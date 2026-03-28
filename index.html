@@ -1,0 +1,455 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>CAM Logic — Allocation Engine</title>
+  <style>
+    *, *::before, *::after { box-sizing: border-box; margin: 0; padding: 0; }
+
+    body {
+      font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif;
+      background: #f4f6f9;
+      color: #1a1a2e;
+      min-height: 100vh;
+      padding: 32px 16px;
+    }
+
+    header {
+      text-align: center;
+      margin-bottom: 36px;
+    }
+    header h1 {
+      font-size: 2rem;
+      font-weight: 700;
+      color: #1a1a2e;
+    }
+    header p {
+      margin-top: 6px;
+      color: #555;
+      font-size: 0.95rem;
+    }
+
+    .container {
+      max-width: 860px;
+      margin: 0 auto;
+      display: flex;
+      flex-direction: column;
+      gap: 28px;
+    }
+
+    .card {
+      background: #fff;
+      border-radius: 12px;
+      padding: 28px;
+      box-shadow: 0 2px 10px rgba(0,0,0,0.07);
+    }
+    .card h2 {
+      font-size: 1.05rem;
+      font-weight: 600;
+      margin-bottom: 18px;
+      color: #1a1a2e;
+      border-bottom: 2px solid #e8eaf0;
+      padding-bottom: 10px;
+    }
+
+    .field-row {
+      display: flex;
+      gap: 14px;
+      flex-wrap: wrap;
+      margin-bottom: 14px;
+    }
+    .field {
+      display: flex;
+      flex-direction: column;
+      flex: 1;
+      min-width: 160px;
+    }
+    .field label {
+      font-size: 0.78rem;
+      font-weight: 600;
+      color: #666;
+      text-transform: uppercase;
+      letter-spacing: 0.04em;
+      margin-bottom: 5px;
+    }
+    .field input {
+      padding: 9px 12px;
+      border: 1.5px solid #dde1ea;
+      border-radius: 8px;
+      font-size: 0.92rem;
+      color: #1a1a2e;
+      transition: border-color 0.15s;
+      background: #fafbfc;
+    }
+    .field input:focus {
+      outline: none;
+      border-color: #4361ee;
+      background: #fff;
+    }
+
+    .section-label {
+      font-size: 0.82rem;
+      font-weight: 700;
+      color: #888;
+      text-transform: uppercase;
+      letter-spacing: 0.05em;
+      margin: 20px 0 10px;
+    }
+
+    .tenant-block, .expense-block {
+      background: #f8f9fc;
+      border: 1.5px solid #e4e7f0;
+      border-radius: 10px;
+      padding: 16px;
+      margin-bottom: 12px;
+    }
+    .block-title {
+      font-size: 0.85rem;
+      font-weight: 600;
+      color: #4361ee;
+      margin-bottom: 12px;
+    }
+
+    button#runBtn {
+      width: 100%;
+      padding: 14px;
+      background: #4361ee;
+      color: #fff;
+      font-size: 1rem;
+      font-weight: 700;
+      border: none;
+      border-radius: 10px;
+      cursor: pointer;
+      letter-spacing: 0.02em;
+      transition: background 0.15s, transform 0.1s;
+    }
+    button#runBtn:hover { background: #3451d1; }
+    button#runBtn:active { transform: scale(0.99); }
+
+    #results { display: none; }
+    #results h2 { margin-bottom: 20px; }
+
+    .result-card {
+      background: #f0f4ff;
+      border: 1.5px solid #c5d0f5;
+      border-radius: 10px;
+      padding: 18px 20px;
+      margin-bottom: 14px;
+    }
+    .result-card .tenant-name {
+      font-size: 1.05rem;
+      font-weight: 700;
+      color: #1a1a2e;
+      margin-bottom: 10px;
+    }
+    .result-grid {
+      display: grid;
+      grid-template-columns: repeat(auto-fill, minmax(180px, 1fr));
+      gap: 10px;
+    }
+    .result-stat {
+      background: #fff;
+      border-radius: 8px;
+      padding: 10px 14px;
+      border: 1px solid #dde5fb;
+    }
+    .result-stat .stat-label {
+      font-size: 0.72rem;
+      color: #888;
+      text-transform: uppercase;
+      letter-spacing: 0.05em;
+      font-weight: 600;
+    }
+    .result-stat .stat-value {
+      font-size: 1.05rem;
+      font-weight: 700;
+      color: #1a1a2e;
+      margin-top: 3px;
+    }
+    .cap-badge {
+      display: inline-block;
+      margin-top: 10px;
+      padding: 4px 10px;
+      background: #fff3cd;
+      color: #856404;
+      font-size: 0.78rem;
+      font-weight: 600;
+      border-radius: 20px;
+      border: 1px solid #ffe08a;
+    }
+    .error-msg {
+      background: #fff0f0;
+      border: 1.5px solid #f5c6c6;
+      color: #c0392b;
+      padding: 12px 16px;
+      border-radius: 8px;
+      font-size: 0.9rem;
+    }
+  </style>
+</head>
+<body>
+
+<header>
+  <h1>CAM Logic</h1>
+  <p>Commercial Area Maintenance Reconciliation Platform</p>
+</header>
+
+<div class="container">
+
+  <!-- Property Info -->
+  <div class="card">
+    <h2>Property Info</h2>
+    <div class="field-row">
+      <div class="field">
+        <label>Property Name</label>
+        <input type="text" id="propertyName" placeholder="e.g. Westfield Plaza" />
+      </div>
+      <div class="field">
+        <label>Total Property Sqft</label>
+        <input type="number" id="totalSqft" placeholder="e.g. 20000" min="1" />
+      </div>
+    </div>
+  </div>
+
+  <!-- Tenants -->
+  <div class="card">
+    <h2>Tenants</h2>
+
+    <div class="tenant-block">
+      <div class="block-title">Tenant 1</div>
+      <div class="field-row">
+        <div class="field"><label>Name</label><input type="text" id="t1name" placeholder="Tenant name" /></div>
+        <div class="field"><label>Leased Sqft</label><input type="number" id="t1sqft" placeholder="e.g. 2000" min="0" /></div>
+        <div class="field"><label>Cap % (optional)</label><input type="number" id="t1cap" placeholder="e.g. 20" min="0" /></div>
+      </div>
+      <div class="field">
+        <label>Excluded Categories (comma-separated)</label>
+        <input type="text" id="t1excl" placeholder="e.g. janitorial, security" />
+      </div>
+    </div>
+
+    <div class="tenant-block">
+      <div class="block-title">Tenant 2</div>
+      <div class="field-row">
+        <div class="field"><label>Name</label><input type="text" id="t2name" placeholder="Tenant name" /></div>
+        <div class="field"><label>Leased Sqft</label><input type="number" id="t2sqft" placeholder="e.g. 5000" min="0" /></div>
+        <div class="field"><label>Cap % (optional)</label><input type="number" id="t2cap" placeholder="e.g. 15" min="0" /></div>
+      </div>
+      <div class="field">
+        <label>Excluded Categories (comma-separated)</label>
+        <input type="text" id="t2excl" placeholder="e.g. landscaping" />
+      </div>
+    </div>
+
+    <div class="tenant-block">
+      <div class="block-title">Tenant 3</div>
+      <div class="field-row">
+        <div class="field"><label>Name</label><input type="text" id="t3name" placeholder="Tenant name" /></div>
+        <div class="field"><label>Leased Sqft</label><input type="number" id="t3sqft" placeholder="e.g. 8000" min="0" /></div>
+        <div class="field"><label>Cap % (optional)</label><input type="number" id="t3cap" placeholder="e.g. 10" min="0" /></div>
+      </div>
+      <div class="field">
+        <label>Excluded Categories (comma-separated)</label>
+        <input type="text" id="t3excl" placeholder="e.g. utilities, maintenance" />
+      </div>
+    </div>
+  </div>
+
+  <!-- Expenses -->
+  <div class="card">
+    <h2>Expenses</h2>
+
+    <div class="expense-block">
+      <div class="block-title">Expense 1</div>
+      <div class="field-row">
+        <div class="field"><label>Vendor</label><input type="text" id="e1vendor" placeholder="e.g. CleanCo" /></div>
+        <div class="field"><label>Category</label><input type="text" id="e1cat" placeholder="e.g. janitorial" /></div>
+        <div class="field"><label>Amount ($)</label><input type="number" id="e1amt" placeholder="e.g. 8000" min="0" /></div>
+      </div>
+    </div>
+
+    <div class="expense-block">
+      <div class="block-title">Expense 2</div>
+      <div class="field-row">
+        <div class="field"><label>Vendor</label><input type="text" id="e2vendor" placeholder="e.g. LandscapeInc" /></div>
+        <div class="field"><label>Category</label><input type="text" id="e2cat" placeholder="e.g. landscaping" /></div>
+        <div class="field"><label>Amount ($)</label><input type="number" id="e2amt" placeholder="e.g. 6000" min="0" /></div>
+      </div>
+    </div>
+
+    <div class="expense-block">
+      <div class="block-title">Expense 3</div>
+      <div class="field-row">
+        <div class="field"><label>Vendor</label><input type="text" id="e3vendor" placeholder="e.g. SecureGuard" /></div>
+        <div class="field"><label>Category</label><input type="text" id="e3cat" placeholder="e.g. security" /></div>
+        <div class="field"><label>Amount ($)</label><input type="number" id="e3amt" placeholder="e.g. 4000" min="0" /></div>
+      </div>
+    </div>
+
+    <div class="expense-block">
+      <div class="block-title">Expense 4</div>
+      <div class="field-row">
+        <div class="field"><label>Vendor</label><input type="text" id="e4vendor" placeholder="e.g. FixItFast" /></div>
+        <div class="field"><label>Category</label><input type="text" id="e4cat" placeholder="e.g. maintenance" /></div>
+        <div class="field"><label>Amount ($)</label><input type="number" id="e4amt" placeholder="e.g. 5000" min="0" /></div>
+      </div>
+    </div>
+
+    <div class="expense-block">
+      <div class="block-title">Expense 5</div>
+      <div class="field-row">
+        <div class="field"><label>Vendor</label><input type="text" id="e5vendor" placeholder="e.g. UtilityPlus" /></div>
+        <div class="field"><label>Category</label><input type="text" id="e5cat" placeholder="e.g. utilities" /></div>
+        <div class="field"><label>Amount ($)</label><input type="number" id="e5amt" placeholder="e.g. 9000" min="0" /></div>
+      </div>
+    </div>
+  </div>
+
+  <!-- Run Button -->
+  <button id="runBtn" onclick="runAllocation()">Run CAM Allocation</button>
+
+  <!-- Results -->
+  <div class="card" id="results">
+    <h2 id="resultsTitle">Results</h2>
+    <div id="resultsBody"></div>
+  </div>
+
+</div>
+
+<script>
+  function parseCsv(str) {
+    return str.split(",").map(s => s.trim().toLowerCase()).filter(s => s.length > 0);
+  }
+
+  function fmt(n) {
+    return "$" + n.toLocaleString("en-US", { minimumFractionDigits: 2, maximumFractionDigits: 2 });
+  }
+
+  function runCAMAllocation(expenses, tenants) {
+    return tenants.map(function(tenant) {
+      var proRata = tenant.leasedSqft / tenant.totalPropertySqft;
+
+      var eligible = expenses.filter(function(exp) {
+        return !tenant.excludedCategories.includes(exp.category.toLowerCase());
+      });
+
+      var total = eligible.reduce(function(sum, exp) {
+        return sum + exp.amount * proRata;
+      }, 0);
+
+      var capAdjustment = null;
+      if (tenant.capPercentage !== null && tenant.capPercentage !== undefined) {
+        var cap = 10000 * (1 + tenant.capPercentage / 100);
+        if (total > cap) {
+          capAdjustment = total - cap;
+          total = cap;
+        }
+      }
+
+      return {
+        tenantName: tenant.name,
+        proRata: proRata,
+        allocatedAmount: parseFloat(total.toFixed(2)),
+        capAdjustment: capAdjustment !== null ? parseFloat(capAdjustment.toFixed(2)) : null,
+        capApplied: capAdjustment !== null,
+        eligibleExpenseCount: eligible.length
+      };
+    });
+  }
+
+  function runAllocation() {
+    var errEl = document.getElementById("resultsBody");
+    var resultsSection = document.getElementById("results");
+
+    // --- Collect property ---
+    var propName = document.getElementById("propertyName").value.trim() || "Unnamed Property";
+    var totalSqft = parseFloat(document.getElementById("totalSqft").value);
+
+    if (!totalSqft || totalSqft <= 0) {
+      resultsSection.style.display = "block";
+      errEl.innerHTML = '<div class="error-msg">Please enter a valid Total Property Sqft.</div>';
+      return;
+    }
+
+    // --- Collect tenants ---
+    var tenants = [];
+    for (var i = 1; i <= 3; i++) {
+      var name = document.getElementById("t" + i + "name").value.trim();
+      var sqft = parseFloat(document.getElementById("t" + i + "sqft").value);
+      if (!name || !sqft || sqft <= 0) continue;
+      var capVal = document.getElementById("t" + i + "cap").value.trim();
+      tenants.push({
+        name: name,
+        leasedSqft: sqft,
+        totalPropertySqft: totalSqft,
+        excludedCategories: parseCsv(document.getElementById("t" + i + "excl").value),
+        capPercentage: capVal !== "" ? parseFloat(capVal) : null
+      });
+    }
+
+    if (tenants.length === 0) {
+      resultsSection.style.display = "block";
+      errEl.innerHTML = '<div class="error-msg">Please enter at least one tenant with a name and leased sqft.</div>';
+      return;
+    }
+
+    // --- Collect expenses ---
+    var expenses = [];
+    for (var j = 1; j <= 5; j++) {
+      var vendor = document.getElementById("e" + j + "vendor").value.trim();
+      var cat = document.getElementById("e" + j + "cat").value.trim();
+      var amt = parseFloat(document.getElementById("e" + j + "amt").value);
+      if (!vendor || !cat || !amt || amt <= 0) continue;
+      expenses.push({ vendor: vendor, category: cat, amount: amt });
+    }
+
+    if (expenses.length === 0) {
+      resultsSection.style.display = "block";
+      errEl.innerHTML = '<div class="error-msg">Please enter at least one expense with vendor, category, and amount.</div>';
+      return;
+    }
+
+    // --- Run engine ---
+    var results = runCAMAllocation(expenses, tenants);
+    var totalExpenses = expenses.reduce(function(s, e) { return s + e.amount; }, 0);
+
+    // --- Render results ---
+    document.getElementById("resultsTitle").textContent = "Results — " + propName;
+
+    var html = '<div style="margin-bottom:18px;padding:12px 16px;background:#eef2ff;border-radius:8px;font-size:0.9rem;color:#444;">'
+      + '<strong>Total Expenses:</strong> ' + fmt(totalExpenses)
+      + '&nbsp;&nbsp;|&nbsp;&nbsp;<strong>Tenants:</strong> ' + results.length
+      + '&nbsp;&nbsp;|&nbsp;&nbsp;<strong>Expense Line Items:</strong> ' + expenses.length
+      + '</div>';
+
+    results.forEach(function(r) {
+      html += '<div class="result-card">';
+      html += '<div class="tenant-name">' + escHtml(r.tenantName) + '</div>';
+      html += '<div class="result-grid">';
+      html += stat("Allocated Amount", fmt(r.allocatedAmount));
+      html += stat("Pro-Rata Share", (r.proRata * 100).toFixed(2) + "%");
+      html += stat("Eligible Expenses", r.eligibleExpenseCount + " of " + expenses.length);
+      html += '</div>';
+      if (r.capApplied) {
+        html += '<div class="cap-badge">Cap applied — ' + fmt(r.capAdjustment) + ' reduced</div>';
+      }
+      html += '</div>';
+    });
+
+    errEl.innerHTML = html;
+    resultsSection.style.display = "block";
+    resultsSection.scrollIntoView({ behavior: "smooth", block: "start" });
+  }
+
+  function stat(label, value) {
+    return '<div class="result-stat"><div class="stat-label">' + label + '</div><div class="stat-value">' + value + '</div></div>';
+  }
+
+  function escHtml(str) {
+    return str.replace(/&/g,"&amp;").replace(/</g,"&lt;").replace(/>/g,"&gt;").replace(/"/g,"&quot;");
+  }
+</script>
+
+</body>
+</html>
