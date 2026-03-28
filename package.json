@@ -6,5 +6,8 @@
   "scripts": {
     "test": "node test-allocation.js"
   },
-  "license": "MIT"
+  "license": "MIT",
+  "dependencies": {
+    "xrpl": "^4.6.0"
+  }
 }
