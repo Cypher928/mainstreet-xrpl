@@ -1,2 +1,72 @@
-# mainstreet-xrpl
-DeFi liquidity platform for small business-tokenized invoices, equipment &amp; inventory on XRP Ledger
+# CAM Logic
+
+CAM Logic is an open-source Commercial Area Maintenance (CAM) reconciliation platform built for commercial real estate. In a typical commercial lease, tenants pay an estimated share of shared property expenses — landscaping, security, janitorial, utilities — throughout the year. At year-end, landlords reconcile actual costs against those estimates, triggering refunds or additional charges. Today this process is manual, opaque, and prone to disputes. CAM Logic automates the allocation math, anchors reconciliation records immutably on the XRP Ledger, and uses XRPL escrow to hold estimated payments until the final figures are verified — replacing a slow, trust-dependent paper process with a transparent, auditable, on-chain workflow.
+
+---
+
+## XRPL Integration
+
+CAM Logic uses the XRP Ledger for three distinct functions:
+
+**1. Invoice Hashing (`xrpl-integration.js`)**
+Each completed CAM reconciliation is SHA-256 hashed and the hash is written into the `Memo` field of an XRPL transaction. This creates a permanent, timestamped proof-of-existence for the reconciliation record. Neither party can alter the figures after the fact — the hash on-chain will not match.
+
+**2. Escrow Settlement (`escrow-reconciliation.js`)**
+At the start of the lease year, the tenant locks their estimated annual CAM contribution into an XRPL `EscrowCreate` transaction. The funds are time-locked until the reconciliation deadline. When the year-end figures are confirmed, `completeCAMEscrow()` handles all three settlement outcomes automatically:
+- **Overpaid** — escrow is finished, landlord refunds the difference to the tenant.
+- **Underpaid** — escrow is cancelled, tenant sends the correct higher amount directly.
+- **Exact** — escrow is finished, no further action needed.
+
+**3. On-Chain Audit Trail**
+Every transaction — escrow creation, finish, cancellation, and any adjustment payment — includes a structured JSON memo recording the `property_id`, `tenant_id`, and billing `period`. The full history of a reconciliation is verifiable by anyone with the tenant's XRPL address.
+
+---
+
+## File Structure
+
+| File | Description |
+|---|---|
+| `allocation-engine.js` | Core allocation logic: calculates each tenant's pro-rata CAM share with category exclusions and optional caps. |
+| `xrpl-integration.js` | SHA-256 hashes a reconciliation result and anchors it on the XRPL testnet via a Memo-field transaction. |
+| `escrow-reconciliation.js` | Creates and settles XRPL time-locked escrows for estimated CAM payments, handling overpay, underpay, and exact settlement. |
+| `index.html` | Single-file browser UI for entering property, tenant, and expense data and running the allocation engine client-side. |
+| `test-allocation.js` | Runs sample data through the allocation engine and logs results to the console. |
+| `test-xrpl.js` | Hashes a sample reconciliation result and submits it to the XRPL testnet, logging the transaction hash and explorer link. |
+| `test-escrow.js` | Demonstrates the full escrow lifecycle across three scenarios (overpaid, underpaid, exact) using testnet-funded wallets. |
+| `package.json` | Node.js project config with the `xrpl` SDK as the only dependency. |
+
+---
+
+## How to Run
+
+**Prerequisites:** Node.js v18+ and internet access to reach the XRPL testnet.
+
+```bash
+# 1. Clone the repository
+git clone https://github.com/Cypher928/mainstreet-xrpl.git
+cd mainstreet-xrpl
+
+# 2. Install dependencies
+npm install
+
+# 3. Run the allocation engine (no network required)
+node test-allocation.js
+
+# 4. Anchor a reconciliation result on the XRPL testnet
+node test-xrpl.js
+
+# 5. Run the full escrow lifecycle test (funds wallets via testnet faucet)
+node test-escrow.js
+
+# 6. Open the browser UI
+open index.html
+```
+
+---
+
+## Why XRPL
+
+- **Purpose-built for payments.** The XRP Ledger's native escrow and payment primitives map directly onto the CAM settlement workflow without requiring custom smart contract logic — reducing attack surface and audit complexity.
+- **Low cost, high throughput.** XRPL transactions settle in 3–5 seconds and cost a fraction of a cent, making it economically viable to anchor every reconciliation record on-chain rather than batching or sampling.
+- **RLUSD stablecoin.** Ripple's USD-pegged stablecoin (RLUSD) on XRPL enables CAM obligations to be denominated and settled in dollars without fiat bank rails, reducing the friction of cross-party payments in commercial leasing.
+- **Transparent and auditable.** Every on-chain memo is readable by any explorer or auditor without requiring access to proprietary systems — critical for the dispute resolution and audit requirements common in commercial lease agreements.
