@@ -1,0 +1,527 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>CAM Logic — System Architecture</title>
+  <style>
+    *, *::before, *::after { box-sizing: border-box; margin: 0; padding: 0; }
+
+    body {
+      font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif;
+      background: #F1F5F9;
+      color: #1E293B;
+      padding: 40px 20px 60px;
+    }
+
+    header {
+      text-align: center;
+      margin-bottom: 32px;
+    }
+    header h1 {
+      font-size: 1.75rem;
+      font-weight: 700;
+      color: #0F172A;
+      letter-spacing: -0.01em;
+    }
+    header p {
+      margin-top: 6px;
+      color: #64748B;
+      font-size: 0.92rem;
+    }
+
+    .card {
+      max-width: 1020px;
+      margin: 0 auto;
+      background: #fff;
+      border-radius: 18px;
+      padding: 36px 36px 28px;
+      box-shadow: 0 4px 32px rgba(0,0,0,0.09);
+    }
+
+    svg {
+      width: 100%;
+      height: auto;
+      display: block;
+    }
+
+    .legend {
+      display: flex;
+      justify-content: center;
+      align-items: center;
+      gap: 28px;
+      flex-wrap: wrap;
+      margin-top: 24px;
+      padding-top: 20px;
+      border-top: 1px solid #E2E8F0;
+    }
+    .legend-item {
+      display: flex;
+      align-items: center;
+      gap: 7px;
+      font-size: 0.8rem;
+      color: #475569;
+      font-weight: 500;
+    }
+    .legend-dot {
+      width: 13px;
+      height: 13px;
+      border-radius: 3px;
+      flex-shrink: 0;
+    }
+    .legend-line {
+      display: flex;
+      align-items: center;
+    }
+  </style>
+</head>
+<body>
+
+<header>
+  <h1>CAM Logic — System Architecture</h1>
+  <p>Commercial Area Maintenance Reconciliation on XRP Ledger</p>
+</header>
+
+<div class="card">
+  <svg viewBox="0 0 960 690" xmlns="http://www.w3.org/2000/svg">
+    <defs>
+
+      <!-- Arrow markers -->
+      <marker id="arr-blue" markerWidth="9" markerHeight="7" refX="8" refY="3.5" orient="auto">
+        <polygon points="0 0, 9 3.5, 0 7" fill="#93C5FD"/>
+      </marker>
+      <marker id="arr-green" markerWidth="9" markerHeight="7" refX="8" refY="3.5" orient="auto">
+        <polygon points="0 0, 9 3.5, 0 7" fill="#6EE7B7"/>
+      </marker>
+      <marker id="arr-purple" markerWidth="9" markerHeight="7" refX="8" refY="3.5" orient="auto">
+        <polygon points="0 0, 9 3.5, 0 7" fill="#C4B5FD"/>
+      </marker>
+
+      <!-- Subtle drop shadow -->
+      <filter id="sh" x="-8%" y="-8%" width="116%" height="130%">
+        <feDropShadow dx="0" dy="2" stdDeviation="4" flood-color="#00000014"/>
+      </filter>
+
+      <!-- Subtle inset for layer bands -->
+      <filter id="sh-sm" x="-4%" y="-4%" width="108%" height="118%">
+        <feDropShadow dx="0" dy="1" stdDeviation="2" flood-color="#0000000a"/>
+      </filter>
+
+    </defs>
+
+    <!-- ================================================================ -->
+    <!-- LAYER 1 BAND — User Interface (y 10–210)                        -->
+    <!-- ================================================================ -->
+    <rect x="0" y="10" width="960" height="200" rx="14"
+          fill="#EFF6FF" stroke="#BFDBFE" stroke-width="1.5" filter="url(#sh-sm)"/>
+
+    <!-- Layer label -->
+    <text x="22" y="35" font-family="-apple-system,BlinkMacSystemFont,sans-serif"
+          font-size="10.5" font-weight="700" fill="#1D4ED8" letter-spacing="0.07em">
+      LAYER 1 — USER INTERFACE
+    </text>
+
+    <!-- ── Node: Property Manager ───────────────────────────────────── -->
+    <g filter="url(#sh)">
+      <rect x="160" y="52" width="230" height="130" rx="11"
+            fill="white" stroke="#3B82F6" stroke-width="2"/>
+
+      <!-- Person icon background -->
+      <circle cx="196" cy="92" r="18" fill="#DBEAFE"/>
+      <!-- Head -->
+      <circle cx="196" cy="86" r="7" fill="#3B82F6"/>
+      <!-- Shoulders -->
+      <path d="M182,108 Q196,98 210,108" fill="#3B82F6"/>
+
+      <!-- Labels -->
+      <text x="224" y="85"
+            font-family="-apple-system,BlinkMacSystemFont,sans-serif"
+            font-size="13.5" font-weight="700" fill="#1E3A5F">Property</text>
+      <text x="224" y="103"
+            font-family="-apple-system,BlinkMacSystemFont,sans-serif"
+            font-size="13.5" font-weight="700" fill="#1E3A5F">Manager</text>
+      <text x="224" y="120"
+            font-family="-apple-system,BlinkMacSystemFont,sans-serif"
+            font-size="10.5" fill="#64748B">uploads expenses</text>
+
+      <!-- Tag pill -->
+      <rect x="176" y="142" width="196" height="24" rx="6" fill="#DBEAFE"/>
+      <text x="274" y="158"
+            font-family="-apple-system,BlinkMacSystemFont,sans-serif"
+            font-size="10" fill="#1D4ED8" text-anchor="middle" font-weight="600">
+        CSV · Manual Entry · API
+      </text>
+    </g>
+
+    <!-- ── Node: Tenant ─────────────────────────────────────────────── -->
+    <g filter="url(#sh)">
+      <rect x="570" y="52" width="230" height="130" rx="11"
+            fill="white" stroke="#3B82F6" stroke-width="2"/>
+
+      <!-- Building icon -->
+      <rect x="590" y="72" width="34" height="34" rx="4" fill="#DBEAFE"/>
+      <rect x="596" y="78" width="7" height="7" rx="1" fill="#3B82F6"/>
+      <rect x="611" y="78" width="7" height="7" rx="1" fill="#3B82F6"/>
+      <rect x="596" y="92" width="7" height="7" rx="1" fill="#3B82F6"/>
+      <rect x="611" y="92" width="7" height="7" rx="1" fill="#3B82F6"/>
+
+      <text x="636" y="90"
+            font-family="-apple-system,BlinkMacSystemFont,sans-serif"
+            font-size="13.5" font-weight="700" fill="#1E3A5F">Tenant</text>
+      <text x="636" y="108"
+            font-family="-apple-system,BlinkMacSystemFont,sans-serif"
+            font-size="10.5" fill="#64748B">views allocations</text>
+      <text x="636" y="124"
+            font-family="-apple-system,BlinkMacSystemFont,sans-serif"
+            font-size="10.5" fill="#64748B">&amp; reconciliation</text>
+
+      <!-- Tag pill -->
+      <rect x="590" y="142" width="192" height="24" rx="6" fill="#DBEAFE"/>
+      <text x="686" y="158"
+            font-family="-apple-system,BlinkMacSystemFont,sans-serif"
+            font-size="10" fill="#1D4ED8" text-anchor="middle" font-weight="600">
+        Web UI · Tenant Portal
+      </text>
+    </g>
+
+    <!-- ================================================================ -->
+    <!-- LAYER 2 BAND — CAM Logic Engine (y 228–428)                     -->
+    <!-- ================================================================ -->
+    <rect x="0" y="228" width="960" height="200" rx="14"
+          fill="#F5F3FF" stroke="#DDD6FE" stroke-width="1.5" filter="url(#sh-sm)"/>
+
+    <text x="22" y="252" font-family="-apple-system,BlinkMacSystemFont,sans-serif"
+          font-size="10.5" font-weight="700" fill="#5B21B6" letter-spacing="0.07em">
+      LAYER 2 — CAM LOGIC ENGINE
+    </text>
+
+    <!-- ── Node: Expense Upload & Storage ───────────────────────────── -->
+    <g filter="url(#sh)">
+      <rect x="44" y="270" width="230" height="130" rx="11"
+            fill="white" stroke="#7C3AED" stroke-width="2"/>
+
+      <!-- Upload icon bg -->
+      <rect x="62" y="286" width="34" height="34" rx="4" fill="#EDE9FE"/>
+      <!-- Upload arrow -->
+      <line x1="79" y1="310" x2="79" y2="298" stroke="#7C3AED" stroke-width="2.5" stroke-linecap="round"/>
+      <polyline points="73,304 79,297 85,304" fill="none" stroke="#7C3AED" stroke-width="2.5"
+                stroke-linecap="round" stroke-linejoin="round"/>
+      <line x1="72" y1="314" x2="86" y2="314" stroke="#7C3AED" stroke-width="2" stroke-linecap="round"/>
+
+      <text x="106" y="300"
+            font-family="-apple-system,BlinkMacSystemFont,sans-serif"
+            font-size="13" font-weight="700" fill="#3B0764">Expense Upload</text>
+      <text x="106" y="318"
+            font-family="-apple-system,BlinkMacSystemFont,sans-serif"
+            font-size="13" font-weight="700" fill="#3B0764">&amp; Storage</text>
+      <text x="62" y="340"
+            font-family="-apple-system,BlinkMacSystemFont,sans-serif"
+            font-size="10.5" fill="#64748B">vendor · category · amount</text>
+
+      <rect x="62" y="354" width="196" height="24" rx="6" fill="#EDE9FE"/>
+      <text x="160" y="370"
+            font-family="-apple-system,BlinkMacSystemFont,sans-serif"
+            font-size="10" fill="#5B21B6" text-anchor="middle" font-weight="600">
+        Structured JSON Storage
+      </text>
+    </g>
+
+    <!-- ── Node: Allocation Engine ──────────────────────────────────── -->
+    <g filter="url(#sh)">
+      <rect x="365" y="270" width="230" height="130" rx="11"
+            fill="white" stroke="#7C3AED" stroke-width="2"/>
+
+      <!-- Gear icon -->
+      <rect x="383" y="286" width="34" height="34" rx="4" fill="#EDE9FE"/>
+      <circle cx="400" cy="303" r="9" fill="none" stroke="#7C3AED" stroke-width="2.5"/>
+      <circle cx="400" cy="303" r="4" fill="#7C3AED"/>
+      <!-- gear teeth -->
+      <rect x="398" y="291" width="4" height="4" rx="1" fill="#7C3AED"/>
+      <rect x="398" y="311" width="4" height="4" rx="1" fill="#7C3AED"/>
+      <rect x="388" y="301" width="4" height="4" rx="1" fill="#7C3AED"/>
+      <rect x="408" y="301" width="4" height="4" rx="1" fill="#7C3AED"/>
+
+      <text x="427" y="300"
+            font-family="-apple-system,BlinkMacSystemFont,sans-serif"
+            font-size="13" font-weight="700" fill="#3B0764">Allocation</text>
+      <text x="427" y="318"
+            font-family="-apple-system,BlinkMacSystemFont,sans-serif"
+            font-size="13" font-weight="700" fill="#3B0764">Engine</text>
+      <text x="383" y="340"
+            font-family="-apple-system,BlinkMacSystemFont,sans-serif"
+            font-size="10.5" fill="#64748B">pro-rata · caps · exclusions</text>
+
+      <rect x="383" y="354" width="196" height="24" rx="6" fill="#EDE9FE"/>
+      <text x="480" y="370"
+            font-family="-apple-system,BlinkMacSystemFont,sans-serif"
+            font-size="10" fill="#5B21B6" text-anchor="middle" font-weight="600">
+        runCAMAllocation()
+      </text>
+    </g>
+
+    <!-- ── Node: Reconciliation Report Generator ────────────────────── -->
+    <g filter="url(#sh)">
+      <rect x="686" y="270" width="230" height="130" rx="11"
+            fill="white" stroke="#7C3AED" stroke-width="2"/>
+
+      <!-- Bar chart icon -->
+      <rect x="704" y="286" width="34" height="34" rx="4" fill="#EDE9FE"/>
+      <rect x="710" y="305" width="6" height="12" rx="1" fill="#7C3AED"/>
+      <rect x="719" y="299" width="6" height="18" rx="1" fill="#7C3AED"/>
+      <rect x="728" y="294" width="6" height="23" rx="1" fill="#7C3AED"/>
+
+      <text x="748" y="298"
+            font-family="-apple-system,BlinkMacSystemFont,sans-serif"
+            font-size="12.5" font-weight="700" fill="#3B0764">Reconciliation</text>
+      <text x="748" y="315"
+            font-family="-apple-system,BlinkMacSystemFont,sans-serif"
+            font-size="12.5" font-weight="700" fill="#3B0764">Report Generator</text>
+      <text x="704" y="340"
+            font-family="-apple-system,BlinkMacSystemFont,sans-serif"
+            font-size="10.5" fill="#64748B">year-end · per-tenant</text>
+
+      <rect x="704" y="354" width="196" height="24" rx="6" fill="#EDE9FE"/>
+      <text x="802" y="370"
+            font-family="-apple-system,BlinkMacSystemFont,sans-serif"
+            font-size="10" fill="#5B21B6" text-anchor="middle" font-weight="600">
+        PDF · JSON · On-Chain Hash
+      </text>
+    </g>
+
+    <!-- Horizontal flow arrows within Layer 2 -->
+    <line x1="274" y1="335" x2="365" y2="335"
+          stroke="#C4B5FD" stroke-width="2"
+          stroke-dasharray="5,3" marker-end="url(#arr-purple)"/>
+    <line x1="595" y1="335" x2="686" y2="335"
+          stroke="#C4B5FD" stroke-width="2"
+          stroke-dasharray="5,3" marker-end="url(#arr-purple)"/>
+
+    <!-- ================================================================ -->
+    <!-- LAYER 3 BAND — XRPL Blockchain (y 446–670)                      -->
+    <!-- ================================================================ -->
+    <rect x="0" y="446" width="960" height="228" rx="14"
+          fill="#ECFDF5" stroke="#A7F3D0" stroke-width="1.5" filter="url(#sh-sm)"/>
+
+    <text x="22" y="469" font-family="-apple-system,BlinkMacSystemFont,sans-serif"
+          font-size="10.5" font-weight="700" fill="#065F46" letter-spacing="0.07em">
+      LAYER 3 — XRPL BLOCKCHAIN
+    </text>
+
+    <!-- ── Node: Invoice Hash → Memo Field ──────────────────────────── -->
+    <g filter="url(#sh)">
+      <rect x="44" y="484" width="230" height="164" rx="11"
+            fill="white" stroke="#059669" stroke-width="2"/>
+
+      <!-- Hash icon -->
+      <rect x="62" y="500" width="34" height="34" rx="4" fill="#D1FAE5"/>
+      <text x="69" y="522"
+            font-family="'Courier New',monospace"
+            font-size="20" font-weight="900" fill="#059669">#</text>
+
+      <text x="106" y="516"
+            font-family="-apple-system,BlinkMacSystemFont,sans-serif"
+            font-size="13" font-weight="700" fill="#064E3B">Invoice Hash</text>
+      <text x="106" y="534"
+            font-family="-apple-system,BlinkMacSystemFont,sans-serif"
+            font-size="13" font-weight="700" fill="#064E3B">→ Memo Field</text>
+      <text x="62" y="556"
+            font-family="-apple-system,BlinkMacSystemFont,sans-serif"
+            font-size="10.5" fill="#64748B">SHA-256 · proof of existence</text>
+
+      <!-- Source file pill -->
+      <rect x="62" y="568" width="196" height="22" rx="6" fill="#D1FAE5"/>
+      <text x="160" y="583"
+            font-family="-apple-system,BlinkMacSystemFont,sans-serif"
+            font-size="10" fill="#065F46" text-anchor="middle" font-weight="600">
+        xrpl-integration.js
+      </text>
+
+      <!-- XRPL TX badge -->
+      <rect x="62" y="598" width="72" height="20" rx="10" fill="#059669"/>
+      <text x="98" y="612"
+            font-family="-apple-system,BlinkMacSystemFont,sans-serif"
+            font-size="9.5" fill="white" font-weight="700" text-anchor="middle">
+        XRPL TX
+      </text>
+      <rect x="142" y="598" width="72" height="20" rx="10" fill="#D1FAE5"/>
+      <text x="178" y="612"
+            font-family="-apple-system,BlinkMacSystemFont,sans-serif"
+            font-size="9.5" fill="#065F46" font-weight="700" text-anchor="middle">
+        Testnet
+      </text>
+    </g>
+
+    <!-- ── Node: RLUSD Monthly Payments ─────────────────────────────── -->
+    <g filter="url(#sh)">
+      <rect x="365" y="484" width="230" height="164" rx="11"
+            fill="white" stroke="#059669" stroke-width="2"/>
+
+      <!-- Dollar icon -->
+      <rect x="383" y="500" width="34" height="34" rx="4" fill="#D1FAE5"/>
+      <text x="390" y="523"
+            font-family="-apple-system,BlinkMacSystemFont,sans-serif"
+            font-size="19" font-weight="900" fill="#059669">$</text>
+
+      <text x="427" y="516"
+            font-family="-apple-system,BlinkMacSystemFont,sans-serif"
+            font-size="13" font-weight="700" fill="#064E3B">RLUSD Monthly</text>
+      <text x="427" y="534"
+            font-family="-apple-system,BlinkMacSystemFont,sans-serif"
+            font-size="13" font-weight="700" fill="#064E3B">Payments</text>
+      <text x="383" y="556"
+            font-family="-apple-system,BlinkMacSystemFont,sans-serif"
+            font-size="10.5" fill="#64748B">USD-pegged · no bank rails</text>
+
+      <rect x="383" y="568" width="196" height="22" rx="6" fill="#D1FAE5"/>
+      <text x="480" y="583"
+            font-family="-apple-system,BlinkMacSystemFont,sans-serif"
+            font-size="10" fill="#065F46" text-anchor="middle" font-weight="600">
+        RLUSD Issued Currency
+      </text>
+
+      <rect x="383" y="598" width="72" height="20" rx="10" fill="#059669"/>
+      <text x="419" y="612"
+            font-family="-apple-system,BlinkMacSystemFont,sans-serif"
+            font-size="9.5" fill="white" font-weight="700" text-anchor="middle">
+        Payment
+      </text>
+      <rect x="463" y="598" width="72" height="20" rx="10" fill="#D1FAE5"/>
+      <text x="499" y="612"
+            font-family="-apple-system,BlinkMacSystemFont,sans-serif"
+            font-size="9.5" fill="#065F46" font-weight="700" text-anchor="middle">
+        Stablecoin
+      </text>
+    </g>
+
+    <!-- ── Node: Escrow Settlement ───────────────────────────────────── -->
+    <g filter="url(#sh)">
+      <rect x="686" y="484" width="230" height="164" rx="11"
+            fill="white" stroke="#059669" stroke-width="2"/>
+
+      <!-- Lock icon -->
+      <rect x="704" y="500" width="34" height="34" rx="4" fill="#D1FAE5"/>
+      <!-- shackle -->
+      <path d="M715,511 Q715,503 721,503 Q727,503 727,511"
+            fill="none" stroke="#059669" stroke-width="2.5" stroke-linecap="round"/>
+      <!-- lock body -->
+      <rect x="712" y="511" width="18" height="14" rx="3" fill="#059669"/>
+      <!-- keyhole -->
+      <circle cx="721" cy="517" r="3" fill="white"/>
+      <rect x="719" y="518" width="4" height="5" rx="1" fill="white"/>
+
+      <text x="748" y="516"
+            font-family="-apple-system,BlinkMacSystemFont,sans-serif"
+            font-size="13" font-weight="700" fill="#064E3B">Escrow</text>
+      <text x="748" y="534"
+            font-family="-apple-system,BlinkMacSystemFont,sans-serif"
+            font-size="13" font-weight="700" fill="#064E3B">Settlement</text>
+      <text x="704" y="556"
+            font-family="-apple-system,BlinkMacSystemFont,sans-serif"
+            font-size="10.5" fill="#64748B">time-locked · over/underpay</text>
+
+      <rect x="704" y="568" width="196" height="22" rx="6" fill="#D1FAE5"/>
+      <text x="802" y="583"
+            font-family="-apple-system,BlinkMacSystemFont,sans-serif"
+            font-size="10" fill="#065F46" text-anchor="middle" font-weight="600">
+        escrow-reconciliation.js
+      </text>
+
+      <rect x="704" y="598" width="88" height="20" rx="10" fill="#059669"/>
+      <text x="748" y="612"
+            font-family="-apple-system,BlinkMacSystemFont,sans-serif"
+            font-size="9.5" fill="white" font-weight="700" text-anchor="middle">
+        EscrowCreate
+      </text>
+      <rect x="800" y="598" width="72" height="20" rx="10" fill="#D1FAE5"/>
+      <text x="836" y="612"
+            font-family="-apple-system,BlinkMacSystemFont,sans-serif"
+            font-size="9.5" fill="#065F46" font-weight="700" text-anchor="middle">
+        EscrowFinish
+      </text>
+    </g>
+
+    <!-- ================================================================ -->
+    <!-- ARROWS: Layer 1 → Layer 2 (dashed blue, midY ≈ 219)             -->
+    <!-- ================================================================ -->
+
+    <!-- PropertyMgr bottom-left (265,182) → ExpenseUpload top (159,270) -->
+    <path d="M 265,182 C 265,219 159,219 159,270"
+          fill="none" stroke="#93C5FD" stroke-width="2"
+          stroke-dasharray="6,3" marker-end="url(#arr-blue)"/>
+
+    <!-- PropertyMgr bottom-right (295,182) → AllocationEngine top (475,270) -->
+    <path d="M 295,182 C 295,219 475,219 475,270"
+          fill="none" stroke="#93C5FD" stroke-width="2"
+          stroke-dasharray="6,3" marker-end="url(#arr-blue)"/>
+
+    <!-- Tenant bottom-left (655,182) → AllocationEngine top (485,270) -->
+    <path d="M 655,182 C 655,219 485,219 485,270"
+          fill="none" stroke="#93C5FD" stroke-width="2"
+          stroke-dasharray="6,3" marker-end="url(#arr-blue)"/>
+
+    <!-- Tenant bottom-right (695,182) → ReconReport top (801,270) -->
+    <path d="M 695,182 C 695,219 801,219 801,270"
+          fill="none" stroke="#93C5FD" stroke-width="2"
+          stroke-dasharray="6,3" marker-end="url(#arr-blue)"/>
+
+    <!-- ================================================================ -->
+    <!-- ARROWS: Layer 2 → Layer 3 (solid green, midY ≈ 437)             -->
+    <!-- ================================================================ -->
+
+    <!-- ExpenseUpload bottom (159,400) → InvoiceHash top (159,484) -->
+    <path d="M 159,400 C 159,437 159,437 159,484"
+          fill="none" stroke="#6EE7B7" stroke-width="2.5"
+          marker-end="url(#arr-green)"/>
+
+    <!-- AllocationEngine bottom (480,400) → RLUSD top (480,484) -->
+    <path d="M 480,400 C 480,437 480,437 480,484"
+          fill="none" stroke="#6EE7B7" stroke-width="2.5"
+          marker-end="url(#arr-green)"/>
+
+    <!-- ReconReport bottom (801,400) → EscrowSettlement top (801,484) -->
+    <path d="M 801,400 C 801,437 801,437 801,484"
+          fill="none" stroke="#6EE7B7" stroke-width="2.5"
+          marker-end="url(#arr-green)"/>
+
+  </svg>
+
+  <!-- Legend -->
+  <div class="legend">
+    <div class="legend-item">
+      <div class="legend-dot" style="background:#3B82F6;"></div>
+      User Interface
+    </div>
+    <div class="legend-item">
+      <div class="legend-dot" style="background:#7C3AED;"></div>
+      CAM Logic Engine
+    </div>
+    <div class="legend-item">
+      <div class="legend-dot" style="background:#059669;"></div>
+      XRPL Blockchain
+    </div>
+    <div class="legend-item legend-line">
+      <svg width="34" height="14" style="margin-right:7px">
+        <line x1="0" y1="7" x2="25" y2="7" stroke="#93C5FD" stroke-width="2" stroke-dasharray="5,2.5"/>
+        <polygon points="25,4 34,7 25,10" fill="#93C5FD"/>
+      </svg>
+      UI → Engine
+    </div>
+    <div class="legend-item legend-line">
+      <svg width="34" height="14" style="margin-right:7px">
+        <line x1="0" y1="7" x2="25" y2="7" stroke="#6EE7B7" stroke-width="2.5"/>
+        <polygon points="25,4 34,7 25,10" fill="#6EE7B7"/>
+      </svg>
+      Engine → Chain
+    </div>
+    <div class="legend-item legend-line">
+      <svg width="34" height="14" style="margin-right:7px">
+        <line x1="0" y1="7" x2="25" y2="7" stroke="#C4B5FD" stroke-width="2" stroke-dasharray="5,2.5"/>
+        <polygon points="25,4 34,7 25,10" fill="#C4B5FD"/>
+      </svg>
+      Internal Flow
+    </div>
+  </div>
+</div>
+
+</body>
+</html>
