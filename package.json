@@ -1,0 +1,10 @@
+{
+  "name": "cam-logic",
+  "version": "1.0.0",
+  "description": "CAM Logic — Commercial Area Maintenance reconciliation platform for commercial real estate",
+  "main": "allocation-engine.js",
+  "scripts": {
+    "test": "node test-allocation.js"
+  },
+  "license": "MIT"
+}
