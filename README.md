@@ -19,6 +19,17 @@ Everything runs client-side with a real connection to the XRPL Testnet using xrp
 
 **Why this matters:** Small businesses and property managers currently spend weeks arguing over opaque CAM bills. This demo shows how XRPL escrow and immutable memos can make the entire process transparent, automatic, and auditable for everyone involved.
 
+### 🏢 Built for Real Estate — Not Crypto Users
+
+Landlords and tenants never interact with cryptocurrency directly. CAM Logic handles everything behind the scenes:
+
+- Tenants pay via familiar bank or card payment
+- Landlords receive funds in their normal account
+- XRPL settlement, escrow, and audit trail happen invisibly
+- No wallets, no seed phrases, no crypto knowledge required
+
+The blockchain layer exists to protect both parties — not to complicate their workflow. Think of it like how Visa runs on complex infrastructure that cardholders never see.
+
 ---
 
 CAM Logic is an open-source Commercial Area Maintenance (CAM) reconciliation platform built for commercial real estate. In a typical commercial lease, tenants pay an estimated share of shared property expenses — landscaping, security, janitorial, utilities — throughout the year. At year-end, landlords reconcile actual costs against those estimates, triggering refunds or additional charges. Today this process is manual, opaque, and prone to disputes. CAM Logic automates the allocation math, anchors reconciliation records immutably on the XRP Ledger, and uses XRPL escrow to hold estimated payments until the final figures are verified — replacing a slow, trust-dependent paper process with a transparent, auditable, on-chain workflow.
