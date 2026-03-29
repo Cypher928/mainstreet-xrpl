@@ -3,7 +3,10 @@
 CAM Logic is an open-source Commercial Area Maintenance (CAM) reconciliation platform built for commercial real estate. In a typical commercial lease, tenants pay an estimated share of shared property expenses — landscaping, security, janitorial, utilities — throughout the year. At year-end, landlords reconcile actual costs against those estimates, triggering refunds or additional charges. Today this process is manual, opaque, and prone to disputes. CAM Logic automates the allocation math, anchors reconciliation records immutably on the XRP Ledger, and uses XRPL escrow to hold estimated payments until the final figures are verified — replacing a slow, trust-dependent paper process with a transparent, auditable, on-chain workflow.
 
 ---
+🌐 Live Demo: https://mainstreet-xrpl.vercel.app
 
+Also add a GitHub section at the bottom with:
+- How to clone and run locally
 ## XRPL Integration
 
 CAM Logic uses the XRP Ledger for three distinct functions:
