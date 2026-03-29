@@ -3,7 +3,7 @@
 <head>
   <meta charset="UTF-8" />
   <meta name="viewport" content="width=device-width, initial-scale=1.0" />
-  <title>CAM Logic — Allocation Engine</title>
+  <title>CAM Logic — AI-Powered Allocation</title>
   <style>
     *, *::before, *::after { box-sizing: border-box; margin: 0; padding: 0; }
 
@@ -12,194 +12,258 @@
       background: #f4f6f9;
       color: #1a1a2e;
       min-height: 100vh;
-      padding: 32px 16px;
+      padding: 32px 16px 64px;
     }
 
-    header {
-      text-align: center;
-      margin-bottom: 36px;
-    }
-    header h1 {
-      font-size: 2rem;
-      font-weight: 700;
-      color: #1a1a2e;
-    }
-    header p {
-      margin-top: 6px;
-      color: #555;
-      font-size: 0.95rem;
-    }
+    header { text-align: center; margin-bottom: 32px; }
+    header h1 { font-size: 1.9rem; font-weight: 700; color: #1a1a2e; }
+    header p { margin-top: 6px; color: #64748b; font-size: 0.92rem; }
 
-    .container {
-      max-width: 860px;
-      margin: 0 auto;
+    /* API key bar */
+    .api-bar {
+      max-width: 720px;
+      margin: 0 auto 28px;
       display: flex;
-      flex-direction: column;
-      gap: 28px;
+      align-items: center;
+      gap: 12px;
+      background: #fffbeb;
+      border: 1.5px solid #fcd34d;
+      border-radius: 11px;
+      padding: 13px 18px;
     }
+    .api-bar label {
+      font-size: 0.78rem; font-weight: 700; color: #92400e;
+      white-space: nowrap; text-transform: uppercase; letter-spacing: 0.04em;
+    }
+    .api-bar input {
+      flex: 1; padding: 8px 12px;
+      border: 1.5px solid #fcd34d; border-radius: 7px;
+      font-size: 0.88rem; font-family: "Courier New", monospace;
+      background: white; color: #1a1a2e;
+    }
+    .api-bar input:focus { outline: none; border-color: #f59e0b; }
+    .api-bar .hint { font-size: 0.73rem; color: #a8a29e; white-space: nowrap; }
 
+    /* Layout */
+    .container { max-width: 720px; margin: 0 auto; display: flex; flex-direction: column; gap: 22px; }
+
+    /* Cards */
     .card {
       background: #fff;
-      border-radius: 12px;
-      padding: 28px;
-      box-shadow: 0 2px 10px rgba(0,0,0,0.07);
-    }
-    .card h2 {
-      font-size: 1.05rem;
-      font-weight: 600;
-      margin-bottom: 18px;
-      color: #1a1a2e;
-      border-bottom: 2px solid #e8eaf0;
-      padding-bottom: 10px;
+      border-radius: 14px;
+      padding: 26px 28px;
+      box-shadow: 0 2px 12px rgba(0,0,0,0.07);
     }
 
-    .field-row {
-      display: flex;
-      gap: 14px;
-      flex-wrap: wrap;
+    /* Section header */
+    .sec-head { display: flex; align-items: flex-start; gap: 12px; margin-bottom: 22px; }
+    .sec-num {
+      width: 27px; height: 27px; border-radius: 50%;
+      background: #4361ee; color: white;
+      font-size: 0.78rem; font-weight: 700;
+      display: flex; align-items: center; justify-content: center;
+      flex-shrink: 0; margin-top: 2px;
+    }
+    .sec-num.green { background: #16a34a; }
+    .sec-head h2 { font-size: 1.02rem; font-weight: 700; }
+    .sec-head p { font-size: 0.8rem; color: #94a3b8; margin-top: 3px; }
+
+    /* Form fields */
+    .field-row { display: flex; gap: 14px; flex-wrap: wrap; margin-bottom: 14px; }
+    .field { display: flex; flex-direction: column; flex: 1; min-width: 150px; }
+    .field label {
+      font-size: 0.73rem; font-weight: 700; color: #64748b;
+      text-transform: uppercase; letter-spacing: 0.05em; margin-bottom: 5px;
+    }
+    .field input, .field select {
+      padding: 9px 12px;
+      border: 1.5px solid #e2e8f0; border-radius: 8px;
+      font-size: 0.9rem; color: #1a1a2e; background: #f8fafc;
+      transition: border-color 0.15s;
+    }
+    .field input:focus, .field select:focus {
+      outline: none; border-color: #4361ee; background: white;
+    }
+
+    /* Tenant slots */
+    .tenant-slot {
+      border: 1.5px solid #e4e7f0;
+      border-radius: 11px;
+      overflow: hidden;
+      margin-bottom: 13px;
+    }
+    .tenant-slot:last-child { margin-bottom: 0; }
+    .slot-head {
+      background: #f8f9fc;
+      border-bottom: 1.5px solid #e4e7f0;
+      padding: 9px 16px;
+      font-size: 0.8rem; font-weight: 700; color: #4361ee;
+    }
+    .slot-body { padding: 16px; }
+
+    /* Upload zone */
+    .upload-zone {
+      position: relative;
+      border: 2px dashed #c8d0e7;
+      border-radius: 9px;
+      padding: 26px 20px;
+      text-align: center;
+      cursor: pointer;
+      transition: border-color 0.15s, background 0.15s;
+    }
+    .upload-zone:hover { border-color: #4361ee; background: #f0f4ff; }
+    .upload-zone input[type="file"] {
+      position: absolute; inset: 0; opacity: 0;
+      cursor: pointer; width: 100%; height: 100%;
+    }
+    .upload-zone .uz-icon { font-size: 1.6rem; margin-bottom: 7px; }
+    .upload-zone .uz-label { font-size: 0.88rem; font-weight: 600; color: #4361ee; }
+    .upload-zone .uz-sub { font-size: 0.73rem; color: #94a3b8; margin-top: 4px; }
+
+    /* Spinner */
+    .spinner-wrap { text-align: center; padding: 22px; }
+    .spinner {
+      display: inline-block;
+      width: 28px; height: 28px;
+      border: 3px solid #e2e8f0;
+      border-top-color: #4361ee;
+      border-radius: 50%;
+      animation: spin 0.65s linear infinite;
+    }
+    .spinner.sm { width: 20px; height: 20px; border-width: 2.5px; }
+    @keyframes spin { to { transform: rotate(360deg); } }
+    .spinner-label { font-size: 0.8rem; color: #94a3b8; margin-top: 9px; }
+
+    /* Status row */
+    .status-row {
+      display: flex; align-items: center; gap: 7px;
+      font-size: 0.78rem; font-weight: 600;
       margin-bottom: 14px;
     }
-    .field {
-      display: flex;
-      flex-direction: column;
-      flex: 1;
-      min-width: 160px;
+    .status-row.ok { color: #16a34a; }
+    .status-row.err { color: #dc2626; }
+    .status-dot {
+      width: 17px; height: 17px; border-radius: 50%;
+      display: flex; align-items: center; justify-content: center;
+      flex-shrink: 0;
     }
-    .field label {
-      font-size: 0.78rem;
-      font-weight: 600;
-      color: #666;
-      text-transform: uppercase;
-      letter-spacing: 0.04em;
-      margin-bottom: 5px;
-    }
-    .field input {
-      padding: 9px 12px;
-      border: 1.5px solid #dde1ea;
-      border-radius: 8px;
-      font-size: 0.92rem;
-      color: #1a1a2e;
-      transition: border-color 0.15s;
-      background: #fafbfc;
-    }
-    .field input:focus {
-      outline: none;
-      border-color: #4361ee;
-      background: #fff;
+    .status-dot.ok { background: #16a34a; }
+    .status-dot.err { background: #dc2626; }
+    .status-dot svg { display: block; }
+    .re-btn {
+      margin-left: auto;
+      font-size: 0.75rem; color: #4361ee;
+      background: none; border: none; cursor: pointer;
+      text-decoration: underline; padding: 0;
     }
 
-    .section-label {
-      font-size: 0.82rem;
-      font-weight: 700;
-      color: #888;
-      text-transform: uppercase;
-      letter-spacing: 0.05em;
-      margin: 20px 0 10px;
-    }
+    /* Extracted (fade in) */
+    .extracted { animation: fadein 0.25s ease; }
+    @keyframes fadein { from { opacity:0; transform:translateY(5px); } to { opacity:1; transform:none; } }
 
-    .tenant-block, .expense-block {
+    /* Invoice items */
+    .invoice-list { display: flex; flex-direction: column; gap: 10px; margin-bottom: 13px; }
+    .inv-item {
       background: #f8f9fc;
       border: 1.5px solid #e4e7f0;
       border-radius: 10px;
-      padding: 16px;
-      margin-bottom: 12px;
+      overflow: hidden;
     }
-    .block-title {
-      font-size: 0.85rem;
-      font-weight: 600;
-      color: #4361ee;
-      margin-bottom: 12px;
+    .inv-head {
+      padding: 8px 14px;
+      font-size: 0.78rem; font-weight: 700; color: #4361ee;
+      border-bottom: 1.5px solid #e4e7f0;
+      background: white;
     }
+    .inv-body { padding: 14px; }
+    .inv-body .upload-zone { padding: 16px; }
 
-    button#runBtn {
-      width: 100%;
-      padding: 14px;
-      background: #4361ee;
-      color: #fff;
-      font-size: 1rem;
-      font-weight: 700;
-      border: none;
-      border-radius: 10px;
-      cursor: pointer;
-      letter-spacing: 0.02em;
+    .add-btn {
+      width: 100%; padding: 11px;
+      border: 2px dashed #c8d0e7; border-radius: 9px;
+      background: none; cursor: pointer;
+      font-size: 0.88rem; font-weight: 600; color: #4361ee;
+      transition: all 0.15s;
+    }
+    .add-btn:hover { border-color: #4361ee; background: #f0f4ff; }
+    .add-btn:disabled { opacity: 0.4; cursor: not-allowed; }
+
+    /* Run button */
+    #runBtn {
+      width: 100%; padding: 14px;
+      background: #4361ee; color: white;
+      font-size: 1rem; font-weight: 700;
+      border: none; border-radius: 11px;
+      cursor: pointer; letter-spacing: 0.02em;
       transition: background 0.15s, transform 0.1s;
     }
-    button#runBtn:hover { background: #3451d1; }
-    button#runBtn:active { transform: scale(0.99); }
+    #runBtn:hover { background: #3451d1; }
+    #runBtn:active { transform: scale(0.99); }
 
+    /* Results */
     #results { display: none; }
-    #results h2 { margin-bottom: 20px; }
-
     .result-card {
-      background: #f0f4ff;
-      border: 1.5px solid #c5d0f5;
-      border-radius: 10px;
-      padding: 18px 20px;
-      margin-bottom: 14px;
+      background: #f0f4ff; border: 1.5px solid #c5d0f5;
+      border-radius: 11px; padding: 18px 20px; margin-bottom: 13px;
     }
-    .result-card .tenant-name {
-      font-size: 1.05rem;
-      font-weight: 700;
-      color: #1a1a2e;
-      margin-bottom: 10px;
-    }
+    .result-card .r-name { font-size: 1rem; font-weight: 700; margin-bottom: 12px; }
     .result-grid {
       display: grid;
-      grid-template-columns: repeat(auto-fill, minmax(180px, 1fr));
+      grid-template-columns: repeat(auto-fill, minmax(160px, 1fr));
       gap: 10px;
     }
     .result-stat {
-      background: #fff;
-      border-radius: 8px;
-      padding: 10px 14px;
-      border: 1px solid #dde5fb;
+      background: white; border-radius: 8px;
+      padding: 10px 14px; border: 1px solid #dde5fb;
     }
     .result-stat .stat-label {
-      font-size: 0.72rem;
-      color: #888;
-      text-transform: uppercase;
-      letter-spacing: 0.05em;
-      font-weight: 600;
+      font-size: 0.69rem; color: #94a3b8;
+      text-transform: uppercase; letter-spacing: 0.05em; font-weight: 600;
     }
-    .result-stat .stat-value {
-      font-size: 1.05rem;
-      font-weight: 700;
-      color: #1a1a2e;
-      margin-top: 3px;
-    }
+    .result-stat .stat-value { font-size: 1.02rem; font-weight: 700; margin-top: 3px; }
     .cap-badge {
-      display: inline-block;
-      margin-top: 10px;
-      padding: 4px 10px;
-      background: #fff3cd;
-      color: #856404;
-      font-size: 0.78rem;
-      font-weight: 600;
-      border-radius: 20px;
-      border: 1px solid #ffe08a;
+      display: inline-block; margin-top: 10px; padding: 4px 10px;
+      background: #fff3cd; color: #856404; font-size: 0.76rem; font-weight: 600;
+      border-radius: 20px; border: 1px solid #ffe08a;
     }
-    .error-msg {
-      background: #fff0f0;
-      border: 1.5px solid #f5c6c6;
-      color: #c0392b;
-      padding: 12px 16px;
-      border-radius: 8px;
-      font-size: 0.9rem;
+
+    /* Error banner */
+    .err-banner {
+      background: #fff0f0; border: 1.5px solid #fca5a5;
+      color: #b91c1c; padding: 12px 16px; border-radius: 8px; font-size: 0.88rem;
     }
+
+    /* Summary bar */
+    .summary-bar {
+      padding: 11px 16px; background: #eef2ff;
+      border-radius: 8px; font-size: 0.86rem; color: #475569;
+      margin-bottom: 18px;
+    }
+    .summary-bar strong { color: #1e293b; }
   </style>
 </head>
 <body>
 
 <header>
   <h1>CAM Logic</h1>
-  <p>Commercial Area Maintenance Reconciliation Platform</p>
+  <p>AI-Powered Commercial Area Maintenance Reconciliation</p>
 </header>
+
+<!-- API Key -->
+<div class="api-bar">
+  <label for="apiKey">Anthropic API Key</label>
+  <input type="password" id="apiKey" placeholder="sk-ant-..." autocomplete="off" />
+  <span class="hint">Used in-browser only · never stored</span>
+</div>
 
 <div class="container">
 
-  <!-- Property Info -->
+  <!-- ── SECTION 1: Property Setup ─────────────────────────────────── -->
   <div class="card">
-    <h2>Property Info</h2>
+    <div class="sec-head">
+      <div class="sec-num">1</div>
+      <div><h2>Property Setup</h2><p>Basic property information</p></div>
+    </div>
     <div class="field-row">
       <div class="field">
         <label>Property Name</label>
@@ -212,244 +276,494 @@
     </div>
   </div>
 
-  <!-- Tenants -->
+  <!-- ── SECTION 2: Lease Upload ────────────────────────────────────── -->
   <div class="card">
-    <h2>Tenants</h2>
-
-    <div class="tenant-block">
-      <div class="block-title">Tenant 1</div>
-      <div class="field-row">
-        <div class="field"><label>Name</label><input type="text" id="t1name" placeholder="Tenant name" /></div>
-        <div class="field"><label>Leased Sqft</label><input type="number" id="t1sqft" placeholder="e.g. 2000" min="0" /></div>
-        <div class="field"><label>Cap % (optional)</label><input type="number" id="t1cap" placeholder="e.g. 20" min="0" /></div>
-      </div>
-      <div class="field">
-        <label>Excluded Categories (comma-separated)</label>
-        <input type="text" id="t1excl" placeholder="e.g. janitorial, security" />
+    <div class="sec-head">
+      <div class="sec-num">2</div>
+      <div>
+        <h2>Lease Upload</h2>
+        <p>Upload tenant leases — AI extracts CAM terms automatically</p>
       </div>
     </div>
-
-    <div class="tenant-block">
-      <div class="block-title">Tenant 2</div>
-      <div class="field-row">
-        <div class="field"><label>Name</label><input type="text" id="t2name" placeholder="Tenant name" /></div>
-        <div class="field"><label>Leased Sqft</label><input type="number" id="t2sqft" placeholder="e.g. 5000" min="0" /></div>
-        <div class="field"><label>Cap % (optional)</label><input type="number" id="t2cap" placeholder="e.g. 15" min="0" /></div>
-      </div>
-      <div class="field">
-        <label>Excluded Categories (comma-separated)</label>
-        <input type="text" id="t2excl" placeholder="e.g. landscaping" />
-      </div>
-    </div>
-
-    <div class="tenant-block">
-      <div class="block-title">Tenant 3</div>
-      <div class="field-row">
-        <div class="field"><label>Name</label><input type="text" id="t3name" placeholder="Tenant name" /></div>
-        <div class="field"><label>Leased Sqft</label><input type="number" id="t3sqft" placeholder="e.g. 8000" min="0" /></div>
-        <div class="field"><label>Cap % (optional)</label><input type="number" id="t3cap" placeholder="e.g. 10" min="0" /></div>
-      </div>
-      <div class="field">
-        <label>Excluded Categories (comma-separated)</label>
-        <input type="text" id="t3excl" placeholder="e.g. utilities, maintenance" />
-      </div>
-    </div>
+    <div id="tenantSlots"></div>
   </div>
 
-  <!-- Expenses -->
+  <!-- ── SECTION 3: Invoice Upload ─────────────────────────────────── -->
   <div class="card">
-    <h2>Expenses</h2>
-
-    <div class="expense-block">
-      <div class="block-title">Expense 1</div>
-      <div class="field-row">
-        <div class="field"><label>Vendor</label><input type="text" id="e1vendor" placeholder="e.g. CleanCo" /></div>
-        <div class="field"><label>Category</label><input type="text" id="e1cat" placeholder="e.g. janitorial" /></div>
-        <div class="field"><label>Amount ($)</label><input type="number" id="e1amt" placeholder="e.g. 8000" min="0" /></div>
+    <div class="sec-head">
+      <div class="sec-num">3</div>
+      <div>
+        <h2>Invoice Upload</h2>
+        <p>Upload vendor invoices — AI extracts amounts and categories</p>
       </div>
     </div>
-
-    <div class="expense-block">
-      <div class="block-title">Expense 2</div>
-      <div class="field-row">
-        <div class="field"><label>Vendor</label><input type="text" id="e2vendor" placeholder="e.g. LandscapeInc" /></div>
-        <div class="field"><label>Category</label><input type="text" id="e2cat" placeholder="e.g. landscaping" /></div>
-        <div class="field"><label>Amount ($)</label><input type="number" id="e2amt" placeholder="e.g. 6000" min="0" /></div>
-      </div>
-    </div>
-
-    <div class="expense-block">
-      <div class="block-title">Expense 3</div>
-      <div class="field-row">
-        <div class="field"><label>Vendor</label><input type="text" id="e3vendor" placeholder="e.g. SecureGuard" /></div>
-        <div class="field"><label>Category</label><input type="text" id="e3cat" placeholder="e.g. security" /></div>
-        <div class="field"><label>Amount ($)</label><input type="number" id="e3amt" placeholder="e.g. 4000" min="0" /></div>
-      </div>
-    </div>
-
-    <div class="expense-block">
-      <div class="block-title">Expense 4</div>
-      <div class="field-row">
-        <div class="field"><label>Vendor</label><input type="text" id="e4vendor" placeholder="e.g. FixItFast" /></div>
-        <div class="field"><label>Category</label><input type="text" id="e4cat" placeholder="e.g. maintenance" /></div>
-        <div class="field"><label>Amount ($)</label><input type="number" id="e4amt" placeholder="e.g. 5000" min="0" /></div>
-      </div>
-    </div>
-
-    <div class="expense-block">
-      <div class="block-title">Expense 5</div>
-      <div class="field-row">
-        <div class="field"><label>Vendor</label><input type="text" id="e5vendor" placeholder="e.g. UtilityPlus" /></div>
-        <div class="field"><label>Category</label><input type="text" id="e5cat" placeholder="e.g. utilities" /></div>
-        <div class="field"><label>Amount ($)</label><input type="number" id="e5amt" placeholder="e.g. 9000" min="0" /></div>
-      </div>
-    </div>
+    <div class="invoice-list" id="invoiceList"></div>
+    <button class="add-btn" id="addInvoiceBtn" onclick="addInvoiceSlot()">
+      + Upload Invoice
+    </button>
   </div>
 
-  <!-- Run Button -->
+  <!-- ── SECTION 4: Run Allocation ─────────────────────────────────── -->
   <button id="runBtn" onclick="runAllocation()">Run CAM Allocation</button>
 
   <!-- Results -->
   <div class="card" id="results">
-    <h2 id="resultsTitle">Results</h2>
+    <div class="sec-head">
+      <div class="sec-num green">4</div>
+      <div><h2 id="resultsTitle">Allocation Results</h2></div>
+    </div>
     <div id="resultsBody"></div>
   </div>
 
-</div>
+</div><!-- /container -->
 
 <script>
-  function parseCsv(str) {
-    return str.split(",").map(s => s.trim().toLowerCase()).filter(s => s.length > 0);
+// ─── Constants ────────────────────────────────────────────────────────────────
+const API_URL    = 'https://api.anthropic.com/v1/messages';
+const MODEL      = 'claude-sonnet-4-20250514';
+const MAX_LEASES = 3;
+const MAX_INVS   = 10;
+
+const LEASE_PROMPT = `Extract the following CAM lease terms from this document and return ONLY valid JSON with these fields: tenantName, leasedSqft, capPercentage, excludedCategories (array of strings), baseYear. If a field is not found, use null.`;
+
+const INVOICE_PROMPT = `Extract invoice details and return ONLY valid JSON with: vendorName, amount (number), category, invoiceDate. Category must be one of: landscaping, snow, repairs, utilities, janitorial, security, management, other`;
+
+const CATEGORIES = ['landscaping','snow','repairs','utilities','janitorial','security','management','other'];
+
+// ─── State ────────────────────────────────────────────────────────────────────
+// tenantData[i] = null | { tenantName, leasedSqft, capPercentage, excludedCategories, baseYear }
+const tenantData  = [null, null, null];
+// invoiceData[i] = null | { vendorName, amount, category, invoiceDate }
+const invoiceData = [];
+let invoiceCount  = 0;
+
+// ─── Claude API helpers ───────────────────────────────────────────────────────
+
+function apiKey() {
+  return document.getElementById('apiKey').value.trim();
+}
+
+async function toBase64(file) {
+  return new Promise((res, rej) => {
+    const r = new FileReader();
+    r.onload  = () => res(r.result.split(',')[1]);
+    r.onerror = rej;
+    r.readAsDataURL(file);
+  });
+}
+
+function parseJSON(text) {
+  // Strip markdown code fences that Claude sometimes wraps around JSON
+  const cleaned = text.replace(/^```(?:json)?\s*/m, '').replace(/\s*```\s*$/m, '').trim();
+  return JSON.parse(cleaned);
+}
+
+async function callClaude(file, prompt) {
+  const base64    = await toBase64(file);
+  const isImage   = file.type.startsWith('image/');
+  const mediaType = isImage ? file.type : 'application/pdf';
+
+  const contentBlock = isImage
+    ? { type: 'image',    source: { type: 'base64', media_type: mediaType, data: base64 } }
+    : { type: 'document', source: { type: 'base64', media_type: mediaType, data: base64 } };
+
+  const headers = {
+    'Content-Type': 'application/json',
+    'anthropic-version': '2023-06-01',
+    'anthropic-dangerous-direct-browser-access': 'true',
+  };
+  const key = apiKey();
+  if (key) headers['x-api-key'] = key;
+
+  const resp = await fetch(API_URL, {
+    method: 'POST',
+    headers,
+    body: JSON.stringify({
+      model: MODEL,
+      max_tokens: 1024,
+      messages: [{
+        role: 'user',
+        content: [contentBlock, { type: 'text', text: prompt }]
+      }]
+    })
+  });
+
+  if (!resp.ok) {
+    const err = await resp.json().catch(() => ({}));
+    throw new Error(err?.error?.message || `API error ${resp.status}`);
   }
 
-  function fmt(n) {
-    return "$" + n.toLocaleString("en-US", { minimumFractionDigits: 2, maximumFractionDigits: 2 });
+  const data = await resp.json();
+  return parseJSON(data.content[0].text);
+}
+
+// ─── SVG icons ────────────────────────────────────────────────────────────────
+const CHECK_SVG = `<svg viewBox="0 0 12 12" width="10" height="10" fill="none" stroke="white" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round"><polyline points="2,6 5,9 10,3"/></svg>`;
+const CROSS_SVG = `<svg viewBox="0 0 12 12" width="10" height="10" stroke="white" stroke-width="2.2" stroke-linecap="round"><line x1="2" y1="2" x2="10" y2="10"/><line x1="10" y1="2" x2="2" y2="10"/></svg>`;
+
+// ─── Tenant Slots ─────────────────────────────────────────────────────────────
+
+function renderTenantSlots() {
+  const container = document.getElementById('tenantSlots');
+  container.innerHTML = '';
+  for (let i = 0; i < MAX_LEASES; i++) {
+    const slot = document.createElement('div');
+    slot.className = 'tenant-slot';
+    slot.id = `ts-${i}`;
+    slot.innerHTML = `<div class="slot-head">Tenant ${i + 1}</div>
+                      <div class="slot-body" id="tb-${i}"></div>`;
+    container.appendChild(slot);
+    renderTenantUploadZone(i);
   }
+}
 
-  function runCAMAllocation(expenses, tenants) {
-    return tenants.map(function(tenant) {
-      var proRata = tenant.leasedSqft / tenant.totalPropertySqft;
+function renderTenantUploadZone(i) {
+  const body = document.getElementById(`tb-${i}`);
+  const zone = document.createElement('div');
+  zone.className = 'upload-zone';
 
-      var eligible = expenses.filter(function(exp) {
-        return !tenant.excludedCategories.includes(exp.category.toLowerCase());
-      });
+  const inp = document.createElement('input');
+  inp.type   = 'file';
+  inp.accept = '.pdf,application/pdf';
+  inp.addEventListener('change', e => {
+    if (e.target.files[0]) handleLease(i, e.target.files[0]);
+  });
 
-      var total = eligible.reduce(function(sum, exp) {
-        return sum + exp.amount * proRata;
-      }, 0);
+  zone.innerHTML = `<div class="uz-icon">📄</div>
+                    <div class="uz-label">Upload Lease</div>
+                    <div class="uz-sub">PDF only</div>`;
+  zone.appendChild(inp);
+  body.innerHTML = '';
+  body.appendChild(zone);
+}
 
-      var capAdjustment = null;
-      if (tenant.capPercentage !== null && tenant.capPercentage !== undefined) {
-        var cap = 10000 * (1 + tenant.capPercentage / 100);
-        if (total > cap) {
-          capAdjustment = total - cap;
-          total = cap;
-        }
-      }
+async function handleLease(i, file) {
+  const body = document.getElementById(`tb-${i}`);
+  body.innerHTML = `<div class="spinner-wrap">
+    <div class="spinner"></div>
+    <div class="spinner-label">AI reading lease…</div>
+  </div>`;
 
-      return {
-        tenantName: tenant.name,
-        proRata: proRata,
-        allocatedAmount: parseFloat(total.toFixed(2)),
-        capAdjustment: capAdjustment !== null ? parseFloat(capAdjustment.toFixed(2)) : null,
-        capApplied: capAdjustment !== null,
-        eligibleExpenseCount: eligible.length
-      };
-    });
+  try {
+    const d = await callClaude(file, LEASE_PROMPT);
+    tenantData[i] = {
+      tenantName:         d.tenantName          ?? '',
+      leasedSqft:         d.leasedSqft          ?? '',
+      capPercentage:      d.capPercentage        ?? '',
+      excludedCategories: Array.isArray(d.excludedCategories)
+                            ? d.excludedCategories.join(', ') : '',
+      baseYear:           d.baseYear             ?? '',
+    };
+    renderTenantFields(i);
+  } catch (err) {
+    renderTenantError(i, err.message);
   }
+}
 
-  function runAllocation() {
-    var errEl = document.getElementById("resultsBody");
-    var resultsSection = document.getElementById("results");
+function renderTenantFields(i) {
+  const d    = tenantData[i];
+  const body = document.getElementById(`tb-${i}`);
+  body.innerHTML = `
+    <div class="extracted">
+      <div class="status-row ok">
+        <span class="status-dot ok">${CHECK_SVG}</span>
+        Fields extracted — review and edit below
+        <button class="re-btn" onclick="resetTenant(${i})">Re-upload</button>
+      </div>
+      <div class="field-row">
+        <div class="field">
+          <label>Tenant Name</label>
+          <input type="text" value="${esc(d.tenantName)}"
+            oninput="tenantData[${i}].tenantName = this.value"/>
+        </div>
+        <div class="field">
+          <label>Leased Sqft</label>
+          <input type="number" value="${esc(d.leasedSqft)}"
+            oninput="tenantData[${i}].leasedSqft = this.value"/>
+        </div>
+      </div>
+      <div class="field-row">
+        <div class="field">
+          <label>Cap % (optional)</label>
+          <input type="number" value="${esc(d.capPercentage)}"
+            oninput="tenantData[${i}].capPercentage = this.value"/>
+        </div>
+        <div class="field">
+          <label>Base Year</label>
+          <input type="text" value="${esc(d.baseYear)}"
+            oninput="tenantData[${i}].baseYear = this.value"/>
+        </div>
+      </div>
+      <div class="field">
+        <label>Excluded Categories (comma-separated)</label>
+        <input type="text" value="${esc(d.excludedCategories)}"
+          oninput="tenantData[${i}].excludedCategories = this.value"/>
+      </div>
+    </div>`;
+}
 
-    // --- Collect property ---
-    var propName = document.getElementById("propertyName").value.trim() || "Unnamed Property";
-    var totalSqft = parseFloat(document.getElementById("totalSqft").value);
+function renderTenantError(i, msg) {
+  const body = document.getElementById(`tb-${i}`);
+  body.innerHTML = `
+    <div class="extracted">
+      <div class="status-row err">
+        <span class="status-dot err">${CROSS_SVG}</span>
+        Extraction failed: ${esc(msg)}
+        <button class="re-btn" onclick="resetTenant(${i})">Try again</button>
+      </div>
+    </div>`;
+}
 
-    if (!totalSqft || totalSqft <= 0) {
-      resultsSection.style.display = "block";
-      errEl.innerHTML = '<div class="error-msg">Please enter a valid Total Property Sqft.</div>';
-      return;
+function resetTenant(i) {
+  tenantData[i] = null;
+  renderTenantUploadZone(i);
+}
+
+// ─── Invoice Slots ────────────────────────────────────────────────────────────
+
+function addInvoiceSlot() {
+  if (invoiceCount >= MAX_INVS) return;
+  const idx = invoiceCount++;
+  invoiceData.push(null);
+
+  const list = document.getElementById('invoiceList');
+  const item = document.createElement('div');
+  item.className = 'inv-item';
+  item.id = `ii-${idx}`;
+  item.innerHTML = `<div class="inv-head">Invoice ${idx + 1}</div>
+                    <div class="inv-body" id="ib-${idx}"></div>`;
+  list.appendChild(item);
+
+  renderInvoiceUploadZone(idx);
+
+  if (invoiceCount >= MAX_INVS) {
+    document.getElementById('addInvoiceBtn').disabled = true;
+  }
+}
+
+function renderInvoiceUploadZone(idx) {
+  const body = document.getElementById(`ib-${idx}`);
+  const zone = document.createElement('div');
+  zone.className = 'upload-zone';
+
+  const inp = document.createElement('input');
+  inp.type   = 'file';
+  inp.accept = '.pdf,.jpg,.jpeg,.png,.webp,application/pdf,image/*';
+  inp.addEventListener('change', e => {
+    if (e.target.files[0]) handleInvoice(idx, e.target.files[0]);
+  });
+
+  zone.innerHTML = `<div class="uz-label">Upload Invoice</div>
+                    <div class="uz-sub">PDF or image (JPG, PNG, WebP)</div>`;
+  zone.appendChild(inp);
+  body.innerHTML = '';
+  body.appendChild(zone);
+}
+
+async function handleInvoice(idx, file) {
+  const body = document.getElementById(`ib-${idx}`);
+  body.innerHTML = `<div class="spinner-wrap" style="padding:14px;">
+    <div class="spinner sm"></div>
+    <div class="spinner-label">AI reading invoice…</div>
+  </div>`;
+
+  try {
+    const d = await callClaude(file, INVOICE_PROMPT);
+    invoiceData[idx] = {
+      vendorName:  d.vendorName   ?? '',
+      amount:      d.amount       ?? '',
+      category:    d.category     ?? 'other',
+      invoiceDate: d.invoiceDate  ?? '',
+    };
+    renderInvoiceFields(idx);
+  } catch (err) {
+    renderInvoiceError(idx, err.message);
+  }
+}
+
+function renderInvoiceFields(idx) {
+  const d    = invoiceData[idx];
+  const body = document.getElementById(`ib-${idx}`);
+  const opts = CATEGORIES.map(c =>
+    `<option value="${c}"${d.category === c ? ' selected' : ''}>${c}</option>`
+  ).join('');
+
+  body.innerHTML = `
+    <div class="extracted">
+      <div class="status-row ok" style="margin-bottom:10px;">
+        <span class="status-dot ok">${CHECK_SVG}</span>
+        Extracted — review and edit
+        <button class="re-btn" onclick="resetInvoice(${idx})">Re-upload</button>
+      </div>
+      <div class="field-row">
+        <div class="field" style="flex:2;">
+          <label>Vendor</label>
+          <input type="text" value="${esc(d.vendorName)}"
+            oninput="invoiceData[${idx}].vendorName = this.value"/>
+        </div>
+        <div class="field">
+          <label>Amount ($)</label>
+          <input type="number" value="${esc(d.amount)}"
+            oninput="invoiceData[${idx}].amount = parseFloat(this.value) || ''"/>
+        </div>
+      </div>
+      <div class="field-row">
+        <div class="field">
+          <label>Category</label>
+          <select onchange="invoiceData[${idx}].category = this.value">${opts}</select>
+        </div>
+        <div class="field">
+          <label>Invoice Date</label>
+          <input type="text" value="${esc(d.invoiceDate)}"
+            oninput="invoiceData[${idx}].invoiceDate = this.value"/>
+        </div>
+      </div>
+    </div>`;
+}
+
+function renderInvoiceError(idx, msg) {
+  const body = document.getElementById(`ib-${idx}`);
+  body.innerHTML = `
+    <div class="extracted">
+      <div class="status-row err">
+        <span class="status-dot err">${CROSS_SVG}</span>
+        Extraction failed: ${esc(msg)}
+        <button class="re-btn" onclick="resetInvoice(${idx})">Try again</button>
+      </div>
+    </div>`;
+}
+
+function resetInvoice(idx) {
+  invoiceData[idx] = null;
+  renderInvoiceUploadZone(idx);
+}
+
+// ─── CAM Allocation Engine ────────────────────────────────────────────────────
+
+function runCAMAllocation(expenses, tenants) {
+  return tenants.map(t => {
+    const proRata  = t.leasedSqft / t.totalSqft;
+    const eligible = expenses.filter(e =>
+      !t.excludedCategories.includes(e.category.toLowerCase())
+    );
+    let total = eligible.reduce((s, e) => s + e.amount * proRata, 0);
+    let capAdj = null;
+
+    if (t.capPct !== null && t.capPct !== '' && !isNaN(parseFloat(t.capPct))) {
+      const cap = 10000 * (1 + parseFloat(t.capPct) / 100);
+      if (total > cap) { capAdj = total - cap; total = cap; }
     }
 
-    // --- Collect tenants ---
-    var tenants = [];
-    for (var i = 1; i <= 3; i++) {
-      var name = document.getElementById("t" + i + "name").value.trim();
-      var sqft = parseFloat(document.getElementById("t" + i + "sqft").value);
-      if (!name || !sqft || sqft <= 0) continue;
-      var capVal = document.getElementById("t" + i + "cap").value.trim();
-      tenants.push({
-        name: name,
-        leasedSqft: sqft,
-        totalPropertySqft: totalSqft,
-        excludedCategories: parseCsv(document.getElementById("t" + i + "excl").value),
-        capPercentage: capVal !== "" ? parseFloat(capVal) : null
-      });
-    }
+    return {
+      name:            t.name,
+      proRata,
+      allocatedAmount: parseFloat(total.toFixed(2)),
+      capAdjustment:   capAdj !== null ? parseFloat(capAdj.toFixed(2)) : null,
+      capApplied:      capAdj !== null,
+      eligibleCount:   eligible.length,
+    };
+  });
+}
 
-    if (tenants.length === 0) {
-      resultsSection.style.display = "block";
-      errEl.innerHTML = '<div class="error-msg">Please enter at least one tenant with a name and leased sqft.</div>';
-      return;
-    }
+function runAllocation() {
+  const propName  = document.getElementById('propertyName').value.trim() || 'Property';
+  const totalSqft = parseFloat(document.getElementById('totalSqft').value);
+  const section   = document.getElementById('results');
+  const body      = document.getElementById('resultsBody');
 
-    // --- Collect expenses ---
-    var expenses = [];
-    for (var j = 1; j <= 5; j++) {
-      var vendor = document.getElementById("e" + j + "vendor").value.trim();
-      var cat = document.getElementById("e" + j + "cat").value.trim();
-      var amt = parseFloat(document.getElementById("e" + j + "amt").value);
-      if (!vendor || !cat || !amt || amt <= 0) continue;
-      expenses.push({ vendor: vendor, category: cat, amount: amt });
-    }
-
-    if (expenses.length === 0) {
-      resultsSection.style.display = "block";
-      errEl.innerHTML = '<div class="error-msg">Please enter at least one expense with vendor, category, and amount.</div>';
-      return;
-    }
-
-    // --- Run engine ---
-    var results = runCAMAllocation(expenses, tenants);
-    var totalExpenses = expenses.reduce(function(s, e) { return s + e.amount; }, 0);
-
-    // --- Render results ---
-    document.getElementById("resultsTitle").textContent = "Results — " + propName;
-
-    var html = '<div style="margin-bottom:18px;padding:12px 16px;background:#eef2ff;border-radius:8px;font-size:0.9rem;color:#444;">'
-      + '<strong>Total Expenses:</strong> ' + fmt(totalExpenses)
-      + '&nbsp;&nbsp;|&nbsp;&nbsp;<strong>Tenants:</strong> ' + results.length
-      + '&nbsp;&nbsp;|&nbsp;&nbsp;<strong>Expense Line Items:</strong> ' + expenses.length
-      + '</div>';
-
-    results.forEach(function(r) {
-      html += '<div class="result-card">';
-      html += '<div class="tenant-name">' + escHtml(r.tenantName) + '</div>';
-      html += '<div class="result-grid">';
-      html += stat("Allocated Amount", fmt(r.allocatedAmount));
-      html += stat("Pro-Rata Share", (r.proRata * 100).toFixed(2) + "%");
-      html += stat("Eligible Expenses", r.eligibleExpenseCount + " of " + expenses.length);
-      html += '</div>';
-      if (r.capApplied) {
-        html += '<div class="cap-badge">Cap applied — ' + fmt(r.capAdjustment) + ' reduced</div>';
-      }
-      html += '</div>';
-    });
-
-    errEl.innerHTML = html;
-    resultsSection.style.display = "block";
-    resultsSection.scrollIntoView({ behavior: "smooth", block: "start" });
+  if (!totalSqft || totalSqft <= 0) {
+    showErr(body, section, 'Please enter a valid Total Property Sqft in Section 1.');
+    return;
   }
 
-  function stat(label, value) {
-    return '<div class="result-stat"><div class="stat-label">' + label + '</div><div class="stat-value">' + value + '</div></div>';
+  const tenants = tenantData
+    .filter(t => t && t.tenantName && parseFloat(t.leasedSqft) > 0)
+    .map(t => ({
+      name:               t.tenantName,
+      leasedSqft:         parseFloat(t.leasedSqft),
+      totalSqft,
+      capPct:             t.capPercentage,
+      excludedCategories: t.excludedCategories
+        ? t.excludedCategories.split(',').map(s => s.trim().toLowerCase()).filter(Boolean)
+        : [],
+    }));
+
+  if (!tenants.length) {
+    showErr(body, section, 'Please upload at least one lease with a name and square footage in Section 2.');
+    return;
   }
 
-  function escHtml(str) {
-    return str.replace(/&/g,"&amp;").replace(/</g,"&lt;").replace(/>/g,"&gt;").replace(/"/g,"&quot;");
+  const invoices = invoiceData
+    .filter(inv => inv && inv.vendorName && parseFloat(inv.amount) > 0)
+    .map(inv => ({ vendor: inv.vendorName, category: inv.category, amount: parseFloat(inv.amount) }));
+
+  if (!invoices.length) {
+    showErr(body, section, 'Please upload at least one invoice with a vendor and amount in Section 3.');
+    return;
   }
+
+  const results   = runCAMAllocation(invoices, tenants);
+  const totalCost = invoices.reduce((s, e) => s + e.amount, 0);
+
+  document.getElementById('resultsTitle').textContent = `Results — ${propName}`;
+
+  let html = `<div class="summary-bar">
+    <strong>Total Expenses:</strong> ${fmt(totalCost)}
+    &nbsp;|&nbsp; <strong>Tenants:</strong> ${results.length}
+    &nbsp;|&nbsp; <strong>Invoices:</strong> ${invoices.length}
+  </div>`;
+
+  results.forEach(r => {
+    html += `<div class="result-card">
+      <div class="r-name">${esc(r.name)}</div>
+      <div class="result-grid">
+        ${stat('Allocated Amount', fmt(r.allocatedAmount))}
+        ${stat('Pro-Rata Share',   (r.proRata * 100).toFixed(2) + '%')}
+        ${stat('Eligible Invoices', r.eligibleCount + ' of ' + invoices.length)}
+      </div>
+      ${r.capApplied
+        ? `<div class="cap-badge">Cap applied — ${fmt(r.capAdjustment)} reduced</div>`
+        : ''}
+    </div>`;
+  });
+
+  body.innerHTML = html;
+  section.style.display = 'block';
+  section.scrollIntoView({ behavior: 'smooth', block: 'start' });
+}
+
+// ─── Helpers ──────────────────────────────────────────────────────────────────
+
+function showErr(body, section, msg) {
+  body.innerHTML = `<div class="err-banner">${esc(msg)}</div>`;
+  section.style.display = 'block';
+  section.scrollIntoView({ behavior: 'smooth', block: 'start' });
+}
+
+function fmt(n) {
+  return '$' + n.toLocaleString('en-US', { minimumFractionDigits: 2, maximumFractionDigits: 2 });
+}
+
+function esc(v) {
+  if (v === null || v === undefined) return '';
+  return String(v)
+    .replace(/&/g, '&amp;')
+    .replace(/</g, '&lt;')
+    .replace(/>/g, '&gt;')
+    .replace(/"/g, '&quot;');
+}
+
+function stat(label, value) {
+  return `<div class="result-stat">
+    <div class="stat-label">${label}</div>
+    <div class="stat-value">${value}</div>
+  </div>`;
+}
+
+// ─── Init ─────────────────────────────────────────────────────────────────────
+renderTenantSlots();
+addInvoiceSlot(); // open first invoice slot by default
+
 </script>
-
 </body>
 </html>
