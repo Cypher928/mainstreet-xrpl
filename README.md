@@ -1,5 +1,26 @@
 # CAM Logic
 
+### 🚀 Try the Live Demo
+
+**Live Demo:** https://mainstreet-xrpl.vercel.app
+
+Experience a complete CAM (Common Area Maintenance) reconciliation on the XRP Ledger in under 60 seconds:
+
+- Enter property size, tenant rentable area, and expense categories
+- Input estimated vs actual year-end CAM costs
+- Run the allocation engine (pro-rata calculation with category exclusions and caps)
+- See the reconciliation result (overpaid, underpaid, or exact)
+- Watch the full reconciliation data get SHA-256 hashed and anchored to XRPL Testnet as a structured Memo
+- Simulate the escrow workflow (EscrowCreate → reconciliation → EscrowFinish or cancellation)
+
+Everything runs client-side with a real connection to the XRPL Testnet using xrpl.js. No private keys or signing authority are ever requested.
+
+**Security note:** This is a 100% read-only demo. Wallet addresses and data are not stored anywhere.
+
+**Why this matters:** Small businesses and property managers currently spend weeks arguing over opaque CAM bills. This demo shows how XRPL escrow and immutable memos can make the entire process transparent, automatic, and auditable for everyone involved.
+
+---
+
 CAM Logic is an open-source Commercial Area Maintenance (CAM) reconciliation platform built for commercial real estate. In a typical commercial lease, tenants pay an estimated share of shared property expenses — landscaping, security, janitorial, utilities — throughout the year. At year-end, landlords reconcile actual costs against those estimates, triggering refunds or additional charges. Today this process is manual, opaque, and prone to disputes. CAM Logic automates the allocation math, anchors reconciliation records immutably on the XRP Ledger, and uses XRPL escrow to hold estimated payments until the final figures are verified — replacing a slow, trust-dependent paper process with a transparent, auditable, on-chain workflow.
 
 ---
