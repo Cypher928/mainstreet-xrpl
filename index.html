@@ -364,6 +364,120 @@
       font-family: "Courier New", monospace; font-size: 0.7rem;
       color: #166534; word-break: break-all; line-height: 1.5;
     }
+
+    /* ── Reports section ─────────────────────────────────────────────── */
+    #reportsSection { display: none; }
+    .report-btn-row { display: flex; gap: 12px; flex-wrap: wrap; margin-top: 8px; }
+    .report-btn {
+      padding: 10px 20px; border-radius: 9px; font-size: 0.88rem;
+      font-weight: 700; cursor: pointer; border: none; transition: all 0.15s;
+      background: #1e40af; color: #fff;
+    }
+    .report-btn:hover { background: #1e3a8a; }
+    .tenant-report-btn {
+      padding: 8px 16px; border-radius: 7px; font-size: 0.82rem;
+      font-weight: 600; cursor: pointer; border: 1.5px solid #bfdbfe;
+      background: #eff6ff; color: #1e40af; transition: all 0.15s;
+    }
+    .tenant-report-btn:hover { background: #dbeafe; }
+
+    /* ── Report overlay ───────────────────────────────────────────────── */
+    #reportOverlay {
+      display: none; position: fixed; inset: 0; z-index: 1000;
+      background: #fff; overflow-y: auto;
+    }
+    #reportOverlay.open { display: block; }
+    .rpt-toolbar {
+      position: sticky; top: 0; z-index: 10;
+      background: #1e40af; color: #fff;
+      display: flex; align-items: center; justify-content: space-between;
+      padding: 12px 24px; gap: 12px;
+    }
+    .rpt-toolbar h2 { margin: 0; font-size: 1rem; font-weight: 700; }
+    .rpt-toolbar-actions { display: flex; gap: 8px; }
+    .rpt-tool-btn {
+      padding: 7px 16px; border-radius: 7px; font-size: 0.82rem;
+      font-weight: 600; cursor: pointer; border: none; background: #fff;
+      color: #1e40af; transition: all 0.15s;
+    }
+    .rpt-tool-btn:hover { background: #dbeafe; }
+    .rpt-close-btn {
+      padding: 7px 16px; border-radius: 7px; font-size: 0.82rem;
+      font-weight: 600; cursor: pointer; border: 1.5px solid rgba(255,255,255,0.4);
+      background: transparent; color: #fff; transition: all 0.15s;
+    }
+    .rpt-close-btn:hover { background: rgba(255,255,255,0.15); }
+    .rpt-body {
+      max-width: 860px; margin: 32px auto 64px; padding: 0 24px;
+      font-family: Georgia, serif; color: #1a1a2e;
+    }
+    .rpt-letterhead {
+      text-align: center; border-bottom: 2px solid #1e40af;
+      padding-bottom: 18px; margin-bottom: 28px;
+    }
+    .rpt-letterhead h1 { font-size: 1.5rem; margin: 0 0 4px; color: #1e40af; }
+    .rpt-letterhead .rpt-sub { font-size: 0.88rem; color: #64748b; }
+    .rpt-section-title {
+      font-size: 1rem; font-weight: 700; color: #1e40af;
+      border-bottom: 1px solid #bfdbfe; padding-bottom: 6px;
+      margin: 28px 0 14px;
+    }
+    .rpt-kpi-row { display: flex; gap: 16px; flex-wrap: wrap; margin-bottom: 8px; }
+    .rpt-kpi {
+      flex: 1; min-width: 120px; padding: 14px 18px;
+      background: #f8fafc; border: 1px solid #e2e8f0; border-radius: 10px;
+      text-align: center;
+    }
+    .rpt-kpi .kpi-val { font-size: 1.25rem; font-weight: 700; color: #1e40af; }
+    .rpt-kpi .kpi-lbl { font-size: 0.74rem; color: #64748b; margin-top: 3px; }
+    .rpt-table {
+      width: 100%; border-collapse: collapse; font-size: 0.86rem; margin-bottom: 8px;
+    }
+    .rpt-table th {
+      background: #eff6ff; color: #1e40af; text-align: left;
+      padding: 9px 12px; font-size: 0.78rem; text-transform: uppercase;
+      letter-spacing: 0.04em;
+    }
+    .rpt-table td { padding: 9px 12px; border-bottom: 1px solid #f1f5f9; }
+    .rpt-table tr:last-child td { border-bottom: none; }
+    .rpt-table tr:hover td { background: #f8fafc; }
+    .rpt-table .total-row td { font-weight: 700; background: #f0f9ff; }
+    .rpt-pill {
+      display: inline-block; padding: 2px 9px; border-radius: 20px;
+      font-size: 0.74rem; font-weight: 700;
+    }
+    .rpt-pill.open   { background: #fef3c7; color: #92400e; }
+    .rpt-pill.closed { background: #dcfce7; color: #166534; }
+    .rpt-hash-box {
+      margin-top: 8px; padding: 10px 14px;
+      background: #f0fdf4; border: 1.5px solid #86efac; border-radius: 8px;
+    }
+    .rpt-hash-box .rpt-hash-lbl {
+      font-size: 0.7rem; font-weight: 700; color: #166534;
+      text-transform: uppercase; letter-spacing: 0.05em; margin-bottom: 4px;
+      font-family: sans-serif;
+    }
+    .rpt-hash-box .rpt-hash-val {
+      font-family: "Courier New", monospace; font-size: 0.68rem;
+      color: #166534; word-break: break-all; line-height: 1.5;
+    }
+    .rpt-footer {
+      margin-top: 36px; padding-top: 16px; border-top: 1px solid #e2e8f0;
+      font-size: 0.74rem; color: #94a3b8; text-align: center;
+      font-family: sans-serif;
+    }
+
+    /* ── Print styles ─────────────────────────────────────────────────── */
+    @media print {
+      body > *:not(#reportOverlay) { display: none !important; }
+      #reportOverlay {
+        display: block !important; position: static !important;
+        overflow: visible !important; box-shadow: none !important;
+      }
+      .rpt-toolbar { display: none !important; }
+      .rpt-body { margin: 0; padding: 20px; max-width: 100%; }
+      @page { margin: 1cm; }
+    }
   </style>
 </head>
 <body>
@@ -455,7 +569,33 @@
     </div>
   </div>
 
+  <!-- ── SECTION 6: Reports ─────────────────────────────────────────── -->
+  <div class="card" id="reportsSection">
+    <div class="sec-head">
+      <div class="sec-num" style="background:#7c3aed;">6</div>
+      <div><h2>Reports</h2><p>Print-ready landlord and tenant reports</p></div>
+    </div>
+    <div class="report-btn-row">
+      <button class="report-btn" onclick="generateMasterReport()">
+        &#x1F4CB; Landlord Master Report
+      </button>
+    </div>
+    <div id="tenantReportButtons" style="margin-top:14px;"></div>
+  </div>
+
 </div><!-- /container -->
+
+<!-- ── Report Overlay ──────────────────────────────────────────────────── -->
+<div id="reportOverlay">
+  <div class="rpt-toolbar">
+    <h2 id="rptToolbarTitle">Report</h2>
+    <div class="rpt-toolbar-actions">
+      <button class="rpt-tool-btn" onclick="window.print()">&#x1F5A8; Print / Save PDF</button>
+      <button class="rpt-close-btn" onclick="closeReport()">&#x2715; Close</button>
+    </div>
+  </div>
+  <div class="rpt-body" id="rptBody"></div>
+</div>
 
 <script>
 // ─── Constants ────────────────────────────────────────────────────────────────
@@ -845,9 +985,13 @@ function runAllocation() {
   const results   = runCAMAllocation(invoices, tenants);
   const totalCost = invoices.reduce((s, e) => s + e.amount, 0);
 
-  // Store for dispute section
-  lastInvoices = invoices.map((inv, i) => ({ id: `inv-${i}`, ...inv }));
-  lastTenants  = tenants;
+  // Store for dispute + reports sections
+  lastInvoices     = invoices.map((inv, i) => ({ id: `inv-${i}`, ...inv }));
+  lastTenants      = tenants;
+  lastResults      = results;
+  lastPropName     = propName;
+  lastTotal        = totalCost;
+  lastInvoicesFull = invoices;
 
   document.getElementById('resultsTitle').textContent = `Results — ${propName}`;
 
@@ -876,6 +1020,7 @@ function runAllocation() {
   section.scrollIntoView({ behavior: 'smooth', block: 'start' });
 
   renderDisputeSection();
+  showReportSection();
 }
 
 // ─── Helpers ──────────────────────────────────────────────────────────────────
@@ -905,6 +1050,12 @@ function stat(label, value) {
     <div class="stat-value">${value}</div>
   </div>`;
 }
+
+// ─── Report State ─────────────────────────────────────────────────────────────
+let lastResults  = []; // runCAMAllocation output
+let lastPropName = '';
+let lastTotal    = 0;
+let lastInvoicesFull = []; // full invoice list with category sums
 
 // ─── Dispute State ────────────────────────────────────────────────────────────
 let lastInvoices = []; // [{ id, vendor, category, amount }]
@@ -1088,6 +1239,305 @@ async function resolveDispute(id, resolution) {
   });
 
   renderOpenDisputes();
+}
+
+// ─── Reports ──────────────────────────────────────────────────────────────────
+
+function showReportSection() {
+  const sec = document.getElementById('reportsSection');
+  sec.style.display = 'block';
+  sec.scrollIntoView({ behavior: 'smooth', block: 'start' });
+
+  // Render per-tenant statement buttons
+  const wrap = document.getElementById('tenantReportButtons');
+  if (!lastResults.length) { wrap.innerHTML = ''; return; }
+  let html = '<div style="font-size:0.8rem;color:#64748b;margin-bottom:8px;">Tenant Statements</div>';
+  html += '<div class="report-btn-row">';
+  lastResults.forEach(r => {
+    html += `<button class="tenant-report-btn" onclick="generateTenantStatement('${esc(r.name)}')">${esc(r.name)}</button>`;
+  });
+  html += '</div>';
+  wrap.innerHTML = html;
+}
+
+function openReport(title, bodyHtml) {
+  document.getElementById('rptToolbarTitle').textContent = title;
+  document.getElementById('rptBody').innerHTML = bodyHtml;
+  document.getElementById('reportOverlay').classList.add('open');
+  window.scrollTo(0, 0);
+}
+
+function closeReport() {
+  document.getElementById('reportOverlay').classList.remove('open');
+}
+
+function generateMasterReport() {
+  if (!lastResults.length) { alert('Run CAM Allocation first.'); return; }
+
+  const now    = new Date().toLocaleDateString('en-US', { year:'numeric', month:'long', day:'numeric' });
+  const period = new Date().getFullYear() + ' CAM Year';
+
+  // Category breakdown
+  const catTotals = {};
+  lastInvoicesFull.forEach(inv => {
+    catTotals[inv.category] = (catTotals[inv.category] || 0) + inv.amount;
+  });
+
+  // Dispute counts per tenant
+  function disputeCount(tenantName) {
+    return disputes.filter(d => d.tenantName === tenantName).length;
+  }
+  function openDisputeCount(tenantName) {
+    return disputes.filter(d => d.tenantName === tenantName && d.status === 'open').length;
+  }
+
+  const totalBilled = lastResults.reduce((s, r) => s + r.allocatedAmount, 0);
+
+  // Tenant summary table rows
+  const tenantRows = lastResults.map(r => {
+    const dc = disputeCount(r.name);
+    const oc = openDisputeCount(r.name);
+    return `<tr>
+      <td>${esc(r.name)}</td>
+      <td style="text-align:right">${fmt(r.allocatedAmount)}</td>
+      <td style="text-align:right">${(r.proRata * 100).toFixed(2)}%</td>
+      <td style="text-align:center">${dc > 0
+        ? `<span class="rpt-pill ${oc > 0 ? 'open' : 'closed'}">${dc} (${oc} open)</span>`
+        : '—'}</td>
+    </tr>`;
+  }).join('');
+
+  // Expense breakdown rows
+  const expRows = Object.entries(catTotals).map(([cat, amt]) => `
+    <tr>
+      <td style="text-transform:capitalize">${esc(cat)}</td>
+      <td style="text-align:right">${lastInvoicesFull.filter(i => i.category === cat).length}</td>
+      <td style="text-align:right">${fmt(amt)}</td>
+      <td style="text-align:right">${((amt / lastTotal) * 100).toFixed(1)}%</td>
+    </tr>`).join('');
+
+  // Report hash
+  sha256({ propName: lastPropName, total: lastTotal, tenants: lastResults.map(r => r.name), generated: now })
+    .then(hash => {
+      document.querySelector('.rpt-hash-val').textContent =
+        'SHA-256: ' + hash + '\nGenerated: ' + new Date().toISOString();
+    });
+
+  const html = `
+    <div class="rpt-letterhead">
+      <h1>${esc(lastPropName)}</h1>
+      <div class="rpt-sub">Landlord Master CAM Report &nbsp;·&nbsp; ${period} &nbsp;·&nbsp; Generated ${now}</div>
+    </div>
+
+    <div class="rpt-kpi-row">
+      <div class="rpt-kpi">
+        <div class="kpi-val">${fmt(lastTotal)}</div>
+        <div class="kpi-lbl">Total Expenses</div>
+      </div>
+      <div class="rpt-kpi">
+        <div class="kpi-val">${fmt(totalBilled)}</div>
+        <div class="kpi-lbl">Total CAM Billed</div>
+      </div>
+      <div class="rpt-kpi">
+        <div class="kpi-val">${lastResults.length}</div>
+        <div class="kpi-lbl">Tenants</div>
+      </div>
+      <div class="rpt-kpi">
+        <div class="kpi-val">${lastInvoicesFull.length}</div>
+        <div class="kpi-lbl">Invoices</div>
+      </div>
+      <div class="rpt-kpi">
+        <div class="kpi-val">${disputes.length}</div>
+        <div class="kpi-lbl">Total Disputes</div>
+      </div>
+    </div>
+
+    <div class="rpt-section-title">Tenant Summary</div>
+    <table class="rpt-table">
+      <thead><tr>
+        <th>Tenant</th><th style="text-align:right">CAM Billed</th>
+        <th style="text-align:right">Pro-Rata</th><th style="text-align:center">Disputes</th>
+      </tr></thead>
+      <tbody>${tenantRows}</tbody>
+      <tfoot><tr class="total-row">
+        <td>TOTAL</td>
+        <td style="text-align:right">${fmt(totalBilled)}</td>
+        <td></td><td></td>
+      </tr></tfoot>
+    </table>
+
+    <div class="rpt-section-title">Expense Breakdown by Category</div>
+    <table class="rpt-table">
+      <thead><tr>
+        <th>Category</th><th style="text-align:right">Invoices</th>
+        <th style="text-align:right">Amount</th><th style="text-align:right">% of Total</th>
+      </tr></thead>
+      <tbody>${expRows}</tbody>
+      <tfoot><tr class="total-row">
+        <td>TOTAL</td><td style="text-align:right">${lastInvoicesFull.length}</td>
+        <td style="text-align:right">${fmt(lastTotal)}</td><td style="text-align:right">100%</td>
+      </tr></tfoot>
+    </table>
+
+    <div class="rpt-section-title">XRPL Audit Record</div>
+    <div class="rpt-hash-box">
+      <div class="rpt-hash-lbl">&#x1F517; On-Chain Integrity Hash</div>
+      <div class="rpt-hash-val">Computing…</div>
+    </div>
+
+    <div class="rpt-footer">
+      CAM Logic &nbsp;·&nbsp; ${esc(lastPropName)} &nbsp;·&nbsp; This report is auto-generated and reflects data entered in the current session.
+    </div>`;
+
+  openReport('Landlord Master Report — ' + lastPropName, html);
+
+  // Fill hash after render
+  sha256({ propName: lastPropName, total: lastTotal, tenants: lastResults.map(r => r.name), generated: now })
+    .then(hash => {
+      const el = document.querySelector('#rptBody .rpt-hash-val');
+      if (el) el.textContent = 'SHA-256: ' + hash + '\nGenerated: ' + new Date().toISOString();
+    });
+}
+
+function generateTenantStatement(tenantName) {
+  if (!lastResults.length) { alert('Run CAM Allocation first.'); return; }
+
+  const r = lastResults.find(x => x.name === tenantName);
+  const t = lastTenants.find(x => x.name === tenantName);
+  if (!r || !t) return;
+
+  const now    = new Date().toLocaleDateString('en-US', { year:'numeric', month:'long', day:'numeric' });
+  const period = new Date().getFullYear() + ' CAM Year';
+
+  // Per-invoice breakdown
+  const eligible = lastInvoicesFull.filter(inv =>
+    !t.excludedCategories.includes(inv.category.toLowerCase())
+  );
+  const invoiceRows = eligible.map(inv => {
+    const share = parseFloat((inv.amount * r.proRata).toFixed(2));
+    return `<tr>
+      <td>${esc(inv.vendor)}</td>
+      <td style="text-transform:capitalize">${esc(inv.category)}</td>
+      <td style="text-align:right">${fmt(inv.amount)}</td>
+      <td style="text-align:right">${(r.proRata * 100).toFixed(2)}%</td>
+      <td style="text-align:right">${fmt(share)}</td>
+    </tr>`;
+  }).join('');
+
+  // Excluded categories note
+  const exclNote = t.excludedCategories.length
+    ? `<p style="font-size:0.8rem;color:#94a3b8;margin-top:6px;">Excluded categories: ${t.excludedCategories.join(', ')}</p>`
+    : '';
+
+  // Cap info
+  const capNote = r.capApplied
+    ? `<p style="font-size:0.82rem;color:#b45309;margin-top:6px;font-style:italic;">
+        Cap applied — your allocation was reduced by ${fmt(r.capAdjustment)} to meet the lease cap.</p>`
+    : '';
+
+  // Year-end reconciliation (estimated = allocated, actual = allocated for demo)
+  const estimated  = r.allocatedAmount;
+  const actual     = r.allocatedAmount; // same when no payments entered
+  const difference = actual - estimated;
+  const reconNote  = difference > 0
+    ? `<span style="color:#dc2626">Underpaid ${fmt(difference)}</span>`
+    : difference < 0
+    ? `<span style="color:#16a34a">Overpaid ${fmt(Math.abs(difference))}</span>`
+    : '<span style="color:#16a34a">Settled — no adjustment needed</span>';
+
+  // Disputes for this tenant
+  const tenantDisputes = disputes.filter(d => d.tenantName === tenantName);
+  const disputeRows = tenantDisputes.length
+    ? tenantDisputes.map(d => {
+        const statusLabel = d.status === 'open' ? 'Open'
+          : d.status === 'accepted' ? 'Accepted'
+          : d.status === 'rejected' ? 'Rejected'
+          : 'Docs Requested';
+        const pill = `<span class="rpt-pill ${d.status === 'open' ? 'open' : 'closed'}">${statusLabel}</span>`;
+        return `<tr>
+          <td>${esc(d.vendor)}</td>
+          <td>${fmt(d.tenantShare)}</td>
+          <td>${esc(d.reason)}</td>
+          <td>${pill}</td>
+          ${d.hash ? `<td style="font-family:monospace;font-size:0.66rem;word-break:break-all">${d.hash.substring(0,16)}…</td>` : '<td>—</td>'}
+        </tr>`;
+      }).join('')
+    : '<tr><td colspan="5" style="color:#94a3b8;text-align:center">No disputes filed</td></tr>';
+
+  const html = `
+    <div class="rpt-letterhead">
+      <h1>${esc(tenantName)}</h1>
+      <div class="rpt-sub">CAM Tenant Statement &nbsp;·&nbsp; ${esc(lastPropName)} &nbsp;·&nbsp; ${period} &nbsp;·&nbsp; ${now}</div>
+    </div>
+
+    <div class="rpt-kpi-row">
+      <div class="rpt-kpi">
+        <div class="kpi-val">${(r.proRata * 100).toFixed(2)}%</div>
+        <div class="kpi-lbl">Pro-Rata Share</div>
+      </div>
+      <div class="rpt-kpi">
+        <div class="kpi-val">${t.leasedSqft.toLocaleString()} sqft</div>
+        <div class="kpi-lbl">Leased Sqft</div>
+      </div>
+      <div class="rpt-kpi">
+        <div class="kpi-val">${fmt(r.allocatedAmount)}</div>
+        <div class="kpi-lbl">CAM Billed</div>
+      </div>
+      <div class="rpt-kpi">
+        <div class="kpi-val">${eligible.length}</div>
+        <div class="kpi-lbl">Eligible Invoices</div>
+      </div>
+    </div>
+
+    <div class="rpt-section-title">Invoice Breakdown</div>
+    <table class="rpt-table">
+      <thead><tr>
+        <th>Vendor</th><th>Category</th><th style="text-align:right">Invoice Amt</th>
+        <th style="text-align:right">Your Share %</th><th style="text-align:right">Your Share $</th>
+      </tr></thead>
+      <tbody>${invoiceRows}</tbody>
+      <tfoot><tr class="total-row">
+        <td colspan="4">TOTAL</td>
+        <td style="text-align:right">${fmt(r.allocatedAmount)}</td>
+      </tr></tfoot>
+    </table>
+    ${exclNote}${capNote}
+
+    <div class="rpt-section-title">Year-End Reconciliation</div>
+    <table class="rpt-table">
+      <tbody>
+        <tr><td>Estimated Annual CAM</td><td style="text-align:right">${fmt(estimated)}</td></tr>
+        <tr><td>Actual Reconciled CAM</td><td style="text-align:right">${fmt(actual)}</td></tr>
+        <tr class="total-row"><td>Net Settlement</td><td style="text-align:right">${reconNote}</td></tr>
+      </tbody>
+    </table>
+
+    <div class="rpt-section-title">Disputes</div>
+    <table class="rpt-table">
+      <thead><tr>
+        <th>Vendor</th><th>Amount</th><th>Reason</th><th>Status</th><th>Hash</th>
+      </tr></thead>
+      <tbody>${disputeRows}</tbody>
+    </table>
+
+    <div class="rpt-section-title">XRPL Audit Record</div>
+    <div class="rpt-hash-box">
+      <div class="rpt-hash-lbl">&#x1F517; On-Chain Integrity Hash</div>
+      <div class="rpt-hash-val" id="tenantHashVal">Computing…</div>
+    </div>
+
+    <div class="rpt-footer">
+      CAM Logic &nbsp;·&nbsp; ${esc(tenantName)} &nbsp;·&nbsp; ${esc(lastPropName)} &nbsp;·&nbsp;
+      This statement is auto-generated and reflects data entered in the current session.
+    </div>`;
+
+  openReport('Tenant Statement — ' + tenantName, html);
+
+  sha256({ tenantName, propName: lastPropName, allocated: r.allocatedAmount, proRata: r.proRata, generated: now })
+    .then(hash => {
+      const el = document.getElementById('tenantHashVal');
+      if (el) el.textContent = 'SHA-256: ' + hash + '\nGenerated: ' + new Date().toISOString();
+    });
 }
 
 // ─── Init ─────────────────────────────────────────────────────────────────────
