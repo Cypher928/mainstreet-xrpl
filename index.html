@@ -240,6 +240,130 @@
       margin-bottom: 18px;
     }
     .summary-bar strong { color: #1e293b; }
+
+    /* ── Dispute section ──────────────────────────────────────────────── */
+    #disputeSection { display: none; }
+
+    .dispute-tenant-label {
+      font-size: 0.73rem; font-weight: 700; color: #64748b;
+      text-transform: uppercase; letter-spacing: 0.05em;
+      margin: 16px 0 8px;
+    }
+    .dispute-tenant-label:first-child { margin-top: 0; }
+
+    .dispute-inv-row {
+      display: flex; align-items: center; gap: 10px;
+      padding: 10px 14px;
+      background: #f8f9fc; border: 1.5px solid #e4e7f0;
+      border-radius: 9px; margin-bottom: 6px;
+    }
+    .dispute-inv-row .inv-info { flex: 1; }
+    .dispute-inv-row .inv-info .inv-name {
+      font-size: 0.88rem; font-weight: 600; color: #1a1a2e;
+    }
+    .dispute-inv-row .inv-info .inv-meta {
+      font-size: 0.76rem; color: #94a3b8; margin-top: 2px;
+    }
+    .dispute-inv-row .inv-amount {
+      font-size: 0.88rem; font-weight: 700; color: #1a1a2e;
+      white-space: nowrap;
+    }
+    .d-btn {
+      padding: 6px 13px; border-radius: 7px;
+      font-size: 0.78rem; font-weight: 600; cursor: pointer;
+      border: 1.5px solid #e2e8f0; background: white; color: #64748b;
+      white-space: nowrap; transition: all 0.15s;
+    }
+    .d-btn:hover { border-color: #ea580c; color: #ea580c; background: #fff7ed; }
+    .d-btn.active { border-color: #ea580c; color: #ea580c; background: #fff7ed; }
+
+    .dispute-form {
+      margin-top: 6px; margin-bottom: 6px;
+      padding: 14px; background: #fff7ed;
+      border: 1.5px solid #fed7aa; border-radius: 9px;
+      animation: fadein 0.2s ease;
+    }
+    .dispute-form label {
+      font-size: 0.73rem; font-weight: 700; color: #92400e;
+      text-transform: uppercase; letter-spacing: 0.05em;
+      display: block; margin-bottom: 6px;
+    }
+    .dispute-form textarea {
+      width: 100%; padding: 8px 11px;
+      border: 1.5px solid #fed7aa; border-radius: 7px;
+      font-size: 0.88rem; font-family: inherit;
+      resize: vertical; min-height: 62px; background: white;
+    }
+    .dispute-form textarea:focus { outline: none; border-color: #ea580c; }
+    .dispute-form-btns { display: flex; gap: 8px; margin-top: 9px; }
+    .d-submit-btn {
+      padding: 7px 16px; background: #ea580c; color: white;
+      border: none; border-radius: 7px;
+      font-size: 0.82rem; font-weight: 700; cursor: pointer;
+      transition: background 0.15s;
+    }
+    .d-submit-btn:hover { background: #c2410c; }
+    .d-cancel-btn {
+      padding: 7px 14px; background: white; color: #64748b;
+      border: 1.5px solid #e2e8f0; border-radius: 7px;
+      font-size: 0.82rem; cursor: pointer;
+    }
+
+    /* Open disputes */
+    .disputes-heading {
+      font-size: 0.9rem; font-weight: 700; color: #1a1a2e;
+      margin: 22px 0 12px; padding-top: 18px;
+      border-top: 1.5px solid #f1f5f9;
+    }
+    .dispute-card {
+      background: #fff7ed; border: 1.5px solid #fed7aa;
+      border-radius: 11px; padding: 16px; margin-bottom: 10px;
+      animation: fadein 0.25s ease;
+    }
+    .dispute-card.resolved {
+      background: #f0fdf4; border-color: #bbf7d0;
+    }
+    .dispute-card .d-meta {
+      font-size: 0.76rem; color: #94a3b8; margin-bottom: 6px;
+    }
+    .dispute-card .d-title {
+      font-size: 0.9rem; font-weight: 700; color: #1a1a2e; margin-bottom: 4px;
+    }
+    .dispute-card .d-reason {
+      font-size: 0.84rem; color: #64748b; margin-bottom: 12px;
+      font-style: italic;
+    }
+    .d-actions { display: flex; gap: 8px; flex-wrap: wrap; }
+    .d-res-btn {
+      padding: 6px 14px; border-radius: 7px;
+      font-size: 0.8rem; font-weight: 600; cursor: pointer;
+      border: 1.5px solid transparent; transition: all 0.15s;
+    }
+    .d-res-btn.accept { background: #dcfce7; color: #166534; border-color: #86efac; }
+    .d-res-btn.accept:hover { background: #bbf7d0; }
+    .d-res-btn.reject { background: #fee2e2; color: #991b1b; border-color: #fca5a5; }
+    .d-res-btn.reject:hover { background: #fecaca; }
+    .d-res-btn.docs   { background: #eff6ff; color: #1e40af; border-color: #bfdbfe; }
+    .d-res-btn.docs:hover   { background: #dbeafe; }
+
+    .resolved-badge {
+      display: inline-flex; align-items: center; gap: 5px;
+      padding: 3px 10px; background: #dcfce7; color: #166534;
+      font-size: 0.76rem; font-weight: 700; border-radius: 20px;
+      margin-bottom: 10px;
+    }
+    .onchain-record {
+      margin-top: 10px; padding: 10px 12px;
+      background: #f0fdf4; border: 1.5px solid #86efac; border-radius: 8px;
+    }
+    .onchain-record .oc-label {
+      font-size: 0.72rem; font-weight: 700; color: #166534;
+      text-transform: uppercase; letter-spacing: 0.05em; margin-bottom: 4px;
+    }
+    .onchain-record .oc-hash {
+      font-family: "Courier New", monospace; font-size: 0.7rem;
+      color: #166534; word-break: break-all; line-height: 1.5;
+    }
   </style>
 </head>
 <body>
@@ -313,6 +437,22 @@
       <div><h2 id="resultsTitle">Allocation Results</h2></div>
     </div>
     <div id="resultsBody"></div>
+  </div>
+
+  <!-- ── SECTION 5: Dispute a Charge ───────────────────────────────── -->
+  <div class="card" id="disputeSection">
+    <div class="sec-head">
+      <div class="sec-num" style="background:#ea580c;">5</div>
+      <div>
+        <h2>Dispute a Charge</h2>
+        <p>Disputes Resolved: <span id="resolvedCount" style="font-weight:700;color:#1e293b;">0</span></p>
+      </div>
+    </div>
+    <div id="disputeInvoiceList"></div>
+    <div id="openDisputesWrap" style="display:none;">
+      <div class="disputes-heading">Open Disputes</div>
+      <div id="openDisputesList"></div>
+    </div>
   </div>
 
 </div><!-- /container -->
@@ -705,6 +845,10 @@ function runAllocation() {
   const results   = runCAMAllocation(invoices, tenants);
   const totalCost = invoices.reduce((s, e) => s + e.amount, 0);
 
+  // Store for dispute section
+  lastInvoices = invoices.map((inv, i) => ({ id: `inv-${i}`, ...inv }));
+  lastTenants  = tenants;
+
   document.getElementById('resultsTitle').textContent = `Results — ${propName}`;
 
   let html = `<div class="summary-bar">
@@ -730,6 +874,8 @@ function runAllocation() {
   body.innerHTML = html;
   section.style.display = 'block';
   section.scrollIntoView({ behavior: 'smooth', block: 'start' });
+
+  renderDisputeSection();
 }
 
 // ─── Helpers ──────────────────────────────────────────────────────────────────
@@ -758,6 +904,190 @@ function stat(label, value) {
     <div class="stat-label">${label}</div>
     <div class="stat-value">${value}</div>
   </div>`;
+}
+
+// ─── Dispute State ────────────────────────────────────────────────────────────
+let lastInvoices = []; // [{ id, vendor, category, amount }]
+let lastTenants  = []; // [{ name, excludedCategories }]
+const disputes   = []; // [{ id, tenantName, invoiceId, vendor, category, tenantShare, reason, timestamp, status, resolution, resolvedAt, hash }]
+let nextDisputeId = 0;
+
+// ─── SHA-256 (Web Crypto — no library needed) ─────────────────────────────────
+async function sha256(obj) {
+  const text   = JSON.stringify(obj, Object.keys(obj).sort());
+  const buf    = new TextEncoder().encode(text);
+  const digest = await crypto.subtle.digest('SHA-256', buf);
+  return Array.from(new Uint8Array(digest))
+    .map(b => b.toString(16).padStart(2, '0')).join('').toUpperCase();
+}
+
+// ─── Dispute: Invoice List ────────────────────────────────────────────────────
+function renderDisputeSection() {
+  const section = document.getElementById('disputeSection');
+  section.style.display = 'block';
+
+  const container = document.getElementById('disputeInvoiceList');
+  if (!lastTenants.length || !lastInvoices.length) { container.innerHTML = ''; return; }
+
+  let html = '';
+  lastTenants.forEach(t => {
+    const eligible = lastInvoices.filter(inv =>
+      !t.excludedCategories.includes(inv.category.toLowerCase())
+    );
+    if (!eligible.length) return;
+
+    html += `<div class="dispute-tenant-label">${esc(t.name)}</div>`;
+    eligible.forEach(inv => {
+      const tenantShare = parseFloat((inv.amount * (t.leasedSqft / t.totalSqft)).toFixed(2));
+      const rowId = `drow-${t.name}-${inv.id}`.replace(/\s+/g, '-');
+      html += `
+        <div id="${esc(rowId)}">
+          <div class="dispute-inv-row">
+            <div class="inv-info">
+              <div class="inv-name">${esc(inv.vendor)}</div>
+              <div class="inv-meta">${esc(inv.category)} · your share: ${fmt(tenantShare)}</div>
+            </div>
+            <div class="inv-amount">${fmt(inv.amount)}</div>
+            <button class="d-btn" id="dbtn-${esc(rowId)}"
+              onclick="toggleDisputeForm('${esc(rowId)}','${esc(t.name)}','${esc(inv.id)}','${esc(inv.vendor)}','${esc(inv.category)}',${tenantShare})">
+              Dispute
+            </button>
+          </div>
+          <div id="dform-${esc(rowId)}" style="display:none;"></div>
+        </div>`;
+    });
+  });
+
+  container.innerHTML = html || '<p style="font-size:0.85rem;color:#94a3b8;">No invoices to display.</p>';
+}
+
+function toggleDisputeForm(rowId, tenantName, invoiceId, vendor, category, tenantShare) {
+  const formEl = document.getElementById(`dform-${rowId}`);
+  const btnEl  = document.getElementById(`dbtn-${rowId}`);
+  if (formEl.style.display === 'block') {
+    formEl.style.display = 'none';
+    btnEl.classList.remove('active');
+    btnEl.textContent = 'Dispute';
+    return;
+  }
+  btnEl.classList.add('active');
+  btnEl.textContent = 'Cancel';
+  formEl.style.display = 'block';
+  formEl.innerHTML = `
+    <div class="dispute-form">
+      <label>Reason for Dispute</label>
+      <textarea id="dreason-${esc(rowId)}" placeholder="Describe why you are disputing this charge…"></textarea>
+      <div class="dispute-form-btns">
+        <button class="d-submit-btn"
+          onclick="submitDispute('${esc(rowId)}','${esc(tenantName)}','${esc(invoiceId)}','${esc(vendor)}','${esc(category)}',${tenantShare})">
+          Submit Dispute
+        </button>
+        <button class="d-cancel-btn"
+          onclick="toggleDisputeForm('${esc(rowId)}','${esc(tenantName)}','${esc(invoiceId)}','${esc(vendor)}','${esc(category)}',${tenantShare})">
+          Cancel
+        </button>
+      </div>
+    </div>`;
+}
+
+function submitDispute(rowId, tenantName, invoiceId, vendor, category, tenantShare) {
+  const reason = document.getElementById(`dreason-${rowId}`).value.trim();
+  if (!reason) {
+    document.getElementById(`dreason-${rowId}`).style.borderColor = '#ea580c';
+    return;
+  }
+  disputes.push({
+    id:          nextDisputeId++,
+    tenantName,
+    invoiceId,
+    vendor,
+    category,
+    tenantShare,
+    reason,
+    timestamp:   new Date().toISOString(),
+    status:      'open',
+    resolution:  null,
+    resolvedAt:  null,
+    hash:        null,
+  });
+  // Close the form, reset button
+  const formEl = document.getElementById(`dform-${rowId}`);
+  const btnEl  = document.getElementById(`dbtn-${rowId}`);
+  formEl.style.display = 'none';
+  btnEl.classList.remove('active');
+  btnEl.textContent = 'Dispute';
+
+  renderOpenDisputes();
+}
+
+// ─── Dispute: Open Disputes List ─────────────────────────────────────────────
+function renderOpenDisputes() {
+  const wrap = document.getElementById('openDisputesWrap');
+  const list = document.getElementById('openDisputesList');
+
+  if (!disputes.length) { wrap.style.display = 'none'; return; }
+  wrap.style.display = 'block';
+
+  // Update resolved counter
+  const resolvedCount = disputes.filter(d => d.status !== 'open').length;
+  document.getElementById('resolvedCount').textContent = resolvedCount;
+
+  list.innerHTML = disputes.map(d => {
+    const isResolved = d.status !== 'open';
+    const ts = new Date(d.timestamp).toLocaleString();
+
+    let actionsHtml = '';
+    if (isResolved) {
+      const label = d.status === 'accepted' ? '✅ Accepted'
+                  : d.status === 'rejected' ? '❌ Rejected'
+                  : '📄 Documentation Requested';
+      actionsHtml = `
+        <div class="resolved-badge">${label}</div>
+        ${d.hash ? `<div class="onchain-record">
+          <div class="oc-label">On-Chain Record</div>
+          <div class="oc-hash">${d.hash}</div>
+        </div>` : ''}`;
+    } else {
+      actionsHtml = `
+        <div class="d-actions">
+          <button class="d-res-btn accept" onclick="resolveDispute(${d.id},'accepted')">✅ Accept</button>
+          <button class="d-res-btn reject" onclick="resolveDispute(${d.id},'rejected')">❌ Reject</button>
+          <button class="d-res-btn docs"   onclick="resolveDispute(${d.id},'docs_requested')">📄 Request Documentation</button>
+        </div>`;
+    }
+
+    return `
+      <div class="dispute-card${isResolved ? ' resolved' : ''}">
+        <div class="d-meta">#${d.id + 1} · ${esc(d.tenantName)} · ${ts}</div>
+        <div class="d-title">${esc(d.vendor)} (${esc(d.category)}) — ${fmt(d.tenantShare)}</div>
+        <div class="d-reason">"${esc(d.reason)}"</div>
+        ${actionsHtml}
+      </div>`;
+  }).join('');
+}
+
+async function resolveDispute(id, resolution) {
+  const d = disputes.find(x => x.id === id);
+  if (!d || d.status !== 'open') return;
+
+  d.status     = resolution;
+  d.resolvedAt = new Date().toISOString();
+
+  // Hash the full dispute record for the on-chain audit trail
+  d.hash = await sha256({
+    id:          d.id,
+    tenantName:  d.tenantName,
+    invoiceId:   d.invoiceId,
+    vendor:      d.vendor,
+    category:    d.category,
+    tenantShare: d.tenantShare,
+    reason:      d.reason,
+    timestamp:   d.timestamp,
+    resolution:  d.resolution,
+    resolvedAt:  d.resolvedAt,
+  });
+
+  renderOpenDisputes();
 }
 
 // ─── Init ─────────────────────────────────────────────────────────────────────
