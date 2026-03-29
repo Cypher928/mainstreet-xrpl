@@ -32,7 +32,28 @@ The blockchain layer exists to protect both parties — not to complicate their 
 
 ---
 
-CAM Logic is an open-source Commercial Area Maintenance (CAM) reconciliation platform built for commercial real estate. In a typical commercial lease, tenants pay an estimated share of shared property expenses — landscaping, security, janitorial, utilities — throughout the year. At year-end, landlords reconcile actual costs against those estimates, triggering refunds or additional charges. Today this process is manual, opaque, and prone to disputes. CAM Logic automates the allocation math, anchors reconciliation records immutably on the XRP Ledger, and uses XRPL escrow to hold estimated payments until the final figures are verified — replacing a slow, trust-dependent paper process with a transparent, auditable, on-chain workflow.
+## What is CAM Logic?
+
+CAM Logic is a commercial real estate platform that eliminates CAM reconciliation disputes by giving landlords and tenants real-time transparency into every expense.
+
+### For Landlords
+- Upload each tenant's lease once — AI reads the CAM rules automatically
+- Scan invoices as they arrive — AI extracts vendor, amount, and category
+- The app calculates each tenant's share automatically based on their lease
+- Everything stored, organized, and auditable in one place
+- No more spreadsheets, no more year-end arguments
+
+### For Tenants
+- Download the app and see a clean dashboard
+- Real-time view of every invoice — vendor, amount, and category
+- Their exact CAM share broken down daily, monthly, and year-to-date
+- Pay weekly, monthly, or annually — whatever their lease requires
+- No surprises at year-end because they've seen every charge as it happened
+
+### The Result
+Tenants stop disputing CAM charges because they can see every invoice the moment it's uploaded. Landlords save time, legal fees, and tenant relationships.
+
+Powered by XRPL — every invoice is cryptographically verified on-chain, and year-end settlements are handled automatically via XRPL Escrow. Tenants and landlords never interact with cryptocurrency directly — the blockchain layer is invisible, working behind the scenes to protect both parties.
 
 ---
 
