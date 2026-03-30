@@ -807,7 +807,7 @@
 </div>
 
 <!-- ── Report Overlay ──────────────────────────────────────────────────── -->
-<div id="reportOverlay">
+<div id="reportOverlay" style="display:none;">
   <div class="rpt-toolbar">
     <h2 id="rptToolbarTitle">Report</h2>
     <div class="rpt-toolbar-actions">
@@ -1705,12 +1705,12 @@ function guardedTenantStatement() {
 function openReport(title, bodyHtml) {
   document.getElementById('rptToolbarTitle').textContent = title;
   document.getElementById('rptBody').innerHTML = bodyHtml;
-  document.getElementById('reportOverlay').classList.add('open');
+  document.getElementById('reportOverlay').style.display = 'block';
   window.scrollTo(0, 0);
 }
 
 function closeReport() {
-  document.getElementById('reportOverlay').classList.remove('open');
+  document.getElementById('reportOverlay').style.display = 'none';
 }
 
 function generateMasterReport() {
@@ -2126,7 +2126,15 @@ function liveUpdateBreadcrumb(name) {
 }
 
 // ─── Init ─────────────────────────────────────────────────────────────────────
-renderPortfolio(); // show portfolio dashboard on load
+try {
+  renderPortfolio();
+} catch (e) {
+  console.error('CAM Logic: portfolio render failed, falling back to main workflow.', e);
+  document.getElementById('portfolioDashboard').style.display = 'none';
+  document.getElementById('mainWorkflow').style.display       = 'block';
+  renderTenantSlots();
+  addInvoiceSlot();
+}
 
 </script>
 
