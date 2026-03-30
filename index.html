@@ -557,6 +557,16 @@
     .warn-btn.dismiss { background: #f1f5f9; color: #475569; border: 1px solid #cbd5e1; }
     .warn-btn.dismiss:hover { background: #e2e8f0; }
 
+    /* ── Invoice folder upload button ───────────────────────────────── */
+    .inv-folder-btn {
+      display: inline-flex; align-items: center; gap: 6px;
+      padding: 7px 14px; border-radius: 8px; font-size: 0.82rem;
+      font-weight: 600; cursor: pointer; border: 1.5px solid #bfdbfe;
+      background: #eff6ff; color: #1e40af; transition: all 0.15s;
+      user-select: none;
+    }
+    .inv-folder-btn:hover { background: #dbeafe; border-color: #93c5fd; }
+
     /* ── Allocation confirmation modal ───────────────────────────────── */
     .modal-backdrop {
       position: fixed; inset: 0; z-index: 500;
@@ -837,13 +847,31 @@
       <div class="sec-num">3</div>
       <div>
         <h2>Invoice Upload</h2>
-        <p>Upload vendor invoices — AI extracts amounts and categories</p>
+        <p>Drop multiple invoices — AI extracts each one automatically</p>
       </div>
     </div>
-    <div class="invoice-list" id="invoiceList"></div>
-    <button class="add-btn" id="addInvoiceBtn" onclick="addInvoiceSlot()">
-      + Upload Invoice
-    </button>
+    <div class="bulk-upload-zone" id="invZone"
+      ondragover="event.preventDefault();this.classList.add('drag-over')"
+      ondragleave="this.classList.remove('drag-over')"
+      ondrop="event.preventDefault();this.classList.remove('drag-over');handleBatchInvoices(event.dataTransfer.files)">
+      <div class="bulk-uz-icon">&#x1F9FE;</div>
+      <div class="bulk-uz-label">Drop invoice files here, or click to select</div>
+      <div class="bulk-uz-sub">PDF, JPG, PNG accepted &middot; multiple files at once</div>
+      <input type="file" id="invFileInput" multiple
+        accept=".pdf,.jpg,.jpeg,.png,.webp,application/pdf,image/*"
+        onchange="handleBatchInvoices(this.files)" />
+    </div>
+    <div style="margin-top:10px;display:flex;gap:10px;align-items:center;">
+      <label class="inv-folder-btn">
+        &#x1F4C1; Upload Folder
+        <input type="file" id="invFolderInput" multiple webkitdirectory
+          accept=".pdf,.jpg,.jpeg,.png,.webp,application/pdf,image/*"
+          onchange="handleBatchInvoices(this.files)" style="display:none;" />
+      </label>
+      <span style="font-size:0.74rem;color:#94a3b8;">ZIP files — extract first, then select all</span>
+    </div>
+    <div id="invProgress" style="display:none;"></div>
+    <div id="invResults"></div>
   </div>
 
   <!-- ── SECTION 4: Run Allocation ─────────────────────────────────── -->
@@ -928,7 +956,6 @@
 const API_URL    = 'https://api.anthropic.com/v1/messages';
 const MODEL      = 'claude-sonnet-4-20250514';
 const MAX_LEASES = 3;
-const MAX_INVS   = 10;
 
 const LEASE_PROMPT = `Extract the following CAM lease terms from this document and return ONLY valid JSON with these fields: tenantName, leasedSqft, capPercentage, excludedCategories (array of strings), baseYear, confidence. "confidence" must be an object with a score 0-100 for each field (tenantName, leasedSqft, capPercentage, excludedCategories, baseYear) reflecting how clearly that value was found in the document. If a field is not found, use null.`;
 
@@ -939,9 +966,8 @@ const CATEGORIES = ['landscaping','snow','repairs','utilities','janitorial','sec
 // ─── State ────────────────────────────────────────────────────────────────────
 // tenantData[i] = null | { tenantName, leasedSqft, capPercentage, excludedCategories, baseYear }
 const tenantData  = [null, null, null];
-// invoiceData[i] = null | { vendorName, amount, category, invoiceDate }
+// invoiceData[i] = { vendorName, amount, category, invoiceDate, confidence, _error }
 const invoiceData = [];
-let invoiceCount  = 0;
 
 // ─── Portfolio State ──────────────────────────────────────────────────────────
 const portfolio = [
@@ -1302,129 +1328,168 @@ function clearBulkResults() {
   document.getElementById('bulkLeaseInput').value = '';
 }
 
-// ─── Invoice Slots ────────────────────────────────────────────────────────────
+// ─── Batch Invoice Upload ─────────────────────────────────────────────────────
 
-function addInvoiceSlot() {
-  if (invoiceCount >= MAX_INVS) return;
-  const idx = invoiceCount++;
-  invoiceData.push(null);
+async function handleBatchInvoices(fileList) {
+  if (!fileList || fileList.length === 0) return;
+  const files = Array.from(fileList).filter(f =>
+    f.type.startsWith('image/') || f.type === 'application/pdf' ||
+    /\.(pdf|jpe?g|png|webp)$/i.test(f.name)
+  );
+  if (!files.length) return;
+  const total = files.length;
 
-  const list = document.getElementById('invoiceList');
-  const item = document.createElement('div');
-  item.className = 'inv-item';
-  item.id = `ii-${idx}`;
-  item.innerHTML = `<div class="inv-head">Invoice ${idx + 1}</div>
-                    <div class="inv-body" id="ib-${idx}"></div>`;
-  list.appendChild(item);
+  invoiceData.splice(0, invoiceData.length);
 
-  renderInvoiceUploadZone(idx);
+  const prog = document.getElementById('invProgress');
+  const res  = document.getElementById('invResults');
+  res.innerHTML = '';
+  prog.style.display = 'block';
 
-  if (invoiceCount >= MAX_INVS) {
-    document.getElementById('addInvoiceBtn').disabled = true;
-  }
-}
+  document.getElementById('invFileInput').value   = '';
+  document.getElementById('invFolderInput').value = '';
 
-function renderInvoiceUploadZone(idx) {
-  const body = document.getElementById(`ib-${idx}`);
-  const zone = document.createElement('div');
-  zone.className = 'upload-zone';
+  for (let i = 0; i < total; i++) {
+    const pct = Math.round((i / total) * 100);
+    prog.innerHTML = `
+      <div class="bulk-progress-wrap">
+        <div class="bulk-progress-label">Processing invoice ${i + 1} of ${total} — "${esc(files[i].name)}"</div>
+        <div class="bulk-progress-track">
+          <div class="bulk-progress-fill" style="width:${pct}%"></div>
+        </div>
+      </div>`;
 
-  const inp = document.createElement('input');
-  inp.type   = 'file';
-  inp.accept = '.pdf,.jpg,.jpeg,.png,.webp,application/pdf,image/*';
-  inp.addEventListener('change', e => {
-    if (e.target.files[0]) handleInvoice(idx, e.target.files[0]);
-  });
+    try {
+      const d = await callClaude(files[i], INVOICE_PROMPT);
+      invoiceData.push({
+        vendorName:  d.vendorName  ?? '',
+        amount:      d.amount      ?? '',
+        category:    d.category    ?? 'other',
+        invoiceDate: d.invoiceDate ?? '',
+        confidence:  d.confidence  ?? {},
+        _error:      null,
+      });
+    } catch (err) {
+      invoiceData.push({
+        vendorName:  files[i].name.replace(/\.(pdf|jpe?g|png|webp)$/i, ''),
+        amount: '', category: 'other', invoiceDate: '',
+        confidence: {}, _error: err.message,
+      });
+    }
 
-  zone.innerHTML = `<div class="uz-label">Upload Invoice</div>
-                    <div class="uz-sub">PDF or image (JPG, PNG, WebP)</div>`;
-  zone.appendChild(inp);
-  body.innerHTML = '';
-  body.appendChild(zone);
-}
-
-async function handleInvoice(idx, file) {
-  const body = document.getElementById(`ib-${idx}`);
-  body.innerHTML = `<div class="spinner-wrap" style="padding:14px;">
-    <div class="spinner sm"></div>
-    <div class="spinner-label">AI reading invoice…</div>
-  </div>`;
-
-  try {
-    const d = await callClaude(file, INVOICE_PROMPT);
-    invoiceData[idx] = {
-      vendorName:  d.vendorName   ?? '',
-      amount:      d.amount       ?? '',
-      category:    d.category     ?? 'other',
-      invoiceDate: d.invoiceDate  ?? '',
-      confidence:  d.confidence   ?? {},
-    };
-    renderInvoiceFields(idx);
+    renderInvResults();
+    const idx = invoiceData.length - 1;
     checkDuplicateInvoice(idx);
     checkAmountSanity(idx);
-  } catch (err) {
-    renderInvoiceError(idx, err.message);
+  }
+
+  prog.innerHTML = `
+    <div class="bulk-progress-wrap">
+      <div class="bulk-progress-label">&#x2713; ${total} invoice${total !== 1 ? 's' : ''} processed — review and edit below</div>
+      <div class="bulk-progress-track">
+        <div class="bulk-progress-fill" style="width:100%"></div>
+      </div>
+    </div>`;
+}
+
+function renderInvResults() {
+  const el = document.getElementById('invResults');
+  if (!invoiceData.length) { el.innerHTML = ''; return; }
+
+  const rows = invoiceData.map((d, i) => {
+    const conf = d.confidence || {};
+    const icon = d._error ? '⚠️' : d.vendorName ? '✓' : '?';
+    const name = d.vendorName || '(unknown — click to edit)';
+    const amtStr = d.amount !== '' ? fmt(parseFloat(d.amount) || 0) : '—';
+    const catStr = d.category || 'other';
+    const scores = [conf.vendorName, conf.amount, conf.category].filter(s => s !== undefined && s !== null);
+    const overallConf = scores.length ? Math.min(...scores) : undefined;
+
+    const opts = CATEGORIES.map(c =>
+      `<option value="${c}"${d.category === c ? ' selected' : ''}>${c}</option>`
+    ).join('');
+
+    return `
+      <div class="bulk-tenant-row${d._error ? ' has-error' : ''}" id="itr-${i}">
+        <div class="bulk-tenant-summary" onclick="toggleInvDetail(${i})">
+          <span class="bulk-t-status">${icon}</span>
+          <span class="bulk-t-name" id="iname-${i}">${esc(name)}</span>
+          <span class="bulk-t-meta" id="imeta-${i}">${esc(catStr)} &middot; ${amtStr}</span>
+          ${overallConf !== undefined ? confidenceBadge(overallConf) : ''}
+          <span class="bulk-t-chevron" id="ichev-${i}">&#x25BC; Edit</span>
+          <button class="bulk-t-remove" onclick="event.stopPropagation();removeInvItem(${i})">Remove</button>
+        </div>
+        <div class="bulk-tenant-detail" id="idet-${i}" style="display:none;">
+          ${d._error ? `<div class="err-banner" style="margin-bottom:10px;">Extraction error: ${esc(d._error)}</div>` : ''}
+          <div id="dup-warn-${i}"></div>
+          <div id="sanity-warn-${i}"></div>
+          <div class="field-row">
+            <div class="field" style="flex:2;">
+              <label>Vendor ${confidenceBadge(conf.vendorName)}</label>
+              <input type="text" value="${esc(d.vendorName)}"
+                oninput="invoiceData[${i}].vendorName=this.value;refreshInvSummary(${i})"/>
+            </div>
+            <div class="field">
+              <label>Amount ($) ${confidenceBadge(conf.amount)}</label>
+              <input type="number" value="${esc(d.amount)}"
+                oninput="invoiceData[${i}].amount=parseFloat(this.value)||'';refreshInvSummary(${i})"/>
+            </div>
+          </div>
+          <div class="field-row">
+            <div class="field">
+              <label>Category ${confidenceBadge(conf.category)}</label>
+              <select onchange="invoiceData[${i}].category=this.value;refreshInvSummary(${i})">${opts}</select>
+            </div>
+            <div class="field">
+              <label>Invoice Date ${confidenceBadge(conf.invoiceDate)}</label>
+              <input type="text" value="${esc(d.invoiceDate)}"
+                oninput="invoiceData[${i}].invoiceDate=this.value"/>
+            </div>
+          </div>
+        </div>
+      </div>`;
+  }).join('');
+
+  el.innerHTML = `
+    <div class="bulk-results-head">
+      <h3>Extracted Invoices (${invoiceData.length})</h3>
+      <button class="bulk-clear-btn" onclick="clearInvResults()">&#x2715; Clear All</button>
+    </div>
+    ${rows}`;
+}
+
+function toggleInvDetail(i) {
+  const det  = document.getElementById(`idet-${i}`);
+  const chev = document.getElementById(`ichev-${i}`);
+  if (!det) return;
+  const open = det.style.display === 'block';
+  det.style.display = open ? 'none' : 'block';
+  chev.innerHTML    = open ? '&#x25BC; Edit' : '&#x25B2; Close';
+}
+
+function refreshInvSummary(i) {
+  const d = invoiceData[i];
+  if (!d) return;
+  const nameEl = document.getElementById(`iname-${i}`);
+  const metaEl = document.getElementById(`imeta-${i}`);
+  if (nameEl) nameEl.textContent = d.vendorName || '(unknown — click to edit)';
+  if (metaEl) {
+    const amtStr = d.amount !== '' ? fmt(parseFloat(d.amount) || 0) : '—';
+    metaEl.textContent = (d.category || 'other') + ' · ' + amtStr;
   }
 }
 
-function renderInvoiceFields(idx) {
-  const d    = invoiceData[idx];
-  const body = document.getElementById(`ib-${idx}`);
-  const opts = CATEGORIES.map(c =>
-    `<option value="${c}"${d.category === c ? ' selected' : ''}>${c}</option>`
-  ).join('');
-  const conf = d.confidence || {};
-
-  body.innerHTML = `
-    <div class="extracted">
-      <div class="status-row ok" style="margin-bottom:10px;">
-        <span class="status-dot ok">${CHECK_SVG}</span>
-        Extracted — review and edit
-        <button class="re-btn" onclick="resetInvoice(${idx})">Re-upload</button>
-      </div>
-      <div id="dup-warn-${idx}"></div>
-      <div id="sanity-warn-${idx}"></div>
-      <div class="field-row">
-        <div class="field" style="flex:2;">
-          <label>Vendor ${confidenceBadge(conf.vendorName)}</label>
-          <input type="text" value="${esc(d.vendorName)}"
-            oninput="invoiceData[${idx}].vendorName = this.value"/>
-        </div>
-        <div class="field">
-          <label>Amount ($) ${confidenceBadge(conf.amount)}</label>
-          <input type="number" value="${esc(d.amount)}"
-            oninput="invoiceData[${idx}].amount = parseFloat(this.value) || ''"/>
-        </div>
-      </div>
-      <div class="field-row">
-        <div class="field">
-          <label>Category ${confidenceBadge(conf.category)}</label>
-          <select onchange="invoiceData[${idx}].category = this.value">${opts}</select>
-        </div>
-        <div class="field">
-          <label>Invoice Date ${confidenceBadge(conf.invoiceDate)}</label>
-          <input type="text" value="${esc(d.invoiceDate)}"
-            oninput="invoiceData[${idx}].invoiceDate = this.value"/>
-        </div>
-      </div>
-    </div>`;
+function removeInvItem(i) {
+  invoiceData.splice(i, 1);
+  renderInvResults();
 }
 
-function renderInvoiceError(idx, msg) {
-  const body = document.getElementById(`ib-${idx}`);
-  body.innerHTML = `
-    <div class="extracted">
-      <div class="status-row err">
-        <span class="status-dot err">${CROSS_SVG}</span>
-        Extraction failed: ${esc(msg)}
-        <button class="re-btn" onclick="resetInvoice(${idx})">Try again</button>
-      </div>
-    </div>`;
-}
-
-function resetInvoice(idx) {
-  invoiceData[idx] = null;
-  renderInvoiceUploadZone(idx);
+function clearInvResults() {
+  invoiceData.splice(0, invoiceData.length);
+  document.getElementById('invResults').innerHTML = '';
+  document.getElementById('invProgress').style.display = 'none';
+  document.getElementById('invFileInput').value   = '';
+  document.getElementById('invFolderInput').value = '';
 }
 
 // ─── Confidence Badge ─────────────────────────────────────────────────────────
@@ -1501,8 +1566,7 @@ function showDuplicateWarning(idx, other, otherIdx) {
 }
 
 function removeDuplicateInvoice(idx) {
-  invoiceData[idx] = null;
-  renderInvoiceUploadZone(idx);
+  removeInvItem(idx);
 }
 
 // ─── Amount Sanity Check ──────────────────────────────────────────────────────
@@ -2372,7 +2436,6 @@ function resetWorkflow() {
   switchLeaseTab('bulk');
 
   invoiceData.length = 0;
-  invoiceCount = 0;
   lastResults = []; lastInvoices = []; lastTenants = [];
   lastPropName = ''; lastTotal = 0; lastInvoicesFull = [];
   disputes.length = 0;
@@ -2392,9 +2455,11 @@ function resetWorkflow() {
   document.getElementById('tenantReportButtons').innerHTML = '';
 
   renderTenantSlots();
-  document.getElementById('invoiceList').innerHTML = '';
-  document.getElementById('addInvoiceBtn').disabled = false;
-  addInvoiceSlot();
+  invoiceData.splice(0, invoiceData.length);
+  document.getElementById('invResults').innerHTML = '';
+  document.getElementById('invProgress').style.display = 'none';
+  document.getElementById('invFileInput').value   = '';
+  document.getElementById('invFolderInput').value = '';
 }
 
 function liveUpdateBreadcrumb(name) {
@@ -2410,7 +2475,6 @@ try {
   document.getElementById('portfolioDashboard').style.display = 'none';
   document.getElementById('mainWorkflow').style.display       = 'block';
   renderTenantSlots();
-  addInvoiceSlot();
 }
 
 </script>
