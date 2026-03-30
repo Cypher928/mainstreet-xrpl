@@ -365,6 +365,74 @@
       color: #166534; word-break: break-all; line-height: 1.5;
     }
 
+    /* ── Confidence badges ───────────────────────────────────────────── */
+    .conf-badge {
+      display: inline-flex; align-items: center; gap: 3px;
+      padding: 1px 7px; border-radius: 20px;
+      font-size: 0.68rem; font-weight: 700; margin-left: 6px;
+      vertical-align: middle; white-space: nowrap;
+    }
+    .conf-high { background: #dcfce7; color: #166534; }
+    .conf-mid  { background: #fef9c3; color: #854d0e; }
+    .conf-low  { background: #fee2e2; color: #991b1b; }
+
+    /* ── Inline warnings (duplicate / sanity) ────────────────────────── */
+    .warn-banner {
+      margin: 8px 0 4px; padding: 10px 14px; border-radius: 9px;
+      font-size: 0.83rem; line-height: 1.5;
+      border: 1.5px solid #fdba74; background: #fff7ed; color: #9a3412;
+    }
+    .warn-banner .warn-msg { margin-bottom: 8px; }
+    .warn-banner-btns { display: flex; gap: 8px; }
+    .warn-btn {
+      padding: 5px 14px; border-radius: 7px; font-size: 0.78rem;
+      font-weight: 600; cursor: pointer; border: none; transition: all 0.15s;
+    }
+    .warn-btn.add    { background: #fed7aa; color: #9a3412; }
+    .warn-btn.add:hover    { background: #fdba74; }
+    .warn-btn.remove { background: #f1f5f9; color: #475569; border: 1px solid #cbd5e1; }
+    .warn-btn.remove:hover { background: #e2e8f0; }
+    .warn-btn.dismiss { background: #f1f5f9; color: #475569; border: 1px solid #cbd5e1; }
+    .warn-btn.dismiss:hover { background: #e2e8f0; }
+
+    /* ── Allocation confirmation modal ───────────────────────────────── */
+    .modal-backdrop {
+      position: fixed; inset: 0; z-index: 500;
+      background: rgba(15,23,42,0.5);
+      display: flex; align-items: center; justify-content: center; padding: 24px;
+    }
+    .modal-box {
+      background: #fff; border-radius: 16px; width: 100%; max-width: 480px;
+      box-shadow: 0 24px 64px rgba(0,0,0,0.22); padding: 28px 28px 22px;
+    }
+    .modal-title {
+      font-size: 1.08rem; font-weight: 700; color: #1a1a2e; margin-bottom: 14px;
+    }
+    .modal-confirm-msg {
+      background: #eff6ff; border: 1.5px solid #bfdbfe; border-radius: 9px;
+      padding: 12px 14px; font-size: 0.85rem; color: #1e40af;
+      font-weight: 500; margin-bottom: 16px; line-height: 1.5;
+    }
+    .modal-summary-table {
+      width: 100%; border-collapse: collapse; font-size: 0.85rem; margin-bottom: 20px;
+    }
+    .modal-summary-table td { padding: 7px 2px; border-bottom: 1px solid #f1f5f9; }
+    .modal-summary-table td:last-child { text-align: right; font-weight: 600; color: #1e40af; }
+    .modal-summary-table tr:last-child td { border-bottom: none; }
+    .modal-actions { display: flex; gap: 10px; }
+    .modal-confirm {
+      flex: 1; padding: 11px; border-radius: 9px; font-size: 0.9rem;
+      font-weight: 700; cursor: pointer; border: none;
+      background: #1e40af; color: #fff; transition: all 0.15s;
+    }
+    .modal-confirm:hover { background: #1e3a8a; }
+    .modal-cancel {
+      flex: 1; padding: 11px; border-radius: 9px; font-size: 0.9rem;
+      font-weight: 600; cursor: pointer;
+      background: #f1f5f9; color: #475569; border: 1.5px solid #cbd5e1; transition: all 0.15s;
+    }
+    .modal-cancel:hover { background: #e2e8f0; }
+
     /* ── Reports section ─────────────────────────────────────────────── */
     #reportsSection { display: block; }
     .report-btn-row { display: flex; gap: 12px; flex-wrap: wrap; margin-top: 8px; }
@@ -548,7 +616,7 @@
   </div>
 
   <!-- ── SECTION 4: Run Allocation ─────────────────────────────────── -->
-  <button id="runBtn" onclick="runAllocation()">Run CAM Allocation</button>
+  <button id="runBtn" onclick="showAllocationModal()">Run CAM Allocation</button>
 
   <!-- Results -->
   <div class="card" id="results">
@@ -600,6 +668,18 @@
 
 </div><!-- /container -->
 
+<!-- ── Allocation Confirmation Modal ──────────────────────────────────── -->
+<div id="allocModal" class="modal-backdrop" style="display:none;" onclick="if(event.target===this)closeAllocModal()">
+  <div class="modal-box">
+    <div class="modal-title">&#x1F4CB; Confirm CAM Allocation</div>
+    <div id="allocModalBody"></div>
+    <div class="modal-actions">
+      <button class="modal-confirm" onclick="confirmAllocation()">Confirm &amp; Run</button>
+      <button class="modal-cancel"  onclick="closeAllocModal()">Go Back &amp; Review</button>
+    </div>
+  </div>
+</div>
+
 <!-- ── Report Overlay ──────────────────────────────────────────────────── -->
 <div id="reportOverlay">
   <div class="rpt-toolbar">
@@ -619,9 +699,9 @@ const MODEL      = 'claude-sonnet-4-20250514';
 const MAX_LEASES = 3;
 const MAX_INVS   = 10;
 
-const LEASE_PROMPT = `Extract the following CAM lease terms from this document and return ONLY valid JSON with these fields: tenantName, leasedSqft, capPercentage, excludedCategories (array of strings), baseYear. If a field is not found, use null.`;
+const LEASE_PROMPT = `Extract the following CAM lease terms from this document and return ONLY valid JSON with these fields: tenantName, leasedSqft, capPercentage, excludedCategories (array of strings), baseYear, confidence. "confidence" must be an object with a score 0-100 for each field (tenantName, leasedSqft, capPercentage, excludedCategories, baseYear) reflecting how clearly that value was found in the document. If a field is not found, use null.`;
 
-const INVOICE_PROMPT = `Extract invoice details and return ONLY valid JSON with: vendorName, amount (number), category, invoiceDate. Category must be one of: landscaping, snow, repairs, utilities, janitorial, security, management, other`;
+const INVOICE_PROMPT = `Extract invoice details and return ONLY valid JSON with these fields: vendorName, amount (number), category, invoiceDate, confidence. "confidence" must be an object with a score 0-100 for each field (vendorName, amount, category, invoiceDate) reflecting how clearly that value was found in the document. Category must be one of: landscaping, snow, repairs, utilities, janitorial, security, management, other`;
 
 const CATEGORIES = ['landscaping','snow','repairs','utilities','janitorial','security','management','other'];
 
@@ -748,6 +828,7 @@ async function handleLease(i, file) {
       excludedCategories: Array.isArray(d.excludedCategories)
                             ? d.excludedCategories.join(', ') : '',
       baseYear:           d.baseYear             ?? '',
+      confidence:         d.confidence           ?? {},
     };
     renderTenantFields(i);
   } catch (err) {
@@ -758,6 +839,7 @@ async function handleLease(i, file) {
 function renderTenantFields(i) {
   const d    = tenantData[i];
   const body = document.getElementById(`tb-${i}`);
+  const conf = d.confidence || {};
   body.innerHTML = `
     <div class="extracted">
       <div class="status-row ok">
@@ -767,30 +849,30 @@ function renderTenantFields(i) {
       </div>
       <div class="field-row">
         <div class="field">
-          <label>Tenant Name</label>
+          <label>Tenant Name ${confidenceBadge(conf.tenantName)}</label>
           <input type="text" value="${esc(d.tenantName)}"
             oninput="tenantData[${i}].tenantName = this.value"/>
         </div>
         <div class="field">
-          <label>Leased Sqft</label>
+          <label>Leased Sqft ${confidenceBadge(conf.leasedSqft)}</label>
           <input type="number" value="${esc(d.leasedSqft)}"
             oninput="tenantData[${i}].leasedSqft = this.value"/>
         </div>
       </div>
       <div class="field-row">
         <div class="field">
-          <label>Cap % (optional)</label>
+          <label>Cap % (optional) ${confidenceBadge(conf.capPercentage)}</label>
           <input type="number" value="${esc(d.capPercentage)}"
             oninput="tenantData[${i}].capPercentage = this.value"/>
         </div>
         <div class="field">
-          <label>Base Year</label>
+          <label>Base Year ${confidenceBadge(conf.baseYear)}</label>
           <input type="text" value="${esc(d.baseYear)}"
             oninput="tenantData[${i}].baseYear = this.value"/>
         </div>
       </div>
       <div class="field">
-        <label>Excluded Categories (comma-separated)</label>
+        <label>Excluded Categories (comma-separated) ${confidenceBadge(conf.excludedCategories)}</label>
         <input type="text" value="${esc(d.excludedCategories)}"
           oninput="tenantData[${i}].excludedCategories = this.value"/>
       </div>
@@ -869,8 +951,11 @@ async function handleInvoice(idx, file) {
       amount:      d.amount       ?? '',
       category:    d.category     ?? 'other',
       invoiceDate: d.invoiceDate  ?? '',
+      confidence:  d.confidence   ?? {},
     };
     renderInvoiceFields(idx);
+    checkDuplicateInvoice(idx);
+    checkAmountSanity(idx);
   } catch (err) {
     renderInvoiceError(idx, err.message);
   }
@@ -882,6 +967,7 @@ function renderInvoiceFields(idx) {
   const opts = CATEGORIES.map(c =>
     `<option value="${c}"${d.category === c ? ' selected' : ''}>${c}</option>`
   ).join('');
+  const conf = d.confidence || {};
 
   body.innerHTML = `
     <div class="extracted">
@@ -890,25 +976,27 @@ function renderInvoiceFields(idx) {
         Extracted — review and edit
         <button class="re-btn" onclick="resetInvoice(${idx})">Re-upload</button>
       </div>
+      <div id="dup-warn-${idx}"></div>
+      <div id="sanity-warn-${idx}"></div>
       <div class="field-row">
         <div class="field" style="flex:2;">
-          <label>Vendor</label>
+          <label>Vendor ${confidenceBadge(conf.vendorName)}</label>
           <input type="text" value="${esc(d.vendorName)}"
             oninput="invoiceData[${idx}].vendorName = this.value"/>
         </div>
         <div class="field">
-          <label>Amount ($)</label>
+          <label>Amount ($) ${confidenceBadge(conf.amount)}</label>
           <input type="number" value="${esc(d.amount)}"
             oninput="invoiceData[${idx}].amount = parseFloat(this.value) || ''"/>
         </div>
       </div>
       <div class="field-row">
         <div class="field">
-          <label>Category</label>
+          <label>Category ${confidenceBadge(conf.category)}</label>
           <select onchange="invoiceData[${idx}].category = this.value">${opts}</select>
         </div>
         <div class="field">
-          <label>Invoice Date</label>
+          <label>Invoice Date ${confidenceBadge(conf.invoiceDate)}</label>
           <input type="text" value="${esc(d.invoiceDate)}"
             oninput="invoiceData[${idx}].invoiceDate = this.value"/>
         </div>
@@ -931,6 +1019,173 @@ function renderInvoiceError(idx, msg) {
 function resetInvoice(idx) {
   invoiceData[idx] = null;
   renderInvoiceUploadZone(idx);
+}
+
+// ─── Confidence Badge ─────────────────────────────────────────────────────────
+
+function confidenceBadge(score) {
+  if (score === null || score === undefined) return '';
+  const s = parseInt(score, 10);
+  if (isNaN(s)) return '';
+  if (s >= 90) return `<span class="conf-badge conf-high">✓ High confidence</span>`;
+  if (s >= 70) return `<span class="conf-badge conf-mid">⚠ Please verify</span>`;
+  return `<span class="conf-badge conf-low">⚑ Low confidence — review carefully</span>`;
+}
+
+// ─── Duplicate Invoice Detection ──────────────────────────────────────────────
+
+function similarVendor(a, b) {
+  if (!a || !b) return false;
+  const na = a.toLowerCase().trim();
+  const nb = b.toLowerCase().trim();
+  if (na === nb) return true;
+  // Check if one contains at least the first 5 chars of the other
+  const min = Math.min(na.length, nb.length);
+  if (min >= 5) {
+    const prefix = na.substring(0, Math.min(5, na.length));
+    if (nb.includes(prefix)) return true;
+    const prefix2 = nb.substring(0, Math.min(5, nb.length));
+    if (na.includes(prefix2)) return true;
+  }
+  return false;
+}
+
+function checkDuplicateInvoice(idx) {
+  const curr = invoiceData[idx];
+  if (!curr || !curr.vendorName || curr.amount === '') return;
+  const currAmt  = parseFloat(curr.amount);
+  const currDate = curr.invoiceDate ? new Date(curr.invoiceDate) : null;
+
+  for (let i = 0; i < invoiceData.length; i++) {
+    if (i === idx) continue;
+    const other = invoiceData[i];
+    if (!other || !other.vendorName || other.amount === '') continue;
+
+    const amtMatch    = Math.abs(currAmt - parseFloat(other.amount)) <= 1;
+    const vendorMatch = similarVendor(curr.vendorName, other.vendorName);
+
+    let dateMatch = true;
+    if (currDate && other.invoiceDate) {
+      const diffDays = Math.abs(currDate - new Date(other.invoiceDate)) / 86400000;
+      dateMatch = diffDays <= 7;
+    }
+
+    if (vendorMatch && amtMatch && dateMatch) {
+      showDuplicateWarning(idx, other, i);
+      return;
+    }
+  }
+}
+
+function showDuplicateWarning(idx, other, otherIdx) {
+  const el = document.getElementById(`dup-warn-${idx}`);
+  if (!el) return;
+  el.innerHTML = `
+    <div class="warn-banner">
+      <div class="warn-msg">
+        ⚠️ This looks like a duplicate of <strong>${esc(other.vendorName)}</strong>
+        ${fmt(parseFloat(other.amount))} (Invoice ${otherIdx + 1}) already uploaded.
+        Add anyway?
+      </div>
+      <div class="warn-banner-btns">
+        <button class="warn-btn add"    onclick="this.closest('.warn-banner').remove()">Yes, add it</button>
+        <button class="warn-btn remove" onclick="removeDuplicateInvoice(${idx})">Remove duplicate</button>
+      </div>
+    </div>`;
+}
+
+function removeDuplicateInvoice(idx) {
+  invoiceData[idx] = null;
+  renderInvoiceUploadZone(idx);
+}
+
+// ─── Amount Sanity Check ──────────────────────────────────────────────────────
+
+function checkAmountSanity(idx) {
+  const curr = invoiceData[idx];
+  if (!curr || curr.amount === '' || !curr.category) return;
+  const currAmt = parseFloat(curr.amount);
+  if (!currAmt || currAmt <= 0) return;
+
+  const peers = invoiceData
+    .filter((inv, i) => i !== idx && inv && inv.category === curr.category && parseFloat(inv.amount) > 0)
+    .map(inv => parseFloat(inv.amount));
+
+  if (peers.length === 0) return;
+
+  const avg = peers.reduce((s, a) => s + a, 0) / peers.length;
+  if (currAmt > avg * 3) {
+    showSanityWarning(idx, curr.category, currAmt, avg);
+  }
+}
+
+function showSanityWarning(idx, category, amount, avg) {
+  const el = document.getElementById(`sanity-warn-${idx}`);
+  if (!el) return;
+  el.innerHTML = `
+    <div class="warn-banner">
+      <div class="warn-msg">
+        ⚠️ This <strong>${esc(category)}</strong> invoice (${fmt(amount)}) is unusually
+        high compared to your other ${esc(category)} invoices (avg ${fmt(avg)}).
+        Please verify before continuing.
+      </div>
+      <div class="warn-banner-btns">
+        <button class="warn-btn dismiss" onclick="this.closest('.warn-banner').remove()">Dismiss</button>
+      </div>
+    </div>`;
+}
+
+// ─── Pre-Allocation Confirmation Modal ────────────────────────────────────────
+
+function showAllocationModal() {
+  const totalSqft = parseFloat(document.getElementById('totalSqft').value);
+  const tenants   = tenantData.filter(t => t && t.tenantName && parseFloat(t.leasedSqft) > 0);
+  const invoices  = invoiceData.filter(inv => inv && inv.vendorName && parseFloat(inv.amount) > 0);
+
+  // If data isn't ready let runAllocation() surface the validation error
+  if (!totalSqft || totalSqft <= 0 || !tenants.length || !invoices.length) {
+    runAllocation();
+    return;
+  }
+
+  const total = invoices.reduce((s, inv) => s + parseFloat(inv.amount), 0);
+
+  // Category breakdown rows
+  const catTotals = {};
+  invoices.forEach(inv => {
+    catTotals[inv.category] = (catTotals[inv.category] || 0) + parseFloat(inv.amount);
+  });
+  const catRows = Object.entries(catTotals)
+    .sort((a, b) => b[1] - a[1])
+    .map(([cat, amt]) => `
+      <tr>
+        <td style="padding-left:14px;color:#64748b;text-transform:capitalize">${esc(cat)}</td>
+        <td>${fmt(amt)}</td>
+      </tr>`).join('');
+
+  document.getElementById('allocModalBody').innerHTML = `
+    <div class="modal-confirm-msg">
+      You are about to allocate <strong>${fmt(total)}</strong> across
+      <strong>${tenants.length}</strong> tenant${tenants.length !== 1 ? 's' : ''}.
+      Please confirm this looks correct.
+    </div>
+    <table class="modal-summary-table">
+      <tr><td>Total Invoices</td><td>${invoices.length}</td></tr>
+      <tr><td>Total Amount</td><td>${fmt(total)}</td></tr>
+      <tr><td>Tenants</td><td>${tenants.length}</td></tr>
+      ${catRows}
+    </table>`;
+
+  document.getElementById('allocModal').style.display = 'flex';
+}
+
+function confirmAllocation() {
+  closeAllocModal();
+  runAllocation();
+}
+
+function closeAllocModal() {
+  document.getElementById('allocModal').style.display = 'none';
 }
 
 // ─── CAM Allocation Engine ────────────────────────────────────────────────────
