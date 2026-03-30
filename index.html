@@ -448,6 +448,85 @@
     .breadcrumb-path { font-size: 0.84rem; color: #94a3b8; }
     .breadcrumb-path span { color: #1a1a2e; font-weight: 700; }
 
+    /* ── Lease Upload Tabs ───────────────────────────────────────────── */
+    .lease-tab-bar {
+      display: flex; gap: 0; margin-bottom: 18px;
+      border-bottom: 2px solid #e2e8f0;
+    }
+    .lease-tab {
+      padding: 9px 22px; font-size: 0.85rem; font-weight: 600;
+      border: none; background: none; cursor: pointer; color: #64748b;
+      border-bottom: 2px solid transparent; margin-bottom: -2px;
+      transition: all 0.15s;
+    }
+    .lease-tab:hover { color: #1e40af; }
+    .lease-tab.active { color: #1e40af; border-bottom-color: #1e40af; }
+
+    /* Bulk upload zone */
+    .bulk-upload-zone {
+      border: 2px dashed #cbd5e1; border-radius: 12px;
+      padding: 32px 24px; text-align: center; cursor: pointer;
+      background: #f8fafc; transition: all 0.18s; position: relative;
+    }
+    .bulk-upload-zone:hover, .bulk-upload-zone.drag-over {
+      border-color: #3b82f6; background: #eff6ff;
+    }
+    .bulk-upload-zone input[type=file] {
+      position: absolute; inset: 0; opacity: 0; cursor: pointer;
+      width: 100%; height: 100%;
+    }
+    .bulk-uz-icon { font-size: 2rem; margin-bottom: 8px; }
+    .bulk-uz-label { font-size: 0.95rem; font-weight: 600; color: #1e293b; margin-bottom: 4px; }
+    .bulk-uz-sub { font-size: 0.78rem; color: #94a3b8; }
+
+    /* Bulk progress */
+    .bulk-progress-wrap {
+      margin: 16px 0; padding: 14px 16px;
+      background: #eff6ff; border: 1.5px solid #bfdbfe; border-radius: 10px;
+    }
+    .bulk-progress-label {
+      font-size: 0.85rem; font-weight: 600; color: #1e40af; margin-bottom: 8px;
+    }
+    .bulk-progress-track {
+      height: 6px; background: #dbeafe; border-radius: 3px; overflow: hidden;
+    }
+    .bulk-progress-fill {
+      height: 100%; background: #2563eb; border-radius: 3px; transition: width 0.35s ease;
+    }
+
+    /* Bulk results */
+    .bulk-results-head {
+      display: flex; align-items: center; justify-content: space-between;
+      margin: 16px 0 10px;
+    }
+    .bulk-results-head h3 { font-size: 0.88rem; font-weight: 700; color: #1a1a2e; margin: 0; }
+    .bulk-clear-btn {
+      padding: 5px 12px; border-radius: 7px; font-size: 0.78rem;
+      font-weight: 600; cursor: pointer; border: 1.5px solid #fca5a5;
+      background: #fee2e2; color: #991b1b; transition: all 0.15s;
+    }
+    .bulk-clear-btn:hover { background: #fecaca; }
+    .bulk-tenant-row {
+      border: 1.5px solid #e2e8f0; border-radius: 11px; margin-bottom: 10px; overflow: hidden;
+    }
+    .bulk-tenant-row.has-error { border-color: #fca5a5; }
+    .bulk-tenant-summary {
+      display: flex; align-items: center; gap: 10px; padding: 10px 14px;
+      background: #f8fafc; cursor: pointer; user-select: none;
+    }
+    .bulk-tenant-summary:hover { background: #f1f5f9; }
+    .bulk-t-status { font-size: 0.95rem; flex-shrink: 0; }
+    .bulk-t-name { font-size: 0.88rem; font-weight: 700; color: #1a1a2e; flex: 1; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+    .bulk-t-meta { font-size: 0.78rem; color: #64748b; white-space: nowrap; }
+    .bulk-t-chevron { font-size: 0.7rem; color: #94a3b8; flex-shrink: 0; }
+    .bulk-t-remove {
+      padding: 3px 10px; border-radius: 6px; font-size: 0.74rem; font-weight: 600;
+      cursor: pointer; border: 1.5px solid #fca5a5; background: #fff;
+      color: #dc2626; transition: all 0.15s; flex-shrink: 0;
+    }
+    .bulk-t-remove:hover { background: #fee2e2; }
+    .bulk-tenant-detail { padding: 14px 14px 10px; border-top: 1px solid #e2e8f0; }
+
     /* ── Confidence badges ───────────────────────────────────────────── */
     .conf-badge {
       display: inline-flex; align-items: center; gap: 3px;
@@ -723,7 +802,33 @@
         <p>Upload tenant leases — AI extracts CAM terms automatically</p>
       </div>
     </div>
-    <div id="tenantSlots"></div>
+
+    <!-- Tab bar -->
+    <div class="lease-tab-bar">
+      <button class="lease-tab active" id="lTabBulk"   onclick="switchLeaseTab('bulk')">&#x1F4C2; Upload All Leases</button>
+      <button class="lease-tab"        id="lTabSingle" onclick="switchLeaseTab('single')">&#x1F4C4; Add One Tenant</button>
+    </div>
+
+    <!-- Panel A: Bulk -->
+    <div id="leasePanelBulk">
+      <div class="bulk-upload-zone" id="bulkZone"
+        ondragover="event.preventDefault();this.classList.add('drag-over')"
+        ondragleave="this.classList.remove('drag-over')"
+        ondrop="event.preventDefault();this.classList.remove('drag-over');handleBulkLeases(event.dataTransfer.files)">
+        <div class="bulk-uz-icon">&#x1F4C2;</div>
+        <div class="bulk-uz-label">Drop all lease PDFs here, or click to select</div>
+        <div class="bulk-uz-sub">Multiple PDFs accepted &middot; AI processes each one sequentially</div>
+        <input type="file" id="bulkLeaseInput" multiple accept=".pdf,application/pdf"
+          onchange="handleBulkLeases(this.files)" />
+      </div>
+      <div id="bulkProgress" style="display:none;"></div>
+      <div id="bulkResults"></div>
+    </div>
+
+    <!-- Panel B: Single -->
+    <div id="leasePanelSingle" style="display:none;">
+      <div id="tenantSlots"></div>
+    </div>
   </div>
 
   <!-- ── SECTION 3: Invoice Upload ─────────────────────────────────── -->
@@ -1029,6 +1134,172 @@ function renderTenantError(i, msg) {
 function resetTenant(i) {
   tenantData[i] = null;
   renderTenantUploadZone(i);
+}
+
+// ─── Lease Tab Switching ──────────────────────────────────────────────────────
+
+function switchLeaseTab(tab) {
+  document.getElementById('lTabBulk').classList.toggle('active', tab === 'bulk');
+  document.getElementById('lTabSingle').classList.toggle('active', tab === 'single');
+  document.getElementById('leasePanelBulk').style.display   = tab === 'bulk'   ? 'block' : 'none';
+  document.getElementById('leasePanelSingle').style.display = tab === 'single' ? 'block' : 'none';
+}
+
+// ─── Bulk Lease Upload ────────────────────────────────────────────────────────
+
+async function handleBulkLeases(fileList) {
+  if (!fileList || fileList.length === 0) return;
+  const files = Array.from(fileList);
+  const total = files.length;
+
+  // Clear tenantData and start fresh for bulk
+  tenantData.splice(0, tenantData.length);
+
+  const prog    = document.getElementById('bulkProgress');
+  const results = document.getElementById('bulkResults');
+  results.innerHTML = '';
+  prog.style.display = 'block';
+
+  // Reset file input so the same files can be re-selected if needed
+  document.getElementById('bulkLeaseInput').value = '';
+
+  for (let i = 0; i < total; i++) {
+    const pct = Math.round((i / total) * 100);
+    prog.innerHTML = `
+      <div class="bulk-progress-wrap">
+        <div class="bulk-progress-label">Processing lease ${i + 1} of ${total} — "${esc(files[i].name)}"</div>
+        <div class="bulk-progress-track">
+          <div class="bulk-progress-fill" style="width:${pct}%"></div>
+        </div>
+      </div>`;
+
+    try {
+      const d = await callClaude(files[i], LEASE_PROMPT);
+      tenantData.push({
+        tenantName:         d.tenantName          ?? '',
+        leasedSqft:         d.leasedSqft          ?? '',
+        capPercentage:      d.capPercentage        ?? '',
+        excludedCategories: Array.isArray(d.excludedCategories)
+                              ? d.excludedCategories.join(', ') : '',
+        baseYear:           d.baseYear             ?? '',
+        confidence:         d.confidence           ?? {},
+        _error:             null,
+      });
+    } catch (err) {
+      tenantData.push({
+        tenantName:         files[i].name.replace(/\.pdf$/i, ''),
+        leasedSqft: '', capPercentage: '', excludedCategories: '', baseYear: '',
+        confidence: {}, _error: err.message,
+      });
+    }
+  }
+
+  prog.innerHTML = `
+    <div class="bulk-progress-wrap">
+      <div class="bulk-progress-label">&#x2713; ${total} lease${total !== 1 ? 's' : ''} processed — review and edit below</div>
+      <div class="bulk-progress-track">
+        <div class="bulk-progress-fill" style="width:100%"></div>
+      </div>
+    </div>`;
+
+  renderBulkResults();
+}
+
+function renderBulkResults() {
+  const el = document.getElementById('bulkResults');
+  if (!tenantData.length) { el.innerHTML = ''; return; }
+
+  const rows = tenantData.map((d, i) => {
+    const conf   = d.confidence || {};
+    const icon   = d._error ? '⚠️' : d.tenantName ? '✓' : '?';
+    const name   = d.tenantName || '(unknown — click to edit)';
+    const meta   = [d.leasedSqft ? d.leasedSqft + ' sqft' : null,
+                    d.capPercentage ? d.capPercentage + '% cap' : null]
+                    .filter(Boolean).join(' · ') || '—';
+
+    return `
+      <div class="bulk-tenant-row${d._error ? ' has-error' : ''}" id="btr-${i}">
+        <div class="bulk-tenant-summary" onclick="toggleBulkDetail(${i})">
+          <span class="bulk-t-status">${icon}</span>
+          <span class="bulk-t-name"   id="bname-${i}">${esc(name)}</span>
+          <span class="bulk-t-meta"   id="bmeta-${i}">${esc(meta)}</span>
+          <span class="bulk-t-chevron" id="bchev-${i}">&#x25BC; Edit</span>
+          <button class="bulk-t-remove" onclick="event.stopPropagation();removeBulkTenant(${i})">Remove</button>
+        </div>
+        <div class="bulk-tenant-detail" id="bdet-${i}" style="display:none;">
+          ${d._error ? `<div class="err-banner" style="margin-bottom:10px;">Extraction error: ${esc(d._error)}</div>` : ''}
+          <div class="field-row">
+            <div class="field">
+              <label>Tenant Name ${confidenceBadge(conf.tenantName)}</label>
+              <input type="text" value="${esc(d.tenantName)}"
+                oninput="tenantData[${i}].tenantName=this.value;refreshBulkSummary(${i})"/>
+            </div>
+            <div class="field">
+              <label>Leased Sqft ${confidenceBadge(conf.leasedSqft)}</label>
+              <input type="number" value="${esc(d.leasedSqft)}"
+                oninput="tenantData[${i}].leasedSqft=this.value;refreshBulkSummary(${i})"/>
+            </div>
+          </div>
+          <div class="field-row">
+            <div class="field">
+              <label>Cap % (optional) ${confidenceBadge(conf.capPercentage)}</label>
+              <input type="number" value="${esc(d.capPercentage)}"
+                oninput="tenantData[${i}].capPercentage=this.value;refreshBulkSummary(${i})"/>
+            </div>
+            <div class="field">
+              <label>Base Year ${confidenceBadge(conf.baseYear)}</label>
+              <input type="text" value="${esc(d.baseYear)}"
+                oninput="tenantData[${i}].baseYear=this.value"/>
+            </div>
+          </div>
+          <div class="field">
+            <label>Excluded Categories (comma-separated) ${confidenceBadge(conf.excludedCategories)}</label>
+            <input type="text" value="${esc(d.excludedCategories)}"
+              oninput="tenantData[${i}].excludedCategories=this.value"/>
+          </div>
+        </div>
+      </div>`;
+  }).join('');
+
+  el.innerHTML = `
+    <div class="bulk-results-head">
+      <h3>Extracted Tenants (${tenantData.length})</h3>
+      <button class="bulk-clear-btn" onclick="clearBulkResults()">&#x2715; Clear All</button>
+    </div>
+    ${rows}`;
+}
+
+function toggleBulkDetail(i) {
+  const det  = document.getElementById(`bdet-${i}`);
+  const chev = document.getElementById(`bchev-${i}`);
+  const open = det.style.display === 'block';
+  det.style.display  = open ? 'none' : 'block';
+  chev.innerHTML     = open ? '&#x25BC; Edit' : '&#x25B2; Close';
+}
+
+function refreshBulkSummary(i) {
+  const d = tenantData[i];
+  if (!d) return;
+  const nameEl = document.getElementById(`bname-${i}`);
+  const metaEl = document.getElementById(`bmeta-${i}`);
+  if (nameEl) nameEl.textContent = d.tenantName || '(unknown — click to edit)';
+  if (metaEl) {
+    metaEl.textContent = [d.leasedSqft ? d.leasedSqft + ' sqft' : null,
+                          d.capPercentage ? d.capPercentage + '% cap' : null]
+                          .filter(Boolean).join(' · ') || '—';
+  }
+}
+
+function removeBulkTenant(i) {
+  tenantData.splice(i, 1);
+  renderBulkResults();
+}
+
+function clearBulkResults() {
+  tenantData.splice(0, tenantData.length);
+  document.getElementById('bulkResults').innerHTML = '';
+  document.getElementById('bulkProgress').style.display = 'none';
+  document.getElementById('bulkLeaseInput').value = '';
 }
 
 // ─── Invoice Slots ────────────────────────────────────────────────────────────
@@ -2093,7 +2364,13 @@ function syncPortfolioEntry() {
 }
 
 function resetWorkflow() {
-  for (let i = 0; i < MAX_LEASES; i++) tenantData[i] = null;
+  // Reset tenant data for both modes
+  tenantData.splice(0, tenantData.length, null, null, null);
+  document.getElementById('bulkResults').innerHTML = '';
+  document.getElementById('bulkProgress').style.display = 'none';
+  document.getElementById('bulkLeaseInput').value = '';
+  switchLeaseTab('bulk');
+
   invoiceData.length = 0;
   invoiceCount = 0;
   lastResults = []; lastInvoices = []; lastTenants = [];
