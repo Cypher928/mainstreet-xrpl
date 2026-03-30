@@ -366,7 +366,7 @@
     }
 
     /* ── Reports section ─────────────────────────────────────────────── */
-    #reportsSection { display: none; }
+    #reportsSection { display: block; }
     .report-btn-row { display: flex; gap: 12px; flex-wrap: wrap; margin-top: 8px; }
     .report-btn {
       padding: 10px 20px; border-radius: 9px; font-size: 0.88rem;
@@ -374,6 +374,12 @@
       background: #1e40af; color: #fff;
     }
     .report-btn:hover { background: #1e3a8a; }
+    .reports-notice {
+      margin-top: 14px; padding: 12px 16px;
+      background: #f8fafc; border: 1.5px dashed #cbd5e1; border-radius: 9px;
+      font-size: 0.85rem; color: #64748b; text-align: center;
+    }
+    #tenantReportButtons { margin-top: 14px; }
     .tenant-report-btn {
       padding: 8px 16px; border-radius: 7px; font-size: 0.82rem;
       font-weight: 600; cursor: pointer; border: 1.5px solid #bfdbfe;
@@ -573,14 +579,23 @@
   <div class="card" id="reportsSection">
     <div class="sec-head">
       <div class="sec-num" style="background:#7c3aed;">6</div>
-      <div><h2>Reports</h2><p>Print-ready landlord and tenant reports</p></div>
+      <div>
+        <h2>Reports</h2>
+        <p>Generate printable reports for landlords and tenants</p>
+      </div>
     </div>
     <div class="report-btn-row">
-      <button class="report-btn" onclick="generateMasterReport()">
+      <button class="report-btn" onclick="guardedMasterReport()">
         &#x1F4CB; Landlord Master Report
       </button>
+      <button class="report-btn" onclick="guardedTenantStatement()">
+        &#x1F9FE; Tenant Statement
+      </button>
     </div>
-    <div id="tenantReportButtons" style="margin-top:14px;"></div>
+    <div id="reportsMsg" class="reports-notice">
+      Run a CAM allocation in Section 4 to generate reports.
+    </div>
+    <div id="tenantReportButtons"></div>
   </div>
 
 </div><!-- /container -->
@@ -1020,7 +1035,7 @@ function runAllocation() {
   section.scrollIntoView({ behavior: 'smooth', block: 'start' });
 
   renderDisputeSection();
-  showReportSection();
+  showReportSection(); // refresh notice + tenant buttons
 }
 
 // ─── Helpers ──────────────────────────────────────────────────────────────────
@@ -1244,13 +1259,18 @@ async function resolveDispute(id, resolution) {
 // ─── Reports ──────────────────────────────────────────────────────────────────
 
 function showReportSection() {
-  const sec = document.getElementById('reportsSection');
-  sec.style.display = 'block';
-  sec.scrollIntoView({ behavior: 'smooth', block: 'start' });
-
-  // Render per-tenant statement buttons
+  // Update the notice + tenant buttons after allocation runs
+  const msg  = document.getElementById('reportsMsg');
   const wrap = document.getElementById('tenantReportButtons');
-  if (!lastResults.length) { wrap.innerHTML = ''; return; }
+
+  if (!lastResults.length) {
+    msg.style.display  = 'block';
+    wrap.innerHTML = '';
+    return;
+  }
+
+  msg.style.display = 'none';
+
   let html = '<div style="font-size:0.8rem;color:#64748b;margin-bottom:8px;">Tenant Statements</div>';
   html += '<div class="report-btn-row">';
   lastResults.forEach(r => {
@@ -1258,6 +1278,36 @@ function showReportSection() {
   });
   html += '</div>';
   wrap.innerHTML = html;
+}
+
+function guardedMasterReport() {
+  if (!lastResults.length) {
+    const msg = document.getElementById('reportsMsg');
+    msg.style.display = 'block';
+    msg.textContent = 'Please run a CAM allocation first to generate reports.';
+    msg.scrollIntoView({ behavior: 'smooth', block: 'nearest' });
+    return;
+  }
+  generateMasterReport();
+}
+
+function guardedTenantStatement() {
+  if (!lastResults.length) {
+    const msg = document.getElementById('reportsMsg');
+    msg.style.display = 'block';
+    msg.textContent = 'Please run a CAM allocation first to generate reports.';
+    msg.scrollIntoView({ behavior: 'smooth', block: 'nearest' });
+    return;
+  }
+  // If only one tenant, open directly; otherwise prompt via the tenant buttons
+  if (lastResults.length === 1) {
+    generateTenantStatement(lastResults[0].name);
+  } else {
+    const msg = document.getElementById('reportsMsg');
+    msg.style.display = 'block';
+    msg.textContent = 'Select a tenant below to generate their statement.';
+    document.getElementById('tenantReportButtons').scrollIntoView({ behavior: 'smooth', block: 'nearest' });
+  }
 }
 
 function openReport(title, bodyHtml) {
