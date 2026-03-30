@@ -77,7 +77,10 @@ The app tracks the running average amount per expense category. If a newly uploa
 Clicking Run CAM Allocation opens a summary modal showing the total number of invoices, the total dollar amount being allocated, the number of tenants, and a per-category breakdown. The allocation only proceeds after the user confirms the figures look correct.
 
 ---
+🌐 Live Demo: https://mainstreet-xrpl.vercel.app
 
+Also add a GitHub section at the bottom with:
+- How to clone and run locally
 ## XRPL Integration
 
 CAM Logic uses the XRP Ledger for three distinct functions:
