@@ -365,6 +365,89 @@
       color: #166534; word-break: break-all; line-height: 1.5;
     }
 
+    /* ── Portfolio Dashboard ─────────────────────────────────────────── */
+    #portfolioDashboard {
+      max-width: 720px; margin: 20px auto 0; padding: 0 16px;
+    }
+    .ptf-kpi-bar {
+      display: grid; grid-template-columns: repeat(5, 1fr);
+      gap: 10px; margin-bottom: 24px;
+    }
+    @media (max-width: 600px) { .ptf-kpi-bar { grid-template-columns: repeat(3, 1fr); } }
+    .ptf-kpi {
+      background: #fff; border-radius: 12px; padding: 14px 12px;
+      box-shadow: 0 2px 10px rgba(0,0,0,0.06); text-align: center;
+    }
+    .ptf-kpi-val {
+      font-size: 1.4rem; font-weight: 800; color: #1e40af;
+      line-height: 1; margin-bottom: 4px;
+    }
+    .ptf-kpi-disputes .ptf-kpi-val { color: #ef4444; }
+    .ptf-kpi-lbl {
+      font-size: 0.68rem; color: #94a3b8;
+      text-transform: uppercase; letter-spacing: 0.04em;
+    }
+    .ptf-props-head {
+      display: flex; align-items: center; justify-content: space-between;
+      margin-bottom: 14px;
+    }
+    .ptf-props-head h2 {
+      font-size: 1.05rem; font-weight: 700; color: #1a1a2e; margin: 0;
+    }
+    .add-prop-btn {
+      padding: 8px 16px; border-radius: 9px; font-size: 0.83rem;
+      font-weight: 700; cursor: pointer; border: 2px dashed #bfdbfe;
+      background: #eff6ff; color: #1e40af; transition: all 0.15s;
+    }
+    .add-prop-btn:hover { background: #dbeafe; border-color: #93c5fd; }
+    .ptf-cards-grid {
+      display: grid; grid-template-columns: repeat(auto-fill, minmax(210px, 1fr));
+      gap: 14px; margin-bottom: 32px;
+    }
+    .ptf-prop-card {
+      background: #fff; border-radius: 14px; padding: 18px 18px 16px;
+      box-shadow: 0 2px 10px rgba(0,0,0,0.07);
+      border: 2px solid transparent; cursor: pointer;
+      transition: all 0.18s;
+    }
+    .ptf-prop-card:hover {
+      border-color: #bfdbfe;
+      box-shadow: 0 6px 20px rgba(30,64,175,0.13);
+      transform: translateY(-2px);
+    }
+    .ptf-prop-card.active { border-color: #3b82f6; background: #f0f7ff; }
+    .ptf-prop-name { font-size: 0.95rem; font-weight: 700; color: #1a1a2e; margin-bottom: 6px; }
+    .ptf-status-row {
+      display: flex; align-items: center; gap: 6px;
+      font-size: 0.76rem; color: #64748b; margin-bottom: 14px;
+    }
+    .ptf-status-dot {
+      width: 9px; height: 9px; border-radius: 50%; flex-shrink: 0;
+    }
+    .ptf-status-dot.reconciled  { background: #22c55e; box-shadow: 0 0 0 3px #dcfce7; }
+    .ptf-status-dot.in-progress { background: #f59e0b; box-shadow: 0 0 0 3px #fef3c7; }
+    .ptf-status-dot.disputes    { background: #ef4444; box-shadow: 0 0 0 3px #fee2e2; }
+    .ptf-stats-row { display: flex; gap: 14px; margin-bottom: 10px; }
+    .ptf-stat { font-size: 0.77rem; color: #64748b; }
+    .ptf-stat strong { display: block; font-size: 0.92rem; font-weight: 700; color: #1e293b; }
+    .ptf-cam-lbl { font-size: 0.68rem; color: #94a3b8; text-transform: uppercase; letter-spacing: 0.04em; }
+    .ptf-cam-val { font-size: 1.15rem; font-weight: 800; color: #1e40af; margin-top: 2px; }
+
+    /* ── Property Breadcrumb ─────────────────────────────────────────── */
+    #propertyBreadcrumb {
+      max-width: 720px; margin: 16px auto 0; padding: 0 16px;
+      display: none; align-items: center; gap: 12px; flex-wrap: wrap;
+    }
+    .breadcrumb-back {
+      padding: 7px 14px; border-radius: 8px; font-size: 0.82rem;
+      font-weight: 600; cursor: pointer; border: 1.5px solid #e2e8f0;
+      background: #fff; color: #475569; transition: all 0.15s;
+      box-shadow: 0 1px 4px rgba(0,0,0,0.06); white-space: nowrap;
+    }
+    .breadcrumb-back:hover { background: #f1f5f9; border-color: #93c5fd; color: #1e40af; }
+    .breadcrumb-path { font-size: 0.84rem; color: #94a3b8; }
+    .breadcrumb-path span { color: #1a1a2e; font-weight: 700; }
+
     /* ── Confidence badges ───────────────────────────────────────────── */
     .conf-badge {
       display: inline-flex; align-items: center; gap: 3px;
@@ -568,7 +651,49 @@
   <span class="hint">Used in-browser only · never stored</span>
 </div>
 
-<div class="container">
+<!-- ── Portfolio Dashboard ──────────────────────────────────────────── -->
+<div id="portfolioDashboard">
+
+  <!-- KPI Overview Bar -->
+  <div class="ptf-kpi-bar">
+    <div class="ptf-kpi">
+      <div class="ptf-kpi-val" id="pKpiProperties">3</div>
+      <div class="ptf-kpi-lbl">Properties</div>
+    </div>
+    <div class="ptf-kpi">
+      <div class="ptf-kpi-val" id="pKpiTenants">9</div>
+      <div class="ptf-kpi-lbl">Total Tenants</div>
+    </div>
+    <div class="ptf-kpi">
+      <div class="ptf-kpi-val" id="pKpiCAM">$45,750</div>
+      <div class="ptf-kpi-lbl">CAM Collected</div>
+    </div>
+    <div class="ptf-kpi">
+      <div class="ptf-kpi-val" id="pKpiInvoices">22</div>
+      <div class="ptf-kpi-lbl">Invoices Processed</div>
+    </div>
+    <div class="ptf-kpi ptf-kpi-disputes">
+      <div class="ptf-kpi-val" id="pKpiDisputes">2</div>
+      <div class="ptf-kpi-lbl">Open Disputes</div>
+    </div>
+  </div>
+
+  <!-- Property Cards -->
+  <div class="ptf-props-head">
+    <h2>Your Properties</h2>
+    <button class="add-prop-btn" onclick="addNewProperty()">+ Add New Property</button>
+  </div>
+  <div class="ptf-cards-grid" id="propertyCardsGrid"></div>
+
+</div>
+
+<!-- ── Property Breadcrumb ───────────────────────────────────────────── -->
+<div id="propertyBreadcrumb">
+  <button class="breadcrumb-back" onclick="backToPortfolio()">&#x2190; Back to Portfolio</button>
+  <span class="breadcrumb-path">Portfolio &rsaquo; <span id="breadcrumbPropName"></span></span>
+</div>
+
+<div class="container" id="mainWorkflow" style="display:none;">
 
   <!-- ── SECTION 1: Property Setup ─────────────────────────────────── -->
   <div class="card">
@@ -579,7 +704,8 @@
     <div class="field-row">
       <div class="field">
         <label>Property Name</label>
-        <input type="text" id="propertyName" placeholder="e.g. Westfield Plaza" />
+        <input type="text" id="propertyName" placeholder="e.g. Westfield Plaza"
+          oninput="liveUpdateBreadcrumb(this.value)" />
       </div>
       <div class="field">
         <label>Total Property Sqft</label>
@@ -711,6 +837,15 @@ const tenantData  = [null, null, null];
 // invoiceData[i] = null | { vendorName, amount, category, invoiceDate }
 const invoiceData = [];
 let invoiceCount  = 0;
+
+// ─── Portfolio State ──────────────────────────────────────────────────────────
+const portfolio = [
+  { id: 'prop-1', name: 'Westfield Plaza',        totalSqft: 28000, status: 'in-progress', tenantCount: 3, invoiceCount: 7,  totalCAM: 14200, openDisputes: 0 },
+  { id: 'prop-2', name: 'Bartlett Commons',        totalSqft: 15000, status: 'reconciled',  tenantCount: 2, invoiceCount: 4,  totalCAM: 8750,  openDisputes: 0 },
+  { id: 'prop-3', name: 'Sunrise Shopping Center', totalSqft: 45000, status: 'disputes',    tenantCount: 4, invoiceCount: 11, totalCAM: 22800, openDisputes: 2 },
+];
+let nextPropId   = 4;
+let activePropId = null; // null = portfolio view
 
 // ─── Claude API helpers ───────────────────────────────────────────────────────
 
@@ -1291,6 +1426,7 @@ function runAllocation() {
 
   renderDisputeSection();
   showReportSection(); // refresh notice + tenant buttons
+  syncPortfolioEntry();
 }
 
 // ─── Helpers ──────────────────────────────────────────────────────────────────
@@ -1845,9 +1981,151 @@ function generateTenantStatement(tenantName) {
     });
 }
 
+// ─── Portfolio ────────────────────────────────────────────────────────────────
+
+function portfolioKPIs() {
+  return {
+    properties:   portfolio.length,
+    tenants:      portfolio.reduce((s, p) => s + p.tenantCount, 0),
+    cam:          portfolio.reduce((s, p) => s + p.totalCAM, 0),
+    invoices:     portfolio.reduce((s, p) => s + p.invoiceCount, 0),
+    openDisputes: portfolio.reduce((s, p) => s + p.openDisputes, 0),
+  };
+}
+
+function renderPortfolio() {
+  const k = portfolioKPIs();
+
+  document.getElementById('pKpiProperties').textContent = k.properties;
+  document.getElementById('pKpiTenants').textContent    = k.tenants;
+  document.getElementById('pKpiCAM').textContent        = '$' + k.cam.toLocaleString('en-US');
+  document.getElementById('pKpiInvoices').textContent   = k.invoices;
+  document.getElementById('pKpiDisputes').textContent   = k.openDisputes;
+
+  const statusLabel = { reconciled: 'Reconciled', 'in-progress': 'In Progress', disputes: 'Has Open Disputes' };
+
+  document.getElementById('propertyCardsGrid').innerHTML = portfolio.map(p => `
+    <div class="ptf-prop-card${activePropId === p.id ? ' active' : ''}" onclick="selectProperty('${p.id}')">
+      <div class="ptf-prop-name">${esc(p.name)}</div>
+      <div class="ptf-status-row">
+        <span class="ptf-status-dot ${p.status}"></span>
+        ${statusLabel[p.status] || p.status}
+      </div>
+      <div class="ptf-stats-row">
+        <div class="ptf-stat"><strong>${p.tenantCount}</strong>Tenants</div>
+        <div class="ptf-stat"><strong>${p.invoiceCount}</strong>Invoices</div>
+        ${p.openDisputes > 0
+          ? `<div class="ptf-stat"><strong style="color:#ef4444">${p.openDisputes}</strong>Disputes</div>`
+          : ''}
+      </div>
+      <div class="ptf-cam-lbl">CAM This Period</div>
+      <div class="ptf-cam-val">${p.totalCAM > 0 ? '$' + p.totalCAM.toLocaleString('en-US') : '—'}</div>
+    </div>`).join('');
+
+  document.getElementById('portfolioDashboard').style.display  = 'block';
+  document.getElementById('propertyBreadcrumb').style.display  = 'none';
+  document.getElementById('mainWorkflow').style.display        = 'none';
+}
+
+function selectProperty(id) {
+  const prop = portfolio.find(p => p.id === id);
+  if (!prop) return;
+
+  resetWorkflow();
+  activePropId = id;
+
+  document.getElementById('propertyName').value = prop.name;
+  document.getElementById('totalSqft').value    = prop.totalSqft || '';
+  document.getElementById('breadcrumbPropName').textContent = prop.name;
+
+  document.getElementById('portfolioDashboard').style.display  = 'none';
+  document.getElementById('propertyBreadcrumb').style.display  = 'flex';
+  document.getElementById('mainWorkflow').style.display        = 'block';
+
+  window.scrollTo({ top: 0, behavior: 'smooth' });
+}
+
+function backToPortfolio() {
+  syncPortfolioEntry();
+  activePropId = null;
+  renderPortfolio();
+  window.scrollTo({ top: 0, behavior: 'smooth' });
+}
+
+function addNewProperty() {
+  const id = 'prop-' + (nextPropId++);
+  portfolio.push({
+    id, name: 'New Property', totalSqft: 0,
+    status: 'in-progress', tenantCount: 0, invoiceCount: 0,
+    totalCAM: 0, openDisputes: 0,
+  });
+  selectProperty(id);
+  setTimeout(() => {
+    const el = document.getElementById('propertyName');
+    el.focus(); el.select();
+  }, 80);
+}
+
+function syncPortfolioEntry() {
+  if (!activePropId) return;
+  const prop = portfolio.find(p => p.id === activePropId);
+  if (!prop) return;
+
+  const name = document.getElementById('propertyName').value.trim();
+  const sqft = parseFloat(document.getElementById('totalSqft').value) || 0;
+  if (name) prop.name = name;
+  if (sqft) prop.totalSqft = sqft;
+
+  if (lastResults.length) {
+    prop.tenantCount  = lastResults.length;
+    prop.invoiceCount = lastInvoicesFull.length;
+    prop.totalCAM     = Math.round(lastResults.reduce((s, r) => s + r.allocatedAmount, 0));
+  }
+
+  const openCount    = disputes.filter(d => d.status === 'open').length;
+  prop.openDisputes  = openCount;
+  prop.status        = openCount > 0      ? 'disputes'
+                     : lastResults.length ? 'reconciled'
+                     : 'in-progress';
+
+  document.getElementById('breadcrumbPropName').textContent = prop.name;
+}
+
+function resetWorkflow() {
+  for (let i = 0; i < MAX_LEASES; i++) tenantData[i] = null;
+  invoiceData.length = 0;
+  invoiceCount = 0;
+  lastResults = []; lastInvoices = []; lastTenants = [];
+  lastPropName = ''; lastTotal = 0; lastInvoicesFull = [];
+  disputes.length = 0;
+  nextDisputeId = 0;
+
+  document.getElementById('propertyName').value = '';
+  document.getElementById('totalSqft').value    = '';
+  document.getElementById('resultsBody').innerHTML = '';
+  document.getElementById('resultsTitle').textContent = 'Allocation Results';
+  document.getElementById('results').style.display = 'none';
+  document.getElementById('disputeSection').style.display = '';
+  document.getElementById('disputeInvoiceList').innerHTML = '';
+  document.getElementById('openDisputesWrap').style.display = 'none';
+  document.getElementById('resolvedCount').textContent = '0';
+  document.getElementById('reportsMsg').style.display = 'block';
+  document.getElementById('reportsMsg').textContent = 'Run a CAM allocation in Section 4 to generate reports.';
+  document.getElementById('tenantReportButtons').innerHTML = '';
+
+  renderTenantSlots();
+  document.getElementById('invoiceList').innerHTML = '';
+  document.getElementById('addInvoiceBtn').disabled = false;
+  addInvoiceSlot();
+}
+
+function liveUpdateBreadcrumb(name) {
+  const el = document.getElementById('breadcrumbPropName');
+  if (el) el.textContent = name || 'New Property';
+}
+
 // ─── Init ─────────────────────────────────────────────────────────────────────
-renderTenantSlots();
-addInvoiceSlot(); // open first invoice slot by default
+renderPortfolio(); // show portfolio dashboard on load
 
 </script>
 
