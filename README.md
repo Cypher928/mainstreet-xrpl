@@ -57,6 +57,27 @@ Powered by XRPL — every invoice is cryptographically verified on-chain, and ye
 
 ---
 
+## Error Prevention
+
+CAM Logic includes four layers of error prevention to reduce costly mistakes before any funds are calculated:
+
+**AI Confidence Scoring**
+Every field extracted from a lease or invoice by Claude AI is accompanied by a confidence score (0–100). A colored indicator appears next to each field in the UI:
+- Green — High confidence (90–100): value was clearly present in the document
+- Yellow — Please verify (70–89): value was found but may need review
+- Red — Low confidence (below 70): value was inferred or unclear — review carefully before proceeding
+
+**Duplicate Invoice Detection**
+After each invoice is scanned, the app automatically compares it against all previously uploaded invoices using vendor name similarity, amount (within $1), and invoice date (within 7 days). If a likely duplicate is found, a warning banner appears with two options: add it anyway or remove the duplicate.
+
+**Amount Sanity Checks**
+The app tracks the running average amount per expense category. If a newly uploaded invoice is more than 3× the average for its category, a warning flags it as unusually high so it can be verified before being included in the allocation.
+
+**Pre-Allocation Confirmation**
+Clicking Run CAM Allocation opens a summary modal showing the total number of invoices, the total dollar amount being allocated, the number of tenants, and a per-category breakdown. The allocation only proceeds after the user confirms the figures look correct.
+
+---
+
 ## XRPL Integration
 
 CAM Logic uses the XRP Ledger for three distinct functions:
