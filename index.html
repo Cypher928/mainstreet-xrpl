@@ -3,7 +3,7 @@
 <head>
   <meta charset="UTF-8" />
   <meta name="viewport" content="width=device-width, initial-scale=1.0" />
-  <title>CAM Logic — AI-Powered Allocation</title>
+  <title>Mainstreet — AI-Powered CAM Reconciliation</title>
   <style>
     *, *::before, *::after { box-sizing: border-box; margin: 0; padding: 0; }
 
@@ -844,8 +844,8 @@
 <body>
 
 <header>
-  <h1>CAM Logic</h1>
-  <p>AI-Powered Commercial Area Maintenance Reconciliation</p>
+  <h1>Mainstreet</h1>
+  <p>CAM Reconciliation &nbsp;&middot;&nbsp; Works Alongside Yardi &nbsp;&middot;&nbsp; Powered by XRPL</p>
 </header>
 
 <!-- API Key -->
@@ -2702,7 +2702,7 @@ function generateHolesReport() {
     ${summaryBar}
 
     <div class="rpt-footer">
-      CAM Logic &nbsp;·&nbsp; ${esc(propName)} &nbsp;·&nbsp; Monthly Holes Report &nbsp;·&nbsp; ${now}
+      Mainstreet &nbsp;·&nbsp; ${esc(propName)} &nbsp;·&nbsp; Monthly Holes Report &nbsp;·&nbsp; ${now}
     </div>`;
 
   openReport('Monthly Holes Report — ' + propName, html);
@@ -2834,7 +2834,7 @@ function generateMasterReport() {
     </div>
 
     <div class="rpt-footer">
-      CAM Logic &nbsp;·&nbsp; ${esc(lastPropName)} &nbsp;·&nbsp; This report is auto-generated and reflects data entered in the current session.
+      Mainstreet &nbsp;·&nbsp; ${esc(lastPropName)} &nbsp;·&nbsp; This report is auto-generated and reflects data entered in the current session.
     </div>`;
 
   openReport('Landlord Master Report — ' + lastPropName, html);
@@ -2975,7 +2975,7 @@ function generateTenantStatement(tenantName) {
     </div>
 
     <div class="rpt-footer">
-      CAM Logic &nbsp;·&nbsp; ${esc(tenantName)} &nbsp;·&nbsp; ${esc(lastPropName)} &nbsp;·&nbsp;
+      Mainstreet &nbsp;·&nbsp; ${esc(tenantName)} &nbsp;·&nbsp; ${esc(lastPropName)} &nbsp;·&nbsp;
       This statement is auto-generated and reflects data entered in the current session.
     </div>`;
 
@@ -3145,7 +3145,7 @@ function liveUpdateBreadcrumb(name) {
 try {
   renderPortfolio();
 } catch (e) {
-  console.error('CAM Logic: portfolio render failed, falling back to main workflow.', e);
+  console.error('Mainstreet: portfolio render failed, falling back to main workflow.', e);
   document.getElementById('portfolioDashboard').style.display = 'none';
   document.getElementById('mainWorkflow').style.display       = 'block';
   renderTenantSlots();
@@ -3156,9 +3156,10 @@ try {
 <footer style="max-width:720px;margin:32px auto 0;padding:18px 24px;background:#fff;border-radius:12px;box-shadow:0 2px 10px rgba(0,0,0,0.06);display:flex;align-items:flex-start;gap:14px;">
   <span style="font-size:1.1rem;flex-shrink:0;">🔒</span>
   <p style="font-size:0.8rem;line-height:1.6;color:#64748b;margin:0;">
-    <strong style="color:#1e293b;">CAM Logic is 100% read-only.</strong>
+    <strong style="color:#1e293b;">Mainstreet is 100% read-only.</strong>
     No private keys or seed phrases are ever requested. All analysis runs client-side in your browser.
     Wallet addresses are not logged or retained. Only publicly visible XRPL data is used.
+    &nbsp;&middot;&nbsp; <strong style="color:#1e293b;">Mainstreet on XRPL</strong>
   </p>
 </footer>
 
