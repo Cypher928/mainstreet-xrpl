@@ -627,6 +627,58 @@
     }
     .tenant-report-btn:hover { background: #dbeafe; }
 
+    .report-btn-holes { background: #92400e; }
+    .report-btn-holes:hover { background: #78350f; }
+
+    /* ── Holes report styles ─────────────────────────────────────────── */
+    .holes-group {
+      margin-bottom: 28px;
+    }
+    .holes-group-title {
+      font-size: 0.8rem; font-weight: 800; letter-spacing: 0.08em;
+      text-transform: uppercase; color: #475569;
+      border-bottom: 2px solid #e2e8f0; padding-bottom: 6px;
+      margin-bottom: 12px; font-family: sans-serif;
+    }
+    .hole-item {
+      display: flex; align-items: flex-start; gap: 10px;
+      padding: 11px 14px; border-radius: 9px;
+      margin-bottom: 8px; font-family: sans-serif;
+      border: 1.5px solid transparent;
+    }
+    .hole-item.critical {
+      background: #fff1f2; border-color: #fecdd3; color: #9f1239;
+    }
+    .hole-item.warning {
+      background: #fffbeb; border-color: #fde68a; color: #92400e;
+    }
+    .hole-item.ok {
+      background: #f0fdf4; border-color: #bbf7d0; color: #166534;
+    }
+    .hole-icon { font-size: 1rem; flex-shrink: 0; margin-top: 1px; }
+    .hole-text { font-size: 0.86rem; line-height: 1.45; }
+    .hole-text strong { font-weight: 700; }
+    .hole-text .hole-detail {
+      display: block; font-size: 0.76rem; opacity: 0.75; margin-top: 2px;
+    }
+    .holes-summary-bar {
+      margin-top: 28px; padding: 16px 20px;
+      border-radius: 11px; font-family: sans-serif;
+      display: flex; align-items: center; gap: 14px;
+    }
+    .holes-summary-bar.has-issues {
+      background: #fff1f2; border: 2px solid #fca5a5;
+    }
+    .holes-summary-bar.all-clear {
+      background: #f0fdf4; border: 2px solid #86efac;
+    }
+    .holes-summary-count {
+      font-size: 2rem; font-weight: 800; line-height: 1; flex-shrink: 0;
+    }
+    .holes-summary-bar.has-issues .holes-summary-count { color: #be123c; }
+    .holes-summary-bar.all-clear  .holes-summary-count { color: #15803d; }
+    .holes-summary-msg { font-size: 0.9rem; font-weight: 600; }
+
     /* ── Report overlay ───────────────────────────────────────────────── */
     #reportOverlay {
       display: none; position: fixed; inset: 0; z-index: 1000;
@@ -917,6 +969,9 @@
       </button>
       <button class="report-btn" onclick="guardedTenantStatement()">
         &#x1F9FE; Tenant Statement
+      </button>
+      <button class="report-btn report-btn-holes" onclick="generateHolesReport()">
+        &#x1F50D; Monthly Holes Report
       </button>
     </div>
     <div id="reportsMsg" class="reports-notice">
@@ -2035,6 +2090,237 @@ function guardedTenantStatement() {
     msg.textContent = 'Select a tenant below to generate their statement.';
     document.getElementById('tenantReportButtons').scrollIntoView({ behavior: 'smooth', block: 'nearest' });
   }
+}
+
+// ─── Monthly Holes Report ─────────────────────────────────────────────────────
+
+function generateHolesReport() {
+  const propName = document.getElementById('propertyName').value.trim() || 'Property';
+  const now      = new Date().toLocaleDateString('en-US', { year:'numeric', month:'long', day:'numeric' });
+  const month    = new Date().toLocaleDateString('en-US', { year:'numeric', month:'long' });
+
+  const criticalItems = [];
+  const warningItems  = [];
+
+  // ── 1. Missing categories vs. last reconciliation ──────────────────────────
+  // prevCats: categories seen in the last allocation run
+  // currCats: categories present in currently uploaded invoices
+  const prevCats = [...new Set(lastInvoicesFull.map(inv => inv.category).filter(Boolean))];
+  const currCats = [...new Set(
+    invoiceData.filter(inv => inv && !inv._error && inv.category).map(inv => inv.category)
+  )];
+
+  if (prevCats.length > 0) {
+    prevCats.forEach(cat => {
+      if (!currCats.includes(cat)) {
+        const prevTotal = lastInvoicesFull
+          .filter(inv => inv.category === cat)
+          .reduce((s, inv) => s + (parseFloat(inv.amount) || 0), 0);
+        criticalItems.push({
+          icon: '🚫',
+          text: `No <strong>${esc(cat)}</strong> invoice found this month`,
+          detail: prevTotal > 0
+            ? `Last reconciliation total: ${fmt(prevTotal)} — verify if expense still applies`
+            : 'Was present in last reconciliation',
+        });
+      }
+    });
+  }
+
+  // ── 2. Missing regular vendors ────────────────────────────────────────────
+  const prevVendors = [...new Set(lastInvoicesFull.map(inv => inv.vendor).filter(Boolean))];
+  const currVendors = invoiceData
+    .filter(inv => inv && !inv._error && inv.vendorName)
+    .map(inv => inv.vendorName);
+
+  prevVendors.forEach(vendor => {
+    const stillPresent = currVendors.some(v => similarVendor(v, vendor));
+    if (!stillPresent) {
+      const lastAmt = lastInvoicesFull
+        .filter(inv => inv.vendor === vendor)
+        .reduce((s, inv) => s + (parseFloat(inv.amount) || 0), 0);
+      criticalItems.push({
+        icon: '🏢',
+        text: `<strong>${esc(vendor)}</strong> has not submitted an invoice this month`,
+        detail: lastAmt > 0 ? `Last invoice total: ${fmt(lastAmt)}` : 'Was present in last reconciliation',
+      });
+    }
+  });
+
+  if (prevCats.length === 0 && prevVendors.length === 0) {
+    // No prior reconciliation to compare against — note it as a warning
+    warningItems.push({
+      icon: '📋',
+      text: 'No previous reconciliation data available for comparison',
+      detail: 'Run a CAM allocation first to enable month-over-month gap detection',
+    });
+  }
+
+  // ── 3. Tenants with no lease uploaded ────────────────────────────────────
+  const validTenants = tenantData.filter(t => t && !t._error && t.tenantName && parseFloat(t.leasedSqft) > 0);
+  const errorTenants = tenantData.filter(t => t && t._error);
+  const emptySlots   = tenantData.filter(t => t === null).length;
+
+  if (validTenants.length === 0 && tenantData.length === 0) {
+    warningItems.push({
+      icon: '👤',
+      text: 'No tenant leases uploaded',
+      detail: 'Upload at least one lease in Section 2 before running allocation',
+    });
+  }
+  errorTenants.forEach(t => {
+    warningItems.push({
+      icon: '⚠️',
+      text: `Lease extraction failed for <strong>${esc(t.tenantName || 'unknown tenant')}</strong>`,
+      detail: t._error,
+    });
+  });
+  if (emptySlots > 0 && tenantData.some(t => t === null)) {
+    // Only flag empty slots if we're in single-lease mode (fixed 3-slot array)
+    // and some real tenants exist (mixed state)
+    if (validTenants.length > 0) {
+      warningItems.push({
+        icon: '👤',
+        text: `${emptySlots} tenant slot${emptySlots !== 1 ? 's' : ''} still empty`,
+        detail: 'Upload leases for all tenants or remove unused slots before reconciling',
+      });
+    }
+  }
+
+  // ── 4. Low-confidence invoices not reviewed ───────────────────────────────
+  invoiceData.forEach((inv, i) => {
+    if (!inv) return;
+    if (inv._error) {
+      warningItems.push({
+        icon: '🔴',
+        text: `Invoice ${i + 1}: extraction failed — <strong>${esc(inv.vendorName || 'unknown vendor')}</strong>`,
+        detail: inv._error,
+      });
+      return;
+    }
+    const conf   = inv.confidence || {};
+    const scores = Object.values(conf).filter(s => typeof s === 'number');
+    const minScore = scores.length ? Math.min(...scores) : null;
+    if (minScore !== null && minScore < 70) {
+      const fieldNames = Object.entries(conf)
+        .filter(([, v]) => typeof v === 'number' && v < 70)
+        .map(([k]) => k);
+      warningItems.push({
+        icon: '⚠️',
+        text: `Invoice ${i + 1} — <strong>${esc(inv.vendorName || 'unknown vendor')}</strong> has low confidence fields`,
+        detail: `Low confidence on: ${fieldNames.join(', ')} (min score: ${minScore}%) — please verify before allocating`,
+      });
+    }
+  });
+
+  // ── Build HTML ────────────────────────────────────────────────────────────
+  const totalIssues = criticalItems.length + warningItems.length;
+
+  function renderItems(items) {
+    if (!items.length) return '';
+    return items.map(it => `
+      <div class="hole-item ${it.severity || (it === criticalItems[criticalItems.indexOf(it)] ? 'critical' : 'warning')}">
+        <span class="hole-icon">${it.icon}</span>
+        <span class="hole-text">
+          ${it.text}
+          ${it.detail ? `<span class="hole-detail">${esc(it.detail)}</span>` : ''}
+        </span>
+      </div>`).join('');
+  }
+
+  // Tag severity explicitly
+  criticalItems.forEach(it => { it.severity = 'critical'; });
+  warningItems.forEach(it => { it.severity = 'warning'; });
+
+  const missingSection = criticalItems.length ? `
+    <div class="holes-group">
+      <div class="holes-group-title">&#x1F6AB; Missing Items</div>
+      ${criticalItems.map(it => `
+        <div class="hole-item critical">
+          <span class="hole-icon">${it.icon}</span>
+          <span class="hole-text">
+            ${it.text}
+            ${it.detail ? `<span class="hole-detail">${esc(it.detail)}</span>` : ''}
+          </span>
+        </div>`).join('')}
+    </div>` : `
+    <div class="holes-group">
+      <div class="holes-group-title">&#x1F6AB; Missing Items</div>
+      <div class="hole-item ok">
+        <span class="hole-icon">&#x2705;</span>
+        <span class="hole-text">No missing categories or vendors detected</span>
+      </div>
+    </div>`;
+
+  const incompleteSection = warningItems.length ? `
+    <div class="holes-group">
+      <div class="holes-group-title">&#x26A0;&#xFE0F; Incomplete Items</div>
+      ${warningItems.map(it => `
+        <div class="hole-item warning">
+          <span class="hole-icon">${it.icon}</span>
+          <span class="hole-text">
+            ${it.text}
+            ${it.detail ? `<span class="hole-detail">${esc(it.detail)}</span>` : ''}
+          </span>
+        </div>`).join('')}
+    </div>` : `
+    <div class="holes-group">
+      <div class="holes-group-title">&#x26A0;&#xFE0F; Incomplete Items</div>
+      <div class="hole-item ok">
+        <span class="hole-icon">&#x2705;</span>
+        <span class="hole-text">All tenants and invoices look complete</span>
+      </div>
+    </div>`;
+
+  const summaryBar = totalIssues === 0 ? `
+    <div class="holes-summary-bar all-clear">
+      <div class="holes-summary-count">&#x2713;</div>
+      <div class="holes-summary-msg">Everything looks good — ready to run reconciliation</div>
+    </div>` : `
+    <div class="holes-summary-bar has-issues">
+      <div class="holes-summary-count">${totalIssues}</div>
+      <div class="holes-summary-msg">
+        ${totalIssues} item${totalIssues !== 1 ? 's' : ''} need${totalIssues === 1 ? 's' : ''} attention before running reconciliation
+        <span style="display:block;font-size:0.78rem;font-weight:400;margin-top:2px;opacity:0.8;">
+          ${criticalItems.length} critical &nbsp;·&nbsp; ${warningItems.length} warning${warningItems.length !== 1 ? 's' : ''}
+        </span>
+      </div>
+    </div>`;
+
+  const html = `
+    <div class="rpt-letterhead">
+      <h1>${esc(propName)}</h1>
+      <div class="rpt-sub">Monthly Holes Report &nbsp;·&nbsp; ${month} &nbsp;·&nbsp; Generated ${now}</div>
+    </div>
+
+    <div class="rpt-kpi-row">
+      <div class="rpt-kpi">
+        <div class="kpi-val" style="color:${criticalItems.length > 0 ? '#be123c' : '#15803d'}">${criticalItems.length}</div>
+        <div class="kpi-lbl">Critical Missing</div>
+      </div>
+      <div class="rpt-kpi">
+        <div class="kpi-val" style="color:${warningItems.length > 0 ? '#92400e' : '#15803d'}">${warningItems.length}</div>
+        <div class="kpi-lbl">Warnings</div>
+      </div>
+      <div class="rpt-kpi">
+        <div class="kpi-val">${validTenants.length}</div>
+        <div class="kpi-lbl">Leases Uploaded</div>
+      </div>
+      <div class="rpt-kpi">
+        <div class="kpi-val">${invoiceData.filter(inv => inv && !inv._error).length}</div>
+        <div class="kpi-lbl">Invoices Loaded</div>
+      </div>
+    </div>
+
+    ${missingSection}
+    ${incompleteSection}
+    ${summaryBar}
+
+    <div class="rpt-footer">
+      CAM Logic &nbsp;·&nbsp; ${esc(propName)} &nbsp;·&nbsp; Monthly Holes Report &nbsp;·&nbsp; ${now}
+    </div>`;
+
+  openReport('Monthly Holes Report — ' + propName, html);
 }
 
 function openReport(title, bodyHtml) {
