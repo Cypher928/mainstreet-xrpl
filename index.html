@@ -433,6 +433,54 @@
     .ptf-cam-lbl { font-size: 0.68rem; color: #94a3b8; text-transform: uppercase; letter-spacing: 0.04em; }
     .ptf-cam-val { font-size: 1.15rem; font-weight: 800; color: #1e40af; margin-top: 2px; }
 
+    /* ── XRPL Trust Strip ───────────────────────────────────────────── */
+    .xrpl-trust-strip {
+      display: flex; align-items: center; justify-content: center;
+      flex-wrap: wrap; gap: 18px;
+      background: linear-gradient(135deg, #0f172a 0%, #1e3a5f 100%);
+      border-radius: 12px; padding: 14px 20px; margin-bottom: 24px;
+    }
+    .xrpl-trust-item {
+      display: flex; align-items: center; gap: 7px;
+      font-size: 0.78rem; font-weight: 600; color: #bfdbfe;
+      white-space: nowrap;
+    }
+    .xrpl-trust-item .xrpl-icon { font-size: 0.95rem; }
+    .xrpl-trust-divider {
+      width: 1px; height: 18px; background: rgba(148,163,184,0.3);
+    }
+    .xrpl-trust-link {
+      font-size: 0.75rem; color: #7dd3fc; font-weight: 600;
+      text-decoration: none; border-bottom: 1px solid rgba(125,211,252,0.3);
+      transition: color 0.15s;
+    }
+    .xrpl-trust-link:hover { color: #bae6fd; }
+
+    /* ── On-Chain badge on property cards ───────────────────────────── */
+    .ptf-onchain-badge {
+      display: inline-flex; align-items: center; gap: 4px;
+      padding: 2px 8px; border-radius: 20px; margin-top: 8px;
+      background: #f0fdf4; border: 1px solid #86efac;
+      font-size: 0.68rem; font-weight: 700; color: #15803d;
+    }
+
+    /* ── Phase 2 teaser ─────────────────────────────────────────────── */
+    .ptf-phase2-teaser {
+      display: flex; align-items: center; gap: 14px;
+      background: #fefce8; border: 1.5px solid #fde68a;
+      border-radius: 11px; padding: 13px 18px; margin-bottom: 8px;
+    }
+    .ptf-phase2-icon { font-size: 1.2rem; flex-shrink: 0; }
+    .ptf-phase2-text { font-size: 0.82rem; color: #78350f; line-height: 1.4; }
+    .ptf-phase2-text strong { color: #92400e; }
+    .ptf-phase2-badge {
+      margin-left: auto; flex-shrink: 0;
+      padding: 3px 10px; border-radius: 20px;
+      background: #fef3c7; border: 1px solid #fcd34d;
+      font-size: 0.7rem; font-weight: 700; color: #92400e;
+      white-space: nowrap;
+    }
+
     /* ── Property Breadcrumb ─────────────────────────────────────────── */
     #propertyBreadcrumb {
       max-width: 720px; margin: 16px auto 0; padding: 0 16px;
@@ -858,6 +906,30 @@
 <!-- ── Portfolio Dashboard ──────────────────────────────────────────── -->
 <div id="portfolioDashboard">
 
+  <!-- XRPL Trust Strip -->
+  <div class="xrpl-trust-strip">
+    <div class="xrpl-trust-item">
+      <span class="xrpl-icon">&#x1F517;</span>
+      Every reconciliation hashed on XRPL
+    </div>
+    <div class="xrpl-trust-divider"></div>
+    <div class="xrpl-trust-item">
+      <span class="xrpl-icon">&#x1F512;</span>
+      Dispute resolutions recorded immutably
+    </div>
+    <div class="xrpl-trust-divider"></div>
+    <div class="xrpl-trust-item">
+      <span class="xrpl-icon">&#x26A1;</span>
+      Year-end settlement via XRPL Escrow
+    </div>
+    <div class="xrpl-trust-divider"></div>
+    <a class="xrpl-trust-link"
+      href="https://testnet.xrpl.org/transactions/AFAD1E38C7A932C35511DB846A099EE346B7E1D71EF3E9F5E61D1F9BF505E113"
+      target="_blank" rel="noopener">
+      View Live TX &#x2197;
+    </a>
+  </div>
+
   <!-- KPI Overview Bar -->
   <div class="ptf-kpi-bar">
     <div class="ptf-kpi">
@@ -888,6 +960,16 @@
     <button class="add-prop-btn" onclick="addNewProperty()">+ Add New Property</button>
   </div>
   <div class="ptf-cards-grid" id="propertyCardsGrid"></div>
+
+  <!-- Phase 2 Teaser -->
+  <div class="ptf-phase2-teaser">
+    <span class="ptf-phase2-icon">&#x1F3E6;</span>
+    <div class="ptf-phase2-text">
+      <strong>Mortgage Escrow Analysis — Coming Soon</strong><br>
+      Verify CAM compliance before releasing escrow funds. Built for commercial mortgage servicers on XRPL.
+    </div>
+    <span class="ptf-phase2-badge">Phase 2</span>
+  </div>
 
 </div>
 
@@ -3027,6 +3109,9 @@ function renderPortfolio() {
       </div>
       <div class="ptf-cam-lbl">CAM This Period</div>
       <div class="ptf-cam-val">${p.totalCAM > 0 ? '$' + p.totalCAM.toLocaleString('en-US') : '—'}</div>
+      ${p.status === 'reconciled'
+        ? `<div class="ptf-onchain-badge">&#x1F517; On-Chain Record</div>`
+        : ''}
     </div>`).join('');
 
   document.getElementById('portfolioDashboard').style.display  = 'block';
