@@ -464,6 +464,16 @@
       font-size: 0.68rem; font-weight: 700; color: #15803d;
     }
 
+    /* ── Demo launch button ─────────────────────────────────────────── */
+    .demo-launch-btn {
+      padding: 8px 18px; border-radius: 9px; font-size: 0.83rem;
+      font-weight: 700; cursor: pointer; border: none; white-space: nowrap;
+      background: linear-gradient(135deg, #1e40af 0%, #7c3aed 100%);
+      color: #fff; transition: all 0.15s;
+      box-shadow: 0 2px 8px rgba(30,64,175,0.3);
+    }
+    .demo-launch-btn:hover { opacity: 0.88; transform: translateY(-1px); }
+
     /* ── Phase 2 teaser ─────────────────────────────────────────────── */
     .ptf-phase2-teaser {
       display: flex; align-items: center; gap: 14px;
@@ -957,7 +967,10 @@
   <!-- Property Cards -->
   <div class="ptf-props-head">
     <h2>Your Properties</h2>
-    <button class="add-prop-btn" onclick="addNewProperty()">+ Add New Property</button>
+    <div style="display:flex;gap:8px;align-items:center;">
+      <button class="demo-launch-btn" onclick="loadDemo()">&#x1F3AF; Try Live Demo</button>
+      <button class="add-prop-btn" onclick="addNewProperty()">+ Add New Property</button>
+    </div>
   </div>
   <div class="ptf-cards-grid" id="propertyCardsGrid"></div>
 
@@ -3068,6 +3081,91 @@ function generateTenantStatement(tenantName) {
       const el = document.getElementById('tenantHashVal');
       if (el) el.textContent = 'SHA-256: ' + hash + '\nGenerated: ' + new Date().toISOString();
     });
+}
+
+// ─── Load Demo ────────────────────────────────────────────────────────────────
+
+function loadDemo() {
+  // Add demo property to portfolio if not already there
+  if (!portfolio.find(p => p.id === 'demo')) {
+    portfolio.unshift({
+      id: 'demo', name: 'Riverside Commons', totalSqft: 24000,
+      status: 'in-progress', tenantCount: 3, invoiceCount: 7,
+      totalCAM: 0, openDisputes: 0,
+    });
+  }
+
+  // Navigate into the property
+  resetWorkflow();
+  activePropId = 'demo';
+
+  document.getElementById('propertyName').value              = 'Riverside Commons';
+  document.getElementById('totalSqft').value                 = '24000';
+  document.getElementById('breadcrumbPropName').textContent  = 'Riverside Commons';
+  document.getElementById('portfolioDashboard').style.display = 'none';
+  document.getElementById('propertyBreadcrumb').style.display = 'flex';
+  document.getElementById('mainWorkflow').style.display       = 'block';
+
+  // ── Tenants ──────────────────────────────────────────────────────────────
+  tenantData.splice(0, tenantData.length,
+    {
+      tenantName: 'Fresh Market Foods', leasedSqft: '6200',
+      capPercentage: '10', excludedCategories: 'snow', baseYear: '2024',
+      confidence: { tenantName:98, leasedSqft:96, capPercentage:92, excludedCategories:88, baseYear:95 },
+      _error: null,
+    },
+    {
+      tenantName: 'Riverside Dental Group', leasedSqft: '1800',
+      capPercentage: '', excludedCategories: 'management', baseYear: '2024',
+      confidence: { tenantName:97, leasedSqft:94, capPercentage:null, excludedCategories:91, baseYear:96 },
+      _error: null,
+    },
+    {
+      tenantName: 'FitLife Gym & Wellness', leasedSqft: '3400',
+      capPercentage: '', excludedCategories: '', baseYear: '2023',
+      confidence: { tenantName:99, leasedSqft:97, capPercentage:null, excludedCategories:null, baseYear:94 },
+      _error: null,
+    }
+  );
+
+  // ── Invoices ─────────────────────────────────────────────────────────────
+  invoiceData.splice(0, invoiceData.length,
+    { vendorName:'Green Thumb Landscaping', amount:2400, category:'landscaping', invoiceDate:'2025-01-15', confidence:{vendorName:97,amount:99,category:95,invoiceDate:98}, _error:null },
+    { vendorName:'Metro Snow Services',     amount:1850, category:'snow',        invoiceDate:'2025-01-22', confidence:{vendorName:96,amount:98,category:97,invoiceDate:97}, _error:null },
+    { vendorName:'Apex Building Repairs',   amount:3200, category:'repairs',     invoiceDate:'2025-01-31', confidence:{vendorName:94,amount:97,category:89,invoiceDate:96}, _error:null },
+    { vendorName:'City Electric Co',        amount:4100, category:'utilities',   invoiceDate:'2025-01-31', confidence:{vendorName:98,amount:99,category:96,invoiceDate:99}, _error:null },
+    { vendorName:'CleanRight Janitorial',   amount:2800, category:'janitorial',  invoiceDate:'2025-01-31', confidence:{vendorName:95,amount:98,category:94,invoiceDate:97}, _error:null },
+    { vendorName:'SecureWatch Inc',         amount:1600, category:'security',    invoiceDate:'2025-01-31', confidence:{vendorName:97,amount:99,category:96,invoiceDate:98}, _error:null },
+    { vendorName:'Summit Management Group', amount:3500, category:'management',  invoiceDate:'2025-01-31', confidence:{vendorName:96,amount:98,category:93,invoiceDate:97}, _error:null }
+  );
+
+  // Render lease + invoice results
+  switchLeaseTab('bulk');
+  renderBulkResults();
+  switchInvTab('files');
+  renderInvResults();
+
+  // Run allocation, then seed a sample open dispute
+  runAllocation();
+
+  // Pre-seed one open dispute so the dispute section is populated
+  const repairShare = parseFloat((3200 * (6200 / 24000)).toFixed(2));
+  disputes.push({
+    id:          nextDisputeId++,
+    tenantName:  'Fresh Market Foods',
+    invoiceId:   'inv-2',
+    vendor:      'Apex Building Repairs',
+    category:    'repairs',
+    tenantShare: repairShare,
+    reason:      'Work order was not pre-approved per lease Section 8.3. Requesting documentation before accepting this charge.',
+    timestamp:   new Date(Date.now() - 2 * 24 * 60 * 60 * 1000).toISOString(),
+    status:      'open',
+    resolution:  null, resolvedAt: null, hash: null,
+  });
+  renderOpenDisputes();
+  syncPortfolioEntry();
+
+  window.scrollTo({ top: 0, behavior: 'smooth' });
 }
 
 // ─── Portfolio ────────────────────────────────────────────────────────────────
