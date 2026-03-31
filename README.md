@@ -1,159 +1,146 @@
-# CAM Logic
+# CAM Logic — AI-Powered CAM Reconciliation for Commercial Real Estate
 
-### 🚀 Try the Live Demo
+> **The CAM reconciliation layer that works alongside Yardi — transparent, automated, and settled on XRPL.**
 
-**Live Demo:** https://mainstreet-xrpl.vercel.app
+**Live Demo:** [mainstreet-xrpl.vercel.app](https://mainstreet-xrpl.vercel.app)
 
-Experience a complete CAM (Common Area Maintenance) reconciliation on the XRP Ledger in under 60 seconds:
-
-- Enter property size, tenant rentable area, and expense categories
-- Input estimated vs actual year-end CAM costs
-- Run the allocation engine (pro-rata calculation with category exclusions and caps)
-- See the reconciliation result (overpaid, underpaid, or exact)
-- Watch the full reconciliation data get SHA-256 hashed and anchored to XRPL Testnet as a structured Memo
-- Simulate the escrow workflow (EscrowCreate → reconciliation → EscrowFinish or cancellation)
-
-Everything runs client-side with a real connection to the XRPL Testnet using xrpl.js. No private keys or signing authority are ever requested.
-
-**Security note:** This is a 100% read-only demo. Wallet addresses and data are not stored anywhere.
-
-**Why this matters:** Small businesses and property managers currently spend weeks arguing over opaque CAM bills. This demo shows how XRPL escrow and immutable memos can make the entire process transparent, automatic, and auditable for everyone involved.
-
-### 🏢 Built for Real Estate — Not Crypto Users
-
-Landlords and tenants never interact with cryptocurrency directly. CAM Logic handles everything behind the scenes:
-
-- Tenants pay via familiar bank or card payment
-- Landlords receive funds in their normal account
-- XRPL settlement, escrow, and audit trail happen invisibly
-- No wallets, no seed phrases, no crypto knowledge required
-
-The blockchain layer exists to protect both parties — not to complicate their workflow. Think of it like how Visa runs on complex infrastructure that cardholders never see.
+**Live XRPL Transaction:**
+[AFAD1E38C7A932C35511DB846A099EE346B7E1D71EF3E9F5E61D1F9BF505E113](https://testnet.xrpl.org/transactions/AFAD1E38C7A932C35511DB846A099EE346B7E1D71EF3E9F5E61D1F9BF505E113)
 
 ---
 
-## What is CAM Logic?
+## What It Does
 
-CAM Logic is a commercial real estate platform that eliminates CAM reconciliation disputes by giving landlords and tenants real-time transparency into every expense.
+CAM Logic automates the full Commercial Area Maintenance reconciliation workflow — from uploading leases to generating printable tenant statements — with AI-powered document extraction, on-chain audit trails, and a dispute resolution workflow.
 
-### For Landlords
-- Upload each tenant's lease once — AI reads the CAM rules automatically
-- Scan invoices as they arrive — AI extracts vendor, amount, and category
-- The app calculates each tenant's share automatically based on their lease
-- Everything stored, organized, and auditable in one place
-- No more spreadsheets, no more year-end arguments
-
-### For Tenants
-- Download the app and see a clean dashboard
-- Real-time view of every invoice — vendor, amount, and category
-- Their exact CAM share broken down daily, monthly, and year-to-date
-- Pay weekly, monthly, or annually — whatever their lease requires
-- No surprises at year-end because they've seen every charge as it happened
-
-### The Result
-Tenants stop disputing CAM charges because they can see every invoice the moment it's uploaded. Landlords save time, legal fees, and tenant relationships.
-
-Powered by XRPL — every invoice is cryptographically verified on-chain, and year-end settlements are handled automatically via XRPL Escrow. Tenants and landlords never interact with cryptocurrency directly — the blockchain layer is invisible, working behind the scenes to protect both parties.
-
----
-
-## Error Prevention
-
-CAM Logic includes four layers of error prevention to reduce costly mistakes before any funds are calculated:
-
-**AI Confidence Scoring**
-Every field extracted from a lease or invoice by Claude AI is accompanied by a confidence score (0–100). A colored indicator appears next to each field in the UI:
-- Green — High confidence (90–100): value was clearly present in the document
-- Yellow — Please verify (70–89): value was found but may need review
-- Red — Low confidence (below 70): value was inferred or unclear — review carefully before proceeding
-
-**Duplicate Invoice Detection**
-After each invoice is scanned, the app automatically compares it against all previously uploaded invoices using vendor name similarity, amount (within $1), and invoice date (within 7 days). If a likely duplicate is found, a warning banner appears with two options: add it anyway or remove the duplicate.
-
-**Amount Sanity Checks**
-The app tracks the running average amount per expense category. If a newly uploaded invoice is more than 3× the average for its category, a warning flags it as unusually high so it can be verified before being included in the allocation.
-
-**Pre-Allocation Confirmation**
-Clicking Run CAM Allocation opens a summary modal showing the total number of invoices, the total dollar amount being allocated, the number of tenants, and a per-category breakdown. The allocation only proceeds after the user confirms the figures look correct.
-
----
-🌐 Live Demo: https://mainstreet-xrpl.vercel.app
-
-Also add a GitHub section at the bottom with:
-- How to clone and run locally
-## XRPL Integration
-
-CAM Logic uses the XRP Ledger for three distinct functions:
-
-**1. Invoice Hashing (`xrpl-integration.js`)**
-Each completed CAM reconciliation is SHA-256 hashed and the hash is written into the `Memo` field of an XRPL transaction. This creates a permanent, timestamped proof-of-existence for the reconciliation record. Neither party can alter the figures after the fact — the hash on-chain will not match.
-
-**2. Escrow Settlement (`escrow-reconciliation.js`)**
-At the start of the lease year, the tenant locks their estimated annual CAM contribution into an XRPL `EscrowCreate` transaction. The funds are time-locked until the reconciliation deadline. When the year-end figures are confirmed, `completeCAMEscrow()` handles all three settlement outcomes automatically:
-- **Overpaid** — escrow is finished, landlord refunds the difference to the tenant.
-- **Underpaid** — escrow is cancelled, tenant sends the correct higher amount directly.
-- **Exact** — escrow is finished, no further action needed.
-
-**3. On-Chain Audit Trail**
-Every transaction — escrow creation, finish, cancellation, and any adjustment payment — includes a structured JSON memo recording the `property_id`, `tenant_id`, and billing `period`. The full history of a reconciliation is verifiable by anyone with the tenant's XRPL address.
-
----
-
-## File Structure
-
-| File | Description |
+| Feature | Description |
 |---|---|
-| `allocation-engine.js` | Core allocation logic: calculates each tenant's pro-rata CAM share with category exclusions and optional caps. |
-| `xrpl-integration.js` | SHA-256 hashes a reconciliation result and anchors it on the XRPL testnet via a Memo-field transaction. |
-| `escrow-reconciliation.js` | Creates and settles XRPL time-locked escrows for estimated CAM payments, handling overpay, underpay, and exact settlement. |
-| `index.html` | Single-file browser UI for entering property, tenant, and expense data and running the allocation engine client-side. |
-| `test-allocation.js` | Runs sample data through the allocation engine and logs results to the console. |
-| `test-xrpl.js` | Hashes a sample reconciliation result and submits it to the XRPL testnet, logging the transaction hash and explorer link. |
-| `test-escrow.js` | Demonstrates the full escrow lifecycle across three scenarios (overpaid, underpaid, exact) using testnet-funded wallets. |
-| `package.json` | Node.js project config with the `xrpl` SDK as the only dependency. |
-
----
-
-## How to Run
-
-**Prerequisites:** Node.js v18+ and internet access to reach the XRPL testnet.
-
-```bash
-# 1. Clone the repository
-git clone https://github.com/Cypher928/mainstreet-xrpl.git
-cd mainstreet-xrpl
-
-# 2. Install dependencies
-npm install
-
-# 3. Run the allocation engine (no network required)
-node test-allocation.js
-
-# 4. Anchor a reconciliation result on the XRPL testnet
-node test-xrpl.js
-
-# 5. Run the full escrow lifecycle test (funds wallets via testnet faucet)
-node test-escrow.js
-
-# 6. Open the browser UI
-open index.html
-```
-
----
-
-## Live XRPL Transaction
-
-A real payment transaction generated by `test-xrpl.js` — two fresh testnet wallets funded via the faucet, 10 XRP sent with a `CAMLogic/Test` memo containing a unique timestamp:
-
-**https://testnet.xrpl.org/transactions/AFAD1E38C7A932C35511DB846A099EE346B7E1D71EF3E9F5E61D1F9BF505E113**
-
-Every run of `node test-xrpl.js` produces a new transaction with a new pair of wallets and a new timestamp, verifiable on the XRPL testnet explorer.
+| **Portfolio Dashboard** | See all properties at once with KPIs — total tenants, invoices, CAM collected, open disputes |
+| **Bulk Lease Upload** | Drop all lease PDFs at once — AI reads CAM terms, sqft, caps, and exclusions automatically |
+| **Batch Invoice Upload** | Drop multiple invoice files (PDF, JPG, PNG) — AI extracts vendor, amount, category, and date from each |
+| **Yardi Genesis CSV Import** | Export your CAM expense report from Yardi, drop it in — columns auto-detected, categories auto-mapped |
+| **CAM Allocation Engine** | Calculates each tenant's pro-rata share based on their lease terms, exclusions, and caps |
+| **Dispute Workflow** | Tenants can dispute any charge; resolutions are hashed and recorded on-chain via XRPL |
+| **Monthly Holes Report** | Flags missing invoice categories and vendors before reconciliation runs — no more surprises |
+| **Landlord Master Report** | Full property-wide summary — expenses by category, tenant allocations, dispute log |
+| **Tenant Statements** | Per-tenant printable statements showing their share, eligible invoices, and reconciliation status |
+| **AI Confidence Scoring** | Every extracted field is scored 0–100; low-confidence fields flagged for manual review |
+| **Duplicate Detection** | Cross-batch duplicate invoices caught automatically with vendor + amount + date matching |
+| **Pre-Allocation Modal** | Confirmation summary before any allocation runs — shows total, tenant count, category breakdown |
 
 ---
 
 ## Why XRPL
 
-- **Purpose-built for payments.** The XRP Ledger's native escrow and payment primitives map directly onto the CAM settlement workflow without requiring custom smart contract logic — reducing attack surface and audit complexity.
-- **Low cost, high throughput.** XRPL transactions settle in 3–5 seconds and cost a fraction of a cent, making it economically viable to anchor every reconciliation record on-chain rather than batching or sampling.
-- **RLUSD stablecoin.** Ripple's USD-pegged stablecoin (RLUSD) on XRPL enables CAM obligations to be denominated and settled in dollars without fiat bank rails, reducing the friction of cross-party payments in commercial leasing.
-- **Transparent and auditable.** Every on-chain memo is readable by any explorer or auditor without requiring access to proprietary systems — critical for the dispute resolution and audit requirements common in commercial lease agreements.
+CAM reconciliation involves significant money and significant disputes. XRPL provides the audit trail that neither party can alter after the fact.
+
+- **Every invoice hashed on-chain** — SHA-256 fingerprint anchored to XRPL at allocation time
+- **Year-end settlement via XRPL Escrow** — funds released automatically when both parties agree
+- **Dispute resolutions recorded immutably** — accepted, rejected, or docs-requested status stored on ledger
+- **Neither landlord nor tenant touches crypto directly** — XRPL is the backend, not the interface
+
+---
+
+## For the Property Manager
+
+Traditional CAM reconciliation takes weeks, involves outside firms, and produces paper statements tenants can't easily verify. CAM Logic changes that:
+
+- **No more mailing statements** — tenants see their share, eligible invoices, and reasoning in real time
+- **Flexible payment cadence** — tenants can pay weekly, monthly, or annually
+- **Dispute any charge directly in the app** — no emails, no phone calls, no he-said-she-said
+- **No outside reconciliation firm needed** — the allocation engine runs in seconds, not weeks
+- **Works alongside Yardi** — import your existing data via CSV, no migration required
+
+---
+
+## Roadmap
+
+| Phase | Status |
+|---|---|
+| **Phase 1 — CAM Reconciliation** | Live now |
+| **Phase 2 — Escrow Analysis for Mortgage Companies** | In development |
+| **Phase 3 — Rent Payment Processing via XRPL** | Planned |
+
+---
+
+## Tech Stack
+
+| Layer | Technology |
+|---|---|
+| Frontend | HTML / CSS / Vanilla JavaScript |
+| AI | Claude API (Anthropic) — `claude-sonnet-4-20250514` |
+| Blockchain | XRPL + xrpl.js |
+| Hosting | Vercel (static) |
+| Payments | RLUSD on XRPL *(planned)* |
+
+---
+
+## File Structure
+
+```
+mainstreet-xrpl/
+├── index.html                  # Full app — all UI, AI logic, portfolio, reports, dispute workflow
+├── xrpl-integration.js         # XRPL testnet connection, escrow creation, payment anchoring
+├── escrow-reconciliation.js    # Escrow lifecycle: create, finish, cancel with CAM data memos
+├── allocation-engine.js        # Standalone CAM pro-rata allocation engine (Node.js)
+├── architecture.html           # Visual system architecture diagram
+├── test-xrpl.js                # Live XRPL testnet test — funds two wallets, sends 10 XRP with memo
+├── test-allocation.js          # Unit tests for the allocation engine
+├── test-escrow.js              # Integration tests for escrow reconciliation
+├── vercel.json                 # Vercel static hosting config
+├── package.json                # Node.js dependencies (xrpl, etc.)
+└── LICENSE                     # MIT
+```
+
+---
+
+## Error Prevention
+
+CAM Logic has four layers of error prevention built in before allocation runs:
+
+1. **AI Confidence Scoring** — every field extracted from a lease or invoice is scored 0–100; anything below 70% is flagged with a visual warning badge
+2. **Duplicate Invoice Detection** — cross-batch matching on vendor name prefix, amount (±$1), and date (±7 days); warns before adding and lets you remove the duplicate
+3. **Amount Sanity Check** — if a new invoice is more than 3× the average for its category, a warning banner appears asking you to verify
+4. **Pre-Allocation Confirmation Modal** — shows total expense amount, tenant count, and category breakdown before any allocation runs
+
+---
+
+## Security & Privacy
+
+CAM Logic is **100% client-side and read-only**.
+
+- No private keys or seed phrases are ever requested
+- All AI analysis runs in your browser — documents are sent directly to the Anthropic API and never touch a CAM Logic server
+- Wallet addresses are not logged or retained
+- Only publicly visible XRPL data is used for on-chain verification
+- Your Anthropic API key is used in-browser only and never stored
+
+---
+
+## Quick Start
+
+1. Open [mainstreet-xrpl.vercel.app](https://mainstreet-xrpl.vercel.app)
+2. Paste your Anthropic API key in the key bar at the top
+3. Select a property from the portfolio dashboard (or add a new one)
+4. Upload tenant leases — AI extracts CAM terms automatically
+5. Upload invoices or import from Yardi Genesis CSV
+6. Click **Run CAM Allocation**
+7. Review results, dispute any charges, and generate printable reports
+
+No installation. No account. No data stored.
+
+---
+
+## Live XRPL Transaction
+
+This transaction was anchored to the XRPL testnet during development to demonstrate the on-chain audit trail:
+
+```
+TX Hash:  AFAD1E38C7A932C35511DB846A099EE346B7E1D71EF3E9F5E61D1F9BF505E113
+Network:  XRPL Testnet
+Explorer: https://testnet.xrpl.org/transactions/AFAD1E38C7A932C35511DB846A099EE346B7E1D71EF3E9F5E61D1F9BF505E113
+```
+
+---
+
+*Built for the XRPL Grants program. CAM Logic is open source under the MIT License.*
