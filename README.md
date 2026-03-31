@@ -1,4 +1,4 @@
-# CAM Logic — AI-Powered CAM Reconciliation for Commercial Real Estate
+# Mainstreet — AI-Powered CAM Reconciliation for Commercial Real Estate
 
 > **The CAM reconciliation layer that works alongside Yardi — transparent, automated, and settled on XRPL.**
 
@@ -11,7 +11,7 @@
 
 ## What It Does
 
-CAM Logic automates the full Commercial Area Maintenance reconciliation workflow — from uploading leases to generating printable tenant statements — with AI-powered document extraction, on-chain audit trails, and a dispute resolution workflow.
+Mainstreet automates the full Commercial Area Maintenance reconciliation workflow — from uploading leases to generating printable tenant statements — with AI-powered document extraction, on-chain audit trails, and a dispute resolution workflow.
 
 | Feature | Description |
 |---|---|
@@ -43,7 +43,7 @@ CAM reconciliation involves significant money and significant disputes. XRPL pro
 
 ## For the Property Manager
 
-Traditional CAM reconciliation takes weeks, involves outside firms, and produces paper statements tenants can't easily verify. CAM Logic changes that:
+Traditional CAM reconciliation takes weeks, involves outside firms, and produces paper statements tenants can't easily verify. Mainstreet changes that:
 
 - **No more mailing statements** — tenants see their share, eligible invoices, and reasoning in real time
 - **Flexible payment cadence** — tenants can pay weekly, monthly, or annually
@@ -96,7 +96,7 @@ mainstreet-xrpl/
 
 ## Error Prevention
 
-CAM Logic has four layers of error prevention built in before allocation runs:
+Mainstreet has four layers of error prevention built in before allocation runs:
 
 1. **AI Confidence Scoring** — every field extracted from a lease or invoice is scored 0–100; anything below 70% is flagged with a visual warning badge
 2. **Duplicate Invoice Detection** — cross-batch matching on vendor name prefix, amount (±$1), and date (±7 days); warns before adding and lets you remove the duplicate
@@ -107,10 +107,10 @@ CAM Logic has four layers of error prevention built in before allocation runs:
 
 ## Security & Privacy
 
-CAM Logic is **100% client-side and read-only**.
+Mainstreet is **100% client-side and read-only**.
 
 - No private keys or seed phrases are ever requested
-- All AI analysis runs in your browser — documents are sent directly to the Anthropic API and never touch a CAM Logic server
+- All AI analysis runs in your browser — documents are sent directly to the Anthropic API and never touch a Mainstreet server
 - Wallet addresses are not logged or retained
 - Only publicly visible XRPL data is used for on-chain verification
 - Your Anthropic API key is used in-browser only and never stored
@@ -143,4 +143,4 @@ Explorer: https://testnet.xrpl.org/transactions/AFAD1E38C7A932C35511DB846A099EE3
 
 ---
 
-*Built for the XRPL Grants program. CAM Logic is open source under the MIT License.*
+*Built for the XRPL Grants program. Mainstreet is open source under the MIT License.*
