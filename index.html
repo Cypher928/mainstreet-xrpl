@@ -557,6 +557,69 @@
     .warn-btn.dismiss { background: #f1f5f9; color: #475569; border: 1px solid #cbd5e1; }
     .warn-btn.dismiss:hover { background: #e2e8f0; }
 
+    /* ── Yardi import ────────────────────────────────────────────────── */
+    .yardi-tmpl-link {
+      font-size: 0.8rem; font-weight: 600; color: #1e40af;
+      text-decoration: none; white-space: nowrap;
+    }
+    .yardi-tmpl-link:hover { text-decoration: underline; }
+
+    .yardi-err {
+      display: flex; gap: 12px; align-items: flex-start;
+      padding: 16px 18px; background: #fff7ed; border: 1.5px solid #fed7aa;
+      border-radius: 10px; margin-top: 14px;
+    }
+    .yardi-err-icon { font-size: 1.4rem; flex-shrink: 0; }
+    .yardi-err-msg { font-size: 0.86rem; line-height: 1.6; color: #9a3412; }
+    .yardi-err-msg a { color: #1e40af; font-weight: 600; }
+
+    .yardi-preview-wrap { margin-top: 16px; }
+    .yardi-preview-info {
+      font-size: 0.84rem; color: #475569; margin-bottom: 10px;
+      display: flex; align-items: center; gap: 8px; flex-wrap: wrap;
+    }
+    .yardi-unknown-note {
+      padding: 2px 9px; border-radius: 20px;
+      background: #fef9c3; color: #854d0e;
+      font-size: 0.76rem; font-weight: 600;
+    }
+    .yardi-table-scroll { overflow-x: auto; border-radius: 8px; border: 1.5px solid #e2e8f0; }
+    .yardi-table { width: 100%; border-collapse: collapse; font-size: 0.82rem; }
+    .yardi-th {
+      background: #eff6ff; color: #1e40af; text-align: left;
+      padding: 9px 10px; font-size: 0.72rem; text-transform: uppercase;
+      letter-spacing: 0.04em; white-space: nowrap; border-bottom: 1.5px solid #bfdbfe;
+    }
+    .yardi-th.yardi-unknown { background: #fef9c3; color: #854d0e; }
+    .yardi-th-cb { width: 36px; text-align: center; }
+    .yardi-td { padding: 8px 10px; border-bottom: 1px solid #f1f5f9; vertical-align: middle; }
+    .yardi-td.yardi-unknown { background: #fefce8; }
+    .yardi-td.yardi-amt { font-weight: 600; text-align: right; white-space: nowrap; }
+    .yardi-td.yardi-cb { text-align: center; }
+    .yardi-td.yardi-desc {
+      color: #64748b; max-width: 180px;
+      overflow: hidden; text-overflow: ellipsis; white-space: nowrap;
+    }
+    .yardi-table tbody tr:hover .yardi-td { background: #f8fafc; }
+    .yardi-table tbody tr:hover .yardi-td.yardi-unknown { background: #fef9c3; }
+    .yardi-cat-sel {
+      padding: 4px 8px; border-radius: 6px; font-size: 0.8rem;
+      border: 1.5px solid #e2e8f0; background: #f8fafc; color: #1a1a2e;
+    }
+    .yardi-footer {
+      display: flex; align-items: center; justify-content: space-between;
+      padding: 12px 4px 2px; margin-top: 6px;
+      font-size: 0.85rem; color: #475569;
+      border-top: 1.5px solid #e2e8f0;
+    }
+    .yardi-import-btn {
+      padding: 10px 22px; border-radius: 9px; font-size: 0.88rem;
+      font-weight: 700; cursor: pointer; border: none;
+      background: #16a34a; color: #fff; transition: all 0.15s;
+    }
+    .yardi-import-btn:hover { background: #15803d; }
+    .yardi-import-btn:disabled { background: #94a3b8; cursor: not-allowed; }
+
     /* ── Invoice folder upload button ───────────────────────────────── */
     .inv-folder-btn {
       display: inline-flex; align-items: center; gap: 6px;
@@ -899,31 +962,64 @@
       <div class="sec-num">3</div>
       <div>
         <h2>Invoice Upload</h2>
-        <p>Drop multiple invoices — AI extracts each one automatically</p>
+        <p>Upload invoice files or import directly from Yardi Genesis</p>
       </div>
     </div>
-    <div class="bulk-upload-zone" id="invZone"
-      ondragover="event.preventDefault();this.classList.add('drag-over')"
-      ondragleave="this.classList.remove('drag-over')"
-      ondrop="event.preventDefault();this.classList.remove('drag-over');handleBatchInvoices(event.dataTransfer.files)">
-      <div class="bulk-uz-icon">&#x1F9FE;</div>
-      <div class="bulk-uz-label">Drop invoice files here, or click to select</div>
-      <div class="bulk-uz-sub">PDF, JPG, PNG accepted &middot; multiple files at once</div>
-      <input type="file" id="invFileInput" multiple
-        accept=".pdf,.jpg,.jpeg,.png,.webp,application/pdf,image/*"
-        onchange="handleBatchInvoices(this.files)" />
+
+    <!-- Tab bar -->
+    <div class="lease-tab-bar">
+      <button class="lease-tab active" id="iTabFiles" onclick="switchInvTab('files')">&#x1F9FE; Upload Files</button>
+      <button class="lease-tab"        id="iTabYardi" onclick="switchInvTab('yardi')">&#x1F4CA; Import from Yardi</button>
     </div>
-    <div style="margin-top:10px;display:flex;gap:10px;align-items:center;">
-      <label class="inv-folder-btn">
-        &#x1F4C1; Upload Folder
-        <input type="file" id="invFolderInput" multiple webkitdirectory
+
+    <!-- Panel A: File Upload -->
+    <div id="invPanelFiles">
+      <div class="bulk-upload-zone" id="invZone"
+        ondragover="event.preventDefault();this.classList.add('drag-over')"
+        ondragleave="this.classList.remove('drag-over')"
+        ondrop="event.preventDefault();this.classList.remove('drag-over');handleBatchInvoices(event.dataTransfer.files)">
+        <div class="bulk-uz-icon">&#x1F9FE;</div>
+        <div class="bulk-uz-label">Drop invoice files here, or click to select</div>
+        <div class="bulk-uz-sub">PDF, JPG, PNG accepted &middot; multiple files at once</div>
+        <input type="file" id="invFileInput" multiple
           accept=".pdf,.jpg,.jpeg,.png,.webp,application/pdf,image/*"
-          onchange="handleBatchInvoices(this.files)" style="display:none;" />
-      </label>
-      <span style="font-size:0.74rem;color:#94a3b8;">ZIP files — extract first, then select all</span>
+          onchange="handleBatchInvoices(this.files)" />
+      </div>
+      <div style="margin-top:10px;display:flex;gap:10px;align-items:center;">
+        <label class="inv-folder-btn">
+          &#x1F4C1; Upload Folder
+          <input type="file" id="invFolderInput" multiple webkitdirectory
+            accept=".pdf,.jpg,.jpeg,.png,.webp,application/pdf,image/*"
+            onchange="handleBatchInvoices(this.files)" style="display:none;" />
+        </label>
+        <span style="font-size:0.74rem;color:#94a3b8;">ZIP files — extract first, then select all</span>
+      </div>
+      <div id="invProgress" style="display:none;"></div>
+      <div id="invResults"></div>
     </div>
-    <div id="invProgress" style="display:none;"></div>
-    <div id="invResults"></div>
+
+    <!-- Panel B: Yardi Import -->
+    <div id="invPanelYardi" style="display:none;">
+      <div class="bulk-upload-zone" id="yardiZone"
+        ondragover="event.preventDefault();this.classList.add('drag-over')"
+        ondragleave="this.classList.remove('drag-over')"
+        ondrop="event.preventDefault();this.classList.remove('drag-over');handleYardiCSV(event.dataTransfer.files[0])">
+        <div class="bulk-uz-icon">&#x1F4E5;</div>
+        <div class="bulk-uz-label">&#x1F4E5; Import from Yardi Genesis (CSV)</div>
+        <div class="bulk-uz-sub">Export your CAM expense report from Yardi Genesis and drop it here</div>
+        <input type="file" id="yardiFileInput" accept=".csv,text/csv"
+          onchange="handleYardiCSV(this.files[0])" />
+      </div>
+      <div style="margin-top:10px;display:flex;align-items:center;justify-content:space-between;flex-wrap:wrap;gap:8px;">
+        <span style="font-size:0.78rem;color:#64748b;">
+          Columns auto-detected: Vendor, Amount, Date, Description, GL Account, Property
+        </span>
+        <a href="#" class="yardi-tmpl-link" onclick="event.preventDefault();downloadYardiTemplate()">
+          &#x2B07; Download Sample CSV Template
+        </a>
+      </div>
+      <div id="yardiPreview"></div>
+    </div>
   </div>
 
   <!-- ── SECTION 4: Run Allocation ─────────────────────────────────── -->
@@ -1545,6 +1641,295 @@ function clearInvResults() {
   document.getElementById('invProgress').style.display = 'none';
   document.getElementById('invFileInput').value   = '';
   document.getElementById('invFolderInput').value = '';
+}
+
+// ─── Invoice Tab Switching ────────────────────────────────────────────────────
+
+function switchInvTab(tab) {
+  document.getElementById('iTabFiles').classList.toggle('active', tab === 'files');
+  document.getElementById('iTabYardi').classList.toggle('active', tab === 'yardi');
+  document.getElementById('invPanelFiles').style.display = tab === 'files' ? 'block' : 'none';
+  document.getElementById('invPanelYardi').style.display = tab === 'yardi' ? 'block' : 'none';
+}
+
+// ─── Yardi Genesis CSV Import ─────────────────────────────────────────────────
+
+// Known column aliases for Yardi export headers
+const YARDI_COL_ALIASES = {
+  vendorName:  ['vendor', 'payee', 'vendor name', 'payee name', 'supplier', 'vendor/payee', 'paid to'],
+  amount:      ['amount', 'total', 'net amount', 'net', 'charge', 'expense', 'cost', 'debit', 'invoice amount', 'check amount'],
+  invoiceDate: ['date', 'post date', 'posting date', 'invoice date', 'trans date', 'transaction date', 'gl date', 'check date'],
+  description: ['description', 'memo', 'notes', 'comment', 'detail', 'narrative', 'reference', 'invoice description'],
+  category:    ['category', 'account', 'gl code', 'gl account', 'account code', 'expense type', 'type', 'account description', 'account name'],
+  property:    ['property', 'building', 'property name', 'building name', 'site', 'property code', 'location'],
+};
+
+let yardiRows        = [];
+let yardiColMap      = {}; // fieldName -> colIndex
+let yardiUnrecognized = []; // [{index, name}]
+
+function yardiParseCSV(text) {
+  const lines = text.replace(/\r\n/g, '\n').replace(/\r/g, '\n').split('\n');
+  return lines
+    .filter(l => l.trim())
+    .map(line => {
+      const cells = [];
+      let inQ = false, cur = '', i = 0;
+      while (i < line.length) {
+        const c = line[i];
+        if (c === '"') {
+          if (inQ && line[i + 1] === '"') { cur += '"'; i += 2; continue; }
+          inQ = !inQ;
+        } else if (c === ',' && !inQ) {
+          cells.push(cur.trim());
+          cur = ''; i++; continue;
+        } else { cur += c; }
+        i++;
+      }
+      cells.push(cur.trim());
+      return cells;
+    });
+}
+
+function yardiFuzzyMatch(header, aliases) {
+  const h = header.toLowerCase().replace(/[^a-z0-9 /]/g, '').trim();
+  return aliases.some(alias => {
+    const a = alias.toLowerCase();
+    return h === a || h.includes(a) || a.includes(h);
+  });
+}
+
+function yardiDetectColumns(headers) {
+  const colMap = {};
+  const unrecognized = [];
+  headers.forEach((h, i) => {
+    let matched = false;
+    for (const [field, aliases] of Object.entries(YARDI_COL_ALIASES)) {
+      if (!(field in colMap) && yardiFuzzyMatch(h, aliases)) {
+        colMap[field] = i;
+        matched = true;
+        break;
+      }
+    }
+    if (!matched && h.trim()) unrecognized.push({ index: i, name: h });
+  });
+  return { colMap, unrecognized };
+}
+
+function yardiCategoryFromText(description, gl) {
+  const t = (description + ' ' + gl).toLowerCase();
+  if (/landscap|lawn|mow|trim|plant|shrub|mulch|irrigation/.test(t))    return 'landscaping';
+  if (/snow|ice|salt|plow|deice/.test(t))                                return 'snow';
+  if (/repair|fix|maintain|hvac|heat|cool|roof|paint|plumb|electric/.test(t) &&
+      !/utility|utilities/.test(t))                                       return 'repairs';
+  if (/electric|gas|water|sewer|utility|utilities|power/.test(t))        return 'utilities';
+  if (/janitor|clean|sweep|trash|waste/.test(t))                         return 'janitorial';
+  if (/secur|guard|patrol|access|camera/.test(t))                        return 'security';
+  if (/manag|admin|management fee|service fee/.test(t))                  return 'management';
+  return 'other';
+}
+
+function handleYardiCSV(file) {
+  if (!file) return;
+  const preview = document.getElementById('yardiPreview');
+  preview.innerHTML = '<div class="spinner-wrap"><div class="spinner sm"></div><div class="spinner-label">Parsing CSV…</div></div>';
+
+  const reader = new FileReader();
+  reader.onload = e => {
+    const allRows = yardiParseCSV(e.target.result);
+    if (allRows.length < 2) { showYardiError(); return; }
+
+    const headers = allRows[0];
+    const { colMap, unrecognized } = yardiDetectColumns(headers);
+
+    if (!('vendorName' in colMap) && !('amount' in colMap)) {
+      showYardiError(); return;
+    }
+
+    yardiRows         = allRows.slice(1).filter(r => r.some(c => c.trim()));
+    yardiColMap       = colMap;
+    yardiUnrecognized = unrecognized;
+
+    document.getElementById('yardiFileInput').value = '';
+    renderYardiPreview(headers);
+  };
+  reader.onerror = showYardiError;
+  reader.readAsText(file);
+}
+
+function showYardiError() {
+  document.getElementById('yardiPreview').innerHTML = `
+    <div class="yardi-err">
+      <span class="yardi-err-icon">⚠️</span>
+      <div class="yardi-err-msg">
+        <strong>We couldn't read this file automatically.</strong><br>
+        Please make sure you're exporting the CAM expense report from Yardi Genesis.<br><br>
+        <a href="#" onclick="event.preventDefault();downloadYardiTemplate()">
+          ⬇ Need help? Download our import template
+        </a>
+      </div>
+    </div>`;
+}
+
+function yardiCell(row, field) {
+  const idx = yardiColMap[field];
+  return idx !== undefined ? (row[idx] || '').trim() : '';
+}
+
+function renderYardiPreview(headers) {
+  const el = document.getElementById('yardiPreview');
+
+  let initCount = 0, initTotal = 0;
+  const tableRows = yardiRows.map((row, i) => {
+    const vendor  = yardiCell(row, 'vendorName');
+    const amtRaw  = yardiCell(row, 'amount').replace(/[$,\s]/g, '');
+    const amt     = parseFloat(amtRaw) || 0;
+    const date    = yardiCell(row, 'invoiceDate');
+    const desc    = yardiCell(row, 'description');
+    const gl      = yardiCell(row, 'category');
+    const sugCat  = yardiCategoryFromText(desc, gl);
+    const checked = amt > 0 || !!vendor;
+
+    if (checked) { initCount++; initTotal += amt; }
+
+    const opts = CATEGORIES.map(c =>
+      `<option value="${c}"${sugCat === c ? ' selected' : ''}>${c}</option>`
+    ).join('');
+
+    const extraCells = yardiUnrecognized.map(u =>
+      `<td class="yardi-td yardi-unknown">${esc((row[u.index] || '').trim())}</td>`
+    ).join('');
+
+    return `<tr>
+      <td class="yardi-td yardi-cb">
+        <input type="checkbox" id="ychk-${i}"${checked ? ' checked' : ''} onchange="updateYardiTotals()"/>
+      </td>
+      <td class="yardi-td">${esc(vendor || '—')}</td>
+      <td class="yardi-td yardi-amt">${amt > 0 ? fmt(amt) : '—'}</td>
+      <td class="yardi-td">${esc(date || '—')}</td>
+      <td class="yardi-td">
+        <select class="yardi-cat-sel" id="ycat-${i}">${opts}</select>
+      </td>
+      <td class="yardi-td yardi-desc" title="${esc(desc || gl || '')}">${esc(desc || gl || '—')}</td>
+      ${extraCells}
+    </tr>`;
+  }).join('');
+
+  const extraHeaders = yardiUnrecognized.map(u =>
+    `<th class="yardi-th yardi-unknown">${esc(u.name)}</th>`
+  ).join('');
+
+  el.innerHTML = `
+    <div class="yardi-preview-wrap">
+      <div class="yardi-preview-info">
+        Found <strong>${yardiRows.length}</strong> expense row${yardiRows.length !== 1 ? 's' : ''}.
+        ${yardiUnrecognized.length
+          ? `<span class="yardi-unknown-note">⚠ ${yardiUnrecognized.length} unrecognized column${yardiUnrecognized.length !== 1 ? 's' : ''} highlighted in yellow</span>`
+          : ''}
+      </div>
+      <div class="yardi-table-scroll">
+        <table class="yardi-table">
+          <thead><tr>
+            <th class="yardi-th yardi-th-cb">
+              <input type="checkbox" id="yCheckAll" checked onchange="toggleAllYardi(this.checked)"/>
+            </th>
+            <th class="yardi-th">Vendor</th>
+            <th class="yardi-th" style="text-align:right">Amount</th>
+            <th class="yardi-th">Date</th>
+            <th class="yardi-th">Category</th>
+            <th class="yardi-th">Description / GL</th>
+            ${extraHeaders}
+          </tr></thead>
+          <tbody>${tableRows}</tbody>
+        </table>
+      </div>
+      <div class="yardi-footer">
+        <span id="yardiTotalInfo">
+          <strong>${initCount}</strong> row${initCount !== 1 ? 's' : ''} selected &nbsp;&middot;&nbsp;
+          <strong>${fmt(initTotal)}</strong> total
+        </span>
+        <button class="yardi-import-btn" id="yardiImportBtn" onclick="confirmYardiImport()">
+          &#x2713; Import ${initCount} Expense${initCount !== 1 ? 's' : ''}
+        </button>
+      </div>
+    </div>`;
+}
+
+function updateYardiTotals() {
+  let count = 0, total = 0;
+  yardiRows.forEach((row, i) => {
+    const chk = document.getElementById(`ychk-${i}`);
+    if (!chk || !chk.checked) return;
+    const amt = parseFloat(yardiCell(row, 'amount').replace(/[$,\s]/g, '')) || 0;
+    count++; total += amt;
+  });
+  const info = document.getElementById('yardiTotalInfo');
+  const btn  = document.getElementById('yardiImportBtn');
+  if (info) info.innerHTML = `<strong>${count}</strong> row${count !== 1 ? 's' : ''} selected &nbsp;&middot;&nbsp; <strong>${fmt(total)}</strong> total`;
+  if (btn)  btn.textContent = `✓ Import ${count} Expense${count !== 1 ? 's' : ''}`;
+}
+
+function toggleAllYardi(checked) {
+  yardiRows.forEach((_, i) => {
+    const chk = document.getElementById(`ychk-${i}`);
+    if (chk) chk.checked = checked;
+  });
+  updateYardiTotals();
+}
+
+function confirmYardiImport() {
+  let imported = 0;
+  yardiRows.forEach((row, i) => {
+    const chk = document.getElementById(`ychk-${i}`);
+    if (!chk || !chk.checked) return;
+    const vendor = yardiCell(row, 'vendorName');
+    const amt    = parseFloat(yardiCell(row, 'amount').replace(/[$,\s]/g, '')) || 0;
+    const date   = yardiCell(row, 'invoiceDate');
+    const cat    = document.getElementById(`ycat-${i}`)?.value || 'other';
+    if (!vendor && amt <= 0) return;
+    invoiceData.push({
+      vendorName:  vendor || 'Unknown Vendor',
+      amount:      amt,
+      category:    cat,
+      invoiceDate: date,
+      confidence:  { vendorName: 95, amount: 95, category: 70, invoiceDate: 90 },
+      _error:      null,
+    });
+    imported++;
+  });
+
+  // Switch to file-upload tab so user sees the imported results
+  switchInvTab('files');
+  renderInvResults();
+  document.getElementById('invResults').scrollIntoView({ behavior: 'smooth', block: 'start' });
+
+  // Reset Yardi state and show confirmation
+  yardiRows = []; yardiColMap = {}; yardiUnrecognized = [];
+  document.getElementById('yardiPreview').innerHTML = `
+    <div class="hole-item ok" style="margin-top:14px;">
+      <span class="hole-icon">✅</span>
+      <span class="hole-text">
+        <strong>${imported} expense${imported !== 1 ? 's' : ''} imported from Yardi.</strong>
+        <span class="hole-detail">Review and edit them in the Upload Files tab before running allocation.</span>
+      </span>
+    </div>`;
+}
+
+function downloadYardiTemplate() {
+  const csv = [
+    'Vendor,Amount,Post Date,Description,GL Account,Property',
+    'ABC Landscaping,1250.00,2025-01-15,Monthly grounds maintenance,5400-Landscaping,Westfield Plaza',
+    'City Snow Removal,875.50,2025-01-22,Snow plowing and salt - Lot A,5410-Snow Removal,Westfield Plaza',
+    'Acme Janitorial,2100.00,2025-01-31,January janitorial services,5420-Janitorial,Westfield Plaza',
+    'Metro Electric,3400.00,2025-01-31,Common area electricity,5430-Utilities,Westfield Plaza',
+    'SecureGuard Inc,1800.00,2025-01-31,Security patrol services,5440-Security,Westfield Plaza',
+  ].join('\r\n');
+  const blob = new Blob([csv], { type: 'text/csv' });
+  const url  = URL.createObjectURL(blob);
+  const a    = document.createElement('a');
+  a.href = url; a.download = 'yardi-cam-import-template.csv';
+  a.click();
+  URL.revokeObjectURL(url);
 }
 
 // ─── Confidence Badge ─────────────────────────────────────────────────────────
@@ -2746,6 +3131,9 @@ function resetWorkflow() {
   document.getElementById('invProgress').style.display = 'none';
   document.getElementById('invFileInput').value   = '';
   document.getElementById('invFolderInput').value = '';
+  yardiRows = []; yardiColMap = {}; yardiUnrecognized = [];
+  document.getElementById('yardiPreview').innerHTML = '';
+  switchInvTab('files');
 }
 
 function liveUpdateBreadcrumb(name) {
