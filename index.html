@@ -3,21 +3,36 @@
 <head>
   <meta charset="UTF-8" />
   <meta name="viewport" content="width=device-width, initial-scale=1.0" />
-  <title>CAM Logic — AI-Powered Allocation</title>
+  <meta http-equiv="Cache-Control" content="no-cache, no-store, must-revalidate" />
+  <meta http-equiv="Pragma" content="no-cache" />
+  <title>Mainstreet — AI-Powered CAM Reconciliation</title>
+  <link rel="preconnect" href="https://fonts.googleapis.com" />
+  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
+  <link href="https://fonts.googleapis.com/css2?family=Cormorant+Garamond:wght@400;600;700&family=DM+Sans:ital,wght@0,400;0,500;0,600;0,700;1,400&family=DM+Mono:wght@400;500&display=swap" rel="stylesheet" />
   <style>
     *, *::before, *::after { box-sizing: border-box; margin: 0; padding: 0; }
 
     body {
-      font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif;
-      background: #f4f6f9;
-      color: #1a1a2e;
+      font-family: 'DM Sans', -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif;
+      background: #0B1220;
+      color: #E2E8F0;
       min-height: 100vh;
       padding: 32px 16px 64px;
     }
 
-    header { text-align: center; margin-bottom: 32px; }
-    header h1 { font-size: 1.9rem; font-weight: 700; color: #1a1a2e; }
-    header p { margin-top: 6px; color: #64748b; font-size: 0.92rem; }
+    /* ── Header / Hero ──────────────────────────────────────────────── */
+    header { text-align: center; margin-bottom: 32px; padding: 48px 20px 40px; }
+    header h1 {
+      font-family: 'Cormorant Garamond', Georgia, serif;
+      font-size: 3.2rem; font-weight: 700; color: #E2E8F0;
+      letter-spacing: -0.02em; line-height: 1.1; margin-bottom: 12px;
+    }
+    .hero-tagline {
+      font-family: 'Cormorant Garamond', Georgia, serif;
+      font-size: 1.35rem; font-weight: 400; color: #C9973A;
+      letter-spacing: 0.01em; margin-bottom: 10px;
+    }
+    header p { margin-top: 6px; color: #64748B; font-size: 0.88rem; }
 
     /* API key bar */
     .api-bar {
@@ -26,113 +41,119 @@
       display: flex;
       align-items: center;
       gap: 12px;
-      background: #fffbeb;
-      border: 1.5px solid #fcd34d;
+      background: #111827;
+      border: 1.5px solid rgba(201,151,58,0.3);
       border-radius: 11px;
       padding: 13px 18px;
     }
     .api-bar label {
-      font-size: 0.78rem; font-weight: 700; color: #92400e;
+      font-size: 0.78rem; font-weight: 700; color: #C9973A;
       white-space: nowrap; text-transform: uppercase; letter-spacing: 0.04em;
+      font-family: 'DM Mono', monospace;
     }
     .api-bar input {
       flex: 1; padding: 8px 12px;
-      border: 1.5px solid #fcd34d; border-radius: 7px;
-      font-size: 0.88rem; font-family: "Courier New", monospace;
-      background: white; color: #1a1a2e;
+      border: 1.5px solid rgba(255,255,255,0.1); border-radius: 7px;
+      font-size: 0.88rem; font-family: 'DM Mono', "Courier New", monospace;
+      background: #0F1929; color: #E2E8F0;
+      transition: border-color 0.15s;
     }
-    .api-bar input:focus { outline: none; border-color: #f59e0b; }
-    .api-bar .hint { font-size: 0.73rem; color: #a8a29e; white-space: nowrap; }
+    .api-bar input:focus { outline: none; border-color: #C9973A; }
+    .api-bar .hint { font-size: 0.73rem; color: #64748B; white-space: nowrap; }
 
     /* Layout */
     .container { max-width: 720px; margin: 0 auto; display: flex; flex-direction: column; gap: 22px; }
 
     /* Cards */
     .card {
-      background: #fff;
+      background: #111827;
       border-radius: 14px;
       padding: 26px 28px;
-      box-shadow: 0 2px 12px rgba(0,0,0,0.07);
+      box-shadow: 0 2px 20px rgba(0,0,0,0.4);
+      border: 1px solid rgba(255,255,255,0.07);
     }
 
     /* Section header */
     .sec-head { display: flex; align-items: flex-start; gap: 12px; margin-bottom: 22px; }
     .sec-num {
       width: 27px; height: 27px; border-radius: 50%;
-      background: #4361ee; color: white;
+      background: #C9973A; color: #0B1220;
       font-size: 0.78rem; font-weight: 700;
       display: flex; align-items: center; justify-content: center;
       flex-shrink: 0; margin-top: 2px;
     }
-    .sec-num.green { background: #16a34a; }
-    .sec-head h2 { font-size: 1.02rem; font-weight: 700; }
-    .sec-head p { font-size: 0.8rem; color: #94a3b8; margin-top: 3px; }
+    .sec-num.green { background: #22c55e; color: #0B1220; }
+    .sec-head h2 { font-size: 1.02rem; font-weight: 700; color: #E2E8F0; }
+    .sec-head p { font-size: 0.8rem; color: #64748B; margin-top: 3px; }
 
     /* Form fields */
     .field-row { display: flex; gap: 14px; flex-wrap: wrap; margin-bottom: 14px; }
     .field { display: flex; flex-direction: column; flex: 1; min-width: 150px; }
     .field label {
-      font-size: 0.73rem; font-weight: 700; color: #64748b;
+      font-size: 0.73rem; font-weight: 700; color: #94A3B8;
       text-transform: uppercase; letter-spacing: 0.05em; margin-bottom: 5px;
+      font-family: 'DM Mono', monospace;
     }
     .field input, .field select {
       padding: 9px 12px;
-      border: 1.5px solid #e2e8f0; border-radius: 8px;
-      font-size: 0.9rem; color: #1a1a2e; background: #f8fafc;
+      border: 1.5px solid rgba(255,255,255,0.1); border-radius: 8px;
+      font-size: 0.9rem; color: #E2E8F0; background: #0F1929;
       transition: border-color 0.15s;
     }
     .field input:focus, .field select:focus {
-      outline: none; border-color: #4361ee; background: white;
+      outline: none; border-color: #C9973A; background: #0B1220;
     }
+    .field select option { background: #111827; color: #E2E8F0; }
 
     /* Tenant slots */
     .tenant-slot {
-      border: 1.5px solid #e4e7f0;
+      border: 1.5px solid rgba(255,255,255,0.08);
       border-radius: 11px;
       overflow: hidden;
       margin-bottom: 13px;
     }
     .tenant-slot:last-child { margin-bottom: 0; }
     .slot-head {
-      background: #f8f9fc;
-      border-bottom: 1.5px solid #e4e7f0;
+      background: #0F1929;
+      border-bottom: 1.5px solid rgba(255,255,255,0.08);
       padding: 9px 16px;
-      font-size: 0.8rem; font-weight: 700; color: #4361ee;
+      font-size: 0.8rem; font-weight: 700; color: #C9973A;
+      font-family: 'DM Mono', monospace;
     }
     .slot-body { padding: 16px; }
 
     /* Upload zone */
     .upload-zone {
       position: relative;
-      border: 2px dashed #c8d0e7;
+      border: 2px dashed rgba(255,255,255,0.15);
       border-radius: 9px;
       padding: 26px 20px;
       text-align: center;
       cursor: pointer;
       transition: border-color 0.15s, background 0.15s;
     }
-    .upload-zone:hover { border-color: #4361ee; background: #f0f4ff; }
+    .upload-zone:hover { border-color: #C9973A; background: rgba(201,151,58,0.05); }
     .upload-zone input[type="file"] {
       position: absolute; inset: 0; opacity: 0;
       cursor: pointer; width: 100%; height: 100%;
     }
     .upload-zone .uz-icon { font-size: 1.6rem; margin-bottom: 7px; }
-    .upload-zone .uz-label { font-size: 0.88rem; font-weight: 600; color: #4361ee; }
-    .upload-zone .uz-sub { font-size: 0.73rem; color: #94a3b8; margin-top: 4px; }
+    .upload-zone .uz-label { font-size: 0.88rem; font-weight: 600; color: #C9973A; }
+    .upload-zone .uz-sub { font-size: 0.73rem; color: #64748B; margin-top: 4px; }
 
     /* Spinner */
     .spinner-wrap { text-align: center; padding: 22px; }
     .spinner {
       display: inline-block;
       width: 28px; height: 28px;
-      border: 3px solid #e2e8f0;
-      border-top-color: #4361ee;
+      border: 3px solid rgba(255,255,255,0.1);
+      border-top-color: #C9973A;
       border-radius: 50%;
       animation: spin 0.65s linear infinite;
     }
     .spinner.sm { width: 20px; height: 20px; border-width: 2.5px; }
     @keyframes spin { to { transform: rotate(360deg); } }
-    .spinner-label { font-size: 0.8rem; color: #94a3b8; margin-top: 9px; }
+    .spinner-label { font-size: 0.8rem; color: #64748B; margin-top: 9px; }
 
     /* Status row */
     .status-row {
@@ -140,19 +161,19 @@
       font-size: 0.78rem; font-weight: 600;
       margin-bottom: 14px;
     }
-    .status-row.ok { color: #16a34a; }
-    .status-row.err { color: #dc2626; }
+    .status-row.ok { color: #4ade80; }
+    .status-row.err { color: #f87171; }
     .status-dot {
       width: 17px; height: 17px; border-radius: 50%;
       display: flex; align-items: center; justify-content: center;
       flex-shrink: 0;
     }
-    .status-dot.ok { background: #16a34a; }
-    .status-dot.err { background: #dc2626; }
+    .status-dot.ok { background: #22c55e; }
+    .status-dot.err { background: #ef4444; }
     .status-dot svg { display: block; }
     .re-btn {
       margin-left: auto;
-      font-size: 0.75rem; color: #4361ee;
+      font-size: 0.75rem; color: #C9973A;
       background: none; border: none; cursor: pointer;
       text-decoration: underline; padding: 0;
     }
@@ -164,135 +185,140 @@
     /* Invoice items */
     .invoice-list { display: flex; flex-direction: column; gap: 10px; margin-bottom: 13px; }
     .inv-item {
-      background: #f8f9fc;
-      border: 1.5px solid #e4e7f0;
+      background: #0F1929;
+      border: 1.5px solid rgba(255,255,255,0.08);
       border-radius: 10px;
       overflow: hidden;
     }
     .inv-head {
       padding: 8px 14px;
-      font-size: 0.78rem; font-weight: 700; color: #4361ee;
-      border-bottom: 1.5px solid #e4e7f0;
-      background: white;
+      font-size: 0.78rem; font-weight: 700; color: #C9973A;
+      border-bottom: 1.5px solid rgba(255,255,255,0.08);
+      background: #111827;
+      font-family: 'DM Mono', monospace;
     }
     .inv-body { padding: 14px; }
     .inv-body .upload-zone { padding: 16px; }
 
     .add-btn {
       width: 100%; padding: 11px;
-      border: 2px dashed #c8d0e7; border-radius: 9px;
+      border: 2px dashed rgba(255,255,255,0.15); border-radius: 9px;
       background: none; cursor: pointer;
-      font-size: 0.88rem; font-weight: 600; color: #4361ee;
+      font-size: 0.88rem; font-weight: 600; color: #C9973A;
       transition: all 0.15s;
     }
-    .add-btn:hover { border-color: #4361ee; background: #f0f4ff; }
+    .add-btn:hover { border-color: #C9973A; background: rgba(201,151,58,0.05); }
     .add-btn:disabled { opacity: 0.4; cursor: not-allowed; }
 
     /* Run button */
     #runBtn {
       width: 100%; padding: 14px;
-      background: #4361ee; color: white;
+      background: linear-gradient(135deg, #C9973A 0%, #E4B15C 100%);
+      color: #0B1220;
       font-size: 1rem; font-weight: 700;
       border: none; border-radius: 11px;
       cursor: pointer; letter-spacing: 0.02em;
-      transition: background 0.15s, transform 0.1s;
+      transition: opacity 0.15s, transform 0.1s;
+      box-shadow: 0 4px 16px rgba(201,151,58,0.35);
     }
-    #runBtn:hover { background: #3451d1; }
+    #runBtn:hover { opacity: 0.9; }
     #runBtn:active { transform: scale(0.99); }
 
     /* Results */
     #results { display: none; }
     .result-card {
-      background: #f0f4ff; border: 1.5px solid #c5d0f5;
+      background: rgba(201,151,58,0.08); border: 1.5px solid rgba(201,151,58,0.2);
       border-radius: 11px; padding: 18px 20px; margin-bottom: 13px;
     }
-    .result-card .r-name { font-size: 1rem; font-weight: 700; margin-bottom: 12px; }
+    .result-card .r-name { font-size: 1rem; font-weight: 700; margin-bottom: 12px; color: #E2E8F0; }
     .result-grid {
       display: grid;
       grid-template-columns: repeat(auto-fill, minmax(160px, 1fr));
       gap: 10px;
     }
     .result-stat {
-      background: white; border-radius: 8px;
-      padding: 10px 14px; border: 1px solid #dde5fb;
+      background: #111827; border-radius: 8px;
+      padding: 10px 14px; border: 1px solid rgba(255,255,255,0.08);
     }
     .result-stat .stat-label {
-      font-size: 0.69rem; color: #94a3b8;
+      font-size: 0.69rem; color: #64748B;
       text-transform: uppercase; letter-spacing: 0.05em; font-weight: 600;
+      font-family: 'DM Mono', monospace;
     }
-    .result-stat .stat-value { font-size: 1.02rem; font-weight: 700; margin-top: 3px; }
+    .result-stat .stat-value { font-size: 1.02rem; font-weight: 700; margin-top: 3px; color: #E2E8F0; }
     .cap-badge {
       display: inline-block; margin-top: 10px; padding: 4px 10px;
-      background: #fff3cd; color: #856404; font-size: 0.76rem; font-weight: 600;
-      border-radius: 20px; border: 1px solid #ffe08a;
+      background: rgba(201,151,58,0.15); color: #E4B15C; font-size: 0.76rem; font-weight: 600;
+      border-radius: 20px; border: 1px solid rgba(201,151,58,0.3);
     }
 
     /* Error banner */
     .err-banner {
-      background: #fff0f0; border: 1.5px solid #fca5a5;
-      color: #b91c1c; padding: 12px 16px; border-radius: 8px; font-size: 0.88rem;
+      background: rgba(239,68,68,0.1); border: 1.5px solid rgba(239,68,68,0.3);
+      color: #fca5a5; padding: 12px 16px; border-radius: 8px; font-size: 0.88rem;
     }
 
     /* Summary bar */
     .summary-bar {
-      padding: 11px 16px; background: #eef2ff;
-      border-radius: 8px; font-size: 0.86rem; color: #475569;
-      margin-bottom: 18px;
+      padding: 11px 16px; background: rgba(201,151,58,0.1);
+      border-radius: 8px; font-size: 0.86rem; color: #94A3B8;
+      margin-bottom: 18px; border: 1px solid rgba(201,151,58,0.2);
     }
-    .summary-bar strong { color: #1e293b; }
+    .summary-bar strong { color: #E2E8F0; }
 
     /* ── Dispute section ──────────────────────────────────────────────── */
     #disputeSection { display: none; }
 
     .dispute-tenant-label {
-      font-size: 0.73rem; font-weight: 700; color: #64748b;
+      font-size: 0.73rem; font-weight: 700; color: #94A3B8;
       text-transform: uppercase; letter-spacing: 0.05em;
-      margin: 16px 0 8px;
+      margin: 16px 0 8px; font-family: 'DM Mono', monospace;
     }
     .dispute-tenant-label:first-child { margin-top: 0; }
 
     .dispute-inv-row {
       display: flex; align-items: center; gap: 10px;
       padding: 10px 14px;
-      background: #f8f9fc; border: 1.5px solid #e4e7f0;
+      background: #0F1929; border: 1.5px solid rgba(255,255,255,0.08);
       border-radius: 9px; margin-bottom: 6px;
     }
     .dispute-inv-row .inv-info { flex: 1; }
     .dispute-inv-row .inv-info .inv-name {
-      font-size: 0.88rem; font-weight: 600; color: #1a1a2e;
+      font-size: 0.88rem; font-weight: 600; color: #E2E8F0;
     }
     .dispute-inv-row .inv-info .inv-meta {
-      font-size: 0.76rem; color: #94a3b8; margin-top: 2px;
+      font-size: 0.76rem; color: #64748B; margin-top: 2px;
     }
     .dispute-inv-row .inv-amount {
-      font-size: 0.88rem; font-weight: 700; color: #1a1a2e;
+      font-size: 0.88rem; font-weight: 700; color: #E2E8F0;
       white-space: nowrap;
     }
     .d-btn {
       padding: 6px 13px; border-radius: 7px;
       font-size: 0.78rem; font-weight: 600; cursor: pointer;
-      border: 1.5px solid #e2e8f0; background: white; color: #64748b;
+      border: 1.5px solid rgba(255,255,255,0.12); background: #111827; color: #94A3B8;
       white-space: nowrap; transition: all 0.15s;
     }
-    .d-btn:hover { border-color: #ea580c; color: #ea580c; background: #fff7ed; }
-    .d-btn.active { border-color: #ea580c; color: #ea580c; background: #fff7ed; }
+    .d-btn:hover { border-color: #ea580c; color: #fb923c; background: rgba(234,88,12,0.1); }
+    .d-btn.active { border-color: #ea580c; color: #fb923c; background: rgba(234,88,12,0.1); }
 
     .dispute-form {
       margin-top: 6px; margin-bottom: 6px;
-      padding: 14px; background: #fff7ed;
-      border: 1.5px solid #fed7aa; border-radius: 9px;
+      padding: 14px; background: rgba(234,88,12,0.08);
+      border: 1.5px solid rgba(234,88,12,0.3); border-radius: 9px;
       animation: fadein 0.2s ease;
     }
     .dispute-form label {
-      font-size: 0.73rem; font-weight: 700; color: #92400e;
+      font-size: 0.73rem; font-weight: 700; color: #fb923c;
       text-transform: uppercase; letter-spacing: 0.05em;
       display: block; margin-bottom: 6px;
+      font-family: 'DM Mono', monospace;
     }
     .dispute-form textarea {
       width: 100%; padding: 8px 11px;
-      border: 1.5px solid #fed7aa; border-radius: 7px;
+      border: 1.5px solid rgba(234,88,12,0.3); border-radius: 7px;
       font-size: 0.88rem; font-family: inherit;
-      resize: vertical; min-height: 62px; background: white;
+      resize: vertical; min-height: 62px; background: #0F1929; color: #E2E8F0;
     }
     .dispute-form textarea:focus { outline: none; border-color: #ea580c; }
     .dispute-form-btns { display: flex; gap: 8px; margin-top: 9px; }
@@ -304,33 +330,33 @@
     }
     .d-submit-btn:hover { background: #c2410c; }
     .d-cancel-btn {
-      padding: 7px 14px; background: white; color: #64748b;
-      border: 1.5px solid #e2e8f0; border-radius: 7px;
+      padding: 7px 14px; background: #111827; color: #94A3B8;
+      border: 1.5px solid rgba(255,255,255,0.1); border-radius: 7px;
       font-size: 0.82rem; cursor: pointer;
     }
 
     /* Open disputes */
     .disputes-heading {
-      font-size: 0.9rem; font-weight: 700; color: #1a1a2e;
+      font-size: 0.9rem; font-weight: 700; color: #E2E8F0;
       margin: 22px 0 12px; padding-top: 18px;
-      border-top: 1.5px solid #f1f5f9;
+      border-top: 1.5px solid rgba(255,255,255,0.08);
     }
     .dispute-card {
-      background: #fff7ed; border: 1.5px solid #fed7aa;
+      background: rgba(234,88,12,0.08); border: 1.5px solid rgba(234,88,12,0.25);
       border-radius: 11px; padding: 16px; margin-bottom: 10px;
       animation: fadein 0.25s ease;
     }
     .dispute-card.resolved {
-      background: #f0fdf4; border-color: #bbf7d0;
+      background: rgba(34,197,94,0.08); border-color: rgba(34,197,94,0.3);
     }
     .dispute-card .d-meta {
-      font-size: 0.76rem; color: #94a3b8; margin-bottom: 6px;
+      font-size: 0.76rem; color: #64748B; margin-bottom: 6px;
     }
     .dispute-card .d-title {
-      font-size: 0.9rem; font-weight: 700; color: #1a1a2e; margin-bottom: 4px;
+      font-size: 0.9rem; font-weight: 700; color: #E2E8F0; margin-bottom: 4px;
     }
     .dispute-card .d-reason {
-      font-size: 0.84rem; color: #64748b; margin-bottom: 12px;
+      font-size: 0.84rem; color: #94A3B8; margin-bottom: 12px;
       font-style: italic;
     }
     .d-actions { display: flex; gap: 8px; flex-wrap: wrap; }
@@ -339,30 +365,31 @@
       font-size: 0.8rem; font-weight: 600; cursor: pointer;
       border: 1.5px solid transparent; transition: all 0.15s;
     }
-    .d-res-btn.accept { background: #dcfce7; color: #166534; border-color: #86efac; }
-    .d-res-btn.accept:hover { background: #bbf7d0; }
-    .d-res-btn.reject { background: #fee2e2; color: #991b1b; border-color: #fca5a5; }
-    .d-res-btn.reject:hover { background: #fecaca; }
-    .d-res-btn.docs   { background: #eff6ff; color: #1e40af; border-color: #bfdbfe; }
-    .d-res-btn.docs:hover   { background: #dbeafe; }
+    .d-res-btn.accept { background: rgba(34,197,94,0.15); color: #4ade80; border-color: rgba(34,197,94,0.3); }
+    .d-res-btn.accept:hover { background: rgba(34,197,94,0.25); }
+    .d-res-btn.reject { background: rgba(239,68,68,0.12); color: #f87171; border-color: rgba(239,68,68,0.3); }
+    .d-res-btn.reject:hover { background: rgba(239,68,68,0.22); }
+    .d-res-btn.docs   { background: rgba(201,151,58,0.12); color: #E4B15C; border-color: rgba(201,151,58,0.3); }
+    .d-res-btn.docs:hover   { background: rgba(201,151,58,0.22); }
 
     .resolved-badge {
       display: inline-flex; align-items: center; gap: 5px;
-      padding: 3px 10px; background: #dcfce7; color: #166534;
+      padding: 3px 10px; background: rgba(34,197,94,0.15); color: #4ade80;
       font-size: 0.76rem; font-weight: 700; border-radius: 20px;
       margin-bottom: 10px;
     }
     .onchain-record {
       margin-top: 10px; padding: 10px 12px;
-      background: #f0fdf4; border: 1.5px solid #86efac; border-radius: 8px;
+      background: rgba(34,197,94,0.08); border: 1.5px solid rgba(34,197,94,0.25); border-radius: 8px;
     }
     .onchain-record .oc-label {
-      font-size: 0.72rem; font-weight: 700; color: #166534;
+      font-size: 0.72rem; font-weight: 700; color: #4ade80;
       text-transform: uppercase; letter-spacing: 0.05em; margin-bottom: 4px;
+      font-family: 'DM Mono', monospace;
     }
     .onchain-record .oc-hash {
-      font-family: "Courier New", monospace; font-size: 0.7rem;
-      color: #166534; word-break: break-all; line-height: 1.5;
+      font-family: 'DM Mono', "Courier New", monospace; font-size: 0.7rem;
+      color: #4ade80; word-break: break-all; line-height: 1.5;
     }
 
     /* ── Portfolio Dashboard ─────────────────────────────────────────── */
@@ -375,63 +402,128 @@
     }
     @media (max-width: 600px) { .ptf-kpi-bar { grid-template-columns: repeat(3, 1fr); } }
     .ptf-kpi {
-      background: #fff; border-radius: 12px; padding: 14px 12px;
-      box-shadow: 0 2px 10px rgba(0,0,0,0.06); text-align: center;
+      background: #111827; border-radius: 12px; padding: 14px 12px;
+      box-shadow: 0 2px 16px rgba(0,0,0,0.4); text-align: center;
+      border: 1px solid rgba(255,255,255,0.07);
     }
     .ptf-kpi-val {
-      font-size: 1.4rem; font-weight: 800; color: #1e40af;
+      font-size: 1.4rem; font-weight: 800; color: #C9973A;
       line-height: 1; margin-bottom: 4px;
     }
     .ptf-kpi-disputes .ptf-kpi-val { color: #ef4444; }
     .ptf-kpi-lbl {
-      font-size: 0.68rem; color: #94a3b8;
+      font-size: 0.68rem; color: #64748B;
       text-transform: uppercase; letter-spacing: 0.04em;
+      font-family: 'DM Mono', monospace;
     }
     .ptf-props-head {
       display: flex; align-items: center; justify-content: space-between;
       margin-bottom: 14px;
     }
     .ptf-props-head h2 {
-      font-size: 1.05rem; font-weight: 700; color: #1a1a2e; margin: 0;
+      font-size: 1.05rem; font-weight: 700; color: #E2E8F0; margin: 0;
     }
     .add-prop-btn {
       padding: 8px 16px; border-radius: 9px; font-size: 0.83rem;
-      font-weight: 700; cursor: pointer; border: 2px dashed #bfdbfe;
-      background: #eff6ff; color: #1e40af; transition: all 0.15s;
+      font-weight: 700; cursor: pointer; border: 2px dashed rgba(201,151,58,0.4);
+      background: rgba(201,151,58,0.08); color: #C9973A; transition: all 0.15s;
     }
-    .add-prop-btn:hover { background: #dbeafe; border-color: #93c5fd; }
+    .add-prop-btn:hover { background: rgba(201,151,58,0.15); border-color: #C9973A; }
     .ptf-cards-grid {
       display: grid; grid-template-columns: repeat(auto-fill, minmax(210px, 1fr));
       gap: 14px; margin-bottom: 32px;
     }
     .ptf-prop-card {
-      background: #fff; border-radius: 14px; padding: 18px 18px 16px;
-      box-shadow: 0 2px 10px rgba(0,0,0,0.07);
-      border: 2px solid transparent; cursor: pointer;
-      transition: all 0.18s;
+      background: #111827; border-radius: 14px; padding: 18px 18px 16px;
+      box-shadow: 0 2px 16px rgba(0,0,0,0.4);
+      border: 1px solid rgba(255,255,255,0.07);
+      border-left: 4px solid #C9973A;
+      cursor: pointer; transition: all 0.18s;
     }
+    .ptf-prop-card.status-reconciled  { border-left-color: #22c55e; }
+    .ptf-prop-card.status-in-progress { border-left-color: #C9973A; }
+    .ptf-prop-card.status-disputes    { border-left-color: #ef4444; }
     .ptf-prop-card:hover {
-      border-color: #bfdbfe;
-      box-shadow: 0 6px 20px rgba(30,64,175,0.13);
+      border-color: rgba(201,151,58,0.35);
+      box-shadow: 0 8px 28px rgba(0,0,0,0.5);
       transform: translateY(-2px);
     }
-    .ptf-prop-card.active { border-color: #3b82f6; background: #f0f7ff; }
-    .ptf-prop-name { font-size: 0.95rem; font-weight: 700; color: #1a1a2e; margin-bottom: 6px; }
+    .ptf-prop-card.active { border-color: #C9973A; background: rgba(201,151,58,0.08); }
+    .ptf-prop-name { font-size: 0.95rem; font-weight: 700; color: #E2E8F0; margin-bottom: 6px; }
     .ptf-status-row {
       display: flex; align-items: center; gap: 6px;
-      font-size: 0.76rem; color: #64748b; margin-bottom: 14px;
+      font-size: 0.76rem; color: #64748B; margin-bottom: 14px;
     }
     .ptf-status-dot {
       width: 9px; height: 9px; border-radius: 50%; flex-shrink: 0;
     }
-    .ptf-status-dot.reconciled  { background: #22c55e; box-shadow: 0 0 0 3px #dcfce7; }
-    .ptf-status-dot.in-progress { background: #f59e0b; box-shadow: 0 0 0 3px #fef3c7; }
-    .ptf-status-dot.disputes    { background: #ef4444; box-shadow: 0 0 0 3px #fee2e2; }
+    .ptf-status-dot.reconciled  { background: #22c55e; box-shadow: 0 0 0 3px rgba(34,197,94,0.2); }
+    .ptf-status-dot.in-progress { background: #f59e0b; box-shadow: 0 0 0 3px rgba(245,158,11,0.2); }
+    .ptf-status-dot.disputes    { background: #ef4444; box-shadow: 0 0 0 3px rgba(239,68,68,0.2); }
     .ptf-stats-row { display: flex; gap: 14px; margin-bottom: 10px; }
-    .ptf-stat { font-size: 0.77rem; color: #64748b; }
-    .ptf-stat strong { display: block; font-size: 0.92rem; font-weight: 700; color: #1e293b; }
-    .ptf-cam-lbl { font-size: 0.68rem; color: #94a3b8; text-transform: uppercase; letter-spacing: 0.04em; }
-    .ptf-cam-val { font-size: 1.15rem; font-weight: 800; color: #1e40af; margin-top: 2px; }
+    .ptf-stat { font-size: 0.77rem; color: #64748B; }
+    .ptf-stat strong { display: block; font-size: 0.92rem; font-weight: 700; color: #E2E8F0; }
+    .ptf-cam-lbl { font-size: 0.68rem; color: #64748B; text-transform: uppercase; letter-spacing: 0.04em; font-family: 'DM Mono', monospace; }
+    .ptf-cam-val { font-size: 1.15rem; font-weight: 800; color: #C9973A; margin-top: 2px; }
+
+    /* ── XRPL Trust Strip ───────────────────────────────────────────── */
+    .xrpl-trust-strip {
+      display: flex; align-items: center; justify-content: center;
+      flex-wrap: wrap; gap: 18px;
+      background: linear-gradient(135deg, #0F1929 0%, #111827 100%);
+      border: 1px solid rgba(201,151,58,0.2);
+      border-radius: 12px; padding: 14px 20px; margin-bottom: 24px;
+    }
+    .xrpl-trust-item {
+      display: flex; align-items: center; gap: 7px;
+      font-size: 0.78rem; font-weight: 600; color: #E4B15C;
+      white-space: nowrap;
+    }
+    .xrpl-trust-item .xrpl-icon { font-size: 0.95rem; }
+    .xrpl-trust-divider {
+      width: 1px; height: 18px; background: rgba(201,151,58,0.2);
+    }
+    .xrpl-trust-link {
+      font-size: 0.75rem; color: #4ade80; font-weight: 600;
+      text-decoration: none; border-bottom: 1px solid rgba(74,222,128,0.3);
+      transition: color 0.15s;
+    }
+    .xrpl-trust-link:hover { color: #86efac; }
+
+    /* ── On-Chain badge on property cards ───────────────────────────── */
+    .ptf-onchain-badge {
+      display: inline-flex; align-items: center; gap: 4px;
+      padding: 2px 8px; border-radius: 20px; margin-top: 8px;
+      background: rgba(34,197,94,0.12); border: 1px solid rgba(34,197,94,0.3);
+      font-size: 0.68rem; font-weight: 700; color: #4ade80;
+    }
+
+    /* ── Demo launch button ─────────────────────────────────────────── */
+    .demo-launch-btn {
+      padding: 8px 18px; border-radius: 9px; font-size: 0.83rem;
+      font-weight: 700; cursor: pointer; border: none; white-space: nowrap;
+      background: linear-gradient(135deg, #C9973A 0%, #E4B15C 100%);
+      color: #0B1220; transition: all 0.15s;
+      box-shadow: 0 2px 10px rgba(201,151,58,0.35);
+    }
+    .demo-launch-btn:hover { opacity: 0.88; transform: translateY(-1px); }
+
+    /* ── Phase 2 teaser ─────────────────────────────────────────────── */
+    .ptf-phase2-teaser {
+      display: flex; align-items: center; gap: 14px;
+      background: rgba(201,151,58,0.06); border: 1.5px solid rgba(201,151,58,0.2);
+      border-radius: 11px; padding: 13px 18px; margin-bottom: 8px;
+    }
+    .ptf-phase2-icon { font-size: 1.2rem; flex-shrink: 0; }
+    .ptf-phase2-text { font-size: 0.82rem; color: #94A3B8; line-height: 1.4; }
+    .ptf-phase2-text strong { color: #E4B15C; }
+    .ptf-phase2-badge {
+      margin-left: auto; flex-shrink: 0;
+      padding: 3px 10px; border-radius: 20px;
+      background: rgba(201,151,58,0.15); border: 1px solid rgba(201,151,58,0.3);
+      font-size: 0.7rem; font-weight: 700; color: #E4B15C;
+      white-space: nowrap;
+    }
 
     /* ── Property Breadcrumb ─────────────────────────────────────────── */
     #propertyBreadcrumb {
@@ -440,58 +532,58 @@
     }
     .breadcrumb-back {
       padding: 7px 14px; border-radius: 8px; font-size: 0.82rem;
-      font-weight: 600; cursor: pointer; border: 1.5px solid #e2e8f0;
-      background: #fff; color: #475569; transition: all 0.15s;
-      box-shadow: 0 1px 4px rgba(0,0,0,0.06); white-space: nowrap;
+      font-weight: 600; cursor: pointer; border: 1.5px solid rgba(255,255,255,0.1);
+      background: #111827; color: #94A3B8; transition: all 0.15s;
+      box-shadow: 0 1px 4px rgba(0,0,0,0.2); white-space: nowrap;
     }
-    .breadcrumb-back:hover { background: #f1f5f9; border-color: #93c5fd; color: #1e40af; }
-    .breadcrumb-path { font-size: 0.84rem; color: #94a3b8; }
-    .breadcrumb-path span { color: #1a1a2e; font-weight: 700; }
+    .breadcrumb-back:hover { background: #0F1929; border-color: #C9973A; color: #C9973A; }
+    .breadcrumb-path { font-size: 0.84rem; color: #64748B; }
+    .breadcrumb-path span { color: #E2E8F0; font-weight: 700; }
 
     /* ── Lease Upload Tabs ───────────────────────────────────────────── */
     .lease-tab-bar {
       display: flex; gap: 0; margin-bottom: 18px;
-      border-bottom: 2px solid #e2e8f0;
+      border-bottom: 2px solid rgba(255,255,255,0.08);
     }
     .lease-tab {
       padding: 9px 22px; font-size: 0.85rem; font-weight: 600;
-      border: none; background: none; cursor: pointer; color: #64748b;
+      border: none; background: none; cursor: pointer; color: #64748B;
       border-bottom: 2px solid transparent; margin-bottom: -2px;
       transition: all 0.15s;
     }
-    .lease-tab:hover { color: #1e40af; }
-    .lease-tab.active { color: #1e40af; border-bottom-color: #1e40af; }
+    .lease-tab:hover { color: #C9973A; }
+    .lease-tab.active { color: #C9973A; border-bottom-color: #C9973A; }
 
     /* Bulk upload zone */
     .bulk-upload-zone {
-      border: 2px dashed #cbd5e1; border-radius: 12px;
+      border: 2px dashed rgba(255,255,255,0.12); border-radius: 12px;
       padding: 32px 24px; text-align: center; cursor: pointer;
-      background: #f8fafc; transition: all 0.18s; position: relative;
+      background: #0F1929; transition: all 0.18s; position: relative;
     }
     .bulk-upload-zone:hover, .bulk-upload-zone.drag-over {
-      border-color: #3b82f6; background: #eff6ff;
+      border-color: #C9973A; background: rgba(201,151,58,0.05);
     }
     .bulk-upload-zone input[type=file] {
       position: absolute; inset: 0; opacity: 0; cursor: pointer;
       width: 100%; height: 100%;
     }
     .bulk-uz-icon { font-size: 2rem; margin-bottom: 8px; }
-    .bulk-uz-label { font-size: 0.95rem; font-weight: 600; color: #1e293b; margin-bottom: 4px; }
-    .bulk-uz-sub { font-size: 0.78rem; color: #94a3b8; }
+    .bulk-uz-label { font-size: 0.95rem; font-weight: 600; color: #E2E8F0; margin-bottom: 4px; }
+    .bulk-uz-sub { font-size: 0.78rem; color: #64748B; }
 
     /* Bulk progress */
     .bulk-progress-wrap {
       margin: 16px 0; padding: 14px 16px;
-      background: #eff6ff; border: 1.5px solid #bfdbfe; border-radius: 10px;
+      background: rgba(201,151,58,0.08); border: 1.5px solid rgba(201,151,58,0.2); border-radius: 10px;
     }
     .bulk-progress-label {
-      font-size: 0.85rem; font-weight: 600; color: #1e40af; margin-bottom: 8px;
+      font-size: 0.85rem; font-weight: 600; color: #E4B15C; margin-bottom: 8px;
     }
     .bulk-progress-track {
-      height: 6px; background: #dbeafe; border-radius: 3px; overflow: hidden;
+      height: 6px; background: rgba(255,255,255,0.1); border-radius: 3px; overflow: hidden;
     }
     .bulk-progress-fill {
-      height: 100%; background: #2563eb; border-radius: 3px; transition: width 0.35s ease;
+      height: 100%; background: linear-gradient(90deg, #C9973A, #E4B15C); border-radius: 3px; transition: width 0.35s ease;
     }
 
     /* Bulk results */
@@ -499,33 +591,33 @@
       display: flex; align-items: center; justify-content: space-between;
       margin: 16px 0 10px;
     }
-    .bulk-results-head h3 { font-size: 0.88rem; font-weight: 700; color: #1a1a2e; margin: 0; }
+    .bulk-results-head h3 { font-size: 0.88rem; font-weight: 700; color: #E2E8F0; margin: 0; }
     .bulk-clear-btn {
       padding: 5px 12px; border-radius: 7px; font-size: 0.78rem;
       font-weight: 600; cursor: pointer; border: 1.5px solid #fca5a5;
-      background: #fee2e2; color: #991b1b; transition: all 0.15s;
+      background: rgba(239,68,68,0.1); color: #f87171; transition: all 0.15s;
     }
-    .bulk-clear-btn:hover { background: #fecaca; }
+    .bulk-clear-btn:hover { background: rgba(239,68,68,0.2); }
     .bulk-tenant-row {
-      border: 1.5px solid #e2e8f0; border-radius: 11px; margin-bottom: 10px; overflow: hidden;
+      border: 1.5px solid rgba(255,255,255,0.08); border-radius: 11px; margin-bottom: 10px; overflow: hidden;
     }
-    .bulk-tenant-row.has-error { border-color: #fca5a5; }
+    .bulk-tenant-row.has-error { border-color: rgba(239,68,68,0.3); }
     .bulk-tenant-summary {
       display: flex; align-items: center; gap: 10px; padding: 10px 14px;
-      background: #f8fafc; cursor: pointer; user-select: none;
+      background: #0F1929; cursor: pointer; user-select: none;
     }
-    .bulk-tenant-summary:hover { background: #f1f5f9; }
+    .bulk-tenant-summary:hover { background: #0B1220; }
     .bulk-t-status { font-size: 0.95rem; flex-shrink: 0; }
-    .bulk-t-name { font-size: 0.88rem; font-weight: 700; color: #1a1a2e; flex: 1; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
-    .bulk-t-meta { font-size: 0.78rem; color: #64748b; white-space: nowrap; }
-    .bulk-t-chevron { font-size: 0.7rem; color: #94a3b8; flex-shrink: 0; }
+    .bulk-t-name { font-size: 0.88rem; font-weight: 700; color: #E2E8F0; flex: 1; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+    .bulk-t-meta { font-size: 0.78rem; color: #64748B; white-space: nowrap; }
+    .bulk-t-chevron { font-size: 0.7rem; color: #64748B; flex-shrink: 0; }
     .bulk-t-remove {
       padding: 3px 10px; border-radius: 6px; font-size: 0.74rem; font-weight: 600;
-      cursor: pointer; border: 1.5px solid #fca5a5; background: #fff;
-      color: #dc2626; transition: all 0.15s; flex-shrink: 0;
+      cursor: pointer; border: 1.5px solid rgba(239,68,68,0.3); background: #111827;
+      color: #f87171; transition: all 0.15s; flex-shrink: 0;
     }
-    .bulk-t-remove:hover { background: #fee2e2; }
-    .bulk-tenant-detail { padding: 14px 14px 10px; border-top: 1px solid #e2e8f0; }
+    .bulk-t-remove:hover { background: rgba(239,68,68,0.1); }
+    .bulk-tenant-detail { padding: 14px 14px 10px; border-top: 1px solid rgba(255,255,255,0.06); }
 
     /* ── Confidence badges ───────────────────────────────────────────── */
     .conf-badge {
@@ -533,16 +625,17 @@
       padding: 1px 7px; border-radius: 20px;
       font-size: 0.68rem; font-weight: 700; margin-left: 6px;
       vertical-align: middle; white-space: nowrap;
+      font-family: 'DM Mono', monospace;
     }
-    .conf-high { background: #dcfce7; color: #166534; }
-    .conf-mid  { background: #fef9c3; color: #854d0e; }
-    .conf-low  { background: #fee2e2; color: #991b1b; }
+    .conf-high { background: rgba(34,197,94,0.15); color: #4ade80; }
+    .conf-mid  { background: rgba(245,158,11,0.15); color: #fbbf24; }
+    .conf-low  { background: rgba(239,68,68,0.15); color: #f87171; }
 
     /* ── Inline warnings (duplicate / sanity) ────────────────────────── */
     .warn-banner {
       margin: 8px 0 4px; padding: 10px 14px; border-radius: 9px;
       font-size: 0.83rem; line-height: 1.5;
-      border: 1.5px solid #fdba74; background: #fff7ed; color: #9a3412;
+      border: 1.5px solid rgba(234,88,12,0.3); background: rgba(234,88,12,0.08); color: #fb923c;
     }
     .warn-banner .warn-msg { margin-bottom: 8px; }
     .warn-banner-btns { display: flex; gap: 8px; }
@@ -550,60 +643,125 @@
       padding: 5px 14px; border-radius: 7px; font-size: 0.78rem;
       font-weight: 600; cursor: pointer; border: none; transition: all 0.15s;
     }
-    .warn-btn.add    { background: #fed7aa; color: #9a3412; }
-    .warn-btn.add:hover    { background: #fdba74; }
-    .warn-btn.remove { background: #f1f5f9; color: #475569; border: 1px solid #cbd5e1; }
-    .warn-btn.remove:hover { background: #e2e8f0; }
-    .warn-btn.dismiss { background: #f1f5f9; color: #475569; border: 1px solid #cbd5e1; }
-    .warn-btn.dismiss:hover { background: #e2e8f0; }
+    .warn-btn.add    { background: rgba(234,88,12,0.15); color: #fb923c; border: 1px solid rgba(234,88,12,0.3); }
+    .warn-btn.add:hover    { background: rgba(234,88,12,0.25); }
+    .warn-btn.remove { background: #111827; color: #94A3B8; border: 1px solid rgba(255,255,255,0.1); }
+    .warn-btn.remove:hover { background: #0F1929; }
+    .warn-btn.dismiss { background: #111827; color: #94A3B8; border: 1px solid rgba(255,255,255,0.1); }
+    .warn-btn.dismiss:hover { background: #0F1929; }
+
+    /* ── Yardi import ────────────────────────────────────────────────── */
+    .yardi-tmpl-link {
+      font-size: 0.8rem; font-weight: 600; color: #C9973A;
+      text-decoration: none; white-space: nowrap;
+    }
+    .yardi-tmpl-link:hover { text-decoration: underline; }
+
+    .yardi-err {
+      display: flex; gap: 12px; align-items: flex-start;
+      padding: 16px 18px; background: rgba(234,88,12,0.08); border: 1.5px solid rgba(234,88,12,0.25);
+      border-radius: 10px; margin-top: 14px;
+    }
+    .yardi-err-icon { font-size: 1.4rem; flex-shrink: 0; }
+    .yardi-err-msg { font-size: 0.86rem; line-height: 1.6; color: #fb923c; }
+    .yardi-err-msg a { color: #C9973A; font-weight: 600; }
+
+    .yardi-preview-wrap { margin-top: 16px; }
+    .yardi-preview-info {
+      font-size: 0.84rem; color: #94A3B8; margin-bottom: 10px;
+      display: flex; align-items: center; gap: 8px; flex-wrap: wrap;
+    }
+    .yardi-unknown-note {
+      padding: 2px 9px; border-radius: 20px;
+      background: rgba(245,158,11,0.15); color: #fbbf24;
+      font-size: 0.76rem; font-weight: 600;
+    }
+    .yardi-table-scroll { overflow-x: auto; border-radius: 8px; border: 1.5px solid rgba(255,255,255,0.08); }
+    .yardi-table { width: 100%; border-collapse: collapse; font-size: 0.82rem; }
+    .yardi-th {
+      background: rgba(201,151,58,0.1); color: #E4B15C; text-align: left;
+      padding: 9px 10px; font-size: 0.72rem; text-transform: uppercase;
+      letter-spacing: 0.04em; white-space: nowrap; border-bottom: 1.5px solid rgba(201,151,58,0.2);
+      font-family: 'DM Mono', monospace;
+    }
+    .yardi-th.yardi-unknown { background: rgba(245,158,11,0.1); color: #fbbf24; }
+    .yardi-th-cb { width: 36px; text-align: center; }
+    .yardi-td { padding: 8px 10px; border-bottom: 1px solid rgba(255,255,255,0.05); vertical-align: middle; color: #E2E8F0; }
+    .yardi-td.yardi-unknown { background: rgba(245,158,11,0.05); }
+    .yardi-td.yardi-amt { font-weight: 600; text-align: right; white-space: nowrap; }
+    .yardi-td.yardi-cb { text-align: center; }
+    .yardi-td.yardi-desc {
+      color: #64748B; max-width: 180px;
+      overflow: hidden; text-overflow: ellipsis; white-space: nowrap;
+    }
+    .yardi-table tbody tr:hover .yardi-td { background: rgba(255,255,255,0.03); }
+    .yardi-table tbody tr:hover .yardi-td.yardi-unknown { background: rgba(245,158,11,0.08); }
+    .yardi-cat-sel {
+      padding: 4px 8px; border-radius: 6px; font-size: 0.8rem;
+      border: 1.5px solid rgba(255,255,255,0.1); background: #0F1929; color: #E2E8F0;
+    }
+    .yardi-footer {
+      display: flex; align-items: center; justify-content: space-between;
+      padding: 12px 4px 2px; margin-top: 6px;
+      font-size: 0.85rem; color: #94A3B8;
+      border-top: 1.5px solid rgba(255,255,255,0.08);
+    }
+    .yardi-import-btn {
+      padding: 10px 22px; border-radius: 9px; font-size: 0.88rem;
+      font-weight: 700; cursor: pointer; border: none;
+      background: linear-gradient(135deg, #16a34a, #22c55e); color: #fff; transition: all 0.15s;
+    }
+    .yardi-import-btn:hover { opacity: 0.9; }
+    .yardi-import-btn:disabled { background: #374151; cursor: not-allowed; color: #6B7280; }
 
     /* ── Invoice folder upload button ───────────────────────────────── */
     .inv-folder-btn {
       display: inline-flex; align-items: center; gap: 6px;
       padding: 7px 14px; border-radius: 8px; font-size: 0.82rem;
-      font-weight: 600; cursor: pointer; border: 1.5px solid #bfdbfe;
-      background: #eff6ff; color: #1e40af; transition: all 0.15s;
+      font-weight: 600; cursor: pointer; border: 1.5px solid rgba(201,151,58,0.3);
+      background: rgba(201,151,58,0.08); color: #C9973A; transition: all 0.15s;
       user-select: none;
     }
-    .inv-folder-btn:hover { background: #dbeafe; border-color: #93c5fd; }
+    .inv-folder-btn:hover { background: rgba(201,151,58,0.15); border-color: #C9973A; }
 
     /* ── Allocation confirmation modal ───────────────────────────────── */
     .modal-backdrop {
       position: fixed; inset: 0; z-index: 500;
-      background: rgba(15,23,42,0.5);
+      background: rgba(0,0,0,0.7);
       display: flex; align-items: center; justify-content: center; padding: 24px;
     }
     .modal-box {
-      background: #fff; border-radius: 16px; width: 100%; max-width: 480px;
-      box-shadow: 0 24px 64px rgba(0,0,0,0.22); padding: 28px 28px 22px;
+      background: #111827; border-radius: 16px; width: 100%; max-width: 480px;
+      box-shadow: 0 24px 64px rgba(0,0,0,0.6); padding: 28px 28px 22px;
+      border: 1px solid rgba(255,255,255,0.1);
     }
     .modal-title {
-      font-size: 1.08rem; font-weight: 700; color: #1a1a2e; margin-bottom: 14px;
+      font-size: 1.08rem; font-weight: 700; color: #E2E8F0; margin-bottom: 14px;
     }
     .modal-confirm-msg {
-      background: #eff6ff; border: 1.5px solid #bfdbfe; border-radius: 9px;
-      padding: 12px 14px; font-size: 0.85rem; color: #1e40af;
+      background: rgba(201,151,58,0.1); border: 1.5px solid rgba(201,151,58,0.25); border-radius: 9px;
+      padding: 12px 14px; font-size: 0.85rem; color: #E4B15C;
       font-weight: 500; margin-bottom: 16px; line-height: 1.5;
     }
     .modal-summary-table {
       width: 100%; border-collapse: collapse; font-size: 0.85rem; margin-bottom: 20px;
     }
-    .modal-summary-table td { padding: 7px 2px; border-bottom: 1px solid #f1f5f9; }
-    .modal-summary-table td:last-child { text-align: right; font-weight: 600; color: #1e40af; }
+    .modal-summary-table td { padding: 7px 2px; border-bottom: 1px solid rgba(255,255,255,0.06); color: #E2E8F0; }
+    .modal-summary-table td:last-child { text-align: right; font-weight: 600; color: #C9973A; }
     .modal-summary-table tr:last-child td { border-bottom: none; }
     .modal-actions { display: flex; gap: 10px; }
     .modal-confirm {
       flex: 1; padding: 11px; border-radius: 9px; font-size: 0.9rem;
       font-weight: 700; cursor: pointer; border: none;
-      background: #1e40af; color: #fff; transition: all 0.15s;
+      background: linear-gradient(135deg, #C9973A, #E4B15C); color: #0B1220; transition: all 0.15s;
     }
-    .modal-confirm:hover { background: #1e3a8a; }
+    .modal-confirm:hover { opacity: 0.9; }
     .modal-cancel {
       flex: 1; padding: 11px; border-radius: 9px; font-size: 0.9rem;
       font-weight: 600; cursor: pointer;
-      background: #f1f5f9; color: #475569; border: 1.5px solid #cbd5e1; transition: all 0.15s;
+      background: #0F1929; color: #94A3B8; border: 1.5px solid rgba(255,255,255,0.1); transition: all 0.15s;
     }
-    .modal-cancel:hover { background: #e2e8f0; }
+    .modal-cancel:hover { background: #0B1220; }
 
     /* ── Reports section ─────────────────────────────────────────────── */
     #reportsSection { display: block; }
@@ -611,106 +769,159 @@
     .report-btn {
       padding: 10px 20px; border-radius: 9px; font-size: 0.88rem;
       font-weight: 700; cursor: pointer; border: none; transition: all 0.15s;
-      background: #1e40af; color: #fff;
+      background: linear-gradient(135deg, #C9973A, #E4B15C); color: #0B1220;
     }
-    .report-btn:hover { background: #1e3a8a; }
+    .report-btn:hover { opacity: 0.9; }
     .reports-notice {
       margin-top: 14px; padding: 12px 16px;
-      background: #f8fafc; border: 1.5px dashed #cbd5e1; border-radius: 9px;
-      font-size: 0.85rem; color: #64748b; text-align: center;
+      background: #0F1929; border: 1.5px dashed rgba(255,255,255,0.1); border-radius: 9px;
+      font-size: 0.85rem; color: #64748B; text-align: center;
     }
     #tenantReportButtons { margin-top: 14px; }
     .tenant-report-btn {
       padding: 8px 16px; border-radius: 7px; font-size: 0.82rem;
-      font-weight: 600; cursor: pointer; border: 1.5px solid #bfdbfe;
-      background: #eff6ff; color: #1e40af; transition: all 0.15s;
+      font-weight: 600; cursor: pointer; border: 1.5px solid rgba(201,151,58,0.3);
+      background: rgba(201,151,58,0.08); color: #C9973A; transition: all 0.15s;
     }
-    .tenant-report-btn:hover { background: #dbeafe; }
+    .tenant-report-btn:hover { background: rgba(201,151,58,0.15); }
+
+    .report-btn-holes { background: linear-gradient(135deg, #92400e, #b45309); color: white; }
+    .report-btn-holes:hover { opacity: 0.9; }
+
+    /* ── Holes report styles ─────────────────────────────────────────── */
+    .holes-group {
+      margin-bottom: 28px;
+    }
+    .holes-group-title {
+      font-size: 0.8rem; font-weight: 800; letter-spacing: 0.08em;
+      text-transform: uppercase; color: #94A3B8;
+      border-bottom: 2px solid rgba(255,255,255,0.08); padding-bottom: 6px;
+      margin-bottom: 12px; font-family: 'DM Mono', monospace;
+    }
+    .hole-item {
+      display: flex; align-items: flex-start; gap: 10px;
+      padding: 11px 14px; border-radius: 9px;
+      margin-bottom: 8px; font-family: 'DM Sans', sans-serif;
+      border: 1.5px solid transparent;
+    }
+    .hole-item.critical {
+      background: rgba(239,68,68,0.1); border-color: rgba(239,68,68,0.25); color: #f87171;
+    }
+    .hole-item.warning {
+      background: rgba(245,158,11,0.1); border-color: rgba(245,158,11,0.25); color: #fbbf24;
+    }
+    .hole-item.ok {
+      background: rgba(34,197,94,0.08); border-color: rgba(34,197,94,0.2); color: #4ade80;
+    }
+    .hole-icon { font-size: 1rem; flex-shrink: 0; margin-top: 1px; }
+    .hole-text { font-size: 0.86rem; line-height: 1.45; }
+    .hole-text strong { font-weight: 700; }
+    .hole-text .hole-detail {
+      display: block; font-size: 0.76rem; opacity: 0.75; margin-top: 2px;
+    }
+    .holes-summary-bar {
+      margin-top: 28px; padding: 16px 20px;
+      border-radius: 11px; font-family: 'DM Sans', sans-serif;
+      display: flex; align-items: center; gap: 14px;
+    }
+    .holes-summary-bar.has-issues {
+      background: rgba(239,68,68,0.1); border: 2px solid rgba(239,68,68,0.3);
+    }
+    .holes-summary-bar.all-clear {
+      background: rgba(34,197,94,0.08); border: 2px solid rgba(34,197,94,0.25);
+    }
+    .holes-summary-count {
+      font-size: 2rem; font-weight: 800; line-height: 1; flex-shrink: 0;
+    }
+    .holes-summary-bar.has-issues .holes-summary-count { color: #f87171; }
+    .holes-summary-bar.all-clear  .holes-summary-count { color: #4ade80; }
+    .holes-summary-msg { font-size: 0.9rem; font-weight: 600; color: #E2E8F0; }
 
     /* ── Report overlay ───────────────────────────────────────────────── */
     #reportOverlay {
       display: none; position: fixed; inset: 0; z-index: 1000;
-      background: #fff; overflow-y: auto;
+      background: #0B1220; overflow-y: auto;
     }
     #reportOverlay.open { display: block; }
     .rpt-toolbar {
       position: sticky; top: 0; z-index: 10;
-      background: #1e40af; color: #fff;
+      background: #111827; color: #E2E8F0;
       display: flex; align-items: center; justify-content: space-between;
       padding: 12px 24px; gap: 12px;
+      border-bottom: 1px solid rgba(201,151,58,0.2);
     }
-    .rpt-toolbar h2 { margin: 0; font-size: 1rem; font-weight: 700; }
+    .rpt-toolbar h2 { margin: 0; font-size: 1rem; font-weight: 700; color: #E2E8F0; }
     .rpt-toolbar-actions { display: flex; gap: 8px; }
     .rpt-tool-btn {
       padding: 7px 16px; border-radius: 7px; font-size: 0.82rem;
-      font-weight: 600; cursor: pointer; border: none; background: #fff;
-      color: #1e40af; transition: all 0.15s;
+      font-weight: 600; cursor: pointer; border: 1px solid rgba(201,151,58,0.3);
+      background: rgba(201,151,58,0.1); color: #C9973A; transition: all 0.15s;
     }
-    .rpt-tool-btn:hover { background: #dbeafe; }
+    .rpt-tool-btn:hover { background: rgba(201,151,58,0.2); }
     .rpt-close-btn {
       padding: 7px 16px; border-radius: 7px; font-size: 0.82rem;
       font-weight: 600; cursor: pointer; border: 1.5px solid rgba(255,255,255,0.4);
-      background: transparent; color: #fff; transition: all 0.15s;
+      background: transparent; color: #E2E8F0; transition: all 0.15s;
     }
-    .rpt-close-btn:hover { background: rgba(255,255,255,0.15); }
+    .rpt-close-btn:hover { background: rgba(255,255,255,0.08); }
     .rpt-body {
       max-width: 860px; margin: 32px auto 64px; padding: 0 24px;
-      font-family: Georgia, serif; color: #1a1a2e;
+      font-family: Georgia, serif; color: #E2E8F0;
     }
     .rpt-letterhead {
-      text-align: center; border-bottom: 2px solid #1e40af;
+      text-align: center; border-bottom: 2px solid rgba(201,151,58,0.4);
       padding-bottom: 18px; margin-bottom: 28px;
     }
-    .rpt-letterhead h1 { font-size: 1.5rem; margin: 0 0 4px; color: #1e40af; }
-    .rpt-letterhead .rpt-sub { font-size: 0.88rem; color: #64748b; }
+    .rpt-letterhead h1 { font-size: 1.5rem; margin: 0 0 4px; color: #C9973A; font-family: 'Cormorant Garamond', Georgia, serif; }
+    .rpt-letterhead .rpt-sub { font-size: 0.88rem; color: #64748B; }
     .rpt-section-title {
-      font-size: 1rem; font-weight: 700; color: #1e40af;
-      border-bottom: 1px solid #bfdbfe; padding-bottom: 6px;
+      font-size: 1rem; font-weight: 700; color: #C9973A;
+      border-bottom: 1px solid rgba(201,151,58,0.25); padding-bottom: 6px;
       margin: 28px 0 14px;
     }
     .rpt-kpi-row { display: flex; gap: 16px; flex-wrap: wrap; margin-bottom: 8px; }
     .rpt-kpi {
       flex: 1; min-width: 120px; padding: 14px 18px;
-      background: #f8fafc; border: 1px solid #e2e8f0; border-radius: 10px;
+      background: #111827; border: 1px solid rgba(255,255,255,0.08); border-radius: 10px;
       text-align: center;
     }
-    .rpt-kpi .kpi-val { font-size: 1.25rem; font-weight: 700; color: #1e40af; }
-    .rpt-kpi .kpi-lbl { font-size: 0.74rem; color: #64748b; margin-top: 3px; }
+    .rpt-kpi .kpi-val { font-size: 1.25rem; font-weight: 700; color: #C9973A; }
+    .rpt-kpi .kpi-lbl { font-size: 0.74rem; color: #64748B; margin-top: 3px; }
     .rpt-table {
       width: 100%; border-collapse: collapse; font-size: 0.86rem; margin-bottom: 8px;
     }
     .rpt-table th {
-      background: #eff6ff; color: #1e40af; text-align: left;
+      background: rgba(201,151,58,0.1); color: #E4B15C; text-align: left;
       padding: 9px 12px; font-size: 0.78rem; text-transform: uppercase;
-      letter-spacing: 0.04em;
+      letter-spacing: 0.04em; font-family: 'DM Mono', monospace;
     }
-    .rpt-table td { padding: 9px 12px; border-bottom: 1px solid #f1f5f9; }
+    .rpt-table td { padding: 9px 12px; border-bottom: 1px solid rgba(255,255,255,0.06); color: #E2E8F0; }
     .rpt-table tr:last-child td { border-bottom: none; }
-    .rpt-table tr:hover td { background: #f8fafc; }
-    .rpt-table .total-row td { font-weight: 700; background: #f0f9ff; }
+    .rpt-table tr:hover td { background: rgba(255,255,255,0.03); }
+    .rpt-table .total-row td { font-weight: 700; background: rgba(201,151,58,0.08); }
     .rpt-pill {
       display: inline-block; padding: 2px 9px; border-radius: 20px;
       font-size: 0.74rem; font-weight: 700;
     }
-    .rpt-pill.open   { background: #fef3c7; color: #92400e; }
-    .rpt-pill.closed { background: #dcfce7; color: #166534; }
+    .rpt-pill.open   { background: rgba(245,158,11,0.15); color: #fbbf24; }
+    .rpt-pill.closed { background: rgba(34,197,94,0.15); color: #4ade80; }
     .rpt-hash-box {
       margin-top: 8px; padding: 10px 14px;
-      background: #f0fdf4; border: 1.5px solid #86efac; border-radius: 8px;
+      background: rgba(34,197,94,0.08); border: 1.5px solid rgba(34,197,94,0.25); border-radius: 8px;
     }
     .rpt-hash-box .rpt-hash-lbl {
-      font-size: 0.7rem; font-weight: 700; color: #166534;
+      font-size: 0.7rem; font-weight: 700; color: #4ade80;
       text-transform: uppercase; letter-spacing: 0.05em; margin-bottom: 4px;
-      font-family: sans-serif;
+      font-family: 'DM Mono', monospace;
     }
     .rpt-hash-box .rpt-hash-val {
-      font-family: "Courier New", monospace; font-size: 0.68rem;
-      color: #166534; word-break: break-all; line-height: 1.5;
+      font-family: 'DM Mono', "Courier New", monospace; font-size: 0.68rem;
+      color: #4ade80; word-break: break-all; line-height: 1.5;
     }
     .rpt-footer {
-      margin-top: 36px; padding-top: 16px; border-top: 1px solid #e2e8f0;
-      font-size: 0.74rem; color: #94a3b8; text-align: center;
-      font-family: sans-serif;
+      margin-top: 36px; padding-top: 16px; border-top: 1px solid rgba(255,255,255,0.08);
+      font-size: 0.74rem; color: #64748B; text-align: center;
+      font-family: 'DM Sans', sans-serif;
     }
 
     /* ── Print styles ─────────────────────────────────────────────────── */
@@ -719,9 +930,11 @@
       #reportOverlay {
         display: block !important; position: static !important;
         overflow: visible !important; box-shadow: none !important;
+        background: white !important;
       }
       .rpt-toolbar { display: none !important; }
-      .rpt-body { margin: 0; padding: 20px; max-width: 100%; }
+      .rpt-body { margin: 0; padding: 20px; max-width: 100%; color: #000 !important; }
+      .rpt-body * { color: #000 !important; background: white !important; border-color: #ccc !important; }
       @page { margin: 1cm; }
     }
   </style>
@@ -729,8 +942,9 @@
 <body>
 
 <header>
-  <h1>CAM Logic</h1>
-  <p>AI-Powered Commercial Area Maintenance Reconciliation</p>
+  <h1>Mainstreet</h1>
+  <div class="hero-tagline">The smarter way to reconcile CAM charges</div>
+  <p>CAM Reconciliation &nbsp;&middot;&nbsp; Works Alongside Yardi &nbsp;&middot;&nbsp; Powered by XRPL</p>
 </header>
 
 <!-- API Key -->
@@ -742,6 +956,30 @@
 
 <!-- ── Portfolio Dashboard ──────────────────────────────────────────── -->
 <div id="portfolioDashboard">
+
+  <!-- XRPL Trust Strip -->
+  <div class="xrpl-trust-strip">
+    <div class="xrpl-trust-item">
+      <span class="xrpl-icon">&#x1F517;</span>
+      Every reconciliation hashed on XRPL
+    </div>
+    <div class="xrpl-trust-divider"></div>
+    <div class="xrpl-trust-item">
+      <span class="xrpl-icon">&#x1F512;</span>
+      Dispute resolutions recorded immutably
+    </div>
+    <div class="xrpl-trust-divider"></div>
+    <div class="xrpl-trust-item">
+      <span class="xrpl-icon">&#x26A1;</span>
+      Year-end settlement via XRPL Escrow
+    </div>
+    <div class="xrpl-trust-divider"></div>
+    <a class="xrpl-trust-link"
+      href="https://testnet.xrpl.org/transactions/AFAD1E38C7A932C35511DB846A099EE346B7E1D71EF3E9F5E61D1F9BF505E113"
+      target="_blank" rel="noopener">
+      View Live TX &#x2197;
+    </a>
+  </div>
 
   <!-- KPI Overview Bar -->
   <div class="ptf-kpi-bar">
@@ -770,9 +1008,22 @@
   <!-- Property Cards -->
   <div class="ptf-props-head">
     <h2>Your Properties</h2>
-    <button class="add-prop-btn" onclick="addNewProperty()">+ Add New Property</button>
+    <div style="display:flex;gap:8px;align-items:center;">
+      <button class="demo-launch-btn" onclick="loadDemo()">&#x1F3AF; Try Live Demo</button>
+      <button class="add-prop-btn" onclick="addNewProperty()">+ Add New Property</button>
+    </div>
   </div>
   <div class="ptf-cards-grid" id="propertyCardsGrid"></div>
+
+  <!-- Phase 2 Teaser -->
+  <div class="ptf-phase2-teaser">
+    <span class="ptf-phase2-icon">&#x1F3E6;</span>
+    <div class="ptf-phase2-text">
+      <strong>Mortgage Escrow Analysis — Coming Soon</strong><br>
+      Verify CAM compliance before releasing escrow funds. Built for commercial mortgage servicers on XRPL.
+    </div>
+    <span class="ptf-phase2-badge">Phase 2</span>
+  </div>
 
 </div>
 
@@ -847,31 +1098,64 @@
       <div class="sec-num">3</div>
       <div>
         <h2>Invoice Upload</h2>
-        <p>Drop multiple invoices — AI extracts each one automatically</p>
+        <p>Upload invoice files or import directly from Yardi Genesis</p>
       </div>
     </div>
-    <div class="bulk-upload-zone" id="invZone"
-      ondragover="event.preventDefault();this.classList.add('drag-over')"
-      ondragleave="this.classList.remove('drag-over')"
-      ondrop="event.preventDefault();this.classList.remove('drag-over');handleBatchInvoices(event.dataTransfer.files)">
-      <div class="bulk-uz-icon">&#x1F9FE;</div>
-      <div class="bulk-uz-label">Drop invoice files here, or click to select</div>
-      <div class="bulk-uz-sub">PDF, JPG, PNG accepted &middot; multiple files at once</div>
-      <input type="file" id="invFileInput" multiple
-        accept=".pdf,.jpg,.jpeg,.png,.webp,application/pdf,image/*"
-        onchange="handleBatchInvoices(this.files)" />
+
+    <!-- Tab bar -->
+    <div class="lease-tab-bar">
+      <button class="lease-tab active" id="iTabFiles" onclick="switchInvTab('files')">&#x1F9FE; Upload Files</button>
+      <button class="lease-tab"        id="iTabYardi" onclick="switchInvTab('yardi')">&#x1F4CA; Import from Yardi</button>
     </div>
-    <div style="margin-top:10px;display:flex;gap:10px;align-items:center;">
-      <label class="inv-folder-btn">
-        &#x1F4C1; Upload Folder
-        <input type="file" id="invFolderInput" multiple webkitdirectory
+
+    <!-- Panel A: File Upload -->
+    <div id="invPanelFiles">
+      <div class="bulk-upload-zone" id="invZone"
+        ondragover="event.preventDefault();this.classList.add('drag-over')"
+        ondragleave="this.classList.remove('drag-over')"
+        ondrop="event.preventDefault();this.classList.remove('drag-over');handleBatchInvoices(event.dataTransfer.files)">
+        <div class="bulk-uz-icon">&#x1F9FE;</div>
+        <div class="bulk-uz-label">Drop invoice files here, or click to select</div>
+        <div class="bulk-uz-sub">PDF, JPG, PNG accepted &middot; multiple files at once</div>
+        <input type="file" id="invFileInput" multiple
           accept=".pdf,.jpg,.jpeg,.png,.webp,application/pdf,image/*"
-          onchange="handleBatchInvoices(this.files)" style="display:none;" />
-      </label>
-      <span style="font-size:0.74rem;color:#94a3b8;">ZIP files — extract first, then select all</span>
+          onchange="handleBatchInvoices(this.files)" />
+      </div>
+      <div style="margin-top:10px;display:flex;gap:10px;align-items:center;">
+        <label class="inv-folder-btn">
+          &#x1F4C1; Upload Folder
+          <input type="file" id="invFolderInput" multiple webkitdirectory
+            accept=".pdf,.jpg,.jpeg,.png,.webp,application/pdf,image/*"
+            onchange="handleBatchInvoices(this.files)" style="display:none;" />
+        </label>
+        <span style="font-size:0.74rem;color:#94a3b8;">ZIP files — extract first, then select all</span>
+      </div>
+      <div id="invProgress" style="display:none;"></div>
+      <div id="invResults"></div>
     </div>
-    <div id="invProgress" style="display:none;"></div>
-    <div id="invResults"></div>
+
+    <!-- Panel B: Yardi Import -->
+    <div id="invPanelYardi" style="display:none;">
+      <div class="bulk-upload-zone" id="yardiZone"
+        ondragover="event.preventDefault();this.classList.add('drag-over')"
+        ondragleave="this.classList.remove('drag-over')"
+        ondrop="event.preventDefault();this.classList.remove('drag-over');handleYardiCSV(event.dataTransfer.files[0])">
+        <div class="bulk-uz-icon">&#x1F4E5;</div>
+        <div class="bulk-uz-label">&#x1F4E5; Import from Yardi Genesis (CSV)</div>
+        <div class="bulk-uz-sub">Export your CAM expense report from Yardi Genesis and drop it here</div>
+        <input type="file" id="yardiFileInput" accept=".csv,text/csv"
+          onchange="handleYardiCSV(this.files[0])" />
+      </div>
+      <div style="margin-top:10px;display:flex;align-items:center;justify-content:space-between;flex-wrap:wrap;gap:8px;">
+        <span style="font-size:0.78rem;color:#64748b;">
+          Columns auto-detected: Vendor, Amount, Date, Description, GL Account, Property
+        </span>
+        <a href="#" class="yardi-tmpl-link" onclick="event.preventDefault();downloadYardiTemplate()">
+          &#x2B07; Download Sample CSV Template
+        </a>
+      </div>
+      <div id="yardiPreview"></div>
+    </div>
   </div>
 
   <!-- ── SECTION 4: Run Allocation ─────────────────────────────────── -->
@@ -917,6 +1201,9 @@
       </button>
       <button class="report-btn" onclick="guardedTenantStatement()">
         &#x1F9FE; Tenant Statement
+      </button>
+      <button class="report-btn report-btn-holes" onclick="generateHolesReport()">
+        &#x1F50D; Monthly Holes Report
       </button>
     </div>
     <div id="reportsMsg" class="reports-notice">
@@ -1492,6 +1779,295 @@ function clearInvResults() {
   document.getElementById('invFolderInput').value = '';
 }
 
+// ─── Invoice Tab Switching ────────────────────────────────────────────────────
+
+function switchInvTab(tab) {
+  document.getElementById('iTabFiles').classList.toggle('active', tab === 'files');
+  document.getElementById('iTabYardi').classList.toggle('active', tab === 'yardi');
+  document.getElementById('invPanelFiles').style.display = tab === 'files' ? 'block' : 'none';
+  document.getElementById('invPanelYardi').style.display = tab === 'yardi' ? 'block' : 'none';
+}
+
+// ─── Yardi Genesis CSV Import ─────────────────────────────────────────────────
+
+// Known column aliases for Yardi export headers
+const YARDI_COL_ALIASES = {
+  vendorName:  ['vendor', 'payee', 'vendor name', 'payee name', 'supplier', 'vendor/payee', 'paid to'],
+  amount:      ['amount', 'total', 'net amount', 'net', 'charge', 'expense', 'cost', 'debit', 'invoice amount', 'check amount'],
+  invoiceDate: ['date', 'post date', 'posting date', 'invoice date', 'trans date', 'transaction date', 'gl date', 'check date'],
+  description: ['description', 'memo', 'notes', 'comment', 'detail', 'narrative', 'reference', 'invoice description'],
+  category:    ['category', 'account', 'gl code', 'gl account', 'account code', 'expense type', 'type', 'account description', 'account name'],
+  property:    ['property', 'building', 'property name', 'building name', 'site', 'property code', 'location'],
+};
+
+let yardiRows        = [];
+let yardiColMap      = {}; // fieldName -> colIndex
+let yardiUnrecognized = []; // [{index, name}]
+
+function yardiParseCSV(text) {
+  const lines = text.replace(/\r\n/g, '\n').replace(/\r/g, '\n').split('\n');
+  return lines
+    .filter(l => l.trim())
+    .map(line => {
+      const cells = [];
+      let inQ = false, cur = '', i = 0;
+      while (i < line.length) {
+        const c = line[i];
+        if (c === '"') {
+          if (inQ && line[i + 1] === '"') { cur += '"'; i += 2; continue; }
+          inQ = !inQ;
+        } else if (c === ',' && !inQ) {
+          cells.push(cur.trim());
+          cur = ''; i++; continue;
+        } else { cur += c; }
+        i++;
+      }
+      cells.push(cur.trim());
+      return cells;
+    });
+}
+
+function yardiFuzzyMatch(header, aliases) {
+  const h = header.toLowerCase().replace(/[^a-z0-9 /]/g, '').trim();
+  return aliases.some(alias => {
+    const a = alias.toLowerCase();
+    return h === a || h.includes(a) || a.includes(h);
+  });
+}
+
+function yardiDetectColumns(headers) {
+  const colMap = {};
+  const unrecognized = [];
+  headers.forEach((h, i) => {
+    let matched = false;
+    for (const [field, aliases] of Object.entries(YARDI_COL_ALIASES)) {
+      if (!(field in colMap) && yardiFuzzyMatch(h, aliases)) {
+        colMap[field] = i;
+        matched = true;
+        break;
+      }
+    }
+    if (!matched && h.trim()) unrecognized.push({ index: i, name: h });
+  });
+  return { colMap, unrecognized };
+}
+
+function yardiCategoryFromText(description, gl) {
+  const t = (description + ' ' + gl).toLowerCase();
+  if (/landscap|lawn|mow|trim|plant|shrub|mulch|irrigation/.test(t))    return 'landscaping';
+  if (/snow|ice|salt|plow|deice/.test(t))                                return 'snow';
+  if (/repair|fix|maintain|hvac|heat|cool|roof|paint|plumb|electric/.test(t) &&
+      !/utility|utilities/.test(t))                                       return 'repairs';
+  if (/electric|gas|water|sewer|utility|utilities|power/.test(t))        return 'utilities';
+  if (/janitor|clean|sweep|trash|waste/.test(t))                         return 'janitorial';
+  if (/secur|guard|patrol|access|camera/.test(t))                        return 'security';
+  if (/manag|admin|management fee|service fee/.test(t))                  return 'management';
+  return 'other';
+}
+
+function handleYardiCSV(file) {
+  if (!file) return;
+  const preview = document.getElementById('yardiPreview');
+  preview.innerHTML = '<div class="spinner-wrap"><div class="spinner sm"></div><div class="spinner-label">Parsing CSV…</div></div>';
+
+  const reader = new FileReader();
+  reader.onload = e => {
+    const allRows = yardiParseCSV(e.target.result);
+    if (allRows.length < 2) { showYardiError(); return; }
+
+    const headers = allRows[0];
+    const { colMap, unrecognized } = yardiDetectColumns(headers);
+
+    if (!('vendorName' in colMap) && !('amount' in colMap)) {
+      showYardiError(); return;
+    }
+
+    yardiRows         = allRows.slice(1).filter(r => r.some(c => c.trim()));
+    yardiColMap       = colMap;
+    yardiUnrecognized = unrecognized;
+
+    document.getElementById('yardiFileInput').value = '';
+    renderYardiPreview(headers);
+  };
+  reader.onerror = showYardiError;
+  reader.readAsText(file);
+}
+
+function showYardiError() {
+  document.getElementById('yardiPreview').innerHTML = `
+    <div class="yardi-err">
+      <span class="yardi-err-icon">⚠️</span>
+      <div class="yardi-err-msg">
+        <strong>We couldn't read this file automatically.</strong><br>
+        Please make sure you're exporting the CAM expense report from Yardi Genesis.<br><br>
+        <a href="#" onclick="event.preventDefault();downloadYardiTemplate()">
+          ⬇ Need help? Download our import template
+        </a>
+      </div>
+    </div>`;
+}
+
+function yardiCell(row, field) {
+  const idx = yardiColMap[field];
+  return idx !== undefined ? (row[idx] || '').trim() : '';
+}
+
+function renderYardiPreview(headers) {
+  const el = document.getElementById('yardiPreview');
+
+  let initCount = 0, initTotal = 0;
+  const tableRows = yardiRows.map((row, i) => {
+    const vendor  = yardiCell(row, 'vendorName');
+    const amtRaw  = yardiCell(row, 'amount').replace(/[$,\s]/g, '');
+    const amt     = parseFloat(amtRaw) || 0;
+    const date    = yardiCell(row, 'invoiceDate');
+    const desc    = yardiCell(row, 'description');
+    const gl      = yardiCell(row, 'category');
+    const sugCat  = yardiCategoryFromText(desc, gl);
+    const checked = amt > 0 || !!vendor;
+
+    if (checked) { initCount++; initTotal += amt; }
+
+    const opts = CATEGORIES.map(c =>
+      `<option value="${c}"${sugCat === c ? ' selected' : ''}>${c}</option>`
+    ).join('');
+
+    const extraCells = yardiUnrecognized.map(u =>
+      `<td class="yardi-td yardi-unknown">${esc((row[u.index] || '').trim())}</td>`
+    ).join('');
+
+    return `<tr>
+      <td class="yardi-td yardi-cb">
+        <input type="checkbox" id="ychk-${i}"${checked ? ' checked' : ''} onchange="updateYardiTotals()"/>
+      </td>
+      <td class="yardi-td">${esc(vendor || '—')}</td>
+      <td class="yardi-td yardi-amt">${amt > 0 ? fmt(amt) : '—'}</td>
+      <td class="yardi-td">${esc(date || '—')}</td>
+      <td class="yardi-td">
+        <select class="yardi-cat-sel" id="ycat-${i}">${opts}</select>
+      </td>
+      <td class="yardi-td yardi-desc" title="${esc(desc || gl || '')}">${esc(desc || gl || '—')}</td>
+      ${extraCells}
+    </tr>`;
+  }).join('');
+
+  const extraHeaders = yardiUnrecognized.map(u =>
+    `<th class="yardi-th yardi-unknown">${esc(u.name)}</th>`
+  ).join('');
+
+  el.innerHTML = `
+    <div class="yardi-preview-wrap">
+      <div class="yardi-preview-info">
+        Found <strong>${yardiRows.length}</strong> expense row${yardiRows.length !== 1 ? 's' : ''}.
+        ${yardiUnrecognized.length
+          ? `<span class="yardi-unknown-note">⚠ ${yardiUnrecognized.length} unrecognized column${yardiUnrecognized.length !== 1 ? 's' : ''} highlighted in yellow</span>`
+          : ''}
+      </div>
+      <div class="yardi-table-scroll">
+        <table class="yardi-table">
+          <thead><tr>
+            <th class="yardi-th yardi-th-cb">
+              <input type="checkbox" id="yCheckAll" checked onchange="toggleAllYardi(this.checked)"/>
+            </th>
+            <th class="yardi-th">Vendor</th>
+            <th class="yardi-th" style="text-align:right">Amount</th>
+            <th class="yardi-th">Date</th>
+            <th class="yardi-th">Category</th>
+            <th class="yardi-th">Description / GL</th>
+            ${extraHeaders}
+          </tr></thead>
+          <tbody>${tableRows}</tbody>
+        </table>
+      </div>
+      <div class="yardi-footer">
+        <span id="yardiTotalInfo">
+          <strong>${initCount}</strong> row${initCount !== 1 ? 's' : ''} selected &nbsp;&middot;&nbsp;
+          <strong>${fmt(initTotal)}</strong> total
+        </span>
+        <button class="yardi-import-btn" id="yardiImportBtn" onclick="confirmYardiImport()">
+          &#x2713; Import ${initCount} Expense${initCount !== 1 ? 's' : ''}
+        </button>
+      </div>
+    </div>`;
+}
+
+function updateYardiTotals() {
+  let count = 0, total = 0;
+  yardiRows.forEach((row, i) => {
+    const chk = document.getElementById(`ychk-${i}`);
+    if (!chk || !chk.checked) return;
+    const amt = parseFloat(yardiCell(row, 'amount').replace(/[$,\s]/g, '')) || 0;
+    count++; total += amt;
+  });
+  const info = document.getElementById('yardiTotalInfo');
+  const btn  = document.getElementById('yardiImportBtn');
+  if (info) info.innerHTML = `<strong>${count}</strong> row${count !== 1 ? 's' : ''} selected &nbsp;&middot;&nbsp; <strong>${fmt(total)}</strong> total`;
+  if (btn)  btn.textContent = `✓ Import ${count} Expense${count !== 1 ? 's' : ''}`;
+}
+
+function toggleAllYardi(checked) {
+  yardiRows.forEach((_, i) => {
+    const chk = document.getElementById(`ychk-${i}`);
+    if (chk) chk.checked = checked;
+  });
+  updateYardiTotals();
+}
+
+function confirmYardiImport() {
+  let imported = 0;
+  yardiRows.forEach((row, i) => {
+    const chk = document.getElementById(`ychk-${i}`);
+    if (!chk || !chk.checked) return;
+    const vendor = yardiCell(row, 'vendorName');
+    const amt    = parseFloat(yardiCell(row, 'amount').replace(/[$,\s]/g, '')) || 0;
+    const date   = yardiCell(row, 'invoiceDate');
+    const cat    = document.getElementById(`ycat-${i}`)?.value || 'other';
+    if (!vendor && amt <= 0) return;
+    invoiceData.push({
+      vendorName:  vendor || 'Unknown Vendor',
+      amount:      amt,
+      category:    cat,
+      invoiceDate: date,
+      confidence:  { vendorName: 95, amount: 95, category: 70, invoiceDate: 90 },
+      _error:      null,
+    });
+    imported++;
+  });
+
+  // Switch to file-upload tab so user sees the imported results
+  switchInvTab('files');
+  renderInvResults();
+  document.getElementById('invResults').scrollIntoView({ behavior: 'smooth', block: 'start' });
+
+  // Reset Yardi state and show confirmation
+  yardiRows = []; yardiColMap = {}; yardiUnrecognized = [];
+  document.getElementById('yardiPreview').innerHTML = `
+    <div class="hole-item ok" style="margin-top:14px;">
+      <span class="hole-icon">✅</span>
+      <span class="hole-text">
+        <strong>${imported} expense${imported !== 1 ? 's' : ''} imported from Yardi.</strong>
+        <span class="hole-detail">Review and edit them in the Upload Files tab before running allocation.</span>
+      </span>
+    </div>`;
+}
+
+function downloadYardiTemplate() {
+  const csv = [
+    'Vendor,Amount,Post Date,Description,GL Account,Property',
+    'ABC Landscaping,1250.00,2025-01-15,Monthly grounds maintenance,5400-Landscaping,Westfield Plaza',
+    'City Snow Removal,875.50,2025-01-22,Snow plowing and salt - Lot A,5410-Snow Removal,Westfield Plaza',
+    'Acme Janitorial,2100.00,2025-01-31,January janitorial services,5420-Janitorial,Westfield Plaza',
+    'Metro Electric,3400.00,2025-01-31,Common area electricity,5430-Utilities,Westfield Plaza',
+    'SecureGuard Inc,1800.00,2025-01-31,Security patrol services,5440-Security,Westfield Plaza',
+  ].join('\r\n');
+  const blob = new Blob([csv], { type: 'text/csv' });
+  const url  = URL.createObjectURL(blob);
+  const a    = document.createElement('a');
+  a.href = url; a.download = 'yardi-cam-import-template.csv';
+  a.click();
+  URL.revokeObjectURL(url);
+}
+
 // ─── Confidence Badge ─────────────────────────────────────────────────────────
 
 function confidenceBadge(score) {
@@ -2037,6 +2613,237 @@ function guardedTenantStatement() {
   }
 }
 
+// ─── Monthly Holes Report ─────────────────────────────────────────────────────
+
+function generateHolesReport() {
+  const propName = document.getElementById('propertyName').value.trim() || 'Property';
+  const now      = new Date().toLocaleDateString('en-US', { year:'numeric', month:'long', day:'numeric' });
+  const month    = new Date().toLocaleDateString('en-US', { year:'numeric', month:'long' });
+
+  const criticalItems = [];
+  const warningItems  = [];
+
+  // ── 1. Missing categories vs. last reconciliation ──────────────────────────
+  // prevCats: categories seen in the last allocation run
+  // currCats: categories present in currently uploaded invoices
+  const prevCats = [...new Set(lastInvoicesFull.map(inv => inv.category).filter(Boolean))];
+  const currCats = [...new Set(
+    invoiceData.filter(inv => inv && !inv._error && inv.category).map(inv => inv.category)
+  )];
+
+  if (prevCats.length > 0) {
+    prevCats.forEach(cat => {
+      if (!currCats.includes(cat)) {
+        const prevTotal = lastInvoicesFull
+          .filter(inv => inv.category === cat)
+          .reduce((s, inv) => s + (parseFloat(inv.amount) || 0), 0);
+        criticalItems.push({
+          icon: '🚫',
+          text: `No <strong>${esc(cat)}</strong> invoice found this month`,
+          detail: prevTotal > 0
+            ? `Last reconciliation total: ${fmt(prevTotal)} — verify if expense still applies`
+            : 'Was present in last reconciliation',
+        });
+      }
+    });
+  }
+
+  // ── 2. Missing regular vendors ────────────────────────────────────────────
+  const prevVendors = [...new Set(lastInvoicesFull.map(inv => inv.vendor).filter(Boolean))];
+  const currVendors = invoiceData
+    .filter(inv => inv && !inv._error && inv.vendorName)
+    .map(inv => inv.vendorName);
+
+  prevVendors.forEach(vendor => {
+    const stillPresent = currVendors.some(v => similarVendor(v, vendor));
+    if (!stillPresent) {
+      const lastAmt = lastInvoicesFull
+        .filter(inv => inv.vendor === vendor)
+        .reduce((s, inv) => s + (parseFloat(inv.amount) || 0), 0);
+      criticalItems.push({
+        icon: '🏢',
+        text: `<strong>${esc(vendor)}</strong> has not submitted an invoice this month`,
+        detail: lastAmt > 0 ? `Last invoice total: ${fmt(lastAmt)}` : 'Was present in last reconciliation',
+      });
+    }
+  });
+
+  if (prevCats.length === 0 && prevVendors.length === 0) {
+    // No prior reconciliation to compare against — note it as a warning
+    warningItems.push({
+      icon: '📋',
+      text: 'No previous reconciliation data available for comparison',
+      detail: 'Run a CAM allocation first to enable month-over-month gap detection',
+    });
+  }
+
+  // ── 3. Tenants with no lease uploaded ────────────────────────────────────
+  const validTenants = tenantData.filter(t => t && !t._error && t.tenantName && parseFloat(t.leasedSqft) > 0);
+  const errorTenants = tenantData.filter(t => t && t._error);
+  const emptySlots   = tenantData.filter(t => t === null).length;
+
+  if (validTenants.length === 0 && tenantData.length === 0) {
+    warningItems.push({
+      icon: '👤',
+      text: 'No tenant leases uploaded',
+      detail: 'Upload at least one lease in Section 2 before running allocation',
+    });
+  }
+  errorTenants.forEach(t => {
+    warningItems.push({
+      icon: '⚠️',
+      text: `Lease extraction failed for <strong>${esc(t.tenantName || 'unknown tenant')}</strong>`,
+      detail: t._error,
+    });
+  });
+  if (emptySlots > 0 && tenantData.some(t => t === null)) {
+    // Only flag empty slots if we're in single-lease mode (fixed 3-slot array)
+    // and some real tenants exist (mixed state)
+    if (validTenants.length > 0) {
+      warningItems.push({
+        icon: '👤',
+        text: `${emptySlots} tenant slot${emptySlots !== 1 ? 's' : ''} still empty`,
+        detail: 'Upload leases for all tenants or remove unused slots before reconciling',
+      });
+    }
+  }
+
+  // ── 4. Low-confidence invoices not reviewed ───────────────────────────────
+  invoiceData.forEach((inv, i) => {
+    if (!inv) return;
+    if (inv._error) {
+      warningItems.push({
+        icon: '🔴',
+        text: `Invoice ${i + 1}: extraction failed — <strong>${esc(inv.vendorName || 'unknown vendor')}</strong>`,
+        detail: inv._error,
+      });
+      return;
+    }
+    const conf   = inv.confidence || {};
+    const scores = Object.values(conf).filter(s => typeof s === 'number');
+    const minScore = scores.length ? Math.min(...scores) : null;
+    if (minScore !== null && minScore < 70) {
+      const fieldNames = Object.entries(conf)
+        .filter(([, v]) => typeof v === 'number' && v < 70)
+        .map(([k]) => k);
+      warningItems.push({
+        icon: '⚠️',
+        text: `Invoice ${i + 1} — <strong>${esc(inv.vendorName || 'unknown vendor')}</strong> has low confidence fields`,
+        detail: `Low confidence on: ${fieldNames.join(', ')} (min score: ${minScore}%) — please verify before allocating`,
+      });
+    }
+  });
+
+  // ── Build HTML ────────────────────────────────────────────────────────────
+  const totalIssues = criticalItems.length + warningItems.length;
+
+  function renderItems(items) {
+    if (!items.length) return '';
+    return items.map(it => `
+      <div class="hole-item ${it.severity || (it === criticalItems[criticalItems.indexOf(it)] ? 'critical' : 'warning')}">
+        <span class="hole-icon">${it.icon}</span>
+        <span class="hole-text">
+          ${it.text}
+          ${it.detail ? `<span class="hole-detail">${esc(it.detail)}</span>` : ''}
+        </span>
+      </div>`).join('');
+  }
+
+  // Tag severity explicitly
+  criticalItems.forEach(it => { it.severity = 'critical'; });
+  warningItems.forEach(it => { it.severity = 'warning'; });
+
+  const missingSection = criticalItems.length ? `
+    <div class="holes-group">
+      <div class="holes-group-title">&#x1F6AB; Missing Items</div>
+      ${criticalItems.map(it => `
+        <div class="hole-item critical">
+          <span class="hole-icon">${it.icon}</span>
+          <span class="hole-text">
+            ${it.text}
+            ${it.detail ? `<span class="hole-detail">${esc(it.detail)}</span>` : ''}
+          </span>
+        </div>`).join('')}
+    </div>` : `
+    <div class="holes-group">
+      <div class="holes-group-title">&#x1F6AB; Missing Items</div>
+      <div class="hole-item ok">
+        <span class="hole-icon">&#x2705;</span>
+        <span class="hole-text">No missing categories or vendors detected</span>
+      </div>
+    </div>`;
+
+  const incompleteSection = warningItems.length ? `
+    <div class="holes-group">
+      <div class="holes-group-title">&#x26A0;&#xFE0F; Incomplete Items</div>
+      ${warningItems.map(it => `
+        <div class="hole-item warning">
+          <span class="hole-icon">${it.icon}</span>
+          <span class="hole-text">
+            ${it.text}
+            ${it.detail ? `<span class="hole-detail">${esc(it.detail)}</span>` : ''}
+          </span>
+        </div>`).join('')}
+    </div>` : `
+    <div class="holes-group">
+      <div class="holes-group-title">&#x26A0;&#xFE0F; Incomplete Items</div>
+      <div class="hole-item ok">
+        <span class="hole-icon">&#x2705;</span>
+        <span class="hole-text">All tenants and invoices look complete</span>
+      </div>
+    </div>`;
+
+  const summaryBar = totalIssues === 0 ? `
+    <div class="holes-summary-bar all-clear">
+      <div class="holes-summary-count">&#x2713;</div>
+      <div class="holes-summary-msg">Everything looks good — ready to run reconciliation</div>
+    </div>` : `
+    <div class="holes-summary-bar has-issues">
+      <div class="holes-summary-count">${totalIssues}</div>
+      <div class="holes-summary-msg">
+        ${totalIssues} item${totalIssues !== 1 ? 's' : ''} need${totalIssues === 1 ? 's' : ''} attention before running reconciliation
+        <span style="display:block;font-size:0.78rem;font-weight:400;margin-top:2px;opacity:0.8;">
+          ${criticalItems.length} critical &nbsp;·&nbsp; ${warningItems.length} warning${warningItems.length !== 1 ? 's' : ''}
+        </span>
+      </div>
+    </div>`;
+
+  const html = `
+    <div class="rpt-letterhead">
+      <h1>${esc(propName)}</h1>
+      <div class="rpt-sub">Monthly Holes Report &nbsp;·&nbsp; ${month} &nbsp;·&nbsp; Generated ${now}</div>
+    </div>
+
+    <div class="rpt-kpi-row">
+      <div class="rpt-kpi">
+        <div class="kpi-val" style="color:${criticalItems.length > 0 ? '#be123c' : '#15803d'}">${criticalItems.length}</div>
+        <div class="kpi-lbl">Critical Missing</div>
+      </div>
+      <div class="rpt-kpi">
+        <div class="kpi-val" style="color:${warningItems.length > 0 ? '#92400e' : '#15803d'}">${warningItems.length}</div>
+        <div class="kpi-lbl">Warnings</div>
+      </div>
+      <div class="rpt-kpi">
+        <div class="kpi-val">${validTenants.length}</div>
+        <div class="kpi-lbl">Leases Uploaded</div>
+      </div>
+      <div class="rpt-kpi">
+        <div class="kpi-val">${invoiceData.filter(inv => inv && !inv._error).length}</div>
+        <div class="kpi-lbl">Invoices Loaded</div>
+      </div>
+    </div>
+
+    ${missingSection}
+    ${incompleteSection}
+    ${summaryBar}
+
+    <div class="rpt-footer">
+      Mainstreet &nbsp;·&nbsp; ${esc(propName)} &nbsp;·&nbsp; Monthly Holes Report &nbsp;·&nbsp; ${now}
+    </div>`;
+
+  openReport('Monthly Holes Report — ' + propName, html);
+}
+
 function openReport(title, bodyHtml) {
   document.getElementById('rptToolbarTitle').textContent = title;
   document.getElementById('rptBody').innerHTML = bodyHtml;
@@ -2163,7 +2970,7 @@ function generateMasterReport() {
     </div>
 
     <div class="rpt-footer">
-      CAM Logic &nbsp;·&nbsp; ${esc(lastPropName)} &nbsp;·&nbsp; This report is auto-generated and reflects data entered in the current session.
+      Mainstreet &nbsp;·&nbsp; ${esc(lastPropName)} &nbsp;·&nbsp; This report is auto-generated and reflects data entered in the current session.
     </div>`;
 
   openReport('Landlord Master Report — ' + lastPropName, html);
@@ -2304,7 +3111,7 @@ function generateTenantStatement(tenantName) {
     </div>
 
     <div class="rpt-footer">
-      CAM Logic &nbsp;·&nbsp; ${esc(tenantName)} &nbsp;·&nbsp; ${esc(lastPropName)} &nbsp;·&nbsp;
+      Mainstreet &nbsp;·&nbsp; ${esc(tenantName)} &nbsp;·&nbsp; ${esc(lastPropName)} &nbsp;·&nbsp;
       This statement is auto-generated and reflects data entered in the current session.
     </div>`;
 
@@ -2315,6 +3122,91 @@ function generateTenantStatement(tenantName) {
       const el = document.getElementById('tenantHashVal');
       if (el) el.textContent = 'SHA-256: ' + hash + '\nGenerated: ' + new Date().toISOString();
     });
+}
+
+// ─── Load Demo ────────────────────────────────────────────────────────────────
+
+function loadDemo() {
+  // Add demo property to portfolio if not already there
+  if (!portfolio.find(p => p.id === 'demo')) {
+    portfolio.unshift({
+      id: 'demo', name: 'Riverside Commons', totalSqft: 24000,
+      status: 'in-progress', tenantCount: 3, invoiceCount: 7,
+      totalCAM: 0, openDisputes: 0,
+    });
+  }
+
+  // Navigate into the property
+  resetWorkflow();
+  activePropId = 'demo';
+
+  document.getElementById('propertyName').value              = 'Riverside Commons';
+  document.getElementById('totalSqft').value                 = '24000';
+  document.getElementById('breadcrumbPropName').textContent  = 'Riverside Commons';
+  document.getElementById('portfolioDashboard').style.display = 'none';
+  document.getElementById('propertyBreadcrumb').style.display = 'flex';
+  document.getElementById('mainWorkflow').style.display       = 'block';
+
+  // ── Tenants ──────────────────────────────────────────────────────────────
+  tenantData.splice(0, tenantData.length,
+    {
+      tenantName: 'Fresh Market Foods', leasedSqft: '6200',
+      capPercentage: '10', excludedCategories: 'snow', baseYear: '2024',
+      confidence: { tenantName:98, leasedSqft:96, capPercentage:92, excludedCategories:88, baseYear:95 },
+      _error: null,
+    },
+    {
+      tenantName: 'Riverside Dental Group', leasedSqft: '1800',
+      capPercentage: '', excludedCategories: 'management', baseYear: '2024',
+      confidence: { tenantName:97, leasedSqft:94, capPercentage:null, excludedCategories:91, baseYear:96 },
+      _error: null,
+    },
+    {
+      tenantName: 'FitLife Gym & Wellness', leasedSqft: '3400',
+      capPercentage: '', excludedCategories: '', baseYear: '2023',
+      confidence: { tenantName:99, leasedSqft:97, capPercentage:null, excludedCategories:null, baseYear:94 },
+      _error: null,
+    }
+  );
+
+  // ── Invoices ─────────────────────────────────────────────────────────────
+  invoiceData.splice(0, invoiceData.length,
+    { vendorName:'Green Thumb Landscaping', amount:2400, category:'landscaping', invoiceDate:'2025-01-15', confidence:{vendorName:97,amount:99,category:95,invoiceDate:98}, _error:null },
+    { vendorName:'Metro Snow Services',     amount:1850, category:'snow',        invoiceDate:'2025-01-22', confidence:{vendorName:96,amount:98,category:97,invoiceDate:97}, _error:null },
+    { vendorName:'Apex Building Repairs',   amount:3200, category:'repairs',     invoiceDate:'2025-01-31', confidence:{vendorName:94,amount:97,category:89,invoiceDate:96}, _error:null },
+    { vendorName:'City Electric Co',        amount:4100, category:'utilities',   invoiceDate:'2025-01-31', confidence:{vendorName:98,amount:99,category:96,invoiceDate:99}, _error:null },
+    { vendorName:'CleanRight Janitorial',   amount:2800, category:'janitorial',  invoiceDate:'2025-01-31', confidence:{vendorName:95,amount:98,category:94,invoiceDate:97}, _error:null },
+    { vendorName:'SecureWatch Inc',         amount:1600, category:'security',    invoiceDate:'2025-01-31', confidence:{vendorName:97,amount:99,category:96,invoiceDate:98}, _error:null },
+    { vendorName:'Summit Management Group', amount:3500, category:'management',  invoiceDate:'2025-01-31', confidence:{vendorName:96,amount:98,category:93,invoiceDate:97}, _error:null }
+  );
+
+  // Render lease + invoice results
+  switchLeaseTab('bulk');
+  renderBulkResults();
+  switchInvTab('files');
+  renderInvResults();
+
+  // Run allocation, then seed a sample open dispute
+  runAllocation();
+
+  // Pre-seed one open dispute so the dispute section is populated
+  const repairShare = parseFloat((3200 * (6200 / 24000)).toFixed(2));
+  disputes.push({
+    id:          nextDisputeId++,
+    tenantName:  'Fresh Market Foods',
+    invoiceId:   'inv-2',
+    vendor:      'Apex Building Repairs',
+    category:    'repairs',
+    tenantShare: repairShare,
+    reason:      'Work order was not pre-approved per lease Section 8.3. Requesting documentation before accepting this charge.',
+    timestamp:   new Date(Date.now() - 2 * 24 * 60 * 60 * 1000).toISOString(),
+    status:      'open',
+    resolution:  null, resolvedAt: null, hash: null,
+  });
+  renderOpenDisputes();
+  syncPortfolioEntry();
+
+  window.scrollTo({ top: 0, behavior: 'smooth' });
 }
 
 // ─── Portfolio ────────────────────────────────────────────────────────────────
@@ -2341,7 +3233,7 @@ function renderPortfolio() {
   const statusLabel = { reconciled: 'Reconciled', 'in-progress': 'In Progress', disputes: 'Has Open Disputes' };
 
   document.getElementById('propertyCardsGrid').innerHTML = portfolio.map(p => `
-    <div class="ptf-prop-card${activePropId === p.id ? ' active' : ''}" onclick="selectProperty('${p.id}')">
+    <div class="ptf-prop-card status-${p.status}${activePropId === p.id ? ' active' : ''}" onclick="selectProperty('${p.id}')">
       <div class="ptf-prop-name">${esc(p.name)}</div>
       <div class="ptf-status-row">
         <span class="ptf-status-dot ${p.status}"></span>
@@ -2356,6 +3248,9 @@ function renderPortfolio() {
       </div>
       <div class="ptf-cam-lbl">CAM This Period</div>
       <div class="ptf-cam-val">${p.totalCAM > 0 ? '$' + p.totalCAM.toLocaleString('en-US') : '—'}</div>
+      ${p.status === 'reconciled'
+        ? `<div class="ptf-onchain-badge">&#x1F517; On-Chain Record</div>`
+        : ''}
     </div>`).join('');
 
   document.getElementById('portfolioDashboard').style.display  = 'block';
@@ -2460,6 +3355,9 @@ function resetWorkflow() {
   document.getElementById('invProgress').style.display = 'none';
   document.getElementById('invFileInput').value   = '';
   document.getElementById('invFolderInput').value = '';
+  yardiRows = []; yardiColMap = {}; yardiUnrecognized = [];
+  document.getElementById('yardiPreview').innerHTML = '';
+  switchInvTab('files');
 }
 
 function liveUpdateBreadcrumb(name) {
@@ -2471,7 +3369,7 @@ function liveUpdateBreadcrumb(name) {
 try {
   renderPortfolio();
 } catch (e) {
-  console.error('CAM Logic: portfolio render failed, falling back to main workflow.', e);
+  console.error('Mainstreet: portfolio render failed, falling back to main workflow.', e);
   document.getElementById('portfolioDashboard').style.display = 'none';
   document.getElementById('mainWorkflow').style.display       = 'block';
   renderTenantSlots();
@@ -2479,12 +3377,13 @@ try {
 
 </script>
 
-<footer style="max-width:720px;margin:32px auto 0;padding:18px 24px;background:#fff;border-radius:12px;box-shadow:0 2px 10px rgba(0,0,0,0.06);display:flex;align-items:flex-start;gap:14px;">
-  <span style="font-size:1.1rem;flex-shrink:0;">🔒</span>
-  <p style="font-size:0.8rem;line-height:1.6;color:#64748b;margin:0;">
-    <strong style="color:#1e293b;">CAM Logic is 100% read-only.</strong>
+<footer style="max-width:720px;margin:32px auto 0;padding:18px 24px;background:#111827;border-radius:12px;border:1px solid rgba(255,255,255,0.07);box-shadow:0 2px 20px rgba(0,0,0,0.4);display:flex;align-items:flex-start;gap:14px;">
+  <span style="font-size:1.1rem;flex-shrink:0;">&#x1F512;</span>
+  <p style="font-size:0.8rem;line-height:1.6;color:#64748B;margin:0;">
+    <strong style="color:#E2E8F0;">Mainstreet is 100% read-only.</strong>
     No private keys or seed phrases are ever requested. All analysis runs client-side in your browser.
     Wallet addresses are not logged or retained. Only publicly visible XRPL data is used.
+    &nbsp;&middot;&nbsp; <strong style="color:#C9973A;">Mainstreet on XRPL</strong>
   </p>
 </footer>
 
