@@ -9,6 +9,7 @@
   <link rel="preconnect" href="https://fonts.googleapis.com" />
   <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
   <link href="https://fonts.googleapis.com/css2?family=Cormorant+Garamond:wght@400;600;700&family=DM+Sans:ital,wght@0,400;0,500;0,600;0,700;1,400&family=DM+Mono:wght@400;500&display=swap" rel="stylesheet" />
+  <script src="https://cdn.jsdelivr.net/npm/xlsx@0.18.5/dist/xlsx.full.min.js"></script>
   <style>
     *, *::before, *::after { box-sizing: border-box; margin: 0; padding: 0; }
 
@@ -924,6 +925,42 @@
       font-family: 'DM Sans', sans-serif;
     }
 
+    /* ── GL Excel Upload ─────────────────────────────────────────────── */
+    .gl-table { width: 100%; border-collapse: collapse; font-size: 0.82rem; }
+    .gl-th {
+      background: rgba(34,197,94,0.1); color: #4ade80; text-align: left;
+      padding: 9px 10px; font-size: 0.72rem; text-transform: uppercase;
+      letter-spacing: 0.04em; white-space: nowrap;
+      border-bottom: 1.5px solid rgba(34,197,94,0.2);
+      font-family: 'DM Mono', monospace;
+    }
+    .gl-th-cb, .gl-td-cb { width: 36px; text-align: center; }
+    .gl-th-amt, .gl-td-amt { text-align: right; font-weight: 600; white-space: nowrap; }
+    .gl-td {
+      padding: 8px 10px; border-bottom: 1px solid rgba(255,255,255,0.05);
+      vertical-align: middle; color: #E2E8F0;
+    }
+    .gl-td-date { color: #94A3B8; font-family: 'DM Mono', monospace; font-size: 0.78rem; white-space: nowrap; }
+    .gl-table tbody tr:hover .gl-td { background: rgba(255,255,255,0.03); }
+    .gl-row-excluded .gl-td { opacity: 0.4; }
+    .gl-total-row {
+      display: flex; align-items: center; justify-content: space-between;
+      padding: 10px 4px 2px; margin-top: 6px;
+      font-size: 0.85rem; color: #94A3B8;
+      border-top: 1.5px solid rgba(255,255,255,0.08);
+    }
+    .gl-total-row strong { color: #E2E8F0; }
+    .gl-import-btn {
+      width: 100%; margin-top: 14px; padding: 12px;
+      background: linear-gradient(135deg, #22c55e 0%, #16a34a 100%);
+      color: #0B1220; font-size: 0.95rem; font-weight: 700;
+      border: none; border-radius: 11px; cursor: pointer;
+      transition: opacity 0.15s, transform 0.1s;
+      box-shadow: 0 4px 16px rgba(34,197,94,0.3);
+    }
+    .gl-import-btn:hover { opacity: 0.9; }
+    .gl-import-btn:active { transform: scale(0.99); }
+
     /* ── Print styles ─────────────────────────────────────────────────── */
     @media print {
       body > *:not(#reportOverlay) { display: none !important; }
@@ -1098,21 +1135,29 @@
       <div class="sec-num" style="background:#22c55e;font-size:0.62rem;letter-spacing:-0.02em;">GL</div>
       <div>
         <h2>GL Excel Upload</h2>
-        <p>Upload your General Ledger export to cross-reference CAM expenses</p>
+        <p>Upload your 2024 General Ledger export — CAM items auto-detected &amp; categorized</p>
       </div>
     </div>
-    <div class="upload-zone" onclick="document.getElementById('glFileInput').click()" style="padding:22px 20px;">
+
+    <!-- Upload zone -->
+    <div class="upload-zone" id="glZone" style="padding:22px 20px;">
       <div class="uz-icon">&#x1F4CA;</div>
       <div class="uz-label">Upload 2024 GL Excel File (.xlsx only)</div>
-      <div class="uz-sub">Click to select &middot; .xlsx files only</div>
-      <input type="file" id="glFileInput" accept=".xlsx,application/vnd.openxmlformats-officedocument.spreadsheetml.sheet"
+      <div class="uz-sub">Auto-detects Date, Vendor, Category &amp; Amount columns &middot; parsed entirely in-browser</div>
+      <input type="file" id="glFileInput"
+        accept=".xlsx,application/vnd.openxmlformats-officedocument.spreadsheetml.sheet"
         style="position:absolute;inset:0;opacity:0;cursor:pointer;width:100%;height:100%;"
         onchange="handleGLUpload(this)" />
     </div>
-    <div id="glFileMsg" style="display:none;margin-top:12px;padding:10px 14px;background:rgba(34,197,94,0.08);border:1.5px solid rgba(34,197,94,0.25);border-radius:9px;font-size:0.85rem;color:#4ade80;display:flex;align-items:center;gap:8px;">
-      <span>&#x2705;</span>
-      <span id="glFileName"></span>
-    </div>
+
+    <!-- Status / spinner -->
+    <div id="glStatus" style="display:none;margin-top:12px;"></div>
+
+    <!-- Extracted GL Items table -->
+    <div id="glResults"></div>
+
+    <!-- Import action -->
+    <div id="glImportBar"></div>
   </div>
 
   <!-- ── SECTION 3: Invoice Upload ─────────────────────────────────── -->
@@ -1278,6 +1323,8 @@ const CATEGORIES = ['landscaping','snow','repairs','utilities','janitorial','sec
 const tenantData  = [null, null, null];
 // invoiceData[i] = { vendorName, amount, category, invoiceDate, confidence, _error }
 const invoiceData = [];
+// glData[i] = { date, vendor, category, amount, confidence, _include }
+let glData = [];
 
 // ─── Portfolio State ──────────────────────────────────────────────────────────
 const portfolio = [
@@ -1483,12 +1530,289 @@ function switchLeaseTab(tab) {
 
 // ─── GL Excel Upload ─────────────────────────────────────────────────────────
 
+const GL_COL_ALIASES = {
+  date:        ['date','period','post date','trans date','transaction date','posted','entry date','doc date'],
+  vendor:      ['vendor','payee','supplier','paid to','vendor name','payee name'],
+  description: ['description','desc','memo','detail','note','narration','particulars','reference'],
+  category:    ['category','account','acct','account name','gl account','gl code','account code','type','class','dept','department'],
+  amount:      ['amount','total','debit','net','charge','expense','cost','sum','value','net amount'],
+};
+
+const GL_CAT_KEYWORDS = {
+  landscaping: ['landscap','lawn','grass','garden','tree','plant','irrigation','mulch','fertiliz','turf','shrub'],
+  snow:        ['snow','ice removal','salt','plow','winter removal','de-ice','deice'],
+  repairs:     ['repair','maintenance','maint','hvac','roof','plumb','electric','fix','replac','paint','patch','caulk'],
+  utilities:   ['utilit','electric','water','gas','sewer','trash','waste','garbage','recycle','telecom'],
+  janitorial:  ['janitor','clean','custodial','sweep','mop','sanitiz','disinfect','porter','floor care'],
+  security:    ['securit','guard','patrol','alarm','cctv','camera','monitor','access control'],
+  management:  ['manage','admin','accounting','office','legal','insurance','fee','tax','professional','audit'],
+};
+
+function glFuzzyMatch(header, aliases) {
+  const h = header.toLowerCase().trim();
+  return aliases.some(a => h.includes(a) || a.includes(h));
+}
+
+function detectGLCategory(text) {
+  if (!text) return 'other';
+  const t = text.toLowerCase();
+  for (const [cat, kws] of Object.entries(GL_CAT_KEYWORDS)) {
+    if (kws.some(k => t.includes(k))) return cat;
+  }
+  return 'other';
+}
+
+function parseGLDate(val) {
+  if (!val && val !== 0) return '';
+  if (typeof val === 'number') {
+    try {
+      const d = XLSX.SSF.parse_date_code(val);
+      return `${d.y}-${String(d.m).padStart(2,'0')}-${String(d.d).padStart(2,'0')}`;
+    } catch { return String(val); }
+  }
+  return String(val).trim();
+}
+
 function handleGLUpload(input) {
   const file = input.files && input.files[0];
   if (!file) return;
-  const msg = document.getElementById('glFileMsg');
-  document.getElementById('glFileName').textContent = 'File selected: ' + file.name;
-  msg.style.display = 'flex';
+
+  if (!file.name.toLowerCase().endsWith('.xlsx')) {
+    alert('Please select an .xlsx file.');
+    input.value = '';
+    return;
+  }
+
+  const statusEl    = document.getElementById('glStatus');
+  const resultsEl   = document.getElementById('glResults');
+  const importBarEl = document.getElementById('glImportBar');
+
+  statusEl.style.display = 'block';
+  statusEl.innerHTML = `<div class="spinner-wrap"><div class="spinner"></div>
+    <div class="spinner-label">Reading ${esc(file.name)}&hellip;</div></div>`;
+  resultsEl.innerHTML   = '';
+  importBarEl.innerHTML = '';
+  glData = [];
+
+  const reader = new FileReader();
+  reader.onload = function(e) {
+    try {
+      const wb   = XLSX.read(new Uint8Array(e.target.result), { type: 'array', cellDates: false });
+      const ws   = wb.Sheets[wb.SheetNames[0]];
+      const rows = XLSX.utils.sheet_to_json(ws, { header: 1, defval: '' });
+
+      if (rows.length < 2) {
+        statusEl.innerHTML = `<div class="err-banner">The spreadsheet appears empty or has no data rows.</div>`;
+        return;
+      }
+
+      // Find the header row (first row with 3+ non-empty cells)
+      let hdrIdx = 0;
+      for (let i = 0; i < Math.min(12, rows.length); i++) {
+        if (rows[i].filter(c => String(c).trim() !== '').length >= 3) { hdrIdx = i; break; }
+      }
+      const headers = rows[hdrIdx].map(h => String(h || ''));
+
+      // Detect column indices
+      const ci = { date: -1, vendor: -1, description: -1, category: -1, amount: -1 };
+      headers.forEach((h, i) => {
+        for (const [field, aliases] of Object.entries(GL_COL_ALIASES)) {
+          if (ci[field] === -1 && glFuzzyMatch(h, aliases)) ci[field] = i;
+        }
+      });
+
+      // If no explicit amount column, find first column with positive numbers
+      if (ci.amount === -1) {
+        const sample = rows[hdrIdx + 1] || [];
+        sample.forEach((v, i) => {
+          if (ci.amount === -1 && typeof v === 'number' && v > 0) ci.amount = i;
+        });
+      }
+
+      if (ci.amount === -1) {
+        statusEl.innerHTML = `<div class="err-banner">Could not detect an Amount column.
+          Headers found: <em>${headers.filter(Boolean).join(', ') || 'none'}</em></div>`;
+        return;
+      }
+
+      // Confidence scores based on detection quality
+      const vendorConf = ci.vendor >= 0 ? 92 : (ci.description >= 0 ? 72 : 50);
+      const dateConf   = ci.date   >= 0 ? 92 : 40;
+      const catFromCol = ci.category >= 0;
+
+      // Parse data rows
+      const vendorCol = ci.vendor >= 0 ? ci.vendor : ci.description;
+
+      for (let i = hdrIdx + 1; i < rows.length; i++) {
+        const row    = rows[i];
+        const amtRaw = row[ci.amount];
+        const amt    = typeof amtRaw === 'number'
+          ? amtRaw
+          : parseFloat(String(amtRaw).replace(/[^0-9.\-]/g, '')) || 0;
+        if (amt <= 0) continue;                        // skip zero/negative/blank
+
+        const vendor  = vendorCol >= 0 ? String(row[vendorCol] || '').trim() : '';
+        const desc    = ci.description >= 0 ? String(row[ci.description] || '').trim() : '';
+        const catRaw  = ci.category >= 0 ? String(row[ci.category] || '').trim() : '';
+        const dateVal = ci.date >= 0 ? parseGLDate(row[ci.date]) : '';
+
+        if (!vendor && !desc) continue;               // skip fully blank rows
+
+        const catText  = catRaw || desc || vendor;
+        const category = detectGLCategory(catText);
+        const catConf  = catFromCol ? 80 : (category !== 'other' ? 70 : 42);
+
+        glData.push({
+          date:     dateVal,
+          vendor:   vendor || desc,
+          category,
+          amount:   amt,
+          confidence: { vendor: vendorConf, date: dateConf, amount: 95, category: catConf },
+          _include: true,
+        });
+      }
+
+      if (!glData.length) {
+        statusEl.innerHTML = `<div class="err-banner">No valid expense rows found.
+          Ensure the file has positive amounts and vendor or description data.</div>`;
+        return;
+      }
+
+      const total = glData.reduce((s, r) => s + r.amount, 0);
+      statusEl.innerHTML = `
+        <div class="status-row ok" style="margin:0 0 2px;">
+          <div class="status-dot ok"><svg width="10" height="10" viewBox="0 0 10 10">
+            <polyline points="1.5,5 4,7.5 8.5,2.5" fill="none" stroke="#fff" stroke-width="1.8" stroke-linecap="round"/>
+          </svg></div>
+          <span>Parsed <strong>${glData.length} GL entries</strong> from
+            <em>${esc(file.name)}</em> &mdash; total <strong>${fmt(total)}</strong></span>
+        </div>`;
+
+      renderGLResults();
+    } catch (err) {
+      statusEl.innerHTML = `<div class="err-banner">Error reading file: ${esc(String(err.message || err))}</div>`;
+    }
+  };
+  reader.readAsArrayBuffer(file);
+}
+
+function renderGLResults() {
+  const container   = document.getElementById('glResults');
+  const importBarEl = document.getElementById('glImportBar');
+  if (!glData.length) { container.innerHTML = ''; importBarEl.innerHTML = ''; return; }
+
+  const included = glData.filter(r => r._include).length;
+  const total    = glData.filter(r => r._include).reduce((s, r) => s + r.amount, 0);
+
+  const catOpts = CATEGORIES.map(c => `<option value="${c}">${c}</option>`).join('');
+
+  const rowsHtml = glData.map((r, i) => {
+    const overall = Math.min(r.confidence.vendor, r.confidence.amount, r.confidence.category);
+    const opts    = CATEGORIES.map(c =>
+      `<option value="${c}"${r.category === c ? ' selected' : ''}>${c}</option>`
+    ).join('');
+    return `<tr class="${r._include ? '' : 'gl-row-excluded'}" id="glr-${i}">
+      <td class="gl-td gl-td-cb">
+        <input type="checkbox" ${r._include ? 'checked' : ''}
+          onchange="glData[${i}]._include=this.checked;refreshGLFooter();
+            document.getElementById('glr-${i}').className=this.checked?'':'gl-row-excluded';" />
+      </td>
+      <td class="gl-td gl-td-date">${esc(r.date || '—')}</td>
+      <td class="gl-td">${esc(r.vendor)}</td>
+      <td class="gl-td">
+        <select class="yardi-cat-sel" onchange="glData[${i}].category=this.value">${opts}</select>
+      </td>
+      <td class="gl-td gl-td-amt">${fmt(r.amount)}</td>
+      <td class="gl-td">${confidenceBadge(overall)}</td>
+    </tr>`;
+  }).join('');
+
+  container.innerHTML = `
+    <div class="bulk-results-head" style="margin-top:16px;">
+      <h3>Extracted GL Items (${glData.length})</h3>
+      <button class="bulk-clear-btn" onclick="clearGLData()">&#x2715; Clear</button>
+    </div>
+    <div class="yardi-table-scroll" style="margin-top:10px;">
+      <table class="gl-table">
+        <thead><tr>
+          <th class="gl-th gl-th-cb"></th>
+          <th class="gl-th">Date</th>
+          <th class="gl-th">Vendor / Description</th>
+          <th class="gl-th">Category</th>
+          <th class="gl-th gl-th-amt">Amount</th>
+          <th class="gl-th">Confidence</th>
+        </tr></thead>
+        <tbody>${rowsHtml}</tbody>
+      </table>
+    </div>
+    <div class="gl-total-row">
+      <span id="glIncludedCount">${included} of ${glData.length} items selected</span>
+      <span id="glTotalAmt">Total: <strong>${fmt(total)}</strong></span>
+    </div>`;
+
+  importBarEl.innerHTML = `
+    <button class="gl-import-btn" onclick="importGLToInvoices()">
+      &#x2B07;&nbsp; Import ${included} Selected GL Items into Invoice List
+    </button>`;
+}
+
+function refreshGLFooter() {
+  const included = glData.filter(r => r._include).length;
+  const total    = glData.filter(r => r._include).reduce((s, r) => s + r.amount, 0);
+  const cEl = document.getElementById('glIncludedCount');
+  const tEl = document.getElementById('glTotalAmt');
+  if (cEl) cEl.textContent = `${included} of ${glData.length} items selected`;
+  if (tEl) tEl.innerHTML  = `Total: <strong>${fmt(total)}</strong>`;
+  const btn = document.querySelector('.gl-import-btn');
+  if (btn) btn.textContent = `⬇ Import ${included} Selected GL Items into Invoice List`;
+}
+
+function importGLToInvoices() {
+  const items = glData.filter(r => r._include);
+  if (!items.length) { alert('No GL items are selected.'); return; }
+
+  items.forEach(r => {
+    invoiceData.push({
+      vendorName:  r.vendor,
+      amount:      r.amount,
+      category:    r.category,
+      invoiceDate: r.date,
+      confidence: {
+        vendorName:  r.confidence.vendor,
+        amount:      r.confidence.amount,
+        category:    r.confidence.category,
+        invoiceDate: r.confidence.date,
+      },
+      _error: null,
+    });
+  });
+
+  renderInvResults();
+
+  const bar = document.getElementById('glImportBar');
+  bar.innerHTML = `
+    <div class="status-row ok" style="margin:10px 0 0;">
+      <div class="status-dot ok"><svg width="10" height="10" viewBox="0 0 10 10">
+        <polyline points="1.5,5 4,7.5 8.5,2.5" fill="none" stroke="#fff" stroke-width="1.8" stroke-linecap="round"/>
+      </svg></div>
+      <span><strong>${items.length} GL items imported</strong> to Invoice List &mdash;
+        review below, then click <em>Run CAM Allocation</em>.</span>
+    </div>`;
+
+  // Scroll to invoice results
+  setTimeout(() => {
+    const el = document.getElementById('invResults');
+    if (el && el.innerHTML) el.scrollIntoView({ behavior: 'smooth', block: 'start' });
+  }, 120);
+}
+
+function clearGLData() {
+  glData = [];
+  document.getElementById('glResults').innerHTML   = '';
+  document.getElementById('glImportBar').innerHTML = '';
+  document.getElementById('glStatus').style.display = 'none';
+  document.getElementById('glStatus').innerHTML    = '';
+  document.getElementById('glFileInput').value     = '';
 }
 
 // ─── Bulk Lease Upload ────────────────────────────────────────────────────────
@@ -3391,6 +3715,13 @@ function resetWorkflow() {
   yardiRows = []; yardiColMap = {}; yardiUnrecognized = [];
   document.getElementById('yardiPreview').innerHTML = '';
   switchInvTab('files');
+  // Reset GL state
+  glData = [];
+  document.getElementById('glResults').innerHTML   = '';
+  document.getElementById('glImportBar').innerHTML = '';
+  document.getElementById('glStatus').style.display = 'none';
+  document.getElementById('glStatus').innerHTML    = '';
+  document.getElementById('glFileInput').value     = '';
 }
 
 function liveUpdateBreadcrumb(name) {
