@@ -1092,6 +1092,29 @@
     </div>
   </div>
 
+  <!-- ── GL Excel Upload ───────────────────────────────────────────── -->
+  <div class="card">
+    <div class="sec-head">
+      <div class="sec-num" style="background:#22c55e;font-size:0.62rem;letter-spacing:-0.02em;">GL</div>
+      <div>
+        <h2>GL Excel Upload</h2>
+        <p>Upload your General Ledger export to cross-reference CAM expenses</p>
+      </div>
+    </div>
+    <div class="upload-zone" onclick="document.getElementById('glFileInput').click()" style="padding:22px 20px;">
+      <div class="uz-icon">&#x1F4CA;</div>
+      <div class="uz-label">Upload 2024 GL Excel File (.xlsx only)</div>
+      <div class="uz-sub">Click to select &middot; .xlsx files only</div>
+      <input type="file" id="glFileInput" accept=".xlsx,application/vnd.openxmlformats-officedocument.spreadsheetml.sheet"
+        style="position:absolute;inset:0;opacity:0;cursor:pointer;width:100%;height:100%;"
+        onchange="handleGLUpload(this)" />
+    </div>
+    <div id="glFileMsg" style="display:none;margin-top:12px;padding:10px 14px;background:rgba(34,197,94,0.08);border:1.5px solid rgba(34,197,94,0.25);border-radius:9px;font-size:0.85rem;color:#4ade80;display:flex;align-items:center;gap:8px;">
+      <span>&#x2705;</span>
+      <span id="glFileName"></span>
+    </div>
+  </div>
+
   <!-- ── SECTION 3: Invoice Upload ─────────────────────────────────── -->
   <div class="card">
     <div class="sec-head">
@@ -1456,6 +1479,16 @@ function switchLeaseTab(tab) {
   document.getElementById('lTabSingle').classList.toggle('active', tab === 'single');
   document.getElementById('leasePanelBulk').style.display   = tab === 'bulk'   ? 'block' : 'none';
   document.getElementById('leasePanelSingle').style.display = tab === 'single' ? 'block' : 'none';
+}
+
+// ─── GL Excel Upload ─────────────────────────────────────────────────────────
+
+function handleGLUpload(input) {
+  const file = input.files && input.files[0];
+  if (!file) return;
+  const msg = document.getElementById('glFileMsg');
+  document.getElementById('glFileName').textContent = 'File selected: ' + file.name;
+  msg.style.display = 'flex';
 }
 
 // ─── Bulk Lease Upload ────────────────────────────────────────────────────────
