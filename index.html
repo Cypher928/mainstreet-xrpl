@@ -651,6 +651,62 @@
     .warn-btn.dismiss { background: #111827; color: #94A3B8; border: 1px solid rgba(255,255,255,0.1); }
     .warn-btn.dismiss:hover { background: #0F1929; }
 
+    /* ── Inline duplicate badge (summary row) ────────────────────────── */
+    .dup-row-badge {
+      display: inline-flex; align-items: center; gap: 6px;
+      padding: 3px 9px; border-radius: 20px; font-size: 0.72rem; font-weight: 600;
+      background: rgba(234,88,12,0.12); color: #fb923c;
+      border: 1px solid rgba(234,88,12,0.3); white-space: nowrap; flex-shrink: 0;
+    }
+    .dup-row-remove {
+      margin-left: 4px; cursor: pointer; background: none; border: none;
+      color: #fb923c; font-size: 0.72rem; font-weight: 700; padding: 0;
+      text-decoration: underline;
+    }
+    .dup-row-remove:hover { color: #f97316; }
+
+    /* ── Previous Runs section ───────────────────────────────────────── */
+    #previousRunsSection { margin-bottom: 14px; }
+    .prev-runs-head {
+      display: flex; align-items: center; gap: 10px; margin-bottom: 12px;
+    }
+    .prev-runs-title {
+      font-family: 'Cormorant Garamond', Georgia, serif;
+      font-size: 1.1rem; font-weight: 700; color: #E2E8F0;
+    }
+    .prev-run-card {
+      background: #0F1929; border: 1px solid rgba(255,255,255,0.07);
+      border-radius: 10px; padding: 14px 16px; margin-bottom: 8px;
+    }
+    .prev-run-meta { font-size: 0.75rem; color: #64748b; margin-bottom: 4px; font-family: 'DM Mono', monospace; }
+    .prev-run-title { font-size: 0.95rem; font-weight: 600; color: #E2E8F0; margin-bottom: 6px; }
+    .prev-run-stats { display: flex; gap: 18px; flex-wrap: wrap; margin-bottom: 8px; }
+    .prev-run-stat { font-size: 0.8rem; color: #94A3B8; }
+    .prev-run-stat strong { color: #C9973A; }
+    .prev-run-view-btn {
+      font-size: 0.78rem; font-weight: 600; padding: 5px 14px;
+      background: rgba(201,151,58,0.12); color: #C9973A;
+      border: 1px solid rgba(201,151,58,0.3); border-radius: 7px; cursor: pointer;
+      transition: all 0.15s;
+    }
+    .prev-run-view-btn:hover { background: rgba(201,151,58,0.22); }
+    .prev-run-detail { display: none; margin-top: 12px; padding-top: 12px; border-top: 1px solid rgba(255,255,255,0.06); }
+    .prev-run-detail .result-card { margin-bottom: 6px; }
+
+    /* ── Dispute doc upload ──────────────────────────────────────────── */
+    .dispute-doc-row { margin-top: 8px; }
+    .dispute-doc-label { font-size: 0.78rem; color: #94A3B8; margin-bottom: 4px; display: block; }
+    .dispute-doc-input { font-size: 0.8rem; color: #C9973A; }
+    .dispute-doc-name { font-size: 0.76rem; color: #4ade80; margin-top: 3px; font-family: 'DM Mono', monospace; }
+
+    /* ── View labels (Landlord / Tenant) ─────────────────────────────── */
+    .view-label {
+      display: inline-block; font-size: 0.68rem; font-weight: 700; letter-spacing: 0.07em;
+      text-transform: uppercase; padding: 2px 8px; border-radius: 20px; margin-bottom: 2px;
+    }
+    .view-label.landlord { background: rgba(234,88,12,0.15); color: #fb923c; border: 1px solid rgba(234,88,12,0.3); }
+    .view-label.tenant   { background: rgba(139,92,246,0.15); color: #a78bfa; border: 1px solid rgba(139,92,246,0.3); }
+
     /* ── Yardi import ────────────────────────────────────────────────── */
     .yardi-tmpl-link {
       font-size: 0.8rem; font-weight: 600; color: #C9973A;
@@ -1238,12 +1294,21 @@
     <div id="resultsBody"></div>
   </div>
 
+  <!-- ── Previous Runs ───────────────────────────────────────────── -->
+  <div id="previousRunsSection" style="display:none;">
+    <div class="prev-runs-head">
+      <div class="prev-runs-title">&#x1F4C5; Previous Runs</div>
+    </div>
+    <div id="previousRunsList"></div>
+  </div>
+
   <!-- ── SECTION 5: Dispute a Charge ───────────────────────────────── -->
   <div class="card" id="disputeSection">
     <div class="sec-head">
       <div class="sec-num" style="background:#ea580c;">5</div>
       <div>
-        <h2>Dispute a Charge</h2>
+        <div class="view-label landlord">Landlord View</div>
+        <h2>Manage Disputes</h2>
         <p>Disputes Resolved: <span id="resolvedCount" style="font-weight:700;color:#1e293b;">0</span></p>
       </div>
     </div>
@@ -1263,13 +1328,19 @@
         <p>Generate printable reports for landlords and tenants</p>
       </div>
     </div>
-    <div class="report-btn-row">
-      <button class="report-btn" onclick="guardedMasterReport()">
-        &#x1F4CB; Landlord Master Report
-      </button>
-      <button class="report-btn" onclick="guardedTenantStatement()">
-        &#x1F9FE; Tenant Statement
-      </button>
+    <div class="report-btn-row" style="align-items:flex-end;flex-wrap:wrap;gap:10px;">
+      <div>
+        <div class="view-label landlord" style="margin-bottom:5px;">Landlord View</div>
+        <button class="report-btn" onclick="guardedMasterReport()">
+          &#x1F4CB; Landlord Master Report
+        </button>
+      </div>
+      <div>
+        <div class="view-label tenant" style="margin-bottom:5px;">Tenant View</div>
+        <button class="report-btn" onclick="guardedTenantStatement()">
+          &#x1F9FE; Tenant Statement
+        </button>
+      </div>
       <button class="report-btn report-btn-holes" onclick="generateHolesReport()">
         &#x1F50D; Monthly Holes Report
       </button>
@@ -2053,6 +2124,24 @@ function renderInvResults() {
       `<option value="${c}"${d.category === c ? ' selected' : ''}>${c}</option>`
     ).join('');
 
+    // Inline duplicate detection — check against all other items
+    let dupBadge = '';
+    if (d.vendorName && d.amount !== '') {
+      const amt = parseFloat(d.amount);
+      for (let j = 0; j < invoiceData.length; j++) {
+        if (j === i) continue;
+        const oth = invoiceData[j];
+        if (!oth || !oth.vendorName || oth.amount === '') continue;
+        if (Math.abs(amt - parseFloat(oth.amount)) <= 1 && similarVendor(d.vendorName, oth.vendorName)) {
+          dupBadge = `<span class="dup-row-badge" onclick="event.stopPropagation()">
+            ⚠ Possible duplicate of ${esc(oth.vendorName)}
+            <button class="dup-row-remove" onclick="event.stopPropagation();removeInvItem(${i})">Remove</button>
+          </span>`;
+          break;
+        }
+      }
+    }
+
     return `
       <div class="bulk-tenant-row${d._error ? ' has-error' : ''}" id="itr-${i}">
         <div class="bulk-tenant-summary" onclick="toggleInvDetail(${i})">
@@ -2060,6 +2149,7 @@ function renderInvResults() {
           <span class="bulk-t-name" id="iname-${i}">${esc(name)}</span>
           <span class="bulk-t-meta" id="imeta-${i}">${esc(catStr)} &middot; ${amtStr}</span>
           ${overallConf !== undefined ? confidenceBadge(overallConf) : ''}
+          ${dupBadge}
           <span class="bulk-t-chevron" id="ichev-${i}">&#x25BC; Edit</span>
           <button class="bulk-t-remove" onclick="event.stopPropagation();removeInvItem(${i})">Remove</button>
         </div>
@@ -2692,6 +2782,17 @@ function runAllocation() {
   section.style.display = 'block';
   section.scrollIntoView({ behavior: 'smooth', block: 'start' });
 
+  // Save to previous runs history
+  camRuns.unshift({
+    propName,
+    timestamp:     new Date(),
+    totalExpenses: totalCost,
+    tenantCount:   results.length,
+    invoiceCount:  invoices.length,
+    results:       results.map(r => ({ ...r })),
+  });
+  renderPreviousRuns();
+
   renderDisputeSection();
   showReportSection(); // refresh notice + tenant buttons
   syncPortfolioEntry();
@@ -2703,6 +2804,55 @@ function showErr(body, section, msg) {
   body.innerHTML = `<div class="err-banner">${esc(msg)}</div>`;
   section.style.display = 'block';
   section.scrollIntoView({ behavior: 'smooth', block: 'start' });
+}
+
+// ─── Previous Runs ────────────────────────────────────────────────────────────
+function renderPreviousRuns() {
+  const sec  = document.getElementById('previousRunsSection');
+  const list = document.getElementById('previousRunsList');
+  // Only show if there are 2+ runs (first run is always the current one)
+  if (camRuns.length < 2) { sec.style.display = 'none'; return; }
+  sec.style.display = 'block';
+
+  list.innerHTML = camRuns.slice(1).map((run, idx) => {
+    const runIdx = idx + 1; // offset because we sliced
+    const ts = run.timestamp.toLocaleString('en-US', {
+      month: 'short', day: 'numeric', year: 'numeric',
+      hour: '2-digit', minute: '2-digit',
+    });
+    const detailHtml = run.results.map(r => `
+      <div class="result-card" style="padding:10px 14px;margin-bottom:6px;">
+        <div class="r-name" style="font-size:0.88rem;">${esc(r.name)}</div>
+        <div class="result-grid">
+          ${stat('Allocated', fmt(r.allocatedAmount))}
+          ${stat('Pro-Rata',  (r.proRata * 100).toFixed(2) + '%')}
+          ${stat('Invoices',  r.eligibleCount + ' of ' + run.invoiceCount)}
+        </div>
+      </div>`).join('');
+    return `
+      <div class="prev-run-card">
+        <div class="prev-run-meta">${ts}</div>
+        <div class="prev-run-title">${esc(run.propName)}</div>
+        <div class="prev-run-stats">
+          <div class="prev-run-stat">Expenses: <strong>${fmt(run.totalExpenses)}</strong></div>
+          <div class="prev-run-stat">Tenants: <strong>${run.tenantCount}</strong></div>
+          <div class="prev-run-stat">Invoices: <strong>${run.invoiceCount}</strong></div>
+        </div>
+        <button class="prev-run-view-btn" onclick="togglePrevRunDetail(${runIdx})">&#x25BC; View Results</button>
+        <div class="prev-run-detail" id="prev-run-detail-${runIdx}">
+          ${detailHtml}
+        </div>
+      </div>`;
+  }).join('');
+}
+
+function togglePrevRunDetail(idx) {
+  const el  = document.getElementById(`prev-run-detail-${idx}`);
+  const btn = el ? el.previousElementSibling : null;
+  if (!el) return;
+  const open = el.style.display === 'block';
+  el.style.display  = open ? 'none' : 'block';
+  if (btn) btn.innerHTML = open ? '&#x25BC; View Results' : '&#x25B2; Hide Results';
 }
 
 function fmt(n) {
@@ -2726,6 +2876,7 @@ function stat(label, value) {
 }
 
 // ─── Report State ─────────────────────────────────────────────────────────────
+const camRuns    = []; // previous run history
 let lastResults  = []; // runCAMAllocation output
 let lastPropName = '';
 let lastTotal    = 0;
@@ -2802,6 +2953,12 @@ function toggleDisputeForm(rowId, tenantName, invoiceId, vendor, category, tenan
     <div class="dispute-form">
       <label>Reason for Dispute</label>
       <textarea id="dreason-${esc(rowId)}" placeholder="Describe why you are disputing this charge…"></textarea>
+      <div class="dispute-doc-row">
+        <span class="dispute-doc-label">&#x1F4CE; Attach Supporting Document (optional)</span>
+        <input type="file" id="ddoc-${esc(rowId)}" class="dispute-doc-input"
+          onchange="document.getElementById('ddocname-${esc(rowId)}').textContent=this.files[0]?'📎 '+this.files[0].name:''" />
+        <div id="ddocname-${esc(rowId)}" class="dispute-doc-name"></div>
+      </div>
       <div class="dispute-form-btns">
         <button class="d-submit-btn"
           onclick="submitDispute('${esc(rowId)}','${esc(tenantName)}','${esc(invoiceId)}','${esc(vendor)}','${esc(category)}',${tenantShare})">
@@ -2821,6 +2978,8 @@ function submitDispute(rowId, tenantName, invoiceId, vendor, category, tenantSha
     document.getElementById(`dreason-${rowId}`).style.borderColor = '#ea580c';
     return;
   }
+  const docInput = document.getElementById(`ddoc-${rowId}`);
+  const docName  = docInput && docInput.files[0] ? docInput.files[0].name : null;
   disputes.push({
     id:          nextDisputeId++,
     tenantName,
@@ -2829,6 +2988,7 @@ function submitDispute(rowId, tenantName, invoiceId, vendor, category, tenantSha
     category,
     tenantShare,
     reason,
+    docName,
     timestamp:   new Date().toISOString(),
     status:      'open',
     resolution:  null,
@@ -2877,18 +3037,44 @@ function renderOpenDisputes() {
         <div class="d-actions">
           <button class="d-res-btn accept" onclick="resolveDispute(${d.id},'accepted')">✅ Accept</button>
           <button class="d-res-btn reject" onclick="resolveDispute(${d.id},'rejected')">❌ Reject</button>
-          <button class="d-res-btn docs"   onclick="resolveDispute(${d.id},'docs_requested')">📄 Request Documentation</button>
+          <button class="d-res-btn docs"   onclick="showDocsRequest(${d.id})">📄 Request Documentation</button>
+        </div>
+        <div id="docs-req-${d.id}" style="display:none;margin-top:8px;padding:10px 12px;background:rgba(201,151,58,0.07);border:1px solid rgba(201,151,58,0.2);border-radius:8px;">
+          <span class="dispute-doc-label" style="color:#C9973A;">Attach landlord documentation for this dispute:</span>
+          <input type="file" id="docs-file-${d.id}" class="dispute-doc-input"
+            onchange="document.getElementById('docs-fname-${d.id}').textContent=this.files[0]?'📎 '+this.files[0].name:''" />
+          <div id="docs-fname-${d.id}" class="dispute-doc-name"></div>
+          <div style="display:flex;gap:8px;margin-top:8px;">
+            <button class="warn-btn add" onclick="confirmDocsRequest(${d.id})">Submit &amp; Resolve</button>
+            <button class="warn-btn dismiss" onclick="document.getElementById('docs-req-${d.id}').style.display='none'">Cancel</button>
+          </div>
         </div>`;
     }
 
+    const docHtml = d.docName
+      ? `<div style="font-size:0.75rem;color:#4ade80;margin:4px 0 0;font-family:'DM Mono',monospace;">📎 ${esc(d.docName)}</div>`
+      : '';
     return `
       <div class="dispute-card${isResolved ? ' resolved' : ''}">
         <div class="d-meta">#${d.id + 1} · ${esc(d.tenantName)} · ${ts}</div>
         <div class="d-title">${esc(d.vendor)} (${esc(d.category)}) — ${fmt(d.tenantShare)}</div>
         <div class="d-reason">"${esc(d.reason)}"</div>
+        ${docHtml}
         ${actionsHtml}
       </div>`;
   }).join('');
+}
+
+function showDocsRequest(id) {
+  const el = document.getElementById(`docs-req-${id}`);
+  if (el) el.style.display = el.style.display === 'block' ? 'none' : 'block';
+}
+
+async function confirmDocsRequest(id) {
+  const fileEl = document.getElementById(`docs-file-${id}`);
+  const d = disputes.find(x => x.id === id);
+  if (d && fileEl && fileEl.files[0]) d.docName = fileEl.files[0].name;
+  await resolveDispute(id, 'docs_requested');
 }
 
 async function resolveDispute(id, resolution) {
