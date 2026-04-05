@@ -3952,8 +3952,13 @@ function savePortfolio() {
 
 // Save tenants, invoices, and the last CAM results for the active property.
 // Safe to call any time — does nothing if no property is open.
+// Guard: set to true while loadPropertyData() is running so that the
+// savePropertyData() hooks inside renderBulkResults / renderInvResults
+// do not overwrite localStorage with partial state mid-load.
+let _loading = false;
+
 function savePropertyData() {
-  if (!activePropId) return;
+  if (!activePropId || _loading) return;
   lsSet(`ms_tenants_${activePropId}`,  tenantData);
   lsSet(`ms_invoices_${activePropId}`, invoiceData);
   // Only write results if an allocation has been run
@@ -3974,37 +3979,45 @@ function savePropertyData() {
 function loadPropertyData(propId) {
   let restored = false;
 
-  const savedTenants = lsGet(`ms_tenants_${propId}`);
-  if (savedTenants && savedTenants.length) {
-    tenantData.splice(0, tenantData.length, ...savedTenants);
-    renderBulkResults();
-    restored = true;
-  }
-
-  const savedInvoices = lsGet(`ms_invoices_${propId}`);
-  if (savedInvoices && savedInvoices.length) {
-    invoiceData.splice(0, invoiceData.length, ...savedInvoices);
-    renderInvResults();
-    restored = true;
-  }
-
-  const savedResults = lsGet(`ms_results_${propId}`);
-  if (savedResults && savedResults.results && savedResults.results.length) {
-    lastResults      = savedResults.results;
-    lastPropName     = savedResults.propName     || '';
-    lastTotal        = savedResults.total        || 0;
-    lastInvoices     = savedResults.invoices     || [];
-    lastInvoicesFull = savedResults.invoicesFull || [];
-    lastTenants      = savedResults.tenants      || [];
-    // Restore disputes
-    if (savedResults.disputes && savedResults.disputes.length) {
-      disputes.splice(0, disputes.length, ...savedResults.disputes);
-      nextDisputeId = Math.max(...disputes.map(d => d.id + 1), 0);
+  // Block savePropertyData() from firing mid-load and overwriting keys with
+  // partial state (e.g. empty invoiceData overwriting ms_invoices before
+  // invoices have been read back from localStorage).
+  _loading = true;
+  try {
+    const savedTenants = lsGet(`ms_tenants_${propId}`);
+    if (savedTenants && savedTenants.length) {
+      tenantData.splice(0, tenantData.length, ...savedTenants);
+      renderBulkResults();
+      restored = true;
     }
-    restoreResultsDisplay();
-    renderDisputeSection();
-    showReportSection();
-    restored = true;
+
+    const savedInvoices = lsGet(`ms_invoices_${propId}`);
+    if (savedInvoices && savedInvoices.length) {
+      invoiceData.splice(0, invoiceData.length, ...savedInvoices);
+      renderInvResults();
+      restored = true;
+    }
+
+    const savedResults = lsGet(`ms_results_${propId}`);
+    if (savedResults && savedResults.results && savedResults.results.length) {
+      lastResults      = savedResults.results;
+      lastPropName     = savedResults.propName     || '';
+      lastTotal        = savedResults.total        || 0;
+      lastInvoices     = savedResults.invoices     || [];
+      lastInvoicesFull = savedResults.invoicesFull || [];
+      lastTenants      = savedResults.tenants      || [];
+      // Restore disputes
+      if (savedResults.disputes && savedResults.disputes.length) {
+        disputes.splice(0, disputes.length, ...savedResults.disputes);
+        nextDisputeId = Math.max(...disputes.map(d => d.id + 1), 0);
+      }
+      restoreResultsDisplay();
+      renderDisputeSection();
+      showReportSection();
+      restored = true;
+    }
+  } finally {
+    _loading = false;
   }
 
   if (restored) showRestoredBanner();
