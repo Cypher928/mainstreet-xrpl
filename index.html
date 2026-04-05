@@ -540,6 +540,13 @@
     .breadcrumb-back:hover { background: #0F1929; border-color: #C9973A; color: #C9973A; }
     .breadcrumb-path { font-size: 0.84rem; color: #64748B; }
     .breadcrumb-path span { color: #E2E8F0; font-weight: 700; }
+    .breadcrumb-clear-btn {
+      margin-left: auto; padding: 5px 12px; border-radius: 7px; font-size: 0.74rem;
+      font-weight: 600; cursor: pointer; border: 1px solid rgba(239,68,68,0.3);
+      background: rgba(239,68,68,0.08); color: #f87171; transition: all 0.15s;
+      white-space: nowrap;
+    }
+    .breadcrumb-clear-btn:hover { background: rgba(239,68,68,0.18); border-color: #ef4444; }
 
     /* ── Lease Upload Tabs ───────────────────────────────────────────── */
     .lease-tab-bar {
@@ -1124,6 +1131,7 @@
 <div id="propertyBreadcrumb">
   <button class="breadcrumb-back" onclick="backToPortfolio()">&#x2190; Back to Portfolio</button>
   <span class="breadcrumb-path">Portfolio &rsaquo; <span id="breadcrumbPropName"></span></span>
+  <button class="breadcrumb-clear-btn" onclick="clearPropertyData()" title="Remove saved tenants, invoices &amp; results for this property">&#x1F5D1; Clear Property Data</button>
 </div>
 
 <div class="container" id="mainWorkflow" style="display:none;">
@@ -2008,6 +2016,7 @@ function renderBulkResults() {
       <button class="bulk-clear-btn" onclick="clearBulkResults()">&#x2715; Clear All</button>
     </div>
     ${rows}`;
+  savePropertyData(); // persist tenant changes
 }
 
 function toggleBulkDetail(i) {
@@ -2041,6 +2050,7 @@ function clearBulkResults() {
   document.getElementById('bulkResults').innerHTML = '';
   document.getElementById('bulkProgress').style.display = 'none';
   document.getElementById('bulkLeaseInput').value = '';
+  savePropertyData(); // persist cleared state
 }
 
 // ─── Batch Invoice Upload ─────────────────────────────────────────────────────
@@ -2190,6 +2200,7 @@ function renderInvResults() {
       <button class="bulk-clear-btn" onclick="clearInvResults()">&#x2715; Clear All</button>
     </div>
     ${rows}`;
+  savePropertyData(); // persist invoice changes
 }
 
 function toggleInvDetail(i) {
@@ -2224,6 +2235,7 @@ function clearInvResults() {
   document.getElementById('invProgress').style.display = 'none';
   document.getElementById('invFileInput').value   = '';
   document.getElementById('invFolderInput').value = '';
+  savePropertyData(); // persist cleared state
 }
 
 // ─── Invoice Tab Switching ────────────────────────────────────────────────────
@@ -2796,6 +2808,7 @@ function runAllocation() {
   renderDisputeSection();
   showReportSection(); // refresh notice + tenant buttons
   syncPortfolioEntry();
+  savePropertyData(); // persist allocation results
 }
 
 // ─── Helpers ──────────────────────────────────────────────────────────────────
@@ -3816,6 +3829,7 @@ function selectProperty(id) {
   document.getElementById('propertyBreadcrumb').style.display  = 'flex';
   document.getElementById('mainWorkflow').style.display        = 'block';
 
+  loadPropertyData(id); // restore saved tenants, invoices, and results
   window.scrollTo({ top: 0, behavior: 'smooth' });
 }
 
@@ -3831,8 +3845,9 @@ function addNewProperty() {
   portfolio.push({
     id, name: 'New Property', totalSqft: 0,
     status: 'in-progress', tenantCount: 0, invoiceCount: 0,
-    totalCAM: 0, openDisputes: 0,
+    totalCAM: 0, openDisputes: 0, createdAt: new Date().toISOString(),
   });
+  savePortfolio(); // persist new property in list
   selectProperty(id);
   setTimeout(() => {
     const el = document.getElementById('propertyName');
@@ -3863,6 +3878,7 @@ function syncPortfolioEntry() {
                      : 'in-progress';
 
   document.getElementById('breadcrumbPropName').textContent = prop.name;
+  savePortfolio(); // persist updated portfolio metadata
 }
 
 function resetWorkflow() {
@@ -3915,8 +3931,172 @@ function liveUpdateBreadcrumb(name) {
   if (el) el.textContent = name || 'New Property';
 }
 
+// ─── localStorage Persistence ─────────────────────────────────────────────────
+// All reads/writes wrapped in try/catch — localStorage can be unavailable in
+// some private-browsing contexts and should never break the app.
+
+function lsGet(key) {
+  try { return JSON.parse(localStorage.getItem(key)); }
+  catch (e) { return null; }
+}
+
+function lsSet(key, val) {
+  try { localStorage.setItem(key, JSON.stringify(val)); }
+  catch (e) { /* quota exceeded or storage blocked — silently skip */ }
+}
+
+// Save the portfolio list (property names, sqft, status) to localStorage.
+function savePortfolio() {
+  lsSet('ms_properties', portfolio);
+}
+
+// Save tenants, invoices, and the last CAM results for the active property.
+// Safe to call any time — does nothing if no property is open.
+function savePropertyData() {
+  if (!activePropId) return;
+  lsSet(`ms_tenants_${activePropId}`,  tenantData);
+  lsSet(`ms_invoices_${activePropId}`, invoiceData);
+  // Only write results if an allocation has been run
+  if (lastResults.length) {
+    lsSet(`ms_results_${activePropId}`, {
+      results:      lastResults,
+      propName:     lastPropName,
+      total:        lastTotal,
+      invoices:     lastInvoices,
+      invoicesFull: lastInvoicesFull,
+      tenants:      lastTenants,
+      disputes:     disputes,
+    });
+  }
+}
+
+// Restore tenants, invoices, and results for a property when it is opened.
+function loadPropertyData(propId) {
+  let restored = false;
+
+  const savedTenants = lsGet(`ms_tenants_${propId}`);
+  if (savedTenants && savedTenants.length) {
+    tenantData.splice(0, tenantData.length, ...savedTenants);
+    renderBulkResults();
+    restored = true;
+  }
+
+  const savedInvoices = lsGet(`ms_invoices_${propId}`);
+  if (savedInvoices && savedInvoices.length) {
+    invoiceData.splice(0, invoiceData.length, ...savedInvoices);
+    renderInvResults();
+    restored = true;
+  }
+
+  const savedResults = lsGet(`ms_results_${propId}`);
+  if (savedResults && savedResults.results && savedResults.results.length) {
+    lastResults      = savedResults.results;
+    lastPropName     = savedResults.propName     || '';
+    lastTotal        = savedResults.total        || 0;
+    lastInvoices     = savedResults.invoices     || [];
+    lastInvoicesFull = savedResults.invoicesFull || [];
+    lastTenants      = savedResults.tenants      || [];
+    // Restore disputes
+    if (savedResults.disputes && savedResults.disputes.length) {
+      disputes.splice(0, disputes.length, ...savedResults.disputes);
+      nextDisputeId = Math.max(...disputes.map(d => d.id + 1), 0);
+    }
+    restoreResultsDisplay();
+    renderDisputeSection();
+    showReportSection();
+    restored = true;
+  }
+
+  if (restored) showRestoredBanner();
+}
+
+// Re-draw the results card from the in-memory lastResults state.
+// Used when restoring a saved run — mirrors the display logic in runAllocation().
+function restoreResultsDisplay() {
+  const section = document.getElementById('results');
+  const body    = document.getElementById('resultsBody');
+  document.getElementById('resultsTitle').textContent = `Results — ${lastPropName}`;
+
+  let html = `<div class="summary-bar">
+    <strong>Total Expenses:</strong> ${fmt(lastTotal)}
+    &nbsp;|&nbsp; <strong>Tenants:</strong> ${lastResults.length}
+    &nbsp;|&nbsp; <strong>Invoices:</strong> ${lastInvoicesFull.length}
+  </div>`;
+
+  lastResults.forEach(r => {
+    html += `<div class="result-card">
+      <div class="r-name">${esc(r.name)}</div>
+      <div class="result-grid">
+        ${stat('Allocated Amount',  fmt(r.allocatedAmount))}
+        ${stat('Pro-Rata Share',    (r.proRata * 100).toFixed(2) + '%')}
+        ${stat('Eligible Invoices', r.eligibleCount + ' of ' + lastInvoicesFull.length)}
+      </div>
+      ${r.capApplied
+        ? `<div class="cap-badge">Cap applied — ${fmt(r.capAdjustment)} reduced</div>`
+        : ''}
+    </div>`;
+  });
+
+  body.innerHTML = html;
+  section.style.display = 'block';
+}
+
+// Show a temporary green banner confirming data was loaded from a previous session.
+function showRestoredBanner() {
+  let banner = document.getElementById('restoredBanner');
+  if (!banner) {
+    banner = document.createElement('div');
+    banner.id = 'restoredBanner';
+    banner.style.cssText = [
+      'position:fixed', 'top:16px', 'left:50%', 'transform:translateX(-50%)',
+      'z-index:9999', 'background:#166534', 'color:#dcfce7',
+      'padding:10px 20px', 'border-radius:10px', 'font-size:0.85rem',
+      'font-weight:600', 'box-shadow:0 4px 20px rgba(0,0,0,0.5)',
+      'transition:opacity 0.6s', 'pointer-events:none', 'white-space:nowrap',
+    ].join(';');
+    document.body.appendChild(banner);
+  }
+  banner.textContent = '✅ Data restored from previous session';
+  banner.style.opacity = '1';
+  clearTimeout(banner._hideTimer);
+  banner._hideTimer = setTimeout(() => { banner.style.opacity = '0'; }, 4000);
+}
+
+// Remove saved tenant/invoice/result data for the active property.
+// Keeps the property in the portfolio list — only clears its working data.
+function clearPropertyData() {
+  if (!activePropId) return;
+  if (!confirm(
+    'Clear saved tenants, invoices, and results for this property?\n' +
+    'The property will remain in your portfolio.'
+  )) return;
+
+  try {
+    localStorage.removeItem(`ms_tenants_${activePropId}`);
+    localStorage.removeItem(`ms_invoices_${activePropId}`);
+    localStorage.removeItem(`ms_results_${activePropId}`);
+  } catch (e) { /* ignore */ }
+
+  // Preserve the property name and sqft, reset everything else
+  const savedName = document.getElementById('propertyName').value;
+  const savedSqft = document.getElementById('totalSqft').value;
+  resetWorkflow();
+  document.getElementById('propertyName').value = savedName;
+  document.getElementById('totalSqft').value    = savedSqft;
+}
+
 // ─── Init ─────────────────────────────────────────────────────────────────────
 try {
+  // Restore saved portfolio list from localStorage (falls back to built-in defaults)
+  const savedPortfolio = lsGet('ms_properties');
+  if (savedPortfolio && savedPortfolio.length) {
+    portfolio.splice(0, portfolio.length, ...savedPortfolio);
+    // Keep nextPropId above any existing IDs to avoid collisions
+    const maxNum = savedPortfolio
+      .map(p => parseInt(p.id.replace('prop-', '')) || 0)
+      .reduce((a, b) => Math.max(a, b), 3);
+    nextPropId = maxNum + 1;
+  }
   renderPortfolio();
 } catch (e) {
   console.error('Mainstreet: portfolio render failed, falling back to main workflow.', e);
