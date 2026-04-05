@@ -3959,7 +3959,10 @@ let _loading = false;
 
 function savePropertyData() {
   if (!activePropId || _loading) return;
-  lsSet(`ms_tenants_${activePropId}`,  tenantData);
+  // Filter null slots (empty single-tenant form slots) so they are never
+  // written to localStorage and can't corrupt the load path on next visit.
+  const tenantsToSave = tenantData.filter(t => t !== null);
+  lsSet(`ms_tenants_${activePropId}`, tenantsToSave);
   lsSet(`ms_invoices_${activePropId}`, invoiceData);
   // Only write results if an allocation has been run
   if (lastResults.length) {
@@ -3976,49 +3979,68 @@ function savePropertyData() {
 }
 
 // Restore tenants, invoices, and results for a property when it is opened.
+// Each section is wrapped in its own try/catch so a failure in one step
+// does not prevent the others from loading.
 function loadPropertyData(propId) {
   let restored = false;
 
-  // Block savePropertyData() from firing mid-load and overwriting keys with
-  // partial state (e.g. empty invoiceData overwriting ms_invoices before
-  // invoices have been read back from localStorage).
+  // Block savePropertyData() from firing mid-load — each render call
+  // (renderBulkResults, renderInvResults) would otherwise overwrite
+  // localStorage with partial state before all three keys are read back.
   _loading = true;
+
+  // ── Tenants ──────────────────────────────────────────────────────────
   try {
     const savedTenants = lsGet(`ms_tenants_${propId}`);
-    if (savedTenants && savedTenants.length) {
-      tenantData.splice(0, tenantData.length, ...savedTenants);
+    // Filter any stale nulls that may exist in data saved before the fix
+    const clean = Array.isArray(savedTenants)
+      ? savedTenants.filter(t => t !== null)
+      : [];
+    if (clean.length) {
+      tenantData.splice(0, tenantData.length, ...clean);
       renderBulkResults();
       restored = true;
     }
+  } catch (e) {
+    console.warn('[Mainstreet] tenant restore failed:', e);
+  }
 
+  // ── Invoices ─────────────────────────────────────────────────────────
+  try {
     const savedInvoices = lsGet(`ms_invoices_${propId}`);
-    if (savedInvoices && savedInvoices.length) {
+    if (Array.isArray(savedInvoices) && savedInvoices.length) {
       invoiceData.splice(0, invoiceData.length, ...savedInvoices);
       renderInvResults();
       restored = true;
     }
+  } catch (e) {
+    console.warn('[Mainstreet] invoice restore failed:', e);
+  }
 
+  // ── CAM Results ───────────────────────────────────────────────────────
+  try {
     const savedResults = lsGet(`ms_results_${propId}`);
-    if (savedResults && savedResults.results && savedResults.results.length) {
+    if (savedResults && Array.isArray(savedResults.results) && savedResults.results.length) {
       lastResults      = savedResults.results;
       lastPropName     = savedResults.propName     || '';
       lastTotal        = savedResults.total        || 0;
       lastInvoices     = savedResults.invoices     || [];
       lastInvoicesFull = savedResults.invoicesFull || [];
       lastTenants      = savedResults.tenants      || [];
-      // Restore disputes
-      if (savedResults.disputes && savedResults.disputes.length) {
+      if (Array.isArray(savedResults.disputes) && savedResults.disputes.length) {
         disputes.splice(0, disputes.length, ...savedResults.disputes);
-        nextDisputeId = Math.max(...disputes.map(d => d.id + 1), 0);
+        nextDisputeId = Math.max(...savedResults.disputes.map(d => d.id + 1), 0);
       }
       restoreResultsDisplay();
       renderDisputeSection();
       showReportSection();
       restored = true;
     }
-  } finally {
-    _loading = false;
+  } catch (e) {
+    console.warn('[Mainstreet] results restore failed:', e);
   }
+
+  _loading = false;
 
   if (restored) showRestoredBanner();
 }
