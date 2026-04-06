@@ -3715,6 +3715,7 @@ function loadDemo() {
   }
 
   // Navigate into the property
+  activePropId = null;
   resetWorkflow();
   activePropId = 'demo';
 
@@ -3840,18 +3841,27 @@ function selectProperty(id) {
   const prop = portfolio.find(p => p.id === id);
   if (!prop) return;
 
+  // Clear activePropId first so resetWorkflow can't accidentally trigger
+  // a save against the old property while clearing state.
+  activePropId = null;
   resetWorkflow();
+
+  // Set identity BEFORE loadPropertyData so any save paths can reference it.
   activePropId = id;
 
-  document.getElementById('propertyName').value = prop.name;
-  document.getElementById('totalSqft').value    = prop.totalSqft || '';
+  // Populate property header fields (elements exist in DOM even while hidden).
+  document.getElementById('propertyName').value             = prop.name;
+  document.getElementById('totalSqft').value                = prop.totalSqft || '';
   document.getElementById('breadcrumbPropName').textContent = prop.name;
+
+  // Load saved data and render into hidden DOM FIRST — then reveal the view
+  // so the user never sees a blank flash.
+  loadPropertyData(id);
 
   document.getElementById('portfolioDashboard').style.display  = 'none';
   document.getElementById('propertyBreadcrumb').style.display  = 'flex';
   document.getElementById('mainWorkflow').style.display        = 'block';
 
-  loadPropertyData(id); // restore saved tenants, invoices, and results
   window.scrollTo({ top: 0, behavior: 'smooth' });
 }
 
