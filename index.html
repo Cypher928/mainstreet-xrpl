@@ -1533,6 +1533,7 @@ async function handleLease(i, file) {
       confidence:         d.confidence           ?? {},
     };
     renderTenantFields(i);
+    savePropertyData(); // persist single-tenant upload
   } catch (err) {
     renderTenantError(i, err.message);
   }
@@ -3841,6 +3842,10 @@ function selectProperty(id) {
   const prop = portfolio.find(p => p.id === id);
   if (!prop) return;
 
+  // Save current property data before wiping in-memory state — this is the
+  // last chance to persist anything that hasn't been saved at a mutation point.
+  savePropertyData();
+
   // Clear activePropId first so resetWorkflow can't accidentally trigger
   // a save against the old property while clearing state.
   activePropId = null;
@@ -3866,6 +3871,7 @@ function selectProperty(id) {
 }
 
 function backToPortfolio() {
+  savePropertyData();   // persist latest state before leaving the property
   syncPortfolioEntry();
   activePropId = null;
   renderPortfolio();
