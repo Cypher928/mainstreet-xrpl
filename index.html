@@ -1867,6 +1867,7 @@ function importGLToInvoices() {
   });
 
   renderInvResults();
+  savePropertyData();
 
   const bar = document.getElementById('glImportBar');
   bar.innerHTML = `
@@ -1952,6 +1953,7 @@ async function handleBulkLeases(fileList) {
     </div>`;
 
   renderBulkResults();
+  savePropertyData();
 }
 
 function renderBulkResults() {
@@ -2016,7 +2018,6 @@ function renderBulkResults() {
       <button class="bulk-clear-btn" onclick="clearBulkResults()">&#x2715; Clear All</button>
     </div>
     ${rows}`;
-  savePropertyData(); // persist tenant changes
 }
 
 function toggleBulkDetail(i) {
@@ -2043,6 +2044,7 @@ function refreshBulkSummary(i) {
 function removeBulkTenant(i) {
   tenantData.splice(i, 1);
   renderBulkResults();
+  savePropertyData();
 }
 
 function clearBulkResults() {
@@ -2115,6 +2117,7 @@ async function handleBatchInvoices(fileList) {
         <div class="bulk-progress-fill" style="width:100%"></div>
       </div>
     </div>`;
+  savePropertyData();
 }
 
 function renderInvResults() {
@@ -2200,7 +2203,6 @@ function renderInvResults() {
       <button class="bulk-clear-btn" onclick="clearInvResults()">&#x2715; Clear All</button>
     </div>
     ${rows}`;
-  savePropertyData(); // persist invoice changes
 }
 
 function toggleInvDetail(i) {
@@ -2227,6 +2229,7 @@ function refreshInvSummary(i) {
 function removeInvItem(i) {
   invoiceData.splice(i, 1);
   renderInvResults();
+  savePropertyData();
 }
 
 function clearInvResults() {
@@ -2496,6 +2499,7 @@ function confirmYardiImport() {
   // Switch to file-upload tab so user sees the imported results
   switchInvTab('files');
   renderInvResults();
+  savePropertyData();
   document.getElementById('invResults').scrollIntoView({ behavior: 'smooth', block: 'start' });
 
   // Reset Yardi state and show confirmation
@@ -3970,13 +3974,10 @@ function savePortfolio() {
 
 // Save tenants, invoices, and the last CAM results for the active property.
 // Safe to call any time — does nothing if no property is open.
-// Guard: set to true while loadPropertyData() is running so that the
-// savePropertyData() hooks inside renderBulkResults / renderInvResults
-// do not overwrite localStorage with partial state mid-load.
-let _loading = false;
-
+// Note: render functions (renderBulkResults, renderInvResults) no longer call
+// this — only explicit mutation points do, so no mid-load overwrite risk.
 function savePropertyData() {
-  if (!activePropId || _loading) return;
+  if (!activePropId) return;
   // Filter null slots (empty single-tenant form slots) so they are never
   // written to localStorage and can't corrupt the load path on next visit.
   const tenantsToSave = tenantData.filter(t => t !== null);
@@ -4001,11 +4002,6 @@ function savePropertyData() {
 // does not prevent the others from loading.
 function loadPropertyData(propId) {
   let restored = false;
-
-  // Block savePropertyData() from firing mid-load — each render call
-  // (renderBulkResults, renderInvResults) would otherwise overwrite
-  // localStorage with partial state before all three keys are read back.
-  _loading = true;
 
   // ── Tenants ──────────────────────────────────────────────────────────
   try {
@@ -4057,8 +4053,6 @@ function loadPropertyData(propId) {
   } catch (e) {
     console.warn('[Mainstreet] results restore failed:', e);
   }
-
-  _loading = false;
 
   if (restored) showRestoredBanner();
 }
