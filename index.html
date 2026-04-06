@@ -1611,26 +1611,62 @@ function switchLeaseTab(tab) {
 // ─── GL Excel Upload ─────────────────────────────────────────────────────────
 
 const GL_COL_ALIASES = {
-  date:        ['date','period','post date','trans date','transaction date','posted','entry date','doc date'],
-  vendor:      ['vendor','payee','supplier','paid to','vendor name','payee name'],
-  description: ['description','desc','memo','detail','note','narration','particulars','reference'],
-  category:    ['category','account','acct','account name','gl account','gl code','account code','type','class','dept','department'],
-  amount:      ['amount','total','debit','net','charge','expense','cost','sum','value','net amount'],
+  date:        ['posting date','post date','gl date','trans date','transaction date',
+                 'entry date','doc date','voucher date','invoice date','check date',
+                 'period date','trx date','value date','effective date','pay date',
+                 'date','period','posted'],
+  vendor:      ['vendor name','payee name','vendor/payee','pay to','paid to','remit to',
+                 'check payee','vend name','supplier name','payable to','merchant',
+                 'counterparty','company name','vendor','payee','supplier','name'],
+  description: ['gl description','account description','transaction description',
+                 'invoice description','line description','trans description',
+                 'item description','description','memo','narration','reference',
+                 'remarks','particulars','notes','detail','note','comment','purpose',
+                 'explanation','desc'],
+  category:    ['account name','gl account','gl code','account code','account number',
+                 'gl acct','expense type','expense category','gl category','cost type',
+                 'expense acct','account type','natural account','object code',
+                 'cost center','sub-account','category','account','acct','class',
+                 'dept','department','type'],
+  amount:      ['net amount','total amount','transaction amount','payment amount',
+                 'expense amount','invoice amount','check amount','gross amount',
+                 'amount','total','net','charge','expense','cost','value'],
+  debit:       ['debit amount','dr amount','debit total','debit','dr'],
+  credit:      ['credit amount','cr amount','credit total','credit','cr'],
 };
 
 const GL_CAT_KEYWORDS = {
-  landscaping: ['landscap','lawn','grass','garden','tree','plant','irrigation','mulch','fertiliz','turf','shrub'],
-  snow:        ['snow','ice removal','salt','plow','winter removal','de-ice','deice'],
-  repairs:     ['repair','maintenance','maint','hvac','roof','plumb','electric','fix','replac','paint','patch','caulk'],
-  utilities:   ['utilit','electric','water','gas','sewer','trash','waste','garbage','recycle','telecom'],
-  janitorial:  ['janitor','clean','custodial','sweep','mop','sanitiz','disinfect','porter','floor care'],
-  security:    ['securit','guard','patrol','alarm','cctv','camera','monitor','access control'],
-  management:  ['manage','admin','accounting','office','legal','insurance','fee','tax','professional','audit'],
+  landscaping: ['landscap','lawn','grass','garden','tree','plant','irrigation','mulch',
+                'fertiliz','turf','shrub','bush','groundskeep','exterior','sprinkler',
+                'mow','prun','leaf','weed','sod','aerat'],
+  snow:        ['snow','ice removal','salt','plow','winter removal','de-ice','deice',
+                'sand','ice melt','winter service','deicer','salting'],
+  repairs:     ['repair','maintenance','maint','hvac','roof','plumb','electric',
+                'replac','paint','patch','caulk','seal','restore','renovate','rebuild',
+                'work order','handyman','labor','capital improve','fix','service call',
+                'ext repair','bldg repair','fac repair','general repair','preventive'],
+  utilities:   ['utilit','electric','power','water','gas','sewer','trash','waste',
+                'garbage','recycle','telecom','internet','phone','cable','fuel','oil',
+                'natural gas','propane','electric bill','water bill'],
+  janitorial:  ['janitor','clean','custodial','sweep','mop','sanitiz','disinfect',
+                'porter','floor care','window wash','carpet','strip wax','pressure wash',
+                'restroom','lavatory','janitorial supply','cleaning supply','building clean'],
+  security:    ['securit','guard','patrol','alarm','cctv','camera','monitor',
+                'access control','badge','surveillance','fire alarm','sprinkler system',
+                'smoke','locksmith','security system','security service'],
+  management:  ['mgmt fee','management fee','admin fee','pm fee','property mgmt',
+                'property management','manage','admin','accounting','office','legal',
+                'insurance','professional','audit','overhead','administrative'],
 };
 
-function glFuzzyMatch(header, aliases) {
-  const h = header.toLowerCase().trim();
-  return aliases.some(a => h.includes(a) || a.includes(h));
+// Fuzzy header match — exact, contains, or normalized equality
+function glFuzzyMatch(rawHeader, aliases) {
+  const h = rawHeader.toLowerCase().replace(/[^a-z0-9 ]/g, ' ').replace(/\s+/g, ' ').trim();
+  for (const a of aliases) {
+    const an = a.toLowerCase().replace(/[^a-z0-9 ]/g, ' ').replace(/\s+/g, ' ').trim();
+    if (h === an || h.includes(an) || an.includes(h)) return true;
+  }
+  return false;
 }
 
 function detectGLCategory(text) {
@@ -1642,6 +1678,24 @@ function detectGLCategory(text) {
   return 'other';
 }
 
+// Parse a GL amount value — handles $, commas, (parentheses), trailing -
+function parseGLAmount(v) {
+  if (v === null || v === undefined || v === '') return 0;
+  if (typeof v === 'number') return v;
+  const s = String(v).trim();
+  if (!s) return 0;
+  // Detect accounting negative: (1,234.56) or (1234.56)
+  const isParenNeg = /^\(.*\)$/.test(s);
+  // Strip currency symbol, commas, spaces, parentheses, $
+  const clean = s.replace(/[$,\s()]/g, '');
+  // Handle trailing minus sign: 1234.56-
+  const trailingMinus = clean.endsWith('-');
+  const digits = trailingMinus ? clean.slice(0, -1) : clean;
+  const n = parseFloat(digits);
+  if (isNaN(n)) return 0;
+  return (isParenNeg || trailingMinus) ? -Math.abs(n) : n;
+}
+
 function parseGLDate(val) {
   if (!val && val !== 0) return '';
   if (typeof val === 'number') {
@@ -1650,7 +1704,14 @@ function parseGLDate(val) {
       return `${d.y}-${String(d.m).padStart(2,'0')}-${String(d.d).padStart(2,'0')}`;
     } catch { return String(val); }
   }
-  return String(val).trim();
+  const s = String(val).trim();
+  // Try to normalize common date formats: M/D/YYYY, M-D-YYYY, YYYY/MM/DD
+  const mdy = s.match(/^(\d{1,2})[\/\-](\d{1,2})[\/\-](\d{2,4})$/);
+  if (mdy) {
+    const yr = mdy[3].length === 2 ? '20' + mdy[3] : mdy[3];
+    return `${yr}-${mdy[1].padStart(2,'0')}-${mdy[2].padStart(2,'0')}`;
+  }
+  return s;
 }
 
 function handleGLUpload(input) {
@@ -1686,27 +1747,54 @@ function handleGLUpload(input) {
         return;
       }
 
-      // Find the header row (first row with 3+ non-empty cells)
-      let hdrIdx = 0;
-      for (let i = 0; i < Math.min(12, rows.length); i++) {
-        if (rows[i].filter(c => String(c).trim() !== '').length >= 3) { hdrIdx = i; break; }
+      // ── Find header row ─────────────────────────────────────────────────
+      // Score each of the first 15 rows by how many cells match a known alias.
+      // The row with the most matches is the header.
+      let hdrIdx = 0, bestScore = 0;
+      for (let i = 0; i < Math.min(15, rows.length); i++) {
+        const row = rows[i];
+        const nonEmpty = row.filter(c => String(c).trim() !== '');
+        if (nonEmpty.length < 2) continue;
+        let score = 0;
+        for (const cell of row) {
+          const h = String(cell || '');
+          if (!h.trim()) continue;
+          for (const aliases of Object.values(GL_COL_ALIASES)) {
+            if (glFuzzyMatch(h, aliases)) { score++; break; }
+          }
+        }
+        if (score > bestScore) { bestScore = score; hdrIdx = i; }
+        if (score >= 3) break; // Good enough — stop early
       }
       const headers = rows[hdrIdx].map(h => String(h || ''));
 
-      // Detect column indices
-      const ci = { date: -1, vendor: -1, description: -1, category: -1, amount: -1 };
+      // ── Detect column indices ───────────────────────────────────────────
+      const ci = { date: -1, vendor: -1, description: -1, category: -1,
+                   amount: -1, debit: -1, credit: -1 };
       headers.forEach((h, i) => {
         for (const [field, aliases] of Object.entries(GL_COL_ALIASES)) {
           if (ci[field] === -1 && glFuzzyMatch(h, aliases)) ci[field] = i;
         }
       });
 
-      // If no explicit amount column, find first column with positive numbers
+      // Resolve amount column: prefer explicit amount, then debit, then scan for numbers
+      let amtMode = 'single'; // single | debit | debit-credit
+      if (ci.amount === -1 && ci.debit >= 0) {
+        ci.amount = ci.debit;
+        amtMode = ci.credit >= 0 ? 'debit-credit' : 'debit';
+      }
       if (ci.amount === -1) {
-        const sample = rows[hdrIdx + 1] || [];
-        sample.forEach((v, i) => {
-          if (ci.amount === -1 && typeof v === 'number' && v > 0) ci.amount = i;
-        });
+        // Scan first several data rows for the first column that looks numeric
+        for (let r = hdrIdx + 1; r < Math.min(hdrIdx + 6, rows.length); r++) {
+          rows[r].forEach((v, i) => {
+            if (ci.amount === -1 && i !== ci.date && i !== ci.vendor &&
+                i !== ci.description && i !== ci.category) {
+              const n = parseGLAmount(v);
+              if (n > 0) ci.amount = i;
+            }
+          });
+          if (ci.amount !== -1) break;
+        }
       }
 
       if (ci.amount === -1) {
@@ -1719,28 +1807,36 @@ function handleGLUpload(input) {
       const vendorConf = ci.vendor >= 0 ? 92 : (ci.description >= 0 ? 72 : 50);
       const dateConf   = ci.date   >= 0 ? 92 : 40;
       const catFromCol = ci.category >= 0;
+      const vendorCol  = ci.vendor >= 0 ? ci.vendor : ci.description;
 
-      // Parse data rows
-      const vendorCol = ci.vendor >= 0 ? ci.vendor : ci.description;
-
+      // ── Parse data rows ─────────────────────────────────────────────────
       for (let i = hdrIdx + 1; i < rows.length; i++) {
-        const row    = rows[i];
-        const amtRaw = row[ci.amount];
-        const amt    = typeof amtRaw === 'number'
-          ? amtRaw
-          : parseFloat(String(amtRaw).replace(/[^0-9.\-]/g, '')) || 0;
-        if (amt <= 0) continue;                        // skip zero/negative/blank
+        const row = rows[i];
 
-        const vendor  = vendorCol >= 0 ? String(row[vendorCol] || '').trim() : '';
+        // Skip blank rows (fewer than 2 non-empty cells)
+        if (row.filter(c => String(c).trim() !== '').length < 2) continue;
+
+        // Compute net amount
+        let amt = parseGLAmount(row[ci.amount]);
+        if (amtMode === 'debit-credit' && ci.credit >= 0) {
+          const cr = parseGLAmount(row[ci.credit]);
+          amt = amt - cr; // net: debit minus credit
+        }
+        if (amt <= 0) continue; // skip zero / net-credit / blank rows
+
+        const vendor  = vendorCol  >= 0 ? String(row[vendorCol]        || '').trim() : '';
         const desc    = ci.description >= 0 ? String(row[ci.description] || '').trim() : '';
-        const catRaw  = ci.category >= 0 ? String(row[ci.category] || '').trim() : '';
-        const dateVal = ci.date >= 0 ? parseGLDate(row[ci.date]) : '';
+        const catRaw  = ci.category >= 0 ? String(row[ci.category]     || '').trim() : '';
+        const dateVal = ci.date     >= 0 ? parseGLDate(row[ci.date]) : '';
 
-        if (!vendor && !desc) continue;               // skip fully blank rows
+        if (!vendor && !desc) continue; // fully blank text row — skip
 
+        // Categorize from GL account/description/vendor, in order of reliability
         const catText  = catRaw || desc || vendor;
         const category = detectGLCategory(catText);
-        const catConf  = catFromCol ? 80 : (category !== 'other' ? 70 : 42);
+        const catConf  = catFromCol
+          ? (category !== 'other' ? 85 : 65)   // column present → higher baseline
+          : (category !== 'other' ? 72 : 42);   // inferred from text
 
         glData.push({
           date:     dateVal,
