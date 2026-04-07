@@ -3898,6 +3898,18 @@ function portfolioKPIs() {
 }
 
 function renderPortfolio() {
+  // Overlay real saved counts from propList() onto portfolio metadata so cards
+  // always show actual data instead of stale cached numbers.
+  const savedMap = {};
+  propList().forEach(s => { savedMap[s.id] = s; });
+  portfolio.forEach(p => {
+    const s = savedMap[p.id];
+    if (!s) return;
+    if (s.tenantCount  > 0) p.tenantCount  = s.tenantCount;
+    if (s.invoiceCount > 0) p.invoiceCount = s.invoiceCount;
+    if (s.totalCAM     > 0) p.totalCAM     = s.totalCAM;
+  });
+
   const k = portfolioKPIs();
 
   document.getElementById('pKpiProperties').textContent = k.properties;
@@ -4066,8 +4078,9 @@ function liveUpdateBreadcrumb(name) {
 }
 
 // ─── localStorage Persistence ─────────────────────────────────────────────────
-// All reads/writes wrapped in try/catch — localStorage can be unavailable in
-// some private-browsing contexts and should never break the app.
+// One atomic key per property: ms_prop_{id} → { name, sqft, tenants, invoices,
+// results, savedAt }.  One write either fully succeeds or fully fails — no
+// partial-save corruption possible.  Portfolio list still in ms_properties.
 
 function lsGet(key) {
   try { return JSON.parse(localStorage.getItem(key)); }
@@ -4075,103 +4088,202 @@ function lsGet(key) {
 }
 
 function lsSet(key, val) {
-  try { localStorage.setItem(key, JSON.stringify(val)); }
-  catch (e) { /* quota exceeded or storage blocked — silently skip */ }
+  try {
+    localStorage.setItem(key, JSON.stringify(val));
+    return true;
+  } catch (e) {
+    // Surface the error so the user (and dev console) can see it
+    console.error('[Mainstreet] localStorage write failed:', key, e);
+    const banner = document.getElementById('restoredBanner');
+    if (banner) {
+      banner.style.background = '#7f1d1d';
+      banner.style.color      = '#fee2e2';
+      banner.textContent      = '⚠️ Could not save data — storage may be full';
+      banner.style.opacity    = '1';
+      clearTimeout(banner._hideTimer);
+      banner._hideTimer = setTimeout(() => { banner.style.opacity = '0'; }, 6000);
+    }
+    return false;
+  }
 }
 
-// Save the portfolio list (property names, sqft, status) to localStorage.
+// ── Portfolio list ────────────────────────────────────────────────────────────
+
 function savePortfolio() {
   lsSet('ms_properties', portfolio);
 }
 
-// Save tenants, invoices, and the last CAM results for the active property.
-// Safe to call any time — does nothing if no property is open.
-// Note: render functions (renderBulkResults, renderInvResults) no longer call
-// this — only explicit mutation points do, so no mid-load overwrite risk.
+// ── Core 4-function property persistence API ──────────────────────────────────
+
+// Save ALL property data atomically under a single key.
+function propSave(id, data) {
+  if (!id) return false;
+  return lsSet(`ms_prop_${id}`, {
+    name:     data.name    || '',
+    sqft:     data.sqft    || 0,
+    tenants:  Array.isArray(data.tenants)  ? data.tenants.filter(t => t !== null) : [],
+    invoices: Array.isArray(data.invoices) ? data.invoices : [],
+    results:  data.results || null,
+    savedAt:  new Date().toISOString(),
+  });
+}
+
+// Load ALL property data from one key.
+// Falls back to the old three-key format and migrates it on first read.
+function propLoad(id) {
+  if (!id) return null;
+
+  // ── New unified key ─────────────────────────────────────────────────
+  const d = lsGet(`ms_prop_${id}`);
+  if (d) {
+    const tenants  = Array.isArray(d.tenants)  ? d.tenants.filter(t => t !== null)  : [];
+    const invoices = Array.isArray(d.invoices) ? d.invoices : [];
+    const results  = d.results || null;
+    if (tenants.length || invoices.length || results)
+      return { name: d.name || '', sqft: d.sqft || 0, tenants, invoices, results };
+  }
+
+  // ── Legacy migration: old three-key format ──────────────────────────
+  const oldTenants  = lsGet(`ms_tenants_${id}`);
+  const oldInvoices = lsGet(`ms_invoices_${id}`);
+  const oldResults  = lsGet(`ms_results_${id}`);
+  const tenants  = Array.isArray(oldTenants)  ? oldTenants.filter(t => t !== null)  : [];
+  const invoices = Array.isArray(oldInvoices) ? oldInvoices : [];
+  const results  = oldResults || null;
+  if (!tenants.length && !invoices.length && !results) return null;
+
+  // Consolidate into new format immediately so future reads use the fast path
+  propSave(id, { name: '', sqft: 0, tenants, invoices, results });
+  return { name: '', sqft: 0, tenants, invoices, results };
+}
+
+// Wipe all saved data for a property (legacy keys too).
+function propClear(id) {
+  if (!id) return;
+  try {
+    localStorage.removeItem(`ms_prop_${id}`);
+    localStorage.removeItem(`ms_tenants_${id}`);
+    localStorage.removeItem(`ms_invoices_${id}`);
+    localStorage.removeItem(`ms_results_${id}`);
+  } catch (e) { /* ignore */ }
+}
+
+// Return saved summary records for all properties — used to populate
+// portfolio cards with real tenant / invoice / CAM counts.
+function propList() {
+  const out = [];
+  try {
+    for (let i = 0; i < localStorage.length; i++) {
+      const key = localStorage.key(i);
+      if (!key || !key.startsWith('ms_prop_')) continue;
+      const d = lsGet(key);
+      if (!d) continue;
+      const id = key.slice('ms_prop_'.length);
+      out.push({
+        id,
+        tenantCount:  Array.isArray(d.tenants)  ? d.tenants.filter(t => t !== null).length : 0,
+        invoiceCount: Array.isArray(d.invoices) ? d.invoices.length : 0,
+        totalCAM:     d.results && Array.isArray(d.results.results)
+          ? Math.round(d.results.results.reduce((s, r) => s + (r.allocatedAmount || 0), 0))
+          : 0,
+      });
+    }
+  } catch (e) { /* ignore */ }
+  return out;
+}
+
+// ── App-level wrappers (all existing call sites remain unchanged) ─────────────
+
+// Snapshot every piece of active-property state into one atomic localStorage write.
 function savePropertyData() {
   if (!activePropId) return;
-  // Filter null slots (empty single-tenant form slots) so they are never
-  // written to localStorage and can't corrupt the load path on next visit.
-  const tenantsToSave = tenantData.filter(t => t !== null);
-  lsSet(`ms_tenants_${activePropId}`, tenantsToSave);
-  lsSet(`ms_invoices_${activePropId}`, invoiceData);
-  // Only write results if an allocation has been run
-  if (lastResults.length) {
-    lsSet(`ms_results_${activePropId}`, {
+
+  const name = document.getElementById('propertyName')?.value?.trim() || '';
+  const sqft = parseFloat(document.getElementById('totalSqft')?.value) || 0;
+
+  propSave(activePropId, {
+    name,
+    sqft,
+    tenants:  tenantData,
+    invoices: Array.from(invoiceData),
+    results: lastResults.length ? {
       results:      lastResults,
       propName:     lastPropName,
       total:        lastTotal,
       invoices:     lastInvoices,
       invoicesFull: lastInvoicesFull,
       tenants:      lastTenants,
-      disputes:     disputes,
-    });
-  }
+      disputes:     Array.from(disputes),
+    } : null,
+  });
 }
 
-// Restore tenants, invoices, and results for a property when it is opened.
-// Each section is wrapped in its own try/catch so a failure in one step
-// does not prevent the others from loading.
+// Restore all saved state for a property and re-render affected sections.
 function loadPropertyData(propId) {
+  const data = propLoad(propId);
+  if (!data) return; // nothing saved yet — correct blank-slate behaviour
+
   let restored = false;
 
   // ── Tenants ──────────────────────────────────────────────────────────
   try {
-    const savedTenants = lsGet(`ms_tenants_${propId}`);
-    // Filter any stale nulls that may exist in data saved before the fix
-    const clean = Array.isArray(savedTenants)
-      ? savedTenants.filter(t => t !== null)
-      : [];
-    if (clean.length) {
-      tenantData.splice(0, tenantData.length, ...clean);
+    if (data.tenants.length) {
+      tenantData.splice(0, tenantData.length, ...data.tenants);
       renderBulkResults();
       restored = true;
     }
-  } catch (e) {
-    console.warn('[Mainstreet] tenant restore failed:', e);
-  }
+  } catch (e) { console.warn('[Mainstreet] tenant restore failed:', e); }
 
   // ── Invoices ─────────────────────────────────────────────────────────
   try {
-    const savedInvoices = lsGet(`ms_invoices_${propId}`);
-    if (Array.isArray(savedInvoices) && savedInvoices.length) {
-      invoiceData.splice(0, invoiceData.length, ...savedInvoices);
+    if (data.invoices.length) {
+      invoiceData.splice(0, invoiceData.length, ...data.invoices);
       renderInvResults();
       restored = true;
     }
-  } catch (e) {
-    console.warn('[Mainstreet] invoice restore failed:', e);
-  }
+  } catch (e) { console.warn('[Mainstreet] invoice restore failed:', e); }
 
   // ── CAM Results ───────────────────────────────────────────────────────
   try {
-    const savedResults = lsGet(`ms_results_${propId}`);
-    if (savedResults && Array.isArray(savedResults.results) && savedResults.results.length) {
-      lastResults      = savedResults.results;
-      lastPropName     = savedResults.propName     || '';
-      lastTotal        = savedResults.total        || 0;
-      lastInvoices     = savedResults.invoices     || [];
-      lastInvoicesFull = savedResults.invoicesFull || [];
-      lastTenants      = savedResults.tenants      || [];
-      if (Array.isArray(savedResults.disputes) && savedResults.disputes.length) {
-        disputes.splice(0, disputes.length, ...savedResults.disputes);
-        nextDisputeId = Math.max(...savedResults.disputes.map(d => d.id + 1), 0);
+    const r = data.results;
+    if (r && Array.isArray(r.results) && r.results.length) {
+      lastResults      = r.results;
+      lastPropName     = r.propName     || '';
+      lastTotal        = r.total        || 0;
+      lastInvoices     = r.invoices     || [];
+      lastInvoicesFull = r.invoicesFull || [];
+      lastTenants      = r.tenants      || [];
+      if (Array.isArray(r.disputes) && r.disputes.length) {
+        disputes.splice(0, disputes.length, ...r.disputes);
+        nextDisputeId = Math.max(...r.disputes.map(d => d.id + 1), 0);
       }
       restoreResultsDisplay();
       renderDisputeSection();
       showReportSection();
       restored = true;
     }
-  } catch (e) {
-    console.warn('[Mainstreet] results restore failed:', e);
-  }
+  } catch (e) { console.warn('[Mainstreet] results restore failed:', e); }
 
   if (restored) showRestoredBanner();
 }
 
-// Re-draw the results card from the in-memory lastResults state.
-// Used when restoring a saved run — mirrors the display logic in runAllocation().
-function restoreResultsDisplay() {
+// Wipe saved data for the active property and reset the workflow UI.
+function clearPropertyData() {
+  if (!activePropId) return;
+  if (!confirm(
+    'Clear saved tenants, invoices, and results for this property?\n' +
+    'The property will remain in your portfolio.'
+  )) return;
+
+  propClear(activePropId);
+
+  const savedName = document.getElementById('propertyName').value;
+  const savedSqft = document.getElementById('totalSqft').value;
+  resetWorkflow();
+  document.getElementById('propertyName').value = savedName;
+  document.getElementById('totalSqft').value    = savedSqft;
+}
+
   const section = document.getElementById('results');
   const body    = document.getElementById('resultsBody');
   document.getElementById('resultsTitle').textContent = `Results — ${lastPropName}`;
@@ -4221,28 +4333,6 @@ function showRestoredBanner() {
   banner._hideTimer = setTimeout(() => { banner.style.opacity = '0'; }, 4000);
 }
 
-// Remove saved tenant/invoice/result data for the active property.
-// Keeps the property in the portfolio list — only clears its working data.
-function clearPropertyData() {
-  if (!activePropId) return;
-  if (!confirm(
-    'Clear saved tenants, invoices, and results for this property?\n' +
-    'The property will remain in your portfolio.'
-  )) return;
-
-  try {
-    localStorage.removeItem(`ms_tenants_${activePropId}`);
-    localStorage.removeItem(`ms_invoices_${activePropId}`);
-    localStorage.removeItem(`ms_results_${activePropId}`);
-  } catch (e) { /* ignore */ }
-
-  // Preserve the property name and sqft, reset everything else
-  const savedName = document.getElementById('propertyName').value;
-  const savedSqft = document.getElementById('totalSqft').value;
-  resetWorkflow();
-  document.getElementById('propertyName').value = savedName;
-  document.getElementById('totalSqft').value    = savedSqft;
-}
 
 // ─── Init ─────────────────────────────────────────────────────────────────────
 try {
