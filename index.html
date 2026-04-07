@@ -4221,6 +4221,11 @@ function savePropertyData() {
 // Restore all saved state for a property and re-render affected sections.
 function loadPropertyData(propId) {
   const data = propLoad(propId);
+
+  console.log('[Mainstreet] loadPropertyData', propId, data
+    ? { tenants: data.tenants.length, invoices: data.invoices.length, hasResults: !!data.results }
+    : 'NO SAVED DATA');
+
   if (!data) return; // nothing saved yet — correct blank-slate behaviour
 
   let restored = false;
@@ -4229,7 +4234,10 @@ function loadPropertyData(propId) {
   try {
     if (data.tenants.length) {
       tenantData.splice(0, tenantData.length, ...data.tenants);
+      // Ensure the bulk tab panel is visible before rendering into it
+      switchLeaseTab('bulk');
       renderBulkResults();
+      console.log('[Mainstreet] tenants restored:', tenantData.length);
       restored = true;
     }
   } catch (e) { console.warn('[Mainstreet] tenant restore failed:', e); }
@@ -4238,7 +4246,10 @@ function loadPropertyData(propId) {
   try {
     if (data.invoices.length) {
       invoiceData.splice(0, invoiceData.length, ...data.invoices);
+      // Ensure the files tab panel is visible before rendering into it
+      switchInvTab('files');
       renderInvResults();
+      console.log('[Mainstreet] invoices restored:', invoiceData.length);
       restored = true;
     }
   } catch (e) { console.warn('[Mainstreet] invoice restore failed:', e); }
@@ -4260,6 +4271,7 @@ function loadPropertyData(propId) {
       restoreResultsDisplay();
       renderDisputeSection();
       showReportSection();
+      console.log('[Mainstreet] results restored:', lastResults.length, 'tenants');
       restored = true;
     }
   } catch (e) { console.warn('[Mainstreet] results restore failed:', e); }
@@ -4284,6 +4296,9 @@ function clearPropertyData() {
   document.getElementById('totalSqft').value    = savedSqft;
 }
 
+// Re-draw the results card from in-memory lastResults state.
+// Used when restoring a saved run — mirrors the display logic in runAllocation().
+function restoreResultsDisplay() {
   const section = document.getElementById('results');
   const body    = document.getElementById('resultsBody');
   document.getElementById('resultsTitle').textContent = `Results — ${lastPropName}`;
