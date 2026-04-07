@@ -1388,7 +1388,7 @@
 <script>
 // ─── Constants ────────────────────────────────────────────────────────────────
 const API_URL    = 'https://api.anthropic.com/v1/messages';
-const MODEL      = 'claude-sonnet-4-20250514';
+const MODEL      = 'claude-sonnet-4-5';
 const MAX_LEASES = 3;
 
 const LEASE_PROMPT = `Extract the following CAM lease terms from this document and return ONLY valid JSON with these fields: tenantName, leasedSqft, capPercentage, excludedCategories (array of strings), baseYear, confidence. "confidence" must be an object with a score 0-100 for each field (tenantName, leasedSqft, capPercentage, excludedCategories, baseYear) reflecting how clearly that value was found in the document. If a field is not found, use null.`;
@@ -1424,54 +1424,84 @@ async function toBase64(file) {
   return new Promise((res, rej) => {
     const r = new FileReader();
     r.onload  = () => res(r.result.split(',')[1]);
-    r.onerror = rej;
+    r.onerror = () => rej(new Error('Could not read file — try a different file'));
     r.readAsDataURL(file);
   });
 }
 
 function parseJSON(text) {
-  // Strip markdown code fences that Claude sometimes wraps around JSON
+  if (typeof text !== 'string' || !text.trim()) {
+    throw new Error('Empty response from API');
+  }
+  // Strip markdown code fences Claude sometimes wraps around JSON
   const cleaned = text.replace(/^```(?:json)?\s*/m, '').replace(/\s*```\s*$/m, '').trim();
-  return JSON.parse(cleaned);
+  try {
+    return JSON.parse(cleaned);
+  } catch {
+    throw new Error('Could not parse API response as JSON');
+  }
 }
 
 async function callClaude(file, prompt) {
-  const base64    = await toBase64(file);
+  const key = apiKey();
+  if (!key) {
+    throw new Error('No API key — enter your Anthropic API key above');
+  }
+
+  let base64;
+  try {
+    base64 = await toBase64(file);
+  } catch (e) {
+    throw new Error(e.message || 'Failed to read file');
+  }
+
+  // Determine media type — force PDF for non-image files
   const isImage   = file.type.startsWith('image/');
-  const mediaType = isImage ? file.type : 'application/pdf';
+  const mediaType = isImage ? (file.type || 'image/jpeg') : 'application/pdf';
 
   const contentBlock = isImage
     ? { type: 'image',    source: { type: 'base64', media_type: mediaType, data: base64 } }
     : { type: 'document', source: { type: 'base64', media_type: mediaType, data: base64 } };
 
-  const headers = {
-    'Content-Type': 'application/json',
-    'anthropic-version': '2023-06-01',
-    'anthropic-dangerous-direct-browser-access': 'true',
-  };
-  const key = apiKey();
-  if (key) headers['x-api-key'] = key;
-
-  const resp = await fetch(API_URL, {
-    method: 'POST',
-    headers,
-    body: JSON.stringify({
-      model: MODEL,
-      max_tokens: 1024,
-      messages: [{
-        role: 'user',
-        content: [contentBlock, { type: 'text', text: prompt }]
-      }]
-    })
-  });
-
-  if (!resp.ok) {
-    const err = await resp.json().catch(() => ({}));
-    throw new Error(err?.error?.message || `API error ${resp.status}`);
+  let resp;
+  try {
+    resp = await fetch(API_URL, {
+      method: 'POST',
+      headers: {
+        'Content-Type': 'application/json',
+        'anthropic-version': '2023-06-01',
+        'anthropic-dangerous-direct-browser-access': 'true',
+        'x-api-key': key,
+      },
+      body: JSON.stringify({
+        model: MODEL,
+        max_tokens: 1024,
+        messages: [{ role: 'user', content: [contentBlock, { type: 'text', text: prompt }] }],
+      }),
+    });
+  } catch (e) {
+    // fetch() itself threw — network error or CORS block
+    throw new Error('Network error — check your connection and API key');
   }
 
-  const data = await resp.json();
-  return parseJSON(data.content[0].text);
+  if (!resp.ok) {
+    let msg = `API error ${resp.status}`;
+    try {
+      const body = await resp.json();
+      msg = body?.error?.message || body?.message || msg;
+    } catch { /* response body not JSON, keep default msg */ }
+    throw new Error(msg);
+  }
+
+  let data;
+  try {
+    data = await resp.json();
+  } catch {
+    throw new Error('Invalid response from API');
+  }
+
+  const text = data?.content?.[0]?.text;
+  return parseJSON(text);
 }
 
 // ─── SVG icons ────────────────────────────────────────────────────────────────
