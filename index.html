@@ -626,6 +626,22 @@
     }
     .bulk-t-remove:hover { background: rgba(239,68,68,0.1); }
     .bulk-tenant-detail { padding: 14px 14px 10px; border-top: 1px solid rgba(255,255,255,0.06); }
+    .inv-action-btns { display: flex; gap: 5px; flex-shrink: 0; align-items: center; }
+    .inv-act-btn {
+      font-size: 0.72rem; padding: 3px 9px; border-radius: 5px; border: 1.5px solid #334155;
+      background: rgba(51,65,85,0.4); color: #94A3B8; cursor: pointer; font-weight: 600;
+      white-space: nowrap; transition: all 0.15s;
+    }
+    .inv-act-btn:hover { border-color: #3B82F6; color: #93C5FD; background: rgba(59,130,246,0.1); }
+    .inv-act-explain:hover { border-color: #8B5CF6; color: #C4B5FD; background: rgba(139,92,246,0.1); }
+    .inv-act-dispute:hover { border-color: #ea580c; color: #fb923c; background: rgba(234,88,12,0.1); }
+    .inv-disputed-badge { font-size: 0.7rem; color: #fb923c; font-weight: 700; flex-shrink: 0; }
+    .inv-explain-box {
+      margin-top: 12px; padding: 12px; background: rgba(139,92,246,0.08);
+      border: 1.5px solid rgba(139,92,246,0.3); border-radius: 8px; font-size: 0.84rem; color: #CBD5E1;
+    }
+    .inv-explain-box strong { color: #A78BFA; display: block; margin-bottom: 6px; font-size: 0.78rem; text-transform: uppercase; letter-spacing: 0.05em; }
+    .inv-explain-box p { margin: 0; line-height: 1.6; }
 
     /* ── Confidence badges ───────────────────────────────────────────── */
     .conf-badge {
@@ -2290,7 +2306,13 @@ function renderInvResults() {
           <span class="bulk-t-meta" id="imeta-${i}">${esc(catStr)} &middot; ${amtStr}</span>
           ${overallConf !== undefined ? confidenceBadge(overallConf) : ''}
           ${dupBadge}
+          ${d._disputed ? `<span class="inv-disputed-badge">\u26a0 Disputed</span>` : ''}
           <span class="bulk-t-chevron" id="ichev-${i}">&#x25BC; Edit</span>
+          <div class="inv-action-btns">
+            <button class="inv-act-btn" onclick="event.stopPropagation();viewInvoice(${i})">View</button>
+            <button class="inv-act-btn inv-act-explain" id="iexplbtn-${i}" onclick="event.stopPropagation();explainCharge(${i})">Explain</button>
+            <button class="inv-act-btn inv-act-dispute" onclick="event.stopPropagation();disputeCharge(${i})">Dispute</button>
+          </div>
           <button class="bulk-t-remove" onclick="event.stopPropagation();removeInvItem(${i})">Remove</button>
         </div>
         <div class="bulk-tenant-detail" id="idet-${i}" style="display:none;">
@@ -2339,6 +2361,99 @@ function toggleInvDetail(i) {
   const open = det.style.display === 'block';
   det.style.display = open ? 'none' : 'block';
   chev.innerHTML    = open ? '&#x25BC; Edit' : '&#x25B2; Close';
+}
+
+function viewInvoice(i) {
+  const det  = document.getElementById(`idet-${i}`);
+  const chev = document.getElementById(`ichev-${i}`);
+  if (!det) return;
+  det.style.display = 'block';
+  chev.innerHTML    = '&#x25B2; Close';
+  det.scrollIntoView({ behavior: 'smooth', block: 'nearest' });
+}
+
+async function explainCharge(i) {
+  const inv = invoiceData[i];
+  if (!inv) return;
+  const key = apiKey();
+  if (!key) { alert('Enter your Anthropic API key to use this feature.'); return; }
+  const btn = document.getElementById(`iexplbtn-${i}`);
+  if (btn) { btn.textContent = '…'; btn.disabled = true; }
+  try {
+    const resp = await fetch(API_URL, {
+      method: 'POST',
+      headers: {
+        'Content-Type': 'application/json',
+        'anthropic-version': '2023-06-01',
+        'anthropic-dangerous-direct-browser-access': 'true',
+        'x-api-key': key,
+      },
+      body: JSON.stringify({
+        model: MODEL,
+        max_tokens: 512,
+        messages: [{ role: 'user', content:
+          `You are a commercial real estate CAM reconciliation expert. Explain this invoice charge in plain language for a tenant:\n` +
+          `Vendor: ${inv.vendorName || 'Unknown'}\n` +
+          `Category: ${inv.category || 'other'}\n` +
+          `Amount: $${inv.amount || '0'}\n` +
+          `Date: ${inv.invoiceDate || 'Unknown'}\n\n` +
+          `Explain what this charge covers, whether it is a normal CAM expense, and any red flags to watch for. Be concise (3-4 sentences).`
+        }],
+      }),
+    });
+    if (!resp.ok) throw new Error(`API error ${resp.status}`);
+    const data = await resp.json();
+    const text = data?.content?.[0]?.text || 'No explanation available.';
+    const det = document.getElementById(`idet-${i}`);
+    let expl = document.getElementById(`iexpl-${i}`);
+    if (!expl) {
+      expl = document.createElement('div');
+      expl.id = `iexpl-${i}`;
+      expl.className = 'inv-explain-box';
+      det.appendChild(expl);
+    }
+    expl.innerHTML = `<strong>AI Explanation</strong><p>${esc(text)}</p>`;
+    det.style.display = 'block';
+    document.getElementById(`ichev-${i}`).innerHTML = '&#x25B2; Close';
+    expl.scrollIntoView({ behavior: 'smooth', block: 'nearest' });
+  } catch (e) {
+    alert(`Explain error: ${e.message}`);
+  } finally {
+    if (btn) { btn.textContent = 'Explain'; btn.disabled = false; }
+  }
+}
+
+function disputeCharge(i) {
+  const det = document.getElementById(`idet-${i}`);
+  if (!det) return;
+  det.style.display = 'block';
+  document.getElementById(`ichev-${i}`).innerHTML = '&#x25B2; Close';
+  const existing = document.getElementById(`idisp-${i}`);
+  if (existing) { existing.remove(); return; }
+  const form = document.createElement('div');
+  form.id = `idisp-${i}`;
+  form.className = 'dispute-form';
+  form.innerHTML = `
+    <label>Dispute Reason</label>
+    <textarea id="idispr-${i}" placeholder="Why are you disputing this charge?"></textarea>
+    <div class="dispute-form-btns">
+      <button class="d-submit-btn" onclick="submitInvDispute(${i})">Flag as Disputed</button>
+      <button class="d-cancel-btn" onclick="document.getElementById('idisp-${i}').remove()">Cancel</button>
+    </div>`;
+  det.appendChild(form);
+  form.scrollIntoView({ behavior: 'smooth', block: 'nearest' });
+}
+
+function submitInvDispute(i) {
+  const inv = invoiceData[i];
+  if (!inv) return;
+  const ta = document.getElementById(`idispr-${i}`);
+  const reason = ta?.value?.trim();
+  if (!reason) { if (ta) ta.style.borderColor = '#ea580c'; return; }
+  inv._disputed = true;
+  inv._disputeReason = reason;
+  savePropertyData();
+  renderInvResults();
 }
 
 function refreshInvSummary(i) {
