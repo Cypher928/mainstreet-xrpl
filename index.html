@@ -3214,6 +3214,25 @@ function renderDisputeSection() {
   container.innerHTML = html || '<p style="font-size:0.85rem;color:#94a3b8;">No invoices to display.</p>';
 }
 
+// Wrapper for Dispute button inside the tenant statement report (table context).
+// Shows/hides the hidden <tr> that contains the form div, then delegates to toggleDisputeForm.
+function tsToggleDispute(rowId, tenantName, idx) {
+  const t = lastTenants.find(x => x.name === tenantName);
+  const r = lastResults.find(x => x.name === tenantName);
+  if (!t || !r) return;
+  const eligible = lastInvoicesFull.filter(inv =>
+    !t.excludedCategories.includes(inv.category.toLowerCase())
+  );
+  const inv = eligible[idx];
+  if (!inv) return;
+  const share = parseFloat((inv.amount * r.proRata).toFixed(2));
+  const trEl   = document.getElementById(`dtr-${rowId}`);
+  const formEl = document.getElementById(`dform-${rowId}`);
+  const isOpen = formEl && formEl.style.display === 'block';
+  if (trEl) trEl.style.display = isOpen ? 'none' : '';
+  toggleDisputeForm(rowId, tenantName, `inv-${idx}`, inv.vendor, inv.category, share);
+}
+
 function toggleDisputeForm(rowId, tenantName, invoiceId, vendor, category, tenantShare) {
   const formEl = document.getElementById(`dform-${rowId}`);
   const btnEl  = document.getElementById(`dbtn-${rowId}`);
@@ -3817,15 +3836,21 @@ function generateTenantStatement(tenantName) {
   const eligible = lastInvoicesFull.filter(inv =>
     !t.excludedCategories.includes(inv.category.toLowerCase())
   );
-  const invoiceRows = eligible.map(inv => {
+  const invoiceRows = eligible.map((inv, idx) => {
     const share = parseFloat((inv.amount * r.proRata).toFixed(2));
+    const rowId = `ts-${tenantName}-${idx}`.replace(/\s+/g, '-');
     return `<tr>
       <td>${esc(inv.vendor)}</td>
       <td style="text-transform:capitalize">${esc(inv.category)}</td>
       <td style="text-align:right">${fmt(inv.amount)}</td>
       <td style="text-align:right">${(r.proRata * 100).toFixed(2)}%</td>
       <td style="text-align:right">${fmt(share)}</td>
-    </tr>`;
+      <td style="text-align:center">
+        <button class="d-btn" id="dbtn-${rowId}"
+          onclick="tsToggleDispute('${rowId}','${esc(tenantName)}',${idx})">Dispute</button>
+      </td>
+    </tr>
+    <tr id="dtr-${rowId}" style="display:none"><td colspan="6" style="padding:0"><div id="dform-${rowId}"></div></td></tr>`;
   }).join('');
 
   // Excluded categories note
@@ -3898,10 +3923,11 @@ function generateTenantStatement(tenantName) {
       <thead><tr>
         <th>Vendor</th><th>Category</th><th style="text-align:right">Invoice Amt</th>
         <th style="text-align:right">Your Share %</th><th style="text-align:right">Your Share $</th>
+        <th style="text-align:center">Actions</th>
       </tr></thead>
       <tbody>${invoiceRows}</tbody>
       <tfoot><tr class="total-row">
-        <td colspan="4">TOTAL</td>
+        <td colspan="5">TOTAL</td>
         <td style="text-align:right">${fmt(r.allocatedAmount)}</td>
       </tr></tfoot>
     </table>
