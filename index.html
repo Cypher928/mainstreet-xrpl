@@ -373,11 +373,18 @@
     .d-res-btn.docs   { background: rgba(201,151,58,0.12); color: #E4B15C; border-color: rgba(201,151,58,0.3); }
     .d-res-btn.docs:hover   { background: rgba(201,151,58,0.22); }
 
+    .disputes-open-head     { color: #f87171; border-color: rgba(239,68,68,0.2); }
+    .disputes-resolved-head { color: #4ade80; border-color: rgba(34,197,94,0.2); }
     .resolved-badge {
       display: inline-flex; align-items: center; gap: 5px;
       padding: 3px 10px; background: rgba(34,197,94,0.15); color: #4ade80;
       font-size: 0.76rem; font-weight: 700; border-radius: 20px;
-      margin-bottom: 10px;
+      margin-bottom: 6px;
+    }
+    .resolved-badge.rejected { background: rgba(239,68,68,0.15); color: #f87171; }
+    .resolved-badge.docs     { background: rgba(201,151,58,0.15); color: #E4B15C; }
+    .d-resolved-ts {
+      font-size: 0.74rem; color: #64748B; margin-bottom: 10px;
     }
     .onchain-record {
       margin-top: 10px; padding: 10px 12px;
@@ -390,8 +397,14 @@
     }
     .onchain-record .oc-hash {
       font-family: 'DM Mono', "Courier New", monospace; font-size: 0.7rem;
-      color: #4ade80; word-break: break-all; line-height: 1.5;
+      color: #4ade80; word-break: break-all; line-height: 1.5; margin-bottom: 8px;
     }
+    .oc-view-btn {
+      font-size: 0.74rem; padding: 4px 12px; border-radius: 6px; cursor: pointer;
+      border: 1.5px solid rgba(34,197,94,0.4); background: rgba(34,197,94,0.1);
+      color: #4ade80; font-weight: 700; transition: all 0.15s;
+    }
+    .oc-view-btn:hover { background: rgba(34,197,94,0.2); }
 
     /* ── Portfolio Dashboard ─────────────────────────────────────────── */
     #portfolioDashboard {
@@ -1395,7 +1408,6 @@
     </div>
     <div id="disputeInvoiceList"></div>
     <div id="openDisputesWrap" style="display:none;">
-      <div class="disputes-heading">Open Disputes</div>
       <div id="openDisputesList"></div>
     </div>
   </div>
@@ -3417,24 +3429,38 @@ function renderOpenDisputes() {
   section.style.display = 'block';
   wrap.style.display = 'block';
 
-  // Update resolved counter
-  const resolvedCount = disputes.filter(d => d.status !== 'open').length;
-  document.getElementById('resolvedCount').textContent = resolvedCount;
+  const openList     = disputes.filter(d => d.status === 'open');
+  const resolvedList = disputes.filter(d => d.status !== 'open');
+  document.getElementById('resolvedCount').textContent = resolvedList.length;
 
-  list.innerHTML = disputes.map(d => {
+  function fmtTs(iso) {
+    if (!iso) return '';
+    return new Date(iso).toLocaleString('en-US', { month: 'short', day: 'numeric', hour: 'numeric', minute: '2-digit' });
+  }
+
+  function renderCard(d) {
     const isResolved = d.status !== 'open';
-    const ts = new Date(d.timestamp).toLocaleString();
+    const docHtml = d.docName
+      ? `<div style="font-size:0.75rem;color:#4ade80;margin:4px 0 0;font-family:'DM Mono',monospace;">📎 ${esc(d.docName)}</div>`
+      : '';
 
     let actionsHtml = '';
     if (isResolved) {
-      const label = d.status === 'accepted' ? '✅ Accepted'
-                  : d.status === 'rejected' ? '❌ Rejected'
-                  : '📄 Documentation Requested';
+      const label      = d.status === 'accepted' ? '✅ Accepted'
+                       : d.status === 'rejected' ? '❌ Rejected'
+                       : '📄 Docs Requested';
+      const statusWord = d.status === 'accepted' ? 'Accepted'
+                       : d.status === 'rejected' ? 'Rejected' : 'Resolved';
+      const badgeClass = d.status === 'rejected' ? 'resolved-badge rejected'
+                       : d.status === 'docs_requested' ? 'resolved-badge docs'
+                       : 'resolved-badge';
       actionsHtml = `
-        <div class="resolved-badge">${label}</div>
+        <div class="${badgeClass}">${label}</div>
+        ${d.resolvedAt ? `<div class="d-resolved-ts">${statusWord} · ${fmtTs(d.resolvedAt)}</div>` : ''}
         ${d.hash ? `<div class="onchain-record">
           <div class="oc-label">On-Chain Record</div>
           <div class="oc-hash">${d.hash}</div>
+          <button class="oc-view-btn" onclick="copyOnChainHash(this,'${d.hash}')">&#x1F517; View Record</button>
         </div>` : ''}`;
     } else {
       actionsHtml = `
@@ -3455,18 +3481,36 @@ function renderOpenDisputes() {
         </div>`;
     }
 
-    const docHtml = d.docName
-      ? `<div style="font-size:0.75rem;color:#4ade80;margin:4px 0 0;font-family:'DM Mono',monospace;">📎 ${esc(d.docName)}</div>`
-      : '';
     return `
       <div class="dispute-card${isResolved ? ' resolved' : ''}">
-        <div class="d-meta">#${d.id + 1} · ${esc(d.tenantName)} · ${ts}</div>
+        <div class="d-meta">#${d.id + 1} · ${esc(d.tenantName)} · ${fmtTs(d.timestamp)}</div>
         <div class="d-title">${esc(d.vendor)} (${esc(d.category)}) — ${fmt(d.tenantShare)}</div>
         <div class="d-reason">"${esc(d.reason)}"</div>
         ${docHtml}
         ${actionsHtml}
       </div>`;
-  }).join('');
+  }
+
+  let html = '';
+  if (openList.length) {
+    html += `<div class="disputes-heading disputes-open-head">&#x1F534; Open Disputes</div>`;
+    html += openList.map(renderCard).join('');
+  }
+  if (resolvedList.length) {
+    html += `<div class="disputes-heading disputes-resolved-head">&#x1F7E2; Resolved Disputes</div>`;
+    html += resolvedList.map(renderCard).join('');
+  }
+  list.innerHTML = html;
+}
+
+function copyOnChainHash(btn, hash) {
+  navigator.clipboard.writeText(hash).then(() => {
+    const orig = btn.textContent;
+    btn.textContent = '\u2705 Copied!';
+    setTimeout(() => btn.textContent = orig, 2000);
+  }).catch(() => {
+    btn.textContent = hash.substring(0, 8) + '\u2026';
+  });
 }
 
 function showDocsRequest(id) {
