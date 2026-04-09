@@ -1638,14 +1638,15 @@ function parseJSON(text) {
 async function callClaude(file, prompt) {
   const key = apiKey();
   if (!key) {
-    throw new Error('No API key — enter your Anthropic API key above');
+    throw new Error('Please enter your Anthropic API key above or check your connection');
   }
 
   let base64;
   try {
     base64 = await toBase64(file);
   } catch (e) {
-    throw new Error(e.message || 'Failed to read file');
+    console.error('[Mainstreet] File read error:', e);
+    throw new Error('Could not read file — try a different file');
   }
 
   // Determine media type — force PDF for non-image files
@@ -1673,28 +1674,32 @@ async function callClaude(file, prompt) {
       }),
     });
   } catch (e) {
-    // fetch() itself threw — network error or CORS block
-    throw new Error('Network error — check your connection and API key');
+    console.error('[Mainstreet] fetch error:', e);
+    throw new Error('Please enter your Anthropic API key above or check your connection');
   }
 
   if (!resp.ok) {
-    let msg = `API error ${resp.status}`;
-    try {
-      const body = await resp.json();
-      msg = body?.error?.message || body?.message || msg;
-    } catch { /* response body not JSON, keep default msg */ }
-    throw new Error(msg);
+    let detail = `HTTP ${resp.status}`;
+    try { const b = await resp.json(); detail = b?.error?.message || b?.message || detail; } catch { /* ignore */ }
+    console.error('[Mainstreet] API error:', detail);
+    throw new Error('Extraction failed — try a different file or contact support');
   }
 
   let data;
   try {
     data = await resp.json();
-  } catch {
-    throw new Error('Invalid response from API');
+  } catch (e) {
+    console.error('[Mainstreet] Response parse error:', e);
+    throw new Error('Extraction failed — try a different file or contact support');
   }
 
   const text = data?.content?.[0]?.text;
-  return parseJSON(text);
+  try {
+    return parseJSON(text);
+  } catch (e) {
+    console.error('[Mainstreet] JSON parse error:', e, '| raw text:', text);
+    throw new Error('Extraction failed — try a different file or contact support');
+  }
 }
 
 // ─── SVG icons ────────────────────────────────────────────────────────────────
