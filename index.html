@@ -642,6 +642,36 @@
     }
     .inv-explain-box strong { color: #A78BFA; display: block; margin-bottom: 6px; font-size: 0.78rem; text-transform: uppercase; letter-spacing: 0.05em; }
     .inv-explain-box p { margin: 0; line-height: 1.6; }
+    /* ── Tenant Statement Invoice Cards ───────────────────────────────── */
+    .ts-inv-list { display: flex; flex-direction: column; gap: 10px; margin-bottom: 12px; }
+    .ts-inv-card {
+      background: #0F1929; border: 1.5px solid rgba(255,255,255,0.08);
+      border-radius: 11px; overflow: hidden;
+    }
+    .ts-inv-top { padding: 12px 14px 8px; }
+    .ts-inv-vendor { font-size: 0.92rem; font-weight: 700; color: #E2E8F0; margin-bottom: 5px; }
+    .ts-inv-amounts { display: flex; flex-direction: column; gap: 2px; }
+    .ts-inv-total { font-size: 0.82rem; color: #94A3B8; }
+    .ts-inv-share { font-size: 0.85rem; color: #CBD5E1; }
+    .ts-inv-share strong { color: #F59E0B; }
+    .ts-inv-cat { font-size: 0.75rem; color: #64748B; text-transform: capitalize; margin-top: 2px; }
+    .ts-inv-btns {
+      display: flex; gap: 8px; padding: 8px 14px 12px; flex-wrap: wrap;
+    }
+    .ts-view-btn {
+      font-size: 0.78rem; padding: 5px 12px; border-radius: 6px;
+      border: 1.5px solid rgba(59,130,246,0.4); background: rgba(59,130,246,0.1);
+      color: #93C5FD; cursor: pointer; font-weight: 600; white-space: nowrap;
+    }
+    .ts-view-btn:hover { border-color: #3B82F6; background: rgba(59,130,246,0.2); }
+    .ts-inv-btns .d-btn { font-size: 0.78rem; padding: 5px 12px; }
+    .ts-inv-total-row {
+      display: flex; justify-content: space-between; align-items: center;
+      padding: 12px 14px; background: rgba(245,158,11,0.08);
+      border: 1.5px solid rgba(245,158,11,0.2); border-radius: 9px;
+      margin-bottom: 10px; font-size: 0.88rem; color: #CBD5E1;
+    }
+    .ts-inv-total-row strong { color: #F59E0B; font-size: 1rem; }
 
     /* ── Confidence badges ───────────────────────────────────────────── */
     .conf-badge {
@@ -1399,6 +1429,15 @@
     </div>
   </div>
   <div class="rpt-body" id="rptBody"></div>
+</div>
+
+<!-- ── Invoice File Viewer ────────────────────────────────────────────────── -->
+<div id="invFileViewer" style="display:none;position:fixed;inset:0;z-index:2000;background:rgba(0,0,0,0.92);flex-direction:column;">
+  <div style="display:flex;align-items:center;justify-content:space-between;padding:12px 18px;background:#0F1929;border-bottom:1px solid rgba(255,255,255,0.08);">
+    <span id="invFileViewerTitle" style="font-weight:700;color:#E2E8F0;font-size:0.95rem;"></span>
+    <button onclick="closeInvFileViewer()" style="background:rgba(239,68,68,0.15);border:1.5px solid rgba(239,68,68,0.3);color:#f87171;padding:6px 16px;border-radius:7px;cursor:pointer;font-weight:700;">✕ Close</button>
+  </div>
+  <div id="invFileViewerBody" style="flex:1;overflow:auto;display:flex;align-items:center;justify-content:center;padding:16px;"></div>
 </div>
 
 <script>
@@ -2230,6 +2269,13 @@ async function handleBatchInvoices(fileList) {
       </div>`;
 
     try {
+      // Capture data URL for later viewing (before callClaude strips it)
+      const fileDataUrl = await new Promise((res, rej) => {
+        const r = new FileReader();
+        r.onload  = () => res(r.result);
+        r.onerror = () => res(null);
+        r.readAsDataURL(files[i]);
+      });
       const d = await callClaude(files[i], INVOICE_PROMPT);
       invoiceData.push({
         vendorName:  d.vendorName  ?? '',
@@ -2238,12 +2284,14 @@ async function handleBatchInvoices(fileList) {
         invoiceDate: d.invoiceDate ?? '',
         confidence:  d.confidence  ?? {},
         _error:      null,
+        fileDataUrl, fileName: files[i].name, fileType: files[i].type,
       });
     } catch (err) {
       invoiceData.push({
         vendorName:  files[i].name.replace(/\.(pdf|jpe?g|png|webp)$/i, ''),
         amount: '', category: 'other', invoiceDate: '',
         confidence: {}, _error: err.message,
+        fileDataUrl: null, fileName: files[i].name, fileType: files[i].type,
       });
     }
 
@@ -2370,6 +2418,27 @@ function viewInvoice(i) {
   det.style.display = 'block';
   chev.innerHTML    = '&#x25B2; Close';
   det.scrollIntoView({ behavior: 'smooth', block: 'nearest' });
+}
+
+function viewInvFile(i) {
+  const inv = invoiceData[i];
+  if (!inv || !inv.fileDataUrl) return;
+  const viewer = document.getElementById('invFileViewer');
+  const title  = document.getElementById('invFileViewerTitle');
+  const body   = document.getElementById('invFileViewerBody');
+  title.textContent = inv.vendorName || inv.fileName || 'Invoice';
+  if (inv.fileType && inv.fileType.startsWith('image/')) {
+    body.innerHTML = `<img src="${inv.fileDataUrl}" style="max-width:100%;max-height:calc(100vh - 80px);border-radius:8px;object-fit:contain;" />`;
+  } else {
+    body.innerHTML = `<iframe src="${inv.fileDataUrl}" style="width:100%;height:calc(100vh - 80px);border:none;border-radius:8px;"></iframe>`;
+  }
+  viewer.style.display = 'flex';
+}
+
+function closeInvFileViewer() {
+  const viewer = document.getElementById('invFileViewer');
+  viewer.style.display = 'none';
+  document.getElementById('invFileViewerBody').innerHTML = '';
 }
 
 async function explainCharge(i) {
@@ -3226,10 +3295,6 @@ function tsToggleDispute(rowId, tenantName, idx) {
   const inv = eligible[idx];
   if (!inv) return;
   const share = parseFloat((inv.amount * r.proRata).toFixed(2));
-  const trEl   = document.getElementById(`dtr-${rowId}`);
-  const formEl = document.getElementById(`dform-${rowId}`);
-  const isOpen = formEl && formEl.style.display === 'block';
-  if (trEl) trEl.style.display = isOpen ? 'none' : '';
   toggleDisputeForm(rowId, tenantName, `inv-${idx}`, inv.vendor, inv.category, share);
 }
 
@@ -3836,21 +3901,35 @@ function generateTenantStatement(tenantName) {
   const eligible = lastInvoicesFull.filter(inv =>
     !t.excludedCategories.includes(inv.category.toLowerCase())
   );
-  const invoiceRows = eligible.map((inv, idx) => {
+  // Find matching invoiceData entries for file viewing (matched by vendor+category)
+  const invoiceCards = eligible.map((inv, idx) => {
     const share = parseFloat((inv.amount * r.proRata).toFixed(2));
     const rowId = `ts-${tenantName}-${idx}`.replace(/\s+/g, '-');
-    return `<tr>
-      <td>${esc(inv.vendor)}</td>
-      <td style="text-transform:capitalize">${esc(inv.category)}</td>
-      <td style="text-align:right">${fmt(inv.amount)}</td>
-      <td style="text-align:right">${(r.proRata * 100).toFixed(2)}%</td>
-      <td style="text-align:right">${fmt(share)}</td>
-      <td style="text-align:center">
-        <button class="d-btn" id="dbtn-${rowId}"
-          onclick="tsToggleDispute('${rowId}','${esc(tenantName)}',${idx})">Dispute</button>
-      </td>
-    </tr>
-    <tr id="dtr-${rowId}" style="display:none"><td colspan="6" style="padding:0"><div id="dform-${rowId}"></div></td></tr>`;
+    // Find stored file in invoiceData (match by vendor name)
+    const stored = invoiceData.find(d =>
+      d.vendorName && d.vendorName.toLowerCase() === (inv.vendor || '').toLowerCase()
+    );
+    const hasFile = stored && stored.fileDataUrl;
+    const viewBtn = hasFile
+      ? `<button class="ts-view-btn" onclick="viewInvFile(${invoiceData.indexOf(stored)})">&#x1F4C4; View Invoice</button>`
+      : '';
+    return `
+      <div class="ts-inv-card">
+        <div class="ts-inv-top">
+          <div class="ts-inv-vendor">${esc(inv.vendor)}</div>
+          <div class="ts-inv-amounts">
+            <span class="ts-inv-total">${fmt(inv.amount)}</span>
+            <span class="ts-inv-share">Your share (${(r.proRata * 100).toFixed(2)}%): <strong>${fmt(share)}</strong></span>
+            <span class="ts-inv-cat">${esc(inv.category)}</span>
+          </div>
+        </div>
+        <div class="ts-inv-btns">
+          ${viewBtn}
+          <button class="d-btn" id="dbtn-${rowId}"
+            onclick="tsToggleDispute('${rowId}','${esc(tenantName)}',${idx})">&#x26A0; Dispute This Charge</button>
+        </div>
+        <div id="dform-${rowId}" style="display:none;"></div>
+      </div>`;
   }).join('');
 
   // Excluded categories note
@@ -3919,18 +3998,11 @@ function generateTenantStatement(tenantName) {
     </div>
 
     <div class="rpt-section-title">Invoice Breakdown</div>
-    <table class="rpt-table">
-      <thead><tr>
-        <th>Vendor</th><th>Category</th><th style="text-align:right">Invoice Amt</th>
-        <th style="text-align:right">Your Share %</th><th style="text-align:right">Your Share $</th>
-        <th style="text-align:center">Actions</th>
-      </tr></thead>
-      <tbody>${invoiceRows}</tbody>
-      <tfoot><tr class="total-row">
-        <td colspan="5">TOTAL</td>
-        <td style="text-align:right">${fmt(r.allocatedAmount)}</td>
-      </tr></tfoot>
-    </table>
+    <div class="ts-inv-list">${invoiceCards}</div>
+    <div class="ts-inv-total-row">
+      <span>Total CAM Billed to You</span>
+      <strong>${fmt(r.allocatedAmount)}</strong>
+    </div>
     ${exclNote}${capNote}
 
     <div class="rpt-section-title">Year-End Reconciliation</div>
