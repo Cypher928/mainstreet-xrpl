@@ -672,6 +672,33 @@
       margin-bottom: 10px; font-size: 0.88rem; color: #CBD5E1;
     }
     .ts-inv-total-row strong { color: #F59E0B; font-size: 1rem; }
+    /* ── Dispute mode states ──────────────────────────────────────────── */
+    .ts-inv-card--disputing {
+      border-color: rgba(234,88,12,0.7) !important;
+      box-shadow: 0 0 0 3px rgba(234,88,12,0.15);
+    }
+    .ts-inv-card--disputed {
+      border-color: rgba(234,88,12,0.45) !important;
+    }
+    .ts-dispute-mode-label {
+      font-size: 0.72rem; font-weight: 700; color: #fb923c;
+      text-transform: uppercase; letter-spacing: 0.06em;
+      padding: 8px 14px 0;
+    }
+    .ts-under-review-badge {
+      display: inline-block; font-size: 0.72rem; font-weight: 700;
+      color: #fb923c; background: rgba(234,88,12,0.12);
+      border: 1.5px solid rgba(234,88,12,0.3); border-radius: 5px;
+      padding: 2px 9px; margin-top: 5px;
+    }
+    .ts-dispute-submitted-msg {
+      font-size: 0.84rem; color: #4ade80; padding: 12px 14px;
+      background: rgba(74,222,128,0.07);
+      border-top: 1px solid rgba(74,222,128,0.15);
+    }
+    .ts-landlord-note {
+      font-size: 0.73rem; color: #64748B; margin-top: 9px; font-style: italic;
+    }
 
     /* ── Confidence badges ───────────────────────────────────────────── */
     .conf-badge {
@@ -3269,19 +3296,38 @@ function tsToggleDispute(rowId, tenantName, idx) {
 function toggleDisputeForm(rowId, tenantName, invoiceId, vendor, category, tenantShare) {
   const formEl = document.getElementById(`dform-${rowId}`);
   const btnEl  = document.getElementById(`dbtn-${rowId}`);
+  const card   = formEl && formEl.closest('.ts-inv-card');
+
   if (formEl.style.display === 'block') {
     formEl.style.display = 'none';
     btnEl.classList.remove('active');
-    btnEl.textContent = 'Dispute';
+    btnEl.textContent = '\u26A0 Dispute This Charge';
+    if (card) {
+      card.classList.remove('ts-inv-card--disputing');
+      const lbl = card.querySelector('.ts-dispute-mode-label');
+      if (lbl) lbl.remove();
+    }
     return;
   }
+
   btnEl.classList.add('active');
   btnEl.textContent = 'Cancel';
   formEl.style.display = 'block';
+
+  if (card) {
+    card.classList.add('ts-inv-card--disputing');
+    if (!card.querySelector('.ts-dispute-mode-label')) {
+      const lbl = document.createElement('div');
+      lbl.className = 'ts-dispute-mode-label';
+      lbl.textContent = '\u26A0 Disputing this charge';
+      card.insertBefore(lbl, formEl);
+    }
+  }
+
   formEl.innerHTML = `
     <div class="dispute-form">
       <label>Reason for Dispute</label>
-      <textarea id="dreason-${esc(rowId)}" placeholder="Describe why you are disputing this charge…"></textarea>
+      <textarea id="dreason-${esc(rowId)}" placeholder="Examples:&#10;\u2022 This charge is not in my lease&#10;\u2022 Amount seems incorrect&#10;\u2022 Duplicate charge"></textarea>
       <div class="dispute-doc-row">
         <span class="dispute-doc-label">&#x1F4CE; Attach Supporting Document (optional)</span>
         <input type="file" id="ddoc-${esc(rowId)}" class="dispute-doc-input"
@@ -3298,6 +3344,7 @@ function toggleDisputeForm(rowId, tenantName, invoiceId, vendor, category, tenan
           Cancel
         </button>
       </div>
+      <div class="ts-landlord-note">Your landlord will review this request</div>
     </div>`;
 }
 
@@ -3311,27 +3358,49 @@ function submitDispute(rowId, tenantName, invoiceId, vendor, category, tenantSha
   const docName  = docInput && docInput.files[0] ? docInput.files[0].name : null;
   disputes.push({
     id:          nextDisputeId++,
-    tenantName,
-    invoiceId,
-    vendor,
-    category,
-    tenantShare,
-    reason,
-    docName,
+    tenantName, invoiceId, vendor, category, tenantShare, reason, docName,
     timestamp:   new Date().toISOString(),
     status:      'open',
-    resolution:  null,
-    resolvedAt:  null,
-    hash:        null,
+    resolution:  null, resolvedAt: null, hash: null,
   });
-  // Close the form, reset button
+
   const formEl = document.getElementById(`dform-${rowId}`);
   const btnEl  = document.getElementById(`dbtn-${rowId}`);
-  formEl.style.display = 'none';
-  btnEl.classList.remove('active');
-  btnEl.textContent = 'Dispute';
+  const card   = formEl && formEl.closest('.ts-inv-card');
+
+  if (card) {
+    // Tenant statement card — rich feedback
+    card.classList.remove('ts-inv-card--disputing');
+    card.classList.add('ts-inv-card--disputed');
+    const lbl = card.querySelector('.ts-dispute-mode-label');
+    if (lbl) lbl.remove();
+    // Success message replaces the form
+    formEl.style.display = 'block';
+    formEl.innerHTML = `<div class="ts-dispute-submitted-msg">&#x2705; Dispute submitted — your landlord will review this request.</div>`;
+    // "Under Review" badge below vendor name
+    const vendorEl = card.querySelector('.ts-inv-vendor');
+    if (vendorEl && !card.querySelector('.ts-under-review-badge')) {
+      const badge = document.createElement('span');
+      badge.className = 'ts-under-review-badge';
+      badge.textContent = '\u26A0 Under Review';
+      vendorEl.insertAdjacentElement('afterend', badge);
+    }
+    // Lock the dispute button
+    if (btnEl) {
+      btnEl.disabled = true;
+      btnEl.textContent = 'Disputed';
+      btnEl.classList.remove('active');
+      btnEl.style.cssText += ';opacity:0.45;cursor:not-allowed;';
+    }
+  } else {
+    // Landlord side — simple close
+    formEl.style.display = 'none';
+    if (btnEl) { btnEl.classList.remove('active'); btnEl.textContent = 'Dispute'; }
+  }
 
   renderOpenDisputes();
+  syncPortfolioEntry();
+  savePropertyData();
 }
 
 // ─── Dispute: Open Disputes List ─────────────────────────────────────────────
