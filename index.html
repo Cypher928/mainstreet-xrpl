@@ -757,6 +757,11 @@
     }
     .ts-view-btn:hover { border-color: #3B82F6; background: rgba(59,130,246,0.2); }
     .ts-inv-btns .d-btn { font-size: 0.78rem; padding: 5px 12px; }
+    .ts-explain-btn {
+      display: inline-block; width: auto; margin-top: 0;
+      font-size: 0.78rem; padding: 5px 12px;
+      border-color: rgba(99,102,241,0.4); color: #a5b4fc;
+    }
     .ts-inv-total-row {
       display: flex; justify-content: space-between; align-items: center;
       padding: 12px 14px; background: rgba(245,158,11,0.08);
@@ -3523,6 +3528,15 @@ function renderDisputeSection() {
 
 // Wrapper for Dispute button inside the tenant statement report (table context).
 // Shows/hides the hidden <tr> that contains the form div, then delegates to toggleDisputeForm.
+// Opens the Explain Charge panel from the tenant statement and pre-expands
+// the category of the invoice that was clicked.
+function tsExplainCharge(tenantName, category) {
+  openExplainPanel(tenantName);
+  if (category) {
+    setTimeout(() => epToggleDrill(category, tenantName), 60);
+  }
+}
+
 function tsToggleDispute(rowId, tenantName, idx) {
   const t = lastTenants.find(x => x.name === tenantName);
   const r = lastResults.find(x => x.name === tenantName);
@@ -4243,6 +4257,8 @@ function generateTenantStatement(tenantName) {
         </div>
         <div class="ts-inv-btns">
           ${viewBtn}
+          <button class="explain-btn ts-explain-btn"
+            onclick="tsExplainCharge('${esc(tenantName)}','${esc(inv.category)}')">&#x1F4CA; Explain Charge</button>
           <button class="d-btn" id="dbtn-${rowId}"
             onclick="tsToggleDispute('${rowId}','${esc(tenantName)}',${idx})">&#x26A0; Dispute This Charge</button>
         </div>
