@@ -1356,13 +1356,13 @@
     <div id="previousRunsList"></div>
   </div>
 
-  <!-- ── SECTION 5: Dispute a Charge ───────────────────────────────── -->
+  <!-- ── SECTION 5: Tenant Disputes ───────────────────────────────── -->
   <div class="card" id="disputeSection">
     <div class="sec-head">
       <div class="sec-num" style="background:#ea580c;">5</div>
       <div>
         <div class="view-label landlord">Landlord View</div>
-        <h2>Manage Disputes</h2>
+        <h2>Tenant Disputes</h2>
         <p>Disputes Resolved: <span id="resolvedCount" style="font-weight:700;color:#1e293b;">0</span></p>
       </div>
     </div>
@@ -3245,42 +3245,10 @@ async function sha256(obj) {
 
 // ─── Dispute: Invoice List ────────────────────────────────────────────────────
 function renderDisputeSection() {
-  const section = document.getElementById('disputeSection');
-  section.style.display = 'block';
-
-  const container = document.getElementById('disputeInvoiceList');
-  if (!lastTenants.length || !lastInvoices.length) { container.innerHTML = ''; return; }
-
-  let html = '';
-  lastTenants.forEach(t => {
-    const eligible = lastInvoices.filter(inv =>
-      !t.excludedCategories.includes(inv.category.toLowerCase())
-    );
-    if (!eligible.length) return;
-
-    html += `<div class="dispute-tenant-label">${esc(t.name)}</div>`;
-    eligible.forEach(inv => {
-      const tenantShare = parseFloat((inv.amount * (t.leasedSqft / t.totalSqft)).toFixed(2));
-      const rowId = `drow-${t.name}-${inv.id}`.replace(/\s+/g, '-');
-      html += `
-        <div id="${esc(rowId)}">
-          <div class="dispute-inv-row">
-            <div class="inv-info">
-              <div class="inv-name">${esc(inv.vendor)}</div>
-              <div class="inv-meta">${esc(inv.category)} · your share: ${fmt(tenantShare)}</div>
-            </div>
-            <div class="inv-amount">${fmt(inv.amount)}</div>
-            <button class="d-btn" id="dbtn-${esc(rowId)}"
-              onclick="toggleDisputeForm('${esc(rowId)}','${esc(t.name)}','${esc(inv.id)}','${esc(inv.vendor)}','${esc(inv.category)}',${tenantShare})">
-              Dispute
-            </button>
-          </div>
-          <div id="dform-${esc(rowId)}" style="display:none;"></div>
-        </div>`;
-    });
-  });
-
-  container.innerHTML = html || '<p style="font-size:0.85rem;color:#94a3b8;">No invoices to display.</p>';
+  // Section is only shown when tenants have actually filed disputes.
+  // renderOpenDisputes() controls visibility of #disputeSection.
+  document.getElementById('disputeInvoiceList').innerHTML = '';
+  renderOpenDisputes();
 }
 
 // Wrapper for Dispute button inside the tenant statement report (table context).
@@ -3368,10 +3336,16 @@ function submitDispute(rowId, tenantName, invoiceId, vendor, category, tenantSha
 
 // ─── Dispute: Open Disputes List ─────────────────────────────────────────────
 function renderOpenDisputes() {
-  const wrap = document.getElementById('openDisputesWrap');
-  const list = document.getElementById('openDisputesList');
+  const section = document.getElementById('disputeSection');
+  const wrap    = document.getElementById('openDisputesWrap');
+  const list    = document.getElementById('openDisputesList');
 
-  if (!disputes.length) { wrap.style.display = 'none'; return; }
+  if (!disputes.length) {
+    section.style.display = 'none';
+    wrap.style.display = 'none';
+    return;
+  }
+  section.style.display = 'block';
   wrap.style.display = 'block';
 
   // Update resolved counter
