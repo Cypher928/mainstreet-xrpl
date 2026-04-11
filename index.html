@@ -792,36 +792,46 @@
     }
     .inv-explain-box strong { color: #A78BFA; display: block; margin-bottom: 6px; font-size: 0.78rem; text-transform: uppercase; letter-spacing: 0.05em; }
     .inv-explain-box p { margin: 0; line-height: 1.6; }
-    /* ── Tenant Statement Hero ─────────────────────────────────────────── */
-    .ts-hero { padding: 24px 4px 20px; border-bottom: 1px solid rgba(255,255,255,0.07); margin-bottom: 22px; }
-    .ts-hero-label {
-      font-size: 0.72rem; font-weight: 700; color: #64748B;
+    /* ── Tenant Statement Summary Card ──────────────────────────────── */
+    .ts-summary-card {
+      background: #0F1929; border: 1px solid rgba(255,255,255,0.09);
+      border-radius: 14px; padding: 22px 18px 18px; margin-bottom: 16px;
+    }
+    .ts-summary-total-label {
+      font-size: 0.7rem; font-weight: 700; color: #64748B;
       text-transform: uppercase; letter-spacing: 0.09em; margin-bottom: 6px;
     }
-    .ts-hero-amount {
-      font-size: 2.5rem; font-weight: 800; color: #F1F5F9; line-height: 1.1; margin-bottom: 16px;
-      letter-spacing: -0.03em;
+    .ts-summary-total-amount {
+      font-size: 2.6rem; font-weight: 800; color: #F1F5F9; line-height: 1.1;
+      margin-bottom: 18px; letter-spacing: -0.03em;
     }
-    .primary-pay-btn {
-      display: block; width: 100%; padding: 13px 0; border-radius: 10px; cursor: pointer;
-      font-size: 0.95rem; font-weight: 700; letter-spacing: 0.01em;
-      background: #C9973A; border: none; color: #0B1220; transition: background 0.15s;
+    .ts-summary-stats {
+      display: flex; border-top: 1px solid rgba(255,255,255,0.07); padding-top: 14px; gap: 0;
     }
-    .primary-pay-btn:hover { background: #D4A84A; }
-    .ts-trust-bar {
-      display: flex; flex-wrap: wrap; gap: 5px 16px; padding: 10px 0; margin-top: 10px;
-      font-size: 0.73rem; color: #475569; border-top: 1px solid rgba(255,255,255,0.05);
+    .ts-summary-stat {
+      flex: 1; display: flex; flex-direction: column; gap: 3px;
+      padding: 0 12px; border-right: 1px solid rgba(255,255,255,0.06);
     }
-    .ts-trust-bar span { white-space: nowrap; }
-    /* ── Tenant meta strip ───────────────────────────────────────────── */
-    .ts-meta-row {
-      display: flex; flex-wrap: wrap; gap: 8px 24px; padding: 0 4px 18px;
-      border-bottom: 1px solid rgba(255,255,255,0.05); margin-bottom: 18px;
+    .ts-summary-stat:first-child { padding-left: 0; }
+    .ts-summary-stat:last-child { border-right: none; }
+    .ts-ss-label { font-size: 0.67rem; color: #475569; text-transform: uppercase; letter-spacing: 0.06em; }
+    .ts-ss-val { font-size: 0.92rem; font-weight: 700; color: #CBD5E1; }
+    .ts-ss-val.highlight { color: #C9973A; }
+    /* ── Category expense cards ─────────────────────────────────────── */
+    .ts-cat-list { display: flex; flex-direction: column; gap: 8px; margin-bottom: 20px; }
+    .ts-cat-card {
+      display: flex; align-items: center; justify-content: space-between;
+      background: #0F1929; border: 1px solid rgba(255,255,255,0.07);
+      border-radius: 10px; padding: 14px 16px;
     }
-    .ts-meta-item { display: flex; flex-direction: column; gap: 2px; }
-    .ts-meta-item span { font-size: 0.7rem; color: #64748B; text-transform: uppercase; letter-spacing: 0.06em; }
-    .ts-meta-item strong { font-size: 0.88rem; color: #94A3B8; font-weight: 600; }
-    /* ── Charge List ─────────────────────────────────────────────────── */
+    .ts-cat-name { font-size: 0.9rem; font-weight: 600; color: #CBD5E1; text-transform: capitalize; }
+    .ts-cat-total-amt { font-size: 0.74rem; color: #475569; margin-top: 3px; }
+    .ts-cat-right { text-align: right; }
+    .ts-cat-share-lbl { font-size: 0.67rem; color: #475569; text-transform: uppercase; letter-spacing: 0.05em; }
+    .ts-cat-share-amt { font-size: 1rem; font-weight: 700; color: #4ade80; }
+    /* ── Bottom action row ──────────────────────────────────────────── */
+    .ts-bottom-actions { display: flex; gap: 10px; margin-bottom: 24px; }
+    /* ── Hidden detail / charge list ───────────────────────────────── */
     .charge-list { display: flex; flex-direction: column; margin-bottom: 8px; }
     .charge-row { padding: 20px 4px; border-bottom: 1px solid rgba(255,255,255,0.06); }
     .charge-row:last-child { border-bottom: none; }
@@ -4370,7 +4380,30 @@ function generateTenantStatement(tenantName) {
   const eligible = lastInvoicesFull.filter(inv =>
     !t.excludedCategories.includes(inv.category.toLowerCase())
   );
-  // Build charge rows (source invoice accessible via View Details → drill-down)
+  // Group eligible invoices by category for the summary view
+  const catMap = {};
+  eligible.forEach(inv => {
+    const key = (inv.category || 'other').toLowerCase();
+    if (!catMap[key]) catMap[key] = { label: inv.category || 'Other', total: 0, share: 0 };
+    catMap[key].total += parseFloat(inv.amount) || 0;
+    catMap[key].share += parseFloat((inv.amount * r.proRata).toFixed(2));
+  });
+  const categoryCards = Object.entries(catMap)
+    .sort((a, b) => b[1].share - a[1].share)
+    .map(([, data]) => `
+      <div class="ts-cat-card">
+        <div>
+          <div class="ts-cat-name">${esc(data.label)}</div>
+          <div class="ts-cat-total-amt">Total billed: ${fmt(parseFloat(data.total.toFixed(2)))}</div>
+        </div>
+        <div class="ts-cat-right">
+          <div class="ts-cat-share-lbl">Your share</div>
+          <div class="ts-cat-share-amt">${fmt(parseFloat(data.share.toFixed(2)))}</div>
+        </div>
+      </div>`).join('');
+
+  // Per-invoice rows kept in a hidden section for disputes / details
+  const detailId = 'tsdetail-' + tenantName.replace(/\W+/g, '-');
   const chargeRows = eligible.map((inv, idx) => {
     const share = parseFloat((inv.amount * r.proRata).toFixed(2));
     const rowId = `ts-${tenantName}-${idx}`.replace(/\s+/g, '-');
@@ -4430,33 +4463,48 @@ function generateTenantStatement(tenantName) {
     : '<tr><td colspan="5" style="color:#94a3b8;text-align:center">No disputes filed</td></tr>';
 
   const html = `
-    <div class="ts-hero">
-      <div class="ts-hero-label">Total CAM Due</div>
-      <div class="ts-hero-amount">${fmt(r.allocatedAmount)}</div>
-      <button class="primary-pay-btn">Pay Now &mdash; ${fmt(r.allocatedAmount)}</button>
-      <div class="ts-trust-bar">
-        <span>&#x1F4C5; Generated: ${now}</span>
-        <span>&#x2714; ${eligible.length} verified invoice${eligible.length === 1 ? '' : 's'}</span>
-        <span>&#x1F4D0; Pro-rata by sq ft</span>
+    <div class="ts-summary-card">
+      <div class="ts-summary-total-label">Total CAM Billed to You</div>
+      <div class="ts-summary-total-amount">${fmt(r.allocatedAmount)}</div>
+      <div class="ts-summary-stats">
+        <div class="ts-summary-stat">
+          <span class="ts-ss-label">Your Share</span>
+          <span class="ts-ss-val highlight">${(r.proRata * 100).toFixed(2)}%</span>
+        </div>
+        <div class="ts-summary-stat">
+          <span class="ts-ss-label">Building Sq Ft</span>
+          <span class="ts-ss-val">${(t.totalSqft || 0).toLocaleString()}</span>
+        </div>
+        <div class="ts-summary-stat">
+          <span class="ts-ss-label">Your Sq Ft</span>
+          <span class="ts-ss-val">${t.leasedSqft.toLocaleString()}</span>
+        </div>
       </div>
     </div>
 
-    <div class="ts-meta-row">
-      <div class="ts-meta-item"><span>Tenant</span><strong>${esc(tenantName)}</strong></div>
-      <div class="ts-meta-item"><span>Property</span><strong>${esc(lastPropName)}</strong></div>
-      <div class="ts-meta-item"><span>Pro-Rata Share</span><strong>${(r.proRata * 100).toFixed(2)}%</strong></div>
-      <div class="ts-meta-item"><span>Leased Area</span><strong>${t.leasedSqft.toLocaleString()} sqft</strong></div>
-      <div class="ts-meta-item"><span>Period</span><strong>${period}</strong></div>
+    <button class="primary-pay-btn" style="margin-bottom:24px;">Pay Now &mdash; ${fmt(r.allocatedAmount)} USD</button>
+
+    <div class="rpt-section-title">Expense Breakdown</div>
+    <p class="rpt-helper-text">Your share of each expense category based on ${(r.proRata * 100).toFixed(2)}% pro-rata allocation.</p>
+    <div class="ts-cat-list">${categoryCards}</div>
+    ${exclNote}${capNote}
+
+    <div class="ts-bottom-actions">
+      <button class="btn-secondary" style="flex:1;padding:10px 0;font-size:0.82rem;"
+        onclick="(function(btn){var d=document.getElementById('${detailId}');var open=d.style.display==='block';d.style.display=open?'none':'block';btn.textContent=open?'View All Invoices':'Hide Invoice List';if(!open)d.scrollIntoView({behavior:'smooth',block:'start'});})(this)">
+        View All Invoices
+      </button>
+      <button class="btn-danger-outline" style="flex:1;padding:10px 0;font-size:0.82rem;"
+        onclick="var d=document.getElementById('${detailId}');d.style.display='block';d.scrollIntoView({behavior:'smooth',block:'start'})">
+        Dispute an Item
+      </button>
     </div>
 
-    <div class="rpt-section-title">Charge Breakdown</div>
-    <p class="rpt-helper-text">Review each charge below. Click View Details to see the calculation, or file a dispute.</p>
-    <div class="charge-list">${chargeRows}</div>
-    <div class="ts-inv-total-row">
-      <span>Total CAM Billed to You</span>
-      <strong>${fmt(r.allocatedAmount)}</strong>
+    <div id="${detailId}" style="display:none;">
+      <div class="rpt-section-title">All Invoices</div>
+      <p class="rpt-helper-text">Click Dispute on any charge you'd like to contest.</p>
+      <div class="charge-list">${chargeRows}</div>
     </div>
-    ${exclNote}${capNote}
 
     <div class="rpt-section-title">Year-End Reconciliation</div>
     <table class="rpt-table">
