@@ -63,34 +63,69 @@
     .api-bar .hint { font-size: 0.73rem; color: #64748B; white-space: nowrap; }
 
     /* Layout */
-    .container { max-width: 720px; margin: 0 auto; display: flex; flex-direction: column; gap: 28px; }
+    .container { max-width: 720px; margin: 0 auto; display: flex; flex-direction: column; gap: 32px; }
 
     /* Cards */
     .card {
       background: #111827;
-      border-radius: 14px;
-      padding: 30px 32px;
-      box-shadow: 0 2px 20px rgba(0,0,0,0.4);
+      border-radius: 16px;
+      padding: 32px 36px;
+      box-shadow: 0 2px 24px rgba(0,0,0,0.45);
       border: 1px solid rgba(255,255,255,0.07);
     }
 
     /* Section header */
-    .sec-head { display: flex; align-items: flex-start; gap: 12px; margin-bottom: 26px; }
+    .sec-head { display: flex; align-items: flex-start; gap: 14px; margin-bottom: 28px; }
     /* Helper text */
     .rpt-helper-text {
       font-size: 0.82rem; color: #64748B; margin: -4px 0 14px;
       line-height: 1.5; font-style: italic;
     }
     .sec-num {
-      width: 27px; height: 27px; border-radius: 50%;
+      width: 28px; height: 28px; border-radius: 50%;
       background: #C9973A; color: #0B1220;
       font-size: 0.78rem; font-weight: 700;
       display: flex; align-items: center; justify-content: center;
-      flex-shrink: 0; margin-top: 2px;
+      flex-shrink: 0; margin-top: 3px;
     }
     .sec-num.green { background: #22c55e; color: #0B1220; }
-    .sec-head h2 { font-size: 1.02rem; font-weight: 700; color: #E2E8F0; }
-    .sec-head p { font-size: 0.8rem; color: #64748B; margin-top: 3px; }
+    .sec-head h2 { font-size: 1.08rem; font-weight: 700; color: #E2E8F0; margin-bottom: 4px; }
+    .sec-head p { font-size: 0.82rem; color: #64748B; line-height: 1.5; }
+
+    /* ── Step Progress Indicator ─────────────────────────────────────── */
+    .step-bar {
+      display: flex; align-items: center; justify-content: center;
+      gap: 0; margin-bottom: 4px; padding: 18px 0 6px;
+    }
+    .step-item {
+      display: flex; flex-direction: column; align-items: center; gap: 5px;
+      flex: 1; position: relative;
+    }
+    .step-item:not(:last-child)::after {
+      content: ''; position: absolute; top: 13px; left: calc(50% + 14px);
+      right: calc(-50% + 14px); height: 2px;
+      background: rgba(255,255,255,0.08);
+    }
+    .step-item.done:not(:last-child)::after { background: #C9973A; }
+    .step-dot {
+      width: 26px; height: 26px; border-radius: 50%; z-index: 1;
+      display: flex; align-items: center; justify-content: center;
+      font-size: 0.7rem; font-weight: 700;
+      border: 2px solid rgba(255,255,255,0.12);
+      background: #0B1220; color: #64748B;
+    }
+    .step-item.done .step-dot {
+      background: #C9973A; border-color: #C9973A; color: #0B1220;
+    }
+    .step-item.active .step-dot {
+      background: transparent; border-color: #C9973A; color: #C9973A;
+      box-shadow: 0 0 0 3px rgba(201,151,58,0.15);
+    }
+    .step-label {
+      font-size: 0.66rem; font-weight: 600; color: #64748B;
+      text-transform: uppercase; letter-spacing: 0.05em; white-space: nowrap;
+    }
+    .step-item.done .step-label, .step-item.active .step-label { color: #C9973A; }
 
     /* Form fields */
     .field-row { display: flex; gap: 14px; flex-wrap: wrap; margin-bottom: 14px; }
@@ -216,42 +251,46 @@
     .add-btn:hover { border-color: #C9973A; background: rgba(201,151,58,0.05); }
     .add-btn:disabled { opacity: 0.4; cursor: not-allowed; }
 
-    /* Run button */
+    /* Run button — primary CTA */
     #runBtn {
-      width: 100%; padding: 14px;
+      width: 100%; padding: 16px;
       background: linear-gradient(135deg, #C9973A 0%, #E4B15C 100%);
       color: #0B1220;
-      font-size: 1rem; font-weight: 700;
-      border: none; border-radius: 11px;
-      cursor: pointer; letter-spacing: 0.02em;
-      transition: opacity 0.15s, transform 0.1s;
-      box-shadow: 0 4px 16px rgba(201,151,58,0.35);
+      font-size: 1.05rem; font-weight: 800;
+      border: none; border-radius: 13px;
+      cursor: pointer; letter-spacing: 0.03em;
+      transition: opacity 0.15s, transform 0.1s, box-shadow 0.15s;
+      box-shadow: 0 6px 22px rgba(201,151,58,0.4);
     }
-    #runBtn:hover { opacity: 0.9; }
+    #runBtn:hover { opacity: 0.92; box-shadow: 0 8px 28px rgba(201,151,58,0.5); }
     #runBtn:active { transform: scale(0.99); }
 
     /* Results */
     #results { display: none; }
     .result-card {
-      background: rgba(201,151,58,0.08); border: 1.5px solid rgba(201,151,58,0.2);
-      border-radius: 11px; padding: 18px 20px; margin-bottom: 13px;
+      background: rgba(201,151,58,0.06); border: 1.5px solid rgba(201,151,58,0.18);
+      border-radius: 13px; padding: 22px 24px; margin-bottom: 16px;
     }
-    .result-card .r-name { font-size: 1rem; font-weight: 700; margin-bottom: 12px; color: #E2E8F0; }
+    .result-card .r-name {
+      font-size: 1.05rem; font-weight: 700; margin-bottom: 16px;
+      color: #E2E8F0; padding-bottom: 12px;
+      border-bottom: 1px solid rgba(255,255,255,0.06);
+    }
     .result-grid {
       display: grid;
-      grid-template-columns: repeat(auto-fill, minmax(160px, 1fr));
+      grid-template-columns: repeat(3, 1fr);
       gap: 10px;
     }
     .result-stat {
-      background: #111827; border-radius: 8px;
-      padding: 10px 14px; border: 1px solid rgba(255,255,255,0.08);
+      background: #0F1929; border-radius: 10px;
+      padding: 12px 14px; border: 1px solid rgba(255,255,255,0.07);
     }
     .result-stat .stat-label {
-      font-size: 0.69rem; color: #64748B;
-      text-transform: uppercase; letter-spacing: 0.05em; font-weight: 600;
-      font-family: 'DM Mono', monospace;
+      font-size: 0.67rem; color: #64748B;
+      text-transform: uppercase; letter-spacing: 0.06em; font-weight: 700;
+      font-family: 'DM Mono', monospace; margin-bottom: 5px;
     }
-    .result-stat .stat-value { font-size: 1.02rem; font-weight: 700; margin-top: 3px; color: #E2E8F0; }
+    .result-stat .stat-value { font-size: 1.05rem; font-weight: 700; color: #E2E8F0; }
     .cap-badge {
       display: inline-block; margin-top: 10px; padding: 4px 10px;
       background: rgba(201,151,58,0.15); color: #E4B15C; font-size: 0.76rem; font-weight: 600;
@@ -345,11 +384,15 @@
 
     /* Summary bar */
     .summary-bar {
-      padding: 11px 16px; background: rgba(201,151,58,0.1);
-      border-radius: 8px; font-size: 0.86rem; color: #94A3B8;
-      margin-bottom: 18px; border: 1px solid rgba(201,151,58,0.2);
+      display: flex; gap: 24px; flex-wrap: wrap;
+      padding: 14px 18px; background: rgba(201,151,58,0.08);
+      border-radius: 10px; font-size: 0.84rem; color: #94A3B8;
+      margin-bottom: 22px; border: 1px solid rgba(201,151,58,0.18);
+      align-items: center;
     }
-    .summary-bar strong { color: #E2E8F0; }
+    .summary-bar strong { color: #F59E0B; font-size: 1rem; display: block; }
+    .summary-bar-item { display: flex; flex-direction: column; gap: 1px; }
+    .summary-bar-label { font-size: 0.67rem; text-transform: uppercase; letter-spacing: 0.06em; color: #64748B; }
 
     /* ── Dispute section ──────────────────────────────────────────────── */
     #disputeSection { display: none; }
@@ -1311,11 +1354,31 @@
 
 <div class="container" id="mainWorkflow" style="display:none;">
 
+  <!-- ── Step Progress Bar ─────────────────────────────────────────── -->
+  <div class="step-bar" id="stepBar">
+    <div class="step-item done" id="step-upload">
+      <div class="step-dot">&#x2713;</div>
+      <div class="step-label">Upload</div>
+    </div>
+    <div class="step-item" id="step-calculate">
+      <div class="step-dot">2</div>
+      <div class="step-label">Calculate</div>
+    </div>
+    <div class="step-item" id="step-review">
+      <div class="step-dot">3</div>
+      <div class="step-label">Review</div>
+    </div>
+    <div class="step-item" id="step-resolve">
+      <div class="step-dot">4</div>
+      <div class="step-label">Resolve</div>
+    </div>
+  </div>
+
   <!-- ── SECTION 1: Property Setup ─────────────────────────────────── -->
   <div class="card">
     <div class="sec-head">
       <div class="sec-num">1</div>
-      <div><h2>Property Setup</h2><p>Basic property information</p></div>
+      <div><h2>Property Setup</h2><p>Enter property details to begin the CAM reconciliation</p></div>
     </div>
     <div class="field-row">
       <div class="field">
@@ -1336,7 +1399,7 @@
       <div class="sec-num">2</div>
       <div>
         <h2>Lease Upload</h2>
-        <p>Upload tenant leases — AI extracts CAM terms automatically</p>
+        <p>Upload leases and invoices — AI extracts CAM terms automatically</p>
       </div>
     </div>
 
@@ -1405,7 +1468,7 @@
       <div class="sec-num">3</div>
       <div>
         <h2>Invoice Upload</h2>
-        <p>Upload invoice files or import directly from Yardi Genesis</p>
+        <p>Upload CAM expense invoices or import from Yardi Genesis</p>
       </div>
     </div>
 
@@ -1472,7 +1535,10 @@
   <div class="card" id="results">
     <div class="sec-head">
       <div class="sec-num green">4</div>
-      <div><h2 id="resultsTitle">Allocation Results</h2></div>
+      <div>
+        <h2 id="resultsTitle">Allocation Results</h2>
+        <p>Review calculated charges for each tenant</p>
+      </div>
     </div>
     <div id="resultsBody"></div>
   </div>
@@ -3253,9 +3319,9 @@ function runAllocation() {
   document.getElementById('resultsTitle').textContent = `Results — ${propName}`;
 
   let html = `<div class="summary-bar">
-    <strong>Total Expenses:</strong> ${fmt(totalCost)}
-    &nbsp;|&nbsp; <strong>Tenants:</strong> ${results.length}
-    &nbsp;|&nbsp; <strong>Invoices:</strong> ${invoices.length}
+    <div class="summary-bar-item"><span class="summary-bar-label">Total Expenses</span><strong>${fmt(totalCost)}</strong></div>
+    <div class="summary-bar-item"><span class="summary-bar-label">Tenants</span><strong>${results.length}</strong></div>
+    <div class="summary-bar-item"><span class="summary-bar-label">Invoices</span><strong>${invoices.length}</strong></div>
   </div>`;
 
   results.forEach(r => {
@@ -3292,6 +3358,24 @@ function runAllocation() {
   showReportSection(); // refresh notice + tenant buttons
   syncPortfolioEntry();
   savePropertyData(); // persist allocation results
+  updateStepBar('review');
+}
+
+// ─── Step Progress Bar ────────────────────────────────────────────────────────
+
+function updateStepBar(reached) {
+  const steps = ['upload','calculate','review','resolve'];
+  const idx   = steps.indexOf(reached);
+  steps.forEach((s, i) => {
+    const el = document.getElementById(`step-${s}`);
+    if (!el) return;
+    el.classList.remove('done', 'active');
+    if (i < idx)  el.classList.add('done');
+    if (i === idx) el.classList.add('active');
+    const dot = el.querySelector('.step-dot');
+    if (i < idx && dot) dot.innerHTML = '&#x2713;';
+    if (i >= idx && dot) dot.textContent = i + 1;
+  });
 }
 
 // ─── Helpers ──────────────────────────────────────────────────────────────────
@@ -3669,6 +3753,7 @@ function submitDispute(rowId, tenantName, invoiceId, vendor, category, tenantSha
   renderOpenDisputes();
   syncPortfolioEntry();
   savePropertyData();
+  updateStepBar('resolve');
 }
 
 // ─── Dispute: Open Disputes List ─────────────────────────────────────────────
