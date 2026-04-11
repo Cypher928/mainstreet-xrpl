@@ -4964,5 +4964,14 @@ try {
   </p>
 </footer>
 
+<!-- ── Supabase ───────────────────────────────────────────────────────────── -->
+<script src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2"></script>
+<script>
+  const supabaseUrl = "https://zhsuheghehzbkmzurzyf.supabase.co";
+  const supabaseKey = "eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6Inpoc3VoZWhnZWhiemttenVyenlmIiwicm9sZSI6ImFub24iLCJpYXQiOjE3NzU4NDkwNDAsImV4cCI6MjA5MTQyNTA0MH0.HUl9ha9hhjIO1F_k8xPkqbZQnWx-ERRGbnmc6KS3lNE";
+  const db = window.supabase.createClient(supabaseUrl, supabaseKey);
+  console.log("[Mainstreet] Supabase connected:", db);
+</script>
+
 </body>
 </html>
