@@ -441,37 +441,40 @@
     .d-btn.active { border-color: #ea580c; color: #fb923c; background: rgba(234,88,12,0.1); }
 
     .dispute-form {
-      margin-top: 6px; margin-bottom: 6px;
-      padding: 14px; background: rgba(234,88,12,0.08);
-      border: 1.5px solid rgba(234,88,12,0.3); border-radius: 9px;
+      margin-top: 12px; padding: 14px 0;
+      border-top: 1px solid rgba(255,255,255,0.07);
       animation: fadein 0.2s ease;
     }
-    .dispute-form label {
-      font-size: 0.73rem; font-weight: 700; color: #fb923c;
-      text-transform: uppercase; letter-spacing: 0.05em;
-      display: block; margin-bottom: 6px;
-      font-family: 'DM Mono', monospace;
+    .dispute-form-title {
+      font-size: 0.88rem; font-weight: 700; color: #E2E8F0; margin-bottom: 10px;
     }
     .dispute-form textarea {
-      width: 100%; padding: 8px 11px;
-      border: 1.5px solid rgba(234,88,12,0.3); border-radius: 7px;
-      font-size: 0.88rem; font-family: inherit;
-      resize: vertical; min-height: 62px; background: #0F1929; color: #E2E8F0;
+      width: 100%; padding: 10px 12px; box-sizing: border-box;
+      border: 1px solid rgba(255,255,255,0.12); border-radius: 8px;
+      font-size: 0.85rem; font-family: inherit;
+      resize: vertical; min-height: 72px; background: #0F1929; color: #E2E8F0;
+      margin-bottom: 8px;
     }
-    .dispute-form textarea:focus { outline: none; border-color: #ea580c; }
-    .dispute-form-btns { display: flex; gap: 8px; margin-top: 9px; }
+    .dispute-form textarea:focus { outline: none; border-color: rgba(239,68,68,0.45); }
+    .dispute-attach-label {
+      display: flex; align-items: center; gap: 6px; cursor: pointer;
+      font-size: 0.74rem; color: #475569; margin-bottom: 10px; transition: color 0.15s;
+    }
+    .dispute-attach-label:hover { color: #64748B; }
+    .dispute-attach-label input { display: none; }
+    .dispute-form-btns { display: flex; gap: 8px; margin-top: 2px; }
     .d-submit-btn {
-      padding: 7px 16px; background: #ea580c; color: white;
+      padding: 8px 20px; background: #ea580c; color: white;
       border: none; border-radius: 7px;
-      font-size: 0.82rem; font-weight: 700; cursor: pointer;
-      transition: background 0.15s;
+      font-size: 0.82rem; font-weight: 700; cursor: pointer; transition: background 0.15s;
     }
     .d-submit-btn:hover { background: #c2410c; }
     .d-cancel-btn {
-      padding: 7px 14px; background: #111827; color: #94A3B8;
-      border: 1.5px solid rgba(255,255,255,0.1); border-radius: 7px;
-      font-size: 0.82rem; cursor: pointer;
+      padding: 8px 14px; background: transparent; color: #64748B;
+      border: 1px solid rgba(255,255,255,0.1); border-radius: 7px;
+      font-size: 0.82rem; cursor: pointer; transition: all 0.15s;
     }
+    .d-cancel-btn:hover { color: #94A3B8; border-color: rgba(255,255,255,0.2); }
 
     /* Open disputes */
     .disputes-heading {
@@ -859,6 +862,41 @@
       margin-top: 4px; font-size: 0.9rem; color: #CBD5E1;
     }
     .ts-inv-total-row strong { color: #F59E0B; font-size: 1.08rem; }
+    /* ── Inline charge detail box ───────────────────────────────────── */
+    .ts-detail-box {
+      margin-top: 12px; padding: 14px 16px;
+      background: #0B1220; border: 1px solid rgba(255,255,255,0.09);
+      border-radius: 10px; animation: fadein 0.15s ease;
+    }
+    .ts-detail-header {
+      display: flex; align-items: center; justify-content: space-between; margin-bottom: 12px;
+    }
+    .ts-detail-title { font-size: 0.82rem; font-weight: 700; color: #E2E8F0; }
+    .ts-detail-close {
+      background: none; border: none; color: #475569; cursor: pointer;
+      font-size: 1rem; line-height: 1; padding: 0;
+    }
+    .ts-detail-close:hover { color: #94A3B8; }
+    .ts-detail-row {
+      display: flex; justify-content: space-between; align-items: center;
+      padding: 7px 0; border-bottom: 1px solid rgba(255,255,255,0.05);
+      font-size: 0.81rem; color: #475569;
+    }
+    .ts-detail-row:last-of-type { border-bottom: none; }
+    .ts-detail-val { color: #CBD5E1; font-weight: 600; text-align: right; }
+    .ts-detail-highlight { padding-top: 10px; }
+    .ts-detail-highlight .ts-detail-val { color: #F59E0B; font-size: 1.05rem; font-weight: 800; }
+    .ts-detail-basis {
+      font-size: 0.72rem; color: #475569; margin-top: 10px; padding-top: 10px;
+      border-top: 1px solid rgba(255,255,255,0.05);
+    }
+    .ts-detail-view-inv {
+      display: block; margin-top: 10px; width: 100%; padding: 8px 0;
+      text-align: center; border: 1px solid rgba(59,130,246,0.28);
+      background: transparent; color: #93C5FD; border-radius: 7px;
+      font-size: 0.78rem; font-weight: 600; cursor: pointer; transition: all 0.15s;
+    }
+    .ts-detail-view-inv:hover { background: rgba(59,130,246,0.1); border-color: #3B82F6; }
     /* ── Dispute mode states ──────────────────────────────────────────── */
     .ts-inv-card--disputing {
       background: rgba(234,88,12,0.04);
@@ -3729,25 +3767,24 @@ function toggleDisputeForm(rowId, tenantName, invoiceId, vendor, category, tenan
 
   formEl.innerHTML = `
     <div class="dispute-form">
-      <label>Reason for Dispute</label>
-      <textarea id="dreason-${esc(rowId)}" placeholder="Examples:&#10;\u2022 This charge is not in my lease&#10;\u2022 Amount seems incorrect&#10;\u2022 Duplicate charge"></textarea>
-      <div class="dispute-doc-row">
-        <span class="dispute-doc-label">&#x1F4CE; Attach Supporting Document (optional)</span>
+      <div class="dispute-form-title">Dispute this charge</div>
+      <textarea id="dreason-${esc(rowId)}" placeholder="Explain why you're disputing this charge…"></textarea>
+      <label class="dispute-attach-label">
         <input type="file" id="ddoc-${esc(rowId)}" class="dispute-doc-input"
-          onchange="document.getElementById('ddocname-${esc(rowId)}').textContent=this.files[0]?'📎 '+this.files[0].name:''" />
-        <div id="ddocname-${esc(rowId)}" class="dispute-doc-name"></div>
-      </div>
+          onchange="document.getElementById('ddocname-${esc(rowId)}').textContent=this.files[0]?'&#x1F4CE; '+this.files[0].name:''">
+        <span id="ddocname-${esc(rowId)}">&#x1F4CE; Attach file (optional)</span>
+      </label>
       <div class="dispute-form-btns">
         <button class="d-submit-btn"
           onclick="submitDispute('${esc(rowId)}','${esc(tenantName)}','${esc(invoiceId)}','${esc(vendor)}','${esc(category)}',${tenantShare})">
-          Submit Dispute
+          Submit
         </button>
         <button class="d-cancel-btn"
           onclick="toggleDisputeForm('${esc(rowId)}','${esc(tenantName)}','${esc(invoiceId)}','${esc(vendor)}','${esc(category)}',${tenantShare})">
           Cancel
         </button>
       </div>
-      <div class="ts-landlord-note">Your landlord will review this request</div>
+      <div class="ts-landlord-note">Your landlord will review and respond.</div>
     </div>`;
 }
 
@@ -4392,10 +4429,7 @@ function generateTenantStatement(tenantName) {
     .sort((a, b) => b[1].share - a[1].share)
     .map(([, data]) => `
       <div class="ts-cat-card">
-        <div>
-          <div class="ts-cat-name">${esc(data.label)}</div>
-          <div class="ts-cat-total-amt">Total billed: ${fmt(parseFloat(data.total.toFixed(2)))}</div>
-        </div>
+        <div class="ts-cat-name">${esc(data.label)}</div>
         <div class="ts-cat-right">
           <div class="ts-cat-share-lbl">Your share</div>
           <div class="ts-cat-share-amt">${fmt(parseFloat(data.share.toFixed(2)))}</div>
@@ -4406,17 +4440,36 @@ function generateTenantStatement(tenantName) {
   const detailId = 'tsdetail-' + tenantName.replace(/\W+/g, '-');
   const chargeRows = eligible.map((inv, idx) => {
     const share = parseFloat((inv.amount * r.proRata).toFixed(2));
-    const rowId = `ts-${tenantName}-${idx}`.replace(/\s+/g, '-');
+    const rowId  = `ts-${tenantName}-${idx}`.replace(/\s+/g, '-');
+    const pct    = (r.proRata * 100).toFixed(2);
+    const stored = invoiceData.find(d =>
+      d.vendorName && d.vendorName.toLowerCase() === (inv.vendor || '').toLowerCase()
+    );
+    const viewInvBtn = stored && stored.fileDataUrl
+      ? `<button class="ts-detail-view-inv" onclick="viewInvFile(${invoiceData.indexOf(stored)})">&#x1F4C4; View Invoice Document</button>`
+      : '';
     return `
       <div class="charge-row ts-inv-card">
         <div class="charge-vendor">${esc(inv.vendor)}</div>
         <div class="charge-amount">${fmt(share)}</div>
-        <div class="charge-sub">Your share (${(r.proRata * 100).toFixed(2)}%) &bull; ${esc(inv.category)}</div>
+        <div class="charge-sub">Your share (${pct}%) &bull; ${esc(inv.category)}</div>
         <div class="charge-actions">
           <button class="btn-secondary"
-            onclick="tsExplainCharge('${esc(tenantName)}','${esc(inv.category)}')">View Details</button>
+            onclick="(function(b){var d=document.getElementById('ddetail-${rowId}');var o=d.style.display==='block';d.style.display=o?'none':'block';b.textContent=o?'View Details':'Close';})(this)">View Details</button>
           <button class="btn-danger-outline" id="dbtn-${rowId}"
             onclick="tsToggleDispute('${rowId}','${esc(tenantName)}',${idx})">Dispute</button>
+        </div>
+        <div id="ddetail-${rowId}" class="ts-detail-box" style="display:none;">
+          <div class="ts-detail-header">
+            <span class="ts-detail-title">Charge Details</span>
+            <button class="ts-detail-close" onclick="this.closest('.ts-detail-box').style.display='none';var b=document.querySelector('[onclick*=\\'ddetail-${rowId}\\']');if(b&&b.textContent==='Close')b.textContent='View Details'">&#x2715;</button>
+          </div>
+          <div class="ts-detail-row"><span>Vendor</span><span class="ts-detail-val">${esc(inv.vendor)}</span></div>
+          <div class="ts-detail-row"><span>Category</span><span class="ts-detail-val">${esc(inv.category)}</span></div>
+          <div class="ts-detail-row"><span>Invoice Total</span><span class="ts-detail-val">${fmt(inv.amount)}</span></div>
+          <div class="ts-detail-row ts-detail-highlight"><span>Your Share</span><span class="ts-detail-val">${fmt(share)}</span></div>
+          <div class="ts-detail-basis">Based on ${pct}% pro-rata allocation by square footage</div>
+          ${viewInvBtn}
         </div>
         <div id="dform-${rowId}" style="display:none;"></div>
       </div>`;
