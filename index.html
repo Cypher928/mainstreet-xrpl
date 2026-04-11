@@ -836,22 +836,35 @@
     .ts-bottom-actions { display: flex; gap: 10px; margin-bottom: 24px; }
     /* ── Hidden detail / charge list ───────────────────────────────── */
     .charge-list { display: flex; flex-direction: column; margin-bottom: 8px; }
-    .charge-row { padding: 20px 4px; border-bottom: 1px solid rgba(255,255,255,0.06); }
-    .charge-row:last-child { border-bottom: none; }
-    .charge-vendor { font-size: 0.85rem; font-weight: 600; color: #94A3B8; margin-bottom: 4px; }
-    .charge-amount { font-size: 1.45rem; font-weight: 800; color: #F59E0B; letter-spacing: -0.02em; margin-bottom: 5px; }
-    .charge-sub { font-size: 0.75rem; color: #475569; margin-bottom: 14px; line-height: 1.4; }
-    .charge-actions { display: flex; gap: 8px; }
-    .btn-secondary {
-      flex: 1; padding: 6px 0; border-radius: 7px; cursor: pointer;
-      font-size: 0.75rem; font-weight: 600; text-align: center;
-      border: 1px solid rgba(255,255,255,0.12); background: transparent;
-      color: #64748B; transition: all 0.15s;
+    .charge-row {
+      padding: 18px 10px; border-bottom: 1px solid rgba(255,255,255,0.06);
+      cursor: pointer; border-radius: 8px; margin: 0 -10px;
+      transition: background 0.12s;
     }
-    .btn-secondary:hover { border-color: rgba(255,255,255,0.25); color: #94A3B8; background: rgba(255,255,255,0.04); }
+    .charge-row:last-child { border-bottom: none; }
+    .charge-row:hover { background: rgba(255,255,255,0.03); }
+    .charge-row-top { display: flex; align-items: center; gap: 10px; }
+    .charge-row-left { flex: 1; min-width: 0; }
+    .charge-vendor { font-size: 0.85rem; font-weight: 600; color: #94A3B8; margin-bottom: 4px; }
+    .charge-amount { font-size: 1.45rem; font-weight: 800; color: #F59E0B; letter-spacing: -0.02em; margin-bottom: 4px; }
+    .charge-sub { font-size: 0.75rem; color: #475569; line-height: 1.4; }
+    .charge-chevron {
+      font-size: 1.3rem; color: #334155; flex-shrink: 0;
+      transition: transform 0.15s, color 0.15s; line-height: 1;
+    }
+    .charge-row:hover .charge-chevron { color: #475569; transform: translateX(2px); }
+    .charge-row.detail-open .charge-chevron { transform: rotate(90deg); color: #64748B; }
+    .ts-detail-actions { display: flex; gap: 8px; margin-top: 14px; }
+    .btn-secondary {
+      flex: 1; padding: 9px 0; border-radius: 8px; cursor: pointer;
+      font-size: 0.8rem; font-weight: 600; text-align: center;
+      border: 1px solid rgba(255,255,255,0.12); background: transparent;
+      color: #94A3B8; transition: all 0.15s;
+    }
+    .btn-secondary:hover { border-color: rgba(255,255,255,0.25); color: #CBD5E1; background: rgba(255,255,255,0.04); }
     .btn-danger-outline {
-      flex: 1; padding: 6px 0; border-radius: 7px; cursor: pointer;
-      font-size: 0.75rem; font-weight: 600; text-align: center;
+      flex: 1; padding: 9px 0; border-radius: 8px; cursor: pointer;
+      font-size: 0.8rem; font-weight: 600; text-align: center;
       border: 1px solid rgba(239,68,68,0.22); background: transparent;
       color: #f87171; transition: all 0.15s;
     }
@@ -4446,32 +4459,38 @@ function generateTenantStatement(tenantName) {
       d.vendorName && d.vendorName.toLowerCase() === (inv.vendor || '').toLowerCase()
     );
     const viewInvBtn = stored && stored.fileDataUrl
-      ? `<button class="ts-detail-view-inv" onclick="viewInvFile(${invoiceData.indexOf(stored)})">&#x1F4C4; View Invoice Document</button>`
+      ? `<button class="btn-secondary" onclick="event.stopPropagation();viewInvFile(${invoiceData.indexOf(stored)})">&#x1F4C4; View Invoice</button>`
       : '';
     return `
-      <div class="charge-row ts-inv-card">
-        <div class="charge-vendor">${esc(inv.vendor)}</div>
-        <div class="charge-amount">${fmt(share)}</div>
-        <div class="charge-sub">Your share (${pct}%) &bull; ${esc(inv.category)}</div>
-        <div class="charge-actions">
-          <button class="btn-secondary"
-            onclick="(function(b){var d=document.getElementById('ddetail-${rowId}');var o=d.style.display==='block';d.style.display=o?'none':'block';b.textContent=o?'View Details':'Close';})(this)">View Details</button>
-          <button class="btn-danger-outline" id="dbtn-${rowId}"
-            onclick="tsToggleDispute('${rowId}','${esc(tenantName)}',${idx})">Dispute</button>
+      <div class="charge-row ts-inv-card" id="crow-${rowId}"
+        onclick="(function(row){var d=document.getElementById('ddetail-${rowId}');var open=d.style.display==='block';d.style.display=open?'none':'block';row.classList.toggle('detail-open',!open);})(this)">
+        <div class="charge-row-top">
+          <div class="charge-row-left">
+            <div class="charge-vendor">${esc(inv.vendor)}</div>
+            <div class="charge-amount">${fmt(share)}</div>
+            <div class="charge-sub">Your share (${pct}%) &bull; ${esc(inv.category)}</div>
+          </div>
+          <div class="charge-chevron">&#x203A;</div>
         </div>
-        <div id="ddetail-${rowId}" class="ts-detail-box" style="display:none;">
+        <div id="ddetail-${rowId}" class="ts-detail-box" style="display:none;"
+          onclick="event.stopPropagation()">
           <div class="ts-detail-header">
             <span class="ts-detail-title">Charge Details</span>
-            <button class="ts-detail-close" onclick="this.closest('.ts-detail-box').style.display='none';var b=document.querySelector('[onclick*=\\'ddetail-${rowId}\\']');if(b&&b.textContent==='Close')b.textContent='View Details'">&#x2715;</button>
+            <button class="ts-detail-close"
+              onclick="document.getElementById('ddetail-${rowId}').style.display='none';document.getElementById('crow-${rowId}').classList.remove('detail-open')">&#x2715;</button>
           </div>
           <div class="ts-detail-row"><span>Vendor</span><span class="ts-detail-val">${esc(inv.vendor)}</span></div>
           <div class="ts-detail-row"><span>Category</span><span class="ts-detail-val">${esc(inv.category)}</span></div>
           <div class="ts-detail-row"><span>Invoice Total</span><span class="ts-detail-val">${fmt(inv.amount)}</span></div>
           <div class="ts-detail-row ts-detail-highlight"><span>Your Share</span><span class="ts-detail-val">${fmt(share)}</span></div>
           <div class="ts-detail-basis">Based on ${pct}% pro-rata allocation by square footage</div>
-          ${viewInvBtn}
+          <div class="ts-detail-actions">
+            ${viewInvBtn}
+            <button class="btn-danger-outline" id="dbtn-${rowId}"
+              onclick="event.stopPropagation();tsToggleDispute('${rowId}','${esc(tenantName)}',${idx})">Dispute this charge</button>
+          </div>
         </div>
-        <div id="dform-${rowId}" style="display:none;"></div>
+        <div id="dform-${rowId}" style="display:none;" onclick="event.stopPropagation()"></div>
       </div>`;
   }).join('');
 
