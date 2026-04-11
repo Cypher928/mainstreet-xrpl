@@ -823,27 +823,26 @@
     .ts-meta-item strong { font-size: 0.88rem; color: #94A3B8; font-weight: 600; }
     /* ── Charge List ─────────────────────────────────────────────────── */
     .charge-list { display: flex; flex-direction: column; margin-bottom: 8px; }
-    .charge-row { padding: 16px 4px; border-bottom: 1px solid rgba(255,255,255,0.06); }
+    .charge-row { padding: 20px 4px; border-bottom: 1px solid rgba(255,255,255,0.06); }
     .charge-row:last-child { border-bottom: none; }
-    .charge-main { display: flex; justify-content: space-between; align-items: baseline; margin-bottom: 4px; }
-    .charge-vendor { font-size: 0.95rem; font-weight: 700; color: #E2E8F0; }
-    .charge-amount { font-size: 1.05rem; font-weight: 800; color: #F59E0B; white-space: nowrap; padding-left: 12px; }
-    .charge-sub { font-size: 0.78rem; color: #64748B; margin-bottom: 12px; line-height: 1.4; }
+    .charge-vendor { font-size: 0.85rem; font-weight: 600; color: #94A3B8; margin-bottom: 4px; }
+    .charge-amount { font-size: 1.45rem; font-weight: 800; color: #F59E0B; letter-spacing: -0.02em; margin-bottom: 5px; }
+    .charge-sub { font-size: 0.75rem; color: #475569; margin-bottom: 14px; line-height: 1.4; }
     .charge-actions { display: flex; gap: 8px; }
     .btn-secondary {
-      flex: 1; padding: 8px 0; border-radius: 8px; cursor: pointer;
-      font-size: 0.8rem; font-weight: 600; text-align: center;
-      border: 1.5px solid rgba(255,255,255,0.13); background: transparent;
-      color: #94A3B8; transition: all 0.15s;
+      flex: 1; padding: 6px 0; border-radius: 7px; cursor: pointer;
+      font-size: 0.75rem; font-weight: 600; text-align: center;
+      border: 1px solid rgba(255,255,255,0.12); background: transparent;
+      color: #64748B; transition: all 0.15s;
     }
-    .btn-secondary:hover { border-color: rgba(255,255,255,0.28); color: #CBD5E1; background: rgba(255,255,255,0.05); }
+    .btn-secondary:hover { border-color: rgba(255,255,255,0.25); color: #94A3B8; background: rgba(255,255,255,0.04); }
     .btn-danger-outline {
-      flex: 1; padding: 8px 0; border-radius: 8px; cursor: pointer;
-      font-size: 0.8rem; font-weight: 600; text-align: center;
-      border: 1.5px solid rgba(239,68,68,0.28); background: transparent;
+      flex: 1; padding: 6px 0; border-radius: 7px; cursor: pointer;
+      font-size: 0.75rem; font-weight: 600; text-align: center;
+      border: 1px solid rgba(239,68,68,0.22); background: transparent;
       color: #f87171; transition: all 0.15s;
     }
-    .btn-danger-outline:hover { background: rgba(239,68,68,0.09); border-color: rgba(239,68,68,0.55); }
+    .btn-danger-outline:hover { background: rgba(239,68,68,0.07); border-color: rgba(239,68,68,0.45); }
     .ts-inv-total-row {
       display: flex; justify-content: space-between; align-items: center;
       padding: 14px 4px; border-top: 1.5px solid rgba(245,158,11,0.2);
@@ -4377,11 +4376,9 @@ function generateTenantStatement(tenantName) {
     const rowId = `ts-${tenantName}-${idx}`.replace(/\s+/g, '-');
     return `
       <div class="charge-row ts-inv-card">
-        <div class="charge-main">
-          <div class="charge-vendor">${esc(inv.vendor)}</div>
-          <div class="charge-amount">${fmt(share)}</div>
-        </div>
-        <div class="charge-sub">Your share (${(r.proRata * 100).toFixed(2)}%) &bull; ${esc(inv.category)} &bull; Invoice total: ${fmt(inv.amount)}</div>
+        <div class="charge-vendor">${esc(inv.vendor)}</div>
+        <div class="charge-amount">${fmt(share)}</div>
+        <div class="charge-sub">Your share (${(r.proRata * 100).toFixed(2)}%) &bull; ${esc(inv.category)}</div>
         <div class="charge-actions">
           <button class="btn-secondary"
             onclick="tsExplainCharge('${esc(tenantName)}','${esc(inv.category)}')">View Details</button>
