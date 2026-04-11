@@ -106,26 +106,30 @@
       right: calc(-50% + 14px); height: 2px;
       background: rgba(255,255,255,0.08);
     }
-    .step-item.done:not(:last-child)::after { background: #C9973A; }
+    .step-item.done:not(:last-child)::after { background: #22c55e; transition: background 0.3s ease; }
     .step-dot {
       width: 26px; height: 26px; border-radius: 50%; z-index: 1;
       display: flex; align-items: center; justify-content: center;
       font-size: 0.7rem; font-weight: 700;
       border: 2px solid rgba(255,255,255,0.12);
       background: #0B1220; color: #64748B;
+      transition: all 0.3s ease;
     }
     .step-item.done .step-dot {
-      background: #C9973A; border-color: #C9973A; color: #0B1220;
+      background: #22c55e; border-color: #22c55e; color: #0B1220;
     }
     .step-item.active .step-dot {
       background: transparent; border-color: #C9973A; color: #C9973A;
-      box-shadow: 0 0 0 3px rgba(201,151,58,0.15);
+      box-shadow: 0 0 0 4px rgba(201,151,58,0.2), 0 0 12px rgba(201,151,58,0.25);
+      transform: scale(1.08);
     }
     .step-label {
       font-size: 0.66rem; font-weight: 600; color: #64748B;
       text-transform: uppercase; letter-spacing: 0.05em; white-space: nowrap;
+      transition: color 0.3s ease;
     }
-    .step-item.done .step-label, .step-item.active .step-label { color: #C9973A; }
+    .step-item.done .step-label { color: #22c55e; }
+    .step-item.active .step-label { color: #C9973A; }
 
     /* Form fields */
     .field-row { display: flex; gap: 14px; flex-wrap: wrap; margin-bottom: 14px; }
@@ -788,28 +792,46 @@
       background: #0F1929; border: 1.5px solid rgba(255,255,255,0.08);
       border-radius: 11px; overflow: hidden;
     }
-    .ts-inv-top { padding: 12px 14px 8px; }
-    .ts-inv-vendor { font-size: 0.92rem; font-weight: 700; color: #E2E8F0; margin-bottom: 5px; }
-    .ts-inv-amounts { display: flex; flex-direction: column; gap: 2px; }
-    .ts-inv-total { font-size: 0.82rem; color: #94A3B8; }
-    .ts-inv-share { font-size: 0.85rem; color: #CBD5E1; }
-    .ts-inv-share strong { color: #F59E0B; }
-    .ts-inv-cat { font-size: 0.75rem; color: #64748B; text-transform: capitalize; margin-top: 2px; }
+    .ts-inv-top { padding: 14px 16px 10px; }
+    .ts-inv-vendor { font-size: 0.95rem; font-weight: 700; color: #E2E8F0; margin-bottom: 8px; }
+    .ts-inv-amounts { display: flex; flex-direction: column; gap: 6px; }
+    .ts-inv-total { font-size: 0.8rem; color: #64748B; }
+    .ts-inv-share { font-size: 0.88rem; color: #CBD5E1; }
+    .ts-inv-share strong { color: #F59E0B; font-size: 1.05rem; }
+    .ts-inv-cat {
+      display: inline-block; font-size: 0.7rem; color: #475569;
+      text-transform: uppercase; letter-spacing: 0.06em;
+      background: rgba(255,255,255,0.04); border-radius: 4px;
+      padding: 2px 6px; margin-top: 2px;
+    }
     .ts-inv-btns {
-      display: flex; gap: 8px; padding: 8px 14px 12px; flex-wrap: wrap;
+      display: flex; flex-direction: column; gap: 7px; padding: 10px 16px 14px;
     }
-    .ts-view-btn {
-      font-size: 0.78rem; padding: 5px 12px; border-radius: 6px;
-      border: 1.5px solid rgba(59,130,246,0.4); background: rgba(59,130,246,0.1);
-      color: #93C5FD; cursor: pointer; font-weight: 600; white-space: nowrap;
-    }
-    .ts-view-btn:hover { border-color: #3B82F6; background: rgba(59,130,246,0.2); }
-    .ts-inv-btns .d-btn { font-size: 0.78rem; padding: 5px 12px; }
+    /* Primary: View Calculation */
     .ts-explain-btn {
-      display: inline-block; width: auto; margin-top: 0;
-      font-size: 0.78rem; padding: 5px 12px;
-      border-color: rgba(99,102,241,0.4); color: #a5b4fc;
+      display: block; width: 100%; margin-top: 0;
+      font-size: 0.82rem; font-weight: 700; padding: 9px 0;
+      border-radius: 8px; cursor: pointer; letter-spacing: 0.02em;
+      background: rgba(201,151,58,0.18); border: 1.5px solid rgba(201,151,58,0.5);
+      color: #E4B15C; transition: all 0.15s;
     }
+    .ts-explain-btn:hover { background: rgba(201,151,58,0.28); border-color: #C9973A; color: #f0c97a; }
+    /* Secondary: View Source Invoice */
+    .ts-view-btn {
+      display: block; width: 100%; font-size: 0.8rem; font-weight: 600;
+      padding: 7px 0; border-radius: 8px; cursor: pointer; white-space: nowrap;
+      border: 1.5px solid rgba(255,255,255,0.14); background: transparent;
+      color: #94A3B8; transition: all 0.15s; text-align: center;
+    }
+    .ts-view-btn:hover { border-color: rgba(255,255,255,0.28); color: #CBD5E1; background: rgba(255,255,255,0.05); }
+    /* Tertiary danger: Dispute */
+    .ts-inv-btns .d-btn {
+      display: block; width: 100%; font-size: 0.78rem; font-weight: 600;
+      padding: 6px 0; border-radius: 8px; cursor: pointer;
+      background: transparent; border: 1.5px solid rgba(239,68,68,0.25);
+      color: #f87171; transition: all 0.15s;
+    }
+    .ts-inv-btns .d-btn:hover { background: rgba(239,68,68,0.08); border-color: rgba(239,68,68,0.5); }
     .ts-inv-total-row {
       display: flex; justify-content: space-between; align-items: center;
       padding: 12px 14px; background: rgba(245,158,11,0.08);
@@ -817,6 +839,14 @@
       margin-bottom: 10px; font-size: 0.88rem; color: #CBD5E1;
     }
     .ts-inv-total-row strong { color: #F59E0B; font-size: 1rem; }
+    .ts-trust-bar {
+      display: flex; flex-wrap: wrap; gap: 10px 18px;
+      padding: 9px 14px; margin-bottom: 16px;
+      background: rgba(34,197,94,0.06); border: 1px solid rgba(34,197,94,0.18);
+      border-radius: 8px; font-size: 0.75rem; color: #6ee7a0;
+      letter-spacing: 0.01em;
+    }
+    .ts-trust-bar span { white-space: nowrap; }
     /* ── Dispute mode states ──────────────────────────────────────────── */
     .ts-inv-card--disputing {
       border-color: rgba(234,88,12,0.7) !important;
@@ -4425,6 +4455,12 @@ function generateTenantStatement(tenantName) {
         <div class="kpi-val">${eligible.length}</div>
         <div class="kpi-lbl">Included Expenses</div>
       </div>
+    </div>
+
+    <div class="ts-trust-bar">
+      <span>&#x1F4C5; Generated: ${now}</span>
+      <span>&#x2714; Based on: ${eligible.length} verified invoice${eligible.length === 1 ? '' : 's'}</span>
+      <span>&#x1F4D0; Method: Pro-rata by square footage</span>
     </div>
 
     <div class="rpt-section-title">Invoice Breakdown</div>
