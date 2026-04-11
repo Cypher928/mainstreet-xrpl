@@ -820,36 +820,47 @@
     .ts-ss-label { font-size: 0.67rem; color: #475569; text-transform: uppercase; letter-spacing: 0.06em; }
     .ts-ss-val { font-size: 0.92rem; font-weight: 700; color: #CBD5E1; }
     .ts-ss-val.highlight { color: #C9973A; }
-    /* ── Category expense cards ─────────────────────────────────────── */
+    /* ── Category accordion ─────────────────────────────────────────── */
     .ts-cat-list { display: flex; flex-direction: column; gap: 8px; margin-bottom: 20px; }
-    .ts-cat-card {
-      display: flex; align-items: center; justify-content: space-between;
-      background: #0F1929; border: 1px solid rgba(255,255,255,0.07);
-      border-radius: 10px; padding: 14px 16px;
+    .ts-cat-accordion {
+      border: 1px solid rgba(255,255,255,0.08); border-radius: 12px; overflow: hidden;
     }
+    .ts-cat-header {
+      display: flex; align-items: center; gap: 12px; padding: 14px 16px;
+      background: #0F1929; cursor: pointer; user-select: none; transition: background 0.12s;
+    }
+    .ts-cat-header:hover { background: #111e33; }
+    .ts-cat-header.active { background: #111e33; }
+    .ts-cat-left { flex: 1; }
     .ts-cat-name { font-size: 0.9rem; font-weight: 600; color: #CBD5E1; text-transform: capitalize; }
-    .ts-cat-total-amt { font-size: 0.74rem; color: #475569; margin-top: 3px; }
-    .ts-cat-right { text-align: right; }
-    .ts-cat-share-lbl { font-size: 0.67rem; color: #475569; text-transform: uppercase; letter-spacing: 0.05em; }
+    .ts-cat-meta { font-size: 0.72rem; color: #475569; margin-top: 2px; }
+    .ts-cat-right { text-align: right; flex-shrink: 0; }
+    .ts-cat-share-lbl { font-size: 0.67rem; color: #475569; text-transform: uppercase; letter-spacing: 0.05em; margin-top: 2px; }
     .ts-cat-share-amt { font-size: 1rem; font-weight: 700; color: #4ade80; }
-    /* ── Bottom action row ──────────────────────────────────────────── */
-    .ts-bottom-actions { display: flex; gap: 10px; margin-bottom: 24px; }
-    /* ── Hidden detail / charge list ───────────────────────────────── */
-    .charge-list { display: flex; flex-direction: column; margin-bottom: 8px; }
+    .ts-cat-chevron {
+      font-size: 1.1rem; color: #334155; flex-shrink: 0; line-height: 1;
+      transition: transform 0.2s, color 0.15s;
+    }
+    .ts-cat-header.active .ts-cat-chevron { transform: rotate(90deg); color: #64748B; }
+    .ts-cat-body {
+      border-top: 1px solid rgba(255,255,255,0.05);
+      background: rgba(0,0,0,0.14);
+    }
+    /* ── Charge list inside accordion body ──────────────────────────── */
+    .charge-list { display: flex; flex-direction: column; }
     .charge-row {
-      padding: 18px 10px; border-bottom: 1px solid rgba(255,255,255,0.06);
-      cursor: pointer; border-radius: 8px; margin: 0 -10px;
-      transition: background 0.12s;
+      padding: 16px 16px; border-bottom: 1px solid rgba(255,255,255,0.05);
+      cursor: pointer; transition: background 0.12s;
     }
     .charge-row:last-child { border-bottom: none; }
     .charge-row:hover { background: rgba(255,255,255,0.03); }
     .charge-row-top { display: flex; align-items: center; gap: 10px; }
     .charge-row-left { flex: 1; min-width: 0; }
-    .charge-vendor { font-size: 0.85rem; font-weight: 600; color: #94A3B8; margin-bottom: 4px; }
-    .charge-amount { font-size: 1.45rem; font-weight: 800; color: #F59E0B; letter-spacing: -0.02em; margin-bottom: 4px; }
-    .charge-sub { font-size: 0.75rem; color: #475569; line-height: 1.4; }
+    .charge-vendor { font-size: 0.85rem; font-weight: 600; color: #94A3B8; margin-bottom: 3px; }
+    .charge-amount { font-size: 1.2rem; font-weight: 800; color: #F59E0B; letter-spacing: -0.02em; margin-bottom: 3px; }
+    .charge-sub { font-size: 0.73rem; color: #475569; line-height: 1.4; }
     .charge-chevron {
-      font-size: 1.3rem; color: #334155; flex-shrink: 0;
+      font-size: 1.1rem; color: #334155; flex-shrink: 0;
       transition: transform 0.15s, color 0.15s; line-height: 1;
     }
     .charge-row:hover .charge-chevron { color: #475569; transform: translateX(2px); }
@@ -4430,69 +4441,82 @@ function generateTenantStatement(tenantName) {
   const eligible = lastInvoicesFull.filter(inv =>
     !t.excludedCategories.includes(inv.category.toLowerCase())
   );
-  // Group eligible invoices by category for the summary view
+  // Group eligible invoices by category, preserving per-invoice indices
   const catMap = {};
-  eligible.forEach(inv => {
+  eligible.forEach((inv, idx) => {
     const key = (inv.category || 'other').toLowerCase();
-    if (!catMap[key]) catMap[key] = { label: inv.category || 'Other', total: 0, share: 0 };
-    catMap[key].total += parseFloat(inv.amount) || 0;
-    catMap[key].share += parseFloat((inv.amount * r.proRata).toFixed(2));
+    if (!catMap[key]) catMap[key] = { label: inv.category || 'Other', share: 0, invoices: [] };
+    const share = parseFloat((inv.amount * r.proRata).toFixed(2));
+    catMap[key].share += share;
+    catMap[key].invoices.push({ inv, idx, share });
   });
+
+  const pct = (r.proRata * 100).toFixed(2);
+
+  // Build accordion: one card per category, invoices expand inside
   const categoryCards = Object.entries(catMap)
     .sort((a, b) => b[1].share - a[1].share)
-    .map(([, data]) => `
-      <div class="ts-cat-card">
-        <div class="ts-cat-name">${esc(data.label)}</div>
-        <div class="ts-cat-right">
-          <div class="ts-cat-share-lbl">Your share</div>
-          <div class="ts-cat-share-amt">${fmt(parseFloat(data.share.toFixed(2)))}</div>
-        </div>
-      </div>`).join('');
+    .map(([, data]) => {
+      const invRows = data.invoices.map(({ inv, idx, share }) => {
+        const rowId = `ts-${tenantName}-${idx}`.replace(/\s+/g, '-');
+        const stored = invoiceData.find(d =>
+          d.vendorName && d.vendorName.toLowerCase() === (inv.vendor || '').toLowerCase()
+        );
+        const viewInvBtn = stored && stored.fileDataUrl
+          ? `<button class="btn-secondary" onclick="event.stopPropagation();viewInvFile(${invoiceData.indexOf(stored)})">&#x1F4C4; View Invoice</button>`
+          : '';
+        return `
+          <div class="charge-row ts-inv-card" id="crow-${rowId}"
+            onclick="(function(row){var d=document.getElementById('ddetail-${rowId}');var open=d.style.display==='block';d.style.display=open?'none':'block';row.classList.toggle('detail-open',!open);})(this)">
+            <div class="charge-row-top">
+              <div class="charge-row-left">
+                <div class="charge-vendor">${esc(inv.vendor)}</div>
+                <div class="charge-amount">${fmt(share)}</div>
+                <div class="charge-sub">Your share (${pct}%)</div>
+              </div>
+              <div class="charge-chevron">&#x203A;</div>
+            </div>
+            <div id="ddetail-${rowId}" class="ts-detail-box" style="display:none;" onclick="event.stopPropagation()">
+              <div class="ts-detail-header">
+                <span class="ts-detail-title">Charge Details</span>
+                <button class="ts-detail-close"
+                  onclick="document.getElementById('ddetail-${rowId}').style.display='none';document.getElementById('crow-${rowId}').classList.remove('detail-open')">&#x2715;</button>
+              </div>
+              <div class="ts-detail-row"><span>Vendor</span><span class="ts-detail-val">${esc(inv.vendor)}</span></div>
+              <div class="ts-detail-row"><span>Category</span><span class="ts-detail-val">${esc(inv.category)}</span></div>
+              <div class="ts-detail-row"><span>Invoice Total</span><span class="ts-detail-val">${fmt(inv.amount)}</span></div>
+              <div class="ts-detail-row ts-detail-highlight"><span>Your Share</span><span class="ts-detail-val">${fmt(share)}</span></div>
+              <div class="ts-detail-basis">Based on ${pct}% pro-rata allocation by square footage</div>
+              <div class="ts-detail-actions">
+                ${viewInvBtn}
+                <button class="btn-danger-outline" id="dbtn-${rowId}"
+                  onclick="event.stopPropagation();tsToggleDispute('${rowId}','${esc(tenantName)}',${idx})">Dispute this charge</button>
+              </div>
+            </div>
+            <div id="dform-${rowId}" style="display:none;" onclick="event.stopPropagation()"></div>
+          </div>`;
+      }).join('');
 
-  // Per-invoice rows kept in a hidden section for disputes / details
-  const detailId = 'tsdetail-' + tenantName.replace(/\W+/g, '-');
-  const chargeRows = eligible.map((inv, idx) => {
-    const share = parseFloat((inv.amount * r.proRata).toFixed(2));
-    const rowId  = `ts-${tenantName}-${idx}`.replace(/\s+/g, '-');
-    const pct    = (r.proRata * 100).toFixed(2);
-    const stored = invoiceData.find(d =>
-      d.vendorName && d.vendorName.toLowerCase() === (inv.vendor || '').toLowerCase()
-    );
-    const viewInvBtn = stored && stored.fileDataUrl
-      ? `<button class="btn-secondary" onclick="event.stopPropagation();viewInvFile(${invoiceData.indexOf(stored)})">&#x1F4C4; View Invoice</button>`
-      : '';
-    return `
-      <div class="charge-row ts-inv-card" id="crow-${rowId}"
-        onclick="(function(row){var d=document.getElementById('ddetail-${rowId}');var open=d.style.display==='block';d.style.display=open?'none':'block';row.classList.toggle('detail-open',!open);})(this)">
-        <div class="charge-row-top">
-          <div class="charge-row-left">
-            <div class="charge-vendor">${esc(inv.vendor)}</div>
-            <div class="charge-amount">${fmt(share)}</div>
-            <div class="charge-sub">Your share (${pct}%) &bull; ${esc(inv.category)}</div>
+      const count = data.invoices.length;
+      return `
+        <div class="ts-cat-accordion">
+          <div class="ts-cat-header"
+            onclick="(function(hdr){var body=hdr.nextElementSibling;var isOpen=body.style.display==='block';document.querySelectorAll('.ts-cat-body').forEach(function(b){b.style.display='none';});document.querySelectorAll('.ts-cat-header').forEach(function(h){h.classList.remove('active');});if(!isOpen){body.style.display='block';hdr.classList.add('active');}})(this)">
+            <div class="ts-cat-left">
+              <div class="ts-cat-name">${esc(data.label)}</div>
+              <div class="ts-cat-meta">${count} invoice${count !== 1 ? 's' : ''}</div>
+            </div>
+            <div class="ts-cat-right">
+              <div class="ts-cat-share-amt">${fmt(parseFloat(data.share.toFixed(2)))}</div>
+              <div class="ts-cat-share-lbl">Your share</div>
+            </div>
+            <div class="ts-cat-chevron">&#x203A;</div>
           </div>
-          <div class="charge-chevron">&#x203A;</div>
-        </div>
-        <div id="ddetail-${rowId}" class="ts-detail-box" style="display:none;"
-          onclick="event.stopPropagation()">
-          <div class="ts-detail-header">
-            <span class="ts-detail-title">Charge Details</span>
-            <button class="ts-detail-close"
-              onclick="document.getElementById('ddetail-${rowId}').style.display='none';document.getElementById('crow-${rowId}').classList.remove('detail-open')">&#x2715;</button>
+          <div class="ts-cat-body" style="display:none;">
+            <div class="charge-list">${invRows}</div>
           </div>
-          <div class="ts-detail-row"><span>Vendor</span><span class="ts-detail-val">${esc(inv.vendor)}</span></div>
-          <div class="ts-detail-row"><span>Category</span><span class="ts-detail-val">${esc(inv.category)}</span></div>
-          <div class="ts-detail-row"><span>Invoice Total</span><span class="ts-detail-val">${fmt(inv.amount)}</span></div>
-          <div class="ts-detail-row ts-detail-highlight"><span>Your Share</span><span class="ts-detail-val">${fmt(share)}</span></div>
-          <div class="ts-detail-basis">Based on ${pct}% pro-rata allocation by square footage</div>
-          <div class="ts-detail-actions">
-            ${viewInvBtn}
-            <button class="btn-danger-outline" id="dbtn-${rowId}"
-              onclick="event.stopPropagation();tsToggleDispute('${rowId}','${esc(tenantName)}',${idx})">Dispute this charge</button>
-          </div>
-        </div>
-        <div id="dform-${rowId}" style="display:none;" onclick="event.stopPropagation()"></div>
-      </div>`;
-  }).join('');
+        </div>`;
+    }).join('');
 
   // Excluded categories note
   const exclNote = t.excludedCategories.length
@@ -4557,26 +4581,9 @@ function generateTenantStatement(tenantName) {
     <button class="primary-pay-btn" style="margin-bottom:24px;">Pay Now &mdash; ${fmt(r.allocatedAmount)} USD</button>
 
     <div class="rpt-section-title">Expense Breakdown</div>
-    <p class="rpt-helper-text">Your share of each expense category based on ${(r.proRata * 100).toFixed(2)}% pro-rata allocation.</p>
+    <p class="rpt-helper-text">Tap a category to see individual charges. Tap any charge to view details or dispute.</p>
     <div class="ts-cat-list">${categoryCards}</div>
     ${exclNote}${capNote}
-
-    <div class="ts-bottom-actions">
-      <button class="btn-secondary" style="flex:1;padding:10px 0;font-size:0.82rem;"
-        onclick="(function(btn){var d=document.getElementById('${detailId}');var open=d.style.display==='block';d.style.display=open?'none':'block';btn.textContent=open?'View All Invoices':'Hide Invoice List';if(!open)d.scrollIntoView({behavior:'smooth',block:'start'});})(this)">
-        View All Invoices
-      </button>
-      <button class="btn-danger-outline" style="flex:1;padding:10px 0;font-size:0.82rem;"
-        onclick="var d=document.getElementById('${detailId}');d.style.display='block';d.scrollIntoView({behavior:'smooth',block:'start'})">
-        Dispute an Item
-      </button>
-    </div>
-
-    <div id="${detailId}" style="display:none;">
-      <div class="rpt-section-title">All Invoices</div>
-      <p class="rpt-helper-text">Click Dispute on any charge you'd like to contest.</p>
-      <div class="charge-list">${chargeRows}</div>
-    </div>
 
     <div class="rpt-section-title">Year-End Reconciliation</div>
     <table class="rpt-table">
