@@ -377,6 +377,12 @@
     .ep-inv-vendor { font-size: 0.82rem; color: #CBD5E1; }
     .ep-inv-date { font-size: 0.72rem; color: #64748B; margin-top: 1px; }
     .ep-inv-amount { font-size: 0.84rem; font-weight: 700; color: #E2E8F0; white-space: nowrap; }
+    .ep-view-inv-btn {
+      font-size: 0.71rem; font-weight: 600; color: #93C5FD; cursor: pointer;
+      background: transparent; border: none; padding: 0; margin-top: 4px;
+      display: inline-block; text-decoration: underline; transition: color 0.15s;
+    }
+    .ep-view-inv-btn:hover { color: #60A5FA; }
       border-radius: 20px; border: 1px solid rgba(201,151,58,0.3);
     }
 
@@ -786,79 +792,76 @@
     }
     .inv-explain-box strong { color: #A78BFA; display: block; margin-bottom: 6px; font-size: 0.78rem; text-transform: uppercase; letter-spacing: 0.05em; }
     .inv-explain-box p { margin: 0; line-height: 1.6; }
-    /* ── Tenant Statement Invoice Cards ───────────────────────────────── */
-    .ts-inv-list { display: flex; flex-direction: column; gap: 10px; margin-bottom: 12px; }
-    .ts-inv-card {
-      background: #0F1929; border: 1.5px solid rgba(255,255,255,0.08);
-      border-radius: 11px; overflow: hidden;
+    /* ── Tenant Statement Hero ─────────────────────────────────────────── */
+    .ts-hero { padding: 24px 4px 20px; border-bottom: 1px solid rgba(255,255,255,0.07); margin-bottom: 22px; }
+    .ts-hero-label {
+      font-size: 0.72rem; font-weight: 700; color: #64748B;
+      text-transform: uppercase; letter-spacing: 0.09em; margin-bottom: 6px;
     }
-    .ts-inv-top { padding: 14px 16px 10px; }
-    .ts-inv-vendor { font-size: 0.95rem; font-weight: 700; color: #E2E8F0; margin-bottom: 8px; }
-    .ts-inv-amounts { display: flex; flex-direction: column; gap: 6px; }
-    .ts-inv-total { font-size: 0.8rem; color: #64748B; }
-    .ts-inv-share { font-size: 0.88rem; color: #CBD5E1; }
-    .ts-inv-share strong { color: #F59E0B; font-size: 1.05rem; }
-    .ts-inv-cat {
-      display: inline-block; font-size: 0.7rem; color: #475569;
-      text-transform: uppercase; letter-spacing: 0.06em;
-      background: rgba(255,255,255,0.04); border-radius: 4px;
-      padding: 2px 6px; margin-top: 2px;
+    .ts-hero-amount {
+      font-size: 2.5rem; font-weight: 800; color: #F1F5F9; line-height: 1.1; margin-bottom: 16px;
+      letter-spacing: -0.03em;
     }
-    .ts-inv-btns {
-      display: flex; flex-direction: column; gap: 7px; padding: 10px 16px 14px;
+    .primary-pay-btn {
+      display: block; width: 100%; padding: 13px 0; border-radius: 10px; cursor: pointer;
+      font-size: 0.95rem; font-weight: 700; letter-spacing: 0.01em;
+      background: #C9973A; border: none; color: #0B1220; transition: background 0.15s;
     }
-    /* Primary: View Calculation */
-    .ts-explain-btn {
-      display: block; width: 100%; margin-top: 0;
-      font-size: 0.82rem; font-weight: 700; padding: 9px 0;
-      border-radius: 8px; cursor: pointer; letter-spacing: 0.02em;
-      background: rgba(201,151,58,0.18); border: 1.5px solid rgba(201,151,58,0.5);
-      color: #E4B15C; transition: all 0.15s;
-    }
-    .ts-explain-btn:hover { background: rgba(201,151,58,0.28); border-color: #C9973A; color: #f0c97a; }
-    /* Secondary: View Source Invoice */
-    .ts-view-btn {
-      display: block; width: 100%; font-size: 0.8rem; font-weight: 600;
-      padding: 7px 0; border-radius: 8px; cursor: pointer; white-space: nowrap;
-      border: 1.5px solid rgba(255,255,255,0.14); background: transparent;
-      color: #94A3B8; transition: all 0.15s; text-align: center;
-    }
-    .ts-view-btn:hover { border-color: rgba(255,255,255,0.28); color: #CBD5E1; background: rgba(255,255,255,0.05); }
-    /* Tertiary danger: Dispute */
-    .ts-inv-btns .d-btn {
-      display: block; width: 100%; font-size: 0.78rem; font-weight: 600;
-      padding: 6px 0; border-radius: 8px; cursor: pointer;
-      background: transparent; border: 1.5px solid rgba(239,68,68,0.25);
-      color: #f87171; transition: all 0.15s;
-    }
-    .ts-inv-btns .d-btn:hover { background: rgba(239,68,68,0.08); border-color: rgba(239,68,68,0.5); }
-    .ts-inv-total-row {
-      display: flex; justify-content: space-between; align-items: center;
-      padding: 12px 14px; background: rgba(245,158,11,0.08);
-      border: 1.5px solid rgba(245,158,11,0.2); border-radius: 9px;
-      margin-bottom: 10px; font-size: 0.88rem; color: #CBD5E1;
-    }
-    .ts-inv-total-row strong { color: #F59E0B; font-size: 1rem; }
+    .primary-pay-btn:hover { background: #D4A84A; }
     .ts-trust-bar {
-      display: flex; flex-wrap: wrap; gap: 10px 18px;
-      padding: 9px 14px; margin-bottom: 16px;
-      background: rgba(34,197,94,0.06); border: 1px solid rgba(34,197,94,0.18);
-      border-radius: 8px; font-size: 0.75rem; color: #6ee7a0;
-      letter-spacing: 0.01em;
+      display: flex; flex-wrap: wrap; gap: 5px 16px; padding: 10px 0; margin-top: 10px;
+      font-size: 0.73rem; color: #475569; border-top: 1px solid rgba(255,255,255,0.05);
     }
     .ts-trust-bar span { white-space: nowrap; }
+    /* ── Tenant meta strip ───────────────────────────────────────────── */
+    .ts-meta-row {
+      display: flex; flex-wrap: wrap; gap: 8px 24px; padding: 0 4px 18px;
+      border-bottom: 1px solid rgba(255,255,255,0.05); margin-bottom: 18px;
+    }
+    .ts-meta-item { display: flex; flex-direction: column; gap: 2px; }
+    .ts-meta-item span { font-size: 0.7rem; color: #64748B; text-transform: uppercase; letter-spacing: 0.06em; }
+    .ts-meta-item strong { font-size: 0.88rem; color: #94A3B8; font-weight: 600; }
+    /* ── Charge List ─────────────────────────────────────────────────── */
+    .charge-list { display: flex; flex-direction: column; margin-bottom: 8px; }
+    .charge-row { padding: 16px 4px; border-bottom: 1px solid rgba(255,255,255,0.06); }
+    .charge-row:last-child { border-bottom: none; }
+    .charge-main { display: flex; justify-content: space-between; align-items: baseline; margin-bottom: 4px; }
+    .charge-vendor { font-size: 0.95rem; font-weight: 700; color: #E2E8F0; }
+    .charge-amount { font-size: 1.05rem; font-weight: 800; color: #F59E0B; white-space: nowrap; padding-left: 12px; }
+    .charge-sub { font-size: 0.78rem; color: #64748B; margin-bottom: 12px; line-height: 1.4; }
+    .charge-actions { display: flex; gap: 8px; }
+    .btn-secondary {
+      flex: 1; padding: 8px 0; border-radius: 8px; cursor: pointer;
+      font-size: 0.8rem; font-weight: 600; text-align: center;
+      border: 1.5px solid rgba(255,255,255,0.13); background: transparent;
+      color: #94A3B8; transition: all 0.15s;
+    }
+    .btn-secondary:hover { border-color: rgba(255,255,255,0.28); color: #CBD5E1; background: rgba(255,255,255,0.05); }
+    .btn-danger-outline {
+      flex: 1; padding: 8px 0; border-radius: 8px; cursor: pointer;
+      font-size: 0.8rem; font-weight: 600; text-align: center;
+      border: 1.5px solid rgba(239,68,68,0.28); background: transparent;
+      color: #f87171; transition: all 0.15s;
+    }
+    .btn-danger-outline:hover { background: rgba(239,68,68,0.09); border-color: rgba(239,68,68,0.55); }
+    .ts-inv-total-row {
+      display: flex; justify-content: space-between; align-items: center;
+      padding: 14px 4px; border-top: 1.5px solid rgba(245,158,11,0.2);
+      margin-top: 4px; font-size: 0.9rem; color: #CBD5E1;
+    }
+    .ts-inv-total-row strong { color: #F59E0B; font-size: 1.08rem; }
     /* ── Dispute mode states ──────────────────────────────────────────── */
     .ts-inv-card--disputing {
-      border-color: rgba(234,88,12,0.7) !important;
-      box-shadow: 0 0 0 3px rgba(234,88,12,0.15);
+      background: rgba(234,88,12,0.04);
+      border-bottom-color: rgba(234,88,12,0.5) !important;
     }
     .ts-inv-card--disputed {
-      border-color: rgba(234,88,12,0.45) !important;
+      border-bottom-color: rgba(234,88,12,0.3) !important;
     }
     .ts-dispute-mode-label {
       font-size: 0.72rem; font-weight: 700; color: #fb923c;
       text-transform: uppercase; letter-spacing: 0.06em;
-      padding: 8px 14px 0;
+      margin-bottom: 8px;
     }
     .ts-under-review-badge {
       display: inline-block; font-size: 0.72rem; font-weight: 700;
@@ -1662,7 +1665,7 @@
   <div id="explainPanelSheet">
     <div id="explainPanelHeader">
       <div>
-        <div id="explainPanelTitle">View Calculation</div>
+        <div id="explainPanelTitle">View Details</div>
         <div id="explainPanelSubtitle"></div>
       </div>
       <button class="ep-close-btn" onclick="closeExplainPanel()">&#x2715; Close</button>
@@ -3605,14 +3608,23 @@ function epToggleDrill(category, tenantName) {
   );
 
   drillEl.innerHTML = `<div class="ep-drill">${
-    invs.map(inv => `
+    invs.map(inv => {
+      const stored = invoiceData.find(d =>
+        d.vendorName && d.vendorName.toLowerCase() === (inv.vendor || inv.vendorName || '').toLowerCase()
+      );
+      const viewBtn = stored && stored.fileDataUrl
+        ? `<button class="ep-view-inv-btn" onclick="viewInvFile(${invoiceData.indexOf(stored)})">&#x1F4C4; View Source Invoice</button>`
+        : '';
+      return `
       <div class="ep-inv-row">
         <div>
           <div class="ep-inv-vendor">${esc(inv.vendor || inv.vendorName || '—')}</div>
           <div class="ep-inv-date">${esc(inv.invoiceDate || '—')}</div>
+          ${viewBtn}
         </div>
         <div class="ep-inv-amount">${fmt(parseFloat(inv.amount) || 0)}</div>
-      </div>`).join('')
+      </div>`;
+    }).join('')
   }</div>`;
 }
 
@@ -3683,7 +3695,7 @@ function toggleDisputeForm(rowId, tenantName, invoiceId, vendor, category, tenan
   if (formEl.style.display === 'block') {
     formEl.style.display = 'none';
     btnEl.classList.remove('active');
-    btnEl.textContent = '\u26A0 Submit Dispute';
+    btnEl.textContent = 'Dispute';
     if (card) {
       card.classList.remove('ts-inv-card--disputing');
       const lbl = card.querySelector('.ts-dispute-mode-label');
@@ -4359,34 +4371,22 @@ function generateTenantStatement(tenantName) {
   const eligible = lastInvoicesFull.filter(inv =>
     !t.excludedCategories.includes(inv.category.toLowerCase())
   );
-  // Find matching invoiceData entries for file viewing (matched by vendor+category)
-  const invoiceCards = eligible.map((inv, idx) => {
+  // Build charge rows (source invoice accessible via View Details → drill-down)
+  const chargeRows = eligible.map((inv, idx) => {
     const share = parseFloat((inv.amount * r.proRata).toFixed(2));
     const rowId = `ts-${tenantName}-${idx}`.replace(/\s+/g, '-');
-    // Find stored file in invoiceData (match by vendor name)
-    const stored = invoiceData.find(d =>
-      d.vendorName && d.vendorName.toLowerCase() === (inv.vendor || '').toLowerCase()
-    );
-    const hasFile = stored && stored.fileDataUrl;
-    const viewBtn = hasFile
-      ? `<button class="ts-view-btn" onclick="viewInvFile(${invoiceData.indexOf(stored)})">&#x1F4C4; View Source Invoice</button>`
-      : '';
     return `
-      <div class="ts-inv-card">
-        <div class="ts-inv-top">
-          <div class="ts-inv-vendor">${esc(inv.vendor)}</div>
-          <div class="ts-inv-amounts">
-            <span class="ts-inv-total">${fmt(inv.amount)}</span>
-            <span class="ts-inv-share">Your CAM charge (${(r.proRata * 100).toFixed(2)}%): <strong>${fmt(share)}</strong></span>
-            <span class="ts-inv-cat">${esc(inv.category)}</span>
-          </div>
+      <div class="charge-row ts-inv-card">
+        <div class="charge-main">
+          <div class="charge-vendor">${esc(inv.vendor)}</div>
+          <div class="charge-amount">${fmt(share)}</div>
         </div>
-        <div class="ts-inv-btns">
-          ${viewBtn}
-          <button class="explain-btn ts-explain-btn"
-            onclick="tsExplainCharge('${esc(tenantName)}','${esc(inv.category)}')">&#x1F4CA; View Calculation</button>
-          <button class="d-btn" id="dbtn-${rowId}"
-            onclick="tsToggleDispute('${rowId}','${esc(tenantName)}',${idx})">&#x26A0; Dispute This Charge</button>
+        <div class="charge-sub">Your share (${(r.proRata * 100).toFixed(2)}%) &bull; ${esc(inv.category)} &bull; Invoice total: ${fmt(inv.amount)}</div>
+        <div class="charge-actions">
+          <button class="btn-secondary"
+            onclick="tsExplainCharge('${esc(tenantName)}','${esc(inv.category)}')">View Details</button>
+          <button class="btn-danger-outline" id="dbtn-${rowId}"
+            onclick="tsToggleDispute('${rowId}','${esc(tenantName)}',${idx})">Dispute</button>
         </div>
         <div id="dform-${rowId}" style="display:none;"></div>
       </div>`;
@@ -4433,39 +4433,28 @@ function generateTenantStatement(tenantName) {
     : '<tr><td colspan="5" style="color:#94a3b8;text-align:center">No disputes filed</td></tr>';
 
   const html = `
-    <div class="rpt-letterhead">
-      <h1>${esc(tenantName)}</h1>
-      <div class="rpt-sub">CAM Tenant Statement &nbsp;·&nbsp; ${esc(lastPropName)} &nbsp;·&nbsp; ${period} &nbsp;·&nbsp; ${now}</div>
-    </div>
-
-    <div class="rpt-kpi-row">
-      <div class="rpt-kpi">
-        <div class="kpi-val">${(r.proRata * 100).toFixed(2)}%</div>
-        <div class="kpi-lbl">Pro-Rata Share</div>
-      </div>
-      <div class="rpt-kpi">
-        <div class="kpi-val">${t.leasedSqft.toLocaleString()} sqft</div>
-        <div class="kpi-lbl">Leased Sqft</div>
-      </div>
-      <div class="rpt-kpi">
-        <div class="kpi-val">${fmt(r.allocatedAmount)}</div>
-        <div class="kpi-lbl">CAM Billed</div>
-      </div>
-      <div class="rpt-kpi">
-        <div class="kpi-val">${eligible.length}</div>
-        <div class="kpi-lbl">Included Expenses</div>
+    <div class="ts-hero">
+      <div class="ts-hero-label">Total CAM Due</div>
+      <div class="ts-hero-amount">${fmt(r.allocatedAmount)}</div>
+      <button class="primary-pay-btn">Pay Now &mdash; ${fmt(r.allocatedAmount)}</button>
+      <div class="ts-trust-bar">
+        <span>&#x1F4C5; Generated: ${now}</span>
+        <span>&#x2714; ${eligible.length} verified invoice${eligible.length === 1 ? '' : 's'}</span>
+        <span>&#x1F4D0; Pro-rata by sq ft</span>
       </div>
     </div>
 
-    <div class="ts-trust-bar">
-      <span>&#x1F4C5; Generated: ${now}</span>
-      <span>&#x2714; Based on: ${eligible.length} verified invoice${eligible.length === 1 ? '' : 's'}</span>
-      <span>&#x1F4D0; Method: Pro-rata by square footage</span>
+    <div class="ts-meta-row">
+      <div class="ts-meta-item"><span>Tenant</span><strong>${esc(tenantName)}</strong></div>
+      <div class="ts-meta-item"><span>Property</span><strong>${esc(lastPropName)}</strong></div>
+      <div class="ts-meta-item"><span>Pro-Rata Share</span><strong>${(r.proRata * 100).toFixed(2)}%</strong></div>
+      <div class="ts-meta-item"><span>Leased Area</span><strong>${t.leasedSqft.toLocaleString()} sqft</strong></div>
+      <div class="ts-meta-item"><span>Period</span><strong>${period}</strong></div>
     </div>
 
-    <div class="rpt-section-title">Invoice Breakdown</div>
-    <p class="rpt-helper-text">Review each charge below. You can view details, verify calculations, or submit a dispute.</p>
-    <div class="ts-inv-list">${invoiceCards}</div>
+    <div class="rpt-section-title">Charge Breakdown</div>
+    <p class="rpt-helper-text">Review each charge below. Click View Details to see the calculation, or file a dispute.</p>
+    <div class="charge-list">${chargeRows}</div>
     <div class="ts-inv-total-row">
       <span>Total CAM Billed to You</span>
       <strong>${fmt(r.allocatedAmount)}</strong>
