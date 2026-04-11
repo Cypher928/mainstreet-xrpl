@@ -63,19 +63,24 @@
     .api-bar .hint { font-size: 0.73rem; color: #64748B; white-space: nowrap; }
 
     /* Layout */
-    .container { max-width: 720px; margin: 0 auto; display: flex; flex-direction: column; gap: 22px; }
+    .container { max-width: 720px; margin: 0 auto; display: flex; flex-direction: column; gap: 28px; }
 
     /* Cards */
     .card {
       background: #111827;
       border-radius: 14px;
-      padding: 26px 28px;
+      padding: 30px 32px;
       box-shadow: 0 2px 20px rgba(0,0,0,0.4);
       border: 1px solid rgba(255,255,255,0.07);
     }
 
     /* Section header */
-    .sec-head { display: flex; align-items: flex-start; gap: 12px; margin-bottom: 22px; }
+    .sec-head { display: flex; align-items: flex-start; gap: 12px; margin-bottom: 26px; }
+    /* Helper text */
+    .rpt-helper-text {
+      font-size: 0.82rem; color: #64748B; margin: -4px 0 14px;
+      line-height: 1.5; font-style: italic;
+    }
     .sec-num {
       width: 27px; height: 27px; border-radius: 50%;
       background: #C9973A; color: #0B1220;
@@ -1461,7 +1466,7 @@
   </div>
 
   <!-- ── SECTION 4: Run Allocation ─────────────────────────────────── -->
-  <button id="runBtn" onclick="showAllocationModal()">Run CAM Allocation</button>
+  <button id="runBtn" onclick="showAllocationModal()">Calculate CAM Charges</button>
 
   <!-- Results -->
   <div class="card" id="results">
@@ -1487,7 +1492,8 @@
       <div>
         <div class="view-label landlord">Landlord View</div>
         <h2>Tenant Disputes</h2>
-        <p>Disputes Resolved: <span id="resolvedCount" style="font-weight:700;color:#1e293b;">0</span></p>
+        <p>Review tenant disputes and take action below.</p>
+        <p style="margin-top:4px;">Disputes Resolved: <span id="resolvedCount" style="font-weight:700;color:#1e293b;">0</span></p>
       </div>
     </div>
     <div id="disputeInvoiceList"></div>
@@ -1560,7 +1566,7 @@
   <div id="explainPanelSheet">
     <div id="explainPanelHeader">
       <div>
-        <div id="explainPanelTitle">Explain Charge</div>
+        <div id="explainPanelTitle">View Calculation</div>
         <div id="explainPanelSubtitle"></div>
       </div>
       <button class="ep-close-btn" onclick="closeExplainPanel()">&#x2715; Close</button>
@@ -2201,7 +2207,7 @@ function importGLToInvoices() {
         <polyline points="1.5,5 4,7.5 8.5,2.5" fill="none" stroke="#fff" stroke-width="1.8" stroke-linecap="round"/>
       </svg></div>
       <span><strong>${items.length} GL items imported</strong> to Invoice List &mdash;
-        review below, then click <em>Run CAM Allocation</em>.</span>
+        review below, then click <em>Calculate CAM Charges</em>.</span>
     </div>`;
 
   // Scroll to invoice results
@@ -3258,12 +3264,12 @@ function runAllocation() {
       <div class="result-grid">
         ${stat('Allocated Amount', fmt(r.allocatedAmount))}
         ${stat('Pro-Rata Share',   (r.proRata * 100).toFixed(2) + '%')}
-        ${stat('Eligible Invoices', r.eligibleCount + ' of ' + invoices.length)}
+        ${stat('Included Expenses', r.eligibleCount + ' of ' + invoices.length)}
       </div>
       ${r.capApplied
         ? `<div class="cap-badge">Cap applied — ${fmt(r.capAdjustment)} reduced</div>`
         : ''}
-      <button class="explain-btn" onclick="openExplainPanel('${esc(r.name)}')">&#x1F4CA; Explain Charge</button>
+      <button class="explain-btn" onclick="openExplainPanel('${esc(r.name)}')">&#x1F4CA; View Calculation</button>
     </div>`;
   });
 
@@ -3412,7 +3418,7 @@ function openExplainPanel(tenantName) {
         <div class="ep-stat-value">${fmt(eligible.reduce((s,i)=>s+(parseFloat(i.amount)||0),0))}</div>
       </div>
       <div class="ep-stat">
-        <div class="ep-stat-label">Your Share</div>
+        <div class="ep-stat-label">Your CAM Charge</div>
         <div class="ep-stat-value highlight">${fmt(r.allocatedAmount)}</div>
       </div>
     </div>
@@ -3443,7 +3449,7 @@ function openExplainPanel(tenantName) {
           <div style="display:flex;align-items:center;">
             <div class="ep-cat-right">
               <div class="ep-cat-total">${fmt(data.total)}</div>
-              <div class="ep-cat-share">Your share: ${fmt(yourShare)}</div>
+              <div class="ep-cat-share">Your CAM charge: ${fmt(yourShare)}</div>
             </div>
             <span class="ep-cat-chevron" id="epchev-${esc(cat.replace(/\s+/g,'-'))}">&#x25BC;</span>
           </div>
@@ -3563,7 +3569,7 @@ function toggleDisputeForm(rowId, tenantName, invoiceId, vendor, category, tenan
   if (formEl.style.display === 'block') {
     formEl.style.display = 'none';
     btnEl.classList.remove('active');
-    btnEl.textContent = '\u26A0 Dispute This Charge';
+    btnEl.textContent = '\u26A0 Submit Dispute';
     if (card) {
       card.classList.remove('ts-inv-card--disputing');
       const lbl = card.querySelector('.ts-dispute-mode-label');
@@ -4097,7 +4103,7 @@ function closeReport() {
 }
 
 function generateMasterReport() {
-  if (!lastResults.length) { alert('Run CAM Allocation first.'); return; }
+  if (!lastResults.length) { alert('Calculate CAM Charges first.'); return; }
 
   const now    = new Date().toLocaleDateString('en-US', { year:'numeric', month:'long', day:'numeric' });
   const period = new Date().getFullYear() + ' CAM Year';
@@ -4225,7 +4231,7 @@ function generateMasterReport() {
 }
 
 function generateTenantStatement(tenantName) {
-  if (!lastResults.length) { alert('Run CAM Allocation first.'); return; }
+  if (!lastResults.length) { alert('Calculate CAM Charges first.'); return; }
 
   const r = lastResults.find(x => x.name === tenantName);
   const t = lastTenants.find(x => x.name === tenantName);
@@ -4248,7 +4254,7 @@ function generateTenantStatement(tenantName) {
     );
     const hasFile = stored && stored.fileDataUrl;
     const viewBtn = hasFile
-      ? `<button class="ts-view-btn" onclick="viewInvFile(${invoiceData.indexOf(stored)})">&#x1F4C4; View Invoice</button>`
+      ? `<button class="ts-view-btn" onclick="viewInvFile(${invoiceData.indexOf(stored)})">&#x1F4C4; View Source Invoice</button>`
       : '';
     return `
       <div class="ts-inv-card">
@@ -4256,14 +4262,14 @@ function generateTenantStatement(tenantName) {
           <div class="ts-inv-vendor">${esc(inv.vendor)}</div>
           <div class="ts-inv-amounts">
             <span class="ts-inv-total">${fmt(inv.amount)}</span>
-            <span class="ts-inv-share">Your share (${(r.proRata * 100).toFixed(2)}%): <strong>${fmt(share)}</strong></span>
+            <span class="ts-inv-share">Your CAM charge (${(r.proRata * 100).toFixed(2)}%): <strong>${fmt(share)}</strong></span>
             <span class="ts-inv-cat">${esc(inv.category)}</span>
           </div>
         </div>
         <div class="ts-inv-btns">
           ${viewBtn}
           <button class="explain-btn ts-explain-btn"
-            onclick="tsExplainCharge('${esc(tenantName)}','${esc(inv.category)}')">&#x1F4CA; Explain Charge</button>
+            onclick="tsExplainCharge('${esc(tenantName)}','${esc(inv.category)}')">&#x1F4CA; View Calculation</button>
           <button class="d-btn" id="dbtn-${rowId}"
             onclick="tsToggleDispute('${rowId}','${esc(tenantName)}',${idx})">&#x26A0; Dispute This Charge</button>
         </div>
@@ -4332,11 +4338,12 @@ function generateTenantStatement(tenantName) {
       </div>
       <div class="rpt-kpi">
         <div class="kpi-val">${eligible.length}</div>
-        <div class="kpi-lbl">Eligible Invoices</div>
+        <div class="kpi-lbl">Included Expenses</div>
       </div>
     </div>
 
     <div class="rpt-section-title">Invoice Breakdown</div>
+    <p class="rpt-helper-text">Review each charge below. You can view details, verify calculations, or submit a dispute.</p>
     <div class="ts-inv-list">${invoiceCards}</div>
     <div class="ts-inv-total-row">
       <span>Total CAM Billed to You</span>
@@ -4354,6 +4361,7 @@ function generateTenantStatement(tenantName) {
     </table>
 
     <div class="rpt-section-title">Disputes</div>
+    <p class="rpt-helper-text">Disputes are reviewed by your landlord. You'll be notified when a decision is made.</p>
     <table class="rpt-table">
       <thead><tr>
         <th>Vendor</th><th>Amount</th><th>Reason</th><th>Status</th><th>Hash</th>
@@ -4897,12 +4905,12 @@ function restoreResultsDisplay() {
       <div class="result-grid">
         ${stat('Allocated Amount',  fmt(r.allocatedAmount))}
         ${stat('Pro-Rata Share',    (r.proRata * 100).toFixed(2) + '%')}
-        ${stat('Eligible Invoices', r.eligibleCount + ' of ' + lastInvoicesFull.length)}
+        ${stat('Included Expenses', r.eligibleCount + ' of ' + lastInvoicesFull.length)}
       </div>
       ${r.capApplied
         ? `<div class="cap-badge">Cap applied — ${fmt(r.capAdjustment)} reduced</div>`
         : ''}
-      <button class="explain-btn" onclick="openExplainPanel('${esc(r.name)}')">&#x1F4CA; Explain Charge</button>
+      <button class="explain-btn" onclick="openExplainPanel('${esc(r.name)}')">&#x1F4CA; View Calculation</button>
     </div>`;
   });
 
