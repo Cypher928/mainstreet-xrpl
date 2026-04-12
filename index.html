@@ -4985,35 +4985,62 @@ function loadProperties() {
 
 // ── Core 4-function property persistence API ──────────────────────────────────
 
+// Centralised key builder — all reads/writes go through this.
+function getPropertyStorageKey(id) {
+  return `ms_property_${id}`;
+}
+
 // Save ALL property data atomically under a single key.
 function propSave(id, data) {
   if (!id) return false;
-  return lsSet(`ms_prop_${id}`, {
-    name:     data.name    || '',
-    sqft:     data.sqft    || 0,
-    tenants:  Array.isArray(data.tenants)  ? data.tenants.filter(t => t !== null) : [],
-    invoices: Array.isArray(data.invoices) ? data.invoices : [],
-    results:  data.results || null,
-    savedAt:  new Date().toISOString(),
-  });
+  const key = getPropertyStorageKey(id);
+  try {
+    localStorage.setItem(key, JSON.stringify({
+      name:     data.name    || '',
+      sqft:     data.sqft    || 0,
+      tenants:  Array.isArray(data.tenants)  ? data.tenants.filter(t => t !== null) : [],
+      invoices: Array.isArray(data.invoices) ? data.invoices : [],
+      results:  data.results || null,
+      savedAt:  new Date().toISOString(),
+    }));
+    return true;
+  } catch (e) { console.warn('[Mainstreet] propSave failed:', e); return false; }
 }
 
-// Load ALL property data from one key.
-// Falls back to the old three-key format and migrates it on first read.
+// Load ALL property data.
+// Checks ms_property_{id} first, then migrates from the old ms_prop_{id} key,
+// then the legacy three-key format — so no existing saved data is lost.
 function propLoad(id) {
   if (!id) return null;
 
-  // ── New unified key ─────────────────────────────────────────────────
-  const d = lsGet(`ms_prop_${id}`);
-  if (d) {
-    const tenants  = Array.isArray(d.tenants)  ? d.tenants.filter(t => t !== null)  : [];
-    const invoices = Array.isArray(d.invoices) ? d.invoices : [];
-    const results  = d.results || null;
-    if (tenants.length || invoices.length || results)
-      return { name: d.name || '', sqft: d.sqft || 0, tenants, invoices, results };
+  // ── Current key ─────────────────────────────────────────────────────
+  const raw = localStorage.getItem(getPropertyStorageKey(id));
+  if (raw) {
+    try {
+      const d = JSON.parse(raw);
+      const tenants  = Array.isArray(d.tenants)  ? d.tenants.filter(t => t !== null)  : [];
+      const invoices = Array.isArray(d.invoices) ? d.invoices : [];
+      const results  = d.results || null;
+      if (tenants.length || invoices.length || results)
+        return { name: d.name || '', sqft: d.sqft || 0, tenants, invoices, results };
+    } catch { /* fall through to migration */ }
   }
 
-  // ── Legacy migration: old three-key format ──────────────────────────
+  // ── Migrate from old ms_prop_{id} key ────────────────────────────────
+  const legacy = lsGet(`ms_prop_${id}`);
+  if (legacy) {
+    const tenants  = Array.isArray(legacy.tenants)  ? legacy.tenants.filter(t => t !== null)  : [];
+    const invoices = Array.isArray(legacy.invoices) ? legacy.invoices : [];
+    const results  = legacy.results || null;
+    if (tenants.length || invoices.length || results) {
+      // Write to new key so future reads skip this path
+      propSave(id, { name: legacy.name || '', sqft: legacy.sqft || 0, tenants, invoices, results });
+      localStorage.removeItem(`ms_prop_${id}`);
+      return { name: legacy.name || '', sqft: legacy.sqft || 0, tenants, invoices, results };
+    }
+  }
+
+  // ── Legacy three-key format ──────────────────────────────────────────
   const oldTenants  = lsGet(`ms_tenants_${id}`);
   const oldInvoices = lsGet(`ms_invoices_${id}`);
   const oldResults  = lsGet(`ms_results_${id}`);
@@ -5022,15 +5049,19 @@ function propLoad(id) {
   const results  = oldResults || null;
   if (!tenants.length && !invoices.length && !results) return null;
 
-  // Consolidate into new format immediately so future reads use the fast path
+  // Consolidate into new key so future reads use the fast path
   propSave(id, { name: '', sqft: 0, tenants, invoices, results });
+  localStorage.removeItem(`ms_tenants_${id}`);
+  localStorage.removeItem(`ms_invoices_${id}`);
+  localStorage.removeItem(`ms_results_${id}`);
   return { name: '', sqft: 0, tenants, invoices, results };
 }
 
-// Wipe all saved data for a property (legacy keys too).
+// Wipe all saved data for a property (all key formats).
 function propClear(id) {
   if (!id) return;
   try {
+    localStorage.removeItem(getPropertyStorageKey(id));
     localStorage.removeItem(`ms_prop_${id}`);
     localStorage.removeItem(`ms_tenants_${id}`);
     localStorage.removeItem(`ms_invoices_${id}`);
@@ -5040,23 +5071,38 @@ function propClear(id) {
 
 // Return saved summary records for all properties — used to populate
 // portfolio cards with real tenant / invoice / CAM counts.
+// Reads both the current ms_property_{id} key and the old ms_prop_{id} key.
 function propList() {
-  const out = [];
+  const seen = new Set();
+  const out  = [];
+
+  function pushEntry(id, d) {
+    if (!d || seen.has(id)) return;
+    seen.add(id);
+    out.push({
+      id,
+      tenantCount:  Array.isArray(d.tenants)  ? d.tenants.filter(t => t !== null).length : 0,
+      invoiceCount: Array.isArray(d.invoices) ? d.invoices.length : 0,
+      totalCAM:     d.results && Array.isArray(d.results.results)
+        ? Math.round(d.results.results.reduce((s, r) => s + (r.allocatedAmount || 0), 0))
+        : 0,
+    });
+  }
+
   try {
     for (let i = 0; i < localStorage.length; i++) {
       const key = localStorage.key(i);
-      if (!key || !key.startsWith('ms_prop_')) continue;
-      const d = lsGet(key);
-      if (!d) continue;
-      const id = key.slice('ms_prop_'.length);
-      out.push({
-        id,
-        tenantCount:  Array.isArray(d.tenants)  ? d.tenants.filter(t => t !== null).length : 0,
-        invoiceCount: Array.isArray(d.invoices) ? d.invoices.length : 0,
-        totalCAM:     d.results && Array.isArray(d.results.results)
-          ? Math.round(d.results.results.reduce((s, r) => s + (r.allocatedAmount || 0), 0))
-          : 0,
-      });
+      if (!key) continue;
+      // Current key format
+      if (key.startsWith('ms_property_')) {
+        const id = key.slice('ms_property_'.length);
+        try { pushEntry(id, JSON.parse(localStorage.getItem(key))); } catch { /* skip */ }
+      }
+      // Old key format (not yet migrated)
+      if (key.startsWith('ms_prop_')) {
+        const id = key.slice('ms_prop_'.length);
+        pushEntry(id, lsGet(key));
+      }
     }
   } catch (e) { /* ignore */ }
   return out;
