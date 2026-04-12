@@ -1776,10 +1776,8 @@ let glData = [];
 
 // ─── Portfolio State ──────────────────────────────────────────────────────────
 const portfolio = [
-  { id: 'prop-1', name: 'Westfield Plaza',        totalSqft: 28000, status: 'in-progress', tenantCount: 3, invoiceCount: 7,  totalCAM: 14200, openDisputes: 0 },
-  { id: 'prop-2', name: 'Bartlett Commons',        totalSqft: 15000, status: 'reconciled',  tenantCount: 2, invoiceCount: 4,  totalCAM: 8750,  openDisputes: 0 },
-  { id: 'prop-3', name: 'Sunrise Shopping Center', totalSqft: 45000, status: 'disputes',    tenantCount: 4, invoiceCount: 11, totalCAM: 22800, openDisputes: 2 },
-  { id: 'prop-4', name: 'Maple Plaza',             totalSqft: 18000, status: 'disputes',    tenantCount: 3, invoiceCount: 5,  totalCAM: 12300, openDisputes: 1 },
+  { id: 'demo',   name: 'Riverside Commons', totalSqft: 24000, status: 'in-progress', tenantCount: 3, invoiceCount: 7, totalCAM: 0,     openDisputes: 0 },
+  { id: 'prop-4', name: 'Maple Plaza',        totalSqft: 18000, status: 'disputes',    tenantCount: 3, invoiceCount: 5, totalCAM: 12300, openDisputes: 1 },
 ];
 let nextPropId   = 5;
 let activePropId = null; // null = portfolio view
@@ -4951,10 +4949,8 @@ function savePortfolio() {
 // Explicit defaults — defined here so loadProperties() always has the full
 // list regardless of any earlier mutation to the global portfolio array.
 const defaultProperties = [
-  { id: 'prop-1', name: 'Westfield Plaza',        totalSqft: 28000, status: 'in-progress', tenantCount: 3, invoiceCount: 7,  totalCAM: 14200, openDisputes: 0 },
-  { id: 'prop-2', name: 'Bartlett Commons',        totalSqft: 15000, status: 'reconciled',  tenantCount: 2, invoiceCount: 4,  totalCAM: 8750,  openDisputes: 0 },
-  { id: 'prop-3', name: 'Sunrise Shopping Center', totalSqft: 45000, status: 'disputes',    tenantCount: 4, invoiceCount: 11, totalCAM: 22800, openDisputes: 2 },
-  { id: 'prop-4', name: 'Maple Plaza',             totalSqft: 18000, status: 'disputes',    tenantCount: 3, invoiceCount: 5,  totalCAM: 12300, openDisputes: 1 },
+  { id: 'demo',   name: 'Riverside Commons', totalSqft: 24000, status: 'in-progress', tenantCount: 3, invoiceCount: 7, totalCAM: 0,     openDisputes: 0 },
+  { id: 'prop-4', name: 'Maple Plaza',        totalSqft: 18000, status: 'disputes',    tenantCount: 3, invoiceCount: 5, totalCAM: 12300, openDisputes: 1 },
 ];
 
 function loadProperties() {
