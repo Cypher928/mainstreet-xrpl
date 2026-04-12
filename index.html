@@ -1783,6 +1783,7 @@ const portfolio = [
 ];
 let nextPropId   = 5;
 let activePropId = null; // null = portfolio view
+let _props       = [];   // canonical merged array from loadProperties()
 
 // ─── Claude API helpers ───────────────────────────────────────────────────────
 
@@ -4627,13 +4628,15 @@ function generateTenantStatement(tenantName) {
 // ─── Load Demo ────────────────────────────────────────────────────────────────
 
 function loadDemo() {
-  // Add demo property to portfolio if not already there
-  if (!portfolio.find(p => p.id === 'demo')) {
-    portfolio.unshift({
+  // Add demo property to canonical array and portfolio if not already there
+  if (!_props.find(p => p.id === 'demo')) {
+    const demoProp = {
       id: 'demo', name: 'Riverside Commons', totalSqft: 24000,
       status: 'in-progress', tenantCount: 3, invoiceCount: 7,
       totalCAM: 0, openDisputes: 0,
-    });
+    };
+    _props.unshift(demoProp);
+    portfolio.unshift(demoProp);
   }
 
   // Navigate into the property
@@ -4712,22 +4715,23 @@ function loadDemo() {
 
 // ─── Portfolio ────────────────────────────────────────────────────────────────
 
-function portfolioKPIs() {
+function portfolioKPIs(props) {
   return {
-    properties:   portfolio.length,
-    tenants:      portfolio.reduce((s, p) => s + p.tenantCount, 0),
-    cam:          portfolio.reduce((s, p) => s + p.totalCAM, 0),
-    invoices:     portfolio.reduce((s, p) => s + p.invoiceCount, 0),
-    openDisputes: portfolio.reduce((s, p) => s + p.openDisputes, 0),
+    properties:   props.length,
+    tenants:      props.reduce((s, p) => s + p.tenantCount, 0),
+    cam:          props.reduce((s, p) => s + p.totalCAM, 0),
+    invoices:     props.reduce((s, p) => s + p.invoiceCount, 0),
+    openDisputes: props.reduce((s, p) => s + p.openDisputes, 0),
   };
 }
 
-function renderPortfolio() {
-  // Overlay real saved counts from propList() onto portfolio metadata so cards
+function renderPortfolio(props) {
+  console.log('RENDERING PROPERTIES:', props);
+  // Overlay real saved counts from propList() onto the props so cards
   // always show actual data instead of stale cached numbers.
   const savedMap = {};
   propList().forEach(s => { savedMap[s.id] = s; });
-  portfolio.forEach(p => {
+  props.forEach(p => {
     const s = savedMap[p.id];
     if (!s) return;
     if (s.tenantCount  > 0) p.tenantCount  = s.tenantCount;
@@ -4735,7 +4739,7 @@ function renderPortfolio() {
     if (s.totalCAM     > 0) p.totalCAM     = s.totalCAM;
   });
 
-  const k = portfolioKPIs();
+  const k = portfolioKPIs(props);
 
   document.getElementById('pKpiProperties').textContent = k.properties;
   document.getElementById('pKpiTenants').textContent    = k.tenants;
@@ -4745,8 +4749,8 @@ function renderPortfolio() {
 
   const statusLabel = { reconciled: 'Reconciled', 'in-progress': 'In Progress', disputes: 'Has Open Disputes' };
 
-  document.getElementById('propertyCardsGrid').innerHTML = portfolio.map(p => `
-    <div class="ptf-prop-card status-${p.status}${activePropId === p.id ? ' active' : ''}" onclick="selectProperty('${p.id}')">
+  document.getElementById('propertyCardsGrid').innerHTML = props.map(p => `
+    <div class="ptf-prop-card status-${p.status}${activePropId === p.id ? ' active' : ''}" onclick="selectProperty('${p.id}', _props)">
       <div class="ptf-prop-name">${esc(p.name)}</div>
       <div class="ptf-status-row">
         <span class="ptf-status-dot ${p.status}"></span>
@@ -4771,9 +4775,13 @@ function renderPortfolio() {
   document.getElementById('mainWorkflow').style.display        = 'none';
 }
 
-function selectProperty(id) {
-  const prop = portfolio.find(p => p.id === id);
-  if (!prop) return;
+function selectProperty(id, props) {
+  const list = props || _props;
+  const prop = list.find(p => p.id === id);
+  if (!prop) {
+    console.error('Property not found:', id, '— available ids:', list.map(p => p.id));
+    return;
+  }
 
   // Save current property data before wiping in-memory state — this is the
   // last chance to persist anything that hasn't been saved at a mutation point.
@@ -4807,19 +4815,21 @@ function backToPortfolio() {
   savePropertyData();   // persist latest state before leaving the property
   syncPortfolioEntry();
   activePropId = null;
-  renderPortfolio();
+  renderPortfolio(_props);
   window.scrollTo({ top: 0, behavior: 'smooth' });
 }
 
 function addNewProperty() {
   const id = 'prop-' + (nextPropId++);
-  portfolio.push({
+  const newProp = {
     id, name: 'New Property', totalSqft: 0,
     status: 'in-progress', tenantCount: 0, invoiceCount: 0,
     totalCAM: 0, openDisputes: 0, createdAt: new Date().toISOString(),
-  });
+  };
+  portfolio.push(newProp);
+  _props.push(newProp);    // keep canonical array in sync
   savePortfolio(); // persist new property in list
-  selectProperty(id);
+  selectProperty(id, _props);
   setTimeout(() => {
     const el = document.getElementById('propertyName');
     el.focus(); el.select();
@@ -4828,7 +4838,7 @@ function addNewProperty() {
 
 function syncPortfolioEntry() {
   if (!activePropId) return;
-  const prop = portfolio.find(p => p.id === activePropId);
+  const prop = _props.find(p => p.id === activePropId);
   if (!prop) return;
 
   const name = document.getElementById('propertyName').value.trim();
@@ -5217,10 +5227,11 @@ function showRestoredBanner() {
 // ─── Init ─────────────────────────────────────────────────────────────────────
 try {
   const merged = loadProperties();
+  _props = merged;                                      // canonical array for all reads
   console.log('PROPERTIES ON LOAD:', merged);
-  portfolio.splice(0, portfolio.length, ...merged);
+  portfolio.splice(0, portfolio.length, ...merged);     // keep global in sync for mutations
   nextPropId = Math.max(...merged.map(p => parseInt(p.id.replace(/\D/g, '')) || 0), 4) + 1;
-  renderPortfolio();
+  renderPortfolio(_props);
 } catch (e) {
   console.error('Mainstreet: portfolio render failed, falling back to main workflow.', e);
   document.getElementById('portfolioDashboard').style.display = 'none';
