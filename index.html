@@ -5176,21 +5176,29 @@ function showRestoredBanner() {
 
 // ─── Init ─────────────────────────────────────────────────────────────────────
 try {
-  // Merge saved portfolio with built-in defaults so new properties added to code
-  // always appear even when older localStorage data exists.
-  const savedPortfolio = lsGet('ms_properties');
-  if (savedPortfolio && savedPortfolio.length) {
-    const savedIds = new Set(savedPortfolio.map(p => p.id));
-    // Any default property whose id is absent from the saved list gets appended.
-    const missing = portfolio.filter(p => !savedIds.has(p.id));
-    const merged  = [...savedPortfolio, ...missing];
+  const defaults = portfolio.slice();            // snapshot before any mutation
+  const saved    = lsGet('ms_properties') || [];
+
+  if (saved.length) {
+    // Index saved entries by id AND by name for O(1) lookup
+    const byId   = new Map(saved.map(p => [p.id,   p]));
+    const byName = new Map(saved.map(p => [p.name, p]));
+    const matchedIds = new Set();
+
+    // Rule 4 + 5: walk every default; use saved version when one matches, else keep default
+    const merged = defaults.map(def => {
+      const hit = byId.get(def.id) || byName.get(def.name);
+      if (hit) matchedIds.add(hit.id);
+      return hit ?? def;
+    });
+
+    // Rule 6: append user-created properties that don't match any default
+    saved.forEach(p => { if (!matchedIds.has(p.id)) merged.push(p); });
+
     portfolio.splice(0, portfolio.length, ...merged);
-    // Keep nextPropId above any existing IDs to avoid collisions
-    const maxNum = merged
-      .map(p => parseInt(p.id.replace('prop-', '')) || 0)
-      .reduce((a, b) => Math.max(a, b), 3);
-    nextPropId = maxNum + 1;
+    nextPropId = Math.max(...merged.map(p => parseInt(p.id.replace(/\D/g, '')) || 0), 3) + 1;
   }
+
   renderPortfolio();
 } catch (e) {
   console.error('Mainstreet: portfolio render failed, falling back to main workflow.', e);
