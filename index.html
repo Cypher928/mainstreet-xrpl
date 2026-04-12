@@ -1779,8 +1779,9 @@ const portfolio = [
   { id: 'prop-1', name: 'Westfield Plaza',        totalSqft: 28000, status: 'in-progress', tenantCount: 3, invoiceCount: 7,  totalCAM: 14200, openDisputes: 0 },
   { id: 'prop-2', name: 'Bartlett Commons',        totalSqft: 15000, status: 'reconciled',  tenantCount: 2, invoiceCount: 4,  totalCAM: 8750,  openDisputes: 0 },
   { id: 'prop-3', name: 'Sunrise Shopping Center', totalSqft: 45000, status: 'disputes',    tenantCount: 4, invoiceCount: 11, totalCAM: 22800, openDisputes: 2 },
+  { id: 'prop-4', name: 'Maple Plaza',             totalSqft: 18000, status: 'disputes',    tenantCount: 3, invoiceCount: 5,  totalCAM: 12300, openDisputes: 1 },
 ];
-let nextPropId   = 4;
+let nextPropId   = 5;
 let activePropId = null; // null = portfolio view
 
 // ─── Claude API helpers ───────────────────────────────────────────────────────
@@ -4937,34 +4938,41 @@ function savePortfolio() {
   lsSet('ms_properties', portfolio);
 }
 
-// Merge code-defined defaults with whatever is in localStorage, write the
-// result back to localStorage so it is always the canonical source of truth,
-// and return the merged array.
-//
-// Rules (matches user requirements exactly):
-//   • Both default + saved exist for same id/name → use saved version
-//   • Only in defaults                            → always add it
-//   • Only in localStorage                        → keep it
+// Explicit defaults — defined here so loadProperties() always has the full
+// list regardless of any earlier mutation to the global portfolio array.
+const defaultProperties = [
+  { id: 'prop-1', name: 'Westfield Plaza',        totalSqft: 28000, status: 'in-progress', tenantCount: 3, invoiceCount: 7,  totalCAM: 14200, openDisputes: 0 },
+  { id: 'prop-2', name: 'Bartlett Commons',        totalSqft: 15000, status: 'reconciled',  tenantCount: 2, invoiceCount: 4,  totalCAM: 8750,  openDisputes: 0 },
+  { id: 'prop-3', name: 'Sunrise Shopping Center', totalSqft: 45000, status: 'disputes',    tenantCount: 4, invoiceCount: 11, totalCAM: 22800, openDisputes: 2 },
+  { id: 'prop-4', name: 'Maple Plaza',             totalSqft: 18000, status: 'disputes',    tenantCount: 3, invoiceCount: 5,  totalCAM: 12300, openDisputes: 1 },
+];
+
 function loadProperties() {
-  const defaults = portfolio.slice();          // snapshot before any mutation
-  const saved    = lsGet('ms_properties') || [];
+  const defaults = defaultProperties.slice();
+  console.log('DEFAULTS:', defaults);
 
-  const byId      = new Map(saved.map(p => [p.id,   p]));
-  const byName    = new Map(saved.map(p => [p.name, p]));
-  const matchedIds = new Set();
+  let saved = [];
+  try {
+    const raw = localStorage.getItem('ms_properties');
+    saved = raw ? JSON.parse(raw) : [];
+  } catch {
+    saved = [];
+  }
 
-  // Walk defaults: use saved version when found, otherwise keep the default
-  const merged = defaults.map(def => {
-    const hit = byId.get(def.id) || byName.get(def.name);
-    if (hit) matchedIds.add(hit.id);
-    return hit ?? def;
+  const byId = new Map(saved.map(p => [p.id, p]));
+
+  // Default fields are the base; saved fields overlay on top
+  const merged = defaults.map(def =>
+    byId.has(def.id) ? { ...def, ...byId.get(def.id) } : def
+  );
+
+  // Append user-created properties not present in defaults
+  saved.forEach(p => {
+    if (!merged.find(m => m.id === p.id)) merged.push(p);
   });
 
-  // Append user-created properties that don't match any default
-  saved.forEach(p => { if (!matchedIds.has(p.id)) merged.push(p); });
-
-  // Overwrite localStorage with the merged result so it is never stale
-  lsSet('ms_properties', merged);
+  // Always overwrite localStorage with the clean merged result
+  localStorage.setItem('ms_properties', JSON.stringify(merged));
 
   return merged;
 }
@@ -5209,8 +5217,9 @@ function showRestoredBanner() {
 // ─── Init ─────────────────────────────────────────────────────────────────────
 try {
   const merged = loadProperties();
+  console.log('PROPERTIES ON LOAD:', merged);
   portfolio.splice(0, portfolio.length, ...merged);
-  nextPropId = Math.max(...merged.map(p => parseInt(p.id.replace(/\D/g, '')) || 0), 3) + 1;
+  nextPropId = Math.max(...merged.map(p => parseInt(p.id.replace(/\D/g, '')) || 0), 4) + 1;
   renderPortfolio();
 } catch (e) {
   console.error('Mainstreet: portfolio render failed, falling back to main workflow.', e);
