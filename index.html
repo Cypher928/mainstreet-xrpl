@@ -4937,6 +4937,38 @@ function savePortfolio() {
   lsSet('ms_properties', portfolio);
 }
 
+// Merge code-defined defaults with whatever is in localStorage, write the
+// result back to localStorage so it is always the canonical source of truth,
+// and return the merged array.
+//
+// Rules (matches user requirements exactly):
+//   • Both default + saved exist for same id/name → use saved version
+//   • Only in defaults                            → always add it
+//   • Only in localStorage                        → keep it
+function loadProperties() {
+  const defaults = portfolio.slice();          // snapshot before any mutation
+  const saved    = lsGet('ms_properties') || [];
+
+  const byId      = new Map(saved.map(p => [p.id,   p]));
+  const byName    = new Map(saved.map(p => [p.name, p]));
+  const matchedIds = new Set();
+
+  // Walk defaults: use saved version when found, otherwise keep the default
+  const merged = defaults.map(def => {
+    const hit = byId.get(def.id) || byName.get(def.name);
+    if (hit) matchedIds.add(hit.id);
+    return hit ?? def;
+  });
+
+  // Append user-created properties that don't match any default
+  saved.forEach(p => { if (!matchedIds.has(p.id)) merged.push(p); });
+
+  // Overwrite localStorage with the merged result so it is never stale
+  lsSet('ms_properties', merged);
+
+  return merged;
+}
+
 // ── Core 4-function property persistence API ──────────────────────────────────
 
 // Save ALL property data atomically under a single key.
@@ -5176,29 +5208,9 @@ function showRestoredBanner() {
 
 // ─── Init ─────────────────────────────────────────────────────────────────────
 try {
-  const defaults = portfolio.slice();            // snapshot before any mutation
-  const saved    = lsGet('ms_properties') || [];
-
-  if (saved.length) {
-    // Index saved entries by id AND by name for O(1) lookup
-    const byId   = new Map(saved.map(p => [p.id,   p]));
-    const byName = new Map(saved.map(p => [p.name, p]));
-    const matchedIds = new Set();
-
-    // Rule 4 + 5: walk every default; use saved version when one matches, else keep default
-    const merged = defaults.map(def => {
-      const hit = byId.get(def.id) || byName.get(def.name);
-      if (hit) matchedIds.add(hit.id);
-      return hit ?? def;
-    });
-
-    // Rule 6: append user-created properties that don't match any default
-    saved.forEach(p => { if (!matchedIds.has(p.id)) merged.push(p); });
-
-    portfolio.splice(0, portfolio.length, ...merged);
-    nextPropId = Math.max(...merged.map(p => parseInt(p.id.replace(/\D/g, '')) || 0), 3) + 1;
-  }
-
+  const merged = loadProperties();
+  portfolio.splice(0, portfolio.length, ...merged);
+  nextPropId = Math.max(...merged.map(p => parseInt(p.id.replace(/\D/g, '')) || 0), 3) + 1;
   renderPortfolio();
 } catch (e) {
   console.error('Mainstreet: portfolio render failed, falling back to main workflow.', e);
