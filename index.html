@@ -5176,12 +5176,17 @@ function showRestoredBanner() {
 
 // ─── Init ─────────────────────────────────────────────────────────────────────
 try {
-  // Restore saved portfolio list from localStorage (falls back to built-in defaults)
+  // Merge saved portfolio with built-in defaults so new properties added to code
+  // always appear even when older localStorage data exists.
   const savedPortfolio = lsGet('ms_properties');
   if (savedPortfolio && savedPortfolio.length) {
-    portfolio.splice(0, portfolio.length, ...savedPortfolio);
+    const savedIds = new Set(savedPortfolio.map(p => p.id));
+    // Any default property whose id is absent from the saved list gets appended.
+    const missing = portfolio.filter(p => !savedIds.has(p.id));
+    const merged  = [...savedPortfolio, ...missing];
+    portfolio.splice(0, portfolio.length, ...merged);
     // Keep nextPropId above any existing IDs to avoid collisions
-    const maxNum = savedPortfolio
+    const maxNum = merged
       .map(p => parseInt(p.id.replace('prop-', '')) || 0)
       .reduce((a, b) => Math.max(a, b), 3);
     nextPropId = maxNum + 1;
