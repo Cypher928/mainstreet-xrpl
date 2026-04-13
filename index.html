@@ -4893,8 +4893,8 @@ async function selectProperty(id) {
 }
 
 async function backToPortfolio() {
-  await savePropertyData();   // persist latest state before leaving the property
-  syncPortfolioEntry();
+  await savePropertyData();      // persist latest state before leaving the property
+  await syncPortfolioEntry();    // update counts/status and save to Supabase
   activePropId = null;
   renderPortfolio(_props);
   window.scrollTo({ top: 0, behavior: 'smooth' });
@@ -5035,10 +5035,22 @@ async function loadProperties() {
 }
 
 // Upsert a single property (all fields) to Supabase.
+// fileDataUrl is stripped from invoices before the write — base64 blobs are
+// kept in memory for live previews but must not go into database rows.
 async function saveProperty(property) {
   try {
-    console.log('SAVING PROPERTY', property);
     const { id, name, ...data } = property;
+
+    // Strip file blobs — keep extracted fields only
+    if (Array.isArray(data.invoices)) {
+      data.invoices = data.invoices.map(({ fileDataUrl, ...rest }) => rest);
+    }
+
+    console.log('SAVING PROPERTY', id, {
+      tenants: (data.tenants || []).length,
+      invoices: (data.invoices || []).length,
+    });
+
     const { error } = await db.from('properties').upsert({ id, name, data });
     if (error) throw error;
   } catch (e) {
