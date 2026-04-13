@@ -1943,6 +1943,10 @@ async function handleLease(i, file) {
     const property = currentProperty();
     if (!property) throw new Error('No property selected');
 
+    // Snapshot existing before any mutation
+    const existing = { tenants: Array.from(property.tenants || []) };
+    console.log('EXISTING DATA:', existing);
+
     const d = await callClaude(file, LEASE_PROMPT);
     tenantData[i] = {
       tenantName:         d.tenantName          ?? '',
@@ -1955,7 +1959,9 @@ async function handleLease(i, file) {
     };
     renderTenantFields(i);
 
-    property.tenants = tenantData.filter(t => t !== null);
+    // tenantData is already restored from _props; slot i was just updated in-place.
+    // Merge so other slots' existing data isn't lost on save.
+    property.tenants = mergeTenantsDedup(existing.tenants, tenantData.filter(t => t !== null));
     console.log('CURRENT PROPERTY ID:', property.id);
     console.log('SAVING DATA:', property);
     await saveProperty(property);
@@ -2392,6 +2398,9 @@ async function importGLToInvoices() {
 
   const property = currentProperty();
   if (!property) throw new Error('No property selected');
+  const existing = { invoices: Array.from(property.invoices || []) };
+  console.log('EXISTING DATA:', existing);
+  // invoiceData already has existing invoices (restored on selectProperty) + new GL items.
   property.invoices = Array.from(invoiceData);
   console.log('CURRENT PROPERTY ID:', property.id);
   console.log('SAVING DATA:', property);
@@ -2423,22 +2432,53 @@ function clearGLData() {
   document.getElementById('glFileInput').value     = '';
 }
 
+// ─── Upload Merge Helpers ─────────────────────────────────────────────────────
+// New upload replaces existing tenant with the same name; others are kept.
+function mergeTenantsDedup(existing, incoming) {
+  const newNames = new Set(
+    incoming.filter(t => t.tenantName).map(t => t.tenantName.trim().toLowerCase())
+  );
+  const kept = existing.filter(
+    t => !t.tenantName || !newNames.has(t.tenantName.trim().toLowerCase())
+  );
+  return [...kept, ...incoming];
+}
+
+// Appends incoming invoices that don't already exist by vendor+amount+date.
+function mergeInvoicesDedup(existing, incoming) {
+  const seen = new Set(
+    existing.map(inv =>
+      `${(inv.vendorName || '').toLowerCase()}|${inv.amount}|${inv.invoiceDate || ''}`
+    )
+  );
+  const novel = incoming.filter(inv => {
+    const key = `${(inv.vendorName || '').toLowerCase()}|${inv.amount}|${inv.invoiceDate || ''}`;
+    return !seen.has(key);
+  });
+  return [...existing, ...novel];
+}
+
 // ─── Bulk Lease Upload ────────────────────────────────────────────────────────
 
 async function handleBulkLeases(fileList) {
   if (!fileList || fileList.length === 0) return;
+
+  // Bind property and snapshot existing data BEFORE clearing in-memory state.
+  const property = currentProperty();
+  if (!property) throw new Error('No property selected');
+  const existing = { tenants: Array.from(property.tenants || []) };
+  console.log('EXISTING DATA:', existing);
+
   const files = Array.from(fileList);
   const total = files.length;
 
-  // Clear tenantData and start fresh for bulk
+  // Clear for a fresh bulk parse run
   tenantData.splice(0, tenantData.length);
 
   const prog    = document.getElementById('bulkProgress');
   const results = document.getElementById('bulkResults');
   results.innerHTML = '';
   prog.style.display = 'block';
-
-  // Reset file input so the same files can be re-selected if needed
   document.getElementById('bulkLeaseInput').value = '';
 
   for (let i = 0; i < total; i++) {
@@ -2480,11 +2520,14 @@ async function handleBulkLeases(fileList) {
       </div>
     </div>`;
 
+  // Merge: new uploads replace same-name existing tenants; rest are kept.
+  const newTenants = tenantData.filter(t => t !== null);
+  const merged = mergeTenantsDedup(existing.tenants, newTenants);
+  property.tenants = merged;
+  // Keep tenantData in sync with merged result so UI shows the full set.
+  tenantData.splice(0, tenantData.length, ...merged);
   renderBulkResults();
 
-  const property = currentProperty();
-  if (!property) throw new Error('No property selected');
-  property.tenants = tenantData.filter(t => t !== null);
   console.log('CURRENT PROPERTY ID:', property.id);
   console.log('SAVING DATA:', property);
   await saveProperty(property);
@@ -2598,6 +2641,13 @@ async function handleBatchInvoices(fileList) {
     /\.(pdf|jpe?g|png|webp)$/i.test(f.name)
   );
   if (!files.length) return;
+
+  // Bind property and snapshot existing invoices BEFORE clearing in-memory state.
+  const property = currentProperty();
+  if (!property) throw new Error('No property selected');
+  const existing = { invoices: Array.from(property.invoices || []) };
+  console.log('EXISTING DATA:', existing);
+
   const total = files.length;
 
   invoiceData.splice(0, invoiceData.length);
@@ -2661,9 +2711,14 @@ async function handleBatchInvoices(fileList) {
       </div>
     </div>`;
 
-  const property = currentProperty();
-  if (!property) throw new Error('No property selected');
-  property.invoices = Array.from(invoiceData);
+  // Merge: append new invoices that don't already exist by vendor+amount+date.
+  const newInvoices = Array.from(invoiceData);
+  const merged = mergeInvoicesDedup(existing.invoices, newInvoices);
+  property.invoices = merged;
+  // Keep invoiceData in sync with merged result so UI shows the full set.
+  invoiceData.splice(0, invoiceData.length, ...merged);
+  renderInvResults();
+
   console.log('CURRENT PROPERTY ID:', property.id);
   console.log('SAVING DATA:', property);
   await saveProperty(property);
@@ -3171,6 +3226,9 @@ async function confirmYardiImport() {
 
   const property = currentProperty();
   if (!property) throw new Error('No property selected');
+  const existing = { invoices: Array.from(property.invoices || []) };
+  console.log('EXISTING DATA:', existing);
+  // invoiceData already has existing invoices (restored on selectProperty) + new Yardi items.
   property.invoices = Array.from(invoiceData);
   console.log('CURRENT PROPERTY ID:', property.id);
   console.log('SAVING DATA:', property);
