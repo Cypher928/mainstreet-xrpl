@@ -4866,30 +4866,33 @@ function renderPortfolio(props) {
 
 async function selectProperty(id) {
   const property = _props.find(p => p.id === id);
-  if (!property) {
-    console.error('selectProperty: not found in _props:', id);
-    return;
-  }
+  if (!property) return;
 
-  await savePropertyData();   // persist current before switching
-  activePropId = null;
-  resetWorkflow();
+  // Fire-and-forget save for the property we're leaving — don't block navigation
+  if (activePropId && activePropId !== id) savePropertyData();
+
+  // Switch active property and clear old workflow state
   activePropId = id;
+  resetWorkflow();
 
-  // Single Supabase fetch — no redundant calls
-  const data = await loadPropertyData(id);
-  console.log('LOADED PROPERTY:', data);
-
-  // Attach fresh data to the _props entry
-  property.tenants  = data?.tenants  || [];
-  property.invoices = data?.invoices || [];
-  property.disputes = data?.disputes || [];
-  property.results  = data?.results  || null;
-  if (data?.name)      property.name      = data.name;
-  if (data?.totalSqft) property.totalSqft = data.totalSqft;
-
-  // Render exactly once — after all data is attached
+  // ⚡ INSTANT: render immediately with whatever is already in _props
   renderProperty(property);
+
+  // Load fresh data in the background, re-render once it arrives
+  setTimeout(async () => {
+    const data = await loadPropertyData(id);
+    if (!data) return;
+
+    property.tenants  = data.tenants  || [];
+    property.invoices = data.invoices || [];
+    property.disputes = data.disputes || [];
+    property.results  = data.results  || null;
+    if (data.name)      property.name      = data.name;
+    if (data.totalSqft) property.totalSqft = data.totalSqft;
+
+    // Only re-render if the user is still on this property
+    if (activePropId === id) renderProperty(property);
+  }, 0);
 }
 
 async function backToPortfolio() {
