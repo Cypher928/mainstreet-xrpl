@@ -1945,7 +1945,7 @@ async function handleLease(i, file) {
       confidence:         d.confidence           ?? {},
     };
     renderTenantFields(i);
-    savePropertyData(); // persist single-tenant upload
+    await savePropertyData(); // persist lease upload to Supabase
   } catch (err) {
     renderTenantError(i, err.message);
   }
@@ -2355,7 +2355,7 @@ function refreshGLFooter() {
   if (btn) btn.textContent = `⬇ Import ${included} Selected GL Items into Invoice List`;
 }
 
-function importGLToInvoices() {
+async function importGLToInvoices() {
   const items = glData.filter(r => r._include);
   if (!items.length) { alert('No GL items are selected.'); return; }
 
@@ -2376,7 +2376,7 @@ function importGLToInvoices() {
   });
 
   renderInvResults();
-  savePropertyData();
+  await savePropertyData(); // persist GL-imported invoices to Supabase
 
   const bar = document.getElementById('glImportBar');
   bar.innerHTML = `
@@ -2462,7 +2462,7 @@ async function handleBulkLeases(fileList) {
     </div>`;
 
   renderBulkResults();
-  savePropertyData();
+  await savePropertyData(); // persist all leases to Supabase
 }
 
 function renderBulkResults() {
@@ -2550,18 +2550,18 @@ function refreshBulkSummary(i) {
   }
 }
 
-function removeBulkTenant(i) {
+async function removeBulkTenant(i) {
   tenantData.splice(i, 1);
   renderBulkResults();
-  savePropertyData();
+  await savePropertyData();
 }
 
-function clearBulkResults() {
+async function clearBulkResults() {
   tenantData.splice(0, tenantData.length);
   document.getElementById('bulkResults').innerHTML = '';
   document.getElementById('bulkProgress').style.display = 'none';
   document.getElementById('bulkLeaseInput').value = '';
-  savePropertyData(); // persist cleared state
+  await savePropertyData();
 }
 
 // ─── Batch Invoice Upload ─────────────────────────────────────────────────────
@@ -2635,7 +2635,7 @@ async function handleBatchInvoices(fileList) {
         <div class="bulk-progress-fill" style="width:100%"></div>
       </div>
     </div>`;
-  savePropertyData();
+  await savePropertyData(); // persist all invoices to Supabase
 }
 
 function renderInvResults() {
@@ -2840,7 +2840,7 @@ function disputeCharge(i) {
   form.scrollIntoView({ behavior: 'smooth', block: 'nearest' });
 }
 
-function submitInvDispute(i) {
+async function submitInvDispute(i) {
   const inv = invoiceData[i];
   if (!inv) return;
   const ta = document.getElementById(`idispr-${i}`);
@@ -2848,7 +2848,7 @@ function submitInvDispute(i) {
   if (!reason) { if (ta) ta.style.borderColor = '#ea580c'; return; }
   inv._disputed = true;
   inv._disputeReason = reason;
-  savePropertyData();
+  await savePropertyData();
   renderInvResults();
 }
 
@@ -2864,19 +2864,19 @@ function refreshInvSummary(i) {
   }
 }
 
-function removeInvItem(i) {
+async function removeInvItem(i) {
   invoiceData.splice(i, 1);
   renderInvResults();
-  savePropertyData();
+  await savePropertyData();
 }
 
-function clearInvResults() {
+async function clearInvResults() {
   invoiceData.splice(0, invoiceData.length);
   document.getElementById('invResults').innerHTML = '';
   document.getElementById('invProgress').style.display = 'none';
   document.getElementById('invFileInput').value   = '';
   document.getElementById('invFolderInput').value = '';
-  savePropertyData(); // persist cleared state
+  await savePropertyData();
 }
 
 // ─── Invoice Tab Switching ────────────────────────────────────────────────────
@@ -3113,7 +3113,7 @@ function toggleAllYardi(checked) {
   updateYardiTotals();
 }
 
-function confirmYardiImport() {
+async function confirmYardiImport() {
   let imported = 0;
   yardiRows.forEach((row, i) => {
     const chk = document.getElementById(`ychk-${i}`);
@@ -3137,7 +3137,7 @@ function confirmYardiImport() {
   // Switch to file-upload tab so user sees the imported results
   switchInvTab('files');
   renderInvResults();
-  savePropertyData();
+  await savePropertyData(); // persist Yardi-imported invoices to Supabase
   document.getElementById('invResults').scrollIntoView({ behavior: 'smooth', block: 'start' });
 
   // Reset Yardi state and show confirmation
@@ -3372,7 +3372,7 @@ function runCAMAllocation(expenses, tenants) {
   });
 }
 
-function runAllocation() {
+async function runAllocation() {
   const propName  = document.getElementById('propertyName').value.trim() || 'Property';
   const totalSqft = parseFloat(document.getElementById('totalSqft').value);
   const section   = document.getElementById('results');
@@ -3468,8 +3468,8 @@ function runAllocation() {
 
   renderDisputeSection();
   showReportSection(); // refresh notice + tenant buttons
-  syncPortfolioEntry();
-  savePropertyData(); // persist allocation results
+  await syncPortfolioEntry();
+  await savePropertyData(); // persist CAM allocation results to Supabase
   updateStepBar('review');
 }
 
@@ -3820,7 +3820,7 @@ function toggleDisputeForm(rowId, tenantName, invoiceId, vendor, category, tenan
     </div>`;
 }
 
-function submitDispute(rowId, tenantName, invoiceId, vendor, category, tenantShare) {
+async function submitDispute(rowId, tenantName, invoiceId, vendor, category, tenantShare) {
   const reason = document.getElementById(`dreason-${rowId}`).value.trim();
   if (!reason) {
     document.getElementById(`dreason-${rowId}`).style.borderColor = '#ea580c';
@@ -3871,8 +3871,8 @@ function submitDispute(rowId, tenantName, invoiceId, vendor, category, tenantSha
   }
 
   renderOpenDisputes();
-  syncPortfolioEntry();
-  savePropertyData();
+  await syncPortfolioEntry();
+  await savePropertyData(); // persist dispute to Supabase
   updateStepBar('resolve');
 }
 
@@ -4947,6 +4947,7 @@ async function loadProperties() {
 // Upsert a single property (all fields) to Supabase.
 async function saveProperty(property) {
   try {
+    console.log('SAVING PROPERTY', property);
     const { id, name, ...data } = property;
     const { error } = await db.from('properties').upsert({ id, name, data });
     if (error) throw error;
@@ -4958,7 +4959,8 @@ async function saveProperty(property) {
 // ── App-level wrappers ────────────────────────────────────────────────────────
 
 // Snapshot current in-memory state back into the canonical _props entry and
-// persist to Supabase. Fire-and-forget at most call sites; awaited where order matters.
+// persist to Supabase. Always awaited at mutation points; fire-and-forget only
+// for minor UI events (remove, clear) where latency is acceptable.
 async function savePropertyData() {
   if (!activePropId) return;
 
@@ -4972,6 +4974,7 @@ async function savePropertyData() {
   if (sqft) prop.totalSqft = sqft;
   prop.tenants  = tenantData.filter(t => t !== null);
   prop.invoices = Array.from(invoiceData);
+  prop.disputes = Array.from(disputes);
   prop.results  = lastResults.length ? {
     results:      lastResults,
     propName:     lastPropName,
