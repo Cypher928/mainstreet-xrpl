@@ -5043,13 +5043,56 @@ function createDemoProperty() {
   return { id: 'demo', name: 'Riverside Commons', totalSqft: 24000, status: 'in-progress', tenantCount: 3, invoiceCount: 7, totalCAM: 0, openDisputes: 0 };
 }
 
-// Load all properties from Supabase.
-// Returns an empty array on failure — init() handles the empty-DB seed case.
+// ── localStorage fallback ─────────────────────────────────────────────────────
+// Data is always saved here first (instant, offline-safe).
+// Supabase is synced in the background — if it's down, data is still safe.
+
+const _LS_KEY = '_ms_props_v2';
+
+function _stripBlobs(property) {
+  // Return a copy of property with fileDataUrl removed from all invoice arrays
+  const p = { ...property };
+  if (Array.isArray(p.invoices)) {
+    p.invoices = p.invoices.filter(Boolean).map(({ fileDataUrl, ...r }) => r);
+  }
+  if (p.results) {
+    const res = { ...p.results };
+    if (Array.isArray(res.invoicesFull)) res.invoicesFull = res.invoicesFull.filter(Boolean).map(({ fileDataUrl, ...r }) => r);
+    if (Array.isArray(res.invoices))     res.invoices     = res.invoices.filter(Boolean).map(({ fileDataUrl, ...r }) => r);
+    p.results = res;
+  }
+  return p;
+}
+
+function _lsSave(property) {
+  try {
+    const stored = JSON.parse(localStorage.getItem(_LS_KEY) || '{}');
+    stored[property.id] = _stripBlobs(property);
+    localStorage.setItem(_LS_KEY, JSON.stringify(stored));
+  } catch (e) { console.warn('[Mainstreet] localStorage save failed:', e); }
+}
+
+function _lsLoadAll() {
+  try {
+    const stored = JSON.parse(localStorage.getItem(_LS_KEY) || '{}');
+    const rows = Object.values(stored);
+    return rows.length ? rows : null;
+  } catch (e) { return null; }
+}
+
+function _lsLoad(id) {
+  try {
+    const stored = JSON.parse(localStorage.getItem(_LS_KEY) || '{}');
+    return stored[id] || null;
+  } catch (e) { return null; }
+}
+
+// Load all properties — Supabase first, localStorage fallback.
 async function loadProperties() {
   try {
     const { data, error } = await db.from('properties').select('*');
     if (error) throw error;
-    if (!data || data.length === 0) return [];
+    if (!data || data.length === 0) return _lsLoadAll() || [];
 
     // Reconstruct full property objects: spread data JSONB on top of id/name
     const rows = data.map(p => ({ id: p.id, name: p.name, ...(p.data || {}) }));
@@ -5059,58 +5102,45 @@ async function loadProperties() {
     const merged = defaultProperties.map(def =>
       byId.has(def.id) ? { ...def, ...byId.get(def.id) } : def
     );
-    // Append user-created properties not in defaults
     rows.forEach(p => { if (!merged.find(m => m.id === p.id)) merged.push(p); });
-
     return merged;
   } catch (e) {
-    console.error('[Mainstreet] loadProperties failed:', e);
-    return [];
+    console.warn('[Mainstreet] Supabase unavailable, loading from localStorage:', e.message);
+    return _lsLoadAll() || defaultProperties.slice();
   }
 }
 
-// Upsert a single property (all fields) to Supabase.
-// fileDataUrl is stripped from invoices before the write — base64 blobs are
-// kept in memory for live previews but must not go into database rows.
+// Save a property — localStorage first (instant), Supabase in background.
+// fileDataUrl blobs are stripped before either write.
 async function saveProperty(property) {
+  // ── 1. Save locally right now — works offline, never fails from network ──
+  _lsSave(property);
+
+  // ── 2. Try to sync to Supabase in the background ──────────────────────────
   try {
-    const { id, name, ...data } = property;
-
-    // Strip fileDataUrl blobs from ALL invoice arrays — base64 content is
-    // kept in memory for live previews but must not go into Supabase rows.
-    if (Array.isArray(data.invoices)) {
-      data.invoices = data.invoices.filter(Boolean).map(({ fileDataUrl, ...rest }) => rest);
-    }
-    if (data.results) {
-      if (Array.isArray(data.results.invoicesFull)) {
-        data.results = { ...data.results,
-          invoicesFull: data.results.invoicesFull.filter(Boolean).map(({ fileDataUrl, ...r }) => r) };
-      }
-      if (Array.isArray(data.results.invoices)) {
-        data.results = { ...data.results,
-          invoices: data.results.invoices.filter(Boolean).map(({ fileDataUrl, ...r }) => r) };
-      }
-    }
-
-    console.log('SAVING PROPERTY', id, {
-      tenants: (data.tenants || []).length,
-      invoices: (data.invoices || []).length,
-    });
-
+    const stripped = _stripBlobs(property);
+    const { id, name, ...data } = stripped;
     const { error } = await db.from('properties').upsert({ id, name, data });
     if (error) throw error;
+    console.log('SAVED TO SUPABASE', id, { tenants: (data.tenants||[]).length, invoices: (data.invoices||[]).length });
   } catch (e) {
-    const msg = e?.message || e?.code || String(e);
-    console.error('[Mainstreet] saveProperty failed:', msg, e);
-    // Show error with actual message so we can diagnose
-    const prev = document.getElementById('_saveErrToast');
-    if (prev) prev.remove();
-    const toast = document.createElement('div');
-    toast.id = '_saveErrToast';
-    toast.style.cssText = 'position:fixed;bottom:20px;left:50%;transform:translateX(-50%);background:#e74c3c;color:#fff;padding:12px 20px;border-radius:6px;z-index:9999;font-size:13px;box-shadow:0 4px 12px rgba(0,0,0,.3);max-width:90vw;text-align:center;';
-    toast.textContent = 'DB Error: ' + msg;
-    document.body.appendChild(toast);
-    setTimeout(() => toast.remove(), 8000);
+    const msg = e?.message || String(e);
+    const isNetErr = /load failed|failed to fetch|networkerror|offline/i.test(msg);
+    if (isNetErr) {
+      // Network down — data is safe in localStorage, no need to alarm the user
+      console.warn('[Mainstreet] Supabase offline, saved locally only:', msg);
+    } else {
+      // Real error (RLS, schema mismatch, etc.) — surface to user
+      console.error('[Mainstreet] saveProperty Supabase error:', msg, e);
+      const prev = document.getElementById('_saveErrToast');
+      if (prev) prev.remove();
+      const toast = document.createElement('div');
+      toast.id = '_saveErrToast';
+      toast.style.cssText = 'position:fixed;bottom:20px;left:50%;transform:translateX(-50%);background:#e74c3c;color:#fff;padding:12px 20px;border-radius:6px;z-index:9999;font-size:13px;box-shadow:0 4px 12px rgba(0,0,0,.3);max-width:90vw;text-align:center;';
+      toast.textContent = 'Sync error: ' + msg;
+      document.body.appendChild(toast);
+      setTimeout(() => toast.remove(), 8000);
+    }
   }
 }
 
@@ -5147,17 +5177,16 @@ async function savePropertyData() {
   await saveProperty(prop);
 }
 
-// Fetch a single property's full data from Supabase. Returns the reconstructed
-// object (id, name, plus everything from the data JSONB column), or null.
+// Fetch a single property's full data — Supabase first, localStorage fallback.
 async function loadPropertyData(id) {
   try {
     const { data, error } = await db.from('properties').select('*').eq('id', id).single();
     if (error) throw error;
-    if (!data) return null;
+    if (!data) return _lsLoad(id);
     return { id: data.id, name: data.name, ...(data.data || {}) };
   } catch (e) {
-    console.error('[Mainstreet] loadPropertyData failed:', e);
-    return null;
+    console.warn('[Mainstreet] Supabase unavailable, loading property from localStorage:', e.message);
+    return _lsLoad(id);
   }
 }
 
@@ -5309,18 +5338,6 @@ function showRestoredBanner() {
 // ─── Init ─────────────────────────────────────────────────────────────────────
 async function init() {
   try {
-    // ── Quick connectivity probe ──────────────────────────────────────────────
-    try {
-      const probe = await db.from('properties').select('id').limit(1);
-      if (probe.error) {
-        console.error('[Mainstreet] Supabase probe error:', probe.error.code, probe.error.message, probe.error.hint);
-      } else {
-        console.log('[Mainstreet] Supabase connection OK, rows sampled:', probe.data?.length ?? 0);
-      }
-    } catch (probeErr) {
-      console.error('[Mainstreet] Supabase probe threw:', probeErr);
-    }
-
     _props = await loadProperties();
 
     if (!_props || _props.length === 0) {
