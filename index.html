@@ -4866,13 +4866,13 @@ function renderPortfolio(props) {
 
 async function selectProperty(id, props) {
   const list = props || _props;
-  const prop = list.find(p => p.id === id);
-  if (!prop) {
+  const property = list.find(p => p.id === id);
+  if (!property) {
     console.error('Property not found:', id, '— available ids:', list.map(p => p.id));
     return;
   }
 
-  // Save current property data before wiping in-memory state.
+  // Save current property before clearing in-memory state.
   await savePropertyData();
 
   // Clear activePropId first so resetWorkflow can't accidentally trigger
@@ -4880,15 +4880,35 @@ async function selectProperty(id, props) {
   activePropId = null;
   resetWorkflow();
 
+  // Fetch fresh data directly from Supabase — don't rely on _props cache
+  // which may be stale or missing tenants/invoices if the row was seeded
+  // without a full data column.
+  const fresh = await fetchPropertyFromDB(id);
+  console.log('LOADED PROPERTY DATA:', fresh);
+
+  if (fresh) {
+    // Attach all persisted fields back onto the _props entry so
+    // loadPropertyData can read them from the canonical array.
+    property.tenants  = fresh.tenants  || [];
+    property.invoices = fresh.invoices || [];
+    property.disputes = fresh.disputes || [];
+    property.results  = fresh.results  || null;
+    // Sync metadata fields that may have changed from another device.
+    if (fresh.name)      property.name      = fresh.name;
+    if (fresh.totalSqft) property.totalSqft = fresh.totalSqft;
+    if (fresh.status)    property.status    = fresh.status;
+  }
+
   // Set identity BEFORE loadPropertyData so any save paths can reference it.
   activePropId = id;
 
-  // Populate property header fields (elements exist in DOM even while hidden).
-  document.getElementById('propertyName').value             = prop.name;
-  document.getElementById('totalSqft').value                = prop.totalSqft || '';
-  document.getElementById('breadcrumbPropName').textContent = prop.name;
+  // Populate property header fields.
+  document.getElementById('propertyName').value             = property.name;
+  document.getElementById('totalSqft').value                = property.totalSqft || '';
+  document.getElementById('breadcrumbPropName').textContent = property.name;
 
-  // Load saved data and render into hidden DOM FIRST — then reveal the view.
+  // Restore tenants, invoices, and CAM results into working arrays — render
+  // into hidden DOM FIRST so the user never sees a blank flash.
   await loadPropertyData(id);
 
   document.getElementById('portfolioDashboard').style.display  = 'none';
@@ -5049,6 +5069,21 @@ async function saveProperty(property) {
     if (error) throw error;
   } catch (e) {
     console.error('[Mainstreet] saveProperty failed:', e);
+  }
+}
+
+// Fetch a single property's full row fresh from Supabase and return the
+// reconstructed object (id, name, plus everything from the data JSONB column).
+// Returns null on error or if the row doesn't exist.
+async function fetchPropertyFromDB(id) {
+  try {
+    const { data, error } = await db.from('properties').select('*').eq('id', id).single();
+    if (error) throw error;
+    if (!data) return null;
+    return { id: data.id, name: data.name, ...(data.data || {}) };
+  } catch (e) {
+    console.error('[Mainstreet] fetchPropertyFromDB failed:', e);
+    return null;
   }
 }
 
