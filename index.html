@@ -5079,16 +5079,16 @@ async function saveProperty(property) {
     // Strip fileDataUrl blobs from ALL invoice arrays — base64 content is
     // kept in memory for live previews but must not go into Supabase rows.
     if (Array.isArray(data.invoices)) {
-      data.invoices = data.invoices.map(({ fileDataUrl, ...rest }) => rest);
+      data.invoices = data.invoices.filter(Boolean).map(({ fileDataUrl, ...rest }) => rest);
     }
     if (data.results) {
       if (Array.isArray(data.results.invoicesFull)) {
         data.results = { ...data.results,
-          invoicesFull: data.results.invoicesFull.map(({ fileDataUrl, ...r }) => r) };
+          invoicesFull: data.results.invoicesFull.filter(Boolean).map(({ fileDataUrl, ...r }) => r) };
       }
       if (Array.isArray(data.results.invoices)) {
         data.results = { ...data.results,
-          invoices: data.results.invoices.map(({ fileDataUrl, ...r }) => r) };
+          invoices: data.results.invoices.filter(Boolean).map(({ fileDataUrl, ...r }) => r) };
       }
     }
 
@@ -5100,13 +5100,17 @@ async function saveProperty(property) {
     const { error } = await db.from('properties').upsert({ id, name, data });
     if (error) throw error;
   } catch (e) {
-    console.error('[Mainstreet] saveProperty failed:', e);
-    // Show a brief toast so the user knows about save failures
+    const msg = e?.message || e?.code || String(e);
+    console.error('[Mainstreet] saveProperty failed:', msg, e);
+    // Show error with actual message so we can diagnose
+    const prev = document.getElementById('_saveErrToast');
+    if (prev) prev.remove();
     const toast = document.createElement('div');
-    toast.style.cssText = 'position:fixed;bottom:20px;left:50%;transform:translateX(-50%);background:#e74c3c;color:#fff;padding:10px 20px;border-radius:6px;z-index:9999;font-size:14px;box-shadow:0 4px 12px rgba(0,0,0,.3);';
-    toast.textContent = 'Save failed — check your connection and try again';
+    toast.id = '_saveErrToast';
+    toast.style.cssText = 'position:fixed;bottom:20px;left:50%;transform:translateX(-50%);background:#e74c3c;color:#fff;padding:12px 20px;border-radius:6px;z-index:9999;font-size:13px;box-shadow:0 4px 12px rgba(0,0,0,.3);max-width:90vw;text-align:center;';
+    toast.textContent = 'DB Error: ' + msg;
     document.body.appendChild(toast);
-    setTimeout(() => toast.remove(), 5000);
+    setTimeout(() => toast.remove(), 8000);
   }
 }
 
@@ -5305,6 +5309,18 @@ function showRestoredBanner() {
 // ─── Init ─────────────────────────────────────────────────────────────────────
 async function init() {
   try {
+    // ── Quick connectivity probe ──────────────────────────────────────────────
+    try {
+      const probe = await db.from('properties').select('id').limit(1);
+      if (probe.error) {
+        console.error('[Mainstreet] Supabase probe error:', probe.error.code, probe.error.message, probe.error.hint);
+      } else {
+        console.log('[Mainstreet] Supabase connection OK, rows sampled:', probe.data?.length ?? 0);
+      }
+    } catch (probeErr) {
+      console.error('[Mainstreet] Supabase probe threw:', probeErr);
+    }
+
     _props = await loadProperties();
 
     if (!_props || _props.length === 0) {
