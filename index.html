@@ -10,6 +10,7 @@
   <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
   <link href="https://fonts.googleapis.com/css2?family=Cormorant+Garamond:wght@400;600;700&family=DM+Sans:ital,wght@0,400;0,500;0,600;0,700;1,400&family=DM+Mono:wght@400;500&display=swap" rel="stylesheet" />
   <script src="https://cdn.jsdelivr.net/npm/xlsx@0.18.5/dist/xlsx.full.min.js"></script>
+  <script src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2"></script>
   <style>
     *, *::before, *::after { box-sizing: border-box; margin: 0; padding: 0; }
 
@@ -1755,6 +1756,13 @@
 </div>
 
 <script>
+// ─── Supabase ─────────────────────────────────────────────────────────────────
+const { createClient: _sbCreateClient } = window.supabase;
+const db = _sbCreateClient(
+  'https://zhsuheghehzbkmzurzyf.supabase.co',
+  'eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6Inpoc3VoZWhnZWhiemttenVyenlmIiwicm9sZSI6ImFub24iLCJpYXQiOjE3NzU4NDkwNDAsImV4cCI6MjA5MTQyNTA0MH0.HUl9ha9hhjIO1F_k8xPkqbZQnWx-ERRGbnmc6KS3lNE'
+);
+
 // ─── Constants ────────────────────────────────────────────────────────────────
 const API_URL    = 'https://api.anthropic.com/v1/messages';
 const MODEL      = 'claude-sonnet-4-5';
@@ -4626,16 +4634,13 @@ function generateTenantStatement(tenantName) {
 
 // ─── Load Demo ────────────────────────────────────────────────────────────────
 
-function loadDemo() {
-  // Add demo property to canonical array and portfolio if not already there
+async function loadDemo() {
+  // Add demo property to canonical array if not already there
   if (!_props.find(p => p.id === 'demo')) {
-    const demoProp = {
-      id: 'demo', name: 'Riverside Commons', totalSqft: 24000,
-      status: 'in-progress', tenantCount: 3, invoiceCount: 7,
-      totalCAM: 0, openDisputes: 0,
-    };
+    const demoProp = createDemoProperty();
     _props.unshift(demoProp);
     portfolio.unshift(demoProp);
+    await saveProperty(demoProp);
   }
 
   // Navigate into the property
@@ -4726,17 +4731,6 @@ function portfolioKPIs(props) {
 
 function renderPortfolio(props) {
   console.log('RENDERING PROPERTIES:', props);
-  // Overlay real saved counts from propList() onto the props so cards
-  // always show actual data instead of stale cached numbers.
-  const savedMap = {};
-  propList().forEach(s => { savedMap[s.id] = s; });
-  props.forEach(p => {
-    const s = savedMap[p.id];
-    if (!s) return;
-    if (s.tenantCount  > 0) p.tenantCount  = s.tenantCount;
-    if (s.invoiceCount > 0) p.invoiceCount = s.invoiceCount;
-    if (s.totalCAM     > 0) p.totalCAM     = s.totalCAM;
-  });
 
   const k = portfolioKPIs(props);
 
@@ -4774,7 +4768,7 @@ function renderPortfolio(props) {
   document.getElementById('mainWorkflow').style.display        = 'none';
 }
 
-function selectProperty(id, props) {
+async function selectProperty(id, props) {
   const list = props || _props;
   const prop = list.find(p => p.id === id);
   if (!prop) {
@@ -4782,9 +4776,8 @@ function selectProperty(id, props) {
     return;
   }
 
-  // Save current property data before wiping in-memory state — this is the
-  // last chance to persist anything that hasn't been saved at a mutation point.
-  savePropertyData();
+  // Save current property data before wiping in-memory state.
+  await savePropertyData();
 
   // Clear activePropId first so resetWorkflow can't accidentally trigger
   // a save against the old property while clearing state.
@@ -4799,9 +4792,8 @@ function selectProperty(id, props) {
   document.getElementById('totalSqft').value                = prop.totalSqft || '';
   document.getElementById('breadcrumbPropName').textContent = prop.name;
 
-  // Load saved data and render into hidden DOM FIRST — then reveal the view
-  // so the user never sees a blank flash.
-  loadPropertyData(id);
+  // Load saved data and render into hidden DOM FIRST — then reveal the view.
+  await loadPropertyData(id);
 
   document.getElementById('portfolioDashboard').style.display  = 'none';
   document.getElementById('propertyBreadcrumb').style.display  = 'flex';
@@ -4810,15 +4802,15 @@ function selectProperty(id, props) {
   window.scrollTo({ top: 0, behavior: 'smooth' });
 }
 
-function backToPortfolio() {
-  savePropertyData();   // persist latest state before leaving the property
+async function backToPortfolio() {
+  await savePropertyData();   // persist latest state before leaving the property
   syncPortfolioEntry();
   activePropId = null;
   renderPortfolio(_props);
   window.scrollTo({ top: 0, behavior: 'smooth' });
 }
 
-function addNewProperty() {
+async function addNewProperty() {
   const id = 'prop-' + (nextPropId++);
   const newProp = {
     id, name: 'New Property', totalSqft: 0,
@@ -4827,15 +4819,15 @@ function addNewProperty() {
   };
   portfolio.push(newProp);
   _props.push(newProp);    // keep canonical array in sync
-  savePortfolio(); // persist new property in list
-  selectProperty(id, _props);
+  await saveProperty(newProp);
+  await selectProperty(id, _props);
   setTimeout(() => {
     const el = document.getElementById('propertyName');
     el.focus(); el.select();
   }, 80);
 }
 
-function syncPortfolioEntry() {
+async function syncPortfolioEntry() {
   if (!activePropId) return;
   const prop = _props.find(p => p.id === activePropId);
   if (!prop) return;
@@ -4851,14 +4843,14 @@ function syncPortfolioEntry() {
     prop.totalCAM     = Math.round(lastResults.reduce((s, r) => s + r.allocatedAmount, 0));
   }
 
-  const openCount    = disputes.filter(d => d.status === 'open').length;
-  prop.openDisputes  = openCount;
-  prop.status        = openCount > 0      ? 'disputes'
-                     : lastResults.length ? 'reconciled'
-                     : 'in-progress';
+  const openCount   = disputes.filter(d => d.status === 'open').length;
+  prop.openDisputes = openCount;
+  prop.status       = openCount > 0      ? 'disputes'
+                    : lastResults.length ? 'reconciled'
+                    : 'in-progress';
 
   document.getElementById('breadcrumbPropName').textContent = prop.name;
-  savePortfolio(); // persist updated portfolio metadata
+  await saveProperty(prop);
 }
 
 function resetWorkflow() {
@@ -4911,269 +4903,127 @@ function liveUpdateBreadcrumb(name) {
   if (el) el.textContent = name || 'New Property';
 }
 
-// ─── localStorage Persistence ─────────────────────────────────────────────────
-// One atomic key per property: ms_prop_{id} → { name, sqft, tenants, invoices,
-// results, savedAt }.  One write either fully succeeds or fully fails — no
-// partial-save corruption possible.  Portfolio list still in ms_properties.
+// ─── Supabase Persistence ─────────────────────────────────────────────────────
+// All property data lives in Supabase: properties(id text PK, name text, data jsonb)
+// The `data` column holds everything except id and name — sqft, status, tenants,
+// invoices, results, tenantCount, invoiceCount, totalCAM, openDisputes, etc.
 
-function lsGet(key) {
-  try { return JSON.parse(localStorage.getItem(key)); }
-  catch (e) { return null; }
-}
-
-function lsSet(key, val) {
-  try {
-    localStorage.setItem(key, JSON.stringify(val));
-    return true;
-  } catch (e) {
-    // Surface the error so the user (and dev console) can see it
-    console.error('[Mainstreet] localStorage write failed:', key, e);
-    const banner = document.getElementById('restoredBanner');
-    if (banner) {
-      banner.style.background = '#7f1d1d';
-      banner.style.color      = '#fee2e2';
-      banner.textContent      = '⚠️ Could not save data — storage may be full';
-      banner.style.opacity    = '1';
-      clearTimeout(banner._hideTimer);
-      banner._hideTimer = setTimeout(() => { banner.style.opacity = '0'; }, 6000);
-    }
-    return false;
-  }
-}
-
-// ── Portfolio list ────────────────────────────────────────────────────────────
-
-function savePortfolio() {
-  lsSet('ms_properties', portfolio);
-}
-
-// Explicit defaults — defined here so loadProperties() always has the full
-// list regardless of any earlier mutation to the global portfolio array.
+// Explicit defaults — structural baseline for default properties.
 const defaultProperties = [
   { id: 'demo',   name: 'Riverside Commons', totalSqft: 24000, status: 'in-progress', tenantCount: 3, invoiceCount: 7, totalCAM: 0,     openDisputes: 0 },
   { id: 'prop-4', name: 'Maple Plaza',        totalSqft: 18000, status: 'disputes',    tenantCount: 3, invoiceCount: 5, totalCAM: 12300, openDisputes: 1 },
 ];
 
-function loadProperties() {
-  const defaults = defaultProperties.slice();
-  console.log('DEFAULTS:', defaults);
+function createDemoProperty() {
+  return { id: 'demo', name: 'Riverside Commons', totalSqft: 24000, status: 'in-progress', tenantCount: 3, invoiceCount: 7, totalCAM: 0, openDisputes: 0 };
+}
 
-  let saved = [];
+// Load all properties from Supabase.
+// Returns an empty array on failure — init() handles the empty-DB seed case.
+async function loadProperties() {
   try {
-    const raw = localStorage.getItem('ms_properties');
-    saved = raw ? JSON.parse(raw) : [];
-  } catch {
-    saved = [];
+    const { data, error } = await db.from('properties').select('*');
+    if (error) throw error;
+    if (!data || data.length === 0) return [];
+
+    // Reconstruct full property objects: spread data JSONB on top of id/name
+    const rows = data.map(p => ({ id: p.id, name: p.name, ...(p.data || {}) }));
+
+    // Merge with defaults so structural fields are always present for known ids
+    const byId   = new Map(rows.map(p => [p.id, p]));
+    const merged = defaultProperties.map(def =>
+      byId.has(def.id) ? { ...def, ...byId.get(def.id) } : def
+    );
+    // Append user-created properties not in defaults
+    rows.forEach(p => { if (!merged.find(m => m.id === p.id)) merged.push(p); });
+
+    return merged;
+  } catch (e) {
+    console.error('[Mainstreet] loadProperties failed:', e);
+    return [];
   }
-
-  const byId = new Map(saved.map(p => [p.id, p]));
-
-  // Default fields are the base; saved fields overlay on top
-  const merged = defaults.map(def =>
-    byId.has(def.id) ? { ...def, ...byId.get(def.id) } : def
-  );
-
-  // Append user-created properties not present in defaults
-  saved.forEach(p => {
-    if (!merged.find(m => m.id === p.id)) merged.push(p);
-  });
-
-  // Always overwrite localStorage with the clean merged result
-  localStorage.setItem('ms_properties', JSON.stringify(merged));
-
-  return merged;
 }
 
-// ── Core 4-function property persistence API ──────────────────────────────────
-
-// Centralised key builder — all reads/writes go through this.
-function getPropertyStorageKey(id) {
-  return `ms_property_${id}`;
-}
-
-// Save ALL property data atomically under a single key.
-function propSave(id, data) {
-  if (!id) return false;
-  const key = getPropertyStorageKey(id);
+// Upsert a single property (all fields) to Supabase.
+async function saveProperty(property) {
   try {
-    localStorage.setItem(key, JSON.stringify({
-      name:     data.name    || '',
-      sqft:     data.sqft    || 0,
-      tenants:  Array.isArray(data.tenants)  ? data.tenants.filter(t => t !== null) : [],
-      invoices: Array.isArray(data.invoices) ? data.invoices : [],
-      results:  data.results || null,
-      savedAt:  new Date().toISOString(),
-    }));
-    return true;
-  } catch (e) { console.warn('[Mainstreet] propSave failed:', e); return false; }
-}
-
-// Load ALL property data.
-// Checks ms_property_{id} first, then migrates from the old ms_prop_{id} key,
-// then the legacy three-key format — so no existing saved data is lost.
-function propLoad(id) {
-  if (!id) return null;
-
-  // ── Current key ─────────────────────────────────────────────────────
-  const raw = localStorage.getItem(getPropertyStorageKey(id));
-  if (raw) {
-    try {
-      const d = JSON.parse(raw);
-      const tenants  = Array.isArray(d.tenants)  ? d.tenants.filter(t => t !== null)  : [];
-      const invoices = Array.isArray(d.invoices) ? d.invoices : [];
-      const results  = d.results || null;
-      if (tenants.length || invoices.length || results)
-        return { name: d.name || '', sqft: d.sqft || 0, tenants, invoices, results };
-    } catch { /* fall through to migration */ }
+    const { id, name, ...data } = property;
+    const { error } = await db.from('properties').upsert({ id, name, data });
+    if (error) throw error;
+  } catch (e) {
+    console.error('[Mainstreet] saveProperty failed:', e);
   }
-
-  // ── Migrate from old ms_prop_{id} key ────────────────────────────────
-  const legacy = lsGet(`ms_prop_${id}`);
-  if (legacy) {
-    const tenants  = Array.isArray(legacy.tenants)  ? legacy.tenants.filter(t => t !== null)  : [];
-    const invoices = Array.isArray(legacy.invoices) ? legacy.invoices : [];
-    const results  = legacy.results || null;
-    if (tenants.length || invoices.length || results) {
-      // Write to new key so future reads skip this path
-      propSave(id, { name: legacy.name || '', sqft: legacy.sqft || 0, tenants, invoices, results });
-      localStorage.removeItem(`ms_prop_${id}`);
-      return { name: legacy.name || '', sqft: legacy.sqft || 0, tenants, invoices, results };
-    }
-  }
-
-  // ── Legacy three-key format ──────────────────────────────────────────
-  const oldTenants  = lsGet(`ms_tenants_${id}`);
-  const oldInvoices = lsGet(`ms_invoices_${id}`);
-  const oldResults  = lsGet(`ms_results_${id}`);
-  const tenants  = Array.isArray(oldTenants)  ? oldTenants.filter(t => t !== null)  : [];
-  const invoices = Array.isArray(oldInvoices) ? oldInvoices : [];
-  const results  = oldResults || null;
-  if (!tenants.length && !invoices.length && !results) return null;
-
-  // Consolidate into new key so future reads use the fast path
-  propSave(id, { name: '', sqft: 0, tenants, invoices, results });
-  localStorage.removeItem(`ms_tenants_${id}`);
-  localStorage.removeItem(`ms_invoices_${id}`);
-  localStorage.removeItem(`ms_results_${id}`);
-  return { name: '', sqft: 0, tenants, invoices, results };
 }
 
-// Wipe all saved data for a property (all key formats).
-function propClear(id) {
-  if (!id) return;
-  try {
-    localStorage.removeItem(getPropertyStorageKey(id));
-    localStorage.removeItem(`ms_prop_${id}`);
-    localStorage.removeItem(`ms_tenants_${id}`);
-    localStorage.removeItem(`ms_invoices_${id}`);
-    localStorage.removeItem(`ms_results_${id}`);
-  } catch (e) { /* ignore */ }
-}
+// ── App-level wrappers ────────────────────────────────────────────────────────
 
-// Return saved summary records for all properties — used to populate
-// portfolio cards with real tenant / invoice / CAM counts.
-// Reads both the current ms_property_{id} key and the old ms_prop_{id} key.
-function propList() {
-  const seen = new Set();
-  const out  = [];
-
-  function pushEntry(id, d) {
-    if (!d || seen.has(id)) return;
-    seen.add(id);
-    out.push({
-      id,
-      tenantCount:  Array.isArray(d.tenants)  ? d.tenants.filter(t => t !== null).length : 0,
-      invoiceCount: Array.isArray(d.invoices) ? d.invoices.length : 0,
-      totalCAM:     d.results && Array.isArray(d.results.results)
-        ? Math.round(d.results.results.reduce((s, r) => s + (r.allocatedAmount || 0), 0))
-        : 0,
-    });
-  }
-
-  try {
-    for (let i = 0; i < localStorage.length; i++) {
-      const key = localStorage.key(i);
-      if (!key) continue;
-      // Current key format
-      if (key.startsWith('ms_property_')) {
-        const id = key.slice('ms_property_'.length);
-        try { pushEntry(id, JSON.parse(localStorage.getItem(key))); } catch { /* skip */ }
-      }
-      // Old key format (not yet migrated)
-      if (key.startsWith('ms_prop_')) {
-        const id = key.slice('ms_prop_'.length);
-        pushEntry(id, lsGet(key));
-      }
-    }
-  } catch (e) { /* ignore */ }
-  return out;
-}
-
-// ── App-level wrappers (all existing call sites remain unchanged) ─────────────
-
-// Snapshot every piece of active-property state into one atomic localStorage write.
-function savePropertyData() {
+// Snapshot current in-memory state back into the canonical _props entry and
+// persist to Supabase. Fire-and-forget at most call sites; awaited where order matters.
+async function savePropertyData() {
   if (!activePropId) return;
+
+  const prop = _props.find(p => p.id === activePropId);
+  if (!prop) return;
 
   const name = document.getElementById('propertyName')?.value?.trim() || '';
   const sqft = parseFloat(document.getElementById('totalSqft')?.value) || 0;
 
-  propSave(activePropId, {
-    name,
-    sqft,
-    tenants:  tenantData,
-    invoices: Array.from(invoiceData),
-    results: lastResults.length ? {
-      results:      lastResults,
-      propName:     lastPropName,
-      total:        lastTotal,
-      invoices:     lastInvoices,
-      invoicesFull: lastInvoicesFull,
-      tenants:      lastTenants,
-      disputes:     Array.from(disputes),
-    } : null,
-  });
+  if (name) prop.name = name;
+  if (sqft) prop.totalSqft = sqft;
+  prop.tenants  = tenantData.filter(t => t !== null);
+  prop.invoices = Array.from(invoiceData);
+  prop.results  = lastResults.length ? {
+    results:      lastResults,
+    propName:     lastPropName,
+    total:        lastTotal,
+    invoices:     lastInvoices,
+    invoicesFull: lastInvoicesFull,
+    tenants:      lastTenants,
+    disputes:     Array.from(disputes),
+  } : null;
+
+  await saveProperty(prop);
 }
 
-// Restore all saved state for a property and re-render affected sections.
-function loadPropertyData(propId) {
-  const data = propLoad(propId);
+// Restore all saved state for a property from the in-memory _props entry.
+async function loadPropertyData(propId) {
+  const prop = _props.find(p => p.id === propId);
 
-  console.log('[Mainstreet] loadPropertyData', propId, data
-    ? { tenants: data.tenants.length, invoices: data.invoices.length, hasResults: !!data.results }
-    : 'NO SAVED DATA');
+  console.log('[Mainstreet] loadPropertyData', propId, prop
+    ? { tenants: (prop.tenants || []).length, invoices: (prop.invoices || []).length, hasResults: !!prop.results }
+    : 'NOT IN _PROPS');
 
-  if (!data) return; // nothing saved yet — correct blank-slate behaviour
+  if (!prop) return;
 
   let restored = false;
 
   // ── Tenants ──────────────────────────────────────────────────────────
   try {
-    if (data.tenants.length) {
-      tenantData.splice(0, tenantData.length, ...data.tenants);
-      // Ensure the bulk tab panel is visible before rendering into it
+    const tenants = (prop.tenants || []).filter(t => t !== null);
+    if (tenants.length) {
+      tenantData.splice(0, tenantData.length, ...tenants);
       switchLeaseTab('bulk');
       renderBulkResults();
-      console.log('[Mainstreet] tenants restored:', tenantData.length);
+      console.log('[Mainstreet] tenants restored:', tenants.length);
       restored = true;
     }
   } catch (e) { console.warn('[Mainstreet] tenant restore failed:', e); }
 
   // ── Invoices ─────────────────────────────────────────────────────────
   try {
-    if (data.invoices.length) {
-      invoiceData.splice(0, invoiceData.length, ...data.invoices);
-      // Ensure the files tab panel is visible before rendering into it
+    const invoices = prop.invoices || [];
+    if (invoices.length) {
+      invoiceData.splice(0, invoiceData.length, ...invoices);
       switchInvTab('files');
       renderInvResults();
-      console.log('[Mainstreet] invoices restored:', invoiceData.length);
+      console.log('[Mainstreet] invoices restored:', invoices.length);
       restored = true;
     }
   } catch (e) { console.warn('[Mainstreet] invoice restore failed:', e); }
 
   // ── CAM Results ───────────────────────────────────────────────────────
   try {
-    const r = data.results;
+    const r = prop.results;
     if (r && Array.isArray(r.results) && r.results.length) {
       lastResults      = r.results;
       lastPropName     = r.propName     || '';
@@ -5197,14 +5047,20 @@ function loadPropertyData(propId) {
 }
 
 // Wipe saved data for the active property and reset the workflow UI.
-function clearPropertyData() {
+async function clearPropertyData() {
   if (!activePropId) return;
   if (!confirm(
     'Clear saved tenants, invoices, and results for this property?\n' +
     'The property will remain in your portfolio.'
   )) return;
 
-  propClear(activePropId);
+  const prop = _props.find(p => p.id === activePropId);
+  if (prop) {
+    prop.tenants  = [];
+    prop.invoices = [];
+    prop.results  = null;
+    await saveProperty(prop);
+  }
 
   const savedName = document.getElementById('propertyName').value;
   const savedSqft = document.getElementById('totalSqft').value;
@@ -5268,19 +5124,30 @@ function showRestoredBanner() {
 
 
 // ─── Init ─────────────────────────────────────────────────────────────────────
-try {
-  const merged = loadProperties();
-  _props = merged;                                      // canonical array for all reads
-  console.log('PROPERTIES ON LOAD:', merged);
-  portfolio.splice(0, portfolio.length, ...merged);     // keep global in sync for mutations
-  nextPropId = Math.max(...merged.map(p => parseInt(p.id.replace(/\D/g, '')) || 0), 4) + 1;
-  renderPortfolio(_props);
-} catch (e) {
-  console.error('Mainstreet: portfolio render failed, falling back to main workflow.', e);
-  document.getElementById('portfolioDashboard').style.display = 'none';
-  document.getElementById('mainWorkflow').style.display       = 'block';
-  renderTenantSlots();
+async function init() {
+  try {
+    _props = await loadProperties();
+
+    if (!_props || _props.length === 0) {
+      // First run — seed the demo property and both defaults
+      for (const def of defaultProperties) {
+        await saveProperty(def);
+      }
+      _props = defaultProperties.slice();
+    }
+
+    console.log('[Mainstreet] PROPERTIES ON LOAD:', _props);
+    portfolio.splice(0, portfolio.length, ..._props);
+    nextPropId = Math.max(..._props.map(p => parseInt(p.id.replace(/\D/g, '')) || 0), 4) + 1;
+    renderPortfolio(_props);
+  } catch (e) {
+    console.error('[Mainstreet] portfolio render failed, falling back to main workflow.', e);
+    document.getElementById('portfolioDashboard').style.display = 'none';
+    document.getElementById('mainWorkflow').style.display       = 'block';
+    renderTenantSlots();
+  }
 }
+init();
 
 </script>
 
@@ -5294,14 +5161,6 @@ try {
   </p>
 </footer>
 
-<!-- ── Supabase ───────────────────────────────────────────────────────────── -->
-<script src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2"></script>
-<script>
-  const supabaseUrl = "https://zhsuheghehzbkmzurzyf.supabase.co";
-  const supabaseKey = "eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6Inpoc3VoZWhnZWhiemttenVyenlmIiwicm9sZSI6ImFub24iLCJpYXQiOjE3NzU4NDkwNDAsImV4cCI6MjA5MTQyNTA0MH0.HUl9ha9hhjIO1F_k8xPkqbZQnWx-ERRGbnmc6KS3lNE";
-  const db = window.supabase.createClient(supabaseUrl, supabaseKey);
-  console.log("[Mainstreet] Supabase connected:", db);
-</script>
 
 </body>
 </html>
