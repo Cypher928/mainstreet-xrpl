@@ -1791,6 +1791,12 @@ let nextPropId   = 5;
 let activePropId = null; // null = portfolio view
 let _props       = [];   // canonical merged array from loadProperties()
 
+// Returns the currently selected property object, or null if none is active.
+function currentProperty() {
+  if (!activePropId) return null;
+  return _props.find(p => p.id === activePropId) || null;
+}
+
 // ─── Claude API helpers ───────────────────────────────────────────────────────
 
 function apiKey() {
@@ -1934,6 +1940,9 @@ async function handleLease(i, file) {
   </div>`;
 
   try {
+    const property = currentProperty();
+    if (!property) throw new Error('No property selected');
+
     const d = await callClaude(file, LEASE_PROMPT);
     tenantData[i] = {
       tenantName:         d.tenantName          ?? '',
@@ -1945,7 +1954,11 @@ async function handleLease(i, file) {
       confidence:         d.confidence           ?? {},
     };
     renderTenantFields(i);
-    await savePropertyData(); // persist lease upload to Supabase
+
+    property.tenants = tenantData.filter(t => t !== null);
+    console.log('CURRENT PROPERTY ID:', property.id);
+    console.log('SAVING DATA:', property);
+    await saveProperty(property);
   } catch (err) {
     renderTenantError(i, err.message);
   }
@@ -2376,7 +2389,13 @@ async function importGLToInvoices() {
   });
 
   renderInvResults();
-  await savePropertyData(); // persist GL-imported invoices to Supabase
+
+  const property = currentProperty();
+  if (!property) throw new Error('No property selected');
+  property.invoices = Array.from(invoiceData);
+  console.log('CURRENT PROPERTY ID:', property.id);
+  console.log('SAVING DATA:', property);
+  await saveProperty(property);
 
   const bar = document.getElementById('glImportBar');
   bar.innerHTML = `
@@ -2462,7 +2481,13 @@ async function handleBulkLeases(fileList) {
     </div>`;
 
   renderBulkResults();
-  await savePropertyData(); // persist all leases to Supabase
+
+  const property = currentProperty();
+  if (!property) throw new Error('No property selected');
+  property.tenants = tenantData.filter(t => t !== null);
+  console.log('CURRENT PROPERTY ID:', property.id);
+  console.log('SAVING DATA:', property);
+  await saveProperty(property);
 }
 
 function renderBulkResults() {
@@ -2635,7 +2660,13 @@ async function handleBatchInvoices(fileList) {
         <div class="bulk-progress-fill" style="width:100%"></div>
       </div>
     </div>`;
-  await savePropertyData(); // persist all invoices to Supabase
+
+  const property = currentProperty();
+  if (!property) throw new Error('No property selected');
+  property.invoices = Array.from(invoiceData);
+  console.log('CURRENT PROPERTY ID:', property.id);
+  console.log('SAVING DATA:', property);
+  await saveProperty(property);
 }
 
 function renderInvResults() {
@@ -3137,7 +3168,14 @@ async function confirmYardiImport() {
   // Switch to file-upload tab so user sees the imported results
   switchInvTab('files');
   renderInvResults();
-  await savePropertyData(); // persist Yardi-imported invoices to Supabase
+
+  const property = currentProperty();
+  if (!property) throw new Error('No property selected');
+  property.invoices = Array.from(invoiceData);
+  console.log('CURRENT PROPERTY ID:', property.id);
+  console.log('SAVING DATA:', property);
+  await saveProperty(property);
+
   document.getElementById('invResults').scrollIntoView({ behavior: 'smooth', block: 'start' });
 
   // Reset Yardi state and show confirmation
