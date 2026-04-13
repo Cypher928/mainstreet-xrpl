@@ -4893,8 +4893,43 @@ async function selectProperty(id) {
 }
 
 async function backToPortfolio() {
-  await savePropertyData();      // persist latest state before leaving the property
-  await syncPortfolioEntry();    // update counts/status and save to Supabase
+  // ── 1. Synchronously snapshot all state into the _props entry ─────────────
+  //    Do this before clearing activePropId so DOM reads still work.
+  if (activePropId) {
+    const prop = _props.find(p => p.id === activePropId);
+    if (prop) {
+      const name = document.getElementById('propertyName')?.value?.trim() || '';
+      const sqft = parseFloat(document.getElementById('totalSqft')?.value) || 0;
+      if (name) prop.name = name;
+      if (sqft) prop.totalSqft = sqft;
+      prop.tenants  = tenantData.filter(t => t !== null);
+      prop.invoices = Array.from(invoiceData);
+      prop.disputes = Array.from(disputes);
+      prop.results  = lastResults.length ? {
+        results: lastResults, propName: lastPropName, total: lastTotal,
+        invoices: lastInvoices, invoicesFull: lastInvoicesFull,
+        tenants: lastTenants, disputes: Array.from(disputes),
+      } : null;
+      // Update portfolio card stats from current session
+      if (lastResults.length) {
+        prop.tenantCount  = lastResults.length;
+        prop.invoiceCount = lastInvoicesFull.length;
+        prop.totalCAM     = Math.round(lastResults.reduce((s, r) => s + r.allocatedAmount, 0));
+      } else {
+        prop.tenantCount  = (prop.tenants || []).length;
+        prop.invoiceCount = (prop.invoices || []).length;
+      }
+      const openCount   = disputes.filter(d => d.status === 'open').length;
+      prop.openDisputes = openCount;
+      prop.status       = openCount > 0      ? 'disputes'
+                        : lastResults.length ? 'reconciled'
+                        : 'in-progress';
+      // Fire-and-forget the DB write — don't block the UI
+      saveProperty(prop);
+    }
+  }
+
+  // ── 2. Show portfolio immediately — no waiting for network ────────────────
   activePropId = null;
   renderPortfolio(_props);
   window.scrollTo({ top: 0, behavior: 'smooth' });
@@ -5041,9 +5076,20 @@ async function saveProperty(property) {
   try {
     const { id, name, ...data } = property;
 
-    // Strip file blobs — keep extracted fields only
+    // Strip fileDataUrl blobs from ALL invoice arrays — base64 content is
+    // kept in memory for live previews but must not go into Supabase rows.
     if (Array.isArray(data.invoices)) {
       data.invoices = data.invoices.map(({ fileDataUrl, ...rest }) => rest);
+    }
+    if (data.results) {
+      if (Array.isArray(data.results.invoicesFull)) {
+        data.results = { ...data.results,
+          invoicesFull: data.results.invoicesFull.map(({ fileDataUrl, ...r }) => r) };
+      }
+      if (Array.isArray(data.results.invoices)) {
+        data.results = { ...data.results,
+          invoices: data.results.invoices.map(({ fileDataUrl, ...r }) => r) };
+      }
     }
 
     console.log('SAVING PROPERTY', id, {
@@ -5055,6 +5101,12 @@ async function saveProperty(property) {
     if (error) throw error;
   } catch (e) {
     console.error('[Mainstreet] saveProperty failed:', e);
+    // Show a brief toast so the user knows about save failures
+    const toast = document.createElement('div');
+    toast.style.cssText = 'position:fixed;bottom:20px;left:50%;transform:translateX(-50%);background:#e74c3c;color:#fff;padding:10px 20px;border-radius:6px;z-index:9999;font-size:14px;box-shadow:0 4px 12px rgba(0,0,0,.3);';
+    toast.textContent = 'Save failed — check your connection and try again';
+    document.body.appendChild(toast);
+    setTimeout(() => toast.remove(), 5000);
   }
 }
 
