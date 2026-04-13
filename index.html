@@ -4839,7 +4839,7 @@ function renderPortfolio(props) {
   const statusLabel = { reconciled: 'Reconciled', 'in-progress': 'In Progress', disputes: 'Has Open Disputes' };
 
   document.getElementById('propertyCardsGrid').innerHTML = props.map(p => `
-    <div class="ptf-prop-card status-${p.status}${activePropId === p.id ? ' active' : ''}" onclick="selectProperty('${p.id}', _props)">
+    <div class="ptf-prop-card status-${p.status}${activePropId === p.id ? ' active' : ''}" onclick="selectProperty('${p.id}')">
       <div class="ptf-prop-name">${esc(p.name)}</div>
       <div class="ptf-status-row">
         <span class="ptf-status-dot ${p.status}"></span>
@@ -4864,58 +4864,32 @@ function renderPortfolio(props) {
   document.getElementById('mainWorkflow').style.display        = 'none';
 }
 
-async function selectProperty(id, props) {
-  const list = props || _props;
-  const property = list.find(p => p.id === id);
+async function selectProperty(id) {
+  const property = _props.find(p => p.id === id);
   if (!property) {
-    console.error('Property not found:', id, '— available ids:', list.map(p => p.id));
+    console.error('selectProperty: not found in _props:', id);
     return;
   }
 
-  // Save current property before clearing in-memory state.
-  await savePropertyData();
-
-  // Clear activePropId first so resetWorkflow can't accidentally trigger
-  // a save against the old property while clearing state.
+  await savePropertyData();   // persist current before switching
   activePropId = null;
   resetWorkflow();
-
-  // Fetch fresh data directly from Supabase — don't rely on _props cache
-  // which may be stale or missing tenants/invoices if the row was seeded
-  // without a full data column.
-  const fresh = await fetchPropertyFromDB(id);
-  console.log('LOADED PROPERTY DATA:', fresh);
-
-  if (fresh) {
-    // Attach all persisted fields back onto the _props entry so
-    // loadPropertyData can read them from the canonical array.
-    property.tenants  = fresh.tenants  || [];
-    property.invoices = fresh.invoices || [];
-    property.disputes = fresh.disputes || [];
-    property.results  = fresh.results  || null;
-    // Sync metadata fields that may have changed from another device.
-    if (fresh.name)      property.name      = fresh.name;
-    if (fresh.totalSqft) property.totalSqft = fresh.totalSqft;
-    if (fresh.status)    property.status    = fresh.status;
-  }
-
-  // Set identity BEFORE loadPropertyData so any save paths can reference it.
   activePropId = id;
 
-  // Populate property header fields.
-  document.getElementById('propertyName').value             = property.name;
-  document.getElementById('totalSqft').value                = property.totalSqft || '';
-  document.getElementById('breadcrumbPropName').textContent = property.name;
+  // Single Supabase fetch — no redundant calls
+  const data = await loadPropertyData(id);
+  console.log('LOADED PROPERTY:', data);
 
-  // Restore tenants, invoices, and CAM results into working arrays — render
-  // into hidden DOM FIRST so the user never sees a blank flash.
-  await loadPropertyData(id);
+  // Attach fresh data to the _props entry
+  property.tenants  = data?.tenants  || [];
+  property.invoices = data?.invoices || [];
+  property.disputes = data?.disputes || [];
+  property.results  = data?.results  || null;
+  if (data?.name)      property.name      = data.name;
+  if (data?.totalSqft) property.totalSqft = data.totalSqft;
 
-  document.getElementById('portfolioDashboard').style.display  = 'none';
-  document.getElementById('propertyBreadcrumb').style.display  = 'flex';
-  document.getElementById('mainWorkflow').style.display        = 'block';
-
-  window.scrollTo({ top: 0, behavior: 'smooth' });
+  // Render exactly once — after all data is attached
+  renderProperty(property);
 }
 
 async function backToPortfolio() {
@@ -4936,7 +4910,7 @@ async function addNewProperty() {
   portfolio.push(newProp);
   _props.push(newProp);    // keep canonical array in sync
   await saveProperty(newProp);
-  await selectProperty(id, _props);
+  await selectProperty(id);
   setTimeout(() => {
     const el = document.getElementById('propertyName');
     el.focus(); el.select();
@@ -5072,20 +5046,6 @@ async function saveProperty(property) {
   }
 }
 
-// Fetch a single property's full row fresh from Supabase and return the
-// reconstructed object (id, name, plus everything from the data JSONB column).
-// Returns null on error or if the row doesn't exist.
-async function fetchPropertyFromDB(id) {
-  try {
-    const { data, error } = await db.from('properties').select('*').eq('id', id).single();
-    if (error) throw error;
-    if (!data) return null;
-    return { id: data.id, name: data.name, ...(data.data || {}) };
-  } catch (e) {
-    console.error('[Mainstreet] fetchPropertyFromDB failed:', e);
-    return null;
-  }
-}
 
 // ── App-level wrappers ────────────────────────────────────────────────────────
 
@@ -5119,45 +5079,64 @@ async function savePropertyData() {
   await saveProperty(prop);
 }
 
-// Restore all saved state for a property from the in-memory _props entry.
-async function loadPropertyData(propId) {
-  const prop = _props.find(p => p.id === propId);
+// Fetch a single property's full data from Supabase. Returns the reconstructed
+// object (id, name, plus everything from the data JSONB column), or null.
+async function loadPropertyData(id) {
+  try {
+    const { data, error } = await db.from('properties').select('*').eq('id', id).single();
+    if (error) throw error;
+    if (!data) return null;
+    return { id: data.id, name: data.name, ...(data.data || {}) };
+  } catch (e) {
+    console.error('[Mainstreet] loadPropertyData failed:', e);
+    return null;
+  }
+}
 
-  console.log('[Mainstreet] loadPropertyData', propId, prop
-    ? { tenants: (prop.tenants || []).length, invoices: (prop.invoices || []).length, hasResults: !!prop.results }
-    : 'NOT IN _PROPS');
-
-  if (!prop) return;
-
+// Restore a property's saved state into working arrays and render the detail view.
+// Called exactly once from selectProperty — after data has been attached to `property`.
+function renderProperty(property) {
   let restored = false;
 
-  // ── Tenants ──────────────────────────────────────────────────────────
+  // ── Header ────────────────────────────────────────────────────────────
+  document.getElementById('propertyName').value             = property.name;
+  document.getElementById('totalSqft').value                = property.totalSqft || '';
+  document.getElementById('breadcrumbPropName').textContent = property.name;
+
+  // ── Tenants ───────────────────────────────────────────────────────────
   try {
-    const tenants = (prop.tenants || []).filter(t => t !== null);
+    const tenants = (property.tenants || []).filter(t => t !== null);
     if (tenants.length) {
       tenantData.splice(0, tenantData.length, ...tenants);
       switchLeaseTab('bulk');
       renderBulkResults();
-      console.log('[Mainstreet] tenants restored:', tenants.length);
       restored = true;
     }
   } catch (e) { console.warn('[Mainstreet] tenant restore failed:', e); }
 
-  // ── Invoices ─────────────────────────────────────────────────────────
+  // ── Invoices ──────────────────────────────────────────────────────────
   try {
-    const invoices = prop.invoices || [];
+    const invoices = property.invoices || [];
     if (invoices.length) {
       invoiceData.splice(0, invoiceData.length, ...invoices);
       switchInvTab('files');
       renderInvResults();
-      console.log('[Mainstreet] invoices restored:', invoices.length);
       restored = true;
     }
   } catch (e) { console.warn('[Mainstreet] invoice restore failed:', e); }
 
+  // ── Disputes ──────────────────────────────────────────────────────────
+  try {
+    const savedDisputes = property.disputes || [];
+    if (savedDisputes.length) {
+      disputes.splice(0, disputes.length, ...savedDisputes);
+      nextDisputeId = Math.max(...savedDisputes.map(d => d.id + 1), 0);
+    }
+  } catch (e) { console.warn('[Mainstreet] dispute restore failed:', e); }
+
   // ── CAM Results ───────────────────────────────────────────────────────
   try {
-    const r = prop.results;
+    const r = property.results;
     if (r && Array.isArray(r.results) && r.results.length) {
       lastResults      = r.results;
       lastPropName     = r.propName     || '';
@@ -5165,19 +5144,21 @@ async function loadPropertyData(propId) {
       lastInvoices     = r.invoices     || [];
       lastInvoicesFull = r.invoicesFull || [];
       lastTenants      = r.tenants      || [];
-      if (Array.isArray(r.disputes) && r.disputes.length) {
-        disputes.splice(0, disputes.length, ...r.disputes);
-        nextDisputeId = Math.max(...r.disputes.map(d => d.id + 1), 0);
-      }
       restoreResultsDisplay();
       renderDisputeSection();
       showReportSection();
-      console.log('[Mainstreet] results restored:', lastResults.length, 'tenants');
       restored = true;
     }
   } catch (e) { console.warn('[Mainstreet] results restore failed:', e); }
 
   if (restored) showRestoredBanner();
+
+  // ── Show property view ────────────────────────────────────────────────
+  document.getElementById('portfolioDashboard').style.display  = 'none';
+  document.getElementById('propertyBreadcrumb').style.display  = 'flex';
+  document.getElementById('mainWorkflow').style.display        = 'block';
+
+  window.scrollTo({ top: 0, behavior: 'smooth' });
 }
 
 // Wipe saved data for the active property and reset the workflow UI.
