@@ -1,0 +1,48 @@
+// Serverless proxy for Anthropic API calls.
+// Reads ANTHROPIC_API_KEY from the Vercel environment — never exposed to the browser.
+
+export const config = {
+  api: {
+    bodyParser: {
+      sizeLimit: '12mb', // base64-encoded PDFs/images can be large
+    },
+  },
+};
+
+export default async function handler(req, res) {
+  if (req.method !== 'POST') {
+    return res.status(405).json({ error: 'Method not allowed' });
+  }
+
+  const apiKey = process.env.ANTHROPIC_API_KEY;
+  if (!apiKey) {
+    console.error('[Mainstreet] ANTHROPIC_API_KEY is not set');
+    return res.status(500).json({ error: 'API key not configured on server' });
+  }
+
+  const { model, max_tokens, messages } = req.body || {};
+  if (!model || !messages) {
+    return res.status(400).json({ error: 'Missing required fields: model, messages' });
+  }
+
+  let anthropicResp;
+  try {
+    anthropicResp = await fetch('https://api.anthropic.com/v1/messages', {
+      method: 'POST',
+      headers: {
+        'Content-Type': 'application/json',
+        'anthropic-version': '2023-06-01',
+        'x-api-key': apiKey,
+      },
+      body: JSON.stringify({ model, max_tokens, messages }),
+    });
+  } catch (e) {
+    console.error('[Mainstreet] Anthropic fetch error:', e);
+    return res.status(502).json({ error: 'Could not reach Anthropic API' });
+  }
+
+  const data = await anthropicResp.json();
+
+  // Forward exact status + body so the client can handle Anthropic errors normally
+  return res.status(anthropicResp.status).json(data);
+}

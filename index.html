@@ -36,32 +36,6 @@
     }
     header p { margin-top: 6px; color: #64748B; font-size: 0.88rem; }
 
-    /* API key bar */
-    .api-bar {
-      max-width: 720px;
-      margin: 0 auto 28px;
-      display: flex;
-      align-items: center;
-      gap: 12px;
-      background: #111827;
-      border: 1.5px solid rgba(201,151,58,0.3);
-      border-radius: 11px;
-      padding: 13px 18px;
-    }
-    .api-bar label {
-      font-size: 0.78rem; font-weight: 700; color: #C9973A;
-      white-space: nowrap; text-transform: uppercase; letter-spacing: 0.04em;
-      font-family: 'DM Mono', monospace;
-    }
-    .api-bar input {
-      flex: 1; padding: 8px 12px;
-      border: 1.5px solid rgba(255,255,255,0.1); border-radius: 7px;
-      font-size: 0.88rem; font-family: 'DM Mono', "Courier New", monospace;
-      background: #0F1929; color: #E2E8F0;
-      transition: border-color 0.15s;
-    }
-    .api-bar input:focus { outline: none; border-color: #C9973A; }
-    .api-bar .hint { font-size: 0.73rem; color: #64748B; white-space: nowrap; }
 
     /* Layout */
     .container { max-width: 720px; margin: 0 auto; display: flex; flex-direction: column; gap: 32px; }
@@ -1370,12 +1344,6 @@
   <p>CAM Reconciliation &nbsp;&middot;&nbsp; Works Alongside Yardi &nbsp;&middot;&nbsp; Powered by XRPL</p>
 </header>
 
-<!-- API Key -->
-<div class="api-bar">
-  <label for="apiKey">Anthropic API Key</label>
-  <input type="password" id="apiKey" placeholder="sk-ant-..." autocomplete="off" />
-  <span class="hint">Used in-browser only · never stored</span>
-</div>
 
 <!-- ── Portfolio Dashboard ──────────────────────────────────────────── -->
 <div id="portfolioDashboard">
@@ -1764,7 +1732,6 @@ const db = _sbCreateClient(
 );
 
 // ─── Constants ────────────────────────────────────────────────────────────────
-const API_URL    = 'https://api.anthropic.com/v1/messages';
 const MODEL      = 'claude-sonnet-4-5';
 const MAX_LEASES = 3;
 
@@ -1799,10 +1766,6 @@ function currentProperty() {
 
 // ─── Claude API helpers ───────────────────────────────────────────────────────
 
-function apiKey() {
-  return document.getElementById('apiKey').value.trim();
-}
-
 async function toBase64(file) {
   return new Promise((res, rej) => {
     const r = new FileReader();
@@ -1826,11 +1789,6 @@ function parseJSON(text) {
 }
 
 async function callClaude(file, prompt) {
-  const key = apiKey();
-  if (!key) {
-    throw new Error('Please enter your Anthropic API key above or check your connection');
-  }
-
   let base64;
   try {
     base64 = await toBase64(file);
@@ -1849,14 +1807,9 @@ async function callClaude(file, prompt) {
 
   let resp;
   try {
-    resp = await fetch(API_URL, {
+    resp = await fetch('/api/claude', {
       method: 'POST',
-      headers: {
-        'Content-Type': 'application/json',
-        'anthropic-version': '2023-06-01',
-        'anthropic-dangerous-direct-browser-access': 'true',
-        'x-api-key': key,
-      },
+      headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify({
         model: MODEL,
         max_tokens: 1024,
@@ -1865,7 +1818,7 @@ async function callClaude(file, prompt) {
     });
   } catch (e) {
     console.error('[Mainstreet] fetch error:', e);
-    throw new Error('Please enter your Anthropic API key above or check your connection');
+    throw new Error('Could not reach the server — check your connection');
   }
 
   if (!resp.ok) {
@@ -2857,19 +2810,12 @@ function closeInvFileViewer() {
 async function explainCharge(i) {
   const inv = invoiceData[i];
   if (!inv) return;
-  const key = apiKey();
-  if (!key) { alert('Enter your Anthropic API key to use this feature.'); return; }
   const btn = document.getElementById(`iexplbtn-${i}`);
   if (btn) { btn.textContent = '…'; btn.disabled = true; }
   try {
-    const resp = await fetch(API_URL, {
+    const resp = await fetch('/api/claude', {
       method: 'POST',
-      headers: {
-        'Content-Type': 'application/json',
-        'anthropic-version': '2023-06-01',
-        'anthropic-dangerous-direct-browser-access': 'true',
-        'x-api-key': key,
-      },
+      headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify({
         model: MODEL,
         max_tokens: 512,
