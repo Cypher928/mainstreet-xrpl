@@ -20,10 +20,14 @@ export default async function handler(req, res) {
     return res.status(500).json({ error: 'API key not configured on server' });
   }
 
-  const { model, max_tokens, messages } = req.body || {};
-  if (!model || !messages) {
-    return res.status(400).json({ error: 'Missing required fields: model, messages' });
+  const { max_tokens, messages, model: requestedModel } = req.body || {};
+  if (!messages) {
+    return res.status(400).json({ error: 'Missing required field: messages' });
   }
+
+  // Env var takes priority — lets you change the model without a code deploy.
+  // Falls back to whatever the client sent, then to the hardcoded default.
+  const model = process.env.CLAUDE_MODEL || requestedModel || 'claude-sonnet-4-6';
 
   let anthropicResp;
   try {

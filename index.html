@@ -1733,7 +1733,7 @@ const db = _sbCreateClient(
 );
 
 // ─── Constants ────────────────────────────────────────────────────────────────
-const MODEL      = 'claude-sonnet-4-5';
+const MODEL      = 'claude-sonnet-4-6';
 const MAX_LEASES = 3;
 
 const LEASE_PROMPT = `Extract the following CAM lease terms from this document and return ONLY valid JSON with these fields: tenantName, leasedSqft, capPercentage, excludedCategories (array of strings), baseYear, confidence. "confidence" must be an object with a score 0-100 for each field (tenantName, leasedSqft, capPercentage, excludedCategories, baseYear) reflecting how clearly that value was found in the document. If a field is not found, use null.`;
