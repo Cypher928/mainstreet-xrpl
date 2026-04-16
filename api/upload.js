@@ -1,5 +1,7 @@
 // Serverless proxy for Supabase Storage uploads.
-// Runs server-side so browser CORS restrictions never apply.
+// Uses Node.js https module — avoids Node native fetch binary upload issues.
+
+import { request } from 'https';
 
 export const config = {
   api: {
@@ -12,6 +14,30 @@ export const config = {
 const SUPABASE_URL      = 'https://zhsuheghehzbkmzurzyf.supabase.co';
 const SUPABASE_ANON_KEY = 'eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6Inpoc3VoZWhnZWhiemttenVyenlmIiwicm9sZSI6ImFub24iLCJpYXQiOjE3NzU4NDkwNDAsImV4cCI6MjA5MTQyNTA0MH0.HUl9ha9hhjIO1F_k8xPkqbZQnWx-ERRGbnmc6KS3lNE';
 
+function httpsPost(url, headers, body) {
+  return new Promise((resolve, reject) => {
+    const parsed = new URL(url);
+    const req = request(
+      {
+        hostname: parsed.hostname,
+        path:     parsed.pathname,
+        method:   'POST',
+        headers:  { ...headers, 'Content-Length': body.length },
+      },
+      (res) => {
+        const chunks = [];
+        res.on('data', c => chunks.push(c));
+        res.on('end', () => resolve({
+          status: res.statusCode,
+          body:   Buffer.concat(chunks).toString(),
+        }));
+      }
+    );
+    req.on('error', reject);
+    req.end(body);
+  });
+}
+
 export default async function handler(req, res) {
   if (req.method !== 'POST') {
     return res.status(405).json({ error: 'Method not allowed' });
@@ -22,36 +48,33 @@ export default async function handler(req, res) {
     return res.status(400).json({ error: 'Missing fileName or fileBase64' });
   }
 
-  const key = process.env.SUPABASE_SERVICE_ROLE_KEY || SUPABASE_ANON_KEY;
-  const buffer = Buffer.from(fileBase64, 'base64');
-  const encodedName = encodeURIComponent(fileName);
-  const uploadUrl = `${SUPABASE_URL}/storage/v1/object/invoices/${encodedName}`;
+  const key      = process.env.SUPABASE_SERVICE_ROLE_KEY || SUPABASE_ANON_KEY;
+  const buffer   = Buffer.from(fileBase64, 'base64');
+  const safeName = fileName.replace(/[^a-zA-Z0-9._-]/g, '_');
+  const uploadUrl = `${SUPABASE_URL}/storage/v1/object/invoices/${safeName}`;
 
-  console.log('[api/upload] uploading:', fileName, 'size:', buffer.length);
+  console.log('[api/upload] POST', uploadUrl, 'bytes:', buffer.length);
 
-  let uploadRes;
+  let status, body;
   try {
-    uploadRes = await fetch(uploadUrl, {
-      method: 'POST',
-      headers: {
-        'Authorization': `Bearer ${key}`,
-        'Content-Type': fileType || 'application/octet-stream',
-        'x-upsert': 'true',
-      },
-      body: buffer,
-    });
+    ({ status, body } = await httpsPost(uploadUrl, {
+      'Authorization': `Bearer ${key}`,
+      'apikey':        key,
+      'Content-Type':  fileType || 'application/octet-stream',
+      'x-upsert':      'true',
+    }, buffer));
   } catch (e) {
-    console.error('[api/upload] fetch error:', e.message);
-    return res.status(502).json({ error: `Could not reach Supabase Storage: ${e.message}` });
+    // e.code = ECONNREFUSED | ENOTFOUND | ETIMEDOUT etc.
+    console.error('[api/upload] network error:', e.message, e.code);
+    return res.status(502).json({ error: `Network error reaching Supabase: ${e.message} (${e.code || 'unknown'})` });
   }
 
-  const responseText = await uploadRes.text();
-  console.log('[api/upload] response:', uploadRes.status, responseText);
+  console.log('[api/upload] response:', status, body);
 
-  if (!uploadRes.ok) {
-    return res.status(uploadRes.status).json({ error: responseText });
+  if (status >= 300) {
+    return res.status(status).json({ error: `Supabase Storage error (HTTP ${status}): ${body}` });
   }
 
-  const publicUrl = `${SUPABASE_URL}/storage/v1/object/public/invoices/${encodedName}`;
+  const publicUrl = `${SUPABASE_URL}/storage/v1/object/public/invoices/${safeName}`;
   return res.status(200).json({ url: publicUrl });
 }
