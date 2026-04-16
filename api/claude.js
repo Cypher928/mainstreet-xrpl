@@ -20,7 +20,7 @@ export default async function handler(req, res) {
     return res.status(500).json({ error: 'API key not configured on server' });
   }
 
-  const { max_tokens, messages, model: requestedModel } = req.body || {};
+  const { max_tokens, messages, model: requestedModel, system } = req.body || {};
   if (!messages) {
     return res.status(400).json({ error: 'Missing required field: messages' });
   }
@@ -28,6 +28,9 @@ export default async function handler(req, res) {
   // Env var takes priority — lets you change the model without a code deploy.
   // Falls back to whatever the client sent, then to the hardcoded default.
   const model = process.env.CLAUDE_MODEL || requestedModel || 'claude-sonnet-4-6';
+
+  const payload = { model, max_tokens, messages };
+  if (system) payload.system = system;
 
   let anthropicResp;
   try {
@@ -38,7 +41,7 @@ export default async function handler(req, res) {
         'anthropic-version': '2023-06-01',
         'x-api-key': apiKey,
       },
-      body: JSON.stringify({ model, max_tokens, messages }),
+      body: JSON.stringify(payload),
     });
   } catch (e) {
     console.error('[Mainstreet] Anthropic fetch error:', e);
