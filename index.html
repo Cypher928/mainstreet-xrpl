@@ -765,6 +765,7 @@
     .inv-act-explain:hover { border-color: #8B5CF6; color: #C4B5FD; background: rgba(139,92,246,0.1); }
     .inv-act-dispute:hover { border-color: #ea580c; color: #fb923c; background: rgba(234,88,12,0.1); }
     .inv-disputed-badge { font-size: 0.7rem; color: #fb923c; font-weight: 700; flex-shrink: 0; }
+    .inv-upload-err-badge { font-size: 0.72rem; color: #f87171; font-weight: 600; flex-shrink: 0; background: rgba(239,68,68,0.1); border: 1px solid rgba(239,68,68,0.3); border-radius: 5px; padding: 2px 7px; }
     .inv-explain-box {
       margin-top: 12px; padding: 12px; background: rgba(139,92,246,0.08);
       border: 1.5px solid rgba(139,92,246,0.3); border-radius: 8px; font-size: 0.84rem; color: #CBD5E1;
@@ -1777,7 +1778,6 @@ function currentProperty() {
 async function uploadInvoiceFile(file, propertyId) {
   const safeName = file.name.replace(/[^a-zA-Z0-9._-]/g, '_');
   const path = `${propertyId}/${Date.now()}-${safeName}`;
-  console.log('[Mainstreet] Uploading invoice:', path);
 
   const { error } = await db.storage.from('invoices').upload(path, file, {
     contentType: file.type || 'application/octet-stream',
@@ -1786,12 +1786,11 @@ async function uploadInvoiceFile(file, propertyId) {
 
   if (error) {
     console.error('[Mainstreet] Storage upload failed:', error.message, error);
-    return null;
+    return { url: null, error: error.message };
   }
 
   const { data } = db.storage.from('invoices').getPublicUrl(path);
-  console.log('[Mainstreet] Invoice uploaded OK:', data.publicUrl);
-  return data.publicUrl;
+  return { url: data.publicUrl, error: null };
 }
 
 // ─── Claude API helpers ───────────────────────────────────────────────────────
@@ -2657,8 +2656,8 @@ async function handleBatchInvoices(fileList) {
       // Step 1 — AI extraction (critical; failure marks invoice as errored)
       const d = await callClaude(files[i], INVOICE_PROMPT);
 
-      // Step 2 — file upload (best-effort; failure means no View Invoice button but data is kept)
-      const fileUrl = await uploadInvoiceFile(files[i], property.id);
+      // Step 2 — file upload (best-effort; data kept even when upload fails)
+      const { url: fileUrl, error: fileUploadError } = await uploadInvoiceFile(files[i], property.id);
 
       invoiceData.push({
         vendorName:  d.vendorName  ?? '',
@@ -2667,6 +2666,7 @@ async function handleBatchInvoices(fileList) {
         invoiceDate: d.invoiceDate ?? '',
         confidence:  d.confidence  ?? {},
         _error:      null,
+        _fileUploadError: fileUploadError,
         fileUrl, fileName: files[i].name, fileType: files[i].type,
       });
     } catch (err) {
@@ -2675,6 +2675,7 @@ async function handleBatchInvoices(fileList) {
         vendorName:  files[i].name.replace(/\.(pdf|jpe?g|png|webp)$/i, ''),
         amount: '', category: 'other', invoiceDate: '',
         confidence: {}, _error: err.message,
+        _fileUploadError: null,
         fileUrl: null, fileName: files[i].name, fileType: files[i].type,
       });
     }
@@ -2750,6 +2751,7 @@ function renderInvResults() {
           ${overallConf !== undefined ? confidenceBadge(overallConf) : ''}
           ${dupBadge}
           ${d._disputed ? `<span class="inv-disputed-badge">\u26a0 Disputed</span>` : ''}
+          ${d._fileUploadError ? `<span class="inv-upload-err-badge">&#x26A0; File not saved: ${esc(d._fileUploadError)}</span>` : ''}
           <span class="bulk-t-chevron" id="ichev-${i}">&#x25BC; Edit</span>
           <div class="inv-action-btns">
             <button class="inv-act-btn" onclick="event.stopPropagation();viewInvoice(${i})">View</button>
