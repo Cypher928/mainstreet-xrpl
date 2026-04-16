@@ -3797,6 +3797,45 @@ function tsExplainCharge(tenantName, category) {
   }
 }
 
+// AI Explanation for a single invoice inside the Tenant Statement.
+// Same Claude call and styling as the landlord explainCharge() — scoped to the
+// tenant detail box so the landlord view is completely unaffected.
+async function tsExplainInvoice(rowId, vendor, category, amount, date) {
+  const btn = document.getElementById(`tsexplbtn-${rowId}`);
+  if (btn) { btn.textContent = '…'; btn.disabled = true; }
+  try {
+    const resp = await fetch('/api/claude', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({
+        model: MODEL,
+        max_tokens: 512,
+        messages: [{ role: 'user', content:
+          `You are a commercial real estate CAM reconciliation expert. Explain this invoice charge in plain language for a tenant:\n` +
+          `Vendor: ${vendor || 'Unknown'}\n` +
+          `Category: ${category || 'other'}\n` +
+          `Amount: $${amount || '0'}\n` +
+          `Date: ${date || 'Unknown'}\n\n` +
+          `Explain what this charge covers, whether it is a normal CAM expense, and any red flags to watch for. Be concise (3-4 sentences).`
+        }],
+      }),
+    });
+    if (!resp.ok) throw new Error(`API error ${resp.status}`);
+    const data = await resp.json();
+    const text = data?.content?.[0]?.text || 'No explanation available.';
+    const expl = document.getElementById(`tsexpl-${rowId}`);
+    if (expl) {
+      expl.className = 'inv-explain-box';
+      expl.innerHTML = `<strong>AI Explanation</strong><p>${esc(text)}</p>`;
+      expl.scrollIntoView({ behavior: 'smooth', block: 'nearest' });
+    }
+  } catch (e) {
+    alert(`Explain error: ${e.message}`);
+  } finally {
+    if (btn) { btn.textContent = 'Explain'; btn.disabled = false; }
+  }
+}
+
 function tsToggleDispute(rowId, tenantName, idx) {
   const t = lastTenants.find(x => x.name === tenantName);
   const r = lastResults.find(x => x.name === tenantName);
@@ -4542,9 +4581,12 @@ function generateTenantStatement(tenantName) {
               <div class="ts-detail-basis">Based on ${pct}% pro-rata allocation by square footage</div>
               <div class="ts-detail-actions">
                 ${viewInvBtn}
+                <button class="inv-act-btn inv-act-explain" id="tsexplbtn-${rowId}"
+                  onclick="event.stopPropagation();tsExplainInvoice('${rowId}','${esc(inv.vendor)}','${esc(inv.category)}',${inv.amount},'${esc(inv.invoiceDate||'')}')">Explain</button>
                 <button class="btn-danger-outline" id="dbtn-${rowId}"
                   onclick="event.stopPropagation();tsToggleDispute('${rowId}','${esc(tenantName)}',${idx})">Dispute this charge</button>
               </div>
+              <div id="tsexpl-${rowId}"></div>
             </div>
             <div id="dform-${rowId}" style="display:none;" onclick="event.stopPropagation()"></div>
           </div>`;
