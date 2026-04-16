@@ -1778,22 +1778,13 @@ function currentProperty() {
 
 // ─── Supabase Storage upload ──────────────────────────────────────────────────
 
-async function uploadInvoiceFile(file, propertyId) {
-  const safeName = file.name.replace(/[^a-zA-Z0-9._-]/g, '_');
-  const path = `${propertyId}/${Date.now()}-${safeName}`;
-
-  const { error } = await db.storage.from('invoices').upload(path, file, {
-    contentType: file.type || 'application/octet-stream',
-    upsert: false,
-  });
-
-  if (error) {
-    console.error('[Mainstreet] Storage upload failed:', error.message, error);
-    return { url: null, error: error.message };
-  }
-
-  const { data } = db.storage.from('invoices').getPublicUrl(path);
-  return { url: data.publicUrl, error: null };
+async function uploadInvoiceFile(file) {
+  console.log('[UPLOAD START]', file.name);
+  const { data, error } = await db.storage.from('invoices').upload(file.name, file);
+  console.log('[UPLOAD RESULT]', { data, error });
+  if (error) return { url: null, error: error.message };
+  const { data: urlData } = db.storage.from('invoices').getPublicUrl(file.name);
+  return { url: urlData.publicUrl, error: null };
 }
 
 // ─── Claude API helpers ───────────────────────────────────────────────────────
@@ -2655,33 +2646,29 @@ async function handleBatchInvoices(fileList) {
         </div>
       </div>`;
 
+    // Step 1 — Claude extraction (failure is non-fatal; recorded in _error)
+    let d = null;
+    let claudeError = null;
     try {
-      // Step 1 — AI extraction (critical; failure marks invoice as errored)
-      const d = await callClaude(files[i], INVOICE_PROMPT);
-
-      // Step 2 — file upload (best-effort; data kept even when upload fails)
-      const { url: fileUrl, error: fileUploadError } = await uploadInvoiceFile(files[i], property.id);
-
-      invoiceData.push({
-        vendorName:  d.vendorName  ?? '',
-        amount:      d.amount      ?? '',
-        category:    d.category    ?? 'other',
-        invoiceDate: d.invoiceDate ?? '',
-        confidence:  d.confidence  ?? {},
-        _error:      null,
-        _fileUploadError: fileUploadError,
-        fileUrl, fileName: files[i].name, fileType: files[i].type,
-      });
+      d = await callClaude(files[i], INVOICE_PROMPT);
     } catch (err) {
-      console.error('[Mainstreet] Invoice processing failed:', err.message, err);
-      invoiceData.push({
-        vendorName:  files[i].name.replace(/\.(pdf|jpe?g|png|webp)$/i, ''),
-        amount: '', category: 'other', invoiceDate: '',
-        confidence: {}, _error: err.message,
-        _fileUploadError: null,
-        fileUrl: null, fileName: files[i].name, fileType: files[i].type,
-      });
+      console.error('[Mainstreet] Claude extraction failed:', err.message, err);
+      claudeError = err.message;
     }
+
+    // Step 2 — Storage upload (always runs, independent of Claude)
+    const { url: fileUrl, error: fileUploadError } = await uploadInvoiceFile(files[i]);
+
+    invoiceData.push({
+      vendorName:  d?.vendorName  ?? files[i].name.replace(/\.(pdf|jpe?g|png|webp)$/i, ''),
+      amount:      d?.amount      ?? '',
+      category:    d?.category    ?? 'other',
+      invoiceDate: d?.invoiceDate ?? '',
+      confidence:  d?.confidence  ?? {},
+      _error:           claudeError,
+      _fileUploadError: fileUploadError,
+      fileUrl, fileName: files[i].name, fileType: files[i].type,
+    });
 
     renderInvResults();
     const idx = invoiceData.length - 1;
