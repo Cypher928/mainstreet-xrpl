@@ -771,6 +771,12 @@
     }
     .inv-explain-box strong { color: #A78BFA; display: block; margin-bottom: 6px; font-size: 0.78rem; text-transform: uppercase; letter-spacing: 0.05em; }
     .inv-explain-box p { margin: 0; line-height: 1.6; }
+    .expl-preview { overflow: hidden; display: -webkit-box; -webkit-line-clamp: 4; -webkit-box-orient: vertical; line-height: 1.6; }
+    .expl-preview.expanded { display: block; }
+    .expl-readmore { margin-top: 8px; background: none; border: none; padding: 0; color: #A78BFA; font-size: 0.82rem; cursor: pointer; text-decoration: underline; display: block; }
+    .expl-hd { display: block; margin: 6px 0 2px; color: #F1F5F9; font-weight: 700; font-size: 0.88rem; }
+    .expl-list { margin: 4px 0 4px 16px; padding: 0; }
+    .expl-list li { margin-bottom: 3px; }
     /* ── Tenant Statement Summary Card ──────────────────────────────── */
     .ts-summary-card {
       background: #0F1929; border: 1px solid rgba(255,255,255,0.09);
@@ -1748,6 +1754,8 @@ const CATEGORIES = ['landscaping','snow','repairs','utilities','janitorial','sec
 const tenantData  = [null, null, null];
 // invoiceData[i] = { vendorName, amount, category, invoiceDate, confidence, _error }
 const invoiceData = [];
+// Per-session file URL cache — keyed by vendor name (lowercased). Not persisted; populated on upload.
+const _invFileCache = {};
 // glData[i] = { date, vendor, category, amount, confidence, _include }
 let glData = [];
 
@@ -2643,6 +2651,9 @@ async function handleBatchInvoices(fileList) {
         _error:      null,
         fileDataUrl, fileName: files[i].name, fileType: files[i].type,
       });
+      if (fileDataUrl && d.vendorName) {
+        _invFileCache[d.vendorName.toLowerCase()] = { url: fileDataUrl, name: files[i].name, type: files[i].type };
+      }
     } catch (err) {
       invoiceData.push({
         vendorName:  files[i].name.replace(/\.(pdf|jpe?g|png|webp)$/i, ''),
@@ -2809,6 +2820,21 @@ function closeInvFileViewer() {
   document.getElementById('invFileViewerBody').innerHTML = '';
 }
 
+function viewInvFileByVendor(vendor) {
+  const cached = _invFileCache[(vendor || '').toLowerCase()];
+  if (!cached) return;
+  const viewer = document.getElementById('invFileViewer');
+  const title  = document.getElementById('invFileViewerTitle');
+  const body   = document.getElementById('invFileViewerBody');
+  title.textContent = cached.name || vendor || 'Invoice';
+  if (cached.type && cached.type.startsWith('image/')) {
+    body.innerHTML = `<img src="${cached.url}" style="max-width:100%;max-height:calc(100vh - 80px);border-radius:8px;object-fit:contain;" />`;
+  } else {
+    body.innerHTML = `<iframe src="${cached.url}" style="width:100%;height:calc(100vh - 80px);border:none;border-radius:8px;"></iframe>`;
+  }
+  viewer.style.display = 'flex';
+}
+
 async function explainCharge(i) {
   const inv = invoiceData[i];
   if (!inv) return;
@@ -2842,7 +2868,8 @@ async function explainCharge(i) {
       expl.className = 'inv-explain-box';
       det.appendChild(expl);
     }
-    expl.innerHTML = `<strong>AI Explanation</strong><p>${esc(text)}</p>`;
+    const mdHtml = renderMarkdown(text);
+    expl.innerHTML = `<strong>AI Explanation</strong><div class="expl-preview">${mdHtml}</div><button class="expl-readmore" onclick="var p=this.previousElementSibling;p.classList.toggle('expanded');this.textContent=p.classList.contains('expanded')?'Show less \u25b2':'Read full explanation \u25be'">Read full explanation &#x25BE;</button>`;
     det.style.display = 'block';
     document.getElementById(`ichev-${i}`).innerHTML = '&#x25B2; Close';
     expl.scrollIntoView({ behavior: 'smooth', block: 'nearest' });
@@ -3604,6 +3631,33 @@ function esc(v) {
     .replace(/"/g, '&quot;');
 }
 
+// Convert a subset of markdown to safe HTML (HTML-escapes first, then renders).
+function renderMarkdown(rawText) {
+  let s = String(rawText || '')
+    .replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;');
+  s = s.replace(/\*\*(.+?)\*\*/g,'<strong>$1</strong>');
+  s = s.replace(/^#{1,3} +(.+)$/gm,'<span class="expl-hd">$1</span>');
+  const lines = s.split('\n');
+  const segs = [];
+  let listItems = [];
+  for (const line of lines) {
+    const m = line.match(/^[-*] +(.+)$/);
+    if (m) { listItems.push(`<li>${m[1]}</li>`); }
+    else {
+      if (listItems.length) { segs.push({ ul: true, html: `<ul class="expl-list">${listItems.join('')}</ul>` }); listItems = []; }
+      segs.push({ ul: false, html: line });
+    }
+  }
+  if (listItems.length) segs.push({ ul: true, html: `<ul class="expl-list">${listItems.join('')}</ul>` });
+  let out = '';
+  for (let i = 0; i < segs.length; i++) {
+    const seg = segs[i];
+    if (seg.ul) { out += seg.html; }
+    else { if (i > 0 && !segs[i-1].ul) out += '<br>'; out += seg.html; }
+  }
+  return out;
+}
+
 function stat(label, value) {
   return `<div class="result-stat">
     <div class="stat-label">${label}</div>
@@ -3826,7 +3880,8 @@ async function tsExplainInvoice(rowId, vendor, category, amount, date) {
     const expl = document.getElementById(`tsexpl-${rowId}`);
     if (expl) {
       expl.className = 'inv-explain-box';
-      expl.innerHTML = `<strong>AI Explanation</strong><p>${esc(text)}</p>`;
+      const mdHtml = renderMarkdown(text);
+      expl.innerHTML = `<strong>AI Explanation</strong><div class="expl-preview">${mdHtml}</div><button class="expl-readmore" onclick="var p=this.previousElementSibling;p.classList.toggle('expanded');this.textContent=p.classList.contains('expanded')?'Show less \u25b2':'Read full explanation \u25be'">Read full explanation &#x25BE;</button>`;
       expl.scrollIntoView({ behavior: 'smooth', block: 'nearest' });
     }
   } catch (e) {
@@ -4550,11 +4605,9 @@ function generateTenantStatement(tenantName) {
     .map(([, data]) => {
       const invRows = data.invoices.map(({ inv, idx, share }) => {
         const rowId = `ts-${tenantName}-${idx}`.replace(/\s+/g, '-');
-        const stored = invoiceData.find(d =>
-          d.vendorName && d.vendorName.toLowerCase() === (inv.vendor || '').toLowerCase()
-        );
-        const viewInvBtn = stored && stored.fileDataUrl
-          ? `<button class="btn-secondary" onclick="event.stopPropagation();viewInvFile(${invoiceData.indexOf(stored)})">&#x1F4C4; View Invoice</button>`
+        const cachedFile = _invFileCache[(inv.vendor || '').toLowerCase()];
+        const viewInvBtn = cachedFile
+          ? `<button class="btn-secondary" onclick="event.stopPropagation();viewInvFileByVendor('${esc(inv.vendor)}')">&#x1F4C4; View Invoice</button>`
           : '';
         return `
           <div class="charge-row ts-inv-card" id="crow-${rowId}"
@@ -4993,6 +5046,7 @@ function resetWorkflow() {
   switchLeaseTab('bulk');
 
   invoiceData.length = 0;
+  Object.keys(_invFileCache).forEach(k => delete _invFileCache[k]);
   lastResults = []; lastInvoices = []; lastTenants = [];
   lastPropName = ''; lastTotal = 0; lastInvoicesFull = [];
   disputes.length = 0;
