@@ -1752,10 +1752,8 @@ const CATEGORIES = ['landscaping','snow','repairs','utilities','janitorial','sec
 // ─── State ────────────────────────────────────────────────────────────────────
 // tenantData[i] = null | { tenantName, leasedSqft, capPercentage, excludedCategories, baseYear }
 const tenantData  = [null, null, null];
-// invoiceData[i] = { vendorName, amount, category, invoiceDate, confidence, _error }
+// invoiceData[i] = { vendorName, amount, category, invoiceDate, confidence, _error, fileUrl, fileName, fileType }
 const invoiceData = [];
-// Per-session file URL cache — keyed by vendor name (lowercased). Not persisted; populated on upload.
-const _invFileCache = {};
 // glData[i] = { date, vendor, category, amount, confidence, _include }
 let glData = [];
 
@@ -2634,14 +2632,19 @@ async function handleBatchInvoices(fileList) {
       </div>`;
 
     try {
-      // Capture data URL for later viewing (before callClaude strips it)
-      const fileDataUrl = await new Promise((res, rej) => {
-        const r = new FileReader();
-        r.onload  = () => res(r.result);
-        r.onerror = () => res(null);
-        r.readAsDataURL(files[i]);
-      });
-      const d = await callClaude(files[i], INVOICE_PROMPT);
+      const [d, fileUrl] = await Promise.all([
+        callClaude(files[i], INVOICE_PROMPT),
+        (async () => {
+          const ext  = files[i].name.split('.').pop().toLowerCase();
+          const path = `${property.id}/${Date.now()}-${files[i].name.replace(/[^a-zA-Z0-9._-]/g, '_')}`;
+          const { error } = await db.storage.from('invoices').upload(path, files[i], {
+            contentType: files[i].type,
+            upsert: false,
+          });
+          if (error) throw error;
+          return db.storage.from('invoices').getPublicUrl(path).data.publicUrl;
+        })(),
+      ]);
       invoiceData.push({
         vendorName:  d.vendorName  ?? '',
         amount:      d.amount      ?? '',
@@ -2649,17 +2652,14 @@ async function handleBatchInvoices(fileList) {
         invoiceDate: d.invoiceDate ?? '',
         confidence:  d.confidence  ?? {},
         _error:      null,
-        fileDataUrl, fileName: files[i].name, fileType: files[i].type,
+        fileUrl, fileName: files[i].name, fileType: files[i].type,
       });
-      if (fileDataUrl && d.vendorName) {
-        _invFileCache[d.vendorName.toLowerCase()] = { url: fileDataUrl, name: files[i].name, type: files[i].type };
-      }
     } catch (err) {
       invoiceData.push({
         vendorName:  files[i].name.replace(/\.(pdf|jpe?g|png|webp)$/i, ''),
         amount: '', category: 'other', invoiceDate: '',
         confidence: {}, _error: err.message,
-        fileDataUrl: null, fileName: files[i].name, fileType: files[i].type,
+        fileUrl: null, fileName: files[i].name, fileType: files[i].type,
       });
     }
 
@@ -2801,17 +2801,8 @@ function viewInvoice(i) {
 
 function viewInvFile(i) {
   const inv = invoiceData[i];
-  if (!inv || !inv.fileDataUrl) return;
-  const viewer = document.getElementById('invFileViewer');
-  const title  = document.getElementById('invFileViewerTitle');
-  const body   = document.getElementById('invFileViewerBody');
-  title.textContent = inv.vendorName || inv.fileName || 'Invoice';
-  if (inv.fileType && inv.fileType.startsWith('image/')) {
-    body.innerHTML = `<img src="${inv.fileDataUrl}" style="max-width:100%;max-height:calc(100vh - 80px);border-radius:8px;object-fit:contain;" />`;
-  } else {
-    body.innerHTML = `<iframe src="${inv.fileDataUrl}" style="width:100%;height:calc(100vh - 80px);border:none;border-radius:8px;"></iframe>`;
-  }
-  viewer.style.display = 'flex';
+  if (!inv || !inv.fileUrl) return;
+  openInvFileViewer(inv.fileUrl, inv.vendorName || inv.fileName || 'Invoice', inv.fileType);
 }
 
 function closeInvFileViewer() {
@@ -2820,19 +2811,16 @@ function closeInvFileViewer() {
   document.getElementById('invFileViewerBody').innerHTML = '';
 }
 
-function viewInvFileByVendor(vendor) {
-  const cached = _invFileCache[(vendor || '').toLowerCase()];
-  if (!cached) return;
-  const viewer = document.getElementById('invFileViewer');
-  const title  = document.getElementById('invFileViewerTitle');
-  const body   = document.getElementById('invFileViewerBody');
-  title.textContent = cached.name || vendor || 'Invoice';
-  if (cached.type && cached.type.startsWith('image/')) {
-    body.innerHTML = `<img src="${cached.url}" style="max-width:100%;max-height:calc(100vh - 80px);border-radius:8px;object-fit:contain;" />`;
+function openInvFileViewer(url, title, fileType) {
+  if (!url) return;
+  document.getElementById('invFileViewerTitle').textContent = title || 'Invoice';
+  const body = document.getElementById('invFileViewerBody');
+  if (fileType && fileType.startsWith('image/')) {
+    body.innerHTML = `<img src="${url}" style="max-width:100%;max-height:calc(100vh - 80px);border-radius:8px;object-fit:contain;" />`;
   } else {
-    body.innerHTML = `<iframe src="${cached.url}" style="width:100%;height:calc(100vh - 80px);border:none;border-radius:8px;"></iframe>`;
+    body.innerHTML = `<iframe src="${url}" style="width:100%;height:calc(100vh - 80px);border:none;border-radius:8px;"></iframe>`;
   }
-  viewer.style.display = 'flex';
+  document.getElementById('invFileViewer').style.display = 'flex';
 }
 
 async function explainCharge(i) {
@@ -3789,7 +3777,7 @@ function epToggleDrill(category, tenantName) {
       const stored = invoiceData.find(d =>
         d.vendorName && d.vendorName.toLowerCase() === (inv.vendor || inv.vendorName || '').toLowerCase()
       );
-      const viewBtn = stored && stored.fileDataUrl
+      const viewBtn = stored && stored.fileUrl
         ? `<button class="ep-view-inv-btn" onclick="viewInvFile(${invoiceData.indexOf(stored)})">&#x1F4C4; View Source Invoice</button>`
         : '';
       return `
@@ -4605,9 +4593,11 @@ function generateTenantStatement(tenantName) {
     .map(([, data]) => {
       const invRows = data.invoices.map(({ inv, idx, share }) => {
         const rowId = `ts-${tenantName}-${idx}`.replace(/\s+/g, '-');
-        const cachedFile = _invFileCache[(inv.vendor || '').toLowerCase()];
-        const viewInvBtn = cachedFile
-          ? `<button class="btn-secondary" onclick="event.stopPropagation();viewInvFileByVendor('${esc(inv.vendor)}')">&#x1F4C4; View Invoice</button>`
+        const stored = invoiceData.find(d =>
+          d.vendorName && d.vendorName.toLowerCase() === (inv.vendor || '').toLowerCase()
+        );
+        const viewInvBtn = stored && stored.fileUrl
+          ? `<button class="btn-secondary" onclick="event.stopPropagation();openInvFileViewer('${stored.fileUrl}','${esc(inv.vendor)}','${esc(stored.fileType || '')}')">&#x1F4C4; View Invoice</button>`
           : '';
         return `
           <div class="charge-row ts-inv-card" id="crow-${rowId}"
@@ -5046,7 +5036,6 @@ function resetWorkflow() {
   switchLeaseTab('bulk');
 
   invoiceData.length = 0;
-  Object.keys(_invFileCache).forEach(k => delete _invFileCache[k]);
   lastResults = []; lastInvoices = []; lastTenants = [];
   lastPropName = ''; lastTotal = 0; lastInvoicesFull = [];
   disputes.length = 0;
@@ -5113,18 +5102,9 @@ function createDemoProperty() {
 const _LS_KEY = '_ms_props_v2';
 
 function _stripBlobs(property) {
-  // Return a copy of property with fileDataUrl removed from all invoice arrays
-  const p = { ...property };
-  if (Array.isArray(p.invoices)) {
-    p.invoices = p.invoices.filter(Boolean).map(({ fileDataUrl, ...r }) => r);
-  }
-  if (p.results) {
-    const res = { ...p.results };
-    if (Array.isArray(res.invoicesFull)) res.invoicesFull = res.invoicesFull.filter(Boolean).map(({ fileDataUrl, ...r }) => r);
-    if (Array.isArray(res.invoices))     res.invoices     = res.invoices.filter(Boolean).map(({ fileDataUrl, ...r }) => r);
-    p.results = res;
-  }
-  return p;
+  // fileUrl is now a plain URL string — nothing to strip. This function is kept
+  // as a safety passthrough in case other blob fields are added in future.
+  return property;
 }
 
 function _lsSave(property) {
@@ -5174,7 +5154,7 @@ async function loadProperties() {
 }
 
 // Save a property — localStorage first (instant), Supabase in background.
-// fileDataUrl blobs are stripped before either write.
+// Invoice files live in Supabase Storage; only the fileUrl string is saved here.
 async function saveProperty(property) {
   // ── 1. Save locally right now — works offline, never fails from network ──
   _lsSave(property);
