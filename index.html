@@ -1734,11 +1734,14 @@
 
 <script>
 // ─── Supabase ─────────────────────────────────────────────────────────────────
+const SUPABASE_URL      = 'https://zhsuheghehzbkmzurzyf.supabase.co';
+const SUPABASE_ANON_KEY = 'eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6Inpoc3VoZWhnZWhiemttenVyenlmIiwicm9sZSI6ImFub24iLCJpYXQiOjE3NzU4NDkwNDAsImV4cCI6MjA5MTQyNTA0MH0.HUl9ha9hhjIO1F_k8xPkqbZQnWx-ERRGbnmc6KS3lNE';
+
+console.log('[Mainstreet] SUPABASE_URL:',      SUPABASE_URL      || '❌ MISSING');
+console.log('[Mainstreet] SUPABASE_ANON_KEY:', SUPABASE_ANON_KEY ? SUPABASE_ANON_KEY.slice(0, 20) + '...' : '❌ MISSING');
+
 const { createClient: _sbCreateClient } = window.supabase;
-const db = _sbCreateClient(
-  'https://zhsuheghehzbkmzurzyf.supabase.co',
-  'eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6Inpoc3VoZWhnZWhiemttenVyenlmIiwicm9sZSI6ImFub24iLCJpYXQiOjE3NzU4NDkwNDAsImV4cCI6MjA5MTQyNTA0MH0.HUl9ha9hhjIO1F_k8xPkqbZQnWx-ERRGbnmc6KS3lNE'
-);
+const db = _sbCreateClient(SUPABASE_URL, SUPABASE_ANON_KEY);
 
 // ─── Constants ────────────────────────────────────────────────────────────────
 const MODEL      = 'claude-sonnet-4-6';
