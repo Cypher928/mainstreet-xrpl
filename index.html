@@ -1772,6 +1772,28 @@ function currentProperty() {
   return _props.find(p => p.id === activePropId) || null;
 }
 
+// ─── Supabase Storage upload ──────────────────────────────────────────────────
+
+async function uploadInvoiceFile(file, propertyId) {
+  const safeName = file.name.replace(/[^a-zA-Z0-9._-]/g, '_');
+  const path = `${propertyId}/${Date.now()}-${safeName}`;
+  console.log('[Mainstreet] Uploading invoice:', path);
+
+  const { error } = await db.storage.from('invoices').upload(path, file, {
+    contentType: file.type || 'application/octet-stream',
+    upsert: false,
+  });
+
+  if (error) {
+    console.error('[Mainstreet] Storage upload failed:', error.message, error);
+    return null;
+  }
+
+  const { data } = db.storage.from('invoices').getPublicUrl(path);
+  console.log('[Mainstreet] Invoice uploaded OK:', data.publicUrl);
+  return data.publicUrl;
+}
+
 // ─── Claude API helpers ───────────────────────────────────────────────────────
 
 async function toBase64(file) {
@@ -2632,19 +2654,12 @@ async function handleBatchInvoices(fileList) {
       </div>`;
 
     try {
-      const [d, fileUrl] = await Promise.all([
-        callClaude(files[i], INVOICE_PROMPT),
-        (async () => {
-          const ext  = files[i].name.split('.').pop().toLowerCase();
-          const path = `${property.id}/${Date.now()}-${files[i].name.replace(/[^a-zA-Z0-9._-]/g, '_')}`;
-          const { error } = await db.storage.from('invoices').upload(path, files[i], {
-            contentType: files[i].type,
-            upsert: false,
-          });
-          if (error) throw error;
-          return db.storage.from('invoices').getPublicUrl(path).data.publicUrl;
-        })(),
-      ]);
+      // Step 1 — AI extraction (critical; failure marks invoice as errored)
+      const d = await callClaude(files[i], INVOICE_PROMPT);
+
+      // Step 2 — file upload (best-effort; failure means no View Invoice button but data is kept)
+      const fileUrl = await uploadInvoiceFile(files[i], property.id);
+
       invoiceData.push({
         vendorName:  d.vendorName  ?? '',
         amount:      d.amount      ?? '',
@@ -2655,6 +2670,7 @@ async function handleBatchInvoices(fileList) {
         fileUrl, fileName: files[i].name, fileType: files[i].type,
       });
     } catch (err) {
+      console.error('[Mainstreet] Invoice processing failed:', err.message, err);
       invoiceData.push({
         vendorName:  files[i].name.replace(/\.(pdf|jpe?g|png|webp)$/i, ''),
         amount: '', category: 'other', invoiceDate: '',
