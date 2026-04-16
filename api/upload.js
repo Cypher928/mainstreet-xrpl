@@ -64,9 +64,12 @@ export default async function handler(req, res) {
       'x-upsert':      'true',
     }, buffer));
   } catch (e) {
-    // e.code = ECONNREFUSED | ENOTFOUND | ETIMEDOUT etc.
-    console.error('[api/upload] network error:', e.message, e.code);
-    return res.status(502).json({ error: `Network error reaching Supabase: ${e.message} (${e.code || 'unknown'})` });
+    console.error('[api/upload] network error:', e.code, e.message);
+    const paused = ['ECONNREFUSED', 'ENOTFOUND', 'ETIMEDOUT', 'ECONNRESET'].includes(e.code);
+    const msg = paused
+      ? `Supabase project is unreachable (${e.code}) — it may be paused. Go to supabase.com, open your project, and click Resume.`
+      : `Network error: ${e.message} (${e.code || 'unknown'})`;
+    return res.status(502).json({ error: msg });
   }
 
   console.log('[api/upload] response:', status, body);

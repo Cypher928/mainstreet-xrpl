@@ -765,7 +765,7 @@
     .inv-act-explain:hover { border-color: #8B5CF6; color: #C4B5FD; background: rgba(139,92,246,0.1); }
     .inv-act-dispute:hover { border-color: #ea580c; color: #fb923c; background: rgba(234,88,12,0.1); }
     .inv-disputed-badge { font-size: 0.7rem; color: #fb923c; font-weight: 700; flex-shrink: 0; }
-    .inv-upload-err-badge { font-size: 0.72rem; color: #f87171; font-weight: 600; flex-shrink: 0; background: rgba(239,68,68,0.1); border: 1px solid rgba(239,68,68,0.3); border-radius: 5px; padding: 2px 7px; }
+    .inv-upload-err-banner { font-size: 0.8rem; color: #fca5a5; font-weight: 500; background: rgba(239,68,68,0.1); border: 1px solid rgba(239,68,68,0.3); border-radius: 6px; padding: 6px 10px; margin: 4px 0 2px; word-break: break-word; white-space: normal; }
     .inv-explain-box {
       margin-top: 12px; padding: 12px; background: rgba(139,92,246,0.08);
       border: 1.5px solid rgba(139,92,246,0.3); border-radius: 8px; font-size: 0.84rem; color: #CBD5E1;
@@ -2751,7 +2751,6 @@ function renderInvResults() {
           ${overallConf !== undefined ? confidenceBadge(overallConf) : ''}
           ${dupBadge}
           ${d._disputed ? `<span class="inv-disputed-badge">\u26a0 Disputed</span>` : ''}
-          ${d._fileUploadError ? `<span class="inv-upload-err-badge">&#x26A0; Storage error: ${esc(String(d._fileUploadError))}</span>` : ''}
           <span class="bulk-t-chevron" id="ichev-${i}">&#x25BC; Edit</span>
           <div class="inv-action-btns">
             <button class="inv-act-btn" onclick="event.stopPropagation();viewInvoice(${i})">View</button>
@@ -2760,6 +2759,7 @@ function renderInvResults() {
           </div>
           <button class="bulk-t-remove" onclick="event.stopPropagation();removeInvItem(${i})">Remove</button>
         </div>
+        ${d._fileUploadError ? `<div class="inv-upload-err-banner">&#x26A0; File not saved — ${esc(String(d._fileUploadError))}</div>` : ''}
         <div class="bulk-tenant-detail" id="idet-${i}" style="display:none;">
           ${d._error ? `<div class="err-banner" style="margin-bottom:10px;">Extraction error: ${esc(d._error)}</div>` : ''}
           <div id="dup-warn-${i}"></div>
