@@ -4872,6 +4872,7 @@ async function backToPortfolio() {
         results:     lastResults, propName: lastPropName, total: lastTotal,
         invoices:    lastInvoices, invoicesFull: lastInvoicesFull,
         tenants:     lastTenants, disputes: Array.from(disputes),
+        camRuns:     camRuns.map(r => ({ ...r, timestamp: r.timestamp instanceof Date ? r.timestamp.toISOString() : r.timestamp })),
       } : null;
       // Update portfolio card stats from current session
       if (lastResults.length) {
@@ -4954,6 +4955,9 @@ function resetWorkflow() {
   lastPropName = ''; lastTotal = 0; lastInvoicesFull = [];
   disputes.length = 0;
   nextDisputeId = 0;
+  camRuns.length = 0;
+  document.getElementById('previousRunsSection').style.display = 'none';
+  document.getElementById('previousRunsList').innerHTML = '';
 
   document.getElementById('propertyName').value = '';
   document.getElementById('totalSqft').value    = '';
@@ -5136,6 +5140,7 @@ async function savePropertyData() {
     invoicesFull: lastInvoicesFull,
     tenants:      lastTenants,
     disputes:     Array.from(disputes),
+    camRuns:      camRuns.map(r => ({ ...r, timestamp: r.timestamp instanceof Date ? r.timestamp.toISOString() : r.timestamp })),
   } : null;
 
   await saveProperty(prop);
@@ -5205,8 +5210,16 @@ function renderProperty(property) {
       lastInvoices     = r.invoices     || [];
       lastInvoicesFull = r.invoicesFull || [];
       lastTenants      = r.tenants      || [];
+      // Restore per-property run history — parse ISO timestamps back to Date objects
+      if (Array.isArray(r.camRuns) && r.camRuns.length) {
+        camRuns.splice(0, camRuns.length, ...r.camRuns.map(run => ({
+          ...run,
+          timestamp: run.timestamp ? new Date(run.timestamp) : new Date(),
+        })));
+      }
       restoreResultsDisplay();
       renderDisputeSection();
+      renderPreviousRuns();
       showReportSection();
       restored = true;
     }
