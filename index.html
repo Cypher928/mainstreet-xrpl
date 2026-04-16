@@ -1759,28 +1759,26 @@ CLASSIFY EACH CHARGE AS:
 - Needs clarification
 - Potential issue
 
-DEFAULT BEHAVIOR:
-- Most charges should be treated as "Looks standard" or "Needs clarification"
-- Only flag "Potential issue" if something is clearly wrong or unusual
+CRITICAL DEFAULT RULE:
+- If a charge appears common or typical, ALWAYS classify it as "Looks standard"
+- Do NOT use "Needs clarification" just because small details are missing
+- Missing date, generic category, or lack of detail ALONE is NOT enough to escalate
+
+ONLY USE:
+- "Needs clarification" → if something is mildly unclear AND affects understanding
+- "Potential issue" → only if something appears clearly wrong, unusual, or excessive
 
 TONE RULES:
 - Calm, neutral, professional
 - Do NOT sound alarmist or accusatory
 - Do NOT assume wrongdoing
 - Do NOT encourage disputes unless clearly justified
-- Avoid legal-sounding or aggressive language
 
 QUESTION RULES:
 - Do NOT automatically suggest questions
-- ONLY include questions if something is genuinely unclear
-- Limit to 1–2 simple, polite questions MAX
-- Phrase them casually, not formally
-
-BAD EXAMPLE:
-"Request documentation and verify policy scope"
-
-GOOD EXAMPLE:
-"You might want to confirm what period this charge covers"
+- ONLY include questions if absolutely necessary
+- Limit to ONE simple question MAX
+- If the charge is standard, DO NOT include questions at all
 
 OUTPUT FORMAT:
 
@@ -1796,8 +1794,8 @@ CONTEXT:
 Briefly explain how this type of charge is typically handled in commercial leases.
 
 IF NEEDED:
-(Optional — only include if truly helpful)
-One or two short, polite clarification questions.
+(Optional — only include if truly necessary)
+One short, simple clarification question.
 
 IMPORTANT:
 If the charge appears normal, DO NOT include the "IF NEEDED" section.`;
