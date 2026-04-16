@@ -11,7 +11,7 @@ export const config = {
   },
 };
 
-const SUPABASE_URL      = 'https://zhsuheghehzbkmzurzyf.supabase.co';
+const SUPABASE_URL      = 'https://zhsuhehgehbzkmzurzyf.supabase.co';
 const SUPABASE_ANON_KEY = 'eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6Inpoc3VoZWhnZWhiemttenVyenlmIiwicm9sZSI6ImFub24iLCJpYXQiOjE3NzU4NDkwNDAsImV4cCI6MjA5MTQyNTA0MH0.HUl9ha9hhjIO1F_k8xPkqbZQnWx-ERRGbnmc6KS3lNE';
 
 function httpsPost(url, headers, body) {
