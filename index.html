@@ -4819,26 +4819,37 @@ async function selectProperty(id) {
   // Fire-and-forget save for the property we're leaving — don't block navigation
   if (activePropId && activePropId !== id) savePropertyData();
 
-  // Switch active property and clear old workflow state
+  // Switch active property and clear all global workflow state
   activePropId = id;
   resetWorkflow();
 
-  // ⚡ INSTANT: render immediately with whatever is already in _props
+  // ── Wipe the _props cache for this property before the instant render ─────
+  // Prevents stale or leaked data from the previous property showing through
+  // while the real load is in flight.
+  property.tenants  = [];
+  property.invoices = [];
+  property.disputes = [];
+  property.results  = null;
+
+  // ⚡ INSTANT: show the property shell (name/sqft) with a clean slate
   renderProperty(property);
 
-  // Load fresh data in the background, re-render once it arrives
+  // Load real data in the background, re-render once it arrives
   setTimeout(async () => {
     const data = await loadPropertyData(id);
-    if (!data) return;
+    if (!data || activePropId !== id) return;
+
+    // Verify results belong to THIS property — guards against data that was
+    // accidentally saved to the wrong property in a previous session
+    const safeResults = (data.results?.propId === id) ? data.results : null;
 
     property.tenants  = data.tenants  || [];
     property.invoices = data.invoices || [];
     property.disputes = data.disputes || [];
-    property.results  = data.results  || null;
+    property.results  = safeResults;
     if (data.name)      property.name      = data.name;
     if (data.totalSqft) property.totalSqft = data.totalSqft;
 
-    // Only re-render if the user is still on this property
     if (activePropId === id) renderProperty(property);
   }, 0);
 }
@@ -4857,9 +4868,10 @@ async function backToPortfolio() {
       prop.invoices = Array.from(invoiceData);
       prop.disputes = Array.from(disputes);
       prop.results  = lastResults.length ? {
-        results: lastResults, propName: lastPropName, total: lastTotal,
-        invoices: lastInvoices, invoicesFull: lastInvoicesFull,
-        tenants: lastTenants, disputes: Array.from(disputes),
+        propId:      prop.id,
+        results:     lastResults, propName: lastPropName, total: lastTotal,
+        invoices:    lastInvoices, invoicesFull: lastInvoicesFull,
+        tenants:     lastTenants, disputes: Array.from(disputes),
       } : null;
       // Update portfolio card stats from current session
       if (lastResults.length) {
@@ -5116,6 +5128,7 @@ async function savePropertyData() {
   prop.invoices = Array.from(invoiceData);
   prop.disputes = Array.from(disputes);
   prop.results  = lastResults.length ? {
+    propId:       prop.id,          // used to verify results belong to this property on load
     results:      lastResults,
     propName:     lastPropName,
     total:        lastTotal,
