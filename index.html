@@ -1779,12 +1779,22 @@ function currentProperty() {
 // ─── Supabase Storage upload ──────────────────────────────────────────────────
 
 async function uploadInvoiceFile(file) {
-  console.log('[UPLOAD START]', file.name);
-  const { data, error } = await db.storage.from('invoices').upload(file.name, file, { upsert: true });
-  console.log('[UPLOAD RESULT]', { data, error });
-  if (error) return { url: null, error: error.message };
-  const { data: urlData } = db.storage.from('invoices').getPublicUrl(file.name);
-  return { url: urlData.publicUrl, error: null };
+  console.log('[UPLOAD START]', file.name, file.size);
+  try {
+    const fileBase64 = await toBase64(file);
+    const resp = await fetch('/api/upload', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ fileName: file.name, fileType: file.type, fileBase64 }),
+    });
+    const result = await resp.json();
+    console.log('[UPLOAD RESULT]', resp.status, result);
+    if (!resp.ok || result.error) return { url: null, error: result.error || `HTTP ${resp.status}` };
+    return { url: result.url, error: null };
+  } catch (e) {
+    console.error('[UPLOAD EXCEPTION]', e);
+    return { url: null, error: e.message };
+  }
 }
 
 // ─── Claude API helpers ───────────────────────────────────────────────────────
