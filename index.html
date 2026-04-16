@@ -1780,7 +1780,7 @@ function currentProperty() {
 
 async function uploadInvoiceFile(file) {
   console.log('[UPLOAD START]', file.name);
-  const { data, error } = await db.storage.from('invoices').upload(file.name, file);
+  const { data, error } = await db.storage.from('invoices').upload(file.name, file, { upsert: true });
   console.log('[UPLOAD RESULT]', { data, error });
   if (error) return { url: null, error: error.message };
   const { data: urlData } = db.storage.from('invoices').getPublicUrl(file.name);
@@ -2741,7 +2741,7 @@ function renderInvResults() {
           ${overallConf !== undefined ? confidenceBadge(overallConf) : ''}
           ${dupBadge}
           ${d._disputed ? `<span class="inv-disputed-badge">\u26a0 Disputed</span>` : ''}
-          ${d._fileUploadError ? `<span class="inv-upload-err-badge">&#x26A0; File not saved: ${esc(d._fileUploadError)}</span>` : ''}
+          ${d._fileUploadError ? `<span class="inv-upload-err-badge">&#x26A0; Storage error: ${esc(String(d._fileUploadError))}</span>` : ''}
           <span class="bulk-t-chevron" id="ichev-${i}">&#x25BC; Edit</span>
           <div class="inv-action-btns">
             <button class="inv-act-btn" onclick="event.stopPropagation();viewInvoice(${i})">View</button>
