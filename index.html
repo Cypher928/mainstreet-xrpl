@@ -943,6 +943,16 @@
     .conf-high { background: rgba(34,197,94,0.15); color: #4ade80; }
     .conf-mid  { background: rgba(245,158,11,0.15); color: #fbbf24; }
     .conf-low  { background: rgba(239,68,68,0.15); color: #f87171; }
+    .conf-clickable { cursor: pointer; text-decoration: underline dotted; }
+    .conf-clickable:hover { opacity: 0.75; }
+    .field-highlight {
+      border-color: #fbbf24 !important;
+      box-shadow: 0 0 0 3px rgba(251,191,36,0.25) !important;
+      transition: box-shadow 0.2s, border-color 0.2s;
+    }
+    .field-hint {
+      font-size: 0.72rem; color: #fbbf24; margin-top: 4px; line-height: 1.4;
+    }
 
     /* ── Inline warnings (duplicate / sanity) ────────────────────────── */
     .warn-banner {
@@ -3083,6 +3093,10 @@ function renderInvResults() {
     const catStr = d.category || 'other';
     const scores = [conf.vendorName, conf.amount, conf.category].filter(s => s !== undefined && s !== null);
     const overallConf = scores.length ? Math.min(...scores) : undefined;
+
+    // Which fields are below 90% — used by clickable badge to highlight them
+    const weakFields = ['vendorName','amount','category','invoiceDate']
+      .filter(f => conf[f] !== undefined && conf[f] !== null && parseInt(conf[f]) < 90);
     const matchBadge  = d.matchedTenant
       ? `<span class="match-badge" title="${esc(d.matchReason || '')}">&#x2192; ${esc(d.matchedTenant)}</span>`
       : '';
@@ -3115,7 +3129,7 @@ function renderInvResults() {
           <span class="bulk-t-status">${icon}</span>
           <span class="bulk-t-name" id="iname-${i}">${esc(name)}</span>
           <span class="bulk-t-meta" id="imeta-${i}">${esc(catStr)} &middot; ${amtStr}</span>
-          ${overallConf !== undefined ? confidenceBadge(overallConf) : ''}
+          ${overallConf !== undefined ? clickableConfBadge(overallConf, i, weakFields) : ''}
           ${matchBadge}
           ${dupBadge}
           ${d._disputed ? `<span class="inv-disputed-badge">\u26a0 Disputed</span>` : ''}
@@ -3135,23 +3149,23 @@ function renderInvResults() {
           <div class="field-row">
             <div class="field" style="flex:2;">
               <label>Vendor ${confidenceBadge(conf.vendorName)}</label>
-              <input type="text" value="${esc(d.vendorName)}"
+              <input id="ifield-${i}-vendorName" type="text" value="${esc(d.vendorName)}"
                 oninput="invoiceData[${i}].vendorName=this.value;refreshInvSummary(${i})"/>
             </div>
             <div class="field">
               <label>Amount ($) ${confidenceBadge(conf.amount)}</label>
-              <input type="number" value="${esc(d.amount)}"
+              <input id="ifield-${i}-amount" type="number" value="${esc(d.amount)}"
                 oninput="invoiceData[${i}].amount=parseFloat(this.value)||'';refreshInvSummary(${i})"/>
             </div>
           </div>
           <div class="field-row">
             <div class="field">
               <label>Category ${confidenceBadge(conf.category)}</label>
-              <select onchange="invoiceData[${i}].category=this.value;refreshInvSummary(${i})">${opts}</select>
+              <select id="ifield-${i}-category" onchange="invoiceData[${i}].category=this.value;refreshInvSummary(${i})">${opts}</select>
             </div>
             <div class="field">
               <label>Invoice Date ${confidenceBadge(conf.invoiceDate)}</label>
-              <input type="text" value="${esc(d.invoiceDate)}"
+              <input id="ifield-${i}-invoiceDate" type="text" value="${esc(d.invoiceDate)}"
                 oninput="invoiceData[${i}].invoiceDate=this.value"/>
             </div>
           </div>
@@ -3165,6 +3179,57 @@ function renderInvResults() {
       <button class="bulk-clear-btn" onclick="clearInvResults()">&#x2715; Clear All</button>
     </div>
     ${rows}`;
+}
+
+// Returns a clickable confidence badge that opens + highlights weak fields on click.
+// Falls back to the plain badge when all fields are high-confidence.
+function clickableConfBadge(score, i, weakFields) {
+  if (score === null || score === undefined) return '';
+  const s = parseInt(score, 10);
+  if (isNaN(s) || s >= 90 || !weakFields.length) return confidenceBadge(score);
+  const label = s >= 70 ? '&#x26A0; Please verify' : '&#x2691; Low confidence — click to review';
+  const cls   = s >= 70 ? 'conf-mid' : 'conf-low';
+  return `<span class="conf-badge ${cls} conf-clickable"
+    onclick="event.stopPropagation();openInvoiceAndHighlight(${i},${JSON.stringify(weakFields)})"
+    title="Click to jump to fields that need review">${label}</span>`;
+}
+
+const _FIELD_HINTS = {
+  vendorName:  'We are not confident about this vendor name. Please verify.',
+  amount:      'We are not confident about this amount. Please verify.',
+  category:    'We are not confident this category is correct. Please review.',
+  invoiceDate: 'We are not confident about this date. Please verify.',
+};
+
+function openInvoiceAndHighlight(i, fields) {
+  // Open the detail row
+  const det  = document.getElementById(`idet-${i}`);
+  const chev = document.getElementById(`ichev-${i}`);
+  if (!det) return;
+  det.style.display = 'block';
+  if (chev) chev.innerHTML = '&#x25B2; Close';
+
+  // Scroll into view
+  det.scrollIntoView({ behavior: 'smooth', block: 'nearest' });
+
+  // Highlight each weak field and show a hint message
+  fields.forEach(field => {
+    const el = document.getElementById(`ifield-${i}-${field}`);
+    if (!el) return;
+
+    el.classList.add('field-highlight');
+    setTimeout(() => el.classList.remove('field-highlight'), 3500);
+
+    const hintId = `ifhint-${i}-${field}`;
+    if (!document.getElementById(hintId)) {
+      const hint = document.createElement('div');
+      hint.id        = hintId;
+      hint.className = 'field-hint';
+      hint.textContent = _FIELD_HINTS[field] || 'Please review this field.';
+      el.parentElement.appendChild(hint);
+      setTimeout(() => hint.remove(), 5000);
+    }
+  });
 }
 
 function toggleInvDetail(i) {
@@ -3828,6 +3893,10 @@ function runFullReconciliation(property) {
   const { leases, invoices, totalSqFt } = property;
   if (!leases.length || !invoices.length) return [];
 
+  // Pre-compute property-level sqFt overflow once
+  const totalLeasedSqFt = leases.reduce((s, l) => s + (l.sqFt || 0), 0);
+  const sqFtOverflow    = totalSqFt > 0 && totalLeasedSqFt > totalSqFt;
+
   invoices.forEach(inv => {
     const m = matchInvoiceToTenant(inv, leases);
     inv.matchedTenant   = m ? m.tenantName : null;
@@ -3878,6 +3947,14 @@ function runFullReconciliation(property) {
     ];
 
     const flags = [];
+
+    if (sqFtOverflow) {
+      flags.push({
+        code:        'SQFT_OVERFLOW',
+        message:     'Total leased square footage exceeds property total',
+        explanation: `The sum of tenant square footage (${totalLeasedSqFt.toLocaleString()} sqft) exceeds the property total (${totalSqFt.toLocaleString()} sqft). Pro-rata calculations may be incorrect.`,
+      });
+    }
 
     if (!lease.sqFt || lease.sqFt === 0) {
       flags.push({
@@ -3961,13 +4038,8 @@ async function runAllocation() {
     return;
   }
 
-  const usedSqFt = tenantData.filter(t => t).reduce((s, t) => s + parseSqft(t.leasedSqft), 0);
-  if (usedSqFt > totalSqft) {
-    showErr(body, section,
-      `Total tenant square footage (${usedSqFt.toLocaleString()} sqft) exceeds property total (${totalSqft.toLocaleString()} sqft). Please adjust before calculating.`
-    );
-    return;
-  }
+  // Show banner if sqFt is over, but do NOT block — surfaced as SQFT_OVERFLOW flag on results
+  checkSqftValidation();
 
   const tenants = tenantData
     .filter(t => t && t.tenantName && parseSqft(t.leasedSqft) > 0)
