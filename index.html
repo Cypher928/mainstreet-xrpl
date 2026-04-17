@@ -1818,7 +1818,9 @@ IF NEEDED:
 One short, simple question
 
 FINAL RULE:
-When in doubt → choose "Looks standard" and do NOT include questions.`;
+When in doubt → choose "Looks standard" and do NOT include questions.
+
+If the category appears incorrect based on the vendor or description, gently interpret the charge correctly in your explanation without criticizing the classification.`;
 
 const LANDLORD_SYSTEM_PROMPT = `You are an expert in commercial real estate CAM (Common Area Maintenance) reconciliation.
 You are advising a landlord reviewing expenses before sending them to tenants.
@@ -1850,7 +1852,8 @@ One short sentence explaining what a tenant might question
 SUGGESTION:
 One simple, practical way to improve clarity or reduce pushback
 IMPORTANT:
-If the charge looks normal, say "No issues" and do not invent problems.`;
+If the charge looks normal, say "No issues" and do not invent problems.
+If the category appears incorrect based on the vendor or description, gently interpret the charge correctly in your explanation without criticizing the classification.`;
 
 const LEASE_PROMPT = `Extract the following CAM lease terms from this document and return ONLY valid JSON with these fields: tenantName, leasedSqft, capPercentage, excludedCategories (array of strings), baseYear, confidence. "confidence" must be an object with a score 0-100 for each field (tenantName, leasedSqft, capPercentage, excludedCategories, baseYear) reflecting how clearly that value was found in the document. If a field is not found, use null.`;
 
@@ -2835,6 +2838,11 @@ async function handleBatchInvoices(fileList) {
       }
     }
 
+    if (resolvedCategory === 'other' && vendorName.toLowerCase().includes('insurance')) {
+      resolvedCategory = 'insurance';
+      resolvedConf = { ...resolvedConf, category: 90 };
+    }
+
     invoiceData.push({
       vendorName,
       amount:      d?.amount      ?? '',
@@ -3024,7 +3032,8 @@ async function explainCharge(i) {
           `Vendor: ${inv.vendorName || 'Unknown'}\n` +
           `Category: ${inv.category || 'other'}\n` +
           `Amount: $${inv.amount || '0'}\n` +
-          `Date: ${inv.invoiceDate || 'Unknown'}`
+          `Date: ${inv.invoiceDate || 'Unknown'}\n` +
+          `Confidence: ${inv.confidence?.category ?? 'unknown'}%`
         }],
       }),
     });
@@ -4040,7 +4049,8 @@ async function tsExplainInvoice(rowId, vendor, category, amount, date) {
           `Vendor: ${vendor || 'Unknown'}\n` +
           `Category: ${category || 'other'}\n` +
           `Amount: $${amount || '0'}\n` +
-          `Date: ${date || 'Unknown'}`
+          `Date: ${date || 'Unknown'}\n` +
+          `Confidence: unknown%`
         }],
       }),
     });
