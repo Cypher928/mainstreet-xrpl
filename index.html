@@ -986,6 +986,30 @@
       margin-left: 6px; cursor: default;
     }
 
+    /* ── Per-tenant invoice breakdown (result cards) ────────────────── */
+    .recon-breakdown { margin: 10px 0 4px; }
+    .recon-breakdown summary {
+      font-size: 0.78rem; color: #94a3b8; cursor: pointer; user-select: none;
+      padding: 4px 0; list-style: none;
+    }
+    .recon-breakdown summary::-webkit-details-marker { display: none; }
+    .recon-breakdown summary::before { content: '▶ '; font-size: 0.65rem; }
+    .recon-breakdown[open] summary::before { content: '▼ '; }
+    .recon-inv-list { margin-top: 6px; display: flex; flex-direction: column; gap: 4px; }
+    .recon-inv-row {
+      display: flex; align-items: center; gap: 8px; flex-wrap: wrap;
+      font-size: 0.75rem; padding: 4px 8px; border-radius: 6px;
+      background: rgba(255,255,255,0.04);
+    }
+    .recon-inv-vendor { flex: 1; min-width: 100px; color: #e2e8f0; font-weight: 600; }
+    .recon-inv-cat    { color: #94a3b8; font-size: 0.7rem; }
+    .recon-inv-share  { margin-left: auto; font-weight: 700; color: #e2e8f0; }
+    .recon-inv-badge  {
+      padding: 1px 6px; border-radius: 20px; font-size: 0.65rem; font-weight: 700;
+    }
+    .recon-direct { background: rgba(167,139,250,0.15); color: #a78bfa; border: 1px solid rgba(167,139,250,0.3); }
+    .recon-shared { background: rgba(99,102,241,0.12);  color: #818cf8; border: 1px solid rgba(99,102,241,0.25); }
+
     /* ── Previous Runs section ───────────────────────────────────────── */
     #previousRunsSection { margin-bottom: 14px; }
     .prev-runs-head {
@@ -1885,6 +1909,59 @@ const tenantData  = [null, null, null];
 const invoiceData = [];
 // glData[i] = { date, vendor, category, amount, confidence, _include }
 let glData = [];
+
+// ─── Data Model Classes ───────────────────────────────────────────────────────
+
+class Property {
+  constructor(name, totalSqFt) {
+    this.id = 'prop_' + Date.now();
+    this.name = name;
+    this.totalSqFt = totalSqFt;
+    this.leases = [];
+    this.invoices = [];
+    this.reconciliations = [];
+  }
+  addLeases(newLeases)  { this.leases   = this.leases.concat(newLeases);  }
+  addInvoices(newInvs)  { this.invoices = this.invoices.concat(newInvs);  }
+}
+
+class Lease {
+  constructor(tenantName, unitNumber, sqFt, startDate, endDate, excludedCategories = []) {
+    this.tenantName         = tenantName;
+    this.unitNumber         = unitNumber || '';
+    this.sqFt               = parseFloat(sqFt) || 0;
+    this.startDate          = startDate  || '';
+    this.endDate            = endDate    || '';
+    this.excludedCategories = excludedCategories.map(c => c.toLowerCase());
+  }
+}
+
+class Invoice {
+  constructor(id, date, amount, vendor, category, description = '') {
+    this.id              = id || ('inv_' + Date.now());
+    this.date            = date     || '';
+    this.amount          = parseFloat(amount) || 0;
+    this.vendorName      = vendor   || '';  // field matchInvoiceToTenant expects
+    this.category        = category || 'other';
+    this.invoiceDate     = date     || '';  // field matchInvoiceToTenant expects
+    this.description     = description;
+    this.matchedTenant   = null;
+    this.matchConfidence = 0;
+    this.matchReason     = '';
+  }
+}
+
+class ReconciliationResult {
+  constructor(tenantName, unitNumber, sqFt, totalAllocated, proRataPercent, includedInvoices) {
+    this.tenantName       = tenantName;
+    this.unitNumber       = unitNumber || '';
+    this.sqFt             = sqFt;
+    this.totalAllocated   = totalAllocated;
+    this.proRataPercent   = proRataPercent;
+    this.includedInvoices = includedInvoices || [];
+    this.status           = totalAllocated > 0 ? 'calculated' : 'needs review';
+  }
+}
 
 // ─── Portfolio State ──────────────────────────────────────────────────────────
 const portfolio = [
@@ -3639,6 +3716,52 @@ function matchInvoiceToTenant(invoice, tenants) {
   return bestMatch; // null = no match, shared expense
 }
 
+// ─── Full Reconciliation Engine ───────────────────────────────────────────────
+// Works on a Property object. Shared invoices are split pro-rata; invoices with
+// a direct tenant match (confidence >= 75) are charged only to that tenant.
+
+function runFullReconciliation(property) {
+  const { leases, invoices, totalSqFt } = property;
+  if (!leases.length || !invoices.length) return [];
+
+  invoices.forEach(inv => {
+    const m = matchInvoiceToTenant(inv, leases);
+    inv.matchedTenant   = m ? m.tenantName : null;
+    inv.matchConfidence = m ? m.confidence : 0;
+    inv.matchReason     = m ? m.reason     : '';
+  });
+
+  const directInvoices = invoices.filter(inv => inv.matchConfidence >= 75);
+  const sharedInvoices = invoices.filter(inv => inv.matchConfidence <  75);
+
+  const results = leases.map(lease => {
+    const proRata = lease.sqFt / totalSqFt;
+
+    const eligibleShared = sharedInvoices.filter(inv =>
+      !lease.excludedCategories.includes((inv.category || '').toLowerCase())
+    );
+    const sharedTotal = eligibleShared.reduce((s, inv) => s + inv.amount, 0) * proRata;
+
+    const ownInvoices = directInvoices.filter(inv => inv.matchedTenant === lease.tenantName);
+    const ownTotal    = ownInvoices.reduce((s, inv) => s + inv.amount, 0);
+
+    return new ReconciliationResult(
+      lease.tenantName,
+      lease.unitNumber,
+      lease.sqFt,
+      parseFloat((sharedTotal + ownTotal).toFixed(2)),
+      parseFloat((proRata * 100).toFixed(2)),
+      [
+        ...eligibleShared.map(inv => ({ ...inv, allocation: 'shared', share: parseFloat((inv.amount * proRata).toFixed(2)) })),
+        ...ownInvoices.map(inv    => ({ ...inv, allocation: 'direct', share: inv.amount })),
+      ]
+    );
+  });
+
+  property.reconciliations = results;
+  return results;
+}
+
 // ─── CAM Allocation Engine ────────────────────────────────────────────────────
 
 function runCAMAllocation(expenses, tenants) {
@@ -3714,7 +3837,18 @@ async function runAllocation() {
   const results   = runCAMAllocation(invoices, tenants);
   const totalCost = invoices.reduce((s, e) => s + e.amount, 0);
 
-  // Tag each invoice with its best tenant match (unit number or name hit)
+  // Build a Property + run full reconciliation (for per-tenant invoice breakdown + direct matching)
+  const _prop = new Property(propName, totalSqft);
+  _prop.addLeases(tenantData.filter(t => t && t.tenantName && parseSqft(t.leasedSqft) > 0).map(t =>
+    new Lease(t.tenantName, t.unitNumber || '', parseSqft(t.leasedSqft), t.startDate || '', t.endDate || '',
+      t.excludedCategories ? t.excludedCategories.split(',').map(s => s.trim()) : [])
+  ));
+  _prop.addInvoices(invoiceData.filter(inv => inv && inv.vendorName && parseFloat(inv.amount) > 0).map(inv =>
+    new Invoice(null, inv.invoiceDate, inv.amount, inv.vendorName, inv.category)
+  ));
+  const fullResults = runFullReconciliation(_prop);
+
+  // Sync matchedTenant tags back to invoiceData for badge display
   const activeTenants = tenantData.filter(t => t && t.tenantName);
   invoiceData.forEach((inv, i) => {
     if (!inv) return;
@@ -3726,12 +3860,13 @@ async function runAllocation() {
   renderInvResults();
 
   // Store for dispute + reports sections
-  lastInvoices     = invoices.map((inv, i) => ({ id: `inv-${i}`, ...inv }));
-  lastTenants      = tenants;
-  lastResults      = results;
-  lastPropName     = propName;
-  lastTotal        = totalCost;
-  lastInvoicesFull = invoices;
+  lastInvoices        = invoices.map((inv, i) => ({ id: `inv-${i}`, ...inv }));
+  lastTenants         = tenants;
+  lastResults         = results;
+  lastPropName        = propName;
+  lastTotal           = totalCost;
+  lastInvoicesFull    = invoices;
+  lastFullResults     = fullResults; // ReconciliationResult[] from runFullReconciliation
 
   document.getElementById('resultsTitle').textContent = `Results — ${propName}`;
 
@@ -3742,6 +3877,25 @@ async function runAllocation() {
   </div>`;
 
   results.forEach(r => {
+    const fr = fullResults.find(x => x.tenantName === r.name);
+    const invBreakdown = (() => {
+      if (!fr || !fr.includedInvoices.length) return '';
+      const rows = fr.includedInvoices.map(inv =>
+        `<div class="recon-inv-row">
+          <span class="recon-inv-vendor">${esc(inv.vendorName || '')}</span>
+          <span class="recon-inv-cat">${esc(inv.category || '')}</span>
+          ${inv.allocation === 'direct'
+            ? `<span class="recon-inv-badge recon-direct">direct</span>`
+            : `<span class="recon-inv-badge recon-shared">shared</span>`}
+          <span class="recon-inv-share">${fmt(inv.share)}</span>
+        </div>`
+      ).join('');
+      return `<details class="recon-breakdown">
+        <summary>Invoice breakdown (${fr.includedInvoices.length})</summary>
+        <div class="recon-inv-list">${rows}</div>
+      </details>`;
+    })();
+
     html += `<div class="result-card">
       <div class="r-name">${esc(r.name)}</div>
       <div class="result-grid">
@@ -3752,6 +3906,7 @@ async function runAllocation() {
       ${r.capApplied
         ? `<div class="cap-badge">Cap applied — ${fmt(r.capAdjustment)} reduced</div>`
         : ''}
+      ${invBreakdown}
       <button class="explain-btn" onclick="openExplainPanel('${esc(r.name)}')">&#x1F4CA; View Calculation</button>
     </div>`;
   });
@@ -4050,6 +4205,7 @@ let lastResults  = []; // runCAMAllocation output
 let lastPropName = '';
 let lastTotal    = 0;
 let lastInvoicesFull = []; // full invoice list with category sums
+let lastFullResults  = []; // ReconciliationResult[] from runFullReconciliation
 
 // ─── Dispute State ────────────────────────────────────────────────────────────
 let lastInvoices = []; // [{ id, vendor, category, amount }]
@@ -5356,7 +5512,7 @@ function resetWorkflow() {
 
   invoiceData.length = 0;
   lastResults = []; lastInvoices = []; lastTenants = [];
-  lastPropName = ''; lastTotal = 0; lastInvoicesFull = [];
+  lastPropName = ''; lastTotal = 0; lastInvoicesFull = []; lastFullResults = [];
   disputes.length = 0;
   nextDisputeId = 0;
   camRuns.length = 0;
