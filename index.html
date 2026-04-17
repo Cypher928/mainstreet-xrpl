@@ -1045,14 +1045,22 @@
       width: 100%; font-size: 0.68rem; color: #f87171; margin-top: 2px; cursor: help;
     }
 
-    /* ── Sqft validation error ───────────────────────────────────────── */
+    /* ── Sqft validation banner ──────────────────────────────────────── */
     .sqft-error-banner {
       margin-bottom: 12px; padding: 10px 14px; border-radius: 8px;
-      background: rgba(248,113,113,0.10); border: 1px solid rgba(248,113,113,0.4);
-      color: #f87171; font-size: 0.82rem; font-weight: 600;
+      font-size: 0.82rem; font-weight: 600;
     }
-    .sqft-invalid #tenantSlots {
-      border: 1px solid rgba(248,113,113,0.5); border-radius: 10px; padding: 8px;
+    .sqft-error-banner[data-severity="over"] {
+      background: rgba(248,113,113,0.10); border: 1px solid rgba(248,113,113,0.4); color: #f87171;
+    }
+    .sqft-error-banner[data-severity="under"] {
+      background: rgba(245,158,11,0.10); border: 1px solid rgba(245,158,11,0.4); color: #fbbf24;
+    }
+    .sqft-over #tenantSlots {
+      border: 1px solid rgba(248,113,113,0.4); border-radius: 10px; padding: 8px;
+    }
+    .sqft-under #tenantSlots {
+      border: 1px solid rgba(245,158,11,0.35); border-radius: 10px; padding: 8px;
     }
 
     /* ── Previous Runs section ───────────────────────────────────────── */
@@ -2244,31 +2252,48 @@ function validateTotalSqFt(property, newLease) {
 
 function checkSqftValidation() {
   const totalSqFt = parseFloat(document.getElementById('totalSqft')?.value) || 0;
-  if (!totalSqFt) { clearSqftError(); return; }
+  if (!totalSqFt) { clearSqftBanner(); return; }
 
   const usedSqFt = tenantData.filter(t => t).reduce((s, t) => s + parseSqft(t.leasedSqft), 0);
+  if (!usedSqFt)  { clearSqftBanner(); return; }
+
+  const used  = usedSqFt.toLocaleString();
+  const total = totalSqFt.toLocaleString();
 
   if (usedSqFt > totalSqFt) {
-    showSqftError(
-      `&#x26A0; Total tenant square footage (${usedSqFt.toLocaleString()} sqft) exceeds property total (${totalSqFt.toLocaleString()} sqft). Please adjust.`
+    showSqftBanner(
+      `&#x26A0;&#xFE0F; Total leased square footage (${used} sqft) exceeds building total (${total} sqft). Please adjust tenant sizes.`,
+      'over'
+    );
+  } else if (usedSqFt < totalSqFt) {
+    showSqftBanner(
+      `&#x26A0;&#xFE0F; Total leased square footage (${used} sqft) is less than building total (${total} sqft). Some space may be missing.`,
+      'under'
     );
   } else {
-    clearSqftError();
+    clearSqftBanner();
   }
 }
 
-function showSqftError(msg) {
-  const el     = document.getElementById('sqft-error');
-  const panel  = document.getElementById('leasePanelSingle');
-  if (el)    { el.innerHTML = msg; el.style.display = 'block'; }
-  if (panel) panel.classList.add('sqft-invalid');
+function showSqftBanner(msg, severity) {
+  const el    = document.getElementById('sqft-error');
+  const panel = document.getElementById('leasePanelSingle');
+  if (el) {
+    el.innerHTML = msg;
+    el.style.display = 'block';
+    el.dataset.severity = severity;
+  }
+  if (panel) {
+    panel.classList.remove('sqft-over', 'sqft-under');
+    panel.classList.add(severity === 'over' ? 'sqft-over' : 'sqft-under');
+  }
 }
 
-function clearSqftError() {
-  const el     = document.getElementById('sqft-error');
-  const panel  = document.getElementById('leasePanelSingle');
-  if (el)    { el.innerHTML = ''; el.style.display = 'none'; }
-  if (panel) panel.classList.remove('sqft-invalid');
+function clearSqftBanner() {
+  const el    = document.getElementById('sqft-error');
+  const panel = document.getElementById('leasePanelSingle');
+  if (el)    { el.innerHTML = ''; el.style.display = 'none'; delete el.dataset.severity; }
+  if (panel) panel.classList.remove('sqft-over', 'sqft-under');
 }
 
 function renderTenantFields(i) {
