@@ -953,6 +953,20 @@
     .field-hint {
       font-size: 0.72rem; color: #fbbf24; margin-top: 4px; line-height: 1.4;
     }
+    .conf-verified { background: rgba(34,197,94,0.15); color: #4ade80; border: none; }
+    .field-verify-actions { display: flex; gap: 6px; margin-top: 5px; }
+    .verify-btn {
+      font-size: 0.7rem; padding: 3px 9px; border-radius: 5px;
+      cursor: pointer; font-weight: 600; border: 1px solid;
+    }
+    .verify-btn-confirm {
+      background: rgba(34,197,94,0.12); color: #4ade80; border-color: rgba(34,197,94,0.3);
+    }
+    .verify-btn-confirm:hover { background: rgba(34,197,94,0.22); }
+    .verify-btn-change {
+      background: rgba(148,163,184,0.08); color: #94a3b8; border-color: rgba(148,163,184,0.2);
+    }
+    .verify-btn-change:hover { background: rgba(148,163,184,0.16); }
 
     /* ── Inline warnings (duplicate / sanity) ────────────────────────── */
     .warn-banner {
@@ -3154,7 +3168,7 @@ function renderInvResults() {
           <span class="bulk-t-status">${icon}</span>
           <span class="bulk-t-name" id="iname-${i}">${esc(name)}</span>
           <span class="bulk-t-meta" id="imeta-${i}">${esc(catStr)} &middot; ${amtStr}</span>
-          ${overallConf !== undefined ? clickableConfBadge(overallConf, i, weakFields) : ''}
+          <span id="isummaryBadge-${i}">${overallConf !== undefined ? clickableConfBadge(overallConf, i, weakFields) : ''}</span>
           ${matchBadge}
           ${dupBadge}
           ${d._disputed ? `<span class="inv-disputed-badge">\u26a0 Disputed</span>` : ''}
@@ -3175,23 +3189,27 @@ function renderInvResults() {
             <div class="field" style="flex:2;">
               <label>Vendor ${confidenceBadge(conf.vendorName)}</label>
               <input id="ifield-${i}-vendorName" type="text" value="${esc(d.vendorName)}"
-                oninput="invoiceData[${i}].vendorName=this.value;refreshInvSummary(${i})"/>
+                oninput="invoiceData[${i}].vendorName=this.value;markFieldVerified(${i},'vendorName');refreshInvSummary(${i})"/>
+              <span id="ibadgeWrap-${i}-vendorName">${verifiableActions(conf.vendorName, i, 'vendorName')}</span>
             </div>
             <div class="field">
               <label>Amount ($) ${confidenceBadge(conf.amount)}</label>
               <input id="ifield-${i}-amount" type="number" value="${esc(d.amount)}"
-                oninput="invoiceData[${i}].amount=parseFloat(this.value)||'';refreshInvSummary(${i})"/>
+                oninput="invoiceData[${i}].amount=parseFloat(this.value)||'';markFieldVerified(${i},'amount');refreshInvSummary(${i})"/>
+              <span id="ibadgeWrap-${i}-amount">${verifiableActions(conf.amount, i, 'amount')}</span>
             </div>
           </div>
           <div class="field-row">
             <div class="field">
               <label>Category ${confidenceBadge(conf.category)}</label>
-              <select id="ifield-${i}-category" onchange="invoiceData[${i}].category=this.value;refreshInvSummary(${i})">${opts}</select>
+              <select id="ifield-${i}-category" onchange="invoiceData[${i}].category=this.value;markFieldVerified(${i},'category');refreshInvSummary(${i})">${opts}</select>
+              <span id="ibadgeWrap-${i}-category">${verifiableActions(conf.category, i, 'category')}</span>
             </div>
             <div class="field">
               <label>Invoice Date ${confidenceBadge(conf.invoiceDate)}</label>
               <input id="ifield-${i}-invoiceDate" type="text" value="${esc(d.invoiceDate)}"
-                oninput="invoiceData[${i}].invoiceDate=this.value"/>
+                oninput="invoiceData[${i}].invoiceDate=this.value;markFieldVerified(${i},'invoiceDate');recomputeSummaryBadge(${i})"/>
+              <span id="ibadgeWrap-${i}-invoiceDate">${verifiableActions(conf.invoiceDate, i, 'invoiceDate')}</span>
             </div>
           </div>
         </div>
@@ -3255,6 +3273,46 @@ function openInvoiceAndHighlight(i, fields) {
       setTimeout(() => hint.remove(), 5000);
     }
   });
+}
+
+function verifiableActions(score, i, field) {
+  const s = parseInt(score);
+  const verified = invoiceData[i]?.verified?.[field];
+  if (verified) return `<span class="conf-badge conf-verified">&#x2713; Verified</span>`;
+  if (!isNaN(s) && s < 75) {
+    return `<div class="field-verify-actions">
+      <button class="verify-btn verify-btn-confirm" onclick="markFieldVerified(${i},'${field}')">Mark as Verified</button>
+      <button class="verify-btn verify-btn-change" onclick="focusInvField(${i},'${field}')">Change</button>
+    </div>`;
+  }
+  return '';
+}
+
+function markFieldVerified(i, field) {
+  if (!invoiceData[i]) return;
+  if (!invoiceData[i].verified) invoiceData[i].verified = {};
+  invoiceData[i].verified[field] = true;
+  const wrap = document.getElementById(`ibadgeWrap-${i}-${field}`);
+  if (wrap) wrap.innerHTML = '<span class="conf-badge conf-verified">&#x2713; Verified</span>';
+  recomputeSummaryBadge(i);
+}
+
+function focusInvField(i, field) {
+  const el = document.getElementById(`ifield-${i}-${field}`);
+  if (!el) return;
+  el.focus();
+  if (el.tagName === 'SELECT') el.click();
+}
+
+function recomputeSummaryBadge(i) {
+  const d = invoiceData[i]; if (!d) return;
+  const conf = d.confidence || {};
+  const scores = [conf.vendorName, conf.amount, conf.category].filter(s => s !== undefined && s !== null);
+  const overallConf = scores.length ? Math.min(...scores) : undefined;
+  const weakFields = ['vendorName','amount','category','invoiceDate']
+    .filter(f => conf[f] !== undefined && conf[f] !== null && parseInt(conf[f]) < 90 && !d.verified?.[f]);
+  const el = document.getElementById(`isummaryBadge-${i}`);
+  if (el) el.innerHTML = overallConf !== undefined ? clickableConfBadge(overallConf, i, weakFields) : '';
 }
 
 function toggleInvDetail(i) {
