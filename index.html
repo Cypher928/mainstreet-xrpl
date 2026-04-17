@@ -1248,6 +1248,14 @@
       border-bottom: 1px solid rgba(201,151,58,0.25); padding-bottom: 6px;
       margin: 28px 0 14px;
     }
+    .ai-risk-box { background: #111827; border: 1px solid rgba(255,255,255,0.08); border-radius: 12px; padding: 18px 20px; margin-bottom: 24px; }
+    .ai-risk-title { font-size: 0.78rem; font-weight: 700; color: #C9973A; text-transform: uppercase; letter-spacing: 0.07em; margin-bottom: 12px; }
+    .ai-risk-row { display: flex; align-items: center; gap: 10px; font-size: 0.88rem; color: #CBD5E1; margin-bottom: 6px; }
+    .ai-risk-row:last-child { margin-bottom: 0; }
+    .ai-run-btn { margin-top: 14px; background: rgba(201,151,58,0.12); border: 1px solid rgba(201,151,58,0.35); color: #C9973A; border-radius: 8px; padding: 8px 16px; font-size: 0.82rem; font-weight: 600; cursor: pointer; width: 100%; }
+    .ai-run-btn:hover { background: rgba(201,151,58,0.2); }
+    .ai-inv-review { margin-top: 10px; padding: 12px; background: rgba(139,92,246,0.07); border: 1px solid rgba(139,92,246,0.2); border-radius: 8px; font-size: 0.83rem; color: #CBD5E1; line-height: 1.6; }
+    .ai-inv-review strong { color: #A78BFA; font-size: 0.75rem; text-transform: uppercase; letter-spacing: 0.05em; display: block; margin-bottom: 4px; }
     .rpt-kpi-row { display: flex; gap: 16px; flex-wrap: wrap; margin-bottom: 8px; }
     .rpt-kpi {
       flex: 1; min-width: 120px; padding: 14px 18px;
@@ -1811,6 +1819,38 @@ One short, simple question
 
 FINAL RULE:
 When in doubt → choose "Looks standard" and do NOT include questions.`;
+
+const LANDLORD_SYSTEM_PROMPT = `You are an expert in commercial real estate CAM (Common Area Maintenance) reconciliation.
+You are advising a landlord reviewing expenses before sending them to tenants.
+Your job is NOT to audit for correctness, but to identify which charges tenants may question and how to make them clearer.
+Focus on:
+- Clarity
+- Presentation
+- Reducing tenant confusion and disputes
+CLASSIFICATIONS:
+- No issues → Clear and typical
+- Might get questions → Minor clarity issues
+- Likely to be challenged → High risk of pushback
+ONLY flag something if it could realistically confuse or concern a tenant.
+COMMON TRIGGERS:
+- Missing dates
+- Vague categories like "other"
+- Large or unusual amounts
+- Unclear vendor names
+TONE:
+- Calm
+- Professional
+- Practical
+- Never alarmist
+- Never suggest legal wrongdoing
+OUTPUT FORMAT:
+STATUS: [No issues / Might get questions / Likely to be challenged]
+WHY:
+One short sentence explaining what a tenant might question
+SUGGESTION:
+One simple, practical way to improve clarity or reduce pushback
+IMPORTANT:
+If the charge looks normal, say "No issues" and do not invent problems.`;
 
 const LEASE_PROMPT = `Extract the following CAM lease terms from this document and return ONLY valid JSON with these fields: tenantName, leasedSqft, capPercentage, excludedCategories (array of strings), baseYear, confidence. "confidence" must be an object with a score 0-100 for each field (tenantName, leasedSqft, capPercentage, excludedCategories, baseYear) reflecting how clearly that value was found in the document. If a field is not found, use null.`;
 
@@ -2918,7 +2958,7 @@ async function explainCharge(i) {
       body: JSON.stringify({
         model: MODEL,
         max_tokens: 1024,
-        system: CAM_EXPLAIN_SYSTEM_PROMPT,
+        system: LANDLORD_SYSTEM_PROMPT,
         messages: [{ role: 'user', content:
           `Vendor: ${inv.vendorName || 'Unknown'}\n` +
           `Category: ${inv.category || 'other'}\n` +
@@ -2939,7 +2979,7 @@ async function explainCharge(i) {
       det.appendChild(expl);
     }
     const mdHtml = renderMarkdown(text);
-    expl.innerHTML = `<strong>AI Explanation</strong><div class="expl-preview">${mdHtml}</div><button class="expl-readmore" onclick="var p=this.previousElementSibling;p.classList.toggle('expanded');this.textContent=p.classList.contains('expanded')?'Show less \u25b2':'Read full explanation \u25be'">Read full explanation &#x25BE;</button>`;
+    expl.innerHTML = `<strong>AI Review</strong><div class="expl-preview">${mdHtml}</div><button class="expl-readmore" onclick="var p=this.previousElementSibling;p.classList.toggle('expanded');this.textContent=p.classList.contains('expanded')?'Show less \u25b2':'Read full explanation \u25be'">Read full explanation &#x25BE;</button>`;
     det.style.display = 'block';
     document.getElementById(`ichev-${i}`).innerHTML = '&#x25B2; Close';
     expl.scrollIntoView({ behavior: 'smooth', block: 'nearest' });
@@ -4536,6 +4576,20 @@ function generateMasterReport() {
 
   const totalBilled = lastResults.reduce((s, r) => s + r.allocatedAmount, 0);
 
+  // AI Risk classification — map confidence scores to risk buckets
+  const riskInvoices = invoiceData.filter(inv => inv && !inv._error && inv.vendorName && parseFloat(inv.amount) > 0);
+  let riskGreen = 0, riskYellow = 0, riskRed = 0;
+  riskInvoices.forEach(inv => {
+    const conf = inv.confidence || {};
+    const scores = [conf.vendorName, conf.amount, conf.category].filter(s => s != null);
+    const minScore = scores.length ? Math.min(...scores) : 0;
+    const flagged = minScore < 90 || inv.category === 'other' || !inv.invoiceDate;
+    const openDispute = disputes.some(d => d.vendor === inv.vendorName && d.status === 'open');
+    if (openDispute) riskRed++;
+    else if (flagged) riskYellow++;
+    else riskGreen++;
+  });
+
   // Tenant summary table rows
   const tenantRows = lastResults.map(r => {
     const dc = disputeCount(r.name);
@@ -4570,6 +4624,15 @@ function generateMasterReport() {
     <div class="rpt-letterhead">
       <h1>${esc(lastPropName)}</h1>
       <div class="rpt-sub">Landlord Master CAM Report &nbsp;·&nbsp; ${period} &nbsp;·&nbsp; Generated ${now}</div>
+    </div>
+
+    <div class="ai-risk-box">
+      <div class="ai-risk-title">&#x1F9E0; AI Risk Review — Building Summary</div>
+      <div class="ai-risk-row"><span>&#x1F7E2;</span><span><strong>${riskGreen}</strong> charge${riskGreen !== 1 ? 's' : ''} look standard — no action needed</span></div>
+      <div class="ai-risk-row"><span>&#x1F7E1;</span><span><strong>${riskYellow}</strong> charge${riskYellow !== 1 ? 's' : ''} may get tenant questions</span></div>
+      <div class="ai-risk-row"><span>&#x1F534;</span><span><strong>${riskRed}</strong> charge${riskRed !== 1 ? 's' : ''} linked to open disputes</span></div>
+      <div id="aiRiskDetail"></div>
+      ${riskYellow + riskRed > 0 ? `<button class="ai-run-btn" onclick="runLandlordAIReview()">&#x1F9E0; Run AI Review on Flagged Charges</button>` : ''}
     </div>
 
     <div class="rpt-kpi-row">
@@ -4640,6 +4703,56 @@ function generateMasterReport() {
       const el = document.querySelector('#rptBody .rpt-hash-val');
       if (el) el.textContent = 'SHA-256: ' + hash + '\nGenerated: ' + new Date().toISOString();
     });
+}
+
+async function runLandlordAIReview() {
+  const btn = document.querySelector('.ai-run-btn');
+  const container = document.getElementById('aiRiskDetail');
+  if (!container) return;
+  if (btn) { btn.disabled = true; btn.textContent = 'Reviewing flagged charges…'; }
+
+  const flagged = invoiceData.filter(inv => {
+    if (!inv || inv._error || !inv.vendorName || !(parseFloat(inv.amount) > 0)) return false;
+    const conf = inv.confidence || {};
+    const scores = [conf.vendorName, conf.amount, conf.category].filter(s => s != null);
+    const minScore = scores.length ? Math.min(...scores) : 0;
+    return minScore < 90 || inv.category === 'other' || !inv.invoiceDate;
+  });
+
+  if (!flagged.length) {
+    container.innerHTML = '<div style="color:#4ade80;font-size:0.83rem;margin-top:10px;">&#x2713; All charges look clear — no AI review needed.</div>';
+    if (btn) btn.remove();
+    return;
+  }
+
+  let html = '';
+  for (const inv of flagged) {
+    try {
+      const resp = await fetch('/api/claude', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          model: MODEL,
+          max_tokens: 512,
+          system: LANDLORD_SYSTEM_PROMPT,
+          messages: [{ role: 'user', content:
+            `Vendor: ${inv.vendorName || 'Unknown'}\n` +
+            `Category: ${inv.category || 'other'}\n` +
+            `Amount: $${inv.amount || '0'}\n` +
+            `Date: ${inv.invoiceDate || 'Unknown'}`
+          }],
+        }),
+      });
+      const data = await resp.json();
+      const text = data?.content?.[0]?.text || 'No review available.';
+      html += `<div class="ai-inv-review"><strong>${esc(inv.vendorName)} — ${fmt(parseFloat(inv.amount))}</strong>${renderMarkdown(text)}</div>`;
+    } catch (e) {
+      html += `<div class="ai-inv-review"><strong>${esc(inv.vendorName)}</strong>Review failed: ${esc(e.message)}</div>`;
+    }
+  }
+
+  container.innerHTML = html;
+  if (btn) btn.remove();
 }
 
 function generateTenantStatement(tenantName) {
