@@ -2728,7 +2728,7 @@ async function clearBulkResults() {
 function normalizeCategory(vendor, description) {
   const v = (vendor || '').toLowerCase();
 
-  if (v.includes('insurance'))                        return { category: 'insurance',   confidence: 0.95 };
+  if (v.includes('insurance') || v.includes(' ins ') || v.includes(' ins.') || v.startsWith('ins ') || v.includes('coverage') || v.includes('policy')) return { category: 'insurance', confidence: 0.95 };
   if (v.includes('landscap'))                         return { category: 'landscaping', confidence: 0.95 };
   if (v.includes('snow'))                             return { category: 'snow',        confidence: 0.95 };
   if (v.includes('electric') || v.includes('utility')) return { category: 'utilities',  confidence: 0.90 };
