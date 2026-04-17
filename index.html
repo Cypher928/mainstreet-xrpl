@@ -1026,7 +1026,13 @@
       font-size: 0.8rem; font-weight: 700; color: #f87171; margin-bottom: 6px;
     }
     .rc-flag-item {
-      font-size: 0.78rem; color: #fca5a5; line-height: 1.6;
+      font-size: 0.78rem; color: #fca5a5; line-height: 1.5; margin-bottom: 6px;
+    }
+    .rc-flag-expl {
+      font-size: 0.73rem; color: #f8717188; font-weight: 400; line-height: 1.4;
+    }
+    .recon-inv-flag {
+      width: 100%; font-size: 0.68rem; color: #f87171; margin-top: 2px; cursor: help;
     }
 
     /* ── Sqft validation error ───────────────────────────────────────── */
@@ -3857,24 +3863,46 @@ function runFullReconciliation(property) {
     }
 
     const included = [
-      ...eligibleShared.map(inv => ({ ...inv, allocation: 'shared', share: parseFloat((inv.amount * proRata).toFixed(2)) })),
-      ...ownInvoices.map(inv    => ({ ...inv, allocation: 'direct', share: inv.amount })),
+      ...eligibleShared.map(inv => ({
+        ...inv,
+        allocation: 'shared',
+        share: parseFloat((inv.amount * proRata).toFixed(2)),
+        ...(inv.matchConfidence < 75 ? {
+          flag: {
+            message:     'Low confidence invoice match',
+            explanation: 'This invoice could not be confidently matched to a tenant using unit number or name, so it was treated as a shared expense.',
+          },
+        } : {}),
+      })),
+      ...ownInvoices.map(inv => ({ ...inv, allocation: 'direct', share: inv.amount })),
     ];
 
     const flags = [];
 
     if (!lease.sqFt || lease.sqFt === 0) {
-      flags.push({ code: 'SQFT_APPROXIMATE', message: 'Square footage is missing or estimated' });
+      flags.push({
+        code:        'SQFT_APPROXIMATE',
+        message:     'Square footage may be incorrect',
+        explanation: 'This tenant has missing or zero square footage, which may cause incorrect pro-rata calculations.',
+      });
     }
 
-    const invoiceYears    = invoices.map(inv => new Date(inv.date || inv.invoiceDate || '').getFullYear()).filter(y => !isNaN(y));
-    const leaseStartYear  = new Date(lease.startDate).getFullYear();
+    const invoiceYears   = invoices.map(inv => new Date(inv.date || inv.invoiceDate || '').getFullYear()).filter(y => !isNaN(y));
+    const leaseStartYear = new Date(lease.startDate).getFullYear();
     if (!isNaN(leaseStartYear) && invoiceYears.some(y => y < leaseStartYear)) {
-      flags.push({ code: 'BASE_YEAR_MISMATCH', message: 'Invoices include dates before lease start year' });
+      flags.push({
+        code:        'BASE_YEAR_MISMATCH',
+        message:     'Invoice dates may not match lease period',
+        explanation: 'One or more invoices occur before the lease start date, which may indicate incorrect CAM charges.',
+      });
     }
 
     if (!lease.leaseType) {
-      flags.push({ code: 'NNN_GROSS_UNKNOWN', message: 'Lease type (NNN or Gross) not specified' });
+      flags.push({
+        code:        'NNN_GROSS_UNKNOWN',
+        message:     'Lease type not specified',
+        explanation: 'The system could not determine if this lease is NNN or Gross, which affects how expenses should be allocated.',
+      });
     }
 
     const result = new ReconciliationResult(
@@ -4029,7 +4057,11 @@ async function runAllocation() {
     const flagsSection = flags.length > 0
       ? `<div class="rc-flags">
           <div class="rc-flags-title">&#x26A0;&#xFE0F; Needs Review</div>
-          ${flags.map(f => `<div class="rc-flag-item">&#x2022; ${esc(f.message)}</div>`).join('')}
+          ${flags.map(f => `
+            <div class="rc-flag-item">
+              &#x2022; <strong>${esc(f.message)}</strong>
+              ${f.explanation ? `<br><span class="rc-flag-expl">${esc(f.explanation)}</span>` : ''}
+            </div>`).join('')}
         </div>`
       : '';
 
@@ -4044,6 +4076,7 @@ async function runAllocation() {
             ? `<span class="recon-inv-badge recon-direct">direct</span>`
             : `<span class="recon-inv-badge recon-shared">shared</span>`}
           <span class="recon-inv-share">${fmt(inv.share)}</span>
+          ${inv.flag ? `<span class="recon-inv-flag" title="${esc(inv.flag.explanation || '')}">&#x26A0; ${esc(inv.flag.message)}</span>` : ''}
         </div>`
       ).join('');
       const capLine = fr.capApplied
