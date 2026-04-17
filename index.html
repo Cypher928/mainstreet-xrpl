@@ -1963,7 +1963,7 @@ class Invoice {
 
 class ReconciliationResult {
   constructor(tenantName, unitNumber, sqFt, totalAllocated, proRataPercent,
-              includedInvoices, capApplied = false, capAdjustment = null, ambiguityFlags = []) {
+              includedInvoices, capApplied = false, capAdjustment = null) {
     this.tenantName         = tenantName;
     this.unitNumber         = unitNumber || '';
     this.sqFt               = sqFt;
@@ -1972,10 +1972,8 @@ class ReconciliationResult {
     this.includedInvoices   = includedInvoices || [];
     this.capApplied         = capApplied;
     this.capAdjustment      = capAdjustment;
-    this.ambiguityFlags     = ambiguityFlags;  // [{ code, message }]
-    this.status             = ambiguityFlags.length > 0 ? 'needs review'
-                            : totalAllocated  > 0       ? 'calculated'
-                            :                             'needs review';
+    this.ambiguityFlags     = [];  // populated by runFullReconciliation after construction
+    this.status             = totalAllocated > 0 ? 'calculated' : 'needs review';
     const total = this.includedInvoices.reduce((s, inv) => s + (inv.share || 0), 0);
     this.averageConfidence  = total > 0
       ? Math.round(this.includedInvoices.reduce((s, inv) => s + (inv.matchConfidence || 0) * (inv.share || 0), 0) / total)
@@ -3783,30 +3781,23 @@ function runFullReconciliation(property) {
       ...ownInvoices.map(inv    => ({ ...inv, allocation: 'direct', share: inv.amount })),
     ];
 
-    // Ambiguity flags
     const flags = [];
 
-    if (lease.sqFtApproximate) {
-      flags.push({ code: 'SQF_APPROXIMATE', message: 'Sq ft may be approximate — verify lease exhibit' });
+    if (!lease.sqFt || lease.sqFt === 0) {
+      flags.push({ code: 'SQFT_APPROXIMATE', message: 'Square footage is missing or estimated' });
     }
 
-    if (lease.baseYear !== null) {
-      const years = included
-        .map(inv => new Date(inv.date || inv.invoiceDate || '').getFullYear())
-        .filter(y => !isNaN(y));
-      if (years.some(y => y !== lease.baseYear)) {
-        flags.push({ code: 'BASE_YEAR_MISMATCH', message: `Invoice year(s) outside base year ${lease.baseYear}` });
-      }
+    const invoiceYears    = invoices.map(inv => new Date(inv.date || inv.invoiceDate || '').getFullYear()).filter(y => !isNaN(y));
+    const leaseStartYear  = new Date(lease.startDate).getFullYear();
+    if (!isNaN(leaseStartYear) && invoiceYears.some(y => y < leaseStartYear)) {
+      flags.push({ code: 'BASE_YEAR_MISMATCH', message: 'Invoices include dates before lease start year' });
     }
 
-    if (lease.leaseType) {
-      const t = lease.leaseType.toUpperCase();
-      if (t.includes('NNN') || t.includes('GROSS')) {
-        flags.push({ code: 'NNN_GROSS_DETECTED', message: `Lease type "${lease.leaseType}" — confirm which expenses are included in CAM` });
-      }
+    if (!lease.leaseType) {
+      flags.push({ code: 'NNN_GROSS_UNKNOWN', message: 'Lease type (NNN or Gross) not specified' });
     }
 
-    return new ReconciliationResult(
+    const result = new ReconciliationResult(
       lease.tenantName,
       lease.unitNumber,
       lease.sqFt,
@@ -3814,9 +3805,10 @@ function runFullReconciliation(property) {
       parseFloat((proRata * 100).toFixed(2)),
       included,
       capApplied,
-      capAdjustment,
-      flags
+      capAdjustment
     );
+    result.ambiguityFlags = flags;
+    return result;
   });
 
   property.reconciliations = results;
