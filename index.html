@@ -1011,7 +1011,23 @@
     .recon-shared    { background: rgba(99,102,241,0.12);  color: #818cf8; border: 1px solid rgba(99,102,241,0.25); }
     .recon-cap-note  { font-size: 0.72rem; color: #fbbf24; margin: 4px 0 2px; }
     .recon-conf-note { font-size: 0.72rem; color: #64748b; margin: 2px 0 4px; }
-    .recon-flag-note { font-size: 0.72rem; color: #f87171; margin: 2px 0; }
+
+    /* ── Flagged result card ─────────────────────────────────────────── */
+    .result-card--flagged { border-color: rgba(248,113,113,0.4) !important; }
+    .rc-unit { font-size: 0.8rem; font-weight: 400; color: #94a3b8; }
+    .rc-flags {
+      margin: 12px 0 8px;
+      padding: 10px 14px;
+      border-radius: 8px;
+      background: rgba(248,113,113,0.08);
+      border: 1px solid rgba(248,113,113,0.3);
+    }
+    .rc-flags-title {
+      font-size: 0.8rem; font-weight: 700; color: #f87171; margin-bottom: 6px;
+    }
+    .rc-flag-item {
+      font-size: 0.78rem; color: #fca5a5; line-height: 1.6;
+    }
 
     /* ── Previous Runs section ───────────────────────────────────────── */
     #previousRunsSection { margin-bottom: 14px; }
@@ -3934,7 +3950,18 @@ async function runAllocation() {
   </div>`;
 
   results.forEach(r => {
-    const fr = fullResults.find(x => x.tenantName === r.name);
+    const fr    = fullResults.find(x => x.tenantName === r.name);
+    const flags = fr?.ambiguityFlags || [];
+
+    // ── Prominent flags block ──────────────────────────────────────────
+    const flagsSection = flags.length > 0
+      ? `<div class="rc-flags">
+          <div class="rc-flags-title">&#x26A0;&#xFE0F; Needs Review</div>
+          ${flags.map(f => `<div class="rc-flag-item">&#x2022; ${esc(f.message)}</div>`).join('')}
+        </div>`
+      : '';
+
+    // ── Collapsible invoice breakdown ──────────────────────────────────
     const invBreakdown = (() => {
       if (!fr || !fr.includedInvoices.length) return '';
       const rows = fr.includedInvoices.map(inv =>
@@ -3947,33 +3974,31 @@ async function runAllocation() {
           <span class="recon-inv-share">${fmt(inv.share)}</span>
         </div>`
       ).join('');
-      const capLine   = fr.capApplied
+      const capLine = fr.capApplied
         ? `<div class="recon-cap-note">&#x26A0; Cap applied — ${fmt(fr.capAdjustment)} reduced</div>`
         : '';
-      const confLine  = fr.averageConfidence > 0
-        ? `<div class="recon-conf-note">Match confidence: ${fr.averageConfidence}%</div>`
-        : '';
-      const flagLines = (fr.ambiguityFlags || []).map(f =>
-        `<div class="recon-flag-note">&#x26A0; ${esc(f.message)}</div>`
-      ).join('');
-      const hasFlags  = (fr.ambiguityFlags || []).length > 0;
-      return `<details class="recon-breakdown"${hasFlags ? ' open' : ''}>
-        <summary>Invoice breakdown (${fr.includedInvoices.length})${fr.averageConfidence > 0 ? ` · ${fr.averageConfidence}% confidence` : ''}${hasFlags ? ' ⚠' : ''}</summary>
-        ${capLine}${confLine}${flagLines}
+      return `<details class="recon-breakdown">
+        <summary>Invoice breakdown (${fr.includedInvoices.length})${fr.averageConfidence > 0 ? ` · ${fr.averageConfidence}% confidence` : ''}</summary>
+        ${capLine}
         <div class="recon-inv-list">${rows}</div>
       </details>`;
     })();
 
-    html += `<div class="result-card">
-      <div class="r-name">${esc(r.name)}</div>
+    // ── Confidence stat (only show when fr has it) ─────────────────────
+    const confStat = fr?.averageConfidence > 0
+      ? stat('Confidence', fr.averageConfidence + '%')
+      : '';
+
+    html += `<div class="result-card${flags.length ? ' result-card--flagged' : ''}">
+      <div class="r-name">${esc(r.name)}${fr?.unitNumber ? `<span class="rc-unit"> · Unit ${esc(fr.unitNumber)}</span>` : ''}</div>
       <div class="result-grid">
-        ${stat('Allocated Amount', fmt(r.allocatedAmount))}
-        ${stat('Pro-Rata Share',   (r.proRata * 100).toFixed(2) + '%')}
-        ${stat('Included Expenses', r.eligibleCount + ' of ' + invoices.length)}
+        ${stat('Total', fmt(r.allocatedAmount))}
+        ${stat('Pro-Rata', (r.proRata * 100).toFixed(2) + '%')}
+        ${confStat}
+        ${stat('Invoices', r.eligibleCount + ' of ' + invoices.length)}
       </div>
-      ${r.capApplied
-        ? `<div class="cap-badge">Cap applied — ${fmt(r.capAdjustment)} reduced</div>`
-        : ''}
+      ${r.capApplied ? `<div class="cap-badge">Cap applied — ${fmt(r.capAdjustment)} reduced</div>` : ''}
+      ${flagsSection}
       ${invBreakdown}
       <button class="explain-btn" onclick="openExplainPanel('${esc(r.name)}')">&#x1F4CA; View Calculation</button>
     </div>`;
