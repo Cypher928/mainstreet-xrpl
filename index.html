@@ -1010,7 +1010,8 @@
     .recon-direct    { background: rgba(167,139,250,0.15); color: #a78bfa; border: 1px solid rgba(167,139,250,0.3); }
     .recon-shared    { background: rgba(99,102,241,0.12);  color: #818cf8; border: 1px solid rgba(99,102,241,0.25); }
     .recon-cap-note  { font-size: 0.72rem; color: #fbbf24; margin: 4px 0 2px; }
-    .recon-conf-note { font-size: 0.72rem; color: #64748b;  margin: 2px 0 4px; }
+    .recon-conf-note { font-size: 0.72rem; color: #64748b; margin: 2px 0 4px; }
+    .recon-flag-note { font-size: 0.72rem; color: #f87171; margin: 2px 0; }
 
     /* ── Previous Runs section ───────────────────────────────────────── */
     #previousRunsSection { margin-bottom: 14px; }
@@ -1928,7 +1929,9 @@ class Property {
 }
 
 class Lease {
-  constructor(tenantName, unitNumber, sqFt, startDate, endDate, excludedCategories = [], capPercentage = null, capBaseAmount = null) {
+  constructor(tenantName, unitNumber, sqFt, startDate, endDate,
+              excludedCategories = [], capPercentage = null, capBaseAmount = null,
+              sqFtApproximate = false, baseYear = null, leaseType = null) {
     this.tenantName         = tenantName;
     this.unitNumber         = unitNumber || '';
     this.sqFt               = parseFloat(sqFt) || 0;
@@ -1937,6 +1940,9 @@ class Lease {
     this.excludedCategories = excludedCategories.map(c => c.toLowerCase());
     this.capPercentage      = capPercentage !== null ? parseFloat(capPercentage) : null;
     this.capBaseAmount      = capBaseAmount  !== null ? parseFloat(capBaseAmount)  : null;
+    this.sqFtApproximate    = !!sqFtApproximate;
+    this.baseYear           = baseYear ? parseInt(baseYear) : null;
+    this.leaseType          = leaseType || null; // e.g. 'NNN', 'Gross', 'Modified Gross'
   }
 }
 
@@ -1956,7 +1962,8 @@ class Invoice {
 }
 
 class ReconciliationResult {
-  constructor(tenantName, unitNumber, sqFt, totalAllocated, proRataPercent, includedInvoices, capApplied = false, capAdjustment = null) {
+  constructor(tenantName, unitNumber, sqFt, totalAllocated, proRataPercent,
+              includedInvoices, capApplied = false, capAdjustment = null, ambiguityFlags = []) {
     this.tenantName         = tenantName;
     this.unitNumber         = unitNumber || '';
     this.sqFt               = sqFt;
@@ -1965,9 +1972,10 @@ class ReconciliationResult {
     this.includedInvoices   = includedInvoices || [];
     this.capApplied         = capApplied;
     this.capAdjustment      = capAdjustment;
-    this.status             = totalAllocated > 0 ? 'calculated' : 'needs review';
-    // Weighted-average match confidence across included invoices (by share amount).
-    // 0 = all shared/pro-rata; 75-90 = some or all directly matched.
+    this.ambiguityFlags     = ambiguityFlags;  // [{ code, message }]
+    this.status             = ambiguityFlags.length > 0 ? 'needs review'
+                            : totalAllocated  > 0       ? 'calculated'
+                            :                             'needs review';
     const total = this.includedInvoices.reduce((s, inv) => s + (inv.share || 0), 0);
     this.averageConfidence  = total > 0
       ? Math.round(this.includedInvoices.reduce((s, inv) => s + (inv.matchConfidence || 0) * (inv.share || 0), 0) / total)
@@ -3775,6 +3783,29 @@ function runFullReconciliation(property) {
       ...ownInvoices.map(inv    => ({ ...inv, allocation: 'direct', share: inv.amount })),
     ];
 
+    // Ambiguity flags
+    const flags = [];
+
+    if (lease.sqFtApproximate) {
+      flags.push({ code: 'SQF_APPROXIMATE', message: 'Sq ft may be approximate — verify lease exhibit' });
+    }
+
+    if (lease.baseYear !== null) {
+      const years = included
+        .map(inv => new Date(inv.date || inv.invoiceDate || '').getFullYear())
+        .filter(y => !isNaN(y));
+      if (years.some(y => y !== lease.baseYear)) {
+        flags.push({ code: 'BASE_YEAR_MISMATCH', message: `Invoice year(s) outside base year ${lease.baseYear}` });
+      }
+    }
+
+    if (lease.leaseType) {
+      const t = lease.leaseType.toUpperCase();
+      if (t.includes('NNN') || t.includes('GROSS')) {
+        flags.push({ code: 'NNN_GROSS_DETECTED', message: `Lease type "${lease.leaseType}" — confirm which expenses are included in CAM` });
+      }
+    }
+
     return new ReconciliationResult(
       lease.tenantName,
       lease.unitNumber,
@@ -3783,7 +3814,8 @@ function runFullReconciliation(property) {
       parseFloat((proRata * 100).toFixed(2)),
       included,
       capApplied,
-      capAdjustment
+      capAdjustment,
+      flags
     );
   });
 
@@ -3871,7 +3903,10 @@ async function runAllocation() {
   _prop.addLeases(tenantData.filter(t => t && t.tenantName && parseSqft(t.leasedSqft) > 0).map(t =>
     new Lease(t.tenantName, t.unitNumber || '', parseSqft(t.leasedSqft), t.startDate || '', t.endDate || '',
       t.excludedCategories ? t.excludedCategories.split(',').map(s => s.trim()) : [],
-      t.capPercentage ?? null, null)
+      t.capPercentage ?? null, null,
+      (t.confidence?.leasedSqft ?? 100) < 70,  // sqFtApproximate
+      t.baseYear ?? null,                        // baseYear
+      null)                                      // leaseType (not yet extracted)
   ));
   _prop.addInvoices(invoiceData.filter(inv => inv && inv.vendorName && parseFloat(inv.amount) > 0).map(inv =>
     new Invoice(null, inv.invoiceDate, inv.amount, inv.vendorName, inv.category)
@@ -3920,15 +3955,19 @@ async function runAllocation() {
           <span class="recon-inv-share">${fmt(inv.share)}</span>
         </div>`
       ).join('');
-      const capLine = fr.capApplied
-        ? `<div class="recon-cap-note">Cap applied — ${fmt(fr.capAdjustment)} reduced</div>`
+      const capLine   = fr.capApplied
+        ? `<div class="recon-cap-note">&#x26A0; Cap applied — ${fmt(fr.capAdjustment)} reduced</div>`
         : '';
-      const confLine = fr.averageConfidence > 0
+      const confLine  = fr.averageConfidence > 0
         ? `<div class="recon-conf-note">Match confidence: ${fr.averageConfidence}%</div>`
         : '';
-      return `<details class="recon-breakdown">
-        <summary>Invoice breakdown (${fr.includedInvoices.length})${fr.averageConfidence > 0 ? ` · ${fr.averageConfidence}% confidence` : ''}</summary>
-        ${capLine}${confLine}
+      const flagLines = (fr.ambiguityFlags || []).map(f =>
+        `<div class="recon-flag-note">&#x26A0; ${esc(f.message)}</div>`
+      ).join('');
+      const hasFlags  = (fr.ambiguityFlags || []).length > 0;
+      return `<details class="recon-breakdown"${hasFlags ? ' open' : ''}>
+        <summary>Invoice breakdown (${fr.includedInvoices.length})${fr.averageConfidence > 0 ? ` · ${fr.averageConfidence}% confidence` : ''}${hasFlags ? ' ⚠' : ''}</summary>
+        ${capLine}${confLine}${flagLines}
         <div class="recon-inv-list">${rows}</div>
       </details>`;
     })();
