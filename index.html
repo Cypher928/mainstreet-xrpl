@@ -1854,9 +1854,9 @@ If the charge looks normal, say "No issues" and do not invent problems.`;
 
 const LEASE_PROMPT = `Extract the following CAM lease terms from this document and return ONLY valid JSON with these fields: tenantName, leasedSqft, capPercentage, excludedCategories (array of strings), baseYear, confidence. "confidence" must be an object with a score 0-100 for each field (tenantName, leasedSqft, capPercentage, excludedCategories, baseYear) reflecting how clearly that value was found in the document. If a field is not found, use null.`;
 
-const INVOICE_PROMPT = `Extract invoice details and return ONLY valid JSON with these fields: vendorName, amount (number), category, invoiceDate, confidence. "confidence" must be an object with a score 0-100 for each field (vendorName, amount, category, invoiceDate) reflecting how clearly that value was found in the document. Category must be one of: landscaping, snow, repairs, utilities, janitorial, security, management, other`;
+const INVOICE_PROMPT = `Extract invoice details and return ONLY valid JSON with these fields: vendorName, amount (number), category, invoiceDate, confidence. "confidence" must be an object with a score 0-100 for each field (vendorName, amount, category, invoiceDate) reflecting how clearly that value was found in the document. Category must be one of: insurance, landscaping, snow, repairs, utilities, janitorial, security, management, other. IMPORTANT: Insurance companies, policies, or premiums → insurance.`;
 
-const CATEGORIES = ['landscaping','snow','repairs','utilities','janitorial','security','management','other'];
+const CATEGORIES = ['insurance','landscaping','snow','repairs','utilities','janitorial','security','management','other'];
 
 // ─── State ────────────────────────────────────────────────────────────────────
 // tenantData[i] = null | { tenantName, leasedSqft, capPercentage, excludedCategories, baseYear }
