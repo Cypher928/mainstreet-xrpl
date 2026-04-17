@@ -1856,6 +1856,14 @@ const LEASE_PROMPT = `Extract the following CAM lease terms from this document a
 
 const INVOICE_PROMPT = `Extract invoice details and return ONLY valid JSON with these fields: vendorName, amount (number), category, invoiceDate, confidence. "confidence" must be an object with a score 0-100 for each field (vendorName, amount, category, invoiceDate) reflecting how clearly that value was found in the document. Category must be one of: insurance, landscaping, snow, repairs, utilities, janitorial, security, management, other. IMPORTANT: Insurance companies, policies, or premiums → insurance.`;
 
+const CATEGORY_PROMPT = `Classify this invoice into ONE category:
+[insurance, landscaping, snow, repairs, janitorial, utilities, other]
+
+Prioritize vendor name when obvious (e.g. insurance companies → insurance).
+
+Return JSON:
+{ "category": "...", "confidence": 0.0-1.0 }`;
+
 const CATEGORIES = ['insurance','landscaping','snow','repairs','utilities','janitorial','security','management','other'];
 
 // ─── State ────────────────────────────────────────────────────────────────────
@@ -2736,6 +2744,28 @@ function normalizeCategory(vendor, description) {
   return null;
 }
 
+async function classifyCategory(vendorName, amount) {
+  try {
+    const resp = await fetch('/api/claude', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({
+        model: MODEL,
+        max_tokens: 64,
+        messages: [{ role: 'user', content:
+          CATEGORY_PROMPT + `\n\nVendor: ${vendorName || 'Unknown'}\nAmount: $${amount || '0'}`
+        }],
+      }),
+    });
+    if (!resp.ok) return null;
+    const data = await resp.json();
+    const text = data?.content?.[0]?.text || '';
+    const json = JSON.parse(text.match(/\{[\s\S]*\}/)?.[0] || 'null');
+    if (json?.category && CATEGORIES.includes(json.category)) return json;
+  } catch { /* non-fatal */ }
+  return null;
+}
+
 async function handleBatchInvoices(fileList) {
   if (!fileList || fileList.length === 0) return;
   const files = Array.from(fileList).filter(f =>
@@ -2785,27 +2815,32 @@ async function handleBatchInvoices(fileList) {
     // Step 2 — Storage upload (always runs, independent of Claude)
     const { url: fileUrl, error: fileUploadError } = await uploadInvoiceFile(files[i]);
 
+    // Step 3 — Category resolution: Claude → normalizeCategory → classifyCategory
+    const vendorName = d?.vendorName ?? files[i].name.replace(/\.(pdf|jpe?g|png|webp)$/i, '');
+    let resolvedCategory = d?.category ?? 'other';
+    let resolvedConf     = d?.confidence ?? {};
+    const claudeCatConf  = resolvedConf.category ?? 0;
+
+    if (resolvedCategory === 'other' || claudeCatConf < 80) {
+      const norm = normalizeCategory(vendorName, '');
+      if (norm) {
+        resolvedCategory = norm.category;
+        resolvedConf = { ...resolvedConf, category: Math.round(norm.confidence * 100) };
+      } else {
+        const ai = await classifyCategory(vendorName, d?.amount);
+        if (ai) {
+          resolvedCategory = ai.category;
+          resolvedConf = { ...resolvedConf, category: Math.round(ai.confidence * 100) };
+        }
+      }
+    }
+
     invoiceData.push({
-      vendorName:  d?.vendorName  ?? files[i].name.replace(/\.(pdf|jpe?g|png|webp)$/i, ''),
+      vendorName,
       amount:      d?.amount      ?? '',
-      category:    (function() {
-        const claudeCat  = d?.category ?? 'other';
-        const claudeConf = d?.confidence?.category ?? 0;
-        if (claudeCat === 'other' || claudeConf < 80) {
-          const norm = normalizeCategory(d?.vendorName, '');
-          if (norm) return norm.category;
-        }
-        return claudeCat;
-      })(),
+      category:    resolvedCategory,
       invoiceDate: d?.invoiceDate ?? '',
-      confidence:  (function() {
-        const base = d?.confidence ?? {};
-        if ((d?.category === 'other' || (base.category ?? 0) < 80)) {
-          const norm = normalizeCategory(d?.vendorName, '');
-          if (norm) return { ...base, category: Math.round(norm.confidence * 100) };
-        }
-        return base;
-      })(),
+      confidence:  resolvedConf,
       _error:           claudeError,
       _fileUploadError: fileUploadError,
       fileUrl, fileName: files[i].name, fileType: files[i].type,
