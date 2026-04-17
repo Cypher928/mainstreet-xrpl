@@ -1029,6 +1029,16 @@
       font-size: 0.78rem; color: #fca5a5; line-height: 1.6;
     }
 
+    /* ── Sqft validation error ───────────────────────────────────────── */
+    .sqft-error-banner {
+      margin-bottom: 12px; padding: 10px 14px; border-radius: 8px;
+      background: rgba(248,113,113,0.10); border: 1px solid rgba(248,113,113,0.4);
+      color: #f87171; font-size: 0.82rem; font-weight: 600;
+    }
+    .sqft-invalid #tenantSlots {
+      border: 1px solid rgba(248,113,113,0.5); border-radius: 10px; padding: 8px;
+    }
+
     /* ── Previous Runs section ───────────────────────────────────────── */
     #previousRunsSection { margin-bottom: 14px; }
     .prev-runs-head {
@@ -1530,7 +1540,8 @@
       </div>
       <div class="field">
         <label>Total Property Sqft</label>
-        <input type="number" id="totalSqft" placeholder="e.g. 20000" min="1" />
+        <input type="number" id="totalSqft" placeholder="e.g. 20000" min="1"
+          oninput="checkSqftValidation()" />
       </div>
     </div>
   </div>
@@ -1569,6 +1580,7 @@
 
     <!-- Panel B: Single -->
     <div id="leasePanelSingle" style="display:none;">
+      <div id="sqft-error" class="sqft-error-banner" style="display:none;"></div>
       <div id="tenantSlots"></div>
     </div>
   </div>
@@ -2180,6 +2192,7 @@ async function handleLease(i, file) {
       confidence:         d.confidence           ?? {},
     };
     renderTenantFields(i);
+    checkSqftValidation();
 
     // tenantData is already restored from _props; slot i was just updated in-place.
     // Merge so other slots' existing data isn't lost on save.
@@ -2190,6 +2203,56 @@ async function handleLease(i, file) {
   } catch (err) {
     renderTenantError(i, err.message);
   }
+}
+
+// ─── Sqft Validation ─────────────────────────────────────────────────────────
+
+function validateTotalSqFt(property, newLease) {
+  const totalSqFt = parseFloat(property.totalSqFt || property.totalSqft) || 0;
+  if (!totalSqFt) return { valid: true, message: null };
+
+  const existingTotal = (property.leases || [])
+    .filter(l => l.tenantName !== (newLease?.tenantName))
+    .reduce((s, l) => s + (parseSqft(l.sqFt || l.leasedSqft)), 0);
+
+  const newTotal = existingTotal + parseSqft(newLease?.sqFt || newLease?.leasedSqft || 0);
+
+  if (newTotal > totalSqFt) {
+    return {
+      valid: false,
+      message: `Total tenant square footage (${newTotal.toLocaleString()} sqft) exceeds property total (${totalSqFt.toLocaleString()} sqft). Please adjust.`,
+    };
+  }
+  return { valid: true, message: null };
+}
+
+function checkSqftValidation() {
+  const totalSqFt = parseFloat(document.getElementById('totalSqft')?.value) || 0;
+  if (!totalSqFt) { clearSqftError(); return; }
+
+  const usedSqFt = tenantData.filter(t => t).reduce((s, t) => s + parseSqft(t.leasedSqft), 0);
+
+  if (usedSqFt > totalSqFt) {
+    showSqftError(
+      `&#x26A0; Total tenant square footage (${usedSqFt.toLocaleString()} sqft) exceeds property total (${totalSqFt.toLocaleString()} sqft). Please adjust.`
+    );
+  } else {
+    clearSqftError();
+  }
+}
+
+function showSqftError(msg) {
+  const el     = document.getElementById('sqft-error');
+  const panel  = document.getElementById('leasePanelSingle');
+  if (el)    { el.innerHTML = msg; el.style.display = 'block'; }
+  if (panel) panel.classList.add('sqft-invalid');
+}
+
+function clearSqftError() {
+  const el     = document.getElementById('sqft-error');
+  const panel  = document.getElementById('leasePanelSingle');
+  if (el)    { el.innerHTML = ''; el.style.display = 'none'; }
+  if (panel) panel.classList.remove('sqft-invalid');
 }
 
 function renderTenantFields(i) {
@@ -2212,7 +2275,7 @@ function renderTenantFields(i) {
         <div class="field">
           <label>Leased Sqft ${confidenceBadge(conf.leasedSqft)}</label>
           <input type="number" value="${esc(d.leasedSqft)}"
-            oninput="tenantData[${i}].leasedSqft = this.value"/>
+            oninput="tenantData[${i}].leasedSqft = this.value; checkSqftValidation()"/>
         </div>
       </div>
       <div class="field-row">
@@ -2250,6 +2313,7 @@ function renderTenantError(i, msg) {
 function resetTenant(i) {
   tenantData[i] = null;
   renderTenantUploadZone(i);
+  checkSqftValidation();
 }
 
 // ─── Lease Tab Switching ──────────────────────────────────────────────────────
@@ -3866,6 +3930,14 @@ async function runAllocation() {
 
   if (!totalSqft || totalSqft <= 0) {
     showErr(body, section, 'Please enter a valid Total Property Sqft in Section 1.');
+    return;
+  }
+
+  const usedSqFt = tenantData.filter(t => t).reduce((s, t) => s + parseSqft(t.leasedSqft), 0);
+  if (usedSqFt > totalSqft) {
+    showErr(body, section,
+      `Total tenant square footage (${usedSqFt.toLocaleString()} sqft) exceeds property total (${totalSqft.toLocaleString()} sqft). Please adjust before calculating.`
+    );
     return;
   }
 
