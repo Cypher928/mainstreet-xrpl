@@ -2725,6 +2725,17 @@ async function clearBulkResults() {
 
 // ─── Batch Invoice Upload ─────────────────────────────────────────────────────
 
+function normalizeCategory(vendor, description) {
+  const v = (vendor || '').toLowerCase();
+
+  if (v.includes('insurance'))                        return { category: 'insurance',   confidence: 0.95 };
+  if (v.includes('landscap'))                         return { category: 'landscaping', confidence: 0.95 };
+  if (v.includes('snow'))                             return { category: 'snow',        confidence: 0.95 };
+  if (v.includes('electric') || v.includes('utility')) return { category: 'utilities',  confidence: 0.90 };
+
+  return null;
+}
+
 async function handleBatchInvoices(fileList) {
   if (!fileList || fileList.length === 0) return;
   const files = Array.from(fileList).filter(f =>
@@ -2777,9 +2788,24 @@ async function handleBatchInvoices(fileList) {
     invoiceData.push({
       vendorName:  d?.vendorName  ?? files[i].name.replace(/\.(pdf|jpe?g|png|webp)$/i, ''),
       amount:      d?.amount      ?? '',
-      category:    d?.category    ?? 'other',
+      category:    (function() {
+        const claudeCat  = d?.category ?? 'other';
+        const claudeConf = d?.confidence?.category ?? 0;
+        if (claudeCat === 'other' || claudeConf < 80) {
+          const norm = normalizeCategory(d?.vendorName, '');
+          if (norm) return norm.category;
+        }
+        return claudeCat;
+      })(),
       invoiceDate: d?.invoiceDate ?? '',
-      confidence:  d?.confidence  ?? {},
+      confidence:  (function() {
+        const base = d?.confidence ?? {};
+        if ((d?.category === 'other' || (base.category ?? 0) < 80)) {
+          const norm = normalizeCategory(d?.vendorName, '');
+          if (norm) return { ...base, category: Math.round(norm.confidence * 100) };
+        }
+        return base;
+      })(),
       _error:           claudeError,
       _fileUploadError: fileUploadError,
       fileUrl, fileName: files[i].name, fileType: files[i].type,
