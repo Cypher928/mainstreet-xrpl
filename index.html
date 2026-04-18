@@ -2522,10 +2522,20 @@ function renderTenantFields(i) {
             oninput="tenantData[${i}].baseYear = this.value"/>
         </div>
       </div>
-      <div class="field">
-        <label>Excluded Categories (comma-separated) ${confidenceBadge(conf.excludedCategories)}</label>
-        <input type="text" value="${esc(d.excludedCategories)}"
-          oninput="tenantData[${i}].excludedCategories = this.value"/>
+      <div class="field-row">
+        <div class="field">
+          <label>Lease Type</label>
+          <select onchange="tenantData[${i}].leaseType = this.value || null; if(lastResults.length) runAllocation()">
+            <option value="">Select lease type</option>
+            <option value="NNN"${d.leaseType === 'NNN'   ? ' selected' : ''}>NNN</option>
+            <option value="Gross"${d.leaseType === 'Gross' ? ' selected' : ''}>Gross</option>
+          </select>
+        </div>
+        <div class="field">
+          <label>Excluded Categories (comma-separated) ${confidenceBadge(conf.excludedCategories)}</label>
+          <input type="text" value="${esc(d.excludedCategories)}"
+            oninput="tenantData[${i}].excludedCategories = this.value"/>
+        </div>
       </div>
     </div>`;
 }
@@ -3099,10 +3109,20 @@ function renderBulkResults() {
                 oninput="tenantData[${i}].baseYear=this.value"/>
             </div>
           </div>
-          <div class="field">
-            <label>Excluded Categories (comma-separated) ${confidenceBadge(conf.excludedCategories)}</label>
-            <input type="text" value="${esc(d.excludedCategories)}"
-              oninput="tenantData[${i}].excludedCategories=this.value"/>
+          <div class="field-row">
+            <div class="field">
+              <label>Lease Type</label>
+              <select onchange="tenantData[${i}].leaseType = this.value || null; if(lastResults.length) runAllocation()">
+                <option value="">Select lease type</option>
+                <option value="NNN"${d.leaseType === 'NNN'   ? ' selected' : ''}>NNN</option>
+                <option value="Gross"${d.leaseType === 'Gross' ? ' selected' : ''}>Gross</option>
+              </select>
+            </div>
+            <div class="field">
+              <label>Excluded Categories (comma-separated) ${confidenceBadge(conf.excludedCategories)}</label>
+              <input type="text" value="${esc(d.excludedCategories)}"
+                oninput="tenantData[${i}].excludedCategories=this.value"/>
+            </div>
           </div>
         </div>
       </div>`;
@@ -4372,7 +4392,7 @@ async function runAllocation() {
       t.capPercentage ?? null, null,
       (t.confidence?.leasedSqft ?? 100) < 70,  // sqFtApproximate
       t.baseYear ?? null,                        // baseYear
-      null)                                      // leaseType (not yet extracted)
+      t.leaseType ?? null)                       // leaseType: 'NNN' | 'Gross' | null
   ));
   _prop.addInvoices(invoiceData.filter(inv => inv && inv.vendorName && parseFloat(inv.amount) > 0).map(inv =>
     new Invoice(null, inv.invoiceDate, inv.amount, inv.vendorName, inv.category)
