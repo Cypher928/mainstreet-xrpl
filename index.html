@@ -2762,6 +2762,18 @@ function renderTenantFields(i) {
       </div>
       <div class="field-row">
         <div class="field">
+          <label>Lease Start Date</label>
+          <input type="date" value="${esc(d.startDate || '')}"
+            onchange="handleTenantChange(${i},'startDate',this.value)"/>
+        </div>
+        <div class="field">
+          <label>Lease End Date</label>
+          <input type="date" value="${esc(d.endDate || '')}"
+            onchange="handleTenantChange(${i},'endDate',this.value)"/>
+        </div>
+      </div>
+      <div class="field-row">
+        <div class="field">
           <label>Cap % (optional) ${confidenceBadge(conf.capPercentage)}</label>
           <input type="number" value="${esc(d.capPercentage)}"
             onchange="handleTenantChange(${i},'capPercentage',this.value)"/>
@@ -2800,8 +2812,8 @@ function renderTenantError(i, msg) {
   if (!tenantData[i]) {
     tenantData[i] = {
       tenantName: '', leasedSqft: '', capPercentage: '',
-      excludedCategories: '', baseYear: '', leaseType: null,
-      confidence: {}, _error: msg,
+      excludedCategories: '', baseYear: '', startDate: '', endDate: '',
+      leaseType: null, confidence: {}, _error: msg,
     };
   } else {
     tenantData[i]._error = msg;
@@ -3285,6 +3297,8 @@ async function handleBulkLeases(fileList) {
         excludedCategories: Array.isArray(d.excludedCategories)
                               ? d.excludedCategories.join(', ') : '',
         baseYear:           d.baseYear             ?? '',
+        startDate:          d.startDate            ?? '',
+        endDate:            d.endDate              ?? '',
         confidence:         d.confidence           ?? {},
         _error:             null,
       });
@@ -3354,24 +3368,36 @@ function renderBulkResults() {
             <div class="field">
               <label>Tenant Name ${confidenceBadge(conf.tenantName)}</label>
               <input type="text" value="${esc(d.tenantName)}"
-                onchange="handleBulkChange(${i},'tenantName',this.value)"/>
+                oninput="handleBulkChange(${i},'tenantName',this.value)"/>
             </div>
             <div class="field">
               <label>Leased Sqft ${confidenceBadge(conf.leasedSqft)}</label>
               <input type="number" value="${esc(d.leasedSqft)}"
-                onchange="handleBulkChange(${i},'leasedSqft',this.value)"/>
+                oninput="handleBulkChange(${i},'leasedSqft',this.value)"/>
+            </div>
+          </div>
+          <div class="field-row">
+            <div class="field">
+              <label>Lease Start Date</label>
+              <input type="date" value="${esc(d.startDate || '')}"
+                onchange="handleBulkChange(${i},'startDate',this.value)"/>
+            </div>
+            <div class="field">
+              <label>Lease End Date</label>
+              <input type="date" value="${esc(d.endDate || '')}"
+                onchange="handleBulkChange(${i},'endDate',this.value)"/>
             </div>
           </div>
           <div class="field-row">
             <div class="field">
               <label>Cap % (optional) ${confidenceBadge(conf.capPercentage)}</label>
               <input type="number" value="${esc(d.capPercentage)}"
-                onchange="handleBulkChange(${i},'capPercentage',this.value)"/>
+                oninput="handleBulkChange(${i},'capPercentage',this.value)"/>
             </div>
             <div class="field">
               <label>Base Year ${confidenceBadge(conf.baseYear)}</label>
               <input type="text" value="${esc(d.baseYear)}"
-                onchange="handleBulkChange(${i},'baseYear',this.value)"/>
+                oninput="handleBulkChange(${i},'baseYear',this.value)"/>
             </div>
           </div>
           <div class="field-row">
@@ -3386,7 +3412,7 @@ function renderBulkResults() {
             <div class="field">
               <label>Excluded Categories (comma-separated) ${confidenceBadge(conf.excludedCategories)}</label>
               <input type="text" value="${esc(d.excludedCategories)}"
-                onchange="handleBulkChange(${i},'excludedCategories',this.value)"/>
+                oninput="handleBulkChange(${i},'excludedCategories',this.value)"/>
             </div>
           </div>
         </div>
