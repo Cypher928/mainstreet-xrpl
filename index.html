@@ -2662,6 +2662,16 @@ function handleTenantChange(index, field, value) {
   savePropertyData(); // fire-and-forget async persist
 }
 
+function handleBulkChange(index, field, value) {
+  if (!tenantData[index]) return;
+  tenantData[index][field] = (field === 'leaseType') ? (value || null) : value;
+  refreshBulkSummary(index);
+  if (field === 'leasedSqft') checkSqftValidation();
+  if (field === 'leaseType' && lastResults.length) runAllocation();
+  saveTenantData();
+  savePropertyData();
+}
+
 function liveTenantFlags(d) {
   const flags = [];
   if (!d.leasedSqft || parseSqft(d.leasedSqft) === 0) {
@@ -3344,30 +3354,30 @@ function renderBulkResults() {
             <div class="field">
               <label>Tenant Name ${confidenceBadge(conf.tenantName)}</label>
               <input type="text" value="${esc(d.tenantName)}"
-                oninput="tenantData[${i}].tenantName=this.value;refreshBulkSummary(${i})"/>
+                onchange="handleBulkChange(${i},'tenantName',this.value)"/>
             </div>
             <div class="field">
               <label>Leased Sqft ${confidenceBadge(conf.leasedSqft)}</label>
               <input type="number" value="${esc(d.leasedSqft)}"
-                oninput="tenantData[${i}].leasedSqft=this.value;refreshBulkSummary(${i})"/>
+                onchange="handleBulkChange(${i},'leasedSqft',this.value)"/>
             </div>
           </div>
           <div class="field-row">
             <div class="field">
               <label>Cap % (optional) ${confidenceBadge(conf.capPercentage)}</label>
               <input type="number" value="${esc(d.capPercentage)}"
-                oninput="tenantData[${i}].capPercentage=this.value;refreshBulkSummary(${i})"/>
+                onchange="handleBulkChange(${i},'capPercentage',this.value)"/>
             </div>
             <div class="field">
               <label>Base Year ${confidenceBadge(conf.baseYear)}</label>
               <input type="text" value="${esc(d.baseYear)}"
-                oninput="tenantData[${i}].baseYear=this.value"/>
+                onchange="handleBulkChange(${i},'baseYear',this.value)"/>
             </div>
           </div>
           <div class="field-row">
             <div class="field">
               <label>Lease Type</label>
-              <select onchange="tenantData[${i}].leaseType = this.value || null; if(lastResults.length) runAllocation()">
+              <select onchange="handleBulkChange(${i},'leaseType',this.value)">
                 <option value="">Select lease type</option>
                 <option value="NNN"${d.leaseType === 'NNN'   ? ' selected' : ''}>NNN</option>
                 <option value="Gross"${d.leaseType === 'Gross' ? ' selected' : ''}>Gross</option>
@@ -3376,7 +3386,7 @@ function renderBulkResults() {
             <div class="field">
               <label>Excluded Categories (comma-separated) ${confidenceBadge(conf.excludedCategories)}</label>
               <input type="text" value="${esc(d.excludedCategories)}"
-                oninput="tenantData[${i}].excludedCategories=this.value"/>
+                onchange="handleBulkChange(${i},'excludedCategories',this.value)"/>
             </div>
           </div>
         </div>
