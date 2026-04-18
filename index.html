@@ -1088,6 +1088,16 @@
     .rc-flags--warn .rc-flags-title { color: #fbbf24; }
     .rc-flags--warn .rc-flag-item { color: #fde68a; }
     .rc-flags--warn .rc-flag-expl { color: rgba(253,230,138,0.55); }
+    /* Tenant edit form — live flag banners */
+    .tf-flags { display: flex; flex-direction: column; gap: 6px; margin: 10px 0 14px; }
+    .tf-flag {
+      display: flex; align-items: flex-start; gap: 9px;
+      padding: 9px 12px; border-radius: 8px; font-size: 0.78rem; line-height: 1.45;
+    }
+    .tf-flag--warn { background: rgba(245,158,11,0.08); border: 1px solid rgba(245,158,11,0.3); color: #fde68a; }
+    .tf-flag--crit { background: rgba(248,113,113,0.08); border: 1px solid rgba(248,113,113,0.3); color: #fca5a5; }
+    .tf-flag-icon  { flex-shrink: 0; line-height: 1.45; }
+    .tf-flag-expl  { font-weight: 400; opacity: 0.75; margin-top: 2px; font-size: 0.73rem; }
     /* Invoice confidence badge */
     .recon-inv-conf { font-size: 0.67rem; font-weight: 700; border-radius: 4px; padding: 1px 5px; flex-shrink: 0; }
     .recon-inv-conf-hi  { background: rgba(34,197,94,0.14);   color: #86efac; }
@@ -2610,6 +2620,45 @@ async function copyReqInfoMsg() {
   }
 }
 
+function liveTenantFlags(d) {
+  const flags = [];
+  if (!d.leasedSqft || parseSqft(d.leasedSqft) === 0) {
+    flags.push({
+      code:     'SQFT_APPROXIMATE',
+      severity: 'warn',
+      message:  'Square footage not set',
+      explanation: 'Pro-rata share cannot be calculated without a valid leased square footage.',
+    });
+  }
+  if (d.startDate) {
+    const startYear = new Date(d.startDate).getFullYear();
+    if (!isNaN(startYear)) {
+      const hasEarlyInvoice = invoiceData.some(inv => {
+        if (!inv) return false;
+        const y = new Date(inv.invoiceDate || '').getFullYear();
+        return !isNaN(y) && y < startYear;
+      });
+      if (hasEarlyInvoice) {
+        flags.push({
+          code:     'BASE_YEAR_MISMATCH',
+          severity: 'warn',
+          message:  'Invoice dates may predate this lease',
+          explanation: `One or more invoices are from before ${startYear}. These may be incorrectly included in the CAM pool.`,
+        });
+      }
+    }
+  }
+  if (!d.leaseType) {
+    flags.push({
+      code:     'NNN_GROSS_UNKNOWN',
+      severity: 'warn',
+      message:  'Lease type not specified',
+      explanation: 'Select NNN or Gross above — this affects how expenses are allocated.',
+    });
+  }
+  return flags;
+}
+
 function renderTenantFields(i) {
   const d    = tenantData[i];
   const body = document.getElementById(`tb-${i}`);
@@ -2622,6 +2671,19 @@ function renderTenantFields(i) {
       ${(!d.tenantName || !d.startDate) ? '<div class="extract-hint">&#x2022; Lease terms unclear</div>' : ''}
     </div>` : '';
 
+  const _liveFlags  = liveTenantFlags(d);
+  const _flagsBlock = _liveFlags.length ? `
+    <div class="tf-flags">
+      ${_liveFlags.map(f => `
+        <div class="tf-flag tf-flag--${f.severity}">
+          <span class="tf-flag-icon">&#x26A1;</span>
+          <div>
+            <strong>${esc(f.message)}</strong>
+            <div class="tf-flag-expl">${esc(f.explanation)}</div>
+          </div>
+        </div>`).join('')}
+    </div>` : '';
+
   body.innerHTML = `
     <div class="extracted">
       ${_errBlock}
@@ -2630,6 +2692,7 @@ function renderTenantFields(i) {
         Fields extracted — review and edit below
         <button class="re-btn" onclick="resetTenant(${i})">Re-upload</button>
       </div>
+      ${_flagsBlock}
       <div class="field-row">
         <div class="field">
           <label>Tenant Name ${confidenceBadge(conf.tenantName)}</label>
