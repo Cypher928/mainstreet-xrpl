@@ -2643,6 +2643,25 @@ function humanizeFlag(code) {
   }
 }
 
+function saveTenantData() {
+  try {
+    localStorage.setItem('tenantData', JSON.stringify(tenantData));
+    console.log('Tenant data saved');
+  } catch (e) {
+    console.error('Failed to save tenant data', e);
+  }
+}
+
+function handleTenantChange(index, field, value) {
+  if (!tenantData[index]) return;
+  tenantData[index][field] = (field === 'leaseType') ? (value || null) : value;
+  renderTenantFields(index);
+  if (field === 'leasedSqft') checkSqftValidation();
+  if (field === 'leaseType' && lastResults.length) runAllocation();
+  saveTenantData();
+  savePropertyData(); // fire-and-forget async persist
+}
+
 function liveTenantFlags(d) {
   const flags = [];
   if (!d.leasedSqft || parseSqft(d.leasedSqft) === 0) {
@@ -2723,30 +2742,30 @@ function renderTenantFields(i) {
         <div class="field">
           <label>Tenant Name ${confidenceBadge(conf.tenantName)}</label>
           <input type="text" value="${esc(d.tenantName)}"
-            oninput="tenantData[${i}].tenantName = this.value"/>
+            onchange="handleTenantChange(${i},'tenantName',this.value)"/>
         </div>
         <div class="field">
           <label>Leased Sqft ${confidenceBadge(conf.leasedSqft)}</label>
           <input type="number" value="${esc(d.leasedSqft)}"
-            oninput="tenantData[${i}].leasedSqft = this.value; checkSqftValidation()"/>
+            onchange="handleTenantChange(${i},'leasedSqft',this.value)"/>
         </div>
       </div>
       <div class="field-row">
         <div class="field">
           <label>Cap % (optional) ${confidenceBadge(conf.capPercentage)}</label>
           <input type="number" value="${esc(d.capPercentage)}"
-            oninput="tenantData[${i}].capPercentage = this.value"/>
+            onchange="handleTenantChange(${i},'capPercentage',this.value)"/>
         </div>
         <div class="field">
           <label>Base Year ${confidenceBadge(conf.baseYear)}</label>
           <input type="text" value="${esc(d.baseYear)}"
-            oninput="tenantData[${i}].baseYear = this.value"/>
+            onchange="handleTenantChange(${i},'baseYear',this.value)"/>
         </div>
       </div>
       <div class="field-row">
         <div class="field">
           <label>Lease Type</label>
-          <select onchange="tenantData[${i}].leaseType = this.value || null; if(lastResults.length) runAllocation()">
+          <select onchange="handleTenantChange(${i},'leaseType',this.value)">
             <option value="">Select lease type</option>
             <option value="NNN"${d.leaseType === 'NNN'   ? ' selected' : ''}>NNN</option>
             <option value="Gross"${d.leaseType === 'Gross' ? ' selected' : ''}>Gross</option>
@@ -2755,7 +2774,7 @@ function renderTenantFields(i) {
         <div class="field">
           <label>Excluded Categories (comma-separated) ${confidenceBadge(conf.excludedCategories)}</label>
           <input type="text" value="${esc(d.excludedCategories)}"
-            oninput="tenantData[${i}].excludedCategories = this.value"/>
+            onchange="handleTenantChange(${i},'excludedCategories',this.value)"/>
         </div>
       </div>
       ${missingLeaseFields(d).length ? `
@@ -6759,6 +6778,18 @@ function showRestoredBanner() {
 
 // ─── Init ─────────────────────────────────────────────────────────────────────
 async function init() {
+  // Restore unsaved tenant edits from localStorage (fallback — overridden by
+  // property-scoped data once selectProperty() runs).
+  try {
+    const saved = localStorage.getItem('tenantData');
+    if (saved) {
+      const parsed = JSON.parse(saved);
+      if (Array.isArray(parsed) && parsed.length) {
+        tenantData.splice(0, tenantData.length, ...parsed);
+      }
+    }
+  } catch (e) { /* ignore corrupt LS entry */ }
+
   try {
     _props = await loadProperties();
 
