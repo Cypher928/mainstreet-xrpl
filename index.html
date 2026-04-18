@@ -3818,6 +3818,19 @@ function markFieldVerified(i, field) {
   const wrap = document.getElementById(`ibadgeWrap-${i}-${field}`);
   if (wrap) wrap.innerHTML = '<span class="conf-badge conf-verified">&#x2713; Verified</span>';
   recomputeSummaryBadge(i);
+  savePropertyData();
+}
+
+function markInvoiceVerified(i) {
+  if (!invoiceData[i]) return;
+  invoiceData[i].verified = { vendorName: true, amount: true, category: true, invoiceDate: true };
+  ['vendorName','amount','category','invoiceDate'].forEach(field => {
+    const wrap = document.getElementById(`ibadgeWrap-${i}-${field}`);
+    if (wrap) wrap.innerHTML = '<span class="conf-badge conf-verified">&#x2713; Verified</span>';
+  });
+  recomputeSummaryBadge(i);
+  try { localStorage.setItem('invoiceData', JSON.stringify(invoiceData)); } catch {}
+  savePropertyData();
 }
 
 function focusInvField(i, field) {
