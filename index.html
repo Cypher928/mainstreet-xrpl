@@ -1083,6 +1083,28 @@
     .recon-inv-flag {
       width: 100%; font-size: 0.68rem; color: #f87171; margin-top: 2px; cursor: help;
     }
+    /* Yellow/amber warning flags (non-critical ambiguity) */
+    .rc-flags--warn { background: rgba(245,158,11,0.07); border-color: rgba(245,158,11,0.3); }
+    .rc-flags--warn .rc-flags-title { color: #fbbf24; }
+    .rc-flags--warn .rc-flag-item { color: #fde68a; }
+    .rc-flags--warn .rc-flag-expl { color: rgba(253,230,138,0.55); }
+    /* Invoice confidence badge */
+    .recon-inv-conf { font-size: 0.67rem; font-weight: 700; border-radius: 4px; padding: 1px 5px; flex-shrink: 0; }
+    .recon-inv-conf-hi  { background: rgba(34,197,94,0.14);   color: #86efac; }
+    .recon-inv-conf-med { background: rgba(245,158,11,0.14);  color: #fbbf24; }
+    .recon-inv-conf-lo  { background: rgba(248,113,113,0.14); color: #f87171; }
+    .recon-inv-reason { display: block; font-size: 0.66rem; color: #64748b; font-style: italic; margin-top: 2px; }
+    /* Review & Edit Matches button */
+    .review-matches-btn {
+      display: block; width: 100%; margin-top: 22px; padding: 14px 24px;
+      border-radius: 10px; font-size: 0.92rem; font-weight: 700; cursor: pointer;
+      border: 2px solid rgba(201,151,58,0.45); background: rgba(201,151,58,0.06);
+      color: #C9973A; transition: all 0.18s; text-align: center;
+    }
+    .review-matches-btn:hover { background: rgba(201,151,58,0.14); border-color: #C9973A; }
+    /* Explain panel invoice row confidence */
+    .ep-inv-conf { font-size: 0.7rem; font-weight: 700; border-radius: 4px; padding: 1px 6px; margin-left: 6px; }
+    .ep-inv-reason { font-size: 0.72rem; color: #64748b; font-style: italic; margin-top: 2px; }
 
     .hidden { display: none !important; }
 
@@ -4565,37 +4587,51 @@ async function runAllocation() {
     const fr    = fullResults.find(x => x.tenantName === r.name);
     const flags = fr?.ambiguityFlags || [];
 
-    // ── Prominent flags block ──────────────────────────────────────────
-    const flagsSection = flags.length > 0
-      ? `<div class="rc-flags">
-          <div class="rc-flags-title">&#x26A0;&#xFE0F; Needs Review</div>
-          ${flags.map(f => `
-            <div class="rc-flag-item">
-              &#x2022; <strong>${esc(f.message)}</strong>
-              ${f.explanation ? `<br><span class="rc-flag-expl">${esc(f.explanation)}</span>` : ''}
-            </div>`).join('')}
-        </div>`
-      : '';
+    // ── Prominent flags block (critical=red, warnings=yellow) ─────────
+    const _critFlags = flags.filter(f => f.code === 'SQFT_OVERFLOW');
+    const _warnFlags = flags.filter(f => f.code !== 'SQFT_OVERFLOW');
+    const _renderFlagBlock = (group, extraCls, icon, label) => group.length ? `
+      <div class="rc-flags ${extraCls}">
+        <div class="rc-flags-title">${icon} ${label}</div>
+        ${group.map(f => `
+          <div class="rc-flag-item">
+            &#x2022; <strong>${esc(f.message)}</strong>
+            ${f.explanation ? `<br><span class="rc-flag-expl">${esc(f.explanation)}</span>` : ''}
+          </div>`).join('')}
+      </div>` : '';
+    const flagsSection =
+      _renderFlagBlock(_critFlags, '',              '&#x26A0;&#xFE0F;', 'Needs Review') +
+      _renderFlagBlock(_warnFlags, 'rc-flags--warn','&#x26A1;',         'Ambiguity Detected');
 
     // ── Collapsible invoice breakdown ──────────────────────────────────
     const invBreakdown = (() => {
       if (!fr || !fr.includedInvoices.length) return '';
-      const rows = fr.includedInvoices.map(inv =>
-        `<div class="recon-inv-row">
+      const rows = fr.includedInvoices.map(inv => {
+        const conf = inv.matchConfidence ?? 0;
+        const confCls = conf >= 75 ? 'recon-inv-conf-hi' : conf >= 50 ? 'recon-inv-conf-med' : 'recon-inv-conf-lo';
+        const confBadge = conf > 0
+          ? `<span class="recon-inv-conf ${confCls}">${conf}%</span>`
+          : `<span class="recon-inv-conf recon-inv-conf-lo">—</span>`;
+        const reasonLine = inv.matchReason
+          ? `<span class="recon-inv-reason">${esc(inv.matchReason)}</span>`
+          : '';
+        return `<div class="recon-inv-row">
           <span class="recon-inv-vendor">${esc(inv.vendorName || '')}</span>
           <span class="recon-inv-cat">${esc(inv.category || '')}</span>
           ${inv.allocation === 'direct'
             ? `<span class="recon-inv-badge recon-direct">direct</span>`
             : `<span class="recon-inv-badge recon-shared">shared</span>`}
+          ${confBadge}
           <span class="recon-inv-share">${fmt(inv.share)}</span>
           ${inv.flag ? `<span class="recon-inv-flag" title="${esc(inv.flag.explanation || '')}">&#x26A0; ${esc(inv.flag.message)}</span>` : ''}
-        </div>`
-      ).join('');
+          ${reasonLine}
+        </div>`;
+      }).join('');
       const capLine = fr.capApplied
-        ? `<div class="recon-cap-note">&#x26A0; Cap applied — ${fmt(fr.capAdjustment)} reduced</div>`
+        ? `<div class="recon-cap-note">&#x26A0; Cap applied — your share reduced by ${fmt(fr.capAdjustment)}</div>`
         : '';
       return `<details class="recon-breakdown">
-        <summary>Invoice breakdown (${fr.includedInvoices.length})${fr.averageConfidence > 0 ? ` · ${fr.averageConfidence}% confidence` : ''}</summary>
+        <summary>Invoice breakdown (${fr.includedInvoices.length})${fr.averageConfidence > 0 ? ` · avg ${fr.averageConfidence}% match confidence` : ''}</summary>
         ${capLine}
         <div class="recon-inv-list">${rows}</div>
       </details>`;
@@ -4606,7 +4642,7 @@ async function runAllocation() {
       ? stat('Confidence', fr.averageConfidence + '%')
       : '';
 
-    html += `<div class="result-card${flags.length ? ' result-card--flagged' : ''}">
+    html += `<div class="result-card${_critFlags.length ? ' result-card--flagged' : ''}">
       <div class="r-name">${esc(r.name)}${fr?.unitNumber ? `<span class="rc-unit"> · Unit ${esc(fr.unitNumber)}</span>` : ''}</div>
       <div class="result-grid">
         ${stat('Total', fmt(r.allocatedAmount))}
@@ -4614,12 +4650,16 @@ async function runAllocation() {
         ${confStat}
         ${stat('Invoices', r.eligibleCount + ' of ' + invoices.length)}
       </div>
-      ${r.capApplied ? `<div class="cap-badge">Cap applied — ${fmt(r.capAdjustment)} reduced</div>` : ''}
+      ${r.capApplied ? `<div class="cap-badge">&#x26A0; Cap applied — your share reduced by ${fmt(r.capAdjustment)}</div>` : ''}
       ${flagsSection}
       ${invBreakdown}
       <button class="explain-btn" onclick="openExplainPanel('${esc(r.name)}')">&#x1F4CA; View Calculation</button>
     </div>`;
   });
+
+  html += `<button class="review-matches-btn" onclick="document.getElementById('invResults').scrollIntoView({behavior:'smooth',block:'start'})">
+    &#x270F;&#xFE0F;&nbsp; Review &amp; Edit Invoice Matches
+  </button>`;
 
   body.innerHTML = html;
   section.style.display = 'block';
@@ -4891,11 +4931,16 @@ function epToggleDrill(category, tenantName) {
       const viewBtn = stored && stored.fileUrl
         ? `<button class="ep-view-inv-btn" onclick="viewInvFile(${invoiceData.indexOf(stored)})">&#x1F4C4; View Source Invoice</button>`
         : '';
+      const conf = stored?.matchConfidence ?? inv.matchConfidence ?? 0;
+      const confCls = conf >= 75 ? 'recon-inv-conf-hi' : conf >= 50 ? 'recon-inv-conf-med' : 'recon-inv-conf-lo';
+      const confBadge = conf > 0 ? `<span class="recon-inv-conf ${confCls} ep-inv-conf">${conf}% match</span>` : '';
+      const reason = stored?.matchReason || inv.matchReason || '';
       return `
       <div class="ep-inv-row">
         <div>
-          <div class="ep-inv-vendor">${esc(inv.vendor || inv.vendorName || '—')}</div>
+          <div class="ep-inv-vendor">${esc(inv.vendor || inv.vendorName || '—')}${confBadge}</div>
           <div class="ep-inv-date">${esc(inv.invoiceDate || '—')}</div>
+          ${reason ? `<div class="ep-inv-reason">${esc(reason)}</div>` : ''}
           ${viewBtn}
         </div>
         <div class="ep-inv-amount">${fmt(parseFloat(inv.amount) || 0)}</div>
@@ -6549,19 +6594,51 @@ function restoreResultsDisplay() {
   </div>`;
 
   lastResults.forEach(r => {
-    html += `<div class="result-card">
+    const fr    = lastFullResults.find(x => x.tenantName === r.name);
+    const flags = fr?.ambiguityFlags || [];
+    const critF = flags.filter(f => f.code === 'SQFT_OVERFLOW');
+    const warnF = flags.filter(f => f.code !== 'SQFT_OVERFLOW');
+    const _rfb  = (group, cls, icon, label) => group.length ? `
+      <div class="rc-flags ${cls}">
+        <div class="rc-flags-title">${icon} ${label}</div>
+        ${group.map(f => `<div class="rc-flag-item">&#x2022; <strong>${esc(f.message)}</strong>${f.explanation ? `<br><span class="rc-flag-expl">${esc(f.explanation)}</span>` : ''}</div>`).join('')}
+      </div>` : '';
+    const invBreakdown = (() => {
+      if (!fr?.includedInvoices.length) return '';
+      const rows = fr.includedInvoices.map(inv => {
+        const conf = inv.matchConfidence ?? 0;
+        const confCls = conf >= 75 ? 'recon-inv-conf-hi' : conf >= 50 ? 'recon-inv-conf-med' : 'recon-inv-conf-lo';
+        return `<div class="recon-inv-row">
+          <span class="recon-inv-vendor">${esc(inv.vendorName || '')}</span>
+          <span class="recon-inv-cat">${esc(inv.category || '')}</span>
+          ${inv.allocation === 'direct' ? `<span class="recon-inv-badge recon-direct">direct</span>` : `<span class="recon-inv-badge recon-shared">shared</span>`}
+          ${conf > 0 ? `<span class="recon-inv-conf ${confCls}">${conf}%</span>` : ''}
+          <span class="recon-inv-share">${fmt(inv.share)}</span>
+          ${inv.matchReason ? `<span class="recon-inv-reason">${esc(inv.matchReason)}</span>` : ''}
+        </div>`;
+      }).join('');
+      const capLine = fr.capApplied ? `<div class="recon-cap-note">&#x26A0; Cap applied — your share reduced by ${fmt(fr.capAdjustment)}</div>` : '';
+      return `<details class="recon-breakdown"><summary>Invoice breakdown (${fr.includedInvoices.length})${fr.averageConfidence > 0 ? ` · avg ${fr.averageConfidence}% match confidence` : ''}</summary>${capLine}<div class="recon-inv-list">${rows}</div></details>`;
+    })();
+    html += `<div class="result-card${critF.length ? ' result-card--flagged' : ''}">
       <div class="r-name">${esc(r.name)}</div>
       <div class="result-grid">
         ${stat('Allocated Amount',  fmt(r.allocatedAmount))}
         ${stat('Pro-Rata Share',    (r.proRata * 100).toFixed(2) + '%')}
+        ${fr?.averageConfidence > 0 ? stat('Confidence', fr.averageConfidence + '%') : ''}
         ${stat('Included Expenses', r.eligibleCount + ' of ' + lastInvoicesFull.length)}
       </div>
-      ${r.capApplied
-        ? `<div class="cap-badge">Cap applied — ${fmt(r.capAdjustment)} reduced</div>`
-        : ''}
+      ${r.capApplied ? `<div class="cap-badge">&#x26A0; Cap applied — your share reduced by ${fmt(r.capAdjustment)}</div>` : ''}
+      ${_rfb(critF, '',              '&#x26A0;&#xFE0F;', 'Needs Review')}
+      ${_rfb(warnF, 'rc-flags--warn','&#x26A1;',         'Ambiguity Detected')}
+      ${invBreakdown}
       <button class="explain-btn" onclick="openExplainPanel('${esc(r.name)}')">&#x1F4CA; View Calculation</button>
     </div>`;
   });
+
+  html += `<button class="review-matches-btn" onclick="document.getElementById('invResults').scrollIntoView({behavior:'smooth',block:'start'})">
+    &#x270F;&#xFE0F;&nbsp; Review &amp; Edit Invoice Matches
+  </button>`;
 
   body.innerHTML = html;
   section.style.display = 'block';
