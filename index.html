@@ -1485,6 +1485,15 @@
     .login-msg { margin-top: 14px; font-size: 0.84rem; color: #64748B; min-height: 20px; line-height: 1.5; }
     .login-msg.success { color: #4ade80; }
     .login-msg.error   { color: #f87171; }
+    .login-tabs { display: flex; gap: 0; margin-bottom: 28px; border-radius: 8px; overflow: hidden; border: 1px solid rgba(255,255,255,0.08); }
+    .login-tab {
+      flex: 1; padding: 9px 0; font-size: 0.84rem; font-weight: 600; font-family: inherit;
+      cursor: pointer; background: transparent; color: #64748B; border: none;
+      transition: background 0.15s, color 0.15s;
+    }
+    .login-tab.active { background: rgba(201,151,58,0.15); color: #C9973A; }
+    .login-tab:hover:not(.active) { background: rgba(255,255,255,0.04); color: #94A3B8; }
+    .login-hint { font-size: 0.75rem; color: #64748B; margin: -8px 0 10px; text-align: left; }
     /* ── Auth: header user bar ───────────────────────────────────────── */
     .header-user-bar {
       display: flex; align-items: center; justify-content: center;
@@ -1508,10 +1517,24 @@
   <div class="login-card">
     <div class="login-logo">Mainstreet</div>
     <div class="login-tagline">The smarter way to reconcile CAM charges</div>
+
+    <!-- Tab switcher -->
+    <div class="login-tabs">
+      <button class="login-tab active" id="loginTabSignIn" onclick="switchAuthTab('signin')">Sign In</button>
+      <button class="login-tab" id="loginTabSignUp" onclick="switchAuthTab('signup')">Create Account</button>
+    </div>
+
     <label class="login-label" for="loginEmail">Email address</label>
     <input class="login-input" type="email" id="loginEmail" placeholder="you@example.com"
-      onkeydown="if(event.key==='Enter')sendMagicLink()" autocomplete="email" />
-    <button class="login-btn" id="loginBtn" onclick="sendMagicLink()">Send Magic Link</button>
+      autocomplete="email" onkeydown="if(event.key==='Enter')document.getElementById('loginPassword').focus()" />
+
+    <label class="login-label" for="loginPassword">Password</label>
+    <input class="login-input" type="password" id="loginPassword" placeholder="••••••••"
+      autocomplete="current-password" onkeydown="if(event.key==='Enter')submitAuth()" />
+
+    <p id="loginPasswordHint" class="login-hint" style="display:none;">Minimum 6 characters</p>
+
+    <button class="login-btn" id="loginBtn" onclick="submitAuth()">Sign In</button>
     <div class="login-msg" id="loginMsg"></div>
   </div>
 </div>
@@ -1941,38 +1964,65 @@ function _showLogin() {
   document.getElementById('appContent').style.display  = 'none';
 }
 
-async function sendMagicLink() {
-  const email  = (document.getElementById('loginEmail').value || '').trim();
-  const btn    = document.getElementById('loginBtn');
-  const msgEl  = document.getElementById('loginMsg');
+let _authMode = 'signin'; // 'signin' | 'signup'
+
+function switchAuthTab(mode) {
+  _authMode = mode;
+  const isSignUp = mode === 'signup';
+  document.getElementById('loginTabSignIn').classList.toggle('active', !isSignUp);
+  document.getElementById('loginTabSignUp').classList.toggle('active',  isSignUp);
+  document.getElementById('loginBtn').textContent = isSignUp ? 'Create Account' : 'Sign In';
+  document.getElementById('loginPasswordHint').style.display = isSignUp ? '' : 'none';
+  document.getElementById('loginPassword').autocomplete = isSignUp ? 'new-password' : 'current-password';
+  document.getElementById('loginMsg').className = 'login-msg';
+  document.getElementById('loginMsg').textContent = '';
+}
+
+async function submitAuth() {
+  const email    = (document.getElementById('loginEmail').value    || '').trim();
+  const password = (document.getElementById('loginPassword').value || '');
+  const btn      = document.getElementById('loginBtn');
+  const msgEl    = document.getElementById('loginMsg');
 
   if (!email) {
-    msgEl.className = 'login-msg error';
+    msgEl.className   = 'login-msg error';
     msgEl.textContent = 'Please enter your email address.';
+    return;
+  }
+  if (!password) {
+    msgEl.className   = 'login-msg error';
+    msgEl.textContent = 'Please enter a password.';
+    return;
+  }
+  if (_authMode === 'signup' && password.length < 6) {
+    msgEl.className   = 'login-msg error';
+    msgEl.textContent = 'Password must be at least 6 characters.';
     return;
   }
 
   btn.disabled    = true;
-  btn.textContent = 'Sending…';
+  btn.textContent = _authMode === 'signup' ? 'Creating account…' : 'Signing in…';
   msgEl.className = 'login-msg';
   msgEl.textContent = '';
 
-  const { error } = await db.auth.signInWithOtp({
-    email,
-    options: { emailRedirectTo: window.location.origin + window.location.pathname },
-  });
+  const { error } = _authMode === 'signup'
+    ? await db.auth.signUp({ email, password })
+    : await db.auth.signInWithPassword({ email, password });
 
   if (error) {
     msgEl.className   = 'login-msg error';
     msgEl.textContent = error.message;
     btn.disabled      = false;
-    btn.textContent   = 'Send Magic Link';
-  } else {
+    btn.textContent   = _authMode === 'signup' ? 'Create Account' : 'Sign In';
+  } else if (_authMode === 'signup') {
+    // Supabase may require email confirmation — show a message instead of auto-login
     msgEl.className   = 'login-msg success';
-    msgEl.textContent = '✓ Magic link sent — check your inbox (and spam folder).';
-    btn.textContent   = 'Resend';
+    msgEl.textContent = '✓ Account created! Check your email to confirm, then sign in.';
     btn.disabled      = false;
+    btn.textContent   = 'Create Account';
+    switchAuthTab('signin');
   }
+  // On successful signIn, onAuthStateChange fires automatically — no manual handling needed
 }
 
 async function signOut() {
