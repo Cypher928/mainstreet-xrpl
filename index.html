@@ -3130,7 +3130,7 @@ function renderInvResults() {
 
     // Which fields are below 90% — used by clickable badge to highlight them
     const weakFields = ['vendorName','amount','category','invoiceDate']
-      .filter(f => conf[f] !== undefined && conf[f] !== null && parseInt(conf[f]) < 90);
+      .filter(f => (conf[f] === undefined || conf[f] === null || parseInt(conf[f]) < 90) && !d.verified?.[f]);
     const matchBadge  = d.matchedTenant
       ? `<span class="match-badge" title="${esc(d.matchReason || '')}">&#x2192; ${esc(d.matchedTenant)}</span>`
       : '';
@@ -3271,13 +3271,16 @@ function openInvoiceAndHighlight(i, fields) {
 }
 
 function verifiableActions(score, i, field) {
-  const s = parseInt(score);
   const verified = invoiceData[i]?.verified?.[field];
   if (verified) return `<span class="conf-badge conf-verified">&#x2713; Verified</span>`;
-  if (!isNaN(s) && s < 75) {
+
+  const s = (score === null || score === undefined) ? -1 : parseInt(score, 10);
+  const needsVerify = isNaN(s) || s < 90;
+  if (needsVerify) {
+    console.log('Rendering verify buttons', i, field, score);
     return `<div class="field-verify-actions">
-      <button class="verify-btn verify-btn-confirm" onclick="markFieldVerified(${i},'${field}')">Mark as Verified</button>
-      <button class="verify-btn verify-btn-change" onclick="focusInvField(${i},'${field}')">Change</button>
+      <button class="verify-btn verify-btn-confirm" onclick="markFieldVerified(${i},'${field}')">&#x2713; Mark as Verified</button>
+      <button class="verify-btn verify-btn-change" onclick="focusInvField(${i},'${field}')">&#x270E; Change</button>
     </div>`;
   }
   return '';
@@ -3305,7 +3308,7 @@ function recomputeSummaryBadge(i) {
   const scores = [conf.vendorName, conf.amount, conf.category].filter(s => s !== undefined && s !== null);
   const overallConf = scores.length ? Math.min(...scores) : undefined;
   const weakFields = ['vendorName','amount','category','invoiceDate']
-    .filter(f => conf[f] !== undefined && conf[f] !== null && parseInt(conf[f]) < 90 && !d.verified?.[f]);
+    .filter(f => (conf[f] === undefined || conf[f] === null || parseInt(conf[f]) < 90) && !d.verified?.[f]);
   const el = document.getElementById(`isummaryBadge-${i}`);
   if (el) el.innerHTML = overallConf !== undefined ? clickableConfBadge(overallConf, i, weakFields) : '';
 }
