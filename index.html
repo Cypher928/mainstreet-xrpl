@@ -1070,12 +1070,6 @@
     .sqft-error-banner[data-severity="under"] {
       background: rgba(245,158,11,0.10); border: 1px solid rgba(245,158,11,0.4); color: #fbbf24;
     }
-    .sqft-over #tenantSlots {
-      border: 1px solid rgba(248,113,113,0.4); border-radius: 10px; padding: 8px;
-    }
-    .sqft-under #tenantSlots {
-      border: 1px solid rgba(245,158,11,0.35); border-radius: 10px; padding: 8px;
-    }
 
     /* ── Previous Runs section ───────────────────────────────────────── */
     #previousRunsSection { margin-bottom: 14px; }
@@ -1600,6 +1594,9 @@
       <button class="lease-tab"        id="lTabSingle" onclick="switchLeaseTab('single')">&#x1F4C4; Add One Tenant</button>
     </div>
 
+    <!-- SqFt mismatch banner — lives above both panels so it's always visible -->
+    <div id="sqft-error" class="sqft-error-banner" style="display:none;"></div>
+
     <!-- Panel A: Bulk -->
     <div id="leasePanelBulk">
       <div class="bulk-upload-zone" id="bulkZone"
@@ -1618,7 +1615,6 @@
 
     <!-- Panel B: Single -->
     <div id="leasePanelSingle" style="display:none;">
-      <div id="sqft-error" class="sqft-error-banner" style="display:none;"></div>
       <div id="tenantSlots"></div>
     </div>
   </div>
@@ -2269,6 +2265,8 @@ function checkSqftValidation() {
   if (!totalSqFt) { clearSqftBanner(); return; }
 
   const usedSqFt = tenantData.filter(t => t).reduce((s, t) => s + parseSqft(t.leasedSqft), 0);
+  console.log('SqFt check:', usedSqFt, totalSqFt);
+
   if (!usedSqFt)  { clearSqftBanner(); return; }
 
   const used  = usedSqFt.toLocaleString();
@@ -2276,12 +2274,12 @@ function checkSqftValidation() {
 
   if (usedSqFt > totalSqFt) {
     showSqftBanner(
-      `&#x26A0;&#xFE0F; Total leased square footage (${used} sqft) exceeds building total (${total} sqft). Please adjust tenant sizes.`,
+      `&#x26A0; Total leased (${used} sqft) exceeds building total (${total} sqft). Please adjust tenant sizes.`,
       'over'
     );
   } else if (usedSqFt < totalSqFt) {
     showSqftBanner(
-      `&#x26A0;&#xFE0F; Total leased square footage (${used} sqft) is less than building total (${total} sqft). Some space may be missing.`,
+      `&#x26A0; Total leased (${used} sqft) is less than building total (${total} sqft). Some space may be unaccounted for.`,
       'under'
     );
   } else {
@@ -2290,24 +2288,19 @@ function checkSqftValidation() {
 }
 
 function showSqftBanner(msg, severity) {
-  const el    = document.getElementById('sqft-error');
-  const panel = document.getElementById('leasePanelSingle');
-  if (el) {
-    el.innerHTML = msg;
-    el.style.display = 'block';
-    el.dataset.severity = severity;
-  }
-  if (panel) {
-    panel.classList.remove('sqft-over', 'sqft-under');
-    panel.classList.add(severity === 'over' ? 'sqft-over' : 'sqft-under');
-  }
+  const el = document.getElementById('sqft-error');
+  if (!el) return;
+  el.innerHTML = msg;
+  el.style.display = 'block';
+  el.dataset.severity = severity;
 }
 
 function clearSqftBanner() {
-  const el    = document.getElementById('sqft-error');
-  const panel = document.getElementById('leasePanelSingle');
-  if (el)    { el.innerHTML = ''; el.style.display = 'none'; delete el.dataset.severity; }
-  if (panel) panel.classList.remove('sqft-over', 'sqft-under');
+  const el = document.getElementById('sqft-error');
+  if (!el) return;
+  el.innerHTML = '';
+  el.style.display = 'none';
+  delete el.dataset.severity;
 }
 
 function renderTenantFields(i) {
@@ -2868,6 +2861,7 @@ async function handleBulkLeases(fileList) {
   // Keep tenantData in sync with merged result so UI shows the full set.
   tenantData.splice(0, tenantData.length, ...merged);
   renderBulkResults();
+  checkSqftValidation();
 
   console.log('CURRENT PROPERTY ID:', property.id);
   console.log('SAVING DATA:', property);
@@ -2962,6 +2956,7 @@ function refreshBulkSummary(i) {
 async function removeBulkTenant(i) {
   tenantData.splice(i, 1);
   renderBulkResults();
+  checkSqftValidation();
   await savePropertyData();
 }
 
