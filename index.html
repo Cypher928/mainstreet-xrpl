@@ -368,6 +368,29 @@
       color: #fca5a5; padding: 12px 16px; border-radius: 8px; font-size: 0.88rem;
     }
     .extract-hint { margin-top: 6px; opacity: 0.85; font-size: 0.82rem; }
+    .req-info-btn {
+      padding: 3px 10px; border-radius: 6px; font-size: 0.74rem; font-weight: 600;
+      cursor: pointer; border: 1.5px solid rgba(201,151,58,0.45); background: #111827;
+      color: #C9973A; transition: all 0.15s; flex-shrink: 0;
+    }
+    .req-info-btn:hover { background: rgba(201,151,58,0.12); }
+    .req-info-modal-email {
+      width: 100%; box-sizing: border-box; min-height: 200px;
+      background: #0B1220; border: 1px solid rgba(255,255,255,0.12); border-radius: 8px;
+      color: #CBD5E0; font-size: 0.84rem; padding: 12px; font-family: inherit;
+      resize: vertical; line-height: 1.65;
+    }
+    .copy-msg-btn {
+      flex: 1; padding: 11px; border-radius: 9px; font-size: 0.9rem; font-weight: 700;
+      cursor: pointer; border: none;
+      background: linear-gradient(135deg, #C9973A, #E4B15C); color: #0B1220; transition: opacity 0.15s;
+    }
+    .copy-msg-btn:hover { opacity: 0.88; }
+    .req-info-form-footer {
+      margin-top: 14px; padding-top: 12px; border-top: 1px solid rgba(255,255,255,0.07);
+      display: flex; align-items: center; gap: 10px;
+    }
+    .req-info-footer-hint { font-size: 0.79rem; color: #64748B; flex: 1; }
 
     /* Summary bar */
     .summary-bar {
@@ -1889,6 +1912,21 @@
 
 </div><!-- /container -->
 
+<!-- ── Request Info Modal ──────────────────────────────────────────────── -->
+<div id="reqInfoModal" class="modal-backdrop" style="display:none;" onclick="if(event.target===this)closeReqInfoModal()">
+  <div class="modal-box" style="max-width:560px;">
+    <div class="modal-title">&#x2709;&#xFE0F; Request Lease Information</div>
+    <p style="font-size:0.83rem;color:#94A3B8;margin:0 0 12px;">
+      Copy this message and send it to your tenant or their representative.
+    </p>
+    <textarea id="reqInfoEmailBody" class="req-info-modal-email" readonly></textarea>
+    <div class="modal-actions" style="margin-top:14px;">
+      <button class="copy-msg-btn" id="copyMsgBtn" onclick="copyReqInfoMsg()">&#x1F4CB; Copy Message</button>
+      <button class="modal-cancel" onclick="closeReqInfoModal()">Close</button>
+    </div>
+  </div>
+</div>
+
 <!-- ── Allocation Confirmation Modal ──────────────────────────────────── -->
 <div id="allocModal" class="modal-backdrop" style="display:none;" onclick="if(event.target===this)closeAllocModal()">
   <div class="modal-box">
@@ -2488,6 +2526,63 @@ function clearSqftBanner() {
   delete el.dataset.severity;
 }
 
+function missingLeaseFields(d) {
+  const m = [];
+  if (!d.tenantName)  m.push('Tenant name');
+  if (!d.leasedSqft)  m.push('Leased square footage');
+  if (!d.startDate)   m.push('Lease start date');
+  if (!d.endDate)     m.push('Lease end date');
+  if (!d.leaseType)   m.push('Lease type (NNN or Gross)');
+  return m;
+}
+
+function openReqInfoModal(i) {
+  const d = tenantData[i];
+  if (!d) return;
+  const missing    = missingLeaseFields(d);
+  const propName   = currentProperty()?.name || 'the property';
+  const fieldList  = missing.map(f => `  \u2022 ${f}`).join('\n');
+  const greeting   = d.tenantName ? ` ${d.tenantName}` : '';
+
+  const body =
+`Subject: Lease Information Request \u2013 ${propName}
+
+Hi${greeting},
+
+We are currently reconciling CAM charges for ${propName} and need the following information to complete your lease record:
+
+${fieldList}
+
+Could you please provide the above details at your earliest convenience? This will allow us to finalize your CAM reconciliation accurately and on time.
+
+Thank you,
+${propName} Management`;
+
+  document.getElementById('reqInfoEmailBody').value = body;
+  const btn = document.getElementById('copyMsgBtn');
+  if (btn) btn.innerHTML = '&#x1F4CB; Copy Message';
+  document.getElementById('reqInfoModal').style.display = 'flex';
+}
+
+function closeReqInfoModal() {
+  document.getElementById('reqInfoModal').style.display = 'none';
+}
+
+async function copyReqInfoMsg() {
+  const el  = document.getElementById('reqInfoEmailBody');
+  const btn = document.getElementById('copyMsgBtn');
+  try {
+    await navigator.clipboard.writeText(el.value);
+  } catch {
+    el.select();
+    document.execCommand('copy');
+  }
+  if (btn) {
+    btn.textContent = '\u2713 Copied!';
+    setTimeout(() => { btn.innerHTML = '&#x1F4CB; Copy Message'; }, 2200);
+  }
+}
+
 function renderTenantFields(i) {
   const d    = tenantData[i];
   const body = document.getElementById(`tb-${i}`);
@@ -2547,6 +2642,11 @@ function renderTenantFields(i) {
             oninput="tenantData[${i}].excludedCategories = this.value"/>
         </div>
       </div>
+      ${missingLeaseFields(d).length ? `
+      <div class="req-info-form-footer">
+        <span class="req-info-footer-hint">Missing: ${missingLeaseFields(d).join(', ')}</span>
+        <button class="req-info-btn" onclick="openReqInfoModal(${i})">&#x2709; Request Info</button>
+      </div>` : ''}
     </div>`;
 }
 
@@ -3079,12 +3179,13 @@ function renderBulkResults() {
   if (!tenantData.length) { el.innerHTML = ''; return; }
 
   const rows = tenantData.map((d, i) => {
-    const conf   = d.confidence || {};
-    const icon   = d._error ? '⚠️' : d.tenantName ? '✓' : '?';
-    const name   = d.tenantName || '(unknown — click to edit)';
-    const meta   = [d.leasedSqft ? d.leasedSqft + ' sqft' : null,
-                    d.capPercentage ? d.capPercentage + '% cap' : null]
-                    .filter(Boolean).join(' · ') || '—';
+    const conf    = d.confidence || {};
+    const icon    = d._error ? '⚠️' : d.tenantName ? '✓' : '?';
+    const name    = d.tenantName || '(unknown — click to edit)';
+    const meta    = [d.leasedSqft ? d.leasedSqft + ' sqft' : null,
+                     d.capPercentage ? d.capPercentage + '% cap' : null]
+                     .filter(Boolean).join(' · ') || '—';
+    const _missing = missingLeaseFields(d);
 
     return `
       <div class="bulk-tenant-row${d._error ? ' has-error' : ''}" id="btr-${i}">
@@ -3093,6 +3194,7 @@ function renderBulkResults() {
           <span class="bulk-t-name"   id="bname-${i}">${esc(name)}</span>
           <span class="bulk-t-meta"   id="bmeta-${i}">${esc(meta)}</span>
           <span class="bulk-t-chevron" id="bchev-${i}">&#x25BC; Edit</span>
+          ${_missing.length ? `<button class="req-info-btn" onclick="event.stopPropagation();openReqInfoModal(${i})">&#x2709; Request Info</button>` : ''}
           <button class="bulk-t-remove" onclick="event.stopPropagation();removeBulkTenant(${i})">Remove</button>
         </div>
         <div class="bulk-tenant-detail" id="bdet-${i}" style="display:none;">
