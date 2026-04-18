@@ -1949,14 +1949,12 @@ const db = _sbCreateClient(SUPABASE_URL, SUPABASE_ANON_KEY);
 
 // ─── Authentication ───────────────────────────────────────────────────────────
 async function _showApp(user) {
-  _currentUserId = user.id;
   document.getElementById('loginScreen').style.display  = 'none';
   document.getElementById('appContent').style.display   = '';
   document.getElementById('headerUserEmail').textContent = user.email;
 }
 
 function _showLogin() {
-  _currentUserId = null;
   document.getElementById('loginScreen').style.display = 'flex';
   document.getElementById('appContent').style.display  = 'none';
 }
@@ -2242,8 +2240,7 @@ class ReconciliationResult {
 // ─── Portfolio State ──────────────────────────────────────────────────────────
 const portfolio = [];
 let activePropId = null; // null = portfolio view
-let _props       = [];   // canonical merged array from loadProperties()
-let _currentUserId = null; // set after auth, scopes all Supabase reads/writes
+let _props = []; // canonical merged array from loadProperties()
 
 // Returns the currently selected property object, or null if none is active.
 function currentProperty() {
@@ -6159,24 +6156,20 @@ function _lsLoad(id) {
   } catch (e) { return null; }
 }
 
-// Load all properties for the current user — Supabase primary, localStorage fallback.
 async function loadProperties() {
-  if (!_currentUserId) return _lsLoadAll() || [];
   try {
     const { data, error } = await db
       .from('properties')
       .select('*')
-      .eq('user_id', _currentUserId)
       .order('created_at', { ascending: false });
     if (error) throw error;
     if (!data || data.length === 0) return [];
 
-    // Reconstruct full property objects: spread data JSONB on top of id/name/sqft
     return data.map(p => ({
-      id:         p.id,
-      name:       p.name,
-      totalSqft:  p.sqft || 0,
-      status:     'in-progress',
+      id:           p.id,
+      name:         p.name,
+      totalSqft:    p.sqft || 0,
+      status:       'in-progress',
       tenantCount:  0,
       invoiceCount: 0,
       totalCAM:     0,
@@ -6194,29 +6187,20 @@ async function loadProperties() {
 async function saveProperty(property) {
   _lsSave(property);
 
-  // Use getSession() — reads the local cached token, no network round-trip needed
-  const { data: { session } } = await db.auth.getSession();
-  if (!session) {
-    console.warn('[Mainstreet] saveProperty: no active session, skipping Supabase write');
-    return;
-  }
-  const userId = session.user.id;
-
   try {
     const stripped = _stripBlobs(property);
     const { id, name, totalSqft, ...rest } = stripped;
     const payload = {
-      user_id: userId,
-      name:    name || 'New Property',
-      sqft:    totalSqft || 0,
-      data:    rest,
+      name: name || 'New Property',
+      sqft: totalSqft || 0,
+      data: rest,
     };
 
     if (id) {
       // Existing record — update by id
       const { error } = await db.from('properties').upsert({ id, ...payload });
       if (error) throw error;
-      console.log('UPDATED IN SUPABASE', id, 'user:', userId);
+      console.log('UPDATED IN SUPABASE', id);
     } else {
       // New record — let Supabase generate the UUID
       const { data: inserted, error } = await db.from('properties')
@@ -6227,7 +6211,7 @@ async function saveProperty(property) {
       // Patch the in-memory object so callers immediately have the real UUID
       property.id = inserted.id;
       _lsSave(property);
-      console.log('INSERTED INTO SUPABASE', inserted.id, 'user:', userId);
+      console.log('INSERTED INTO SUPABASE', inserted.id);
     }
   } catch (e) {
     // If INSERT failed and property still has no id, keep it null — do NOT assign
@@ -6288,9 +6272,7 @@ async function savePropertyData() {
 // Fetch a single property's full data — Supabase first, localStorage fallback.
 async function loadPropertyData(id) {
   try {
-    let q = db.from('properties').select('*').eq('id', id);
-    if (_currentUserId) q = q.eq('user_id', _currentUserId);
-    const { data, error } = await q.single();
+    const { data, error } = await db.from('properties').select('*').eq('id', id).single();
     if (error) throw error;
     if (!data) return _lsLoad(id);
     return { id: data.id, name: data.name, totalSqft: data.sqft || 0, ...(data.data || {}) };
@@ -6461,7 +6443,7 @@ async function init() {
     // New user with no saved properties — start with an empty portfolio
     if (!_props || _props.length === 0) _props = [];
 
-    console.log('[Mainstreet] PROPERTIES ON LOAD:', _props.length, 'for user', _currentUserId);
+    console.log('[Mainstreet] PROPERTIES ON LOAD:', _props.length);
     portfolio.splice(0, portfolio.length, ..._props);
     renderPortfolio(_props);
   } catch (e) {
