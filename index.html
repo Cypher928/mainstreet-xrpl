@@ -2179,7 +2179,6 @@ let glData = [];
 
 class Property {
   constructor(name, totalSqFt) {
-    this.id = 'prop_' + Date.now();
     this.name = name;
     this.totalSqFt = totalSqFt;
     this.leases = [];
@@ -2210,7 +2209,7 @@ class Lease {
 
 class Invoice {
   constructor(id, date, amount, vendor, category, description = '') {
-    this.id              = id || ('inv_' + Date.now());
+    this.id              = id || null;
     this.date            = date     || '';
     this.amount          = parseFloat(amount) || 0;
     this.vendorName      = vendor   || '';  // field matchInvoiceToTenant expects
@@ -2244,10 +2243,7 @@ class ReconciliationResult {
 }
 
 // ─── Portfolio State ──────────────────────────────────────────────────────────
-const portfolio = [
-  { id: 'demo',   name: 'Riverside Commons', totalSqft: 24000, status: 'in-progress', tenantCount: 3, invoiceCount: 7, totalCAM: 0,     openDisputes: 0 },
-  { id: 'prop-4', name: 'Maple Plaza',        totalSqft: 18000, status: 'disputes',    tenantCount: 3, invoiceCount: 5, totalCAM: 12300, openDisputes: 1 },
-];
+const portfolio = [];
 let activePropId = null; // null = portfolio view
 let _props       = [];   // canonical merged array from loadProperties()
 let _currentUserId = null; // set after auth, scopes all Supabase reads/writes
@@ -5805,18 +5801,20 @@ function generateTenantStatement(tenantName) {
 // ─── Load Demo ────────────────────────────────────────────────────────────────
 
 async function loadDemo() {
-  // Add demo property to canonical array if not already there
-  if (!_props.find(p => p.id === 'demo')) {
-    const demoProp = createDemoProperty();
-    _props.unshift(demoProp);
-    portfolio.unshift(demoProp);
-    await saveProperty(demoProp);
-  }
+  // Create a fresh demo property — no hardcoded id, Supabase generates UUID
+  const demoProp = {
+    name: 'Riverside Commons (Demo)', totalSqft: 24000,
+    status: 'in-progress', tenantCount: 3, invoiceCount: 7,
+    totalCAM: 0, openDisputes: 0,
+  };
+  _props.unshift(demoProp);
+  portfolio.unshift(demoProp);
+  await saveProperty(demoProp); // patches demoProp.id with real UUID
 
   // Navigate into the property
   activePropId = null;
   resetWorkflow();
-  activePropId = 'demo';
+  activePropId = demoProp.id;
 
   document.getElementById('propertyName').value              = 'Riverside Commons';
   document.getElementById('totalSqft').value                 = '24000';
@@ -6127,14 +6125,7 @@ function liveUpdateBreadcrumb(name) {
 // invoices, results, tenantCount, invoiceCount, totalCAM, openDisputes, etc.
 
 // Explicit defaults — structural baseline for default properties.
-const defaultProperties = [
-  { id: 'demo',   name: 'Riverside Commons', totalSqft: 24000, status: 'in-progress', tenantCount: 3, invoiceCount: 7, totalCAM: 0,     openDisputes: 0 },
-  { id: 'prop-4', name: 'Maple Plaza',        totalSqft: 18000, status: 'disputes',    tenantCount: 3, invoiceCount: 5, totalCAM: 12300, openDisputes: 1 },
-];
-
-function createDemoProperty() {
-  return { id: 'demo', name: 'Riverside Commons', totalSqft: 24000, status: 'in-progress', tenantCount: 3, invoiceCount: 7, totalCAM: 0, openDisputes: 0 };
-}
+const defaultProperties = [];
 
 // ── localStorage fallback ─────────────────────────────────────────────────────
 // Data is always saved here first (instant, offline-safe).
