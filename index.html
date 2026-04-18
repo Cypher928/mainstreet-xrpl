@@ -6197,13 +6197,19 @@ async function loadProperties() {
 async function saveProperty(property) {
   _lsSave(property);
 
-  if (!_currentUserId) return;
+  // Always resolve user_id fresh from the session — never rely on cached state
+  const { data: { user } } = await db.auth.getUser();
+  if (!user?.id) {
+    console.warn('[Mainstreet] saveProperty: no authenticated user, skipping Supabase write');
+    return;
+  }
+  const userId = user.id;
 
   try {
     const stripped = _stripBlobs(property);
     const { id, name, totalSqft, ...rest } = stripped;
     const payload = {
-      user_id: _currentUserId,
+      user_id: userId,
       name:    name || 'New Property',
       sqft:    totalSqft || 0,
       data:    rest,
@@ -6213,37 +6219,34 @@ async function saveProperty(property) {
       // Existing record — update by id
       const { error } = await db.from('properties').upsert({ id, ...payload });
       if (error) throw error;
-      console.log('UPDATED IN SUPABASE', id);
+      console.log('UPDATED IN SUPABASE', id, 'user:', userId);
     } else {
       // New record — let Supabase generate the UUID
-      const { data: inserted, error } = await db.from('properties').insert(payload).select('id').single();
+      const { data: inserted, error } = await db.from('properties')
+        .insert(payload)
+        .select('id')
+        .single();
       if (error) throw error;
       // Patch the in-memory object so callers immediately have the real UUID
       property.id = inserted.id;
       _lsSave(property);
-      console.log('INSERTED INTO SUPABASE', inserted.id);
+      console.log('INSERTED INTO SUPABASE', inserted.id, 'user:', userId);
     }
   } catch (e) {
-    // If INSERT failed and property still has no id, assign a client-side UUID
-    // so the rest of the app can continue working offline
-    if (!property.id) {
-      property.id = (typeof crypto !== 'undefined' && crypto.randomUUID)
-        ? crypto.randomUUID()
-        : 'local-' + Date.now();
-      _lsSave(property);
-    }
+    // If INSERT failed and property still has no id, keep it null — do NOT assign
+    // a fake local id that could later be mistakenly sent to Supabase
     const msg = e?.message || String(e);
     const isNetErr = /load failed|failed to fetch|networkerror|offline/i.test(msg);
     if (isNetErr) {
       console.warn('[Mainstreet] Supabase offline, saved locally only:', msg);
     } else {
-      console.error('[Mainstreet] saveProperty Supabase error:', msg, e);
+      console.error('[Mainstreet] saveProperty error:', msg, e);
       const prev = document.getElementById('_saveErrToast');
       if (prev) prev.remove();
       const toast = document.createElement('div');
       toast.id = '_saveErrToast';
       toast.style.cssText = 'position:fixed;bottom:20px;left:50%;transform:translateX(-50%);background:#e74c3c;color:#fff;padding:12px 20px;border-radius:6px;z-index:9999;font-size:13px;box-shadow:0 4px 12px rgba(0,0,0,.3);max-width:90vw;text-align:center;';
-      toast.textContent = 'Sync error: ' + msg;
+      toast.textContent = 'Save error: ' + msg;
       document.body.appendChild(toast);
       setTimeout(() => toast.remove(), 8000);
     }
