@@ -367,6 +367,7 @@
       background: rgba(239,68,68,0.1); border: 1.5px solid rgba(239,68,68,0.3);
       color: #fca5a5; padding: 12px 16px; border-radius: 8px; font-size: 0.88rem;
     }
+    .extract-hint { margin-top: 6px; opacity: 0.85; font-size: 0.82rem; }
 
     /* Summary bar */
     .summary-bar {
@@ -2491,9 +2492,18 @@ function renderTenantFields(i) {
   const d    = tenantData[i];
   const body = document.getElementById(`tb-${i}`);
   const conf = d.confidence || {};
+  const _errBlock = d._error ? `
+    <div class="err-banner" style="margin-bottom:12px;">
+      <strong>&#x26A0; We couldn't automatically extract this lease.</strong><br>
+      You can still enter the details manually below.
+      ${!d.leasedSqft ? '<div class="extract-hint">&#x2022; Square footage not detected</div>' : ''}
+      ${(!d.tenantName || !d.startDate) ? '<div class="extract-hint">&#x2022; Lease terms unclear</div>' : ''}
+    </div>` : '';
+
   body.innerHTML = `
     <div class="extracted">
-      <div class="status-row ok">
+      ${_errBlock}
+      <div class="status-row ok" style="${d._error ? 'display:none' : ''}">
         <span class="status-dot ok">${CHECK_SVG}</span>
         Fields extracted — review and edit below
         <button class="re-btn" onclick="resetTenant(${i})">Re-upload</button>
@@ -2541,15 +2551,17 @@ function renderTenantFields(i) {
 }
 
 function renderTenantError(i, msg) {
-  const body = document.getElementById(`tb-${i}`);
-  body.innerHTML = `
-    <div class="extracted">
-      <div class="status-row err">
-        <span class="status-dot err">${CROSS_SVG}</span>
-        Extraction failed: ${esc(msg)}
-        <button class="re-btn" onclick="resetTenant(${i})">Try again</button>
-      </div>
-    </div>`;
+  // Provide a blank editable record so the user can fill in details manually
+  if (!tenantData[i]) {
+    tenantData[i] = {
+      tenantName: '', leasedSqft: '', capPercentage: '',
+      excludedCategories: '', baseYear: '', leaseType: null,
+      confidence: {}, _error: msg,
+    };
+  } else {
+    tenantData[i]._error = msg;
+  }
+  renderTenantFields(i);
 }
 
 function resetTenant(i) {
@@ -3084,7 +3096,12 @@ function renderBulkResults() {
           <button class="bulk-t-remove" onclick="event.stopPropagation();removeBulkTenant(${i})">Remove</button>
         </div>
         <div class="bulk-tenant-detail" id="bdet-${i}" style="display:none;">
-          ${d._error ? `<div class="err-banner" style="margin-bottom:10px;">Extraction error: ${esc(d._error)}</div>` : ''}
+          ${d._error ? `<div class="err-banner" style="margin-bottom:12px;">
+            <strong>&#x26A0; We couldn't automatically extract this lease.</strong><br>
+            You can still enter the details manually below.
+            ${!d.leasedSqft ? '<div class="extract-hint">&#x2022; Square footage not detected</div>' : ''}
+            ${(!d.tenantName || !d.startDate) ? '<div class="extract-hint">&#x2022; Lease terms unclear</div>' : ''}
+          </div>` : ''}
           <div class="field-row">
             <div class="field">
               <label>Tenant Name ${confidenceBadge(conf.tenantName)}</label>
@@ -3400,7 +3417,10 @@ function renderInvResults() {
         </div>
         ${d._fileUploadError ? `<div class="inv-upload-err-banner">&#x26A0; File not saved — ${esc(String(d._fileUploadError))}</div>` : ''}
         <div class="bulk-tenant-detail" id="idet-${i}" style="display:none;">
-          ${d._error ? `<div class="err-banner" style="margin-bottom:10px;">Extraction error: ${esc(d._error)}</div>` : ''}
+          ${d._error ? `<div class="err-banner" style="margin-bottom:12px;">
+            <strong>&#x26A0; We couldn't automatically extract this invoice.</strong><br>
+            You can still enter the details manually below.
+          </div>` : ''}
           <div id="dup-warn-${i}"></div>
           <div id="sanity-warn-${i}"></div>
           <div class="field-row">
