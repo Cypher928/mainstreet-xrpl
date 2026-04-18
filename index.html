@@ -1446,15 +1446,88 @@
       .rpt-body * { color: #000 !important; background: white !important; border-color: #ccc !important; }
       @page { margin: 1cm; }
     }
+    /* ── Auth: login screen ──────────────────────────────────────────── */
+    #loginScreen {
+      position: fixed; inset: 0; z-index: 9999;
+      background: #0B1220; display: flex; align-items: center; justify-content: center; padding: 24px;
+    }
+    .login-card {
+      background: #111827; border-radius: 16px; padding: 48px 44px;
+      box-shadow: 0 2px 40px rgba(0,0,0,0.65); border: 1px solid rgba(255,255,255,0.07);
+      width: 100%; max-width: 420px; text-align: center;
+    }
+    .login-logo {
+      font-family: 'Cormorant Garamond', Georgia, serif;
+      font-size: 2.6rem; font-weight: 700; color: #E2E8F0; letter-spacing: -0.02em; margin-bottom: 6px;
+    }
+    .login-tagline {
+      font-family: 'Cormorant Garamond', Georgia, serif;
+      font-size: 1.05rem; color: #C9973A; margin-bottom: 36px;
+    }
+    .login-label {
+      display: block; text-align: left; font-size: 0.78rem; color: #94A3B8;
+      text-transform: uppercase; letter-spacing: 0.07em; margin-bottom: 7px;
+    }
+    .login-input {
+      width: 100%; padding: 11px 14px;
+      background: #1E293B; border: 1px solid rgba(255,255,255,0.1);
+      border-radius: 8px; color: #E2E8F0; font-size: 0.92rem;
+      outline: none; margin-bottom: 14px; font-family: inherit;
+    }
+    .login-input:focus { border-color: rgba(201,151,58,0.5); }
+    .login-btn {
+      width: 100%; padding: 12px; background: #C9973A; color: #0B1220;
+      font-weight: 700; font-size: 0.9rem; letter-spacing: 0.02em;
+      border: none; border-radius: 8px; cursor: pointer; font-family: inherit;
+    }
+    .login-btn:hover:not(:disabled) { background: #D4A84B; }
+    .login-btn:disabled { opacity: 0.5; cursor: not-allowed; }
+    .login-msg { margin-top: 14px; font-size: 0.84rem; color: #64748B; min-height: 20px; line-height: 1.5; }
+    .login-msg.success { color: #4ade80; }
+    .login-msg.error   { color: #f87171; }
+    /* ── Auth: header user bar ───────────────────────────────────────── */
+    .header-user-bar {
+      display: flex; align-items: center; justify-content: center;
+      gap: 12px; margin-top: 14px; font-size: 0.82rem;
+    }
+    .header-user-email { color: #94A3B8; }
+    .logout-btn {
+      padding: 5px 13px; border-radius: 6px; cursor: pointer;
+      font-size: 0.78rem; font-weight: 600; font-family: inherit;
+      background: rgba(148,163,184,0.08); color: #94A3B8;
+      border: 1px solid rgba(148,163,184,0.2);
+    }
+    .logout-btn:hover { background: rgba(148,163,184,0.16); color: #E2E8F0; }
+
   </style>
 </head>
 <body>
+
+<!-- ── Login Screen ─────────────────────────────────────────────────────── -->
+<div id="loginScreen" style="display:none;">
+  <div class="login-card">
+    <div class="login-logo">Mainstreet</div>
+    <div class="login-tagline">The smarter way to reconcile CAM charges</div>
+    <label class="login-label" for="loginEmail">Email address</label>
+    <input class="login-input" type="email" id="loginEmail" placeholder="you@example.com"
+      onkeydown="if(event.key==='Enter')sendMagicLink()" autocomplete="email" />
+    <button class="login-btn" id="loginBtn" onclick="sendMagicLink()">Send Magic Link</button>
+    <div class="login-msg" id="loginMsg"></div>
+  </div>
+</div>
+
+<!-- ── Authenticated App ─────────────────────────────────────────────────── -->
+<div id="appContent" style="display:none;">
 
 <header>
   <h1>Mainstreet</h1>
   <div class="hero-tagline">The smarter way to reconcile CAM charges</div>
   <p>CAM Reconciliation &nbsp;&middot;&nbsp; Works Alongside Yardi &nbsp;&middot;&nbsp; Powered by XRPL</p>
   <p style="margin-top:8px;font-size:0.9rem;color:#94A3B8;letter-spacing:0.01em;">AI-powered CAM reconciliation built for landlords and property managers</p>
+  <div class="header-user-bar" id="headerUserBar">
+    <span class="header-user-email" id="headerUserEmail"></span>
+    <button class="logout-btn" onclick="signOut()">Sign out</button>
+  </div>
 </header>
 
 
@@ -1850,6 +1923,76 @@ console.log('[Mainstreet] SUPABASE_ANON_KEY:', SUPABASE_ANON_KEY ? SUPABASE_ANON
 
 const { createClient: _sbCreateClient } = window.supabase;
 const db = _sbCreateClient(SUPABASE_URL, SUPABASE_ANON_KEY);
+
+// ─── Authentication ───────────────────────────────────────────────────────────
+function _showApp(user) {
+  document.getElementById('loginScreen').style.display  = 'none';
+  document.getElementById('appContent').style.display   = '';
+  document.getElementById('headerUserEmail').textContent = user.email;
+}
+
+function _showLogin() {
+  document.getElementById('loginScreen').style.display = 'flex';
+  document.getElementById('appContent').style.display  = 'none';
+}
+
+async function sendMagicLink() {
+  const email  = (document.getElementById('loginEmail').value || '').trim();
+  const btn    = document.getElementById('loginBtn');
+  const msgEl  = document.getElementById('loginMsg');
+
+  if (!email) {
+    msgEl.className = 'login-msg error';
+    msgEl.textContent = 'Please enter your email address.';
+    return;
+  }
+
+  btn.disabled    = true;
+  btn.textContent = 'Sending…';
+  msgEl.className = 'login-msg';
+  msgEl.textContent = '';
+
+  const { error } = await db.auth.signInWithOtp({
+    email,
+    options: { emailRedirectTo: window.location.origin + window.location.pathname },
+  });
+
+  if (error) {
+    msgEl.className   = 'login-msg error';
+    msgEl.textContent = error.message;
+    btn.disabled      = false;
+    btn.textContent   = 'Send Magic Link';
+  } else {
+    msgEl.className   = 'login-msg success';
+    msgEl.textContent = '✓ Magic link sent — check your inbox (and spam folder).';
+    btn.textContent   = 'Resend';
+    btn.disabled      = false;
+  }
+}
+
+async function signOut() {
+  await db.auth.signOut();
+}
+
+// Check existing session, then listen for changes
+db.auth.getSession().then(({ data: { session } }) => {
+  if (session?.user) {
+    _showApp(session.user);
+    init();
+  } else {
+    _showLogin();
+  }
+});
+
+db.auth.onAuthStateChange((event, session) => {
+  if (session?.user) {
+    _showApp(session.user);
+    // Only run init once — on first SIGNED_IN event after login
+    if (event === 'SIGNED_IN') init();
+  } else {
+    _showLogin();
+  }
+});
 
 // ─── Constants ────────────────────────────────────────────────────────────────
 const MODEL      = 'claude-sonnet-4-6';
@@ -6255,7 +6398,6 @@ async function init() {
     renderTenantSlots();
   }
 }
-init();
 
 </script>
 
@@ -6274,6 +6416,8 @@ init();
   </p>
 </footer>
 
+
+</div><!-- /#appContent -->
 
 </body>
 </html>
