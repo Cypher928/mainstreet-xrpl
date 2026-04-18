@@ -1949,13 +1949,10 @@ const db = _sbCreateClient(SUPABASE_URL, SUPABASE_ANON_KEY);
 
 // ─── Authentication ───────────────────────────────────────────────────────────
 async function _showApp(user) {
-  // Resolve the full user object to get a guaranteed user_id
-  const { data: { user: fullUser } } = await db.auth.getUser();
-  _currentUserId = (fullUser || user).id;
-
+  _currentUserId = user.id;
   document.getElementById('loginScreen').style.display  = 'none';
   document.getElementById('appContent').style.display   = '';
-  document.getElementById('headerUserEmail').textContent = (fullUser || user).email;
+  document.getElementById('headerUserEmail').textContent = user.email;
 }
 
 function _showLogin() {
@@ -6197,13 +6194,13 @@ async function loadProperties() {
 async function saveProperty(property) {
   _lsSave(property);
 
-  // Always resolve user_id fresh from the session — never rely on cached state
-  const { data: { user } } = await db.auth.getUser();
-  if (!user?.id) {
-    console.warn('[Mainstreet] saveProperty: no authenticated user, skipping Supabase write');
+  // Use getSession() — reads the local cached token, no network round-trip needed
+  const { data: { session } } = await db.auth.getSession();
+  if (!session) {
+    console.warn('[Mainstreet] saveProperty: no active session, skipping Supabase write');
     return;
   }
-  const userId = user.id;
+  const userId = session.user.id;
 
   try {
     const stripped = _stripBlobs(property);
