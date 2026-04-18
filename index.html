@@ -2530,35 +2530,39 @@ function missingLeaseFields(d) {
   const m = [];
   if (!d.tenantName)  m.push('Tenant name');
   if (!d.leasedSqft)  m.push('Leased square footage');
+  if (!d.leaseType)   m.push('Lease type (NNN or Gross)');
   if (!d.startDate)   m.push('Lease start date');
   if (!d.endDate)     m.push('Lease end date');
-  if (!d.leaseType)   m.push('Lease type (NNN or Gross)');
   return m;
+}
+
+function buildRequestInfoMessage(d, propName) {
+  const missing  = missingLeaseFields(d);
+  const greeting = d.tenantName ? ` ${d.tenantName}` : ' Tenant';
+  const intro    = missing.length === 1
+    ? 'We just need one item to complete your lease record:\n\n'
+    : 'We need the following information to complete your lease record:\n\n';
+  const bullets  = missing.map(f => `\u2022 ${f}`).join('\n');
+
+  return `Subject: Lease Information Request \u2013 ${propName}
+
+Hi${greeting},
+
+We are currently reconciling CAM charges for ${propName} and need the following information.
+
+${intro}${bullets}
+
+Please reply with this information at your earliest convenience. This will allow us to finalize your CAM reconciliation accurately and on time.
+
+Thank you,
+${propName} Management`;
 }
 
 function openReqInfoModal(i) {
   const d = tenantData[i];
   if (!d) return;
-  const missing    = missingLeaseFields(d);
-  const propName   = currentProperty()?.name || 'the property';
-  const fieldList  = missing.map(f => `  \u2022 ${f}`).join('\n');
-  const greeting   = d.tenantName ? ` ${d.tenantName}` : '';
-
-  const body =
-`Subject: Lease Information Request \u2013 ${propName}
-
-Hi${greeting},
-
-We are currently reconciling CAM charges for ${propName} and need the following information to complete your lease record:
-
-${fieldList}
-
-Could you please provide the above details at your earliest convenience? This will allow us to finalize your CAM reconciliation accurately and on time.
-
-Thank you,
-${propName} Management`;
-
-  document.getElementById('reqInfoEmailBody').value = body;
+  const propName = currentProperty()?.name || 'the property';
+  document.getElementById('reqInfoEmailBody').value = buildRequestInfoMessage(d, propName);
   const btn = document.getElementById('copyMsgBtn');
   if (btn) btn.innerHTML = '&#x1F4CB; Copy Message';
   document.getElementById('reqInfoModal').style.display = 'flex';
