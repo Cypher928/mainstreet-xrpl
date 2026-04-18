@@ -1098,6 +1098,14 @@
     .tf-flag--crit { background: rgba(248,113,113,0.08); border: 1px solid rgba(248,113,113,0.3); color: #fca5a5; }
     .tf-flag-icon  { flex-shrink: 0; line-height: 1.45; }
     .tf-flag-expl  { font-weight: 400; opacity: 0.75; margin-top: 2px; font-size: 0.73rem; }
+    .rc-flag-impact {
+      font-size: 0.72rem; color: rgba(148,163,184,0.75); margin-top: 2px;
+    }
+    .tf-missing-note {
+      margin-top: 10px; padding: 10px 12px; border-radius: 8px;
+      background: rgba(245,158,11,0.08); border: 1px solid rgba(245,158,11,0.25);
+      color: #fbbf24; font-size: 0.8rem;
+    }
     /* Invoice confidence badge */
     .recon-inv-conf { font-size: 0.67rem; font-weight: 700; border-radius: 4px; padding: 1px 5px; flex-shrink: 0; }
     .recon-inv-conf-hi  { background: rgba(34,197,94,0.14);   color: #86efac; }
@@ -2620,6 +2628,21 @@ async function copyReqInfoMsg() {
   }
 }
 
+function humanizeFlag(code) {
+  switch (code) {
+    case 'SQFT_OVERFLOW':
+      return { title: 'Total leased space exceeds building size',     impact: 'This will cause incorrect pro-rata calculations' };
+    case 'SQFT_APPROXIMATE':
+      return { title: 'Square footage appears to be estimated',       impact: 'This may slightly affect allocation accuracy' };
+    case 'BASE_YEAR_MISMATCH':
+      return { title: 'Base year may not match lease terms',          impact: 'This may affect which expenses are included' };
+    case 'NNN_GROSS_UNKNOWN':
+      return { title: 'Lease type not specified (NNN vs Gross)',      impact: 'This directly affects how expenses are allocated' };
+    default:
+      return { title: 'Needs review', impact: '' };
+  }
+}
+
 function liveTenantFlags(d) {
   const flags = [];
   if (!d.leasedSqft || parseSqft(d.leasedSqft) === 0) {
@@ -2669,19 +2692,22 @@ function renderTenantFields(i) {
       You can still enter the details manually below.
       ${!d.leasedSqft ? '<div class="extract-hint">&#x2022; Square footage not detected</div>' : ''}
       ${(!d.tenantName || !d.startDate) ? '<div class="extract-hint">&#x2022; Lease terms unclear</div>' : ''}
+      <div class="tf-missing-note">&#x26A0; Missing required lease information. Please complete the fields below or use "Request Info" to contact the tenant.</div>
     </div>` : '';
 
   const _liveFlags  = liveTenantFlags(d);
   const _flagsBlock = _liveFlags.length ? `
     <div class="tf-flags">
-      ${_liveFlags.map(f => `
-        <div class="tf-flag tf-flag--${f.severity}">
+      ${_liveFlags.map(f => {
+        const hf = humanizeFlag(f.code);
+        return `<div class="tf-flag tf-flag--${f.severity}">
           <span class="tf-flag-icon">&#x26A1;</span>
           <div>
-            <strong>${esc(f.message)}</strong>
-            <div class="tf-flag-expl">${esc(f.explanation)}</div>
+            <strong>${hf.title}</strong>
+            ${hf.impact ? `<div class="rc-flag-impact">${hf.impact}</div>` : ''}
           </div>
-        </div>`).join('')}
+        </div>`;
+      }).join('')}
     </div>` : '';
 
   body.innerHTML = `
@@ -4656,11 +4682,13 @@ async function runAllocation() {
     const _renderFlagBlock = (group, extraCls, icon, label) => group.length ? `
       <div class="rc-flags ${extraCls}">
         <div class="rc-flags-title">${icon} ${label}</div>
-        ${group.map(f => `
-          <div class="rc-flag-item">
-            &#x2022; <strong>${esc(f.message)}</strong>
-            ${f.explanation ? `<br><span class="rc-flag-expl">${esc(f.explanation)}</span>` : ''}
-          </div>`).join('')}
+        ${group.map(f => {
+          const hf = humanizeFlag(f.code);
+          return `<div class="rc-flag-item">
+            &#x2022; <strong>${hf.title}</strong>
+            ${hf.impact ? `<div class="rc-flag-impact">${hf.impact}</div>` : ''}
+          </div>`;
+        }).join('')}
       </div>` : '';
     const flagsSection =
       _renderFlagBlock(_critFlags, '',              '&#x26A0;&#xFE0F;', 'Needs Review') +
@@ -4694,7 +4722,7 @@ async function runAllocation() {
         ? `<div class="recon-cap-note">&#x26A0; Cap applied — your share reduced by ${fmt(fr.capAdjustment)}</div>`
         : '';
       return `<details class="recon-breakdown">
-        <summary>Invoice breakdown (${fr.includedInvoices.length})${fr.averageConfidence > 0 ? ` · avg ${fr.averageConfidence}% match confidence` : ''}</summary>
+        <summary>Invoice breakdown (${fr.includedInvoices.length} expenses included)${fr.averageConfidence > 0 ? ` · avg ${fr.averageConfidence}% match confidence` : ''}</summary>
         ${capLine}
         <div class="recon-inv-list">${rows}</div>
       </details>`;
@@ -6664,7 +6692,7 @@ function restoreResultsDisplay() {
     const _rfb  = (group, cls, icon, label) => group.length ? `
       <div class="rc-flags ${cls}">
         <div class="rc-flags-title">${icon} ${label}</div>
-        ${group.map(f => `<div class="rc-flag-item">&#x2022; <strong>${esc(f.message)}</strong>${f.explanation ? `<br><span class="rc-flag-expl">${esc(f.explanation)}</span>` : ''}</div>`).join('')}
+        ${group.map(f => { const hf = humanizeFlag(f.code); return `<div class="rc-flag-item">&#x2022; <strong>${hf.title}</strong>${hf.impact ? `<div class="rc-flag-impact">${hf.impact}</div>` : ''}</div>`; }).join('')}
       </div>` : '';
     const invBreakdown = (() => {
       if (!fr?.includedInvoices.length) return '';
@@ -6681,7 +6709,7 @@ function restoreResultsDisplay() {
         </div>`;
       }).join('');
       const capLine = fr.capApplied ? `<div class="recon-cap-note">&#x26A0; Cap applied — your share reduced by ${fmt(fr.capAdjustment)}</div>` : '';
-      return `<details class="recon-breakdown"><summary>Invoice breakdown (${fr.includedInvoices.length})${fr.averageConfidence > 0 ? ` · avg ${fr.averageConfidence}% match confidence` : ''}</summary>${capLine}<div class="recon-inv-list">${rows}</div></details>`;
+      return `<details class="recon-breakdown"><summary>Invoice breakdown (${fr.includedInvoices.length} expenses included)${fr.averageConfidence > 0 ? ` · avg ${fr.averageConfidence}% match confidence` : ''}</summary>${capLine}<div class="recon-inv-list">${rows}</div></details>`;
     })();
     html += `<div class="result-card${critF.length ? ' result-card--flagged' : ''}">
       <div class="r-name">${esc(r.name)}</div>
