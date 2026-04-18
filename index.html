@@ -2248,7 +2248,6 @@ const portfolio = [
   { id: 'demo',   name: 'Riverside Commons', totalSqft: 24000, status: 'in-progress', tenantCount: 3, invoiceCount: 7, totalCAM: 0,     openDisputes: 0 },
   { id: 'prop-4', name: 'Maple Plaza',        totalSqft: 18000, status: 'disputes',    tenantCount: 3, invoiceCount: 5, totalCAM: 12300, openDisputes: 1 },
 ];
-let nextPropId   = 5;
 let activePropId = null; // null = portfolio view
 let _props       = [];   // canonical merged array from loadProperties()
 let _currentUserId = null; // set after auth, scopes all Supabase reads/writes
@@ -6027,16 +6026,16 @@ async function backToPortfolio() {
 }
 
 async function addNewProperty() {
-  const id = 'prop-' + (nextPropId++);
+  // No id — saveProperty will INSERT and patch newProp.id with the Supabase UUID
   const newProp = {
-    id, name: 'New Property', totalSqft: 0,
+    name: 'New Property', totalSqft: 0,
     status: 'in-progress', tenantCount: 0, invoiceCount: 0,
     totalCAM: 0, openDisputes: 0, createdAt: new Date().toISOString(),
   };
+  _props.push(newProp);
   portfolio.push(newProp);
-  _props.push(newProp);    // keep canonical array in sync
-  await saveProperty(newProp);
-  await selectProperty(id);
+  await saveProperty(newProp); // patches newProp.id in-place
+  await selectProperty(newProp.id);
   setTimeout(() => {
     const el = document.getElementById('propertyName');
     el.focus(); el.select();
@@ -6203,6 +6202,7 @@ async function loadProperties() {
 }
 
 // Save a property — localStorage first (instant), then Supabase.
+// INSERT when property has no id (new); UPSERT when it already has a UUID.
 async function saveProperty(property) {
   _lsSave(property);
 
@@ -6211,16 +6211,36 @@ async function saveProperty(property) {
   try {
     const stripped = _stripBlobs(property);
     const { id, name, totalSqft, ...rest } = stripped;
-    const { error } = await db.from('properties').upsert({
-      id,
+    const payload = {
       user_id: _currentUserId,
       name:    name || 'New Property',
       sqft:    totalSqft || 0,
       data:    rest,
-    });
-    if (error) throw error;
-    console.log('SAVED TO SUPABASE', id, { tenants: (rest.tenants||[]).length, invoices: (rest.invoices||[]).length });
+    };
+
+    if (id) {
+      // Existing record — update by id
+      const { error } = await db.from('properties').upsert({ id, ...payload });
+      if (error) throw error;
+      console.log('UPDATED IN SUPABASE', id);
+    } else {
+      // New record — let Supabase generate the UUID
+      const { data: inserted, error } = await db.from('properties').insert(payload).select('id').single();
+      if (error) throw error;
+      // Patch the in-memory object so callers immediately have the real UUID
+      property.id = inserted.id;
+      _lsSave(property);
+      console.log('INSERTED INTO SUPABASE', inserted.id);
+    }
   } catch (e) {
+    // If INSERT failed and property still has no id, assign a client-side UUID
+    // so the rest of the app can continue working offline
+    if (!property.id) {
+      property.id = (typeof crypto !== 'undefined' && crypto.randomUUID)
+        ? crypto.randomUUID()
+        : 'local-' + Date.now();
+      _lsSave(property);
+    }
     const msg = e?.message || String(e);
     const isNetErr = /load failed|failed to fetch|networkerror|offline/i.test(msg);
     if (isNetErr) {
@@ -6452,9 +6472,6 @@ async function init() {
 
     console.log('[Mainstreet] PROPERTIES ON LOAD:', _props.length, 'for user', _currentUserId);
     portfolio.splice(0, portfolio.length, ..._props);
-    nextPropId = _props.length
-      ? Math.max(..._props.map(p => parseInt((p.id || '').replace(/\D/g, '')) || 0), 4) + 1
-      : 5;
     renderPortfolio(_props);
   } catch (e) {
     console.error('[Mainstreet] portfolio render failed, falling back to main workflow.', e);
