@@ -772,6 +772,7 @@
     .bulk-t-name { font-size: 0.88rem; font-weight: 700; color: #E2E8F0; flex: 1; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
     .bulk-t-meta { font-size: 0.78rem; color: #64748B; white-space: nowrap; }
     .bulk-t-chevron { font-size: 0.7rem; color: #64748B; flex-shrink: 0; }
+    .bulk-t-missing { font-size: 0.73rem; font-weight: 600; color: #fbbf24; white-space: nowrap; flex-shrink: 0; }
     .bulk-t-remove {
       padding: 3px 10px; border-radius: 6px; font-size: 0.74rem; font-weight: 600;
       cursor: pointer; border: 1.5px solid rgba(239,68,68,0.3); background: #111827;
@@ -3197,6 +3198,7 @@ function renderBulkResults() {
           <span class="bulk-t-status">${icon}</span>
           <span class="bulk-t-name"   id="bname-${i}">${esc(name)}</span>
           <span class="bulk-t-meta"   id="bmeta-${i}">${esc(meta)}</span>
+          ${_missing.length ? `<span class="bulk-t-missing" id="bmissing-${i}">\u26A0 Missing: ${_missing.join(', ')}</span>` : `<span id="bmissing-${i}"></span>`}
           <span class="bulk-t-chevron" id="bchev-${i}">&#x25BC; Edit</span>
           ${_missing.length ? `<button class="req-info-btn" onclick="event.stopPropagation();openReqInfoModal(${i})">&#x2709; Request Info</button>` : ''}
           <button class="bulk-t-remove" onclick="event.stopPropagation();removeBulkTenant(${i})">Remove</button>
@@ -3270,13 +3272,19 @@ function toggleBulkDetail(i) {
 function refreshBulkSummary(i) {
   const d = tenantData[i];
   if (!d) return;
-  const nameEl = document.getElementById(`bname-${i}`);
-  const metaEl = document.getElementById(`bmeta-${i}`);
+  const nameEl    = document.getElementById(`bname-${i}`);
+  const metaEl    = document.getElementById(`bmeta-${i}`);
+  const missingEl = document.getElementById(`bmissing-${i}`);
   if (nameEl) nameEl.textContent = d.tenantName || '(unknown — click to edit)';
   if (metaEl) {
     metaEl.textContent = [d.leasedSqft ? d.leasedSqft + ' sqft' : null,
                           d.capPercentage ? d.capPercentage + '% cap' : null]
                           .filter(Boolean).join(' · ') || '—';
+  }
+  if (missingEl) {
+    const m = missingLeaseFields(d);
+    missingEl.textContent  = m.length ? `\u26A0 Missing: ${m.join(', ')}` : '';
+    missingEl.className    = m.length ? 'bulk-t-missing' : '';
   }
 }
 
