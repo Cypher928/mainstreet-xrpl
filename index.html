@@ -1925,13 +1925,18 @@ const { createClient: _sbCreateClient } = window.supabase;
 const db = _sbCreateClient(SUPABASE_URL, SUPABASE_ANON_KEY);
 
 // ─── Authentication ───────────────────────────────────────────────────────────
-function _showApp(user) {
+async function _showApp(user) {
+  // Resolve the full user object to get a guaranteed user_id
+  const { data: { user: fullUser } } = await db.auth.getUser();
+  _currentUserId = (fullUser || user).id;
+
   document.getElementById('loginScreen').style.display  = 'none';
   document.getElementById('appContent').style.display   = '';
-  document.getElementById('headerUserEmail').textContent = user.email;
+  document.getElementById('headerUserEmail').textContent = (fullUser || user).email;
 }
 
 function _showLogin() {
+  _currentUserId = null;
   document.getElementById('loginScreen').style.display = 'flex';
   document.getElementById('appContent').style.display  = 'none';
 }
@@ -2196,6 +2201,7 @@ const portfolio = [
 let nextPropId   = 5;
 let activePropId = null; // null = portfolio view
 let _props       = [];   // canonical merged array from loadProperties()
+let _currentUserId = null; // set after auth, scopes all Supabase reads/writes
 
 // Returns the currently selected property object, or null if none is active.
 function currentProperty() {
@@ -6116,50 +6122,60 @@ function _lsLoad(id) {
   } catch (e) { return null; }
 }
 
-// Load all properties — Supabase first, localStorage fallback.
+// Load all properties for the current user — Supabase primary, localStorage fallback.
 async function loadProperties() {
+  if (!_currentUserId) return _lsLoadAll() || [];
   try {
-    const { data, error } = await db.from('properties').select('*');
+    const { data, error } = await db
+      .from('properties')
+      .select('*')
+      .eq('user_id', _currentUserId)
+      .order('created_at', { ascending: false });
     if (error) throw error;
-    if (!data || data.length === 0) return _lsLoadAll() || [];
+    if (!data || data.length === 0) return [];
 
-    // Reconstruct full property objects: spread data JSONB on top of id/name
-    const rows = data.map(p => ({ id: p.id, name: p.name, ...(p.data || {}) }));
-
-    // Merge with defaults so structural fields are always present for known ids
-    const byId   = new Map(rows.map(p => [p.id, p]));
-    const merged = defaultProperties.map(def =>
-      byId.has(def.id) ? { ...def, ...byId.get(def.id) } : def
-    );
-    rows.forEach(p => { if (!merged.find(m => m.id === p.id)) merged.push(p); });
-    return merged;
+    // Reconstruct full property objects: spread data JSONB on top of id/name/sqft
+    return data.map(p => ({
+      id:         p.id,
+      name:       p.name,
+      totalSqft:  p.sqft || 0,
+      status:     'in-progress',
+      tenantCount:  0,
+      invoiceCount: 0,
+      totalCAM:     0,
+      openDisputes: 0,
+      ...(p.data || {}),
+    }));
   } catch (e) {
     console.warn('[Mainstreet] Supabase unavailable, loading from localStorage:', e.message);
-    return _lsLoadAll() || defaultProperties.slice();
+    return _lsLoadAll() || [];
   }
 }
 
-// Save a property — localStorage first (instant), Supabase in background.
-// Invoice files live in Supabase Storage; only the fileUrl string is saved here.
+// Save a property — localStorage first (instant), then Supabase.
 async function saveProperty(property) {
-  // ── 1. Save locally right now — works offline, never fails from network ──
   _lsSave(property);
 
-  // ── 2. Try to sync to Supabase in the background ──────────────────────────
+  if (!_currentUserId) return;
+
   try {
     const stripped = _stripBlobs(property);
-    const { id, name, ...data } = stripped;
-    const { error } = await db.from('properties').upsert({ id, name, data });
+    const { id, name, totalSqft, ...rest } = stripped;
+    const { error } = await db.from('properties').upsert({
+      id,
+      user_id: _currentUserId,
+      name:    name || 'New Property',
+      sqft:    totalSqft || 0,
+      data:    rest,
+    });
     if (error) throw error;
-    console.log('SAVED TO SUPABASE', id, { tenants: (data.tenants||[]).length, invoices: (data.invoices||[]).length });
+    console.log('SAVED TO SUPABASE', id, { tenants: (rest.tenants||[]).length, invoices: (rest.invoices||[]).length });
   } catch (e) {
     const msg = e?.message || String(e);
     const isNetErr = /load failed|failed to fetch|networkerror|offline/i.test(msg);
     if (isNetErr) {
-      // Network down — data is safe in localStorage, no need to alarm the user
       console.warn('[Mainstreet] Supabase offline, saved locally only:', msg);
     } else {
-      // Real error (RLS, schema mismatch, etc.) — surface to user
       console.error('[Mainstreet] saveProperty Supabase error:', msg, e);
       const prev = document.getElementById('_saveErrToast');
       if (prev) prev.remove();
@@ -6211,10 +6227,12 @@ async function savePropertyData() {
 // Fetch a single property's full data — Supabase first, localStorage fallback.
 async function loadPropertyData(id) {
   try {
-    const { data, error } = await db.from('properties').select('*').eq('id', id).single();
+    let q = db.from('properties').select('*').eq('id', id);
+    if (_currentUserId) q = q.eq('user_id', _currentUserId);
+    const { data, error } = await q.single();
     if (error) throw error;
     if (!data) return _lsLoad(id);
-    return { id: data.id, name: data.name, ...(data.data || {}) };
+    return { id: data.id, name: data.name, totalSqft: data.sqft || 0, ...(data.data || {}) };
   } catch (e) {
     console.warn('[Mainstreet] Supabase unavailable, loading property from localStorage:', e.message);
     return _lsLoad(id);
@@ -6379,17 +6397,14 @@ async function init() {
   try {
     _props = await loadProperties();
 
-    if (!_props || _props.length === 0) {
-      // First run — seed the demo property and both defaults
-      for (const def of defaultProperties) {
-        await saveProperty(def);
-      }
-      _props = defaultProperties.slice();
-    }
+    // New user with no saved properties — start with an empty portfolio
+    if (!_props || _props.length === 0) _props = [];
 
-    console.log('[Mainstreet] PROPERTIES ON LOAD:', _props);
+    console.log('[Mainstreet] PROPERTIES ON LOAD:', _props.length, 'for user', _currentUserId);
     portfolio.splice(0, portfolio.length, ..._props);
-    nextPropId = Math.max(..._props.map(p => parseInt(p.id.replace(/\D/g, '')) || 0), 4) + 1;
+    nextPropId = _props.length
+      ? Math.max(..._props.map(p => parseInt((p.id || '').replace(/\D/g, '')) || 0), 4) + 1
+      : 5;
     renderPortfolio(_props);
   } catch (e) {
     console.error('[Mainstreet] portfolio render failed, falling back to main workflow.', e);
