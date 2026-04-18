@@ -1059,6 +1059,8 @@
       width: 100%; font-size: 0.68rem; color: #f87171; margin-top: 2px; cursor: help;
     }
 
+    .hidden { display: none !important; }
+
     /* ── Sqft validation banner ──────────────────────────────────────── */
     .sqft-error-banner {
       margin-bottom: 12px; padding: 10px 14px; border-radius: 8px;
@@ -1595,7 +1597,7 @@
     </div>
 
     <!-- SqFt mismatch banner — lives above both panels so it's always visible -->
-    <div id="sqft-error" class="sqft-error-banner" style="display:none;"></div>
+    <div id="sqft-error" class="sqft-error-banner hidden"></div>
 
     <!-- Panel A: Bulk -->
     <div id="leasePanelBulk">
@@ -2265,23 +2267,17 @@ function checkSqftValidation() {
   if (!totalSqFt) { clearSqftBanner(); return; }
 
   const usedSqFt = tenantData.filter(t => t).reduce((s, t) => s + parseSqft(t.leasedSqft), 0);
-  console.log('SqFt check:', usedSqFt, totalSqFt);
+  console.log('SQFT CHECK', usedSqFt, totalSqFt);
 
-  if (!usedSqFt)  { clearSqftBanner(); return; }
+  if (!usedSqFt) { clearSqftBanner(); return; }
 
   const used  = usedSqFt.toLocaleString();
   const total = totalSqFt.toLocaleString();
 
   if (usedSqFt > totalSqFt) {
-    showSqftBanner(
-      `&#x26A0; Total leased (${used} sqft) exceeds building total (${total} sqft). Please adjust tenant sizes.`,
-      'over'
-    );
+    showSqftBanner(`⚠ Total leased (${used} sqft) exceeds building total (${total} sqft). Please adjust tenant sizes.`, 'over');
   } else if (usedSqFt < totalSqFt) {
-    showSqftBanner(
-      `&#x26A0; Total leased (${used} sqft) is less than building total (${total} sqft). Some space may be unaccounted for.`,
-      'under'
-    );
+    showSqftBanner(`⚠ Total leased (${used} sqft) is less than building total (${total} sqft). Some space may be unaccounted for.`, 'under');
   } else {
     clearSqftBanner();
   }
@@ -2289,17 +2285,17 @@ function checkSqftValidation() {
 
 function showSqftBanner(msg, severity) {
   const el = document.getElementById('sqft-error');
-  if (!el) return;
-  el.innerHTML = msg;
-  el.style.display = 'block';
+  if (!el) { console.warn('sqft-error element not found'); return; }
+  el.innerText = msg;
   el.dataset.severity = severity;
+  el.classList.remove('hidden');
 }
 
 function clearSqftBanner() {
   const el = document.getElementById('sqft-error');
   if (!el) return;
-  el.innerHTML = '';
-  el.style.display = 'none';
+  el.innerText = '';
+  el.classList.add('hidden');
   delete el.dataset.severity;
 }
 
@@ -3128,7 +3124,6 @@ function renderInvResults() {
     const scores = [conf.vendorName, conf.amount, conf.category].filter(s => s !== undefined && s !== null);
     const overallConf = scores.length ? Math.min(...scores) : undefined;
 
-    // Which fields are below 90% — used by clickable badge to highlight them
     const weakFields = ['vendorName','amount','category','invoiceDate']
       .filter(f => (conf[f] === undefined || conf[f] === null || parseInt(conf[f]) < 90) && !d.verified?.[f]);
     const matchBadge  = d.matchedTenant
@@ -3156,6 +3151,26 @@ function renderInvResults() {
         }
       }
     }
+
+    // ── Verify blocks: computed explicitly for each field ──────────────────
+    function _vblock(score, fieldName) {
+      if (d.verified?.[fieldName]) {
+        return `<span class="conf-badge conf-verified">&#x2713; Verified</span>`;
+      }
+      const s = (score == null) ? -1 : parseInt(score, 10);
+      if (isNaN(s) || s < 90) {
+        console.log('VERIFY BUTTONS RENDERED', i, fieldName, score);
+        return `<div class="field-verify-actions">
+          <button class="verify-btn verify-btn-confirm" onclick="markFieldVerified(${i},'${fieldName}')">&#x2714; Mark Verified</button>
+          <button class="verify-btn verify-btn-change" onclick="focusInvField(${i},'${fieldName}')">&#x270E; Change</button>
+        </div>`;
+      }
+      return '';
+    }
+    const vVendor   = _vblock(conf.vendorName,  'vendorName');
+    const vAmount   = _vblock(conf.amount,       'amount');
+    const vCategory = _vblock(conf.category,     'category');
+    const vDate     = _vblock(conf.invoiceDate,  'invoiceDate');
 
     return `
       <div class="bulk-tenant-row${d._error ? ' has-error' : ''}" id="itr-${i}">
@@ -3185,26 +3200,26 @@ function renderInvResults() {
               <label>Vendor ${confidenceBadge(conf.vendorName)}</label>
               <input id="ifield-${i}-vendorName" type="text" value="${esc(d.vendorName)}"
                 oninput="invoiceData[${i}].vendorName=this.value;markFieldVerified(${i},'vendorName');refreshInvSummary(${i})"/>
-              <span id="ibadgeWrap-${i}-vendorName">${verifiableActions(conf.vendorName, i, 'vendorName')}</span>
+              <span id="ibadgeWrap-${i}-vendorName">${vVendor}</span>
             </div>
             <div class="field">
               <label>Amount ($) ${confidenceBadge(conf.amount)}</label>
               <input id="ifield-${i}-amount" type="number" value="${esc(d.amount)}"
                 oninput="invoiceData[${i}].amount=parseFloat(this.value)||'';markFieldVerified(${i},'amount');refreshInvSummary(${i})"/>
-              <span id="ibadgeWrap-${i}-amount">${verifiableActions(conf.amount, i, 'amount')}</span>
+              <span id="ibadgeWrap-${i}-amount">${vAmount}</span>
             </div>
           </div>
           <div class="field-row">
             <div class="field">
               <label>Category ${confidenceBadge(conf.category)}</label>
               <select id="ifield-${i}-category" onchange="invoiceData[${i}].category=this.value;markFieldVerified(${i},'category');refreshInvSummary(${i})">${opts}</select>
-              <span id="ibadgeWrap-${i}-category">${verifiableActions(conf.category, i, 'category')}</span>
+              <span id="ibadgeWrap-${i}-category">${vCategory}</span>
             </div>
             <div class="field">
               <label>Invoice Date ${confidenceBadge(conf.invoiceDate)}</label>
               <input id="ifield-${i}-invoiceDate" type="text" value="${esc(d.invoiceDate)}"
                 oninput="invoiceData[${i}].invoiceDate=this.value;markFieldVerified(${i},'invoiceDate');recomputeSummaryBadge(${i})"/>
-              <span id="ibadgeWrap-${i}-invoiceDate">${verifiableActions(conf.invoiceDate, i, 'invoiceDate')}</span>
+              <span id="ibadgeWrap-${i}-invoiceDate">${vDate}</span>
             </div>
           </div>
         </div>
@@ -3217,6 +3232,8 @@ function renderInvResults() {
       <button class="bulk-clear-btn" onclick="clearInvResults()">&#x2715; Clear All</button>
     </div>
     ${rows}`;
+
+  setTimeout(() => console.log('UI REFRESH COMPLETE'), 500);
 }
 
 // Returns a clickable confidence badge that opens + highlights weak fields on click.
