@@ -2463,32 +2463,39 @@ async function callClaude(file, prompt) {
   }
 }
 
+// ─── Paste this block to replace normalizeTenant ─────────────────────────────
 function normalizeTenant(raw) {
   if (!raw || typeof raw !== 'object') return null;
+  // Unwrap tenants array if present
   const src = Array.isArray(raw.tenants) && raw.tenants.length > 0 ? raw.tenants[0] : raw;
 
-  const name = src.name || src.tenantName || '';
+  // tenantName: name | tenant | tenantName
+  const name = src.name || src.tenant || src.tenantName || '';
 
-  const sqftRaw = src.sqft ?? src.leasedSqft ?? '';
-  let sqft = '';
+  // leasedSqft: sqft | leasedSqft | squareFeet | leased_square_feet
+  const sqftRaw = src.sqft ?? src.leasedSqft ?? src.squareFeet ?? src.leased_square_feet ?? '';
+  let leasedSqft = '';
   if (sqftRaw !== '' && sqftRaw !== null && sqftRaw !== undefined) {
     const n = typeof sqftRaw === 'number' ? sqftRaw
       : parseFloat(String(sqftRaw).replace(/,/g, '').replace(/[^0-9.]/g, ''));
-    sqft = (!isNaN(n) && n > 0) ? String(n) : '';
+    leasedSqft = (!isNaN(n) && n > 0) ? String(n) : '';
   }
 
-  const capRaw = src.cap ?? src.capPercentage ?? '';
-  const cap = (capRaw !== '' && capRaw !== null && capRaw !== undefined) ? String(capRaw) : '';
+  // capPercentage: cap | capPercent | cap_percentage | capPercentage
+  const capRaw = src.cap ?? src.capPercent ?? src.cap_percentage ?? src.capPercentage ?? '';
+  const capPercentage = (capRaw !== '' && capRaw !== null && capRaw !== undefined) ? String(capRaw) : '';
 
-  let exclusions = '';
-  if (typeof src.exclusions === 'string')              exclusions = src.exclusions;
-  else if (Array.isArray(src.exclusions))              exclusions = src.exclusions.join(', ');
-  else if (typeof src.excluded === 'string')           exclusions = src.excluded;
-  else if (Array.isArray(src.excluded))                exclusions = src.excluded.join(', ');
-  else if (typeof src.excludedCategories === 'string') exclusions = src.excludedCategories;
-  else if (Array.isArray(src.excludedCategories))      exclusions = src.excludedCategories.join(', ');
+  // startDate: startDate | start_date | lease_start
+  const startDate = String(src.startDate || src.start_date || src.lease_start || '');
 
-  const ltRaw = src.leaseType || src.lease_type || '';
+  // endDate: endDate | end_date | lease_end
+  const endDate = String(src.endDate || src.end_date || src.lease_end || '');
+
+  // baseYear: baseYear | base_year
+  const baseYear = String(src.baseYear || src.base_year || '');
+
+  // leaseType: leaseType | lease_type | type
+  const ltRaw = src.leaseType || src.lease_type || src.type || '';
   let leaseType = null;
   if (ltRaw) {
     const s = String(ltRaw).trim();
@@ -2496,18 +2503,26 @@ function normalizeTenant(raw) {
     else if (/^gross$/i.test(s))                     leaseType = 'Gross';
   }
 
+  // excludedCategories: excluded | excludedCategories | exclusions (string or array)
+  const excSrc = src.excluded ?? src.excludedCategories ?? src.exclusions ?? null;
+  let excludedCategories = '';
+  if (typeof excSrc === 'string')      excludedCategories = excSrc;
+  else if (Array.isArray(excSrc))      excludedCategories = excSrc.join(', ');
+
   return {
-    tenantName:         String(name),
-    leasedSqft:         sqft,
-    capPercentage:      cap,
-    excludedCategories: exclusions,
-    baseYear:           String(src.baseYear  || src.base_year  || ''),
-    startDate:          String(src.startDate || src.start_date || ''),
-    endDate:            String(src.endDate   || src.end_date   || ''),
+    tenantName: String(name),
+    leasedSqft,
+    capPercentage,
+    excludedCategories,
+    baseYear,
+    startDate,
+    endDate,
     leaseType,
-    confidence:         src.confidence || {},
+    confidence: src.confidence || {},
   };
 }
+// ─────────────────────────────────────────────────────────────────────────────
+
 
 async function callClaudeForLease(text) {
   const response = await fetch("/api/claude", {
@@ -2588,6 +2603,9 @@ async function handleLease(i, file) {
     const leaseText = await file.text();
     const d = await callClaudeForLease(leaseText);
     tenantData[i] = normalizeTenant(d);
+    document.body.insertAdjacentHTML('beforeend',
+      '<div style="position:fixed;bottom:10px;left:10px;background:#000;color:#0f0;padding:10px;z-index:9999;font-size:12px;">TENANTS: ' + JSON.stringify(tenantData) + '</div>'
+    );
     renderTenantFields(i);
     checkSqftValidation();
 
@@ -3395,6 +3413,9 @@ async function handleBulkLeases(fileList) {
       const leaseText = await files[i].text();
       const d = await callClaudeForLease(leaseText);
       tenantData.push({ ...normalizeTenant(d), _error: null });
+      document.body.insertAdjacentHTML('beforeend',
+        '<div style="position:fixed;bottom:10px;left:10px;background:#000;color:#0f0;padding:10px;z-index:9999;font-size:12px;">TENANTS: ' + JSON.stringify(tenantData) + '</div>'
+      );
     } catch (err) {
       tenantData.push({
         tenantName:         files[i].name.replace(/\.pdf$/i, ''),
