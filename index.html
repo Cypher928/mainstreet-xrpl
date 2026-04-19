@@ -2646,12 +2646,13 @@ async function extractPdfText(file) {
 }
 
 async function callClaudeForLease(text) {
+  // system must be a top-level field — NOT a role in the messages array
   const buildBody = (userContent) => JSON.stringify({
     model: MODEL,
     max_tokens: 1024,
+    system: CLAUDE_LEASE_SYSTEM,
     messages: [
-      { role: 'system', content: CLAUDE_LEASE_SYSTEM },
-      { role: 'user',   content: userContent },
+      { role: 'user', content: userContent },
     ],
   });
 
@@ -2668,26 +2669,34 @@ async function callClaudeForLease(text) {
     }
     let d;
     try { d = await r.json(); } catch { throw new Error('Lease extraction response parse failed'); }
-    return d?.content?.[0]?.text ?? d?.completion ?? '';
+    const responseText = d?.content?.[0]?.text ?? '';
+    console.log("RAW AI RESPONSE:", responseText);
+    return responseText;
   };
 
   const tryParse = (rawText) => {
-    console.log("RAW AI RESPONSE:", rawText);
+    // Strip markdown fences
     let raw = rawText.replace(/^```(?:json)?\s*/i, '').replace(/\s*```\s*$/i, '').trim();
+
+    // Hard stop if response doesn't start with { — log and do not silently continue
     if (!raw.startsWith('{') && !raw.startsWith('[')) {
-      const s = raw.indexOf('{'), e = raw.lastIndexOf('}');
-      if (s !== -1 && e > s) { raw = raw.slice(s, e + 1); console.warn('[callClaudeForLease] extracted JSON block from prose response'); }
+      console.error('[callClaudeForLease] Response is not JSON — does not start with {');
+      console.error('[callClaudeForLease] Raw content was:', rawText);
+      return null;
     }
+
     try {
       const parsed = JSON.parse(raw);
       console.log('[callClaudeForLease] parsed keys:', Object.keys(parsed));
       return parsed;
     } catch (e) {
+      console.error('[callClaudeForLease] JSON.parse failed:', e.message);
+      console.error('[callClaudeForLease] Raw content was:', rawText);
       return null;
     }
   };
 
-  // First attempt — user message is just the raw lease text
+  // First attempt
   let rawText;
   try {
     rawText = await doFetch(buildBody(text));
@@ -2698,7 +2707,7 @@ async function callClaudeForLease(text) {
 
   let parsed = tryParse(rawText);
 
-  // Retry once with a stricter instruction if response was not valid JSON
+  // Retry once with a stricter instruction prepended to the lease text
   if (!parsed) {
     console.warn('[callClaudeForLease] non-JSON response — retrying with stricter instruction');
     const strictUser = `You must return ONLY a JSON object. No explanation. Start with { and end with }.\n\n${text}`;
@@ -2711,7 +2720,7 @@ async function callClaudeForLease(text) {
   }
 
   if (!parsed) {
-    console.error('[callClaudeForLease] JSON parse FAILED after retry. Last raw response:', rawText);
+    console.error('[callClaudeForLease] FAILED after retry — returning empty result');
     return { tenants: [] };
   }
 
