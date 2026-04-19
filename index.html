@@ -2646,59 +2646,72 @@ async function extractPdfText(file) {
 }
 
 async function callClaudeForLease(text) {
-  let resp;
-  try {
-    resp = await fetch('/api/claude', {
+  const buildBody = (userContent) => JSON.stringify({
+    model: MODEL,
+    max_tokens: 1024,
+    messages: [
+      { role: 'system', content: CLAUDE_LEASE_SYSTEM },
+      { role: 'user',   content: userContent },
+    ],
+  });
+
+  const doFetch = async (body) => {
+    const r = await fetch('/api/claude', {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({
-        model: MODEL,
-        max_tokens: 1024,
-        system: CLAUDE_LEASE_SYSTEM,
-        messages: [{ role: 'user', content: [{ type: 'text', text: CLAUDE_LEASE_PROMPT.replace('{{LEASE_TEXT}}', text) }] }],
-      }),
+      body,
     });
+    if (!r.ok) {
+      let detail = `HTTP ${r.status}`;
+      try { const b = await r.json(); detail = b?.error?.message || b?.message || detail; } catch {}
+      throw new Error('Lease extraction failed: ' + detail);
+    }
+    let d;
+    try { d = await r.json(); } catch { throw new Error('Lease extraction response parse failed'); }
+    return d?.content?.[0]?.text ?? d?.completion ?? '';
+  };
+
+  const tryParse = (rawText) => {
+    console.log("RAW AI RESPONSE:", rawText);
+    let raw = rawText.replace(/^```(?:json)?\s*/i, '').replace(/\s*```\s*$/i, '').trim();
+    if (!raw.startsWith('{') && !raw.startsWith('[')) {
+      const s = raw.indexOf('{'), e = raw.lastIndexOf('}');
+      if (s !== -1 && e > s) { raw = raw.slice(s, e + 1); console.warn('[callClaudeForLease] extracted JSON block from prose response'); }
+    }
+    try {
+      const parsed = JSON.parse(raw);
+      console.log('[callClaudeForLease] parsed keys:', Object.keys(parsed));
+      return parsed;
+    } catch (e) {
+      return null;
+    }
+  };
+
+  // First attempt — user message is just the raw lease text
+  let rawText;
+  try {
+    rawText = await doFetch(buildBody(text));
   } catch (e) {
     console.error('[callClaudeForLease] fetch error:', e);
     throw new Error('Could not reach the server');
   }
 
-  if (!resp.ok) {
-    let detail = `HTTP ${resp.status}`;
-    try { const b = await resp.json(); detail = b?.error?.message || b?.message || detail; } catch {}
-    console.error('[callClaudeForLease] API error:', detail);
-    throw new Error('Lease extraction failed: ' + detail);
-  }
+  let parsed = tryParse(rawText);
 
-  let data;
-  try { data = await resp.json(); } catch (e) { throw new Error('Lease extraction response parse failed'); }
-
-  // Support both Anthropic messages format and legacy completion format
-  const rawText = data?.content?.[0]?.text ?? data?.completion ?? '';
-  console.log('[callClaudeForLease] raw response:', rawText);
-  console.log("RAW AI RESPONSE:", rawText);
-
-  // Strip markdown code fences if the model wraps the JSON despite the prompt
-  let raw = rawText.replace(/^```(?:json)?\s*/i, '').replace(/\s*```\s*$/i, '').trim();
-
-  // If still not starting with {, try to extract the first {...} block
-  if (!raw.startsWith('{') && !raw.startsWith('[')) {
-    const jsonStart = raw.indexOf('{');
-    const jsonEnd   = raw.lastIndexOf('}');
-    if (jsonStart !== -1 && jsonEnd > jsonStart) {
-      raw = raw.slice(jsonStart, jsonEnd + 1);
-      console.warn('[callClaudeForLease] extracted JSON substring from non-JSON response');
+  // Retry once with a stricter instruction if response was not valid JSON
+  if (!parsed) {
+    console.warn('[callClaudeForLease] non-JSON response — retrying with stricter instruction');
+    const strictUser = `You must return ONLY a JSON object. No explanation. Start with { and end with }.\n\n${text}`;
+    try {
+      rawText = await doFetch(buildBody(strictUser));
+      parsed = tryParse(rawText);
+    } catch (e) {
+      console.error('[callClaudeForLease] retry fetch error:', e);
     }
   }
 
-  let parsed;
-  try {
-    parsed = JSON.parse(raw);
-    console.log('[callClaudeForLease] parsed keys:', Object.keys(parsed));
-  } catch (e) {
-    console.error('[callClaudeForLease] JSON parse FAILED');
-    console.error('  error:', e.message);
-    console.error('  raw text was:', rawText);
+  if (!parsed) {
+    console.error('[callClaudeForLease] JSON parse FAILED after retry. Last raw response:', rawText);
     return { tenants: [] };
   }
 
