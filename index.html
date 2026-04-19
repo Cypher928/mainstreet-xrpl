@@ -2229,15 +2229,39 @@ IMPORTANT:
 If the charge looks normal, say "No issues" and do not invent problems.
 If the category appears incorrect based on the vendor or description, gently interpret the charge correctly in your explanation without criticizing the classification.`;
 
-const LEASE_PROMPT = `Extract the following CAM lease terms from this document and return ONLY valid JSON with these exact fields: tenantName, leasedSqft, capPercentage, excludedCategories (array of strings), baseYear, startDate, endDate, leaseType, confidence.
+const LEASE_PROMPT = `
+You are extracting structured lease data from a commercial lease document.
 
-Rules:
-- leasedSqft: return a plain number (no units). Look for patterns like "4,000 RSF", "4000 sf", "approx 4000 sq ft", "Premises: 4000", "~4k square feet", or any number near the words sqft/sf/square feet/RSF/GLA.
-- leaseType: return "NNN" if the lease is triple-net or NNN, "Gross" if it is a gross lease, otherwise null.
-- startDate / endDate: return ISO date strings (YYYY-MM-DD) if found, otherwise null.
-- excludedCategories: list any CAM expense categories explicitly excluded for this tenant.
-- confidence: object with score 0-100 for each field (tenantName, leasedSqft, capPercentage, excludedCategories, baseYear, startDate, endDate, leaseType) reflecting how clearly the value appears in the document.
-- If a field is not found, use null.`;
+Return ONLY valid JSON. No explanations.
+
+STRICT RULES:
+- Always extract square footage if it exists, even if approximate (e.g. "approx 4000 sf", "~4,000 sqft", "about 4000").
+- Normalize square footage to a NUMBER (no commas, no text).
+- Normalize leaseType to EXACTLY one of: "NNN", "Gross", "" (empty if unknown)
+- Extract dates in YYYY-MM-DD format.
+- If a value is missing, return "" (empty string) or null for numbers.
+- If square footage appears anywhere (including "Premises", "RSF", "SF"), you MUST capture it.
+
+OUTPUT FORMAT:
+{
+  "tenants": [
+    {
+      "name": "",
+      "sqft": null,
+      "leaseType": "",
+      "startDate": "",
+      "endDate": "",
+      "cap": null,
+      "exclusions": "",
+      "rawText": ""
+    }
+  ]
+}
+
+IMPORTANT:
+- "rawText" should include the portion of the lease where key data was found (used for fallback parsing).
+- Do NOT skip fields. Always include all keys.
+`;
 
 const INVOICE_PROMPT = `Extract invoice details and return ONLY valid JSON with these fields: vendorName, amount (number), category, invoiceDate, confidence. "confidence" must be an object with a score 0-100 for each field (vendorName, amount, category, invoiceDate) reflecting how clearly that value was found in the document. Category must be one of: insurance, landscaping, snow, repairs, utilities, janitorial, security, management, other. IMPORTANT: Insurance companies, policies, or premiums → insurance.`;
 
@@ -2495,17 +2519,19 @@ async function handleLease(i, file) {
     console.log('EXISTING DATA:', existing);
 
     const d = await callClaude(file, LEASE_PROMPT);
+    const t = (Array.isArray(d.tenants) && d.tenants.length > 0) ? d.tenants[0] : d;
     tenantData[i] = {
-      tenantName:         d.tenantName          ?? '',
-      leasedSqft:         d.leasedSqft          ?? '',
-      capPercentage:      d.capPercentage        ?? '',
-      excludedCategories: Array.isArray(d.excludedCategories)
-                            ? d.excludedCategories.join(', ') : '',
-      baseYear:           d.baseYear             ?? '',
-      startDate:          d.startDate            ?? '',
-      endDate:            d.endDate              ?? '',
-      leaseType:          d.leaseType            ?? null,
-      confidence:         d.confidence           ?? {},
+      tenantName:         t.name               ?? t.tenantName         ?? '',
+      leasedSqft:         t.sqft               ?? t.leasedSqft         ?? '',
+      capPercentage:      t.cap                ?? t.capPercentage       ?? '',
+      excludedCategories: typeof t.exclusions === 'string' ? t.exclusions
+                            : Array.isArray(t.excludedCategories) ? t.excludedCategories.join(', ')
+                            : '',
+      baseYear:           t.baseYear           ?? '',
+      startDate:          t.startDate          ?? '',
+      endDate:            t.endDate            ?? '',
+      leaseType:          (t.leaseType || t.leaseType === '') ? (t.leaseType || null) : null,
+      confidence:         t.confidence         ?? {},
     };
     renderTenantFields(i);
     checkSqftValidation();
@@ -3312,17 +3338,19 @@ async function handleBulkLeases(fileList) {
 
     try {
       const d = await callClaude(files[i], LEASE_PROMPT);
+      const t = (Array.isArray(d.tenants) && d.tenants.length > 0) ? d.tenants[0] : d;
       tenantData.push({
-        tenantName:         d.tenantName          ?? '',
-        leasedSqft:         d.leasedSqft          ?? '',
-        capPercentage:      d.capPercentage        ?? '',
-        excludedCategories: Array.isArray(d.excludedCategories)
-                              ? d.excludedCategories.join(', ') : '',
-        baseYear:           d.baseYear             ?? '',
-        startDate:          d.startDate            ?? '',
-        endDate:            d.endDate              ?? '',
-        leaseType:          d.leaseType            ?? null,
-        confidence:         d.confidence           ?? {},
+        tenantName:         t.name               ?? t.tenantName         ?? '',
+        leasedSqft:         t.sqft               ?? t.leasedSqft         ?? '',
+        capPercentage:      t.cap                ?? t.capPercentage       ?? '',
+        excludedCategories: typeof t.exclusions === 'string' ? t.exclusions
+                              : Array.isArray(t.excludedCategories) ? t.excludedCategories.join(', ')
+                              : '',
+        baseYear:           t.baseYear           ?? '',
+        startDate:          t.startDate          ?? '',
+        endDate:            t.endDate            ?? '',
+        leaseType:          (t.leaseType || t.leaseType === '') ? (t.leaseType || null) : null,
+        confidence:         t.confidence         ?? {},
         _error:             null,
       });
     } catch (err) {
