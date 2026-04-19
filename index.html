@@ -2558,10 +2558,11 @@ function normalizeTenant(raw) {
     'tenant_name', 'tenantName', 'tenant', 'lessee', 'name'
   );
 
-  // leased_sqft — strip commas, extract number from strings like "65,000 rentable square feet"
+  // leased_sqft — strip commas, extract number from strings like "4,500 rentable square feet"
   const sqftRaw = pick(
-    'leased_sqft', 'leasedSqft', 'sqft', 'square_footage', 'leased_area',
-    'rentable_sqft', 'squareFeet', 'leased_square_feet', 'area'
+    'leased_sqft', 'leasedSqft', 'sqft', 'square_feet', 'squareFeet',
+    'rentable_square_feet', 'rentableSqFt', 'square_footage', 'leased_area',
+    'rentable_sqft', 'leased_square_feet', 'area'
   );
   const sqftNum = parseNum(sqftRaw);
   const leasedSqft = sqftNum !== null && sqftNum > 0 ? String(Math.round(sqftNum)) : null;
@@ -2589,12 +2590,12 @@ function normalizeTenant(raw) {
   const byRaw = pick('baseYear', 'base_year');
   const baseYear = byRaw ? String(parseInt(byRaw, 10)) : '';
 
-  // lease_type
+  // lease_type — NNN or "Triple Net" → "Triple Net"; Modified Gross; Gross
   const ltRaw = pick('lease_type', 'leaseType', 'type') || '';
   let leaseType = null;
   if (ltRaw) {
     const s = String(ltRaw).trim();
-    if (/^nnn$/i.test(s) || /triple.?net/i.test(s))  leaseType = 'NNN';
+    if (/nnn/i.test(s) || /triple.?net/i.test(s))    leaseType = 'Triple Net';
     else if (/modified.?gross/i.test(s))              leaseType = 'Modified Gross';
     else if (/gross/i.test(s))                        leaseType = 'Gross';
   }
@@ -2605,7 +2606,7 @@ function normalizeTenant(raw) {
   if (typeof excSrc === 'string' && excSrc)  excludedCategories = excSrc;
   else if (Array.isArray(excSrc))            excludedCategories = excSrc.filter(Boolean).join(', ');
 
-  return {
+  const normalizedTenant = {
     tenantName:         name ? String(name) : '',
     leasedSqft,
     capPercentage,
@@ -2616,6 +2617,8 @@ function normalizeTenant(raw) {
     leaseType,
     confidence:         src.confidence || {},
   };
+  console.log("FINAL NORMALIZED:", normalizedTenant);
+  return normalizedTenant;
 }
 
 
