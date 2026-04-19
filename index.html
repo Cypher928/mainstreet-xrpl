@@ -2235,59 +2235,51 @@ IMPORTANT:
 If the charge looks normal, say "No issues" and do not invent problems.
 If the category appears incorrect based on the vendor or description, gently interpret the charge correctly in your explanation without criticizing the classification.`;
 
-const CLAUDE_LEASE_PROMPT = `Return ONLY valid JSON. No explanation. No markdown. No text outside the JSON object.
+const CLAUDE_LEASE_PROMPT = `You are a commercial real estate lease analyst.
 
-Extract commercial lease terms from the document below and return this exact structure:
+Your job is to extract structured data from a lease document.
 
-{
-  "tenantName": "name of tenant/lessee (string, or null if not found)",
-  "leasedSqft": 3000,
-  "startDate": "YYYY-MM-DD",
-  "endDate": "YYYY-MM-DD",
-  "leaseType": "NNN",
-  "capPercentage": 5,
-  "excludedCategories": "management fees, capital improvements"
-}
+CRITICAL RULES:
+- Treat each tenant separately
+- NEVER mix data between tenants
+- Only use information that appears near that tenant's section
+- If multiple tenants exist, return multiple objects
+- If a field is missing, return null (do NOT guess)
 
-RULES — read carefully:
+DATE RULES:
+- If lease says "commence on or about March 1, 2024" → extract "March 1, 2024"
+- If lease term is given (example: "5 years") AND start date exists → calculate end date
+- If both start and end dates are written → use them directly
+- Always return dates in this format: YYYY-MM-DD
 
-tenantName: string or null
-- The party RENTING (not the landlord/lessor/property owner)
-- Look near "Tenant:", "Lessee:", "Occupant:", or the signature block
-- Return null only if completely absent
+EXTRACTION RULES:
+- Tenant Name → exact tenant name
+- Leased SqFt → numeric only
+- Lease Type → one of: NNN, Gross, Modified Gross
+- CAM % → numeric only (no % sign)
+- CAM Cap % → numeric only
+- Base Year → year only (YYYY)
+- Excluded Categories → comma-separated list
 
-leasedSqft: NUMBER or null
-- Must be an INTEGER — never a string, never empty
-- Range (e.g. "2,800 – 3,200 sq ft") → return the average: 3000
-- Approximate (e.g. "approximately 4,000 sf") → return the number: 4000
-- Formats to recognize: "4,000 SF", "4000 square feet", "Premises: 4000 RSF", "~4k sqft", "± 4,000 SF"
-- Search the entire document; sqft often appears in recitals or rent schedules
-- Return null ONLY if no square footage appears anywhere
+OUTPUT FORMAT:
+Return ONLY valid JSON (no explanation, no text before or after)
 
-startDate / endDate: "YYYY-MM-DD" or null
-- Look for: commencement date, term start, effective date, expiration date, term end
-- If endDate is not explicitly stated but a lease term is given (e.g. "5 years", "36 months"), compute it:
-  endDate = startDate + term - 1 day
-  Example: start March 1 2024 + 5 years → February 28 2029
-- Return null only if endDate cannot be determined from either an explicit date or a calculable term
+[
+  {
+    "tenantName": "",
+    "leasedSqft": "",
+    "startDate": "",
+    "endDate": "",
+    "leaseType": "",
+    "camPercent": "",
+    "camCapPercent": "",
+    "baseYear": "",
+    "excludedCategories": ""
+  }
+]
 
-leaseType: "NNN" or "Gross" or null
-- "NNN": triple net, NNN, net-net-net, net lease, tenant pays taxes/insurance/maintenance
-- "Gross": gross lease, full-service, modified gross, landlord pays operating expenses
-- Return null only if completely unspecified
-
-capPercentage: number or null
-- Annual CAM expense increase cap as a plain number (e.g. 5 for 5%)
-- Look for: "cap", "not to exceed X%", "capped at", "increase limited to"
-- If the lease says "no cap", "uncapped", or "no limit" → return null
-- Return null if not present
-
-excludedCategories: string or null
-- Comma-separated CAM categories excluded for this tenant
-- Example: "management fees, capital improvements, depreciation"
-- Return null if none specified
-
-IMPORTANT: Always include ALL 7 keys. Missing values must be null — never empty string "".`;
+LEASE TEXT:
+{{LEASE_TEXT}}`;
 
 const INVOICE_PROMPT = `Extract invoice details and return ONLY valid JSON with these fields: vendorName, amount (number), category, invoiceDate, confidence. "confidence" must be an object with a score 0-100 for each field (vendorName, amount, category, invoiceDate) reflecting how clearly that value was found in the document. Category must be one of: insurance, landscaping, snow, repairs, utilities, janitorial, security, management, other. IMPORTANT: Insurance companies, policies, or premiums → insurance.`;
 
@@ -2505,6 +2497,11 @@ function applyRawTextFallback(tenants) {
 
 function enrichLeaseData(data, extractedText) {
   if (!extractedText) return data;
+  // Handle array response (new prompt returns [...])
+  if (Array.isArray(data)) {
+    data.forEach(item => enrichLeaseData(item, extractedText));
+    return data;
+  }
 
   const text = extractedText.toLowerCase();
 
@@ -2600,8 +2597,10 @@ function enrichLeaseData(data, extractedText) {
 
 function normalizeTenant(raw) {
   if (!raw || typeof raw !== 'object') return null;
-  // Unwrap legacy tenants-array wrapper if present
-  const src = Array.isArray(raw.tenants) && raw.tenants.length > 0 ? raw.tenants[0] : raw;
+  // Unwrap: top-level array (new prompt), legacy tenants wrapper, or plain object
+  const src = Array.isArray(raw)
+    ? (raw[0] || {})
+    : (Array.isArray(raw.tenants) && raw.tenants.length > 0 ? raw.tenants[0] : raw);
 
   const toISODate = str => {
     if (!str) return '';
@@ -2633,8 +2632,8 @@ function normalizeTenant(raw) {
     }
   }
 
-  // capPercentage: capPercentage | cap | capPercent | cap_percentage
-  const capRaw = src.capPercentage ?? src.cap ?? src.capPercent ?? src.cap_percentage ?? null;
+  // capPercentage: camCapPercent (new) | capPercentage | cap | capPercent | cap_percentage
+  const capRaw = src.camCapPercent ?? src.capPercentage ?? src.cap ?? src.capPercent ?? src.cap_percentage ?? null;
   const capNoCap = typeof capRaw === 'string' && /no.?cap|uncapped|no.?limit/i.test(capRaw);
   const capPercentage = (!capNoCap && capRaw !== null && capRaw !== undefined && capRaw !== '') ? String(capRaw) : '';
 
@@ -2652,7 +2651,8 @@ function normalizeTenant(raw) {
   if (ltRaw) {
     const s = String(ltRaw).trim();
     if (/^nnn$/i.test(s) || /triple.?net/i.test(s))            leaseType = 'NNN';
-    else if (/gross/i.test(s))                                   leaseType = 'Gross';
+    else if (/modified.?gross/i.test(s))                        leaseType = 'Gross';
+    else if (/gross/i.test(s))                                  leaseType = 'Gross';
   }
 
   // excludedCategories: excludedCategories | excluded | exclusions
@@ -2707,7 +2707,7 @@ async function callClaudeForLease(text) {
       body: JSON.stringify({
         model: MODEL,
         max_tokens: 1024,
-        messages: [{ role: 'user', content: [{ type: 'text', text: CLAUDE_LEASE_PROMPT + '\n\nLEASE TEXT:\n' + text }] }],
+        messages: [{ role: 'user', content: [{ type: 'text', text: CLAUDE_LEASE_PROMPT.replace('{{LEASE_TEXT}}', text) }] }],
       }),
     });
   } catch (e) {
@@ -3616,7 +3616,8 @@ async function handleBulkLeases(fileList) {
         '<div style="position:fixed;bottom:10px;left:10px;background:#000;color:#0f0;padding:10px;z-index:9999;font-size:12px;max-width:600px;white-space:pre-wrap;overflow:auto;max-height:200px;">EXTRACTED TEXT (first 1000 chars):\n' + leaseText.slice(0, 1000).replace(/</g,'&lt;') + '</div>'
       );
       const d = await callClaudeForLease(leaseText);
-      const extractedTenants = Array.isArray(d.tenants) && d.tenants.length > 0 ? d.tenants : [d];
+      const extractedTenants = Array.isArray(d) ? d
+        : (Array.isArray(d.tenants) && d.tenants.length > 0 ? d.tenants : [d]);
       console.log('RAW TENANTS:', extractedTenants);
       extractedTenants.forEach(raw => {
         const normalized = normalizeTenant(raw);
