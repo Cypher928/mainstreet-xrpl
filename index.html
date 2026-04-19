@@ -2229,39 +2229,63 @@ IMPORTANT:
 If the charge looks normal, say "No issues" and do not invent problems.
 If the category appears incorrect based on the vendor or description, gently interpret the charge correctly in your explanation without criticizing the classification.`;
 
-const CLAUDE_LEASE_PROMPT = `
-You are extracting structured lease data from a commercial lease document.
+const CLAUDE_LEASE_PROMPT = `You are a commercial real estate data extractor. Extract lease terms and return ONLY a JSON object. No prose, no markdown, no explanation.
 
-Return ONLY valid JSON. No explanations.
+CRITICAL: Extract REAL values from the document. Never return empty strings. If you find a value, return it.
 
-STRICT RULES:
-- Always extract square footage if it exists, even if approximate (e.g. "approx 4000 sf", "~4,000 sqft", "about 4000").
-- Normalize square footage to a NUMBER (no commas, no text).
-- Normalize leaseType to EXACTLY one of: "NNN", "Gross", "" (empty if unknown)
-- Extract dates in YYYY-MM-DD format.
-- If a value is missing, return "" (empty string) or null for numbers.
-- If square footage appears anywhere (including "Premises", "RSF", "SF"), you MUST capture it.
+FIELD RULES:
 
-OUTPUT FORMAT:
+tenantName:
+- The business or person renting the space (not the landlord/lessor)
+- Look for: "Tenant:", "Lessee:", the party paying rent, the business operating at the premises
+- Return null only if truly unidentifiable
+
+leasedSqft:
+- Return as a plain INTEGER (no commas, no units)
+- Extract from ANY format: "4,000 SF", "4000 square feet", "approx 4,000 sf", "± 4,000 SF", "~4k sqft", "Premises: 4000 RSF", "approximately four thousand square feet"
+- Search entire document — sqft often appears in recitals, premises definition, or rent schedule
+- Return null only if no number appears near sf/sqft/square feet/RSF/GLA/premises
+
+leaseType:
+- "NNN" if: triple net, NNN, net-net-net, tenant pays taxes/insurance/maintenance
+- "Gross" if: gross lease, full-service, landlord pays operating expenses
+- "Gross" also for: modified gross, gross modified
+- Return null if genuinely unspecified
+
+startDate / endDate:
+- Return as "YYYY-MM-DD"
+- Look for: commencement date, term start, effective date, expiration date, term end
+- Return null if not found
+
+cap:
+- The CAM expense cap percentage (e.g. 5 for 5%)
+- Look for: "cap", "not to exceed", "increase limited to", "capped at X%"
+- Return the NUMBER only (e.g. 5, not "5%")
+- Return null if not present
+
+baseYear:
+- The base year for CAM expense calculations (e.g. 2023)
+- Return as an INTEGER
+- Return null if not present
+
+excluded:
+- Comma-separated list of CAM expense categories explicitly excluded for this tenant
+- Examples: "management fees, capital improvements, depreciation"
+- Return null if none specified
+
+REQUIRED OUTPUT FORMAT — return exactly this structure:
 {
-  "tenants": [
-    {
-      "name": "",
-      "sqft": null,
-      "leaseType": "",
-      "startDate": "",
-      "endDate": "",
-      "cap": null,
-      "exclusions": "",
-      "rawText": ""
-    }
-  ]
+  "tenantName": string | null,
+  "leasedSqft": number | null,
+  "leaseType": "NNN" | "Gross" | null,
+  "startDate": "YYYY-MM-DD" | null,
+  "endDate": "YYYY-MM-DD" | null,
+  "cap": number | null,
+  "baseYear": number | null,
+  "excluded": string | null
 }
 
-IMPORTANT:
-- "rawText" should include the portion of the lease where key data was found (used for fallback parsing).
-- Do NOT skip fields. Always include all keys.
-`;
+Return ONLY the JSON object. Nothing else.`;
 
 const INVOICE_PROMPT = `Extract invoice details and return ONLY valid JSON with these fields: vendorName, amount (number), category, invoiceDate, confidence. "confidence" must be an object with a score 0-100 for each field (vendorName, amount, category, invoiceDate) reflecting how clearly that value was found in the document. Category must be one of: insurance, landscaping, snow, repairs, utilities, janitorial, security, management, other. IMPORTANT: Insurance companies, policies, or premiums → insurance.`;
 
@@ -2463,65 +2487,62 @@ async function callClaude(file, prompt) {
   }
 }
 
-// ─── Paste this block to replace normalizeTenant ─────────────────────────────
 function normalizeTenant(raw) {
   if (!raw || typeof raw !== 'object') return null;
-  // Unwrap tenants array if present
+  // Unwrap legacy tenants-array wrapper if present
   const src = Array.isArray(raw.tenants) && raw.tenants.length > 0 ? raw.tenants[0] : raw;
 
-  // tenantName: name | tenant | tenantName
-  const name = src.name || src.tenant || src.tenantName || '';
+  // tenantName: tenantName | name | tenant
+  const name = src.tenantName || src.name || src.tenant || null;
 
-  // leasedSqft: sqft | leasedSqft | squareFeet | leased_square_feet
-  const sqftRaw = src.sqft ?? src.leasedSqft ?? src.squareFeet ?? src.leased_square_feet ?? '';
+  // leasedSqft: leasedSqft | sqft | squareFeet | leased_square_feet → plain integer string
+  const sqftRaw = src.leasedSqft ?? src.sqft ?? src.squareFeet ?? src.leased_square_feet ?? null;
   let leasedSqft = '';
-  if (sqftRaw !== '' && sqftRaw !== null && sqftRaw !== undefined) {
+  if (sqftRaw !== null && sqftRaw !== undefined && sqftRaw !== '') {
     const n = typeof sqftRaw === 'number' ? sqftRaw
       : parseFloat(String(sqftRaw).replace(/,/g, '').replace(/[^0-9.]/g, ''));
-    leasedSqft = (!isNaN(n) && n > 0) ? String(n) : '';
+    leasedSqft = (!isNaN(n) && n > 0) ? String(Math.round(n)) : '';
   }
 
   // capPercentage: cap | capPercent | cap_percentage | capPercentage
-  const capRaw = src.cap ?? src.capPercent ?? src.cap_percentage ?? src.capPercentage ?? '';
-  const capPercentage = (capRaw !== '' && capRaw !== null && capRaw !== undefined) ? String(capRaw) : '';
+  const capRaw = src.cap ?? src.capPercent ?? src.cap_percentage ?? src.capPercentage ?? null;
+  const capPercentage = (capRaw !== null && capRaw !== undefined && capRaw !== '') ? String(capRaw) : '';
 
-  // startDate: startDate | start_date | lease_start
-  const startDate = String(src.startDate || src.start_date || src.lease_start || '');
+  // startDate / endDate with all alias variants
+  const startDate = src.startDate || src.start_date || src.lease_start || src.commencementDate || '';
+  const endDate   = src.endDate   || src.end_date   || src.lease_end   || src.expirationDate   || '';
 
-  // endDate: endDate | end_date | lease_end
-  const endDate = String(src.endDate || src.end_date || src.lease_end || '');
+  // baseYear: integer
+  const byRaw = src.baseYear || src.base_year || null;
+  const baseYear = byRaw ? String(parseInt(byRaw, 10)) : '';
 
-  // baseYear: baseYear | base_year
-  const baseYear = String(src.baseYear || src.base_year || '');
-
-  // leaseType: leaseType | lease_type | type
+  // leaseType: normalize "NNN", "Gross", modified gross → "Gross", etc.
   const ltRaw = src.leaseType || src.lease_type || src.type || '';
   let leaseType = null;
   if (ltRaw) {
     const s = String(ltRaw).trim();
-    if (/^nnn$/i.test(s) || /triple.?net/i.test(s)) leaseType = 'NNN';
-    else if (/^gross$/i.test(s))                     leaseType = 'Gross';
+    if (/^nnn$/i.test(s) || /triple.?net/i.test(s))            leaseType = 'NNN';
+    else if (/gross/i.test(s))                                   leaseType = 'Gross';
   }
 
-  // excludedCategories: excluded | excludedCategories | exclusions (string or array)
+  // excludedCategories: excluded | excludedCategories | exclusions
   const excSrc = src.excluded ?? src.excludedCategories ?? src.exclusions ?? null;
   let excludedCategories = '';
-  if (typeof excSrc === 'string')      excludedCategories = excSrc;
-  else if (Array.isArray(excSrc))      excludedCategories = excSrc.join(', ');
+  if (typeof excSrc === 'string' && excSrc)  excludedCategories = excSrc;
+  else if (Array.isArray(excSrc))            excludedCategories = excSrc.filter(Boolean).join(', ');
 
   return {
-    tenantName: String(name),
+    tenantName:         name ? String(name) : '',
     leasedSqft,
     capPercentage,
     excludedCategories,
     baseYear,
-    startDate,
-    endDate,
+    startDate:          String(startDate),
+    endDate:            String(endDate),
     leaseType,
-    confidence: src.confidence || {},
+    confidence:         src.confidence || {},
   };
 }
-// ─────────────────────────────────────────────────────────────────────────────
 
 
 async function callClaudeForLease(text) {
