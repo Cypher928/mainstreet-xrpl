@@ -2646,123 +2646,65 @@ async function extractPdfText(file) {
 }
 
 async function callClaudeForLease(text) {
-  // system must be a top-level field — NOT a role in the messages array
-  const buildBody = (userContent) => JSON.stringify({
-    model: MODEL,
-    max_tokens: 1024,
-    system: CLAUDE_LEASE_SYSTEM,
-    messages: [
-      { role: 'user', content: userContent },
-    ],
-  });
-
-  const doFetch = async (body) => {
-    const r = await fetch('/api/claude', {
+  let resp;
+  try {
+    resp = await fetch('/api/claude', {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
-      body,
+      body: JSON.stringify({
+        model: MODEL,
+        max_tokens: 1024,
+        system: CLAUDE_LEASE_SYSTEM,
+        tools: [{
+          name: 'extract_lease',
+          description: 'Extract structured lease fields from the provided lease text.',
+          input_schema: {
+            type: 'object',
+            properties: {
+              tenant_name:      { type: ['string', 'null'], description: 'Tenant/lessee name' },
+              sqft:             { type: ['number', 'null'], description: 'Leased square footage as an integer' },
+              lease_start_date: { type: ['string', 'null'], description: 'Lease start date in YYYY-MM-DD format' },
+              lease_end_date:   { type: ['string', 'null'], description: 'Lease end date in YYYY-MM-DD format' },
+              lease_type:       { type: ['string', 'null'], description: 'NNN, Gross, or Modified Gross' },
+              cam_cap:          { type: ['number', 'null'], description: 'Annual CAM increase cap as a plain number (5 = 5%)' },
+              excluded_categories: { type: 'array', items: { type: 'string' }, description: 'CAM categories explicitly excluded' },
+            },
+            required: ['tenant_name', 'sqft', 'lease_start_date', 'lease_end_date', 'lease_type', 'cam_cap', 'excluded_categories'],
+          },
+        }],
+        tool_choice: { type: 'tool', name: 'extract_lease' },
+        messages: [{ role: 'user', content: text }],
+      }),
     });
-    if (!r.ok) {
-      let detail = `HTTP ${r.status}`;
-      try { const b = await r.json(); detail = b?.error?.message || b?.message || detail; } catch {}
-      throw new Error('Lease extraction failed: ' + detail);
-    }
-    let d;
-    try { d = await r.json(); } catch { throw new Error('Lease extraction response parse failed'); }
-    const responseText = d?.content?.[0]?.text ?? '';
-    console.log("RAW AI RESPONSE:", responseText);
-    return responseText;
-  };
-
-  const tryParse = (rawText) => {
-    // Strip markdown fences
-    let raw = rawText.replace(/^```(?:json)?\s*/i, '').replace(/\s*```\s*$/i, '').trim();
-
-    // Hard stop if response doesn't start with { — log and do not silently continue
-    if (!raw.startsWith('{') && !raw.startsWith('[')) {
-      console.error('[callClaudeForLease] Response is not JSON — does not start with {');
-      console.error('[callClaudeForLease] Raw content was:', rawText);
-      return null;
-    }
-
-    try {
-      const parsed = JSON.parse(raw);
-      console.log('[callClaudeForLease] parsed keys:', Object.keys(parsed));
-      return parsed;
-    } catch (e) {
-      console.error('[callClaudeForLease] JSON.parse failed:', e.message);
-      console.error('[callClaudeForLease] Raw content was:', rawText);
-      return null;
-    }
-  };
-
-  // First attempt
-  let rawText;
-  try {
-    rawText = await doFetch(buildBody(text));
   } catch (e) {
     console.error('[callClaudeForLease] fetch error:', e);
     throw new Error('Could not reach the server');
   }
 
-  let parsed = tryParse(rawText);
-
-  // Retry once with a stricter instruction prepended to the lease text
-  if (!parsed) {
-    console.warn('[callClaudeForLease] non-JSON response — retrying with stricter instruction');
-    const strictUser = `You must return ONLY a JSON object. No explanation. Start with { and end with }.\n\n${text}`;
-    try {
-      rawText = await doFetch(buildBody(strictUser));
-      parsed = tryParse(rawText);
-    } catch (e) {
-      console.error('[callClaudeForLease] retry fetch error:', e);
-    }
+  if (!resp.ok) {
+    let detail = `HTTP ${resp.status}`;
+    try { const b = await resp.json(); detail = b?.error?.message || b?.message || detail; } catch {}
+    console.error('[callClaudeForLease] API error:', detail);
+    throw new Error('Lease extraction failed: ' + detail);
   }
 
-  if (!parsed) {
-    console.error('[callClaudeForLease] FAILED after retry — returning empty result');
+  let data;
+  try { data = await resp.json(); } catch { throw new Error('Lease extraction response parse failed'); }
+
+  console.log("RAW AI RESPONSE:", data);
+
+  const toolBlock = data?.content?.find(b => b.type === 'tool_use' && b.name === 'extract_lease');
+  if (!toolBlock?.input) {
+    console.error('[callClaudeForLease] No tool_use block in response:', data?.content);
     return { tenants: [] };
   }
 
-  // Attach this PDF's text to each tenant immediately — before any enrichment
-  if (Array.isArray(parsed)) {
-    parsed = parsed.map(t => ({ ...t, _rawText: text }));
-  } else if (parsed && typeof parsed === 'object') {
-    parsed._rawText = text;
-  }
+  const parsed = { ...toolBlock.input, _rawText: text };
+  console.log('[callClaudeForLease] extracted input:', parsed);
 
-  parsed = enrichLeaseData(parsed, text);
-
-  if (Array.isArray(parsed)) {
-    parsed = parsed.map(t => {
-      console.log('TENANT + TEXT MATCH:', t.tenantName, (t._rawText || '').slice(0, 100));
-      if (!t.startDate) {
-        const chunk = t._rawText || '';
-
-        // 1. Keyword match first
-        const keywordMatch = chunk.match(
-          /\b(commence(?:ment)?|commencing|effective(?: date)?|lease date|start date)[^.]{0,60}?\b(January|February|March|April|May|June|July|August|September|October|November|December)\s+\d{1,2},\s+\d{4}\b/i
-        );
-        if (keywordMatch) {
-          const d = new Date(keywordMatch[0].match(/\b(January|February|March|April|May|June|July|August|September|October|November|December)\s+\d{1,2},\s+\d{4}\b/i)[0]);
-          if (!isNaN(d)) { t.startDate = d.toISOString().split('T')[0]; return t; }
-        }
-
-        // 2. Loose fallback
-        const looseMatch = chunk.match(
-          /\b(January|February|March|April|May|June|July|August|September|October|November|December)\s+\d{1,2},\s+\d{4}\b/i
-        );
-        if (looseMatch) {
-          const d = new Date(looseMatch[0]);
-          if (!isNaN(d)) t.startDate = d.toISOString().split('T')[0];
-        }
-      }
-      return t;
-    });
-  }
-
-  console.log('FINAL PARSED TENANT:', parsed);
-  return parsed;
+  const enriched = enrichLeaseData(parsed, text);
+  console.log('FINAL PARSED TENANT:', enriched);
+  return enriched;
 }
 // ─── SVG icons ────────────────────────────────────────────────────────────────
 const CHECK_SVG = `<svg viewBox="0 0 12 12" width="10" height="10" fill="none" stroke="white" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round"><polyline points="2,6 5,9 10,3"/></svg>`;
