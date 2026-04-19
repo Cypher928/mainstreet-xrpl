@@ -2670,6 +2670,7 @@ async function callClaudeForLease(text) {
   // Support both Anthropic messages format and legacy completion format
   const rawText = data?.content?.[0]?.text ?? data?.completion ?? '';
   console.log('[callClaudeForLease] raw response:', rawText);
+  console.log("RAW AI RESPONSE:", rawText);
 
   // Strip markdown code fences if the model wraps the JSON despite the prompt
   let raw = rawText.replace(/^```(?:json)?\s*/i, '').replace(/\s*```\s*$/i, '').trim();
