@@ -2229,7 +2229,7 @@ IMPORTANT:
 If the charge looks normal, say "No issues" and do not invent problems.
 If the category appears incorrect based on the vendor or description, gently interpret the charge correctly in your explanation without criticizing the classification.`;
 
-const LEASE_PROMPT = `
+const CLAUDE_LEASE_PROMPT = `
 You are extracting structured lease data from a commercial lease document.
 
 Return ONLY valid JSON. No explanations.
@@ -2463,6 +2463,27 @@ async function callClaude(file, prompt) {
   }
 }
 
+async function callClaudeForLease(text) {
+  const response = await fetch("/api/claude", {
+    method: "POST",
+    headers: {
+      "Content-Type": "application/json"
+    },
+    body: JSON.stringify({
+      prompt: CLAUDE_LEASE_PROMPT + "\n\nLEASE TEXT:\n" + text
+    })
+  });
+
+  const data = await response.json();
+
+  try {
+    return JSON.parse(data.completion);
+  } catch (e) {
+    console.error("Claude JSON parse error:", e);
+    return { tenants: [] };
+  }
+}
+
 // ─── SVG icons ────────────────────────────────────────────────────────────────
 const CHECK_SVG = `<svg viewBox="0 0 12 12" width="10" height="10" fill="none" stroke="white" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round"><polyline points="2,6 5,9 10,3"/></svg>`;
 const CROSS_SVG = `<svg viewBox="0 0 12 12" width="10" height="10" stroke="white" stroke-width="2.2" stroke-linecap="round"><line x1="2" y1="2" x2="10" y2="10"/><line x1="10" y1="2" x2="2" y2="10"/></svg>`;
@@ -2518,7 +2539,8 @@ async function handleLease(i, file) {
     const existing = { tenants: Array.from(property.tenants || []) };
     console.log('EXISTING DATA:', existing);
 
-    const d = await callClaude(file, LEASE_PROMPT);
+    const leaseText = await file.text();
+    const d = await callClaudeForLease(leaseText);
     const t = (Array.isArray(d.tenants) && d.tenants.length > 0) ? d.tenants[0] : d;
     tenantData[i] = {
       tenantName:         t.name               ?? t.tenantName         ?? '',
@@ -3337,7 +3359,8 @@ async function handleBulkLeases(fileList) {
       </div>`;
 
     try {
-      const d = await callClaude(files[i], LEASE_PROMPT);
+      const leaseText = await files[i].text();
+      const d = await callClaudeForLease(leaseText);
       const t = (Array.isArray(d.tenants) && d.tenants.length > 0) ? d.tenants[0] : d;
       tenantData.push({
         tenantName:         t.name               ?? t.tenantName         ?? '',
