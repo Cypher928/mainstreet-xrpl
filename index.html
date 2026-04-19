@@ -2533,12 +2533,11 @@ function normalizeTenant(raw) {
   const text = src._rawText || JSON.stringify(src);
   console.log("TEXT USED FOR PARSING:", text.slice(0, 300));
 
+  const toISODate = s => { if (!s) return ''; const d = new Date(s); return isNaN(d) ? '' : d.toISOString().split('T')[0]; };
+
   // SQFT
-  let sqft = '';
-  const sqftMatch = text.match(/([\d,]+)\s*(rentable\s*)?square\s*feet/i);
-  if (sqftMatch) {
-    sqft = parseInt(sqftMatch[1].replace(/,/g, ''), 10);
-  }
+  const sqftMatch = text.match(/([\d,]+)\s*(rentable\s*)?(square\s*feet|sq\s*ft)/i);
+  const leasedSqft = sqftMatch ? sqftMatch[1].replace(/,/g, '') : '';
 
   // START DATE
   let startDate = '';
@@ -2549,33 +2548,19 @@ function normalizeTenant(raw) {
   }
 
   // END DATE
-  let endDate = '';
-  const endMatch = text.match(/expire.*?(January|February|March|April|May|June|July|August|September|October|November|December)\s+\d{1,2},\s+\d{4}/i);
-  if (endMatch) {
-    const d = new Date(endMatch[0]);
-    if (!isNaN(d)) endDate = d.toISOString().split('T')[0];
-  }
+  const endMatch = text.match(/expire[s]? on ([A-Za-z]+ \d{1,2}, \d{4})/i);
+  const endDate = endMatch ? toISODate(endMatch[1]) : '';
 
   // LEASE TYPE
-  let leaseType = null;
-  if (/nnn|triple\s*-?\s*net/i.test(text)) {
-    leaseType = 'Triple Net (NNN)';
-  } else if (/modified\s*gross/i.test(text)) {
-    leaseType = 'Modified Gross';
-  } else if (/gross/i.test(text)) {
-    leaseType = 'Gross';
-  }
+  let leaseType = '';
+  if (/triple\s*net|nnn/i.test(text)) leaseType = 'Triple Net (NNN)';
+  else if (/modified\s*gross/i.test(text)) leaseType = 'Modified Gross';
+  else if (/gross/i.test(text)) leaseType = 'Gross';
 
-  const result = {
-    tenantName: src.tenant_name || src.tenantName || '',
-    leasedSqft: sqft,
-    startDate,
-    endDate,
-    leaseType,
-  };
+  const tenantName = src.tenant_name || src.tenantName || '';
 
+  const result = { tenantName, leasedSqft, startDate, endDate, leaseType };
   console.log("FINAL NORMALIZED:", result);
-
   return result;
 }
 
