@@ -2150,30 +2150,30 @@ If the category appears incorrect based on the vendor or description, gently int
 
 const CLAUDE_LEASE_PROMPT = `You are a commercial lease data extractor.
 
-Return ONLY a valid JSON object. No explanation. No markdown. No text before or after the JSON.
+YOUR RESPONSE MUST BE ONLY A SINGLE JSON OBJECT. No explanation. No markdown. No code fences. No text before or after.
 
-Extract the following fields from the lease text provided:
+Use EXACTLY these key names — no variations, no camelCase, no other spellings:
 
 {
-  "tenant_name": "exact tenant/lessee name (string or null)",
-  "leased_sqft": 3000,
-  "lease_start_date": "YYYY-MM-DD",
-  "lease_end_date": "YYYY-MM-DD",
+  "tenant_name": "string or null",
+  "leased_sqft": integer or null,
+  "lease_start_date": "YYYY-MM-DD or null",
+  "lease_end_date": "YYYY-MM-DD or null",
   "lease_type": "NNN or Gross or Modified Gross or null",
-  "cam_cap": 5,
-  "excluded_categories": ["management fees", "capital improvements"]
+  "cam_cap": number or null,
+  "excluded_categories": []
 }
 
-RULES:
-- tenant_name: the party paying rent, not the landlord. Look near "Tenant:", "Lessee:"
-- leased_sqft: integer only. Ranges (2800-3200) → average (3000). Null if not found
-- lease_start_date: commencement/effective/start date in YYYY-MM-DD. Null if not found
-- lease_end_date: expiration/end date in YYYY-MM-DD. If not stated, compute from term length. Null if cannot determine
-- lease_type: "NNN" for triple net / tenant pays taxes+insurance+maintenance. "Gross" for gross/full-service. "Modified Gross" if stated. Null if unclear
-- cam_cap: annual CAM increase cap as a plain number (5 for 5%). Null if none or "no cap"
-- excluded_categories: array of CAM expense categories explicitly excluded. Empty array [] if none
-
-Return ONLY the JSON object. If a field cannot be found, use null (never empty string "").
+STRICT RULES:
+- Key names are FIXED. Do NOT use tenantName, startDate, sqft, or any other variant.
+- tenant_name: party paying rent (not landlord). Look near "Tenant:", "Lessee:". String or null.
+- leased_sqft: integer only. Average ranges (2800–3200 → 3000). Null if not found.
+- lease_start_date: commencement/effective/start date in YYYY-MM-DD format. Null if not found.
+- lease_end_date: expiration/end/termination date in YYYY-MM-DD format. If not stated, compute from term length + start date. Null if cannot determine.
+- lease_type: "NNN" if tenant pays taxes+insurance+maintenance. "Gross" if landlord pays. "Modified Gross" if stated. Null if unclear.
+- cam_cap: annual CAM increase cap as a plain number (e.g. 5 for 5%). Null if there is no cap or it is not stated.
+- excluded_categories: array of strings listing CAM expense categories explicitly excluded from tenant's share. Empty array [] if none.
+- Use null for any field not found. Never use empty string "".
 
 LEASE TEXT:
 {{LEASE_TEXT}}`;
@@ -2528,6 +2528,19 @@ function normalizeTenant(raw) {
     ? (raw[0] || {})
     : (Array.isArray(raw.tenants) && raw.tenants.length > 0 ? raw.tenants[0] : raw);
 
+  console.log('[normalizeTenant] incoming keys:', Object.keys(src), src);
+
+  // Normalize any legacy/variant keys to the canonical snake_case names the parser expects
+  if (src.sqft        !== undefined && src.leased_sqft       === undefined) src.leased_sqft       = src.sqft;
+  if (src.start_date  !== undefined && src.lease_start_date  === undefined) src.lease_start_date  = src.start_date;
+  if (src.end_date    !== undefined && src.lease_end_date    === undefined) src.lease_end_date    = src.end_date;
+  if (src.tenantName  !== undefined && src.tenant_name       === undefined) src.tenant_name       = src.tenantName;
+  if (src.startDate   !== undefined && src.lease_start_date  === undefined) src.lease_start_date  = src.startDate;
+  if (src.endDate     !== undefined && src.lease_end_date    === undefined) src.lease_end_date    = src.endDate;
+  if (src.camPercent  !== undefined && src.cam_cap           === undefined) src.cam_cap           = src.camPercent;
+  if (src.capPercent  !== undefined && src.cam_cap           === undefined) src.cam_cap           = src.capPercent;
+  if (src.excludedCategories !== undefined && src.excluded_categories === undefined) src.excluded_categories = src.excludedCategories;
+
   const toISODate = str => {
     if (!str) return '';
     if (/^\d{4}-\d{2}-\d{2}$/.test(str)) return str;       // already ISO
@@ -2652,8 +2665,11 @@ async function callClaudeForLease(text) {
   try { data = await resp.json(); } catch (e) { throw new Error('Lease extraction response parse failed'); }
 
   // Support both Anthropic messages format and legacy completion format
-  const raw = data?.content?.[0]?.text ?? data?.completion ?? '';
-  console.log('[callClaudeForLease] raw response:', raw);
+  const rawText = data?.content?.[0]?.text ?? data?.completion ?? '';
+  console.log('[callClaudeForLease] raw response:', rawText);
+
+  // Strip markdown code fences if the model wraps the JSON despite the prompt
+  const raw = rawText.replace(/^```(?:json)?\s*/i, '').replace(/\s*```\s*$/i, '').trim();
 
   let parsed;
   try {
