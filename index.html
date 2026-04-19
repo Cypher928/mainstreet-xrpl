@@ -2924,7 +2924,61 @@ async function handleLease(i, file) {
     console.log('[DEBUG] leaseText length:', leaseText.length, '| preview:', leaseText.slice(0, 200));
     const d = await callClaudeForLease(leaseText);
     console.log('RAW TENANTS:', d);
-    tenantData[i] = normalizeTenant({ ...d, _rawText: leaseText });
+    function normalizeTenant(raw) {
+  if (!raw) return null;
+
+  const text = raw._rawText || JSON.stringify(raw);
+
+  const clean = (v) => (v ? String(v).trim() : '');
+
+  // --- Tenant Name ---
+  let tenantName =
+    raw.tenantName ||
+    (text.match(/Tenant:\s*(.+)/i)?.[1]) ||
+    '';
+
+  // --- Square Feet ---
+  let leasedSqft =
+    raw.leasedSqft ||
+    (text.match(/([\d,]+)\s*(?:rentable\s*)?(?:square feet|sq\.?\s*ft)/i)?.[1]?.replace(/,/g, '')) ||
+    '';
+
+  // --- Start Date ---
+  let startDate =
+    raw.startDate ||
+    (text.match(/commence(?:ment)?\s*(?:date)?\s*(?:on)?\s*([A-Za-z]+\s+\d{1,2},\s+\d{4})/i)?.[1]) ||
+    '';
+
+  // --- End Date ---
+  let endDate =
+    raw.endDate ||
+    (text.match(/expire(?:s|)\s*(?:on)?\s*([A-Za-z]+\s+\d{1,2},\s+\d{4})/i)?.[1]) ||
+    '';
+
+  // --- Lease Type ---
+  let leaseType = '';
+  if (/triple\s*net/i.test(text) || /\bnnn\b/i.test(text)) {
+    leaseType = 'Triple Net (NNN)';
+  } else if (/modified\s*gross/i.test(text)) {
+    leaseType = 'Modified Gross';
+  } else if (/\bgross\b/i.test(text)) {
+    leaseType = 'Gross';
+  }
+
+  // --- Convert dates to ISO ---
+  const toISO = (d) => {
+    const date = new Date(d);
+    return isNaN(date) ? '' : date.toISOString().split('T')[0];
+  };
+
+  return {
+    tenantName: clean(tenantName),
+    leasedSqft: clean(leasedSqft),
+    startDate: toISO(startDate),
+    endDate: toISO(endDate),
+    leaseType: clean(leaseType),
+  };
+}
     console.log("FINAL TENANT OBJECT:", tenantData[i]);
     applyRawTextFallback([tenantData[i]]);
     console.log('NORMALIZED TENANTS:', tenantData);
