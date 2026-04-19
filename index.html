@@ -2266,7 +2266,10 @@ leasedSqft: NUMBER or null
 
 startDate / endDate: "YYYY-MM-DD" or null
 - Look for: commencement date, term start, effective date, expiration date, term end
-- Return null if not found
+- If endDate is not explicitly stated but a lease term is given (e.g. "5 years", "36 months"), compute it:
+  endDate = startDate + term - 1 day
+  Example: start March 1 2024 + 5 years → February 28 2029
+- Return null only if endDate cannot be determined from either an explicit date or a calculable term
 
 leaseType: "NNN" or "Gross" or null
 - "NNN": triple net, NNN, net-net-net, net lease, tenant pays taxes/insurance/maintenance
