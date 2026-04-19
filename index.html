@@ -2495,6 +2495,33 @@ function applyRawTextFallback(tenants) {
   });
 }
 
+function splitTextByTenant(extractedText, tenants) {
+  if (!extractedText || !tenants || tenants.length === 0) return tenants;
+  const normalizedText = extractedText.replace(/\s+/g, ' ');
+
+  const positions = tenants.map(t => {
+    if (!t.tenantName) return null;
+    // Try full name first, then short name (before first comma)
+    const names = [t.tenantName, t.tenantName.split(',')[0]].filter(Boolean);
+    for (const name of names) {
+      const escaped = name.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
+      const match = normalizedText.match(new RegExp(escaped, 'i'));
+      if (match) return { tenant: t, index: match.index };
+    }
+    return null;
+  }).filter(Boolean);
+
+  positions.sort((a, b) => a.index - b.index);
+
+  for (let i = 0; i < positions.length; i++) {
+    const start = positions[i].index;
+    const end = positions[i + 1]?.index || normalizedText.length;
+    positions[i].tenant._rawText = normalizedText.slice(start, end);
+  }
+
+  return tenants;
+}
+
 function enrichLeaseData(data, extractedText) {
   if (!extractedText) return data;
   // Handle array response (new prompt returns [...])
@@ -2737,6 +2764,22 @@ async function callClaudeForLease(text) {
     return { tenants: [] };
   }
   parsed = enrichLeaseData(parsed, text);
+
+  if (Array.isArray(parsed)) {
+    parsed = splitTextByTenant(text, parsed);
+    parsed = parsed.map(t => {
+      if (!t.startDate) {
+        const chunk = t._rawText || '';
+        const match = chunk.match(/\b(January|February|March|April|May|June|July|August|September|October|November|December)\s+\d{1,2},\s+\d{4}\b/i);
+        if (match) {
+          const d = new Date(match[0]);
+          if (!isNaN(d)) t.startDate = d.toISOString().split('T')[0];
+        }
+      }
+      return t;
+    });
+  }
+
   console.log('FINAL PARSED TENANT:', parsed);
   return parsed;
 }
