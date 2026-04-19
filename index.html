@@ -2769,10 +2769,23 @@ async function callClaudeForLease(text) {
     parsed = splitTextByTenant(text, parsed);
     parsed = parsed.map(t => {
       if (!t.startDate) {
-        const chunk = t._rawText || '';
-        const match = chunk.match(/\b(January|February|March|April|May|June|July|August|September|October|November|December)\s+\d{1,2},\s+\d{4}\b/i);
-        if (match) {
-          const d = new Date(match[0]);
+        const text = t._rawText || '';
+
+        // 1. Keyword-based match first (strongest signal)
+        const keywordMatch = text.match(
+          /\b(commence(?:ment)?|commencing|effective(?: date)?|lease date|start date)[^.]{0,60}?\b(January|February|March|April|May|June|July|August|September|October|November|December)\s+\d{1,2},\s+\d{4}\b/i
+        );
+        if (keywordMatch) {
+          const d = new Date(keywordMatch[0].match(/\b(January|February|March|April|May|June|July|August|September|October|November|December)\s+\d{1,2},\s+\d{4}\b/i)[0]);
+          if (!isNaN(d)) { t.startDate = d.toISOString().split('T')[0]; return t; }
+        }
+
+        // 2. Fallback: any date in tenant section
+        const looseMatch = text.match(
+          /\b(January|February|March|April|May|June|July|August|September|October|November|December)\s+\d{1,2},\s+\d{4}\b/i
+        );
+        if (looseMatch) {
+          const d = new Date(looseMatch[0]);
           if (!isNaN(d)) t.startDate = d.toISOString().split('T')[0];
         }
       }
