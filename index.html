@@ -2505,7 +2505,7 @@ function enrichLeaseData(data, extractedText) {
   // --- START DATE
   if (!data.startDate) {
     const startMatch = extractedText.match(
-      /(commence(?:ment)?(?:\s+date)?|start(?:\s+date)?)[^a-zA-Z0-9]{0,20}([A-Z][a-z]+ \d{1,2}, \d{4})/i
+      /(commence|commencement|start)[^\n]*?(\b\w+ \d{1,2}, \d{4}\b)/i
     );
     if (startMatch) {
       data.startDate = startMatch[2];
@@ -2515,7 +2515,7 @@ function enrichLeaseData(data, extractedText) {
   // --- END DATE
   if (!data.endDate) {
     const endMatch = extractedText.match(
-      /(expire|expiration|end(?:\s+date)?|terminate)[^a-zA-Z0-9]{0,20}([A-Z][a-z]+ \d{1,2}, \d{4})/i
+      /(expire|expiration|end(?:\s+date)?|terminate)[^\n]*?(\b\w+ \d{1,2}, \d{4}\b)/i
     );
     if (endMatch) {
       data.endDate = endMatch[2];
