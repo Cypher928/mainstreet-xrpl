@@ -2148,7 +2148,35 @@ IMPORTANT:
 If the charge looks normal, say "No issues" and do not invent problems.
 If the category appears incorrect based on the vendor or description, gently interpret the charge correctly in your explanation without criticizing the classification.`;
 
-const LEASE_PROMPT = `Extract the following CAM lease terms from this document and return ONLY valid JSON with these fields: tenantName, leasedSqft, capPercentage, excludedCategories (array of strings), baseYear, confidence. "confidence" must be an object with a score 0-100 for each field (tenantName, leasedSqft, capPercentage, excludedCategories, baseYear) reflecting how clearly that value was found in the document. If a field is not found, use null.`;
+const CLAUDE_LEASE_PROMPT = `You are a commercial lease data extractor.
+
+Return ONLY a valid JSON object. No explanation. No markdown. No text before or after the JSON.
+
+Extract the following fields from the lease text provided:
+
+{
+  "tenant_name": "exact tenant/lessee name (string or null)",
+  "leased_sqft": 3000,
+  "lease_start_date": "YYYY-MM-DD",
+  "lease_end_date": "YYYY-MM-DD",
+  "lease_type": "NNN or Gross or Modified Gross or null",
+  "cam_cap": 5,
+  "excluded_categories": ["management fees", "capital improvements"]
+}
+
+RULES:
+- tenant_name: the party paying rent, not the landlord. Look near "Tenant:", "Lessee:"
+- leased_sqft: integer only. Ranges (2800-3200) → average (3000). Null if not found
+- lease_start_date: commencement/effective/start date in YYYY-MM-DD. Null if not found
+- lease_end_date: expiration/end date in YYYY-MM-DD. If not stated, compute from term length. Null if cannot determine
+- lease_type: "NNN" for triple net / tenant pays taxes+insurance+maintenance. "Gross" for gross/full-service. "Modified Gross" if stated. Null if unclear
+- cam_cap: annual CAM increase cap as a plain number (5 for 5%). Null if none or "no cap"
+- excluded_categories: array of CAM expense categories explicitly excluded. Empty array [] if none
+
+Return ONLY the JSON object. If a field cannot be found, use null (never empty string "").
+
+LEASE TEXT:
+{{LEASE_TEXT}}`;
 
 const INVOICE_PROMPT = `Extract invoice details and return ONLY valid JSON with these fields: vendorName, amount (number), category, invoiceDate, confidence. "confidence" must be an object with a score 0-100 for each field (vendorName, amount, category, invoiceDate) reflecting how clearly that value was found in the document. Category must be one of: insurance, landscaping, snow, repairs, utilities, janitorial, security, management, other. IMPORTANT: Insurance companies, policies, or premiums → insurance.`;
 
@@ -2350,6 +2378,331 @@ async function callClaude(file, prompt) {
   }
 }
 
+function applyRawTextFallback(tenants) {
+  const MONTHS = /\b(January|February|March|April|May|June|July|August|September|October|November|December)\s+\d{1,2},\s+\d{4}\b/i;
+  tenants.forEach(t => {
+    if (!t || !t._rawText) return;
+    if (!t.startDate) {
+      const match = t._rawText.match(MONTHS);
+      if (match) {
+        const d = new Date(match[0]);
+        if (!isNaN(d)) t.startDate = d.toISOString().split('T')[0];
+      }
+    }
+  });
+}
+
+function splitTextByTenant(extractedText, tenants) {
+  if (!extractedText || !tenants?.length) return tenants;
+
+  const text = extractedText.replace(/\s+/g, ' ');
+
+  const positions = tenants.map(t => {
+    if (!t.tenantName) return null;
+
+    const name = t.tenantName.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
+    const regex = new RegExp(name, 'i');
+    const match = text.match(regex);
+
+    if (!match) return null;
+
+    return { tenant: t, index: match.index };
+  }).filter(Boolean);
+
+  positions.sort((a, b) => a.index - b.index);
+
+  for (let i = 0; i < positions.length; i++) {
+    const start = positions[i].index;
+    const nextIndex = positions[i + 1]?.index || text.length;
+    const extendedEnd = Math.min(nextIndex + 1500, text.length);
+    positions[i].tenant._rawText = text.slice(start, extendedEnd);
+  }
+
+  return tenants;
+}
+
+function enrichLeaseData(data, extractedText) {
+  if (!extractedText) return data;
+  // Handle array response (new prompt returns [...])
+  if (Array.isArray(data)) {
+    data.forEach(item => enrichLeaseData(item, extractedText));
+    return data;
+  }
+
+  const text = extractedText.toLowerCase();
+
+  // --- SQFT (fallback)
+  if (!data.leasedSqft) {
+    const sqftMatch = extractedText.match(/([\d,]{2,6})\s*(sq\s*ft|square feet)/i);
+    if (sqftMatch) {
+      data.leasedSqft = parseInt(sqftMatch[1].replace(/,/g, ''));
+    }
+  }
+
+  // --- START DATE
+  if (!data.startDate) {
+    const startMatch = extractedText.match(
+      /(commence|commencement|start)[^\n]*?(\b\w+ \d{1,2}, \d{4}\b)/i
+    );
+    if (startMatch) {
+      data.startDate = startMatch[2];
+    }
+  }
+
+  // --- END DATE
+  if (!data.endDate) {
+    const endMatch = extractedText.match(
+      /(expire|expiration|end(?:\s+date)?|terminate)[^\n]*?(\b\w+ \d{1,2}, \d{4}\b)/i
+    );
+    if (endMatch) {
+      data.endDate = endMatch[2];
+    }
+  }
+
+  // --- TERM FALLBACK
+  if (!data.endDate && data.startDate) {
+    const termMatch = extractedText.match(/(\d+)\s*\(?\d*\)?\s*year/i);
+    if (termMatch) {
+      const years = parseInt(termMatch[1]);
+      const start = new Date(data.startDate);
+      if (!isNaN(start)) {
+        start.setFullYear(start.getFullYear() + years);
+        data.endDate = start.toLocaleDateString('en-US', {
+          month: 'short',
+          day: 'numeric',
+          year: 'numeric'
+        });
+      }
+    }
+  }
+
+  // --- START DATE ("on or about" fallback)
+  if (!data.startDate) {
+    const match = extractedText.match(/on or about ([A-Z][a-z]+ \d{1,2}, \d{4})/i);
+    if (match) data.startDate = match[1];
+  }
+
+  // FINAL fallback — always extract first real date if still missing
+  if (!data.startDate && extractedText) {
+    const dateMatch = extractedText.match(/\b(January|February|March|April|May|June|July|August|September|October|November|December)\s+\d{1,2},\s+\d{4}\b/i);
+    if (dateMatch) {
+      data.startDate = dateMatch[0];
+    }
+  }
+
+  console.log('ENRICHED DATES:', data.startDate, data.endDate);
+
+  // --- LEASE TYPE
+  if (!data.leaseType) {
+    if (/cam|common area maintenance|taxes|insurance/i.test(text)) {
+      data.leaseType = "NNN";
+    } else if (/gross/i.test(text)) {
+      data.leaseType = "Gross";
+    }
+  }
+
+  // --- CAP %
+  if (!data.capPercentage) {
+    const capMatch = extractedText.match(/(\d+(\.\d+)?)\s*%.*cap/i);
+    if (capMatch) {
+      data.capPercentage = parseFloat(capMatch[1]);
+    }
+  }
+
+  // --- EXCLUSIONS
+  if (!data.excludedCategories) {
+    const exclMatch = extractedText.match(/exclusions?\s*[:\-]?\s*(.*)/i);
+    if (exclMatch) {
+      data.excludedCategories = exclMatch[1].trim();
+    }
+  }
+
+  return data;
+}
+
+
+function normalizeTenant(raw) {
+  if (!raw || typeof raw !== 'object') return null;
+  // Unwrap: top-level array (new prompt), legacy tenants wrapper, or plain object
+  const src = Array.isArray(raw)
+    ? (raw[0] || {})
+    : (Array.isArray(raw.tenants) && raw.tenants.length > 0 ? raw.tenants[0] : raw);
+
+  const toISODate = str => {
+    if (!str) return '';
+    if (/^\d{4}-\d{2}-\d{2}$/.test(str)) return str;       // already ISO
+    const d = new Date(str);
+    return isNaN(d) ? '' : d.toISOString().split('T')[0];   // "March 1, 2024" → "2024-03-01"
+  };
+
+  // tenantName: tenant_name (new) | tenantName | name | tenant
+  const name = src.tenant_name ?? src.tenantName ?? src.name ?? src.tenant ?? null;
+
+  // leasedSqft: leased_sqft (new) | leasedSqft | sqft | squareFeet | leased_square_feet → integer string or null
+  const sqftRaw = src.leased_sqft ?? src.leasedSqft ?? src.sqft ?? src.squareFeet ?? src.leased_square_feet ?? null;
+  let leasedSqft = null;
+  if (sqftRaw !== null && sqftRaw !== undefined && sqftRaw !== '') {
+    if (typeof sqftRaw === 'number') {
+      leasedSqft = sqftRaw > 0 ? String(Math.round(sqftRaw)) : null;
+    } else {
+      const s = String(sqftRaw).replace(/,/g, '');
+      // Handle ranges like "2800-3200" or "2,800 – 3,200" → average
+      const rangeMatch = s.match(/(\d+(?:\.\d+)?)\s*[-–—]\s*(\d+(?:\.\d+)?)/);
+      if (rangeMatch) {
+        const avg = (parseFloat(rangeMatch[1]) + parseFloat(rangeMatch[2])) / 2;
+        leasedSqft = avg > 0 ? String(Math.round(avg)) : null;
+      } else {
+        const n = parseFloat(s.replace(/[^0-9.]/g, ''));
+        leasedSqft = (!isNaN(n) && n > 0) ? String(Math.round(n)) : null;
+      }
+    }
+  }
+
+  // capPercentage: cam_cap (new) | camCapPercent | capPercentage | cap | capPercent | cap_percentage
+  const capRaw = src.cam_cap ?? src.camCapPercent ?? src.capPercentage ?? src.cap ?? src.capPercent ?? src.cap_percentage ?? null;
+  const capNoCap = typeof capRaw === 'string' && /no.?cap|uncapped|no.?limit/i.test(capRaw);
+  const capPercentage = (!capNoCap && capRaw !== null && capRaw !== undefined && capRaw !== '') ? String(capRaw) : '';
+
+  // startDate / endDate — convert any format to YYYY-MM-DD for <input type="date">
+  const startDate = toISODate(src.lease_start_date || src.startDate || src.start_date || src.lease_start || src.commencementDate || '');
+  const endDate   = toISODate(src.lease_end_date   || src.endDate   || src.end_date   || src.lease_end   || src.expirationDate   || '');
+
+  // baseYear: integer
+  const byRaw = src.baseYear || src.base_year || null;
+  const baseYear = byRaw ? String(parseInt(byRaw, 10)) : '';
+
+  // leaseType: normalize "NNN", "Gross", modified gross → "Gross", etc.
+  const ltRaw = src.leaseType || src.lease_type || src.type || '';
+  let leaseType = null;
+  if (ltRaw) {
+    const s = String(ltRaw).trim();
+    if (/^nnn$/i.test(s) || /triple.?net/i.test(s))            leaseType = 'NNN';
+    else if (/modified.?gross/i.test(s))                        leaseType = 'Gross';
+    else if (/gross/i.test(s))                                  leaseType = 'Gross';
+  }
+
+  // excludedCategories: excluded_categories (new) | excludedCategories | excluded | exclusions
+  const excSrc = src.excluded_categories ?? src.excludedCategories ?? src.excluded ?? src.exclusions ?? null;
+  let excludedCategories = '';
+  if (typeof excSrc === 'string' && excSrc)  excludedCategories = excSrc;
+  else if (Array.isArray(excSrc))            excludedCategories = excSrc.filter(Boolean).join(', ');
+
+  return {
+    tenantName:         name ? String(name) : '',
+    leasedSqft,
+    capPercentage,
+    excludedCategories,
+    baseYear,
+    startDate,
+    endDate,
+    leaseType,
+    confidence:         src.confidence || {},
+  };
+}
+
+
+async function extractPdfText(file) {
+  // For non-PDF files (txt, etc.) fall back to plain text read
+  if (!file.name.toLowerCase().endsWith('.pdf') && file.type !== 'application/pdf') {
+    return file.text();
+  }
+
+  const lib = window.pdfjsLib;
+  if (!lib) throw new Error('PDF.js not loaded');
+
+  const arrayBuffer = await file.arrayBuffer();
+  const pdf = await lib.getDocument({ data: arrayBuffer }).promise;
+
+  const pages = [];
+  for (let p = 1; p <= pdf.numPages; p++) {
+    const page = await pdf.getPage(p);
+    const content = await page.getTextContent();
+    const pageText = content.items.map(item => item.str).join(' ');
+    pages.push(pageText);
+  }
+
+  return pages.join('\n\n');
+}
+
+async function callClaudeForLease(text) {
+  let resp;
+  try {
+    resp = await fetch('/api/claude', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({
+        model: MODEL,
+        max_tokens: 1024,
+        messages: [{ role: 'user', content: [{ type: 'text', text: CLAUDE_LEASE_PROMPT.replace('{{LEASE_TEXT}}', text) }] }],
+      }),
+    });
+  } catch (e) {
+    console.error('[callClaudeForLease] fetch error:', e);
+    throw new Error('Could not reach the server');
+  }
+
+  if (!resp.ok) {
+    let detail = `HTTP ${resp.status}`;
+    try { const b = await resp.json(); detail = b?.error?.message || b?.message || detail; } catch {}
+    console.error('[callClaudeForLease] API error:', detail);
+    throw new Error('Lease extraction failed: ' + detail);
+  }
+
+  let data;
+  try { data = await resp.json(); } catch (e) { throw new Error('Lease extraction response parse failed'); }
+
+  // Support both Anthropic messages format and legacy completion format
+  const raw = data?.content?.[0]?.text ?? data?.completion ?? '';
+  console.log('[callClaudeForLease] raw response:', raw);
+
+  let parsed;
+  try {
+    parsed = JSON.parse(raw);
+  } catch (e) {
+    console.error('[callClaudeForLease] JSON parse error:', e, '| raw:', raw);
+    return { tenants: [] };
+  }
+
+  // Attach this PDF's text to each tenant immediately — before any enrichment
+  if (Array.isArray(parsed)) {
+    parsed = parsed.map(t => ({ ...t, _rawText: text }));
+  } else if (parsed && typeof parsed === 'object') {
+    parsed._rawText = text;
+  }
+
+  parsed = enrichLeaseData(parsed, text);
+
+  if (Array.isArray(parsed)) {
+    parsed = parsed.map(t => {
+      console.log('TENANT + TEXT MATCH:', t.tenantName, (t._rawText || '').slice(0, 100));
+      if (!t.startDate) {
+        const chunk = t._rawText || '';
+
+        // 1. Keyword match first
+        const keywordMatch = chunk.match(
+          /\b(commence(?:ment)?|commencing|effective(?: date)?|lease date|start date)[^.]{0,60}?\b(January|February|March|April|May|June|July|August|September|October|November|December)\s+\d{1,2},\s+\d{4}\b/i
+        );
+        if (keywordMatch) {
+          const d = new Date(keywordMatch[0].match(/\b(January|February|March|April|May|June|July|August|September|October|November|December)\s+\d{1,2},\s+\d{4}\b/i)[0]);
+          if (!isNaN(d)) { t.startDate = d.toISOString().split('T')[0]; return t; }
+        }
+
+        // 2. Loose fallback
+        const looseMatch = chunk.match(
+          /\b(January|February|March|April|May|June|July|August|September|October|November|December)\s+\d{1,2},\s+\d{4}\b/i
+        );
+        if (looseMatch) {
+          const d = new Date(looseMatch[0]);
+          if (!isNaN(d)) t.startDate = d.toISOString().split('T')[0];
+        }
+      }
+      return t;
+    });
+  }
+
+  console.log('FINAL PARSED TENANT:', parsed);
+  return parsed;
+}
 // ─── SVG icons ────────────────────────────────────────────────────────────────
 const CHECK_SVG = `<svg viewBox="0 0 12 12" width="10" height="10" fill="none" stroke="white" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round"><polyline points="2,6 5,9 10,3"/></svg>`;
 const CROSS_SVG = `<svg viewBox="0 0 12 12" width="10" height="10" stroke="white" stroke-width="2.2" stroke-linecap="round"><line x1="2" y1="2" x2="10" y2="10"/><line x1="10" y1="2" x2="2" y2="10"/></svg>`;
