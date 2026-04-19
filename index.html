@@ -2237,42 +2237,44 @@ If the category appears incorrect based on the vendor or description, gently int
 
 const CLAUDE_LEASE_PROMPT = `You are a commercial real estate data extractor. Extract lease terms and return ONLY a JSON object. No prose, no markdown, no explanation.
 
-CRITICAL: Extract REAL values from the document. Never return empty strings. If you find a value, return it.
+IMPORTANT: Always return your best answer. If a reasonable value exists, return it. Do NOT leave fields null just because the value is approximate or expressed in an unusual format.
 
 FIELD RULES:
 
 tenantName:
-- The business or person renting the space (not the landlord/lessor)
-- Look for: "Tenant:", "Lessee:", the party paying rent, the business operating at the premises
-- Return null only if truly unidentifiable
+- The business or person RENTING the space (not the landlord, lessor, or property owner)
+- Look near: "Tenant:", "Lessee:", "Occupant:", "Tenant's name:", signature blocks, or the party obligated to pay rent
+- Return your best guess. Return null only if no tenant identity appears anywhere
 
 leasedSqft:
-- Return as a plain INTEGER (no commas, no units)
-- Extract from ANY format: "4,000 SF", "4000 square feet", "approx 4,000 sf", "± 4,000 SF", "~4k sqft", "Premises: 4000 RSF", "approximately four thousand square feet"
-- Search entire document — sqft often appears in recitals, premises definition, or rent schedule
-- Return null only if no number appears near sf/sqft/square feet/RSF/GLA/premises
+- Return as a plain INTEGER (no commas, no units, no text)
+- Handle ALL of these formats — always return a number:
+  - Clean: "4,000 SF" → 4000
+  - Approximate: "approximately 3,000 sf" → 3000
+  - Range: "2,800 – 3,200 rentable square feet" → return the AVERAGE (3000)
+  - Written out: "approximately four thousand square feet" → 4000
+  - Prefixed: "Premises: 4000 RSF", "~4k sqft", "± 4,000 SF" → 4000
+- Search the ENTIRE document — sqft often appears in recitals, premises definitions, or rent schedules
+- Return null ONLY if no number near sf/sqft/square feet/RSF/GLA/premises appears anywhere
 
 leaseType:
-- "NNN" if: triple net, NNN, net-net-net, tenant pays taxes/insurance/maintenance
-- "Gross" if: gross lease, full-service, landlord pays operating expenses
-- "Gross" also for: modified gross, gross modified
-- Return null if genuinely unspecified
+- "NNN" for: triple net, NNN, net-net-net, net lease, tenant pays taxes/insurance/maintenance
+- "Gross" for: gross lease, full-service lease, modified gross, gross modified, landlord pays operating expenses
+- Return null only if completely unspecified
 
 startDate / endDate:
 - Return as "YYYY-MM-DD"
-- Look for: commencement date, term start, effective date, expiration date, term end
+- Look for: commencement date, term start, effective date / expiration date, term end, lease end
 - Return null if not found
 
 cap:
-- The CAM expense cap percentage (e.g. 5 for 5%)
-- Look for: "cap", "not to exceed", "increase limited to", "capped at X%"
-- Return the NUMBER only (e.g. 5, not "5%")
-- Return null if not present
+- The annual CAM expense increase cap as a percentage number (e.g. 5 for 5%)
+- Look for: "cap", "not to exceed", "increase limited to", "capped at X%", "annual increase cap"
+- Return the NUMBER only (e.g. 5, not "5%"). Return null if not present
 
 baseYear:
-- The base year for CAM expense calculations (e.g. 2023)
-- Return as an INTEGER
-- Return null if not present
+- The base year for CAM expense stop calculations (e.g. 2023)
+- Return as an INTEGER. Return null if not present
 
 excluded:
 - Comma-separated list of CAM expense categories explicitly excluded for this tenant
@@ -2501,13 +2503,24 @@ function normalizeTenant(raw) {
   // tenantName: tenantName | name | tenant
   const name = src.tenantName || src.name || src.tenant || null;
 
-  // leasedSqft: leasedSqft | sqft | squareFeet | leased_square_feet → plain integer string
+  // leasedSqft: leasedSqft | sqft | squareFeet | leased_square_feet → plain integer string or null
   const sqftRaw = src.leasedSqft ?? src.sqft ?? src.squareFeet ?? src.leased_square_feet ?? null;
-  let leasedSqft = '';
+  let leasedSqft = null;
   if (sqftRaw !== null && sqftRaw !== undefined && sqftRaw !== '') {
-    const n = typeof sqftRaw === 'number' ? sqftRaw
-      : parseFloat(String(sqftRaw).replace(/,/g, '').replace(/[^0-9.]/g, ''));
-    leasedSqft = (!isNaN(n) && n > 0) ? String(Math.round(n)) : '';
+    if (typeof sqftRaw === 'number') {
+      leasedSqft = sqftRaw > 0 ? String(Math.round(sqftRaw)) : null;
+    } else {
+      const s = String(sqftRaw).replace(/,/g, '');
+      // Handle ranges like "2800-3200" or "2,800 – 3,200" → average
+      const rangeMatch = s.match(/(\d+(?:\.\d+)?)\s*[-–—]\s*(\d+(?:\.\d+)?)/);
+      if (rangeMatch) {
+        const avg = (parseFloat(rangeMatch[1]) + parseFloat(rangeMatch[2])) / 2;
+        leasedSqft = avg > 0 ? String(Math.round(avg)) : null;
+      } else {
+        const n = parseFloat(s.replace(/[^0-9.]/g, ''));
+        leasedSqft = (!isNaN(n) && n > 0) ? String(Math.round(n)) : null;
+      }
+    }
   }
 
   // capPercentage: cap | capPercent | cap_percentage | capPercentage
