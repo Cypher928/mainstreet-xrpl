@@ -2530,7 +2530,8 @@ function normalizeTenant(raw) {
     ? (raw[0] || {})
     : (Array.isArray(raw.tenants) && raw.tenants.length > 0 ? raw.tenants[0] : raw);
 
-  const text = JSON.stringify(src);
+  const text = src._rawText || JSON.stringify(src);
+  console.log("TEXT USED FOR PARSING:", text.slice(0, 300));
 
   // SQFT
   let sqft = '';
