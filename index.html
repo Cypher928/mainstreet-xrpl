@@ -2489,6 +2489,20 @@ async function callClaude(file, prompt) {
   }
 }
 
+function applyRawTextFallback(tenants) {
+  const MONTHS = /\b(January|February|March|April|May|June|July|August|September|October|November|December)\s+\d{1,2},\s+\d{4}\b/i;
+  tenants.forEach(t => {
+    if (!t || !t._rawText) return;
+    if (!t.startDate) {
+      const match = t._rawText.match(MONTHS);
+      if (match) {
+        const d = new Date(match[0]);
+        if (!isNaN(d)) t.startDate = d.toISOString().split('T')[0];
+      }
+    }
+  });
+}
+
 function enrichLeaseData(data, extractedText) {
   if (!extractedText) return data;
 
@@ -2786,7 +2800,8 @@ async function handleLease(i, file) {
     console.log('[DEBUG] leaseText length:', leaseText.length, '| preview:', leaseText.slice(0, 200));
     const d = await callClaudeForLease(leaseText);
     console.log('RAW TENANTS:', d);
-    tenantData[i] = normalizeTenant(d);
+    tenantData[i] = { ...normalizeTenant(d), _rawText: leaseText };
+    applyRawTextFallback([tenantData[i]]);
     console.log('NORMALIZED TENANTS:', tenantData);
     document.body.insertAdjacentHTML('beforeend',
       '<div style="position:fixed;bottom:10px;left:10px;background:#000;color:#0f0;padding:10px;z-index:9999;font-size:12px;max-width:600px;white-space:pre-wrap;overflow:auto;max-height:200px;">EXTRACTED TEXT (first 1000 chars):\n' + leaseText.slice(0, 1000).replace(/</g,'&lt;') + '</div>'
@@ -3606,7 +3621,7 @@ async function handleBulkLeases(fileList) {
       extractedTenants.forEach(raw => {
         const normalized = normalizeTenant(raw);
         console.log('NORMALIZED TENANT:', normalized);
-        tenantData.push({ ...normalized, _error: null });
+        tenantData.push({ ...normalized, _error: null, _rawText: leaseText });
       });
       console.log('NORMALIZED TENANTS:', tenantData);
     } catch (err) {
@@ -3638,6 +3653,7 @@ async function handleBulkLeases(fileList) {
   property.tenants = merged;
   // Keep tenantData in sync with merged result so UI shows the full set.
   tenantData.splice(0, tenantData.length, ...merged);
+  applyRawTextFallback(tenantData);
   console.log('FINAL tenantData after merge:', tenantData);
   renderBulkResults();
   checkSqftValidation();
