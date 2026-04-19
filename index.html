@@ -2761,14 +2761,19 @@ async function handleLease(i, file) {
     const existing = { tenants: Array.from(property.tenants || []) };
     console.log('EXISTING DATA:', existing);
 
-    const d = await callClaude(file, LEASE_PROMPT);
+    const text = await extractPdfText(file);
+    const raw  = await callClaudeForLease(text);
+    const d    = normalizeTenant(raw);
+    if (!d) throw new Error('Could not extract lease fields');
     tenantData[i] = {
       tenantName:         d.tenantName          ?? '',
       leasedSqft:         d.leasedSqft          ?? '',
       capPercentage:      d.capPercentage        ?? '',
-      excludedCategories: Array.isArray(d.excludedCategories)
-                            ? d.excludedCategories.join(', ') : '',
+      excludedCategories: d.excludedCategories   ?? '',
       baseYear:           d.baseYear             ?? '',
+      startDate:          d.startDate            ?? '',
+      endDate:            d.endDate              ?? '',
+      leaseType:          d.leaseType            ?? null,
       confidence:         d.confidence           ?? {},
     };
     renderTenantFields(i);
@@ -3376,14 +3381,19 @@ async function handleBulkLeases(fileList) {
       </div>`;
 
     try {
-      const d = await callClaude(files[i], LEASE_PROMPT);
+      const text = await extractPdfText(files[i]);
+      const raw  = await callClaudeForLease(text);
+      const d    = normalizeTenant(raw);
+      if (!d) throw new Error('Could not extract lease fields');
       tenantData.push({
         tenantName:         d.tenantName          ?? '',
         leasedSqft:         d.leasedSqft          ?? '',
         capPercentage:      d.capPercentage        ?? '',
-        excludedCategories: Array.isArray(d.excludedCategories)
-                              ? d.excludedCategories.join(', ') : '',
+        excludedCategories: d.excludedCategories   ?? '',
         baseYear:           d.baseYear             ?? '',
+        startDate:          d.startDate            ?? '',
+        endDate:            d.endDate              ?? '',
+        leaseType:          d.leaseType            ?? null,
         confidence:         d.confidence           ?? {},
         _error:             null,
       });
