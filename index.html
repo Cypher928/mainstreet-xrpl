@@ -2776,6 +2776,7 @@ async function handleLease(i, file) {
       leaseType:          d.leaseType            ?? null,
       confidence:         d.confidence           ?? {},
     };
+    console.log("FINAL TENANT:", tenantData[i]);
     renderTenantFields(i);
     checkSqftValidation();
 
@@ -2885,11 +2886,24 @@ function renderTenantFields(i) {
       </div>
       <div class="field-row">
         <div class="field">
+          <label>Lease Start Date</label>
+          <input type="date" value="${esc(d.startDate || '')}"
+            onchange="tenantData[${i}].startDate = this.value"/>
+        </div>
+        <div class="field">
+          <label>Lease End Date</label>
+          <input type="date" value="${esc(d.endDate || '')}"
+            onchange="tenantData[${i}].endDate = this.value"/>
+        </div>
+      </div>
+      <div class="field-row">
+        <div class="field">
           <label>Lease Type</label>
           <select onchange="tenantData[${i}].leaseType = this.value || null; if(lastResults.length) runAllocation()">
             <option value="">Select lease type</option>
-            <option value="NNN"${d.leaseType === 'NNN'   ? ' selected' : ''}>NNN</option>
+            <option value="Triple Net"${d.leaseType === 'Triple Net' ? ' selected' : ''}>Triple Net (NNN)</option>
             <option value="Gross"${d.leaseType === 'Gross' ? ' selected' : ''}>Gross</option>
+            <option value="Modified Gross"${d.leaseType === 'Modified Gross' ? ' selected' : ''}>Modified Gross</option>
           </select>
         </div>
         <div class="field">
@@ -3433,6 +3447,7 @@ function renderBulkResults() {
   if (!tenantData.length) { el.innerHTML = ''; return; }
 
   const rows = tenantData.map((d, i) => {
+    console.log("FINAL TENANT:", d);
     const conf   = d.confidence || {};
     const icon   = d._error ? '⚠️' : d.tenantName ? '✓' : '?';
     const name   = d.tenantName || '(unknown — click to edit)';
@@ -3477,11 +3492,24 @@ function renderBulkResults() {
           </div>
           <div class="field-row">
             <div class="field">
+              <label>Lease Start Date</label>
+              <input type="date" value="${esc(d.startDate || '')}"
+                onchange="tenantData[${i}].startDate=this.value"/>
+            </div>
+            <div class="field">
+              <label>Lease End Date</label>
+              <input type="date" value="${esc(d.endDate || '')}"
+                onchange="tenantData[${i}].endDate=this.value"/>
+            </div>
+          </div>
+          <div class="field-row">
+            <div class="field">
               <label>Lease Type</label>
               <select onchange="tenantData[${i}].leaseType = this.value || null; if(lastResults.length) runAllocation()">
                 <option value="">Select lease type</option>
-                <option value="NNN"${d.leaseType === 'NNN'   ? ' selected' : ''}>NNN</option>
+                <option value="Triple Net"${d.leaseType === 'Triple Net' ? ' selected' : ''}>Triple Net (NNN)</option>
                 <option value="Gross"${d.leaseType === 'Gross' ? ' selected' : ''}>Gross</option>
+                <option value="Modified Gross"${d.leaseType === 'Modified Gross' ? ' selected' : ''}>Modified Gross</option>
               </select>
             </div>
             <div class="field">
