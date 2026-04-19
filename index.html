@@ -2496,27 +2496,29 @@ function applyRawTextFallback(tenants) {
 }
 
 function splitTextByTenant(extractedText, tenants) {
-  if (!extractedText || !tenants || tenants.length === 0) return tenants;
-  const normalizedText = extractedText.replace(/\s+/g, ' ');
+  if (!extractedText || !tenants?.length) return tenants;
+
+  const text = extractedText.replace(/\s+/g, ' ');
 
   const positions = tenants.map(t => {
     if (!t.tenantName) return null;
-    // Try full name first, then short name (before first comma)
-    const names = [t.tenantName, t.tenantName.split(',')[0]].filter(Boolean);
-    for (const name of names) {
-      const escaped = name.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
-      const match = normalizedText.match(new RegExp(escaped, 'i'));
-      if (match) return { tenant: t, index: match.index };
-    }
-    return null;
+
+    const name = t.tenantName.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
+    const regex = new RegExp(name, 'i');
+    const match = text.match(regex);
+
+    if (!match) return null;
+
+    return { tenant: t, index: match.index };
   }).filter(Boolean);
 
   positions.sort((a, b) => a.index - b.index);
 
   for (let i = 0; i < positions.length; i++) {
     const start = positions[i].index;
-    const end = positions[i + 1]?.index || normalizedText.length;
-    positions[i].tenant._rawText = normalizedText.slice(start, end);
+    const nextIndex = positions[i + 1]?.index || text.length;
+    const extendedEnd = Math.min(nextIndex + 1500, text.length);
+    positions[i].tenant._rawText = text.slice(start, extendedEnd);
   }
 
   return tenants;
