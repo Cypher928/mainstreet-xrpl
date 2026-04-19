@@ -2924,7 +2924,7 @@ async function handleLease(i, file) {
     console.log('[DEBUG] leaseText length:', leaseText.length, '| preview:', leaseText.slice(0, 200));
     const d = await callClaudeForLease(leaseText);
     console.log('RAW TENANTS:', d);
-    tenantData[i] = { ...normalizeTenant(d), _rawText: leaseText };
+    tenantData[i] = normalizeTenant({ ...d, _rawText: leaseText });
     applyRawTextFallback([tenantData[i]]);
     console.log('NORMALIZED TENANTS:', tenantData);
     document.body.insertAdjacentHTML('beforeend',
