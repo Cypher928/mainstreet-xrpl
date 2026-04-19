@@ -2532,72 +2532,75 @@ function normalizeTenant(raw) {
 
   console.log('[normalizeTenant] incoming keys:', Object.keys(src), src);
 
-  // Normalize any legacy/variant keys to the canonical snake_case names the parser expects
-  if (src.sqft        !== undefined && src.leased_sqft       === undefined) src.leased_sqft       = src.sqft;
-  if (src.start_date  !== undefined && src.lease_start_date  === undefined) src.lease_start_date  = src.start_date;
-  if (src.end_date    !== undefined && src.lease_end_date    === undefined) src.lease_end_date    = src.end_date;
-  if (src.tenantName  !== undefined && src.tenant_name       === undefined) src.tenant_name       = src.tenantName;
-  if (src.startDate   !== undefined && src.lease_start_date  === undefined) src.lease_start_date  = src.startDate;
-  if (src.endDate     !== undefined && src.lease_end_date    === undefined) src.lease_end_date    = src.endDate;
-  if (src.camPercent  !== undefined && src.cam_cap           === undefined) src.cam_cap           = src.camPercent;
-  if (src.capPercent  !== undefined && src.cam_cap           === undefined) src.cam_cap           = src.capPercent;
-  if (src.excludedCategories !== undefined && src.excluded_categories === undefined) src.excluded_categories = src.excludedCategories;
+  // Helper: first defined non-null value from a list of keys on an object
+  const pick = (...keys) => { for (const k of keys) { if (src[k] !== undefined && src[k] !== null) return src[k]; } return null; };
 
   const toISODate = str => {
     if (!str) return '';
-    if (/^\d{4}-\d{2}-\d{2}$/.test(str)) return str;       // already ISO
+    if (/^\d{4}-\d{2}-\d{2}$/.test(str)) return str;
     const d = new Date(str);
-    return isNaN(d) ? '' : d.toISOString().split('T')[0];   // "March 1, 2024" → "2024-03-01"
+    return isNaN(d) ? '' : d.toISOString().split('T')[0];
   };
 
-  // tenantName: tenant_name (new) | tenantName | name | tenant
-  const name = src.tenant_name ?? src.tenantName ?? src.name ?? src.tenant ?? null;
+  // Parse a number out of any value — strips commas, extracts first number from strings like "65,000 sq ft"
+  const parseNum = val => {
+    if (val === null || val === undefined || val === '') return null;
+    if (typeof val === 'number') return isFinite(val) ? val : null;
+    const s = String(val).replace(/,/g, '');
+    const rangeMatch = s.match(/(\d+(?:\.\d+)?)\s*[-–—]\s*(\d+(?:\.\d+)?)/);
+    if (rangeMatch) return (parseFloat(rangeMatch[1]) + parseFloat(rangeMatch[2])) / 2;
+    const n = parseFloat(s.match(/[\d.]+/)?.[0] ?? '');
+    return isNaN(n) ? null : n;
+  };
 
-  // leasedSqft: leased_sqft (new) | leasedSqft | sqft | squareFeet | leased_square_feet → integer string or null
-  const sqftRaw = src.leased_sqft ?? src.leasedSqft ?? src.sqft ?? src.squareFeet ?? src.leased_square_feet ?? null;
-  let leasedSqft = null;
-  if (sqftRaw !== null && sqftRaw !== undefined && sqftRaw !== '') {
-    if (typeof sqftRaw === 'number') {
-      leasedSqft = sqftRaw > 0 ? String(Math.round(sqftRaw)) : null;
-    } else {
-      const s = String(sqftRaw).replace(/,/g, '');
-      // Handle ranges like "2800-3200" or "2,800 – 3,200" → average
-      const rangeMatch = s.match(/(\d+(?:\.\d+)?)\s*[-–—]\s*(\d+(?:\.\d+)?)/);
-      if (rangeMatch) {
-        const avg = (parseFloat(rangeMatch[1]) + parseFloat(rangeMatch[2])) / 2;
-        leasedSqft = avg > 0 ? String(Math.round(avg)) : null;
-      } else {
-        const n = parseFloat(s.replace(/[^0-9.]/g, ''));
-        leasedSqft = (!isNaN(n) && n > 0) ? String(Math.round(n)) : null;
-      }
-    }
-  }
+  // tenant_name
+  const name = pick(
+    'tenant_name', 'tenantName', 'tenant', 'lessee', 'name'
+  );
 
-  // capPercentage: cam_cap (new) | camCapPercent | capPercentage | cap | capPercent | cap_percentage
-  const capRaw = src.cam_cap ?? src.camCapPercent ?? src.capPercentage ?? src.cap ?? src.capPercent ?? src.cap_percentage ?? null;
+  // leased_sqft — strip commas, extract number from strings like "65,000 rentable square feet"
+  const sqftRaw = pick(
+    'leased_sqft', 'leasedSqft', 'sqft', 'square_footage', 'leased_area',
+    'rentable_sqft', 'squareFeet', 'leased_square_feet', 'area'
+  );
+  const sqftNum = parseNum(sqftRaw);
+  const leasedSqft = sqftNum !== null && sqftNum > 0 ? String(Math.round(sqftNum)) : null;
+
+  // cam_cap
+  const capRaw = pick(
+    'cam_cap', 'camCapPercent', 'capPercentage', 'cap', 'capPercent', 'cap_percentage', 'camPercent'
+  );
   const capNoCap = typeof capRaw === 'string' && /no.?cap|uncapped|no.?limit/i.test(capRaw);
   const capPercentage = (!capNoCap && capRaw !== null && capRaw !== undefined && capRaw !== '') ? String(capRaw) : '';
 
-  // startDate / endDate — convert any format to YYYY-MM-DD for <input type="date">
-  const startDate = toISODate(src.lease_start_date || src.startDate || src.start_date || src.lease_start || src.commencementDate || '');
-  const endDate   = toISODate(src.lease_end_date   || src.endDate   || src.end_date   || src.lease_end   || src.expirationDate   || '');
+  // lease_start_date
+  const startDate = toISODate(pick(
+    'lease_start_date', 'start_date', 'leaseStart', 'commencement_date',
+    'startDate', 'lease_start', 'commencementDate'
+  ) || '');
 
-  // baseYear: integer
-  const byRaw = src.baseYear || src.base_year || null;
+  // lease_end_date
+  const endDate = toISODate(pick(
+    'lease_end_date', 'end_date', 'leaseEnd', 'expiration_date',
+    'endDate', 'lease_end', 'expirationDate'
+  ) || '');
+
+  // baseYear
+  const byRaw = pick('baseYear', 'base_year');
   const baseYear = byRaw ? String(parseInt(byRaw, 10)) : '';
 
-  // leaseType: normalize "NNN", "Gross", modified gross → "Gross", etc.
-  const ltRaw = src.leaseType || src.lease_type || src.type || '';
+  // lease_type
+  const ltRaw = pick('lease_type', 'leaseType', 'type') || '';
   let leaseType = null;
   if (ltRaw) {
     const s = String(ltRaw).trim();
-    if (/^nnn$/i.test(s) || /triple.?net/i.test(s))            leaseType = 'NNN';
-    else if (/modified.?gross/i.test(s))                        leaseType = 'Gross';
-    else if (/gross/i.test(s))                                  leaseType = 'Gross';
+    if (/^nnn$/i.test(s) || /triple.?net/i.test(s))  leaseType = 'NNN';
+    else if (/modified.?gross/i.test(s))              leaseType = 'Modified Gross';
+    else if (/gross/i.test(s))                        leaseType = 'Gross';
   }
 
-  // excludedCategories: excluded_categories (new) | excludedCategories | excluded | exclusions
-  const excSrc = src.excluded_categories ?? src.excludedCategories ?? src.excluded ?? src.exclusions ?? null;
+  // excluded_categories
+  const excSrc = pick('excluded_categories', 'excludedCategories', 'excluded', 'exclusions');
   let excludedCategories = '';
   if (typeof excSrc === 'string' && excSrc)  excludedCategories = excSrc;
   else if (Array.isArray(excSrc))            excludedCategories = excSrc.filter(Boolean).join(', ');
