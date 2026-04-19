@@ -12,6 +12,12 @@
   <link href="https://fonts.googleapis.com/css2?family=Cormorant+Garamond:wght@400;600;700&family=DM+Sans:ital,wght@0,400;0,500;0,600;0,700;1,400&family=DM+Mono:wght@400;500&display=swap" rel="stylesheet" />
   <script src="https://cdn.jsdelivr.net/npm/xlsx@0.18.5/dist/xlsx.full.min.js"></script>
   <script src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2"></script>
+  <script src="https://cdn.jsdelivr.net/npm/pdfjs-dist@4.4.168/build/pdf.min.mjs" type="module"></script>
+  <script type="module">
+    import * as pdfjsLib from 'https://cdn.jsdelivr.net/npm/pdfjs-dist@4.4.168/build/pdf.min.mjs';
+    pdfjsLib.GlobalWorkerOptions.workerSrc = 'https://cdn.jsdelivr.net/npm/pdfjs-dist@4.4.168/build/pdf.worker.min.mjs';
+    window.pdfjsLib = pdfjsLib;
+  </script>
   <style>
     *, *::before, *::after { box-sizing: border-box; margin: 0; padding: 0; }
 
@@ -2545,6 +2551,29 @@ function normalizeTenant(raw) {
 }
 
 
+async function extractPdfText(file) {
+  // For non-PDF files (txt, etc.) fall back to plain text read
+  if (!file.name.toLowerCase().endsWith('.pdf') && file.type !== 'application/pdf') {
+    return file.text();
+  }
+
+  const lib = window.pdfjsLib;
+  if (!lib) throw new Error('PDF.js not loaded');
+
+  const arrayBuffer = await file.arrayBuffer();
+  const pdf = await lib.getDocument({ data: arrayBuffer }).promise;
+
+  const pages = [];
+  for (let p = 1; p <= pdf.numPages; p++) {
+    const page = await pdf.getPage(p);
+    const content = await page.getTextContent();
+    const pageText = content.items.map(item => item.str).join(' ');
+    pages.push(pageText);
+  }
+
+  return pages.join('\n\n');
+}
+
 async function callClaudeForLease(text) {
   let resp;
   try {
@@ -2639,7 +2668,7 @@ async function handleLease(i, file) {
     const existing = { tenants: Array.from(property.tenants || []) };
     console.log('EXISTING DATA:', existing);
 
-    const leaseText = await file.text();
+    const leaseText = await extractPdfText(file);
     console.log('[DEBUG] leaseText length:', leaseText.length, '| preview:', leaseText.slice(0, 200));
     const d = await callClaudeForLease(leaseText);
     console.log('RAW TENANTS:', d);
@@ -3452,7 +3481,7 @@ async function handleBulkLeases(fileList) {
       </div>`;
 
     try {
-      const leaseText = await files[i].text();
+      const leaseText = await extractPdfText(files[i]);
       console.log('[DEBUG] leaseText length:', leaseText.length, '| preview:', leaseText.slice(0, 200));
       document.body.insertAdjacentHTML('beforeend',
         '<div style="position:fixed;bottom:10px;left:10px;background:#000;color:#0f0;padding:10px;z-index:9999;font-size:12px;max-width:600px;white-space:pre-wrap;overflow:auto;max-height:200px;">EXTRACTED TEXT (first 1000 chars):\n' + leaseText.slice(0, 1000).replace(/</g,'&lt;') + '</div>'
