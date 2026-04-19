@@ -2573,6 +2573,13 @@ function normalizeTenant(raw) {
   // Unwrap legacy tenants-array wrapper if present
   const src = Array.isArray(raw.tenants) && raw.tenants.length > 0 ? raw.tenants[0] : raw;
 
+  const toISODate = str => {
+    if (!str) return '';
+    if (/^\d{4}-\d{2}-\d{2}$/.test(str)) return str;       // already ISO
+    const d = new Date(str);
+    return isNaN(d) ? '' : d.toISOString().split('T')[0];   // "March 1, 2024" → "2024-03-01"
+  };
+
   // tenantName: tenantName | name | tenant
   const name = src.tenantName || src.name || src.tenant || null;
 
@@ -2601,9 +2608,9 @@ function normalizeTenant(raw) {
   const capNoCap = typeof capRaw === 'string' && /no.?cap|uncapped|no.?limit/i.test(capRaw);
   const capPercentage = (!capNoCap && capRaw !== null && capRaw !== undefined && capRaw !== '') ? String(capRaw) : '';
 
-  // startDate / endDate with all alias variants
-  const startDate = src.startDate || src.start_date || src.lease_start || src.commencementDate || '';
-  const endDate   = src.endDate   || src.end_date   || src.lease_end   || src.expirationDate   || '';
+  // startDate / endDate — convert any format to YYYY-MM-DD for <input type="date">
+  const startDate = toISODate(src.startDate || src.start_date || src.lease_start || src.commencementDate || '');
+  const endDate   = toISODate(src.endDate   || src.end_date   || src.lease_end   || src.expirationDate   || '');
 
   // baseYear: integer
   const byRaw = src.baseYear || src.base_year || null;
@@ -2630,8 +2637,8 @@ function normalizeTenant(raw) {
     capPercentage,
     excludedCategories,
     baseYear,
-    startDate:          String(startDate),
-    endDate:            String(endDate),
+    startDate,
+    endDate,
     leaseType,
     confidence:         src.confidence || {},
   };
@@ -2700,6 +2707,7 @@ async function callClaudeForLease(text) {
     return { tenants: [] };
   }
   parsed = enrichLeaseData(parsed, text);
+  console.log('FINAL PARSED TENANT:', parsed);
   return parsed;
 }
 
