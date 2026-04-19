@@ -2489,11 +2489,34 @@ async function callClaude(file, prompt) {
   }
 }
 
-function applyEndDateFallback(data, extractedText) {
-  if (!data.endDate && data.startDate && extractedText) {
-    const termMatch = extractedText.match(/(\d+)\s*\(?year/gi);
+function enrichLeaseData(data, extractedText) {
+  if (!extractedText) return data;
+
+  const text = extractedText.toLowerCase();
+
+  // --- SQFT (fallback)
+  if (!data.leasedSqft) {
+    const sqftMatch = extractedText.match(/([\d,]{2,6})\s*(sq\s*ft|square feet)/i);
+    if (sqftMatch) {
+      data.leasedSqft = parseInt(sqftMatch[1].replace(/,/g, ''));
+    }
+  }
+
+  // --- START DATE
+  if (!data.startDate) {
+    const startMatch = extractedText.match(
+      /(commence|start)[^a-zA-Z0-9]{0,20}([A-Za-z]+ \d{1,2}, \d{4})/i
+    );
+    if (startMatch) {
+      data.startDate = new Date(startMatch[2]).toISOString().split('T')[0];
+    }
+  }
+
+  // --- TERM → END DATE
+  if (!data.endDate && data.startDate) {
+    const termMatch = extractedText.match(/(\d+)\s*\(?year/i);
     if (termMatch) {
-      const years = parseInt(termMatch[0]);
+      const years = parseInt(termMatch[1]);
       const start = new Date(data.startDate);
       const end = new Date(start);
       end.setFullYear(end.getFullYear() + years);
@@ -2501,7 +2524,35 @@ function applyEndDateFallback(data, extractedText) {
       data.endDate = end.toISOString().split('T')[0];
     }
   }
+
+  // --- LEASE TYPE
+  if (!data.leaseType) {
+    if (/cam|common area maintenance|taxes|insurance/i.test(text)) {
+      data.leaseType = "NNN";
+    } else if (/gross/i.test(text)) {
+      data.leaseType = "Gross";
+    }
+  }
+
+  // --- CAP %
+  if (!data.capPercentage) {
+    const capMatch = extractedText.match(/(\d+(\.\d+)?)\s*%.*cap/i);
+    if (capMatch) {
+      data.capPercentage = parseFloat(capMatch[1]);
+    }
+  }
+
+  // --- EXCLUSIONS
+  if (!data.excludedCategories) {
+    const exclMatch = extractedText.match(/exclusions?\s*[:\-]?\s*(.*)/i);
+    if (exclMatch) {
+      data.excludedCategories = exclMatch[1].trim();
+    }
+  }
+
+  return data;
 }
+
 
 function normalizeTenant(raw) {
   if (!raw || typeof raw !== 'object') return null;
@@ -2694,7 +2745,7 @@ async function handleLease(i, file) {
     console.log('[DEBUG] leaseText length:', leaseText.length, '| preview:', leaseText.slice(0, 200));
     const d = await callClaudeForLease(leaseText);
     console.log('RAW TENANTS:', d);
-    applyEndDateFallback(d, leaseText);
+    enrichLeaseData(d, leaseText);
     tenantData[i] = normalizeTenant(d);
     console.log('NORMALIZED TENANTS:', tenantData);
     document.body.insertAdjacentHTML('beforeend',
@@ -3513,7 +3564,7 @@ async function handleBulkLeases(fileList) {
       const extractedTenants = Array.isArray(d.tenants) && d.tenants.length > 0 ? d.tenants : [d];
       console.log('RAW TENANTS:', extractedTenants);
       extractedTenants.forEach(raw => {
-        applyEndDateFallback(raw, leaseText);
+        enrichLeaseData(raw, leaseText);
         const normalized = normalizeTenant(raw);
         console.log('NORMALIZED TENANT:', normalized);
         tenantData.push({ ...normalized, _error: null });
