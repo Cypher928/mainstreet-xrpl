@@ -2678,12 +2678,15 @@ async function callClaudeForLease(text) {
   const raw = data?.content?.[0]?.text ?? data?.completion ?? '';
   console.log('[callClaudeForLease] raw response:', raw);
 
+  let parsed;
   try {
-    return JSON.parse(raw);
+    parsed = JSON.parse(raw);
   } catch (e) {
     console.error('[callClaudeForLease] JSON parse error:', e, '| raw:', raw);
     return { tenants: [] };
   }
+  parsed = enrichLeaseData(parsed, text);
+  return parsed;
 }
 
 // ─── SVG icons ────────────────────────────────────────────────────────────────
@@ -2745,7 +2748,6 @@ async function handleLease(i, file) {
     console.log('[DEBUG] leaseText length:', leaseText.length, '| preview:', leaseText.slice(0, 200));
     const d = await callClaudeForLease(leaseText);
     console.log('RAW TENANTS:', d);
-    enrichLeaseData(d, leaseText);
     tenantData[i] = normalizeTenant(d);
     console.log('NORMALIZED TENANTS:', tenantData);
     document.body.insertAdjacentHTML('beforeend',
@@ -3564,7 +3566,6 @@ async function handleBulkLeases(fileList) {
       const extractedTenants = Array.isArray(d.tenants) && d.tenants.length > 0 ? d.tenants : [d];
       console.log('RAW TENANTS:', extractedTenants);
       extractedTenants.forEach(raw => {
-        enrichLeaseData(raw, leaseText);
         const normalized = normalizeTenant(raw);
         console.log('NORMALIZED TENANT:', normalized);
         tenantData.push({ ...normalized, _error: null });
