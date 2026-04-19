@@ -2148,32 +2148,35 @@ IMPORTANT:
 If the charge looks normal, say "No issues" and do not invent problems.
 If the category appears incorrect based on the vendor or description, gently interpret the charge correctly in your explanation without criticizing the classification.`;
 
-const CLAUDE_LEASE_PROMPT = `You are a commercial lease data extractor.
+const CLAUDE_LEASE_PROMPT = `You MUST return ONLY valid JSON. Do not include any explanation, text, or formatting outside the JSON object. If you include anything else, the response will break the system.
 
-YOUR RESPONSE MUST BE ONLY A SINGLE JSON OBJECT. No explanation. No markdown. No code fences. No text before or after.
+Your entire response must be parseable by JSON.parse(). No markdown. No code fences. No introductory text. No trailing text. Start your response with { and end with }.
 
-Use EXACTLY these key names — no variations, no camelCase, no other spellings:
+Return this exact structure with these exact key names:
 
 {
   "tenant_name": "string or null",
   "leased_sqft": integer or null,
-  "lease_start_date": "YYYY-MM-DD or null",
-  "lease_end_date": "YYYY-MM-DD or null",
-  "lease_type": "NNN or Gross or Modified Gross or null",
+  "lease_start_date": "YYYY-MM-DD" or null,
+  "lease_end_date": "YYYY-MM-DD" or null,
+  "lease_type": "NNN" or "Gross" or "Modified Gross" or null,
   "cam_cap": number or null,
   "excluded_categories": []
 }
 
-STRICT RULES:
-- Key names are FIXED. Do NOT use tenantName, startDate, sqft, or any other variant.
-- tenant_name: party paying rent (not landlord). Look near "Tenant:", "Lessee:". String or null.
-- leased_sqft: integer only. Average ranges (2800–3200 → 3000). Null if not found.
-- lease_start_date: commencement/effective/start date in YYYY-MM-DD format. Null if not found.
-- lease_end_date: expiration/end/termination date in YYYY-MM-DD format. If not stated, compute from term length + start date. Null if cannot determine.
-- lease_type: "NNN" if tenant pays taxes+insurance+maintenance. "Gross" if landlord pays. "Modified Gross" if stated. Null if unclear.
-- cam_cap: annual CAM increase cap as a plain number (e.g. 5 for 5%). Null if there is no cap or it is not stated.
-- excluded_categories: array of strings listing CAM expense categories explicitly excluded from tenant's share. Empty array [] if none.
-- Use null for any field not found. Never use empty string "".
+FIELD RULES:
+- tenant_name: the party paying rent, NOT the landlord. Look near "Tenant:", "Lessee:". Return as string or null.
+- leased_sqft: square footage as an integer. For ranges (2800–3200) return the average (3000). Return null if not found.
+- lease_start_date: commencement, effective, or start date. Format as YYYY-MM-DD. Return null if not found.
+- lease_end_date: expiration, end, or termination date. Format as YYYY-MM-DD. If not stated, compute from term length + start date. Return null only if it cannot be determined.
+- lease_type: "NNN" if tenant pays property taxes + insurance + maintenance. "Gross" if landlord covers those costs. "Modified Gross" if explicitly stated. Return null if unclear.
+- cam_cap: the annual CAM expense increase cap as a plain number (5 means 5%). Return null if there is no cap or it is not mentioned.
+- excluded_categories: array of CAM expense category names explicitly excluded from the tenant's share. Return [] if none are listed.
+
+KEY NAME RULES — these are the only valid key names:
+  tenant_name, leased_sqft, lease_start_date, lease_end_date, lease_type, cam_cap, excluded_categories
+Do NOT use: tenantName, startDate, endDate, sqft, camPercent, capPercent, or any other variant.
+Use null for missing fields. Never use empty string "".
 
 LEASE TEXT:
 {{LEASE_TEXT}}`;
@@ -2669,13 +2672,26 @@ async function callClaudeForLease(text) {
   console.log('[callClaudeForLease] raw response:', rawText);
 
   // Strip markdown code fences if the model wraps the JSON despite the prompt
-  const raw = rawText.replace(/^```(?:json)?\s*/i, '').replace(/\s*```\s*$/i, '').trim();
+  let raw = rawText.replace(/^```(?:json)?\s*/i, '').replace(/\s*```\s*$/i, '').trim();
+
+  // If still not starting with {, try to extract the first {...} block
+  if (!raw.startsWith('{') && !raw.startsWith('[')) {
+    const jsonStart = raw.indexOf('{');
+    const jsonEnd   = raw.lastIndexOf('}');
+    if (jsonStart !== -1 && jsonEnd > jsonStart) {
+      raw = raw.slice(jsonStart, jsonEnd + 1);
+      console.warn('[callClaudeForLease] extracted JSON substring from non-JSON response');
+    }
+  }
 
   let parsed;
   try {
     parsed = JSON.parse(raw);
+    console.log('[callClaudeForLease] parsed keys:', Object.keys(parsed));
   } catch (e) {
-    console.error('[callClaudeForLease] JSON parse error:', e, '| raw:', raw);
+    console.error('[callClaudeForLease] JSON parse FAILED');
+    console.error('  error:', e.message);
+    console.error('  raw text was:', rawText);
     return { tenants: [] };
   }
 
