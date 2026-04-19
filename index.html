@@ -2505,23 +2505,37 @@ function enrichLeaseData(data, extractedText) {
   // --- START DATE
   if (!data.startDate) {
     const startMatch = extractedText.match(
-      /(commence|start)[^a-zA-Z0-9]{0,20}([A-Za-z]+ \d{1,2}, \d{4})/i
+      /(commence(?:ment)?(?:\s+date)?|start(?:\s+date)?)[^a-zA-Z0-9]{0,20}([A-Z][a-z]+ \d{1,2}, \d{4})/i
     );
     if (startMatch) {
-      data.startDate = new Date(startMatch[2]).toISOString().split('T')[0];
+      data.startDate = startMatch[2];
     }
   }
 
-  // --- TERM → END DATE
+  // --- END DATE
+  if (!data.endDate) {
+    const endMatch = extractedText.match(
+      /(expire|expiration|end(?:\s+date)?|terminate)[^a-zA-Z0-9]{0,20}([A-Z][a-z]+ \d{1,2}, \d{4})/i
+    );
+    if (endMatch) {
+      data.endDate = endMatch[2];
+    }
+  }
+
+  // --- TERM FALLBACK
   if (!data.endDate && data.startDate) {
-    const termMatch = extractedText.match(/(\d+)\s*\(?year/i);
+    const termMatch = extractedText.match(/(\d+)\s*\(?\d*\)?\s*year/i);
     if (termMatch) {
       const years = parseInt(termMatch[1]);
       const start = new Date(data.startDate);
-      const end = new Date(start);
-      end.setFullYear(end.getFullYear() + years);
-      end.setDate(end.getDate() - 1);
-      data.endDate = end.toISOString().split('T')[0];
+      if (!isNaN(start)) {
+        start.setFullYear(start.getFullYear() + years);
+        data.endDate = start.toLocaleDateString('en-US', {
+          month: 'short',
+          day: 'numeric',
+          year: 'numeric'
+        });
+      }
     }
   }
 
