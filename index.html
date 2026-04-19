@@ -2545,6 +2545,14 @@ function enrichLeaseData(data, extractedText) {
     if (match) data.startDate = match[1];
   }
 
+  // FINAL fallback — always extract first real date if still missing
+  if (!data.startDate && extractedText) {
+    const dateMatch = extractedText.match(/\b(January|February|March|April|May|June|July|August|September|October|November|December)\s+\d{1,2},\s+\d{4}\b/i);
+    if (dateMatch) {
+      data.startDate = dateMatch[0];
+    }
+  }
+
   console.log('ENRICHED DATES:', data.startDate, data.endDate);
 
   // --- LEASE TYPE
