@@ -2525,22 +2525,40 @@ function normalizeTenant(raw) {
 
 
 async function callClaudeForLease(text) {
-  const response = await fetch("/api/claude", {
-    method: "POST",
-    headers: {
-      "Content-Type": "application/json"
-    },
-    body: JSON.stringify({
-      prompt: CLAUDE_LEASE_PROMPT + "\n\nLEASE TEXT:\n" + text
-    })
-  });
+  let resp;
+  try {
+    resp = await fetch('/api/claude', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({
+        model: MODEL,
+        max_tokens: 1024,
+        messages: [{ role: 'user', content: [{ type: 'text', text: CLAUDE_LEASE_PROMPT + '\n\nLEASE TEXT:\n' + text }] }],
+      }),
+    });
+  } catch (e) {
+    console.error('[callClaudeForLease] fetch error:', e);
+    throw new Error('Could not reach the server');
+  }
 
-  const data = await response.json();
+  if (!resp.ok) {
+    let detail = `HTTP ${resp.status}`;
+    try { const b = await resp.json(); detail = b?.error?.message || b?.message || detail; } catch {}
+    console.error('[callClaudeForLease] API error:', detail);
+    throw new Error('Lease extraction failed: ' + detail);
+  }
+
+  let data;
+  try { data = await resp.json(); } catch (e) { throw new Error('Lease extraction response parse failed'); }
+
+  // Support both Anthropic messages format and legacy completion format
+  const raw = data?.content?.[0]?.text ?? data?.completion ?? '';
+  console.log('[callClaudeForLease] raw response:', raw);
 
   try {
-    return JSON.parse(data.completion);
+    return JSON.parse(raw);
   } catch (e) {
-    console.error("Claude JSON parse error:", e);
+    console.error('[callClaudeForLease] JSON parse error:', e, '| raw:', raw);
     return { tenants: [] };
   }
 }
@@ -2602,7 +2620,9 @@ async function handleLease(i, file) {
 
     const leaseText = await file.text();
     const d = await callClaudeForLease(leaseText);
+    console.log('RAW TENANTS:', d);
     tenantData[i] = normalizeTenant(d);
+    console.log('NORMALIZED TENANTS:', tenantData);
     document.body.insertAdjacentHTML('beforeend',
       '<div style="position:fixed;bottom:10px;left:10px;background:#000;color:#0f0;padding:10px;z-index:9999;font-size:12px;">TENANTS: ' + JSON.stringify(tenantData) + '</div>'
     );
@@ -3412,14 +3432,23 @@ async function handleBulkLeases(fileList) {
     try {
       const leaseText = await files[i].text();
       const d = await callClaudeForLease(leaseText);
-      tenantData.push({ ...normalizeTenant(d), _error: null });
+      const extractedTenants = Array.isArray(d.tenants) && d.tenants.length > 0 ? d.tenants : [d];
+      console.log('RAW TENANTS:', extractedTenants);
+      extractedTenants.forEach(raw => {
+        const normalized = normalizeTenant(raw);
+        console.log('NORMALIZED TENANT:', normalized);
+        tenantData.push({ ...normalized, _error: null });
+      });
+      console.log('NORMALIZED TENANTS:', tenantData);
       document.body.insertAdjacentHTML('beforeend',
         '<div style="position:fixed;bottom:10px;left:10px;background:#000;color:#0f0;padding:10px;z-index:9999;font-size:12px;">TENANTS: ' + JSON.stringify(tenantData) + '</div>'
       );
     } catch (err) {
+      console.error('[handleBulkLeases] extraction error for', files[i].name, err);
       tenantData.push({
         tenantName:         files[i].name.replace(/\.pdf$/i, ''),
         leasedSqft: '', capPercentage: '', excludedCategories: '', baseYear: '',
+        startDate: '', endDate: '', leaseType: null,
         confidence: {}, _error: err.message,
       });
     }
@@ -3433,12 +3462,17 @@ async function handleBulkLeases(fileList) {
       </div>
     </div>`;
 
+  if (!tenantData.length) {
+    console.error('No tenants extracted');
+  }
+
   // Merge: new uploads replace same-name existing tenants; rest are kept.
   const newTenants = tenantData.filter(t => t !== null);
   const merged = mergeTenantsDedup(existing.tenants, newTenants);
   property.tenants = merged;
   // Keep tenantData in sync with merged result so UI shows the full set.
   tenantData.splice(0, tenantData.length, ...merged);
+  console.log('FINAL tenantData after merge:', tenantData);
   renderBulkResults();
   checkSqftValidation();
 
