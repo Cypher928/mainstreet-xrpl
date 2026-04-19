@@ -2761,22 +2761,11 @@ async function handleLease(i, file) {
     const existing = { tenants: Array.from(property.tenants || []) };
     console.log('EXISTING DATA:', existing);
 
-    const text = await extractPdfText(file);
-    const raw  = await callClaudeForLease(text);
-    const d    = normalizeTenant(raw);
-    if (!d) throw new Error('Could not extract lease fields');
-    tenantData[i] = {
-      tenantName:         d.tenantName          ?? '',
-      leasedSqft:         d.leasedSqft          ?? '',
-      capPercentage:      d.capPercentage        ?? '',
-      excludedCategories: d.excludedCategories   ?? '',
-      baseYear:           d.baseYear             ?? '',
-      startDate:          d.startDate            ?? '',
-      endDate:            d.endDate              ?? '',
-      leaseType:          d.leaseType            ?? null,
-      confidence:         d.confidence           ?? {},
-    };
-    console.log("FINAL TENANT:", tenantData[i]);
+    const text   = await extractPdfText(file);
+    const raw    = await callClaudeForLease(text);
+    const tenant = normalizeTenant(raw);
+    if (!tenant) throw new Error('Could not extract lease fields');
+    tenantData[i] = tenant;
     renderTenantFields(i);
     checkSqftValidation();
 
@@ -2852,6 +2841,7 @@ function clearSqftBanner() {
 function renderTenantFields(i) {
   const d    = tenantData[i];
   const body = document.getElementById(`tb-${i}`);
+  console.log("FINAL TENANT USED IN UI:", d);
   const conf = d.confidence || {};
   body.innerHTML = `
     <div class="extracted">
@@ -3395,22 +3385,11 @@ async function handleBulkLeases(fileList) {
       </div>`;
 
     try {
-      const text = await extractPdfText(files[i]);
-      const raw  = await callClaudeForLease(text);
-      const d    = normalizeTenant(raw);
-      if (!d) throw new Error('Could not extract lease fields');
-      tenantData.push({
-        tenantName:         d.tenantName          ?? '',
-        leasedSqft:         d.leasedSqft          ?? '',
-        capPercentage:      d.capPercentage        ?? '',
-        excludedCategories: d.excludedCategories   ?? '',
-        baseYear:           d.baseYear             ?? '',
-        startDate:          d.startDate            ?? '',
-        endDate:            d.endDate              ?? '',
-        leaseType:          d.leaseType            ?? null,
-        confidence:         d.confidence           ?? {},
-        _error:             null,
-      });
+      const text   = await extractPdfText(files[i]);
+      const raw    = await callClaudeForLease(text);
+      const tenant = normalizeTenant(raw);
+      if (!tenant) throw new Error('Could not extract lease fields');
+      tenantData.push(tenant);
     } catch (err) {
       tenantData.push({
         tenantName:         files[i].name.replace(/\.pdf$/i, ''),
@@ -3447,7 +3426,7 @@ function renderBulkResults() {
   if (!tenantData.length) { el.innerHTML = ''; return; }
 
   const rows = tenantData.map((d, i) => {
-    console.log("FINAL TENANT:", d);
+    console.log("FINAL TENANT USED IN UI:", d);
     const conf   = d.confidence || {};
     const icon   = d._error ? '⚠️' : d.tenantName ? '✓' : '?';
     const name   = d.tenantName || '(unknown — click to edit)';
