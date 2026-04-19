@@ -2539,6 +2539,14 @@ function enrichLeaseData(data, extractedText) {
     }
   }
 
+  // --- START DATE ("on or about" fallback)
+  if (!data.startDate) {
+    const match = extractedText.match(/on or about ([A-Z][a-z]+ \d{1,2}, \d{4})/i);
+    if (match) data.startDate = match[1];
+  }
+
+  console.log('ENRICHED DATES:', data.startDate, data.endDate);
+
   // --- LEASE TYPE
   if (!data.leaseType) {
     if (/cam|common area maintenance|taxes|insurance/i.test(text)) {
