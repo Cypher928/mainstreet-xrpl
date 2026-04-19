@@ -2279,6 +2279,7 @@ leaseType: "NNN" or "Gross" or null
 capPercentage: number or null
 - Annual CAM expense increase cap as a plain number (e.g. 5 for 5%)
 - Look for: "cap", "not to exceed X%", "capped at", "increase limited to"
+- If the lease says "no cap", "uncapped", or "no limit" → return null
 - Return null if not present
 
 excludedCategories: string or null
@@ -2532,7 +2533,8 @@ function normalizeTenant(raw) {
 
   // capPercentage: capPercentage | cap | capPercent | cap_percentage
   const capRaw = src.capPercentage ?? src.cap ?? src.capPercent ?? src.cap_percentage ?? null;
-  const capPercentage = (capRaw !== null && capRaw !== undefined && capRaw !== '') ? String(capRaw) : '';
+  const capNoCap = typeof capRaw === 'string' && /no.?cap|uncapped|no.?limit/i.test(capRaw);
+  const capPercentage = (!capNoCap && capRaw !== null && capRaw !== undefined && capRaw !== '') ? String(capRaw) : '';
 
   // startDate / endDate with all alias variants
   const startDate = src.startDate || src.start_date || src.lease_start || src.commencementDate || '';
