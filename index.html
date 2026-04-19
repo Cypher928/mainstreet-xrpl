@@ -2765,16 +2765,24 @@ async function callClaudeForLease(text) {
     console.error('[callClaudeForLease] JSON parse error:', e, '| raw:', raw);
     return { tenants: [] };
   }
+
+  // Attach this PDF's text to each tenant immediately — before any enrichment
+  if (Array.isArray(parsed)) {
+    parsed = parsed.map(t => ({ ...t, _rawText: text }));
+  } else if (parsed && typeof parsed === 'object') {
+    parsed._rawText = text;
+  }
+
   parsed = enrichLeaseData(parsed, text);
 
   if (Array.isArray(parsed)) {
-    parsed = splitTextByTenant(text, parsed);
     parsed = parsed.map(t => {
+      console.log('TENANT + TEXT MATCH:', t.tenantName, (t._rawText || '').slice(0, 100));
       if (!t.startDate) {
-        const text = t._rawText || '';
+        const chunk = t._rawText || '';
 
-        // 1. Keyword-based match first (strongest signal)
-        const keywordMatch = text.match(
+        // 1. Keyword match first
+        const keywordMatch = chunk.match(
           /\b(commence(?:ment)?|commencing|effective(?: date)?|lease date|start date)[^.]{0,60}?\b(January|February|March|April|May|June|July|August|September|October|November|December)\s+\d{1,2},\s+\d{4}\b/i
         );
         if (keywordMatch) {
@@ -2782,8 +2790,8 @@ async function callClaudeForLease(text) {
           if (!isNaN(d)) { t.startDate = d.toISOString().split('T')[0]; return t; }
         }
 
-        // 2. Fallback: any date in tenant section
-        const looseMatch = text.match(
+        // 2. Loose fallback
+        const looseMatch = chunk.match(
           /\b(January|February|March|April|May|June|July|August|September|October|November|December)\s+\d{1,2},\s+\d{4}\b/i
         );
         if (looseMatch) {
