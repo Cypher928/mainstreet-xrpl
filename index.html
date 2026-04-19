@@ -2689,36 +2689,6 @@ function normalizeTenant(raw) {
   };
 }
 
-  const toISODate = str => {
-    if (!str) return '';
-    if (/^\d{4}-\d{2}-\d{2}$/.test(str)) return str;       // already ISO
-    const d = new Date(str);
-    return isNaN(d) ? '' : d.toISOString().split('T')[0];   // "March 1, 2024" → "2024-03-01"
-  };
-
-  // tenantName: tenantName | name | tenant
-  const name = src.tenantName || src.name || src.tenant || null;
-
-  // leasedSqft: leasedSqft | sqft | squareFeet | leased_square_feet → plain integer string or null
-  const sqftRaw = src.leasedSqft ?? src.sqft ?? src.squareFeet ?? src.leased_square_feet ?? null;
-  let leasedSqft = null;
-  if (sqftRaw !== null && sqftRaw !== undefined && sqftRaw !== '') {
-    if (typeof sqftRaw === 'number') {
-      leasedSqft = sqftRaw > 0 ? String(Math.round(sqftRaw)) : null;
-    } else {
-      const s = String(sqftRaw).replace(/,/g, '');
-      // Handle ranges like "2800-3200" or "2,800 – 3,200" → average
-      const rangeMatch = s.match(/(\d+(?:\.\d+)?)\s*[-–—]\s*(\d+(?:\.\d+)?)/);
-      if (rangeMatch) {
-        const avg = (parseFloat(rangeMatch[1]) + parseFloat(rangeMatch[2])) / 2;
-        leasedSqft = avg > 0 ? String(Math.round(avg)) : null;
-      } else {
-        const n = parseFloat(s.replace(/[^0-9.]/g, ''));
-        leasedSqft = (!isNaN(n) && n > 0) ? String(Math.round(n)) : null;
-      }
-    }
-  }
-
   // capPercentage: camCapPercent (new) | capPercentage | cap | capPercent | cap_percentage
   const capRaw = src.camCapPercent ?? src.capPercentage ?? src.cap ?? src.capPercent ?? src.cap_percentage ?? null;
   const capNoCap = typeof capRaw === 'string' && /no.?cap|uncapped|no.?limit/i.test(capRaw);
