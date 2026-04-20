@@ -2383,20 +2383,11 @@ async function callClaude(file, prompt) {
     throw new Error('Could not reach the server — check your connection');
   }
 
-  try {
-    data = await resp.json();
-  } catch (e) {
-    console.error('[Mainstreet] Response parse error:', e);
+  if (!data || typeof data !== 'object') {
     throw new Error('Extraction failed — try a different file or contact support');
   }
 
-  const text = data?.content?.[0]?.text;
-  try {
-    return parseJSON(text);
-  } catch (e) {
-    console.error('[Mainstreet] JSON parse error:', e, '| raw text:', text);
-    throw new Error('Extraction failed — try a different file or contact support');
-  }
+  return data;
 }
 
 function applyRawTextFallback(tenants) {
@@ -2627,16 +2618,14 @@ async function callClaudeForLease(text) {
     throw new Error('Lease extraction failed: ' + e.message);
   }
 
-  const raw = data?.content?.[0]?.text || '';
-  console.log('RAW AI RESPONSE:', raw);
+  console.log('RAW AI RESPONSE:', data);
 
-  let parsed;
-  try {
-    parsed = JSON.parse(raw);
-  } catch (e) {
-    console.error('FAILED RAW JSON:', raw);
+  if (!data || typeof data !== 'object') {
+    console.error('[callClaudeForLease] Unexpected response:', data);
     return { tenants: [] };
   }
+
+  const parsed = data;
 
   const enriched = enrichLeaseData({ ...parsed, _rawText: text }, text);
   console.log('FINAL PARSED TENANT:', enriched);
@@ -3483,9 +3472,7 @@ async function classifyCategory(vendorName, amount) {
         CATEGORY_PROMPT + `\n\nVendor: ${vendorName || 'Unknown'}\nAmount: $${amount || '0'}`
       }],
     });
-    const text = data?.content?.[0]?.text || '';
-    const json = JSON.parse(text.match(/\{[\s\S]*\}/)?.[0] || 'null');
-    if (json?.category && CATEGORIES.includes(json.category)) return json;
+    if (data?.category && CATEGORIES.includes(data.category)) return data;
   } catch { /* non-fatal */ }
   return null;
 }

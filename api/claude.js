@@ -1,5 +1,6 @@
 // Serverless proxy for Anthropic API calls.
 // Reads ANTHROPIC_API_KEY from the Vercel environment — never exposed to the browser.
+// Always returns parsed JSON extracted from Claude's text response.
 
 export const config = {
   api: {
@@ -43,7 +44,7 @@ export default async function handler(req, res) {
     });
   } catch (e) {
     console.error('[claude] Network error reaching Anthropic:', e.message);
-    return res.status(502).json({ error: 'Could not reach Anthropic API' });
+    return res.status(500).json({ error: 'Could not reach Anthropic API' });
   }
 
   // ── Parse Anthropic response body ───────────────────────────────────────────
@@ -51,23 +52,38 @@ export default async function handler(req, res) {
   try {
     data = await anthropicResp.json();
   } catch (e) {
-    console.error('[claude] Failed to parse Anthropic response as JSON, status:', anthropicResp.status, e.message);
+    console.error('[claude] Failed to parse Anthropic response body:', e.message);
     return res.status(500).json({ error: 'Invalid response from Anthropic API' });
   }
 
   if (!anthropicResp.ok) {
     const msg = data?.error?.message || data?.message || `HTTP ${anthropicResp.status}`;
     console.error('[claude] Anthropic API error:', anthropicResp.status, msg);
-    return res.status(anthropicResp.status).json({ error: msg });
+    return res.status(500).json({ error: msg });
   }
 
-  // ── Validate content ────────────────────────────────────────────────────────
+  // ── Extract text content ────────────────────────────────────────────────────
   const rawText = data?.content?.[0]?.text;
-  if (rawText === undefined && data?.content?.[0]?.type !== 'tool_use') {
-    console.error('[claude] Missing content in Anthropic response:', JSON.stringify(data));
+  if (!rawText) {
+    console.error('[claude] Missing content[0].text in response:', JSON.stringify(data));
     return res.status(500).json({ error: 'No content in Anthropic response' });
   }
 
-  // Return the full Anthropic envelope — callers read data.content[0].text
-  return res.status(200).json(data);
+  // ── Strip markdown fences, extract and parse JSON ───────────────────────────
+  const cleaned = rawText.replace(/^```json\s*/i, '').replace(/```\s*$/, '').trim();
+  const match = cleaned.match(/\{[\s\S]*\}/);
+  if (!match) {
+    console.error('[claude] No JSON object found in Claude response:', rawText);
+    return res.status(500).json({ error: 'Claude did not return valid JSON' });
+  }
+
+  let parsed;
+  try {
+    parsed = JSON.parse(match[0]);
+  } catch (e) {
+    console.error('[claude] JSON.parse failed:', match[0]);
+    return res.status(500).json({ error: 'Failed to parse JSON from Claude response' });
+  }
+
+  return res.status(200).json(parsed);
 }
