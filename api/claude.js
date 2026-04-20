@@ -45,11 +45,38 @@ export default async function handler(req, res) {
     });
   } catch (e) {
     console.error('[Mainstreet] Anthropic fetch error:', e);
-    return res.status(502).json({ error: 'Could not reach Anthropic API' });
-  }
+    const text = await anthropicResp.text();
 
-  const data = await anthropicResp.json();
+
+
+// Clean Claude formatting
+
+let raw = text
+
+  .replace(/```json/g, '')
+
+  .replace(/```/g, '')
+
+  .trim();
+
+
+
+// Extract JSON safely
+
+const match = raw.match(/\{[\s\S]*\}/);
+
+
+
+if (!match) {
+
+  console.error("Invalid Claude response:", raw);
+
+  return res.status(500).json({ error: "Invalid JSON from Claude" });
+
+}
+
 
   // Forward exact status + body so the client can handle Anthropic errors normally
-  return res.status(anthropicResp.status).json(data);
+  const data = JSON.parse(match[0]);
+return res.status(200).json(data);
 }
