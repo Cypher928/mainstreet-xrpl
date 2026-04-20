@@ -2533,31 +2533,37 @@ function normalizeTenant(raw) {
   const text = src._rawText || JSON.stringify(src);
   console.log("TEXT USED FOR PARSING:", text.slice(0, 300));
 
-  const toISODate = s => { if (!s) return ''; const d = new Date(s); return isNaN(d) ? '' : d.toISOString().split('T')[0]; };
+  const toISODate = s => {
+    if (!s) return '';
+    const d = new Date(s);
+    return isNaN(d) ? '' : d.toISOString().split('T')[0];
+  };
 
-  // SQFT
-  const sqftMatch = text.match(/([\d,]+)\s*(rentable\s*)?(square\s*feet|sq\s*ft)/i);
+  // TENANT NAME — try AI field first, then regex on raw text
+  const nameFromAI = src.tenant_name || src.tenantName || src.name || '';
+  const nameMatch  = !nameFromAI && text.match(/(?:tenant|lessee)\s*:\s*(.+)/i);
+  const tenantName = nameFromAI || (nameMatch ? nameMatch[1].trim() : '');
+
+  // SQFT — "4,500 rentable square feet" or "4,500 sq ft"
+  const sqftMatch  = text.match(/([\d,]+)\s*(rentable\s*)?(square\s*feet|sq\.?\s*ft)/i);
   const leasedSqft = sqftMatch ? sqftMatch[1].replace(/,/g, '') : '';
 
-  // START DATE
-  let startDate = '';
-  const startMatch = text.match(/commence.*?(January|February|March|April|May|June|July|August|September|October|November|December)\s+\d{1,2},\s+\d{4}/i);
-  if (startMatch) {
-    const d = new Date(startMatch[0]);
-    if (!isNaN(d)) startDate = d.toISOString().split('T')[0];
-  }
+  // START DATE — "commence on March 1, 2024" or structured field
+  const startISO   = src.lease_start_date || src.start_date || src.startDate || '';
+  const startMatch = !startISO && text.match(/commence[sd]?\s+(?:on\s+)?([A-Za-z]+ \d{1,2},\s*\d{4})/i);
+  const startDate  = startISO ? toISODate(startISO) : (startMatch ? toISODate(startMatch[1]) : '');
 
-  // END DATE
-  const endMatch = text.match(/expire[s]? on ([A-Za-z]+ \d{1,2}, \d{4})/i);
-  const endDate = endMatch ? toISODate(endMatch[1]) : '';
+  // END DATE — "expire on February 28, 2029" or structured field
+  const endISO   = src.lease_end_date || src.end_date || src.endDate || '';
+  const endMatch = !endISO && text.match(/expire[sd]?\s+(?:on\s+)?([A-Za-z]+ \d{1,2},\s*\d{4})/i);
+  const endDate  = endISO ? toISODate(endISO) : (endMatch ? toISODate(endMatch[1]) : '');
 
-  // LEASE TYPE
-  let leaseType = '';
-  if (/triple\s*net|nnn/i.test(text)) leaseType = 'Triple Net (NNN)';
-  else if (/modified\s*gross/i.test(text)) leaseType = 'Modified Gross';
-  else if (/gross/i.test(text)) leaseType = 'Gross';
-
-  const tenantName = src.tenant_name || src.tenantName || '';
+  // LEASE TYPE — structured field first, then text scan
+  const ltFromAI = src.lease_type || src.leaseType || '';
+  let leaseType  = '';
+  if (/triple\s*net|\bnnn\b/i.test(ltFromAI || text)) leaseType = 'Triple Net (NNN)';
+  else if (/modified\s*gross/i.test(ltFromAI || text)) leaseType = 'Modified Gross';
+  else if (/\bgross\b/i.test(ltFromAI || text))        leaseType = 'Gross';
 
   const result = { tenantName, leasedSqft, startDate, endDate, leaseType };
   console.log("FINAL NORMALIZED:", result);
@@ -2704,11 +2710,13 @@ async function handleLease(i, file) {
     const existing = { tenants: Array.from(property.tenants || []) };
     console.log('EXISTING DATA:', existing);
 
-    const text   = await extractPdfText(file);
-    const raw    = await callClaudeForLease(text);
-    const tenant = normalizeTenant(raw);
+    const leaseText = await extractPdfText(file);
+    const d         = await callClaudeForLease(leaseText);
+    const rawObj    = Array.isArray(d) ? d[0] : (d.tenants?.[0] || d);
+    console.log("FINAL TENANT USED IN UI:", rawObj);
+    const tenant    = normalizeTenant({ ...rawObj, _rawText: leaseText });
     if (!tenant) throw new Error('Could not extract lease fields');
-    tenantData[i] = tenant;
+    tenantData[i]   = tenant;
     renderTenantFields(i);
     checkSqftValidation();
 
@@ -3315,9 +3323,11 @@ async function handleBulkLeases(fileList) {
       </div>`;
 
     try {
-      const text   = await extractPdfText(files[i]);
-      const raw    = await callClaudeForLease(text);
-      const tenant = normalizeTenant(raw);
+      const leaseText = await extractPdfText(files[i]);
+      const d         = await callClaudeForLease(leaseText);
+      const rawObj    = Array.isArray(d) ? d[0] : (d.tenants?.[0] || d);
+      console.log("FINAL TENANT USED IN UI:", rawObj);
+      const tenant    = normalizeTenant({ ...rawObj, _rawText: leaseText });
       if (!tenant) throw new Error('Could not extract lease fields');
       tenantData.push(tenant);
     } catch (err) {
