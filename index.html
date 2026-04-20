@@ -2750,14 +2750,30 @@ try {
   const raw = data.content.map(c => c.text) .join( ' ' ) ;
   console.log('[callClaudeForLease] raw response:', raw);
 
-  let parsed;
-  try {
-    parsed = JSON.parse(raw);
-  } catch (e) {
-    console.error('[callClaudeForLease] JSON parse error:', e, '| raw:', raw);
-    return { tenants: [] };
-  }
+const raw = data.content.map(c => c.text).join('');
+console.log('[callClaudeForLease] raw response:', raw);
 
+// CLEAN Claude output (fixes extra text issue)
+const cleaned = raw
+  .replace(/```json/g, '')
+  .replace(/```/g, '')
+  .trim();
+
+// Extract only JSON block
+const match = cleaned.match(/\{[\s\S]*\}/);
+
+if (!match) {
+  console.error("No JSON found:", cleaned);
+  return { tenants: []} ;
+}
+
+let parsed;
+try {
+  parsed = JSON.parse(match[0]);
+} catch (e) {
+  console.error("JSON parse failed:", match[0]);
+  return { renants: [] } ;
+}
   // Attach this PDF's text to each tenant immediately — before any enrichment
   if (Array.isArray(parsed)) {
     parsed = parsed.map(t => ({ ...t, _rawText: text }));
