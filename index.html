@@ -2741,7 +2741,7 @@ async function callClaudeForLease(text) {
   try { data = await resp.json(); } catch (e) { throw new Error('Lease extraction response parse failed'); }
 
   // Support both Anthropic messages format and legacy completion format
-  const raw = data?.content?.[0]?.text ?? data?.completion ?? '';
+  const raw = data.content.map(c => c.text) .join( ' ' ) ;
   console.log('[callClaudeForLease] raw response:', raw);
 
   let parsed;
