@@ -2045,8 +2045,30 @@ db.auth.onAuthStateChange((event, session) => {
 });
 
 // ─── Constants ────────────────────────────────────────────────────────────────
-const MODEL      = 'claude-sonnet-4-6';
-const MAX_LEASES = 3;
+const MODEL           = 'claude-sonnet-4-6';
+const ANTHROPIC_KEY   = window.ANTHROPIC_API_KEY || '';  // set via window.ANTHROPIC_API_KEY before this script
+const MAX_LEASES      = 3;
+
+// Single entry-point for every Claude API call.
+// Uses the Anthropic Messages API directly from the browser.
+async function claudeFetch(body) {
+  const resp = await fetch('https://api.anthropic.com/v1/messages', {
+    method: 'POST',
+    headers: {
+      'Content-Type':                          'application/json',
+      'x-api-key':                             ANTHROPIC_KEY,
+      'anthropic-version':                     '2023-06-01',
+      'anthropic-dangerous-direct-browser-access': 'true',
+    },
+    body: typeof body === 'string' ? body : JSON.stringify(body),
+  });
+  if (!resp.ok) {
+    let detail = `HTTP ${resp.status}`;
+    try { const b = await resp.json(); detail = b?.error?.message || b?.message || detail; } catch {}
+    throw new Error(detail);
+  }
+  return resp.json();
+}
 
 const CAM_EXPLAIN_SYSTEM_PROMPT = `You are an expert in commercial real estate CAM (Common Area Maintenance) charges.
 
@@ -2340,30 +2362,18 @@ async function callClaude(file, prompt) {
     ? { type: 'image',    source: { type: 'base64', media_type: mediaType, data: base64 } }
     : { type: 'document', source: { type: 'base64', media_type: mediaType, data: base64 } };
 
-  let resp;
+  let data;
   try {
-    resp = await fetch('/api/claude', {
-      method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({
-        model: MODEL,
-        max_tokens: 1024,
-        messages: [{ role: 'user', content: [contentBlock, { type: 'text', text: prompt }] }],
-      }),
+    data = await claudeFetch({
+      model: MODEL,
+      max_tokens: 1024,
+      messages: [{ role: 'user', content: [contentBlock, { type: 'text', text: prompt }] }],
     });
   } catch (e) {
     console.error('[Mainstreet] fetch error:', e);
     throw new Error('Could not reach the server — check your connection');
   }
 
-  if (!resp.ok) {
-    let detail = `HTTP ${resp.status}`;
-    try { const b = await resp.json(); detail = b?.error?.message || b?.message || detail; } catch { /* ignore */ }
-    console.error('[Mainstreet] API error:', detail);
-    throw new Error('Extraction failed — try a different file or contact support');
-  }
-
-  let data;
   try {
     data = await resp.json();
   } catch (e) {
@@ -2595,50 +2605,36 @@ async function extractPdfText(file) {
 }
 
 async function callClaudeForLease(text) {
-  let resp;
+  let data;
   try {
-    resp = await fetch('/api/claude', {
-      method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({
-        model: MODEL,
-        max_tokens: 1024,
-        system: CLAUDE_LEASE_SYSTEM,
-        tools: [{
-          name: 'extract_lease',
-          description: 'Extract structured lease fields from the provided lease text.',
-          input_schema: {
-            type: 'object',
-            properties: {
-              tenant_name:      { type: ['string', 'null'], description: 'Tenant/lessee name' },
-              sqft:             { type: ['number', 'null'], description: 'Leased square footage as an integer' },
-              lease_start_date: { type: ['string', 'null'], description: 'Lease start date in YYYY-MM-DD format' },
-              lease_end_date:   { type: ['string', 'null'], description: 'Lease end date in YYYY-MM-DD format' },
-              lease_type:       { type: ['string', 'null'], description: 'NNN, Gross, or Modified Gross' },
-              cam_cap:          { type: ['number', 'null'], description: 'Annual CAM increase cap as a plain number (5 = 5%)' },
-              excluded_categories: { type: 'array', items: { type: 'string' }, description: 'CAM categories explicitly excluded' },
-            },
-            required: ['tenant_name', 'sqft', 'lease_start_date', 'lease_end_date', 'lease_type', 'cam_cap', 'excluded_categories'],
+    data = await claudeFetch({
+      model: MODEL,
+      max_tokens: 1024,
+      system: CLAUDE_LEASE_SYSTEM,
+      tools: [{
+        name: 'extract_lease',
+        description: 'Extract structured lease fields from the provided lease text.',
+        input_schema: {
+          type: 'object',
+          properties: {
+            tenant_name:         { type: ['string', 'null'], description: 'Tenant/lessee name' },
+            sqft:                { type: ['number', 'null'], description: 'Leased square footage as an integer' },
+            lease_start_date:    { type: ['string', 'null'], description: 'Lease start date in YYYY-MM-DD format' },
+            lease_end_date:      { type: ['string', 'null'], description: 'Lease end date in YYYY-MM-DD format' },
+            lease_type:          { type: ['string', 'null'], description: 'NNN, Gross, or Modified Gross' },
+            cam_cap:             { type: ['number', 'null'], description: 'Annual CAM increase cap as a plain number (5 = 5%)' },
+            excluded_categories: { type: 'array', items: { type: 'string' }, description: 'CAM categories explicitly excluded' },
           },
-        }],
-        tool_choice: { type: 'tool', name: 'extract_lease' },
-        messages: [{ role: 'user', content: text }],
-      }),
+          required: ['tenant_name', 'sqft', 'lease_start_date', 'lease_end_date', 'lease_type', 'cam_cap', 'excluded_categories'],
+        },
+      }],
+      tool_choice: { type: 'tool', name: 'extract_lease' },
+      messages: [{ role: 'user', content: text }],
     });
   } catch (e) {
-    console.error('[callClaudeForLease] fetch error:', e);
-    throw new Error('Could not reach the server');
+    console.error('[callClaudeForLease] error:', e);
+    throw new Error('Lease extraction failed: ' + e.message);
   }
-
-  if (!resp.ok) {
-    let detail = `HTTP ${resp.status}`;
-    try { const b = await resp.json(); detail = b?.error?.message || b?.message || detail; } catch {}
-    console.error('[callClaudeForLease] API error:', detail);
-    throw new Error('Lease extraction failed: ' + detail);
-  }
-
-  let data;
-  try { data = await resp.json(); } catch { throw new Error('Lease extraction response parse failed'); }
 
   console.log("RAW AI RESPONSE:", data);
 
@@ -3489,19 +3485,13 @@ function normalizeCategory(vendor, description) {
 
 async function classifyCategory(vendorName, amount) {
   try {
-    const resp = await fetch('/api/claude', {
-      method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({
-        model: MODEL,
-        max_tokens: 64,
-        messages: [{ role: 'user', content:
-          CATEGORY_PROMPT + `\n\nVendor: ${vendorName || 'Unknown'}\nAmount: $${amount || '0'}`
-        }],
-      }),
+    const data = await claudeFetch({
+      model: MODEL,
+      max_tokens: 64,
+      messages: [{ role: 'user', content:
+        CATEGORY_PROMPT + `\n\nVendor: ${vendorName || 'Unknown'}\nAmount: $${amount || '0'}`
+      }],
     });
-    if (!resp.ok) return null;
-    const data = await resp.json();
     const text = data?.content?.[0]?.text || '';
     const json = JSON.parse(text.match(/\{[\s\S]*\}/)?.[0] || 'null');
     if (json?.category && CATEGORIES.includes(json.category)) return json;
@@ -3888,24 +3878,18 @@ async function explainCharge(i) {
   const btn = document.getElementById(`iexplbtn-${i}`);
   if (btn) { btn.textContent = '…'; btn.disabled = true; }
   try {
-    const resp = await fetch('/api/claude', {
-      method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({
-        model: MODEL,
-        max_tokens: 1024,
-        system: LANDLORD_SYSTEM_PROMPT,
-        messages: [{ role: 'user', content:
-          `Vendor: ${inv.vendorName || 'Unknown'}\n` +
-          `Category: ${inv.category || 'other'}\n` +
-          `Amount: $${inv.amount || '0'}\n` +
-          `Date: ${inv.invoiceDate || 'Unknown'}\n` +
-          `Confidence: ${inv.confidence?.category ?? 'unknown'}%`
-        }],
-      }),
+    const data = await claudeFetch({
+      model: MODEL,
+      max_tokens: 1024,
+      system: LANDLORD_SYSTEM_PROMPT,
+      messages: [{ role: 'user', content:
+        `Vendor: ${inv.vendorName || 'Unknown'}\n` +
+        `Category: ${inv.category || 'other'}\n` +
+        `Amount: $${inv.amount || '0'}\n` +
+        `Date: ${inv.invoiceDate || 'Unknown'}\n` +
+        `Confidence: ${inv.confidence?.category ?? 'unknown'}%`
+      }],
     });
-    if (!resp.ok) throw new Error(`API error ${resp.status}`);
-    const data = await resp.json();
     const text = data?.content?.[0]?.text || 'No explanation available.';
     const det = document.getElementById(`idet-${i}`);
     let expl = document.getElementById(`iexpl-${i}`);
@@ -5126,24 +5110,18 @@ async function tsExplainInvoice(rowId, vendor, category, amount, date) {
   const btn = document.getElementById(`tsexplbtn-${rowId}`);
   if (btn) { btn.textContent = '…'; btn.disabled = true; }
   try {
-    const resp = await fetch('/api/claude', {
-      method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({
-        model: MODEL,
-        max_tokens: 1024,
-        system: CAM_EXPLAIN_SYSTEM_PROMPT,
-        messages: [{ role: 'user', content:
-          `Vendor: ${vendor || 'Unknown'}\n` +
-          `Category: ${category || 'other'}\n` +
-          `Amount: $${amount || '0'}\n` +
-          `Date: ${date || 'Unknown'}\n` +
-          `Confidence: unknown%`
-        }],
-      }),
+    const data = await claudeFetch({
+      model: MODEL,
+      max_tokens: 1024,
+      system: CAM_EXPLAIN_SYSTEM_PROMPT,
+      messages: [{ role: 'user', content:
+        `Vendor: ${vendor || 'Unknown'}\n` +
+        `Category: ${category || 'other'}\n` +
+        `Amount: $${amount || '0'}\n` +
+        `Date: ${date || 'Unknown'}\n` +
+        `Confidence: unknown%`
+      }],
     });
-    if (!resp.ok) throw new Error(`API error ${resp.status}`);
-    const data = await resp.json();
     const text = data?.content?.[0]?.text || 'No explanation available.';
     const expl = document.getElementById(`tsexpl-${rowId}`);
     if (expl) {
@@ -5887,22 +5865,17 @@ async function runLandlordAIReview() {
   let html = '';
   for (const inv of flagged) {
     try {
-      const resp = await fetch('/api/claude', {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({
-          model: MODEL,
-          max_tokens: 512,
-          system: LANDLORD_SYSTEM_PROMPT,
-          messages: [{ role: 'user', content:
-            `Vendor: ${inv.vendorName || 'Unknown'}\n` +
-            `Category: ${inv.category || 'other'}\n` +
-            `Amount: $${inv.amount || '0'}\n` +
-            `Date: ${inv.invoiceDate || 'Unknown'}`
-          }],
-        }),
+      const data = await claudeFetch({
+        model: MODEL,
+        max_tokens: 512,
+        system: LANDLORD_SYSTEM_PROMPT,
+        messages: [{ role: 'user', content:
+          `Vendor: ${inv.vendorName || 'Unknown'}\n` +
+          `Category: ${inv.category || 'other'}\n` +
+          `Amount: $${inv.amount || '0'}\n` +
+          `Date: ${inv.invoiceDate || 'Unknown'}`
+        }],
       });
-      const data = await resp.json();
       const text = data?.content?.[0]?.text || 'No review available.';
       html += `<div class="ai-inv-review"><strong>${esc(inv.vendorName)} — ${fmt(parseFloat(inv.amount))}</strong>${renderMarkdown(text)}</div>`;
     } catch (e) {
@@ -6449,23 +6422,31 @@ const defaultProperties = [];
 
 const _LS_KEY = '_ms_props_v2';
 
+// In-memory fallback for when localStorage is blocked (Safari ITP, private mode, file://)
+const _memStore = {};
+
+function _lsGet(key) {
+  try { return localStorage.getItem(key); } catch { return _memStore[key] ?? null; }
+}
+function _lsSet(key, value) {
+  try { localStorage.setItem(key, value); } catch { _memStore[key] = value; }
+}
+
 function _stripBlobs(property) {
-  // fileUrl is now a plain URL string — nothing to strip. This function is kept
-  // as a safety passthrough in case other blob fields are added in future.
   return property;
 }
 
 function _lsSave(property) {
   try {
-    const stored = JSON.parse(localStorage.getItem(_LS_KEY) || '{}');
+    const stored = JSON.parse(_lsGet(_LS_KEY) || '{}');
     stored[property.id] = _stripBlobs(property);
-    localStorage.setItem(_LS_KEY, JSON.stringify(stored));
-  } catch (e) { console.warn('[Mainstreet] localStorage save failed:', e); }
+    _lsSet(_LS_KEY, JSON.stringify(stored));
+  } catch (e) { console.warn('[Mainstreet] storage save failed:', e); }
 }
 
 function _lsLoadAll() {
   try {
-    const stored = JSON.parse(localStorage.getItem(_LS_KEY) || '{}');
+    const stored = JSON.parse(_lsGet(_LS_KEY) || '{}');
     const rows = Object.values(stored);
     return rows.length ? rows : null;
   } catch (e) { return null; }
@@ -6473,7 +6454,7 @@ function _lsLoadAll() {
 
 function _lsLoad(id) {
   try {
-    const stored = JSON.parse(localStorage.getItem(_LS_KEY) || '{}');
+    const stored = JSON.parse(_lsGet(_LS_KEY) || '{}');
     return stored[id] || null;
   } catch (e) { return null; }
 }
