@@ -2045,21 +2045,15 @@ db.auth.onAuthStateChange((event, session) => {
 });
 
 // ─── Constants ────────────────────────────────────────────────────────────────
-const MODEL           = 'claude-sonnet-4-6';
-const ANTHROPIC_KEY   = window.ANTHROPIC_API_KEY || '';  // set via window.ANTHROPIC_API_KEY before this script
-const MAX_LEASES      = 3;
+const MODEL       = 'claude-sonnet-4-6';
+const MAX_LEASES  = 3;
 
 // Single entry-point for every Claude API call.
-// Uses the Anthropic Messages API directly from the browser.
+// Proxies through /api/claude — API key stays server-side.
 async function claudeFetch(body) {
-  const resp = await fetch('https://api.anthropic.com/v1/messages', {
+  const resp = await fetch('/api/claude', {
     method: 'POST',
-    headers: {
-      'Content-Type':                          'application/json',
-      'x-api-key':                             ANTHROPIC_KEY,
-      'anthropic-version':                     '2023-06-01',
-      'anthropic-dangerous-direct-browser-access': 'true',
-    },
+    headers: { 'Content-Type': 'application/json' },
     body: typeof body === 'string' ? body : JSON.stringify(body),
   });
   if (!resp.ok) {
@@ -2170,7 +2164,22 @@ IMPORTANT:
 If the charge looks normal, say "No issues" and do not invent problems.
 If the category appears incorrect based on the vendor or description, gently interpret the charge correctly in your explanation without criticizing the classification.`;
 
-const CLAUDE_LEASE_SYSTEM = `You are a data extraction engine. You MUST return ONLY valid JSON. Do not include any explanation, text, markdown, or commentary. Do not include labels like "Tenant:" or sentences. If you fail to return JSON, the system will break.`;
+const CLAUDE_LEASE_SYSTEM = `You are a strict JSON extraction engine.
+Return ONLY valid JSON.
+No explanations. No text. No markdown.
+Format:
+{
+  "tenant_name": "",
+  "leased_sqft": "",
+  "lease_start_date": "",
+  "lease_end_date": "",
+  "lease_type": "",
+  "cap": ""
+}
+Rules:
+* Extract exact values
+* Dates must be YYYY-MM-DD
+* If unknown, use ""`;
 
 const CLAUDE_LEASE_PROMPT = `Extract the following fields from the lease text below.
 
@@ -2611,24 +2620,6 @@ async function callClaudeForLease(text) {
       model: MODEL,
       max_tokens: 1024,
       system: CLAUDE_LEASE_SYSTEM,
-      tools: [{
-        name: 'extract_lease',
-        description: 'Extract structured lease fields from the provided lease text.',
-        input_schema: {
-          type: 'object',
-          properties: {
-            tenant_name:         { type: ['string', 'null'], description: 'Tenant/lessee name' },
-            sqft:                { type: ['number', 'null'], description: 'Leased square footage as an integer' },
-            lease_start_date:    { type: ['string', 'null'], description: 'Lease start date in YYYY-MM-DD format' },
-            lease_end_date:      { type: ['string', 'null'], description: 'Lease end date in YYYY-MM-DD format' },
-            lease_type:          { type: ['string', 'null'], description: 'NNN, Gross, or Modified Gross' },
-            cam_cap:             { type: ['number', 'null'], description: 'Annual CAM increase cap as a plain number (5 = 5%)' },
-            excluded_categories: { type: 'array', items: { type: 'string' }, description: 'CAM categories explicitly excluded' },
-          },
-          required: ['tenant_name', 'sqft', 'lease_start_date', 'lease_end_date', 'lease_type', 'cam_cap', 'excluded_categories'],
-        },
-      }],
-      tool_choice: { type: 'tool', name: 'extract_lease' },
       messages: [{ role: 'user', content: text }],
     });
   } catch (e) {
@@ -2636,18 +2627,18 @@ async function callClaudeForLease(text) {
     throw new Error('Lease extraction failed: ' + e.message);
   }
 
-  console.log("RAW AI RESPONSE:", data);
+  const raw = data?.content?.[0]?.text || '';
+  console.log('RAW AI RESPONSE:', raw);
 
-  const toolBlock = data?.content?.find(b => b.type === 'tool_use' && b.name === 'extract_lease');
-  if (!toolBlock?.input) {
-    console.error('[callClaudeForLease] No tool_use block in response:', data?.content);
+  let parsed;
+  try {
+    parsed = JSON.parse(raw);
+  } catch (e) {
+    console.error('FAILED RAW JSON:', raw);
     return { tenants: [] };
   }
 
-  const parsed = { ...toolBlock.input, _rawText: text };
-  console.log('[callClaudeForLease] extracted input:', parsed);
-
-  const enriched = enrichLeaseData(parsed, text);
+  const enriched = enrichLeaseData({ ...parsed, _rawText: text }, text);
   console.log('FINAL PARSED TENANT:', enriched);
   return enriched;
 }
