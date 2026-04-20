@@ -2717,6 +2717,7 @@ async function handleLease(i, file) {
     const tenant    = normalizeTenant({ ...rawObj, _rawText: leaseText });
     if (!tenant) throw new Error('Could not extract lease fields');
     tenantData[i]   = tenant;
+    console.log("FINAL TENANT OBJECT:", tenantData[i]);
     renderTenantFields(i);
     checkSqftValidation();
 
@@ -2791,6 +2792,7 @@ function clearSqftBanner() {
 
 function renderTenantFields(i) {
   const d    = tenantData[i];
+  console.log("UI USING:", d);
   const body = document.getElementById(`tb-${i}`);
   console.log("FINAL TENANT USED IN UI:", d);
   body.innerHTML = `
