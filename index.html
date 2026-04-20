@@ -2750,9 +2750,6 @@ try {
   const raw = data.content.map(c => c.text) .join( ' ' ) ;
   console.log('[callClaudeForLease] raw response:', raw);
 
-const raw = data.content.map(c => c.text).join('');
-console.log('[callClaudeForLease] raw response:', raw);
-
 // CLEAN Claude output (fixes extra text issue)
 const cleaned = raw
   .replace(/```json/g, '')
@@ -2772,7 +2769,7 @@ try {
   parsed = JSON.parse(match[0]);
 } catch (e) {
   console.error("JSON parse failed:", match[0]);
-  return { renants: [] } ;
+  return { tenants: [] } ;
 }
   // Attach this PDF's text to each tenant immediately — before any enrichment
   if (Array.isArray(parsed)) {
