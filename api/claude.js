@@ -62,21 +62,13 @@ let raw = text
 
 
 // Extract JSON safely
-
 const match = raw.match(/\{[\s\S]*\}/);
 
-
-
 if (!match) {
-
   console.error("Invalid Claude response:", raw);
-
   return res.status(500).json({ error: "Invalid JSON from Claude" });
-
 }
 
+const data = JSON.parse(match[0]);
 
-  // Forward exact status + body so the client can handle Anthropic errors normally
-  const data = JSON.parse(match[0]);
 return res.status(200).json(data);
-}
