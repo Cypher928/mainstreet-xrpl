@@ -2737,9 +2737,14 @@ async function callClaudeForLease(text) {
     throw new Error('Lease extraction failed: ' + detail);
   }
 
-  let data;
-  try { data = await resp.json(); } catch (e) { throw new Error('Lease extraction response parse failed'); }
-
+let data;
+try {
+  data = await resp.json();
+  console.log("FULL DATA:", data);   // ✅ SAFE now (inside try)
+} catch (e) {
+  console.error("JSON parse failed:", e);
+  throw new Error('Lease extraction response parse failed');
+}
 
   // Support both Anthropic messages format and legacy completion format
   const raw = data.content.map(c => c.text) .join( ' ' ) ;
