@@ -2689,49 +2689,7 @@ function normalizeTenant(raw) {
   };
 }
 
-  // capPercentage: camCapPercent (new) | capPercentage | cap | capPercent | cap_percentage
-  const capRaw = src.camCapPercent ?? src.capPercentage ?? src.cap ?? src.capPercent ?? src.cap_percentage ?? null;
-  const capNoCap = typeof capRaw === 'string' && /no.?cap|uncapped|no.?limit/i.test(capRaw);
-  const capPercentage = (!capNoCap && capRaw !== null && capRaw !== undefined && capRaw !== '') ? String(capRaw) : '';
-
-  // startDate / endDate — convert any format to YYYY-MM-DD for <input type="date">
-  const startDate = toISODate(src.startDate || src.start_date || src.lease_start || src.commencementDate || '');
-  const endDate   = toISODate(src.endDate   || src.end_date   || src.lease_end   || src.expirationDate   || '');
-
-  // baseYear: integer
-  const byRaw = src.baseYear || src.base_year || null;
-  const baseYear = byRaw ? String(parseInt(byRaw, 10)) : '';
-
-  // leaseType: normalize "NNN", "Gross", modified gross → "Gross", etc.
-  const ltRaw = src.leaseType || src.lease_type || src.type || '';
-  let leaseType = null;
-  if (ltRaw) {
-    const s = String(ltRaw).trim();
-    if (/^nnn$/i.test(s) || /triple.?net/i.test(s))            leaseType = 'NNN';
-    else if (/modified.?gross/i.test(s))                        leaseType = 'Gross';
-    else if (/gross/i.test(s))                                  leaseType = 'Gross';
-  }
-
-  // excludedCategories: excludedCategories | excluded | exclusions
-  const excSrc = src.excludedCategories ?? src.excluded ?? src.exclusions ?? null;
-  let excludedCategories = '';
-  if (typeof excSrc === 'string' && excSrc)  excludedCategories = excSrc;
-  else if (Array.isArray(excSrc))            excludedCategories = excSrc.filter(Boolean).join(', ');
-
-  return {
-    tenantName:         name ? String(name) : '',
-    leasedSqft,
-    capPercentage,
-    excludedCategories,
-    baseYear,
-    startDate,
-    endDate,
-    leaseType,
-    confidence:         src.confidence || {},
-  };
-}
-
-
+ 
 async function extractPdfText(file) {
   // For non-PDF files (txt, etc.) fall back to plain text read
   if (!file.name.toLowerCase().endsWith('.pdf') && file.type !== 'application/pdf') {
