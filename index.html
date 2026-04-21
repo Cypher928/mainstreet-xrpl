@@ -2901,7 +2901,10 @@ function normalizeTenant(input) {
 
     // tenantData is already restored from _props; slot i was just updated in-place.
     // Merge so other slots' existing data isn't lost on save.
-    property.tenants = mergeTenantsDedup(existing.tenants, tenantData.filter(t => t !== null));
+    property.tenants = mergeTenantsDedup(
+  existing.tenants,
+  tenantData.filter(t => t && typeof t === "object")
+);
     console.log('CURRENT PROPERTY ID:', property.id);
     console.log('SAVING DATA:', property);
     await saveProperty(property);
@@ -3763,7 +3766,7 @@ console.log('FINAL tenantData:', tenantData);
 }
 
   // Merge: new uploads replace same-name existing tenants; rest are kept.
-  const newTenants = tenantData.filter(t => t !== null);
+  const newTenants = tenantData.filter(t => t && typeof t === "object");
   const merged = mergeTenantsDedup(existing.tenants, newTenants);
   property.tenants = merged;
   // Keep tenantData in sync with merged result so UI shows the full set.
@@ -3782,8 +3785,10 @@ function renderBulkResults() {
   const el = document.getElementById('bulkResults');
   if (!tenantData.length) { el.innerHTML = ''; return; }
 
-  const rows = tenantData.map((d, i) => {
-    const conf    = d.confidence || {};
+  const rows = tenantData
+  .filter(d => d && typeof d === "object")
+  .map((d, i) => {
+    const conf    = (d && d.confidence) || {};
     const icon    = d._error ? '⚠️' : d.tenantName ? '✓' : '?';
     const name    = d.tenantName || '(unknown — click to edit)';
     const meta    = [d.leasedSqft ? d.leasedSqft + ' sqft' : null,
