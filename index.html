@@ -2747,7 +2747,7 @@ try {
 }
 
   // Support both Anthropic messages format and legacy completion format
- et raw = "";
+ let raw = "";
 
 if (Array.isArray(data?.content)) {
   raw = data.content.map(c => c?.text || "").join("");
