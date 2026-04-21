@@ -54,11 +54,29 @@ module.exports = async function handler(req, res) {
       text = data.content.map(c => c.text).join(' ');
     }
 
-    return res.status(200).json({
-      success: true,
-      text,
-      raw: data
-    });
+   // Clean Claude formatting
+let raw = text
+  .replace(/```json/g, '')
+  .replace(/```/g, '')
+  .trim();
+
+// Extract JSON safely
+let json;
+
+try {
+  json = JSON.parse(raw);
+} catch {
+  const match = raw.match(/\[[\s\S]*\]/) || raw.match(/\{[\s\S]*\}/);
+
+  if (!match) {
+    console.error("Claude raw response:", raw);
+    return res.status(500).json({ error: "Invalid JSON from Claude" });
+  }
+
+  json = JSON.parse(match[0]);
+}
+
+return res.status(200).json(json);
 
   } catch (err) {
     console.error('[Server Error]', err);
