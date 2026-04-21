@@ -30,7 +30,6 @@ export default async function handler(req, res) {
   const payload = { model, max_tokens, messages };
   if (system) payload.system = system;
 
-  // ── Call Anthropic ──────────────────────────────────────────────────────────
   let anthropicResp;
   try {
     anthropicResp = await fetch('https://api.anthropic.com/v1/messages', {
@@ -42,48 +41,48 @@ export default async function handler(req, res) {
       },
       body: JSON.stringify(payload),
     });
-  } catch (e) {
-    console.error('[claude] Network error reaching Anthropic:', e.message);
-    return res.status(500).json({ error: 'Could not reach Anthropic API' });
-  }
-
-  // ── Parse Anthropic response body ───────────────────────────────────────────
-  let data;
-  try {
-    data = await anthropicResp.json();
-  } catch (e) {
-    console.error('[claude] Failed to parse Anthropic response body:', e.message);
-    return res.status(500).json({ error: 'Invalid response from Anthropic API' });
+  } catch (err) {
+    console.error('[Mainstreet] Fetch failed:', err);
+    return res.status(500).json({ error: 'Failed to reach Anthropic' });
   }
 
   if (!anthropicResp.ok) {
-    const msg = data?.error?.message || data?.message || `HTTP ${anthropicResp.status}`;
-    console.error('[claude] Anthropic API error:', anthropicResp.status, msg);
-    return res.status(500).json({ error: msg });
+    const errText = await anthropicResp.text();
+    console.error('[Mainstreet] Anthropic error:', errText);
+    return res.status(500).json({ error: 'Anthropic API error', details: errText });
   }
 
-  // ── Extract text content ────────────────────────────────────────────────────
-  const rawText = data?.content?.[0]?.text;
-  if (!rawText) {
-    console.error('[claude] Missing content[0].text in response:', JSON.stringify(data));
-    return res.status(500).json({ error: 'No content in Anthropic response' });
-  }
-
-  // ── Strip markdown fences, extract and parse JSON ───────────────────────────
-  const cleaned = rawText.replace(/^```json\s*/i, '').replace(/```\s*$/, '').trim();
-  const match = cleaned.match(/\{[\s\S]*\}/);
-  if (!match) {
-    console.error('[claude] No JSON object found in Claude response:', rawText);
-    return res.status(500).json({ error: 'Claude did not return valid JSON' });
-  }
-
-  let parsed;
+  let json;
   try {
-    parsed = JSON.parse(match[0]);
-  } catch (e) {
-    console.error('[claude] JSON.parse failed:', match[0]);
-    return res.status(500).json({ error: 'Failed to parse JSON from Claude response' });
+    json = await anthropicResp.json();
+  } catch (err) {
+    console.error('[Mainstreet] JSON parse failed:', err);
+    return res.status(500).json({ error: 'Invalid JSON from Anthropic' });
   }
 
-  return res.status(200).json(parsed);
+  const text = json?.content?.[0]?.text;
+
+  if (!text) {
+    console.error('[Mainstreet] No content returned:', json);
+    return res.status(500).json({ error: 'No content from Claude' });
+  }
+
+  // Clean + extract JSON
+  const cleaned = text.replace(/```json/g, '').replace(/```/g, '').trim();
+  const match = cleaned.match(/\{[\s\S]*\}/);
+
+  if (!match) {
+    console.error('[Mainstreet] No JSON found:', cleaned);
+    return res.status(500).json({ error: 'No JSON in response' });
+  }
+
+  let data;
+  try {
+    data = JSON.parse(match[0]);
+  } catch (err) {
+    console.error('[Mainstreet] JSON parse failed:', match[0]);
+    return res.status(500).json({ error: 'Failed to parse JSON' });
+  }
+
+  return res.status(200).json(data);
 }
