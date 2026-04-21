@@ -2,15 +2,7 @@
 // Reads ANTHROPIC_API_KEY from the Vercel environment — never exposed to the browser.
 // Always returns parsed JSON extracted from Claude's text response.
 
-export const config = {
-  api: {
-    bodyParser: {
-      sizeLimit: '12mb',
-    },
-  },
-};
-
-export default async function handler(req, res) {
+module.exports = async function handler(req, res) {
   if (req.method !== 'POST') {
     return res.status(405).json({ error: 'Method not allowed' });
   }
