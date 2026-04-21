@@ -2870,35 +2870,36 @@ async function handleLease(i, file) {
     const leaseText = await extractPdfText(file);
     console.log('[DEBUG] leaseText length:', leaseText.length, '| preview:', leaseText.slice(0, 200));
     const d = await callClaudeForLease(leaseText);
-    console.log('RAW TENANTS:', d);
-    function normalizeTenant(raw) {
-  if (!raw) return null;
+    const tenantData = Array.isArray (d)
+    
+    function normalizeTenant(input) {
+  if (!input) return null;
 
-  const text = raw._rawText || JSON.stringify(raw);
+  const text = JSON.stringify(input);
 
   const clean = (v) => (v ? String(v).trim() : '');
 
   // --- Tenant Name ---
   let tenantName =
-    raw.tenantName ||
+    input.tenantName ||
     (text.match(/Tenant:\s*(.+)/i)?.[1]) ||
     '';
 
   // --- Square Feet ---
   let leasedSqft =
-    raw.leasedSqft ||
+    input.leasedSqft ||
     (text.match(/([\d,]+)\s*(?:rentable\s*)?(?:square feet|sq\.?\s*ft)/i)?.[1]?.replace(/,/g, '')) ||
     '';
 
   // --- Start Date ---
   let startDate =
-    raw.startDate ||
+    input.startDate ||
     (text.match(/commence(?:ment)?\s*(?:date)?\s*(?:on)?\s*([A-Za-z]+\s+\d{1,2},\s+\d{4})/i)?.[1]) ||
     '';
 
   // --- End Date ---
   let endDate =
-    raw.endDate ||
+    input.endDate ||
     (text.match(/expire(?:s|)\s*(?:on)?\s*([A-Za-z]+\s+\d{1,2},\s+\d{4})/i)?.[1]) ||
     '';
 
@@ -3742,6 +3743,7 @@ async function handleBulkLeases(fileList) {
         '<div style="position:fixed;bottom:10px;left:10px;background:#000;color:#0f0;padding:10px;z-index:9999;font-size:12px;max-width:600px;white-space:pre-wrap;overflow:auto;max-height:200px;">EXTRACTED TEXT (first 1000 chars):\n' + leaseText.slice(0, 1000).replace(/</g,'&lt;') + '</div>'
       );
       const d = await callClaudeForLease(leaseText);
+     let tenantData = [];
       const extractedTenants = Array.isArray(d) ? d
         : (Array.isArray(d.tenants) && d.tenants.length > 0 ? d.tenants : [d]);
       console.log('RAW TENANTS:', extractedTenants);
