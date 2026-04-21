@@ -2630,12 +2630,12 @@ async function callClaudeForLease(text) {
   }
 
   return {
-    tenantName:  data.tenant_name       || '',
-    leasedSqft:  parseFloat(data.leased_sqft) || 0,
-    startDate:   data.lease_start_date  || '',
-    endDate:     data.lease_end_date    || '',
-    leaseType,
-    cap:         data.cap ? parseFloat(data.cap) : null,
+    tenant_name:       data.tenant_name      || '',
+    leased_sqft:       parseFloat(data.leased_sqft) || 0,
+    lease_start_date:  data.lease_start_date || '',
+    lease_end_date:    data.lease_end_date   || '',
+    lease_type:        leaseType,
+    cap:               data.cap ? parseFloat(data.cap) : null,
   };
 }
 // ─── SVG icons ────────────────────────────────────────────────────────────────
@@ -2786,41 +2786,41 @@ function renderTenantFields(i) {
       <div class="field-row">
         <div class="field">
           <label>Tenant Name</label>
-          <input type="text" value="${d.tenantName || ''}"
-            oninput="tenantData[${i}].tenantName = this.value"/>
+          <input type="text" value="${d.tenant_name || ''}"
+            oninput="tenantData[${i}].tenant_name = this.value"/>
         </div>
         <div class="field">
           <label>Leased Sqft</label>
-          <input type="number" value="${d.leasedSqft || ''}"
-            oninput="tenantData[${i}].leasedSqft = this.value; checkSqftValidation()"/>
+          <input type="number" value="${d.leased_sqft || ''}"
+            oninput="tenantData[${i}].leased_sqft = this.value; checkSqftValidation()"/>
         </div>
       </div>
       <div class="field-row">
         <div class="field">
           <label>Lease Start Date</label>
-          <input type="date" value="${d.startDate || ''}"
-            onchange="tenantData[${i}].startDate = this.value"/>
+          <input type="date" value="${d.lease_start_date || ''}"
+            onchange="tenantData[${i}].lease_start_date = this.value"/>
         </div>
         <div class="field">
           <label>Lease End Date</label>
-          <input type="date" value="${d.endDate || ''}"
-            onchange="tenantData[${i}].endDate = this.value"/>
+          <input type="date" value="${d.lease_end_date || ''}"
+            onchange="tenantData[${i}].lease_end_date = this.value"/>
         </div>
       </div>
       <div class="field-row">
         <div class="field">
           <label>Lease Type</label>
-          <select onchange="tenantData[${i}].leaseType = this.value || null; if(lastResults.length) runAllocation()">
+          <select onchange="tenantData[${i}].lease_type = this.value || null; if(lastResults.length) runAllocation()">
             <option value="">Select lease type</option>
-            <option value="Triple Net (NNN)"${d.leaseType === 'Triple Net (NNN)' ? ' selected' : ''}>Triple Net (NNN)</option>
-            <option value="Gross"${d.leaseType === 'Gross' ? ' selected' : ''}>Gross</option>
-            <option value="Modified Gross"${d.leaseType === 'Modified Gross' ? ' selected' : ''}>Modified Gross</option>
+            <option value="Triple Net (NNN)"${d.lease_type === 'Triple Net (NNN)' ? ' selected' : ''}>Triple Net (NNN)</option>
+            <option value="Gross"${d.lease_type === 'Gross' ? ' selected' : ''}>Gross</option>
+            <option value="Modified Gross"${d.lease_type === 'Modified Gross' ? ' selected' : ''}>Modified Gross</option>
           </select>
         </div>
         <div class="field">
           <label>Excluded Categories (comma-separated)</label>
-          <input type="text" value="${d.excludedCategories || ''}"
-            oninput="tenantData[${i}].excludedCategories = this.value"/>
+          <input type="text" value="${d.excluded_categories || ''}"
+            oninput="tenantData[${i}].excluded_categories = this.value"/>
         </div>
       </div>
     </div>`;
