@@ -69,6 +69,7 @@ export default async function handler(req, res) {
 
   // Clean + extract JSON
   const cleaned = text.replace(/```json/g, '').replace(/```/g, '').trim();
+  console.log('[Mainstreet] RAW CLAUDE RESPONSE:', cleaned);
   const match = cleaned.match(/\{[\s\S]*\}/);
 
   if (!match) {
