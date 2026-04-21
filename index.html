@@ -3785,9 +3785,9 @@ function renderBulkResults() {
   const el = document.getElementById('bulkResults');
   if (!tenantData.length) { el.innerHTML = ''; return; }
 
-  const rows = tenantData
-  .filter(d => d && typeof d === "object")
-  .map((d, i) => {
+  const safeData = (tenantData || []).filter(d => d && typeof d === "object");
+
+const rows = safeData.map((d, i) => {
     const conf    = (d && d.confidence) || {};
     const icon    = d._error ? '⚠️' : d.tenantName ? '✓' : '?';
     const name    = d.tenantName || '(unknown — click to edit)';
