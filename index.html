@@ -2857,63 +2857,41 @@ extractedTenants.forEach(raw => {
     _rawText: leaseText
   });
 });
-    function normalizeTenant(input) {
+    
+function normalizeTenant(input) {
   if (!input) return null;
 
-  const text = JSON.stringify(input);
+  const clean = (v) => (v ? String(v).trim() : "");
 
-  const clean = (v) => (v ? String(v).trim() : '');
-
-  // --- Tenant Name ---
-  let tenantName =
-    input.tenantName ||
-    (text.match(/Tenant:\s*(.+)/i)?.[1]) ||
-    '';
-
-  // --- Square Feet ---
-  let leasedSqft =
-    input.leasedSqft ||
-    (text.match(/([\d,]+)\s*(?:rentable\s*)?(?:square feet|sq\.?\s*ft)/i)?.[1]?.replace(/,/g, '')) ||
-    '';
-
-  // --- Start Date ---
-  let startDate =
-    input.startDate ||
-    (text.match(/commence(?:ment)?\s*(?:date)?\s*(?:on)?\s*([A-Za-z]+\s+\d{1,2},\s+\d{4})/i)?.[1]) ||
-    '';
-
-  // --- End Date ---
-  let endDate =
-    input.endDate ||
-    (text.match(/expire(?:s|)\s*(?:on)?\s*([A-Za-z]+\s+\d{1,2},\s+\d{4})/i)?.[1]) ||
-    '';
-
-  // --- Lease Type ---
-  let leaseType = '';
-  if (/triple\s*net/i.test(text) || /\bnnn\b/i.test(text)) {
-    leaseType = 'Triple Net (NNN)';
-  } else if (/modified\s*gross/i.test(text)) {
-    leaseType = 'Modified Gross';
-  } else if (/\bgross\b/i.test(text)) {
-    leaseType = 'Gross';
-  }
-
-  // --- Convert dates to ISO ---
   const toISO = (d) => {
     const date = new Date(d);
-    return isNaN(date) ? '' : date.toISOString().split('T')[0];
+    return isNaN(date) ? "" : date.toISOString().split("T")[0];
   };
 
-  return {
-    tenantName: clean(tenantName),
-    leasedSqft: clean(leasedSqft),
-    startDate: toISO(startDate),
-    endDate: toISO(endDate),
-    leaseType: clean(leaseType),
+  const result = {
+    tenantName: clean(input.tenantName) || "UNKNOWN TENANT",
+    leasedSqft: clean(input.leasedSqft),
+    startDate: toISO(input.startDate),
+    endDate: toISO(input.endDate),
+    leaseType: clean(input.leaseType),
+
+    capPercentage:
+      clean(input.capPercentage) ||
+      clean(input.camPercent) ||
+      clean(input.camCapPercent) ||
+      "",
+
+    baseYear: clean(input.baseYear),
+    excludedCategories: clean(input.excludedCategories),
+
+    confidence: input.confidence || {}
   };
+
+  console.log("FINAL TENANT OBJECT:", result);
+
+  return result;
 }
-    console.log("FINAL TENANT OBJECT:", tenantData[i]);
-    applyRawTextFallback([tenantData[i]]);
+         applyRawTextFallback(tenantData);
     console.log('NORMALIZED TENANTS:', tenantData);
     document.body.insertAdjacentHTML('beforeend',
       '<div style="position:fixed;bottom:10px;left:10px;background:#000;color:#0f0;padding:10px;z-index:9999;font-size:12px;max-width:600px;white-space:pre-wrap;overflow:auto;max-height:200px;">EXTRACTED TEXT (first 1000 chars):\n' + leaseText.slice(0, 1000).replace(/</g,'&lt;') + '</div>'
