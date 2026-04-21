@@ -2620,12 +2620,21 @@ async function callClaudeForLease(text) {
   const data = await res.json();
   console.log('LEASE API RESPONSE:', data);
 
+  let leaseType = data.lease_type || '';
+  if (leaseType.toUpperCase().includes('NNN')) {
+    leaseType = 'Triple Net (NNN)';
+  } else if (leaseType.toLowerCase().includes('gross')) {
+    leaseType = leaseType.toLowerCase().includes('modified')
+      ? 'Modified Gross'
+      : 'Gross';
+  }
+
   return {
     tenantName:  data.tenant_name       || '',
     leasedSqft:  parseFloat(data.leased_sqft) || 0,
     startDate:   data.lease_start_date  || '',
     endDate:     data.lease_end_date    || '',
-    leaseType:   data.lease_type        || '',
+    leaseType,
     cap:         data.cap ? parseFloat(data.cap) : null,
   };
 }
