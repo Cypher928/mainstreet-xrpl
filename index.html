@@ -2760,6 +2760,7 @@ if (Array.isArray(data?.content)) {
   return { tenants: [] };
 }
   console.log('[callClaudeForLease] raw response:', raw);
+return[{ tenantName: 'TEST TENANT", leasedSqft: "4500"}];
 
 // CLEAN Claude output (fixes extra text issue)
 const cleaned = raw
