@@ -2605,31 +2605,29 @@ async function extractPdfText(file) {
 }
 
 async function callClaudeForLease(text) {
-  let data;
-  try {
-    data = await claudeFetch({
-      model: MODEL,
-      max_tokens: 1024,
-      system: CLAUDE_LEASE_SYSTEM,
-      messages: [{ role: 'user', content: text }],
-    });
-  } catch (e) {
-    console.error('[callClaudeForLease] error:', e);
-    throw new Error('Lease extraction failed: ' + e.message);
+  const messages = [{ role: 'user', content: text }];
+
+  const res = await fetch('/api/claude', {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ messages, max_tokens: 1000, system: CLAUDE_LEASE_SYSTEM }),
+  });
+
+  if (!res.ok) {
+    throw new Error(`Lease extraction failed: HTTP ${res.status}`);
   }
 
-  console.log('RAW AI RESPONSE:', data);
+  const data = await res.json();
+  console.log('LEASE API RESPONSE:', data);
 
-  if (!data || typeof data !== 'object') {
-    console.error('[callClaudeForLease] Unexpected response:', data);
-    return { tenants: [] };
-  }
-
-  const parsed = data;
-
-  const enriched = enrichLeaseData({ ...parsed, _rawText: text }, text);
-  console.log('FINAL PARSED TENANT:', enriched);
-  return enriched;
+  return {
+    tenantName:  data.tenant_name       || '',
+    leasedSqft:  parseFloat(data.leased_sqft) || 0,
+    startDate:   data.lease_start_date  || '',
+    endDate:     data.lease_end_date    || '',
+    leaseType:   data.lease_type        || '',
+    cap:         data.cap ? parseFloat(data.cap) : null,
+  };
 }
 // ─── SVG icons ────────────────────────────────────────────────────────────────
 const CHECK_SVG = `<svg viewBox="0 0 12 12" width="10" height="10" fill="none" stroke="white" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round"><polyline points="2,6 5,9 10,3"/></svg>`;
@@ -2687,10 +2685,8 @@ async function handleLease(i, file) {
     console.log('EXISTING DATA:', existing);
 
     const leaseText = await extractPdfText(file);
-    const d         = await callClaudeForLease(leaseText);
-    const rawObj    = Array.isArray(d) ? d[0] : (d.tenants?.[0] || d);
-    console.log("FINAL TENANT USED IN UI:", rawObj);
-    const tenant    = normalizeTenant({ ...rawObj, _rawText: leaseText });
+    const tenant    = await callClaudeForLease(leaseText);
+    console.log("FINAL TENANT USED IN UI:", tenant);
     if (!tenant) throw new Error('Could not extract lease fields');
     tenantData[i]   = tenant;
     console.log("FINAL TENANT OBJECT:", tenantData[i]);
@@ -3302,10 +3298,8 @@ async function handleBulkLeases(fileList) {
 
     try {
       const leaseText = await extractPdfText(files[i]);
-      const d         = await callClaudeForLease(leaseText);
-      const rawObj    = Array.isArray(d) ? d[0] : (d.tenants?.[0] || d);
-      console.log("FINAL TENANT USED IN UI:", rawObj);
-      const tenant    = normalizeTenant({ ...rawObj, _rawText: leaseText });
+      const tenant    = await callClaudeForLease(leaseText);
+      console.log("FINAL TENANT USED IN UI:", tenant);
       if (!tenant) throw new Error('Could not extract lease fields');
       tenantData.push(tenant);
     } catch (err) {
