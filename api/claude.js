@@ -50,10 +50,16 @@ module.exports = async function handler(req, res) {
 
     // Extract text safely
     let text = '';
-    if (data?.content && Array.isArray(data.content)) {
-      text = data.content.map(c => c.text).join(' ');
-    }
-
+    if (Array.isArray(data?.content)) {
+  text = data.content.map(c => c?.text || '').join('');
+} else if (typeof data?.content === 'string') {
+  text = data.content;
+} else if (data?.content?.[0]?.text) {
+  text = data.content[0].text;
+} else {
+  console.error("Unexpected Claude response:", data);
+  throw new Error("Claude response format invalid");
+}
    // Clean Claude formatting
 let raw = text
   .replace(/```json/g, '')
@@ -76,7 +82,17 @@ try {
   json = JSON.parse(match[0]);
 }
 
-return res.status(200).json(json);
+let result;
+
+if (Array.isArray(json)) {
+  result = json;
+} else if (json?.tenants && Array.isArray(json.tenants)) {
+  result = json.tenants;
+} else {
+  result = [json];
+}
+
+return res.status(200).json(result);
 
   } catch (err) {
     console.error('[Server Error]', err);
