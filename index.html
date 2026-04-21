@@ -3703,7 +3703,7 @@ async function handleBulkLeases(fileList) {
   const total = files.length;
 
   // Clear for a fresh bulk parse run
-  tenantData.splice(0, tenantData.length);
+
 
   const prog    = document.getElementById('bulkProgress');
   const results = document.getElementById('bulkResults');
@@ -3711,6 +3711,7 @@ async function handleBulkLeases(fileList) {
   prog.style.display = 'block';
   document.getElementById('bulkLeaseInput').value = '';
 
+let tenantData = [];
   for (let i = 0; i < total; i++) {
     const pct = Math.round((i / total) * 100);
     prog.innerHTML = `
@@ -3728,16 +3729,18 @@ async function handleBulkLeases(fileList) {
         '<div style="position:fixed;bottom:10px;left:10px;background:#000;color:#0f0;padding:10px;z-index:9999;font-size:12px;max-width:600px;white-space:pre-wrap;overflow:auto;max-height:200px;">EXTRACTED TEXT (first 1000 chars):\n' + leaseText.slice(0, 1000).replace(/</g,'&lt;') + '</div>'
       );
       const d = await callClaudeForLease(leaseText);
-     let tenantData = [];
+     
+console.log('CLAUDE RETURN:', d);
       const extractedTenants = Array.isArray(d) ? d
-        : (Array.isArray(d.tenants) && d.tenants.length > 0 ? d.tenants : [d]);
-      console.log('RAW TENANTS:', extractedTenants);
-            console.log('NORMALIZED TENANTS:', tenantData);
+  : (Array.isArray(d.tenants) && d.tenants.length > 0 ? d.tenants : [d]);
+
+console.log('RAW TENANTS:', extractedTenants);
+
 extractedTenants.forEach(raw => {
   console.log('USING RAW TENANT:', raw);
   tenantData.push({ ...raw, _error: null, _rawText: leaseText });
-console.log('FINAL tenantData:', tenantData);
 });
+console.log('FINAL tenantData:', tenantData);
 
     } catch (err) {
       console.error('[handleBulkLeases] extraction error for', files[i].name, err);
@@ -3758,9 +3761,10 @@ console.log('FINAL tenantData:', tenantData);
       </div>
     </div>`;
 
-  if (!tenantData.length) {
-    console.error('No tenants extracted');
-  }
+ if (!tenantData.length) {
+  console.error('No tenants extracted');
+  return;
+}
 
   // Merge: new uploads replace same-name existing tenants; rest are kept.
   const newTenants = tenantData.filter(t => t !== null);
