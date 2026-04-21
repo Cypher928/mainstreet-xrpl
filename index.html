@@ -3275,6 +3275,7 @@ function mergeInvoicesDedup(existing, incoming) {
 // ─── Bulk Lease Upload ────────────────────────────────────────────────────────
 
 async function handleBulkLeases(fileList) {
+  console.log('[Mainstreet] handleBulkLeases STARTED');
   if (!fileList || fileList.length === 0) return;
 
   // Bind property and snapshot existing data BEFORE clearing in-memory state.
