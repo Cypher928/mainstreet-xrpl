@@ -2869,9 +2869,30 @@ async function handleLease(i, file) {
 
     const leaseText = await extractPdfText(file);
     console.log('[DEBUG] leaseText length:', leaseText.length, '| preview:', leaseText.slice(0, 200));
-    const d = await callClaudeForLease(leaseText);
-    const tenantData = Array.isArray (d)
-    
+
+const d = await callClaudeForLease(leaseText);       
+ let tenantData = [];
+
+const extractedTenants = Array.isArray(d)
+  ? d
+  : (Array.isArray(d?.tenants) ? d.tenants : (d ? [d] : []));
+
+console.log("SAFE TENANTS:", extractedTenants);
+extractedTenants.forEach(raw => {
+  const normalized = normalizeTenant(raw);
+
+  if (!normalized) {
+    return; // skips THIS item only (inside forEach callback)
+  }
+
+  console.log("NORMALIZED TENANT:", normalized);
+
+  tenantData.push({
+    ...normalized,
+    _error: null,
+    _rawText: leaseText
+  });
+});
     function normalizeTenant(input) {
   if (!input) return null;
 
