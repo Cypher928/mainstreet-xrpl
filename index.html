@@ -2766,14 +2766,13 @@ if (data?.content) {
 }
 
 console.log("[callClaudeForLease] raw response:", raw);
-const nameMatch = raw.match(/Tenant[:\s]+([A-Za-z0-9 &]+)/i);
-const sqftMatch = raw.match(/([\d,]+)\s*(square feet|sqft|sf)/i);
-
-return [{
-  tenantName: nameMatch ? nameMatch[1].trim() : "UNKNOWN TENANT",
-  leasedSqft: sqftMatch ? sqftMatch[1].replace(/,/g, "") : "0"
-}];
-
+try {
+  const parsed = JSON.parse(raw);
+  return Array.isArray(parsed) ? parsed : [parsed];
+} catch (e) {
+  console.error("Failed to parse Claude JSON:", raw);
+  return [];
+}
 } 
 
   // ─── SVG icons ────────────────────────────────────────────────────────────────
