@@ -3737,8 +3737,26 @@ console.log('CLAUDE RETURN:', d);
 console.log('RAW TENANTS:', extractedTenants);
 
 extractedTenants.forEach(raw => {
+  if (!raw || typeof raw !== 'object') {
+    console.warn('SKIPPING INVALID TENANT:', raw);
+    return;
+  }
+
   console.log('USING RAW TENANT:', raw);
-  tenantData.push({ ...raw, _error: null, _rawText: leaseText });
+
+  tenantData.push({
+    tenantName: raw.tenantName || 'UNKNOWN TENANT',
+    leasedSqft: Number(raw.leasedSqft) || '',
+    startDate: raw.startDate || '',
+    endDate: raw.endDate || '',
+    leaseType: raw.leaseType || '',
+    capPercentage: raw.capPercentage || raw.camPercent || raw.camCapPercent || '',
+    baseYear: raw.baseYear || '',
+    excludedCategories: raw.excludedCategories || '',
+    confidence: raw.confidence || {},
+    _error: null,
+    _rawText: leaseText
+  });
 });
 console.log('FINAL tenantData:', tenantData);
 
