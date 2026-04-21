@@ -2747,7 +2747,18 @@ try {
 }
 
   // Support both Anthropic messages format and legacy completion format
-  const raw = data.content.map(c => c.text) .join( ' ' ) ;
+ et raw = "";
+
+if (Array.isArray(data?.content)) {
+  raw = data.content.map(c => c?.text || "").join("");
+} else if (typeof data?.content === "string") {
+  raw = data.content;
+} else if (data?.content?.[0]?.text) {
+  raw = data.content[0].text;
+} else {
+  console.error("Unexpected Claude response:", data);
+  return { tenants: [] };
+}
   console.log('[callClaudeForLease] raw response:', raw);
 
 // CLEAN Claude output (fixes extra text issue)
