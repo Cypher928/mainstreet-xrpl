@@ -3732,12 +3732,13 @@ async function handleBulkLeases(fileList) {
       const extractedTenants = Array.isArray(d) ? d
         : (Array.isArray(d.tenants) && d.tenants.length > 0 ? d.tenants : [d]);
       console.log('RAW TENANTS:', extractedTenants);
-      extractedTenants.forEach(raw => {
-        const normalized = normalizeTenant(raw);
-        console.log('NORMALIZED TENANT:', normalized);
-        tenantData.push({ ...normalized, _error: null, _rawText: leaseText });
-      });
-      console.log('NORMALIZED TENANTS:', tenantData);
+            console.log('NORMALIZED TENANTS:', tenantData);
+extractedTenants.forEach(raw => {
+  console.log('USING RAW TENANT:', raw);
+  tenantData.push({ ...raw, _error: null, _rawText: leaseText });
+console.log('FINAL tenantData:', tenantData);
+});
+
     } catch (err) {
       console.error('[handleBulkLeases] extraction error for', files[i].name, err);
       tenantData.push({
