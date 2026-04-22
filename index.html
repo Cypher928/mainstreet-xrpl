@@ -7301,7 +7301,11 @@ async function init() {
     renderPortfolio(_props);
 if (_props.length) {
   const property =  _props[0];
-tenantData.splice(0, tenantData.length, ...(property.tenants || []));
+tenantData.splice(
+  0,
+  tenantData.length,
+  ...(property.data?.tenants || property.tenants || [])
+);
   renderBulkResults();
 }
   } catch (e) {
