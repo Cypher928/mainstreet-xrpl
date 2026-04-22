@@ -2792,31 +2792,32 @@ function renderTenantSlots() {
     const tenant = tenantData[i];
 
 if (tenant) {
-  slot.innerHTML = `
+ slot.innerHTML = `
     <div class="slot-head">Tenant ${i + 1}</div>
-    <div class="slot-body">
+    <div class="slot-body" id="tb-${i}">
 
       <label>Name</label>
-      <input value="${tenant.tenantName || ''}"
+      <input value="${tenant.tenantName || ""}"
         onchange="tenantData[${i}].tenantName = this.value" />
 
       <label>Sq Ft</label>
-      <input value="${tenant.leasedSqft || ''}"
+      <input value="${tenant.leasedSqft || ""}"
         onchange="tenantData[${i}].leasedSqft = this.value" />
 
       <label>CAM %</label>
-      <input value="${tenant.camPercent || ''}"
+      <input value="${tenant.camPercent || ""}"
         onchange="tenantData[${i}].camPercent = this.value" />
 
       <label>Lease Type</label>
       <select onchange="tenantData[${i}].leaseType = this.value">
-        <option ${tenant.leaseType === 'NNN' ? 'selected' : ''}>NNN</option>
-        <option ${tenant.leaseType === 'Gross' ? 'selected' : ''}>Gross</option>
-        <option ${tenant.leaseType === 'Modified' ? 'selected' : ''}>Modified</option>
+        <option value="NNN" ${tenant.leaseType === 'NNN' ? 'selected' : ''}>NNN</option>
+        <option value="Gross" ${tenant.leaseType === 'Gross' ? 'selected' : ''}>Gross</option>
+        <option value="Modified" ${tenant.leaseType === 'Modified' ? 'selected' : ''}>Modified</option>
       </select>
 
     </div>
   `;
+}
 } else {
   renderTenantUploadZone(i);
 }
