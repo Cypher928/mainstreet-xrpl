@@ -2788,10 +2788,38 @@ function renderTenantSlots() {
     const slot = document.createElement('div');
     slot.className = 'tenant-slot';
     slot.id = `ts-${i}`;
-    slot.innerHTML = `<div class="slot-head">Tenant ${i + 1}</div>
-                      <div class="slot-body" id="tb-${i}"></div>`;
-    container.appendChild(slot);
-    renderTenantUploadZone(i);
+        container.appendChild(slot);
+    const tenant = tenantData[i];
+
+if (tenant) {
+  slot.innerHTML = `
+    <div class="slot-head">Tenant ${i + 1}</div>
+    <div class="slot-body">
+
+      <label>Name</label>
+      <input value="${tenant.tenantName || ''}"
+        onchange="tenantData[${i}].tenantName = this.value" />
+
+      <label>Sq Ft</label>
+      <input value="${tenant.leasedSqft || ''}"
+        onchange="tenantData[${i}].leasedSqft = this.value" />
+
+      <label>CAM %</label>
+      <input value="${tenant.camPercent || ''}"
+        onchange="tenantData[${i}].camPercent = this.value" />
+
+      <label>Lease Type</label>
+      <select onchange="tenantData[${i}].leaseType = this.value">
+        <option ${tenant.leaseType === 'NNN' ? 'selected' : ''}>NNN</option>
+        <option ${tenant.leaseType === 'Gross' ? 'selected' : ''}>Gross</option>
+        <option ${tenant.leaseType === 'Modified' ? 'selected' : ''}>Modified</option>
+      </select>
+
+    </div>
+  `;
+} else {
+  renderTenantUploadZone(i);
+}
   }
 }
 
@@ -2901,12 +2929,9 @@ function normalizeTenant(input) {
 
     // tenantData is already restored from _props; slot i was just updated in-place.
     // Merge so other slots' existing data isn't lost on save.
-    property.tenants = mergeTenantsDedup(
-  existing.tenants,
-  tenantData.filter(t => t && typeof t === "object")
-);
-    console.log('CURRENT PROPERTY ID:', property.id);
+        console.log('CURRENT PROPERTY ID:', property.id);
     console.log('SAVING DATA:', property);
+property.tenants = tenantData.filter(t => t);
     await saveProperty(property);
   } catch (err) {
     renderTenantError(i, err.message);
@@ -6721,7 +6746,7 @@ function renderPortfolio(props) {
     </div>
 
     <div class="ptf-stats-row">
-      <div class="ptf-stat"><strong>${p.tenantCount || 0}</strong> Tenants</div>
+      <div class="ptf-stat"><strong>${p.tenantCount ?? p.tenants?.length ?? 0}</strong>Tenants</div>
     </div>
   </div>
 `).join('');
@@ -7078,7 +7103,17 @@ async function loadPropertyData(id) {
     const { data, error } = await db.from('properties').select('*').eq('id', id).single();
     if (error) throw error;
     if (!data) return _lsLoad(id);
-    return { id: data.id, name: data.name, totalSqft: data.sqft || 0, ...(data.data || {}) };
+  const prop = {
+  id: data.id,
+  name: data.name,
+  totalSqft: data.sqft || 0,
+  ...(data.data || {})
+};
+// 🔥 ensure tenant count is always correct
+prop.tenantCount = prop.tenantCount ?? prop.tenants?.length ?? 0;
+
+return prop;
+
   } catch (e) {
     console.warn('[Mainstreet] Supabase unavailable, loading property from localStorage:', e.message);
     return _lsLoad(id);
