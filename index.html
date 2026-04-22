@@ -2684,7 +2684,7 @@ async function callClaudeForLease(text) {
     (raw.squareFeet   !== '' && raw.squareFeet    != null) ? raw.squareFeet   :
     null;
   const _sqft = _sqftRaw !== null
-    ? (Number(String(_sqftRaw).replace(/[^0-9.]/g, '')) || null)
+    ? (v => isNaN(v) ? null : v)(Number(String(_sqftRaw).replace(/[^0-9.]/g, '')))
     : null;
 
   const _or = (a, b) => (a !== null && a !== undefined && a !== '') ? a : (b !== null && b !== undefined && b !== '') ? b : null;
