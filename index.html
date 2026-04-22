@@ -2792,7 +2792,7 @@ function renderTenantSlots() {
     const tenant = tenantData[i];
 
 if (tenant) {
-slot.innerHTML = `
+  slot.innerHTML = `
     <div class="slot-head">Tenant ${i + 1}</div>
     <div class="slot-body" id="tb-${i}">
 
@@ -2816,15 +2816,17 @@ slot.innerHTML = `
       </select>
 
     </div>
-`;
-} else {
-  renderTenantUploadZone(i);
+  `;
+}
+else {
+  // renderTenantUploadZone(i);
 }
 }
 }
 
 function renderTenantUploadZone(i) {
-  const body = document.getElementById(`tb-${i}`);
+const body = document.getElementById(`tb-${i}`) || document.getElementById(`ts-${i}`);
+if (!body) return;
   const zone = document.createElement('div');
   zone.className = 'upload-zone';
 
