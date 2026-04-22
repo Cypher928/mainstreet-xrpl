@@ -2696,7 +2696,7 @@ async function callClaudeForLease(text) {
   const _tenantName  = _or(raw.tenantName,    raw.tenant_name);
   const _startDate   = _or(raw.startDate,      raw.lease_start_date);
   const _endDate     = _or(raw.endDate,        raw.lease_end_date);
-  const _leaseType   = _or(raw.leaseType,      raw.lease_type);
+  const _leaseType   = normalizeLeaseType(raw.leaseType ?? raw.lease_type ?? raw.type);
   const _cap         = _or(_or(_or(raw.capPercentage, raw.cap), raw.camPercent), raw.cam_cap_percent);
 
   return {
