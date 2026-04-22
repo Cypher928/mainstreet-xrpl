@@ -2792,7 +2792,7 @@ function renderTenantSlots() {
     const tenant = tenantData[i];
 
 if (tenant) {
- slot.innerHTML = `
+slot.innerHTML = `
     <div class="slot-head">Tenant ${i + 1}</div>
     <div class="slot-body" id="tb-${i}">
 
@@ -2816,7 +2816,7 @@ if (tenant) {
       </select>
 
     </div>
-
+`;
 } else {
   renderTenantUploadZone(i);
 }
