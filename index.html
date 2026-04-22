@@ -2819,32 +2819,40 @@ if (tenant) {
   `;
 }
 else {
-  // renderTenantUploadZone(i);
+   renderTenantUploadZone(i);
 }
 }
 }
 
 function renderTenantUploadZone(i) {
-const body = document.getElementById(`tb-${i}`) || document.getElementById(`ts-${i}`);
-if (!body) return;
+  const body = document.getElementById(`tb-${i}`);
+
+  // If tenant UI not ready yet, do nothing
+  if (!body) return;
+
   const zone = document.createElement('div');
   zone.className = 'upload-zone';
 
-  const inp = document.createElement('input');
-  inp.type   = 'file';
-  inp.accept = '.pdf,application/pdf';
-  inp.addEventListener('change', e => {
-    if (e.target.files[0]) handleLease(i, e.target.files[0]);
+  const input = document.createElement('input');
+  input.type = 'file';
+  input.accept = '.pdf,application/pdf';
+
+  input.addEventListener('change', (e) => {
+    const file = e.target.files[0];
+    if (file) handleLease(i, file);
   });
 
-  zone.innerHTML = `<div class="uz-icon">📄</div>
-                    <div class="uz-label">Upload Lease</div>
-                    <div class="uz-sub">PDF only</div>`;
-  zone.appendChild(inp);
-  body.innerHTML = '';
-  body.appendChild(zone);
-}
+  zone.innerHTML = `
+    <div class="uz-icon">📄</div>
+    <div class="uz-label">Upload Lease</div>
+    <div class="uz-sub">PDF only</div>
+  `;
 
+  zone.appendChild(input);
+
+  // SAFE replace
+  body.replaceChildren(zone);
+}
 async function handleLease(i, file) {
   const body = document.getElementById(`tb-${i}`);
   body.innerHTML = `<div class="spinner-wrap">
