@@ -2675,17 +2675,32 @@ async function callClaudeForLease(text) {
   };
 
   const raw = data;
+  const _sqft =
+    raw.leasedSqft ??
+    raw.leased_sqft ??
+    raw.sqft ??
+    raw.squareFeet ??
+    raw.rentableSqft ??
+    raw.rentable_area ??
+    raw.area ??
+    (raw.rawText
+      ? Number(
+          (raw.rawText.match(/(\d{1,3}(,\d{3})+|\d+)\s*(square feet|sqft)/i)?.[1] || '')
+            .replace(/,/g, '')
+        )
+      : null) ||
+    null;
   return {
     // snake_case (used by renderTenantFields)
     tenant_name:      raw.tenant_name ?? raw.tenantName ?? null,
-    leased_sqft:      raw.leasedSqft ?? raw.leased_sqft ?? (raw.leasedSqft || raw.leased_sqft ? Number(String(raw.leasedSqft || raw.leased_sqft).replace(/[^0-9]/g, '')) : null),
+    leased_sqft:      _sqft,
     lease_start_date: raw.startDate ?? raw.lease_start_date ?? null,
     lease_end_date:   raw.endDate ?? raw.lease_end_date ?? null,
     lease_type:       raw.leaseType ?? raw.lease_type ?? null,
     cap:              raw.capPercentage ?? raw.cap ?? raw.camPercent ?? (raw.cap || raw.camPercent ? Number(String(raw.cap || raw.camPercent).replace(/[^0-9.]/g, '')) * (String(raw.cap || raw.camPercent).includes('.') ? 100 : 1) : null),
     // camelCase aliases
     tenantName:       raw.tenant_name ?? raw.tenantName ?? null,
-    leasedSqft:       raw.leasedSqft ?? raw.leased_sqft ?? (raw.leasedSqft || raw.leased_sqft ? Number(String(raw.leasedSqft || raw.leased_sqft).replace(/[^0-9]/g, '')) : null),
+    leasedSqft:       _sqft,
     startDate:        raw.startDate ?? raw.lease_start_date ?? null,
     endDate:          raw.endDate ?? raw.lease_end_date ?? null,
     leaseType:        raw.leaseType ?? raw.lease_type ?? null,
