@@ -2691,20 +2691,20 @@ async function callClaudeForLease(text) {
     ? (v => isNaN(v) ? null : v)(Number(String(_sqftRaw).replace(/[^0-9.]/g, '')))
     : null;
 
-  const text = raw.rawText || '';
+  const rawTextValue = raw.rawText || '';
 
   const fallbackSqft =
     (_sqft != null)
       ? _sqft
-      : (text.match(/([\d,]+)\s*(?:rentable\s*)?(?:square feet|sq ?ft)/i)?.[1]?.replace(/,/g, '') || null);
+      : (rawTextValue.match(/([\d,]+)\s*(?:rentable\s*)?(?:square feet|sq ?ft)/i)?.[1]?.replace(/,/g, '') || null);
 
   const fallbackStart =
     raw.startDate ||
-    (text.match(/commence.*?(?:on\s)?([A-Za-z]+\s\d{1,2},\s\d{4})/i)?.[1] || null);
+    (rawTextValue.match(/commence.*?(?:on\s)?([A-Za-z]+\s\d{1,2},\s\d{4})/i)?.[1] || null);
 
   const fallbackEnd =
     raw.endDate ||
-    (text.match(/expire.*?(?:on\s)?([A-Za-z]+\s\d{1,2},\s\d{4})/i)?.[1] || null);
+    (rawTextValue.match(/expire.*?(?:on\s)?([A-Za-z]+\s\d{1,2},\s\d{4})/i)?.[1] || null);
 
   return {
     tenantName:         raw.tenantName       || null,
@@ -2724,7 +2724,7 @@ async function callClaudeForLease(text) {
     baseYear:           raw.baseYear         ?? null,
     confidence:         raw.confidence       || {},
     _error:             null,
-    rawText:            text,
+    rawText:            rawTextValue,
   };
 }
 // ─── SVG icons ────────────────────────────────────────────────────────────────
