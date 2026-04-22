@@ -3423,9 +3423,12 @@ function renderBulkResults() {
     console.log("FINAL TENANT USED IN UI:", d);
     const icon = d._error ? '⚠️' : d.tenantName ? '✓' : '?';
     const name = d.tenantName || '(unknown — click to edit)';
-    const meta = [d.leasedSqft ? d.leasedSqft + ' sqft' : null,
-                  d.leaseType  ? d.leaseType              : null]
-                  .filter(v => v !== null && v !== undefined).join(' · ') || '—';
+    const meta = [
+      (d.leasedSqft !== null && d.leasedSqft !== undefined) ? `${d.leasedSqft} sqft` : null,
+      (d.startDate  !== null && d.startDate  !== undefined && d.startDate  !== '') ? d.startDate  : null,
+      (d.endDate    !== null && d.endDate    !== undefined && d.endDate    !== '') ? d.endDate    : null,
+      d.leaseType ?? null,
+    ].filter(v => v !== null && v !== undefined).join(' · ') || '—';
 
     return `
       <div class="bulk-tenant-row${d._error ? ' has-error' : ''}" id="btr-${i}">
@@ -3505,9 +3508,12 @@ function refreshBulkSummary(i) {
   const metaEl = document.getElementById(`bmeta-${i}`);
   if (nameEl) nameEl.textContent = d.tenantName || '(unknown — click to edit)';
   if (metaEl) {
-    metaEl.textContent = [d.leasedSqft ? d.leasedSqft + ' sqft' : null,
-                          d.leaseType  ? d.leaseType              : null]
-                          .filter(v => v !== null && v !== undefined).join(' · ') || '—';
+    metaEl.textContent = [
+      (d.leasedSqft !== null && d.leasedSqft !== undefined) ? `${d.leasedSqft} sqft` : null,
+      (d.startDate  !== null && d.startDate  !== undefined && d.startDate  !== '') ? d.startDate  : null,
+      (d.endDate    !== null && d.endDate    !== undefined && d.endDate    !== '') ? d.endDate    : null,
+      d.leaseType ?? null,
+    ].filter(v => v !== null && v !== undefined).join(' · ') || '—';
   }
 }
 
