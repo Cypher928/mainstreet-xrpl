@@ -3382,12 +3382,26 @@ async function handleBulkLeases(fileList) {
       if (!tenant) throw new Error('Could not extract lease fields');
       tenantData.push(tenant);
     } catch (err) {
-      if (!tenantData.length) {
+      console.error('[handleBulkLeases] extraction error for', files[i].name, err);
+
+      const hasValidTenant = tenantData.some(t =>
+        t &&
+        (t.leasedSqft !== null && t.leasedSqft !== undefined) &&
+        (t.startDate || t.endDate)
+      );
+
+      if (!hasValidTenant) {
         tenantData.push({
-          tenantName:         files[i].name.replace(/\.pdf$/i, ''),
-          leasedSqft: '', capPercentage: '', excludedCategories: '', baseYear: '',
-          startDate: '', endDate: '', leaseType: null,
-          confidence: {}, _error: err.message,
+          tenantName:        files[i].name.replace(/\.pdf$/i, ''),
+          leasedSqft:        null,
+          capPercentage:     null,
+          excludedCategories: null,
+          baseYear:          null,
+          startDate:         null,
+          endDate:           null,
+          leaseType:         null,
+          confidence:        {},
+          _error:            err.message,
         });
       }
     }
