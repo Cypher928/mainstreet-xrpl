@@ -6712,26 +6712,20 @@ function renderPortfolio(props) {
   const statusLabel = { reconciled: 'Reconciled', 'in-progress': 'In Progress', disputes: 'Has Open Disputes' };
 
   document.getElementById('propertyCardsGrid').innerHTML = props.map(p => `
-    <div class="ptf-prop-card status-${p.status}${activePropId === p.id ? ' active' : ''}" onclick="selectProperty('${p.id}')">
-      <div class="ptf-prop-name">${esc(p.name)}</div>
-      <div class="ptf-status-row">
-        <span class="ptf-status-dot ${p.status}"></span>
-        ${statusLabel[p.status] || p.status}
-      </div>
-      <div class="ptf-stats-row">
-        <div class="ptf-stat"><strong>${p.tenantCount}</strong>Tenants</div>
-        <div class="ptf-stat"><strong>${p.invoiceCount}</strong>Invoices</div>
-        ${p.openDisputes > 0
-          ? `<div class="ptf-stat"><strong style="color:#ef4444">${p.openDisputes}</strong>Disputes</div>`
-          : ''}
-      </div>
-      <div class="ptf-cam-lbl">CAM This Period</div>
-      <div class="ptf-cam-val">${p.totalCAM > 0 ? '$' + p.totalCAM.toLocaleString('en-US') : '—'}</div>
-      ${p.status === 'reconciled'
-        ? `<div class="ptf-onchain-badge">&#x1F517; On-Chain Record</div>`
-        : ''}
-    </div>`).join('');
+  <div class="ptf-prop-card status-${p.status} ${activePropId === p.id ? 'active' : ''}" onclick="selectProperty('${p.id}')">
+    <div class="ptf-prop-name">${esc(p.name)}</div>
 
+    <div class="ptf-status-row">
+      <span class="ptf-status-dot ${p.status}"></span>
+      ${statusLabel[p.status] || p.status}
+    </div>
+
+    <div class="ptf-stats-row">
+      <div class="ptf-stat"><strong>${p.tenantCount || 0}</strong> Tenants</div>
+    </div>
+  </div>
+`).join('');
+   
   document.getElementById('portfolioDashboard').style.display  = 'block';
   document.getElementById('propertyBreadcrumb').style.display  = 'none';
   document.getElementById('mainWorkflow').style.display        = 'none';
