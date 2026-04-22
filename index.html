@@ -2691,33 +2691,40 @@ async function callClaudeForLease(text) {
     ? (v => isNaN(v) ? null : v)(Number(String(_sqftRaw).replace(/[^0-9.]/g, '')))
     : null;
 
-  const _or = (a, b) => (a !== null && a !== undefined && a !== '') ? a : (b !== null && b !== undefined && b !== '') ? b : null;
+  const text = raw.rawText || '';
 
-  const _tenantName  = _or(raw.tenantName,    raw.tenant_name);
-  const _startDate   = _or(raw.startDate,      raw.lease_start_date);
-  const _endDate     = _or(raw.endDate,        raw.lease_end_date);
-  const _leaseType   = normalizeLeaseType(raw.leaseType ?? raw.lease_type ?? raw.type);
-  const _cap         = _or(_or(_or(raw.capPercentage, raw.cap), raw.camPercent), raw.cam_cap_percent);
+  const fallbackSqft =
+    (_sqft != null)
+      ? _sqft
+      : (text.match(/([\d,]+)\s*(?:rentable\s*)?(?:square feet|sq ?ft)/i)?.[1]?.replace(/,/g, '') || null);
+
+  const fallbackStart =
+    raw.startDate ||
+    (text.match(/commence.*?(?:on\s)?([A-Za-z]+\s\d{1,2},\s\d{4})/i)?.[1] || null);
+
+  const fallbackEnd =
+    raw.endDate ||
+    (text.match(/expire.*?(?:on\s)?([A-Za-z]+\s\d{1,2},\s\d{4})/i)?.[1] || null);
 
   return {
-    // snake_case (used by renderTenantFields)
-    tenant_name:       _tenantName,
-    leased_sqft:       _sqft,
-    lease_start_date:  _startDate,
-    lease_end_date:    _endDate,
-    lease_type:        _leaseType,
-    cap:               _cap,
-    // camelCase aliases
-    tenantName:        _tenantName,
-    leasedSqft:        _sqft,
-    startDate:         _startDate,
-    endDate:           _endDate,
-    leaseType:         _leaseType,
-    capPercentage:     _cap,
+    tenantName:         raw.tenantName       || null,
+    leasedSqft:         fallbackSqft ? Number(fallbackSqft) : null,
+    startDate:          fallbackStart        || null,
+    endDate:            fallbackEnd          || null,
+    leaseType:          normalizeLeaseType(raw.leaseType),
+    capPercentage:      raw.capPercentage    ?? null,
+    // snake_case aliases
+    tenant_name:        raw.tenantName       || null,
+    leased_sqft:        fallbackSqft ? Number(fallbackSqft) : null,
+    lease_start_date:   fallbackStart        || null,
+    lease_end_date:     fallbackEnd          || null,
+    lease_type:         normalizeLeaseType(raw.leaseType),
+    cap:                raw.capPercentage    ?? null,
     excludedCategories: raw.excludedCategories ?? null,
-    baseYear:           raw.baseYear ?? null,
-    confidence:         raw.confidence ?? {},
+    baseYear:           raw.baseYear         ?? null,
+    confidence:         raw.confidence       || {},
     _error:             null,
+    rawText:            text,
   };
 }
 // ─── SVG icons ────────────────────────────────────────────────────────────────
