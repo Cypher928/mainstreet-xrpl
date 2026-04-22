@@ -2165,21 +2165,26 @@ If the charge looks normal, say "No issues" and do not invent problems.
 If the category appears incorrect based on the vendor or description, gently interpret the charge correctly in your explanation without criticizing the classification.`;
 
 const CLAUDE_LEASE_SYSTEM = `You are a strict JSON extraction engine.
-Return ONLY valid JSON.
-No explanations. No text. No markdown.
-Format:
+Return ONLY valid JSON. No text. No explanation. No markdown.
+
+Return exactly this structure:
 {
-  "tenant_name": "",
-  "leased_sqft": "",
-  "lease_start_date": "",
-  "lease_end_date": "",
-  "lease_type": "",
-  "cap": ""
+  "tenantName": string,
+  "leasedSqft": number,
+  "startDate": "YYYY-MM-DD",
+  "endDate": "YYYY-MM-DD",
+  "leaseType": string,
+  "capPercentage": number
 }
+
 Rules:
-* Extract exact values
-* Dates must be YYYY-MM-DD
-* If unknown, use ""`;
+- tenantName: full legal name of the tenant/lessee
+- leasedSqft: integer, no commas, no units (e.g. 4500)
+- startDate: lease commencement date in YYYY-MM-DD format (e.g. "March 1, 2024" → "2024-03-01")
+- endDate: lease expiration date in YYYY-MM-DD format
+- leaseType: normalize to one of: "NNN", "Gross", "Modified Gross" ("Triple Net", "Triple-Net", "NNN" → "NNN")
+- capPercentage: CAM increase cap as a plain number (e.g. "35%" → 35, "0.35" → 35)
+- Use null for any field that cannot be determined`;
 
 const CLAUDE_LEASE_PROMPT = `Extract the following fields from the lease text below.
 
@@ -2654,14 +2659,15 @@ async function callClaudeForLease(text) {
     return isNaN(d) ? s : d.toISOString().split('T')[0];
   };
 
-  // Normalize lease type to dropdown values
-  let leaseType = data.lease_type || null;
-  if (leaseType) {
-    if (leaseType.toUpperCase().includes('NNN') || /triple\s*net/i.test(leaseType)) {
+  // Normalize lease type to UI dropdown values
+  const _rawLeaseType = data.leaseType || data.lease_type || null;
+  let leaseType = null;
+  if (_rawLeaseType) {
+    if (/nnn|triple.?net/i.test(_rawLeaseType)) {
       leaseType = 'Triple Net (NNN)';
-    } else if (/modified\s*gross/i.test(leaseType)) {
+    } else if (/modified.?gross/i.test(_rawLeaseType)) {
       leaseType = 'Modified Gross';
-    } else if (/gross/i.test(leaseType)) {
+    } else if (/gross/i.test(_rawLeaseType)) {
       leaseType = 'Gross';
     }
   }
