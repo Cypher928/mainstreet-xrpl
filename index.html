@@ -3435,13 +3435,17 @@ function renderBulkResults() {
 
   const rows = tenantData.map((d, i) => {
     console.log("FINAL TENANT USED IN UI:", d);
-    const icon = d._error ? '⚠️' : d.tenantName ? '✓' : '?';
-    const name = d.tenantName || '(unknown — click to edit)';
+    const sqft      = d.leasedSqft   ?? d.leased_sqft   ?? null;
+    const start     = d.startDate    ?? d.start_date     ?? null;
+    const end       = d.endDate      ?? d.end_date       ?? null;
+    const leaseType = d.leaseType    ?? d.lease_type     ?? null;
+    const icon = d._error ? '⚠️' : (d.tenantName ?? d.tenant_name) ? '✓' : '?';
+    const name = d.tenantName ?? d.tenant_name ?? '(unknown — click to edit)';
     const meta = [
-      (d.leasedSqft !== null && d.leasedSqft !== undefined) ? `${d.leasedSqft} sqft` : null,
-      (d.startDate  !== null && d.startDate  !== undefined && d.startDate  !== '') ? d.startDate  : null,
-      (d.endDate    !== null && d.endDate    !== undefined && d.endDate    !== '') ? d.endDate    : null,
-      d.leaseType ?? null,
+      sqft  !== null ? `${sqft} sqft` : null,
+      start !== null && start !== '' ? start : null,
+      end   !== null && end   !== '' ? end   : null,
+      leaseType ?? null,
     ].filter(v => v !== null && v !== undefined).join(' · ') || '—';
 
     return `
@@ -3520,13 +3524,17 @@ function refreshBulkSummary(i) {
   if (!d) return;
   const nameEl = document.getElementById(`bname-${i}`);
   const metaEl = document.getElementById(`bmeta-${i}`);
-  if (nameEl) nameEl.textContent = d.tenantName || '(unknown — click to edit)';
+  const _sqft  = d.leasedSqft ?? d.leased_sqft ?? null;
+  const _start = d.startDate  ?? d.start_date  ?? null;
+  const _end   = d.endDate    ?? d.end_date    ?? null;
+  const _type  = d.leaseType  ?? d.lease_type  ?? null;
+  if (nameEl) nameEl.textContent = d.tenantName ?? d.tenant_name ?? '(unknown — click to edit)';
   if (metaEl) {
     metaEl.textContent = [
-      (d.leasedSqft !== null && d.leasedSqft !== undefined) ? `${d.leasedSqft} sqft` : null,
-      (d.startDate  !== null && d.startDate  !== undefined && d.startDate  !== '') ? d.startDate  : null,
-      (d.endDate    !== null && d.endDate    !== undefined && d.endDate    !== '') ? d.endDate    : null,
-      d.leaseType ?? null,
+      _sqft  !== null                        ? `${_sqft} sqft` : null,
+      _start !== null && _start !== ''       ? _start          : null,
+      _end   !== null && _end   !== ''       ? _end            : null,
+      _type ?? null,
     ].filter(v => v !== null && v !== undefined).join(' · ') || '—';
   }
 }
