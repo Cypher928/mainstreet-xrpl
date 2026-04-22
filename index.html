@@ -6998,12 +6998,13 @@ async function saveProperty(property) {
     const stripped = _stripBlobs(property);
     const { id, name, totalSqft, ...rest } = stripped;
     const payload = {
-      name: name || 'New Property',
-      sqft: totalSqft || 0,
-      data: rest,
-  
-    };
-
+  name: name || 'New Property',
+  sqft: totalSqft || 0,
+  data: {
+    ...rest,
+    tenants: property.tenants || []
+  }
+};
     if (id) {
       // Existing record — update by id
       const { error } = await db.from('properties').upsert({ id, ...payload });
