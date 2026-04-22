@@ -7299,7 +7299,7 @@ async function init() {
     portfolio.splice(0, portfolio.length, ..._props);
     renderPortfolio(_props);
 if (_props.length) {
-  const property = _props.find(p => p.id === currentPropertyId) || _props[0];
+  const property =  _props[0];
 tenantData.splice(0, tenantData.length, ...(property.tenants || []));
   renderBulkResults();
 }
