@@ -2642,22 +2642,45 @@ async function callClaudeForLease(text) {
 
   const data = parsed[0];
 
-  let leaseType = data.lease_type || '';
-  if (leaseType.toUpperCase().includes('NNN')) {
-    leaseType = 'Triple Net (NNN)';
-  } else if (leaseType.toLowerCase().includes('gross')) {
-    leaseType = leaseType.toLowerCase().includes('modified')
-      ? 'Modified Gross'
-      : 'Gross';
+  // Normalize leased_sqft: "4,500 sqft" → 4500, null if missing
+  const leased_sqft = Number(String(data.leased_sqft || '').replace(/[^0-9]/g, '')) || null;
+
+  // Normalize dates to YYYY-MM-DD; keep original string if unparseable; null if absent
+  const toISO = val => {
+    if (!val) return null;
+    const s = String(val).trim();
+    if (/^\d{4}-\d{2}-\d{2}$/.test(s)) return s;
+    const d = new Date(s);
+    return isNaN(d) ? s : d.toISOString().split('T')[0];
+  };
+
+  // Normalize lease type to dropdown values
+  let leaseType = data.lease_type || null;
+  if (leaseType) {
+    if (leaseType.toUpperCase().includes('NNN') || /triple\s*net/i.test(leaseType)) {
+      leaseType = 'Triple Net (NNN)';
+    } else if (/modified\s*gross/i.test(leaseType)) {
+      leaseType = 'Modified Gross';
+    } else if (/gross/i.test(leaseType)) {
+      leaseType = 'Gross';
+    }
   }
 
+  // Normalize CAM cap: "35%" → 35, "0.35" → 35, "35" → 35
+  const normalizeCap = val => {
+    if (!val) return null;
+    const n = parseFloat(String(val).replace(/[^0-9.]/g, ''));
+    if (isNaN(n)) return null;
+    return n < 1 ? Math.round(n * 100) : n;
+  };
+
   return {
-    tenant_name:       data.tenant_name      || '',
-    leased_sqft:       parseFloat(data.leased_sqft) || 0,
-    lease_start_date:  data.lease_start_date || '',
-    lease_end_date:    data.lease_end_date   || '',
+    tenant_name:       data.tenant_name      || null,
+    leased_sqft,
+    lease_start_date:  toISO(data.lease_start_date),
+    lease_end_date:    toISO(data.lease_end_date),
     lease_type:        leaseType,
-    cap:               data.cap ? parseFloat(data.cap) : null,
+    cap:               normalizeCap(data.cap),
   };
 }
 // ─── SVG icons ────────────────────────────────────────────────────────────────
