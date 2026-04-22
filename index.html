@@ -2659,18 +2659,16 @@ async function callClaudeForLease(text) {
     return isNaN(d) ? s : d.toISOString().split('T')[0];
   };
 
-  // Normalize lease type to UI dropdown values
-  const _rawLeaseType = data.leaseType || data.lease_type || null;
-  let leaseType = null;
-  if (_rawLeaseType) {
-    if (/nnn|triple.?net/i.test(_rawLeaseType)) {
-      leaseType = 'Triple Net (NNN)';
-    } else if (/modified.?gross/i.test(_rawLeaseType)) {
-      leaseType = 'Modified Gross';
-    } else if (/gross/i.test(_rawLeaseType)) {
-      leaseType = 'Gross';
-    }
-  }
+  // Normalize leaseType so UI always receives the expected label
+  const normalizeLeaseType = (val) => {
+    if (!val) return null;
+    const v = String(val).toLowerCase();
+    if (v.includes('nnn') || v.includes('triple')) return 'Triple Net (NNN)';
+    if (v.includes('modified'))                     return 'Modified Gross';
+    if (v.includes('gross'))                        return 'Gross';
+    return val;
+  };
+  const leaseType = normalizeLeaseType(data.leaseType || data.lease_type);
 
   // Normalize CAM cap: "35%" → 35, "0.35" → 35, "35" → 35
   const normalizeCap = val => {
