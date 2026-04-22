@@ -2786,15 +2786,14 @@ async function handleLease(i, file) {
     const tenant    = await callClaudeForLease(leaseText);
     console.log("FINAL TENANT USED IN UI:", tenant);
     if (!tenant) throw new Error('Could not extract lease fields');
-    window.tenantData[i] = tenant;
-    console.log("FINAL TENANT OBJECT:", window.tenantData[i]);
+    tenantData[i]   = tenant;
+    console.log("FINAL TENANT OBJECT:", tenantData[i]);
     renderTenantFields(i);
-    renderTenantSlots();
     checkSqftValidation();
 
     // tenantData is already restored from _props; slot i was just updated in-place.
     // Merge so other slots' existing data isn't lost on save.
-    property.tenants = mergeTenantsDedup(existing.tenants, window.tenantData.filter(t => t !== null));
+    property.tenants = mergeTenantsDedup(existing.tenants, tenantData.filter(t => t !== null));
     console.log('CURRENT PROPERTY ID:', property.id);
     console.log('SAVING DATA:', property);
     await saveProperty(property);
