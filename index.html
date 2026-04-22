@@ -3126,9 +3126,9 @@ function liveTenantFlags(d) {
 }
 
 function renderTenantFields(i) {
-  const d    = tenantData[i];
+  const d    = tenantData[i] || {};
   const body = document.getElementById(`tb-${i}`);
-  const conf = d.confidence || {};
+  const conf = d?.confidence || {};
   const _errBlock = d._error ? `
     <div class="err-banner" style="margin-bottom:12px;">
       <strong>&#x26A0; We couldn't automatically extract this lease.</strong><br>
