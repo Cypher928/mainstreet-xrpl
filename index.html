@@ -7290,6 +7290,7 @@ async function init() {
 
   try {
     _props = await loadProperties();
+   console.log("LOADED PROPS FULL:", _props);
 
     // New user with no saved properties — start with an empty portfolio
     if (!_props || _props.length === 0) _props = [];
@@ -7297,6 +7298,11 @@ async function init() {
     console.log('[Mainstreet] PROPERTIES ON LOAD:', _props.length);
     portfolio.splice(0, portfolio.length, ..._props);
     renderPortfolio(_props);
+if (_props.length) {
+  const property = _props.find(p => p.id === currentPropertyId) || _props[0];
+tenantData.splice(0, tenantData.length, ...(property.tenants || []));
+  renderBulkResults();
+}
   } catch (e) {
     console.error('[Mainstreet] portfolio render failed, falling back to main workflow.', e);
     document.getElementById('portfolioDashboard').style.display = 'none';
