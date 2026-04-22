@@ -2936,12 +2936,22 @@ function normalizeTenant(input) {
     );
     renderTenantFields(i);
     checkSqftValidation();
+   
+     window.tenantData = [
+  ...(window.tenantData || []),
+  ...tenantData
+];
+
+    // after ALL your processing logic finishes
+
+renderTenantSlots();   
+}
 
     // tenantData is already restored from _props; slot i was just updated in-place.
     // Merge so other slots' existing data isn't lost on save.
         console.log('CURRENT PROPERTY ID:', property.id);
     console.log('SAVING DATA:', property);
-property.tenants = tenantData.filter(t => t);
+property.tenants = window.tenantData.filter(t => t);
     await saveProperty(property);
   } catch (err) {
     renderTenantError(i, err.message);
