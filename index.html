@@ -3425,7 +3425,7 @@ function renderBulkResults() {
     const name = d.tenantName || '(unknown — click to edit)';
     const meta = [d.leasedSqft ? d.leasedSqft + ' sqft' : null,
                   d.leaseType  ? d.leaseType              : null]
-                  .filter(Boolean).join(' · ') || '—';
+                  .filter(v => v !== null && v !== undefined).join(' · ') || '—';
 
     return `
       <div class="bulk-tenant-row${d._error ? ' has-error' : ''}" id="btr-${i}">
@@ -3507,7 +3507,7 @@ function refreshBulkSummary(i) {
   if (metaEl) {
     metaEl.textContent = [d.leasedSqft ? d.leasedSqft + ' sqft' : null,
                           d.leaseType  ? d.leaseType              : null]
-                          .filter(Boolean).join(' · ') || '—';
+                          .filter(v => v !== null && v !== undefined).join(' · ') || '—';
   }
 }
 
