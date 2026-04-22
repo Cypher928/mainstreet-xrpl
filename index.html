@@ -2617,8 +2617,30 @@ async function callClaudeForLease(text) {
     throw new Error(`Lease extraction failed: HTTP ${res.status}`);
   }
 
-  const data = await res.json();
-  console.log('LEASE API RESPONSE:', data);
+  const response = await res.json();
+  console.log('LEASE API RESPONSE:', response);
+
+  // Normalize: accept string, object, or array
+  let parsed = response;
+  if (typeof parsed === 'string') {
+    try {
+      parsed = JSON.parse(parsed);
+    } catch (e) {
+      console.error('[callClaudeForLease] Claude returned invalid JSON string:', parsed);
+      return null;
+    }
+  }
+  if (!Array.isArray(parsed)) {
+    parsed = [parsed];
+  }
+  parsed = parsed.filter(t => t && typeof t === 'object');
+
+  if (parsed.length === 0) {
+    console.error('[callClaudeForLease] No valid tenant objects in response');
+    return null;
+  }
+
+  const data = parsed[0];
 
   let leaseType = data.lease_type || '';
   if (leaseType.toUpperCase().includes('NNN')) {
