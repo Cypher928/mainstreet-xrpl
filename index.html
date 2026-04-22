@@ -2674,21 +2674,22 @@ async function callClaudeForLease(text) {
     return n < 1 ? Math.round(n * 100) : n;
   };
 
+  const raw = data;
   return {
     // snake_case (used by renderTenantFields)
-    tenant_name:       data.tenant_name ?? data.tenantName ?? null,
-    leased_sqft:       Number(String(data.leased_sqft ?? data.leasedSqft ?? '').replace(/[^0-9]/g, '')) || null,
-    lease_start_date:  toISO(data.lease_start_date ?? data.startDate),
-    lease_end_date:    toISO(data.lease_end_date ?? data.endDate),
-    lease_type:        leaseType,
-    cap:               normalizeCap(data.cap ?? data.capPercentage ?? data.camPercent),
+    tenant_name:      raw.tenant_name ?? raw.tenantName ?? null,
+    leased_sqft:      raw.leasedSqft ?? raw.leased_sqft ?? (raw.leasedSqft || raw.leased_sqft ? Number(String(raw.leasedSqft || raw.leased_sqft).replace(/[^0-9]/g, '')) : null),
+    lease_start_date: raw.startDate ?? raw.lease_start_date ?? null,
+    lease_end_date:   raw.endDate ?? raw.lease_end_date ?? null,
+    lease_type:       raw.leaseType ?? raw.lease_type ?? null,
+    cap:              raw.capPercentage ?? raw.cap ?? raw.camPercent ?? (raw.cap || raw.camPercent ? Number(String(raw.cap || raw.camPercent).replace(/[^0-9.]/g, '')) * (String(raw.cap || raw.camPercent).includes('.') ? 100 : 1) : null),
     // camelCase aliases
-    tenantName:        data.tenant_name ?? data.tenantName ?? null,
-    leasedSqft:        Number(String(data.leased_sqft ?? data.leasedSqft ?? '').replace(/[^0-9]/g, '')) || null,
-    startDate:         toISO(data.lease_start_date ?? data.startDate),
-    endDate:           toISO(data.lease_end_date ?? data.endDate),
-    leaseType,
-    capPercentage:     normalizeCap(data.cap ?? data.capPercentage ?? data.camPercent),
+    tenantName:       raw.tenant_name ?? raw.tenantName ?? null,
+    leasedSqft:       raw.leasedSqft ?? raw.leased_sqft ?? (raw.leasedSqft || raw.leased_sqft ? Number(String(raw.leasedSqft || raw.leased_sqft).replace(/[^0-9]/g, '')) : null),
+    startDate:        raw.startDate ?? raw.lease_start_date ?? null,
+    endDate:          raw.endDate ?? raw.lease_end_date ?? null,
+    leaseType:        raw.leaseType ?? raw.lease_type ?? null,
+    capPercentage:    raw.capPercentage ?? raw.cap ?? raw.camPercent ?? (raw.cap || raw.camPercent ? Number(String(raw.cap || raw.camPercent).replace(/[^0-9.]/g, '')) * (String(raw.cap || raw.camPercent).includes('.') ? 100 : 1) : null),
   };
 }
 // ─── SVG icons ────────────────────────────────────────────────────────────────
