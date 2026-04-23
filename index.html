@@ -2623,6 +2623,44 @@ async function extractPdfText(file) {
   return pages.join('\n\n');
 }
 
+function extractDates(text) {
+  const toISO = str => {
+    if (!str) return null;
+    const d = new Date(str);
+    return isNaN(d) ? null : d.toISOString().split('T')[0];
+  };
+
+  // Keyword-anchored patterns
+  const startMatch =
+    text.match(/commence(?:s)? on ([A-Za-z]+ \d{1,2}, \d{4})/i) ||
+    text.match(/commencement\s+date[^\n]*?([A-Za-z]+ \d{1,2}, \d{4})/i) ||
+    text.match(/start(?:s|ing)? on ([A-Za-z]+ \d{1,2}, \d{4})/i);
+
+  const endMatch =
+    text.match(/expire(?:s)? on ([A-Za-z]+ \d{1,2}, \d{4})/i) ||
+    text.match(/expir(?:ation|y)\s+date[^\n]*?([A-Za-z]+ \d{1,2}, \d{4})/i) ||
+    text.match(/terminat(?:es|ion)[^\n]*?([A-Za-z]+ \d{1,2}, \d{4})/i);
+
+  let startDate = toISO(startMatch?.[1]);
+  let endDate   = toISO(endMatch?.[1]);
+
+  // Fallback: extract first two parseable dates from full text
+  if (!startDate || !endDate) {
+    const DATE_RE = /\b([A-Za-z]+ \d{1,2}, \d{4}|\d{4}-\d{2}-\d{2})\b/g;
+    const found = [];
+    let m;
+    while ((m = DATE_RE.exec(text)) !== null) {
+      const iso = toISO(m[1]);
+      if (iso && !found.includes(iso)) found.push(iso);
+      if (found.length === 2) break;
+    }
+    if (!startDate) startDate = found[0] || null;
+    if (!endDate)   endDate   = found[1] || null;
+  }
+
+  return { startDate, endDate };
+}
+
 async function callClaudeForLease(text) {
   const messages = [{ role: 'user', content: text }];
 
@@ -2712,13 +2750,9 @@ async function callClaudeForLease(text) {
       ? _sqft
       : (rawTextValue.match(/([\d,]+)\s*(?:rentable\s*)?(?:square feet|sq ?ft)/i)?.[1]?.replace(/,/g, '') || null);
 
-  const fallbackStart =
-    raw.startDate ||
-    (rawTextValue.match(/commence.*?(?:on\s)?([A-Za-z]+\s\d{1,2},\s\d{4})/i)?.[1] || null);
-
-  const fallbackEnd =
-    raw.endDate ||
-    (rawTextValue.match(/expire.*?(?:on\s)?([A-Za-z]+\s\d{1,2},\s\d{4})/i)?.[1] || null);
+  const _extracted = extractDates(rawTextValue);
+  const fallbackStart = raw.startDate || _extracted.startDate;
+  const fallbackEnd   = raw.endDate   || _extracted.endDate;
 
   return {
     tenantName:         raw.tenantName       || null,
