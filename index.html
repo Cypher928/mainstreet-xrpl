@@ -2743,7 +2743,7 @@ async function callClaudeForLease(text) {
     ? (v => isNaN(v) ? null : v)(Number(String(_sqftRaw).replace(/[^0-9.]/g, '')))
     : null;
 
-  const rawTextValue = raw.rawText || '';
+  const rawTextValue = text || '';
 
   const fallbackSqft =
     (_sqft != null)
@@ -2753,6 +2753,7 @@ async function callClaudeForLease(text) {
   const _extracted = extractDates(rawTextValue);
   const fallbackStart = raw.startDate || _extracted.startDate;
   const fallbackEnd   = raw.endDate   || _extracted.endDate;
+  console.log('DATES:', fallbackStart, fallbackEnd, '(raw:', raw.startDate, raw.endDate, '| extracted:', _extracted.startDate, _extracted.endDate, ')');
 
   return {
     tenantName:         raw.tenantName       || null,
@@ -2772,7 +2773,7 @@ async function callClaudeForLease(text) {
     baseYear:           raw.baseYear         ?? null,
     confidence:         raw.confidence       || {},
     _error:             null,
-    rawText:            rawTextValue,
+    rawText:            text || '',
   };
 }
 // ─── SVG icons ────────────────────────────────────────────────────────────────
