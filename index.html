@@ -6333,7 +6333,7 @@ function portfolioKPIs(props) {
   const safeProps = Array.isArray(props) ? props : [];
   return {
     properties:   safeProps.length,
-    tenants:      safeProps.reduce((s, p) => s + (Number(p.tenantCount)  || 0), 0),
+    tenants:      safeProps.reduce((s, p) => s + (Array.isArray(p.tenants) ? p.tenants.length : (Number(p.tenantCount) || 0)), 0),
     cam:          safeProps.reduce((s, p) => s + (Number(p.totalCAM)     || 0), 0),
     invoices:     safeProps.reduce((s, p) => s + (Number(p.invoiceCount) || 0), 0),
     openDisputes: safeProps.reduce((s, p) => s + (Number(p.openDisputes) || 0), 0),
@@ -6635,7 +6635,34 @@ async function loadProperties() {
 
   if (error) throw error;
 
-  return data;
+  const properties = data || [];
+
+  await Promise.all(properties.map(async (property) => {
+    const { data: tenants } = await db
+      .from('tenants')
+      .select('*')
+      .eq('property_id', property.id);
+    property.tenants = tenants || [];
+  }));
+
+  return properties;
+}
+
+async function syncTenantsToTable(propertyId, tenants) {
+  await db.from('tenants').delete().eq('property_id', propertyId);
+  const rows = tenants
+    .filter(t => t && (t.tenantName || t.tenant_name))
+    .map(t => ({
+      property_id: propertyId,
+      name:       t.tenantName       || t.tenant_name       || null,
+      sqft:       t.leasedSqft       ?? t.leased_sqft       ?? null,
+      cap:        t.capPercentage     ?? t.cap               ?? null,
+      start_date: t.lease_start_date  || t.startDate         || null,
+      end_date:   t.lease_end_date    || t.endDate           || null,
+    }));
+  if (rows.length === 0) return;
+  const { error } = await db.from('tenants').insert(rows);
+  if (error) console.error('[syncTenantsToTable]', error.message);
 }
 
 // Save a property — localStorage first (instant), then Supabase.
@@ -6668,6 +6695,11 @@ async function saveProperty(property) {
       property.id = inserted.id;
       _lsSave(property);
       console.log('INSERTED INTO SUPABASE', inserted.id);
+    }
+
+    // Sync tenants to dedicated table whenever property is saved
+    if (property.id && Array.isArray(property.tenants) && property.tenants.length > 0) {
+      await syncTenantsToTable(property.id, property.tenants);
     }
   } catch (e) {
     // If INSERT failed and property still has no id, keep it null — do NOT assign
