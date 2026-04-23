@@ -6842,6 +6842,7 @@ async function init() {
 
     console.log('[Mainstreet] PROPERTIES ON LOAD:', _props.length, _props);
     portfolio.splice(0, portfolio.length, ..._props);
+    console.log('RENDER DATA:', properties);
     renderPortfolio(properties);
   } catch (e) {
     console.error('[Mainstreet] portfolio render failed, falling back to main workflow.', e);
