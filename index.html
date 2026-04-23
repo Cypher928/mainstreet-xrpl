@@ -6295,12 +6295,13 @@ async function loadDemo() {
 // ─── Portfolio ────────────────────────────────────────────────────────────────
 
 function portfolioKPIs(props) {
+  const safeProps = Array.isArray(props) ? props : [];
   return {
-    properties:   props.length,
-    tenants:      props.reduce((s, p) => s + p.tenantCount, 0),
-    cam:          props.reduce((s, p) => s + p.totalCAM, 0),
-    invoices:     props.reduce((s, p) => s + p.invoiceCount, 0),
-    openDisputes: props.reduce((s, p) => s + p.openDisputes, 0),
+    properties:   safeProps.length,
+    tenants:      safeProps.reduce((s, p) => s + (Number(p.tenantCount)  || 0), 0),
+    cam:          safeProps.reduce((s, p) => s + (Number(p.totalCAM)     || 0), 0),
+    invoices:     safeProps.reduce((s, p) => s + (Number(p.invoiceCount) || 0), 0),
+    openDisputes: safeProps.reduce((s, p) => s + (Number(p.openDisputes) || 0), 0),
   };
 }
 
@@ -6314,34 +6315,41 @@ function renderPortfolio(props) {
 
   const k = portfolioKPIs(props);
 
-  document.getElementById('pKpiProperties').textContent = k.properties;
-  document.getElementById('pKpiTenants').textContent    = k.tenants;
-  document.getElementById('pKpiCAM').textContent        = '$' + k.cam.toLocaleString('en-US');
-  document.getElementById('pKpiInvoices').textContent   = k.invoices;
-  document.getElementById('pKpiDisputes').textContent   = k.openDisputes;
+  document.getElementById('pKpiProperties').textContent = k.properties ?? 0;
+  document.getElementById('pKpiTenants').textContent    = k.tenants    ?? 0;
+  document.getElementById('pKpiCAM').textContent        = '$' + (k.cam ?? 0).toLocaleString('en-US');
+  document.getElementById('pKpiInvoices').textContent   = k.invoices   ?? 0;
+  document.getElementById('pKpiDisputes').textContent   = k.openDisputes ?? 0;
 
   const statusLabel = { reconciled: 'Reconciled', 'in-progress': 'In Progress', disputes: 'Has Open Disputes' };
 
-  document.getElementById('propertyCardsGrid').innerHTML = props.map(p => `
-    <div class="ptf-prop-card status-${p.status}${activePropId === p.id ? ' active' : ''}" onclick="selectProperty('${p.id}')">
-      <div class="ptf-prop-name">${esc(p.name)}</div>
+  document.getElementById('propertyCardsGrid').innerHTML = props.map(p => {
+    const tenants      = Array.isArray(p.tenants)  ? p.tenants.length  : (Number(p.tenantCount)  || 0);
+    const invoices     = Array.isArray(p.invoices) ? p.invoices.length : (Number(p.invoiceCount) || 0);
+    const openDisputes = Number(p.openDisputes) || 0;
+    const cam          = Number(p.totalCAM)     || 0;
+    const status       = p.status || 'in-progress';
+    return `
+    <div class="ptf-prop-card status-${status}${activePropId === p.id ? ' active' : ''}" onclick="selectProperty('${p.id}')">
+      <div class="ptf-prop-name">${esc(p.name || '—')}</div>
       <div class="ptf-status-row">
-        <span class="ptf-status-dot ${p.status}"></span>
-        ${statusLabel[p.status] || p.status}
+        <span class="ptf-status-dot ${status}"></span>
+        ${statusLabel[status] || status}
       </div>
       <div class="ptf-stats-row">
-        <div class="ptf-stat"><strong>${p.tenantCount}</strong>Tenants</div>
-        <div class="ptf-stat"><strong>${p.invoiceCount}</strong>Invoices</div>
-        ${p.openDisputes > 0
-          ? `<div class="ptf-stat"><strong style="color:#ef4444">${p.openDisputes}</strong>Disputes</div>`
+        <div class="ptf-stat"><strong>${tenants}</strong>Tenants</div>
+        <div class="ptf-stat"><strong>${invoices}</strong>Invoices</div>
+        ${openDisputes > 0
+          ? `<div class="ptf-stat"><strong style="color:#ef4444">${openDisputes}</strong>Disputes</div>`
           : ''}
       </div>
       <div class="ptf-cam-lbl">CAM This Period</div>
-      <div class="ptf-cam-val">${p.totalCAM > 0 ? '$' + p.totalCAM.toLocaleString('en-US') : '—'}</div>
-      ${p.status === 'reconciled'
+      <div class="ptf-cam-val">${cam > 0 ? '$' + cam.toLocaleString('en-US') : '—'}</div>
+      ${status === 'reconciled'
         ? `<div class="ptf-onchain-badge">&#x1F517; On-Chain Record</div>`
         : ''}
-    </div>`).join('');
+    </div>`;
+  }).join('');
 
   document.getElementById('portfolioDashboard').style.display  = 'block';
   document.getElementById('propertyBreadcrumb').style.display  = 'none';
