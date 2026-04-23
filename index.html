@@ -2032,13 +2032,15 @@ async function signOut() {
 }
 
 // Check existing session, then listen for changes
-db.auth.getSession().then(({ data: { session } }) => {
-  if (session?.user) {
-    _showApp(session.user);
-    init();
-  } else {
-    _showLogin();
-  }
+window.addEventListener('load', () => {
+  db.auth.getSession().then(({ data: { session } }) => {
+    if (session?.user) {
+      _showApp(session.user);
+      init();
+    } else {
+      _showLogin();
+    }
+  });
 });
 
 db.auth.onAuthStateChange((event, session) => {
@@ -2599,8 +2601,13 @@ async function extractPdfText(file) {
     return file.text();
   }
 
-  const lib = window.pdfjsLib;
-  if (!lib) throw new Error('PDF.js failed to load');
+  const pdfjs = window['pdfjsLib'];
+  console.log('PDFJS READY:', !!window['pdfjsLib']);
+  if (!pdfjs) {
+    console.error('PDF.js not ready');
+    throw new Error('PDF.js failed to load');
+  }
+  const lib = pdfjs;
 
   const arrayBuffer = await file.arrayBuffer();
   const pdf = await lib.getDocument({ data: arrayBuffer }).promise;
