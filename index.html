@@ -2853,49 +2853,71 @@ function renderTenantUploadZone(i) {
   // SAFE replace
   body.replaceChildren(zone);
 }
+
 async function handleLease(i, file) {
   const body = document.getElementById(`tb-${i}`);
-  body.innerHTML = `<div class="spinner-wrap">
-    <div class="spinner"></div>
-    <div class="spinner-label">AI reading lease…</div>
-  </div>`;
+  body.innerHTML = `
+    <div class="spinner-wrap">
+      <div class="spinner"></div>
+      <div class="spinner-label">AI reading lease...</div>
+    </div>
+  `;
 
   try {
     const property = currentProperty();
     if (!property) throw new Error('No property selected');
 
-    // Snapshot existing before any mutation
+    // Snapshot existing data
     const existing = { tenants: Array.from(property.tenants || []) };
-    console.log('EXISTING DATA:', existing);
+    console.log("EXISTING DATA:", existing);
 
     const leaseText = await extractPdfText(file);
-    console.log('[DEBUG] leaseText length:', leaseText.length, '| preview:', leaseText.slice(0, 200));
+    console.log("[DEBUG] leaseText length:", leaseText.length);
 
-const d = await callClaudeForLease(leaseText);       
- let tenantData = [];
+    const d = await callClaudeForLease(leaseText);
 
-const extractedTenants = Array.isArray(d)
-  ? d
-  : (Array.isArray(d?.tenants) ? d.tenants : (d ? [d] : []));
+    let tenantData = [];
 
-console.log("SAFE TENANTS:", extractedTenants);
-extractedTenants.forEach(raw => {
-  const normalized = normalizeTenant(raw);
+    const extractedTenants = Array.isArray(d)
+      ? d
+      : (Array.isArray(d?.tenants) ? d.tenants : (d ? [d] : []));
 
-  if (!normalized) {
-    return; // skips THIS item only (inside forEach callback)
-  }
+    console.log("SAFE TENANTS:", extractedTenants);
 
-  console.log("NORMALIZED TENANT:", normalized);
+    extractedTenants.forEach(raw => {
+      const normalized = normalizeTenant(raw);
+      if (!normalized) return;
 
-  tenantData.push({
-    ...normalized,
-    _error: null,
-    _rawText: leaseText
-  });
-});
-    
-function normalizeTenant(input) {
+      console.log("NORMALIZED TENANT:", normalized);
+
+      tenantData.push({
+        ...normalized,
+        _error: null,
+        _rawText: leaseText
+      });
+    });
+
+    // ✅ AFTER LOOP — UI + STATE UPDATE
+    applyRawTextFallback(tenantData);
+
+    console.log("NORMALIZED TENANTS:", tenantData);
+
+    renderTenantFields(i);
+    checkSqftValidation();
+
+    window.tenantData = [
+      ...(window.tenantData || []),
+      ...tenantData
+    ];
+
+    renderTenantSlots();
+
+    // Save
+    property.tenants = window.tenantData.filter(t => t);
+    await saveProperty(property);
+
+
+    function normalizeTenant(input) {
   if (!input) return null;
 
   const clean = (v) => (v ? String(v).trim() : "");
@@ -2927,36 +2949,11 @@ function normalizeTenant(input) {
   console.log("FINAL TENANT OBJECT:", result);
 
   return result;
+} 
+        
 }
 
-         applyRawTextFallback(tenantData);
-    console.log('NORMALIZED TENANTS:', tenantData);
-    document.body.insertAdjacentHTML('beforeend',
-      '<div style="position:fixed;bottom:10px;left:10px;background:#000;color:#0f0;padding:10px;z-index:9999;font-size:12px;max-width:600px;white-space:pre-wrap;overflow:auto;max-height:200px;">EXTRACTED TEXT (first 1000 chars):\n' + leaseText.slice(0, 1000).replace(/</g,'&lt;') + '</div>'
-    );
-    renderTenantFields(i);
-    checkSqftValidation();
-   
-     window.tenantData = [
-  ...(window.tenantData || []),
-  ...tenantData
-];
-
-    // after ALL your processing logic finishes
-
-renderTenantSlots();   
-}
-
-    // tenantData is already restored from _props; slot i was just updated in-place.
-    // Merge so other slots' existing data isn't lost on save.
-        console.log('CURRENT PROPERTY ID:', property.id);
-    console.log('SAVING DATA:', property);
-property.tenants = window.tenantData.filter(t => t);
-    await saveProperty(property);
-  } catch (err) {
-    renderTenantError(i, err.message);
-  }
-}
+  
 
 // ─── Sqft Validation ─────────────────────────────────────────────────────────
 
@@ -7366,11 +7363,6 @@ tenantData.splice(
   }
 }
 
-<script src="https://cdnjs.cloudflare.com/ajax/libs/pdf.js/3.11.174/pdf.min.js"></script>
-<script>
-  pdfjsLib.GlobalWorkerOptions.workerSrc =
-    "https://cdnjs.cloudflare.com/ajax/libs/pdf.js/3.11.174/pdf.worker.min.js";
-</script>
 
 
 
