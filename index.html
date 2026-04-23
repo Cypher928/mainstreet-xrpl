@@ -6291,7 +6291,12 @@ function portfolioKPIs(props) {
 }
 
 function renderPortfolio(props) {
-  console.log('RENDERING PROPERTIES:', props);
+  console.log('RENDER DATA:', props);
+
+  if (!props || !Array.isArray(props)) {
+    console.error('[renderPortfolio] called with invalid data:', props);
+    return;
+  }
 
   const k = portfolioKPIs(props);
 
@@ -6857,7 +6862,7 @@ async function init() {
     // New user with no saved properties — start with an empty portfolio
     if (!_props || _props.length === 0) _props = [];
 
-    console.log('[Mainstreet] PROPERTIES ON LOAD:', _props.length);
+    console.log('[Mainstreet] PROPERTIES ON LOAD:', _props.length, _props);
     portfolio.splice(0, portfolio.length, ..._props);
     renderPortfolio(_props);
   } catch (e) {
