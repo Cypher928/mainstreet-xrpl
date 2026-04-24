@@ -2653,7 +2653,7 @@ function getWarnings(flags) {
 
 function computeFlags(d) {
   const base = [];
-  if (!d.start_date && !d.end_date && d.doc_has_dates === false) {
+  if (d.doc_has_dates === false) {
     base.push('no_term_in_doc');
   } else {
     if (!d.start_date) base.push('missing_start_date');
@@ -2668,7 +2668,7 @@ function computeFlags(d) {
 
 function computeFlagsStrict(d) {
   const base = [];
-  if (d.start_date == null && d.end_date == null && d.doc_has_dates === false) {
+  if (d.doc_has_dates === false) {
     base.push('no_term_in_doc');
   } else {
     if (d.start_date == null) base.push('missing_start_date');
