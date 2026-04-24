@@ -2687,7 +2687,18 @@ function extractLeaseData(text) {
   return { name, sqft, lease_type, start_date, end_date, flags };
 }
 
-async function callClaudeForLease(text) {
+function getWarnings(flags = []) {
+  return flags.map(f => {
+    if (f === 'lease_type_missing')    return 'Lease type not specified';
+    if (f === 'missing_start_date')    return 'Missing start date';
+    if (f === 'missing_end_date')      return 'Missing end date';
+    if (f === 'approx_sqft_detected')  return 'Approximate sqft detected';
+    if (f === 'base_year_detected')    return 'Base year needs review';
+    return f;
+  });
+}
+
+
   const messages = [{ role: 'user', content: text }];
 
   const res = await fetch('/api/claude', {
@@ -2942,6 +2953,7 @@ function renderTenantFields(i) {
         Fields extracted — review and edit below
         <button class="re-btn" onclick="resetTenant(${i})">Re-upload</button>
       </div>
+      ${(() => { const w = getWarnings(d.flags || []); return w.length ? `<div class="rc-flags"><div class="rc-flags-title">&#x26A0;&#xFE0F; Needs Review</div>${w.map(m => `<div class="rc-flag-item">${m}</div>`).join('')}</div>` : ''; })()}
       <div class="field-row">
         <div class="field">
           <label>Tenant Name</label>
@@ -3477,21 +3489,22 @@ async function handleBulkLeases(fileList) {
       const hasValidTenant = tenantData.some(t =>
         t &&
         (t.leasedSqft !== null && t.leasedSqft !== undefined) &&
-        (t.startDate || t.endDate)
+        (t.start_date || t.end_date)
       );
 
       if (!hasValidTenant) {
         tenantData.push({
-          tenantName:        files[i].name.replace(/\.pdf$/i, ''),
-          leasedSqft:        null,
-          capPercentage:     null,
+          tenantName:         files[i].name.replace(/\.pdf$/i, ''),
+          leasedSqft:         null,
+          capPercentage:      null,
           excludedCategories: null,
-          baseYear:          null,
-          startDate:         null,
-          endDate:           null,
-          leaseType:         null,
-          confidence:        {},
-          _error:            err.message,
+          baseYear:           null,
+          start_date:         null,
+          end_date:           null,
+          lease_type:         null,
+          flags:              [],
+          confidence:         {},
+          _error:             err.message,
         });
       }
     }
@@ -3526,9 +3539,9 @@ function renderBulkResults() {
   const rows = tenantData.map((d, i) => {
     console.log("FINAL TENANT USED IN UI:", d);
     const sqft        = d.leasedSqft     ?? d.leased_sqft     ?? null;
-    const start       = d.startDate      ?? d.start_date       ?? null;
-    const end         = d.endDate        ?? d.end_date         ?? null;
-    const leaseType   = d.leaseType      ?? d.lease_type       ?? null;
+    const start       = d.start_date      ?? d.startDate        ?? null;
+    const end         = d.end_date        ?? d.endDate          ?? null;
+    const leaseType   = d.lease_type      ?? d.leaseType        ?? null;
     const capPct      = d.capPercentage  ?? d.cap_percentage   ?? null;
     const icon = d._error ? '⚠️' : (d.tenantName ?? d.tenant_name) ? '✓' : '?';
     const name = d.tenantName ?? d.tenant_name ?? '(unknown — click to edit)';
@@ -3551,6 +3564,7 @@ function renderBulkResults() {
         </div>
         <div class="bulk-tenant-detail" id="bdet-${i}" style="display:none;">
           ${d._error ? `<div class="err-banner" style="margin-bottom:10px;">Extraction error: ${esc(d._error)}</div>` : ''}
+          ${(() => { const w = getWarnings(d.flags || []); return w.length ? `<div class="rc-flags"><div class="rc-flags-title">&#x26A0;&#xFE0F; Needs Review</div>${w.map(m => `<div class="rc-flag-item">${m}</div>`).join('')}</div>` : ''; })()}
           <div class="field-row">
             <div class="field">
               <label>Tenant Name</label>
@@ -3566,23 +3580,23 @@ function renderBulkResults() {
           <div class="field-row">
             <div class="field">
               <label>Lease Start Date</label>
-              <input type="date" value="${d.startDate || ''}"
-                onchange="tenantData[${i}].startDate=this.value"/>
+              <input type="date" value="${d.start_date || ''}"
+                onchange="tenantData[${i}].start_date=this.value"/>
             </div>
             <div class="field">
               <label>Lease End Date</label>
-              <input type="date" value="${d.endDate || ''}"
-                onchange="tenantData[${i}].endDate=this.value"/>
+              <input type="date" value="${d.end_date || ''}"
+                onchange="tenantData[${i}].end_date=this.value"/>
             </div>
           </div>
           <div class="field-row">
             <div class="field">
               <label>Lease Type</label>
-              <select onchange="tenantData[${i}].leaseType = this.value || null; if(lastResults.length) runAllocation()">
+              <select onchange="tenantData[${i}].lease_type = this.value || null; if(lastResults.length) runAllocation()">
                 <option value="">Select lease type</option>
-                <option value="Triple Net (NNN)"${d.leaseType === 'Triple Net (NNN)' ? ' selected' : ''}>Triple Net (NNN)</option>
-                <option value="Gross"${d.leaseType === 'Gross' ? ' selected' : ''}>Gross</option>
-                <option value="Modified Gross"${d.leaseType === 'Modified Gross' ? ' selected' : ''}>Modified Gross</option>
+                <option value="Triple Net (NNN)"${d.lease_type === 'Triple Net (NNN)' ? ' selected' : ''}>Triple Net (NNN)</option>
+                <option value="Gross"${d.lease_type === 'Gross' ? ' selected' : ''}>Gross</option>
+                <option value="Modified Gross"${d.lease_type === 'Modified Gross' ? ' selected' : ''}>Modified Gross</option>
               </select>
             </div>
             <div class="field">
@@ -3617,9 +3631,9 @@ function refreshBulkSummary(i) {
   const nameEl = document.getElementById(`bname-${i}`);
   const metaEl = document.getElementById(`bmeta-${i}`);
   const _sqft  = d.leasedSqft ?? d.leased_sqft ?? null;
-  const _start = d.startDate  ?? d.start_date  ?? null;
-  const _end   = d.endDate    ?? d.end_date    ?? null;
-  const _type  = d.leaseType  ?? d.lease_type  ?? null;
+  const _start = d.start_date  ?? d.startDate  ?? null;
+  const _end   = d.end_date    ?? d.endDate    ?? null;
+  const _type  = d.lease_type  ?? d.leaseType  ?? null;
   if (nameEl) nameEl.textContent = d.tenantName ?? d.tenant_name ?? '(unknown — click to edit)';
   if (metaEl) {
     metaEl.textContent = [
@@ -4847,12 +4861,12 @@ async function runAllocation() {
   // Build a Property + run full reconciliation (for per-tenant invoice breakdown + direct matching)
   const _prop = new Property(propName, totalSqft);
   _prop.addLeases(tenantData.filter(t => t && t.tenantName && parseSqft(t.leasedSqft) > 0).map(t =>
-    new Lease(t.tenantName, t.unitNumber || '', parseSqft(t.leasedSqft), t.startDate || '', t.endDate || '',
+    new Lease(t.tenantName, t.unitNumber || '', parseSqft(t.leasedSqft), t.start_date || t.startDate || '', t.end_date || t.endDate || '',
       t.excludedCategories ? t.excludedCategories.split(',').map(s => s.trim()) : [],
       t.capPercentage ?? null, null,
       (t.confidence?.leasedSqft ?? 100) < 70,  // sqFtApproximate
       t.baseYear ?? null,                        // baseYear
-      t.leaseType ?? null)                       // leaseType: 'NNN' | 'Gross' | null
+      t.lease_type ?? t.leaseType ?? null)       // leaseType: 'Triple Net (NNN)' | 'Gross' | null
   ));
   _prop.addInvoices(invoiceData.filter(inv => inv && inv.vendorName && parseFloat(inv.amount) > 0).map(inv =>
     new Invoice(null, inv.invoiceDate, inv.amount, inv.vendorName, inv.category)
