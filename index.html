@@ -3061,7 +3061,7 @@ function renderTenantFields(i) {
       <div class="field-row">
         <div class="field">
           <label>Lease Type</label>
-          <select onchange="tenantData[${i}].lease_type = this.value || null; if(lastResults.length) runAllocation(); renderTenantFields(${i})">
+          <select onchange="tenantData[${i}].lease_type = this.value || null; if(lastResults.length) runAllocation()">
             <option value="">Select lease type</option>
             <option value="Triple Net (NNN)"${t.lease_type === 'Triple Net (NNN)' ? ' selected' : ''}>Triple Net (NNN)</option>
             <option value="Gross"${t.lease_type === 'Gross' ? ' selected' : ''}>Gross</option>
