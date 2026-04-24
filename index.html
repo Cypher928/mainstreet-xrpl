@@ -2549,9 +2549,9 @@ function enrichLeaseData(data, extractedText) {
 
 function normalizeTenant(d) {
   if (!d) return d;
-  const start = d.start_date ?? d.lease_start_date ?? d.startDate ?? null;
-  const end   = d.end_date   ?? d.lease_end_date   ?? d.endDate   ?? null;
-  const type  = d.lease_type ?? d.leaseType        ?? null;
+  const start = d.start_date ?? d.startDate ?? d.lease_start_date ?? '';
+  const end   = d.end_date   ?? d.endDate   ?? d.lease_end_date   ?? '';
+  const type  = d.lease_type ?? d.leaseType ?? '';
   return { ...d, start_date: start, end_date: end, lease_type: type };
 }
 
@@ -2596,34 +2596,26 @@ function normalizeText(text) {
 
 function extractLeaseData(text) {
   if (!text || typeof text !== 'string') {
-    return { name: null, sqft: null, start_date: null, end_date: null, lease_type: null, flags: ['invalid_text_input'] };
+    return { start_date: '', end_date: '', lease_type: '' };
   }
 
-  // Collect every parseable date from all common formats, sort chronologically
-  const raw = [
-    ...(text.match(/\b\d{1,2}\/\d{1,2}\/\d{4}\b/g) || []),
-    ...(text.match(/\b\d{4}-\d{2}-\d{2}\b/g) || []),
-    ...(text.match(/\b(?:January|February|March|April|May|June|July|August|September|October|November|December)\s+\d{1,2},\s+\d{4}\b/gi) || []),
-  ];
-  const dates = raw.map(d => new Date(d)).filter(d => !isNaN(d));
-  dates.sort((a, b) => a - b);
+  const matches = text.match(
+    /\b(\d{1,2}\/\d{1,2}\/\d{4}|\d{4}-\d{2}-\d{2}|(?:January|February|March|April|May|June|July|August|September|October|November|December)\s+\d{1,2},\s+\d{4})\b/gi
+  ) || [];
 
-  const start_date = dates[0]                    ? dates[0].toISOString().slice(0, 10)                    : null;
-  const end_date   = dates[dates.length - 1]     ? dates[dates.length - 1].toISOString().slice(0, 10)     : null;
+  const dates = matches
+    .map(d => new Date(d))
+    .filter(d => !isNaN(d))
+    .sort((a, b) => a - b);
 
-  const lease_type =
-    /triple[\s-]?net|nnn/i.test(text)  ? 'Triple Net (NNN)' :
-    /modified[\s-]?gross/i.test(text)  ? 'Modified Gross'   :
-    /gross|full[\s-]?service/i.test(text) ? 'Gross'         :
-    null;
-
-  const nameMatch = text.match(/tenant[:\s]+([a-zA-Z0-9 &,.'()-]+)/i);
-  const name = nameMatch ? nameMatch[1].trim() : null;
-
-  const sqftMatch = text.match(/([\d,]+)\s*(?:rentable\s*)?(?:square feet|sq\.?\s*ft\.?)/i);
-  const sqft = sqftMatch ? Number(sqftMatch[1].replace(/,/g, '')) : null;
-
-  return { name, sqft, start_date, end_date, lease_type, flags: [] };
+  return {
+    start_date: dates[0]              ? dates[0].toISOString().slice(0, 10)              : '',
+    end_date:   dates.length          ? dates[dates.length - 1].toISOString().slice(0, 10) : '',
+    lease_type: /triple[\s-]?net|nnn/i.test(text) ? 'Triple Net (NNN)'
+              : /modified[\s-]?gross/i.test(text)  ? 'Modified Gross'
+              : /gross/i.test(text)                 ? 'Gross'
+              : '',
+  };
 }
 
 function getWarnings(flags) {
@@ -2713,19 +2705,18 @@ async function callClaudeForLease(text) {
   console.log('CLEANED LEASE TEXT:', cleanText?.slice(0, 2000));
   const fb = extractLeaseData(cleanText);
 
-  const resolvedName = raw.tenantName ?? raw.tenant_name ?? fb.name ?? null;
+  const resolvedName = raw.tenantName ?? raw.tenant_name ?? '';
   const resolvedSqft = (() => {
     const v = raw.leasedSqft ?? raw.leased_sqft ?? raw.sqft ?? raw.squareFeet ?? null;
     if (v != null && v !== '') {
       const n = Number(String(v).replace(/[^0-9.]/g, ''));
       if (!isNaN(n)) return n;
     }
-    return fb.sqft ?? null;
+    return null;
   })();
-  // Check every key Claude might use, then fall back to regex
-  const resolvedStart = raw.startDate ?? raw.start_date ?? raw.lease_start_date ?? fb.start_date ?? null;
-  const resolvedEnd   = raw.endDate   ?? raw.end_date   ?? raw.lease_end_date   ?? fb.end_date   ?? null;
-  const resolvedType  = normalizeLeaseType(raw.leaseType ?? raw.lease_type ?? fb.lease_type);
+  const resolvedStart = raw.startDate ?? raw.start_date ?? raw.lease_start_date ?? fb.start_date ?? '';
+  const resolvedEnd   = raw.endDate   ?? raw.end_date   ?? raw.lease_end_date   ?? fb.end_date   ?? '';
+  const resolvedType  = normalizeLeaseType(raw.leaseType ?? raw.lease_type ?? fb.lease_type) ?? '';
 
   console.log('DATES:', resolvedStart, resolvedEnd, '(ai:', raw.startDate ?? raw.start_date, raw.endDate ?? raw.end_date, '| regex:', fb.start_date, fb.end_date, ')');
 
@@ -2733,22 +2724,21 @@ async function callClaudeForLease(text) {
     ...(resolvedStart ? [] : ['missing_start_date']),
     ...(resolvedEnd   ? [] : ['missing_end_date']),
     ...(resolvedType  ? [] : ['lease_type_missing']),
-    ...(Array.isArray(fb.flags) ? fb.flags : []),
   ])];
 
-  return {
-    tenant_name:        resolvedName,
-    leased_sqft:        resolvedSqft,
-    start_date:         resolvedStart,
-    end_date:           resolvedEnd,
-    lease_type:         resolvedType,
-    cap:                normalizeCap(raw.capPercentage ?? raw.cam_cap ?? null),
+  return normalizeTenant({
+    tenant_name:         resolvedName,
+    leased_sqft:         resolvedSqft,
+    start_date:          resolvedStart,
+    end_date:            resolvedEnd,
+    lease_type:          resolvedType,
+    cap:                 normalizeCap(raw.capPercentage ?? raw.cam_cap ?? null),
     excluded_categories: raw.excludedCategories ?? raw.excluded_categories ?? null,
-    baseYear:           raw.baseYear ?? null,
-    confidence:         raw.confidence || {},
-    flags:              finalFlags,
-    _error:             null,
-  };
+    baseYear:            raw.baseYear ?? null,
+    confidence:          raw.confidence || {},
+    flags:               finalFlags,
+    _error:              null,
+  });
 }
 // ─── SVG icons ────────────────────────────────────────────────────────────────
 const CHECK_SVG = `<svg viewBox="0 0 12 12" width="10" height="10" fill="none" stroke="white" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round"><polyline points="2,6 5,9 10,3"/></svg>`;
