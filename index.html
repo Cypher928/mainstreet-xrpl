@@ -2633,11 +2633,14 @@ function extractLeaseData(text) {
     return isNaN(d) ? null : d.toISOString().split('T')[0];
   };
 
-  // Extract first match from an ordered list of regexes; capture group 1 is the value
-  function extractDate(regexList) {
+  // Try each regex in order; return ISO date from first match
+  function firstMatch(regexList) {
     for (const r of regexList) {
       const m = text.match(r);
-      if (m) return toISO(m[1]);
+      if (m?.[1]) {
+        const iso = toISO(m[1].trim());
+        if (iso) return iso;
+      }
     }
     return null;
   }
@@ -2647,42 +2650,58 @@ function extractLeaseData(text) {
   const name = nameMatch ? nameMatch[1].trim() : null;
 
   // ---------- sqft ----------
-  const sqftMatch =
-    text.match(/([\d,]+)\s*(?:rentable\s*)?(?:square feet|sq\.?\s*ft\.?)/i);
-  const sqft = sqftMatch
-    ? Number(sqftMatch[1].replace(/,/g, ''))
-    : null;
+  const sqftMatch = text.match(/([\d,]+)\s*(?:rentable\s*)?(?:square feet|sq\.?\s*ft\.?)/i);
+  const sqft = sqftMatch ? Number(sqftMatch[1].replace(/,/g, '')) : null;
 
   // ---------- lease type ----------
   let lease_type = null;
-  if (lower.includes('triple net') || lower.includes('nnn'))
+  if (/nnn|triple[\s-]?net/i.test(text))
     lease_type = 'Triple Net (NNN)';
-  else if (lower.includes('modified gross'))
+  else if (/modified[\s-]?gross/i.test(text))
     lease_type = 'Modified Gross';
-  else if (lower.includes('gross lease') || lower.includes('full service') || lower.includes('full-service'))
+  else if (/gross|full[\s-]?service/i.test(text))
     lease_type = 'Gross';
 
-  // ---------- dates ----------
-  const start_date = extractDate([
-    /commence(?:s|ment)?\s+(?:date\s*[:\s]+)?([A-Za-z]+ \d{1,2},?\s*\d{4})/i,
-    /commencement\s+date[:\s]+([A-Za-z0-9,\- ]+?\d{4})/i,
-    /starts?\s+(?:on\s*)?[:\s]+([A-Za-z0-9,\- ]+?\d{4})/i,
-    /effective\s+date[:\s]+([A-Za-z0-9,\- ]+?\d{4})/i,
+  // ---------- dates — anchored patterns ----------
+  const DATE_FRAG = String.raw`(\d{1,2}[\/\-]\d{1,2}[\/\-]\d{2,4}|(?:Jan(?:uary)?|Feb(?:ruary)?|Mar(?:ch)?|Apr(?:il)?|May|Jun(?:e)?|Jul(?:y)?|Aug(?:ust)?|Sep(?:tember)?|Oct(?:ober)?|Nov(?:ember)?|Dec(?:ember)?)[.,]?\s+\d{1,2}[,.]?\s*\d{4})`;
+
+  let start_date = firstMatch([
+    new RegExp(String.raw`(?:commencement|lease\s+start|start)\s*date\s*[:\-]?\s*` + DATE_FRAG, 'i'),
+    new RegExp(String.raw`commences?\s+(?:on\s+)?` + DATE_FRAG, 'i'),
+    new RegExp(String.raw`effective\s+(?:date\s+(?:of\s+)?)?(?:this\s+lease\s+)?(?:is\s+)?` + DATE_FRAG, 'i'),
+    new RegExp(String.raw`(?:begins?|starts?)\s+(?:on\s+)?` + DATE_FRAG, 'i'),
   ]);
 
-  const end_date = extractDate([
-    /expir(?:es?|ation|y)\s+(?:date\s*)?[:\s]+([A-Za-z0-9,\- ]+?\d{4})/i,
-    /terminat(?:es?|ion)\s+(?:date\s*)?[:\s]+([A-Za-z0-9,\- ]+?\d{4})/i,
-    /lease\s+end\s+date[:\s]+([A-Za-z0-9,\- ]+?\d{4})/i,
+  let end_date = firstMatch([
+    new RegExp(String.raw`(?:expiration|termination|lease\s+end)\s*date\s*[:\-]?\s*` + DATE_FRAG, 'i'),
+    new RegExp(String.raw`(?:expires?|terminates?)\s+(?:on\s+)?` + DATE_FRAG, 'i'),
+    new RegExp(String.raw`(?:end|expiry)\s+(?:date\s+(?:of\s+)?)?(?:this\s+lease\s+)?(?:is\s+)?` + DATE_FRAG, 'i'),
   ]);
+
+  // ---------- dates — generic scan fallback ----------
+  if (!start_date || !end_date) {
+    const ALL_DATES = new RegExp(
+      String.raw`\b(\d{1,2}[\/\-]\d{1,2}[\/\-]\d{2,4}|(?:Jan(?:uary)?|Feb(?:ruary)?|Mar(?:ch)?|Apr(?:il)?|May|Jun(?:e)?|Jul(?:y)?|Aug(?:ust)?|Sep(?:tember)?|Oct(?:ober)?|Nov(?:ember)?|Dec(?:ember)?)[.,]?\s+\d{1,2}[,.]?\s*\d{4})\b`,
+      'gi'
+    );
+    const found = [];
+    let m;
+    while ((m = ALL_DATES.exec(text)) !== null) {
+      const iso = toISO(m[1]);
+      if (iso && !found.includes(iso)) found.push(iso);
+      if (found.length === 2) break;
+    }
+    if (!start_date) start_date = found[0] || null;
+    if (!end_date)   end_date   = found[1] || null;
+  }
 
   // ---------- flags ----------
   const flags = [];
-  if (lower.includes('approx'))      flags.push('approx_sqft_detected');
-  if (lower.includes('base year'))   flags.push('base_year_detected');
-  if (!lease_type)                   flags.push('lease_type_missing');
-  if (!start_date)                   flags.push('missing_start_date');
-  if (!end_date)                     flags.push('missing_end_date');
+  if (lower.includes('approx'))    flags.push('approx_sqft_detected');
+  if (lower.includes('base year')) flags.push('base_year_detected');
+  if (!lease_type)                 flags.push('lease_type_missing');
+  if (!start_date)                 flags.push('missing_start_date');
+  if (!end_date)                   flags.push('missing_end_date');
 
   return { name, sqft, lease_type, start_date, end_date, flags };
 }
