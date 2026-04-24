@@ -2642,6 +2642,18 @@ function computeFlags(d) {
   return [...base, ...extra];
 }
 
+function computeFlagsStrict(d) {
+  const base = [
+    d.start_date == null ? 'missing_start_date' : null,
+    d.end_date   == null ? 'missing_end_date'   : null,
+    d.lease_type == null ? 'lease_type_missing' : null,
+  ].filter(Boolean);
+  const extra = (Array.isArray(d.flags) ? d.flags : []).filter(
+    f => (f === 'approx_sqft_detected' || f === 'base_year_detected') && !base.includes(f)
+  );
+  return [...base, ...extra];
+}
+
 async function callClaudeForLease(text) {
   const messages = [{ role: 'user', content: text }];
 
@@ -2892,14 +2904,19 @@ function toInputDate(val) {
 }
 
 function renderTenantFields(i) {
-  const d = tenantData[i]; // guaranteed normalized via normalizeTenant at set/push time
+  let d = normalizeTenant(tenantData[i]);
+  tenantData[i] = d;
+
   const name     = d.tenant_name      ?? d.tenantName ?? '';
   const sqft     = d.leased_sqft      ?? d.leasedSqft ?? null;
   const excluded = d.excluded_categories ?? d.excludedCategories ?? '';
+  const start    = d.start_date  || '';
+  const end      = d.end_date    || '';
+  const type     = d.lease_type  || '';
 
-  const localFlags = computeFlags(d);
+  const flags = computeFlagsStrict(d);
 
-  console.log('RENDER TENANT:', { name, start_date: d.start_date, end_date: d.end_date, lease_type: d.lease_type, flags: localFlags });
+  console.log('RENDER TENANT:', { name, start_date: start, end_date: end, lease_type: type, flags });
   const body = document.getElementById(`tb-${i}`);
   body.innerHTML = `
     <div class="extracted">
@@ -2908,7 +2925,7 @@ function renderTenantFields(i) {
         Fields extracted — review and edit below
         <button class="re-btn" onclick="resetTenant(${i})">Re-upload</button>
       </div>
-      ${(() => { const w = getWarnings(localFlags); return w.length ? `<div class="rc-flags"><div class="rc-flags-title">&#x26A0;&#xFE0F; Needs Review</div>${w.map(m => `<div class="rc-flag-item">${m}</div>`).join('')}</div>` : ''; })()}
+      ${(() => { const w = getWarnings(flags); return w.length ? `<div class="rc-flags"><div class="rc-flags-title">&#x26A0;&#xFE0F; Needs Review</div>${w.map(m => `<div class="rc-flag-item">${m}</div>`).join('')}</div>` : ''; })()}
       <div class="field-row">
         <div class="field">
           <label>Tenant Name</label>
@@ -2924,12 +2941,12 @@ function renderTenantFields(i) {
       <div class="field-row">
         <div class="field">
           <label>Lease Start Date</label>
-          <input type="date" value="${toInputDate(d.start_date)}"
+          <input type="date" value="${toInputDate(start)}"
             oninput="tenantData[${i}].start_date = this.value"/>
         </div>
         <div class="field">
           <label>Lease End Date</label>
-          <input type="date" value="${toInputDate(d.end_date)}"
+          <input type="date" value="${toInputDate(end)}"
             oninput="tenantData[${i}].end_date = this.value"/>
         </div>
       </div>
@@ -2938,9 +2955,9 @@ function renderTenantFields(i) {
           <label>Lease Type</label>
           <select onchange="tenantData[${i}].lease_type = this.value || null; if(lastResults.length) runAllocation()">
             <option value="">Select lease type</option>
-            <option value="Triple Net (NNN)"${d.lease_type === 'Triple Net (NNN)' ? ' selected' : ''}>Triple Net (NNN)</option>
-            <option value="Gross"${d.lease_type === 'Gross' ? ' selected' : ''}>Gross</option>
-            <option value="Modified Gross"${d.lease_type === 'Modified Gross' ? ' selected' : ''}>Modified Gross</option>
+            <option value="Triple Net (NNN)"${type === 'Triple Net (NNN)' ? ' selected' : ''}>Triple Net (NNN)</option>
+            <option value="Gross"${type === 'Gross' ? ' selected' : ''}>Gross</option>
+            <option value="Modified Gross"${type === 'Modified Gross' ? ' selected' : ''}>Modified Gross</option>
           </select>
         </div>
         <div class="field">
