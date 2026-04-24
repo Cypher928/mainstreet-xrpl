@@ -2904,8 +2904,7 @@ function toInputDate(val) {
 }
 
 function renderTenantFields(i) {
-  let d = normalizeTenant(tenantData[i]);
-  tenantData[i] = d;
+  const d = tenantData[i];
 
   const name     = d.tenant_name      ?? d.tenantName ?? '';
   const sqft     = d.leased_sqft      ?? d.leasedSqft ?? null;
@@ -6271,6 +6270,7 @@ async function loadDemo() {
 
   // ── Tenants ──────────────────────────────────────────────────────────────
   tenantData.splice(0, tenantData.length,
+    ...[
     {
       tenantName: 'Fresh Market Foods', leasedSqft: '6200',
       capPercentage: '10', excludedCategories: 'snow', baseYear: '2024',
@@ -6289,6 +6289,7 @@ async function loadDemo() {
       confidence: { tenantName:99, leasedSqft:97, capPercentage:null, excludedCategories:null, baseYear:94 },
       _error: null,
     }
+    ].map(normalizeTenant)
   );
 
   // ── Invoices ─────────────────────────────────────────────────────────────
