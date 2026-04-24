@@ -2687,7 +2687,8 @@ function extractLeaseData(text) {
   return { name, sqft, lease_type, start_date, end_date, flags };
 }
 
-function getWarnings(flags = []) {
+function getWarnings(flags) {
+  if (!Array.isArray(flags)) return [];
   return flags.map(f => {
     if (f === 'lease_type_missing')    return 'Lease type not specified';
     if (f === 'missing_start_date')    return 'Missing start date';
@@ -2803,7 +2804,7 @@ function getWarnings(flags = []) {
     excludedCategories: raw.excludedCategories ?? null,
     baseYear:           raw.baseYear         ?? null,
     confidence:         raw.confidence       || {},
-    flags:              fb.flags,
+    flags:              Array.isArray(fb.flags) ? fb.flags : [],
     _error:             null,
     rawText:            text || '',
   };
