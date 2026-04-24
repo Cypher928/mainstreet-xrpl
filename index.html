@@ -2561,6 +2561,8 @@ function normalizeTenant(d) {
     confidence:          d.confidence          ?? {},
     baseYear:            d.baseYear            ?? null,
     unitNumber:          d.unitNumber          ?? '',
+    doc_has_dates:       d.doc_has_dates       ?? true,
+    doc_has_lease_type:  d.doc_has_lease_type  ?? true,
     _error:              d._error              ?? null,
   };
 }
@@ -2639,6 +2641,7 @@ function extractLeaseData(text) {
 function getWarnings(flags) {
   if (!Array.isArray(flags)) return [];
   return flags.map(f => {
+    if (f === 'no_term_in_doc')        return 'No lease term found in document — please enter manually';
     if (f === 'lease_type_missing')    return 'Lease type not specified';
     if (f === 'missing_start_date')    return 'Missing start date';
     if (f === 'missing_end_date')      return 'Missing end date';
@@ -2649,11 +2652,14 @@ function getWarnings(flags) {
 }
 
 function computeFlags(d) {
-  const base = [
-    !d.start_date  ? 'missing_start_date' : null,
-    !d.end_date    ? 'missing_end_date'   : null,
-    !d.lease_type  ? 'lease_type_missing' : null,
-  ].filter(Boolean);
+  const base = [];
+  if (!d.start_date && !d.end_date && d.doc_has_dates === false) {
+    base.push('no_term_in_doc');
+  } else {
+    if (!d.start_date) base.push('missing_start_date');
+    if (!d.end_date)   base.push('missing_end_date');
+  }
+  if (!d.lease_type) base.push('lease_type_missing');
   const extra = (Array.isArray(d.flags) ? d.flags : []).filter(
     f => (f === 'approx_sqft_detected' || f === 'base_year_detected') && !base.includes(f)
   );
@@ -2661,11 +2667,14 @@ function computeFlags(d) {
 }
 
 function computeFlagsStrict(d) {
-  const base = [
-    d.start_date == null ? 'missing_start_date' : null,
-    d.end_date   == null ? 'missing_end_date'   : null,
-    d.lease_type == null ? 'lease_type_missing' : null,
-  ].filter(Boolean);
+  const base = [];
+  if (d.start_date == null && d.end_date == null && d.doc_has_dates === false) {
+    base.push('no_term_in_doc');
+  } else {
+    if (d.start_date == null) base.push('missing_start_date');
+    if (d.end_date   == null) base.push('missing_end_date');
+  }
+  if (d.lease_type == null) base.push('lease_type_missing');
   const extra = (Array.isArray(d.flags) ? d.flags : []).filter(
     f => (f === 'approx_sqft_detected' || f === 'base_year_detected') && !base.includes(f)
   );
@@ -2762,7 +2771,10 @@ async function callClaudeForLease(text) {
 
   console.log('DATES:', resolvedStart, resolvedEnd, '(ai:', raw.startDate ?? raw.start_date, raw.endDate ?? raw.end_date, '| regex:', fb.start_date, fb.end_date, ')');
 
-  const finalFlags = computeFlags({ start_date: resolvedStart, end_date: resolvedEnd, lease_type: resolvedType, flags: raw.flags });
+  const doc_has_dates = /\b(?:\d{1,2}\/\d{1,2}\/\d{4}|\d{4}-\d{2}-\d{2}|(?:January|February|March|April|May|June|July|August|September|October|November|December)\s+\d{1,2},?\s+\d{4})\b/i.test(text);
+  const doc_has_lease_type = /triple[\s-]?net|nnn|gross|modified[\s-]?gross/i.test(text);
+
+  const finalFlags = computeFlags({ start_date: resolvedStart, end_date: resolvedEnd, lease_type: resolvedType, flags: raw.flags, doc_has_dates, doc_has_lease_type });
 
   return normalizeTenant({
     tenant_name:         resolvedName,
@@ -2775,6 +2787,8 @@ async function callClaudeForLease(text) {
     baseYear:            raw.baseYear ?? null,
     confidence:          raw.confidence || {},
     flags:               finalFlags,
+    doc_has_dates,
+    doc_has_lease_type,
     _error:              null,
   });
 }
