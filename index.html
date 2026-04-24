@@ -2556,12 +2556,12 @@ function normalizeTenant(d) {
 }
 
 function isValidTenant(d) {
-  return d != null && !!(
-    d.tenant_name || d.tenantName ||
-    d.leased_sqft || d.leasedSqft ||
-    d.start_date  ||
-    d.end_date    ||
-    d.lease_type
+  if (!d) return false;
+  const name = d.tenant_name || d.tenantName;
+  const sqft = d.leased_sqft || d.leasedSqft;
+  return (
+    name && name.trim().length > 0 &&
+    sqft && String(sqft).trim().length > 0
   );
 }
 
@@ -2829,8 +2829,9 @@ async function handleLease(i, file) {
     const tenant    = await callClaudeForLease(leaseText);
     console.log("FINAL TENANT USED IN UI:", tenant);
     if (!tenant) throw new Error('Could not extract lease fields');
-    if (!isValidTenant(tenant)) throw new Error('Extracted tenant has no usable fields');
-    tenantData[i]   = normalizeTenant(tenant);
+    const normalized = normalizeTenant(tenant);
+    if (!isValidTenant(normalized)) throw new Error('Extracted tenant has no usable fields');
+    tenantData[i] = normalized;
     console.log("FINAL TENANT OBJECT:", tenantData[i]);
     renderTenantFields(i);
     checkSqftValidation();
@@ -3464,20 +3465,10 @@ async function handleBulkLeases(fileList) {
       const tenant    = await callClaudeForLease(leaseText);
       console.log("FINAL TENANT USED IN UI:", tenant);
       if (!tenant) throw new Error('Could not extract lease fields');
-      if (isValidTenant(tenant)) tenantData.push(normalizeTenant(tenant));
+      const t = normalizeTenant(tenant);
+      if (isValidTenant(t)) tenantData.push(t);
     } catch (err) {
       console.error('[handleBulkLeases] extraction error for', files[i].name, err);
-      const fallback = {
-        tenant_name:  files[i].name.replace(/\.pdf$/i, ''),
-        leased_sqft:  null,
-        start_date:   null,
-        end_date:     null,
-        lease_type:   null,
-        flags:        [],
-        confidence:   {},
-        _error:       err.message,
-      };
-      if (isValidTenant(fallback)) tenantData.push(normalizeTenant(fallback));
     }
   }
 
