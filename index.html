@@ -2623,7 +2623,20 @@ async function extractPdfText(file) {
   return pages.join('\n\n');
 }
 
+function normalizeText(text) {
+  if (!text) return '';
+  return text
+    .replace(/\r/g, ' ')
+    .replace(/\n/g, ' ')
+    .replace(/\s+/g, ' ')
+    .replace(/([a-zA-Z])\s+([a-zA-Z])/g, '$1$2')
+    .trim();
+}
+
 function extractLeaseData(text) {
+  if (!text || typeof text !== 'string') {
+    return { start_date: null, end_date: null, lease_type: null, sqft: null, name: null, flags: ['invalid_text_input'] };
+  }
   const lower = text.toLowerCase();
 
   const toISO = str => {
@@ -2788,7 +2801,10 @@ async function callClaudeForLease(text) {
   };
 
   const raw = data;
-  const fb  = extractLeaseData(text);
+  console.log('RAW LEASE TEXT:', text?.slice(0, 2000));
+  const cleanText = normalizeText(text);
+  console.log('CLEANED LEASE TEXT:', cleanText?.slice(0, 2000));
+  const fb  = extractLeaseData(cleanText);
 
   // Prefer AI values; fall back to regex extraction
   const resolvedName  = raw.tenantName  || raw.tenant_name  || fb.name  || null;
