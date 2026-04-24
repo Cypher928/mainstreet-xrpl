@@ -2630,6 +2630,18 @@ function getWarnings(flags) {
   });
 }
 
+function computeFlags(d) {
+  const base = [
+    !d.start_date  ? 'missing_start_date' : null,
+    !d.end_date    ? 'missing_end_date'   : null,
+    !d.lease_type  ? 'lease_type_missing' : null,
+  ].filter(Boolean);
+  const extra = (Array.isArray(d.flags) ? d.flags : []).filter(
+    f => (f === 'approx_sqft_detected' || f === 'base_year_detected') && !base.includes(f)
+  );
+  return [...base, ...extra];
+}
+
 async function callClaudeForLease(text) {
   const messages = [{ role: 'user', content: text }];
 
@@ -2720,11 +2732,7 @@ async function callClaudeForLease(text) {
 
   console.log('DATES:', resolvedStart, resolvedEnd, '(ai:', raw.startDate ?? raw.start_date, raw.endDate ?? raw.end_date, '| regex:', fb.start_date, fb.end_date, ')');
 
-  const finalFlags = [...new Set([
-    ...(resolvedStart ? [] : ['missing_start_date']),
-    ...(resolvedEnd   ? [] : ['missing_end_date']),
-    ...(resolvedType  ? [] : ['lease_type_missing']),
-  ])];
+  const finalFlags = computeFlags({ start_date: resolvedStart, end_date: resolvedEnd, lease_type: resolvedType, flags: raw.flags });
 
   return normalizeTenant({
     tenant_name:         resolvedName,
@@ -2889,14 +2897,7 @@ function renderTenantFields(i) {
   const sqft     = d.leased_sqft      ?? d.leasedSqft ?? null;
   const excluded = d.excluded_categories ?? d.excludedCategories ?? '';
 
-  const localFlags = [];
-  if (!d.start_date)  localFlags.push('missing_start_date');
-  if (!d.end_date)    localFlags.push('missing_end_date');
-  if (!d.lease_type)  localFlags.push('lease_type_missing');
-  (Array.isArray(d.flags) ? d.flags : []).forEach(f => {
-    if ((f === 'approx_sqft_detected' || f === 'base_year_detected') && !localFlags.includes(f))
-      localFlags.push(f);
-  });
+  const localFlags = computeFlags(d);
 
   console.log('RENDER TENANT:', { name, start_date: d.start_date, end_date: d.end_date, lease_type: d.lease_type, flags: localFlags });
   const body = document.getElementById(`tb-${i}`);
