@@ -2549,12 +2549,10 @@ function enrichLeaseData(data, extractedText) {
 
 function normalizeTenant(d) {
   if (!d) return d;
-  return {
-    ...d,
-    start_date: d.start_date ?? d.lease_start_date ?? d.startDate ?? null,
-    end_date:   d.end_date   ?? d.lease_end_date   ?? d.endDate   ?? null,
-    lease_type: d.lease_type ?? d.leaseType        ?? null,
-  };
+  const start = d.start_date ?? d.lease_start_date ?? d.startDate ?? null;
+  const end   = d.end_date   ?? d.lease_end_date   ?? d.endDate   ?? null;
+  const type  = d.lease_type ?? d.leaseType        ?? null;
+  return { ...d, start_date: start, end_date: end, lease_type: type };
 }
 
 
@@ -3532,19 +3530,16 @@ async function handleBulkLeases(fileList) {
       );
 
       if (!hasValidTenant) {
-        tenantData.push({
-          tenantName:         files[i].name.replace(/\.pdf$/i, ''),
-          leasedSqft:         null,
-          capPercentage:      null,
-          excludedCategories: null,
-          baseYear:           null,
+        tenantData.push(normalizeTenant({
+          tenant_name:        files[i].name.replace(/\.pdf$/i, ''),
+          leased_sqft:        null,
           start_date:         null,
           end_date:           null,
           lease_type:         null,
           flags:              [],
           confidence:         {},
           _error:             err.message,
-        });
+        }));
       }
     }
   }
