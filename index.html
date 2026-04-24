@@ -2549,19 +2549,27 @@ function enrichLeaseData(data, extractedText) {
 
 function normalizeTenant(d) {
   if (!d) return d;
-  const start = d.start_date ?? d.startDate ?? d.lease_start_date ?? '';
-  const end   = d.end_date   ?? d.endDate   ?? d.lease_end_date   ?? '';
-  const type  = d.lease_type ?? d.leaseType ?? '';
-  return { ...d, start_date: start, end_date: end, lease_type: type };
+  return {
+    tenant_name:         d.tenant_name         ?? d.tenantName                    ?? '',
+    leased_sqft:         d.leased_sqft         ?? d.leasedSqft                    ?? '',
+    start_date:          d.start_date          ?? d.startDate  ?? d.lease_start_date ?? '',
+    end_date:            d.end_date            ?? d.endDate    ?? d.lease_end_date   ?? '',
+    lease_type:          d.lease_type          ?? d.leaseType                     ?? '',
+    excluded_categories: d.excluded_categories ?? d.excludedCategories            ?? '',
+    cap:                 d.cap                 ?? d.capPercentage                 ?? null,
+    flags:               d.flags               ?? [],
+    confidence:          d.confidence          ?? {},
+    baseYear:            d.baseYear            ?? null,
+    unitNumber:          d.unitNumber          ?? '',
+    _error:              d._error              ?? null,
+  };
 }
 
 function isValidTenant(d) {
   if (!d) return false;
-  const name = d.tenant_name || d.tenantName;
-  const sqft = d.leased_sqft || d.leasedSqft;
   return (
-    name && name.trim().length > 0 &&
-    sqft && String(sqft).trim().length > 0
+    d.tenant_name && d.tenant_name.trim().length > 0 &&
+    d.leased_sqft != null && String(d.leased_sqft).trim().length > 0
   );
 }
 
@@ -3491,13 +3499,13 @@ function renderBulkResults() {
   const rows = tenantData.map((d, i) => {
     if (!d) return '';
     console.log("FINAL TENANT USED IN UI:", d);
-    const sqft        = d.leasedSqft     ?? d.leased_sqft     ?? null;
-    const start       = d.start_date      ?? d.startDate        ?? null;
-    const end         = d.end_date        ?? d.endDate          ?? null;
-    const leaseType   = d.lease_type      ?? d.leaseType        ?? null;
-    const capPct      = d.capPercentage  ?? d.cap_percentage   ?? null;
-    const icon = d._error ? '⚠️' : (d.tenantName ?? d.tenant_name) ? '✓' : '?';
-    const name = d.tenantName ?? d.tenant_name ?? '(unknown — click to edit)';
+    const sqft      = d.leased_sqft  || null;
+    const start     = d.start_date  || null;
+    const end       = d.end_date    || null;
+    const leaseType = d.lease_type  || null;
+    const capPct    = d.cap         ?? null;
+    const icon = d._error ? '⚠️' : d.tenant_name ? '✓' : '?';
+    const name = d.tenant_name || '(unknown — click to edit)';
     const meta = [
       sqft      !== null && sqft      !== '' ? `${sqft} sqft`   : null,
       start     !== null && start     !== '' ? start             : null,
@@ -3521,13 +3529,13 @@ function renderBulkResults() {
           <div class="field-row">
             <div class="field">
               <label>Tenant Name</label>
-              <input type="text" value="${d.tenantName || ''}"
-                oninput="tenantData[${i}].tenantName=this.value;refreshBulkSummary(${i})"/>
+              <input type="text" value="${esc(d.tenant_name || '')}"
+                oninput="tenantData[${i}].tenant_name=this.value;refreshBulkSummary(${i})"/>
             </div>
             <div class="field">
               <label>Leased Sqft</label>
-              <input type="number" value="${d.leasedSqft || ''}"
-                oninput="tenantData[${i}].leasedSqft=this.value;refreshBulkSummary(${i})"/>
+              <input type="number" value="${d.leased_sqft || ''}"
+                oninput="tenantData[${i}].leased_sqft=this.value;refreshBulkSummary(${i})"/>
             </div>
           </div>
           <div class="field-row">
@@ -3554,8 +3562,8 @@ function renderBulkResults() {
             </div>
             <div class="field">
               <label>Excluded Categories (comma-separated)</label>
-              <input type="text" value="${d.excludedCategories || ''}"
-                oninput="tenantData[${i}].excludedCategories=this.value"/>
+              <input type="text" value="${esc(d.excluded_categories || '')}"
+                oninput="tenantData[${i}].excluded_categories=this.value"/>
             </div>
           </div>
         </div>
@@ -3583,18 +3591,14 @@ function refreshBulkSummary(i) {
   if (!d) return;
   const nameEl = document.getElementById(`bname-${i}`);
   const metaEl = document.getElementById(`bmeta-${i}`);
-  const _sqft  = d.leasedSqft ?? d.leased_sqft ?? null;
-  const _start = d.start_date  ?? d.startDate  ?? null;
-  const _end   = d.end_date    ?? d.endDate    ?? null;
-  const _type  = d.lease_type  ?? d.leaseType  ?? null;
-  if (nameEl) nameEl.textContent = d.tenantName ?? d.tenant_name ?? '(unknown — click to edit)';
+  if (nameEl) nameEl.textContent = d.tenant_name || '(unknown — click to edit)';
   if (metaEl) {
     metaEl.textContent = [
-      _sqft  !== null                        ? `${_sqft} sqft` : null,
-      _start !== null && _start !== ''       ? _start          : null,
-      _end   !== null && _end   !== ''       ? _end            : null,
-      _type ?? null,
-    ].filter(v => v !== null && v !== undefined).join(' · ') || '—';
+      d.leased_sqft ? `${d.leased_sqft} sqft` : null,
+      d.start_date  || null,
+      d.end_date    || null,
+      d.lease_type  || null,
+    ].filter(Boolean).join(' · ') || '—';
   }
 }
 
@@ -4775,20 +4779,20 @@ async function runAllocation() {
   checkSqftValidation();
 
   const tenants = tenantData
-    .filter(t => t && t.tenantName && parseSqft(t.leasedSqft) > 0)
+    .filter(t => t && t.tenant_name && parseSqft(t.leased_sqft) > 0)
     .map(t => ({
-      name:               t.tenantName,
-      leasedSqft:         parseSqft(t.leasedSqft),
+      name:               t.tenant_name,
+      leasedSqft:         parseSqft(t.leased_sqft),
       totalSqft,
-      capPct:             t.capPercentage,
-      excludedCategories: t.excludedCategories
-        ? t.excludedCategories.split(',').map(s => s.trim().toLowerCase()).filter(Boolean)
+      capPct:             t.cap,
+      excludedCategories: t.excluded_categories
+        ? t.excluded_categories.split(',').map(s => s.trim().toLowerCase()).filter(Boolean)
         : [],
     }));
 
   if (!tenants.length) {
     // If there are tenants with names but missing sqft, give a more specific message
-    const namedTenantsWithNoSqft = tenantData.filter(t => t && t.tenantName && parseSqft(t.leasedSqft) <= 0);
+    const namedTenantsWithNoSqft = tenantData.filter(t => t && t.tenant_name && parseSqft(t.leased_sqft) <= 0);
     if (namedTenantsWithNoSqft.length) {
       showErr(body, section,
         `${namedTenantsWithNoSqft.length} tenant(s) are missing Leased Sqft. ` +
@@ -4813,13 +4817,13 @@ async function runAllocation() {
 
   // Build a Property + run full reconciliation (for per-tenant invoice breakdown + direct matching)
   const _prop = new Property(propName, totalSqft);
-  _prop.addLeases(tenantData.filter(t => t && t.tenantName && parseSqft(t.leasedSqft) > 0).map(t =>
-    new Lease(t.tenant_name || t.tenantName, t.unitNumber || '', parseSqft(t.leased_sqft ?? t.leasedSqft), t.start_date || '', t.end_date || '',
+  _prop.addLeases(tenantData.filter(t => t && t.tenant_name && parseSqft(t.leased_sqft) > 0).map(t =>
+    new Lease(t.tenant_name, t.unitNumber || '', parseSqft(t.leased_sqft), t.start_date || '', t.end_date || '',
       t.excluded_categories ? t.excluded_categories.split(',').map(s => s.trim()) : [],
-      t.cap ?? t.capPercentage ?? null, null,
-      (t.confidence?.leasedSqft ?? 100) < 70,
+      t.cap ?? null, null,
+      (t.confidence?.leased_sqft ?? t.confidence?.leasedSqft ?? 100) < 70,
       t.baseYear ?? null,
-      t.lease_type ?? null)
+      t.lease_type || null)
   ));
   _prop.addInvoices(invoiceData.filter(inv => inv && inv.vendorName && parseFloat(inv.amount) > 0).map(inv =>
     new Invoice(null, inv.invoiceDate, inv.amount, inv.vendorName, inv.category)
@@ -4827,7 +4831,7 @@ async function runAllocation() {
   const fullResults = runFullReconciliation(_prop);
 
   // Sync matchedTenant tags back to invoiceData for badge display
-  const activeTenants = tenantData.filter(t => t && t.tenantName);
+  const activeTenants = tenantData.filter(t => t && t.tenant_name);
   invoiceData.forEach((inv, i) => {
     if (!inv) return;
     const m = matchInvoiceToTenant(inv, activeTenants);
@@ -5655,7 +5659,7 @@ function generateHolesReport() {
   }
 
   // ── 3. Tenants with no lease uploaded ────────────────────────────────────
-  const validTenants = tenantData.filter(t => t && !t._error && t.tenantName && parseSqft(t.leasedSqft) > 0);
+  const validTenants = tenantData.filter(t => t && !t._error && t.tenant_name && parseSqft(t.leased_sqft) > 0);
   const errorTenants = tenantData.filter(t => t && t._error);
   const emptySlots   = tenantData.filter(t => t === null).length;
 
@@ -5669,7 +5673,7 @@ function generateHolesReport() {
   errorTenants.forEach(t => {
     warningItems.push({
       icon: '⚠️',
-      text: `Lease extraction failed for <strong>${esc(t.tenantName || 'unknown tenant')}</strong>`,
+      text: `Lease extraction failed for <strong>${esc(t.tenant_name || 'unknown tenant')}</strong>`,
       detail: t._error,
     });
   });
@@ -6639,12 +6643,12 @@ async function loadProperties() {
 async function syncTenantsToTable(propertyId, tenants) {
   await db.from('tenants').delete().eq('property_id', propertyId);
   const rows = tenants
-    .filter(t => t && (t.tenantName || t.tenant_name))
+    .filter(t => t && t.tenant_name)
     .map(t => ({
       property_id: propertyId,
-      name:       t.tenantName       || t.tenant_name       || null,
-      sqft:       t.leasedSqft       ?? t.leased_sqft       ?? null,
-      cap:        t.capPercentage     ?? t.cap               ?? null,
+      name:       t.tenant_name  || null,
+      sqft:       t.leased_sqft  ?? null,
+      cap:        t.cap          ?? null,
       start_date: t.start_date || null,
       end_date:   t.end_date   || null,
     }));
