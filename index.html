@@ -2708,6 +2708,23 @@ function extractLeaseData(text) {
     if (!end_date)   end_date   = found[1] || null;
   }
 
+  // ---------- fallback: full-document date scan ----------
+  if (!start_date || !end_date) {
+    const dateMatches = text.match(
+      /\b(\d{1,2}\/\d{1,2}\/\d{2,4}|(?:jan|feb|mar|apr|may|jun|jul|aug|sep|oct|nov|dec)[a-z]*\s+\d{1,2},?\s+\d{4})\b/gi
+    );
+    if (dateMatches && dateMatches.length >= 2) {
+      const parsedDates = dateMatches
+        .map(d => new Date(d))
+        .filter(d => !isNaN(d));
+      if (parsedDates.length >= 2) {
+        parsedDates.sort((a, b) => a - b);
+        if (!start_date) start_date = parsedDates[0].toISOString().split('T')[0];
+        if (!end_date)   end_date   = parsedDates[parsedDates.length - 1].toISOString().split('T')[0];
+      }
+    }
+  }
+
   // ---------- flags ----------
   const flags = [];
   if (lower.includes('approx'))    flags.push('approx_sqft_detected');
@@ -2822,12 +2839,14 @@ async function callClaudeForLease(text) {
 
   console.log('DATES:', resolvedStart, resolvedEnd, '(raw:', raw.startDate, raw.endDate, '| extracted:', fb.start_date, fb.end_date, ')');
 
-  // Remove flags that are invalidated by the resolved (AI-merged) values
-  const finalFlags = (Array.isArray(fb.flags) ? fb.flags : []).filter(f => {
-    if (f === 'missing_start_date'  && resolvedStart) return false;
-    if (f === 'missing_end_date'    && resolvedEnd)   return false;
-    if (f === 'lease_type_missing'  && resolvedType)  return false;
-    return true;
+  // Recalculate flags from final resolved values (not from the regex-only stage)
+  const finalFlags = [];
+  if (!resolvedStart) finalFlags.push('missing_start_date');
+  if (!resolvedEnd)   finalFlags.push('missing_end_date');
+  if (!resolvedType)  finalFlags.push('lease_type_missing');
+  // Carry over non-date/type informational flags from regex stage
+  (Array.isArray(fb.flags) ? fb.flags : []).forEach(f => {
+    if (f === 'approx_sqft_detected' || f === 'base_year_detected') finalFlags.push(f);
   });
 
   return {
