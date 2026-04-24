@@ -3050,18 +3050,18 @@ function renderTenantFields(i) {
         <div class="field">
           <label>Lease Start Date</label>
           <input type="date" value="${t.start_date ?? ''}"
-            onchange="tenantData[${i}].start_date = this.value"/>
+            oninput="tenantData[${i}].start_date = this.value"/>
         </div>
         <div class="field">
           <label>Lease End Date</label>
           <input type="date" value="${t.end_date ?? ''}"
-            onchange="tenantData[${i}].end_date = this.value"/>
+            oninput="tenantData[${i}].end_date = this.value"/>
         </div>
       </div>
       <div class="field-row">
         <div class="field">
           <label>Lease Type</label>
-          <select onchange="tenantData[${i}].lease_type = this.value || null; if(lastResults.length) runAllocation()">
+          <select onchange="tenantData[${i}].lease_type = this.value || null; if(lastResults.length) runAllocation(); renderTenantFields(${i})">
             <option value="">Select lease type</option>
             <option value="Triple Net (NNN)"${t.lease_type === 'Triple Net (NNN)' ? ' selected' : ''}>Triple Net (NNN)</option>
             <option value="Gross"${t.lease_type === 'Gross' ? ' selected' : ''}>Gross</option>
