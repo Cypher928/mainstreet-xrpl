@@ -3006,19 +3006,14 @@ function clearSqftBanner() {
 
 function renderTenantFields(i) {
   const d = tenantData[i];
-  const t = {
-    start_date: d.start_date  ?? d.lease_start_date ?? d.startDate  ?? null,
-    end_date:   d.end_date    ?? d.lease_end_date   ?? d.endDate    ?? null,
-    lease_type: d.lease_type  ?? d.leaseType        ?? null,
-    sqft:       d.sqft        ?? d.leased_sqft      ?? d.leasedSqft ?? null,
-    name:       d.name        ?? d.tenant_name      ?? d.tenantName ?? '',
-    excluded:   d.excluded_categories ?? d.excludedCategories      ?? '',
-  };
 
-  // Write resolved values back to d so inputs and subsequent reads use one canonical key
-  if (!d.start_date  && t.start_date)  d.start_date  = t.start_date;
-  if (!d.end_date    && t.end_date)    d.end_date    = t.end_date;
-  if (!d.lease_type  && t.lease_type)  d.lease_type  = t.lease_type;
+  // Resolve across all key variants then write back to canonical snake_case
+  d.start_date  = d.start_date  ?? d.lease_start_date ?? d.startDate  ?? null;
+  d.end_date    = d.end_date    ?? d.lease_end_date   ?? d.endDate    ?? null;
+  d.lease_type  = d.lease_type  ?? d.leaseType        ?? null;
+  const name     = d.name       ?? d.tenant_name      ?? d.tenantName ?? '';
+  const sqft     = d.sqft       ?? d.leased_sqft      ?? d.leasedSqft ?? null;
+  const excluded = d.excluded_categories ?? d.excludedCategories     ?? '';
 
   const localFlags = [];
   if (!d.start_date)  localFlags.push('missing_start_date');
@@ -3029,7 +3024,7 @@ function renderTenantFields(i) {
       localFlags.push(f);
   });
 
-  console.log('RENDER TENANT:', { name: t.name, start_date: d.start_date, end_date: d.end_date, lease_type: d.lease_type, flags: localFlags });
+  console.log('RENDER TENANT:', { name, start_date: d.start_date, end_date: d.end_date, lease_type: d.lease_type, flags: localFlags });
   const body = document.getElementById(`tb-${i}`);
   body.innerHTML = `
     <div class="extracted">
@@ -3042,24 +3037,24 @@ function renderTenantFields(i) {
       <div class="field-row">
         <div class="field">
           <label>Tenant Name</label>
-          <input type="text" value="${esc(t.name)}"
+          <input type="text" value="${esc(name)}"
             oninput="tenantData[${i}].tenant_name = this.value"/>
         </div>
         <div class="field">
           <label>Leased Sqft</label>
-          <input type="number" value="${t.sqft ?? ''}"
+          <input type="number" value="${sqft ?? ''}"
             oninput="tenantData[${i}].leased_sqft = this.value; checkSqftValidation()"/>
         </div>
       </div>
       <div class="field-row">
         <div class="field">
           <label>Lease Start Date</label>
-          <input type="date" value="${d.start_date ?? ''}"
+          <input type="date" value="${d.start_date ? d.start_date.slice(0, 10) : ''}"
             oninput="tenantData[${i}].start_date = this.value"/>
         </div>
         <div class="field">
           <label>Lease End Date</label>
-          <input type="date" value="${d.end_date ?? ''}"
+          <input type="date" value="${d.end_date ? d.end_date.slice(0, 10) : ''}"
             oninput="tenantData[${i}].end_date = this.value"/>
         </div>
       </div>
@@ -3075,7 +3070,7 @@ function renderTenantFields(i) {
         </div>
         <div class="field">
           <label>Excluded Categories (comma-separated)</label>
-          <input type="text" value="${esc(t.excluded)}"
+          <input type="text" value="${esc(excluded)}"
             oninput="tenantData[${i}].excluded_categories = this.value"/>
         </div>
       </div>
