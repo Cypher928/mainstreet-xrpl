@@ -2699,7 +2699,7 @@ function getWarnings(flags) {
   });
 }
 
-
+async function callClaudeForLease(text) {
   const messages = [{ role: 'user', content: text }];
 
   const res = await fetch('/api/claude', {
