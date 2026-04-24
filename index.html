@@ -2917,17 +2917,7 @@ function toInputDate(val) {
 
 function renderTenantFields(i) {
   const d = tenantData[i];
-
-  const name     = d.tenant_name      ?? d.tenantName ?? '';
-  const sqft     = d.leased_sqft      ?? d.leasedSqft ?? null;
-  const excluded = d.excluded_categories ?? d.excludedCategories ?? '';
-  const start    = d.start_date  || '';
-  const end      = d.end_date    || '';
-  const type     = d.lease_type  || '';
-
   const flags = computeFlagsStrict(d);
-
-  console.log('RENDER TENANT:', { name, start_date: start, end_date: end, lease_type: type, flags });
   const body = document.getElementById(`tb-${i}`);
   body.innerHTML = `
     <div class="extracted">
@@ -2940,24 +2930,24 @@ function renderTenantFields(i) {
       <div class="field-row">
         <div class="field">
           <label>Tenant Name</label>
-          <input type="text" value="${esc(name)}"
+          <input type="text" value="${esc(d.tenant_name || '')}"
             oninput="tenantData[${i}].tenant_name = this.value"/>
         </div>
         <div class="field">
           <label>Leased Sqft</label>
-          <input type="number" value="${sqft ?? ''}"
+          <input type="number" value="${d.leased_sqft ?? ''}"
             oninput="tenantData[${i}].leased_sqft = this.value; checkSqftValidation()"/>
         </div>
       </div>
       <div class="field-row">
         <div class="field">
           <label>Lease Start Date</label>
-          <input type="date" value="${toInputDate(start)}"
+          <input type="date" value="${toInputDate(d.start_date)}"
             oninput="tenantData[${i}].start_date = this.value"/>
         </div>
         <div class="field">
           <label>Lease End Date</label>
-          <input type="date" value="${toInputDate(end)}"
+          <input type="date" value="${toInputDate(d.end_date)}"
             oninput="tenantData[${i}].end_date = this.value"/>
         </div>
       </div>
@@ -2966,14 +2956,14 @@ function renderTenantFields(i) {
           <label>Lease Type</label>
           <select onchange="tenantData[${i}].lease_type = this.value || null; if(lastResults.length) runAllocation()">
             <option value="">Select lease type</option>
-            <option value="Triple Net (NNN)"${type === 'Triple Net (NNN)' ? ' selected' : ''}>Triple Net (NNN)</option>
-            <option value="Gross"${type === 'Gross' ? ' selected' : ''}>Gross</option>
-            <option value="Modified Gross"${type === 'Modified Gross' ? ' selected' : ''}>Modified Gross</option>
+            <option value="Triple Net (NNN)"${d.lease_type === 'Triple Net (NNN)' ? ' selected' : ''}>Triple Net (NNN)</option>
+            <option value="Gross"${d.lease_type === 'Gross' ? ' selected' : ''}>Gross</option>
+            <option value="Modified Gross"${d.lease_type === 'Modified Gross' ? ' selected' : ''}>Modified Gross</option>
           </select>
         </div>
         <div class="field">
           <label>Excluded Categories (comma-separated)</label>
-          <input type="text" value="${esc(excluded)}"
+          <input type="text" value="${esc(d.excluded_categories || '')}"
             oninput="tenantData[${i}].excluded_categories = this.value"/>
         </div>
       </div>
