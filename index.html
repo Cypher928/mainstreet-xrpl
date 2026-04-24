@@ -2623,42 +2623,68 @@ async function extractPdfText(file) {
   return pages.join('\n\n');
 }
 
-function extractDates(text) {
+function extractLeaseData(text) {
+  const lower = text.toLowerCase();
+
   const toISO = str => {
     if (!str) return null;
-    const d = new Date(str);
+    const trimmed = String(str).trim().replace(/[,\s]+$/, '');
+    const d = new Date(trimmed);
     return isNaN(d) ? null : d.toISOString().split('T')[0];
   };
 
-  // Keyword-anchored patterns
-  const startMatch =
-    text.match(/commence(?:s)? on ([A-Za-z]+ \d{1,2}, \d{4})/i) ||
-    text.match(/commencement\s+date[^\n]*?([A-Za-z]+ \d{1,2}, \d{4})/i) ||
-    text.match(/start(?:s|ing)? on ([A-Za-z]+ \d{1,2}, \d{4})/i);
-
-  const endMatch =
-    text.match(/expire(?:s)? on ([A-Za-z]+ \d{1,2}, \d{4})/i) ||
-    text.match(/expir(?:ation|y)\s+date[^\n]*?([A-Za-z]+ \d{1,2}, \d{4})/i) ||
-    text.match(/terminat(?:es|ion)[^\n]*?([A-Za-z]+ \d{1,2}, \d{4})/i);
-
-  let startDate = toISO(startMatch?.[1]);
-  let endDate   = toISO(endMatch?.[1]);
-
-  // Fallback: extract first two parseable dates from full text
-  if (!startDate || !endDate) {
-    const DATE_RE = /\b([A-Za-z]+ \d{1,2}, \d{4}|\d{4}-\d{2}-\d{2})\b/g;
-    const found = [];
-    let m;
-    while ((m = DATE_RE.exec(text)) !== null) {
-      const iso = toISO(m[1]);
-      if (iso && !found.includes(iso)) found.push(iso);
-      if (found.length === 2) break;
+  // Extract first match from an ordered list of regexes; capture group 1 is the value
+  function extractDate(regexList) {
+    for (const r of regexList) {
+      const m = text.match(r);
+      if (m) return toISO(m[1]);
     }
-    if (!startDate) startDate = found[0] || null;
-    if (!endDate)   endDate   = found[1] || null;
+    return null;
   }
 
-  return { startDate, endDate };
+  // ---------- name ----------
+  const nameMatch = text.match(/tenant[:\s]+([a-zA-Z0-9 &,.'()-]+)/i);
+  const name = nameMatch ? nameMatch[1].trim() : null;
+
+  // ---------- sqft ----------
+  const sqftMatch =
+    text.match(/([\d,]+)\s*(?:rentable\s*)?(?:square feet|sq\.?\s*ft\.?)/i);
+  const sqft = sqftMatch
+    ? Number(sqftMatch[1].replace(/,/g, ''))
+    : null;
+
+  // ---------- lease type ----------
+  let lease_type = null;
+  if (lower.includes('triple net') || lower.includes('nnn'))
+    lease_type = 'Triple Net (NNN)';
+  else if (lower.includes('modified gross'))
+    lease_type = 'Modified Gross';
+  else if (lower.includes('gross lease') || lower.includes('full service') || lower.includes('full-service'))
+    lease_type = 'Gross';
+
+  // ---------- dates ----------
+  const start_date = extractDate([
+    /commence(?:s|ment)?\s+(?:date\s*[:\s]+)?([A-Za-z]+ \d{1,2},?\s*\d{4})/i,
+    /commencement\s+date[:\s]+([A-Za-z0-9,\- ]+?\d{4})/i,
+    /starts?\s+(?:on\s*)?[:\s]+([A-Za-z0-9,\- ]+?\d{4})/i,
+    /effective\s+date[:\s]+([A-Za-z0-9,\- ]+?\d{4})/i,
+  ]);
+
+  const end_date = extractDate([
+    /expir(?:es?|ation|y)\s+(?:date\s*)?[:\s]+([A-Za-z0-9,\- ]+?\d{4})/i,
+    /terminat(?:es?|ion)\s+(?:date\s*)?[:\s]+([A-Za-z0-9,\- ]+?\d{4})/i,
+    /lease\s+end\s+date[:\s]+([A-Za-z0-9,\- ]+?\d{4})/i,
+  ]);
+
+  // ---------- flags ----------
+  const flags = [];
+  if (lower.includes('approx'))      flags.push('approx_sqft_detected');
+  if (lower.includes('base year'))   flags.push('base_year_detected');
+  if (!lease_type)                   flags.push('lease_type_missing');
+  if (!start_date)                   flags.push('missing_start_date');
+  if (!end_date)                     flags.push('missing_end_date');
+
+  return { name, sqft, lease_type, start_date, end_date, flags };
 }
 
 async function callClaudeForLease(text) {
@@ -2731,47 +2757,42 @@ async function callClaudeForLease(text) {
   };
 
   const raw = data;
+  const fb  = extractLeaseData(text);
 
-  // Resolve sqft from any possible key, then convert to Number (null if absent/unparseable)
-  const _sqftRaw =
-    (raw.leasedSqft   !== '' && raw.leasedSqft   != null) ? raw.leasedSqft   :
-    (raw.leased_sqft  !== '' && raw.leased_sqft   != null) ? raw.leased_sqft  :
-    (raw.sqft         !== '' && raw.sqft          != null) ? raw.sqft         :
-    (raw.squareFeet   !== '' && raw.squareFeet    != null) ? raw.squareFeet   :
-    null;
-  const _sqft = _sqftRaw !== null
-    ? (v => isNaN(v) ? null : v)(Number(String(_sqftRaw).replace(/[^0-9.]/g, '')))
-    : null;
+  // Prefer AI values; fall back to regex extraction
+  const resolvedName  = raw.tenantName  || raw.tenant_name  || fb.name  || null;
+  const resolvedSqft  = (() => {
+    const v = raw.leasedSqft ?? raw.leased_sqft ?? raw.sqft ?? raw.squareFeet ?? null;
+    if (v != null && v !== '') {
+      const n = Number(String(v).replace(/[^0-9.]/g, ''));
+      if (!isNaN(n)) return n;
+    }
+    return fb.sqft ?? null;
+  })();
+  const resolvedStart = raw.startDate || fb.start_date || null;
+  const resolvedEnd   = raw.endDate   || fb.end_date   || null;
+  const resolvedType  = normalizeLeaseType(raw.leaseType || raw.lease_type || fb.lease_type);
 
-  const rawTextValue = text || '';
-
-  const fallbackSqft =
-    (_sqft != null)
-      ? _sqft
-      : (rawTextValue.match(/([\d,]+)\s*(?:rentable\s*)?(?:square feet|sq ?ft)/i)?.[1]?.replace(/,/g, '') || null);
-
-  const _extracted = extractDates(rawTextValue);
-  const fallbackStart = raw.startDate || _extracted.startDate;
-  const fallbackEnd   = raw.endDate   || _extracted.endDate;
-  console.log('DATES:', fallbackStart, fallbackEnd, '(raw:', raw.startDate, raw.endDate, '| extracted:', _extracted.startDate, _extracted.endDate, ')');
+  console.log('DATES:', resolvedStart, resolvedEnd, '(raw:', raw.startDate, raw.endDate, '| extracted:', fb.start_date, fb.end_date, ')');
 
   return {
-    tenantName:         raw.tenantName       || null,
-    leasedSqft:         fallbackSqft ? Number(fallbackSqft) : null,
-    startDate:          fallbackStart        || null,
-    endDate:            fallbackEnd          || null,
-    leaseType:          normalizeLeaseType(raw.leaseType),
+    tenantName:         resolvedName,
+    leasedSqft:         resolvedSqft,
+    startDate:          resolvedStart,
+    endDate:            resolvedEnd,
+    leaseType:          resolvedType,
     capPercentage:      raw.capPercentage    ?? null,
     // snake_case aliases
-    tenant_name:        raw.tenantName       || null,
-    leased_sqft:        fallbackSqft ? Number(fallbackSqft) : null,
-    lease_start_date:   fallbackStart        || null,
-    lease_end_date:     fallbackEnd          || null,
-    lease_type:         normalizeLeaseType(raw.leaseType),
+    tenant_name:        resolvedName,
+    leased_sqft:        resolvedSqft,
+    lease_start_date:   resolvedStart,
+    lease_end_date:     resolvedEnd,
+    lease_type:         resolvedType,
     cap:                raw.capPercentage    ?? null,
     excludedCategories: raw.excludedCategories ?? null,
     baseYear:           raw.baseYear         ?? null,
     confidence:         raw.confidence       || {},
+    flags:              fb.flags,
     _error:             null,
     rawText:            text || '',
   };
