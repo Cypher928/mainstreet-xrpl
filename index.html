@@ -3004,6 +3004,16 @@ function clearSqftBanner() {
   delete el.dataset.severity;
 }
 
+function toInputDate(val) {
+  if (!val) return '';
+  if (/^\d{4}-\d{2}-\d{2}$/.test(val)) return val;
+  const d = new Date(val);
+  if (!isNaN(d)) return d.toISOString().slice(0, 10);
+  const m = val.match(/^(\d{1,2})\/(\d{1,2})\/(\d{4})$/);
+  if (m) return `${m[3]}-${m[1].padStart(2, '0')}-${m[2].padStart(2, '0')}`;
+  return '';
+}
+
 function renderTenantFields(i) {
   const d = tenantData[i];
 
@@ -3049,12 +3059,12 @@ function renderTenantFields(i) {
       <div class="field-row">
         <div class="field">
           <label>Lease Start Date</label>
-          <input type="date" value="${d.start_date ? d.start_date.slice(0, 10) : ''}"
+          <input type="date" value="${toInputDate(d.start_date)}"
             oninput="tenantData[${i}].start_date = this.value"/>
         </div>
         <div class="field">
           <label>Lease End Date</label>
-          <input type="date" value="${d.end_date ? d.end_date.slice(0, 10) : ''}"
+          <input type="date" value="${toInputDate(d.end_date)}"
             oninput="tenantData[${i}].end_date = this.value"/>
         </div>
       </div>
