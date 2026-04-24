@@ -2547,51 +2547,14 @@ function enrichLeaseData(data, extractedText) {
 }
 
 
-function normalizeTenant(raw) {
-  if (!raw || typeof raw !== 'object') return null;
-
-  const src = Array.isArray(raw)
-    ? (raw[0] || {})
-    : (Array.isArray(raw.tenants) && raw.tenants.length > 0 ? raw.tenants[0] : raw);
-
-  const text = src._rawText || JSON.stringify(src);
-  console.log("TEXT USED FOR PARSING:", text.slice(0, 300));
-
-  const toISODate = s => {
-    if (!s) return '';
-    const d = new Date(s);
-    return isNaN(d) ? '' : d.toISOString().split('T')[0];
+function normalizeTenant(d) {
+  if (!d) return d;
+  return {
+    ...d,
+    start_date: d.start_date ?? d.lease_start_date ?? d.startDate ?? null,
+    end_date:   d.end_date   ?? d.lease_end_date   ?? d.endDate   ?? null,
+    lease_type: d.lease_type ?? d.leaseType        ?? null,
   };
-
-  // TENANT NAME — try AI field first, then regex on raw text
-  const nameFromAI = src.tenant_name || src.tenantName || src.name || '';
-  const nameMatch  = !nameFromAI && text.match(/(?:tenant|lessee)\s*:\s*(.+)/i);
-  const tenantName = nameFromAI || (nameMatch ? nameMatch[1].trim() : '');
-
-  // SQFT — "4,500 rentable square feet" or "4,500 sq ft"
-  const sqftMatch  = text.match(/([\d,]+)\s*(rentable\s*)?(square\s*feet|sq\.?\s*ft)/i);
-  const leasedSqft = sqftMatch ? sqftMatch[1].replace(/,/g, '') : '';
-
-  // START DATE — "commence on March 1, 2024" or structured field
-  const startISO   = src.lease_start_date || src.start_date || src.startDate || '';
-  const startMatch = !startISO && text.match(/commence[sd]?\s+(?:on\s+)?([A-Za-z]+ \d{1,2},\s*\d{4})/i);
-  const startDate  = startISO ? toISODate(startISO) : (startMatch ? toISODate(startMatch[1]) : '');
-
-  // END DATE — "expire on February 28, 2029" or structured field
-  const endISO   = src.lease_end_date || src.end_date || src.endDate || '';
-  const endMatch = !endISO && text.match(/expire[sd]?\s+(?:on\s+)?([A-Za-z]+ \d{1,2},\s*\d{4})/i);
-  const endDate  = endISO ? toISODate(endISO) : (endMatch ? toISODate(endMatch[1]) : '');
-
-  // LEASE TYPE — structured field first, then text scan
-  const ltFromAI = src.lease_type || src.leaseType || '';
-  let leaseType  = '';
-  if (/triple\s*net|\bnnn\b/i.test(ltFromAI || text)) leaseType = 'Triple Net (NNN)';
-  else if (/modified\s*gross/i.test(ltFromAI || text)) leaseType = 'Modified Gross';
-  else if (/\bgross\b/i.test(ltFromAI || text))        leaseType = 'Gross';
-
-  const result = { tenantName, leasedSqft, startDate, endDate, leaseType };
-  console.log("FINAL NORMALIZED:", result);
-  return result;
 }
 
 
@@ -2921,7 +2884,7 @@ async function handleLease(i, file) {
     const tenant    = await callClaudeForLease(leaseText);
     console.log("FINAL TENANT USED IN UI:", tenant);
     if (!tenant) throw new Error('Could not extract lease fields');
-    tenantData[i]   = tenant;
+    tenantData[i]   = normalizeTenant(tenant);
     console.log("FINAL TENANT OBJECT:", tenantData[i]);
     renderTenantFields(i);
     checkSqftValidation();
@@ -3006,15 +2969,10 @@ function toInputDate(val) {
 }
 
 function renderTenantFields(i) {
-  const d = tenantData[i];
-
-  // Resolve across all key variants then write back to canonical snake_case
-  d.start_date  = d.start_date  ?? d.lease_start_date ?? d.startDate  ?? null;
-  d.end_date    = d.end_date    ?? d.lease_end_date   ?? d.endDate    ?? null;
-  d.lease_type  = d.lease_type  ?? d.leaseType        ?? null;
-  const name     = d.name       ?? d.tenant_name      ?? d.tenantName ?? '';
-  const sqft     = d.sqft       ?? d.leased_sqft      ?? d.leasedSqft ?? null;
-  const excluded = d.excluded_categories ?? d.excludedCategories     ?? '';
+  const d = tenantData[i]; // guaranteed normalized via normalizeTenant at set/push time
+  const name     = d.tenant_name      ?? d.tenantName ?? '';
+  const sqft     = d.leased_sqft      ?? d.leasedSqft ?? null;
+  const excluded = d.excluded_categories ?? d.excludedCategories ?? '';
 
   const localFlags = [];
   if (!d.start_date)  localFlags.push('missing_start_date');
@@ -3563,7 +3521,7 @@ async function handleBulkLeases(fileList) {
       const tenant    = await callClaudeForLease(leaseText);
       console.log("FINAL TENANT USED IN UI:", tenant);
       if (!tenant) throw new Error('Could not extract lease fields');
-      tenantData.push(tenant);
+      tenantData.push(normalizeTenant(tenant));
     } catch (err) {
       console.error('[handleBulkLeases] extraction error for', files[i].name, err);
 
@@ -3604,7 +3562,7 @@ async function handleBulkLeases(fileList) {
   const merged = mergeTenantsDedup(existing.tenants, newTenants);
   property.tenants = merged;
   // Keep tenantData in sync with merged result so UI shows the full set.
-  tenantData.splice(0, tenantData.length, ...merged);
+  tenantData.splice(0, tenantData.length, ...merged.map(normalizeTenant));
   renderBulkResults();
   checkSqftValidation();
 
@@ -6898,7 +6856,7 @@ function renderProperty(property) {
   try {
     const tenants = (property.tenants || []).filter(t => t !== null);
     if (tenants.length) {
-      tenantData.splice(0, tenantData.length, ...tenants);
+      tenantData.splice(0, tenantData.length, ...tenants.map(normalizeTenant));
       switchLeaseTab('bulk');
       renderBulkResults();
       restored = true;
