@@ -2821,11 +2821,10 @@ async function callClaudeForLease(text) {
   console.log('RAW LEASE TEXT:', text?.slice(0, 2000));
   const cleanText = normalizeText(text);
   console.log('CLEANED LEASE TEXT:', cleanText?.slice(0, 2000));
-  const fb  = extractLeaseData(cleanText);
+  const fb = extractLeaseData(cleanText);
 
-  // Prefer AI values; fall back to regex extraction
-  const resolvedName  = raw.tenantName  || raw.tenant_name  || fb.name  || null;
-  const resolvedSqft  = (() => {
+  const resolvedName = raw.tenantName ?? raw.tenant_name ?? fb.name ?? null;
+  const resolvedSqft = (() => {
     const v = raw.leasedSqft ?? raw.leased_sqft ?? raw.sqft ?? raw.squareFeet ?? null;
     if (v != null && v !== '') {
       const n = Number(String(v).replace(/[^0-9.]/g, ''));
@@ -2833,42 +2832,34 @@ async function callClaudeForLease(text) {
     }
     return fb.sqft ?? null;
   })();
-  const resolvedStart = raw.startDate || fb.start_date || null;
-  const resolvedEnd   = raw.endDate   || fb.end_date   || null;
-  const resolvedType  = normalizeLeaseType(raw.leaseType || raw.lease_type || fb.lease_type);
+  // Check every key Claude might use, then fall back to regex
+  const resolvedStart = raw.startDate ?? raw.start_date ?? raw.lease_start_date ?? fb.start_date ?? null;
+  const resolvedEnd   = raw.endDate   ?? raw.end_date   ?? raw.lease_end_date   ?? fb.end_date   ?? null;
+  const resolvedType  = normalizeLeaseType(raw.leaseType ?? raw.lease_type ?? fb.lease_type);
 
-  console.log('DATES:', resolvedStart, resolvedEnd, '(raw:', raw.startDate, raw.endDate, '| extracted:', fb.start_date, fb.end_date, ')');
+  console.log('DATES:', resolvedStart, resolvedEnd, '(ai:', raw.startDate ?? raw.start_date, raw.endDate ?? raw.end_date, '| regex:', fb.start_date, fb.end_date, ')');
 
-  // Recalculate flags from final resolved values (not from the regex-only stage)
-  const finalFlags = [];
-  if (!resolvedStart) finalFlags.push('missing_start_date');
-  if (!resolvedEnd)   finalFlags.push('missing_end_date');
-  if (!resolvedType)  finalFlags.push('lease_type_missing');
-  // Carry over non-date/type informational flags from regex stage
-  (Array.isArray(fb.flags) ? fb.flags : []).forEach(f => {
-    if (f === 'approx_sqft_detected' || f === 'base_year_detected') finalFlags.push(f);
-  });
+  const finalFlags = [
+    ...(resolvedStart ? [] : ['missing_start_date']),
+    ...(resolvedEnd   ? [] : ['missing_end_date']),
+    ...(resolvedType  ? [] : ['lease_type_missing']),
+    ...(Array.isArray(fb.flags) ? fb.flags : []).filter(f =>
+      !['missing_start_date', 'missing_end_date', 'lease_type_missing'].includes(f)
+    ),
+  ];
 
   return {
-    tenantName:         resolvedName,
-    leasedSqft:         resolvedSqft,
-    startDate:          resolvedStart,
-    endDate:            resolvedEnd,
-    leaseType:          resolvedType,
-    capPercentage:      raw.capPercentage    ?? null,
-    // snake_case aliases
     tenant_name:        resolvedName,
     leased_sqft:        resolvedSqft,
-    lease_start_date:   resolvedStart,
-    lease_end_date:     resolvedEnd,
+    start_date:         resolvedStart,
+    end_date:           resolvedEnd,
     lease_type:         resolvedType,
-    cap:                raw.capPercentage    ?? null,
-    excludedCategories: raw.excludedCategories ?? null,
-    baseYear:           raw.baseYear         ?? null,
-    confidence:         raw.confidence       || {},
+    cap:                normalizeCap(raw.capPercentage ?? raw.cam_cap ?? null),
+    excluded_categories: raw.excludedCategories ?? raw.excluded_categories ?? null,
+    baseYear:           raw.baseYear ?? null,
+    confidence:         raw.confidence || {},
     flags:              finalFlags,
     _error:             null,
-    rawText:            text || '',
   };
 }
 // ─── SVG icons ────────────────────────────────────────────────────────────────
@@ -4951,12 +4942,12 @@ async function runAllocation() {
   // Build a Property + run full reconciliation (for per-tenant invoice breakdown + direct matching)
   const _prop = new Property(propName, totalSqft);
   _prop.addLeases(tenantData.filter(t => t && t.tenantName && parseSqft(t.leasedSqft) > 0).map(t =>
-    new Lease(t.tenantName, t.unitNumber || '', parseSqft(t.leasedSqft), t.start_date || t.startDate || '', t.end_date || t.endDate || '',
-      t.excludedCategories ? t.excludedCategories.split(',').map(s => s.trim()) : [],
-      t.capPercentage ?? null, null,
-      (t.confidence?.leasedSqft ?? 100) < 70,  // sqFtApproximate
-      t.baseYear ?? null,                        // baseYear
-      t.lease_type ?? t.leaseType ?? null)       // leaseType: 'Triple Net (NNN)' | 'Gross' | null
+    new Lease(t.tenant_name || t.tenantName, t.unitNumber || '', parseSqft(t.leased_sqft ?? t.leasedSqft), t.start_date || '', t.end_date || '',
+      t.excluded_categories ? t.excluded_categories.split(',').map(s => s.trim()) : [],
+      t.cap ?? t.capPercentage ?? null, null,
+      (t.confidence?.leasedSqft ?? 100) < 70,
+      t.baseYear ?? null,
+      t.lease_type ?? null)
   ));
   _prop.addInvoices(invoiceData.filter(inv => inv && inv.vendorName && parseFloat(inv.amount) > 0).map(inv =>
     new Invoice(null, inv.invoiceDate, inv.amount, inv.vendorName, inv.category)
@@ -6780,8 +6771,8 @@ async function syncTenantsToTable(propertyId, tenants) {
       name:       t.tenantName       || t.tenant_name       || null,
       sqft:       t.leasedSqft       ?? t.leased_sqft       ?? null,
       cap:        t.capPercentage     ?? t.cap               ?? null,
-      start_date: t.lease_start_date  || t.startDate         || null,
-      end_date:   t.lease_end_date    || t.endDate           || null,
+      start_date: t.start_date || null,
+      end_date:   t.end_date   || null,
     }));
   if (rows.length === 0) return;
   const { error } = await db.from('tenants').insert(rows);
