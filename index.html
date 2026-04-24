@@ -2822,6 +2822,14 @@ async function callClaudeForLease(text) {
 
   console.log('DATES:', resolvedStart, resolvedEnd, '(raw:', raw.startDate, raw.endDate, '| extracted:', fb.start_date, fb.end_date, ')');
 
+  // Remove flags that are invalidated by the resolved (AI-merged) values
+  const finalFlags = (Array.isArray(fb.flags) ? fb.flags : []).filter(f => {
+    if (f === 'missing_start_date'  && resolvedStart) return false;
+    if (f === 'missing_end_date'    && resolvedEnd)   return false;
+    if (f === 'lease_type_missing'  && resolvedType)  return false;
+    return true;
+  });
+
   return {
     tenantName:         resolvedName,
     leasedSqft:         resolvedSqft,
@@ -2839,7 +2847,7 @@ async function callClaudeForLease(text) {
     excludedCategories: raw.excludedCategories ?? null,
     baseYear:           raw.baseYear         ?? null,
     confidence:         raw.confidence       || {},
-    flags:              Array.isArray(fb.flags) ? fb.flags : [],
+    flags:              finalFlags,
     _error:             null,
     rawText:            text || '',
   };
@@ -2978,10 +2986,15 @@ function clearSqftBanner() {
 }
 
 function renderTenantFields(i) {
-  const d    = tenantData[i];
-  console.log("UI USING:", d);
+  const d         = tenantData[i];
+  const startDate = d.start_date       ?? d.lease_start_date ?? d.startDate ?? '';
+  const endDate   = d.end_date         ?? d.lease_end_date   ?? d.endDate   ?? '';
+  const leaseType = d.lease_type       ?? d.leaseType        ?? '';
+  const tenantName = d.tenant_name     ?? d.tenantName       ?? '';
+  const leasedSqft = d.leased_sqft     ?? d.leasedSqft       ?? '';
+  const excluded   = d.excluded_categories ?? d.excludedCategories ?? '';
+  console.log('RENDER TENANT:', { tenantName, startDate, endDate, leaseType, flags: d.flags });
   const body = document.getElementById(`tb-${i}`);
-  console.log("FINAL TENANT USED IN UI:", d);
   body.innerHTML = `
     <div class="extracted">
       <div class="status-row ok">
@@ -2993,25 +3006,25 @@ function renderTenantFields(i) {
       <div class="field-row">
         <div class="field">
           <label>Tenant Name</label>
-          <input type="text" value="${d.tenant_name || ''}"
+          <input type="text" value="${esc(tenantName)}"
             oninput="tenantData[${i}].tenant_name = this.value"/>
         </div>
         <div class="field">
           <label>Leased Sqft</label>
-          <input type="number" value="${d.leased_sqft || ''}"
+          <input type="number" value="${leasedSqft}"
             oninput="tenantData[${i}].leased_sqft = this.value; checkSqftValidation()"/>
         </div>
       </div>
       <div class="field-row">
         <div class="field">
           <label>Lease Start Date</label>
-          <input type="date" value="${d.lease_start_date || ''}"
-            onchange="tenantData[${i}].lease_start_date = this.value"/>
+          <input type="date" value="${startDate}"
+            onchange="tenantData[${i}].start_date = this.value"/>
         </div>
         <div class="field">
           <label>Lease End Date</label>
-          <input type="date" value="${d.lease_end_date || ''}"
-            onchange="tenantData[${i}].lease_end_date = this.value"/>
+          <input type="date" value="${endDate}"
+            onchange="tenantData[${i}].end_date = this.value"/>
         </div>
       </div>
       <div class="field-row">
@@ -3019,14 +3032,14 @@ function renderTenantFields(i) {
           <label>Lease Type</label>
           <select onchange="tenantData[${i}].lease_type = this.value || null; if(lastResults.length) runAllocation()">
             <option value="">Select lease type</option>
-            <option value="Triple Net (NNN)"${d.lease_type === 'Triple Net (NNN)' ? ' selected' : ''}>Triple Net (NNN)</option>
-            <option value="Gross"${d.lease_type === 'Gross' ? ' selected' : ''}>Gross</option>
-            <option value="Modified Gross"${d.lease_type === 'Modified Gross' ? ' selected' : ''}>Modified Gross</option>
+            <option value="Triple Net (NNN)"${leaseType === 'Triple Net (NNN)' ? ' selected' : ''}>Triple Net (NNN)</option>
+            <option value="Gross"${leaseType === 'Gross' ? ' selected' : ''}>Gross</option>
+            <option value="Modified Gross"${leaseType === 'Modified Gross' ? ' selected' : ''}>Modified Gross</option>
           </select>
         </div>
         <div class="field">
           <label>Excluded Categories (comma-separated)</label>
-          <input type="text" value="${d.excluded_categories || ''}"
+          <input type="text" value="${esc(excluded)}"
             oninput="tenantData[${i}].excluded_categories = this.value"/>
         </div>
       </div>
