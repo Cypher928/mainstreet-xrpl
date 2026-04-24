@@ -6637,13 +6637,11 @@ async function loadProperties() {
 
   const properties = data || [];
 
-  await Promise.all(properties.map(async (property) => {
-    const { data: tenants } = await db
-      .from('tenants')
-      .select('*')
-      .eq('property_id', property.id);
-    property.tenants = tenants || [];
-  }));
+  const { data: tenants } = await db.from('tenants').select('*');
+  const allTenants = tenants || [];
+  properties.forEach(p => {
+    p.tenants = allTenants.filter(t => t.property_id === p.id);
+  });
 
   return properties;
 }
