@@ -3504,7 +3504,6 @@ async function handleBulkLeases(fileList) {
   const deduped = dedupeTenants(tenantData);
   console.log('TENANTS AFTER DEDUPE:', deduped);
   property.tenants = deduped;
-  tenantData.splice(0, tenantData.length, ...deduped);
 
   renderBulkResults();
   checkSqftValidation();
