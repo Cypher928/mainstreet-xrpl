@@ -205,6 +205,33 @@
       background: none; border: none; cursor: pointer;
       text-decoration: underline; padding: 0;
     }
+    .view-lease-btn {
+      font-size: 0.75rem; color: #818cf8;
+      background: none; border: none; cursor: pointer;
+      text-decoration: underline; padding: 0; margin-left: 10px;
+    }
+    #leaseViewerModal {
+      display: none; position: fixed; inset: 0; z-index: 2100;
+      background: rgba(0,0,0,0.92); flex-direction: column;
+    }
+    #leaseViewerModal .lvm-header {
+      display: flex; align-items: center; justify-content: space-between;
+      padding: 12px 18px; background: #0F1929;
+      border-bottom: 1px solid rgba(255,255,255,0.08);
+    }
+    #leaseViewerModal .lvm-title { font-weight: 700; color: #E2E8F0; font-size: 0.95rem; }
+    #leaseViewerModal .lvm-actions { display: flex; gap: 8px; align-items: center; }
+    #leaseViewerModal .lvm-open-btn {
+      background: rgba(99,102,241,0.15); border: 1.5px solid rgba(99,102,241,0.3);
+      color: #818cf8; padding: 5px 14px; border-radius: 7px; cursor: pointer; font-size: 0.8rem;
+    }
+    #leaseViewerModal .lvm-close-btn {
+      background: rgba(239,68,68,0.15); border: 1.5px solid rgba(239,68,68,0.3);
+      color: #f87171; padding: 6px 16px; border-radius: 7px; cursor: pointer; font-weight: 700;
+    }
+    #leaseViewerFrame {
+      flex: 1; width: 100%; border: none; background: #fff;
+    }
 
     /* Extracted (fade in) */
     .extracted { animation: fadein 0.25s ease; }
@@ -1965,6 +1992,18 @@
   </div>
 </div>
 
+<!-- ── Lease File Viewer ──────────────────────────────────────────────────── -->
+<div id="leaseViewerModal">
+  <div class="lvm-header">
+    <span class="lvm-title" id="leaseViewerTitle">Lease Document</span>
+    <div class="lvm-actions">
+      <button class="lvm-open-btn" onclick="leaseViewerOpenExternal()">Open in new tab</button>
+      <button class="lvm-close-btn" onclick="closeLeaseModal()">&#x2715; Close</button>
+    </div>
+  </div>
+  <iframe id="leaseViewerFrame" src=""></iframe>
+</div>
+
 <!-- ── Invoice File Viewer ────────────────────────────────────────────────── -->
 <div id="invFileViewer" style="display:none;position:fixed;inset:0;z-index:2000;background:rgba(0,0,0,0.92);flex-direction:column;">
   <div style="display:flex;align-items:center;justify-content:space-between;padding:12px 18px;background:#0F1929;border-bottom:1px solid rgba(255,255,255,0.08);">
@@ -2899,6 +2938,7 @@ async function handleLease(i, file) {
     if (!isValidTenant(normalized)) throw new Error('Extracted tenant has no usable fields');
 
     tenantData[i] = normalized;
+    tenantData[i].leaseFile = file;
     console.log("RAW EXTRACTED TENANTS:", JSON.stringify(tenantData.filter(t => t !== null), null, 2));
     renderTenantFields(i);
     checkSqftValidation();
@@ -2994,6 +3034,7 @@ function renderTenantFields(i) {
       <div class="status-row ok">
         <span class="status-dot ok">${CHECK_SVG}</span>
         Fields extracted — review and edit below
+        ${d.leaseFile ? `<button class="view-lease-btn" onclick="openLeaseModal(${i})">View Lease</button>` : ''}
         <button class="re-btn" onclick="resetTenant(${i})">Re-upload</button>
       </div>
       ${(() => { const w = getWarnings(flags); return w.length ? `<div class="rc-flags"><div class="rc-flags-title">&#x26A0;&#xFE0F; Needs Review</div>${w.map(m => `<div class="rc-flag-item">${m}</div>`).join('')}</div>` : ''; })()}
@@ -3534,6 +3575,7 @@ async function handleBulkLeases(fileList) {
       console.log("FINAL TENANT USED IN UI:", tenant);
       if (!tenant) throw new Error('Could not extract lease fields');
       const t = normalizeTenant(tenant);
+      t.leaseFile = files[i];
       if (isValidTenant(t)) tenantData.push(t);
     } catch (err) {
       console.error('[handleBulkLeases] extraction error for', files[i].name, err);
@@ -3592,6 +3634,7 @@ function renderBulkResults() {
           <span class="bulk-t-name"   id="bname-${i}">${esc(name)}</span>
           <span class="bulk-t-meta"   id="bmeta-${i}">${esc(meta)}</span>
           <span class="bulk-t-chevron" id="bchev-${i}">&#x25BC; Edit</span>
+          ${d.leaseFile ? `<button class="view-lease-btn" style="margin-left:0" onclick="event.stopPropagation();openLeaseModal(${i})">View Lease</button>` : ''}
           <button class="bulk-t-remove" onclick="event.stopPropagation();removeBulkTenant(${i})">Remove</button>
         </div>
         <div class="bulk-tenant-detail" id="bdet-${i}" style="display:none;">
@@ -5308,6 +5351,56 @@ function epToggleDrill(category, tenantName) {
 function closeExplainPanel() {
   document.getElementById('explainPanel').classList.remove('open');
   document.body.style.overflow = '';
+}
+
+// ─── Lease Viewer ─────────────────────────────────────────────────────────────
+let _leaseViewerUrl = null;
+
+function openLeaseModal(i) {
+  const d = tenantData[i];
+  if (!d?.leaseFile) return;
+
+  const isMobile = /Mobi|Android/i.test(navigator.userAgent);
+  _leaseViewerUrl = URL.createObjectURL(d.leaseFile);
+
+  if (isMobile) {
+    window.open(_leaseViewerUrl, '_blank');
+    URL.revokeObjectURL(_leaseViewerUrl);
+    _leaseViewerUrl = null;
+    return;
+  }
+
+  const modal = document.getElementById('leaseViewerModal');
+  const frame = document.getElementById('leaseViewerFrame');
+  const title = document.getElementById('leaseViewerTitle');
+
+  title.textContent = d.tenant_name ? `Lease — ${d.tenant_name}` : 'Lease Document';
+  frame.src = _leaseViewerUrl;
+
+  // Fallback: if iframe load fails, offer window.open
+  frame.onerror = () => {
+    frame.src = '';
+    if (_leaseViewerUrl) window.open(_leaseViewerUrl, '_blank');
+  };
+
+  modal.style.display = 'flex';
+  document.body.style.overflow = 'hidden';
+}
+
+function closeLeaseModal() {
+  const modal = document.getElementById('leaseViewerModal');
+  const frame = document.getElementById('leaseViewerFrame');
+  modal.style.display = 'none';
+  frame.src = '';
+  document.body.style.overflow = '';
+  if (_leaseViewerUrl) {
+    URL.revokeObjectURL(_leaseViewerUrl);
+    _leaseViewerUrl = null;
+  }
+}
+
+function leaseViewerOpenExternal() {
+  if (_leaseViewerUrl) window.open(_leaseViewerUrl, '_blank');
 }
 
 // ─── Report State ─────────────────────────────────────────────────────────────
