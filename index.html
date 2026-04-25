@@ -3812,10 +3812,9 @@ console.log('FINAL tenantData:', tenantData);
   const merged = mergeTenantsDedup(existing.tenants, newTenants);
   property.tenants = merged;
   // Keep tenantData in sync with merged result so UI shows the full set.
-  tenantData.splice(0, tenantData.length, ...merged);
-  applyRawTextFallback(tenantData);
-  console.log('FINAL tenantData after merge:', tenantData);
-  renderBulkResults();
+   applyRawTextFallback(property.tenants);
+  console.log('FINAL tenants after merge:", property.tenants);
+  renderBulkResults(property.tenants);
   checkSqftValidation();
 
   console.log('CURRENT PROPERTY ID:', property.id);
@@ -3823,12 +3822,14 @@ console.log('FINAL tenantData:', tenantData);
   await saveProperty(property);
 }
 
-function renderBulkResults() {
+function renderBulkResults(data) {
   const el = document.getElementById('bulkResults');
-  if (!tenantData.length) { el.innerHTML = ''; return; }
+ if (!data || !data.length) {
+  el.innerHTML = "";
+  return;
+}
 
-  const safeData = (tenantData || []).filter(d => d && typeof d === "object");
-
+const safeData = (data || []).filter(d => d && typeof d === "object");
 const rows = safeData.map((d, i) => {
     const conf    = (d && d.confidence) || {};
     const icon    = d._error ? '⚠️' : d.tenantName ? '✓' : '?';
