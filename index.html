@@ -2073,6 +2073,20 @@ async function claudeFetch(body) {
   return resp.json();
 }
 
+async function explainFetch(body) {
+  const resp = await fetch('/api/explain', {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: typeof body === 'string' ? body : JSON.stringify(body),
+  });
+  if (!resp.ok) {
+    let detail = `HTTP ${resp.status}`;
+    try { const b = await resp.json(); detail = b?.error?.message || b?.message || detail; } catch {}
+    throw new Error(detail);
+  }
+  return resp.json();
+}
+
 const CAM_EXPLAIN_SYSTEM_PROMPT = `You are an expert in commercial real estate CAM (Common Area Maintenance) charges.
 
 Your job is to help tenants understand charges in a calm, neutral, and practical way — WITHOUT creating unnecessary concern or conflict with landlords.
@@ -4043,7 +4057,7 @@ async function explainCharge(i) {
   const btn = document.getElementById(`iexplbtn-${i}`);
   if (btn) { btn.textContent = '…'; btn.disabled = true; }
   try {
-    const data = await claudeFetch({
+    const data = await explainFetch({
       model: MODEL,
       max_tokens: 1024,
       system: LANDLORD_SYSTEM_PROMPT,
@@ -5288,7 +5302,7 @@ async function tsExplainInvoice(rowId, vendor, category, amount, date) {
   const btn = document.getElementById(`tsexplbtn-${rowId}`);
   if (btn) { btn.textContent = '…'; btn.disabled = true; }
   try {
-    const data = await claudeFetch({
+    const data = await explainFetch({
       model: MODEL,
       max_tokens: 1024,
       system: CAM_EXPLAIN_SYSTEM_PROMPT,
@@ -6043,7 +6057,7 @@ async function runLandlordAIReview() {
   let html = '';
   for (const inv of flagged) {
     try {
-      const data = await claudeFetch({
+      const data = await explainFetch({
         model: MODEL,
         max_tokens: 512,
         system: LANDLORD_SYSTEM_PROMPT,
