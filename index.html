@@ -2839,31 +2839,30 @@ async function handleLease(i, file) {
     <div class="spinner-label">AI reading lease…</div>
   </div>`;
 
+  const property = currentProperty();
+  if (!property) { renderTenantError(i, 'No property selected'); return; }
+
+  // Hard reset before any processing
+  property.tenants = [];
+  tenantData.splice(0, tenantData.length, null, null, null);
+
   try {
-    const property = currentProperty();
-    if (!property) throw new Error('No property selected');
-
-    // Snapshot existing before any mutation, then reset for clean state
-    const existing = { tenants: Array.from(property.tenants || []) };
-    property.tenants = [];
-    console.log('EXISTING DATA:', existing);
-
-    const leaseText = await extractPdfText(file);
-    const tenant    = await callClaudeForLease(leaseText);
-    console.log("FINAL TENANT USED IN UI:", tenant);
-    if (!tenant) throw new Error('Could not extract lease fields');
-    const normalized = normalizeTenant(tenant);
+    const leaseText  = await extractPdfText(file);
+    const extracted  = await callClaudeForLease(leaseText);
+    if (!extracted) throw new Error('Could not extract lease fields');
+    const normalized = normalizeTenant(extracted);
     if (!isValidTenant(normalized)) throw new Error('Extracted tenant has no usable fields');
+
     tenantData[i] = normalized;
-    console.log("FINAL TENANT OBJECT:", tenantData[i]);
     renderTenantFields(i);
     checkSqftValidation();
 
-    // tenantData is already restored from _props; slot i was just updated in-place.
-    // Merge so other slots' existing data isn't lost on save.
-    property.tenants = dedupeTenants(mergeTenantsDedup(existing.tenants, tenantData.filter(t => t !== null)));
+    console.log('TENANTS BEFORE DEDUPE:', tenantData.filter(t => t !== null));
+    const deduped = dedupeTenants(tenantData.filter(t => t !== null));
+    console.log('TENANTS AFTER DEDUPE:', deduped);
+    property.tenants = deduped;
+
     console.log('CURRENT PROPERTY ID:', property.id);
-    console.log('SAVING DATA:', property);
     await saveProperty(property);
   } catch (err) {
     renderTenantError(i, err.message);
@@ -3426,13 +3425,13 @@ function mergeTenantsDedup(existing, incoming) {
 }
 
 function dedupeTenants(arr) {
-  const seen = new Set();
-  return arr.filter(t => {
-    const key = `${t.tenant_name}-${t.leased_sqft}`;
-    if (seen.has(key)) return false;
-    seen.add(key);
-    return true;
-  });
+  const map = new Map();
+  for (const t of arr) {
+    const key = (t.tenant_name || '').toLowerCase().trim();
+    if (!key) continue;
+    if (!map.has(key)) map.set(key, t);
+  }
+  return Array.from(map.values());
 }
 
 // Appends incoming invoices that don't already exist by vendor+amount+date.
@@ -3455,18 +3454,15 @@ async function handleBulkLeases(fileList) {
   console.log('[Mainstreet] handleBulkLeases STARTED');
   if (!fileList || fileList.length === 0) return;
 
-  // Bind property and snapshot existing data BEFORE clearing in-memory state.
   const property = currentProperty();
   if (!property) throw new Error('No property selected');
-  const existing = { tenants: Array.from(property.tenants || []) };
+
+  // Hard reset before any processing
   property.tenants = [];
-  console.log('EXISTING DATA:', existing);
+  tenantData.splice(0, tenantData.length);
 
   const files = Array.from(fileList);
   const total = files.length;
-
-  // Clear for a fresh bulk parse run
-  tenantData.splice(0, tenantData.length);
 
   const prog    = document.getElementById('bulkProgress');
   const results = document.getElementById('bulkResults');
@@ -3504,17 +3500,16 @@ async function handleBulkLeases(fileList) {
       </div>
     </div>`;
 
-  // Merge: new uploads replace same-name existing tenants; rest are kept.
-  const newTenants = tenantData.filter(t => t !== null);
-  const merged = dedupeTenants(mergeTenantsDedup(existing.tenants, newTenants));
-  property.tenants = merged;
-  // Keep tenantData in sync with merged result so UI shows the full set.
-  tenantData.splice(0, tenantData.length, ...merged.filter(isValidTenant).map(normalizeTenant));
+  console.log('TENANTS BEFORE DEDUPE:', tenantData);
+  const deduped = dedupeTenants(tenantData);
+  console.log('TENANTS AFTER DEDUPE:', deduped);
+  property.tenants = deduped;
+  tenantData.splice(0, tenantData.length, ...deduped);
+
   renderBulkResults();
   checkSqftValidation();
 
   console.log('CURRENT PROPERTY ID:', property.id);
-  console.log('SAVING DATA:', property);
   await saveProperty(property);
 }
 
