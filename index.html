@@ -2868,6 +2868,7 @@ async function handleLease(i, file) {
     if (!isValidTenant(normalized)) throw new Error('Extracted tenant has no usable fields');
 
     tenantData[i] = normalized;
+    console.log("RAW EXTRACTED TENANTS:", JSON.stringify(tenantData.filter(t => t !== null), null, 2));
     renderTenantFields(i);
     checkSqftValidation();
 
@@ -2875,6 +2876,8 @@ async function handleLease(i, file) {
     const deduped = dedupeTenants(tenantData.filter(t => t !== null));
     console.log('TENANTS AFTER DEDUPE:', deduped);
     property.tenants = deduped;
+    console.log("AFTER DEDUPE TENANTS:", JSON.stringify(property.tenants, null, 2));
+    console.log("FINAL TENANTS FOR RENDER:", JSON.stringify(property.tenants, null, 2));
 
     console.log('CURRENT PROPERTY ID:', property.id);
     await saveProperty(property);
@@ -3514,10 +3517,13 @@ async function handleBulkLeases(fileList) {
       </div>
     </div>`;
 
+  console.log("RAW EXTRACTED TENANTS:", JSON.stringify(tenantData, null, 2));
   console.log('TENANTS BEFORE DEDUPE:', tenantData);
   const deduped = dedupeTenants(tenantData);
   console.log('TENANTS AFTER DEDUPE:', deduped);
   property.tenants = deduped;
+  console.log("AFTER DEDUPE TENANTS:", JSON.stringify(property.tenants, null, 2));
+  console.log("FINAL TENANTS FOR RENDER:", JSON.stringify(property.tenants, null, 2));
 
   renderBulkResults();
   checkSqftValidation();
@@ -4801,6 +4807,7 @@ function runCAMAllocation(expenses, tenants) {
 async function runAllocation() {
   const propName  = document.getElementById('propertyName').value.trim() || 'Property';
   const totalSqft = parseFloat(document.getElementById('totalSqft').value);
+  console.log("CALCULATED TOTAL LEASED SQFT:", totalSqft);
   const section   = document.getElementById('results');
   const body      = document.getElementById('resultsBody');
 
