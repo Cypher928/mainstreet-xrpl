@@ -1,4 +1,4 @@
-/// Serverless function for Claude API (CommonJS - Vercel safe)
+// Serverless function for Claude API (Vercel safe)
 
 module.exports = async function handler(req, res) {
   try {
@@ -16,8 +16,16 @@ module.exports = async function handler(req, res) {
 
     const { messages, max_tokens = 1024, model, system } = req.body || {};
 
-    if (!messages) {
-      return res.status(400).json({ error: 'Missing messages' });
+    // ✅ ALWAYS build safe messages
+    let finalMessages = messages;
+
+    if (!finalMessages) {
+      finalMessages = [
+        {
+          role: "user",
+          content: `Explain this CAM charge clearly in plain English:\n\n${JSON.stringify(req.body, null, 2)}`
+        }
+      ];
     }
 
     // Call Anthropic API
@@ -32,7 +40,7 @@ module.exports = async function handler(req, res) {
         model: model || 'claude-3-sonnet-20240229',
         max_tokens,
         system,
-        messages
+        messages: finalMessages
       })
     });
 
@@ -40,6 +48,7 @@ module.exports = async function handler(req, res) {
     if (!response.ok) {
       let errorText = await response.text();
       console.error('[Claude API Error]', errorText);
+
       return res.status(500).json({
         error: 'Claude API request failed',
         details: errorText
@@ -48,54 +57,28 @@ module.exports = async function handler(req, res) {
 
     const data = await response.json();
 
-    // Extract text safely
+    // ✅ SAFELY extract text (no JSON parsing)
     let text = '';
+
     if (Array.isArray(data?.content)) {
-  text = data.content.map(c => c?.text || '').join('');
-} else if (typeof data?.content === 'string') {
-  text = data.content;
-} else if (data?.content?.[0]?.text) {
-  text = data.content[0].text;
-} else {
-  console.error("Unexpected Claude response:", data);
-  throw new Error("Claude response format invalid");
-}
-   // Clean Claude formatting
-let raw = text
-  .replace(/```json/g, '')
-  .replace(/```/g, '')
-  .trim();
+      text = data.content.map(c => c?.text || '').join('');
+    } else if (typeof data?.content === 'string') {
+      text = data.content;
+    } else if (data?.content?.[0]?.text) {
+      text = data.content[0].text;
+    } else {
+      console.error("Unexpected Claude response:", data);
+      return res.status(500).json({ error: "Claude response format invalid" });
+    }
 
-// Extract JSON safely
-let json;
-
-try {
-  json = JSON.parse(raw);
-} catch {
-  const match = raw.match(/\[[\s\S]*\]/) || raw.match(/\{[\s\S]*\}/);
-
-  if (!match) {
-    console.error("Claude raw response:", raw);
-    return res.status(500).json({ error: "Invalid JSON from Claude" });
-  }
-
-  json = JSON.parse(match[0]);
-}
-
-let result;
-
-if (Array.isArray(json)) {
-  result = json;
-} else if (json?.tenants && Array.isArray(json.tenants)) {
-  result = json.tenants;
-} else {
-  result = [json];
-}
-
-return res.status(200).json(result);
+    // ✅ RETURN CLEAN TEXT (no JSON parsing!)
+    return res.status(200).json({
+      text: text.trim()
+    });
 
   } catch (err) {
     console.error('[Server Error]', err);
+
     return res.status(500).json({
       error: 'Internal server error',
       details: err.message
