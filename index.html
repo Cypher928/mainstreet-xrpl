@@ -2843,8 +2843,9 @@ async function handleLease(i, file) {
     const property = currentProperty();
     if (!property) throw new Error('No property selected');
 
-    // Snapshot existing before any mutation
+    // Snapshot existing before any mutation, then reset for clean state
     const existing = { tenants: Array.from(property.tenants || []) };
+    property.tenants = [];
     console.log('EXISTING DATA:', existing);
 
     const leaseText = await extractPdfText(file);
@@ -2860,7 +2861,7 @@ async function handleLease(i, file) {
 
     // tenantData is already restored from _props; slot i was just updated in-place.
     // Merge so other slots' existing data isn't lost on save.
-    property.tenants = mergeTenantsDedup(existing.tenants, tenantData.filter(t => t !== null));
+    property.tenants = dedupeTenants(mergeTenantsDedup(existing.tenants, tenantData.filter(t => t !== null)));
     console.log('CURRENT PROPERTY ID:', property.id);
     console.log('SAVING DATA:', property);
     await saveProperty(property);
@@ -3416,12 +3417,22 @@ function clearGLData() {
 // New upload replaces existing tenant with the same name; others are kept.
 function mergeTenantsDedup(existing, incoming) {
   const newNames = new Set(
-    incoming.filter(t => t.tenantName).map(t => t.tenantName.trim().toLowerCase())
+    incoming.filter(t => t.tenant_name).map(t => t.tenant_name.trim().toLowerCase())
   );
   const kept = existing.filter(
-    t => !t.tenantName || !newNames.has(t.tenantName.trim().toLowerCase())
+    t => !t.tenant_name || !newNames.has(t.tenant_name.trim().toLowerCase())
   );
   return [...kept, ...incoming];
+}
+
+function dedupeTenants(arr) {
+  const seen = new Set();
+  return arr.filter(t => {
+    const key = `${t.tenant_name}-${t.leased_sqft}`;
+    if (seen.has(key)) return false;
+    seen.add(key);
+    return true;
+  });
 }
 
 // Appends incoming invoices that don't already exist by vendor+amount+date.
@@ -3448,6 +3459,7 @@ async function handleBulkLeases(fileList) {
   const property = currentProperty();
   if (!property) throw new Error('No property selected');
   const existing = { tenants: Array.from(property.tenants || []) };
+  property.tenants = [];
   console.log('EXISTING DATA:', existing);
 
   const files = Array.from(fileList);
@@ -3494,7 +3506,7 @@ async function handleBulkLeases(fileList) {
 
   // Merge: new uploads replace same-name existing tenants; rest are kept.
   const newTenants = tenantData.filter(t => t !== null);
-  const merged = mergeTenantsDedup(existing.tenants, newTenants);
+  const merged = dedupeTenants(mergeTenantsDedup(existing.tenants, newTenants));
   property.tenants = merged;
   // Keep tenantData in sync with merged result so UI shows the full set.
   tenantData.splice(0, tenantData.length, ...merged.filter(isValidTenant).map(normalizeTenant));
@@ -4829,6 +4841,9 @@ async function runAllocation() {
   const results   = runCAMAllocation(invoices, tenants);
   const totalCost = invoices.reduce((s, e) => s + e.amount, 0);
 
+  const totalLeasedSqft = tenants.reduce((s, t) => s + (t.leasedSqft || 0), 0);
+  const sqftExceedsProperty = totalLeasedSqft > totalSqft;
+
   // Build a Property + run full reconciliation (for per-tenant invoice breakdown + direct matching)
   const _prop = new Property(propName, totalSqft);
   _prop.addLeases(tenantData.filter(t => t && t.tenant_name && parseSqft(t.leased_sqft) > 0).map(t =>
@@ -4870,7 +4885,8 @@ async function runAllocation() {
     <div class="summary-bar-item"><span class="summary-bar-label">Total Expenses</span><strong>${fmt(totalCost)}</strong></div>
     <div class="summary-bar-item"><span class="summary-bar-label">Tenants</span><strong>${results.length}</strong></div>
     <div class="summary-bar-item"><span class="summary-bar-label">Invoices</span><strong>${invoices.length}</strong></div>
-  </div>`;
+  </div>
+  ${sqftExceedsProperty ? `<div class="rc-flags" style="margin-bottom:12px;"><div class="rc-flags-title">&#x26A0;&#xFE0F; sqft_exceeds_property</div><div class="rc-flag-item">Total leased sqft (${totalLeasedSqft.toLocaleString()}) exceeds property sqft (${totalSqft.toLocaleString()}) — pro-rata shares may exceed 100%. Verify tenant sqft values.</div></div>` : ''}`;
 
   results.forEach(r => {
     const fr    = fullResults.find(x => x.tenantName === r.name);
@@ -5081,6 +5097,15 @@ function openExplainPanel(tenantName) {
   const r = lastResults.find(x => x.name === tenantName);
   const t = lastTenants.find(x => x.name === tenantName);
   if (!r || !t) return;
+
+  const td = tenantData.find(x => x && x.tenant_name === tenantName);
+  if (!t.leasedSqft || !t.totalSqft || !td?.lease_type) {
+    const panel = document.getElementById('explainPanel');
+    const body  = document.getElementById('explainBody');
+    if (body) body.innerHTML = `<div class="rc-flags"><div class="rc-flags-title">&#x26A0;&#xFE0F; Cannot Generate Explanation</div><div class="rc-flag-item">Cannot generate explanation — missing required lease data (leased sqft, property sqft, or lease type).</div></div>`;
+    if (panel) panel.style.display = 'flex';
+    return;
+  }
 
   const leasedSqft  = parseFloat(t.leasedSqft) || 0;
   const totalSqft   = parseFloat(t.totalSqft)  || 0;
