@@ -1180,6 +1180,30 @@
     .prev-run-view-btn:hover { background: rgba(201,151,58,0.22); }
     .prev-run-detail { display: none; margin-top: 12px; padding-top: 12px; border-top: 1px solid rgba(255,255,255,0.06); }
     .prev-run-detail .result-card { margin-bottom: 6px; }
+    .prev-run-latest-badge {
+      display: inline-block; font-size: 0.62rem; font-weight: 700; letter-spacing: 0.07em;
+      text-transform: uppercase; background: rgba(74,222,128,0.12); color: #4ade80;
+      border: 1px solid rgba(74,222,128,0.25); border-radius: 20px;
+      padding: 2px 8px; margin-left: 8px; vertical-align: middle;
+    }
+    .prev-run-group { margin-bottom: 16px; }
+    .prev-run-toggle-btn {
+      font-size: 0.76rem; color: #64748b; background: none; border: none;
+      cursor: pointer; padding: 4px 0; margin-top: 4px;
+      text-decoration: underline; text-underline-offset: 3px;
+    }
+    .prev-run-toggle-btn:hover { color: #94a3b8; }
+    .prev-run-hist-list { display: none; margin-top: 6px; padding-left: 14px; border-left: 2px solid rgba(255,255,255,0.05); }
+    .prev-run-hist-list.open { display: block; }
+    .prev-run-hist-item {
+      padding: 8px 12px; margin-bottom: 5px;
+      background: rgba(15,25,41,0.55); border: 1px solid rgba(255,255,255,0.04);
+      border-radius: 8px;
+    }
+    .prev-run-hist-meta { font-size: 0.7rem; color: #475569; font-family: 'DM Mono', monospace; margin-bottom: 3px; }
+    .prev-run-hist-stats { display: flex; gap: 12px; flex-wrap: wrap; margin-bottom: 6px; }
+    .prev-run-hist-stat { font-size: 0.74rem; color: #64748b; }
+    .prev-run-hist-stat strong { color: #9a7a3a; }
 
     /* ── Dispute doc upload ──────────────────────────────────────────── */
     .dispute-doc-row { margin-top: 8px; }
@@ -5128,43 +5152,101 @@ function showErr(body, section, msg) {
 }
 
 // ─── Previous Runs ────────────────────────────────────────────────────────────
+function _fmtRunTs(ts) {
+  return (ts instanceof Date ? ts : new Date(ts)).toLocaleString('en-US', {
+    month: 'short', day: 'numeric', year: 'numeric', hour: '2-digit', minute: '2-digit',
+  });
+}
+
+function _prevRunDetailHtml(run) {
+  return run.results.map(r => `
+    <div class="result-card" style="padding:10px 14px;margin-bottom:6px;">
+      <div class="r-name" style="font-size:0.88rem;">${esc(r.name)}</div>
+      <div class="result-grid">
+        ${stat('Allocated', fmt(r.allocatedAmount))}
+        ${stat('Pro-Rata',  (r.proRata * 100).toFixed(2) + '%')}
+        ${stat('Invoices',  r.eligibleCount + ' of ' + run.invoiceCount)}
+      </div>
+    </div>`).join('');
+}
+
+function renderPrevRunCard(run, camIdx) {
+  return `
+    <div class="prev-run-card">
+      <div class="prev-run-meta">${_fmtRunTs(run.timestamp)}</div>
+      <div class="prev-run-title">${esc(run.propName)}<span class="prev-run-latest-badge">Latest</span></div>
+      <div class="prev-run-stats">
+        <div class="prev-run-stat">Expenses: <strong>${fmt(run.totalExpenses)}</strong></div>
+        <div class="prev-run-stat">Tenants: <strong>${run.tenantCount}</strong></div>
+        <div class="prev-run-stat">Invoices: <strong>${run.invoiceCount}</strong></div>
+      </div>
+      <button class="prev-run-view-btn" onclick="togglePrevRunDetail(${camIdx})">&#x25BC; View Results</button>
+      <div class="prev-run-detail" id="prev-run-detail-${camIdx}">
+        ${_prevRunDetailHtml(run)}
+      </div>
+    </div>`;
+}
+
+function renderPrevRunHistItem(run, camIdx) {
+  return `
+    <div class="prev-run-hist-item">
+      <div class="prev-run-hist-meta">${_fmtRunTs(run.timestamp)}</div>
+      <div class="prev-run-hist-stats">
+        <div class="prev-run-hist-stat">Expenses: <strong>${fmt(run.totalExpenses)}</strong></div>
+        <div class="prev-run-hist-stat">Tenants: <strong>${run.tenantCount}</strong></div>
+        <div class="prev-run-hist-stat">Invoices: <strong>${run.invoiceCount}</strong></div>
+      </div>
+      <button class="prev-run-view-btn" style="font-size:0.72rem;padding:4px 10px;" onclick="togglePrevRunDetail(${camIdx})">&#x25BC; View Results</button>
+      <div class="prev-run-detail" id="prev-run-detail-${camIdx}">
+        ${_prevRunDetailHtml(run)}
+      </div>
+    </div>`;
+}
+
 function renderPreviousRuns() {
   const sec  = document.getElementById('previousRunsSection');
   const list = document.getElementById('previousRunsList');
-  // Only show if there are 2+ runs (first run is always the current one)
   if (camRuns.length < 2) { sec.style.display = 'none'; return; }
   sec.style.display = 'block';
 
-  list.innerHTML = camRuns.slice(1).map((run, idx) => {
-    const runIdx = idx + 1; // offset because we sliced
-    const ts = run.timestamp.toLocaleString('en-US', {
-      month: 'short', day: 'numeric', year: 'numeric',
-      hour: '2-digit', minute: '2-digit',
-    });
-    const detailHtml = run.results.map(r => `
-      <div class="result-card" style="padding:10px 14px;margin-bottom:6px;">
-        <div class="r-name" style="font-size:0.88rem;">${esc(r.name)}</div>
-        <div class="result-grid">
-          ${stat('Allocated', fmt(r.allocatedAmount))}
-          ${stat('Pro-Rata',  (r.proRata * 100).toFixed(2) + '%')}
-          ${stat('Invoices',  r.eligibleCount + ' of ' + run.invoiceCount)}
-        </div>
-      </div>`).join('');
+  // Group historical runs (all but camRuns[0]) by property name, preserving DESC order
+  const grouped = new Map();
+  camRuns.slice(1).forEach((run, sliceIdx) => {
+    const key = (run.propName || '').trim();
+    if (!grouped.has(key)) grouped.set(key, []);
+    grouped.get(key).push({ run, camIdx: sliceIdx + 1 });
+  });
+
+  // Sort groups by each property's most recent run, newest first
+  const groups = [...grouped.entries()].sort(
+    (a, b) => new Date(b[1][0].run.timestamp) - new Date(a[1][0].run.timestamp)
+  );
+
+  list.innerHTML = groups.map(([, entries], groupIdx) => {
+    const primary = entries[0];
+    const older   = entries.slice(1);
     return `
-      <div class="prev-run-card">
-        <div class="prev-run-meta">${ts}</div>
-        <div class="prev-run-title">${esc(run.propName)}</div>
-        <div class="prev-run-stats">
-          <div class="prev-run-stat">Expenses: <strong>${fmt(run.totalExpenses)}</strong></div>
-          <div class="prev-run-stat">Tenants: <strong>${run.tenantCount}</strong></div>
-          <div class="prev-run-stat">Invoices: <strong>${run.invoiceCount}</strong></div>
-        </div>
-        <button class="prev-run-view-btn" onclick="togglePrevRunDetail(${runIdx})">&#x25BC; View Results</button>
-        <div class="prev-run-detail" id="prev-run-detail-${runIdx}">
-          ${detailHtml}
-        </div>
+      <div class="prev-run-group">
+        ${renderPrevRunCard(primary.run, primary.camIdx)}
+        ${older.length ? `
+          <button class="prev-run-toggle-btn" onclick="togglePrevRunGroup(${groupIdx}, this)">
+            &#x25BC; Show previous runs (${older.length})
+          </button>
+          <div class="prev-run-hist-list" id="prhist-${groupIdx}">
+            ${older.map(e => renderPrevRunHistItem(e.run, e.camIdx)).join('')}
+          </div>` : ''}
       </div>`;
   }).join('');
+}
+
+function togglePrevRunGroup(groupIdx, btn) {
+  const el = document.getElementById(`prhist-${groupIdx}`);
+  if (!el) return;
+  const open = el.classList.toggle('open');
+  const count = el.querySelectorAll('.prev-run-hist-item').length;
+  btn.innerHTML = open
+    ? `&#x25B2; Hide previous runs (${count})`
+    : `&#x25BC; Show previous runs (${count})`;
 }
 
 function togglePrevRunDetail(idx) {
@@ -5172,7 +5254,7 @@ function togglePrevRunDetail(idx) {
   const btn = el ? el.previousElementSibling : null;
   if (!el) return;
   const open = el.style.display === 'block';
-  el.style.display  = open ? 'none' : 'block';
+  el.style.display = open ? 'none' : 'block';
   if (btn) btn.innerHTML = open ? '&#x25BC; View Results' : '&#x25B2; Hide Results';
 }
 
