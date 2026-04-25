@@ -5378,7 +5378,13 @@ function closeExplainPanel() {
 }
 
 // ─── Lease Viewer ─────────────────────────────────────────────────────────────
-let _leaseViewerUrl = null;
+let _leaseViewerUrl  = null;
+let _leaseLoadTimeout = null;
+
+function _lvmSetLoadingText(text) {
+  const el = document.querySelector('#lvmLoading .lvm-loading-text');
+  if (el) el.textContent = text;
+}
 
 function openLeaseModal(i) {
   const d = tenantData[i];
@@ -5400,15 +5406,22 @@ function openLeaseModal(i) {
   const loading = document.getElementById('lvmLoading');
 
   title.textContent = d.tenant_name || 'Unknown Tenant';
+  _lvmSetLoadingText('Loading lease document…');
   loading.style.display = 'flex';
 
-  frame.onload = () => { loading.style.display = 'none'; };
-  frame.onerror = () => {
+  frame.onload = () => {
+    clearTimeout(_leaseLoadTimeout);
+    _leaseLoadTimeout = null;
     loading.style.display = 'none';
-    frame.src = '';
-    if (_leaseViewerUrl) window.open(_leaseViewerUrl, '_blank');
   };
+  frame.onerror = null;
+
   frame.src = _leaseViewerUrl;
+
+  _leaseLoadTimeout = setTimeout(() => {
+    _lvmSetLoadingText('Preview unavailable — opening file…');
+    if (_leaseViewerUrl) window.open(_leaseViewerUrl, '_blank');
+  }, 3000);
 
   modal.style.display = 'flex';
   document.body.style.overflow = 'hidden';
@@ -5418,11 +5431,17 @@ function closeLeaseModal() {
   const modal   = document.getElementById('leaseViewerModal');
   const frame   = document.getElementById('leaseViewerFrame');
   const loading = document.getElementById('lvmLoading');
+
+  clearTimeout(_leaseLoadTimeout);
+  _leaseLoadTimeout = null;
+
   modal.style.display = 'none';
-  frame.onload  = null;
-  frame.onerror = null;
-  frame.src = '';
+  frame.onload = null;
+  frame.src    = '';
+
+  _lvmSetLoadingText('Loading lease document…');
   loading.style.display = 'flex';
+
   document.body.style.overflow = '';
   if (_leaseViewerUrl) {
     URL.revokeObjectURL(_leaseViewerUrl);
