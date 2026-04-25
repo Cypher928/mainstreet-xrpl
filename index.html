@@ -3082,10 +3082,10 @@ function renderTenantFields(i) {
       <div class="status-row ok">
         <span class="status-dot ok">${CHECK_SVG}</span>
         Fields extracted — review and edit below
-        ${d.leaseFile ? `<button class="view-lease-btn" onclick="openLeaseModal(${i})">View Lease</button>` : ''}
         <button class="re-btn" onclick="resetTenant(${i})">Re-upload</button>
       </div>
       ${(() => { const w = getWarnings(flags); return w.length ? `<div class="rc-flags"><div class="rc-flags-title">&#x26A0;&#xFE0F; Needs Review</div>${w.map(m => `<div class="rc-flag-item">${m}</div>`).join('')}</div>` : ''; })()}
+      ${d.leaseFile ? `<button class="action-btn" onclick="openLeaseModalFromFile(${i})">&#x1F4C4; View Lease</button>` : ''}
       <div class="field-row">
         <div class="field">
           <label>Tenant Name</label>
@@ -3682,7 +3682,7 @@ function renderBulkResults() {
           <span class="bulk-t-name"   id="bname-${i}">${esc(name)}</span>
           <span class="bulk-t-meta"   id="bmeta-${i}">${esc(meta)}</span>
           <span class="bulk-t-chevron" id="bchev-${i}">&#x25BC; Edit</span>
-          ${d.leaseFile ? `<button class="view-lease-btn" style="margin-left:0" onclick="event.stopPropagation();openLeaseModal(${i})">View Lease</button>` : ''}
+          ${d.leaseFile ? `<button class="view-lease-btn" style="margin-left:0" onclick="event.stopPropagation();openLeaseModalFromFile(${i})">View Lease</button>` : ''}
           <button class="bulk-t-remove" onclick="event.stopPropagation();removeBulkTenant(${i})">Remove</button>
         </div>
         <div class="bulk-tenant-detail" id="bdet-${i}" style="display:none;">
@@ -5089,6 +5089,11 @@ async function runAllocation() {
       ? stat('Confidence', fr.averageConfidence + '%')
       : '';
 
+    const tdIdx = tenantData.findIndex(t => t && t.tenant_name === r.name);
+    const leaseBtn = (tdIdx >= 0 && tenantData[tdIdx]?.leaseFile)
+      ? `<button class="action-btn" onclick="openLeaseModalFromFile(${tdIdx})">&#x1F4C4; View Lease</button>`
+      : '';
+
     html += `<div class="result-card${flags.length ? ' result-card--flagged' : ''}">
       <div class="r-name">${esc(r.name)}${fr?.unitNumber ? `<span class="rc-unit"> · Unit ${esc(fr.unitNumber)}</span>` : ''}</div>
       <div class="result-grid">
@@ -5099,6 +5104,7 @@ async function runAllocation() {
       </div>
       ${r.capApplied ? `<div class="cap-badge">Cap applied — ${fmt(r.capAdjustment)} reduced</div>` : ''}
       ${flagsSection}
+      ${leaseBtn}
       ${invBreakdown}
       <button class="explain-btn${sqftExceedsProperty ? ' sqft-blocked' : ''}" title="${sqftExceedsProperty ? 'Fix square footage mismatch to view calculation' : ''}" onclick="${sqftExceedsProperty ? 'void(0)' : `openExplainPanel('${esc(r.name)}')`}">&#x1F4CA; View Calculation</button>
     </div>`;
@@ -5469,8 +5475,13 @@ function _lvmSetLoadingText(text) {
   if (el) el.textContent = text;
 }
 
-function openLeaseModal(i) {
-  const d = tenantData[i];
+function openLeaseModalFromFile(index) {
+  const d = tenantData[index];
+  if (!d?.leaseFile) return;
+  openLeaseModal(d);
+}
+
+function openLeaseModal(d) {
   if (!d?.leaseFile) return;
 
   const isMobile = /Mobi|Android/i.test(navigator.userAgent);
