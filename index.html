@@ -3427,7 +3427,7 @@ function mergeTenantsDedup(existing, incoming) {
 function dedupeTenants(arr) {
   const map = new Map();
   for (const t of arr) {
-    const key = (t.tenant_name || '').toLowerCase().trim();
+    const key = (t.tenant_name || '').toLowerCase().replace(/[^\w\s]/g, '').replace(/\s+/g, ' ').trim();
     if (!key) continue;
     if (!map.has(key)) map.set(key, t);
   }
