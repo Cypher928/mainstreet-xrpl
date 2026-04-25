@@ -5378,8 +5378,9 @@ function closeExplainPanel() {
 }
 
 // ─── Lease Viewer ─────────────────────────────────────────────────────────────
-let _leaseViewerUrl  = null;
+let _leaseViewerUrl   = null;
 let _leaseLoadTimeout = null;
+let _leaseTimeoutFired = false;
 
 function _lvmSetLoadingText(text) {
   const el = document.querySelector('#lvmLoading .lvm-loading-text');
@@ -5408,8 +5409,10 @@ function openLeaseModal(i) {
   title.textContent = d.tenant_name || 'Unknown Tenant';
   _lvmSetLoadingText('Loading lease document…');
   loading.style.display = 'flex';
+  _leaseTimeoutFired = false;
 
   frame.onload = () => {
+    if (_leaseTimeoutFired) return;
     clearTimeout(_leaseLoadTimeout);
     _leaseLoadTimeout = null;
     loading.style.display = 'none';
@@ -5419,6 +5422,7 @@ function openLeaseModal(i) {
   frame.src = _leaseViewerUrl;
 
   _leaseLoadTimeout = setTimeout(() => {
+    _leaseTimeoutFired = true;
     _lvmSetLoadingText('Preview unavailable — opening file…');
     if (_leaseViewerUrl) window.open(_leaseViewerUrl, '_blank');
   }, 3000);
@@ -5433,7 +5437,8 @@ function closeLeaseModal() {
   const loading = document.getElementById('lvmLoading');
 
   clearTimeout(_leaseLoadTimeout);
-  _leaseLoadTimeout = null;
+  _leaseLoadTimeout  = null;
+  _leaseTimeoutFired = false;
 
   modal.style.display = 'none';
   frame.onload = null;
