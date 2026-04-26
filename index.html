@@ -2074,14 +2074,29 @@ console.log('[Mainstreet] SUPABASE_ANON_KEY:', SUPABASE_ANON_KEY ? SUPABASE_ANON
 
 const { createClient: _sbCreateClient } = window.supabase;
 const db = _sbCreateClient(SUPABASE_URL, SUPABASE_ANON_KEY, {
-  auth: { persistSession: false },
+  auth: {
+    persistSession:     true,
+    autoRefreshToken:   true,
+    detectSessionInUrl: true,
+    storage:            window.localStorage,
+  },
 });
+
+// 🚑 Emergency fallback — never leave the screen blank
+setTimeout(() => {
+  const login = document.getElementById('loginScreen');
+  const app   = document.getElementById('appContent');
+  if (login && app && login.style.display === 'none' && app.style.display === 'none') {
+    console.log('⚠️ Fallback triggered — showing login');
+    _showLogin();
+  }
+}, 1000);
 
 // ─── Authentication ───────────────────────────────────────────────────────────
 async function _showApp(user) {
   document.getElementById('loginScreen').style.display  = 'none';
-  document.getElementById('appContent').style.display   = '';
-  document.getElementById('headerUserEmail').textContent = user.email;
+  document.getElementById('appContent').style.display   = 'block';
+  if (user?.email) document.getElementById('headerUserEmail').textContent = user.email;
 }
 
 function _showLogin() {
@@ -2130,7 +2145,7 @@ async function submitAuth() {
   msgEl.className = 'login-msg';
   msgEl.textContent = '';
 
-  const { error } = _authMode === 'signup'
+  const { data, error } = _authMode === 'signup'
     ? await db.auth.signUp({ email, password })
     : await db.auth.signInWithPassword({ email, password });
 
@@ -2140,14 +2155,15 @@ async function submitAuth() {
     btn.disabled      = false;
     btn.textContent   = _authMode === 'signup' ? 'Create Account' : 'Sign In';
   } else if (_authMode === 'signup') {
-    // Supabase may require email confirmation — show a message instead of auto-login
     msgEl.className   = 'login-msg success';
     msgEl.textContent = '✓ Account created! Check your email to confirm, then sign in.';
     btn.disabled      = false;
     btn.textContent   = 'Create Account';
     switchAuthTab('signin');
+  } else if (data?.user) {
+    // Explicit show — don't rely solely on onAuthStateChange firing in restricted browsers
+    _showApp(data.user);
   }
-  // On successful signIn, onAuthStateChange fires automatically — no manual handling needed
 }
 
 async function signOut() {
@@ -2156,13 +2172,23 @@ async function signOut() {
 
 // Check existing session, then listen for changes
 window.addEventListener('load', () => {
-  db.auth.getSession().then(({ data: { session } }) => {
-    if (session?.user) {
-      _showApp(session.user);
+  db.auth.getSession().then(({ data, error }) => {
+    if (error) {
+      console.warn('[Mainstreet] getSession error:', error.message);
+      _showLogin();
+      return;
+    }
+    if (data?.session?.user) {
+      console.log('✅ Session restored');
+      _showApp(data.session.user);
       init();
     } else {
+      console.log('❌ No session — showing login');
       _showLogin();
     }
+  }).catch(e => {
+    console.warn('[Mainstreet] getSession failed:', e.message);
+    _showLogin();
   });
 });
 
