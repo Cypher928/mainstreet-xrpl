@@ -2073,7 +2073,9 @@ console.log('[Mainstreet] SUPABASE_URL:',      SUPABASE_URL      || '❌ MISSING
 console.log('[Mainstreet] SUPABASE_ANON_KEY:', SUPABASE_ANON_KEY ? SUPABASE_ANON_KEY.slice(0, 20) + '...' : '❌ MISSING');
 
 const { createClient: _sbCreateClient } = window.supabase;
-const db = _sbCreateClient(SUPABASE_URL, SUPABASE_ANON_KEY);
+const db = _sbCreateClient(SUPABASE_URL, SUPABASE_ANON_KEY, {
+  auth: { persistSession: false },
+});
 
 // ─── Authentication ───────────────────────────────────────────────────────────
 async function _showApp(user) {
