@@ -3033,13 +3033,17 @@ function validateTotalSqFt(property, newLease) {
 }
 
 function checkSqftValidation() {
-  const totalSqFt = parseFloat(document.getElementById('totalSqft')?.value) || 0;
+  const prop = currentProperty();
+  console.log('CURRENT PROPERTY:', prop);
+  const totalSqFt = Number(prop?.totalSqft) || 0;
   if (!totalSqFt) { clearSqftBanner(); return; }
 
-  const usedSqFt = tenantData.filter(t => t).reduce((s, t) => s + parseSqft(t.leasedSqft), 0);
-  console.log('SQFT CHECK', usedSqFt, totalSqFt);
+  const usedSqFt = tenantData.filter(t => t).reduce((s, t) => s + parseSqft(t.leased_sqft), 0);
+  console.log('SQFT CHECK:', { usedSqFt, totalSqFt });
 
   if (!usedSqFt) { clearSqftBanner(); return; }
+
+  window._sqftInvalid = usedSqFt > totalSqFt;
 
   const used  = usedSqFt.toLocaleString();
   const total = totalSqFt.toLocaleString();
@@ -3049,6 +3053,7 @@ function checkSqftValidation() {
   } else if (usedSqFt < totalSqFt) {
     showSqftBanner(`⚠ Total leased (${used} sqft) is less than building total (${total} sqft). Some space may be unaccounted for.`, 'under');
   } else {
+    window._sqftInvalid = false;
     clearSqftBanner();
   }
 }
@@ -3703,7 +3708,8 @@ async function handleBulkLeases(fileList) {
 
 function renderBulkResults() {
   const el = document.getElementById('bulkResults');
-  if (!tenantData.length) { el.innerHTML = ''; return; }
+  el.innerHTML = '';
+  if (!tenantData.length) { return; }
 
   const rows = tenantData.map((d, i) => {
     if (!d) return '';
@@ -7151,7 +7157,8 @@ async function savePropertyData() {
   if (!prop) return;
 
   const name = document.getElementById('propertyName')?.value?.trim() || '';
-  const sqft = parseFloat(document.getElementById('totalSqft')?.value) || 0;
+  const sqftDom = parseFloat(document.getElementById('totalSqft')?.value) || 0;
+  const sqft = prop.totalSqft || sqftDom;
 
   if (name) prop.name = name;
   if (sqft) prop.totalSqft = sqft;
