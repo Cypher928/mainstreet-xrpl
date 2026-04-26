@@ -6758,6 +6758,13 @@ async function selectProperty(id) {
   const property = _props.find(p => p.id === id);
   if (!property) return;
 
+  // If re-selecting the same active property and we already have live
+  // in-memory tenants, just re-render — do not reset or reload
+  if (id === activePropId && tenantData.some(t => t && t.tenant_name)) {
+    renderProperty(property);
+    return;
+  }
+
   // Fire-and-forget save for the property we're leaving — don't block navigation
   if (activePropId && activePropId !== id) savePropertyData();
 
@@ -7143,12 +7150,20 @@ function renderProperty(property) {
 
   // ── Tenants ───────────────────────────────────────────────────────────
   try {
-    const tenants = (property.tenants || []).filter(t => t !== null);
-    if (tenants.length) {
-      tenantData.splice(0, tenantData.length, ...tenants.filter(isValidTenant).map(normalizeTenant));
+    const liveTenants = tenantData.filter(t => t && t.tenant_name);
+    if (liveTenants.length > 0) {
+      // Live in-memory tenants (with leaseFile) — reuse, just re-render
       switchLeaseTab('bulk');
       renderBulkResults();
       restored = true;
+    } else {
+      const tenants = (property.tenants || []).filter(t => t !== null);
+      if (tenants.length) {
+        tenantData.splice(0, tenantData.length, ...tenants.filter(isValidTenant).map(normalizeTenant));
+        switchLeaseTab('bulk');
+        renderBulkResults();
+        restored = true;
+      }
     }
   } catch (e) { console.warn('[Mainstreet] tenant restore failed:', e); }
 
