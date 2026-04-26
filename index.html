@@ -2450,6 +2450,7 @@ class Invoice {
     this.invoiceDate     = date     || '';  // field matchInvoiceToTenant expects
     this.description     = description;
     this.matchedTenant   = null;
+    this.matchedTenantId = null;
     this.matchConfidence = 0;
     this.matchReason     = '';
   }
@@ -4956,6 +4957,16 @@ function closeAllocModal() {
 // ─── Tenant Matching ──────────────────────────────────────────────────────────
 // Tries to match a single invoice to a specific tenant by unit number or name.
 // Returns { tenantName, confidence, reason } or null if no genuine match found.
+function matchesTenant(inv, tenant) {
+  const tName = tenant.tenantName || tenant.name || '';
+  return (
+    (inv.matchedTenantId && tenant.id && inv.matchedTenantId === tenant.id) ||
+    (inv.tenantId        && tenant.id && inv.tenantId        === tenant.id) ||
+    (inv.matchedTenant   && tName && inv.matchedTenant === tName) ||
+    (inv.tenantName      && tName && inv.tenantName    === tName)
+  );
+}
+
 function matchInvoiceToTenant(invoice, tenants) {
   let bestMatch = null;
   let bestConf  = 0;
@@ -5016,10 +5027,9 @@ function runFullReconciliation(property) {
     );
     const sharedTotal = eligibleShared.reduce((s, inv) => s + inv.amount, 0) * proRata;
 
-    const ownInvoices = directInvoices.filter(inv =>
-      (lease.id && inv.matchedTenantId === lease.id) ||
-      inv.matchedTenant === lease.tenantName
-    );
+    const ownInvoices = directInvoices.filter(inv => matchesTenant(inv, lease));
+    console.log(`[reconcile] ${lease.tenantName} — direct:${ownInvoices.length} shared:${eligibleShared.length}`,
+      ownInvoices.map(i => ({ id: i.id, matchedTenantId: i.matchedTenantId, matchedTenant: i.matchedTenant })));
     const ownTotal    = ownInvoices.reduce((s, inv) => s + inv.amount, 0);
 
     let rawTotal      = sharedTotal + ownTotal;
