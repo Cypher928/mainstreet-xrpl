@@ -3062,8 +3062,15 @@ function checkSqftValidation() {
 function runCamValidation() {
   const prop = currentProperty();
 
-  const tenantTotal = (tenantData || []).reduce(
-    (sum, t) => sum + (Number(t?.leased_sqft) || 0),
+  const validTenants = (tenantData || []).filter(t =>
+    t &&
+    t.tenant_name &&
+    Number(t.leased_sqft) > 0 &&
+    !t.extractionFailed
+  );
+
+  const tenantTotal = validTenants.reduce(
+    (sum, t) => sum + (Number(t.leased_sqft) || 0),
     0
   );
 
@@ -5056,9 +5063,14 @@ async function runAllocation() {
   // Show banner if sqFt is over, but do NOT block — surfaced as SQFT_OVERFLOW flag on results
   checkSqftValidation();
 
-  const tenants = tenantData
-    .filter(t => t && t.tenant_name && parseSqft(t.leased_sqft) > 0)
-    .map(t => ({
+  const validTenants = (tenantData || []).filter(t =>
+    t &&
+    t.tenant_name &&
+    Number(t.leased_sqft) > 0 &&
+    !t.extractionFailed
+  );
+
+  const tenants = validTenants.map(t => ({
       name:               t.tenant_name,
       leasedSqft:         parseSqft(t.leased_sqft),
       totalSqft,
