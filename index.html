@@ -3054,20 +3054,21 @@ function checkSqftValidation() {
 }
 
 function updatePropertySqft(newSqft) {
-  const property = currentProperty();
-  if (!property) return;
+  const prop = currentProperty();
+  if (!prop) return;
 
   const parsed = Number(newSqft);
-  if (!parsed || parsed <= 0) {
-    console.warn('Invalid sqft:', newSqft);
-    return;
-  }
+  if (!parsed || parsed <= 0) return;
 
-  property.totalSqft = parsed;
-  console.log('UPDATED PROPERTY SQFT:', parsed);
+  prop.totalSqft = parsed;
+
+  saveProperty(prop);
+  console.log('UPDATED SQFT:', parsed);
 
   checkSqftValidation();
-  saveProperty(property); // fire-and-forget persist
+  runCamValidation?.();
+
+  renderProperty(prop);
 }
 
 function showSqftBanner(msg, severity) {
