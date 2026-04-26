@@ -3640,6 +3640,7 @@ async function handleBulkLeases(fileList) {
     }
 
     const isValid = extracted && extracted.tenant_name;
+    if (!isValid) console.log('FAILED LEASE:', file.name);
     const tenant = {
       ...(isValid
         ? normalizeTenant(extracted)
@@ -3694,9 +3695,9 @@ function renderBulkResults() {
     const end       = d.end_date    || null;
     const leaseType = d.lease_type  || null;
     const capPct    = d.cap         ?? null;
-    const icon = d._error ? '⚠️' : d.tenant_name ? '✓' : '?';
+    const icon = d.extractionFailed ? '❌' : d.tenant_name ? '✓' : '?';
     const name = d.tenant_name || '(unknown — click to edit)';
-    const meta = [
+    const meta = d.extractionFailed ? 'Extraction failed — tap to re-upload' : [
       sqft      !== null && sqft      !== '' ? `${sqft} sqft`   : null,
       start     !== null && start     !== '' ? start             : null,
       end       !== null && end       !== '' ? end               : null,
@@ -3705,7 +3706,7 @@ function renderBulkResults() {
     ].filter(v => v !== null && v !== undefined).join(' · ') || '—';
 
     return `
-      <div class="bulk-tenant-row${d._error ? ' has-error' : ''}" id="btr-${i}">
+      <div class="bulk-tenant-row${d.extractionFailed ? ' has-error' : ''}" id="btr-${i}">
         <div class="bulk-tenant-summary" onclick="toggleBulkDetail(${i})">
           <span class="bulk-t-status">${icon}</span>
           <span class="bulk-t-name"   id="bname-${i}">${esc(name)}</span>
