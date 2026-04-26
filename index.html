@@ -1781,7 +1781,7 @@
       <div class="field">
         <label>Total Property Sqft</label>
         <input type="number" id="totalSqft" placeholder="e.g. 20000" min="1"
-          oninput="checkSqftValidation()" />
+          oninput="updatePropertySqft(this.value)" />
       </div>
     </div>
   </div>
@@ -3051,6 +3051,23 @@ function checkSqftValidation() {
   } else {
     clearSqftBanner();
   }
+}
+
+function updatePropertySqft(newSqft) {
+  const property = currentProperty();
+  if (!property) return;
+
+  const parsed = Number(newSqft);
+  if (!parsed || parsed <= 0) {
+    console.warn('Invalid sqft:', newSqft);
+    return;
+  }
+
+  property.totalSqft = parsed;
+  console.log('UPDATED PROPERTY SQFT:', parsed);
+
+  checkSqftValidation();
+  saveProperty(property); // fire-and-forget persist
 }
 
 function showSqftBanner(msg, severity) {
