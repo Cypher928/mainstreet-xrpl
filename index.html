@@ -3712,11 +3712,13 @@ function renderBulkResults() {
           <span class="bulk-t-name"   id="bname-${i}">${esc(name)}</span>
           <span class="bulk-t-meta"   id="bmeta-${i}">${esc(meta)}</span>
           <span class="bulk-t-chevron" id="bchev-${i}">&#x25BC; Edit</span>
-          ${d.leaseExpected
-            ? d.leaseFile
-              ? `<button class="view-lease-btn" style="margin-left:0" onclick="event.stopPropagation();openLeaseModalFromFile(${i})">View Lease</button>`
-              : `<span class="lease-missing-note" style="margin-left:6px;">No lease file — re-upload to view</span>`
-            : ''}
+          ${d.extractionFailed
+            ? `<button class="view-lease-btn" style="margin-left:0;color:#f97316;" onclick="event.stopPropagation();retryExtraction(${i})">&#x21BA; Retry</button>`
+            : d.leaseExpected
+              ? d.leaseFile
+                ? `<button class="view-lease-btn" style="margin-left:0" onclick="event.stopPropagation();openLeaseModalFromFile(${i})">View Lease</button>`
+                : `<span class="lease-missing-note" style="margin-left:6px;">No lease file — re-upload to view</span>`
+              : ''}
           <button class="bulk-t-remove" onclick="event.stopPropagation();removeBulkTenant(${i})">Remove</button>
         </div>
         <div class="bulk-tenant-detail" id="bdet-${i}" style="display:none;">
@@ -3803,6 +3805,33 @@ async function removeBulkTenant(i) {
   renderBulkResults();
   checkSqftValidation();
   await savePropertyData();
+}
+
+async function retryExtraction(index) {
+  const t = tenantData[index];
+  if (!t || !t.leaseFile) return;
+
+  try {
+    const leaseText = await extractPdfText(t.leaseFile);
+    const extracted = await callClaudeForLease(leaseText);
+    const isValid   = extracted && extracted.tenant_name;
+    if (!isValid) throw new Error('Could not extract tenant fields');
+
+    tenantData[index] = {
+      ...normalizeTenant(extracted),
+      leaseFile:        t.leaseFile,
+      leaseExpected:    true,
+      fileName:         t.fileName,
+      id:               t.id,
+      extractionFailed: false,
+    };
+  } catch (err) {
+    console.log('RETRY FAILED:', t.leaseFile?.name || t.fileName);
+    tenantData[index] = { ...t, _error: err.message || 'Retry failed' };
+  }
+
+  renderBulkResults();
+  checkSqftValidation();
 }
 
 async function clearBulkResults() {
