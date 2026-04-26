@@ -3058,20 +3058,19 @@ function checkSqftValidation() {
   }
 }
 
-function updatePropertySqft(newSqft) {
+function updatePropertySqft(val) {
   const prop = currentProperty();
   if (!prop) return;
 
-  const parsed = Number(newSqft);
-  if (!parsed || parsed <= 0) return;
+  prop.totalSqft = Number(val) || 0;
 
-  prop.totalSqft = parsed;
+  console.log('UPDATED SQFT:', prop.totalSqft);
 
   saveProperty(prop);
-  console.log('UPDATED SQFT:', parsed);
 
   checkSqftValidation();
   runCamValidation?.();
+  calculateCAM?.();
 
   renderProperty(prop);
 }
