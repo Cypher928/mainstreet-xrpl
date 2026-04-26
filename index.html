@@ -235,18 +235,11 @@
     }
     #leaseViewerModal .lvm-body { position: relative; flex: 1; display: flex; }
     #leaseViewerFrame { position: absolute; inset: 0; width: 100%; height: 100%; border: none; background: #fff; }
-    #lvmLoading {
-      position: absolute; inset: 0; z-index: 10;
-      display: flex; flex-direction: column; align-items: center; justify-content: center;
-      background: #0a1628; gap: 14px;
+    #leaseCloseBtn {
+      position: fixed; top: 16px; right: 16px; z-index: 9999;
+      background: rgba(0,0,0,0.7); color: #fff; border: none;
+      font-size: 20px; padding: 10px 14px; border-radius: 8px; cursor: pointer;
     }
-    #lvmLoading .lvm-spinner {
-      width: 40px; height: 40px; border-radius: 50%;
-      border: 3px solid rgba(99,102,241,0.2); border-top-color: #818cf8;
-      animation: lvm-spin 0.8s linear infinite;
-    }
-    #lvmLoading .lvm-loading-text { color: #94a3b8; font-size: 0.85rem; }
-    @keyframes lvm-spin { to { transform: rotate(360deg); } }
 
     /* Extracted (fade in) */
     .extracted { animation: fadein 0.25s ease; }
@@ -2036,6 +2029,7 @@
 
 <!-- ── Lease File Viewer ──────────────────────────────────────────────────── -->
 <div id="leaseViewerModal">
+  <button id="leaseCloseBtn" onclick="closeLeaseModal()">&#x2715;</button>
   <div class="lvm-header">
     <div class="lvm-header-left">
       <span class="lvm-label">Lease Document</span>
@@ -2047,11 +2041,6 @@
     </div>
   </div>
   <div class="lvm-body">
-    <div id="lvmLoading">
-      <div class="lvm-spinner"></div>
-      <span class="lvm-loading-text">Loading lease preview...</span>
-      <button class="action-btn" style="margin-top:12px;font-size:0.8rem;" onclick="leaseViewerOpenExternal()">Open in new tab</button>
-    </div>
     <iframe id="leaseViewerFrame" src=""></iframe>
   </div>
 </div>
@@ -5503,91 +5492,64 @@ function closeExplainPanel() {
 }
 
 // ─── Lease Viewer ─────────────────────────────────────────────────────────────
-let _leaseViewerUrl   = null;
-let _leaseLoadTimeout = null;
-let _leaseTimeoutFired = false;
 
-function _lvmSetLoadingText(text) {
-  const el = document.querySelector('#lvmLoading .lvm-loading-text');
-  if (el) el.innerText = text;
+// Primary: always open in a new tab. Revoke the blob URL after 5s so the
+// tab has time to load before memory is freed.
+function openLease(file) {
+  const url = URL.createObjectURL(file);
+  window.open(url, '_blank');
+  setTimeout(() => URL.revokeObjectURL(url), 5000);
 }
 
+// Entry point for all inline onclick buttons — always delegates to openLease.
 function openLeaseModalFromFile(index) {
   const d = tenantData[index];
   if (!d?.leaseFile) return;
-  openLeaseModal(d);
+  openLease(d.leaseFile);
 }
 
-function openLeaseModal(d) {
-  if (!d?.leaseFile) return;
-
-  const isMobile = /Mobi|Android/i.test(navigator.userAgent);
-  _leaseViewerUrl = URL.createObjectURL(d.leaseFile);
-
-  if (isMobile) {
-    window.open(_leaseViewerUrl, '_blank');
-    URL.revokeObjectURL(_leaseViewerUrl);
-    _leaseViewerUrl = null;
-    return;
-  }
-
-  const modal   = document.getElementById('leaseViewerModal');
-  const frame   = document.getElementById('leaseViewerFrame');
-  const title   = document.getElementById('leaseViewerTitle');
-  const loading = document.getElementById('lvmLoading');
-
-  title.textContent = d.tenant_name || 'Unknown Tenant';
-  _leaseTimeoutFired = false;
-  _lvmSetLoadingText('Loading lease preview...');
-  loading.style.display = 'flex';
-
-  frame.onload = () => {
-    if (_leaseTimeoutFired) return;
-    clearTimeout(_leaseLoadTimeout);
-    _leaseLoadTimeout = null;
-    loading.style.display = 'none';
-  };
-  frame.onerror = null;
-
-  frame.src = _leaseViewerUrl;
-
-  _leaseLoadTimeout = setTimeout(() => {
-    _leaseTimeoutFired = true;
-    _lvmSetLoadingText('Preview unavailable — opening in new tab...');
-    window.open(_leaseViewerUrl, '_blank');
-    closeLeaseModal();
-  }, 3000);
-
+// Desktop modal — kept for future use. Pass the File object directly.
+function openLeaseModal(file) {
+  if (!file) return;
+  const modal = document.getElementById('leaseViewerModal');
+  const frame = document.getElementById('leaseViewerFrame');
+  const title = document.getElementById('leaseViewerTitle');
+  const url   = URL.createObjectURL(file);
+  modal._leaseUrl = url;
+  if (title) title.textContent = file.name || 'Lease Document';
+  frame.src = url;
   modal.style.display = 'flex';
   document.body.style.overflow = 'hidden';
 }
 
 function closeLeaseModal() {
-  const modal   = document.getElementById('leaseViewerModal');
-  const frame   = document.getElementById('leaseViewerFrame');
-  const loading = document.getElementById('lvmLoading');
-
-  clearTimeout(_leaseLoadTimeout);
-  _leaseLoadTimeout  = null;
-  _leaseTimeoutFired = false;
-
-  modal.style.display = 'none';
-  frame.onload = null;
-  frame.src    = '';
-
-  _lvmSetLoadingText('Loading lease preview...');
-  loading.style.display = 'flex';
-
-  document.body.style.overflow = '';
-  if (_leaseViewerUrl) {
-    URL.revokeObjectURL(_leaseViewerUrl);
-    _leaseViewerUrl = null;
+  const modal = document.getElementById('leaseViewerModal');
+  const frame = document.getElementById('leaseViewerFrame');
+  if (frame) { frame.onload = null; frame.src = ''; }
+  if (modal) {
+    modal.style.display = 'none';
+    if (modal._leaseUrl) {
+      URL.revokeObjectURL(modal._leaseUrl);
+      modal._leaseUrl = null;
+    }
   }
+  document.body.style.overflow = '';
 }
 
 function leaseViewerOpenExternal() {
-  if (_leaseViewerUrl) window.open(_leaseViewerUrl, '_blank');
+  const modal = document.getElementById('leaseViewerModal');
+  if (modal?._leaseUrl) window.open(modal._leaseUrl, '_blank');
 }
+
+// ESC key always closes modal — user can never be trapped
+document.addEventListener('keydown', (e) => {
+  if (e.key === 'Escape') closeLeaseModal();
+});
+
+// Clicking the dark backdrop closes modal
+document.getElementById('leaseViewerModal')?.addEventListener('click', (e) => {
+  if (e.target.id === 'leaseViewerModal') closeLeaseModal();
+});
 
 // ─── Report State ─────────────────────────────────────────────────────────────
 const camRuns    = []; // previous run history
