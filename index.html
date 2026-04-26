@@ -5493,29 +5493,19 @@ function closeExplainPanel() {
 
 // ─── Lease Viewer ─────────────────────────────────────────────────────────────
 
-// Primary: always open in a new tab. Revoke the blob URL after 5s so the
-// tab has time to load before memory is freed.
+// Primary: open lease in the in-app modal viewer.
 function openLease(file) {
-  const url = URL.createObjectURL(file);
-  const a   = document.createElement('a');
-  a.href     = url;
-  a.target   = '_blank';
-  a.rel      = 'noopener noreferrer';
-  a.download = file.name;
-  document.body.appendChild(a);
-  a.click();
-  document.body.removeChild(a);
-  setTimeout(() => URL.revokeObjectURL(url), 15000);
+  openLeaseModal(file);
 }
 
-// Entry point for all inline onclick buttons — always delegates to openLease.
+// Entry point for all inline onclick buttons.
 function openLeaseModalFromFile(index) {
   const d = tenantData[index];
   if (!d?.leaseFile) return;
   openLease(d.leaseFile);
 }
 
-// Desktop modal — kept for future use. Pass the File object directly.
+// Modal viewer — creates blob URL, loads iframe, stores URL for cleanup on close.
 function openLeaseModal(file) {
   if (!file) return;
   const modal = document.getElementById('leaseViewerModal');
