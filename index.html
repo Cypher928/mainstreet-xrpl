@@ -3865,10 +3865,11 @@ if (tenantSaveError) {
 
 function renderBulkResults(data) {
   const el = document.getElementById('bulkResults');
- if (!data || !data.length) {
-  el.innerHTML = "";
-  return;
-}
+
+  if (!data || !data.length) {
+    el.innerHTML = "<div style='padding:20px;color:white;'>No tenants found</div>";
+    return;
+  }
 
 const safeData = (data || []).filter(d => d && typeof d === "object");
 const rows = safeData.map((d, i) => {
