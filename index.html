@@ -3060,12 +3060,27 @@ function checkSqftValidation() {
 }
 
 function runCamValidation() {
-  const isValid = checkSqftValidation();
+  const prop = currentProperty();
+
+  const tenantTotal = (tenantData || []).reduce(
+    (sum, t) => sum + (Number(t?.leased_sqft) || 0),
+    0
+  );
+
+  const propertyTotal = Number(prop?.totalSqft) || 0;
+
+  console.log('CAM VALIDATION CHECK:', { tenantTotal, propertyTotal });
+
+  const isValid = tenantTotal <= propertyTotal;
+
+  window._sqftInvalid = !isValid;
+
   if (!isValid) {
-    console.log('CAM paused — invalid sqft');
+    console.log('❌ CAM paused — mismatch');
     return;
   }
-  console.log('CAM running...');
+
+  console.log('✅ CAM running');
   calculateCAM?.();
 }
 
