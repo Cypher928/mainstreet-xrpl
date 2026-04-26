@@ -2700,6 +2700,8 @@ function normalizeTenant(d) {
     doc_has_dates:       d.doc_has_dates       ?? true,
     doc_has_lease_type:  d.doc_has_lease_type  ?? true,
     leaseExpected:       d.leaseExpected       ?? false,
+    id:                  d.id                  ?? crypto.randomUUID(),
+    fileName:            d.fileName            ?? '',
     _error:              d._error              ?? null,
   };
 }
@@ -3089,11 +3091,11 @@ function renderTenantFields(i) {
         <button class="re-btn" onclick="resetTenant(${i})">Re-upload</button>
       </div>
       ${(() => { const w = getWarnings(flags); return w.length ? `<div class="rc-flags"><div class="rc-flags-title">&#x26A0;&#xFE0F; Needs Review</div>${w.map(m => `<div class="rc-flag-item">${m}</div>`).join('')}</div>` : ''; })()}
-      ${d.leaseFile
-        ? `<button class="action-btn" onclick="openLeaseModalFromFile(${i})">&#x1F4C4; View Lease</button>`
-        : d.leaseExpected
-          ? `<div class="lease-missing-note">Lease document not loaded — please re-upload to view</div>`
-          : ''}
+      ${d.leaseExpected
+        ? d.leaseFile
+          ? `<button class="action-btn" onclick="openLeaseModalFromFile(${i})">&#x1F4C4; View Lease</button>`
+          : `<div class="lease-missing-note">Lease document not loaded — please re-upload to view</div>`
+        : ''}
       <div class="field-row">
         <div class="field">
           <label>Tenant Name</label>
@@ -3615,27 +3617,47 @@ async function handleBulkLeases(fileList) {
   prog.style.display = 'block';
   document.getElementById('bulkLeaseInput').value = '';
 
-  for (let i = 0; i < total; i++) {
-    const pct = Math.round((i / total) * 100);
+  let completed = 0;
+  const _progUpdate = () => {
+    const pct = Math.round((completed / total) * 100);
     prog.innerHTML = `
       <div class="bulk-progress-wrap">
-        <div class="bulk-progress-label">Processing lease ${i + 1} of ${total} — "${esc(files[i].name)}"</div>
+        <div class="bulk-progress-label">Processing leases… ${completed} of ${total} done</div>
         <div class="bulk-progress-track">
           <div class="bulk-progress-fill" style="width:${pct}%"></div>
         </div>
       </div>`;
+  };
+  _progUpdate();
 
+  await Promise.all(files.map(async (file) => {
     try {
-      const leaseText = await extractPdfText(files[i]);
+      const leaseText = await extractPdfText(file);
       const tenant    = await callClaudeForLease(leaseText);
-      console.log("FINAL TENANT USED IN UI:", tenant);
       if (!tenant) throw new Error('Could not extract lease fields');
-      const t = { ...normalizeTenant(tenant), leaseFile: files[i], leaseExpected: true };
+      const t = {
+        ...normalizeTenant(tenant),
+        leaseFile:    file,
+        leaseExpected: true,
+        id:           crypto.randomUUID(),
+        fileName:     file.name,
+      };
       if (isValidTenant(t)) tenantData.push(t);
     } catch (err) {
-      console.error('[handleBulkLeases] extraction error for', files[i].name, err);
+      console.error('[handleBulkLeases] extraction error for', file.name, err);
+      tenantData.push({
+        tenant_name:  file.name.replace(/\.pdf$/i, ''),
+        leaseFile:    file,
+        leaseExpected: false,
+        id:           crypto.randomUUID(),
+        fileName:     file.name,
+        _error:       err.message || 'Extraction failed',
+      });
+    } finally {
+      completed++;
+      _progUpdate();
     }
-  }
+  }));
 
   prog.innerHTML = `
     <div class="bulk-progress-wrap">
@@ -3645,6 +3667,9 @@ async function handleBulkLeases(fileList) {
       </div>
     </div>`;
 
+  console.log("FINAL TENANTS:", tenantData.map(t => ({
+    name: t.tenant_name, hasFile: !!t.leaseFile, file: t.fileName,
+  })));
   console.log("RAW EXTRACTED TENANTS:", JSON.stringify(tenantData, null, 2));
   console.log('TENANTS BEFORE DEDUPE:', tenantData);
   const deduped = dedupeTenants(tenantData);
@@ -3689,11 +3714,11 @@ function renderBulkResults() {
           <span class="bulk-t-name"   id="bname-${i}">${esc(name)}</span>
           <span class="bulk-t-meta"   id="bmeta-${i}">${esc(meta)}</span>
           <span class="bulk-t-chevron" id="bchev-${i}">&#x25BC; Edit</span>
-          ${d.leaseFile
-            ? `<button class="view-lease-btn" style="margin-left:0" onclick="event.stopPropagation();openLeaseModalFromFile(${i})">View Lease</button>`
-            : d.leaseExpected
-              ? `<span class="lease-missing-note" style="margin-left:6px;">No lease file — re-upload to view</span>`
-              : ''}
+          ${d.leaseExpected
+            ? d.leaseFile
+              ? `<button class="view-lease-btn" style="margin-left:0" onclick="event.stopPropagation();openLeaseModalFromFile(${i})">View Lease</button>`
+              : `<span class="lease-missing-note" style="margin-left:6px;">No lease file — re-upload to view</span>`
+            : ''}
           <button class="bulk-t-remove" onclick="event.stopPropagation();removeBulkTenant(${i})">Remove</button>
         </div>
         <div class="bulk-tenant-detail" id="bdet-${i}" style="display:none;">
@@ -5102,11 +5127,11 @@ async function runAllocation() {
 
     const tdIdx = tenantData.findIndex(t => t && t.tenant_name === r.name);
     const _td   = tdIdx >= 0 ? tenantData[tdIdx] : null;
-    const leaseBtn = _td?.leaseFile
-      ? `<button class="action-btn" onclick="openLeaseModalFromFile(${tdIdx})">&#x1F4C4; View Lease</button>`
-      : _td?.leaseExpected
-        ? `<div class="lease-missing-note">Lease document not loaded — please re-upload to view</div>`
-        : '';
+    const leaseBtn = _td?.leaseExpected
+      ? _td.leaseFile
+        ? `<button class="action-btn" onclick="openLeaseModalFromFile(${tdIdx})">&#x1F4C4; View Lease</button>`
+        : `<div class="lease-missing-note">Lease document not loaded — please re-upload to view</div>`
+      : '';
 
     html += `<div class="result-card${flags.length ? ' result-card--flagged' : ''}">
       <div class="r-name">${esc(r.name)}${fr?.unitNumber ? `<span class="rc-unit"> · Unit ${esc(fr.unitNumber)}</span>` : ''}</div>
