@@ -5498,7 +5498,7 @@ function closeExplainPanel() {
 function openLease(file) {
   const url = URL.createObjectURL(file);
   window.open(url, '_blank');
-  setTimeout(() => URL.revokeObjectURL(url), 5000);
+  setTimeout(() => URL.revokeObjectURL(url), 15000);
 }
 
 // Entry point for all inline onclick buttons — always delegates to openLease.
