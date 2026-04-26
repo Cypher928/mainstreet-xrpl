@@ -3062,12 +3062,7 @@ function checkSqftValidation() {
 function runCamValidation() {
   const prop = currentProperty();
 
-  const validTenants = (tenantData || []).filter(t =>
-    t &&
-    t.tenant_name &&
-    Number(t.leased_sqft) > 0 &&
-    !t.extractionFailed
-  );
+  const validTenants = getValidTenants();
 
   const tenantTotal = validTenants.reduce(
     (sum, t) => sum + (Number(t.leased_sqft) || 0),
@@ -3089,6 +3084,39 @@ function runCamValidation() {
 
   console.log('✅ CAM running');
   calculateCAM?.();
+}
+
+function getValidTenants() {
+  return (tenantData || []).filter(t =>
+    t &&
+    t.tenant_name &&
+    Number(t.leased_sqft) > 0 &&
+    !t.extractionFailed
+  );
+}
+
+function renderFailedTenants(tenants) {
+  const el = document.getElementById('bulkResults');
+  if (!el || !tenants.length) return;
+  const rows = tenants.map((d) => {
+    const i = tenantData.indexOf(d);
+    if (i === -1) return '';
+    return `
+      <div class="bulk-tenant-row has-error" id="btr-failed-${i}">
+        <div class="bulk-tenant-summary">
+          <span class="bulk-t-status">❌</span>
+          <span class="bulk-t-name">${esc(d.fileName || d.tenant_name || 'Unknown')}</span>
+          <span class="bulk-t-meta">Extraction failed — tap to re-upload</span>
+          <button class="view-lease-btn" style="margin-left:0;color:#f97316;" onclick="retryExtraction(${i})">&#x21BA; Retry</button>
+          <button class="bulk-t-remove" onclick="event.stopPropagation();removeBulkTenant(${i})">Remove</button>
+        </div>
+      </div>`;
+  }).join('');
+  el.insertAdjacentHTML('beforeend', `
+    <div class="bulk-results-head" style="margin-top:16px;border-top:1px solid rgba(239,68,68,0.2);padding-top:12px;">
+      <h3 style="color:#f87171;">Needs Attention (${tenants.length})</h3>
+    </div>
+    ${rows}`);
 }
 
 function updatePropertySqft(val) {
@@ -3740,7 +3768,8 @@ async function handleBulkLeases(fileList) {
 function renderBulkResults(tenants) {
   const el = document.getElementById('bulkResults');
   el.innerHTML = '';
-  const data = tenants || tenantData;
+  el.scrollTop = 0;
+  const data = (tenants || tenantData).filter(t => t && typeof t === 'object');
   if (!data.length) { return; }
 
   const rows = data.map((d) => {
@@ -5063,12 +5092,7 @@ async function runAllocation() {
   // Show banner if sqFt is over, but do NOT block — surfaced as SQFT_OVERFLOW flag on results
   checkSqftValidation();
 
-  const validTenants = (tenantData || []).filter(t =>
-    t &&
-    t.tenant_name &&
-    Number(t.leased_sqft) > 0 &&
-    !t.extractionFailed
-  );
+  const validTenants = getValidTenants();
 
   const tenants = validTenants.map(t => ({
       name:               t.tenant_name,
@@ -6859,7 +6883,10 @@ async function selectProperty(id) {
   }
 
   // Fire-and-forget save for the property we're leaving — don't block navigation
-  if (activePropId && activePropId !== id) savePropertyData();
+  if (activePropId && activePropId !== id) {
+    console.log('Switching property — clearing transient state');
+    savePropertyData();
+  }
 
   // Switch active property and clear all global workflow state
   activePropId = id;
@@ -7248,11 +7275,11 @@ function renderProperty(property) {
     console.log('RENDER PROPERTY:', { propSqft: property.totalSqft, tenants: liveTenants.length });
 
     if (liveTenants.length > 0) {
-      // Deduplicate in-place by fileName || tenant_name
+      // Deduplicate in-place by stable UUID (t.id)
       const seen = new Set();
       const deduped = tenantData.filter(t => {
-        if (!t) return false;
-        const key = t.fileName || t.tenant_name;
+        if (!t || typeof t !== 'object') return false;
+        const key = t.id || t.fileName || t.tenant_name;
         if (seen.has(key)) return false;
         seen.add(key);
         return true;
@@ -7262,16 +7289,17 @@ function renderProperty(property) {
       tenantData.forEach((t, idx) => {
         if (t) tenantData[idx] = { ...t, leased_sqft: Number(t.leased_sqft) || 0 };
       });
-      const freshLive = tenantData.filter(t => t && t.tenant_name);
       switchLeaseTab('bulk');
-      renderBulkResults(freshLive);
+      renderBulkResults(getValidTenants());
+      renderFailedTenants(tenantData.filter(t => t && t.extractionFailed));
       restored = true;
     } else {
       const tenants = (property.tenants || []).filter(t => t !== null);
       if (tenants.length) {
         tenantData.splice(0, tenantData.length, ...tenants.filter(isValidTenant).map(normalizeTenant));
         switchLeaseTab('bulk');
-        renderBulkResults();
+        renderBulkResults(getValidTenants());
+        renderFailedTenants(tenantData.filter(t => t && t.extractionFailed));
         restored = true;
       }
     }
