@@ -3800,6 +3800,19 @@ async function handleBulkLeases(fileList) {
   await saveProperty(property);
 }
 
+function updateTenantField(index, field, value) {
+  if (tenantData[index]) {
+    tenantData[index][field] = value;
+  }
+  // Keep property.tenants in sync so CAM always reads fresh values
+  const prop = currentProperty();
+  if (prop?.tenants && tenantData[index]?.id) {
+    const pt = prop.tenants.find(t => t?.id === tenantData[index].id);
+    if (pt) pt[field] = value;
+  }
+  console.log('UPDATED TENANT:', tenantData[index]);
+}
+
 function renderBulkResults(tenants) {
   const el = document.getElementById('bulkResults');
   el.innerHTML = '';
@@ -3850,30 +3863,30 @@ function renderBulkResults(tenants) {
             <div class="field">
               <label>Tenant Name</label>
               <input type="text" value="${esc(d.tenant_name || '')}"
-                oninput="tenantData[${i}].tenant_name=this.value;refreshBulkSummary(${i})"/>
+                oninput="updateTenantField(${i},'tenant_name',this.value);refreshBulkSummary(${i})"/>
             </div>
             <div class="field">
               <label>Leased Sqft</label>
               <input type="number" value="${d.leased_sqft || ''}"
-                oninput="tenantData[${i}].leased_sqft=this.value;refreshBulkSummary(${i})"/>
+                oninput="updateTenantField(${i},'leased_sqft',this.value);refreshBulkSummary(${i});checkSqftValidation()"/>
             </div>
           </div>
           <div class="field-row">
             <div class="field">
               <label>Lease Start Date</label>
               <input type="date" value="${d.start_date || ''}"
-                onchange="tenantData[${i}].start_date=this.value"/>
+                onchange="updateTenantField(${i},'start_date',this.value)"/>
             </div>
             <div class="field">
               <label>Lease End Date</label>
               <input type="date" value="${d.end_date || ''}"
-                onchange="tenantData[${i}].end_date=this.value"/>
+                onchange="updateTenantField(${i},'end_date',this.value)"/>
             </div>
           </div>
           <div class="field-row">
             <div class="field">
               <label>Lease Type</label>
-              <select onchange="tenantData[${i}].lease_type = this.value || null; if(lastResults.length) runAllocation()">
+              <select onchange="updateTenantField(${i},'lease_type',this.value||null);if(lastResults.length)runAllocation()">
                 <option value="">Select lease type</option>
                 <option value="Triple Net (NNN)"${d.lease_type === 'Triple Net (NNN)' ? ' selected' : ''}>Triple Net (NNN)</option>
                 <option value="Gross"${d.lease_type === 'Gross' ? ' selected' : ''}>Gross</option>
@@ -3883,7 +3896,7 @@ function renderBulkResults(tenants) {
             <div class="field">
               <label>Excluded Categories (comma-separated)</label>
               <input type="text" value="${esc(d.excluded_categories || '')}"
-                oninput="tenantData[${i}].excluded_categories=this.value"/>
+                oninput="updateTenantField(${i},'excluded_categories',this.value)"/>
             </div>
           </div>
         </div>
