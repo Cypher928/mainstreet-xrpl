@@ -1,4 +1,6 @@
 // Serverless function for Claude API (Vercel safe)
+console.log("🔥 JS IS RUNNING");
+document.body.style.background = "red";
 
 module.exports = async function handler(req, res) {
   try {
