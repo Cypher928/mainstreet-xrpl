@@ -3814,7 +3814,7 @@ const { data: savedTenants, error: tenantSaveError } = await supabase
       start_date: t.startDate || null,
       end_date: t.endDate || null,
       lease_type: t.leaseType || null
-    })),  
+    })),
     { onConflict: 'property_id,name' }
   );
 
