@@ -3632,37 +3632,29 @@ async function handleBulkLeases(fileList) {
   _progUpdate();
 
   await Promise.all(files.map(async (file) => {
+    let extracted = null;
     try {
       const leaseText = await extractPdfText(file);
-      const extracted = await callClaudeForLease(leaseText);
-      const isValid   = extracted && extracted.tenant_name;
-
-      const t = {
-        ...(isValid
-          ? normalizeTenant(extracted)
-          : { tenant_name: file.name.replace(/\.pdf$/i, ''), _error: 'Could not extract tenant fields' }),
-        leaseFile:        file,
-        leaseExpected:    true,
-        fileName:         file.name,
-        id:               crypto.randomUUID(),
-        extractionFailed: !isValid,
-      };
-      tenantData.push(t);
+      extracted = await callClaudeForLease(leaseText);
     } catch (err) {
-      console.error('[handleBulkLeases] extraction error for', file.name, err);
-      tenantData.push({
-        tenant_name:      file.name.replace(/\.pdf$/i, ''),
-        leaseFile:        file,
-        leaseExpected:    true,
-        fileName:         file.name,
-        id:               crypto.randomUUID(),
-        extractionFailed: true,
-        _error:           err.message || 'Extraction failed',
-      });
-    } finally {
-      completed++;
-      _progUpdate();
+      console.error('[handleBulkLeases] extraction failed:', file.name, err);
     }
+
+    const isValid = extracted && extracted.tenant_name;
+    const tenant = {
+      ...(isValid
+        ? normalizeTenant(extracted)
+        : { tenant_name: file.name.replace(/\.pdf$/i, ''), _error: 'Could not extract tenant fields' }),
+      leaseFile:        file,
+      leaseExpected:    true,
+      fileName:         file.name,
+      extractionFailed: !isValid,
+      id:               crypto.randomUUID(),
+    };
+    tenantData.push(tenant);
+
+    completed++;
+    _progUpdate();
   }));
 
   prog.innerHTML = `
