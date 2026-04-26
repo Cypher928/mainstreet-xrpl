@@ -1117,6 +1117,7 @@
     .recon-direct    { background: rgba(167,139,250,0.15); color: #a78bfa; border: 1px solid rgba(167,139,250,0.3); }
     .recon-shared    { background: rgba(99,102,241,0.12);  color: #818cf8; border: 1px solid rgba(99,102,241,0.25); }
     .recon-cap-note  { font-size: 0.72rem; color: #fbbf24; margin: 4px 0 2px; }
+    .recon-inv-acts  { display: flex; gap: 6px; align-items: center; margin-left: 6px; }
     .recon-conf-note { font-size: 0.72rem; color: #64748b; margin: 2px 0 4px; }
 
     /* ── Flagged result card ─────────────────────────────────────────── */
@@ -5280,17 +5281,26 @@ async function runAllocation() {
     // ── Collapsible invoice breakdown ──────────────────────────────────
     const invBreakdown = (() => {
       if (!fr || !fr.includedInvoices.length) return '';
-      const rows = fr.includedInvoices.map(inv =>
-        `<div class="recon-inv-row">
+      const rows = fr.includedInvoices.map((inv, invIdx) => {
+        const rowId = `rcn-${r.name}-${invIdx}`.replace(/[^a-zA-Z0-9-]/g, '-');
+        return `<div class="recon-inv-row ts-inv-card" id="crow-${rowId}">
           <span class="recon-inv-vendor">${esc(inv.vendorName || '')}</span>
           <span class="recon-inv-cat">${esc(inv.category || '')}</span>
           ${inv.allocation === 'direct'
             ? `<span class="recon-inv-badge recon-direct">direct</span>`
             : `<span class="recon-inv-badge recon-shared">shared</span>`}
           <span class="recon-inv-share">${fmt(inv.share)}</span>
+          <span class="recon-inv-acts">
+            <button class="inv-act-btn inv-act-explain" id="tsexplbtn-${rowId}"
+              onclick="event.stopPropagation();tsExplainInvoice('${rowId}','${esc(inv.vendorName||'')}','${esc(inv.category||'')}',${inv.amount},'${esc(inv.invoiceDate||'')}')">Explain</button>
+            <button class="inv-act-btn inv-act-dispute" id="dbtn-${rowId}"
+              onclick="event.stopPropagation();toggleDisputeForm('${rowId}','${esc(r.name)}','${rowId}','${esc(inv.vendorName||'')}','${esc(inv.category||'')}',${inv.share})">Dispute</button>
+          </span>
           ${inv.flag ? `<span class="recon-inv-flag" title="${esc(inv.flag.explanation || '')}">&#x26A0; ${esc(inv.flag.message)}</span>` : ''}
-        </div>`
-      ).join('');
+          <div id="tsexpl-${rowId}" style="width:100%;"></div>
+          <div id="dform-${rowId}" style="display:none;width:100%;"></div>
+        </div>`;
+      }).join('');
       const capLine = fr.capApplied
         ? `<div class="recon-cap-note">&#x26A0; Cap applied — ${fmt(fr.capAdjustment)} reduced</div>`
         : '';
