@@ -4965,18 +4965,20 @@ function matchInvoiceToTenant(invoice, tenants) {
   for (const t of tenants) {
     let conf   = 0;
     let reason = '';
+    // support both Lease objects (tenantName) and tenantData items (tenant_name)
+    const name = t.tenantName || t.tenant_name || '';
 
     if (t.unitNumber && text.includes(t.unitNumber.toLowerCase())) {
       conf   = 90;
       reason = `Unit ${t.unitNumber}`;
     }
-    if (t.tenantName && text.includes(t.tenantName.toLowerCase())) {
-      if (conf < 75) { conf = 75; reason = t.tenantName; }
+    if (name && text.includes(name.toLowerCase())) {
+      if (conf < 75) { conf = 75; reason = name; }
     }
 
     if (conf > bestConf) {
       bestConf  = conf;
-      bestMatch = { tenantName: t.tenantName, confidence: conf, reason };
+      bestMatch = { tenantName: name, tenantId: t.id || null, confidence: conf, reason };
     }
   }
 
@@ -4998,6 +5000,7 @@ function runFullReconciliation(property) {
   invoices.forEach(inv => {
     const m = matchInvoiceToTenant(inv, leases);
     inv.matchedTenant   = m ? m.tenantName : null;
+    inv.matchedTenantId = m ? m.tenantId   : null;
     inv.matchConfidence = m ? m.confidence : 0;
     inv.matchReason     = m ? m.reason     : '';
   });
@@ -5013,7 +5016,10 @@ function runFullReconciliation(property) {
     );
     const sharedTotal = eligibleShared.reduce((s, inv) => s + inv.amount, 0) * proRata;
 
-    const ownInvoices = directInvoices.filter(inv => inv.matchedTenant === lease.tenantName);
+    const ownInvoices = directInvoices.filter(inv =>
+      (lease.id && inv.matchedTenantId === lease.id) ||
+      inv.matchedTenant === lease.tenantName
+    );
     const ownTotal    = ownInvoices.reduce((s, inv) => s + inv.amount, 0);
 
     let rawTotal      = sharedTotal + ownTotal;
@@ -5182,14 +5188,16 @@ async function runAllocation() {
 
   // Build a Property + run full reconciliation (for per-tenant invoice breakdown + direct matching)
   const _prop = new Property(propName, totalSqft);
-  _prop.addLeases(tenantData.filter(t => t && t.tenant_name && parseSqft(t.leased_sqft) > 0).map(t =>
-    new Lease(t.tenant_name, t.unitNumber || '', parseSqft(t.leased_sqft), t.start_date || '', t.end_date || '',
+  _prop.addLeases(tenantData.filter(t => t && t.tenant_name && parseSqft(t.leased_sqft) > 0).map(t => {
+    const lease = new Lease(t.tenant_name, t.unitNumber || '', parseSqft(t.leased_sqft), t.start_date || '', t.end_date || '',
       t.excluded_categories ? t.excluded_categories.split(',').map(s => s.trim()) : [],
       t.cap ?? null, null,
       (t.confidence?.leased_sqft ?? t.confidence?.leasedSqft ?? 100) < 70,
       t.baseYear ?? null,
-      t.lease_type || null)
-  ));
+      t.lease_type || null);
+    lease.id = t.id || null; // stable id for invoice linking
+    return lease;
+  }));
   _prop.addInvoices(invoiceData.filter(inv => inv && inv.vendorName && parseFloat(inv.amount) > 0).map(inv =>
     new Invoice(null, inv.invoiceDate, inv.amount, inv.vendorName, inv.category)
   ));
@@ -5200,9 +5208,10 @@ async function runAllocation() {
   invoiceData.forEach((inv, i) => {
     if (!inv) return;
     const m = matchInvoiceToTenant(inv, activeTenants);
-    invoiceData[i].matchedTenant   = m ? m.tenantName  : null;
-    invoiceData[i].matchConfidence = m ? m.confidence  : 0;
-    invoiceData[i].matchReason     = m ? m.reason      : '';
+    invoiceData[i].matchedTenant   = m ? m.tenantName : null;
+    invoiceData[i].matchedTenantId = m ? m.tenantId   : null;
+    invoiceData[i].matchConfidence = m ? m.confidence : 0;
+    invoiceData[i].matchReason     = m ? m.reason     : '';
   });
   renderInvResults();
 
