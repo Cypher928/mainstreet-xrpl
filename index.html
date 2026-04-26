@@ -1180,6 +1180,9 @@
     .prev-run-view-btn:hover { background: rgba(201,151,58,0.22); }
     .prev-run-detail { display: none; margin-top: 12px; padding-top: 12px; border-top: 1px solid rgba(255,255,255,0.06); }
     .prev-run-detail .result-card { margin-bottom: 6px; }
+    .lease-missing-note {
+      font-size: 0.75rem; color: #64748b; font-style: italic; margin: 4px 0;
+    }
     .prev-run-latest-badge {
       display: inline-block; font-size: 0.62rem; font-weight: 700; letter-spacing: 0.07em;
       text-transform: uppercase; background: rgba(74,222,128,0.12); color: #4ade80;
@@ -2695,6 +2698,7 @@ function normalizeTenant(d) {
     unitNumber:          d.unitNumber          ?? '',
     doc_has_dates:       d.doc_has_dates       ?? true,
     doc_has_lease_type:  d.doc_has_lease_type  ?? true,
+    leaseExpected:       d.leaseExpected       ?? false,
     _error:              d._error              ?? null,
   };
 }
@@ -2986,7 +2990,8 @@ async function handleLease(i, file) {
     if (!isValidTenant(normalized)) throw new Error('Extracted tenant has no usable fields');
 
     tenantData[i] = normalized;
-    tenantData[i].leaseFile = file;
+    tenantData[i].leaseFile    = file;
+    tenantData[i].leaseExpected = true;
     console.log("RAW EXTRACTED TENANTS:", JSON.stringify(tenantData.filter(t => t !== null), null, 2));
     renderTenantFields(i);
     checkSqftValidation();
@@ -3085,7 +3090,11 @@ function renderTenantFields(i) {
         <button class="re-btn" onclick="resetTenant(${i})">Re-upload</button>
       </div>
       ${(() => { const w = getWarnings(flags); return w.length ? `<div class="rc-flags"><div class="rc-flags-title">&#x26A0;&#xFE0F; Needs Review</div>${w.map(m => `<div class="rc-flag-item">${m}</div>`).join('')}</div>` : ''; })()}
-      ${d.leaseFile ? `<button class="action-btn" onclick="openLeaseModalFromFile(${i})">&#x1F4C4; View Lease</button>` : ''}
+      ${d.leaseFile
+        ? `<button class="action-btn" onclick="openLeaseModalFromFile(${i})">&#x1F4C4; View Lease</button>`
+        : d.leaseExpected
+          ? `<div class="lease-missing-note">Lease document not loaded — please re-upload to view</div>`
+          : ''}
       <div class="field-row">
         <div class="field">
           <label>Tenant Name</label>
@@ -3623,7 +3632,8 @@ async function handleBulkLeases(fileList) {
       console.log("FINAL TENANT USED IN UI:", tenant);
       if (!tenant) throw new Error('Could not extract lease fields');
       const t = normalizeTenant(tenant);
-      t.leaseFile = files[i];
+      t.leaseFile    = files[i];
+      t.leaseExpected = true;
       if (isValidTenant(t)) tenantData.push(t);
     } catch (err) {
       console.error('[handleBulkLeases] extraction error for', files[i].name, err);
@@ -3682,7 +3692,11 @@ function renderBulkResults() {
           <span class="bulk-t-name"   id="bname-${i}">${esc(name)}</span>
           <span class="bulk-t-meta"   id="bmeta-${i}">${esc(meta)}</span>
           <span class="bulk-t-chevron" id="bchev-${i}">&#x25BC; Edit</span>
-          ${d.leaseFile ? `<button class="view-lease-btn" style="margin-left:0" onclick="event.stopPropagation();openLeaseModalFromFile(${i})">View Lease</button>` : ''}
+          ${d.leaseFile
+            ? `<button class="view-lease-btn" style="margin-left:0" onclick="event.stopPropagation();openLeaseModalFromFile(${i})">View Lease</button>`
+            : d.leaseExpected
+              ? `<span class="lease-missing-note" style="margin-left:6px;">No lease file — re-upload to view</span>`
+              : ''}
           <button class="bulk-t-remove" onclick="event.stopPropagation();removeBulkTenant(${i})">Remove</button>
         </div>
         <div class="bulk-tenant-detail" id="bdet-${i}" style="display:none;">
@@ -5090,9 +5104,12 @@ async function runAllocation() {
       : '';
 
     const tdIdx = tenantData.findIndex(t => t && t.tenant_name === r.name);
-    const leaseBtn = (tdIdx >= 0 && tenantData[tdIdx]?.leaseFile)
+    const _td   = tdIdx >= 0 ? tenantData[tdIdx] : null;
+    const leaseBtn = _td?.leaseFile
       ? `<button class="action-btn" onclick="openLeaseModalFromFile(${tdIdx})">&#x1F4C4; View Lease</button>`
-      : '';
+      : _td?.leaseExpected
+        ? `<div class="lease-missing-note">Lease document not loaded — please re-upload to view</div>`
+        : '';
 
     html += `<div class="result-card${flags.length ? ' result-card--flagged' : ''}">
       <div class="r-name">${esc(r.name)}${fr?.unitNumber ? `<span class="rc-unit"> · Unit ${esc(fr.unitNumber)}</span>` : ''}</div>
