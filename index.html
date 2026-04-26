@@ -3036,12 +3036,12 @@ function checkSqftValidation() {
   const prop = currentProperty();
   console.log('CURRENT PROPERTY:', prop);
   const totalSqFt = Number(prop?.totalSqft) || 0;
-  if (!totalSqFt) { clearSqftBanner(); return; }
+  if (!totalSqFt) { window._sqftInvalid = false; clearSqftBanner(); return true; }
 
   const usedSqFt = tenantData.filter(t => t).reduce((s, t) => s + parseSqft(t.leased_sqft), 0);
   console.log('SQFT CHECK:', { usedSqFt, totalSqFt });
 
-  if (!usedSqFt) { clearSqftBanner(); return; }
+  if (!usedSqFt) { window._sqftInvalid = false; clearSqftBanner(); return true; }
 
   window._sqftInvalid = usedSqFt > totalSqFt;
 
@@ -3056,6 +3056,17 @@ function checkSqftValidation() {
     window._sqftInvalid = false;
     clearSqftBanner();
   }
+  return !window._sqftInvalid;
+}
+
+function runCamValidation() {
+  const isValid = checkSqftValidation();
+  if (!isValid) {
+    console.log('CAM paused — invalid sqft');
+    return;
+  }
+  console.log('CAM running...');
+  calculateCAM?.();
 }
 
 function updatePropertySqft(val) {
@@ -3069,8 +3080,7 @@ function updatePropertySqft(val) {
   saveProperty(prop);
 
   checkSqftValidation();
-  runCamValidation?.();
-  calculateCAM?.();
+  runCamValidation();
 
   renderProperty(prop);
 }
@@ -3705,13 +3715,16 @@ async function handleBulkLeases(fileList) {
   await saveProperty(property);
 }
 
-function renderBulkResults() {
+function renderBulkResults(tenants) {
   const el = document.getElementById('bulkResults');
   el.innerHTML = '';
-  if (!tenantData.length) { return; }
+  const data = tenants || tenantData;
+  if (!data.length) { return; }
 
-  const rows = tenantData.map((d, i) => {
+  const rows = data.map((d) => {
     if (!d) return '';
+    // always resolve to the real tenantData index so onclick handlers stay correct
+    const i = tenantData.indexOf(d) !== -1 ? tenantData.indexOf(d) : data.indexOf(d);
     console.log("FINAL TENANT USED IN UI:", d);
     const sqft      = d.leased_sqft  || null;
     const start     = d.start_date  || null;
@@ -3793,7 +3806,7 @@ function renderBulkResults() {
 
   el.innerHTML = `
     <div class="bulk-results-head">
-      <h3>Extracted Tenants (${tenantData.length})</h3>
+      <h3>Extracted Tenants (${tenantData.filter(Boolean).length})</h3>
       <button class="bulk-clear-btn" onclick="clearBulkResults()">&#x2715; Clear All</button>
     </div>
     ${rows}`;
@@ -7205,10 +7218,26 @@ function renderProperty(property) {
   // ── Tenants ───────────────────────────────────────────────────────────
   try {
     const liveTenants = tenantData.filter(t => t && t.tenant_name);
+    console.log('RENDER PROPERTY:', { propSqft: property.totalSqft, tenants: liveTenants.length });
+
     if (liveTenants.length > 0) {
-      // Live in-memory tenants (with leaseFile) — reuse, just re-render
+      // Deduplicate in-place by fileName || tenant_name
+      const seen = new Set();
+      const deduped = tenantData.filter(t => {
+        if (!t) return false;
+        const key = t.fileName || t.tenant_name;
+        if (seen.has(key)) return false;
+        seen.add(key);
+        return true;
+      });
+      tenantData.splice(0, tenantData.length, ...deduped);
+      // Normalize leased_sqft to a clean number in-place
+      tenantData.forEach((t, idx) => {
+        if (t) tenantData[idx] = { ...t, leased_sqft: Number(t.leased_sqft) || 0 };
+      });
+      const freshLive = tenantData.filter(t => t && t.tenant_name);
       switchLeaseTab('bulk');
-      renderBulkResults();
+      renderBulkResults(freshLive);
       restored = true;
     } else {
       const tenants = (property.tenants || []).filter(t => t !== null);
@@ -7219,6 +7248,7 @@ function renderProperty(property) {
         restored = true;
       }
     }
+    checkSqftValidation();
   } catch (e) { console.warn('[Mainstreet] tenant restore failed:', e); }
 
   // ── Invoices ──────────────────────────────────────────────────────────
