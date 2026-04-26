@@ -23,7 +23,7 @@ module.exports = async function handler(req, res) {
       finalMessages = [
         {
           role: "user",
-          content: `Explain this CAM charge clearly in plain English:\n\n${JSON.stringify(req.body, null, 2)}`
+          content: `Explain this CAM charge clearly in plain English:\n\n${JSON.stringify(req.body)}`
         }
       ];
     }
