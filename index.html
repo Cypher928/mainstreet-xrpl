@@ -3747,6 +3747,25 @@ let tenantData = [];
 
     try {
       const leaseText = await extractPdfText(files[i]);
+// 🔥 Upload lease to Supabase storage
+const file = files[i];
+const filePath = `${property.id}/${Date.now()}_${file.name}`;
+
+const { data: uploadData, error: uploadError } = await supabase.storage
+  .from('leases')
+  .upload(filePath, file);
+
+let publicUrl = null;
+
+if (!uploadError) {
+  const { data: urlData } = supabase.storage
+    .from('leases')
+    .getPublicUrl(filePath);
+
+  publicUrl = urlData.publicUrl;
+} else {
+  console.error('Upload error:', uploadError);
+}
       console.log('[DEBUG] leaseText length:', leaseText.length, '| preview:', leaseText.slice(0, 200));
       document.body.insertAdjacentHTML('beforeend',
         '<div style="position:fixed;bottom:10px;left:10px;background:#000;color:#0f0;padding:10px;z-index:9999;font-size:12px;max-width:600px;white-space:pre-wrap;overflow:auto;max-height:200px;">EXTRACTED TEXT (first 1000 chars):\n' + leaseText.slice(0, 1000).replace(/</g,'&lt;') + '</div>'
@@ -3770,6 +3789,7 @@ extractedTenants.forEach(raw => {
   tenantData.push({
     tenantName: raw.tenantName || 'UNKNOWN TENANT',
     leasedSqft: Number(raw.leasedSqft) || '',
+    lease_url: publicUrl,
     startDate: raw.startDate || '',
     endDate: raw.endDate || '',
     leaseType: raw.leaseType || '',
@@ -3782,6 +3802,27 @@ extractedTenants.forEach(raw => {
   });
 });
 console.log('FINAL tenantData:', tenantData);
+/ 🔥 SAVE TENANTS TO SUPABASE TABLE (THIS IS THE MISSING PIECE)
+const { data: savedTenants, error: tenantSaveError } = await supabase
+  .from('tenants')
+  .upsert(
+    property.tenants.map(t => ({
+      property_id: property.id,
+      name: t.tenantName,
+      sqft: t.leasedSqft,
+      lease_url: t.lease_url,
+      start_date: t.startDate || null,
+      end_date: t.endDate || null,
+      lease_type: t.leaseType || null
+    })),  
+    { onConflict: 'property_id,name' }
+  );
+
+if (tenantSaveError) {
+  console.error('❌ TENANT SAVE ERROR:', tenantSaveError);
+} else {
+  console.log('✅ TENANTS SAVED:', savedTenants);
+}
 
     } catch (err) {
       console.error('[handleBulkLeases] extraction error for', files[i].name, err);
