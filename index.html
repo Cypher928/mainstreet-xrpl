@@ -2992,7 +2992,7 @@ async function handleLease(i, file) {
     const normalized = normalizeTenant(extracted);
     if (!isValidTenant(normalized)) throw new Error('Extracted tenant has no usable fields');
 
-    tenantData[i] = { ...normalized, leaseFile: file, leaseExpected: true };
+    tenantData[i] = { ...normalized, leaseFile: file, leaseExpected: true, fileName: file.name };
     console.log("RAW EXTRACTED TENANTS:", JSON.stringify(tenantData.filter(t => t !== null), null, 2));
     renderTenantFields(i);
     checkSqftValidation();
