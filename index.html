@@ -2049,7 +2049,8 @@
   <div class="lvm-body">
     <div id="lvmLoading">
       <div class="lvm-spinner"></div>
-      <span class="lvm-loading-text">Loading lease document…</span>
+      <span class="lvm-loading-text">Loading lease preview...</span>
+      <button class="action-btn" style="margin-top:12px;font-size:0.8rem;" onclick="leaseViewerOpenExternal()">Open in new tab</button>
     </div>
     <iframe id="leaseViewerFrame" src=""></iframe>
   </div>
@@ -5489,7 +5490,7 @@ let _leaseTimeoutFired = false;
 
 function _lvmSetLoadingText(text) {
   const el = document.querySelector('#lvmLoading .lvm-loading-text');
-  if (el) el.textContent = text;
+  if (el) el.innerText = text;
 }
 
 function openLeaseModalFromFile(index) {
@@ -5517,9 +5518,9 @@ function openLeaseModal(d) {
   const loading = document.getElementById('lvmLoading');
 
   title.textContent = d.tenant_name || 'Unknown Tenant';
-  _lvmSetLoadingText('Loading lease document…');
-  loading.style.display = 'flex';
   _leaseTimeoutFired = false;
+  _lvmSetLoadingText('Loading lease preview...');
+  loading.style.display = 'flex';
 
   frame.onload = () => {
     if (_leaseTimeoutFired) return;
@@ -5533,8 +5534,9 @@ function openLeaseModal(d) {
 
   _leaseLoadTimeout = setTimeout(() => {
     _leaseTimeoutFired = true;
-    _lvmSetLoadingText('Preview unavailable — opening file…');
-    if (_leaseViewerUrl) window.open(_leaseViewerUrl, '_blank');
+    _lvmSetLoadingText('Preview unavailable — opening in new tab...');
+    window.open(_leaseViewerUrl, '_blank');
+    closeLeaseModal();
   }, 3000);
 
   modal.style.display = 'flex';
@@ -5554,7 +5556,7 @@ function closeLeaseModal() {
   frame.onload = null;
   frame.src    = '';
 
-  _lvmSetLoadingText('Loading lease document…');
+  _lvmSetLoadingText('Loading lease preview...');
   loading.style.display = 'flex';
 
   document.body.style.overflow = '';
