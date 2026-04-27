@@ -5221,6 +5221,7 @@ function runCAMAllocation(expenses, tenants) {
 }
 
 async function runAllocation() {
+  const scrollY    = window.scrollY;
   const propName  = document.getElementById('propertyName').value.trim() || 'Property';
   const totalSqft = parseFloat(document.getElementById('totalSqft').value);
   console.log("CALCULATED TOTAL LEASED SQFT:", totalSqft);
@@ -5419,7 +5420,6 @@ async function runAllocation() {
 
   body.innerHTML = html;
   section.style.display = 'block';
-  section.scrollIntoView({ behavior: 'smooth', block: 'start' });
 
   // Save to previous runs history
   camRuns.unshift({
@@ -5437,6 +5437,7 @@ async function runAllocation() {
   await syncPortfolioEntry();
   await savePropertyData(); // persist CAM allocation results to Supabase
   updateStepBar('review');
+  requestAnimationFrame(() => { window.scrollTo(0, scrollY); });
 }
 
 // ─── Step Progress Bar ────────────────────────────────────────────────────────
