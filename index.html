@@ -2479,6 +2479,11 @@ class ReconciliationResult {
     this.averageConfidence  = total > 0
       ? Math.round(this.includedInvoices.reduce((s, inv) => s + (inv.matchConfidence || 0) * (inv.share || 0), 0) / total)
       : 0;
+    // Aliases for lastResults consumers (runCAMAllocation shape compatibility)
+    this.name           = tenantName;
+    this.allocatedAmount = totalAllocated;
+    this.proRata        = proRataPercent / 100;
+    this.eligibleCount  = (includedInvoices || []).length;
   }
 }
 
@@ -5287,18 +5292,18 @@ async function runAllocation() {
   // Store for dispute + reports sections
   lastInvoices        = invoices.map((inv, i) => ({ id: `inv-${i}`, ...inv }));
   lastTenants         = tenants;
-  lastResults         = results;
+  lastResults         = fullResults; // unified: ReconciliationResult[] is single source of truth
+  lastFullResults     = fullResults;
   lastPropName        = propName;
   lastTotal           = totalCost;
   lastInvoicesFull    = invoices;
-  lastFullResults     = fullResults; // ReconciliationResult[] from runFullReconciliation
 
   document.getElementById('resultsTitle').textContent = `Results — ${propName}`;
   applySqftMismatchUI(sqftExceedsProperty);
 
   let html = `<div class="summary-bar">
     <div class="summary-bar-item"><span class="summary-bar-label">Total Expenses</span><strong>${fmt(totalCost)}</strong></div>
-    <div class="summary-bar-item"><span class="summary-bar-label">Tenants</span><strong>${results.length}</strong></div>
+    <div class="summary-bar-item"><span class="summary-bar-label">Tenants</span><strong>${fullResults.length}</strong></div>
     <div class="summary-bar-item"><span class="summary-bar-label">Invoices</span><strong>${invoices.length}</strong></div>
   </div>
   ${sqftExceedsProperty ? `
@@ -5320,9 +5325,8 @@ async function runAllocation() {
   <div class="invalid-data-badge">&#x26A0; Invalid data — calculations paused</div>
   ` : ''}`;
 
-  results.forEach(r => {
-    const fr    = fullResults.find(x => x.tenantName === r.name);
-    const flags = fr?.ambiguityFlags || [];
+  fullResults.forEach(r => {
+    const flags = r.ambiguityFlags || [];
 
     // ── Prominent flags block ──────────────────────────────────────────
     const flagsSection = flags.length > 0
@@ -5338,8 +5342,8 @@ async function runAllocation() {
 
     // ── Collapsible invoice breakdown ──────────────────────────────────
     const invBreakdown = (() => {
-      if (!fr || !fr.includedInvoices.length) return '';
-      const rows = fr.includedInvoices.map((inv, invIdx) => {
+      if (!r.includedInvoices.length) return '';
+      const rows = r.includedInvoices.map((inv, invIdx) => {
         const rowId = `rcn-${r.name}-${invIdx}`.replace(/[^a-zA-Z0-9-]/g, '-');
         return `<div class="recon-inv-row ts-inv-card" id="crow-${rowId}">
           <span class="recon-inv-vendor">${esc(inv.vendorName || '')}</span>
@@ -5359,19 +5363,19 @@ async function runAllocation() {
           <div id="dform-${rowId}" style="display:none;width:100%;"></div>
         </div>`;
       }).join('');
-      const capLine = fr.capApplied
-        ? `<div class="recon-cap-note">&#x26A0; Cap applied — ${fmt(fr.capAdjustment)} reduced</div>`
+      const capLine = r.capApplied
+        ? `<div class="recon-cap-note">&#x26A0; Cap applied — ${fmt(r.capAdjustment)} reduced</div>`
         : '';
       return `<details class="recon-breakdown">
-        <summary>Invoice breakdown (${fr.includedInvoices.length})${fr.averageConfidence > 0 ? ` · ${fr.averageConfidence}% confidence` : ''}</summary>
+        <summary>Invoice breakdown (${r.includedInvoices.length})${r.averageConfidence > 0 ? ` · ${r.averageConfidence}% confidence` : ''}</summary>
         ${capLine}
         <div class="recon-inv-list">${rows}</div>
       </details>`;
     })();
 
-    // ── Confidence stat (only show when fr has it) ─────────────────────
-    const confStat = fr?.averageConfidence > 0
-      ? stat('Confidence', fr.averageConfidence + '%')
+    // ── Confidence stat ────────────────────────────────────────────────
+    const confStat = r.averageConfidence > 0
+      ? stat('Confidence', r.averageConfidence + '%')
       : '';
 
     const tdIdx = tenantData.findIndex(t => t && t.tenant_name === r.name);
@@ -5383,7 +5387,7 @@ async function runAllocation() {
       : '';
 
     html += `<div class="result-card${flags.length ? ' result-card--flagged' : ''}">
-      <div class="r-name">${esc(r.name)}${fr?.unitNumber ? `<span class="rc-unit"> · Unit ${esc(fr.unitNumber)}</span>` : ''}</div>
+      <div class="r-name">${esc(r.name)}${r.unitNumber ? `<span class="rc-unit"> · Unit ${esc(r.unitNumber)}</span>` : ''}</div>
       <div class="result-grid">
         ${stat('Total', fmt(r.allocatedAmount))}
         ${stat('Pro-Rata', (r.proRata * 100).toFixed(2) + '%')}
@@ -5407,9 +5411,9 @@ async function runAllocation() {
     propName,
     timestamp:     new Date(),
     totalExpenses: totalCost,
-    tenantCount:   results.length,
+    tenantCount:   fullResults.length,
     invoiceCount:  invoices.length,
-    results:       results.map(r => ({ ...r })),
+    results:       fullResults.map(r => ({ ...r })),
   });
   renderPreviousRuns();
 
@@ -5837,7 +5841,7 @@ document.getElementById('leaseViewerModal')?.addEventListener('click', (e) => {
 
 // ─── Report State ─────────────────────────────────────────────────────────────
 const camRuns    = []; // previous run history
-let lastResults  = []; // runCAMAllocation output
+let lastResults  = []; // ReconciliationResult[] — unified with lastFullResults
 let sqftMismatch = false;
 
 function applySqftMismatchUI(mismatch) {
