@@ -3226,30 +3226,34 @@ function renderTenantFields(i) {
         <div class="field">
           <label>Tenant Name</label>
           <input type="text" value="${esc(d.tenant_name || '')}"
-            oninput="updateTenantField(${i},'tenant_name',this.value)"/>
+            onfocus="isEditingField=true"
+            onblur="handleFieldBlur(${i},'tenant_name',this.value)"/>
         </div>
         <div class="field">
           <label>Leased Sqft</label>
           <input type="number" value="${d.leased_sqft ?? ''}"
-            oninput="updateTenantField(${i},'leased_sqft',this.value);checkSqftValidation()"/>
+            onfocus="isEditingField=true"
+            onblur="handleFieldBlur(${i},'leased_sqft',this.value);checkSqftValidation()"/>
         </div>
       </div>
       <div class="field-row">
         <div class="field">
           <label>Lease Start Date</label>
           <input type="date" value="${toInputDate(d.start_date)}"
-            oninput="updateTenantField(${i},'start_date',this.value)"/>
+            onfocus="isEditingField=true"
+            onblur="handleFieldBlur(${i},'start_date',this.value)"/>
         </div>
         <div class="field">
           <label>Lease End Date</label>
           <input type="date" value="${toInputDate(d.end_date)}"
-            oninput="updateTenantField(${i},'end_date',this.value)"/>
+            onfocus="isEditingField=true"
+            onblur="handleFieldBlur(${i},'end_date',this.value)"/>
         </div>
       </div>
       <div class="field-row">
         <div class="field">
           <label>Lease Type</label>
-          <select onchange="updateTenantField(${i},'lease_type',this.value||null);if(lastResults.length)runAllocation()">
+          <select onchange="handleFieldBlur(${i},'lease_type',this.value||null)">
             <option value="">Select lease type</option>
             <option value="Triple Net (NNN)"${d.lease_type === 'Triple Net (NNN)' ? ' selected' : ''}>Triple Net (NNN)</option>
             <option value="Gross"${d.lease_type === 'Gross' ? ' selected' : ''}>Gross</option>
@@ -3259,7 +3263,8 @@ function renderTenantFields(i) {
         <div class="field">
           <label>Excluded Categories (comma-separated)</label>
           <input type="text" value="${esc(d.excluded_categories || '')}"
-            oninput="updateTenantField(${i},'excluded_categories',this.value)"/>
+            onfocus="isEditingField=true"
+            onblur="handleFieldBlur(${i},'excluded_categories',this.value)"/>
         </div>
       </div>
     </div>`;
@@ -3829,10 +3834,15 @@ function updateTenantField(index, field, value) {
   // Mirror: keep tenantData in sync as working buffer
   if (td) td[field] = value;
 
-  // Auto-refresh results panel so "Needs Review" and CAM values update immediately
-  if (lastResults.length && ['lease_type', 'leased_sqft', 'start_date', 'end_date', 'excluded_categories'].includes(field)) {
+  // Auto-refresh results panel — only after editing is complete (blur), not while typing
+  if (lastResults.length && !isEditingField && ['lease_type', 'leased_sqft', 'start_date', 'end_date', 'excluded_categories'].includes(field)) {
     runAllocation();
   }
+}
+
+function handleFieldBlur(index, field, value) {
+  isEditingField = false;
+  updateTenantField(index, field, value);
 }
 
 function renderBulkResults() {
@@ -3898,30 +3908,34 @@ function renderBulkResults() {
             <div class="field">
               <label>Tenant Name</label>
               <input type="text" value="${esc(d.tenant_name || '')}"
-                oninput="updateTenantField(${i},'tenant_name',this.value);refreshBulkSummary(${i})"/>
+                onfocus="isEditingField=true"
+                onblur="handleFieldBlur(${i},'tenant_name',this.value);refreshBulkSummary(${i})"/>
             </div>
             <div class="field">
               <label>Leased Sqft</label>
               <input type="number" value="${d.leased_sqft || ''}"
-                oninput="updateTenantField(${i},'leased_sqft',this.value);refreshBulkSummary(${i});checkSqftValidation()"/>
+                onfocus="isEditingField=true"
+                onblur="handleFieldBlur(${i},'leased_sqft',this.value);refreshBulkSummary(${i});checkSqftValidation()"/>
             </div>
           </div>
           <div class="field-row">
             <div class="field">
               <label>Lease Start Date</label>
               <input type="date" value="${d.start_date || ''}"
-                onchange="updateTenantField(${i},'start_date',this.value)"/>
+                onfocus="isEditingField=true"
+                onblur="handleFieldBlur(${i},'start_date',this.value)"/>
             </div>
             <div class="field">
               <label>Lease End Date</label>
               <input type="date" value="${d.end_date || ''}"
-                onchange="updateTenantField(${i},'end_date',this.value)"/>
+                onfocus="isEditingField=true"
+                onblur="handleFieldBlur(${i},'end_date',this.value)"/>
             </div>
           </div>
           <div class="field-row">
             <div class="field">
               <label>Lease Type</label>
-              <select onchange="updateTenantField(${i},'lease_type',this.value||null);if(lastResults.length)runAllocation()">
+              <select onchange="handleFieldBlur(${i},'lease_type',this.value||null)">
                 <option value="">Select lease type</option>
                 <option value="Triple Net (NNN)"${d.lease_type === 'Triple Net (NNN)' ? ' selected' : ''}>Triple Net (NNN)</option>
                 <option value="Gross"${d.lease_type === 'Gross' ? ' selected' : ''}>Gross</option>
@@ -3931,7 +3945,8 @@ function renderBulkResults() {
             <div class="field">
               <label>Excluded Categories (comma-separated)</label>
               <input type="text" value="${esc(d.excluded_categories || '')}"
-                oninput="updateTenantField(${i},'excluded_categories',this.value)"/>
+                onfocus="isEditingField=true"
+                onblur="handleFieldBlur(${i},'excluded_categories',this.value)"/>
             </div>
           </div>
         </div>
@@ -5843,6 +5858,7 @@ document.getElementById('leaseViewerModal')?.addEventListener('click', (e) => {
 const camRuns    = []; // previous run history
 let lastResults  = []; // ReconciliationResult[] — unified with lastFullResults
 let sqftMismatch = false;
+let isEditingField = false; // true while a text/number/date input has focus
 
 function applySqftMismatchUI(mismatch) {
   sqftMismatch = mismatch;
