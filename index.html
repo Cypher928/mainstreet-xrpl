@@ -3879,7 +3879,7 @@ function renderBulkResults(tenants) {
         </div>
         <div class="bulk-tenant-detail" id="bdet-${i}" style="display:none;">
           ${d._error ? `<div class="err-banner" style="margin-bottom:10px;">Extraction error: ${esc(d._error)}</div>` : ''}
-          ${(() => { const w = getWarnings(d.flags || []); return w.length ? `<div class="rc-flags"><div class="rc-flags-title">&#x26A0;&#xFE0F; Needs Review</div>${w.map(m => `<div class="rc-flag-item">${m}</div>`).join('')}</div>` : ''; })()}
+          ${(() => { const w = getWarnings(computeFlags(d)); return w.length ? `<div class="rc-flags"><div class="rc-flags-title">&#x26A0;&#xFE0F; Needs Review</div>${w.map(m => `<div class="rc-flag-item">${m}</div>`).join('')}</div>` : ''; })()}
           <div class="field-row">
             <div class="field">
               <label>Tenant Name</label>
@@ -5043,6 +5043,8 @@ function matchInvoiceToTenant(invoice, tenants) {
 // a direct tenant match (confidence >= 75) are charged only to that tenant.
 
 function runFullReconciliation(property) {
+  // Always read fresh tenant data — never rely on what was baked into Lease objects
+  const liveTenants = currentProperty()?.tenants || [];
   const { leases, invoices, totalSqFt } = property;
   if (!leases.length || !invoices.length) return [];
 
@@ -5062,6 +5064,8 @@ function runFullReconciliation(property) {
   const sharedInvoices = invoices.filter(inv => inv.matchConfidence <  75);
 
   const results = leases.map(lease => {
+    // Look up current tenant state directly from property.tenants by stable id
+    const live    = liveTenants.find(t => t?.id === lease.id) || {};
     const proRata = lease.sqFt / totalSqFt;
 
     const eligibleShared = sharedInvoices.filter(inv =>
@@ -5102,6 +5106,7 @@ function runFullReconciliation(property) {
       ...ownInvoices.map(inv => ({ ...inv, allocation: 'direct', share: inv.amount })),
     ];
 
+    // Recompute flags from live tenant data — never cache between runs
     const flags = [];
 
     if (sqFtOverflow) {
@@ -5112,7 +5117,7 @@ function runFullReconciliation(property) {
       });
     }
 
-    if (!lease.sqFt || lease.sqFt === 0) {
+    if (!parseSqft(live.leased_sqft || lease.sqFt)) {
       flags.push({
         code:        'SQFT_APPROXIMATE',
         message:     'Square footage may be incorrect',
@@ -5121,7 +5126,8 @@ function runFullReconciliation(property) {
     }
 
     const invoiceYears   = invoices.map(inv => new Date(inv.date || inv.invoiceDate || '').getFullYear()).filter(y => !isNaN(y));
-    const leaseStartYear = new Date(lease.startDate).getFullYear();
+    const leaseStartDate = live.start_date || lease.startDate || '';
+    const leaseStartYear = new Date(leaseStartDate).getFullYear();
     if (!isNaN(leaseStartYear) && invoiceYears.some(y => y < leaseStartYear)) {
       flags.push({
         code:        'BASE_YEAR_MISMATCH',
@@ -5130,7 +5136,9 @@ function runFullReconciliation(property) {
       });
     }
 
-    if (!lease.leaseType) {
+    // Use live lease_type so edits take effect immediately without re-extracting
+    const currentLeaseType = live.lease_type || lease.leaseType || null;
+    if (!currentLeaseType) {
       flags.push({
         code:        'NNN_GROSS_UNKNOWN',
         message:     'Lease type not specified',
@@ -5212,7 +5220,7 @@ async function runAllocation() {
 
   if (!tenants.length) {
     // If there are tenants with names but missing sqft, give a more specific message
-    const namedTenantsWithNoSqft = (currentProperty()?.tenants || tenantData).filter(t => t && t.tenant_name && parseSqft(t.leased_sqft) <= 0);
+    const namedTenantsWithNoSqft = (currentProperty()?.tenants || []).filter(t => t && t.tenant_name && parseSqft(t.leased_sqft) <= 0);
     if (namedTenantsWithNoSqft.length) {
       showErr(body, section,
         `${namedTenantsWithNoSqft.length} tenant(s) are missing Leased Sqft. ` +
@@ -5256,7 +5264,7 @@ async function runAllocation() {
   const fullResults = runFullReconciliation(_prop);
 
   // Sync matchedTenant tags back to invoiceData for badge display
-  const activeTenants = (currentProperty()?.tenants || tenantData).filter(t => t && t.tenant_name);
+  const activeTenants = (currentProperty()?.tenants || []).filter(t => t && t.tenant_name);
   invoiceData.forEach((inv, i) => {
     if (!inv) return;
     const m = matchInvoiceToTenant(inv, activeTenants);
