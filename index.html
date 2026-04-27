@@ -363,8 +363,9 @@
     .explain-btn {
       display: block; width: 100%; margin-top: 14px;
       padding: 9px 0; border-radius: 8px; font-size: 0.82rem; font-weight: 700;
-      border: 1.5px solid rgba(99,102,241,0.4); background: rgba(99,102,241,0.1);
+      border: 1.5px solid rgba(99,102,241,0.4); background: #2a3550;
       color: #a5b4fc; cursor: pointer; letter-spacing: 0.02em; transition: all 0.15s;
+      opacity: 1;
     }
     .explain-btn:hover { background: rgba(99,102,241,0.2); border-color: #6366f1; color: #c7d2fe; }
     /* ── Explain Panel (slide-up sheet) ─────────────────────────────── */
@@ -3566,8 +3567,8 @@ function renderGLResults() {
           onchange="glData[${i}]._include=this.checked;refreshGLFooter();
             document.getElementById('glr-${i}').className=this.checked?'':'gl-row-excluded';" />
       </td>
-      <td class="gl-td gl-td-date">${esc(r.date || '—')}</td>
-      <td class="gl-td">${esc(r.vendor)}</td>
+      <td class="gl-td gl-td-date">${esc(cleanHTML(r.date || '—'))}</td>
+      <td class="gl-td">${esc(cleanHTML(r.vendor))}</td>
       <td class="gl-td">
         <select class="yardi-cat-sel" onchange="glData[${i}].category=this.value">${opts}</select>
       </td>
@@ -4130,9 +4131,9 @@ function renderInvResults() {
   const rows = invoiceData.map((d, i) => {
     const conf = d.confidence || {};
     const icon = d._error ? '⚠️' : d.vendorName ? '✓' : '?';
-    const name = d.vendorName || '(unknown — click to edit)';
+    const name = cleanHTML(d.vendorName || '(unknown — click to edit)');
     const amtStr = d.amount !== '' ? fmt(parseFloat(d.amount) || 0) : '—';
-    const catStr = d.category || 'other';
+    const catStr = cleanHTML(d.category || 'other');
     const scores = [conf.vendorName, conf.amount, conf.category].filter(s => s !== undefined && s !== null);
     const overallConf = scores.length ? Math.min(...scores) : undefined;
 
@@ -4621,12 +4622,12 @@ function renderYardiPreview(headers) {
 
   let initCount = 0, initTotal = 0;
   const tableRows = yardiRows.map((row, i) => {
-    const vendor  = yardiCell(row, 'vendorName');
+    const vendor  = cleanHTML(yardiCell(row, 'vendorName'));
     const amtRaw  = yardiCell(row, 'amount').replace(/[$,\s]/g, '');
     const amt     = parseFloat(amtRaw) || 0;
-    const date    = yardiCell(row, 'invoiceDate');
-    const desc    = yardiCell(row, 'description');
-    const gl      = yardiCell(row, 'category');
+    const date    = cleanHTML(yardiCell(row, 'invoiceDate'));
+    const desc    = cleanHTML(yardiCell(row, 'description'));
+    const gl      = cleanHTML(yardiCell(row, 'category'));
     const sugCat  = yardiCategoryFromText(desc, gl);
     const checked = amt > 0 || !!vendor;
 
@@ -5501,6 +5502,13 @@ function togglePrevRunDetail(idx) {
 
 function fmt(n) {
   return '$' + n.toLocaleString('en-US', { minimumFractionDigits: 2, maximumFractionDigits: 2 });
+}
+
+function cleanHTML(text) {
+  if (text === null || text === undefined) return '';
+  const div = document.createElement('div');
+  div.innerHTML = String(text);
+  return div.textContent || div.innerText || '';
 }
 
 function esc(v) {
