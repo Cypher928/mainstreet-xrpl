@@ -3206,7 +3206,7 @@ function renderTenantFields(i) {
       </div>
       ${(() => { const w = getWarnings(flags); return w.length ? `<div class="rc-flags"><div class="rc-flags-title">&#x26A0;&#xFE0F; Needs Review</div>${w.map(m => `<div class="rc-flag-item">${m}</div>`).join('')}</div>` : ''; })()}
       ${d.leaseExpected
-        ? d.leaseFile
+        ? (d.leaseFile instanceof File || d.lease_url)
           ? `<button class="action-btn" onclick="openLeaseModalFromFile(${i})">&#x1F4C4; View Lease</button>`
           : `<div class="lease-missing-note">Lease document not loaded — please re-upload to view</div>`
         : ''}
@@ -3852,7 +3852,7 @@ function renderBulkResults(tenants) {
           ${d.extractionFailed
             ? `<button class="view-lease-btn" style="margin-left:0;color:#f97316;" onclick="event.stopPropagation();retryExtraction(${i})">&#x21BA; Retry</button>`
             : d.leaseExpected
-              ? (d.leaseFile || d.lease_url)
+              ? (d.leaseFile instanceof File || d.lease_url)
                 ? `<button class="view-lease-btn" style="margin-left:0" onclick="event.stopPropagation();openLeaseModalFromFile(${i})">View Lease</button>`
                 : `<span class="lease-missing-note" style="margin-left:6px;">No lease file — re-upload to view</span>`
               : ''}
@@ -5319,7 +5319,7 @@ async function runAllocation() {
     const tdIdx = tenantData.findIndex(t => t && t.tenant_name === r.name);
     const _td   = tdIdx >= 0 ? tenantData[tdIdx] : null;
     const leaseBtn = _td?.leaseExpected
-      ? (_td.leaseFile || _td.lease_url)
+      ? (_td.leaseFile instanceof File || _td.lease_url)
         ? `<button class="action-btn" onclick="openLeaseModalFromFile(${tdIdx})">&#x1F4C4; View Lease</button>`
         : `<div class="lease-missing-note">Lease document not loaded — please re-upload to view</div>`
       : '';
@@ -5707,7 +5707,7 @@ function openLeaseModalFromFile(index) {
   const d = tenantData[index];
   if (!d) return;
   console.log('LEASE URL:', d.lease_url);
-  if (d.leaseFile) {
+  if (d.leaseFile instanceof File) {
     openLeaseModal(d.leaseFile);
   } else if (d.lease_url) {
     openLeaseModal(d.lease_url);
@@ -7184,7 +7184,11 @@ function _lsSet(key, value) {
 }
 
 function _stripBlobs(property) {
-  return property;
+  if (!property || !Array.isArray(property.tenants)) return property;
+  return {
+    ...property,
+    tenants: property.tenants.map(t => t ? { ...t, leaseFile: undefined } : t),
+  };
 }
 
 function _lsSave(property) {
