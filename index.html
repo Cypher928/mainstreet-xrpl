@@ -3025,6 +3025,7 @@ async function handleLease(i, file) {
 
     const leaseUrl = await uploadLeaseToStorage(file, property.id, normalized.id);
     tenantData[i] = { ...normalized, leaseFile: file, leaseExpected: true, fileName: file.name, lease_url: leaseUrl };
+    storeLeaseFile(normalized.id, file);
     console.log("RAW EXTRACTED TENANTS:", JSON.stringify(tenantData.filter(t => t !== null), null, 2));
     renderTenantFields(i);
     checkSqftValidation();
@@ -3771,6 +3772,7 @@ async function handleBulkLeases(fileList) {
       id:               tenantId,
     };
     tenantData.push(tenant);
+    storeLeaseFile(tenantId, file);
 
     completed++;
     _progUpdate();
@@ -3938,6 +3940,7 @@ function refreshBulkSummary(i) {
 }
 
 async function removeBulkTenant(i) {
+  if (tenantData[i]?.id) deleteLeaseFile(tenantData[i].id);
   tenantData.splice(i, 1);
   renderBulkResults();
   checkSqftValidation();
@@ -3946,24 +3949,26 @@ async function removeBulkTenant(i) {
 
 async function retryExtraction(index) {
   const t = tenantData[index];
-  if (!t || !t.leaseFile) return;
+  if (!t) return;
+  const file = (t.leaseFile instanceof File) ? t.leaseFile : await getLeaseFile(t.id);
+  if (!file) return;
 
   try {
-    const leaseText = await extractPdfText(t.leaseFile);
+    const leaseText = await extractPdfText(file);
     const extracted = await callClaudeForLease(leaseText);
     const isValid   = extracted && extracted.tenant_name;
     if (!isValid) throw new Error('Could not extract tenant fields');
 
     tenantData[index] = {
       ...normalizeTenant(extracted),
-      leaseFile:        t.leaseFile,
+      leaseFile:        file,
       leaseExpected:    true,
       fileName:         t.fileName,
       id:               t.id,
       extractionFailed: false,
     };
   } catch (err) {
-    console.log('RETRY FAILED:', t.leaseFile?.name || t.fileName);
+    console.log('RETRY FAILED:', file?.name || t.fileName);
     tenantData[index] = { ...t, _error: err.message || 'Retry failed' };
   }
 
@@ -7183,6 +7188,66 @@ function _lsSet(key, value) {
   try { localStorage.setItem(key, value); } catch { _memStore[key] = value; }
 }
 
+// ── IndexedDB lease-file cache ────────────────────────────────────────────────
+// Persists File blobs across navigation in the same browser. Falls back to
+// Supabase Storage URL for cross-device access when available.
+const _IDB_NAME  = 'mainstreet-lease-files';
+const _IDB_STORE = 'files';
+let   _leaseIdb  = null;
+
+function _openLeaseIdb() {
+  if (_leaseIdb) return Promise.resolve(_leaseIdb);
+  return new Promise((resolve, reject) => {
+    const req = indexedDB.open(_IDB_NAME, 1);
+    req.onupgradeneeded = e => e.target.result.createObjectStore(_IDB_STORE);
+    req.onsuccess  = e => { _leaseIdb = e.target.result; resolve(_leaseIdb); };
+    req.onerror    = e => reject(e.target.error);
+  });
+}
+
+async function storeLeaseFile(tenantId, file) {
+  if (!tenantId || !(file instanceof File)) return;
+  try {
+    const db = await _openLeaseIdb();
+    const tx = db.transaction(_IDB_STORE, 'readwrite');
+    tx.objectStore(_IDB_STORE).put(file, tenantId);
+    await new Promise((res, rej) => { tx.oncomplete = res; tx.onerror = e => rej(e.target.error); });
+  } catch (e) { console.warn('[storeLeaseFile]', e); }
+}
+
+async function getLeaseFile(tenantId) {
+  if (!tenantId) return null;
+  try {
+    const db  = await _openLeaseIdb();
+    const tx  = db.transaction(_IDB_STORE, 'readonly');
+    const req = tx.objectStore(_IDB_STORE).get(tenantId);
+    return new Promise((res, rej) => { req.onsuccess = () => res(req.result ?? null); req.onerror = e => rej(e.target.error); });
+  } catch (e) { return null; }
+}
+
+async function deleteLeaseFile(tenantId) {
+  if (!tenantId) return;
+  try {
+    const db = await _openLeaseIdb();
+    const tx = db.transaction(_IDB_STORE, 'readwrite');
+    tx.objectStore(_IDB_STORE).delete(tenantId);
+  } catch (e) { console.warn('[deleteLeaseFile]', e); }
+}
+
+// After restoring tenants from DB, refill leaseFile from IndexedDB and re-render.
+async function restoreLeaseFiles() {
+  let changed = false;
+  await Promise.all(tenantData.map(async (t, idx) => {
+    if (!t || !t.id || !t.leaseExpected || t.leaseFile instanceof File) return;
+    const file = await getLeaseFile(t.id);
+    if (file instanceof File) {
+      tenantData[idx] = { ...t, leaseFile: file };
+      changed = true;
+    }
+  }));
+  if (changed) renderBulkResults(getValidTenants());
+}
+
 function _stripBlobs(property) {
   if (!property || !Array.isArray(property.tenants)) return property;
   return {
@@ -7420,6 +7485,7 @@ function renderProperty(property) {
       }
     }
     checkSqftValidation();
+    restoreLeaseFiles(); // async: fills leaseFile from IndexedDB, re-renders when done
   } catch (e) { console.warn('[Mainstreet] tenant restore failed:', e); }
 
   // ── Invoices ──────────────────────────────────────────────────────────
