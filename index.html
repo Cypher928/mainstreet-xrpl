@@ -2843,7 +2843,9 @@ function computeFlags(d) {
   const extra = (Array.isArray(d.flags) ? d.flags : []).filter(
     f => (f === 'approx_sqft_detected' || f === 'base_year_detected') && !base.includes(f)
   );
-  return [...base, ...extra];
+  const result = [...base, ...extra];
+  if (d.lease_type && d.lease_type !== '') return result.filter(f => f !== 'lease_type_missing');
+  return result;
 }
 
 function computeFlagsStrict(d) {
@@ -2854,11 +2856,13 @@ function computeFlagsStrict(d) {
     if (d.start_date == null) base.push('missing_start_date');
     if (d.end_date   == null) base.push('missing_end_date');
   }
-  if (d.lease_type == null) base.push('lease_type_missing');
+  if (!d.lease_type) base.push('lease_type_missing');
   const extra = (Array.isArray(d.flags) ? d.flags : []).filter(
     f => (f === 'approx_sqft_detected' || f === 'base_year_detected') && !base.includes(f)
   );
-  return [...base, ...extra];
+  const result = [...base, ...extra];
+  if (d.lease_type && d.lease_type !== '') return result.filter(f => f !== 'lease_type_missing');
+  return result;
 }
 
 async function callClaudeForLease(text) {
