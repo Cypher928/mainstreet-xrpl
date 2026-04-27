@@ -849,6 +849,10 @@
     .inv-act-explain:hover { border-color: #8B5CF6; color: #C4B5FD; background: rgba(139,92,246,0.1); }
     .inv-act-dispute:hover { border-color: #ea580c; color: #fb923c; background: rgba(234,88,12,0.1); }
     .inv-disputed-badge { font-size: 0.7rem; color: #fb923c; font-weight: 700; flex-shrink: 0; }
+    .badge-disputed {
+      display: inline-block; background: #7c2d12; color: #fca5a5;
+      padding: 4px 8px; border-radius: 6px; font-size: 0.75rem; font-weight: 700;
+    }
     .inv-upload-err-banner { font-size: 0.8rem; color: #fca5a5; font-weight: 500; background: rgba(239,68,68,0.1); border: 1px solid rgba(239,68,68,0.3); border-radius: 6px; padding: 6px 10px; margin: 4px 0 2px; word-break: break-word; white-space: normal; }
     .inv-explain-box {
       margin-top: 12px; padding: 12px; background: rgba(139,92,246,0.08);
@@ -4194,7 +4198,7 @@ function renderInvResults() {
           <span id="isummaryBadge-${i}">${overallConf !== undefined ? clickableConfBadge(overallConf, i, weakFields) : ''}</span>
           ${matchBadge}
           ${dupBadge}
-          ${d._disputed ? `<span class="inv-disputed-badge">\u26a0 Disputed</span>` : ''}
+          ${d._disputed ? `<span class="badge-disputed">Disputed</span>` : ''}
           <span class="bulk-t-chevron" id="ichev-${i}">&#x25BC; Edit</span>
           <div class="inv-action-btns">
             <button class="inv-act-btn" onclick="event.stopPropagation();viewInvoice(${i})">View</button>
@@ -4385,12 +4389,22 @@ function openInvFileViewer(url, title, fileType) {
   document.getElementById('invFileViewer').style.display = 'flex';
 }
 
+async function handleExplain(button, fn) {
+  const original = button ? button.innerText : '';
+  if (button) { button.innerText = 'Thinking…'; button.disabled = true; }
+  try {
+    await fn();
+  } finally {
+    if (button) { button.innerText = original; button.disabled = false; }
+  }
+}
+
 async function explainCharge(i) {
   const inv = invoiceData[i];
   if (!inv) return;
   const btn = document.getElementById(`iexplbtn-${i}`);
-  if (btn) { btn.textContent = '…'; btn.disabled = true; }
   try {
+    await handleExplain(btn, async () => {
     const data = await explainFetch({
       model: MODEL,
       max_tokens: 1024,
@@ -4417,10 +4431,9 @@ async function explainCharge(i) {
     det.style.display = 'block';
     document.getElementById(`ichev-${i}`).innerHTML = '&#x25B2; Close';
     expl.scrollIntoView({ behavior: 'smooth', block: 'nearest' });
+    });
   } catch (e) {
     alert(`Explain error: ${e.message}`);
-  } finally {
-    if (btn) { btn.textContent = 'Explain'; btn.disabled = false; }
   }
 }
 
@@ -4455,6 +4468,7 @@ async function submitInvDispute(i) {
   inv._disputeReason = reason;
   await savePropertyData();
   renderInvResults();
+  alert('Dispute submitted successfully. Your landlord will review it.');
 }
 
 function refreshInvSummary(i) {
@@ -5844,8 +5858,8 @@ function tsExplainCharge(tenantName, category) {
 // tenant detail box so the landlord view is completely unaffected.
 async function tsExplainInvoice(rowId, vendor, category, amount, date) {
   const btn = document.getElementById(`tsexplbtn-${rowId}`);
-  if (btn) { btn.textContent = '…'; btn.disabled = true; }
   try {
+    await handleExplain(btn, async () => {
     const data = await explainFetch({
       model: MODEL,
       max_tokens: 1024,
@@ -5866,10 +5880,9 @@ async function tsExplainInvoice(rowId, vendor, category, amount, date) {
       expl.innerHTML = `<strong>AI Explanation</strong><div class="expl-preview">${mdHtml}</div><button class="expl-readmore" onclick="var p=this.previousElementSibling;p.classList.toggle('expanded');this.textContent=p.classList.contains('expanded')?'Show less \u25b2':'Read full explanation \u25be'">Read full explanation &#x25BE;</button>`;
       expl.scrollIntoView({ behavior: 'smooth', block: 'nearest' });
     }
+    });
   } catch (e) {
     alert(`Explain error: ${e.message}`);
-  } finally {
-    if (btn) { btn.textContent = 'Explain'; btn.disabled = false; }
   }
 }
 
@@ -5971,10 +5984,10 @@ async function submitDispute(rowId, tenantName, invoiceId, vendor, category, ten
     formEl.innerHTML = `<div class="ts-dispute-submitted-msg">&#x2705; Dispute submitted — your landlord will review this request.</div>`;
     // "Under Review" badge below vendor name
     const vendorEl = card.querySelector('.ts-inv-vendor');
-    if (vendorEl && !card.querySelector('.ts-under-review-badge')) {
+    if (vendorEl && !card.querySelector('.badge-disputed')) {
       const badge = document.createElement('span');
-      badge.className = 'ts-under-review-badge';
-      badge.textContent = '\u26A0 Under Review';
+      badge.className = 'badge-disputed';
+      badge.textContent = 'Disputed';
       vendorEl.insertAdjacentElement('afterend', badge);
     }
     // Lock the dispute button
@@ -5990,10 +6003,15 @@ async function submitDispute(rowId, tenantName, invoiceId, vendor, category, ten
     if (btnEl) { btnEl.classList.remove('active'); btnEl.textContent = 'Dispute'; }
   }
 
+  // Mark matching invoice as disputed so badge renders on re-entry
+  const matchedInv = invoiceData.find(d => d.vendorName?.toLowerCase() === vendor?.toLowerCase());
+  if (matchedInv) matchedInv._disputed = true;
+
   renderOpenDisputes();
   await syncPortfolioEntry();
   await savePropertyData(); // persist dispute to Supabase
   updateStepBar('resolve');
+  alert('Dispute submitted successfully. Your landlord will review it.');
 }
 
 // ─── Dispute: Open Disputes List ─────────────────────────────────────────────
