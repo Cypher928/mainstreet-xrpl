@@ -3125,7 +3125,7 @@ function runCamValidation() {
 }
 
 function getValidTenants() {
-  return (tenantData || []).filter(t =>
+  return (currentProperty()?.tenants || []).filter(t =>
     t &&
     t.tenant_name &&
     Number(t.leased_sqft) > 0 &&
@@ -3220,30 +3220,30 @@ function renderTenantFields(i) {
         <div class="field">
           <label>Tenant Name</label>
           <input type="text" value="${esc(d.tenant_name || '')}"
-            oninput="tenantData[${i}].tenant_name = this.value"/>
+            oninput="updateTenantField(${i},'tenant_name',this.value)"/>
         </div>
         <div class="field">
           <label>Leased Sqft</label>
           <input type="number" value="${d.leased_sqft ?? ''}"
-            oninput="tenantData[${i}].leased_sqft = this.value; checkSqftValidation()"/>
+            oninput="updateTenantField(${i},'leased_sqft',this.value);checkSqftValidation()"/>
         </div>
       </div>
       <div class="field-row">
         <div class="field">
           <label>Lease Start Date</label>
           <input type="date" value="${toInputDate(d.start_date)}"
-            oninput="tenantData[${i}].start_date = this.value"/>
+            oninput="updateTenantField(${i},'start_date',this.value)"/>
         </div>
         <div class="field">
           <label>Lease End Date</label>
           <input type="date" value="${toInputDate(d.end_date)}"
-            oninput="tenantData[${i}].end_date = this.value"/>
+            oninput="updateTenantField(${i},'end_date',this.value)"/>
         </div>
       </div>
       <div class="field-row">
         <div class="field">
           <label>Lease Type</label>
-          <select onchange="tenantData[${i}].lease_type = this.value || null; if(lastResults.length) runAllocation()">
+          <select onchange="updateTenantField(${i},'lease_type',this.value||null);if(lastResults.length)runAllocation()">
             <option value="">Select lease type</option>
             <option value="Triple Net (NNN)"${d.lease_type === 'Triple Net (NNN)' ? ' selected' : ''}>Triple Net (NNN)</option>
             <option value="Gross"${d.lease_type === 'Gross' ? ' selected' : ''}>Gross</option>
@@ -3253,7 +3253,7 @@ function renderTenantFields(i) {
         <div class="field">
           <label>Excluded Categories (comma-separated)</label>
           <input type="text" value="${esc(d.excluded_categories || '')}"
-            oninput="tenantData[${i}].excluded_categories = this.value"/>
+            oninput="updateTenantField(${i},'excluded_categories',this.value)"/>
         </div>
       </div>
     </div>`;
@@ -3272,6 +3272,8 @@ function renderTenantError(i, msg) {
 }
 
 function resetTenant(i) {
+  const prop = currentProperty();
+  if (prop?.tenants) prop.tenants[i] = null;
   tenantData[i] = null;
   renderTenantUploadZone(i);
   checkSqftValidation();
@@ -3810,29 +3812,39 @@ async function handleBulkLeases(fileList) {
 }
 
 function updateTenantField(index, field, value) {
-  if (tenantData[index]) {
-    tenantData[index][field] = value;
-  }
-  // Keep property.tenants in sync so CAM always reads fresh values
+  // Primary write: property.tenants by stable id
   const prop = currentProperty();
-  if (prop?.tenants && tenantData[index]?.id) {
-    const pt = prop.tenants.find(t => t?.id === tenantData[index].id);
+  const td = tenantData[index];
+  if (prop?.tenants && td?.id) {
+    const pt = prop.tenants.find(t => t?.id === td.id);
     if (pt) pt[field] = value;
+    else if (prop.tenants[index]) prop.tenants[index][field] = value;
   }
-  console.log('UPDATED TENANT:', tenantData[index]);
+  // Mirror: keep tenantData in sync as working buffer
+  if (td) td[field] = value;
+  console.log('UPDATED TENANT:', td);
 }
 
 function renderBulkResults(tenants) {
   const el = document.getElementById('bulkResults');
   el.innerHTML = '';
   el.scrollTop = 0;
-  const data = (tenants || tenantData).filter(t => t && typeof t === 'object');
+  const prop = currentProperty();
+  // Sync tenantData to mirror property.tenants, preserving non-serializable leaseFile blobs
+  if (prop?.tenants) {
+    const oldById = Object.fromEntries(tenantData.filter(t => t?.id).map(t => [t.id, t]));
+    tenantData.splice(0, tenantData.length, ...prop.tenants.map(t =>
+      t?.id && oldById[t.id]?.leaseFile instanceof File
+        ? { ...t, leaseFile: oldById[t.id].leaseFile }
+        : t
+    ));
+  }
+  const data = (prop?.tenants || tenants || tenantData).filter(t => t && typeof t === 'object');
   if (!data.length) { return; }
 
   const rows = data.map((d) => {
     if (!d) return '';
-    // always resolve to the real tenantData index so onclick handlers stay correct
-    const i = tenantData.indexOf(d) !== -1 ? tenantData.indexOf(d) : data.indexOf(d);
+    const i = data.indexOf(d);
     console.log("FINAL TENANT USED IN UI:", d);
     const sqft      = d.leased_sqft  || null;
     const start     = d.start_date  || null;
@@ -3914,7 +3926,7 @@ function renderBulkResults(tenants) {
 
   el.innerHTML = `
     <div class="bulk-results-head">
-      <h3>Extracted Tenants (${tenantData.filter(Boolean).length})</h3>
+      <h3>Extracted Tenants (${data.length})</h3>
       <button class="bulk-clear-btn" onclick="clearBulkResults()">&#x2715; Clear All</button>
     </div>
     ${rows}`;
@@ -3945,8 +3957,10 @@ function refreshBulkSummary(i) {
 }
 
 async function removeBulkTenant(i) {
+  const prop = currentProperty();
   if (tenantData[i]?.id) deleteLeaseFile(tenantData[i].id);
   tenantData.splice(i, 1);
+  if (prop?.tenants) prop.tenants.splice(i, 1);
   renderBulkResults();
   checkSqftValidation();
   await savePropertyData();
@@ -3958,13 +3972,14 @@ async function retryExtraction(index) {
   const file = (t.leaseFile instanceof File) ? t.leaseFile : await getLeaseFile(t.id);
   if (!file) return;
 
+  const prop = currentProperty();
   try {
     const leaseText = await extractPdfText(file);
     const extracted = await callClaudeForLease(leaseText);
     const isValid   = extracted && extracted.tenant_name;
     if (!isValid) throw new Error('Could not extract tenant fields');
 
-    tenantData[index] = {
+    const updated = {
       ...normalizeTenant(extracted),
       leaseFile:        file,
       leaseExpected:    true,
@@ -3972,9 +3987,13 @@ async function retryExtraction(index) {
       id:               t.id,
       extractionFailed: false,
     };
+    tenantData[index] = updated;
+    if (prop?.tenants) prop.tenants[index] = updated;
   } catch (err) {
     console.log('RETRY FAILED:', file?.name || t.fileName);
-    tenantData[index] = { ...t, _error: err.message || 'Retry failed' };
+    const failed = { ...t, _error: err.message || 'Retry failed' };
+    tenantData[index] = failed;
+    if (prop?.tenants) prop.tenants[index] = failed;
   }
 
   renderBulkResults();
@@ -3982,7 +4001,9 @@ async function retryExtraction(index) {
 }
 
 async function clearBulkResults() {
+  const prop = currentProperty();
   tenantData.splice(0, tenantData.length);
+  if (prop?.tenants) prop.tenants.splice(0, prop.tenants.length);
   document.getElementById('bulkResults').innerHTML = '';
   document.getElementById('bulkProgress').style.display = 'none';
   document.getElementById('bulkLeaseInput').value = '';
@@ -5191,7 +5212,7 @@ async function runAllocation() {
 
   if (!tenants.length) {
     // If there are tenants with names but missing sqft, give a more specific message
-    const namedTenantsWithNoSqft = tenantData.filter(t => t && t.tenant_name && parseSqft(t.leased_sqft) <= 0);
+    const namedTenantsWithNoSqft = (currentProperty()?.tenants || tenantData).filter(t => t && t.tenant_name && parseSqft(t.leased_sqft) <= 0);
     if (namedTenantsWithNoSqft.length) {
       showErr(body, section,
         `${namedTenantsWithNoSqft.length} tenant(s) are missing Leased Sqft. ` +
@@ -5219,7 +5240,7 @@ async function runAllocation() {
 
   // Build a Property + run full reconciliation (for per-tenant invoice breakdown + direct matching)
   const _prop = new Property(propName, totalSqft);
-  _prop.addLeases(tenantData.filter(t => t && t.tenant_name && parseSqft(t.leased_sqft) > 0).map(t => {
+  _prop.addLeases(getValidTenants().map(t => {
     const lease = new Lease(t.tenant_name, t.unitNumber || '', parseSqft(t.leased_sqft), t.start_date || '', t.end_date || '',
       t.excluded_categories ? t.excluded_categories.split(',').map(s => s.trim()) : [],
       t.cap ?? null, null,
@@ -5235,7 +5256,7 @@ async function runAllocation() {
   const fullResults = runFullReconciliation(_prop);
 
   // Sync matchedTenant tags back to invoiceData for badge display
-  const activeTenants = tenantData.filter(t => t && t.tenant_name);
+  const activeTenants = (currentProperty()?.tenants || tenantData).filter(t => t && t.tenant_name);
   invoiceData.forEach((inv, i) => {
     if (!inv) return;
     const m = matchInvoiceToTenant(inv, activeTenants);
@@ -7271,7 +7292,7 @@ async function restoreLeaseFiles() {
       changed = true;
     }
   }));
-  if (changed) renderBulkResults(getValidTenants());
+  if (changed) renderBulkResults();
 }
 
 function _stripBlobs(property) {
@@ -7435,7 +7456,7 @@ async function savePropertyData() {
 
   if (name) prop.name = name;
   if (sqft) prop.totalSqft = sqft;
-  prop.tenants  = tenantData.filter(t => t !== null);
+  // property.tenants is the source of truth — always current; no snapshot from tenantData needed
   prop.invoices = Array.from(invoiceData);
   prop.disputes = Array.from(disputes);
   prop.results  = lastResults.length ? {
@@ -7492,20 +7513,23 @@ function renderProperty(property) {
         return true;
       });
       tenantData.splice(0, tenantData.length, ...deduped);
-      // Normalize leased_sqft to a clean number in-place
+      // Normalize leased_sqft to a clean number in-place and sync to property.tenants
       tenantData.forEach((t, idx) => {
         if (t) tenantData[idx] = { ...t, leased_sqft: Number(t.leased_sqft) || 0 };
       });
+      property.tenants = [...tenantData];
       switchLeaseTab('bulk');
-      renderBulkResults(getValidTenants());
+      renderBulkResults();
       renderFailedTenants(tenantData.filter(t => t && t.extractionFailed));
       restored = true;
     } else {
       const tenants = (property.tenants || []).filter(t => t !== null);
       if (tenants.length) {
-        tenantData.splice(0, tenantData.length, ...tenants.filter(isValidTenant).map(normalizeTenant));
+        const normalized = tenants.map(normalizeTenant);
+        property.tenants = normalized;
+        tenantData.splice(0, tenantData.length, ...normalized);
         switchLeaseTab('bulk');
-        renderBulkResults(getValidTenants());
+        renderBulkResults();
         renderFailedTenants(tenantData.filter(t => t && t.extractionFailed));
         restored = true;
       }
