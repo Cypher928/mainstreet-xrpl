@@ -3136,8 +3136,9 @@ function getValidTenants() {
 function renderFailedTenants(tenants) {
   const el = document.getElementById('bulkResults');
   if (!el || !tenants.length) return;
+  const srcTenants = currentProperty()?.tenants || tenantData;
   const rows = tenants.map((d) => {
-    const i = tenantData.indexOf(d);
+    const i = srcTenants.findIndex(t => t?.id && t.id === d?.id);
     if (i === -1) return '';
     return `
       <div class="bulk-tenant-row has-error" id="btr-failed-${i}">
@@ -3825,27 +3826,31 @@ function updateTenantField(index, field, value) {
   console.log('UPDATED TENANT:', td);
 }
 
-function renderBulkResults(tenants) {
+function renderBulkResults() {
   const el = document.getElementById('bulkResults');
   el.innerHTML = '';
   el.scrollTop = 0;
-  const prop = currentProperty();
-  // Sync tenantData to mirror property.tenants, preserving non-serializable leaseFile blobs
-  if (prop?.tenants) {
-    const oldById = Object.fromEntries(tenantData.filter(t => t?.id).map(t => [t.id, t]));
-    tenantData.splice(0, tenantData.length, ...prop.tenants.map(t =>
-      t?.id && oldById[t.id]?.leaseFile instanceof File
-        ? { ...t, leaseFile: oldById[t.id].leaseFile }
-        : t
-    ));
-  }
-  const data = (prop?.tenants || tenants || tenantData).filter(t => t && typeof t === 'object');
-  if (!data.length) { return; }
 
-  const rows = data.map((d) => {
+  // Single source of truth: property.tenants
+  const propTenants = currentProperty()?.tenants || [];
+
+  // Carry over leaseFile blobs (not serializable, never in property.tenants)
+  const blobById = Object.fromEntries(
+    tenantData.filter(t => t?.id && t.leaseFile instanceof File).map(t => [t.id, t.leaseFile])
+  );
+
+  // Build render list: only valid objects, blobs merged back in
+  const tenants = propTenants
+    .filter(t => t && typeof t === 'object')
+    .map(t => (t?.id && blobById[t.id]) ? { ...t, leaseFile: blobById[t.id] } : t);
+
+  // Mirror tenantData exactly so index-based onclick handlers stay correct
+  tenantData.splice(0, tenantData.length, ...tenants);
+
+  if (!tenants.length) return;
+
+  const rows = tenants.map((d, i) => {
     if (!d) return '';
-    const i = data.indexOf(d);
-    console.log("FINAL TENANT USED IN UI:", d);
     const sqft      = d.leased_sqft  || null;
     const start     = d.start_date  || null;
     const end       = d.end_date    || null;
@@ -3926,7 +3931,7 @@ function renderBulkResults(tenants) {
 
   el.innerHTML = `
     <div class="bulk-results-head">
-      <h3>Extracted Tenants (${data.length})</h3>
+      <h3>Extracted Tenants (${tenants.length})</h3>
       <button class="bulk-clear-btn" onclick="clearBulkResults()">&#x2715; Clear All</button>
     </div>
     ${rows}`;
@@ -7528,17 +7533,13 @@ function renderProperty(property) {
       property.tenants = [...tenantData];
       switchLeaseTab('bulk');
       renderBulkResults();
-      renderFailedTenants(tenantData.filter(t => t && t.extractionFailed));
       restored = true;
     } else {
       const tenants = (property.tenants || []).filter(t => t !== null);
       if (tenants.length) {
-        const normalized = tenants.map(normalizeTenant);
-        property.tenants = normalized;
-        tenantData.splice(0, tenantData.length, ...normalized);
+        property.tenants = tenants.map(normalizeTenant);
         switchLeaseTab('bulk');
         renderBulkResults();
-        renderFailedTenants(tenantData.filter(t => t && t.extractionFailed));
         restored = true;
       }
     }
