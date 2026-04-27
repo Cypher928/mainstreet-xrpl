@@ -5193,6 +5193,17 @@ function runFullReconciliation(property) {
     return result;
   });
 
+  // Penny adjustment: if floating-point rounding leaves a tiny gap, absorb it into
+  // the largest tenant so the sum of allocations equals total invoices exactly.
+  const totalExpenses = invoices.reduce((s, inv) => s + inv.amount, 0);
+  const sumAllocated  = results.reduce((s, r) => s + r.totalAllocated, 0);
+  const diff          = parseFloat((totalExpenses - sumAllocated).toFixed(2));
+  if (Math.abs(diff) < 0.05 && results.length > 0) {
+    const largest = results.reduce((a, b) => a.totalAllocated >= b.totalAllocated ? a : b);
+    largest.totalAllocated   = parseFloat((largest.totalAllocated  + diff).toFixed(2));
+    largest.allocatedAmount  = largest.totalAllocated;
+  }
+
   property.reconciliations = results;
   return results;
 }
