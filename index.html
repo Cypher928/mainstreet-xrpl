@@ -3630,10 +3630,10 @@ async function importGLToInvoices() {
 
   items.forEach(r => {
     invoiceData.push({
-      vendorName:  r.vendor,
+      vendorName:  cleanHTML(r.vendor),
       amount:      r.amount,
       category:    r.category,
-      invoiceDate: r.date,
+      invoiceDate: cleanHTML(r.date),
       confidence: {
         vendorName:  r.confidence.vendor,
         amount:      r.confidence.amount,
@@ -3823,7 +3823,11 @@ function updateTenantField(index, field, value) {
   }
   // Mirror: keep tenantData in sync as working buffer
   if (td) td[field] = value;
-  console.log('UPDATED TENANT:', td);
+
+  // Auto-refresh results panel so "Needs Review" and CAM values update immediately
+  if (lastResults.length && ['lease_type', 'leased_sqft', 'start_date', 'end_date', 'excluded_categories'].includes(field)) {
+    runAllocation();
+  }
 }
 
 function renderBulkResults() {
@@ -4117,10 +4121,10 @@ async function handleBatchInvoices(fileList) {
     }
 
     invoiceData.push({
-      vendorName,
+      vendorName:  cleanHTML(vendorName),
       amount:      d?.amount      ?? '',
       category:    resolvedCategory,
-      invoiceDate: d?.invoiceDate ?? '',
+      invoiceDate: cleanHTML(d?.invoiceDate ?? ''),
       confidence:  resolvedConf,
       _error:           claudeError,
       _fileUploadError: fileUploadError,
@@ -4241,7 +4245,7 @@ function renderInvResults() {
           <div class="field-row">
             <div class="field" style="flex:2;">
               <label>Vendor ${confidenceBadge(conf.vendorName)}</label>
-              <input id="ifield-${i}-vendorName" type="text" value="${esc(d.vendorName)}"
+              <input id="ifield-${i}-vendorName" type="text" value="${esc(cleanHTML(d.vendorName))}"
                 oninput="invoiceData[${i}].vendorName=this.value;markFieldVerified(${i},'vendorName');refreshInvSummary(${i})"/>
               <span id="ibadgeWrap-${i}-vendorName">${vVendor}</span>
             </div>
@@ -4260,7 +4264,7 @@ function renderInvResults() {
             </div>
             <div class="field">
               <label>Invoice Date ${confidenceBadge(conf.invoiceDate)}</label>
-              <input id="ifield-${i}-invoiceDate" type="text" value="${esc(d.invoiceDate)}"
+              <input id="ifield-${i}-invoiceDate" type="text" value="${esc(cleanHTML(d.invoiceDate))}"
                 oninput="invoiceData[${i}].invoiceDate=this.value;markFieldVerified(${i},'invoiceDate');recomputeSummaryBadge(${i})"/>
               <span id="ibadgeWrap-${i}-invoiceDate">${vDate}</span>
             </div>
@@ -4763,9 +4767,9 @@ async function confirmYardiImport() {
   yardiRows.forEach((row, i) => {
     const chk = document.getElementById(`ychk-${i}`);
     if (!chk || !chk.checked) return;
-    const vendor = yardiCell(row, 'vendorName');
+    const vendor = cleanHTML(yardiCell(row, 'vendorName'));
     const amt    = parseFloat(yardiCell(row, 'amount').replace(/[$,\s]/g, '')) || 0;
-    const date   = yardiCell(row, 'invoiceDate');
+    const date   = cleanHTML(yardiCell(row, 'invoiceDate'));
     const cat    = document.getElementById(`ycat-${i}`)?.value || 'other';
     if (!vendor && amt <= 0) return;
     invoiceData.push({
