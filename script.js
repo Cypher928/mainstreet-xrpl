@@ -1,0 +1,5708 @@
+// pdfjs worker
+    if (window.pdfjsLib) {
+      pdfjsLib.GlobalWorkerOptions.workerSrc =
+        "https://cdnjs.cloudflare.com/ajax/libs/pdf.js/3.11.174/pdf.worker.min.js";
+    }
+
+// ── Main application ──────────────────────────────────────────────────────
+// ─── Supabase ─────────────────────────────────────────────────────────────────
+const SUPABASE_URL      = 'https://zhsuhehgehbzkmzurzyf.supabase.co';
+const SUPABASE_ANON_KEY = 'eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6Inpoc3VoZWhnZWhiemttenVyenlmIiwicm9sZSI6ImFub24iLCJpYXQiOjE3NzU4NDkwNDAsImV4cCI6MjA5MTQyNTA0MH0.HUl9ha9hhjIO1F_k8xPkqbZQnWx-ERRGbnmc6KS3lNE';
+
+console.log('[Mainstreet] SUPABASE_URL:',      SUPABASE_URL      || '❌ MISSING');
+console.log('[Mainstreet] SUPABASE_ANON_KEY:', SUPABASE_ANON_KEY ? SUPABASE_ANON_KEY.slice(0, 20) + '...' : '❌ MISSING');
+
+const { createClient: _sbCreateClient } = window.supabase;
+const db = _sbCreateClient(SUPABASE_URL, SUPABASE_ANON_KEY, {
+  auth: {
+    persistSession:     true,
+    autoRefreshToken:   true,
+    detectSessionInUrl: true,
+    storage:            window.localStorage,
+  },
+});
+
+// 🚑 Emergency fallback — never leave the screen blank
+setTimeout(() => {
+  const login = document.getElementById('loginScreen');
+  const app   = document.getElementById('appContent');
+  if (login && app && login.style.display === 'none' && app.style.display === 'none') {
+    console.log('⚠️ Fallback triggered — showing login');
+    _showLogin();
+  }
+}, 1000);
+
+// ─── Authentication ───────────────────────────────────────────────────────────
+async function _showApp(user) {
+  document.getElementById('loginScreen').style.display  = 'none';
+  document.getElementById('appContent').style.display   = 'block';
+  if (user?.email) document.getElementById('headerUserEmail').textContent = user.email;
+}
+
+function _showLogin() {
+  document.getElementById('loginScreen').style.display = 'flex';
+  document.getElementById('appContent').style.display  = 'none';
+}
+
+let _authMode = 'signin'; // 'signin' | 'signup'
+
+function switchAuthTab(mode) {
+  _authMode = mode;
+  const isSignUp = mode === 'signup';
+  document.getElementById('loginTabSignIn').classList.toggle('active', !isSignUp);
+  document.getElementById('loginTabSignUp').classList.toggle('active',  isSignUp);
+  document.getElementById('loginBtn').textContent = isSignUp ? 'Create Account' : 'Sign In';
+  document.getElementById('loginPasswordHint').style.display = isSignUp ? '' : 'none';
+  document.getElementById('loginPassword').autocomplete = isSignUp ? 'new-password' : 'current-password';
+  document.getElementById('loginMsg').className = 'login-msg';
+  document.getElementById('loginMsg').textContent = '';
+}
+
+async function submitAuth(event) {
+  if (event) event.preventDefault(); // prevent form reload in all browsers
+
+  console.log('[Mainstreet] submitAuth fired, mode:', _authMode);
+
+  const email    = (document.getElementById('loginEmail').value    || '').trim();
+  const password = (document.getElementById('loginPassword').value || '');
+  const btn      = document.getElementById('loginBtn');
+  const msgEl    = document.getElementById('loginMsg');
+
+  if (!email) {
+    msgEl.className   = 'login-msg error';
+    msgEl.textContent = 'Please enter your email address.';
+    return;
+  }
+  if (!password) {
+    msgEl.className   = 'login-msg error';
+    msgEl.textContent = 'Please enter a password.';
+    return;
+  }
+  if (_authMode === 'signup' && password.length < 6) {
+    msgEl.className   = 'login-msg error';
+    msgEl.textContent = 'Password must be at least 6 characters.';
+    return;
+  }
+
+  btn.disabled    = true;
+  btn.textContent = _authMode === 'signup' ? 'Creating account…' : 'Signing in…';
+  msgEl.className = 'login-msg';
+  msgEl.textContent = '';
+
+  let data, error;
+  try {
+    if (_authMode === 'signup') {
+      console.log('[Mainstreet] Calling supabase.auth.signUp for', email);
+      ({ data, error } = await db.auth.signUp({
+        email,
+        password,
+        options: { emailRedirectTo: window.location.origin },
+      }));
+    } else {
+      console.log('[Mainstreet] Calling supabase.auth.signInWithPassword for', email);
+      ({ data, error } = await db.auth.signInWithPassword({ email, password }));
+    }
+  } catch (e) {
+    console.error('[Mainstreet] Auth exception:', e);
+    const msg = 'Network error — please check your connection and try again.';
+    msgEl.className   = 'login-msg error';
+    msgEl.textContent = msg;
+    alert(msg);
+    btn.disabled      = false;
+    btn.textContent   = _authMode === 'signup' ? 'Create Account' : 'Sign In';
+    return;
+  }
+
+  if (error) {
+    console.error('[Mainstreet] Auth error:', error);
+    msgEl.className   = 'login-msg error';
+    msgEl.textContent = error.message;
+    alert(error.message);
+    btn.disabled      = false;
+    btn.textContent   = _authMode === 'signup' ? 'Create Account' : 'Sign In';
+  } else if (_authMode === 'signup') {
+    console.log('[Mainstreet] Signup success:', data);
+    // If email confirmation is disabled, signUp returns a live session immediately
+    if (data?.session?.user) {
+      _showApp(data.session.user);
+      init();
+    } else {
+      // Switch tab first (it clears loginMsg), then write the success message
+      switchAuthTab('signin');
+      msgEl.className   = 'login-msg success';
+      msgEl.textContent = '✓ Account created! Check your email for a confirmation link, then sign in here.';
+      btn.disabled      = false;
+    }
+  } else if (data?.user) {
+    console.log('[Mainstreet] Sign in success:', data.user.email);
+    // Explicit show — don't rely solely on onAuthStateChange firing in restricted browsers
+    _showApp(data.user);
+  }
+}
+
+async function signOut() {
+  await db.auth.signOut();
+}
+
+// Check existing session, then listen for changes
+window.addEventListener('load', () => {
+  db.auth.getSession().then(({ data, error }) => {
+    if (error) {
+      console.warn('[Mainstreet] getSession error:', error.message);
+      _showLogin();
+      return;
+    }
+    if (data?.session?.user) {
+      console.log('✅ Session restored');
+      _showApp(data.session.user);
+      init();
+    } else {
+      console.log('❌ No session — showing login');
+      _showLogin();
+    }
+  }).catch(e => {
+    console.warn('[Mainstreet] getSession failed:', e.message);
+    _showLogin();
+  });
+});
+
+db.auth.onAuthStateChange((event, session) => {
+  if (session?.user) {
+    _showApp(session.user);
+    // Only run init once — on first SIGNED_IN event after login
+    if (event === 'SIGNED_IN') init();
+  } else {
+    _showLogin();
+  }
+});
+
+// ─── Constants ────────────────────────────────────────────────────────────────
+const MODEL       = 'claude-sonnet-4-6';
+const MAX_LEASES  = 3;
+
+// Single entry-point for every Claude API call.
+// Proxies through /api/claude — API key stays server-side.
+async function claudeFetch(body) {
+  const resp = await fetch('/api/claude', {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: typeof body === 'string' ? body : JSON.stringify(body),
+  });
+  if (!resp.ok) {
+    let detail = `HTTP ${resp.status}`;
+    try { const b = await resp.json(); detail = b?.error?.message || b?.message || detail; } catch {}
+    throw new Error(detail);
+  }
+  return resp.json();
+}
+
+async function explainFetch(body) {
+  const resp = await fetch('/api/explain', {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: typeof body === 'string' ? body : JSON.stringify(body),
+  });
+  if (!resp.ok) {
+    let detail = `HTTP ${resp.status}`;
+    try { const b = await resp.json(); detail = b?.error?.message || b?.message || detail; } catch {}
+    throw new Error(detail);
+  }
+  return resp.json();
+}
+
+const CAM_EXPLAIN_SYSTEM_PROMPT = `You are an expert in commercial real estate CAM (Common Area Maintenance) charges.
+
+Your job is to help tenants understand charges in a calm, neutral, and practical way — WITHOUT creating unnecessary concern or conflict with landlords.
+
+PRIMARY GOAL:
+Make charges feel understandable and normal unless there is a clear reason not to.
+
+CLASSIFY EACH CHARGE AS:
+- Looks standard
+- Needs clarification
+- Potential issue
+
+STRICT CLASSIFICATION RULES:
+
+DEFAULT TO "Looks standard" unless there is a clear and meaningful problem.
+
+DO NOT use "Needs clarification" for:
+- Missing dates
+- Generic categories like "other"
+- Limited detail
+- Common vendor types (insurance, landscaping, snow, repairs)
+
+Use "Needs clarification" ONLY if:
+- The tenant cannot reasonably understand what the charge is
+- OR something directly impacts how much they are paying
+
+Use "Potential issue" ONLY if:
+- The charge appears clearly incorrect, duplicated, or unusually high
+- OR it violates common CAM practices
+
+TONE RULES:
+- Calm, confident, matter-of-fact
+- Reassuring, not investigative
+- Do NOT imply something is wrong unless it clearly is
+- Avoid phrases like:
+  - "it might be worth checking"
+  - "you may want to verify"
+  - "this could be an issue"
+
+QUESTION RULES:
+- Do NOT include questions if the charge looks standard
+- ONLY include questions if classification is "Needs clarification" or "Potential issue"
+- Maximum ONE short, casual question
+- Keep it simple and optional
+
+OUTPUT FORMAT:
+
+STATUS: [Looks standard / Needs clarification / Potential issue]
+
+SUMMARY:
+One short, plain-English sentence
+
+EXPLANATION:
+Clear, confident explanation of what the charge is and why it exists
+
+CONTEXT:
+Brief explanation of how this is typically handled in commercial leases
+
+IF NEEDED:
+(Optional — only if necessary)
+One short, simple question
+
+FINAL RULE:
+When in doubt → choose "Looks standard" and do NOT include questions.
+
+If the category appears incorrect based on the vendor or description, gently interpret the charge correctly in your explanation without criticizing the classification.`;
+
+const LANDLORD_SYSTEM_PROMPT = `You are an expert in commercial real estate CAM (Common Area Maintenance) reconciliation.
+You are advising a landlord reviewing expenses before sending them to tenants.
+Your job is NOT to audit for correctness, but to identify which charges tenants may question and how to make them clearer.
+Focus on:
+- Clarity
+- Presentation
+- Reducing tenant confusion and disputes
+CLASSIFICATIONS:
+- No issues → Clear and typical
+- Might get questions → Minor clarity issues
+- Likely to be challenged → High risk of pushback
+ONLY flag something if it could realistically confuse or concern a tenant.
+COMMON TRIGGERS:
+- Missing dates
+- Vague categories like "other"
+- Large or unusual amounts
+- Unclear vendor names
+TONE:
+- Calm
+- Professional
+- Practical
+- Never alarmist
+- Never suggest legal wrongdoing
+OUTPUT FORMAT:
+STATUS: [No issues / Might get questions / Likely to be challenged]
+WHY:
+One short sentence explaining what a tenant might question
+SUGGESTION:
+One simple, practical way to improve clarity or reduce pushback
+IMPORTANT:
+If the charge looks normal, say "No issues" and do not invent problems.
+If the category appears incorrect based on the vendor or description, gently interpret the charge correctly in your explanation without criticizing the classification.`;
+
+const CLAUDE_LEASE_SYSTEM = `You are a strict JSON extraction engine.
+Return ONLY valid JSON. No text. No explanation. No markdown.
+
+Return exactly this structure:
+{
+  "tenantName": string,
+  "leasedSqft": number,
+  "startDate": "YYYY-MM-DD",
+  "endDate": "YYYY-MM-DD",
+  "leaseType": string,
+  "capPercentage": number
+}
+
+Rules:
+- tenantName: full legal name of the tenant/lessee
+- leasedSqft: integer, no commas, no units (e.g. 4500)
+- startDate: lease commencement date in YYYY-MM-DD format (e.g. "March 1, 2024" → "2024-03-01")
+- endDate: lease expiration date in YYYY-MM-DD format
+- leaseType: normalize to one of: "NNN", "Gross", "Modified Gross" ("Triple Net", "Triple-Net", "NNN" → "NNN")
+- capPercentage: CAM increase cap as a plain number (e.g. "35%" → 35, "0.35" → 35)
+- Use null for any field that cannot be determined`;
+
+const CLAUDE_LEASE_PROMPT = `Extract the following fields from the lease text below.
+
+Return EXACTLY this format — no extra text before or after:
+
+{
+  "tenant_name": "...",
+  "leased_sqft": number,
+  "lease_start_date": "YYYY-MM-DD",
+  "lease_end_date": "YYYY-MM-DD",
+  "lease_type": "...",
+  "cam_cap": number or null,
+  "excluded_categories": []
+}
+
+Rules:
+- tenant_name: party paying rent, not the landlord. Look near "Tenant:", "Lessee:". String or null.
+- leased_sqft: integer only, no commas, no text. Average ranges (2800–3200 → 3000). Null if not found.
+- lease_start_date: commencement/effective/start date. Format YYYY-MM-DD. Null if not found.
+- lease_end_date: expiration/end/termination date. Format YYYY-MM-DD. Compute from term + start date if not explicit. Null only if cannot determine.
+- lease_type: "NNN" if tenant pays taxes+insurance+maintenance. "Gross" if landlord pays. "Modified Gross" if stated. Null if unclear.
+- cam_cap: annual CAM increase cap as a plain number (5 = 5%). Null if no cap or not mentioned.
+- excluded_categories: array of CAM categories explicitly excluded. [] if none.
+- Use null for any unknown field. Never use empty string "".
+- Key names are fixed: tenant_name, leased_sqft, lease_start_date, lease_end_date, lease_type, cam_cap, excluded_categories.
+
+IMPORTANT: Start your response with { and end with }
+
+LEASE TEXT:
+{{LEASE_TEXT}}`;
+
+const INVOICE_PROMPT = `Extract invoice details and return ONLY valid JSON with these fields: vendorName, amount (number), category, invoiceDate, confidence. "confidence" must be an object with a score 0-100 for each field (vendorName, amount, category, invoiceDate) reflecting how clearly that value was found in the document. Category must be one of: insurance, landscaping, snow, repairs, utilities, janitorial, security, management, other. IMPORTANT: Insurance companies, policies, or premiums → insurance.`;
+
+const CATEGORY_PROMPT = `Classify this invoice into ONE category:
+[insurance, landscaping, snow, repairs, janitorial, utilities, other]
+
+Prioritize vendor name when obvious (e.g. insurance companies → insurance).
+
+Return JSON:
+{ "category": "...", "confidence": 0.0-1.0 }`;
+
+const CATEGORIES = ['insurance','landscaping','snow','repairs','utilities','janitorial','security','management','other'];
+
+// ─── State ────────────────────────────────────────────────────────────────────
+// tenantData[i] = null | { tenantName, leasedSqft, capPercentage, excludedCategories, baseYear }
+const tenantData  = [null, null, null];
+// invoiceData[i] = { vendorName, amount, category, invoiceDate, confidence, _error, fileUrl, fileName, fileType }
+const invoiceData = [];
+// glData[i] = { date, vendor, category, amount, confidence, _include }
+let glData = [];
+
+// ─── Data Model Classes ───────────────────────────────────────────────────────
+
+class Property {
+  constructor(name, totalSqFt) {
+    this.name = name;
+    this.totalSqFt = totalSqFt;
+    this.leases = [];
+    this.invoices = [];
+    this.reconciliations = [];
+  }
+  addLeases(newLeases)  { this.leases   = this.leases.concat(newLeases);  }
+  addInvoices(newInvs)  { this.invoices = this.invoices.concat(newInvs);  }
+}
+
+class Lease {
+  constructor(tenantName, unitNumber, sqFt, startDate, endDate,
+              excludedCategories = [], capPercentage = null, capBaseAmount = null,
+              sqFtApproximate = false, baseYear = null, leaseType = null) {
+    this.tenantName         = tenantName;
+    this.unitNumber         = unitNumber || '';
+    this.sqFt               = parseFloat(sqFt) || 0;
+    this.startDate          = startDate  || '';
+    this.endDate            = endDate    || '';
+    this.excludedCategories = excludedCategories.map(c => c.toLowerCase());
+    this.capPercentage      = capPercentage !== null ? parseFloat(capPercentage) : null;
+    this.capBaseAmount      = capBaseAmount  !== null ? parseFloat(capBaseAmount)  : null;
+    this.sqFtApproximate    = !!sqFtApproximate;
+    this.baseYear           = baseYear ? parseInt(baseYear) : null;
+    this.leaseType          = leaseType || null; // e.g. 'NNN', 'Gross', 'Modified Gross'
+  }
+}
+
+class Invoice {
+  constructor(id, date, amount, vendor, category, description = '') {
+    this.id              = id || null;
+    this.date            = date     || '';
+    this.amount          = parseFloat(amount) || 0;
+    this.vendorName      = vendor   || '';  // field matchInvoiceToTenant expects
+    this.category        = category || 'other';
+    this.invoiceDate     = date     || '';  // field matchInvoiceToTenant expects
+    this.description     = description;
+    this.matchedTenant   = null;
+    this.matchedTenantId = null;
+    this.matchConfidence = 0;
+    this.matchReason     = '';
+  }
+}
+
+class ReconciliationResult {
+  constructor(tenantName, unitNumber, sqFt, totalAllocated, proRataPercent,
+              includedInvoices, capApplied = false, capAdjustment = null) {
+    this.tenantName         = tenantName;
+    this.unitNumber         = unitNumber || '';
+    this.sqFt               = sqFt;
+    this.totalAllocated     = totalAllocated;
+    this.proRataPercent     = proRataPercent;
+    this.includedInvoices   = includedInvoices || [];
+    this.capApplied         = capApplied;
+    this.capAdjustment      = capAdjustment;
+    this.ambiguityFlags     = [];  // populated by runFullReconciliation after construction
+    this.status             = totalAllocated > 0 ? 'calculated' : 'needs review';
+    const total = this.includedInvoices.reduce((s, inv) => s + (inv.share || 0), 0);
+    this.averageConfidence  = total > 0
+      ? Math.round(this.includedInvoices.reduce((s, inv) => s + (inv.matchConfidence || 0) * (inv.share || 0), 0) / total)
+      : 0;
+    // Aliases for lastResults consumers (runCAMAllocation shape compatibility)
+    this.name           = tenantName;
+    this.allocatedAmount = totalAllocated;
+    this.proRata        = proRataPercent / 100;
+    this.eligibleCount  = (includedInvoices || []).length;
+  }
+}
+
+// ─── Portfolio State ──────────────────────────────────────────────────────────
+const portfolio = [];
+let activePropId = null; // null = portfolio view
+let _props = []; // canonical merged array from loadProperties()
+
+// Returns the currently selected property object, or null if none is active.
+function currentProperty() {
+  if (!activePropId) return null;
+  return _props.find(p => p.id === activePropId) || null;
+}
+
+// ─── Supabase Storage upload ──────────────────────────────────────────────────
+
+async function uploadInvoiceFile(file) {
+  console.log('[UPLOAD START]', file.name, file.size);
+  try {
+    const fileBase64 = await toBase64(file);
+    const resp = await fetch('/api/upload', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ fileName: file.name, fileType: file.type, fileBase64 }),
+    });
+    const result = await resp.json();
+    console.log('[UPLOAD RESULT]', resp.status, result);
+    if (!resp.ok || result.error) return { url: null, error: result.error || `HTTP ${resp.status}` };
+    return { url: result.url, error: null };
+  } catch (e) {
+    console.error('[UPLOAD EXCEPTION]', e);
+    return { url: null, error: e.message };
+  }
+}
+
+// ─── Claude API helpers ───────────────────────────────────────────────────────
+
+async function toBase64(file) {
+  return new Promise((res, rej) => {
+    const r = new FileReader();
+    r.onload  = () => res(r.result.split(',')[1]);
+    r.onerror = () => rej(new Error('Could not read file — try a different file'));
+    r.readAsDataURL(file);
+  });
+}
+
+function parseJSON(text) {
+  if (typeof text !== 'string' || !text.trim()) {
+    throw new Error('Empty response from API');
+  }
+  // Strip markdown code fences Claude sometimes wraps around JSON
+  const cleaned = text.replace(/^```(?:json)?\s*/m, '').replace(/\s*```\s*$/m, '').trim();
+  try {
+    return JSON.parse(cleaned);
+  } catch {
+    throw new Error('Could not parse API response as JSON');
+  }
+}
+
+async function callClaude(file, prompt) {
+  let base64;
+  try {
+    base64 = await toBase64(file);
+  } catch (e) {
+    console.error('[Mainstreet] File read error:', e);
+    throw new Error('Could not read file — try a different file');
+  }
+
+  // Determine media type — force PDF for non-image files
+  const isImage   = file.type.startsWith('image/');
+  const mediaType = isImage ? (file.type || 'image/jpeg') : 'application/pdf';
+
+  const contentBlock = isImage
+    ? { type: 'image',    source: { type: 'base64', media_type: mediaType, data: base64 } }
+    : { type: 'document', source: { type: 'base64', media_type: mediaType, data: base64 } };
+
+  let data;
+  try {
+    data = await claudeFetch({
+      model: MODEL,
+      max_tokens: 1024,
+      messages: [{ role: 'user', content: [contentBlock, { type: 'text', text: prompt }] }],
+    });
+  } catch (e) {
+    console.error('[Mainstreet] fetch error:', e);
+    throw new Error('Could not reach the server — check your connection');
+  }
+
+  if (!data || typeof data !== 'object') {
+    throw new Error('Extraction failed — try a different file or contact support');
+  }
+
+  return data;
+}
+
+function applyRawTextFallback(tenants) {
+  const MONTHS = /\b(January|February|March|April|May|June|July|August|September|October|November|December)\s+\d{1,2},\s+\d{4}\b/i;
+  tenants.forEach(t => {
+    if (!t || !t._rawText) return;
+    if (!t.startDate) {
+      const match = t._rawText.match(MONTHS);
+      if (match) {
+        const d = new Date(match[0]);
+        if (!isNaN(d)) t.startDate = d.toISOString().split('T')[0];
+      }
+    }
+  });
+}
+
+function splitTextByTenant(extractedText, tenants) {
+  if (!extractedText || !tenants?.length) return tenants;
+
+  const text = extractedText.replace(/\s+/g, ' ');
+
+  const positions = tenants.map(t => {
+    if (!t.tenantName) return null;
+
+    const name = t.tenantName.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
+    const regex = new RegExp(name, 'i');
+    const match = text.match(regex);
+
+    if (!match) return null;
+
+    return { tenant: t, index: match.index };
+  }).filter(Boolean);
+
+  positions.sort((a, b) => a.index - b.index);
+
+  for (let i = 0; i < positions.length; i++) {
+    const start = positions[i].index;
+    const nextIndex = positions[i + 1]?.index || text.length;
+    const extendedEnd = Math.min(nextIndex + 1500, text.length);
+    positions[i].tenant._rawText = text.slice(start, extendedEnd);
+  }
+
+  return tenants;
+}
+
+function enrichLeaseData(data, extractedText) {
+  if (!extractedText) return data;
+  // Handle array response (new prompt returns [...])
+  if (Array.isArray(data)) {
+    data.forEach(item => enrichLeaseData(item, extractedText));
+    return data;
+  }
+
+  const text = extractedText.toLowerCase();
+
+  // --- SQFT (fallback)
+  if (!data.leasedSqft) {
+    const sqftMatch = extractedText.match(/([\d,]{2,6})\s*(sq\s*ft|square feet)/i);
+    if (sqftMatch) {
+      data.leasedSqft = parseInt(sqftMatch[1].replace(/,/g, ''));
+    }
+  }
+
+  // --- START DATE
+  if (!data.startDate) {
+    const startMatch = extractedText.match(
+      /(commence|commencement|start)[^\n]*?(\b\w+ \d{1,2}, \d{4}\b)/i
+    );
+    if (startMatch) {
+      data.startDate = startMatch[2];
+    }
+  }
+
+  // --- END DATE
+  if (!data.endDate) {
+    const endMatch = extractedText.match(
+      /(expire|expiration|end(?:\s+date)?|terminate)[^\n]*?(\b\w+ \d{1,2}, \d{4}\b)/i
+    );
+    if (endMatch) {
+      data.endDate = endMatch[2];
+    }
+  }
+
+  // --- TERM FALLBACK
+  if (!data.endDate && data.startDate) {
+    const termMatch = extractedText.match(/(\d+)\s*\(?\d*\)?\s*year/i);
+    if (termMatch) {
+      const years = parseInt(termMatch[1]);
+      const start = new Date(data.startDate);
+      if (!isNaN(start)) {
+        start.setFullYear(start.getFullYear() + years);
+        data.endDate = start.toLocaleDateString('en-US', {
+          month: 'short',
+          day: 'numeric',
+          year: 'numeric'
+        });
+      }
+    }
+  }
+
+  // --- START DATE ("on or about" fallback)
+  if (!data.startDate) {
+    const match = extractedText.match(/on or about ([A-Z][a-z]+ \d{1,2}, \d{4})/i);
+    if (match) data.startDate = match[1];
+  }
+
+  // FINAL fallback — always extract first real date if still missing
+  if (!data.startDate && extractedText) {
+    const dateMatch = extractedText.match(/\b(January|February|March|April|May|June|July|August|September|October|November|December)\s+\d{1,2},\s+\d{4}\b/i);
+    if (dateMatch) {
+      data.startDate = dateMatch[0];
+    }
+  }
+
+  console.log('ENRICHED DATES:', data.startDate, data.endDate);
+
+  // --- LEASE TYPE
+  if (!data.leaseType) {
+    if (/cam|common area maintenance|taxes|insurance/i.test(text)) {
+      data.leaseType = "NNN";
+    } else if (/gross/i.test(text)) {
+      data.leaseType = "Gross";
+    }
+  }
+
+  // --- CAP %
+  if (!data.capPercentage) {
+    const capMatch = extractedText.match(/(\d+(\.\d+)?)\s*%.*cap/i);
+    if (capMatch) {
+      data.capPercentage = parseFloat(capMatch[1]);
+    }
+  }
+
+  // --- EXCLUSIONS
+  if (!data.excludedCategories) {
+    const exclMatch = extractedText.match(/exclusions?\s*[:\-]?\s*(.*)/i);
+    if (exclMatch) {
+      data.excludedCategories = exclMatch[1].trim();
+    }
+  }
+
+  return data;
+}
+
+
+function normalizeTenant(d) {
+  if (!d) return d;
+  return {
+    tenant_name:         d.tenant_name         ?? d.tenantName                    ?? '',
+    leased_sqft:         d.leased_sqft         ?? d.leasedSqft                    ?? '',
+    start_date:          d.start_date          ?? d.startDate  ?? d.lease_start_date ?? '',
+    end_date:            d.end_date            ?? d.endDate    ?? d.lease_end_date   ?? '',
+    lease_type:          d.lease_type          ?? d.leaseType                     ?? '',
+    excluded_categories: d.excluded_categories ?? d.excludedCategories            ?? '',
+    cap:                 d.cap                 ?? d.capPercentage                 ?? null,
+    flags:               d.flags               ?? [],
+    confidence:          d.confidence          ?? {},
+    baseYear:            d.baseYear            ?? null,
+    unitNumber:          d.unitNumber          ?? '',
+    doc_has_dates:       d.doc_has_dates       ?? true,
+    doc_has_lease_type:  d.doc_has_lease_type  ?? true,
+    leaseExpected:       d.leaseExpected       ?? false,
+    extractionFailed:    d.extractionFailed    ?? false,
+    id:                  d.id                  ?? crypto.randomUUID(),
+    fileName:            d.fileName            ?? '',
+    lease_url:           d.lease_url           ?? null,
+    _error:              d._error              ?? null,
+  };
+}
+
+function isValidTenant(d) {
+  if (!d) return false;
+  return (
+    d.tenant_name && d.tenant_name.trim().length > 0 &&
+    d.leased_sqft != null && String(d.leased_sqft).trim().length > 0
+  );
+}
+
+
+async function extractPdfText(file) {
+  // For non-PDF files (txt, etc.) fall back to plain text read
+  if (!file.name.toLowerCase().endsWith('.pdf') && file.type !== 'application/pdf') {
+    return file.text();
+  }
+
+  const pdfjs = window['pdfjsLib'];
+  console.log('PDFJS READY:', !!window['pdfjsLib']);
+  if (!pdfjs) {
+    console.error('PDF.js not ready');
+    throw new Error('PDF.js failed to load');
+  }
+  const lib = pdfjs;
+
+  const arrayBuffer = await file.arrayBuffer();
+  const pdf = await lib.getDocument({ data: arrayBuffer }).promise;
+
+  const pages = [];
+  for (let p = 1; p <= pdf.numPages; p++) {
+    const page = await pdf.getPage(p);
+    const content = await page.getTextContent();
+    const pageText = content.items.map(item => item.str).join(' ');
+    pages.push(pageText);
+  }
+
+  return pages.join('\n\n');
+}
+
+function normalizeText(text) {
+  if (!text) return '';
+  return text
+    .replace(/\r/g, ' ')
+    .replace(/\n/g, ' ')
+    .replace(/\s+/g, ' ')
+    .replace(/([a-zA-Z])\s+([a-zA-Z])/g, '$1$2')
+    .trim();
+}
+
+function extractLeaseData(text) {
+  if (!text || typeof text !== 'string') {
+    return { start_date: '', end_date: '', lease_type: '' };
+  }
+
+  const matches = text.match(
+    /\b(\d{1,2}\/\d{1,2}\/\d{4}|\d{4}-\d{2}-\d{2}|(?:January|February|March|April|May|June|July|August|September|October|November|December)\s+\d{1,2},\s+\d{4})\b/gi
+  ) || [];
+
+  const dates = matches
+    .map(d => new Date(d))
+    .filter(d => !isNaN(d))
+    .sort((a, b) => a - b);
+
+  return {
+    start_date: dates[0]              ? dates[0].toISOString().slice(0, 10)              : '',
+    end_date:   dates.length          ? dates[dates.length - 1].toISOString().slice(0, 10) : '',
+    lease_type: /triple[\s-]?net|nnn/i.test(text) ? 'Triple Net (NNN)'
+              : /modified[\s-]?gross/i.test(text)  ? 'Modified Gross'
+              : /gross/i.test(text)                 ? 'Gross'
+              : '',
+  };
+}
+
+function getWarnings(flags) {
+  if (!Array.isArray(flags)) return [];
+  return flags.map(f => {
+    if (f === 'no_term_in_doc')        return 'No lease term found in document — please enter manually';
+    if (f === 'lease_type_missing')    return 'Lease type not specified';
+    if (f === 'missing_start_date')    return 'Missing start date';
+    if (f === 'missing_end_date')      return 'Missing end date';
+    if (f === 'approx_sqft_detected')  return 'Approximate sqft detected';
+    if (f === 'base_year_detected')    return 'Base year needs review';
+    return f;
+  });
+}
+
+function computeFlags(d) {
+  const base = [];
+  if (d.doc_has_dates === false) {
+    base.push('no_term_in_doc');
+  } else {
+    if (!d.start_date) base.push('missing_start_date');
+    if (!d.end_date)   base.push('missing_end_date');
+  }
+  if (!d.lease_type) base.push('lease_type_missing');
+  const extra = (Array.isArray(d.flags) ? d.flags : []).filter(
+    f => (f === 'approx_sqft_detected' || f === 'base_year_detected') && !base.includes(f)
+  );
+  const result = [...base, ...extra];
+  if (d.lease_type && d.lease_type !== '') return result.filter(f => f !== 'lease_type_missing');
+  return result;
+}
+
+function computeFlagsStrict(d) {
+  const base = [];
+  if (d.doc_has_dates === false) {
+    base.push('no_term_in_doc');
+  } else {
+    if (d.start_date == null) base.push('missing_start_date');
+    if (d.end_date   == null) base.push('missing_end_date');
+  }
+  if (!d.lease_type) base.push('lease_type_missing');
+  const extra = (Array.isArray(d.flags) ? d.flags : []).filter(
+    f => (f === 'approx_sqft_detected' || f === 'base_year_detected') && !base.includes(f)
+  );
+  const result = [...base, ...extra];
+  if (d.lease_type && d.lease_type !== '') return result.filter(f => f !== 'lease_type_missing');
+  return result;
+}
+
+async function callClaudeForLease(text) {
+  const messages = [{ role: 'user', content: text }];
+
+  const res = await fetch('/api/claude', {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ messages, max_tokens: 1000, system: CLAUDE_LEASE_SYSTEM }),
+  });
+
+  if (!res.ok) {
+    throw new Error(`Lease extraction failed: HTTP ${res.status}`);
+  }
+
+  const response = await res.json();
+  console.log('LEASE API RESPONSE:', response);
+
+  // Normalize: accept string, object, or array
+  let parsed = response;
+  if (typeof parsed === 'string') {
+    try {
+      parsed = JSON.parse(parsed);
+    } catch (e) {
+      console.error('[callClaudeForLease] Claude returned invalid JSON string:', parsed);
+      return null;
+    }
+  }
+  if (!Array.isArray(parsed)) {
+    parsed = [parsed];
+  }
+  parsed = parsed.filter(t => t && typeof t === 'object');
+
+  if (parsed.length === 0) {
+    console.error('[callClaudeForLease] No valid tenant objects in response');
+    return null;
+  }
+
+  const data = parsed[0];
+
+  // Normalize leased_sqft: "4,500 sqft" → 4500, null if missing
+  const leased_sqft = Number(String(data.leased_sqft || '').replace(/[^0-9]/g, '')) || null;
+
+  // Normalize dates to YYYY-MM-DD; keep original string if unparseable; null if absent
+  const toISO = val => {
+    if (!val) return null;
+    const s = String(val).trim();
+    if (/^\d{4}-\d{2}-\d{2}$/.test(s)) return s;
+    const d = new Date(s);
+    return isNaN(d) ? s : d.toISOString().split('T')[0];
+  };
+
+  // Normalize leaseType so UI always receives the expected label
+  const normalizeLeaseType = (val) => {
+    if (!val) return null;
+    const v = String(val).toLowerCase();
+    if (v.includes('nnn') || v.includes('triple')) return 'Triple Net (NNN)';
+    if (v.includes('modified'))                     return 'Modified Gross';
+    if (v.includes('gross'))                        return 'Gross';
+    return val;
+  };
+  const leaseType = normalizeLeaseType(data.leaseType || data.lease_type);
+
+  // Normalize CAM cap: "35%" → 35, "0.35" → 35, "35" → 35
+  const normalizeCap = val => {
+    if (!val) return null;
+    const n = parseFloat(String(val).replace(/[^0-9.]/g, ''));
+    if (isNaN(n)) return null;
+    return n < 1 ? Math.round(n * 100) : n;
+  };
+
+  const raw = data;
+  console.log('RAW LEASE TEXT:', text?.slice(0, 2000));
+  const cleanText = normalizeText(text);
+  console.log('CLEANED LEASE TEXT:', cleanText?.slice(0, 2000));
+  const fb = extractLeaseData(cleanText);
+
+  const resolvedName = raw.tenantName ?? raw.tenant_name ?? '';
+  const resolvedSqft = (() => {
+    const v = raw.leasedSqft ?? raw.leased_sqft ?? raw.sqft ?? raw.squareFeet ?? null;
+    if (v != null && v !== '') {
+      const n = Number(String(v).replace(/[^0-9.]/g, ''));
+      if (!isNaN(n)) return n;
+    }
+    return null;
+  })();
+  const resolvedStart = raw.startDate ?? raw.start_date ?? raw.lease_start_date ?? fb.start_date ?? '';
+  const resolvedEnd   = raw.endDate   ?? raw.end_date   ?? raw.lease_end_date   ?? fb.end_date   ?? '';
+  const resolvedType  = normalizeLeaseType(raw.leaseType ?? raw.lease_type ?? fb.lease_type) ?? '';
+
+  console.log('DATES:', resolvedStart, resolvedEnd, '(ai:', raw.startDate ?? raw.start_date, raw.endDate ?? raw.end_date, '| regex:', fb.start_date, fb.end_date, ')');
+
+  const doc_has_dates = /\b(?:\d{1,2}\/\d{1,2}\/\d{4}|\d{4}-\d{2}-\d{2}|(?:January|February|March|April|May|June|July|August|September|October|November|December)\s+\d{1,2},?\s+\d{4})\b/i.test(text);
+  const doc_has_lease_type = /triple[\s-]?net|nnn|gross|modified[\s-]?gross/i.test(text);
+
+  const finalFlags = computeFlags({ start_date: resolvedStart, end_date: resolvedEnd, lease_type: resolvedType, flags: raw.flags, doc_has_dates, doc_has_lease_type });
+
+  return normalizeTenant({
+    tenant_name:         resolvedName,
+    leased_sqft:         resolvedSqft,
+    start_date:          resolvedStart,
+    end_date:            resolvedEnd,
+    lease_type:          resolvedType,
+    cap:                 normalizeCap(raw.capPercentage ?? raw.cam_cap ?? null),
+    excluded_categories: raw.excludedCategories ?? raw.excluded_categories ?? null,
+    baseYear:            raw.baseYear ?? null,
+    confidence:          raw.confidence || {},
+    flags:               finalFlags,
+    doc_has_dates,
+    doc_has_lease_type,
+    _error:              null,
+  });
+}
+// ─── SVG icons ────────────────────────────────────────────────────────────────
+const CHECK_SVG = `<svg viewBox="0 0 12 12" width="10" height="10" fill="none" stroke="white" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round"><polyline points="2,6 5,9 10,3"/></svg>`;
+const CROSS_SVG = `<svg viewBox="0 0 12 12" width="10" height="10" stroke="white" stroke-width="2.2" stroke-linecap="round"><line x1="2" y1="2" x2="10" y2="10"/><line x1="10" y1="2" x2="2" y2="10"/></svg>`;
+
+// ─── Tenant Slots ─────────────────────────────────────────────────────────────
+
+function renderTenantSlots() {
+  const container = document.getElementById('tenantSlots');
+  container.innerHTML = '';
+  for (let i = 0; i < MAX_LEASES; i++) {
+    const slot = document.createElement('div');
+    slot.className = 'tenant-slot';
+    slot.id = `ts-${i}`;
+    slot.innerHTML = `<div class="slot-head">Tenant ${i + 1}</div>
+                      <div class="slot-body" id="tb-${i}"></div>`;
+    container.appendChild(slot);
+    renderTenantUploadZone(i);
+  }
+}
+
+function renderTenantUploadZone(i) {
+  const body = document.getElementById(`tb-${i}`);
+  const zone = document.createElement('div');
+  zone.className = 'upload-zone';
+
+  const inp = document.createElement('input');
+  inp.type   = 'file';
+  inp.accept = '.pdf,application/pdf';
+  inp.addEventListener('change', e => {
+    if (e.target.files[0]) handleLease(i, e.target.files[0]);
+  });
+
+  zone.innerHTML = `<div class="uz-icon">📄</div>
+                    <div class="uz-label">Upload Lease</div>
+                    <div class="uz-sub">PDF only</div>`;
+  zone.appendChild(inp);
+  body.innerHTML = '';
+  body.appendChild(zone);
+}
+
+async function handleLease(i, file) {
+  const body = document.getElementById(`tb-${i}`);
+  body.innerHTML = `<div class="spinner-wrap">
+    <div class="spinner"></div>
+    <div class="spinner-label">AI reading lease…</div>
+  </div>`;
+
+  const property = currentProperty();
+  if (!property) { renderTenantError(i, 'No property selected'); return; }
+
+  // Hard reset before any processing
+  property.tenants = [];
+  tenantData.splice(0, tenantData.length, null, null, null);
+
+  try {
+    const leaseText  = await extractPdfText(file);
+    const extracted  = await callClaudeForLease(leaseText);
+    if (!extracted) throw new Error('Could not extract lease fields');
+    const normalized = normalizeTenant(extracted);
+    if (!isValidTenant(normalized)) throw new Error('Extracted tenant has no usable fields');
+
+    const leaseUrl = await uploadLeaseToStorage(file, property.id, normalized.id);
+    tenantData[i] = { ...normalized, leaseFile: file, leaseExpected: true, fileName: file.name, lease_url: leaseUrl };
+    storeLeaseFile(normalized.id, file);
+    console.log("RAW EXTRACTED TENANTS:", JSON.stringify(tenantData.filter(t => t !== null), null, 2));
+    renderTenantFields(i);
+    checkSqftValidation();
+
+    console.log('TENANTS BEFORE DEDUPE:', tenantData.filter(t => t !== null));
+    const deduped = dedupeTenants(tenantData.filter(t => t !== null));
+    console.log('TENANTS AFTER DEDUPE:', deduped);
+    property.tenants = deduped;
+    console.log("AFTER DEDUPE TENANTS:", JSON.stringify(property.tenants, null, 2));
+    console.log("FINAL TENANTS FOR RENDER:", JSON.stringify(property.tenants, null, 2));
+
+    console.log('CURRENT PROPERTY ID:', property.id);
+    await saveProperty(property);
+  } catch (err) {
+    renderTenantError(i, err.message);
+  }
+}
+
+// ─── Sqft Validation ─────────────────────────────────────────────────────────
+
+function validateTotalSqFt(property, newLease) {
+  const totalSqFt = parseFloat(property.totalSqFt || property.totalSqft) || 0;
+  if (!totalSqFt) return { valid: true, message: null };
+
+  const existingTotal = (property.leases || [])
+    .filter(l => l.tenantName !== (newLease?.tenantName))
+    .reduce((s, l) => s + (parseSqft(l.sqFt || l.leasedSqft)), 0);
+
+  const newTotal = existingTotal + parseSqft(newLease?.sqFt || newLease?.leasedSqft || 0);
+
+  if (newTotal > totalSqFt) {
+    return {
+      valid: false,
+      message: `Total tenant square footage (${newTotal.toLocaleString()} sqft) exceeds property total (${totalSqFt.toLocaleString()} sqft). Please adjust.`,
+    };
+  }
+  return { valid: true, message: null };
+}
+
+function checkSqftValidation() {
+  const prop = currentProperty();
+  console.log('CURRENT PROPERTY:', prop);
+  const totalSqFt = Number(prop?.totalSqft) || 0;
+  if (!totalSqFt) { window._sqftInvalid = false; clearSqftBanner(); return true; }
+
+  const usedSqFt = tenantData.filter(t => t).reduce((s, t) => s + parseSqft(t.leased_sqft), 0);
+  console.log('SQFT CHECK:', { usedSqFt, totalSqFt });
+
+  if (!usedSqFt) { window._sqftInvalid = false; clearSqftBanner(); return true; }
+
+  window._sqftInvalid = usedSqFt > totalSqFt;
+
+  const used  = usedSqFt.toLocaleString();
+  const total = totalSqFt.toLocaleString();
+
+  if (usedSqFt > totalSqFt) {
+    showSqftBanner(`⚠ Total leased (${used} sqft) exceeds building total (${total} sqft). Please adjust tenant sizes.`, 'over');
+  } else if (usedSqFt < totalSqFt) {
+    showSqftBanner(`⚠ Total leased (${used} sqft) is less than building total (${total} sqft). Some space may be unaccounted for.`, 'under');
+  } else {
+    window._sqftInvalid = false;
+    clearSqftBanner();
+  }
+  return !window._sqftInvalid;
+}
+
+function runCamValidation() {
+  const prop = currentProperty();
+
+  const validTenants = getValidTenants();
+
+  const tenantTotal = validTenants.reduce(
+    (sum, t) => sum + (Number(t.leased_sqft) || 0),
+    0
+  );
+
+  const propertyTotal = Number(prop?.totalSqft) || 0;
+
+  console.log('CAM VALIDATION CHECK:', { tenantTotal, propertyTotal });
+
+  const isValid = tenantTotal <= propertyTotal;
+
+  window._sqftInvalid = !isValid;
+
+  if (!isValid) {
+    console.log('❌ CAM paused — mismatch');
+    return;
+  }
+
+  console.log('✅ CAM running');
+  calculateCAM?.();
+}
+
+function getValidTenants() {
+  return (currentProperty()?.tenants || []).filter(t =>
+    t &&
+    t.tenant_name &&
+    Number(t.leased_sqft) > 0 &&
+    !t.extractionFailed
+  );
+}
+
+function renderFailedTenants(tenants) {
+  const el = document.getElementById('bulkResults');
+  if (!el || !tenants.length) return;
+  const srcTenants = currentProperty()?.tenants || tenantData;
+  const rows = tenants.map((d) => {
+    const i = srcTenants.findIndex(t => t?.id && t.id === d?.id);
+    if (i === -1) return '';
+    return `
+      <div class="bulk-tenant-row has-error" id="btr-failed-${i}">
+        <div class="bulk-tenant-summary">
+          <span class="bulk-t-status">❌</span>
+          <span class="bulk-t-name">${esc(d.fileName || d.tenant_name || 'Unknown')}</span>
+          <span class="bulk-t-meta">Extraction failed — tap to re-upload</span>
+          <button class="view-lease-btn" style="margin-left:0;color:#f97316;" onclick="retryExtraction(${i})">&#x21BA; Retry</button>
+          <button class="bulk-t-remove" onclick="event.stopPropagation();removeBulkTenant(${i})">Remove</button>
+        </div>
+      </div>`;
+  }).join('');
+  el.insertAdjacentHTML('beforeend', `
+    <div class="bulk-results-head" style="margin-top:16px;border-top:1px solid rgba(239,68,68,0.2);padding-top:12px;">
+      <h3 style="color:#f87171;">Needs Attention (${tenants.length})</h3>
+    </div>
+    ${rows}`);
+}
+
+function updatePropertySqft(val) {
+  const prop = currentProperty();
+  if (!prop) return;
+
+  prop.totalSqft = Number(val) || 0;
+
+  console.log('UPDATED SQFT:', prop.totalSqft);
+
+  saveProperty(prop);
+
+  checkSqftValidation();
+  runCamValidation();
+
+  renderProperty(prop);
+}
+
+function showSqftBanner(msg, severity) {
+  const el = document.getElementById('sqft-error');
+  if (!el) { console.warn('sqft-error element not found'); return; }
+  el.innerText = msg;
+  el.dataset.severity = severity;
+  el.classList.remove('hidden');
+}
+
+function clearSqftBanner() {
+  const el = document.getElementById('sqft-error');
+  if (!el) return;
+  el.innerText = '';
+  el.classList.add('hidden');
+  delete el.dataset.severity;
+}
+
+function toInputDate(val) {
+  if (!val) return '';
+  if (/^\d{4}-\d{2}-\d{2}$/.test(val)) return val;
+  const d = new Date(val);
+  if (!isNaN(d)) return d.toISOString().slice(0, 10);
+  const m = val.match(/^(\d{1,2})\/(\d{1,2})\/(\d{4})$/);
+  if (m) return `${m[3]}-${m[1].padStart(2, '0')}-${m[2].padStart(2, '0')}`;
+  return '';
+}
+
+function renderTenantFields(i) {
+  const d = tenantData[i];
+  const flags = computeFlagsStrict(d);
+  const body = document.getElementById(`tb-${i}`);
+  body.innerHTML = `
+    <div class="extracted">
+      <div class="status-row ok">
+        <span class="status-dot ok">${CHECK_SVG}</span>
+        Fields extracted — review and edit below
+        <button class="re-btn" onclick="resetTenant(${i})">Re-upload</button>
+      </div>
+      ${(() => { const w = getWarnings(flags); return w.length ? `<div class="rc-flags"><div class="rc-flags-title">&#x26A0;&#xFE0F; Needs Review</div>${w.map(m => `<div class="rc-flag-item">${m}</div>`).join('')}</div>` : ''; })()}
+      ${d.leaseExpected
+        ? (d.leaseFile instanceof File || d.lease_url)
+          ? `<button class="action-btn" onclick="openLeaseModalFromFile(${i})">&#x1F4C4; View Lease</button>`
+          : `<div class="lease-missing-note">Lease document not loaded — please re-upload to view</div>`
+        : ''}
+      <div class="field-row">
+        <div class="field">
+          <label>Tenant Name</label>
+          <input type="text" value="${esc(d.tenant_name || '')}"
+            onfocus="isEditingField=true"
+            onblur="handleFieldBlur(${i},'tenant_name',this.value)"/>
+        </div>
+        <div class="field">
+          <label>Leased Sqft</label>
+          <input type="number" value="${d.leased_sqft ?? ''}"
+            onfocus="isEditingField=true"
+            onblur="handleFieldBlur(${i},'leased_sqft',this.value);checkSqftValidation()"/>
+        </div>
+      </div>
+      <div class="field-row">
+        <div class="field">
+          <label>Lease Start Date</label>
+          <input type="date" value="${toInputDate(d.start_date)}"
+            onfocus="isEditingField=true"
+            onblur="handleFieldBlur(${i},'start_date',this.value)"/>
+        </div>
+        <div class="field">
+          <label>Lease End Date</label>
+          <input type="date" value="${toInputDate(d.end_date)}"
+            onfocus="isEditingField=true"
+            onblur="handleFieldBlur(${i},'end_date',this.value)"/>
+        </div>
+      </div>
+      <div class="field-row">
+        <div class="field">
+          <label>Lease Type</label>
+          <select onchange="handleFieldBlur(${i},'lease_type',this.value||null)">
+            <option value="">Select lease type</option>
+            <option value="Triple Net (NNN)"${d.lease_type === 'Triple Net (NNN)' ? ' selected' : ''}>Triple Net (NNN)</option>
+            <option value="Gross"${d.lease_type === 'Gross' ? ' selected' : ''}>Gross</option>
+            <option value="Modified Gross"${d.lease_type === 'Modified Gross' ? ' selected' : ''}>Modified Gross</option>
+          </select>
+        </div>
+        <div class="field">
+          <label>Excluded Categories (comma-separated)</label>
+          <input type="text" value="${esc(d.excluded_categories || '')}"
+            onfocus="isEditingField=true"
+            onblur="handleFieldBlur(${i},'excluded_categories',this.value)"/>
+        </div>
+      </div>
+    </div>`;
+}
+
+function renderTenantError(i, msg) {
+  const body = document.getElementById(`tb-${i}`);
+  body.innerHTML = `
+    <div class="extracted">
+      <div class="status-row err">
+        <span class="status-dot err">${CROSS_SVG}</span>
+        Extraction failed: ${esc(msg)}
+        <button class="re-btn" onclick="resetTenant(${i})">Try again</button>
+      </div>
+    </div>`;
+}
+
+function resetTenant(i) {
+  const prop = currentProperty();
+  if (prop?.tenants) prop.tenants[i] = null;
+  tenantData[i] = null;
+  renderTenantUploadZone(i);
+  checkSqftValidation();
+}
+
+// ─── Lease Tab Switching ──────────────────────────────────────────────────────
+
+function switchLeaseTab(tab) {
+  document.getElementById('lTabBulk').classList.toggle('active', tab === 'bulk');
+  document.getElementById('lTabSingle').classList.toggle('active', tab === 'single');
+  document.getElementById('leasePanelBulk').style.display   = tab === 'bulk'   ? 'block' : 'none';
+  document.getElementById('leasePanelSingle').style.display = tab === 'single' ? 'block' : 'none';
+}
+
+// ─── GL Excel Upload ─────────────────────────────────────────────────────────
+
+const GL_COL_ALIASES = {
+  date:        ['posting date','post date','gl date','trans date','transaction date',
+                 'entry date','doc date','voucher date','invoice date','check date',
+                 'period date','trx date','value date','effective date','pay date',
+                 'date','period','posted'],
+  vendor:      ['vendor name','payee name','vendor/payee','pay to','paid to','remit to',
+                 'check payee','vend name','supplier name','payable to','merchant',
+                 'counterparty','company name','vendor','payee','supplier','name'],
+  description: ['gl description','account description','transaction description',
+                 'invoice description','line description','trans description',
+                 'item description','description','memo','narration','reference',
+                 'remarks','particulars','notes','detail','note','comment','purpose',
+                 'explanation','desc'],
+  category:    ['account name','gl account','gl code','account code','account number',
+                 'gl acct','expense type','expense category','gl category','cost type',
+                 'expense acct','account type','natural account','object code',
+                 'cost center','sub-account','category','account','acct','class',
+                 'dept','department','type'],
+  amount:      ['net amount','total amount','transaction amount','payment amount',
+                 'expense amount','invoice amount','check amount','gross amount',
+                 'amount','total','net','charge','expense','cost','value'],
+  debit:       ['debit amount','dr amount','debit total','debit','dr'],
+  credit:      ['credit amount','cr amount','credit total','credit','cr'],
+};
+
+const GL_CAT_KEYWORDS = {
+  landscaping: ['landscap','lawn','grass','garden','tree','plant','irrigation','mulch',
+                'fertiliz','turf','shrub','bush','groundskeep','exterior','sprinkler',
+                'mow','prun','leaf','weed','sod','aerat'],
+  snow:        ['snow','ice removal','salt','plow','winter removal','de-ice','deice',
+                'sand','ice melt','winter service','deicer','salting'],
+  repairs:     ['repair','maintenance','maint','hvac','roof','plumb','electric',
+                'replac','paint','patch','caulk','seal','restore','renovate','rebuild',
+                'work order','handyman','labor','capital improve','fix','service call',
+                'ext repair','bldg repair','fac repair','general repair','preventive'],
+  utilities:   ['utilit','electric','power','water','gas','sewer','trash','waste',
+                'garbage','recycle','telecom','internet','phone','cable','fuel','oil',
+                'natural gas','propane','electric bill','water bill'],
+  janitorial:  ['janitor','clean','custodial','sweep','mop','sanitiz','disinfect',
+                'porter','floor care','window wash','carpet','strip wax','pressure wash',
+                'restroom','lavatory','janitorial supply','cleaning supply','building clean'],
+  security:    ['securit','guard','patrol','alarm','cctv','camera','monitor',
+                'access control','badge','surveillance','fire alarm','sprinkler system',
+                'smoke','locksmith','security system','security service'],
+  management:  ['mgmt fee','management fee','admin fee','pm fee','property mgmt',
+                'property management','manage','admin','accounting','office','legal',
+                'insurance','professional','audit','overhead','administrative'],
+};
+
+// Fuzzy header match — exact, contains, or normalized equality
+function glFuzzyMatch(rawHeader, aliases) {
+  const h = rawHeader.toLowerCase().replace(/[^a-z0-9 ]/g, ' ').replace(/\s+/g, ' ').trim();
+  for (const a of aliases) {
+    const an = a.toLowerCase().replace(/[^a-z0-9 ]/g, ' ').replace(/\s+/g, ' ').trim();
+    if (h === an || h.includes(an) || an.includes(h)) return true;
+  }
+  return false;
+}
+
+function detectGLCategory(text) {
+  if (!text) return 'other';
+  const t = text.toLowerCase();
+  for (const [cat, kws] of Object.entries(GL_CAT_KEYWORDS)) {
+    if (kws.some(k => t.includes(k))) return cat;
+  }
+  return 'other';
+}
+
+// Parse a GL amount value — handles $, commas, (parentheses), trailing -
+function parseGLAmount(v) {
+  if (v === null || v === undefined || v === '') return 0;
+  if (typeof v === 'number') return v;
+  const s = String(v).trim();
+  if (!s) return 0;
+  // Detect accounting negative: (1,234.56) or (1234.56)
+  const isParenNeg = /^\(.*\)$/.test(s);
+  // Strip currency symbol, commas, spaces, parentheses, $
+  const clean = s.replace(/[$,\s()]/g, '');
+  // Handle trailing minus sign: 1234.56-
+  const trailingMinus = clean.endsWith('-');
+  const digits = trailingMinus ? clean.slice(0, -1) : clean;
+  const n = parseFloat(digits);
+  if (isNaN(n)) return 0;
+  return (isParenNeg || trailingMinus) ? -Math.abs(n) : n;
+}
+
+function parseGLDate(val) {
+  if (!val && val !== 0) return '';
+  if (typeof val === 'number') {
+    try {
+      const d = XLSX.SSF.parse_date_code(val);
+      return `${d.y}-${String(d.m).padStart(2,'0')}-${String(d.d).padStart(2,'0')}`;
+    } catch { return String(val); }
+  }
+  const s = String(val).trim();
+  // Try to normalize common date formats: M/D/YYYY, M-D-YYYY, YYYY/MM/DD
+  const mdy = s.match(/^(\d{1,2})[\/\-](\d{1,2})[\/\-](\d{2,4})$/);
+  if (mdy) {
+    const yr = mdy[3].length === 2 ? '20' + mdy[3] : mdy[3];
+    return `${yr}-${mdy[1].padStart(2,'0')}-${mdy[2].padStart(2,'0')}`;
+  }
+  return s;
+}
+
+function handleGLUpload(input) {
+  const file = input.files && input.files[0];
+  if (!file) return;
+
+  if (!file.name.toLowerCase().endsWith('.xlsx')) {
+    alert('Please select an .xlsx file.');
+    input.value = '';
+    return;
+  }
+
+  const statusEl    = document.getElementById('glStatus');
+  const resultsEl   = document.getElementById('glResults');
+  const importBarEl = document.getElementById('glImportBar');
+
+  statusEl.style.display = 'block';
+  statusEl.innerHTML = `<div class="spinner-wrap"><div class="spinner"></div>
+    <div class="spinner-label">Reading ${esc(file.name)}&hellip;</div></div>`;
+  resultsEl.innerHTML   = '';
+  importBarEl.innerHTML = '';
+  glData = [];
+
+  const reader = new FileReader();
+  reader.onload = function(e) {
+    try {
+      const wb   = XLSX.read(new Uint8Array(e.target.result), { type: 'array', cellDates: false });
+      const ws   = wb.Sheets[wb.SheetNames[0]];
+      const rows = XLSX.utils.sheet_to_json(ws, { header: 1, defval: '' });
+
+      if (rows.length < 2) {
+        statusEl.innerHTML = `<div class="err-banner">The spreadsheet appears empty or has no data rows.</div>`;
+        return;
+      }
+
+      // ── Find header row ─────────────────────────────────────────────────
+      // Score each of the first 15 rows by how many cells match a known alias.
+      // The row with the most matches is the header.
+      let hdrIdx = 0, bestScore = 0;
+      for (let i = 0; i < Math.min(15, rows.length); i++) {
+        const row = rows[i];
+        const nonEmpty = row.filter(c => String(c).trim() !== '');
+        if (nonEmpty.length < 2) continue;
+        let score = 0;
+        for (const cell of row) {
+          const h = String(cell || '');
+          if (!h.trim()) continue;
+          for (const aliases of Object.values(GL_COL_ALIASES)) {
+            if (glFuzzyMatch(h, aliases)) { score++; break; }
+          }
+        }
+        if (score > bestScore) { bestScore = score; hdrIdx = i; }
+        if (score >= 3) break; // Good enough — stop early
+      }
+      const headers = rows[hdrIdx].map(h => String(h || ''));
+
+      // ── Detect column indices ───────────────────────────────────────────
+      const ci = { date: -1, vendor: -1, description: -1, category: -1,
+                   amount: -1, debit: -1, credit: -1 };
+      headers.forEach((h, i) => {
+        for (const [field, aliases] of Object.entries(GL_COL_ALIASES)) {
+          if (ci[field] === -1 && glFuzzyMatch(h, aliases)) ci[field] = i;
+        }
+      });
+
+      // Resolve amount column: prefer explicit amount, then debit, then scan for numbers
+      let amtMode = 'single'; // single | debit | debit-credit
+      if (ci.amount === -1 && ci.debit >= 0) {
+        ci.amount = ci.debit;
+        amtMode = ci.credit >= 0 ? 'debit-credit' : 'debit';
+      }
+      if (ci.amount === -1) {
+        // Scan first several data rows for the first column that looks numeric
+        for (let r = hdrIdx + 1; r < Math.min(hdrIdx + 6, rows.length); r++) {
+          rows[r].forEach((v, i) => {
+            if (ci.amount === -1 && i !== ci.date && i !== ci.vendor &&
+                i !== ci.description && i !== ci.category) {
+              const n = parseGLAmount(v);
+              if (n > 0) ci.amount = i;
+            }
+          });
+          if (ci.amount !== -1) break;
+        }
+      }
+
+      if (ci.amount === -1) {
+        statusEl.innerHTML = `<div class="err-banner">Could not detect an Amount column.
+          Headers found: <em>${headers.filter(Boolean).join(', ') || 'none'}</em></div>`;
+        return;
+      }
+
+      // Confidence scores based on detection quality
+      const vendorConf = ci.vendor >= 0 ? 92 : (ci.description >= 0 ? 72 : 50);
+      const dateConf   = ci.date   >= 0 ? 92 : 40;
+      const catFromCol = ci.category >= 0;
+      const vendorCol  = ci.vendor >= 0 ? ci.vendor : ci.description;
+
+      // ── Parse data rows ─────────────────────────────────────────────────
+      for (let i = hdrIdx + 1; i < rows.length; i++) {
+        const row = rows[i];
+
+        // Skip blank rows (fewer than 2 non-empty cells)
+        if (row.filter(c => String(c).trim() !== '').length < 2) continue;
+
+        // Compute net amount
+        let amt = parseGLAmount(row[ci.amount]);
+        if (amtMode === 'debit-credit' && ci.credit >= 0) {
+          const cr = parseGLAmount(row[ci.credit]);
+          amt = amt - cr; // net: debit minus credit
+        }
+        if (amt <= 0) continue; // skip zero / net-credit / blank rows
+
+        const vendor  = vendorCol  >= 0 ? String(row[vendorCol]        || '').trim() : '';
+        const desc    = ci.description >= 0 ? String(row[ci.description] || '').trim() : '';
+        const catRaw  = ci.category >= 0 ? String(row[ci.category]     || '').trim() : '';
+        const dateVal = ci.date     >= 0 ? parseGLDate(row[ci.date]) : '';
+
+        if (!vendor && !desc) continue; // fully blank text row — skip
+
+        // Categorize from GL account/description/vendor, in order of reliability
+        const catText  = catRaw || desc || vendor;
+        const category = detectGLCategory(catText);
+        const catConf  = catFromCol
+          ? (category !== 'other' ? 85 : 65)   // column present → higher baseline
+          : (category !== 'other' ? 72 : 42);   // inferred from text
+
+        glData.push({
+          date:     dateVal,
+          vendor:   vendor || desc,
+          category,
+          amount:   amt,
+          confidence: { vendor: vendorConf, date: dateConf, amount: 95, category: catConf },
+          _include: true,
+        });
+      }
+
+      if (!glData.length) {
+        statusEl.innerHTML = `<div class="err-banner">No valid expense rows found.
+          Ensure the file has positive amounts and vendor or description data.</div>`;
+        return;
+      }
+
+      const total = glData.reduce((s, r) => s + r.amount, 0);
+      statusEl.innerHTML = `
+        <div class="status-row ok" style="margin:0 0 2px;">
+          <div class="status-dot ok"><svg width="10" height="10" viewBox="0 0 10 10">
+            <polyline points="1.5,5 4,7.5 8.5,2.5" fill="none" stroke="#fff" stroke-width="1.8" stroke-linecap="round"/>
+          </svg></div>
+          <span>Parsed <strong>${glData.length} GL entries</strong> from
+            <em>${esc(file.name)}</em> &mdash; total <strong>${fmt(total)}</strong></span>
+        </div>`;
+
+      renderGLResults();
+    } catch (err) {
+      statusEl.innerHTML = `<div class="err-banner">Error reading file: ${esc(String(err.message || err))}</div>`;
+    }
+  };
+  reader.readAsArrayBuffer(file);
+}
+
+function renderGLResults() {
+  const container   = document.getElementById('glResults');
+  const importBarEl = document.getElementById('glImportBar');
+  if (!glData.length) { container.innerHTML = ''; importBarEl.innerHTML = ''; return; }
+
+  const included = glData.filter(r => r._include).length;
+  const total    = glData.filter(r => r._include).reduce((s, r) => s + r.amount, 0);
+
+  const catOpts = CATEGORIES.map(c => `<option value="${c}">${c}</option>`).join('');
+
+  const rowsHtml = glData.map((r, i) => {
+    const overall = Math.min(r.confidence.vendor, r.confidence.amount, r.confidence.category);
+    const opts    = CATEGORIES.map(c =>
+      `<option value="${c}"${r.category === c ? ' selected' : ''}>${c}</option>`
+    ).join('');
+    return `<tr class="${r._include ? '' : 'gl-row-excluded'}" id="glr-${i}">
+      <td class="gl-td gl-td-cb">
+        <input type="checkbox" ${r._include ? 'checked' : ''}
+          onchange="glData[${i}]._include=this.checked;refreshGLFooter();
+            document.getElementById('glr-${i}').className=this.checked?'':'gl-row-excluded';" />
+      </td>
+      <td class="gl-td gl-td-date">${esc(cleanHTML(r.date || '—'))}</td>
+      <td class="gl-td">${esc(cleanHTML(r.vendor))}</td>
+      <td class="gl-td">
+        <select class="yardi-cat-sel" onchange="glData[${i}].category=this.value">${opts}</select>
+      </td>
+      <td class="gl-td gl-td-amt">${fmt(r.amount)}</td>
+      <td class="gl-td">${confidenceBadge(overall)}</td>
+    </tr>`;
+  }).join('');
+
+  container.innerHTML = `
+    <div class="bulk-results-head" style="margin-top:16px;">
+      <h3>Extracted GL Items (${glData.length})</h3>
+      <button class="bulk-clear-btn" onclick="clearGLData()">&#x2715; Clear</button>
+    </div>
+    <div class="yardi-table-scroll" style="margin-top:10px;">
+      <table class="gl-table">
+        <thead><tr>
+          <th class="gl-th gl-th-cb"></th>
+          <th class="gl-th">Date</th>
+          <th class="gl-th">Vendor / Description</th>
+          <th class="gl-th">Category</th>
+          <th class="gl-th gl-th-amt">Amount</th>
+          <th class="gl-th">Confidence</th>
+        </tr></thead>
+        <tbody>${rowsHtml}</tbody>
+      </table>
+    </div>
+    <div class="gl-total-row">
+      <span id="glIncludedCount">${included} of ${glData.length} items selected</span>
+      <span id="glTotalAmt">Total: <strong>${fmt(total)}</strong></span>
+    </div>`;
+
+  importBarEl.innerHTML = `
+    <button class="gl-import-btn" onclick="importGLToInvoices()">
+      &#x2B07;&nbsp; Import ${included} Selected GL Items into Invoice List
+    </button>`;
+}
+
+function refreshGLFooter() {
+  const included = glData.filter(r => r._include).length;
+  const total    = glData.filter(r => r._include).reduce((s, r) => s + r.amount, 0);
+  const cEl = document.getElementById('glIncludedCount');
+  const tEl = document.getElementById('glTotalAmt');
+  if (cEl) cEl.textContent = `${included} of ${glData.length} items selected`;
+  if (tEl) tEl.innerHTML  = `Total: <strong>${fmt(total)}</strong>`;
+  const btn = document.querySelector('.gl-import-btn');
+  if (btn) btn.textContent = `⬇ Import ${included} Selected GL Items into Invoice List`;
+}
+
+async function importGLToInvoices() {
+  const items = glData.filter(r => r._include);
+  if (!items.length) { alert('No GL items are selected.'); return; }
+
+  items.forEach(r => {
+    invoiceData.push({
+      vendorName:  cleanHTML(r.vendor),
+      amount:      r.amount,
+      category:    r.category,
+      invoiceDate: cleanHTML(r.date),
+      confidence: {
+        vendorName:  r.confidence.vendor,
+        amount:      r.confidence.amount,
+        category:    r.confidence.category,
+        invoiceDate: r.confidence.date,
+      },
+      _error: null,
+    });
+  });
+
+  renderInvResults();
+
+  const property = currentProperty();
+  if (!property) throw new Error('No property selected');
+  const existing = { invoices: Array.from(property.invoices || []) };
+  console.log('EXISTING DATA:', existing);
+  // invoiceData already has existing invoices (restored on selectProperty) + new GL items.
+  property.invoices = Array.from(invoiceData);
+  console.log('CURRENT PROPERTY ID:', property.id);
+  console.log('SAVING DATA:', property);
+  await saveProperty(property);
+
+  const bar = document.getElementById('glImportBar');
+  bar.innerHTML = `
+    <div class="status-row ok" style="margin:10px 0 0;">
+      <div class="status-dot ok"><svg width="10" height="10" viewBox="0 0 10 10">
+        <polyline points="1.5,5 4,7.5 8.5,2.5" fill="none" stroke="#fff" stroke-width="1.8" stroke-linecap="round"/>
+      </svg></div>
+      <span><strong>${items.length} GL items imported</strong> to Invoice List &mdash;
+        review below, then click <em>Calculate CAM Charges</em>.</span>
+    </div>`;
+
+  // Scroll to invoice results
+  setTimeout(() => {
+    const el = document.getElementById('invResults');
+    if (el && el.innerHTML) el.scrollIntoView({ behavior: 'smooth', block: 'start' });
+  }, 120);
+}
+
+function clearGLData() {
+  glData = [];
+  document.getElementById('glResults').innerHTML   = '';
+  document.getElementById('glImportBar').innerHTML = '';
+  document.getElementById('glStatus').style.display = 'none';
+  document.getElementById('glStatus').innerHTML    = '';
+  document.getElementById('glFileInput').value     = '';
+}
+
+// ─── Upload Merge Helpers ─────────────────────────────────────────────────────
+// New upload replaces existing tenant with the same name; others are kept.
+function mergeTenantsDedup(existing, incoming) {
+  const newNames = new Set(
+    incoming.filter(t => t.tenant_name).map(t => t.tenant_name.trim().toLowerCase())
+  );
+  const kept = existing.filter(
+    t => !t.tenant_name || !newNames.has(t.tenant_name.trim().toLowerCase())
+  );
+  return [...kept, ...incoming];
+}
+
+function dedupeTenants(arr) {
+  const map = new Map();
+  for (const t of arr) {
+    const key = (t.tenant_name || '').toLowerCase().replace(/[^\w\s]/g, '').replace(/\s+/g, ' ').trim();
+    if (!key) continue;
+    if (!map.has(key)) map.set(key, t);
+  }
+  return Array.from(map.values());
+}
+
+// Appends incoming invoices that don't already exist by vendor+amount+date.
+function mergeInvoicesDedup(existing, incoming) {
+  const seen = new Set(
+    existing.map(inv =>
+      `${(inv.vendorName || '').toLowerCase()}|${inv.amount}|${inv.invoiceDate || ''}`
+    )
+  );
+  const novel = incoming.filter(inv => {
+    const key = `${(inv.vendorName || '').toLowerCase()}|${inv.amount}|${inv.invoiceDate || ''}`;
+    return !seen.has(key);
+  });
+  return [...existing, ...novel];
+}
+
+// ─── Bulk Lease Upload ────────────────────────────────────────────────────────
+
+async function handleBulkLeases(fileList) {
+  console.log('[Mainstreet] handleBulkLeases STARTED');
+  if (!fileList || fileList.length === 0) return;
+
+  const property = currentProperty();
+  if (!property) throw new Error('No property selected');
+
+  // Hard reset before any processing
+  property.tenants = [];
+  tenantData.splice(0, tenantData.length);
+
+  const files = Array.from(fileList);
+  const total = files.length;
+
+  const prog    = document.getElementById('bulkProgress');
+  const results = document.getElementById('bulkResults');
+  results.innerHTML = '';
+  prog.style.display = 'block';
+  document.getElementById('bulkLeaseInput').value = '';
+
+  let completed = 0;
+  const _progUpdate = () => {
+    const pct = Math.round((completed / total) * 100);
+    prog.innerHTML = `
+      <div class="bulk-progress-wrap">
+        <div class="bulk-progress-label">Processing leases… ${completed} of ${total} done</div>
+        <div class="bulk-progress-track">
+          <div class="bulk-progress-fill" style="width:${pct}%"></div>
+        </div>
+      </div>`;
+  };
+  _progUpdate();
+
+  await Promise.all(files.map(async (file) => {
+    const tenantId = crypto.randomUUID();
+
+    let extracted = null;
+    try {
+      const leaseText = await extractPdfText(file);
+      extracted = await callClaudeForLease(leaseText);
+    } catch (err) {
+      console.error('[handleBulkLeases] extraction failed:', file.name, err);
+    }
+
+    const leaseUrl = await uploadLeaseToStorage(file, property.id, tenantId);
+
+    const isValid = extracted && extracted.tenant_name;
+    if (!isValid) console.log('FAILED LEASE:', file.name);
+    const tenant = {
+      ...(isValid
+        ? normalizeTenant(extracted)
+        : { tenant_name: file.name.replace(/\.pdf$/i, ''), _error: 'Could not extract tenant fields' }),
+      leaseFile:        file,
+      leaseExpected:    true,
+      fileName:         file.name,
+      lease_url:        leaseUrl,
+      extractionFailed: !isValid,
+      id:               tenantId,
+    };
+    tenantData.push(tenant);
+    storeLeaseFile(tenantId, file);
+
+    completed++;
+    _progUpdate();
+  }));
+
+  prog.innerHTML = `
+    <div class="bulk-progress-wrap">
+      <div class="bulk-progress-label">&#x2713; ${total} lease${total !== 1 ? 's' : ''} processed — review and edit below</div>
+      <div class="bulk-progress-track">
+        <div class="bulk-progress-fill" style="width:100%"></div>
+      </div>
+    </div>`;
+
+  console.log("FINAL TENANTS:", tenantData.map(t => ({
+    name: t.tenant_name, hasFile: !!t.leaseFile, file: t.fileName,
+  })));
+  console.log("RAW EXTRACTED TENANTS:", JSON.stringify(tenantData, null, 2));
+  console.log('TENANTS BEFORE DEDUPE:', tenantData);
+  const deduped = dedupeTenants(tenantData);
+  console.log('TENANTS AFTER DEDUPE:', deduped);
+  property.tenants = deduped;
+  console.log("AFTER DEDUPE TENANTS:", JSON.stringify(property.tenants, null, 2));
+  console.log("FINAL TENANTS FOR RENDER:", JSON.stringify(property.tenants, null, 2));
+
+  renderBulkResults();
+  checkSqftValidation();
+
+  console.log('CURRENT PROPERTY ID:', property.id);
+  await saveProperty(property);
+}
+
+function updateTenantField(index, field, value) {
+  // Primary write: property.tenants by stable id
+  const prop = currentProperty();
+  const td = tenantData[index];
+  if (prop?.tenants && td?.id) {
+    const pt = prop.tenants.find(t => t?.id === td.id);
+    if (pt) pt[field] = value;
+    else if (prop.tenants[index]) prop.tenants[index][field] = value;
+  }
+  // Mirror: keep tenantData in sync as working buffer
+  if (td) td[field] = value;
+
+  // Auto-refresh results panel — only after editing is complete (blur), not while typing
+  if (lastResults.length && !isEditingField && ['lease_type', 'leased_sqft', 'start_date', 'end_date', 'excluded_categories'].includes(field)) {
+    runAllocation();
+  }
+}
+
+function handleFieldBlur(index, field, value) {
+  isEditingField = false;
+  updateTenantField(index, field, value);
+}
+
+function renderBulkResults() {
+  const el = document.getElementById('bulkResults');
+  el.innerHTML = '';
+  el.scrollTop = 0;
+
+  // Single source of truth: property.tenants
+  const propTenants = currentProperty()?.tenants || [];
+
+  // Carry over leaseFile blobs (not serializable, never in property.tenants)
+  const blobById = Object.fromEntries(
+    tenantData.filter(t => t?.id && t.leaseFile instanceof File).map(t => [t.id, t.leaseFile])
+  );
+
+  // Build render list: only valid objects, blobs merged back in
+  const tenants = propTenants
+    .filter(t => t && typeof t === 'object')
+    .map(t => (t?.id && blobById[t.id]) ? { ...t, leaseFile: blobById[t.id] } : t);
+
+  // Mirror tenantData exactly so index-based onclick handlers stay correct
+  tenantData.splice(0, tenantData.length, ...tenants);
+
+  if (!tenants.length) return;
+
+  const rows = tenants.map((d, i) => {
+    if (!d) return '';
+    const sqft      = d.leased_sqft  || null;
+    const start     = d.start_date  || null;
+    const end       = d.end_date    || null;
+    const leaseType = d.lease_type  || null;
+    const capPct    = d.cap         ?? null;
+    const icon = d.extractionFailed ? '❌' : d.tenant_name ? '✓' : '?';
+    const name = d.tenant_name || '(unknown — click to edit)';
+    const meta = d.extractionFailed ? 'Extraction failed — tap to re-upload' : [
+      sqft      !== null && sqft      !== '' ? `${sqft} sqft`   : null,
+      start     !== null && start     !== '' ? start             : null,
+      end       !== null && end       !== '' ? end               : null,
+      leaseType !== null && leaseType !== '' ? leaseType         : null,
+      capPct    !== null && capPct    !== '' ? `${capPct}% cap`  : null,
+    ].filter(v => v !== null && v !== undefined).join(' · ') || '—';
+
+    return `
+      <div class="bulk-tenant-row${d.extractionFailed ? ' has-error' : ''}" id="btr-${i}">
+        <div class="bulk-tenant-summary" onclick="toggleBulkDetail(${i})">
+          <span class="bulk-t-status">${icon}</span>
+          <span class="bulk-t-name"   id="bname-${i}">${esc(name)}</span>
+          <span class="bulk-t-meta"   id="bmeta-${i}">${esc(meta)}</span>
+          <span class="bulk-t-chevron" id="bchev-${i}">&#x25BC; Edit</span>
+          ${d.extractionFailed
+            ? `<button class="view-lease-btn" style="margin-left:0;color:#f97316;" onclick="event.stopPropagation();retryExtraction(${i})">&#x21BA; Retry</button>`
+            : d.leaseExpected
+              ? (d.leaseFile instanceof File || d.lease_url)
+                ? `<button class="view-lease-btn" style="margin-left:0" onclick="event.stopPropagation();openLeaseModalFromFile(${i})">View Lease</button>`
+                : `<span class="lease-missing-note" style="margin-left:6px;">No lease file — re-upload to view</span>`
+              : ''}
+          <button class="bulk-t-remove" onclick="event.stopPropagation();removeBulkTenant(${i})">Remove</button>
+        </div>
+        <div class="bulk-tenant-detail" id="bdet-${i}" style="display:none;">
+          ${d._error ? `<div class="err-banner" style="margin-bottom:10px;">Extraction error: ${esc(d._error)}</div>` : ''}
+          ${(() => { const w = getWarnings(computeFlags(d)); return w.length ? `<div class="rc-flags"><div class="rc-flags-title">&#x26A0;&#xFE0F; Needs Review</div>${w.map(m => `<div class="rc-flag-item">${m}</div>`).join('')}</div>` : ''; })()}
+          <div class="field-row">
+            <div class="field">
+              <label>Tenant Name</label>
+              <input type="text" value="${esc(d.tenant_name || '')}"
+                onfocus="isEditingField=true"
+                onblur="handleFieldBlur(${i},'tenant_name',this.value);refreshBulkSummary(${i})"/>
+            </div>
+            <div class="field">
+              <label>Leased Sqft</label>
+              <input type="number" value="${d.leased_sqft || ''}"
+                onfocus="isEditingField=true"
+                onblur="handleFieldBlur(${i},'leased_sqft',this.value);refreshBulkSummary(${i});checkSqftValidation()"/>
+            </div>
+          </div>
+          <div class="field-row">
+            <div class="field">
+              <label>Lease Start Date</label>
+              <input type="date" value="${d.start_date || ''}"
+                onfocus="isEditingField=true"
+                onblur="handleFieldBlur(${i},'start_date',this.value)"/>
+            </div>
+            <div class="field">
+              <label>Lease End Date</label>
+              <input type="date" value="${d.end_date || ''}"
+                onfocus="isEditingField=true"
+                onblur="handleFieldBlur(${i},'end_date',this.value)"/>
+            </div>
+          </div>
+          <div class="field-row">
+            <div class="field">
+              <label>Lease Type</label>
+              <select onchange="handleFieldBlur(${i},'lease_type',this.value||null)">
+                <option value="">Select lease type</option>
+                <option value="Triple Net (NNN)"${d.lease_type === 'Triple Net (NNN)' ? ' selected' : ''}>Triple Net (NNN)</option>
+                <option value="Gross"${d.lease_type === 'Gross' ? ' selected' : ''}>Gross</option>
+                <option value="Modified Gross"${d.lease_type === 'Modified Gross' ? ' selected' : ''}>Modified Gross</option>
+              </select>
+            </div>
+            <div class="field">
+              <label>Excluded Categories (comma-separated)</label>
+              <input type="text" value="${esc(d.excluded_categories || '')}"
+                onfocus="isEditingField=true"
+                onblur="handleFieldBlur(${i},'excluded_categories',this.value)"/>
+            </div>
+          </div>
+        </div>
+      </div>`;
+  }).join('');
+
+  el.innerHTML = `
+    <div class="bulk-results-head">
+      <h3>Extracted Tenants (${tenants.length})</h3>
+      <button class="bulk-clear-btn" onclick="clearBulkResults()">&#x2715; Clear All</button>
+    </div>
+    ${rows}`;
+}
+
+function toggleBulkDetail(i) {
+  const det  = document.getElementById(`bdet-${i}`);
+  const chev = document.getElementById(`bchev-${i}`);
+  const open = det.style.display === 'block';
+  det.style.display  = open ? 'none' : 'block';
+  chev.innerHTML     = open ? '&#x25BC; Edit' : '&#x25B2; Close';
+}
+
+function refreshBulkSummary(i) {
+  const d = tenantData[i];
+  if (!d) return;
+  const nameEl = document.getElementById(`bname-${i}`);
+  const metaEl = document.getElementById(`bmeta-${i}`);
+  if (nameEl) nameEl.textContent = d.tenant_name || '(unknown — click to edit)';
+  if (metaEl) {
+    metaEl.textContent = [
+      d.leased_sqft ? `${d.leased_sqft} sqft` : null,
+      d.start_date  || null,
+      d.end_date    || null,
+      d.lease_type  || null,
+    ].filter(Boolean).join(' · ') || '—';
+  }
+}
+
+async function removeBulkTenant(i) {
+  const prop = currentProperty();
+  if (tenantData[i]?.id) deleteLeaseFile(tenantData[i].id);
+  tenantData.splice(i, 1);
+  if (prop?.tenants) prop.tenants.splice(i, 1);
+  renderBulkResults();
+  checkSqftValidation();
+  await savePropertyData();
+}
+
+async function retryExtraction(index) {
+  const t = tenantData[index];
+  if (!t) return;
+  const file = (t.leaseFile instanceof File) ? t.leaseFile : await getLeaseFile(t.id);
+  if (!file) return;
+
+  const prop = currentProperty();
+  try {
+    const leaseText = await extractPdfText(file);
+    const extracted = await callClaudeForLease(leaseText);
+    const isValid   = extracted && extracted.tenant_name;
+    if (!isValid) throw new Error('Could not extract tenant fields');
+
+    const updated = {
+      ...normalizeTenant(extracted),
+      leaseFile:        file,
+      leaseExpected:    true,
+      fileName:         t.fileName,
+      id:               t.id,
+      extractionFailed: false,
+    };
+    tenantData[index] = updated;
+    if (prop?.tenants) prop.tenants[index] = updated;
+  } catch (err) {
+    console.log('RETRY FAILED:', file?.name || t.fileName);
+    const failed = { ...t, _error: err.message || 'Retry failed' };
+    tenantData[index] = failed;
+    if (prop?.tenants) prop.tenants[index] = failed;
+  }
+
+  renderBulkResults();
+  checkSqftValidation();
+}
+
+async function clearBulkResults() {
+  const prop = currentProperty();
+  tenantData.splice(0, tenantData.length);
+  if (prop?.tenants) prop.tenants.splice(0, prop.tenants.length);
+  document.getElementById('bulkResults').innerHTML = '';
+  document.getElementById('bulkProgress').style.display = 'none';
+  document.getElementById('bulkLeaseInput').value = '';
+  await savePropertyData();
+}
+
+// ─── Batch Invoice Upload ─────────────────────────────────────────────────────
+
+function normalizeCategory(vendor, description) {
+  const v = (vendor || '').toLowerCase();
+
+  if (v.includes('insurance') || v.includes(' ins ') || v.includes(' ins.') || v.startsWith('ins ') || v.includes('coverage') || v.includes('policy')) return { category: 'insurance', confidence: 0.95 };
+  if (v.includes('landscap'))                         return { category: 'landscaping', confidence: 0.95 };
+  if (v.includes('snow'))                             return { category: 'snow',        confidence: 0.95 };
+  if (v.includes('electric') || v.includes('utility')) return { category: 'utilities',  confidence: 0.90 };
+
+  return null;
+}
+
+async function classifyCategory(vendorName, amount) {
+  try {
+    const data = await claudeFetch({
+      model: MODEL,
+      max_tokens: 64,
+      messages: [{ role: 'user', content:
+        CATEGORY_PROMPT + `\n\nVendor: ${vendorName || 'Unknown'}\nAmount: $${amount || '0'}`
+      }],
+    });
+    if (data?.category && CATEGORIES.includes(data.category)) return data;
+  } catch { /* non-fatal */ }
+  return null;
+}
+
+async function handleBatchInvoices(fileList) {
+  if (!fileList || fileList.length === 0) return;
+  const files = Array.from(fileList).filter(f =>
+    f.type.startsWith('image/') || f.type === 'application/pdf' ||
+    /\.(pdf|jpe?g|png|webp)$/i.test(f.name)
+  );
+  if (!files.length) return;
+
+  // Bind property and snapshot existing invoices BEFORE clearing in-memory state.
+  const property = currentProperty();
+  if (!property) throw new Error('No property selected');
+  const existing = { invoices: Array.from(property.invoices || []) };
+  console.log('EXISTING DATA:', existing);
+
+  const total = files.length;
+
+  invoiceData.splice(0, invoiceData.length);
+
+  const prog = document.getElementById('invProgress');
+  const res  = document.getElementById('invResults');
+  res.innerHTML = '';
+  prog.style.display = 'block';
+
+  document.getElementById('invFileInput').value   = '';
+  document.getElementById('invFolderInput').value = '';
+
+  for (let i = 0; i < total; i++) {
+    const pct = Math.round((i / total) * 100);
+    prog.innerHTML = `
+      <div class="bulk-progress-wrap">
+        <div class="bulk-progress-label">Processing invoice ${i + 1} of ${total} — "${esc(files[i].name)}"</div>
+        <div class="bulk-progress-track">
+          <div class="bulk-progress-fill" style="width:${pct}%"></div>
+        </div>
+      </div>`;
+
+    // Step 1 — Claude extraction (failure is non-fatal; recorded in _error)
+    let d = null;
+    let claudeError = null;
+    try {
+      d = await callClaude(files[i], INVOICE_PROMPT);
+    } catch (err) {
+      console.error('[Mainstreet] Claude extraction failed:', err.message, err);
+      claudeError = err.message;
+    }
+
+    // Step 2 — Storage upload (always runs, independent of Claude)
+    const { url: fileUrl, error: fileUploadError } = await uploadInvoiceFile(files[i]);
+
+    // Step 3 — Category resolution: Claude → normalizeCategory → classifyCategory
+    const vendorName = d?.vendorName ?? files[i].name.replace(/\.(pdf|jpe?g|png|webp)$/i, '');
+    let resolvedCategory = d?.category ?? 'other';
+    let resolvedConf     = d?.confidence ?? {};
+    const claudeCatConf  = resolvedConf.category ?? 0;
+
+    if (resolvedCategory === 'other' || claudeCatConf < 80) {
+      const norm = normalizeCategory(vendorName, '');
+      if (norm) {
+        resolvedCategory = norm.category;
+        resolvedConf = { ...resolvedConf, category: Math.round(norm.confidence * 100) };
+      } else {
+        const ai = await classifyCategory(vendorName, d?.amount);
+        if (ai) {
+          resolvedCategory = ai.category;
+          resolvedConf = { ...resolvedConf, category: Math.round(ai.confidence * 100) };
+        }
+      }
+    }
+
+    if (resolvedCategory === 'other' && vendorName.toLowerCase().includes('insurance')) {
+      resolvedCategory = 'insurance';
+      resolvedConf = { ...resolvedConf, category: 90 };
+    }
+
+    invoiceData.push({
+      vendorName:  cleanHTML(vendorName),
+      amount:      d?.amount      ?? '',
+      category:    resolvedCategory,
+      invoiceDate: cleanHTML(d?.invoiceDate ?? ''),
+      confidence:  resolvedConf,
+      _error:           claudeError,
+      _fileUploadError: fileUploadError,
+      fileUrl, fileName: files[i].name, fileType: files[i].type,
+    });
+
+    renderInvResults();
+    const idx = invoiceData.length - 1;
+    checkDuplicateInvoice(idx);
+    checkAmountSanity(idx);
+  }
+
+  prog.innerHTML = `
+    <div class="bulk-progress-wrap">
+      <div class="bulk-progress-label">&#x2713; ${total} invoice${total !== 1 ? 's' : ''} processed — review and edit below</div>
+      <div class="bulk-progress-track">
+        <div class="bulk-progress-fill" style="width:100%"></div>
+      </div>
+    </div>`;
+
+  // Merge: append new invoices that don't already exist by vendor+amount+date.
+  const newInvoices = Array.from(invoiceData);
+  const merged = mergeInvoicesDedup(existing.invoices, newInvoices);
+  property.invoices = merged;
+  // Keep invoiceData in sync with merged result so UI shows the full set.
+  invoiceData.splice(0, invoiceData.length, ...merged);
+  renderInvResults();
+
+  console.log('CURRENT PROPERTY ID:', property.id);
+  console.log('SAVING DATA:', property);
+  await saveProperty(property);
+}
+
+function renderInvResults() {
+  const el = document.getElementById('invResults');
+  if (!invoiceData.length) { el.innerHTML = ''; return; }
+
+  const rows = invoiceData.map((d, i) => {
+    const conf = d.confidence || {};
+    const icon = d._error ? '⚠️' : d.vendorName ? '✓' : '?';
+    const name = cleanHTML(d.vendorName || '(unknown — click to edit)');
+    const amtStr = d.amount !== '' ? fmt(parseFloat(d.amount) || 0) : '—';
+    const catStr = cleanHTML(d.category || 'other');
+    const scores = [conf.vendorName, conf.amount, conf.category].filter(s => s !== undefined && s !== null);
+    const overallConf = scores.length ? Math.min(...scores) : undefined;
+
+    const weakFields = ['vendorName','amount','category','invoiceDate']
+      .filter(f => (conf[f] === undefined || conf[f] === null || parseInt(conf[f]) < 90) && !d.verified?.[f]);
+    const matchBadge  = d.matchedTenant
+      ? `<span class="match-badge" title="${esc(d.matchReason || '')}">&#x2192; ${esc(d.matchedTenant)}</span>`
+      : '';
+
+    const opts = CATEGORIES.map(c =>
+      `<option value="${c}"${d.category === c ? ' selected' : ''}>${c}</option>`
+    ).join('');
+
+    // Inline duplicate detection — check against all other items
+    let dupBadge = '';
+    if (d.vendorName && d.amount !== '') {
+      const amt = parseFloat(d.amount);
+      for (let j = 0; j < invoiceData.length; j++) {
+        if (j === i) continue;
+        const oth = invoiceData[j];
+        if (!oth || !oth.vendorName || oth.amount === '') continue;
+        if (Math.abs(amt - parseFloat(oth.amount)) <= 1 && similarVendor(d.vendorName, oth.vendorName)) {
+          dupBadge = `<span class="dup-row-badge" onclick="event.stopPropagation()">
+            ⚠ Possible duplicate of ${esc(oth.vendorName)}
+            <button class="dup-row-remove" onclick="event.stopPropagation();removeInvItem(${i})">Remove</button>
+          </span>`;
+          break;
+        }
+      }
+    }
+
+    // ── Verify blocks: computed explicitly for each field ──────────────────
+    function _vblock(score, fieldName) {
+      if (d.verified?.[fieldName]) {
+        return `<span class="conf-badge conf-verified">&#x2713; Verified</span>`;
+      }
+      const s = (score == null) ? -1 : parseInt(score, 10);
+      if (isNaN(s) || s < 90) {
+        console.log('VERIFY BUTTONS RENDERED', i, fieldName, score);
+        return `<div class="field-verify-actions">
+          <button class="verify-btn verify-btn-confirm" onclick="markFieldVerified(${i},'${fieldName}')">&#x2714; Mark Verified</button>
+          <button class="verify-btn verify-btn-change" onclick="focusInvField(${i},'${fieldName}')">&#x270E; Change</button>
+        </div>`;
+      }
+      return '';
+    }
+    const vVendor   = _vblock(conf.vendorName,  'vendorName');
+    const vAmount   = _vblock(conf.amount,       'amount');
+    const vCategory = _vblock(conf.category,     'category');
+    const vDate     = _vblock(conf.invoiceDate,  'invoiceDate');
+
+    return `
+      <div class="bulk-tenant-row${d._error ? ' has-error' : ''}" id="itr-${i}">
+        <div class="bulk-tenant-summary" onclick="toggleInvDetail(${i})">
+          <span class="bulk-t-status">${icon}</span>
+          <span class="bulk-t-name" id="iname-${i}">${esc(name)}</span>
+          <span class="bulk-t-meta" id="imeta-${i}">${esc(catStr)} &middot; ${amtStr}</span>
+          <span id="isummaryBadge-${i}">${overallConf !== undefined ? clickableConfBadge(overallConf, i, weakFields) : ''}</span>
+          ${matchBadge}
+          ${dupBadge}
+          ${d._disputed ? `<span class="badge-disputed">Disputed</span>` : ''}
+          <span class="bulk-t-chevron" id="ichev-${i}">&#x25BC; Edit</span>
+          <div class="inv-action-btns">
+            <button class="inv-act-btn" onclick="event.stopPropagation();viewInvoice(${i})">View</button>
+            <button class="inv-act-btn inv-act-explain" id="iexplbtn-${i}" onclick="event.stopPropagation();explainCharge(${i})">Explain</button>
+            <button class="inv-act-btn inv-act-dispute" onclick="event.stopPropagation();disputeCharge(${i})">Dispute</button>
+          </div>
+          <button class="bulk-t-remove" onclick="event.stopPropagation();removeInvItem(${i})">Remove</button>
+        </div>
+        ${d._fileUploadError ? `<div class="inv-upload-err-banner">&#x26A0; File not saved — ${esc(String(d._fileUploadError))}</div>` : ''}
+        <div class="bulk-tenant-detail" id="idet-${i}" style="display:none;">
+          ${d._error ? `<div class="err-banner" style="margin-bottom:10px;">Extraction error: ${esc(d._error)}</div>` : ''}
+          <div id="dup-warn-${i}"></div>
+          <div id="sanity-warn-${i}"></div>
+          <div class="field-row">
+            <div class="field" style="flex:2;">
+              <label>Vendor ${confidenceBadge(conf.vendorName)}</label>
+              <input id="ifield-${i}-vendorName" type="text" value="${esc(cleanHTML(d.vendorName))}"
+                oninput="invoiceData[${i}].vendorName=this.value;markFieldVerified(${i},'vendorName');refreshInvSummary(${i})"/>
+              <span id="ibadgeWrap-${i}-vendorName">${vVendor}</span>
+            </div>
+            <div class="field">
+              <label>Amount ($) ${confidenceBadge(conf.amount)}</label>
+              <input id="ifield-${i}-amount" type="number" value="${esc(d.amount)}"
+                oninput="invoiceData[${i}].amount=parseFloat(this.value)||'';markFieldVerified(${i},'amount');refreshInvSummary(${i})"/>
+              <span id="ibadgeWrap-${i}-amount">${vAmount}</span>
+            </div>
+          </div>
+          <div class="field-row">
+            <div class="field">
+              <label>Category ${confidenceBadge(conf.category)}</label>
+              <select id="ifield-${i}-category" onchange="invoiceData[${i}].category=this.value;markFieldVerified(${i},'category');refreshInvSummary(${i})">${opts}</select>
+              <span id="ibadgeWrap-${i}-category">${vCategory}</span>
+            </div>
+            <div class="field">
+              <label>Invoice Date ${confidenceBadge(conf.invoiceDate)}</label>
+              <input id="ifield-${i}-invoiceDate" type="text" value="${esc(cleanHTML(d.invoiceDate))}"
+                oninput="invoiceData[${i}].invoiceDate=this.value;markFieldVerified(${i},'invoiceDate');recomputeSummaryBadge(${i})"/>
+              <span id="ibadgeWrap-${i}-invoiceDate">${vDate}</span>
+            </div>
+          </div>
+        </div>
+      </div>`;
+  }).join('');
+
+  el.innerHTML = `
+    <div class="bulk-results-head">
+      <h3>Extracted Invoices (${invoiceData.length})</h3>
+      <button class="bulk-clear-btn" onclick="clearInvResults()">&#x2715; Clear All</button>
+    </div>
+    ${rows}`;
+
+  setTimeout(() => console.log('UI REFRESH COMPLETE'), 500);
+}
+
+// Returns a clickable confidence badge that opens + highlights weak fields on click.
+// Falls back to the plain badge when all fields are high-confidence.
+function clickableConfBadge(score, i, weakFields) {
+  if (score === null || score === undefined) return '';
+  const s = parseInt(score, 10);
+  if (isNaN(s) || s >= 90 || !weakFields.length) return confidenceBadge(score);
+  const label = s >= 70 ? '&#x26A0; Please verify' : '&#x2691; Low confidence — click to review';
+  const cls   = s >= 70 ? 'conf-mid' : 'conf-low';
+  return `<span class="conf-badge ${cls} conf-clickable"
+    onclick="event.stopPropagation();openInvoiceAndHighlight(${i},${JSON.stringify(weakFields)})"
+    title="Click to jump to fields that need review">${label}</span>`;
+}
+
+const _FIELD_HINTS = {
+  vendorName:  'We are not confident about this vendor name. Please verify.',
+  amount:      'We are not confident about this amount. Please verify.',
+  category:    'We are not confident this category is correct. Please review.',
+  invoiceDate: 'We are not confident about this date. Please verify.',
+};
+
+function openInvoiceAndHighlight(i, fields) {
+  // Open the detail row
+  const det  = document.getElementById(`idet-${i}`);
+  const chev = document.getElementById(`ichev-${i}`);
+  if (!det) return;
+  det.style.display = 'block';
+  if (chev) chev.innerHTML = '&#x25B2; Close';
+
+  // Scroll into view
+  det.scrollIntoView({ behavior: 'smooth', block: 'nearest' });
+
+  // Highlight each weak field and show a hint message
+  fields.forEach(field => {
+    const el = document.getElementById(`ifield-${i}-${field}`);
+    if (!el) return;
+
+    el.classList.add('field-highlight');
+    setTimeout(() => el.classList.remove('field-highlight'), 3500);
+
+    const hintId = `ifhint-${i}-${field}`;
+    if (!document.getElementById(hintId)) {
+      const hint = document.createElement('div');
+      hint.id        = hintId;
+      hint.className = 'field-hint';
+      hint.textContent = _FIELD_HINTS[field] || 'Please review this field.';
+      el.parentElement.appendChild(hint);
+      setTimeout(() => hint.remove(), 5000);
+    }
+  });
+}
+
+function verifiableActions(score, i, field) {
+  const verified = invoiceData[i]?.verified?.[field];
+  if (verified) return `<span class="conf-badge conf-verified">&#x2713; Verified</span>`;
+
+  const s = (score === null || score === undefined) ? -1 : parseInt(score, 10);
+  const needsVerify = isNaN(s) || s < 90;
+  if (needsVerify) {
+    console.log('Rendering verify buttons', i, field, score);
+    return `<div class="field-verify-actions">
+      <button class="verify-btn verify-btn-confirm" onclick="markFieldVerified(${i},'${field}')">&#x2713; Mark as Verified</button>
+      <button class="verify-btn verify-btn-change" onclick="focusInvField(${i},'${field}')">&#x270E; Change</button>
+    </div>`;
+  }
+  return '';
+}
+
+function markFieldVerified(i, field) {
+  if (!invoiceData[i]) return;
+  if (!invoiceData[i].verified) invoiceData[i].verified = {};
+  invoiceData[i].verified[field] = true;
+  const wrap = document.getElementById(`ibadgeWrap-${i}-${field}`);
+  if (wrap) wrap.innerHTML = '<span class="conf-badge conf-verified">&#x2713; Verified</span>';
+  recomputeSummaryBadge(i);
+}
+
+function focusInvField(i, field) {
+  const el = document.getElementById(`ifield-${i}-${field}`);
+  if (!el) return;
+  el.focus();
+  if (el.tagName === 'SELECT') el.click();
+}
+
+function recomputeSummaryBadge(i) {
+  const d = invoiceData[i]; if (!d) return;
+  const conf = d.confidence || {};
+  const scores = [conf.vendorName, conf.amount, conf.category].filter(s => s !== undefined && s !== null);
+  const overallConf = scores.length ? Math.min(...scores) : undefined;
+  const weakFields = ['vendorName','amount','category','invoiceDate']
+    .filter(f => (conf[f] === undefined || conf[f] === null || parseInt(conf[f]) < 90) && !d.verified?.[f]);
+  const el = document.getElementById(`isummaryBadge-${i}`);
+  if (el) el.innerHTML = overallConf !== undefined ? clickableConfBadge(overallConf, i, weakFields) : '';
+}
+
+function toggleInvDetail(i) {
+  const det  = document.getElementById(`idet-${i}`);
+  const chev = document.getElementById(`ichev-${i}`);
+  if (!det) return;
+  const open = det.style.display === 'block';
+  det.style.display = open ? 'none' : 'block';
+  chev.innerHTML    = open ? '&#x25BC; Edit' : '&#x25B2; Close';
+}
+
+function viewInvoice(i) {
+  const det  = document.getElementById(`idet-${i}`);
+  const chev = document.getElementById(`ichev-${i}`);
+  if (!det) return;
+  det.style.display = 'block';
+  chev.innerHTML    = '&#x25B2; Close';
+  det.scrollIntoView({ behavior: 'smooth', block: 'nearest' });
+}
+
+function viewInvFile(i) {
+  const inv = invoiceData[i];
+  if (!inv || !inv.fileUrl) return;
+  openInvFileViewer(inv.fileUrl, inv.vendorName || inv.fileName || 'Invoice', inv.fileType);
+}
+
+function closeInvFileViewer() {
+  const viewer = document.getElementById('invFileViewer');
+  viewer.style.display = 'none';
+  document.getElementById('invFileViewerBody').innerHTML = '';
+}
+
+function openInvFileViewer(url, title, fileType) {
+  if (!url) return;
+  document.getElementById('invFileViewerTitle').textContent = title || 'Invoice';
+  const body = document.getElementById('invFileViewerBody');
+  if (fileType && fileType.startsWith('image/')) {
+    body.innerHTML = `<img src="${url}" style="max-width:100%;max-height:calc(100vh - 80px);border-radius:8px;object-fit:contain;" />`;
+  } else {
+    body.innerHTML = `<iframe src="${url}" style="width:100%;height:calc(100vh - 80px);border:none;border-radius:8px;"></iframe>`;
+  }
+  document.getElementById('invFileViewer').style.display = 'flex';
+}
+
+async function handleExplain(button, fn) {
+  const original = button ? button.innerText : '';
+  if (button) { button.innerText = 'Thinking…'; button.disabled = true; }
+  try {
+    await fn();
+  } finally {
+    if (button) { button.innerText = original; button.disabled = false; }
+  }
+}
+
+async function explainCharge(i) {
+  const inv = invoiceData[i];
+  if (!inv) return;
+  const btn = document.getElementById(`iexplbtn-${i}`);
+  try {
+    await handleExplain(btn, async () => {
+    const data = await explainFetch({
+      model: MODEL,
+      max_tokens: 1024,
+      system: LANDLORD_SYSTEM_PROMPT,
+      messages: [{ role: 'user', content:
+        `Vendor: ${inv.vendorName || 'Unknown'}\n` +
+        `Category: ${inv.category || 'other'}\n` +
+        `Amount: $${inv.amount || '0'}\n` +
+        `Date: ${inv.invoiceDate || 'Unknown'}\n` +
+        `Confidence: ${inv.confidence?.category ?? 'unknown'}%`
+      }],
+    });
+    const text = data?.content?.[0]?.text || 'No explanation available.';
+    const det = document.getElementById(`idet-${i}`);
+    let expl = document.getElementById(`iexpl-${i}`);
+    if (!expl) {
+      expl = document.createElement('div');
+      expl.id = `iexpl-${i}`;
+      expl.className = 'inv-explain-box';
+      det.appendChild(expl);
+    }
+    const mdHtml = renderMarkdown(text);
+    expl.innerHTML = `<strong>AI Review</strong><div class="expl-preview">${mdHtml}</div><button class="expl-readmore" onclick="var p=this.previousElementSibling;p.classList.toggle('expanded');this.textContent=p.classList.contains('expanded')?'Show less \u25b2':'Read full explanation \u25be'">Read full explanation &#x25BE;</button>`;
+    det.style.display = 'block';
+    document.getElementById(`ichev-${i}`).innerHTML = '&#x25B2; Close';
+    expl.scrollIntoView({ behavior: 'smooth', block: 'nearest' });
+    });
+  } catch (e) {
+    alert(`Explain error: ${e.message}`);
+  }
+}
+
+function disputeCharge(i) {
+  const det = document.getElementById(`idet-${i}`);
+  if (!det) return;
+  det.style.display = 'block';
+  document.getElementById(`ichev-${i}`).innerHTML = '&#x25B2; Close';
+  const existing = document.getElementById(`idisp-${i}`);
+  if (existing) { existing.remove(); return; }
+  const form = document.createElement('div');
+  form.id = `idisp-${i}`;
+  form.className = 'dispute-form';
+  form.innerHTML = `
+    <label>Dispute Reason</label>
+    <textarea id="idispr-${i}" placeholder="Why are you disputing this charge?"></textarea>
+    <div class="dispute-form-btns">
+      <button class="d-submit-btn" onclick="submitInvDispute(${i})">Flag as Disputed</button>
+      <button class="d-cancel-btn" onclick="document.getElementById('idisp-${i}').remove()">Cancel</button>
+    </div>`;
+  det.appendChild(form);
+  form.scrollIntoView({ behavior: 'smooth', block: 'nearest' });
+}
+
+async function submitInvDispute(i) {
+  const inv = invoiceData[i];
+  if (!inv) return;
+  const ta = document.getElementById(`idispr-${i}`);
+  const reason = ta?.value?.trim();
+  if (!reason) { if (ta) ta.style.borderColor = '#ea580c'; return; }
+  inv._disputed = true;
+  inv._disputeReason = reason;
+  await savePropertyData();
+  renderInvResults();
+  alert('Dispute submitted successfully. Your landlord will review it.');
+}
+
+function refreshInvSummary(i) {
+  const d = invoiceData[i];
+  if (!d) return;
+  const nameEl = document.getElementById(`iname-${i}`);
+  const metaEl = document.getElementById(`imeta-${i}`);
+  if (nameEl) nameEl.textContent = d.vendorName || '(unknown — click to edit)';
+  if (metaEl) {
+    const amtStr = d.amount !== '' ? fmt(parseFloat(d.amount) || 0) : '—';
+    metaEl.textContent = (d.category || 'other') + ' · ' + amtStr;
+  }
+}
+
+async function removeInvItem(i) {
+  invoiceData.splice(i, 1);
+  renderInvResults();
+  await savePropertyData();
+}
+
+async function clearInvResults() {
+  invoiceData.splice(0, invoiceData.length);
+  document.getElementById('invResults').innerHTML = '';
+  document.getElementById('invProgress').style.display = 'none';
+  document.getElementById('invFileInput').value   = '';
+  document.getElementById('invFolderInput').value = '';
+  await savePropertyData();
+}
+
+// ─── Invoice Tab Switching ────────────────────────────────────────────────────
+
+function switchInvTab(tab) {
+  document.getElementById('iTabFiles').classList.toggle('active', tab === 'files');
+  document.getElementById('iTabYardi').classList.toggle('active', tab === 'yardi');
+  document.getElementById('invPanelFiles').style.display = tab === 'files' ? 'block' : 'none';
+  document.getElementById('invPanelYardi').style.display = tab === 'yardi' ? 'block' : 'none';
+}
+
+// ─── Yardi Genesis CSV Import ─────────────────────────────────────────────────
+
+// Known column aliases for Yardi export headers
+const YARDI_COL_ALIASES = {
+  vendorName:  ['vendor', 'payee', 'vendor name', 'payee name', 'supplier', 'vendor/payee', 'paid to'],
+  amount:      ['amount', 'total', 'net amount', 'net', 'charge', 'expense', 'cost', 'debit', 'invoice amount', 'check amount'],
+  invoiceDate: ['date', 'post date', 'posting date', 'invoice date', 'trans date', 'transaction date', 'gl date', 'check date'],
+  description: ['description', 'memo', 'notes', 'comment', 'detail', 'narrative', 'reference', 'invoice description'],
+  category:    ['category', 'account', 'gl code', 'gl account', 'account code', 'expense type', 'type', 'account description', 'account name'],
+  property:    ['property', 'building', 'property name', 'building name', 'site', 'property code', 'location'],
+};
+
+let yardiRows        = [];
+let yardiColMap      = {}; // fieldName -> colIndex
+let yardiUnrecognized = []; // [{index, name}]
+
+function yardiParseCSV(text) {
+  const lines = text.replace(/\r\n/g, '\n').replace(/\r/g, '\n').split('\n');
+  return lines
+    .filter(l => l.trim())
+    .map(line => {
+      const cells = [];
+      let inQ = false, cur = '', i = 0;
+      while (i < line.length) {
+        const c = line[i];
+        if (c === '"') {
+          if (inQ && line[i + 1] === '"') { cur += '"'; i += 2; continue; }
+          inQ = !inQ;
+        } else if (c === ',' && !inQ) {
+          cells.push(cur.trim());
+          cur = ''; i++; continue;
+        } else { cur += c; }
+        i++;
+      }
+      cells.push(cur.trim());
+      return cells;
+    });
+}
+
+function yardiFuzzyMatch(header, aliases) {
+  const h = header.toLowerCase().replace(/[^a-z0-9 /]/g, '').trim();
+  return aliases.some(alias => {
+    const a = alias.toLowerCase();
+    return h === a || h.includes(a) || a.includes(h);
+  });
+}
+
+function yardiDetectColumns(headers) {
+  const colMap = {};
+  const unrecognized = [];
+  headers.forEach((h, i) => {
+    let matched = false;
+    for (const [field, aliases] of Object.entries(YARDI_COL_ALIASES)) {
+      if (!(field in colMap) && yardiFuzzyMatch(h, aliases)) {
+        colMap[field] = i;
+        matched = true;
+        break;
+      }
+    }
+    if (!matched && h.trim()) unrecognized.push({ index: i, name: h });
+  });
+  return { colMap, unrecognized };
+}
+
+function yardiCategoryFromText(description, gl) {
+  const t = (description + ' ' + gl).toLowerCase();
+  if (/landscap|lawn|mow|trim|plant|shrub|mulch|irrigation/.test(t))    return 'landscaping';
+  if (/snow|ice|salt|plow|deice/.test(t))                                return 'snow';
+  if (/repair|fix|maintain|hvac|heat|cool|roof|paint|plumb|electric/.test(t) &&
+      !/utility|utilities/.test(t))                                       return 'repairs';
+  if (/electric|gas|water|sewer|utility|utilities|power/.test(t))        return 'utilities';
+  if (/janitor|clean|sweep|trash|waste/.test(t))                         return 'janitorial';
+  if (/secur|guard|patrol|access|camera/.test(t))                        return 'security';
+  if (/manag|admin|management fee|service fee/.test(t))                  return 'management';
+  return 'other';
+}
+
+function handleYardiCSV(file) {
+  if (!file) return;
+  const preview = document.getElementById('yardiPreview');
+  preview.innerHTML = '<div class="spinner-wrap"><div class="spinner sm"></div><div class="spinner-label">Parsing CSV…</div></div>';
+
+  const reader = new FileReader();
+  reader.onload = e => {
+    const allRows = yardiParseCSV(e.target.result);
+    if (allRows.length < 2) { showYardiError(); return; }
+
+    const headers = allRows[0];
+    const { colMap, unrecognized } = yardiDetectColumns(headers);
+
+    if (!('vendorName' in colMap) && !('amount' in colMap)) {
+      showYardiError(); return;
+    }
+
+    yardiRows         = allRows.slice(1).filter(r => r.some(c => c.trim()));
+    yardiColMap       = colMap;
+    yardiUnrecognized = unrecognized;
+
+    document.getElementById('yardiFileInput').value = '';
+    renderYardiPreview(headers);
+  };
+  reader.onerror = showYardiError;
+  reader.readAsText(file);
+}
+
+function showYardiError() {
+  document.getElementById('yardiPreview').innerHTML = `
+    <div class="yardi-err">
+      <span class="yardi-err-icon">⚠️</span>
+      <div class="yardi-err-msg">
+        <strong>We couldn't read this file automatically.</strong><br>
+        Please make sure you're exporting the CAM expense report from Yardi Genesis.<br><br>
+        <a href="#" onclick="event.preventDefault();downloadYardiTemplate()">
+          ⬇ Need help? Download our import template
+        </a>
+      </div>
+    </div>`;
+}
+
+function yardiCell(row, field) {
+  const idx = yardiColMap[field];
+  return idx !== undefined ? (row[idx] || '').trim() : '';
+}
+
+function renderYardiPreview(headers) {
+  const el = document.getElementById('yardiPreview');
+
+  let initCount = 0, initTotal = 0;
+  const tableRows = yardiRows.map((row, i) => {
+    const vendor  = cleanHTML(yardiCell(row, 'vendorName'));
+    const amtRaw  = yardiCell(row, 'amount').replace(/[$,\s]/g, '');
+    const amt     = parseFloat(amtRaw) || 0;
+    const date    = cleanHTML(yardiCell(row, 'invoiceDate'));
+    const desc    = cleanHTML(yardiCell(row, 'description'));
+    const gl      = cleanHTML(yardiCell(row, 'category'));
+    const sugCat  = yardiCategoryFromText(desc, gl);
+    const checked = amt > 0 || !!vendor;
+
+    if (checked) { initCount++; initTotal += amt; }
+
+    const opts = CATEGORIES.map(c =>
+      `<option value="${c}"${sugCat === c ? ' selected' : ''}>${c}</option>`
+    ).join('');
+
+    const extraCells = yardiUnrecognized.map(u =>
+      `<td class="yardi-td yardi-unknown">${esc((row[u.index] || '').trim())}</td>`
+    ).join('');
+
+    return `<tr>
+      <td class="yardi-td yardi-cb">
+        <input type="checkbox" id="ychk-${i}"${checked ? ' checked' : ''} onchange="updateYardiTotals()"/>
+      </td>
+      <td class="yardi-td">${esc(vendor || '—')}</td>
+      <td class="yardi-td yardi-amt">${amt > 0 ? fmt(amt) : '—'}</td>
+      <td class="yardi-td">${esc(date || '—')}</td>
+      <td class="yardi-td">
+        <select class="yardi-cat-sel" id="ycat-${i}">${opts}</select>
+      </td>
+      <td class="yardi-td yardi-desc" title="${esc(desc || gl || '')}">${esc(desc || gl || '—')}</td>
+      ${extraCells}
+    </tr>`;
+  }).join('');
+
+  const extraHeaders = yardiUnrecognized.map(u =>
+    `<th class="yardi-th yardi-unknown">${esc(u.name)}</th>`
+  ).join('');
+
+  el.innerHTML = `
+    <div class="yardi-preview-wrap">
+      <div class="yardi-preview-info">
+        Found <strong>${yardiRows.length}</strong> expense row${yardiRows.length !== 1 ? 's' : ''}.
+        ${yardiUnrecognized.length
+          ? `<span class="yardi-unknown-note">⚠ ${yardiUnrecognized.length} unrecognized column${yardiUnrecognized.length !== 1 ? 's' : ''} highlighted in yellow</span>`
+          : ''}
+      </div>
+      <div class="yardi-table-scroll">
+        <table class="yardi-table">
+          <thead><tr>
+            <th class="yardi-th yardi-th-cb">
+              <input type="checkbox" id="yCheckAll" checked onchange="toggleAllYardi(this.checked)"/>
+            </th>
+            <th class="yardi-th">Vendor</th>
+            <th class="yardi-th" style="text-align:right">Amount</th>
+            <th class="yardi-th">Date</th>
+            <th class="yardi-th">Category</th>
+            <th class="yardi-th">Description / GL</th>
+            ${extraHeaders}
+          </tr></thead>
+          <tbody>${tableRows}</tbody>
+        </table>
+      </div>
+      <div class="yardi-footer">
+        <span id="yardiTotalInfo">
+          <strong>${initCount}</strong> row${initCount !== 1 ? 's' : ''} selected &nbsp;&middot;&nbsp;
+          <strong>${fmt(initTotal)}</strong> total
+        </span>
+        <button class="yardi-import-btn" id="yardiImportBtn" onclick="confirmYardiImport()">
+          &#x2713; Import ${initCount} Expense${initCount !== 1 ? 's' : ''}
+        </button>
+      </div>
+    </div>`;
+}
+
+function updateYardiTotals() {
+  let count = 0, total = 0;
+  yardiRows.forEach((row, i) => {
+    const chk = document.getElementById(`ychk-${i}`);
+    if (!chk || !chk.checked) return;
+    const amt = parseFloat(yardiCell(row, 'amount').replace(/[$,\s]/g, '')) || 0;
+    count++; total += amt;
+  });
+  const info = document.getElementById('yardiTotalInfo');
+  const btn  = document.getElementById('yardiImportBtn');
+  if (info) info.innerHTML = `<strong>${count}</strong> row${count !== 1 ? 's' : ''} selected &nbsp;&middot;&nbsp; <strong>${fmt(total)}</strong> total`;
+  if (btn)  btn.textContent = `✓ Import ${count} Expense${count !== 1 ? 's' : ''}`;
+}
+
+function toggleAllYardi(checked) {
+  yardiRows.forEach((_, i) => {
+    const chk = document.getElementById(`ychk-${i}`);
+    if (chk) chk.checked = checked;
+  });
+  updateYardiTotals();
+}
+
+async function confirmYardiImport() {
+  let imported = 0;
+  yardiRows.forEach((row, i) => {
+    const chk = document.getElementById(`ychk-${i}`);
+    if (!chk || !chk.checked) return;
+    const vendor = cleanHTML(yardiCell(row, 'vendorName'));
+    const amt    = parseFloat(yardiCell(row, 'amount').replace(/[$,\s]/g, '')) || 0;
+    const date   = cleanHTML(yardiCell(row, 'invoiceDate'));
+    const cat    = document.getElementById(`ycat-${i}`)?.value || 'other';
+    if (!vendor && amt <= 0) return;
+    invoiceData.push({
+      vendorName:  vendor || 'Unknown Vendor',
+      amount:      amt,
+      category:    cat,
+      invoiceDate: date,
+      confidence:  { vendorName: 95, amount: 95, category: 70, invoiceDate: 90 },
+      _error:      null,
+    });
+    imported++;
+  });
+
+  // Switch to file-upload tab so user sees the imported results
+  switchInvTab('files');
+  renderInvResults();
+
+  const property = currentProperty();
+  if (!property) throw new Error('No property selected');
+  const existing = { invoices: Array.from(property.invoices || []) };
+  console.log('EXISTING DATA:', existing);
+  // invoiceData already has existing invoices (restored on selectProperty) + new Yardi items.
+  property.invoices = Array.from(invoiceData);
+  console.log('CURRENT PROPERTY ID:', property.id);
+  console.log('SAVING DATA:', property);
+  await saveProperty(property);
+
+  document.getElementById('invResults').scrollIntoView({ behavior: 'smooth', block: 'start' });
+
+  // Reset Yardi state and show confirmation
+  yardiRows = []; yardiColMap = {}; yardiUnrecognized = [];
+  document.getElementById('yardiPreview').innerHTML = `
+    <div class="hole-item ok" style="margin-top:14px;">
+      <span class="hole-icon">✅</span>
+      <span class="hole-text">
+        <strong>${imported} expense${imported !== 1 ? 's' : ''} imported from Yardi.</strong>
+        <span class="hole-detail">Review and edit them in the Upload Files tab before running allocation.</span>
+      </span>
+    </div>`;
+}
+
+function downloadYardiTemplate() {
+  const csv = [
+    'Vendor,Amount,Post Date,Description,GL Account,Property',
+    'ABC Landscaping,1250.00,2025-01-15,Monthly grounds maintenance,5400-Landscaping,Westfield Plaza',
+    'City Snow Removal,875.50,2025-01-22,Snow plowing and salt - Lot A,5410-Snow Removal,Westfield Plaza',
+    'Acme Janitorial,2100.00,2025-01-31,January janitorial services,5420-Janitorial,Westfield Plaza',
+    'Metro Electric,3400.00,2025-01-31,Common area electricity,5430-Utilities,Westfield Plaza',
+    'SecureGuard Inc,1800.00,2025-01-31,Security patrol services,5440-Security,Westfield Plaza',
+  ].join('\r\n');
+  const blob = new Blob([csv], { type: 'text/csv' });
+  const url  = URL.createObjectURL(blob);
+  const a    = document.createElement('a');
+  a.href = url; a.download = 'yardi-cam-import-template.csv';
+  a.click();
+  URL.revokeObjectURL(url);
+}
+
+// ─── Confidence Badge ─────────────────────────────────────────────────────────
+
+function confidenceBadge(score) {
+  if (score === null || score === undefined) return '';
+  const s = parseInt(score, 10);
+  if (isNaN(s)) return '';
+  if (s >= 90) return `<span class="conf-badge conf-high">✓ High confidence</span>`;
+  if (s >= 70) return `<span class="conf-badge conf-mid">⚠ Please verify</span>`;
+  return `<span class="conf-badge conf-low">⚑ Low confidence — review carefully</span>`;
+}
+
+// ─── Duplicate Invoice Detection ──────────────────────────────────────────────
+
+function similarVendor(a, b) {
+  if (!a || !b) return false;
+  const na = a.toLowerCase().trim();
+  const nb = b.toLowerCase().trim();
+  if (na === nb) return true;
+  // Check if one contains at least the first 5 chars of the other
+  const min = Math.min(na.length, nb.length);
+  if (min >= 5) {
+    const prefix = na.substring(0, Math.min(5, na.length));
+    if (nb.includes(prefix)) return true;
+    const prefix2 = nb.substring(0, Math.min(5, nb.length));
+    if (na.includes(prefix2)) return true;
+  }
+  return false;
+}
+
+function checkDuplicateInvoice(idx) {
+  const curr = invoiceData[idx];
+  if (!curr || !curr.vendorName || curr.amount === '') return;
+  const currAmt  = parseFloat(curr.amount);
+  const currDate = curr.invoiceDate ? new Date(curr.invoiceDate) : null;
+
+  for (let i = 0; i < invoiceData.length; i++) {
+    if (i === idx) continue;
+    const other = invoiceData[i];
+    if (!other || !other.vendorName || other.amount === '') continue;
+
+    const amtMatch    = Math.abs(currAmt - parseFloat(other.amount)) <= 1;
+    const vendorMatch = similarVendor(curr.vendorName, other.vendorName);
+
+    let dateMatch = true;
+    if (currDate && other.invoiceDate) {
+      const diffDays = Math.abs(currDate - new Date(other.invoiceDate)) / 86400000;
+      dateMatch = diffDays <= 7;
+    }
+
+    if (vendorMatch && amtMatch && dateMatch) {
+      showDuplicateWarning(idx, other, i);
+      return;
+    }
+  }
+}
+
+function showDuplicateWarning(idx, other, otherIdx) {
+  const el = document.getElementById(`dup-warn-${idx}`);
+  if (!el) return;
+  el.innerHTML = `
+    <div class="warn-banner">
+      <div class="warn-msg">
+        ⚠️ This looks like a duplicate of <strong>${esc(other.vendorName)}</strong>
+        ${fmt(parseFloat(other.amount))} (Invoice ${otherIdx + 1}) already uploaded.
+        Add anyway?
+      </div>
+      <div class="warn-banner-btns">
+        <button class="warn-btn add"    onclick="this.closest('.warn-banner').remove()">Yes, add it</button>
+        <button class="warn-btn remove" onclick="removeDuplicateInvoice(${idx})">Remove duplicate</button>
+      </div>
+    </div>`;
+}
+
+function removeDuplicateInvoice(idx) {
+  removeInvItem(idx);
+}
+
+// ─── Amount Sanity Check ──────────────────────────────────────────────────────
+
+function checkAmountSanity(idx) {
+  const curr = invoiceData[idx];
+  if (!curr || curr.amount === '' || !curr.category) return;
+  const currAmt = parseFloat(curr.amount);
+  if (!currAmt || currAmt <= 0) return;
+
+  const peers = invoiceData
+    .filter((inv, i) => i !== idx && inv && inv.category === curr.category && parseFloat(inv.amount) > 0)
+    .map(inv => parseFloat(inv.amount));
+
+  if (peers.length === 0) return;
+
+  const avg = peers.reduce((s, a) => s + a, 0) / peers.length;
+  if (currAmt > avg * 3) {
+    showSanityWarning(idx, curr.category, currAmt, avg);
+  }
+}
+
+function showSanityWarning(idx, category, amount, avg) {
+  const el = document.getElementById(`sanity-warn-${idx}`);
+  if (!el) return;
+  el.innerHTML = `
+    <div class="warn-banner">
+      <div class="warn-msg">
+        ⚠️ This <strong>${esc(category)}</strong> invoice (${fmt(amount)}) is unusually
+        high compared to your other ${esc(category)} invoices (avg ${fmt(avg)}).
+        Please verify before continuing.
+      </div>
+      <div class="warn-banner-btns">
+        <button class="warn-btn dismiss" onclick="this.closest('.warn-banner').remove()">Dismiss</button>
+      </div>
+    </div>`;
+}
+
+// ─── Pre-Allocation Confirmation Modal ────────────────────────────────────────
+
+// Parse leasedSqft robustly: handles numbers, numeric strings, and strings
+// with commas (e.g. "2,500") or trailing units (e.g. "2500 sq ft").
+// Returns the numeric value, or 0 if the value is empty / non-numeric.
+function parseSqft(v) {
+  if (v === null || v === undefined || v === '') return 0;
+  // Remove thousands-separator commas then parse
+  const n = parseFloat(String(v).replace(/,/g, '').trim());
+  return isNaN(n) ? 0 : n;
+}
+
+function showAllocationModal() {
+  if (sqftMismatch) return;
+  const totalSqft = parseFloat(document.getElementById('totalSqft').value);
+  const tenants   = tenantData.filter(t => t && t.tenantName && parseSqft(t.leasedSqft) > 0);
+  const invoices  = invoiceData.filter(inv => inv && inv.vendorName && parseFloat(inv.amount) > 0);
+
+  // If data isn't ready let runAllocation() surface the validation error
+  if (!totalSqft || totalSqft <= 0 || !tenants.length || !invoices.length) {
+    runAllocation();
+    return;
+  }
+
+  const total = invoices.reduce((s, inv) => s + parseFloat(inv.amount), 0);
+
+  // Category breakdown rows
+  const catTotals = {};
+  invoices.forEach(inv => {
+    catTotals[inv.category] = (catTotals[inv.category] || 0) + parseFloat(inv.amount);
+  });
+  const catRows = Object.entries(catTotals)
+    .sort((a, b) => b[1] - a[1])
+    .map(([cat, amt]) => `
+      <tr>
+        <td style="padding-left:14px;color:#64748b;text-transform:capitalize">${esc(cat)}</td>
+        <td>${fmt(amt)}</td>
+      </tr>`).join('');
+
+  document.getElementById('allocModalBody').innerHTML = `
+    <div class="modal-confirm-msg">
+      You are about to allocate <strong>${fmt(total)}</strong> across
+      <strong>${tenants.length}</strong> tenant${tenants.length !== 1 ? 's' : ''}.
+      Please confirm this looks correct.
+    </div>
+    <table class="modal-summary-table">
+      <tr><td>Total Invoices</td><td>${invoices.length}</td></tr>
+      <tr><td>Total Amount</td><td>${fmt(total)}</td></tr>
+      <tr><td>Tenants</td><td>${tenants.length}</td></tr>
+      ${catRows}
+    </table>`;
+
+  document.getElementById('allocModal').style.display = 'flex';
+}
+
+function confirmAllocation() {
+  closeAllocModal();
+  runAllocation();
+}
+
+function closeAllocModal() {
+  document.getElementById('allocModal').style.display = 'none';
+}
+
+// ─── Tenant Matching ──────────────────────────────────────────────────────────
+// Tries to match a single invoice to a specific tenant by unit number or name.
+// Returns { tenantName, confidence, reason } or null if no genuine match found.
+function matchesTenant(inv, tenant) {
+  const tName = tenant.tenantName || tenant.name || '';
+  return (
+    (inv.matchedTenantId && tenant.id && inv.matchedTenantId === tenant.id) ||
+    (inv.tenantId        && tenant.id && inv.tenantId        === tenant.id) ||
+    (inv.matchedTenant   && tName && inv.matchedTenant === tName) ||
+    (inv.tenantName      && tName && inv.tenantName    === tName)
+  );
+}
+
+function matchInvoiceToTenant(invoice, tenants) {
+  let bestMatch = null;
+  let bestConf  = 0;
+  const text = [invoice.vendorName, invoice.category, invoice.invoiceDate]
+    .filter(Boolean).join(' ').toLowerCase();
+
+  for (const t of tenants) {
+    let conf   = 0;
+    let reason = '';
+    // support both Lease objects (tenantName) and tenantData items (tenant_name)
+    const name = t.tenantName || t.tenant_name || '';
+
+    if (t.unitNumber && text.includes(t.unitNumber.toLowerCase())) {
+      conf   = 90;
+      reason = `Unit ${t.unitNumber}`;
+    }
+    if (name && text.includes(name.toLowerCase())) {
+      if (conf < 75) { conf = 75; reason = name; }
+    }
+
+    if (conf > bestConf) {
+      bestConf  = conf;
+      bestMatch = { tenantName: name, tenantId: t.id || null, confidence: conf, reason };
+    }
+  }
+
+  return bestMatch; // null = no match, shared expense
+}
+
+// ─── Full Reconciliation Engine ───────────────────────────────────────────────
+// Works on a Property object. Shared invoices are split pro-rata; invoices with
+// a direct tenant match (confidence >= 75) are charged only to that tenant.
+
+function runFullReconciliation(property) {
+  // Always read fresh tenant data — never rely on what was baked into Lease objects
+  const liveTenants = currentProperty()?.tenants || [];
+  const { leases, invoices, totalSqFt } = property;
+  if (!leases.length || !invoices.length) return [];
+
+  // Pre-compute property-level sqFt overflow once
+  const totalLeasedSqFt = leases.reduce((s, l) => s + (l.sqFt || 0), 0);
+  const sqFtOverflow    = totalSqFt > 0 && totalLeasedSqFt > totalSqFt;
+
+  invoices.forEach(inv => {
+    const m = matchInvoiceToTenant(inv, leases);
+    inv.matchedTenant   = m ? m.tenantName : null;
+    inv.matchedTenantId = m ? m.tenantId   : null;
+    inv.matchConfidence = m ? m.confidence : 0;
+    inv.matchReason     = m ? m.reason     : '';
+  });
+
+  const directInvoices = invoices.filter(inv => inv.matchConfidence >= 75);
+  const sharedInvoices = invoices.filter(inv => inv.matchConfidence <  75);
+
+  const results = leases.map(lease => {
+    // Look up current tenant state directly from property.tenants by stable id
+    const live    = liveTenants.find(t => t?.id === lease.id) || {};
+    const proRata = lease.sqFt / totalSqFt;
+
+    const eligibleShared = sharedInvoices.filter(inv =>
+      !lease.excludedCategories.includes((inv.category || '').toLowerCase())
+    );
+    const sharedTotal = eligibleShared.reduce((s, inv) => s + inv.amount, 0) * proRata;
+
+    const ownInvoices = directInvoices.filter(inv => matchesTenant(inv, lease));
+    console.log(`[reconcile] ${lease.tenantName} — direct:${ownInvoices.length} shared:${eligibleShared.length}`,
+      ownInvoices.map(i => ({ id: i.id, matchedTenantId: i.matchedTenantId, matchedTenant: i.matchedTenant })));
+    const ownTotal    = ownInvoices.reduce((s, inv) => s + inv.amount, 0);
+
+    let rawTotal      = sharedTotal + ownTotal;
+    let capApplied    = false;
+    let capAdjustment = null;
+
+    if (lease.capPercentage !== null && lease.capBaseAmount !== null) {
+      const cap = lease.capBaseAmount * (1 + lease.capPercentage / 100);
+      if (rawTotal > cap) {
+        capAdjustment = parseFloat((rawTotal - cap).toFixed(2));
+        rawTotal      = cap;
+        capApplied    = true;
+      }
+    }
+
+    const included = [
+      ...eligibleShared.map(inv => ({
+        ...inv,
+        allocation: 'shared',
+        share: parseFloat((inv.amount * proRata).toFixed(2)),
+        ...(inv.matchConfidence < 75 ? {
+          flag: {
+            message:     'Low confidence invoice match',
+            explanation: 'This invoice could not be confidently matched to a tenant using unit number or name, so it was treated as a shared expense.',
+          },
+        } : {}),
+      })),
+      ...ownInvoices.map(inv => ({ ...inv, allocation: 'direct', share: inv.amount })),
+    ];
+
+    // Recompute flags from live tenant data — never cache between runs
+    const flags = [];
+
+    if (sqFtOverflow) {
+      flags.push({
+        code:        'SQFT_OVERFLOW',
+        message:     'Total leased square footage exceeds property total',
+        explanation: `The sum of tenant square footage (${totalLeasedSqFt.toLocaleString()} sqft) exceeds the property total (${totalSqFt.toLocaleString()} sqft). Pro-rata calculations may be incorrect.`,
+      });
+    }
+
+    if (!parseSqft(live.leased_sqft || lease.sqFt)) {
+      flags.push({
+        code:        'SQFT_APPROXIMATE',
+        message:     'Square footage may be incorrect',
+        explanation: 'This tenant has missing or zero square footage, which may cause incorrect pro-rata calculations.',
+      });
+    }
+
+    const invoiceYears   = invoices.map(inv => new Date(inv.date || inv.invoiceDate || '').getFullYear()).filter(y => !isNaN(y));
+    const leaseStartDate = live.start_date || lease.startDate || '';
+    const leaseStartYear = new Date(leaseStartDate).getFullYear();
+    if (!isNaN(leaseStartYear) && invoiceYears.some(y => y < leaseStartYear)) {
+      flags.push({
+        code:        'BASE_YEAR_MISMATCH',
+        message:     'Invoice dates may not match lease period',
+        explanation: 'One or more invoices occur before the lease start date, which may indicate incorrect CAM charges.',
+      });
+    }
+
+    // Use live lease_type so edits take effect immediately without re-extracting
+    const currentLeaseType = live.lease_type || lease.leaseType || null;
+    if (!currentLeaseType) {
+      flags.push({
+        code:        'NNN_GROSS_UNKNOWN',
+        message:     'Lease type not specified',
+        explanation: 'The system could not determine if this lease is NNN or Gross, which affects how expenses should be allocated.',
+      });
+    }
+
+    const result = new ReconciliationResult(
+      lease.tenantName,
+      lease.unitNumber,
+      lease.sqFt,
+      parseFloat(rawTotal.toFixed(2)),
+      parseFloat((proRata * 100).toFixed(2)),
+      included,
+      capApplied,
+      capAdjustment
+    );
+    result.ambiguityFlags = flags;
+    return result;
+  });
+
+  // Penny adjustment: if floating-point rounding leaves a tiny gap, absorb it into
+  // the largest tenant so the sum of allocations equals total invoices exactly.
+  const totalExpenses = invoices.reduce((s, inv) => s + inv.amount, 0);
+  const sumAllocated  = results.reduce((s, r) => s + r.totalAllocated, 0);
+  const diff          = parseFloat((totalExpenses - sumAllocated).toFixed(2));
+  if (Math.abs(diff) < 0.05 && results.length > 0) {
+    const largest = results.reduce((a, b) => a.totalAllocated >= b.totalAllocated ? a : b);
+    largest.totalAllocated   = parseFloat((largest.totalAllocated  + diff).toFixed(2));
+    largest.allocatedAmount  = largest.totalAllocated;
+  }
+
+  property.reconciliations = results;
+  return results;
+}
+
+// ─── CAM Allocation Engine ────────────────────────────────────────────────────
+
+function runCAMAllocation(expenses, tenants) {
+  return tenants.map(t => {
+    const proRata  = t.leasedSqft / t.totalSqft;
+    const eligible = expenses.filter(e =>
+      !t.excludedCategories.includes(e.category.toLowerCase())
+    );
+    let total = eligible.reduce((s, e) => s + e.amount * proRata, 0);
+    let capAdj = null;
+
+    if (t.capPct !== null && t.capPct !== '' && !isNaN(parseFloat(t.capPct))) {
+      const cap = 10000 * (1 + parseFloat(t.capPct) / 100);
+      if (total > cap) { capAdj = total - cap; total = cap; }
+    }
+
+    return {
+      name:            t.name,
+      proRata,
+      allocatedAmount: parseFloat(total.toFixed(2)),
+      capAdjustment:   capAdj !== null ? parseFloat(capAdj.toFixed(2)) : null,
+      capApplied:      capAdj !== null,
+      eligibleCount:   eligible.length,
+    };
+  });
+}
+
+async function runAllocation() {
+  const scrollY    = window.scrollY;
+  const propName  = document.getElementById('propertyName').value.trim() || 'Property';
+  const totalSqft = parseFloat(document.getElementById('totalSqft').value);
+  console.log("CALCULATED TOTAL LEASED SQFT:", totalSqft);
+  const section   = document.getElementById('results');
+  const body      = document.getElementById('resultsBody');
+
+  if (!totalSqft || totalSqft <= 0) {
+    showErr(body, section, 'Please enter a valid Total Property Sqft in Section 1.');
+    return;
+  }
+
+  // Show banner if sqFt is over, but do NOT block — surfaced as SQFT_OVERFLOW flag on results
+  checkSqftValidation();
+
+  const validTenants = getValidTenants();
+
+  const tenants = validTenants.map(t => ({
+      name:               t.tenant_name,
+      leasedSqft:         parseSqft(t.leased_sqft),
+      totalSqft,
+      capPct:             t.cap,
+      excludedCategories: t.excluded_categories
+        ? t.excluded_categories.split(',').map(s => s.trim().toLowerCase()).filter(Boolean)
+        : [],
+    }));
+
+  if (!tenants.length) {
+    // If there are tenants with names but missing sqft, give a more specific message
+    const namedTenantsWithNoSqft = (currentProperty()?.tenants || []).filter(t => t && t.tenant_name && parseSqft(t.leased_sqft) <= 0);
+    if (namedTenantsWithNoSqft.length) {
+      showErr(body, section,
+        `${namedTenantsWithNoSqft.length} tenant(s) are missing Leased Sqft. ` +
+        'Click "Edit" on each tenant in Section 2 and enter their square footage, then run again.');
+    } else {
+      showErr(body, section, 'Please upload at least one lease with a name and square footage in Section 2.');
+    }
+    return;
+  }
+
+  const invoices = invoiceData
+    .filter(inv => inv && inv.vendorName && parseFloat(inv.amount) > 0)
+    .map(inv => ({ vendor: inv.vendorName, category: inv.category, amount: parseFloat(inv.amount) }));
+
+  if (!invoices.length) {
+    showErr(body, section, 'Please upload at least one invoice with a vendor and amount in Section 3.');
+    return;
+  }
+
+  const results   = runCAMAllocation(invoices, tenants);
+  const totalCost = invoices.reduce((s, e) => s + e.amount, 0);
+
+  const totalLeasedSqft = tenants.reduce((s, t) => s + (t.leasedSqft || 0), 0);
+  const sqftExceedsProperty = totalLeasedSqft > totalSqft;
+
+  // Build a Property + run full reconciliation (for per-tenant invoice breakdown + direct matching)
+  const _prop = new Property(propName, totalSqft);
+  _prop.addLeases(getValidTenants().map(t => {
+    const lease = new Lease(t.tenant_name, t.unitNumber || '', parseSqft(t.leased_sqft), t.start_date || '', t.end_date || '',
+      t.excluded_categories ? t.excluded_categories.split(',').map(s => s.trim()) : [],
+      t.cap ?? null, null,
+      (t.confidence?.leased_sqft ?? t.confidence?.leasedSqft ?? 100) < 70,
+      t.baseYear ?? null,
+      t.lease_type || null);
+    lease.id = t.id || null; // stable id for invoice linking
+    return lease;
+  }));
+  _prop.addInvoices(invoiceData.filter(inv => inv && inv.vendorName && parseFloat(inv.amount) > 0).map(inv =>
+    new Invoice(null, inv.invoiceDate, inv.amount, inv.vendorName, inv.category)
+  ));
+  const fullResults = runFullReconciliation(_prop);
+
+  // Sync matchedTenant tags back to invoiceData for badge display
+  const activeTenants = (currentProperty()?.tenants || []).filter(t => t && t.tenant_name);
+  invoiceData.forEach((inv, i) => {
+    if (!inv) return;
+    const m = matchInvoiceToTenant(inv, activeTenants);
+    invoiceData[i].matchedTenant   = m ? m.tenantName : null;
+    invoiceData[i].matchedTenantId = m ? m.tenantId   : null;
+    invoiceData[i].matchConfidence = m ? m.confidence : 0;
+    invoiceData[i].matchReason     = m ? m.reason     : '';
+  });
+  renderInvResults();
+
+  // Store for dispute + reports sections
+  lastInvoices        = invoices.map((inv, i) => ({ id: `inv-${i}`, ...inv }));
+  lastTenants         = tenants;
+  lastResults         = fullResults; // unified: ReconciliationResult[] is single source of truth
+  lastFullResults     = fullResults;
+  lastPropName        = propName;
+  lastTotal           = totalCost;
+  lastInvoicesFull    = invoices;
+
+  document.getElementById('resultsTitle').textContent = `Results — ${propName}`;
+  applySqftMismatchUI(sqftExceedsProperty);
+
+  let html = `<div class="summary-bar">
+    <div class="summary-bar-item"><span class="summary-bar-label">Total Expenses</span><strong>${fmt(totalCost)}</strong></div>
+    <div class="summary-bar-item"><span class="summary-bar-label">Tenants</span><strong>${fullResults.length}</strong></div>
+    <div class="summary-bar-item"><span class="summary-bar-label">Invoices</span><strong>${invoices.length}</strong></div>
+  </div>
+  ${sqftExceedsProperty ? `
+  <div class="sqft-mismatch-banner">
+    <div class="smb-title">&#x26A0; Calculation paused — fix required</div>
+    <div class="smb-body">
+      Your leases total <strong>${totalLeasedSqft.toLocaleString()} sqft</strong>, but the property is set to <strong>${totalSqft.toLocaleString()} sqft</strong>.<br><br>
+      This usually means:<br>
+      &bull; Additional leases were added<br>
+      &bull; Duplicate or overlapping leases exist<br>
+      &bull; Property square footage needs updating<br><br>
+      Please resolve this before continuing.
+    </div>
+    <div class="smb-actions">
+      <button class="smb-btn" onclick="document.getElementById('totalSqft')?.scrollIntoView({behavior:'smooth',block:'center'})">Update Property Sqft</button>
+      <button class="smb-btn" onclick="document.getElementById('tenantSlots')?.scrollIntoView({behavior:'smooth',block:'start'})">Review Leases</button>
+    </div>
+  </div>
+  <div class="invalid-data-badge">&#x26A0; Invalid data — calculations paused</div>
+  ` : ''}`;
+
+  fullResults.forEach(r => {
+    const flags = r.ambiguityFlags || [];
+
+    // ── Prominent flags block ──────────────────────────────────────────
+    const flagsSection = flags.length > 0
+      ? `<div class="rc-flags">
+          <div class="rc-flags-title">&#x26A0;&#xFE0F; Needs Review</div>
+          ${flags.map(f => `
+            <div class="rc-flag-item">
+              &#x2022; <strong>${esc(f.message)}</strong>
+              ${f.explanation ? `<br><span class="rc-flag-expl">${esc(f.explanation)}</span>` : ''}
+            </div>`).join('')}
+        </div>`
+      : '';
+
+    // ── Collapsible invoice breakdown ──────────────────────────────────
+    const invBreakdown = (() => {
+      if (!r.includedInvoices.length) return '';
+      const rows = r.includedInvoices.map((inv, invIdx) => {
+        const rowId = `rcn-${r.name}-${invIdx}`.replace(/[^a-zA-Z0-9-]/g, '-');
+        return `<div class="recon-inv-row ts-inv-card" id="crow-${rowId}">
+          <span class="recon-inv-vendor">${esc(inv.vendorName || '')}</span>
+          <span class="recon-inv-cat">${esc(inv.category || '')}</span>
+          ${inv.allocation === 'direct'
+            ? `<span class="recon-inv-badge recon-direct">direct</span>`
+            : `<span class="recon-inv-badge recon-shared">shared</span>`}
+          <span class="recon-inv-share">${fmt(inv.share)}</span>
+          <span class="recon-inv-acts">
+            <button class="inv-act-btn inv-act-explain" id="tsexplbtn-${rowId}"
+              onclick="event.stopPropagation();tsExplainInvoice('${rowId}','${esc(inv.vendorName||'')}','${esc(inv.category||'')}',${inv.amount},'${esc(inv.invoiceDate||'')}')">Explain</button>
+            <button class="inv-act-btn inv-act-dispute" id="dbtn-${rowId}"
+              onclick="event.stopPropagation();toggleDisputeForm('${rowId}','${esc(r.name)}','${rowId}','${esc(inv.vendorName||'')}','${esc(inv.category||'')}',${inv.share})">Dispute</button>
+          </span>
+          ${inv.flag ? `<span class="recon-inv-flag" title="${esc(inv.flag.explanation || '')}">&#x26A0; ${esc(inv.flag.message)}</span>` : ''}
+          <div id="tsexpl-${rowId}" style="width:100%;"></div>
+          <div id="dform-${rowId}" style="display:none;width:100%;"></div>
+        </div>`;
+      }).join('');
+      const capLine = r.capApplied
+        ? `<div class="recon-cap-note">&#x26A0; Cap applied — ${fmt(r.capAdjustment)} reduced</div>`
+        : '';
+      return `<details class="recon-breakdown">
+        <summary>Invoice breakdown (${r.includedInvoices.length})${r.averageConfidence > 0 ? ` · ${r.averageConfidence}% confidence` : ''}</summary>
+        ${capLine}
+        <div class="recon-inv-list">${rows}</div>
+      </details>`;
+    })();
+
+    // ── Confidence stat ────────────────────────────────────────────────
+    const confStat = r.averageConfidence > 0
+      ? stat('Confidence', r.averageConfidence + '%')
+      : '';
+
+    const tdIdx = tenantData.findIndex(t => t && t.tenant_name === r.name);
+    const _td   = tdIdx >= 0 ? tenantData[tdIdx] : null;
+    const leaseBtn = _td?.leaseExpected
+      ? (_td.leaseFile instanceof File || _td.lease_url)
+        ? `<button class="action-btn" onclick="openLeaseModalFromFile(${tdIdx})">&#x1F4C4; View Lease</button>`
+        : `<div class="lease-missing-note">Lease document not loaded — please re-upload to view</div>`
+      : '';
+
+    html += `<div class="result-card${flags.length ? ' result-card--flagged' : ''}">
+      <div class="r-name">${esc(r.name)}${r.unitNumber ? `<span class="rc-unit"> · Unit ${esc(r.unitNumber)}</span>` : ''}</div>
+      <div class="result-grid">
+        ${stat('Total', fmt(r.allocatedAmount))}
+        ${stat('Pro-Rata', (r.proRata * 100).toFixed(2) + '%')}
+        ${confStat}
+        ${stat('Invoices', r.eligibleCount + ' of ' + invoices.length)}
+      </div>
+      ${r.capApplied ? `<div class="cap-badge">Cap applied — ${fmt(r.capAdjustment)} reduced</div>` : ''}
+      ${flagsSection}
+      ${leaseBtn}
+      ${invBreakdown}
+      <button class="explain-btn${sqftExceedsProperty ? ' sqft-blocked' : ''}" title="${sqftExceedsProperty ? 'Fix square footage mismatch to view calculation' : ''}" onclick="${sqftExceedsProperty ? 'void(0)' : `openExplainPanel('${esc(r.name)}')`}">&#x1F4CA; View Calculation</button>
+    </div>`;
+  });
+
+  body.innerHTML = html;
+  section.style.display = 'block';
+
+  // Save to previous runs history
+  camRuns.unshift({
+    propName,
+    timestamp:     new Date(),
+    totalExpenses: totalCost,
+    tenantCount:   fullResults.length,
+    invoiceCount:  invoices.length,
+    results:       fullResults.map(r => ({ ...r })),
+  });
+  renderPreviousRuns();
+
+  renderDisputeSection();
+  showReportSection(); // refresh notice + tenant buttons
+  await syncPortfolioEntry();
+  await savePropertyData(); // persist CAM allocation results to Supabase
+  updateStepBar('review');
+  requestAnimationFrame(() => { window.scrollTo(0, scrollY); });
+}
+
+// ─── Step Progress Bar ────────────────────────────────────────────────────────
+
+function updateStepBar(reached) {
+  const steps = ['upload','calculate','review','resolve'];
+  const idx   = steps.indexOf(reached);
+  steps.forEach((s, i) => {
+    const el = document.getElementById(`step-${s}`);
+    if (!el) return;
+    el.classList.remove('done', 'active');
+    if (i < idx)  el.classList.add('done');
+    if (i === idx) el.classList.add('active');
+    const dot = el.querySelector('.step-dot');
+    if (i < idx && dot) dot.innerHTML = '&#x2713;';
+    if (i >= idx && dot) dot.textContent = i + 1;
+  });
+}
+
+// ─── Helpers ──────────────────────────────────────────────────────────────────
+
+function showErr(body, section, msg) {
+  body.innerHTML = `<div class="err-banner">${esc(msg)}</div>`;
+  section.style.display = 'block';
+  section.scrollIntoView({ behavior: 'smooth', block: 'start' });
+}
+
+// ─── Previous Runs ────────────────────────────────────────────────────────────
+function _fmtRunTs(ts) {
+  return (ts instanceof Date ? ts : new Date(ts)).toLocaleString('en-US', {
+    month: 'short', day: 'numeric', year: 'numeric', hour: '2-digit', minute: '2-digit',
+  });
+}
+
+function _prevRunDetailHtml(run) {
+  return run.results.map(r => `
+    <div class="result-card" style="padding:10px 14px;margin-bottom:6px;">
+      <div class="r-name" style="font-size:0.88rem;">${esc(r.name)}</div>
+      <div class="result-grid">
+        ${stat('Allocated', fmt(r.allocatedAmount))}
+        ${stat('Pro-Rata',  (r.proRata * 100).toFixed(2) + '%')}
+        ${stat('Invoices',  r.eligibleCount + ' of ' + run.invoiceCount)}
+      </div>
+    </div>`).join('');
+}
+
+function renderPrevRunCard(run, camIdx) {
+  return `
+    <div class="prev-run-card">
+      <div class="prev-run-meta">${_fmtRunTs(run.timestamp)}</div>
+      <div class="prev-run-title">${esc(run.propName)}<span class="prev-run-latest-badge">Latest</span></div>
+      <div class="prev-run-stats">
+        <div class="prev-run-stat">Expenses: <strong>${fmt(run.totalExpenses)}</strong></div>
+        <div class="prev-run-stat">Tenants: <strong>${run.tenantCount}</strong></div>
+        <div class="prev-run-stat">Invoices: <strong>${run.invoiceCount}</strong></div>
+      </div>
+      <button class="prev-run-view-btn" onclick="togglePrevRunDetail(${camIdx})">&#x25BC; View Results</button>
+      <div class="prev-run-detail" id="prev-run-detail-${camIdx}">
+        ${_prevRunDetailHtml(run)}
+      </div>
+    </div>`;
+}
+
+function renderPrevRunHistItem(run, camIdx) {
+  return `
+    <div class="prev-run-hist-item">
+      <div class="prev-run-hist-meta">${_fmtRunTs(run.timestamp)}</div>
+      <div class="prev-run-hist-stats">
+        <div class="prev-run-hist-stat">Expenses: <strong>${fmt(run.totalExpenses)}</strong></div>
+        <div class="prev-run-hist-stat">Tenants: <strong>${run.tenantCount}</strong></div>
+        <div class="prev-run-hist-stat">Invoices: <strong>${run.invoiceCount}</strong></div>
+      </div>
+      <button class="prev-run-view-btn" style="font-size:0.72rem;padding:4px 10px;" onclick="togglePrevRunDetail(${camIdx})">&#x25BC; View Results</button>
+      <div class="prev-run-detail" id="prev-run-detail-${camIdx}">
+        ${_prevRunDetailHtml(run)}
+      </div>
+    </div>`;
+}
+
+function renderPreviousRuns() {
+  const sec  = document.getElementById('previousRunsSection');
+  const list = document.getElementById('previousRunsList');
+  if (camRuns.length < 2) { sec.style.display = 'none'; return; }
+  sec.style.display = 'block';
+
+  // Group historical runs (all but camRuns[0]) by property name, preserving DESC order
+  const grouped = new Map();
+  camRuns.slice(1).forEach((run, sliceIdx) => {
+    const key = (run.propName || '').trim();
+    if (!grouped.has(key)) grouped.set(key, []);
+    grouped.get(key).push({ run, camIdx: sliceIdx + 1 });
+  });
+
+  // Sort groups by each property's most recent run, newest first
+  const groups = [...grouped.entries()].sort(
+    (a, b) => new Date(b[1][0].run.timestamp) - new Date(a[1][0].run.timestamp)
+  );
+
+  list.innerHTML = groups.map(([, entries], groupIdx) => {
+    const primary = entries[0];
+    const older   = entries.slice(1);
+    return `
+      <div class="prev-run-group">
+        ${renderPrevRunCard(primary.run, primary.camIdx)}
+        ${older.length ? `
+          <button class="prev-run-toggle-btn" onclick="togglePrevRunGroup(${groupIdx}, this)">
+            &#x25BC; Show previous runs (${older.length})
+          </button>
+          <div class="prev-run-hist-list" id="prhist-${groupIdx}">
+            ${older.map(e => renderPrevRunHistItem(e.run, e.camIdx)).join('')}
+          </div>` : ''}
+      </div>`;
+  }).join('');
+}
+
+function togglePrevRunGroup(groupIdx, btn) {
+  const el = document.getElementById(`prhist-${groupIdx}`);
+  if (!el) return;
+  const open = el.classList.toggle('open');
+  const count = el.querySelectorAll('.prev-run-hist-item').length;
+  btn.innerHTML = open
+    ? `&#x25B2; Hide previous runs (${count})`
+    : `&#x25BC; Show previous runs (${count})`;
+}
+
+function togglePrevRunDetail(idx) {
+  const el  = document.getElementById(`prev-run-detail-${idx}`);
+  const btn = el ? el.previousElementSibling : null;
+  if (!el) return;
+  const open = el.style.display === 'block';
+  el.style.display = open ? 'none' : 'block';
+  if (btn) btn.innerHTML = open ? '&#x25BC; View Results' : '&#x25B2; Hide Results';
+}
+
+function fmt(n) {
+  return '$' + n.toLocaleString('en-US', { minimumFractionDigits: 2, maximumFractionDigits: 2 });
+}
+
+function cleanHTML(text) {
+  if (text === null || text === undefined) return '';
+  const div = document.createElement('div');
+  div.innerHTML = String(text);
+  return div.textContent || div.innerText || '';
+}
+
+function esc(v) {
+  if (v === null || v === undefined) return '';
+  return String(v)
+    .replace(/&/g, '&amp;')
+    .replace(/</g, '&lt;')
+    .replace(/>/g, '&gt;')
+    .replace(/"/g, '&quot;');
+}
+
+// Convert a subset of markdown to safe HTML (HTML-escapes first, then renders).
+function renderMarkdown(rawText) {
+  let s = String(rawText || '')
+    .replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;');
+  s = s.replace(/\*\*(.+?)\*\*/g,'<strong>$1</strong>');
+  s = s.replace(/^#{1,3} +(.+)$/gm,'<span class="expl-hd">$1</span>');
+  const lines = s.split('\n');
+  const segs = [];
+  let listItems = [];
+  for (const line of lines) {
+    const m = line.match(/^[-*] +(.+)$/);
+    if (m) { listItems.push(`<li>${m[1]}</li>`); }
+    else {
+      if (listItems.length) { segs.push({ ul: true, html: `<ul class="expl-list">${listItems.join('')}</ul>` }); listItems = []; }
+      segs.push({ ul: false, html: line });
+    }
+  }
+  if (listItems.length) segs.push({ ul: true, html: `<ul class="expl-list">${listItems.join('')}</ul>` });
+  let out = '';
+  for (let i = 0; i < segs.length; i++) {
+    const seg = segs[i];
+    if (seg.ul) { out += seg.html; }
+    else { if (i > 0 && !segs[i-1].ul) out += '<br>'; out += seg.html; }
+  }
+  return out;
+}
+
+function stat(label, value) {
+  return `<div class="result-stat">
+    <div class="stat-label">${label}</div>
+    <div class="stat-value">${value}</div>
+  </div>`;
+}
+
+// ─── Explain Charge Panel ─────────────────────────────────────────────────────
+
+function openExplainPanel(tenantName) {
+  const r = lastResults.find(x => x.name === tenantName);
+  const t = lastTenants.find(x => x.name === tenantName);
+  if (!r || !t) return;
+
+  const td = tenantData.find(x => x && x.tenant_name === tenantName);
+  if (!t.leasedSqft || !t.totalSqft || !td?.lease_type) {
+    const panel = document.getElementById('explainPanel');
+    const body  = document.getElementById('explainPanelBody');
+    if (body) body.innerHTML = `<div class="rc-flags"><div class="rc-flags-title">&#x26A0;&#xFE0F; Cannot Generate Explanation</div><div class="rc-flag-item">Cannot generate explanation — missing required lease data (leased sqft, property sqft, or lease type).</div></div>`;
+    if (panel) { panel.classList.add('open'); document.body.style.overflow = 'hidden'; }
+    return;
+  }
+
+  const leasedSqft  = parseFloat(t.leasedSqft) || 0;
+  const totalSqft   = parseFloat(t.totalSqft)  || 0;
+  const totalCamAll = lastInvoicesFull.reduce((s, inv) => s + (parseFloat(inv.amount) || 0), 0);
+
+  const eligible = lastInvoicesFull.filter(inv =>
+    !t.excludedCategories.includes((inv.category || '').toLowerCase())
+  );
+
+  // Section 1 — Summary
+  const adjHtml = r.capApplied
+    ? `<div class="ep-adj">&#x26A0; Cap applied — your share reduced by ${fmt(r.capAdjustment)}</div>`
+    : '';
+  const exclHtml = t.excludedCategories.length
+    ? `<div class="ep-excl">Excluded from your CAM: ${t.excludedCategories.join(', ')}</div>`
+    : '';
+
+  const s1 = `
+    <div class="ep-section-title">Summary</div>
+    <div class="ep-stat-grid">
+      <div class="ep-stat">
+        <div class="ep-stat-label">Your Sqft</div>
+        <div class="ep-stat-value">${leasedSqft.toLocaleString()}</div>
+      </div>
+      <div class="ep-stat">
+        <div class="ep-stat-label">Building Sqft</div>
+        <div class="ep-stat-value">${totalSqft.toLocaleString()}</div>
+      </div>
+      <div class="ep-stat">
+        <div class="ep-stat-label">Your % Share</div>
+        <div class="ep-stat-value">${(r.proRata * 100).toFixed(2)}%</div>
+      </div>
+      <div class="ep-stat">
+        <div class="ep-stat-label">Total CAM Pool</div>
+        <div class="ep-stat-value">${fmt(totalCamAll)}</div>
+      </div>
+      <div class="ep-stat">
+        <div class="ep-stat-label">Eligible Expenses</div>
+        <div class="ep-stat-value">${fmt(eligible.reduce((s,i)=>s+(parseFloat(i.amount)||0),0))}</div>
+      </div>
+      <div class="ep-stat">
+        <div class="ep-stat-label">Your CAM Charge</div>
+        <div class="ep-stat-value highlight">${fmt(r.allocatedAmount)}</div>
+      </div>
+    </div>
+    ${adjHtml}${exclHtml}`;
+
+  // Section 2 — Category Breakdown
+  const catMap = {};
+  eligible.forEach(inv => {
+    const cat = (inv.category || 'other').toLowerCase();
+    if (!catMap[cat]) catMap[cat] = { total: 0, count: 0, invs: [] };
+    const amt = parseFloat(inv.amount) || 0;
+    catMap[cat].total += amt;
+    catMap[cat].count++;
+    catMap[cat].invs.push(inv);
+  });
+
+  const s2rows = Object.entries(catMap)
+    .sort((a, b) => b[1].total - a[1].total)
+    .map(([cat, data]) => {
+      const yourShare = parseFloat((data.total * r.proRata).toFixed(2));
+      return `
+        <div class="ep-cat-row" id="epcat-${esc(cat.replace(/\s+/g,'-'))}"
+          onclick="epToggleDrill('${esc(cat)}','${esc(tenantName)}')">
+          <div>
+            <div class="ep-cat-name">${esc(cat)}</div>
+            <div class="ep-cat-meta">${data.count} invoice${data.count !== 1 ? 's' : ''}</div>
+          </div>
+          <div style="display:flex;align-items:center;">
+            <div class="ep-cat-right">
+              <div class="ep-cat-total">${fmt(data.total)}</div>
+              <div class="ep-cat-share">Your CAM charge: ${fmt(yourShare)}</div>
+            </div>
+            <span class="ep-cat-chevron" id="epchev-${esc(cat.replace(/\s+/g,'-'))}">&#x25BC;</span>
+          </div>
+        </div>
+        <div id="epdrill-${esc(cat.replace(/\s+/g,'-'))}" style="display:none;"></div>`;
+    }).join('');
+
+  const s2 = `<div class="ep-section-title">Category Breakdown — click to drill down</div>${s2rows}`;
+
+  // Populate and open panel
+  document.getElementById('explainPanelTitle').textContent    = tenantName;
+  document.getElementById('explainPanelSubtitle').textContent = `CAM Charge Breakdown — ${lastPropName}`;
+  document.getElementById('explainPanelBody').innerHTML = s1 + s2;
+  document.getElementById('explainPanel').classList.add('open');
+  document.body.style.overflow = 'hidden';
+}
+
+function epToggleDrill(category, tenantName) {
+  const t = lastTenants.find(x => x.name === tenantName);
+  const r = lastResults.find(x => x.name === tenantName);
+  if (!t || !r) return;
+
+  const slug    = category.replace(/\s+/g, '-');
+  const drillEl = document.getElementById(`epdrill-${slug}`);
+  const chevEl  = document.getElementById(`epchev-${slug}`);
+  const rowEl   = document.getElementById(`epcat-${slug}`);
+  if (!drillEl) return;
+
+  const open = drillEl.style.display === 'block';
+  drillEl.style.display = open ? 'none' : 'block';
+  if (chevEl) chevEl.innerHTML = open ? '&#x25BC;' : '&#x25B2;';
+  if (rowEl)  rowEl.classList.toggle('active', !open);
+  if (open)   return;
+
+  // Build drill-down invoice list for this category
+  const invs = lastInvoicesFull.filter(inv =>
+    !t.excludedCategories.includes((inv.category || '').toLowerCase()) &&
+    (inv.category || 'other').toLowerCase() === category.toLowerCase()
+  );
+
+  drillEl.innerHTML = `<div class="ep-drill">${
+    invs.map(inv => {
+      const stored = invoiceData.find(d =>
+        d.vendorName && d.vendorName.toLowerCase() === (inv.vendor || inv.vendorName || '').toLowerCase()
+      );
+      const viewBtn = stored && stored.fileUrl
+        ? `<button class="ep-view-inv-btn" onclick="viewInvFile(${invoiceData.indexOf(stored)})">&#x1F4C4; View Source Invoice</button>`
+        : '';
+      return `
+      <div class="ep-inv-row">
+        <div>
+          <div class="ep-inv-vendor">${esc(inv.vendor || inv.vendorName || '—')}</div>
+          <div class="ep-inv-date">${esc(inv.invoiceDate || '—')}</div>
+          ${viewBtn}
+        </div>
+        <div class="ep-inv-amount">${fmt(parseFloat(inv.amount) || 0)}</div>
+      </div>`;
+    }).join('')
+  }</div>`;
+}
+
+function closeExplainPanel() {
+  document.getElementById('explainPanel').classList.remove('open');
+  document.body.style.overflow = '';
+  document.body.classList.remove('modal-open');
+}
+
+// ─── Lease Viewer ─────────────────────────────────────────────────────────────
+
+// Primary: open lease in the in-app modal viewer.
+function openLease(file) {
+  openLeaseModal(file);
+}
+
+// Entry point for all inline onclick buttons.
+function openLeaseModalFromFile(index) {
+  const d = tenantData[index];
+  if (!d) return;
+  console.log('LEASE URL:', d.lease_url);
+  if (d.leaseFile instanceof File) {
+    openLeaseModal(d.leaseFile);
+  } else if (d.lease_url) {
+    openLeaseModal(d.lease_url);
+  }
+}
+
+// Modal viewer — accepts a File object (local) or a URL string (persisted).
+function openLeaseModal(fileOrUrl) {
+  if (!fileOrUrl) return;
+  const modal = document.getElementById('leaseViewerModal');
+  const frame = document.getElementById('leaseViewerFrame');
+  const title = document.getElementById('leaseViewerTitle');
+
+  let url, titleText, isBlob;
+  if (typeof fileOrUrl === 'string') {
+    url       = fileOrUrl;
+    titleText = 'Lease Document';
+    isBlob    = false;
+  } else {
+    url       = URL.createObjectURL(fileOrUrl);
+    titleText = fileOrUrl.name || 'Lease Document';
+    isBlob    = true;
+  }
+
+  modal._leaseUrl = url;
+  modal._isBlob   = isBlob;
+  if (title) title.textContent = titleText;
+  frame.src = url;
+  modal.style.display = 'flex';
+  document.body.style.overflow = 'hidden';
+}
+
+function closeLeaseModal() {
+  const modal = document.getElementById('leaseViewerModal');
+  const frame = document.getElementById('leaseViewerFrame');
+  if (frame) { frame.onload = null; frame.src = ''; }
+  if (modal) {
+    modal.style.display = 'none';
+    if (modal._leaseUrl && modal._isBlob) {
+      URL.revokeObjectURL(modal._leaseUrl);
+    }
+    modal._leaseUrl = null;
+    modal._isBlob   = false;
+  }
+  document.body.style.overflow = '';
+}
+
+function leaseViewerOpenExternal() {
+  const modal = document.getElementById('leaseViewerModal');
+  if (modal?._leaseUrl) window.open(modal._leaseUrl, '_blank');
+}
+
+// ESC key always closes modal — user can never be trapped
+document.addEventListener('keydown', (e) => {
+  if (e.key === 'Escape') closeLeaseModal();
+});
+
+// Clicking the dark backdrop closes modal
+document.getElementById('leaseViewerModal')?.addEventListener('click', (e) => {
+  if (e.target.id === 'leaseViewerModal') closeLeaseModal();
+});
+
+// ─── Report State ─────────────────────────────────────────────────────────────
+const camRuns    = []; // previous run history
+let lastResults  = []; // ReconciliationResult[] — unified with lastFullResults
+let sqftMismatch = false;
+let isEditingField = false; // true while a text/number/date input has focus
+
+function applySqftMismatchUI(mismatch) {
+  sqftMismatch = mismatch;
+  const ids = ['runBtn'];
+  ids.forEach(id => {
+    const el = document.getElementById(id);
+    if (!el) return;
+    el.classList.toggle('sqft-blocked', mismatch);
+  });
+  document.querySelectorAll('.report-btn').forEach(btn => {
+    btn.classList.toggle('sqft-blocked', mismatch);
+  });
+}
+let lastPropName = '';
+let lastTotal    = 0;
+let lastInvoicesFull = []; // full invoice list with category sums
+let lastFullResults  = []; // ReconciliationResult[] from runFullReconciliation
+
+// ─── Dispute State ────────────────────────────────────────────────────────────
+let lastInvoices = []; // [{ id, vendor, category, amount }]
+let lastTenants  = []; // [{ name, excludedCategories }]
+const disputes   = []; // [{ id, tenantName, invoiceId, vendor, category, tenantShare, reason, timestamp, status, resolution, resolvedAt, hash }]
+let nextDisputeId = 0;
+
+// ─── SHA-256 (Web Crypto — no library needed) ─────────────────────────────────
+async function sha256(obj) {
+  const text   = JSON.stringify(obj, Object.keys(obj).sort());
+  const buf    = new TextEncoder().encode(text);
+  const digest = await crypto.subtle.digest('SHA-256', buf);
+  return Array.from(new Uint8Array(digest))
+    .map(b => b.toString(16).padStart(2, '0')).join('').toUpperCase();
+}
+
+// ─── Dispute: Invoice List ────────────────────────────────────────────────────
+function renderDisputeSection() {
+  // Section is only shown when tenants have actually filed disputes.
+  // renderOpenDisputes() controls visibility of #disputeSection.
+  document.getElementById('disputeInvoiceList').innerHTML = '';
+  renderOpenDisputes();
+}
+
+// Wrapper for Dispute button inside the tenant statement report (table context).
+// Shows/hides the hidden <tr> that contains the form div, then delegates to toggleDisputeForm.
+// Opens the Explain Charge panel from the tenant statement and pre-expands
+// the category of the invoice that was clicked.
+function tsExplainCharge(tenantName, category) {
+  openExplainPanel(tenantName);
+  if (category) {
+    setTimeout(() => epToggleDrill(category, tenantName), 60);
+  }
+}
+
+// AI Explanation for a single invoice inside the Tenant Statement.
+// Same Claude call and styling as the landlord explainCharge() — scoped to the
+// tenant detail box so the landlord view is completely unaffected.
+async function tsExplainInvoice(rowId, vendor, category, amount, date) {
+  const btn = document.getElementById(`tsexplbtn-${rowId}`);
+  try {
+    await handleExplain(btn, async () => {
+    const data = await explainFetch({
+      model: MODEL,
+      max_tokens: 1024,
+      system: CAM_EXPLAIN_SYSTEM_PROMPT,
+      messages: [{ role: 'user', content:
+        `Vendor: ${vendor || 'Unknown'}\n` +
+        `Category: ${category || 'other'}\n` +
+        `Amount: $${amount || '0'}\n` +
+        `Date: ${date || 'Unknown'}\n` +
+        `Confidence: unknown%`
+      }],
+    });
+    const text = data?.content?.[0]?.text || 'No explanation available.';
+    const expl = document.getElementById(`tsexpl-${rowId}`);
+    if (expl) {
+      expl.className = 'inv-explain-box';
+      const mdHtml = renderMarkdown(text);
+      expl.innerHTML = `<strong>AI Explanation</strong><div class="expl-preview">${mdHtml}</div><button class="expl-readmore" onclick="var p=this.previousElementSibling;p.classList.toggle('expanded');this.textContent=p.classList.contains('expanded')?'Show less \u25b2':'Read full explanation \u25be'">Read full explanation &#x25BE;</button>`;
+      expl.scrollIntoView({ behavior: 'smooth', block: 'nearest' });
+    }
+    });
+  } catch (e) {
+    alert(`Explain error: ${e.message}`);
+  }
+}
+
+function tsToggleDispute(rowId, tenantName, idx) {
+  const t = lastTenants.find(x => x.name === tenantName);
+  const r = lastResults.find(x => x.name === tenantName);
+  if (!t || !r) return;
+  const eligible = lastInvoicesFull.filter(inv =>
+    !t.excludedCategories.includes(inv.category.toLowerCase())
+  );
+  const inv = eligible[idx];
+  if (!inv) return;
+  const share = parseFloat((inv.amount * r.proRata).toFixed(2));
+  toggleDisputeForm(rowId, tenantName, `inv-${idx}`, inv.vendor, inv.category, share);
+}
+
+function toggleDisputeForm(rowId, tenantName, invoiceId, vendor, category, tenantShare) {
+  const formEl = document.getElementById(`dform-${rowId}`);
+  const btnEl  = document.getElementById(`dbtn-${rowId}`);
+  const card   = formEl && formEl.closest('.ts-inv-card');
+
+  if (formEl.style.display === 'block') {
+    formEl.style.display = 'none';
+    btnEl.classList.remove('active');
+    btnEl.textContent = 'Dispute';
+    if (card) {
+      card.classList.remove('ts-inv-card--disputing');
+      const lbl = card.querySelector('.ts-dispute-mode-label');
+      if (lbl) lbl.remove();
+    }
+    return;
+  }
+
+  btnEl.classList.add('active');
+  btnEl.textContent = 'Cancel';
+  formEl.style.display = 'block';
+
+  if (card) {
+    card.classList.add('ts-inv-card--disputing');
+    if (!card.querySelector('.ts-dispute-mode-label')) {
+      const lbl = document.createElement('div');
+      lbl.className = 'ts-dispute-mode-label';
+      lbl.textContent = '\u26A0 Disputing this charge';
+      card.insertBefore(lbl, formEl);
+    }
+  }
+
+  formEl.innerHTML = `
+    <div class="dispute-form">
+      <div class="dispute-form-title">Dispute this charge</div>
+      <textarea id="dreason-${esc(rowId)}" placeholder="Explain why you're disputing this charge…"></textarea>
+      <label class="dispute-attach-label">
+        <input type="file" id="ddoc-${esc(rowId)}" class="dispute-doc-input"
+          onchange="document.getElementById('ddocname-${esc(rowId)}').textContent=this.files[0]?'&#x1F4CE; '+this.files[0].name:''">
+        <span id="ddocname-${esc(rowId)}">&#x1F4CE; Attach file (optional)</span>
+      </label>
+      <div class="dispute-form-btns">
+        <button class="d-submit-btn"
+          onclick="submitDispute('${esc(rowId)}','${esc(tenantName)}','${esc(invoiceId)}','${esc(vendor)}','${esc(category)}',${tenantShare})">
+          Submit
+        </button>
+        <button class="d-cancel-btn"
+          onclick="toggleDisputeForm('${esc(rowId)}','${esc(tenantName)}','${esc(invoiceId)}','${esc(vendor)}','${esc(category)}',${tenantShare})">
+          Cancel
+        </button>
+      </div>
+      <div class="ts-landlord-note">Your landlord will review and respond.</div>
+    </div>`;
+}
+
+async function submitDispute(rowId, tenantName, invoiceId, vendor, category, tenantShare) {
+  const reason = document.getElementById(`dreason-${rowId}`).value.trim();
+  if (!reason) {
+    document.getElementById(`dreason-${rowId}`).style.borderColor = '#ea580c';
+    return;
+  }
+  const docInput = document.getElementById(`ddoc-${rowId}`);
+  const docName  = docInput && docInput.files[0] ? docInput.files[0].name : null;
+  disputes.push({
+    id:          nextDisputeId++,
+    tenantName, invoiceId, vendor, category, tenantShare, reason, docName,
+    timestamp:   new Date().toISOString(),
+    status:      'open',
+    resolution:  null, resolvedAt: null, hash: null,
+  });
+
+  const formEl = document.getElementById(`dform-${rowId}`);
+  const btnEl  = document.getElementById(`dbtn-${rowId}`);
+  const card   = formEl && formEl.closest('.ts-inv-card');
+
+  if (card) {
+    // Tenant statement card — rich feedback
+    card.classList.remove('ts-inv-card--disputing');
+    card.classList.add('ts-inv-card--disputed');
+    const lbl = card.querySelector('.ts-dispute-mode-label');
+    if (lbl) lbl.remove();
+    // Success message replaces the form
+    formEl.style.display = 'block';
+    formEl.innerHTML = `<div class="ts-dispute-submitted-msg">&#x2705; Dispute submitted — your landlord will review this request.</div>`;
+    // "Under Review" badge below vendor name
+    const vendorEl = card.querySelector('.ts-inv-vendor');
+    if (vendorEl && !card.querySelector('.badge-disputed')) {
+      const badge = document.createElement('span');
+      badge.className = 'badge-disputed';
+      badge.textContent = 'Disputed';
+      vendorEl.insertAdjacentElement('afterend', badge);
+    }
+    // Lock the dispute button
+    if (btnEl) {
+      btnEl.disabled = true;
+      btnEl.textContent = 'Disputed';
+      btnEl.classList.remove('active');
+      btnEl.style.cssText += ';opacity:0.45;cursor:not-allowed;';
+    }
+  } else {
+    // Landlord side — simple close
+    formEl.style.display = 'none';
+    if (btnEl) { btnEl.classList.remove('active'); btnEl.textContent = 'Dispute'; }
+  }
+
+  // Mark matching invoice as disputed so badge renders on re-entry
+  const matchedInv = invoiceData.find(d => d.vendorName?.toLowerCase() === vendor?.toLowerCase());
+  if (matchedInv) matchedInv._disputed = true;
+
+  renderOpenDisputes();
+  await syncPortfolioEntry();
+  await savePropertyData(); // persist dispute to Supabase
+  updateStepBar('resolve');
+  alert('Dispute submitted successfully. Your landlord will review it.');
+}
+
+// ─── Dispute: Open Disputes List ─────────────────────────────────────────────
+function renderOpenDisputes() {
+  const section = document.getElementById('disputeSection');
+  const wrap    = document.getElementById('openDisputesWrap');
+  const list    = document.getElementById('openDisputesList');
+
+  if (!disputes.length) {
+    section.style.display = 'none';
+    wrap.style.display = 'none';
+    return;
+  }
+  section.style.display = 'block';
+  wrap.style.display = 'block';
+
+  const openList     = disputes.filter(d => d.status === 'open');
+  const resolvedList = disputes.filter(d => d.status !== 'open');
+  document.getElementById('resolvedCount').textContent = resolvedList.length;
+
+  function fmtTs(iso) {
+    if (!iso) return '';
+    return new Date(iso).toLocaleString('en-US', { month: 'short', day: 'numeric', hour: 'numeric', minute: '2-digit' });
+  }
+
+  function renderCard(d) {
+    const isResolved = d.status !== 'open';
+    const docHtml = d.docName
+      ? `<div style="font-size:0.75rem;color:#4ade80;margin:4px 0 0;font-family:'DM Mono',monospace;">📎 ${esc(d.docName)}</div>`
+      : '';
+
+    let actionsHtml = '';
+    if (isResolved) {
+      const label      = d.status === 'accepted' ? '✅ Accepted'
+                       : d.status === 'rejected' ? '❌ Rejected'
+                       : '📄 Docs Requested';
+      const statusWord = d.status === 'accepted' ? 'Accepted'
+                       : d.status === 'rejected' ? 'Rejected' : 'Resolved';
+      const badgeClass = d.status === 'rejected' ? 'resolved-badge rejected'
+                       : d.status === 'docs_requested' ? 'resolved-badge docs'
+                       : 'resolved-badge';
+      actionsHtml = `
+        <div class="${badgeClass}">${label}</div>
+        ${d.resolvedAt ? `<div class="d-resolved-ts">${statusWord} · ${fmtTs(d.resolvedAt)}</div>` : ''}
+        ${d.hash ? `<div class="onchain-record">
+          <div class="oc-label">On-Chain Record</div>
+          <div class="oc-hash">${d.hash}</div>
+          <button class="oc-view-btn" onclick="copyOnChainHash(this,'${d.hash}')">&#x1F517; View Record</button>
+        </div>` : ''}`;
+    } else {
+      actionsHtml = `
+        <div class="d-actions">
+          <button class="d-res-btn accept" onclick="resolveDispute(${d.id},'accepted')">✅ Accept</button>
+          <button class="d-res-btn reject" onclick="resolveDispute(${d.id},'rejected')">❌ Reject</button>
+          <button class="d-res-btn docs"   onclick="showDocsRequest(${d.id})">📄 Request Documentation</button>
+        </div>
+        <div id="docs-req-${d.id}" style="display:none;margin-top:8px;padding:10px 12px;background:rgba(201,151,58,0.07);border:1px solid rgba(201,151,58,0.2);border-radius:8px;">
+          <span class="dispute-doc-label" style="color:#C9973A;">Attach landlord documentation for this dispute:</span>
+          <input type="file" id="docs-file-${d.id}" class="dispute-doc-input"
+            onchange="document.getElementById('docs-fname-${d.id}').textContent=this.files[0]?'📎 '+this.files[0].name:''" />
+          <div id="docs-fname-${d.id}" class="dispute-doc-name"></div>
+          <div style="display:flex;gap:8px;margin-top:8px;">
+            <button class="warn-btn add" onclick="confirmDocsRequest(${d.id})">Submit &amp; Resolve</button>
+            <button class="warn-btn dismiss" onclick="document.getElementById('docs-req-${d.id}').style.display='none'">Cancel</button>
+          </div>
+        </div>`;
+    }
+
+    return `
+      <div class="dispute-card${isResolved ? ' resolved' : ''}">
+        <div class="d-meta">#${d.id + 1} · ${esc(d.tenantName)} · ${fmtTs(d.timestamp)}</div>
+        <div class="d-title">${esc(d.vendor)} (${esc(d.category)}) — ${fmt(d.tenantShare)}</div>
+        <div class="d-reason">"${esc(d.reason)}"</div>
+        ${docHtml}
+        ${actionsHtml}
+      </div>`;
+  }
+
+  let html = '';
+  if (openList.length) {
+    html += `<div class="disputes-heading disputes-open-head">&#x1F534; Open Disputes</div>`;
+    html += openList.map(renderCard).join('');
+  }
+  if (resolvedList.length) {
+    html += `<div class="disputes-heading disputes-resolved-head">&#x1F7E2; Resolved Disputes</div>`;
+    html += resolvedList.map(renderCard).join('');
+  }
+  list.innerHTML = html;
+}
+
+function copyOnChainHash(btn, hash) {
+  navigator.clipboard.writeText(hash).then(() => {
+    const orig = btn.textContent;
+    btn.textContent = '\u2705 Copied!';
+    setTimeout(() => btn.textContent = orig, 2000);
+  }).catch(() => {
+    btn.textContent = hash.substring(0, 8) + '\u2026';
+  });
+}
+
+function showDocsRequest(id) {
+  const el = document.getElementById(`docs-req-${id}`);
+  if (el) el.style.display = el.style.display === 'block' ? 'none' : 'block';
+}
+
+async function confirmDocsRequest(id) {
+  const fileEl = document.getElementById(`docs-file-${id}`);
+  const d = disputes.find(x => x.id === id);
+  if (d && fileEl && fileEl.files[0]) d.docName = fileEl.files[0].name;
+  await resolveDispute(id, 'docs_requested');
+}
+
+async function resolveDispute(id, resolution) {
+  const d = disputes.find(x => x.id === id);
+  if (!d || d.status !== 'open') return;
+
+  d.status     = resolution;
+  d.resolvedAt = new Date().toISOString();
+
+  // Hash the full dispute record for the on-chain audit trail
+  d.hash = await sha256({
+    id:          d.id,
+    tenantName:  d.tenantName,
+    invoiceId:   d.invoiceId,
+    vendor:      d.vendor,
+    category:    d.category,
+    tenantShare: d.tenantShare,
+    reason:      d.reason,
+    timestamp:   d.timestamp,
+    resolution:  d.resolution,
+    resolvedAt:  d.resolvedAt,
+  });
+
+  renderOpenDisputes();
+  syncPortfolioEntry();
+}
+
+// ─── Reports ──────────────────────────────────────────────────────────────────
+
+function showReportSection() {
+  // Update the notice + tenant buttons after allocation runs
+  const msg  = document.getElementById('reportsMsg');
+  const wrap = document.getElementById('tenantReportButtons');
+
+  if (!lastResults.length) {
+    msg.style.display  = 'block';
+    wrap.innerHTML = '';
+    return;
+  }
+
+  msg.style.display = 'none';
+
+  let html = '<div style="font-size:0.8rem;color:#64748b;margin-bottom:8px;">Tenant Statements</div>';
+  html += '<div class="report-btn-row">';
+  lastResults.forEach(r => {
+    html += `<button class="tenant-report-btn" onclick="generateTenantStatement('${esc(r.name)}')">${esc(r.name)}</button>`;
+  });
+  html += '</div>';
+  wrap.innerHTML = html;
+}
+
+function guardedMasterReport() {
+  if (sqftMismatch) return;
+  if (!lastResults.length) {
+    const msg = document.getElementById('reportsMsg');
+    msg.style.display = 'block';
+    msg.textContent = 'Please run a CAM allocation first to generate reports.';
+    msg.scrollIntoView({ behavior: 'smooth', block: 'nearest' });
+    return;
+  }
+  generateMasterReport();
+}
+
+function guardedTenantStatement() {
+  if (sqftMismatch) return;
+  if (!lastResults.length) {
+    const msg = document.getElementById('reportsMsg');
+    msg.style.display = 'block';
+    msg.textContent = 'Please run a CAM allocation first to generate reports.';
+    msg.scrollIntoView({ behavior: 'smooth', block: 'nearest' });
+    return;
+  }
+  // If only one tenant, open directly; otherwise prompt via the tenant buttons
+  if (lastResults.length === 1) {
+    generateTenantStatement(lastResults[0].name);
+  } else {
+    const msg = document.getElementById('reportsMsg');
+    msg.style.display = 'block';
+    msg.textContent = 'Select a tenant below to generate their statement.';
+    document.getElementById('tenantReportButtons').scrollIntoView({ behavior: 'smooth', block: 'nearest' });
+  }
+}
+
+// ─── Monthly Holes Report ─────────────────────────────────────────────────────
+
+function generateHolesReport() {
+  if (sqftMismatch) return;
+  const propName = document.getElementById('propertyName').value.trim() || 'Property';
+  const now      = new Date().toLocaleDateString('en-US', { year:'numeric', month:'long', day:'numeric' });
+  const month    = new Date().toLocaleDateString('en-US', { year:'numeric', month:'long' });
+
+  const criticalItems = [];
+  const warningItems  = [];
+
+  // ── 1. Missing categories vs. last reconciliation ──────────────────────────
+  // prevCats: categories seen in the last allocation run
+  // currCats: categories present in currently uploaded invoices
+  const prevCats = [...new Set(lastInvoicesFull.map(inv => inv.category).filter(Boolean))];
+  const currCats = [...new Set(
+    invoiceData.filter(inv => inv && !inv._error && inv.category).map(inv => inv.category)
+  )];
+
+  if (prevCats.length > 0) {
+    prevCats.forEach(cat => {
+      if (!currCats.includes(cat)) {
+        const prevTotal = lastInvoicesFull
+          .filter(inv => inv.category === cat)
+          .reduce((s, inv) => s + (parseFloat(inv.amount) || 0), 0);
+        criticalItems.push({
+          icon: '🚫',
+          text: `No <strong>${esc(cat)}</strong> invoice found this month`,
+          detail: prevTotal > 0
+            ? `Last reconciliation total: ${fmt(prevTotal)} — verify if expense still applies`
+            : 'Was present in last reconciliation',
+        });
+      }
+    });
+  }
+
+  // ── 2. Missing regular vendors ────────────────────────────────────────────
+  const prevVendors = [...new Set(lastInvoicesFull.map(inv => inv.vendor).filter(Boolean))];
+  const currVendors = invoiceData
+    .filter(inv => inv && !inv._error && inv.vendorName)
+    .map(inv => inv.vendorName);
+
+  prevVendors.forEach(vendor => {
+    const stillPresent = currVendors.some(v => similarVendor(v, vendor));
+    if (!stillPresent) {
+      const lastAmt = lastInvoicesFull
+        .filter(inv => inv.vendor === vendor)
+        .reduce((s, inv) => s + (parseFloat(inv.amount) || 0), 0);
+      criticalItems.push({
+        icon: '🏢',
+        text: `<strong>${esc(vendor)}</strong> has not submitted an invoice this month`,
+        detail: lastAmt > 0 ? `Last invoice total: ${fmt(lastAmt)}` : 'Was present in last reconciliation',
+      });
+    }
+  });
+
+  if (prevCats.length === 0 && prevVendors.length === 0) {
+    // No prior reconciliation to compare against — note it as a warning
+    warningItems.push({
+      icon: '📋',
+      text: 'No previous reconciliation data available for comparison',
+      detail: 'Run a CAM allocation first to enable month-over-month gap detection',
+    });
+  }
+
+  // ── 3. Tenants with no lease uploaded ────────────────────────────────────
+  const validTenants = tenantData.filter(t => t && !t._error && t.tenant_name && parseSqft(t.leased_sqft) > 0);
+  const errorTenants = tenantData.filter(t => t && t._error);
+  const emptySlots   = tenantData.filter(t => t === null).length;
+
+  if (validTenants.length === 0 && tenantData.length === 0) {
+    warningItems.push({
+      icon: '👤',
+      text: 'No tenant leases uploaded',
+      detail: 'Upload at least one lease in Section 2 before running allocation',
+    });
+  }
+  errorTenants.forEach(t => {
+    warningItems.push({
+      icon: '⚠️',
+      text: `Lease extraction failed for <strong>${esc(t.tenant_name || 'unknown tenant')}</strong>`,
+      detail: t._error,
+    });
+  });
+  if (emptySlots > 0 && tenantData.some(t => t === null)) {
+    // Only flag empty slots if we're in single-lease mode (fixed 3-slot array)
+    // and some real tenants exist (mixed state)
+    if (validTenants.length > 0) {
+      warningItems.push({
+        icon: '👤',
+        text: `${emptySlots} tenant slot${emptySlots !== 1 ? 's' : ''} still empty`,
+        detail: 'Upload leases for all tenants or remove unused slots before reconciling',
+      });
+    }
+  }
+
+  // ── 4. Low-confidence invoices not reviewed ───────────────────────────────
+  invoiceData.forEach((inv, i) => {
+    if (!inv) return;
+    if (inv._error) {
+      warningItems.push({
+        icon: '🔴',
+        text: `Invoice ${i + 1}: extraction failed — <strong>${esc(inv.vendorName || 'unknown vendor')}</strong>`,
+        detail: inv._error,
+      });
+      return;
+    }
+    const conf   = inv.confidence || {};
+    const scores = Object.values(conf).filter(s => typeof s === 'number');
+    const minScore = scores.length ? Math.min(...scores) : null;
+    if (minScore !== null && minScore < 70) {
+      const fieldNames = Object.entries(conf)
+        .filter(([, v]) => typeof v === 'number' && v < 70)
+        .map(([k]) => k);
+      warningItems.push({
+        icon: '⚠️',
+        text: `Invoice ${i + 1} — <strong>${esc(inv.vendorName || 'unknown vendor')}</strong> has low confidence fields`,
+        detail: `Low confidence on: ${fieldNames.join(', ')} (min score: ${minScore}%) — please verify before allocating`,
+      });
+    }
+  });
+
+  // ── Build HTML ────────────────────────────────────────────────────────────
+  const totalIssues = criticalItems.length + warningItems.length;
+
+  function renderItems(items) {
+    if (!items.length) return '';
+    return items.map(it => `
+      <div class="hole-item ${it.severity || (it === criticalItems[criticalItems.indexOf(it)] ? 'critical' : 'warning')}">
+        <span class="hole-icon">${it.icon}</span>
+        <span class="hole-text">
+          ${it.text}
+          ${it.detail ? `<span class="hole-detail">${esc(it.detail)}</span>` : ''}
+        </span>
+      </div>`).join('');
+  }
+
+  // Tag severity explicitly
+  criticalItems.forEach(it => { it.severity = 'critical'; });
+  warningItems.forEach(it => { it.severity = 'warning'; });
+
+  const missingSection = criticalItems.length ? `
+    <div class="holes-group">
+      <div class="holes-group-title">&#x1F6AB; Missing Items</div>
+      ${criticalItems.map(it => `
+        <div class="hole-item critical">
+          <span class="hole-icon">${it.icon}</span>
+          <span class="hole-text">
+            ${it.text}
+            ${it.detail ? `<span class="hole-detail">${esc(it.detail)}</span>` : ''}
+          </span>
+        </div>`).join('')}
+    </div>` : `
+    <div class="holes-group">
+      <div class="holes-group-title">&#x1F6AB; Missing Items</div>
+      <div class="hole-item ok">
+        <span class="hole-icon">&#x2705;</span>
+        <span class="hole-text">No missing categories or vendors detected</span>
+      </div>
+    </div>`;
+
+  const incompleteSection = warningItems.length ? `
+    <div class="holes-group">
+      <div class="holes-group-title">&#x26A0;&#xFE0F; Incomplete Items</div>
+      ${warningItems.map(it => `
+        <div class="hole-item warning">
+          <span class="hole-icon">${it.icon}</span>
+          <span class="hole-text">
+            ${it.text}
+            ${it.detail ? `<span class="hole-detail">${esc(it.detail)}</span>` : ''}
+          </span>
+        </div>`).join('')}
+    </div>` : `
+    <div class="holes-group">
+      <div class="holes-group-title">&#x26A0;&#xFE0F; Incomplete Items</div>
+      <div class="hole-item ok">
+        <span class="hole-icon">&#x2705;</span>
+        <span class="hole-text">All tenants and invoices look complete</span>
+      </div>
+    </div>`;
+
+  const summaryBar = totalIssues === 0 ? `
+    <div class="holes-summary-bar all-clear">
+      <div class="holes-summary-count">&#x2713;</div>
+      <div class="holes-summary-msg">Everything looks good — ready to run reconciliation</div>
+    </div>` : `
+    <div class="holes-summary-bar has-issues">
+      <div class="holes-summary-count">${totalIssues}</div>
+      <div class="holes-summary-msg">
+        ${totalIssues} item${totalIssues !== 1 ? 's' : ''} need${totalIssues === 1 ? 's' : ''} attention before running reconciliation
+        <span style="display:block;font-size:0.78rem;font-weight:400;margin-top:2px;opacity:0.8;">
+          ${criticalItems.length} critical &nbsp;·&nbsp; ${warningItems.length} warning${warningItems.length !== 1 ? 's' : ''}
+        </span>
+      </div>
+    </div>`;
+
+  const html = `
+    <div class="rpt-letterhead">
+      <h1>${esc(propName)}</h1>
+      <div class="rpt-sub">Monthly Holes Report &nbsp;·&nbsp; ${month} &nbsp;·&nbsp; Generated ${now}</div>
+    </div>
+
+    <div class="rpt-kpi-row">
+      <div class="rpt-kpi">
+        <div class="kpi-val" style="color:${criticalItems.length > 0 ? '#be123c' : '#15803d'}">${criticalItems.length}</div>
+        <div class="kpi-lbl">Critical Missing</div>
+      </div>
+      <div class="rpt-kpi">
+        <div class="kpi-val" style="color:${warningItems.length > 0 ? '#92400e' : '#15803d'}">${warningItems.length}</div>
+        <div class="kpi-lbl">Warnings</div>
+      </div>
+      <div class="rpt-kpi">
+        <div class="kpi-val">${validTenants.length}</div>
+        <div class="kpi-lbl">Leases Uploaded</div>
+      </div>
+      <div class="rpt-kpi">
+        <div class="kpi-val">${invoiceData.filter(inv => inv && !inv._error).length}</div>
+        <div class="kpi-lbl">Invoices Loaded</div>
+      </div>
+    </div>
+
+    ${missingSection}
+    ${incompleteSection}
+    ${summaryBar}
+
+    <div class="rpt-footer">
+      Mainstreet &nbsp;·&nbsp; ${esc(propName)} &nbsp;·&nbsp; Monthly Holes Report &nbsp;·&nbsp; ${now}
+    </div>`;
+
+  openReport('Monthly Holes Report — ' + propName, html);
+}
+
+function openReport(title, bodyHtml) {
+  document.getElementById('rptToolbarTitle').textContent = title;
+  document.getElementById('rptBody').innerHTML = bodyHtml;
+  document.getElementById('reportOverlay').style.display = 'block';
+  window.scrollTo(0, 0);
+}
+
+function closeReport() {
+  document.getElementById('reportOverlay').style.display = 'none';
+}
+
+function generateMasterReport() {
+  if (!lastResults.length) { alert('Calculate CAM Charges first.'); return; }
+
+  const now    = new Date().toLocaleDateString('en-US', { year:'numeric', month:'long', day:'numeric' });
+  const period = new Date().getFullYear() + ' CAM Year';
+
+  // Category breakdown
+  const catTotals = {};
+  lastInvoicesFull.forEach(inv => {
+    catTotals[inv.category] = (catTotals[inv.category] || 0) + inv.amount;
+  });
+
+  // Dispute counts per tenant
+  function disputeCount(tenantName) {
+    return disputes.filter(d => d.tenantName === tenantName).length;
+  }
+  function openDisputeCount(tenantName) {
+    return disputes.filter(d => d.tenantName === tenantName && d.status === 'open').length;
+  }
+
+  const totalBilled = lastResults.reduce((s, r) => s + r.allocatedAmount, 0);
+
+  // AI Risk classification — map confidence scores to risk buckets
+  const riskInvoices = invoiceData.filter(inv => inv && !inv._error && inv.vendorName && parseFloat(inv.amount) > 0);
+  let riskGreen = 0, riskYellow = 0, riskRed = 0;
+  riskInvoices.forEach(inv => {
+    const conf = inv.confidence || {};
+    const scores = [conf.vendorName, conf.amount, conf.category].filter(s => s != null);
+    const minScore = scores.length ? Math.min(...scores) : 0;
+    const flagged = minScore < 90 || inv.category === 'other' || !inv.invoiceDate;
+    const openDispute = disputes.some(d => d.vendor === inv.vendorName && d.status === 'open');
+    if (openDispute) riskRed++;
+    else if (flagged) riskYellow++;
+    else riskGreen++;
+  });
+
+  // Tenant summary table rows
+  const tenantRows = lastResults.map(r => {
+    const dc = disputeCount(r.name);
+    const oc = openDisputeCount(r.name);
+    return `<tr>
+      <td>${esc(r.name)}</td>
+      <td style="text-align:right">${fmt(r.allocatedAmount)}</td>
+      <td style="text-align:right">${(r.proRata * 100).toFixed(2)}%</td>
+      <td style="text-align:center">${dc > 0
+        ? `<span class="rpt-pill ${oc > 0 ? 'open' : 'closed'}">${dc} (${oc} open)</span>`
+        : '—'}</td>
+    </tr>`;
+  }).join('');
+
+  // Expense breakdown rows
+  const expRows = Object.entries(catTotals).map(([cat, amt]) => `
+    <tr>
+      <td style="text-transform:capitalize">${esc(cat)}</td>
+      <td style="text-align:right">${lastInvoicesFull.filter(i => i.category === cat).length}</td>
+      <td style="text-align:right">${fmt(amt)}</td>
+      <td style="text-align:right">${((amt / lastTotal) * 100).toFixed(1)}%</td>
+    </tr>`).join('');
+
+  // Report hash
+  sha256({ propName: lastPropName, total: lastTotal, tenants: lastResults.map(r => r.name), generated: now })
+    .then(hash => {
+      document.querySelector('.rpt-hash-val').textContent =
+        'SHA-256: ' + hash + '\nGenerated: ' + new Date().toISOString();
+    });
+
+  const html = `
+    <div class="rpt-letterhead">
+      <h1>${esc(lastPropName)}</h1>
+      <div class="rpt-sub">Landlord Master CAM Report &nbsp;·&nbsp; ${period} &nbsp;·&nbsp; Generated ${now}</div>
+    </div>
+
+    <div class="ai-risk-box">
+      <div class="ai-risk-title">&#x1F9E0; AI Risk Review — Building Summary</div>
+      <div class="ai-risk-row"><span>&#x1F7E2;</span><span><strong>${riskGreen}</strong> charge${riskGreen !== 1 ? 's' : ''} look standard — no action needed</span></div>
+      <div class="ai-risk-row"><span>&#x1F7E1;</span><span><strong>${riskYellow}</strong> charge${riskYellow !== 1 ? 's' : ''} may get tenant questions</span></div>
+      <div class="ai-risk-row"><span>&#x1F534;</span><span><strong>${riskRed}</strong> charge${riskRed !== 1 ? 's' : ''} linked to open disputes</span></div>
+      <div id="aiRiskDetail"></div>
+      ${riskYellow + riskRed > 0 ? `<button class="ai-run-btn" onclick="runLandlordAIReview()">&#x1F9E0; Run AI Review on Flagged Charges</button>` : ''}
+    </div>
+
+    <div class="rpt-kpi-row">
+      <div class="rpt-kpi">
+        <div class="kpi-val">${fmt(lastTotal)}</div>
+        <div class="kpi-lbl">Total Expenses</div>
+      </div>
+      <div class="rpt-kpi">
+        <div class="kpi-val">${fmt(totalBilled)}</div>
+        <div class="kpi-lbl">Total CAM Billed</div>
+      </div>
+      <div class="rpt-kpi">
+        <div class="kpi-val">${lastResults.length}</div>
+        <div class="kpi-lbl">Tenants</div>
+      </div>
+      <div class="rpt-kpi">
+        <div class="kpi-val">${lastInvoicesFull.length}</div>
+        <div class="kpi-lbl">Invoices</div>
+      </div>
+      <div class="rpt-kpi">
+        <div class="kpi-val">${disputes.length}</div>
+        <div class="kpi-lbl">Total Disputes</div>
+      </div>
+    </div>
+
+    <div class="rpt-section-title">Tenant Summary</div>
+    <table class="rpt-table">
+      <thead><tr>
+        <th>Tenant</th><th style="text-align:right">CAM Billed</th>
+        <th style="text-align:right">Pro-Rata</th><th style="text-align:center">Disputes</th>
+      </tr></thead>
+      <tbody>${tenantRows}</tbody>
+      <tfoot><tr class="total-row">
+        <td>TOTAL</td>
+        <td style="text-align:right">${fmt(totalBilled)}</td>
+        <td></td><td></td>
+      </tr></tfoot>
+    </table>
+
+    <div class="rpt-section-title">Expense Breakdown by Category</div>
+    <table class="rpt-table">
+      <thead><tr>
+        <th>Category</th><th style="text-align:right">Invoices</th>
+        <th style="text-align:right">Amount</th><th style="text-align:right">% of Total</th>
+      </tr></thead>
+      <tbody>${expRows}</tbody>
+      <tfoot><tr class="total-row">
+        <td>TOTAL</td><td style="text-align:right">${lastInvoicesFull.length}</td>
+        <td style="text-align:right">${fmt(lastTotal)}</td><td style="text-align:right">100%</td>
+      </tr></tfoot>
+    </table>
+
+    <div class="rpt-section-title">XRPL Audit Record</div>
+    <div class="rpt-hash-box">
+      <div class="rpt-hash-lbl">&#x1F517; On-Chain Integrity Hash</div>
+      <div class="rpt-hash-val">Computing…</div>
+    </div>
+
+    <div class="rpt-footer">
+      Mainstreet &nbsp;·&nbsp; ${esc(lastPropName)} &nbsp;·&nbsp; This report is auto-generated and reflects data entered in the current session.
+    </div>`;
+
+  openReport('Landlord Master Report — ' + lastPropName, html);
+
+  // Fill hash after render
+  sha256({ propName: lastPropName, total: lastTotal, tenants: lastResults.map(r => r.name), generated: now })
+    .then(hash => {
+      const el = document.querySelector('#rptBody .rpt-hash-val');
+      if (el) el.textContent = 'SHA-256: ' + hash + '\nGenerated: ' + new Date().toISOString();
+    });
+}
+
+async function runLandlordAIReview() {
+  const btn = document.querySelector('.ai-run-btn');
+  const container = document.getElementById('aiRiskDetail');
+  if (!container) return;
+  if (btn) { btn.disabled = true; btn.textContent = 'Reviewing flagged charges…'; }
+
+  const flagged = invoiceData.filter(inv => {
+    if (!inv || inv._error || !inv.vendorName || !(parseFloat(inv.amount) > 0)) return false;
+    const conf = inv.confidence || {};
+    const scores = [conf.vendorName, conf.amount, conf.category].filter(s => s != null);
+    const minScore = scores.length ? Math.min(...scores) : 0;
+    return minScore < 90 || inv.category === 'other' || !inv.invoiceDate;
+  });
+
+  if (!flagged.length) {
+    container.innerHTML = '<div style="color:#4ade80;font-size:0.83rem;margin-top:10px;">&#x2713; All charges look clear — no AI review needed.</div>';
+    if (btn) btn.remove();
+    return;
+  }
+
+  let html = '';
+  for (const inv of flagged) {
+    try {
+      const data = await explainFetch({
+        model: MODEL,
+        max_tokens: 512,
+        system: LANDLORD_SYSTEM_PROMPT,
+        messages: [{ role: 'user', content:
+          `Vendor: ${inv.vendorName || 'Unknown'}\n` +
+          `Category: ${inv.category || 'other'}\n` +
+          `Amount: $${inv.amount || '0'}\n` +
+          `Date: ${inv.invoiceDate || 'Unknown'}`
+        }],
+      });
+      const text = data?.content?.[0]?.text || 'No review available.';
+      html += `<div class="ai-inv-review"><strong>${esc(inv.vendorName)} — ${fmt(parseFloat(inv.amount))}</strong>${renderMarkdown(text)}</div>`;
+    } catch (e) {
+      html += `<div class="ai-inv-review"><strong>${esc(inv.vendorName)}</strong>Review failed: ${esc(e.message)}</div>`;
+    }
+  }
+
+  container.innerHTML = html;
+  if (btn) btn.remove();
+}
+
+function generateTenantStatement(tenantName) {
+  if (!lastResults.length) { alert('Calculate CAM Charges first.'); return; }
+
+  const r = lastResults.find(x => x.name === tenantName);
+  const t = lastTenants.find(x => x.name === tenantName);
+  if (!r || !t) return;
+
+  const now    = new Date().toLocaleDateString('en-US', { year:'numeric', month:'long', day:'numeric' });
+  const period = new Date().getFullYear() + ' CAM Year';
+
+  // Per-invoice breakdown
+  const eligible = lastInvoicesFull.filter(inv =>
+    !t.excludedCategories.includes(inv.category.toLowerCase())
+  );
+  // Group eligible invoices by category, preserving per-invoice indices
+  const catMap = {};
+  eligible.forEach((inv, idx) => {
+    const key = (inv.category || 'other').toLowerCase();
+    if (!catMap[key]) catMap[key] = { label: inv.category || 'Other', share: 0, invoices: [] };
+    const share = parseFloat((inv.amount * r.proRata).toFixed(2));
+    catMap[key].share += share;
+    catMap[key].invoices.push({ inv, idx, share });
+  });
+
+  const pct = (r.proRata * 100).toFixed(2);
+
+  // Build accordion: one card per category, invoices expand inside
+  const categoryCards = Object.entries(catMap)
+    .sort((a, b) => b[1].share - a[1].share)
+    .map(([, data]) => {
+      const invRows = data.invoices.map(({ inv, idx, share }) => {
+        const rowId = `ts-${tenantName}-${idx}`.replace(/\s+/g, '-');
+        const stored = invoiceData.find(d =>
+          d.vendorName && d.vendorName.toLowerCase() === (inv.vendor || '').toLowerCase()
+        );
+        const viewInvBtn = stored && stored.fileUrl
+          ? `<button class="btn-secondary" onclick="event.stopPropagation();openInvFileViewer('${stored.fileUrl}','${esc(inv.vendor)}','${esc(stored.fileType || '')}')">&#x1F4C4; View Invoice</button>`
+          : '';
+        return `
+          <div class="charge-row ts-inv-card" id="crow-${rowId}"
+            onclick="(function(row){var d=document.getElementById('ddetail-${rowId}');var open=d.style.display==='block';d.style.display=open?'none':'block';row.classList.toggle('detail-open',!open);})(this)">
+            <div class="charge-row-top">
+              <div class="charge-row-left">
+                <div class="charge-vendor">${esc(inv.vendor)}</div>
+                <div class="charge-amount">${fmt(share)}</div>
+                <div class="charge-sub">Your share (${pct}%)</div>
+                <p class="ts-vendor-hint">Tap here for details or to dispute this charge</p>
+              </div>
+              <div class="charge-chevron">&#x203A;</div>
+            </div>
+            <div id="ddetail-${rowId}" class="ts-detail-box" style="display:none;" onclick="event.stopPropagation()">
+              <div class="ts-detail-header">
+                <span class="ts-detail-title">Charge Details</span>
+                <button class="ts-detail-close"
+                  onclick="document.getElementById('ddetail-${rowId}').style.display='none';document.getElementById('crow-${rowId}').classList.remove('detail-open')">&#x2715;</button>
+              </div>
+              <div class="ts-detail-row"><span>Vendor</span><span class="ts-detail-val">${esc(inv.vendor)}</span></div>
+              <div class="ts-detail-row"><span>Category</span><span class="ts-detail-val">${esc(inv.category)}</span></div>
+              <div class="ts-detail-row"><span>Invoice Total</span><span class="ts-detail-val">${fmt(inv.amount)}</span></div>
+              <div class="ts-detail-row ts-detail-highlight"><span>Your Share</span><span class="ts-detail-val">${fmt(share)}</span></div>
+              <div class="ts-detail-basis">Based on ${pct}% pro-rata allocation by square footage</div>
+              <div class="ts-detail-actions">
+                ${viewInvBtn}
+                <button class="inv-act-btn inv-act-explain" id="tsexplbtn-${rowId}"
+                  onclick="event.stopPropagation();tsExplainInvoice('${rowId}','${esc(inv.vendor)}','${esc(inv.category)}',${inv.amount},'${esc(inv.invoiceDate||'')}')">Explain</button>
+                <button class="btn-danger-outline" id="dbtn-${rowId}"
+                  onclick="event.stopPropagation();tsToggleDispute('${rowId}','${esc(tenantName)}',${idx})">Dispute this charge</button>
+              </div>
+              <div id="tsexpl-${rowId}"></div>
+            </div>
+            <div id="dform-${rowId}" style="display:none;" onclick="event.stopPropagation()"></div>
+          </div>`;
+      }).join('');
+
+      const count = data.invoices.length;
+      return `
+        <div class="ts-cat-accordion">
+          <div class="ts-cat-header"
+            onclick="(function(hdr){var body=hdr.nextElementSibling;var isOpen=body.style.display==='block';document.querySelectorAll('.ts-cat-body').forEach(function(b){b.style.display='none';});document.querySelectorAll('.ts-cat-header').forEach(function(h){h.classList.remove('active');});if(!isOpen){body.style.display='block';hdr.classList.add('active');}})(this)">
+            <div class="ts-cat-left">
+              <div class="ts-cat-name">${esc(data.label)}</div>
+              <div class="ts-cat-meta">${count} invoice${count !== 1 ? 's' : ''}</div>
+            </div>
+            <div class="ts-cat-right">
+              <div class="ts-cat-share-amt">${fmt(parseFloat(data.share.toFixed(2)))}</div>
+              <div class="ts-cat-share-lbl">Your share</div>
+            </div>
+            <div class="ts-cat-chevron">&#x203A;</div>
+          </div>
+          <div class="ts-cat-body" style="display:none;">
+            <div class="charge-list">${invRows}</div>
+          </div>
+        </div>`;
+    }).join('');
+
+  // Excluded categories note
+  const exclNote = t.excludedCategories.length
+    ? `<p style="font-size:0.8rem;color:#94a3b8;margin-top:6px;">Excluded categories: ${t.excludedCategories.join(', ')}</p>`
+    : '';
+
+  // Cap info
+  const capNote = r.capApplied
+    ? `<p style="font-size:0.82rem;color:#b45309;margin-top:6px;font-style:italic;">
+        Cap applied — your allocation was reduced by ${fmt(r.capAdjustment)} to meet the lease cap.</p>`
+    : '';
+
+  // Year-end reconciliation (estimated = allocated, actual = allocated for demo)
+  const estimated  = r.allocatedAmount;
+  const actual     = r.allocatedAmount; // same when no payments entered
+  const difference = actual - estimated;
+  const reconNote  = difference > 0
+    ? `<span style="color:#dc2626">Underpaid ${fmt(difference)}</span>`
+    : difference < 0
+    ? `<span style="color:#16a34a">Overpaid ${fmt(Math.abs(difference))}</span>`
+    : '<span style="color:#16a34a">Settled — no adjustment needed</span>';
+
+  // Disputes for this tenant
+  const tenantDisputes = disputes.filter(d => d.tenantName === tenantName);
+  const disputeRows = tenantDisputes.length
+    ? tenantDisputes.map(d => {
+        const statusLabel = d.status === 'open' ? 'Open'
+          : d.status === 'accepted' ? 'Accepted'
+          : d.status === 'rejected' ? 'Rejected'
+          : 'Docs Requested';
+        const pill = `<span class="rpt-pill ${d.status === 'open' ? 'open' : 'closed'}">${statusLabel}</span>`;
+        return `<tr>
+          <td>${esc(d.vendor)}</td>
+          <td>${fmt(d.tenantShare)}</td>
+          <td>${esc(d.reason)}</td>
+          <td>${pill}</td>
+          ${d.hash ? `<td style="font-family:monospace;font-size:0.66rem;word-break:break-all">${d.hash.substring(0,16)}…</td>` : '<td>—</td>'}
+        </tr>`;
+      }).join('')
+    : '<tr><td colspan="5" style="color:#94a3b8;text-align:center">No disputes filed</td></tr>';
+
+  const html = `
+    <div class="ts-summary-card">
+      <div class="ts-summary-total-label">Total CAM Billed to You</div>
+      <div class="ts-summary-total-amount">${fmt(r.allocatedAmount)}</div>
+      <div class="ts-summary-stats">
+        <div class="ts-summary-stat">
+          <span class="ts-ss-label">Your Share</span>
+          <span class="ts-ss-val highlight">${(r.proRata * 100).toFixed(2)}%</span>
+        </div>
+        <div class="ts-summary-stat">
+          <span class="ts-ss-label">Building Sq Ft</span>
+          <span class="ts-ss-val">${(t.totalSqft || 0).toLocaleString()}</span>
+        </div>
+        <div class="ts-summary-stat">
+          <span class="ts-ss-label">Your Sq Ft</span>
+          <span class="ts-ss-val">${t.leasedSqft.toLocaleString()}</span>
+        </div>
+      </div>
+    </div>
+
+    <button class="primary-pay-btn" style="margin-bottom:24px;">Pay Now &mdash; ${fmt(r.allocatedAmount)} USD</button>
+
+    <div class="rpt-section-title">Expense Breakdown</div>
+    <p class="rpt-helper-text">Tap a category to see individual charges. Tap any charge to view details or dispute.</p>
+    <div class="ts-cat-list">${categoryCards}</div>
+    ${exclNote}${capNote}
+
+    <div class="rpt-section-title">Year-End Reconciliation</div>
+    <table class="rpt-table">
+      <tbody>
+        <tr><td>Estimated Annual CAM</td><td style="text-align:right">${fmt(estimated)}</td></tr>
+        <tr><td>Actual Reconciled CAM</td><td style="text-align:right">${fmt(actual)}</td></tr>
+        <tr class="total-row"><td>Net Settlement</td><td style="text-align:right">${reconNote}</td></tr>
+      </tbody>
+    </table>
+
+    <div class="rpt-section-title">Disputes</div>
+    <p class="rpt-helper-text">Disputes are reviewed by your landlord. You'll be notified when a decision is made.</p>
+    <table class="rpt-table">
+      <thead><tr>
+        <th>Vendor</th><th>Amount</th><th>Reason</th><th>Status</th><th>Hash</th>
+      </tr></thead>
+      <tbody>${disputeRows}</tbody>
+    </table>
+
+    <div class="rpt-section-title">XRPL Audit Record</div>
+    <div class="rpt-hash-box">
+      <div class="rpt-hash-lbl">&#x1F517; On-Chain Integrity Hash</div>
+      <div class="rpt-hash-val" id="tenantHashVal">Computing…</div>
+    </div>
+
+    <div class="rpt-footer">
+      Mainstreet &nbsp;·&nbsp; ${esc(tenantName)} &nbsp;·&nbsp; ${esc(lastPropName)} &nbsp;·&nbsp;
+      This statement is auto-generated and reflects data entered in the current session.
+    </div>`;
+
+  openReport('Tenant Statement — ' + tenantName, html);
+
+  sha256({ tenantName, propName: lastPropName, allocated: r.allocatedAmount, proRata: r.proRata, generated: now })
+    .then(hash => {
+      const el = document.getElementById('tenantHashVal');
+      if (el) el.textContent = 'SHA-256: ' + hash + '\nGenerated: ' + new Date().toISOString();
+    });
+}
+
+// ─── Load Demo ────────────────────────────────────────────────────────────────
+
+async function loadDemo() {
+  // Create a fresh demo property — no hardcoded id, Supabase generates UUID
+  const demoProp = {
+    name: 'Riverside Commons (Demo)', totalSqft: 24000,
+    status: 'in-progress', tenantCount: 3, invoiceCount: 7,
+    totalCAM: 0, openDisputes: 0,
+  };
+  _props.unshift(demoProp);
+  portfolio.unshift(demoProp);
+  await saveProperty(demoProp); // patches demoProp.id with real UUID
+
+  // Navigate into the property
+  activePropId = null;
+  resetWorkflow();
+  activePropId = demoProp.id;
+
+  document.getElementById('propertyName').value              = 'Riverside Commons';
+  document.getElementById('totalSqft').value                 = '24000';
+  document.getElementById('breadcrumbPropName').textContent  = 'Riverside Commons';
+  document.getElementById('portfolioDashboard').style.display = 'none';
+  document.getElementById('propertyBreadcrumb').style.display = 'flex';
+  document.getElementById('mainWorkflow').style.display       = 'block';
+
+  // ── Tenants ──────────────────────────────────────────────────────────────
+  tenantData.splice(0, tenantData.length,
+    ...[
+    {
+      tenantName: 'Fresh Market Foods', leasedSqft: '6200',
+      capPercentage: '10', excludedCategories: 'snow', baseYear: '2024',
+      confidence: { tenantName:98, leasedSqft:96, capPercentage:92, excludedCategories:88, baseYear:95 },
+      _error: null,
+    },
+    {
+      tenantName: 'Riverside Dental Group', leasedSqft: '1800',
+      capPercentage: '', excludedCategories: 'management', baseYear: '2024',
+      confidence: { tenantName:97, leasedSqft:94, capPercentage:null, excludedCategories:91, baseYear:96 },
+      _error: null,
+    },
+    {
+      tenantName: 'FitLife Gym & Wellness', leasedSqft: '3400',
+      capPercentage: '', excludedCategories: '', baseYear: '2023',
+      confidence: { tenantName:99, leasedSqft:97, capPercentage:null, excludedCategories:null, baseYear:94 },
+      _error: null,
+    }
+    ].map(normalizeTenant)
+  );
+
+  // ── Invoices ─────────────────────────────────────────────────────────────
+  invoiceData.splice(0, invoiceData.length,
+    { vendorName:'Green Thumb Landscaping', amount:2400, category:'landscaping', invoiceDate:'2025-01-15', confidence:{vendorName:97,amount:99,category:95,invoiceDate:98}, _error:null },
+    { vendorName:'Metro Snow Services',     amount:1850, category:'snow',        invoiceDate:'2025-01-22', confidence:{vendorName:96,amount:98,category:97,invoiceDate:97}, _error:null },
+    { vendorName:'Apex Building Repairs',   amount:3200, category:'repairs',     invoiceDate:'2025-01-31', confidence:{vendorName:94,amount:97,category:89,invoiceDate:96}, _error:null },
+    { vendorName:'City Electric Co',        amount:4100, category:'utilities',   invoiceDate:'2025-01-31', confidence:{vendorName:98,amount:99,category:96,invoiceDate:99}, _error:null },
+    { vendorName:'CleanRight Janitorial',   amount:2800, category:'janitorial',  invoiceDate:'2025-01-31', confidence:{vendorName:95,amount:98,category:94,invoiceDate:97}, _error:null },
+    { vendorName:'SecureWatch Inc',         amount:1600, category:'security',    invoiceDate:'2025-01-31', confidence:{vendorName:97,amount:99,category:96,invoiceDate:98}, _error:null },
+    { vendorName:'Summit Management Group', amount:3500, category:'management',  invoiceDate:'2025-01-31', confidence:{vendorName:96,amount:98,category:93,invoiceDate:97}, _error:null }
+  );
+
+  // Render lease + invoice results
+  switchLeaseTab('bulk');
+  renderBulkResults();
+  switchInvTab('files');
+  renderInvResults();
+
+  // Run allocation, then seed a sample open dispute
+  runAllocation();
+
+  // Pre-seed one open dispute so the dispute section is populated
+  const repairShare = parseFloat((3200 * (6200 / 24000)).toFixed(2));
+  disputes.push({
+    id:          nextDisputeId++,
+    tenantName:  'Fresh Market Foods',
+    invoiceId:   'inv-2',
+    vendor:      'Apex Building Repairs',
+    category:    'repairs',
+    tenantShare: repairShare,
+    reason:      'Work order was not pre-approved per lease Section 8.3. Requesting documentation before accepting this charge.',
+    timestamp:   new Date(Date.now() - 2 * 24 * 60 * 60 * 1000).toISOString(),
+    status:      'open',
+    resolution:  null, resolvedAt: null, hash: null,
+  });
+  renderOpenDisputes();
+  syncPortfolioEntry();
+
+  window.scrollTo({ top: 0, behavior: 'smooth' });
+}
+
+// ─── Portfolio ────────────────────────────────────────────────────────────────
+
+function portfolioKPIs(props) {
+  const safeProps = Array.isArray(props) ? props : [];
+  return {
+    properties:   safeProps.length,
+    tenants:      safeProps.reduce((s, p) => s + (Array.isArray(p.tenants) ? p.tenants.length : (Number(p.tenantCount) || 0)), 0),
+    cam:          safeProps.reduce((s, p) => s + (Number(p.totalCAM)     || 0), 0),
+    invoices:     safeProps.reduce((s, p) => s + (Number(p.invoiceCount) || 0), 0),
+    openDisputes: safeProps.reduce((s, p) => s + (Number(p.openDisputes) || 0), 0),
+  };
+}
+
+function renderPortfolio(props) {
+  console.log('RENDER DATA:', props);
+
+  if (!props || !Array.isArray(props)) {
+    console.error('[renderPortfolio] called with invalid data:', props);
+    return;
+  }
+
+  const k = portfolioKPIs(props);
+
+  document.getElementById('pKpiProperties').textContent = k.properties ?? 0;
+  document.getElementById('pKpiTenants').textContent    = k.tenants    ?? 0;
+  document.getElementById('pKpiCAM').textContent        = '$' + (k.cam ?? 0).toLocaleString('en-US');
+  document.getElementById('pKpiInvoices').textContent   = k.invoices   ?? 0;
+  document.getElementById('pKpiDisputes').textContent   = k.openDisputes ?? 0;
+
+  const statusLabel = { reconciled: 'Reconciled', 'in-progress': 'In Progress', disputes: 'Has Open Disputes' };
+
+  document.getElementById('propertyCardsGrid').innerHTML = props.map(p => {
+    const tenants      = Array.isArray(p.tenants)  ? p.tenants.length  : (Number(p.tenantCount)  || 0);
+    const invoices     = Array.isArray(p.invoices) ? p.invoices.length : (Number(p.invoiceCount) || 0);
+    const openDisputes = Number(p.openDisputes) || 0;
+    const cam          = Number(p.totalCAM)     || 0;
+    const status       = p.status || 'in-progress';
+    return `
+    <div class="ptf-prop-card status-${status}${activePropId === p.id ? ' active' : ''}" onclick="selectProperty('${p.id}')">
+      <div class="ptf-prop-name">${esc(p.name || '—')}</div>
+      <div class="ptf-status-row">
+        <span class="ptf-status-dot ${status}"></span>
+        ${statusLabel[status] || status}
+      </div>
+      <div class="ptf-stats-row">
+        <div class="ptf-stat"><strong>${tenants}</strong>Tenants</div>
+        <div class="ptf-stat"><strong>${invoices}</strong>Invoices</div>
+        ${openDisputes > 0
+          ? `<div class="ptf-stat"><strong style="color:#ef4444">${openDisputes}</strong>Disputes</div>`
+          : ''}
+      </div>
+      <div class="ptf-cam-lbl">CAM This Period</div>
+      <div class="ptf-cam-val">${cam > 0 ? '$' + cam.toLocaleString('en-US') : '—'}</div>
+      ${status === 'reconciled'
+        ? `<div class="ptf-onchain-badge">&#x1F517; On-Chain Record</div>`
+        : ''}
+    </div>`;
+  }).join('');
+
+  document.getElementById('portfolioDashboard').style.display  = 'block';
+  document.getElementById('propertyBreadcrumb').style.display  = 'none';
+  document.getElementById('mainWorkflow').style.display        = 'none';
+}
+
+async function selectProperty(id) {
+  const property = _props.find(p => p.id === id);
+  if (!property) return;
+
+  // If re-selecting the same active property and we already have live
+  // in-memory tenants, just re-render — do not reset or reload
+  if (id === activePropId && tenantData.some(t => t && t.tenant_name)) {
+    renderProperty(property);
+    return;
+  }
+
+  // Fire-and-forget save for the property we're leaving — don't block navigation
+  if (activePropId && activePropId !== id) {
+    console.log('Switching property — clearing transient state');
+    savePropertyData();
+  }
+
+  // Switch active property and clear all global workflow state
+  activePropId = id;
+  resetWorkflow();
+
+  // ── Wipe the _props cache for this property before the instant render ─────
+  // Prevents stale or leaked data from the previous property showing through
+  // while the real load is in flight.
+  property.tenants  = [];
+  property.invoices = [];
+  property.disputes = [];
+  property.results  = null;
+
+  // ⚡ INSTANT: show the property shell (name/sqft) with a clean slate
+  renderProperty(property);
+
+  // Load real data in the background, re-render once it arrives
+  setTimeout(async () => {
+    const data = await loadPropertyData(id);
+    if (!data || activePropId !== id) return;
+
+    // Verify results belong to THIS property — guards against data that was
+    // accidentally saved to the wrong property in a previous session
+    const safeResults = (data.results?.propId === id) ? data.results : null;
+
+    property.tenants  = data.tenants  || [];
+    property.invoices = data.invoices || [];
+    property.disputes = data.disputes || [];
+    property.results  = safeResults;
+    if (data.name)      property.name      = data.name;
+    if (data.totalSqft) property.totalSqft = data.totalSqft;
+
+    if (activePropId === id) renderProperty(property);
+  }, 0);
+}
+
+async function backToPortfolio() {
+  // ── 1. Synchronously snapshot all state into the _props entry ─────────────
+  //    Do this before clearing activePropId so DOM reads still work.
+  if (activePropId) {
+    const prop = _props.find(p => p.id === activePropId);
+    if (prop) {
+      const name = document.getElementById('propertyName')?.value?.trim() || '';
+      const sqft = parseFloat(document.getElementById('totalSqft')?.value) || 0;
+      if (name) prop.name = name;
+      if (sqft) prop.totalSqft = sqft;
+      prop.tenants  = tenantData.filter(t => t !== null);
+      prop.invoices = Array.from(invoiceData);
+      prop.disputes = Array.from(disputes);
+      prop.results  = lastResults.length ? {
+        propId:      prop.id,
+        results:     lastResults, propName: lastPropName, total: lastTotal,
+        invoices:    lastInvoices, invoicesFull: lastInvoicesFull,
+        tenants:     lastTenants, disputes: Array.from(disputes),
+        camRuns:     camRuns.map(r => ({ ...r, timestamp: r.timestamp instanceof Date ? r.timestamp.toISOString() : r.timestamp })),
+      } : null;
+      // Update portfolio card stats from current session
+      if (lastResults.length) {
+        prop.tenantCount  = lastResults.length;
+        prop.invoiceCount = lastInvoicesFull.length;
+        prop.totalCAM     = Math.round(lastResults.reduce((s, r) => s + r.allocatedAmount, 0));
+      } else {
+        prop.tenantCount  = (prop.tenants || []).length;
+        prop.invoiceCount = (prop.invoices || []).length;
+      }
+      const openCount   = disputes.filter(d => d.status === 'open').length;
+      prop.openDisputes = openCount;
+      prop.status       = openCount > 0      ? 'disputes'
+                        : lastResults.length ? 'reconciled'
+                        : 'in-progress';
+      // Fire-and-forget the DB write — don't block the UI
+      saveProperty(prop);
+    }
+  }
+
+  // ── 2. Show portfolio immediately — no waiting for network ────────────────
+  activePropId = null;
+  renderPortfolio(_props);
+  window.scrollTo({ top: 0, behavior: 'smooth' });
+}
+
+async function addNewProperty() {
+  // No id — saveProperty will INSERT and patch newProp.id with the Supabase UUID
+  const newProp = {
+    name: 'New Property', totalSqft: 0,
+    status: 'in-progress', tenantCount: 0, invoiceCount: 0,
+    totalCAM: 0, openDisputes: 0, createdAt: new Date().toISOString(),
+  };
+  _props.push(newProp);
+  portfolio.push(newProp);
+  await saveProperty(newProp); // patches newProp.id in-place
+  await selectProperty(newProp.id);
+  setTimeout(() => {
+    const el = document.getElementById('propertyName');
+    el.focus(); el.select();
+  }, 80);
+}
+
+async function syncPortfolioEntry() {
+  if (!activePropId) return;
+  const prop = _props.find(p => p.id === activePropId);
+  if (!prop) return;
+
+  const name = document.getElementById('propertyName').value.trim();
+  const sqft = parseFloat(document.getElementById('totalSqft').value) || 0;
+  if (name) prop.name = name;
+  if (sqft) prop.totalSqft = sqft;
+
+  if (lastResults.length) {
+    prop.tenantCount  = lastResults.length;
+    prop.invoiceCount = lastInvoicesFull.length;
+    prop.totalCAM     = Math.round(lastResults.reduce((s, r) => s + r.allocatedAmount, 0));
+  }
+
+  const openCount   = disputes.filter(d => d.status === 'open').length;
+  prop.openDisputes = openCount;
+  prop.status       = openCount > 0      ? 'disputes'
+                    : lastResults.length ? 'reconciled'
+                    : 'in-progress';
+
+  document.getElementById('breadcrumbPropName').textContent = prop.name;
+  await saveProperty(prop);
+}
+
+function resetWorkflow() {
+  // Reset tenant data for both modes
+  tenantData.splice(0, tenantData.length, null, null, null);
+  document.getElementById('bulkResults').innerHTML = '';
+  document.getElementById('bulkProgress').style.display = 'none';
+  document.getElementById('bulkLeaseInput').value = '';
+  switchLeaseTab('bulk');
+
+  invoiceData.length = 0;
+  lastResults = []; lastInvoices = []; lastTenants = [];
+  lastPropName = ''; lastTotal = 0; lastInvoicesFull = []; lastFullResults = [];
+  disputes.length = 0;
+  nextDisputeId = 0;
+  camRuns.length = 0;
+  document.getElementById('previousRunsSection').style.display = 'none';
+  document.getElementById('previousRunsList').innerHTML = '';
+
+  document.getElementById('propertyName').value = '';
+  document.getElementById('totalSqft').value    = '';
+  document.getElementById('resultsBody').innerHTML = '';
+  document.getElementById('resultsTitle').textContent = 'Allocation Results';
+  document.getElementById('results').style.display = 'none';
+  document.getElementById('disputeSection').style.display = '';
+  document.getElementById('disputeInvoiceList').innerHTML = '';
+  document.getElementById('openDisputesWrap').style.display = 'none';
+  document.getElementById('resolvedCount').textContent = '0';
+  document.getElementById('reportsMsg').style.display = 'block';
+  document.getElementById('reportsMsg').textContent = 'Run a CAM allocation in Section 4 to generate reports.';
+  document.getElementById('tenantReportButtons').innerHTML = '';
+
+  renderTenantSlots();
+  invoiceData.splice(0, invoiceData.length);
+  document.getElementById('invResults').innerHTML = '';
+  document.getElementById('invProgress').style.display = 'none';
+  document.getElementById('invFileInput').value   = '';
+  document.getElementById('invFolderInput').value = '';
+  yardiRows = []; yardiColMap = {}; yardiUnrecognized = [];
+  document.getElementById('yardiPreview').innerHTML = '';
+  switchInvTab('files');
+  // Reset GL state
+  glData = [];
+  document.getElementById('glResults').innerHTML   = '';
+  document.getElementById('glImportBar').innerHTML = '';
+  document.getElementById('glStatus').style.display = 'none';
+  document.getElementById('glStatus').innerHTML    = '';
+  document.getElementById('glFileInput').value     = '';
+}
+
+function liveUpdateBreadcrumb(name) {
+  const el = document.getElementById('breadcrumbPropName');
+  if (el) el.textContent = name || 'New Property';
+}
+
+// ─── Supabase Persistence ─────────────────────────────────────────────────────
+// All property data lives in Supabase: properties(id text PK, name text, data jsonb)
+// The `data` column holds everything except id and name — sqft, status, tenants,
+// invoices, results, tenantCount, invoiceCount, totalCAM, openDisputes, etc.
+
+// Explicit defaults — structural baseline for default properties.
+const defaultProperties = [];
+
+// ── localStorage fallback ─────────────────────────────────────────────────────
+// Data is always saved here first (instant, offline-safe).
+// Supabase is synced in the background — if it's down, data is still safe.
+
+const _LS_KEY = '_ms_props_v2';
+
+// In-memory fallback for when localStorage is blocked (Safari ITP, private mode, file://)
+const _memStore = {};
+
+function _lsGet(key) {
+  try { return localStorage.getItem(key); } catch { return _memStore[key] ?? null; }
+}
+function _lsSet(key, value) {
+  try { localStorage.setItem(key, value); } catch { _memStore[key] = value; }
+}
+
+// ── IndexedDB lease-file cache ────────────────────────────────────────────────
+// Persists File blobs across navigation in the same browser. Falls back to
+// Supabase Storage URL for cross-device access when available.
+const _IDB_NAME  = 'mainstreet-lease-files';
+const _IDB_STORE = 'files';
+let   _leaseIdb  = null;
+
+function _openLeaseIdb() {
+  if (_leaseIdb) return Promise.resolve(_leaseIdb);
+  return new Promise((resolve, reject) => {
+    const req = indexedDB.open(_IDB_NAME, 1);
+    req.onupgradeneeded = e => e.target.result.createObjectStore(_IDB_STORE);
+    req.onsuccess  = e => { _leaseIdb = e.target.result; resolve(_leaseIdb); };
+    req.onerror    = e => reject(e.target.error);
+  });
+}
+
+async function storeLeaseFile(tenantId, file) {
+  if (!tenantId || !(file instanceof File)) return;
+  try {
+    const db = await _openLeaseIdb();
+    const tx = db.transaction(_IDB_STORE, 'readwrite');
+    tx.objectStore(_IDB_STORE).put(file, tenantId);
+    await new Promise((res, rej) => { tx.oncomplete = res; tx.onerror = e => rej(e.target.error); });
+  } catch (e) { console.warn('[storeLeaseFile]', e); }
+}
+
+async function getLeaseFile(tenantId) {
+  if (!tenantId) return null;
+  try {
+    const db  = await _openLeaseIdb();
+    const tx  = db.transaction(_IDB_STORE, 'readonly');
+    const req = tx.objectStore(_IDB_STORE).get(tenantId);
+    return new Promise((res, rej) => { req.onsuccess = () => res(req.result ?? null); req.onerror = e => rej(e.target.error); });
+  } catch (e) { return null; }
+}
+
+async function deleteLeaseFile(tenantId) {
+  if (!tenantId) return;
+  try {
+    const db = await _openLeaseIdb();
+    const tx = db.transaction(_IDB_STORE, 'readwrite');
+    tx.objectStore(_IDB_STORE).delete(tenantId);
+  } catch (e) { console.warn('[deleteLeaseFile]', e); }
+}
+
+// After restoring tenants from DB, refill leaseFile from IndexedDB and re-render.
+async function restoreLeaseFiles() {
+  let changed = false;
+  await Promise.all(tenantData.map(async (t, idx) => {
+    if (!t || !t.id || !t.leaseExpected || t.leaseFile instanceof File) return;
+    const file = await getLeaseFile(t.id);
+    if (file instanceof File) {
+      tenantData[idx] = { ...t, leaseFile: file };
+      changed = true;
+    }
+  }));
+  if (changed) renderBulkResults();
+}
+
+function _stripBlobs(property) {
+  if (!property || !Array.isArray(property.tenants)) return property;
+  return {
+    ...property,
+    tenants: property.tenants.map(t => t ? { ...t, leaseFile: undefined } : t),
+  };
+}
+
+function _lsSave(property) {
+  try {
+    const stored = JSON.parse(_lsGet(_LS_KEY) || '{}');
+    stored[property.id] = _stripBlobs(property);
+    _lsSet(_LS_KEY, JSON.stringify(stored));
+  } catch (e) { console.warn('[Mainstreet] storage save failed:', e); }
+}
+
+function _lsLoadAll() {
+  try {
+    const stored = JSON.parse(_lsGet(_LS_KEY) || '{}');
+    const rows = Object.values(stored);
+    return rows.length ? rows : null;
+  } catch (e) { return null; }
+}
+
+function _lsLoad(id) {
+  try {
+    const stored = JSON.parse(_lsGet(_LS_KEY) || '{}');
+    return stored[id] || null;
+  } catch (e) { return null; }
+}
+
+async function loadProperties() {
+  const { data, error } = await db
+    .from('properties')
+    .select('*');
+
+  console.log('DATA:', data);
+  console.log('ERROR:', error);
+
+  if (error) throw error;
+
+  const properties = data || [];
+
+  const { data: tenants } = await db.from('tenants').select('*');
+  const allTenants = tenants || [];
+  properties.forEach(p => {
+    p.tenants = allTenants.filter(t => t.property_id === p.id);
+  });
+
+  return properties;
+}
+
+async function syncTenantsToTable(propertyId, tenants) {
+  await db.from('tenants').delete().eq('property_id', propertyId);
+  const rows = tenants
+    .filter(t => t && t.tenant_name)
+    .map(t => ({
+      property_id: propertyId,
+      name:        t.tenant_name  || null,
+      sqft:        t.leased_sqft  ?? null,
+      cap:         t.cap          ?? null,
+      start_date:  t.start_date   || null,
+      end_date:    t.end_date     || null,
+      lease_url:   t.lease_url    || null,
+    }));
+  if (rows.length === 0) return;
+  const { error } = await db.from('tenants').insert(rows);
+  if (error) console.error('[syncTenantsToTable]', error.message);
+}
+
+async function uploadLeaseToStorage(file, propertyId, tenantId) {
+  if (!db || !propertyId) return null;
+  try {
+    const filePath = `${propertyId}/${tenantId}/${file.name}`;
+    const { error } = await db.storage.from('leases').upload(filePath, file, { upsert: true });
+    if (error) throw error;
+    const { data: urlData } = db.storage.from('leases').getPublicUrl(filePath);
+    const publicUrl = urlData?.publicUrl || null;
+    console.log('LEASE URL:', publicUrl);
+    return publicUrl;
+  } catch (e) {
+    console.warn('[uploadLeaseToStorage]', e.message);
+    return null;
+  }
+}
+
+// Save a property — localStorage first (instant), then Supabase.
+// INSERT when property has no id (new); UPSERT when it already has a UUID.
+async function saveProperty(property) {
+  _lsSave(property);
+
+  try {
+    const stripped = _stripBlobs(property);
+    const { id, name, totalSqft, ...rest } = stripped;
+    const payload = {
+      name: name || 'New Property',
+      sqft: totalSqft || 0,
+      data: rest,
+    };
+
+    if (id) {
+      // Existing record — update by id
+      const { error } = await db.from('properties').upsert({ id, ...payload });
+      if (error) throw error;
+      console.log('UPDATED IN SUPABASE', id);
+    } else {
+      // New record — let Supabase generate the UUID
+      const { data: inserted, error } = await db.from('properties')
+        .insert(payload)
+        .select('id')
+        .single();
+      if (error) throw error;
+      // Patch the in-memory object so callers immediately have the real UUID
+      property.id = inserted.id;
+      _lsSave(property);
+      console.log('INSERTED INTO SUPABASE', inserted.id);
+    }
+
+    // Sync tenants to dedicated table whenever property is saved
+    if (property.id && Array.isArray(property.tenants) && property.tenants.length > 0) {
+      await syncTenantsToTable(property.id, property.tenants);
+    }
+  } catch (e) {
+    // If INSERT failed and property still has no id, keep it null — do NOT assign
+    // a fake local id that could later be mistakenly sent to Supabase
+    const msg = e?.message || String(e);
+    const isNetErr = /load failed|failed to fetch|networkerror|offline/i.test(msg);
+    if (isNetErr) {
+      console.warn('[Mainstreet] Supabase offline, saved locally only:', msg);
+    } else {
+      console.error('[Mainstreet] saveProperty error:', msg, e);
+      const prev = document.getElementById('_saveErrToast');
+      if (prev) prev.remove();
+      const toast = document.createElement('div');
+      toast.id = '_saveErrToast';
+      toast.style.cssText = 'position:fixed;bottom:20px;left:50%;transform:translateX(-50%);background:#e74c3c;color:#fff;padding:12px 20px;border-radius:6px;z-index:9999;font-size:13px;box-shadow:0 4px 12px rgba(0,0,0,.3);max-width:90vw;text-align:center;';
+      toast.textContent = 'Save error: ' + msg;
+      document.body.appendChild(toast);
+      setTimeout(() => toast.remove(), 8000);
+    }
+  }
+}
+
+
+// ── App-level wrappers ────────────────────────────────────────────────────────
+
+// Snapshot current in-memory state back into the canonical _props entry and
+// persist to Supabase. Always awaited at mutation points; fire-and-forget only
+// for minor UI events (remove, clear) where latency is acceptable.
+async function savePropertyData() {
+  if (!activePropId) return;
+
+  const prop = _props.find(p => p.id === activePropId);
+  if (!prop) return;
+
+  const name = document.getElementById('propertyName')?.value?.trim() || '';
+  const sqftDom = parseFloat(document.getElementById('totalSqft')?.value) || 0;
+  const sqft = prop.totalSqft || sqftDom;
+
+  if (name) prop.name = name;
+  if (sqft) prop.totalSqft = sqft;
+  // property.tenants is the source of truth — always current; no snapshot from tenantData needed
+  prop.invoices = Array.from(invoiceData);
+  prop.disputes = Array.from(disputes);
+  prop.results  = lastResults.length ? {
+    propId:       prop.id,          // used to verify results belong to this property on load
+    results:      lastResults,
+    propName:     lastPropName,
+    total:        lastTotal,
+    invoices:     lastInvoices,
+    invoicesFull: lastInvoicesFull,
+    tenants:      lastTenants,
+    disputes:     Array.from(disputes),
+    camRuns:      camRuns.map(r => ({ ...r, timestamp: r.timestamp instanceof Date ? r.timestamp.toISOString() : r.timestamp })),
+  } : null;
+
+  await saveProperty(prop);
+}
+
+// Fetch a single property's full data — Supabase first, localStorage fallback.
+async function loadPropertyData(id) {
+  try {
+    const { data, error } = await db.from('properties').select('*').eq('id', id).single();
+    if (error) throw error;
+    if (!data) return _lsLoad(id);
+    return { id: data.id, name: data.name, totalSqft: data.sqft || 0, ...(data.data || {}) };
+  } catch (e) {
+    console.warn('[Mainstreet] Supabase unavailable, loading property from localStorage:', e.message);
+    return _lsLoad(id);
+  }
+}
+
+// Restore a property's saved state into working arrays and render the detail view.
+// Called exactly once from selectProperty — after data has been attached to `property`.
+function renderProperty(property) {
+  let restored = false;
+
+  // ── Header ────────────────────────────────────────────────────────────
+  document.getElementById('propertyName').value             = property.name;
+  document.getElementById('totalSqft').value                = property.totalSqft || '';
+  document.getElementById('breadcrumbPropName').textContent = property.name;
+
+  // ── Tenants ───────────────────────────────────────────────────────────
+  try {
+    const liveTenants = tenantData.filter(t => t && t.tenant_name);
+    console.log('RENDER PROPERTY:', { propSqft: property.totalSqft, tenants: liveTenants.length });
+
+    if (liveTenants.length > 0) {
+      // Deduplicate in-place by stable UUID (t.id)
+      const seen = new Set();
+      const deduped = tenantData.filter(t => {
+        if (!t || typeof t !== 'object') return false;
+        const key = t.id || t.fileName || t.tenant_name;
+        if (seen.has(key)) return false;
+        seen.add(key);
+        return true;
+      });
+      tenantData.splice(0, tenantData.length, ...deduped);
+      // Normalize leased_sqft to a clean number in-place and sync to property.tenants
+      tenantData.forEach((t, idx) => {
+        if (t) tenantData[idx] = { ...t, leased_sqft: Number(t.leased_sqft) || 0 };
+      });
+      property.tenants = [...tenantData];
+      switchLeaseTab('bulk');
+      renderBulkResults();
+      restored = true;
+    } else {
+      const tenants = (property.tenants || []).filter(t => t !== null);
+      if (tenants.length) {
+        property.tenants = tenants.map(normalizeTenant);
+        switchLeaseTab('bulk');
+        renderBulkResults();
+        restored = true;
+      }
+    }
+    checkSqftValidation();
+    restoreLeaseFiles(); // async: fills leaseFile from IndexedDB, re-renders when done
+  } catch (e) { console.warn('[Mainstreet] tenant restore failed:', e); }
+
+  // ── Invoices ──────────────────────────────────────────────────────────
+  try {
+    const invoices = property.invoices || [];
+    if (invoices.length) {
+      invoiceData.splice(0, invoiceData.length, ...invoices);
+      switchInvTab('files');
+      renderInvResults();
+      restored = true;
+    }
+  } catch (e) { console.warn('[Mainstreet] invoice restore failed:', e); }
+
+  // ── Disputes ──────────────────────────────────────────────────────────
+  try {
+    const savedDisputes = property.disputes || [];
+    if (savedDisputes.length) {
+      disputes.splice(0, disputes.length, ...savedDisputes);
+      nextDisputeId = Math.max(...savedDisputes.map(d => d.id + 1), 0);
+    }
+  } catch (e) { console.warn('[Mainstreet] dispute restore failed:', e); }
+
+  // ── CAM Results ───────────────────────────────────────────────────────
+  try {
+    const r = property.results;
+    if (r && Array.isArray(r.results) && r.results.length) {
+      lastResults      = r.results;
+      lastPropName     = r.propName     || '';
+      lastTotal        = r.total        || 0;
+      lastInvoices     = r.invoices     || [];
+      lastInvoicesFull = r.invoicesFull || [];
+      lastTenants      = r.tenants      || [];
+      // Restore per-property run history — parse ISO timestamps back to Date objects
+      if (Array.isArray(r.camRuns) && r.camRuns.length) {
+        camRuns.splice(0, camRuns.length, ...r.camRuns.map(run => ({
+          ...run,
+          timestamp: run.timestamp ? new Date(run.timestamp) : new Date(),
+        })));
+      }
+      restoreResultsDisplay();
+      renderDisputeSection();
+      renderPreviousRuns();
+      showReportSection();
+      restored = true;
+    }
+  } catch (e) { console.warn('[Mainstreet] results restore failed:', e); }
+
+  if (restored) showRestoredBanner();
+
+  // ── Show property view ────────────────────────────────────────────────
+  document.getElementById('portfolioDashboard').style.display  = 'none';
+  document.getElementById('propertyBreadcrumb').style.display  = 'flex';
+  document.getElementById('mainWorkflow').style.display        = 'block';
+
+  window.scrollTo({ top: 0, behavior: 'smooth' });
+}
+
+// Wipe saved data for the active property and reset the workflow UI.
+async function clearPropertyData() {
+  if (!activePropId) return;
+  if (!confirm(
+    'Clear saved tenants, invoices, and results for this property?\n' +
+    'The property will remain in your portfolio.'
+  )) return;
+
+  const prop = _props.find(p => p.id === activePropId);
+  if (prop) {
+    prop.tenants  = [];
+    prop.invoices = [];
+    prop.results  = null;
+    await saveProperty(prop);
+  }
+
+  const savedName = document.getElementById('propertyName').value;
+  const savedSqft = document.getElementById('totalSqft').value;
+  resetWorkflow();
+  document.getElementById('propertyName').value = savedName;
+  document.getElementById('totalSqft').value    = savedSqft;
+}
+
+// Re-draw the results card from in-memory lastResults state.
+// Used when restoring a saved run — mirrors the display logic in runAllocation().
+function restoreResultsDisplay() {
+  const section = document.getElementById('results');
+  const body    = document.getElementById('resultsBody');
+  document.getElementById('resultsTitle').textContent = `Results — ${lastPropName}`;
+
+  let html = `<div class="summary-bar">
+    <strong>Total Expenses:</strong> ${fmt(lastTotal)}
+    &nbsp;|&nbsp; <strong>Tenants:</strong> ${lastResults.length}
+    &nbsp;|&nbsp; <strong>Invoices:</strong> ${lastInvoicesFull.length}
+  </div>`;
+
+  lastResults.forEach(r => {
+    html += `<div class="result-card">
+      <div class="r-name">${esc(r.name)}</div>
+      <div class="result-grid">
+        ${stat('Allocated Amount',  fmt(r.allocatedAmount))}
+        ${stat('Pro-Rata Share',    (r.proRata * 100).toFixed(2) + '%')}
+        ${stat('Included Expenses', r.eligibleCount + ' of ' + lastInvoicesFull.length)}
+      </div>
+      ${r.capApplied
+        ? `<div class="cap-badge">Cap applied — ${fmt(r.capAdjustment)} reduced</div>`
+        : ''}
+      <button class="explain-btn" onclick="openExplainPanel('${esc(r.name)}')">&#x1F4CA; View Calculation</button>
+    </div>`;
+  });
+
+  body.innerHTML = html;
+  section.style.display = 'block';
+}
+
+// Show a temporary green banner confirming data was loaded from a previous session.
+function showRestoredBanner() {
+  let banner = document.getElementById('restoredBanner');
+  if (!banner) {
+    banner = document.createElement('div');
+    banner.id = 'restoredBanner';
+    banner.style.cssText = [
+      'position:fixed', 'top:16px', 'left:50%', 'transform:translateX(-50%)',
+      'z-index:9999', 'background:#166534', 'color:#dcfce7',
+      'padding:10px 20px', 'border-radius:10px', 'font-size:0.85rem',
+      'font-weight:600', 'box-shadow:0 4px 20px rgba(0,0,0,0.5)',
+      'transition:opacity 0.6s', 'pointer-events:none', 'white-space:nowrap',
+    ].join(';');
+    document.body.appendChild(banner);
+  }
+  banner.textContent = '✅ Data restored from previous session';
+  banner.style.opacity = '1';
+  clearTimeout(banner._hideTimer);
+  banner._hideTimer = setTimeout(() => { banner.style.opacity = '0'; }, 4000);
+}
+
+
+// ─── Init ─────────────────────────────────────────────────────────────────────
+async function init() {
+  try {
+    const properties = await loadProperties();
+    _props = properties || [];
+
+    console.log('[Mainstreet] PROPERTIES ON LOAD:', _props.length, _props);
+    portfolio.splice(0, portfolio.length, ..._props);
+    console.log('RENDER DATA:', properties);
+    renderPortfolio(properties);
+  } catch (e) {
+    console.error('[Mainstreet] portfolio render failed, falling back to main workflow.', e);
+    document.getElementById('portfolioDashboard').style.display = 'none';
+    document.getElementById('mainWorkflow').style.display       = 'block';
+    renderTenantSlots();
+  }
+}
+
