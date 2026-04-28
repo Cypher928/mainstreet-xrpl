@@ -2153,9 +2153,22 @@ async function submitAuth() {
   msgEl.className = 'login-msg';
   msgEl.textContent = '';
 
-  const { data, error } = _authMode === 'signup'
-    ? await db.auth.signUp({ email, password })
-    : await db.auth.signInWithPassword({ email, password });
+  let data, error;
+  try {
+    ({ data, error } = _authMode === 'signup'
+      ? await db.auth.signUp({
+          email,
+          password,
+          options: { emailRedirectTo: window.location.origin },
+        })
+      : await db.auth.signInWithPassword({ email, password }));
+  } catch (e) {
+    msgEl.className   = 'login-msg error';
+    msgEl.textContent = 'Network error — please check your connection and try again.';
+    btn.disabled      = false;
+    btn.textContent   = _authMode === 'signup' ? 'Create Account' : 'Sign In';
+    return;
+  }
 
   if (error) {
     msgEl.className   = 'login-msg error';
@@ -2163,11 +2176,18 @@ async function submitAuth() {
     btn.disabled      = false;
     btn.textContent   = _authMode === 'signup' ? 'Create Account' : 'Sign In';
   } else if (_authMode === 'signup') {
-    msgEl.className   = 'login-msg success';
-    msgEl.textContent = '✓ Account created! Check your email to confirm, then sign in.';
-    btn.disabled      = false;
-    btn.textContent   = 'Create Account';
-    switchAuthTab('signin');
+    // If email confirmation is disabled in Supabase, signUp returns a live session —
+    // go straight into the app. Otherwise show the "check email" prompt.
+    if (data?.session?.user) {
+      _showApp(data.session.user);
+      init();
+    } else {
+      msgEl.className   = 'login-msg success';
+      msgEl.textContent = '✓ Account created! Check your email for a confirmation link, then sign in here.';
+      btn.disabled      = false;
+      btn.textContent   = 'Create Account';
+      switchAuthTab('signin');
+    }
   } else if (data?.user) {
     // Explicit show — don't rely solely on onAuthStateChange firing in restricted browsers
     _showApp(data.user);
