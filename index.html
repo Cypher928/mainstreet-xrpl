@@ -1638,21 +1638,23 @@
 
     <!-- Tab switcher -->
     <div class="login-tabs">
-      <button class="login-tab active" id="loginTabSignIn" onclick="switchAuthTab('signin')">Sign In</button>
-      <button class="login-tab" id="loginTabSignUp" onclick="switchAuthTab('signup')">Create Account</button>
+      <button type="button" class="login-tab active" id="loginTabSignIn" onclick="switchAuthTab('signin')">Sign In</button>
+      <button type="button" class="login-tab" id="loginTabSignUp" onclick="switchAuthTab('signup')">Create Account</button>
     </div>
 
-    <label class="login-label" for="loginEmail">Email address</label>
-    <input class="login-input" type="email" id="loginEmail" placeholder="you@example.com"
-      autocomplete="email" onkeydown="if(event.key==='Enter')document.getElementById('loginPassword').focus()" />
+    <form id="loginForm" onsubmit="submitAuth(event)">
+      <label class="login-label" for="loginEmail">Email address</label>
+      <input class="login-input" type="email" id="loginEmail" placeholder="you@example.com"
+        autocomplete="email" />
 
-    <label class="login-label" for="loginPassword">Password</label>
-    <input class="login-input" type="password" id="loginPassword" placeholder="••••••••"
-      autocomplete="current-password" onkeydown="if(event.key==='Enter')submitAuth()" />
+      <label class="login-label" for="loginPassword">Password</label>
+      <input class="login-input" type="password" id="loginPassword" placeholder="••••••••"
+        autocomplete="current-password" />
 
-    <p id="loginPasswordHint" class="login-hint" style="display:none;">Minimum 6 characters</p>
+      <p id="loginPasswordHint" class="login-hint" style="display:none;">Minimum 6 characters</p>
 
-    <button class="login-btn" id="loginBtn" onclick="submitAuth()">Sign In</button>
+      <button type="submit" class="login-btn" id="loginBtn">Sign In</button>
+    </form>
     <div class="login-msg" id="loginMsg"></div>
   </div>
 </div>
@@ -2126,7 +2128,11 @@ function switchAuthTab(mode) {
   document.getElementById('loginMsg').textContent = '';
 }
 
-async function submitAuth() {
+async function submitAuth(event) {
+  if (event) event.preventDefault(); // prevent form reload in all browsers
+
+  console.log('[Mainstreet] submitAuth fired, mode:', _authMode);
+
   const email    = (document.getElementById('loginEmail').value    || '').trim();
   const password = (document.getElementById('loginPassword').value || '');
   const btn      = document.getElementById('loginBtn');
@@ -2155,41 +2161,50 @@ async function submitAuth() {
 
   let data, error;
   try {
-    ({ data, error } = _authMode === 'signup'
-      ? await db.auth.signUp({
-          email,
-          password,
-          options: { emailRedirectTo: window.location.origin },
-        })
-      : await db.auth.signInWithPassword({ email, password }));
+    if (_authMode === 'signup') {
+      console.log('[Mainstreet] Calling supabase.auth.signUp for', email);
+      ({ data, error } = await db.auth.signUp({
+        email,
+        password,
+        options: { emailRedirectTo: window.location.origin },
+      }));
+    } else {
+      console.log('[Mainstreet] Calling supabase.auth.signInWithPassword for', email);
+      ({ data, error } = await db.auth.signInWithPassword({ email, password }));
+    }
   } catch (e) {
+    console.error('[Mainstreet] Auth exception:', e);
+    const msg = 'Network error — please check your connection and try again.';
     msgEl.className   = 'login-msg error';
-    msgEl.textContent = 'Network error — please check your connection and try again.';
+    msgEl.textContent = msg;
+    alert(msg);
     btn.disabled      = false;
     btn.textContent   = _authMode === 'signup' ? 'Create Account' : 'Sign In';
     return;
   }
 
   if (error) {
+    console.error('[Mainstreet] Auth error:', error);
     msgEl.className   = 'login-msg error';
     msgEl.textContent = error.message;
+    alert(error.message);
     btn.disabled      = false;
     btn.textContent   = _authMode === 'signup' ? 'Create Account' : 'Sign In';
   } else if (_authMode === 'signup') {
-    // If email confirmation is disabled in Supabase, signUp returns a live session —
-    // go straight into the app. Otherwise show the "check email" prompt.
+    console.log('[Mainstreet] Signup success:', data);
+    // If email confirmation is disabled, signUp returns a live session immediately
     if (data?.session?.user) {
       _showApp(data.session.user);
       init();
     } else {
-      // Switch to signin tab first (which would clear the message), THEN write the
-      // success message so it isn't immediately wiped by switchAuthTab's reset.
+      // Switch tab first (it clears loginMsg), then write the success message
       switchAuthTab('signin');
       msgEl.className   = 'login-msg success';
       msgEl.textContent = '✓ Account created! Check your email for a confirmation link, then sign in here.';
       btn.disabled      = false;
     }
   } else if (data?.user) {
+    console.log('[Mainstreet] Sign in success:', data.user.email);
     // Explicit show — don't rely solely on onAuthStateChange firing in restricted browsers
     _showApp(data.user);
   }
