@@ -2182,11 +2182,12 @@ async function submitAuth() {
       _showApp(data.session.user);
       init();
     } else {
+      // Switch to signin tab first (which would clear the message), THEN write the
+      // success message so it isn't immediately wiped by switchAuthTab's reset.
+      switchAuthTab('signin');
       msgEl.className   = 'login-msg success';
       msgEl.textContent = '✓ Account created! Check your email for a confirmation link, then sign in here.';
       btn.disabled      = false;
-      btn.textContent   = 'Create Account';
-      switchAuthTab('signin');
     }
   } else if (data?.user) {
     // Explicit show — don't rely solely on onAuthStateChange firing in restricted browsers
