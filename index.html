@@ -369,14 +369,14 @@
     }
     .explain-btn:hover { background: rgba(99,102,241,0.2); border-color: #6366f1; color: #c7d2fe; }
     /* ── Explain Panel (slide-up sheet) ─────────────────────────────── */
-    #explainPanel { display: none; position: fixed; inset: 0; z-index: 1500; }
+    #explainPanel { display: none; position: fixed; inset: 0; z-index: 9999; }
     #explainPanel.open { display: block; }
     #explainPanelBackdrop {
       position: absolute; inset: 0; background: rgba(0,0,0,0.65);
       animation: fadein 0.2s ease;
     }
     #explainPanelSheet {
-      position: absolute; bottom: 0; left: 0; right: 0;
+      position: absolute; bottom: 0; left: 0; right: 0; z-index: 10000;
       background: #0F1929; border-radius: 18px 18px 0 0;
       max-height: 88vh; display: flex; flex-direction: column;
       box-shadow: 0 -8px 40px rgba(0,0,0,0.5);
@@ -393,8 +393,10 @@
     .ep-close-btn {
       padding: 5px 14px; border-radius: 7px; font-size: 0.8rem; font-weight: 700;
       border: 1.5px solid rgba(255,255,255,0.12); background: transparent;
-      color: #94A3B8; cursor: pointer;
+      color: #94A3B8; cursor: pointer; pointer-events: auto;
     }
+    /* Safari/iPhone: ensure all modal buttons receive touch events */
+    #explainPanelSheet button, #leaseViewerModal button { pointer-events: auto; }
     #explainPanelBody { overflow-y: auto; padding: 16px 18px 32px; flex: 1; }
     .ep-section-title {
       font-size: 0.72rem; font-weight: 700; color: #64748B;
@@ -2031,13 +2033,13 @@
 <!-- ── Explain Charge Panel ───────────────────────────────────────────────── -->
 <div id="explainPanel">
   <div id="explainPanelBackdrop" onclick="closeExplainPanel()"></div>
-  <div id="explainPanelSheet">
+  <div id="explainPanelSheet" onclick="event.stopPropagation()">
     <div id="explainPanelHeader">
       <div>
         <div id="explainPanelTitle">View Details</div>
         <div id="explainPanelSubtitle"></div>
       </div>
-      <button class="ep-close-btn" onclick="closeExplainPanel()">&#x2715; Close</button>
+      <button class="ep-close-btn" onclick="closeExplainPanel(); event.stopPropagation()">&#x2715; Close</button>
     </div>
     <div id="explainPanelBody"></div>
   </div>
@@ -2045,7 +2047,7 @@
 
 <!-- ── Lease File Viewer ──────────────────────────────────────────────────── -->
 <div id="leaseViewerModal">
-  <button id="leaseCloseBtn" onclick="closeLeaseModal()">&#x2715;</button>
+  <button id="leaseCloseBtn" onclick="closeLeaseModal(); event.stopPropagation()">&#x2715;</button>
   <div class="lvm-header">
     <div class="lvm-header-left">
       <span class="lvm-label">Lease Document</span>
@@ -2053,7 +2055,7 @@
     </div>
     <div class="lvm-actions">
       <button class="lvm-open-btn" onclick="leaseViewerOpenExternal()">Open in new tab</button>
-      <button class="lvm-close-btn" onclick="closeLeaseModal()">&#x2715; Close</button>
+      <button class="lvm-close-btn" onclick="closeLeaseModal(); event.stopPropagation()">&#x2715; Close</button>
     </div>
   </div>
   <div class="lvm-body">
@@ -5651,9 +5653,9 @@ function openExplainPanel(tenantName) {
   const td = tenantData.find(x => x && x.tenant_name === tenantName);
   if (!t.leasedSqft || !t.totalSqft || !td?.lease_type) {
     const panel = document.getElementById('explainPanel');
-    const body  = document.getElementById('explainBody');
+    const body  = document.getElementById('explainPanelBody');
     if (body) body.innerHTML = `<div class="rc-flags"><div class="rc-flags-title">&#x26A0;&#xFE0F; Cannot Generate Explanation</div><div class="rc-flag-item">Cannot generate explanation — missing required lease data (leased sqft, property sqft, or lease type).</div></div>`;
-    if (panel) panel.style.display = 'flex';
+    if (panel) { panel.classList.add('open'); document.body.style.overflow = 'hidden'; }
     return;
   }
 
@@ -5793,6 +5795,7 @@ function epToggleDrill(category, tenantName) {
 function closeExplainPanel() {
   document.getElementById('explainPanel').classList.remove('open');
   document.body.style.overflow = '';
+  document.body.classList.remove('modal-open');
 }
 
 // ─── Lease Viewer ─────────────────────────────────────────────────────────────
