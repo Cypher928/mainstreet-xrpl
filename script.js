@@ -723,23 +723,27 @@ function toISODate(val) {
   return isNaN(d) ? '' : d.toISOString().split('T')[0];
 }
 
-// Regex-based fallback: scans raw lease text for the first and last full date strings.
+// Regex-based fallback: scans raw lease text for date strings.
 function extractDatesFromText(text) {
-  const re = /\b(?:Jan(?:uary)?|Feb(?:ruary)?|Mar(?:ch)?|Apr(?:il)?|May|Jun(?:e)?|Jul(?:y)?|Aug(?:ust)?|Sep(?:tember)?|Oct(?:ober)?|Nov(?:ember)?|Dec(?:ember))[.\s]+\d{1,2},?\s*20\d{2}\b|\b\d{1,2}[\/\-]\d{1,2}[\/\-]20\d{2}\b|\b20\d{2}[\/\-]\d{2}[\/\-]\d{2}\b/gi;
-  const hits = [...text.matchAll(re)].map(m => toISODate(m[0])).filter(Boolean);
+  if (!text) return {};
+  const re = /\b(\d{1,2}\/\d{1,2}\/\d{2,4}|\w+\s\d{1,2},\s\d{4})\b/g;
+  const matches = text.match(re) || [];
+  if (matches.length < 2) return {};
   return {
-    startDate: hits[0] || '',
-    endDate:   hits.length > 1 ? hits[hits.length - 1] : '',
+    startDate:     matches[0],
+    endDate:       matches[1],
+    _usedFallback: true,
   };
 }
 
 function normalizeTenant(d) {
   if (!d) return d;
+  const fallback = extractDatesFromText(d.rawText || '');
   return {
     tenant_name:         cleanTenantName(d.tenant_name ?? d.tenantName ?? ''),
     leased_sqft:         d.leased_sqft         ?? d.leasedSqft                    ?? '',
-    start_date:          toISODate(d.start_date ?? d.startDate  ?? d.lease_start_date ?? ''),
-    end_date:            toISODate(d.end_date   ?? d.endDate    ?? d.lease_end_date   ?? ''),
+    start_date:          toISODate(d.start_date ?? d.startDate ?? d.lease_start_date ?? fallback.startDate ?? ''),
+    end_date:            toISODate(d.end_date   ?? d.endDate   ?? d.lease_end_date  ?? fallback.endDate   ?? ''),
     lease_type:          d.lease_type          ?? d.leaseType                     ?? '',
     excluded_categories: d.excluded_categories ?? d.excludedCategories            ?? '',
     cap:                 d.cap                 ?? d.capPercentage                 ?? null,
@@ -752,6 +756,7 @@ function normalizeTenant(d) {
     leaseExpected:       d.leaseExpected       ?? false,
     extractionFailed:    d.extractionFailed    ?? false,
     _needsReview:        d._needsReview        ?? false,
+    _usedFallback:       d._usedFallback       ?? fallback._usedFallback ?? false,
     id:                  d.id                  ?? crypto.randomUUID(),
     fileName:            d.fileName            ?? '',
     lease_url:           d.lease_url           ?? null,
@@ -1796,17 +1801,8 @@ async function handleBulkLeases(fileList) {
 
     const leaseUrl = await uploadLeaseToStorage(file, property.id, tenantId);
 
+    if (extracted && leaseText) extracted.rawText = leaseText;
     const norm = extracted ? normalizeTenant(extracted) : null;
-
-    // Fallback: fill missing dates from raw text before confidence check
-    if (norm && leaseText && (!norm.start_date || !norm.end_date)) {
-      const fallback = extractDatesFromText(leaseText);
-      if (fallback.startDate || fallback.endDate) {
-        if (!norm.start_date && fallback.startDate) norm.start_date = fallback.startDate;
-        if (!norm.end_date   && fallback.endDate)   norm.end_date   = fallback.endDate;
-        norm._usedFallback = true;
-      }
-    }
 
     const hasStrongName = norm ? isStrongName(norm.tenant_name) : false;
     const hasRealData   = norm && !!(norm.start_date || norm.end_date || norm.leased_sqft);
@@ -2093,17 +2089,8 @@ async function retryExtractionWithFile(index, file) {
       console.error('[retryExtraction] extraction error:', err);
     }
 
+    if (extracted && leaseText) extracted.rawText = leaseText;
     const norm = extracted ? normalizeTenant(extracted) : null;
-
-    // Regex date fallback (same as handleBulkLeases)
-    if (norm && leaseText && (!norm.start_date || !norm.end_date)) {
-      const fallback = extractDatesFromText(leaseText);
-      if (fallback.startDate || fallback.endDate) {
-        if (!norm.start_date && fallback.startDate) norm.start_date = fallback.startDate;
-        if (!norm.end_date   && fallback.endDate)   norm.end_date   = fallback.endDate;
-        norm._usedFallback = true;
-      }
-    }
 
     // Confidence scoring (mirrors handleBulkLeases exactly)
     const hasStrongName = norm ? isStrongName(norm.tenant_name) : false;
