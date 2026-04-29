@@ -2107,6 +2107,7 @@ async function retryExtractionWithFile(index, file) {
       leaseText = await extractPdfText(file);
       if (!leaseText || leaseText.length < 300) {
         console.warn('[retryExtraction] likely scanned PDF — text too short:', leaseText?.length);
+        renderTenantError(index, "This looks like a scanned lease — some fields may need manual entry");
       }
       extracted = await callClaudeForLease(leaseText);
     } catch (err) {
