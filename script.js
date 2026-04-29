@@ -1798,8 +1798,11 @@ async function handleBulkLeases(fileList) {
     // Fallback: fill missing dates from raw text before confidence check
     if (norm && leaseText && (!norm.start_date || !norm.end_date)) {
       const fallback = extractDatesFromText(leaseText);
-      if (!norm.start_date && fallback.startDate) norm.start_date = fallback.startDate;
-      if (!norm.end_date   && fallback.endDate)   norm.end_date   = fallback.endDate;
+      if (fallback.startDate || fallback.endDate) {
+        if (!norm.start_date && fallback.startDate) norm.start_date = fallback.startDate;
+        if (!norm.end_date   && fallback.endDate)   norm.end_date   = fallback.endDate;
+        norm._usedFallback = true;
+      }
     }
 
     const hasStrongName = norm ? isStrongName(norm.tenant_name) : false;
