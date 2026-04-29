@@ -4021,6 +4021,11 @@ document.addEventListener('keydown', (e) => {
   if (e.key === 'Escape') closeLeaseModal();
 });
 
+// Global click debug
+document.addEventListener('click', (e) => {
+  console.log("CLICK DETECTED ON:", e.target);
+});
+
 // Delegated retry handler — survives innerHTML re-renders
 document.addEventListener('click', (e) => {
   const el = e.target.closest('[data-retry]');
