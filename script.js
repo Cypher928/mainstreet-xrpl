@@ -1825,7 +1825,21 @@ async function handleBulkLeases(fileList) {
     const needsReview       = confidenceScore >= 2 && confidenceScore < 4; // ⚠️ partial
     const isFail            = confidenceScore < 2;  // ❌ reject
     const isValid           = !isFail;
-    const isPartial         = needsReview || (isValid && !norm.lease_type);
+
+    const hasName      = isStrongName(norm?.tenant_name ?? '');
+    const hasDates     = norm?.start_date && norm?.end_date;
+    const hasLeaseType = !!norm?.lease_type;
+    const isEmptyExtraction = !hasName && !hasDates && !norm?.leased_sqft;
+
+    let isPartial   = needsReview || (isValid && !hasLeaseType);
+    let _showRetry  = false;
+    if (isEmptyExtraction) {
+      isPartial  = false;
+      _showRetry = true;
+    } else if (!hasDates || !hasLeaseType) {
+      isPartial  = true;
+      _showRetry = true;
+    }
 
     if (!isValid) console.log('[extraction] low-confidence result for:', file.name);
 
@@ -1839,6 +1853,7 @@ async function handleBulkLeases(fileList) {
       lease_url:        leaseUrl,
       extractionFailed: !isValid,
       _needsReview:     isPartial,
+      _showRetry,
       _error:           isValid ? null : 'Low confidence extraction — please enter fields manually',
       id:               tenantId,
     };
@@ -2136,7 +2151,21 @@ async function retryExtractionWithFile(index, file) {
     const needsReview       = confidenceScore >= 2 && confidenceScore < 4;
     const isFail            = confidenceScore < 2;
     const isValid           = !isFail;
-    const isPartial         = needsReview || (isValid && !norm?.lease_type);
+
+    const hasName      = isStrongName(norm?.tenant_name ?? '');
+    const hasDates     = norm?.start_date && norm?.end_date;
+    const hasLeaseType = !!norm?.lease_type;
+    const isEmptyExtraction = !hasName && !hasDates && !norm?.leased_sqft;
+
+    let isPartial  = needsReview || (isValid && !hasLeaseType);
+    let _showRetry = false;
+    if (isEmptyExtraction) {
+      isPartial  = false;
+      _showRetry = true;
+    } else if (!hasDates || !hasLeaseType) {
+      isPartial  = true;
+      _showRetry = true;
+    }
 
     const updated = {
       ...(isValid ? norm : { tenant_name: file.name.replace(/\.pdf$/i, '') }),
@@ -2146,6 +2175,7 @@ async function retryExtractionWithFile(index, file) {
       lease_url:        t?.lease_url ?? null,
       extractionFailed: !isValid,
       _needsReview:     isPartial,
+      _showRetry,
       _error:           isValid ? null : 'Low confidence extraction — please enter fields manually',
       id:               t?.id ?? crypto.randomUUID(),
     };
