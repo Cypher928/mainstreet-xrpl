@@ -1941,8 +1941,12 @@ function renderBulkResults() {
     const showRetryButton = d.extractionFailed || d._showRetry;
     const showWarning     = d._needsReview;
 
+    const displayName = d.tenant_name && d.tenant_name.trim().length > 0
+      ? d.tenant_name
+      : '(unknown — click to edit)';
+    const isWeakName  = d.tenant_name ? !isStrongName(d.tenant_name) : false;
+
     const icon = d.extractionFailed ? '❌' : showWarning ? '⚠️' : d.tenant_name ? '✓' : '?';
-    const name = d.tenant_name || '(unknown — click to edit)';
     const meta = d.extractionFailed
       ? 'Extraction failed — tap to re-upload'
       : showWarning
@@ -1959,7 +1963,7 @@ function renderBulkResults() {
       <div class="bulk-tenant-row${d.extractionFailed ? ' has-error' : showWarning ? ' has-warning' : ''}" id="btr-${i}">
         <div class="bulk-tenant-summary" onclick="toggleBulkDetail(${i})">
           <span class="bulk-t-status">${icon}</span>
-          <span class="bulk-t-name"   id="bname-${i}">${esc(name)}</span>
+          <span class="bulk-t-name" id="bname-${i}"${isWeakName ? ' style="opacity:0.6;font-style:italic;"' : ''}>${esc(displayName)}</span>
           <span class="bulk-t-meta"   id="bmeta-${i}">${esc(meta)}</span>
           <span class="bulk-t-chevron" id="bchev-${i}">&#x25BC; Edit</span>
           ${showRetryButton
