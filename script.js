@@ -708,6 +708,7 @@ function isStrongName(name) {
   if (!name || name.length <= 3) return false;
   if (/^(unknown\s*tenant|n\/a|none|null)$/i.test(name.trim())) return false;
   if (/\b(lease|agreement|contract|addendum|exhibit|amendment|schedule|document)\b/i.test(name)) return false;
+  if (name.toLowerCase().includes('.pdf')) return false;
   return true;
 }
 
