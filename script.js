@@ -1810,8 +1810,6 @@ async function handleBulkLeases(fileList) {
 
     const hasStrongName = norm ? isStrongName(norm.tenant_name) : false;
     const hasRealData   = norm && !!(norm.start_date || norm.end_date || norm.leased_sqft);
-    // Accepted = strong name alone OR any real data (name-only is still allowed but partial)
-    const isValid = hasStrongName || hasRealData;
 
     // Numeric confidence score
     let confidenceScore = 0;
@@ -1822,9 +1820,11 @@ async function handleBulkLeases(fileList) {
       if (norm.leased_sqft)   confidenceScore += 1;
       if (norm._usedFallback) confidenceScore -= 1; // regex dates less reliable than Claude's
     }
-    const isValidExtraction = confidenceScore >= 2;
-    const needsReview       = confidenceScore < 4;
-    const isPartial         = isValid && (needsReview || !norm.lease_type);
+    const isValidExtraction = confidenceScore >= 4; // ✅ full confidence
+    const needsReview       = confidenceScore >= 2 && confidenceScore < 4; // ⚠️ partial
+    const isFail            = confidenceScore < 2;  // ❌ reject
+    const isValid           = !isFail;
+    const isPartial         = needsReview || (isValid && !norm.lease_type);
 
     if (!isValid) console.log('[extraction] low-confidence result for:', file.name);
 
