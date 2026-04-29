@@ -709,6 +709,8 @@ function isStrongName(name) {
   if (/^(unknown\s*tenant|n\/a|none|null)$/i.test(name.trim())) return false;
   if (/\b(lease|agreement|contract|addendum|exhibit|amendment|schedule|document)\b/i.test(name)) return false;
   if (name.toLowerCase().includes('.pdf')) return false;
+  // snake_case / kebab-case with no spaces → system-generated filename fragment
+  if (/[_\-]/.test(name) && !/\s/.test(name)) return false;
   return true;
 }
 
@@ -1809,11 +1811,20 @@ async function handleBulkLeases(fileList) {
     const hasStrongName = norm ? isStrongName(norm.tenant_name) : false;
     const hasRealData   = norm && !!(norm.start_date || norm.end_date || norm.leased_sqft);
     // Accepted = strong name alone OR any real data (name-only is still allowed but partial)
-    const isValid          = hasStrongName || hasRealData;
-    // Full confidence requires real data — a name alone is never full success
-    const isValidExtraction = hasRealData;
-    // Partial = accepted but missing full confidence or missing key CAM fields
-    const isPartial        = isValid && (!isValidExtraction || !norm.start_date || !norm.end_date || !norm.lease_type);
+    const isValid = hasStrongName || hasRealData;
+
+    // Numeric confidence score
+    let confidenceScore = 0;
+    if (norm) {
+      if (hasStrongName)      confidenceScore += 2;
+      if (norm.start_date)    confidenceScore += 1;
+      if (norm.end_date)      confidenceScore += 1;
+      if (norm.leased_sqft)   confidenceScore += 1;
+      if (norm._usedFallback) confidenceScore -= 1; // regex dates less reliable than Claude's
+    }
+    const isValidExtraction = confidenceScore >= 2;
+    const needsReview       = confidenceScore < 4;
+    const isPartial         = isValid && (needsReview || !norm.lease_type);
 
     if (!isValid) console.log('[extraction] low-confidence result for:', file.name);
 
