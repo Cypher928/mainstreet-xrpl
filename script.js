@@ -2063,6 +2063,10 @@ function retryUploadForSlot(index) {
       alert("File failed to load. Try re-uploading.");
       return;
     }
+    if (file.size > 25 * 1024 * 1024) {
+      alert("This lease is too large. Please upload a smaller or compressed PDF.");
+      return;
+    }
     console.log("FILE SIZE:", file.size);
     await retryExtractionWithFile(index, file);
   };
@@ -2084,15 +2088,26 @@ async function retryExtractionWithFile(index, file) {
   const t    = tenantData[index];
   const prop = currentProperty();
 
-  // Show spinner in the retry button row
+  if (file.size > 25 * 1024 * 1024) {
+    alert("This lease is too large. Please upload a smaller or compressed PDF.");
+    return;
+  }
+
   const row = document.getElementById(`btr-${index}`);
-  if (row) row.style.opacity = '0.5';
+  if (row) {
+    row.style.opacity = '0.5';
+    const statusEl = row.querySelector('.bulk-t-meta');
+    if (statusEl) statusEl.textContent = 'Processing lease… this may take up to 30 seconds';
+  }
 
   try {
     let leaseText = null;
     let extracted = null;
     try {
       leaseText = await extractPdfText(file);
+      if (!leaseText || leaseText.length < 300) {
+        console.warn('[retryExtraction] likely scanned PDF — text too short:', leaseText?.length);
+      }
       extracted = await callClaudeForLease(leaseText);
     } catch (err) {
       console.error('[retryExtraction] extraction error:', err);
