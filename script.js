@@ -2055,7 +2055,16 @@ function retryUploadForSlot(index) {
   input.onchange = async (e) => {
     const file = e.target.files[0];
     input.onchange = null; // detach after one use
-    if (file) await retryExtractionWithFile(index, file);
+    if (!file) {
+      alert("No file selected.");
+      return;
+    }
+    if (file.size === 0) {
+      alert("File failed to load. Try re-uploading.");
+      return;
+    }
+    console.log("FILE SIZE:", file.size);
+    await retryExtractionWithFile(index, file);
   };
   input.click();
 }
