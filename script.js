@@ -720,6 +720,16 @@ function toISODate(val) {
   return isNaN(d) ? '' : d.toISOString().split('T')[0];
 }
 
+// Regex-based fallback: scans raw lease text for the first and last full date strings.
+function extractDatesFromText(text) {
+  const re = /\b(?:Jan(?:uary)?|Feb(?:ruary)?|Mar(?:ch)?|Apr(?:il)?|May|Jun(?:e)?|Jul(?:y)?|Aug(?:ust)?|Sep(?:tember)?|Oct(?:ober)?|Nov(?:ember)?|Dec(?:ember))[.\s]+\d{1,2},?\s*20\d{2}\b|\b\d{1,2}[\/\-]\d{1,2}[\/\-]20\d{2}\b|\b20\d{2}[\/\-]\d{2}[\/\-]\d{2}\b/gi;
+  const hits = [...text.matchAll(re)].map(m => toISODate(m[0])).filter(Boolean);
+  return {
+    startDate: hits[0] || '',
+    endDate:   hits.length > 1 ? hits[hits.length - 1] : '',
+  };
+}
+
 function normalizeTenant(d) {
   if (!d) return d;
   return {
@@ -1773,8 +1783,9 @@ async function handleBulkLeases(fileList) {
     const tenantId = crypto.randomUUID();
 
     let extracted = null;
+    let leaseText = null;
     try {
-      const leaseText = await extractPdfText(file);
+      leaseText = await extractPdfText(file);
       extracted = await callClaudeForLease(leaseText);
     } catch (err) {
       console.error('[handleBulkLeases] extraction failed:', file.name, err);
@@ -1784,14 +1795,21 @@ async function handleBulkLeases(fileList) {
 
     const norm = extracted ? normalizeTenant(extracted) : null;
 
-    // Tier 1 — strong name (not a document-level phrase)
-    const hasStrongName    = norm ? isStrongName(norm.tenant_name) : false;
-    // Tier 2 — supporting data present even if name is weak/missing
-    const hasSupportingData = norm && (norm.start_date || norm.end_date || norm.leased_sqft);
-    // Valid = anything we can actually use
-    const isValid          = hasStrongName || hasSupportingData;
-    // Needs review = valid but missing at least one required CAM field
-    const isPartial        = isValid && (!norm.start_date || !norm.end_date || !norm.lease_type);
+    // Fallback: fill missing dates from raw text before confidence check
+    if (norm && leaseText && (!norm.start_date || !norm.end_date)) {
+      const fallback = extractDatesFromText(leaseText);
+      if (!norm.start_date && fallback.startDate) norm.start_date = fallback.startDate;
+      if (!norm.end_date   && fallback.endDate)   norm.end_date   = fallback.endDate;
+    }
+
+    const hasStrongName = norm ? isStrongName(norm.tenant_name) : false;
+    const hasRealData   = norm && !!(norm.start_date || norm.end_date || norm.leased_sqft);
+    // Accepted = strong name alone OR any real data (name-only is still allowed but partial)
+    const isValid          = hasStrongName || hasRealData;
+    // Full confidence requires real data — a name alone is never full success
+    const isValidExtraction = hasRealData;
+    // Partial = accepted but missing full confidence or missing key CAM fields
+    const isPartial        = isValid && (!isValidExtraction || !norm.start_date || !norm.end_date || !norm.lease_type);
 
     if (!isValid) console.log('[extraction] low-confidence result for:', file.name);
 
