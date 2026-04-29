@@ -4028,12 +4028,12 @@ document.addEventListener('click', (e) => {
 
 // Delegated retry handler — survives innerHTML re-renders
 document.addEventListener('click', (e) => {
-  const el = e.target.closest('[data-retry]');
-  if (!el) return;
+  const retryEl = e.target.closest('[data-retry]');
+  if (!retryEl) return;
   e.stopPropagation();
-  const i = parseInt(el.dataset.index, 10);
-  console.log('[retry] slot clicked:', i);
-  retryExtraction(i);
+  const i = retryEl.dataset.index;
+  console.log("RETRY CLICKED SLOT:", i);
+  retryUploadForSlot(i);
 });
 
 // Clicking the dark backdrop closes modal
