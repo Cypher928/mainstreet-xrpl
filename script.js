@@ -790,8 +790,13 @@ async function extractPdfText(file) {
   const arrayBuffer = await file.arrayBuffer();
   const pdf = await lib.getDocument({ data: arrayBuffer }).promise;
 
+  const MAX_PAGES = 5;
+  if (pdf.numPages > MAX_PAGES) {
+    console.warn(`Large lease detected (${pdf.numPages} pages) — processing first ${MAX_PAGES} pages only`);
+  }
+
   const pages = [];
-  for (let p = 1; p <= pdf.numPages; p++) {
+  for (let p = 1; p <= Math.min(pdf.numPages, MAX_PAGES); p++) {
     const page = await pdf.getPage(p);
     const content = await page.getTextContent();
     const pageText = content.items.map(item => item.str).join(' ');
