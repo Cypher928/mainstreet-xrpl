@@ -702,13 +702,31 @@ function cleanTenantName(raw) {
     .trim();
 }
 
+// Returns true when a name is a real business/person name rather than a
+// document-level phrase that the AI mistakenly returned as the tenant name.
+function isStrongName(name) {
+  if (!name || name.length <= 3) return false;
+  if (/^(unknown\s*tenant|n\/a|none|null)$/i.test(name.trim())) return false;
+  if (/\b(lease|agreement|contract|addendum|exhibit|amendment|schedule|document)\b/i.test(name)) return false;
+  return true;
+}
+
+// Normalizes any date string/value to YYYY-MM-DD; returns '' if absent or unparseable.
+function toISODate(val) {
+  if (!val) return '';
+  const s = String(val).trim();
+  if (/^\d{4}-\d{2}-\d{2}$/.test(s)) return s;
+  const d = new Date(s);
+  return isNaN(d) ? '' : d.toISOString().split('T')[0];
+}
+
 function normalizeTenant(d) {
   if (!d) return d;
   return {
     tenant_name:         cleanTenantName(d.tenant_name ?? d.tenantName ?? ''),
     leased_sqft:         d.leased_sqft         ?? d.leasedSqft                    ?? '',
-    start_date:          d.start_date          ?? d.startDate  ?? d.lease_start_date ?? '',
-    end_date:            d.end_date            ?? d.endDate    ?? d.lease_end_date   ?? '',
+    start_date:          toISODate(d.start_date ?? d.startDate  ?? d.lease_start_date ?? ''),
+    end_date:            toISODate(d.end_date   ?? d.endDate    ?? d.lease_end_date   ?? ''),
     lease_type:          d.lease_type          ?? d.leaseType                     ?? '',
     excluded_categories: d.excluded_categories ?? d.excludedCategories            ?? '',
     cap:                 d.cap                 ?? d.capPercentage                 ?? null,
@@ -1764,12 +1782,22 @@ async function handleBulkLeases(fileList) {
 
     const leaseUrl = await uploadLeaseToStorage(file, property.id, tenantId);
 
-    const isValid   = extracted && (extracted.tenant_name || extracted.leased_sqft);
-    const isPartial = isValid && (!extracted.start_date || !extracted.end_date || !extracted.lease_type);
-    if (!isValid) console.log('FAILED LEASE:', file.name);
+    const norm = extracted ? normalizeTenant(extracted) : null;
+
+    // Tier 1 — strong name (not a document-level phrase)
+    const hasStrongName    = norm ? isStrongName(norm.tenant_name) : false;
+    // Tier 2 — supporting data present even if name is weak/missing
+    const hasSupportingData = norm && (norm.start_date || norm.end_date || norm.leased_sqft);
+    // Valid = anything we can actually use
+    const isValid          = hasStrongName || hasSupportingData;
+    // Needs review = valid but missing at least one required CAM field
+    const isPartial        = isValid && (!norm.start_date || !norm.end_date || !norm.lease_type);
+
+    if (!isValid) console.log('[extraction] low-confidence result for:', file.name);
+
     const tenant = {
       ...(isValid
-        ? normalizeTenant(extracted)
+        ? norm
         : { tenant_name: file.name.replace(/\.pdf$/i, '') }),
       leaseFile:        file,
       leaseExpected:    true,
@@ -1777,7 +1805,7 @@ async function handleBulkLeases(fileList) {
       lease_url:        leaseUrl,
       extractionFailed: !isValid,
       _needsReview:     isPartial,
-      _error:           isValid ? null : 'Could not extract tenant fields — please enter manually',
+      _error:           isValid ? null : 'Low confidence extraction — please enter fields manually',
       id:               tenantId,
     };
     tenantData.push(tenant);
