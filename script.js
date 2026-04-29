@@ -146,6 +146,7 @@ async function signOut() {
 
 // Check existing session, then listen for changes
 window.addEventListener('load', () => {
+  initCamYearSelect();
   db.auth.getSession().then(({ data, error }) => {
     if (error) {
       console.warn('[Mainstreet] getSession error:', error.message);
@@ -690,10 +691,21 @@ function enrichLeaseData(data, extractedText) {
 }
 
 
+// Remove stray single-letter initials (e.g. "P." or "M.") that AI sometimes
+// prepends/appends to extracted names, then collapse extra whitespace.
+function cleanTenantName(raw) {
+  if (!raw) return '';
+  return raw
+    .replace(/\b[A-Z]\.\s*/g, '')   // drop "P. ", "M. " etc.
+    .replace(/\s+/g, ' ')
+    .replace(/^[\s,;.]+|[\s,;.]+$/g, '')
+    .trim();
+}
+
 function normalizeTenant(d) {
   if (!d) return d;
   return {
-    tenant_name:         d.tenant_name         ?? d.tenantName                    ?? '',
+    tenant_name:         cleanTenantName(d.tenant_name ?? d.tenantName ?? ''),
     leased_sqft:         d.leased_sqft         ?? d.leasedSqft                    ?? '',
     start_date:          d.start_date          ?? d.startDate  ?? d.lease_start_date ?? '',
     end_date:            d.end_date            ?? d.endDate    ?? d.lease_end_date   ?? '',
@@ -801,7 +813,10 @@ function getWarnings(flags) {
 
 function computeFlags(d) {
   const base = [];
-  if (d.doc_has_dates === false) {
+  // Only show "no term in doc" when the document had no dates AND the user hasn't
+  // manually filled either in. If at least one date is present, fall through to
+  // individual checks so only the still-missing field gets flagged.
+  if (d.doc_has_dates === false && !d.start_date && !d.end_date) {
     base.push('no_term_in_doc');
   } else {
     if (!d.start_date) base.push('missing_start_date');
@@ -818,7 +833,7 @@ function computeFlags(d) {
 
 function computeFlagsStrict(d) {
   const base = [];
-  if (d.doc_has_dates === false) {
+  if (d.doc_has_dates === false && d.start_date == null && d.end_date == null) {
     base.push('no_term_in_doc');
   } else {
     if (d.start_date == null) base.push('missing_start_date');
@@ -3303,7 +3318,7 @@ async function runAllocation() {
   lastTotal           = totalCost;
   lastInvoicesFull    = invoices;
 
-  document.getElementById('resultsTitle').textContent = `Results — ${propName}`;
+  document.getElementById('resultsTitle').textContent = `${getCamYear()} CAM — ${propName}`;
   applySqftMismatchUI(sqftExceedsProperty);
 
   let html = `<div class="summary-bar">
@@ -3413,6 +3428,7 @@ async function runAllocation() {
   // Save to previous runs history
   camRuns.unshift({
     propName,
+    camYear:       getCamYear(),
     timestamp:     new Date(),
     totalExpenses: totalCost,
     tenantCount:   fullResults.length,
@@ -3506,7 +3522,7 @@ function renderPrevRunCard(run, camIdx) {
   return `
     <div class="prev-run-card">
       <div class="prev-run-meta">${_fmtRunTs(run.timestamp)}</div>
-      <div class="prev-run-title">${esc(run.propName)}<span class="prev-run-latest-badge">Latest</span></div>
+      <div class="prev-run-title">${run.camYear ? `${run.camYear} CAM — ` : ''}${esc(run.propName)}<span class="prev-run-latest-badge">Latest</span></div>
       <div class="prev-run-stats">
         <div class="prev-run-stat">Expenses: <strong>${fmt(run.totalExpenses)}</strong></div>
         <div class="prev-run-stat">Tenants: <strong>${run.tenantCount}</strong></div>
@@ -3522,7 +3538,7 @@ function renderPrevRunCard(run, camIdx) {
 function renderPrevRunHistItem(run, camIdx) {
   return `
     <div class="prev-run-hist-item">
-      <div class="prev-run-hist-meta">${_fmtRunTs(run.timestamp)}</div>
+      <div class="prev-run-hist-meta">${run.camYear ? `${run.camYear} CAM · ` : ''}${_fmtRunTs(run.timestamp)}</div>
       <div class="prev-run-hist-stats">
         <div class="prev-run-hist-stat">Expenses: <strong>${fmt(run.totalExpenses)}</strong></div>
         <div class="prev-run-hist-stat">Tenants: <strong>${run.tenantCount}</strong></div>
@@ -3877,6 +3893,30 @@ document.getElementById('leaseViewerModal')?.addEventListener('click', (e) => {
 // ─── Report State ─────────────────────────────────────────────────────────────
 const camRuns    = []; // previous run history
 let lastResults  = []; // ReconciliationResult[] — unified with lastFullResults
+
+// ─── CAM Year ─────────────────────────────────────────────────────────────────
+let _camYear = (() => {
+  const stored = localStorage.getItem('camYear');
+  return stored ? parseInt(stored, 10) : new Date().getFullYear();
+})();
+function getCamYear() { return _camYear; }
+function setCamYear(y) {
+  _camYear = parseInt(y, 10) || new Date().getFullYear();
+  localStorage.setItem('camYear', _camYear);
+}
+function initCamYearSelect() {
+  const sel = document.getElementById('camYearSelect');
+  if (!sel) return;
+  const cur = new Date().getFullYear();
+  sel.innerHTML = '';
+  for (let yr = cur - 3; yr <= cur + 1; yr++) {
+    const opt = document.createElement('option');
+    opt.value = yr;
+    opt.textContent = `${yr} CAM`;
+    if (yr === _camYear) opt.selected = true;
+    sel.appendChild(opt);
+  }
+}
 let sqftMismatch = false;
 let isEditingField = false; // true while a text/number/date input has focus
 
@@ -5235,7 +5275,7 @@ function resetWorkflow() {
   document.getElementById('propertyName').value = '';
   document.getElementById('totalSqft').value    = '';
   document.getElementById('resultsBody').innerHTML = '';
-  document.getElementById('resultsTitle').textContent = 'Allocation Results';
+  document.getElementById('resultsTitle').textContent = `${getCamYear()} CAM Reconciliation`;
   document.getElementById('results').style.display = 'none';
   document.getElementById('disputeSection').style.display = '';
   document.getElementById('disputeInvoiceList').innerHTML = '';
@@ -5674,7 +5714,7 @@ async function clearPropertyData() {
 function restoreResultsDisplay() {
   const section = document.getElementById('results');
   const body    = document.getElementById('resultsBody');
-  document.getElementById('resultsTitle').textContent = `Results — ${lastPropName}`;
+  document.getElementById('resultsTitle').textContent = `${getCamYear()} CAM — ${lastPropName}`;
 
   let html = `<div class="summary-bar">
     <strong>Total Expenses:</strong> ${fmt(lastTotal)}

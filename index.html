@@ -1787,6 +1787,12 @@
         <input type="number" id="totalSqft" placeholder="e.g. 20000" min="1"
           oninput="updatePropertySqft(this.value)" />
       </div>
+      <div class="field">
+        <label>CAM Year</label>
+        <select id="camYearSelect" onchange="setCamYear(this.value)">
+          <!-- Options populated by initCamYearSelect() on load -->
+        </select>
+      </div>
     </div>
   </div>
 
