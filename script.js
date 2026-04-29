@@ -1820,11 +1820,6 @@ function updateTenantField(index, field, value) {
   }
   // Mirror: keep tenantData in sync as working buffer
   if (td) td[field] = value;
-
-  // Auto-refresh results panel — only after editing is complete (blur), not while typing
-  if (lastResults.length && !isEditingField && ['lease_type', 'leased_sqft', 'start_date', 'end_date', 'excluded_categories'].includes(field)) {
-    runAllocation();
-  }
 }
 
 function handleFieldBlur(index, field, value) {
@@ -3219,12 +3214,17 @@ function runCAMAllocation(expenses, tenants) {
 }
 
 async function runAllocation() {
+  if (isRunning) return; // prevent concurrent runs
+  isRunning = true;
+
   const scrollY    = window.scrollY;
 
   // Loading state
   const runBtn = document.getElementById('runBtn');
   const runBtnOrigText = runBtn ? runBtn.textContent : '';
   if (runBtn) { runBtn.disabled = true; runBtn.textContent = 'Running…'; }
+
+  try {
 
   const propName  = document.getElementById('propertyName').value.trim() || 'Property';
   const totalSqft = parseFloat(document.getElementById('totalSqft').value);
@@ -3443,11 +3443,17 @@ async function runAllocation() {
   await savePropertyData(); // persist CAM allocation results to Supabase
   updateStepBar('review');
 
-  // Restore button and show completion notice
-  if (runBtn) { runBtn.disabled = false; runBtn.textContent = runBtnOrigText; }
   showRunCompleteToast();
 
   requestAnimationFrame(() => { window.scrollTo(0, scrollY); });
+
+  } catch (err) {
+    console.error('[runAllocation] unexpected error:', err);
+  } finally {
+    // Always restore button and release the guard, even on error
+    if (runBtn) { runBtn.disabled = false; runBtn.textContent = runBtnOrigText; }
+    isRunning = false;
+  }
 }
 
 function showRunCompleteToast() {
@@ -3491,12 +3497,6 @@ function showErr(body, section, msg) {
   body.innerHTML = `<div class="err-banner">${esc(msg)}</div>`;
   section.style.display = 'block';
   section.scrollIntoView({ behavior: 'smooth', block: 'start' });
-  // Restore run button if it was put into loading state
-  const runBtn = document.getElementById('runBtn');
-  if (runBtn && runBtn.textContent === 'Running…') {
-    runBtn.disabled = false;
-    runBtn.textContent = 'Calculate CAM Charges';
-  }
 }
 
 // ─── Previous Runs ────────────────────────────────────────────────────────────
@@ -3917,8 +3917,9 @@ function initCamYearSelect() {
     sel.appendChild(opt);
   }
 }
-let sqftMismatch = false;
+let sqftMismatch   = false;
 let isEditingField = false; // true while a text/number/date input has focus
+let isRunning      = false; // guard against concurrent runAllocation() calls
 
 function applySqftMismatchUI(mismatch) {
   sqftMismatch = mismatch;
