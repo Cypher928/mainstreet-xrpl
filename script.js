@@ -1169,7 +1169,7 @@ function renderFailedTenants(tenants) {
         <div class="bulk-tenant-summary">
           <span class="bulk-t-status">❌</span>
           <span class="bulk-t-name">${esc(d.fileName || d.tenant_name || 'Unknown')}</span>
-          <span class="bulk-t-meta">Extraction failed — tap to re-upload</span>
+          <span class="bulk-t-meta" style="cursor:pointer;" onclick="retryUploadForSlot(${i})">Extraction failed — tap to re-upload</span>
           <button class="view-lease-btn" style="margin-left:0;color:#f97316;" onclick="retryExtraction(${i})">&#x21BA; Retry</button>
           <button class="bulk-t-remove" onclick="event.stopPropagation();removeBulkTenant(${i})">Remove</button>
         </div>
@@ -1948,7 +1948,7 @@ function renderBulkResults() {
             : d.leaseExpected
               ? (d.leaseFile instanceof File || d.lease_url)
                 ? `<button class="view-lease-btn" style="margin-left:0" onclick="event.stopPropagation();openLeaseModalFromFile(${i})">View Lease</button>`
-                : `<span class="lease-missing-note" style="margin-left:6px;">No lease file — re-upload to view</span>`
+                : `<span class="lease-missing-note" style="margin-left:6px;cursor:pointer;" onclick="event.stopPropagation();retryUploadForSlot(${i})">No lease file — tap to re-upload</span>`
               : ''}
           <button class="bulk-t-remove" onclick="event.stopPropagation();removeBulkTenant(${i})">Remove</button>
         </div>
@@ -2050,34 +2050,97 @@ async function removeBulkTenant(i) {
   await savePropertyData();
 }
 
+// Opens the bulk file input scoped to a single slot so the user can
+// re-select a file for an extraction that failed or had no cached file.
+function retryUploadForSlot(index) {
+  const input = document.getElementById('bulkLeaseInput');
+  if (!input) return;
+  input.value = '';
+  input.onchange = async (e) => {
+    const file = e.target.files[0];
+    input.onchange = null; // detach after one use
+    if (file) await retryExtractionWithFile(index, file);
+  };
+  input.click();
+}
+
 async function retryExtraction(index) {
   const t = tenantData[index];
   if (!t) return;
   const file = (t.leaseFile instanceof File) ? t.leaseFile : await getLeaseFile(t.id);
-  if (!file) return;
+  if (!file) {
+    retryUploadForSlot(index);
+    return;
+  }
+  await retryExtractionWithFile(index, file);
+}
 
+async function retryExtractionWithFile(index, file) {
+  const t    = tenantData[index];
   const prop = currentProperty();
+
+  // Show spinner in the retry button row
+  const row = document.getElementById(`btr-${index}`);
+  if (row) row.style.opacity = '0.5';
+
   try {
-    const leaseText = await extractPdfText(file);
-    const extracted = await callClaudeForLease(leaseText);
-    const isValid   = extracted && extracted.tenant_name;
-    if (!isValid) throw new Error('Could not extract tenant fields');
+    let leaseText = null;
+    let extracted = null;
+    try {
+      leaseText = await extractPdfText(file);
+      extracted = await callClaudeForLease(leaseText);
+    } catch (err) {
+      console.error('[retryExtraction] extraction error:', err);
+    }
+
+    const norm = extracted ? normalizeTenant(extracted) : null;
+
+    // Regex date fallback (same as handleBulkLeases)
+    if (norm && leaseText && (!norm.start_date || !norm.end_date)) {
+      const fallback = extractDatesFromText(leaseText);
+      if (fallback.startDate || fallback.endDate) {
+        if (!norm.start_date && fallback.startDate) norm.start_date = fallback.startDate;
+        if (!norm.end_date   && fallback.endDate)   norm.end_date   = fallback.endDate;
+        norm._usedFallback = true;
+      }
+    }
+
+    // Confidence scoring (mirrors handleBulkLeases exactly)
+    const hasStrongName = norm ? isStrongName(norm.tenant_name) : false;
+    let confidenceScore = 0;
+    if (norm) {
+      if (hasStrongName)      confidenceScore += 2;
+      if (norm.start_date)    confidenceScore += 1;
+      if (norm.end_date)      confidenceScore += 1;
+      if (norm.leased_sqft)   confidenceScore += 1;
+      if (norm._usedFallback) confidenceScore -= 1;
+    }
+    const isValidExtraction = confidenceScore >= 4;
+    const needsReview       = confidenceScore >= 2 && confidenceScore < 4;
+    const isFail            = confidenceScore < 2;
+    const isValid           = !isFail;
+    const isPartial         = needsReview || (isValid && !norm?.lease_type);
 
     const updated = {
-      ...normalizeTenant(extracted),
+      ...(isValid ? norm : { tenant_name: file.name.replace(/\.pdf$/i, '') }),
       leaseFile:        file,
       leaseExpected:    true,
-      fileName:         t.fileName,
-      id:               t.id,
-      extractionFailed: false,
+      fileName:         file.name,
+      lease_url:        t?.lease_url ?? null,
+      extractionFailed: !isValid,
+      _needsReview:     isPartial,
+      _error:           isValid ? null : 'Low confidence extraction — please enter fields manually',
+      id:               t?.id ?? crypto.randomUUID(),
     };
     tenantData[index] = updated;
     if (prop?.tenants) prop.tenants[index] = updated;
   } catch (err) {
-    console.log('RETRY FAILED:', file?.name || t.fileName);
-    const failed = { ...t, _error: err.message || 'Retry failed' };
+    console.error('[retryExtraction] unexpected error:', err);
+    const failed = { ...(t ?? {}), _error: err.message || 'Retry failed' };
     tenantData[index] = failed;
     if (prop?.tenants) prop.tenants[index] = failed;
+  } finally {
+    if (row) row.style.opacity = '';
   }
 
   renderBulkResults();
