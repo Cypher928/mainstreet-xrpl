@@ -1938,11 +1938,14 @@ function renderBulkResults() {
     const end       = d.end_date    || null;
     const leaseType = d.lease_type  || null;
     const capPct    = d.cap         ?? null;
-    const icon = d.extractionFailed ? '❌' : d._needsReview ? '⚠️' : d.tenant_name ? '✓' : '?';
+    const showRetryButton = d.extractionFailed || d._showRetry;
+    const showWarning     = d._needsReview;
+
+    const icon = d.extractionFailed ? '❌' : showWarning ? '⚠️' : d.tenant_name ? '✓' : '?';
     const name = d.tenant_name || '(unknown — click to edit)';
     const meta = d.extractionFailed
       ? 'Extraction failed — tap to re-upload'
-      : d._needsReview
+      : showWarning
         ? 'Needs Review — some fields missing'
         : [
             sqft      !== null && sqft      !== '' ? `${sqft} sqft`   : null,
@@ -1953,13 +1956,13 @@ function renderBulkResults() {
           ].filter(v => v !== null && v !== undefined).join(' · ') || '—';
 
     return `
-      <div class="bulk-tenant-row${d.extractionFailed ? ' has-error' : d._needsReview ? ' has-warning' : ''}" id="btr-${i}">
+      <div class="bulk-tenant-row${d.extractionFailed ? ' has-error' : showWarning ? ' has-warning' : ''}" id="btr-${i}">
         <div class="bulk-tenant-summary" onclick="toggleBulkDetail(${i})">
           <span class="bulk-t-status">${icon}</span>
           <span class="bulk-t-name"   id="bname-${i}">${esc(name)}</span>
           <span class="bulk-t-meta"   id="bmeta-${i}">${esc(meta)}</span>
           <span class="bulk-t-chevron" id="bchev-${i}">&#x25BC; Edit</span>
-          ${d.extractionFailed
+          ${showRetryButton
             ? `<button class="view-lease-btn" data-retry data-index="${i}" style="margin-left:0;color:#f97316;">&#x21BA; Retry</button>`
             : d.leaseExpected
               ? (d.leaseFile instanceof File || d.lease_url)
@@ -1971,7 +1974,7 @@ function renderBulkResults() {
         <div class="bulk-tenant-detail" id="bdet-${i}" style="display:none;">
           ${d._error
             ? `<div class="err-banner" style="margin-bottom:10px;">Extraction error: ${esc(d._error)}</div>`
-            : d._needsReview
+            : showWarning
               ? `<div class="err-banner" style="margin-bottom:10px;border-color:#f59e0b;color:#fbbf24;">&#x26A0;&#xFE0F; Needs Review — AI extracted partial data. Please fill in the missing fields below.</div>`
               : ''}
           ${(() => { const w = getWarnings(computeFlags(d)); return w.length ? `<div class="rc-flags"><div class="rc-flags-title">&#x26A0;&#xFE0F; Needs Review</div>${w.map(m => `<div class="rc-flag-item">${m}</div>`).join('')}</div>` : ''; })()}
