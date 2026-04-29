@@ -720,6 +720,7 @@ function normalizeTenant(d) {
     doc_has_lease_type:  d.doc_has_lease_type  ?? true,
     leaseExpected:       d.leaseExpected       ?? false,
     extractionFailed:    d.extractionFailed    ?? false,
+    _needsReview:        d._needsReview        ?? false,
     id:                  d.id                  ?? crypto.randomUUID(),
     fileName:            d.fileName            ?? '',
     lease_url:           d.lease_url           ?? null,
@@ -1763,17 +1764,20 @@ async function handleBulkLeases(fileList) {
 
     const leaseUrl = await uploadLeaseToStorage(file, property.id, tenantId);
 
-    const isValid = extracted && extracted.tenant_name;
+    const isValid   = extracted && (extracted.tenant_name || extracted.leased_sqft);
+    const isPartial = isValid && (!extracted.start_date || !extracted.end_date || !extracted.lease_type);
     if (!isValid) console.log('FAILED LEASE:', file.name);
     const tenant = {
       ...(isValid
         ? normalizeTenant(extracted)
-        : { tenant_name: file.name.replace(/\.pdf$/i, ''), _error: 'Could not extract tenant fields' }),
+        : { tenant_name: file.name.replace(/\.pdf$/i, '') }),
       leaseFile:        file,
       leaseExpected:    true,
       fileName:         file.name,
       lease_url:        leaseUrl,
       extractionFailed: !isValid,
+      _needsReview:     isPartial,
+      _error:           isValid ? null : 'Could not extract tenant fields — please enter manually',
       id:               tenantId,
     };
     tenantData.push(tenant);
@@ -1857,18 +1861,22 @@ function renderBulkResults() {
     const end       = d.end_date    || null;
     const leaseType = d.lease_type  || null;
     const capPct    = d.cap         ?? null;
-    const icon = d.extractionFailed ? '❌' : d.tenant_name ? '✓' : '?';
+    const icon = d.extractionFailed ? '❌' : d._needsReview ? '⚠️' : d.tenant_name ? '✓' : '?';
     const name = d.tenant_name || '(unknown — click to edit)';
-    const meta = d.extractionFailed ? 'Extraction failed — tap to re-upload' : [
-      sqft      !== null && sqft      !== '' ? `${sqft} sqft`   : null,
-      start     !== null && start     !== '' ? start             : null,
-      end       !== null && end       !== '' ? end               : null,
-      leaseType !== null && leaseType !== '' ? leaseType         : null,
-      capPct    !== null && capPct    !== '' ? `${capPct}% cap`  : null,
-    ].filter(v => v !== null && v !== undefined).join(' · ') || '—';
+    const meta = d.extractionFailed
+      ? 'Extraction failed — tap to re-upload'
+      : d._needsReview
+        ? 'Needs Review — some fields missing'
+        : [
+            sqft      !== null && sqft      !== '' ? `${sqft} sqft`   : null,
+            start     !== null && start     !== '' ? start             : null,
+            end       !== null && end       !== '' ? end               : null,
+            leaseType !== null && leaseType !== '' ? leaseType         : null,
+            capPct    !== null && capPct    !== '' ? `${capPct}% cap`  : null,
+          ].filter(v => v !== null && v !== undefined).join(' · ') || '—';
 
     return `
-      <div class="bulk-tenant-row${d.extractionFailed ? ' has-error' : ''}" id="btr-${i}">
+      <div class="bulk-tenant-row${d.extractionFailed ? ' has-error' : d._needsReview ? ' has-warning' : ''}" id="btr-${i}">
         <div class="bulk-tenant-summary" onclick="toggleBulkDetail(${i})">
           <span class="bulk-t-status">${icon}</span>
           <span class="bulk-t-name"   id="bname-${i}">${esc(name)}</span>
@@ -1884,7 +1892,11 @@ function renderBulkResults() {
           <button class="bulk-t-remove" onclick="event.stopPropagation();removeBulkTenant(${i})">Remove</button>
         </div>
         <div class="bulk-tenant-detail" id="bdet-${i}" style="display:none;">
-          ${d._error ? `<div class="err-banner" style="margin-bottom:10px;">Extraction error: ${esc(d._error)}</div>` : ''}
+          ${d._error
+            ? `<div class="err-banner" style="margin-bottom:10px;">Extraction error: ${esc(d._error)}</div>`
+            : d._needsReview
+              ? `<div class="err-banner" style="margin-bottom:10px;border-color:#f59e0b;color:#fbbf24;">&#x26A0;&#xFE0F; Needs Review — AI extracted partial data. Please fill in the missing fields below.</div>`
+              : ''}
           ${(() => { const w = getWarnings(computeFlags(d)); return w.length ? `<div class="rc-flags"><div class="rc-flags-title">&#x26A0;&#xFE0F; Needs Review</div>${w.map(m => `<div class="rc-flag-item">${m}</div>`).join('')}</div>` : ''; })()}
           <div class="field-row">
             <div class="field">
