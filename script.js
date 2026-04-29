@@ -3205,6 +3205,12 @@ function runCAMAllocation(expenses, tenants) {
 
 async function runAllocation() {
   const scrollY    = window.scrollY;
+
+  // Loading state
+  const runBtn = document.getElementById('runBtn');
+  const runBtnOrigText = runBtn ? runBtn.textContent : '';
+  if (runBtn) { runBtn.disabled = true; runBtn.textContent = 'Running…'; }
+
   const propName  = document.getElementById('propertyName').value.trim() || 'Property';
   const totalSqft = parseFloat(document.getElementById('totalSqft').value);
   console.log("CALCULATED TOTAL LEASED SQFT:", totalSqft);
@@ -3420,7 +3426,30 @@ async function runAllocation() {
   await syncPortfolioEntry();
   await savePropertyData(); // persist CAM allocation results to Supabase
   updateStepBar('review');
+
+  // Restore button and show completion notice
+  if (runBtn) { runBtn.disabled = false; runBtn.textContent = runBtnOrigText; }
+  showRunCompleteToast();
+
   requestAnimationFrame(() => { window.scrollTo(0, scrollY); });
+}
+
+function showRunCompleteToast() {
+  const existing = document.getElementById('camCompleteToast');
+  if (existing) existing.remove();
+  const toast = document.createElement('div');
+  toast.id = 'camCompleteToast';
+  toast.textContent = '✓ CAM Reconciliation Complete';
+  Object.assign(toast.style, {
+    position: 'fixed', bottom: '28px', left: '50%', transform: 'translateX(-50%)',
+    background: '#166534', color: '#bbf7d0', padding: '10px 22px',
+    borderRadius: '8px', fontWeight: '600', fontSize: '0.9rem',
+    boxShadow: '0 4px 20px rgba(0,0,0,0.4)', zIndex: '99999',
+    transition: 'opacity 0.4s', opacity: '1', pointerEvents: 'none',
+  });
+  document.body.appendChild(toast);
+  setTimeout(() => { toast.style.opacity = '0'; }, 2800);
+  setTimeout(() => { toast.remove(); }, 3300);
 }
 
 // ─── Step Progress Bar ────────────────────────────────────────────────────────
@@ -3446,6 +3475,12 @@ function showErr(body, section, msg) {
   body.innerHTML = `<div class="err-banner">${esc(msg)}</div>`;
   section.style.display = 'block';
   section.scrollIntoView({ behavior: 'smooth', block: 'start' });
+  // Restore run button if it was put into loading state
+  const runBtn = document.getElementById('runBtn');
+  if (runBtn && runBtn.textContent === 'Running…') {
+    runBtn.disabled = false;
+    runBtn.textContent = 'Calculate CAM Charges';
+  }
 }
 
 // ─── Previous Runs ────────────────────────────────────────────────────────────
