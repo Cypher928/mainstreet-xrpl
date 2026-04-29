@@ -1169,8 +1169,8 @@ function renderFailedTenants(tenants) {
         <div class="bulk-tenant-summary">
           <span class="bulk-t-status">❌</span>
           <span class="bulk-t-name">${esc(d.fileName || d.tenant_name || 'Unknown')}</span>
-          <span class="bulk-t-meta" style="cursor:pointer;" onclick="retryUploadForSlot(${i})">Extraction failed — tap to re-upload</span>
-          <button class="view-lease-btn" style="margin-left:0;color:#f97316;" onclick="retryExtraction(${i})">&#x21BA; Retry</button>
+          <span class="bulk-t-meta" data-retry data-index="${i}" style="cursor:pointer;">Extraction failed — tap to re-upload</span>
+          <button class="view-lease-btn" data-retry data-index="${i}" style="margin-left:0;color:#f97316;">&#x21BA; Retry</button>
           <button class="bulk-t-remove" onclick="event.stopPropagation();removeBulkTenant(${i})">Remove</button>
         </div>
       </div>`;
@@ -1944,11 +1944,11 @@ function renderBulkResults() {
           <span class="bulk-t-meta"   id="bmeta-${i}">${esc(meta)}</span>
           <span class="bulk-t-chevron" id="bchev-${i}">&#x25BC; Edit</span>
           ${d.extractionFailed
-            ? `<button class="view-lease-btn" style="margin-left:0;color:#f97316;" onclick="event.stopPropagation();retryExtraction(${i})">&#x21BA; Retry</button>`
+            ? `<button class="view-lease-btn" data-retry data-index="${i}" style="margin-left:0;color:#f97316;">&#x21BA; Retry</button>`
             : d.leaseExpected
               ? (d.leaseFile instanceof File || d.lease_url)
                 ? `<button class="view-lease-btn" style="margin-left:0" onclick="event.stopPropagation();openLeaseModalFromFile(${i})">View Lease</button>`
-                : `<span class="lease-missing-note" style="margin-left:6px;cursor:pointer;" onclick="event.stopPropagation();retryUploadForSlot(${i})">No lease file — tap to re-upload</span>`
+                : `<span class="lease-missing-note" data-retry data-index="${i}" style="margin-left:6px;cursor:pointer;">No lease file — tap to re-upload</span>`
               : ''}
           <button class="bulk-t-remove" onclick="event.stopPropagation();removeBulkTenant(${i})">Remove</button>
         </div>
@@ -4019,6 +4019,16 @@ function leaseViewerOpenExternal() {
 // ESC key always closes modal — user can never be trapped
 document.addEventListener('keydown', (e) => {
   if (e.key === 'Escape') closeLeaseModal();
+});
+
+// Delegated retry handler — survives innerHTML re-renders
+document.addEventListener('click', (e) => {
+  const el = e.target.closest('[data-retry]');
+  if (!el) return;
+  e.stopPropagation();
+  const i = parseInt(el.dataset.index, 10);
+  console.log('[retry] slot clicked:', i);
+  retryExtraction(i);
 });
 
 // Clicking the dark backdrop closes modal
