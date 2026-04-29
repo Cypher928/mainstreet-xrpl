@@ -1952,19 +1952,20 @@ function renderBulkResults() {
       : showWarning
         ? 'Needs Review — some fields missing'
         : [
-            sqft      !== null && sqft      !== '' ? `${sqft} sqft`   : null,
-            start     !== null && start     !== '' ? start             : null,
-            end       !== null && end       !== '' ? end               : null,
-            leaseType !== null && leaseType !== '' ? leaseType         : null,
-            capPct    !== null && capPct    !== '' ? `${capPct}% cap`  : null,
-          ].filter(v => v !== null && v !== undefined).join(' · ') || '—';
+            sqft      !== null && sqft      !== '' ? `${sqft} sqft`   : '— sqft',
+            start     !== null && start     !== '' ? start             : '—',
+            end       !== null && end       !== '' ? end               : '—',
+            leaseType !== null && leaseType !== '' ? leaseType         : '—',
+          ].join(' · ');
 
     return `
       <div class="bulk-tenant-row${d.extractionFailed ? ' has-error' : showWarning ? ' has-warning' : ''}" id="btr-${i}">
         <div class="bulk-tenant-summary" onclick="toggleBulkDetail(${i})">
           <span class="bulk-t-status">${icon}</span>
-          <span class="bulk-t-name" id="bname-${i}"${isWeakName ? ' style="opacity:0.6;font-style:italic;"' : ''}>${esc(displayName)}</span>
-          <span class="bulk-t-meta"   id="bmeta-${i}">${esc(meta)}</span>
+          <div class="bulk-t-info" id="binfo-${i}">
+            <div class="tenant-title"${isWeakName ? ' style="opacity:0.6;font-style:italic;"' : ''}>${esc(displayName)}</div>
+            <div class="tenant-meta" id="bmeta-${i}">${esc(meta)}</div>
+          </div>
           <span class="bulk-t-chevron" id="bchev-${i}">&#x25BC; Edit</span>
           ${showRetryButton
             ? `<button class="view-lease-btn" data-retry data-index="${i}" style="margin-left:0;color:#f97316;">&#x21BA; Retry</button>`
