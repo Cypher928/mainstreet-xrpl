@@ -848,44 +848,89 @@ async function extractPdfText(file) {
   return pages.join('\n\n');
 }
 
-async function runOcrSpaceOCR(file) {
-  const formData = new FormData();
-  formData.append("file", file);
-  formData.append("apikey", "K82881310188957");
-  formData.append("OCREngine", "2");
-  formData.append("isOverlayRequired", "false");
-  formData.append("scale", "true");
-  formData.append("isTable", "true");
+// Converts a File/Blob to a base64 string without stack-overflowing on large files.
+async function fileToBase64(file) {
+  const arrayBuffer = await file.arrayBuffer();
+  const bytes = new Uint8Array(arrayBuffer);
+  let binary = '';
+  const CHUNK = 8192;
+  for (let i = 0; i < bytes.length; i += CHUNK) {
+    binary += String.fromCharCode(...bytes.subarray(i, i + CHUNK));
+  }
+  return btoa(binary);
+}
 
-  const res = await fetch("https://api.ocr.space/parse/image", {
-    method: "POST",
-    body: formData,
+// Sends the PDF directly to Claude as a base64 document block.
+// Claude uses vision to read scanned PDFs — no OCR middleware needed.
+async function callClaudeWithPdfDirect(file) {
+  console.log('[PDF direct] sending', file.name, 'to Claude natively');
+  const base64 = await fileToBase64(file);
+
+  const extractionPrompt = `Extract the following fields from this commercial lease document.
+Return ONLY valid JSON. No explanation. No markdown.
+
+{
+  "tenant_name": string or null,
+  "lease_start_date": "YYYY-MM-DD" or null,
+  "lease_end_date": "YYYY-MM-DD" or null,
+  "lease_type": "NNN" | "Gross" | "Modified Gross" | null,
+  "sqft": number or null
+}
+
+TENANT NAME:
+- Look for labels: "Tenant:", "Lessee:", "Occupant:"
+- If no label: first business entity (LLC, Inc, Corp) that is NOT the landlord
+- Exclude names containing: Properties, Realty, Holdings, Capital, Investments, Management
+- NEVER return null if any company name exists
+
+DATES:
+- Start: Commencement Date → Lease Start Date → Effective Date → Execution Date
+- End: Expiration Date → Lease End Date → calculate from start date + term length
+
+LEASE TYPE: Triple Net / NNN → "NNN" | Modified Gross | Gross
+Return best guess — do not leave fields null unless truly impossible.`;
+
+  const messages = [{
+    role: 'user',
+    content: [
+      {
+        type: 'document',
+        source: { type: 'base64', media_type: 'application/pdf', data: base64 },
+      },
+      { type: 'text', text: extractionPrompt },
+    ],
+  }];
+
+  const res = await fetch('/api/claude', {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ messages, max_tokens: 1000, system: CLAUDE_LEASE_SYSTEM }),
   });
 
+  if (!res.ok) throw new Error(`Claude PDF direct failed: HTTP ${res.status}`);
   const data = await res.json();
-
-  const text = data?.ParsedResults?.[0]?.ParsedText || "";
-
-  console.log("OCR RESULT:", text.slice(0, 500));
-  console.log("TEXT LENGTH:", text.length);
-
-  return text;
+  console.log('[PDF direct] response:', JSON.stringify(data));
+  return data;
 }
 
 async function extractLeaseText(file) {
+  // For non-PDFs read as plain text
+  if (!file.name.toLowerCase().endsWith('.pdf') && file.type !== 'application/pdf') {
+    return file.text();
+  }
+
+  // Try PDF.js text layer first (works for digital/searchable PDFs)
   let text = await extractPdfText(file);
-  if (!text || text.length < 1000 || !text.includes("Lease") || text.split(" ").length < 100) {
-    console.log("Using OCR fallback...");
-    const ocrText = await runOcrSpaceOCR(file);
-    if (ocrText && ocrText.length > 50) {
-      text = ocrText;
-    }
+  const isWeak = !text || text.length < 1000 || !text.includes('Lease') || text.split(' ').length < 100;
+
+  if (!isWeak) {
+    console.log('[extract] PDF.js text layer sufficient:', text.length, 'chars');
+    return text;
   }
-  if (!text || text.trim().length < 50) {
-    console.log("No usable text after OCR");
-    return null;
-  }
-  return text;
+
+  // Scanned / image-based PDF — return null so the caller uses Claude's PDF vision
+  console.log('[extract] weak PDF text, will use Claude PDF direct');
+  return null;
 }
 
 function normalizeText(text) {
@@ -1945,13 +1990,21 @@ async function handleBulkLeases(fileList) {
 
       let leaseText  = null;
       let extracted  = null;
+      let usedPdfDirect = false;
       try {
         leaseText = await extractLeaseText(file);
-        if (!leaseText) {
-          console.log("Empty text — marking as failed:", file.name);
-          extracted = { tenant_name: null };
-        } else {
+
+        if (leaseText && leaseText.length >= 50) {
+          // Digital PDF — text layer is good, send text to Claude
+          console.log('[extract] using text pipeline for', file.name);
           extracted = await callClaudeForLease(leaseText);
+        } else {
+          // Scanned / image PDF — send PDF directly to Claude (vision reads it)
+          console.log('[extract] using Claude PDF direct for', file.name);
+          usedPdfDirect = true;
+          extracted = await callClaudeWithPdfDirect(file);
+          // Set a placeholder so status logic knows we got something back
+          leaseText = extracted ? `[Claude PDF direct: ${file.name}]` : null;
         }
       } catch (err) {
         console.error('[handleBulkLeases] extraction error:', file.name, err);
@@ -1959,7 +2012,7 @@ async function handleBulkLeases(fileList) {
 
       const leaseUrl = await uploadLeaseToStorage(file, property.id, tenantId);
 
-      if (extracted && leaseText) extracted.rawText = leaseText;
+      if (extracted && !usedPdfDirect) extracted.rawText = leaseText;
       const norm = extracted ? normalizeTenant(extracted) : null;
 
       // Resolve name first — Claude → regex → filename fallback — so status
@@ -1972,12 +2025,13 @@ async function handleBulkLeases(fileList) {
       const hasDates     = !!(norm?.start_date || norm?.end_date);
       const hasLeaseType = !!norm?.lease_type;
 
-      // Status rules (in priority order):
-      // failed       = no usable text OR no tenant name after all fallbacks
-      // needs_review = has tenant but missing any of start_date / end_date / lease_type
+      // Status rules:
+      // failed       = no extraction result at all, OR no tenant after all fallbacks
+      // needs_review = has tenant but missing start_date, end_date, or lease_type
       // success      = all key fields present
+      const hadExtraction = !!extracted; // true if Claude returned anything
       let status;
-      if (!leaseText || leaseText.length < 50) {
+      if (!hadExtraction) {
         status = 'failed';
       } else if (!hasTenant) {
         status = 'failed';
