@@ -333,8 +333,12 @@ Rules:
   NEVER return null if any company name exists anywhere in the text.
 - lease_start_date: YYYY-MM-DD. Hierarchy: "Commencement Date" → "Lease Start Date" → "Term begins" → "Effective Date" → "Execution Date". Calculate from context if needed. Never null if any date exists.
 - lease_end_date: YYYY-MM-DD. Hierarchy: "Expiration Date" → "Lease End Date" → "Term ends". Calculate from start_date + term length if needed. Never null if start date and term length are both known.
-- lease_type: One of "NNN", "Gross", "Modified Gross". "Triple Net" or "Triple-Net" or "NNN" → "NNN". Null only if completely absent.
-- sqft: Integer, no commas, no units. Null if not found.
+- lease_type: One of "NNN", "Gross", "Modified Gross".
+  Explicit: "Triple Net" / "Triple-Net" / "NNN" → "NNN". "Modified Gross" → "Modified Gross". "Gross" → "Gross".
+  Inferred: If tenant pays "Pro Rata Share" of taxes + insurance + operating expenses → "NNN".
+  If landlord pays operating expenses → "Gross".
+  If some expenses split → "Modified Gross". Null only if completely unresolvable.
+- sqft: Integer. Strip commas, units, and the word "approximately". Null if not found.
 - capPercentage: CAM cap as plain number (35% → 35). Null if not mentioned.
 - Use null only when a field is truly impossible to determine.`;
 
@@ -368,7 +372,32 @@ IMPORTANT: Start your response with { and end with }
 LEASE TEXT:
 {{LEASE_TEXT}}`;
 
-const INVOICE_PROMPT = `Extract invoice details and return ONLY valid JSON with these fields: vendorName, amount (number), category, invoiceDate, confidence. "confidence" must be an object with a score 0-100 for each field (vendorName, amount, category, invoiceDate) reflecting how clearly that value was found in the document. Category must be one of: insurance, landscaping, snow, repairs, utilities, janitorial, security, management, other. IMPORTANT: Insurance companies, policies, or premiums → insurance.`;
+const INVOICE_PROMPT = `You are extracting data from a commercial real estate invoice or bill.
+This document may be a scanned image — tolerate OCR noise, spacing issues, and number formatting quirks.
+Return ONLY valid JSON. No explanation. No markdown.
+
+{
+  "vendorName": string,
+  "amount": number,
+  "invoiceDate": "YYYY-MM-DD" or null,
+  "category": string,
+  "confidence": { "vendorName": 0-100, "amount": 0-100, "invoiceDate": 0-100, "category": 0-100 }
+}
+
+RULES:
+- vendorName: The company that issued the invoice (top of page, "From:", "Bill From:", or largest company name). Not the property owner.
+- amount: Total due / Amount due / Invoice total. Numbers only — strip $, commas. If you see periods used as thousand separators (e.g. "1.200,00") convert correctly. Never null if any dollar amount exists.
+- invoiceDate: Invoice date / Bill date / Date issued. YYYY-MM-DD format. Not the due date.
+- category: One of: insurance, landscaping, snow, repairs, utilities, janitorial, security, management, other.
+  - insurance → any insurance company, premium, policy, or coverage
+  - utilities → electric, gas, water, sewer, telecom
+  - landscaping → lawn, grounds, irrigation, tree, mulch
+  - snow → snow removal, plowing, salting, ice
+  - repairs → maintenance, HVAC, plumbing, roof, painting, carpentry
+  - janitorial → cleaning, custodial, sanitation
+  - security → alarm, guard, monitoring, access control
+  - management → property management, admin fee
+- confidence: 0 = not found, 100 = explicitly labeled`;
 
 const CATEGORY_PROMPT = `Classify this invoice into ONE category:
 [insurance, landscaping, snow, repairs, janitorial, utilities, other]
@@ -960,9 +989,10 @@ function extractLeaseData(text) {
   return {
     start_date: dates[0]              ? dates[0].toISOString().slice(0, 10)              : '',
     end_date:   dates.length          ? dates[dates.length - 1].toISOString().slice(0, 10) : '',
-    lease_type: /triple[\s-]?net|nnn/i.test(text) ? 'Triple Net (NNN)'
-              : /modified[\s-]?gross/i.test(text)  ? 'Modified Gross'
-              : /gross/i.test(text)                 ? 'Gross'
+    lease_type: /triple[\s-]?net|nnn/i.test(text)                             ? 'Triple Net (NNN)'
+              : /modified[\s-]?gross/i.test(text)                              ? 'Modified Gross'
+              : /pro\s*rata\s*share.{0,120}(?:taxes|insurance|operating)/i.test(text) ? 'NNN'
+              : /gross/i.test(text)                                             ? 'Gross'
               : '',
   };
 }
@@ -3357,8 +3387,14 @@ function showSanityWarning(idx, category, amount, avg) {
 // Returns the numeric value, or 0 if the value is empty / non-numeric.
 function parseSqft(v) {
   if (v === null || v === undefined || v === '') return 0;
-  // Remove thousands-separator commas then parse
-  const n = parseFloat(String(v).replace(/,/g, '').trim());
+  let s = String(v).trim();
+  // Replace capital-O OCR artifact with zero: "45,OOO" → "45,000"
+  s = s.replace(/O/g, '0');
+  // European-style thousand separators: "45.000" → "45000" (only when no decimal follows)
+  s = s.replace(/\.(?=\d{3}(?:[,\s]|$))/g, '');
+  // Strip remaining non-numeric chars except decimal point
+  s = s.replace(/[^0-9.]/g, '');
+  const n = parseFloat(s);
   return isNaN(n) ? 0 : n;
 }
 
