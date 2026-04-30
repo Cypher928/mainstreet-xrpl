@@ -936,23 +936,52 @@ function computeFlagsStrict(d) {
 }
 
 async function callClaudeForLease(text) {
+  if (!text || text.trim().length < 50) {
+    console.log("Skipping Claude — no usable OCR text");
+    return {};
+  }
+
   const prompt = `
 You are extracting structured data from a commercial lease.
-Return ONLY valid JSON.
+Return ONLY valid JSON. No explanation.
 Extract:
-- tenant_name
-- leased_sqft
-- lease_start_date (YYYY-MM-DD)
-- lease_end_date (YYYY-MM-DD)
-- lease_type (NNN, Gross, Modified Gross)
-Rules:
-- Dates must be ISO format YYYY-MM-DD
-- If term is given (e.g. 10 years), calculate end date
-- If multiple tenants appear, choose the primary tenant
-- Do NOT return explanations
-- Do NOT return null unless absolutely nothing is found
-TEXT:
+{
+  "tenant_name": string,
+  "lease_start_date": string (YYYY-MM-DD or null),
+  "lease_end_date": string (YYYY-MM-DD or null),
+  "lease_type": string (NNN, Gross, Modified Gross, or null),
+  "sqft": number or null
+}
+RULES:
+TENANT NAME (HIGHEST PRIORITY):
+- Look for labels: "Tenant", "Lessee", "Occupant"
+- If not found, select the FIRST business entity (LLC, Inc, Corp)
+- If multiple companies exist:
+  → EXCLUDE landlord names (Properties, Realty, Holdings, Capital, Investments)
+  → Choose the NON-landlord company
+- If still unclear:
+  → Return the most prominent company name in the document
+- NEVER return null if any company name exists
+DATES:
+- Start date priority:
+  Commencement Date → Lease Start Date → Effective Date → Execution Date
+- End date priority:
+  Expiration Date → Lease End Date → Term ends
+- If end date is missing but term exists:
+  → Calculate from start date + term length
+LEASE TYPE:
+- If you see "Triple Net" → return "NNN"
+- Otherwise detect Gross or Modified Gross if mentioned
+SQUARE FOOTAGE:
+- Extract numeric value if present (ignore commas)
+IMPORTANT:
+- Return BEST GUESS — do not leave fields null unless absolutely impossible
+- Do NOT fail just because some fields are missing
+- Output must be valid JSON only
+LEASE TEXT:
+"""
 ${text}
+"""
 `;
   const messages = [{ role: 'user', content: prompt }];
 
@@ -991,8 +1020,8 @@ ${text}
 
   const data = parsed[0];
 
-  // Normalize leased_sqft: "4,500 sqft" → 4500, null if missing
-  const leased_sqft = Number(String(data.leased_sqft || '').replace(/[^0-9]/g, '')) || null;
+  // Normalize leased_sqft: accepts sqft, leased_sqft, or leasedSqft key
+  const leased_sqft = Number(String(data.sqft || data.leased_sqft || data.leasedSqft || '').replace(/[^0-9]/g, '')) || null;
 
   // Normalize dates to YYYY-MM-DD; keep original string if unparseable; null if absent
   const toISO = val => {
