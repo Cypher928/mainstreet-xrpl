@@ -327,8 +327,8 @@ Return exactly this structure:
 Rules:
 - tenantName: full legal name of the tenant/lessee. Look for labels like "Tenant:", "Lessee:", "Tenant Name:". If not explicitly labeled, infer from: (1) the first bold or all-caps line that looks like a company or person name, (2) any entity name that appears repeatedly throughout the document, (3) any company name (Inc., LLC, Corp., Ltd., Co.) found near the beginning. Never leave tenantName null if a reasonable guess exists — use your best inference.
 - leasedSqft: integer, no commas, no units (e.g. 4500)
-- startDate: lease commencement date in YYYY-MM-DD format (e.g. "March 1, 2024" → "2024-03-01")
-- endDate: lease expiration date in YYYY-MM-DD format
+- startDate: lease commencement date in YYYY-MM-DD format. Look for: "Commencement Date", "Lease Start Date", "Term begins on", "Term shall commence on", "Effective Date". If none found, use "Execution Date" as a last resort. Never leave null if a reasonable date exists.
+- endDate: lease expiration/end date in YYYY-MM-DD format. Look for: "Expiration Date", "Lease End Date", "Term ends on". If not stated explicitly, calculate from start date + lease term (e.g. "for a term of 10 years from [startDate]" → add 10 years). Never leave null if start date and term length are both known.
 - leaseType: normalize to one of: "NNN", "Gross", "Modified Gross" ("Triple Net", "Triple-Net", "NNN" → "NNN")
 - capPercentage: CAM increase cap as a plain number (e.g. "35%" → 35, "0.35" → 35)
 - Use null for any field that cannot be determined`;
@@ -350,8 +350,8 @@ Return EXACTLY this format — no extra text before or after:
 Rules:
 - tenant_name: party paying rent, not the landlord. Look near "Tenant:", "Lessee:", "Tenant Name:". If not explicitly labeled, infer from: the first bold/all-caps line resembling a company or person name, any entity repeated throughout the document, or any business suffix (Inc., LLC, Corp., Ltd., Co.). Never return null if a reasonable guess exists.
 - leased_sqft: integer only, no commas, no text. Average ranges (2800–3200 → 3000). Null if not found.
-- lease_start_date: commencement/effective/start date. Format YYYY-MM-DD. Null if not found.
-- lease_end_date: expiration/end/termination date. Format YYYY-MM-DD. Compute from term + start date if not explicit. Null only if cannot determine.
+- lease_start_date: Format YYYY-MM-DD. Look for: "Commencement Date", "Lease Start Date", "Term begins on", "Term shall commence on", "Effective Date". Fall back to "Execution Date" if nothing else found. Never null if a reasonable date exists.
+- lease_end_date: Format YYYY-MM-DD. Look for: "Expiration Date", "Lease End Date", "Term ends on". If not stated, calculate from start date + term length (e.g. "10-year term from 2020-01-01" → "2030-01-01"). Never null if start date and term length are both present.
 - lease_type: "NNN" if tenant pays taxes+insurance+maintenance. "Gross" if landlord pays. "Modified Gross" if stated. Null if unclear.
 - cam_cap: annual CAM increase cap as a plain number (5 = 5%). Null if no cap or not mentioned.
 - excluded_categories: array of CAM categories explicitly excluded. [] if none.
