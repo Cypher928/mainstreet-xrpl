@@ -1870,36 +1870,33 @@ async function handleBulkLeases(fileList) {
     const hasStrongName = norm ? isStrongName(norm.tenant_name) : false;
     const hasRealData   = norm && !!(norm.start_date || norm.end_date || norm.leased_sqft);
 
-    // Numeric confidence score
+    // Numeric confidence score (for internal ranking only)
     let confidenceScore = 0;
     if (norm) {
       const hasTenant = !!norm.tenant_name && norm.tenant_name.trim().length > 0;
       if (hasStrongName)      confidenceScore += 2;
-      else if (hasTenant)     confidenceScore += 1; // weak name still counts
+      else if (hasTenant)     confidenceScore += 1;
       if (norm.start_date)    confidenceScore += 1;
       if (norm.end_date)      confidenceScore += 1;
       if (norm.leased_sqft)   confidenceScore += 1;
       if (norm._usedFallback) confidenceScore -= 1;
     }
-    const isValidExtraction = confidenceScore >= 4; // ✅ full confidence
-    const needsReview       = confidenceScore >= 1 && confidenceScore < 4; // ⚠️ partial
-    const isFail            = confidenceScore < 1;  // ❌ truly nothing extracted
-    const isValid           = !isFail;
 
     const hasTenant    = !!norm?.tenant_name?.trim();
     const hasDates     = !!(norm?.start_date || norm?.end_date);
     const hasLeaseType = !!norm?.lease_type;
-    const isEmptyExtraction = !hasTenant && !hasDates && !norm?.leased_sqft;
 
-    let isPartial  = needsReview || (isValid && !hasLeaseType);
-    let _showRetry = false;
-    if (isEmptyExtraction) {
-      isPartial  = false;
-      _showRetry = true;
+    // Status: only truly fail when there is no tenant name at all
+    let status = 'success';
+    if (!hasTenant) {
+      status = 'failed';
     } else if (!hasDates || !hasLeaseType) {
-      isPartial  = true;
-      _showRetry = true;
+      status = 'needs_review';
     }
+
+    const isValid   = status !== 'failed';
+    const isPartial = status === 'needs_review';
+    const _showRetry = !hasTenant || !hasDates || !hasLeaseType;
 
     if (!isValid) console.log('[extraction] low-confidence result for:', file.name);
 
@@ -1914,7 +1911,7 @@ async function handleBulkLeases(fileList) {
       extractionFailed: !isValid,
       _needsReview:     isPartial,
       _showRetry,
-      _error:           isValid ? null : 'Low confidence extraction — please enter fields manually',
+      _error:           isValid ? null : 'Could not identify a tenant — please enter fields manually',
       id:               tenantId,
     };
     tenantData.push(tenant);
@@ -2218,25 +2215,20 @@ async function retryExtractionWithFile(index, file) {
       if (norm.leased_sqft)   confidenceScore += 1;
       if (norm._usedFallback) confidenceScore -= 1;
     }
-    const isValidExtraction = confidenceScore >= 4;
-    const needsReview       = confidenceScore >= 1 && confidenceScore < 4;
-    const isFail            = confidenceScore < 1;
-    const isValid           = !isFail;
-
     const hasTenant    = !!norm?.tenant_name?.trim();
     const hasDates     = !!(norm?.start_date || norm?.end_date);
     const hasLeaseType = !!norm?.lease_type;
-    const isEmptyExtraction = !hasTenant && !hasDates && !norm?.leased_sqft;
 
-    let isPartial  = needsReview || (isValid && !hasLeaseType);
-    let _showRetry = false;
-    if (isEmptyExtraction) {
-      isPartial  = false;
-      _showRetry = true;
+    let status = 'success';
+    if (!hasTenant) {
+      status = 'failed';
     } else if (!hasDates || !hasLeaseType) {
-      isPartial  = true;
-      _showRetry = true;
+      status = 'needs_review';
     }
+
+    const isValid    = status !== 'failed';
+    const isPartial  = status === 'needs_review';
+    const _showRetry = !hasTenant || !hasDates || !hasLeaseType;
 
     const updated = {
       ...(isValid ? norm : { tenant_name: file.name.replace(/\.pdf$/i, '') }),
@@ -2247,7 +2239,7 @@ async function retryExtractionWithFile(index, file) {
       extractionFailed: !isValid,
       _needsReview:     isPartial,
       _showRetry,
-      _error:           isValid ? null : 'Low confidence extraction — please enter fields manually',
+      _error:           isValid ? null : 'Could not identify a tenant — please enter fields manually',
       id:               t?.id ?? crypto.randomUUID(),
     };
     tenantData[index] = updated;
