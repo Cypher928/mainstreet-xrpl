@@ -815,6 +815,10 @@ async function runOcrSpaceOCR(file) {
   const formData = new FormData();
   formData.append("file", file);
   formData.append("apikey", "K82881310188957");
+  formData.append("OCREngine", "2");
+  formData.append("isOverlayRequired", "false");
+  formData.append("scale", "true");
+  formData.append("isTable", "true");
 
   const res = await fetch("https://api.ocr.space/parse/image", {
     method: "POST",
@@ -826,6 +830,7 @@ async function runOcrSpaceOCR(file) {
   const text = data?.ParsedResults?.[0]?.ParsedText || "";
 
   console.log("OCR RESULT:", text.slice(0, 500));
+  console.log("TEXT LENGTH:", text.length);
 
   return text;
 }
@@ -1908,7 +1913,7 @@ async function handleBulkLeases(fileList) {
     const tenant = {
       ...(isValid
         ? norm
-        : { tenant_name: file.name.replace(/\.pdf$/i, '') }),
+        : {}),
       leaseFile:        file,
       leaseExpected:    true,
       fileName:         file.name,
@@ -2236,7 +2241,7 @@ async function retryExtractionWithFile(index, file) {
     const _showRetry = !hasTenant || !hasDates || !hasLeaseType;
 
     const updated = {
-      ...(isValid ? norm : { tenant_name: file.name.replace(/\.pdf$/i, '') }),
+      ...(isValid ? norm : {}),
       leaseFile:        file,
       leaseExpected:    true,
       fileName:         file.name,
