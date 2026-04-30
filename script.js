@@ -325,7 +325,12 @@ Return exactly this structure:
 }
 
 Rules:
-- tenantName: full legal name of the tenant/lessee. Look for labels like "Tenant:", "Lessee:", "Tenant Name:". If not explicitly labeled, infer from: (1) the first bold or all-caps line that looks like a company or person name, (2) any entity name that appears repeatedly throughout the document, (3) any company name (Inc., LLC, Corp., Ltd., Co.) found near the beginning. Never leave tenantName null if a reasonable guess exists — use your best inference.
+- tenantName: Extract the tenant name with high priority.
+  Look for labels like: Tenant, Lessee, Occupant.
+  If not found, select the first business entity name (LLC, Inc, Corp).
+  If multiple entities exist, choose the NON-landlord company — ignore names containing words like "Properties", "Realty", "Real Estate", "Holdings", "Capital", or "Investments".
+  If no explicit tenant label exists, return the most prominent company name in the document.
+  Only return null if no reasonable tenant can be identified after exhausting all of the above.
 - leasedSqft: integer, no commas, no units (e.g. 4500)
 - startDate: lease commencement date in YYYY-MM-DD format. Look for: "Commencement Date", "Lease Start Date", "Term begins on", "Term shall commence on", "Effective Date". If none found, use "Execution Date" as a last resort. Never leave null if a reasonable date exists.
 - endDate: lease expiration/end date in YYYY-MM-DD format. Look for: "Expiration Date", "Lease End Date", "Term ends on". If not stated explicitly, calculate from start date + lease term (e.g. "for a term of 10 years from [startDate]" → add 10 years). Never leave null if start date and term length are both known.
