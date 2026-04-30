@@ -325,7 +325,7 @@ Return exactly this structure:
 }
 
 Rules:
-- tenantName: full legal name of the tenant/lessee
+- tenantName: full legal name of the tenant/lessee. Look for labels like "Tenant:", "Lessee:", "Tenant Name:". If not explicitly labeled, infer from: (1) the first bold or all-caps line that looks like a company or person name, (2) any entity name that appears repeatedly throughout the document, (3) any company name (Inc., LLC, Corp., Ltd., Co.) found near the beginning. Never leave tenantName null if a reasonable guess exists — use your best inference.
 - leasedSqft: integer, no commas, no units (e.g. 4500)
 - startDate: lease commencement date in YYYY-MM-DD format (e.g. "March 1, 2024" → "2024-03-01")
 - endDate: lease expiration date in YYYY-MM-DD format
@@ -348,7 +348,7 @@ Return EXACTLY this format — no extra text before or after:
 }
 
 Rules:
-- tenant_name: party paying rent, not the landlord. Look near "Tenant:", "Lessee:". String or null.
+- tenant_name: party paying rent, not the landlord. Look near "Tenant:", "Lessee:", "Tenant Name:". If not explicitly labeled, infer from: the first bold/all-caps line resembling a company or person name, any entity repeated throughout the document, or any business suffix (Inc., LLC, Corp., Ltd., Co.). Never return null if a reasonable guess exists.
 - leased_sqft: integer only, no commas, no text. Average ranges (2800–3200 → 3000). Null if not found.
 - lease_start_date: commencement/effective/start date. Format YYYY-MM-DD. Null if not found.
 - lease_end_date: expiration/end/termination date. Format YYYY-MM-DD. Compute from term + start date if not explicit. Null only if cannot determine.
