@@ -1994,7 +1994,7 @@ async function handleBulkLeases(fileList) {
   checkSqftValidation();
 
   console.log('CURRENT PROPERTY ID:', property.id);
-  await saveProperty(property);
+  await saveWithRetry(property);
 }
 
 function updateTenantField(index, field, value) {
@@ -5790,15 +5790,21 @@ async function uploadLeaseToStorage(file, propertyId, tenantId) {
   }
 }
 
-async function saveWithRetry(property, retries = 2) {
-  try {
-    return await saveProperty(property);
-  } catch (e) {
-    if (retries > 0) {
-      console.log("Retrying save...");
-      return saveWithRetry(property, retries - 1);
+async function saveWithRetry(property, retries = 3) {
+  for (let i = 0; i < retries; i++) {
+    try {
+      console.log("Saving lease attempt:", i + 1);
+      return await Promise.race([
+        saveProperty(property),
+        new Promise((_, reject) =>
+          setTimeout(() => reject(new Error("Save timeout")), 8000)
+        ),
+      ]);
+    } catch (err) {
+      console.warn("Save failed:", err.message);
+      if (i === retries - 1) throw err;
+      await new Promise(r => setTimeout(r, 1000));
     }
-    throw e;
   }
 }
 
