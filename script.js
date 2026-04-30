@@ -807,19 +807,21 @@ async function extractPdfText(file) {
 }
 
 async function runOcrSpaceOCR(file) {
-  console.log('Using OCR.space...');
   const formData = new FormData();
-  formData.append('file', file);
-  formData.append('language', 'eng');
-  formData.append('isOverlayRequired', 'false');
-  const res = await fetch('https://api.ocr.space/parse/image', {
-    method: 'POST',
-    headers: { apikey: 'K82881310188957' },
+  formData.append("file", file);
+  formData.append("apikey", "K82881310188957");
+
+  const res = await fetch("https://api.ocr.space/parse/image", {
+    method: "POST",
     body: formData,
   });
+
   const data = await res.json();
-  const text = data?.ParsedResults?.[0]?.ParsedText || '';
-  console.log('OCR.space RESULT:', text.slice(0, 500));
+
+  const text = data?.ParsedResults?.[0]?.ParsedText || "";
+
+  console.log("OCR RESULT:", text.slice(0, 500));
+
   return text;
 }
 
