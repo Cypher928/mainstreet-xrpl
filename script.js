@@ -5807,7 +5807,27 @@ function _stripBlobs(property) {
   if (!property || !Array.isArray(property.tenants)) return property;
   return {
     ...property,
-    tenants: property.tenants.map(t => t ? { ...t, leaseFile: undefined } : t),
+    tenants: property.tenants.map(t => t ? {
+      ...t,
+      leaseFile: undefined, // File objects are not serializable
+      rawText:   undefined, // OCR text only needed during extraction — can be 10k+ chars
+    } : t),
+    // Strip the full invoice list from the DB payload — invoices live separately
+    // and are merged back in on load; keeping them in `data` inflates the row.
+    invoices: (property.invoices || []).map(inv => inv ? {
+      vendorName:  inv.vendorName,
+      amount:      inv.amount,
+      category:    inv.category,
+      invoiceDate: inv.invoiceDate,
+      fileUrl:     inv.fileUrl,
+      fileName:    inv.fileName,
+      // drop confidence, _error, raw text — not needed for persistence
+    } : inv),
+    // CAM results can be very large; strip the full invoice copy inside results
+    results: property.results ? {
+      ...property.results,
+      invoicesFull: undefined,
+    } : property.results,
   };
 }
 
@@ -5936,17 +5956,33 @@ async function saveProperty(property) {
       await syncTenantsToTable(property.id, property.tenants);
     }
   } catch (e) {
-    // If INSERT failed and property still has no id, keep it null — do NOT assign
-    // a fake local id that could later be mistakenly sent to Supabase
     const msg = e?.message || String(e);
-    const isNetErr = /load failed|failed to fetch|networkerror|offline/i.test(msg);
+    const isNetErr     = /load failed|failed to fetch|networkerror|offline/i.test(msg);
+    const isTimeout    = /statement timeout|timeout|57014/i.test(msg);
+    const isSizeErr    = /too large|payload|entity/i.test(msg);
+
     if (isNetErr) {
+      // Silent — user is offline, localStorage has the data, will sync on reconnect
+      return;
+    }
+
+    console.error('[Mainstreet] saveProperty error:', msg, e);
+
+    const prev = document.getElementById('_saveErrToast');
+    if (prev) prev.remove();
+
+    const toast = document.createElement('div');
+    toast.id = '_saveErrToast';
+
+    if (isTimeout || isSizeErr) {
+      // Non-fatal: data is in localStorage. Show a gentle amber notice, not a red alarm.
+      toast.style.cssText = 'position:fixed;bottom:20px;left:50%;transform:translateX(-50%);background:#92400e;color:#fef3c7;padding:12px 20px;border-radius:6px;z-index:9999;font-size:13px;box-shadow:0 4px 12px rgba(0,0,0,.3);max-width:90vw;text-align:center;';
+      toast.textContent = '⚠️ Cloud sync slow — data saved locally and will retry automatically.';
+      document.body.appendChild(toast);
+      setTimeout(() => toast.remove(), 5000);
+      // Retry once after a short pause
+      setTimeout(() => saveProperty(property), 4000);
     } else {
-      console.error('[Mainstreet] saveProperty error:', msg, e);
-      const prev = document.getElementById('_saveErrToast');
-      if (prev) prev.remove();
-      const toast = document.createElement('div');
-      toast.id = '_saveErrToast';
       toast.style.cssText = 'position:fixed;bottom:20px;left:50%;transform:translateX(-50%);background:#e74c3c;color:#fff;padding:12px 20px;border-radius:6px;z-index:9999;font-size:13px;box-shadow:0 4px 12px rgba(0,0,0,.3);max-width:90vw;text-align:center;';
       toast.textContent = 'Save error: ' + msg;
       document.body.appendChild(toast);
@@ -5958,9 +5994,10 @@ async function saveProperty(property) {
 
 // ── App-level wrappers ────────────────────────────────────────────────────────
 
+let _saveDebounceTimer = null;
+
 // Snapshot current in-memory state back into the canonical _props entry and
-// persist to Supabase. Always awaited at mutation points; fire-and-forget only
-// for minor UI events (remove, clear) where latency is acceptable.
+// persist to Supabase. Debounced — rapid successive calls collapse into one write.
 async function savePropertyData() {
   if (!activePropId) return;
 
@@ -5988,7 +6025,10 @@ async function savePropertyData() {
     camRuns:      camRuns.map(r => ({ ...r, timestamp: r.timestamp instanceof Date ? r.timestamp.toISOString() : r.timestamp })),
   } : null;
 
-  await saveProperty(prop);
+  // Debounce: collapse rapid successive saves (e.g. per-keystroke field edits)
+  // into a single DB write 800 ms after the last call.
+  clearTimeout(_saveDebounceTimer);
+  _saveDebounceTimer = setTimeout(() => saveProperty(prop), 800);
 }
 
 // Fetch a single property's full data — Supabase first, localStorage fallback.
