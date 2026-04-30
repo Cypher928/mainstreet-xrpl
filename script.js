@@ -1834,8 +1834,9 @@ function mergeTenantsDedup(existing, incoming) {
 function dedupeTenants(arr) {
   const map = new Map();
   for (const t of arr) {
-    const key = (t.tenant_name || '').toLowerCase().replace(/[^\w\s]/g, '').replace(/\s+/g, ' ').trim();
-    if (!key) continue;
+    const nameKey = (t.tenant_name || '').toLowerCase().replace(/[^\w\s]/g, '').replace(/\s+/g, ' ').trim();
+    // For entries without a name (failed/partial) use their stable id or fileName so they always pass through
+    const key = nameKey || t.id || t.fileName || String(map.size);
     if (!map.has(key)) map.set(key, t);
   }
   return Array.from(map.values());
@@ -1944,14 +1945,23 @@ async function handleBulkLeases(fileList) {
       const isPartial  = status === 'needs_review';
       const _showRetry = !hasTenant || !hasDates || !hasLeaseType;
 
-      if (!isValid) console.log('[extraction] low-confidence result for:', file.name);
+      console.log(`[file] ${file.name} → status=${status} name="${norm?.tenant_name || ''}"`);
 
+      // Always push a record — even failed extractions get a card
       tenantData.push({
-        ...(isValid ? norm : {}),
+        tenant_name:      norm?.tenant_name    ?? null,
+        leased_sqft:      norm?.leased_sqft    ?? null,
+        start_date:       norm?.start_date     ?? null,
+        end_date:         norm?.end_date       ?? null,
+        lease_type:       norm?.lease_type     ?? null,
+        flags:            norm?.flags          ?? [],
+        doc_has_dates:    norm?.doc_has_dates  ?? false,
+        doc_has_lease_type: norm?.doc_has_lease_type ?? false,
         leaseFile:        file,
         leaseExpected:    true,
         fileName:         file.name,
         lease_url:        leaseUrl,
+        status,
         extractionFailed: !isValid,
         _needsReview:     isPartial,
         _showRetry,
@@ -1961,11 +1971,17 @@ async function handleBulkLeases(fileList) {
       storeLeaseFile(tenantId, file);
     } catch (err) {
       console.error("FAILED FILE:", file.name, err);
+      // Outer catch: push a placeholder so the file is never silently dropped
       tenantData.push({
         tenant_name:      null,
+        leased_sqft:      null,
+        start_date:       null,
+        end_date:         null,
+        lease_type:       null,
         fileName:         file.name,
         leaseFile:        file,
         leaseExpected:    true,
+        status:           'failed',
         extractionFailed: true,
         _needsReview:     false,
         _showRetry:       true,
@@ -1976,6 +1992,9 @@ async function handleBulkLeases(fileList) {
 
     completed++;
     _progUpdate();
+    // Progressive render: show each card as it completes, don't wait for all files
+    property.tenants = [...tenantData];
+    renderBulkResults();
   }));
 
   prog.innerHTML = `
@@ -1986,21 +2005,15 @@ async function handleBulkLeases(fileList) {
       </div>
     </div>`;
 
-  console.log("FINAL TENANTS:", tenantData.map(t => ({
-    name: t.tenant_name, hasFile: !!t.leaseFile, file: t.fileName,
-  })));
-  console.log("RAW EXTRACTED TENANTS:", JSON.stringify(tenantData, null, 2));
-  console.log('TENANTS BEFORE DEDUPE:', tenantData);
-  const deduped = dedupeTenants(tenantData);
-  console.log('TENANTS AFTER DEDUPE:', deduped);
-  property.tenants = deduped;
-  console.log("AFTER DEDUPE TENANTS:", JSON.stringify(property.tenants, null, 2));
-  console.log("FINAL TENANTS FOR RENDER:", JSON.stringify(property.tenants, null, 2));
+  console.log(`[bulk] done — ${tenantData.length} of ${total} files produced cards:`,
+    tenantData.map(t => ({ name: t.tenant_name, status: t.status, file: t.fileName })));
+
+  // Dedup by name for persistence only (nameless entries keep their id-based key and are retained)
+  property.tenants = dedupeTenants([...tenantData]);
 
   renderBulkResults();
   checkSqftValidation();
 
-  console.log('CURRENT PROPERTY ID:', property.id);
   await saveWithRetry(property);
 }
 
@@ -2027,21 +2040,9 @@ function renderBulkResults() {
   el.innerHTML = '';
   el.scrollTop = 0;
 
-  // Single source of truth: property.tenants
-  const propTenants = currentProperty()?.tenants || [];
-
-  // Carry over leaseFile blobs (not serializable, never in property.tenants)
-  const blobById = Object.fromEntries(
-    tenantData.filter(t => t?.id && t.leaseFile instanceof File).map(t => [t.id, t.leaseFile])
-  );
-
-  // Build render list: only valid objects, blobs merged back in
-  const tenants = propTenants
-    .filter(t => t && typeof t === 'object')
-    .map(t => (t?.id && blobById[t.id]) ? { ...t, leaseFile: blobById[t.id] } : t);
-
-  // Mirror tenantData exactly so index-based onclick handlers stay correct
-  tenantData.splice(0, tenantData.length, ...tenants);
+  // tenantData is the source of truth — contains every file, including failed extractions.
+  // Do NOT filter by tenant_name or status here; every file must render a card.
+  const tenants = tenantData.filter(t => t && typeof t === 'object');
 
   if (!tenants.length) return;
 
