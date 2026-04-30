@@ -728,22 +728,40 @@ function toISODate(val) {
   return isNaN(d) ? '' : d.toISOString().split('T')[0];
 }
 
-// Regex-based last-resort tenant name extraction from raw text.
+// Deterministic tenant name extractor — runs before and after Claude as a hard fallback.
 function extractTenantFromText(text) {
   if (!text) return null;
-  // Try explicit label first
-  const labelMatch = text.match(/(?:Tenant|Lessee|Occupant)\s*[:\-]\s*([A-Z][^\n\r,;]{3,60})/i);
+
+  const landlordWords = /properties|realty|real estate|holdings|capital|management|investments|partners|trust|fund|group llc|llp/i;
+
+  // 1. Explicit label with entity suffix — highest confidence
+  const labelMatch = text.match(
+    /(?:tenant|lessee|occupant)\s*[:\-]?\s*([A-Z][A-Za-z0-9,&.\s]{2,60}?(?:LLC|L\.L\.C\.|INC\.?|CORP\.?|LTD\.?|L\.P\.|CO\.))/i
+  );
   if (labelMatch) {
     const name = labelMatch[1].trim().replace(/\s+/g, ' ');
     if (isStrongName(name)) return name;
   }
-  // Try business entity suffix
-  const entityMatch = text.match(/\b([A-Z][A-Za-z\s'&.,]{2,50}(?:LLC|Inc\.?|Corp\.?|Ltd\.?|Co\.|L\.P\.))/);
-  if (entityMatch) {
-    const name = entityMatch[1].trim().replace(/\s+/g, ' ');
-    const landlordWords = /Properties|Realty|Real Estate|Holdings|Capital|Investments|Partners|Trust/i;
+
+  // 2. Explicit label without entity suffix — still reliable
+  const labelOnly = text.match(/(?:tenant|lessee|occupant)\s*[:\-]\s*([A-Z][A-Za-z0-9,&.\s]{3,50})/i);
+  if (labelOnly) {
+    const name = labelOnly[1].split('\n')[0].trim().replace(/\s+/g, ' ');
     if (isStrongName(name) && !landlordWords.test(name)) return name;
   }
+
+  // 3. Collect ALL entity names, filter landlord words, return first survivor
+  const allEntities = text.match(
+    /[A-Z][A-Za-z0-9,&.\s]{2,60}?(?:LLC|L\.L\.C\.|INC\.?|CORP\.?|LTD\.?|L\.P\.|CO\.)/g
+  ) || [];
+  const filtered = allEntities
+    .map(n => n.trim().replace(/\s+/g, ' '))
+    .filter(n => isStrongName(n) && !landlordWords.test(n));
+  if (filtered.length > 0) return filtered[0];
+
+  // 4. Any entity name at all (last resort before filename)
+  if (allEntities.length > 0) return allEntities[0].trim().replace(/\s+/g, ' ');
+
   return null;
 }
 
@@ -1957,13 +1975,19 @@ async function handleBulkLeases(fileList) {
         status = 'needs_review';
       }
 
+      // Absolute last resort: derive a display name from the filename so
+      // "(unknown…)" never appears. Strip extension, replace separators with spaces.
+      const resolvedName = norm?.tenant_name?.trim()
+        || extractTenantFromText(leaseText || '')
+        || file.name.replace(/\.[^.]+$/, '').replace(/[_\-]+/g, ' ').trim();
+
       const isPartial  = status !== 'success';
       const _showRetry = status === 'failed';
 
-      console.log(`[file] ${file.name} → status=${status} name="${norm?.tenant_name || '—'}"`);
+      console.log(`[file] ${file.name} → status=${status} name="${resolvedName}"`);
 
       tenantData.push({
-        tenant_name:        norm?.tenant_name        ?? null,
+        tenant_name:        resolvedName || null,
         leased_sqft:        norm?.leased_sqft        ?? null,
         start_date:         norm?.start_date         ?? null,
         end_date:           norm?.end_date           ?? null,
@@ -2030,7 +2054,10 @@ async function handleBulkLeases(fileList) {
   renderBulkResults();
   checkSqftValidation();
 
-  await saveWithRetry(property);
+  // Save is fire-and-forget — UI must never block waiting for DB
+  saveWithRetry(property).catch(err => {
+    console.error('[bulk] save failed (non-fatal):', err.message);
+  });
 }
 
 function updateTenantField(index, field, value) {
