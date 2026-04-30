@@ -9,8 +9,6 @@
 const SUPABASE_URL      = 'https://zhsuhehgehbzkmzurzyf.supabase.co';
 const SUPABASE_ANON_KEY = 'eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6Inpoc3VoZWhnZWhiemttenVyenlmIiwicm9sZSI6ImFub24iLCJpYXQiOjE3NzU4NDkwNDAsImV4cCI6MjA5MTQyNTA0MH0.HUl9ha9hhjIO1F_k8xPkqbZQnWx-ERRGbnmc6KS3lNE';
 
-console.log('[Mainstreet] SUPABASE_URL:',      SUPABASE_URL      || '❌ MISSING');
-console.log('[Mainstreet] SUPABASE_ANON_KEY:', SUPABASE_ANON_KEY ? SUPABASE_ANON_KEY.slice(0, 20) + '...' : '❌ MISSING');
 
 const { createClient: _sbCreateClient } = window.supabase;
 const db = _sbCreateClient(SUPABASE_URL, SUPABASE_ANON_KEY, {
@@ -27,7 +25,6 @@ setTimeout(() => {
   const login = document.getElementById('loginScreen');
   const app   = document.getElementById('appContent');
   if (login && app && login.style.display === 'none' && app.style.display === 'none') {
-    console.log('⚠️ Fallback triggered — showing login');
     _showLogin();
   }
 }, 1000);
@@ -61,7 +58,6 @@ function switchAuthTab(mode) {
 async function submitAuth(event) {
   if (event) event.preventDefault(); // prevent form reload in all browsers
 
-  console.log('[Mainstreet] submitAuth fired, mode:', _authMode);
 
   const email    = (document.getElementById('loginEmail').value    || '').trim();
   const password = (document.getElementById('loginPassword').value || '');
@@ -92,14 +88,12 @@ async function submitAuth(event) {
   let data, error;
   try {
     if (_authMode === 'signup') {
-      console.log('[Mainstreet] Calling supabase.auth.signUp for', email);
       ({ data, error } = await db.auth.signUp({
         email,
         password,
         options: { emailRedirectTo: window.location.origin },
       }));
     } else {
-      console.log('[Mainstreet] Calling supabase.auth.signInWithPassword for', email);
       ({ data, error } = await db.auth.signInWithPassword({ email, password }));
     }
   } catch (e) {
@@ -121,7 +115,6 @@ async function submitAuth(event) {
     btn.disabled      = false;
     btn.textContent   = _authMode === 'signup' ? 'Create Account' : 'Sign In';
   } else if (_authMode === 'signup') {
-    console.log('[Mainstreet] Signup success:', data);
     // If email confirmation is disabled, signUp returns a live session immediately
     if (data?.session?.user) {
       _showApp(data.session.user);
@@ -134,7 +127,6 @@ async function submitAuth(event) {
       btn.disabled      = false;
     }
   } else if (data?.user) {
-    console.log('[Mainstreet] Sign in success:', data.user.email);
     // Explicit show — don't rely solely on onAuthStateChange firing in restricted browsers
     _showApp(data.user);
   }
@@ -149,20 +141,16 @@ window.addEventListener('load', () => {
   initCamYearSelect();
   db.auth.getSession().then(({ data, error }) => {
     if (error) {
-      console.warn('[Mainstreet] getSession error:', error.message);
       _showLogin();
       return;
     }
     if (data?.session?.user) {
-      console.log('✅ Session restored');
       _showApp(data.session.user);
       init();
     } else {
-      console.log('❌ No session — showing login');
       _showLogin();
     }
   }).catch(e => {
-    console.warn('[Mainstreet] getSession failed:', e.message);
     _showLogin();
   });
 });
@@ -504,7 +492,6 @@ function currentProperty() {
 // ─── Supabase Storage upload ──────────────────────────────────────────────────
 
 async function uploadInvoiceFile(file) {
-  console.log('[UPLOAD START]', file.name, file.size);
   try {
     const fileBase64 = await toBase64(file);
     const resp = await fetch('/api/upload', {
@@ -513,7 +500,6 @@ async function uploadInvoiceFile(file) {
       body: JSON.stringify({ fileName: file.name, fileType: file.type, fileBase64 }),
     });
     const result = await resp.json();
-    console.log('[UPLOAD RESULT]', resp.status, result);
     if (!resp.ok || result.error) return { url: null, error: result.error || `HTTP ${resp.status}` };
     return { url: result.url, error: null };
   } catch (e) {
@@ -694,7 +680,6 @@ function enrichLeaseData(data, extractedText) {
     }
   }
 
-  console.log('ENRICHED DATES:', data.startDate, data.endDate);
 
   // --- LEASE TYPE
   if (!data.leaseType) {
@@ -851,7 +836,6 @@ async function extractPdfText(file) {
   }
 
   const pdfjs = window['pdfjsLib'];
-  console.log('PDFJS READY:', !!window['pdfjsLib']);
   if (!pdfjs) {
     console.error('PDF.js not ready');
     throw new Error('PDF.js failed to load');
@@ -863,7 +847,6 @@ async function extractPdfText(file) {
 
   const MAX_PAGES = 5;
   if (pdf.numPages > MAX_PAGES) {
-    console.warn(`Large lease detected (${pdf.numPages} pages) — processing first ${MAX_PAGES} pages only`);
   }
 
   const pages = [];
@@ -892,7 +875,6 @@ async function fileToBase64(file) {
 // Sends the PDF directly to Claude as a base64 document block.
 // Claude uses vision to read scanned PDFs — no OCR middleware needed.
 async function callClaudeWithPdfDirect(file) {
-  console.log('[PDF direct] sending', file.name, 'to Claude natively');
   const base64 = await fileToBase64(file);
 
   const extractionPrompt = `Extract the following fields from this commercial lease document.
@@ -938,7 +920,6 @@ Return best guess — do not leave fields null unless truly impossible.`;
 
   if (!res.ok) throw new Error(`Claude PDF direct failed: HTTP ${res.status}`);
   const data = await res.json();
-  console.log('[PDF direct] response:', JSON.stringify(data));
   return data;
 }
 
@@ -953,12 +934,10 @@ async function extractLeaseText(file) {
   const isWeak = !text || text.length < 1000 || !text.includes('Lease') || text.split(' ').length < 100;
 
   if (!isWeak) {
-    console.log('[extract] PDF.js text layer sufficient:', text.length, 'chars');
     return text;
   }
 
   // Scanned / image-based PDF — return null so the caller uses Claude's PDF vision
-  console.log('[extract] weak PDF text, will use Claude PDF direct');
   return null;
 }
 
@@ -1131,7 +1110,6 @@ ${leaseSnippet}
   }
 
   const response = await res.json();
-  console.log('LEASE API RESPONSE:', response);
 
   // Normalize: accept string, object, or array
   let parsed = response;
@@ -1173,8 +1151,6 @@ ${leaseSnippet}
   };
 
   const raw = data;
-  console.log('[Claude] raw response:', JSON.stringify(raw));
-  console.log('[Claude] lease snippet (first 500):', leaseSnippet?.slice(0, 500));
   const cleanText = normalizeText(text);
   const fb = extractLeaseData(cleanText);
 
@@ -1194,7 +1170,6 @@ ${leaseSnippet}
   const resolvedEnd   = raw.lease_end_date   ?? raw.endDate   ?? raw.end_date   ?? fb.end_date   ?? '';
   const resolvedType  = normalizeLeaseType(raw.lease_type ?? raw.leaseType ?? fb.lease_type) ?? '';
 
-  console.log('[Claude] name:', resolvedName, '| start:', resolvedStart, '| end:', resolvedEnd, '| type:', resolvedType);
 
   const doc_has_dates = /\b(?:\d{1,2}\/\d{1,2}\/\d{4}|\d{4}-\d{2}-\d{2}|(?:January|February|March|April|May|June|July|August|September|October|November|December)\s+\d{1,2},?\s+\d{4})\b/i.test(text);
   const doc_has_lease_type = /triple[\s-]?net|nnn|gross|modified[\s-]?gross/i.test(text);
@@ -1281,18 +1256,12 @@ async function handleLease(i, file) {
     const leaseUrl = await uploadLeaseToStorage(file, property.id, normalized.id);
     tenantData[i] = { ...normalized, leaseFile: file, leaseExpected: true, fileName: file.name, lease_url: leaseUrl };
     storeLeaseFile(normalized.id, file);
-    console.log("RAW EXTRACTED TENANTS:", JSON.stringify(tenantData.filter(t => t !== null), null, 2));
     renderTenantFields(i);
     checkSqftValidation();
 
-    console.log('TENANTS BEFORE DEDUPE:', tenantData.filter(t => t !== null));
     const deduped = dedupeTenants(tenantData.filter(t => t !== null));
-    console.log('TENANTS AFTER DEDUPE:', deduped);
     property.tenants = deduped;
-    console.log("AFTER DEDUPE TENANTS:", JSON.stringify(property.tenants, null, 2));
-    console.log("FINAL TENANTS FOR RENDER:", JSON.stringify(property.tenants, null, 2));
 
-    console.log('CURRENT PROPERTY ID:', property.id);
     await saveProperty(property);
   } catch (err) {
     renderTenantError(i, err.message);
@@ -1322,12 +1291,10 @@ function validateTotalSqFt(property, newLease) {
 
 function checkSqftValidation() {
   const prop = currentProperty();
-  console.log('CURRENT PROPERTY:', prop);
   const totalSqFt = Number(prop?.totalSqft) || 0;
   if (!totalSqFt) { window._sqftInvalid = false; clearSqftBanner(); return true; }
 
   const usedSqFt = tenantData.filter(t => t).reduce((s, t) => s + parseSqft(t.leased_sqft), 0);
-  console.log('SQFT CHECK:', { usedSqFt, totalSqFt });
 
   if (!usedSqFt) { window._sqftInvalid = false; clearSqftBanner(); return true; }
 
@@ -1359,18 +1326,15 @@ function runCamValidation() {
 
   const propertyTotal = Number(prop?.totalSqft) || 0;
 
-  console.log('CAM VALIDATION CHECK:', { tenantTotal, propertyTotal });
 
   const isValid = tenantTotal <= propertyTotal;
 
   window._sqftInvalid = !isValid;
 
   if (!isValid) {
-    console.log('❌ CAM paused — mismatch');
     return;
   }
 
-  console.log('✅ CAM running');
   calculateCAM?.();
 }
 
@@ -1414,7 +1378,6 @@ function updatePropertySqft(val) {
 
   prop.totalSqft = Number(val) || 0;
 
-  console.log('UPDATED SQFT:', prop.totalSqft);
 
   saveProperty(prop);
 
@@ -1426,7 +1389,7 @@ function updatePropertySqft(val) {
 
 function showSqftBanner(msg, severity) {
   const el = document.getElementById('sqft-error');
-  if (!el) { console.warn('sqft-error element not found'); return; }
+  if (!el) { return; }
   el.innerText = msg;
   el.dataset.severity = severity;
   el.classList.remove('hidden');
@@ -1904,11 +1867,8 @@ async function importGLToInvoices() {
   const property = currentProperty();
   if (!property) throw new Error('No property selected');
   const existing = { invoices: Array.from(property.invoices || []) };
-  console.log('EXISTING DATA:', existing);
   // invoiceData already has existing invoices (restored on selectProperty) + new GL items.
   property.invoices = Array.from(invoiceData);
-  console.log('CURRENT PROPERTY ID:', property.id);
-  console.log('SAVING DATA:', property);
   await saveProperty(property);
 
   const bar = document.getElementById('glImportBar');
@@ -1977,7 +1937,6 @@ function mergeInvoicesDedup(existing, incoming) {
 // ─── Bulk Lease Upload ────────────────────────────────────────────────────────
 
 async function handleBulkLeases(fileList) {
-  console.log('[Mainstreet] handleBulkLeases STARTED');
   if (!fileList || fileList.length === 0) return;
 
   const property = currentProperty();
@@ -2016,7 +1975,6 @@ async function handleBulkLeases(fileList) {
   const processFile = async (file) => {
     const tenantId = crypto.randomUUID();
     try {
-      console.log("Processing:", file.name);
 
       let leaseText  = null;
       let extracted  = null;
@@ -2026,11 +1984,9 @@ async function handleBulkLeases(fileList) {
 
         if (leaseText && leaseText.length >= 50) {
           // Digital PDF — text layer is good, send text to Claude
-          console.log('[extract] using text pipeline for', file.name);
           extracted = await callClaudeForLease(leaseText);
         } else {
           // Scanned / image PDF — send PDF directly to Claude (vision reads it)
-          console.log('[extract] using Claude PDF direct for', file.name);
           usedPdfDirect = true;
           extracted = await callClaudeWithPdfDirect(file);
           // Set a placeholder so status logic knows we got something back
@@ -2074,7 +2030,6 @@ async function handleBulkLeases(fileList) {
       const isPartial  = status === 'needs_review';
       const _showRetry = status === 'failed';
 
-      console.log(`[file] ${file.name} → status=${status} name="${resolvedName}"`);
 
       tenantData.push({
         tenant_name:        resolvedName || null,
@@ -2135,8 +2090,6 @@ async function handleBulkLeases(fileList) {
       </div>
     </div>`;
 
-  console.log(`[bulk] done — ${tenantData.length} of ${total} files produced cards:`,
-    tenantData.map(t => ({ name: t.tenant_name, status: t.status, file: t.fileName })));
 
   // Dedup by name for persistence only (nameless entries keep their id-based key and are retained)
   property.tenants = dedupeTenants([...tenantData]);
@@ -2343,7 +2296,6 @@ function retryUploadForSlot(index) {
       alert("This lease is too large. Please upload a smaller or compressed PDF.");
       return;
     }
-    console.log("FILE SIZE:", file.size);
     await retryExtractionWithFile(index, file);
   };
   input.click();
@@ -2382,7 +2334,6 @@ async function retryExtractionWithFile(index, file) {
     try {
       leaseText = await extractLeaseText(file);
       if (!leaseText) {
-        console.log("Empty text — marking as failed:", file.name);
         extracted = { tenant_name: null, status: 'failed' };
       } else {
         extracted = await callClaudeForLease(leaseText);
@@ -2497,7 +2448,6 @@ async function handleBatchInvoices(fileList) {
   const property = currentProperty();
   if (!property) throw new Error('No property selected');
   const existing = { invoices: Array.from(property.invoices || []) };
-  console.log('EXISTING DATA:', existing);
 
   const total = files.length;
 
@@ -2592,8 +2542,6 @@ async function handleBatchInvoices(fileList) {
   invoiceData.splice(0, invoiceData.length, ...merged);
   renderInvResults();
 
-  console.log('CURRENT PROPERTY ID:', property.id);
-  console.log('SAVING DATA:', property);
   await saveProperty(property);
 }
 
@@ -2645,7 +2593,6 @@ function renderInvResults() {
       }
       const s = (score == null) ? -1 : parseInt(score, 10);
       if (isNaN(s) || s < 90) {
-        console.log('VERIFY BUTTONS RENDERED', i, fieldName, score);
         return `<div class="field-verify-actions">
           <button class="verify-btn verify-btn-confirm" onclick="markFieldVerified(${i},'${fieldName}')">&#x2714; Mark Verified</button>
           <button class="verify-btn verify-btn-change" onclick="focusInvField(${i},'${fieldName}')">&#x270E; Change</button>
@@ -2718,8 +2665,6 @@ function renderInvResults() {
       <button class="bulk-clear-btn" onclick="clearInvResults()">&#x2715; Clear All</button>
     </div>
     ${rows}`;
-
-  setTimeout(() => console.log('UI REFRESH COMPLETE'), 500);
 }
 
 // Returns a clickable confidence badge that opens + highlights weak fields on click.
@@ -2780,7 +2725,6 @@ function verifiableActions(score, i, field) {
   const s = (score === null || score === undefined) ? -1 : parseInt(score, 10);
   const needsVerify = isNaN(s) || s < 90;
   if (needsVerify) {
-    console.log('Rendering verify buttons', i, field, score);
     return `<div class="field-verify-actions">
       <button class="verify-btn verify-btn-confirm" onclick="markFieldVerified(${i},'${field}')">&#x2713; Mark as Verified</button>
       <button class="verify-btn verify-btn-change" onclick="focusInvField(${i},'${field}')">&#x270E; Change</button>
@@ -3229,11 +3173,8 @@ async function confirmYardiImport() {
   const property = currentProperty();
   if (!property) throw new Error('No property selected');
   const existing = { invoices: Array.from(property.invoices || []) };
-  console.log('EXISTING DATA:', existing);
   // invoiceData already has existing invoices (restored on selectProperty) + new Yardi items.
   property.invoices = Array.from(invoiceData);
-  console.log('CURRENT PROPERTY ID:', property.id);
-  console.log('SAVING DATA:', property);
   await saveProperty(property);
 
   document.getElementById('invResults').scrollIntoView({ behavior: 'smooth', block: 'start' });
@@ -3528,8 +3469,6 @@ function runFullReconciliation(property) {
     const sharedTotal = eligibleShared.reduce((s, inv) => s + inv.amount, 0) * proRata;
 
     const ownInvoices = directInvoices.filter(inv => matchesTenant(inv, lease));
-    console.log(`[reconcile] ${lease.tenantName} — direct:${ownInvoices.length} shared:${eligibleShared.length}`,
-      ownInvoices.map(i => ({ id: i.id, matchedTenantId: i.matchedTenantId, matchedTenant: i.matchedTenant })));
     const ownTotal    = ownInvoices.reduce((s, inv) => s + inv.amount, 0);
 
     let rawTotal      = sharedTotal + ownTotal;
@@ -3640,8 +3579,12 @@ function runCAMAllocation(expenses, tenants) {
     let total = eligible.reduce((s, e) => s + e.amount * proRata, 0);
     let capAdj = null;
 
-    if (t.capPct !== null && t.capPct !== '' && !isNaN(parseFloat(t.capPct))) {
-      const cap = 10000 * (1 + parseFloat(t.capPct) / 100);
+    // Cap requires a prior-year base amount to calculate correctly.
+    // capBaseAmount must be entered manually; without it we skip cap enforcement
+    // rather than show wrong math.
+    if (t.capPct !== null && t.capPct !== '' && !isNaN(parseFloat(t.capPct)) &&
+        t.capBaseAmount !== null && t.capBaseAmount !== undefined && !isNaN(parseFloat(t.capBaseAmount))) {
+      const cap = parseFloat(t.capBaseAmount) * (1 + parseFloat(t.capPct) / 100);
       if (total > cap) { capAdj = total - cap; total = cap; }
     }
 
@@ -3671,7 +3614,6 @@ async function runAllocation() {
 
   const propName  = document.getElementById('propertyName').value.trim() || 'Property';
   const totalSqft = parseFloat(document.getElementById('totalSqft').value);
-  console.log("CALCULATED TOTAL LEASED SQFT:", totalSqft);
   const section   = document.getElementById('results');
   const body      = document.getElementById('resultsBody');
 
@@ -3690,6 +3632,7 @@ async function runAllocation() {
       leasedSqft:         parseSqft(t.leased_sqft),
       totalSqft,
       capPct:             t.cap,
+      capBaseAmount:      t.capBaseAmount ?? null,
       excludedCategories: t.excluded_categories
         ? t.excluded_categories.split(',').map(s => s.trim().toLowerCase()).filter(Boolean)
         : [],
@@ -3708,13 +3651,27 @@ async function runAllocation() {
     return;
   }
 
-  const invoices = invoiceData
-    .filter(inv => inv && inv.vendorName && parseFloat(inv.amount) > 0)
+  const allInvoices   = invoiceData.filter(inv => inv && inv.vendorName);
+  const invoices      = allInvoices
+    .filter(inv => parseFloat(inv.amount) > 0)
     .map(inv => ({ vendor: inv.vendorName, category: inv.category, amount: parseFloat(inv.amount) }));
+  const skippedCount  = allInvoices.length - invoices.length;
 
   if (!invoices.length) {
     showErr(body, section, 'Please upload at least one invoice with a vendor and amount in Section 3.');
     return;
+  }
+
+  // Warn if invoices are being excluded due to missing amounts
+  if (skippedCount > 0) {
+    const existingWarn = section.querySelector('.cam-skip-warning');
+    if (!existingWarn) {
+      const warn = document.createElement('div');
+      warn.className = 'cam-skip-warning';
+      warn.style.cssText = 'background:#7c3a0020;border:1px solid #f59e0b;color:#fbbf24;padding:10px 14px;border-radius:8px;margin-bottom:14px;font-size:0.85rem;';
+      warn.textContent = `⚠️ ${skippedCount} invoice${skippedCount > 1 ? 's' : ''} with no amount were excluded from this calculation. Open each invoice in Section 3 and enter the missing amount to include them.`;
+      section.prepend(warn);
+    }
   }
 
   const results   = runCAMAllocation(invoices, tenants);
@@ -4269,7 +4226,6 @@ function openLease(file) {
 function openLeaseModalFromFile(index) {
   const d = tenantData[index];
   if (!d) return;
-  console.log('LEASE URL:', d.lease_url);
   if (d.leaseFile instanceof File) {
     openLeaseModal(d.leaseFile);
   } else if (d.lease_url) {
@@ -4330,7 +4286,6 @@ document.addEventListener('keydown', (e) => {
 
 // Global click debug
 document.addEventListener('click', (e) => {
-  console.log("CLICK DETECTED ON:", e.target);
 });
 
 // Delegated retry handler — survives innerHTML re-renders
@@ -4339,7 +4294,6 @@ document.addEventListener('click', (e) => {
   if (!retryEl) return;
   e.stopPropagation();
   const i = retryEl.dataset.index;
-  console.log("RETRY CLICKED SLOT:", i);
   retryUploadForSlot(i);
 });
 
@@ -5524,7 +5478,6 @@ function portfolioKPIs(props) {
 }
 
 function renderPortfolio(props) {
-  console.log('RENDER DATA:', props);
 
   if (!props || !Array.isArray(props)) {
     console.error('[renderPortfolio] called with invalid data:', props);
@@ -5587,7 +5540,6 @@ async function selectProperty(id) {
 
   // Fire-and-forget save for the property we're leaving — don't block navigation
   if (activePropId && activePropId !== id) {
-    console.log('Switching property — clearing transient state');
     savePropertyData();
   }
 
@@ -5815,7 +5767,7 @@ async function storeLeaseFile(tenantId, file) {
     const tx = db.transaction(_IDB_STORE, 'readwrite');
     tx.objectStore(_IDB_STORE).put(file, tenantId);
     await new Promise((res, rej) => { tx.oncomplete = res; tx.onerror = e => rej(e.target.error); });
-  } catch (e) { console.warn('[storeLeaseFile]', e); }
+  } catch (e) { }
 }
 
 async function getLeaseFile(tenantId) {
@@ -5834,7 +5786,7 @@ async function deleteLeaseFile(tenantId) {
     const db = await _openLeaseIdb();
     const tx = db.transaction(_IDB_STORE, 'readwrite');
     tx.objectStore(_IDB_STORE).delete(tenantId);
-  } catch (e) { console.warn('[deleteLeaseFile]', e); }
+  } catch (e) { }
 }
 
 // After restoring tenants from DB, refill leaseFile from IndexedDB and re-render.
@@ -5864,7 +5816,7 @@ function _lsSave(property) {
     const stored = JSON.parse(_lsGet(_LS_KEY) || '{}');
     stored[property.id] = _stripBlobs(property);
     _lsSet(_LS_KEY, JSON.stringify(stored));
-  } catch (e) { console.warn('[Mainstreet] storage save failed:', e); }
+  } catch (e) { }
 }
 
 function _lsLoadAll() {
@@ -5887,8 +5839,6 @@ async function loadProperties() {
     .from('properties')
     .select('*');
 
-  console.log('DATA:', data);
-  console.log('ERROR:', error);
 
   if (error) throw error;
 
@@ -5929,10 +5879,8 @@ async function uploadLeaseToStorage(file, propertyId, tenantId) {
     if (error) throw error;
     const { data: urlData } = db.storage.from('leases').getPublicUrl(filePath);
     const publicUrl = urlData?.publicUrl || null;
-    console.log('LEASE URL:', publicUrl);
     return publicUrl;
   } catch (e) {
-    console.warn('[uploadLeaseToStorage]', e.message);
     return null;
   }
 }
@@ -5940,7 +5888,6 @@ async function uploadLeaseToStorage(file, propertyId, tenantId) {
 async function saveWithRetry(property, retries = 3) {
   for (let i = 0; i < retries; i++) {
     try {
-      console.log("Saving lease attempt:", i + 1);
       return await Promise.race([
         saveProperty(property),
         new Promise((_, reject) =>
@@ -5948,7 +5895,6 @@ async function saveWithRetry(property, retries = 3) {
         ),
       ]);
     } catch (err) {
-      console.warn("Save failed:", err.message);
       if (i === retries - 1) throw err;
       await new Promise(r => setTimeout(r, 1000));
     }
@@ -5973,7 +5919,6 @@ async function saveProperty(property) {
       // Existing record — update by id
       const { error } = await db.from('properties').upsert({ id, ...payload });
       if (error) throw error;
-      console.log('UPDATED IN SUPABASE', id);
     } else {
       // New record — let Supabase generate the UUID
       const { data: inserted, error } = await db.from('properties')
@@ -5984,7 +5929,6 @@ async function saveProperty(property) {
       // Patch the in-memory object so callers immediately have the real UUID
       property.id = inserted.id;
       _lsSave(property);
-      console.log('INSERTED INTO SUPABASE', inserted.id);
     }
 
     // Sync tenants to dedicated table whenever property is saved
@@ -5997,7 +5941,6 @@ async function saveProperty(property) {
     const msg = e?.message || String(e);
     const isNetErr = /load failed|failed to fetch|networkerror|offline/i.test(msg);
     if (isNetErr) {
-      console.warn('[Mainstreet] Supabase offline, saved locally only:', msg);
     } else {
       console.error('[Mainstreet] saveProperty error:', msg, e);
       const prev = document.getElementById('_saveErrToast');
@@ -6056,7 +5999,6 @@ async function loadPropertyData(id) {
     if (!data) return _lsLoad(id);
     return { id: data.id, name: data.name, totalSqft: data.sqft || 0, ...(data.data || {}) };
   } catch (e) {
-    console.warn('[Mainstreet] Supabase unavailable, loading property from localStorage:', e.message);
     return _lsLoad(id);
   }
 }
@@ -6074,7 +6016,6 @@ function renderProperty(property) {
   // ── Tenants ───────────────────────────────────────────────────────────
   try {
     const liveTenants = tenantData.filter(t => t && t.tenant_name);
-    console.log('RENDER PROPERTY:', { propSqft: property.totalSqft, tenants: liveTenants.length });
 
     if (liveTenants.length > 0) {
       // Deduplicate in-place by stable UUID (t.id)
@@ -6106,7 +6047,7 @@ function renderProperty(property) {
     }
     checkSqftValidation();
     restoreLeaseFiles(); // async: fills leaseFile from IndexedDB, re-renders when done
-  } catch (e) { console.warn('[Mainstreet] tenant restore failed:', e); }
+  } catch (e) { }
 
   // ── Invoices ──────────────────────────────────────────────────────────
   try {
@@ -6117,7 +6058,7 @@ function renderProperty(property) {
       renderInvResults();
       restored = true;
     }
-  } catch (e) { console.warn('[Mainstreet] invoice restore failed:', e); }
+  } catch (e) { }
 
   // ── Disputes ──────────────────────────────────────────────────────────
   try {
@@ -6126,7 +6067,7 @@ function renderProperty(property) {
       disputes.splice(0, disputes.length, ...savedDisputes);
       nextDisputeId = Math.max(...savedDisputes.map(d => d.id + 1), 0);
     }
-  } catch (e) { console.warn('[Mainstreet] dispute restore failed:', e); }
+  } catch (e) { }
 
   // ── CAM Results ───────────────────────────────────────────────────────
   try {
@@ -6151,7 +6092,7 @@ function renderProperty(property) {
       showReportSection();
       restored = true;
     }
-  } catch (e) { console.warn('[Mainstreet] results restore failed:', e); }
+  } catch (e) { }
 
   if (restored) showRestoredBanner();
 
@@ -6246,9 +6187,7 @@ async function init() {
     const properties = await loadProperties();
     _props = properties || [];
 
-    console.log('[Mainstreet] PROPERTIES ON LOAD:', _props.length, _props);
     portfolio.splice(0, portfolio.length, ..._props);
-    console.log('RENDER DATA:', properties);
     renderPortfolio(properties);
   } catch (e) {
     console.error('[Mainstreet] portfolio render failed, falling back to main workflow.', e);
