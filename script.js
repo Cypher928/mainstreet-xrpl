@@ -311,32 +311,32 @@ IMPORTANT:
 If the charge looks normal, say "No issues" and do not invent problems.
 If the category appears incorrect based on the vendor or description, gently interpret the charge correctly in your explanation without criticizing the classification.`;
 
-const CLAUDE_LEASE_SYSTEM = `You are a strict JSON extraction engine.
-Return ONLY valid JSON. No text. No explanation. No markdown.
+const CLAUDE_LEASE_SYSTEM = `You are a strict JSON extraction engine for commercial leases.
+Return ONLY valid JSON. No text. No explanation. No markdown. Start with { and end with }.
 
 Return exactly this structure:
 {
-  "tenantName": string,
-  "leasedSqft": number,
-  "startDate": "YYYY-MM-DD",
-  "endDate": "YYYY-MM-DD",
-  "leaseType": string,
+  "tenant_name": string,
+  "lease_start_date": "YYYY-MM-DD",
+  "lease_end_date": "YYYY-MM-DD",
+  "lease_type": string,
+  "sqft": number,
   "capPercentage": number
 }
 
 Rules:
-- tenantName: Extract the tenant name with high priority.
-  Look for labels like: Tenant, Lessee, Occupant.
-  If not found, select the first business entity name (LLC, Inc, Corp).
-  If multiple entities exist, choose the NON-landlord company — ignore names containing words like "Properties", "Realty", "Real Estate", "Holdings", "Capital", or "Investments".
-  If no explicit tenant label exists, return the most prominent company name in the document.
-  Only return null if no reasonable tenant can be identified after exhausting all of the above.
-- leasedSqft: integer, no commas, no units (e.g. 4500)
-- startDate: lease commencement date in YYYY-MM-DD format. Look for: "Commencement Date", "Lease Start Date", "Term begins on", "Term shall commence on", "Effective Date". If none found, use "Execution Date" as a last resort. Never leave null if a reasonable date exists.
-- endDate: lease expiration/end date in YYYY-MM-DD format. Look for: "Expiration Date", "Lease End Date", "Term ends on". If not stated explicitly, calculate from start date + lease term (e.g. "for a term of 10 years from [startDate]" → add 10 years). Never leave null if start date and term length are both known.
-- leaseType: normalize to one of: "NNN", "Gross", "Modified Gross" ("Triple Net", "Triple-Net", "NNN" → "NNN")
-- capPercentage: CAM increase cap as a plain number (e.g. "35%" → 35, "0.35" → 35)
-- Use null for any field that cannot be determined`;
+- tenant_name: HIGHEST PRIORITY. The text may be OCR'd from a scanned document — tolerate spacing/character noise.
+  Step 1: Look for labels "Tenant:", "Lessee:", "Occupant:" and take the name that follows.
+  Step 2: If no label, find the first entity name with a suffix: LLC, Inc, Corp, Ltd, Co., L.P.
+  Step 3: If multiple entities exist, EXCLUDE any containing: Properties, Realty, Real Estate, Holdings, Capital, Investments, Partners, Trust.
+  Step 4: Return the most prominent remaining company name.
+  NEVER return null if any company name exists anywhere in the text.
+- lease_start_date: YYYY-MM-DD. Hierarchy: "Commencement Date" → "Lease Start Date" → "Term begins" → "Effective Date" → "Execution Date". Calculate from context if needed. Never null if any date exists.
+- lease_end_date: YYYY-MM-DD. Hierarchy: "Expiration Date" → "Lease End Date" → "Term ends". Calculate from start_date + term length if needed. Never null if start date and term length are both known.
+- lease_type: One of "NNN", "Gross", "Modified Gross". "Triple Net" or "Triple-Net" or "NNN" → "NNN". Null only if completely absent.
+- sqft: Integer, no commas, no units. Null if not found.
+- capPercentage: CAM cap as plain number (35% → 35). Null if not mentioned.
+- Use null only when a field is truly impossible to determine.`;
 
 const CLAUDE_LEASE_PROMPT = `Extract the following fields from the lease text below.
 
@@ -728,6 +728,25 @@ function toISODate(val) {
   return isNaN(d) ? '' : d.toISOString().split('T')[0];
 }
 
+// Regex-based last-resort tenant name extraction from raw text.
+function extractTenantFromText(text) {
+  if (!text) return null;
+  // Try explicit label first
+  const labelMatch = text.match(/(?:Tenant|Lessee|Occupant)\s*[:\-]\s*([A-Z][^\n\r,;]{3,60})/i);
+  if (labelMatch) {
+    const name = labelMatch[1].trim().replace(/\s+/g, ' ');
+    if (isStrongName(name)) return name;
+  }
+  // Try business entity suffix
+  const entityMatch = text.match(/\b([A-Z][A-Za-z\s'&.,]{2,50}(?:LLC|Inc\.?|Corp\.?|Ltd\.?|Co\.|L\.P\.))/);
+  if (entityMatch) {
+    const name = entityMatch[1].trim().replace(/\s+/g, ' ');
+    const landlordWords = /Properties|Realty|Real Estate|Holdings|Capital|Investments|Partners|Trust/i;
+    if (isStrongName(name) && !landlordWords.test(name)) return name;
+  }
+  return null;
+}
+
 // Regex-based fallback: scans raw lease text for date strings.
 function extractDatesFromText(text) {
   if (!text) return {};
@@ -935,47 +954,50 @@ function computeFlagsStrict(d) {
   return result;
 }
 
+// Preprocesses text before sending to Claude: normalizes whitespace and caps length.
+function prepareLeaseTextForClaude(rawText) {
+  if (!rawText) return '';
+  const cleaned = rawText
+    .replace(/\r\n/g, '\n')
+    .replace(/\r/g, '\n')
+    .replace(/[ \t]{3,}/g, '  ')   // collapse runs of spaces/tabs
+    .replace(/\n{4,}/g, '\n\n\n')  // collapse excessive blank lines
+    .trim();
+  // Focus on the first 5000 chars — lease header always contains name/dates/type
+  return cleaned.length > 5000 ? cleaned.slice(0, 5000) + '\n...[truncated]' : cleaned;
+}
+
 async function callClaudeForLease(text) {
+  const leaseSnippet = prepareLeaseTextForClaude(text);
   const prompt = `
-You are extracting structured data from a commercial lease.
-Return ONLY valid JSON. No explanation.
+You are extracting structured data from a commercial lease document.
+NOTE: This text may have been extracted via OCR from a scanned document — tolerate minor spelling errors, extra spaces, or character substitutions.
+Return ONLY valid JSON. No explanation. No markdown.
+
 Extract:
 {
   "tenant_name": string,
-  "lease_start_date": string (YYYY-MM-DD or null),
-  "lease_end_date": string (YYYY-MM-DD or null),
-  "lease_type": string (NNN, Gross, Modified Gross, or null),
+  "lease_start_date": "YYYY-MM-DD" or null,
+  "lease_end_date": "YYYY-MM-DD" or null,
+  "lease_type": "NNN" | "Gross" | "Modified Gross" | null,
   "sqft": number or null
 }
-RULES:
-TENANT NAME (HIGHEST PRIORITY):
-- Look for labels: "Tenant", "Lessee", "Occupant"
-- If not found, select the FIRST business entity (LLC, Inc, Corp)
-- If multiple companies exist:
-  → EXCLUDE landlord names (Properties, Realty, Holdings, Capital, Investments)
-  → Choose the NON-landlord company
-- If still unclear:
-  → Return the most prominent company name in the document
+
+TENANT NAME (highest priority):
+- Look for labels: "Tenant:", "Lessee:", "Occupant:"
+- If no label found: pick the first business entity (LLC, Inc, Corp, Ltd, L.P.)
+- If multiple entities: EXCLUDE names with Properties/Realty/Holdings/Capital/Investments
 - NEVER return null if any company name exists
+
 DATES:
-- Start date priority:
-  Commencement Date → Lease Start Date → Effective Date → Execution Date
-- End date priority:
-  Expiration Date → Lease End Date → Term ends
-- If end date is missing but term exists:
-  → Calculate from start date + term length
-LEASE TYPE:
-- If you see "Triple Net" → return "NNN"
-- Otherwise detect Gross or Modified Gross if mentioned
-SQUARE FOOTAGE:
-- Extract numeric value if present (ignore commas)
-IMPORTANT:
-- Return BEST GUESS — do not leave fields null unless absolutely impossible
-- Do NOT fail just because some fields are missing
-- Output must be valid JSON only
+- Start: Commencement Date → Lease Start Date → Effective Date → Execution Date
+- End: Expiration Date → Lease End Date → calculate from start + term length if needed
+
+IMPORTANT: Best guess always. Do not leave tenant_name null if any company name exists.
+
 LEASE TEXT:
 """
-${text}
+${leaseSnippet}
 """
 `;
   const messages = [{ role: 'user', content: prompt }];
@@ -1015,18 +1037,6 @@ ${text}
 
   const data = parsed[0];
 
-  // Normalize leased_sqft: accepts sqft, leased_sqft, or leasedSqft key
-  const leased_sqft = Number(String(data.sqft || data.leased_sqft || data.leasedSqft || '').replace(/[^0-9]/g, '')) || null;
-
-  // Normalize dates to YYYY-MM-DD; keep original string if unparseable; null if absent
-  const toISO = val => {
-    if (!val) return null;
-    const s = String(val).trim();
-    if (/^\d{4}-\d{2}-\d{2}$/.test(s)) return s;
-    const d = new Date(s);
-    return isNaN(d) ? s : d.toISOString().split('T')[0];
-  };
-
   // Normalize leaseType so UI always receives the expected label
   const normalizeLeaseType = (val) => {
     if (!val) return null;
@@ -1036,8 +1046,6 @@ ${text}
     if (v.includes('gross'))                        return 'Gross';
     return val;
   };
-  const leaseType = normalizeLeaseType(data.leaseType || data.lease_type);
-
   // Normalize CAM cap: "35%" → 35, "0.35" → 35, "35" → 35
   const normalizeCap = val => {
     if (!val) return null;
@@ -1047,12 +1055,15 @@ ${text}
   };
 
   const raw = data;
-  console.log('RAW LEASE TEXT:', text?.slice(0, 2000));
+  console.log('[Claude] raw response:', JSON.stringify(raw));
+  console.log('[Claude] lease snippet (first 500):', leaseSnippet?.slice(0, 500));
   const cleanText = normalizeText(text);
-  console.log('CLEANED LEASE TEXT:', cleanText?.slice(0, 2000));
   const fb = extractLeaseData(cleanText);
 
-  const resolvedName = raw.tenantName ?? raw.tenant_name ?? '';
+  // Accept either schema: tenant_name (user prompt) or tenantName (system prompt)
+  const aiName = raw.tenant_name ?? raw.tenantName ?? null;
+  // Regex fallback when Claude returns null/empty for the tenant name
+  const resolvedName = (aiName && String(aiName).trim()) || extractTenantFromText(text) || '';
   const resolvedSqft = (() => {
     const v = raw.leasedSqft ?? raw.leased_sqft ?? raw.sqft ?? raw.squareFeet ?? null;
     if (v != null && v !== '') {
@@ -1061,11 +1072,11 @@ ${text}
     }
     return null;
   })();
-  const resolvedStart = raw.startDate ?? raw.start_date ?? raw.lease_start_date ?? fb.start_date ?? '';
-  const resolvedEnd   = raw.endDate   ?? raw.end_date   ?? raw.lease_end_date   ?? fb.end_date   ?? '';
-  const resolvedType  = normalizeLeaseType(raw.leaseType ?? raw.lease_type ?? fb.lease_type) ?? '';
+  const resolvedStart = raw.lease_start_date ?? raw.startDate ?? raw.start_date ?? fb.start_date ?? '';
+  const resolvedEnd   = raw.lease_end_date   ?? raw.endDate   ?? raw.end_date   ?? fb.end_date   ?? '';
+  const resolvedType  = normalizeLeaseType(raw.lease_type ?? raw.leaseType ?? fb.lease_type) ?? '';
 
-  console.log('DATES:', resolvedStart, resolvedEnd, '(ai:', raw.startDate ?? raw.start_date, raw.endDate ?? raw.end_date, '| regex:', fb.start_date, fb.end_date, ')');
+  console.log('[Claude] name:', resolvedName, '| start:', resolvedStart, '| end:', resolvedEnd, '| type:', resolvedType);
 
   const doc_has_dates = /\b(?:\d{1,2}\/\d{1,2}\/\d{4}|\d{4}-\d{2}-\d{2}|(?:January|February|March|April|May|June|July|August|September|October|November|December)\s+\d{1,2},?\s+\d{4})\b/i.test(text);
   const doc_has_lease_type = /triple[\s-]?net|nnn|gross|modified[\s-]?gross/i.test(text);
@@ -1879,78 +1890,74 @@ async function handleBulkLeases(fileList) {
   };
   _progUpdate();
 
-  for (const file of files) {
+  // Process all files in parallel — OCR and Claude run concurrently.
+  // Each file is isolated in its own catch so one failure never blocks the rest.
+  await Promise.all(files.map(async (file) => {
     const tenantId = crypto.randomUUID();
     try {
       console.log("Processing:", file.name);
 
-    let extracted = null;
-    let leaseText = null;
-    try {
-      leaseText = await extractLeaseText(file);
-      if (!leaseText) {
-        console.log("Empty text — marking as failed:", file.name);
-        extracted = { tenant_name: null, status: 'failed' };
-      } else {
-        extracted = await callClaudeForLease(leaseText);
+      let leaseText = null;
+      let extracted = null;
+      try {
+        leaseText = await extractLeaseText(file);
+        if (!leaseText) {
+          console.log("Empty text — marking as failed:", file.name);
+          extracted = { tenant_name: null, status: 'failed' };
+        } else {
+          extracted = await callClaudeForLease(leaseText);
+        }
+      } catch (err) {
+        console.error('[handleBulkLeases] extraction failed:', file.name, err);
       }
-    } catch (err) {
-      console.error('[handleBulkLeases] extraction failed:', file.name, err);
-    }
 
-    const leaseUrl = await uploadLeaseToStorage(file, property.id, tenantId);
+      const leaseUrl = await uploadLeaseToStorage(file, property.id, tenantId);
 
-    if (extracted && leaseText) extracted.rawText = leaseText;
-    const norm = extracted ? normalizeTenant(extracted) : null;
+      if (extracted && leaseText) extracted.rawText = leaseText;
+      const norm = extracted ? normalizeTenant(extracted) : null;
 
-    const hasStrongName = norm ? isStrongName(norm.tenant_name) : false;
-    const hasRealData   = norm && !!(norm.start_date || norm.end_date || norm.leased_sqft);
+      const hasStrongName = norm ? isStrongName(norm.tenant_name) : false;
 
-    // Numeric confidence score (for internal ranking only)
-    let confidenceScore = 0;
-    if (norm) {
-      const hasTenant = !!norm.tenant_name && norm.tenant_name.trim().length > 0;
-      if (hasStrongName)      confidenceScore += 2;
-      else if (hasTenant)     confidenceScore += 1;
-      if (norm.start_date)    confidenceScore += 1;
-      if (norm.end_date)      confidenceScore += 1;
-      if (norm.leased_sqft)   confidenceScore += 1;
-      if (norm._usedFallback) confidenceScore -= 1;
-    }
+      let confidenceScore = 0;
+      if (norm) {
+        const hasTenant = !!norm.tenant_name && norm.tenant_name.trim().length > 0;
+        if (hasStrongName)      confidenceScore += 2;
+        else if (hasTenant)     confidenceScore += 1;
+        if (norm.start_date)    confidenceScore += 1;
+        if (norm.end_date)      confidenceScore += 1;
+        if (norm.leased_sqft)   confidenceScore += 1;
+        if (norm._usedFallback) confidenceScore -= 1;
+      }
 
-    const hasTenant    = !!norm?.tenant_name?.trim();
-    const hasDates     = !!(norm?.start_date || norm?.end_date);
-    const hasLeaseType = !!norm?.lease_type;
+      const hasTenant    = !!norm?.tenant_name?.trim();
+      const hasDates     = !!(norm?.start_date || norm?.end_date);
+      const hasLeaseType = !!norm?.lease_type;
 
-    // Status: only truly fail when there is no tenant name at all
-    let status = 'success';
-    if (!hasTenant) {
-      status = 'failed';
-    } else if (!hasDates || !hasLeaseType) {
-      status = 'needs_review';
-    }
+      let status = 'success';
+      if (!hasTenant) {
+        status = 'failed';
+      } else if (!hasDates || !hasLeaseType) {
+        status = 'needs_review';
+      }
 
-    const isValid   = status !== 'failed';
-    const isPartial = status === 'needs_review';
-    const _showRetry = !hasTenant || !hasDates || !hasLeaseType;
+      const isValid    = status !== 'failed';
+      const isPartial  = status === 'needs_review';
+      const _showRetry = !hasTenant || !hasDates || !hasLeaseType;
 
-    if (!isValid) console.log('[extraction] low-confidence result for:', file.name);
+      if (!isValid) console.log('[extraction] low-confidence result for:', file.name);
 
-    const tenant = {
-      ...(isValid
-        ? norm
-        : {}),
-      leaseFile:        file,
-      leaseExpected:    true,
-      fileName:         file.name,
-      lease_url:        leaseUrl,
-      extractionFailed: !isValid,
-      _needsReview:     isPartial,
-      _showRetry,
-      _error:           isValid ? null : 'Could not identify a tenant — please enter fields manually',
-      id:               tenantId,
-    };
-      tenantData.push(tenant);
+      tenantData.push({
+        ...(isValid ? norm : {}),
+        leaseFile:        file,
+        leaseExpected:    true,
+        fileName:         file.name,
+        lease_url:        leaseUrl,
+        extractionFailed: !isValid,
+        _needsReview:     isPartial,
+        _showRetry,
+        _error:           isValid ? null : 'Could not identify a tenant — please enter fields manually',
+        id:               tenantId,
+      });
       storeLeaseFile(tenantId, file);
     } catch (err) {
       console.error("FAILED FILE:", file.name, err);
@@ -1969,7 +1976,7 @@ async function handleBulkLeases(fileList) {
 
     completed++;
     _progUpdate();
-  }
+  }));
 
   prog.innerHTML = `
     <div class="bulk-progress-wrap">
