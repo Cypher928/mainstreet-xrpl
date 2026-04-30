@@ -835,18 +835,18 @@ async function runOcrSpaceOCR(file) {
   return text;
 }
 
-// Extracts text from a PDF (or plain-text file). Falls back to OCR.space
-// when the PDF has no text layer (scanned documents).
 async function extractLeaseText(file) {
   let text = await extractPdfText(file);
-  const isWeakText =
-    !text ||
-    text.length < 1000 ||
-    !text.includes("Lease") ||
-    text.split(" ").length < 100;
-  if (isWeakText) {
+  if (!text || text.length < 1000 || !text.includes("Lease") || text.split(" ").length < 100) {
     console.log("Using OCR fallback...");
-    text = await runOcrSpaceOCR(file);
+    const ocrText = await runOcrSpaceOCR(file);
+    if (ocrText && ocrText.length > 50) {
+      text = ocrText;
+    }
+  }
+  if (!text || text.trim().length < 50) {
+    console.log("No usable text after OCR");
+    return null;
   }
   return text;
 }
@@ -936,11 +936,6 @@ function computeFlagsStrict(d) {
 }
 
 async function callClaudeForLease(text) {
-  if (!text || text.trim().length < 50) {
-    console.log("Skipping Claude — no usable OCR text");
-    return {};
-  }
-
   const prompt = `
 You are extracting structured data from a commercial lease.
 Return ONLY valid JSON. No explanation.
@@ -1891,9 +1886,9 @@ async function handleBulkLeases(fileList) {
     let leaseText = null;
     try {
       leaseText = await extractLeaseText(file);
-      if (!leaseText || leaseText.trim().length < 50) {
-        console.warn('No usable OCR text');
-        extracted = { extractionFailed: true, reason: 'OCR returned no usable text' };
+      if (!leaseText) {
+        console.log("Empty text — marking as failed:", file.name);
+        extracted = { tenant_name: null, status: 'failed' };
       } else {
         extracted = await callClaudeForLease(leaseText);
       }
@@ -2229,9 +2224,9 @@ async function retryExtractionWithFile(index, file) {
     let extracted = null;
     try {
       leaseText = await extractLeaseText(file);
-      if (!leaseText || leaseText.trim().length < 50) {
-        console.warn('No usable OCR text');
-        extracted = { extractionFailed: true, reason: 'OCR returned no usable text' };
+      if (!leaseText) {
+        console.log("Empty text — marking as failed:", file.name);
+        extracted = { tenant_name: null, status: 'failed' };
       } else {
         extracted = await callClaudeForLease(leaseText);
       }
