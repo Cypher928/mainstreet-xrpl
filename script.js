@@ -806,6 +806,37 @@ async function extractPdfText(file) {
   return pages.join('\n\n');
 }
 
+async function runOCR(file) {
+  const formData = new FormData();
+  formData.append("file", file);
+  formData.append("apikey", "K82881310188957");
+  formData.append("language", "eng");
+
+  const res = await fetch("https://api.ocr.space/parse/image", {
+    method: "POST",
+    body: formData,
+  });
+
+  const data = await res.json();
+
+  if (!data.ParsedResults || !data.ParsedResults[0]) {
+    throw new Error("OCR failed");
+  }
+
+  return data.ParsedResults[0].ParsedText || "";
+}
+
+// Extracts text from a PDF (or plain-text file). Falls back to cloud
+// OCR when the PDF has no text layer (scanned documents).
+async function extractLeaseText(file) {
+  let text = await extractPdfText(file);
+  if (!text || text.length < 300) {
+    console.log("[extractLeaseText] short text layer — using OCR fallback");
+    text = await runOCR(file);
+  }
+  return text;
+}
+
 function normalizeText(text) {
   if (!text) return '';
   return text
@@ -1056,7 +1087,7 @@ async function handleLease(i, file) {
   tenantData.splice(0, tenantData.length, null, null, null);
 
   try {
-    const leaseText  = await extractPdfText(file);
+    const leaseText  = await extractLeaseText(file);
     const extracted  = await callClaudeForLease(leaseText);
     if (!extracted) throw new Error('Could not extract lease fields');
     const normalized = normalizeTenant(extracted);
@@ -1798,7 +1829,7 @@ async function handleBulkLeases(fileList) {
     let extracted = null;
     let leaseText = null;
     try {
-      leaseText = await extractPdfText(file);
+      leaseText = await extractLeaseText(file);
       extracted = await callClaudeForLease(leaseText);
     } catch (err) {
       console.error('[handleBulkLeases] extraction failed:', file.name, err);
@@ -2132,11 +2163,7 @@ async function retryExtractionWithFile(index, file) {
     let leaseText = null;
     let extracted = null;
     try {
-      leaseText = await extractPdfText(file);
-      if (!leaseText || leaseText.length < 300) {
-        console.warn('[retryExtraction] likely scanned PDF — text too short:', leaseText?.length);
-        renderTenantError(index, "This looks like a scanned lease — some fields may need manual entry");
-      }
+      leaseText = await extractLeaseText(file);
       extracted = await callClaudeForLease(leaseText);
     } catch (err) {
       console.error('[retryExtraction] extraction error:', err);
