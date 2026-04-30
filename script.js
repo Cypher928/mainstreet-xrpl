@@ -1879,8 +1879,10 @@ async function handleBulkLeases(fileList) {
   };
   _progUpdate();
 
-  await Promise.all(files.map(async (file) => {
+  for (const file of files) {
     const tenantId = crypto.randomUUID();
+    try {
+      console.log("Processing:", file.name);
 
     let extracted = null;
     let leaseText = null;
@@ -1948,12 +1950,26 @@ async function handleBulkLeases(fileList) {
       _error:           isValid ? null : 'Could not identify a tenant — please enter fields manually',
       id:               tenantId,
     };
-    tenantData.push(tenant);
-    storeLeaseFile(tenantId, file);
+      tenantData.push(tenant);
+      storeLeaseFile(tenantId, file);
+    } catch (err) {
+      console.error("FAILED FILE:", file.name, err);
+      tenantData.push({
+        tenant_name:      null,
+        fileName:         file.name,
+        leaseFile:        file,
+        leaseExpected:    true,
+        extractionFailed: true,
+        _needsReview:     false,
+        _showRetry:       true,
+        _error:           err.message || 'Processing error',
+        id:               tenantId,
+      });
+    }
 
     completed++;
     _progUpdate();
-  }));
+  }
 
   prog.innerHTML = `
     <div class="bulk-progress-wrap">
@@ -5771,6 +5787,18 @@ async function uploadLeaseToStorage(file, propertyId, tenantId) {
   } catch (e) {
     console.warn('[uploadLeaseToStorage]', e.message);
     return null;
+  }
+}
+
+async function saveWithRetry(property, retries = 2) {
+  try {
+    return await saveProperty(property);
+  } catch (e) {
+    if (retries > 0) {
+      console.log("Retrying save...");
+      return saveWithRetry(property, retries - 1);
+    }
+    throw e;
   }
 }
 
