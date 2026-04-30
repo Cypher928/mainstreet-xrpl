@@ -806,33 +806,48 @@ async function extractPdfText(file) {
   return pages.join('\n\n');
 }
 
-async function runOCR(file) {
-  const formData = new FormData();
-  formData.append("file", file);
-  formData.append("apikey", "K82881310188957");
-  formData.append("language", "eng");
-
-  const res = await fetch("https://api.ocr.space/parse/image", {
-    method: "POST",
-    body: formData,
+function fileToBase64(file) {
+  return new Promise((resolve, reject) => {
+    const reader = new FileReader();
+    reader.onload  = () => resolve(reader.result.split(',')[1]);
+    reader.onerror = reject;
+    reader.readAsDataURL(file);
   });
-
-  const data = await res.json();
-
-  if (!data.ParsedResults || !data.ParsedResults[0]) {
-    throw new Error("OCR failed");
-  }
-
-  return data.ParsedResults[0].ParsedText || "";
 }
 
-// Extracts text from a PDF (or plain-text file). Falls back to cloud
-// OCR when the PDF has no text layer (scanned documents).
+async function runGoogleVisionOCR(file) {
+  try {
+    const base64 = await fileToBase64(file);
+    const res = await fetch(
+      'https://vision.googleapis.com/v1/images:annotate?key=AIzaSyCK835EEsNAzLs2UyoqI6Ow5gIPC2JVGMQ',
+      {
+        method:  'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          requests: [{
+            image:    { content: base64 },
+            features: [{ type: 'DOCUMENT_TEXT_DETECTION' }],
+          }],
+        }),
+      }
+    );
+    const data = await res.json();
+    const text = data.responses?.[0]?.fullTextAnnotation?.text || '';
+    console.log('OCR RESULT:', text.slice(0, 500));
+    return text;
+  } catch (err) {
+    console.error('[runGoogleVisionOCR] failed:', err);
+    return '';
+  }
+}
+
+// Extracts text from a PDF (or plain-text file). Falls back to Google
+// Vision OCR when the PDF has no text layer (scanned documents).
 async function extractLeaseText(file) {
   let text = await extractPdfText(file);
   if (!text || text.length < 300) {
-    console.log("[extractLeaseText] short text layer — using OCR fallback");
-    text = await runOCR(file);
+    console.log('Using Google Vision OCR...');
+    text = await runGoogleVisionOCR(file);
   }
   return text;
 }
