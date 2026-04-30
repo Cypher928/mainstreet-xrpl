@@ -954,17 +954,42 @@ function computeFlagsStrict(d) {
   return result;
 }
 
-// Preprocesses text before sending to Claude: normalizes whitespace and caps length.
+// Extracts lines most likely to contain key lease fields.
+function extractImportantSections(text) {
+  const keywords = [
+    'tenant', 'lessee', 'occupant', 'landlord', 'lessor',
+    'term', 'commencement', 'expiration', 'commence', 'expires',
+    'lease term', 'rent', 'square', 'premises', 'nnn', 'triple net',
+    'gross', 'modified gross', 'sqft', 'sq ft', 'square feet',
+  ];
+  return text
+    .split('\n')
+    .filter(line => keywords.some(k => line.toLowerCase().includes(k)))
+    .slice(0, 250)
+    .join('\n');
+}
+
+// Builds the text sent to Claude: keyword lines first (signal boost),
+// then head + tail of the full document so dates/terms near the middle
+// and end of the lease are not lost to blind truncation.
 function prepareLeaseTextForClaude(rawText) {
   if (!rawText) return '';
-  const cleaned = rawText
+  const clean = rawText
     .replace(/\r\n/g, '\n')
     .replace(/\r/g, '\n')
-    .replace(/[ \t]{3,}/g, '  ')   // collapse runs of spaces/tabs
-    .replace(/\n{4,}/g, '\n\n\n')  // collapse excessive blank lines
+    .replace(/[ \t]{3,}/g, '  ')
+    .replace(/\n{4,}/g, '\n\n\n')
     .trim();
-  // Focus on the first 5000 chars — lease header always contains name/dates/type
-  return cleaned.length > 5000 ? cleaned.slice(0, 5000) + '\n...[truncated]' : cleaned;
+
+  const keyLines  = extractImportantSections(clean);
+  const head      = clean.slice(0, 4000);
+  const tail      = clean.length > 4000 ? clean.slice(-2000) : '';
+
+  return [
+    keyLines ? `KEY SECTIONS:\n${keyLines}` : '',
+    `FULL CONTEXT (start):\n${head}`,
+    tail ? `FULL CONTEXT (end):\n${tail}` : '',
+  ].filter(Boolean).join('\n\n...\n\n');
 }
 
 async function callClaudeForLease(text) {
@@ -1892,24 +1917,26 @@ async function handleBulkLeases(fileList) {
   _progUpdate();
 
   // Process all files in parallel — OCR and Claude run concurrently.
-  // Each file is isolated in its own catch so one failure never blocks the rest.
-  await Promise.all(files.map(async (file) => {
+  // Process in small batches: parallel within each batch, sequential between
+  // batches so we don't hit DB / OCR rate limits.
+  const BATCH_SIZE = 2;
+  const processFile = async (file) => {
     const tenantId = crypto.randomUUID();
     try {
       console.log("Processing:", file.name);
 
-      let leaseText = null;
-      let extracted = null;
+      let leaseText  = null;
+      let extracted  = null;
       try {
         leaseText = await extractLeaseText(file);
         if (!leaseText) {
           console.log("Empty text — marking as failed:", file.name);
-          extracted = { tenant_name: null, status: 'failed' };
+          extracted = { tenant_name: null };
         } else {
           extracted = await callClaudeForLease(leaseText);
         }
       } catch (err) {
-        console.error('[handleBulkLeases] extraction failed:', file.name, err);
+        console.error('[handleBulkLeases] extraction error:', file.name, err);
       }
 
       const leaseUrl = await uploadLeaseToStorage(file, property.id, tenantId);
@@ -1917,61 +1944,47 @@ async function handleBulkLeases(fileList) {
       if (extracted && leaseText) extracted.rawText = leaseText;
       const norm = extracted ? normalizeTenant(extracted) : null;
 
-      const hasStrongName = norm ? isStrongName(norm.tenant_name) : false;
-
-      let confidenceScore = 0;
-      if (norm) {
-        const hasTenant = !!norm.tenant_name && norm.tenant_name.trim().length > 0;
-        if (hasStrongName)      confidenceScore += 2;
-        else if (hasTenant)     confidenceScore += 1;
-        if (norm.start_date)    confidenceScore += 1;
-        if (norm.end_date)      confidenceScore += 1;
-        if (norm.leased_sqft)   confidenceScore += 1;
-        if (norm._usedFallback) confidenceScore -= 1;
-      }
-
       const hasTenant    = !!norm?.tenant_name?.trim();
       const hasDates     = !!(norm?.start_date || norm?.end_date);
       const hasLeaseType = !!norm?.lease_type;
 
+      // Only mark failed when OCR+Claude produced truly nothing (no text at all).
+      // Missing dates or lease type → needs_review so the card stays yellow, not red.
       let status = 'success';
-      if (!hasTenant) {
+      if (!hasTenant && !leaseText) {
         status = 'failed';
-      } else if (!hasDates || !hasLeaseType) {
+      } else if (!hasTenant || !hasDates || !hasLeaseType) {
         status = 'needs_review';
       }
 
-      const isValid    = status !== 'failed';
-      const isPartial  = status === 'needs_review';
-      const _showRetry = !hasTenant || !hasDates || !hasLeaseType;
+      const isPartial  = status !== 'success';
+      const _showRetry = status === 'failed';
 
-      console.log(`[file] ${file.name} → status=${status} name="${norm?.tenant_name || ''}"`);
+      console.log(`[file] ${file.name} → status=${status} name="${norm?.tenant_name || '—'}"`);
 
-      // Always push a record — even failed extractions get a card
       tenantData.push({
-        tenant_name:      norm?.tenant_name    ?? null,
-        leased_sqft:      norm?.leased_sqft    ?? null,
-        start_date:       norm?.start_date     ?? null,
-        end_date:         norm?.end_date       ?? null,
-        lease_type:       norm?.lease_type     ?? null,
-        flags:            norm?.flags          ?? [],
-        doc_has_dates:    norm?.doc_has_dates  ?? false,
+        tenant_name:        norm?.tenant_name        ?? null,
+        leased_sqft:        norm?.leased_sqft        ?? null,
+        start_date:         norm?.start_date         ?? null,
+        end_date:           norm?.end_date           ?? null,
+        lease_type:         norm?.lease_type         ?? null,
+        flags:              norm?.flags              ?? [],
+        doc_has_dates:      norm?.doc_has_dates      ?? false,
         doc_has_lease_type: norm?.doc_has_lease_type ?? false,
-        leaseFile:        file,
-        leaseExpected:    true,
-        fileName:         file.name,
-        lease_url:        leaseUrl,
+        leaseFile:          file,
+        leaseExpected:      true,
+        fileName:           file.name,
+        lease_url:          leaseUrl,
         status,
-        extractionFailed: !isValid,
-        _needsReview:     isPartial,
+        extractionFailed:   status === 'failed',
+        _needsReview:       isPartial,
         _showRetry,
-        _error:           isValid ? null : 'Could not identify a tenant — please enter fields manually',
-        id:               tenantId,
+        _error:             status === 'failed' ? 'No text could be extracted — tap Retry to re-upload' : null,
+        id:                 tenantId,
       });
       storeLeaseFile(tenantId, file);
     } catch (err) {
       console.error("FAILED FILE:", file.name, err);
-      // Outer catch: push a placeholder so the file is never silently dropped
       tenantData.push({
         tenant_name:      null,
         leased_sqft:      null,
@@ -1992,10 +2005,13 @@ async function handleBulkLeases(fileList) {
 
     completed++;
     _progUpdate();
-    // Progressive render: show each card as it completes, don't wait for all files
     property.tenants = [...tenantData];
     renderBulkResults();
-  }));
+  };
+
+  for (let i = 0; i < files.length; i += BATCH_SIZE) {
+    await Promise.all(files.slice(i, i + BATCH_SIZE).map(processFile));
+  }
 
   prog.innerHTML = `
     <div class="bulk-progress-wrap">
