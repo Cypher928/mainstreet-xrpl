@@ -926,7 +926,25 @@ function computeFlagsStrict(d) {
 }
 
 async function callClaudeForLease(text) {
-  const messages = [{ role: 'user', content: text }];
+  const prompt = `
+You are extracting structured data from a commercial lease.
+Return ONLY valid JSON.
+Extract:
+- tenant_name
+- leased_sqft
+- lease_start_date (YYYY-MM-DD)
+- lease_end_date (YYYY-MM-DD)
+- lease_type (NNN, Gross, Modified Gross)
+Rules:
+- Dates must be ISO format YYYY-MM-DD
+- If term is given (e.g. 10 years), calculate end date
+- If multiple tenants appear, choose the primary tenant
+- Do NOT return explanations
+- Do NOT return null unless absolutely nothing is found
+TEXT:
+${text}
+`;
+  const messages = [{ role: 'user', content: prompt }];
 
   const res = await fetch('/api/claude', {
     method: 'POST',
