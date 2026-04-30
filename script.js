@@ -829,7 +829,13 @@ async function runOcrSpaceOCR(file) {
 // when the PDF has no text layer (scanned documents).
 async function extractLeaseText(file) {
   let text = await extractPdfText(file);
-  if (!text || text.length < 300) {
+  const isWeakText =
+    !text ||
+    text.length < 1000 ||
+    !text.includes("Lease") ||
+    text.split(" ").length < 100;
+  if (isWeakText) {
+    console.log("Using OCR fallback...");
     text = await runOcrSpaceOCR(file);
   }
   return text;
