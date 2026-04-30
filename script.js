@@ -1962,26 +1962,32 @@ async function handleBulkLeases(fileList) {
       if (extracted && leaseText) extracted.rawText = leaseText;
       const norm = extracted ? normalizeTenant(extracted) : null;
 
-      const hasTenant    = !!norm?.tenant_name?.trim();
-      const hasDates     = !!(norm?.start_date || norm?.end_date);
-      const hasLeaseType = !!norm?.lease_type;
-
-      // Only mark failed when OCR+Claude produced truly nothing (no text at all).
-      // Missing dates or lease type → needs_review so the card stays yellow, not red.
-      let status = 'success';
-      if (!hasTenant && !leaseText) {
-        status = 'failed';
-      } else if (!hasTenant || !hasDates || !hasLeaseType) {
-        status = 'needs_review';
-      }
-
-      // Absolute last resort: derive a display name from the filename so
-      // "(unknown…)" never appears. Strip extension, replace separators with spaces.
+      // Resolve name first — Claude → regex → filename fallback — so status
+      // logic can use the final name rather than Claude's raw output alone.
       const resolvedName = norm?.tenant_name?.trim()
         || extractTenantFromText(leaseText || '')
         || file.name.replace(/\.[^.]+$/, '').replace(/[_\-]+/g, ' ').trim();
 
-      const isPartial  = status !== 'success';
+      const hasTenant    = !!resolvedName;
+      const hasDates     = !!(norm?.start_date || norm?.end_date);
+      const hasLeaseType = !!norm?.lease_type;
+
+      // Status rules (in priority order):
+      // failed       = no usable text OR no tenant name after all fallbacks
+      // needs_review = has tenant but missing any of start_date / end_date / lease_type
+      // success      = all key fields present
+      let status;
+      if (!leaseText || leaseText.length < 50) {
+        status = 'failed';
+      } else if (!hasTenant) {
+        status = 'failed';
+      } else if (!norm?.start_date || !norm?.end_date || !hasLeaseType) {
+        status = 'needs_review';
+      } else {
+        status = 'success';
+      }
+
+      const isPartial  = status === 'needs_review';
       const _showRetry = status === 'failed';
 
       console.log(`[file] ${file.name} → status=${status} name="${resolvedName}"`);
