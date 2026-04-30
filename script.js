@@ -1910,12 +1910,21 @@ function mergeTenantsDedup(existing, incoming) {
 }
 
 function dedupeTenants(arr) {
+  // Key: fileName wins — same physical file uploaded twice = one entry.
+  // Different files with the same tenant name = KEPT SEPARATE (e.g. two ShopRite spaces).
+  // Entries with no name or file fall back to their stable id.
   const map = new Map();
   for (const t of arr) {
-    const nameKey = (t.tenant_name || '').toLowerCase().replace(/[^\w\s]/g, '').replace(/\s+/g, ' ').trim();
-    // For entries without a name (failed/partial) use their stable id or fileName so they always pass through
-    const key = nameKey || t.id || t.fileName || String(map.size);
-    if (!map.has(key)) map.set(key, t);
+    const key = t.fileName || t.id || (t.tenant_name || '').toLowerCase().trim() || String(map.size);
+    if (!map.has(key)) {
+      map.set(key, t);
+    } else {
+      // If a later entry for the same file has a name and the existing one doesn't, prefer the later one
+      const existing = map.get(key);
+      if (!existing.tenant_name && t.tenant_name) map.set(key, t);
+      // If a later entry has sqft and the existing one doesn't, prefer the later one
+      else if (parseSqft(t.leased_sqft) > 0 && parseSqft(existing.leased_sqft) <= 0) map.set(key, t);
+    }
   }
   return Array.from(map.values());
 }
@@ -3626,6 +3635,20 @@ async function runAllocation() {
   checkSqftValidation();
 
   const validTenants = getValidTenants();
+
+  // Warn about tenants that exist but are excluded from CAM due to missing sqft
+  const allNamedTenants = (currentProperty()?.tenants || []).filter(t => t && t.tenant_name);
+  const missingSquare   = allNamedTenants.filter(t => parseSqft(t.leased_sqft) <= 0);
+  if (missingSquare.length > 0 && validTenants.length > 0) {
+    const existingWarn = section.querySelector('.cam-sqft-warning');
+    if (!existingWarn) {
+      const warn = document.createElement('div');
+      warn.className = 'cam-sqft-warning';
+      warn.style.cssText = 'background:#7c2d1220;border:1px solid #f97316;color:#fb923c;padding:10px 14px;border-radius:8px;margin-bottom:14px;font-size:0.85rem;';
+      warn.textContent = `⚠️ ${missingSquare.length} tenant${missingSquare.length > 1 ? 's' : ''} excluded from CAM — missing Leased Sqft: ${missingSquare.map(t => t.tenant_name).join(', ')}. Edit those tenants in Section 2 and re-run to include them.`;
+      section.prepend(warn);
+    }
+  }
 
   const tenants = validTenants.map(t => ({
       name:               t.tenant_name,
@@ -5543,38 +5566,35 @@ async function selectProperty(id) {
     savePropertyData();
   }
 
-  // Switch active property and clear all global workflow state
+  // Switch active property and clear workflow state
   activePropId = id;
   resetWorkflow();
 
-  // ── Wipe the _props cache for this property before the instant render ─────
-  // Prevents stale or leaked data from the previous property showing through
-  // while the real load is in flight.
-  property.tenants  = [];
-  property.invoices = [];
-  property.disputes = [];
-  property.results  = null;
-
-  // ⚡ INSTANT: show the property shell (name/sqft) with a clean slate
+  // ⚡ INSTANT: render with whatever is already in the _props cache.
+  // Do NOT wipe property.tenants/invoices — that would erase data the user
+  // just uploaded if they navigate away and back within the same session.
   renderProperty(property);
 
-  // Load real data in the background, re-render once it arrives
+  // Load from DB/localStorage in the background and update if richer data arrives.
   setTimeout(async () => {
     const data = await loadPropertyData(id);
     if (!data || activePropId !== id) return;
 
-    // Verify results belong to THIS property — guards against data that was
-    // accidentally saved to the wrong property in a previous session
     const safeResults = (data.results?.propId === id) ? data.results : null;
 
-    property.tenants  = data.tenants  || [];
-    property.invoices = data.invoices || [];
-    property.disputes = data.disputes || [];
-    property.results  = safeResults;
-    if (data.name)      property.name      = data.name;
-    if (data.totalSqft) property.totalSqft = data.totalSqft;
-
-    if (activePropId === id) renderProperty(property);
+    // Only overwrite if the loaded data has at least as many tenants as what
+    // is already in memory — prevents an old DB record from erasing a fresh upload.
+    const inMemCount  = (property.tenants || []).length;
+    const loadedCount = (data.tenants     || []).length;
+    if (loadedCount >= inMemCount) {
+      property.tenants  = data.tenants  || [];
+      property.invoices = data.invoices || [];
+      property.disputes = data.disputes || [];
+      property.results  = safeResults;
+      if (data.name)      property.name      = data.name;
+      if (data.totalSqft) property.totalSqft = data.totalSqft;
+      if (activePropId === id) renderProperty(property);
+    }
   }, 0);
 }
 
@@ -5612,7 +5632,11 @@ async function backToPortfolio() {
       prop.status       = openCount > 0      ? 'disputes'
                         : lastResults.length ? 'reconciled'
                         : 'in-progress';
-      // Fire-and-forget the DB write — don't block the UI
+      // Cancel any pending debounce timer — we're saving now
+      clearTimeout(_saveDebounceTimer);
+      // Always flush to localStorage synchronously before navigating away
+      _lsSave(prop);
+      // Fire-and-forget the DB write
       saveProperty(prop);
     }
   }
@@ -6031,16 +6055,28 @@ async function savePropertyData() {
   _saveDebounceTimer = setTimeout(() => saveProperty(prop), 800);
 }
 
-// Fetch a single property's full data — Supabase first, localStorage fallback.
+// Fetch a single property's full data.
+// Returns the richer of the two sources — DB or localStorage — measured by tenant count.
+// This prevents a timed-out DB write from making the old (empty) DB record win over
+// the localStorage snapshot that was written before the timeout.
 async function loadPropertyData(id) {
+  let dbData  = null;
+  let lsData  = _lsLoad(id);
+
   try {
     const { data, error } = await db.from('properties').select('*').eq('id', id).single();
-    if (error) throw error;
-    if (!data) return _lsLoad(id);
-    return { id: data.id, name: data.name, totalSqft: data.sqft || 0, ...(data.data || {}) };
-  } catch (e) {
-    return _lsLoad(id);
-  }
+    if (!error && data) {
+      dbData = { id: data.id, name: data.name, totalSqft: data.sqft || 0, ...(data.data || {}) };
+    }
+  } catch (e) { /* offline or error — fall through to localStorage */ }
+
+  if (!dbData) return lsData;
+  if (!lsData) return dbData;
+
+  // Both exist — use whichever has more tenants (richer state)
+  const dbCount = (dbData.tenants  || []).length;
+  const lsCount = (lsData.tenants  || []).length;
+  return lsCount > dbCount ? lsData : dbData;
 }
 
 // Restore a property's saved state into working arrays and render the detail view.
