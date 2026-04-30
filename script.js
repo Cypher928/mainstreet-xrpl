@@ -814,7 +814,7 @@ async function runOcrSpaceOCR(file) {
   formData.append('isOverlayRequired', 'false');
   const res = await fetch('https://api.ocr.space/parse/image', {
     method: 'POST',
-    headers: { apikey: 'helloworld' },
+    headers: { apikey: 'K82881310188957' },
     body: formData,
   });
   const data = await res.json();
