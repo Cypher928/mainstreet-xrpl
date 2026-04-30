@@ -1873,24 +1873,26 @@ async function handleBulkLeases(fileList) {
     // Numeric confidence score
     let confidenceScore = 0;
     if (norm) {
+      const hasTenant = !!norm.tenant_name && norm.tenant_name.trim().length > 0;
       if (hasStrongName)      confidenceScore += 2;
+      else if (hasTenant)     confidenceScore += 1; // weak name still counts
       if (norm.start_date)    confidenceScore += 1;
       if (norm.end_date)      confidenceScore += 1;
       if (norm.leased_sqft)   confidenceScore += 1;
-      if (norm._usedFallback) confidenceScore -= 1; // regex dates less reliable than Claude's
+      if (norm._usedFallback) confidenceScore -= 1;
     }
     const isValidExtraction = confidenceScore >= 4; // ✅ full confidence
-    const needsReview       = confidenceScore >= 2 && confidenceScore < 4; // ⚠️ partial
-    const isFail            = confidenceScore < 2;  // ❌ reject
+    const needsReview       = confidenceScore >= 1 && confidenceScore < 4; // ⚠️ partial
+    const isFail            = confidenceScore < 1;  // ❌ truly nothing extracted
     const isValid           = !isFail;
 
-    const hasName      = isStrongName(norm?.tenant_name ?? '');
-    const hasDates     = norm?.start_date && norm?.end_date;
+    const hasTenant    = !!norm?.tenant_name?.trim();
+    const hasDates     = !!(norm?.start_date || norm?.end_date);
     const hasLeaseType = !!norm?.lease_type;
-    const isEmptyExtraction = !hasName && !hasDates && !norm?.leased_sqft;
+    const isEmptyExtraction = !hasTenant && !hasDates && !norm?.leased_sqft;
 
-    let isPartial   = needsReview || (isValid && !hasLeaseType);
-    let _showRetry  = false;
+    let isPartial  = needsReview || (isValid && !hasLeaseType);
+    let _showRetry = false;
     if (isEmptyExtraction) {
       isPartial  = false;
       _showRetry = true;
@@ -2208,21 +2210,23 @@ async function retryExtractionWithFile(index, file) {
     const hasStrongName = norm ? isStrongName(norm.tenant_name) : false;
     let confidenceScore = 0;
     if (norm) {
+      const hasTenant = !!norm.tenant_name && norm.tenant_name.trim().length > 0;
       if (hasStrongName)      confidenceScore += 2;
+      else if (hasTenant)     confidenceScore += 1; // weak name still counts
       if (norm.start_date)    confidenceScore += 1;
       if (norm.end_date)      confidenceScore += 1;
       if (norm.leased_sqft)   confidenceScore += 1;
       if (norm._usedFallback) confidenceScore -= 1;
     }
     const isValidExtraction = confidenceScore >= 4;
-    const needsReview       = confidenceScore >= 2 && confidenceScore < 4;
-    const isFail            = confidenceScore < 2;
+    const needsReview       = confidenceScore >= 1 && confidenceScore < 4;
+    const isFail            = confidenceScore < 1;
     const isValid           = !isFail;
 
-    const hasName      = isStrongName(norm?.tenant_name ?? '');
-    const hasDates     = norm?.start_date && norm?.end_date;
+    const hasTenant    = !!norm?.tenant_name?.trim();
+    const hasDates     = !!(norm?.start_date || norm?.end_date);
     const hasLeaseType = !!norm?.lease_type;
-    const isEmptyExtraction = !hasName && !hasDates && !norm?.leased_sqft;
+    const isEmptyExtraction = !hasTenant && !hasDates && !norm?.leased_sqft;
 
     let isPartial  = needsReview || (isValid && !hasLeaseType);
     let _showRetry = false;
