@@ -806,48 +806,29 @@ async function extractPdfText(file) {
   return pages.join('\n\n');
 }
 
-function fileToBase64(file) {
-  return new Promise((resolve, reject) => {
-    const reader = new FileReader();
-    reader.onload  = () => resolve(reader.result.split(',')[1]);
-    reader.onerror = reject;
-    reader.readAsDataURL(file);
+async function runOcrSpaceOCR(file) {
+  console.log('Using OCR.space...');
+  const formData = new FormData();
+  formData.append('file', file);
+  formData.append('language', 'eng');
+  formData.append('isOverlayRequired', 'false');
+  const res = await fetch('https://api.ocr.space/parse/image', {
+    method: 'POST',
+    headers: { apikey: 'helloworld' },
+    body: formData,
   });
+  const data = await res.json();
+  const text = data?.ParsedResults?.[0]?.ParsedText || '';
+  console.log('OCR.space RESULT:', text.slice(0, 500));
+  return text;
 }
 
-async function runGoogleVisionOCR(file) {
-  try {
-    const base64 = await fileToBase64(file);
-    const res = await fetch(
-      'https://vision.googleapis.com/v1/images:annotate?key=AIzaSyCK835EEsNAzLs2UyoqI6Ow5gIPC2JVGMQ',
-      {
-        method:  'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({
-          requests: [{
-            image:    { content: base64 },
-            features: [{ type: 'DOCUMENT_TEXT_DETECTION' }],
-          }],
-        }),
-      }
-    );
-    const data = await res.json();
-    const text = data.responses?.[0]?.fullTextAnnotation?.text || '';
-    console.log('OCR RESULT:', text.slice(0, 500));
-    return text;
-  } catch (err) {
-    console.error('[runGoogleVisionOCR] failed:', err);
-    return '';
-  }
-}
-
-// Extracts text from a PDF (or plain-text file). Falls back to Google
-// Vision OCR when the PDF has no text layer (scanned documents).
+// Extracts text from a PDF (or plain-text file). Falls back to OCR.space
+// when the PDF has no text layer (scanned documents).
 async function extractLeaseText(file) {
   let text = await extractPdfText(file);
   if (!text || text.length < 300) {
-    console.log('Using Google Vision OCR...');
-    text = await runGoogleVisionOCR(file);
+    text = await runOcrSpaceOCR(file);
   }
   return text;
 }
@@ -1845,7 +1826,12 @@ async function handleBulkLeases(fileList) {
     let leaseText = null;
     try {
       leaseText = await extractLeaseText(file);
-      extracted = await callClaudeForLease(leaseText);
+      if (!leaseText || leaseText.trim().length < 50) {
+        console.warn('No usable OCR text');
+        extracted = { extractionFailed: true, reason: 'OCR returned no usable text' };
+      } else {
+        extracted = await callClaudeForLease(leaseText);
+      }
     } catch (err) {
       console.error('[handleBulkLeases] extraction failed:', file.name, err);
     }
@@ -2179,7 +2165,12 @@ async function retryExtractionWithFile(index, file) {
     let extracted = null;
     try {
       leaseText = await extractLeaseText(file);
-      extracted = await callClaudeForLease(leaseText);
+      if (!leaseText || leaseText.trim().length < 50) {
+        console.warn('No usable OCR text');
+        extracted = { extractionFailed: true, reason: 'OCR returned no usable text' };
+      } else {
+        extracted = await callClaudeForLease(leaseText);
+      }
     } catch (err) {
       console.error('[retryExtraction] extraction error:', err);
     }
