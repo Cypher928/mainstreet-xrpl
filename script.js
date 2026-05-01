@@ -3634,6 +3634,11 @@ async function runAllocation() {
   // Show banner if sqFt is over, but do NOT block — surfaced as SQFT_OVERFLOW flag on results
   checkSqftValidation();
 
+  // Flush any pending field edits from tenantData into currentProperty().tenants before reading.
+  // updateTenantField writes to both, but if the ID lookup missed, only tenantData was updated.
+  const _activeProp = currentProperty();
+  if (_activeProp && tenantData.some(t => t !== null)) _activeProp.tenants = tenantData.filter(t => t !== null);
+
   const validTenants = getValidTenants();
 
   // Warn about tenants that exist but are excluded from CAM due to missing sqft
@@ -3872,6 +3877,9 @@ async function runAllocation() {
 
   } catch (err) {
     console.error('[runAllocation] unexpected error:', err);
+    const body = document.getElementById('resultsBody');
+    const section = document.getElementById('results');
+    if (body && section) showErr(body, section, 'Calculation error — please check your data and try again.');
   } finally {
     // Always restore button and release the guard, even on error
     if (runBtn) { runBtn.disabled = false; runBtn.textContent = runBtnOrigText; }
@@ -6034,7 +6042,9 @@ async function savePropertyData() {
 
   if (name) prop.name = name;
   if (sqft) prop.totalSqft = sqft;
-  // property.tenants is the source of truth — always current; no snapshot from tenantData needed
+  // tenantData is the live working buffer; always sync it to prop.tenants before saving
+  // so any field edit (even if prop.tenants wasn't updated) is captured.
+  if (tenantData.some(t => t !== null)) prop.tenants = tenantData.filter(t => t !== null);
   prop.invoices = Array.from(invoiceData);
   prop.disputes = Array.from(disputes);
   prop.results  = lastResults.length ? {
@@ -6116,6 +6126,10 @@ function renderProperty(property) {
       const tenants = (property.tenants || []).filter(t => t !== null);
       if (tenants.length) {
         property.tenants = tenants.map(normalizeTenant);
+        // Sync tenantData from property.tenants so renderBulkResults and field edits work.
+        // resetWorkflow() clears tenantData on every navigation, so we must repopulate it
+        // here whenever we restore from property.tenants (the else branch = tenantData was empty).
+        tenantData.splice(0, tenantData.length, ...property.tenants);
         switchLeaseTab('bulk');
         renderBulkResults();
         restored = true;
