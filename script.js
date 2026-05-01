@@ -2141,6 +2141,16 @@ function renderBulkResults() {
 
   if (!tenants.length) return;
 
+  // Build a set of tenant names that appear more than once (case-insensitive).
+  // Used to show a "possible duplicate" badge so the user knows to review them.
+  const _nameCount = new Map();
+  tenants.forEach(t => {
+    if (!t.tenant_name) return;
+    const key = t.tenant_name.trim().toLowerCase();
+    _nameCount.set(key, (_nameCount.get(key) || 0) + 1);
+  });
+  const _dupNames = new Set([..._nameCount.entries()].filter(([, n]) => n > 1).map(([k]) => k));
+
   const rows = tenants.map((d, i) => {
     if (!d) return '';
     const sqft      = d.leased_sqft  || null;
@@ -2155,6 +2165,7 @@ function renderBulkResults() {
       ? d.tenant_name
       : '(unknown — click to edit)';
     const isWeakName  = d.tenant_name ? !isStrongName(d.tenant_name) : false;
+    const isDupName   = d.tenant_name ? _dupNames.has(d.tenant_name.trim().toLowerCase()) : false;
 
     const icon = d.extractionFailed ? '❌' : showWarning ? '⚠️' : d.tenant_name ? '✓' : '?';
     const meta = d.extractionFailed
@@ -2168,12 +2179,16 @@ function renderBulkResults() {
             leaseType !== null && leaseType !== '' ? leaseType         : '—',
           ].join(' · ');
 
+    const dupBadge = isDupName
+      ? `<span style="font-size:0.72rem;background:#78350f40;border:1px solid #f59e0b;color:#fbbf24;border-radius:4px;padding:1px 6px;margin-left:6px;white-space:nowrap;">⚠ Duplicate name — add unit # or remove one</span>`
+      : '';
+
     return `
       <div class="bulk-tenant-row${d.extractionFailed ? ' has-error' : showWarning ? ' has-warning' : ''}" id="btr-${i}">
         <div class="bulk-tenant-summary" onclick="toggleBulkDetail(${i})">
           <span class="bulk-t-status">${icon}</span>
           <div class="bulk-t-info" id="binfo-${i}">
-            <div class="tenant-title"${isWeakName ? ' style="opacity:0.6;font-style:italic;"' : ''}>${esc(displayName)}</div>
+            <div class="tenant-title"${isWeakName ? ' style="opacity:0.6;font-style:italic;"' : ''}>${esc(displayName)}${dupBadge}</div>
             <div class="tenant-meta" id="bmeta-${i}">${esc(meta)}</div>
           </div>
           <span class="bulk-t-chevron" id="bchev-${i}">&#x25BC; Edit</span>
@@ -3619,6 +3634,12 @@ async function runAllocation() {
   const runBtnOrigText = runBtn ? runBtn.textContent : '';
   if (runBtn) { runBtn.disabled = true; runBtn.textContent = 'Running…'; }
 
+  // Commit any in-progress field edit before reading data — if the user typed
+  // a new value and clicked Run without clicking away, onblur hasn't fired yet.
+  if (document.activeElement && document.activeElement !== document.body) {
+    document.activeElement.blur();
+  }
+
   try {
 
   const propName  = document.getElementById('propertyName').value.trim() || 'Property';
@@ -3641,18 +3662,18 @@ async function runAllocation() {
 
   const validTenants = getValidTenants();
 
+  // Clear any warnings left over from a previous run before recomputing them.
+  section.querySelectorAll('.cam-sqft-warning, .cam-skip-warning').forEach(el => el.remove());
+
   // Warn about tenants that exist but are excluded from CAM due to missing sqft
   const allNamedTenants = (currentProperty()?.tenants || []).filter(t => t && t.tenant_name);
   const missingSquare   = allNamedTenants.filter(t => parseSqft(t.leased_sqft) <= 0);
   if (missingSquare.length > 0 && validTenants.length > 0) {
-    const existingWarn = section.querySelector('.cam-sqft-warning');
-    if (!existingWarn) {
-      const warn = document.createElement('div');
-      warn.className = 'cam-sqft-warning';
-      warn.style.cssText = 'background:#7c2d1220;border:1px solid #f97316;color:#fb923c;padding:10px 14px;border-radius:8px;margin-bottom:14px;font-size:0.85rem;';
-      warn.textContent = `⚠️ ${missingSquare.length} tenant${missingSquare.length > 1 ? 's' : ''} excluded from CAM — missing Leased Sqft: ${missingSquare.map(t => t.tenant_name).join(', ')}. Edit those tenants in Section 2 and re-run to include them.`;
-      section.prepend(warn);
-    }
+    const warn = document.createElement('div');
+    warn.className = 'cam-sqft-warning';
+    warn.style.cssText = 'background:#7c2d1220;border:1px solid #f97316;color:#fb923c;padding:10px 14px;border-radius:8px;margin-bottom:14px;font-size:0.85rem;';
+    warn.textContent = `⚠️ ${missingSquare.length} tenant${missingSquare.length > 1 ? 's' : ''} excluded from CAM — missing Leased Sqft: ${missingSquare.map(t => t.tenant_name).join(', ')}. Edit those tenants in Section 2 and re-run to include them.`;
+    section.prepend(warn);
   }
 
   const tenants = validTenants.map(t => ({
@@ -3692,14 +3713,11 @@ async function runAllocation() {
 
   // Warn if invoices are being excluded due to missing amounts
   if (skippedCount > 0) {
-    const existingWarn = section.querySelector('.cam-skip-warning');
-    if (!existingWarn) {
-      const warn = document.createElement('div');
-      warn.className = 'cam-skip-warning';
-      warn.style.cssText = 'background:#7c3a0020;border:1px solid #f59e0b;color:#fbbf24;padding:10px 14px;border-radius:8px;margin-bottom:14px;font-size:0.85rem;';
-      warn.textContent = `⚠️ ${skippedCount} invoice${skippedCount > 1 ? 's' : ''} with no amount were excluded from this calculation. Open each invoice in Section 3 and enter the missing amount to include them.`;
-      section.prepend(warn);
-    }
+    const warn = document.createElement('div');
+    warn.className = 'cam-skip-warning';
+    warn.style.cssText = 'background:#7c3a0020;border:1px solid #f59e0b;color:#fbbf24;padding:10px 14px;border-radius:8px;margin-bottom:14px;font-size:0.85rem;';
+    warn.textContent = `⚠️ ${skippedCount} invoice${skippedCount > 1 ? 's' : ''} with no amount were excluded from this calculation. Open each invoice in Section 3 and enter the missing amount to include them.`;
+    section.prepend(warn);
   }
 
   const results   = runCAMAllocation(invoices, tenants);
