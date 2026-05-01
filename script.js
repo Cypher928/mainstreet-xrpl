@@ -3385,7 +3385,6 @@ function parseSqft(v) {
 }
 
 function showAllocationModal() {
-  if (sqftMismatch) return;
   const totalSqft = parseFloat(document.getElementById('totalSqft').value);
   const tenants   = tenantData.filter(t => t && t.tenantName && parseSqft(t.leasedSqft) > 0);
   const invoices  = invoiceData.filter(inv => inv && inv.vendorName && parseFloat(inv.amount) > 0);
@@ -3795,21 +3794,16 @@ async function runAllocation() {
   </div>
   ${sqftExceedsProperty ? `
   <div class="sqft-mismatch-banner">
-    <div class="smb-title">&#x26A0; Calculation paused — fix required</div>
+    <div class="smb-title">&#x26A0;&#xFE0F; Sqft mismatch — results may be inaccurate</div>
     <div class="smb-body">
       Your leases total <strong>${totalLeasedSqft.toLocaleString()} sqft</strong>, but the property is set to <strong>${totalSqft.toLocaleString()} sqft</strong>.<br><br>
-      This usually means:<br>
-      &bull; Additional leases were added<br>
-      &bull; Duplicate or overlapping leases exist<br>
-      &bull; Property square footage needs updating<br><br>
-      Please resolve this before continuing.
+      Pro-rata shares are calculated using mismatched data. You can fix this now or continue reviewing results.
     </div>
     <div class="smb-actions">
-      <button class="smb-btn" onclick="document.getElementById('totalSqft')?.scrollIntoView({behavior:'smooth',block:'center'})">Update Property Sqft</button>
-      <button class="smb-btn" onclick="document.getElementById('tenantSlots')?.scrollIntoView({behavior:'smooth',block:'start'})">Review Leases</button>
+      <button class="smb-btn" onclick="fixSqftToMatch(${totalLeasedSqft})">Use Lease Total (${totalLeasedSqft.toLocaleString()} sqft)</button>
+      <button class="smb-btn smb-btn-primary" onclick="rerunAfterWarning()">Run Anyway</button>
     </div>
   </div>
-  <div class="invalid-data-badge">&#x26A0; Invalid data — calculations paused</div>
   ` : ''}`;
 
   fullResults.forEach(r => {
@@ -3936,7 +3930,7 @@ async function runAllocation() {
       ${flagsSection}
       ${leaseBtn}
       ${invBreakdown}
-      <button class="explain-btn${sqftExceedsProperty ? ' sqft-blocked' : ''}" title="${sqftExceedsProperty ? 'Fix square footage mismatch to view calculation' : ''}" onclick="${sqftExceedsProperty ? 'void(0)' : `openExplainPanel('${esc(r.name)}')`}">&#x1F4CA; View Calculation</button>
+      <button class="explain-btn" onclick="openExplainPanel('${esc(r.name)}')">&#x1F4CA; View Calculation</button>
     </div>`;
   });
 
@@ -4476,15 +4470,21 @@ let isRunning      = false; // guard against concurrent runAllocation() calls
 
 function applySqftMismatchUI(mismatch) {
   sqftMismatch = mismatch;
-  const ids = ['runBtn'];
-  ids.forEach(id => {
-    const el = document.getElementById(id);
-    if (!el) return;
-    el.classList.toggle('sqft-blocked', mismatch);
-  });
-  document.querySelectorAll('.report-btn').forEach(btn => {
-    btn.classList.toggle('sqft-blocked', mismatch);
-  });
+}
+
+function fixSqftToMatch(leaseTotalSqft) {
+  const sqftInput = document.getElementById('totalSqft');
+  if (sqftInput) {
+    sqftInput.value = leaseTotalSqft;
+    updatePropertySqft(leaseTotalSqft);
+  }
+  showToast(`Property sqft updated to ${Number(leaseTotalSqft).toLocaleString()} sqft`);
+  rerunAfterWarning();
+}
+
+function rerunAfterWarning() {
+  document.querySelectorAll('.sqft-mismatch-banner').forEach(el => el.remove());
+  setTimeout(() => runAllocation(), 50);
 }
 let lastPropName = '';
 let lastTotal    = 0;
@@ -4855,7 +4855,6 @@ function showReportSection() {
 }
 
 function guardedMasterReport() {
-  if (sqftMismatch) return;
   if (!lastResults.length) {
     const msg = document.getElementById('reportsMsg');
     msg.style.display = 'block';
@@ -4867,7 +4866,6 @@ function guardedMasterReport() {
 }
 
 function guardedTenantStatement() {
-  if (sqftMismatch) return;
   if (!lastResults.length) {
     const msg = document.getElementById('reportsMsg');
     msg.style.display = 'block';
@@ -4889,7 +4887,6 @@ function guardedTenantStatement() {
 // ─── Monthly Holes Report ─────────────────────────────────────────────────────
 
 function generateHolesReport() {
-  if (sqftMismatch) return;
   const propName = document.getElementById('propertyName').value.trim() || 'Property';
   const now      = new Date().toLocaleDateString('en-US', { year:'numeric', month:'long', day:'numeric' });
   const month    = new Date().toLocaleDateString('en-US', { year:'numeric', month:'long' });
