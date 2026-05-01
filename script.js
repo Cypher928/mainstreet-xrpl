@@ -2186,7 +2186,7 @@ function renderBulkResults() {
     return `
       <div class="bulk-tenant-row${d.extractionFailed ? ' has-error' : showWarning ? ' has-warning' : ''}" id="btr-${i}">
         <div class="bulk-tenant-summary" onclick="toggleBulkDetail(${i})">
-          <span class="bulk-t-status">${icon}</span>
+          <span class="bulk-t-status" id="bstatus-${i}">${icon}</span>
           <div class="bulk-t-info" id="binfo-${i}">
             <div class="tenant-title" id="bname-${i}"${isWeakName ? ' style="opacity:0.6;font-style:italic;"' : ''}>${esc(displayName)}${dupBadge}</div>
             <div class="tenant-meta" id="bmeta-${i}">${esc(meta)}</div>
@@ -2253,6 +2253,9 @@ function renderBulkResults() {
                 onblur="handleFieldBlur(${i},'excluded_categories',this.value)"/>
             </div>
           </div>
+          <div style="display:flex;justify-content:flex-end;padding-top:10px;">
+            <button class="bulk-done-btn" id="bdone-${i}" onclick="saveBulkTenant(${i})">Done ✓</button>
+          </div>
         </div>
       </div>`;
   }).join('');
@@ -2271,6 +2274,55 @@ function toggleBulkDetail(i) {
   const open = det.style.display === 'block';
   det.style.display  = open ? 'none' : 'block';
   chev.innerHTML     = open ? '&#x25BC; Edit' : '&#x25B2; Close';
+}
+
+function saveBulkTenant(i) {
+  // Commit any in-progress field edit before reading
+  if (document.activeElement && document.activeElement !== document.body) {
+    document.activeElement.blur();
+  }
+
+  const d   = tenantData[i];
+  const row = document.getElementById(`btr-${i}`);
+
+  // If tenant now has a name and sqft, clear the needs-review state
+  if (d && d._needsReview && d.tenant_name && parseSqft(d.leased_sqft) > 0) {
+    d._needsReview = false;
+    if (row) {
+      row.classList.remove('has-warning', 'has-error');
+      // Update status icon to ✓
+      const statusEl = document.getElementById(`bstatus-${i}`);
+      if (statusEl) statusEl.textContent = '✓';
+    }
+  }
+
+  // Refresh the card header (name, meta line)
+  refreshBulkSummary(i);
+
+  // Success flash
+  if (row) {
+    row.classList.add('lease-save-flash');
+    setTimeout(() => row.classList.remove('lease-save-flash'), 800);
+  }
+
+  // Button feedback: "Done ✓" → "Saved ✓" briefly
+  const btn = document.getElementById(`bdone-${i}`);
+  if (btn) {
+    btn.textContent = 'Saved ✓';
+    btn.disabled = true;
+  }
+
+  // Collapse after a short pause so user sees the flash
+  setTimeout(() => {
+    const det  = document.getElementById(`bdet-${i}`);
+    const chev = document.getElementById(`bchev-${i}`);
+    if (det)  { det.style.display = 'none'; }
+    if (chev) { chev.innerHTML = '&#x25BC; Edit'; }
+    // Reset Done button for if they reopen
+    if (btn) { btn.textContent = 'Done ✓'; btn.disabled = false; }
+  }, 550);
+
+  showToast('Lease updated');
 }
 
 function refreshBulkSummary(i) {
