@@ -3652,7 +3652,7 @@ async function runAllocation() {
   // Loading state
   const runBtn = document.getElementById('runBtn');
   const runBtnOrigText = runBtn ? runBtn.textContent : '';
-  if (runBtn) { runBtn.disabled = true; runBtn.textContent = 'Running…'; }
+  if (runBtn) { runBtn.disabled = true; runBtn.textContent = 'Running…'; runBtn.style.opacity = '0.7'; }
 
   // Commit any in-progress field edit before reading data — if the user typed
   // a new value and clicked Run without clicking away, onblur hasn't fired yet.
@@ -3936,6 +3936,7 @@ async function runAllocation() {
 
   body.innerHTML = html;
   section.style.display = 'block';
+  animateCAMResults(body, section);
 
   // Save to previous runs history
   camRuns.unshift({
@@ -3968,27 +3969,68 @@ async function runAllocation() {
     if (body && section) showErr(body, section, 'Calculation error — please check your data and try again.');
   } finally {
     // Always restore button and release the guard, even on error
-    if (runBtn) { runBtn.disabled = false; runBtn.textContent = runBtnOrigText; }
+    if (runBtn) { runBtn.disabled = false; runBtn.textContent = runBtnOrigText; runBtn.style.opacity = '1'; }
     isRunning = false;
   }
 }
 
 // Generic toast: bg defaults to green success, pass a hex color for other tones.
 function showToast(msg, { color = '#166534', textColor = '#bbf7d0', duration = 3000 } = {}) {
-  const id = '_genericToast_' + Math.random().toString(36).slice(2);
   const toast = document.createElement('div');
-  toast.id = id;
   Object.assign(toast.style, {
-    position: 'fixed', bottom: '28px', left: '50%', transform: 'translateX(-50%)',
+    position: 'fixed', bottom: '28px', left: '50%',
+    transform: 'translateX(-50%) translateY(12px)',
+    opacity: '0',
     background: color, color: textColor, padding: '10px 22px',
     borderRadius: '8px', fontWeight: '600', fontSize: '0.9rem',
     boxShadow: '0 4px 20px rgba(0,0,0,0.4)', zIndex: '99999',
-    transition: 'opacity 0.4s', opacity: '1', pointerEvents: 'none', maxWidth: '90vw', textAlign: 'center',
+    transition: 'opacity 0.28s ease, transform 0.28s ease',
+    pointerEvents: 'none', maxWidth: '90vw', textAlign: 'center',
   });
   toast.textContent = msg;
   document.body.appendChild(toast);
-  setTimeout(() => { toast.style.opacity = '0'; }, duration - 400);
+  requestAnimationFrame(() => {
+    toast.style.transform = 'translateX(-50%) translateY(0)';
+    toast.style.opacity = '1';
+  });
+  setTimeout(() => {
+    toast.style.opacity = '0';
+    toast.style.transform = 'translateX(-50%) translateY(10px)';
+  }, duration - 350);
   setTimeout(() => { toast.remove(); }, duration);
+}
+
+function animateCAMResults(body, section) {
+  // Slide the whole results section up from slightly below
+  section.style.opacity = '0';
+  section.style.transform = 'translateY(8px)';
+  requestAnimationFrame(() => requestAnimationFrame(() => {
+    section.style.transition = 'opacity 0.32s ease, transform 0.32s ease';
+    section.style.opacity = '1';
+    section.style.transform = 'translateY(0)';
+    setTimeout(() => { section.style.transition = ''; section.style.transform = ''; }, 400);
+  }));
+
+  // Stagger each tenant card in, then pop the total amount
+  const cards = body.querySelectorAll('.result-card');
+  cards.forEach((card, i) => {
+    card.style.opacity = '0';
+    card.style.transform = 'translateY(12px)';
+    setTimeout(() => {
+      card.style.transition = 'opacity 0.3s ease, transform 0.3s ease';
+      card.style.opacity = '1';
+      card.style.transform = 'translateY(0)';
+      // Money pop: bounce the "Total" stat value once the card appears
+      const totalEl = card.querySelector('.result-stat:first-child .stat-value');
+      if (totalEl) {
+        setTimeout(() => {
+          totalEl.style.transition = 'transform 0.22s cubic-bezier(0.34,1.56,0.64,1)';
+          totalEl.style.transform = 'scale(1.08)';
+          setTimeout(() => { totalEl.style.transform = 'scale(1)'; }, 200);
+        }, 120);
+      }
+    }, i * 80);
+  });
 }
 
 function showRunCompleteToast() {
@@ -3998,15 +4040,25 @@ function showRunCompleteToast() {
   toast.id = 'camCompleteToast';
   toast.textContent = '✓ CAM Reconciliation Complete';
   Object.assign(toast.style, {
-    position: 'fixed', bottom: '28px', left: '50%', transform: 'translateX(-50%)',
+    position: 'fixed', bottom: '28px', left: '50%',
+    transform: 'translateX(-50%) translateY(12px)',
+    opacity: '0',
     background: '#166534', color: '#bbf7d0', padding: '10px 22px',
     borderRadius: '8px', fontWeight: '600', fontSize: '0.9rem',
     boxShadow: '0 4px 20px rgba(0,0,0,0.4)', zIndex: '99999',
-    transition: 'opacity 0.4s', opacity: '1', pointerEvents: 'none',
+    transition: 'opacity 0.28s ease, transform 0.28s ease',
+    pointerEvents: 'none',
   });
   document.body.appendChild(toast);
-  setTimeout(() => { toast.style.opacity = '0'; }, 2800);
-  setTimeout(() => { toast.remove(); }, 3300);
+  requestAnimationFrame(() => {
+    toast.style.transform = 'translateX(-50%) translateY(0)';
+    toast.style.opacity = '1';
+  });
+  setTimeout(() => {
+    toast.style.opacity = '0';
+    toast.style.transform = 'translateX(-50%) translateY(10px)';
+  }, 2650);
+  setTimeout(() => { toast.remove(); }, 3100);
 }
 
 // ─── Step Progress Bar ────────────────────────────────────────────────────────

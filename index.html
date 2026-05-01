@@ -290,6 +290,7 @@
     }
     #runBtn:hover { opacity: 0.92; box-shadow: 0 8px 28px rgba(201,151,58,0.5); }
     #runBtn:active { transform: scale(0.99); }
+    button:active { transform: scale(0.97); transition: transform 0.08s ease; }
     #runBtn.sqft-blocked, .report-btn.sqft-blocked {
       opacity: 0.4; cursor: not-allowed; pointer-events: none;
     }
@@ -309,18 +310,14 @@
     .smb-btn {
       padding: 6px 14px; border-radius: 7px; border: 1px solid rgba(148,163,184,0.3);
       background: rgba(255,255,255,0.06); color: #cbd5e1;
-      font-size: 0.78rem; cursor: pointer;
+      font-size: 0.78rem; cursor: pointer; transition: all 0.15s;
     }
     .smb-btn:hover { background: rgba(255,255,255,0.1); }
-    .invalid-data-badge {
-      display: inline-block; background: rgba(239,68,68,0.15);
-      border: 1px solid rgba(239,68,68,0.35); color: #f87171;
-      font-size: 0.72rem; font-weight: 600; border-radius: 5px;
-      padding: 3px 8px; margin-bottom: 10px;
+    .smb-btn-primary {
+      background: rgba(201,151,58,0.18); border-color: rgba(201,151,58,0.5);
+      color: #E4B15C; font-weight: 600;
     }
-    .explain-btn.sqft-blocked {
-      opacity: 0.4; cursor: not-allowed; pointer-events: none;
-    }
+    .smb-btn-primary:hover { background: rgba(201,151,58,0.28); }
 
     /* Results */
     #results { display: none; }
@@ -348,6 +345,10 @@
       font-family: 'DM Mono', monospace; margin-bottom: 5px;
     }
     .result-stat .stat-value { font-size: 1.05rem; font-weight: 700; color: #E2E8F0; }
+    .result-stat:first-child .stat-value {
+      color: #E4B15C;
+      text-shadow: 0 0 12px rgba(201,151,58,0.28);
+    }
     .cap-badge {
       display: inline-block; margin-top: 10px; padding: 4px 10px;
       background: rgba(201,151,58,0.15); color: #E4B15C; font-size: 0.76rem; font-weight: 600;
