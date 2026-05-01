@@ -2128,6 +2128,7 @@ function updateTenantField(index, field, value) {
 function handleFieldBlur(index, field, value) {
   isEditingField = false;
   updateTenantField(index, field, value);
+  savePropertyData(); // debounced — collapses rapid edits into one write
 }
 
 function renderBulkResults() {
@@ -2188,7 +2189,7 @@ function renderBulkResults() {
         <div class="bulk-tenant-summary" onclick="toggleBulkDetail(${i})">
           <span class="bulk-t-status">${icon}</span>
           <div class="bulk-t-info" id="binfo-${i}">
-            <div class="tenant-title"${isWeakName ? ' style="opacity:0.6;font-style:italic;"' : ''}>${esc(displayName)}${dupBadge}</div>
+            <div class="tenant-title" id="bname-${i}"${isWeakName ? ' style="opacity:0.6;font-style:italic;"' : ''}>${esc(displayName)}${dupBadge}</div>
             <div class="tenant-meta" id="bmeta-${i}">${esc(meta)}</div>
           </div>
           <span class="bulk-t-chevron" id="bchev-${i}">&#x25BC; Edit</span>
@@ -2278,7 +2279,28 @@ function refreshBulkSummary(i) {
   if (!d) return;
   const nameEl = document.getElementById(`bname-${i}`);
   const metaEl = document.getElementById(`bmeta-${i}`);
-  if (nameEl) nameEl.textContent = d.tenant_name || '(unknown — click to edit)';
+
+  if (nameEl) {
+    const displayName = d.tenant_name?.trim() || '(unknown — click to edit)';
+    const isWeakName  = d.tenant_name ? !isStrongName(d.tenant_name) : false;
+
+    // Recompute duplicate badge from current tenantData
+    const _nc = new Map();
+    tenantData.forEach(t => {
+      if (!t?.tenant_name) return;
+      const k = t.tenant_name.trim().toLowerCase();
+      _nc.set(k, (_nc.get(k) || 0) + 1);
+    });
+    const isDup = d.tenant_name ? (_nc.get(d.tenant_name.trim().toLowerCase()) || 0) > 1 : false;
+    const dupBadge = isDup
+      ? `<span style="font-size:0.72rem;background:#78350f40;border:1px solid #f59e0b;color:#fbbf24;border-radius:4px;padding:1px 6px;margin-left:6px;white-space:nowrap;">⚠ Duplicate name — add unit # or remove one</span>`
+      : '';
+
+    nameEl.style.opacity     = isWeakName ? '0.6' : '';
+    nameEl.style.fontStyle   = isWeakName ? 'italic' : '';
+    nameEl.innerHTML = esc(displayName) + dupBadge;
+  }
+
   if (metaEl) {
     metaEl.textContent = [
       d.leased_sqft ? `${d.leased_sqft} sqft` : null,
