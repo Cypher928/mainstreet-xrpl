@@ -3907,7 +3907,9 @@ async function runAllocation() {
 
   renderDisputeSection();
   showReportSection(); // refresh notice + tenant buttons
-  await syncPortfolioEntry();
+  // Fire-and-forget — only updates portfolio card stats; a Supabase hang here
+  // must not hold the button in "Running…" after results are already on screen.
+  syncPortfolioEntry().catch(() => {});
   await savePropertyData(); // persist CAM allocation results to Supabase
   updateStepBar('review');
 
