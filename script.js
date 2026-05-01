@@ -2320,8 +2320,6 @@ function saveBulkTenant(i) {
     if (chev) { chev.innerHTML = '&#x25BC; Edit'; }
     // Reset Done button for if they reopen
     if (btn) { btn.textContent = 'Done ✓'; btn.disabled = false; }
-    // Auto re-run only if results are already on screen
-    if (lastResults.length > 0) runAllocation();
   }, 550);
 
   showToast('Lease updated');
