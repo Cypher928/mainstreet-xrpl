@@ -2678,26 +2678,26 @@ function renderInvResults() {
             <div class="field" style="flex:2;">
               <label>Vendor ${confidenceBadge(conf.vendorName)}</label>
               <input id="ifield-${i}-vendorName" type="text" value="${esc(cleanHTML(d.vendorName))}"
-                oninput="invoiceData[${i}].vendorName=this.value;markFieldVerified(${i},'vendorName');refreshInvSummary(${i})"/>
+                oninput="invoiceData[${i}].vendorName=this.value;markFieldVerified(${i},'vendorName');refreshInvSummary(${i});savePropertyData()"/>
               <span id="ibadgeWrap-${i}-vendorName">${vVendor}</span>
             </div>
             <div class="field">
               <label>Amount ($) ${confidenceBadge(conf.amount)}</label>
               <input id="ifield-${i}-amount" type="number" value="${esc(d.amount)}"
-                oninput="invoiceData[${i}].amount=parseFloat(this.value)||'';markFieldVerified(${i},'amount');refreshInvSummary(${i})"/>
+                oninput="invoiceData[${i}].amount=parseFloat(this.value)||'';markFieldVerified(${i},'amount');refreshInvSummary(${i});savePropertyData()"/>
               <span id="ibadgeWrap-${i}-amount">${vAmount}</span>
             </div>
           </div>
           <div class="field-row">
             <div class="field">
               <label>Category ${confidenceBadge(conf.category)}</label>
-              <select id="ifield-${i}-category" onchange="invoiceData[${i}].category=this.value;markFieldVerified(${i},'category');refreshInvSummary(${i})">${opts}</select>
+              <select id="ifield-${i}-category" onchange="invoiceData[${i}].category=this.value;markFieldVerified(${i},'category');refreshInvSummary(${i});savePropertyData()">${opts}</select>
               <span id="ibadgeWrap-${i}-category">${vCategory}</span>
             </div>
             <div class="field">
               <label>Invoice Date ${confidenceBadge(conf.invoiceDate)}</label>
               <input id="ifield-${i}-invoiceDate" type="text" value="${esc(cleanHTML(d.invoiceDate))}"
-                oninput="invoiceData[${i}].invoiceDate=this.value;markFieldVerified(${i},'invoiceDate');recomputeSummaryBadge(${i})"/>
+                oninput="invoiceData[${i}].invoiceDate=this.value;markFieldVerified(${i},'invoiceDate');recomputeSummaryBadge(${i});savePropertyData()"/>
               <span id="ibadgeWrap-${i}-invoiceDate">${vDate}</span>
             </div>
           </div>
