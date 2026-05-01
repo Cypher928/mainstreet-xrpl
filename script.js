@@ -101,7 +101,6 @@ async function submitAuth(event) {
     const msg = 'Network error — please check your connection and try again.';
     msgEl.className   = 'login-msg error';
     msgEl.textContent = msg;
-    alert(msg);
     btn.disabled      = false;
     btn.textContent   = _authMode === 'signup' ? 'Create Account' : 'Sign In';
     return;
@@ -110,8 +109,8 @@ async function submitAuth(event) {
   if (error) {
     console.error('[Mainstreet] Auth error:', error);
     msgEl.className   = 'login-msg error';
-    msgEl.textContent = error.message;
-    alert(error.message);
+    msgEl.textContent = error.message || 'Sign-in failed — please check your credentials and try again.';
+    // No alert — the inline message is sufficient
     btn.disabled      = false;
     btn.textContent   = _authMode === 'signup' ? 'Create Account' : 'Sign In';
   } else if (_authMode === 'signup') {
@@ -1428,7 +1427,7 @@ function renderTenantFields(i) {
       ${d.leaseExpected
         ? (d.leaseFile instanceof File || d.lease_url)
           ? `<button class="action-btn" onclick="openLeaseModalFromFile(${i})">&#x1F4C4; View Lease</button>`
-          : `<div class="lease-missing-note">Lease document not loaded — please re-upload to view</div>`
+          : `<div class="lease-missing-note">⚠️ Lease not attached — using manual data</div>`
         : ''}
       <div class="field-row">
         <div class="field">
@@ -2927,7 +2926,7 @@ async function submitInvDispute(i) {
   inv._disputeReason = reason;
   await savePropertyData();
   renderInvResults();
-  alert('Dispute submitted successfully. Your landlord will review it.');
+  showToast('✓ Dispute submitted — your landlord will review it.');
 }
 
 function refreshInvSummary(i) {
@@ -3922,7 +3921,7 @@ async function runAllocation() {
     const leaseBtn = _td?.leaseExpected
       ? (_td.leaseFile instanceof File || _td.lease_url)
         ? `<button class="action-btn" onclick="openLeaseModalFromFile(${tdIdx})">&#x1F4C4; View Lease</button>`
-        : `<div class="lease-missing-note">Lease document not loaded — please re-upload to view</div>`
+        : `<div class="lease-missing-note">⚠️ Lease not attached — using manual data</div>`
       : '';
 
     html += `<div class="result-card${flags.length ? ' result-card--flagged' : ''}">
@@ -3931,7 +3930,7 @@ async function runAllocation() {
         ${stat('Total', fmt(r.allocatedAmount))}
         ${stat('Pro-Rata', (r.proRata * 100).toFixed(2) + '%')}
         ${confStat}
-        ${stat('Invoices', r.eligibleCount + ' of ' + invoices.length)}
+        ${stat('Included', r.eligibleCount + ' of ' + invoices.length)}
       </div>
       ${r.capApplied ? `<div class="cap-badge">Cap applied — ${fmt(r.capAdjustment)} reduced</div>` : ''}
       ${flagsSection}
@@ -3978,6 +3977,24 @@ async function runAllocation() {
     if (runBtn) { runBtn.disabled = false; runBtn.textContent = runBtnOrigText; }
     isRunning = false;
   }
+}
+
+// Generic toast: bg defaults to green success, pass a hex color for other tones.
+function showToast(msg, { color = '#166534', textColor = '#bbf7d0', duration = 3000 } = {}) {
+  const id = '_genericToast_' + Math.random().toString(36).slice(2);
+  const toast = document.createElement('div');
+  toast.id = id;
+  Object.assign(toast.style, {
+    position: 'fixed', bottom: '28px', left: '50%', transform: 'translateX(-50%)',
+    background: color, color: textColor, padding: '10px 22px',
+    borderRadius: '8px', fontWeight: '600', fontSize: '0.9rem',
+    boxShadow: '0 4px 20px rgba(0,0,0,0.4)', zIndex: '99999',
+    transition: 'opacity 0.4s', opacity: '1', pointerEvents: 'none', maxWidth: '90vw', textAlign: 'center',
+  });
+  toast.textContent = msg;
+  document.body.appendChild(toast);
+  setTimeout(() => { toast.style.opacity = '0'; }, duration - 400);
+  setTimeout(() => { toast.remove(); }, duration);
 }
 
 function showRunCompleteToast() {
@@ -4537,7 +4554,8 @@ async function tsExplainInvoice(rowId, vendor, category, amount, date) {
     }
     });
   } catch (e) {
-    alert(`Explain error: ${e.message}`);
+    const expl = document.getElementById(`tsexpl-${rowId}`);
+    if (expl) { expl.className = 'inv-explain-box'; expl.innerHTML = '<span style="color:#f87171;">Unable to generate explanation — please try again.</span>'; }
   }
 }
 
@@ -4666,7 +4684,7 @@ async function submitDispute(rowId, tenantName, invoiceId, vendor, category, ten
   await syncPortfolioEntry();
   await savePropertyData(); // persist dispute to Supabase
   updateStepBar('resolve');
-  alert('Dispute submitted successfully. Your landlord will review it.');
+  showToast('✓ Dispute submitted — your landlord will review it.');
 }
 
 // ─── Dispute: Open Disputes List ─────────────────────────────────────────────
@@ -4821,8 +4839,16 @@ function showReportSection() {
 
   let html = '<div style="font-size:0.8rem;color:#64748b;margin-bottom:8px;">Tenant Statements</div>';
   html += '<div class="report-btn-row">';
+  // Count name occurrences so duplicates get sqft disambiguation
+  const _rNameCount = {};
+  lastResults.forEach(r => { _rNameCount[r.name] = (_rNameCount[r.name] || 0) + 1; });
   lastResults.forEach(r => {
-    html += `<button class="tenant-report-btn" onclick="generateTenantStatement('${esc(r.name)}')">${esc(r.name)}</button>`;
+    const isDup = (_rNameCount[r.name] || 0) > 1;
+    const t = lastTenants.find(x => x.name === r.name);
+    const label = isDup && t?.leasedSqft
+      ? `${r.name} (${Number(t.leasedSqft).toLocaleString()} sqft)`
+      : r.name;
+    html += `<button class="tenant-report-btn" onclick="generateTenantStatement('${esc(r.name)}')">${esc(label)}</button>`;
   });
   html += '</div>';
   wrap.innerHTML = html;
@@ -5104,7 +5130,7 @@ function closeReport() {
 }
 
 function generateMasterReport() {
-  if (!lastResults.length) { alert('Calculate CAM Charges first.'); return; }
+  if (!lastResults.length) { showToast('Run a CAM allocation first to generate reports.', { color: '#92400e', textColor: '#fef3c7' }); return; }
 
   const now    = new Date().toLocaleDateString('en-US', { year:'numeric', month:'long', day:'numeric' });
   const period = new Date().getFullYear() + ' CAM Year';
@@ -5300,7 +5326,7 @@ async function runLandlordAIReview() {
 }
 
 function generateTenantStatement(tenantName) {
-  if (!lastResults.length) { alert('Calculate CAM Charges first.'); return; }
+  if (!lastResults.length) { showToast('Run a CAM allocation first to generate reports.', { color: '#92400e', textColor: '#fef3c7' }); return; }
 
   const r = lastResults.find(x => x.name === tenantName);
   const t = lastTenants.find(x => x.name === tenantName);
@@ -6102,16 +6128,18 @@ async function saveProperty(property) {
     if (isTimeout || isSizeErr) {
       // Non-fatal: data is in localStorage. Show a gentle amber notice, not a red alarm.
       toast.style.cssText = 'position:fixed;bottom:20px;left:50%;transform:translateX(-50%);background:#92400e;color:#fef3c7;padding:12px 20px;border-radius:6px;z-index:9999;font-size:13px;box-shadow:0 4px 12px rgba(0,0,0,.3);max-width:90vw;text-align:center;';
-      toast.textContent = '⚠️ Cloud sync slow — data saved locally and will retry automatically.';
+      toast.textContent = '⚠️ Sync delayed — your data is saved locally and will sync automatically.';
       document.body.appendChild(toast);
       setTimeout(() => toast.remove(), 5000);
       // Retry once after a short pause
       setTimeout(() => saveProperty(property), 4000);
     } else {
-      toast.style.cssText = 'position:fixed;bottom:20px;left:50%;transform:translateX(-50%);background:#e74c3c;color:#fff;padding:12px 20px;border-radius:6px;z-index:9999;font-size:13px;box-shadow:0 4px 12px rgba(0,0,0,.3);max-width:90vw;text-align:center;';
-      toast.textContent = 'Save error: ' + msg;
+      // Any other non-network error — still friendly, never raw
+      toast.style.cssText = 'position:fixed;bottom:20px;left:50%;transform:translateX(-50%);background:#92400e;color:#fef3c7;padding:12px 20px;border-radius:6px;z-index:9999;font-size:13px;box-shadow:0 4px 12px rgba(0,0,0,.3);max-width:90vw;text-align:center;';
+      toast.textContent = '⚠️ Sync delayed — your data is saved locally and will retry automatically.';
       document.body.appendChild(toast);
-      setTimeout(() => toast.remove(), 8000);
+      setTimeout(() => toast.remove(), 6000);
+      setTimeout(() => saveProperty(property), 6000);
     }
   }
 }
