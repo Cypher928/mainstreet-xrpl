@@ -829,8 +829,8 @@ function normalizeTenant(d) {
   if (!d) return d;
   const fallback = extractDatesFromText(d.rawText || '');
   return {
-    tenant_name:         cleanTenantName(d.tenant_name ?? d.tenantName ?? ''),
-    leased_sqft:         d.leased_sqft         ?? d.leasedSqft                    ?? '',
+    tenant_name:         cleanTenantName(d.tenant_name ?? d.tenantName ?? d.name ?? ''),
+    leased_sqft:         d.leased_sqft         ?? d.leasedSqft ?? d.sqft  ?? '',
     start_date:          toISODate(d.start_date ?? d.startDate ?? d.lease_start_date ?? fallback.startDate ?? ''),
     end_date:            toISODate(d.end_date   ?? d.endDate   ?? d.lease_end_date  ?? fallback.endDate   ?? ''),
     lease_type:          d.lease_type          ?? d.leaseType                     ?? '',
@@ -848,7 +848,7 @@ function normalizeTenant(d) {
     _usedFallback:       d._usedFallback       ?? fallback._usedFallback ?? false,
     id:                  d.id                  ?? crypto.randomUUID(),
     fileName:            d.fileName            ?? '',
-    lease_url:           d.lease_url           ?? null,
+    lease_url:           d.lease_url ?? d.file_url ?? null,
     _error:              d._error              ?? null,
   };
 }
