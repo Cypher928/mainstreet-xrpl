@@ -135,13 +135,12 @@ async function submitAuth(event) {
 
 async function signOut() {
   _initialized = false;
+  _showLogin(); // Reset UI immediately — don't wait on Supabase
   try {
     await db.auth.signOut();
   } catch (e) {
-    console.warn('[signOut] Supabase error (forcing UI reset anyway):', e?.message);
+    console.warn('[signOut] Supabase error:', e?.message);
   }
-  // Always reset UI — even if the Supabase call fails or session was already gone.
-  _showLogin();
 }
 
 // Check existing session, then listen for changes
