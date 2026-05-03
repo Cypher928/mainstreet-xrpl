@@ -1286,6 +1286,9 @@ async function handleLease(i, file) {
     const normalized = normalizeTenant(extracted);
     if (!isValidTenant(normalized)) throw new Error('Extracted tenant has no usable fields');
 
+    // Ensure property has a DB id before uploading to storage
+    if (!property.id) await saveProperty(property);
+
     const leaseUrl = await uploadLeaseToStorage(file, property.id, normalized.id);
     tenantData[i] = { ...normalized, leaseFile: file, leaseExpected: true, fileName: file.name, lease_url: leaseUrl };
     storeLeaseFile(normalized.id, file);
@@ -2038,6 +2041,7 @@ async function handleBulkLeases(fileList) {
         console.error('[handleBulkLeases] extraction error:', file.name, err);
       }
 
+      if (!property.id) await saveProperty(property);
       const leaseUrl = await uploadLeaseToStorage(file, property.id, tenantId);
 
       if (extracted && !usedPdfDirect) extracted.rawText = leaseText;
@@ -6183,15 +6187,22 @@ async function syncTenantsToTable(propertyId, tenants) {
 }
 
 async function uploadLeaseToStorage(file, propertyId, tenantId) {
-  if (!db || !propertyId) return null;
+  if (!db) return null;
+  if (!propertyId) {
+    console.warn('[uploadLeaseToStorage] skipped — property has no id yet');
+    return null;
+  }
   try {
     const filePath = `${propertyId}/${tenantId}/${file.name}`;
     const { error } = await db.storage.from('leases').upload(filePath, file, { upsert: true });
-    if (error) throw error;
+    if (error) {
+      console.error('[uploadLeaseToStorage] upload error:', error.message, error);
+      return null;
+    }
     const { data: urlData } = db.storage.from('leases').getPublicUrl(filePath);
-    const publicUrl = urlData?.publicUrl || null;
-    return publicUrl;
+    return urlData?.publicUrl || null;
   } catch (e) {
+    console.error('[uploadLeaseToStorage] exception:', e.message);
     return null;
   }
 }
