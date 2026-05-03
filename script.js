@@ -132,7 +132,13 @@ async function submitAuth(event) {
 }
 
 async function signOut() {
-  await db.auth.signOut();
+  try {
+    await db.auth.signOut();
+  } catch (e) {
+    console.warn('[signOut] Supabase error (forcing UI reset anyway):', e?.message);
+  }
+  // Always reset UI — even if the Supabase call fails or session was already gone.
+  _showLogin();
 }
 
 // Check existing session, then listen for changes
@@ -6498,14 +6504,17 @@ async function init() {
   try {
     const properties = await loadProperties();
     _props = properties || [];
-
     portfolio.splice(0, portfolio.length, ..._props);
     renderPortfolio(properties);
   } catch (e) {
-    console.error('[Mainstreet] portfolio render failed, falling back to main workflow.', e);
-    document.getElementById('portfolioDashboard').style.display = 'none';
-    document.getElementById('mainWorkflow').style.display       = 'block';
-    renderTenantSlots();
+    console.error('[init] loadProperties failed:', e?.message);
+    // Show the dashboard with zero properties — never hide it on a transient error.
+    // This keeps the user on the correct screen instead of the empty workflow.
+    _props = [];
+    portfolio.splice(0, portfolio.length);
+    renderPortfolio([]);
+    document.getElementById('portfolioDashboard').style.display = 'block';
+    document.getElementById('mainWorkflow').style.display       = 'none';
   }
 }
 
