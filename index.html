@@ -607,6 +607,40 @@
     #portfolioDashboard {
       max-width: 720px; margin: 20px auto 0; padding: 0 16px;
     }
+    .hero-demo-card {
+      background: linear-gradient(135deg, rgba(201,151,58,0.1) 0%, rgba(15,25,41,0.6) 100%);
+      border: 1.5px solid rgba(201,151,58,0.3);
+      border-radius: 18px; padding: 28px 32px 24px;
+      margin-bottom: 24px; position: relative; overflow: hidden;
+    }
+    .hero-demo-card::before {
+      content: ''; position: absolute; top: 0; right: 0;
+      width: 180px; height: 180px; border-radius: 50%;
+      background: radial-gradient(circle, rgba(201,151,58,0.12) 0%, transparent 70%);
+      transform: translate(40%, -40%); pointer-events: none;
+    }
+    .hdc-year {
+      font-size: 0.72rem; font-weight: 700; letter-spacing: 0.1em;
+      text-transform: uppercase; color: #C9973A; margin-bottom: 14px;
+      font-family: 'DM Mono', monospace;
+    }
+    .hdc-amount {
+      font-size: 2.4rem; font-weight: 800; color: #E4B15C; line-height: 1;
+      margin-bottom: 8px; letter-spacing: -0.03em;
+      text-shadow: 0 0 24px rgba(201,151,58,0.3);
+    }
+    .hdc-analyzed {
+      font-size: 1rem; font-weight: 500; color: #94A3B8; letter-spacing: 0;
+    }
+    .hdc-meta {
+      font-size: 0.88rem; color: #64748B; margin-bottom: 20px;
+      font-family: 'DM Mono', monospace;
+    }
+    .hdc-checks { display: flex; flex-direction: column; gap: 6px; }
+    .hdc-check {
+      font-size: 0.85rem; font-weight: 600; color: #4ade80;
+      display: flex; align-items: center; gap: 7px;
+    }
     .ptf-kpi-bar {
       display: grid; grid-template-columns: repeat(5, 1fr);
       gap: 10px; margin-bottom: 24px;
@@ -1701,6 +1735,17 @@
 
 <!-- ── Portfolio Dashboard ──────────────────────────────────────────── -->
 <div id="portfolioDashboard">
+
+  <!-- Hero Demo Card -->
+  <div class="hero-demo-card">
+    <div class="hdc-year">2026 CAM &mdash; Maple Plaza</div>
+    <div class="hdc-amount">$12,300 <span class="hdc-analyzed">analyzed</span></div>
+    <div class="hdc-meta">5 tenants &nbsp;&bull;&nbsp; 5 invoices</div>
+    <div class="hdc-checks">
+      <div class="hdc-check">&#x2714; Fully allocated</div>
+      <div class="hdc-check">&#x2714; Audit-ready</div>
+    </div>
+  </div>
 
   <!-- XRPL Trust Strip -->
   <div class="xrpl-trust-strip">
