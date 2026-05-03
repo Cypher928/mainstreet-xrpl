@@ -2144,9 +2144,7 @@ async function handleBulkLeases(fileList) {
   checkSqftValidation();
 
   // Save is fire-and-forget — UI must never block waiting for DB
-  saveWithRetry(property).catch(err => {
-    console.error('[bulk] save failed (non-fatal):', err.message);
-  });
+  saveProperty(property);
 }
 
 function updateTenantField(index, field, value) {
@@ -6207,21 +6205,6 @@ async function uploadLeaseToStorage(file, propertyId, tenantId) {
   }
 }
 
-async function saveWithRetry(property, retries = 3) {
-  for (let i = 0; i < retries; i++) {
-    try {
-      return await Promise.race([
-        saveProperty(property),
-        new Promise((_, reject) =>
-          setTimeout(() => reject(new Error("Save timeout")), 8000)
-        ),
-      ]);
-    } catch (err) {
-      if (i === retries - 1) throw err;
-      await new Promise(r => setTimeout(r, 1000));
-    }
-  }
-}
 
 // Save a property — localStorage first (instant), then Supabase.
 // INSERT when property has no id (new); UPSERT when it already has a UUID.
@@ -6276,23 +6259,12 @@ async function saveProperty(property) {
 
     const toast = document.createElement('div');
     toast.id = '_saveErrToast';
-
-    if (isTimeout || isSizeErr) {
-      // Non-fatal: data is in localStorage. Show a gentle amber notice, not a red alarm.
-      toast.style.cssText = 'position:fixed;bottom:20px;left:50%;transform:translateX(-50%);background:#92400e;color:#fef3c7;padding:12px 20px;border-radius:6px;z-index:9999;font-size:13px;box-shadow:0 4px 12px rgba(0,0,0,.3);max-width:90vw;text-align:center;';
-      toast.textContent = '⚠️ Sync delayed — your data is saved locally and will sync automatically.';
-      document.body.appendChild(toast);
-      setTimeout(() => toast.remove(), 5000);
-      // Retry once after a short pause
-      setTimeout(() => saveProperty(property), 4000);
-    } else {
-      // Any other non-network error — still friendly, never raw
-      toast.style.cssText = 'position:fixed;bottom:20px;left:50%;transform:translateX(-50%);background:#92400e;color:#fef3c7;padding:12px 20px;border-radius:6px;z-index:9999;font-size:13px;box-shadow:0 4px 12px rgba(0,0,0,.3);max-width:90vw;text-align:center;';
-      toast.textContent = '⚠️ Sync delayed — your data is saved locally and will retry automatically.';
-      document.body.appendChild(toast);
-      setTimeout(() => toast.remove(), 6000);
-      setTimeout(() => saveProperty(property), 6000);
-    }
+    toast.style.cssText = 'position:fixed;bottom:20px;left:50%;transform:translateX(-50%);background:#92400e;color:#fef3c7;padding:12px 20px;border-radius:6px;z-index:9999;font-size:13px;box-shadow:0 4px 12px rgba(0,0,0,.3);max-width:90vw;text-align:center;';
+    toast.textContent = '⚠️ Sync delayed — your data is saved locally and will sync on next save.';
+    document.body.appendChild(toast);
+    setTimeout(() => toast.remove(), 5000);
+    // Do NOT schedule a retry here — savePropertyData() is debounced and will
+    // retry on the next user action. Infinite auto-retry causes toast spam.
   }
 }
 
