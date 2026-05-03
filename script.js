@@ -1266,6 +1266,7 @@ function renderTenantUploadZone(i) {
 }
 
 async function handleLease(i, file) {
+  console.log('[handleLease] dropped:', file.name, `(${(file.size/1024).toFixed(1)} KB)`);
   const body = document.getElementById(`tb-${i}`);
   body.innerHTML = `<div class="spinner-wrap">
     <div class="spinner"></div>
@@ -1983,6 +1984,7 @@ function mergeInvoicesDedup(existing, incoming) {
 
 async function handleBulkLeases(fileList) {
   if (!fileList || fileList.length === 0) return;
+  console.log('[handleBulkLeases] dropped', fileList.length, 'file(s):', Array.from(fileList).map(f => f.name).join(', '));
 
   const property = currentProperty();
   if (!property) throw new Error('No property selected');
@@ -6185,22 +6187,28 @@ async function syncTenantsToTable(propertyId, tenants) {
 }
 
 async function uploadLeaseToStorage(file, propertyId, tenantId) {
-  if (!db) return null;
-  if (!propertyId) {
-    console.warn('[uploadLeaseToStorage] skipped — property has no id yet');
+  if (!db) {
+    console.error('[uploadLeaseToStorage] db client not initialised');
     return null;
   }
+  if (!propertyId) {
+    console.warn('[uploadLeaseToStorage] skipped — property has no id yet (will retry after save)');
+    return null;
+  }
+  const filePath = `${propertyId}/${tenantId}/${file.name}`;
+  console.log('[uploadLeaseToStorage] uploading', file.name, '→', filePath);
   try {
-    const filePath = `${propertyId}/${tenantId}/${file.name}`;
     const { error } = await db.storage.from('leases').upload(filePath, file, { upsert: true });
     if (error) {
-      console.error('[uploadLeaseToStorage] upload error:', error.message, error);
+      console.error('[uploadLeaseToStorage] FAILED:', error.message, error);
       return null;
     }
     const { data: urlData } = db.storage.from('leases').getPublicUrl(filePath);
-    return urlData?.publicUrl || null;
+    const url = urlData?.publicUrl || null;
+    console.log('[uploadLeaseToStorage] SUCCESS:', url);
+    return url;
   } catch (e) {
-    console.error('[uploadLeaseToStorage] exception:', e.message);
+    console.error('[uploadLeaseToStorage] exception:', e.message, e);
     return null;
   }
 }
