@@ -25,19 +25,20 @@
       padding: 32px 16px 64px;
     }
 
-    /* ── Header / Hero ──────────────────────────────────────────────── */
-    header { text-align: center; margin-bottom: 32px; padding: 48px 20px 40px; }
+    /* ── App Bar ──────────────────────────────────────────────────── */
+    header {
+      max-width: 720px; margin: 0 auto 28px; padding: 20px 16px;
+      display: flex; align-items: center; justify-content: space-between;
+      border-bottom: 1px solid rgba(255,255,255,0.06);
+    }
     header h1 {
       font-family: 'Cormorant Garamond', Georgia, serif;
-      font-size: 3.2rem; font-weight: 700; color: #E2E8F0;
-      letter-spacing: -0.02em; line-height: 1.1; margin-bottom: 12px;
+      font-size: 1.7rem; font-weight: 700; color: #E2E8F0;
+      letter-spacing: -0.01em; line-height: 1; margin: 0;
     }
-    .hero-tagline {
-      font-family: 'Cormorant Garamond', Georgia, serif;
-      font-size: 1.35rem; font-weight: 400; color: #C9973A;
-      letter-spacing: 0.01em; margin-bottom: 10px;
+    .app-bar-right {
+      display: flex; align-items: center; gap: 10px;
     }
-    header p { margin-top: 6px; color: #64748B; font-size: 0.88rem; }
 
 
     /* Layout */
@@ -621,7 +622,7 @@
 
     /* ── Portfolio Dashboard ─────────────────────────────────────────── */
     #portfolioDashboard {
-      max-width: 720px; margin: 20px auto 0; padding: 0 16px;
+      max-width: 720px; margin: 0 auto; padding: 0 16px 48px;
     }
     .hero-demo-card {
       background: linear-gradient(135deg, rgba(201,151,58,0.1) 0%, rgba(11,18,32,0.75) 100%);
@@ -1713,8 +1714,8 @@
     .login-hint { font-size: 0.75rem; color: #64748B; margin: -8px 0 10px; text-align: left; }
     /* ── Auth: header user bar ───────────────────────────────────────── */
     .header-user-bar {
-      display: flex; align-items: center; justify-content: center;
-      gap: 12px; margin-top: 14px; font-size: 0.82rem;
+      display: flex; align-items: center;
+      gap: 10px; font-size: 0.82rem;
     }
     .header-user-email { color: #94A3B8; }
     .logout-btn {
@@ -1763,12 +1764,12 @@
 
 <header>
   <h1>Mainstreet</h1>
-  <div class="hero-tagline">Reconcile CAM in minutes — not weeks</div>
-  <p>Upload leases + invoices.<br>We calculate, explain, and validate every charge.</p>
-  <button class="demo-launch-btn" onclick="loadDemo()" style="margin-top:18px;">&#x1F3AF; Try Live Demo</button>
-  <div class="header-user-bar" id="headerUserBar">
-    <span class="header-user-email" id="headerUserEmail"></span>
-    <button class="logout-btn" onclick="signOut()">Sign out</button>
+  <div class="app-bar-right">
+    <button class="demo-launch-btn" onclick="loadDemo()">&#x1F3AF; Try Live Demo</button>
+    <div class="header-user-bar" id="headerUserBar">
+      <span class="header-user-email" id="headerUserEmail"></span>
+      <button class="logout-btn" onclick="signOut()">Sign out</button>
+    </div>
   </div>
 </header>
 
@@ -1776,14 +1777,34 @@
 <!-- ── Portfolio Dashboard ──────────────────────────────────────────── -->
 <div id="portfolioDashboard">
 
-  <!-- Hero Demo Card -->
-  <div class="hero-demo-card">
-    <div class="hdc-year">2026 CAM &mdash; Maple Plaza</div>
-    <div class="hdc-amount">$12,300 <span class="hdc-analyzed">analyzed</span></div>
-    <div class="hdc-meta">5 tenants &nbsp;&bull;&nbsp; 5 invoices</div>
-    <div class="hdc-checks">
-      <div class="hdc-check">&#x2714; Fully allocated</div>
-      <div class="hdc-check">&#x2714; Audit-ready</div>
+  <!-- Property Cards — primary content -->
+  <div class="ptf-props-head">
+    <h2>Your Properties</h2>
+    <button class="add-prop-btn" onclick="addNewProperty()">+ Add Property</button>
+  </div>
+  <div class="ptf-cards-grid" id="propertyCardsGrid"></div>
+
+  <!-- KPI Overview Bar — portfolio summary -->
+  <div class="ptf-kpi-bar" style="margin-top:24px;">
+    <div class="ptf-kpi">
+      <div class="ptf-kpi-val" id="pKpiProperties">3</div>
+      <div class="ptf-kpi-lbl">Properties</div>
+    </div>
+    <div class="ptf-kpi">
+      <div class="ptf-kpi-val" id="pKpiTenants">9</div>
+      <div class="ptf-kpi-lbl">Total Tenants</div>
+    </div>
+    <div class="ptf-kpi">
+      <div class="ptf-kpi-val" id="pKpiCAM">$45,750</div>
+      <div class="ptf-kpi-lbl">CAM Collected</div>
+    </div>
+    <div class="ptf-kpi">
+      <div class="ptf-kpi-val" id="pKpiInvoices">22</div>
+      <div class="ptf-kpi-lbl">Invoices Processed</div>
+    </div>
+    <div class="ptf-kpi ptf-kpi-disputes">
+      <div class="ptf-kpi-val" id="pKpiDisputes">2</div>
+      <div class="ptf-kpi-lbl">Open Disputes</div>
     </div>
   </div>
 
@@ -1810,40 +1831,6 @@
       View Live TX &#x2197;
     </a>
   </div>
-
-  <!-- KPI Overview Bar -->
-  <div class="ptf-kpi-bar">
-    <div class="ptf-kpi">
-      <div class="ptf-kpi-val" id="pKpiProperties">3</div>
-      <div class="ptf-kpi-lbl">Properties</div>
-    </div>
-    <div class="ptf-kpi">
-      <div class="ptf-kpi-val" id="pKpiTenants">9</div>
-      <div class="ptf-kpi-lbl">Total Tenants</div>
-    </div>
-    <div class="ptf-kpi">
-      <div class="ptf-kpi-val" id="pKpiCAM">$45,750</div>
-      <div class="ptf-kpi-lbl">CAM Collected</div>
-    </div>
-    <div class="ptf-kpi">
-      <div class="ptf-kpi-val" id="pKpiInvoices">22</div>
-      <div class="ptf-kpi-lbl">Invoices Processed</div>
-    </div>
-    <div class="ptf-kpi ptf-kpi-disputes">
-      <div class="ptf-kpi-val" id="pKpiDisputes">2</div>
-      <div class="ptf-kpi-lbl">Open Disputes</div>
-    </div>
-  </div>
-
-  <!-- Property Cards -->
-  <div class="ptf-props-head">
-    <h2>Your Properties</h2>
-    <div style="display:flex;gap:8px;align-items:center;">
-      <button class="demo-launch-btn" onclick="loadDemo()">&#x1F3AF; Try Live Demo</button>
-      <button class="add-prop-btn" onclick="addNewProperty()">+ Add New Property</button>
-    </div>
-  </div>
-  <div class="ptf-cards-grid" id="propertyCardsGrid"></div>
 
   <!-- Phase 2 Teaser -->
   <div class="ptf-phase2-teaser">
