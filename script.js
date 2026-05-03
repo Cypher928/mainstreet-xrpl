@@ -1290,7 +1290,15 @@ async function handleLease(i, file) {
       extractLeaseText(file),
     ]);
 
-    const extracted  = await callClaudeForLease(leaseText);
+    // Digital PDF: text layer extracted — send text to Claude
+    // Scanned PDF: leaseText is null/short — send PDF bytes directly (vision)
+    let extracted;
+    if (leaseText && leaseText.length >= 50) {
+      extracted = await callClaudeForLease(leaseText);
+    } else {
+      extracted = await callClaudeWithPdfDirect(file);
+    }
+
     if (!extracted) throw new Error('Could not extract lease fields');
     const normalized = normalizeTenant(extracted);
     if (!isValidTenant(normalized)) throw new Error('Extracted tenant has no usable fields');
