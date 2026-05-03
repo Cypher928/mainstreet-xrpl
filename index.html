@@ -18,26 +18,22 @@
 
     body {
       font-family: 'DM Sans', -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif;
-      background: radial-gradient(ellipse at 50% -10%, #1c2b45 0%, #0B1220 55%);
-      background-attachment: fixed;
+      background: #0B1220;
       color: #E2E8F0;
       min-height: 100vh;
-      padding: 32px 16px 64px;
+      padding: 0 16px 64px;
     }
 
     /* ── App Bar ──────────────────────────────────────────────────── */
     header {
-      max-width: 720px; margin: 0 auto 28px; padding: 20px 16px;
+      max-width: 720px; margin: 0 auto 32px; padding: 18px 16px;
       display: flex; align-items: center; justify-content: space-between;
-      border-bottom: 1px solid rgba(255,255,255,0.06);
+      border-bottom: 1px solid rgba(255,255,255,0.07);
     }
     header h1 {
       font-family: 'Cormorant Garamond', Georgia, serif;
-      font-size: 1.7rem; font-weight: 700; color: #E2E8F0;
+      font-size: 1.65rem; font-weight: 700; color: #E2E8F0;
       letter-spacing: -0.01em; line-height: 1; margin: 0;
-    }
-    .app-bar-right {
-      display: flex; align-items: center; gap: 10px;
     }
 
 
@@ -46,16 +42,11 @@
 
     /* Cards */
     .card {
-      background: rgba(15, 22, 36, 0.82);
-      backdrop-filter: blur(14px);
-      -webkit-backdrop-filter: blur(14px);
-      border-radius: 20px;
+      background: #111827;
+      border-radius: 16px;
       padding: 32px 36px;
-      box-shadow:
-        0 6px 36px rgba(0,0,0,0.55),
-        0 0 48px rgba(201,151,58,0.04),
-        inset 0 1px 0 rgba(255,255,255,0.07);
-      border: 1px solid rgba(255,255,255,0.09);
+      box-shadow: 0 2px 12px rgba(0,0,0,0.4);
+      border: 1px solid rgba(255,255,255,0.07);
     }
 
     /* Section header */
@@ -329,15 +320,10 @@
     /* Results */
     #results { display: none; }
     .result-card {
-      background: rgba(201,151,58,0.05);
-      backdrop-filter: blur(10px);
-      -webkit-backdrop-filter: blur(10px);
-      border: 1.5px solid rgba(201,151,58,0.2);
-      border-radius: 18px; padding: 22px 24px; margin-bottom: 16px;
-      box-shadow:
-        0 6px 28px rgba(0,0,0,0.38),
-        0 0 40px rgba(201,151,58,0.06),
-        inset 0 1px 0 rgba(255,255,255,0.05);
+      background: rgba(201,151,58,0.04);
+      border: 1px solid rgba(201,151,58,0.13);
+      border-radius: 14px; padding: 22px 24px; margin-bottom: 14px;
+      box-shadow: 0 2px 8px rgba(0,0,0,0.28);
     }
     .result-card .r-name {
       font-size: 1.05rem; font-weight: 700; margin-bottom: 16px;
@@ -350,11 +336,10 @@
       gap: 10px;
     }
     .result-stat {
-      background: rgba(11, 18, 32, 0.7);
-      border-radius: 12px;
+      background: #0F1929;
+      border-radius: 10px;
       padding: 12px 14px;
-      border: 1px solid rgba(255,255,255,0.08);
-      box-shadow: inset 0 1px 0 rgba(255,255,255,0.04);
+      border: 1px solid rgba(255,255,255,0.07);
     }
     .result-stat .stat-label {
       font-size: 0.67rem; color: #64748B;
@@ -364,7 +349,6 @@
     .result-stat .stat-value { font-size: 1.05rem; font-weight: 700; color: #E2E8F0; }
     .result-stat:first-child .stat-value {
       color: #E4B15C;
-      text-shadow: 0 0 12px rgba(201,151,58,0.28);
     }
     .cap-badge {
       display: inline-block; margin-top: 10px; padding: 4px 10px;
@@ -624,62 +608,19 @@
     #portfolioDashboard {
       max-width: 720px; margin: 0 auto; padding: 0 16px 48px;
     }
-    .hero-demo-card {
-      background: linear-gradient(135deg, rgba(201,151,58,0.1) 0%, rgba(11,18,32,0.75) 100%);
-      backdrop-filter: blur(16px);
-      -webkit-backdrop-filter: blur(16px);
-      border: 1.5px solid rgba(201,151,58,0.28);
-      border-radius: 22px; padding: 28px 32px 24px;
-      margin-bottom: 24px; position: relative; overflow: hidden;
-      box-shadow:
-        0 8px 40px rgba(0,0,0,0.5),
-        0 0 60px rgba(201,151,58,0.07),
-        inset 0 1px 0 rgba(255,255,255,0.08);
-    }
-    .hero-demo-card::before {
-      content: ''; position: absolute; top: 0; right: 0;
-      width: 180px; height: 180px; border-radius: 50%;
-      background: radial-gradient(circle, rgba(201,151,58,0.12) 0%, transparent 70%);
-      transform: translate(40%, -40%); pointer-events: none;
-    }
-    .hdc-year {
-      font-size: 0.72rem; font-weight: 700; letter-spacing: 0.1em;
-      text-transform: uppercase; color: #C9973A; margin-bottom: 14px;
-      font-family: 'DM Mono', monospace;
-    }
-    .hdc-amount {
-      font-size: 2.4rem; font-weight: 800; color: #E4B15C; line-height: 1;
-      margin-bottom: 8px; letter-spacing: -0.03em;
-      text-shadow: 0 0 24px rgba(201,151,58,0.3);
-    }
-    .hdc-analyzed {
-      font-size: 1rem; font-weight: 500; color: #94A3B8; letter-spacing: 0;
-    }
-    .hdc-meta {
-      font-size: 0.88rem; color: #64748B; margin-bottom: 20px;
-      font-family: 'DM Mono', monospace;
-    }
-    .hdc-checks { display: flex; flex-direction: column; gap: 6px; }
-    .hdc-check {
-      font-size: 0.85rem; font-weight: 600; color: #4ade80;
-      display: flex; align-items: center; gap: 7px;
-    }
     .ptf-kpi-bar {
       display: grid; grid-template-columns: repeat(5, 1fr);
       gap: 10px; margin-bottom: 24px;
     }
     @media (max-width: 600px) { .ptf-kpi-bar { grid-template-columns: repeat(3, 1fr); } }
     .ptf-kpi {
-      background: rgba(15, 22, 36, 0.8);
-      backdrop-filter: blur(10px);
-      -webkit-backdrop-filter: blur(10px);
-      border-radius: 14px; padding: 14px 12px;
-      box-shadow:
-        0 4px 20px rgba(0,0,0,0.45),
-        inset 0 1px 0 rgba(255,255,255,0.06);
+      background: #111827;
+      border-radius: 12px; padding: 14px 12px;
+      box-shadow: 0 1px 6px rgba(0,0,0,0.3);
       text-align: center;
-      border: 1px solid rgba(255,255,255,0.09);
+      border: 1px solid rgba(255,255,255,0.07);
     }
+    .ptf-kpi:hover { background: #141e2e; }
     .ptf-kpi-val {
       font-size: 1.4rem; font-weight: 800; color: #C9973A;
       line-height: 1; margin-bottom: 4px;
@@ -708,26 +649,22 @@
       gap: 14px; margin-bottom: 32px;
     }
     .ptf-prop-card {
-      background: rgba(15, 22, 36, 0.8);
-      backdrop-filter: blur(12px);
-      -webkit-backdrop-filter: blur(12px);
-      border-radius: 18px; padding: 18px 18px 16px;
-      box-shadow:
-        0 4px 24px rgba(0,0,0,0.45),
-        inset 0 1px 0 rgba(255,255,255,0.06);
-      border: 1px solid rgba(255,255,255,0.09);
-      border-left: 4px solid #C9973A;
-      cursor: pointer; transition: all 0.18s;
+      background: #111827;
+      border-radius: 14px; padding: 18px 18px 16px;
+      box-shadow: 0 2px 10px rgba(0,0,0,0.32);
+      border: 1px solid rgba(255,255,255,0.07);
+      border-left: 3px solid rgba(201,151,58,0.65);
+      cursor: pointer; transition: box-shadow 0.15s, transform 0.15s, background 0.15s;
     }
-    .ptf-prop-card.status-reconciled  { border-left-color: #22c55e; }
-    .ptf-prop-card.status-in-progress { border-left-color: #C9973A; }
-    .ptf-prop-card.status-disputes    { border-left-color: #ef4444; }
+    .ptf-prop-card.status-reconciled  { border-left-color: rgba(34,197,94,0.65); }
+    .ptf-prop-card.status-in-progress { border-left-color: rgba(201,151,58,0.65); }
+    .ptf-prop-card.status-disputes    { border-left-color: rgba(239,68,68,0.65); }
     .ptf-prop-card:hover {
-      border-color: rgba(201,151,58,0.35);
-      box-shadow: 0 8px 28px rgba(0,0,0,0.5);
-      transform: translateY(-2px);
+      background: #141e2e;
+      box-shadow: 0 4px 18px rgba(0,0,0,0.42);
+      transform: translateY(-1px);
     }
-    .ptf-prop-card.active { border-color: #C9973A; background: rgba(201,151,58,0.08); }
+    .ptf-prop-card.active { border-color: rgba(201,151,58,0.3); background: rgba(201,151,58,0.06); }
     .ptf-prop-name { font-size: 0.95rem; font-weight: 700; color: #E2E8F0; margin-bottom: 6px; }
     .ptf-status-row {
       display: flex; align-items: center; gap: 6px;
@@ -1663,15 +1600,10 @@
       background: #0B1220; display: flex; align-items: center; justify-content: center; padding: 24px;
     }
     .login-card {
-      background: rgba(15, 22, 36, 0.85);
-      backdrop-filter: blur(20px);
-      -webkit-backdrop-filter: blur(20px);
-      border-radius: 22px; padding: 48px 44px;
-      box-shadow:
-        0 8px 48px rgba(0,0,0,0.7),
-        0 0 60px rgba(201,151,58,0.05),
-        inset 0 1px 0 rgba(255,255,255,0.08);
-      border: 1px solid rgba(255,255,255,0.1);
+      background: #111827;
+      border-radius: 18px; padding: 48px 44px;
+      box-shadow: 0 4px 32px rgba(0,0,0,0.6);
+      border: 1px solid rgba(255,255,255,0.08);
       width: 100%; max-width: 420px; text-align: center;
     }
     .login-logo {
@@ -1764,18 +1696,20 @@
 
 <header>
   <h1>Mainstreet</h1>
-  <div class="app-bar-right">
-    <button class="demo-launch-btn" onclick="loadDemo()">&#x1F3AF; Try Live Demo</button>
-    <div class="header-user-bar" id="headerUserBar">
-      <span class="header-user-email" id="headerUserEmail"></span>
-      <button class="logout-btn" onclick="signOut()">Sign out</button>
-    </div>
+  <div class="header-user-bar" id="headerUserBar">
+    <span class="header-user-email" id="headerUserEmail"></span>
+    <button class="logout-btn" onclick="signOut()">Sign out</button>
   </div>
 </header>
 
 
 <!-- ── Portfolio Dashboard ──────────────────────────────────────────── -->
 <div id="portfolioDashboard">
+
+  <!-- Primary Action -->
+  <div style="text-align:center;margin-bottom:28px;">
+    <button class="demo-launch-btn" onclick="loadDemo()">&#x1F3AF; Try Live Demo</button>
+  </div>
 
   <!-- Property Cards — primary content -->
   <div class="ptf-props-head">
@@ -1785,7 +1719,7 @@
   <div class="ptf-cards-grid" id="propertyCardsGrid"></div>
 
   <!-- KPI Overview Bar — portfolio summary -->
-  <div class="ptf-kpi-bar" style="margin-top:24px;">
+  <div class="ptf-kpi-bar">
     <div class="ptf-kpi">
       <div class="ptf-kpi-val" id="pKpiProperties">3</div>
       <div class="ptf-kpi-lbl">Properties</div>
