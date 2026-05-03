@@ -6221,9 +6221,6 @@ async function syncTenantsToTable(propertyId, tenants) {
 
   if (rows.length === 0) return;
 
-  const { error: delErr } = await db.from('tenants').delete().eq('property_id', propertyId);
-  if (delErr) { console.error('[syncTenantsToTable] delete error:', delErr.message); return; }
-
   const { error } = await db.from('tenants').insert(rows).select('id');
   if (error) console.error('[syncTenantsToTable] insert error:', error.message);
 }
