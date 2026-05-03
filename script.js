@@ -497,7 +497,7 @@ function currentProperty() {
 // ─── Supabase Storage upload ──────────────────────────────────────────────────
 
 async function uploadInvoiceFile(file) {
-  try {
+  const attempt = async () => {
     const fileBase64 = await toBase64(file);
     const resp = await fetch('/api/upload', {
       method: 'POST',
@@ -505,11 +505,23 @@ async function uploadInvoiceFile(file) {
       body: JSON.stringify({ fileName: file.name, fileType: file.type, fileBase64 }),
     });
     const result = await resp.json();
-    if (!resp.ok || result.error) return { url: null, error: result.error || `HTTP ${resp.status}` };
-    return { url: result.url, error: null };
-  } catch (e) {
-    console.error('[UPLOAD EXCEPTION]', e);
-    return { url: null, error: e.message };
+    if (!resp.ok || result.error) throw new Error(result.error || `HTTP ${resp.status}`);
+    return result.url;
+  };
+
+  // Retry up to 2 times with backoff — storage timeouts are usually transient
+  for (let i = 0; i < 3; i++) {
+    try {
+      const url = await attempt();
+      return { url, error: null };
+    } catch (e) {
+      if (i < 2) {
+        await new Promise(r => setTimeout(r, (i + 1) * 1200));
+        continue;
+      }
+      console.error('[uploadInvoiceFile] failed after 3 attempts:', e.message);
+      return { url: null, error: 'cloud-backup-failed' };
+    }
   }
 }
 
@@ -2726,7 +2738,7 @@ function renderInvResults() {
           </div>
           <button class="bulk-t-remove" onclick="event.stopPropagation();removeInvItem(${i})">Remove</button>
         </div>
-        ${d._fileUploadError ? `<div class="inv-upload-err-banner">&#x26A0; File not saved — ${esc(String(d._fileUploadError))}</div>` : ''}
+        ${d._fileUploadError ? `<div class="inv-upload-err-banner">&#x26A0; File backup unavailable — invoice data is saved and CAM will run normally</div>` : ''}
         <div class="bulk-tenant-detail" id="idet-${i}" style="display:none;">
           ${d._error ? `<div class="err-banner" style="margin-bottom:10px;">Extraction error: ${esc(d._error)}</div>` : ''}
           <div id="dup-warn-${i}"></div>
