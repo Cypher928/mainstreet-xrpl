@@ -88,20 +88,31 @@ async function submitAuth(event) {
 
   let data, error;
   try {
-    const authCall = _authMode === 'signup'
+    const attemptAuth = () => _authMode === 'signup'
       ? db.auth.signUp({ email, password, options: { emailRedirectTo: window.location.origin } })
       : db.auth.signInWithPassword({ email, password });
 
-    ({ data, error } = await Promise.race([
-      authCall,
-      new Promise((_, reject) =>
-        setTimeout(() => reject(new Error('Request timed out — please check your connection and try again.')), 12000)
-      ),
-    ]));
+    const withTimeout = (promise, ms) => Promise.race([
+      promise,
+      new Promise((_, reject) => setTimeout(() => reject(new Error('__timeout__')), ms)),
+    ]);
+
+    // Two attempts: free-tier projects can take 20-30s to wake from pause
+    try {
+      ({ data, error } = await withTimeout(attemptAuth(), 20000));
+    } catch (e) {
+      if (e.message !== '__timeout__') throw e;
+      msgEl.className   = 'login-msg';
+      msgEl.textContent = 'Taking a moment — server is waking up, retrying…';
+      ({ data, error } = await withTimeout(attemptAuth(), 25000));
+    }
   } catch (e) {
     console.error('[Mainstreet] Auth exception:', e);
+    const msg = e.message === '__timeout__'
+      ? 'Connection timed out — please try again in a few seconds.'
+      : (e.message || 'Network error — please check your connection and try again.');
     msgEl.className   = 'login-msg error';
-    msgEl.textContent = e.message || 'Network error — please check your connection and try again.';
+    msgEl.textContent = msg;
     btn.disabled      = false;
     btn.textContent   = _authMode === 'signup' ? 'Create Account' : 'Sign In';
     return;
