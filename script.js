@@ -1276,9 +1276,8 @@ async function handleLease(i, file) {
   const property = currentProperty();
   if (!property) { renderTenantError(i, 'No property selected'); return; }
 
-  // Hard reset before any processing
-  property.tenants = [];
-  tenantData.splice(0, tenantData.length, null, null, null);
+  // Only clear this slot — preserve other tenants already uploaded
+  tenantData[i] = null;
 
   try {
     // Ensure property has a DB id so the storage path is valid
@@ -2001,10 +2000,7 @@ async function handleBulkLeases(fileList) {
   const property = currentProperty();
   if (!property) throw new Error('No property selected');
 
-  // Hard reset before any processing
-  property.tenants = [];
-  tenantData.splice(0, tenantData.length);
-
+  // Preserve existing tenants — new uploads append rather than replace
   const files = Array.from(fileList);
   const total = files.length;
 
