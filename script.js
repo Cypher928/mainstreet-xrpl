@@ -87,20 +87,20 @@ async function submitAuth(event) {
 
   let data, error;
   try {
-    if (_authMode === 'signup') {
-      ({ data, error } = await db.auth.signUp({
-        email,
-        password,
-        options: { emailRedirectTo: window.location.origin },
-      }));
-    } else {
-      ({ data, error } = await db.auth.signInWithPassword({ email, password }));
-    }
+    const authCall = _authMode === 'signup'
+      ? db.auth.signUp({ email, password, options: { emailRedirectTo: window.location.origin } })
+      : db.auth.signInWithPassword({ email, password });
+
+    ({ data, error } = await Promise.race([
+      authCall,
+      new Promise((_, reject) =>
+        setTimeout(() => reject(new Error('Request timed out — please check your connection and try again.')), 12000)
+      ),
+    ]));
   } catch (e) {
     console.error('[Mainstreet] Auth exception:', e);
-    const msg = 'Network error — please check your connection and try again.';
     msgEl.className   = 'login-msg error';
-    msgEl.textContent = msg;
+    msgEl.textContent = e.message || 'Network error — please check your connection and try again.';
     btn.disabled      = false;
     btn.textContent   = _authMode === 'signup' ? 'Create Account' : 'Sign In';
     return;
@@ -128,6 +128,7 @@ async function submitAuth(event) {
   } else if (data?.user) {
     // Explicit show — don't rely solely on onAuthStateChange firing in restricted browsers
     _showApp(data.user);
+    init();
   }
 }
 
