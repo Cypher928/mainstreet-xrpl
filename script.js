@@ -2324,7 +2324,7 @@ function toggleBulkDetail(i) {
   chev.innerHTML     = open ? '&#x25BC; Edit' : '&#x25B2; Close';
 }
 
-function saveBulkTenant(i) {
+async function saveBulkTenant(i) {
   // Commit any in-progress field edit before reading
   if (document.activeElement && document.activeElement !== document.body) {
     document.activeElement.blur();
@@ -2346,6 +2346,10 @@ function saveBulkTenant(i) {
 
   // Refresh the card header (name, meta line)
   refreshBulkSummary(i);
+
+  // Persist to Supabase immediately — don't rely on debounced oninput
+  await savePropertyData();
+  console.log('[saveBulkTenant] tenant', i, 'saved:', d?.tenant_name);
 
   // Success flash
   if (row) {
