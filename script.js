@@ -1281,16 +1281,20 @@ async function handleLease(i, file) {
   tenantData.splice(0, tenantData.length, null, null, null);
 
   try {
-    const leaseText  = await extractLeaseText(file);
+    // Ensure property has a DB id so the storage path is valid
+    if (!property.id) await saveProperty(property);
+
+    // Upload to storage and extract text in parallel — neither depends on the other
+    const [leaseUrl, leaseText] = await Promise.all([
+      uploadLeaseToStorage(file, property.id),
+      extractLeaseText(file),
+    ]);
+
     const extracted  = await callClaudeForLease(leaseText);
     if (!extracted) throw new Error('Could not extract lease fields');
     const normalized = normalizeTenant(extracted);
     if (!isValidTenant(normalized)) throw new Error('Extracted tenant has no usable fields');
 
-    // Ensure property has a DB id before uploading to storage
-    if (!property.id) await saveProperty(property);
-
-    const leaseUrl = await uploadLeaseToStorage(file, property.id, normalized.id);
     tenantData[i] = { ...normalized, leaseFile: file, leaseExpected: true, fileName: file.name, lease_url: leaseUrl };
     storeLeaseFile(normalized.id, file);
     renderTenantFields(i);
@@ -2018,33 +2022,39 @@ async function handleBulkLeases(fileList) {
   // Process all files in parallel — OCR and Claude run concurrently.
   // Process in small batches: parallel within each batch, sequential between
   // batches so we don't hit DB / OCR rate limits.
+  // Ensure property has a DB id once before processing any files
+  if (!property.id) await saveProperty(property);
+
   const BATCH_SIZE = 2;
   const processFile = async (file) => {
     const tenantId = crypto.randomUUID();
     try {
-
       let leaseText  = null;
       let extracted  = null;
       let usedPdfDirect = false;
-      try {
-        leaseText = await extractLeaseText(file);
 
+      // Upload to storage and extract text in parallel
+      let leaseUrl = null;
+      try {
+        [leaseUrl, leaseText] = await Promise.all([
+          uploadLeaseToStorage(file, property.id),
+          extractLeaseText(file),
+        ]);
+      } catch (err) {
+        console.error('[handleBulkLeases] upload/extract error:', file.name, err);
+      }
+
+      try {
         if (leaseText && leaseText.length >= 50) {
-          // Digital PDF — text layer is good, send text to Claude
           extracted = await callClaudeForLease(leaseText);
         } else {
-          // Scanned / image PDF — send PDF directly to Claude (vision reads it)
           usedPdfDirect = true;
           extracted = await callClaudeWithPdfDirect(file);
-          // Set a placeholder so status logic knows we got something back
           leaseText = extracted ? `[Claude PDF direct: ${file.name}]` : null;
         }
       } catch (err) {
         console.error('[handleBulkLeases] extraction error:', file.name, err);
       }
-
-      if (!property.id) await saveProperty(property);
-      const leaseUrl = await uploadLeaseToStorage(file, property.id, tenantId);
 
       if (extracted && !usedPdfDirect) extracted.rawText = leaseText;
       const norm = extracted ? normalizeTenant(extracted) : null;
@@ -6186,16 +6196,17 @@ async function syncTenantsToTable(propertyId, tenants) {
   if (error) console.error('[syncTenantsToTable]', error.message);
 }
 
-async function uploadLeaseToStorage(file, propertyId, tenantId) {
+async function uploadLeaseToStorage(file, propertyId) {
   if (!db) {
     console.error('[uploadLeaseToStorage] db client not initialised');
     return null;
   }
   if (!propertyId) {
-    console.warn('[uploadLeaseToStorage] skipped — property has no id yet (will retry after save)');
+    console.warn('[uploadLeaseToStorage] skipped — property has no id yet');
     return null;
   }
-  const filePath = `${propertyId}/${tenantId}/${file.name}`;
+  // Timestamp prefix keeps paths unique even if the same file is re-uploaded
+  const filePath = `${propertyId}/${Date.now()}-${file.name}`;
   console.log('[uploadLeaseToStorage] uploading', file.name, '→', filePath);
   try {
     const { error } = await db.storage.from('leases').upload(filePath, file, { upsert: true });
