@@ -6160,44 +6160,72 @@ function _lsLoad(id) {
 
 async function loadProperties() {
   const { data: { user } } = await db.auth.getUser();
-  if (!user) throw new Error('Not authenticated');
+  if (!user?.id) throw new Error('Not authenticated');
 
+  // Select only the columns needed for the property list — skip the large data blob.
   const { data, error } = await db
     .from('properties')
-    .select('*')
+    .select('id, name, sqft, user_id')
     .eq('user_id', user.id);
 
   if (error) throw error;
 
-  const properties = data || [];
+  const properties = (data || []).map(p => ({
+    id:         p.id,
+    name:       p.name,
+    totalSqft:  p.sqft || 0,
+  }));
+
   if (properties.length === 0) return properties;
 
   const propertyIds = properties.map(p => p.id);
-  const { data: tenants } = await db.from('tenants').select('*').in('property_id', propertyIds);
-  const allTenants = tenants || [];
+  const { data: tenantRows, error: tenantErr } = await db
+    .from('tenants')
+    .select('property_id, name, sqft, cap, start_date, end_date, lease_url')
+    .in('property_id', propertyIds);
+
+  if (tenantErr) console.error('[loadProperties] tenants error:', tenantErr.message);
+
+  const allTenants = tenantRows || [];
   properties.forEach(p => {
-    p.tenants = allTenants.filter(t => t.property_id === p.id);
+    // Map DB column names back to the field names the app expects
+    p.tenants = allTenants
+      .filter(t => t.property_id === p.id)
+      .map(t => normalizeTenant({
+        tenant_name: t.name,
+        leased_sqft: t.sqft,
+        cap:         t.cap,
+        start_date:  t.start_date,
+        end_date:    t.end_date,
+        lease_url:   t.lease_url,
+      }));
   });
 
   return properties;
 }
 
 async function syncTenantsToTable(propertyId, tenants) {
-  await db.from('tenants').delete().eq('property_id', propertyId);
-  const rows = tenants
+  if (!propertyId || typeof propertyId !== 'string' || propertyId.length < 10) return;
+
+  const rows = (tenants || [])
     .filter(t => t && t.tenant_name)
     .map(t => ({
       property_id: propertyId,
       name:        t.tenant_name  || null,
-      sqft:        t.leased_sqft  ?? null,
+      sqft:        Number(t.leased_sqft) || null,
       cap:         t.cap          ?? null,
       start_date:  t.start_date   || null,
       end_date:    t.end_date     || null,
       lease_url:   t.lease_url    || null,
     }));
+
   if (rows.length === 0) return;
-  const { error } = await db.from('tenants').insert(rows);
-  if (error) console.error('[syncTenantsToTable]', error.message);
+
+  const { error: delErr } = await db.from('tenants').delete().eq('property_id', propertyId);
+  if (delErr) { console.error('[syncTenantsToTable] delete error:', delErr.message); return; }
+
+  const { error } = await db.from('tenants').insert(rows).select('id');
+  if (error) console.error('[syncTenantsToTable] insert error:', error.message);
 }
 
 async function uploadLeaseToStorage(file, propertyId) {
@@ -6236,44 +6264,47 @@ async function saveProperty(property) {
 
   try {
     const stripped = _stripBlobs(property);
-    const { id, name, totalSqft, ...rest } = stripped;
+    const { id, name, totalSqft } = stripped;
+
+    // Keep the DB data column small — tenants live in their own table,
+    // results are large and restored from localStorage on load.
+    const data = {
+      invoices: stripped.invoices || [],
+      disputes: stripped.disputes || [],
+      camYear:  stripped.camYear  ?? null,
+    };
+
     const payload = {
       name: name || 'New Property',
       sqft: totalSqft || 0,
-      data: rest,
+      data,
     };
 
     if (id) {
-      // Existing record — update by id
-      const { error } = await db.from('properties').upsert({ id, ...payload });
+      const { error } = await db.from('properties')
+        .upsert({ id, ...payload })
+        .select('id');
       if (error) throw error;
     } else {
-      // New record — attach user_id so loadProperties() can filter by it
       const { data: { user } } = await db.auth.getUser();
+      if (!user?.id) throw new Error('Not authenticated');
       const { data: inserted, error } = await db.from('properties')
-        .insert({ ...payload, user_id: user?.id })
+        .insert({ ...payload, user_id: user.id })
         .select('id')
         .single();
       if (error) throw error;
-      // Patch the in-memory object so callers immediately have the real UUID
       property.id = inserted.id;
       _lsSave(property);
     }
 
-    // Sync tenants to dedicated table whenever property is saved
     if (property.id && Array.isArray(property.tenants) && property.tenants.length > 0) {
       await syncTenantsToTable(property.id, property.tenants);
     }
   } catch (e) {
     const msg = e?.message || String(e);
-    const isNetErr     = /load failed|failed to fetch|networkerror|offline/i.test(msg);
-    const isTimeout    = /statement timeout|timeout|57014/i.test(msg);
-    const isSizeErr    = /too large|payload|entity/i.test(msg);
+    const isNetErr  = /load failed|failed to fetch|networkerror|offline/i.test(msg);
 
-    if (isNetErr) {
-      // Silent — user is offline, localStorage has the data, will sync on reconnect
-      return;
-    }
+    if (isNetErr) return;
 
     console.error('[Mainstreet] saveProperty error:', msg, e);
 
@@ -6286,8 +6317,6 @@ async function saveProperty(property) {
     toast.textContent = '⚠️ Sync delayed — your data is saved locally and will sync on next save.';
     document.body.appendChild(toast);
     setTimeout(() => toast.remove(), 5000);
-    // Do NOT schedule a retry here — savePropertyData() is debounced and will
-    // retry on the next user action. Infinite auto-retry causes toast spam.
   }
 }
 
@@ -6342,9 +6371,38 @@ async function loadPropertyData(id) {
   let lsData  = _lsLoad(id);
 
   try {
-    const { data, error } = await db.from('properties').select('*').eq('id', id).single();
+    if (!id || typeof id !== 'string') throw new Error('invalid id');
+    const { data, error } = await db
+      .from('properties')
+      .select('id, name, sqft, data')
+      .eq('id', id)
+      .single();
     if (!error && data) {
-      dbData = { id: data.id, name: data.name, totalSqft: data.sqft || 0, ...(data.data || {}) };
+      const d = data.data || {};
+      dbData = {
+        id:        data.id,
+        name:      data.name,
+        totalSqft: data.sqft || 0,
+        invoices:  d.invoices  || [],
+        disputes:  d.disputes  || [],
+        camYear:   d.camYear   ?? null,
+      };
+
+      // Fetch tenants from their own table and merge in
+      const { data: tenantRows } = await db
+        .from('tenants')
+        .select('property_id, name, sqft, cap, start_date, end_date, lease_url')
+        .eq('property_id', id);
+      if (tenantRows?.length) {
+        dbData.tenants = tenantRows.map(t => normalizeTenant({
+          tenant_name: t.name,
+          leased_sqft: t.sqft,
+          cap:         t.cap,
+          start_date:  t.start_date,
+          end_date:    t.end_date,
+          lease_url:   t.lease_url,
+        }));
+      }
     }
   } catch (e) { /* offline or error — fall through to localStorage */ }
 
