@@ -6131,16 +6131,21 @@ function _lsLoad(id) {
 }
 
 async function loadProperties() {
+  const { data: { user } } = await db.auth.getUser();
+  if (!user) throw new Error('Not authenticated');
+
   const { data, error } = await db
     .from('properties')
-    .select('*');
-
+    .select('*')
+    .eq('user_id', user.id);
 
   if (error) throw error;
 
   const properties = data || [];
+  if (properties.length === 0) return properties;
 
-  const { data: tenants } = await db.from('tenants').select('*');
+  const propertyIds = properties.map(p => p.id);
+  const { data: tenants } = await db.from('tenants').select('*').in('property_id', propertyIds);
   const allTenants = tenants || [];
   properties.forEach(p => {
     p.tenants = allTenants.filter(t => t.property_id === p.id);
@@ -6216,9 +6221,10 @@ async function saveProperty(property) {
       const { error } = await db.from('properties').upsert({ id, ...payload });
       if (error) throw error;
     } else {
-      // New record — let Supabase generate the UUID
+      // New record — attach user_id so loadProperties() can filter by it
+      const { data: { user } } = await db.auth.getUser();
       const { data: inserted, error } = await db.from('properties')
-        .insert(payload)
+        .insert({ ...payload, user_id: user?.id })
         .select('id')
         .single();
       if (error) throw error;
