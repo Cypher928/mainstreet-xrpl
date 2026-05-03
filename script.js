@@ -42,6 +42,7 @@ function _showLogin() {
 }
 
 let _authMode = 'signin'; // 'signin' | 'signup'
+let _initialized = false;
 
 function switchAuthTab(mode) {
   _authMode = mode;
@@ -117,7 +118,7 @@ async function submitAuth(event) {
     // If email confirmation is disabled, signUp returns a live session immediately
     if (data?.session?.user) {
       _showApp(data.session.user);
-      init();
+      if (!_initialized) { _initialized = true; init(); }
     } else {
       // Switch tab first (it clears loginMsg), then write the success message
       switchAuthTab('signin');
@@ -128,11 +129,12 @@ async function submitAuth(event) {
   } else if (data?.user) {
     // Explicit show — don't rely solely on onAuthStateChange firing in restricted browsers
     _showApp(data.user);
-    init();
+    if (!_initialized) { _initialized = true; init(); }
   }
 }
 
 async function signOut() {
+  _initialized = false;
   try {
     await db.auth.signOut();
   } catch (e) {
@@ -152,7 +154,7 @@ window.addEventListener('load', () => {
     }
     if (data?.session?.user) {
       _showApp(data.session.user);
-      init();
+      if (!_initialized) { _initialized = true; init(); }
     } else {
       _showLogin();
     }
@@ -162,11 +164,14 @@ window.addEventListener('load', () => {
 });
 
 db.auth.onAuthStateChange((event, session) => {
-  if (session?.user) {
+  if (event === 'SIGNED_IN' && session?.user) {
     _showApp(session.user);
-    // Only run init once — on first SIGNED_IN event after login
-    if (event === 'SIGNED_IN') init();
-  } else {
+    if (!_initialized) {
+      _initialized = true;
+      init();
+    }
+  } else if (event === 'SIGNED_OUT') {
+    _initialized = false;
     _showLogin();
   }
 });
