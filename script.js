@@ -2422,9 +2422,11 @@ async function removeBulkTenant(i) {
   const prop = currentProperty();
   if (tenantData[i]?.id) deleteLeaseFile(tenantData[i].id);
   tenantData.splice(i, 1);
-  if (prop?.tenants) prop.tenants.splice(i, 1);
+  if (prop?.tenants) prop.tenants = [...tenantData];
   renderBulkResults();
   checkSqftValidation();
+  // Full re-sync: delete all rows for this property then re-insert what remains
+  if (prop?.id) await resyncTenantsToTable(prop.id, tenantData.filter(t => t !== null));
   await savePropertyData();
 }
 
@@ -2559,6 +2561,11 @@ async function clearBulkResults() {
   document.getElementById('bulkResults').innerHTML = '';
   document.getElementById('bulkProgress').style.display = 'none';
   document.getElementById('bulkLeaseInput').value = '';
+  // Delete all tenant rows for this property from Supabase
+  if (prop?.id) {
+    const { error } = await db.from('tenants').delete().eq('property_id', prop.id);
+    if (error) console.error('[clearBulkResults] delete error:', error.message);
+  }
   await savePropertyData();
 }
 
@@ -6206,6 +6213,28 @@ async function loadProperties() {
   });
 
   return properties;
+}
+
+// Full replace: delete all rows for the property then insert the given list.
+// Used by explicit user actions (remove, clear all) to keep DB in sync.
+async function resyncTenantsToTable(propertyId, tenants) {
+  if (!propertyId || typeof propertyId !== 'string' || propertyId.length < 10) return;
+  const { error: delErr } = await db.from('tenants').delete().eq('property_id', propertyId);
+  if (delErr) { console.error('[resyncTenantsToTable] delete error:', delErr.message); return; }
+  const rows = (tenants || [])
+    .filter(t => t && t.tenant_name)
+    .map(t => ({
+      property_id: propertyId,
+      name:        t.tenant_name       || null,
+      sqft:        Number(t.leased_sqft) || null,
+      cap:         t.cap               ?? null,
+      start_date:  t.start_date        || null,
+      end_date:    t.end_date          || null,
+      lease_url:   t.lease_url         || null,
+    }));
+  if (rows.length === 0) return;
+  const { error } = await db.from('tenants').insert(rows).select('id');
+  if (error) console.error('[resyncTenantsToTable] insert error:', error.message);
 }
 
 async function syncTenantsToTable(propertyId, tenants) {
