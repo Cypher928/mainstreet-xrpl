@@ -1311,6 +1311,8 @@ async function handleLease(i, file) {
     property.tenants = deduped;
 
     await saveProperty(property);
+    // Full resync ONCE after save — replaces any stale rows for this property
+    await resyncTenantsToTable(property.id, deduped);
   } catch (err) {
     renderTenantError(i, err.message);
   }
@@ -2159,8 +2161,10 @@ async function handleBulkLeases(fileList) {
   renderBulkResults();
   checkSqftValidation();
 
-  // Save is fire-and-forget — UI must never block waiting for DB
-  saveProperty(property);
+  // Save property row, then resync tenants ONCE after all files are done.
+  // Doing this inside processFile caused cumulative inserts: 1+2+3+4+5 = 15 rows for 5 files.
+  await saveProperty(property);
+  await resyncTenantsToTable(property.id, property.tenants.filter(t => t?.tenant_name));
 }
 
 function updateTenantField(index, field, value) {
@@ -2353,6 +2357,8 @@ async function saveBulkTenant(i) {
 
   // Persist to Supabase immediately — don't rely on debounced oninput
   await savePropertyData();
+  const prop = currentProperty();
+  if (prop?.id) await resyncTenantsToTable(prop.id, tenantData.filter(t => t?.tenant_name));
   console.log('[saveBulkTenant] tenant', i, 'saved:', d?.tenant_name);
 
   // Success flash
@@ -6327,9 +6333,10 @@ async function saveProperty(property) {
       _lsSave(property);
     }
 
-    if (property.id && Array.isArray(property.tenants) && property.tenants.length > 0) {
-      await syncTenantsToTable(property.id, property.tenants);
-    }
+    // Tenant sync is NOT done here — syncTenantsToTable is called explicitly
+    // at upload completion and on user actions (Done, Remove, Clear All) only.
+    // Calling it here caused duplicate inserts: saveProperty runs per file
+    // processed, so 5 uploads × 5 cumulative rows = 15 DB rows from one session.
   } catch (e) {
     const msg = e?.message || String(e);
     const isNetErr  = /load failed|failed to fetch|networkerror|offline/i.test(msg);
