@@ -848,7 +848,7 @@ function normalizeTenant(d) {
     _usedFallback:       d._usedFallback       ?? fallback._usedFallback ?? false,
     id:                  d.id                  ?? crypto.randomUUID(),
     fileName:            d.fileName            ?? '',
-    lease_url:           d.lease_url ?? d.file_url ?? null,
+    leaseUrl:            d.leaseUrl ?? d.lease_url ?? d.file_url ?? null,
     _error:              d._error              ?? null,
   };
 }
@@ -1302,7 +1302,7 @@ async function handleLease(i, file) {
     const normalized = normalizeTenant(extracted);
     if (!isValidTenant(normalized)) throw new Error('Extracted tenant has no usable fields');
 
-    tenantData[i] = { ...normalized, leaseFile: file, leaseExpected: true, fileName: file.name, lease_url: leaseUrl };
+    tenantData[i] = { ...normalized, leaseFile: file, leaseExpected: true, fileName: file.name, leaseUrl };
     storeLeaseFile(normalized.id, file);
     renderTenantFields(i);
     checkSqftValidation();
@@ -1476,7 +1476,7 @@ function renderTenantFields(i) {
       </div>
       ${(() => { const w = getWarnings(flags); return w.length ? `<div class="rc-flags"><div class="rc-flags-title">&#x26A0;&#xFE0F; Needs Review</div>${w.map(m => `<div class="rc-flag-item">${m}</div>`).join('')}</div>` : ''; })()}
       ${d.leaseExpected
-        ? (d.leaseFile instanceof File || d.lease_url)
+        ? (d.leaseFile instanceof File || d.leaseUrl)
           ? `<button class="action-btn" onclick="openLeaseModalFromFile(${i})">&#x1F4C4; View Lease</button>`
           : `<div class="lease-missing-note">⚠️ Lease not attached — using manual data</div>`
         : ''}
@@ -2107,7 +2107,7 @@ async function handleBulkLeases(fileList) {
         leaseFile:          file,
         leaseExpected:      true,
         fileName:           file.name,
-        lease_url:          leaseUrl,
+        leaseUrl,
         status,
         extractionFailed:   status === 'failed',
         _needsReview:       isPartial,
@@ -2251,7 +2251,7 @@ function renderBulkResults() {
           ${showRetryButton
             ? `<button class="view-lease-btn" data-retry data-index="${i}" style="margin-left:0;color:#f97316;">&#x21BA; Retry</button>`
             : d.leaseExpected
-              ? (d.leaseFile instanceof File || d.lease_url)
+              ? (d.leaseFile instanceof File || d.leaseUrl)
                 ? `<button class="view-lease-btn" style="margin-left:0" onclick="event.stopPropagation();openLeaseModalFromFile(${i})">View Lease</button>`
                 : `<span class="lease-missing-note" data-retry data-index="${i}" style="margin-left:6px;cursor:pointer;">No lease file — tap to re-upload</span>`
               : ''}
@@ -2538,7 +2538,7 @@ async function retryExtractionWithFile(index, file) {
       leaseFile:        file,
       leaseExpected:    true,
       fileName:         file.name,
-      lease_url:        t?.lease_url ?? null,
+      leaseUrl:         t?.leaseUrl ?? null,
       extractionFailed: !isValid,
       _needsReview:     isPartial,
       _showRetry,
@@ -4034,7 +4034,7 @@ async function runAllocation() {
     const tdIdx = tenantData.findIndex(t => t && t.tenant_name === r.name);
     const _td   = tdIdx >= 0 ? tenantData[tdIdx] : null;
     const leaseBtn = _td?.leaseExpected
-      ? (_td.leaseFile instanceof File || _td.lease_url)
+      ? (_td.leaseFile instanceof File || _td.leaseUrl)
         ? `<button class="action-btn" onclick="openLeaseModalFromFile(${tdIdx})">&#x1F4C4; View Lease</button>`
         : `<div class="lease-missing-note">⚠️ Lease not attached — using manual data</div>`
       : '';
@@ -4536,8 +4536,8 @@ function openLeaseModalFromFile(index) {
   if (!d) return;
   if (d.leaseFile instanceof File) {
     openLeaseModal(d.leaseFile);
-  } else if (d.lease_url) {
-    openLeaseModal(d.lease_url);
+  } else if (d.leaseUrl) {
+    openLeaseModal(d.leaseUrl);
   }
 }
 
@@ -6237,7 +6237,7 @@ async function resyncTenantsToTable(propertyId, tenants) {
       cap:         t.cap                ?? null,
       start_date:  t.start_date         || null,
       end_date:    t.end_date           || null,
-      lease_url:   t.lease_url          || null,
+      lease_url:   t.leaseUrl           ?? null,
       lease_type:  t.lease_type         || null,
     }));
   if (rows.length === 0) return;
@@ -6257,7 +6257,7 @@ async function syncTenantsToTable(propertyId, tenants) {
       cap:         t.cap                ?? null,
       start_date:  t.start_date         || null,
       end_date:    t.end_date           || null,
-      lease_url:   t.lease_url          || null,
+      lease_url:   t.leaseUrl           ?? null,
       lease_type:  t.lease_type         || null,
     }));
 
