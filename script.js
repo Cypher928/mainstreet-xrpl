@@ -842,13 +842,13 @@ function normalizeTenant(d) {
     unitNumber:          d.unitNumber          ?? '',
     doc_has_dates:       d.doc_has_dates       ?? true,
     doc_has_lease_type:  d.doc_has_lease_type  ?? true,
-    leaseExpected:       d.leaseExpected       ?? false,
+    leaseUrl:            d.leaseUrl ?? d.lease_url ?? d.file_url ?? null,
+    leaseExpected:       d.leaseExpected ?? !!(d.leaseUrl ?? d.lease_url ?? d.file_url),
     extractionFailed:    d.extractionFailed    ?? false,
     _needsReview:        d._needsReview        ?? false,
     _usedFallback:       d._usedFallback       ?? fallback._usedFallback ?? false,
     id:                  d.id                  ?? crypto.randomUUID(),
     fileName:            d.fileName            ?? '',
-    leaseUrl:            d.leaseUrl ?? d.lease_url ?? d.file_url ?? null,
     _error:              d._error              ?? null,
   };
 }
