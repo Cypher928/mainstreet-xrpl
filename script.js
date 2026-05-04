@@ -6198,7 +6198,7 @@ async function loadProperties() {
   const propertyIds = properties.map(p => p.id);
   const { data: tenantRows, error: tenantErr } = await db
     .from('tenants')
-    .select('property_id, name, sqft, cap, start_date, end_date, lease_url')
+    .select('property_id, name, sqft, cap, start_date, end_date, lease_url, lease_type')
     .in('property_id', propertyIds);
 
   if (tenantErr) console.error('[loadProperties] tenants error:', tenantErr.message);
@@ -6215,6 +6215,7 @@ async function loadProperties() {
         start_date:  t.start_date,
         end_date:    t.end_date,
         lease_url:   t.lease_url,
+        lease_type:  t.lease_type,
       }));
   });
 
@@ -6231,12 +6232,13 @@ async function resyncTenantsToTable(propertyId, tenants) {
     .filter(t => t && t.tenant_name)
     .map(t => ({
       property_id: propertyId,
-      name:        t.tenant_name       || null,
+      name:        t.tenant_name        || null,
       sqft:        Number(t.leased_sqft) || null,
-      cap:         t.cap               ?? null,
-      start_date:  t.start_date        || null,
-      end_date:    t.end_date          || null,
-      lease_url:   t.lease_url         || null,
+      cap:         t.cap                ?? null,
+      start_date:  t.start_date         || null,
+      end_date:    t.end_date           || null,
+      lease_url:   t.lease_url          || null,
+      lease_type:  t.lease_type         || null,
     }));
   if (rows.length === 0) return;
   const { error } = await db.from('tenants').insert(rows).select('id');
@@ -6250,12 +6252,13 @@ async function syncTenantsToTable(propertyId, tenants) {
     .filter(t => t && t.tenant_name)
     .map(t => ({
       property_id: propertyId,
-      name:        t.tenant_name  || null,
+      name:        t.tenant_name        || null,
       sqft:        Number(t.leased_sqft) || null,
-      cap:         t.cap          ?? null,
-      start_date:  t.start_date   || null,
-      end_date:    t.end_date     || null,
-      lease_url:   t.lease_url    || null,
+      cap:         t.cap                ?? null,
+      start_date:  t.start_date         || null,
+      end_date:    t.end_date           || null,
+      lease_url:   t.lease_url          || null,
+      lease_type:  t.lease_type         || null,
     }));
 
   if (rows.length === 0) return;
@@ -6428,7 +6431,7 @@ async function loadPropertyData(id) {
       // Fetch tenants from their own table and merge in
       const { data: tenantRows } = await db
         .from('tenants')
-        .select('property_id, name, sqft, cap, start_date, end_date, lease_url')
+        .select('property_id, name, sqft, cap, start_date, end_date, lease_url, lease_type')
         .eq('property_id', id);
       if (tenantRows?.length) {
         dbData.tenants = tenantRows.map(t => normalizeTenant({
@@ -6438,6 +6441,7 @@ async function loadPropertyData(id) {
           start_date:  t.start_date,
           end_date:    t.end_date,
           lease_url:   t.lease_url,
+          lease_type:  t.lease_type,
         }));
       }
     }
