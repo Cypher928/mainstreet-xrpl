@@ -6237,7 +6237,7 @@ async function resyncTenantsToTable(propertyId, tenants) {
       cap:         t.cap                ?? null,
       start_date:  t.start_date         || null,
       end_date:    t.end_date           || null,
-      lease_url:   t.leaseUrl           ?? null,
+      ...(t.leaseUrl ? { lease_url: t.leaseUrl } : {}),
       lease_type:  t.lease_type         || null,
     }));
   if (rows.length === 0) return;
@@ -6257,7 +6257,7 @@ async function syncTenantsToTable(propertyId, tenants) {
       cap:         t.cap                ?? null,
       start_date:  t.start_date         || null,
       end_date:    t.end_date           || null,
-      lease_url:   t.leaseUrl           ?? null,
+      ...(t.leaseUrl ? { lease_url: t.leaseUrl } : {}),
       lease_type:  t.lease_type         || null,
     }));
 
@@ -6268,30 +6268,39 @@ async function syncTenantsToTable(propertyId, tenants) {
 }
 
 async function uploadLeaseToStorage(file, propertyId) {
-  if (!db) {
-    console.error('[uploadLeaseToStorage] db client not initialised');
-    return null;
-  }
   if (!propertyId) {
     console.warn('[uploadLeaseToStorage] skipped — property has no id yet');
     return null;
   }
-  // Timestamp prefix keeps paths unique even if the same file is re-uploaded
-  const filePath = `${propertyId}/${Date.now()}-${file.name}`;
-  console.log('[uploadLeaseToStorage] uploading', file.name, '→', filePath);
-  try {
-    const { error } = await db.storage.from('leases').upload(filePath, file, { upsert: true });
-    if (error) {
-      console.error('[uploadLeaseToStorage] FAILED:', error.message, error);
+
+  const fileName = `${propertyId}/${Date.now()}-${file.name}`;
+  console.log('[uploadLeaseToStorage] uploading', file.name, '→', fileName);
+
+  const attempt = async () => {
+    const fileBase64 = await toBase64(file);
+    const resp = await fetch('/api/upload', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ fileName, fileType: file.type, fileBase64, bucket: 'leases' }),
+    });
+    const result = await resp.json();
+    if (!resp.ok || result.error) throw new Error(result.error || `HTTP ${resp.status}`);
+    return result.url;
+  };
+
+  for (let i = 0; i < 3; i++) {
+    try {
+      const url = await attempt();
+      console.log('[uploadLeaseToStorage] SUCCESS:', url);
+      return url;
+    } catch (e) {
+      if (i < 2) {
+        await new Promise(r => setTimeout(r, (i + 1) * 1200));
+        continue;
+      }
+      console.error('[uploadLeaseToStorage] failed after 3 attempts:', e.message);
       return null;
     }
-    const { data: urlData } = db.storage.from('leases').getPublicUrl(filePath);
-    const url = urlData?.publicUrl || null;
-    console.log('[uploadLeaseToStorage] SUCCESS:', url);
-    return url;
-  } catch (e) {
-    console.error('[uploadLeaseToStorage] exception:', e.message, e);
-    return null;
   }
 }
 
