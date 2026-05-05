@@ -349,8 +349,7 @@ Rules:
   If landlord pays operating expenses → "Gross".
   If some expenses split → "Modified Gross". Null only if completely unresolvable.
 - sqft: Integer. Strip commas, units, and the word "approximately". Null if not found.
-- cam_cap: annual CAM increase cap as a plain number (5 = 5%). Null if no cap or not mentioned.
-- capPercentage: same as cam_cap — return the same value for both fields.
+- cam_cap and capPercentage: CRITICAL — you MUST search the entire document for any language that limits CAM or operating expense increases. Look for ALL of the following phrases: "CAM cap", "operating expense cap", "expense stop", "base year stop", "not to exceed", "shall not pay more than", "increases limited to", "capped at", "no more than X% increase", "annual increase cap", "controllable expense cap". If a percentage is found (e.g. "5%" or "5 percent"), return 5. If a dollar amount is found, return that number. Return the SAME value for both cam_cap and capPercentage. Only return null if absolutely no cap-related language exists anywhere in the document.
 - Use null only when a field is truly impossible to determine.`;
 
 const CLAUDE_LEASE_PROMPT = `Extract the following fields from the lease text below.
@@ -373,7 +372,7 @@ Rules:
 - lease_start_date: Format YYYY-MM-DD. Look for: "Commencement Date", "Lease Start Date", "Term begins on", "Term shall commence on", "Effective Date". Fall back to "Execution Date" if nothing else found. Never null if a reasonable date exists.
 - lease_end_date: Format YYYY-MM-DD. Look for: "Expiration Date", "Lease End Date", "Term ends on". If not stated, calculate from start date + term length (e.g. "10-year term from 2020-01-01" → "2030-01-01"). Never null if start date and term length are both present.
 - lease_type: "NNN" if tenant pays taxes+insurance+maintenance. "Gross" if landlord pays. "Modified Gross" if stated. Null if unclear.
-- cam_cap: annual CAM increase cap as a plain number (5 = 5%). Null if no cap or not mentioned.
+- cam_cap: CRITICAL — search the ENTIRE lease for any CAM/operating expense cap or limit. Look for: "CAM cap", "expense cap", "expense stop", "base year stop", "not to exceed", "shall not pay more than", "increases limited to", "capped at X%", "no more than X% increase", "controllable expense cap". Return the number only (e.g. 5% → 5, $10,000 → 10000). Only null if absolutely no cap language exists anywhere.
 - excluded_categories: array of CAM categories explicitly excluded. [] if none.
 - Use null for any unknown field. Never use empty string "".
 - Key names are fixed: tenant_name, leased_sqft, lease_start_date, lease_end_date, lease_type, cam_cap, excluded_categories.
@@ -937,7 +936,10 @@ DATES:
 
 LEASE TYPE: Triple Net / NNN → "NNN" | Modified Gross | Gross
 
-CAM CAP: annual CAM increase cap as a plain number (5% → 5). Null if not mentioned.
+CAM CAP (CRITICAL): Search the ENTIRE document for any language limiting CAM or operating expense increases.
+Look for: "CAM cap", "expense cap", "expense stop", "base year stop", "not to exceed", "shall not pay more than", "increases limited to", "capped at", "no more than X%", "controllable expense cap".
+If a percentage (e.g. 5%) → return 5. If a dollar amount → return that number.
+Only return null if NO cap language exists anywhere in the document.
 
 Return best guess — do not leave fields null unless truly impossible.`;
 
