@@ -330,6 +330,7 @@ Return exactly this structure:
   "lease_end_date": "YYYY-MM-DD",
   "lease_type": string,
   "sqft": number,
+  "cam_cap": number,
   "capPercentage": number
 }
 
@@ -348,7 +349,8 @@ Rules:
   If landlord pays operating expenses → "Gross".
   If some expenses split → "Modified Gross". Null only if completely unresolvable.
 - sqft: Integer. Strip commas, units, and the word "approximately". Null if not found.
-- capPercentage: CAM cap as plain number (35% → 35). Null if not mentioned.
+- cam_cap: annual CAM increase cap as a plain number (5 = 5%). Null if no cap or not mentioned.
+- capPercentage: same as cam_cap — return the same value for both fields.
 - Use null only when a field is truly impossible to determine.`;
 
 const CLAUDE_LEASE_PROMPT = `Extract the following fields from the lease text below.
@@ -836,7 +838,7 @@ function normalizeTenant(d) {
     end_date:            toISODate(d.end_date   ?? d.endDate   ?? d.lease_end_date  ?? fallback.endDate   ?? ''),
     lease_type:          d.lease_type          ?? d.leaseType                     ?? '',
     excluded_categories: d.excluded_categories ?? d.excludedCategories            ?? '',
-    cap:                 d.cap                 ?? d.capPercentage                 ?? null,
+    cap:                 d.cap                 ?? d.cam_cap ?? d.capPercentage    ?? null,
     flags:               d.flags               ?? [],
     confidence:          d.confidence          ?? {},
     baseYear:            d.baseYear            ?? null,
@@ -919,7 +921,8 @@ Return ONLY valid JSON. No explanation. No markdown.
   "lease_start_date": "YYYY-MM-DD" or null,
   "lease_end_date": "YYYY-MM-DD" or null,
   "lease_type": "NNN" | "Gross" | "Modified Gross" | null,
-  "sqft": number or null
+  "sqft": number or null,
+  "cam_cap": number or null
 }
 
 TENANT NAME:
@@ -933,6 +936,9 @@ DATES:
 - End: Expiration Date → Lease End Date → calculate from start date + term length
 
 LEASE TYPE: Triple Net / NNN → "NNN" | Modified Gross | Gross
+
+CAM CAP: annual CAM increase cap as a plain number (5% → 5). Null if not mentioned.
+
 Return best guess — do not leave fields null unless truly impossible.`;
 
   const messages = [{
