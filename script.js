@@ -3640,13 +3640,20 @@ function runFullReconciliation(property) {
     let capApplied    = false;
     let capAdjustment = null;
 
-    if (lease.capPercentage !== null && lease.capBaseAmount !== null) {
-      const cap = lease.capBaseAmount * (1 + lease.capPercentage / 100);
-      if (rawTotal > cap) {
-        capAdjustment = parseFloat((rawTotal - cap).toFixed(2));
-        rawTotal      = cap;
-        capApplied    = true;
-      }
+    // Compute expectedCam from lease cap terms. capBaseAmount is the prior-year
+    // base; applying the cap percentage gives the ceiling the tenant is expected to pay.
+    // Fall back to capBaseAmount alone if percentage is absent.
+    let expectedCam = null;
+    if (lease.capBaseAmount !== null) {
+      expectedCam = (lease.capPercentage !== null)
+        ? parseFloat((lease.capBaseAmount * (1 + lease.capPercentage / 100)).toFixed(2))
+        : parseFloat(lease.capBaseAmount.toFixed(2));
+    }
+
+    if (expectedCam !== null && rawTotal > expectedCam) {
+      capAdjustment = parseFloat((rawTotal - expectedCam).toFixed(2));
+      rawTotal      = expectedCam;
+      capApplied    = true;
     }
 
     const included = [
@@ -3717,8 +3724,10 @@ function runFullReconciliation(property) {
     result.ambiguityFlags = flags;
     result.tenantId    = lease.id;
     result.actualCam   = result.totalAllocated;
-    result.expectedCam = null; // populated from cam_reconciliations on load; not yet entered via UI
-    result.variance    = null; // computed below once expectedCam is available
+    result.expectedCam = expectedCam;
+    result.variance    = (result.actualCam !== null && expectedCam !== null)
+      ? parseFloat((result.actualCam - expectedCam).toFixed(2))
+      : null;
     return result;
   });
 
