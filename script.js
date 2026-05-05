@@ -6257,16 +6257,16 @@ async function resyncTenantsToTable(propertyId, tenants) {
     .map(t => ({
       id:          t.id,
       property_id: propertyId,
-      name:        t.tenant_name        || null,
+      name:        t.tenant_name || null,
       sqft:        Number(t.leased_sqft) || null,
-      cap:         t.cap                ?? null,
-      start_date:  t.start_date         || null,
-      end_date:    t.end_date           || null,
+      cap:         t.cap ?? t.cam_cap ?? t.capPercentage ?? null,
+      start_date:  t.start_date || null,
+      end_date:    t.end_date   || null,
       ...(t.leaseUrl ? { lease_url: t.leaseUrl } : {}),
-      lease_type:  t.lease_type         || null,
+      lease_type:  t.lease_type || null,
     }));
   if (rows.length === 0) return;
-  console.log('[resyncTenantsToTable] TENANT ROWS TO SAVE:', rows.map(r => ({ name: r.name, cap: r.cap, id: r.id })));
+  console.log('TENANT INSERT PAYLOAD', JSON.stringify(rows, null, 2));
   const { error } = await db.from('tenants').insert(rows).select('id');
   if (error) console.error('[resyncTenantsToTable] insert error:', error.message);
 }
@@ -6278,16 +6278,16 @@ async function syncTenantsToTable(propertyId, tenants) {
     .map(t => ({
       id:          t.id,
       property_id: propertyId,
-      name:        t.tenant_name        || null,
+      name:        t.tenant_name || null,
       sqft:        Number(t.leased_sqft) || null,
-      cap:         t.cap                ?? null,
-      start_date:  t.start_date         || null,
-      end_date:    t.end_date           || null,
+      cap:         t.cap ?? t.cam_cap ?? t.capPercentage ?? null,
+      start_date:  t.start_date || null,
+      end_date:    t.end_date   || null,
       ...(t.leaseUrl ? { lease_url: t.leaseUrl } : {}),
-      lease_type:  t.lease_type         || null,
+      lease_type:  t.lease_type || null,
     }));
   if (rows.length === 0) return;
-  console.log('[syncTenantsToTable] TENANT ROWS TO SAVE:', rows.map(r => ({ name: r.name, cap: r.cap, id: r.id })));
+  console.log('TENANT INSERT PAYLOAD', JSON.stringify(rows, null, 2));
   const { error } = await db.from('tenants').insert(rows).select('id');
   if (error) console.error('[syncTenantsToTable] insert error:', error.message);
 }
