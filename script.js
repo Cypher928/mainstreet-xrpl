@@ -3719,7 +3719,7 @@ function runFullReconciliation(property) {
     result.tenantId       = lease.id;
 
     const actualCam   = result.totalAllocated ?? null;
-    const expectedCam = lease.cap ?? null;
+    const expectedCam = live.cap ?? null;
     const variance    = (actualCam !== null && expectedCam !== null)
       ? Math.round((actualCam - expectedCam) * 100) / 100
       : null;
