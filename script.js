@@ -4105,7 +4105,7 @@ async function runAllocation() {
   // must not hold the button in "Running…" after results are already on screen.
   syncPortfolioEntry().catch(() => {});
   await savePropertyData(); // persist CAM allocation results to Supabase
-  saveCamResults(currentProperty()?.id, fullResults, getCamYear()).catch(e =>
+  await saveCamResults(currentProperty()?.id, fullResults, getCamYear()).catch(e =>
     console.error('[saveCamResults]', e)
   );
   updateStepBar('review');
@@ -6302,9 +6302,6 @@ async function syncTenantsToTable(propertyId, tenants) {
 
 async function saveCamResults(propertyId, fullResults, year) {
   if (!propertyId || !year) return;
-  const { error: delErr } = await db.from('cam_reconciliations')
-    .delete().eq('property_id', propertyId).eq('year', year);
-  if (delErr) { console.error('[saveCamResults] delete error:', delErr.message); return; }
   const rows = (fullResults || []).map(r => {
     const actual   = r.actualCam ?? r.totalAllocated ?? null;
     const expected = r.expectedCam ?? null;
@@ -6320,17 +6317,25 @@ async function saveCamResults(propertyId, fullResults, year) {
     };
   });
   console.log('ROWS TO SAVE:', rows);
-  if (!rows.length) return;
-  const { data, error } = await db.from('cam_reconciliations').insert(rows).select();
-  console.log('INSERT RESULT:', data, error);
-  if (error) console.error('[saveCamResults] insert error:', error.message);
+  const resp = await fetch('/api/cam-reconciliations', {
+    method:  'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body:    JSON.stringify({ propertyId, year, rows }),
+  });
+  const result = await resp.json();
+  console.log('INSERT RESULT:', resp.status, result);
+  if (!resp.ok) console.error('[saveCamResults] error:', result.error, result.detail);
 }
 
 async function loadCamResults(propertyId, year) {
   if (!propertyId || !year) return [];
-  const { data, error } = await db.from('cam_reconciliations')
-    .select('*').eq('property_id', propertyId).eq('year', year);
-  if (error) { console.error('[loadCamResults] error:', error.message); return []; }
+  const resp = await fetch(`/api/cam-reconciliations?propertyId=${encodeURIComponent(propertyId)}&year=${encodeURIComponent(year)}`);
+  if (!resp.ok) {
+    const err = await resp.json().catch(() => ({}));
+    console.error('[loadCamResults] error:', err.error);
+    return [];
+  }
+  const { data } = await resp.json();
   return data || [];
 }
 
