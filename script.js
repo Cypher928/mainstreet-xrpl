@@ -962,6 +962,7 @@ Return best guess — do not leave fields null unless truly impossible.`;
 
   if (!res.ok) throw new Error(`Claude PDF direct failed: HTTP ${res.status}`);
   const data = await res.json();
+  console.log('RAW EXTRACTION (pdf-direct)', data);
   return data;
 }
 
@@ -1193,6 +1194,7 @@ ${leaseSnippet}
   };
 
   const raw = data;
+  console.log('RAW EXTRACTION (text)', raw);
   const cleanText = normalizeText(text);
   const fb = extractLeaseData(cleanText);
 
@@ -1218,7 +1220,7 @@ ${leaseSnippet}
 
   const finalFlags = computeFlags({ start_date: resolvedStart, end_date: resolvedEnd, lease_type: resolvedType, flags: raw.flags, doc_has_dates, doc_has_lease_type });
 
-  return normalizeTenant({
+  const normalized = normalizeTenant({
     tenant_name:         resolvedName,
     leased_sqft:         resolvedSqft,
     start_date:          resolvedStart,
@@ -1233,6 +1235,8 @@ ${leaseSnippet}
     doc_has_lease_type,
     _error:              null,
   });
+  console.log('NORMALIZED TENANT (text)', normalized);
+  return normalized;
 }
 // ─── SVG icons ────────────────────────────────────────────────────────────────
 const CHECK_SVG = `<svg viewBox="0 0 12 12" width="10" height="10" fill="none" stroke="white" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round"><polyline points="2,6 5,9 10,3"/></svg>`;
@@ -1309,6 +1313,7 @@ async function handleLease(i, file) {
 
     if (!extracted) throw new Error('Could not extract lease fields');
     const normalized = normalizeTenant(extracted);
+    console.log('NORMALIZED TENANT (handleLease)', normalized);
     if (!isValidTenant(normalized)) throw new Error('Extracted tenant has no usable fields');
 
     tenantData[i] = { ...normalized, leaseFile: file, leaseExpected: true, fileName: file.name, leaseUrl };
@@ -2073,6 +2078,7 @@ async function handleBulkLeases(fileList) {
 
       if (extracted && !usedPdfDirect) extracted.rawText = leaseText;
       const norm = extracted ? normalizeTenant(extracted) : null;
+      console.log('NORMALIZED TENANT (processFile)', norm);
 
       // Resolve name first — Claude → regex → filename fallback — so status
       // logic can use the final name rather than Claude's raw output alone.
