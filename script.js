@@ -3715,6 +3715,7 @@ function runFullReconciliation(property) {
       capAdjustment
     );
     result.ambiguityFlags = flags;
+    result.tenantId = lease.id;
     return result;
   });
 
@@ -4077,6 +4078,9 @@ async function runAllocation() {
   // must not hold the button in "Running…" after results are already on screen.
   syncPortfolioEntry().catch(() => {});
   await savePropertyData(); // persist CAM allocation results to Supabase
+  saveCamResults(currentProperty()?.id, fullResults, getCamYear()).catch(e =>
+    console.error('[saveCamResults]', e)
+  );
   updateStepBar('review');
 
   showRunCompleteToast();
@@ -6198,7 +6202,7 @@ async function loadProperties() {
   const propertyIds = properties.map(p => p.id);
   const { data: tenantRows, error: tenantErr } = await db
     .from('tenants')
-    .select('property_id, name, sqft, cap, start_date, end_date, lease_url, lease_type')
+    .select('id, property_id, name, sqft, cap, start_date, end_date, lease_url, lease_type')
     .in('property_id', propertyIds);
 
   if (tenantErr) console.error('[loadProperties] tenants error:', tenantErr.message);
@@ -6209,6 +6213,7 @@ async function loadProperties() {
     p.tenants = allTenants
       .filter(t => t.property_id === p.id)
       .map(t => normalizeTenant({
+        id:          t.id,
         tenant_name: t.name,
         leased_sqft: t.sqft,
         cap:         t.cap,
@@ -6231,6 +6236,7 @@ async function resyncTenantsToTable(propertyId, tenants) {
   const rows = (tenants || [])
     .filter(t => t && t.tenant_name)
     .map(t => ({
+      id:          t.id,
       property_id: propertyId,
       name:        t.tenant_name        || null,
       sqft:        Number(t.leased_sqft) || null,
@@ -6251,6 +6257,7 @@ async function syncTenantsToTable(propertyId, tenants) {
   const rows = (tenants || [])
     .filter(t => t && t.tenant_name)
     .map(t => ({
+      id:          t.id,
       property_id: propertyId,
       name:        t.tenant_name        || null,
       sqft:        Number(t.leased_sqft) || null,
@@ -6265,6 +6272,34 @@ async function syncTenantsToTable(propertyId, tenants) {
 
   const { error } = await db.from('tenants').insert(rows).select('id');
   if (error) console.error('[syncTenantsToTable] insert error:', error.message);
+}
+
+async function saveCamResults(propertyId, tenants, year) {
+  if (!propertyId || !year) return;
+  const { error: delErr } = await db.from('cam_reconciliations')
+    .delete().eq('property_id', propertyId).eq('year', year);
+  if (delErr) { console.error('[saveCamResults] delete error:', delErr.message); return; }
+  const rows = (tenants || [])
+    .filter(t => t.tenantId ?? t.id)
+    .map(t => ({
+      property_id:  propertyId,
+      tenant_id:    t.tenantId ?? t.id ?? null,
+      expected_cam: t.expectedCam ?? null,
+      actual_cam:   t.actualCam ?? t.totalAllocated ?? null,
+      variance:     t.variance ?? null,
+      year,
+    }));
+  if (!rows.length) return;
+  const { error } = await db.from('cam_reconciliations').insert(rows);
+  if (error) console.error('[saveCamResults] insert error:', error.message);
+}
+
+async function loadCamResults(propertyId, year) {
+  if (!propertyId || !year) return [];
+  const { data, error } = await db.from('cam_reconciliations')
+    .select('*').eq('property_id', propertyId).eq('year', year);
+  if (error) { console.error('[loadCamResults] error:', error.message); return []; }
+  return data || [];
 }
 
 async function uploadLeaseToStorage(file, propertyId) {
@@ -6440,10 +6475,11 @@ async function loadPropertyData(id) {
       // Fetch tenants from their own table and merge in
       const { data: tenantRows } = await db
         .from('tenants')
-        .select('property_id, name, sqft, cap, start_date, end_date, lease_url, lease_type')
+        .select('id, property_id, name, sqft, cap, start_date, end_date, lease_url, lease_type')
         .eq('property_id', id);
       if (tenantRows?.length) {
         dbData.tenants = tenantRows.map(t => normalizeTenant({
+          id:          t.id,
           tenant_name: t.name,
           leased_sqft: t.sqft,
           cap:         t.cap,
@@ -6452,6 +6488,21 @@ async function loadPropertyData(id) {
           lease_url:   t.lease_url,
           lease_type:  t.lease_type,
         }));
+
+        // Merge persisted CAM results into tenant objects so the UI can restore them
+        const camRows = await loadCamResults(id, getCamYear());
+        if (camRows.length) {
+          dbData.tenants = dbData.tenants.map(t => {
+            const cam = camRows.find(r => r.tenant_id === t.id);
+            if (!cam) return t;
+            return {
+              ...t,
+              expectedCam: cam.expected_cam,
+              actualCam:   cam.actual_cam,
+              variance:    cam.variance,
+            };
+          });
+        }
       }
     }
   } catch (e) { /* offline or error — fall through to localStorage */ }
