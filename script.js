@@ -3792,6 +3792,7 @@ function runCAMAllocation(expenses, tenants) {
 }
 
 async function runAllocation() {
+  console.log('RUN ALLOCATION FIRED');
   if (isRunning) return; // prevent concurrent runs
   isRunning = true;
 
