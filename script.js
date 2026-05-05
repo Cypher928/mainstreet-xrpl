@@ -6266,13 +6266,13 @@ async function resyncTenantsToTable(propertyId, tenants) {
       lease_type:  t.lease_type         || null,
     }));
   if (rows.length === 0) return;
+  console.log('[resyncTenantsToTable] TENANT ROWS TO SAVE:', rows.map(r => ({ name: r.name, cap: r.cap, id: r.id })));
   const { error } = await db.from('tenants').insert(rows).select('id');
   if (error) console.error('[resyncTenantsToTable] insert error:', error.message);
 }
 
 async function syncTenantsToTable(propertyId, tenants) {
   if (!propertyId || typeof propertyId !== 'string' || propertyId.length < 10) return;
-
   const rows = (tenants || [])
     .filter(t => t && t.tenant_name)
     .map(t => ({
@@ -6286,9 +6286,8 @@ async function syncTenantsToTable(propertyId, tenants) {
       ...(t.leaseUrl ? { lease_url: t.leaseUrl } : {}),
       lease_type:  t.lease_type         || null,
     }));
-
   if (rows.length === 0) return;
-
+  console.log('[syncTenantsToTable] TENANT ROWS TO SAVE:', rows.map(r => ({ name: r.name, cap: r.cap, id: r.id })));
   const { error } = await db.from('tenants').insert(rows).select('id');
   if (error) console.error('[syncTenantsToTable] insert error:', error.message);
 }
