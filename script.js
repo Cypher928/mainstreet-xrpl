@@ -3640,14 +3640,19 @@ function runFullReconciliation(property) {
     let capApplied    = false;
     let capAdjustment = null;
 
-    // Compute expectedCam from lease cap terms. capBaseAmount is the prior-year
-    // base; applying the cap percentage gives the ceiling the tenant is expected to pay.
-    // Fall back to capBaseAmount alone if percentage is absent.
+    // Compute expectedCam from lease cap terms.
+    // Prefer the computed dollar ceiling (capBaseAmount × (1 + cap%)) when available.
+    // Fall back to live.cap (the raw cap value from the tenant) so expectedCam is
+    // never null simply because capBaseAmount was not entered.
     let expectedCam = null;
     if (lease.capBaseAmount !== null) {
       expectedCam = (lease.capPercentage !== null)
         ? parseFloat((lease.capBaseAmount * (1 + lease.capPercentage / 100)).toFixed(2))
         : parseFloat(lease.capBaseAmount.toFixed(2));
+    } else if (live.cap != null) {
+      expectedCam = parseFloat(live.cap);
+    } else if (lease.capPercentage !== null) {
+      expectedCam = parseFloat(lease.capPercentage);
     }
 
     if (expectedCam !== null && rawTotal > expectedCam) {
