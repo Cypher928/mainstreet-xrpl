@@ -3715,7 +3715,10 @@ function runFullReconciliation(property) {
       capAdjustment
     );
     result.ambiguityFlags = flags;
-    result.tenantId = lease.id;
+    result.tenantId    = lease.id;
+    result.actualCam   = result.totalAllocated;
+    result.expectedCam = null; // populated from cam_reconciliations on load; not yet entered via UI
+    result.variance    = null; // computed below once expectedCam is available
     return result;
   });
 
@@ -6281,14 +6284,21 @@ async function saveCamResults(propertyId, tenants, year) {
   if (delErr) { console.error('[saveCamResults] delete error:', delErr.message); return; }
   const rows = (tenants || [])
     .filter(t => t.tenantId ?? t.id)
-    .map(t => ({
-      property_id:  propertyId,
-      tenant_id:    t.tenantId ?? t.id ?? null,
-      expected_cam: t.expectedCam ?? null,
-      actual_cam:   t.actualCam ?? t.totalAllocated ?? null,
-      variance:     t.variance ?? null,
-      year,
-    }));
+    .map(t => {
+      const actualCam   = t.actualCam   ?? t.totalAllocated ?? null;
+      const expectedCam = t.expectedCam ?? null;
+      const variance    = (actualCam !== null && expectedCam !== null)
+        ? parseFloat((actualCam - expectedCam).toFixed(2))
+        : (t.variance ?? null);
+      return {
+        property_id:  propertyId,
+        tenant_id:    t.tenantId ?? t.id ?? null,
+        expected_cam: expectedCam,
+        actual_cam:   actualCam,
+        variance,
+        year,
+      };
+    });
   if (!rows.length) return;
   const { error } = await db.from('cam_reconciliations').insert(rows);
   if (error) console.error('[saveCamResults] insert error:', error.message);
