@@ -6301,17 +6301,24 @@ async function saveCamResults(propertyId, fullResults, year) {
   const { error: delErr } = await db.from('cam_reconciliations')
     .delete().eq('property_id', propertyId).eq('year', year);
   if (delErr) { console.error('[saveCamResults] delete error:', delErr.message); return; }
-  const rows = (fullResults || []).map(r => ({
-    property_id:  propertyId,
-    tenant_id:    r.tenantId,
-    actual_cam:   r.actualCam   ?? r.totalAllocated ?? null,
-    expected_cam: r.expectedCam ?? null,
-    variance:     r.variance    ?? null,
-    year,
-  }));
+  const rows = (fullResults || []).map(r => {
+    const actual   = r.actualCam ?? r.totalAllocated ?? null;
+    const expected = r.expectedCam ?? null;
+    return {
+      property_id:  propertyId,
+      tenant_id:    r.tenantId,
+      actual_cam:   actual,
+      expected_cam: expected,
+      variance:     (actual !== null && expected !== null)
+        ? Math.round((actual - expected) * 100) / 100
+        : null,
+      year,
+    };
+  });
   console.log('ROWS TO SAVE:', rows);
   if (!rows.length) return;
-  const { error } = await db.from('cam_reconciliations').insert(rows);
+  const { data, error } = await db.from('cam_reconciliations').insert(rows).select();
+  console.log('INSERT RESULT:', data, error);
   if (error) console.error('[saveCamResults] insert error:', error.message);
 }
 
