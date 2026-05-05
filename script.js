@@ -6296,28 +6296,20 @@ async function syncTenantsToTable(propertyId, tenants) {
   if (error) console.error('[syncTenantsToTable] insert error:', error.message);
 }
 
-async function saveCamResults(propertyId, tenants, year) {
+async function saveCamResults(propertyId, fullResults, year) {
   if (!propertyId || !year) return;
   const { error: delErr } = await db.from('cam_reconciliations')
     .delete().eq('property_id', propertyId).eq('year', year);
   if (delErr) { console.error('[saveCamResults] delete error:', delErr.message); return; }
-  const rows = (tenants || [])
-    .filter(t => t.tenantId ?? t.id)
-    .map(t => {
-      const actualCam   = t.actualCam   ?? t.totalAllocated ?? null;
-      const expectedCam = t.expectedCam ?? null;
-      const variance    = (actualCam !== null && expectedCam !== null)
-        ? parseFloat((actualCam - expectedCam).toFixed(2))
-        : (t.variance ?? null);
-      return {
-        property_id:  propertyId,
-        tenant_id:    t.tenantId ?? t.id ?? null,
-        expected_cam: expectedCam,
-        actual_cam:   actualCam,
-        variance,
-        year,
-      };
-    });
+  const rows = (fullResults || []).map(r => ({
+    property_id:  propertyId,
+    tenant_id:    r.tenantId,
+    actual_cam:   r.actualCam   ?? r.totalAllocated ?? null,
+    expected_cam: r.expectedCam ?? null,
+    variance:     r.variance    ?? null,
+    year,
+  }));
+  console.log('ROWS TO SAVE:', rows);
   if (!rows.length) return;
   const { error } = await db.from('cam_reconciliations').insert(rows);
   if (error) console.error('[saveCamResults] insert error:', error.message);
