@@ -2116,6 +2116,7 @@ async function handleBulkLeases(fileList) {
         start_date:         norm?.start_date         ?? null,
         end_date:           norm?.end_date           ?? null,
         lease_type:         norm?.lease_type         ?? null,
+        cap:                norm?.cap                ?? null,
         flags:              norm?.flags              ?? [],
         doc_has_dates:      norm?.doc_has_dates      ?? false,
         doc_has_lease_type: norm?.doc_has_lease_type ?? false,
