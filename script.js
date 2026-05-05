@@ -3726,13 +3726,18 @@ function runFullReconciliation(property) {
       capApplied,
       capAdjustment
     );
-    result.ambiguityFlags = flags;
-    result.tenantId    = lease.id;
-    result.actualCam   = result.totalAllocated;
-    result.expectedCam = expectedCam;
-    result.variance    = (result.actualCam !== null && expectedCam !== null)
+    result.ambiguityFlags  = flags;
+    result.tenantId        = lease.id;
+    result.actualCam       = result.totalAllocated;
+    result.expectedCam     = expectedCam;
+    result.variance        = (result.actualCam !== null && expectedCam !== null)
       ? parseFloat((result.actualCam - expectedCam).toFixed(2))
       : null;
+    result.expectedSource  =
+      lease.capBaseAmount !== null ? 'base+percent' :
+      live.cap            != null  ? 'live_cap'     :
+      lease.capPercentage !== null ? 'percent_only' :
+      null;
     return result;
   });
 
