@@ -6386,12 +6386,11 @@ async function saveProperty(property) {
     const stripped = _stripBlobs(property);
     const { id, name, totalSqft } = stripped;
 
-    // Keep the DB data column small — tenants live in their own table,
-    // results are large and restored from localStorage on load.
     const data = {
       invoices: stripped.invoices || [],
       disputes: stripped.disputes || [],
       camYear:  stripped.camYear  ?? null,
+      results:  stripped.results  ?? null,
     };
 
     const payload = {
@@ -6507,6 +6506,7 @@ async function loadPropertyData(id) {
         invoices:  d.invoices  || [],
         disputes:  d.disputes  || [],
         camYear:   d.camYear   ?? null,
+        results:   d.results   ?? null,
       };
 
       // Fetch tenants from their own table and merge in
