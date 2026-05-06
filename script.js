@@ -4108,6 +4108,29 @@ async function runAllocation() {
   await saveCamResults(currentProperty()?.id, fullResults, getCamYear()).catch(e =>
     console.error('[saveCamResults]', e)
   );
+
+  // Snapshot the full reconciliation and immediately persist to Supabase so
+  // results survive logout, browser refresh, and cleared localStorage.
+  const _snapProp = currentProperty();
+  if (_snapProp) {
+    _snapProp.camReconciliation = {
+      propId:       _snapProp.id,
+      propName,
+      camYear:      getCamYear(),
+      savedAt:      new Date().toISOString(),
+      total:        totalCost,
+      results:      fullResults.map(r => ({ ...r })),
+      invoices:     lastInvoices,
+      invoicesFull: lastInvoicesFull,
+      tenants:      lastTenants,
+      camRuns:      camRuns.map(r => ({
+        ...r,
+        timestamp: r.timestamp instanceof Date ? r.timestamp.toISOString() : r.timestamp,
+      })),
+    };
+    await saveProperty(_snapProp);
+  }
+
   updateStepBar('review');
 
   showRunCompleteToast();
@@ -5909,16 +5932,18 @@ async function selectProperty(id) {
     if (!data || activePropId !== id) return;
 
     const safeResults = (data.results?.propId === id) ? data.results : null;
+    const safeCamRec  = (data.camReconciliation?.propId === id) ? data.camReconciliation : null;
 
     // Only overwrite if the loaded data has at least as many tenants as what
     // is already in memory — prevents an old DB record from erasing a fresh upload.
     const inMemCount  = (property.tenants || []).length;
     const loadedCount = (data.tenants     || []).length;
     if (loadedCount >= inMemCount) {
-      property.tenants  = data.tenants  || [];
-      property.invoices = data.invoices || [];
-      property.disputes = data.disputes || [];
-      property.results  = safeResults;
+      property.tenants           = data.tenants  || [];
+      property.invoices          = data.invoices || [];
+      property.disputes          = data.disputes || [];
+      property.results           = safeResults;
+      property.camReconciliation = safeCamRec;
       if (data.name)      property.name      = data.name;
       if (data.totalSqft) property.totalSqft = data.totalSqft;
       if (activePropId === id) renderProperty(property);
@@ -6175,11 +6200,15 @@ function _stripBlobs(property) {
       fileName:    inv.fileName,
       // drop confidence, _error, raw text — not needed for persistence
     } : inv),
-    // CAM results can be very large; strip the full invoice copy inside results
+    // CAM results can be very large; strip the full invoice copy inside results/camReconciliation
     results: property.results ? {
       ...property.results,
       invoicesFull: undefined,
     } : property.results,
+    camReconciliation: property.camReconciliation ? {
+      ...property.camReconciliation,
+      invoicesFull: undefined,
+    } : property.camReconciliation,
   };
 }
 
@@ -6387,10 +6416,11 @@ async function saveProperty(property) {
     const { id, name, totalSqft } = stripped;
 
     const data = {
-      invoices: stripped.invoices || [],
-      disputes: stripped.disputes || [],
-      camYear:  stripped.camYear  ?? null,
-      results:  stripped.results  ?? null,
+      invoices:          stripped.invoices          || [],
+      disputes:          stripped.disputes          || [],
+      camYear:           stripped.camYear           ?? null,
+      results:           stripped.results           ?? null,
+      camReconciliation: stripped.camReconciliation ?? null,
     };
 
     const payload = {
@@ -6503,10 +6533,11 @@ async function loadPropertyData(id) {
         id:        data.id,
         name:      data.name,
         totalSqft: data.sqft || 0,
-        invoices:  d.invoices  || [],
-        disputes:  d.disputes  || [],
-        camYear:   d.camYear   ?? null,
-        results:   d.results   ?? null,
+        invoices:          d.invoices          || [],
+        disputes:          d.disputes          || [],
+        camYear:           d.camYear           ?? null,
+        results:           d.results           ?? null,
+        camReconciliation: d.camReconciliation ?? null,
       };
 
       // Fetch tenants from their own table and merge in
@@ -6624,18 +6655,19 @@ function renderProperty(property) {
   } catch (e) { }
 
   // ── CAM Results ───────────────────────────────────────────────────────
+  // camReconciliation is the authoritative snapshot written immediately after
+  // each run. property.results is the legacy fallback for older saved data.
   try {
-    const r = property.results;
-    if (r && Array.isArray(r.results) && r.results.length) {
-      lastResults      = r.results;
-      lastPropName     = r.propName     || '';
-      lastTotal        = r.total        || 0;
-      lastInvoices     = r.invoices     || [];
-      lastInvoicesFull = r.invoicesFull || [];
-      lastTenants      = r.tenants      || [];
-      // Restore per-property run history — parse ISO timestamps back to Date objects
-      if (Array.isArray(r.camRuns) && r.camRuns.length) {
-        camRuns.splice(0, camRuns.length, ...r.camRuns.map(run => ({
+    const rec = property.camReconciliation ?? property.results;
+    if (rec && Array.isArray(rec.results) && rec.results.length) {
+      lastResults      = rec.results;
+      lastPropName     = rec.propName     || '';
+      lastTotal        = rec.total        || 0;
+      lastInvoices     = rec.invoices     || [];
+      lastInvoicesFull = rec.invoicesFull || [];
+      lastTenants      = rec.tenants      || [];
+      if (Array.isArray(rec.camRuns) && rec.camRuns.length) {
+        camRuns.splice(0, camRuns.length, ...rec.camRuns.map(run => ({
           ...run,
           timestamp: run.timestamp ? new Date(run.timestamp) : new Date(),
         })));
