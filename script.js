@@ -5,6 +5,8 @@
     }
 
 // ── Main application ──────────────────────────────────────────────────────
+// Set to true locally to enable verbose extraction/reconciliation tracing.
+const DEBUG = false;
 // ─── Supabase ─────────────────────────────────────────────────────────────────
 const SUPABASE_URL      = 'https://zhsuhehgehbzkmzurzyf.supabase.co';
 const SUPABASE_ANON_KEY = 'eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6Inpoc3VoZWhnZWhiemttenVyenlmIiwicm9sZSI6ImFub24iLCJpYXQiOjE3NzU4NDkwNDAsImV4cCI6MjA5MTQyNTA0MH0.HUl9ha9hhjIO1F_k8xPkqbZQnWx-ERRGbnmc6KS3lNE';
@@ -962,7 +964,6 @@ Return best guess — do not leave fields null unless truly impossible.`;
 
   if (!res.ok) throw new Error(`Claude PDF direct failed: HTTP ${res.status}`);
   const data = await res.json();
-  console.log('RAW EXTRACTION (pdf-direct)', data);
   return data;
 }
 
@@ -1194,7 +1195,6 @@ ${leaseSnippet}
   };
 
   const raw = data;
-  console.log('RAW EXTRACTION (text)', raw);
   const cleanText = normalizeText(text);
   const fb = extractLeaseData(cleanText);
 
@@ -1235,7 +1235,6 @@ ${leaseSnippet}
     doc_has_lease_type,
     _error:              null,
   });
-  console.log('NORMALIZED TENANT (text)', normalized);
   return normalized;
 }
 // ─── SVG icons ────────────────────────────────────────────────────────────────
@@ -1313,7 +1312,6 @@ async function handleLease(i, file) {
 
     if (!extracted) throw new Error('Could not extract lease fields');
     const normalized = normalizeTenant(extracted);
-    console.log('NORMALIZED TENANT (handleLease)', normalized);
     if (!isValidTenant(normalized)) throw new Error('Extracted tenant has no usable fields');
 
     tenantData[i] = { ...normalized, leaseFile: file, leaseExpected: true, fileName: file.name, leaseUrl };
@@ -2078,7 +2076,6 @@ async function handleBulkLeases(fileList) {
 
       if (extracted && !usedPdfDirect) extracted.rawText = leaseText;
       const norm = extracted ? normalizeTenant(extracted) : null;
-      console.log('NORMALIZED TENANT (processFile)', norm);
 
       // Resolve name first — Claude → regex → filename fallback — so status
       // logic can use the final name rather than Claude's raw output alone.
@@ -3792,7 +3789,6 @@ function runCAMAllocation(expenses, tenants) {
 }
 
 async function runAllocation() {
-  console.log('RUN ALLOCATION FIRED');
   if (isRunning) return; // prevent concurrent runs
   isRunning = true;
 
@@ -6303,7 +6299,6 @@ async function resyncTenantsToTable(propertyId, tenants) {
       lease_type:  t.lease_type || null,
     }));
   if (rows.length === 0) return;
-  console.log('TENANT INSERT PAYLOAD', JSON.stringify(rows, null, 2));
   const { error } = await db.from('tenants').insert(rows).select('id');
   if (error) console.error('[resyncTenantsToTable] insert error:', error.message);
 }
@@ -6324,7 +6319,6 @@ async function syncTenantsToTable(propertyId, tenants) {
       lease_type:  t.lease_type || null,
     }));
   if (rows.length === 0) return;
-  console.log('TENANT INSERT PAYLOAD', JSON.stringify(rows, null, 2));
   const { error } = await db.from('tenants').insert(rows).select('id');
   if (error) console.error('[syncTenantsToTable] insert error:', error.message);
 }
@@ -6345,14 +6339,12 @@ async function saveCamResults(propertyId, fullResults, year) {
       year,
     };
   });
-  console.log('ROWS TO SAVE:', rows);
   const resp = await fetch('/api/cam-reconciliations', {
     method:  'POST',
     headers: { 'Content-Type': 'application/json' },
     body:    JSON.stringify({ propertyId, year, rows }),
   });
   const result = await resp.json();
-  console.log('INSERT RESULT:', resp.status, result);
   if (!resp.ok) console.error('[saveCamResults] error:', result.error, result.detail);
 }
 
