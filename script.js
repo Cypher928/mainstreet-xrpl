@@ -5930,20 +5930,25 @@ async function selectProperty(id) {
     const safeResults = (data.results?.propId === id) ? data.results : null;
     const safeCamRec  = (data.camReconciliation?.propId === id) ? data.camReconciliation : null;
 
-    // Only overwrite if the loaded data has at least as many tenants as what
-    // is already in memory — prevents an old DB record from erasing a fresh upload.
+    // Reconciliation results are always applied — they don't depend on tenant count.
+    property.results           = safeResults;
+    property.camReconciliation = safeCamRec;
+
+    // Tenant/invoice data: only overwrite when loaded data is at least as rich,
+    // preventing a stale DB record from erasing a fresh in-session upload.
     const inMemCount  = (property.tenants || []).length;
     const loadedCount = (data.tenants     || []).length;
     if (loadedCount >= inMemCount) {
-      property.tenants           = data.tenants  || [];
-      property.invoices          = data.invoices || [];
-      property.disputes          = data.disputes || [];
-      property.results           = safeResults;
-      property.camReconciliation = safeCamRec;
+      property.tenants  = data.tenants  || [];
+      property.invoices = data.invoices || [];
+      property.disputes = data.disputes || [];
       if (data.name)      property.name      = data.name;
       if (data.totalSqft) property.totalSqft = data.totalSqft;
-      if (activePropId === id) renderProperty(property);
     }
+
+    // Always re-render so the restored reconciliation snapshot appears even when
+    // the tenant-count guard above did not overwrite tenant/invoice arrays.
+    if (activePropId === id) renderProperty(property);
   }, 0);
 }
 
@@ -6570,10 +6575,20 @@ async function loadPropertyData(id) {
   if (!dbData) return lsData;
   if (!lsData) return dbData;
 
-  // Both exist — use whichever has more tenants (richer state)
-  const dbCount = (dbData.tenants  || []).length;
-  const lsCount = (lsData.tenants  || []).length;
-  return lsCount > dbCount ? lsData : dbData;
+  // Tenant/invoice data: prefer whichever source has more (prevents stale DB
+  // from erasing a fresh upload that hasn't synced yet).
+  const dbCount = (dbData.tenants || []).length;
+  const lsCount = (lsData.tenants || []).length;
+  const base = lsCount > dbCount ? lsData : dbData;
+
+  // Reconciliation results: always prefer Supabase — it is written immediately
+  // after each run and is the authoritative source. localStorage may lag behind
+  // or be missing the field entirely on older sessions.
+  return {
+    ...base,
+    results:           dbData.results           ?? base.results           ?? null,
+    camReconciliation: dbData.camReconciliation ?? base.camReconciliation ?? null,
+  };
 }
 
 // Restore a property's saved state into working arrays and render the detail view.
@@ -6647,30 +6662,26 @@ function renderProperty(property) {
   } catch (e) { }
 
   // ── CAM Results ───────────────────────────────────────────────────────
-  // camReconciliation is the authoritative snapshot written immediately after
-  // each run. property.results is the legacy fallback for older saved data.
+  // camReconciliation is the authoritative snapshot (written immediately after
+  // each run). property.results is the legacy fallback for older saved data.
   try {
     const rec = property.camReconciliation ?? property.results;
-    if (rec && Array.isArray(rec.results) && rec.results.length) {
-      lastResults      = rec.results;
-      lastPropName     = rec.propName     || '';
-      lastTotal        = rec.total        || 0;
-      lastInvoices     = rec.invoices     || [];
-      lastInvoicesFull = rec.invoicesFull || [];
-      lastTenants      = rec.tenants      || [];
-      if (Array.isArray(rec.camRuns) && rec.camRuns.length) {
-        camRuns.splice(0, camRuns.length, ...rec.camRuns.map(run => ({
-          ...run,
-          timestamp: run.timestamp ? new Date(run.timestamp) : new Date(),
-        })));
-      }
-      restoreResultsDisplay();
+    console.log('[restoreResults]', {
+      propertyId:    property.id,
+      hasResults:    !!rec,
+      resultsPropId: rec?.propId,
+    });
+    if (rec && Array.isArray(rec.results) && rec.results.length &&
+        (!rec.propId || rec.propId === property.id)) {
+      restoreResultsDisplay(rec);
       renderDisputeSection();
       renderPreviousRuns();
       showReportSection();
       restored = true;
     }
-  } catch (e) { }
+  } catch (e) {
+    console.error('[restoreResults] render error:', e);
+  }
 
   if (restored) showRestoredBanner();
 
@@ -6705,9 +6716,25 @@ async function clearPropertyData() {
   document.getElementById('totalSqft').value    = savedSqft;
 }
 
-// Re-draw the results card from in-memory lastResults state.
-// Used when restoring a saved run — mirrors the display logic in runAllocation().
-function restoreResultsDisplay() {
+// Re-draw the results cards from a reconciliation snapshot.
+// Pass the snapshot object to hydrate globals before rendering, or omit to
+// render from already-set globals (e.g. immediately after runAllocation).
+function restoreResultsDisplay(snapshot) {
+  if (snapshot) {
+    lastResults      = snapshot.results      || [];
+    lastPropName     = snapshot.propName     || '';
+    lastTotal        = snapshot.total        || 0;
+    lastInvoices     = snapshot.invoices     || [];
+    lastInvoicesFull = snapshot.invoicesFull || [];
+    lastTenants      = snapshot.tenants      || [];
+    if (snapshot.camYear) setCamYear(snapshot.camYear);
+    if (Array.isArray(snapshot.camRuns) && snapshot.camRuns.length) {
+      camRuns.splice(0, camRuns.length, ...snapshot.camRuns.map(run => ({
+        ...run,
+        timestamp: run.timestamp ? new Date(run.timestamp) : new Date(),
+      })));
+    }
+  }
   const section = document.getElementById('results');
   const body    = document.getElementById('resultsBody');
   document.getElementById('resultsTitle').textContent = `${getCamYear()} CAM — ${lastPropName}`;
