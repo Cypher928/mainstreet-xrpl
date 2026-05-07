@@ -5930,6 +5930,14 @@ async function selectProperty(id) {
     const safeResults = (data.results?.propId === id) ? data.results : null;
     const safeCamRec  = (data.camReconciliation?.propId === id) ? data.camReconciliation : null;
 
+    console.log('[selectProperty load]', {
+      propertyId:   id,
+      hasDbResults: !!data.results,
+      hasDbCamRec:  !!data.camReconciliation,
+      safeCamRec:   !!safeCamRec,
+      safeResults:  !!safeResults,
+    });
+
     // Reconciliation results are always applied — they don't depend on tenant count.
     property.results           = safeResults;
     property.camReconciliation = safeCamRec;
@@ -6567,6 +6575,40 @@ async function loadPropertyData(id) {
               variance:    cam.variance,
             };
           });
+
+          // If the full snapshot is missing from properties.data (e.g. saveProperty
+          // failed while saveCamResults succeeded), rebuild a minimal camReconciliation
+          // from the cam_reconciliations rows so the results section still restores.
+          if (!dbData.camReconciliation && !dbData.results) {
+            const totalSqft = dbData.totalSqft || 1;
+            const snapResults = dbData.tenants
+              .filter(t => t.actualCam != null)
+              .map(t => ({
+                name:             t.tenant_name || '(Unknown)',
+                allocatedAmount:  t.actualCam,
+                totalAllocated:   t.actualCam,
+                proRata:          (Number(t.leased_sqft) || 0) / totalSqft,
+                proRataPercent:   ((Number(t.leased_sqft) || 0) / totalSqft) * 100,
+                eligibleCount:    0,
+                capApplied:       false,
+                capAdjustment:    null,
+                includedInvoices: [],
+                ambiguityFlags:   [],
+              }));
+            if (snapResults.length) {
+              dbData.camReconciliation = {
+                propId:       dbData.id,
+                propName:     dbData.name || '',
+                camYear:      camRows[0]?.year ?? getCamYear(),
+                total:        snapResults.reduce((s, r) => s + (r.allocatedAmount || 0), 0),
+                results:      snapResults,
+                invoices:     [],
+                invoicesFull: [],
+                tenants:      [],
+                camRuns:      [],
+              };
+            }
+          }
         }
       }
     }
@@ -6665,12 +6707,15 @@ function renderProperty(property) {
   // camReconciliation is the authoritative snapshot (written immediately after
   // each run). property.results is the legacy fallback for older saved data.
   try {
-    const rec = property.camReconciliation ?? property.results;
-    console.log('[restoreResults]', {
-      propertyId:    property.id,
-      hasResults:    !!rec,
-      resultsPropId: rec?.propId,
+    const propertyId = property.id;
+    console.log('[restore]', {
+      propertyId,
+      hasResults:    !!property.results,
+      hasCamRec:     !!property.camReconciliation,
+      resultsPropId: property.results?.propId,
+      camRecCount:   property.camReconciliation?.length,
     });
+    const rec = property.camReconciliation ?? property.results;
     if (rec && Array.isArray(rec.results) && rec.results.length &&
         (!rec.propId || rec.propId === property.id)) {
       restoreResultsDisplay(rec);
