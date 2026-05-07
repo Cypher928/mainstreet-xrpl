@@ -6580,7 +6580,15 @@ async function loadPropertyData(id) {
           // failed while saveCamResults succeeded), rebuild a minimal camReconciliation
           // from the cam_reconciliations rows so the results section still restores.
           if (!dbData.camReconciliation && !dbData.results) {
-            const totalSqft = dbData.totalSqft || 1;
+            const totalSqft   = dbData.totalSqft || 1;
+            // Use the invoices already loaded from properties.data so invoice
+            // counts and totals display correctly instead of showing "0 invoices".
+            const invoiceList = dbData.invoices || [];
+            const invoiceCount = invoiceList.length;
+            const invoiceTotal = invoiceList.reduce(
+              (s, inv) => s + (parseFloat(inv.amount) || 0), 0
+            );
+
             const snapResults = dbData.tenants
               .filter(t => t.actualCam != null)
               .map(t => ({
@@ -6589,7 +6597,10 @@ async function loadPropertyData(id) {
                 totalAllocated:   t.actualCam,
                 proRata:          (Number(t.leased_sqft) || 0) / totalSqft,
                 proRataPercent:   ((Number(t.leased_sqft) || 0) / totalSqft) * 100,
-                eligibleCount:    0,
+                // All invoices are eligible for every tenant in a standard CAM run;
+                // we can't recover the per-tenant breakdown from cam_reconciliations
+                // alone, so use the full invoice count as the best approximation.
+                eligibleCount:    invoiceCount,
                 capApplied:       false,
                 capAdjustment:    null,
                 includedInvoices: [],
@@ -6600,10 +6611,12 @@ async function loadPropertyData(id) {
                 propId:       dbData.id,
                 propName:     dbData.name || '',
                 camYear:      camRows[0]?.year ?? getCamYear(),
-                total:        snapResults.reduce((s, r) => s + (r.allocatedAmount || 0), 0),
+                // Prefer the sum of stored invoice amounts; fall back to sum of
+                // actual_cam values if no invoices were saved in properties.data.
+                total:        invoiceTotal || snapResults.reduce((s, r) => s + (r.allocatedAmount || 0), 0),
                 results:      snapResults,
-                invoices:     [],
-                invoicesFull: [],
+                invoices:     invoiceList.map((inv, i) => ({ id: `inv-${i}`, ...inv })),
+                invoicesFull: invoiceList,
                 tenants:      [],
                 camRuns:      [],
               };
