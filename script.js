@@ -4193,6 +4193,7 @@ async function runAllocation() {
     results:       fullResults.map(r => ({ ...r })),
   });
   renderPreviousRuns();
+  renderAuditPanel();
 
   renderDisputeSection();
   showReportSection(); // refresh notice + tenant buttons
@@ -5232,6 +5233,258 @@ async function resolveDispute(id, resolution) {
 
   renderOpenDisputes();
   syncPortfolioEntry();
+}
+
+// ─── AI Audit Summary ────────────────────────────────────────────────────────
+
+// Pure function — reads globals, returns flag arrays. No DOM side-effects.
+function buildAuditSummary() {
+  const red = [], yellow = [], green = [];
+
+  const invs     = lastInvoicesFull.length ? lastInvoicesFull : [];
+  const allInvData = invoiceData.filter(inv => inv && inv.vendorName);
+  const paidInvData = allInvData.filter(inv => parseFloat(inv.amount) > 0);
+  const results  = lastResults;
+  const tenants  = lastTenants;
+  const total    = lastTotal || 0;
+
+  // ── 1. Unusually large single invoice (> 40% of total) ───────────────────
+  if (total > 0 && invs.length) {
+    const thresh = total * 0.4;
+    invs.forEach(inv => {
+      if (!inv) return;
+      const amt = parseFloat(inv.amount) || 0;
+      if (amt > thresh) {
+        const pct = ((amt / total) * 100).toFixed(1);
+        red.push({
+          title:  `Unusually large invoice — ${inv.vendor || inv.vendorName || 'Unknown'}: ${fmt(amt)} (${pct}% of total CAM)`,
+          detail: 'A single invoice represents over 40% of total expenses. Verify this charge is not an error.',
+        });
+      }
+    });
+  }
+
+  // ── 2. YoY change (compare two most-recent distinct years) ───────────────
+  {
+    const byYear = {};
+    camRuns.forEach(r => { if (r.camYear && !byYear[r.camYear]) byYear[r.camYear] = r; });
+    const years = Object.keys(byYear).map(Number).sort((a, b) => b - a);
+    if (years.length >= 2) {
+      const curr = byYear[years[0]], prev = byYear[years[1]];
+      if (curr.totalExpenses && prev.totalExpenses) {
+        const pct = ((curr.totalExpenses - prev.totalExpenses) / prev.totalExpenses) * 100;
+        const dir = pct > 0 ? 'increased' : 'decreased';
+        const detail = `${years[1]}: ${fmt(prev.totalExpenses)} → ${years[0]}: ${fmt(curr.totalExpenses)}`;
+        if (pct > 20) {
+          red.push({ title: `Total CAM ${dir} ${Math.abs(pct).toFixed(1)}% year-over-year`, detail });
+        } else if (Math.abs(pct) > 10) {
+          yellow.push({ title: `Total CAM ${dir} ${Math.abs(pct).toFixed(1)}% year-over-year`, detail });
+        } else {
+          green.push({ title: `CAM within normal range YoY (${pct > 0 ? '+' : ''}${pct.toFixed(1)}%)`, detail });
+        }
+      }
+    }
+  }
+
+  // ── 3. Duplicate invoices — same vendor + same amount ────────────────────
+  {
+    const seen = {}, dupeVendors = new Set();
+    invs.forEach(inv => {
+      if (!inv) return;
+      const vendor = (inv.vendor || inv.vendorName || '').trim().toLowerCase();
+      const amt    = parseFloat(inv.amount || 0).toFixed(2);
+      const key    = `${vendor}|${amt}`;
+      if (!vendor || amt === '0.00') return;
+      if (seen[key]) dupeVendors.add(vendor);
+      else seen[key] = true;
+    });
+    if (dupeVendors.size) {
+      yellow.push({
+        title:  `Possible duplicate invoices detected (${dupeVendors.size} vendor${dupeVendors.size > 1 ? 's' : ''})`,
+        detail: `Same vendor and amount appear more than once: ${[...dupeVendors].join(', ')}. Verify these are not double-billed.`,
+      });
+    }
+  }
+
+  // ── 4. Missing source documents ──────────────────────────────────────────
+  {
+    const missing = allInvData.filter(inv => !inv.fileUrl && !inv.fileName);
+    if (missing.length > 0) {
+      const pct = Math.round((missing.length / allInvData.length) * 100);
+      const names = missing.slice(0, 3).map(inv => inv.vendorName).join(', ') +
+        (missing.length > 3 ? ` +${missing.length - 3} more` : '');
+      const bucket = pct === 100 ? red : yellow;
+      bucket.push({
+        title:  `${missing.length} of ${allInvData.length} invoice${missing.length > 1 ? 's' : ''} missing source document`,
+        detail: `Without attachments these charges cannot be independently verified: ${names}.`,
+      });
+    } else if (allInvData.length > 0) {
+      green.push({ title: `All ${allInvData.length} invoices have source documents attached` });
+    }
+  }
+
+  // ── 5. Invoices without a date ───────────────────────────────────────────
+  {
+    const noDates = allInvData.filter(inv => !inv.invoiceDate);
+    if (noDates.length) {
+      yellow.push({
+        title:  `${noDates.length} invoice${noDates.length > 1 ? 's' : ''} missing invoice date`,
+        detail: noDates.slice(0, 3).map(inv => inv.vendorName).join(', ') +
+          (noDates.length > 3 ? ` +${noDates.length - 3} more` : ''),
+      });
+    }
+  }
+
+  // ── 6. Low-confidence tenant matches ────────────────────────────────────
+  {
+    const lowConf = paidInvData.filter(inv => inv.matchConfidence > 0 && inv.matchConfidence < 75);
+    if (lowConf.length) {
+      yellow.push({
+        title:  `${lowConf.length} invoice${lowConf.length > 1 ? 's' : ''} with low tenant match confidence`,
+        detail: lowConf.slice(0, 3).map(inv => `${inv.vendorName} (${inv.matchConfidence}%)`).join(', ') +
+          (lowConf.length > 3 ? ` +${lowConf.length - 3} more` : ''),
+      });
+    }
+  }
+
+  // ── 7. Shared expense allocation status ──────────────────────────────────
+  {
+    const matched = paidInvData.filter(inv => (inv.matchConfidence || 0) >= 75).length;
+    const shared  = paidInvData.length - matched;
+    if (paidInvData.length > 0) {
+      if (matched === 0) {
+        green.push({
+          title:  `All ${paidInvData.length} invoices allocated as shared CAM expenses (pro-rata)`,
+          detail: 'No invoices were linked to individual tenants — all costs are distributed by square footage.',
+        });
+      } else {
+        green.push({
+          title:  `${matched} invoice${matched > 1 ? 's' : ''} directly matched to tenant${matched > 1 ? 's' : ''}, ${shared} shared pro-rata`,
+        });
+      }
+    }
+  }
+
+  // ── 8. Pro-rata allocation coverage ─────────────────────────────────────
+  {
+    const totalPR = results.reduce((s, r) => s + (r.proRataPercent || 0), 0);
+    if (results.length > 0) {
+      if (Math.abs(totalPR - 100) < 2) {
+        green.push({ title: `Pro-rata percentages sum to ${totalPR.toFixed(1)}% — all expenses accounted for` });
+      } else if (totalPR < 98) {
+        yellow.push({
+          title:  `Pro-rata totals ${totalPR.toFixed(1)}% — ${(100 - totalPR).toFixed(1)}% of expenses unallocated`,
+          detail: 'Total leased sqft may be less than the property total. Check tenant sqft entries.',
+        });
+      } else {
+        yellow.push({
+          title:  `Pro-rata totals ${totalPR.toFixed(1)}% — exceeds 100%`,
+          detail: 'Total leased sqft may exceed the property total. Check tenant sqft entries.',
+        });
+      }
+    }
+  }
+
+  // ── 9. CAM cap applied ───────────────────────────────────────────────────
+  {
+    const capped = results.filter(r => r.capApplied);
+    if (capped.length) {
+      yellow.push({
+        title:  `CAM cap applied for ${capped.length} tenant${capped.length > 1 ? 's' : ''}: ${capped.map(r => r.name).join(', ')}`,
+        detail: 'Actual charges exceeded the contractual cap. Tenants paid less than their full pro-rata share.',
+      });
+    }
+  }
+
+  // ── 10. Ambiguity flags surfaced by the reconciliation engine ────────────
+  {
+    const flagMap = {};
+    results.forEach(r => {
+      (r.ambiguityFlags || []).forEach(f => {
+        if (!flagMap[f.code]) flagMap[f.code] = { message: f.message, explanation: f.explanation, tenants: [] };
+        flagMap[f.code].tenants.push(r.name);
+      });
+    });
+    Object.values(flagMap).forEach(({ message, explanation, tenants }) => {
+      yellow.push({
+        title:  `${message} — ${tenants.length} tenant${tenants.length > 1 ? 's' : ''}: ${tenants.join(', ')}`,
+        detail: explanation || '',
+      });
+    });
+  }
+
+  // ── 11. Lease exclusion inconsistencies ──────────────────────────────────
+  {
+    const cats = [...new Set(invs.map(inv => inv ? (inv.category || 'other').toLowerCase() : null).filter(Boolean))];
+    cats.forEach(cat => {
+      const excl = tenants.filter(t => (t.excludedCategories || []).includes(cat));
+      if (excl.length > 0 && excl.length < tenants.length) {
+        yellow.push({
+          title:  `"${cat}" excluded for ${excl.length} of ${tenants.length} tenants`,
+          detail: `Excluded for: ${excl.map(t => t.name).join(', ')}`,
+        });
+      }
+    });
+  }
+
+  if (red.length === 0 && yellow.length === 0) {
+    green.push({ title: 'No issues detected — reconciliation looks clean' });
+  }
+
+  return { red, yellow, green };
+}
+
+// Builds and injects the AI Audit Panel into the results section.
+// Safe to call multiple times — removes any prior panel first.
+function renderAuditPanel() {
+  const prev = document.getElementById('auditPanel');
+  if (prev) prev.remove();
+
+  const section = document.getElementById('results');
+  if (!section || !lastResults.length) return;
+
+  const { red, yellow, green } = buildAuditSummary();
+
+  const badge = (n, color) => n > 0
+    ? `<span class="ap-badge ap-badge--${color}">${n}</span>`
+    : '';
+
+  const flagSection = (flags, color, label) => {
+    if (!flags.length) return '';
+    return `<div class="ap-section">
+      <div class="ap-section-title ap-${color}">${esc(label)} (${flags.length})</div>
+      ${flags.map(f => `<div class="ap-flag ap-flag--${color}">
+        <div class="ap-flag-title">${esc(f.title)}</div>
+        ${f.detail ? `<div class="ap-flag-detail">${esc(f.detail)}</div>` : ''}
+      </div>`).join('')}
+    </div>`;
+  };
+
+  const panel = document.createElement('div');
+  panel.id        = 'auditPanel';
+  panel.className = 'ap-panel';
+  panel.innerHTML = `
+    <div class="ap-header" onclick="
+      document.getElementById('apBody').classList.toggle('ap-body--open');
+      this.querySelector('.ap-chevron').classList.toggle('ap-chevron--open');
+    ">
+      <div class="ap-header-left">
+        <span class="ap-title">&#x1F50D;&nbsp; AI Audit Summary</span>
+      </div>
+      <div class="ap-header-right">
+        ${badge(red.length, 'red')}
+        ${badge(yellow.length, 'yellow')}
+        ${badge(green.length, 'green')}
+        <span class="ap-chevron">&#x25BC;</span>
+      </div>
+    </div>
+    <div id="apBody" class="ap-body ap-body--open">
+      ${flagSection(red,    'red',    'Red Flags')}
+      ${flagSection(yellow, 'yellow', 'Yellow Flags')}
+      ${flagSection(green,  'green',  'Green Flags')}
+    </div>`;
+
+  section.appendChild(panel);
 }
 
 // ─── Reports ──────────────────────────────────────────────────────────────────
@@ -7004,6 +7257,7 @@ function renderProperty(property) {
       restoreResultsDisplay(patchedRec);
       renderDisputeSection();
       renderPreviousRuns();
+      renderAuditPanel();
       showReportSection();
       restored = true;
     }
