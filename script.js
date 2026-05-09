@@ -5237,6 +5237,156 @@ async function resolveDispute(id, resolution) {
 
 // ─── AI Audit Summary ────────────────────────────────────────────────────────
 
+// Duplicate / Suspicious Invoice Detection
+// Accepts the normalized invoiceData array (items with vendorName, amount,
+// invoiceDate, fileUrl, fileName). Returns an array of
+// { severity: 'red'|'yellow', title, detail } objects.
+// Rules are deterministic and explainable — no ML required.
+function _detectInvoiceSuspicions(invoices) {
+  const flags = [];
+  if (!invoices.length) return flags;
+
+  // Normalised view used by all checks
+  const rows = invoices.map((inv, idx) => {
+    const vendor = (inv.vendorName || inv.vendor || '').toLowerCase().trim();
+    const amount = parseFloat(inv.amount) || 0;
+    const date   = (inv.invoiceDate || '').trim();
+    const ts     = date ? new Date(date).getTime() : NaN;
+    return {
+      idx,
+      vendor,
+      displayVendor: inv.vendorName || inv.vendor || '(unknown)',
+      amount,
+      amtKey: amount.toFixed(2),
+      date,
+      ts,
+      category: (inv.category || '').toLowerCase().trim(),
+      fileUrl:  inv.fileUrl  || '',
+      fileName: (inv.fileName || '').trim().toLowerCase(),
+    };
+  }).filter(r => r.vendor && r.amount > 0);
+
+  const DAY_MS = 24 * 60 * 60 * 1000;
+
+  // ── 1. Exact duplicates: same vendor + amount + date → Red ───────────────
+  const exactMap = {};
+  rows.forEach(r => {
+    if (!r.date) return;
+    const key = `${r.vendor}|${r.amtKey}|${r.date}`;
+    (exactMap[key] = exactMap[key] || []).push(r);
+  });
+  const exactFlaggedIdx = new Set();
+  Object.values(exactMap).forEach(group => {
+    if (group.length < 2) return;
+    group.forEach(r => exactFlaggedIdx.add(r.idx));
+    flags.push({
+      severity: 'red',
+      title:    `Exact duplicate invoice: "${group[0].displayVendor}" — identical vendor, amount, and date (×${group.length})`,
+      detail:   `${fmt(group[0].amount)} on ${group[0].date} appears ${group.length} times. Only one charge should be valid.`,
+    });
+  });
+
+  // ── 2. Near-duplicate: same vendor + amount, dates within 7 days → Yellow ─
+  // (Skip invoices already flagged as exact duplicates)
+  const nearMap = {};
+  rows.filter(r => !exactFlaggedIdx.has(r.idx)).forEach(r => {
+    const key = `${r.vendor}|${r.amtKey}`;
+    (nearMap[key] = nearMap[key] || []).push(r);
+  });
+  Object.values(nearMap).forEach(group => {
+    if (group.length < 2) return;
+    const dated = group.filter(r => !isNaN(r.ts)).sort((a, b) => a.ts - b.ts);
+    for (let i = 0; i < dated.length - 1; i++) {
+      const daysDiff = Math.round((dated[i + 1].ts - dated[i].ts) / DAY_MS);
+      if (daysDiff <= 7) {
+        flags.push({
+          severity: 'yellow',
+          title:    `Possible duplicate: "${dated[i].displayVendor}" billed ${fmt(dated[i].amount)} twice within ${daysDiff} day${daysDiff === 1 ? '' : 's'}`,
+          detail:   `Invoice dates: ${dated[i].date} and ${dated[i + 1].date}. Could be a billing error or re-submission.`,
+        });
+        break; // one flag per vendor+amount pair is enough
+      }
+    }
+  });
+
+  // ── 3. Same source file attached to multiple invoice records → Red ────────
+  const urlMap = {};
+  rows.forEach(r => {
+    if (!r.fileUrl) return;
+    (urlMap[r.fileUrl] = urlMap[r.fileUrl] || []).push(r);
+  });
+  Object.values(urlMap).forEach(group => {
+    if (group.length < 2) return;
+    const vendors = [...new Set(group.map(r => r.displayVendor))].join(', ');
+    flags.push({
+      severity: 'red',
+      title:    `Same source document linked to ${group.length} separate invoice records`,
+      detail:   `Vendors: ${vendors}. A single file should not represent multiple charges — possible duplicate upload.`,
+    });
+  });
+
+  // ── 4. Same filename + same amount from different records → Yellow ─────────
+  // (Only fires if fileUrl check didn't already catch it)
+  const fnMap = {};
+  rows.forEach(r => {
+    if (!r.fileName) return;
+    const key = `${r.fileName}|${r.amtKey}`;
+    (fnMap[key] = fnMap[key] || []).push(r);
+  });
+  Object.entries(fnMap).forEach(([key, group]) => {
+    if (group.length < 2) return;
+    const alreadyCovered = Object.values(urlMap).some(g => g.length > 1 &&
+      group.every(r => g.some(u => u.idx === r.idx)));
+    if (alreadyCovered) return;
+    const [fn] = key.split('|');
+    flags.push({
+      severity: 'yellow',
+      title:    `Filename "${fn}" appears on ${group.length} invoice records with the same amount`,
+      detail:   `Vendors: ${[...new Set(group.map(r => r.displayVendor))].join(', ')}. Confirm these are distinct documents.`,
+    });
+  });
+
+  // ── 5. Billing frequency: same vendor, 3+ invoices within 5 days → Yellow ─
+  const byVendor = {};
+  rows.filter(r => !isNaN(r.ts)).forEach(r => {
+    (byVendor[r.vendor] = byVendor[r.vendor] || []).push(r);
+  });
+  Object.entries(byVendor).forEach(([vendor, entries]) => {
+    if (entries.length < 3) return;
+    const sorted = [...entries].sort((a, b) => a.ts - b.ts);
+    for (let i = 0; i <= sorted.length - 3; i++) {
+      const window = sorted.filter(e => e.ts >= sorted[i].ts && e.ts <= sorted[i].ts + 5 * DAY_MS);
+      if (window.length >= 3) {
+        const displayVendor = window[0].displayVendor;
+        flags.push({
+          severity: 'yellow',
+          title:    `"${displayVendor}" billed ${window.length} times within 5 days`,
+          detail:   `Dates: ${window.map(e => e.date).join(', ')}. Unusual billing frequency — review for split invoicing or errors.`,
+        });
+        break;
+      }
+    }
+  });
+
+  // ── 6. Same amount from 3+ different vendors (round-number clustering) ─────
+  const amtVendorMap = {};
+  rows.forEach(r => {
+    (amtVendorMap[r.amtKey] = amtVendorMap[r.amtKey] || new Set()).add(r.vendor);
+  });
+  Object.entries(amtVendorMap).forEach(([amtKey, vendorSet]) => {
+    if (vendorSet.size < 3) return;
+    const amt = parseFloat(amtKey);
+    if (amt % 100 !== 0) return; // only flag suspiciously round amounts
+    flags.push({
+      severity: 'yellow',
+      title:    `${vendorSet.size} different vendors each billed the same round amount (${fmt(amt)})`,
+      detail:   `Vendors: ${[...vendorSet].join(', ')}. Identical round amounts across vendors may warrant review.`,
+    });
+  });
+
+  return flags;
+}
+
 // Pure function — reads globals, returns flag arrays. No DOM side-effects.
 function buildAuditSummary() {
   const red = [], yellow = [], green = [];
@@ -5286,23 +5436,12 @@ function buildAuditSummary() {
     }
   }
 
-  // ── 3. Duplicate invoices — same vendor + same amount ────────────────────
+  // ── 3. Duplicate / suspicious invoice detection ──────────────────────────
   {
-    const seen = {}, dupeVendors = new Set();
-    invs.forEach(inv => {
-      if (!inv) return;
-      const vendor = (inv.vendor || inv.vendorName || '').trim().toLowerCase();
-      const amt    = parseFloat(inv.amount || 0).toFixed(2);
-      const key    = `${vendor}|${amt}`;
-      if (!vendor || amt === '0.00') return;
-      if (seen[key]) dupeVendors.add(vendor);
-      else seen[key] = true;
-    });
-    if (dupeVendors.size) {
-      yellow.push({
-        title:  `Possible duplicate invoices detected (${dupeVendors.size} vendor${dupeVendors.size > 1 ? 's' : ''})`,
-        detail: `Same vendor and amount appear more than once: ${[...dupeVendors].join(', ')}. Verify these are not double-billed.`,
-      });
+    const suspicions = _detectInvoiceSuspicions(allInvData);
+    suspicions.forEach(s => (s.severity === 'red' ? red : yellow).push({ title: s.title, detail: s.detail }));
+    if (suspicions.length === 0 && allInvData.length > 0) {
+      green.push({ title: 'No duplicate or suspicious invoice patterns detected' });
     }
   }
 
