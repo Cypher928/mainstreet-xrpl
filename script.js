@@ -2973,7 +2973,18 @@ function viewInvoice(i) {
 
 function viewInvFile(i) {
   const inv = invoiceData[i];
-  if (!inv || !inv.fileUrl) return;
+  console.log('[viewInvFile] ENTER', {
+    i,
+    invFound:  !!inv,
+    fileUrl:   inv?.fileUrl ? 'PRESENT' : 'MISSING',
+    fileType:  inv?.fileType,
+    vendorName: inv?.vendorName,
+    invoiceDataLen: invoiceData.length,
+  });
+  if (!inv || !inv.fileUrl) {
+    console.warn('[viewInvFile] GUARD: no inv or no fileUrl', { i, inv });
+    return;
+  }
   openInvFileViewer(inv.fileUrl, inv.vendorName || inv.fileName || 'Invoice', inv.fileType);
 }
 
@@ -4608,11 +4619,15 @@ function epToggleDrill(category, tenantName) {
     (inv.category || 'other').toLowerCase() === category.toLowerCase()
   );
 
+  console.log('[epToggleDrill] building drill for', { category, tenantName, invCount: invs.length, sampleInv: invs[0], invoiceDataLen: invoiceData.length });
+
   drillEl.innerHTML = `<div class="ep-drill">${
     invs.map(inv => {
+      const vendorKey = (inv.vendor || inv.vendorName || '').toLowerCase();
       const stored = invoiceData.find(d =>
-        d.vendorName && d.vendorName.toLowerCase() === (inv.vendor || inv.vendorName || '').toLowerCase()
+        d.vendorName && d.vendorName.toLowerCase() === vendorKey
       );
+      console.log('[epToggleDrill] inv match', { vendor: inv.vendor, vendorName: inv.vendorName, vendorKey, storedFound: !!stored, fileUrl: stored?.fileUrl ? 'PRESENT' : 'MISSING' });
       const viewBtn = stored && stored.fileUrl
         ? `<button class="ep-view-inv-btn" onclick="viewInvFile(${invoiceData.indexOf(stored)})">&#x1F4C4; View Source Invoice</button>`
         : '';
@@ -5647,7 +5662,18 @@ function generateTenantStatement(tenantName) {
 
   const r = lastResults.find(x => x.name === tenantName);
   const t = lastTenants.find(x => x.name === tenantName);
-  if (!r || !t) return;
+  if (!r || !t) {
+    console.warn('[generateTenantStatement] GUARD: missing r or t', { tenantName, rFound: !!r, tFound: !!t });
+    return;
+  }
+
+  console.log('[generateTenantStatement] ENTER', {
+    tenantName,
+    lastInvoicesFullLen: lastInvoicesFull.length,
+    invoiceDataLen:      invoiceData.length,
+    sampleLastInvFull:   lastInvoicesFull[0],
+    sampleInvoiceData:   invoiceData[0] ? { vendorName: invoiceData[0].vendorName, fileUrl: invoiceData[0].fileUrl ? 'PRESENT' : 'MISSING', category: invoiceData[0].category } : null,
+  });
 
   const now    = new Date().toLocaleDateString('en-US', { year:'numeric', month:'long', day:'numeric' });
   const period = new Date().getFullYear() + ' CAM Year';
@@ -5674,11 +5700,20 @@ function generateTenantStatement(tenantName) {
     .map(([, data]) => {
       const invRows = data.invoices.map(({ inv, idx, share }) => {
         const rowId = `ts-${tenantName}-${idx}`.replace(/\s+/g, '-');
+        const vendorKey = (inv.vendor || inv.vendorName || '').toLowerCase();
         const stored = invoiceData.find(d =>
-          d.vendorName && d.vendorName.toLowerCase() === (inv.vendor || '').toLowerCase()
+          d.vendorName && d.vendorName.toLowerCase() === vendorKey
         );
+        console.log('[generateTenantStatement] invoice match', {
+          idx,
+          invVendor:    inv.vendor,
+          invVendorName: inv.vendorName,
+          vendorKey,
+          storedFound:  !!stored,
+          storedFileUrl: stored ? (stored.fileUrl ? 'PRESENT' : 'MISSING') : 'N/A',
+        });
         const viewInvBtn = stored && stored.fileUrl
-          ? `<button class="btn-secondary" onclick="event.stopPropagation();openInvFileViewer('${stored.fileUrl}','${esc(inv.vendor)}','${esc(stored.fileType || '')}')">&#x1F4C4; View Invoice</button>`
+          ? `<button class="btn-secondary" onclick="event.stopPropagation();openInvFileViewer('${stored.fileUrl}','${esc(inv.vendor || inv.vendorName || '')}','${esc(stored.fileType || '')}')">&#x1F4C4; View Invoice</button>`
           : '';
         return `
           <div class="charge-row ts-inv-card" id="crow-${rowId}"
@@ -6916,15 +6951,21 @@ function restoreResultsDisplay(snapshot) {
     lastPropName     = snapshot.propName     || '';
     lastTotal        = snapshot.total        || 0;
     lastInvoices     = snapshot.invoices     || [];
-    lastInvoicesFull = snapshot.invoicesFull || [];
+    // Normalize restored invoices to always carry `vendor` (the field used by fresh-run paths).
+    // _stripBlobs preserves `vendorName` but drops the `vendor` alias that runAllocation creates.
+    // Without this, generateTenantStatement and epToggleDrill vendor matches return nothing.
+    lastInvoicesFull = (snapshot.invoicesFull || []).map(inv => inv && !inv.vendor
+      ? { ...inv, vendor: inv.vendorName || '' }
+      : inv
+    );
     lastTenants      = snapshot.tenants      || [];
     console.log('[restoreResultsDisplay] hydrated globals', {
       lastResultsLen:   lastResults.length,
       lastTenantsLen:   lastTenants.length,
       lastInvoicesLen:  lastInvoicesFull.length,
+      sampleInvoice:    lastInvoicesFull[0],
       lastTenantsNames: lastTenants.map(x => x?.name),
       lastResultsNames: lastResults.map(x => x?.name),
-      snapshotTenantsRaw: snapshot.tenants,
     });
     if (snapshot.camYear) setCamYear(snapshot.camYear);
     if (Array.isArray(snapshot.camRuns) && snapshot.camRuns.length) {
