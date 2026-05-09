@@ -6208,77 +6208,145 @@ function generateTenantStatement(tenantName) {
 
 // ─── Load Demo ────────────────────────────────────────────────────────────────
 
-async function loadDemo() {
-  // Create a fresh demo property — no hardcoded id, Supabase generates UUID
-  const demoProp = {
-    name: 'Riverside Commons (Demo)', totalSqft: 24000,
-    status: 'in-progress', tenantCount: 3, invoiceCount: 7,
-    totalCAM: 0, openDisputes: 0,
-  };
-  _props.unshift(demoProp);
-  portfolio.unshift(demoProp);
-  await saveProperty(demoProp); // patches demoProp.id with real UUID
+// Stable identifiers so the demo property is idempotent across sessions/devices.
+const DEMO_PROPERTY_ID = 'dec00000-0000-4000-a000-000000000001';
+const _DEMO_TENANT_IDS = [
+  'dec00000-0000-4000-a000-000000000002', // Fresh Market Foods
+  'dec00000-0000-4000-a000-000000000003', // Riverside Dental Group
+  'dec00000-0000-4000-a000-000000000004', // FitLife Gym & Wellness
+];
 
-  // Navigate into the property
-  activePropId = null;
-  resetWorkflow();
-  activePropId = demoProp.id;
+// Ensures Riverside Commons exists in Supabase with complete seeded state.
+// Idempotent — skips re-seeding if valid camReconciliation already present.
+// Returns DEMO_PROPERTY_ID on success, null on auth failure.
+async function ensureDemoProperty() {
+  const { data: { user } } = await db.auth.getUser();
+  if (!user?.id) return null;
 
-  document.getElementById('propertyName').value              = 'Riverside Commons';
-  document.getElementById('totalSqft').value                 = '24000';
-  document.getElementById('breadcrumbPropName').textContent  = 'Riverside Commons';
-  document.getElementById('portfolioDashboard').style.display = 'none';
-  document.getElementById('propertyBreadcrumb').style.display = 'flex';
-  document.getElementById('mainWorkflow').style.display       = 'block';
-
-  // ── Tenants ──────────────────────────────────────────────────────────────
-  tenantData.splice(0, tenantData.length,
-    ...[
-    {
-      tenantName: 'Fresh Market Foods', leasedSqft: '6200',
-      capPercentage: '10', excludedCategories: 'snow', baseYear: '2024',
-      confidence: { tenantName:98, leasedSqft:96, capPercentage:92, excludedCategories:88, baseYear:95 },
-      _error: null,
-    },
-    {
-      tenantName: 'Riverside Dental Group', leasedSqft: '1800',
-      capPercentage: '', excludedCategories: 'management', baseYear: '2024',
-      confidence: { tenantName:97, leasedSqft:94, capPercentage:null, excludedCategories:91, baseYear:96 },
-      _error: null,
-    },
-    {
-      tenantName: 'FitLife Gym & Wellness', leasedSqft: '3400',
-      capPercentage: '', excludedCategories: '', baseYear: '2023',
-      confidence: { tenantName:99, leasedSqft:97, capPercentage:null, excludedCategories:null, baseYear:94 },
-      _error: null,
+  // ── Idempotency check — skip if already fully seeded ─────────────────────
+  try {
+    const { data: row, error } = await db.from('properties')
+      .select('data')
+      .eq('id', DEMO_PROPERTY_ID)
+      .eq('user_id', user.id)
+      .single();
+    if (!error && row?.data?.camReconciliation?.results?.length > 0) {
+      console.log('[ensureDemoProperty] already seeded — skip');
+      return DEMO_PROPERTY_ID;
     }
-    ].map(normalizeTenant)
-  );
+  } catch (_) { /* not found — fall through to seed */ }
 
-  // ── Invoices ─────────────────────────────────────────────────────────────
-  invoiceData.splice(0, invoiceData.length,
-    { vendorName:'Green Thumb Landscaping', amount:2400, category:'landscaping', invoiceDate:'2025-01-15', confidence:{vendorName:97,amount:99,category:95,invoiceDate:98}, _error:null },
-    { vendorName:'Metro Snow Services',     amount:1850, category:'snow',        invoiceDate:'2025-01-22', confidence:{vendorName:96,amount:98,category:97,invoiceDate:97}, _error:null },
-    { vendorName:'Apex Building Repairs',   amount:3200, category:'repairs',     invoiceDate:'2025-01-31', confidence:{vendorName:94,amount:97,category:89,invoiceDate:96}, _error:null },
-    { vendorName:'City Electric Co',        amount:4100, category:'utilities',   invoiceDate:'2025-01-31', confidence:{vendorName:98,amount:99,category:96,invoiceDate:99}, _error:null },
-    { vendorName:'CleanRight Janitorial',   amount:2800, category:'janitorial',  invoiceDate:'2025-01-31', confidence:{vendorName:95,amount:98,category:94,invoiceDate:97}, _error:null },
-    { vendorName:'SecureWatch Inc',         amount:1600, category:'security',    invoiceDate:'2025-01-31', confidence:{vendorName:97,amount:99,category:96,invoiceDate:98}, _error:null },
-    { vendorName:'Summit Management Group', amount:3500, category:'management',  invoiceDate:'2025-01-31', confidence:{vendorName:96,amount:98,category:93,invoiceDate:97}, _error:null }
-  );
+  console.log('[ensureDemoProperty] seeding Riverside Commons…');
 
-  // Render lease + invoice results
-  switchLeaseTab('bulk');
-  renderBulkResults();
-  switchInvTab('files');
-  renderInvResults();
+  // ── Demo data constants ───────────────────────────────────────────────────
+  const PROP_NAME  = 'Riverside Commons';
+  const PROP_SQFT  = 24000;
+  const CAM_YEAR   = 2025;
 
-  // Run allocation, then seed a sample open dispute
-  runAllocation();
+  const demoTenantConfigs = [
+    {
+      id: _DEMO_TENANT_IDS[0], tenant_name: 'Fresh Market Foods',
+      leased_sqft: '6200', cap: '10', excluded_categories: 'snow',
+      start_date: '2020-01-01', end_date: '2027-12-31', lease_type: 'NNN',
+      confidence: { tenantName:98, leasedSqft:96, capPercentage:92, excludedCategories:88 },
+    },
+    {
+      id: _DEMO_TENANT_IDS[1], tenant_name: 'Riverside Dental Group',
+      leased_sqft: '1800', cap: null, excluded_categories: 'management',
+      start_date: '2021-06-01', end_date: '2026-05-31', lease_type: 'NNN',
+      confidence: { tenantName:97, leasedSqft:94, excludedCategories:91 },
+    },
+    {
+      id: _DEMO_TENANT_IDS[2], tenant_name: 'FitLife Gym & Wellness',
+      leased_sqft: '3400', cap: null, excluded_categories: '',
+      start_date: '2022-01-01', end_date: '2025-12-31', lease_type: 'NNN',
+      confidence: { tenantName:99, leasedSqft:97 },
+    },
+  ];
 
-  // Pre-seed one open dispute so the dispute section is populated
-  const repairShare = parseFloat((3200 * (6200 / 24000)).toFixed(2));
-  disputes.push({
-    id:          nextDisputeId++,
+  const demoInvoiceList = [
+    { vendorName: 'Green Thumb Landscaping', amount: 2400, category: 'landscaping', invoiceDate: '2025-01-15' },
+    { vendorName: 'Metro Snow Services',     amount: 1850, category: 'snow',        invoiceDate: '2025-01-22' },
+    { vendorName: 'Apex Building Repairs',   amount: 3200, category: 'repairs',     invoiceDate: '2025-01-31' },
+    { vendorName: 'City Electric Co',        amount: 4100, category: 'utilities',   invoiceDate: '2025-01-31' },
+    { vendorName: 'CleanRight Janitorial',   amount: 2800, category: 'janitorial',  invoiceDate: '2025-01-31' },
+    { vendorName: 'SecureWatch Inc',         amount: 1600, category: 'security',    invoiceDate: '2025-01-31' },
+    { vendorName: 'Summit Management Group', amount: 3500, category: 'management',  invoiceDate: '2025-01-31' },
+  ];
+
+  const totalExpenses = demoInvoiceList.reduce((s, inv) => s + inv.amount, 0);
+
+  // ── Normalize tenants (gives stable IDs + all expected fields) ────────────
+  const demoTenants = demoTenantConfigs.map(normalizeTenant);
+
+  // ── Build Property object for reconciliation engine ───────────────────────
+  const reconProp = new Property(PROP_NAME, PROP_SQFT);
+  reconProp.addLeases(demoTenants.map(t => {
+    const excl  = (t.excluded_categories || '').split(',').map(s => s.trim()).filter(Boolean);
+    const lease = new Lease(
+      t.tenant_name, '', parseSqft(t.leased_sqft),
+      t.start_date || '', t.end_date || '', excl,
+      t.cap ? parseFloat(t.cap) : null, null, false, null, t.lease_type || null
+    );
+    lease.id = t.id;
+    return lease;
+  }));
+  reconProp.addInvoices(demoInvoiceList.map(inv =>
+    new Invoice(null, inv.invoiceDate, inv.amount, inv.vendorName, inv.category)
+  ));
+
+  // runFullReconciliation reads currentProperty().tenants for live cap/flag lookups.
+  // Temporarily wire the demo property into _props and activePropId.
+  const prevActivePropId = activePropId;
+  const demoEntry = { id: DEMO_PROPERTY_ID, name: PROP_NAME, totalSqft: PROP_SQFT, tenants: demoTenants };
+  const demoIdx = _props.findIndex(p => p.id === DEMO_PROPERTY_ID);
+  if (demoIdx >= 0) Object.assign(_props[demoIdx], demoEntry);
+  else _props.unshift(demoEntry);
+  activePropId = DEMO_PROPERTY_ID;
+
+  let fullResults;
+  try {
+    fullResults = runFullReconciliation(reconProp);
+  } finally {
+    activePropId = prevActivePropId; // always restore
+  }
+
+  // ── Build report-layer data structures ────────────────────────────────────
+  const invoiceSummary = demoInvoiceList.map((inv, i) => ({
+    id: `inv-${i}`, vendor: inv.vendorName, category: inv.category, amount: inv.amount,
+  }));
+  const tenantSummary = demoTenants.map(t => ({
+    name:               t.tenant_name,
+    leasedSqft:         parseSqft(t.leased_sqft),
+    totalSqft:          PROP_SQFT,
+    capPct:             t.cap ? parseFloat(t.cap) : null,
+    excludedCategories: (t.excluded_categories || '').split(',').map(s => s.trim().toLowerCase()).filter(Boolean),
+  }));
+
+  const camReconciliation = {
+    propId:       DEMO_PROPERTY_ID,
+    propName:     PROP_NAME,
+    camYear:      CAM_YEAR,
+    savedAt:      new Date().toISOString(),
+    total:        totalExpenses,
+    results:      fullResults.map(r => ({ ...r })),
+    invoices:     invoiceSummary,
+    invoicesFull: demoInvoiceList, // full objects; stripped on save, re-hydrated on load
+    tenants:      tenantSummary,
+    camRuns: [{
+      propName:      PROP_NAME,
+      camYear:       CAM_YEAR,
+      timestamp:     new Date().toISOString(),
+      totalExpenses,
+      tenantCount:   fullResults.length,
+      invoiceCount:  demoInvoiceList.length,
+      results:       fullResults.map(r => ({ ...r })),
+    }],
+  };
+
+  const repairShare = parseFloat((3200 * (6200 / PROP_SQFT)).toFixed(2));
+  const demoDisputes = [{
+    id: 0,
     tenantName:  'Fresh Market Foods',
     invoiceId:   'inv-2',
     vendor:      'Apex Building Repairs',
@@ -6288,11 +6356,87 @@ async function loadDemo() {
     timestamp:   new Date(Date.now() - 2 * 24 * 60 * 60 * 1000).toISOString(),
     status:      'open',
     resolution:  null, resolvedAt: null, hash: null,
-  });
-  renderOpenDisputes();
-  syncPortfolioEntry();
+  }];
 
-  window.scrollTo({ top: 0, behavior: 'smooth' });
+  // ── Persist to Supabase ───────────────────────────────────────────────────
+  // invoicesFull is intentionally omitted (matches _stripBlobs convention);
+  // on load it is re-hydrated from data.invoices via renderProperty.
+  const propertyData = {
+    invoices:          demoInvoiceList.map(inv => ({
+      vendorName: inv.vendorName, amount: inv.amount,
+      category: inv.category, invoiceDate: inv.invoiceDate,
+    })),
+    disputes:          demoDisputes,
+    camYear:           CAM_YEAR,
+    results:           null,
+    camReconciliation: { ...camReconciliation, invoicesFull: undefined },
+  };
+
+  const { error: propErr } = await db.from('properties')
+    .upsert({ id: DEMO_PROPERTY_ID, user_id: user.id, name: PROP_NAME, sqft: PROP_SQFT, data: propertyData })
+    .select('id');
+  if (propErr) { console.error('[ensureDemoProperty] property upsert failed:', propErr.message); throw propErr; }
+
+  // Tenants: delete existing rows then insert with stable IDs so they're
+  // always queryable by property_id even if the user has run the old demo.
+  await db.from('tenants').delete().eq('property_id', DEMO_PROPERTY_ID);
+  const tenantRows = demoTenants.map(t => ({
+    id:          t.id,
+    property_id: DEMO_PROPERTY_ID,
+    name:        t.tenant_name,
+    sqft:        Number(t.leased_sqft) || null,
+    cap:         t.cap != null ? parseFloat(t.cap) : null,
+    start_date:  t.start_date  || null,
+    end_date:    t.end_date    || null,
+    lease_type:  t.lease_type  || null,
+    lease_url:   null,
+  }));
+  const { error: tenErr } = await db.from('tenants').insert(tenantRows).select('id');
+  if (tenErr) console.warn('[ensureDemoProperty] tenant insert warning:', tenErr.message);
+
+  // ── Update in-memory _props with full state ───────────────────────────────
+  const demoPropFull = {
+    id:                DEMO_PROPERTY_ID,
+    name:              PROP_NAME,
+    totalSqft:         PROP_SQFT,
+    tenants:           demoTenants,
+    invoices:          propertyData.invoices,
+    disputes:          demoDisputes,
+    camYear:           CAM_YEAR,
+    camReconciliation, // invoicesFull intact for in-memory rendering
+  };
+  const finalIdx = _props.findIndex(p => p.id === DEMO_PROPERTY_ID);
+  if (finalIdx >= 0) Object.assign(_props[finalIdx], demoPropFull);
+  else _props.unshift(demoPropFull);
+
+  // Save to localStorage so it's available immediately on next load
+  _lsSave(demoPropFull);
+
+  console.log('[ensureDemoProperty] seeded successfully', {
+    totalExpenses, tenants: fullResults.length, invoices: demoInvoiceList.length,
+  });
+  return DEMO_PROPERTY_ID;
+}
+
+async function loadDemo() {
+  const btn = document.getElementById('demoBtn');
+  const origText = btn?.textContent ?? 'Try Live Demo';
+  if (btn) { btn.disabled = true; btn.textContent = 'Loading…'; }
+  try {
+    const id = await ensureDemoProperty();
+    if (!id) {
+      showToast('Please log in to load the demo.', { color: '#92400e', textColor: '#fef3c7' });
+      return;
+    }
+    renderPortfolio(); // refresh card list so demo appears
+    await selectProperty(id);
+    window.scrollTo({ top: 0, behavior: 'smooth' });
+  } catch (e) {
+    console.error('[loadDemo]', e);
+    showToast('Demo failed to load — please try again.', { color: '#92400e', textColor: '#fef3c7' });
+  } finally {
+    if (btn) { btn.disabled = false; btn.textContent = origText; }
+  }
 }
 
 // ─── Portfolio ────────────────────────────────────────────────────────────────
