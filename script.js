@@ -6564,6 +6564,16 @@ async function saveProperty(property) {
       camReconciliation: stripped.camReconciliation ?? null,
     };
 
+    console.log('[saveProperty] POST-STRIP invoice snapshot', {
+      invoiceCount: data.invoices.length,
+      sample:       data.invoices[0] ? {
+        vendorName: data.invoices[0].vendorName,
+        fileUrl:    data.invoices[0].fileUrl ? 'PRESENT:' + String(data.invoices[0].fileUrl).slice(0, 60) : 'MISSING',
+        fileName:   data.invoices[0].fileName,
+      } : null,
+      tenantsIsArray: Array.isArray(stripped.tenants),
+    });
+
     const payload = {
       name: name || 'New Property',
       sqft: totalSqft || 0,
@@ -6634,6 +6644,16 @@ async function savePropertyData() {
   // so any field edit (even if prop.tenants wasn't updated) is captured.
   if (tenantData.some(t => t !== null)) prop.tenants = tenantData.filter(t => t !== null);
   prop.invoices = Array.from(invoiceData);
+
+  console.log('[savePropertyData] PRE-SAVE invoice snapshot', {
+    invoiceCount:   prop.invoices.length,
+    sample:         prop.invoices[0] ? {
+      vendorName: prop.invoices[0].vendorName,
+      fileUrl:    prop.invoices[0].fileUrl ? 'PRESENT:' + String(prop.invoices[0].fileUrl).slice(0, 60) : 'MISSING',
+      fileName:   prop.invoices[0].fileName,
+      fileType:   prop.invoices[0].fileType,
+    } : null,
+  });
   prop.disputes = Array.from(disputes);
   prop.results  = lastResults.length ? {
     propId:       prop.id,          // used to verify results belong to this property on load
@@ -6680,6 +6700,14 @@ async function loadPropertyData(id) {
         results:           d.results           ?? null,
         camReconciliation: d.camReconciliation ?? null,
       };
+      console.log('[loadPropertyData] FROM SUPABASE invoices', {
+        invoiceCount: dbData.invoices.length,
+        sample:       dbData.invoices[0] ? {
+          vendorName: dbData.invoices[0].vendorName,
+          fileUrl:    dbData.invoices[0].fileUrl ? 'PRESENT:' + String(dbData.invoices[0].fileUrl).slice(0, 60) : 'MISSING',
+          fileName:   dbData.invoices[0].fileName,
+        } : null,
+      });
 
       // Fetch tenants from their own table and merge in
       const { data: tenantRows } = await db
@@ -6777,14 +6805,34 @@ async function loadPropertyData(id) {
     }
   } catch (e) { /* offline or error — fall through to localStorage */ }
 
-  if (!dbData) return lsData;
-  if (!lsData) return dbData;
+  if (!dbData) {
+    console.log('[loadPropertyData] MERGE: using lsData only (no dbData)', { lsInvoices: lsData?.invoices?.length });
+    return lsData;
+  }
+  if (!lsData) {
+    console.log('[loadPropertyData] MERGE: using dbData only (no lsData)', { dbInvoices: dbData?.invoices?.length });
+    return dbData;
+  }
 
   // Tenant/invoice data: prefer whichever source has more (prevents stale DB
   // from erasing a fresh upload that hasn't synced yet).
   const dbCount = (dbData.tenants || []).length;
   const lsCount = (lsData.tenants || []).length;
   const base = lsCount > dbCount ? lsData : dbData;
+
+  console.log('[loadPropertyData] MERGE result', {
+    winner:         lsCount > dbCount ? 'localStorage' : 'supabase',
+    dbTenants:      dbCount,
+    lsTenants:      lsCount,
+    dbInvoices:     (dbData.invoices || []).length,
+    lsInvoices:     (lsData.invoices || []).length,
+    baseInvoice0:   base.invoices?.[0] ? {
+      vendorName: base.invoices[0].vendorName,
+      fileUrl:    base.invoices[0].fileUrl ? 'PRESENT:' + String(base.invoices[0].fileUrl).slice(0, 60) : 'MISSING',
+    } : null,
+    lsInvoice0fileUrl: lsData.invoices?.[0]?.fileUrl ? 'PRESENT' : 'MISSING',
+    dbInvoice0fileUrl: dbData.invoices?.[0]?.fileUrl ? 'PRESENT' : 'MISSING',
+  });
 
   // Reconciliation results: always prefer Supabase — it is written immediately
   // after each run and is the authoritative source. localStorage may lag behind
@@ -6849,13 +6897,22 @@ function renderProperty(property) {
   // ── Invoices ──────────────────────────────────────────────────────────
   try {
     const invoices = property.invoices || [];
+    console.log('[renderProperty] RESTORE invoiceData', {
+      invoiceCount: invoices.length,
+      sample:       invoices[0] ? {
+        vendorName: invoices[0].vendorName,
+        fileUrl:    invoices[0].fileUrl ? 'PRESENT:' + String(invoices[0].fileUrl).slice(0, 60) : 'MISSING',
+        fileName:   invoices[0].fileName,
+        fileType:   invoices[0].fileType,
+      } : null,
+    });
     if (invoices.length) {
       invoiceData.splice(0, invoiceData.length, ...invoices);
       switchInvTab('files');
       renderInvResults();
       restored = true;
     }
-  } catch (e) { }
+  } catch (e) { console.error('[renderProperty] invoices restore error:', e); }
 
   // ── Disputes ──────────────────────────────────────────────────────────
   try {
