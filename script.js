@@ -3613,25 +3613,59 @@ function matchInvoiceToTenant(invoice, tenants) {
   const text = [invoice.vendorName, invoice.category, invoice.invoiceDate]
     .filter(Boolean).join(' ').toLowerCase();
 
+  console.log('[matchInvoiceToTenant] INPUT', {
+    invoiceVendorName:  invoice.vendorName,
+    invoiceVendor:      invoice.vendor,       // alias used in some paths
+    invoiceCategory:    invoice.category,
+    invoiceDate:        invoice.invoiceDate,
+    invoiceAmount:      invoice.amount,
+    invoiceId:          invoice.id,
+    assembledText:      text,
+    tenantCount:        tenants.length,
+    tenantNames:        tenants.map(t => t.tenantName || t.tenant_name || '(none)'),
+    tenantUnits:        tenants.map(t => t.unitNumber || '(none)'),
+  });
+
   for (const t of tenants) {
     let conf   = 0;
     let reason = '';
     // support both Lease objects (tenantName) and tenantData items (tenant_name)
     const name = t.tenantName || t.tenant_name || '';
 
-    if (t.unitNumber && text.includes(t.unitNumber.toLowerCase())) {
+    const unitHit = !!(t.unitNumber && text.includes(t.unitNumber.toLowerCase()));
+    const nameHit = !!(name && text.includes(name.toLowerCase()));
+
+    if (unitHit) {
       conf   = 90;
       reason = `Unit ${t.unitNumber}`;
     }
-    if (name && text.includes(name.toLowerCase())) {
+    if (nameHit) {
       if (conf < 75) { conf = 75; reason = name; }
     }
+
+    console.log('[matchInvoiceToTenant] CANDIDATE', {
+      tenantName:  name,
+      unitNumber:  t.unitNumber || '',
+      unitChecked: t.unitNumber ? t.unitNumber.toLowerCase() : '(skip)',
+      nameChecked: name ? name.toLowerCase() : '(skip)',
+      unitHit,
+      nameHit,
+      conf,
+      reason: reason || 'no match',
+    });
 
     if (conf > bestConf) {
       bestConf  = conf;
       bestMatch = { tenantName: name, tenantId: t.id || null, confidence: conf, reason };
     }
   }
+
+  console.log('[matchInvoiceToTenant] RESULT', {
+    vendor:     invoice.vendorName || invoice.vendor,
+    bestConf,
+    bestMatch,
+    verdict:    bestConf >= 75 ? 'DIRECT' : bestConf > 0 ? 'LOW-CONF' : 'SHARED (no match)',
+  });
 
   return bestMatch; // null = no match, shared expense
 }
@@ -3650,12 +3684,32 @@ function runFullReconciliation(property) {
   const totalLeasedSqFt = leases.reduce((s, l) => s + (l.sqFt || 0), 0);
   const sqFtOverflow    = totalSqFt > 0 && totalLeasedSqFt > totalSqFt;
 
+  console.log('[runFullReconciliation] ENTER', {
+    invoiceCount: invoices.length,
+    leaseCount:   leases.length,
+    leaseSummary: leases.map(l => ({ name: l.tenantName, unit: l.unitNumber, sqFt: l.sqFt })),
+    invoiceSample: invoices.slice(0, 3).map(inv => ({
+      vendorName:  inv.vendorName,
+      vendor:      inv.vendor,
+      category:    inv.category,
+      invoiceDate: inv.invoiceDate,
+      amount:      inv.amount,
+    })),
+  });
+
   invoices.forEach(inv => {
     const m = matchInvoiceToTenant(inv, leases);
     inv.matchedTenant   = m ? m.tenantName : null;
     inv.matchedTenantId = m ? m.tenantId   : null;
     inv.matchConfidence = m ? m.confidence : 0;
     inv.matchReason     = m ? m.reason     : '';
+    console.log('[runFullReconciliation] MATCH RESULT', {
+      vendor:         inv.vendorName || inv.vendor,
+      matchConfidence: inv.matchConfidence,
+      matchedTenant:  inv.matchedTenant,
+      matchReason:    inv.matchReason,
+      classification: inv.matchConfidence >= 75 ? 'DIRECT' : 'SHARED',
+    });
   });
 
   const directInvoices = invoices.filter(inv => inv.matchConfidence >= 75);
@@ -3935,6 +3989,18 @@ async function runAllocation() {
 
   // Sync matchedTenant tags back to invoiceData for badge display
   const activeTenants = (currentProperty()?.tenants || []).filter(t => t && t.tenant_name);
+  console.log('[runAllocation] badge-sync matchInvoiceToTenant', {
+    activeTenantCount: activeTenants.length,
+    activeTenantNames: activeTenants.map(t => t.tenant_name),
+    activeTenantUnits: activeTenants.map(t => t.unitNumber || '(none)'),
+    invoiceDataCount:  invoiceData.length,
+    invoiceDataSample: invoiceData.slice(0, 3).map(inv => ({
+      vendorName:  inv?.vendorName,
+      vendor:      inv?.vendor,
+      category:    inv?.category,
+      invoiceDate: inv?.invoiceDate,
+    })),
+  });
   invoiceData.forEach((inv, i) => {
     if (!inv) return;
     const m = matchInvoiceToTenant(inv, activeTenants);
@@ -3942,6 +4008,12 @@ async function runAllocation() {
     invoiceData[i].matchedTenantId = m ? m.tenantId   : null;
     invoiceData[i].matchConfidence = m ? m.confidence : 0;
     invoiceData[i].matchReason     = m ? m.reason     : '';
+    console.log('[runAllocation] badge-sync RESULT', {
+      idx:             i,
+      vendor:          inv.vendorName || inv.vendor,
+      matchConfidence: invoiceData[i].matchConfidence,
+      matchedTenant:   invoiceData[i].matchedTenant,
+    });
   });
   renderInvResults();
 
@@ -7023,6 +7095,28 @@ function restoreResultsDisplay(snapshot) {
       sampleInvoice:    lastInvoicesFull[0],
       lastTenantsNames: lastTenants.map(x => x?.name),
       lastResultsNames: lastResults.map(x => x?.name),
+    });
+    // Audit includedInvoices in each result for flags and matchConfidence
+    lastResults.forEach((r, ri) => {
+      const flagged = (r.includedInvoices || []).filter(inv => inv.flag);
+      const conf0   = (r.includedInvoices || []).filter(inv => (inv.matchConfidence || 0) === 0);
+      console.log('[restoreResultsDisplay] result audit', {
+        tenant:              r.name || r.tenantName,
+        includedInvoiceCount: (r.includedInvoices || []).length,
+        flaggedCount:        flagged.length,
+        zeroConfCount:       conf0.length,
+        sampleFlagged:       flagged.slice(0, 2).map(inv => ({
+          vendorName:      inv.vendorName,
+          matchConfidence: inv.matchConfidence,
+          flagMsg:         inv.flag?.message,
+        })),
+        sampleIncluded:      (r.includedInvoices || []).slice(0, 2).map(inv => ({
+          vendorName:      inv.vendorName,
+          matchConfidence: inv.matchConfidence,
+          allocation:      inv.allocation,
+          hasFlag:         !!inv.flag,
+        })),
+      });
     });
     if (snapshot.camYear) setCamYear(snapshot.camYear);
     if (Array.isArray(snapshot.camRuns) && snapshot.camRuns.length) {
