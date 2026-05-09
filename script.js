@@ -6617,7 +6617,16 @@ async function loadPropertyData(id) {
                 results:      snapResults,
                 invoices:     invoiceList.map((inv, i) => ({ id: `inv-${i}`, ...inv })),
                 invoicesFull: invoiceList,
-                tenants:      [],
+                tenants:      (dbData.tenants || [])
+                  .filter(t => t && t.tenant_name)
+                  .map(t => ({
+                    name:               t.tenant_name,
+                    leasedSqft:         Number(t.leased_sqft) || 0,
+                    totalSqft:          totalSqft,
+                    excludedCategories: t.excluded_categories
+                      ? t.excluded_categories.split(',').map(s => s.trim().toLowerCase()).filter(Boolean)
+                      : [],
+                  })),
                 camRuns:      [],
               };
             }
