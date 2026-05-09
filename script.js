@@ -4025,6 +4025,8 @@ async function runAllocation() {
   lastPropName        = propName;
   lastTotal           = totalCost;
   lastInvoicesFull    = invoices;
+  console.log('[PIPELINE:1] runtime — lastInvoicesFull[0]', JSON.parse(JSON.stringify(lastInvoicesFull[0] || {})));
+  console.log('[PIPELINE:1] runtime — invoiceData[0]', JSON.parse(JSON.stringify(invoiceData[0] || {})));
 
   document.getElementById('resultsTitle').textContent = `${getCamYear()} CAM — ${propName}`;
   applySqftMismatchUI(sqftExceedsProperty);
@@ -4221,6 +4223,9 @@ async function runAllocation() {
         timestamp: r.timestamp instanceof Date ? r.timestamp.toISOString() : r.timestamp,
       })),
     };
+    console.log('[PIPELINE:2] pre-save — camRec.invoicesFull[0]', JSON.parse(JSON.stringify(_snapProp.camReconciliation.invoicesFull?.[0] || {})));
+    console.log('[PIPELINE:2] pre-save — prop.invoices[0]', JSON.parse(JSON.stringify(_snapProp.invoices?.[0] || {})));
+    console.log('[PIPELINE:2] pre-save — results[0].includedInvoices[0]', JSON.parse(JSON.stringify(_snapProp.camReconciliation.results?.[0]?.includedInvoices?.[0] || {})));
     await saveProperty(_snapProp);
   }
 
@@ -5739,13 +5744,8 @@ function generateTenantStatement(tenantName) {
     return;
   }
 
-  console.log('[generateTenantStatement] ENTER', {
-    tenantName,
-    lastInvoicesFullLen: lastInvoicesFull.length,
-    invoiceDataLen:      invoiceData.length,
-    sampleLastInvFull:   lastInvoicesFull[0],
-    sampleInvoiceData:   invoiceData[0] ? { vendorName: invoiceData[0].vendorName, fileUrl: invoiceData[0].fileUrl ? 'PRESENT' : 'MISSING', category: invoiceData[0].category } : null,
-  });
+  console.log('[PIPELINE:7] generateTenantStatement — lastInvoicesFull[0]', JSON.parse(JSON.stringify(lastInvoicesFull[0] || {})));
+  console.log('[PIPELINE:7] generateTenantStatement — invoiceData[0]', JSON.parse(JSON.stringify(invoiceData[0] || {})));
 
   const now    = new Date().toLocaleDateString('en-US', { year:'numeric', month:'long', day:'numeric' });
   const period = new Date().getFullYear() + ' CAM Year';
@@ -5776,6 +5776,10 @@ function generateTenantStatement(tenantName) {
         const stored = invoiceData.find(d =>
           d.vendorName && d.vendorName.toLowerCase() === vendorKey
         );
+        if (idx === 0) {
+          console.log('[PIPELINE:7b] first inv obj', JSON.parse(JSON.stringify(inv || {})));
+          console.log('[PIPELINE:7b] first stored obj', JSON.parse(JSON.stringify(stored || {})));
+        }
         console.log('[generateTenantStatement] invoice match', {
           idx,
           invVendor:    inv.vendor,
@@ -6636,15 +6640,8 @@ async function saveProperty(property) {
       camReconciliation: stripped.camReconciliation ?? null,
     };
 
-    console.log('[saveProperty] POST-STRIP invoice snapshot', {
-      invoiceCount: data.invoices.length,
-      sample:       data.invoices[0] ? {
-        vendorName: data.invoices[0].vendorName,
-        fileUrl:    data.invoices[0].fileUrl ? 'PRESENT:' + String(data.invoices[0].fileUrl).slice(0, 60) : 'MISSING',
-        fileName:   data.invoices[0].fileName,
-      } : null,
-      tenantsIsArray: Array.isArray(stripped.tenants),
-    });
+    console.log('[PIPELINE:3] post-strip — data.invoices[0]', JSON.parse(JSON.stringify(data.invoices[0] || {})));
+    console.log('[PIPELINE:3] post-strip — camRec.results[0].includedInvoices[0]', JSON.parse(JSON.stringify(data.camReconciliation?.results?.[0]?.includedInvoices?.[0] || {})));
 
     const payload = {
       name: name || 'New Property',
@@ -6717,15 +6714,7 @@ async function savePropertyData() {
   if (tenantData.some(t => t !== null)) prop.tenants = tenantData.filter(t => t !== null);
   prop.invoices = Array.from(invoiceData);
 
-  console.log('[savePropertyData] PRE-SAVE invoice snapshot', {
-    invoiceCount:   prop.invoices.length,
-    sample:         prop.invoices[0] ? {
-      vendorName: prop.invoices[0].vendorName,
-      fileUrl:    prop.invoices[0].fileUrl ? 'PRESENT:' + String(prop.invoices[0].fileUrl).slice(0, 60) : 'MISSING',
-      fileName:   prop.invoices[0].fileName,
-      fileType:   prop.invoices[0].fileType,
-    } : null,
-  });
+  console.log('[PIPELINE:2a] savePropertyData — prop.invoices[0]', JSON.parse(JSON.stringify(prop.invoices[0] || {})));
   prop.disputes = Array.from(disputes);
   prop.results  = lastResults.length ? {
     propId:       prop.id,          // used to verify results belong to this property on load
@@ -6772,14 +6761,8 @@ async function loadPropertyData(id) {
         results:           d.results           ?? null,
         camReconciliation: d.camReconciliation ?? null,
       };
-      console.log('[loadPropertyData] FROM SUPABASE invoices', {
-        invoiceCount: dbData.invoices.length,
-        sample:       dbData.invoices[0] ? {
-          vendorName: dbData.invoices[0].vendorName,
-          fileUrl:    dbData.invoices[0].fileUrl ? 'PRESENT:' + String(dbData.invoices[0].fileUrl).slice(0, 60) : 'MISSING',
-          fileName:   dbData.invoices[0].fileName,
-        } : null,
-      });
+      console.log('[PIPELINE:4] Supabase read — invoices[0]', JSON.parse(JSON.stringify(dbData.invoices[0] || {})));
+      console.log('[PIPELINE:4] Supabase read — camRec.results[0].includedInvoices[0]', JSON.parse(JSON.stringify(dbData.camReconciliation?.results?.[0]?.includedInvoices?.[0] || {})));
 
       // Fetch tenants from their own table and merge in
       const { data: tenantRows } = await db
@@ -6892,19 +6875,16 @@ async function loadPropertyData(id) {
   const lsCount = (lsData.tenants || []).length;
   const base = lsCount > dbCount ? lsData : dbData;
 
-  console.log('[loadPropertyData] MERGE result', {
-    winner:         lsCount > dbCount ? 'localStorage' : 'supabase',
-    dbTenants:      dbCount,
-    lsTenants:      lsCount,
-    dbInvoices:     (dbData.invoices || []).length,
-    lsInvoices:     (lsData.invoices || []).length,
-    baseInvoice0:   base.invoices?.[0] ? {
-      vendorName: base.invoices[0].vendorName,
-      fileUrl:    base.invoices[0].fileUrl ? 'PRESENT:' + String(base.invoices[0].fileUrl).slice(0, 60) : 'MISSING',
-    } : null,
-    lsInvoice0fileUrl: lsData.invoices?.[0]?.fileUrl ? 'PRESENT' : 'MISSING',
-    dbInvoice0fileUrl: dbData.invoices?.[0]?.fileUrl ? 'PRESENT' : 'MISSING',
+  console.log('[PIPELINE:4b] MERGE decision', {
+    winner:     lsCount > dbCount ? 'localStorage' : 'supabase',
+    dbTenants:  dbCount,
+    lsTenants:  lsCount,
+    dbInvoices: (dbData.invoices || []).length,
+    lsInvoices: (lsData.invoices || []).length,
   });
+  console.log('[PIPELINE:4b] MERGE — base.invoices[0]', JSON.parse(JSON.stringify(base.invoices?.[0] || {})));
+  console.log('[PIPELINE:4b] MERGE — lsData.invoices[0]', JSON.parse(JSON.stringify(lsData.invoices?.[0] || {})));
+  console.log('[PIPELINE:4b] MERGE — dbData.invoices[0]', JSON.parse(JSON.stringify(dbData.invoices?.[0] || {})));
 
   // Reconciliation results: always prefer Supabase — it is written immediately
   // after each run and is the authoritative source. localStorage may lag behind
@@ -6969,17 +6949,10 @@ function renderProperty(property) {
   // ── Invoices ──────────────────────────────────────────────────────────
   try {
     const invoices = property.invoices || [];
-    console.log('[renderProperty] RESTORE invoiceData', {
-      invoiceCount: invoices.length,
-      sample:       invoices[0] ? {
-        vendorName: invoices[0].vendorName,
-        fileUrl:    invoices[0].fileUrl ? 'PRESENT:' + String(invoices[0].fileUrl).slice(0, 60) : 'MISSING',
-        fileName:   invoices[0].fileName,
-        fileType:   invoices[0].fileType,
-      } : null,
-    });
+    console.log('[PIPELINE:5] renderProperty — property.invoices[0]', JSON.parse(JSON.stringify(invoices[0] || {})));
     if (invoices.length) {
       invoiceData.splice(0, invoiceData.length, ...invoices);
+      console.log('[PIPELINE:5b] invoiceData[0] after splice', JSON.parse(JSON.stringify(invoiceData[0] || {})));
       switchInvTab('files');
       renderInvResults();
       restored = true;
@@ -7088,36 +7061,9 @@ function restoreResultsDisplay(snapshot) {
       : inv
     );
     lastTenants      = snapshot.tenants      || [];
-    console.log('[restoreResultsDisplay] hydrated globals', {
-      lastResultsLen:   lastResults.length,
-      lastTenantsLen:   lastTenants.length,
-      lastInvoicesLen:  lastInvoicesFull.length,
-      sampleInvoice:    lastInvoicesFull[0],
-      lastTenantsNames: lastTenants.map(x => x?.name),
-      lastResultsNames: lastResults.map(x => x?.name),
-    });
-    // Audit includedInvoices in each result for flags and matchConfidence
-    lastResults.forEach((r, ri) => {
-      const flagged = (r.includedInvoices || []).filter(inv => inv.flag);
-      const conf0   = (r.includedInvoices || []).filter(inv => (inv.matchConfidence || 0) === 0);
-      console.log('[restoreResultsDisplay] result audit', {
-        tenant:              r.name || r.tenantName,
-        includedInvoiceCount: (r.includedInvoices || []).length,
-        flaggedCount:        flagged.length,
-        zeroConfCount:       conf0.length,
-        sampleFlagged:       flagged.slice(0, 2).map(inv => ({
-          vendorName:      inv.vendorName,
-          matchConfidence: inv.matchConfidence,
-          flagMsg:         inv.flag?.message,
-        })),
-        sampleIncluded:      (r.includedInvoices || []).slice(0, 2).map(inv => ({
-          vendorName:      inv.vendorName,
-          matchConfidence: inv.matchConfidence,
-          allocation:      inv.allocation,
-          hasFlag:         !!inv.flag,
-        })),
-      });
-    });
+    console.log('[PIPELINE:6] restored — lastInvoicesFull[0]', JSON.parse(JSON.stringify(lastInvoicesFull[0] || {})));
+    console.log('[PIPELINE:6] restored — lastResults[0].includedInvoices[0]', JSON.parse(JSON.stringify(lastResults[0]?.includedInvoices?.[0] || {})));
+    console.log('[PIPELINE:6] restored — invoiceData[0] at restore time', JSON.parse(JSON.stringify(invoiceData[0] || {})));
     if (snapshot.camYear) setCamYear(snapshot.camYear);
     if (Array.isArray(snapshot.camRuns) && snapshot.camRuns.length) {
       camRuns.splice(0, camRuns.length, ...snapshot.camRuns.map(run => ({
