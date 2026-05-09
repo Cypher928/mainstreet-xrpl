@@ -6216,12 +6216,56 @@ const _DEMO_TENANT_IDS = [
   'dec00000-0000-4000-a000-000000000004', // FitLife Gym & Wellness
 ];
 
+// Deletes every property whose name matches "Riverside Commons*" and whose ID
+// is NOT the canonical DEMO_PROPERTY_ID.  Cleans Supabase, _props, and
+// localStorage so no duplicate demo entries survive.
+async function cleanupLegacyDemos(userId) {
+  try {
+    const { data: rows } = await db.from('properties')
+      .select('id, name, sqft')
+      .eq('user_id', userId)
+      .ilike('name', 'riverside commons%')
+      .neq('id', DEMO_PROPERTY_ID);
+
+    // Belt-and-suspenders: only remove entries whose sqft matches the demo
+    const legacyIds = (rows || []).filter(r => r.sqft === 24000).map(r => r.id);
+    if (!legacyIds.length) return;
+
+    console.log('[cleanupLegacyDemos] removing', legacyIds.length, 'legacy entry/entries:', legacyIds);
+
+    // Delete tenants first (FK), then the property rows
+    for (const id of legacyIds) {
+      await db.from('tenants').delete().eq('property_id', id);
+    }
+    await db.from('properties').delete().in('id', legacyIds).eq('user_id', userId);
+
+    // Remove from _props
+    for (const id of legacyIds) {
+      const idx = _props.findIndex(p => p.id === id);
+      if (idx >= 0) _props.splice(idx, 1);
+    }
+
+    // Remove from localStorage
+    try {
+      const stored = JSON.parse(_lsGet(_LS_KEY) || '{}');
+      let dirty = false;
+      legacyIds.forEach(id => { if (stored[id]) { delete stored[id]; dirty = true; } });
+      if (dirty) _lsSet(_LS_KEY, JSON.stringify(stored));
+    } catch (_) {}
+  } catch (e) {
+    console.warn('[cleanupLegacyDemos] non-fatal:', e.message);
+  }
+}
+
 // Ensures Riverside Commons exists in Supabase with complete seeded state.
 // Idempotent — skips re-seeding if valid camReconciliation already present.
 // Returns DEMO_PROPERTY_ID on success, null on auth failure.
 async function ensureDemoProperty() {
   const { data: { user } } = await db.auth.getUser();
   if (!user?.id) return null;
+
+  // Always clean up legacy random-UUID demo copies before anything else
+  await cleanupLegacyDemos(user.id);
 
   // ── Idempotency check — skip if already fully seeded ─────────────────────
   try {
