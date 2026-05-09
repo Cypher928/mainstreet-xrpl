@@ -5280,9 +5280,15 @@ function _detectInvoiceSuspicions(invoices) {
     if (group.length < 2) return;
     group.forEach(r => exactFlaggedIdx.add(r.idx));
     flags.push({
-      severity: 'red',
-      title:    `Exact duplicate invoice: "${group[0].displayVendor}" — identical vendor, amount, and date (×${group.length})`,
-      detail:   `${fmt(group[0].amount)} on ${group[0].date} appears ${group.length} times. Only one charge should be valid.`,
+      severity:   'red',
+      title:      `Exact duplicate invoice: "${group[0].displayVendor}" — identical vendor, amount, and date (×${group.length})`,
+      conditions: [
+        `Vendor: "${group[0].displayVendor}"`,
+        `Amount: ${fmt(group[0].amount)}`,
+        `Date: ${group[0].date}`,
+        `Appears ${group.length} times in invoice list`,
+        'Only one charge should be valid',
+      ],
     });
   });
 
@@ -5300,9 +5306,15 @@ function _detectInvoiceSuspicions(invoices) {
       const daysDiff = Math.round((dated[i + 1].ts - dated[i].ts) / DAY_MS);
       if (daysDiff <= 7) {
         flags.push({
-          severity: 'yellow',
-          title:    `Possible duplicate: "${dated[i].displayVendor}" billed ${fmt(dated[i].amount)} twice within ${daysDiff} day${daysDiff === 1 ? '' : 's'}`,
-          detail:   `Invoice dates: ${dated[i].date} and ${dated[i + 1].date}. Could be a billing error or re-submission.`,
+          severity:   'yellow',
+          title:      `Possible duplicate: "${dated[i].displayVendor}" billed ${fmt(dated[i].amount)} twice within ${daysDiff} day${daysDiff === 1 ? '' : 's'}`,
+          conditions: [
+            `Vendor: "${dated[i].displayVendor}"`,
+            `Amount: ${fmt(dated[i].amount)} (identical on both invoices)`,
+            `Invoice date 1: ${dated[i].date}`,
+            `Invoice date 2: ${dated[i + 1].date}`,
+            `Gap: ${daysDiff} day${daysDiff === 1 ? '' : 's'} apart (threshold: 7 days)`,
+          ],
         });
         break; // one flag per vendor+amount pair is enough
       }
@@ -5317,11 +5329,14 @@ function _detectInvoiceSuspicions(invoices) {
   });
   Object.values(urlMap).forEach(group => {
     if (group.length < 2) return;
-    const vendors = [...new Set(group.map(r => r.displayVendor))].join(', ');
     flags.push({
-      severity: 'red',
-      title:    `Same source document linked to ${group.length} separate invoice records`,
-      detail:   `Vendors: ${vendors}. A single file should not represent multiple charges — possible duplicate upload.`,
+      severity:   'red',
+      title:      `Same source document linked to ${group.length} separate invoice records`,
+      conditions: [
+        `Shared file URL across ${group.length} records`,
+        ...group.slice(0, 4).map(r => `Record: "${r.displayVendor}" — ${fmt(r.amount)}`),
+        'A single file should not represent multiple distinct charges',
+      ],
     });
   });
 
@@ -5339,10 +5354,16 @@ function _detectInvoiceSuspicions(invoices) {
       group.every(r => g.some(u => u.idx === r.idx)));
     if (alreadyCovered) return;
     const [fn] = key.split('|');
+    const uniqueVendors = [...new Set(group.map(r => r.displayVendor))];
     flags.push({
-      severity: 'yellow',
-      title:    `Filename "${fn}" appears on ${group.length} invoice records with the same amount`,
-      detail:   `Vendors: ${[...new Set(group.map(r => r.displayVendor))].join(', ')}. Confirm these are distinct documents.`,
+      severity:   'yellow',
+      title:      `Filename "${fn}" appears on ${group.length} invoice records with the same amount`,
+      conditions: [
+        `Filename: "${fn}"`,
+        `Amount: ${fmt(group[0].amount)} (identical on all records)`,
+        `Vendors: ${uniqueVendors.join(', ')}`,
+        'Confirm these are distinct documents, not duplicate uploads',
+      ],
     });
   });
 
@@ -5351,17 +5372,21 @@ function _detectInvoiceSuspicions(invoices) {
   rows.filter(r => !isNaN(r.ts)).forEach(r => {
     (byVendor[r.vendor] = byVendor[r.vendor] || []).push(r);
   });
-  Object.entries(byVendor).forEach(([vendor, entries]) => {
+  Object.entries(byVendor).forEach(([, entries]) => {
     if (entries.length < 3) return;
     const sorted = [...entries].sort((a, b) => a.ts - b.ts);
     for (let i = 0; i <= sorted.length - 3; i++) {
-      const window = sorted.filter(e => e.ts >= sorted[i].ts && e.ts <= sorted[i].ts + 5 * DAY_MS);
-      if (window.length >= 3) {
-        const displayVendor = window[0].displayVendor;
+      const win = sorted.filter(e => e.ts >= sorted[i].ts && e.ts <= sorted[i].ts + 5 * DAY_MS);
+      if (win.length >= 3) {
         flags.push({
-          severity: 'yellow',
-          title:    `"${displayVendor}" billed ${window.length} times within 5 days`,
-          detail:   `Dates: ${window.map(e => e.date).join(', ')}. Unusual billing frequency — review for split invoicing or errors.`,
+          severity:   'yellow',
+          title:      `"${win[0].displayVendor}" billed ${win.length} times within 5 days`,
+          conditions: [
+            `Vendor: "${win[0].displayVendor}"`,
+            `${win.length} invoices within a 5-day window`,
+            ...win.map(e => `Invoice: ${e.date} — ${fmt(e.amount)}`),
+            'Review for split invoicing, billing errors, or duplicate submissions',
+          ],
         });
         break;
       }
@@ -5378,9 +5403,14 @@ function _detectInvoiceSuspicions(invoices) {
     const amt = parseFloat(amtKey);
     if (amt % 100 !== 0) return; // only flag suspiciously round amounts
     flags.push({
-      severity: 'yellow',
-      title:    `${vendorSet.size} different vendors each billed the same round amount (${fmt(amt)})`,
-      detail:   `Vendors: ${[...vendorSet].join(', ')}. Identical round amounts across vendors may warrant review.`,
+      severity:   'yellow',
+      title:      `${vendorSet.size} different vendors each billed the same round amount (${fmt(amt)})`,
+      conditions: [
+        `Amount: ${fmt(amt)} (round number — divisible by 100)`,
+        `${vendorSet.size} distinct vendors`,
+        `Vendors: ${[...vendorSet].join(', ')}`,
+        'Identical round amounts across unrelated vendors may indicate errors or coordination',
+      ],
     });
   });
 
@@ -5409,6 +5439,12 @@ function buildAuditSummary() {
         red.push({
           title:  `Unusually large invoice — ${inv.vendor || inv.vendorName || 'Unknown'}: ${fmt(amt)} (${pct}% of total CAM)`,
           detail: 'A single invoice represents over 40% of total expenses. Verify this charge is not an error.',
+          conditions: [
+            `Vendor: "${inv.vendor || inv.vendorName || 'Unknown'}"`,
+            `Invoice amount: ${fmt(amt)}`,
+            `Total CAM expenses: ${fmt(total)}`,
+            `Proportion: ${pct}% of total (threshold: >40%)`,
+          ],
         });
       }
     });
@@ -5425,12 +5461,17 @@ function buildAuditSummary() {
         const pct = ((curr.totalExpenses - prev.totalExpenses) / prev.totalExpenses) * 100;
         const dir = pct > 0 ? 'increased' : 'decreased';
         const detail = `${years[1]}: ${fmt(prev.totalExpenses)} → ${years[0]}: ${fmt(curr.totalExpenses)}`;
+        const yoyConditions = [
+          `Previous year (${years[1]}): ${fmt(prev.totalExpenses)}`,
+          `Current year (${years[0]}): ${fmt(curr.totalExpenses)}`,
+          `Change: ${pct > 0 ? '+' : ''}${pct.toFixed(1)}%`,
+        ];
         if (pct > 20) {
-          red.push({ title: `Total CAM ${dir} ${Math.abs(pct).toFixed(1)}% year-over-year`, detail });
+          red.push({ title: `Total CAM ${dir} ${Math.abs(pct).toFixed(1)}% year-over-year`, detail, conditions: [...yoyConditions, 'Threshold: >20% triggers red flag'] });
         } else if (Math.abs(pct) > 10) {
-          yellow.push({ title: `Total CAM ${dir} ${Math.abs(pct).toFixed(1)}% year-over-year`, detail });
+          yellow.push({ title: `Total CAM ${dir} ${Math.abs(pct).toFixed(1)}% year-over-year`, detail, conditions: [...yoyConditions, 'Threshold: >10% triggers yellow flag'] });
         } else {
-          green.push({ title: `CAM within normal range YoY (${pct > 0 ? '+' : ''}${pct.toFixed(1)}%)`, detail });
+          green.push({ title: `CAM within normal range YoY (${pct > 0 ? '+' : ''}${pct.toFixed(1)}%)`, detail, conditions: [...yoyConditions, 'Within normal ±10% range'] });
         }
       }
     }
@@ -5439,7 +5480,7 @@ function buildAuditSummary() {
   // ── 3. Duplicate / suspicious invoice detection ──────────────────────────
   {
     const suspicions = _detectInvoiceSuspicions(allInvData);
-    suspicions.forEach(s => (s.severity === 'red' ? red : yellow).push({ title: s.title, detail: s.detail }));
+    suspicions.forEach(s => (s.severity === 'red' ? red : yellow).push({ title: s.title, detail: s.detail, conditions: s.conditions }));
     if (suspicions.length === 0 && allInvData.length > 0) {
       green.push({ title: 'No duplicate or suspicious invoice patterns detected' });
     }
@@ -5456,9 +5497,13 @@ function buildAuditSummary() {
       bucket.push({
         title:  `${missing.length} of ${allInvData.length} invoice${missing.length > 1 ? 's' : ''} missing source document`,
         detail: `Without attachments these charges cannot be independently verified: ${names}.`,
+        conditions: [
+          `Invoices missing attachments: ${missing.length} of ${allInvData.length} (${pct}%)`,
+          `Missing for: ${names}`,
+        ],
       });
     } else if (allInvData.length > 0) {
-      green.push({ title: `All ${allInvData.length} invoices have source documents attached` });
+      green.push({ title: `All ${allInvData.length} invoices have source documents attached`, conditions: [`${allInvData.length} invoices each have an attached source document`] });
     }
   }
 
@@ -5466,10 +5511,15 @@ function buildAuditSummary() {
   {
     const noDates = allInvData.filter(inv => !inv.invoiceDate);
     if (noDates.length) {
+      const noDateNames = noDates.slice(0, 3).map(inv => inv.vendorName).join(', ') +
+        (noDates.length > 3 ? ` +${noDates.length - 3} more` : '');
       yellow.push({
         title:  `${noDates.length} invoice${noDates.length > 1 ? 's' : ''} missing invoice date`,
-        detail: noDates.slice(0, 3).map(inv => inv.vendorName).join(', ') +
-          (noDates.length > 3 ? ` +${noDates.length - 3} more` : ''),
+        detail: noDateNames,
+        conditions: [
+          `Count: ${noDates.length} invoice${noDates.length > 1 ? 's' : ''} have no invoice date recorded`,
+          `Vendors: ${noDateNames}`,
+        ],
       });
     }
   }
@@ -5478,10 +5528,15 @@ function buildAuditSummary() {
   {
     const lowConf = paidInvData.filter(inv => inv.matchConfidence > 0 && inv.matchConfidence < 75);
     if (lowConf.length) {
+      const lowConfNames = lowConf.slice(0, 3).map(inv => `${inv.vendorName} (${inv.matchConfidence}%)`).join(', ') +
+        (lowConf.length > 3 ? ` +${lowConf.length - 3} more` : '');
       yellow.push({
         title:  `${lowConf.length} invoice${lowConf.length > 1 ? 's' : ''} with low tenant match confidence`,
-        detail: lowConf.slice(0, 3).map(inv => `${inv.vendorName} (${inv.matchConfidence}%)`).join(', ') +
-          (lowConf.length > 3 ? ` +${lowConf.length - 3} more` : ''),
+        detail: lowConfNames,
+        conditions: [
+          `Count: ${lowConf.length} invoice${lowConf.length > 1 ? 's' : ''} matched with <75% confidence (treated as shared)`,
+          `Invoices: ${lowConfNames}`,
+        ],
       });
     }
   }
@@ -5495,10 +5550,15 @@ function buildAuditSummary() {
         green.push({
           title:  `All ${paidInvData.length} invoices allocated as shared CAM expenses (pro-rata)`,
           detail: 'No invoices were linked to individual tenants — all costs are distributed by square footage.',
+          conditions: [`${paidInvData.length} invoices allocated pro-rata; none matched to individual tenants`],
         });
       } else {
         green.push({
           title:  `${matched} invoice${matched > 1 ? 's' : ''} directly matched to tenant${matched > 1 ? 's' : ''}, ${shared} shared pro-rata`,
+          conditions: [
+            `Direct tenant matches: ${matched} (confidence ≥75%)`,
+            `Shared pro-rata: ${shared}`,
+          ],
         });
       }
     }
@@ -5509,16 +5569,24 @@ function buildAuditSummary() {
     const totalPR = results.reduce((s, r) => s + (r.proRataPercent || 0), 0);
     if (results.length > 0) {
       if (Math.abs(totalPR - 100) < 2) {
-        green.push({ title: `Pro-rata percentages sum to ${totalPR.toFixed(1)}% — all expenses accounted for` });
+        green.push({ title: `Pro-rata percentages sum to ${totalPR.toFixed(1)}% — all expenses accounted for`, conditions: [`Sum of tenant pro-rata: ${totalPR.toFixed(1)}% (within ±2% of 100%)`] });
       } else if (totalPR < 98) {
         yellow.push({
           title:  `Pro-rata totals ${totalPR.toFixed(1)}% — ${(100 - totalPR).toFixed(1)}% of expenses unallocated`,
           detail: 'Total leased sqft may be less than the property total. Check tenant sqft entries.',
+          conditions: [
+            `Sum of tenant pro-rata: ${totalPR.toFixed(1)}%`,
+            `Unallocated gap: ${(100 - totalPR).toFixed(1)}% (likely vacant or unmeasured space)`,
+          ],
         });
       } else {
         yellow.push({
           title:  `Pro-rata totals ${totalPR.toFixed(1)}% — exceeds 100%`,
           detail: 'Total leased sqft may exceed the property total. Check tenant sqft entries.',
+          conditions: [
+            `Sum of tenant pro-rata: ${totalPR.toFixed(1)}%`,
+            `Excess: ${(totalPR - 100).toFixed(1)}% over 100% (tenant sqft entries may exceed property sqft)`,
+          ],
         });
       }
     }
@@ -5531,6 +5599,10 @@ function buildAuditSummary() {
       yellow.push({
         title:  `CAM cap applied for ${capped.length} tenant${capped.length > 1 ? 's' : ''}: ${capped.map(r => r.name).join(', ')}`,
         detail: 'Actual charges exceeded the contractual cap. Tenants paid less than their full pro-rata share.',
+        conditions: [
+          `Tenants with cap applied: ${capped.map(r => r.name).join(', ')}`,
+          `These tenants\' calculated charges exceeded their contractual CAM cap`,
+        ],
       });
     }
   }
@@ -5548,6 +5620,10 @@ function buildAuditSummary() {
       yellow.push({
         title:  `${message} — ${tenants.length} tenant${tenants.length > 1 ? 's' : ''}: ${tenants.join(', ')}`,
         detail: explanation || '',
+        conditions: [
+          `Affected tenants: ${tenants.join(', ')}`,
+          ...(explanation ? [`Reason: ${explanation}`] : []),
+        ],
       });
     });
   }
@@ -5558,9 +5634,15 @@ function buildAuditSummary() {
     cats.forEach(cat => {
       const excl = tenants.filter(t => (t.excludedCategories || []).includes(cat));
       if (excl.length > 0 && excl.length < tenants.length) {
+        const included = tenants.filter(t => !(t.excludedCategories || []).includes(cat));
         yellow.push({
           title:  `"${cat}" excluded for ${excl.length} of ${tenants.length} tenants`,
           detail: `Excluded for: ${excl.map(t => t.name).join(', ')}`,
+          conditions: [
+            `Category: "${cat}"`,
+            `Excluded for: ${excl.map(t => t.name).join(', ')} (${excl.length} tenant${excl.length > 1 ? 's' : ''})`,
+            `Included for: ${included.map(t => t.name).join(', ')} (${included.length} tenant${included.length > 1 ? 's' : ''})`,
+          ],
         });
       }
     });
@@ -5595,6 +5677,7 @@ function renderAuditPanel() {
       ${flags.map(f => `<div class="ap-flag ap-flag--${color}">
         <div class="ap-flag-title">${esc(f.title)}</div>
         ${f.detail ? `<div class="ap-flag-detail">${esc(f.detail)}</div>` : ''}
+        ${f.conditions?.length ? `<ul class="ap-flag-conditions">${f.conditions.map(c => `<li>${esc(c)}</li>`).join('')}</ul>` : ''}
       </div>`).join('')}
     </div>`;
   };
