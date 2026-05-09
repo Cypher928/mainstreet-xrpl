@@ -2335,6 +2335,16 @@ function renderBulkResults() {
       <button class="bulk-clear-btn" onclick="clearBulkResults()">&#x2715; Clear All</button>
     </div>
     ${rows}`;
+
+  // Confirm onclick is in the generated DOM
+  const firstSummary = el.querySelector('.bulk-tenant-summary');
+  console.log('[renderBulkResults] rendered', tenants.length, 'tenants', {
+    firstSummaryOnclick:     firstSummary?.getAttribute('onclick'),
+    firstSummaryPE:          firstSummary ? window.getComputedStyle(firstSummary).pointerEvents : 'N/A',
+    bulkResultsPE:           window.getComputedStyle(el).pointerEvents,
+    mainWorkflowPE:          window.getComputedStyle(document.getElementById('mainWorkflow')).pointerEvents,
+    appContentPE:            window.getComputedStyle(document.getElementById('appContent')).pointerEvents,
+  });
 }
 
 function toggleBulkDetail(i) {
@@ -4694,9 +4704,34 @@ document.addEventListener('keydown', (e) => {
   if (e.key === 'Escape') closeLeaseModal();
 });
 
-// Global click debug
+// Global click diagnostic — reports what element received the click and any blocking overlays
 document.addEventListener('click', (e) => {
-});
+  const path = e.composedPath ? e.composedPath() : [];
+  const topEl = path[0] || e.target;
+
+  // Check every fixed/absolute overlay that could be covering content
+  const overlayIds = ['explainPanel','leaseViewerModal','allocModal','reportOverlay','invFileViewer','loginScreen'];
+  const overlayState = overlayIds.map(id => {
+    const el = document.getElementById(id);
+    if (!el) return `${id}:MISSING`;
+    const s = window.getComputedStyle(el);
+    return `${id}:display=${s.display},vis=${s.visibility},pe=${s.pointerEvents}`;
+  });
+
+  console.log('[CLICK PROBE]', {
+    target:          e.target?.id || e.target?.className || e.target?.tagName,
+    composedPath0:   topEl?.id || topEl?.className || topEl?.tagName,
+    composedPathLen: path.length,
+    pathIds:         path.slice(0,8).map(el => el.id || el.className || el.tagName || '?'),
+    clientXY:        `${e.clientX},${e.clientY}`,
+    elementAtPoint:  document.elementFromPoint(e.clientX, e.clientY)?.id
+                     || document.elementFromPoint(e.clientX, e.clientY)?.className
+                     || document.elementFromPoint(e.clientX, e.clientY)?.tagName,
+    overlays:        overlayState,
+    bodyOverflow:    document.body.style.overflow,
+    bodyPE:          window.getComputedStyle(document.body).pointerEvents,
+  });
+}, true); // capture phase so we see it before any stopPropagation
 
 // Delegated retry handler — survives innerHTML re-renders
 document.addEventListener('click', (e) => {
@@ -4706,6 +4741,16 @@ document.addEventListener('click', (e) => {
   const i = retryEl.dataset.index;
   retryUploadForSlot(i);
 });
+
+// Mousedown diagnostic — fires before click; confirms the pointer event is reaching the DOM
+document.addEventListener('mousedown', (e) => {
+  const el = document.elementFromPoint(e.clientX, e.clientY);
+  console.log('[MOUSEDOWN PROBE]', {
+    target:         e.target?.id || e.target?.className || e.target?.tagName,
+    elementAtPoint: el?.id || el?.className || el?.tagName,
+    clientXY:       `${e.clientX},${e.clientY}`,
+  });
+}, true);
 
 // Clicking the dark backdrop closes modal
 document.getElementById('leaseViewerModal')?.addEventListener('click', (e) => {
@@ -6008,7 +6053,11 @@ async function selectProperty(id) {
 
     // Always re-render so the restored reconciliation snapshot appears even when
     // the tenant-count guard above did not overwrite tenant/invoice arrays.
-    if (activePropId === id) renderProperty(property);
+    if (activePropId === id) {
+      console.log('[selectProperty] SECOND renderProperty firing', { id, activePropId });
+      renderProperty(property);
+      console.log('[selectProperty] SECOND renderProperty done — mainWorkflow display:', document.getElementById('mainWorkflow')?.style.display, 'portfolio display:', document.getElementById('portfolioDashboard')?.style.display);
+    }
   }, 0);
 }
 
@@ -6912,6 +6961,17 @@ function restoreResultsDisplay(snapshot) {
 
   body.innerHTML = html;
   section.style.display = 'block';
+
+  // Confirm the explain buttons rendered with onclick and are not pointer-blocked
+  const firstBtn = body.querySelector('.explain-btn');
+  console.log('[restoreResultsDisplay] results rendered', {
+    resultCount:      lastResults.length,
+    firstBtnOnclick:  firstBtn?.getAttribute('onclick'),
+    firstBtnPE:       firstBtn ? window.getComputedStyle(firstBtn).pointerEvents : 'N/A',
+    sectionPE:        window.getComputedStyle(section).pointerEvents,
+    bodyPE:           window.getComputedStyle(body).pointerEvents,
+    sectionDisplay:   section.style.display,
+  });
 }
 
 // Show a temporary green banner confirming data was loaded from a previous session.
