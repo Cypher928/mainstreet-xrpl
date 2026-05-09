@@ -6731,7 +6731,25 @@ function renderProperty(property) {
     const rec = property.camReconciliation ?? property.results;
     if (rec && Array.isArray(rec.results) && rec.results.length &&
         (!rec.propId || rec.propId === property.id)) {
-      restoreResultsDisplay(rec);
+      // invoicesFull is stripped by _stripBlobs before every save (Supabase + localStorage)
+      // to keep payloads small. Re-hydrate it here from invoiceData, which was
+      // already populated by the invoices block above, so the summary bar
+      // ("Invoices: N") and per-tenant stat ("X of N") render correctly.
+      const invoiceFull = rec.invoicesFull?.length
+        ? rec.invoicesFull
+        : invoiceData.length ? [...invoiceData] : (property.invoices || []);
+      const patchedRec = invoiceFull.length && !rec.invoicesFull?.length
+        ? {
+            ...rec,
+            invoicesFull: invoiceFull,
+            // eligibleCount of 0 means it was lost (fallback path); replace with
+            // full invoice count, which is correct for standard CAM allocations.
+            results: rec.results.map(r =>
+              r.eligibleCount ? r : { ...r, eligibleCount: invoiceFull.length }
+            ),
+          }
+        : rec;
+      restoreResultsDisplay(patchedRec);
       renderDisputeSection();
       renderPreviousRuns();
       showReportSection();
