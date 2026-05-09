@@ -2338,9 +2338,13 @@ function renderBulkResults() {
 }
 
 function toggleBulkDetail(i) {
+  console.log('[toggleBulkDetail] ENTER', { i });
   const det  = document.getElementById(`bdet-${i}`);
   const chev = document.getElementById(`bchev-${i}`);
+  if (!det) { console.warn('[toggleBulkDetail] GUARD: det element not found', { i, id: `bdet-${i}` }); return; }
+  if (!chev) { console.warn('[toggleBulkDetail] GUARD: chev element not found', { i, id: `bchev-${i}` }); return; }
   const open = det.style.display === 'block';
+  console.log('[toggleBulkDetail] toggling', { i, wasOpen: open });
   det.style.display  = open ? 'none' : 'block';
   chev.innerHTML     = open ? '&#x25BC; Edit' : '&#x25B2; Close';
 }
@@ -4421,18 +4425,50 @@ function stat(label, value) {
 // ─── Explain Charge Panel ─────────────────────────────────────────────────────
 
 function openExplainPanel(tenantName) {
+  console.log('[openExplainPanel] ENTER', {
+    tenantName,
+    lastResultsLen:  lastResults.length,
+    lastTenantsLen:  lastTenants.length,
+    tenantDataLen:   tenantData.filter(Boolean).length,
+    lastTenantsNames: lastTenants.map(x => x.name),
+    lastResultsNames: lastResults.map(x => x.name),
+  });
+
   const r = lastResults.find(x => x.name === tenantName);
   const t = lastTenants.find(x => x.name === tenantName);
-  if (!r || !t) return;
+
+  if (!r || !t) {
+    console.warn('[openExplainPanel] GUARD 1 FAILED — missing r or t', {
+      tenantName,
+      rFound:         !!r,
+      tFound:         !!t,
+      lastResultsLen: lastResults.length,
+      lastTenantsLen: lastTenants.length,
+      lastTenantsNames: lastTenants.map(x => x.name),
+      lastResultsNames: lastResults.map(x => x.name),
+    });
+    return;
+  }
+
+  console.log('[openExplainPanel] GUARD 1 passed', { tenantName, r, t });
 
   const td = tenantData.find(x => x && x.tenant_name === tenantName);
   if (!t.leasedSqft || !t.totalSqft || !td?.lease_type) {
+    console.warn('[openExplainPanel] GUARD 2 — missing lease data (showing error panel)', {
+      tenantName,
+      leasedSqft:  t.leasedSqft,
+      totalSqft:   t.totalSqft,
+      tdFound:     !!td,
+      leaseType:   td?.lease_type,
+    });
     const panel = document.getElementById('explainPanel');
     const body  = document.getElementById('explainPanelBody');
     if (body) body.innerHTML = `<div class="rc-flags"><div class="rc-flags-title">&#x26A0;&#xFE0F; Cannot Generate Explanation</div><div class="rc-flag-item">Cannot generate explanation — missing required lease data (leased sqft, property sqft, or lease type).</div></div>`;
     if (panel) { panel.classList.add('open'); document.body.style.overflow = 'hidden'; }
     return;
   }
+
+  console.log('[openExplainPanel] GUARD 2 passed — proceeding to render', { tenantName, leasedSqft: t.leasedSqft, totalSqft: t.totalSqft, leaseType: td.lease_type });
 
   const leasedSqft  = parseFloat(t.leasedSqft) || 0;
   const totalSqft   = parseFloat(t.totalSqft)  || 0;
@@ -4521,18 +4557,34 @@ function openExplainPanel(tenantName) {
   document.getElementById('explainPanelBody').innerHTML = s1 + s2;
   document.getElementById('explainPanel').classList.add('open');
   document.body.style.overflow = 'hidden';
+  console.log('[openExplainPanel] PANEL OPENED', { tenantName, panelClasses: document.getElementById('explainPanel').className });
 }
 
 function epToggleDrill(category, tenantName) {
+  console.log('[epToggleDrill] ENTER', { category, tenantName, lastTenantsLen: lastTenants.length, lastResultsLen: lastResults.length });
+
   const t = lastTenants.find(x => x.name === tenantName);
   const r = lastResults.find(x => x.name === tenantName);
-  if (!t || !r) return;
+
+  if (!t || !r) {
+    console.warn('[epToggleDrill] GUARD 1 FAILED — missing t or r', {
+      category, tenantName,
+      tFound: !!t, rFound: !!r,
+      lastTenantsLen: lastTenants.length,
+      lastResultsLen: lastResults.length,
+    });
+    return;
+  }
 
   const slug    = category.replace(/\s+/g, '-');
   const drillEl = document.getElementById(`epdrill-${slug}`);
   const chevEl  = document.getElementById(`epchev-${slug}`);
   const rowEl   = document.getElementById(`epcat-${slug}`);
-  if (!drillEl) return;
+
+  if (!drillEl) {
+    console.warn('[epToggleDrill] GUARD 2 FAILED — drillEl not found', { slug, id: `epdrill-${slug}` });
+    return;
+  }
 
   const open = drillEl.style.display === 'block';
   drillEl.style.display = open ? 'none' : 'block';
@@ -6607,6 +6659,11 @@ async function loadPropertyData(id) {
                 ambiguityFlags:   [],
               }));
             if (snapResults.length) {
+              console.log('[loadPropertyData] FALLBACK PATH — rebuilding camReconciliation from cam_reconciliations rows', {
+                snapResultsLen: snapResults.length,
+                dbTenantsLen: (dbData.tenants || []).length,
+                totalSqft,
+              });
               dbData.camReconciliation = {
                 propId:       dbData.id,
                 propName:     dbData.name || '',
@@ -6812,6 +6869,14 @@ function restoreResultsDisplay(snapshot) {
     lastInvoices     = snapshot.invoices     || [];
     lastInvoicesFull = snapshot.invoicesFull || [];
     lastTenants      = snapshot.tenants      || [];
+    console.log('[restoreResultsDisplay] hydrated globals', {
+      lastResultsLen:   lastResults.length,
+      lastTenantsLen:   lastTenants.length,
+      lastInvoicesLen:  lastInvoicesFull.length,
+      lastTenantsNames: lastTenants.map(x => x?.name),
+      lastResultsNames: lastResults.map(x => x?.name),
+      snapshotTenantsRaw: snapshot.tenants,
+    });
     if (snapshot.camYear) setCamYear(snapshot.camYear);
     if (Array.isArray(snapshot.camRuns) && snapshot.camRuns.length) {
       camRuns.splice(0, camRuns.length, ...snapshot.camRuns.map(run => ({
