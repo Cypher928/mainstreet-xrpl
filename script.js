@@ -1816,6 +1816,7 @@ function handleGLUpload(input) {
       }
 
       const total = glData.reduce((s, r) => s + r.amount, 0);
+      logActivity('gl_uploaded', `GL file parsed — ${glData.length} entries`, { severity: 'info', actor: 'User', detail: file.name, financialImpact: fmt(total) });
       statusEl.innerHTML = `
         <div class="status-row ok" style="margin:0 0 2px;">
           <div class="status-dot ok"><svg width="10" height="10" viewBox="0 0 10 10">
@@ -1932,6 +1933,12 @@ async function importGLToInvoices() {
   // invoiceData already has existing invoices (restored on selectProperty) + new GL items.
   property.invoices = Array.from(invoiceData);
   await saveProperty(property);
+  logActivity('invoice_uploaded', `${items.length} GL item${items.length !== 1 ? 's' : ''} imported`, {
+    severity:        'info',
+    actor:           'User',
+    detail:          'Imported from General Ledger',
+    financialImpact: fmt(items.reduce((s, r) => s + r.amount, 0)),
+  });
 
   const bar = document.getElementById('glImportBar');
   bar.innerHTML = `
@@ -2178,6 +2185,15 @@ async function handleBulkLeases(fileList) {
   // Doing this inside processFile caused cumulative inserts: 1+2+3+4+5 = 15 rows for 5 files.
   await saveProperty(property);
   await resyncTenantsToTable(property.id, property.tenants.filter(t => t?.tenant_name));
+  {
+    const successCount = tenantData.filter(t => t.status === 'success').length;
+    logActivity('lease_uploaded', `${total} lease${total !== 1 ? 's' : ''} uploaded`, {
+      severity:      'info',
+      actor:         'User',
+      relatedEntity: property.name || '',
+      detail:        `${successCount} of ${total} extracted successfully`,
+    });
+  }
 }
 
 function updateTenantField(index, field, value) {
@@ -2736,6 +2752,12 @@ async function handleBatchInvoices(fileList) {
   renderInvResults();
 
   await saveProperty(property);
+  logActivity('invoice_uploaded', `${total} invoice${total !== 1 ? 's' : ''} uploaded`, {
+    severity:        'info',
+    actor:           'User',
+    relatedEntity:   property.name || '',
+    financialImpact: fmt(invoiceData.reduce((s, i) => s + (parseFloat(i.amount) || 0), 0)),
+  });
 }
 
 function renderInvResults() {
@@ -3380,6 +3402,7 @@ async function confirmYardiImport() {
   // invoiceData already has existing invoices (restored on selectProperty) + new Yardi items.
   property.invoices = Array.from(invoiceData);
   await saveProperty(property);
+  logActivity('invoice_uploaded', `${imported} Yardi expense${imported !== 1 ? 's' : ''} imported`, { severity: 'info', actor: 'User', detail: 'Imported from Yardi CSV' });
 
   document.getElementById('invResults').scrollIntoView({ behavior: 'smooth', block: 'start' });
 
@@ -4203,10 +4226,36 @@ async function runAllocation() {
       return m;
     }, {}),
   });
+
+  // ── Activity log: reconciliation run ─────────────────────────────────
+  {
+    const isRerun = camRuns.length > 1;
+    const narrative = buildAuditNarrative();
+    logActivity(
+      isRerun ? 'reconciliation_rerun' : 'reconciliation_run',
+      `${isRerun ? 'Rerun' : 'CAM reconciliation'} — ${getCamYear()}`,
+      {
+        severity:       'success',
+        actor:          'System',
+        relatedEntity:  propName,
+        financialImpact: fmt(totalCost),
+        detail:         `Risk: ${narrative.riskLevel} · ${fullResults.length} tenants · ${invoices.length} invoices`,
+      }
+    );
+    const trendsData = buildHistoricalTrends();
+    if (trendsData && trendsData.trends.length) {
+      logActivity('historical_comparison',
+        `Historical comparison — ${trendsData.priorYear} vs ${trendsData.currYear}`,
+        { severity: 'info', actor: 'System', relatedEntity: propName, detail: `${trendsData.trends.length} trend${trendsData.trends.length > 1 ? 's' : ''} detected` }
+      );
+    }
+  }
+
   renderPreviousRuns();
   renderNarrativePanel();
   renderAuditPanel();
   renderHistoricalTrendsPanel();
+  renderActivityTimeline();
 
   renderDisputeSection();
   showReportSection(); // refresh notice + tenant buttons
@@ -4923,6 +4972,21 @@ let lastTenants  = []; // [{ name, excludedCategories }]
 const disputes   = []; // [{ id, tenantName, invoiceId, vendor, category, tenantShare, reason, timestamp, status, resolution, resolvedAt, hash }]
 let nextDisputeId = 0;
 
+// ─── Activity Log ─────────────────────────────────────────────────────────────
+const activityLog = []; // { type, title, detail, severity, timestamp, actor, relatedEntity, financialImpact }
+
+function logActivity(type, title, { detail = '', severity = 'info', actor = 'System', relatedEntity = '', financialImpact = '' } = {}) {
+  activityLog.unshift({
+    type, title, detail, severity,
+    timestamp:     new Date().toISOString(),
+    actor,
+    relatedEntity,
+    financialImpact,
+  });
+  if (activityLog.length > 200) activityLog.length = 200;
+  savePropertyData(); // persist change — debounced, so rapid events collapse
+}
+
 // ─── SHA-256 (Web Crypto — no library needed) ─────────────────────────────────
 async function sha256(obj) {
   const text   = JSON.stringify(obj, Object.keys(obj).sort());
@@ -5066,6 +5130,13 @@ async function submitDispute(rowId, tenantName, invoiceId, vendor, category, ten
     timestamp:   new Date().toISOString(),
     status:      'open',
     resolution:  null, resolvedAt: null, hash: null,
+  });
+  logActivity('dispute_opened', `Dispute filed — ${vendor || 'Unknown vendor'}`, {
+    severity:        'warning',
+    actor:           tenantName || 'Tenant',
+    relatedEntity:   vendor || '',
+    detail:          reason || '',
+    financialImpact: tenantShare ? fmt(parseFloat(tenantShare) || 0) : '',
   });
 
   const formEl = document.getElementById(`dform-${rowId}`);
@@ -5229,6 +5300,20 @@ async function resolveDispute(id, resolution) {
 
   d.status     = resolution;
   d.resolvedAt = new Date().toISOString();
+  {
+    const isDocsReq = resolution === 'docs_requested';
+    const evType  = isDocsReq ? 'docs_requested' : 'dispute_resolved';
+    const evTitle = isDocsReq
+      ? `Documentation requested — ${d.vendor || 'Unknown vendor'}`
+      : `Dispute ${resolution} — ${d.vendor || 'Unknown vendor'}`;
+    logActivity(evType, evTitle, {
+      severity:        isDocsReq ? 'warning' : 'info',
+      actor:           'Landlord',
+      relatedEntity:   d.tenantName || '',
+      detail:          d.reason || '',
+      financialImpact: d.tenantShare ? fmt(parseFloat(d.tenantShare) || 0) : '',
+    });
+  }
 
   // Hash the full dispute record for the on-chain audit trail
   d.hash = await sha256({
@@ -6327,6 +6412,105 @@ function renderHistoricalTrendsPanel() {
   section.appendChild(panel);
 }
 
+// ─── Activity Timeline ────────────────────────────────────────────────────────
+
+function buildActivityTimeline() {
+  return [...activityLog]; // already newest-first
+}
+
+function renderActivityTimeline() {
+  const prev = document.getElementById('timelinePanel');
+  if (prev) prev.remove();
+
+  const section = document.getElementById('results');
+  if (!section || !lastResults.length) return;
+
+  const events = buildActivityTimeline();
+  if (!events.length) return;
+
+  const severityDot = sev => {
+    const cls = { error: 'tl-dot--red', warning: 'tl-dot--yellow', success: 'tl-dot--green', info: 'tl-dot--blue' }[sev] || 'tl-dot--blue';
+    return `<div class="tl-dot ${cls}"></div>`;
+  };
+
+  const fmtTs = ts => {
+    const d = new Date(ts);
+    return d.toLocaleDateString('en-US', { month: 'short', day: 'numeric', year: 'numeric' })
+      + ' at ' + d.toLocaleTimeString('en-US', { hour: 'numeric', minute: '2-digit', hour12: true });
+  };
+
+  const typeLabel = {
+    property_created:      'Property',
+    lease_uploaded:        'Lease',
+    invoice_uploaded:      'Invoice',
+    gl_uploaded:           'GL',
+    reconciliation_run:    'CAM Run',
+    reconciliation_rerun:  'CAM Rerun',
+    audit_generated:       'Audit',
+    historical_comparison: 'Trends',
+    tenant_statement:      'Report',
+    exception_report:      'Report',
+    reconciliation_summary:'Report',
+    dispute_opened:        'Dispute',
+    dispute_resolved:      'Dispute',
+    docs_requested:        'Docs',
+  };
+
+  const rows = events.map((ev, idx) => {
+    const isLast = idx === events.length - 1;
+    const lbl = typeLabel[ev.type] || 'Event';
+    const actorHtml = (ev.actor && ev.actor !== 'System')
+      ? `<span class="tl-actor">${esc(ev.actor)}</span>`
+      : '';
+    const impactHtml = ev.financialImpact
+      ? `<span class="tl-impact">${esc(ev.financialImpact)}</span>`
+      : '';
+    const entityHtml = ev.relatedEntity
+      ? `<span class="tl-entity">${esc(ev.relatedEntity)}</span>`
+      : '';
+    return `<div class="tl-item">
+      <div class="tl-track">
+        ${severityDot(ev.severity)}
+        ${!isLast ? '<div class="tl-line"></div>' : ''}
+      </div>
+      <div class="tl-content">
+        <div class="tl-top">
+          <span class="tl-type-badge">${esc(lbl)}</span>
+          <span class="tl-title">${esc(ev.title)}</span>
+          ${impactHtml}
+        </div>
+        ${ev.detail ? `<div class="tl-detail">${esc(ev.detail)}</div>` : ''}
+        <div class="tl-meta">
+          <span class="tl-ts">${fmtTs(ev.timestamp)}</span>
+          ${actorHtml}
+          ${entityHtml}
+        </div>
+      </div>
+    </div>`;
+  }).join('');
+
+  const panel = document.createElement('div');
+  panel.id        = 'timelinePanel';
+  panel.className = 'ap-panel';
+  panel.innerHTML = `
+    <div class="ap-header" onclick="
+      document.getElementById('tlBody').classList.toggle('ap-body--open');
+      this.querySelector('.ap-chevron').classList.toggle('ap-chevron--open');
+    ">
+      <div class="ap-header-left">
+        <span class="ap-title">&#x1F4C5;&nbsp; Activity Timeline &mdash; ${esc(String(events.length))} event${events.length !== 1 ? 's' : ''}</span>
+      </div>
+      <div class="ap-header-right">
+        <span class="ap-chevron">&#x25BC;</span>
+      </div>
+    </div>
+    <div id="tlBody" class="ap-body">
+      <div class="tl-list">${rows}</div>
+    </div>`;
+
+  section.appendChild(panel);
+}
+
 // ─── Reports ──────────────────────────────────────────────────────────────────
 
 function showReportSection() {
@@ -6672,6 +6856,7 @@ function guardedReconciliationSummary() {
 }
 
 function generateReconciliationSummary() {
+  logActivity('reconciliation_summary', 'Reconciliation Summary report generated', { severity: 'info', actor: 'User', relatedEntity: lastPropName || 'Property' });
   const propName   = lastPropName || 'Property';
   const now        = new Date().toLocaleDateString('en-US', { year: 'numeric', month: 'long', day: 'numeric' });
   const period     = (getCamYear() || new Date().getFullYear()) + ' CAM Year';
@@ -6773,6 +6958,7 @@ function guardedExceptionReport() {
 }
 
 function generateExceptionReport() {
+  logActivity('exception_report', 'Audit Exception Summary report generated', { severity: 'info', actor: 'User', relatedEntity: lastPropName || 'Property' });
   const { red, yellow, green } = buildAuditSummary();
   const propName = lastPropName || 'Property';
   const now      = new Date().toLocaleString('en-US', { year: 'numeric', month: 'long', day: 'numeric', hour: '2-digit', minute: '2-digit' });
@@ -7057,6 +7243,7 @@ async function runLandlordAIReview() {
 
 function generateTenantStatement(tenantName) {
   if (!lastResults.length) { showToast('Run a CAM allocation first to generate reports.', { color: '#92400e', textColor: '#fef3c7' }); return; }
+  logActivity('tenant_statement', `Tenant statement generated — ${tenantName}`, { severity: 'info', actor: 'User', relatedEntity: tenantName });
 
   const r = lastResults.find(x => x.name === tenantName);
   const t = lastTenants.find(x => x.name === tenantName);
@@ -7742,6 +7929,7 @@ async function addNewProperty() {
   _props.push(newProp);
   portfolio.push(newProp);
   await saveProperty(newProp); // patches newProp.id in-place
+  logActivity('property_created', 'Property created', { severity: 'success', actor: 'User', relatedEntity: newProp.name || 'New Property' });
   await selectProperty(newProp.id);
   setTimeout(() => {
     const el = document.getElementById('propertyName');
@@ -8149,6 +8337,7 @@ async function saveProperty(property) {
       camYear:           stripped.camYear           ?? null,
       results:           stripped.results           ?? null,
       camReconciliation: stripped.camReconciliation ?? null,
+      activityLog:       stripped.activityLog       || [],
     };
 
     console.log('[PIPELINE:3] post-strip — data.invoices[0]', JSON.parse(JSON.stringify(data.invoices[0] || {})));
@@ -8226,7 +8415,8 @@ async function savePropertyData() {
   prop.invoices = Array.from(invoiceData);
 
   console.log('[PIPELINE:2a] savePropertyData — prop.invoices[0]', JSON.parse(JSON.stringify(prop.invoices[0] || {})));
-  prop.disputes = Array.from(disputes);
+  prop.disputes    = Array.from(disputes);
+  prop.activityLog = [...activityLog];
   prop.results  = lastResults.length ? {
     propId:       prop.id,          // used to verify results belong to this property on load
     results:      lastResults,
@@ -8271,6 +8461,7 @@ async function loadPropertyData(id) {
         camYear:           d.camYear           ?? null,
         results:           d.results           ?? null,
         camReconciliation: d.camReconciliation ?? null,
+        activityLog:       d.activityLog       || [],
       };
       console.log('[PIPELINE:4] Supabase read — invoices[0]', JSON.parse(JSON.stringify(dbData.invoices[0] || {})));
       console.log('[PIPELINE:4] Supabase read — camRec.results[0].includedInvoices[0]', JSON.parse(JSON.stringify(dbData.camReconciliation?.results?.[0]?.includedInvoices?.[0] || {})));
@@ -8479,6 +8670,12 @@ function renderProperty(property) {
     }
   } catch (e) { }
 
+  // ── Activity Log ──────────────────────────────────────────────────────
+  try {
+    const savedLog = property.activityLog || [];
+    activityLog.splice(0, activityLog.length, ...savedLog);
+  } catch (e) { }
+
   // ── CAM Results ───────────────────────────────────────────────────────
   // camReconciliation is the authoritative snapshot (written immediately after
   // each run). property.results is the legacy fallback for older saved data.
@@ -8518,6 +8715,7 @@ function renderProperty(property) {
       renderNarrativePanel();
       renderAuditPanel();
       renderHistoricalTrendsPanel();
+      renderActivityTimeline();
       showReportSection();
       restored = true;
     }

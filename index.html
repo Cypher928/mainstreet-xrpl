@@ -1920,6 +1920,27 @@
     .ht-dir--up   { color: #f87171; }
     .ht-dir--down { color: #34d399; }
     .ht-dir--flat { color: #94a3b8; font-size: 0.6rem; }
+    /* ── Activity Timeline Panel ─────────────────────────────────────── */
+    .tl-list   { display: flex; flex-direction: column; padding: 2px 0; }
+    .tl-item   { display: flex; gap: 12px; min-height: 44px; }
+    .tl-track  { display: flex; flex-direction: column; align-items: center; flex-shrink: 0; width: 14px; padding-top: 3px; }
+    .tl-dot    { width: 10px; height: 10px; border-radius: 50%; flex-shrink: 0; border: 1.5px solid; }
+    .tl-dot--red    { background: rgba(239,68,68,0.25);  border-color: #f87171; }
+    .tl-dot--yellow { background: rgba(245,158,11,0.25); border-color: #fbbf24; }
+    .tl-dot--green  { background: rgba(34,197,94,0.25);  border-color: #4ade80; }
+    .tl-dot--blue   { background: rgba(99,102,241,0.25); border-color: #818cf8; }
+    .tl-line   { flex: 1; width: 1px; background: rgba(100,116,139,0.25); margin: 3px 0; min-height: 12px; }
+    .tl-content { flex: 1; padding-bottom: 14px; min-width: 0; }
+    .tl-item:last-child .tl-content { padding-bottom: 4px; }
+    .tl-top    { display: flex; align-items: baseline; flex-wrap: wrap; gap: 6px; margin-bottom: 2px; }
+    .tl-type-badge { font-size: 0.63rem; font-weight: 700; padding: 1px 6px; border-radius: 4px; background: rgba(100,116,139,0.2); color: #94a3b8; text-transform: uppercase; letter-spacing: 0.08em; white-space: nowrap; flex-shrink: 0; }
+    .tl-title  { font-size: 0.81rem; font-weight: 500; color: #e2e8f0; flex: 1; min-width: 0; }
+    .tl-impact { font-size: 0.75rem; font-weight: 600; color: #C9973A; white-space: nowrap; }
+    .tl-detail { font-size: 0.73rem; color: #64748b; line-height: 1.4; margin-bottom: 3px; }
+    .tl-meta   { display: flex; align-items: center; flex-wrap: wrap; gap: 7px; }
+    .tl-ts     { font-size: 0.69rem; color: #475569; }
+    .tl-actor  { font-size: 0.67rem; font-weight: 600; color: #94a3b8; background: rgba(100,116,139,0.15); padding: 1px 6px; border-radius: 4px; }
+    .tl-entity { font-size: 0.67rem; color: #64748b; font-style: italic; }
     /* ── Exception Report ────────────────────────────────────────────── */
     .exc-flag-list  { display: flex; flex-direction: column; gap: 8px; margin-bottom: 20px; }
     .exc-flag       { border-radius: 8px; padding: 12px 14px; border: 1px solid; }
