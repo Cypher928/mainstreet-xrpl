@@ -1510,19 +1510,51 @@
     }
     .rpt-close-btn:hover { background: rgba(255,255,255,0.08); }
     .rpt-body {
-      max-width: 860px; margin: 32px auto 64px; padding: 0 24px;
-      font-family: Georgia, serif; color: #E2E8F0;
+      max-width: 880px; margin: 36px auto 72px; padding: 0 28px;
+      font-family: Georgia, 'Times New Roman', serif; color: #E2E8F0; line-height: 1.65;
     }
+    /* ── Report cover ────────────────────────────────────────────── */
+    .rpt-cover {
+      text-align: center; padding: 36px 0 28px;
+      border-bottom: 2px solid rgba(201,151,58,0.35); margin-bottom: 32px;
+    }
+    .rpt-cover-brand {
+      font-family: 'DM Sans', sans-serif; font-size: 0.67rem; font-weight: 700;
+      color: #C9973A; text-transform: uppercase; letter-spacing: 0.22em; margin-bottom: 14px;
+    }
+    .rpt-cover-title {
+      font-family: 'Cormorant Garamond', Georgia, serif;
+      font-size: 2.1rem; font-weight: 700; color: #E2E8F0; margin: 0 0 6px; line-height: 1.15;
+    }
+    .rpt-cover-type {
+      font-family: 'DM Sans', sans-serif; font-size: 0.78rem; font-weight: 600;
+      color: #94A3B8; text-transform: uppercase; letter-spacing: 0.12em; margin-bottom: 20px;
+    }
+    .rpt-cover-meta {
+      display: flex; flex-wrap: wrap; justify-content: center; gap: 24px;
+      font-family: 'DM Sans', sans-serif;
+    }
+    .rpt-cover-meta-item { display: flex; flex-direction: column; align-items: center; gap: 2px; }
+    .rpt-cover-meta-item span:first-child {
+      font-size: 0.61rem; text-transform: uppercase; letter-spacing: 0.1em; color: #475569;
+    }
+    .rpt-cover-meta-item span:last-child { font-size: 0.82rem; color: #94A3B8; font-weight: 500; }
+    /* Legacy letterhead for holes report */
     .rpt-letterhead {
-      text-align: center; border-bottom: 2px solid rgba(201,151,58,0.4);
-      padding-bottom: 18px; margin-bottom: 28px;
+      text-align: center; border-bottom: 2px solid rgba(201,151,58,0.35);
+      padding-bottom: 20px; margin-bottom: 32px;
     }
-    .rpt-letterhead h1 { font-size: 1.5rem; margin: 0 0 4px; color: #C9973A; font-family: 'Cormorant Garamond', Georgia, serif; }
-    .rpt-letterhead .rpt-sub { font-size: 0.88rem; color: #64748B; }
+    .rpt-letterhead h1 {
+      font-size: 1.8rem; margin: 0 0 4px; color: #C9973A;
+      font-family: 'Cormorant Garamond', Georgia, serif; font-weight: 700;
+    }
+    .rpt-letterhead .rpt-sub { font-size: 0.82rem; color: #64748B; }
+    /* ── Section title ───────────────────────────────────────────── */
     .rpt-section-title {
-      font-size: 1rem; font-weight: 700; color: #C9973A;
-      border-bottom: 1px solid rgba(201,151,58,0.25); padding-bottom: 6px;
-      margin: 28px 0 14px;
+      font-size: 0.69rem; font-weight: 700; color: #C9973A;
+      text-transform: uppercase; letter-spacing: 0.14em;
+      border-bottom: 1px solid rgba(201,151,58,0.2); padding-bottom: 8px;
+      margin: 36px 0 16px; font-family: 'DM Sans', sans-serif; page-break-after: avoid;
     }
     .ai-risk-box { background: #111827; border: 1px solid rgba(255,255,255,0.08); border-radius: 12px; padding: 18px 20px; margin-bottom: 24px; }
     .ai-risk-title { font-size: 0.78rem; font-weight: 700; color: #C9973A; text-transform: uppercase; letter-spacing: 0.07em; margin-bottom: 12px; }
@@ -1532,26 +1564,42 @@
     .ai-run-btn:hover { background: rgba(201,151,58,0.2); }
     .ai-inv-review { margin-top: 10px; padding: 12px; background: rgba(139,92,246,0.07); border: 1px solid rgba(139,92,246,0.2); border-radius: 8px; font-size: 0.83rem; color: #CBD5E1; line-height: 1.6; }
     .ai-inv-review strong { color: #A78BFA; font-size: 0.75rem; text-transform: uppercase; letter-spacing: 0.05em; display: block; margin-bottom: 4px; }
-    .rpt-kpi-row { display: flex; gap: 16px; flex-wrap: wrap; margin-bottom: 8px; }
+    .rpt-kpi-row { display: flex; gap: 12px; flex-wrap: wrap; margin: 0 0 28px; }
     .rpt-kpi {
-      flex: 1; min-width: 120px; padding: 14px 18px;
-      background: #111827; border: 1px solid rgba(255,255,255,0.08); border-radius: 10px;
-      text-align: center;
+      flex: 1; min-width: 110px; padding: 18px 14px;
+      background: rgba(255,255,255,0.025); border: 1px solid rgba(255,255,255,0.07);
+      border-radius: 10px; text-align: center; page-break-inside: avoid;
     }
-    .rpt-kpi .kpi-val { font-size: 1.25rem; font-weight: 700; color: #C9973A; }
-    .rpt-kpi .kpi-lbl { font-size: 0.74rem; color: #64748B; margin-top: 3px; }
+    .rpt-kpi .kpi-val {
+      font-size: 1.45rem; font-weight: 700; color: #C9973A; line-height: 1.1;
+      font-family: 'Cormorant Garamond', Georgia, serif;
+    }
+    .rpt-kpi .kpi-lbl {
+      font-size: 0.67rem; color: #64748B; margin-top: 6px;
+      text-transform: uppercase; letter-spacing: 0.07em; font-family: 'DM Sans', sans-serif;
+    }
     .rpt-table {
-      width: 100%; border-collapse: collapse; font-size: 0.86rem; margin-bottom: 8px;
+      width: 100%; border-collapse: collapse; font-size: 0.86rem;
+      margin-bottom: 8px; page-break-inside: auto;
     }
     .rpt-table th {
-      background: rgba(201,151,58,0.1); color: #E4B15C; text-align: left;
-      padding: 9px 12px; font-size: 0.78rem; text-transform: uppercase;
-      letter-spacing: 0.04em; font-family: 'DM Mono', monospace;
+      background: rgba(201,151,58,0.08); color: #E4B15C; text-align: left;
+      padding: 10px 14px; font-size: 0.69rem; text-transform: uppercase;
+      letter-spacing: 0.08em; font-family: 'DM Sans', sans-serif;
+      border-bottom: 1.5px solid rgba(201,151,58,0.2); font-weight: 700;
     }
-    .rpt-table td { padding: 9px 12px; border-bottom: 1px solid rgba(255,255,255,0.06); color: #E2E8F0; }
+    .rpt-table td {
+      padding: 11px 14px; border-bottom: 1px solid rgba(255,255,255,0.06);
+      color: #E2E8F0; vertical-align: top;
+    }
     .rpt-table tr:last-child td { border-bottom: none; }
+    .rpt-table tr:nth-child(even) td { background: rgba(255,255,255,0.016); }
     .rpt-table tr:hover td { background: rgba(255,255,255,0.03); }
-    .rpt-table .total-row td { font-weight: 700; background: rgba(201,151,58,0.08); }
+    .rpt-table .total-row td {
+      font-weight: 700; color: #E4B15C;
+      background: rgba(201,151,58,0.07); border-top: 1.5px solid rgba(201,151,58,0.2);
+      page-break-inside: avoid;
+    }
     .rpt-pill {
       display: inline-block; padding: 2px 9px; border-radius: 20px;
       font-size: 0.74rem; font-weight: 700;
@@ -1572,10 +1620,13 @@
       color: #4ade80; word-break: break-all; line-height: 1.5;
     }
     .rpt-footer {
-      margin-top: 36px; padding-top: 16px; border-top: 1px solid rgba(255,255,255,0.08);
-      font-size: 0.74rem; color: #64748B; text-align: center;
-      font-family: 'DM Sans', sans-serif;
+      margin-top: 52px; padding: 16px 0;
+      border-top: 1px solid rgba(255,255,255,0.08);
+      font-size: 0.71rem; color: #475569; font-family: 'DM Sans', sans-serif;
+      display: flex; justify-content: space-between; align-items: center;
+      flex-wrap: wrap; gap: 6px;
     }
+    .rpt-footer-brand { font-weight: 700; color: #C9973A; letter-spacing: 0.02em; }
 
     /* ── GL Excel Upload ─────────────────────────────────────────────── */
     .gl-table { width: 100%; border-collapse: collapse; font-size: 0.82rem; }
@@ -1618,13 +1669,84 @@
       body > *:not(#reportOverlay) { display: none !important; }
       #reportOverlay {
         display: block !important; position: static !important;
-        overflow: visible !important; box-shadow: none !important;
-        background: white !important;
+        overflow: visible !important; background: white !important;
       }
-      .rpt-toolbar { display: none !important; }
-      .rpt-body { margin: 0; padding: 20px; max-width: 100%; color: #000 !important; }
-      .rpt-body * { color: #000 !important; background: white !important; border-color: #ccc !important; }
-      @page { margin: 1cm; }
+      .rpt-toolbar, .ai-run-btn, .primary-pay-btn,
+      .btn-danger-outline, .btn-secondary, .ts-detail-actions,
+      .rpt-tool-btn, .rpt-close-btn { display: none !important; }
+      .rpt-body {
+        margin: 0 !important; padding: 0 !important; max-width: 100% !important;
+        color: #1a1a1a !important; background: white !important;
+        font-family: Georgia, 'Times New Roman', serif !important; line-height: 1.6 !important;
+      }
+      /* Cover */
+      .rpt-cover { border-bottom-color: #c9973a !important; }
+      .rpt-cover-brand { color: #7a5a1e !important; }
+      .rpt-cover-title { color: #1a1a1a !important; }
+      .rpt-cover-type { color: #555 !important; }
+      .rpt-cover-meta-item span:first-child { color: #777 !important; }
+      .rpt-cover-meta-item span:last-child { color: #333 !important; }
+      /* Letterhead */
+      .rpt-letterhead { border-bottom-color: #c9973a !important; }
+      .rpt-letterhead h1 { color: #7a5a1e !important; }
+      .rpt-letterhead .rpt-sub { color: #555 !important; }
+      /* Section titles */
+      .rpt-section-title {
+        color: #7a5a1e !important; border-bottom-color: #c9973a !important;
+        page-break-after: avoid;
+      }
+      /* KPI tiles */
+      .rpt-kpi {
+        background: #f8f6f0 !important; border-color: #ddd !important;
+        page-break-inside: avoid;
+      }
+      .rpt-kpi .kpi-val { color: #7a5a1e !important; }
+      .rpt-kpi .kpi-lbl { color: #666 !important; }
+      /* Tables */
+      .rpt-table { page-break-inside: auto; }
+      .rpt-table th {
+        background: #f5f0e8 !important; color: #7a5a1e !important;
+        border-bottom-color: #c9973a !important;
+        -webkit-print-color-adjust: exact; print-color-adjust: exact;
+      }
+      .rpt-table td { color: #1a1a1a !important; border-bottom-color: #e0e0e0 !important; background: white !important; }
+      .rpt-table tr:nth-child(even) td { background: #fafafa !important; }
+      .rpt-table tr:hover td { background: transparent !important; }
+      .rpt-table .total-row td {
+        background: #f5f0e8 !important; color: #7a5a1e !important;
+        border-top-color: #c9973a !important; border-bottom-color: transparent !important;
+        -webkit-print-color-adjust: exact; print-color-adjust: exact;
+      }
+      /* AI risk box */
+      .ai-risk-box { background: #f8f6f0 !important; border-color: #ddd !important; page-break-inside: avoid; }
+      .ai-risk-title { color: #7a5a1e !important; }
+      .ai-risk-row { color: #333 !important; }
+      /* Hash block */
+      .rpt-hash-box { background: #f0fff4 !important; border-color: #86efac !important; page-break-inside: avoid; }
+      .rpt-hash-lbl { color: #15803d !important; }
+      .rpt-hash-val { color: #15803d !important; }
+      /* Pills */
+      .rpt-pill.open { background: #fef3c7 !important; color: #92400e !important; -webkit-print-color-adjust: exact; print-color-adjust: exact; }
+      .rpt-pill.closed { background: #dcfce7 !important; color: #15803d !important; -webkit-print-color-adjust: exact; print-color-adjust: exact; }
+      /* Exception flags */
+      .exc-flag-list { page-break-inside: avoid; }
+      .exc-flag--red { background: #fff5f5 !important; border-color: #fca5a5 !important; page-break-inside: avoid; -webkit-print-color-adjust: exact; print-color-adjust: exact; }
+      .exc-flag--yellow { background: #fffbeb !important; border-color: #fcd34d !important; page-break-inside: avoid; -webkit-print-color-adjust: exact; print-color-adjust: exact; }
+      .exc-flag-title { color: #1a1a1a !important; }
+      .exc-flag-detail, .exc-conditions, .exc-conditions li { color: #444 !important; }
+      .exc-sev--red { background: #fee2e2 !important; color: #b91c1c !important; -webkit-print-color-adjust: exact; print-color-adjust: exact; }
+      .exc-sev--yellow { background: #fef3c7 !important; color: #92400e !important; -webkit-print-color-adjust: exact; print-color-adjust: exact; }
+      .exc-clean-title { color: #15803d !important; }
+      .exc-clean-sub { color: #555 !important; }
+      /* Footer */
+      .rpt-footer { border-top-color: #ccc !important; color: #555 !important; }
+      .rpt-footer-brand { color: #7a5a1e !important; }
+      /* Tenant statement interactive elements */
+      .ts-detail-box { display: none !important; }
+      .ts-cat-body { display: block !important; }
+      .ts-cat-header .ts-cat-chevron { display: none !important; }
+      @page { margin: 1.5cm 1.8cm; size: letter portrait; }
+      * { -webkit-print-color-adjust: exact !important; print-color-adjust: exact !important; }
     }
     /* ── Auth: login screen ──────────────────────────────────────────── */
     #loginScreen {
@@ -2152,6 +2274,9 @@
       </button>
       <button class="report-btn report-btn-holes" onclick="guardedExceptionReport()">
         &#x26A0; Exception Summary
+      </button>
+      <button class="report-btn report-btn-holes" onclick="guardedReconciliationSummary()">
+        &#x1F4CA; Reconciliation Summary
       </button>
     </div>
     <div id="reportsMsg" class="reports-notice">

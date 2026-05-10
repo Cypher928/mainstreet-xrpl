@@ -5867,6 +5867,33 @@ function guardedTenantStatement() {
   }
 }
 
+// ─── Shared report primitives ─────────────────────────────────────────────────
+
+function _rptHeader(propName, reportType, period, now, extra = []) {
+  const metaItems = [
+    { label: 'Period',    value: period },
+    { label: 'Generated', value: now    },
+    ...extra,
+  ].map(m => `<div class="rpt-cover-meta-item">
+      <span>${esc(String(m.label))}</span>
+      <span>${esc(String(m.value))}</span>
+    </div>`).join('');
+  return `<div class="rpt-cover">
+    <div class="rpt-cover-brand">Mainstreet CAM Platform</div>
+    <div class="rpt-cover-title">${esc(propName)}</div>
+    <div class="rpt-cover-type">${esc(reportType)}</div>
+    <div class="rpt-cover-meta">${metaItems}</div>
+  </div>`;
+}
+
+function _rptFooter(propName, reportType, now) {
+  return `<div class="rpt-footer">
+    <span class="rpt-footer-brand">Mainstreet CAM Platform</span>
+    <span>${esc(propName)} &nbsp;&middot;&nbsp; ${esc(reportType)}</span>
+    <span>Generated ${esc(now)}</span>
+  </div>`;
+}
+
 // ─── Monthly Holes Report ─────────────────────────────────────────────────────
 
 function generateHolesReport() {
@@ -6109,6 +6136,107 @@ function closeReport() {
   document.getElementById('reportOverlay').style.display = 'none';
 }
 
+// ─── Reconciliation Summary Report ───────────────────────────────────────────
+
+function guardedReconciliationSummary() {
+  if (!lastResults.length) {
+    const msg = document.getElementById('reportsMsg');
+    msg.style.display = 'block';
+    msg.textContent = 'Please run a CAM allocation first to generate reports.';
+    msg.scrollIntoView({ behavior: 'smooth', block: 'nearest' });
+    return;
+  }
+  generateReconciliationSummary();
+}
+
+function generateReconciliationSummary() {
+  const propName   = lastPropName || 'Property';
+  const now        = new Date().toLocaleDateString('en-US', { year: 'numeric', month: 'long', day: 'numeric' });
+  const period     = (getCamYear() || new Date().getFullYear()) + ' CAM Year';
+  const totalBilled = lastResults.reduce((s, r) => s + r.allocatedAmount, 0);
+  const prop       = currentProperty();
+  const propSqft   = parseFloat(prop?.totalSqft || prop?.totalSqFt) || 0;
+  const avgPerTenant = lastTotal / Math.max(lastResults.length, 1);
+
+  const catTotals = {};
+  lastInvoicesFull.forEach(inv => {
+    catTotals[inv.category] = (catTotals[inv.category] || 0) + inv.amount;
+  });
+
+  const tenantRows = lastResults.map(r => {
+    const capNote = r.capApplied
+      ? ` <span style="font-size:0.72rem;color:#f59e0b;">(cap &minus;${fmt(r.capAdjustment)})</span>`
+      : '';
+    return `<tr>
+      <td>${esc(r.name)}</td>
+      <td style="text-align:right">${r.sqFt ? Number(r.sqFt).toLocaleString() : '—'}</td>
+      <td style="text-align:right">${(r.proRata * 100).toFixed(2)}%</td>
+      <td style="text-align:right">${fmt(r.allocatedAmount)}${capNote}</td>
+    </tr>`;
+  }).join('');
+
+  const catRows = Object.entries(catTotals)
+    .sort((a, b) => b[1] - a[1])
+    .map(([cat, amt]) => `<tr>
+      <td style="text-transform:capitalize">${esc(cat)}</td>
+      <td style="text-align:right">${lastInvoicesFull.filter(i => i.category === cat).length}</td>
+      <td style="text-align:right">${fmt(amt)}</td>
+      <td style="text-align:right">${((amt / lastTotal) * 100).toFixed(1)}%</td>
+    </tr>`).join('');
+
+  const html = `
+    ${_rptHeader(propName, 'CAM Reconciliation Summary', period, now, [
+      { label: 'Property sqft', value: propSqft > 0 ? propSqft.toLocaleString() + ' sqft' : '—' },
+      { label: 'Tenants',       value: lastResults.length },
+    ])}
+
+    <div class="rpt-kpi-row">
+      <div class="rpt-kpi"><div class="kpi-val">${fmt(lastTotal)}</div><div class="kpi-lbl">Total Expenses</div></div>
+      <div class="rpt-kpi"><div class="kpi-val">${fmt(totalBilled)}</div><div class="kpi-lbl">Total CAM Billed</div></div>
+      <div class="rpt-kpi"><div class="kpi-val">${lastResults.length}</div><div class="kpi-lbl">Tenants</div></div>
+      <div class="rpt-kpi"><div class="kpi-val">${lastInvoicesFull.length}</div><div class="kpi-lbl">Invoices</div></div>
+      <div class="rpt-kpi"><div class="kpi-val">${fmt(avgPerTenant)}</div><div class="kpi-lbl">Avg / Tenant</div></div>
+    </div>
+
+    <div class="rpt-section-title">Tenant Allocation</div>
+    <table class="rpt-table">
+      <thead><tr>
+        <th>Tenant</th>
+        <th style="text-align:right">Leased sqft</th>
+        <th style="text-align:right">Pro-Rata %</th>
+        <th style="text-align:right">CAM Billed</th>
+      </tr></thead>
+      <tbody>${tenantRows}</tbody>
+      <tfoot><tr class="total-row">
+        <td>TOTAL</td>
+        <td style="text-align:right">${propSqft > 0 ? propSqft.toLocaleString() : '—'}</td>
+        <td></td>
+        <td style="text-align:right">${fmt(totalBilled)}</td>
+      </tr></tfoot>
+    </table>
+
+    <div class="rpt-section-title">Expense Categories</div>
+    <table class="rpt-table">
+      <thead><tr>
+        <th>Category</th>
+        <th style="text-align:right">Invoices</th>
+        <th style="text-align:right">Amount</th>
+        <th style="text-align:right">% of Total</th>
+      </tr></thead>
+      <tbody>${catRows}</tbody>
+      <tfoot><tr class="total-row">
+        <td>TOTAL</td>
+        <td style="text-align:right">${lastInvoicesFull.length}</td>
+        <td style="text-align:right">${fmt(lastTotal)}</td>
+        <td style="text-align:right">100%</td>
+      </tr></tfoot>
+    </table>
+
+    ${_rptFooter(propName, 'CAM Reconciliation Summary', now)}`;
+
+  openReport('Reconciliation Summary — ' + propName, html);
+}
+
 // ─── Audit Exception Summary Report ──────────────────────────────────────────
 
 function guardedExceptionReport() {
@@ -6180,10 +6308,10 @@ function generateExceptionReport() {
     : sections;
 
   const html = `
-    <div class="rpt-letterhead">
-      <h1>${esc(propName)}</h1>
-      <div class="rpt-sub">Audit Exception Summary &nbsp;·&nbsp; ${period} &nbsp;·&nbsp; Generated ${now}</div>
-    </div>
+    ${_rptHeader(propName, 'Audit Exception Summary', period, now, [
+      { label: 'Flags Raised', value: red.length + yellow.length },
+      { label: 'Checks Passed', value: green.length },
+    ])}
 
     <div class="rpt-kpi-row">
       <div class="rpt-kpi">
@@ -6206,9 +6334,7 @@ function generateExceptionReport() {
 
     ${body}
 
-    <div class="rpt-footer">
-      Mainstreet &nbsp;·&nbsp; ${esc(propName)} &nbsp;·&nbsp; Audit Exception Summary &nbsp;·&nbsp; ${now}
-    </div>`;
+    ${_rptFooter(propName, 'Audit Exception Summary', now)}`;
 
   openReport('Audit Exception Summary — ' + propName, html);
 }
@@ -6280,10 +6406,10 @@ function generateMasterReport() {
     });
 
   const html = `
-    <div class="rpt-letterhead">
-      <h1>${esc(lastPropName)}</h1>
-      <div class="rpt-sub">Landlord Master CAM Report &nbsp;·&nbsp; ${period} &nbsp;·&nbsp; Generated ${now}</div>
-    </div>
+    ${_rptHeader(lastPropName, 'Landlord Master CAM Report', period, now, [
+      { label: 'Tenants',        value: lastResults.length },
+      { label: 'Total Expenses', value: fmt(lastTotal) },
+    ])}
 
     <div class="ai-risk-box">
       <div class="ai-risk-title">&#x1F9E0; AI Risk Review — Building Summary</div>
@@ -6350,9 +6476,7 @@ function generateMasterReport() {
       <div class="rpt-hash-val">Computing…</div>
     </div>
 
-    <div class="rpt-footer">
-      Mainstreet &nbsp;·&nbsp; ${esc(lastPropName)} &nbsp;·&nbsp; This report is auto-generated and reflects data entered in the current session.
-    </div>`;
+    ${_rptFooter(lastPropName, 'Landlord Master CAM Report', now)}`;
 
   openReport('Landlord Master Report — ' + lastPropName, html);
 
@@ -6564,6 +6688,11 @@ function generateTenantStatement(tenantName) {
     : '<tr><td colspan="5" style="color:#94a3b8;text-align:center">No disputes filed</td></tr>';
 
   const html = `
+    ${_rptHeader(lastPropName, 'Tenant CAM Statement', period, now, [
+      { label: 'Tenant',     value: tenantName },
+      { label: 'Your Share', value: (r.proRata * 100).toFixed(2) + '%' },
+    ])}
+
     <div class="ts-summary-card">
       <div class="ts-summary-total-label">Total CAM Billed to You</div>
       <div class="ts-summary-total-amount">${fmt(r.allocatedAmount)}</div>
@@ -6614,10 +6743,7 @@ function generateTenantStatement(tenantName) {
       <div class="rpt-hash-val" id="tenantHashVal">Computing…</div>
     </div>
 
-    <div class="rpt-footer">
-      Mainstreet &nbsp;·&nbsp; ${esc(tenantName)} &nbsp;·&nbsp; ${esc(lastPropName)} &nbsp;·&nbsp;
-      This statement is auto-generated and reflects data entered in the current session.
-    </div>`;
+    ${_rptFooter(lastPropName, 'Tenant CAM Statement — ' + tenantName, now)}`;
 
   openReport('Tenant Statement — ' + tenantName, html);
 
