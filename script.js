@@ -5437,6 +5437,7 @@ function buildAuditSummary() {
       if (amt > thresh) {
         const pct = ((amt / total) * 100).toFixed(1);
         red.push({
+          group:  'red_flags',
           title:  `Unusually large invoice — ${inv.vendor || inv.vendorName || 'Unknown'}: ${fmt(amt)} (${pct}% of total CAM)`,
           detail: 'A single invoice represents over 40% of total expenses. Verify this charge is not an error.',
           conditions: [
@@ -5467,11 +5468,11 @@ function buildAuditSummary() {
           `Change: ${pct > 0 ? '+' : ''}${pct.toFixed(1)}%`,
         ];
         if (pct > 20) {
-          red.push({ title: `Total CAM ${dir} ${Math.abs(pct).toFixed(1)}% year-over-year`, detail, conditions: [...yoyConditions, 'Threshold: >20% triggers red flag'] });
+          red.push({ group: 'allocation', title: `Total CAM ${dir} ${Math.abs(pct).toFixed(1)}% year-over-year`, detail, conditions: [...yoyConditions, 'Threshold: >20% triggers red flag'] });
         } else if (Math.abs(pct) > 10) {
-          yellow.push({ title: `Total CAM ${dir} ${Math.abs(pct).toFixed(1)}% year-over-year`, detail, conditions: [...yoyConditions, 'Threshold: >10% triggers yellow flag'] });
+          yellow.push({ group: 'allocation', title: `Total CAM ${dir} ${Math.abs(pct).toFixed(1)}% year-over-year`, detail, conditions: [...yoyConditions, 'Threshold: >10% triggers yellow flag'] });
         } else {
-          green.push({ title: `CAM within normal range YoY (${pct > 0 ? '+' : ''}${pct.toFixed(1)}%)`, detail, conditions: [...yoyConditions, 'Within normal ±10% range'] });
+          green.push({ group: 'allocation', title: `CAM within normal range YoY (${pct > 0 ? '+' : ''}${pct.toFixed(1)}%)`, detail, conditions: [...yoyConditions, 'Within normal ±10% range'] });
         }
       }
     }
@@ -5480,7 +5481,7 @@ function buildAuditSummary() {
   // ── 3. Duplicate / suspicious invoice detection ──────────────────────────
   {
     const suspicions = _detectInvoiceSuspicions(allInvData);
-    suspicions.forEach(s => (s.severity === 'red' ? red : yellow).push({ title: s.title, detail: s.detail, conditions: s.conditions }));
+    suspicions.forEach(s => (s.severity === 'red' ? red : yellow).push({ group: 'duplicates', title: s.title, detail: s.detail, conditions: s.conditions }));
     if (suspicions.length === 0 && allInvData.length > 0) {
       green.push({ title: 'No duplicate or suspicious invoice patterns detected' });
     }
@@ -5495,6 +5496,7 @@ function buildAuditSummary() {
         (missing.length > 3 ? ` +${missing.length - 3} more` : '');
       const bucket = pct === 100 ? red : yellow;
       bucket.push({
+        group:  'missing_docs',
         title:  `${missing.length} of ${allInvData.length} invoice${missing.length > 1 ? 's' : ''} missing source document`,
         detail: `Without attachments these charges cannot be independently verified: ${names}.`,
         conditions: [
@@ -5514,6 +5516,7 @@ function buildAuditSummary() {
       const noDateNames = noDates.slice(0, 3).map(inv => inv.vendorName).join(', ') +
         (noDates.length > 3 ? ` +${noDates.length - 3} more` : '');
       yellow.push({
+        group:  'missing_docs',
         title:  `${noDates.length} invoice${noDates.length > 1 ? 's' : ''} missing invoice date`,
         detail: noDateNames,
         conditions: [
@@ -5531,6 +5534,7 @@ function buildAuditSummary() {
       const lowConfNames = lowConf.slice(0, 3).map(inv => `${inv.vendorName} (${inv.matchConfidence}%)`).join(', ') +
         (lowConf.length > 3 ? ` +${lowConf.length - 3} more` : '');
       yellow.push({
+        group:  'allocation',
         title:  `${lowConf.length} invoice${lowConf.length > 1 ? 's' : ''} with low tenant match confidence`,
         detail: lowConfNames,
         conditions: [
@@ -5569,9 +5573,10 @@ function buildAuditSummary() {
     const totalPR = results.reduce((s, r) => s + (r.proRataPercent || 0), 0);
     if (results.length > 0) {
       if (Math.abs(totalPR - 100) < 2) {
-        green.push({ title: `Pro-rata percentages sum to ${totalPR.toFixed(1)}% — all expenses accounted for`, conditions: [`Sum of tenant pro-rata: ${totalPR.toFixed(1)}% (within ±2% of 100%)`] });
+        green.push({ group: 'allocation', title: `Pro-rata percentages sum to ${totalPR.toFixed(1)}% — all expenses accounted for`, conditions: [`Sum of tenant pro-rata: ${totalPR.toFixed(1)}% (within ±2% of 100%)`] });
       } else if (totalPR < 98) {
         yellow.push({
+          group:  'allocation',
           title:  `Pro-rata totals ${totalPR.toFixed(1)}% — ${(100 - totalPR).toFixed(1)}% of expenses unallocated`,
           detail: 'Total leased sqft may be less than the property total. Check tenant sqft entries.',
           conditions: [
@@ -5581,6 +5586,7 @@ function buildAuditSummary() {
         });
       } else {
         yellow.push({
+          group:  'allocation',
           title:  `Pro-rata totals ${totalPR.toFixed(1)}% — exceeds 100%`,
           detail: 'Total leased sqft may exceed the property total. Check tenant sqft entries.',
           conditions: [
@@ -5597,11 +5603,12 @@ function buildAuditSummary() {
     const capped = results.filter(r => r.capApplied);
     if (capped.length) {
       yellow.push({
+        group:  'allocation',
         title:  `CAM cap applied for ${capped.length} tenant${capped.length > 1 ? 's' : ''}: ${capped.map(r => r.name).join(', ')}`,
         detail: 'Actual charges exceeded the contractual cap. Tenants paid less than their full pro-rata share.',
         conditions: [
           `Tenants with cap applied: ${capped.map(r => r.name).join(', ')}`,
-          `These tenants\' calculated charges exceeded their contractual CAM cap`,
+          `These tenants' calculated charges exceeded their contractual CAM cap`,
         ],
       });
     }
@@ -5618,6 +5625,7 @@ function buildAuditSummary() {
     });
     Object.values(flagMap).forEach(({ message, explanation, tenants }) => {
       yellow.push({
+        group:  'lease',
         title:  `${message} — ${tenants.length} tenant${tenants.length > 1 ? 's' : ''}: ${tenants.join(', ')}`,
         detail: explanation || '',
         conditions: [
@@ -5636,6 +5644,7 @@ function buildAuditSummary() {
       if (excl.length > 0 && excl.length < tenants.length) {
         const included = tenants.filter(t => !(t.excludedCategories || []).includes(cat));
         yellow.push({
+          group:  'lease',
           title:  `"${cat}" excluded for ${excl.length} of ${tenants.length} tenants`,
           detail: `Excluded for: ${excl.map(t => t.name).join(', ')}`,
           conditions: [
@@ -6011,6 +6020,110 @@ function openReport(title, bodyHtml) {
 
 function closeReport() {
   document.getElementById('reportOverlay').style.display = 'none';
+}
+
+// ─── Audit Exception Summary Report ──────────────────────────────────────────
+
+function guardedExceptionReport() {
+  if (!lastResults.length) {
+    const msg = document.getElementById('reportsMsg');
+    msg.style.display = 'block';
+    msg.textContent = 'Please run a CAM allocation first to generate reports.';
+    msg.scrollIntoView({ behavior: 'smooth', block: 'nearest' });
+    return;
+  }
+  generateExceptionReport();
+}
+
+function generateExceptionReport() {
+  const { red, yellow, green } = buildAuditSummary();
+  const propName = lastPropName || 'Property';
+  const now      = new Date().toLocaleString('en-US', { year: 'numeric', month: 'long', day: 'numeric', hour: '2-digit', minute: '2-digit' });
+  const period   = (getCamYear() || new Date().getFullYear()) + ' CAM Year';
+
+  // All actionable flags with severity tag
+  const allFlags = [
+    ...red.map(f    => ({ ...f, severity: 'red'    })),
+    ...yellow.map(f => ({ ...f, severity: 'yellow' })),
+  ];
+
+  // Six semantic groups; ungrouped flags fall into severity catch-alls
+  const GROUPS = [
+    { key: 'red_flags',    label: 'Critical Red Flags',               icon: '&#x1F534;' },
+    { key: 'duplicates',   label: 'Duplicate / Suspicious Invoices',  icon: '&#x1F4CB;' },
+    { key: 'missing_docs', label: 'Missing Documentation',            icon: '&#x1F4CE;' },
+    { key: 'allocation',   label: 'Allocation Warnings',              icon: '&#x2696;'  },
+    { key: 'lease',        label: 'Lease Conflicts',                  icon: '&#x1F4C4;' },
+    { key: 'other',        label: 'Other Warnings',                   icon: '&#x26A0;'  },
+  ];
+
+  const buckets = {};
+  GROUPS.forEach(g => { buckets[g.key] = []; });
+  allFlags.forEach(f => {
+    const key = f.group && buckets[f.group] ? f.group : (f.severity === 'red' ? 'red_flags' : 'other');
+    buckets[key].push(f);
+  });
+
+  const renderFlag = f => {
+    const sevLabel = f.severity === 'red' ? 'Critical' : 'Warning';
+    return `<div class="exc-flag exc-flag--${f.severity}">
+      <div class="exc-flag-header">
+        <span class="exc-sev exc-sev--${f.severity}">${sevLabel}</span>
+        <span class="exc-flag-title">${esc(f.title)}</span>
+      </div>
+      ${f.detail ? `<div class="exc-flag-detail">${esc(f.detail)}</div>` : ''}
+      ${f.conditions?.length ? `<ul class="exc-conditions">${f.conditions.map(c => `<li>${esc(c)}</li>`).join('')}</ul>` : ''}
+    </div>`;
+  };
+
+  const sections = GROUPS.map(g => {
+    const flags = buckets[g.key];
+    if (!flags.length) return '';
+    return `<div class="rpt-section-title">${g.icon}&nbsp; ${esc(g.label)} (${flags.length})</div>
+      <div class="exc-flag-list">${flags.map(renderFlag).join('')}</div>`;
+  }).join('');
+
+  const noExceptions = allFlags.length === 0;
+  const body = noExceptions
+    ? `<div class="exc-clean-state">
+        <div class="exc-clean-icon">&#x2705;</div>
+        <div class="exc-clean-title">No critical exceptions detected</div>
+        <div class="exc-clean-sub">All ${green.length} audit check${green.length !== 1 ? 's' : ''} passed. No red or yellow flags were raised for this reconciliation.</div>
+      </div>`
+    : sections;
+
+  const html = `
+    <div class="rpt-letterhead">
+      <h1>${esc(propName)}</h1>
+      <div class="rpt-sub">Audit Exception Summary &nbsp;·&nbsp; ${period} &nbsp;·&nbsp; Generated ${now}</div>
+    </div>
+
+    <div class="rpt-kpi-row">
+      <div class="rpt-kpi">
+        <div class="kpi-val" style="color:${red.length > 0 ? '#f87171' : '#4ade80'}">${red.length}</div>
+        <div class="kpi-lbl">Critical Flags</div>
+      </div>
+      <div class="rpt-kpi">
+        <div class="kpi-val" style="color:${yellow.length > 0 ? '#fbbf24' : '#4ade80'}">${yellow.length}</div>
+        <div class="kpi-lbl">Warnings</div>
+      </div>
+      <div class="rpt-kpi">
+        <div class="kpi-val" style="color:#4ade80">${green.length}</div>
+        <div class="kpi-lbl">Passed Checks</div>
+      </div>
+      <div class="rpt-kpi">
+        <div class="kpi-val">${red.length + yellow.length + green.length}</div>
+        <div class="kpi-lbl">Total Checks</div>
+      </div>
+    </div>
+
+    ${body}
+
+    <div class="rpt-footer">
+      Mainstreet &nbsp;·&nbsp; ${esc(propName)} &nbsp;·&nbsp; Audit Exception Summary &nbsp;·&nbsp; ${now}
+    </div>`;
+
+  openReport('Audit Exception Summary — ' + propName, html);
 }
 
 function generateMasterReport() {
