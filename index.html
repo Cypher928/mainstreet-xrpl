@@ -641,10 +641,10 @@
       max-width: 720px; margin: 0 auto; padding: 0 16px 48px;
     }
     .ptf-kpi-bar {
-      display: grid; grid-template-columns: repeat(5, 1fr);
-      gap: 10px; margin-bottom: 24px;
+      display: grid; grid-template-columns: repeat(3, 1fr);
+      gap: 10px; margin-bottom: 20px;
     }
-    @media (max-width: 600px) { .ptf-kpi-bar { grid-template-columns: repeat(3, 1fr); } }
+    @media (max-width: 500px) { .ptf-kpi-bar { grid-template-columns: repeat(2, 1fr); } }
     .ptf-kpi {
       background: #111827;
       border-radius: 12px; padding: 14px 12px;
@@ -655,21 +655,54 @@
     .ptf-kpi:hover { background: #141e2e; }
     .ptf-kpi-val {
       font-size: 1.4rem; font-weight: 800; color: #C9973A;
-      line-height: 1; margin-bottom: 4px;
+      line-height: 1; margin-bottom: 4px; transition: color 0.2s;
     }
-    .ptf-kpi-disputes .ptf-kpi-val { color: #ef4444; }
     .ptf-kpi-lbl {
-      font-size: 0.68rem; color: #64748B;
+      font-size: 0.67rem; color: #64748B;
       text-transform: uppercase; letter-spacing: 0.04em;
       font-family: 'DM Mono', monospace;
     }
     .ptf-props-head {
       display: flex; align-items: center; justify-content: space-between;
-      margin-bottom: 14px;
+      margin-bottom: 8px;
     }
     .ptf-props-head h2 {
       font-size: 1.05rem; font-weight: 700; color: #E2E8F0; margin: 0;
     }
+    /* Sort row */
+    .ptf-sort-row { display: flex; align-items: center; gap: 6px; margin-bottom: 12px; flex-wrap: wrap; }
+    .ptf-sort-lbl { font-size: 0.7rem; color: #475569; font-weight: 600; text-transform: uppercase; letter-spacing: 0.06em; margin-right: 2px; }
+    .ptf-sort-btn {
+      padding: 5px 11px; border-radius: 7px; font-size: 0.71rem; font-weight: 600;
+      cursor: pointer; border: 1px solid rgba(100,116,139,0.28); background: rgba(15,23,42,0.5);
+      color: #64748b; transition: all 0.15s;
+    }
+    .ptf-sort-btn:hover { background: rgba(30,41,59,0.85); color: #CBD5E1; border-color: rgba(201,151,58,0.25); }
+    .ptf-sort-btn.active { background: rgba(201,151,58,0.11); color: #C9973A; border-color: rgba(201,151,58,0.38); font-weight: 700; }
+    /* Card layout additions */
+    .ptf-card-top { display: flex; align-items: flex-start; justify-content: space-between; gap: 6px; margin-bottom: 5px; }
+    .ptf-card-top .ptf-prop-name { margin-bottom: 0; flex: 1; min-width: 0; word-break: break-word; }
+    /* Risk badge */
+    .ptf-risk-badge { font-size: 0.6rem; font-weight: 700; padding: 2px 7px; border-radius: 99px; white-space: nowrap; letter-spacing: 0.06em; flex-shrink: 0; }
+    .ptf-risk--critical { background: rgba(239,68,68,0.16);  color: #f87171; border: 1px solid rgba(239,68,68,0.3); }
+    .ptf-risk--elevated { background: rgba(245,158,11,0.16); color: #fbbf24; border: 1px solid rgba(245,158,11,0.3); }
+    .ptf-risk--moderate { background: rgba(59,130,246,0.16); color: #93c5fd; border: 1px solid rgba(59,130,246,0.3); }
+    .ptf-risk--low      { background: rgba(34,197,94,0.16);  color: #4ade80; border: 1px solid rgba(34,197,94,0.3); }
+    /* Trend indicator inside status row */
+    .ptf-trend { font-size: 0.64rem; font-weight: 700; padding: 1px 5px; border-radius: 4px; margin-left: auto; white-space: nowrap; }
+    .ptf-trend--up   { color: #f87171; background: rgba(239,68,68,0.1); }
+    .ptf-trend--down { color: #4ade80; background: rgba(34,197,94,0.1); }
+    .ptf-trend--flat { color: #64748b; }
+    /* Alert/warn stat variants */
+    .ptf-stat--alert strong { color: #f87171; }
+    .ptf-stat--warn  strong { color: #fbbf24; }
+    /* Card footer — CAM year + timestamp */
+    .ptf-card-foot { display: flex; align-items: center; justify-content: space-between; flex-wrap: wrap; gap: 4px; margin-top: 9px; border-top: 1px solid rgba(100,116,139,0.13); padding-top: 7px; }
+    .ptf-cam-year  { font-size: 0.64rem; font-weight: 600; color: #94a3b8; }
+    .ptf-rec-ts    { font-size: 0.63rem; color: #475569; }
+    /* Confidence bar */
+    .ptf-conf-bar  { height: 3px; background: rgba(100,116,139,0.18); border-radius: 99px; margin-top: 9px; overflow: hidden; }
+    .ptf-conf-fill { height: 100%; background: linear-gradient(90deg, #818cf8, #C9973A); border-radius: 99px; transition: width 0.4s; }
     .add-prop-btn {
       padding: 8px 16px; border-radius: 9px; font-size: 0.83rem;
       font-weight: 700; cursor: pointer; border: 2px dashed rgba(201,151,58,0.4);
@@ -2028,35 +2061,41 @@
     </div>
   </div>
 
-  <!-- Property Cards — primary content -->
-  <div class="ptf-props-head">
-    <h2>Your Properties</h2>
-  </div>
-  <div class="ptf-cards-grid" id="propertyCardsGrid"></div>
-
-  <!-- KPI Overview Bar — portfolio summary -->
+  <!-- Portfolio KPI Overview -->
   <div class="ptf-kpi-bar">
     <div class="ptf-kpi">
-      <div class="ptf-kpi-val" id="pKpiProperties">3</div>
+      <div class="ptf-kpi-val" id="pKpiProperties">—</div>
       <div class="ptf-kpi-lbl">Properties</div>
     </div>
     <div class="ptf-kpi">
-      <div class="ptf-kpi-val" id="pKpiTenants">9</div>
-      <div class="ptf-kpi-lbl">Total Tenants</div>
+      <div class="ptf-kpi-val" id="pKpiCAM">—</div>
+      <div class="ptf-kpi-lbl">Total CAM Managed</div>
     </div>
     <div class="ptf-kpi">
-      <div class="ptf-kpi-val" id="pKpiCAM">$45,750</div>
-      <div class="ptf-kpi-lbl">CAM Collected</div>
-    </div>
-    <div class="ptf-kpi">
-      <div class="ptf-kpi-val" id="pKpiInvoices">22</div>
-      <div class="ptf-kpi-lbl">Invoices Processed</div>
-    </div>
-    <div class="ptf-kpi ptf-kpi-disputes">
-      <div class="ptf-kpi-val" id="pKpiDisputes">2</div>
+      <div class="ptf-kpi-val" id="pKpiDisputes">—</div>
       <div class="ptf-kpi-lbl">Open Disputes</div>
     </div>
+    <div class="ptf-kpi">
+      <div class="ptf-kpi-val" id="pKpiCritical">—</div>
+      <div class="ptf-kpi-lbl">At-Risk Properties</div>
+    </div>
+    <div class="ptf-kpi">
+      <div class="ptf-kpi-val" id="pKpiMissingDocs">—</div>
+      <div class="ptf-kpi-lbl">Missing Documents</div>
+    </div>
+    <div class="ptf-kpi">
+      <div class="ptf-kpi-val" id="pKpiConfidence">—</div>
+      <div class="ptf-kpi-lbl">Avg Confidence</div>
+    </div>
   </div>
+
+  <!-- Property Cards — primary content -->
+  <div class="ptf-props-head">
+    <h2>Your Properties</h2>
+    <button class="add-prop-btn" onclick="addNewProperty()">+ Add Property</button>
+  </div>
+  <div id="ptfSortRow" class="ptf-sort-row"></div>
+  <div class="ptf-cards-grid" id="propertyCardsGrid"></div>
 
   <!-- XRPL Trust Strip -->
   <div class="xrpl-trust-strip">

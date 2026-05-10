@@ -7742,65 +7742,225 @@ async function loadDemo() {
 
 // ─── Portfolio ────────────────────────────────────────────────────────────────
 
+let _portfolioSort = 'risk'; // 'risk' | 'recent' | 'cam' | 'disputes'
+
+// Pure function — derives risk metadata from a stored property snapshot.
+// Runs without globals so it can compute for any prop, not just the active one.
+function _buildPropMeta(prop) {
+  const snap     = prop.camReconciliation ?? prop.results ?? null;
+  const invoices = (snap?.invoicesFull?.length ? snap.invoicesFull : null)
+    || (prop.invoices?.length ? prop.invoices : []);
+  const results    = snap?.results || [];
+  const total      = snap?.total || Number(prop.totalCAM) || 0;
+  const camRunsArr = (snap?.camRuns || []);
+
+  const missingDocs  = invoices.filter(i => i && !i.fileUrl && !i.fileName).length;
+  const openDisputes = (prop.disputes || []).filter(d => d.status === 'open').length
+    || Number(prop.openDisputes) || 0;
+
+  // Lightweight flag counts from stored data
+  let redCount = 0, yellowCount = 0;
+  if (snap) {
+    // Large single invoice > 40% of total
+    if (total > 0) {
+      const thresh = total * 0.4;
+      invoices.forEach(inv => { if ((parseFloat(inv?.amount) || 0) > thresh) redCount++; });
+    }
+    // Missing docs — 100% missing = red, partial = yellow
+    if (invoices.length > 0) {
+      const pct = missingDocs / invoices.length;
+      if (pct === 1) redCount++; else if (missingDocs > 0) yellowCount++;
+    }
+    // YoY change from stored camRuns
+    if (camRunsArr.length >= 2) {
+      const curr = camRunsArr[0];
+      const prev = camRunsArr.slice(1).find(r => r.camYear !== curr.camYear) || camRunsArr[1];
+      if (curr.totalExpenses && prev.totalExpenses) {
+        const pct = Math.abs((curr.totalExpenses - prev.totalExpenses) / prev.totalExpenses * 100);
+        if (pct > 20) redCount++; else if (pct > 10) yellowCount++;
+      }
+    }
+    // Pro-rata coverage gap
+    const totalPR = results.reduce((s, r) => s + (r.proRataPercent || 0), 0);
+    if (results.length > 0 && Math.abs(totalPR - 100) >= 5) yellowCount++;
+    // Open disputes add yellow signal
+    if (openDisputes > 0) yellowCount++;
+  }
+
+  // Risk classification — same thresholds as buildAuditNarrative
+  let riskLevel = 'None';
+  if (snap) {
+    if      (redCount >= 3 || (redCount >= 1 && openDisputes >= 1)) riskLevel = 'Critical';
+    else if (redCount >= 1 || yellowCount >= 3)                     riskLevel = 'Elevated';
+    else if (yellowCount >= 1)                                      riskLevel = 'Moderate';
+    else                                                            riskLevel = 'Low';
+  }
+
+  // Avg confidence from per-tenant results
+  const confScores = results.map(r => r.averageConfidence || 0).filter(s => s > 0);
+  const avgConf    = confScores.length
+    ? Math.round(confScores.reduce((s, c) => s + c, 0) / confScores.length)
+    : null;
+
+  // YoY trend direction
+  let trendDir = null, trendPct = null;
+  if (camRunsArr.length >= 2) {
+    const curr = camRunsArr[0];
+    const prev = camRunsArr.slice(1).find(r => r.camYear !== curr.camYear) || camRunsArr[1];
+    if (curr.totalExpenses && prev.totalExpenses) {
+      trendPct  = (curr.totalExpenses - prev.totalExpenses) / prev.totalExpenses * 100;
+      trendDir  = Math.abs(trendPct) < 3 ? 'flat' : trendPct > 0 ? 'up' : 'down';
+    }
+  }
+
+  return {
+    riskLevel, redCount, yellowCount, missingDocs, avgConf,
+    trendDir, trendPct, openDisputes, total,
+    camYear: snap?.camYear || prop.camYear || null,
+    savedAt: snap?.savedAt || null,
+  };
+}
+
+function _fmtCardTs(ts) {
+  if (!ts) return '';
+  return new Date(ts).toLocaleDateString('en-US', { month: 'short', day: 'numeric', year: 'numeric' });
+}
+
 function portfolioKPIs(props) {
   const safeProps = Array.isArray(props) ? props : [];
+  const metas     = safeProps.map(p => _buildPropMeta(p));
+  const criticalOrElevated = metas.filter(m => m.riskLevel === 'Critical' || m.riskLevel === 'Elevated').length;
+  const totalMissingDocs   = metas.reduce((s, m) => s + m.missingDocs, 0);
+  const confScores = metas.map(m => m.avgConf).filter(c => c !== null);
   return {
-    properties:   safeProps.length,
-    tenants:      safeProps.reduce((s, p) => s + (Array.isArray(p.tenants) ? p.tenants.length : (Number(p.tenantCount) || 0)), 0),
-    cam:          safeProps.reduce((s, p) => s + (Number(p.totalCAM)     || 0), 0),
-    invoices:     safeProps.reduce((s, p) => s + (Number(p.invoiceCount) || 0), 0),
-    openDisputes: safeProps.reduce((s, p) => s + (Number(p.openDisputes) || 0), 0),
+    properties:          safeProps.length,
+    cam:                 safeProps.reduce((s, p) => s + (Number(p.totalCAM) || 0), 0),
+    openDisputes:        safeProps.reduce((s, p) => s + (Number(p.openDisputes) || 0), 0),
+    criticalOrElevated,
+    totalMissingDocs,
+    avgConf: confScores.length ? Math.round(confScores.reduce((s, c) => s + c, 0) / confScores.length) : null,
   };
 }
 
 function renderPortfolio(props) {
-
-  if (!props || !Array.isArray(props)) {
+  props = props || _props; // handle no-arg calls
+  if (!Array.isArray(props)) {
     console.error('[renderPortfolio] called with invalid data:', props);
     return;
   }
 
+  // Per-property metadata (risk, confidence, trend, timestamps)
+  const metas = props.map(p => _buildPropMeta(p));
+
+  // Sort
+  const riskScore  = { Critical: 4, Elevated: 3, Moderate: 2, Low: 1, None: 0 };
+  const sortedPairs = props.map((p, i) => ({ p, m: metas[i] })).sort((a, b) => {
+    if (_portfolioSort === 'risk')     return (riskScore[b.m.riskLevel] ?? 0) - (riskScore[a.m.riskLevel] ?? 0);
+    if (_portfolioSort === 'recent')   return (b.m.savedAt ? new Date(b.m.savedAt).getTime() : 0) - (a.m.savedAt ? new Date(a.m.savedAt).getTime() : 0);
+    if (_portfolioSort === 'cam')      return (b.m.total || 0) - (a.m.total || 0);
+    if (_portfolioSort === 'disputes') return (b.m.openDisputes || 0) - (a.m.openDisputes || 0);
+    return 0;
+  });
+
+  // KPI tiles
   const k = portfolioKPIs(props);
+  document.getElementById('pKpiProperties').textContent  = k.properties;
+  document.getElementById('pKpiCAM').textContent         = '$' + k.cam.toLocaleString('en-US');
+  document.getElementById('pKpiDisputes').textContent    = k.openDisputes;
+  document.getElementById('pKpiCritical').textContent    = k.criticalOrElevated;
+  document.getElementById('pKpiMissingDocs').textContent = k.totalMissingDocs;
+  document.getElementById('pKpiConfidence').textContent  = k.avgConf !== null ? k.avgConf + '%' : '—';
 
-  document.getElementById('pKpiProperties').textContent = k.properties ?? 0;
-  document.getElementById('pKpiTenants').textContent    = k.tenants    ?? 0;
-  document.getElementById('pKpiCAM').textContent        = '$' + (k.cam ?? 0).toLocaleString('en-US');
-  document.getElementById('pKpiInvoices').textContent   = k.invoices   ?? 0;
-  document.getElementById('pKpiDisputes').textContent   = k.openDisputes ?? 0;
+  // Conditional accent on risk-sensitive KPIs
+  const critEl = document.getElementById('pKpiCritical');
+  const dispEl = document.getElementById('pKpiDisputes');
+  const missEl = document.getElementById('pKpiMissingDocs');
+  if (critEl) critEl.style.color = k.criticalOrElevated > 0 ? '#f87171' : '#C9973A';
+  if (dispEl) dispEl.style.color = k.openDisputes        > 0 ? '#f87171' : '#C9973A';
+  if (missEl) missEl.style.color = k.totalMissingDocs    > 0 ? '#fbbf24' : '#C9973A';
 
+  // Sort buttons
+  const sortCfg = [
+    { key: 'risk',     label: 'Highest Risk'  },
+    { key: 'recent',   label: 'Most Recent'   },
+    { key: 'cam',      label: 'Largest CAM'   },
+    { key: 'disputes', label: 'Most Disputes' },
+  ];
+  const sortRowEl = document.getElementById('ptfSortRow');
+  if (sortRowEl) {
+    sortRowEl.innerHTML = '<span class="ptf-sort-lbl">Sort by:</span>'
+      + sortCfg.map(({ key, label }) =>
+          `<button class="ptf-sort-btn${_portfolioSort === key ? ' active' : ''}"
+            onclick="_portfolioSort='${key}';renderPortfolio(_props)">${esc(label)}</button>`
+        ).join('');
+  }
+
+  // Property cards
   const statusLabel = { reconciled: 'Reconciled', 'in-progress': 'In Progress', disputes: 'Has Open Disputes' };
 
-  document.getElementById('propertyCardsGrid').innerHTML = props.map(p => {
+  document.getElementById('propertyCardsGrid').innerHTML = sortedPairs.map(({ p, m }) => {
     const tenants      = Array.isArray(p.tenants)  ? p.tenants.length  : (Number(p.tenantCount)  || 0);
     const invoices     = Array.isArray(p.invoices) ? p.invoices.length : (Number(p.invoiceCount) || 0);
-    const openDisputes = Number(p.openDisputes) || 0;
-    const cam          = Number(p.totalCAM)     || 0;
+    const cam          = m.total || Number(p.totalCAM) || 0;
     const status       = p.status || 'in-progress';
+
+    const riskBadge = (() => {
+      const cfg = {
+        Critical: 'ptf-risk--critical',
+        Elevated: 'ptf-risk--elevated',
+        Moderate: 'ptf-risk--moderate',
+        Low:      'ptf-risk--low',
+      }[m.riskLevel];
+      return cfg ? `<span class="ptf-risk-badge ${cfg}">${esc(m.riskLevel)}</span>` : '';
+    })();
+
+    const trendHtml = (() => {
+      if (!m.trendDir) return '';
+      const absPct = Math.abs(m.trendPct || 0).toFixed(0);
+      if (m.trendDir === 'up')   return `<span class="ptf-trend ptf-trend--up">&#x2191;${absPct}% YoY</span>`;
+      if (m.trendDir === 'down') return `<span class="ptf-trend ptf-trend--down">&#x2193;${absPct}% YoY</span>`;
+      return `<span class="ptf-trend ptf-trend--flat">Stable YoY</span>`;
+    })();
+
+    const footParts = [];
+    if (m.camYear) footParts.push(`<span class="ptf-cam-year">${esc(String(m.camYear))} CAM</span>`);
+    if (m.savedAt) footParts.push(`<span class="ptf-rec-ts">${_fmtCardTs(m.savedAt)}</span>`);
+
     return `
-    <div class="ptf-prop-card status-${status}${activePropId === p.id ? ' active' : ''}" onclick="selectProperty('${p.id}')">
-      <div class="ptf-prop-name">${esc(p.name || '—')}</div>
+    <div class="ptf-prop-card status-${status}${activePropId === p.id ? ' active' : ''}" onclick="selectProperty('${esc(p.id)}')">
+      <div class="ptf-card-top">
+        <div class="ptf-prop-name">${esc(p.name || '—')}</div>
+        ${riskBadge}
+      </div>
       <div class="ptf-status-row">
         <span class="ptf-status-dot ${status}"></span>
-        ${statusLabel[status] || status}
+        <span>${statusLabel[status] || status}</span>
+        ${trendHtml}
       </div>
       <div class="ptf-stats-row">
         <div class="ptf-stat"><strong>${tenants}</strong>Tenants</div>
         <div class="ptf-stat"><strong>${invoices}</strong>Invoices</div>
-        ${openDisputes > 0
-          ? `<div class="ptf-stat"><strong style="color:#ef4444">${openDisputes}</strong>Disputes</div>`
+        ${m.openDisputes > 0
+          ? `<div class="ptf-stat ptf-stat--alert"><strong>${m.openDisputes}</strong>Disputes</div>`
+          : ''}
+        ${m.missingDocs > 0
+          ? `<div class="ptf-stat ptf-stat--warn"><strong>${m.missingDocs}</strong>No Docs</div>`
           : ''}
       </div>
       <div class="ptf-cam-lbl">CAM This Period</div>
       <div class="ptf-cam-val">${cam > 0 ? '$' + cam.toLocaleString('en-US') : '—'}</div>
-      ${status === 'reconciled'
-        ? `<div class="ptf-onchain-badge">&#x1F517; On-Chain Record</div>`
+      ${footParts.length ? `<div class="ptf-card-foot">${footParts.join('')}</div>` : ''}
+      ${m.avgConf !== null
+        ? `<div class="ptf-conf-bar" title="${m.avgConf}% avg. match confidence">
+             <div class="ptf-conf-fill" style="width:${m.avgConf}%"></div>
+           </div>`
         : ''}
     </div>`;
   }).join('');
 
-  document.getElementById('portfolioDashboard').style.display  = 'block';
-  document.getElementById('propertyBreadcrumb').style.display  = 'none';
-  document.getElementById('mainWorkflow').style.display        = 'none';
+  document.getElementById('portfolioDashboard').style.display = 'block';
+  document.getElementById('propertyBreadcrumb').style.display = 'none';
+  document.getElementById('mainWorkflow').style.display       = 'none';
 }
 
 async function selectProperty(id) {
