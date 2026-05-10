@@ -946,6 +946,148 @@
     .rc-export-btn:hover { background: rgba(52,211,153,0.14); }
     .rc-export-desc { font-size: 0.8rem; color: #64748B; line-height: 1.5; margin-bottom: 0; }
 
+    /* ── Review Mode ─────────────────────────────────────────────────── */
+    /* Fixed READ ONLY banner */
+    #reviewBanner {
+      display: none; position: fixed; top: 0; left: 0; right: 0; z-index: 2000;
+      background: #0B1120; border-bottom: 2px solid rgba(201,151,58,0.4);
+      padding: 10px 20px; align-items: center; justify-content: space-between;
+      flex-wrap: wrap; gap: 8px;
+      box-shadow: 0 2px 16px rgba(0,0,0,0.5);
+    }
+    .rv-banner-left  { display: flex; align-items: center; gap: 10px; flex-wrap: wrap; }
+    .rv-banner-right { display: flex; align-items: center; gap: 8px;  flex-wrap: wrap; }
+    .rv-ro-badge {
+      font-size: 0.67rem; font-weight: 800; padding: 3px 8px; border-radius: 4px;
+      background: rgba(239,68,68,0.15); color: #f87171;
+      border: 1px solid rgba(239,68,68,0.3); letter-spacing: 0.08em;
+    }
+    .rv-prop { font-size: 0.88rem; font-weight: 700; color: #E2E8F0; }
+    .rv-year { font-size: 0.82rem; color: #C9973A; font-weight: 600; }
+    .rv-sep  { color: #334155; font-size: 0.8rem; }
+    .rv-meta { font-size: 0.76rem; color: #64748B; }
+    .rv-export-btn {
+      padding: 5px 12px; border-radius: 7px; font-size: 0.75rem; font-weight: 600;
+      cursor: pointer; border: 1px solid rgba(52,211,153,0.3);
+      background: rgba(52,211,153,0.08); color: #34D399; transition: all 0.15s;
+      white-space: nowrap;
+    }
+    .rv-export-btn:hover { background: rgba(52,211,153,0.18); border-color: #34D399; }
+
+    /* Review dashboard container */
+    #reviewDashboard {
+      display: none; max-width: 780px; margin: 60px auto 0; padding: 24px 16px 60px;
+    }
+    .rv-results-card {
+      background: #111827; border: 1px solid rgba(255,255,255,0.08);
+      border-radius: 14px; padding: 24px; margin-bottom: 24px;
+    }
+    .rv-results-title {
+      font-size: 1rem; font-weight: 700; color: #E2E8F0; margin-bottom: 16px;
+    }
+    .rv-section-divider {
+      height: 1px; background: rgba(255,255,255,0.06); margin: 8px 0 24px;
+    }
+    .rv-footer {
+      text-align: center; padding: 24px 0;
+      border-top: 1px solid rgba(255,255,255,0.06); margin-top: 16px;
+    }
+    .rv-footer-btn {
+      padding: 12px 28px; border-radius: 10px; font-size: 0.9rem; font-weight: 700;
+      cursor: pointer; border: 1px solid rgba(52,211,153,0.35);
+      background: rgba(52,211,153,0.1); color: #34D399; transition: all 0.18s;
+    }
+    .rv-footer-btn:hover { background: rgba(52,211,153,0.2); border-color: #34D399; }
+
+    /* Review-mode: hide workflow controls globally */
+    body.review-mode #cardSetup,
+    body.review-mode #cardLeases,
+    body.review-mode #cardGL,
+    body.review-mode #cardInvoices,
+    body.review-mode #runBtn,
+    body.review-mode .step-bar,
+    body.review-mode #previousRunsSection,
+    body.review-mode #disputeSection,
+    body.review-mode #reportsSection,
+    body.review-mode .breadcrumb-back,
+    body.review-mode .breadcrumb-clear-btn,
+    body.review-mode .rc-open-btn,
+    body.review-mode #syncIndicator { display: none !important; }
+
+    /* Expired / invalid token screen */
+    #reviewExpiredMsg {
+      display: none; position: fixed; inset: 0; background: #0B1120;
+      align-items: center; justify-content: center; z-index: 3000;
+      flex-direction: column; gap: 16px; padding: 32px; text-align: center;
+    }
+    .rv-expired-icon  { font-size: 3rem; }
+    .rv-expired-title { font-size: 1.3rem; font-weight: 700; color: #E2E8F0; }
+    .rv-expired-desc  { font-size: 0.9rem; color: #64748B; max-width: 360px; line-height: 1.6; }
+
+    /* Generate Review Link button variant */
+    .rv-gen-btn {
+      border-color: rgba(96,165,250,0.35) !important;
+      color: #60A5FA !important;
+      background: rgba(96,165,250,0.08) !important;
+    }
+    .rv-gen-btn:hover { background: rgba(96,165,250,0.18) !important; border-color: #60A5FA !important; }
+
+    /* Review Link Modal */
+    #reviewLinkModal {
+      position: fixed; inset: 0; background: rgba(0,0,0,0.65);
+      display: none; align-items: center; justify-content: center;
+      z-index: 1200; padding: 16px;
+    }
+    .rl-modal-box {
+      background: #111827; border: 1px solid rgba(255,255,255,0.1);
+      border-radius: 14px; width: 100%; max-width: 480px;
+      box-shadow: 0 20px 60px rgba(0,0,0,0.7); padding: 28px;
+    }
+    .rl-title   { font-size: 1rem; font-weight: 700; color: #E2E8F0; margin-bottom: 4px; }
+    .rl-sub     { font-size: 0.82rem; color: #64748B; margin-bottom: 20px; line-height: 1.5; }
+    .rl-label   { font-size: 0.78rem; font-weight: 700; color: #94A3B8; text-transform: uppercase; letter-spacing: 0.05em; margin-bottom: 10px; }
+    .rl-expiry-row { display: flex; gap: 10px; margin-bottom: 20px; flex-wrap: wrap; }
+    .rl-expiry-opt { flex: 1; min-width: 100px; }
+    .rl-expiry-opt input[type=radio] { display: none; }
+    .rl-expiry-opt label {
+      display: block; text-align: center; padding: 10px 8px; border-radius: 9px;
+      border: 1.5px solid rgba(255,255,255,0.1); font-size: 0.82rem; font-weight: 600;
+      color: #94A3B8; cursor: pointer; transition: all 0.15s;
+    }
+    .rl-expiry-opt input:checked + label {
+      border-color: #C9973A; color: #C9973A; background: rgba(201,151,58,0.1);
+    }
+    .rl-expiry-opt label:hover { border-color: rgba(201,151,58,0.4); color: #CBD5E1; }
+    .rl-actions { display: flex; gap: 10px; margin-bottom: 20px; }
+    .rl-gen-btn {
+      flex: 1; padding: 10px; border-radius: 9px; font-size: 0.85rem; font-weight: 700;
+      cursor: pointer; border: none; background: #C9973A; color: #0B1120; transition: all 0.15s;
+    }
+    .rl-gen-btn:hover { background: #E4B15C; }
+    .rl-cancel-btn {
+      padding: 10px 18px; border-radius: 9px; font-size: 0.85rem; font-weight: 600;
+      cursor: pointer; border: 1px solid rgba(255,255,255,0.1); background: transparent; color: #64748B;
+      transition: all 0.15s;
+    }
+    .rl-cancel-btn:hover { background: rgba(255,255,255,0.06); color: #CBD5E1; }
+    #rvLinkResult { display: none; }
+    .rl-link-box  {
+      background: rgba(255,255,255,0.04); border: 1px solid rgba(255,255,255,0.1);
+      border-radius: 9px; padding: 12px; display: flex; gap: 8px; align-items: center;
+      margin-bottom: 8px;
+    }
+    .rl-link-box input {
+      flex: 1; background: none; border: none; color: #E2E8F0; font-size: 0.78rem;
+      font-family: monospace; outline: none; min-width: 0;
+    }
+    #rvCopyBtn {
+      padding: 6px 14px; border-radius: 7px; font-size: 0.78rem; font-weight: 700;
+      cursor: pointer; border: 1px solid rgba(96,165,250,0.3);
+      background: rgba(96,165,250,0.1); color: #60A5FA; white-space: nowrap; transition: all 0.15s;
+    }
+    #rvCopyBtn:hover { background: rgba(96,165,250,0.2); }
+    .rl-expiry-tag { font-size: 0.75rem; color: #64748B; text-align: right; }
+
     /* ── Lease Upload Tabs ───────────────────────────────────────────── */
     .lease-tab-bar {
       display: flex; gap: 0; margin-bottom: 18px;
@@ -2294,7 +2436,7 @@
   </div>
 
   <!-- ── SECTION 1: Property Setup ─────────────────────────────────── -->
-  <div class="card">
+  <div class="card" id="cardSetup">
     <div class="sec-head">
       <div class="sec-num">1</div>
       <div><h2>Property Setup</h2><p>Enter property details to begin the CAM reconciliation</p></div>
@@ -2320,7 +2462,7 @@
   </div>
 
   <!-- ── SECTION 2: Lease Upload ────────────────────────────────────── -->
-  <div class="card">
+  <div class="card" id="cardLeases">
     <div class="sec-head">
       <div class="sec-num">2</div>
       <div>
@@ -2361,7 +2503,7 @@
   </div>
 
   <!-- ── GL Excel Upload ───────────────────────────────────────────── -->
-  <div class="card">
+  <div class="card" id="cardGL">
     <div class="sec-head">
       <div class="sec-num" style="background:#22c55e;font-size:0.62rem;letter-spacing:-0.02em;">GL</div>
       <div>
@@ -2392,7 +2534,7 @@
   </div>
 
   <!-- ── SECTION 3: Invoice Upload ─────────────────────────────────── -->
-  <div class="card">
+  <div class="card" id="cardInvoices">
     <div class="sec-head">
       <div class="sec-num">3</div>
       <div>
@@ -2528,6 +2670,9 @@
       <button class="report-btn report-btn-holes" onclick="guardedReconciliationSummary()">
         &#x1F4CA; Reconciliation Summary
       </button>
+      <button class="report-btn rv-gen-btn" onclick="openReviewLinkModal()" title="Generate a shareable read-only review link for executives">
+        &#x1F517; Generate Review Link
+      </button>
     </div>
     <div id="reportsMsg" class="reports-notice">
       Run a CAM allocation in Section 4 to generate reports.
@@ -2536,6 +2681,65 @@
   </div>
 
 </div><!-- /container -->
+
+<!-- ── READ ONLY Banner (review mode) ─────────────────────────────────── -->
+<div id="reviewBanner"></div>
+
+<!-- ── Executive Review Dashboard ────────────────────────────────────── -->
+<div id="reviewDashboard">
+  <div id="rvNarrativeSlot"></div>
+  <div id="rvAuditSlot"></div>
+  <div id="rvTrendsSlot"></div>
+  <div class="rv-results-card">
+    <div class="rv-results-title">&#x1F4CA; Allocation Results</div>
+    <div id="reviewResultsBody"></div>
+  </div>
+  <div id="rvTimelineSlot"></div>
+  <div class="rv-footer">
+    <button class="rv-footer-btn" onclick="exportReviewPackage()">&#x2B07; Download Audit Package</button>
+  </div>
+</div>
+
+<!-- ── Expired / Invalid Review Link ──────────────────────────────────── -->
+<div id="reviewExpiredMsg">
+  <div class="rv-expired-icon">&#x1F512;</div>
+  <div class="rv-expired-title">Review Link Expired or Invalid</div>
+  <div class="rv-expired-desc">This review link has expired or is no longer valid. Please request a new link from the property manager.</div>
+</div>
+
+<!-- ── Generate Review Link Modal ─────────────────────────────────────── -->
+<div id="reviewLinkModal" onclick="if(event.target===this)closeReviewLinkModal()">
+  <div class="rl-modal-box">
+    <div class="rl-title">&#x1F517; Generate Review Link</div>
+    <div class="rl-sub">Create a shareable read-only link for executive review. No login required&nbsp;— recipients can view but not edit.</div>
+    <div class="rl-label">Link Expiry</div>
+    <div class="rl-expiry-row">
+      <div class="rl-expiry-opt">
+        <input type="radio" name="rvExpiry" id="rv7" value="7" checked>
+        <label for="rv7">7 days</label>
+      </div>
+      <div class="rl-expiry-opt">
+        <input type="radio" name="rvExpiry" id="rv30" value="30">
+        <label for="rv30">30 days</label>
+      </div>
+      <div class="rl-expiry-opt">
+        <input type="radio" name="rvExpiry" id="rv0" value="0">
+        <label for="rv0">Never</label>
+      </div>
+    </div>
+    <div class="rl-actions">
+      <button class="rl-gen-btn" onclick="confirmGenerateReviewLink()">Generate Link</button>
+      <button class="rl-cancel-btn" onclick="closeReviewLinkModal()">Cancel</button>
+    </div>
+    <div id="rvLinkResult">
+      <div class="rl-link-box">
+        <input type="text" id="rvLinkOutput" readonly>
+        <button id="rvCopyBtn" onclick="copyReviewLink()">Copy</button>
+      </div>
+      <div class="rl-expiry-tag" id="rvLinkExpiry"></div>
+    </div>
+  </div>
+</div>
 
 <!-- ── Allocation Confirmation Modal ──────────────────────────────────── -->
 <div id="allocModal" class="modal-backdrop" style="display:none;" onclick="if(event.target===this)closeAllocModal()">

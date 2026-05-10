@@ -5306,6 +5306,258 @@ function rebuildReconciliationState() {
   setTimeout(() => banner.remove(), 4000);
 }
 
+// ─── Executive Review Mode ───────────────────────────────────────────────────
+const _RV_KEY = 'mainstreet_review_v1';
+let _reviewMode = false;
+
+function _rvLoad() {
+  try { return JSON.parse(localStorage.getItem(_RV_KEY) || '{}'); } catch { return {}; }
+}
+function _rvSave(tokens) {
+  try { localStorage.setItem(_RV_KEY, JSON.stringify(tokens)); } catch {}
+}
+function _genUUID() {
+  return ([1e7]+-1e3+-4e3+-8e3+-1e11).replace(/[018]/g, c =>
+    (c ^ crypto.getRandomValues(new Uint8Array(1))[0] & 15 >> c / 4).toString(16));
+}
+
+function generateReviewToken(expiresIn) { // expiresIn: 7, 30, or 0 = never
+  const prop = _props.find(p => p.id === activePropId);
+  if (!prop || !lastResults.length) return null;
+  const token     = _genUUID();
+  const now       = new Date();
+  const expiresAt = expiresIn ? new Date(now.getTime() + expiresIn * 86400000).toISOString() : null;
+  const payload   = {
+    token, expiresAt,
+    propId:    prop.id,
+    propName:  lastPropName || prop.name,
+    camYear:   getCamYear(),
+    createdAt: now.toISOString(),
+    snapshot:  _stripBlobs({
+      propName:    lastPropName || prop.name,
+      propId:      prop.id,
+      totalSqft:   prop.totalSqft,
+      camYear:     getCamYear(),
+      results:     [...lastResults],
+      total:       lastTotal,
+      invoices:    [...lastInvoices],
+      invoicesFull:[...lastInvoicesFull],
+      tenants:     [...lastTenants],
+      camRuns:     camRuns.map(r => ({ ...r, timestamp: r.timestamp instanceof Date ? r.timestamp.toISOString() : r.timestamp })),
+      activityLog: [...activityLog],
+      invoiceData: invoiceData.map(inv => ({ ...inv })),
+      disputes:    [...disputes],
+    }),
+  };
+  const tokens = _rvLoad();
+  const cutoff = now;
+  Object.keys(tokens).forEach(k => {
+    if (tokens[k].expiresAt && new Date(tokens[k].expiresAt) < cutoff) delete tokens[k];
+  });
+  tokens[token] = payload;
+  _rvSave(tokens);
+  return payload;
+}
+
+function validateReviewToken(token) {
+  const payload = _rvLoad()[token];
+  if (!payload) return null;
+  if (payload.expiresAt && new Date(payload.expiresAt) < new Date()) return null;
+  return payload;
+}
+
+// ─── Generate Review Link Modal ───────────────────────────────────────────────
+function openReviewLinkModal() {
+  if (!lastResults.length) {
+    showToast('Run a CAM allocation first to generate a review link.', { color: '#92400e', textColor: '#fef3c7' });
+    return;
+  }
+  const modal = document.getElementById('reviewLinkModal');
+  if (!modal) return;
+  document.getElementById('rvLinkOutput').value      = '';
+  document.getElementById('rvLinkResult').style.display = 'none';
+  modal.style.display = 'flex';
+}
+
+function closeReviewLinkModal() {
+  const m = document.getElementById('reviewLinkModal');
+  if (m) m.style.display = 'none';
+}
+
+function confirmGenerateReviewLink() {
+  const sel  = document.querySelector('input[name="rvExpiry"]:checked');
+  const days = sel ? parseInt(sel.value, 10) : 7;
+  const payload = generateReviewToken(days);
+  if (!payload) {
+    showToast('Could not generate review link — no allocation results found.', { color: '#92400e', textColor: '#fef3c7' });
+    return;
+  }
+  const url = window.location.origin + window.location.pathname + '#review/' + payload.token;
+  document.getElementById('rvLinkOutput').value = url;
+  document.getElementById('rvLinkResult').style.display = 'block';
+  document.getElementById('rvLinkExpiry').textContent = days === 0 ? 'Never expires' : `Expires in ${days} day${days > 1 ? 's' : ''}`;
+}
+
+function copyReviewLink() {
+  const input = document.getElementById('rvLinkOutput');
+  input.select();
+  try {
+    navigator.clipboard.writeText(input.value).catch(() => document.execCommand('copy'));
+  } catch { document.execCommand('copy'); }
+  const btn  = document.getElementById('rvCopyBtn');
+  const orig = btn.textContent;
+  btn.textContent = '✓ Copied!';
+  setTimeout(() => { btn.textContent = orig; }, 2000);
+}
+
+// ─── Review Mode: Entry & Rendering ──────────────────────────────────────────
+function enterReviewMode(payload) {
+  _reviewMode = true;
+  const snap = payload.snapshot;
+
+  // Populate all globals from the stored snapshot
+  lastResults      = snap.results      || [];
+  lastPropName     = snap.propName     || '';
+  lastTotal        = snap.total        || 0;
+  lastInvoices     = snap.invoices     || [];
+  lastInvoicesFull = (snap.invoicesFull || []).map(inv =>
+    (inv && !inv.vendor) ? { ...inv, vendor: inv.vendorName || '' } : inv
+  );
+  lastTenants = snap.tenants || [];
+  if (snap.camYear) setCamYear(snap.camYear);
+  if (Array.isArray(snap.camRuns) && snap.camRuns.length) {
+    camRuns.splice(0, camRuns.length, ...snap.camRuns.map(r => ({
+      ...r, timestamp: r.timestamp ? new Date(r.timestamp) : new Date(),
+    })));
+  }
+  activityLog.splice(0, activityLog.length, ...(snap.activityLog || []));
+  invoiceData.splice(0, invoiceData.length, ...(snap.invoiceData || []));
+  disputes.splice(0, disputes.length, ...(snap.disputes || []));
+
+  // Apply body class — CSS hides all edit controls
+  document.body.classList.add('review-mode');
+
+  // Show the review banner
+  _renderReviewBanner(payload);
+
+  // Temporarily show mainWorkflow + #results so render functions can run
+  document.getElementById('portfolioDashboard').style.display = 'none';
+  document.getElementById('propertyBreadcrumb').style.display = 'none';
+  const mw = document.getElementById('mainWorkflow');
+  const rv = document.getElementById('results');
+  mw.style.display = 'block';
+  rv.style.display = 'block';
+
+  // Render allocation table into review slot
+  const rvBody = document.getElementById('reviewResultsBody');
+  if (rvBody) {
+    let html = `<div class="summary-bar">
+      <strong>Total Expenses:</strong> ${fmt(lastTotal)}
+      &nbsp;|&nbsp; <strong>Tenants:</strong> ${lastResults.length}
+      &nbsp;|&nbsp; <strong>Invoices:</strong> ${lastInvoicesFull.length}
+    </div>`;
+    lastResults.forEach(r => {
+      html += `<div class="result-card">
+        <div class="r-name">${esc(r.name)}</div>
+        <div class="result-grid">
+          ${stat('Allocated Amount',  fmt(r.allocatedAmount))}
+          ${stat('Pro-Rata Share',    (r.proRata * 100).toFixed(2) + '%')}
+          ${stat('Included Expenses', r.eligibleCount + ' of ' + lastInvoicesFull.length)}
+        </div>
+        ${r.capApplied ? `<div class="cap-badge">Cap applied — ${fmt(r.capAdjustment)} reduced</div>` : ''}
+      </div>`;
+    });
+    rvBody.innerHTML = html;
+  }
+
+  // Render each AI panel then move it from #results into its review slot
+  const _movePanel = (panelId, renderFn, slotId) => {
+    renderFn();
+    const panel = document.getElementById(panelId);
+    const slot  = document.getElementById(slotId);
+    if (panel && slot) slot.appendChild(panel);
+  };
+  _movePanel('narrativePanel', renderNarrativePanel,        'rvNarrativeSlot');
+  _movePanel('auditPanel',     renderAuditPanel,            'rvAuditSlot');
+  _movePanel('trendsPanel',    renderHistoricalTrendsPanel, 'rvTrendsSlot');
+  _movePanel('timelinePanel',  renderActivityTimeline,      'rvTimelineSlot');
+
+  // Hide main workflow — review dashboard takes over
+  mw.style.display = 'none';
+  document.getElementById('reviewDashboard').style.display = 'block';
+
+  window.scrollTo({ top: 0, behavior: 'instant' });
+}
+
+function _renderReviewBanner(payload) {
+  const banner = document.getElementById('reviewBanner');
+  if (!banner) return;
+  const createdStr = new Date(payload.createdAt)
+    .toLocaleDateString('en-US', { month: 'long', day: 'numeric', year: 'numeric' });
+  const expiryStr = payload.expiresAt
+    ? 'Expires ' + new Date(payload.expiresAt).toLocaleDateString('en-US', { month: 'short', day: 'numeric', year: 'numeric' })
+    : 'No expiry';
+  banner.innerHTML = `
+    <div class="rv-banner-left">
+      <span class="rv-ro-badge">READ ONLY</span>
+      <span class="rv-prop">${esc(payload.propName)}</span>
+      <span class="rv-sep">·</span>
+      <span class="rv-year">${esc(String(payload.camYear))} CAM Year</span>
+    </div>
+    <div class="rv-banner-right">
+      <span class="rv-meta">Generated ${createdStr}</span>
+      <span class="rv-sep">·</span>
+      <span class="rv-meta">${expiryStr}</span>
+      <button class="rv-export-btn" onclick="exportReviewPackage()">&#x2B07; Download Package</button>
+    </div>`;
+  banner.style.display = 'flex';
+}
+
+function exportReviewPackage() {
+  const now      = new Date().toLocaleDateString('en-US', { year:'numeric', month:'long', day:'numeric' });
+  const safeName = (lastPropName || 'property').replace(/[^a-z0-9]/gi, '_').toLowerCase();
+  const year     = getCamYear();
+
+  const gather = id => document.getElementById(id)?.outerHTML || '';
+  const narrative = gather('narrativePanel');
+  const audit     = gather('auditPanel');
+  const trends    = gather('trendsPanel');
+  const timeline  = gather('timelinePanel');
+  const rvBodyEl  = document.getElementById('reviewResultsBody');
+  const resultsHtml = rvBodyEl ? `<div class="card" style="margin-bottom:24px;padding:24px;">
+    <h2 style="font-size:1.1rem;font-weight:700;color:#E2E8F0;margin-bottom:16px;">${year} Allocation Results</h2>
+    ${rvBodyEl.innerHTML}</div>` : '';
+
+  const styles = Array.from(document.styleSheets).flatMap(ss => {
+    try { return Array.from(ss.cssRules).map(r => r.cssText); } catch { return []; }
+  }).join('\n');
+
+  const html = `<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1">
+<title>${esc(lastPropName)} — ${year} CAM Audit Package</title>
+<style>*{box-sizing:border-box;margin:0;padding:0}body{background:#0B1120;color:#E2E8F0;font-family:'Inter',system-ui,sans-serif;padding:32px 24px}
+.rv-pkg-header{background:linear-gradient(135deg,#1a2535,#0B1120);border:1px solid rgba(201,151,58,.3);border-radius:12px;padding:24px;margin-bottom:28px}
+.rv-pkg-title{font-size:1.5rem;font-weight:800;color:#C9973A;margin-bottom:4px}
+.rv-pkg-meta{font-size:0.84rem;color:#64748B}
+${styles}</style>
+</head>
+<body>
+<div class="rv-pkg-header">
+  <div class="rv-pkg-title">${esc(lastPropName)} — ${year} CAM Audit Package</div>
+  <div class="rv-pkg-meta">Generated ${now} · Executive read-only review</div>
+</div>
+${narrative}${audit}${trends}${resultsHtml}${timeline}
+</body></html>`;
+
+  const blob = new Blob([html], { type: 'text/html' });
+  const url  = URL.createObjectURL(blob);
+  const a    = Object.assign(document.createElement('a'), { href: url, download: `mainstreet_audit_${safeName}_${year}.html` });
+  document.body.appendChild(a); a.click(); a.remove();
+  URL.revokeObjectURL(url);
+}
+
 // ─── SHA-256 (Web Crypto — no library needed) ─────────────────────────────────
 async function sha256(obj) {
   const text   = JSON.stringify(obj, Object.keys(obj).sort());
@@ -9331,6 +9583,23 @@ function showRestoredBanner() {
 // ─── Init ─────────────────────────────────────────────────────────────────────
 async function init() {
   _loadCheckpoints();
+
+  // ── Review mode: detect #review/{token} in URL hash ──────────────────────
+  const hashMatch = location.hash.match(/^#review\/([a-f0-9-]{36})$/i);
+  if (hashMatch) {
+    const payload = validateReviewToken(hashMatch[1]);
+    if (payload) {
+      enterReviewMode(payload);
+    } else {
+      // Token is expired or unknown — show error screen
+      document.getElementById('portfolioDashboard').style.display = 'none';
+      document.getElementById('mainWorkflow').style.display       = 'none';
+      const exp = document.getElementById('reviewExpiredMsg');
+      if (exp) exp.style.display = 'flex';
+    }
+    return; // never proceed to normal portfolio load in review mode
+  }
+
   try {
     const properties = await loadProperties();
     _props = properties || [];
