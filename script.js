@@ -4204,6 +4204,7 @@ async function runAllocation() {
     }, {}),
   });
   renderPreviousRuns();
+  renderNarrativePanel();
   renderAuditPanel();
   renderHistoricalTrendsPanel();
 
@@ -5761,6 +5762,271 @@ function buildAuditSummary() {
   }
 
   return { red, yellow, green };
+}
+
+// ─── AI Auditor Narrative ─────────────────────────────────────────────────────
+
+function buildAuditNarrative() {
+  const { red, yellow, green } = buildAuditSummary();
+  const trends      = buildHistoricalTrends();
+  const invAll      = invoiceData.filter(inv => inv && inv.vendorName);
+  const prop        = currentProperty();
+  const propName    = lastPropName || prop?.name || 'This property';
+  const camYear     = getCamYear() || new Date().getFullYear();
+  const total       = lastTotal || 0;
+  const tenantCount = lastResults.length;
+  const openDisputes = disputes.filter(d => d.status === 'open');
+
+  // ── Risk Level ────────────────────────────────────────────────────────────
+  let riskLevel;
+  if (red.length >= 3 || (red.length >= 1 && openDisputes.length >= 1)) {
+    riskLevel = 'Critical';
+  } else if (red.length >= 1 || yellow.length >= 3) {
+    riskLevel = 'Elevated';
+  } else if (yellow.length >= 1 || openDisputes.length >= 1) {
+    riskLevel = 'Moderate';
+  } else {
+    riskLevel = 'Low';
+  }
+
+  // ── Headline ──────────────────────────────────────────────────────────────
+  const headlines = {
+    Critical: 'Critical Audit Risk — Immediate Review Required Before Tenant Billing',
+    Elevated: 'Elevated Audit Risk — Material Exceptions Identified',
+    Moderate: 'Moderate Risk — Advisory Findings Require Review',
+    Low:      'Low Risk — Reconciliation Appears Audit-Ready',
+  };
+  const headline = headlines[riskLevel];
+
+  // ── Confidence ────────────────────────────────────────────────────────────
+  const pctWithDocs = invAll.length > 0
+    ? Math.round((invAll.filter(i => i.fileUrl || i.fileName).length / invAll.length) * 100)
+    : 100;
+  const pctDated = invAll.length > 0
+    ? Math.round((invAll.filter(i => i.invoiceDate).length / invAll.length) * 100)
+    : 100;
+  let confidence;
+  if (red.length === 0 && pctWithDocs >= 80 && pctDated >= 80 && openDisputes.length === 0) {
+    confidence = 'High';
+  } else if (pctWithDocs >= 50 && red.length <= 1) {
+    confidence = 'Moderate';
+  } else {
+    confidence = 'Low';
+  }
+
+  // ── Financial Impact ──────────────────────────────────────────────────────
+  const disputeAmt   = openDisputes.reduce((s, d) => s + (parseFloat(d.tenantShare) || 0), 0);
+  const capSavings   = lastResults.filter(r => r.capApplied).reduce((s, r) => s + (r.capAdjustment || 0), 0);
+  const missingDocAmt = invAll
+    .filter(i => !i.fileUrl && !i.fileName)
+    .reduce((s, i) => s + (parseFloat(i.amount) || 0), 0);
+  const impactParts = [];
+  if (missingDocAmt > 0) impactParts.push(`${fmt(missingDocAmt)} in undocumented charges`);
+  if (disputeAmt   > 0) impactParts.push(`${fmt(disputeAmt)} in open dispute`);
+  if (capSavings   > 0) impactParts.push(`${fmt(capSavings)} reduced via CAM caps`);
+  const financialImpact = impactParts.length > 0
+    ? impactParts.join(' · ')
+    : total > 0 ? `${fmt(total)} total CAM pool — no at-risk amounts identified` : 'Insufficient data';
+
+  // ── Summary Paragraph ─────────────────────────────────────────────────────
+  const parts = [];
+  parts.push(
+    `The ${camYear} CAM reconciliation for ${propName} covers ${fmt(total)} in total expenses` +
+    ` across ${tenantCount} tenant${tenantCount !== 1 ? 's' : ''}` +
+    ` and ${invAll.length} invoice${invAll.length !== 1 ? 's' : ''}.`
+  );
+  if (red.length > 0) {
+    parts.push(
+      `The audit engine identified ${red.length} critical exception${red.length > 1 ? 's' : ''}` +
+      ` requiring immediate attention prior to tenant billing.`
+    );
+  }
+  if (yellow.length > 0) {
+    parts.push(
+      `An additional ${yellow.length} advisory finding${yellow.length > 1 ? 's were' : ' was'} noted` +
+      ` that may affect the defensibility of this reconciliation in a formal tenant audit.`
+    );
+  }
+  if (openDisputes.length > 0) {
+    parts.push(
+      `${openDisputes.length} tenant dispute${openDisputes.length > 1 ? 's remain' : ' remains'} unresolved;` +
+      ` reconciliation statements should not be finalized until each dispute is addressed.`
+    );
+  }
+  if (trends) {
+    const nonGreenTrends = trends.trends.filter(t => t.severity !== 'green').length;
+    if (nonGreenTrends > 0) {
+      parts.push(
+        `Year-over-year comparison against ${trends.priorYear} identified ${nonGreenTrends}` +
+        ` trend${nonGreenTrends > 1 ? 's' : ''} warranting further review.`
+      );
+    }
+  }
+  if (red.length === 0 && yellow.length === 0 && openDisputes.length === 0) {
+    parts.push(
+      'No critical exceptions were detected. The reconciliation appears materially complete' +
+      ' and audit-defensible based on available data.'
+    );
+  }
+  const summaryParagraph = parts.join(' ');
+
+  // ── Key Findings ──────────────────────────────────────────────────────────
+  const keyFindings = [];
+  red.slice(0, 3).forEach(f => keyFindings.push(f.detail || f.title));
+  if (keyFindings.length < 5) {
+    yellow.slice(0, 5 - keyFindings.length).forEach(f => keyFindings.push(f.detail || f.title));
+  }
+  if (openDisputes.length > 0 && keyFindings.length < 5) {
+    const dAmt = disputeAmt > 0 ? ` totaling ${fmt(disputeAmt)}` : '';
+    keyFindings.push(
+      `${openDisputes.length} unresolved tenant dispute${openDisputes.length > 1 ? 's' : ''}${dAmt} ` +
+      `pending landlord review — billing should be held until resolved.`
+    );
+  }
+  if (trends && keyFindings.length < 5) {
+    trends.trends
+      .filter(t => t.severity === 'red' || t.severity === 'yellow')
+      .slice(0, 5 - keyFindings.length)
+      .forEach(t => keyFindings.push(t.note));
+  }
+
+  // ── Recommendations ───────────────────────────────────────────────────────
+  const recommendations = [];
+  const allFlags = [...red, ...yellow];
+
+  if (allFlags.some(f => f.group === 'missing_docs' && f.title.includes('source document'))) {
+    recommendations.push(
+      'Obtain and attach source invoices for all undocumented CAM charges before issuing ' +
+      'reconciliation statements. Missing documentation is the most common basis for tenant audit challenges.'
+    );
+  }
+  if (red.some(f => f.group === 'red_flags')) {
+    recommendations.push(
+      'Obtain competitive bids or independent verification for any single-vendor invoice ' +
+      'exceeding 40% of the total CAM pool prior to tenant billing.'
+    );
+  }
+  if (allFlags.some(f => f.group === 'duplicates')) {
+    recommendations.push(
+      'Reconcile suspected duplicate or unusually round-number invoices against the general ' +
+      'ledger and executed vendor contracts before finalizing the CAM statement.'
+    );
+  }
+  if (openDisputes.length > 0) {
+    recommendations.push(
+      `Resolve ${openDisputes.length} open tenant dispute${openDisputes.length > 1 ? 's' : ''} ` +
+      'and provide supporting documentation before finalizing reconciliation statements.'
+    );
+  }
+  if (allFlags.some(f => f.group === 'allocation' && f.title.includes('year-over-year'))) {
+    recommendations.push(
+      'Prepare a written landlord explanation for material year-over-year expense increases. ' +
+      'Most standard lease audit rights clauses require this documentation upon tenant request.'
+    );
+  }
+  if (allFlags.some(f => f.group === 'allocation' && f.title.includes('CAM cap'))) {
+    recommendations.push(
+      'Confirm controllable CAM cap calculations are applied consistently with lease terms ' +
+      'and prior-year base amounts for all affected tenants.'
+    );
+  }
+  if (allFlags.some(f => f.group === 'lease')) {
+    recommendations.push(
+      'Review lease exclusion and ambiguity flags with counsel to ensure category treatment ' +
+      'is consistent across all tenant lease agreements.'
+    );
+  }
+  if (allFlags.some(f => f.group === 'missing_docs' && f.title.includes('date'))) {
+    recommendations.push(
+      `Confirm all invoices include a date falling within the ${camYear} reconciliation period. ` +
+      'Undated invoices may be excluded or challenged in a formal audit.'
+    );
+  }
+  if (trends && trends.trends.some(t => t.type === 'vendor' && t.label.includes('New'))) {
+    recommendations.push(
+      `Retain executed contracts and written authorization for all new vendors added in ${trends.currYear} ` +
+      'to substantiate charges in the event of a tenant audit.'
+    );
+  }
+  if (yellow.some(f => f.group === 'allocation' && f.title.includes('unallocated'))) {
+    recommendations.push(
+      'Review tenant square footage entries — the current unallocated gap represents CAM expenses ' +
+      'that cannot be recovered under existing leases without amendment.'
+    );
+  }
+  if (recommendations.length === 0) {
+    recommendations.push(
+      'No corrective actions required. Retain all supporting invoices and reconciliation workpapers ' +
+      'for the statutory audit period (typically three to five years under standard lease audit rights clauses).'
+    );
+  }
+
+  return {
+    headline,
+    riskLevel,
+    summaryParagraph,
+    keyFindings,
+    recommendations,
+    financialImpact,
+    confidence,
+  };
+}
+
+function renderNarrativePanel() {
+  const prev = document.getElementById('narrativePanel');
+  if (prev) prev.remove();
+
+  const section = document.getElementById('results');
+  if (!section || !lastResults.length) return;
+
+  const n = buildAuditNarrative();
+
+  const riskColor = { Critical: 'red', Elevated: 'yellow', Moderate: 'blue', Low: 'green' }[n.riskLevel] || 'green';
+
+  const riskEmoji = { Critical: '🔴', Elevated: '🟡', Moderate: '🔵', Low: '🟢' }[n.riskLevel];
+
+  const findingsHtml = n.keyFindings.length
+    ? `<ul class="an-list">${n.keyFindings.map(f => `<li>${esc(f)}</li>`).join('')}</ul>`
+    : '';
+
+  const recsHtml = n.recommendations.length
+    ? `<ol class="an-list an-list--recs">${n.recommendations.map(r => `<li>${esc(r)}</li>`).join('')}</ol>`
+    : '';
+
+  const panel = document.createElement('div');
+  panel.id        = 'narrativePanel';
+  panel.className = 'an-panel';
+  panel.innerHTML = `
+    <div class="an-header">
+      <div class="an-header-left">
+        <span class="an-icon">&#x1F4CB;</span>
+        <div>
+          <div class="an-label">AI Auditor Narrative</div>
+          <div class="an-headline">${esc(n.headline)}</div>
+        </div>
+      </div>
+      <div class="an-header-right">
+        <span class="an-risk an-risk--${riskColor}">${riskEmoji} ${esc(n.riskLevel)} Risk</span>
+        <span class="an-conf">${esc(n.confidence)} Confidence</span>
+      </div>
+    </div>
+    <div class="an-body">
+      <p class="an-summary">${esc(n.summaryParagraph)}</p>
+      ${n.keyFindings.length ? `<div class="an-section-title">Key Findings</div>${findingsHtml}` : ''}
+      ${n.recommendations.length ? `<div class="an-section-title">Recommended Actions</div>${recsHtml}` : ''}
+      <div class="an-impact-row">
+        <span class="an-impact-label">Estimated Financial Exposure</span>
+        <span class="an-impact-val">${esc(n.financialImpact)}</span>
+      </div>
+    </div>`;
+
+  // Insert before auditPanel so narrative sits above the flag detail panel
+  const auditPanel = document.getElementById('auditPanel');
+  if (auditPanel) {
+    section.insertBefore(panel, auditPanel);
+  } else {
+    section.appendChild(panel);
+  }
 }
 
 // Builds and injects the AI Audit Panel into the results section.
@@ -8249,6 +8515,7 @@ function renderProperty(property) {
       restoreResultsDisplay(patchedRec);
       renderDisputeSection();
       renderPreviousRuns();
+      renderNarrativePanel();
       renderAuditPanel();
       renderHistoricalTrendsPanel();
       showReportSection();
