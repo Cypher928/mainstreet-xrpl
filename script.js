@@ -1816,6 +1816,7 @@ function handleGLUpload(input) {
       }
 
       const total = glData.reduce((s, r) => s + r.amount, 0);
+      captureCheckpoint(activePropId, 'Before GL upload');
       logActivity('gl_uploaded', `GL file parsed — ${glData.length} entries`, { severity: 'info', actor: 'User', detail: file.name, financialImpact: fmt(total) });
       statusEl.innerHTML = `
         <div class="status-row ok" style="margin:0 0 2px;">
@@ -1932,6 +1933,7 @@ async function importGLToInvoices() {
   const existing = { invoices: Array.from(property.invoices || []) };
   // invoiceData already has existing invoices (restored on selectProperty) + new GL items.
   property.invoices = Array.from(invoiceData);
+  captureCheckpoint(activePropId, 'Before GL import');
   await saveProperty(property);
   logActivity('invoice_uploaded', `${items.length} GL item${items.length !== 1 ? 's' : ''} imported`, {
     severity:        'info',
@@ -2183,6 +2185,7 @@ async function handleBulkLeases(fileList) {
 
   // Save property row, then resync tenants ONCE after all files are done.
   // Doing this inside processFile caused cumulative inserts: 1+2+3+4+5 = 15 rows for 5 files.
+  captureCheckpoint(activePropId, 'Before lease upload');
   await saveProperty(property);
   await resyncTenantsToTable(property.id, property.tenants.filter(t => t?.tenant_name));
   {
@@ -2751,6 +2754,7 @@ async function handleBatchInvoices(fileList) {
   invoiceData.splice(0, invoiceData.length, ...merged);
   renderInvResults();
 
+  captureCheckpoint(activePropId, 'Before invoice upload');
   await saveProperty(property);
   logActivity('invoice_uploaded', `${total} invoice${total !== 1 ? 's' : ''} uploaded`, {
     severity:        'info',
@@ -3401,6 +3405,7 @@ async function confirmYardiImport() {
   const existing = { invoices: Array.from(property.invoices || []) };
   // invoiceData already has existing invoices (restored on selectProperty) + new Yardi items.
   property.invoices = Array.from(invoiceData);
+  captureCheckpoint(activePropId, 'Before Yardi import');
   await saveProperty(property);
   logActivity('invoice_uploaded', `${imported} Yardi expense${imported !== 1 ? 's' : ''} imported`, { severity: 'info', actor: 'User', detail: 'Imported from Yardi CSV' });
 
@@ -4227,6 +4232,7 @@ async function runAllocation() {
     }, {}),
   });
 
+  captureCheckpoint(activePropId, 'Before CAM run');
   // ── Activity log: reconciliation run ─────────────────────────────────
   {
     const isRerun = camRuns.length > 1;
@@ -4985,6 +4991,319 @@ function logActivity(type, title, { detail = '', severity = 'info', actor = 'Sys
   });
   if (activityLog.length > 200) activityLog.length = 200;
   savePropertyData(); // persist change — debounced, so rapid events collapse
+}
+
+// ─── Checkpoint System ────────────────────────────────────────────────────────
+const _CP_KEY = 'mainstreet_ckpt_v1';
+const _checkpoints = {};
+
+function _loadCheckpoints() {
+  try {
+    const raw = localStorage.getItem(_CP_KEY);
+    if (raw) Object.assign(_checkpoints, JSON.parse(raw));
+  } catch (e) { }
+}
+
+function _saveCheckpoints() {
+  try {
+    localStorage.setItem(_CP_KEY, JSON.stringify(_checkpoints));
+  } catch (e) {
+    // quota exceeded — trim to 2 per property and retry
+    Object.keys(_checkpoints).forEach(id => {
+      if (_checkpoints[id].length > 2) _checkpoints[id].length = 2;
+    });
+    try { localStorage.setItem(_CP_KEY, JSON.stringify(_checkpoints)); } catch (_) { }
+  }
+}
+
+function captureCheckpoint(propId, label) {
+  if (!propId) return;
+  const prop = _props.find(p => p.id === propId);
+  if (!prop) return;
+  if (!_checkpoints[propId]) _checkpoints[propId] = [];
+  try {
+    const snap = _stripBlobs({
+      ...prop,
+      tenants:     [...(prop.tenants     || [])],
+      invoices:    [...(prop.invoices    || [])],
+      disputes:    [...(prop.disputes    || [])],
+      activityLog: [...activityLog],
+    });
+    _checkpoints[propId].unshift({ ts: new Date().toISOString(), label, snapshot: snap });
+    if (_checkpoints[propId].length > 5) _checkpoints[propId].length = 5;
+    _saveCheckpoints();
+  } catch (e) { console.warn('[captureCheckpoint] failed:', e.message); }
+}
+
+// ─── Sync Status ──────────────────────────────────────────────────────────────
+let _syncStatus = 'idle';
+let _lastSyncAt = null;
+
+function _setSyncStatus(status) {
+  _syncStatus = status;
+  if (status === 'synced') _lastSyncAt = new Date();
+  _renderSyncIndicator();
+}
+
+function _renderSyncIndicator() {
+  const el = document.getElementById('syncIndicator');
+  if (!el) return;
+  const cfgMap = {
+    idle:     { cls: '',             icon: '',  label: '' },
+    pending:  { cls: 'si-pending',   icon: '◌', label: 'Saving…' },
+    synced:   { cls: 'si-synced',    icon: '✓', label: 'Synced' },
+    error:    { cls: 'si-error',     icon: '⚠', label: 'Local only' },
+    conflict: { cls: 'si-conflict',  icon: '⚡', label: 'Conflict' },
+    recovery: { cls: 'si-recovery',  icon: '↩', label: 'Recovery available' },
+  };
+  const cfg = cfgMap[_syncStatus] || { cls: '', icon: '', label: '' };
+  const ts = _lastSyncAt
+    ? `Last synced ${_lastSyncAt.toLocaleTimeString('en-US', { hour: 'numeric', minute: '2-digit' })}`
+    : '';
+  el.className = `sync-indicator${cfg.cls ? ' ' + cfg.cls : ''}`;
+  el.title = ts;
+  el.innerHTML = cfg.label
+    ? `<span class="si-icon">${cfg.icon}</span><span class="si-label">${cfg.label}</span>`
+    : '';
+}
+
+// ─── Integrity Checks ────────────────────────────────────────────────────────
+function checkIntegrity(prop) {
+  const issues = [];
+  if (!prop) return issues;
+
+  const results  = (prop.camReconciliation ?? prop.results)?.results || [];
+  const invoices = prop.invoices || [];
+  const tenants  = prop.tenants  || [];
+  const disps    = prop.disputes || [];
+
+  // 1. Allocation sums — each tenant share should be ≤ total CAM
+  if (results.length) {
+    const totalCam = results.reduce((s, r) => s + (parseFloat(r.tenantShare) || 0), 0);
+    const declared = (prop.camReconciliation ?? prop.results)?.total || 0;
+    if (declared && Math.abs(totalCam - declared) > 1) {
+      issues.push({
+        type:    'allocation_mismatch',
+        level:   'error',
+        message: `Allocated total (${fmt(totalCam)}) differs from declared total (${fmt(declared)}) by ${fmt(Math.abs(totalCam - declared))}`,
+      });
+    }
+  }
+
+  // 2. Invoice total integrity — sum of amounts should be positive
+  const invoiceTotal = invoices.reduce((s, inv) => s + (parseFloat(inv.amount) || 0), 0);
+  if (invoices.length && invoiceTotal <= 0) {
+    issues.push({ type: 'invalid_invoice_total', level: 'error', message: 'Invoice total is zero or negative — check uploaded amounts.' });
+  }
+
+  // 3. Orphaned invoices — invoices with no category assignment
+  const orphaned = invoices.filter(inv => !inv.category || inv.category === 'Uncategorized');
+  if (orphaned.length) {
+    issues.push({ type: 'orphaned_invoices', level: 'warning', message: `${orphaned.length} invoice${orphaned.length > 1 ? 's' : ''} have no category assignment.` });
+  }
+
+  // 4. Missing tenant mappings — results rows with no matching tenant
+  if (results.length && tenants.length) {
+    const tenantNames = new Set(tenants.map(t => (t.tenant_name || '').toLowerCase()));
+    const unmapped = results.filter(r => !tenantNames.has((r.tenantName || '').toLowerCase()));
+    if (unmapped.length) {
+      issues.push({ type: 'missing_tenant_mapping', level: 'warning', message: `${unmapped.length} reconciliation row${unmapped.length > 1 ? 's' : ''} have no matching tenant record.` });
+    }
+  }
+
+  // 5. Duplicate tenant IDs
+  if (tenants.length) {
+    const ids = tenants.map(t => t.id).filter(Boolean);
+    const dups = ids.filter((id, i) => ids.indexOf(id) !== i);
+    if (dups.length) {
+      issues.push({ type: 'duplicate_tenant_ids', level: 'error', message: `${dups.length} duplicate tenant ID${dups.length > 1 ? 's' : ''} detected.` });
+    }
+  }
+
+  // 6. Invalid pro-rata (any tenant with leased_sqft > property sqft)
+  if (prop.totalSqft) {
+    const oversized = tenants.filter(t => (parseFloat(t.leased_sqft) || 0) > (prop.totalSqft || Infinity));
+    if (oversized.length) {
+      issues.push({ type: 'invalid_prorata', level: 'error', message: `${oversized.length} tenant${oversized.length > 1 ? 's have' : ' has'} leased sqft exceeding property total.` });
+    }
+  }
+
+  // 7. Open disputes with no resolution path
+  const openDisps = disps.filter(d => d.status === 'open');
+  if (openDisps.length) {
+    issues.push({ type: 'open_disputes', level: 'warning', message: `${openDisps.length} open dispute${openDisps.length > 1 ? 's' : ''} require resolution.` });
+  }
+
+  // 8. Partial reconciliation state — invoices exist but no CAM run
+  if (invoices.length && !results.length && tenants.length) {
+    issues.push({ type: 'partial_reconciliation', level: 'warning', message: 'Invoices and tenants are loaded but no CAM reconciliation has been run.' });
+  }
+
+  return issues;
+}
+
+// ─── Recovery Modal ──────────────────────────────────────────────────────────
+function openRecoveryModal() {
+  const prop = _props.find(p => p.id === activePropId);
+  let modal = document.getElementById('recoveryModal');
+  if (!modal) return;
+  _buildRecoveryModalBody(prop);
+  modal.style.display = 'flex';
+}
+
+function closeRecoveryModal() {
+  const modal = document.getElementById('recoveryModal');
+  if (modal) modal.style.display = 'none';
+}
+
+function _buildRecoveryModalBody(prop) {
+  const body = document.getElementById('recoveryModalBody');
+  if (!body) return;
+
+  const cpList = _checkpoints[prop?.id] || [];
+  const issues = prop ? checkIntegrity(prop) : [];
+  const errors  = issues.filter(i => i.level === 'error');
+  const warnings = issues.filter(i => i.level === 'warning');
+
+  // ── Sync status section ──
+  const syncHtml = `
+    <div class="rc-section">
+      <div class="rc-section-title">Sync Status</div>
+      <div class="rc-sync-row">
+        <span class="rc-sync-dot rc-sync-dot--${_syncStatus}"></span>
+        <span class="rc-sync-label">${{
+          idle:     'Idle',
+          pending:  'Save in progress…',
+          synced:   'Cloud synced' + (_lastSyncAt ? ` · ${_lastSyncAt.toLocaleTimeString('en-US',{hour:'numeric',minute:'2-digit'})}` : ''),
+          error:    'Sync failed — data saved locally only',
+          conflict: 'Conflict detected',
+          recovery: 'Recovery available',
+        }[_syncStatus] || _syncStatus}</span>
+      </div>
+    </div>`;
+
+  // ── Integrity section ──
+  let integrityRows = '';
+  if (issues.length === 0) {
+    integrityRows = '<div class="rc-integrity-ok">✓ No integrity issues found</div>';
+  } else {
+    integrityRows = issues.map(iss => `
+      <div class="rc-issue rc-issue--${iss.level}">
+        <span class="rc-issue-icon">${iss.level === 'error' ? '✕' : '⚠'}</span>
+        <span class="rc-issue-msg">${iss.message}</span>
+      </div>`).join('');
+  }
+  const integrityHtml = `
+    <div class="rc-section">
+      <div class="rc-section-title">Data Integrity
+        <span class="rc-badge ${errors.length ? 'rc-badge--error' : warnings.length ? 'rc-badge--warn' : 'rc-badge--ok'}">
+          ${errors.length ? errors.length + ' error' + (errors.length > 1 ? 's' : '') : warnings.length ? warnings.length + ' warning' + (warnings.length > 1 ? 's' : '') : 'Clean'}
+        </span>
+      </div>
+      ${integrityRows}
+      ${issues.length ? `<button class="rc-action-btn" onclick="rebuildReconciliationState()">↺ Rebuild Reconciliation State</button>` : ''}
+    </div>`;
+
+  // ── Checkpoints section ──
+  let cpRows = '';
+  if (cpList.length === 0) {
+    cpRows = '<div class="rc-no-cp">No checkpoints saved yet. Checkpoints are captured automatically before major operations.</div>';
+  } else {
+    cpRows = cpList.map((cp, i) => {
+      const d = new Date(cp.ts);
+      const label = cp.label || 'Checkpoint';
+      const ts = d.toLocaleDateString('en-US', { month: 'short', day: 'numeric', year: 'numeric' })
+               + ' ' + d.toLocaleTimeString('en-US', { hour: 'numeric', minute: '2-digit' });
+      return `
+        <div class="rc-cp-row">
+          <div class="rc-cp-info">
+            <span class="rc-cp-label">${label}</span>
+            <span class="rc-cp-ts">${ts}</span>
+          </div>
+          <button class="rc-restore-btn" onclick="restoreCheckpoint(${i})">Restore</button>
+        </div>`;
+    }).join('');
+  }
+  const cpHtml = `
+    <div class="rc-section">
+      <div class="rc-section-title">Checkpoint History <span class="rc-cp-count">${cpList.length}/5</span></div>
+      ${cpRows}
+    </div>`;
+
+  // ── Export section ──
+  const exportHtml = `
+    <div class="rc-section">
+      <div class="rc-section-title">Export Backup</div>
+      <p class="rc-export-desc">Download a full JSON backup of this property's data (invoices, tenants, reconciliation, disputes, activity log).</p>
+      <button class="rc-action-btn rc-export-btn" onclick="exportPropertyBackup()">⬇ Export Property Backup</button>
+    </div>`;
+
+  body.innerHTML = syncHtml + integrityHtml + cpHtml + exportHtml;
+}
+
+function restoreCheckpoint(index) {
+  const cpList = _checkpoints[activePropId];
+  if (!cpList || !cpList[index]) return;
+  const cp = cpList[index];
+  const d  = new Date(cp.ts);
+  const ts = d.toLocaleDateString('en-US', { month: 'short', day: 'numeric' }) + ' at ' + d.toLocaleTimeString('en-US', { hour: 'numeric', minute: '2-digit' });
+  if (!confirm(`Restore checkpoint "${cp.label}" from ${ts}?\n\nThis will overwrite current unsaved changes.`)) return;
+
+  const snap = cp.snapshot;
+  const propIdx = _props.findIndex(p => p.id === activePropId);
+  if (propIdx === -1) return;
+
+  Object.assign(_props[propIdx], snap);
+  closeRecoveryModal();
+
+  // Reload UI from restored snapshot
+  renderProperty(_props[propIdx]);
+  _setSyncStatus('pending');
+  savePropertyData();
+
+  const banner = document.createElement('div');
+  banner.style.cssText = 'position:fixed;top:16px;left:50%;transform:translateX(-50%);z-index:9999;background:#1e3a5f;color:#93c5fd;padding:10px 20px;border-radius:10px;font-size:0.85rem;font-weight:600;box-shadow:0 4px 20px rgba(0,0,0,.5);pointer-events:none;white-space:nowrap;';
+  banner.textContent = `↩ Checkpoint restored — ${cp.label}`;
+  document.body.appendChild(banner);
+  setTimeout(() => banner.remove(), 4000);
+}
+
+function exportPropertyBackup() {
+  const prop = _props.find(p => p.id === activePropId);
+  if (!prop) return;
+  const backup = {
+    exportedAt: new Date().toISOString(),
+    appVersion: 'mainstreet-v1',
+    property:   _stripBlobs({ ...prop, activityLog: [...activityLog] }),
+    checkpoints: _checkpoints[activePropId] || [],
+  };
+  const blob = new Blob([JSON.stringify(backup, null, 2)], { type: 'application/json' });
+  const url  = URL.createObjectURL(blob);
+  const a    = document.createElement('a');
+  const safeName = (prop.name || 'property').replace(/[^a-z0-9]/gi, '_').toLowerCase();
+  a.href = url;
+  a.download = `mainstreet_backup_${safeName}_${new Date().toISOString().slice(0, 10)}.json`;
+  document.body.appendChild(a);
+  a.click();
+  a.remove();
+  URL.revokeObjectURL(url);
+}
+
+function rebuildReconciliationState() {
+  const prop = _props.find(p => p.id === activePropId);
+  if (!prop) return;
+  closeRecoveryModal();
+  // Reload the property to re-hydrate all globals from canonical storage
+  renderProperty(prop);
+  // Re-run if results exist
+  if ((prop.camReconciliation ?? prop.results)?.results?.length) {
+    restoreResults(prop);
+  }
+  const banner = document.createElement('div');
+  banner.style.cssText = 'position:fixed;top:16px;left:50%;transform:translateX(-50%);z-index:9999;background:#134e4a;color:#99f6e4;padding:10px 20px;border-radius:10px;font-size:0.85rem;font-weight:600;box-shadow:0 4px 20px rgba(0,0,0,.5);pointer-events:none;white-space:nowrap;';
+  banner.textContent = '↺ Reconciliation state rebuilt from saved data';
+  document.body.appendChild(banner);
+  setTimeout(() => banner.remove(), 4000);
 }
 
 // ─── SHA-256 (Web Crypto — no library needed) ─────────────────────────────────
@@ -8530,12 +8849,14 @@ async function saveProperty(property) {
     // at upload completion and on user actions (Done, Remove, Clear All) only.
     // Calling it here caused duplicate inserts: saveProperty runs per file
     // processed, so 5 uploads × 5 cumulative rows = 15 DB rows from one session.
+    _setSyncStatus('synced');
   } catch (e) {
     const msg = e?.message || String(e);
     const isNetErr  = /load failed|failed to fetch|networkerror|offline/i.test(msg);
 
     if (isNetErr) return;
 
+    _setSyncStatus('error');
     console.error('[Mainstreet] saveProperty error:', msg, e);
 
     const prev = document.getElementById('_saveErrToast');
@@ -8591,6 +8912,7 @@ async function savePropertyData() {
 
   // Debounce: collapse rapid successive saves (e.g. per-keystroke field edits)
   // into a single DB write 800 ms after the last call.
+  _setSyncStatus('pending');
   clearTimeout(_saveDebounceTimer);
   _saveDebounceTimer = setTimeout(() => saveProperty(prop), 800);
 }
@@ -9008,6 +9330,7 @@ function showRestoredBanner() {
 
 // ─── Init ─────────────────────────────────────────────────────────────────────
 async function init() {
+  _loadCheckpoints();
   try {
     const properties = await loadProperties();
     _props = properties || [];

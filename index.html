@@ -828,6 +828,124 @@
     }
     .breadcrumb-clear-btn:hover { background: rgba(239,68,68,0.18); border-color: #ef4444; }
 
+    /* ── Sync Indicator ─────────────────────────────────────────────── */
+    .sync-indicator {
+      display: inline-flex; align-items: center; gap: 5px;
+      font-size: 0.74rem; font-weight: 600; padding: 4px 9px;
+      border-radius: 6px; border: 1px solid transparent;
+      transition: all 0.2s; white-space: nowrap;
+    }
+    .si-icon { font-size: 0.8rem; }
+    .si-label { letter-spacing: 0.01em; }
+    .si-pending { color: #FBBF24; background: rgba(251,191,36,0.1); border-color: rgba(251,191,36,0.25); animation: si-pulse 1.2s ease-in-out infinite; }
+    .si-synced  { color: #34D399; background: rgba(52,211,153,0.1); border-color: rgba(52,211,153,0.2); }
+    .si-error   { color: #F87171; background: rgba(248,113,113,0.1); border-color: rgba(248,113,113,0.25); }
+    .si-conflict{ color: #C084FC; background: rgba(192,132,252,0.1); border-color: rgba(192,132,252,0.25); }
+    .si-recovery{ color: #60A5FA; background: rgba(96,165,250,0.1); border-color: rgba(96,165,250,0.25); }
+    @keyframes si-pulse { 0%,100%{opacity:1} 50%{opacity:0.5} }
+
+    /* ── Recovery Center button ─────────────────────────────────────── */
+    .rc-open-btn {
+      padding: 5px 11px; border-radius: 7px; font-size: 0.75rem; font-weight: 600;
+      cursor: pointer; border: 1px solid rgba(96,165,250,0.3);
+      background: rgba(96,165,250,0.08); color: #60A5FA; transition: all 0.15s;
+      white-space: nowrap;
+    }
+    .rc-open-btn:hover { background: rgba(96,165,250,0.18); border-color: #60A5FA; }
+
+    /* ── Recovery Modal ─────────────────────────────────────────────── */
+    #recoveryModal {
+      position: fixed; inset: 0; background: rgba(0,0,0,0.65);
+      display: none; align-items: center; justify-content: center;
+      z-index: 1200; padding: 16px;
+    }
+    .rc-modal-box {
+      background: #111827; border: 1px solid rgba(255,255,255,0.1);
+      border-radius: 14px; width: 100%; max-width: 540px; max-height: 88vh;
+      overflow: hidden; display: flex; flex-direction: column;
+      box-shadow: 0 20px 60px rgba(0,0,0,0.7);
+    }
+    .rc-modal-header {
+      display: flex; align-items: center; gap: 10px;
+      padding: 18px 20px 16px; border-bottom: 1px solid rgba(255,255,255,0.08);
+      flex-shrink: 0;
+    }
+    .rc-modal-title { font-size: 1rem; font-weight: 700; color: #E2E8F0; flex: 1; }
+    .rc-modal-close {
+      width: 28px; height: 28px; border: none; background: rgba(255,255,255,0.06);
+      border-radius: 6px; color: #94A3B8; font-size: 1rem; cursor: pointer;
+      display: flex; align-items: center; justify-content: center;
+      transition: all 0.15s;
+    }
+    .rc-modal-close:hover { background: rgba(255,255,255,0.12); color: #E2E8F0; }
+    #recoveryModalBody {
+      overflow-y: auto; padding: 0 20px 20px; flex: 1;
+    }
+    .rc-section {
+      margin-top: 20px; padding-bottom: 20px;
+      border-bottom: 1px solid rgba(255,255,255,0.06);
+    }
+    .rc-section:last-child { border-bottom: none; }
+    .rc-section-title {
+      font-size: 0.78rem; font-weight: 700; color: #94A3B8;
+      text-transform: uppercase; letter-spacing: 0.06em;
+      margin-bottom: 12px; display: flex; align-items: center; gap: 8px;
+    }
+    .rc-sync-row { display: flex; align-items: center; gap: 10px; }
+    .rc-sync-dot {
+      width: 9px; height: 9px; border-radius: 50%; flex-shrink: 0;
+    }
+    .rc-sync-dot--idle     { background: #475569; }
+    .rc-sync-dot--pending  { background: #FBBF24; animation: si-pulse 1.2s infinite; }
+    .rc-sync-dot--synced   { background: #34D399; }
+    .rc-sync-dot--error    { background: #F87171; }
+    .rc-sync-dot--conflict { background: #C084FC; }
+    .rc-sync-dot--recovery { background: #60A5FA; }
+    .rc-sync-label { font-size: 0.84rem; color: #CBD5E1; }
+    .rc-badge {
+      font-size: 0.68rem; font-weight: 700; padding: 2px 7px;
+      border-radius: 10px; text-transform: none; letter-spacing: 0;
+    }
+    .rc-badge--ok      { background: rgba(52,211,153,0.15); color: #34D399; }
+    .rc-badge--warn    { background: rgba(251,191,36,0.15); color: #FBBF24; }
+    .rc-badge--error   { background: rgba(248,113,113,0.15); color: #F87171; }
+    .rc-integrity-ok { font-size: 0.84rem; color: #34D399; padding: 6px 0; }
+    .rc-issue {
+      display: flex; align-items: flex-start; gap: 8px;
+      font-size: 0.82rem; padding: 7px 10px; border-radius: 7px;
+      margin-bottom: 6px;
+    }
+    .rc-issue--error   { background: rgba(248,113,113,0.1); color: #FCA5A5; }
+    .rc-issue--warning { background: rgba(251,191,36,0.08); color: #FDE68A; }
+    .rc-issue-icon { flex-shrink: 0; font-size: 0.75rem; margin-top: 1px; }
+    .rc-issue-msg  { line-height: 1.4; }
+    .rc-no-cp { font-size: 0.82rem; color: #64748B; line-height: 1.5; }
+    .rc-cp-row {
+      display: flex; align-items: center; gap: 10px;
+      padding: 9px 12px; border-radius: 8px; margin-bottom: 6px;
+      background: rgba(255,255,255,0.03); border: 1px solid rgba(255,255,255,0.06);
+    }
+    .rc-cp-info { flex: 1; min-width: 0; }
+    .rc-cp-label { font-size: 0.83rem; color: #CBD5E1; font-weight: 600; display: block; }
+    .rc-cp-ts    { font-size: 0.75rem; color: #64748B; }
+    .rc-cp-count { font-size: 0.72rem; color: #64748B; font-weight: 500; text-transform: none; letter-spacing: 0; }
+    .rc-restore-btn {
+      padding: 5px 12px; border-radius: 6px; font-size: 0.74rem; font-weight: 600;
+      cursor: pointer; border: 1px solid rgba(96,165,250,0.3);
+      background: rgba(96,165,250,0.08); color: #60A5FA;
+      white-space: nowrap; transition: all 0.15s; flex-shrink: 0;
+    }
+    .rc-restore-btn:hover { background: rgba(96,165,250,0.18); border-color: #60A5FA; }
+    .rc-action-btn {
+      margin-top: 10px; padding: 8px 16px; border-radius: 8px; font-size: 0.8rem;
+      font-weight: 600; cursor: pointer; border: 1px solid rgba(255,255,255,0.12);
+      background: rgba(255,255,255,0.05); color: #CBD5E1; transition: all 0.15s;
+    }
+    .rc-action-btn:hover { background: rgba(255,255,255,0.1); }
+    .rc-export-btn { border-color: rgba(52,211,153,0.3); color: #34D399; background: rgba(52,211,153,0.06); }
+    .rc-export-btn:hover { background: rgba(52,211,153,0.14); }
+    .rc-export-desc { font-size: 0.8rem; color: #64748B; line-height: 1.5; margin-bottom: 0; }
+
     /* ── Lease Upload Tabs ───────────────────────────────────────────── */
     .lease-tab-bar {
       display: flex; gap: 0; margin-bottom: 18px;
@@ -2137,7 +2255,20 @@
 <div id="propertyBreadcrumb">
   <button class="breadcrumb-back" onclick="backToPortfolio()">&#x2190; Back to Portfolio</button>
   <span class="breadcrumb-path">Portfolio &rsaquo; <span id="breadcrumbPropName"></span></span>
+  <div id="syncIndicator" class="sync-indicator"></div>
+  <button class="rc-open-btn" onclick="openRecoveryModal()" title="Recovery Center">&#x1F512; Recovery</button>
   <button class="breadcrumb-clear-btn" onclick="clearPropertyData()" title="Remove saved tenants, invoices &amp; results for this property">&#x1F5D1; Clear Property Data</button>
+</div>
+
+<!-- ── Recovery Center Modal ────────────────────────────────────────────── -->
+<div id="recoveryModal" onclick="if(event.target===this)closeRecoveryModal()">
+  <div class="rc-modal-box">
+    <div class="rc-modal-header">
+      <span class="rc-modal-title">&#x1F512; Recovery Center</span>
+      <button class="rc-modal-close" onclick="closeRecoveryModal()">&#x2715;</button>
+    </div>
+    <div id="recoveryModalBody"></div>
+  </div>
 </div>
 
 <div class="container" id="mainWorkflow" style="display:none;">
