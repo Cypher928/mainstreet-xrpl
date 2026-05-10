@@ -4191,9 +4191,21 @@ async function runAllocation() {
     tenantCount:   fullResults.length,
     invoiceCount:  invoices.length,
     results:       fullResults.map(r => ({ ...r })),
+    sqft:          parseFloat(currentProperty()?.totalSqft || currentProperty()?.totalSqFt) || 0,
+    categories:    invoices.reduce((m, inv) => {
+      const k = (inv.category || 'other').toLowerCase();
+      m[k] = (m[k] || 0) + (parseFloat(inv.amount) || 0);
+      return m;
+    }, {}),
+    vendors:       invoices.reduce((m, inv) => {
+      const k = (inv.vendor || inv.vendorName || '').toLowerCase().trim();
+      if (k) m[k] = (m[k] || 0) + (parseFloat(inv.amount) || 0);
+      return m;
+    }, {}),
   });
   renderPreviousRuns();
   renderAuditPanel();
+  renderHistoricalTrendsPanel();
 
   renderDisputeSection();
   showReportSection(); // refresh notice + tenant buttons
@@ -5800,6 +5812,250 @@ function renderAuditPanel() {
       ${flagSection(red,    'red',    'Red Flags')}
       ${flagSection(yellow, 'yellow', 'Yellow Flags')}
       ${flagSection(green,  'green',  'Green Flags')}
+    </div>`;
+
+  section.appendChild(panel);
+}
+
+// ─── Historical Trends ────────────────────────────────────────────────────────
+
+function buildHistoricalTrends() {
+  if (camRuns.length < 2) return null;
+
+  const curr  = camRuns[0];
+  // Find the most recent prior run for the same property with a different year
+  const prior = camRuns.slice(1).find(r =>
+    r.propName === curr.propName && r.camYear !== curr.camYear
+  ) || camRuns.slice(1).find(r => r.propName === curr.propName);
+  if (!prior) return null;
+
+  const currYear  = curr.camYear  || 'Current';
+  const priorYear = prior.camYear || 'Prior';
+  const trends    = [];
+
+  // ── Total Expenses trend ───────────────────────────────────────────────────
+  if (curr.totalExpenses > 0 && prior.totalExpenses > 0) {
+    const diff    = curr.totalExpenses - prior.totalExpenses;
+    const pct     = (diff / prior.totalExpenses) * 100;
+    const absPct  = Math.abs(pct);
+    trends.push({
+      type:      'total',
+      label:     'Total CAM Expenses',
+      currVal:   curr.totalExpenses,
+      priorVal:  prior.totalExpenses,
+      diff,
+      pct,
+      direction: diff > 0 ? 'up' : diff < 0 ? 'down' : 'flat',
+      severity:  absPct >= 15 ? 'red' : absPct >= 7 ? 'yellow' : 'green',
+      note:      absPct >= 15
+        ? `${absPct.toFixed(1)}% YoY increase exceeds the 15% materiality threshold — warrants landlord explanation.`
+        : absPct >= 7
+        ? `${absPct.toFixed(1)}% YoY change — moderate variance, review category drivers.`
+        : `${absPct.toFixed(1)}% YoY change — within normal range.`,
+    });
+  }
+
+  // ── Cost per sqft trend ────────────────────────────────────────────────────
+  const currSqft  = curr.sqft  || 0;
+  const priorSqft = prior.sqft || 0;
+  if (currSqft > 0 && priorSqft > 0 && curr.totalExpenses > 0 && prior.totalExpenses > 0) {
+    const currCpSf  = curr.totalExpenses  / currSqft;
+    const priorCpSf = prior.totalExpenses / priorSqft;
+    const diff      = currCpSf - priorCpSf;
+    const pct       = (diff / priorCpSf) * 100;
+    const absPct    = Math.abs(pct);
+    trends.push({
+      type:      'sqft',
+      label:     'Cost per Sqft',
+      currVal:   currCpSf,
+      priorVal:  priorCpSf,
+      diff,
+      pct,
+      direction: diff > 0 ? 'up' : diff < 0 ? 'down' : 'flat',
+      severity:  absPct >= 15 ? 'red' : absPct >= 7 ? 'yellow' : 'green',
+      note:      `${fmt(currCpSf)}/sqft vs ${fmt(priorCpSf)}/sqft prior year.`,
+      isCpSf:    true,
+    });
+  }
+
+  // ── Per-category trends ────────────────────────────────────────────────────
+  const currCats  = curr.categories  || {};
+  const priorCats = prior.categories || {};
+  if (Object.keys(currCats).length > 0 && Object.keys(priorCats).length > 0) {
+    // Categories present in prior but missing now
+    Object.keys(priorCats).forEach(cat => {
+      if (!currCats[cat] && priorCats[cat] > 500) {
+        trends.push({
+          type:      'category',
+          label:     `Category: ${cat.charAt(0).toUpperCase() + cat.slice(1)}`,
+          currVal:   0,
+          priorVal:  priorCats[cat],
+          diff:      -priorCats[cat],
+          pct:       -100,
+          direction: 'down',
+          severity:  'yellow',
+          note:      `${cat} (${fmt(priorCats[cat])}) present in ${priorYear} but absent in ${currYear} — confirm category was legitimately removed or reclassified.`,
+        });
+      }
+    });
+
+    // Significant spikes in existing categories
+    Object.keys(currCats).forEach(cat => {
+      const c = currCats[cat]  || 0;
+      const p = priorCats[cat] || 0;
+      if (p < 100) return; // ignore categories with tiny prior-year base
+      const diff   = c - p;
+      const pct    = (diff / p) * 100;
+      const absPct = Math.abs(pct);
+      if (absPct >= 20) {
+        trends.push({
+          type:      'category',
+          label:     `Category: ${cat.charAt(0).toUpperCase() + cat.slice(1)}`,
+          currVal:   c,
+          priorVal:  p,
+          diff,
+          pct,
+          direction: diff > 0 ? 'up' : 'down',
+          severity:  absPct >= 40 ? 'red' : 'yellow',
+          note:      `${absPct.toFixed(0)}% YoY ${diff > 0 ? 'increase' : 'decrease'} — ${fmt(c)} vs ${fmt(p)} prior year.${absPct >= 40 ? ' Potential controllable CAM cap exposure.' : ''}`,
+        });
+      }
+    });
+  }
+
+  // ── New vendor detection ───────────────────────────────────────────────────
+  const currVendors  = curr.vendors  || {};
+  const priorVendors = prior.vendors || {};
+  if (Object.keys(currVendors).length > 0 && Object.keys(priorVendors).length > 0) {
+    const newVendors = Object.keys(currVendors).filter(v =>
+      !priorVendors[v] && currVendors[v] >= 1000
+    );
+    if (newVendors.length > 0) {
+      const topNew = newVendors
+        .sort((a, b) => currVendors[b] - currVendors[a])
+        .slice(0, 3);
+      trends.push({
+        type:      'vendor',
+        label:     `New Vendor${topNew.length > 1 ? 's' : ''} Detected`,
+        currVal:   null,
+        priorVal:  null,
+        direction: 'up',
+        severity:  topNew.some(v => currVendors[v] >= 5000) ? 'yellow' : 'green',
+        note:      `${newVendors.length} new vendor${newVendors.length > 1 ? 's' : ''} not present in ${priorYear}: ${topNew.map(v => `${v} (${fmt(currVendors[v])})`).join(', ')}${newVendors.length > 3 ? ` +${newVendors.length - 3} more` : ''}.`,
+        vendors:   topNew,
+      });
+    }
+
+    // Recurring vendors that disappeared
+    const goneVendors = Object.keys(priorVendors).filter(v =>
+      !currVendors[v] && priorVendors[v] >= 2000
+    );
+    if (goneVendors.length > 0) {
+      const topGone = goneVendors
+        .sort((a, b) => priorVendors[b] - priorVendors[a])
+        .slice(0, 3);
+      trends.push({
+        type:      'vendor',
+        label:     `Recurring Vendor${topGone.length > 1 ? 's' : ''} Missing`,
+        currVal:   null,
+        priorVal:  null,
+        direction: 'down',
+        severity:  'yellow',
+        note:      `${goneVendors.length} vendor${goneVendors.length > 1 ? 's' : ''} from ${priorYear} absent in ${currYear}: ${topGone.map(v => `${v} (${fmt(priorVendors[v])})`).join(', ')}${goneVendors.length > 3 ? ` +${goneVendors.length - 3} more` : ''}.`,
+      });
+    }
+  }
+
+  // ── Tenant count change ────────────────────────────────────────────────────
+  if (curr.tenantCount !== prior.tenantCount) {
+    const diff = curr.tenantCount - prior.tenantCount;
+    trends.push({
+      type:      'tenant',
+      label:     'Tenant Count',
+      currVal:   curr.tenantCount,
+      priorVal:  prior.tenantCount,
+      diff,
+      pct:       (diff / Math.max(prior.tenantCount, 1)) * 100,
+      direction: diff > 0 ? 'up' : 'down',
+      severity:  'yellow',
+      note:      `${Math.abs(diff)} tenant${Math.abs(diff) > 1 ? 's' : ''} ${diff > 0 ? 'added' : 'removed'} since ${priorYear} — verify pro-rata denominators reflect current lease roll.`,
+    });
+  }
+
+  return { trends, currYear, priorYear };
+}
+
+function renderHistoricalTrendsPanel() {
+  const prev = document.getElementById('trendsPanel');
+  if (prev) prev.remove();
+
+  const section = document.getElementById('results');
+  if (!section || !lastResults.length) return;
+
+  const data = buildHistoricalTrends();
+  if (!data || data.trends.length === 0) return;
+
+  const { trends, currYear, priorYear } = data;
+
+  const dirIcon = t => {
+    if (t.direction === 'up')   return '<span class="ht-dir ht-dir--up">&#x2191;</span>';
+    if (t.direction === 'down') return '<span class="ht-dir ht-dir--down">&#x2193;</span>';
+    return '<span class="ht-dir ht-dir--flat">&#x25CF;</span>';
+  };
+
+  const valDisplay = t => {
+    if (t.type === 'vendor') return '';
+    if (t.isCpSf) {
+      return `<span class="ht-vals">${fmt(t.currVal)}/sqft <span class="ht-sep">vs</span> ${fmt(t.priorVal)}/sqft</span>`;
+    }
+    if (t.type === 'tenant') {
+      return `<span class="ht-vals">${t.currVal} <span class="ht-sep">vs</span> ${t.priorVal}</span>`;
+    }
+    const sign = t.diff > 0 ? '+' : '';
+    const pctStr = t.pct != null ? ` (${sign}${t.pct.toFixed(1)}%)` : '';
+    return `<span class="ht-vals">${fmt(t.currVal)} <span class="ht-sep">vs</span> ${fmt(t.priorVal)}${pctStr}</span>`;
+  };
+
+  const rows = trends.map(t => `
+    <div class="ht-row ht-row--${t.severity}">
+      <div class="ht-row-left">
+        ${dirIcon(t)}
+        <div class="ht-row-text">
+          <div class="ht-row-label">${esc(t.label)}</div>
+          ${valDisplay(t)}
+        </div>
+      </div>
+      <div class="ht-row-note">${esc(t.note)}</div>
+    </div>`).join('');
+
+  const redCount    = trends.filter(t => t.severity === 'red').length;
+  const yellowCount = trends.filter(t => t.severity === 'yellow').length;
+  const greenCount  = trends.filter(t => t.severity === 'green').length;
+
+  const badge = (n, color) => n > 0
+    ? `<span class="ap-badge ap-badge--${color}">${n}</span>`
+    : '';
+
+  const panel = document.createElement('div');
+  panel.id        = 'trendsPanel';
+  panel.className = 'ap-panel';
+  panel.innerHTML = `
+    <div class="ap-header" onclick="
+      document.getElementById('htBody').classList.toggle('ap-body--open');
+      this.querySelector('.ap-chevron').classList.toggle('ap-chevron--open');
+    ">
+      <div class="ap-header-left">
+        <span class="ap-title">&#x1F4C8;&nbsp; Historical Trends &mdash; ${esc(String(priorYear))} &rarr; ${esc(String(currYear))}</span>
+      </div>
+      <div class="ap-header-right">
+        ${badge(redCount, 'red')}
+        ${badge(yellowCount, 'yellow')}
+        ${badge(greenCount, 'green')}
+        <span class="ap-chevron">&#x25BC;</span>
+      </div>
+    </div>
+    <div id="htBody" class="ap-body ap-body--open">
+      <div class="ht-rows">${rows}</div>
     </div>`;
 
   section.appendChild(panel);
@@ -7994,6 +8250,7 @@ function renderProperty(property) {
       renderDisputeSection();
       renderPreviousRuns();
       renderAuditPanel();
+      renderHistoricalTrendsPanel();
       showReportSection();
       restored = true;
     }
