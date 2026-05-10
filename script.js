@@ -5279,15 +5279,17 @@ function _detectInvoiceSuspicions(invoices) {
   Object.values(exactMap).forEach(group => {
     if (group.length < 2) return;
     group.forEach(r => exactFlaggedIdx.add(r.idx));
+    const dupTotal = group[0].amount * (group.length - 1);
     flags.push({
       severity:   'red',
-      title:      `Exact duplicate invoice: "${group[0].displayVendor}" — identical vendor, amount, and date (×${group.length})`,
+      title:      `Exact duplicate invoice: "${group[0].displayVendor}" — ${fmt(group[0].amount)} on ${group[0].date} appears ${group.length} times`,
+      detail:     `This invoice is listed ${group.length} times with identical vendor, amount, and date. If billed as-is, ${group.length - 1} charge${group.length > 2 ? 's' : ''} (${fmt(dupTotal)}) would be overbilled. Remove all but one entry before billing tenants.`,
       conditions: [
         `Vendor: "${group[0].displayVendor}"`,
-        `Amount: ${fmt(group[0].amount)}`,
+        `Amount per record: ${fmt(group[0].amount)}`,
         `Date: ${group[0].date}`,
-        `Appears ${group.length} times in invoice list`,
-        'Only one charge should be valid',
+        `Occurrences: ${group.length} (${group.length - 1} excess)`,
+        `Overbilling risk: ${fmt(dupTotal)} if all records are billed`,
       ],
     });
   });
@@ -5308,12 +5310,13 @@ function _detectInvoiceSuspicions(invoices) {
         flags.push({
           severity:   'yellow',
           title:      `Possible duplicate: "${dated[i].displayVendor}" billed ${fmt(dated[i].amount)} twice within ${daysDiff} day${daysDiff === 1 ? '' : 's'}`,
+          detail:     `Same vendor and amount appearing ${daysDiff} day${daysDiff === 1 ? '' : 's'} apart. Monthly services are typically billed once per period — confirm whether both charges represent distinct services or whether one is a duplicate submission.`,
           conditions: [
             `Vendor: "${dated[i].displayVendor}"`,
             `Amount: ${fmt(dated[i].amount)} (identical on both invoices)`,
             `Invoice date 1: ${dated[i].date}`,
             `Invoice date 2: ${dated[i + 1].date}`,
-            `Gap: ${daysDiff} day${daysDiff === 1 ? '' : 's'} apart (threshold: 7 days)`,
+            `Gap: ${daysDiff} day${daysDiff === 1 ? '' : 's'} (threshold for review: ≤7 days)`,
           ],
         });
         break; // one flag per vendor+amount pair is enough
@@ -5329,13 +5332,16 @@ function _detectInvoiceSuspicions(invoices) {
   });
   Object.values(urlMap).forEach(group => {
     if (group.length < 2) return;
+    const totalAmt = group.reduce((s, r) => s + r.amount, 0);
     flags.push({
       severity:   'red',
       title:      `Same source document linked to ${group.length} separate invoice records`,
+      detail:     `One file attachment is associated with ${group.length} distinct invoice entries totalling ${fmt(totalAmt)}. A single document cannot substantiate multiple separate charges — this indicates either a data entry error or potential double-billing.`,
       conditions: [
-        `Shared file URL across ${group.length} records`,
+        `Shared attachment used across ${group.length} records`,
+        `Combined billed amount: ${fmt(totalAmt)}`,
         ...group.slice(0, 4).map(r => `Record: "${r.displayVendor}" — ${fmt(r.amount)}`),
-        'A single file should not represent multiple distinct charges',
+        'Each invoice entry must reference a unique source document',
       ],
     });
   });
@@ -5357,12 +5363,13 @@ function _detectInvoiceSuspicions(invoices) {
     const uniqueVendors = [...new Set(group.map(r => r.displayVendor))];
     flags.push({
       severity:   'yellow',
-      title:      `Filename "${fn}" appears on ${group.length} invoice records with the same amount`,
+      title:      `Filename "${fn}" with amount ${fmt(group[0].amount)} appears on ${group.length} invoice records`,
+      detail:     `Matching filename and amount across ${group.length} records may indicate the same file was uploaded multiple times under different entries. Confirm that each record references a distinct, original invoice document.`,
       conditions: [
         `Filename: "${fn}"`,
-        `Amount: ${fmt(group[0].amount)} (identical on all records)`,
+        `Amount: ${fmt(group[0].amount)} (same on all ${group.length} records)`,
         `Vendors: ${uniqueVendors.join(', ')}`,
-        'Confirm these are distinct documents, not duplicate uploads',
+        'Verify these are distinct invoices and not duplicate uploads of the same file',
       ],
     });
   });
@@ -5378,14 +5385,16 @@ function _detectInvoiceSuspicions(invoices) {
     for (let i = 0; i <= sorted.length - 3; i++) {
       const win = sorted.filter(e => e.ts >= sorted[i].ts && e.ts <= sorted[i].ts + 5 * DAY_MS);
       if (win.length >= 3) {
+        const winTotal = win.reduce((s, e) => s + e.amount, 0);
         flags.push({
           severity:   'yellow',
-          title:      `"${win[0].displayVendor}" billed ${win.length} times within 5 days`,
+          title:      `"${win[0].displayVendor}" billed ${win.length} times within 5 days (${fmt(winTotal)} total)`,
+          detail:     `${win.length} invoices from "${win[0].displayVendor}" fall within a single 5-day window. While some vendors bill for multiple events (e.g. emergency calls), this pattern can indicate split invoicing to avoid approval thresholds or duplicate submissions. Obtain itemized backup for each charge.`,
           conditions: [
             `Vendor: "${win[0].displayVendor}"`,
             `${win.length} invoices within a 5-day window`,
+            `Combined total in window: ${fmt(winTotal)}`,
             ...win.map(e => `Invoice: ${e.date} — ${fmt(e.amount)}`),
-            'Review for split invoicing, billing errors, or duplicate submissions',
           ],
         });
         break;
@@ -5404,12 +5413,13 @@ function _detectInvoiceSuspicions(invoices) {
     if (amt % 100 !== 0) return; // only flag suspiciously round amounts
     flags.push({
       severity:   'yellow',
-      title:      `${vendorSet.size} different vendors each billed the same round amount (${fmt(amt)})`,
+      title:      `${vendorSet.size} unrelated vendors each invoiced the same round amount (${fmt(amt)})`,
+      detail:     `Identical round-number amounts from ${vendorSet.size} different vendors is statistically uncommon for independent services. This may indicate estimated or placeholder billing rather than actual cost invoices. Request itemized backup for each charge.`,
       conditions: [
-        `Amount: ${fmt(amt)} (round number — divisible by 100)`,
-        `${vendorSet.size} distinct vendors`,
+        `Shared amount: ${fmt(amt)} (round number, divisible by 100)`,
+        `${vendorSet.size} distinct vendors at this exact amount`,
         `Vendors: ${[...vendorSet].join(', ')}`,
-        'Identical round amounts across unrelated vendors may indicate errors or coordination',
+        'Legitimate invoices typically reflect actual variable costs, not uniform round numbers',
       ],
     });
   });
@@ -5435,16 +5445,19 @@ function buildAuditSummary() {
       if (!inv) return;
       const amt = parseFloat(inv.amount) || 0;
       if (amt > thresh) {
-        const pct = ((amt / total) * 100).toFixed(1);
+        const pct     = ((amt / total) * 100).toFixed(1);
+        const excess  = fmt(amt - thresh);
+        const vendor  = inv.vendor || inv.vendorName || 'Unknown';
         red.push({
           group:  'red_flags',
-          title:  `Unusually large invoice — ${inv.vendor || inv.vendorName || 'Unknown'}: ${fmt(amt)} (${pct}% of total CAM)`,
-          detail: 'A single invoice represents over 40% of total expenses. Verify this charge is not an error.',
+          title:  `Unusually large invoice — ${vendor}: ${fmt(amt)} (${pct}% of total CAM)`,
+          detail: `This invoice represents ${pct}% of total CAM expenses (${fmt(amt)} of ${fmt(total)}), exceeding the 40% materiality threshold by ${excess}. A single vendor accounting for more than 40% of the total expense pool warrants independent verification before billing.`,
           conditions: [
-            `Vendor: "${inv.vendor || inv.vendorName || 'Unknown'}"`,
+            `Vendor: "${vendor}"`,
             `Invoice amount: ${fmt(amt)}`,
-            `Total CAM expenses: ${fmt(total)}`,
-            `Proportion: ${pct}% of total (threshold: >40%)`,
+            `Total CAM pool: ${fmt(total)}`,
+            `Concentration: ${pct}% (threshold: 40%)`,
+            `Dollar excess above threshold: ${excess}`,
           ],
         });
       }
@@ -5459,20 +5472,37 @@ function buildAuditSummary() {
     if (years.length >= 2) {
       const curr = byYear[years[0]], prev = byYear[years[1]];
       if (curr.totalExpenses && prev.totalExpenses) {
-        const pct = ((curr.totalExpenses - prev.totalExpenses) / prev.totalExpenses) * 100;
-        const dir = pct > 0 ? 'increased' : 'decreased';
+        const pct    = ((curr.totalExpenses - prev.totalExpenses) / prev.totalExpenses) * 100;
+        const absDiff = curr.totalExpenses - prev.totalExpenses;
+        const dir    = pct > 0 ? 'increased' : 'decreased';
         const detail = `${years[1]}: ${fmt(prev.totalExpenses)} → ${years[0]}: ${fmt(curr.totalExpenses)}`;
         const yoyConditions = [
           `Previous year (${years[1]}): ${fmt(prev.totalExpenses)}`,
           `Current year (${years[0]}): ${fmt(curr.totalExpenses)}`,
-          `Change: ${pct > 0 ? '+' : ''}${pct.toFixed(1)}%`,
+          `Absolute change: ${absDiff > 0 ? '+' : ''}${fmt(absDiff)}`,
+          `Percentage change: ${pct > 0 ? '+' : ''}${pct.toFixed(1)}%`,
         ];
         if (pct > 20) {
-          red.push({ group: 'allocation', title: `Total CAM ${dir} ${Math.abs(pct).toFixed(1)}% year-over-year`, detail, conditions: [...yoyConditions, 'Threshold: >20% triggers red flag'] });
+          red.push({
+            group: 'allocation',
+            title: `Total CAM ${dir} ${Math.abs(pct).toFixed(1)}% year-over-year`,
+            detail: `Total CAM expenses rose ${Math.abs(pct).toFixed(1)}% from ${fmt(prev.totalExpenses)} in ${years[1]} to ${fmt(curr.totalExpenses)} in ${years[0]}, a ${fmt(Math.abs(absDiff))} ${absDiff > 0 ? 'increase' : 'decrease'}. This exceeds the 20% year-over-year materiality threshold and may require additional landlord documentation under standard CAM audit protocols.`,
+            conditions: [...yoyConditions, 'Threshold: >20% triggers critical flag'],
+          });
         } else if (Math.abs(pct) > 10) {
-          yellow.push({ group: 'allocation', title: `Total CAM ${dir} ${Math.abs(pct).toFixed(1)}% year-over-year`, detail, conditions: [...yoyConditions, 'Threshold: >10% triggers yellow flag'] });
+          yellow.push({
+            group: 'allocation',
+            title: `Total CAM ${dir} ${Math.abs(pct).toFixed(1)}% year-over-year`,
+            detail: `Total CAM expenses ${dir} ${Math.abs(pct).toFixed(1)}% between ${years[1]} and ${years[0]} (${fmt(prev.totalExpenses)} → ${fmt(curr.totalExpenses)}). This change exceeds the 10% monitoring threshold and should be reviewed for unusual or non-recurring expense categories.`,
+            conditions: [...yoyConditions, 'Threshold: >10% triggers warning'],
+          });
         } else {
-          green.push({ group: 'allocation', title: `CAM within normal range YoY (${pct > 0 ? '+' : ''}${pct.toFixed(1)}%)`, detail, conditions: [...yoyConditions, 'Within normal ±10% range'] });
+          green.push({
+            group: 'allocation',
+            title: `CAM within normal range YoY (${pct > 0 ? '+' : ''}${pct.toFixed(1)}%)`,
+            detail,
+            conditions: [...yoyConditions, 'Within normal ±10% range — no action required'],
+          });
         }
       }
     }
@@ -5491,21 +5521,25 @@ function buildAuditSummary() {
   {
     const missing = allInvData.filter(inv => !inv.fileUrl && !inv.fileName);
     if (missing.length > 0) {
-      const pct = Math.round((missing.length / allInvData.length) * 100);
+      const pct   = Math.round((missing.length / allInvData.length) * 100);
       const names = missing.slice(0, 3).map(inv => inv.vendorName).join(', ') +
         (missing.length > 3 ? ` +${missing.length - 3} more` : '');
       const bucket = pct === 100 ? red : yellow;
+      const allMissing = pct === 100;
       bucket.push({
         group:  'missing_docs',
         title:  `${missing.length} of ${allInvData.length} invoice${missing.length > 1 ? 's' : ''} missing source document`,
-        detail: `Without attachments these charges cannot be independently verified: ${names}.`,
+        detail: allMissing
+          ? `No invoices have attached source documents — the entire CAM expense pool of ${fmt(total)} cannot be independently verified. Standard CAM audit requirements mandate supporting documentation for all billed charges.`
+          : `CAM audits require source documentation for all billed expenses. Without attachments, ${names} cannot be independently verified and are susceptible to tenant challenge. ${missing.length} of ${allInvData.length} invoices (${pct}%) are affected.`,
         conditions: [
           `Invoices missing attachments: ${missing.length} of ${allInvData.length} (${pct}%)`,
-          `Missing for: ${names}`,
+          `Affected vendors: ${names}`,
+          'Requirement: all CAM charges must have attached invoices or receipts for audit defensibility',
         ],
       });
     } else if (allInvData.length > 0) {
-      green.push({ title: `All ${allInvData.length} invoices have source documents attached`, conditions: [`${allInvData.length} invoices each have an attached source document`] });
+      green.push({ title: `All ${allInvData.length} invoices have source documents attached`, conditions: [`${allInvData.length} of ${allInvData.length} invoices have attached source documentation — audit-ready`] });
     }
   }
 
@@ -5515,13 +5549,15 @@ function buildAuditSummary() {
     if (noDates.length) {
       const noDateNames = noDates.slice(0, 3).map(inv => inv.vendorName).join(', ') +
         (noDates.length > 3 ? ` +${noDates.length - 3} more` : '');
+      const camYr = getCamYear() || 'the reconciliation period';
       yellow.push({
         group:  'missing_docs',
         title:  `${noDates.length} invoice${noDates.length > 1 ? 's' : ''} missing invoice date`,
-        detail: noDateNames,
+        detail: `Invoice date confirms that a charge falls within the ${camYr} CAM reconciliation period. Undated invoices may be excluded or challenged in a formal tenant audit. Affected: ${noDateNames}.`,
         conditions: [
-          `Count: ${noDates.length} invoice${noDates.length > 1 ? 's' : ''} have no invoice date recorded`,
-          `Vendors: ${noDateNames}`,
+          `Count: ${noDates.length} invoice${noDates.length > 1 ? 's' : ''} have no recorded invoice date`,
+          `Affected vendors: ${noDateNames}`,
+          `Required: invoice date must fall within the ${camYr} reconciliation year`,
         ],
       });
     }
@@ -5531,15 +5567,19 @@ function buildAuditSummary() {
   {
     const lowConf = paidInvData.filter(inv => inv.matchConfidence > 0 && inv.matchConfidence < 75);
     if (lowConf.length) {
-      const lowConfNames = lowConf.slice(0, 3).map(inv => `${inv.vendorName} (${inv.matchConfidence}%)`).join(', ') +
-        (lowConf.length > 3 ? ` +${lowConf.length - 3} more` : '');
+      const lowConfConditions = lowConf.slice(0, 5).map(inv => {
+        const reason = inv.matchReason || 'no field match';
+        return `"${inv.vendorName}": matched on "${reason}" at ${inv.matchConfidence}% — below 75% threshold, allocated pro-rata`;
+      });
+      if (lowConf.length > 5) lowConfConditions.push(`+${lowConf.length - 5} more`);
       yellow.push({
         group:  'allocation',
-        title:  `${lowConf.length} invoice${lowConf.length > 1 ? 's' : ''} with low tenant match confidence`,
-        detail: lowConfNames,
+        title:  `${lowConf.length} invoice${lowConf.length > 1 ? 's' : ''} matched with insufficient confidence for direct tenant charge`,
+        detail: `The matching engine assigns confidence based on unit number hits (90%) and tenant name hits (75%). These invoices matched partially but fell below the 75% direct-charge threshold, so they were distributed pro-rata across all tenants rather than charged to a specific tenant.`,
         conditions: [
-          `Count: ${lowConf.length} invoice${lowConf.length > 1 ? 's' : ''} matched with <75% confidence (treated as shared)`,
-          `Invoices: ${lowConfNames}`,
+          `Confidence threshold for direct charge: 75%`,
+          `Matching signals: unit number match = 90%, tenant name match = 75%`,
+          ...lowConfConditions,
         ],
       });
     }
@@ -5553,15 +5593,18 @@ function buildAuditSummary() {
       if (matched === 0) {
         green.push({
           title:  `All ${paidInvData.length} invoices allocated as shared CAM expenses (pro-rata)`,
-          detail: 'No invoices were linked to individual tenants — all costs are distributed by square footage.',
-          conditions: [`${paidInvData.length} invoices allocated pro-rata; none matched to individual tenants`],
+          detail: `No invoices were matched to an individual tenant — all ${fmt(total)} of CAM expenses were distributed pro-rata across all tenants using their square footage share of the total building.`,
+          conditions: [
+            `${paidInvData.length} invoices distributed pro-rata; none directly charged to a single tenant`,
+            'Allocation basis: each tenant\'s leased sqft as a percentage of total building sqft',
+          ],
         });
       } else {
         green.push({
           title:  `${matched} invoice${matched > 1 ? 's' : ''} directly matched to tenant${matched > 1 ? 's' : ''}, ${shared} shared pro-rata`,
           conditions: [
-            `Direct tenant matches: ${matched} (confidence ≥75%)`,
-            `Shared pro-rata: ${shared}`,
+            `Direct tenant charges: ${matched} invoice${matched > 1 ? 's' : ''} (confidence ≥75% — unit or name match)`,
+            `Shared pro-rata: ${shared} invoice${shared !== 1 ? 's' : ''} distributed by square footage`,
           ],
         });
       }
@@ -5570,28 +5613,49 @@ function buildAuditSummary() {
 
   // ── 8. Pro-rata allocation coverage ─────────────────────────────────────
   {
-    const totalPR = results.reduce((s, r) => s + (r.proRataPercent || 0), 0);
+    const totalPR     = results.reduce((s, r) => s + (r.proRataPercent || 0), 0);
+    const prop        = currentProperty();
+    const propSqft    = parseFloat(prop?.totalSqft || prop?.totalSqFt) || 0;
+    const leasedSqft  = results.reduce((s, r) => s + (r.sqFt || 0), 0);
+    const sqftCtx     = propSqft > 0 && leasedSqft > 0
+      ? `Tenant leases cover ${leasedSqft.toLocaleString()} of ${propSqft.toLocaleString()} total sqft.`
+      : null;
     if (results.length > 0) {
       if (Math.abs(totalPR - 100) < 2) {
-        green.push({ group: 'allocation', title: `Pro-rata percentages sum to ${totalPR.toFixed(1)}% — all expenses accounted for`, conditions: [`Sum of tenant pro-rata: ${totalPR.toFixed(1)}% (within ±2% of 100%)`] });
+        green.push({
+          group: 'allocation',
+          title: `Pro-rata percentages sum to ${totalPR.toFixed(1)}% — all expenses accounted for`,
+          conditions: [
+            `Sum of tenant pro-rata: ${totalPR.toFixed(1)}% (within ±2% of 100%)`,
+            ...(sqftCtx ? [sqftCtx + ' Full building is under lease.'] : []),
+          ],
+        });
       } else if (totalPR < 98) {
+        const gap = (100 - totalPR).toFixed(1);
         yellow.push({
           group:  'allocation',
-          title:  `Pro-rata totals ${totalPR.toFixed(1)}% — ${(100 - totalPR).toFixed(1)}% of expenses unallocated`,
-          detail: 'Total leased sqft may be less than the property total. Check tenant sqft entries.',
+          title:  `Pro-rata totals ${totalPR.toFixed(1)}% — ${gap}% of expenses unallocated`,
+          detail: sqftCtx
+            ? `${sqftCtx} The remaining ${(propSqft - leasedSqft).toLocaleString()} sqft is untenanted — its share of CAM expenses (${gap}%) is not recoverable under current leases.`
+            : `Total leased sqft is less than the property total, leaving ${gap}% of CAM expenses unallocated. Review tenant sqft entries.`,
           conditions: [
             `Sum of tenant pro-rata: ${totalPR.toFixed(1)}%`,
-            `Unallocated gap: ${(100 - totalPR).toFixed(1)}% (likely vacant or unmeasured space)`,
+            `Unrecoverable gap: ${gap}%`,
+            ...(sqftCtx ? [`Leased sqft: ${leasedSqft.toLocaleString()} of ${propSqft.toLocaleString()} total`] : []),
           ],
         });
       } else {
+        const excess = (totalPR - 100).toFixed(1);
         yellow.push({
           group:  'allocation',
           title:  `Pro-rata totals ${totalPR.toFixed(1)}% — exceeds 100%`,
-          detail: 'Total leased sqft may exceed the property total. Check tenant sqft entries.',
+          detail: sqftCtx
+            ? `${sqftCtx} Tenant sqft entries sum to ${leasedSqft.toLocaleString()}, which exceeds the property total of ${propSqft.toLocaleString()} sqft. This overallocates CAM by ${excess}% and must be corrected to avoid overbilling.`
+            : `Tenant sqft entries sum to more than the property total, overallocating CAM by ${excess}%. Review and correct sqft entries.`,
           conditions: [
             `Sum of tenant pro-rata: ${totalPR.toFixed(1)}%`,
-            `Excess: ${(totalPR - 100).toFixed(1)}% over 100% (tenant sqft entries may exceed property sqft)`,
+            `Overallocation: ${excess}% above 100%`,
+            ...(sqftCtx ? [`Leased sqft: ${leasedSqft.toLocaleString()} vs property total: ${propSqft.toLocaleString()}`] : []),
           ],
         });
       }
@@ -5600,15 +5664,27 @@ function buildAuditSummary() {
 
   // ── 9. CAM cap applied ───────────────────────────────────────────────────
   {
-    const capped = results.filter(r => r.capApplied);
+    const capped     = results.filter(r => r.capApplied);
+    const totalSaved = capped.reduce((s, r) => s + (r.capAdjustment || 0), 0);
     if (capped.length) {
+      const capConditions = capped.map(r => {
+        const t      = tenants.find(x => (x.name || x.tenantName) === r.name);
+        const capPct = t?.capPercentage ?? t?.cap ?? null;
+        const capBase = t?.capBaseAmount ?? null;
+        const ceiling = capPct !== null && capBase !== null ? fmt(capBase * (1 + capPct / 100)) : null;
+        const parts  = [`${r.name}: reduced by ${fmt(r.capAdjustment)}`];
+        if (capPct !== null) parts.push(`${capPct}% annual cap`);
+        if (ceiling !== null) parts.push(`ceiling ${ceiling}`);
+        return parts.join(' — ');
+      });
       yellow.push({
         group:  'allocation',
         title:  `CAM cap applied for ${capped.length} tenant${capped.length > 1 ? 's' : ''}: ${capped.map(r => r.name).join(', ')}`,
-        detail: 'Actual charges exceeded the contractual cap. Tenants paid less than their full pro-rata share.',
+        detail: `Tenant responsibility was reduced due to annual controllable CAM cap language in the lease${capped.length > 1 ? 's' : ''}. Affected tenant${capped.length > 1 ? 's' : ''} paid ${fmt(totalSaved)} less in aggregate than their uncapped pro-rata share.`,
         conditions: [
-          `Tenants with cap applied: ${capped.map(r => r.name).join(', ')}`,
-          `These tenants' calculated charges exceeded their contractual CAM cap`,
+          `Total CAM savings from cap enforcement: ${fmt(totalSaved)}`,
+          ...capConditions,
+          'Basis: capBaseAmount × (1 + capPercentage%) sets the maximum billable amount per tenant',
         ],
       });
     }
@@ -5627,10 +5703,13 @@ function buildAuditSummary() {
       yellow.push({
         group:  'lease',
         title:  `${message} — ${tenants.length} tenant${tenants.length > 1 ? 's' : ''}: ${tenants.join(', ')}`,
-        detail: explanation || '',
+        detail: explanation
+          ? `Reconciliation engine flag: ${explanation} This condition was surfaced automatically and may require lease review or landlord clarification.`
+          : 'This condition was surfaced by the reconciliation engine and may require lease review.',
         conditions: [
+          `Flagged by: reconciliation engine`,
           `Affected tenants: ${tenants.join(', ')}`,
-          ...(explanation ? [`Reason: ${explanation}`] : []),
+          ...(explanation ? [`Engine explanation: ${explanation}`] : []),
         ],
       });
     });
@@ -5640,17 +5719,25 @@ function buildAuditSummary() {
   {
     const cats = [...new Set(invs.map(inv => inv ? (inv.category || 'other').toLowerCase() : null).filter(Boolean))];
     cats.forEach(cat => {
-      const excl = tenants.filter(t => (t.excludedCategories || []).includes(cat));
+      const excl     = tenants.filter(t => (t.excludedCategories || []).includes(cat));
+      const included = tenants.filter(t => !(t.excludedCategories || []).includes(cat));
       if (excl.length > 0 && excl.length < tenants.length) {
-        const included = tenants.filter(t => !(t.excludedCategories || []).includes(cat));
+        const catTotal = invs
+          .filter(i => i && (i.category || 'other').toLowerCase() === cat)
+          .reduce((s, i) => s + (parseFloat(i.amount) || 0), 0);
+        const exclImpact = excl.reduce((s, t) => {
+          const r = results.find(x => x.name === (t.name || t.tenantName));
+          return s + (r ? catTotal * ((r.proRataPercent || 0) / 100) : 0);
+        }, 0);
         yellow.push({
           group:  'lease',
           title:  `"${cat}" excluded for ${excl.length} of ${tenants.length} tenants`,
-          detail: `Excluded for: ${excl.map(t => t.name).join(', ')}`,
+          detail: `${cat.charAt(0).toUpperCase() + cat.slice(1)} expenses total ${fmt(catTotal)}. Per lease terms, ${excl.map(t => t.name || t.tenantName).join(' and ')} ${excl.length > 1 ? 'are' : 'is'} excluded from this category, reducing their combined CAM obligation by approximately ${fmt(exclImpact)}.`,
           conditions: [
-            `Category: "${cat}"`,
-            `Excluded for: ${excl.map(t => t.name).join(', ')} (${excl.length} tenant${excl.length > 1 ? 's' : ''})`,
-            `Included for: ${included.map(t => t.name).join(', ')} (${included.length} tenant${included.length > 1 ? 's' : ''})`,
+            `Category: "${cat}" — total expenses: ${fmt(catTotal)}`,
+            `Excluded (per lease): ${excl.map(t => t.name || t.tenantName).join(', ')}`,
+            `Included: ${included.map(t => t.name || t.tenantName).join(', ')}`,
+            `Estimated impact of exclusion: ~${fmt(exclImpact)} reduction in billable obligations`,
           ],
         });
       }
