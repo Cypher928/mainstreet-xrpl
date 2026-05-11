@@ -4053,8 +4053,10 @@ async function runAllocation() {
   lastPropName        = propName;
   lastTotal           = totalCost;
   lastInvoicesFull    = invoices;
-  console.log('[PIPELINE:1] runtime — lastInvoicesFull[0]', JSON.parse(JSON.stringify(lastInvoicesFull[0] || {})));
-  console.log('[PIPELINE:1] runtime — invoiceData[0]', JSON.parse(JSON.stringify(invoiceData[0] || {})));
+  console.groupCollapsed('[PIPELINE:1] runAllocation runtime snapshot');
+  console.log('lastInvoicesFull[0]:', JSON.parse(JSON.stringify(lastInvoicesFull[0] || {})));
+  console.log('invoiceData[0]:', JSON.parse(JSON.stringify(invoiceData[0] || {})));
+  console.groupEnd();
 
   document.getElementById('resultsTitle').textContent = `${getCamYear()} CAM — ${propName}`;
   applySqftMismatchUI(sqftExceedsProperty);
@@ -4292,9 +4294,11 @@ async function runAllocation() {
         timestamp: r.timestamp instanceof Date ? r.timestamp.toISOString() : r.timestamp,
       })),
     };
-    console.log('[PIPELINE:2] pre-save — camRec.invoicesFull[0]', JSON.parse(JSON.stringify(_snapProp.camReconciliation.invoicesFull?.[0] || {})));
-    console.log('[PIPELINE:2] pre-save — prop.invoices[0]', JSON.parse(JSON.stringify(_snapProp.invoices?.[0] || {})));
-    console.log('[PIPELINE:2] pre-save — results[0].includedInvoices[0]', JSON.parse(JSON.stringify(_snapProp.camReconciliation.results?.[0]?.includedInvoices?.[0] || {})));
+    console.groupCollapsed('[PIPELINE:2] pre-save snapshot');
+    console.log('camRec.invoicesFull[0]:', JSON.parse(JSON.stringify(_snapProp.camReconciliation.invoicesFull?.[0] || {})));
+    console.log('prop.invoices[0]:', JSON.parse(JSON.stringify(_snapProp.invoices?.[0] || {})));
+    console.log('results[0].includedInvoices[0]:', JSON.parse(JSON.stringify(_snapProp.camReconciliation.results?.[0]?.includedInvoices?.[0] || {})));
+    console.groupEnd();
     await saveProperty(_snapProp);
   }
 
@@ -4305,7 +4309,11 @@ async function runAllocation() {
   requestAnimationFrame(() => { window.scrollTo(0, scrollY); });
 
   } catch (err) {
-    console.error('[runAllocation] unexpected error:', err);
+    logError('runAllocation', err, {
+      tenantCount:  tenantData.filter(t => t?.tenant_name).length,
+      invoiceCount: invoiceData.length,
+      propName:     document.getElementById('propertyName')?.value?.trim() || '',
+    });
     const body = document.getElementById('resultsBody');
     const section = document.getElementById('results');
     if (body && section) showErr(body, section, 'Calculation error — please check your data and try again.');
@@ -4374,6 +4382,135 @@ function animateCAMResults(body, section) {
     }, i * 80);
   });
 }
+
+// ─── Centralized Error Logging ───────────────────────────────────────────────
+// Stores a ring-buffer of recent errors in localStorage for post-hoc debugging.
+// Call: logError('saveProperty', err, { propId, invoiceCount })
+const _ERR_KEY = 'mainstreet_errors_v1';
+const _ERR_MAX = 50;
+
+function logError(type, error, context = {}) {
+  const entry = {
+    type,
+    message:  error?.message || String(error),
+    stack:    (error?.stack || '').split('\n').slice(0, 6).join('\n'),
+    ts:       new Date().toISOString(),
+    propId:   context.propId   ?? activePropId ?? null,
+    propName: context.propName ?? lastPropName  ?? null,
+    ...context,
+  };
+
+  console.group(`%c[Mainstreet] ${type}`, 'color:#f87171;font-weight:700');
+  console.error('Message:', entry.message);
+  if (Object.keys(context).length) console.info('Context:', context);
+  if (entry.stack) console.debug('Stack:\n' + entry.stack);
+  console.groupEnd();
+
+  try {
+    const log = JSON.parse(localStorage.getItem(_ERR_KEY) || '[]');
+    log.unshift(entry);
+    if (log.length > _ERR_MAX) log.length = _ERR_MAX;
+    localStorage.setItem(_ERR_KEY, JSON.stringify(log));
+  } catch { /* quota — silently skip */ }
+}
+
+// Devtools helpers: window._msErrors.get() / .clear()
+window._msErrors = {
+  get:   ()  => { try { return JSON.parse(localStorage.getItem(_ERR_KEY) || '[]'); } catch { return []; } },
+  clear: ()  => { try { localStorage.removeItem(_ERR_KEY); } catch {} },
+  show:  ()  => { console.table(window._msErrors.get()); },
+};
+
+// ─── Regression Tests ─────────────────────────────────────────────────────────
+// Run via browser console: window._msRunTests()
+// Returns { passed, failed } — safe to run in production (no mutations to server).
+function _msRunTests() {
+  let passed = 0, failed = 0;
+  const ok   = name      => { console.log(`  ✓ ${name}`); passed++; };
+  const fail = (name, r) => { console.warn(`  ✗ ${name}: ${r}`); failed++; };
+
+  console.group('[Mainstreet] Regression Tests');
+
+  // ── 1. _stripBlobs preserves invoice amounts and strips File/raw text ────
+  try {
+    const raw = {
+      invoices: [{
+        id: 99, vendorName: 'ACME', amount: 999.99, category: 'utilities',
+        _rawText: 'x'.repeat(5000),
+        file:    new File([''], 'test.pdf'),
+      }],
+    };
+    const stripped = _stripBlobs(raw);
+    const inv = stripped.invoices[0];
+    if (!inv)                       fail('stripBlobs: invoice survives strip', 'entry is null');
+    else if (inv.vendorName !== 'ACME')   fail('stripBlobs: vendorName preserved', `got "${inv.vendorName}"`);
+    else if (inv.amount !== 999.99)       fail('stripBlobs: amount preserved',    `got ${inv.amount}`);
+    else if ('_rawText' in inv)           fail('stripBlobs: _rawText removed',     '_rawText still present');
+    else if ('file'     in inv)           fail('stripBlobs: File removed',         'file still present');
+    else ok('_stripBlobs preserves invoice data, removes blobs and raw text');
+  } catch (e) { fail('_stripBlobs', e.message); }
+
+  // ── 2. restoreResultsDisplay normalizes vendor from vendorName ───────────
+  // This was a bug where tenant statements matched nothing after page reload.
+  try {
+    const _savedLR  = lastResults; const _savedLN  = lastPropName;
+    const _savedLT  = lastTotal;   const _savedLIF = lastInvoicesFull;
+    const _savedLS  = lastTenants;
+
+    restoreResultsDisplay({
+      results:     [{ name: 'T1', allocatedAmount: 500, proRata: 0.5, eligibleCount: 1, capApplied: false }],
+      propName:    '__test__',
+      total:       1000,
+      invoices:    [],
+      invoicesFull:[{ vendorName: 'ACME Corp', vendor: undefined, amount: 500, category: 'utilities' }],
+      tenants:     [{ name: 'T1', excludedCategories: [] }],
+    });
+
+    const inv = lastInvoicesFull[0];
+    if (!inv)                          fail('restoreResultsDisplay: invoicesFull populated', 'array empty');
+    else if (inv.vendor !== 'ACME Corp') fail('restoreResultsDisplay: vendor normalized from vendorName', `got "${inv.vendor}"`);
+    else                               ok('restoreResultsDisplay normalizes vendor field from vendorName');
+
+    // Restore globals
+    lastResults = _savedLR; lastPropName = _savedLN;
+    lastTotal   = _savedLT; lastInvoicesFull = _savedLIF; lastTenants = _savedLS;
+  } catch (e) { fail('restoreResultsDisplay vendor normalization', e.message); }
+
+  // ── 3. localStorage roundtrip preserves invoice count and content ────────
+  // Exercises _lsSave → _lsLoad to guard against serialization regressions.
+  try {
+    const TEST_ID = '__ms_regtest__';
+    const testProp = {
+      id: TEST_ID, name: 'Regression Test Prop', totalSqft: 5000,
+      invoices: [
+        { id: 1, vendorName: 'Vendor A', amount: 100.00, category: 'utilities' },
+        { id: 2, vendorName: 'Vendor B', amount: 200.50, category: 'maintenance' },
+      ],
+      tenants: [], disputes: [], activityLog: [],
+    };
+    _lsSave(testProp);
+    const loaded = _lsLoad(TEST_ID);
+
+    // Clean up immediately — don't leave test data in storage
+    try {
+      const store = JSON.parse(localStorage.getItem(_LS_KEY) || '{}');
+      delete store[TEST_ID];
+      localStorage.setItem(_LS_KEY, JSON.stringify(store));
+    } catch {}
+
+    if (!loaded)                               fail('localStorage roundtrip: load returned null', 'null');
+    else if (loaded.invoices?.length !== 2)    fail('localStorage roundtrip: invoice count preserved', `got ${loaded.invoices?.length}`);
+    else if (loaded.invoices[0].amount !== 100) fail('localStorage roundtrip: invoice[0].amount', `got ${loaded.invoices[0].amount}`);
+    else if (loaded.invoices[1].vendorName !== 'Vendor B') fail('localStorage roundtrip: invoice[1].vendorName', `got ${loaded.invoices[1].vendorName}`);
+    else ok('localStorage roundtrip preserves invoice count and field values');
+  } catch (e) { fail('localStorage roundtrip', e.message); }
+
+  const status = failed === 0 ? '✓ All tests passed' : `${failed} test(s) FAILED`;
+  console.log(`\n  ${status} (${passed} passed, ${failed} failed)`);
+  console.groupEnd();
+  return { passed, failed };
+}
+window._msRunTests = _msRunTests;
 
 function showRunCompleteToast() {
   const existing = document.getElementById('camCompleteToast');
@@ -5322,6 +5459,7 @@ function _genUUID() {
 }
 
 function generateReviewToken(expiresIn) { // expiresIn: 7, 30, or 0 = never
+  try {
   const prop = _props.find(p => p.id === activePropId);
   if (!prop || !lastResults.length) return null;
   const token     = _genUUID();
@@ -5357,6 +5495,10 @@ function generateReviewToken(expiresIn) { // expiresIn: 7, 30, or 0 = never
   tokens[token] = payload;
   _rvSave(tokens);
   return payload;
+  } catch (e) {
+    logError('generateReviewToken', e, { propId: activePropId, expiresIn });
+    return null;
+  }
 }
 
 function validateReviewToken(token) {
@@ -5412,6 +5554,7 @@ function copyReviewLink() {
 
 // ─── Review Mode: Entry & Rendering ──────────────────────────────────────────
 function enterReviewMode(payload) {
+  try {
   _reviewMode = true;
   const snap = payload.snapshot;
 
@@ -5487,6 +5630,18 @@ function enterReviewMode(payload) {
   document.getElementById('reviewDashboard').style.display = 'block';
 
   window.scrollTo({ top: 0, behavior: 'instant' });
+  } catch (e) {
+    logError('enterReviewMode', e, { token: payload?.token, propName: payload?.propName });
+    // Show the expired/error screen as a safe fallback
+    document.getElementById('portfolioDashboard').style.display = 'none';
+    document.getElementById('mainWorkflow').style.display       = 'none';
+    const exp = document.getElementById('reviewExpiredMsg');
+    if (exp) {
+      exp.style.display = 'flex';
+      const desc = exp.querySelector('.rv-expired-desc');
+      if (desc) desc.textContent = 'An error occurred loading this review. Please request a new link.';
+    }
+  }
 }
 
 function _renderReviewBanner(payload) {
@@ -7427,6 +7582,7 @@ function guardedReconciliationSummary() {
 }
 
 function generateReconciliationSummary() {
+  try {
   logActivity('reconciliation_summary', 'Reconciliation Summary report generated', { severity: 'info', actor: 'User', relatedEntity: lastPropName || 'Property' });
   const propName   = lastPropName || 'Property';
   const now        = new Date().toLocaleDateString('en-US', { year: 'numeric', month: 'long', day: 'numeric' });
@@ -7513,6 +7669,10 @@ function generateReconciliationSummary() {
     ${_rptFooter(propName, 'CAM Reconciliation Summary', now)}`;
 
   openReport('Reconciliation Summary — ' + propName, html);
+  } catch (e) {
+    logError('generateReconciliationSummary', e, { propName: lastPropName });
+    showToast('Could not generate Reconciliation Summary — check console for details.', { color: '#92400e', textColor: '#fef3c7' });
+  }
 }
 
 // ─── Audit Exception Summary Report ──────────────────────────────────────────
@@ -7529,6 +7689,7 @@ function guardedExceptionReport() {
 }
 
 function generateExceptionReport() {
+  try {
   logActivity('exception_report', 'Audit Exception Summary report generated', { severity: 'info', actor: 'User', relatedEntity: lastPropName || 'Property' });
   const { red, yellow, green } = buildAuditSummary();
   const propName = lastPropName || 'Property';
@@ -7616,10 +7777,15 @@ function generateExceptionReport() {
     ${_rptFooter(propName, 'Audit Exception Summary', now)}`;
 
   openReport('Audit Exception Summary — ' + propName, html);
+  } catch (e) {
+    logError('generateExceptionReport', e, { propName: lastPropName });
+    showToast('Could not generate Exception Report — check console for details.', { color: '#92400e', textColor: '#fef3c7' });
+  }
 }
 
 function generateMasterReport() {
   if (!lastResults.length) { showToast('Run a CAM allocation first to generate reports.', { color: '#92400e', textColor: '#fef3c7' }); return; }
+  try {
 
   const now    = new Date().toLocaleDateString('en-US', { year:'numeric', month:'long', day:'numeric' });
   const period = new Date().getFullYear() + ' CAM Year';
@@ -7765,6 +7931,10 @@ function generateMasterReport() {
       const el = document.querySelector('#rptBody .rpt-hash-val');
       if (el) el.textContent = 'SHA-256: ' + hash + '\nGenerated: ' + new Date().toISOString();
     });
+  } catch (e) {
+    logError('generateMasterReport', e, { propName: lastPropName, tenantCount: lastResults.length });
+    showToast('Could not generate Landlord Master Report — check console for details.', { color: '#92400e', textColor: '#fef3c7' });
+  }
 }
 
 async function runLandlordAIReview() {
@@ -7814,6 +7984,7 @@ async function runLandlordAIReview() {
 
 function generateTenantStatement(tenantName) {
   if (!lastResults.length) { showToast('Run a CAM allocation first to generate reports.', { color: '#92400e', textColor: '#fef3c7' }); return; }
+  try {
   logActivity('tenant_statement', `Tenant statement generated — ${tenantName}`, { severity: 'info', actor: 'User', relatedEntity: tenantName });
 
   const r = lastResults.find(x => x.name === tenantName);
@@ -7823,8 +7994,10 @@ function generateTenantStatement(tenantName) {
     return;
   }
 
-  console.log('[PIPELINE:7] generateTenantStatement — lastInvoicesFull[0]', JSON.parse(JSON.stringify(lastInvoicesFull[0] || {})));
-  console.log('[PIPELINE:7] generateTenantStatement — invoiceData[0]', JSON.parse(JSON.stringify(invoiceData[0] || {})));
+  console.groupCollapsed('[PIPELINE:7] generateTenantStatement');
+  console.log('lastInvoicesFull[0]:', JSON.parse(JSON.stringify(lastInvoicesFull[0] || {})));
+  console.log('invoiceData[0]:', JSON.parse(JSON.stringify(invoiceData[0] || {})));
+  console.groupEnd();
 
   const now    = new Date().toLocaleDateString('en-US', { year:'numeric', month:'long', day:'numeric' });
   const period = new Date().getFullYear() + ' CAM Year';
@@ -8032,6 +8205,10 @@ function generateTenantStatement(tenantName) {
       const el = document.getElementById('tenantHashVal');
       if (el) el.textContent = 'SHA-256: ' + hash + '\nGenerated: ' + new Date().toISOString();
     });
+  } catch (e) {
+    logError('generateTenantStatement', e, { tenantName, propName: lastPropName });
+    showToast(`Could not generate statement for ${tenantName} — check console for details.`, { color: '#92400e', textColor: '#fef3c7' });
+  }
 }
 
 // ─── Load Demo ────────────────────────────────────────────────────────────────
@@ -9071,8 +9248,10 @@ async function saveProperty(property) {
       activityLog:       stripped.activityLog       || [],
     };
 
-    console.log('[PIPELINE:3] post-strip — data.invoices[0]', JSON.parse(JSON.stringify(data.invoices[0] || {})));
-    console.log('[PIPELINE:3] post-strip — camRec.results[0].includedInvoices[0]', JSON.parse(JSON.stringify(data.camReconciliation?.results?.[0]?.includedInvoices?.[0] || {})));
+    console.groupCollapsed('[PIPELINE:3] saveProperty post-strip');
+    console.log('invoices[0]:', JSON.parse(JSON.stringify(data.invoices[0] || {})));
+    console.log('camRec.results[0].includedInvoices[0]:', JSON.parse(JSON.stringify(data.camReconciliation?.results?.[0]?.includedInvoices?.[0] || {})));
+    console.groupEnd();
 
     const payload = {
       name: name || 'New Property',
@@ -9109,7 +9288,11 @@ async function saveProperty(property) {
     if (isNetErr) return;
 
     _setSyncStatus('error');
-    console.error('[Mainstreet] saveProperty error:', msg, e);
+    logError('saveProperty', e, {
+      propId:      property?.id,
+      propName:    property?.name,
+      invoiceCount: (property?.invoices || []).length,
+    });
 
     const prev = document.getElementById('_saveErrToast');
     if (prev) prev.remove();
@@ -9136,37 +9319,40 @@ async function savePropertyData() {
   const prop = _props.find(p => p.id === activePropId);
   if (!prop) return;
 
-  const name = document.getElementById('propertyName')?.value?.trim() || '';
-  const sqftDom = parseFloat(document.getElementById('totalSqft')?.value) || 0;
-  const sqft = prop.totalSqft || sqftDom;
+  try {
+    const name = document.getElementById('propertyName')?.value?.trim() || '';
+    const sqftDom = parseFloat(document.getElementById('totalSqft')?.value) || 0;
+    const sqft = prop.totalSqft || sqftDom;
 
-  if (name) prop.name = name;
-  if (sqft) prop.totalSqft = sqft;
-  // tenantData is the live working buffer; always sync it to prop.tenants before saving
-  // so any field edit (even if prop.tenants wasn't updated) is captured.
-  if (tenantData.some(t => t !== null)) prop.tenants = tenantData.filter(t => t !== null);
-  prop.invoices = Array.from(invoiceData);
+    if (name) prop.name = name;
+    if (sqft) prop.totalSqft = sqft;
+    // tenantData is the live working buffer; always sync it to prop.tenants before saving
+    // so any field edit (even if prop.tenants wasn't updated) is captured.
+    if (tenantData.some(t => t !== null)) prop.tenants = tenantData.filter(t => t !== null);
+    prop.invoices = Array.from(invoiceData);
 
-  console.log('[PIPELINE:2a] savePropertyData — prop.invoices[0]', JSON.parse(JSON.stringify(prop.invoices[0] || {})));
-  prop.disputes    = Array.from(disputes);
-  prop.activityLog = [...activityLog];
-  prop.results  = lastResults.length ? {
-    propId:       prop.id,          // used to verify results belong to this property on load
-    results:      lastResults,
-    propName:     lastPropName,
-    total:        lastTotal,
-    invoices:     lastInvoices,
-    invoicesFull: lastInvoicesFull,
-    tenants:      lastTenants,
-    disputes:     Array.from(disputes),
-    camRuns:      camRuns.map(r => ({ ...r, timestamp: r.timestamp instanceof Date ? r.timestamp.toISOString() : r.timestamp })),
-  } : null;
+    prop.disputes    = Array.from(disputes);
+    prop.activityLog = [...activityLog];
+    prop.results  = lastResults.length ? {
+      propId:       prop.id,          // used to verify results belong to this property on load
+      results:      lastResults,
+      propName:     lastPropName,
+      total:        lastTotal,
+      invoices:     lastInvoices,
+      invoicesFull: lastInvoicesFull,
+      tenants:      lastTenants,
+      disputes:     Array.from(disputes),
+      camRuns:      camRuns.map(r => ({ ...r, timestamp: r.timestamp instanceof Date ? r.timestamp.toISOString() : r.timestamp })),
+    } : null;
 
-  // Debounce: collapse rapid successive saves (e.g. per-keystroke field edits)
-  // into a single DB write 800 ms after the last call.
-  _setSyncStatus('pending');
-  clearTimeout(_saveDebounceTimer);
-  _saveDebounceTimer = setTimeout(() => saveProperty(prop), 800);
+    // Debounce: collapse rapid successive saves (e.g. per-keystroke field edits)
+    // into a single DB write 800 ms after the last call.
+    _setSyncStatus('pending');
+    clearTimeout(_saveDebounceTimer);
+    _saveDebounceTimer = setTimeout(() => saveProperty(prop), 800);
+  } catch (e) {
+    logError('savePropertyData', e, { propId: prop.id, propName: prop.name });
+  }
 }
 
 // Fetch a single property's full data.
@@ -9197,8 +9383,10 @@ async function loadPropertyData(id) {
         camReconciliation: d.camReconciliation ?? null,
         activityLog:       d.activityLog       || [],
       };
-      console.log('[PIPELINE:4] Supabase read — invoices[0]', JSON.parse(JSON.stringify(dbData.invoices[0] || {})));
-      console.log('[PIPELINE:4] Supabase read — camRec.results[0].includedInvoices[0]', JSON.parse(JSON.stringify(dbData.camReconciliation?.results?.[0]?.includedInvoices?.[0] || {})));
+      console.groupCollapsed('[PIPELINE:4] Supabase read');
+      console.log('invoices[0]:', JSON.parse(JSON.stringify(dbData.invoices[0] || {})));
+      console.log('camRec.results[0].includedInvoices[0]:', JSON.parse(JSON.stringify(dbData.camReconciliation?.results?.[0]?.includedInvoices?.[0] || {})));
+      console.groupEnd();
 
       // Fetch tenants from their own table and merge in
       const { data: tenantRows } = await db
@@ -9294,7 +9482,11 @@ async function loadPropertyData(id) {
         }
       }
     }
-  } catch (e) { /* offline or error — fall through to localStorage */ }
+  } catch (e) {
+    const isNet = /load failed|failed to fetch|networkerror|offline/i.test(e?.message || '');
+    if (!isNet) logError('loadPropertyData', e, { propId: id });
+    // fall through to localStorage
+  }
 
   if (!dbData) {
     console.log('[loadPropertyData] MERGE: using lsData only (no dbData)', { lsInvoices: lsData?.invoices?.length });
@@ -9311,16 +9503,10 @@ async function loadPropertyData(id) {
   const lsCount = (lsData.tenants || []).length;
   const base = lsCount > dbCount ? lsData : dbData;
 
-  console.log('[PIPELINE:4b] MERGE decision', {
-    winner:     lsCount > dbCount ? 'localStorage' : 'supabase',
-    dbTenants:  dbCount,
-    lsTenants:  lsCount,
-    dbInvoices: (dbData.invoices || []).length,
-    lsInvoices: (lsData.invoices || []).length,
-  });
-  console.log('[PIPELINE:4b] MERGE — base.invoices[0]', JSON.parse(JSON.stringify(base.invoices?.[0] || {})));
-  console.log('[PIPELINE:4b] MERGE — lsData.invoices[0]', JSON.parse(JSON.stringify(lsData.invoices?.[0] || {})));
-  console.log('[PIPELINE:4b] MERGE — dbData.invoices[0]', JSON.parse(JSON.stringify(dbData.invoices?.[0] || {})));
+  console.groupCollapsed('[PIPELINE:4b] MERGE decision');
+  console.log('winner:', lsCount > dbCount ? 'localStorage' : 'supabase', { dbTenants: dbCount, lsTenants: lsCount, dbInvoices: (dbData.invoices||[]).length, lsInvoices: (lsData.invoices||[]).length });
+  console.log('base.invoices[0]:', JSON.parse(JSON.stringify(base.invoices?.[0] || {})));
+  console.groupEnd();
 
   // Reconciliation results: always prefer Supabase — it is written immediately
   // after each run and is the authoritative source. localStorage may lag behind
@@ -9385,15 +9571,19 @@ function renderProperty(property) {
   // ── Invoices ──────────────────────────────────────────────────────────
   try {
     const invoices = property.invoices || [];
-    console.log('[PIPELINE:5] renderProperty — property.invoices[0]', JSON.parse(JSON.stringify(invoices[0] || {})));
     if (invoices.length) {
       invoiceData.splice(0, invoiceData.length, ...invoices);
-      console.log('[PIPELINE:5b] invoiceData[0] after splice', JSON.parse(JSON.stringify(invoiceData[0] || {})));
+      console.groupCollapsed('[PIPELINE:5] renderProperty invoices restored');
+      console.log('invoices[0]:', JSON.parse(JSON.stringify(invoices[0] || {})));
+      console.log('invoiceData[0] after splice:', JSON.parse(JSON.stringify(invoiceData[0] || {})));
+      console.groupEnd();
       switchInvTab('files');
       renderInvResults();
       restored = true;
     }
-  } catch (e) { console.error('[renderProperty] invoices restore error:', e); }
+  } catch (e) {
+    logError('renderProperty.invoices', e, { propId: property?.id, propName: property?.name });
+  }
 
   // ── Disputes ──────────────────────────────────────────────────────────
   try {
@@ -9454,7 +9644,7 @@ function renderProperty(property) {
       restored = true;
     }
   } catch (e) {
-    console.error('[restoreResults] render error:', e);
+    logError('renderProperty.restoreResults', e, { propId: property?.id, propName: property?.name });
   }
 
   if (restored) showRestoredBanner();
@@ -9507,9 +9697,11 @@ function restoreResultsDisplay(snapshot) {
       : inv
     );
     lastTenants      = snapshot.tenants      || [];
-    console.log('[PIPELINE:6] restored — lastInvoicesFull[0]', JSON.parse(JSON.stringify(lastInvoicesFull[0] || {})));
-    console.log('[PIPELINE:6] restored — lastResults[0].includedInvoices[0]', JSON.parse(JSON.stringify(lastResults[0]?.includedInvoices?.[0] || {})));
-    console.log('[PIPELINE:6] restored — invoiceData[0] at restore time', JSON.parse(JSON.stringify(invoiceData[0] || {})));
+    console.groupCollapsed('[PIPELINE:6] restoreResultsDisplay');
+    console.log('lastInvoicesFull[0]:', JSON.parse(JSON.stringify(lastInvoicesFull[0] || {})));
+    console.log('lastResults[0].includedInvoices[0]:', JSON.parse(JSON.stringify(lastResults[0]?.includedInvoices?.[0] || {})));
+    console.log('invoiceData[0] at restore time:', JSON.parse(JSON.stringify(invoiceData[0] || {})));
+    console.groupEnd();
     if (snapshot.camYear) setCamYear(snapshot.camYear);
     if (Array.isArray(snapshot.camRuns) && snapshot.camRuns.length) {
       camRuns.splice(0, camRuns.length, ...snapshot.camRuns.map(run => ({
@@ -9606,7 +9798,9 @@ async function init() {
     portfolio.splice(0, portfolio.length, ..._props);
     renderPortfolio(properties);
   } catch (e) {
-    console.error('[init] loadProperties failed:', e?.message);
+    const isNet = /load failed|failed to fetch|networkerror|offline/i.test(e?.message || '');
+    if (!isNet) logError('init.loadProperties', e, {});
+    else console.warn('[init] offline — loading from localStorage');
     // Show the dashboard with zero properties — never hide it on a transient error.
     // This keeps the user on the correct screen instead of the empty workflow.
     _props = [];
