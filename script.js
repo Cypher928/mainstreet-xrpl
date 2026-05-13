@@ -2042,6 +2042,377 @@ function mergeInvoicesDedup(existing, incoming) {
   return [...existing, ...novel];
 }
 
+// ─── Lease Job Pipeline ───────────────────────────────────────────────────────
+// Orchestration layer around the existing extraction flow.
+// _leaseJobs (in-memory) is the real-time source of truth.
+// lease_jobs (Supabase) is async-synced via fire-and-forget upserts.
+// NO tenant row is written to Supabase until:
+//   confidence is high/medium  OR  the user explicitly confirms via saveBulkTenant.
+
+const _JOB_STAGES = {
+  queued:        { label: 'Queued...',                   progress: 0   },
+  upload:        { label: 'Uploading file...',           progress: 10  },
+  OCR:           { label: 'Running OCR...',              progress: 30  },
+  extraction:    { label: 'Extracting lease terms...',   progress: 55  },
+  normalize:     { label: 'Normalizing...',              progress: 72  },
+  confidence:    { label: 'Computing confidence...',     progress: 88  },
+  persistence:   { label: 'Saving...',                   progress: 95  },
+  completed:     { label: 'Completed',                   progress: 100 },
+  manual_review: { label: 'Review required',             progress: 100 },
+};
+
+function createLeaseJob(file, propertyId) {
+  const jobId = crypto.randomUUID();
+  const now   = new Date().toISOString();
+  const job   = {
+    id:                      jobId,
+    created_at:              now,
+    updated_at:              now,
+    status:                  'queued',
+    stage:                   'upload',
+    progress:                0,
+    file_name:               file.name,
+    file_size:               file.size,
+    property_id:             propertyId,
+    tenant_id:               null,
+    confidence_level:        null,
+    confidence_score:        null,
+    extraction_route:        null,
+    error_message:           null,
+    processing_started_at:   null,
+    processing_completed_at: null,
+    retry_count:             0,
+    debug_summary:           null,
+    _file:    file,           // in-memory only
+    _startMs: Date.now(),     // in-memory only
+  };
+  _leaseJobs.set(jobId, job);
+  _syncJobToDb(job);
+  return jobId;
+}
+
+function updateLeaseJob(jobId, updates) {
+  const job = _leaseJobs.get(jobId);
+  if (!job) return null;
+  Object.assign(job, updates, { updated_at: new Date().toISOString() });
+  _syncJobToDb(job);
+  return job;
+}
+
+function _syncJobToDb(job) {
+  // Strip in-memory-only fields before sending to Supabase
+  const row = Object.fromEntries(Object.entries(job).filter(([k]) => !k.startsWith('_')));
+  db.from('lease_jobs').upsert(row).then(({ error }) => {
+    if (error) logError('lease_job_sync', error, { jobId: job.id, stage: job.stage });
+  });
+}
+
+function failLeaseJob(jobId, err, stage) {
+  updateLeaseJob(jobId, {
+    status:                  'failed',
+    stage:                   stage || 'extraction',
+    progress:                _JOB_STAGES[stage]?.progress ?? 0,
+    error_message:           err?.message || String(err),
+    processing_completed_at: new Date().toISOString(),
+  });
+}
+
+// Returns true if the tenant row requires manual review before Supabase persistence.
+function finalizeLeaseJob(jobId, { norm, conf, meta, tenantId }) {
+  const needsReview = conf.level === 'low' || conf.level === 'failed';
+  updateLeaseJob(jobId, {
+    status:                  needsReview ? 'review_required' : 'completed',
+    stage:                   needsReview ? 'manual_review'   : 'completed',
+    progress:                100,
+    tenant_id:               tenantId,
+    confidence_level:        conf.level,
+    confidence_score:        conf.score,
+    extraction_route:        meta.extractionRoute,
+    processing_completed_at: new Date().toISOString(),
+    debug_summary: {
+      ocrChars:        meta.ocrChars,
+      fileSizeBytes:   meta.fileSizeBytes,
+      processingMs:    meta.processingMs,
+      reasons:         conf.reasons,
+      failedFields:    conf.failedFields,
+      extractionRoute: meta.extractionRoute,
+      tenant_name:     norm?.tenant_name  || null,
+      leased_sqft:     norm?.leased_sqft  || null,
+      start_date:      norm?.start_date   || null,
+      end_date:        norm?.end_date     || null,
+    },
+  });
+  return needsReview;
+}
+
+// Retry using the stored in-memory File — no re-upload dialog needed.
+// Falls back to retryUploadForSlot if the file is no longer in memory.
+async function retryLeaseJob(jobId) {
+  const job = _leaseJobs.get(jobId);
+  if (!job?._file) {
+    console.warn('[retryLeaseJob] file not in memory for job:', jobId, '— falling back to file picker');
+    const i = tenantData.findIndex(t => t.id === jobId);
+    if (i !== -1) retryUploadForSlot(i);
+    return;
+  }
+  const i = tenantData.findIndex(t => t.id === jobId);
+  if (i === -1) { console.warn('[retryLeaseJob] tenantData entry not found for job:', jobId); return; }
+
+  updateLeaseJob(jobId, {
+    status:                  'processing',
+    stage:                   'upload',
+    progress:                0,
+    error_message:           null,
+    processing_started_at:   new Date().toISOString(),
+    processing_completed_at: null,
+    retry_count:             (job.retry_count || 0) + 1,
+    confidence_level:        null,
+    confidence_score:        null,
+    tenant_id:               null,
+  });
+  job._startMs = Date.now();
+
+  tenantData[i] = {
+    ...tenantData[i],
+    status:             'pending',
+    extractionFailed:   false,
+    _showRetry:         false,
+    _error:             null,
+    _confidence:        null,
+    _confidenceScore:   null,
+    _confidenceReasons: [],
+    _autoExpand:        false,
+    _pendingJobReview:  false,
+    id:                 jobId,
+    _jobId:             jobId,
+  };
+
+  const prop = currentProperty();
+  if (prop) prop.tenants = [...tenantData];
+  renderBulkResults();
+
+  await _runLeaseJobPipeline(jobId, i);
+
+  if (prop) prop.tenants = [...tenantData];
+  renderBulkResults();
+}
+
+// Core extraction pipeline — extracted from processFile so retryLeaseJob can also call it.
+// Writes tenantData[placeholderIdx] on completion (success or failure).
+// Ghost-row protection: sets _pendingJobReview=true for low/failed confidence.
+async function _runLeaseJobPipeline(jobId, placeholderIdx) {
+  const job = _leaseJobs.get(jobId);
+  if (!job) { console.error('[_runLeaseJobPipeline] job not found:', jobId); return; }
+  const file       = job._file;
+  const propertyId = job.property_id;
+  const _startMs   = job._startMs || Date.now();
+
+  updateLeaseJob(jobId, {
+    status:                'processing',
+    stage:                 'upload',
+    progress:              _JOB_STAGES.upload.progress,
+    processing_started_at: new Date().toISOString(),
+  });
+  renderBulkResults();
+
+  try {
+    let leaseText     = null;
+    let extracted     = null;
+    let usedPdfDirect = false;
+    let leaseUrl      = null;
+
+    // ── Stage: Upload + OCR ───────────────────────────────────────────────────
+    console.groupCollapsed(`[LEASE:upload] ${file.name}`);
+    try {
+      [leaseUrl, leaseText] = await Promise.all([
+        uploadLeaseToStorage(file, propertyId),
+        extractLeaseText(file),
+      ]);
+      console.log('leaseUrl:', leaseUrl);
+      console.log('leaseText length:', leaseText?.length ?? 0, '| preview:', (leaseText || '').slice(0, 120));
+    } catch (err) {
+      console.error('upload/extract failed:', err.message);
+      logError('lease_upload_extract', err, { propId: propertyId, fileName: file.name, jobId });
+    }
+    console.groupEnd();
+
+    updateLeaseJob(jobId, { stage: 'OCR', progress: _JOB_STAGES.OCR.progress });
+    renderBulkResults();
+
+    // ── Stage: Claude Extraction ──────────────────────────────────────────────
+    console.groupCollapsed(`[LEASE:claude] ${file.name}`);
+    try {
+      if (leaseText && leaseText.length >= 50) {
+        console.log('path: text extraction, chars:', leaseText.length);
+        extracted = await callClaudeForLease(leaseText);
+      } else {
+        usedPdfDirect = true;
+        console.log('path: PDF direct (text weak/missing, chars:', leaseText?.length ?? 0, ')');
+        extracted = await callClaudeWithPdfDirect(file);
+        leaseText = extracted ? `[Claude PDF direct: ${file.name}]` : null;
+      }
+      console.log('raw extracted:', JSON.stringify(extracted)?.slice(0, 300));
+    } catch (err) {
+      console.error('Claude extraction failed:', err.message);
+      logError('lease_claude_extraction', err, { propId: propertyId, fileName: file.name, jobId });
+    }
+    console.groupEnd();
+
+    updateLeaseJob(jobId, { stage: 'extraction', progress: _JOB_STAGES.extraction.progress });
+    renderBulkResults();
+
+    if (extracted && !usedPdfDirect) extracted.rawText = leaseText;
+
+    // ── Stage: Normalize ──────────────────────────────────────────────────────
+    updateLeaseJob(jobId, { stage: 'normalize', progress: _JOB_STAGES.normalize.progress });
+    renderBulkResults();
+
+    const norm = extracted ? normalizeTenant(extracted) : null;
+
+    // ── Stage: Confidence ─────────────────────────────────────────────────────
+    updateLeaseJob(jobId, { stage: 'confidence', progress: _JOB_STAGES.confidence.progress });
+    renderBulkResults();
+
+    const _meta = {
+      extractionRoute:  usedPdfDirect ? 'pdf-direct' : 'text',
+      ocrChars:         (!usedPdfDirect && leaseText) ? leaseText.length : 0,
+      fileSizeBytes:    file.size,
+      processingMs:     Date.now() - _startMs,
+      extractionFailed: !norm,
+    };
+    const _conf = computeExtractionConfidence(norm, _meta);
+    _meta.confidence      = _conf.level;
+    _meta.confidenceScore = _conf.score;
+
+    console.groupCollapsed(`[LEASE:normalize] ${file.name}`);
+    console.log('fields:', JSON.stringify({ tenant_name: norm?.tenant_name, leased_sqft: norm?.leased_sqft, start_date: norm?.start_date, end_date: norm?.end_date, lease_type: norm?.lease_type, cap: norm?.cap }));
+    console.log('confidence:', _conf.level, `(${_conf.score}/100)`, '| route:', _meta.extractionRoute, '| file:', (file.size / 1024).toFixed(1) + 'KB', '| ocr chars:', _meta.ocrChars, '| ms:', _meta.processingMs);
+    if (_conf.reasons.length)      console.log('reasons:', _conf.reasons.join('; '));
+    if (_conf.failedFields.length) console.log('failedFields:', _conf.failedFields.join(', '));
+    console.groupEnd();
+
+    // ── Stage: Persistence ────────────────────────────────────────────────────
+    updateLeaseJob(jobId, { stage: 'persistence', progress: _JOB_STAGES.persistence.progress });
+    renderBulkResults();
+
+    const claudeName   = norm?.tenant_name?.trim() || '';
+    const regexName    = extractTenantFromText(leaseText || '');
+    const filenameName = file.name.replace(/\.[^.]+$/, '').replace(/[_\-]+/g, ' ').trim();
+    const resolvedName = claudeName || regexName || filenameName;
+    const nameFromClaude = !!claudeName;
+
+    const hasTenant     = !!(claudeName || regexName);
+    const hasLeaseType  = !!norm?.lease_type;
+    const hadExtraction = !!extracted;
+
+    let status;
+    if (!hadExtraction || !hasTenant) {
+      status = 'failed';
+    } else if (!norm?.start_date || !norm?.end_date || !hasLeaseType) {
+      status = 'partial';
+    } else {
+      status = 'success';
+    }
+
+    const isPartial  = status === 'partial';
+    const _showRetry = status === 'failed';
+
+    // Processing isolation: low/failed confidence sets _pendingJobReview so the
+    // resyncTenantsToTable filter blocks this row until the user explicitly saves.
+    const needsJobReview = _conf.level === 'low' || _conf.level === 'failed';
+
+    const finalEntry = {
+      tenant_name:          resolvedName || null,
+      leased_sqft:          norm?.leased_sqft        ?? null,
+      start_date:           norm?.start_date         ?? null,
+      end_date:             norm?.end_date           ?? null,
+      lease_type:           norm?.lease_type         ?? null,
+      cap:                  norm?.cap                ?? null,
+      flags:                norm?.flags              ?? [],
+      doc_has_dates:        norm?.doc_has_dates      ?? false,
+      doc_has_lease_type:   norm?.doc_has_lease_type ?? false,
+      leaseFile:            file,
+      leaseExpected:        true,
+      fileName:             file.name,
+      leaseUrl,
+      status,
+      extractionFailed:     status === 'failed',
+      _needsReview:         isPartial,
+      _showRetry,
+      _nameFromClaude:      nameFromClaude,
+      _error:               status === 'failed' ? 'Extraction failed — tap Retry to re-upload' : null,
+      _confidence:          _conf.level,
+      _confidenceScore:     _conf.score,
+      _confidenceReasons:   _conf.reasons,
+      _meta,
+      _autoExpand:          _conf.level === 'low' || _conf.level === 'failed',
+      _userConfirmed:       false,
+      _pendingJobReview:    needsJobReview,
+      id:                   jobId,
+      _jobId:               jobId,
+    };
+
+    tenantData[placeholderIdx] = finalEntry;
+    storeLeaseFile(jobId, file);
+
+    _leaseDebug.set(jobId, {
+      tenantId:        jobId,
+      fileName:        file.name,
+      fileSizeBytes:   file.size,
+      extractionRoute: _meta.extractionRoute,
+      ocrText:         (!usedPdfDirect && leaseText && !leaseText.startsWith('[Claude')) ? leaseText.slice(0, 2000) : null,
+      normalizedText:  (!usedPdfDirect && leaseText && !leaseText.startsWith('[Claude')) ? normalizeText(leaseText).slice(0, 2000) : null,
+      rawExtracted:    extracted,
+      norm,
+      confidence:      _conf,
+      meta:            { ..._meta },
+      failureStage:    null,
+      error:           null,
+    });
+
+    if (status === 'failed') {
+      failLeaseJob(jobId, { message: finalEntry._error || 'Extraction failed' }, 'extraction');
+    } else {
+      finalizeLeaseJob(jobId, { norm, conf: _conf, meta: _meta, tenantId: jobId });
+    }
+
+  } catch (err) {
+    logError('lease_processFile', err, { propId: propertyId, fileName: file.name, jobId });
+    tenantData[placeholderIdx] = {
+      tenant_name:       null,
+      leased_sqft:       null,
+      start_date:        null,
+      end_date:          null,
+      lease_type:        null,
+      fileName:          file.name,
+      leaseFile:         file,
+      leaseExpected:     true,
+      status:            'failed',
+      extractionFailed:  true,
+      _needsReview:      false,
+      _showRetry:        true,
+      _error:            err.message || 'Processing error',
+      id:                jobId,
+      _jobId:            jobId,
+    };
+    failLeaseJob(jobId, err, 'processFile');
+    _leaseDebug.set(jobId, {
+      tenantId:        jobId,
+      fileName:        file.name,
+      fileSizeBytes:   file.size,
+      extractionRoute: 'unknown',
+      ocrText:         null,
+      normalizedText:  null,
+      rawExtracted:    null,
+      norm:            null,
+      confidence:      { level: 'failed', score: 0, reasons: ['Unhandled exception in processFile'], failedFields: ['all'] },
+      meta:            { extractionFailed: true, processingMs: Date.now() - _startMs },
+      failureStage:    'processFile',
+      error:           { message: err.message, stack: (err.stack || '').split('\n').slice(0, 5).join('\n') },
+    });
+  }
+}
+
 // ─── Bulk Lease Upload ────────────────────────────────────────────────────────
 
 async function handleBulkLeases(fileList) {
@@ -2082,183 +2453,15 @@ async function handleBulkLeases(fileList) {
 
   const BATCH_SIZE = 2;
   const processFile = async (file) => {
-    const tenantId  = crypto.randomUUID();
-    const _startMs  = Date.now();        // for processingMs in diagnostics
+    // jobId IS the tenantId — single UUID shared by both systems, preventing duplicates.
+    const jobId = createLeaseJob(file, property.id);
 
-    // Push a pending placeholder immediately so the UI shows in-progress state
     const placeholderIdx = tenantData.length;
-    tenantData.push({ id: tenantId, fileName: file.name, status: 'pending', tenant_name: null, leaseExpected: true, _showRetry: false, _needsReview: false, extractionFailed: false });
+    tenantData.push({ id: jobId, _jobId: jobId, fileName: file.name, status: 'pending', tenant_name: null, leaseExpected: true, _showRetry: false, _needsReview: false, extractionFailed: false });
     property.tenants = [...tenantData];
     renderBulkResults();
 
-    try {
-      let leaseText  = null;
-      let extracted  = null;
-      let usedPdfDirect = false;
-
-      // Upload to storage and extract text in parallel
-      let leaseUrl = null;
-      console.groupCollapsed(`[LEASE:upload] ${file.name}`);
-      try {
-        [leaseUrl, leaseText] = await Promise.all([
-          uploadLeaseToStorage(file, property.id),
-          extractLeaseText(file),
-        ]);
-        console.log('leaseUrl:', leaseUrl);
-        console.log('leaseText length:', leaseText?.length ?? 0, '| preview:', (leaseText || '').slice(0, 120));
-      } catch (err) {
-        console.error('upload/extract failed:', err.message);
-        logError('lease_upload_extract', err, { propId: property.id, fileName: file.name });
-      }
-      console.groupEnd();
-
-      console.groupCollapsed(`[LEASE:claude] ${file.name}`);
-      try {
-        if (leaseText && leaseText.length >= 50) {
-          console.log('path: text extraction, chars:', leaseText.length);
-          extracted = await callClaudeForLease(leaseText);
-        } else {
-          usedPdfDirect = true;
-          console.log('path: PDF direct (text weak/missing, chars:', leaseText?.length ?? 0, ')');
-          extracted = await callClaudeWithPdfDirect(file);
-          leaseText = extracted ? `[Claude PDF direct: ${file.name}]` : null;
-        }
-        console.log('raw extracted:', JSON.stringify(extracted)?.slice(0, 300));
-      } catch (err) {
-        console.error('Claude extraction failed:', err.message);
-        logError('lease_claude_extraction', err, { propId: property.id, fileName: file.name });
-      }
-      console.groupEnd();
-
-      if (extracted && !usedPdfDirect) extracted.rawText = leaseText;
-      const norm = extracted ? normalizeTenant(extracted) : null;
-
-      // Build diagnostics meta and compute confidence before constructing finalEntry
-      const _meta = {
-        extractionRoute: usedPdfDirect ? 'pdf-direct' : 'text',
-        ocrChars:        (!usedPdfDirect && leaseText) ? leaseText.length : 0,
-        fileSizeBytes:   file.size,
-        processingMs:    Date.now() - _startMs,
-        extractionFailed: !norm,
-      };
-      const _conf = computeExtractionConfidence(norm, _meta);
-      _meta.confidence      = _conf.level;
-      _meta.confidenceScore = _conf.score;
-
-      console.groupCollapsed(`[LEASE:normalize] ${file.name}`);
-      console.log('fields:', JSON.stringify({ tenant_name: norm?.tenant_name, leased_sqft: norm?.leased_sqft, start_date: norm?.start_date, end_date: norm?.end_date, lease_type: norm?.lease_type, cap: norm?.cap }));
-      console.log('confidence:', _conf.level, `(${_conf.score}/100)`, '| route:', _meta.extractionRoute, '| file:', (file.size / 1024).toFixed(1) + 'KB', '| ocr chars:', _meta.ocrChars, '| ms:', _meta.processingMs);
-      if (_conf.reasons.length)     console.log('reasons:', _conf.reasons.join('; '));
-      if (_conf.failedFields.length) console.log('failedFields:', _conf.failedFields.join(', '));
-      console.groupEnd();
-
-      // Resolve name: Claude result → regex scan → filename strip (UI display only)
-      const claudeName     = norm?.tenant_name?.trim() || '';
-      const regexName      = extractTenantFromText(leaseText || '');
-      const filenameName   = file.name.replace(/\.[^.]+$/, '').replace(/[_\-]+/g, ' ').trim();
-      const resolvedName   = claudeName || regexName || filenameName;
-      const nameFromClaude = !!claudeName;
-
-      const hasTenant    = !!(claudeName || regexName); // filename-only is NOT sufficient for success
-      const hasDates     = !!(norm?.start_date || norm?.end_date);
-      const hasLeaseType = !!norm?.lease_type;
-
-      // Status rules:
-      // failed  = no extraction result at all, OR no tenant after Claude + regex fallbacks
-      // partial = has tenant but missing start_date, end_date, or lease_type
-      // success = all key fields present
-      const hadExtraction = !!extracted;
-      let status;
-      if (!hadExtraction || !hasTenant) {
-        status = 'failed';
-      } else if (!norm?.start_date || !norm?.end_date || !hasLeaseType) {
-        status = 'partial';
-      } else {
-        status = 'success';
-      }
-
-      const isPartial  = status === 'partial';
-      const _showRetry = status === 'failed';
-
-      const finalEntry = {
-        tenant_name:          resolvedName || null,
-        leased_sqft:          norm?.leased_sqft        ?? null,
-        start_date:           norm?.start_date         ?? null,
-        end_date:             norm?.end_date           ?? null,
-        lease_type:           norm?.lease_type         ?? null,
-        cap:                  norm?.cap                ?? null,
-        flags:                norm?.flags              ?? [],
-        doc_has_dates:        norm?.doc_has_dates      ?? false,
-        doc_has_lease_type:   norm?.doc_has_lease_type ?? false,
-        leaseFile:            file,
-        leaseExpected:        true,
-        fileName:             file.name,
-        leaseUrl,
-        status,
-        extractionFailed:     status === 'failed',
-        _needsReview:         isPartial,
-        _showRetry,
-        _nameFromClaude:      nameFromClaude,
-        _error:               status === 'failed' ? 'Extraction failed — tap Retry to re-upload' : null,
-        // Confidence system fields
-        _confidence:          _conf.level,
-        _confidenceScore:     _conf.score,
-        _confidenceReasons:   _conf.reasons,
-        _meta,
-        // Auto-open the edit panel for low/failed so user sees it without clicking
-        _autoExpand:          _conf.level === 'low' || _conf.level === 'failed',
-        _userConfirmed:       false,
-        id:                   tenantId,
-      };
-      tenantData[placeholderIdx] = finalEntry;
-      storeLeaseFile(tenantId, file);
-      _leaseDebug.set(tenantId, {
-        tenantId,
-        fileName:        file.name,
-        fileSizeBytes:   file.size,
-        extractionRoute: _meta.extractionRoute,
-        ocrText:         (!usedPdfDirect && leaseText && !leaseText.startsWith('[Claude')) ? leaseText.slice(0, 2000) : null,
-        normalizedText:  (!usedPdfDirect && leaseText && !leaseText.startsWith('[Claude')) ? normalizeText(leaseText).slice(0, 2000) : null,
-        rawExtracted:    extracted,
-        norm,
-        confidence:      _conf,
-        meta:            { ..._meta },
-        failureStage:    null,
-        error:           null,
-      });
-    } catch (err) {
-      logError('lease_processFile', err, { propId: property.id, fileName: file.name });
-      tenantData[placeholderIdx] = {
-        tenant_name:      null,
-        leased_sqft:      null,
-        start_date:       null,
-        end_date:         null,
-        lease_type:       null,
-        fileName:         file.name,
-        leaseFile:        file,
-        leaseExpected:    true,
-        status:           'failed',
-        extractionFailed: true,
-        _needsReview:     false,
-        _showRetry:       true,
-        _error:           err.message || 'Processing error',
-        id:               tenantId,
-      };
-      _leaseDebug.set(tenantId, {
-        tenantId,
-        fileName:        file.name,
-        fileSizeBytes:   file.size,
-        extractionRoute: 'unknown',
-        ocrText:         null,
-        normalizedText:  null,
-        rawExtracted:    null,
-        norm:            null,
-        confidence:      { level: 'failed', score: 0, reasons: ['Unhandled exception in processFile'], failedFields: ['all'] },
-        meta:            { extractionFailed: true, processingMs: Date.now() - _startMs },
-        failureStage:    'processFile',
-        error:           { message: err.message, stack: (err.stack || '').split('\n').slice(0, 5).join('\n') },
-      });
-    }
+    await _runLeaseJobPipeline(jobId, placeholderIdx);
 
     completed++;
     _progUpdate();
@@ -2290,7 +2493,7 @@ async function handleBulkLeases(fileList) {
   captureCheckpoint(activePropId, 'Before lease upload');
   await saveProperty(property);
   // Exclude failed extractions — only persist tenants with at minimum a real name
-  await resyncTenantsToTable(property.id, property.tenants.filter(t => t?.tenant_name && (!t?.extractionFailed || t?._userConfirmed)));
+  await resyncTenantsToTable(property.id, property.tenants.filter(t => t?.tenant_name && (!t?.extractionFailed || t?._userConfirmed) && !t?._pendingJobReview));
   {
     const successCount = tenantData.filter(t => t.status === 'success').length;
     logActivity('lease_uploaded', `${total} lease${total !== 1 ? 's' : ''} uploaded`, {
@@ -2479,8 +2682,16 @@ function renderBulkResults() {
     const isPending = d.status === 'pending';
     const confLevel = d._confidence || (d.extractionFailed ? 'failed' : d._needsReview ? 'medium' : null);
     const icon = isPending ? '⏳' : d.extractionFailed ? '❌' : showWarning ? '⚠️' : d.tenant_name ? '✓' : '?';
+
+    // Job progress state — only relevant when pending
+    const _job        = _leaseJobs.get(d.id);
+    const _jobStage   = _job?.stage    || 'upload';
+    const _jobPct     = _job?.progress ?? 0;
+    const _jobElapsed = _job?._startMs ? ((Date.now() - _job._startMs) / 1000).toFixed(1) + 's' : '';
+    const _stageLabel = _JOB_STAGES[_jobStage]?.label ?? 'Processing...';
+
     const meta = isPending
-      ? 'Extracting…'
+      ? _stageLabel
       : d.extractionFailed
       ? 'Extraction failed — tap to re-upload'
       : showWarning
@@ -2491,6 +2702,13 @@ function renderBulkResults() {
             end       !== null && end       !== '' ? end               : '—',
             leaseType !== null && leaseType !== '' ? leaseType         : '—',
           ].join(' · ');
+
+    const jobProgressHtml = isPending ? `
+      <div class="cx-job-progress-track">
+        <div class="cx-job-progress-fill" style="width:${_jobPct}%"></div>
+      </div>
+      ${_jobElapsed ? `<span class="cx-job-elapsed">${_jobElapsed}</span>` : ''}
+    ` : '';
 
     const dupBadge = isDupName
       ? `<span style="font-size:0.72rem;background:#78350f40;border:1px solid #f59e0b;color:#fbbf24;border-radius:4px;padding:1px 6px;margin-left:6px;white-space:nowrap;">⚠ Duplicate name — add unit # or remove one</span>`
@@ -2531,14 +2749,15 @@ function renderBulkResults() {
               ${esc(displayName)}${dupBadge}${_confidenceBadgeHtml(confLevel)}
             </div>
             <div class="tenant-meta" id="bmeta-${i}">${esc(meta)}</div>
+            ${jobProgressHtml}
           </div>
           <span class="bulk-t-chevron" id="bchev-${i}">${chevInitialHtml}</span>
           ${showRetryButton
-            ? `<button class="view-lease-btn" data-retry data-index="${i}" style="margin-left:0;color:#f97316;">&#x21BA; Retry</button>`
+            ? `<button class="view-lease-btn" data-retry data-index="${i}" data-job-id="${d.id || ''}" style="margin-left:0;color:#f97316;">&#x21BA; Retry</button>`
             : d.leaseExpected
               ? (d.leaseFile instanceof File || d.leaseUrl)
                 ? `<button class="view-lease-btn" style="margin-left:0" onclick="event.stopPropagation();openLeaseModalFromFile(${i})">View Lease</button>`
-                : `<span class="lease-missing-note" data-retry data-index="${i}" style="margin-left:6px;cursor:pointer;">No lease file — tap to re-upload</span>`
+                : `<span class="lease-missing-note" data-retry data-index="${i}" data-job-id="${d.id || ''}" style="margin-left:6px;cursor:pointer;">No lease file — tap to re-upload</span>`
               : ''}
           ${_debugMode ? `<button class="cx-debug-toggle" onclick="event.stopPropagation();toggleLeaseDebug(${i})">🛠 Debug</button>` : ''}
           <button class="bulk-t-remove" onclick="event.stopPropagation();removeBulkTenant(${i})">Remove</button>
@@ -2661,6 +2880,11 @@ async function saveBulkTenant(i) {
   // automatically; the user must click "Confirm & Save" with a name present.
   if (d && d.tenant_name && d.tenant_name.trim()) {
     d._userConfirmed = true;
+    // Clear the job review gate — this tenant is now explicitly confirmed by the user
+    if (d._pendingJobReview) {
+      d._pendingJobReview = false;
+      if (d._jobId) updateLeaseJob(d._jobId, { status: 'completed', stage: 'completed' });
+    }
     if (d.extractionFailed) {
       d.extractionFailed = false;
       d.status           = 'partial'; // conservative — AI didn't fill it, mark partial
@@ -2685,7 +2909,7 @@ async function saveBulkTenant(i) {
   // Persist to Supabase immediately — don't rely on debounced oninput
   await savePropertyData();
   const prop = currentProperty();
-  if (prop?.id) await resyncTenantsToTable(prop.id, tenantData.filter(t => t?.tenant_name && (!t?.extractionFailed || t?._userConfirmed)));
+  if (prop?.id) await resyncTenantsToTable(prop.id, tenantData.filter(t => t?.tenant_name && (!t?.extractionFailed || t?._userConfirmed) && !t?._pendingJobReview));
   console.log('[saveBulkTenant] tenant', i, 'saved:', d?.tenant_name);
 
   // Success flash
@@ -2759,7 +2983,7 @@ async function removeBulkTenant(i) {
   renderBulkResults();
   checkSqftValidation();
   // Full re-sync: delete all rows for this property then re-insert what remains
-  if (prop?.id) await resyncTenantsToTable(prop.id, tenantData.filter(t => t?.tenant_name && (!t?.extractionFailed || t?._userConfirmed)));
+  if (prop?.id) await resyncTenantsToTable(prop.id, tenantData.filter(t => t?.tenant_name && (!t?.extractionFailed || t?._userConfirmed) && !t?._pendingJobReview));
   await savePropertyData();
 }
 
@@ -4672,6 +4896,8 @@ const _ERR_MAX = 50;
 
 // In-memory lease extraction debug store — never persisted; reset on page reload.
 const _leaseDebug = new Map();
+// In-memory lease job store — source of truth for job state; async-synced to lease_jobs table.
+const _leaseJobs  = new Map();
 
 function logError(type, error, context = {}) {
   const entry = {
@@ -4797,30 +5023,55 @@ function _msRunTests() {
 window._msRunTests = _msRunTests;
 
 // Devtools helper: window._msLeaseDebug(indexOrId) — prints full debug object for a processed lease.
-// Usage: _msLeaseDebug(0) for first card, _msLeaseDebug('uuid-...') by tenant ID.
+// Usage: _msLeaseDebug(0) for first card, _msLeaseDebug('uuid-...') by tenant ID or job ID.
 window._msLeaseDebug = function(entryIdOrIndex) {
-  let entry;
+  let id;
   if (typeof entryIdOrIndex === 'number') {
     const d = tenantData[entryIdOrIndex];
-    entry = d ? _leaseDebug.get(d.id) : null;
+    id = d?.id;
   } else {
-    entry = _leaseDebug.get(entryIdOrIndex);
+    id = entryIdOrIndex;
   }
-  if (!entry) {
-    console.warn('[_msLeaseDebug] No debug entry for:', entryIdOrIndex, '| Available IDs:', [..._leaseDebug.keys()]);
+
+  const entry = id ? _leaseDebug.get(id) : null;
+  const job   = id ? _leaseJobs.get(id)  : null;
+
+  if (!entry && !job) {
+    console.warn('[_msLeaseDebug] No data for:', entryIdOrIndex,
+      '\n  _leaseDebug IDs:', [..._leaseDebug.keys()],
+      '\n  _leaseJobs IDs:',  [..._leaseJobs.keys()]);
     return null;
   }
-  console.group('[Mainstreet] Lease Debug — ' + entry.fileName);
-  console.log('route:',      entry.extractionRoute);
-  console.log('confidence:', entry.confidence?.level, '(' + (entry.confidence?.score ?? '?') + '/100)');
-  if (entry.confidence?.reasons?.length) console.log('reasons:', entry.confidence.reasons.join('; '));
-  console.log('meta:',        entry.meta);
-  console.log('norm:',        entry.norm);
-  console.log('rawExtracted:', entry.rawExtracted);
-  if (entry.ocrText)  console.log('ocrText (first 500):', entry.ocrText.slice(0, 500));
-  if (entry.error)    console.error('error:', entry.error);
+
+  const label = entry?.fileName || job?.file_name || String(entryIdOrIndex);
+  console.group('[Mainstreet] Lease Debug — ' + label);
+
+  if (job) {
+    console.group('Job State');
+    console.log('status:', job.status, '| stage:', job.stage, '| progress:', job.progress + '%');
+    console.log('retry_count:', job.retry_count);
+    if (job.processing_started_at)   console.log('started:', job.processing_started_at);
+    if (job.processing_completed_at) console.log('completed:', job.processing_completed_at);
+    if (job.error_message)           console.error('error_message:', job.error_message);
+    if (job.debug_summary)           console.log('debug_summary:', job.debug_summary);
+    console.groupEnd();
+  }
+
+  if (entry) {
+    console.group('Extraction Detail');
+    console.log('route:',      entry.extractionRoute);
+    console.log('confidence:', entry.confidence?.level, '(' + (entry.confidence?.score ?? '?') + '/100)');
+    if (entry.confidence?.reasons?.length) console.log('reasons:', entry.confidence.reasons.join('; '));
+    console.log('meta:',         entry.meta);
+    console.log('norm:',         entry.norm);
+    console.log('rawExtracted:', entry.rawExtracted);
+    if (entry.ocrText) console.log('ocrText (first 500):', entry.ocrText.slice(0, 500));
+    if (entry.error)   console.error('error:', entry.error);
+    console.groupEnd();
+  }
+
   console.groupEnd();
-  return entry;
+  return { job, entry };
 };
 
 function showRunCompleteToast() {
@@ -5342,13 +5593,19 @@ document.addEventListener('click', (e) => {
   });
 }, true); // capture phase so we see it before any stopPropagation
 
-// Delegated retry handler — survives innerHTML re-renders
+// Delegated retry handler — survives innerHTML re-renders.
+// Uses retryLeaseJob (in-memory file) when available; falls back to file picker.
 document.addEventListener('click', (e) => {
   const retryEl = e.target.closest('[data-retry]');
   if (!retryEl) return;
   e.stopPropagation();
-  const i = retryEl.dataset.index;
-  retryUploadForSlot(i);
+  const i     = parseInt(retryEl.dataset.index, 10);
+  const jobId = retryEl.dataset.jobId;
+  if (jobId && _leaseJobs.get(jobId)?._file) {
+    retryLeaseJob(jobId);
+  } else {
+    retryUploadForSlot(i);
+  }
 });
 
 // Mousedown diagnostic — fires before click; confirms the pointer event is reaching the DOM
@@ -9428,6 +9685,7 @@ async function resyncTenantsToTable(propertyId, tenants) {
   if (!propertyId || typeof propertyId !== 'string' || propertyId.length < 10) return;
   const { error: delErr } = await db.from('tenants').delete().eq('property_id', propertyId);
   if (delErr) { console.error('[resyncTenantsToTable] delete error:', delErr.message); return; }
+  // Safety net: _pendingJobReview entries must not reach Supabase until user confirms
   const rows = (tenants || [])
     .filter(t => t && t.tenant_name)
     .map(t => ({

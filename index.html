@@ -1174,6 +1174,22 @@
     .cx-banner-medium { background: rgba(245,158,11,0.08); color: #fbbf24; border-color: rgba(245,158,11,0.25); }
     .cx-reasons { margin-top: 6px; font-size: 0.76rem; opacity: 0.85; }
 
+    /* ── Job Progress Bar ──────────────────────────────── */
+    .cx-job-progress-track {
+      height: 3px; border-radius: 2px; overflow: hidden;
+      background: rgba(255,255,255,0.08);
+      margin-top: 5px; width: 100%; max-width: 220px;
+    }
+    .cx-job-progress-fill {
+      height: 100%; border-radius: 2px;
+      background: linear-gradient(90deg, #6366f1, #818cf8);
+      transition: width 0.35s ease;
+    }
+    .cx-job-elapsed {
+      font-size: 0.68rem; color: #64748b; margin-top: 2px;
+      display: block; letter-spacing: 0.02em;
+    }
+
     /* ── Lease Debug Panel ─────────────────────────────── */
     .cx-debug-toggle {
       font-size: 0.7rem; padding: 1px 7px; border-radius: 4px;
