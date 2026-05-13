@@ -845,6 +845,39 @@ function isValidTenant(d) {
 }
 
 
+// Scores extraction quality from 0–100 and maps to high/medium/low/failed.
+// Called in processFile after normalizeTenant; the result is stored on the tenant
+// entry and drives badge colour, auto-expand, and manual-confirm requirements.
+// meta: { usedPdfDirect, ocrChars, fileSizeBytes, processingMs, extractionFailed }
+function computeExtractionConfidence(norm, meta) {
+  if (!norm || meta?.extractionFailed) {
+    return { level: 'failed', score: 0, reasons: ['Extraction returned no data'], failedFields: ['all'] };
+  }
+
+  let score = 100;
+  const reasons = [];
+  const failedFields = [];
+
+  if (!norm.tenant_name || !norm.tenant_name.trim()) {
+    score -= 40; reasons.push('No tenant name extracted'); failedFields.push('tenant_name');
+  } else if (!isStrongName(norm.tenant_name)) {
+    score -= 10; reasons.push('Tenant name looks weak (possible OCR noise)');
+  }
+  if (!norm.start_date)  { score -= 15; reasons.push('Missing lease start date'); failedFields.push('start_date'); }
+  if (!norm.end_date)    { score -= 15; reasons.push('Missing lease end date');   failedFields.push('end_date'); }
+  if (!norm.lease_type)  { score -= 10; reasons.push('Lease type not identified'); failedFields.push('lease_type'); }
+  if (!norm.leased_sqft) { score -= 10; reasons.push('Square footage not found'); failedFields.push('leased_sqft'); }
+  if (norm._usedFallback) { score -= 8; reasons.push('Dates came from regex fallback, not AI'); }
+  // Very short text layer suggests poor OCR quality on the text path
+  if (!meta?.usedPdfDirect && meta?.ocrChars != null && meta.ocrChars < 500) {
+    score -= 10; reasons.push('Very short text layer — possible OCR degradation');
+  }
+
+  score = Math.max(0, score);
+  const level = score >= 80 ? 'high' : score >= 55 ? 'medium' : score > 0 ? 'low' : 'failed';
+  return { level, score, reasons, failedFields };
+}
+
 async function extractPdfText(file) {
   // For non-PDF files (txt, etc.) fall back to plain text read
   if (!file.name.toLowerCase().endsWith('.pdf') && file.type !== 'application/pdf') {
@@ -2049,7 +2082,8 @@ async function handleBulkLeases(fileList) {
 
   const BATCH_SIZE = 2;
   const processFile = async (file) => {
-    const tenantId = crypto.randomUUID();
+    const tenantId  = crypto.randomUUID();
+    const _startMs  = Date.now();        // for processingMs in diagnostics
 
     // Push a pending placeholder immediately so the UI shows in-progress state
     const placeholderIdx = tenantData.length;
@@ -2099,8 +2133,23 @@ async function handleBulkLeases(fileList) {
       if (extracted && !usedPdfDirect) extracted.rawText = leaseText;
       const norm = extracted ? normalizeTenant(extracted) : null;
 
+      // Build diagnostics meta and compute confidence before constructing finalEntry
+      const _meta = {
+        extractionRoute: usedPdfDirect ? 'pdf-direct' : 'text',
+        ocrChars:        (!usedPdfDirect && leaseText) ? leaseText.length : 0,
+        fileSizeBytes:   file.size,
+        processingMs:    Date.now() - _startMs,
+        extractionFailed: !norm,
+      };
+      const _conf = computeExtractionConfidence(norm, _meta);
+      _meta.confidence      = _conf.level;
+      _meta.confidenceScore = _conf.score;
+
       console.groupCollapsed(`[LEASE:normalize] ${file.name}`);
-      console.log('norm:', JSON.stringify({ tenant_name: norm?.tenant_name, leased_sqft: norm?.leased_sqft, start_date: norm?.start_date, end_date: norm?.end_date, lease_type: norm?.lease_type, cap: norm?.cap }));
+      console.log('fields:', JSON.stringify({ tenant_name: norm?.tenant_name, leased_sqft: norm?.leased_sqft, start_date: norm?.start_date, end_date: norm?.end_date, lease_type: norm?.lease_type, cap: norm?.cap }));
+      console.log('confidence:', _conf.level, `(${_conf.score}/100)`, '| route:', _meta.extractionRoute, '| file:', (file.size / 1024).toFixed(1) + 'KB', '| ocr chars:', _meta.ocrChars, '| ms:', _meta.processingMs);
+      if (_conf.reasons.length)     console.log('reasons:', _conf.reasons.join('; '));
+      if (_conf.failedFields.length) console.log('failedFields:', _conf.failedFields.join(', '));
       console.groupEnd();
 
       // Resolve name: Claude result → regex scan → filename strip (UI display only)
@@ -2132,26 +2181,34 @@ async function handleBulkLeases(fileList) {
       const _showRetry = status === 'failed';
 
       const finalEntry = {
-        tenant_name:        resolvedName || null,
-        leased_sqft:        norm?.leased_sqft        ?? null,
-        start_date:         norm?.start_date         ?? null,
-        end_date:           norm?.end_date           ?? null,
-        lease_type:         norm?.lease_type         ?? null,
-        cap:                norm?.cap                ?? null,
-        flags:              norm?.flags              ?? [],
-        doc_has_dates:      norm?.doc_has_dates      ?? false,
-        doc_has_lease_type: norm?.doc_has_lease_type ?? false,
-        leaseFile:          file,
-        leaseExpected:      true,
-        fileName:           file.name,
+        tenant_name:          resolvedName || null,
+        leased_sqft:          norm?.leased_sqft        ?? null,
+        start_date:           norm?.start_date         ?? null,
+        end_date:             norm?.end_date           ?? null,
+        lease_type:           norm?.lease_type         ?? null,
+        cap:                  norm?.cap                ?? null,
+        flags:                norm?.flags              ?? [],
+        doc_has_dates:        norm?.doc_has_dates      ?? false,
+        doc_has_lease_type:   norm?.doc_has_lease_type ?? false,
+        leaseFile:            file,
+        leaseExpected:        true,
+        fileName:             file.name,
         leaseUrl,
         status,
-        extractionFailed:   status === 'failed',
-        _needsReview:       isPartial,
+        extractionFailed:     status === 'failed',
+        _needsReview:         isPartial,
         _showRetry,
-        _nameFromClaude:    nameFromClaude,
-        _error:             status === 'failed' ? 'Extraction failed — tap Retry to re-upload' : null,
-        id:                 tenantId,
+        _nameFromClaude:      nameFromClaude,
+        _error:               status === 'failed' ? 'Extraction failed — tap Retry to re-upload' : null,
+        // Confidence system fields
+        _confidence:          _conf.level,
+        _confidenceScore:     _conf.score,
+        _confidenceReasons:   _conf.reasons,
+        _meta,
+        // Auto-open the edit panel for low/failed so user sees it without clicking
+        _autoExpand:          _conf.level === 'low' || _conf.level === 'failed',
+        _userConfirmed:       false,
+        id:                   tenantId,
       };
       tenantData[placeholderIdx] = finalEntry;
       storeLeaseFile(tenantId, file);
@@ -2205,7 +2262,7 @@ async function handleBulkLeases(fileList) {
   captureCheckpoint(activePropId, 'Before lease upload');
   await saveProperty(property);
   // Exclude failed extractions — only persist tenants with at minimum a real name
-  await resyncTenantsToTable(property.id, property.tenants.filter(t => t?.tenant_name && !t?.extractionFailed));
+  await resyncTenantsToTable(property.id, property.tenants.filter(t => t?.tenant_name && (!t?.extractionFailed || t?._userConfirmed)));
   {
     const successCount = tenantData.filter(t => t.status === 'success').length;
     logActivity('lease_uploaded', `${total} lease${total !== 1 ? 's' : ''} uploaded`, {
@@ -2234,6 +2291,18 @@ function handleFieldBlur(index, field, value) {
   isEditingField = false;
   updateTenantField(index, field, value);
   savePropertyData(); // debounced — collapses rapid edits into one write
+}
+
+function _confidenceBadgeHtml(level) {
+  if (!level || level === 'pending') return '';
+  const cfg = {
+    high:   { cls: 'cx-high',   label: 'High confidence' },
+    medium: { cls: 'cx-medium', label: 'Review recommended' },
+    low:    { cls: 'cx-low',    label: 'Low confidence' },
+    failed: { cls: 'cx-failed', label: 'Extraction failed' },
+  }[level];
+  if (!cfg) return '';
+  return `<span class="cx-badge ${cfg.cls}">${cfg.label}</span>`;
 }
 
 function renderBulkResults() {
@@ -2274,6 +2343,7 @@ function renderBulkResults() {
     const isDupName   = d.tenant_name ? _dupNames.has(d.tenant_name.trim().toLowerCase()) : false;
 
     const isPending = d.status === 'pending';
+    const confLevel = d._confidence || (d.extractionFailed ? 'failed' : d._needsReview ? 'medium' : null);
     const icon = isPending ? '⏳' : d.extractionFailed ? '❌' : showWarning ? '⚠️' : d.tenant_name ? '✓' : '?';
     const meta = isPending
       ? 'Extracting…'
@@ -2292,15 +2362,43 @@ function renderBulkResults() {
       ? `<span style="font-size:0.72rem;background:#78350f40;border:1px solid #f59e0b;color:#fbbf24;border-radius:4px;padding:1px 6px;margin-left:6px;white-space:nowrap;">⚠ Duplicate name — add unit # or remove one</span>`
       : '';
 
+    // Confidence banner text and colour for the expanded detail header
+    const confBannerHtml = (() => {
+      if (isPending || !confLevel) return '';
+      if (confLevel === 'failed') {
+        return `<div class="cx-detail-banner cx-banner-failed">
+          ❌ Extraction failed — AI could not read this document. Fill in the fields below and click Save to confirm manually.
+          ${d._confidenceReasons?.length ? `<div class="cx-reasons">${d._confidenceReasons.map(r => `• ${r}`).join('<br>')}</div>` : ''}
+        </div>`;
+      }
+      if (confLevel === 'low') {
+        return `<div class="cx-detail-banner cx-banner-low">
+          ⚠️ Low confidence extraction — please verify the fields below before saving.
+          ${d._confidenceReasons?.length ? `<div class="cx-reasons">${d._confidenceReasons.map(r => `• ${r}`).join('<br>')}</div>` : ''}
+        </div>`;
+      }
+      if (confLevel === 'medium' || showWarning) {
+        return `<div class="cx-detail-banner cx-banner-medium">
+          ⚠️ Partial extraction — AI found the tenant but some fields are missing. Please fill them in below.
+        </div>`;
+      }
+      return '';
+    })();
+
+    const detailInitialDisplay = d._autoExpand ? 'block' : 'none';
+    const chevInitialHtml = d._autoExpand ? '&#x25B2; Close' : '&#x25BC; Edit';
+
     return `
       <div class="bulk-tenant-row${isPending ? ' is-pending' : d.extractionFailed ? ' has-error' : showWarning ? ' has-warning' : ''}" id="btr-${i}">
         <div class="bulk-tenant-summary" onclick="toggleBulkDetail(${i})">
           <span class="bulk-t-status" id="bstatus-${i}">${icon}</span>
           <div class="bulk-t-info" id="binfo-${i}">
-            <div class="tenant-title" id="bname-${i}"${isWeakName ? ' style="opacity:0.6;font-style:italic;"' : ''}>${esc(displayName)}${dupBadge}</div>
+            <div class="tenant-title" id="bname-${i}"${isWeakName ? ' style="opacity:0.6;font-style:italic;"' : ''}>
+              ${esc(displayName)}${dupBadge}${_confidenceBadgeHtml(confLevel)}
+            </div>
             <div class="tenant-meta" id="bmeta-${i}">${esc(meta)}</div>
           </div>
-          <span class="bulk-t-chevron" id="bchev-${i}">&#x25BC; Edit</span>
+          <span class="bulk-t-chevron" id="bchev-${i}">${chevInitialHtml}</span>
           ${showRetryButton
             ? `<button class="view-lease-btn" data-retry data-index="${i}" style="margin-left:0;color:#f97316;">&#x21BA; Retry</button>`
             : d.leaseExpected
@@ -2310,12 +2408,10 @@ function renderBulkResults() {
               : ''}
           <button class="bulk-t-remove" onclick="event.stopPropagation();removeBulkTenant(${i})">Remove</button>
         </div>
-        <div class="bulk-tenant-detail" id="bdet-${i}" style="display:none;">
-          ${d._error
+        <div class="bulk-tenant-detail" id="bdet-${i}" style="display:${detailInitialDisplay};">
+          ${confBannerHtml || (d._error
             ? `<div class="err-banner" style="margin-bottom:10px;">Extraction error: ${esc(d._error)}</div>`
-            : showWarning
-              ? `<div class="err-banner" style="margin-bottom:10px;border-color:#f59e0b;color:#fbbf24;">&#x26A0;&#xFE0F; Partial extraction — AI found the tenant but some fields are missing. Please fill them in below.</div>`
-              : ''}
+            : '')}
           ${(() => { const w = getWarnings(computeFlags(d)); return w.length ? `<div class="rc-flags"><div class="rc-flags-title">&#x26A0;&#xFE0F; Needs Review</div>${w.map(m => `<div class="rc-flag-item">${m}</div>`).join('')}</div>` : ''; })()}
           <div class="field-row">
             <div class="field">
@@ -2362,8 +2458,13 @@ function renderBulkResults() {
                 onblur="handleFieldBlur(${i},'excluded_categories',this.value)"/>
             </div>
           </div>
-          <div style="display:flex;justify-content:flex-end;padding-top:10px;">
-            <button class="bulk-done-btn" id="bdone-${i}" onclick="saveBulkTenant(${i})">Done ✓</button>
+          <div style="display:flex;justify-content:space-between;align-items:center;padding-top:10px;">
+            ${d.extractionFailed && !d._userConfirmed
+              ? `<span style="font-size:0.78rem;color:#94a3b8;">Fill in fields above, then click Save to confirm manually</span>`
+              : `<span></span>`}
+            <button class="bulk-done-btn" id="bdone-${i}" onclick="saveBulkTenant(${i})">
+              ${d.extractionFailed && !d._userConfirmed ? 'Confirm &amp; Save' : 'Done ✓'}
+            </button>
           </div>
         </div>
       </div>`;
@@ -2413,9 +2514,32 @@ async function saveBulkTenant(i) {
     d._needsReview = false;
     if (row) {
       row.classList.remove('has-warning', 'has-error');
-      // Update status icon to ✓
       const statusEl = document.getElementById(`bstatus-${i}`);
       if (statusEl) statusEl.textContent = '✓';
+    }
+  }
+
+  // When a user explicitly saves a valid tenant name, promote the entry out of
+  // extractionFailed so the resync guard lets it through to Supabase.
+  // This is the only code path that sets _userConfirmed — it cannot happen
+  // automatically; the user must click "Confirm & Save" with a name present.
+  if (d && d.tenant_name && d.tenant_name.trim()) {
+    d._userConfirmed = true;
+    if (d.extractionFailed) {
+      d.extractionFailed = false;
+      d.status           = 'partial'; // conservative — AI didn't fill it, mark partial
+      if (row) {
+        row.classList.remove('has-error');
+        row.classList.add('has-warning');
+        const statusEl = document.getElementById(`bstatus-${i}`);
+        if (statusEl) statusEl.textContent = '⚠️';
+        // Update confidence badge in the name line to reflect user confirmation
+        const nameEl = document.getElementById(`bname-${i}`);
+        if (nameEl) {
+          const badge = nameEl.querySelector('.cx-badge');
+          if (badge) { badge.className = 'cx-badge cx-medium'; badge.textContent = 'Manually confirmed'; }
+        }
+      }
     }
   }
 
@@ -2425,7 +2549,7 @@ async function saveBulkTenant(i) {
   // Persist to Supabase immediately — don't rely on debounced oninput
   await savePropertyData();
   const prop = currentProperty();
-  if (prop?.id) await resyncTenantsToTable(prop.id, tenantData.filter(t => t?.tenant_name && !t?.extractionFailed));
+  if (prop?.id) await resyncTenantsToTable(prop.id, tenantData.filter(t => t?.tenant_name && (!t?.extractionFailed || t?._userConfirmed)));
   console.log('[saveBulkTenant] tenant', i, 'saved:', d?.tenant_name);
 
   // Success flash
@@ -2499,7 +2623,7 @@ async function removeBulkTenant(i) {
   renderBulkResults();
   checkSqftValidation();
   // Full re-sync: delete all rows for this property then re-insert what remains
-  if (prop?.id) await resyncTenantsToTable(prop.id, tenantData.filter(t => t?.tenant_name && !t?.extractionFailed));
+  if (prop?.id) await resyncTenantsToTable(prop.id, tenantData.filter(t => t?.tenant_name && (!t?.extractionFailed || t?._userConfirmed)));
   await savePropertyData();
 }
 
