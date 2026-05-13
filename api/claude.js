@@ -2,6 +2,19 @@
 // Reads ANTHROPIC_API_KEY from the Vercel environment — never exposed to the browser.
 // Always returns parsed JSON extracted from Claude's text response.
 
+// WHY: callClaudeWithPdfDirect sends entire PDF as base64 inside the JSON body.
+// Base64 adds ~33% overhead, so a 5 MB PDF becomes ~6.7 MB.
+// Vercel's default bodyParser limit is 4.5 MB — anything larger silently returns
+// 413 before the handler runs, causing all large scanned leases to fail with
+// "Claude PDF direct failed: HTTP 413". Setting 20 MB covers leases up to ~15 MB.
+module.exports.config = {
+  api: {
+    bodyParser: {
+      sizeLimit: '20mb',
+    },
+  },
+};
+
 module.exports = async function handler(req, res) {
   if (req.method !== 'POST') {
     return res.status(405).json({ error: 'Method not allowed' });

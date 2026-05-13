@@ -322,6 +322,16 @@ IMPORTANT:
 If the charge looks normal, say "No issues" and do not invent problems.
 If the category appears incorrect based on the vendor or description, gently interpret the charge correctly in your explanation without criticizing the classification.`;
 
+// WHY single source of truth: previously there were THREE schema definitions
+// (CLAUDE_LEASE_SYSTEM, CLAUDE_LEASE_PROMPT, and inline user prompts in each call
+// function), each with different field names. This caused Claude to sometimes return
+// fields the resolver didn't expect, silently dropping data. Now only this system
+// prompt defines the canonical schema; both callClaudeForLease and
+// callClaudeWithPdfDirect user prompts align to these exact field names.
+// Canonical field set: tenant_name, lease_start_date, lease_end_date,
+//   lease_type, sqft, cam_cap.
+// The resolver in callClaudeForLease handles aliases (sqft→leased_sqft, etc.)
+// for backward compatibility with any previously-cached extraction results.
 const CLAUDE_LEASE_SYSTEM = `You are a strict JSON extraction engine for commercial leases.
 Return ONLY valid JSON. No text. No explanation. No markdown. Start with { and end with }.
 
@@ -332,8 +342,7 @@ Return exactly this structure:
   "lease_end_date": "YYYY-MM-DD",
   "lease_type": string,
   "sqft": number,
-  "cam_cap": number,
-  "capPercentage": number
+  "cam_cap": number
 }
 
 Rules:
@@ -351,38 +360,8 @@ Rules:
   If landlord pays operating expenses → "Gross".
   If some expenses split → "Modified Gross". Null only if completely unresolvable.
 - sqft: Integer. Strip commas, units, and the word "approximately". Null if not found.
-- cam_cap and capPercentage: CRITICAL — you MUST search the entire document for any language that limits CAM or operating expense increases. Look for ALL of the following phrases: "CAM cap", "operating expense cap", "expense stop", "base year stop", "not to exceed", "shall not pay more than", "increases limited to", "capped at", "no more than X% increase", "annual increase cap", "controllable expense cap". If a percentage is found (e.g. "5%" or "5 percent"), return 5. If a dollar amount is found, return that number. Return the SAME value for both cam_cap and capPercentage. Only return null if absolutely no cap-related language exists anywhere in the document.
+- cam_cap: CRITICAL — you MUST search the entire document for any language that limits CAM or operating expense increases. Look for ALL of the following phrases: "CAM cap", "operating expense cap", "expense stop", "base year stop", "not to exceed", "shall not pay more than", "increases limited to", "capped at", "no more than X% increase", "annual increase cap", "controllable expense cap". If a percentage is found (e.g. "5%" or "5 percent"), return 5. If a dollar amount is found, return that number. Only return null if absolutely no cap-related language exists anywhere in the document.
 - Use null only when a field is truly impossible to determine.`;
-
-const CLAUDE_LEASE_PROMPT = `Extract the following fields from the lease text below.
-
-Return EXACTLY this format — no extra text before or after:
-
-{
-  "tenant_name": "...",
-  "leased_sqft": number,
-  "lease_start_date": "YYYY-MM-DD",
-  "lease_end_date": "YYYY-MM-DD",
-  "lease_type": "...",
-  "cam_cap": number or null,
-  "excluded_categories": []
-}
-
-Rules:
-- tenant_name: party paying rent, not the landlord. Look near "Tenant:", "Lessee:", "Tenant Name:". If not explicitly labeled, infer from: the first bold/all-caps line resembling a company or person name, any entity repeated throughout the document, or any business suffix (Inc., LLC, Corp., Ltd., Co.). Never return null if a reasonable guess exists.
-- leased_sqft: integer only, no commas, no text. Average ranges (2800–3200 → 3000). Null if not found.
-- lease_start_date: Format YYYY-MM-DD. Look for: "Commencement Date", "Lease Start Date", "Term begins on", "Term shall commence on", "Effective Date". Fall back to "Execution Date" if nothing else found. Never null if a reasonable date exists.
-- lease_end_date: Format YYYY-MM-DD. Look for: "Expiration Date", "Lease End Date", "Term ends on". If not stated, calculate from start date + term length (e.g. "10-year term from 2020-01-01" → "2030-01-01"). Never null if start date and term length are both present.
-- lease_type: "NNN" if tenant pays taxes+insurance+maintenance. "Gross" if landlord pays. "Modified Gross" if stated. Null if unclear.
-- cam_cap: CRITICAL — search the ENTIRE lease for any CAM/operating expense cap or limit. Look for: "CAM cap", "expense cap", "expense stop", "base year stop", "not to exceed", "shall not pay more than", "increases limited to", "capped at X%", "no more than X% increase", "controllable expense cap". Return the number only (e.g. 5% → 5, $10,000 → 10000). Only null if absolutely no cap language exists anywhere.
-- excluded_categories: array of CAM categories explicitly excluded. [] if none.
-- Use null for any unknown field. Never use empty string "".
-- Key names are fixed: tenant_name, leased_sqft, lease_start_date, lease_end_date, lease_type, cam_cap, excluded_categories.
-
-IMPORTANT: Start your response with { and end with }
-
-LEASE TEXT:
-{{LEASE_TEXT}}`;
 
 const INVOICE_PROMPT = `You are extracting data from a commercial real estate invoice or bill.
 This document may be a scanned image — tolerate OCR noise, spacing issues, and number formatting quirks.
@@ -883,7 +862,11 @@ async function extractPdfText(file) {
   const pdf = await lib.getDocument({ data: arrayBuffer }).promise;
 
   const MAX_PAGES = 5;
+  // WHY warn: commercial leases are often 20-60 pages; term sheets and exhibit pages
+  // can appear well past page 5. Silent truncation produced no signal when key fields
+  // (commencement date, tenant name) lived beyond the read window.
   if (pdf.numPages > MAX_PAGES) {
+    console.warn(`[extractPdfText] PDF has ${pdf.numPages} pages — reading only first ${MAX_PAGES}. Key terms may be truncated; Claude PDF vision path will read the full document.`);
   }
 
   const pages = [];
@@ -975,7 +958,10 @@ async function extractLeaseText(file) {
 
   // Try PDF.js text layer first (works for digital/searchable PDFs)
   let text = await extractPdfText(file);
-  const isWeak = !text || text.length < 1000 || !text.includes('Lease') || text.split(' ').length < 100;
+  // WHY toLowerCase: legal PDFs routinely use all-caps headings ("LEASE AGREEMENT").
+  // The original text.includes('Lease') is case-sensitive and returns false for 'LEASE',
+  // incorrectly routing digital leases through PDF vision → hitting the 413 body limit.
+  const isWeak = !text || text.length < 1000 || !text.toLowerCase().includes('lease') || text.split(' ').length < 100;
 
   if (!isWeak) {
     return text;
@@ -987,11 +973,14 @@ async function extractLeaseText(file) {
 
 function normalizeText(text) {
   if (!text) return '';
+  // WHY the 4th regex was removed: ([a-zA-Z])\s+([a-zA-Z]) → '$1$2' fused all words
+  // together ("Commencement Date" → "CommencementDate", "Triple Net" → "TripleNet"),
+  // breaking keyword-label detection in the regex fallback path.
+  // The three remaining transforms are safe: CR → space, newline → space, collapse runs.
   return text
     .replace(/\r/g, ' ')
     .replace(/\n/g, ' ')
     .replace(/\s+/g, ' ')
-    .replace(/([a-zA-Z])\s+([a-zA-Z])/g, '$1$2')
     .trim();
 }
 
@@ -1110,6 +1099,9 @@ function prepareLeaseTextForClaude(rawText) {
 
 async function callClaudeForLease(text) {
   const leaseSnippet = prepareLeaseTextForClaude(text);
+  // WHY cam_cap added: the system prompt (CLAUDE_LEASE_SYSTEM) always asks for cam_cap,
+  // but the user prompt previously omitted it. Conflicting instructions caused Claude to
+  // sometimes skip it. Now both prompts agree on the full canonical field set.
   const prompt = `
 You are extracting structured data from a commercial lease document.
 NOTE: This text may have been extracted via OCR from a scanned document — tolerate minor spelling errors, extra spaces, or character substitutions.
@@ -1121,7 +1113,8 @@ Extract:
   "lease_start_date": "YYYY-MM-DD" or null,
   "lease_end_date": "YYYY-MM-DD" or null,
   "lease_type": "NNN" | "Gross" | "Modified Gross" | null,
-  "sqft": number or null
+  "sqft": number or null,
+  "cam_cap": number or null
 }
 
 TENANT NAME (highest priority):
@@ -1133,6 +1126,8 @@ TENANT NAME (highest priority):
 DATES:
 - Start: Commencement Date → Lease Start Date → Effective Date → Execution Date
 - End: Expiration Date → Lease End Date → calculate from start + term length if needed
+
+CAM CAP: Search the entire document for any language limiting CAM increases ("not to exceed", "capped at X%", "expense stop"). Return the number (e.g. 5% → 5). Null if no cap language exists.
 
 IMPORTANT: Best guess always. Do not leave tenant_name null if any company name exists.
 
