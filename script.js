@@ -2212,6 +2212,20 @@ async function handleBulkLeases(fileList) {
       };
       tenantData[placeholderIdx] = finalEntry;
       storeLeaseFile(tenantId, file);
+      _leaseDebug.set(tenantId, {
+        tenantId,
+        fileName:        file.name,
+        fileSizeBytes:   file.size,
+        extractionRoute: _meta.extractionRoute,
+        ocrText:         (!usedPdfDirect && leaseText && !leaseText.startsWith('[Claude')) ? leaseText.slice(0, 2000) : null,
+        normalizedText:  (!usedPdfDirect && leaseText && !leaseText.startsWith('[Claude')) ? normalizeText(leaseText).slice(0, 2000) : null,
+        rawExtracted:    extracted,
+        norm,
+        confidence:      _conf,
+        meta:            { ..._meta },
+        failureStage:    null,
+        error:           null,
+      });
     } catch (err) {
       logError('lease_processFile', err, { propId: property.id, fileName: file.name });
       tenantData[placeholderIdx] = {
@@ -2230,6 +2244,20 @@ async function handleBulkLeases(fileList) {
         _error:           err.message || 'Processing error',
         id:               tenantId,
       };
+      _leaseDebug.set(tenantId, {
+        tenantId,
+        fileName:        file.name,
+        fileSizeBytes:   file.size,
+        extractionRoute: 'unknown',
+        ocrText:         null,
+        normalizedText:  null,
+        rawExtracted:    null,
+        norm:            null,
+        confidence:      { level: 'failed', score: 0, reasons: ['Unhandled exception in processFile'], failedFields: ['all'] },
+        meta:            { extractionFailed: true, processingMs: Date.now() - _startMs },
+        failureStage:    'processFile',
+        error:           { message: err.message, stack: (err.stack || '').split('\n').slice(0, 5).join('\n') },
+      });
     }
 
     completed++;
@@ -2305,6 +2333,111 @@ function _confidenceBadgeHtml(level) {
   return `<span class="cx-badge ${cfg.cls}">${cfg.label}</span>`;
 }
 
+function _copyDebugFromEl(elId, btn) {
+  const el = document.getElementById(elId);
+  if (!el) return;
+  const text = el.textContent || '';
+  if (navigator.clipboard) {
+    navigator.clipboard.writeText(text).then(() => {
+      const orig = btn.textContent; btn.textContent = 'Copied!';
+      setTimeout(() => { btn.textContent = orig; }, 1500);
+    }).catch(() => window.prompt('Copy:', text));
+  } else {
+    window.prompt('Copy:', text);
+  }
+}
+
+function toggleLeaseDebug(i) {
+  const panel = document.getElementById('cxdbg-' + i);
+  if (!panel) return;
+  panel.style.display = panel.style.display === 'none' ? 'block' : 'none';
+}
+
+function renderLeaseDebugPanel(d, i) {
+  const dbg = _leaseDebug.get(d.id);
+  if (!dbg) {
+    return `<div class="cx-debug-panel" id="cxdbg-${i}" style="display:none;">
+      <div class="cx-debug-section">
+        <div class="cx-debug-label">Debug</div>
+        <div class="cx-debug-val">No debug data — entry was loaded from storage before this session.</div>
+      </div></div>`;
+  }
+  const m    = dbg.meta       || {};
+  const c    = dbg.confidence || {};
+  const sizeKb  = dbg.fileSizeBytes != null ? (dbg.fileSizeBytes / 1024).toFixed(1) + ' KB' : '—';
+  const routeMap = { text: 'Text layer → Claude', 'pdf-direct': 'Claude PDF vision (direct)', unknown: 'Unknown (error before route)' };
+  const routeLabel = routeMap[dbg.extractionRoute] || dbg.extractionRoute || '—';
+
+  const sec1 = `<div class="cx-debug-section">
+    <div class="cx-debug-label">Extraction</div>
+    <div class="cx-debug-val"><b>Route:</b> ${esc(routeLabel)} &nbsp;|&nbsp; <b>Time:</b> ${m.processingMs != null ? m.processingMs + ' ms' : '—'} &nbsp;|&nbsp; <b>Size:</b> ${esc(sizeKb)}</div>
+  </div>`;
+
+  const reasonsHtml = c.reasons?.length
+    ? `<div class="cx-debug-val" style="margin-top:3px;">${c.reasons.map(r => '• ' + esc(r)).join('<br>')}</div>` : '';
+  const sec2 = `<div class="cx-debug-section">
+    <div class="cx-debug-label">Confidence</div>
+    <div class="cx-debug-val"><b>Level:</b> ${esc(c.level || '—')} &nbsp;|&nbsp; <b>Score:</b> ${c.score != null ? c.score + '/100' : '—'} &nbsp;|&nbsp; <b>Failed fields:</b> ${c.failedFields?.length ? esc(c.failedFields.join(', ')) : 'none'}</div>
+    ${reasonsHtml}
+  </div>`;
+
+  const ocrChars = m.ocrChars ?? '—';
+  const weakFlag = m.ocrChars != null && m.ocrChars < 500 ? ' ⚠ (weak)' : '';
+  const sec3 = `<div class="cx-debug-section">
+    <div class="cx-debug-label">OCR Metrics</div>
+    <div class="cx-debug-val"><b>OCR chars:</b> ${ocrChars}${weakFlag} &nbsp;|&nbsp; <b>Stored preview:</b> ${dbg.ocrText ? dbg.ocrText.length + ' chars' : 'none (PDF direct)'}</div>
+  </div>`;
+
+  const missing = c.failedFields?.length ? c.failedFields : (d.extractionFailed ? ['all'] : []);
+  const sec4 = `<div class="cx-debug-section">
+    <div class="cx-debug-label">Missing Fields</div>
+    <div class="cx-debug-val">${missing.length ? esc(missing.join(', ')) : 'none'}</div>
+  </div>`;
+
+  const rawClaudeStr = dbg.rawExtracted != null ? JSON.stringify(dbg.rawExtracted, null, 2) : null;
+  const normStr      = dbg.norm         != null ? JSON.stringify(dbg.norm,         null, 2) : null;
+
+  const ocrBlock = dbg.ocrText
+    ? `<details><summary class="cx-debug-label" style="display:list-item;cursor:pointer;">OCR Text Preview (2000 chars max)</summary>
+        <pre class="cx-debug-pre" id="cxdbg-ocr-${i}">${esc(dbg.ocrText)}</pre></details>`
+    : '<div class="cx-debug-val">No OCR text (PDF direct path or error).</div>';
+
+  const rawBlock = rawClaudeStr
+    ? `<details><summary class="cx-debug-label" style="display:list-item;cursor:pointer;">Raw Claude Response <button class="cx-debug-copy" onclick="event.stopPropagation();_copyDebugFromEl('cxdbg-raw-${i}',this)">Copy</button></summary>
+        <pre class="cx-debug-pre" id="cxdbg-raw-${i}">${esc(rawClaudeStr)}</pre></details>`
+    : '<div class="cx-debug-val">No raw Claude response captured.</div>';
+
+  const normBlock = normStr
+    ? `<details><summary class="cx-debug-label" style="display:list-item;cursor:pointer;">Normalized Object <button class="cx-debug-copy" onclick="event.stopPropagation();_copyDebugFromEl('cxdbg-norm-${i}',this)">Copy</button></summary>
+        <pre class="cx-debug-pre" id="cxdbg-norm-${i}">${esc(normStr)}</pre></details>`
+    : '<div class="cx-debug-val">No normalized object.</div>';
+
+  const sec5 = `<div class="cx-debug-section">
+    <div class="cx-debug-label">Raw Outputs</div>
+    ${ocrBlock}
+    ${rawBlock}
+    ${normBlock}
+  </div>`;
+
+  let sec6 = '';
+  if (dbg.failureStage || dbg.error) {
+    sec6 = `<div class="cx-debug-section">
+      <div class="cx-debug-label" style="color:#fca5a5;">Failure Diagnostics</div>
+      <div class="cx-debug-val"><b>Stage:</b> ${esc(dbg.failureStage || '—')}</div>
+      ${dbg.error ? `<div class="cx-debug-val" style="margin-top:3px;"><b>Error:</b> ${esc(dbg.error.message || '—')}</div>` : ''}
+      ${dbg.error?.stack ? `<pre class="cx-debug-pre">${esc(dbg.error.stack)}</pre>` : ''}
+    </div>`;
+  }
+
+  return `<div class="cx-debug-panel" id="cxdbg-${i}" style="display:none;">
+    <div style="padding-bottom:6px;margin-bottom:8px;border-bottom:1px solid rgba(99,102,241,0.25);">
+      <span style="font-weight:600;color:#a5b4fc;">🛠 Lease Debug</span>
+      <span style="color:#64748b;margin-left:8px;font-size:0.73rem;">${esc(dbg.fileName)}</span>
+    </div>
+    ${sec1}${sec2}${sec3}${sec4}${sec5}${sec6}
+  </div>`;
+}
+
 function renderBulkResults() {
   const el = document.getElementById('bulkResults');
   el.innerHTML = '';
@@ -2313,6 +2446,7 @@ function renderBulkResults() {
   // tenantData is the source of truth — contains every file, including failed extractions.
   // Do NOT filter by tenant_name or status here; every file must render a card.
   const tenants = tenantData.filter(t => t && typeof t === 'object');
+  const _debugMode = !!(window.DEBUG_LEASES || localStorage.getItem('ms_debug_leases') === '1');
 
   if (!tenants.length) return;
 
@@ -2406,6 +2540,7 @@ function renderBulkResults() {
                 ? `<button class="view-lease-btn" style="margin-left:0" onclick="event.stopPropagation();openLeaseModalFromFile(${i})">View Lease</button>`
                 : `<span class="lease-missing-note" data-retry data-index="${i}" style="margin-left:6px;cursor:pointer;">No lease file — tap to re-upload</span>`
               : ''}
+          ${_debugMode ? `<button class="cx-debug-toggle" onclick="event.stopPropagation();toggleLeaseDebug(${i})">🛠 Debug</button>` : ''}
           <button class="bulk-t-remove" onclick="event.stopPropagation();removeBulkTenant(${i})">Remove</button>
         </div>
         <div class="bulk-tenant-detail" id="bdet-${i}" style="display:${detailInitialDisplay};">
@@ -2467,6 +2602,7 @@ function renderBulkResults() {
             </button>
           </div>
         </div>
+        ${_debugMode ? renderLeaseDebugPanel(d, i) : ''}
       </div>`;
   }).join('');
 
@@ -4534,6 +4670,9 @@ function animateCAMResults(body, section) {
 const _ERR_KEY = 'mainstreet_errors_v1';
 const _ERR_MAX = 50;
 
+// In-memory lease extraction debug store — never persisted; reset on page reload.
+const _leaseDebug = new Map();
+
 function logError(type, error, context = {}) {
   const entry = {
     type,
@@ -4656,6 +4795,33 @@ function _msRunTests() {
   return { passed, failed };
 }
 window._msRunTests = _msRunTests;
+
+// Devtools helper: window._msLeaseDebug(indexOrId) — prints full debug object for a processed lease.
+// Usage: _msLeaseDebug(0) for first card, _msLeaseDebug('uuid-...') by tenant ID.
+window._msLeaseDebug = function(entryIdOrIndex) {
+  let entry;
+  if (typeof entryIdOrIndex === 'number') {
+    const d = tenantData[entryIdOrIndex];
+    entry = d ? _leaseDebug.get(d.id) : null;
+  } else {
+    entry = _leaseDebug.get(entryIdOrIndex);
+  }
+  if (!entry) {
+    console.warn('[_msLeaseDebug] No debug entry for:', entryIdOrIndex, '| Available IDs:', [..._leaseDebug.keys()]);
+    return null;
+  }
+  console.group('[Mainstreet] Lease Debug — ' + entry.fileName);
+  console.log('route:',      entry.extractionRoute);
+  console.log('confidence:', entry.confidence?.level, '(' + (entry.confidence?.score ?? '?') + '/100)');
+  if (entry.confidence?.reasons?.length) console.log('reasons:', entry.confidence.reasons.join('; '));
+  console.log('meta:',        entry.meta);
+  console.log('norm:',        entry.norm);
+  console.log('rawExtracted:', entry.rawExtracted);
+  if (entry.ocrText)  console.log('ocrText (first 500):', entry.ocrText.slice(0, 500));
+  if (entry.error)    console.error('error:', entry.error);
+  console.groupEnd();
+  return entry;
+};
 
 function showRunCompleteToast() {
   const existing = document.getElementById('camCompleteToast');

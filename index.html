@@ -1174,6 +1174,42 @@
     .cx-banner-medium { background: rgba(245,158,11,0.08); color: #fbbf24; border-color: rgba(245,158,11,0.25); }
     .cx-reasons { margin-top: 6px; font-size: 0.76rem; opacity: 0.85; }
 
+    /* ── Lease Debug Panel ─────────────────────────────── */
+    .cx-debug-toggle {
+      font-size: 0.7rem; padding: 1px 7px; border-radius: 4px;
+      background: rgba(99,102,241,0.12); color: #a5b4fc;
+      border: 1px solid rgba(99,102,241,0.3); cursor: pointer;
+      margin-left: 6px; font-family: inherit; vertical-align: middle;
+      white-space: nowrap; flex-shrink: 0;
+    }
+    .cx-debug-toggle:hover { background: rgba(99,102,241,0.25); }
+    .cx-debug-panel {
+      margin-top: 8px; padding: 12px 14px; border-radius: 8px;
+      background: rgba(10,12,20,0.85); border: 1px solid rgba(99,102,241,0.3);
+      font-size: 0.77rem; color: #c7d2fe; font-family: ui-monospace, monospace;
+      line-height: 1.55;
+    }
+    .cx-debug-section { margin-top: 10px; padding-top: 8px; border-top: 1px solid rgba(99,102,241,0.12); }
+    .cx-debug-section:first-child { margin-top: 0; padding-top: 0; border-top: none; }
+    .cx-debug-label {
+      font-weight: 600; color: #818cf8; font-family: system-ui, sans-serif;
+      font-size: 0.71rem; text-transform: uppercase; letter-spacing: 0.06em;
+      margin-bottom: 4px;
+    }
+    .cx-debug-val { color: #e2e8f0; word-break: break-all; }
+    .cx-debug-copy {
+      font-size: 0.67rem; padding: 0px 5px; margin-left: 6px; border-radius: 3px;
+      background: rgba(99,102,241,0.15); color: #a5b4fc;
+      border: 1px solid rgba(99,102,241,0.25); cursor: pointer; font-family: inherit;
+      vertical-align: middle;
+    }
+    .cx-debug-copy:hover { background: rgba(99,102,241,0.3); }
+    .cx-debug-pre {
+      max-height: 180px; overflow-y: auto; white-space: pre-wrap; word-break: break-all;
+      background: rgba(0,0,0,0.35); padding: 8px 10px; border-radius: 4px;
+      font-size: 0.71rem; line-height: 1.45; margin-top: 5px; color: #cbd5e1;
+    }
+
     .bulk-tenant-row.lease-save-flash {
       animation: leaseSaveFlash 0.8s ease;
     }
