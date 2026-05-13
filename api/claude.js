@@ -61,21 +61,26 @@ module.exports = async function handler(req, res) {
 
   // Clean + extract JSON
   const cleaned = text.replace(/```json/g, '').replace(/```/g, '').trim();
-  console.log('[Mainstreet] RAW CLAUDE RESPONSE:', cleaned);
-  const match = cleaned.match(/\{[\s\S]*\}/);
+  console.log('[Mainstreet] RAW CLAUDE RESPONSE (first 500 chars):', cleaned.slice(0, 500));
+
+  // Support both object { } and array [ { } ] responses from Claude
+  const match = cleaned.match(/(\[[\s\S]*\]|\{[\s\S]*\})/);
 
   if (!match) {
-    console.error('[Mainstreet] No JSON found:', cleaned);
-    return res.status(500).json({ error: 'No JSON in response' });
+    console.error('[Mainstreet] No JSON found in response. Full text:', cleaned);
+    return res.status(500).json({ error: 'No JSON in response', rawText: cleaned.slice(0, 200) });
   }
 
   let data;
   try {
     data = JSON.parse(match[0]);
   } catch (err) {
-    console.error('[Mainstreet] JSON parse failed:', match[0]);
-    return res.status(500).json({ error: 'Failed to parse JSON' });
+    console.error('[Mainstreet] JSON parse failed. Fragment:', match[0].slice(0, 300));
+    return res.status(500).json({ error: 'Failed to parse JSON', fragment: match[0].slice(0, 200) });
   }
+
+  // Unwrap single-element arrays so callers always receive an object
+  if (Array.isArray(data) && data.length === 1) data = data[0];
 
   return res.status(200).json(data);
 }

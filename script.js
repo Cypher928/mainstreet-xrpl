@@ -2055,6 +2055,13 @@ async function handleBulkLeases(fileList) {
   const BATCH_SIZE = 2;
   const processFile = async (file) => {
     const tenantId = crypto.randomUUID();
+
+    // Push a pending placeholder immediately so the UI shows in-progress state
+    const placeholderIdx = tenantData.length;
+    tenantData.push({ id: tenantId, fileName: file.name, status: 'pending', tenant_name: null, leaseExpected: true, _showRetry: false, _needsReview: false, extractionFailed: false });
+    property.tenants = [...tenantData];
+    renderBulkResults();
+
     try {
       let leaseText  = null;
       let extracted  = null;
@@ -2062,61 +2069,74 @@ async function handleBulkLeases(fileList) {
 
       // Upload to storage and extract text in parallel
       let leaseUrl = null;
+      console.groupCollapsed(`[LEASE:upload] ${file.name}`);
       try {
         [leaseUrl, leaseText] = await Promise.all([
           uploadLeaseToStorage(file, property.id),
           extractLeaseText(file),
         ]);
+        console.log('leaseUrl:', leaseUrl);
+        console.log('leaseText length:', leaseText?.length ?? 0, '| preview:', (leaseText || '').slice(0, 120));
       } catch (err) {
-        console.error('[handleBulkLeases] upload/extract error:', file.name, err);
+        console.error('upload/extract failed:', err.message);
+        logError('lease_upload_extract', err, { propId: property.id, fileName: file.name });
       }
+      console.groupEnd();
 
+      console.groupCollapsed(`[LEASE:claude] ${file.name}`);
       try {
         if (leaseText && leaseText.length >= 50) {
+          console.log('path: text extraction, chars:', leaseText.length);
           extracted = await callClaudeForLease(leaseText);
         } else {
           usedPdfDirect = true;
+          console.log('path: PDF direct (text weak/missing, chars:', leaseText?.length ?? 0, ')');
           extracted = await callClaudeWithPdfDirect(file);
           leaseText = extracted ? `[Claude PDF direct: ${file.name}]` : null;
         }
+        console.log('raw extracted:', JSON.stringify(extracted)?.slice(0, 300));
       } catch (err) {
-        console.error('[handleBulkLeases] extraction error:', file.name, err);
+        console.error('Claude extraction failed:', err.message);
+        logError('lease_claude_extraction', err, { propId: property.id, fileName: file.name });
       }
+      console.groupEnd();
 
       if (extracted && !usedPdfDirect) extracted.rawText = leaseText;
       const norm = extracted ? normalizeTenant(extracted) : null;
 
-      // Resolve name first — Claude → regex → filename fallback — so status
-      // logic can use the final name rather than Claude's raw output alone.
-      const resolvedName = norm?.tenant_name?.trim()
-        || extractTenantFromText(leaseText || '')
-        || file.name.replace(/\.[^.]+$/, '').replace(/[_\-]+/g, ' ').trim();
+      console.groupCollapsed(`[LEASE:normalize] ${file.name}`);
+      console.log('norm:', JSON.stringify({ tenant_name: norm?.tenant_name, leased_sqft: norm?.leased_sqft, start_date: norm?.start_date, end_date: norm?.end_date, lease_type: norm?.lease_type, cap: norm?.cap }));
+      console.groupEnd();
 
-      const hasTenant    = !!resolvedName;
+      // Resolve name: Claude result → regex scan → filename strip (UI display only)
+      const claudeName     = norm?.tenant_name?.trim() || '';
+      const regexName      = extractTenantFromText(leaseText || '');
+      const filenameName   = file.name.replace(/\.[^.]+$/, '').replace(/[_\-]+/g, ' ').trim();
+      const resolvedName   = claudeName || regexName || filenameName;
+      const nameFromClaude = !!claudeName;
+
+      const hasTenant    = !!(claudeName || regexName); // filename-only is NOT sufficient for success
       const hasDates     = !!(norm?.start_date || norm?.end_date);
       const hasLeaseType = !!norm?.lease_type;
 
       // Status rules:
-      // failed       = no extraction result at all, OR no tenant after all fallbacks
-      // needs_review = has tenant but missing start_date, end_date, or lease_type
-      // success      = all key fields present
-      const hadExtraction = !!extracted; // true if Claude returned anything
+      // failed  = no extraction result at all, OR no tenant after Claude + regex fallbacks
+      // partial = has tenant but missing start_date, end_date, or lease_type
+      // success = all key fields present
+      const hadExtraction = !!extracted;
       let status;
-      if (!hadExtraction) {
-        status = 'failed';
-      } else if (!hasTenant) {
+      if (!hadExtraction || !hasTenant) {
         status = 'failed';
       } else if (!norm?.start_date || !norm?.end_date || !hasLeaseType) {
-        status = 'needs_review';
+        status = 'partial';
       } else {
         status = 'success';
       }
 
-      const isPartial  = status === 'needs_review';
+      const isPartial  = status === 'partial';
       const _showRetry = status === 'failed';
 
-
-      tenantData.push({
+      const finalEntry = {
         tenant_name:        resolvedName || null,
         leased_sqft:        norm?.leased_sqft        ?? null,
         start_date:         norm?.start_date         ?? null,
@@ -2134,13 +2154,15 @@ async function handleBulkLeases(fileList) {
         extractionFailed:   status === 'failed',
         _needsReview:       isPartial,
         _showRetry,
-        _error:             status === 'failed' ? 'No text could be extracted — tap Retry to re-upload' : null,
+        _nameFromClaude:    nameFromClaude,
+        _error:             status === 'failed' ? 'Extraction failed — tap Retry to re-upload' : null,
         id:                 tenantId,
-      });
+      };
+      tenantData[placeholderIdx] = finalEntry;
       storeLeaseFile(tenantId, file);
     } catch (err) {
-      console.error("FAILED FILE:", file.name, err);
-      tenantData.push({
+      logError('lease_processFile', err, { propId: property.id, fileName: file.name });
+      tenantData[placeholderIdx] = {
         tenant_name:      null,
         leased_sqft:      null,
         start_date:       null,
@@ -2155,7 +2177,7 @@ async function handleBulkLeases(fileList) {
         _showRetry:       true,
         _error:           err.message || 'Processing error',
         id:               tenantId,
-      });
+      };
     }
 
     completed++;
@@ -2187,7 +2209,8 @@ async function handleBulkLeases(fileList) {
   // Doing this inside processFile caused cumulative inserts: 1+2+3+4+5 = 15 rows for 5 files.
   captureCheckpoint(activePropId, 'Before lease upload');
   await saveProperty(property);
-  await resyncTenantsToTable(property.id, property.tenants.filter(t => t?.tenant_name));
+  // Exclude failed extractions — only persist tenants with at minimum a real name
+  await resyncTenantsToTable(property.id, property.tenants.filter(t => t?.tenant_name && !t?.extractionFailed));
   {
     const successCount = tenantData.filter(t => t.status === 'success').length;
     logActivity('lease_uploaded', `${total} lease${total !== 1 ? 's' : ''} uploaded`, {
@@ -2255,11 +2278,14 @@ function renderBulkResults() {
     const isWeakName  = d.tenant_name ? !isStrongName(d.tenant_name) : false;
     const isDupName   = d.tenant_name ? _dupNames.has(d.tenant_name.trim().toLowerCase()) : false;
 
-    const icon = d.extractionFailed ? '❌' : showWarning ? '⚠️' : d.tenant_name ? '✓' : '?';
-    const meta = d.extractionFailed
+    const isPending = d.status === 'pending';
+    const icon = isPending ? '⏳' : d.extractionFailed ? '❌' : showWarning ? '⚠️' : d.tenant_name ? '✓' : '?';
+    const meta = isPending
+      ? 'Extracting…'
+      : d.extractionFailed
       ? 'Extraction failed — tap to re-upload'
       : showWarning
-        ? 'Needs Review — some fields missing'
+        ? 'Partial — some fields missing'
         : [
             sqft      !== null && sqft      !== '' ? `${sqft} sqft`   : '— sqft',
             start     !== null && start     !== '' ? start             : '—',
@@ -2272,7 +2298,7 @@ function renderBulkResults() {
       : '';
 
     return `
-      <div class="bulk-tenant-row${d.extractionFailed ? ' has-error' : showWarning ? ' has-warning' : ''}" id="btr-${i}">
+      <div class="bulk-tenant-row${isPending ? ' is-pending' : d.extractionFailed ? ' has-error' : showWarning ? ' has-warning' : ''}" id="btr-${i}">
         <div class="bulk-tenant-summary" onclick="toggleBulkDetail(${i})">
           <span class="bulk-t-status" id="bstatus-${i}">${icon}</span>
           <div class="bulk-t-info" id="binfo-${i}">
@@ -2293,7 +2319,7 @@ function renderBulkResults() {
           ${d._error
             ? `<div class="err-banner" style="margin-bottom:10px;">Extraction error: ${esc(d._error)}</div>`
             : showWarning
-              ? `<div class="err-banner" style="margin-bottom:10px;border-color:#f59e0b;color:#fbbf24;">&#x26A0;&#xFE0F; Needs Review — AI extracted partial data. Please fill in the missing fields below.</div>`
+              ? `<div class="err-banner" style="margin-bottom:10px;border-color:#f59e0b;color:#fbbf24;">&#x26A0;&#xFE0F; Partial extraction — AI found the tenant but some fields are missing. Please fill them in below.</div>`
               : ''}
           ${(() => { const w = getWarnings(computeFlags(d)); return w.length ? `<div class="rc-flags"><div class="rc-flags-title">&#x26A0;&#xFE0F; Needs Review</div>${w.map(m => `<div class="rc-flag-item">${m}</div>`).join('')}</div>` : ''; })()}
           <div class="field-row">
@@ -2404,7 +2430,7 @@ async function saveBulkTenant(i) {
   // Persist to Supabase immediately — don't rely on debounced oninput
   await savePropertyData();
   const prop = currentProperty();
-  if (prop?.id) await resyncTenantsToTable(prop.id, tenantData.filter(t => t?.tenant_name));
+  if (prop?.id) await resyncTenantsToTable(prop.id, tenantData.filter(t => t?.tenant_name && !t?.extractionFailed));
   console.log('[saveBulkTenant] tenant', i, 'saved:', d?.tenant_name);
 
   // Success flash
@@ -2478,7 +2504,7 @@ async function removeBulkTenant(i) {
   renderBulkResults();
   checkSqftValidation();
   // Full re-sync: delete all rows for this property then re-insert what remains
-  if (prop?.id) await resyncTenantsToTable(prop.id, tenantData.filter(t => t !== null));
+  if (prop?.id) await resyncTenantsToTable(prop.id, tenantData.filter(t => t?.tenant_name && !t?.extractionFailed));
   await savePropertyData();
 }
 
@@ -2572,11 +2598,11 @@ async function retryExtractionWithFile(index, file) {
     if (!hasTenant) {
       status = 'failed';
     } else if (!hasDates || !hasLeaseType) {
-      status = 'needs_review';
+      status = 'partial';
     }
 
     const isValid    = status !== 'failed';
-    const isPartial  = status === 'needs_review';
+    const isPartial  = status === 'partial';
     const _showRetry = !hasTenant || !hasDates || !hasLeaseType;
 
     const updated = {
