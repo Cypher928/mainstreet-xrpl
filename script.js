@@ -192,10 +192,18 @@ db.auth.onAuthStateChange((event, session) => {
 const MODEL       = 'claude-sonnet-4-6';
 const MAX_LEASES  = 3;
 
+// Wraps fetch with a hard client-side abort timeout.
+// Vercel Pro maxDuration is 60 s; 58 s gives a clean abort before platform kills the lambda.
+function _fetchWithTimeout(url, opts, ms = 58000) {
+  const ctrl = new AbortController();
+  const timer = setTimeout(() => ctrl.abort(), ms);
+  return fetch(url, { ...opts, signal: ctrl.signal }).finally(() => clearTimeout(timer));
+}
+
 // Single entry-point for every Claude API call.
 // Proxies through /api/claude — API key stays server-side.
 async function claudeFetch(body) {
-  const resp = await fetch('/api/claude', {
+  const resp = await _fetchWithTimeout('/api/claude', {
     method: 'POST',
     headers: { 'Content-Type': 'application/json' },
     body: typeof body === 'string' ? body : JSON.stringify(body),
@@ -972,7 +980,7 @@ Return best guess — do not leave fields null unless truly impossible.`;
     ],
   }];
 
-  const res = await fetch('/api/claude', {
+  const res = await _fetchWithTimeout('/api/claude', {
     method: 'POST',
     headers: { 'Content-Type': 'application/json' },
     body: JSON.stringify({ messages, max_tokens: 1000, system: CLAUDE_LEASE_SYSTEM }),
@@ -1171,7 +1179,7 @@ ${leaseSnippet}
 `;
   const messages = [{ role: 'user', content: prompt }];
 
-  const res = await fetch('/api/claude', {
+  const res = await _fetchWithTimeout('/api/claude', {
     method: 'POST',
     headers: { 'Content-Type': 'application/json' },
     body: JSON.stringify({ messages, max_tokens: 1000, system: CLAUDE_LEASE_SYSTEM }),
@@ -9679,15 +9687,15 @@ async function loadProperties() {
   return properties;
 }
 
-// Full replace: delete all rows for the property then insert the given list.
-// Used by explicit user actions (remove, clear all) to keep DB in sync.
-async function resyncTenantsToTable(propertyId, tenants) {
-  if (!propertyId || typeof propertyId !== 'string' || propertyId.length < 10) return;
+// Per-property serialization: prevents concurrent delete+insert races.
+// Each entry: { running: boolean, pending: tenants[]|null }
+const _resyncQueues = new Map();
+
+async function _doResyncTenantsToTable(propertyId, tenants) {
   const { error: delErr } = await db.from('tenants').delete().eq('property_id', propertyId);
   if (delErr) { console.error('[resyncTenantsToTable] delete error:', delErr.message); return; }
-  // Safety net: _pendingJobReview entries must not reach Supabase until user confirms
   const rows = (tenants || [])
-    .filter(t => t && t.tenant_name)
+    .filter(t => t && t.tenant_name && !t._pendingJobReview)
     .map(t => ({
       id:          t.id,
       property_id: propertyId,
@@ -9702,6 +9710,33 @@ async function resyncTenantsToTable(propertyId, tenants) {
   if (rows.length === 0) return;
   const { error } = await db.from('tenants').insert(rows).select('id');
   if (error) console.error('[resyncTenantsToTable] insert error:', error.message);
+}
+
+// Full replace: delete all rows for the property then insert the given list.
+// Serialized per-property (last-writer wins): if a resync is already in flight,
+// coalesces concurrent callers so the final state always wins with no interleaving.
+async function resyncTenantsToTable(propertyId, tenants) {
+  if (!propertyId || typeof propertyId !== 'string' || propertyId.length < 10) return;
+  let state = _resyncQueues.get(propertyId);
+  if (!state) {
+    state = { running: false, pending: null };
+    _resyncQueues.set(propertyId, state);
+  }
+  if (state.running) {
+    state.pending = tenants; // last caller wins; earlier pending calls are superseded
+    return;
+  }
+  state.running = true;
+  try {
+    await _doResyncTenantsToTable(propertyId, tenants);
+    while (state.pending !== null) {
+      const next = state.pending;
+      state.pending = null;
+      await _doResyncTenantsToTable(propertyId, next);
+    }
+  } finally {
+    state.running = false;
+  }
 }
 
 async function syncTenantsToTable(propertyId, tenants) {
