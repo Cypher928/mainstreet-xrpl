@@ -2494,7 +2494,8 @@ async function handleBulkLeases(fileList) {
 
 
   // Dedup by name for persistence only (nameless entries keep their id-based key and are retained)
-  property.tenants = dedupeTenants([...tenantData]);
+  // Filter nulls first — dedupeTenants cannot handle null entries (crashes on null.fileName).
+  property.tenants = dedupeTenants(tenantData.filter(t => t !== null));
 
   renderBulkResults();
   checkSqftValidation();
@@ -10137,38 +10138,49 @@ function renderProperty(property) {
 
   // ── Tenants ───────────────────────────────────────────────────────────
   try {
-    const liveTenants = tenantData.filter(t => t && t.tenant_name);
+    // While a pipeline is running, placeholderIdx references inside processFile /
+    // _runLeaseJobPipeline are live. Splicing tenantData would shift or wipe those
+    // indices, leaving the placeholder at the wrong slot and creating ghost cards.
+    // Just re-render the current state and let the pipeline own the array.
+    const hasPending = tenantData.some(t => t?.status === 'pending');
 
-    if (liveTenants.length > 0) {
-      // Deduplicate in-place by stable UUID (t.id)
-      const seen = new Set();
-      const deduped = tenantData.filter(t => {
-        if (!t || typeof t !== 'object') return false;
-        const key = t.id || t.fileName || t.tenant_name;
-        if (seen.has(key)) return false;
-        seen.add(key);
-        return true;
-      });
-      tenantData.splice(0, tenantData.length, ...deduped);
-      // Normalize leased_sqft to a clean number in-place and sync to property.tenants
-      tenantData.forEach((t, idx) => {
-        if (t) tenantData[idx] = { ...t, leased_sqft: Number(t.leased_sqft) || 0 };
-      });
-      property.tenants = [...tenantData];
-      switchLeaseTab('bulk');
+    if (hasPending) {
       renderBulkResults();
       restored = true;
     } else {
-      const tenants = (property.tenants || []).filter(t => t !== null);
-      if (tenants.length) {
-        property.tenants = tenants.map(normalizeTenant);
-        // Sync tenantData from property.tenants so renderBulkResults and field edits work.
-        // resetWorkflow() clears tenantData on every navigation, so we must repopulate it
-        // here whenever we restore from property.tenants (the else branch = tenantData was empty).
-        tenantData.splice(0, tenantData.length, ...property.tenants);
+      const liveTenants = tenantData.filter(t => t && t.tenant_name);
+
+      if (liveTenants.length > 0) {
+        // Deduplicate in-place by stable UUID (t.id)
+        const seen = new Set();
+        const deduped = tenantData.filter(t => {
+          if (!t || typeof t !== 'object') return false;
+          const key = t.id || t.fileName || t.tenant_name;
+          if (seen.has(key)) return false;
+          seen.add(key);
+          return true;
+        });
+        tenantData.splice(0, tenantData.length, ...deduped);
+        // Normalize leased_sqft to a clean number in-place and sync to property.tenants
+        tenantData.forEach((t, idx) => {
+          if (t) tenantData[idx] = { ...t, leased_sqft: Number(t.leased_sqft) || 0 };
+        });
+        property.tenants = [...tenantData];
         switchLeaseTab('bulk');
         renderBulkResults();
         restored = true;
+      } else {
+        const tenants = (property.tenants || []).filter(t => t !== null);
+        if (tenants.length) {
+          property.tenants = tenants.map(normalizeTenant);
+          // Sync tenantData from property.tenants so renderBulkResults and field edits work.
+          // resetWorkflow() clears tenantData on every navigation, so we must repopulate it
+          // here whenever we restore from property.tenants (the else branch = tenantData was empty).
+          tenantData.splice(0, tenantData.length, ...property.tenants);
+          switchLeaseTab('bulk');
+          renderBulkResults();
+          restored = true;
+        }
       }
     }
     checkSqftValidation();
