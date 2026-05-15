@@ -2217,6 +2217,7 @@ async function _runLeaseJobPipeline(jobId, placeholderIdx) {
   const file       = job._file;
   const propertyId = job.property_id;
   const _startMs   = job._startMs || Date.now();
+  console.warn('[PIPELINE:diag] entry | file:', file instanceof File, '| name:', file?.name, '| size:', file?.size, '| retry_count:', job.retry_count ?? 0, '| placeholderIdx:', placeholderIdx);
 
   updateLeaseJob(jobId, {
     status:                'processing',
@@ -2259,12 +2260,13 @@ async function _runLeaseJobPipeline(jobId, placeholderIdx) {
       } else {
         usedPdfDirect = true;
         console.log('path: PDF direct (text weak/missing, chars:', leaseText?.length ?? 0, ')');
+        console.warn('[PIPELINE:diag] pre-pdfDirect | file:', file instanceof File, '| name:', file?.name, '| size:', file?.size, '| elapsedMs:', Date.now() - _startMs);
         extracted = await callClaudeWithPdfDirect(file);
         leaseText = extracted ? `[Claude PDF direct: ${file.name}]` : null;
       }
       console.log('raw extracted:', JSON.stringify(extracted)?.slice(0, 300));
     } catch (err) {
-      console.error('Claude extraction failed:', err.message);
+      console.error('[PIPELINE:diag] Claude stage FAILED | msg:', err.message, '| stack:', (err.stack || '').split('\n').slice(0, 4).join(' | '), '| elapsedMs:', Date.now() - _startMs, '| route:', usedPdfDirect ? 'pdf-direct' : 'text', '| file:', file instanceof File, '| name:', file?.name);
       logError('lease_claude_extraction', err, { propId: propertyId, fileName: file.name, jobId });
     }
     console.groupEnd();
@@ -9583,6 +9585,7 @@ async function restoreLeaseFiles() {
     if (!t || !t.id || !t.leaseExpected || t.leaseFile instanceof File) return;
     const file = await getLeaseFile(t.id);
     if (file instanceof File) {
+      console.warn('[PIPELINE:diag] restoreLeaseFiles OVERWRITE | idx:', idx, '| t.status:', t?.status, '| existing tenantData[idx].status:', tenantData[idx]?.status, '| pipeline still pending?', tenantData[idx]?.status === 'pending');
       tenantData[idx] = { ...t, leaseFile: file };
       changed = true;
     }
@@ -10186,7 +10189,9 @@ function renderProperty(property) {
       }
     }
     checkSqftValidation();
-    restoreLeaseFiles(); // async: fills leaseFile from IndexedDB, re-renders when done
+    // Don't restore files while a pipeline is running — restoreLeaseFiles uses stale
+    // captured (t, idx) refs and would overwrite finalEntry with the old placeholder.
+    if (!hasPending) restoreLeaseFiles();
   } catch (e) { }
 
   // ── Invoices ──────────────────────────────────────────────────────────
