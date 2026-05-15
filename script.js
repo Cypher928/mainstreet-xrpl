@@ -2766,11 +2766,13 @@ function renderBulkResults() {
           <span class="bulk-t-chevron" id="bchev-${i}">${chevInitialHtml}</span>
           ${showRetryButton
             ? `<button class="view-lease-btn" data-retry data-index="${i}" data-job-id="${d.id || ''}" style="margin-left:0;color:#f97316;">&#x21BA; Retry</button>`
-            : d.leaseExpected
-              ? (d.leaseFile instanceof File || d.leaseUrl)
-                ? `<button class="view-lease-btn" style="margin-left:0" onclick="event.stopPropagation();openLeaseModalFromFile(${i})">View Lease</button>`
-                : `<span class="lease-missing-note" data-retry data-index="${i}" data-job-id="${d.id || ''}" style="margin-left:6px;cursor:pointer;">No lease file — tap to re-upload</span>`
-              : ''}
+            : isPending
+              ? ''
+              : d.leaseExpected
+                ? (d.leaseFile instanceof File || d.leaseUrl)
+                  ? `<button class="view-lease-btn" style="margin-left:0" onclick="event.stopPropagation();openLeaseModalFromFile(${i})">View Lease</button>`
+                  : `<span class="lease-missing-note" data-retry data-index="${i}" data-job-id="${d.id || ''}" style="margin-left:6px;cursor:pointer;">No lease file — tap to re-upload</span>`
+                : ''}
           ${_debugMode ? `<button class="cx-debug-toggle" onclick="event.stopPropagation();toggleLeaseDebug(${i})">🛠 Debug</button>` : ''}
           <button class="bulk-t-remove" onclick="event.stopPropagation();removeBulkTenant(${i})">Remove</button>
         </div>
