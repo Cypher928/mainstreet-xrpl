@@ -2759,7 +2759,7 @@ function renderBulkResults() {
         <div class="bulk-tenant-summary" onclick="toggleBulkDetail(${i})">
           <span class="bulk-t-status" id="bstatus-${i}">${icon}</span>
           <div class="bulk-t-info" id="binfo-${i}">
-            <div class="tenant-title" id="bname-${i}"${isWeakName ? ' style="opacity:0.6;font-style:italic;"' : ''}>
+            <div class="tenant-title" id="bname-${i}"${isWeakName ? ' style="opacity:0.6;font-style:italic;"' : ''}${!isPending && d.tenant_name ? ` data-tdp onclick="event.stopPropagation();openTenantDetailPanel(${i})"` : ''}>
               ${esc(displayName)}${dupBadge}${_confidenceBadgeHtml(confLevel)}
             </div>
             <div class="tenant-meta" id="bmeta-${i}">${esc(meta)}</div>
@@ -5509,6 +5509,111 @@ function closeExplainPanel() {
   document.getElementById('explainPanel').classList.remove('open');
   document.body.style.overflow = '';
   document.body.classList.remove('modal-open');
+}
+
+// ─── Tenant Detail Panel ──────────────────────────────────────────────────────
+
+function openTenantDetailPanel(i) {
+  const d = tenantData[i];
+  if (!d || d.status === 'pending') return;
+
+  const panel    = document.getElementById('tenantDetailPanel');
+  const titleEl  = document.getElementById('tdpTitle');
+  const subEl    = document.getElementById('tdpSubtitle');
+  const bodyEl   = document.getElementById('tdpBody');
+  if (!panel || !bodyEl) return;
+
+  // Match by tenantId (stable) if reconciliation has run, else no recon data
+  const recon = lastResults.find(r => r.tenantId === d.id) || null;
+
+  const _v  = (val, fallback = '—') => (val !== null && val !== undefined && val !== '') ? val : fallback;
+  const _pct = (val) => (val !== null && val !== undefined && !isNaN(val))
+    ? parseFloat(val).toFixed(2) + '%' : '—';
+  const _fmt = (n) => (n !== null && n !== undefined && !isNaN(n))
+    ? '$' + parseFloat(n).toLocaleString('en-US', { minimumFractionDigits: 2, maximumFractionDigits: 2 })
+    : '—';
+
+  const confLevel = d._confidence || (d.extractionFailed ? 'failed' : d._needsReview ? 'medium' : null);
+  const badgeHtml = _confidenceBadgeHtml(confLevel);
+
+  const name    = d.tenant_name || '(unknown)';
+  const sqft    = d.leased_sqft ? Number(d.leased_sqft).toLocaleString('en-US') + ' sqft' : null;
+  const capPct  = d.cap ?? null;
+
+  // Pro-rata: prefer live recon value (most accurate), fall back to lease-level cap
+  const proRataPct = recon
+    ? _pct(recon.proRataPercent)
+    : '—';
+
+  const allocatedCam  = recon ? _fmt(recon.totalAllocated) : null;
+  const invoiceCount  = recon ? recon.includedInvoices.length : null;
+
+  titleEl.textContent = name;
+  subEl.textContent   = d.lease_type || '';
+
+  bodyEl.innerHTML = `
+    <div class="tdp-name-row">
+      <span class="tdp-tenant-name">${esc(name)}</span>
+      ${badgeHtml}
+    </div>
+
+    <div class="tdp-section">Lease Info</div>
+    <div class="tdp-grid">
+      <div class="tdp-stat">
+        <div class="tdp-stat-label">Lease Type</div>
+        <div class="tdp-stat-value${!d.lease_type ? ' tdp-null' : ''}">${esc(_v(d.lease_type))}</div>
+      </div>
+      <div class="tdp-stat">
+        <div class="tdp-stat-label">Leased Sqft</div>
+        <div class="tdp-stat-value${!d.leased_sqft ? ' tdp-null' : ''}">${esc(sqft || '—')}</div>
+      </div>
+      <div class="tdp-stat">
+        <div class="tdp-stat-label">Start Date</div>
+        <div class="tdp-stat-value${!d.start_date ? ' tdp-null' : ''}">${esc(_v(d.start_date))}</div>
+      </div>
+      <div class="tdp-stat">
+        <div class="tdp-stat-label">End Date</div>
+        <div class="tdp-stat-value${!d.end_date ? ' tdp-null' : ''}">${esc(_v(d.end_date))}</div>
+      </div>
+      <div class="tdp-stat">
+        <div class="tdp-stat-label">CAM Cap</div>
+        <div class="tdp-stat-value${capPct === null ? ' tdp-null' : ''}">${capPct !== null ? capPct + '%' : '—'}</div>
+      </div>
+      <div class="tdp-stat">
+        <div class="tdp-stat-label">Pro-Rata %</div>
+        <div class="tdp-stat-value tdp-highlight">${proRataPct}</div>
+      </div>
+    </div>
+
+    ${recon ? `
+    <div class="tdp-section">CAM Reconciliation</div>
+    <div class="tdp-grid">
+      <div class="tdp-stat">
+        <div class="tdp-stat-label">Allocated CAM</div>
+        <div class="tdp-stat-value tdp-highlight">${allocatedCam}</div>
+      </div>
+      <div class="tdp-stat">
+        <div class="tdp-stat-label">Invoice Count</div>
+        <div class="tdp-stat-value">${invoiceCount}</div>
+      </div>
+      ${recon.capApplied ? `
+      <div class="tdp-stat tdp-wide">
+        <div class="tdp-stat-label">Cap Applied</div>
+        <div class="tdp-stat-value">Cap reduced charge by ${_fmt(recon.capAdjustment)}</div>
+      </div>` : ''}
+    </div>` : `
+    <div class="tdp-section">CAM Reconciliation</div>
+    <div class="tdp-no-recon">Run reconciliation to see CAM totals and invoice breakdown.</div>`}
+  `;
+
+  document.body.style.overflow = 'hidden';
+  panel.classList.add('open');
+}
+
+function closeTenantDetailPanel() {
+  const panel = document.getElementById('tenantDetailPanel');
+  if (panel) panel.classList.remove('open');
+  document.body.style.overflow = '';
 }
 
 // ─── Lease Viewer ─────────────────────────────────────────────────────────────
