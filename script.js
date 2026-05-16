@@ -8696,13 +8696,79 @@ function generateMasterReport() {
   }
 }
 
-// Stub — Phase 2 will render the tenant detail panel from here.
-// tenantName matches r.name from lastResults (ReconciliationResult.tenantName).
+// Controller — toggles inline expansion row in the Master Report tenant table.
+// tenantName comes from data-tenant-name dataset on the <tr> (set by generateMasterReport).
 function openReportTenantDetail(tenantName) {
-  console.log('[openReportTenantDetail] tenantName:', tenantName,
-    '| recon match:', lastResults.find(r => r.name === tenantName) || 'NOT FOUND',
-    '| tenantData match:', tenantData.find(t => t && t.tenant_name === tenantName) || 'NOT FOUND'
-  );
+  const tr = Array.from(document.querySelectorAll('#rptBody tr[data-tenant-name]'))
+    .find(el => el.dataset.tenantName === tenantName);
+  if (!tr) { console.warn('[openReportTenantDetail] row not found:', tenantName); return; }
+
+  // Toggle: if this row is already expanded, collapse it
+  const next = tr.nextElementSibling;
+  if (next && next.classList.contains('report-tenant-expanded-row')) {
+    closeReportTenantExpansion();
+    return;
+  }
+
+  closeReportTenantExpansion(); // collapse any other open expansion
+  renderReportTenantExpansion(tr, tenantName);
+}
+
+function closeReportTenantExpansion() {
+  const row = document.querySelector('#rptBody .report-tenant-expanded-row');
+  if (row) row.remove();
+}
+
+function renderReportTenantExpansion(tr, tenantName) {
+  const recon = lastResults.find(r => r.name === tenantName) || null;
+  const td    = tenantData.find(t => t && t.tenant_name === tenantName) || null;
+  const dc    = disputes.filter(d => d.tenantName === tenantName).length;
+  const oc    = disputes.filter(d => d.tenantName === tenantName && d.status === 'open').length;
+
+  const _v = (val) =>
+    (val !== null && val !== undefined && String(val).trim() !== '') ? esc(String(val)) : null;
+
+  function stat(label, value, gold) {
+    const isNull = value === null || value === undefined;
+    return `<div class="rpt-exp-stat">
+      <div class="rpt-exp-label">${label}</div>
+      <div class="rpt-exp-value${gold ? ' hi' : ''}${isNull ? ' nil' : ''}">${isNull ? '—' : value}</div>
+    </div>`;
+  }
+
+  const sqftStr   = td?.leased_sqft ? Number(td.leased_sqft).toLocaleString('en-US') : null;
+  const proRatStr = recon ? (recon.proRata * 100).toFixed(2) + '%' : null;
+  const camStr    = recon ? fmt(recon.allocatedAmount) : null;
+  const invCount  = recon ? String(recon.includedInvoices.length) : null;
+
+  const disputeHtml = dc > 0
+    ? `<div class="rpt-exp-grid">${stat('Total Disputes', dc + ' (' + oc + ' open)')}</div>`
+    : `<div class="rpt-exp-no-disputes">No disputes</div>`;
+
+  const html = `
+    <tr class="report-tenant-expanded-row">
+      <td colspan="4">
+        <div class="rpt-exp-inner">
+          <div class="rpt-exp-section">Lease Info</div>
+          <div class="rpt-exp-grid">
+            ${stat('Lease Type',  _v(td?.lease_type))}
+            ${stat('Leased Sqft', sqftStr)}
+            ${stat('Start Date',  _v(td?.start_date))}
+            ${stat('End Date',    _v(td?.end_date))}
+            ${stat('Pro-Rata',    proRatStr, true)}
+          </div>
+          <div class="rpt-exp-section">CAM Summary</div>
+          <div class="rpt-exp-grid">
+            ${stat('Allocated CAM',  camStr, true)}
+            ${stat('Invoice Count',  invCount)}
+          </div>
+          <div class="rpt-exp-section">Disputes</div>
+          ${disputeHtml}
+        </div>
+      </td>
+    </tr>`;
+
+  tr.insertAdjacentHTML('afterend', html);
 }
 
 async function runLandlordAIReview() {

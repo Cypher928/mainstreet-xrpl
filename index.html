@@ -1971,6 +1971,29 @@
       min-height: 44px; display: inline-flex; align-items: center;
     }
     .rpt-tenant-link:hover { color: #C9973A; text-decoration-color: rgba(201,151,58,0.6); }
+    /* Inline expansion row */
+    .report-tenant-expanded-row td {
+      padding: 0; background: rgba(201,151,58,0.04);
+      border-bottom: 2px solid rgba(201,151,58,0.18);
+    }
+    .rpt-exp-inner { padding: 14px 16px 18px; }
+    .rpt-exp-section {
+      font-size: 0.68rem; font-weight: 700; color: #64748B;
+      text-transform: uppercase; letter-spacing: 0.07em;
+      margin: 14px 0 8px; padding-bottom: 5px;
+      border-bottom: 1px solid rgba(255,255,255,0.06);
+    }
+    .rpt-exp-section:first-child { margin-top: 0; }
+    .rpt-exp-grid { display: grid; grid-template-columns: 1fr 1fr; gap: 7px; }
+    .rpt-exp-stat {
+      background: #0B1220; border: 1px solid rgba(255,255,255,0.07);
+      border-radius: 8px; padding: 8px 11px;
+    }
+    .rpt-exp-label { font-size: 0.67rem; color: #64748B; text-transform: uppercase; letter-spacing: 0.05em; }
+    .rpt-exp-value { font-size: 0.88rem; font-weight: 700; color: #E2E8F0; margin-top: 2px; }
+    .rpt-exp-value.hi  { color: #F59E0B; }
+    .rpt-exp-value.nil { color: #475569; font-style: italic; font-weight: 400; font-size: 0.8rem; }
+    .rpt-exp-no-disputes { font-size: 0.82rem; color: #475569; font-style: italic; padding: 4px 0; }
     .rpt-table .total-row td {
       font-weight: 700; color: #E4B15C;
       background: rgba(201,151,58,0.07); border-top: 1.5px solid rgba(201,151,58,0.2);
