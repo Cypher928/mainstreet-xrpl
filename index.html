@@ -2035,7 +2035,30 @@
     }
     .rpt-exp-dispute-hint {
       margin-left: auto; font-size: 0.82rem; color: #475569; flex-shrink: 0;
+      display: inline-block; transition: transform 0.15s;
     }
+    .rpt-exp-dispute-summary.open .rpt-exp-dispute-hint { transform: rotate(90deg); color: #C9973A; }
+    /* Dispute drilldown — inline detail below the summary card */
+    .rpt-exp-dispute-drilldown {
+      margin-top: 5px;
+      border: 1px solid rgba(234,88,12,0.18); border-radius: 7px; overflow: hidden;
+    }
+    .rpt-exp-dispute-item {
+      padding: 8px 12px; background: rgba(11,18,32,0.9);
+      border-bottom: 1px solid rgba(255,255,255,0.05);
+      font-family: 'DM Sans', sans-serif;
+    }
+    .rpt-exp-dispute-item:last-child { border-bottom: none; }
+    .rpt-exp-dispute-item-header { display: flex; align-items: center; justify-content: space-between; gap: 8px; margin-bottom: 3px; }
+    .rpt-exp-dispute-item-title { font-size: 0.83rem; font-weight: 700; color: #E2E8F0; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+    .rpt-exp-dispute-item-meta { font-size: 0.73rem; color: #64748B; margin-bottom: 3px; }
+    .rpt-exp-dispute-item-reason { font-size: 0.78rem; color: #94A3B8; font-style: italic; }
+    .rpt-exp-dispute-status { display: inline-flex; padding: 2px 8px; border-radius: 20px; font-size: 0.7rem; font-weight: 700; flex-shrink: 0; }
+    .rpt-exp-dispute-status.open     { background: rgba(234,88,12,0.15);   color: #fb923c; }
+    .rpt-exp-dispute-status.review   { background: rgba(201,151,58,0.15);  color: #E4B15C; }
+    .rpt-exp-dispute-status.resolved { background: rgba(34,197,94,0.12);   color: #4ade80; }
+    .rpt-exp-dispute-status.rejected { background: rgba(239,68,68,0.12);   color: #f87171; }
+    .rpt-exp-dispute-empty { font-size: 0.8rem; color: #475569; font-style: italic; padding: 8px 12px; }
     .rpt-table .total-row td {
       font-weight: 700; color: #E4B15C;
       background: rgba(201,151,58,0.07); border-top: 1.5px solid rgba(201,151,58,0.2);

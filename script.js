@@ -8739,6 +8739,52 @@ function closeReportTenantExpansion() {
   if (highlighted) highlighted.classList.remove('rpt-row-expanded');
 }
 
+function toggleReportDisputeDrilldown(el) {
+  const next = el.nextElementSibling;
+  if (next && next.classList.contains('rpt-exp-dispute-drilldown')) {
+    next.remove();
+    el.classList.remove('open');
+    return;
+  }
+  el.classList.add('open');
+  const div = document.createElement('div');
+  div.className = 'rpt-exp-dispute-drilldown';
+  div.innerHTML = renderReportDisputeDrilldown(el.dataset.tenantName);
+  el.insertAdjacentElement('afterend', div);
+}
+
+function renderReportDisputeDrilldown(tenantName) {
+  const items = disputes.filter(d => d.tenantName === tenantName);
+  if (!items.length) return '<div class="rpt-exp-dispute-empty">No disputes found.</div>';
+
+  const statusMap = {
+    open:           { cls: 'open',     label: 'Open' },
+    docs_requested: { cls: 'review',   label: 'Under Review' },
+    accepted:       { cls: 'resolved', label: 'Resolved' },
+    rejected:       { cls: 'rejected', label: 'Rejected' },
+  };
+
+  function ts(iso) {
+    if (!iso) return '';
+    try { return new Date(iso).toLocaleDateString('en-US', { month: 'short', day: 'numeric', year: 'numeric' }); }
+    catch (e) { return ''; }
+  }
+
+  return items.map(d => {
+    const st     = statusMap[d.status] || { cls: 'open', label: d.status || 'Open' };
+    const amount = (d.tenantShare != null && !isNaN(d.tenantShare)) ? fmt(parseFloat(d.tenantShare)) : '—';
+    const opened = ts(d.timestamp);
+    return `<div class="rpt-exp-dispute-item">
+      <div class="rpt-exp-dispute-item-header">
+        <span class="rpt-exp-dispute-item-title">${esc(d.vendor || '—')} &middot; ${esc(d.category || '—')}</span>
+        <span class="rpt-exp-dispute-status ${st.cls}">${st.label}</span>
+      </div>
+      <div class="rpt-exp-dispute-item-meta">${amount}${opened ? ' &middot; Opened ' + opened : ''}</div>
+      <div class="rpt-exp-dispute-item-reason">&ldquo;${esc(d.reason || '—')}&rdquo;</div>
+    </div>`;
+  }).join('');
+}
+
 function renderReportTenantExpansion(tr, tenantName) {
   const recon = lastResults.find(r => r.name === tenantName) || null;
   const td    = tenantData.find(t => t && t.tenant_name === tenantName) || null;
@@ -8761,11 +8807,10 @@ function renderReportTenantExpansion(tr, tenantName) {
   const camStr    = recon ? fmt(recon.allocatedAmount) : null;
   const invCount  = recon ? String(recon.includedInvoices.length) : null;
 
-  // Future-ready dispute summary — data attributes let Phase 5 wire onclick
-  // without touching the HTML: onclick="openDisputeDrilldown(this.dataset.tenantName)"
   const disputeHtml = dc > 0
     ? `<div class="rpt-exp-dispute-summary"
-          data-tenant-name="${esc(tenantName)}" data-total="${dc}" data-open="${oc}">
+          data-tenant-name="${esc(tenantName)}" data-total="${dc}" data-open="${oc}"
+          onclick="toggleReportDisputeDrilldown(this)">
         <span class="rpt-exp-dispute-count">${dc} dispute${dc !== 1 ? 's' : ''}</span>
         ${oc > 0
           ? `<span class="rpt-exp-dispute-open">${oc} open</span>`
