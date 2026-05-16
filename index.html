@@ -2388,6 +2388,40 @@
     /* Make tenant name in card look tappable */
     .tenant-title[data-tdp] { cursor: pointer; }
     .tenant-title[data-tdp]:hover { text-decoration: underline; text-underline-offset: 3px; }
+    /* Dispute status badges inside the detail panel */
+    .tdp-dispute-badge {
+      display: inline-flex; align-items: center;
+      padding: 2px 9px; border-radius: 20px;
+      font-size: 0.72rem; font-weight: 700; flex-shrink: 0;
+    }
+    .tdp-dispute-badge.open    { background: rgba(234,88,12,0.15); color: #fb923c; }
+    .tdp-dispute-badge.review  { background: rgba(201,151,58,0.15); color: #E4B15C; }
+    .tdp-dispute-badge.resolved{ background: rgba(34,197,94,0.15);  color: #4ade80; }
+    .tdp-dispute-badge.rejected{ background: rgba(239,68,68,0.15);  color: #f87171; }
+    /* Dispute card inside panel — slightly more compact than the standalone version */
+    .tdp-dispute-card {
+      background: rgba(234,88,12,0.07); border: 1.5px solid rgba(234,88,12,0.2);
+      border-radius: 10px; padding: 12px 14px; margin-bottom: 9px;
+      animation: fadein 0.2s ease;
+    }
+    .tdp-dispute-card.is-resolved { background: rgba(34,197,94,0.06); border-color: rgba(34,197,94,0.2); }
+    .tdp-dispute-card.is-rejected { background: rgba(239,68,68,0.07); border-color: rgba(239,68,68,0.2); }
+    .tdp-dc-header { display: flex; align-items: center; justify-content: space-between; gap: 8px; margin-bottom: 6px; }
+    .tdp-dc-title  { font-size: 0.88rem; font-weight: 700; color: #E2E8F0; flex: 1; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+    .tdp-dc-meta   { font-size: 0.74rem; color: #64748B; margin-bottom: 5px; }
+    .tdp-dc-reason { font-size: 0.82rem; color: #94A3B8; font-style: italic; margin-bottom: 10px; }
+    .tdp-dc-actions { display: flex; gap: 7px; flex-wrap: wrap; }
+    .tdp-dc-btn {
+      padding: 5px 12px; border-radius: 7px; font-size: 0.76rem; font-weight: 600;
+      cursor: pointer; border: 1.5px solid rgba(255,255,255,0.12);
+      background: rgba(255,255,255,0.05); color: #94A3B8; transition: background 0.15s;
+    }
+    .tdp-dc-btn:hover { background: rgba(255,255,255,0.1); }
+    .tdp-dc-btn.resolve { background: rgba(99,102,241,0.12); color: #a5b4fc; border-color: rgba(99,102,241,0.3); }
+    .tdp-dc-btn.resolve:hover { background: rgba(99,102,241,0.22); }
+    .tdp-empty-disputes {
+      font-size: 0.84rem; color: #475569; font-style: italic; padding: 10px 0 4px;
+    }
 
   </style>
 </head>

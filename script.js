@@ -5513,6 +5513,73 @@ function closeExplainPanel() {
 
 // ─── Tenant Detail Panel ──────────────────────────────────────────────────────
 
+function _tdpDisputeBadge(status) {
+  const map = {
+    open:           { cls: 'open',     label: 'Open' },
+    docs_requested: { cls: 'review',   label: 'Under Review' },
+    accepted:       { cls: 'resolved', label: 'Resolved' },
+    rejected:       { cls: 'rejected', label: 'Rejected' },
+  };
+  const cfg = map[status] || { cls: 'open', label: status || 'Open' };
+  return `<span class="tdp-dispute-badge ${cfg.cls}">${cfg.label}</span>`;
+}
+
+function _tdpDisputesHtml(tenantName) {
+  if (!tenantName) return `<div class="tdp-empty-disputes">No disputes for this tenant.</div>`;
+
+  const tenantDisputes = disputes.filter(d => d.tenantName === tenantName);
+  if (!tenantDisputes.length) {
+    return `<div class="tdp-empty-disputes">No disputes for this tenant.</div>`;
+  }
+
+  function _ts(iso) {
+    if (!iso) return '';
+    try {
+      return new Date(iso).toLocaleString('en-US', { month: 'short', day: 'numeric', year: 'numeric', hour: 'numeric', minute: '2-digit' });
+    } catch (e) { return ''; }
+  }
+
+  return tenantDisputes.map(d => {
+    const isResolved = d.status === 'accepted';
+    const isRejected = d.status === 'rejected';
+    const cardCls    = isResolved ? ' is-resolved' : isRejected ? ' is-rejected' : '';
+
+    const amountStr  = (d.tenantShare !== null && d.tenantShare !== undefined && !isNaN(d.tenantShare))
+      ? fmt(parseFloat(d.tenantShare))
+      : '—';
+    const vendor     = d.vendor   || 'Unknown vendor';
+    const category   = d.category || 'Unknown category';
+    const reason     = d.reason   || '(no reason given)';
+    const docHtml    = d.docName
+      ? `<div style="font-size:0.73rem;color:#4ade80;margin:4px 0 8px;font-family:'DM Mono',monospace;">&#x1F4CE; ${esc(d.docName)}</div>`
+      : '';
+
+    const resolvedTs = (d.resolvedAt && (isResolved || isRejected))
+      ? `<div style="font-size:0.73rem;color:#64748B;margin-top:4px;">${isResolved ? 'Resolved' : 'Rejected'} · ${_ts(d.resolvedAt)}</div>`
+      : '';
+
+    const actionHtml = (isResolved || isRejected) ? '' : `
+      <div class="tdp-dc-actions">
+        <button class="tdp-dc-btn" onclick="event.stopPropagation();showToast('Invoice viewer — coming soon',{color:'#1e3a5f',textColor:'#93c5fd'})">View Invoice</button>
+        <button class="tdp-dc-btn" onclick="event.stopPropagation();showToast('Lease clause viewer — coming soon',{color:'#1e3a5f',textColor:'#93c5fd'})">View Lease Clause</button>
+        <button class="tdp-dc-btn resolve" onclick="event.stopPropagation();showToast('Dispute resolution — coming soon',{color:'#1e3a5f',textColor:'#93c5fd'})">Resolve Dispute</button>
+      </div>`;
+
+    return `
+      <div class="tdp-dispute-card${cardCls}">
+        <div class="tdp-dc-header">
+          <div class="tdp-dc-title">${esc(vendor)} &middot; ${esc(category)}</div>
+          ${_tdpDisputeBadge(d.status)}
+        </div>
+        <div class="tdp-dc-meta">${amountStr}${d.timestamp ? ' &middot; Opened ' + _ts(d.timestamp) : ''}</div>
+        <div class="tdp-dc-reason">&ldquo;${esc(reason)}&rdquo;</div>
+        ${docHtml}
+        ${resolvedTs}
+        ${actionHtml}
+      </div>`;
+  }).join('');
+}
+
 function openTenantDetailPanel(i) {
   const d = tenantData[i];
   if (!d || d.status === 'pending') return;
@@ -5604,6 +5671,9 @@ function openTenantDetailPanel(i) {
     </div>` : `
     <div class="tdp-section">CAM Reconciliation</div>
     <div class="tdp-no-recon">Run reconciliation to see CAM totals and invoice breakdown.</div>`}
+
+    <div class="tdp-section">Disputes</div>
+    ${_tdpDisputesHtml(d.tenant_name)}
   `;
 
   document.body.style.overflow = 'hidden';
