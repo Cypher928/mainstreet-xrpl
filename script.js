@@ -8735,6 +8735,8 @@ function openReportTenantDetail(tenantName) {
 function closeReportTenantExpansion() {
   const row = document.querySelector('#rptBody .report-tenant-expanded-row');
   if (row) row.remove();
+  const highlighted = document.querySelector('#rptBody tr.rpt-row-expanded');
+  if (highlighted) highlighted.classList.remove('rpt-row-expanded');
 }
 
 function renderReportTenantExpansion(tr, tenantName) {
@@ -8759,9 +8761,18 @@ function renderReportTenantExpansion(tr, tenantName) {
   const camStr    = recon ? fmt(recon.allocatedAmount) : null;
   const invCount  = recon ? String(recon.includedInvoices.length) : null;
 
+  // Future-ready dispute summary — data attributes let Phase 5 wire onclick
+  // without touching the HTML: onclick="openDisputeDrilldown(this.dataset.tenantName)"
   const disputeHtml = dc > 0
-    ? `<div class="rpt-exp-grid">${stat('Total Disputes', dc + ' (' + oc + ' open)')}</div>`
-    : `<div class="rpt-exp-no-disputes">No disputes</div>`;
+    ? `<div class="rpt-exp-dispute-summary"
+          data-tenant-name="${esc(tenantName)}" data-total="${dc}" data-open="${oc}">
+        <span class="rpt-exp-dispute-count">${dc} dispute${dc !== 1 ? 's' : ''}</span>
+        ${oc > 0
+          ? `<span class="rpt-exp-dispute-open">${oc} open</span>`
+          : `<span class="rpt-exp-dispute-resolved">All resolved</span>`}
+        <span class="rpt-exp-dispute-hint">&#x203A;</span>
+      </div>`
+    : `<div class="rpt-exp-no-disputes">No disputes filed</div>`;
 
   const innerHtml = `
     <div class="rpt-exp-inner">
@@ -8782,17 +8793,16 @@ function renderReportTenantExpansion(tr, tenantName) {
       ${disputeHtml}
     </div>`;
 
-  // insertAdjacentHTML('afterend') on a <tr> inside <tbody> can silently
-  // mis-parse the fragment in some browsers (parses in <div> context instead
-  // of <tbody> context, moving the row outside the table).
-  // createElement + insertBefore is guaranteed correct for table row insertion.
-  const newRow  = document.createElement('tr');
+  // createElement + insertBefore — guaranteed correct for table row insertion
+  // (insertAdjacentHTML can mis-parse <tr> in <div> context in some engines).
+  const newRow = document.createElement('tr');
   newRow.className = 'report-tenant-expanded-row';
   const cell = document.createElement('td');
   cell.colSpan = 4;
   cell.innerHTML = innerHtml;
   newRow.appendChild(cell);
 
+  tr.classList.add('rpt-row-expanded');
   const tbody = tr.parentNode;
   tbody.insertBefore(newRow, tr.nextSibling);
 
