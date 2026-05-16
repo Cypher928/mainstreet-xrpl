@@ -1971,11 +1971,14 @@
       min-height: 44px; display: inline-flex; align-items: center;
     }
     .rpt-tenant-link:hover { color: #C9973A; text-decoration-color: rgba(201,151,58,0.6); }
-    /* Inline expansion row */
-    .report-tenant-expanded-row td {
-      padding: 0; background: rgba(201,151,58,0.04);
-      border-bottom: 2px solid rgba(201,151,58,0.18);
+    /* Inline expansion row — specificity matches .rpt-table tr:nth-child(even) td (0-2-2)
+       so same-specificity later-declaration wins over the striped-row rule. */
+    .rpt-table tr.report-tenant-expanded-row td {
+      padding: 0 !important; background: rgba(15,25,41,0.97) !important;
+      border-bottom: 2px solid rgba(201,151,58,0.25) !important;
+      border-top: 1px solid rgba(201,151,58,0.15);
     }
+    .rpt-table tr.report-tenant-expanded-row:hover td { background: rgba(15,25,41,0.97) !important; }
     .rpt-exp-inner { padding: 14px 16px 18px; }
     .rpt-exp-section {
       font-size: 0.68rem; font-weight: 700; color: #64748B;

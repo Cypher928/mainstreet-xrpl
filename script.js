@@ -8699,18 +8699,36 @@ function generateMasterReport() {
 // Controller — toggles inline expansion row in the Master Report tenant table.
 // tenantName comes from data-tenant-name dataset on the <tr> (set by generateMasterReport).
 function openReportTenantDetail(tenantName) {
-  const tr = Array.from(document.querySelectorAll('#rptBody tr[data-tenant-name]'))
-    .find(el => el.dataset.tenantName === tenantName);
-  if (!tr) { console.warn('[openReportTenantDetail] row not found:', tenantName); return; }
+  const allRows = Array.from(document.querySelectorAll('#rptBody tr[data-tenant-name]'));
+  console.log('[openReportTenantDetail] clicked:', JSON.stringify(tenantName),
+    '| report rows in DOM:', allRows.length,
+    '| row names:', allRows.map(r => r.dataset.tenantName));
 
-  // Toggle: if this row is already expanded, collapse it
+  const tr = allRows.find(el => el.dataset.tenantName === tenantName);
+  if (!tr) {
+    console.warn('[openReportTenantDetail] <tr> not found — tenantName:', JSON.stringify(tenantName),
+      '| available names:', allRows.map(r => JSON.stringify(r.dataset.tenantName)));
+    return;
+  }
+
+  const recon   = lastResults.find(r => r.name === tenantName) || null;
+  const tdMatch = tenantData.find(t => t && t.tenant_name === tenantName) || null;
+  console.log('[openReportTenantDetail] recon:', recon
+    ? { name: recon.name, cam: recon.allocatedAmount, proRata: recon.proRataPercent }
+    : 'NOT FOUND',
+    '| tenantData:', tdMatch
+    ? { name: tdMatch.tenant_name, sqft: tdMatch.leased_sqft, type: tdMatch.lease_type }
+    : 'NOT FOUND');
+
+  // Toggle: clicking the same tenant again collapses
   const next = tr.nextElementSibling;
   if (next && next.classList.contains('report-tenant-expanded-row')) {
+    console.log('[openReportTenantDetail] collapsing existing expansion');
     closeReportTenantExpansion();
     return;
   }
 
-  closeReportTenantExpansion(); // collapse any other open expansion
+  closeReportTenantExpansion();
   renderReportTenantExpansion(tr, tenantName);
 }
 
@@ -8745,30 +8763,43 @@ function renderReportTenantExpansion(tr, tenantName) {
     ? `<div class="rpt-exp-grid">${stat('Total Disputes', dc + ' (' + oc + ' open)')}</div>`
     : `<div class="rpt-exp-no-disputes">No disputes</div>`;
 
-  const html = `
-    <tr class="report-tenant-expanded-row">
-      <td colspan="4">
-        <div class="rpt-exp-inner">
-          <div class="rpt-exp-section">Lease Info</div>
-          <div class="rpt-exp-grid">
-            ${stat('Lease Type',  _v(td?.lease_type))}
-            ${stat('Leased Sqft', sqftStr)}
-            ${stat('Start Date',  _v(td?.start_date))}
-            ${stat('End Date',    _v(td?.end_date))}
-            ${stat('Pro-Rata',    proRatStr, true)}
-          </div>
-          <div class="rpt-exp-section">CAM Summary</div>
-          <div class="rpt-exp-grid">
-            ${stat('Allocated CAM',  camStr, true)}
-            ${stat('Invoice Count',  invCount)}
-          </div>
-          <div class="rpt-exp-section">Disputes</div>
-          ${disputeHtml}
-        </div>
-      </td>
-    </tr>`;
+  const innerHtml = `
+    <div class="rpt-exp-inner">
+      <div class="rpt-exp-section">Lease Info</div>
+      <div class="rpt-exp-grid">
+        ${stat('Lease Type',  _v(td?.lease_type))}
+        ${stat('Leased Sqft', sqftStr)}
+        ${stat('Start Date',  _v(td?.start_date))}
+        ${stat('End Date',    _v(td?.end_date))}
+        ${stat('Pro-Rata',    proRatStr, true)}
+      </div>
+      <div class="rpt-exp-section">CAM Summary</div>
+      <div class="rpt-exp-grid">
+        ${stat('Allocated CAM',  camStr, true)}
+        ${stat('Invoice Count',  invCount)}
+      </div>
+      <div class="rpt-exp-section">Disputes</div>
+      ${disputeHtml}
+    </div>`;
 
-  tr.insertAdjacentHTML('afterend', html);
+  // insertAdjacentHTML('afterend') on a <tr> inside <tbody> can silently
+  // mis-parse the fragment in some browsers (parses in <div> context instead
+  // of <tbody> context, moving the row outside the table).
+  // createElement + insertBefore is guaranteed correct for table row insertion.
+  const newRow  = document.createElement('tr');
+  newRow.className = 'report-tenant-expanded-row';
+  const cell = document.createElement('td');
+  cell.colSpan = 4;
+  cell.innerHTML = innerHtml;
+  newRow.appendChild(cell);
+
+  const tbody = tr.parentNode;
+  tbody.insertBefore(newRow, tr.nextSibling);
+
+  console.log('[renderReportTenantExpansion] inserted | tbody children after:', tbody.children.length,
+    '| newRow visible:', newRow.offsetHeight > 0,
+    '| cell colSpan:', cell.colSpan,
+    '| preview:', newRow.outerHTML.slice(0, 200));
 }
 
 async function runLandlordAIReview() {
