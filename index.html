@@ -1963,6 +1963,14 @@
     .rpt-table tr:last-child td { border-bottom: none; }
     .rpt-table tr:nth-child(even) td { background: rgba(255,255,255,0.016); }
     .rpt-table tr:hover td { background: rgba(255,255,255,0.03); }
+    /* Clickable tenant name inside report tables */
+    .rpt-tenant-link {
+      cursor: pointer; color: #E2E8F0;
+      text-decoration: underline; text-decoration-style: dotted;
+      text-underline-offset: 3px; text-decoration-color: rgba(255,255,255,0.25);
+      min-height: 44px; display: inline-flex; align-items: center;
+    }
+    .rpt-tenant-link:hover { color: #C9973A; text-decoration-color: rgba(201,151,58,0.6); }
     .rpt-table .total-row td {
       font-weight: 700; color: #E4B15C;
       background: rgba(201,151,58,0.07); border-top: 1.5px solid rgba(201,151,58,0.2);

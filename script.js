@@ -8583,8 +8583,8 @@ function generateMasterReport() {
   const tenantRows = lastResults.map(r => {
     const dc = disputeCount(r.name);
     const oc = openDisputeCount(r.name);
-    return `<tr>
-      <td>${esc(r.name)}</td>
+    return `<tr data-tenant-name="${esc(r.name)}">
+      <td><span class="rpt-tenant-link" onclick="openReportTenantDetail('${esc(r.name)}')">${esc(r.name)}</span></td>
       <td style="text-align:right">${fmt(r.allocatedAmount)}</td>
       <td style="text-align:right">${(r.proRata * 100).toFixed(2)}%</td>
       <td style="text-align:center">${dc > 0
@@ -8694,6 +8694,15 @@ function generateMasterReport() {
     logError('generateMasterReport', e, { propName: lastPropName, tenantCount: lastResults.length });
     showToast('Could not generate Landlord Master Report — check console for details.', { color: '#92400e', textColor: '#fef3c7' });
   }
+}
+
+// Stub — Phase 2 will render the tenant detail panel from here.
+// tenantName matches r.name from lastResults (ReconciliationResult.tenantName).
+function openReportTenantDetail(tenantName) {
+  console.log('[openReportTenantDetail] tenantName:', tenantName,
+    '| recon match:', lastResults.find(r => r.name === tenantName) || 'NOT FOUND',
+    '| tenantData match:', tenantData.find(t => t && t.tenant_name === tenantName) || 'NOT FOUND'
+  );
 }
 
 async function runLandlordAIReview() {
