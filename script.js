@@ -10517,6 +10517,190 @@ function portfolioKPIs(props) {
   };
 }
 
+// ── Portfolio Intelligence + Readiness Engine ─────────────────────────────────
+
+const _RDY_LABELS = {
+  needs_review:          'Needs Review',
+  partially_verified:    'Partial',
+  reconciliation_ready:  'Ready',
+  reconciled:            'Reconciled',
+  high_risk:             'High Risk',
+};
+
+// Derives property readiness state, weighted risk score, and operational insight.
+// Pure function — reads prop data, calls existing helpers, returns derived object.
+function derivePropertyReadiness(p) {
+  const tenants = Array.isArray(p.tenants) ? p.tenants.filter(Boolean) : [];
+  const snap    = p.camReconciliation ?? null;
+  const results = snap?.results || [];
+  const meta    = _buildPropMeta(p);
+
+  const rqItems    = getReviewQueueItems([p]);
+  const unresolved = rqItems.filter(i => !i.reviewerConfirmed);
+  const incomplete = unresolved.filter(i => i.reviewState === 'incomplete');
+  const needsRev   = unresolved.filter(i => i.reviewState === 'needs_review');
+
+  const missingCapCount = tenants.filter(t => {
+    const isNNN = /nnn|triple[\s-]?net/i.test(String(t.lease_type || ''));
+    return isNNN && (t.cap == null || t.cap === '');
+  }).length;
+
+  const today      = new Date().toISOString().slice(0, 10);
+  const cutoff12mo = new Date(); cutoff12mo.setMonth(cutoff12mo.getMonth() + 12);
+  const cutoffIso  = cutoff12mo.toISOString().slice(0, 10);
+  const expiredCount  = tenants.filter(t => t.end_date && t.end_date < today).length;
+  const expiringCount = tenants.filter(t => t.end_date && t.end_date >= today && t.end_date <= cutoffIso).length;
+  const lowConfCount  = tenants.filter(t => t._confidence === 'low' || t._confidence === 'failed').length;
+
+  const totalPR    = results.reduce((s, r) => s + (r.proRataPercent || 0), 0);
+  const proRataGap = results.length > 0 ? Math.max(0, 100 - totalPR) : 0;
+
+  // Weighted risk score 0–100
+  let riskScore = 0;
+  riskScore += incomplete.length * 15;
+  riskScore += needsRev.length   * 8;
+  riskScore += missingCapCount   * 20;
+  riskScore += expiredCount      * 20;
+  riskScore += meta.openDisputes * 15;
+  riskScore += lowConfCount      * 10;
+  riskScore += proRataGap >= 5   ? 15 : 0;
+  riskScore  = Math.min(100, riskScore);
+
+  const weightedRisk = riskScore >= 60 ? 'critical'
+    : riskScore >= 35 ? 'high'
+    : riskScore >= 15 ? 'moderate'
+    : riskScore >  0  ? 'low'
+    : 'none';
+
+  // Readiness state — highest severity wins
+  let readiness;
+  const isCriticalRisk = weightedRisk === 'critical' || meta.riskLevel === 'Critical';
+  if (isCriticalRisk && unresolved.length > 0) {
+    readiness = 'high_risk';
+  } else if (snap?.results?.length > 0 && unresolved.length === 0) {
+    readiness = 'reconciled';
+  } else if (unresolved.length === 0 && tenants.length > 0) {
+    readiness = 'reconciliation_ready';
+  } else if (incomplete.length === 0 && needsRev.length > 0) {
+    readiness = 'partially_verified';
+  } else {
+    readiness = 'needs_review';
+  }
+
+  // Insight sentence — highest-priority actionable finding
+  let insight = null;
+  if (incomplete.length > 0) {
+    insight = `${incomplete.length} tenant${incomplete.length !== 1 ? 's' : ''} missing critical lease data.`;
+  } else if (missingCapCount > 0) {
+    insight = `${missingCapCount} NNN tenant${missingCapCount !== 1 ? 's' : ''} missing CAM cap${missingCapCount !== 1 ? 's' : ''}.`;
+  } else if (proRataGap >= 5) {
+    insight = `Pro-rata coverage gap of ${proRataGap.toFixed(0)}% detected.`;
+  } else if (expiredCount > 0) {
+    insight = `${expiredCount} lease${expiredCount !== 1 ? 's' : ''} expired — verify CAM eligibility.`;
+  } else if (expiringCount > 0) {
+    insight = `${expiringCount} lease${expiringCount !== 1 ? 's expire' : ' expires'} within 12 months.`;
+  } else if (needsRev.length > 0) {
+    insight = `${needsRev.length} tenant${needsRev.length !== 1 ? 's' : ''} flagged for review.`;
+  } else if (lowConfCount > 0) {
+    insight = `${lowConfCount} lease${lowConfCount !== 1 ? 's' : ''} extracted with low confidence.`;
+  } else if (meta.openDisputes > 0) {
+    insight = `${meta.openDisputes} open dispute${meta.openDisputes !== 1 ? 's' : ''} require resolution.`;
+  } else if (readiness === 'reconciliation_ready') {
+    insight = 'All tenants verified — ready to reconcile.';
+  } else if (readiness === 'reconciled') {
+    insight = 'Reconciliation complete.';
+  }
+
+  return { readiness, weightedRisk, riskScore, insight, missingCapCount, expiredCount, expiringCount, lowConfCount, proRataGap, unresolvedCount: unresolved.length, incompleteCount: incomplete.length };
+}
+
+// Aggregates portfolio-level operational intelligence from all properties.
+function _piComputePortfolioIntel(props) {
+  let totalUnresolved = 0, totalMissingCaps = 0, totalExpired = 0;
+  let totalExpiring = 0, totalLowConf = 0, totalExposure = 0, proRataGapProps = 0;
+
+  const today     = new Date().toISOString().slice(0, 10);
+  const cutoff    = new Date(); cutoff.setMonth(cutoff.getMonth() + 12);
+  const cutoffIso = cutoff.toISOString().slice(0, 10);
+
+  for (const p of (props || [])) {
+    const tenants = Array.isArray(p.tenants) ? p.tenants.filter(Boolean) : [];
+    const results = (p.camReconciliation ?? null)?.results || [];
+
+    totalUnresolved  += getReviewQueueItems([p]).filter(i => !i.reviewerConfirmed).length;
+    totalMissingCaps += tenants.filter(t => /nnn|triple[\s-]?net/i.test(String(t.lease_type || '')) && (t.cap == null || t.cap === '')).length;
+    totalExpired     += tenants.filter(t => t.end_date && t.end_date < today).length;
+    totalExpiring    += tenants.filter(t => t.end_date && t.end_date >= today && t.end_date <= cutoffIso).length;
+    totalLowConf     += tenants.filter(t => t._confidence === 'low' || t._confidence === 'failed').length;
+    totalExposure    += (p.disputes || []).filter(d => d.status === 'open').reduce((s, d) => s + (parseFloat(d.tenantShare) || 0), 0);
+    const totalPR = results.reduce((s, r) => s + (r.proRataPercent || 0), 0);
+    if (results.length > 0 && Math.abs(totalPR - 100) >= 5) proRataGapProps++;
+  }
+
+  const issues = [];
+  if (totalUnresolved  > 0) issues.push(`${totalUnresolved} unresolved review item${totalUnresolved !== 1 ? 's' : ''}`);
+  if (totalMissingCaps > 0) issues.push(`${totalMissingCaps} missing CAM cap${totalMissingCaps !== 1 ? 's' : ''}`);
+  if (totalExpired     > 0) issues.push(`${totalExpired} expired lease${totalExpired !== 1 ? 's' : ''}`);
+  if (proRataGapProps  > 0) issues.push(`${proRataGapProps} pro-rata gap${proRataGapProps !== 1 ? 's' : ''}`);
+  const summary = issues.length > 0 ? issues.join(' · ') : 'Portfolio is clean — no critical issues detected.';
+
+  return { totalUnresolved, totalMissingCaps, totalExpired, totalExpiring, totalLowConf, totalExposure, proRataGapProps, summary };
+}
+
+// Renders the Portfolio Intelligence panel above the property grid.
+function renderPortfolioIntelligence(props) {
+  const panel = document.getElementById('portfolioIntelPanel');
+  if (!panel) return;
+  const safeProps = Array.isArray(props) ? props : [];
+  if (safeProps.length === 0) { panel.style.display = 'none'; return; }
+
+  const intel      = _piComputePortfolioIntel(safeProps);
+  const hasCritical = intel.totalExpired > 0 || intel.proRataGapProps > 0 || intel.totalExposure > 0;
+  const hasWarn     = intel.totalMissingCaps > 0 || intel.totalLowConf > 0 || intel.totalUnresolved > 0;
+  const panelCls    = hasCritical ? 'pi-panel--alert' : hasWarn ? 'pi-panel--warn' : 'pi-panel--ok';
+
+  const rdCounts = { reconciled: 0, reconciliation_ready: 0, partially_verified: 0, needs_review: 0, high_risk: 0 };
+  for (const p of safeProps) {
+    const rd = derivePropertyReadiness(p);
+    if (rd.readiness in rdCounts) rdCounts[rd.readiness]++;
+  }
+
+  const m = (val, lbl, cls = '') =>
+    `<div class="pi-metric${cls ? ' ' + cls : ''}"><div class="pi-metric-val">${val}</div><div class="pi-metric-lbl">${lbl}</div></div>`;
+
+  const rdyOrder = [
+    { key: 'high_risk',            label: 'High Risk',    cls: 'rdy-high_risk' },
+    { key: 'needs_review',         label: 'Needs Review', cls: 'rdy-needs-review' },
+    { key: 'partially_verified',   label: 'Partial',      cls: 'rdy-partially_verified' },
+    { key: 'reconciliation_ready', label: 'Ready',        cls: 'rdy-reconciliation_ready' },
+    { key: 'reconciled',           label: 'Reconciled',   cls: 'rdy-reconciled' },
+  ];
+  const rdyHtml = rdyOrder
+    .filter(r => rdCounts[r.key] > 0)
+    .map(r => `<span class="pi-rdy-chip ${r.cls}">${rdCounts[r.key]} ${esc(r.label)}</span>`)
+    .join('');
+
+  panel.style.display = 'block';
+  panel.innerHTML = `
+    <div class="pi-panel ${panelCls}">
+      <div class="pi-panel-head">
+        <span class="pi-panel-title">Portfolio Intelligence</span>
+        <span class="pi-summary">${esc(intel.summary)}</span>
+      </div>
+      <div class="pi-metrics">
+        ${m(intel.totalUnresolved || '—', 'Unresolved',     intel.totalUnresolved  > 0 ? 'pi-metric--warn'  : '')}
+        ${m(intel.totalMissingCaps || '—', 'Missing Caps',  intel.totalMissingCaps > 0 ? 'pi-metric--warn'  : '')}
+        ${m(intel.totalExpired || '—', 'Expired Leases',    intel.totalExpired     > 0 ? 'pi-metric--alert' : '')}
+        ${m(intel.totalExpiring || '—', 'Expiring 12mo')}
+        ${m(intel.totalLowConf || '—', 'Low Confidence')}
+        ${m(intel.totalExposure > 0 ? '$' + Math.round(intel.totalExposure).toLocaleString('en-US') : '—', 'Dispute Exposure', intel.totalExposure > 0 ? 'pi-metric--alert' : '')}
+      </div>
+      ${rdyHtml ? `<div class="pi-rdy-row">${rdyHtml}</div>` : ''}
+    </div>`;
+}
+
+// ─────────────────────────────────────────────────────────────────────────────
+
 function renderPortfolio(props) {
   props = props || _props; // handle no-arg calls
   if (!Array.isArray(props)) {
@@ -10572,6 +10756,9 @@ function renderPortfolio(props) {
         ).join('');
   }
 
+  // Portfolio intelligence panel (above cards grid)
+  renderPortfolioIntelligence(props);
+
   // Property cards
   const statusLabel = { reconciled: 'Reconciled', 'in-progress': 'In Progress', disputes: 'Has Open Disputes' };
 
@@ -10613,17 +10800,29 @@ function renderPortfolio(props) {
       : Math.max(0, Math.round(reviewItems.reduce((s, i) => s + i.reviewScore, 0) / reviewItems.length));
     const healthCls       = reviewHealth >= 80 ? 'review-health--good' : reviewHealth >= 50 ? 'review-health--mid' : 'review-health--low';
 
+    const rd = derivePropertyReadiness(p);
+    const rdBadge   = `<span class="ptf-rdy-badge rdy-${rd.readiness}">${esc(_RDY_LABELS[rd.readiness] || rd.readiness)}</span>`;
+    const rdInsight = rd.insight ? `<div class="ptf-insight">${esc(rd.insight)}</div>` : '';
+    const rdCardCls = rd.readiness === 'high_risk'            ? ' rdy-high-risk-card'
+                    : rd.readiness === 'reconciliation_ready' ? ' rdy-ready-card'
+                    : rd.readiness === 'reconciled'           ? ' rdy-reconciled-card'
+                    : '';
+
     return `
-    <div class="ptf-prop-card status-${status}${activePropId === p.id ? ' active' : ''}${reviewUrgency}" onclick="selectProperty('${pid}')">
+    <div class="ptf-prop-card status-${status}${activePropId === p.id ? ' active' : ''}${reviewUrgency}${rdCardCls}" onclick="selectProperty('${pid}')">
       <div class="ptf-card-top">
         <div class="ptf-prop-name">${esc(p.name || '—')}</div>
-        ${riskBadge}
+        <div class="ptf-card-badges">
+          ${riskBadge}
+          ${rdBadge}
+        </div>
       </div>
       <div class="ptf-status-row">
         <span class="ptf-status-dot ${status}"></span>
         <span>${statusLabel[status] || status}</span>
         ${trendHtml}
       </div>
+      ${rdInsight}
       <div class="ptf-stats-row">
         <div class="ptf-stat"><strong>${tenants}</strong>Tenants</div>
         <div class="ptf-stat"><strong>${invoices}</strong>Invoices</div>

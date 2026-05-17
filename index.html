@@ -2756,6 +2756,65 @@
       font-size: 0.84rem; color: #475569; font-style: italic; padding: 10px 0 4px;
     }
 
+    /* ── Portfolio Intelligence + Readiness Engine ────────────────────── */
+    .pi-panel {
+      border-radius: 10px; padding: 12px 14px; margin-bottom: 14px; border: 1px solid;
+    }
+    .pi-panel--ok    { background: rgba(11,18,32,0.6);    border-color: rgba(255,255,255,0.07); }
+    .pi-panel--warn  { background: rgba(245,158,11,0.04); border-color: rgba(245,158,11,0.18); }
+    .pi-panel--alert { background: rgba(239,68,68,0.04);  border-color: rgba(239,68,68,0.18); }
+    .pi-panel-head { display: flex; align-items: flex-start; gap: 8px; flex-wrap: wrap; margin-bottom: 10px; }
+    .pi-panel-title { font-size: 0.63rem; font-weight: 700; text-transform: uppercase; letter-spacing: 0.08em; color: #64748B; flex-shrink: 0; padding-top: 1px; }
+    .pi-summary { font-size: 0.74rem; color: #94A3B8; flex: 1; line-height: 1.4; }
+    .pi-metrics { display: grid; grid-template-columns: repeat(3, 1fr); gap: 6px; margin-bottom: 9px; }
+    @media (max-width: 420px) { .pi-metrics { grid-template-columns: repeat(2, 1fr); } }
+    .pi-metric {
+      padding: 7px 8px; border-radius: 7px; text-align: center;
+      background: rgba(255,255,255,0.025); border: 1px solid rgba(255,255,255,0.06);
+    }
+    .pi-metric--warn  { background: rgba(245,158,11,0.06); border-color: rgba(245,158,11,0.18); }
+    .pi-metric--alert { background: rgba(239,68,68,0.06);  border-color: rgba(239,68,68,0.18); }
+    .pi-metric-val { font-size: 1rem; font-weight: 800; color: #E2E8F0; line-height: 1; font-family: 'DM Sans', sans-serif; }
+    .pi-metric--warn  .pi-metric-val { color: #fbbf24; }
+    .pi-metric--alert .pi-metric-val { color: #f87171; }
+    .pi-metric-lbl { font-size: 0.56rem; color: #64748B; text-transform: uppercase; letter-spacing: 0.04em; margin-top: 3px; }
+    .pi-rdy-row { display: flex; gap: 5px; flex-wrap: wrap; }
+    .pi-rdy-chip { padding: 2px 8px; border-radius: 20px; font-size: 0.62rem; font-weight: 700; border: 1px solid; }
+
+    /* Readiness state tokens (shared: pi chips + ptf card badges) */
+    .rdy-needs-review         { background: rgba(239,68,68,0.08);   border-color: rgba(239,68,68,0.22);   color: #f87171; }
+    .rdy-partially_verified   { background: rgba(245,158,11,0.08);  border-color: rgba(245,158,11,0.2);   color: #fbbf24; }
+    .rdy-reconciliation_ready { background: rgba(74,222,128,0.08);  border-color: rgba(74,222,128,0.2);   color: #4ade80; }
+    .rdy-reconciled           { background: rgba(56,189,248,0.08);  border-color: rgba(56,189,248,0.22);  color: #7dd3fc; }
+    .rdy-high_risk            { background: rgba(239,68,68,0.14);   border-color: rgba(239,68,68,0.35);   color: #fca5a5; }
+
+    /* Card-level readiness badge */
+    .ptf-card-badges { display: flex; flex-direction: column; gap: 3px; align-items: flex-end; flex-shrink: 0; }
+    .ptf-rdy-badge {
+      font-size: 0.55rem; font-weight: 700; padding: 2px 6px; border-radius: 99px; white-space: nowrap; letter-spacing: 0.04em;
+    }
+
+    /* Insight sentence below status row */
+    .ptf-insight {
+      font-size: 0.69rem; color: #94A3B8; margin: -3px 0 8px; line-height: 1.35;
+      padding: 4px 7px; border-radius: 5px; background: rgba(255,255,255,0.02);
+      border-left: 2px solid rgba(100,116,139,0.22);
+    }
+
+    /* Left-border overrides driven by readiness */
+    .ptf-prop-card.rdy-high-risk-card  { border-left-color: rgba(239,68,68,0.8); }
+    .ptf-prop-card.rdy-ready-card      { border-left-color: rgba(74,222,128,0.65); }
+    .ptf-prop-card.rdy-reconciled-card { border-left-color: rgba(56,189,248,0.65); }
+
+    /* Mobile density — ~10% vertical spacing reduction */
+    .ptf-prop-card { padding: 15px 15px 13px; }
+    .ptf-status-row { margin-bottom: 10px; }
+    .ptf-stats-row { gap: 10px; margin-bottom: 8px; }
+    .ptf-kpi { padding: 12px 10px; }
+    .ptf-kpi-val { font-size: 1.3rem; }
+    .property-review-summary { margin: 3px 0 5px; }
+    .ptf-card-foot { margin-top: 7px; padding-top: 6px; }
+
     /* ── AI Review Workspace ───────────────────────────────────────────── */
     #reviewWorkspace {
       position: fixed; inset: 0; z-index: 1050;
@@ -3032,6 +3091,9 @@
       <div class="ptf-kpi-lbl">Avg Confidence</div>
     </div>
   </div>
+
+  <!-- Portfolio Intelligence Panel -->
+  <div id="portfolioIntelPanel" style="display:none;"></div>
 
   <!-- Property Cards — primary content -->
   <div class="ptf-props-head">
