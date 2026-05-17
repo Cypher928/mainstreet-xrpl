@@ -2883,6 +2883,63 @@
       #reviewWorkspace.open { padding: 0; }
     }
 
+    /* Source traceability row */
+    .rw-field-source { display: flex; align-items: center; gap: 4px; margin-top: 4px; flex-wrap: wrap; }
+    .rw-conf-chip {
+      padding: 1px 5px; border-radius: 3px; font-size: 0.54rem; font-weight: 700;
+      text-transform: uppercase; letter-spacing: 0.05em; border: 1px solid; flex-shrink: 0;
+    }
+    .rw-conf-chip--high   { background: rgba(74,222,128,0.08);  border-color: rgba(74,222,128,0.22);  color: #4ade80; }
+    .rw-conf-chip--mid    { background: rgba(245,158,11,0.08);  border-color: rgba(245,158,11,0.22);  color: #fbbf24; }
+    .rw-conf-chip--low    { background: rgba(239,68,68,0.08);   border-color: rgba(239,68,68,0.22);   color: #f87171; }
+    .rw-conf-chip--na     { background: rgba(100,116,139,0.08); border-color: rgba(100,116,139,0.22); color: #475569; }
+    .rw-conf-chip--manual { background: rgba(99,164,255,0.08);  border-color: rgba(99,164,255,0.22);  color: #93c5fd; }
+    .rw-source-meta {
+      font-size: 0.58rem; color: #475569; overflow: hidden; text-overflow: ellipsis;
+      white-space: nowrap; flex: 1; min-width: 0;
+    }
+    .rw-view-src {
+      flex-shrink: 0; font-size: 0.58rem; padding: 1px 5px; border-radius: 3px; cursor: pointer;
+      background: rgba(99,164,255,0.06); border: 1px solid rgba(99,164,255,0.18); color: #6d9fe8;
+      transition: opacity 0.12s;
+    }
+    .rw-view-src:hover { opacity: 0.8; }
+
+    /* Note input */
+    .rw-note-input {
+      width: 100%; box-sizing: border-box;
+      background: rgba(255,255,255,0.03); border: 1px solid rgba(255,255,255,0.09);
+      color: #E2E8F0; border-radius: 7px; padding: 7px 9px; font-size: 0.75rem;
+      font-family: inherit; resize: vertical; min-height: 54px; outline: none;
+      transition: border-color 0.15s;
+    }
+    .rw-note-input::placeholder { color: #475569; }
+    .rw-note-input:focus { border-color: rgba(99,164,255,0.3); }
+    .rw-note-save-btn {
+      margin-top: 5px; padding: 5px 12px; border-radius: 6px; cursor: pointer;
+      font-size: 0.72rem; font-weight: 600;
+      background: rgba(99,164,255,0.08); border: 1px solid rgba(99,164,255,0.22); color: #93c5fd;
+      transition: transform 0.12s;
+    }
+    .rw-note-save-btn:hover { transform: translateY(-1px); }
+
+    /* Review history */
+    .rw-history-entry {
+      display: flex; align-items: flex-start; flex-wrap: wrap; gap: 5px;
+      padding: 6px 0; border-bottom: 1px solid rgba(255,255,255,0.05);
+    }
+    .rw-history-entry:last-child { border-bottom: none; }
+    .rw-hist-badge {
+      padding: 1px 6px; border-radius: 4px; font-size: 0.56rem; font-weight: 700;
+      flex-shrink: 0; border: 1px solid;
+    }
+    .rw-hist--approved { background: rgba(74,222,128,0.08); border-color: rgba(74,222,128,0.2);  color: #4ade80; }
+    .rw-hist--flagged  { background: rgba(245,158,11,0.08); border-color: rgba(245,158,11,0.2);  color: #fbbf24; }
+    .rw-hist--note     { background: rgba(99,164,255,0.06); border-color: rgba(99,164,255,0.18); color: #93c5fd; }
+    .rw-hist-by { font-size: 0.65rem; color: #94A3B8; flex: 1; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+    .rw-hist-at { font-size: 0.6rem; color: #475569; flex-shrink: 0; }
+    .rw-hist-note { width: 100%; font-size: 0.68rem; color: #94A3B8; font-style: italic; line-height: 1.4; padding-top: 2px; }
+
   </style>
 </head>
 <body>
@@ -3481,6 +3538,14 @@
         <div class="rw-section">
           <div class="rw-section-title">Actions</div>
           <div id="rwActions"></div>
+        </div>
+        <div class="rw-section">
+          <div class="rw-section-title">Add Note</div>
+          <div id="rwNoteSection"></div>
+        </div>
+        <div class="rw-section">
+          <div class="rw-section-title">Review History</div>
+          <div id="rwHistory"></div>
         </div>
       </div>
       <div id="rwColInvoices" class="rw-col">

@@ -9961,7 +9961,7 @@ function setReviewQueueFilter(filter) {
   if (prop) renderPropertyReviewQueue(prop);
 }
 
-function markTenantReviewAcknowledged(tenantId) {
+function markTenantReviewAcknowledged(tenantId, note = null) {
   // Find owning property — tenant may not be in the active tenantData array
   let ownerProp = null, ownerIdx = -1;
   for (const p of _props) {
@@ -9971,13 +9971,17 @@ function markTenantReviewAcknowledged(tenantId) {
   if (!ownerProp) return;
 
   const prev    = ownerProp.tenants[ownerIdx];
+  const prevRev = prev.review || {};
+  const now     = new Date().toISOString();
+  const histEntry = { action: 'approved', by: 'Manual Review', at: now, note: note || null };
   const updated = {
     ...prev,
     review: {
-      ...(prev.review || {}),
+      ...prevRev,
       reviewerConfirmed: true,
-      reviewedAt:        new Date().toISOString(),
+      reviewedAt:        now,
       reviewedBy:        'Manual Review',
+      history:           [...(prevRev.history || []), histEntry],
     },
   };
   ownerProp.tenants[ownerIdx] = updated;
@@ -10143,6 +10147,8 @@ function _rwRenderAll(t) {
   _rwRenderWhyFlagged(rv);
   _rwRenderRecommendations(rv);
   _rwRenderActions(t, rv);
+  _rwRenderNoteSection(t);
+  _rwRenderHistory(t);
   _rwRenderInvoices(t);
 }
 
@@ -10164,6 +10170,45 @@ function _rwRenderScoreCard(rv) {
     </div>`;
 }
 
+// Returns { label, cls } confidence chip for a field on tenant t.
+function _rwConfChip(key, t) {
+  if (key !== 'tenant_name' && isFieldManuallyVerified(key, t))
+    return { label: 'Manual', cls: 'rw-conf-chip--manual' };
+  // leased_sqft has a numeric per-field confidence score
+  const numericConf = key === 'leased_sqft'
+    ? (t.confidence?.leased_sqft ?? t.confidence?.leasedSqft ?? null)
+    : null;
+  if (numericConf !== null) {
+    if (numericConf >= 80) return { label: 'High',   cls: 'rw-conf-chip--high' };
+    if (numericConf >= 50) return { label: 'Medium', cls: 'rw-conf-chip--mid' };
+    return { label: 'Low', cls: 'rw-conf-chip--low' };
+  }
+  const fc = key === 'tenant_name'
+    ? { status: t[key] ? 'verified' : 'missing' }
+    : getFieldConfidence(key, t);
+  if (fc.status === 'verified')  return { label: 'High',   cls: 'rw-conf-chip--high' };
+  if (fc.status === 'estimated') return { label: 'Medium', cls: 'rw-conf-chip--mid' };
+  if (fc.status === 'missing')   return { label: 'N/A',    cls: 'rw-conf-chip--na' };
+  return { label: 'Low', cls: 'rw-conf-chip--low' };
+}
+
+// Returns the human-readable extraction method for a field (maps to required fallback states).
+function _rwExtractionMethod(key, t) {
+  if (key !== 'tenant_name' && isFieldManuallyVerified(key, t)) return 'Manually Entered';
+  const val = key === 'tenant_name' ? t[key] : (getEffectiveLeaseField(key, t) ?? t[key]);
+  const isEmpty = val === null || val === undefined || String(val).trim() === '';
+  if (isEmpty) return 'Not Found';
+  if ((key === 'start_date' || key === 'end_date') && (t._usedFallback || t.doc_has_dates === false))
+    return 'Estimated from Context';
+  if (key === 'lease_type' && t.doc_has_lease_type === false)
+    return 'Estimated from Context';
+  if (key === 'leased_sqft') {
+    const nc = t.confidence?.leased_sqft ?? t.confidence?.leasedSqft;
+    if (nc != null && nc < 50) return 'Estimated from Context';
+  }
+  return 'AI Extraction';
+}
+
 function _rwRenderLeaseFields(t) {
   const fields = [
     { key: 'tenant_name', label: 'Tenant Name' },
@@ -10174,24 +10219,50 @@ function _rwRenderLeaseFields(t) {
     { key: 'cap',         label: 'CAM Cap' },
   ];
   const confIcon = { verified: '✓', estimated: '⚠', missing: '—' };
+
   const fieldsHtml = fields.map(({ key, label }) => {
-    const val = (key === 'tenant_name') ? t[key] : (getEffectiveLeaseField(key, t) ?? t[key]);
+    const isManual = key !== 'tenant_name' && isFieldManuallyVerified(key, t);
+    const val = isManual
+      ? getEffectiveLeaseField(key, t)
+      : (key === 'tenant_name' ? t[key] : (getEffectiveLeaseField(key, t) ?? t[key]));
     const isEmpty = val === null || val === undefined || String(val).trim() === '';
-    const conf = (key === 'tenant_name')
+
+    const conf = key === 'tenant_name'
       ? { status: isEmpty ? 'missing' : 'verified', note: isEmpty ? 'Not found in data' : 'From tenant data' }
       : getFieldConfidence(key, t);
+
+    const method    = _rwExtractionMethod(key, t);
+    const chip      = _rwConfChip(key, t);
+    const ov        = t.reviewOverrides?.[key];
+    const overrideTs = isManual && ov?.reviewedAt ? ` · ${_rwFormatDate(ov.reviewedAt)}` : '';
+    // Source document: show filename for document-backed fields, fallback to "—"
+    const srcFull   = isManual ? 'Manual entry' : (t.fileName || '—');
+    const srcTrunc  = srcFull.length > 26 ? srcFull.slice(0, 23) + '…' : srcFull;
+
     const valHtml = isEmpty
       ? `<div class="rw-field-value rw-field-value--missing">Not found</div>`
       : `<div class="rw-field-value">${esc(String(val))}</div>`;
-    const manualBadge = (key !== 'tenant_name' && isFieldManuallyVerified(key, t))
-      ? `<div class="rw-field-conf rw-fc--verified">✓ Manually Verified</div>`
+
+    const confRow = `<div class="rw-field-conf rw-fc--${conf.status}">${confIcon[conf.status] || '—'} ${esc(conf.note || conf.status)}</div>`;
+
+    // View Source: available for all document-backed fields that have a lease URL
+    const viewBtn = (t.leaseUrl && key !== 'tenant_name')
+      ? `<button class="rw-view-src" onclick="openLeaseModalFromRw()" title="Open source document">View &#x2197;</button>`
       : '';
+
+    const sourceRow = `
+      <div class="rw-field-source">
+        <span class="rw-conf-chip ${chip.cls}" title="Confidence level">${chip.label}</span>
+        <span class="rw-source-meta" title="${esc(srcFull + overrideTs)}">${esc(method)} · ${esc(srcTrunc)}${esc(overrideTs)}</span>
+        ${viewBtn}
+      </div>`;
+
     return `
       <div class="rw-field">
         <div class="rw-field-label">${esc(label)}</div>
         ${valHtml}
-        <div class="rw-field-conf rw-fc--${conf.status}">${confIcon[conf.status] || '—'} ${esc(conf.note || conf.status)}</div>
-        ${manualBadge}
+        ${confRow}
+        ${sourceRow}
       </div>`;
   }).join('');
 
@@ -10308,8 +10379,73 @@ function _rwRenderInvoices(t) {
   el.innerHTML = html;
 }
 
+function _rwFormatDate(iso) {
+  if (!iso) return '';
+  try {
+    return new Date(iso).toLocaleDateString('en-US', { month: 'short', day: 'numeric', year: '2-digit', hour: '2-digit', minute: '2-digit' });
+  } catch { return iso; }
+}
+
+function _rwHistActionLabel(action) {
+  return { approved: 'Approved', flagged: 'Flagged', note: 'Note' }[action] || action;
+}
+
+function _rwRenderNoteSection(t) {
+  const el = document.getElementById('rwNoteSection');
+  if (!el) return;
+  const tid = esc(t.id || '');
+  el.innerHTML = `
+    <textarea id="rwNoteInput" class="rw-note-input" placeholder="Add a review note…"></textarea>
+    <button class="rw-note-save-btn" onclick="rwSaveNote('${tid}')">Save Note</button>`;
+}
+
+function _rwRenderHistory(t) {
+  const el = document.getElementById('rwHistory');
+  if (!el) return;
+  const history = t.review?.history || [];
+  if (history.length === 0) {
+    el.innerHTML = `<div class="rw-empty">No review history yet.</div>`;
+    return;
+  }
+  el.innerHTML = [...history].reverse().map(h => `
+    <div class="rw-history-entry">
+      <span class="rw-hist-badge rw-hist--${esc(h.action)}">${esc(_rwHistActionLabel(h.action))}</span>
+      <span class="rw-hist-by">${esc(h.by || 'Unknown')}</span>
+      <span class="rw-hist-at">${esc(_rwFormatDate(h.at))}</span>
+      ${h.note ? `<div class="rw-hist-note">${esc(h.note)}</div>` : ''}
+    </div>`).join('');
+}
+
+function rwSaveNote(tenantId) {
+  const noteText = document.getElementById('rwNoteInput')?.value?.trim();
+  if (!noteText) return;
+  let ownerProp = null, ownerIdx = -1;
+  for (const p of _props) {
+    const idx = (p.tenants || []).findIndex(x => x && x.id === tenantId);
+    if (idx !== -1) { ownerProp = p; ownerIdx = idx; break; }
+  }
+  if (!ownerProp) return;
+  const prev    = ownerProp.tenants[ownerIdx];
+  const prevRev = prev.review || {};
+  const entry   = { action: 'note', by: 'Manual Review', at: new Date().toISOString(), note: noteText };
+  const updated = {
+    ...prev,
+    review: { ...prevRev, notes: noteText, history: [...(prevRev.history || []), entry] },
+  };
+  ownerProp.tenants[ownerIdx] = updated;
+  if (ownerProp.id === activePropId) {
+    const tdIdx = tenantData.findIndex(x => x && x.id === tenantId);
+    if (tdIdx !== -1) tenantData[tdIdx] = updated;
+  }
+  saveProperty(ownerProp);
+  const inp = document.getElementById('rwNoteInput');
+  if (inp) inp.value = '';
+  _rwRenderHistory(updated);
+}
+
 function rwApprove(tenantId) {
-  markTenantReviewAcknowledged(tenantId);
+  const note = document.getElementById('rwNoteInput')?.value?.trim() || null;
+  markTenantReviewAcknowledged(tenantId, note);
   let t = null;
   for (const p of _props) {
     const found = (p.tenants || []).find(x => x && x.id === tenantId);
@@ -10320,14 +10456,21 @@ function rwApprove(tenantId) {
 }
 
 function rwFlag(tenantId) {
+  const note = document.getElementById('rwNoteInput')?.value?.trim() || null;
   let ownerProp = null, ownerIdx = -1;
   for (const p of _props) {
     const idx = (p.tenants || []).findIndex(x => x && x.id === tenantId);
     if (idx !== -1) { ownerProp = p; ownerIdx = idx; break; }
   }
   if (!ownerProp) return;
-  const prev = ownerProp.tenants[ownerIdx];
-  const updated = { ...prev, _needsReview: true, review: { ...(prev.review || {}), reviewerConfirmed: false } };
+  const prev    = ownerProp.tenants[ownerIdx];
+  const prevRev = prev.review || {};
+  const entry   = { action: 'flagged', by: 'Manual Review', at: new Date().toISOString(), note };
+  const updated = {
+    ...prev,
+    _needsReview: true,
+    review: { ...prevRev, reviewerConfirmed: false, history: [...(prevRev.history || []), entry] },
+  };
   ownerProp.tenants[ownerIdx] = updated;
   if (ownerProp.id === activePropId) {
     const tdIdx = tenantData.findIndex(x => x && x.id === tenantId);
