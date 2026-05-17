@@ -2756,6 +2756,133 @@
       font-size: 0.84rem; color: #475569; font-style: italic; padding: 10px 0 4px;
     }
 
+    /* ── AI Review Workspace ───────────────────────────────────────────── */
+    #reviewWorkspace {
+      position: fixed; inset: 0; z-index: 1050;
+      display: none;
+      background: rgba(0,0,0,0.78);
+      backdrop-filter: blur(4px);
+      -webkit-backdrop-filter: blur(4px);
+      overflow-y: auto;
+    }
+    #reviewWorkspace.open { display: flex; align-items: flex-start; justify-content: center; padding: 24px 12px; }
+    #rwSheet {
+      position: relative; width: min(1080px, 100%);
+      background: #111827; border-radius: 14px;
+      border: 1px solid rgba(255,255,255,0.08);
+      box-shadow: 0 24px 72px rgba(0,0,0,0.75);
+      overflow: hidden; display: flex; flex-direction: column;
+    }
+    #rwHeader {
+      display: flex; align-items: center; justify-content: space-between; flex-wrap: wrap; gap: 8px;
+      padding: 14px 20px; border-bottom: 1px solid rgba(255,255,255,0.08);
+      background: #0F1929; flex-shrink: 0;
+    }
+    #rwTitle { font-size: 0.95rem; font-weight: 700; color: #E2E8F0; }
+    #rwSubtitle { font-size: 0.72rem; color: #64748B; margin-top: 2px; }
+    .rw-close-btn {
+      background: rgba(239,68,68,0.1); border: 1px solid rgba(239,68,68,0.25);
+      color: #f87171; padding: 5px 12px; border-radius: 7px; cursor: pointer;
+      font-size: 0.76rem; font-weight: 600; flex-shrink: 0;
+    }
+    #rwBody {
+      display: grid; grid-template-columns: 240px 1fr 220px;
+      min-height: 420px;
+    }
+    .rw-col { padding: 16px 14px; overflow-y: auto; max-height: calc(100vh - 160px); }
+    .rw-col--center { border-left: 1px solid rgba(255,255,255,0.06); border-right: 1px solid rgba(255,255,255,0.06); }
+    .rw-col-title { font-size: 0.6rem; font-weight: 700; text-transform: uppercase; letter-spacing: 0.09em; color: #64748B; margin-bottom: 12px; }
+    .rw-section { margin-bottom: 18px; }
+    .rw-section-title { font-size: 0.6rem; font-weight: 700; text-transform: uppercase; letter-spacing: 0.09em; color: #64748B; margin-bottom: 8px; }
+    .rw-score-card {
+      display: flex; align-items: center; gap: 12px; margin-bottom: 16px;
+      padding: 10px 12px; background: rgba(255,255,255,0.03);
+      border: 1px solid rgba(255,255,255,0.07); border-radius: 9px;
+    }
+    .rw-score-num { font-size: 1.7rem; font-weight: 800; font-family: 'DM Sans', sans-serif; line-height: 1; }
+    .rw-score-num--high { color: #4ade80; }
+    .rw-score-num--mid  { color: #fbbf24; }
+    .rw-score-num--low  { color: #f87171; }
+    .rw-score-meta { flex: 1; min-width: 0; }
+    .rw-score-lbl { font-size: 0.58rem; color: #64748B; text-transform: uppercase; letter-spacing: 0.06em; }
+    .rw-score-status { font-size: 0.76rem; font-weight: 700; margin-top: 3px; }
+    .rw-score-status--incomplete       { color: #f87171; }
+    .rw-score-status--needs_review     { color: #fbbf24; }
+    .rw-score-status--verified         { color: #4ade80; }
+    .rw-score-status--manually_verified { color: #7dd3fc; }
+    .rw-field { margin-bottom: 11px; padding-bottom: 11px; border-bottom: 1px solid rgba(255,255,255,0.05); }
+    .rw-field:last-child { border-bottom: none; }
+    .rw-field-label { font-size: 0.58rem; color: #64748B; text-transform: uppercase; letter-spacing: 0.06em; margin-bottom: 3px; }
+    .rw-field-value { font-size: 0.85rem; font-weight: 600; color: #E2E8F0; }
+    .rw-field-value--missing { color: #475569; font-style: italic; font-weight: 400; }
+    .rw-field-conf { font-size: 0.6rem; margin-top: 3px; }
+    .rw-fc--verified  { color: #4ade80; }
+    .rw-fc--estimated { color: #fbbf24; }
+    .rw-fc--missing   { color: #64748B; }
+    .rw-warning {
+      display: flex; align-items: flex-start; gap: 8px;
+      padding: 7px 9px; border-radius: 7px; margin-bottom: 5px;
+      border: 1px solid transparent;
+    }
+    .rw-warning--high   { background: rgba(239,68,68,0.06);  border-color: rgba(239,68,68,0.15); }
+    .rw-warning--medium { background: rgba(245,158,11,0.06); border-color: rgba(245,158,11,0.14); }
+    .rw-warning--low    { background: rgba(99,164,255,0.05); border-color: rgba(99,164,255,0.12); }
+    .rw-warning-icon  { font-size: 0.7rem; flex-shrink: 0; padding-top: 1px; }
+    .rw-warning-label { font-size: 0.76rem; font-weight: 600; color: #E2E8F0; }
+    .rw-warning-detail { font-size: 0.65rem; color: #94A3B8; margin-top: 2px; line-height: 1.35; }
+    .rw-rec {
+      display: flex; align-items: flex-start; gap: 7px;
+      padding: 7px 9px; border-radius: 7px; margin-bottom: 5px;
+      background: rgba(201,151,58,0.05); border: 1px solid rgba(201,151,58,0.13);
+    }
+    .rw-rec-icon { font-size: 0.7rem; flex-shrink: 0; padding-top: 1px; color: #C9973A; }
+    .rw-rec-text { font-size: 0.76rem; color: #E4B15C; line-height: 1.38; }
+    .rw-actions-row { display: flex; gap: 6px; flex-wrap: wrap; }
+    .rw-btn {
+      flex: 1; min-width: 72px; padding: 7px 10px;
+      border-radius: 8px; font-size: 0.74rem; font-weight: 700;
+      cursor: pointer; transition: transform 0.12s; border: 1.5px solid transparent;
+      text-align: center;
+    }
+    .rw-btn:hover  { transform: translateY(-1px); }
+    .rw-btn:active { transform: translateY(0); }
+    .rw-btn--approve       { background: rgba(74,222,128,0.1);  border-color: rgba(74,222,128,0.25); color: #4ade80; }
+    .rw-btn--flag          { background: rgba(245,158,11,0.1);  border-color: rgba(245,158,11,0.25); color: #fbbf24; }
+    .rw-btn--edit          { background: rgba(99,164,255,0.07); border-color: rgba(99,164,255,0.2);  color: #93c5fd; }
+    .rw-btn--approved-done { background: rgba(74,222,128,0.04); border-color: rgba(74,222,128,0.1);  color: #86efac; cursor: default; }
+    .rw-invoice {
+      padding: 8px 10px; border-radius: 7px; margin-bottom: 5px;
+      background: rgba(255,255,255,0.02); border: 1px solid rgba(255,255,255,0.06);
+    }
+    .rw-invoice-name { font-size: 0.76rem; font-weight: 600; color: #E2E8F0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+    .rw-invoice-cat  { font-size: 0.62rem; color: #64748B; margin-bottom: 2px; }
+    .rw-invoice-amt  { font-size: 0.8rem; font-weight: 700; color: #C9973A; }
+    .rw-invoice-conf { font-size: 0.6rem; color: #64748B; margin-left: 5px; }
+    .rw-prorata-row { display: flex; align-items: center; justify-content: space-between; margin-bottom: 5px; }
+    .rw-prorata-label { font-size: 0.62rem; color: #64748B; }
+    .rw-prorata-val { font-size: 0.8rem; font-weight: 700; color: #E2E8F0; }
+    .rw-prorata-bar { height: 3px; background: rgba(255,255,255,0.07); border-radius: 2px; margin-bottom: 12px; }
+    .rw-prorata-fill { height: 100%; border-radius: 2px; max-width: 100%; }
+    .rw-total-row {
+      margin-top: 8px; padding-top: 8px; border-top: 1px solid rgba(255,255,255,0.06);
+      display: flex; justify-content: space-between; align-items: center;
+    }
+    .rw-empty { font-size: 0.78rem; color: #475569; font-style: italic; }
+    .rw-lease-btn {
+      display: block; width: 100%; padding: 7px; border-radius: 7px; margin-top: 10px;
+      background: rgba(99,164,255,0.06); border: 1px solid rgba(99,164,255,0.16);
+      color: #6d9fe8; font-size: 0.72rem; font-weight: 600; cursor: pointer; text-align: center;
+      transition: transform 0.12s;
+    }
+    .rw-lease-btn:hover { transform: translateY(-1px); }
+    @media (max-width: 680px) {
+      #rwBody { grid-template-columns: 1fr; }
+      .rw-col { max-height: none; }
+      .rw-col--center { border-left: none; border-right: none; border-top: 1px solid rgba(255,255,255,0.06); border-bottom: 1px solid rgba(255,255,255,0.06); }
+      #rwSheet { border-radius: 0; width: 100vw; }
+      #reviewWorkspace.open { padding: 0; }
+    }
+
   </style>
 </head>
 <body>
@@ -3323,6 +3450,44 @@
       <button class="ep-close-btn" onclick="closeTenantDetailPanel(); event.stopPropagation()">&#x2715; Close</button>
     </div>
     <div id="tdpBody"></div>
+  </div>
+</div>
+
+<!-- ── AI Review Workspace ─────────────────────────────────────────────── -->
+<div id="reviewWorkspace" onclick="if(event.target===this)closeReviewWorkspace()">
+  <div id="rwSheet" onclick="event.stopPropagation()">
+    <div id="rwHeader">
+      <div id="rwHeaderInfo">
+        <div id="rwTitle">Review Workspace</div>
+        <div id="rwSubtitle"></div>
+      </div>
+      <button class="rw-close-btn" onclick="closeReviewWorkspace()">&#x2715; Close</button>
+    </div>
+    <div id="rwBody">
+      <div id="rwColLease" class="rw-col">
+        <div class="rw-col-title">Lease Data</div>
+        <div id="rwLeaseFields"></div>
+      </div>
+      <div id="rwColCenter" class="rw-col rw-col--center">
+        <div id="rwScoreCard"></div>
+        <div class="rw-section">
+          <div class="rw-section-title">Why Flagged</div>
+          <div id="rwWhyFlagged"></div>
+        </div>
+        <div class="rw-section">
+          <div class="rw-section-title">Recommended Actions</div>
+          <div id="rwRecommended"></div>
+        </div>
+        <div class="rw-section">
+          <div class="rw-section-title">Actions</div>
+          <div id="rwActions"></div>
+        </div>
+      </div>
+      <div id="rwColInvoices" class="rw-col">
+        <div class="rw-col-title">Allocated Invoices</div>
+        <div id="rwInvoiceList"></div>
+      </div>
+    </div>
   </div>
 </div>
 

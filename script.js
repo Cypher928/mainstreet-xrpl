@@ -6071,7 +6071,13 @@ function leaseViewerOpenExternal() {
 
 // ESC key always closes modal — user can never be trapped
 document.addEventListener('keydown', (e) => {
-  if (e.key === 'Escape') closeLeaseModal();
+  if (e.key === 'Escape') {
+    if (document.getElementById('reviewWorkspace')?.classList.contains('open')) {
+      closeReviewWorkspace();
+    } else {
+      closeLeaseModal();
+    }
+  }
 });
 
 // Global click diagnostic — reports what element received the click and any blocking overlays
@@ -10029,10 +10035,11 @@ function _rqCompactItemHtml(item) {
     <span class="trs-badge ${stateCfg.cls}">${stateCfg.label}</span>
     <span class="trs-score ${scoreColor}">Score: ${item.reviewScore}</span>
     <div class="rq-chips rq-chips--inline">${missingChips}${warnChips}</div>
-    <div class="rq-compact-actions">
+    <div class="rq-compact-actions" style="display:flex;gap:4px;align-items:center;">
+      <button class="rq-action-btn rq-btn--primary" onclick="openReviewWorkspace('${tid}')">Review &#x203A;</button>
       ${acked
-        ? `<span class="rq-chip">Acknowledged</span>`
-        : `<button class="rq-action-btn rq-btn--ack" onclick="markTenantReviewAcknowledged('${tid}')">Mark Reviewed</button>`}
+        ? `<span class="rq-chip">Ack'd</span>`
+        : `<button class="rq-action-btn rq-btn--ack" onclick="markTenantReviewAcknowledged('${tid}')">Ack</button>`}
     </div>
   </div>`;
 }
@@ -10099,6 +10106,257 @@ function renderPropertyReviewQueue(property) {
       </div>
     </details>`;
 }
+
+// ── AI Review Workspace ───────────────────────────────────────────────────────
+
+let _rwActiveTenantId = null;
+
+function openReviewWorkspace(tenantId) {
+  let t = null;
+  for (const p of _props) {
+    const found = (p.tenants || []).find(x => x && x.id === tenantId);
+    if (found) { t = found; break; }
+  }
+  if (!t) t = tenantData.find(x => x && x.id === tenantId);
+  if (!t) return;
+
+  _rwActiveTenantId = tenantId;
+  document.getElementById('rwTitle').textContent = t.tenant_name || 'Tenant Review';
+  const prop = _props.find(p => (p.tenants || []).some(x => x && x.id === tenantId));
+  document.getElementById('rwSubtitle').textContent = prop ? (prop.name || '') : '';
+
+  _rwRenderAll(t);
+  document.getElementById('reviewWorkspace').classList.add('open');
+  document.body.style.overflow = 'hidden';
+}
+
+function closeReviewWorkspace() {
+  _rwActiveTenantId = null;
+  document.getElementById('reviewWorkspace').classList.remove('open');
+  document.body.style.overflow = '';
+}
+
+function _rwRenderAll(t) {
+  const rv = deriveTenantReviewState(t);
+  _rwRenderScoreCard(rv);
+  _rwRenderLeaseFields(t);
+  _rwRenderWhyFlagged(rv);
+  _rwRenderRecommendations(rv);
+  _rwRenderActions(t, rv);
+  _rwRenderInvoices(t);
+}
+
+function _rwRenderScoreCard(rv) {
+  const scoreCls = rv.score >= 80 ? 'rw-score-num--high' : rv.score >= 50 ? 'rw-score-num--mid' : 'rw-score-num--low';
+  const statusLabels = {
+    incomplete:        'Incomplete Data',
+    needs_review:      'Needs Review',
+    verified:          'Verified',
+    manually_verified: 'Manually Verified',
+  };
+  document.getElementById('rwScoreCard').innerHTML = `
+    <div class="rw-score-card">
+      <div class="rw-score-num ${scoreCls}">${rv.score}</div>
+      <div class="rw-score-meta">
+        <div class="rw-score-lbl">Data Quality Score</div>
+        <div class="rw-score-status rw-score-status--${rv.status}">${esc(statusLabels[rv.status] || rv.status)}</div>
+      </div>
+    </div>`;
+}
+
+function _rwRenderLeaseFields(t) {
+  const fields = [
+    { key: 'tenant_name', label: 'Tenant Name' },
+    { key: 'leased_sqft', label: 'Leased Sq Ft' },
+    { key: 'lease_type',  label: 'Lease Type' },
+    { key: 'start_date',  label: 'Lease Start' },
+    { key: 'end_date',    label: 'Lease End' },
+    { key: 'cap',         label: 'CAM Cap' },
+  ];
+  const confIcon = { verified: '✓', estimated: '⚠', missing: '—' };
+  const fieldsHtml = fields.map(({ key, label }) => {
+    const val = (key === 'tenant_name') ? t[key] : (getEffectiveLeaseField(key, t) ?? t[key]);
+    const isEmpty = val === null || val === undefined || String(val).trim() === '';
+    const conf = (key === 'tenant_name')
+      ? { status: isEmpty ? 'missing' : 'verified', note: isEmpty ? 'Not found in data' : 'From tenant data' }
+      : getFieldConfidence(key, t);
+    const valHtml = isEmpty
+      ? `<div class="rw-field-value rw-field-value--missing">Not found</div>`
+      : `<div class="rw-field-value">${esc(String(val))}</div>`;
+    const manualBadge = (key !== 'tenant_name' && isFieldManuallyVerified(key, t))
+      ? `<div class="rw-field-conf rw-fc--verified">✓ Manually Verified</div>`
+      : '';
+    return `
+      <div class="rw-field">
+        <div class="rw-field-label">${esc(label)}</div>
+        ${valHtml}
+        <div class="rw-field-conf rw-fc--${conf.status}">${confIcon[conf.status] || '—'} ${esc(conf.note || conf.status)}</div>
+        ${manualBadge}
+      </div>`;
+  }).join('');
+
+  const leaseBtn = t.leaseUrl
+    ? `<button class="rw-lease-btn" onclick="openLeaseModalFromRw()">&#x1F4C4; View Lease Document</button>`
+    : `<div class="rw-empty" style="margin-top:8px;">No lease document uploaded</div>`;
+
+  document.getElementById('rwLeaseFields').innerHTML = fieldsHtml + leaseBtn;
+}
+
+function _rwRenderWhyFlagged(rv) {
+  if (rv.warnings.length === 0) {
+    document.getElementById('rwWhyFlagged').innerHTML = `<div class="rw-empty">No issues detected.</div>`;
+    return;
+  }
+  const warningDetails = {
+    missing_lease_type:  'Lease type determines which CAM charges apply. Without it, allocation may be incorrect.',
+    missing_sqft:        'Pro-rata share is calculated from square footage. Missing value blocks allocation.',
+    missing_start_date:  'Lease term is needed to validate CAM period eligibility.',
+    missing_end_date:    'Lease term is needed to validate CAM period eligibility.',
+    nnn_cap_missing:     'NNN leases often include CAM caps. Missing cap may over-allocate charges to this tenant.',
+    fallback_extraction: 'Data was extracted using a fallback heuristic — less reliable than structured extraction.',
+    low_sqft_confidence: 'Extracted square footage confidence is below 70%. Verify against the lease document.',
+    pro_rata_overflow:   'Combined pro-rata shares exceed 100%. This indicates a data or configuration error.',
+  };
+  const icons = { high: '⛔', medium: '⚠', low: 'ℹ' };
+  document.getElementById('rwWhyFlagged').innerHTML = rv.warnings.map(w => `
+    <div class="rw-warning rw-warning--${esc(w.severity)}">
+      <span class="rw-warning-icon">${icons[w.severity] || '⚠'}</span>
+      <div>
+        <div class="rw-warning-label">${esc(w.label)}</div>
+        ${warningDetails[w.type] ? `<div class="rw-warning-detail">${esc(warningDetails[w.type])}</div>` : ''}
+      </div>
+    </div>`).join('');
+}
+
+function _rwRenderRecommendations(rv) {
+  const recMap = {
+    missing_lease_type:  'Select a lease type (NNN, Gross, or Modified Gross) using Edit Fields below.',
+    missing_sqft:        'Enter the leased square footage from the signed lease agreement.',
+    missing_start_date:  'Enter the lease commencement date from the lease document.',
+    missing_end_date:    'Enter the lease expiration date from the lease document.',
+    nnn_cap_missing:     'Check the lease for a CAM expense cap clause and enter the annual cap amount.',
+    fallback_extraction: 'Verify all extracted fields against the original lease document.',
+    low_sqft_confidence: 'Confirm the square footage by reviewing the lease document directly.',
+    pro_rata_overflow:   'Review all tenant square footages — total must not exceed the building GLA.',
+  };
+  const recs = rv.warnings.filter(w => recMap[w.type]).map(w => recMap[w.type]);
+  if (recs.length === 0) {
+    document.getElementById('rwRecommended').innerHTML = `<div class="rw-empty">No specific actions required.</div>`;
+    return;
+  }
+  document.getElementById('rwRecommended').innerHTML = recs.map(text => `
+    <div class="rw-rec">
+      <span class="rw-rec-icon">&#x2192;</span>
+      <div class="rw-rec-text">${esc(text)}</div>
+    </div>`).join('');
+}
+
+function _rwRenderActions(t, rv) {
+  const tid = esc(t.id || '');
+  const approveBtn = rv.reviewerConfirmed
+    ? `<button class="rw-btn rw-btn--approved-done" disabled>&#x2713; Approved</button>`
+    : `<button class="rw-btn rw-btn--approve" onclick="rwApprove('${tid}')">&#x2713; Approve</button>`;
+  const flagBtn = `<button class="rw-btn rw-btn--flag" onclick="rwFlag('${tid}')">&#x2691; Flag</button>`;
+  const editBtn = `<button class="rw-btn rw-btn--edit" onclick="rwOpenTenant('${tid}')">Edit Fields</button>`;
+  document.getElementById('rwActions').innerHTML = `<div class="rw-actions-row">${approveBtn}${flagBtn}${editBtn}</div>`;
+}
+
+function _rwRenderInvoices(t) {
+  const recon = lastResults.find(r => r.name === t.tenant_name);
+  const el = document.getElementById('rwInvoiceList');
+  if (!recon) {
+    el.innerHTML = `<div class="rw-empty">No reconciliation run yet.</div>`;
+    return;
+  }
+  const proRataPct = typeof recon.proRataPercent === 'number' ? recon.proRataPercent : (recon.proRata || 0) * 100;
+  const proRataDisplay = proRataPct > 0 ? proRataPct.toFixed(2) + '%' : '—';
+  const proRataFill = Math.min(100, proRataPct).toFixed(1);
+  const proRataOver = proRataPct > 100;
+  const fillColor = proRataOver ? '#f87171' : '#C9973A';
+  const totalAllocated = recon.totalAllocated || recon.allocatedAmount || 0;
+  const invoices = recon.includedInvoices || [];
+  let html = `
+    <div class="rw-prorata-row">
+      <span class="rw-prorata-label">Pro-rata share</span>
+      <span class="rw-prorata-val" style="${proRataOver ? 'color:#f87171;' : ''}">${esc(proRataDisplay)}</span>
+    </div>
+    <div class="rw-prorata-bar"><div class="rw-prorata-fill" style="width:${proRataFill}%;background:${fillColor};"></div></div>`;
+  if (invoices.length === 0) {
+    html += `<div class="rw-empty">No invoices allocated.</div>`;
+  } else {
+    html += invoices.slice(0, 12).map(inv => {
+      const name = inv.vendor || inv.description || inv.invoiceId || '—';
+      const cat  = inv.category || inv.cat || '';
+      const amt  = typeof inv.share === 'number'
+        ? '$' + inv.share.toLocaleString('en-US', { minimumFractionDigits: 2, maximumFractionDigits: 2 })
+        : '—';
+      const conf = inv.matchConfidence != null ? `<span class="rw-invoice-conf">${inv.matchConfidence}% conf</span>` : '';
+      return `
+        <div class="rw-invoice">
+          <div class="rw-invoice-name">${esc(name)}</div>
+          ${cat ? `<div class="rw-invoice-cat">${esc(cat)}</div>` : ''}
+          <div class="rw-invoice-amt">${esc(amt)}${conf}</div>
+        </div>`;
+    }).join('');
+    if (invoices.length > 12) html += `<div class="rw-empty" style="margin-top:4px;">+${invoices.length - 12} more</div>`;
+    html += `
+      <div class="rw-total-row">
+        <span class="rw-prorata-label">Total Allocated</span>
+        <span class="rw-prorata-val" style="color:#C9973A;">$${totalAllocated.toLocaleString('en-US', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}</span>
+      </div>`;
+  }
+  el.innerHTML = html;
+}
+
+function rwApprove(tenantId) {
+  markTenantReviewAcknowledged(tenantId);
+  let t = null;
+  for (const p of _props) {
+    const found = (p.tenants || []).find(x => x && x.id === tenantId);
+    if (found) { t = found; break; }
+  }
+  if (!t) { closeReviewWorkspace(); return; }
+  _rwRenderAll(t);
+}
+
+function rwFlag(tenantId) {
+  let ownerProp = null, ownerIdx = -1;
+  for (const p of _props) {
+    const idx = (p.tenants || []).findIndex(x => x && x.id === tenantId);
+    if (idx !== -1) { ownerProp = p; ownerIdx = idx; break; }
+  }
+  if (!ownerProp) return;
+  const prev = ownerProp.tenants[ownerIdx];
+  const updated = { ...prev, _needsReview: true, review: { ...(prev.review || {}), reviewerConfirmed: false } };
+  ownerProp.tenants[ownerIdx] = updated;
+  if (ownerProp.id === activePropId) {
+    const tdIdx = tenantData.findIndex(x => x && x.id === tenantId);
+    if (tdIdx !== -1) tenantData[tdIdx] = updated;
+  }
+  saveProperty(ownerProp);
+  _rwRenderAll(updated);
+}
+
+function rwOpenTenant(tenantId) {
+  closeReviewWorkspace();
+  const idx = tenantData.findIndex(x => x && x.id === tenantId);
+  if (idx !== -1) openTenantDetailPanel(idx);
+}
+
+function openLeaseModalFromRw() {
+  const tenantId = _rwActiveTenantId;
+  if (!tenantId) return;
+  let t = null;
+  for (const p of _props) {
+    const found = (p.tenants || []).find(x => x && x.id === tenantId);
+    if (found) { t = found; break; }
+  }
+  if (!t) t = tenantData.find(x => x && x.id === tenantId);
+  if (!t?.leaseUrl) return;
+  openLeaseModal(t.leaseUrl);
+}
+
+// ─────────────────────────────────────────────────────────────────────────────
 
 function portfolioKPIs(props) {
   const safeProps = Array.isArray(props) ? props : [];
