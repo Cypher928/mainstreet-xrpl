@@ -10186,11 +10186,11 @@ function renderPortfolio(props) {
       </div>
       ${reviewChips.length > 0 ? `
       <div class="property-review-summary">
-        <div class="review-chips-row">
-          ${reviewChips.map(c => `<span class="review-chip ${c.cls}">${esc(c.label)}</span>`).join('')}
+        ${reviewChips.map(c => `<span class="review-chip ${c.cls}">${esc(c.label)}</span>`).join('')}
+        <span class="review-meta">
+          <span class="review-health ${healthCls}">${reviewHealth}% Healthy</span>
           <button class="review-queue-btn" onclick="event.stopPropagation();selectProperty('${pid}')">Review ›</button>
-        </div>
-        <div class="review-health ${healthCls}">Review Health: ${reviewHealth}%</div>
+        </span>
       </div>` : ''}
       <div class="ptf-cam-lbl">CAM This Period</div>
       <div class="ptf-cam-val">${cam > 0 ? '$' + cam.toLocaleString('en-US') : '—'}</div>
