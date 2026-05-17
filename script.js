@@ -2550,6 +2550,49 @@ function _confidenceBadgeHtml(level) {
   return `<span class="cx-badge ${cfg.cls}">${cfg.label}</span>`;
 }
 
+// ── Lease Review Status helpers ────────────────────────────────────────────
+// Pure functions — read tenant fields only, no mutations, no pipeline access.
+function getLeaseReviewStatus(t) {
+  if (!t || !t.tenant_name || (t.extractionFailed && !t._userConfirmed)) return 'incomplete';
+  const sqft = parseFloat(t.leased_sqft);
+  const missing = !t.lease_type
+    || !t.start_date
+    || !t.end_date
+    || (t.leased_sqft === '' || t.leased_sqft == null);
+  const badSqft = !isNaN(sqft) && sqft <= 0;
+  const recon = lastResults.find(r => r.name === t.tenant_name);
+  const badProRata = recon && recon.proRata > 1.0;
+  if (missing || badSqft || badProRata) return 'needs-review';
+  return 'ready';
+}
+
+function getLeaseReviewNotes(t) {
+  if (!t) return ['No lease data available'];
+  const notes = [];
+  if (t.leased_sqft === '' || t.leased_sqft == null) {
+    notes.push('Square footage not found — verify against lease');
+  } else if (parseFloat(t.leased_sqft) <= 0) {
+    notes.push('Square footage may require verification');
+  }
+  if (!t.start_date) notes.push('Lease start date missing');
+  if (!t.end_date)   notes.push('Lease end date missing');
+  if (!t.lease_type) notes.push('Lease type could not be determined');
+  const recon = lastResults.find(r => r.name === t.tenant_name);
+  if (recon && recon.proRata > 1.0) notes.push('Pro-rata exceeds 100% — verify square footage');
+  if (t._usedFallback) notes.push('Lease dates extracted from document text — confirm accuracy');
+  return notes;
+}
+
+function _reviewStatusPillHtml(status) {
+  const cfg = {
+    'ready':        { cls: 'lrs-ready',       label: '✓ Ready' },
+    'needs-review': { cls: 'lrs-needs-review', label: '⚠ Needs Review' },
+    'incomplete':   { cls: 'lrs-incomplete',   label: '✕ Incomplete' },
+  }[status] || { cls: 'lrs-needs-review', label: '? Unknown' };
+  return `<span class="lrs-pill ${cfg.cls}">${cfg.label}</span>`;
+}
+// ─────────────────────────────────────────────────────────────────────────────
+
 function _copyDebugFromEl(elId, btn) {
   const el = document.getElementById(elId);
   if (!el) return;
@@ -2763,6 +2806,7 @@ function renderBulkResults() {
               ${esc(displayName)}${dupBadge}${_confidenceBadgeHtml(confLevel)}
             </div>
             <div class="tenant-meta" id="bmeta-${i}">${esc(meta)}</div>
+            ${!isPending ? `<div class="lrs-notes-row">${_reviewStatusPillHtml(getLeaseReviewStatus(d))}</div>` : ''}
             ${jobProgressHtml}
           </div>
           <span class="bulk-t-chevron" id="bchev-${i}">${chevInitialHtml}</span>
@@ -8836,6 +8880,14 @@ function renderReportTenantExpansion(tr, tenantName) {
       </div>
       <div class="rpt-exp-section">Disputes</div>
       ${disputeHtml}
+      <div class="rpt-exp-section">Lease Review</div>
+      ${_reviewStatusPillHtml(td ? getLeaseReviewStatus(td) : 'incomplete')}
+      ${(() => {
+        const notes = td ? getLeaseReviewNotes(td) : ['No lease data available'];
+        return notes.length
+          ? `<ul class="rpt-exp-review-notes">${notes.map(n => `<li>${esc(n)}</li>`).join('')}</ul>`
+          : '';
+      })()}
     </div>`;
 
   // createElement + insertBefore — guaranteed correct for table row insertion

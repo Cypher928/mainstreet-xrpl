@@ -1163,6 +1163,23 @@
     .cx-badge.cx-medium { background: rgba(245,158,11,0.12); color: #fbbf24; border: 1px solid rgba(245,158,11,0.3); }
     .cx-badge.cx-low    { background: rgba(239,68,68,0.12);  color: #f87171; border: 1px solid rgba(239,68,68,0.3); }
     .cx-badge.cx-failed { background: rgba(239,68,68,0.18);  color: #fca5a5; border: 1px solid rgba(239,68,68,0.4); }
+    /* Lease Review Status pills — data completeness signal, separate from AI confidence */
+    .lrs-pill {
+      display: inline-flex; align-items: center;
+      padding: 2px 8px; border-radius: 20px;
+      font-size: 0.7rem; font-weight: 700; font-family: 'DM Sans', sans-serif;
+      white-space: nowrap; letter-spacing: 0.02em;
+    }
+    .lrs-ready        { background: rgba(34,197,94,0.12);  color: #4ade80;  border: 1px solid rgba(34,197,94,0.25); }
+    .lrs-needs-review { background: rgba(245,158,11,0.14); color: #fbbf24;  border: 1px solid rgba(245,158,11,0.3); }
+    .lrs-incomplete   { background: rgba(239,68,68,0.12);  color: #f87171;  border: 1px solid rgba(239,68,68,0.25); }
+    .lrs-notes-row    { margin-top: 4px; display: flex; align-items: center; gap: 6px; flex-wrap: wrap; }
+    /* Review notes list inside report expansion panel */
+    .rpt-exp-review-notes {
+      margin: 5px 0 0; padding: 0 0 0 14px;
+      font-size: 0.77rem; color: #94A3B8; line-height: 1.5; list-style: disc;
+    }
+    .rpt-exp-review-notes li { margin-bottom: 2px; }
 
     /* Confidence detail banners (inside the expanded edit panel) */
     .cx-detail-banner {
