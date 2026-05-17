@@ -1338,20 +1338,40 @@
     .rq-chips--inline { display: flex; gap: 3px; flex: 1; min-width: 0; overflow: hidden; flex-wrap: nowrap; }
     .rq-compact-actions { flex-shrink: 0; }
 
-    /* Property card review section */
-    .ptf-review-section {
-      margin-top: 8px; padding-top: 8px;
-      border-top: 1px solid rgba(100,116,139,0.12);
+    /* Property card review summary — integrated inline section */
+    .property-review-summary {
+      margin: 6px 0 8px; padding-top: 6px;
+      border-top: 1px solid rgba(100,116,139,0.1);
     }
-    .ptf-review-bullets {
-      margin: 0 0 6px; padding: 0 0 0 13px;
-      font-size: 0.67rem; list-style: disc; line-height: 1.65; color: #fbbf24;
+    .review-chips-row {
+      display: flex; align-items: center; gap: 4px; flex-wrap: wrap;
     }
-    .ptf-rq-cta {
-      display: flex; align-items: center; justify-content: center; gap: 4px; width: 100%;
-      padding: 5px 10px; border-radius: 8px; font-size: 0.71rem; font-weight: 600; cursor: pointer;
-      background: rgba(99,164,255,0.1); border: 1px solid rgba(99,164,255,0.25); color: #93c5fd;
-      box-sizing: border-box;
+    .review-chip {
+      display: inline-flex; align-items: center;
+      padding: 2px 7px; border-radius: 8px;
+      font-size: 0.64rem; font-weight: 600; white-space: nowrap;
+      background: rgba(100,116,139,0.12); border: 1px solid rgba(100,116,139,0.18); color: #94a3b8;
+    }
+    .review-chip--incomplete { background: rgba(239,68,68,0.08);  border-color: rgba(239,68,68,0.18);  color: #fca5a5; }
+    .review-chip--moderate   { background: rgba(245,158,11,0.08); border-color: rgba(245,158,11,0.18); color: #fde68a; }
+    .review-health {
+      margin-top: 4px; font-size: 0.62rem; color: #475569;
+      font-family: 'DM Mono', monospace; letter-spacing: 0.02em;
+    }
+    .review-health--good { color: #4ade80; }
+    .review-health--mid  { color: #fbbf24; }
+    .review-health--low  { color: #f87171; }
+    .review-queue-btn {
+      margin-left: auto; flex-shrink: 0;
+      padding: 2px 8px; border-radius: 7px;
+      font-size: 0.63rem; font-weight: 600; cursor: pointer; white-space: nowrap;
+      background: rgba(99,164,255,0.08); border: 1px solid rgba(99,164,255,0.2); color: #7baefb;
+    }
+    /* Card urgency tinting — very soft overlays, do not override border-left status color */
+    .ptf-prop-card.review--incomplete  { background: rgba(239,68,68,0.03); }
+    .ptf-prop-card.review--needs-review { background: rgba(245,158,11,0.025); }
+    @media (max-width: 480px) {
+      .review-queue-btn { margin-left: 0; width: 100%; justify-content: center; margin-top: 4px; }
     }
     @media (max-width: 480px) {
       .rq-card--compact { flex-wrap: wrap; }

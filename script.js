@@ -9942,21 +9942,21 @@ function markTenantReviewAcknowledged(tenantId) {
   if (btn) btn.outerHTML = `<span class="rq-chip">Acknowledged</span>`;
 }
 
-// Compact bullet lines for property card (max 3).
+// Returns chip objects {label, cls} for the property card review summary (max 3).
 function _rqPropCardBullets(items) {
   const incomplete  = items.filter(i => i.reviewState === 'incomplete').length;
   const needsReview = items.filter(i => i.reviewState === 'needs_review').length;
   let nnnCap = 0, missingDate = 0;
   items.forEach(item => {
-    if (item.missingFields.includes('NNN Cap'))                                              nnnCap++;
+    if (item.missingFields.includes('NNN Cap'))                                               nnnCap++;
     if (item.missingFields.includes('Start Date') || item.missingFields.includes('End Date')) missingDate++;
   });
-  const lines = [];
-  if (incomplete  > 0) lines.push(`${incomplete} incomplete lease${incomplete !== 1 ? 's' : ''}`);
-  if (needsReview > 0) lines.push(`${needsReview} tenant${needsReview !== 1 ? 's' : ''} need review`);
-  if (nnnCap      > 0) lines.push(`${nnnCap} NNN cap issue${nnnCap !== 1 ? 's' : ''}`);
-  if (missingDate > 0) lines.push(`${missingDate} missing lease date${missingDate !== 1 ? 's' : ''}`);
-  return lines.slice(0, 3);
+  const chips = [];
+  if (incomplete  > 0) chips.push({ label: `${incomplete} Incomplete`,      cls: 'review-chip--incomplete' });
+  if (needsReview > 0) chips.push({ label: `${needsReview} Needs Review`,   cls: 'review-chip--moderate'   });
+  if (nnnCap      > 0) chips.push({ label: `${nnnCap} NNN Cap`,             cls: ''                        });
+  if (missingDate > 0) chips.push({ label: `${missingDate} Missing Date`,   cls: ''                        });
+  return chips.slice(0, 3);
 }
 
 // Compact single-row card for property-level queue.
@@ -10154,11 +10154,17 @@ function renderPortfolio(props) {
     if (m.savedAt) footParts.push(`<span class="ptf-rec-ts">${_fmtCardTs(m.savedAt)}</span>`);
 
     const reviewItems   = getReviewQueueItems([p]).filter(i => !_reviewAcknowledged.has(i.tenantId));
-    const reviewBullets = _rqPropCardBullets(reviewItems);
+    const reviewChips   = _rqPropCardBullets(reviewItems);
     const pid           = esc(p.id);
 
+    const hasIncomplete   = reviewItems.some(i => i.reviewState === 'incomplete');
+    const reviewUrgency   = reviewItems.length === 0 ? '' : hasIncomplete ? ' review--incomplete' : ' review--needs-review';
+    const reviewHealth    = reviewItems.length === 0 ? 100
+      : Math.max(0, Math.round(reviewItems.reduce((s, i) => s + i.reviewScore, 0) / reviewItems.length));
+    const healthCls       = reviewHealth >= 80 ? 'review-health--good' : reviewHealth >= 50 ? 'review-health--mid' : 'review-health--low';
+
     return `
-    <div class="ptf-prop-card status-${status}${activePropId === p.id ? ' active' : ''}" onclick="selectProperty('${pid}')">
+    <div class="ptf-prop-card status-${status}${activePropId === p.id ? ' active' : ''}${reviewUrgency}" onclick="selectProperty('${pid}')">
       <div class="ptf-card-top">
         <div class="ptf-prop-name">${esc(p.name || '—')}</div>
         ${riskBadge}
@@ -10178,10 +10184,13 @@ function renderPortfolio(props) {
           ? `<div class="ptf-stat ptf-stat--warn"><strong>${m.missingDocs}</strong>No Docs</div>`
           : ''}
       </div>
-      ${reviewBullets.length > 0 ? `
-      <div class="ptf-review-section">
-        <ul class="ptf-review-bullets">${reviewBullets.map(b => `<li>${esc(b)}</li>`).join('')}</ul>
-        <button class="ptf-rq-cta" onclick="event.stopPropagation();selectProperty('${pid}')">Open Review Queue ›</button>
+      ${reviewChips.length > 0 ? `
+      <div class="property-review-summary">
+        <div class="review-chips-row">
+          ${reviewChips.map(c => `<span class="review-chip ${c.cls}">${esc(c.label)}</span>`).join('')}
+          <button class="review-queue-btn" onclick="event.stopPropagation();selectProperty('${pid}')">Review ›</button>
+        </div>
+        <div class="review-health ${healthCls}">Review Health: ${reviewHealth}%</div>
       </div>` : ''}
       <div class="ptf-cam-lbl">CAM This Period</div>
       <div class="ptf-cam-val">${cam > 0 ? '$' + cam.toLocaleString('en-US') : '—'}</div>
