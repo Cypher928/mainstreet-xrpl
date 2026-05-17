@@ -1948,7 +1948,7 @@
     }
     .rpt-table {
       width: 100%; border-collapse: collapse; font-size: 0.86rem;
-      margin-bottom: 8px; page-break-inside: auto; word-break: break-word;
+      margin-bottom: 8px; page-break-inside: auto;
     }
     .rpt-table th {
       background: rgba(201,151,58,0.08); color: #E4B15C; text-align: left;
@@ -1970,10 +1970,14 @@
     .rpt-table td:not(:first-child),
     .rpt-table th:not(:first-child) { white-space: nowrap; width: 1px; }
     .rpt-table td:first-child,
-    .rpt-table th:first-child { width: auto; white-space: normal; overflow-wrap: break-word; word-break: break-word; min-width: 72px; }
+    .rpt-table th:first-child { width: auto; white-space: normal; overflow-wrap: break-word; word-break: normal; min-width: 100px; line-height: 1.35; }
     /* TOTAL label is short — safe to nowrap; expansion row spans all cols */
     .rpt-table .total-row td:first-child { white-space: nowrap; min-width: 0; }
     .rpt-table tr.report-tenant-expanded-row td { white-space: normal !important; width: auto !important; }
+    /* Tighter padding on narrow phones — frees ~40px for the tenant column */
+    @media (max-width: 480px) {
+      .rpt-table td, .rpt-table th { padding: 9px 8px; }
+    }
     /* Clickable tenant name inside report tables */
     .rpt-tenant-link {
       cursor: pointer; color: #E2E8F0;
