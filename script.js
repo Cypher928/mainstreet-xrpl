@@ -845,6 +845,7 @@ function normalizeTenant(d) {
     fileName:            d.fileName            ?? '',
     _error:              d._error              ?? null,
     reviewOverrides:     d.reviewOverrides     ?? {},
+    review:              d.review              ?? {},
   };
 }
 
@@ -2594,41 +2595,75 @@ function _reviewStatusPillHtml(status) {
 }
 
 // ── Tenant-level Review State + Scoring ──────────────────────────────────────
-// Pure derived state — computed at render time, no persistence.
+// deriveTenantReviewState is the single source of truth.
+// getTenantReviewState / getTenantReviewScore are thin wrappers for call-site compat.
 
-function getTenantReviewState(t) {
-  if (!t) return 'incomplete';
-  // manually_verified: any field has been explicitly confirmed by a reviewer
-  const overrides = t.reviewOverrides || {};
-  if (Object.values(overrides).some(ov => ov?.reviewerConfirmed)) return 'manually_verified';
-  // incomplete: any critical field absent
-  if (!t.lease_type || !t.leased_sqft || !t.start_date || !t.end_date) return 'incomplete';
-  // needs_review: heuristic signals
-  const sqftConf = t.confidence?.leased_sqft ?? t.confidence?.leasedSqft;
+// Warning types that represent missing fields (vs. quality/heuristic signals).
+const _RQ_MISSING_FIELD_TYPES = new Set([
+  'missing_lease_type', 'missing_sqft', 'missing_start_date', 'missing_end_date', 'nnn_cap_missing',
+]);
+
+function deriveTenantReviewState(t) {
+  const _empty = { status: 'incomplete', score: 0, warnings: [], reviewerConfirmed: false, reviewedAt: null, reviewedBy: null, notes: null };
+  if (!t) return _empty;
+
+  // ── Structured warnings ───────────────────────────────────────────
+  const warnings = [];
+  if (!t.lease_type)  warnings.push({ type: 'missing_lease_type',  severity: 'high',   label: 'Lease Type' });
+  if (!t.leased_sqft) warnings.push({ type: 'missing_sqft',        severity: 'high',   label: 'Sq Ft' });
+  if (!t.start_date)  warnings.push({ type: 'missing_start_date',  severity: 'high',   label: 'Start Date' });
+  if (!t.end_date)    warnings.push({ type: 'missing_end_date',    severity: 'high',   label: 'End Date' });
   const isNNN    = /nnn|triple[\s-]?net/i.test(String(t.lease_type || ''));
-  if (
+  if (isNNN && (t.cap == null || t.cap === '')) warnings.push({ type: 'nnn_cap_missing',      severity: 'medium', label: 'NNN Cap' });
+  if (t._usedFallback) warnings.push({ type: 'fallback_extraction',  severity: 'low',    label: 'Fallback Extraction' });
+  const sqftConf = t.confidence?.leased_sqft ?? t.confidence?.leasedSqft;
+  if (sqftConf != null && sqftConf < 70) warnings.push({ type: 'low_sqft_confidence', severity: 'medium', label: `Low Sqft Confidence (${sqftConf}%)` });
+  const recon = lastResults.find(r => r.name === t.tenant_name);
+  if (recon && recon.proRata > 1.0) warnings.push({ type: 'pro_rata_overflow',    severity: 'high',   label: 'Pro-rata > 100%' });
+
+  // ── Score (identical logic to previous getTenantReviewScore) ──────
+  let score = 100;
+  if (!t.leased_sqft)  score -= 25;
+  if (!t.lease_type)   score -= 25;
+  if (t._usedFallback) score -= 15;
+  if (sqftConf != null && sqftConf < 70) score -= 10;
+  if (isNNN && (t.cap == null || t.cap === '')) score -= 10;
+  score -= getWarnings(computeFlags(t)).length * 5;
+  score = Math.max(0, Math.min(100, score));
+
+  // ── Persisted review metadata ─────────────────────────────────────
+  const persisted         = t.review || {};
+  const reviewerConfirmed = !!(persisted.reviewerConfirmed);
+
+  // Manually verified overrides all derived signals (both new persisted flag and legacy per-field overrides).
+  const hasLegacyOverride = Object.values(t.reviewOverrides || {}).some(ov => ov?.reviewerConfirmed);
+  if (reviewerConfirmed || hasLegacyOverride) {
+    return { status: 'manually_verified', score, warnings, reviewerConfirmed, reviewedAt: persisted.reviewedAt || null, reviewedBy: persisted.reviewedBy || null, notes: persisted.notes || null };
+  }
+
+  // ── Status derivation ─────────────────────────────────────────────
+  let status;
+  if (!t.tenant_name || (t.extractionFailed && !t._userConfirmed)) {
+    status = 'incomplete';
+  } else if (!t.lease_type || !t.leased_sqft || !t.start_date || !t.end_date) {
+    status = 'incomplete';
+  } else if (
     t._usedFallback === true ||
     (sqftConf != null && sqftConf < 70) ||
     (isNNN && (t.cap == null || t.cap === '')) ||
-    t._needsReview === true
-  ) return 'needs_review';
-  return 'verified';
+    t._needsReview === true ||
+    (recon && recon.proRata > 1.0)
+  ) {
+    status = 'needs_review';
+  } else {
+    status = 'verified';
+  }
+
+  return { status, score, warnings, reviewerConfirmed: false, reviewedAt: persisted.reviewedAt || null, reviewedBy: persisted.reviewedBy || null, notes: persisted.notes || null };
 }
 
-function getTenantReviewScore(t) {
-  if (!t) return 0;
-  let score = 100;
-  if (!t.leased_sqft) score -= 25;
-  if (!t.lease_type)  score -= 25;
-  if (t._usedFallback) score -= 15;
-  const sqftConf = t.confidence?.leased_sqft ?? t.confidence?.leasedSqft;
-  if (sqftConf != null && sqftConf < 70) score -= 10;
-  const isNNN = /nnn|triple[\s-]?net/i.test(String(t.lease_type || ''));
-  if (isNNN && (t.cap == null || t.cap === '')) score -= 10;
-  const warnings = getWarnings(computeFlags(t));
-  score -= warnings.length * 5;
-  return Math.max(0, Math.min(100, score));
-}
+function getTenantReviewState(t) { return deriveTenantReviewState(t).status; }
+function getTenantReviewScore(t)  { return deriveTenantReviewState(t).score; }
 
 function _tenantReviewStateBadgeHtml(t) {
   if (!t) return '';
@@ -9724,7 +9759,6 @@ async function loadDemo() {
 
 let _portfolioSort = 'risk'; // 'risk' | 'recent' | 'cam' | 'disputes'
 let _reviewQueueFilter = 'all'; // 'all' | 'incomplete' | 'needs_review' | 'manually_verified'
-const _reviewAcknowledged = new Set();
 
 // Pure function — derives risk metadata from a stored property snapshot.
 // Runs without globals so it can compute for any prop, not just the active one.
@@ -9822,35 +9856,23 @@ function getReviewQueueItems(props) {
   for (const p of (props || [])) {
     const tenants = Array.isArray(p.tenants) ? p.tenants.filter(Boolean) : [];
     for (const t of tenants) {
-      const state = getTenantReviewState(t);
-      if (state === 'verified') continue;
+      const rv = deriveTenantReviewState(t);
+      if (rv.status === 'verified') continue;
 
-      const score = getTenantReviewScore(t);
-      const missingFields = [];
-      if (!t.lease_type)  missingFields.push('Lease Type');
-      if (!t.leased_sqft) missingFields.push('Sq Ft');
-      if (!t.start_date)  missingFields.push('Start Date');
-      if (!t.end_date)    missingFields.push('End Date');
-      const isNNN = /nnn|triple[\s-]?net/i.test(String(t.lease_type || ''));
-      if (isNNN && (t.cap == null || t.cap === '')) missingFields.push('NNN Cap');
-
-      const warningReasons = [];
-      if (t._usedFallback) warningReasons.push('Fallback extraction used');
-      const sqftConf = t.confidence?.leased_sqft ?? t.confidence?.leasedSqft;
-      if (sqftConf != null && sqftConf < 70) warningReasons.push(`Low sqft confidence (${sqftConf}%)`);
-      const recon = lastResults.find(r => r.name === t.tenant_name);
-      if (recon && recon.proRata > 1.0) warningReasons.push('Pro-rata > 100%');
+      const missingFields  = rv.warnings.filter(w =>  _RQ_MISSING_FIELD_TYPES.has(w.type)).map(w => w.label);
+      const warningReasons = rv.warnings.filter(w => !_RQ_MISSING_FIELD_TYPES.has(w.type)).map(w => w.label);
 
       items.push({
-        propertyId:    p.id,
-        propertyName:  p.name || '—',
-        tenantId:      t.id,
-        tenantName:    t.tenant_name || '—',
-        reviewState:   state,
-        reviewScore:   score,
+        propertyId:        p.id,
+        propertyName:      p.name || '—',
+        tenantId:          t.id,
+        tenantName:        t.tenant_name || '—',
+        reviewState:       rv.status,
+        reviewScore:       rv.score,
+        reviewerConfirmed: rv.reviewerConfirmed,
         missingFields,
         warningReasons,
-        lastUpdated:   t.updated_at || t.created_at || null,
+        lastUpdated:       t.updated_at || t.created_at || null,
       });
     }
   }
@@ -9873,7 +9895,7 @@ function _rqUrgencyClass(score) {
 }
 
 function _rqItemHtml(item) {
-  const acked = _reviewAcknowledged.has(item.tenantId);
+  const acked = item.reviewerConfirmed;
   const urgCls = _rqUrgencyClass(item.reviewScore);
   const stateCfg = {
     incomplete:        { cls: 'trs-incomplete',        label: 'Incomplete' },
@@ -9916,7 +9938,7 @@ function renderReviewQueue(props) {
   if (!panel) return;
 
   const allItems = getReviewQueueItems(props);
-  const nonAcked = allItems.filter(i => !_reviewAcknowledged.has(i.tenantId));
+  const nonAcked = allItems.filter(i => !i.reviewerConfirmed);
 
   if (nonAcked.length === 0) { panel.style.display = 'none'; return; }
   panel.style.display = 'block';
@@ -9934,12 +9956,39 @@ function setReviewQueueFilter(filter) {
 }
 
 function markTenantReviewAcknowledged(tenantId) {
-  _reviewAcknowledged.add(tenantId);
-  const card = document.querySelector(`.rq-card[data-rq-tenant-id="${tenantId}"]`);
-  if (!card) return;
-  card.classList.add('rq-acknowledged');
-  const btn = card.querySelector('.rq-btn--ack');
-  if (btn) btn.outerHTML = `<span class="rq-chip">Acknowledged</span>`;
+  // Find owning property — tenant may not be in the active tenantData array
+  let ownerProp = null, ownerIdx = -1;
+  for (const p of _props) {
+    const idx = (p.tenants || []).findIndex(t => t && t.id === tenantId);
+    if (idx !== -1) { ownerProp = p; ownerIdx = idx; break; }
+  }
+  if (!ownerProp) return;
+
+  const prev    = ownerProp.tenants[ownerIdx];
+  const updated = {
+    ...prev,
+    review: {
+      ...(prev.review || {}),
+      reviewerConfirmed: true,
+      reviewedAt:        new Date().toISOString(),
+      reviewedBy:        'Manual Review',
+    },
+  };
+  ownerProp.tenants[ownerIdx] = updated;
+
+  // Keep tenantData in sync if this is the active property
+  if (ownerProp.id === activePropId) {
+    const tdIdx = tenantData.findIndex(t => t && t.id === tenantId);
+    if (tdIdx !== -1) tenantData[tdIdx] = updated;
+  }
+
+  saveProperty(ownerProp); // async fire-and-forget — persists to localStorage + Supabase
+
+  // Re-render the property queue so the card reflects confirmed state
+  renderPropertyReviewQueue(ownerProp);
+  // Refresh homepage banner count if portfolio view is visible
+  const portfolioEl = document.getElementById('portfolioDashboard');
+  if (portfolioEl && portfolioEl.style.display !== 'none') renderReviewQueue(_props);
 }
 
 // Returns chip objects {label, cls} for the property card review summary (max 3).
@@ -9961,7 +10010,7 @@ function _rqPropCardBullets(items) {
 
 // Compact single-row card for property-level queue.
 function _rqCompactItemHtml(item) {
-  const acked = _reviewAcknowledged.has(item.tenantId);
+  const acked = item.reviewerConfirmed;
   const urgCls = _rqUrgencyClass(item.reviewScore);
   const stateCfg = {
     incomplete:        { cls: 'trs-incomplete',        label: 'Incomplete' },
@@ -9993,9 +10042,9 @@ function renderPropertyReviewQueue(property) {
   const panel = document.getElementById('propertyReviewQueuePanel');
   if (!panel) return;
 
-  const allItems  = getReviewQueueItems([property]);
-  const nonAcked  = allItems.filter(i => !_reviewAcknowledged.has(i.tenantId));
-  const ackedItems = allItems.filter(i => _reviewAcknowledged.has(i.tenantId));
+  const allItems   = getReviewQueueItems([property]);
+  const nonAcked   = allItems.filter(i => !i.reviewerConfirmed);
+  const ackedItems = allItems.filter(i =>  i.reviewerConfirmed);
 
   if (allItems.length === 0) { panel.style.display = 'none'; return; }
   panel.style.display = 'block';
@@ -10153,7 +10202,7 @@ function renderPortfolio(props) {
     if (m.camYear) footParts.push(`<span class="ptf-cam-year">${esc(String(m.camYear))} CAM</span>`);
     if (m.savedAt) footParts.push(`<span class="ptf-rec-ts">${_fmtCardTs(m.savedAt)}</span>`);
 
-    const reviewItems   = getReviewQueueItems([p]).filter(i => !_reviewAcknowledged.has(i.tenantId));
+    const reviewItems   = getReviewQueueItems([p]).filter(i => !i.reviewerConfirmed);
     const reviewChips   = _rqPropCardBullets(reviewItems);
     const pid           = esc(p.id);
 
