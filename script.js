@@ -2592,6 +2592,60 @@ function _reviewStatusPillHtml(status) {
   }[status] || { cls: 'lrs-needs-review', label: '? Unknown' };
   return `<span class="lrs-pill ${cfg.cls}">${cfg.label}</span>`;
 }
+
+// ── Tenant-level Review State + Scoring ──────────────────────────────────────
+// Pure derived state — computed at render time, no persistence.
+
+function getTenantReviewState(t) {
+  if (!t) return 'incomplete';
+  // manually_verified: any field has been explicitly confirmed by a reviewer
+  const overrides = t.reviewOverrides || {};
+  if (Object.values(overrides).some(ov => ov?.reviewerConfirmed)) return 'manually_verified';
+  // incomplete: any critical field absent
+  if (!t.lease_type || !t.leased_sqft || !t.start_date || !t.end_date) return 'incomplete';
+  // needs_review: heuristic signals
+  const sqftConf = t.confidence?.leased_sqft ?? t.confidence?.leasedSqft;
+  const isNNN    = /nnn|triple[\s-]?net/i.test(String(t.lease_type || ''));
+  if (
+    t._usedFallback === true ||
+    (sqftConf != null && sqftConf < 70) ||
+    (isNNN && (t.cap == null || t.cap === '')) ||
+    t._needsReview === true
+  ) return 'needs_review';
+  return 'verified';
+}
+
+function getTenantReviewScore(t) {
+  if (!t) return 0;
+  let score = 100;
+  if (!t.leased_sqft) score -= 25;
+  if (!t.lease_type)  score -= 25;
+  if (t._usedFallback) score -= 15;
+  const sqftConf = t.confidence?.leased_sqft ?? t.confidence?.leasedSqft;
+  if (sqftConf != null && sqftConf < 70) score -= 10;
+  const isNNN = /nnn|triple[\s-]?net/i.test(String(t.lease_type || ''));
+  if (isNNN && (t.cap == null || t.cap === '')) score -= 10;
+  const warnings = getWarnings(computeFlags(t));
+  score -= warnings.length * 5;
+  return Math.max(0, Math.min(100, score));
+}
+
+function _tenantReviewStateBadgeHtml(t) {
+  if (!t) return '';
+  const state = getTenantReviewState(t);
+  const score = getTenantReviewScore(t);
+  const cfg = {
+    verified:          { cls: 'trs-verified',          label: 'Verified' },
+    needs_review:      { cls: 'trs-needs-review',      label: 'Needs Review' },
+    incomplete:        { cls: 'trs-incomplete',        label: 'Incomplete' },
+    manually_verified: { cls: 'trs-manually-verified', label: 'Manually Verified' },
+  }[state] || { cls: 'trs-needs-review', label: 'Unknown' };
+  const scoreColor = score >= 90 ? 'trs-score--high' : score >= 70 ? 'trs-score--mid' : 'trs-score--low';
+  return `<div class="trs-header">
+    <span class="trs-badge ${cfg.cls}">${cfg.label}</span>
+    <span class="trs-score ${scoreColor}">Score: ${score}</span>
+  </div>`;
+}
 // ─────────────────────────────────────────────────────────────────────────────
 
 // ── Field Confidence + Source Trace helpers ────────────────────────────────
@@ -9046,6 +9100,7 @@ function renderReportTenantExpansion(tr, tenantName) {
 
   const innerHtml = `
     <div class="rpt-exp-inner">
+      ${td ? _tenantReviewStateBadgeHtml(td) : ''}
       <div class="rpt-exp-section">Lease Info</div>
       <div class="rpt-exp-grid">
         ${stat('Lease Type',  _v(td?.lease_type))}
@@ -9733,11 +9788,18 @@ function _buildPropMeta(prop) {
     }
   }
 
+  // Tenant review state counts — computed from prop.tenants (pure derived state)
+  const tenantArr            = Array.isArray(prop.tenants) ? prop.tenants.filter(Boolean) : [];
+  const tenantsNeedingReview = tenantArr.filter(t => getTenantReviewState(t) === 'needs_review').length;
+  const incompleteLeases     = tenantArr.filter(t => getTenantReviewState(t) === 'incomplete').length;
+  const manuallyVerifiedCount = tenantArr.filter(t => getTenantReviewState(t) === 'manually_verified').length;
+
   return {
     riskLevel, redCount, yellowCount, missingDocs, avgConf,
     trendDir, trendPct, openDisputes, total,
     camYear: snap?.camYear || prop.camYear || null,
     savedAt: snap?.savedAt || null,
+    tenantsNeedingReview, incompleteLeases, manuallyVerifiedCount,
   };
 }
 
@@ -9779,6 +9841,7 @@ function renderPortfolio(props) {
     if (_portfolioSort === 'recent')   return (b.m.savedAt ? new Date(b.m.savedAt).getTime() : 0) - (a.m.savedAt ? new Date(a.m.savedAt).getTime() : 0);
     if (_portfolioSort === 'cam')      return (b.m.total || 0) - (a.m.total || 0);
     if (_portfolioSort === 'disputes') return (b.m.openDisputes || 0) - (a.m.openDisputes || 0);
+    if (_portfolioSort === 'review')   return (b.m.incompleteLeases + b.m.tenantsNeedingReview) - (a.m.incompleteLeases + a.m.tenantsNeedingReview);
     return 0;
   });
 
@@ -9805,6 +9868,7 @@ function renderPortfolio(props) {
     { key: 'recent',   label: 'Most Recent'   },
     { key: 'cam',      label: 'Largest CAM'   },
     { key: 'disputes', label: 'Most Disputes' },
+    { key: 'review',   label: 'Needs Review'  },
   ];
   const sortRowEl = document.getElementById('ptfSortRow');
   if (sortRowEl) {
@@ -9865,6 +9929,9 @@ function renderPortfolio(props) {
           : ''}
         ${m.missingDocs > 0
           ? `<div class="ptf-stat ptf-stat--warn"><strong>${m.missingDocs}</strong>No Docs</div>`
+          : ''}
+        ${(m.tenantsNeedingReview + m.incompleteLeases) > 0
+          ? `<div class="ptf-stat ptf-stat--warn"><strong>${m.tenantsNeedingReview + m.incompleteLeases}</strong>Needs Review</div>`
           : ''}
       </div>
       <div class="ptf-cam-lbl">CAM This Period</div>
