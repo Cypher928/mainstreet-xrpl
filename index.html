@@ -1338,11 +1338,11 @@
     .rq-chips--inline { display: flex; gap: 3px; flex: 1; min-width: 0; overflow: hidden; flex-wrap: nowrap; }
     .rq-compact-actions { flex-shrink: 0; }
 
-    /* Property card review summary — single flex row */
+    /* Property card review summary — flat flex row: chips · health → button */
     .property-review-summary {
-      margin: 5px 0 7px; padding-top: 4px;
+      margin: 5px 0 7px; padding-top: 4px; padding-right: 4px;
       border-top: 1px solid rgba(100,116,139,0.1);
-      display: flex; align-items: center; gap: 4px; flex-wrap: wrap;
+      display: flex; align-items: center; gap: 5px; flex-wrap: wrap;
     }
     .review-chip {
       display: inline-flex; align-items: center;
@@ -1352,19 +1352,17 @@
     }
     .review-chip--incomplete { background: rgba(239,68,68,0.08);  border-color: rgba(239,68,68,0.18);  color: #fca5a5; }
     .review-chip--moderate   { background: rgba(245,158,11,0.08); border-color: rgba(245,158,11,0.18); color: #fde68a; }
-    /* Health + button: fixed left margin keeps cluster close, not full-width split */
-    .review-meta {
-      display: flex; align-items: center; gap: 8px;
-      margin-left: 6px; flex-shrink: 0;
-    }
+    /* Health sits in the chip zone — reads as supporting context, not action */
     .review-health {
-      font-size: 0.60rem; font-weight: 500; white-space: nowrap; letter-spacing: 0.01em;
+      font-size: 0.59rem; font-weight: 500; white-space: nowrap; letter-spacing: 0.01em;
     }
     .review-health--good { color: #86b5a8; }
     .review-health--mid  { color: #fcd34d; }
     .review-health--low  { color: #fca5a5; }
+    /* Button anchored to trailing edge — sole user of margin-left: auto */
     .review-queue-btn {
-      padding: 2px 6px; border-radius: 7px; flex-shrink: 0;
+      margin-left: auto; flex-shrink: 0;
+      padding: 2px 6px; border-radius: 7px;
       font-size: 0.62rem; font-weight: 600; cursor: pointer; white-space: nowrap;
       background: rgba(99,164,255,0.06); border: 1px solid rgba(99,164,255,0.16); color: #6d9fe8;
       transition: transform 0.12s;
@@ -1375,7 +1373,7 @@
     .ptf-prop-card.review--incomplete   { background: rgba(239,68,68,0.03); }
     .ptf-prop-card.review--needs-review { background: rgba(245,158,11,0.025); }
     @media (max-width: 480px) {
-      .review-meta { margin-left: 0; flex: 0 0 100%; justify-content: flex-end; margin-top: 2px; }
+      .review-queue-btn { margin-left: 0; }
     }
     @media (max-width: 480px) {
       .rq-card--compact { flex-wrap: wrap; }
