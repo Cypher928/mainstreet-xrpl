@@ -1056,55 +1056,10 @@ function extractLeaseData(text) {
   };
 }
 
-function getWarnings(flags) {
-  if (!Array.isArray(flags)) return [];
-  return flags.map(f => {
-    if (f === 'no_term_in_doc')        return 'No lease term found in document — please enter manually';
-    if (f === 'lease_type_missing')    return 'Lease type not specified';
-    if (f === 'missing_start_date')    return 'Missing start date';
-    if (f === 'missing_end_date')      return 'Missing end date';
-    if (f === 'approx_sqft_detected')  return 'Approximate sqft detected';
-    if (f === 'base_year_detected')    return 'Base year needs review';
-    return f;
-  });
-}
-
-function computeFlags(d) {
-  const base = [];
-  // Only show "no term in doc" when the document had no dates AND the user hasn't
-  // manually filled either in. If at least one date is present, fall through to
-  // individual checks so only the still-missing field gets flagged.
-  if (d.doc_has_dates === false && !d.start_date && !d.end_date) {
-    base.push('no_term_in_doc');
-  } else {
-    if (!d.start_date) base.push('missing_start_date');
-    if (!d.end_date)   base.push('missing_end_date');
-  }
-  if (!d.lease_type) base.push('lease_type_missing');
-  const extra = (Array.isArray(d.flags) ? d.flags : []).filter(
-    f => (f === 'approx_sqft_detected' || f === 'base_year_detected') && !base.includes(f)
-  );
-  const result = [...base, ...extra];
-  if (d.lease_type && d.lease_type !== '') return result.filter(f => f !== 'lease_type_missing');
-  return result;
-}
-
-function computeFlagsStrict(d) {
-  const base = [];
-  if (d.doc_has_dates === false && d.start_date == null && d.end_date == null) {
-    base.push('no_term_in_doc');
-  } else {
-    if (d.start_date == null) base.push('missing_start_date');
-    if (d.end_date   == null) base.push('missing_end_date');
-  }
-  if (!d.lease_type) base.push('lease_type_missing');
-  const extra = (Array.isArray(d.flags) ? d.flags : []).filter(
-    f => (f === 'approx_sqft_detected' || f === 'base_year_detected') && !base.includes(f)
-  );
-  const result = [...base, ...extra];
-  if (d.lease_type && d.lease_type !== '') return result.filter(f => f !== 'lease_type_missing');
-  return result;
-}
+// Shims — delegate to ReviewEngine (review-engine.js)
+function getWarnings(flags)       { return ReviewEngine.getWarnings(flags); }
+function computeFlags(d)          { return ReviewEngine.computeFlags(d); }
+function computeFlagsStrict(d)    { return ReviewEngine.computeFlagsStrict(d); }
 
 // Extracts lines most likely to contain key lease fields.
 function extractImportantSections(text) {
@@ -2599,72 +2554,14 @@ function _reviewStatusPillHtml(status) {
 // deriveTenantReviewState is the single source of truth.
 // getTenantReviewState / getTenantReviewScore are thin wrappers for call-site compat.
 
-// Warning types that represent missing fields (vs. quality/heuristic signals).
-const _RQ_MISSING_FIELD_TYPES = new Set([
-  'missing_lease_type', 'missing_sqft', 'missing_start_date', 'missing_end_date', 'nnn_cap_missing',
-]);
-
-function deriveTenantReviewState(t) {
-  const _empty = { status: 'incomplete', score: 0, warnings: [], reviewerConfirmed: false, reviewedAt: null, reviewedBy: null, notes: null };
-  if (!t) return _empty;
-
-  // ── Structured warnings ───────────────────────────────────────────
-  const warnings = [];
-  if (!t.lease_type)  warnings.push({ type: 'missing_lease_type',  severity: 'high',   label: 'Lease Type' });
-  if (!t.leased_sqft) warnings.push({ type: 'missing_sqft',        severity: 'high',   label: 'Sq Ft' });
-  if (!t.start_date)  warnings.push({ type: 'missing_start_date',  severity: 'high',   label: 'Start Date' });
-  if (!t.end_date)    warnings.push({ type: 'missing_end_date',    severity: 'high',   label: 'End Date' });
-  const isNNN    = /nnn|triple[\s-]?net/i.test(String(t.lease_type || ''));
-  if (isNNN && (t.cap == null || t.cap === '')) warnings.push({ type: 'nnn_cap_missing',      severity: 'medium', label: 'NNN Cap' });
-  if (t._usedFallback) warnings.push({ type: 'fallback_extraction',  severity: 'low',    label: 'Fallback Extraction' });
-  const sqftConf = t.confidence?.leased_sqft ?? t.confidence?.leasedSqft;
-  if (sqftConf != null && sqftConf < 70) warnings.push({ type: 'low_sqft_confidence', severity: 'medium', label: `Low Sqft Confidence (${sqftConf}%)` });
-  const recon = lastResults.find(r => r.name === t.tenant_name);
-  if (recon && recon.proRata > 1.0) warnings.push({ type: 'pro_rata_overflow',    severity: 'high',   label: 'Pro-rata > 100%' });
-
-  // ── Score (identical logic to previous getTenantReviewScore) ──────
-  let score = 100;
-  if (!t.leased_sqft)  score -= 25;
-  if (!t.lease_type)   score -= 25;
-  if (t._usedFallback) score -= 15;
-  if (sqftConf != null && sqftConf < 70) score -= 10;
-  if (isNNN && (t.cap == null || t.cap === '')) score -= 10;
-  score -= getWarnings(computeFlags(t)).length * 5;
-  score = Math.max(0, Math.min(100, score));
-
-  // ── Persisted review metadata ─────────────────────────────────────
-  const persisted         = t.review || {};
-  const reviewerConfirmed = !!(persisted.reviewerConfirmed);
-
-  // Manually verified overrides all derived signals (both new persisted flag and legacy per-field overrides).
-  const hasLegacyOverride = Object.values(t.reviewOverrides || {}).some(ov => ov?.reviewerConfirmed);
-  if (reviewerConfirmed || hasLegacyOverride) {
-    return { status: 'manually_verified', score, warnings, reviewerConfirmed, reviewedAt: persisted.reviewedAt || null, reviewedBy: persisted.reviewedBy || null, notes: persisted.notes || null };
-  }
-
-  // ── Status derivation ─────────────────────────────────────────────
-  let status;
-  if (!t.tenant_name || (t.extractionFailed && !t._userConfirmed)) {
-    status = 'incomplete';
-  } else if (!t.lease_type || !t.leased_sqft || !t.start_date || !t.end_date) {
-    status = 'incomplete';
-  } else if (
-    t._usedFallback === true ||
-    (sqftConf != null && sqftConf < 70) ||
-    (isNNN && (t.cap == null || t.cap === '')) ||
-    t._needsReview === true ||
-    (recon && recon.proRata > 1.0)
-  ) {
-    status = 'needs_review';
-  } else {
-    status = 'verified';
-  }
-
-  return { status, score, warnings, reviewerConfirmed: false, reviewedAt: persisted.reviewedAt || null, reviewedBy: persisted.reviewedBy || null, notes: persisted.notes || null };
-}
-
-function getTenantReviewState(t) { return deriveTenantReviewState(t).status; }
-function getTenantReviewScore(t)  { return deriveTenantReviewState(t).score; }
+// ── Review engine shims ───────────────────────────────────────────────────────
+// Business logic lives in review-engine.js (pure, no global deps).
+// These shims maintain backward-compatible global function names and supply
+// the live lastResults context for the active-property view.
+const _RQ_MISSING_FIELD_TYPES = ReviewEngine.MISSING_FIELD_TYPES;
+function deriveTenantReviewState(t) { return ReviewEngine.deriveTenantReviewState(t, lastResults); }
+function getTenantReviewState(t)    { return ReviewEngine.getTenantReviewState(t, lastResults); }
+function getTenantReviewScore(t)    { return ReviewEngine.getTenantReviewScore(t, lastResults); }
 
 function _tenantReviewStateBadgeHtml(t) {
   if (!t) return '';
@@ -5852,117 +5749,14 @@ function closeExplainPanel() {
 
 // Derives calculation state from a ReconciliationResult + live tenant record.
 // Returns { state, label, cls } used for calc state badges in panels and reports.
+// ── Reconciliation engine shims ───────────────────────────────────────────────
+// Business logic lives in reconciliation-engine.js (pure, no global deps).
+// evalDate is computed here using getCamYear() so the engine stays pure.
 function _deriveCalcState(result, liveT) {
-  const codes = (result?.ambiguityFlags || []).map(f => f.code);
-  if (codes.includes('NNN_GROSS_UNKNOWN') || codes.includes('SQFT_APPROXIMATE')) {
-    return { state: 'missing_inputs', label: 'Missing Inputs', cls: 'cs-missing' };
-  }
-  if (codes.includes('SQFT_OVERFLOW') || codes.includes('BASE_YEAR_MISMATCH')) {
-    return { state: 'partial', label: 'Partial', cls: 'cs-partial' };
-  }
-  const sqftConf    = parseFloat(liveT?.confidence?.leased_sqft ?? liveT?.confidence?.leasedSqft ?? 100);
-  const hasType     = !!(liveT?.lease_type);
-  const docHasType  = liveT?.doc_has_lease_type !== false;
-  if (sqftConf < 70 || !hasType || !docHasType) {
-    return { state: 'estimated', label: 'Estimated', cls: 'cs-estimated' };
-  }
-  return { state: 'verified', label: 'Verified', cls: 'cs-verified' };
+  return ReconciliationEngine.deriveCalcState(result, liveT);
 }
-
-// Detects reconciliation-level structural issues beyond individual invoice suspicions.
-// Checks: cap overruns, expired leases receiving allocation, pro-rata gaps, gross-lease violations.
-// Returns array of { severity: 'red'|'yellow', title, detail, conditions[] }.
 function _detectReconciliationIssues(results, property, evaluationDate) {
-  const flags   = [];
-  if (!results || !results.length) return flags;
-  // Use the passed evaluationDate, or default to the last day of the CAM year.
-  // This makes expired-lease detection deterministic for a given reconciliation:
-  // the same CAM year always produces the same flag output regardless of when
-  // the function is called.
-  const evalDate = evaluationDate || `${getCamYear()}-12-31`;
-  const tenants = Array.isArray(property?.tenants) ? property.tenants.filter(Boolean) : [];
-
-  // ── 1. Expired lease receiving CAM allocation ────────────────────────────
-  results.forEach(r => {
-    const t = tenants.find(t => t.id === r.tenantId);
-    if (t?.end_date && t.end_date < evalDate && r.totalAllocated > 0) {
-      flags.push({
-        severity: 'red',
-        title:    `Expired lease receiving allocation — ${r.name} (ended ${t.end_date})`,
-        detail:   `${r.name}'s lease ended ${t.end_date}, but this reconciliation allocates ${fmt(r.totalAllocated)} to them. Confirm occupancy or remove this tenant before issuing statements.`,
-        conditions: [
-          `Tenant: ${r.name}`,
-          `Lease end date: ${t.end_date}`,
-          `Allocated amount: ${fmt(r.totalAllocated)}`,
-          'Action: confirm occupancy status or exclude from this reconciliation',
-        ],
-      });
-    }
-  });
-
-  // ── 2. Cap applied — document and verify source ──────────────────────────
-  results.forEach(r => {
-    if (!r.capApplied || !r.capAdjustment) return;
-    const t     = tenants.find(t => t.id === r.tenantId);
-    const src   = t?.doc_has_lease_type !== false ? 'lease document' : 'manual entry';
-    flags.push({
-      severity: 'yellow',
-      title:    `Cap applied to ${r.name} — ${fmt(r.capAdjustment)} reduction (source: ${src})`,
-      detail:   `CAM cap triggered for ${r.name}. Raw allocation was ${fmt(r.totalAllocated + r.capAdjustment)}, reduced by ${fmt(r.capAdjustment)} to ${fmt(r.totalAllocated)}. Confirm cap percentage and base amount are documented in the lease.`,
-      conditions: [
-        `Tenant: ${r.name}`,
-        `Raw allocation: ${fmt(r.totalAllocated + r.capAdjustment)}`,
-        `Cap reduction: −${fmt(r.capAdjustment)}`,
-        `Final charge: ${fmt(r.totalAllocated)}`,
-        `Cap source: ${src}`,
-      ],
-    });
-  });
-
-  // ── 3. Pro-rata coverage gap ─────────────────────────────────────────────
-  {
-    const totalPR = results.reduce((s, r) => s + (r.proRataPercent || 0), 0);
-    const gap     = parseFloat((100 - totalPR).toFixed(2));
-    if (Math.abs(gap) > 2) {
-      const dir = gap > 0 ? 'under-allocated' : 'over-allocated';
-      flags.push({
-        severity: Math.abs(gap) > 5 ? 'red' : 'yellow',
-        title:    `Pro-rata coverage gap: ${gap > 0 ? '+' : ''}${gap.toFixed(1)}% — pool is ${dir}`,
-        detail:   `The sum of all tenant pro-rata shares is ${totalPR.toFixed(2)}% (expected 100%). A ${Math.abs(gap).toFixed(1)}% gap suggests a tenant may be missing from the reconciliation or square footage data needs correction.`,
-        conditions: [
-          `Pro-rata sum: ${totalPR.toFixed(2)}%`,
-          `Gap: ${gap > 0 ? '+' : ''}${gap.toFixed(2)}%`,
-          `${results.length} tenant${results.length !== 1 ? 's' : ''} in reconciliation`,
-          'Verify all tenants are included and square footage is correct',
-        ],
-      });
-    }
-  }
-
-  // ── 4. Gross / Modified Gross tenant receiving shared CAM ────────────────
-  results.forEach(r => {
-    const t = tenants.find(t => t.id === r.tenantId);
-    if (!t) return;
-    const lt = (t.lease_type || '').toLowerCase();
-    if (!/^gross$|modified\s*gross|full\s*service/i.test(lt)) return;
-    const sharedInvs  = (r.includedInvoices || []).filter(i => i.allocation === 'shared');
-    if (!sharedInvs.length) return;
-    const sharedTotal = sharedInvs.reduce((s, i) => s + (i.share || 0), 0);
-    flags.push({
-      severity: 'yellow',
-      title:    `Gross-lease tenant receiving shared CAM — ${r.name} (${fmt(sharedTotal)})`,
-      detail:   `${r.name} holds a ${t.lease_type} lease, which typically bundles operating expenses into base rent. Charging ${fmt(sharedTotal)} in shared CAM may violate lease terms. Review exclusion clauses.`,
-      conditions: [
-        `Tenant: ${r.name}`,
-        `Lease type: ${t.lease_type}`,
-        `Shared CAM charges: ${fmt(sharedTotal)} across ${sharedInvs.length} invoice${sharedInvs.length !== 1 ? 's' : ''}`,
-        'Gross leases typically include all operating expenses in base rent',
-        'Action: confirm excluded categories or add this tenant to the NNN pool only',
-      ],
-    });
-  });
-
-  return flags;
+  return ReconciliationEngine.detectReconciliationIssues(results, property, evaluationDate || `${getCamYear()}-12-31`);
 }
 
 // Builds the in-app Reconciliation Summary HTML panel displayed above result cards.
@@ -6438,14 +6232,10 @@ let nextDisputeId = 0;
 // ─── Activity Log ─────────────────────────────────────────────────────────────
 const activityLog = []; // { type, title, detail, severity, timestamp, actor, relatedEntity, financialImpact }
 
-function logActivity(type, title, { detail = '', severity = 'info', actor = 'System', relatedEntity = '', financialImpact = '' } = {}) {
-  activityLog.unshift({
-    type, title, detail, severity,
-    timestamp:     new Date().toISOString(),
-    actor,
-    relatedEntity,
-    financialImpact,
-  });
+function logActivity(type, title, opts = {}) {
+  // Event shaping delegated to AuditService — ensures canonical field set,
+  // valid severity, and automatic propertyId tagging on every entry.
+  activityLog.unshift(AuditService.shapeEvent(type, title, { ...opts, propertyId: activePropId }));
   if (activityLog.length > 200) activityLog.length = 200;
   savePropertyData(); // persist change — debounced, so rapid events collapse
 }
@@ -10652,87 +10442,8 @@ let _reviewQueueFilter = 'all'; // 'all' | 'incomplete' | 'needs_review' | 'manu
 
 // Pure function — derives risk metadata from a stored property snapshot.
 // Runs without globals so it can compute for any prop, not just the active one.
-function _buildPropMeta(prop) {
-  const snap     = prop.camReconciliation ?? prop.results ?? null;
-  const invoices = (snap?.invoicesFull?.length ? snap.invoicesFull : null)
-    || (prop.invoices?.length ? prop.invoices : []);
-  const results    = snap?.results || [];
-  const total      = snap?.total || Number(prop.totalCAM) || 0;
-  const camRunsArr = (snap?.camRuns || []);
-
-  const missingDocs  = invoices.filter(i => i && !i.fileUrl && !i.fileName).length;
-  const openDisputes = (prop.disputes || []).filter(d => d.status === 'open').length
-    || Number(prop.openDisputes) || 0;
-
-  // Lightweight flag counts from stored data
-  let redCount = 0, yellowCount = 0;
-  if (snap) {
-    // Large single invoice > 40% of total
-    if (total > 0) {
-      const thresh = total * 0.4;
-      invoices.forEach(inv => { if ((parseFloat(inv?.amount) || 0) > thresh) redCount++; });
-    }
-    // Missing docs — 100% missing = red, partial = yellow
-    if (invoices.length > 0) {
-      const pct = missingDocs / invoices.length;
-      if (pct === 1) redCount++; else if (missingDocs > 0) yellowCount++;
-    }
-    // YoY change from stored camRuns
-    if (camRunsArr.length >= 2) {
-      const curr = camRunsArr[0];
-      const prev = camRunsArr.slice(1).find(r => r.camYear !== curr.camYear) || camRunsArr[1];
-      if (curr.totalExpenses && prev.totalExpenses) {
-        const pct = Math.abs((curr.totalExpenses - prev.totalExpenses) / prev.totalExpenses * 100);
-        if (pct > 20) redCount++; else if (pct > 10) yellowCount++;
-      }
-    }
-    // Pro-rata coverage gap
-    const totalPR = results.reduce((s, r) => s + (r.proRataPercent || 0), 0);
-    if (results.length > 0 && Math.abs(totalPR - 100) >= 5) yellowCount++;
-    // Open disputes add yellow signal
-    if (openDisputes > 0) yellowCount++;
-  }
-
-  // Risk classification — same thresholds as buildAuditNarrative
-  let riskLevel = 'None';
-  if (snap) {
-    if      (redCount >= 3 || (redCount >= 1 && openDisputes >= 1)) riskLevel = 'Critical';
-    else if (redCount >= 1 || yellowCount >= 3)                     riskLevel = 'Elevated';
-    else if (yellowCount >= 1)                                      riskLevel = 'Moderate';
-    else                                                            riskLevel = 'Low';
-  }
-
-  // Avg confidence from per-tenant results
-  const confScores = results.map(r => r.averageConfidence || 0).filter(s => s > 0);
-  const avgConf    = confScores.length
-    ? Math.round(confScores.reduce((s, c) => s + c, 0) / confScores.length)
-    : null;
-
-  // YoY trend direction
-  let trendDir = null, trendPct = null;
-  if (camRunsArr.length >= 2) {
-    const curr = camRunsArr[0];
-    const prev = camRunsArr.slice(1).find(r => r.camYear !== curr.camYear) || camRunsArr[1];
-    if (curr.totalExpenses && prev.totalExpenses) {
-      trendPct  = (curr.totalExpenses - prev.totalExpenses) / prev.totalExpenses * 100;
-      trendDir  = Math.abs(trendPct) < 3 ? 'flat' : trendPct > 0 ? 'up' : 'down';
-    }
-  }
-
-  // Tenant review state counts — computed from prop.tenants (pure derived state)
-  const tenantArr            = Array.isArray(prop.tenants) ? prop.tenants.filter(Boolean) : [];
-  const tenantsNeedingReview = tenantArr.filter(t => getTenantReviewState(t) === 'needs_review').length;
-  const incompleteLeases     = tenantArr.filter(t => getTenantReviewState(t) === 'incomplete').length;
-  const manuallyVerifiedCount = tenantArr.filter(t => getTenantReviewState(t) === 'manually_verified').length;
-
-  return {
-    riskLevel, redCount, yellowCount, missingDocs, avgConf,
-    trendDir, trendPct, openDisputes, total,
-    camYear: snap?.camYear || prop.camYear || null,
-    savedAt: snap?.savedAt || null,
-    tenantsNeedingReview, incompleteLeases, manuallyVerifiedCount,
-  };
-}
+// Shim — delegates to Selectors (selectors.js)
+function _buildPropMeta(prop) { return Selectors.buildPropMeta(prop); }
 
 function _fmtCardTs(ts) {
   if (!ts) return '';
@@ -10741,48 +10452,9 @@ function _fmtCardTs(ts) {
 
 // ─── Review Queue ─────────────────────────────────────────────────────────────
 
-function getReviewQueueItems(props) {
-  const items = [];
-  for (const p of (props || [])) {
-    const tenants = Array.isArray(p.tenants) ? p.tenants.filter(Boolean) : [];
-    for (const t of tenants) {
-      const rv = deriveTenantReviewState(t);
-      if (rv.status === 'verified') continue;
-
-      const missingFields  = rv.warnings.filter(w =>  _RQ_MISSING_FIELD_TYPES.has(w.type)).map(w => w.label);
-      const warningReasons = rv.warnings.filter(w => !_RQ_MISSING_FIELD_TYPES.has(w.type)).map(w => w.label);
-
-      items.push({
-        propertyId:        p.id,
-        propertyName:      p.name || '—',
-        tenantId:          t.id,
-        tenantName:        t.tenant_name || '—',
-        reviewState:       rv.status,
-        reviewScore:       rv.score,
-        reviewerConfirmed: rv.reviewerConfirmed,
-        missingFields,
-        warningReasons,
-        lastUpdated:       t.updated_at || t.created_at || null,
-      });
-    }
-  }
-  items.sort((a, b) => {
-    const order = { incomplete: 0, needs_review: 1, manually_verified: 2 };
-    const sa = order[a.reviewState] ?? 3, sb = order[b.reviewState] ?? 3;
-    if (sa !== sb) return sa - sb;
-    if (a.reviewScore !== b.reviewScore) return a.reviewScore - b.reviewScore;
-    const ta = a.lastUpdated ? new Date(a.lastUpdated).getTime() : 0;
-    const tb = b.lastUpdated ? new Date(b.lastUpdated).getTime() : 0;
-    return tb - ta;
-  });
-  return items;
-}
-
-function _rqUrgencyClass(score) {
-  if (score < 50) return 'rq-critical';
-  if (score < 80) return 'rq-moderate';
-  return 'rq-healthy';
-}
+// Shims — delegate to Selectors / ReviewEngine
+function getReviewQueueItems(props) { return Selectors.getReviewQueueItems(props); }
+function _rqUrgencyClass(score)     { return ReviewEngine.urgencyClass(score); }
 
 function _rqItemHtml(item) {
   const acked = item.reviewerConfirmed;
@@ -10891,22 +10563,7 @@ function markTenantReviewAcknowledged(tenantId, note = null) {
   if (portfolioEl && portfolioEl.style.display !== 'none') renderReviewQueue(_props);
 }
 
-// Returns chip objects {label, cls} for the property card review summary (max 3).
-function _rqPropCardBullets(items) {
-  const incomplete  = items.filter(i => i.reviewState === 'incomplete').length;
-  const needsReview = items.filter(i => i.reviewState === 'needs_review').length;
-  let nnnCap = 0, missingDate = 0;
-  items.forEach(item => {
-    if (item.missingFields.includes('NNN Cap'))                                               nnnCap++;
-    if (item.missingFields.includes('Start Date') || item.missingFields.includes('End Date')) missingDate++;
-  });
-  const chips = [];
-  if (incomplete  > 0) chips.push({ label: `${incomplete} Incomplete`,      cls: 'review-chip--incomplete' });
-  if (needsReview > 0) chips.push({ label: `${needsReview} Needs Review`,   cls: 'review-chip--moderate'   });
-  if (nnnCap      > 0) chips.push({ label: `${nnnCap} NNN Cap`,             cls: ''                        });
-  if (missingDate > 0) chips.push({ label: `${missingDate} Missing Date`,   cls: ''                        });
-  return chips.slice(0, 3);
-}
+function _rqPropCardBullets(items) { return Selectors.propCardBullets(items); }
 
 // Compact single-row card for property-level queue.
 function _rqCompactItemHtml(item) {
@@ -11391,151 +11048,16 @@ function openLeaseModalFromRw() {
 
 // ─────────────────────────────────────────────────────────────────────────────
 
-function portfolioKPIs(props) {
-  const safeProps = Array.isArray(props) ? props : [];
-  const metas     = safeProps.map(p => _buildPropMeta(p));
-  const criticalOrElevated = metas.filter(m => m.riskLevel === 'Critical' || m.riskLevel === 'Elevated').length;
-  const totalMissingDocs   = metas.reduce((s, m) => s + m.missingDocs, 0);
-  const confScores = metas.map(m => m.avgConf).filter(c => c !== null);
-  return {
-    properties:          safeProps.length,
-    cam:                 safeProps.reduce((s, p) => s + (Number(p.totalCAM) || 0), 0),
-    openDisputes:        safeProps.reduce((s, p) => s + (Number(p.openDisputes) || 0), 0),
-    criticalOrElevated,
-    totalMissingDocs,
-    avgConf: confScores.length ? Math.round(confScores.reduce((s, c) => s + c, 0) / confScores.length) : null,
-  };
-}
+// Shim — delegates to Selectors (selectors.js)
+function portfolioKPIs(props) { return Selectors.portfolioKPIs(props); }
 
-// ── Portfolio Intelligence + Readiness Engine ─────────────────────────────────
+// ── Portfolio Intelligence + Readiness Engine shims ───────────────────────────
+// Logic lives in selectors.js (pure, no global deps).
+const _RDY_LABELS = Selectors.RDY_LABELS;
 
-const _RDY_LABELS = {
-  needs_review:          'Needs Review',
-  partially_verified:    'Partial',
-  reconciliation_ready:  'Ready',
-  reconciled:            'Reconciled',
-  high_risk:             'High Risk',
-};
-
-// Derives property readiness state, weighted risk score, and operational insight.
-// Pure function — reads prop data, calls existing helpers, returns derived object.
-function derivePropertyReadiness(p) {
-  const tenants = Array.isArray(p.tenants) ? p.tenants.filter(Boolean) : [];
-  const snap    = p.camReconciliation ?? null;
-  const results = snap?.results || [];
-  const meta    = _buildPropMeta(p);
-
-  const rqItems    = getReviewQueueItems([p]);
-  const unresolved = rqItems.filter(i => !i.reviewerConfirmed);
-  const incomplete = unresolved.filter(i => i.reviewState === 'incomplete');
-  const needsRev   = unresolved.filter(i => i.reviewState === 'needs_review');
-
-  const missingCapCount = tenants.filter(t => {
-    const isNNN = /nnn|triple[\s-]?net/i.test(String(t.lease_type || ''));
-    return isNNN && (t.cap == null || t.cap === '');
-  }).length;
-
-  const today      = new Date().toISOString().slice(0, 10);
-  const cutoff12mo = new Date(); cutoff12mo.setMonth(cutoff12mo.getMonth() + 12);
-  const cutoffIso  = cutoff12mo.toISOString().slice(0, 10);
-  const expiredCount  = tenants.filter(t => t.end_date && t.end_date < today).length;
-  const expiringCount = tenants.filter(t => t.end_date && t.end_date >= today && t.end_date <= cutoffIso).length;
-  const lowConfCount  = tenants.filter(t => t._confidence === 'low' || t._confidence === 'failed').length;
-
-  const totalPR    = results.reduce((s, r) => s + (r.proRataPercent || 0), 0);
-  const proRataGap = results.length > 0 ? Math.max(0, 100 - totalPR) : 0;
-
-  // Weighted risk score 0–100
-  let riskScore = 0;
-  riskScore += incomplete.length * 15;
-  riskScore += needsRev.length   * 8;
-  riskScore += missingCapCount   * 20;
-  riskScore += expiredCount      * 20;
-  riskScore += meta.openDisputes * 15;
-  riskScore += lowConfCount      * 10;
-  riskScore += proRataGap >= 5   ? 15 : 0;
-  riskScore  = Math.min(100, riskScore);
-
-  const weightedRisk = riskScore >= 60 ? 'critical'
-    : riskScore >= 35 ? 'high'
-    : riskScore >= 15 ? 'moderate'
-    : riskScore >  0  ? 'low'
-    : 'none';
-
-  // Readiness state — highest severity wins
-  let readiness;
-  const isCriticalRisk = weightedRisk === 'critical' || meta.riskLevel === 'Critical';
-  if (isCriticalRisk && unresolved.length > 0) {
-    readiness = 'high_risk';
-  } else if (snap?.results?.length > 0 && unresolved.length === 0) {
-    readiness = 'reconciled';
-  } else if (unresolved.length === 0 && tenants.length > 0) {
-    readiness = 'reconciliation_ready';
-  } else if (incomplete.length === 0 && needsRev.length > 0) {
-    readiness = 'partially_verified';
-  } else {
-    readiness = 'needs_review';
-  }
-
-  // Insight sentence — highest-priority actionable finding
-  let insight = null;
-  if (incomplete.length > 0) {
-    insight = `${incomplete.length} tenant${incomplete.length !== 1 ? 's' : ''} missing critical lease data.`;
-  } else if (missingCapCount > 0) {
-    insight = `${missingCapCount} NNN tenant${missingCapCount !== 1 ? 's' : ''} missing CAM cap${missingCapCount !== 1 ? 's' : ''}.`;
-  } else if (proRataGap >= 5) {
-    insight = `Pro-rata coverage gap of ${proRataGap.toFixed(0)}% detected.`;
-  } else if (expiredCount > 0) {
-    insight = `${expiredCount} lease${expiredCount !== 1 ? 's' : ''} expired — verify CAM eligibility.`;
-  } else if (expiringCount > 0) {
-    insight = `${expiringCount} lease${expiringCount !== 1 ? 's expire' : ' expires'} within 12 months.`;
-  } else if (needsRev.length > 0) {
-    insight = `${needsRev.length} tenant${needsRev.length !== 1 ? 's' : ''} flagged for review.`;
-  } else if (lowConfCount > 0) {
-    insight = `${lowConfCount} lease${lowConfCount !== 1 ? 's' : ''} extracted with low confidence.`;
-  } else if (meta.openDisputes > 0) {
-    insight = `${meta.openDisputes} open dispute${meta.openDisputes !== 1 ? 's' : ''} require resolution.`;
-  } else if (readiness === 'reconciliation_ready') {
-    insight = 'All tenants verified — ready to reconcile.';
-  } else if (readiness === 'reconciled') {
-    insight = 'Reconciliation complete.';
-  }
-
-  return { readiness, weightedRisk, riskScore, insight, missingCapCount, expiredCount, expiringCount, lowConfCount, proRataGap, unresolvedCount: unresolved.length, incompleteCount: incomplete.length };
-}
-
-// Aggregates portfolio-level operational intelligence from all properties.
-function _piComputePortfolioIntel(props) {
-  let totalUnresolved = 0, totalMissingCaps = 0, totalExpired = 0;
-  let totalExpiring = 0, totalLowConf = 0, totalExposure = 0, proRataGapProps = 0;
-
-  const today     = new Date().toISOString().slice(0, 10);
-  const cutoff    = new Date(); cutoff.setMonth(cutoff.getMonth() + 12);
-  const cutoffIso = cutoff.toISOString().slice(0, 10);
-
-  for (const p of (props || [])) {
-    const tenants = Array.isArray(p.tenants) ? p.tenants.filter(Boolean) : [];
-    const results = (p.camReconciliation ?? null)?.results || [];
-
-    totalUnresolved  += getReviewQueueItems([p]).filter(i => !i.reviewerConfirmed).length;
-    totalMissingCaps += tenants.filter(t => /nnn|triple[\s-]?net/i.test(String(t.lease_type || '')) && (t.cap == null || t.cap === '')).length;
-    totalExpired     += tenants.filter(t => t.end_date && t.end_date < today).length;
-    totalExpiring    += tenants.filter(t => t.end_date && t.end_date >= today && t.end_date <= cutoffIso).length;
-    totalLowConf     += tenants.filter(t => t._confidence === 'low' || t._confidence === 'failed').length;
-    totalExposure    += (p.disputes || []).filter(d => d.status === 'open').reduce((s, d) => s + (parseFloat(d.tenantShare) || 0), 0);
-    const totalPR = results.reduce((s, r) => s + (r.proRataPercent || 0), 0);
-    if (results.length > 0 && Math.abs(totalPR - 100) >= 5) proRataGapProps++;
-  }
-
-  const issues = [];
-  if (totalUnresolved  > 0) issues.push(`${totalUnresolved} unresolved review item${totalUnresolved !== 1 ? 's' : ''}`);
-  if (totalMissingCaps > 0) issues.push(`${totalMissingCaps} missing CAM cap${totalMissingCaps !== 1 ? 's' : ''}`);
-  if (totalExpired     > 0) issues.push(`${totalExpired} expired lease${totalExpired !== 1 ? 's' : ''}`);
-  if (proRataGapProps  > 0) issues.push(`${proRataGapProps} pro-rata gap${proRataGapProps !== 1 ? 's' : ''}`);
-  const summary = issues.length > 0 ? issues.join(' · ') : 'Portfolio is clean — no critical issues detected.';
-
-  return { totalUnresolved, totalMissingCaps, totalExpired, totalExpiring, totalLowConf, totalExposure, proRataGapProps, summary };
-}
+// Shims — delegate to Selectors (selectors.js)
+function derivePropertyReadiness(p)     { return Selectors.derivePropertyReadiness(p); }
+function _piComputePortfolioIntel(props){ return Selectors.computePortfolioIntel(props); }
 
 // Renders the Portfolio Intelligence panel above the property grid.
 function renderPortfolioIntelligence(props) {
@@ -11599,18 +11121,10 @@ function renderPortfolio(props) {
   }
 
   // Per-property metadata (risk, confidence, trend, timestamps)
-  const metas = props.map(p => _buildPropMeta(p));
+  const metas = props.map(p => Selectors.buildPropMeta(p));
 
-  // Sort
-  const riskScore  = { Critical: 4, Elevated: 3, Moderate: 2, Low: 1, None: 0 };
-  const sortedPairs = props.map((p, i) => ({ p, m: metas[i] })).sort((a, b) => {
-    if (_portfolioSort === 'risk')     return (riskScore[b.m.riskLevel] ?? 0) - (riskScore[a.m.riskLevel] ?? 0);
-    if (_portfolioSort === 'recent')   return (b.m.savedAt ? new Date(b.m.savedAt).getTime() : 0) - (a.m.savedAt ? new Date(a.m.savedAt).getTime() : 0);
-    if (_portfolioSort === 'cam')      return (b.m.total || 0) - (a.m.total || 0);
-    if (_portfolioSort === 'disputes') return (b.m.openDisputes || 0) - (a.m.openDisputes || 0);
-    if (_portfolioSort === 'review')   return (b.m.incompleteLeases + b.m.tenantsNeedingReview) - (a.m.incompleteLeases + a.m.tenantsNeedingReview);
-    return 0;
-  });
+  // Deterministic sort via Selectors — always has a stable tiebreaker, never returns 0
+  const sortedPairs = Selectors.sortProperties(props.map((p, i) => ({ p, m: metas[i] })), _portfolioSort);
 
   // KPI tiles
   const k = portfolioKPIs(props);
@@ -11686,9 +11200,8 @@ function renderPortfolio(props) {
 
     const hasIncomplete   = reviewItems.some(i => i.reviewState === 'incomplete');
     const reviewUrgency   = reviewItems.length === 0 ? '' : hasIncomplete ? ' review--incomplete' : ' review--needs-review';
-    const reviewHealth    = reviewItems.length === 0 ? 100
-      : Math.max(0, Math.round(reviewItems.reduce((s, i) => s + i.reviewScore, 0) / reviewItems.length));
-    const healthCls       = reviewHealth >= 80 ? 'review-health--good' : reviewHealth >= 50 ? 'review-health--mid' : 'review-health--low';
+    const reviewHealth    = Selectors.computeReviewHealth(reviewItems);
+    const healthCls       = Selectors.reviewHealthClass(reviewHealth);
 
     const rd = derivePropertyReadiness(p);
     const rdBadge   = `<span class="ptf-rdy-badge rdy-${rd.readiness}">${esc(_RDY_LABELS[rd.readiness] || rd.readiness)}</span>`;
