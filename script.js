@@ -846,6 +846,7 @@ function normalizeTenant(d) {
     _error:              d._error              ?? null,
     reviewOverrides:     d.reviewOverrides     ?? {},
     review:              d.review              ?? {},
+    capBaseAmount:       d.capBaseAmount       ?? null,
   };
 }
 
@@ -4843,7 +4844,7 @@ async function runAllocation() {
   _prop.addLeases(getValidTenants().map(t => {
     const lease = new Lease(t.tenant_name, t.unitNumber || '', parseSqft(t.leased_sqft), t.start_date || '', t.end_date || '',
       t.excluded_categories ? t.excluded_categories.split(',').map(s => s.trim()) : [],
-      t.cap ?? null, null,
+      t.cap ?? null, t.capBaseAmount ?? null,
       (t.confidence?.leased_sqft ?? t.confidence?.leasedSqft ?? 100) < 70,
       t.baseYear ?? null,
       t.lease_type || null);
