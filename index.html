@@ -1295,6 +1295,70 @@
       .rq-action-btn { flex: 1; text-align: center; }
     }
 
+    /* Property-level review queue (collapsible details block) */
+    .rq-prop-details {
+      margin-bottom: 16px; border-radius: 10px; overflow: hidden;
+      background: rgba(11,18,32,0.55); border: 1px solid rgba(255,255,255,0.07);
+    }
+    .rq-prop-summary {
+      list-style: none; display: flex; align-items: center;
+      justify-content: space-between; flex-wrap: wrap; gap: 8px;
+      padding: 10px 14px; cursor: pointer; user-select: none;
+      font-size: 0.8rem; font-weight: 700; color: #94a3b8;
+    }
+    .rq-prop-summary::-webkit-details-marker { display: none; }
+    .rq-prop-summary::before {
+      content: '▶'; font-size: 0.6rem; margin-right: 6px;
+      transition: transform 0.18s; display: inline-block;
+    }
+    details[open] > .rq-prop-summary::before { transform: rotate(90deg); }
+    .rq-prop-summary-title { text-transform: uppercase; letter-spacing: 0.08em; flex-shrink: 0; }
+    .rq-health-summary { display: flex; align-items: center; gap: 5px; flex-wrap: wrap; }
+    .rq-hs-item {
+      padding: 2px 8px; border-radius: 20px; font-size: 0.67rem;
+      font-weight: 700; border: 1px solid;
+    }
+    .rq-hs--incomplete { background: rgba(239,68,68,0.1);  border-color: rgba(239,68,68,0.25);  color: #f87171; }
+    .rq-hs--critical   { background: rgba(239,68,68,0.1);  border-color: rgba(239,68,68,0.25);  color: #f87171; }
+    .rq-hs--moderate   { background: rgba(245,158,11,0.1); border-color: rgba(245,158,11,0.22); color: #fbbf24; }
+    .rq-hs--verified   { background: rgba(56,189,248,0.1); border-color: rgba(56,189,248,0.25); color: #7dd3fc; }
+    .rq-prop-body { padding: 0 12px 12px; }
+
+    /* Compact queue cards (property-level) */
+    .rq-cards--compact { gap: 4px; }
+    .rq-card--compact {
+      flex-direction: row; align-items: center; flex-wrap: nowrap;
+      gap: 8px; padding: 7px 10px;
+    }
+    .rq-compact-name {
+      font-size: 0.82rem; font-weight: 700; color: #E2E8F0;
+      white-space: nowrap; overflow: hidden; text-overflow: ellipsis;
+      flex: 0 0 auto; max-width: 140px;
+    }
+    .rq-chips--inline { display: flex; gap: 3px; flex: 1; min-width: 0; overflow: hidden; flex-wrap: nowrap; }
+    .rq-compact-actions { flex-shrink: 0; }
+
+    /* Property card review section */
+    .ptf-review-section {
+      margin-top: 8px; padding-top: 8px;
+      border-top: 1px solid rgba(100,116,139,0.12);
+    }
+    .ptf-review-bullets {
+      margin: 0 0 6px; padding: 0 0 0 13px;
+      font-size: 0.67rem; list-style: disc; line-height: 1.65; color: #fbbf24;
+    }
+    .ptf-rq-cta {
+      display: flex; align-items: center; justify-content: center; gap: 4px; width: 100%;
+      padding: 5px 10px; border-radius: 8px; font-size: 0.71rem; font-weight: 600; cursor: pointer;
+      background: rgba(99,164,255,0.1); border: 1px solid rgba(99,164,255,0.25); color: #93c5fd;
+      box-sizing: border-box;
+    }
+    @media (max-width: 480px) {
+      .rq-card--compact { flex-wrap: wrap; }
+      .rq-compact-name { max-width: 100%; }
+      .rq-chips--inline { flex-wrap: wrap; }
+    }
+
     /* Confidence detail banners (inside the expanded edit panel) */
     .cx-detail-banner {
       margin-bottom: 12px; padding: 10px 12px; border-radius: 8px;
@@ -2874,6 +2938,9 @@
       </div>
     </div>
   </div>
+
+  <!-- ── Property Review Queue (rendered when property has items needing attention) -->
+  <div id="propertyReviewQueuePanel" style="display:none;"></div>
 
   <!-- ── SECTION 2: Lease Upload ────────────────────────────────────── -->
   <div class="card" id="cardLeases">

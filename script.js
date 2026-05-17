@@ -3136,6 +3136,11 @@ function renderBulkResults() {
     mainWorkflowPE:          window.getComputedStyle(document.getElementById('mainWorkflow')).pointerEvents,
     appContentPE:            window.getComputedStyle(document.getElementById('appContent')).pointerEvents,
   });
+
+  if (activePropId) {
+    const _rqProp = _props.find(p => p.id === activePropId);
+    if (_rqProp) renderPropertyReviewQueue(_rqProp);
+  }
 }
 
 function toggleBulkDetail(i) {
@@ -9905,11 +9910,27 @@ function _rqItemHtml(item) {
   </div>`;
 }
 
+// Portfolio homepage: banner only — detailed queue lives inside each property view.
+function renderReviewQueue(props) {
+  const panel = document.getElementById('reviewQueuePanel');
+  if (!panel) return;
+
+  const allItems = getReviewQueueItems(props);
+  const nonAcked = allItems.filter(i => !_reviewAcknowledged.has(i.tenantId));
+
+  if (nonAcked.length === 0) { panel.style.display = 'none'; return; }
+  panel.style.display = 'block';
+
+  const propCount  = new Set(nonAcked.map(i => i.propertyId)).size;
+  const bannerText = `${nonAcked.length} tenant${nonAcked.length !== 1 ? 's' : ''} require attention across ${propCount} propert${propCount !== 1 ? 'ies' : 'y'}`;
+  panel.innerHTML = `<div class="rq-summary-banner">${esc(bannerText)}</div>`;
+}
+
 function setReviewQueueFilter(filter) {
   _reviewQueueFilter = filter;
-  const panel = document.getElementById('reviewQueuePanel');
-  if (!panel || panel.style.display === 'none') return;
-  renderReviewQueue(_props);
+  if (!activePropId) return;
+  const prop = _props.find(p => p.id === activePropId);
+  if (prop) renderPropertyReviewQueue(prop);
 }
 
 function markTenantReviewAcknowledged(tenantId) {
@@ -9918,14 +9939,61 @@ function markTenantReviewAcknowledged(tenantId) {
   if (!card) return;
   card.classList.add('rq-acknowledged');
   const btn = card.querySelector('.rq-btn--ack');
-  if (btn) btn.outerHTML = `<span class="rq-chip" style="text-align:center;justify-content:center;">Acknowledged</span>`;
+  if (btn) btn.outerHTML = `<span class="rq-chip">Acknowledged</span>`;
 }
 
-function renderReviewQueue(props) {
-  const panel = document.getElementById('reviewQueuePanel');
+// Compact bullet lines for property card (max 3).
+function _rqPropCardBullets(items) {
+  const incomplete  = items.filter(i => i.reviewState === 'incomplete').length;
+  const needsReview = items.filter(i => i.reviewState === 'needs_review').length;
+  let nnnCap = 0, missingDate = 0;
+  items.forEach(item => {
+    if (item.missingFields.includes('NNN Cap'))                                              nnnCap++;
+    if (item.missingFields.includes('Start Date') || item.missingFields.includes('End Date')) missingDate++;
+  });
+  const lines = [];
+  if (incomplete  > 0) lines.push(`${incomplete} incomplete lease${incomplete !== 1 ? 's' : ''}`);
+  if (needsReview > 0) lines.push(`${needsReview} tenant${needsReview !== 1 ? 's' : ''} need review`);
+  if (nnnCap      > 0) lines.push(`${nnnCap} NNN cap issue${nnnCap !== 1 ? 's' : ''}`);
+  if (missingDate > 0) lines.push(`${missingDate} missing lease date${missingDate !== 1 ? 's' : ''}`);
+  return lines.slice(0, 3);
+}
+
+// Compact single-row card for property-level queue.
+function _rqCompactItemHtml(item) {
+  const acked = _reviewAcknowledged.has(item.tenantId);
+  const urgCls = _rqUrgencyClass(item.reviewScore);
+  const stateCfg = {
+    incomplete:        { cls: 'trs-incomplete',        label: 'Incomplete' },
+    needs_review:      { cls: 'trs-needs-review',      label: 'Needs Review' },
+    manually_verified: { cls: 'trs-manually-verified', label: 'Verified' },
+  }[item.reviewState] || { cls: 'trs-needs-review', label: item.reviewState };
+  const scoreColor = item.reviewScore >= 80 ? 'trs-score--high' : item.reviewScore >= 50 ? 'trs-score--mid' : 'trs-score--low';
+  const tid = esc(item.tenantId);
+
+  const missingChips = item.missingFields.map(f => `<span class="rq-chip rq-chip--missing">${esc(f)}</span>`).join('');
+  const warnChips    = item.warningReasons.map(w => `<span class="rq-chip rq-chip--warn">${esc(w)}</span>`).join('');
+
+  return `
+  <div class="rq-card rq-card--compact ${urgCls}${acked ? ' rq-acknowledged' : ''}" data-rq-tenant-id="${tid}">
+    <div class="rq-compact-name">${esc(item.tenantName)}</div>
+    <span class="trs-badge ${stateCfg.cls}">${stateCfg.label}</span>
+    <span class="trs-score ${scoreColor}">Score: ${item.reviewScore}</span>
+    <div class="rq-chips rq-chips--inline">${missingChips}${warnChips}</div>
+    <div class="rq-compact-actions">
+      ${acked
+        ? `<span class="rq-chip">Acknowledged</span>`
+        : `<button class="rq-action-btn rq-btn--ack" onclick="markTenantReviewAcknowledged('${tid}')">Mark Reviewed</button>`}
+    </div>
+  </div>`;
+}
+
+// Property-level queue: grouped by this property, rendered above tenant table.
+function renderPropertyReviewQueue(property) {
+  const panel = document.getElementById('propertyReviewQueuePanel');
   if (!panel) return;
 
-  const allItems  = getReviewQueueItems(props);
+  const allItems  = getReviewQueueItems([property]);
   const nonAcked  = allItems.filter(i => !_reviewAcknowledged.has(i.tenantId));
   const ackedItems = allItems.filter(i => _reviewAcknowledged.has(i.tenantId));
 
@@ -9938,11 +10006,15 @@ function renderReviewQueue(props) {
     needs_review:      nonAcked.filter(i => i.reviewState === 'needs_review').length,
     manually_verified: nonAcked.filter(i => i.reviewState === 'manually_verified').length,
   };
+  const critical = nonAcked.filter(i => i.reviewScore < 50).length;
 
-  const propCount  = new Set(nonAcked.map(i => i.propertyId)).size;
-  const bannerText = nonAcked.length === 0
-    ? 'All tenants reviewed — no action required'
-    : `${nonAcked.length} tenant${nonAcked.length !== 1 ? 's' : ''} require attention across ${propCount} propert${propCount !== 1 ? 'ies' : 'y'}`;
+  const healthParts = [];
+  if (counts.incomplete        > 0) healthParts.push(`<span class="rq-hs-item rq-hs--incomplete">${counts.incomplete} Incomplete</span>`);
+  if (critical                 > 0) healthParts.push(`<span class="rq-hs-item rq-hs--critical">${critical} Critical</span>`);
+  if (counts.needs_review      > 0) healthParts.push(`<span class="rq-hs-item rq-hs--moderate">${counts.needs_review} Needs Review</span>`);
+  if (counts.manually_verified > 0) healthParts.push(`<span class="rq-hs-item rq-hs--verified">${counts.manually_verified} Manually Verified</span>`);
+
+  const shouldExpand = counts.incomplete > 0;
 
   const filteredItems = _reviewQueueFilter === 'all'
     ? nonAcked
@@ -9955,21 +10027,28 @@ function renderReviewQueue(props) {
     { key: 'all',               label: `All (${counts.all})` },
     { key: 'incomplete',        label: `Incomplete (${counts.incomplete})` },
     { key: 'needs_review',      label: `Needs Review (${counts.needs_review})` },
-    { key: 'manually_verified', label: `Manually Verified (${counts.manually_verified})` },
+    { key: 'manually_verified', label: `Verified (${counts.manually_verified})` },
   ];
 
   panel.innerHTML = `
-    <div class="rq-summary-banner${nonAcked.length === 0 ? ' rq-banner--clear' : ''}">${esc(bannerText)}</div>
-    <div class="rq-filter-tabs">
-      ${filterCfg.map(({ key, label }) =>
-          `<button class="rq-tab${_reviewQueueFilter === key ? ' active' : ''}" onclick="setReviewQueueFilter('${key}')">${esc(label)}</button>`
-        ).join('')}
-    </div>
-    <div class="rq-cards">
-      ${displayItems.length > 0
-        ? displayItems.map(_rqItemHtml).join('')
-        : `<div class="rq-empty">No tenants in this category</div>`}
-    </div>`;
+    <details class="rq-prop-details"${shouldExpand ? ' open' : ''}>
+      <summary class="rq-prop-summary">
+        <span class="rq-prop-summary-title">Review Queue</span>
+        <span class="rq-health-summary">${healthParts.join('')}</span>
+      </summary>
+      <div class="rq-prop-body">
+        <div class="rq-filter-tabs">
+          ${filterCfg.map(({ key, label }) =>
+              `<button class="rq-tab${_reviewQueueFilter === key ? ' active' : ''}" onclick="setReviewQueueFilter('${key}')">${esc(label)}</button>`
+            ).join('')}
+        </div>
+        <div class="rq-cards rq-cards--compact">
+          ${displayItems.length > 0
+            ? displayItems.map(_rqCompactItemHtml).join('')
+            : `<div class="rq-empty">No tenants in this category</div>`}
+        </div>
+      </div>
+    </details>`;
 }
 
 function portfolioKPIs(props) {
@@ -10074,8 +10153,12 @@ function renderPortfolio(props) {
     if (m.camYear) footParts.push(`<span class="ptf-cam-year">${esc(String(m.camYear))} CAM</span>`);
     if (m.savedAt) footParts.push(`<span class="ptf-rec-ts">${_fmtCardTs(m.savedAt)}</span>`);
 
+    const reviewItems   = getReviewQueueItems([p]).filter(i => !_reviewAcknowledged.has(i.tenantId));
+    const reviewBullets = _rqPropCardBullets(reviewItems);
+    const pid           = esc(p.id);
+
     return `
-    <div class="ptf-prop-card status-${status}${activePropId === p.id ? ' active' : ''}" onclick="selectProperty('${esc(p.id)}')">
+    <div class="ptf-prop-card status-${status}${activePropId === p.id ? ' active' : ''}" onclick="selectProperty('${pid}')">
       <div class="ptf-card-top">
         <div class="ptf-prop-name">${esc(p.name || '—')}</div>
         ${riskBadge}
@@ -10094,10 +10177,12 @@ function renderPortfolio(props) {
         ${m.missingDocs > 0
           ? `<div class="ptf-stat ptf-stat--warn"><strong>${m.missingDocs}</strong>No Docs</div>`
           : ''}
-        ${(m.tenantsNeedingReview + m.incompleteLeases) > 0
-          ? `<div class="ptf-stat ptf-stat--warn"><strong>${m.tenantsNeedingReview + m.incompleteLeases}</strong>Needs Review</div>`
-          : ''}
       </div>
+      ${reviewBullets.length > 0 ? `
+      <div class="ptf-review-section">
+        <ul class="ptf-review-bullets">${reviewBullets.map(b => `<li>${esc(b)}</li>`).join('')}</ul>
+        <button class="ptf-rq-cta" onclick="event.stopPropagation();selectProperty('${pid}')">Open Review Queue ›</button>
+      </div>` : ''}
       <div class="ptf-cam-lbl">CAM This Period</div>
       <div class="ptf-cam-val">${cam > 0 ? '$' + cam.toLocaleString('en-US') : '—'}</div>
       ${footParts.length ? `<div class="ptf-card-foot">${footParts.join('')}</div>` : ''}
