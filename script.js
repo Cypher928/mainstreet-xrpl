@@ -9718,6 +9718,8 @@ async function loadDemo() {
 // ─── Portfolio ────────────────────────────────────────────────────────────────
 
 let _portfolioSort = 'risk'; // 'risk' | 'recent' | 'cam' | 'disputes'
+let _reviewQueueFilter = 'all'; // 'all' | 'incomplete' | 'needs_review' | 'manually_verified'
+const _reviewAcknowledged = new Set();
 
 // Pure function — derives risk metadata from a stored property snapshot.
 // Runs without globals so it can compute for any prop, not just the active one.
@@ -9806,6 +9808,168 @@ function _buildPropMeta(prop) {
 function _fmtCardTs(ts) {
   if (!ts) return '';
   return new Date(ts).toLocaleDateString('en-US', { month: 'short', day: 'numeric', year: 'numeric' });
+}
+
+// ─── Review Queue ─────────────────────────────────────────────────────────────
+
+function getReviewQueueItems(props) {
+  const items = [];
+  for (const p of (props || [])) {
+    const tenants = Array.isArray(p.tenants) ? p.tenants.filter(Boolean) : [];
+    for (const t of tenants) {
+      const state = getTenantReviewState(t);
+      if (state === 'verified') continue;
+
+      const score = getTenantReviewScore(t);
+      const missingFields = [];
+      if (!t.lease_type)  missingFields.push('Lease Type');
+      if (!t.leased_sqft) missingFields.push('Sq Ft');
+      if (!t.start_date)  missingFields.push('Start Date');
+      if (!t.end_date)    missingFields.push('End Date');
+      const isNNN = /nnn|triple[\s-]?net/i.test(String(t.lease_type || ''));
+      if (isNNN && (t.cap == null || t.cap === '')) missingFields.push('NNN Cap');
+
+      const warningReasons = [];
+      if (t._usedFallback) warningReasons.push('Fallback extraction used');
+      const sqftConf = t.confidence?.leased_sqft ?? t.confidence?.leasedSqft;
+      if (sqftConf != null && sqftConf < 70) warningReasons.push(`Low sqft confidence (${sqftConf}%)`);
+      const recon = lastResults.find(r => r.name === t.tenant_name);
+      if (recon && recon.proRata > 1.0) warningReasons.push('Pro-rata > 100%');
+
+      items.push({
+        propertyId:    p.id,
+        propertyName:  p.name || '—',
+        tenantId:      t.id,
+        tenantName:    t.tenant_name || '—',
+        reviewState:   state,
+        reviewScore:   score,
+        missingFields,
+        warningReasons,
+        lastUpdated:   t.updated_at || t.created_at || null,
+      });
+    }
+  }
+  items.sort((a, b) => {
+    const order = { incomplete: 0, needs_review: 1, manually_verified: 2 };
+    const sa = order[a.reviewState] ?? 3, sb = order[b.reviewState] ?? 3;
+    if (sa !== sb) return sa - sb;
+    if (a.reviewScore !== b.reviewScore) return a.reviewScore - b.reviewScore;
+    const ta = a.lastUpdated ? new Date(a.lastUpdated).getTime() : 0;
+    const tb = b.lastUpdated ? new Date(b.lastUpdated).getTime() : 0;
+    return tb - ta;
+  });
+  return items;
+}
+
+function _rqUrgencyClass(score) {
+  if (score < 50) return 'rq-critical';
+  if (score < 80) return 'rq-moderate';
+  return 'rq-healthy';
+}
+
+function _rqItemHtml(item) {
+  const acked = _reviewAcknowledged.has(item.tenantId);
+  const urgCls = _rqUrgencyClass(item.reviewScore);
+  const stateCfg = {
+    incomplete:        { cls: 'trs-incomplete',        label: 'Incomplete' },
+    needs_review:      { cls: 'trs-needs-review',      label: 'Needs Review' },
+    manually_verified: { cls: 'trs-manually-verified', label: 'Manually Verified' },
+  }[item.reviewState] || { cls: 'trs-needs-review', label: item.reviewState };
+  const scoreColor = item.reviewScore >= 80 ? 'trs-score--high' : item.reviewScore >= 50 ? 'trs-score--mid' : 'trs-score--low';
+
+  const missingChips = item.missingFields.map(f => `<span class="rq-chip rq-chip--missing">${esc(f)}</span>`).join('');
+  const warnChips    = item.warningReasons.map(w => `<span class="rq-chip rq-chip--warn">${esc(w)}</span>`).join('');
+
+  const pid = esc(item.propertyId);
+  const tid = esc(item.tenantId);
+
+  return `
+  <div class="rq-card ${urgCls}${acked ? ' rq-acknowledged' : ''}" data-rq-tenant-id="${tid}">
+    <div class="rq-card-main">
+      <div class="rq-tenant-name">${esc(item.tenantName)}</div>
+      <div class="rq-prop-name">${esc(item.propertyName)}</div>
+      <div class="rq-badges">
+        <span class="trs-badge ${stateCfg.cls}">${stateCfg.label}</span>
+        <span class="trs-score ${scoreColor}">Score: ${item.reviewScore}</span>
+      </div>
+      ${(missingChips || warnChips) ? `<div class="rq-chips">${missingChips}${warnChips}</div>` : ''}
+    </div>
+    <div class="rq-actions">
+      <button class="rq-action-btn rq-btn--primary" onclick="selectProperty('${pid}')">Review Lease</button>
+      <button class="rq-action-btn rq-btn--secondary" onclick="selectProperty('${pid}')">Jump to Tenant</button>
+      ${acked
+        ? `<span class="rq-chip" style="text-align:center;justify-content:center;">Acknowledged</span>`
+        : `<button class="rq-action-btn rq-btn--ack" onclick="markTenantReviewAcknowledged('${tid}')">Mark Reviewed</button>`
+      }
+    </div>
+  </div>`;
+}
+
+function setReviewQueueFilter(filter) {
+  _reviewQueueFilter = filter;
+  const panel = document.getElementById('reviewQueuePanel');
+  if (!panel || panel.style.display === 'none') return;
+  renderReviewQueue(_props);
+}
+
+function markTenantReviewAcknowledged(tenantId) {
+  _reviewAcknowledged.add(tenantId);
+  const card = document.querySelector(`.rq-card[data-rq-tenant-id="${tenantId}"]`);
+  if (!card) return;
+  card.classList.add('rq-acknowledged');
+  const btn = card.querySelector('.rq-btn--ack');
+  if (btn) btn.outerHTML = `<span class="rq-chip" style="text-align:center;justify-content:center;">Acknowledged</span>`;
+}
+
+function renderReviewQueue(props) {
+  const panel = document.getElementById('reviewQueuePanel');
+  if (!panel) return;
+
+  const allItems  = getReviewQueueItems(props);
+  const nonAcked  = allItems.filter(i => !_reviewAcknowledged.has(i.tenantId));
+  const ackedItems = allItems.filter(i => _reviewAcknowledged.has(i.tenantId));
+
+  if (allItems.length === 0) { panel.style.display = 'none'; return; }
+  panel.style.display = 'block';
+
+  const counts = {
+    all:               nonAcked.length,
+    incomplete:        nonAcked.filter(i => i.reviewState === 'incomplete').length,
+    needs_review:      nonAcked.filter(i => i.reviewState === 'needs_review').length,
+    manually_verified: nonAcked.filter(i => i.reviewState === 'manually_verified').length,
+  };
+
+  const propCount  = new Set(nonAcked.map(i => i.propertyId)).size;
+  const bannerText = nonAcked.length === 0
+    ? 'All tenants reviewed — no action required'
+    : `${nonAcked.length} tenant${nonAcked.length !== 1 ? 's' : ''} require attention across ${propCount} propert${propCount !== 1 ? 'ies' : 'y'}`;
+
+  const filteredItems = _reviewQueueFilter === 'all'
+    ? nonAcked
+    : nonAcked.filter(i => i.reviewState === _reviewQueueFilter);
+  const displayItems = _reviewQueueFilter === 'all'
+    ? [...filteredItems, ...ackedItems]
+    : filteredItems;
+
+  const filterCfg = [
+    { key: 'all',               label: `All (${counts.all})` },
+    { key: 'incomplete',        label: `Incomplete (${counts.incomplete})` },
+    { key: 'needs_review',      label: `Needs Review (${counts.needs_review})` },
+    { key: 'manually_verified', label: `Manually Verified (${counts.manually_verified})` },
+  ];
+
+  panel.innerHTML = `
+    <div class="rq-summary-banner${nonAcked.length === 0 ? ' rq-banner--clear' : ''}">${esc(bannerText)}</div>
+    <div class="rq-filter-tabs">
+      ${filterCfg.map(({ key, label }) =>
+          `<button class="rq-tab${_reviewQueueFilter === key ? ' active' : ''}" onclick="setReviewQueueFilter('${key}')">${esc(label)}</button>`
+        ).join('')}
+    </div>
+    <div class="rq-cards">
+      ${displayItems.length > 0
+        ? displayItems.map(_rqItemHtml).join('')
+        : `<div class="rq-empty">No tenants in this category</div>`}
+    </div>`;
 }
 
 function portfolioKPIs(props) {
@@ -9944,6 +10108,8 @@ function renderPortfolio(props) {
         : ''}
     </div>`;
   }).join('');
+
+  renderReviewQueue(props);
 
   document.getElementById('portfolioDashboard').style.display = 'block';
   document.getElementById('propertyBreadcrumb').style.display = 'none';

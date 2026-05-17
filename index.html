@@ -1240,6 +1240,61 @@
       color: #8fd0ff; font-size: 12px; font-weight: 600; letter-spacing: 0.02em;
     }
 
+    /* Review Queue Panel */
+    .rq-panel { margin: 16px 0 0; }
+    .rq-summary-banner {
+      padding: 10px 16px; border-radius: 10px; margin-bottom: 12px;
+      background: rgba(245,158,11,0.09); border: 1px solid rgba(245,158,11,0.22);
+      color: #fbbf24; font-size: 0.82rem; font-weight: 600;
+      display: flex; align-items: center; gap: 8px;
+    }
+    .rq-summary-banner.rq-banner--clear { background: rgba(34,197,94,0.07); border-color: rgba(34,197,94,0.2); color: #4ade80; }
+    .rq-filter-tabs { display: flex; gap: 6px; flex-wrap: wrap; margin-bottom: 12px; }
+    .rq-tab {
+      padding: 4px 12px; border-radius: 20px; font-size: 0.74rem; font-weight: 600; cursor: pointer;
+      background: rgba(255,255,255,0.05); border: 1px solid rgba(255,255,255,0.1); color: #94a3b8;
+      transition: all 0.15s;
+    }
+    .rq-tab.active { background: rgba(99,164,255,0.15); border-color: rgba(99,164,255,0.35); color: #93c5fd; }
+    .rq-cards { display: flex; flex-direction: column; gap: 8px; }
+    .rq-card {
+      border-radius: 10px; padding: 12px 14px;
+      border: 1px solid rgba(255,255,255,0.07);
+      border-left-width: 3px;
+      background: rgba(11,18,32,0.55);
+      display: flex; align-items: flex-start; gap: 12px; flex-wrap: wrap;
+    }
+    .rq-card.rq-critical { border-left-color: rgba(239,68,68,0.65); background: rgba(239,68,68,0.05); }
+    .rq-card.rq-moderate { border-left-color: rgba(245,158,11,0.55); background: rgba(245,158,11,0.04); }
+    .rq-card.rq-healthy  { border-left-color: rgba(34,197,94,0.45); background: rgba(34,197,94,0.04); }
+    .rq-card.rq-acknowledged { opacity: 0.42; pointer-events: none; }
+    .rq-card-main { flex: 1; min-width: 0; }
+    .rq-tenant-name { font-size: 0.88rem; font-weight: 700; color: #E2E8F0; margin-bottom: 2px; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+    .rq-prop-name { font-size: 0.7rem; color: #64748b; margin-bottom: 6px; }
+    .rq-badges { display: flex; align-items: center; gap: 6px; flex-wrap: wrap; margin-bottom: 6px; }
+    .rq-chips { display: flex; gap: 4px; flex-wrap: wrap; }
+    .rq-chip {
+      display: inline-flex; align-items: center; padding: 2px 7px; border-radius: 10px;
+      font-size: 0.64rem; font-weight: 600;
+      background: rgba(100,116,139,0.12); border: 1px solid rgba(100,116,139,0.2); color: #94a3b8;
+    }
+    .rq-chip--missing { background: rgba(239,68,68,0.1);  border-color: rgba(239,68,68,0.25);  color: #f87171; }
+    .rq-chip--warn    { background: rgba(245,158,11,0.1); border-color: rgba(245,158,11,0.2);  color: #fbbf24; }
+    .rq-actions { display: flex; flex-direction: column; gap: 6px; flex-shrink: 0; }
+    .rq-action-btn {
+      padding: 6px 12px; border-radius: 8px; font-size: 0.72rem; font-weight: 600; cursor: pointer;
+      white-space: nowrap; border: 1px solid; transition: opacity 0.12s;
+    }
+    .rq-btn--primary   { background: rgba(80,140,255,0.12); border-color: rgba(80,140,255,0.35); color: #8cc2ff; }
+    .rq-btn--secondary { background: rgba(255,255,255,0.04); border-color: rgba(255,255,255,0.1); color: #94a3b8; }
+    .rq-btn--ack       { background: rgba(34,197,94,0.08); border-color: rgba(34,197,94,0.22); color: #4ade80; }
+    .rq-empty { text-align: center; padding: 20px; color: #475569; font-size: 0.82rem; }
+    @media (max-width: 480px) {
+      .rq-card { flex-direction: column; }
+      .rq-actions { flex-direction: row; flex-wrap: wrap; }
+      .rq-action-btn { flex: 1; text-align: center; }
+    }
+
     /* Confidence detail banners (inside the expanded edit panel) */
     .cx-detail-banner {
       margin-bottom: 12px; padding: 10px 12px; border-radius: 8px;
@@ -2713,6 +2768,7 @@
     <button class="add-prop-btn" onclick="addNewProperty()">+ Add Property</button>
   </div>
   <div id="ptfSortRow" class="ptf-sort-row"></div>
+  <div id="reviewQueuePanel" class="rq-panel" style="display:none;"></div>
   <div class="ptf-cards-grid" id="propertyCardsGrid"></div>
 
   <!-- XRPL Trust Strip -->
