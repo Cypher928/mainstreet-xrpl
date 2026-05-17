@@ -4901,7 +4901,7 @@ async function runAllocation() {
   document.getElementById('resultsTitle').textContent = `${getCamYear()} CAM — ${propName}`;
   applySqftMismatchUI(sqftExceedsProperty);
 
-  let html = `<div class="summary-bar">
+  let html = _buildReconciliationSummaryHtml(fullResults, invoices, propName) + `<div class="summary-bar">
     <div class="summary-bar-item"><span class="summary-bar-label">Total Expenses</span><strong>${fmt(totalCost)}</strong></div>
     <div class="summary-bar-item"><span class="summary-bar-label">Tenants</span><strong>${fullResults.length}</strong></div>
     <div class="summary-bar-item"><span class="summary-bar-label">Invoices</span><strong>${invoices.length}</strong></div>
@@ -4978,6 +4978,7 @@ async function runAllocation() {
                   <div class="ts-detail-row"><span>Invoice Total</span><span class="ts-detail-val">${fmt(inv.amount)}</span></div>
                   <div class="ts-detail-row ts-detail-highlight"><span>Tenant Share</span><span class="ts-detail-val">${fmt(inv.share)}</span></div>
                   <div class="ts-detail-basis">Based on ${pct}% pro-rata allocation by square footage</div>
+                  <div class="ts-detail-formula">${inv.allocation === 'direct' ? fmt(inv.amount) + ' direct charge — full amount to this unit' : fmt(inv.amount) + ' &times; ' + pct + '% = ' + fmt(inv.share)}</div>
                   <div class="ts-detail-actions">
                     <button class="inv-act-btn inv-act-explain" id="tsexplbtn-${rowId}"
                       onclick="event.stopPropagation();tsExplainInvoice('${rowId}','${esc(inv.vendorName||'')}','${esc(inv.category||'')}',${inv.amount},'${esc(inv.invoiceDate||'')}')">Explain</button>
@@ -5031,9 +5032,11 @@ async function runAllocation() {
         ? `<button class="action-btn" onclick="openLeaseModalFromFile(${tdIdx})">&#x1F4C4; View Lease</button>`
         : `<div class="lease-missing-note">⚠️ Lease not attached — using manual data</div>`
       : '';
+    const _liveT  = tenantData.find(t => t && t.id === r.tenantId);
+    const _calcSt = _deriveCalcState(r, _liveT);
 
     html += `<div class="result-card${flags.length ? ' result-card--flagged' : ''}">
-      <div class="r-name">${esc(r.name)}${r.unitNumber ? `<span class="rc-unit"> · Unit ${esc(r.unitNumber)}</span>` : ''}</div>
+      <div class="r-name">${esc(r.name)}${r.unitNumber ? `<span class="rc-unit"> · Unit ${esc(r.unitNumber)}</span>` : ''}<span class="rc-calc-state ${_calcSt.cls}">${_calcSt.label}</span></div>
       <div class="result-grid">
         ${stat('Total', fmt(r.allocatedAmount))}
         ${stat('Pro-Rata', (r.proRata * 100).toFixed(2) + '%')}
@@ -5828,6 +5831,197 @@ function closeExplainPanel() {
   document.getElementById('explainPanel').classList.remove('open');
   document.body.style.overflow = '';
   document.body.classList.remove('modal-open');
+}
+
+// ─── Reconciliation Calculation Engine Helpers ────────────────────────────────
+
+// Derives calculation state from a ReconciliationResult + live tenant record.
+// Returns { state, label, cls } used for calc state badges in panels and reports.
+function _deriveCalcState(result, liveT) {
+  const codes = (result?.ambiguityFlags || []).map(f => f.code);
+  if (codes.includes('NNN_GROSS_UNKNOWN') || codes.includes('SQFT_APPROXIMATE')) {
+    return { state: 'missing_inputs', label: 'Missing Inputs', cls: 'cs-missing' };
+  }
+  if (codes.includes('SQFT_OVERFLOW') || codes.includes('BASE_YEAR_MISMATCH')) {
+    return { state: 'partial', label: 'Partial', cls: 'cs-partial' };
+  }
+  const sqftConf    = parseFloat(liveT?.confidence?.leased_sqft ?? liveT?.confidence?.leasedSqft ?? 100);
+  const hasType     = !!(liveT?.lease_type);
+  const docHasType  = liveT?.doc_has_lease_type !== false;
+  if (sqftConf < 70 || !hasType || !docHasType) {
+    return { state: 'estimated', label: 'Estimated', cls: 'cs-estimated' };
+  }
+  return { state: 'verified', label: 'Verified', cls: 'cs-verified' };
+}
+
+// Detects reconciliation-level structural issues beyond individual invoice suspicions.
+// Checks: cap overruns, expired leases receiving allocation, pro-rata gaps, gross-lease violations.
+// Returns array of { severity: 'red'|'yellow', title, detail, conditions[] }.
+function _detectReconciliationIssues(results, property) {
+  const flags   = [];
+  if (!results || !results.length) return flags;
+  const today   = new Date().toISOString().slice(0, 10);
+  const tenants = Array.isArray(property?.tenants) ? property.tenants.filter(Boolean) : [];
+
+  // ── 1. Expired lease receiving CAM allocation ────────────────────────────
+  results.forEach(r => {
+    const t = tenants.find(t => t.id === r.tenantId);
+    if (t?.end_date && t.end_date < today && r.totalAllocated > 0) {
+      flags.push({
+        severity: 'red',
+        title:    `Expired lease receiving allocation — ${r.name} (ended ${t.end_date})`,
+        detail:   `${r.name}'s lease ended ${t.end_date}, but this reconciliation allocates ${fmt(r.totalAllocated)} to them. Confirm occupancy or remove this tenant before issuing statements.`,
+        conditions: [
+          `Tenant: ${r.name}`,
+          `Lease end date: ${t.end_date}`,
+          `Allocated amount: ${fmt(r.totalAllocated)}`,
+          'Action: confirm occupancy status or exclude from this reconciliation',
+        ],
+      });
+    }
+  });
+
+  // ── 2. Cap applied — document and verify source ──────────────────────────
+  results.forEach(r => {
+    if (!r.capApplied || !r.capAdjustment) return;
+    const t     = tenants.find(t => t.id === r.tenantId);
+    const src   = t?.doc_has_lease_type !== false ? 'lease document' : 'manual entry';
+    flags.push({
+      severity: 'yellow',
+      title:    `Cap applied to ${r.name} — ${fmt(r.capAdjustment)} reduction (source: ${src})`,
+      detail:   `CAM cap triggered for ${r.name}. Raw allocation was ${fmt(r.totalAllocated + r.capAdjustment)}, reduced by ${fmt(r.capAdjustment)} to ${fmt(r.totalAllocated)}. Confirm cap percentage and base amount are documented in the lease.`,
+      conditions: [
+        `Tenant: ${r.name}`,
+        `Raw allocation: ${fmt(r.totalAllocated + r.capAdjustment)}`,
+        `Cap reduction: −${fmt(r.capAdjustment)}`,
+        `Final charge: ${fmt(r.totalAllocated)}`,
+        `Cap source: ${src}`,
+      ],
+    });
+  });
+
+  // ── 3. Pro-rata coverage gap ─────────────────────────────────────────────
+  {
+    const totalPR = results.reduce((s, r) => s + (r.proRataPercent || 0), 0);
+    const gap     = parseFloat((100 - totalPR).toFixed(2));
+    if (Math.abs(gap) > 2) {
+      const dir = gap > 0 ? 'under-allocated' : 'over-allocated';
+      flags.push({
+        severity: Math.abs(gap) > 5 ? 'red' : 'yellow',
+        title:    `Pro-rata coverage gap: ${gap > 0 ? '+' : ''}${gap.toFixed(1)}% — pool is ${dir}`,
+        detail:   `The sum of all tenant pro-rata shares is ${totalPR.toFixed(2)}% (expected 100%). A ${Math.abs(gap).toFixed(1)}% gap suggests a tenant may be missing from the reconciliation or square footage data needs correction.`,
+        conditions: [
+          `Pro-rata sum: ${totalPR.toFixed(2)}%`,
+          `Gap: ${gap > 0 ? '+' : ''}${gap.toFixed(2)}%`,
+          `${results.length} tenant${results.length !== 1 ? 's' : ''} in reconciliation`,
+          'Verify all tenants are included and square footage is correct',
+        ],
+      });
+    }
+  }
+
+  // ── 4. Gross / Modified Gross tenant receiving shared CAM ────────────────
+  results.forEach(r => {
+    const t = tenants.find(t => t.id === r.tenantId);
+    if (!t) return;
+    const lt = (t.lease_type || '').toLowerCase();
+    if (!/^gross$|modified\s*gross|full\s*service/i.test(lt)) return;
+    const sharedInvs  = (r.includedInvoices || []).filter(i => i.allocation === 'shared');
+    if (!sharedInvs.length) return;
+    const sharedTotal = sharedInvs.reduce((s, i) => s + (i.share || 0), 0);
+    flags.push({
+      severity: 'yellow',
+      title:    `Gross-lease tenant receiving shared CAM — ${r.name} (${fmt(sharedTotal)})`,
+      detail:   `${r.name} holds a ${t.lease_type} lease, which typically bundles operating expenses into base rent. Charging ${fmt(sharedTotal)} in shared CAM may violate lease terms. Review exclusion clauses.`,
+      conditions: [
+        `Tenant: ${r.name}`,
+        `Lease type: ${t.lease_type}`,
+        `Shared CAM charges: ${fmt(sharedTotal)} across ${sharedInvs.length} invoice${sharedInvs.length !== 1 ? 's' : ''}`,
+        'Gross leases typically include all operating expenses in base rent',
+        'Action: confirm excluded categories or add this tenant to the NNN pool only',
+      ],
+    });
+  });
+
+  return flags;
+}
+
+// Builds the in-app Reconciliation Summary HTML panel displayed above result cards.
+function _buildReconciliationSummaryHtml(results, invoices, propName) {
+  if (!results || !results.length) return '';
+
+  const totalPool   = invoices.reduce((s, inv) => s + (parseFloat(inv.amount) || 0), 0);
+  const totalBilled = results.reduce((s, r) => s + r.totalAllocated, 0);
+  const proRataSum  = results.reduce((s, r) => s + (r.proRataPercent || 0), 0);
+  const proRataGap  = parseFloat((100 - proRataSum).toFixed(2));
+  const capsCount   = results.filter(r => r.capApplied).length;
+  const capTotal    = results.filter(r => r.capApplied).reduce((s, r) => s + (r.capAdjustment || 0), 0);
+  const flaggedCnt  = results.filter(r => (r.ambiguityFlags || []).length > 0).length;
+
+  const issues   = _detectReconciliationIssues(results, currentProperty());
+  const reds     = issues.filter(f => f.severity === 'red');
+  const yellows  = issues.filter(f => f.severity === 'yellow');
+  const panelCls = reds.length > 0 ? 'rcs-panel--alert' : yellows.length > 0 ? 'rcs-panel--warn' : 'rcs-panel--ok';
+
+  const proCls   = Math.abs(proRataGap) > 5 ? 'rcs-kpi--alert' : Math.abs(proRataGap) > 2 ? 'rcs-kpi--warn' : '';
+  const capsCls  = capsCount > 0 ? 'rcs-kpi--warn' : '';
+  const flagCls  = flaggedCnt > 0 ? 'rcs-kpi--warn' : '';
+
+  const issueHtml = issues.length > 0 ? `<div class="rcs-issues">${
+    issues.map(f => `<div class="rcs-issue rcs-issue--${f.severity}">${f.severity === 'red' ? '&#x26D4;' : '&#x26A0;'} ${esc(f.title)}</div>`).join('')
+  }</div>` : '';
+
+  const rows = results.map(r => {
+    const liveT  = tenantData.find(t => t && t.id === r.tenantId);
+    const calcSt = _deriveCalcState(r, liveT);
+    const capCell = r.capApplied
+      ? `<td class="rcs-td rcs-num rcs-cap-cell">−${fmt(r.capAdjustment)}</td>`
+      : `<td class="rcs-td rcs-muted">—</td>`;
+    return `<tr class="rcs-row">
+      <td class="rcs-td rcs-name-cell">${esc(r.name)}${r.unitNumber ? `<span class="rcs-unit"> · ${esc(r.unitNumber)}</span>` : ''}</td>
+      <td class="rcs-td rcs-num">${r.sqFt ? Number(r.sqFt).toLocaleString() : '—'}</td>
+      <td class="rcs-td rcs-num">${(r.proRata * 100).toFixed(2)}%</td>
+      ${capCell}
+      <td class="rcs-td rcs-num rcs-alloc-total">${fmt(r.totalAllocated)}</td>
+      <td class="rcs-td"><span class="rc-calc-state ${calcSt.cls}">${calcSt.label}</span></td>
+    </tr>`;
+  }).join('');
+
+  return `
+    <div class="rcs-panel ${panelCls}">
+      <div class="rcs-panel-head">
+        <span class="rcs-panel-title">&#x1F4CA; Reconciliation Summary</span>
+        <span class="rcs-coverage-badge">${totalPool > 0 ? (totalBilled / totalPool * 100).toFixed(1) : '—'}% coverage</span>
+      </div>
+      <div class="rcs-kpis">
+        <div class="rcs-kpi"><div class="rcs-kpi-val">${fmt(totalPool)}</div><div class="rcs-kpi-lbl">CAM Pool</div></div>
+        <div class="rcs-kpi"><div class="rcs-kpi-val">${fmt(totalBilled)}</div><div class="rcs-kpi-lbl">Total Billed</div></div>
+        <div class="rcs-kpi ${proCls}"><div class="rcs-kpi-val">${proRataSum.toFixed(1)}%</div><div class="rcs-kpi-lbl">Pro-Rata Sum</div></div>
+        <div class="rcs-kpi ${capsCls}"><div class="rcs-kpi-val">${capsCount > 0 ? capsCount + ' (−' + fmt(capTotal) + ')' : '0'}</div><div class="rcs-kpi-lbl">Caps Applied</div></div>
+        <div class="rcs-kpi ${flagCls}"><div class="rcs-kpi-val">${flaggedCnt}</div><div class="rcs-kpi-lbl">Flagged</div></div>
+      </div>
+      ${issueHtml}
+      <div class="rcs-table-wrap">
+        <table class="rcs-table">
+          <thead><tr>
+            <th class="rcs-th">Tenant</th>
+            <th class="rcs-th rcs-num">Sqft</th>
+            <th class="rcs-th rcs-num">Pro-Rata</th>
+            <th class="rcs-th rcs-num">Cap Adj</th>
+            <th class="rcs-th rcs-num">Allocated</th>
+            <th class="rcs-th">Calc State</th>
+          </tr></thead>
+          <tbody>${rows}</tbody>
+          <tfoot><tr class="rcs-total-row">
+            <td class="rcs-td rcs-total-label" colspan="2">TOTAL</td>
+            <td class="rcs-td rcs-num">${proRataSum.toFixed(1)}%</td>
+            <td class="rcs-td rcs-num">${capsCount > 0 ? '−' + fmt(capTotal) : '—'}</td>
+            <td class="rcs-td rcs-num rcs-alloc-total">${fmt(totalBilled)}</td>
+            <td class="rcs-td"></td>
+          </tr></tfoot>
+        </table>
+      </div>
+    </div>`;
 }
 
 // ─── Tenant Detail Panel ──────────────────────────────────────────────────────
@@ -7652,6 +7846,12 @@ function buildAuditSummary() {
     });
   }
 
+  // ── Structural reconciliation issues (caps, expired leases, pro-rata gaps, lease-type) ──
+  {
+    const reconIssues = _detectReconciliationIssues(lastResults, currentProperty());
+    reconIssues.forEach(f => (f.severity === 'red' ? red : yellow).push(f));
+  }
+
   if (red.length === 0 && yellow.length === 0) {
     green.push({ title: 'No issues detected — reconciliation looks clean' });
   }
@@ -9339,6 +9539,7 @@ function generateTenantStatement(tenantName) {
               <div class="ts-detail-row"><span>Invoice Total</span><span class="ts-detail-val">${fmt(inv.amount)}</span></div>
               <div class="ts-detail-row ts-detail-highlight"><span>Your Share</span><span class="ts-detail-val">${fmt(share)}</span></div>
               <div class="ts-detail-basis">Based on ${pct}% pro-rata allocation by square footage</div>
+              <div class="ts-detail-formula">${fmt(inv.amount)} &times; ${pct}% = ${fmt(share)}</div>
               <div class="ts-detail-actions">
                 ${viewInvBtn}
                 <button class="inv-act-btn inv-act-explain" id="tsexplbtn-${rowId}"
