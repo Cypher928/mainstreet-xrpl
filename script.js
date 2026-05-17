@@ -844,6 +844,7 @@ function normalizeTenant(d) {
     id:                  d.id                  ?? crypto.randomUUID(),
     fileName:            d.fileName            ?? '',
     _error:              d._error              ?? null,
+    reviewOverrides:     d.reviewOverrides     ?? {},
   };
 }
 
@@ -2637,9 +2638,97 @@ function getFieldConfidence(fieldName, t) {
 }
 
 function renderFieldConfidenceHtml(fieldName, t) {
+  if (t?.reviewOverrides?.[fieldName]?.reviewerConfirmed)
+    return `<span class="lfc-meta lfc-manual">✓ Manually Verified</span>`;
   const conf = getFieldConfidence(fieldName, t);
   const icon = conf.status === 'verified' ? '✓' : conf.status === 'estimated' ? '⚠' : '—';
   return `<span class="lfc-meta lfc-${conf.status}">${icon} ${esc(conf.note)}</span>`;
+}
+// ─────────────────────────────────────────────────────────────────────────────
+
+// ── Field Override + Manual Confirmation ──────────────────────────────────
+// Priority: manual override → extracted value → null.
+// Resolver used by all display layers so override logic stays in one place.
+function getEffectiveLeaseField(fieldName, t) {
+  if (!t) return null;
+  const ov = t.reviewOverrides?.[fieldName];
+  return (ov?.reviewerConfirmed ? ov.override : null) ?? t[fieldName] ?? null;
+}
+
+// Editable fields — proRata is computed, not directly stored
+const _LFC_EDITABLE = new Set(['lease_type', 'leased_sqft', 'start_date', 'end_date', 'cap']);
+
+// Renders inner HTML for one LFC item (display mode). Used in initial render
+// and after save/cancel to rebuild item without full expansion re-render.
+function _lfcItemInner(key, label, val, td) {
+  const editable = _LFC_EDITABLE.has(key) && td?.id;
+  return `<div class="lfc-label">${esc(label)}</div>
+    <div class="lfc-value${val == null ? ' lfc-missing' : ''}">${val ?? '—'}</div>
+    ${renderFieldConfidenceHtml(key, td)}
+    ${editable ? `<button class="lfc-edit-btn" onclick="startFieldOverride('${td.id}','${key}')">Edit</button>` : ''}`;
+}
+
+// Saves a manual override to the tenant object + triggers persistence.
+function saveFieldOverride(tenantId, fieldName, newValue) {
+  const idx = tenantData.findIndex(t => t && t.id === tenantId);
+  if (idx === -1) return;
+  const t = tenantData[idx];
+  const prev = t.reviewOverrides || {};
+  // Preserve the very first extracted value as the permanent original
+  const original = prev[fieldName]?.original ?? (t[fieldName] ?? null);
+  tenantData[idx] = {
+    ...t,
+    [fieldName]: newValue,   // update live field so reconciliation reads override
+    reviewOverrides: {
+      ...prev,
+      [fieldName]: { original, override: newValue, reviewerConfirmed: true, reviewedAt: new Date().toISOString(), overrideSource: 'manual' },
+    },
+  };
+  savePropertyData();
+  renderBulkResults();
+  _refreshLfcExpansion(tenantId);
+  showToast('✓ Field updated — re-run reconciliation to apply to totals.', { color: '#0c4a6e', textColor: '#7dd3fc', duration: 4000 });
+}
+
+// Transforms an LFC item to inline edit mode.
+function startFieldOverride(tenantId, fieldName) {
+  const item = document.querySelector(`.lfc-item[data-tenant-id="${tenantId}"][data-field-name="${fieldName}"]`);
+  if (!item) return;
+  const t = tenantData.find(x => x && x.id === tenantId);
+  if (!t) return;
+  const current = getEffectiveLeaseField(fieldName, t) ?? '';
+  const label = item.querySelector('.lfc-label')?.textContent || fieldName;
+  const inputType = (fieldName === 'start_date' || fieldName === 'end_date') ? 'date' : 'text';
+  item.innerHTML = `<div class="lfc-label">${esc(label)}</div>
+    <input class="lfc-edit-input" type="${inputType}" value="${esc(String(current))}" />
+    <div class="lfc-edit-actions">
+      <button class="lfc-save-btn" onclick="confirmFieldOverride('${tenantId}','${fieldName}')">Save</button>
+      <button class="lfc-cancel-btn" onclick="cancelFieldOverride('${tenantId}','${fieldName}')">Cancel</button>
+    </div>`;
+  item.querySelector('.lfc-edit-input')?.focus();
+}
+
+// Reads the inline input and commits the override.
+function confirmFieldOverride(tenantId, fieldName) {
+  const item = document.querySelector(`.lfc-item[data-tenant-id="${tenantId}"][data-field-name="${fieldName}"]`);
+  const val = item?.querySelector('.lfc-edit-input')?.value?.trim() || null;
+  saveFieldOverride(tenantId, fieldName, val);
+}
+
+// Restores the item to display mode without saving.
+function cancelFieldOverride(tenantId, fieldName) {
+  _refreshLfcExpansion(tenantId);
+}
+
+// Closes and re-renders the expansion row for a tenant after an override is saved/cancelled.
+function _refreshLfcExpansion(tenantId) {
+  const t = tenantData.find(x => x && x.id === tenantId);
+  if (!t?.tenant_name) return;
+  const allRows = Array.from(document.querySelectorAll('#rptBody tr[data-tenant-name]'));
+  const tr = allRows.find(el => el.dataset.tenantName === t.tenant_name);
+  if (!tr) return;
+  closeReportTenantExpansion();
+  renderReportTenantExpansion(tr, t.tenant_name);
 }
 // ─────────────────────────────────────────────────────────────────────────────
 
@@ -8949,11 +9038,10 @@ function renderReportTenantExpansion(tr, tenantName) {
           { key: 'cap',         label: 'CAM Cap',     val: capStr },
           { key: 'proRata',     label: 'Pro-Rata',    val: proRatStr },
         ];
+        const tdId = td.id || '';
         const items = lfcFields.map(f =>
-          `<div class="lfc-item">
-            <div class="lfc-label">${esc(f.label)}</div>
-            <div class="lfc-value${f.val == null ? ' lfc-missing' : ''}">${f.val ?? '—'}</div>
-            ${renderFieldConfidenceHtml(f.key, td)}
+          `<div class="lfc-item" data-tenant-id="${esc(tdId)}" data-field-name="${f.key}">
+            ${_lfcItemInner(f.key, f.label, f.val, td)}
           </div>`).join('');
         return `<div class="rpt-exp-section">Lease Field Confidence</div>
           <div class="lfc-grid">${items}</div>`;

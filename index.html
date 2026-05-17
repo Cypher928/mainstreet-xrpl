@@ -1193,6 +1193,28 @@
     .lfc-verified  { color: #4ade80; }
     .lfc-estimated { color: #fbbf24; }
     .lfc-missing   { color: #64748B; }
+    .lfc-manual    { color: #38bdf8; }
+    /* Edit button and inline edit controls */
+    .lfc-edit-btn  {
+      margin-top: 4px; padding: 2px 8px; border-radius: 4px; font-size: 0.65rem;
+      font-weight: 600; cursor: pointer; border: 1px solid rgba(56,189,248,0.3);
+      background: rgba(56,189,248,0.08); color: #7dd3fc; display: block;
+      font-family: 'DM Sans', sans-serif; transition: background .15s;
+    }
+    .lfc-edit-btn:hover { background: rgba(56,189,248,0.16); }
+    .lfc-edit-input {
+      width: 100%; margin-top: 3px; padding: 4px 6px; border-radius: 5px;
+      background: rgba(15,23,42,0.9); border: 1px solid rgba(56,189,248,0.4);
+      color: #E2E8F0; font-size: 0.8rem; font-family: 'DM Sans', sans-serif;
+      box-sizing: border-box;
+    }
+    .lfc-edit-actions { display: flex; gap: 5px; margin-top: 4px; }
+    .lfc-save-btn, .lfc-cancel-btn {
+      flex: 1; padding: 3px 0; border-radius: 4px; font-size: 0.68rem;
+      font-weight: 700; cursor: pointer; font-family: 'DM Sans', sans-serif;
+    }
+    .lfc-save-btn   { background: rgba(56,189,248,0.15); border: 1px solid rgba(56,189,248,0.4); color: #7dd3fc; }
+    .lfc-cancel-btn { background: rgba(255,255,255,0.04); border: 1px solid rgba(255,255,255,0.1); color: #64748B; }
 
     /* Confidence detail banners (inside the expanded edit panel) */
     .cx-detail-banner {
