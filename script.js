@@ -5959,6 +5959,7 @@ function _buildReconciliationSummaryHtml(results, invoices, propName) {
   const flaggedCnt  = results.filter(r => (r.ambiguityFlags || []).length > 0).length;
 
   const issues   = _detectReconciliationIssues(results, currentProperty());
+  _lastReconIssues = issues; // capture for openDisputeFromFlag()
   const reds     = issues.filter(f => f.severity === 'red');
   const yellows  = issues.filter(f => f.severity === 'yellow');
   const panelCls = reds.length > 0 ? 'rcs-panel--alert' : yellows.length > 0 ? 'rcs-panel--warn' : 'rcs-panel--ok';
@@ -5968,7 +5969,10 @@ function _buildReconciliationSummaryHtml(results, invoices, propName) {
   const flagCls  = flaggedCnt > 0 ? 'rcs-kpi--warn' : '';
 
   const issueHtml = issues.length > 0 ? `<div class="rcs-issues">${
-    issues.map(f => `<div class="rcs-issue rcs-issue--${f.severity}">${f.severity === 'red' ? '&#x26D4;' : '&#x26A0;'} ${esc(f.title)}</div>`).join('')
+    issues.map((f, fi) => `<div class="rcs-issue rcs-issue--${f.severity}">
+      <span class="rcs-issue-main">${f.severity === 'red' ? '&#x26D4;' : '&#x26A0;'} ${esc(f.title)}</span>
+      <button class="rcs-dispute-btn" onclick="openDisputeFromFlag(${fi})">Open Dispute</button>
+    </div>`).join('')
   }</div>` : '';
 
   const rows = results.map(r => {
@@ -6387,10 +6391,29 @@ let lastTotal    = 0;
 let lastInvoicesFull = []; // full invoice list with category sums
 let lastFullResults  = []; // ReconciliationResult[] from runFullReconciliation
 
+// ─── Dispute Types + Severity ─────────────────────────────────────────────────
+const _DISPUTE_TYPES = {
+  cam_cap_violation:     { label: 'CAM Cap Violation'     },
+  excluded_expense:      { label: 'Excluded Expense'      },
+  duplicate_billing:     { label: 'Duplicate Billing'     },
+  allocation_mismatch:   { label: 'Allocation Mismatch'   },
+  expired_lease_billing: { label: 'Expired Lease Billing' },
+  admin_fee_violation:   { label: 'Admin Fee Violation'   },
+  unsupported_invoice:   { label: 'Unsupported Invoice'   },
+};
+const _DISPUTE_SEV = {
+  low:      { label: 'Low',      cls: 'dsev-low'  },
+  medium:   { label: 'Medium',   cls: 'dsev-med'  },
+  high:     { label: 'High',     cls: 'dsev-high' },
+  critical: { label: 'Critical', cls: 'dsev-crit' },
+};
+let _lastReconIssues = []; // last _detectReconciliationIssues() output — used by openDisputeFromFlag
+let _dwActiveDid     = null; // active dispute ID in workspace overlay
+
 // ─── Dispute State ────────────────────────────────────────────────────────────
 let lastInvoices = []; // [{ id, vendor, category, amount }]
 let lastTenants  = []; // [{ name, excludedCategories }]
-const disputes   = []; // [{ id, tenantName, invoiceId, vendor, category, tenantShare, reason, timestamp, status, resolution, resolvedAt, hash }]
+const disputes   = []; // [{ id, tenantName, invoiceId, vendor, category, tenantShare, reason, timestamp, status, resolution, resolvedAt, hash, disputeType, severity, reviewerNote, leaseClause, history[] }]
 let nextDisputeId = 0;
 
 // ─── Activity Log ─────────────────────────────────────────────────────────────
@@ -7128,12 +7151,15 @@ async function submitDispute(rowId, tenantName, invoiceId, vendor, category, ten
   }
   const docInput = document.getElementById(`ddoc-${rowId}`);
   const docName  = docInput && docInput.files[0] ? docInput.files[0].name : null;
+  const _dNow = new Date().toISOString();
   disputes.push({
     id:          nextDisputeId++,
     tenantName, invoiceId, vendor, category, tenantShare, reason, docName,
-    timestamp:   new Date().toISOString(),
+    timestamp:   _dNow,
     status:      'open',
     resolution:  null, resolvedAt: null, hash: null,
+    disputeType: null, severity: 'medium', reviewerNote: null, leaseClause: null,
+    history:     [{ action: 'opened', by: tenantName || 'Tenant', at: _dNow, note: reason }],
   });
   logActivity('dispute_opened', `Dispute filed — ${vendor || 'Unknown vendor'}`, {
     severity:        'warning',
@@ -7254,13 +7280,16 @@ function renderOpenDisputes() {
         </div>`;
     }
 
+    const typeLabel = d.disputeType && _DISPUTE_TYPES[d.disputeType] ? `<span class="d-type-chip">${_DISPUTE_TYPES[d.disputeType].label}</span>` : '';
+    const sevLabel  = d.severity && _DISPUTE_SEV[d.severity] ? `<span class="d-sev-chip ${_DISPUTE_SEV[d.severity].cls}">${_DISPUTE_SEV[d.severity].label}</span>` : '';
     return `
       <div class="dispute-card${isResolved ? ' resolved' : ''}">
-        <div class="d-meta">#${d.id + 1} · ${esc(d.tenantName)} · ${fmtTs(d.timestamp)}</div>
+        <div class="d-meta">#${d.id + 1} · ${esc(d.tenantName)} · ${fmtTs(d.timestamp)}${typeLabel}${sevLabel}</div>
         <div class="d-title">${esc(d.vendor)} (${esc(d.category)}) — ${fmt(d.tenantShare)}</div>
         <div class="d-reason">"${esc(d.reason)}"</div>
         ${docHtml}
         ${actionsHtml}
+        <button class="dw-open-btn" onclick="openDisputeWorkspace(${d.id})">&#x1F4CB; Open Workspace</button>
       </div>`;
   }
 
@@ -7304,6 +7333,14 @@ async function resolveDispute(id, resolution) {
 
   d.status     = resolution;
   d.resolvedAt = new Date().toISOString();
+  if (!d.history) d.history = [];
+  d.history.push({
+    action:     resolution === 'docs_requested' ? 'docs_requested' : 'resolved',
+    by:         'Reviewer',
+    at:         d.resolvedAt,
+    fromStatus: 'open',
+    toStatus:   resolution,
+  });
   {
     const isDocsReq = resolution === 'docs_requested';
     const evType  = isDocsReq ? 'docs_requested' : 'dispute_resolved';
@@ -7335,6 +7372,317 @@ async function resolveDispute(id, resolution) {
 
   renderOpenDisputes();
   syncPortfolioEntry();
+}
+
+// ─── Dispute Workspace ────────────────────────────────────────────────────────
+
+function openDisputeWorkspace(disputeId) {
+  const el = document.getElementById('disputeWorkspace');
+  if (!el) return;
+  _dwActiveDid = disputeId;
+  _dwRenderAll(disputeId);
+  el.style.display = 'flex';
+  document.body.style.overflow = 'hidden';
+}
+
+function closeDisputeWorkspace() {
+  const el = document.getElementById('disputeWorkspace');
+  if (el) el.style.display = 'none';
+  document.body.style.overflow = '';
+  _dwActiveDid = null;
+}
+
+function _dwFmtTs(iso) {
+  if (!iso) return '—';
+  try { return new Date(iso).toLocaleString('en-US', { month: 'short', day: 'numeric', year: 'numeric', hour: 'numeric', minute: '2-digit' }); }
+  catch (e) { return iso; }
+}
+
+function _dwRenderAll(disputeId) {
+  const d    = disputes.find(x => x.id === disputeId);
+  const body = document.getElementById('dwBody');
+  if (!d || !body) return;
+
+  const typeInfo = _DISPUTE_TYPES[d.disputeType] || null;
+  const sevInfo  = _DISPUTE_SEV[d.severity || 'medium'] || _DISPUTE_SEV.medium;
+  const isOpen   = d.status === 'open';
+  const statusMap = { open: 'Open', accepted: 'Accepted', rejected: 'Rejected', docs_requested: 'Docs Requested' };
+  const statusCls = { open: 'dw-status-open', accepted: 'dw-status-accepted', rejected: 'dw-status-rejected', docs_requested: 'dw-status-docs' };
+
+  const typeOptions = Object.entries(_DISPUTE_TYPES)
+    .map(([k, v]) => `<option value="${k}"${d.disputeType === k ? ' selected' : ''}>${esc(v.label)}</option>`).join('');
+  const sevOptions = Object.entries(_DISPUTE_SEV)
+    .map(([k, v]) => `<option value="${k}"${(d.severity || 'medium') === k ? ' selected' : ''}>${esc(v.label)}</option>`).join('');
+
+  const histHtml = (d.history || []).length ? (d.history || []).map(h => `
+    <div class="dw-hist-entry">
+      <div class="dw-hist-dot"></div>
+      <div class="dw-hist-body">
+        <div class="dw-hist-action">${esc(h.action || '')}${h.fromStatus && h.toStatus ? ` <span class="dw-hist-arrow">${esc(h.fromStatus)} &#x2192; ${esc(h.toStatus)}</span>` : ''}</div>
+        <div class="dw-hist-meta">${esc(h.by || '')} &middot; ${_dwFmtTs(h.at)}</div>
+        ${h.note ? `<div class="dw-hist-note">&ldquo;${esc(h.note)}&rdquo;</div>` : ''}
+      </div>
+    </div>`).join('') : '<div class="dw-hist-empty">No history recorded yet.</div>';
+
+  const resolveSection = isOpen ? `
+    <div class="dw-section">
+      <div class="dw-section-title">Resolve Dispute</div>
+      <textarea id="dwResolveNote-${d.id}" class="dw-note-input" rows="2" placeholder="Resolution note (optional)…"></textarea>
+      <div class="dw-resolve-btns">
+        <button class="dw-res-btn dw-res-accept" onclick="_dwResolveWithNote(${d.id},'accepted')">&#x2705; Accept</button>
+        <button class="dw-res-btn dw-res-reject" onclick="_dwResolveWithNote(${d.id},'rejected')">&#x274C; Reject</button>
+        <button class="dw-res-btn dw-res-docs"   onclick="_dwResolveWithNote(${d.id},'docs_requested')">&#x1F4C4; Request Docs</button>
+      </div>
+    </div>` : `
+    <div class="dw-resolved-banner dw-resolved-${d.status}">
+      ${d.status === 'accepted' ? '&#x2705; Accepted' : d.status === 'rejected' ? '&#x274C; Rejected' : '&#x1F4C4; Docs Requested'} &middot; ${_dwFmtTs(d.resolvedAt)}
+    </div>`;
+
+  body.innerHTML = `
+    <div class="dw-meta-strip">
+      <span class="dw-badge ${statusCls[d.status] || 'dw-status-open'}">${statusMap[d.status] || esc(d.status)}</span>
+      ${typeInfo ? `<span class="dw-type-badge">${esc(typeInfo.label)}</span>` : ''}
+      <span class="dw-sev-badge ${sevInfo.cls}">${sevInfo.label}</span>
+      <span class="dw-meta-id">#${d.id + 1} &middot; ${_dwFmtTs(d.timestamp)}</span>
+    </div>
+
+    <div class="dw-detail-grid">
+      <div class="dw-detail-item"><div class="dw-lbl">Tenant</div><div class="dw-val">${esc(d.tenantName || '—')}</div></div>
+      <div class="dw-detail-item"><div class="dw-lbl">Vendor</div><div class="dw-val">${esc(d.vendor || '—')}</div></div>
+      <div class="dw-detail-item"><div class="dw-lbl">Category</div><div class="dw-val">${esc(d.category || '—')}</div></div>
+      <div class="dw-detail-item"><div class="dw-lbl">Disputed Amount</div><div class="dw-val dw-amount">${d.tenantShare != null ? fmt(parseFloat(d.tenantShare)) : '—'}</div></div>
+    </div>
+
+    <div class="dw-section">
+      <div class="dw-section-title">Tenant Reason</div>
+      <div class="dw-reason-box">&ldquo;${esc(d.reason || '—')}&rdquo;</div>
+    </div>
+
+    ${isOpen ? `
+    <div class="dw-section">
+      <div class="dw-section-title">Classify Dispute</div>
+      <div class="dw-classify-row">
+        <div class="dw-field">
+          <label class="dw-field-lbl">Dispute Type</label>
+          <select class="dw-select" onchange="_dwSaveType(${d.id},this.value)">
+            <option value="">— Select type —</option>
+            ${typeOptions}
+          </select>
+        </div>
+        <div class="dw-field">
+          <label class="dw-field-lbl">Severity</label>
+          <select class="dw-select" onchange="_dwSaveSeverity(${d.id},this.value)">${sevOptions}</select>
+        </div>
+      </div>
+    </div>` : ''}
+
+    <div class="dw-section">
+      <div class="dw-section-title">Reviewer Notes</div>
+      <textarea id="dwNote-${d.id}" class="dw-note-input" rows="3" placeholder="Internal reviewer notes (not shared with tenant)…">${esc(d.reviewerNote || '')}</textarea>
+      ${isOpen ? `<button class="dw-save-btn" onclick="_dwSaveNote(${d.id})">Save Note</button>` : ''}
+    </div>
+
+    <div class="dw-section">
+      <div class="dw-section-title">Lease Clause Reference</div>
+      <textarea id="dwClause-${d.id}" class="dw-note-input" rows="2" placeholder="Paste relevant lease clause or section reference…">${esc(d.leaseClause || '')}</textarea>
+      ${isOpen ? `<button class="dw-save-btn" onclick="_dwSaveLeaseClause(${d.id})">Save Clause</button>` : ''}
+    </div>
+
+    <div class="dw-section">
+      <div class="dw-section-title">AI Dispute Explanation</div>
+      <div id="dwAiExpl-${d.id}" class="dw-ai-box">
+        <div class="dw-ai-hint">Generates a neutral analysis covering financial impact, lease logic, and recommended resolution path.</div>
+        <button class="dw-ai-btn" onclick="aiExplainDispute(${d.id})">&#x2728; Generate Explanation</button>
+      </div>
+    </div>
+
+    ${resolveSection}
+
+    <div class="dw-section">
+      <div class="dw-section-title">Resolution History</div>
+      <div class="dw-history">${histHtml}</div>
+    </div>
+
+    <div class="dw-section">
+      <div class="dw-section-title">Export</div>
+      <div class="dw-export-row">
+        <button class="dw-export-btn" onclick="generateDisputePacket(${d.id})">&#x1F4C4; Dispute Packet</button>
+      </div>
+    </div>`;
+
+  const titleEl    = document.getElementById('dwTitle');
+  const subtitleEl = document.getElementById('dwSubtitle');
+  if (titleEl)    titleEl.textContent    = `Dispute #${d.id + 1} — ${d.vendor || 'Unknown vendor'}`;
+  if (subtitleEl) subtitleEl.textContent = `${d.tenantName || ''} · ${d.category || ''} · ${d.tenantShare != null ? fmt(parseFloat(d.tenantShare)) : '—'}`;
+}
+
+function _dwSaveType(disputeId, typeKey) {
+  const d = disputes.find(x => x.id === disputeId);
+  if (!d) return;
+  d.disputeType = typeKey || null;
+  if (!d.history) d.history = [];
+  d.history.push({ action: 'type_assigned', by: 'Reviewer', at: new Date().toISOString(), note: typeKey ? (_DISPUTE_TYPES[typeKey]?.label || typeKey) : 'type cleared' });
+  savePropertyData();
+}
+
+function _dwSaveSeverity(disputeId, sev) {
+  const d = disputes.find(x => x.id === disputeId);
+  if (!d) return;
+  d.severity = sev;
+  if (!d.history) d.history = [];
+  d.history.push({ action: 'severity_set', by: 'Reviewer', at: new Date().toISOString(), note: sev });
+  savePropertyData();
+  showToast(`Severity set to ${_DISPUTE_SEV[sev]?.label || sev}`);
+}
+
+function _dwSaveNote(disputeId) {
+  const d  = disputes.find(x => x.id === disputeId);
+  const el = document.getElementById(`dwNote-${disputeId}`);
+  if (!d || !el) return;
+  d.reviewerNote = el.value.trim() || null;
+  if (!d.history) d.history = [];
+  if (d.reviewerNote) d.history.push({ action: 'note_added', by: 'Reviewer', at: new Date().toISOString(), note: d.reviewerNote.slice(0, 120) });
+  savePropertyData();
+  showToast('Note saved.');
+}
+
+function _dwSaveLeaseClause(disputeId) {
+  const d  = disputes.find(x => x.id === disputeId);
+  const el = document.getElementById(`dwClause-${disputeId}`);
+  if (!d || !el) return;
+  d.leaseClause = el.value.trim() || null;
+  if (!d.history) d.history = [];
+  if (d.leaseClause) d.history.push({ action: 'clause_attached', by: 'Reviewer', at: new Date().toISOString(), note: d.leaseClause.slice(0, 100) });
+  savePropertyData();
+  showToast('Lease clause saved.');
+}
+
+async function _dwResolveWithNote(disputeId, resolution) {
+  const d    = disputes.find(x => x.id === disputeId);
+  if (!d || d.status !== 'open') return;
+  const note = (document.getElementById(`dwResolveNote-${disputeId}`)?.value || '').trim();
+  if (note) {
+    if (!d.history) d.history = [];
+    d.history.push({ action: 'resolution_note', by: 'Reviewer', at: new Date().toISOString(), note });
+  }
+  await resolveDispute(disputeId, resolution);
+  _dwRenderAll(disputeId);
+}
+
+// Creates a dispute from a reconciliation issue flag and opens the workspace.
+function openDisputeFromFlag(flagIdx) {
+  const flag = _lastReconIssues[flagIdx];
+  if (!flag) return;
+
+  const typeKeyMap = [
+    [/expired lease/i,  'expired_lease_billing'],
+    [/cap applied/i,    'cam_cap_violation'],
+    [/pro-rata/i,       'allocation_mismatch'],
+    [/gross-lease/i,    'excluded_expense'],
+    [/admin fee/i,      'admin_fee_violation'],
+    [/duplicate/i,      'duplicate_billing'],
+  ];
+  const typeKey = (typeKeyMap.find(([rx]) => rx.test(flag.title)) || [])[1] || null;
+
+  const tenantMatch = flag.title.match(/—\s*([^(—\n]+?)(?:\s*\(|\s*$)/);
+  const tenantName  = tenantMatch ? tenantMatch[1].trim() : '';
+
+  const exposureLine = (flag.conditions || []).find(c => /Allocated|Final charge|Shared CAM/i.test(c));
+  const exposureM    = exposureLine ? exposureLine.match(/\$([\d,]+\.?\d*)/) : null;
+  const exposure     = exposureM ? parseFloat(exposureM[1].replace(/,/g, '')) : 0;
+
+  const now = new Date().toISOString();
+  const did = nextDisputeId++;
+  disputes.push({
+    id:          did,
+    tenantName,
+    invoiceId:   `flag-${flagIdx}`,
+    vendor:      '—',
+    category:    'reconciliation',
+    tenantShare: exposure,
+    reason:      flag.title,
+    docName:     null,
+    timestamp:   now,
+    status:      'open',
+    resolution:  null, resolvedAt: null, hash: null,
+    disputeType: typeKey,
+    severity:    flag.severity === 'red' ? 'high' : 'medium',
+    reviewerNote: null, leaseClause: null,
+    history:     [{ action: 'opened', by: 'System', at: now, note: `Auto-opened from reconciliation flag: ${flag.title}` }],
+  });
+
+  logActivity('dispute_opened', `Dispute opened from reconciliation issue`, {
+    severity: 'warning', actor: 'System', relatedEntity: tenantName || lastPropName || 'Property',
+    detail: flag.title, financialImpact: exposure > 0 ? fmt(exposure) : '',
+  });
+
+  savePropertyData();
+  renderOpenDisputes();
+  openDisputeWorkspace(did);
+}
+
+// AI-powered dispute explanation via the existing explainFetch infrastructure.
+async function aiExplainDispute(disputeId) {
+  const d   = disputes.find(x => x.id === disputeId);
+  const box = document.getElementById(`dwAiExpl-${disputeId}`);
+  if (!d || !box) return;
+
+  const btn = box.querySelector('.dw-ai-btn');
+  if (btn) { btn.disabled = true; btn.textContent = 'Generating…'; }
+
+  const propName  = lastPropName || currentProperty()?.name || 'this property';
+  const camYear   = getCamYear() || new Date().getFullYear();
+  const typeLabel = _DISPUTE_TYPES[d.disputeType]?.label || d.disputeType || 'General';
+
+  const prompt = `You are a CAM reconciliation expert reviewing a tenant dispute for ${propName} (${camYear} CAM year).
+
+Dispute:
+- Type: ${typeLabel}
+- Tenant: ${d.tenantName || 'Unknown'}
+- Vendor: ${d.vendor || '—'}
+- Category: ${d.category || '—'}
+- Disputed amount: ${d.tenantShare != null ? '$' + parseFloat(d.tenantShare).toFixed(2) : 'unknown'}
+- Tenant reason: "${d.reason || '—'}"${d.leaseClause ? `\n- Lease clause: "${d.leaseClause}"` : ''}
+
+Provide a brief analysis covering:
+1. Why this was flagged and what it means
+2. Financial impact
+3. Relevant lease logic
+4. Recommended resolution path
+
+Be neutral, practical, factual. Use markdown.`;
+
+  try {
+    const data = await explainFetch({
+      model:      MODEL,
+      max_tokens: 700,
+      system:     'You are a CAM reconciliation expert. Provide concise, neutral dispute analysis. Focus on lease compliance, financial exposure, and resolution paths. Use markdown with headers and bullet points.',
+      messages:   [{ role: 'user', content: prompt }],
+    });
+    const text = data?.content?.[0]?.text || '';
+    box.innerHTML = text
+      ? `<div class="dw-ai-content">${renderMarkdown(text)}</div>`
+      : `<div class="dw-ai-content">${_buildStaticDisputeExplanation(d)}</div>`;
+  } catch (e) {
+    box.innerHTML = `<div class="dw-ai-content">${_buildStaticDisputeExplanation(d)}</div>`;
+  }
+}
+
+// Static fallback explanation when AI is unavailable.
+function _buildStaticDisputeExplanation(d) {
+  const amt       = d.tenantShare != null ? fmt(parseFloat(d.tenantShare)) : 'unknown';
+  const vendor    = esc(d.vendor || 'this vendor');
+  const cat       = esc(d.category || 'general');
+  const explanations = {
+    cam_cap_violation:     `<strong>CAM Cap Violation</strong><br>The charge of ${amt} may exceed the contractual CAM cap. Review the cap base amount and percentage in the lease and confirm the final charge is at or below the permitted ceiling before issuing the statement.`,
+    excluded_expense:      `<strong>Excluded Expense</strong><br>The tenant's lease may exclude this ${cat} expense from their CAM obligation. Review the exclusion clause and confirm whether ${vendor} charges in this category are recoverable under the lease.`,
+    duplicate_billing:     `<strong>Duplicate Billing</strong><br>The charge of ${amt} from ${vendor} may appear more than once. Pull all invoices from this vendor and confirm each entry represents a distinct service period before including in the CAM pool.`,
+    allocation_mismatch:   `<strong>Allocation Mismatch</strong><br>The tenant's pro-rata share may not match lease terms. Verify the square footage used matches the lease exhibit and confirm the property total sqft is correct.`,
+    expired_lease_billing: `<strong>Expired Lease Billing</strong><br>This tenant's lease may have expired during the CAM year. Confirm current occupancy status and whether a holdover or renewal extends CAM obligations past the original end date.`,
+    admin_fee_violation:   `<strong>Admin Fee Violation</strong><br>The management fee included in CAM may exceed the lease-permitted percentage. Locate the fee cap provision and confirm the charged rate is within bounds.`,
+    unsupported_invoice:   `<strong>Unsupported Invoice</strong><br>The invoice from ${vendor} for ${amt} may lack adequate documentation. Request itemized backup before including this charge in any tenant billing.`,
+  };
+  return explanations[d.disputeType] || `<strong>Dispute Analysis</strong><br>Tenant disputes a ${cat} charge of ${amt} from ${vendor}. Review the relevant lease clauses, source invoices, and pro-rata calculations before responding.`;
 }
 
 // ─── AI Audit Summary ────────────────────────────────────────────────────────
@@ -9453,6 +9801,288 @@ async function runLandlordAIReview() {
 
   container.innerHTML = html;
   if (btn) btn.remove();
+}
+
+// ─── Dispute Packet Report ────────────────────────────────────────────────────
+
+function generateDisputePacket(disputeId) {
+  const d = disputes.find(x => x.id === disputeId);
+  if (!d) { showToast('Dispute not found.', { color: '#92400e', textColor: '#fef3c7' }); return; }
+  try {
+  logActivity('dispute_packet', `Dispute packet generated — #${d.id + 1}`, { severity: 'info', actor: 'User', relatedEntity: d.tenantName || '' });
+
+  const propName  = lastPropName || currentProperty()?.name || 'Property';
+  const camYear   = getCamYear() || new Date().getFullYear();
+  const now       = new Date().toLocaleDateString('en-US', { year: 'numeric', month: 'long', day: 'numeric' });
+  const typeLabel = d.disputeType && _DISPUTE_TYPES[d.disputeType] ? _DISPUTE_TYPES[d.disputeType].label : 'General Dispute';
+  const sevLabel  = d.severity && _DISPUTE_SEV[d.severity] ? _DISPUTE_SEV[d.severity].label : 'Medium';
+
+  const statusMap = { open: 'Open', accepted: 'Accepted', rejected: 'Rejected', docs_requested: 'Documentation Requested' };
+
+  function fmtTs(iso) {
+    if (!iso) return '—';
+    try { return new Date(iso).toLocaleDateString('en-US', { year: 'numeric', month: 'long', day: 'numeric' }); }
+    catch (e) { return iso; }
+  }
+
+  // Find related reconciliation result for calculation breakdown
+  const recon   = lastResults.find(r => r.name === d.tenantName) || null;
+  const liveT   = tenantData.find(t => t && t.tenant_name === d.tenantName) || null;
+  const calcSt  = recon ? _deriveCalcState(recon, liveT) : null;
+
+  const calcBreakdown = recon ? `
+    <div class="rpt-section-title">Calculation Breakdown</div>
+    <table class="rpt-table">
+      <tbody>
+        <tr><td>Square Footage</td><td style="text-align:right">${recon.sqFt ? Number(recon.sqFt).toLocaleString() : '—'} sqft</td></tr>
+        <tr><td>Pro-Rata Share</td><td style="text-align:right">${(recon.proRata * 100).toFixed(2)}%</td></tr>
+        <tr><td>Raw Allocation</td><td style="text-align:right">${fmt(recon.capApplied ? recon.totalAllocated + recon.capAdjustment : recon.totalAllocated)}</td></tr>
+        ${recon.capApplied ? `<tr><td>Cap Reduction</td><td style="text-align:right;color:#fb923c;">−${fmt(recon.capAdjustment)}</td></tr>` : ''}
+        <tr class="total-row"><td>Final CAM Charge</td><td style="text-align:right">${fmt(recon.totalAllocated)}</td></tr>
+        ${calcSt ? `<tr><td>Calculation State</td><td style="text-align:right"><span class="rc-calc-state ${calcSt.cls}">${calcSt.label}</span></td></tr>` : ''}
+      </tbody>
+    </table>` : '';
+
+  // Related invoices
+  const relatedInvs = d.invoiceId && d.invoiceId.startsWith('inv-')
+    ? (() => {
+        const idx = parseInt(d.invoiceId.replace('inv-', ''), 10);
+        const inv = lastInvoicesFull[idx];
+        return inv ? [inv] : [];
+      })()
+    : (lastInvoicesFull || []).filter(inv =>
+        (inv.vendor || inv.vendorName || '').toLowerCase() === (d.vendor || '').toLowerCase()
+      ).slice(0, 5);
+
+  const invRows = relatedInvs.map(inv => `
+    <tr>
+      <td>${esc(inv.vendor || inv.vendorName || '—')}</td>
+      <td>${esc(inv.invoiceDate || '—')}</td>
+      <td style="text-align:right">${fmt(inv.amount)}</td>
+      <td>${esc(inv.category || '—')}</td>
+    </tr>`).join('');
+
+  const histRows = (d.history || []).map(h => `
+    <tr>
+      <td>${fmtTs(h.at)}</td>
+      <td>${esc(h.action || '—')}</td>
+      <td>${esc(h.by || '—')}</td>
+      <td>${esc(h.note || '—')}</td>
+    </tr>`).join('');
+
+  const html = `
+    ${_rptHeader(propName, 'Dispute Packet', camYear + ' CAM Year', now, [
+      { label: 'Dispute #',   value: d.id + 1 },
+      { label: 'Status',      value: statusMap[d.status] || d.status },
+      { label: 'Type',        value: typeLabel },
+      { label: 'Severity',    value: sevLabel },
+    ])}
+
+    <div class="rpt-kpi-row">
+      <div class="rpt-kpi"><div class="kpi-val">${esc(d.tenantName || '—')}</div><div class="kpi-lbl">Tenant</div></div>
+      <div class="rpt-kpi"><div class="kpi-val">${esc(d.vendor || '—')}</div><div class="kpi-lbl">Vendor</div></div>
+      <div class="rpt-kpi"><div class="kpi-val">${esc(d.category || '—')}</div><div class="kpi-lbl">Category</div></div>
+      <div class="rpt-kpi"><div class="kpi-val">${d.tenantShare != null ? fmt(parseFloat(d.tenantShare)) : '—'}</div><div class="kpi-lbl">Disputed Amount</div></div>
+    </div>
+
+    <div class="rpt-section-title">Tenant Reason</div>
+    <div class="rpt-narrative-box">&ldquo;${esc(d.reason || '—')}&rdquo;</div>
+
+    ${d.leaseClause ? `
+    <div class="rpt-section-title">Lease Clause Reference</div>
+    <div class="rpt-narrative-box rpt-clause-box">${esc(d.leaseClause)}</div>` : ''}
+
+    ${d.reviewerNote ? `
+    <div class="rpt-section-title">Reviewer Notes</div>
+    <div class="rpt-narrative-box">${esc(d.reviewerNote)}</div>` : ''}
+
+    ${calcBreakdown}
+
+    ${invRows ? `
+    <div class="rpt-section-title">Supporting Invoices</div>
+    <table class="rpt-table">
+      <thead><tr><th>Vendor</th><th>Date</th><th style="text-align:right">Amount</th><th>Category</th></tr></thead>
+      <tbody>${invRows}</tbody>
+    </table>` : ''}
+
+    ${histRows ? `
+    <div class="rpt-section-title">Resolution History</div>
+    <table class="rpt-table">
+      <thead><tr><th>Date</th><th>Action</th><th>By</th><th>Note</th></tr></thead>
+      <tbody>${histRows}</tbody>
+    </table>` : ''}
+
+    ${d.hash ? `
+    <div class="rpt-section-title">Audit Integrity</div>
+    <div class="rpt-hash-box">
+      <div class="rpt-hash-lbl">&#x1F517; On-Chain Dispute Hash</div>
+      <div class="rpt-hash-val">${d.hash}</div>
+    </div>` : ''}
+
+    ${_rptFooter(propName, 'Dispute Packet', now)}`;
+
+  openReport(`Dispute Packet — #${d.id + 1} ${d.tenantName || ''}`, html);
+  } catch (e) {
+    logError('generateDisputePacket', e, { disputeId });
+    showToast('Could not generate dispute packet.', { color: '#92400e', textColor: '#fef3c7' });
+  }
+}
+
+// ─── Landlord Risk Export ─────────────────────────────────────────────────────
+
+function generateLandlordExport() {
+  if (!lastResults.length) { showToast('Run a CAM allocation first.', { color: '#92400e', textColor: '#fef3c7' }); return; }
+  try {
+  logActivity('landlord_export', 'Landlord Risk Export generated', { severity: 'info', actor: 'User', relatedEntity: lastPropName || 'Property' });
+  const propName   = lastPropName || 'Property';
+  const now        = new Date().toLocaleDateString('en-US', { year: 'numeric', month: 'long', day: 'numeric' });
+  const period     = (getCamYear() || new Date().getFullYear()) + ' CAM Year';
+  const openD      = disputes.filter(d => d.status === 'open');
+  const exposure   = openD.reduce((s, d) => s + (parseFloat(d.tenantShare) || 0), 0);
+  const reconIss   = _detectReconciliationIssues(lastResults, currentProperty());
+  const redIss     = reconIss.filter(f => f.severity === 'red');
+  const yellowIss  = reconIss.filter(f => f.severity === 'yellow');
+  const invSusp    = _detectInvoiceSuspicions(invoiceData.filter(inv => inv && inv.vendorName));
+  const redSusp    = invSusp.filter(f => f.severity === 'red');
+  const proRataSum = lastResults.reduce((s, r) => s + (r.proRataPercent || 0), 0);
+
+  const issueRows = [...redIss, ...yellowIss].map(f => `<tr>
+    <td><span style="color:${f.severity === 'red' ? '#f87171' : '#fbbf24'}">${f.severity === 'red' ? '⛔' : '⚠'}</span></td>
+    <td>${esc(f.title)}</td>
+  </tr>`).join('');
+
+  const disputeRows = openD.map(d => `<tr>
+    <td>#${d.id + 1}</td>
+    <td>${esc(d.tenantName || '—')}</td>
+    <td>${esc(d.vendor || '—')} (${esc(d.category || '—')})</td>
+    <td style="text-align:right">${d.tenantShare != null ? fmt(parseFloat(d.tenantShare)) : '—'}</td>
+    <td>${d.disputeType ? esc(_DISPUTE_TYPES[d.disputeType]?.label || d.disputeType) : '—'}</td>
+    <td>${d.severity ? esc(_DISPUTE_SEV[d.severity]?.label || d.severity) : 'Medium'}</td>
+  </tr>`).join('');
+
+  const tenantRows = lastResults.map(r => {
+    const liveT  = tenantData.find(t => t && t.id === r.tenantId);
+    const calcSt = _deriveCalcState(r, liveT);
+    const flagCnt = (r.ambiguityFlags || []).length;
+    return `<tr>
+      <td>${esc(r.name)}</td>
+      <td style="text-align:right">${fmt(r.totalAllocated)}</td>
+      <td style="text-align:right">${(r.proRata * 100).toFixed(2)}%</td>
+      <td><span class="rc-calc-state ${calcSt.cls}">${calcSt.label}</span></td>
+      <td style="text-align:center">${flagCnt > 0 ? `<span style="color:#fbbf24">${flagCnt}</span>` : '—'}</td>
+    </tr>`;
+  }).join('');
+
+  const html = `
+    ${_rptHeader(propName, 'Landlord Risk Export', period, now, [
+      { label: 'Total CAM',   value: fmt(lastTotal) },
+      { label: 'Open Disputes', value: openD.length },
+      { label: 'Exposure',    value: fmt(exposure) },
+    ])}
+
+    <div class="rpt-kpi-row">
+      <div class="rpt-kpi${redIss.length > 0 ? ' rpt-kpi--alert' : ''}"><div class="kpi-val">${redIss.length}</div><div class="kpi-lbl">Critical Issues</div></div>
+      <div class="rpt-kpi${yellowIss.length > 0 ? ' rpt-kpi--warn' : ''}"><div class="kpi-val">${yellowIss.length}</div><div class="kpi-lbl">Warnings</div></div>
+      <div class="rpt-kpi${openD.length > 0 ? ' rpt-kpi--warn' : ''}"><div class="kpi-val">${openD.length}</div><div class="kpi-lbl">Open Disputes</div></div>
+      <div class="rpt-kpi${exposure > 0 ? ' rpt-kpi--alert' : ''}"><div class="kpi-val">${fmt(exposure)}</div><div class="kpi-lbl">Dispute Exposure</div></div>
+      <div class="rpt-kpi${redSusp.length > 0 ? ' rpt-kpi--alert' : ''}"><div class="kpi-val">${redSusp.length}</div><div class="kpi-lbl">Invoice Red Flags</div></div>
+      <div class="rpt-kpi${Math.abs(proRataSum - 100) > 5 ? ' rpt-kpi--alert' : ''}"><div class="kpi-val">${proRataSum.toFixed(1)}%</div><div class="kpi-lbl">Pro-Rata Sum</div></div>
+    </div>
+
+    ${(redIss.length + yellowIss.length) > 0 ? `
+    <div class="rpt-section-title">Reconciliation Issues</div>
+    <table class="rpt-table"><tbody>${issueRows}</tbody></table>` : ''}
+
+    ${openD.length > 0 ? `
+    <div class="rpt-section-title">Open Disputes — ${fmt(exposure)} Total Exposure</div>
+    <table class="rpt-table">
+      <thead><tr><th>#</th><th>Tenant</th><th>Charge</th><th style="text-align:right">Amount</th><th>Type</th><th>Severity</th></tr></thead>
+      <tbody>${disputeRows}</tbody>
+    </table>` : '<div class="rpt-section-title" style="color:#4ade80">&#x2713; No open disputes</div>'}
+
+    <div class="rpt-section-title">Reconciliation Completeness by Tenant</div>
+    <table class="rpt-table">
+      <thead><tr><th>Tenant</th><th style="text-align:right">Allocated</th><th style="text-align:right">Pro-Rata</th><th>Calc State</th><th style="text-align:center">Flags</th></tr></thead>
+      <tbody>${tenantRows}</tbody>
+    </table>
+
+    ${_rptFooter(propName, 'Landlord Risk Export', now)}`;
+
+  openReport('Landlord Risk Export — ' + propName, html);
+  } catch (e) {
+    logError('generateLandlordExport', e, { propName: lastPropName });
+    showToast('Could not generate Landlord Risk Export.', { color: '#92400e', textColor: '#fef3c7' });
+  }
+}
+
+// ─── CSV + JSON Exports ───────────────────────────────────────────────────────
+
+function _downloadFile(content, filename, mime) {
+  const blob = new Blob([content], { type: mime });
+  const url  = URL.createObjectURL(blob);
+  const a    = document.createElement('a');
+  a.href = url; a.download = filename; a.click();
+  URL.revokeObjectURL(url);
+}
+
+function exportReconciliationCSV() {
+  if (!lastResults.length) { showToast('Run a CAM allocation first.', { color: '#92400e', textColor: '#fef3c7' }); return; }
+  const rows = [
+    ['Tenant', 'Unit', 'Sqft', 'Pro-Rata %', 'Cap Applied', 'Cap Reduction', 'Allocated', 'Invoices', 'Avg Confidence', 'Calc State', 'Flags'],
+    ...lastResults.map(r => {
+      const liveT  = tenantData.find(t => t && t.id === r.tenantId);
+      const calcSt = _deriveCalcState(r, liveT);
+      return [
+        r.name, r.unitNumber || '', r.sqFt || '', (r.proRata * 100).toFixed(2),
+        r.capApplied ? 'Yes' : 'No', r.capApplied ? (r.capAdjustment || 0).toFixed(2) : '',
+        r.totalAllocated.toFixed(2), r.eligibleCount, r.averageConfidence,
+        calcSt.label, (r.ambiguityFlags || []).map(f => f.code).join('; '),
+      ];
+    }),
+  ];
+  const csv = rows.map(row => row.map(v => `"${String(v).replace(/"/g, '""')}"`).join(',')).join('\n');
+  _downloadFile(csv, `cam-reconciliation-${lastPropName || 'export'}-${getCamYear() || new Date().getFullYear()}.csv`, 'text/csv');
+  logActivity('csv_export', 'Reconciliation CSV exported', { severity: 'info', actor: 'User', relatedEntity: lastPropName || 'Property' });
+}
+
+function exportDisputesCSV() {
+  if (!disputes.length) { showToast('No disputes to export.', { color: '#92400e', textColor: '#fef3c7' }); return; }
+  const rows = [
+    ['#', 'Tenant', 'Vendor', 'Category', 'Amount', 'Type', 'Severity', 'Status', 'Reason', 'Reviewer Note', 'Lease Clause', 'Opened', 'Resolved', 'Hash'],
+    ...disputes.map(d => [
+      d.id + 1, d.tenantName || '', d.vendor || '', d.category || '',
+      d.tenantShare != null ? parseFloat(d.tenantShare).toFixed(2) : '',
+      d.disputeType ? (_DISPUTE_TYPES[d.disputeType]?.label || d.disputeType) : '',
+      d.severity ? (_DISPUTE_SEV[d.severity]?.label || d.severity) : 'Medium',
+      d.status || '', d.reason || '', d.reviewerNote || '', d.leaseClause || '',
+      d.timestamp || '', d.resolvedAt || '', d.hash || '',
+    ]),
+  ];
+  const csv = rows.map(row => row.map(v => `"${String(v).replace(/"/g, '""')}"`).join(',')).join('\n');
+  _downloadFile(csv, `cam-disputes-${lastPropName || 'export'}.csv`, 'text/csv');
+  logActivity('disputes_csv_export', 'Disputes CSV exported', { severity: 'info', actor: 'User', relatedEntity: lastPropName || 'Property' });
+}
+
+function exportAuditLog() {
+  const prop = currentProperty();
+  const log  = {
+    property:        lastPropName || prop?.name || 'Unknown',
+    camYear:         getCamYear() || new Date().getFullYear(),
+    exportedAt:      new Date().toISOString(),
+    reconciliation:  lastResults.map(r => ({
+      tenant: r.name, unit: r.unitNumber, sqFt: r.sqFt,
+      proRata: r.proRataPercent, allocated: r.totalAllocated,
+      capApplied: r.capApplied, capAdjustment: r.capAdjustment,
+      calcState: _deriveCalcState(r, tenantData.find(t => t && t.id === r.tenantId))?.state,
+      flags: (r.ambiguityFlags || []).map(f => f.code),
+    })),
+    disputes:        disputes.map(d => ({ ...d, history: d.history || [] })),
+    activityLog:     activityLog.slice(0, 200),
+    reconIssues:     _detectReconciliationIssues(lastResults, prop),
+    invoiceSuspicions: _detectInvoiceSuspicions(invoiceData.filter(inv => inv && inv.vendorName)),
+  };
+  _downloadFile(JSON.stringify(log, null, 2), `cam-audit-log-${lastPropName || 'export'}.json`, 'application/json');
+  logActivity('audit_log_export', 'Audit log exported (JSON)', { severity: 'info', actor: 'User', relatedEntity: lastPropName || 'Property' });
 }
 
 function generateTenantStatement(tenantName) {
