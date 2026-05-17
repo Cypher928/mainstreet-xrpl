@@ -2637,9 +2637,18 @@ function getFieldConfidence(fieldName, t) {
   }
 }
 
+function isFieldManuallyVerified(fieldName, t) {
+  return !!(t?.reviewOverrides?.[fieldName]?.reviewerConfirmed);
+}
+
+function renderManualVerifiedBadge(fieldName, t) {
+  if (!isFieldManuallyVerified(fieldName, t)) return '';
+  return `<div class="lfc-manual-badge">✓ Manually Verified</div>`;
+}
+
+// Always shows the underlying AI confidence state — manual badge is the
+// sole "Manually Verified" indicator, so no duplicate label here.
 function renderFieldConfidenceHtml(fieldName, t) {
-  if (t?.reviewOverrides?.[fieldName]?.reviewerConfirmed)
-    return `<span class="lfc-meta lfc-manual">✓ Manually Verified</span>`;
   const conf = getFieldConfidence(fieldName, t);
   const icon = conf.status === 'verified' ? '✓' : conf.status === 'estimated' ? '⚠' : '—';
   return `<span class="lfc-meta lfc-${conf.status}">${icon} ${esc(conf.note)}</span>`;
@@ -2682,7 +2691,8 @@ function _lfcItemInner(key, label, val, td, isEditing = false) {
       <div class="lfc-value ${missingCls}">${val ?? '—'}</div>
       ${editable ? `<button class="lfc-edit-btn" onclick="startFieldOverride('${td.id}','${key}')">Edit</button>` : ''}
     </div>
-    ${renderFieldConfidenceHtml(key, td)}`;
+    ${renderFieldConfidenceHtml(key, td)}
+    ${renderManualVerifiedBadge(key, td)}`;
 }
 
 // Saves a manual override to the tenant object + triggers persistence.
