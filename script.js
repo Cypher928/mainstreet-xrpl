@@ -2593,6 +2593,56 @@ function _reviewStatusPillHtml(status) {
 }
 // ─────────────────────────────────────────────────────────────────────────────
 
+// ── Field Confidence + Source Trace helpers ────────────────────────────────
+// Pure functions — read tenant fields and metadata only, no mutations.
+function getFieldConfidence(fieldName, t) {
+  if (!t) return { status: 'missing', source: 'missing', note: 'No lease data' };
+  const val = (fieldName === 'proRata') ? null : t[fieldName];
+  const isEmpty = val === null || val === undefined || String(val).trim() === '';
+
+  switch (fieldName) {
+    case 'start_date':
+    case 'end_date': {
+      if (isEmpty) return { status: 'missing', source: 'missing', note: 'Not found in extraction' };
+      if (t._usedFallback)           return { status: 'estimated', source: 'heuristic', note: 'Estimated from document text — confirm accuracy' };
+      if (t.doc_has_dates === false) return { status: 'estimated', source: 'heuristic', note: 'No structured date field found — date inferred' };
+      return { status: 'verified', source: 'structured', note: 'Extracted from lease document' };
+    }
+    case 'lease_type': {
+      if (isEmpty) return { status: 'missing', source: 'missing', note: 'Lease type not identified' };
+      if (t.doc_has_lease_type === false) return { status: 'estimated', source: 'ocr', note: 'Lease type inferred from document context' };
+      return { status: 'verified', source: 'structured', note: 'Extracted from lease document' };
+    }
+    case 'leased_sqft': {
+      if (isEmpty) return { status: 'missing', source: 'missing', note: 'Square footage not found' };
+      const fc = t.confidence?.leased_sqft ?? t.confidence?.leasedSqft;
+      if (fc != null && fc < 70) return { status: 'estimated', source: 'ocr', note: 'Confidence below threshold — verify against lease' };
+      return { status: 'verified', source: 'structured', note: 'Extracted from lease document' };
+    }
+    case 'cap': {
+      if (isEmpty) return { status: 'missing', source: 'missing', note: 'CAM cap not stated in lease' };
+      return { status: 'verified', source: 'structured', note: 'Extracted from lease document' };
+    }
+    case 'proRata': {
+      const sqftConf = getFieldConfidence('leased_sqft', t);
+      if (sqftConf.status === 'missing')   return { status: 'missing',   source: 'missing',    note: 'Cannot compute — square footage missing' };
+      if (sqftConf.status === 'estimated') return { status: 'estimated', source: 'heuristic',  note: 'Computed from estimated square footage' };
+      return { status: 'verified', source: 'structured', note: 'Computed from verified square footage' };
+    }
+    default:
+      return isEmpty
+        ? { status: 'missing',  source: 'missing',    note: 'Not found' }
+        : { status: 'verified', source: 'structured', note: 'Extracted from lease document' };
+  }
+}
+
+function renderFieldConfidenceHtml(fieldName, t) {
+  const conf = getFieldConfidence(fieldName, t);
+  const icon = conf.status === 'verified' ? '✓' : conf.status === 'estimated' ? '⚠' : '—';
+  return `<span class="lfc-meta lfc-${conf.status}">${icon} ${esc(conf.note)}</span>`;
+}
+// ─────────────────────────────────────────────────────────────────────────────
+
 function _copyDebugFromEl(elId, btn) {
   const el = document.getElementById(elId);
   if (!el) return;
@@ -8887,6 +8937,26 @@ function renderReportTenantExpansion(tr, tenantName) {
         return notes.length
           ? `<ul class="rpt-exp-review-notes">${notes.map(n => `<li>${esc(n)}</li>`).join('')}</ul>`
           : '';
+      })()}
+      ${(() => {
+        if (!td) return '';
+        const capStr = td.cap != null ? td.cap + '%' : null;
+        const lfcFields = [
+          { key: 'lease_type',  label: 'Lease Type',  val: _v(td.lease_type) },
+          { key: 'leased_sqft', label: 'Leased Sqft', val: sqftStr },
+          { key: 'start_date',  label: 'Start Date',  val: _v(td.start_date) },
+          { key: 'end_date',    label: 'End Date',    val: _v(td.end_date) },
+          { key: 'cap',         label: 'CAM Cap',     val: capStr },
+          { key: 'proRata',     label: 'Pro-Rata',    val: proRatStr },
+        ];
+        const items = lfcFields.map(f =>
+          `<div class="lfc-item">
+            <div class="lfc-label">${esc(f.label)}</div>
+            <div class="lfc-value${f.val == null ? ' lfc-missing' : ''}">${f.val ?? '—'}</div>
+            ${renderFieldConfidenceHtml(f.key, td)}
+          </div>`).join('');
+        return `<div class="rpt-exp-section">Lease Field Confidence</div>
+          <div class="lfc-grid">${items}</div>`;
       })()}
     </div>`;
 
