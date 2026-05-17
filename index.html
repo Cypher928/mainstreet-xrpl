@@ -1963,6 +1963,17 @@
     .rpt-table tr:last-child td { border-bottom: none; }
     .rpt-table tr:nth-child(even) td { background: rgba(255,255,255,0.016); }
     .rpt-table tr:hover td { background: rgba(255,255,255,0.03); }
+    /* ── Mobile column stabilization ─────────────────────────────────────
+       Numeric cols (2+) shrink to minimum content width and never wrap.
+       Name col (1st) fills remaining space and wraps naturally.
+       Uses width:1px as a shrink-to-content hint in auto table layout. */
+    .rpt-table td:not(:first-child),
+    .rpt-table th:not(:first-child) { white-space: nowrap; width: 1px; }
+    .rpt-table td:first-child,
+    .rpt-table th:first-child { width: auto; white-space: normal; overflow-wrap: break-word; word-break: break-word; min-width: 72px; }
+    /* TOTAL label is short — safe to nowrap; expansion row spans all cols */
+    .rpt-table .total-row td:first-child { white-space: nowrap; min-width: 0; }
+    .rpt-table tr.report-tenant-expanded-row td { white-space: normal !important; width: auto !important; }
     /* Clickable tenant name inside report tables */
     .rpt-tenant-link {
       cursor: pointer; color: #E2E8F0;
