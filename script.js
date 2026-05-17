@@ -2658,14 +2658,31 @@ function getEffectiveLeaseField(fieldName, t) {
 // Editable fields — proRata is computed, not directly stored
 const _LFC_EDITABLE = new Set(['lease_type', 'leased_sqft', 'start_date', 'end_date', 'cap']);
 
-// Renders inner HTML for one LFC item (display mode). Used in initial render
-// and after save/cancel to rebuild item without full expansion re-render.
-function _lfcItemInner(key, label, val, td) {
+// Renders inner HTML for one LFC item.
+// Pass isEditing=true to render the inline input; false (default) for display mode.
+function _lfcItemInner(key, label, val, td, isEditing = false) {
   const editable = _LFC_EDITABLE.has(key) && td?.id;
+
+  if (isEditing) {
+    const inputType = _getFieldInputType(key);
+    const inputVal  = esc(String(getEffectiveLeaseField(key, td) ?? val ?? ''));
+    return `<div class="lfc-label">${esc(label)}</div>
+      <div class="lfc-edit-wrap">
+        <input class="lfc-edit-input" data-lfc-input="${key}" type="${inputType}" value="${inputVal}"${inputType === 'number' ? ' inputmode="decimal"' : ''} />
+        <div class="lfc-edit-actions">
+          <button class="lfc-save-btn"   onclick="confirmFieldOverride('${td.id}','${key}')">Save</button>
+          <button class="lfc-cancel-btn" onclick="cancelFieldOverride('${td.id}','${key}')">Cancel</button>
+        </div>
+      </div>`;
+  }
+
+  const missingCls = val == null ? 'lfc-missing' : '';
   return `<div class="lfc-label">${esc(label)}</div>
-    <div class="lfc-value${val == null ? ' lfc-missing' : ''}">${val ?? '—'}</div>
-    ${renderFieldConfidenceHtml(key, td)}
-    ${editable ? `<button class="lfc-edit-btn" onclick="startFieldOverride('${td.id}','${key}')">Edit</button>` : ''}`;
+    <div class="lfc-value-row">
+      <div class="lfc-value ${missingCls}">${val ?? '—'}</div>
+      ${editable ? `<button class="lfc-edit-btn" onclick="startFieldOverride('${td.id}','${key}')">Edit</button>` : ''}
+    </div>
+    ${renderFieldConfidenceHtml(key, td)}`;
 }
 
 // Saves a manual override to the tenant object + triggers persistence.
@@ -2696,28 +2713,43 @@ function startFieldOverride(tenantId, fieldName) {
   if (!item) return;
   const t = tenantData.find(x => x && x.id === tenantId);
   if (!t) return;
-  const current = getEffectiveLeaseField(fieldName, t) ?? '';
   const label = item.querySelector('.lfc-label')?.textContent || fieldName;
-  const inputType = (fieldName === 'start_date' || fieldName === 'end_date') ? 'date' : 'text';
-  item.innerHTML = `<div class="lfc-label">${esc(label)}</div>
-    <input class="lfc-edit-input" type="${inputType}" value="${esc(String(current))}" />
-    <div class="lfc-edit-actions">
-      <button class="lfc-save-btn" onclick="confirmFieldOverride('${tenantId}','${fieldName}')">Save</button>
-      <button class="lfc-cancel-btn" onclick="cancelFieldOverride('${tenantId}','${fieldName}')">Cancel</button>
-    </div>`;
-  item.querySelector('.lfc-edit-input')?.focus();
+  const val   = getEffectiveLeaseField(fieldName, t);
+  item.innerHTML = _lfcItemInner(fieldName, label, val, t, true);
+  setTimeout(() => {
+    const el = document.querySelector(`[data-lfc-input="${fieldName}"]`);
+    if (el) { el.focus(); el.select?.(); }
+  }, 0);
 }
 
 // Reads the inline input and commits the override.
 function confirmFieldOverride(tenantId, fieldName) {
-  const item = document.querySelector(`.lfc-item[data-tenant-id="${tenantId}"][data-field-name="${fieldName}"]`);
-  const val = item?.querySelector('.lfc-edit-input')?.value?.trim() || null;
+  const input = document.querySelector(`[data-lfc-input="${fieldName}"]`);
+  const val   = input?.value?.trim() || null;
   saveFieldOverride(tenantId, fieldName, val);
 }
 
 // Restores the item to display mode without saving.
 function cancelFieldOverride(tenantId, fieldName) {
   _refreshLfcExpansion(tenantId);
+}
+
+// Enter key commits the active inline edit — registered once at module load.
+document.addEventListener('keydown', (e) => {
+  if (e.key !== 'Enter') return;
+  const input = e.target.closest?.('[data-lfc-input]');
+  if (!input) return;
+  e.preventDefault();
+  const fieldName = input.dataset.lfcInput;
+  const tenantId  = input.closest('[data-tenant-id]')?.dataset?.tenantId;
+  if (tenantId && fieldName) confirmFieldOverride(tenantId, fieldName);
+});
+
+// Returns correct <input> type for each field — drives native mobile pickers.
+function _getFieldInputType(fieldName) {
+  if (fieldName === 'start_date' || fieldName === 'end_date') return 'date';
+  if (fieldName === 'leased_sqft' || fieldName === 'cap')     return 'number';
+  return 'text';
 }
 
 // Closes and re-renders the expansion row for a tenant after an override is saved/cancelled.
