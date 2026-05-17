@@ -2801,6 +2801,11 @@ function saveFieldOverride(tenantId, fieldName, newValue) {
       [fieldName]: { original, override: newValue, reviewerConfirmed: true, reviewedAt: new Date().toISOString(), overrideSource: 'manual' },
     },
   };
+  logActivity('field_override', `Field overridden — ${fieldName}`, {
+    severity: 'info', actor: 'Reviewer',
+    relatedEntity: tenantData[idx]?.tenant_name || tenantId,
+    detail: `${fieldName}: "${original}" → "${newValue}"`,
+  });
   savePropertyData();
   renderBulkResults();
   _refreshLfcExpansion(tenantId);
@@ -3241,6 +3246,15 @@ async function saveBulkTenant(i) {
 
   // Refresh the card header (name, meta line)
   refreshBulkSummary(i);
+
+  const _d = tenantData[i];
+  if (_d?._userConfirmed) {
+    logActivity('tenant_confirmed', `Tenant confirmed — ${_d.tenant_name || '(unnamed)'}`, {
+      severity: 'success', actor: 'Reviewer',
+      relatedEntity: _d.tenant_name || '',
+      detail: _d.extractionFailed ? 'Manually confirmed after extraction failure' : 'Tenant entry saved',
+    });
+  }
 
   // Persist to Supabase immediately — don't rely on debounced oninput
   await savePropertyData();
@@ -5858,16 +5872,20 @@ function _deriveCalcState(result, liveT) {
 // Detects reconciliation-level structural issues beyond individual invoice suspicions.
 // Checks: cap overruns, expired leases receiving allocation, pro-rata gaps, gross-lease violations.
 // Returns array of { severity: 'red'|'yellow', title, detail, conditions[] }.
-function _detectReconciliationIssues(results, property) {
+function _detectReconciliationIssues(results, property, evaluationDate) {
   const flags   = [];
   if (!results || !results.length) return flags;
-  const today   = new Date().toISOString().slice(0, 10);
+  // Use the passed evaluationDate, or default to the last day of the CAM year.
+  // This makes expired-lease detection deterministic for a given reconciliation:
+  // the same CAM year always produces the same flag output regardless of when
+  // the function is called.
+  const evalDate = evaluationDate || `${getCamYear()}-12-31`;
   const tenants = Array.isArray(property?.tenants) ? property.tenants.filter(Boolean) : [];
 
   // ── 1. Expired lease receiving CAM allocation ────────────────────────────
   results.forEach(r => {
     const t = tenants.find(t => t.id === r.tenantId);
-    if (t?.end_date && t.end_date < today && r.totalAllocated > 0) {
+    if (t?.end_date && t.end_date < evalDate && r.totalAllocated > 0) {
       flags.push({
         severity: 'red',
         title:    `Expired lease receiving allocation — ${r.name} (ended ${t.end_date})`,
@@ -7523,6 +7541,10 @@ function _dwSaveType(disputeId, typeKey) {
   d.disputeType = typeKey || null;
   if (!d.history) d.history = [];
   d.history.push({ action: 'type_assigned', by: 'Reviewer', at: new Date().toISOString(), note: typeKey ? (_DISPUTE_TYPES[typeKey]?.label || typeKey) : 'type cleared' });
+  logActivity('dispute_type_set', `Dispute #${d.id + 1} type set — ${_DISPUTE_TYPES[typeKey]?.label || typeKey || 'cleared'}`, {
+    severity: 'info', actor: 'Reviewer', relatedEntity: d.tenantName || '',
+    detail: `Dispute: ${d.vendor || '(no vendor)'}`,
+  });
   savePropertyData();
 }
 
@@ -7532,6 +7554,10 @@ function _dwSaveSeverity(disputeId, sev) {
   d.severity = sev;
   if (!d.history) d.history = [];
   d.history.push({ action: 'severity_set', by: 'Reviewer', at: new Date().toISOString(), note: sev });
+  logActivity('dispute_severity_set', `Dispute #${d.id + 1} severity → ${_DISPUTE_SEV[sev]?.label || sev}`, {
+    severity: 'info', actor: 'Reviewer', relatedEntity: d.tenantName || '',
+    detail: `Dispute: ${d.vendor || '(no vendor)'}`,
+  });
   savePropertyData();
   showToast(`Severity set to ${_DISPUTE_SEV[sev]?.label || sev}`);
 }
@@ -7542,7 +7568,13 @@ function _dwSaveNote(disputeId) {
   if (!d || !el) return;
   d.reviewerNote = el.value.trim() || null;
   if (!d.history) d.history = [];
-  if (d.reviewerNote) d.history.push({ action: 'note_added', by: 'Reviewer', at: new Date().toISOString(), note: d.reviewerNote.slice(0, 120) });
+  if (d.reviewerNote) {
+    d.history.push({ action: 'note_added', by: 'Reviewer', at: new Date().toISOString(), note: d.reviewerNote.slice(0, 120) });
+    logActivity('dispute_note_added', `Reviewer note added — Dispute #${d.id + 1}`, {
+      severity: 'info', actor: 'Reviewer', relatedEntity: d.tenantName || '',
+      detail: d.reviewerNote.slice(0, 120),
+    });
+  }
   savePropertyData();
   showToast('Note saved.');
 }
@@ -7553,7 +7585,13 @@ function _dwSaveLeaseClause(disputeId) {
   if (!d || !el) return;
   d.leaseClause = el.value.trim() || null;
   if (!d.history) d.history = [];
-  if (d.leaseClause) d.history.push({ action: 'clause_attached', by: 'Reviewer', at: new Date().toISOString(), note: d.leaseClause.slice(0, 100) });
+  if (d.leaseClause) {
+    d.history.push({ action: 'clause_attached', by: 'Reviewer', at: new Date().toISOString(), note: d.leaseClause.slice(0, 100) });
+    logActivity('dispute_clause_attached', `Lease clause attached — Dispute #${d.id + 1}`, {
+      severity: 'info', actor: 'Reviewer', relatedEntity: d.tenantName || '',
+      detail: d.leaseClause.slice(0, 100),
+    });
+  }
   savePropertyData();
   showToast('Lease clause saved.');
 }
@@ -10077,6 +10115,20 @@ function exportAuditLog() {
       calcState: _deriveCalcState(r, tenantData.find(t => t && t.id === r.tenantId))?.state,
       flags: (r.ambiguityFlags || []).map(f => f.code),
     })),
+    tenantReviewState: tenantData.filter(Boolean).map(t => {
+      const rv = deriveTenantReviewState(t);
+      return {
+        id: t.id, name: t.tenant_name,
+        reviewState:       rv.status,
+        reviewScore:       rv.score,
+        reviewerConfirmed: rv.reviewerConfirmed,
+        reviewedAt:        rv.reviewedAt,
+        reviewedBy:        rv.reviewedBy,
+        notes:             rv.notes,
+        reviewHistory:     t.review?.history || [],
+        overrideCount:     Object.keys(t.reviewOverrides || {}).length,
+      };
+    }),
     disputes:        disputes.map(d => ({ ...d, history: d.history || [] })),
     activityLog:     activityLog.slice(0, 200),
     reconIssues:     _detectReconciliationIssues(lastResults, prop),
@@ -10823,6 +10875,12 @@ function markTenantReviewAcknowledged(tenantId, note = null) {
     const tdIdx = tenantData.findIndex(t => t && t.id === tenantId);
     if (tdIdx !== -1) tenantData[tdIdx] = updated;
   }
+
+  logActivity('review_acknowledged', `Tenant review acknowledged — ${prev.tenant_name || tenantId}`, {
+    severity: 'success', actor: 'Reviewer',
+    relatedEntity: prev.tenant_name || tenantId,
+    detail: note ? `Note: ${note}` : 'Marked as reviewed',
+  });
 
   saveProperty(ownerProp); // async fire-and-forget — persists to localStorage + Supabase
 
@@ -11862,6 +11920,8 @@ function resetWorkflow() {
   invoiceData.length = 0;
   lastResults = []; lastInvoices = []; lastTenants = [];
   lastPropName = ''; lastTotal = 0; lastInvoicesFull = []; lastFullResults = [];
+  _lastReconIssues = []; _dwActiveDid = null;
+  activityLog.splice(0, activityLog.length);
   disputes.length = 0;
   nextDisputeId = 0;
   camRuns.length = 0;
@@ -12255,6 +12315,10 @@ async function saveProperty(property) {
       results:           stripped.results           ?? null,
       camReconciliation: stripped.camReconciliation ?? null,
       activityLog:       stripped.activityLog       || [],
+      // Tenants are persisted here (not only in the tenants table) so that
+      // review state, reviewOverrides, capBaseAmount, and confidence fields
+      // survive a full Supabase round-trip without needing schema changes.
+      tenants:           stripped.tenants           || [],
     };
 
     console.groupCollapsed('[PIPELINE:3] saveProperty post-strip');
@@ -12391,17 +12455,26 @@ async function loadPropertyData(id) {
         results:           d.results           ?? null,
         camReconciliation: d.camReconciliation ?? null,
         activityLog:       d.activityLog       || [],
+        // Full tenant state (review, reviewOverrides, capBaseAmount, confidence)
+        // stored in properties.data.tenants. Use when present; fall back to the
+        // tenants table (which lacks review fields) for legacy rows.
+        tenants:           d.tenants?.length ? d.tenants.map(normalizeTenant) : null,
       };
       console.groupCollapsed('[PIPELINE:4] Supabase read');
       console.log('invoices[0]:', JSON.parse(JSON.stringify(dbData.invoices[0] || {})));
       console.log('camRec.results[0].includedInvoices[0]:', JSON.parse(JSON.stringify(dbData.camReconciliation?.results?.[0]?.includedInvoices?.[0] || {})));
       console.groupEnd();
 
-      // Fetch tenants from their own table and merge in
-      const { data: tenantRows } = await db
-        .from('tenants')
-        .select('id, property_id, name, sqft, cap, start_date, end_date, lease_url, lease_type')
-        .eq('property_id', id);
+      // Fetch tenants from their own table — used only when properties.data.tenants
+      // is absent (legacy rows predating the full-state persistence introduced here).
+      // When dbData.tenants is already populated from properties.data, skip this
+      // query to avoid overwriting review/reviewOverrides/capBaseAmount fields.
+      const { data: tenantRows } = dbData.tenants
+        ? { data: null }
+        : await db
+            .from('tenants')
+            .select('id, property_id, name, sqft, cap, start_date, end_date, lease_url, lease_type')
+            .eq('property_id', id);
       if (tenantRows?.length) {
         dbData.tenants = tenantRows.map(t => normalizeTenant({
           id:          t.id,
