@@ -1948,7 +1948,7 @@
     }
     .rpt-table {
       width: 100%; border-collapse: collapse; font-size: 0.86rem;
-      margin-bottom: 8px; page-break-inside: auto;
+      margin-bottom: 8px; page-break-inside: auto; word-break: break-word;
     }
     .rpt-table th {
       background: rgba(201,151,58,0.08); color: #E4B15C; text-align: left;
@@ -1969,8 +1969,11 @@
       text-decoration: underline; text-decoration-style: dotted;
       text-underline-offset: 3px; text-decoration-color: rgba(255,255,255,0.25);
       min-height: 44px; display: inline-flex; align-items: center;
+      padding: 8px 0; white-space: normal; overflow-wrap: break-word; max-width: 100%;
+      transition: color .18s ease, opacity .18s ease;
     }
     .rpt-tenant-link:hover { color: #C9973A; text-decoration-color: rgba(201,151,58,0.6); }
+    .rpt-tenant-link:active { color: #C9973A; opacity: 0.72; }
     /* ── Expanded parent row highlight ───────────────────────────────── */
     /* Uses !important to beat .rpt-table tr:nth-child(even) td (specificity 0-2-2) */
     .rpt-table tr.rpt-row-expanded td {
@@ -1979,8 +1982,8 @@
     .rpt-table tr.rpt-row-expanded .rpt-tenant-link { color: #C9973A; }
     /* Chevron indicator — CSS-only, no JS innerHTML touch needed */
     .rpt-tenant-link::after {
-      content: ' \25BE'; font-size: 0.72em; opacity: 0.45;
-      display: inline-block; margin-left: 4px;
+      content: ' \25BE'; font-size: 0.72em; opacity: 0.35;
+      display: inline-block; margin-left: 4px; vertical-align: middle; flex-shrink: 0;
     }
     .rpt-table tr.rpt-row-expanded .rpt-tenant-link::after {
       content: ' \25B4'; opacity: 0.9; color: #C9973A;
@@ -2024,6 +2027,7 @@
     .rpt-exp-dispute-summary:hover {
       background: rgba(234,88,12,0.13); border-color: rgba(234,88,12,0.4);
     }
+    .rpt-exp-dispute-summary:active { background: rgba(234,88,12,0.22); border-color: rgba(234,88,12,0.5); }
     .rpt-exp-dispute-count { font-size: 0.86rem; font-weight: 700; color: #E2E8F0; font-family: 'DM Sans', sans-serif; }
     .rpt-exp-dispute-open {
       display: inline-flex; align-items: center; padding: 2px 8px; border-radius: 20px;
@@ -2044,12 +2048,12 @@
       border: 1px solid rgba(234,88,12,0.18); border-radius: 7px; overflow: hidden;
     }
     .rpt-exp-dispute-item {
-      padding: 8px 12px; background: rgba(11,18,32,0.9);
+      padding: 10px 14px; background: rgba(11,18,32,0.9);
       border-bottom: 1px solid rgba(255,255,255,0.05);
-      font-family: 'DM Sans', sans-serif;
+      font-family: 'DM Sans', sans-serif; line-height: 1.45;
     }
     .rpt-exp-dispute-item:last-child { border-bottom: none; }
-    .rpt-exp-dispute-item-header { display: flex; align-items: center; justify-content: space-between; gap: 8px; margin-bottom: 3px; }
+    .rpt-exp-dispute-item-header { display: flex; align-items: flex-start; justify-content: space-between; gap: 8px; margin-bottom: 4px; flex-wrap: wrap; }
     .rpt-exp-dispute-item-title { font-size: 0.83rem; font-weight: 700; color: #E2E8F0; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
     .rpt-exp-dispute-item-meta { font-size: 0.73rem; color: #64748B; margin-bottom: 3px; }
     .rpt-exp-dispute-item-reason { font-size: 0.78rem; color: #94A3B8; font-style: italic; }
