@@ -10186,8 +10186,10 @@ function renderPortfolio(props) {
       </div>
       ${reviewChips.length > 0 ? `
       <div class="property-review-summary">
-        ${reviewChips.map(c => `<span class="review-chip ${c.cls}">${esc(c.label)}</span>`).join('')}
-        <span class="review-health ${healthCls}">${reviewHealth}% Healthy</span>
+        <span class="review-info">
+          ${reviewChips.map(c => `<span class="review-chip ${c.cls}">${esc(c.label)}</span>`).join('')}
+          <span class="review-health ${healthCls}">${reviewHealth}% Healthy</span>
+        </span>
         <button class="review-queue-btn" onclick="event.stopPropagation();selectProperty('${pid}')">Review ›</button>
       </div>` : ''}
       <div class="ptf-cam-lbl">CAM This Period</div>
