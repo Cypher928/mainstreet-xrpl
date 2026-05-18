@@ -849,6 +849,226 @@ window.QAHarness = (() => {
     return s;
   }
 
+  // ── ReconciliationExplainer suite ─────────────────────────────────────────
+
+  function suiteReconciliationExplainer() {
+    const s  = createSuite('ReconciliationExplainer');
+    const RE = window.ReconciliationExplainer;
+    if (!RE) { s.assert(false, 'ReconciliationExplainer not loaded'); return s; }
+
+    // ── Shared fixtures ────────────────────────────────────────────────────
+    const baseResult = {
+      tenantName:     'Anchor Coffee',
+      name:           'Anchor Coffee',
+      sqFt:           4200,
+      proRataPercent: 26.67,
+      totalAllocated: 12000,
+      allocatedAmount: 12000,
+      capApplied:     false,
+      capAdjustment:  null,
+      ambiguityFlags: [],
+    };
+    const cappedResult = {
+      tenantName:     'Summit Fitness',
+      name:           'Summit Fitness',
+      sqFt:           8000,
+      proRataPercent: 53.33,
+      totalAllocated: 18000,
+      allocatedAmount: 18000,
+      capApplied:     true,
+      capAdjustment:  2000,
+      ambiguityFlags: [
+        { code: 'SQFT_APPROXIMATE', message: 'Square footage may be incorrect', explanation: 'Missing sqft.' },
+        { code: 'BASE_YEAR_MISMATCH', message: 'Invoice dates may not match lease period', explanation: 'Pre-lease invoices.' },
+      ],
+    };
+    const tenant = { lease_type: 'NNN', excluded_categories: 'management fees, admin' };
+    const context = { method: 'leased square footage', totalSqFt: 15750 };
+    const normContext = { method: 'leased square footage', totalSqFt: 15750, normalizationApplied: true, normalizationDelta: 0.0033 };
+
+    // ── buildAllocationNarrative ───────────────────────────────────────────
+
+    const allocBasic = RE.buildAllocationNarrative(baseResult, context);
+    s.assertType(allocBasic, 'string', 'buildAllocationNarrative returns string');
+    s.assert(allocBasic.includes('leased square footage'), 'Alloc narrative includes method');
+    s.assert(allocBasic.includes('4,200'), 'Alloc narrative includes tenant sqft');
+    s.assert(allocBasic.includes('15,750'), 'Alloc narrative includes total sqft');
+    s.assert(allocBasic.includes('26.67%'), 'Alloc narrative includes pro-rata pct');
+    s.assert(!allocBasic.includes('cap'), 'Alloc narrative: no cap sentence when capApplied=false');
+    s.assert(!allocBasic.includes('normalized'), 'Alloc narrative: no normalization when not applied');
+    s.assert(!allocBasic.includes('undefined'), 'Alloc narrative: no undefined placeholder');
+
+    const allocCap = RE.buildAllocationNarrative(cappedResult, context);
+    s.assert(allocCap.includes('cap applied'), 'Cap sentence present when capApplied=true');
+    s.assert(allocCap.includes('$2,000.00'), 'Cap adjustment amount in narrative');
+    s.assert(!allocCap.includes('undefined'), 'Cap narrative: no undefined placeholder');
+
+    const allocNorm = RE.buildAllocationNarrative(baseResult, normContext);
+    s.assert(allocNorm.includes('normalized'), 'Normalization sentence present when applied');
+    s.assert(allocNorm.includes('+0.0033%'), 'Normalization delta value in narrative');
+    s.assert(!allocNorm.includes('undefined'), 'Normalization narrative: no undefined placeholder');
+
+    const allocNoCtx = RE.buildAllocationNarrative(baseResult, null);
+    s.assert(allocNoCtx.includes('leased square footage'), 'Default method used when context null');
+    s.assert(!allocNoCtx.includes('sqft of'), 'No sqft sentence when totalSqFt missing');
+
+    const allocNoSqft = RE.buildAllocationNarrative({ proRataPercent: 50 }, context);
+    s.assert(!allocNoSqft.includes('sqft of'), 'No sqft sentence when tenant sqFt missing');
+
+    // ── Determinism ───────────────────────────────────────────────────────
+    const alloc1 = RE.buildAllocationNarrative(baseResult, context);
+    const alloc2 = RE.buildAllocationNarrative(baseResult, context);
+    s.assertEq(alloc1, alloc2, 'buildAllocationNarrative is deterministic');
+
+    // ── buildExclusionNarrative ────────────────────────────────────────────
+
+    const exInactive = RE.buildExclusionNarrative('inactive_lease');
+    s.assertType(exInactive, 'string', 'buildExclusionNarrative returns string');
+    s.assert(exInactive.includes('lease term has ended'), 'inactive_lease narrative');
+    s.assert(!exInactive.includes('undefined'), 'inactive_lease: no undefined placeholder');
+
+    const exClause = RE.buildExclusionNarrative('lease_clause', 'management fees, admin');
+    s.assert(exClause.includes('management fees'), 'lease_clause narrative includes categories');
+    s.assert(exClause.includes('excluded'), 'lease_clause narrative mentions exclusion');
+
+    const exClauseNoDetail = RE.buildExclusionNarrative('lease_clause', null);
+    s.assert(typeof exClauseNoDetail === 'string', 'lease_clause without detail returns string');
+    s.assert(!exClauseNoDetail.includes('null'), 'lease_clause without detail: no null in output');
+
+    const exZero = RE.buildExclusionNarrative('zero_sqft');
+    s.assert(exZero.includes('no square footage'), 'zero_sqft narrative');
+
+    const exMissing = RE.buildExclusionNarrative('missing_basis');
+    s.assert(exMissing.includes('insufficient data'), 'missing_basis narrative');
+
+    const exUnknown = RE.buildExclusionNarrative('unknown_reason');
+    s.assertType(exUnknown, 'string', 'Unknown reason returns string (fallback)');
+    s.assert(!exUnknown.includes('undefined'), 'Unknown reason: no undefined placeholder');
+
+    // Determinism
+    s.assertEq(RE.buildExclusionNarrative('zero_sqft'), RE.buildExclusionNarrative('zero_sqft'), 'buildExclusionNarrative is deterministic');
+
+    // ── buildWarningNarrative ──────────────────────────────────────────────
+
+    const codes = ['SQFT_OVERFLOW', 'SQFT_APPROXIMATE', 'BASE_YEAR_MISMATCH', 'NNN_GROSS_UNKNOWN'];
+    codes.forEach(code => {
+      const narr = RE.buildWarningNarrative({ code, message: 'msg', explanation: 'expl' });
+      s.assertType(narr, 'string', `buildWarningNarrative returns string for ${code}`);
+      s.assert(narr.length > 20, `${code} narrative is substantive (>20 chars)`);
+      s.assert(!narr.includes('undefined'), `${code} narrative: no undefined placeholder`);
+    });
+
+    // Unknown code falls back to explanation
+    const wUnknown = RE.buildWarningNarrative({ code: 'UNKNOWN', message: 'msg', explanation: 'fallback expl' });
+    s.assertEq(wUnknown, 'fallback expl', 'Unknown code uses explanation as fallback');
+
+    // No code falls back to message
+    const wNoCode = RE.buildWarningNarrative({ message: 'just a message' });
+    s.assertEq(wNoCode, 'just a message', 'No code and no explanation uses message');
+
+    // Null/missing issue
+    const wNull = RE.buildWarningNarrative(null);
+    s.assertEq(wNull, '', 'Null issue returns empty string');
+
+    // Determinism
+    const wDet = { code: 'SQFT_OVERFLOW', message: 'm', explanation: 'e' };
+    s.assertEq(RE.buildWarningNarrative(wDet), RE.buildWarningNarrative(wDet), 'buildWarningNarrative is deterministic');
+
+    // ── buildReconciliationSummaryNarrative ────────────────────────────────
+
+    const summFull = RE.buildReconciliationSummaryNarrative(baseResult, tenant);
+    s.assertType(summFull, 'string', 'buildReconciliationSummaryNarrative returns string');
+    s.assert(summFull.includes('Anchor Coffee'), 'Summary includes tenant name');
+    s.assert(summFull.includes('NNN'), 'Summary includes lease type when tenant provided');
+    s.assert(summFull.includes('4,200'), 'Summary includes sqFt');
+    s.assert(summFull.includes('26.67%'), 'Summary includes pro-rata pct');
+    s.assert(summFull.includes('$12,000.00'), 'Summary includes allocated amount');
+    s.assert(!summFull.includes('cap'), 'No cap sentence when capApplied=false');
+    s.assert(!summFull.includes('undefined'), 'Summary: no undefined placeholder');
+
+    const summCap = RE.buildReconciliationSummaryNarrative(cappedResult, tenant);
+    s.assert(summCap.includes('cap'), 'Cap sentence in summary when capApplied=true');
+    s.assert(summCap.includes('$2,000.00'), 'Cap adjustment amount in summary');
+    s.assert(summCap.includes('2 data quality'), 'Flag count in summary (2 flags)');
+    s.assert(!summCap.includes('undefined'), 'Capped summary: no undefined placeholder');
+
+    const summOneFlagResult = Object.assign({}, baseResult, { ambiguityFlags: [{ code: 'SQFT_OVERFLOW', message: 'm', explanation: 'e' }] });
+    const summOneFlag = RE.buildReconciliationSummaryNarrative(summOneFlagResult, null);
+    s.assert(summOneFlag.includes('One data quality'), 'Singular flag sentence for 1 flag');
+    s.assert(!summOneFlag.includes('NNN'), 'No lease type when tenant not provided');
+
+    const summNull = RE.buildReconciliationSummaryNarrative(null, null);
+    s.assertEq(summNull, '', 'Null result returns empty string');
+
+    // Determinism
+    const sum1 = RE.buildReconciliationSummaryNarrative(cappedResult, tenant);
+    const sum2 = RE.buildReconciliationSummaryNarrative(cappedResult, tenant);
+    s.assertEq(sum1, sum2, 'buildReconciliationSummaryNarrative is deterministic');
+
+    // ── buildExplainability ────────────────────────────────────────────────
+
+    const expl = RE.buildExplainability(cappedResult, tenant, normContext);
+    s.assert(expl && typeof expl === 'object', 'buildExplainability returns object');
+    s.assert(expl.explanations && typeof expl.explanations === 'object', 'explanations key present');
+
+    const { allocation, exclusions, warnings, normalization, summary } = expl.explanations;
+    s.assertType(allocation, 'string', 'explanations.allocation is string');
+    s.assert(Array.isArray(exclusions), 'explanations.exclusions is array');
+    s.assert(Array.isArray(warnings), 'explanations.warnings is array');
+    s.assert(!expl.explanations.hasOwnProperty('normalization') || normalization === null || typeof normalization === 'string',
+      'explanations.normalization is string or null');
+    s.assertType(summary, 'string', 'explanations.summary is string');
+
+    // Normalization present when applied
+    s.assert(typeof normalization === 'string', 'Normalization narrative present when normalizationApplied=true');
+    s.assert(normalization.includes('100%'), 'Normalization narrative mentions 100%');
+
+    // Normalization absent when not applied
+    const explNoNorm = RE.buildExplainability(baseResult, tenant, context);
+    s.assertEq(explNoNorm.explanations.normalization, null, 'Normalization null when not applied');
+
+    // Exclusions from excluded_categories
+    s.assert(exclusions.length === 1, 'One exclusion entry for excluded_categories string');
+    s.assert(exclusions[0].includes('management fees'), 'Exclusion narrative includes categories');
+
+    // No exclusions when no excluded_categories
+    const explNoCats = RE.buildExplainability(baseResult, { lease_type: 'NNN' }, context);
+    s.assertEq(explNoCats.explanations.exclusions.length, 0, 'No exclusions when tenant has none');
+
+    // Warnings deduplicated — cappedResult has SQFT_APPROXIMATE and BASE_YEAR_MISMATCH (distinct)
+    s.assertEq(warnings.length, 2, 'Two unique warnings from two distinct flag codes');
+
+    // Dedup: same code twice → one warning
+    const dupResult = Object.assign({}, baseResult, {
+      ambiguityFlags: [
+        { code: 'SQFT_OVERFLOW', message: 'msg', explanation: 'e' },
+        { code: 'SQFT_OVERFLOW', message: 'msg', explanation: 'e' },
+      ],
+    });
+    const explDup = RE.buildExplainability(dupResult, null, context);
+    s.assertEq(explDup.explanations.warnings.length, 1, 'Duplicate warning codes deduped to one');
+
+    // No undefined in any field
+    [allocation, summary, ...exclusions, ...warnings].forEach((txt, i) => {
+      s.assert(typeof txt === 'string' && !txt.includes('undefined'),
+        `No undefined placeholder in explanations field ${i}`);
+    });
+
+    // Determinism for full buildExplainability
+    const expl1 = RE.buildExplainability(cappedResult, tenant, normContext);
+    const expl2 = RE.buildExplainability(cappedResult, tenant, normContext);
+    s.assertEq(JSON.stringify(expl1), JSON.stringify(expl2), 'buildExplainability is deterministic');
+
+    // Edge: null inputs
+    const explAllNull = RE.buildExplainability(null, null, null);
+    s.assert(explAllNull && typeof explAllNull === 'object', 'buildExplainability handles all-null inputs');
+    s.assertEq(explAllNull.explanations.exclusions.length, 0, 'No exclusions on null tenant');
+    s.assertEq(explAllNull.explanations.warnings.length, 0, 'No warnings on null result');
+    s.assertEq(explAllNull.explanations.normalization, null, 'Normalization null on null context');
+
+    return s;
+  }
+
   // ── Main runner ────────────────────────────────────────────────────────────
 
   function runQaHarness() {
@@ -862,6 +1082,7 @@ window.QAHarness = (() => {
       suitePerformance(fx),
       suitePersistence(fx),
       suiteAllocationIntegrity(fx),
+      suiteReconciliationExplainer(),
     ];
 
     let passed = 0, failed = 0;

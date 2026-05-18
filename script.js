@@ -4839,11 +4839,16 @@ async function runAllocation() {
     const flagsSection = flags.length > 0
       ? `<div class="rc-flags">
           <div class="rc-flags-title">&#x26A0;&#xFE0F; Needs Review</div>
-          ${flags.map(f => `
+          ${flags.map(f => {
+            const narrative = (window.ReconciliationExplainer && f.code)
+              ? window.ReconciliationExplainer.buildWarningNarrative(f)
+              : f.explanation;
+            return `
             <div class="rc-flag-item">
               &#x2022; <strong>${esc(f.message)}</strong>
-              ${f.explanation ? `<br><span class="rc-flag-expl">${esc(f.explanation)}</span>` : ''}
-            </div>`).join('')}
+              ${narrative ? `<br><span class="rc-flag-expl">${esc(narrative)}</span>` : ''}
+            </div>`;
+          }).join('')}
         </div>`
       : '';
 
@@ -5601,9 +5606,15 @@ function openExplainPanel(tenantName) {
   const exclHtml = t.excludedCategories.length
     ? `<div class="ep-excl">Excluded from your CAM: ${t.excludedCategories.join(', ')}</div>`
     : '';
+  const narrativeHtml = (() => {
+    if (!window.ReconciliationExplainer) return '';
+    const narr = window.ReconciliationExplainer.buildReconciliationSummaryNarrative(r, td);
+    return narr ? `<div class="ep-narrative">${esc(narr)}</div>` : '';
+  })();
 
   const s1 = `
     <div class="ep-section-title">Summary</div>
+    ${narrativeHtml}
     <div class="ep-stat-grid">
       <div class="ep-stat">
         <div class="ep-stat-label">Your Sqft</div>
