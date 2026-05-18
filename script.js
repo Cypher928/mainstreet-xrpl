@@ -5777,6 +5777,26 @@ function _buildReconciliationSummaryHtml(results, invoices, propName) {
   const yellows  = issues.filter(f => f.severity === 'yellow');
   const panelCls = reds.length > 0 ? 'rcs-panel--alert' : yellows.length > 0 ? 'rcs-panel--warn' : 'rcs-panel--ok';
 
+  // Allocation integrity badge (Phase 5H) — validate the allocation set produced
+  // by this run against the invariant engine. Pure derivation, no side effects.
+  const _allocSet = results.map(r => ({
+    tenantId:   r.tenantId || r.name,
+    tenantName: r.name,
+    percent:    r.proRataPercent ?? (r.proRata != null ? r.proRata * 100 : 0),
+    amount:     r.totalAllocated ?? r.allocatedAmount ?? 0,
+  }));
+  const _integrity = AllocationIntegrity.buildIntegritySummary(_allocSet, {
+    method: 'leased square footage',
+    excludedCount: 0,
+  });
+  const _balBadgeCls = _integrity.criticalIssueCount > 0 ? 'rcs-balance-badge--critical'
+    : !_integrity.balanced                               ? 'rcs-balance-badge--warn'
+    :                                                      'rcs-balance-badge--ok';
+  const _balBadgeTxt = _integrity.criticalIssueCount > 0 ? '✕ Critical Allocation Error'
+    : !_integrity.balanced                               ? '⚠ Needs Review'
+    :                                                      '✓ Balanced';
+  const _balBadgeHtml = `<span class="rcs-balance-badge ${_balBadgeCls}" title="${esc(_integrity.explainability)}">${_balBadgeTxt}</span>`;
+
   const proCls   = Math.abs(proRataGap) > 5 ? 'rcs-kpi--alert' : Math.abs(proRataGap) > 2 ? 'rcs-kpi--warn' : '';
   const capsCls  = capsCount > 0 ? 'rcs-kpi--warn' : '';
   const flagCls  = flaggedCnt > 0 ? 'rcs-kpi--warn' : '';
@@ -5809,6 +5829,7 @@ function _buildReconciliationSummaryHtml(results, invoices, propName) {
       <div class="rcs-panel-head">
         <span class="rcs-panel-title">&#x1F4CA; Reconciliation Summary</span>
         <span class="rcs-coverage-badge">${totalPool > 0 ? (totalBilled / totalPool * 100).toFixed(1) : '—'}% coverage</span>
+        ${_balBadgeHtml}
       </div>
       <div class="rcs-kpis">
         <div class="rcs-kpi"><div class="rcs-kpi-val">${fmt(totalPool)}</div><div class="rcs-kpi-lbl">CAM Pool</div></div>

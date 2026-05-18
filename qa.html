@@ -15,11 +15,12 @@
   <p>Open DevTools → Console, then call <code>runMainstreetQA()</code>.<br>
      Results auto-run on load. Pass/fail counts and timing appear in the console.</p>
 
-  <!-- Engines (load order matters: review → recon → audit → selectors) -->
+  <!-- Engines (load order matters: review → recon → audit → selectors → alloc-integrity) -->
   <script src="review-engine.js"></script>
   <script src="reconciliation-engine.js"></script>
   <script src="audit-service.js"></script>
   <script src="selectors.js"></script>
+  <script src="allocation-integrity.js"></script>
 
   <!-- Fixtures -->
   <script src="fixtures/sample-property-a.js"></script>
@@ -27,6 +28,7 @@
   <script src="fixtures/malformed-lease.js"></script>
   <script src="fixtures/dispute-heavy-property.js"></script>
   <script src="fixtures/persistence-states.js"></script>
+  <script src="fixtures/allocation-cases.js"></script>
 
   <!-- Harness -->
   <script src="qa-harness.js"></script>

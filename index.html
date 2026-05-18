@@ -1671,6 +1671,12 @@
       background: rgba(148,163,184,0.08); border: 1px solid rgba(148,163,184,0.15);
       border-radius: 5px; padding: 2px 8px;
     }
+    .rcs-balance-badge {
+      font-size: 0.72rem; font-weight: 700; border-radius: 5px; padding: 2px 8px;
+    }
+    .rcs-balance-badge--ok       { color: #4ade80; background: rgba(74,222,128,0.08); border: 1px solid rgba(74,222,128,0.2); }
+    .rcs-balance-badge--warn     { color: #fbbf24; background: rgba(251,191,36,0.08); border: 1px solid rgba(251,191,36,0.2); }
+    .rcs-balance-badge--critical { color: #f87171; background: rgba(248,113,113,0.08); border: 1px solid rgba(248,113,113,0.2); }
     .rcs-kpis {
       display: flex; gap: 10px; flex-wrap: wrap; margin-bottom: 12px;
     }
@@ -3922,6 +3928,7 @@
 <script src="reconciliation-engine.js"></script>
 <script src="audit-service.js"></script>
 <script src="selectors.js"></script>
+<script src="allocation-integrity.js"></script>
 <script src="/script.js"></script>
 
 <footer style="max-width:720px;margin:32px auto 0;padding:18px 24px;background:#111827;border-radius:12px;border:1px solid rgba(255,255,255,0.07);box-shadow:0 2px 20px rgba(0,0,0,0.4);display:flex;align-items:flex-start;gap:14px;">

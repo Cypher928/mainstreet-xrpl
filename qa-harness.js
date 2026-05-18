@@ -700,6 +700,155 @@ window.QAHarness = (() => {
     return s;
   }
 
+  // ── AllocationIntegrity suite ──────────────────────────────────────────────
+
+  function suiteAllocationIntegrity(fx) {
+    const s  = createSuite('AllocationIntegrity');
+    const AI = window.AllocationIntegrity;
+    if (!AI) { s.assert(false, 'AllocationIntegrity not loaded'); return s; }
+
+    const TOL = AI.BALANCE_TOLERANCE;
+
+    // ── validateAllocationSet — balanced inputs ──
+    const vBal = AI.validateAllocationSet(fx.allocBalanced);
+    s.assert(vBal.isBalanced,                              'Balanced set: isBalanced === true');
+    s.assertRange(vBal.totalPercent, 99.99, 100.01,        'Balanced set: totalPercent ~100');
+    s.assertNoNaN(vBal.totalAmount,                         'Balanced set: totalAmount not NaN');
+    s.assertEq(vBal.issues.length, 0,                      'Balanced set: no issues');
+    s.assert(Array.isArray(vBal.normalizedAllocations),    'Balanced set: normalizedAllocations is array');
+
+    // ── Float drift — within BALANCE_TOLERANCE ──
+    const vDrift = AI.validateAllocationSet(fx.allocFloatDrift);
+    s.assert(vDrift.isBalanced,                            'Float drift: within tolerance → isBalanced');
+    s.assertRange(vDrift.totalPercent, 99.9, 100.1,        'Float drift: totalPercent reasonable');
+    s.assertEq(vDrift.issues.length, 0,                    'Float drift: no issues (within tolerance)');
+
+    // ── Over-allocation → critical ──
+    const vOver = AI.validateAllocationSet(fx.allocOverAllocation);
+    s.assert(!vOver.isBalanced,                            'Over-allocation: isBalanced === false');
+    s.assert(vOver.totalPercent > 100 + TOL,               'Over-allocation: totalPercent > 100+tol');
+    s.assert(vOver.issues.some(i => i.type === 'over_allocation' && i.severity === 'critical'),
+      'Over-allocation: critical over_allocation issue');
+
+    // ── Negative percent → critical ──
+    const vNeg = AI.validateAllocationSet(fx.allocNegativePercent);
+    s.assert(vNeg.issues.some(i => i.type === 'negative_percent' && i.severity === 'critical'),
+      'Negative percent: critical negative_percent issue');
+    s.assert(vNeg.issues.some(i => i.type === 'negative_amount' && i.severity === 'critical'),
+      'Negative percent: critical negative_amount issue');
+
+    // ── Duplicate tenant → critical ──
+    const vDup = AI.validateAllocationSet(fx.allocDuplicate);
+    s.assert(vDup.issues.some(i => i.type === 'duplicate_tenant' && i.severity === 'critical'),
+      'Duplicate: critical duplicate_tenant issue');
+    // Deduplication: same type+tenantId only once
+    const dupIssues = vDup.issues.filter(i => i.type === 'duplicate_tenant');
+    s.assertEq(dupIssues.length, 1,                        'Duplicate: issue deduplicated to 1 entry');
+
+    // ── Zero-basis allocation → warning ──
+    const vZero = AI.validateAllocationSet(fx.allocZeroBasis);
+    s.assert(vZero.issues.some(i => i.type === 'zero_basis_allocation' && i.severity === 'warning'),
+      'Zero basis: warning zero_basis_allocation issue');
+
+    // ── NaN percent → critical ──
+    const vNaN = AI.validateAllocationSet(fx.allocNaN);
+    s.assert(vNaN.issues.some(i => i.type === 'nan_percent' && i.severity === 'critical'),
+      'NaN percent: critical nan_percent issue');
+    s.assert(!vNaN.isBalanced,                             'NaN percent: isBalanced === false');
+
+    // ── Under-allocation → warning ──
+    const vUnder = AI.validateAllocationSet(fx.allocUnder);
+    s.assert(vUnder.issues.some(i => i.type === 'under_allocation' && i.severity === 'warning'),
+      'Under-allocation: warning issue');
+
+    // ── Edge: empty set ──
+    const vEmpty = AI.validateAllocationSet(fx.allocEmpty);
+    s.assertEq(vEmpty.totalPercent, 0,                     'Empty set: totalPercent === 0');
+    s.assertEq(vEmpty.totalAmount, 0,                      'Empty set: totalAmount === 0');
+    s.assertEq(vEmpty.issues.length, 0,                    'Empty set: no issues');
+
+    // ── Edge: null / non-array input ──
+    const vNull = AI.validateAllocationSet(null);
+    s.assertEq(vNull.issues.length, 0,                     'null input: no issues');
+    s.assertEq(vNull.totalPercent, 0,                      'null input: totalPercent 0');
+
+    // ── Edge: single tenant ──
+    const vSingle = AI.validateAllocationSet(fx.allocSingle);
+    s.assert(vSingle.isBalanced,                           'Single tenant: isBalanced');
+    s.assertEq(vSingle.issues.length, 0,                   'Single tenant: no issues');
+
+    // ── normalizeAllocationPrecision ──
+    const norm = AI.normalizeAllocationPrecision(fx.allocBalanced, 45000);
+    s.assert(Array.isArray(norm),                          'NormPrecision: returns array');
+    s.assertEq(norm.length, fx.allocBalanced.length,       'NormPrecision: length preserved');
+    norm.forEach((a, i) => {
+      s.assertNoNaN(a.displayAmount,                       `NormPrecision[${i}]: displayAmount not NaN`);
+      s.assertNoNaN(a.displayPercent,                      `NormPrecision[${i}]: displayPercent not NaN`);
+      s.assertRange(a.displayPercent, 0, 100,              `NormPrecision[${i}]: displayPercent in [0,100]`);
+    });
+    // Sum of displayAmounts ≈ targetTotal
+    const normSum = norm.reduce((s, a) => s + a.displayAmount, 0);
+    s.assert(Math.abs(normSum - 45000) < 0.02,             `NormPrecision: sum of displayAmounts ≈ 45000 (got ${normSum})`);
+
+    // Rounding edge case: 3 × 33.33% = 99.99% — exactly at tolerance boundary
+    const vEdge = AI.validateAllocationSet(fx.allocRoundingEdge);
+    s.assertNoNaN(vEdge.totalPercent,                      'Rounding edge: totalPercent not NaN');
+    s.assertRange(vEdge.totalPercent, 99.98, 100.02,       'Rounding edge: totalPercent near 100');
+    // normalize and check displayPercents sum to ~100
+    const normEdge = AI.normalizeAllocationPrecision(fx.allocRoundingEdge, 29999);
+    const pctSum = normEdge.reduce((s, a) => s + a.displayPercent, 0);
+    s.assert(Math.abs(pctSum - 100) < 0.1,                 `NormPrecision edge: displayPercent sum ≈ 100 (got ${pctSum.toFixed(4)})`);
+
+    // ── buildAllocationExplanation ──
+    const expl = AI.buildAllocationExplanation(fx.allocBalanced);
+    s.assertType(expl, 'string',                           'buildExplanation returns string');
+    s.assert(expl.length > 0,                              'buildExplanation non-empty');
+    s.assert(expl.includes('3 active tenants'),            'buildExplanation mentions tenant count');
+    s.assertEq(AI.buildAllocationExplanation([]), 'No tenants in allocation pool.',
+      'buildExplanation([]) → no-tenants message');
+
+    // ── buildIntegritySummary ──
+    const sum = AI.buildIntegritySummary(fx.allocBalanced);
+    s.assert(sum.balanced,                                 'IntegritySummary: balanced set → balanced=true');
+    s.assertEq(sum.criticalIssueCount, 0,                  'IntegritySummary: balanced set → 0 critical');
+    s.assertEq(sum.warningCount, 0,                        'IntegritySummary: balanced set → 0 warnings');
+    s.assertType(sum.explainability, 'string',             'IntegritySummary: explainability is string');
+    s.assert(Array.isArray(sum.normalizedAllocations),     'IntegritySummary: normalizedAllocations is array');
+    s.assertNoNaN(sum.totalPercent,                        'IntegritySummary: totalPercent not NaN');
+    s.assertNoNaN(sum.totalAmount,                         'IntegritySummary: totalAmount not NaN');
+
+    const sumCrit = AI.buildIntegritySummary(fx.allocOverAllocation);
+    s.assert(sumCrit.criticalIssueCount > 0,               'IntegritySummary: over-alloc → criticalIssueCount > 0');
+    s.assert(!sumCrit.balanced,                            'IntegritySummary: over-alloc → balanced=false');
+
+    // ── Determinism: same input → same output ──
+    const run1 = AI.validateAllocationSet(fx.allocBalanced);
+    const run2 = AI.validateAllocationSet(fx.allocBalanced);
+    s.assertEq(run1.totalPercent, run2.totalPercent,       'Determinism: totalPercent identical');
+    s.assertEq(run1.isBalanced,   run2.isBalanced,         'Determinism: isBalanced identical');
+    s.assertEq(run1.issues.map(i => i.type), run2.issues.map(i => i.type), 'Determinism: issue types identical');
+
+    // ── No NaN propagation from any fixture ──
+    [fx.allocBalanced, fx.allocFloatDrift, fx.allocRoundingEdge, fx.allocSingle].forEach((set, i) => {
+      const v = AI.validateAllocationSet(set);
+      s.assertNoNaN(v.totalPercent, `No-NaN fixture[${i}]: totalPercent`);
+      s.assertNoNaN(v.totalAmount,  `No-NaN fixture[${i}]: totalAmount`);
+      v.normalizedAllocations.forEach((a, j) => {
+        s.assertNoNaN(a.displayAmount,  `No-NaN fixture[${i}][${j}]: displayAmount`);
+        s.assertNoNaN(a.displayPercent, `No-NaN fixture[${i}][${j}]: displayPercent`);
+      });
+    });
+
+    // ── deduplication: issues never repeat same type+tenantId ──
+    [vOver, vNeg, vDup, vNaN].forEach((v, i) => {
+      const keys = v.issues.map(iss => `${iss.type}:${iss.tenantId ?? ''}`);
+      s.assertNoDuplicates(v.issues, iss => `${iss.type}:${iss.tenantId ?? ''}`,
+        `Issues deduplicated — fixture set ${i}`);
+    });
+
+    return s;
+  }
+
   // ── Main runner ────────────────────────────────────────────────────────────
 
   function runQaHarness() {
@@ -712,6 +861,7 @@ window.QAHarness = (() => {
       suiteRegression(fx),
       suitePerformance(fx),
       suitePersistence(fx),
+      suiteAllocationIntegrity(fx),
     ];
 
     let passed = 0, failed = 0;
