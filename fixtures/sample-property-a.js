@@ -6,7 +6,8 @@
  */
 window.QAFixtures = window.QAFixtures || {};
 window.QAFixtures.samplePropertyA = {
-  id:       'prop-a-001',
+  id:             'prop-a-001',
+  _schemaVersion: 1,
   name:     'Riverfront Plaza',
   address:  '100 River Rd, Austin TX 78701',
   totalCAM: 45000,

@@ -6240,6 +6240,14 @@ function logActivity(type, title, opts = {}) {
   savePropertyData(); // persist change — debounced, so rapid events collapse
 }
 
+// Direct audit push — bypasses savePropertyData() to avoid re-entrancy during
+// save/load callbacks. Use only for migration_applied, snapshot_restored,
+// malformed_state_recovered events where the caller already holds the save lock.
+function _auditDirect(type, title, opts = {}) {
+  activityLog.unshift(AuditService.shapeEvent(type, title, { ...opts, propertyId: activePropId }));
+  if (activityLog.length > 200) activityLog.length = 200;
+}
+
 // ─── Checkpoint System ────────────────────────────────────────────────────────
 const _CP_KEY = 'mainstreet_ckpt_v1';
 const _checkpoints = {};
@@ -11423,6 +11431,11 @@ async function syncPortfolioEntry() {
 }
 
 function resetWorkflow() {
+  // Cancel any pending debounce save from the previous property — prevents a
+  // timed-out write from firing after activePropId has already changed.
+  clearTimeout(_saveDebounceTimer);
+  _saveDebounceTimer = null;
+
   // Reset tenant data for both modes
   tenantData.splice(0, tenantData.length, null, null, null);
   document.getElementById('bulkResults').innerHTML = '';
@@ -11616,6 +11629,148 @@ function _lsLoad(id) {
     return stored[id] || null;
   } catch (e) { return null; }
 }
+
+// ── Persistence integrity helpers ─────────────────────────────────────────────
+
+/**
+ * Normalizes raw property data from any storage source into a canonical shape.
+ * Guarantees all arrays/objects are valid. Runs targeted schema migrations.
+ * Returns null when input is not an object. Never throws.
+ * Sets _schemaVersion and _migrated on the returned object.
+ */
+function normalizePropertyState(data) {
+  if (!data || typeof data !== 'object') return null;
+  const schemaVersion = data._schemaVersion || 0;
+  let migrated = schemaVersion < STATE_SCHEMA_VERSION;
+  let malformed = false;
+
+  const tenants = (() => {
+    if (!Array.isArray(data.tenants)) return [];
+    return data.tenants.filter(t => {
+      if (!t || typeof t !== 'object') { malformed = true; return false; }
+      // Reject objects with no identifying tenant fields — not a tenant record.
+      if (!t.id && !t.tenant_name && !t.name) { malformed = true; return false; }
+      return true;
+    }).map(t => normalizeTenant(t));
+  })();
+
+  const disputes = (() => {
+    if (!Array.isArray(data.disputes)) return [];
+    return data.disputes.filter(d => {
+      if (!d || typeof d !== 'object' || !d.id) { malformed = true; return false; }
+      return true;
+    });
+  })();
+
+  const activityLogNorm = (() => {
+    if (!Array.isArray(data.activityLog)) return [];
+    return data.activityLog.filter(e => {
+      if (!e || typeof e !== 'object' || !e.type || !e.timestamp) { malformed = true; return false; }
+      return true;
+    });
+  })();
+
+  const invoices = (() => {
+    if (!Array.isArray(data.invoices)) return [];
+    return data.invoices.filter(i => i && typeof i === 'object');
+  })();
+
+  return {
+    ...data,
+    tenants,
+    disputes,
+    activityLog: activityLogNorm,
+    invoices,
+    _schemaVersion: STATE_SCHEMA_VERSION,
+    _migrated:      migrated,
+    _malformed:     malformed,
+  };
+}
+
+/**
+ * Sanitizes externally-imported property data before merging into app state.
+ * Removes NaN values, deduplicates tenant IDs, clamps confidence ranges,
+ * discards invalid dates, and enforces known enum values.
+ */
+function sanitizeImportedPropertyData(raw) {
+  if (!raw || typeof raw !== 'object') return null;
+
+  const VALID_DISPUTE_STATUSES = new Set(['open', 'resolved', 'escalated', 'withdrawn']);
+  const VALID_REVIEW_STATUSES  = new Set(['verified', 'needs_review', 'incomplete', 'manually_verified']);
+
+  const seenIds = new Set();
+  const tenants = (Array.isArray(raw.tenants) ? raw.tenants : [])
+    .filter(t => {
+      if (!t || typeof t !== 'object') return false;
+      const key = t.id || t.tenant_name;
+      if (!key || seenIds.has(key)) return false;
+      seenIds.add(key);
+      return true;
+    })
+    .map(t => {
+      const n = normalizeTenant(t);
+      if (n.start_date && isNaN(new Date(n.start_date).getTime())) n.start_date = null;
+      if (n.end_date   && isNaN(new Date(n.end_date).getTime()))   n.end_date   = null;
+      if (n.confidence && typeof n.confidence === 'object') {
+        Object.keys(n.confidence).forEach(k => {
+          const v = parseFloat(n.confidence[k]);
+          n.confidence[k] = isNaN(v) ? 100 : Math.max(0, Math.min(100, v));
+        });
+      }
+      if (n.review?.status && !VALID_REVIEW_STATUSES.has(n.review.status)) {
+        delete n.review.status;
+      }
+      if (typeof n.leased_sqft === 'number' && isNaN(n.leased_sqft)) n.leased_sqft = null;
+      if (typeof n.cap === 'number' && isNaN(n.cap))                  n.cap = null;
+      return n;
+    });
+
+  const disputes = (Array.isArray(raw.disputes) ? raw.disputes : [])
+    .filter(d => d && typeof d === 'object' && d.id)
+    .map(d => ({
+      ...d,
+      status: VALID_DISPUTE_STATUSES.has(d.status) ? d.status : 'open',
+      amount: (typeof d.amount === 'number' && !isNaN(d.amount)) ? d.amount : 0,
+    }));
+
+  return { ...raw, tenants, disputes };
+}
+
+/**
+ * Captures a lightweight pre-save snapshot of critical state for recovery.
+ * Overwrites any previous snapshot for the same propertyId.
+ */
+function _captureSnapshot(prop) {
+  if (!prop?.id) return;
+  _snapshots[prop.id] = {
+    propertyId:  prop.id,
+    timestamp:   new Date().toISOString(),
+    tenants:     (prop.tenants   || []).map(t => ({ ...t })),
+    disputes:    (prop.disputes  || []).map(d => ({ ...d })),
+    activityLog: [...(prop.activityLog || [])],
+    reviewState: (prop.tenants  || []).map(t => ({
+      id: t.id, review: { ...(t.review || {}) }, reviewOverrides: { ...(t.reviewOverrides || {}) },
+    })),
+  };
+}
+
+/**
+ * Returns the last pre-save snapshot for a given propertyId, or null.
+ * Exposed on window for dev/QA console access.
+ * Emits a snapshot_restored audit event when called while the property is active.
+ */
+function recoverLastSnapshot(propertyId) {
+  const snap = _snapshots[propertyId] || null;
+  if (snap && activePropId === propertyId) {
+    _auditDirect('snapshot_restored', 'Recovery snapshot available', {
+      severity: 'warning',
+      detail:   `Last pre-save snapshot from ${snap.timestamp} — ${snap.tenants.length} tenant(s)`,
+      propertyId,
+    });
+  }
+  return snap;
+}
+window.recoverLastSnapshot = recoverLastSnapshot;
 
 async function loadProperties() {
   const { data: { user } } = await db.auth.getUser();
@@ -11815,6 +11970,12 @@ async function uploadLeaseToStorage(file, propertyId) {
 // Save a property — localStorage first (instant), then Supabase.
 // INSERT when property has no id (new); UPSERT when it already has a UUID.
 async function saveProperty(property) {
+  // Capture snapshot before mutating storage — enables recoverLastSnapshot().
+  _captureSnapshot(property);
+  // Claim this save's generation. If a newer saveProperty fires before this one
+  // resolves, gen will no longer equal _saveGeneration and this completion is stale.
+  const gen = ++_saveGeneration;
+
   _lsSave(property);
 
   try {
@@ -11866,12 +12027,15 @@ async function saveProperty(property) {
     // at upload completion and on user actions (Done, Remove, Clear All) only.
     // Calling it here caused duplicate inserts: saveProperty runs per file
     // processed, so 5 uploads × 5 cumulative rows = 15 DB rows from one session.
+    if (gen !== _saveGeneration) return; // stale — a newer save already completed
     _setSyncStatus('synced');
+    console.log('[audit] property_saved', { propertyId: property.id, gen, ts: new Date().toISOString() });
   } catch (e) {
     const msg = e?.message || String(e);
     const isNetErr  = /load failed|failed to fetch|networkerror|offline/i.test(msg);
 
     if (isNetErr) return;
+    if (gen !== _saveGeneration) return; // stale error — a newer save supersedes this one
 
     _setSyncStatus('error');
     logError('saveProperty', e, {
@@ -11894,6 +12058,17 @@ async function saveProperty(property) {
 
 
 // ── App-level wrappers ────────────────────────────────────────────────────────
+
+// Schema version — increment when persisted shape changes in a breaking way.
+// Stored alongside saved data so loadPropertyData can run targeted migrations.
+const STATE_SCHEMA_VERSION = 1;
+
+// Generation counter — only the most recent in-flight saveProperty may update
+// sync status. Stale completions (from rapidly-fired saves) silently discard.
+let _saveGeneration = 0;
+
+// Lightweight pre-save snapshots keyed by propertyId — used by recoverLastSnapshot().
+const _snapshots = {};
 
 let _saveDebounceTimer = null;
 
@@ -12106,11 +12281,39 @@ async function loadPropertyData(id) {
   // Reconciliation results: always prefer Supabase — it is written immediately
   // after each run and is the authoritative source. localStorage may lag behind
   // or be missing the field entirely on older sessions.
-  return {
+  const merged = {
     ...base,
     results:           dbData.results           ?? base.results           ?? null,
     camReconciliation: dbData.camReconciliation ?? base.camReconciliation ?? null,
   };
+
+  // Run hydration guards — normalizes arrays, enforces canonical shapes, detects
+  // schema migrations and malformed entries from old or partially-written saves.
+  const norm = normalizePropertyState(merged);
+  if (!norm) return merged; // malformed root object — return raw, let caller handle
+
+  if (norm._migrated || norm._malformed) {
+    // Queue audit events for emission after renderProperty populates activityLog.
+    setTimeout(() => {
+      if (activePropId !== id) return;
+      if (norm._migrated) {
+        _auditDirect('migration_applied', 'State schema upgraded', {
+          severity: 'info',
+          detail:   `Property data migrated to schema v${STATE_SCHEMA_VERSION}`,
+          propertyId: id,
+        });
+      }
+      if (norm._malformed) {
+        _auditDirect('malformed_state_recovered', 'Malformed entries removed on load', {
+          severity: 'warning',
+          detail:   'One or more persisted entries had unexpected shape and were filtered out.',
+          propertyId: id,
+        });
+      }
+    }, 200); // after renderProperty's activityLog.splice has run
+  }
+
+  return norm;
 }
 
 // Restore a property's saved state into working arrays and render the detail view.
