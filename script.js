@@ -36,6 +36,13 @@ async function _showApp(user) {
   document.getElementById('loginScreen').style.display  = 'none';
   document.getElementById('appContent').style.display   = 'block';
   if (user?.email) document.getElementById('headerUserEmail').textContent = user.email;
+  const _acNorm = window.AuthService ? window.AuthService.hydrateFromSupabaseUser(user) : null;
+  if (_acNorm) {
+    const _roleEl = document.getElementById('headerRoleBadge');
+    if (_roleEl) { _roleEl.textContent = _acNorm.role; _roleEl.setAttribute('data-role', _acNorm.role); _roleEl.style.display = ''; }
+    const _appEl = document.getElementById('appContent');
+    if (_appEl) _appEl.setAttribute('data-role', _acNorm.role);
+  }
 }
 
 function _showLogin() {
@@ -147,6 +154,7 @@ async function submitAuth(event) {
 }
 
 async function signOut() {
+  if (window.AuthService) window.AuthService.clear();
   _initialized = false;
   _showLogin(); // Reset UI immediately — don't wait on Supabase
   try {
@@ -9933,6 +9941,7 @@ function exportDisputesCSV() {
 }
 
 function exportAuditLog() {
+  if (window.AccessControl && window.AuthService && !window.AccessControl.canExportAudit(window.AuthService.getCurrentUser())) return;
   const prop = currentProperty();
   const log  = {
     property:        lastPropName || prop?.name || 'Unknown',
@@ -11419,6 +11428,7 @@ async function backToPortfolio() {
 }
 
 async function addNewProperty() {
+  if (window.AccessControl && window.AuthService && !window.AccessControl.canAddProperty(window.AuthService.getCurrentUser())) return;
   // No id — saveProperty will INSERT and patch newProp.id with the Supabase UUID
   const newProp = {
     name: 'New Property', totalSqft: 0,
@@ -12615,9 +12625,27 @@ function showRestoredBanner() {
 }
 
 
+// ─── Tenant portal ───────────────────────────────────────────────────────────
+
+function _activateTenantPortal() {
+  const dashEl = document.getElementById('portfolioDashboard');
+  const wfEl   = document.getElementById('mainWorkflow');
+  if (dashEl) dashEl.style.display = 'block';
+  if (wfEl)   wfEl.style.display   = 'none';
+  const msgEl = document.getElementById('tenantPortalMsg');
+  if (msgEl)  msgEl.style.display  = 'block';
+}
+
 // ─── Init ─────────────────────────────────────────────────────────────────────
 async function init() {
   _loadCheckpoints();
+
+  // ── Tenant portal mode — bypass portfolio for tenant-role users ───────────
+  if (window.AccessControl && window.AuthService &&
+      window.AccessControl.isTenantPortalMode(window.AuthService.getCurrentUser())) {
+    _activateTenantPortal();
+    return;
+  }
 
   // ── Review mode: detect #review/{token} in URL hash ──────────────────────
   const hashMatch = location.hash.match(/^#review\/([a-f0-9-]{36})$/i);

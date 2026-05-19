@@ -2604,6 +2604,37 @@
     }
     .logout-btn:hover { background: rgba(148,163,184,0.16); color: #E2E8F0; }
 
+    /* ── RBAC: role badge ──────────────────────────────────────────────── */
+    .header-role-badge {
+      font-size: 0.68rem; font-weight: 700; text-transform: uppercase;
+      letter-spacing: 0.06em; padding: 2px 7px; border-radius: 4px; margin-right: 4px;
+    }
+    .header-role-badge[data-role="landlord"] { color: #6366f1; background: rgba(99,102,241,0.12); border: 1px solid rgba(99,102,241,0.25); }
+    .header-role-badge[data-role="tenant"]   { color: #22c55e; background: rgba(34,197,94,0.10);  border: 1px solid rgba(34,197,94,0.22); }
+    .header-role-badge[data-role="reviewer"] { color: #f59e0b; background: rgba(245,158,11,0.10); border: 1px solid rgba(245,158,11,0.22); }
+    .header-role-badge[data-role="admin"]    { color: #f87171; background: rgba(248,113,113,0.10); border: 1px solid rgba(248,113,113,0.22); }
+
+    /* ── RBAC: tenant portal CSS gating ───────────────────────────────── */
+    #appContent[data-role="tenant"] .start-here        { display: none !important; }
+    #appContent[data-role="tenant"] .ptf-kpi-bar       { display: none !important; }
+    #appContent[data-role="tenant"] #portfolioIntelPanel { display: none !important; }
+    #appContent[data-role="tenant"] #reviewQueuePanel  { display: none !important; }
+    #appContent[data-role="tenant"] #ptfSortRow        { display: none !important; }
+    #appContent[data-role="tenant"] .add-prop-btn      { display: none !important; }
+    #appContent[data-role="tenant"] #reportsSection    { display: none !important; }
+
+    /* ── RBAC: reviewer CSS gating ─────────────────────────────────────── */
+    #appContent[data-role="reviewer"] .add-prop-btn    { display: none !important; }
+
+    /* ── Tenant portal welcome panel ───────────────────────────────────── */
+    .tenant-portal-welcome {
+      max-width: 480px; margin: 32px auto; padding: 28px 32px;
+      background: #1e293b; border: 1px solid rgba(99,102,241,0.2);
+      border-radius: 12px; text-align: center;
+    }
+    .tp-title { font-size: 1.1rem; font-weight: 700; color: #e2e8f0; margin: 0 0 10px; }
+    .tp-sub   { font-size: 0.85rem; color: #94a3b8; line-height: 1.6; margin: 0; }
+
     /* ── AI Auditor Narrative Panel ─────────────────────────────────────── */
     .an-panel {
       margin-top: 24px;
@@ -3320,6 +3351,7 @@
   <h1>Mainstreet</h1>
   <div class="header-user-bar" id="headerUserBar">
     <span class="header-user-email" id="headerUserEmail"></span>
+    <span class="header-role-badge" id="headerRoleBadge" style="display:none;"></span>
     <button class="logout-btn" onclick="signOut()">Sign out</button>
   </div>
 </header>
@@ -3342,6 +3374,14 @@
     <div class="cta-row">
       <button class="btn-primary" onclick="loadDemo()">&#x1F3AF; Try Live Demo</button>
       <button class="btn-secondary" onclick="addNewProperty()">+ Add Property</button>
+    </div>
+  </div>
+
+  <!-- Tenant portal welcome — shown only in tenant mode via JS (_activateTenantPortal) -->
+  <div id="tenantPortalMsg" style="display:none;">
+    <div class="tenant-portal-welcome">
+      <p class="tp-title">Tenant Portal</p>
+      <p class="tp-sub">Your property manager will share your CAM statement and invoice explanations here. Contact them if you don't see your statement yet.</p>
     </div>
   </div>
 
@@ -3925,6 +3965,8 @@
   </div>
 </div>
 
+<script src="auth-service.js"></script>
+<script src="access-control.js"></script>
 <script src="review-engine.js"></script>
 <script src="reconciliation-engine.js"></script>
 <script src="audit-service.js"></script>

@@ -1069,6 +1069,286 @@ window.QAHarness = (() => {
     return s;
   }
 
+  // ── suiteAccessControl ────────────────────────────────────────────────────
+
+  function suiteAccessControl() {
+    const s = createSuite('AccessControl');
+    const AS = window.AuthService;
+    const AC = window.AccessControl;
+    const fx = window.QAFixtures || {};
+
+    if (!AS || !AC) {
+      s.assert(false, 'AuthService and AccessControl must be loaded');
+      return s;
+    }
+
+    // ── AuthService: hydrateFromSupabaseUser shape tests ──────────────────
+
+    // Landlord fixture
+    AS.clear();
+    const landlordUser = AS.hydrateFromSupabaseUser(fx.sbLandlord);
+    s.assert(landlordUser !== null, 'hydrate sbLandlord returns non-null');
+    s.assertEq(landlordUser.id,          'u-landlord-1',         'landlord id');
+    s.assertEq(landlordUser.email,       'owner@riverfront.com', 'landlord email');
+    s.assertEq(landlordUser.role,        'landlord',             'landlord role');
+    s.assertEq(landlordUser.displayName, 'River Owner',          'landlord displayName from display_name');
+    s.assert(Array.isArray(landlordUser.propertyIds),            'landlord propertyIds is array');
+    s.assertEq(landlordUser.propertyIds.length, 0,               'landlord propertyIds empty');
+    s.assertEq(landlordUser.createdAt, '2024-01-15T10:00:00Z',   'landlord createdAt');
+
+    // Tenant fixture
+    AS.clear();
+    const tenantUser = AS.hydrateFromSupabaseUser(fx.sbTenant);
+    s.assert(tenantUser !== null, 'hydrate sbTenant returns non-null');
+    s.assertEq(tenantUser.role,         'tenant',             'tenant role');
+    s.assertEq(tenantUser.displayName,  'coffee',             'tenant displayName from email prefix');
+    s.assertEq(tenantUser.propertyIds.length, 1,              'tenant propertyIds has one entry');
+    s.assertEq(tenantUser.propertyIds[0], 'prop-riverfront',  'tenant propertyIds[0]');
+
+    // Reviewer fixture
+    AS.clear();
+    const reviewerUser = AS.hydrateFromSupabaseUser(fx.sbReviewer);
+    s.assert(reviewerUser !== null, 'hydrate sbReviewer returns non-null');
+    s.assertEq(reviewerUser.role,        'reviewer',         'reviewer role');
+    s.assertEq(reviewerUser.displayName, 'auditor',          'reviewer displayName from email prefix');
+    s.assertEq(reviewerUser.propertyIds.length, 0,           'reviewer propertyIds empty');
+
+    // Admin fixture
+    AS.clear();
+    const adminUser = AS.hydrateFromSupabaseUser(fx.sbAdmin);
+    s.assert(adminUser !== null, 'hydrate sbAdmin returns non-null');
+    s.assertEq(adminUser.role,        'admin',           'admin role');
+    s.assertEq(adminUser.displayName, 'Platform Admin',  'admin displayName from display_name');
+
+    // Unknown role → normalizes to landlord
+    AS.clear();
+    const unknownUser = AS.hydrateFromSupabaseUser(fx.sbUnknownRole);
+    s.assert(unknownUser !== null, 'hydrate sbUnknownRole returns non-null');
+    s.assertEq(unknownUser.role, 'landlord', 'unknown role normalizes to landlord');
+    s.assertEq(unknownUser.displayName, 'x', 'unknownRole displayName from email prefix');
+
+    // Expired session → null
+    AS.clear();
+    const expiredUser = AS.hydrateFromSupabaseUser(fx.sbExpiredSession);
+    s.assert(expiredUser === null, 'hydrate null (expired session) returns null');
+    s.assert(AS.getCurrentUser() === null, 'getCurrentUser() === null after null hydration');
+    s.assert(!AS.isAuthenticated(), 'isAuthenticated() false after null hydration');
+
+    // No metadata → defaults
+    AS.clear();
+    const noMetaUser = AS.hydrateFromSupabaseUser(fx.sbNoMetadata);
+    s.assert(noMetaUser !== null, 'hydrate sbNoMetadata returns non-null');
+    s.assertEq(noMetaUser.role, 'landlord', 'no metadata role defaults to landlord');
+    s.assertEq(noMetaUser.displayName, 'nometa', 'no metadata displayName from email prefix');
+    s.assertEq(noMetaUser.propertyIds.length, 0, 'no metadata propertyIds empty');
+
+    // ── AuthService: getCurrentUser / isAuthenticated ────────────────────
+
+    AS.clear();
+    AS.hydrateFromSupabaseUser(fx.sbLandlord);
+    s.assert(AS.isAuthenticated(), 'isAuthenticated() true after valid hydration');
+    const curUser = AS.getCurrentUser();
+    s.assert(curUser !== null, 'getCurrentUser() non-null after hydration');
+    s.assertEq(curUser.role, 'landlord', 'getCurrentUser().role matches hydrated role');
+
+    // ── AuthService: clear() resets state ────────────────────────────────
+
+    AS.hydrateFromSupabaseUser(fx.sbAdmin);
+    s.assert(AS.isAuthenticated(), 'isAuthenticated() true before clear');
+    AS.clear();
+    s.assert(!AS.isAuthenticated(), 'isAuthenticated() false after clear()');
+    s.assert(AS.getCurrentUser() === null, 'getCurrentUser() null after clear()');
+
+    // No state leak: clear then hydrate different user
+    AS.clear();
+    AS.hydrateFromSupabaseUser(fx.sbTenant);
+    s.assertEq(AS.getCurrentUser().role, 'tenant', 'No state leak: tenant after clear of admin');
+
+    // ── AuthService: role helper methods ─────────────────────────────────
+
+    AS.clear();
+    AS.hydrateFromSupabaseUser(fx.sbLandlord);
+    s.assert(AS.isLandlord(),   'isLandlord() true for landlord');
+    s.assert(!AS.isTenant(),    'isTenant() false for landlord');
+    s.assert(!AS.isReviewer(),  'isReviewer() false for landlord');
+    s.assert(!AS.isAdmin(),     'isAdmin() false for landlord');
+
+    AS.clear();
+    AS.hydrateFromSupabaseUser(fx.sbTenant);
+    s.assert(!AS.isLandlord(),  'isLandlord() false for tenant');
+    s.assert(AS.isTenant(),     'isTenant() true for tenant');
+    s.assert(!AS.isReviewer(),  'isReviewer() false for tenant');
+    s.assert(!AS.isAdmin(),     'isAdmin() false for tenant');
+
+    AS.clear();
+    AS.hydrateFromSupabaseUser(fx.sbReviewer);
+    s.assert(!AS.isLandlord(),  'isLandlord() false for reviewer');
+    s.assert(!AS.isTenant(),    'isTenant() false for reviewer');
+    s.assert(AS.isReviewer(),   'isReviewer() true for reviewer');
+    s.assert(!AS.isAdmin(),     'isAdmin() false for reviewer');
+
+    AS.clear();
+    AS.hydrateFromSupabaseUser(fx.sbAdmin);
+    s.assert(!AS.isLandlord(),  'isLandlord() false for admin');
+    s.assert(!AS.isTenant(),    'isTenant() false for admin');
+    s.assert(!AS.isReviewer(),  'isReviewer() false for admin');
+    s.assert(AS.isAdmin(),      'isAdmin() true for admin');
+
+    // ── AuthService: getUserRole ──────────────────────────────────────────
+
+    AS.clear();
+    s.assert(AS.getUserRole() === null, 'getUserRole() null when not authenticated');
+    AS.hydrateFromSupabaseUser(fx.sbReviewer);
+    s.assertEq(AS.getUserRole(), 'reviewer', 'getUserRole() returns role string');
+
+    // ── VALID_ROLES set ───────────────────────────────────────────────────
+
+    s.assert(AS.VALID_ROLES instanceof Set, 'VALID_ROLES is a Set');
+    s.assert(AS.VALID_ROLES.has('landlord'),  'VALID_ROLES has landlord');
+    s.assert(AS.VALID_ROLES.has('tenant'),    'VALID_ROLES has tenant');
+    s.assert(AS.VALID_ROLES.has('reviewer'),  'VALID_ROLES has reviewer');
+    s.assert(AS.VALID_ROLES.has('admin'),     'VALID_ROLES has admin');
+    s.assert(!AS.VALID_ROLES.has('superuser'), 'VALID_ROLES excludes invalid roles');
+
+    // ── AccessControl: all functions return false for null user ───────────
+
+    s.assert(!AC.canViewPortfolio(null),           'canViewPortfolio(null) false');
+    s.assert(!AC.canViewProperty(null, null),       'canViewProperty(null) false');
+    s.assert(!AC.canEditReview(null),               'canEditReview(null) false');
+    s.assert(!AC.canExportAudit(null),              'canExportAudit(null) false');
+    s.assert(!AC.canViewTenant(null, null),          'canViewTenant(null) false');
+    s.assert(!AC.canDeleteDispute(null),             'canDeleteDispute(null) false');
+    s.assert(!AC.canViewReviewQueue(null),           'canViewReviewQueue(null) false');
+    s.assert(!AC.canViewAuditLog(null),              'canViewAuditLog(null) false');
+    s.assert(!AC.canAddProperty(null),               'canAddProperty(null) false');
+    s.assert(!AC.isTenantPortalMode(null),           'isTenantPortalMode(null) false');
+
+    // Also test with undefined
+    s.assert(!AC.canViewPortfolio(undefined),        'canViewPortfolio(undefined) false');
+    s.assert(!AC.canExportAudit(undefined),          'canExportAudit(undefined) false');
+
+    // ── AccessControl: landlord role matrix ──────────────────────────────
+
+    const ll = { id: 'l1', email: 'l@l.com', role: 'landlord', propertyIds: [] };
+    s.assert(AC.canViewPortfolio(ll),    'landlord: canViewPortfolio true');
+    s.assert(AC.canViewProperty(ll, { id: 'any-prop' }), 'landlord: canViewProperty true');
+    s.assert(AC.canEditReview(ll),       'landlord: canEditReview true');
+    s.assert(AC.canExportAudit(ll),      'landlord: canExportAudit true');
+    s.assert(AC.canViewTenant(ll, { id: 'any-tenant' }), 'landlord: canViewTenant true');
+    s.assert(AC.canDeleteDispute(ll),    'landlord: canDeleteDispute true');
+    s.assert(AC.canViewReviewQueue(ll),  'landlord: canViewReviewQueue true');
+    s.assert(AC.canViewAuditLog(ll),     'landlord: canViewAuditLog true');
+    s.assert(AC.canAddProperty(ll),      'landlord: canAddProperty true');
+    s.assert(!AC.isTenantPortalMode(ll), 'landlord: isTenantPortalMode false');
+
+    // ── AccessControl: tenant role matrix ────────────────────────────────
+
+    const tt = { id: 't1', email: 't@t.com', role: 'tenant', propertyIds: ['prop-riverfront'] };
+    s.assert(!AC.canViewPortfolio(tt),   'tenant: canViewPortfolio false');
+    s.assert(!AC.canEditReview(tt),      'tenant: canEditReview false');
+    s.assert(!AC.canExportAudit(tt),     'tenant: canExportAudit false');
+    s.assert(!AC.canDeleteDispute(tt),   'tenant: canDeleteDispute false');
+    s.assert(!AC.canViewReviewQueue(tt), 'tenant: canViewReviewQueue false');
+    s.assert(!AC.canViewAuditLog(tt),    'tenant: canViewAuditLog false');
+    s.assert(!AC.canAddProperty(tt),     'tenant: canAddProperty false');
+    s.assert(AC.isTenantPortalMode(tt),  'tenant: isTenantPortalMode true');
+
+    // tenant canViewProperty — matching propertyId → true
+    s.assert(AC.canViewProperty(tt, { id: 'prop-riverfront' }),
+      'tenant: canViewProperty with matching propertyId true');
+    // tenant canViewProperty — mismatched propertyId → false
+    s.assert(!AC.canViewProperty(tt, { id: 'prop-other' }),
+      'tenant: canViewProperty with mismatched propertyId false');
+    // tenant canViewProperty — null property → false (ids are set, so no match)
+    s.assert(!AC.canViewProperty(tt, null),
+      'tenant: canViewProperty with null property false (propertyIds not empty)');
+    // tenant canViewProperty — empty propertyIds → true (no restriction)
+    const ttNoIds = { id: 't2', email: 't2@t.com', role: 'tenant', propertyIds: [] };
+    s.assert(AC.canViewProperty(ttNoIds, { id: 'any-prop' }),
+      'tenant: canViewProperty with empty propertyIds true (no restriction)');
+    s.assert(AC.canViewProperty(ttNoIds, null),
+      'tenant: canViewProperty with empty propertyIds and null property true');
+
+    // tenant canViewTenant — matching user_id → true
+    const ownTenantByUserId = { id: 'rec-1', user_id: 't1', name: 'Coffee Co' };
+    s.assert(AC.canViewTenant(tt, ownTenantByUserId),
+      'tenant: canViewTenant with matching user_id true');
+    // tenant canViewTenant — matching id (tenant record id === user id) → true
+    const ownTenantById = { id: 't1', user_id: 'other', name: 'Coffee Co' };
+    s.assert(AC.canViewTenant(tt, ownTenantById),
+      'tenant: canViewTenant with matching tenant.id true');
+    // tenant canViewTenant — mismatched → false
+    const otherTenant = { id: 'rec-other', user_id: 'other-user', name: 'Other Co' };
+    s.assert(!AC.canViewTenant(tt, otherTenant),
+      'tenant: canViewTenant with mismatched ids false');
+    // tenant canViewTenant — null tenant → false
+    s.assert(!AC.canViewTenant(tt, null),
+      'tenant: canViewTenant with null tenant false');
+
+    // ── AccessControl: reviewer role matrix ──────────────────────────────
+
+    const rr = { id: 'r1', email: 'r@r.com', role: 'reviewer', propertyIds: [] };
+    s.assert(AC.canViewPortfolio(rr),    'reviewer: canViewPortfolio true');
+    s.assert(AC.canViewProperty(rr, { id: 'any-prop' }), 'reviewer: canViewProperty true');
+    s.assert(AC.canEditReview(rr),       'reviewer: canEditReview true');
+    s.assert(!AC.canExportAudit(rr),     'reviewer: canExportAudit false');
+    s.assert(AC.canViewTenant(rr, { id: 'any' }), 'reviewer: canViewTenant true');
+    s.assert(!AC.canDeleteDispute(rr),   'reviewer: canDeleteDispute false');
+    s.assert(AC.canViewReviewQueue(rr),  'reviewer: canViewReviewQueue true');
+    s.assert(!AC.canViewAuditLog(rr),    'reviewer: canViewAuditLog false');
+    s.assert(!AC.canAddProperty(rr),     'reviewer: canAddProperty false');
+    s.assert(!AC.isTenantPortalMode(rr), 'reviewer: isTenantPortalMode false');
+
+    // ── AccessControl: admin role matrix ─────────────────────────────────
+
+    const aa = { id: 'a1', email: 'a@a.com', role: 'admin', propertyIds: [] };
+    s.assert(AC.canViewPortfolio(aa),    'admin: canViewPortfolio true');
+    s.assert(AC.canViewProperty(aa, { id: 'any-prop' }), 'admin: canViewProperty true');
+    s.assert(AC.canEditReview(aa),       'admin: canEditReview true');
+    s.assert(AC.canExportAudit(aa),      'admin: canExportAudit true');
+    s.assert(AC.canViewTenant(aa, { id: 'any' }), 'admin: canViewTenant true');
+    s.assert(AC.canDeleteDispute(aa),    'admin: canDeleteDispute true');
+    s.assert(AC.canViewReviewQueue(aa),  'admin: canViewReviewQueue true');
+    s.assert(AC.canViewAuditLog(aa),     'admin: canViewAuditLog true');
+    s.assert(AC.canAddProperty(aa),      'admin: canAddProperty true');
+    s.assert(!AC.isTenantPortalMode(aa), 'admin: isTenantPortalMode false');
+
+    // ── Determinism: same input → same output ─────────────────────────────
+
+    const propObj = { id: 'prop-riverfront' };
+    const tenantObj = { id: 'rec-1', user_id: 't1' };
+
+    s.assertEq(AC.canViewPortfolio(ll),                AC.canViewPortfolio(ll),                'canViewPortfolio deterministic');
+    s.assertEq(AC.canViewProperty(tt, propObj),        AC.canViewProperty(tt, propObj),        'canViewProperty deterministic');
+    s.assertEq(AC.canEditReview(rr),                   AC.canEditReview(rr),                   'canEditReview deterministic');
+    s.assertEq(AC.canExportAudit(aa),                  AC.canExportAudit(aa),                  'canExportAudit deterministic');
+    s.assertEq(AC.canViewTenant(tt, tenantObj),        AC.canViewTenant(tt, tenantObj),        'canViewTenant deterministic');
+    s.assertEq(AC.canDeleteDispute(ll),                AC.canDeleteDispute(ll),                'canDeleteDispute deterministic');
+    s.assertEq(AC.canViewReviewQueue(rr),              AC.canViewReviewQueue(rr),              'canViewReviewQueue deterministic');
+    s.assertEq(AC.canViewAuditLog(ll),                 AC.canViewAuditLog(ll),                 'canViewAuditLog deterministic');
+    s.assertEq(AC.canAddProperty(aa),                  AC.canAddProperty(aa),                  'canAddProperty deterministic');
+    s.assertEq(AC.isTenantPortalMode(tt),              AC.isTenantPortalMode(tt),              'isTenantPortalMode deterministic');
+
+    // ── No AuthService state leaks between clear() calls ─────────────────
+
+    AS.clear();
+    s.assert(!AS.isAuthenticated(), 'state clean after clear #1');
+    AS.hydrateFromSupabaseUser(fx.sbAdmin);
+    s.assertEq(AS.getCurrentUser().role, 'admin', 'admin hydrated');
+    AS.clear();
+    s.assert(!AS.isAuthenticated(), 'state clean after clear #2');
+    s.assert(AS.getCurrentUser() === null, 'getCurrentUser null after clear #2');
+    AS.hydrateFromSupabaseUser(fx.sbTenant);
+    s.assertEq(AS.getCurrentUser().role, 'tenant', 'tenant hydrated after admin+clear — no leak');
+    AS.clear();
+    s.assert(!AS.isAuthenticated(), 'state clean after clear #3');
+
+    // Leave AS in clean state
+    AS.clear();
+
+    return s;
+  }
+
   // ── Main runner ────────────────────────────────────────────────────────────
 
   function runQaHarness() {
@@ -1083,6 +1363,7 @@ window.QAHarness = (() => {
       suitePersistence(fx),
       suiteAllocationIntegrity(fx),
       suiteReconciliationExplainer(),
+      suiteAccessControl(),
     ];
 
     let passed = 0, failed = 0;
