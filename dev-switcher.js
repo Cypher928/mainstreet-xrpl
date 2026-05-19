@@ -15,8 +15,13 @@
   'use strict';
 
   // ── Production guard ────────────────────────────────────────────────────────
-  const _host = window.location.hostname;
-  if (_host !== 'localhost' && _host !== '127.0.0.1' && _host !== '') return;
+  // Allowed on: localhost, 127.0.0.1, and *.vercel.app ONLY when ?devRole=1
+  // is present in the URL. Never activates on any other hostname.
+  const _host   = window.location.hostname;
+  const _isLocal   = _host === 'localhost' || _host === '127.0.0.1' || _host === '';
+  const _isVercelPreview = _host.endsWith('.vercel.app') &&
+    new URLSearchParams(window.location.search).get('devRole') === '1';
+  if (!_isLocal && !_isVercelPreview) return;
 
   // ── Pre-normalized dev users (fallbacks when QAFixtures not loaded) ─────────
   // These match the shape AuthService.setUser() expects.
