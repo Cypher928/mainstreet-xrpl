@@ -2672,6 +2672,28 @@
     }
     .tp-title { font-size: 1.1rem; font-weight: 700; color: #e2e8f0; margin: 0 0 10px; }
     .tp-sub   { font-size: 0.85rem; color: #94a3b8; line-height: 1.6; margin: 0; }
+    /* ── Phase 8C: tenant property card ───────────────────────────────────── */
+    .tp-property-card {
+      max-width: 480px; margin: 20px auto 0; padding: 20px 24px;
+      background: #1e293b; border: 1px solid rgba(99,102,241,0.2);
+      border-radius: 12px;
+    }
+    .tp-property-hdr {
+      display: flex; align-items: center;
+      justify-content: space-between; gap: 12px; margin-bottom: 10px;
+    }
+    .tp-property-name {
+      font-size: 1rem; font-weight: 700; color: #e2e8f0;
+      min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap;
+    }
+    .tp-property-meta { display: flex; flex-wrap: wrap; gap: 6px; margin-bottom: 12px; }
+    .tp-meta-item {
+      font-size: 0.76rem; color: #64748b; padding: 2px 8px;
+      background: rgba(255,255,255,0.05); border: 1px solid rgba(255,255,255,0.08);
+      border-radius: 4px;
+    }
+    .tp-cam-status--done { color: #4ade80; border-color: rgba(74,222,128,0.2); background: rgba(74,222,128,0.06); }
+    .tp-property-note { font-size: 0.8rem; color: #475569; line-height: 1.55; margin: 0; }
 
     /* ── AI Auditor Narrative Panel ─────────────────────────────────────── */
     .an-panel {
@@ -3421,6 +3443,8 @@
       <p class="tp-title">Tenant Portal</p>
       <p class="tp-sub">Your property manager will share your CAM statement and invoice explanations here. Contact them if you don't see your statement yet.</p>
     </div>
+    <!-- Populated by _renderTenantPropertyView() when user.propertyIds is set (Phase 8C) -->
+    <div id="tenantPropertyView" style="display:none;"></div>
   </div>
 
   <!-- Portfolio KPI Overview -->

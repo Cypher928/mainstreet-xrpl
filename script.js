@@ -3875,6 +3875,8 @@ async function explainCharge(i) {
 }
 
 function disputeCharge(i) {
+  if (window.AccessControl && window.AuthService &&
+      !window.AccessControl.canEditReview(window.AuthService.getCurrentUser())) return;
   const det = document.getElementById(`idet-${i}`);
   if (!det) return;
   det.style.display = 'block';
@@ -11354,6 +11356,8 @@ function renderPortfolio(props) {
 }
 
 async function selectProperty(id) {
+  // Tenants use _initTenantPortal() as their data path — they never enter the main workflow
+  if (window.AuthService?.getCurrentUser()?.role === 'tenant') return;
   const property = _props.find(p => p.id === id);
   if (!property) return;
 
@@ -11421,6 +11425,12 @@ async function selectProperty(id) {
 }
 
 async function backToPortfolio() {
+  // Tenant: re-show portal instead of landlord portfolio
+  if (window.AccessControl && window.AuthService &&
+      window.AccessControl.isTenantPortalMode(window.AuthService.getCurrentUser())) {
+    _activateTenantPortal();
+    return;
+  }
   // ── 1. Synchronously snapshot all state into the _props entry ─────────────
   //    Do this before clearing activePropId so DOM reads still work.
   if (activePropId) {
@@ -12678,6 +12688,74 @@ function _activateTenantPortal() {
   if (msgEl)  msgEl.style.display  = 'block';
 }
 
+// ── Phase 8C: Tenant portal init ─────────────────────────────────────────────
+// Called from init() instead of _activateTenantPortal() for tenant-role users.
+// Shows the portal frame, then loads the assigned property (if any) read-only.
+async function _initTenantPortal() {
+  const user = window.AuthService?.getCurrentUser();
+  const assignedIds = (user?.propertyIds || [])
+    .filter(id => typeof id === 'string' && id.length > 10);
+
+  _activateTenantPortal(); // always show portal frame + hide workflow
+
+  if (assignedIds.length === 0) return; // no assignment — welcome message only
+
+  try {
+    const data = await _loadTenantPropertyData(assignedIds[0]);
+    if (data) _renderTenantPropertyView(data);
+  } catch (e) {
+    console.warn('[TenantPortal] Property load failed:', e?.message);
+    // fail silently — welcome message remains visible
+  }
+}
+
+// Client-side permission check before loading a property for a tenant.
+// Defense-in-depth: only loads a property that is explicitly listed in
+// user.propertyIds. Supabase RLS is the authoritative server-side boundary.
+// NOTE: RLS policy "tenant_read_assigned_property" should be added to the
+// properties table before this feature is exposed in production. See Phase 8C-hardening.
+async function _loadTenantPropertyData(id) {
+  const user = window.AuthService?.getCurrentUser();
+  if (!user || user.role !== 'tenant') return null;
+  const assigned = Array.isArray(user.propertyIds) ? user.propertyIds : [];
+  if (!assigned.includes(id)) {
+    console.warn('[TenantPortal] Access denied — property not in user.propertyIds:', id);
+    return null;
+  }
+  return loadPropertyData(id); // existing function — no changes needed
+}
+
+// Renders a read-only property summary card inside #tenantPropertyView.
+// Never enters #mainWorkflow; never sets activePropId.
+function _renderTenantPropertyView(property) {
+  const container = document.getElementById('tenantPropertyView');
+  if (!container) return;
+
+  const camRec     = property.camReconciliation;
+  const hasResults = camRec && Array.isArray(camRec.results) && camRec.results.length > 0;
+  const year       = property.camYear || (hasResults ? (camRec.results[0]?.year ?? null) : null) || '—';
+  const statusText = hasResults ? `Reconciliation complete · ${year}` : 'Reconciliation pending';
+
+  container.innerHTML =
+    '<div class="tp-property-card">' +
+      '<div class="tp-property-hdr">' +
+        `<span class="tp-property-name">${esc(property.name || 'Your Property')}</span>` +
+        '<span class="rv-ro-badge">READ-ONLY</span>' +
+      '</div>' +
+      '<div class="tp-property-meta">' +
+        (property.totalSqft ? `<span class="tp-meta-item">${Number(property.totalSqft).toLocaleString()} sq ft</span>` : '') +
+        `<span class="tp-meta-item${hasResults ? ' tp-cam-status--done' : ''}">${esc(statusText)}</span>` +
+      '</div>' +
+      '<p class="tp-property-note">Your CAM reconciliation data is managed by your property manager. Contact them to request a detailed statement or to dispute a charge.</p>' +
+    '</div>';
+  container.style.display = 'block';
+
+  // Hide the generic welcome message once a property card is shown
+  const welcome = document.getElementById('tenantPortalMsg')
+    ?.querySelector('.tenant-portal-welcome');
+  if (welcome) welcome.style.display = 'none';
+}
+
 // ─── Init ─────────────────────────────────────────────────────────────────────
 async function init() {
   _loadCheckpoints();
@@ -12685,7 +12763,7 @@ async function init() {
   // ── Tenant portal mode — bypass portfolio for tenant-role users ───────────
   if (window.AccessControl && window.AuthService &&
       window.AccessControl.isTenantPortalMode(window.AuthService.getCurrentUser())) {
-    _activateTenantPortal();
+    await _initTenantPortal();
     return;
   }
 
