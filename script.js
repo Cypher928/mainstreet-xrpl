@@ -33,6 +33,7 @@ setTimeout(() => {
 
 // ─── Authentication ───────────────────────────────────────────────────────────
 async function _showApp(user) {
+  _lsUserId = (user && user.id) ? user.id : null;
   document.getElementById('loginScreen').style.display  = 'none';
   document.getElementById('appContent').style.display   = 'block';
   if (user?.email) document.getElementById('headerUserEmail').textContent = user.email;
@@ -52,6 +53,11 @@ function _showLogin() {
 
 let _authMode = 'signin'; // 'signin' | 'signup'
 let _initialized = false;
+let _lsUserId = null; // set in _showApp(), cleared in _clearAppState()
+
+function _lsUserKey() {
+  return _lsUserId ? `_ms_props_v2_${_lsUserId}` : '_ms_props_v2_anon';
+}
 
 function switchAuthTab(mode) {
   _authMode = mode;
@@ -155,6 +161,7 @@ async function submitAuth(event) {
 
 async function signOut() {
   if (window.AuthService) window.AuthService.clear();
+  _clearAppState();
   _initialized = false;
   _showLogin(); // Reset UI immediately — don't wait on Supabase
   try {
@@ -162,6 +169,30 @@ async function signOut() {
   } catch (e) {
     console.warn('[signOut] Supabase error:', e?.message);
   }
+}
+
+function _clearAppState() {
+  _lsUserId        = null;
+  activePropId     = null;
+  _props           = [];
+  lastResults      = [];
+  lastPropName     = '';
+  lastTotal        = 0;
+  lastInvoicesFull = [];
+  lastFullResults  = [];
+  lastInvoices     = [];
+  lastTenants      = [];
+  _lastReconIssues = [];
+  _dwActiveDid     = null;
+  nextDisputeId    = 0;
+  _saveGeneration  = 0;
+  if (_saveDebounceTimer) { clearTimeout(_saveDebounceTimer); _saveDebounceTimer = null; }
+  camRuns.length     = 0;
+  disputes.length    = 0;
+  activityLog.length = 0;
+  portfolio.length   = 0;
+  tenantData[0] = tenantData[1] = tenantData[2] = null;
+  Object.keys(_snapshots).forEach(k => delete _snapshots[k]);
 }
 
 // Check existing session, then listen for changes
@@ -184,13 +215,16 @@ window.addEventListener('load', () => {
 });
 
 db.auth.onAuthStateChange((event, session) => {
-  if (event === 'SIGNED_IN' && session?.user) {
+  if ((event === 'SIGNED_IN' || event === 'INITIAL_SESSION') && session?.user) {
     _showApp(session.user);
     if (!_initialized) {
       _initialized = true;
       init();
     }
+  } else if (event === 'TOKEN_REFRESHED') {
+    console.log('[Auth] Token refreshed');
   } else if (event === 'SIGNED_OUT') {
+    _clearAppState();
     _initialized = false;
     _showLogin();
   }
@@ -5266,9 +5300,9 @@ function _msRunTests() {
 
     // Clean up immediately — don't leave test data in storage
     try {
-      const store = JSON.parse(localStorage.getItem(_LS_KEY) || '{}');
+      const store = JSON.parse(_lsGet(_lsUserKey()) || '{}');
       delete store[TEST_ID];
-      localStorage.setItem(_LS_KEY, JSON.stringify(store));
+      _lsSet(_lsUserKey(), JSON.stringify(store));
     } catch {}
 
     if (!loaded)                               fail('localStorage roundtrip: load returned null', 'null');
@@ -11651,15 +11685,15 @@ function _stripBlobs(property) {
 
 function _lsSave(property) {
   try {
-    const stored = JSON.parse(_lsGet(_LS_KEY) || '{}');
+    const stored = JSON.parse(_lsGet(_lsUserKey()) || '{}');
     stored[property.id] = _stripBlobs(property);
-    _lsSet(_LS_KEY, JSON.stringify(stored));
+    _lsSet(_lsUserKey(), JSON.stringify(stored));
   } catch (e) { }
 }
 
 function _lsLoadAll() {
   try {
-    const stored = JSON.parse(_lsGet(_LS_KEY) || '{}');
+    const stored = JSON.parse(_lsGet(_lsUserKey()) || '{}');
     const rows = Object.values(stored);
     return rows.length ? rows : null;
   } catch (e) { return null; }
@@ -11667,7 +11701,7 @@ function _lsLoadAll() {
 
 function _lsLoad(id) {
   try {
-    const stored = JSON.parse(_lsGet(_LS_KEY) || '{}');
+    const stored = JSON.parse(_lsGet(_lsUserKey()) || '{}');
     return stored[id] || null;
   } catch (e) { return null; }
 }
