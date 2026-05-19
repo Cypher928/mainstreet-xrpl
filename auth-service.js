@@ -175,11 +175,38 @@ window.AuthService = (() => {
     _currentUser = null;
   }
 
+  /**
+   * Directly sets the current user from a pre-normalized user object.
+   * Validates role (unknown → 'landlord') and coerces propertyIds to array.
+   * Intended for dev tooling and testing — in production, prefer
+   * hydrateFromSupabaseUser() which normalizes from a raw Supabase object.
+   * @param {object|null} normalizedUser
+   * @returns {object|null}
+   */
+  function setUser(normalizedUser) {
+    if (normalizedUser == null) {
+      _currentUser = null;
+      return null;
+    }
+    const role = VALID_ROLES.has(normalizedUser.role) ? normalizedUser.role : 'landlord';
+    const email = normalizedUser.email || '';
+    _currentUser = {
+      id:          normalizedUser.id          || '',
+      email,
+      role,
+      displayName: normalizedUser.displayName || email.split('@')[0] || '',
+      propertyIds: Array.isArray(normalizedUser.propertyIds) ? normalizedUser.propertyIds.filter(v => typeof v === 'string') : [],
+      createdAt:   normalizedUser.createdAt   || null,
+    };
+    return _currentUser;
+  }
+
   // ── Exports ─────────────────────────────────────────────────────────────────
 
   return {
     VALID_ROLES,
     hydrateFromSupabaseUser,
+    setUser,
     getCurrentUser,
     isAuthenticated,
     getUserRole,
