@@ -655,7 +655,7 @@
     }
     .ptf-kpi:hover { background: #141e2e; }
     .ptf-kpi-val {
-      font-size: 1.4rem; font-weight: 800; color: #C9973A;
+      font-size: 1.4rem; font-weight: 800; color: #475569;
       line-height: 1; margin-bottom: 4px; transition: color 0.2s;
     }
     .ptf-kpi-lbl {
@@ -2551,6 +2551,7 @@
       box-shadow: 0 4px 32px rgba(0,0,0,0.6);
       border: 1px solid rgba(255,255,255,0.08);
       width: 100%; max-width: 420px; text-align: center;
+      max-height: calc(100vh - 48px); overflow-y: auto;
     }
     .login-logo {
       font-family: 'Cormorant Garamond', Georgia, serif;
@@ -2595,7 +2596,14 @@
       display: flex; align-items: center;
       gap: 10px; font-size: 0.82rem;
     }
-    .header-user-email { color: #94A3B8; }
+    .header-user-email {
+      color: #94A3B8;
+      min-width: 0;
+      overflow: hidden;
+      text-overflow: ellipsis;
+      white-space: nowrap;
+      max-width: 220px;
+    }
     .logout-btn {
       padding: 5px 13px; border-radius: 6px; cursor: pointer;
       font-size: 0.78rem; font-weight: 600; font-family: inherit;
@@ -2603,6 +2611,36 @@
       border: 1px solid rgba(148,163,184,0.2);
     }
     .logout-btn:hover { background: rgba(148,163,184,0.16); color: #E2E8F0; }
+
+    /* ── Mobile: header + login + tenant portal ─────────────────────────── */
+    /* On narrow screens the h1 + user-bar row clips; stack vertically instead */
+    @media (max-width: 480px) {
+      header {
+        flex-direction: column;
+        align-items: flex-start;
+        padding: 14px 12px 10px;
+        margin-bottom: 20px;
+        gap: 8px;
+      }
+      header h1 { font-size: 1.35rem; }
+      .header-user-bar {
+        width: 100%;
+        justify-content: flex-end;
+        flex-wrap: wrap;
+        row-gap: 4px;
+      }
+      .header-user-email { max-width: 180px; }
+      .tenant-portal-welcome { padding: 20px; margin: 16px auto; }
+    }
+    /* Tighten login card padding on very narrow screens */
+    @media (max-width: 360px) {
+      .login-card { padding: 32px 24px; }
+    }
+    /* Tighten login card padding on short screens (landscape mobile, small phones) */
+    @media (max-height: 620px) {
+      .login-card { padding: 24px 32px; }
+      .login-tagline { margin-bottom: 18px; }
+    }
 
     /* ── RBAC: role badge ──────────────────────────────────────────────── */
     .header-role-badge {

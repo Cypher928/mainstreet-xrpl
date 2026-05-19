@@ -11218,6 +11218,14 @@ function renderPortfolio(props) {
   document.getElementById('pKpiMissingDocs').textContent = k.totalMissingDocs;
   document.getElementById('pKpiConfidence').textContent  = k.avgConf !== null ? k.avgConf + '%' : '—';
 
+  // Light up non-risk KPIs from muted placeholder to amber once data is populated
+  const propEl = document.getElementById('pKpiProperties');
+  const camEl  = document.getElementById('pKpiCAM');
+  const confEl = document.getElementById('pKpiConfidence');
+  if (propEl) propEl.style.color = '#C9973A';
+  if (camEl)  camEl.style.color  = '#C9973A';
+  if (confEl) confEl.style.color = k.avgConf !== null ? '#C9973A' : '';
+
   // Conditional accent on risk-sensitive KPIs
   const critEl = document.getElementById('pKpiCritical');
   const dispEl = document.getElementById('pKpiDisputes');
