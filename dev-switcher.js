@@ -203,9 +203,11 @@
     const panel = _buildPanel();
     document.body.appendChild(panel);
 
-    // Reflect whatever role is already active (set by _showApp on page load)
+    // Reflect whatever role is already active (set by _showApp on page load).
+    // Fall back to 'landlord' so the panel shows a usable state on localhost
+    // when Supabase auth hasn't resolved yet (no credentials configured).
     const currentUser = window.AuthService.getCurrentUser();
-    if (currentUser) _syncPanelStatus(currentUser.role);
+    _syncPanelStatus(currentUser ? currentUser.role : 'landlord');
 
     // Stay in sync if _showApp fires after us (auth session restores async)
     const appEl = document.getElementById('appContent');
