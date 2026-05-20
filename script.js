@@ -34,6 +34,8 @@ setTimeout(() => {
 // ─── Authentication ───────────────────────────────────────────────────────────
 async function _showApp(user) {
   _lsUserId = (user && user.id) ? user.id : null;
+  _lsMigrateAncillaryKeys(); // scope ancillary LS keys + re-hydrate _camYear
+  initCamYearSelect();       // re-sync dropdown now that _camYear may have changed
   document.getElementById('loginScreen').style.display  = 'none';
   document.getElementById('appContent').style.display   = 'block';
   if (user?.email) document.getElementById('headerUserEmail').textContent = user.email;
@@ -55,8 +57,34 @@ let _authMode = 'signin'; // 'signin' | 'signup'
 let _initialized = false;
 let _lsUserId = null; // set in _showApp(), cleared in _clearAppState()
 
-function _lsUserKey() {
-  return _lsUserId ? `_ms_props_v2_${_lsUserId}` : '_ms_props_v2_anon';
+function _lsUserKey()   { return _lsUserId ? `_ms_props_v2_${_lsUserId}`       : '_ms_props_v2_anon'; }
+function _errKey()      { return _lsUserId ? `mainstreet_errors_v1_${_lsUserId}`  : 'mainstreet_errors_v1'; }
+function _cpKey()       { return _lsUserId ? `mainstreet_ckpt_v1_${_lsUserId}`    : 'mainstreet_ckpt_v1'; }
+function _rvKey()       { return _lsUserId ? `mainstreet_review_v1_${_lsUserId}`  : 'mainstreet_review_v1'; }
+function _camYearKey()  { return _lsUserId ? `ms_camYear_${_lsUserId}`            : 'ms_camYear_anon'; }
+
+// One-time migration: if the unscoped key has data and the scoped key does not,
+// move the value to the scoped key and delete the unscoped one.
+function _lsMigrateAncillaryKeys() {
+  if (!_lsUserId) return;
+  [
+    ['mainstreet_errors_v1',  _errKey()],
+    ['mainstreet_ckpt_v1',   _cpKey()],
+    ['mainstreet_review_v1', _rvKey()],
+    ['camYear',              _camYearKey()],
+    ['ms_debug_leases',      'ms_debug_leases_' + _lsUserId],
+  ].forEach(function(pair) {
+    var old = pair[0], scoped = pair[1];
+    if (old === scoped) return;
+    if (localStorage.getItem(scoped) !== null) return;
+    var val = localStorage.getItem(old);
+    if (val === null) return;
+    try { localStorage.setItem(scoped, val); } catch (_) {}
+    localStorage.removeItem(old);
+  });
+  // Re-hydrate _camYear from the now-scoped key
+  var stored = localStorage.getItem(_camYearKey());
+  if (stored) _camYear = parseInt(stored, 10) || _camYear;
 }
 
 function switchAuthTab(mode) {
@@ -190,6 +218,7 @@ function _clearAppState() {
   camRuns.length     = 0;
   disputes.length    = 0;
   activityLog.length = 0;
+  invoiceData.length = 0;
   portfolio.length   = 0;
   tenantData[0] = tenantData[1] = tenantData[2] = null;
   Object.keys(_snapshots).forEach(k => delete _snapshots[k]);
@@ -2921,7 +2950,7 @@ function renderBulkResults() {
   // tenantData is the source of truth — contains every file, including failed extractions.
   // Do NOT filter by tenant_name or status here; every file must render a card.
   const tenants = tenantData.filter(t => t && typeof t === 'object');
-  const _debugMode = !!(window.DEBUG_LEASES || localStorage.getItem('ms_debug_leases') === '1');
+  const _debugMode = !!(window.DEBUG_LEASES || localStorage.getItem(_lsUserId ? 'ms_debug_leases_' + _lsUserId : 'ms_debug_leases') === '1');
 
   if (!tenants.length) return;
 
@@ -5190,7 +5219,7 @@ function animateCAMResults(body, section) {
 // ─── Centralized Error Logging ───────────────────────────────────────────────
 // Stores a ring-buffer of recent errors in localStorage for post-hoc debugging.
 // Call: logError('saveProperty', err, { propId, invoiceCount })
-const _ERR_KEY = 'mainstreet_errors_v1';
+// _errKey() defined near _lsUserKey() — returns uid-scoped localStorage key
 const _ERR_MAX = 50;
 
 // In-memory lease extraction debug store — never persisted; reset on page reload.
@@ -5216,17 +5245,17 @@ function logError(type, error, context = {}) {
   console.groupEnd();
 
   try {
-    const log = JSON.parse(localStorage.getItem(_ERR_KEY) || '[]');
+    const log = JSON.parse(localStorage.getItem(_errKey()) || '[]');
     log.unshift(entry);
     if (log.length > _ERR_MAX) log.length = _ERR_MAX;
-    localStorage.setItem(_ERR_KEY, JSON.stringify(log));
+    localStorage.setItem(_errKey(), JSON.stringify(log));
   } catch { /* quota — silently skip */ }
 }
 
 // Devtools helpers: window._msErrors.get() / .clear()
 window._msErrors = {
-  get:   ()  => { try { return JSON.parse(localStorage.getItem(_ERR_KEY) || '[]'); } catch { return []; } },
-  clear: ()  => { try { localStorage.removeItem(_ERR_KEY); } catch {} },
+  get:   ()  => { try { return JSON.parse(localStorage.getItem(_errKey()) || '[]'); } catch { return []; } },
+  clear: ()  => { try { localStorage.removeItem(_errKey()); } catch {} },
   show:  ()  => { console.table(window._msErrors.get()); },
 };
 
@@ -6231,14 +6260,11 @@ const camRuns    = []; // previous run history
 let lastResults  = []; // ReconciliationResult[] — unified with lastFullResults
 
 // ─── CAM Year ─────────────────────────────────────────────────────────────────
-let _camYear = (() => {
-  const stored = localStorage.getItem('camYear');
-  return stored ? parseInt(stored, 10) : new Date().getFullYear();
-})();
+let _camYear = new Date().getFullYear(); // hydrated from scoped key in _lsMigrateAncillaryKeys()
 function getCamYear() { return _camYear; }
 function setCamYear(y) {
   _camYear = parseInt(y, 10) || new Date().getFullYear();
-  localStorage.setItem('camYear', _camYear);
+  localStorage.setItem(_camYearKey(), _camYear);
 }
 function initCamYearSelect() {
   const sel = document.getElementById('camYearSelect');
@@ -6325,25 +6351,25 @@ function _auditDirect(type, title, opts = {}) {
 }
 
 // ─── Checkpoint System ────────────────────────────────────────────────────────
-const _CP_KEY = 'mainstreet_ckpt_v1';
+// _cpKey() defined near _lsUserKey() — returns uid-scoped localStorage key
 const _checkpoints = {};
 
 function _loadCheckpoints() {
   try {
-    const raw = localStorage.getItem(_CP_KEY);
+    const raw = localStorage.getItem(_cpKey());
     if (raw) Object.assign(_checkpoints, JSON.parse(raw));
   } catch (e) { }
 }
 
 function _saveCheckpoints() {
   try {
-    localStorage.setItem(_CP_KEY, JSON.stringify(_checkpoints));
+    localStorage.setItem(_cpKey(), JSON.stringify(_checkpoints));
   } catch (e) {
     // quota exceeded — trim to 2 per property and retry
     Object.keys(_checkpoints).forEach(id => {
       if (_checkpoints[id].length > 2) _checkpoints[id].length = 2;
     });
-    try { localStorage.setItem(_CP_KEY, JSON.stringify(_checkpoints)); } catch (_) { }
+    try { localStorage.setItem(_cpKey(), JSON.stringify(_checkpoints)); } catch (_) { }
   }
 }
 
@@ -6638,14 +6664,14 @@ function rebuildReconciliationState() {
 }
 
 // ─── Executive Review Mode ───────────────────────────────────────────────────
-const _RV_KEY = 'mainstreet_review_v1';
+// _rvKey() defined near _lsUserKey() — returns uid-scoped localStorage key
 let _reviewMode = false;
 
 function _rvLoad() {
-  try { return JSON.parse(localStorage.getItem(_RV_KEY) || '{}'); } catch { return {}; }
+  try { return JSON.parse(localStorage.getItem(_rvKey()) || '{}'); } catch { return {}; }
 }
 function _rvSave(tokens) {
-  try { localStorage.setItem(_RV_KEY, JSON.stringify(tokens)); } catch {}
+  try { localStorage.setItem(_rvKey(), JSON.stringify(tokens)); } catch {}
 }
 function _genUUID() {
   return ([1e7]+-1e3+-4e3+-8e3+-1e11).replace(/[018]/g, c =>
