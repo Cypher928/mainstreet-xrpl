@@ -11919,6 +11919,8 @@ async function loadProperties() {
 const _resyncQueues = new Map();
 
 async function _doResyncTenantsToTable(propertyId, tenants) {
+  // SECURITY: no client-side auth check here — propertyId comes from the caller.
+  // Supabase RLS on the tenants table is the authoritative guard. Add RLS in Phase 8C-hardening.
   const { error: delErr } = await db.from('tenants').delete().eq('property_id', propertyId);
   if (delErr) { console.error('[resyncTenantsToTable] delete error:', delErr.message); return; }
   const rows = (tenants || [])
@@ -12169,6 +12171,10 @@ let _saveDebounceTimer = null;
 // Snapshot current in-memory state back into the canonical _props entry and
 // persist to Supabase. Debounced — rapid successive calls collapse into one write.
 async function savePropertyData() {
+  // SECURITY: tenant mode never sets activePropId, so this guard stops all saves
+  // passively. Most other mutating functions (removeInvItem, clearBulkResults, etc.)
+  // are similarly protected — they all return early when activePropId/currentProperty()
+  // is null. Explicit RBAC guards are only added where passive isolation is insufficient.
   if (!activePropId) return;
 
   const prop = _props.find(p => p.id === activePropId);
@@ -12761,6 +12767,8 @@ async function init() {
   _loadCheckpoints();
 
   // ── Tenant portal mode — bypass portfolio for tenant-role users ───────────
+  // SECURITY: tenant check must come before review-mode check so that a tenant
+  // navigating to a #review/<token> URL cannot enter the reviewer workflow.
   if (window.AccessControl && window.AuthService &&
       window.AccessControl.isTenantPortalMode(window.AuthService.getCurrentUser())) {
     await _initTenantPortal();
