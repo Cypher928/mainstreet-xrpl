@@ -3173,13 +3173,20 @@ async function saveBulkTenant(i) {
   const d   = tenantData[i];
   const row = document.getElementById(`btr-${i}`);
 
-  // If tenant now has a name and sqft, clear the needs-review state
-  if (d && d._needsReview && d.tenant_name && parseSqft(d.leased_sqft) > 0) {
-    d._needsReview = false;
-    if (row) {
-      row.classList.remove('has-warning', 'has-error');
-      const statusEl = document.getElementById(`bstatus-${i}`);
-      if (statusEl) statusEl.textContent = '✓';
+  // Re-derive review state from current field values and clear _needsReview
+  // if all required fields are now present. The original condition only checked
+  // name + sqft and missed start_date / end_date / lease_type — fields the user
+  // fills in after flagging. deriveTenantReviewState() is the single source of
+  // truth and checks all required fields.
+  if (d && d._needsReview) {
+    const rv = deriveTenantReviewState(d);
+    if (rv.status === 'verified' || rv.status === 'manually_verified') {
+      d._needsReview = false;
+      if (row) {
+        row.classList.remove('has-warning', 'has-error');
+        const statusEl = document.getElementById(`bstatus-${i}`);
+        if (statusEl) statusEl.textContent = '✓';
+      }
     }
   }
 
@@ -3252,6 +3259,11 @@ async function saveBulkTenant(i) {
     // Reset Done button for if they reopen
     if (btn) { btn.textContent = 'Done ✓'; btn.disabled = false; }
   }, 550);
+
+  // Full re-render after the 0.8s flash animation completes.
+  // Resolves stale warning banners, status icons, review pills, and queue
+  // badges that are only recomputed inside renderBulkResults().
+  setTimeout(() => { renderBulkResults(); }, 850);
 
   showToast('Lease updated');
 }
