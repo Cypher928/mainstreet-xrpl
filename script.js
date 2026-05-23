@@ -2582,41 +2582,36 @@ function _confidenceBadgeHtml(level) {
 // ── Lease Review Status helpers ────────────────────────────────────────────
 // Pure functions — read tenant fields only, no mutations, no pipeline access.
 function getLeaseReviewStatus(t) {
-  if (!t || !t.tenant_name || (t.extractionFailed && !t._userConfirmed)) return 'incomplete';
-  const sqft = parseFloat(t.leased_sqft);
-  const missing = !t.lease_type
-    || !t.start_date
-    || !t.end_date
-    || (t.leased_sqft === '' || t.leased_sqft == null);
-  const badSqft = !isNaN(sqft) && sqft <= 0;
-  const recon = lastResults.find(r => r.name === t.tenant_name);
-  const badProRata = recon && recon.proRata > 1.0;
-  if (missing || badSqft || badProRata) return 'needs-review';
-  return 'ready';
+  // Delegates to the canonical engine — eliminates independent field-check reimplementation.
+  // Returns canonical vocabulary; _reviewStatusPillHtml() maps both hyphenated and underscore forms.
+  return deriveTenantReviewState(t).status;
 }
 
 function getLeaseReviewNotes(t) {
   if (!t) return ['No lease data available'];
-  const notes = [];
-  if (t.leased_sqft === '' || t.leased_sqft == null) {
-    notes.push('Square footage not found — verify against lease');
-  } else if (parseFloat(t.leased_sqft) <= 0) {
-    notes.push('Square footage may require verification');
-  }
-  if (!t.start_date) notes.push('Lease start date missing');
-  if (!t.end_date)   notes.push('Lease end date missing');
-  if (!t.lease_type) notes.push('Lease type could not be determined');
-  const recon = lastResults.find(r => r.name === t.tenant_name);
-  if (recon && recon.proRata > 1.0) notes.push('Pro-rata exceeds 100% — verify square footage');
-  if (t._usedFallback) notes.push('Lease dates extracted from document text — confirm accuracy');
-  return notes;
+  return deriveTenantReviewState(t).warnings.map(function(w) {
+    switch (w.type) {
+      case 'missing_sqft':        return 'Square footage not found — verify against lease';
+      case 'missing_start_date':  return 'Lease start date missing';
+      case 'missing_end_date':    return 'Lease end date missing';
+      case 'missing_lease_type':  return 'Lease type could not be determined';
+      case 'nnn_cap_missing':     return 'NNN cap percentage not specified';
+      case 'fallback_extraction': return 'Lease dates extracted from document text — confirm accuracy';
+      case 'low_sqft_confidence': return 'Sqft confidence low — verify against lease';
+      case 'pro_rata_overflow':   return 'Pro-rata exceeds 100% — verify square footage';
+      default:                    return w.label;
+    }
+  });
 }
 
 function _reviewStatusPillHtml(status) {
   const cfg = {
-    'ready':        { cls: 'lrs-ready',       label: '✓ Ready' },
-    'needs-review': { cls: 'lrs-needs-review', label: '⚠ Needs Review' },
-    'incomplete':   { cls: 'lrs-incomplete',   label: '✕ Incomplete' },
+    'ready':             { cls: 'lrs-ready',        label: '✓ Ready' },
+    'verified':          { cls: 'lrs-ready',        label: '✓ Ready' },
+    'manually_verified': { cls: 'lrs-ready',        label: '✓ Ready' },
+    'needs-review':      { cls: 'lrs-needs-review', label: '⚠ Needs Review' },
+    'needs_review':      { cls: 'lrs-needs-review', label: '⚠ Needs Review' },
+    'incomplete':        { cls: 'lrs-incomplete',   label: '✕ Incomplete' },
   }[status] || { cls: 'lrs-needs-review', label: '? Unknown' };
   return `<span class="lrs-pill ${cfg.cls}">${cfg.label}</span>`;
 }
@@ -2630,9 +2625,20 @@ function _reviewStatusPillHtml(status) {
 // These shims maintain backward-compatible global function names and supply
 // the live lastResults context for the active-property view.
 const _RQ_MISSING_FIELD_TYPES = ReviewEngine.MISSING_FIELD_TYPES;
-function deriveTenantReviewState(t) { return ReviewEngine.deriveTenantReviewState(t, lastResults); }
+function deriveTenantReviewState(t) {
+  const rv = ReviewEngine.deriveTenantReviewState(t, lastResults);
+  // Add missing[] — structural-blocking warnings separated from quality signals.
+  // Consumers that only care about which required fields are absent use rv.missing;
+  // those that want all quality signals use rv.warnings.
+  rv.missing = rv.warnings
+    .filter(function(w) { return _RQ_MISSING_FIELD_TYPES.has(w.type); })
+    .map(function(w) { return w.label; });
+  return rv;
+}
 function getTenantReviewState(t)    { return ReviewEngine.getTenantReviewState(t, lastResults); }
 function getTenantReviewScore(t)    { return ReviewEngine.getTenantReviewScore(t, lastResults); }
+// Debug helper: window.ms_debug_review(tenantObject) in the browser console
+window.ms_debug_review = function(tenant) { console.table(deriveTenantReviewState(tenant)); };
 
 function _tenantReviewStateBadgeHtml(t) {
   if (!t) return '';
@@ -2942,6 +2948,13 @@ function renderLeaseDebugPanel(d, i) {
   </div>`;
 }
 
+// Derives the confidence display level for a tenant card.
+// Extracted from the duplicate ternary that appeared in renderBulkResults()
+// and renderTenantDetailPanel() — single definition, both callers use this.
+function _tenantConfLevel(d) {
+  return d._confidence || (d.extractionFailed ? 'failed' : d._needsReview ? 'medium' : null);
+}
+
 function renderBulkResults() {
   const el = document.getElementById('bulkResults');
   el.innerHTML = '';
@@ -2981,7 +2994,7 @@ function renderBulkResults() {
     const isDupName   = d.tenant_name ? _dupNames.has(d.tenant_name.trim().toLowerCase()) : false;
 
     const isPending = d.status === 'pending';
-    const confLevel = d._confidence || (d.extractionFailed ? 'failed' : d._needsReview ? 'medium' : null);
+    const confLevel = _tenantConfLevel(d);
     const icon = isPending ? '⏳' : d.extractionFailed ? '❌' : showWarning ? '⚠️' : d.tenant_name ? '✓' : '?';
 
     // Job progress state — only relevant when pending
@@ -6047,7 +6060,7 @@ function openTenantDetailPanel(i) {
     ? '$' + parseFloat(n).toLocaleString('en-US', { minimumFractionDigits: 2, maximumFractionDigits: 2 })
     : '—';
 
-  const confLevel = d._confidence || (d.extractionFailed ? 'failed' : d._needsReview ? 'medium' : null);
+  const confLevel = _tenantConfLevel(d);
   const badgeHtml = _confidenceBadgeHtml(confLevel);
 
   const name    = d.tenant_name || '(unknown)';
