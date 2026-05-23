@@ -1240,6 +1240,47 @@
       background: rgba(90,180,255,0.14); border: 1px solid rgba(90,180,255,0.35);
       color: #8fd0ff; font-size: 12px; font-weight: 600; letter-spacing: 0.02em;
     }
+    /* Evidence button in LFC value row */
+    .lfc-ev-btn {
+      background: none; border: none; cursor: pointer; padding: 0 2px;
+      font-size: 13px; opacity: 0.5; line-height: 1; flex-shrink: 0;
+      transition: opacity .15s;
+    }
+    .lfc-ev-btn:hover { opacity: 1; }
+    /* ── Lease Evidence Panel (lev-*) ──────────────────────────────────────── */
+    .lev-header {
+      display: flex; align-items: center; justify-content: space-between;
+      padding: 9px 12px; background: rgba(99,102,241,0.08);
+      border-bottom: 1px solid rgba(99,102,241,0.2);
+    }
+    .lev-field-label { font-size: 0.72rem; font-weight: 700; color: #a5b4fc; text-transform: uppercase; letter-spacing: 0.07em; }
+    .lev-close {
+      background: none; border: none; color: #64748b; cursor: pointer;
+      font-size: 13px; padding: 0 2px; line-height: 1; font-family: monospace;
+    }
+    .lev-close:hover { color: #e2e8f0; }
+    .lev-body { padding: 10px 12px; display: flex; flex-direction: column; gap: 6px; }
+    .lev-section-lbl { font-size: 0.6rem; color: #475569; text-transform: uppercase; letter-spacing: 0.07em; }
+    .lev-value { font-size: 0.9rem; font-weight: 700; color: #e2e8f0; }
+    .lev-value--missing { color: #475569; font-weight: 400; font-style: italic; font-size: 0.82rem; }
+    .lev-conf { font-size: 0.72rem; }
+    .lev-src-block { border-top: 1px solid rgba(255,255,255,0.06); padding-top: 6px; display: flex; flex-direction: column; gap: 3px; }
+    .lev-src-row { display: flex; justify-content: space-between; align-items: baseline; gap: 8px; }
+    .lev-src-lbl { font-size: 0.62rem; color: #475569; text-transform: uppercase; letter-spacing: 0.05em; flex-shrink: 0; }
+    .lev-src-val { font-size: 0.75rem; color: #94a3b8; text-align: right; word-break: break-all; }
+    .lev-jobid { font-family: monospace; font-size: 0.68rem; color: #64748b; }
+    .lev-excerpt-lbl { font-size: 0.6rem; color: #475569; text-transform: uppercase; letter-spacing: 0.05em; margin-top: 4px; }
+    .lev-quote {
+      margin: 2px 0 0; padding: 6px 8px; border-left: 2px solid rgba(99,102,241,0.4);
+      font-size: 0.78rem; color: #c4b5fd; font-style: italic; line-height: 1.45;
+      background: rgba(99,102,241,0.06); border-radius: 0 4px 4px 0;
+    }
+    .lev-snippet {
+      font-size: 0.72rem; color: #64748b; line-height: 1.5; white-space: pre-wrap;
+      background: rgba(0,0,0,0.25); border-radius: 4px; padding: 6px 8px;
+      border: 1px solid rgba(255,255,255,0.05); max-height: 140px; overflow-y: auto;
+    }
+    .lev-no-data { font-size: 0.75rem; color: #475569; font-style: italic; line-height: 1.5; }
 
     /* Review Queue Panel */
     .rq-panel { margin: 16px 0 0; }

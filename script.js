@@ -2719,6 +2719,151 @@ function renderFieldConfidenceHtml(fieldName, t) {
 }
 // ─────────────────────────────────────────────────────────────────────────────
 
+// ── Lease Field Evidence Panel ────────────────────────────────────────────────
+
+window.__msEvidencePanel = { tenantId: null, fieldKey: null, el: null };
+
+const _LEV_FIELD_LABELS = {
+  tenant_name: 'Tenant Name',
+  leased_sqft: 'Leased Sq Ft',
+  lease_type:  'Lease Type',
+  start_date:  'Lease Start',
+  end_date:    'Lease End',
+  cap:         'CAM Cap',
+  proRata:     'Pro-Rata %',
+};
+
+// Builds a structured evidence object for a single field.
+// Prefers t.fieldEvidence[key] (future pipeline), falls back to _leaseDebug then metadata.
+function getFieldEvidence(fieldKey, t) {
+  if (!t) return null;
+  const value = getEffectiveLeaseField(fieldKey, t) ?? t[fieldKey] ?? null;
+  const conf  = getFieldConfidence(fieldKey, t);
+
+  const canonical = t.fieldEvidence?.[fieldKey];
+  if (canonical) {
+    return normalizeLeaseEvidence({ value, confidence: conf, source: {
+      fileName:    canonical.fileName    ?? t.fileName ?? null,
+      page:        canonical.page        ?? null,
+      snippet:     canonical.snippet     ?? null,
+      quote:       canonical.quote       ?? null,
+      extractionId: canonical.extractionId ?? t._jobId ?? null,
+    }});
+  }
+
+  // Fall back to debug log — present for leases processed in the current session.
+  const dbg     = t._jobId ? _leaseDebug.get(t._jobId) : null;
+  const snippet = dbg?.ocrText ? dbg.ocrText.slice(0, 400) : null;
+  return normalizeLeaseEvidence({ value, confidence: conf, source: {
+    fileName:    t.fileName ?? null,
+    page:        null,
+    snippet,
+    quote:       null,
+    extractionId: t._jobId ?? null,
+  }});
+}
+
+// Safe normalization — always returns a complete shape or null.
+function normalizeLeaseEvidence(raw) {
+  if (!raw) return null;
+  const src = raw.source || {};
+  return {
+    value:      raw.value ?? null,
+    confidence: raw.confidence || { status: 'missing', note: '' },
+    source: {
+      fileName:    (typeof src.fileName    === 'string' && src.fileName.trim())     ? src.fileName.trim()    : null,
+      page:        (typeof src.page        === 'number' && src.page > 0)            ? src.page               : null,
+      snippet:     (typeof src.snippet     === 'string' && src.snippet.trim())      ? src.snippet.trim()     : null,
+      quote:       (typeof src.quote       === 'string' && src.quote.trim())        ? src.quote.trim()       : null,
+      extractionId:(typeof src.extractionId === 'string' && src.extractionId)      ? src.extractionId       : null,
+    },
+  };
+}
+
+function renderLeaseEvidencePanel(fieldKey, t) {
+  const ev       = getFieldEvidence(fieldKey, t);
+  const label    = _LEV_FIELD_LABELS[fieldKey] || fieldKey;
+  const conf     = ev?.confidence || { status: 'missing', note: 'No extraction data' };
+  const src      = ev?.source || {};
+  const confIcon = conf.status === 'verified' ? '✓' : conf.status === 'estimated' ? '⚠' : '—';
+  const confCls  = 'lfc-' + conf.status;
+
+  const valHtml = ev?.value != null
+    ? `<div class="lev-value">${esc(String(ev.value))}</div>`
+    : `<div class="lev-value lev-value--missing">Not found in extraction</div>`;
+
+  const srcRows = [];
+  if (src.fileName) srcRows.push(
+    `<div class="lev-src-row"><span class="lev-src-lbl">Source</span><span class="lev-src-val">${esc(src.fileName)}</span></div>`);
+  if (src.page) srcRows.push(
+    `<div class="lev-src-row"><span class="lev-src-lbl">Page</span><span class="lev-src-val">${src.page}</span></div>`);
+  if (src.extractionId) srcRows.push(
+    `<div class="lev-src-row"><span class="lev-src-lbl">Job ID</span><span class="lev-src-val lev-jobid">${esc(src.extractionId.slice(0, 8))}…</span></div>`);
+
+  const quoteHtml = src.quote
+    ? `<div class="lev-excerpt-lbl">Extracted quote</div><blockquote class="lev-quote">${esc(src.quote)}</blockquote>`
+    : '';
+  const snippetHtml = src.snippet
+    ? `<div class="lev-excerpt-lbl">Document excerpt</div><div class="lev-snippet">${esc(src.snippet.slice(0, 320))}${src.snippet.length > 320 ? '…' : ''}</div>`
+    : '';
+  const noDataMsg = (!src.fileName && !src.snippet && !src.quote)
+    ? `<div class="lev-no-data">No source document data available.<br>Upload a lease PDF to see extraction evidence.</div>`
+    : '';
+
+  return `<div class="lev-header"><span class="lev-field-label">${esc(label)}</span>` +
+    `<button class="lev-close" onclick="closeLeaseEvidencePanel()" title="Close">&#x2715;</button></div>` +
+    `<div class="lev-body"><div class="lev-section-lbl">Extracted value</div>` +
+    valHtml +
+    `<div class="lev-conf ${confCls}">${confIcon} ${esc(conf.note || conf.status)}</div>` +
+    (srcRows.length ? `<div class="lev-src-block">${srcRows.join('')}</div>` : '') +
+    quoteHtml + snippetHtml + noDataMsg + `</div>`;
+}
+
+function openLeaseEvidencePanel(tenantId, fieldKey) {
+  const t = tenantData.find(function(x) { return x && x.id === tenantId; });
+  if (!t) return;
+  const st = window.__msEvidencePanel;
+  // Toggle: clicking the same field again closes the panel
+  if (st.el && st.el.style.display !== 'none' && st.tenantId === tenantId && st.fieldKey === fieldKey) {
+    closeLeaseEvidencePanel();
+    return;
+  }
+  st.tenantId = tenantId;
+  st.fieldKey = fieldKey;
+  let panel = st.el;
+  if (!panel) {
+    panel = document.createElement('div');
+    panel.id = '_msEvidencePanel';
+    panel.style.cssText =
+      'position:fixed;bottom:68px;right:20px;z-index:99997;width:300px;max-height:420px;overflow-y:auto;' +
+      'background:#1e293b;border:1px solid rgba(99,102,241,0.35);border-radius:10px;' +
+      'box-shadow:0 8px 32px rgba(0,0,0,0.55);font-family:inherit;';
+    document.body.appendChild(panel);
+    st.el = panel;
+  }
+  panel.innerHTML = renderLeaseEvidencePanel(fieldKey, t);
+  panel.style.display = 'block';
+}
+
+function closeLeaseEvidencePanel() {
+  const st = window.__msEvidencePanel;
+  if (st.el) st.el.style.display = 'none';
+  st.tenantId = null;
+  st.fieldKey  = null;
+}
+
+// Debug helper: window.ms_debug_evidence('leased_sqft', tenantData[0])
+window.ms_debug_evidence = function(fieldKey, tenant) {
+  const t = tenant || (tenantData && tenantData.find(Boolean));
+  if (!t) { console.warn('[EvidencePanel] No tenant data available'); return; }
+  const ev = getFieldEvidence(fieldKey || 'leased_sqft', t);
+  console.table(ev?.source || {});
+  console.log('[EvidencePanel] value:', ev?.value, '| conf:', ev?.confidence?.status, '—', ev?.confidence?.note);
+  return ev;
+};
+
+// ─────────────────────────────────────────────────────────────────────────────
+
 // ── Field Override + Manual Confirmation ──────────────────────────────────
 // Priority: manual override → extracted value → null.
 // Resolver used by all display layers so override logic stays in one place.
@@ -2750,10 +2895,12 @@ function _lfcItemInner(key, label, val, td, isEditing = false) {
   }
 
   const missingCls = val == null ? 'lfc-missing' : '';
+  const showEvBtn  = _LFC_EDITABLE.has(key) && td?.id;
   return `<div class="lfc-label">${esc(label)}</div>
     <div class="lfc-value-row">
       <div class="lfc-value ${missingCls}">${val ?? '—'}</div>
       ${editable ? `<button class="lfc-edit-btn" onclick="startFieldOverride('${td.id}','${key}')">Edit</button>` : ''}
+      ${showEvBtn ? `<button class="lfc-ev-btn" onclick="openLeaseEvidencePanel('${td.id}','${key}')" title="View extraction evidence">&#x1F50D;</button>` : ''}
     </div>
     ${renderFieldConfidenceHtml(key, td)}
     ${renderManualVerifiedBadge(key, td)}`;
@@ -10928,9 +11075,9 @@ function _rwRenderLeaseFields(t) {
 
     const confRow = `<div class="rw-field-conf rw-fc--${conf.status}">${confIcon[conf.status] || '—'} ${esc(conf.note || conf.status)}</div>`;
 
-    // View Source: available for all document-backed fields that have a lease URL
-    const viewBtn = (t.leaseUrl && key !== 'tenant_name')
-      ? `<button class="rw-view-src" onclick="openLeaseModalFromRw()" title="Open source document">View &#x2197;</button>`
+    // Evidence button: opens extraction evidence panel for all document-backed fields
+    const viewBtn = key !== 'tenant_name'
+      ? `<button class="rw-view-src" onclick="openLeaseEvidencePanel('${t.id}','${key}')" title="View extraction evidence">Evidence</button>`
       : '';
 
     const sourceRow = `
