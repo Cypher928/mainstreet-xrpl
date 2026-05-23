@@ -1,230 +1,117 @@
--- ── tenant_field_evidence + tenant_review_audit ─────────────────────────────
--- Phase 1 normalization: dual-write tables alongside existing JSON blob storage.
--- properties.data.tenants[].fieldEvidence remains authoritative until Phase 2.
--- Both tables are append-only; dedup constraints absorb retries/rapid re-saves.
---
--- Run once: Supabase → Settings → SQL Editor → New query → paste → Run
--- Safe to re-run (all statements use IF NOT EXISTS / OR REPLACE / DROP IF EXISTS).
--- DO NOT drop or alter properties.data — JSON blob persistence stays active.
+-- tenant_field_evidence + tenant_review_audit
+-- Phase 1 normalization: dual-write alongside existing JSON blob in properties.data.
+-- Safe to re-run. DO NOT drop properties.data -- JSON blob persistence stays active.
+-- Rollback: drop table public.tenant_review_audit cascade;
+--           drop table public.tenant_field_evidence cascade;
 
 
--- ── tenant_field_evidence ─────────────────────────────────────────────────────
--- Immutable snapshot log: one row per (tenant, field, reviewed_at moment).
--- Rows correspond 1-to-1 with entries in t.fieldEvidence[key].snapshots[].
--- Dedup: (tenant_id, field_key, reviewed_at) unique — retries silently no-op.
+-- TABLE: tenant_field_evidence
+-- One row per evidence snapshot. Mirrors t.fieldEvidence[key].snapshots[].
 
 create table if not exists public.tenant_field_evidence (
-  id                       uuid         primary key default gen_random_uuid(),
-
-  -- Ownership
-  property_id              uuid         not null
-    references public.properties(id) on delete cascade,
-  tenant_id                text         not null,  -- tenantData[i].id (client UUID string)
-  field_key                text         not null,  -- 'leased_sqft' | 'lease_type' | etc.
-
-  -- Extracted value
+  id                       uuid        primary key default gen_random_uuid(),
+  property_id              uuid        not null references public.properties(id) on delete cascade,
+  tenant_id                text        not null,
+  field_key                text        not null,
   value                    text,
-  confidence_status        text
-    check (confidence_status in ('verified','estimated','missing')),
+  confidence_status        text        check (confidence_status in ('verified','estimated','missing')),
   confidence_note          text,
-
-  -- Source document provenance
   source_file              text,
   source_page              integer,
-  extraction_id            text,                   -- t._jobId
-  extraction_version       text,                   -- 'v1' | 'v1-retry' | 'manual'
-
-  -- Reviewer attribution
+  extraction_id            text,
+  extraction_version       text,
   reviewer_uid             text,
   reviewer_email           text,
-  -- reviewed_at is the client-provided timestamp set in _mkEvidenceSnapshot();
-  -- used as dedup key so the same snapshot can never be inserted twice.
   reviewed_at              timestamptz,
-  approved                 boolean      not null default false,
-  manually_edited          boolean      not null default false,
+  approved                 boolean     not null default false,
+  manually_edited          boolean     not null default false,
   original_extracted_value text,
-
-  -- Server-assigned row timestamp
-  created_at               timestamptz  not null default now(),
-
-  -- Dedup constraint — absorbs network retries and rapid successive saves
-  constraint tenant_field_evidence_dedup
-    unique (tenant_id, field_key, reviewed_at)
+  created_at               timestamptz not null default now(),
+  constraint tenant_field_evidence_dedup unique (tenant_id, field_key, reviewed_at)
 );
 
--- ── Indexes ────────────────────────────────────────────────────────────────────
-
-create index if not exists tfe_property_id_idx
-  on public.tenant_field_evidence (property_id);
-
-create index if not exists tfe_tenant_id_idx
-  on public.tenant_field_evidence (tenant_id);
-
-create index if not exists tfe_field_key_idx
-  on public.tenant_field_evidence (field_key);
-
-create index if not exists tfe_created_at_idx
-  on public.tenant_field_evidence (created_at desc);
-
--- Composite: most common query pattern — "latest snapshot for a tenant+field"
-create index if not exists tfe_tenant_field_time_idx
-  on public.tenant_field_evidence (tenant_id, field_key, created_at desc);
+create index if not exists tfe_property_id_idx      on public.tenant_field_evidence (property_id);
+create index if not exists tfe_tenant_id_idx        on public.tenant_field_evidence (tenant_id);
+create index if not exists tfe_field_key_idx        on public.tenant_field_evidence (field_key);
+create index if not exists tfe_created_at_idx       on public.tenant_field_evidence (created_at desc);
+create index if not exists tfe_tenant_field_time_idx on public.tenant_field_evidence (tenant_id, field_key, created_at desc);
 
 
--- ── tenant_review_audit ───────────────────────────────────────────────────────
--- Append-only audit log for reviewer actions (field corrections, confirmations).
--- client_ts is the timestamp generated by appendReviewAuditEntry() in the JS
--- client; it is the dedup key so retries do not create duplicate audit rows.
+-- TABLE: tenant_review_audit
+-- One row per reviewer action. Mirrors activityLog[type='field_review_audit'].
 
 create table if not exists public.tenant_review_audit (
-  id                   uuid         primary key default gen_random_uuid(),
-
-  -- Ownership
-  property_id          uuid         not null
-    references public.properties(id) on delete cascade,
-  tenant_id            text         not null,
-  -- field_key is null for whole-tenant actions (tenant_confirmed, etc.)
-  field_key            text,
-
-  -- Action descriptor
-  action               text         not null,
-  label                text,
-  severity             text         not null default 'info'
-    check (severity in ('info','success','warning','error')),
-
-  -- Before/after state
-  old_value            text,
-  new_value            text,
-  review_state_before  text,
-  review_state_after   text,
-
-  -- Reviewer attribution
-  reviewer_uid         text,
-  reviewer_email       text,
-
-  -- client_ts: authoritative client timestamp — unique per (tenant, action, ts)
-  -- Set to new Date().toISOString() in appendReviewAuditEntry().
-  client_ts            timestamptz  not null default now(),
-
-  -- Server-assigned row timestamp
-  created_at           timestamptz  not null default now(),
-
-  -- Dedup: same action from same client timestamp = retry, not a new event
-  constraint tenant_review_audit_dedup
-    unique (tenant_id, action, client_ts)
+  id                  uuid        primary key default gen_random_uuid(),
+  property_id         uuid        not null references public.properties(id) on delete cascade,
+  tenant_id           text        not null,
+  field_key           text,
+  action              text        not null,
+  label               text,
+  severity            text        not null default 'info' check (severity in ('info','success','warning','error')),
+  old_value           text,
+  new_value           text,
+  review_state_before text,
+  review_state_after  text,
+  reviewer_uid        text,
+  reviewer_email      text,
+  client_ts           timestamptz not null default now(),
+  created_at          timestamptz not null default now(),
+  constraint tenant_review_audit_dedup unique (tenant_id, action, client_ts)
 );
 
--- ── Indexes ────────────────────────────────────────────────────────────────────
-
-create index if not exists tra_property_id_idx
-  on public.tenant_review_audit (property_id);
-
-create index if not exists tra_tenant_id_idx
-  on public.tenant_review_audit (tenant_id);
-
--- Partial index: field_key is null for tenant-level actions, only index rows
--- that have a field_key (field-level queries are the hot path)
-create index if not exists tra_field_key_idx
-  on public.tenant_review_audit (field_key)
-  where field_key is not null;
-
-create index if not exists tra_created_at_idx
-  on public.tenant_review_audit (created_at desc);
-
--- Composite: "all audit entries for a tenant, newest first"
-create index if not exists tra_tenant_time_idx
-  on public.tenant_review_audit (tenant_id, client_ts desc);
+create index if not exists tra_property_id_idx on public.tenant_review_audit (property_id);
+create index if not exists tra_tenant_id_idx   on public.tenant_review_audit (tenant_id);
+create index if not exists tra_field_key_idx   on public.tenant_review_audit (field_key) where field_key is not null;
+create index if not exists tra_created_at_idx  on public.tenant_review_audit (created_at desc);
+create index if not exists tra_tenant_time_idx on public.tenant_review_audit (tenant_id, client_ts desc);
 
 
--- ── Row-Level Security ─────────────────────────────────────────────────────────
+-- RLS
 
 alter table public.tenant_field_evidence enable row level security;
 alter table public.tenant_review_audit   enable row level security;
 
-
--- ── Explicit grants ────────────────────────────────────────────────────────────
-
 grant usage  on schema public to authenticated;
 grant usage  on schema public to service_role;
-
-grant select, insert, update, delete
-  on public.tenant_field_evidence to authenticated;
-grant select, insert, update, delete
-  on public.tenant_field_evidence to service_role;
-
-grant select, insert, update, delete
-  on public.tenant_review_audit   to authenticated;
-grant select, insert, update, delete
-  on public.tenant_review_audit   to service_role;
+grant select, insert, update, delete on public.tenant_field_evidence to authenticated;
+grant select, insert, update, delete on public.tenant_field_evidence to service_role;
+grant select, insert, update, delete on public.tenant_review_audit   to authenticated;
+grant select, insert, update, delete on public.tenant_review_audit   to service_role;
 
 
--- ── RLS policies: tenant_field_evidence ───────────────────────────────────────
--- Only the property owner (properties.user_id = auth.uid()) may read or write.
--- Mirrors the existing pattern used by lease_jobs and the properties table.
+-- POLICIES: tenant_field_evidence
 
 drop policy if exists "tfe_owner_all"        on public.tenant_field_evidence;
 drop policy if exists "tfe_service_role_all" on public.tenant_field_evidence;
 
 create policy "tfe_owner_all"
   on public.tenant_field_evidence
-  for all
-  to authenticated
-  using (
-    exists (
-      select 1 from public.properties p
-      where p.id   = tenant_field_evidence.property_id
-        and p.user_id = auth.uid()
-    )
-  )
-  with check (
-    exists (
-      select 1 from public.properties p
-      where p.id   = tenant_field_evidence.property_id
-        and p.user_id = auth.uid()
-    )
-  );
+  for all to authenticated
+  using      (exists (select 1 from public.properties p where p.id = tenant_field_evidence.property_id and p.user_id = auth.uid()))
+  with check (exists (select 1 from public.properties p where p.id = tenant_field_evidence.property_id and p.user_id = auth.uid()));
 
 create policy "tfe_service_role_all"
   on public.tenant_field_evidence
-  for all to service_role
-  using (true) with check (true);
+  for all to service_role using (true) with check (true);
 
 
--- ── RLS policies: tenant_review_audit ────────────────────────────────────────
+-- POLICIES: tenant_review_audit
 
 drop policy if exists "tra_owner_all"        on public.tenant_review_audit;
 drop policy if exists "tra_service_role_all" on public.tenant_review_audit;
 
 create policy "tra_owner_all"
   on public.tenant_review_audit
-  for all
-  to authenticated
-  using (
-    exists (
-      select 1 from public.properties p
-      where p.id   = tenant_review_audit.property_id
-        and p.user_id = auth.uid()
-    )
-  )
-  with check (
-    exists (
-      select 1 from public.properties p
-      where p.id   = tenant_review_audit.property_id
-        and p.user_id = auth.uid()
-    )
-  );
+  for all to authenticated
+  using      (exists (select 1 from public.properties p where p.id = tenant_review_audit.property_id and p.user_id = auth.uid()))
+  with check (exists (select 1 from public.properties p where p.id = tenant_review_audit.property_id and p.user_id = auth.uid()));
 
 create policy "tra_service_role_all"
   on public.tenant_review_audit
-  for all to service_role
-  using (true) with check (true);
+  for all to service_role using (true) with check (true);
 
 
--- ── Rollback ──────────────────────────────────────────────────────────────────
--- To revert: drop both tables (JSON blob in properties.data is unaffected).
---
---   drop table if exists public.tenant_review_audit   cascade;
---   drop table if exists public.tenant_field_evidence cascade;
---
--- No data is lost — all evidence remains in properties.data.tenants[].fieldEvidence
--- and all audit entries remain in properties.data.activityLog.
+-- VERIFY (should return 0 rows each, not an error)
+
+select count(*) from public.tenant_field_evidence;
+select count(*) from public.tenant_review_audit;
