@@ -2954,6 +2954,12 @@ function persistFieldEvidence(tenantId, fieldKey, opts) {
   };
 
   savePropertyData(); // debounced — collapses rapid successive calls
+
+  // Dual-write to normalized table — non-blocking, fail-silent
+  const prop = currentProperty();
+  if (prop?.id) {
+    _writeTenantFieldEvidence(prop.id, tenantId, fieldKey, snapshot);
+  }
 }
 
 // Returns the most recent evidence snapshot for a field, or null if none.
@@ -2980,9 +2986,13 @@ function loadFieldEvidence(tenantId) {
 
 // Structured audit trail entry — stored in activityLog via logActivity().
 // tenantId and fieldKey are stored in the detail JSON for structured querying.
+// Also dual-writes to tenant_review_audit (Phase 1 normalized table).
 function appendReviewAuditEntry(entry) {
   if (!entry || !entry.tenantId) return;
   const user = window.AuthService?.getCurrentUser?.() || null;
+  // Single timestamp shared between the JSON detail and the normalized DB row
+  // so both records are unambiguously correlated and the dedup constraint fires.
+  const ts = new Date().toISOString();
   const detail = JSON.stringify({
     tenantId:          entry.tenantId,
     fieldKey:          entry.fieldKey          || null,
@@ -2993,7 +3003,7 @@ function appendReviewAuditEntry(entry) {
     reviewStateAfter:  entry.reviewStateAfter  || null,
     reviewerUid:       user?.id                || entry.reviewerUid  || null,
     reviewerEmail:     user?.email             || entry.reviewerEmail || null,
-    ts:                new Date().toISOString(),
+    ts,
   });
   logActivity('field_review_audit', entry.label || 'Review action', {
     severity:      entry.severity    || 'info',
@@ -3002,7 +3012,202 @@ function appendReviewAuditEntry(entry) {
     tenantId:      entry.tenantId,
     detail,
   });
+  // Dual-write to normalized table — non-blocking, fail-silent (JSON blob is fallback)
+  const prop = currentProperty();
+  if (prop?.id) {
+    _writeTenantReviewAudit(prop.id, entry.tenantId, {
+      fieldKey:          entry.fieldKey          || null,
+      action:            entry.action            || 'review',
+      label:             entry.label             || null,
+      severity:          entry.severity          || 'info',
+      oldValue:          entry.oldValue          ?? null,
+      newValue:          entry.newValue          ?? null,
+      reviewStateBefore: entry.reviewStateBefore || null,
+      reviewStateAfter:  entry.reviewStateAfter  || null,
+      reviewerUid:       user?.id                || entry.reviewerUid   || null,
+      reviewerEmail:     user?.email             || entry.reviewerEmail || null,
+      clientTs:          ts,
+    });
+  }
 }
+
+// ── Normalized Evidence / Audit Tables — Phase 1 dual-write ──────────────────
+//
+// Architecture: OLD (authoritative) = properties.data.tenants[].fieldEvidence
+//               NEW (dual-write)    = tenant_field_evidence, tenant_review_audit
+//
+// Feature flags control the READ path only. Writes go to both systems always.
+// Flip a flag to true in the browser console to test normalized reads:
+//   window.ms_useNormalizedEvidence = true
+//   window.ms_useNormalizedAudit    = true
+//
+// Phase 2 will flip these on permanently and remove JSON blob reads.
+
+if (window.ms_useNormalizedEvidence === undefined) window.ms_useNormalizedEvidence = false;
+if (window.ms_useNormalizedAudit    === undefined) window.ms_useNormalizedAudit    = false;
+
+// Serializes any field value to a string for DB column storage.
+function _evidenceValStr(v) {
+  if (v === null || v === undefined) return null;
+  return typeof v === 'string' ? v : String(v);
+}
+
+// Writes one evidence snapshot to tenant_field_evidence.
+// Uses ignoreDuplicates=true → INSERT ... ON CONFLICT DO NOTHING.
+// Never throws — JSON blob remains the authoritative fallback.
+async function _writeTenantFieldEvidence(propId, tenantId, fieldKey, snapshot) {
+  if (!db || !propId || !tenantId || !fieldKey || !snapshot) return;
+  try {
+    const { error } = await db
+      .from('tenant_field_evidence')
+      .upsert({
+        property_id:              propId,
+        tenant_id:                tenantId,
+        field_key:                fieldKey,
+        value:                    _evidenceValStr(snapshot.value),
+        confidence_status:        snapshot.confidence?.status              ?? null,
+        confidence_note:          snapshot.confidence?.note                ?? null,
+        source_file:              snapshot.sourceFile                      ?? null,
+        source_page:              snapshot.page                            ?? null,
+        extraction_id:            snapshot.extractionId                    ?? null,
+        extraction_version:       snapshot.extractionVersion               ?? null,
+        reviewer_uid:             snapshot.reviewerUid                     ?? null,
+        reviewer_email:           snapshot.reviewerEmail                   ?? null,
+        reviewed_at:              snapshot.reviewedAt                      ?? null,
+        approved:                 snapshot.approved                        ?? false,
+        manually_edited:          snapshot.manuallyEdited                  ?? false,
+        original_extracted_value: _evidenceValStr(snapshot.originalExtractedValue),
+      }, { onConflict: 'tenant_id,field_key,reviewed_at', ignoreDuplicates: true });
+    if (error) console.warn('[NormalizedEvidence] write failed:', error.message);
+  } catch (e) {
+    console.warn('[NormalizedEvidence] write error:', e?.message);
+  }
+}
+
+// Writes one audit entry to tenant_review_audit.
+// clientTs must be the timestamp generated by appendReviewAuditEntry() so that
+// the dedup constraint (tenant_id, action, client_ts) fires correctly on retry.
+async function _writeTenantReviewAudit(propId, tenantId, entry) {
+  if (!db || !propId || !tenantId || !entry) return;
+  try {
+    const { error } = await db
+      .from('tenant_review_audit')
+      .upsert({
+        property_id:         propId,
+        tenant_id:           tenantId,
+        field_key:           entry.fieldKey          ?? null,
+        action:              entry.action            || 'review',
+        label:               entry.label             ?? null,
+        severity:            entry.severity          || 'info',
+        old_value:           _evidenceValStr(entry.oldValue),
+        new_value:           _evidenceValStr(entry.newValue),
+        review_state_before: entry.reviewStateBefore ?? null,
+        review_state_after:  entry.reviewStateAfter  ?? null,
+        reviewer_uid:        entry.reviewerUid       ?? null,
+        reviewer_email:      entry.reviewerEmail     ?? null,
+        client_ts:           entry.clientTs          || new Date().toISOString(),
+      }, { onConflict: 'tenant_id,action,client_ts', ignoreDuplicates: true });
+    if (error) console.warn('[NormalizedAudit] write failed:', error.message);
+  } catch (e) {
+    console.warn('[NormalizedAudit] write error:', e?.message);
+  }
+}
+
+// Returns all evidence snapshots for a (tenant, fieldKey) from the normalized
+// table. Used when ms_useNormalizedEvidence is true (Phase 2+).
+async function getTenantFieldEvidence(tenantId, fieldKey) {
+  if (!db || !tenantId) return [];
+  try {
+    let q = db.from('tenant_field_evidence')
+      .select('*')
+      .eq('tenant_id', tenantId)
+      .order('created_at', { ascending: true });
+    if (fieldKey) q = q.eq('field_key', fieldKey);
+    const { data, error } = await q;
+    if (error) { console.warn('[NormalizedEvidence] read failed:', error.message); return []; }
+    return data || [];
+  } catch (e) {
+    console.warn('[NormalizedEvidence] read error:', e?.message);
+    return [];
+  }
+}
+
+// Returns the full audit trail for a tenant from the normalized table.
+// Used when ms_useNormalizedAudit is true (Phase 2+).
+async function getTenantReviewAudit(tenantId) {
+  if (!db || !tenantId) return [];
+  try {
+    const { data, error } = await db
+      .from('tenant_review_audit')
+      .select('*')
+      .eq('tenant_id', tenantId)
+      .order('client_ts', { ascending: true });
+    if (error) { console.warn('[NormalizedAudit] read failed:', error.message); return []; }
+    return data || [];
+  } catch (e) {
+    console.warn('[NormalizedAudit] read error:', e?.message);
+    return [];
+  }
+}
+
+// Backfill: reads t.fieldEvidence from all loaded tenants and writes every
+// snapshot to tenant_field_evidence. Safe to re-run — dedup constraint
+// silently ignores already-present rows.
+// Console usage: await ms_backfillEvidence()
+async function backfillEvidenceFromProperties() {
+  const prop = currentProperty();
+  if (!prop?.id) { console.warn('[Backfill] No active property loaded'); return; }
+  const tenants = tenantData.filter(Boolean);
+  let written = 0, skipped = 0;
+  for (const t of tenants) {
+    if (!t.id || !t.fieldEvidence) { skipped++; continue; }
+    for (const [fk, fev] of Object.entries(t.fieldEvidence)) {
+      const snaps = Array.isArray(fev?.snapshots) ? fev.snapshots : [];
+      for (const snap of snaps) {
+        await _writeTenantFieldEvidence(prop.id, t.id, fk, snap);
+        written++;
+      }
+    }
+  }
+  console.log(`[Backfill] Evidence — wrote ${written} snapshots, skipped ${skipped} tenants (no fieldEvidence)`);
+  return { written, skipped };
+}
+
+// Backfill: scans activityLog for field_review_audit entries and writes each
+// to tenant_review_audit. Safe to re-run.
+// Console usage: await ms_backfillAudit()
+async function backfillAuditFromProperties() {
+  const prop = currentProperty();
+  if (!prop?.id) { console.warn('[Backfill] No active property loaded'); return; }
+  const auditEntries = activityLog.filter(function(e) {
+    return e.type === 'field_review_audit' && e.tenantId;
+  });
+  let written = 0, malformed = 0;
+  for (const entry of auditEntries) {
+    let parsed = {};
+    try { parsed = JSON.parse(entry.detail || '{}'); } catch (_) {}
+    await _writeTenantReviewAudit(prop.id, entry.tenantId, {
+      fieldKey:          parsed.fieldKey          ?? null,
+      action:            parsed.action            || entry.type || 'review',
+      label:             entry.title              || null,
+      severity:          entry.severity           || 'info',
+      oldValue:          parsed.oldValue          ?? null,
+      newValue:          parsed.newValue          ?? null,
+      reviewStateBefore: parsed.reviewStateBefore ?? null,
+      reviewStateAfter:  parsed.reviewStateAfter  ?? null,
+      reviewerUid:       parsed.reviewerUid       ?? null,
+      reviewerEmail:     parsed.reviewerEmail     || entry.actor || null,
+      clientTs:          parsed.ts                || entry.timestamp || new Date().toISOString(),
+    });
+    written++;
+  }
+  console.log(`[Backfill] Audit — wrote ${written} entries, ${malformed} malformed skipped`);
+  return { written, malformed };
+}
+
+// Console helpers — available immediately after page load
+window.ms_backfillEvidence = backfillEvidenceFromProperties;
+window.ms_backfillAudit    = backfillAuditFromProperties;
 
 // ─────────────────────────────────────────────────────────────────────────────
 
