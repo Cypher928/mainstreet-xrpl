@@ -1,6 +1,5 @@
 -- tenant_field_evidence + tenant_review_audit
--- Phase 1 normalization: dual-write alongside existing JSON blob in properties.data.
--- Safe to re-run. DO NOT drop properties.data -- JSON blob persistence stays active.
+-- Phase 1 normalization. Safe to re-run (IF NOT EXISTS throughout).
 -- Rollback: drop table public.tenant_review_audit cascade;
 --           drop table public.tenant_field_evidence cascade;
 
@@ -78,7 +77,7 @@ grant select, insert, update, delete on public.tenant_review_audit   to service_
 
 
 -- POLICIES: tenant_field_evidence
--- Note: alias 'prop' used (not 'p') to avoid HTML rendering artifacts in chat tools.
+-- Uses IN subquery to avoid alias.id dot-notation (rendered incorrectly by some tools).
 
 drop policy if exists "tfe_owner_all"        on public.tenant_field_evidence;
 drop policy if exists "tfe_service_role_all" on public.tenant_field_evidence;
@@ -87,17 +86,15 @@ create policy "tfe_owner_all"
   on public.tenant_field_evidence
   for all to authenticated
   using (
-    exists (
-      select 1 from public.properties prop
-      where prop.id = tenant_field_evidence.property_id
-        and prop.user_id = auth.uid()
+    property_id in (
+      select id from public.properties
+      where user_id = auth.uid()
     )
   )
   with check (
-    exists (
-      select 1 from public.properties prop
-      where prop.id = tenant_field_evidence.property_id
-        and prop.user_id = auth.uid()
+    property_id in (
+      select id from public.properties
+      where user_id = auth.uid()
     )
   );
 
@@ -115,17 +112,15 @@ create policy "tra_owner_all"
   on public.tenant_review_audit
   for all to authenticated
   using (
-    exists (
-      select 1 from public.properties prop
-      where prop.id = tenant_review_audit.property_id
-        and prop.user_id = auth.uid()
+    property_id in (
+      select id from public.properties
+      where user_id = auth.uid()
     )
   )
   with check (
-    exists (
-      select 1 from public.properties prop
-      where prop.id = tenant_review_audit.property_id
-        and prop.user_id = auth.uid()
+    property_id in (
+      select id from public.properties
+      where user_id = auth.uid()
     )
   );
 
@@ -134,7 +129,7 @@ create policy "tra_service_role_all"
   for all to service_role using (true) with check (true);
 
 
--- VERIFY (both should return 0, not an error)
+-- VERIFY
 
 select count(*) from public.tenant_field_evidence;
 select count(*) from public.tenant_review_audit;
