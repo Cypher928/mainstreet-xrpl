@@ -918,6 +918,7 @@ function normalizeTenant(d) {
     reviewOverrides:     d.reviewOverrides     ?? {},
     review:              d.review              ?? {},
     capBaseAmount:       d.capBaseAmount       ?? null,
+    fieldEvidence:       d.fieldEvidence       ?? {},
   };
 }
 
@@ -2740,20 +2741,28 @@ function getFieldEvidence(fieldKey, t) {
   const value = getEffectiveLeaseField(fieldKey, t) ?? t[fieldKey] ?? null;
   const conf  = getFieldConfidence(fieldKey, t);
 
-  const canonical = t.fieldEvidence?.[fieldKey];
-  if (canonical) {
+  // Prefer persisted snapshot (survives refresh/re-login); fall back to session debug log.
+  const latest = getLatestFieldEvidence(fieldKey, t);
+  const dbg    = t._jobId ? _leaseDebug.get(t._jobId) : null;
+  const snippet = dbg?.ocrText ? dbg.ocrText.slice(0, 400) : null;
+
+  if (latest) {
     return normalizeLeaseEvidence({ value, confidence: conf, source: {
-      fileName:    canonical.fileName    ?? t.fileName ?? null,
-      page:        canonical.page        ?? null,
-      snippet:     canonical.snippet     ?? null,
-      quote:       canonical.quote       ?? null,
-      extractionId: canonical.extractionId ?? t._jobId ?? null,
+      fileName:          latest.sourceFile       ?? t.fileName ?? null,
+      page:              latest.page             ?? null,
+      snippet,           // always from session — not stored in snapshots (keeps blob small)
+      quote:             null,
+      extractionId:      latest.extractionId     ?? t._jobId ?? null,
+      extractionVersion: latest.extractionVersion ?? null,
+      reviewerEmail:     latest.reviewerEmail    ?? null,
+      reviewerUid:       latest.reviewerUid      ?? null,
+      reviewedAt:        latest.reviewedAt        ?? null,
+      approved:          latest.approved          ?? null,
+      manuallyEdited:    latest.manuallyEdited    ?? null,
     }});
   }
 
-  // Fall back to debug log — present for leases processed in the current session.
-  const dbg     = t._jobId ? _leaseDebug.get(t._jobId) : null;
-  const snippet = dbg?.ocrText ? dbg.ocrText.slice(0, 400) : null;
+  // No persisted snapshot — build from session metadata only.
   return normalizeLeaseEvidence({ value, confidence: conf, source: {
     fileName:    t.fileName ?? null,
     page:        null,
@@ -2764,6 +2773,9 @@ function getFieldEvidence(fieldKey, t) {
 }
 
 // Safe normalization — always returns a complete shape or null.
+// source.extractionVersion / reviewerEmail / reviewerUid / reviewedAt /
+// approved / manuallyEdited are optional audit fields populated only when
+// a persisted evidence snapshot is present.
 function normalizeLeaseEvidence(raw) {
   if (!raw) return null;
   const src = raw.source || {};
@@ -2771,11 +2783,17 @@ function normalizeLeaseEvidence(raw) {
     value:      raw.value ?? null,
     confidence: raw.confidence || { status: 'missing', note: '' },
     source: {
-      fileName:    (typeof src.fileName    === 'string' && src.fileName.trim())     ? src.fileName.trim()    : null,
-      page:        (typeof src.page        === 'number' && src.page > 0)            ? src.page               : null,
-      snippet:     (typeof src.snippet     === 'string' && src.snippet.trim())      ? src.snippet.trim()     : null,
-      quote:       (typeof src.quote       === 'string' && src.quote.trim())        ? src.quote.trim()       : null,
-      extractionId:(typeof src.extractionId === 'string' && src.extractionId)      ? src.extractionId       : null,
+      fileName:         (typeof src.fileName    === 'string' && src.fileName.trim())   ? src.fileName.trim()  : null,
+      page:             (typeof src.page        === 'number' && src.page > 0)          ? src.page             : null,
+      snippet:          (typeof src.snippet     === 'string' && src.snippet.trim())    ? src.snippet.trim()   : null,
+      quote:            (typeof src.quote       === 'string' && src.quote.trim())      ? src.quote.trim()     : null,
+      extractionId:     (typeof src.extractionId === 'string' && src.extractionId)    ? src.extractionId     : null,
+      extractionVersion:(typeof src.extractionVersion === 'string')                   ? src.extractionVersion: null,
+      reviewerEmail:    (typeof src.reviewerEmail === 'string' && src.reviewerEmail)   ? src.reviewerEmail    : null,
+      reviewerUid:      (typeof src.reviewerUid   === 'string' && src.reviewerUid)     ? src.reviewerUid      : null,
+      reviewedAt:       (typeof src.reviewedAt    === 'string' && src.reviewedAt)      ? src.reviewedAt       : null,
+      approved:          src.approved       != null ? Boolean(src.approved)       : null,
+      manuallyEdited:    src.manuallyEdited != null ? Boolean(src.manuallyEdited) : null,
     },
   };
 }
@@ -2797,8 +2815,15 @@ function renderLeaseEvidencePanel(fieldKey, t) {
     `<div class="lev-src-row"><span class="lev-src-lbl">Source</span><span class="lev-src-val">${esc(src.fileName)}</span></div>`);
   if (src.page) srcRows.push(
     `<div class="lev-src-row"><span class="lev-src-lbl">Page</span><span class="lev-src-val">${src.page}</span></div>`);
+  if (src.extractionVersion) srcRows.push(
+    `<div class="lev-src-row"><span class="lev-src-lbl">Extraction</span><span class="lev-src-val">${esc(src.extractionVersion)}</span></div>`);
   if (src.extractionId) srcRows.push(
     `<div class="lev-src-row"><span class="lev-src-lbl">Job ID</span><span class="lev-src-val lev-jobid">${esc(src.extractionId.slice(0, 8))}…</span></div>`);
+  // Reviewer attribution — only shown when a persisted snapshot is present
+  if (src.reviewerEmail && src.reviewedAt) srcRows.push(
+    `<div class="lev-src-row"><span class="lev-src-lbl">Reviewed</span><span class="lev-src-val">${esc(src.reviewerEmail)} · ${esc(src.reviewedAt.slice(0, 10))}</span></div>`);
+  if (src.manuallyEdited) srcRows.push(
+    `<div class="lev-src-row"><span class="lev-src-lbl">Edit</span><span class="lev-src-val lev-manual-tag">Manually corrected</span></div>`);
 
   const quoteHtml = src.quote
     ? `<div class="lev-excerpt-lbl">Extracted quote</div><blockquote class="lev-quote">${esc(src.quote)}</blockquote>`
@@ -2862,6 +2887,123 @@ window.ms_debug_evidence = function(fieldKey, tenant) {
   return ev;
 };
 
+// ── Persisted Field Evidence + Reviewer Audit Trail ───────────────────────────
+//
+// Evidence snapshots are stored in t.fieldEvidence[fieldKey].snapshots[].
+// Each snapshot is immutable once appended — history is never mutated.
+// The array is persisted inside properties.data.tenants via savePropertyData()
+// (no schema changes needed; fieldEvidence is already passed through _stripBlobs
+// and normalizeTenant).
+
+// Returns the extraction version tag for a tenant.
+// 'v1' on first pass, 'v1-retry' if prior evidence snapshots already exist,
+// 'manual' is passed explicitly from confirmFieldOverride paths.
+function _extractionVersionTag(t) {
+  if (!t) return 'v1';
+  const fev = t.fieldEvidence || {};
+  const hasHistory = Object.values(fev).some(function(f) {
+    return f && Array.isArray(f.snapshots) && f.snapshots.length > 0;
+  });
+  return hasHistory ? 'v1-retry' : 'v1';
+}
+
+// Builds one immutable evidence snapshot object.
+// Snippet is intentionally NOT stored — it is re-read from _leaseDebug at
+// display time so the Supabase row stays small.
+function _mkEvidenceSnapshot(fieldKey, t, opts) {
+  const conf = getFieldConfidence(fieldKey, t);
+  const user = window.AuthService?.getCurrentUser?.() || null;
+  return {
+    fieldKey,
+    value:                  opts.value !== undefined ? opts.value : (getEffectiveLeaseField(fieldKey, t) ?? t[fieldKey] ?? null),
+    confidence:             { status: conf.status, note: conf.note },
+    sourceFile:             t.fileName  || null,
+    page:                   null,
+    extractionId:           t._jobId    || null,
+    extractionVersion:      opts.extractionVersion || _extractionVersionTag(t),
+    reviewerUid:            user?.id    || null,
+    reviewerEmail:          user?.email || null,
+    reviewedAt:             new Date().toISOString(),
+    approved:               opts.approved       ?? false,
+    manuallyEdited:         opts.manuallyEdited ?? false,
+    originalExtractedValue: opts.originalExtractedValue ?? null,
+  };
+}
+
+// Appends one immutable evidence snapshot to t.fieldEvidence[fieldKey].snapshots.
+// Never mutates historical entries. Persists via savePropertyData() (debounced).
+// Safe: silently no-ops if tenant is not found.
+function persistFieldEvidence(tenantId, fieldKey, opts) {
+  const idx = tenantData.findIndex(function(t) { return t && t.id === tenantId; });
+  if (idx === -1) return;
+  const t = tenantData[idx];
+
+  const snapshot = _mkEvidenceSnapshot(fieldKey, t, opts || {});
+  const fev      = t.fieldEvidence || {};
+  const prev     = fev[fieldKey]   || { snapshots: [] };
+
+  // Guard: cap at 50 snapshots per field to bound storage growth
+  const prevSnaps = Array.isArray(prev.snapshots) ? prev.snapshots : [];
+  const nextSnaps = prevSnaps.length < 50
+    ? prevSnaps.concat([snapshot])
+    : prevSnaps.slice(1).concat([snapshot]); // drop oldest when cap reached
+
+  tenantData[idx] = {
+    ...t,
+    fieldEvidence: { ...fev, [fieldKey]: { snapshots: nextSnaps } },
+  };
+
+  savePropertyData(); // debounced — collapses rapid successive calls
+}
+
+// Returns the most recent evidence snapshot for a field, or null if none.
+function getLatestFieldEvidence(fieldKey, t) {
+  if (!t) return null;
+  const snaps = t.fieldEvidence?.[fieldKey]?.snapshots;
+  if (!snaps || !snaps.length) return null;
+  return snaps[snaps.length - 1];
+}
+
+// Returns all evidence snapshots for a field (oldest first), or [].
+function getEvidenceHistory(fieldKey, t) {
+  if (!t) return [];
+  const snaps = t.fieldEvidence?.[fieldKey]?.snapshots;
+  return Array.isArray(snaps) ? snaps : [];
+}
+
+// Field evidence auto-loads with the tenant object via loadPropertyData().
+// This function is a named accessor for external callers and documentation.
+function loadFieldEvidence(tenantId) {
+  const t = tenantData.find(function(x) { return x && x.id === tenantId; });
+  return t?.fieldEvidence || {};
+}
+
+// Structured audit trail entry — stored in activityLog via logActivity().
+// tenantId and fieldKey are stored in the detail JSON for structured querying.
+function appendReviewAuditEntry(entry) {
+  if (!entry || !entry.tenantId) return;
+  const user = window.AuthService?.getCurrentUser?.() || null;
+  const detail = JSON.stringify({
+    tenantId:          entry.tenantId,
+    fieldKey:          entry.fieldKey          || null,
+    action:            entry.action            || 'review',
+    oldValue:          entry.oldValue          ?? null,
+    newValue:          entry.newValue          ?? null,
+    reviewStateBefore: entry.reviewStateBefore || null,
+    reviewStateAfter:  entry.reviewStateAfter  || null,
+    reviewerUid:       user?.id                || entry.reviewerUid  || null,
+    reviewerEmail:     user?.email             || entry.reviewerEmail || null,
+    ts:                new Date().toISOString(),
+  });
+  logActivity('field_review_audit', entry.label || 'Review action', {
+    severity:      entry.severity    || 'info',
+    actor:         user?.email       || entry.reviewerEmail || 'Reviewer',
+    relatedEntity: entry.tenantName  || entry.tenantId,
+    tenantId:      entry.tenantId,
+    detail,
+  });
+}
+
 // ─────────────────────────────────────────────────────────────────────────────
 
 // ── Field Override + Manual Confirmation ──────────────────────────────────
@@ -2922,10 +3064,32 @@ function saveFieldOverride(tenantId, fieldName, newValue) {
       [fieldName]: { original, override: newValue, reviewerConfirmed: true, reviewedAt: new Date().toISOString(), overrideSource: 'manual' },
     },
   };
+  const reviewStateBefore = deriveTenantReviewState(t).status;
   logActivity('field_override', `Field overridden — ${fieldName}`, {
     severity: 'info', actor: 'Reviewer',
     relatedEntity: tenantData[idx]?.tenant_name || tenantId,
     detail: `${fieldName}: "${original}" → "${newValue}"`,
+  });
+  // Append immutable evidence snapshot — survives refresh, re-login, re-extraction.
+  // Called after tenantData[idx] is updated so _mkEvidenceSnapshot reads the new value.
+  persistFieldEvidence(tenantId, fieldName, {
+    value:                  newValue,
+    approved:               true,
+    manuallyEdited:         true,
+    extractionVersion:      'manual',
+    originalExtractedValue: original,
+  });
+  // Structured audit entry — queryable via activityLog
+  appendReviewAuditEntry({
+    tenantId,
+    tenantName:        tenantData[idx]?.tenant_name || tenantId,
+    fieldKey:          fieldName,
+    action:            'field_override',
+    label:             `Field corrected — ${fieldName}`,
+    oldValue:          original,
+    newValue,
+    reviewStateBefore,
+    reviewStateAfter:  deriveTenantReviewState(tenantData[idx]).status,
   });
   savePropertyData();
   renderBulkResults();
@@ -3384,10 +3548,20 @@ async function saveBulkTenant(i) {
 
   const _d = tenantData[i];
   if (_d?._userConfirmed) {
+    const rvAfter = deriveTenantReviewState(_d).status;
     logActivity('tenant_confirmed', `Tenant confirmed — ${_d.tenant_name || '(unnamed)'}`, {
       severity: 'success', actor: 'Reviewer',
       relatedEntity: _d.tenant_name || '',
       detail: _d.extractionFailed ? 'Manually confirmed after extraction failure' : 'Tenant entry saved',
+    });
+    // Structured audit trail — persisted in activityLog alongside logActivity
+    appendReviewAuditEntry({
+      tenantId:         _d.id,
+      tenantName:       _d.tenant_name || '(unnamed)',
+      action:           'tenant_confirmed',
+      label:            `Tenant confirmed — ${_d.tenant_name || '(unnamed)'}`,
+      severity:         'success',
+      reviewStateAfter: rvAfter,
     });
   }
 
@@ -3574,8 +3748,25 @@ async function retryExtractionWithFile(index, file) {
     const isPartial  = status === 'partial';
     const _showRetry = !hasTenant || !hasDates || !hasLeaseType;
 
+    // Preserve reviewer-approved overrides and evidence history across re-extraction.
+    // Without this, retrying a lease would silently discard manual corrections.
+    const prevOverrides = t?.reviewOverrides || {};
+    const prevEvidence  = t?.fieldEvidence   || {};
+
+    // Merge new norm with prev overrides: for any confirmed override, restore
+    // the reviewer-approved value rather than the fresh AI extraction.
+    const mergedNorm = { ...(isValid ? norm : {}) };
+    if (isValid) {
+      Object.keys(prevOverrides).forEach(function(fk) {
+        const ov = prevOverrides[fk];
+        if (ov?.reviewerConfirmed && fk in mergedNorm) {
+          mergedNorm[fk] = ov.override;
+        }
+      });
+    }
+
     const updated = {
-      ...(isValid ? norm : {}),
+      ...mergedNorm,
       leaseFile:        file,
       leaseExpected:    true,
       fileName:         file.name,
@@ -3585,6 +3776,8 @@ async function retryExtractionWithFile(index, file) {
       _showRetry,
       _error:           isValid ? null : 'Could not identify a tenant — please enter fields manually',
       id:               t?.id ?? crypto.randomUUID(),
+      reviewOverrides:  prevOverrides,
+      fieldEvidence:    prevEvidence,
     };
     tenantData[index] = updated;
     if (prop?.tenants) prop.tenants[index] = updated;
