@@ -6,7 +6,6 @@
 
 
 -- TABLE: tenant_field_evidence
--- One row per evidence snapshot. Mirrors t.fieldEvidence[key].snapshots[].
 
 create table if not exists public.tenant_field_evidence (
   id                       uuid        primary key default gen_random_uuid(),
@@ -30,15 +29,14 @@ create table if not exists public.tenant_field_evidence (
   constraint tenant_field_evidence_dedup unique (tenant_id, field_key, reviewed_at)
 );
 
-create index if not exists tfe_property_id_idx      on public.tenant_field_evidence (property_id);
-create index if not exists tfe_tenant_id_idx        on public.tenant_field_evidence (tenant_id);
-create index if not exists tfe_field_key_idx        on public.tenant_field_evidence (field_key);
-create index if not exists tfe_created_at_idx       on public.tenant_field_evidence (created_at desc);
+create index if not exists tfe_property_id_idx       on public.tenant_field_evidence (property_id);
+create index if not exists tfe_tenant_id_idx         on public.tenant_field_evidence (tenant_id);
+create index if not exists tfe_field_key_idx         on public.tenant_field_evidence (field_key);
+create index if not exists tfe_created_at_idx        on public.tenant_field_evidence (created_at desc);
 create index if not exists tfe_tenant_field_time_idx on public.tenant_field_evidence (tenant_id, field_key, created_at desc);
 
 
 -- TABLE: tenant_review_audit
--- One row per reviewer action. Mirrors activityLog[type='field_review_audit'].
 
 create table if not exists public.tenant_review_audit (
   id                  uuid        primary key default gen_random_uuid(),
@@ -80,6 +78,7 @@ grant select, insert, update, delete on public.tenant_review_audit   to service_
 
 
 -- POLICIES: tenant_field_evidence
+-- Note: alias 'prop' used (not 'p') to avoid HTML rendering artifacts in chat tools.
 
 drop policy if exists "tfe_owner_all"        on public.tenant_field_evidence;
 drop policy if exists "tfe_service_role_all" on public.tenant_field_evidence;
@@ -87,8 +86,20 @@ drop policy if exists "tfe_service_role_all" on public.tenant_field_evidence;
 create policy "tfe_owner_all"
   on public.tenant_field_evidence
   for all to authenticated
-  using      (exists (select 1 from public.properties p where p.id = tenant_field_evidence.property_id and p.user_id = auth.uid()))
-  with check (exists (select 1 from public.properties p where p.id = tenant_field_evidence.property_id and p.user_id = auth.uid()));
+  using (
+    exists (
+      select 1 from public.properties prop
+      where prop.id = tenant_field_evidence.property_id
+        and prop.user_id = auth.uid()
+    )
+  )
+  with check (
+    exists (
+      select 1 from public.properties prop
+      where prop.id = tenant_field_evidence.property_id
+        and prop.user_id = auth.uid()
+    )
+  );
 
 create policy "tfe_service_role_all"
   on public.tenant_field_evidence
@@ -103,15 +114,27 @@ drop policy if exists "tra_service_role_all" on public.tenant_review_audit;
 create policy "tra_owner_all"
   on public.tenant_review_audit
   for all to authenticated
-  using      (exists (select 1 from public.properties p where p.id = tenant_review_audit.property_id and p.user_id = auth.uid()))
-  with check (exists (select 1 from public.properties p where p.id = tenant_review_audit.property_id and p.user_id = auth.uid()));
+  using (
+    exists (
+      select 1 from public.properties prop
+      where prop.id = tenant_review_audit.property_id
+        and prop.user_id = auth.uid()
+    )
+  )
+  with check (
+    exists (
+      select 1 from public.properties prop
+      where prop.id = tenant_review_audit.property_id
+        and prop.user_id = auth.uid()
+    )
+  );
 
 create policy "tra_service_role_all"
   on public.tenant_review_audit
   for all to service_role using (true) with check (true);
 
 
--- VERIFY (should return 0 rows each, not an error)
+-- VERIFY (both should return 0, not an error)
 
 select count(*) from public.tenant_field_evidence;
 select count(*) from public.tenant_review_audit;
