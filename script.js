@@ -2990,6 +2990,18 @@ function loadFieldEvidence(tenantId) {
 function appendReviewAuditEntry(entry) {
   if (!entry || !entry.tenantId) return;
   const user = window.AuthService?.getCurrentUser?.() || null;
+  const _araProp = currentProperty();
+  console.log('[appendReviewAuditEntry] action:', entry.action, '| tenantId:', entry.tenantId,
+    '| propId:', _araProp?.id || 'NULL — dual-write will be skipped',
+    '| activePropId:', activePropId || 'null');
+  if (!_araProp?.id) {
+    console.warn('[appendReviewAuditEntry] currentProperty() is null — normalized audit row will NOT be written. activePropId=' + activePropId);
+    if (window.ms_lastDisputeFlow) {
+      window.ms_lastDisputeFlow.auditPropNull = true;
+      window.ms_lastDisputeFlow.errors.push({ ts: new Date().toISOString(), where: 'appendReviewAuditEntry', reason: 'currentProperty null', activePropId });
+      _updateDisputeBadge();
+    }
+  }
   // Single timestamp shared between the JSON detail and the normalized DB row
   // so both records are unambiguously correlated and the dedup constraint fires.
   const ts = new Date().toISOString();
@@ -3532,6 +3544,172 @@ window.ms_debug_dualwrite = async function() {
   console.log(window.ms_dumpDualWrite());
   console.groupEnd();
   return { auth: authSummary, propId: prop.id, evStatus, audStatus, evRows, audRows };
+};
+
+// ── Dispute-flow diagnostics ──────────────────────────────────────────────────
+// Tracks the last dispute submission attempt end-to-end: auth → property
+// context → save → audit write. Populated by instrumented disputeCharge(),
+// submitDispute(), savePropertyData(), and appendReviewAuditEntry().
+// Enable floating badge: window.ms_debugDisputeUI = true
+window.ms_lastDisputeFlow = window.ms_lastDisputeFlow || {
+  ts:             null,   // ISO timestamp of last attempt
+  trigger:        null,   // 'disputeCharge' | 'submitDispute'
+  auth:           null,   // { uid, email, role } or { uid: null }
+  propId:         null,   // activePropId at time of call (null = save will fail)
+  propFound:      null,   // whether currentProperty() returned non-null
+  saveAttempted:  false,
+  saveResult:     null,   // 'ok' | 'skipped-no-propid' | 'error'
+  auditPropNull:  false,  // true when appendReviewAuditEntry had no property
+  errors:         [],     // failure details (capped at 50)
+};
+
+// Creates/updates a floating badge showing AUTH / PROP / WRITE / READ status.
+// Only renders when window.ms_debugDisputeUI = true.
+function _updateDisputeBadge() {
+  if (!window.ms_debugDisputeUI) return;
+
+  let badge = document.getElementById('_ms_dispute_badge');
+  if (!badge) {
+    badge = document.createElement('div');
+    badge.id = '_ms_dispute_badge';
+    badge.title = 'Dispute flow diagnostics — tap to copy JSON';
+    badge.style.cssText = [
+      'position:fixed', 'bottom:80px', 'right:12px', 'z-index:99999',
+      'background:rgba(15,23,42,0.96)', 'border:1px solid rgba(255,165,0,0.35)',
+      'border-radius:10px', 'padding:8px 12px', 'font-family:monospace',
+      'font-size:12px', 'line-height:1.7', 'cursor:pointer',
+      'min-width:148px', 'box-shadow:0 4px 16px rgba(0,0,0,0.5)',
+      '-webkit-tap-highlight-color:transparent', 'user-select:none',
+    ].join(';');
+    badge.onclick = function() {
+      const s = JSON.stringify(window.ms_lastDisputeFlow, null, 2);
+      console.log('[ms_lastDisputeFlow]', s);
+      if (navigator.clipboard && navigator.clipboard.writeText) {
+        navigator.clipboard.writeText(s).then(function() {
+          badge.style.borderColor = '#4ade80';
+          setTimeout(function() { badge.style.borderColor = 'rgba(255,165,0,0.35)'; }, 900);
+        }).catch(function() { _pillFallbackCopy(s); });
+      } else { _pillFallbackCopy(s); }
+    };
+    document.body.appendChild(badge);
+  }
+
+  const df = window.ms_lastDisputeFlow;
+  const ok   = '#4ade80';
+  const warn = '#fbbf24';
+  const fail = '#f87171';
+  const mute = '#475569';
+
+  function _b(label, color, sym) {
+    return '<span style="color:' + mute + '">' + label + '</span><span style="color:' + color + '">' + sym + '</span>';
+  }
+
+  const authOk   = df.auth && df.auth.uid;
+  const propOk   = df.propFound === true && df.propId;
+  const propFail = df.propFound === false || (!df.propId && df.ts);
+  const writeOk  = df.saveResult === 'ok';
+  const writeFail = df.saveResult && df.saveResult !== 'ok';
+  const readOk   = !df.auditPropNull && df.ts;
+
+  badge.innerHTML =
+    '<div style="color:#92400e;font-size:10px;letter-spacing:.04em;margin-bottom:2px">DISPUTE FLOW' +
+    (df.errors.length ? ' <span style="color:' + fail + '">(' + df.errors.length + 'err)</span>' : '') + '</div>' +
+    _b('AUTH  ', authOk ? ok : (df.auth ? fail : mute), authOk ? '✓' : (df.auth ? '✗' : '·')) + '&nbsp;&nbsp;' +
+    _b('PROP  ', propOk ? ok : (propFail ? fail : mute), propOk ? '✓' : (propFail ? '✗' : '·')) + '<br>' +
+    _b('WRITE ', writeOk ? ok : (writeFail ? fail : mute), writeOk ? '✓' : (writeFail ? '✗' : '·')) + '&nbsp;&nbsp;' +
+    _b('AUDIT ', df.auditPropNull ? fail : (readOk ? ok : mute), df.auditPropNull ? '✗' : (readOk ? '✓' : '·')) +
+    '<div style="color:#334155;font-size:9px;margin-top:2px">tap to copy JSON</div>';
+}
+
+// ── ms_testAuditInsert — fire a known row into tenant_review_audit + read it back
+// Usage: await ms_testAuditInsert()
+// Open a property first — uses currentProperty() or activePropId.
+window.ms_testAuditInsert = async function() {
+  console.group('[ms_testAuditInsert]');
+
+  // Auth
+  const { data: sessionData } = await db.auth.getSession();
+  const sess = sessionData?.session;
+  console.log('auth:', sess ? 'OK uid=' + sess.user.id : 'NO SESSION — RLS will block');
+
+  // Property
+  const prop = currentProperty();
+  const propId = prop?.id || activePropId;
+  console.log('propId:', propId || 'NULL — cannot insert without property_id');
+  console.log('activePropId:', activePropId || 'null');
+  console.log('currentProperty():', prop ? { id: prop.id, name: prop.name } : 'null');
+  console.log('_props loaded:', _props.length, 'properties');
+
+  if (!propId) {
+    console.error('Cannot test — no property loaded. Open a property first, then re-run.');
+    console.groupEnd();
+    return { ok: false, reason: 'no property' };
+  }
+
+  // Insert
+  const ts = new Date().toISOString();
+  const testRow = {
+    property_id: propId,
+    tenant_id:   'diag-tenant-' + Date.now(),
+    action:      'diag_test_insert',
+    severity:    'info',
+    label:       'Diagnostic test — safe to delete',
+    client_ts:   ts,
+  };
+  console.log('inserting:', JSON.stringify(testRow));
+  const { data: insData, error: insErr } = await db
+    .from('tenant_review_audit')
+    .upsert(testRow, { onConflict: 'tenant_id,action,client_ts', ignoreDuplicates: true })
+    .select('id,property_id,tenant_id,action,client_ts');
+  console.log('insert result — data:', insData, '| error:', insErr);
+  if (insErr) {
+    console.error('INSERT FAILED — code:', insErr.code, '| msg:', insErr.message, '| details:', insErr.details, '| hint:', insErr.hint);
+    const rlsKeywords = ['permission', 'policy', 'rls', '42501', 'pgrst301', '403'];
+    if (rlsKeywords.some(k => String(insErr.code + insErr.message).toLowerCase().includes(k))) {
+      console.error('→ RLS likely cause. Check: does property_id', propId, 'have user_id =', sess?.user?.id, '?');
+    }
+  } else if (!insData?.length) {
+    console.warn('INSERT returned 0 rows (ON CONFLICT DO NOTHING or silent RLS block). Row may not exist.');
+    console.warn('→ If RLS is silent, auth.uid()=' + (sess?.user?.id || 'null') + ' may not match property.user_id');
+  } else {
+    console.log('INSERT OK — id:', insData[0].id);
+  }
+
+  // Read back — confirms SELECT RLS too
+  console.log('reading back all tenant_review_audit rows for property...');
+  const { data: rows, error: readErr } = await db
+    .from('tenant_review_audit')
+    .select('id,tenant_id,action,client_ts,severity')
+    .eq('property_id', propId)
+    .order('created_at', { ascending: false })
+    .limit(10);
+  console.log('read-back:', JSON.stringify(rows), readErr ? '| read error:' + readErr.message : '');
+
+  // Also check properties table ownership
+  console.log('verifying property ownership...');
+  const { data: propRow, error: propErr } = await db
+    .from('properties')
+    .select('id,user_id,name')
+    .eq('id', propId)
+    .single();
+  if (propRow) {
+    const ownerMatch = propRow.user_id === sess?.user?.id;
+    console.log('property.user_id:', propRow.user_id, '| auth.uid:', sess?.user?.id, '| MATCH:', ownerMatch);
+    if (!ownerMatch) console.error('→ RLS MISMATCH: property.user_id ≠ auth.uid() — all inserts for this property will be blocked by RLS');
+  } else {
+    console.error('property row not found or SELECT RLS blocked:', propErr?.message);
+  }
+
+  if (window.ms_lastDisputeFlow) {
+    window.ms_lastDisputeFlow.auth = sess ? { uid: sess.user.id, email: sess.user.email } : { uid: null };
+    window.ms_lastDisputeFlow.propId = propId;
+    window.ms_lastDisputeFlow.propFound = !!prop;
+    window.ms_lastDisputeFlow.saveResult = insData?.length ? 'ok' : (insErr ? 'error' : 'skipped-no-propid');
+    _updateDisputeBadge();
+  }
+
+  console.groupEnd();
+  return { auth: sess?.user?.id, propId, insData, insErr, rows, propRow };
 };
 
 // ─────────────────────────────────────────────────────────────────────────────
@@ -4799,8 +4977,15 @@ async function explainCharge(i) {
 }
 
 function disputeCharge(i) {
+  const _dcUser = window.AuthService?.getCurrentUser();
+  console.log('[disputeCharge] i:', i, '| role:', _dcUser?.role, '| activePropId:', activePropId || 'null',
+    '| canEditReview:', window.AccessControl ? window.AccessControl.canEditReview(_dcUser) : 'AccessControl missing');
+  if (window.ms_lastDisputeFlow) { window.ms_lastDisputeFlow.ts = new Date().toISOString(); window.ms_lastDisputeFlow.trigger = 'disputeCharge'; }
   if (window.AccessControl && window.AuthService &&
-      !window.AccessControl.canEditReview(window.AuthService.getCurrentUser())) return;
+      !window.AccessControl.canEditReview(window.AuthService.getCurrentUser())) {
+    console.warn('[disputeCharge] BLOCKED by canEditReview — role:', _dcUser?.role);
+    return;
+  }
   const det = document.getElementById(`idet-${i}`);
   if (!det) return;
   det.style.display = 'block';
@@ -7958,9 +8143,31 @@ function toggleDisputeForm(rowId, tenantName, invoiceId, vendor, category, tenan
 }
 
 async function submitDispute(rowId, tenantName, invoiceId, vendor, category, tenantShare) {
+  // ── Dispute flow diagnostics ──────────────────────────────────────────────
+  const _sdUser = window.AuthService?.getCurrentUser();
+  const _sdProp = currentProperty();
+  const _sdTs   = new Date().toISOString();
+  console.group('[submitDispute] vendor:', vendor, '| tenant:', tenantName);
+  console.log('activePropId:', activePropId || 'NULL — saves will be silently skipped');
+  console.log('currentProperty():', _sdProp ? JSON.stringify({ id: _sdProp.id, name: _sdProp.name }) : 'NULL');
+  console.log('auth user:', _sdUser ? JSON.stringify({ role: _sdUser.role, id: _sdUser.id, email: _sdUser.email }) : 'null');
+  console.log('disputes[] before push:', disputes.length);
+  if (!activePropId) console.error('[submitDispute] activePropId is null — dispute will NOT be saved to Supabase. Is the tenant portal active?');
+  if (window.ms_lastDisputeFlow) {
+    window.ms_lastDisputeFlow.ts        = _sdTs;
+    window.ms_lastDisputeFlow.trigger   = 'submitDispute';
+    window.ms_lastDisputeFlow.propId    = activePropId || null;
+    window.ms_lastDisputeFlow.propFound = !!_sdProp;
+    window.ms_lastDisputeFlow.auth      = _sdUser ? { uid: _sdUser.id, email: _sdUser.email, role: _sdUser.role } : { uid: null };
+    window.ms_lastDisputeFlow.saveAttempted = false;
+    window.ms_lastDisputeFlow.saveResult    = null;
+    _updateDisputeBadge();
+  }
+  // ─────────────────────────────────────────────────────────────────────────
   const reason = document.getElementById(`dreason-${rowId}`).value.trim();
   if (!reason) {
     document.getElementById(`dreason-${rowId}`).style.borderColor = '#ea580c';
+    console.groupEnd();
     return;
   }
   const docInput = document.getElementById(`ddoc-${rowId}`);
@@ -8022,8 +8229,25 @@ async function submitDispute(rowId, tenantName, invoiceId, vendor, category, ten
   if (matchedInv) matchedInv._disputed = true;
 
   renderOpenDisputes();
+  console.log('disputes[] after push:', disputes.length);
+
+  console.log('[submitDispute] calling syncPortfolioEntry()...');
   await syncPortfolioEntry();
+
+  console.log('[submitDispute] calling savePropertyData()... activePropId=', activePropId || 'NULL');
+  if (window.ms_lastDisputeFlow) window.ms_lastDisputeFlow.saveAttempted = true;
   await savePropertyData(); // persist dispute to Supabase
+
+  const _sdPropAfter = currentProperty();
+  const _sdSaveOk    = !!activePropId && !!_sdPropAfter;
+  console.log('[submitDispute] savePropertyData() returned | propId:', activePropId || 'NULL', '| save likely succeeded:', _sdSaveOk);
+  if (window.ms_lastDisputeFlow) {
+    window.ms_lastDisputeFlow.saveResult = _sdSaveOk ? 'ok' : 'skipped-no-propid';
+    if (!_sdSaveOk) window.ms_lastDisputeFlow.errors.push({ ts: new Date().toISOString(), where: 'submitDispute.savePropertyData', reason: 'activePropId null or prop not found' });
+    _updateDisputeBadge();
+  }
+  console.groupEnd();
+
   updateStepBar('resolve');
   showToast('✓ Dispute submitted — your landlord will review it.');
 }
@@ -13096,10 +13320,21 @@ async function savePropertyData() {
   // passively. Most other mutating functions (removeInvItem, clearBulkResults, etc.)
   // are similarly protected — they all return early when activePropId/currentProperty()
   // is null. Explicit RBAC guards are only added where passive isolation is insufficient.
-  if (!activePropId) return;
+  if (!activePropId) {
+    console.warn('[savePropertyData] SKIPPED — activePropId is null. Property not selected, or tenant portal mode active.');
+    if (window.ms_lastDisputeFlow) {
+      window.ms_lastDisputeFlow.saveResult = 'skipped-no-propid';
+      window.ms_lastDisputeFlow.errors.push({ ts: new Date().toISOString(), where: 'savePropertyData', reason: 'activePropId null' });
+      _updateDisputeBadge();
+    }
+    return;
+  }
 
   const prop = _props.find(p => p.id === activePropId);
-  if (!prop) return;
+  if (!prop) {
+    console.warn('[savePropertyData] SKIPPED — prop not found in _props for activePropId:', activePropId);
+    return;
+  }
 
   try {
     const name = document.getElementById('propertyName')?.value?.trim() || '';
