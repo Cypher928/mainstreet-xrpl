@@ -3046,10 +3046,38 @@ function appendReviewAuditEntry(entry) {
 if (window.ms_useNormalizedEvidence === undefined) window.ms_useNormalizedEvidence = false;
 if (window.ms_useNormalizedAudit    === undefined) window.ms_useNormalizedAudit    = false;
 
+// ── Dual-write runtime state — populated by every write attempt ───────────────
+// Set window.ms_debugDualWriteUI = true before a write to show the floating pill.
+// Call ms_dumpDualWrite() or ms_debug_dualwrite() to inspect from mobile.
+window.ms_lastDualWrite = window.ms_lastDualWrite || {
+  evidence: null,  // last _writeTenantFieldEvidence result
+  audit:    null,  // last _writeTenantReviewAudit result
+  auth:     null,  // { uid, email } or { uid: null } — last observed session
+  property: null,  // { id, name } or { id: null }
+  errors:   [],    // all failures appended here (capped at 50)
+};
+
 // Serializes any field value to a string for DB column storage.
 function _evidenceValStr(v) {
   if (v === null || v === undefined) return null;
   return typeof v === 'string' ? v : String(v);
+}
+
+// Classifies a Supabase write result into a readable status string.
+// 'ok'       — row inserted/returned
+// 'no-op'    — ON CONFLICT DO NOTHING fired OR RLS WITH CHECK blocked silently
+// 'rls'      — explicit RLS/permission error (code 42501 / PGRST301 / 403)
+// 'error'    — any other Supabase/network error
+// 'skipped'  — call short-circuited before reaching Supabase
+function _dwStatus(data, error) {
+  if (error) {
+    const c = String(error.code || '');
+    const m = String(error.message || '').toLowerCase();
+    if (c === '42501' || c === 'PGRST301' || m.includes('permission') || m.includes('rls') || m.includes('policy') || error.status === 403) return 'rls';
+    return 'error';
+  }
+  if (!data || data.length === 0) return 'no-op';
+  return 'ok';
 }
 
 // Writes one evidence snapshot to tenant_field_evidence.
@@ -3057,7 +3085,10 @@ function _evidenceValStr(v) {
 // Never throws — JSON blob remains the authoritative fallback.
 async function _writeTenantFieldEvidence(propId, tenantId, fieldKey, snapshot) {
   if (!db || !propId || !tenantId || !fieldKey || !snapshot) {
-    console.warn('[DualWrite:tfe] SKIPPED — missing args', { db: !!db, propId, tenantId, fieldKey, hasSnapshot: !!snapshot });
+    const detail = { db: !!db, propId, tenantId, fieldKey, hasSnapshot: !!snapshot };
+    console.warn('[DualWrite:tfe] SKIPPED — missing args', detail);
+    window.ms_lastDualWrite.evidence = { ts: new Date().toISOString(), status: 'skipped', detail };
+    _updateDualWritePill();
     return;
   }
   const payload = {
@@ -3078,27 +3109,42 @@ async function _writeTenantFieldEvidence(propId, tenantId, fieldKey, snapshot) {
     manually_edited:          snapshot.manuallyEdited                  ?? false,
     original_extracted_value: _evidenceValStr(snapshot.originalExtractedValue),
   };
-  console.groupCollapsed('[DualWrite:tfe] INSERT tenant_field_evidence');
-  console.log('table: tenant_field_evidence');
+  const ts = new Date().toISOString();
+  console.groupCollapsed('[DualWrite:tfe] INSERT tenant_field_evidence @ ' + ts);
   console.log('payload:', JSON.stringify(payload));
   try {
     const { data: sessionData } = await db.auth.getSession();
     const sess = sessionData?.session;
-    console.log('auth:', sess ? `uid=${sess.user.id} email=${sess.user.email}` : 'NO SESSION — auth.uid() will be null, RLS will block');
+    const authState = sess ? { uid: sess.user.id, email: sess.user.email } : { uid: null };
+    window.ms_lastDualWrite.auth = authState;
+    window.ms_lastDualWrite.property = { id: propId };
+    console.log('auth:', sess ? 'OK uid=' + sess.user.id : 'NO SESSION — RLS will block (auth.uid() = null)');
+    if (!sess) console.error('[DualWrite:tfe] FAIL: no auth session → auth.uid() null → RLS WITH CHECK will reject');
+
     const { data, error } = await db
       .from('tenant_field_evidence')
       .upsert(payload, { onConflict: 'tenant_id,field_key,reviewed_at', ignoreDuplicates: true })
       .select('id');
+
+    const status = _dwStatus(data, error);
+    window.ms_lastDualWrite.evidence = { ts, status, propId, tenantId, fieldKey, rowCount: data?.length ?? 0, error: error || null };
+
     if (error) {
-      console.error('[DualWrite:tfe] ERROR:', error.message);
-      console.error('[DualWrite:tfe] code:', error.code, '| details:', error.details, '| hint:', error.hint);
+      console.error('[DualWrite:tfe] ERROR status=' + status, '| code:', error.code, '| msg:', error.message, '| details:', error.details, '| hint:', error.hint);
+      if (window.ms_lastDualWrite.errors.length < 50)
+        window.ms_lastDualWrite.errors.push({ ts, table: 'tenant_field_evidence', code: error.code, message: error.message, details: error.details, hint: error.hint });
+    } else if (status === 'no-op') {
+      console.warn('[DualWrite:tfe] no-op — 0 rows returned. Possible causes: (1) ON CONFLICT DO NOTHING fired (duplicate reviewed_at); (2) RLS WITH CHECK blocked silently; (3) PostgREST returned empty on success (add .select() fixes this — already added).');
     } else {
-      console.log('[DualWrite:tfe] OK — returned row(s):', data);
-      if (!data || data.length === 0) console.warn('[DualWrite:tfe] 0 rows returned — conflict/DO NOTHING or RLS silently blocked');
+      console.log('[DualWrite:tfe] OK — inserted id:', data[0]?.id);
     }
   } catch (e) {
     console.error('[DualWrite:tfe] EXCEPTION:', e);
+    window.ms_lastDualWrite.evidence = { ts, status: 'error', propId, tenantId, fieldKey, rowCount: 0, error: { message: e?.message } };
+    if (window.ms_lastDualWrite.errors.length < 50)
+      window.ms_lastDualWrite.errors.push({ ts, table: 'tenant_field_evidence', message: e?.message });
   } finally {
+    _updateDualWritePill();
     console.groupEnd();
   }
 }
@@ -3108,7 +3154,10 @@ async function _writeTenantFieldEvidence(propId, tenantId, fieldKey, snapshot) {
 // the dedup constraint (tenant_id, action, client_ts) fires correctly on retry.
 async function _writeTenantReviewAudit(propId, tenantId, entry) {
   if (!db || !propId || !tenantId || !entry) {
-    console.warn('[DualWrite:tra] SKIPPED — missing args', { db: !!db, propId, tenantId, hasEntry: !!entry });
+    const detail = { db: !!db, propId, tenantId, hasEntry: !!entry };
+    console.warn('[DualWrite:tra] SKIPPED — missing args', detail);
+    window.ms_lastDualWrite.audit = { ts: new Date().toISOString(), status: 'skipped', detail };
+    _updateDualWritePill();
     return;
   }
   const payload = {
@@ -3126,27 +3175,42 @@ async function _writeTenantReviewAudit(propId, tenantId, entry) {
     reviewer_email:      entry.reviewerEmail     ?? null,
     client_ts:           entry.clientTs          || new Date().toISOString(),
   };
-  console.groupCollapsed('[DualWrite:tra] INSERT tenant_review_audit');
-  console.log('table: tenant_review_audit');
+  const ts = new Date().toISOString();
+  console.groupCollapsed('[DualWrite:tra] INSERT tenant_review_audit @ ' + ts);
   console.log('payload:', JSON.stringify(payload));
   try {
     const { data: sessionData } = await db.auth.getSession();
     const sess = sessionData?.session;
-    console.log('auth:', sess ? `uid=${sess.user.id} email=${sess.user.email}` : 'NO SESSION — auth.uid() will be null, RLS will block');
+    const authState = sess ? { uid: sess.user.id, email: sess.user.email } : { uid: null };
+    window.ms_lastDualWrite.auth = authState;
+    window.ms_lastDualWrite.property = { id: propId };
+    console.log('auth:', sess ? 'OK uid=' + sess.user.id : 'NO SESSION — RLS will block (auth.uid() = null)');
+    if (!sess) console.error('[DualWrite:tra] FAIL: no auth session → auth.uid() null → RLS WITH CHECK will reject');
+
     const { data, error } = await db
       .from('tenant_review_audit')
       .upsert(payload, { onConflict: 'tenant_id,action,client_ts', ignoreDuplicates: true })
       .select('id');
+
+    const status = _dwStatus(data, error);
+    window.ms_lastDualWrite.audit = { ts, status, propId, tenantId, action: entry.action, rowCount: data?.length ?? 0, error: error || null };
+
     if (error) {
-      console.error('[DualWrite:tra] ERROR:', error.message);
-      console.error('[DualWrite:tra] code:', error.code, '| details:', error.details, '| hint:', error.hint);
+      console.error('[DualWrite:tra] ERROR status=' + status, '| code:', error.code, '| msg:', error.message, '| details:', error.details, '| hint:', error.hint);
+      if (window.ms_lastDualWrite.errors.length < 50)
+        window.ms_lastDualWrite.errors.push({ ts, table: 'tenant_review_audit', code: error.code, message: error.message, details: error.details, hint: error.hint });
+    } else if (status === 'no-op') {
+      console.warn('[DualWrite:tra] no-op — 0 rows returned. Possible causes: (1) ON CONFLICT DO NOTHING fired (duplicate client_ts+action); (2) RLS WITH CHECK blocked silently.');
     } else {
-      console.log('[DualWrite:tra] OK — returned row(s):', data);
-      if (!data || data.length === 0) console.warn('[DualWrite:tra] 0 rows returned — conflict/DO NOTHING or RLS silently blocked');
+      console.log('[DualWrite:tra] OK — inserted id:', data[0]?.id);
     }
   } catch (e) {
     console.error('[DualWrite:tra] EXCEPTION:', e);
+    window.ms_lastDualWrite.audit = { ts, status: 'error', propId, tenantId, action: entry.action, rowCount: 0, error: { message: e?.message } };
+    if (window.ms_lastDualWrite.errors.length < 50)
+      window.ms_lastDualWrite.errors.push({ ts, table: 'tenant_review_audit', message: e?.message });
   } finally {
+    _updateDualWritePill();
     console.groupEnd();
   }
 }
@@ -3247,46 +3311,163 @@ async function backfillAuditFromProperties() {
 window.ms_backfillEvidence = backfillEvidenceFromProperties;
 window.ms_backfillAudit    = backfillAuditFromProperties;
 
-// ── Dual-write diagnostic helper ─────────────────────────────────────────────
-// Usage: await ms_debug_dualwrite()
-// Checks auth, active property, then fires one test insert into each table
-// and reads back all rows so you can see exactly what Supabase returns.
+// ── ms_dumpDualWrite — mobile-safe compact summary ───────────────────────────
+// Returns a plain JSON string — paste it anywhere without needing DevTools.
+// Also logs it. Tap the floating pill (when ms_debugDualWriteUI=true) to copy.
+window.ms_dumpDualWrite = function() {
+  const dw = window.ms_lastDualWrite;
+  function errCompact(e) {
+    if (!e) return null;
+    return { code: e.code, message: e.message, details: e.details, hint: e.hint };
+  }
+  const summary = {
+    dumpTs:   new Date().toISOString(),
+    auth:     dw.auth,
+    property: dw.property,
+    evidence: dw.evidence ? {
+      ts:       dw.evidence.ts,
+      status:   dw.evidence.status,
+      rowCount: dw.evidence.rowCount,
+      propId:   dw.evidence.propId,
+      tenantId: dw.evidence.tenantId,
+      fieldKey: dw.evidence.fieldKey,
+      error:    errCompact(dw.evidence.error),
+    } : null,
+    audit: dw.audit ? {
+      ts:       dw.audit.ts,
+      status:   dw.audit.status,
+      rowCount: dw.audit.rowCount,
+      propId:   dw.audit.propId,
+      tenantId: dw.audit.tenantId,
+      action:   dw.audit.action,
+      error:    errCompact(dw.audit.error),
+    } : null,
+    errorCount: dw.errors.length,
+    lastErrors: dw.errors.slice(-3),
+  };
+  const s = JSON.stringify(summary, null, 2);
+  console.log('[ms_dumpDualWrite]', s);
+  return s;
+};
+
+// ── _pillFallbackCopy — textarea execCommand for mobile Safari ────────────────
+function _pillFallbackCopy(text) {
+  try {
+    const ta = document.createElement('textarea');
+    ta.value = text;
+    ta.style.cssText = 'position:fixed;top:-999px;left:-999px;opacity:0;font-size:16px;';
+    document.body.appendChild(ta);
+    ta.focus();
+    ta.select();
+    document.execCommand('copy');
+    document.body.removeChild(ta);
+    return true;
+  } catch (_) { return false; }
+}
+
+// ── _updateDualWritePill — floating status pill (ms_debugDualWriteUI = true) ──
+// Shows AUTH / PROP / TFE / TRA status. Tap to copy ms_dumpDualWrite() output.
+// Pill is created on first call when flag is true; updates on every write.
+function _updateDualWritePill() {
+  if (!window.ms_debugDualWriteUI) return;
+
+  let pill = document.getElementById('_ms_dw_pill');
+  if (!pill) {
+    pill = document.createElement('div');
+    pill.id = '_ms_dw_pill';
+    pill.title = 'Tap to copy diagnostic JSON';
+    pill.style.cssText = [
+      'position:fixed', 'bottom:16px', 'right:12px', 'z-index:99999',
+      'background:rgba(15,23,42,0.96)', 'border:1px solid rgba(255,255,255,0.18)',
+      'border-radius:10px', 'padding:8px 12px', 'font-family:monospace',
+      'font-size:12px', 'line-height:1.7', 'cursor:pointer',
+      'min-width:148px', 'box-shadow:0 4px 16px rgba(0,0,0,0.5)',
+      '-webkit-tap-highlight-color:transparent', 'user-select:none',
+    ].join(';');
+    pill.onclick = function() {
+      const s = window.ms_dumpDualWrite();
+      const flash = function(ok) {
+        pill.style.borderColor = ok ? '#4ade80' : '#f87171';
+        setTimeout(function() { pill.style.borderColor = 'rgba(255,255,255,0.18)'; }, 900);
+      };
+      if (navigator.clipboard && navigator.clipboard.writeText) {
+        navigator.clipboard.writeText(s).then(function() { flash(true); }).catch(function() { flash(_pillFallbackCopy(s)); });
+      } else {
+        flash(_pillFallbackCopy(s));
+      }
+    };
+    document.body.appendChild(pill);
+  }
+
+  const dw = window.ms_lastDualWrite;
+  function _ind(label, state) {
+    // state: 'ok' | 'no-op' | 'rls' | 'error' | 'skipped' | null
+    const ok    = '#4ade80';  // green
+    const warn  = '#fbbf24';  // amber
+    const fail  = '#f87171';  // red
+    const muted = '#475569';  // gray
+    let color, sym;
+    if (!state)              { color = muted; sym = '·'; }
+    else if (state === 'ok') { color = ok;    sym = '✓'; }
+    else if (state === 'no-op') { color = warn; sym = '?'; }
+    else                     { color = fail;  sym = '✗'; }
+    return '<span style="color:' + muted + '">' + label + '</span><span style="color:' + color + '">' + sym + '</span>';
+  }
+
+  const authState  = dw.auth  ? (dw.auth.uid  ? 'ok' : 'error') : null;
+  const propState  = dw.property ? (dw.property.id ? 'ok' : 'error') : null;
+  const tfeState   = dw.evidence ? dw.evidence.status : null;
+  const traState   = dw.audit    ? dw.audit.status    : null;
+  const errCount   = dw.errors.length;
+
+  pill.innerHTML =
+    '<div style="color:#64748b;font-size:10px;letter-spacing:.04em;margin-bottom:2px">DUALWRITE' +
+    (errCount ? ' <span style="color:#f87171">(' + errCount + ' err)</span>' : '') + '</div>' +
+    _ind('AUTH ', authState) + '&nbsp;&nbsp;' + _ind('PROP ', propState) + '<br>' +
+    _ind('TFE  ', tfeState)  + '&nbsp;&nbsp;' + _ind('TRA  ', traState)  +
+    '<div style="color:#334155;font-size:9px;margin-top:2px">tap to copy JSON</div>';
+}
+
+// ── ms_debug_dualwrite — comprehensive fire-and-test diagnostic ───────────────
+// Usage (mobile console or desktop): await ms_debug_dualwrite()
+// Checks auth, active property, fires test inserts, reads back rows.
+// Returns plain object — also stored in ms_lastDualWrite after each write.
 window.ms_debug_dualwrite = async function() {
   console.group('[ms_debug_dualwrite] Dual-write diagnostic');
 
-  // 1. Auth session
+  // 1. Auth
   const { data: sessionData, error: sessionErr } = await db.auth.getSession();
   const sess = sessionData?.session;
   if (sessionErr) console.error('getSession error:', sessionErr);
-  if (sess) {
-    console.log('Auth OK — uid:', sess.user.id, '| email:', sess.user.email, '| expires:', new Date(sess.expires_at * 1000).toISOString());
-  } else {
-    console.error('NO AUTH SESSION — auth.uid() = null inside RLS → all inserts will be blocked');
-  }
+  const authSummary = sess
+    ? { ok: true, uid: sess.user.id, email: sess.user.email, expires: new Date(sess.expires_at * 1000).toISOString() }
+    : { ok: false, reason: 'no session — auth.uid() will be null inside RLS' };
+  console.log('Auth:', JSON.stringify(authSummary));
+  if (!sess) console.error('ALL INSERTS WILL BE BLOCKED — RLS requires authenticated session');
 
-  // 2. Active property
+  window.ms_lastDualWrite.auth = sess ? { uid: sess.user.id, email: sess.user.email } : { uid: null };
+
+  // 2. Property + tenants
   console.log('activePropId:', activePropId || '(none)');
   const prop = currentProperty();
-  console.log('currentProperty():', prop ? { id: prop.id, name: prop.name } : 'NULL — dual-write callers will skip');
+  console.log('currentProperty:', prop ? JSON.stringify({ id: prop.id, name: prop.name }) : 'NULL — callers will skip dual-write');
+  window.ms_lastDualWrite.property = prop ? { id: prop.id, name: prop.name } : { id: null };
 
-  // 3. Loaded tenants
   const validTenants = tenantData.filter(Boolean);
-  console.log('tenantData:', validTenants.length, 'tenant(s) loaded');
-  if (validTenants.length) {
-    console.log('First tenant id:', validTenants[0].id, '| name:', validTenants[0].tenant_name);
-  }
+  console.log('tenants loaded:', validTenants.length, validTenants[0] ? '| first: ' + validTenants[0].id : '');
 
   if (!prop?.id) {
-    console.warn('Skipping insert tests — no active property. Open a property first, then re-run.');
+    console.warn('No active property — skipping insert tests. Open a property first.');
+    _updateDualWritePill();
     console.groupEnd();
-    return { session: sess, propId: null };
+    return { auth: authSummary, propId: null };
   }
 
   const testTs       = new Date().toISOString();
-  const testTenantId = validTenants[0]?.id || 'debug-tenant';
+  const testTenantId = validTenants[0]?.id || 'debug-tenant-' + Date.now();
 
-  // 4. Test insert: tenant_field_evidence
-  console.group('Test INSERT → tenant_field_evidence');
+  // 3. Test insert: tenant_field_evidence
+  console.group('INSERT → tenant_field_evidence');
   const evPayload = {
     property_id:       prop.id,
     tenant_id:         testTenantId,
@@ -3302,14 +3483,16 @@ window.ms_debug_dualwrite = async function() {
     .from('tenant_field_evidence')
     .upsert(evPayload, { onConflict: 'tenant_id,field_key,reviewed_at', ignoreDuplicates: true })
     .select('id,tenant_id,field_key,reviewed_at');
-  console.log('data:', evData, '| error:', evErr);
-  if (evErr) console.error('evidence insert FAILED:', evErr.code, evErr.message, evErr.details, evErr.hint);
-  else if (!evData?.length) console.warn('evidence insert: 0 rows returned — DO NOTHING fired (conflict) or RLS blocked silently');
-  else console.log('evidence insert: row created, id =', evData[0].id);
+  const evStatus = _dwStatus(evData, evErr);
+  console.log('status:', evStatus, '| rows:', evData?.length ?? 0);
+  if (evErr)              console.error('ERROR code=' + evErr.code, evErr.message, evErr.details, evErr.hint);
+  else if (!evData?.length) console.warn('no-op: 0 rows — ON CONFLICT DO NOTHING or silent RLS block');
+  else                    console.log('OK — row id:', evData[0].id);
+  window.ms_lastDualWrite.evidence = { ts: testTs, status: evStatus, propId: prop.id, tenantId: testTenantId, fieldKey: '__debug_test__', rowCount: evData?.length ?? 0, error: evErr || null };
   console.groupEnd();
 
-  // 5. Test insert: tenant_review_audit
-  console.group('Test INSERT → tenant_review_audit');
+  // 4. Test insert: tenant_review_audit
+  console.group('INSERT → tenant_review_audit');
   const audPayload = {
     property_id: prop.id,
     tenant_id:   testTenantId,
@@ -3323,33 +3506,32 @@ window.ms_debug_dualwrite = async function() {
     .from('tenant_review_audit')
     .upsert(audPayload, { onConflict: 'tenant_id,action,client_ts', ignoreDuplicates: true })
     .select('id,tenant_id,action,client_ts');
-  console.log('data:', audData, '| error:', audErr);
-  if (audErr) console.error('audit insert FAILED:', audErr.code, audErr.message, audErr.details, audErr.hint);
-  else if (!audData?.length) console.warn('audit insert: 0 rows returned — DO NOTHING fired (conflict) or RLS blocked silently');
-  else console.log('audit insert: row created, id =', audData[0].id);
+  const audStatus = _dwStatus(audData, audErr);
+  console.log('status:', audStatus, '| rows:', audData?.length ?? 0);
+  if (audErr)              console.error('ERROR code=' + audErr.code, audErr.message, audErr.details, audErr.hint);
+  else if (!audData?.length) console.warn('no-op: 0 rows — ON CONFLICT DO NOTHING or silent RLS block');
+  else                     console.log('OK — row id:', audData[0].id);
+  window.ms_lastDualWrite.audit = { ts: testTs, status: audStatus, propId: prop.id, tenantId: testTenantId, action: 'debug_test', rowCount: audData?.length ?? 0, error: audErr || null };
   console.groupEnd();
 
-  // 6. Read back all rows for this property (confirms RLS read path too)
-  console.group('Read-back check (all rows for this property_id)');
-  const { data: evRows, error: evReadErr } = await db
-    .from('tenant_field_evidence')
-    .select('id,tenant_id,field_key,reviewed_at,value')
-    .eq('property_id', prop.id)
-    .order('created_at', { ascending: false })
-    .limit(10);
-  console.log('tenant_field_evidence rows:', evRows, evReadErr || '');
+  // 5. Read-back (confirms RLS SELECT path too)
+  console.group('Read-back (last 5 rows per table for this property)');
+  const { data: evRows, error: evRErr } = await db.from('tenant_field_evidence')
+    .select('id,tenant_id,field_key,reviewed_at,value').eq('property_id', prop.id)
+    .order('created_at', { ascending: false }).limit(5);
+  console.log('tenant_field_evidence:', JSON.stringify(evRows), evRErr ? 'READ ERR:' + evRErr.message : '');
 
-  const { data: audRows, error: audReadErr } = await db
-    .from('tenant_review_audit')
-    .select('id,tenant_id,action,client_ts,severity')
-    .eq('property_id', prop.id)
-    .order('created_at', { ascending: false })
-    .limit(10);
-  console.log('tenant_review_audit rows:', audRows, audReadErr || '');
+  const { data: audRows, error: audRErr } = await db.from('tenant_review_audit')
+    .select('id,tenant_id,action,client_ts,severity').eq('property_id', prop.id)
+    .order('created_at', { ascending: false }).limit(5);
+  console.log('tenant_review_audit:', JSON.stringify(audRows), audRErr ? 'READ ERR:' + audRErr.message : '');
   console.groupEnd();
 
+  _updateDualWritePill();
+  console.log('--- ms_dumpDualWrite() ---');
+  console.log(window.ms_dumpDualWrite());
   console.groupEnd();
-  return { session: sess, propId: prop.id, evData, evErr, audData, audErr, evRows, audRows };
+  return { auth: authSummary, propId: prop.id, evStatus, audStatus, evRows, audRows };
 };
 
 // ─────────────────────────────────────────────────────────────────────────────
