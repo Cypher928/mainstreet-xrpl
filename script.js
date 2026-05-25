@@ -3604,18 +3604,19 @@ function _updateDisputeBadge() {
     return '<span style="color:' + mute + '">' + label + '</span><span style="color:' + color + '">' + sym + '</span>';
   }
 
-  const authOk   = df.auth && df.auth.uid;
-  const propOk   = df.propFound === true && df.propId;
-  const propFail = df.propFound === false || (!df.propId && df.ts);
-  const writeOk  = df.saveResult === 'ok';
+  const authOk    = df.auth && df.auth.uid;
+  // PROP reads live activePropId directly — reflects hydration state immediately,
+  // not just after a dispute attempt.
+  const propLive  = !!activePropId;
+  const writeOk   = df.saveResult === 'ok';
   const writeFail = df.saveResult && df.saveResult !== 'ok';
-  const readOk   = !df.auditPropNull && df.ts;
+  const readOk    = !df.auditPropNull && df.ts;
 
   badge.innerHTML =
     '<div style="color:#92400e;font-size:10px;letter-spacing:.04em;margin-bottom:2px">DISPUTE FLOW' +
     (df.errors.length ? ' <span style="color:' + fail + '">(' + df.errors.length + 'err)</span>' : '') + '</div>' +
     _b('AUTH  ', authOk ? ok : (df.auth ? fail : mute), authOk ? '✓' : (df.auth ? '✗' : '·')) + '&nbsp;&nbsp;' +
-    _b('PROP  ', propOk ? ok : (propFail ? fail : mute), propOk ? '✓' : (propFail ? '✗' : '·')) + '<br>' +
+    _b('PROP  ', propLive ? ok : fail, propLive ? '✓ ' + activePropId.slice(0,6) : '✗ null') + '<br>' +
     _b('WRITE ', writeOk ? ok : (writeFail ? fail : mute), writeOk ? '✓' : (writeFail ? '✗' : '·')) + '&nbsp;&nbsp;' +
     _b('AUDIT ', df.auditPropNull ? fail : (readOk ? ok : mute), df.auditPropNull ? '✗' : (readOk ? '✓' : '·')) +
     '<div style="color:#334155;font-size:9px;margin-top:2px">tap to copy JSON</div>';
@@ -8152,7 +8153,12 @@ async function submitDispute(rowId, tenantName, invoiceId, vendor, category, ten
   console.log('currentProperty():', _sdProp ? JSON.stringify({ id: _sdProp.id, name: _sdProp.name }) : 'NULL');
   console.log('auth user:', _sdUser ? JSON.stringify({ role: _sdUser.role, id: _sdUser.id, email: _sdUser.email }) : 'null');
   console.log('disputes[] before push:', disputes.length);
-  if (!activePropId) console.error('[submitDispute] activePropId is null — dispute will NOT be saved to Supabase. Is the tenant portal active?');
+  if (!activePropId) {
+    console.error('[DISPUTE] activePropId missing — dispute cannot persist. _tenantPortalPropId:', window._tenantPortalPropId || 'also null');
+    alert('Property context missing — cannot save dispute. Please reload the page and try again.');
+    console.groupEnd();
+    return;
+  }
   if (window.ms_lastDisputeFlow) {
     window.ms_lastDisputeFlow.ts        = _sdTs;
     window.ms_lastDisputeFlow.trigger   = 'submitDispute';
@@ -13346,7 +13352,9 @@ async function savePropertyData() {
     // tenantData is the live working buffer; always sync it to prop.tenants before saving
     // so any field edit (even if prop.tenants wasn't updated) is captured.
     if (tenantData.some(t => t !== null)) prop.tenants = tenantData.filter(t => t !== null);
-    prop.invoices = Array.from(invoiceData);
+    // Guard: only overwrite invoices when invoiceData is populated. In tenant portal
+    // mode invoiceData is always empty — writing it would wipe the property's invoice list.
+    if (invoiceData.length > 0) prop.invoices = Array.from(invoiceData);
 
     prop.disputes    = Array.from(disputes);
     prop.activityLog = [...activityLog];
@@ -13864,7 +13872,19 @@ async function _initTenantPortal() {
 
   try {
     const data = await _loadTenantPropertyData(assignedIds[0]);
-    if (data) _renderTenantPropertyView(data);
+    if (data) {
+      _renderTenantPropertyView(data);
+
+      // Hydrate property context so dispute saves and audit writes work.
+      // activePropId must be set before savePropertyData() / appendReviewAuditEntry()
+      // are reachable; without it both functions silently return at their first guard.
+      activePropId = data.id;
+      window._tenantPortalPropId = data.id;
+      if (!_props.find(p => p.id === data.id)) _props.push(data);
+
+      console.log('[TenantPortal] property context hydrated — activePropId:', activePropId);
+      _updateDisputeBadge();
+    }
   } catch (e) {
     console.warn('[TenantPortal] Property load failed:', e?.message);
     // fail silently — welcome message remains visible
