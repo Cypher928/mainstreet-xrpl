@@ -13358,7 +13358,10 @@ async function savePropertyData() {
 
     prop.disputes    = Array.from(disputes);
     prop.activityLog = [...activityLog];
-    prop.results  = lastResults.length ? {
+    // Only overwrite results when this session computed new ones. Without this
+    // guard, a tenant portal save (where lastResults is always empty) would wipe
+    // the property's CAM reconciliation results on every dispute submission.
+    prop.results = lastResults.length ? {
       propId:       prop.id,          // used to verify results belong to this property on load
       results:      lastResults,
       propName:     lastPropName,
@@ -13368,7 +13371,7 @@ async function savePropertyData() {
       tenants:      lastTenants,
       disputes:     Array.from(disputes),
       camRuns:      camRuns.map(r => ({ ...r, timestamp: r.timestamp instanceof Date ? r.timestamp.toISOString() : r.timestamp })),
-    } : null;
+    } : (prop.results ?? null);
 
     // Debounce: collapse rapid successive saves (e.g. per-keystroke field edits)
     // into a single DB write 800 ms after the last call.
@@ -13537,16 +13540,26 @@ async function loadPropertyData(id) {
   const lsCount = (lsData.tenants || []).length;
   const base = lsCount > dbCount ? lsData : dbData;
 
+  // Disputes: DB is authoritative (tenant may have submitted from another device/session
+  // since the landlord's last visit). Also include any LS-only entries that haven't
+  // reached Supabase yet (e.g. network failure during save) to prevent local data loss.
+  const _dbDisps   = dbData.disputes || [];
+  const _lsDisps   = lsData.disputes || [];
+  const _lsOnlyDisps = _lsDisps.filter(d => !_dbDisps.some(dd => dd.id === d.id));
+  const _mergedDisps = [..._dbDisps, ..._lsOnlyDisps];
+
   console.groupCollapsed('[PIPELINE:4b] MERGE decision');
   console.log('winner:', lsCount > dbCount ? 'localStorage' : 'supabase', { dbTenants: dbCount, lsTenants: lsCount, dbInvoices: (dbData.invoices||[]).length, lsInvoices: (lsData.invoices||[]).length });
   console.log('base.invoices[0]:', JSON.parse(JSON.stringify(base.invoices?.[0] || {})));
+  console.log('[LANDLORD disputes]', { source: 'merge', dbDisputesLen: _dbDisps.length, lsDisputesLen: _lsDisps.length, lsOnlyLen: _lsOnlyDisps.length, mergedLen: _mergedDisps.length, dbDisputes: _dbDisps, lsDisputes: _lsDisps });
   console.groupEnd();
 
-  // Reconciliation results: always prefer Supabase — it is written immediately
-  // after each run and is the authoritative source. localStorage may lag behind
-  // or be missing the field entirely on older sessions.
+  // Reconciliation results and disputes: always prefer Supabase — both are
+  // written immediately after each event and Supabase is the authoritative source.
+  // localStorage may lag behind or belong to a different session entirely.
   const merged = {
     ...base,
+    disputes:          _mergedDisps,
     results:           dbData.results           ?? base.results           ?? null,
     camReconciliation: dbData.camReconciliation ?? base.camReconciliation ?? null,
   };
@@ -13663,6 +13676,7 @@ function renderProperty(property) {
   // ── Disputes ──────────────────────────────────────────────────────────
   try {
     const savedDisputes = property.disputes || [];
+    console.log('[LANDLORD disputes]', { source: 'renderProperty', propId: property.id, disputesLen: savedDisputes.length, disputes: savedDisputes });
     if (savedDisputes.length) {
       disputes.splice(0, disputes.length, ...savedDisputes);
       nextDisputeId = Math.max(...savedDisputes.map(d => d.id + 1), 0);
@@ -13882,7 +13896,14 @@ async function _initTenantPortal() {
       window._tenantPortalPropId = data.id;
       if (!_props.find(p => p.id === data.id)) _props.push(data);
 
-      console.log('[TenantPortal] property context hydrated — activePropId:', activePropId);
+      // Seed working arrays from loaded property so savePropertyData() won't
+      // overwrite them with empty values (renderProperty is not called in tenant mode).
+      disputes.splice(0, disputes.length, ...(data.disputes || []));
+      if (data.disputes?.length) nextDisputeId = Math.max(...data.disputes.map(d => (d.id || 0) + 1), 0);
+      activityLog.splice(0, activityLog.length, ...(data.activityLog || []));
+
+      console.log('[TenantPortal] property context hydrated — activePropId:', activePropId,
+        '| disputes:', disputes.length, '| activityLog:', activityLog.length);
       _updateDisputeBadge();
     }
   } catch (e) {
