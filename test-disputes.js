@@ -414,6 +414,88 @@ suite('TEST 5b — nextDisputeId collision prevention', ({ assert, assertEq }) =
   assertEq(uniqueIds.size, allIds.length, 'all dispute ids are unique (no collision)');
 });
 
+// ── TEST 6 — Dispute count integrity ─────────────────────────────────────────
+
+suite('TEST 6a — Open count from disputes[] after submit', ({ assert, assertEq }) => {
+  const prop = makeProperty({ disputes: [] });
+  const g    = freshGlobals();
+  simulateInitTenantPortal(prop, g);
+
+  assertEq(g.disputes.filter(d => d.status === 'open').length, 0, 'open count is 0 before any dispute');
+  assertEq(g.disputes.length, 0, 'total count is 0 before any dispute');
+
+  const d = { id: g.nextDisputeId++, vendor: 'CleanCo', reason: 'not in lease', status: 'open', tenantName: 'Anchor Retail', timestamp: new Date().toISOString() };
+  g.disputes.push(d);
+
+  assertEq(g.disputes.filter(d => d.status === 'open').length, 1, 'open count is 1 after submit');
+  assertEq(g.disputes.length, 1, 'total count is 1 after submit');
+});
+
+suite('TEST 6b — Landlord reload preserves open count (LS=0, DB=2)', ({ assert, assertEq }) => {
+  // Tenant submitted 2 disputes to DB; landlord LS has no disputes yet
+  const dbData = makeProperty({ disputes: [D0, D1] });
+  const lsData = makeProperty({ disputes: [] });
+  const merged = simulateMerge(dbData, lsData);
+
+  assertEq(merged.disputes.filter(d => d.status === 'open').length, 2, 'open count is 2 from DB (not 0 from LS)');
+  assertEq(merged.disputes.length, 2, 'total count is 2');
+});
+
+suite('TEST 6c — Duplicate merge does not double-count', ({ assert, assertEq }) => {
+  // Same 2 disputes exist in both DB and LS — union dedup must yield exactly 2
+  const dbData = makeProperty({ disputes: [D0, D1] });
+  const lsData = makeProperty({ disputes: [D0, D1] }); // exact same entries
+  const merged = simulateMerge(dbData, lsData);
+
+  assertEq(merged.disputes.length, 2, 'merged has exactly 2 (no double-count)');
+  assertEq(merged.disputes.filter(d => d.status === 'open').length, 2, 'open count not doubled');
+});
+
+suite('TEST 6d — Status differentiation: resolved dispute has open count = 0', ({ assert, assertEq }) => {
+  const resolvedDispute = { id: 0, vendor: 'CleanCo', reason: 'ok', status: 'accepted', tenantName: 'Anchor Retail', timestamp: new Date().toISOString() };
+  const dbData = makeProperty({ disputes: [resolvedDispute] });
+  const lsData = makeProperty({ disputes: [resolvedDispute] });
+  const merged = simulateMerge(dbData, lsData);
+
+  assertEq(merged.disputes.length, 1, 'total dispute count is 1');
+  assertEq(merged.disputes.filter(d => d.status === 'open').length, 0, 'open count is 0 — resolved dispute not counted as open');
+  assert(merged.disputes[0].status !== 'open', 'dispute status is not open');
+});
+
+// ── TEST 7 — savePropertyData guard and skip correctness ─────────────────────
+
+suite('TEST 7a — savePropertyData does NOT skip when activePropId is set', ({ assert, assertEq, assertNotNull }) => {
+  const prop = makeProperty({ disputes: [D0] });
+  const g    = freshGlobals();
+  simulateInitTenantPortal(prop, g);
+
+  const newDispute = { id: g.nextDisputeId++, vendor: 'NewCo', reason: 'disputed', status: 'open', tenantName: 'Anchor Retail', timestamp: new Date().toISOString() };
+  g.disputes.push(newDispute);
+
+  const result = simulateSavePropertyData(g);
+
+  assert(!result.skipped, 'save is NOT skipped when activePropId is set');
+  assertNotNull(result.savedProp, 'savedProp is not null');
+  assertEq(result.savedProp.disputes.length, 2, 'both disputes (D0 + new) persisted');
+  assert(result.savedProp.disputes.some(d => d.vendor === 'NewCo'), 'new dispute is in saved state');
+  assert(result.savedProp.disputes.some(d => d.id === D0.id), 'original D0 also present');
+});
+
+suite('TEST 7b — savePropertyData IS skipped when activePropId is null', ({ assert, assertEq }) => {
+  const prop = makeProperty({ disputes: [D0] });
+  const g    = freshGlobals();
+  simulateInitTenantPortal(prop, g);
+
+  // Force activePropId to null — simulates pre-hydration state
+  g.activePropId = null;
+
+  const result = simulateSavePropertyData(g);
+
+  assert(result.skipped, 'save IS skipped when activePropId is null');
+  assert(result.reason && result.reason.includes('activePropId'), 'skip reason mentions activePropId');
+  assertEq(g._props[0].disputes.length, 1, '_props not mutated — original D0 still there');
+});
+
 // ── Summary ───────────────────────────────────────────────────────────────────
 
 console.log('\n' + '─'.repeat(52));

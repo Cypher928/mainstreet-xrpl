@@ -843,6 +843,7 @@
     .si-error   { color: #F87171; background: rgba(248,113,113,0.1); border-color: rgba(248,113,113,0.25); }
     .si-conflict{ color: #C084FC; background: rgba(192,132,252,0.1); border-color: rgba(192,132,252,0.25); }
     .si-recovery{ color: #60A5FA; background: rgba(96,165,250,0.1); border-color: rgba(96,165,250,0.25); }
+    .si-local   { color: #94A3B8; background: rgba(148,163,184,0.1); border-color: rgba(148,163,184,0.2); }
     @keyframes si-pulse { 0%,100%{opacity:1} 50%{opacity:0.5} }
 
     /* ── Recovery Center button ─────────────────────────────────────── */
@@ -2735,6 +2736,7 @@
       border-radius: 4px;
     }
     .tp-cam-status--done { color: #4ade80; border-color: rgba(74,222,128,0.2); background: rgba(74,222,128,0.06); }
+    .tp-dispute-count--open { color: #fb923c; border-color: rgba(234,88,12,0.2); background: rgba(234,88,12,0.08); }
     .tp-property-note { font-size: 0.8rem; color: #475569; line-height: 1.55; margin: 0; }
 
     /* ── AI Auditor Narrative Panel ─────────────────────────────────────── */
@@ -2945,6 +2947,12 @@
     /* Make tenant name in card look tappable */
     .tenant-title[data-tdp] { cursor: pointer; }
     .tenant-title[data-tdp]:hover { text-decoration: underline; text-underline-offset: 3px; }
+    /* Live open-dispute count badge in the section heading */
+    .ds-open-badge {
+      font-size: 0.72rem; font-weight: 700; color: #fb923c;
+      background: rgba(234,88,12,0.12); border-radius: 4px;
+      padding: 2px 7px; vertical-align: middle; margin-left: 8px;
+    }
     /* Dispute status badges inside the detail panel */
     .tdp-dispute-badge {
       display: inline-flex; align-items: center;
@@ -3803,7 +3811,7 @@
       <div class="sec-num" style="background:#ea580c;">5</div>
       <div>
         <div class="view-label landlord">Landlord View</div>
-        <h2>Tenant Disputes</h2>
+        <h2>Tenant Disputes <span id="openDisputeHeadBadge" class="ds-open-badge"></span></h2>
         <p>Review tenant disputes and take action below.</p>
         <p style="margin-top:4px;">Disputes Resolved: <span id="resolvedCount" style="font-weight:700;color:#1e293b;">0</span></p>
       </div>

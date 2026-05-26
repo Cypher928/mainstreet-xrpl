@@ -3068,6 +3068,12 @@ window.ms_lastDualWrite = window.ms_lastDualWrite || {
   property: null,  // { id, name } or { id: null }
   errors:   [],    // all failures appended here (capped at 50)
 };
+window.ms_syncState = window.ms_syncState || {
+  status:         'idle',  // mirrors _syncStatus: idle|pending|local|synced|error
+  lastSavedAt:    null,    // ISO timestamp when localStorage write last completed
+  lastCloudSyncAt: null,   // ISO timestamp when Supabase write last confirmed
+  lastError:      null,    // { ts, message } from last app-level save failure
+};
 
 // Serializes any field value to a string for DB column storage.
 function _evidenceValStr(v) {
@@ -7477,9 +7483,14 @@ function captureCheckpoint(propId, label) {
 let _syncStatus = 'idle';
 let _lastSyncAt = null;
 
-function _setSyncStatus(status) {
+function _setSyncStatus(status, errorMsg) {
   _syncStatus = status;
-  if (status === 'synced') _lastSyncAt = new Date();
+  if (!window.ms_syncState) window.ms_syncState = { status: 'idle', lastSavedAt: null, lastCloudSyncAt: null, lastError: null };
+  window.ms_syncState.status = status;
+  const _now = new Date().toISOString();
+  if (status === 'local')  window.ms_syncState.lastSavedAt     = _now;
+  if (status === 'synced') { _lastSyncAt = new Date(); window.ms_syncState.lastCloudSyncAt = _now; }
+  if (status === 'error')  window.ms_syncState.lastError       = { ts: _now, message: errorMsg || 'Unknown error' };
   _renderSyncIndicator();
 }
 
@@ -7487,12 +7498,13 @@ function _renderSyncIndicator() {
   const el = document.getElementById('syncIndicator');
   if (!el) return;
   const cfgMap = {
-    idle:     { cls: '',             icon: '',  label: '' },
-    pending:  { cls: 'si-pending',   icon: '◌', label: 'Saving…' },
-    synced:   { cls: 'si-synced',    icon: '✓', label: 'Synced' },
-    error:    { cls: 'si-error',     icon: '⚠', label: 'Local only' },
-    conflict: { cls: 'si-conflict',  icon: '⚡', label: 'Conflict' },
-    recovery: { cls: 'si-recovery',  icon: '↩', label: 'Recovery available' },
+    idle:     { cls: '',            icon: '',  label: '' },
+    pending:  { cls: 'si-pending',  icon: '◌', label: 'Saving…' },
+    local:    { cls: 'si-local',    icon: '◎', label: 'Saved locally' },
+    synced:   { cls: 'si-synced',   icon: '✓', label: 'Synced to cloud ✓' },
+    error:    { cls: 'si-error',    icon: '⚠', label: 'Error saving' },
+    conflict: { cls: 'si-conflict', icon: '⚡', label: 'Conflict' },
+    recovery: { cls: 'si-recovery', icon: '↩', label: 'Recovery available' },
   };
   const cfg = cfgMap[_syncStatus] || { cls: '', icon: '', label: '' };
   const ts = _lastSyncAt
@@ -8235,6 +8247,15 @@ async function submitDispute(rowId, tenantName, invoiceId, vendor, category, ten
   if (matchedInv) matchedInv._disputed = true;
 
   renderOpenDisputes();
+  _refreshDisputeCountUI();
+  _refreshTenantDisputeBadge(tenantName);
+  // Patch tenant portal card dispute chip if visible (tenant mode)
+  const _tenantChip = document.querySelector('.tp-property-meta .tp-meta-item.tp-dispute-count--open, .tp-property-meta .tp-meta-item[class*="dispute"]');
+  if (_tenantChip) {
+    const _oc = disputes.filter(d => d.status === 'open').length;
+    _tenantChip.textContent = `${_oc} open dispute${_oc !== 1 ? 's' : ''}`;
+    _tenantChip.classList.add('tp-dispute-count--open');
+  }
   console.log('disputes[] after push:', disputes.length);
 
   console.log('[submitDispute] calling syncPortfolioEntry()...');
@@ -8349,6 +8370,34 @@ function renderOpenDisputes() {
   list.innerHTML = html;
 }
 
+// Updates all live dispute count surfaces from the canonical disputes[] array.
+// Call after any mutation to disputes[] (submit, resolve).
+function _refreshDisputeCountUI() {
+  const openCount = disputes.filter(d => d.status === 'open').length;
+  const pKpi = document.getElementById('pKpiDisputes');
+  if (pKpi) {
+    pKpi.textContent = openCount;
+    pKpi.style.color = openCount > 0 ? '#f87171' : '#C9973A';
+  }
+  const badge = document.getElementById('openDisputeHeadBadge');
+  if (badge) badge.textContent = openCount > 0 ? `${openCount} Open` : '';
+}
+
+// Patches the per-tenant dispute pill in the CAM report table for one tenant name.
+// Mirrors the template at renderReport() lines 10527-10529 — keep in sync if that changes.
+function _refreshTenantDisputeBadge(tenantName) {
+  if (!tenantName) return;
+  const dc = disputes.filter(d => d.tenantName === tenantName).length;
+  const oc = disputes.filter(d => d.tenantName === tenantName && d.status === 'open').length;
+  const row = document.querySelector(`tr[data-tenant-name="${CSS.escape(tenantName)}"]`);
+  if (!row) return;
+  const td = row.cells[3];
+  if (!td) return;
+  td.innerHTML = dc > 0
+    ? `<span class="rpt-pill ${oc > 0 ? 'open' : 'closed'}">${dc} (${oc} open)</span>`
+    : '—';
+}
+
 function copyOnChainHash(btn, hash) {
   navigator.clipboard.writeText(hash).then(() => {
     const orig = btn.textContent;
@@ -8415,6 +8464,7 @@ async function resolveDispute(id, resolution) {
   });
 
   renderOpenDisputes();
+  _refreshDisputeCountUI();
   syncPortfolioEntry();
 }
 
@@ -13224,6 +13274,7 @@ async function saveProperty(property) {
   const gen = ++_saveGeneration;
 
   _lsSave(property);
+  _setSyncStatus('local'); // localStorage write complete; Supabase write pending
 
   try {
     const stripped = _stripBlobs(property);
@@ -13284,7 +13335,7 @@ async function saveProperty(property) {
     if (isNetErr) return;
     if (gen !== _saveGeneration) return; // stale error — a newer save supersedes this one
 
-    _setSyncStatus('error');
+    _setSyncStatus('error', msg);
     logError('saveProperty', e, {
       propId:      property?.id,
       propName:    property?.name,
@@ -13938,6 +13989,15 @@ function _renderTenantPropertyView(property) {
   const hasResults = camRec && Array.isArray(camRec.results) && camRec.results.length > 0;
   const year       = property.camYear || (hasResults ? (camRec.results[0]?.year ?? null) : null) || '—';
   const statusText = hasResults ? `Reconciliation complete · ${year}` : 'Reconciliation pending';
+  const _allDisps  = property.disputes || [];
+  const _openDisps = _allDisps.filter(d => d.status === 'open').length;
+  const _dispChip  = _allDisps.length > 0
+    ? `<span class="tp-meta-item${_openDisps > 0 ? ' tp-dispute-count--open' : ''}">${
+        _openDisps > 0
+          ? `${_openDisps} open dispute${_openDisps !== 1 ? 's' : ''}`
+          : `${_allDisps.length} dispute${_allDisps.length !== 1 ? 's' : ''} — resolved`
+      }</span>`
+    : '';
 
   container.innerHTML =
     '<div class="tp-property-card">' +
@@ -13948,6 +14008,7 @@ function _renderTenantPropertyView(property) {
       '<div class="tp-property-meta">' +
         (property.totalSqft ? `<span class="tp-meta-item">${Number(property.totalSqft).toLocaleString()} sq ft</span>` : '') +
         `<span class="tp-meta-item${hasResults ? ' tp-cam-status--done' : ''}">${esc(statusText)}</span>` +
+        _dispChip +
       '</div>' +
       '<p class="tp-property-note">Your CAM reconciliation data is managed by your property manager. Contact them to request a detailed statement or to dispute a charge.</p>' +
     '</div>';
