@@ -421,7 +421,22 @@ Return exactly this structure:
   "lease_end_date": "YYYY-MM-DD",
   "lease_type": string,
   "sqft": number,
-  "cam_cap": number
+  "cam_cap": number,
+  "admin_fee_pct": number | null,
+  "gross_up_pct": number | null,
+  "expense_stop": number | null,
+  "audit_rights": true | false | null,
+  "pro_rata_method": "rentable" | "leasable" | "occupied" | "gross" | null,
+  "renewal_options": string | null,
+  "quotes": {
+    "cam_cap": string | null,
+    "admin_fee_pct": string | null,
+    "gross_up_pct": string | null,
+    "expense_stop": string | null,
+    "audit_rights": string | null,
+    "pro_rata_method": string | null,
+    "renewal_options": string | null
+  }
 }
 
 Rules:
@@ -440,6 +455,13 @@ Rules:
   If some expenses split → "Modified Gross". Null only if completely unresolvable.
 - sqft: Integer. Strip commas, units, and the word "approximately". Null if not found.
 - cam_cap: CRITICAL — you MUST search the entire document for any language that limits CAM or operating expense increases. Look for ALL of the following phrases: "CAM cap", "operating expense cap", "expense stop", "base year stop", "not to exceed", "shall not pay more than", "increases limited to", "capped at", "no more than X% increase", "annual increase cap", "controllable expense cap". If a percentage is found (e.g. "5%" or "5 percent"), return 5. If a dollar amount is found, return that number. Only return null if absolutely no cap-related language exists anywhere in the document.
+- admin_fee_pct: Look for "management fee", "administrative fee not to exceed X%", "admin fee cap". Return percentage number only (e.g. 15 for "15%"). Null if not found.
+- gross_up_pct: Look for "gross up", "grossed up to X% occupancy", "occupancy factor". Return percentage (e.g. 95 for "95% occupancy"). Null if not found.
+- expense_stop: Look for "expense stop", "base year stop", "base operating expenses of $X per square foot". Return dollar amount per sqft if found, else null.
+- audit_rights: Return true if tenant has explicit right to audit CAM records. Return false if explicitly waived. Return null if not addressed.
+- pro_rata_method: Return "rentable", "leasable", "occupied", or "gross" based on how the lease defines the pro-rata denominator. Return null if unresolvable.
+- renewal_options: Short description including count, term length, and rate basis (max 120 chars). Null if no renewal options stated.
+- quotes: For each field where you return a non-null value, copy ≤120 chars of the exact verbatim clause text from the lease that led to that value. Return null for any field where the value is null.
 - Use null only when a field is truly impossible to determine.`;
 
 const INVOICE_PROMPT = `You are extracting data from a commercial real estate invoice or bill.
@@ -919,6 +941,12 @@ function normalizeTenant(d) {
     review:              d.review              ?? {},
     capBaseAmount:       d.capBaseAmount       ?? null,
     fieldEvidence:       d.fieldEvidence       ?? {},
+    admin_fee_pct:       d.admin_fee_pct       ?? null,
+    gross_up_pct:        d.gross_up_pct        ?? null,
+    expense_stop:        d.expense_stop        ?? null,
+    audit_rights:        d.audit_rights        ?? null,
+    pro_rata_method:     d.pro_rata_method     ?? null,
+    renewal_options:     d.renewal_options     ?? null,
   };
 }
 
@@ -1061,7 +1089,7 @@ Return best guess — do not leave fields null unless truly impossible.`;
   const res = await _fetchWithTimeout('/api/claude', {
     method: 'POST',
     headers: { 'Content-Type': 'application/json' },
-    body: JSON.stringify({ messages, max_tokens: 1000, system: CLAUDE_LEASE_SYSTEM }),
+    body: JSON.stringify({ messages, max_tokens: 1500, system: CLAUDE_LEASE_SYSTEM }),
   });
 
   if (!res.ok) throw new Error(`Claude PDF direct failed: HTTP ${res.status}`);
@@ -1188,7 +1216,14 @@ Extract:
   "lease_end_date": "YYYY-MM-DD" or null,
   "lease_type": "NNN" | "Gross" | "Modified Gross" | null,
   "sqft": number or null,
-  "cam_cap": number or null
+  "cam_cap": number or null,
+  "admin_fee_pct": number or null,
+  "gross_up_pct": number or null,
+  "expense_stop": number or null,
+  "audit_rights": true | false | null,
+  "pro_rata_method": "rentable" | "leasable" | "occupied" | "gross" | null,
+  "renewal_options": string or null,
+  "quotes": { "cam_cap": string|null, "admin_fee_pct": string|null, "gross_up_pct": string|null, "expense_stop": string|null, "audit_rights": string|null, "pro_rata_method": string|null, "renewal_options": string|null }
 }
 
 TENANT NAME (highest priority):
@@ -1203,6 +1238,8 @@ DATES:
 
 CAM CAP: Search the entire document for any language limiting CAM increases ("not to exceed", "capped at X%", "expense stop"). Return the number (e.g. 5% → 5). Null if no cap language exists.
 
+QUOTES: For each non-null extracted value, copy ≤120 chars of the exact verbatim clause text that led to that value.
+
 IMPORTANT: Best guess always. Do not leave tenant_name null if any company name exists.
 
 LEASE TEXT:
@@ -1215,7 +1252,7 @@ ${leaseSnippet}
   const res = await _fetchWithTimeout('/api/claude', {
     method: 'POST',
     headers: { 'Content-Type': 'application/json' },
-    body: JSON.stringify({ messages, max_tokens: 1000, system: CLAUDE_LEASE_SYSTEM }),
+    body: JSON.stringify({ messages, max_tokens: 1500, system: CLAUDE_LEASE_SYSTEM }),
   });
 
   if (!res.ok) {
@@ -1303,7 +1340,54 @@ ${leaseSnippet}
     doc_has_dates,
     doc_has_lease_type,
     _error:              null,
+    admin_fee_pct:       raw.admin_fee_pct  != null ? parseFloat(raw.admin_fee_pct)  || null : null,
+    gross_up_pct:        raw.gross_up_pct   != null ? parseFloat(raw.gross_up_pct)   || null : null,
+    expense_stop:        raw.expense_stop   != null ? parseFloat(raw.expense_stop)   || null : null,
+    audit_rights:        raw.audit_rights   != null ? Boolean(raw.audit_rights)              : null,
+    pro_rata_method:     raw.pro_rata_method ?? null,
+    renewal_options:     raw.renewal_options ?? null,
   });
+
+  // Inject quote-bearing evidence snapshots for fields where Claude returned verbatim clause text.
+  // Map: Claude quote key → normalized field key (cam_cap is stored as 'cap' in tenant objects).
+  const _quoteMap = {
+    cam_cap:        'cap',
+    admin_fee_pct:  'admin_fee_pct',
+    gross_up_pct:   'gross_up_pct',
+    expense_stop:   'expense_stop',
+    audit_rights:   'audit_rights',
+    pro_rata_method:'pro_rata_method',
+    renewal_options:'renewal_options',
+  };
+  const _rawQuotes = (raw.quotes && typeof raw.quotes === 'object') ? raw.quotes : {};
+  const _qTs = new Date().toISOString();
+  let _fev = normalized.fieldEvidence || {};
+  for (const [quoteKey, fieldKey] of Object.entries(_quoteMap)) {
+    const qt = typeof _rawQuotes[quoteKey] === 'string' ? _rawQuotes[quoteKey].trim().slice(0, 200) : null;
+    if (!qt) continue;
+    const prev = (_fev[fieldKey] || { snapshots: [] }).snapshots;
+    _fev = {
+      ..._fev,
+      [fieldKey]: { snapshots: [...prev, {
+        fieldKey,
+        value:                  normalized[fieldKey] ?? null,
+        confidence:             { status: 'estimated', note: 'AI-extracted' },
+        sourceFile:             normalized.fileName || null,
+        page:                   null,
+        quote:                  qt,
+        extractionId:           normalized._jobId || null,
+        extractionVersion:      'v1',
+        reviewerUid:            null,
+        reviewerEmail:          null,
+        reviewedAt:             _qTs,
+        approved:               false,
+        manuallyEdited:         false,
+        originalExtractedValue: null,
+      }]},
+    };
+  }
+  normalized.fieldEvidence = _fev;
+
   return normalized;
 }
 // ─── SVG icons ────────────────────────────────────────────────────────────────
@@ -2663,6 +2747,11 @@ function _tenantReviewStateBadgeHtml(t) {
 // Pure functions — read tenant fields and metadata only, no mutations.
 function getFieldConfidence(fieldName, t) {
   if (!t) return { status: 'missing', source: 'missing', note: 'No lease data' };
+  // Manual override takes precedence — field was corrected by a reviewer.
+  const _latestSnap = getLatestFieldEvidence(fieldName, t);
+  if (_latestSnap?.manuallyEdited === true) {
+    return { status: 'manual', source: 'manual', note: 'Manually corrected' };
+  }
   const val = (fieldName === 'proRata') ? null : t[fieldName];
   const isEmpty = val === null || val === undefined || String(val).trim() === '';
 
@@ -2725,13 +2814,19 @@ function renderFieldConfidenceHtml(fieldName, t) {
 window.__msEvidencePanel = { tenantId: null, fieldKey: null, el: null };
 
 const _LEV_FIELD_LABELS = {
-  tenant_name: 'Tenant Name',
-  leased_sqft: 'Leased Sq Ft',
-  lease_type:  'Lease Type',
-  start_date:  'Lease Start',
-  end_date:    'Lease End',
-  cap:         'CAM Cap',
-  proRata:     'Pro-Rata %',
+  tenant_name:     'Tenant Name',
+  leased_sqft:     'Leased Sq Ft',
+  lease_type:      'Lease Type',
+  start_date:      'Lease Start',
+  end_date:        'Lease End',
+  cap:             'CAM Cap',
+  proRata:         'Pro-Rata %',
+  admin_fee_pct:   'Admin Fee %',
+  gross_up_pct:    'Gross-Up %',
+  expense_stop:    'Expense Stop',
+  audit_rights:    'Audit Rights',
+  pro_rata_method: 'Pro-Rata Method',
+  renewal_options: 'Renewal Options',
 };
 
 // Builds a structured evidence object for a single field.
@@ -2747,11 +2842,15 @@ function getFieldEvidence(fieldKey, t) {
   const snippet = dbg?.ocrText ? dbg.ocrText.slice(0, 400) : null;
 
   if (latest) {
-    return normalizeLeaseEvidence({ value, confidence: conf, source: {
+    // Prefer the snapshot's stored confidence when available; manual edits always show 'Manually corrected'.
+    const displayConf = latest.manuallyEdited === true
+      ? { status: 'manual', note: 'Manually corrected' }
+      : (latest.confidence?.status ? latest.confidence : conf);
+    return normalizeLeaseEvidence({ value, confidence: displayConf, source: {
       fileName:          latest.sourceFile       ?? t.fileName ?? null,
       page:              latest.page             ?? null,
       snippet,           // always from session — not stored in snapshots (keeps blob small)
-      quote:             null,
+      quote:             latest.quote            ?? null,
       extractionId:      latest.extractionId     ?? t._jobId ?? null,
       extractionVersion: latest.extractionVersion ?? null,
       reviewerEmail:     latest.reviewerEmail    ?? null,
@@ -2919,6 +3018,7 @@ function _mkEvidenceSnapshot(fieldKey, t, opts) {
     confidence:             { status: conf.status, note: conf.note },
     sourceFile:             t.fileName  || null,
     page:                   null,
+    quote:                  opts.quote  != null ? String(opts.quote).slice(0, 200) : null,
     extractionId:           t._jobId    || null,
     extractionVersion:      opts.extractionVersion || _extractionVersionTag(t),
     reviewerUid:            user?.id    || null,
@@ -3839,6 +3939,47 @@ function cancelFieldOverride(tenantId, fieldName) {
   _refreshLfcExpansion(tenantId);
 }
 
+// One-click approve for all core fields of a tenant that have extracted values.
+// Marks review.reviewerConfirmed = true and persists evidence snapshots for each confirmed field.
+function quickConfirmTenantFields(tenantId) {
+  const idx = tenantData.findIndex(t => t && t.id === tenantId);
+  if (idx === -1) return;
+  const t = tenantData[idx];
+  const CORE_FIELDS = [
+    'tenant_name', 'leased_sqft', 'lease_type', 'start_date', 'end_date', 'cap',
+    'admin_fee_pct', 'gross_up_pct', 'expense_stop', 'audit_rights',
+    'pro_rata_method', 'renewal_options',
+  ];
+  const user = window.AuthService?.getCurrentUser?.() || null;
+  for (const fk of CORE_FIELDS) {
+    const val = t[fk] ?? t.reviewOverrides?.[fk]?.override ?? null;
+    if (val == null || val === '') continue;
+    persistFieldEvidence(tenantId, fk, { approved: true, manuallyEdited: false });
+  }
+  const reviewStateBefore = deriveTenantReviewState(t).status;
+  tenantData[idx] = {
+    ...t,
+    review: {
+      ...t.review,
+      reviewerConfirmed: true,
+      reviewedAt:  new Date().toISOString(),
+      reviewedBy:  user?.email || 'Reviewer',
+    },
+  };
+  appendReviewAuditEntry({
+    tenantId,
+    tenantName:        tenantData[idx].tenant_name || tenantId,
+    action:            'quick_confirm',
+    label:             'All fields confirmed',
+    severity:          'info',
+    reviewStateBefore,
+    reviewStateAfter:  deriveTenantReviewState(tenantData[idx]).status,
+  });
+  savePropertyData();
+  _refreshLfcExpansion(tenantId);
+  showToast('✓ All fields confirmed');
+}
+
 // Enter key commits the active inline edit — registered once at module load.
 document.addEventListener('keydown', (e) => {
   if (e.key !== 'Enter') return;
@@ -3853,7 +3994,8 @@ document.addEventListener('keydown', (e) => {
 // Returns correct <input> type for each field — drives native mobile pickers.
 function _getFieldInputType(fieldName) {
   if (fieldName === 'start_date' || fieldName === 'end_date') return 'date';
-  if (fieldName === 'leased_sqft' || fieldName === 'cap')     return 'number';
+  if (fieldName === 'leased_sqft' || fieldName === 'cap' ||
+      fieldName === 'admin_fee_pct' || fieldName === 'gross_up_pct' || fieldName === 'expense_stop') return 'number';
   return 'text';
 }
 

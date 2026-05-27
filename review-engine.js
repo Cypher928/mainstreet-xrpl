@@ -12,6 +12,8 @@ window.ReviewEngine = (() => {
   const MISSING_FIELD_TYPES = new Set([
     'missing_lease_type', 'missing_sqft', 'missing_start_date',
     'missing_end_date', 'nnn_cap_missing',
+    'admin_fee_present', 'gross_up_present', 'expense_stop_present',
+    'audit_rights_present', 'audit_rights_unknown',
   ]);
 
   function getWarnings(flags) {
@@ -89,6 +91,21 @@ window.ReviewEngine = (() => {
     const isNNN = /nnn|triple[\s-]?net/i.test(String(t.lease_type || ''));
     if (isNNN && (t.cap == null || t.cap === ''))
       warnings.push({ type: 'nnn_cap_missing', severity: 'medium', label: 'NNN Cap' });
+    if (t.admin_fee_pct != null)
+      warnings.push({ type: 'admin_fee_present', severity: 'medium',
+        label: `Admin Fee ${t.admin_fee_pct}% — verify against lease-permitted cap` });
+    if (t.gross_up_pct != null)
+      warnings.push({ type: 'gross_up_present', severity: 'medium',
+        label: `Gross-Up at ${t.gross_up_pct}% — confirm occupancy threshold` });
+    if (t.expense_stop != null)
+      warnings.push({ type: 'expense_stop_present', severity: 'medium',
+        label: `Expense Stop $${t.expense_stop}/sqft — confirm base year` });
+    if (t.audit_rights === true)
+      warnings.push({ type: 'audit_rights_present', severity: 'low',
+        label: 'Tenant has CAM audit rights — document response SLA' });
+    if (isNNN && t.audit_rights == null)
+      warnings.push({ type: 'audit_rights_unknown', severity: 'low',
+        label: 'NNN lease — audit rights clause not resolved' });
     if (t._usedFallback)
       warnings.push({ type: 'fallback_extraction', severity: 'low', label: 'Fallback Extraction' });
     const sqftConf = t.confidence?.leased_sqft ?? t.confidence?.leasedSqft;

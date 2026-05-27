@@ -12,8 +12,9 @@
 const { execSync } = require('child_process');
 
 const SUITES = [
-  { label: 'Allocation engine',    cmd: 'node test-allocation.js' },
+  { label: 'Allocation engine',       cmd: 'node test-allocation.js' },
   { label: 'Tenant dispute pipeline', cmd: 'node test-disputes.js' },
+  { label: 'Extraction quality',      cmd: 'node test-extraction.js' },
 ];
 
 let anyFailed = false;
