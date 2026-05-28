@@ -12784,6 +12784,83 @@ function renderPortfolioIntelligence(props) {
 
 // ─────────────────────────────────────────────────────────────────────────────
 
+/**
+ * Returns live invoice statistics for a property by cascading through all
+ * persisted invoice sources. Use this instead of reading p.invoices.length
+ * directly — property.invoices is guarded and may be empty during tenant
+ * portal saves.
+ *
+ * Source cascade (most → least authoritative):
+ *   1. property.invoices[]                          — full objects, written when invoiceData populated
+ *   2. property.camReconciliation.invoicesFull[]    — in-session only (stripped before LS/DB save)
+ *   3. property.camReconciliation.invoices[]        — simplified list, always persisted after a run
+ *   4. property.results.invoices[]                  — legacy fallback for older saved data
+ *   5. per-tenant includedInvoices[], deduplicated  — aggregated from reconciliation results
+ */
+function getPropertyInvoiceStats(p) {
+  const camRec = p.camReconciliation ?? p.results ?? null;
+
+  // Source 1: property.invoices (full objects, guarded write)
+  let invoices = Array.isArray(p.invoices) && p.invoices.length > 0 ? p.invoices : null;
+
+  // Source 2: camReconciliation.invoicesFull (in-session, stripped before save)
+  if (!invoices) {
+    const full = camRec?.invoicesFull;
+    if (Array.isArray(full) && full.length > 0) invoices = full;
+  }
+
+  // Source 3: camReconciliation.invoices (simplified, persisted)
+  if (!invoices) {
+    const simple = camRec?.invoices;
+    if (Array.isArray(simple) && simple.length > 0) invoices = simple;
+  }
+
+  // Source 4: legacy results.invoices
+  if (!invoices && p.results) {
+    const leg = p.results?.invoices;
+    if (Array.isArray(leg) && leg.length > 0) invoices = leg;
+  }
+
+  // Source 5: aggregate per-tenant includedInvoices, deduplicated by id
+  if (!invoices && Array.isArray(camRec?.results) && camRec.results.length > 0) {
+    const seen = new Set();
+    const agg = [];
+    for (const r of camRec.results) {
+      if (!Array.isArray(r.includedInvoices)) continue;
+      for (const inv of r.includedInvoices) {
+        const key = inv.id != null ? String(inv.id)
+          : (inv.vendorName || inv.vendor || '') + '|' + (inv.amount || 0) + '|' + (inv.date || inv.invoiceDate || '');
+        if (!seen.has(key)) { seen.add(key); agg.push(inv); }
+      }
+    }
+    if (agg.length > 0) invoices = agg;
+  }
+
+  if (!invoices || invoices.length === 0) {
+    console.log('[INVOICE STATS]', { propertyId: p.id, invoiceCount: 0, vendorCount: 0, totalExpenseAmount: 0, source: 'none' });
+    return { totalInvoices: 0, uniqueVendors: 0, totalExpenseAmount: 0 };
+  }
+
+  const vendors = new Set();
+  let total = 0;
+  for (const inv of invoices) {
+    const v = inv.vendorName || inv.vendor;
+    if (v) vendors.add(v);
+    const amt = parseFloat(inv.amount || 0);
+    if (!isNaN(amt)) total += amt;
+  }
+
+  const source = Array.isArray(p.invoices) && p.invoices.length > 0 ? 'property.invoices'
+    : Array.isArray(camRec?.invoicesFull) && camRec.invoicesFull.length > 0 ? 'camRec.invoicesFull'
+    : Array.isArray(camRec?.invoices) && camRec.invoices.length > 0 ? 'camRec.invoices'
+    : Array.isArray(p.results?.invoices) && p.results.invoices.length > 0 ? 'results.invoices'
+    : 'camRec.includedInvoices';
+
+  console.log('[INVOICE STATS]', { propertyId: p.id, invoiceCount: invoices.length, vendorCount: vendors.size, totalExpenseAmount: Math.round(total * 100) / 100, source });
+
+  return { totalInvoices: invoices.length, uniqueVendors: vendors.size, totalExpenseAmount: Math.round(total * 100) / 100 };
+}
+
 function renderPortfolio(props) {
   props = props || _props; // handle no-arg calls
   if (!Array.isArray(props)) {
@@ -12847,7 +12924,7 @@ function renderPortfolio(props) {
 
   document.getElementById('propertyCardsGrid').innerHTML = sortedPairs.map(({ p, m }) => {
     const tenants      = Array.isArray(p.tenants)  ? p.tenants.length  : (Number(p.tenantCount)  || 0);
-    const invoices     = Array.isArray(p.invoices) ? p.invoices.length : (Number(p.invoiceCount) || 0);
+    const invoices     = getPropertyInvoiceStats(p).totalInvoices;
     const cam          = m.total || Number(p.totalCAM) || 0;
     const status       = p.status || 'in-progress';
 

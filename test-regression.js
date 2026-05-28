@@ -15,6 +15,7 @@ const SUITES = [
   { label: 'Allocation engine',       cmd: 'node test-allocation.js' },
   { label: 'Tenant dispute pipeline', cmd: 'node test-disputes.js' },
   { label: 'Extraction quality',      cmd: 'node test-extraction.js' },
+  { label: 'Invoice dashboard counts',cmd: 'node test-invoices.js'   },
 ];
 
 let anyFailed = false;
