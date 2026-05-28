@@ -3883,6 +3883,18 @@
       <button class="report-btn report-btn-holes" onclick="guardedReconciliationSummary()">
         &#x1F4CA; Reconciliation Summary
       </button>
+      <div>
+        <div class="view-label landlord" style="margin-bottom:5px;">Landlord View</div>
+        <button class="report-btn" onclick="generateLeaseReviewPacketReport()">
+          &#x1F4CB; Lease Review Packet
+        </button>
+      </div>
+      <div>
+        <div class="view-label landlord" style="margin-bottom:5px;">Lender / Auditor View</div>
+        <button class="report-btn" onclick="generateLenderSummaryReport()">
+          &#x1F3E6; Lender Summary
+        </button>
+      </div>
       <button class="report-btn rv-gen-btn" onclick="openReviewLinkModal()" title="Generate a shareable read-only review link for executives">
         &#x1F517; Generate Review Link
       </button>
@@ -4109,6 +4121,7 @@
 <script src="selectors.js"></script>
 <script src="allocation-integrity.js"></script>
 <script src="reconciliation-explainer.js"></script>
+<script src="lease-review-packets.js"></script>
 <script src="lease-intelligence.js"></script>
 <script src="script.js"></script>
 <!-- Dev-only role switcher — activates only on localhost, no-op elsewhere -->

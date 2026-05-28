@@ -11622,6 +11622,36 @@ function generateLandlordExport() {
   }
 }
 
+function generateLeaseReviewPacketReport() {
+  try {
+    const prop = currentProperty();
+    if (!prop) { showToast('Select a property first.', { color: '#92400e', textColor: '#fef3c7' }); return; }
+    if (!window.LeaseReviewPackets) { showToast('Lease Review Packets module not loaded.', { color: '#92400e', textColor: '#fef3c7' }); return; }
+    const packet = window.LeaseReviewPackets.generateLeaseReviewPacket(prop, { audience: 'landlord' });
+    const html   = window.LeaseReviewPackets.formatReviewPacketHtml(packet);
+    logActivity('lease_review_packet', 'Lease Review Packet generated', { severity: 'info', actor: 'User', relatedEntity: prop.name || 'Property' });
+    openReport('Lease Review Packet — ' + (prop.name || 'Property'), html);
+  } catch (e) {
+    logError('generateLeaseReviewPacketReport', e, { propName: currentProperty()?.name });
+    showToast('Could not generate Lease Review Packet.', { color: '#92400e', textColor: '#fef3c7' });
+  }
+}
+
+function generateLenderSummaryReport() {
+  try {
+    const prop = currentProperty();
+    if (!prop) { showToast('Select a property first.', { color: '#92400e', textColor: '#fef3c7' }); return; }
+    if (!window.LeaseReviewPackets) { showToast('Lease Review Packets module not loaded.', { color: '#92400e', textColor: '#fef3c7' }); return; }
+    const packet = window.LeaseReviewPackets.generateLeaseReviewPacket(prop, { audience: 'lender' });
+    const html   = window.LeaseReviewPackets.formatReviewPacketHtml(packet);
+    logActivity('lender_summary', 'Lender Summary generated', { severity: 'info', actor: 'User', relatedEntity: prop.name || 'Property' });
+    openReport('Lender Summary — ' + (prop.name || 'Property'), html);
+  } catch (e) {
+    logError('generateLenderSummaryReport', e, { propName: currentProperty()?.name });
+    showToast('Could not generate Lender Summary.', { color: '#92400e', textColor: '#fef3c7' });
+  }
+}
+
 // ─── CSV + JSON Exports ───────────────────────────────────────────────────────
 
 function _downloadFile(content, filename, mime) {
