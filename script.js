@@ -2666,6 +2666,10 @@ async function handleBulkLeases(fileList) {
       relatedEntity: property.name || '',
       detail:        `${successCount} of ${total} extracted successfully`,
     });
+    appendPropertyTimelineEvent(property, { type: 'lease_uploaded', severity: 'info',
+      actor: 'User', title: `${total} lease${total !== 1 ? 's' : ''} uploaded`,
+      description: `${successCount} of ${total} extracted successfully`,
+      metadata: { total, successCount } });
   }
 }
 
@@ -3261,6 +3265,12 @@ window.ms_metricsDebug = window.ms_metricsDebug || {
   propertyId:  null,   // property id for which metrics were last derived
   metrics:     null,   // full derivePropertyMetrics() output
   computedAt:  null,   // ISO timestamp of last computation
+};
+window.ms_timelineDebug = window.ms_timelineDebug || {
+  propertyId:  null,
+  lastEvent:   null,
+  totalEvents: 0,
+  updatedAt:   null,
 };
 
 // Serializes any field value to a string for DB column storage.
@@ -3996,7 +4006,12 @@ function saveFieldOverride(tenantId, fieldName, newValue) {
   });
   savePropertyData();
   const _rds1 = (_props || []).find(q => q.id === activePropId);
-  if (_rds1) rebuildDerivedState(_rds1);
+  if (_rds1) rebuildDerivedState(_rds1, { appendTimeline: true });
+  { const _prop = currentProperty();
+    if (_prop) appendPropertyTimelineEvent(_prop, { type: 'field_overridden', severity: 'info',
+      tenantId, actor: user?.email || 'Reviewer', title: `Field corrected — ${fieldName}`,
+      description: `${fieldName}: "${original}" → "${newValue}"`,
+      metadata: { fieldName, original, newValue } }); }
   renderBulkResults();
   _refreshLfcExpansion(tenantId);
   showToast('✓ Field updated — re-run reconciliation to apply to totals.', { color: '#0c4a6e', textColor: '#7dd3fc', duration: 4000 });
@@ -4067,7 +4082,11 @@ function quickConfirmTenantFields(tenantId) {
   });
   savePropertyData();
   const _rds2 = (_props || []).find(q => q.id === activePropId);
-  if (_rds2) rebuildDerivedState(_rds2);
+  if (_rds2) rebuildDerivedState(_rds2, { appendTimeline: true });
+  { const _prop = currentProperty();
+    if (_prop) appendPropertyTimelineEvent(_prop, { type: 'review_confirmed', severity: 'success',
+      tenantId, actor: user?.email || 'Reviewer', title: `All fields confirmed — ${t.tenant_name || tenantId}`,
+      metadata: { tenantId } }); }
   _refreshLfcExpansion(tenantId);
   showToast('✓ All fields confirmed');
 }
@@ -4113,7 +4132,11 @@ async function handleAmendmentUpload(tenantId, file) {
     const amendmentId = 'amd-' + Date.now();
     applyAmendmentOverrides(tenantId, extracted, amendmentId, file.name);
     const _rds3 = (_props || []).find(q => q.id === activePropId);
-    if (_rds3) rebuildDerivedState(_rds3);
+    if (_rds3) rebuildDerivedState(_rds3, { appendTimeline: true });
+    { const _prop = currentProperty();
+      if (_prop) appendPropertyTimelineEvent(_prop, { type: 'amendment_uploaded', severity: 'info',
+        tenantId, actor: 'User', title: `Amendment uploaded — ${file.name}`,
+        metadata: { fileName: file.name, amendmentId } }); }
   } catch (err) {
     showToast('Amendment upload failed: ' + err.message, { color: '#7f1d1d', textColor: '#fca5a5', duration: 5000 });
   }
@@ -4218,6 +4241,12 @@ function applyAmendmentOverrides(tenantId, amNorm, amendmentId, fileName) {
   });
 
   savePropertyData();
+  { const _prop = currentProperty();
+    if (_prop) appendPropertyTimelineEvent(_prop, { type: 'amendment_applied', severity: 'info',
+      tenantId, actor: 'User', title: `Amendment applied — ${overriddenFields.length} field${overriddenFields.length !== 1 ? 's' : ''} modified`,
+      description: `Amendment ID: ${amendmentId} | File: ${fileName}`,
+      metadata: { amendmentId, overriddenFields: overriddenFields.join(','), fileName },
+      relatedEvidenceIds: overriddenFields }); }
   renderBulkResults();
   _refreshLfcExpansion(tenantId);
 
@@ -5048,7 +5077,10 @@ async function handleBatchInvoices(fileList) {
 
   captureCheckpoint(activePropId, 'Before invoice upload');
   await saveProperty(property);
-  rebuildDerivedState(property);
+  rebuildDerivedState(property, { appendTimeline: true });
+  appendPropertyTimelineEvent(property, { type: 'invoice_imported', severity: 'info',
+    actor: 'User', title: `${total} invoice${total !== 1 ? 's' : ''} imported`,
+    metadata: { total, totalAmount: invoiceData.reduce((s,i) => s + (parseFloat(i.amount)||0), 0) } });
   logActivity('invoice_uploaded', `${total} invoice${total !== 1 ? 's' : ''} uploaded`, {
     severity:        'info',
     actor:           'User',
@@ -8597,6 +8629,12 @@ async function submitDispute(rowId, tenantName, invoiceId, vendor, category, ten
     detail:          reason || '',
     financialImpact: tenantShare ? fmt(parseFloat(tenantShare) || 0) : '',
   });
+  { const _prop = currentProperty();
+    if (_prop) appendPropertyTimelineEvent(_prop, { type: 'dispute_created', severity: 'warning',
+      actor: tenantName || 'Tenant', title: `Dispute filed — ${vendor || 'Unknown vendor'}`,
+      description: reason || '',
+      metadata: { vendor, category, tenantShare, reason },
+      relatedDisputeIds: [disputes[disputes.length - 1]?.id].filter(x => x != null) }); }
 
   const formEl = document.getElementById(`dform-${rowId}`);
   const btnEl  = document.getElementById(`dbtn-${rowId}`);
@@ -8839,6 +8877,12 @@ async function resolveDispute(id, resolution) {
       detail:          d.reason || '',
       financialImpact: d.tenantShare ? fmt(parseFloat(d.tenantShare) || 0) : '',
     });
+    { const _prop = currentProperty();
+      if (_prop) appendPropertyTimelineEvent(_prop, { type: 'dispute_resolved', severity: isDocsReq ? 'warning' : 'success',
+        actor: 'Landlord', title: evTitle,
+        description: d.reason || '',
+        metadata: { disputeId: id, resolution, vendor: d.vendor },
+        relatedDisputeIds: [id] }); }
   }
 
   // Hash the full dispute record for the on-chain audit trail
@@ -11450,6 +11494,9 @@ function generateLandlordExport() {
   if (_expProp) rebuildDerivedState(_expProp); // ensure cached metrics are fresh before export
   const _expDm = _expProp ? (derivePropertyMetrics(_expProp) || {}) : {};
   logActivity('landlord_export', 'Landlord Risk Export generated', { severity: 'info', actor: 'User', relatedEntity: lastPropName || 'Property' });
+  { if (_expProp) appendPropertyTimelineEvent(_expProp, { type: 'export_generated', severity: 'info',
+      actor: 'User', title: 'Landlord Risk Export generated',
+      metadata: { exportType: 'landlord_risk', propName: lastPropName || 'Property' } }); }
   const propName   = lastPropName || 'Property';
   const now        = new Date().toLocaleDateString('en-US', { year: 'numeric', month: 'long', day: 'numeric' });
   const period     = (getCamYear() || new Date().getFullYear()) + ' CAM Year';
@@ -11524,6 +11571,21 @@ function generateLandlordExport() {
       <tbody>${tenantRows}</tbody>
     </table>
 
+    ${(() => {
+      const tlItems = derivePropertyTimeline(_expProp || {}).recentActivity.slice(0, 15);
+      const tlRows = tlItems.map(ev =>
+        `<tr><td>${new Date(ev.timestamp).toLocaleDateString('en-US', { month:'short', day:'numeric', year:'numeric' })}</td>
+         <td><span style="color:${ev.severity==='critical'?'#f87171':ev.severity==='warning'?'#fbbf24':ev.severity==='success'?'#4ade80':'#818cf8'}">${ev.type}</span></td>
+         <td>${esc(ev.title)}</td>
+         <td>${esc(ev.actor||'')}</td></tr>`
+      ).join('');
+      return tlRows ? `
+<div class="rpt-section-title">Property Audit Timeline (Recent)</div>
+<table class="rpt-table">
+  <thead><tr><th>Date</th><th>Event</th><th>Title</th><th>By</th></tr></thead>
+  <tbody>${tlRows}</tbody>
+</table>` : '';
+    })()}
     ${_rptFooter(propName, 'Landlord Risk Export', now)}`;
 
   openReport('Landlord Risk Export — ' + propName, html);
@@ -12986,7 +13048,7 @@ function derivePropertyMetrics(p) {
  *
  * @param {object} property  - _props[] entry for the active property
  */
-function rebuildDerivedState(property) {
+function rebuildDerivedState(property, { appendTimeline = false } = {}) {
   if (!property) return;
   const metrics = derivePropertyMetrics(property);
   if (!metrics) return;
@@ -13008,6 +13070,120 @@ function rebuildDerivedState(property) {
     entry._derivedMetrics     = metrics;
     entry.derivedStateVersion = property.derivedStateVersion;
   }
+
+  if (appendTimeline) {
+    appendPropertyTimelineEvent(property, {
+      type:        'derived_metrics_rebuilt',
+      severity:    'info',
+      title:       'Derived metrics rebuilt',
+      description: `Health: ${metrics.health.status}, v${property.derivedStateVersion}`,
+      metadata:    { healthScore: metrics.health.score, healthStatus: metrics.health.status },
+    });
+  }
+}
+
+function appendPropertyTimelineEvent(property, event) {
+  if (!property || !event) return null;
+  if (!Array.isArray(property.timeline)) property.timeline = [];
+  const now = new Date().toISOString();
+  const entry = {
+    id:                  event.id || ('tl-' + Date.now() + '-' + Math.random().toString(36).slice(2, 8)),
+    timestamp:           event.timestamp || now,
+    type:                event.type || 'unknown',
+    severity:            (['critical','warning','info','success'].includes(event.severity) ? event.severity : 'info'),
+    propertyId:          event.propertyId ?? property.id ?? null,
+    tenantId:            event.tenantId   ?? null,
+    actor:               event.actor      ?? 'System',
+    source:              event.source     ?? null,
+    title:               event.title      ?? '',
+    description:         event.description ?? '',
+    metadata:            (event.metadata && typeof event.metadata === 'object') ? event.metadata : {},
+    relatedEvidenceIds:  Array.isArray(event.relatedEvidenceIds)  ? event.relatedEvidenceIds  : [],
+    relatedDisputeIds:   Array.isArray(event.relatedDisputeIds)   ? event.relatedDisputeIds   : [],
+    relatedInvoiceIds:   Array.isArray(event.relatedInvoiceIds)   ? event.relatedInvoiceIds   : [],
+    derivedStateVersion: event.derivedStateVersion ?? property.derivedStateVersion ?? null,
+  };
+  property.timeline.push(entry);
+  if (property.timeline.length > 500) property.timeline = property.timeline.slice(-500);
+  window.ms_timelineDebug = {
+    propertyId:   property.id,
+    lastEvent:    entry,
+    totalEvents:  property.timeline.length,
+    updatedAt:    now,
+  };
+  console.log('[TIMELINE]', entry.type, '|', entry.severity, '|', entry.title, '| v' + (entry.derivedStateVersion ?? '?'));
+  return entry;
+}
+
+function derivePropertyTimeline(property) {
+  const tl = Array.isArray(property.timeline) ? property.timeline : [];
+  return {
+    totalEvents:      tl.length,
+    criticalEvents:   tl.filter(e => e.severity === 'critical'),
+    recentActivity:   tl.slice(-10).reverse(),
+    disputeHistory:   tl.filter(e => e.type === 'dispute_created' || e.type === 'dispute_resolved'),
+    amendmentHistory: tl.filter(e => e.type === 'amendment_uploaded' || e.type === 'amendment_applied'),
+    extractionHistory:tl.filter(e => ['lease_uploaded','extraction_completed','extraction_warning'].includes(e.type)),
+  };
+}
+
+function renderPropertyActivity(property) {
+  const slot = document.getElementById('propertyActivitySlot');
+  if (!slot) return;
+  const tl = Array.isArray(property.timeline) ? property.timeline.slice().reverse() : [];
+  if (!tl.length) { slot.innerHTML = ''; return; }
+
+  const _SEVERITY_DOT = { critical: 'tl-dot--red', warning: 'tl-dot--yellow', success: 'tl-dot--green', info: 'tl-dot--blue' };
+  const _SEVERITY_ICON = { critical: '⛔', warning: '⚠', success: '✓', info: 'ℹ' };
+  const _TYPE_LABEL = {
+    lease_uploaded: 'Lease', extraction_completed: 'Extraction', extraction_warning: 'Extraction',
+    amendment_uploaded: 'Amendment', amendment_applied: 'Amendment', field_overridden: 'Field',
+    review_confirmed: 'Review', invoice_imported: 'Invoice', dispute_created: 'Dispute',
+    dispute_resolved: 'Dispute', sync_restored: 'Sync', merge_recovered: 'Merge',
+    export_generated: 'Export', derived_metrics_rebuilt: 'Metrics',
+  };
+  const fmtTs = ts => {
+    try { const d = new Date(ts); return d.toLocaleDateString('en-US', { month:'short', day:'numeric', year:'numeric' }) + ' ' + d.toLocaleTimeString('en-US', { hour:'numeric', minute:'2-digit' }); }
+    catch { return ts; }
+  };
+  const rows = tl.slice(0, 50).map((ev, idx) => {
+    const dotCls = _SEVERITY_DOT[ev.severity] || 'tl-dot--blue';
+    const icon   = _SEVERITY_ICON[ev.severity] || 'ℹ';
+    const lbl    = _TYPE_LABEL[ev.type] || ev.type;
+    const metaStr = ev.metadata && Object.keys(ev.metadata).length
+      ? Object.entries(ev.metadata).map(([k,v]) => `<span class="pa-meta-kv"><span class="pa-meta-k">${esc(k)}</span><span class="pa-meta-v">${esc(String(v))}</span></span>`).join('')
+      : '';
+    const expand  = metaStr ? `<details class="pa-meta-row"><summary class="pa-meta-toggle">Details</summary>${metaStr}</details>` : '';
+    const tenantHtml = ev.tenantId ? `<span class="tl-entity">Tenant ${esc(ev.tenantId.slice(0,8))}</span>` : '';
+    return `<div class="tl-item">
+      <div class="tl-track"><div class="tl-dot ${dotCls}"></div>${idx < tl.length - 1 ? '<div class="tl-line"></div>' : ''}</div>
+      <div class="tl-content">
+        <div class="tl-top">
+          <span class="tl-type-badge">${esc(lbl)}</span>
+          <span class="pa-sev-icon">${icon}</span>
+          <span class="tl-title">${esc(ev.title)}</span>
+        </div>
+        ${ev.description ? `<div class="tl-detail">${esc(ev.description)}</div>` : ''}
+        <div class="tl-meta">
+          <span class="tl-ts">${fmtTs(ev.timestamp)}</span>
+          ${ev.actor && ev.actor !== 'System' ? `<span class="tl-actor">${esc(ev.actor)}</span>` : ''}
+          ${tenantHtml}
+        </div>
+        ${expand}
+      </div>
+    </div>`;
+  }).join('');
+
+  slot.innerHTML = `<div class="ap-panel" id="propertyActivityPanel">
+    <div class="ap-header" onclick="document.getElementById('paBody').classList.toggle('ap-body--open');this.querySelector('.ap-chevron').classList.toggle('ap-chevron--open')">
+      <div class="ap-header-left"><span class="ap-title">&#x1F4CB;&nbsp; Property Activity &mdash; ${tl.length} event${tl.length !== 1 ? 's' : ''}</span></div>
+      <div class="ap-header-right"><span class="ap-chevron">&#x25BC;</span></div>
+    </div>
+    <div id="paBody" class="ap-body ap-body--open">
+      <div class="tl-list">${rows}</div>
+      ${tl.length > 50 ? `<div class="tl-detail" style="padding:6px 0">Showing 50 of ${tl.length} events</div>` : ''}
+    </div>
+  </div>`;
 }
 
 function renderPortfolio(props) {
@@ -13233,6 +13409,9 @@ async function selectProperty(id) {
       console.log('[selectProperty] SECOND renderProperty firing', { id, activePropId });
       renderProperty(property);
       rebuildDerivedState(property); // rebuild after LS/DB merge so metrics reflect loaded data
+      appendPropertyTimelineEvent(property, { type: 'sync_restored', severity: 'info',
+        actor: 'System', title: 'Property state restored from sync',
+        metadata: { tenantCount: (property.tenants||[]).length, hasReconciliation: !!(property.camReconciliation ?? property.results) } });
       console.log('[selectProperty] SECOND renderProperty done — mainWorkflow display:', document.getElementById('mainWorkflow')?.style.display, 'portfolio display:', document.getElementById('portfolioDashboard')?.style.display);
     }
   }, 0);
@@ -13902,6 +14081,7 @@ async function saveProperty(property) {
       results:           stripped.results           ?? null,
       camReconciliation: stripped.camReconciliation ?? null,
       activityLog:       stripped.activityLog       || [],
+      timeline:          stripped.timeline          || [],
       // Tenants are persisted here (not only in the tenants table) so that
       // review state, reviewOverrides, capBaseAmount, and confidence fields
       // survive a full Supabase round-trip without needing schema changes.
@@ -14076,6 +14256,7 @@ async function loadPropertyData(id) {
         results:           d.results           ?? null,
         camReconciliation: d.camReconciliation ?? null,
         activityLog:       d.activityLog       || [],
+        timeline:          d.timeline          || [],
         // Full tenant state (review, reviewOverrides, capBaseAmount, confidence)
         // stored in properties.data.tenants. Use when present; fall back to the
         // tenants table (which lacks review fields) for legacy rows.
@@ -14353,6 +14534,13 @@ function renderProperty(property) {
   try {
     const savedLog = property.activityLog || [];
     activityLog.splice(0, activityLog.length, ...savedLog);
+  } catch (e) { }
+
+  // ── Property Timeline ─────────────────────────────────────────────────
+  try {
+    if (Array.isArray(property.timeline)) {
+      renderPropertyActivity(property);
+    }
   } catch (e) { }
 
   // ── CAM Results ───────────────────────────────────────────────────────

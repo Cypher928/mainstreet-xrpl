@@ -17,6 +17,7 @@ const SUITES = [
   { label: 'Extraction quality',      cmd: 'node test-extraction.js' },
   { label: 'Invoice dashboard counts',cmd: 'node test-invoices.js'   },
   { label: 'Derived metrics layer',   cmd: 'node test-metrics.js'    },
+  { label: 'Property activity timeline', cmd: 'node test-timeline.js' },
 ];
 
 let anyFailed = false;
