@@ -3257,6 +3257,11 @@ window.ms_extractionDebug = window.ms_extractionDebug || {
   extractionVersion:   'v1',   // prompt schema version
   lastExtractedAt:     null,   // ISO timestamp of last completed extraction
 };
+window.ms_metricsDebug = window.ms_metricsDebug || {
+  propertyId:  null,   // property id for which metrics were last derived
+  metrics:     null,   // full derivePropertyMetrics() output
+  computedAt:  null,   // ISO timestamp of last computation
+};
 
 // Serializes any field value to a string for DB column storage.
 function _evidenceValStr(v) {
@@ -3990,6 +3995,8 @@ function saveFieldOverride(tenantId, fieldName, newValue) {
     reviewStateAfter:  deriveTenantReviewState(tenantData[idx]).status,
   });
   savePropertyData();
+  const _rds1 = (_props || []).find(q => q.id === activePropId);
+  if (_rds1) rebuildDerivedState(_rds1);
   renderBulkResults();
   _refreshLfcExpansion(tenantId);
   showToast('✓ Field updated — re-run reconciliation to apply to totals.', { color: '#0c4a6e', textColor: '#7dd3fc', duration: 4000 });
@@ -4059,6 +4066,8 @@ function quickConfirmTenantFields(tenantId) {
     reviewStateAfter:  deriveTenantReviewState(tenantData[idx]).status,
   });
   savePropertyData();
+  const _rds2 = (_props || []).find(q => q.id === activePropId);
+  if (_rds2) rebuildDerivedState(_rds2);
   _refreshLfcExpansion(tenantId);
   showToast('✓ All fields confirmed');
 }
@@ -4103,6 +4112,8 @@ async function handleAmendmentUpload(tenantId, file) {
 
     const amendmentId = 'amd-' + Date.now();
     applyAmendmentOverrides(tenantId, extracted, amendmentId, file.name);
+    const _rds3 = (_props || []).find(q => q.id === activePropId);
+    if (_rds3) rebuildDerivedState(_rds3);
   } catch (err) {
     showToast('Amendment upload failed: ' + err.message, { color: '#7f1d1d', textColor: '#fca5a5', duration: 5000 });
   }
@@ -5037,6 +5048,7 @@ async function handleBatchInvoices(fileList) {
 
   captureCheckpoint(activePropId, 'Before invoice upload');
   await saveProperty(property);
+  rebuildDerivedState(property);
   logActivity('invoice_uploaded', `${total} invoice${total !== 1 ? 's' : ''} uploaded`, {
     severity:        'info',
     actor:           'User',
@@ -8642,6 +8654,8 @@ async function submitDispute(rowId, tenantName, invoiceId, vendor, category, ten
   console.log('[submitDispute] calling savePropertyData()... activePropId=', activePropId || 'NULL');
   if (window.ms_lastDisputeFlow) window.ms_lastDisputeFlow.saveAttempted = true;
   await savePropertyData(); // persist dispute to Supabase
+  const _rds4 = (_props || []).find(q => q.id === activePropId);
+  if (_rds4) rebuildDerivedState(_rds4);
 
   const _sdPropAfter = currentProperty();
   const _sdSaveOk    = !!activePropId && !!_sdPropAfter;
@@ -11432,6 +11446,9 @@ function generateDisputePacket(disputeId) {
 function generateLandlordExport() {
   if (!lastResults.length) { showToast('Run a CAM allocation first.', { color: '#92400e', textColor: '#fef3c7' }); return; }
   try {
+  const _expProp = currentProperty();
+  if (_expProp) rebuildDerivedState(_expProp); // ensure cached metrics are fresh before export
+  const _expDm = _expProp ? (derivePropertyMetrics(_expProp) || {}) : {};
   logActivity('landlord_export', 'Landlord Risk Export generated', { severity: 'info', actor: 'User', relatedEntity: lastPropName || 'Property' });
   const propName   = lastPropName || 'Property';
   const now        = new Date().toLocaleDateString('en-US', { year: 'numeric', month: 'long', day: 'numeric' });
@@ -11472,10 +11489,12 @@ function generateLandlordExport() {
     </tr>`;
   }).join('');
 
+  const _expTotalCAM = _expDm.financialStats?.totalCAM ?? lastTotal;
+  const _expOpenDisp = _expDm.disputeStats?.openDisputes ?? openD.length;
   const html = `
     ${_rptHeader(propName, 'Landlord Risk Export', period, now, [
-      { label: 'Total CAM',   value: fmt(lastTotal) },
-      { label: 'Open Disputes', value: openD.length },
+      { label: 'Total CAM',   value: fmt(_expTotalCAM) },
+      { label: 'Open Disputes', value: _expOpenDisp },
       { label: 'Exposure',    value: fmt(exposure) },
     ])}
 
@@ -12861,6 +12880,136 @@ function getPropertyInvoiceStats(p) {
   return { totalInvoices: invoices.length, uniqueVendors: vendors.size, totalExpenseAmount: Math.round(total * 100) / 100 };
 }
 
+/**
+ * Canonical derived metrics for a property.
+ * Pure function — same input → same output. All dashboard cards, exports, and
+ * review queues must read counts from this instead of computing independently.
+ *
+ * @param {object} p  - Property object from _props[] (or loaded via loadPropertyData)
+ * @returns {{ propertyId, invoiceStats, disputeStats, reviewStats, financialStats, health, extraction }}
+ */
+function derivePropertyMetrics(p) {
+  if (!p) return null;
+
+  // ── Invoice stats (canonical cascade already in getPropertyInvoiceStats) ───
+  const invStats = getPropertyInvoiceStats(p);
+
+  // ── Dispute stats ─────────────────────────────────────────────────────────
+  const disputes_arr    = Array.isArray(p.disputes) ? p.disputes : [];
+  const openDisputes    = disputes_arr.filter(d => d.status === 'open').length;
+  const resolvedDisputes = disputes_arr.filter(d => d.status !== 'open' && d.status != null).length;
+
+  // ── Review stats ──────────────────────────────────────────────────────────
+  const tenants_arr = Array.isArray(p.tenants) ? p.tenants : [];
+  const reviewStates = tenants_arr.map(t =>
+    window.ReviewEngine ? window.ReviewEngine.deriveTenantReviewState(t, []) : { status: 'incomplete', warnings: [] }
+  );
+  const tenantsNeedingReview = reviewStates.filter(
+    rs => rs.status === 'incomplete' || rs.status === 'needs_review'
+  ).length;
+  const flaggedLeaseCount = reviewStates.filter(rs => rs.warnings && rs.warnings.length > 0).length;
+  const amendmentCount = tenants_arr.reduce(
+    (s, t) => s + (Array.isArray(t.amendments) ? t.amendments.length : 0), 0
+  );
+  const unresolvedWarnings = reviewStates.reduce(
+    (s, rs) => s + (rs.warnings ? rs.warnings.length : 0), 0
+  );
+
+  // ── Financial stats ───────────────────────────────────────────────────────
+  const reconSnap    = p.camReconciliation ?? p.results;
+  const reconResults = Array.isArray(reconSnap?.results) ? reconSnap.results : [];
+  const totalCAM = Math.round(
+    reconResults.reduce((s, r) => s + (Number(r.allocatedAmount) || 0), 0)
+  );
+  const allocationCoveragePct = invStats.totalExpenseAmount > 0
+    ? Math.round((totalCAM / invStats.totalExpenseAmount) * 100)
+    : null;
+
+  // ── Health (wraps derivePropertyReadiness + dispute/review penalties) ──────
+  const rd = (window.Selectors && typeof window.Selectors.derivePropertyReadiness === 'function')
+    ? window.Selectors.derivePropertyReadiness(p)
+    : { riskScore: 0, readiness: 'needs_review' };
+  let healthScore = Math.max(0, Math.min(100, 100 - (rd.riskScore || 0)));
+  const reasons = [];
+  if (openDisputes > 0) {
+    healthScore = Math.max(0, healthScore - Math.min(20, openDisputes * 7));
+    reasons.push(`${openDisputes} open dispute${openDisputes !== 1 ? 's' : ''}`);
+  }
+  if (tenantsNeedingReview > 0) {
+    healthScore = Math.max(0, healthScore - Math.min(15, tenantsNeedingReview * 5));
+    reasons.push(`${tenantsNeedingReview} tenant${tenantsNeedingReview !== 1 ? 's' : ''} need review`);
+  }
+  if (invStats.totalInvoices === 0) reasons.push('No invoices loaded');
+  const healthStatus = healthScore >= 80 ? 'healthy' : healthScore >= 50 ? 'warning' : 'high-risk';
+
+  // ── Extraction stats ──────────────────────────────────────────────────────
+  const tenantsWithEvidence = tenants_arr.filter(
+    t => t.fieldEvidence && Object.keys(t.fieldEvidence).length > 0
+  ).length;
+  const confVals = tenants_arr.map(t => {
+    if (t._confidence === 'high')   return 90;
+    if (t._confidence === 'medium') return 70;
+    if (t._confidence === 'low')    return 40;
+    return null;
+  }).filter(v => v !== null);
+  const avgConfidence = confVals.length
+    ? Math.round(confVals.reduce((s, v) => s + v, 0) / confVals.length)
+    : null;
+
+  const metrics = {
+    propertyId:     p.id,
+    invoiceStats:   { totalInvoices: invStats.totalInvoices, uniqueVendors: invStats.uniqueVendors, totalExpenseAmount: invStats.totalExpenseAmount },
+    disputeStats:   { totalDisputes: disputes_arr.length, openDisputes, resolvedDisputes },
+    reviewStats:    { tenantsNeedingReview, flaggedLeaseCount, amendmentCount, unresolvedWarnings },
+    financialStats: { totalCAM, totalAllocated: totalCAM, allocationCoveragePct },
+    health:         { score: healthScore, status: healthStatus, reasons },
+    extraction:     { tenantsWithEvidence, tenantsMissingEvidence: tenants_arr.length - tenantsWithEvidence, avgConfidence },
+  };
+
+  console.log('[DERIVED METRICS]', {
+    propertyId:   p.id,
+    invoiceCount: invStats.totalInvoices,
+    openDisputes,
+    healthScore,
+    warningCount: unresolvedWarnings,
+    sourceVersion: p.derivedStateVersion ?? 0,
+  });
+
+  return metrics;
+}
+
+/**
+ * Computes fresh derived metrics for a property, caches the result on the
+ * property object, and updates the debug window object. Call after every
+ * mutation: lease upload, amendment, invoice import, dispute submit/resolve,
+ * review confirm, sync restore.
+ *
+ * @param {object} property  - _props[] entry for the active property
+ */
+function rebuildDerivedState(property) {
+  if (!property) return;
+  const metrics = derivePropertyMetrics(property);
+  if (!metrics) return;
+
+  property._derivedMetrics     = metrics;
+  property.derivedStateVersion = (property.derivedStateVersion || 0) + 1;
+
+  window.ms_metricsDebug = {
+    propertyId:  metrics.propertyId,
+    metrics,
+    computedAt:  new Date().toISOString(),
+  };
+
+  // Mirror key values onto _props[] entry for portfolioKPIs() aggregation
+  const entry = (_props || []).find(q => q.id === property.id);
+  if (entry && entry !== property) {
+    entry.openDisputes        = metrics.disputeStats.openDisputes;
+    entry.totalCAM            = metrics.financialStats.totalCAM;
+    entry._derivedMetrics     = metrics;
+    entry.derivedStateVersion = property.derivedStateVersion;
+  }
+}
+
 function renderPortfolio(props) {
   props = props || _props; // handle no-arg calls
   if (!Array.isArray(props)) {
@@ -12923,8 +13072,9 @@ function renderPortfolio(props) {
   const statusLabel = { reconciled: 'Reconciled', 'in-progress': 'In Progress', disputes: 'Has Open Disputes' };
 
   document.getElementById('propertyCardsGrid').innerHTML = sortedPairs.map(({ p, m }) => {
+    const dm           = p._derivedMetrics || derivePropertyMetrics(p);
     const tenants      = Array.isArray(p.tenants)  ? p.tenants.length  : (Number(p.tenantCount)  || 0);
-    const invoices     = getPropertyInvoiceStats(p).totalInvoices;
+    const invoices     = dm.invoiceStats.totalInvoices;
     const cam          = m.total || Number(p.totalCAM) || 0;
     const status       = p.status || 'in-progress';
 
@@ -12985,8 +13135,8 @@ function renderPortfolio(props) {
       <div class="ptf-stats-row">
         <div class="ptf-stat"><strong>${tenants}</strong>Tenants</div>
         <div class="ptf-stat"><strong>${invoices}</strong>Invoices</div>
-        ${m.openDisputes > 0
-          ? `<div class="ptf-stat ptf-stat--alert"><strong>${m.openDisputes}</strong>Disputes</div>`
+        ${dm.disputeStats.openDisputes > 0
+          ? `<div class="ptf-stat ptf-stat--alert"><strong>${dm.disputeStats.openDisputes}</strong>Disputes</div>`
           : ''}
         ${m.missingDocs > 0
           ? `<div class="ptf-stat ptf-stat--warn"><strong>${m.missingDocs}</strong>No Docs</div>`
@@ -13082,6 +13232,7 @@ async function selectProperty(id) {
     if (activePropId === id) {
       console.log('[selectProperty] SECOND renderProperty firing', { id, activePropId });
       renderProperty(property);
+      rebuildDerivedState(property); // rebuild after LS/DB merge so metrics reflect loaded data
       console.log('[selectProperty] SECOND renderProperty done — mainWorkflow display:', document.getElementById('mainWorkflow')?.style.display, 'portfolio display:', document.getElementById('portfolioDashboard')?.style.display);
     }
   }, 0);
@@ -13127,6 +13278,7 @@ async function backToPortfolio() {
       prop.status       = openCount > 0      ? 'disputes'
                         : lastResults.length ? 'reconciled'
                         : 'in-progress';
+      rebuildDerivedState(prop);
       // Cancel any pending debounce timer — we're saving now
       clearTimeout(_saveDebounceTimer);
       // Always flush to localStorage synchronously before navigating away
@@ -13183,6 +13335,7 @@ async function syncPortfolioEntry() {
                     : lastResults.length ? 'reconciled'
                     : 'in-progress';
 
+  rebuildDerivedState(prop);
   document.getElementById('breadcrumbPropName').textContent = prop.name;
   await saveProperty(prop);
 }
