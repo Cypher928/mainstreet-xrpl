@@ -18,6 +18,7 @@ const SUITES = [
   { label: 'Invoice dashboard counts',cmd: 'node test-invoices.js'   },
   { label: 'Derived metrics layer',   cmd: 'node test-metrics.js'    },
   { label: 'Property activity timeline', cmd: 'node test-timeline.js' },
+  { label: 'Lease intelligence benchmark', cmd: 'node test-benchmark.js' },
 ];
 
 let anyFailed = false;

@@ -2447,6 +2447,20 @@ async function _runLeaseJobPipeline(jobId, placeholderIdx) {
     _meta.confidence      = _conf.level;
     _meta.confidenceScore = _conf.score;
 
+    // Phase 15: edge case detection + explainability
+    if (norm && window.LeaseIntelligence) {
+      const _liCtx = { ocrChars: _meta.ocrChars, usedPdfDirect, ocrText: (!usedPdfDirect && leaseText) ? leaseText.slice(0, 500) : null };
+      norm._edgeCases    = window.LeaseIntelligence.detectLeaseEdgeCases(norm, _liCtx);
+      norm._explainability = window.LeaseIntelligence.generateLeaseExplainability(norm);
+      norm._modelRouting = window.LeaseIntelligence.modelRoutingRecommendation(norm);
+      if (norm._edgeCases.edgeCases.length > 0) {
+        _meta.edgeCasesDetected = norm._edgeCases.edgeCases.map(e => e.type);
+        _conf.score = Math.max(0, _conf.score + norm._edgeCases.totalConfidenceAdjustment);
+        _meta.confidenceScore = _conf.score;
+        console.log('[LEASE INTELLIGENCE] edge cases:', norm._edgeCases.edgeCases.map(e => e.type + ':' + e.severity).join(', '), '| model routing:', norm._modelRouting.tier, '→', norm._modelRouting.model);
+      }
+    }
+
     console.groupCollapsed(`[LEASE:normalize] ${file.name}`);
     console.log('fields:', JSON.stringify({ tenant_name: norm?.tenant_name, leased_sqft: norm?.leased_sqft, start_date: norm?.start_date, end_date: norm?.end_date, lease_type: norm?.lease_type, cap: norm?.cap }));
     console.log('confidence:', _conf.level, `(${_conf.score}/100)`, '| route:', _meta.extractionRoute, '| file:', (file.size / 1024).toFixed(1) + 'KB', '| ocr chars:', _meta.ocrChars, '| ms:', _meta.processingMs);
@@ -4131,6 +4145,19 @@ async function handleAmendmentUpload(tenantId, file) {
 
     const amendmentId = 'amd-' + Date.now();
     applyAmendmentOverrides(tenantId, extracted, amendmentId, file.name);
+    // Phase 15: multi-document reasoning after amendment applied
+    if (window.LeaseIntelligence) {
+      const _liTenant = tenantData.find(t => t && t.id === tenantId);
+      if (_liTenant) {
+        const _liDocs = window.LeaseIntelligence.buildMultiDocReasoningDocs(_liTenant);
+        if (_liDocs.length > 1) {
+          _liTenant._multiDocReasoning = window.LeaseIntelligence.reasonMultiDocumentLease(_liDocs);
+          _liTenant._explainability    = window.LeaseIntelligence.generateLeaseExplainability(_liTenant);
+          _liTenant._modelRouting      = window.LeaseIntelligence.modelRoutingRecommendation(_liTenant);
+          console.log('[LEASE INTELLIGENCE] multi-doc reasoning:', Object.keys(_liTenant._multiDocReasoning).length, 'fields | model:', _liTenant._modelRouting.model);
+        }
+      }
+    }
     const _rds3 = (_props || []).find(q => q.id === activePropId);
     if (_rds3) rebuildDerivedState(_rds3, { appendTimeline: true });
     { const _prop = currentProperty();
