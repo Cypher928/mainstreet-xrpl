@@ -947,6 +947,7 @@ function normalizeTenant(d) {
     audit_rights:        d.audit_rights        ?? null,
     pro_rata_method:     d.pro_rata_method     ?? null,
     renewal_options:     d.renewal_options     ?? null,
+    amendments:          Array.isArray(d.amendments) ? d.amendments : [],
   };
 }
 
@@ -1094,6 +1095,9 @@ Return best guess — do not leave fields null unless truly impossible.`;
 
   if (!res.ok) throw new Error(`Claude PDF direct failed: HTTP ${res.status}`);
   const data = await res.json();
+  // Mark telemetry: PDF direct path uses Claude's native document understanding
+  if (window.ms_extractionDebug) window.ms_extractionDebug.OCRUsed = true;
+  console.log('[EXTRACTION] PDF direct (vision) path used');
   return data;
 }
 
@@ -1249,6 +1253,9 @@ ${leaseSnippet}
 `;
   const messages = [{ role: 'user', content: prompt }];
 
+  console.log('[EXTRACTION] starting lease extraction (text path)');
+  const _extractStart = Date.now();
+
   const res = await _fetchWithTimeout('/api/claude', {
     method: 'POST',
     headers: { 'Content-Type': 'application/json' },
@@ -1301,6 +1308,7 @@ ${leaseSnippet}
   };
 
   const raw = data;
+  const _meta = (raw.__meta && typeof raw.__meta === 'object') ? raw.__meta : {};
   const cleanText = normalizeText(text);
   const fb = extractLeaseData(cleanText);
 
@@ -1361,10 +1369,14 @@ ${leaseSnippet}
   };
   const _rawQuotes = (raw.quotes && typeof raw.quotes === 'object') ? raw.quotes : {};
   const _qTs = new Date().toISOString();
+  const _extractionModel = _meta.model || null;
   let _fev = normalized.fieldEvidence || {};
+  let _clauseMatchCount = 0;
   for (const [quoteKey, fieldKey] of Object.entries(_quoteMap)) {
     const qt = typeof _rawQuotes[quoteKey] === 'string' ? _rawQuotes[quoteKey].trim().slice(0, 200) : null;
     if (!qt) continue;
+    _clauseMatchCount++;
+    console.log(`[CLAUSE MATCH] ${fieldKey}: "${qt.slice(0, 60)}${qt.length > 60 ? '…' : ''}"`);
     const prev = (_fev[fieldKey] || { snapshots: [] }).snapshots;
     _fev = {
       ..._fev,
@@ -1374,9 +1386,14 @@ ${leaseSnippet}
         confidence:             { status: 'estimated', note: 'AI-extracted' },
         sourceFile:             normalized.fileName || null,
         page:                   null,
+        section:                null,
         quote:                  qt,
         extractionId:           normalized._jobId || null,
         extractionVersion:      'v1',
+        extractionModel:        _extractionModel,
+        extractedAt:            _qTs,
+        superseded:             false,
+        amendmentId:            null,
         reviewerUid:            null,
         reviewerEmail:          null,
         reviewedAt:             _qTs,
@@ -1387,6 +1404,25 @@ ${leaseSnippet}
     };
   }
   normalized.fieldEvidence = _fev;
+
+  // Populate extraction telemetry for debugging / diagnostics panel
+  const _extractMs = Date.now() - _extractStart;
+  window.ms_extractionDebug = {
+    model:               _extractionModel,
+    inputTokens:         _meta.inputTokens  ?? null,
+    outputTokens:        _meta.outputTokens ?? null,
+    extractionDurationMs: _extractMs,
+    OCRUsed:             false,
+    OCRConfidence:       null,
+    clauseMatches:       _clauseMatchCount,
+    fallbackUsed:        normalized._usedFallback || false,
+    extractionVersion:   'v1',
+    lastExtractedAt:     _qTs,
+  };
+  console.log('[EXTRACTION] complete', {
+    model: _extractionModel, ms: _extractMs,
+    clauseMatches: _clauseMatchCount, tokens: _meta.outputTokens,
+  });
 
   return normalized;
 }
@@ -2849,10 +2885,15 @@ function getFieldEvidence(fieldKey, t) {
     return normalizeLeaseEvidence({ value, confidence: displayConf, source: {
       fileName:          latest.sourceFile       ?? t.fileName ?? null,
       page:              latest.page             ?? null,
+      section:           latest.section          ?? null,
       snippet,           // always from session — not stored in snapshots (keeps blob small)
       quote:             latest.quote            ?? null,
       extractionId:      latest.extractionId     ?? t._jobId ?? null,
       extractionVersion: latest.extractionVersion ?? null,
+      extractionModel:   latest.extractionModel  ?? null,
+      extractedAt:       latest.extractedAt      ?? null,
+      superseded:        latest.superseded        ?? false,
+      amendmentId:       latest.amendmentId       ?? null,
       reviewerEmail:     latest.reviewerEmail    ?? null,
       reviewerUid:       latest.reviewerUid      ?? null,
       reviewedAt:        latest.reviewedAt        ?? null,
@@ -2884,10 +2925,15 @@ function normalizeLeaseEvidence(raw) {
     source: {
       fileName:         (typeof src.fileName    === 'string' && src.fileName.trim())   ? src.fileName.trim()  : null,
       page:             (typeof src.page        === 'number' && src.page > 0)          ? src.page             : null,
+      section:          (typeof src.section     === 'string' && src.section.trim())    ? src.section.trim()   : null,
       snippet:          (typeof src.snippet     === 'string' && src.snippet.trim())    ? src.snippet.trim()   : null,
       quote:            (typeof src.quote       === 'string' && src.quote.trim())      ? src.quote.trim()     : null,
       extractionId:     (typeof src.extractionId === 'string' && src.extractionId)    ? src.extractionId     : null,
       extractionVersion:(typeof src.extractionVersion === 'string')                   ? src.extractionVersion: null,
+      extractionModel:  (typeof src.extractionModel === 'string' && src.extractionModel) ? src.extractionModel : null,
+      extractedAt:      (typeof src.extractedAt  === 'string' && src.extractedAt)     ? src.extractedAt      : null,
+      superseded:        src.superseded  != null ? Boolean(src.superseded)  : false,
+      amendmentId:      (typeof src.amendmentId  === 'string' && src.amendmentId)     ? src.amendmentId      : null,
       reviewerEmail:    (typeof src.reviewerEmail === 'string' && src.reviewerEmail)   ? src.reviewerEmail    : null,
       reviewerUid:      (typeof src.reviewerUid   === 'string' && src.reviewerUid)     ? src.reviewerUid      : null,
       reviewedAt:       (typeof src.reviewedAt    === 'string' && src.reviewedAt)      ? src.reviewedAt       : null,
@@ -2909,13 +2955,24 @@ function renderLeaseEvidencePanel(fieldKey, t) {
     ? `<div class="lev-value">${esc(String(ev.value))}</div>`
     : `<div class="lev-value lev-value--missing">Not found in extraction</div>`;
 
+  // Amendment / lineage status
+  const hasAmendments   = Array.isArray(t.amendments) && t.amendments.length > 0;
+  const isAmendmentSrc  = !!(src.amendmentId);
+  const isOriginalLease = hasAmendments && !isAmendmentSrc;
+
   const srcRows = [];
   if (src.fileName) srcRows.push(
     `<div class="lev-src-row"><span class="lev-src-lbl">Source</span><span class="lev-src-val">${esc(src.fileName)}</span></div>`);
   if (src.page) srcRows.push(
     `<div class="lev-src-row"><span class="lev-src-lbl">Page</span><span class="lev-src-val">${src.page}</span></div>`);
+  if (src.section) srcRows.push(
+    `<div class="lev-src-row"><span class="lev-src-lbl">Section</span><span class="lev-src-val">${esc(src.section)}</span></div>`);
   if (src.extractionVersion) srcRows.push(
     `<div class="lev-src-row"><span class="lev-src-lbl">Extraction</span><span class="lev-src-val">${esc(src.extractionVersion)}</span></div>`);
+  if (src.extractionModel) srcRows.push(
+    `<div class="lev-src-row"><span class="lev-src-lbl">Model</span><span class="lev-src-val lev-model-tag">${esc(src.extractionModel)}</span></div>`);
+  if (src.extractedAt) srcRows.push(
+    `<div class="lev-src-row"><span class="lev-src-lbl">Extracted</span><span class="lev-src-val">${esc(src.extractedAt.slice(0, 10))}</span></div>`);
   if (src.extractionId) srcRows.push(
     `<div class="lev-src-row"><span class="lev-src-lbl">Job ID</span><span class="lev-src-val lev-jobid">${esc(src.extractionId.slice(0, 8))}…</span></div>`);
   // Reviewer attribution — only shown when a persisted snapshot is present
@@ -2923,6 +2980,12 @@ function renderLeaseEvidencePanel(fieldKey, t) {
     `<div class="lev-src-row"><span class="lev-src-lbl">Reviewed</span><span class="lev-src-val">${esc(src.reviewerEmail)} · ${esc(src.reviewedAt.slice(0, 10))}</span></div>`);
   if (src.manuallyEdited) srcRows.push(
     `<div class="lev-src-row"><span class="lev-src-lbl">Edit</span><span class="lev-src-val lev-manual-tag">Manually corrected</span></div>`);
+  if (src.superseded) srcRows.push(
+    `<div class="lev-src-row"><span class="lev-src-lbl">Status</span><span class="lev-src-val lev-superseded-tag">Superseded</span></div>`);
+  if (isAmendmentSrc) srcRows.push(
+    `<div class="lev-src-row"><span class="lev-src-lbl">Lineage</span><span class="lev-src-val lev-amd-tag">Modified by Amendment</span></div>`);
+  if (isOriginalLease) srcRows.push(
+    `<div class="lev-src-row"><span class="lev-src-lbl">Lineage</span><span class="lev-src-val lev-orig-tag">Original Lease</span></div>`);
 
   const quoteHtml = src.quote
     ? `<div class="lev-excerpt-lbl">Extracted quote</div><blockquote class="lev-quote">${esc(src.quote)}</blockquote>`
@@ -2930,8 +2993,11 @@ function renderLeaseEvidencePanel(fieldKey, t) {
   const snippetHtml = src.snippet
     ? `<div class="lev-excerpt-lbl">Document excerpt</div><div class="lev-snippet">${esc(src.snippet.slice(0, 320))}${src.snippet.length > 320 ? '…' : ''}</div>`
     : '';
-  const noDataMsg = (!src.fileName && !src.snippet && !src.quote)
-    ? `<div class="lev-no-data">No source document data available.<br>Upload a lease PDF to see extraction evidence.</div>`
+  const hasSourceData = !!(src.fileName || src.extractionId);
+  const noDataMsg = (!src.snippet && !src.quote)
+    ? hasSourceData
+      ? `<div class="lev-no-data">Source snippet unavailable.</div>`
+      : `<div class="lev-no-data">Source snippet unavailable. Upload a lease PDF to see extraction evidence.</div>`
     : '';
 
   return `<div class="lev-header"><span class="lev-field-label">${esc(label)}</span>` +
@@ -3017,10 +3083,15 @@ function _mkEvidenceSnapshot(fieldKey, t, opts) {
     value:                  opts.value !== undefined ? opts.value : (getEffectiveLeaseField(fieldKey, t) ?? t[fieldKey] ?? null),
     confidence:             { status: conf.status, note: conf.note },
     sourceFile:             t.fileName  || null,
-    page:                   null,
+    page:                   opts.page   ?? null,
+    section:                opts.section ?? null,
     quote:                  opts.quote  != null ? String(opts.quote).slice(0, 200) : null,
     extractionId:           t._jobId    || null,
     extractionVersion:      opts.extractionVersion || _extractionVersionTag(t),
+    extractionModel:        opts.extractionModel ?? null,
+    extractedAt:            opts.extractedAt     ?? null,
+    superseded:             opts.superseded      ?? false,
+    amendmentId:            opts.amendmentId     ?? null,
     reviewerUid:            user?.id    || null,
     reviewerEmail:          user?.email || null,
     reviewedAt:             new Date().toISOString(),
@@ -3173,6 +3244,18 @@ window.ms_syncState = window.ms_syncState || {
   lastSavedAt:    null,    // ISO timestamp when localStorage write last completed
   lastCloudSyncAt: null,   // ISO timestamp when Supabase write last confirmed
   lastError:      null,    // { ts, message } from last app-level save failure
+};
+window.ms_extractionDebug = window.ms_extractionDebug || {
+  model:               null,   // Claude model used for last extraction
+  inputTokens:         null,   // prompt token count from Anthropic response
+  outputTokens:        null,   // completion token count from Anthropic response
+  extractionDurationMs: null,  // wall-clock time for last extraction call
+  OCRUsed:             false,  // true when PDF direct (vision) path was used
+  OCRConfidence:       null,   // future: OCR quality score
+  clauseMatches:       0,      // count of non-null quotes returned by Claude
+  fallbackUsed:        false,  // true when regex date fallback was applied
+  extractionVersion:   'v1',   // prompt schema version
+  lastExtractedAt:     null,   // ISO timestamp of last completed extraction
 };
 
 // Serializes any field value to a string for DB column storage.
@@ -3978,6 +4061,159 @@ function quickConfirmTenantFields(tenantId) {
   savePropertyData();
   _refreshLfcExpansion(tenantId);
   showToast('✓ All fields confirmed');
+}
+
+// ── Amendment Precedence ──────────────────────────────────────────────────────
+//
+// Amendment PDFs are extracted with the same callClaudeForLease() pipeline.
+// Newer amendment values override original lease fields. Original evidence
+// snapshots are preserved — new amendment snapshots are appended (never
+// mutates historical records). Each amendment gets a unique amendmentId.
+
+// Opens a file picker and triggers amendment upload for the given tenant.
+function openAmendmentUpload(tenantId) {
+  const inp = document.createElement('input');
+  inp.type   = 'file';
+  inp.accept = '.pdf,application/pdf';
+  inp.style.display = 'none';
+  inp.addEventListener('change', (e) => {
+    if (e.target.files[0]) handleAmendmentUpload(tenantId, e.target.files[0]);
+    inp.remove();
+  });
+  document.body.appendChild(inp);
+  inp.click();
+}
+
+// Orchestrates amendment PDF extraction + override application.
+async function handleAmendmentUpload(tenantId, file) {
+  const idx = tenantData.findIndex(t => t && t.id === tenantId);
+  if (idx === -1) return;
+
+  showToast('Reading amendment…', { color: '#0c4a6e', textColor: '#7dd3fc', duration: 8000 });
+
+  try {
+    const leaseText = await extractLeaseText(file);
+    let extracted;
+    if (leaseText && leaseText.length >= 50) {
+      extracted = await callClaudeForLease(leaseText);
+    } else {
+      extracted = await callClaudeWithPdfDirect(file);
+    }
+    if (!extracted) throw new Error('Could not extract amendment fields');
+
+    const amendmentId = 'amd-' + Date.now();
+    applyAmendmentOverrides(tenantId, extracted, amendmentId, file.name);
+  } catch (err) {
+    showToast('Amendment upload failed: ' + err.message, { color: '#7f1d1d', textColor: '#fca5a5', duration: 5000 });
+  }
+}
+
+// Applies amendment extraction overrides to an existing tenant.
+// For each field that is non-null in the amendment AND differs from the original:
+//   - appends a new evidence snapshot tagged with the amendmentId
+//   - updates the tenant's live field value
+//   - records the override in tenant.amendments[]
+// Original snapshots are never mutated.
+function applyAmendmentOverrides(tenantId, amNorm, amendmentId, fileName) {
+  const idx = tenantData.findIndex(t => t && t.id === tenantId);
+  if (idx === -1) return;
+  const t = tenantData[idx];
+
+  const COMPARABLE_FIELDS = [
+    'tenant_name', 'leased_sqft', 'start_date', 'end_date', 'lease_type', 'cap',
+    'admin_fee_pct', 'gross_up_pct', 'expense_stop', 'audit_rights',
+    'pro_rata_method', 'renewal_options',
+  ];
+
+  const overriddenFields = [];
+  let updatedTenant = { ...t };
+  const now = new Date().toISOString();
+
+  for (const fk of COMPARABLE_FIELDS) {
+    const amVal = amNorm[fk] ?? null;
+    if (amVal === null || amVal === '') continue;
+
+    const origVal = t[fk] ?? null;
+    // Skip if value is identical — no real change
+    if (origVal !== null && String(amVal) === String(origVal)) continue;
+
+    overriddenFields.push(fk);
+    console.log(`[AMENDMENT OVERRIDE] ${fk}: "${origVal}" → "${amVal}" (${amendmentId})`);
+
+    // Retrieve the quote from the amendment's injected fieldEvidence snapshot, if available
+    const amSnap = amNorm.fieldEvidence?.[fk]?.snapshots?.[0];
+    const qt     = amSnap?.quote ?? null;
+    const amModel = amSnap?.extractionModel ?? null;
+
+    // Update the live field value on the tenant
+    updatedTenant = { ...updatedTenant, [fk]: amVal };
+
+    // Append amendment evidence snapshot (preserves original snapshot history)
+    const fev  = updatedTenant.fieldEvidence || {};
+    const prev = (fev[fk] || { snapshots: [] }).snapshots;
+    updatedTenant.fieldEvidence = {
+      ...fev,
+      [fk]: { snapshots: [...prev, {
+        fieldKey:               fk,
+        value:                  amVal,
+        confidence:             { status: 'estimated', note: 'AI-extracted from amendment' },
+        sourceFile:             fileName || null,
+        page:                   null,
+        section:                amSnap?.section ?? null,
+        quote:                  qt,
+        extractionId:           amNorm._jobId || null,
+        extractionVersion:      'v1-amendment',
+        extractionModel:        amModel,
+        extractedAt:            now,
+        superseded:             false,
+        amendmentId,
+        reviewerUid:            null,
+        reviewerEmail:          null,
+        reviewedAt:             now,
+        approved:               false,
+        manuallyEdited:         false,
+        originalExtractedValue: origVal,
+      }]},
+    };
+  }
+
+  // Build and store the amendment record
+  const amendmentEntry = {
+    amendmentId,
+    uploadedAt:      now,
+    fileName:        fileName || null,
+    effectiveDate:   amNorm.start_date || null,
+    extractedFields: COMPARABLE_FIELDS.reduce((acc, fk) => {
+      if (amNorm[fk] != null && amNorm[fk] !== '') acc[fk] = amNorm[fk];
+      return acc;
+    }, {}),
+    overriddenFields,
+  };
+
+  updatedTenant = {
+    ...updatedTenant,
+    amendments: [...(Array.isArray(t.amendments) ? t.amendments : []), amendmentEntry],
+  };
+
+  tenantData[idx] = updatedTenant;
+
+  appendReviewAuditEntry({
+    tenantId,
+    tenantName: updatedTenant.tenant_name || tenantId,
+    action:     'amendment_applied',
+    label:      `Amendment applied — ${overriddenFields.length} field${overriddenFields.length !== 1 ? 's' : ''} updated`,
+    severity:   'info',
+    detail:     JSON.stringify({ amendmentId, overriddenFields, fileName }),
+  });
+
+  savePropertyData();
+  renderBulkResults();
+  _refreshLfcExpansion(tenantId);
+
+  const msg = overriddenFields.length > 0
+    ? `✓ Amendment applied — ${overriddenFields.length} field${overriddenFields.length !== 1 ? 's' : ''} updated`
+    : '✓ Amendment uploaded — no field differences detected';
+  showToast(msg, { color: '#14532d', textColor: '#86efac', duration: 4000 });
 }
 
 // Enter key commits the active inline edit — registered once at module load.
@@ -10963,6 +11199,13 @@ function renderReportTenantExpansion(tr, tenantName) {
       <div class="rpt-exp-grid">
         ${stat('Allocated CAM',  camStr, true)}
         ${stat('Invoice Count',  invCount)}
+      </div>
+      <div class="rpt-exp-section">Amendments</div>
+      <div class="rpt-exp-amend-bar">
+        ${td && td.amendments && td.amendments.length > 0
+          ? `<span class="rpt-exp-amend-count">${td.amendments.length} amendment${td.amendments.length > 1 ? 's' : ''} on file</span>`
+          : '<span class="rpt-exp-amend-none">No amendments uploaded</span>'}
+        ${td ? `<button class="rpt-exp-amend-btn" onclick="openAmendmentUpload('${esc(td.id || '')}')">+ Add Amendment</button>` : ''}
       </div>
       <div class="rpt-exp-section">Disputes</div>
       ${disputeHtml}

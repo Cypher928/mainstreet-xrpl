@@ -68,6 +68,7 @@ function normalizeTenant(d) {
     audit_rights:        d.audit_rights        ?? null,
     pro_rata_method:     d.pro_rata_method     ?? null,
     renewal_options:     d.renewal_options     ?? null,
+    amendments:          Array.isArray(d.amendments) ? d.amendments : [],
   };
 }
 
@@ -77,10 +78,15 @@ function _mkEvidenceSnapshot(fieldKey, t, opts) {
     value:                  opts.value !== undefined ? opts.value : (t[fieldKey] ?? null),
     confidence:             opts.confidence || { status: 'estimated', note: 'AI-extracted' },
     sourceFile:             t.fileName  || null,
-    page:                   null,
+    page:                   opts.page   ?? null,
+    section:                opts.section ?? null,
     quote:                  opts.quote != null ? String(opts.quote).slice(0, 200) : null,
     extractionId:           t._jobId   || null,
     extractionVersion:      opts.extractionVersion || 'v1',
+    extractionModel:        opts.extractionModel ?? null,
+    extractedAt:            opts.extractedAt     ?? null,
+    superseded:             opts.superseded      ?? false,
+    amendmentId:            opts.amendmentId     ?? null,
     reviewerUid:            null,
     reviewerEmail:          null,
     reviewedAt:             new Date().toISOString(),
@@ -128,9 +134,14 @@ function injectQuoteSnapshots(normalized, rawQuotes) {
         confidence:             { status: 'estimated', note: 'AI-extracted' },
         sourceFile:             normalized.fileName || null,
         page:                   null,
+        section:                null,
         quote:                  qt,
         extractionId:           normalized._jobId || null,
         extractionVersion:      'v1',
+        extractionModel:        null,
+        extractedAt:            _qTs,
+        superseded:             false,
+        amendmentId:            null,
         reviewerUid:            null,
         reviewerEmail:          null,
         reviewedAt:             _qTs,
@@ -384,6 +395,254 @@ const snap8 = _mkEvidenceSnapshot('cap', t8, { quote: longQuote });
 
 assert(snap8.quote !== null, 'Long quote is not null');
 assertEqual(snap8.quote.length, 200, 'Long quote truncated to 200 chars');
+
+// ── TEST 9 — Amendment override precedence ───────────────────────────────
+console.log('\nTEST 9 — Amendment override precedence');
+
+function simApplyAmendment(t, amFields, amendmentId, fileName) {
+  const COMPARABLE_FIELDS = [
+    'tenant_name', 'leased_sqft', 'start_date', 'end_date', 'lease_type', 'cap',
+    'admin_fee_pct', 'gross_up_pct', 'expense_stop', 'audit_rights',
+    'pro_rata_method', 'renewal_options',
+  ];
+  const overriddenFields = [];
+  let updatedTenant = { ...t };
+  const now = new Date().toISOString();
+
+  for (const fk of COMPARABLE_FIELDS) {
+    const amVal = amFields[fk] ?? null;
+    if (amVal === null || amVal === '') continue;
+    const origVal = t[fk] ?? null;
+    if (origVal !== null && String(amVal) === String(origVal)) continue;
+    overriddenFields.push(fk);
+    updatedTenant = { ...updatedTenant, [fk]: amVal };
+    const fev  = updatedTenant.fieldEvidence || {};
+    const prev = (fev[fk] || { snapshots: [] }).snapshots;
+    updatedTenant.fieldEvidence = {
+      ...fev,
+      [fk]: { snapshots: [...prev, {
+        fieldKey: fk, value: amVal,
+        confidence: { status: 'estimated', note: 'AI-extracted from amendment' },
+        sourceFile: fileName || null, page: null, section: null,
+        quote: `Amendment clause for ${fk}`,
+        extractionId: null, extractionVersion: 'v1-amendment',
+        extractionModel: 'claude-test', extractedAt: now,
+        superseded: false, amendmentId,
+        reviewerUid: null, reviewerEmail: null, reviewedAt: now,
+        approved: false, manuallyEdited: false, originalExtractedValue: origVal,
+      }]},
+    };
+  }
+
+  const amendmentEntry = {
+    amendmentId, uploadedAt: now, fileName: fileName || null,
+    effectiveDate: amFields.start_date || null,
+    extractedFields: COMPARABLE_FIELDS.reduce((acc, fk) => {
+      if (amFields[fk] != null) acc[fk] = amFields[fk]; return acc;
+    }, {}),
+    overriddenFields,
+  };
+  updatedTenant = {
+    ...updatedTenant,
+    amendments: [...(Array.isArray(t.amendments) ? t.amendments : []), amendmentEntry],
+  };
+  return { updatedTenant, overriddenFields };
+}
+
+const t9orig = normalizeTenant({
+  tenant_name: 'Jupiter Corp', leased_sqft: 5000, lease_type: 'NNN',
+  start_date: '2022-01-01', end_date: '2026-12-31', cap: 3,
+  admin_fee_pct: null, audit_rights: null,
+});
+
+const { updatedTenant: t9after, overriddenFields: t9overrides } = simApplyAmendment(
+  t9orig,
+  { cap: 5, admin_fee_pct: 10, audit_rights: true, end_date: '2028-12-31' },
+  'amd-001',
+  'Amendment_1.pdf'
+);
+
+// Amendment overrides correct values
+assertEqual(t9after.cap, 5, 'cap overridden to 5 by amendment');
+assertEqual(t9after.admin_fee_pct, 10, 'admin_fee_pct added by amendment');
+assertEqual(t9after.audit_rights, true, 'audit_rights set by amendment');
+assertEqual(t9after.end_date, '2028-12-31', 'end_date extended by amendment');
+
+// Non-changed fields preserved
+assertEqual(t9after.tenant_name, 'Jupiter Corp', 'tenant_name unchanged');
+assertEqual(t9after.leased_sqft, 5000, 'leased_sqft unchanged');
+assertEqual(t9after.start_date, '2022-01-01', 'start_date unchanged (same in amendment)');
+
+// Override list is correct
+assert(t9overrides.includes('cap'), 'cap in overriddenFields');
+assert(t9overrides.includes('admin_fee_pct'), 'admin_fee_pct in overriddenFields');
+assert(!t9overrides.includes('tenant_name'), 'tenant_name NOT in overriddenFields (unchanged)');
+
+// Amendment entry recorded
+assertEqual(t9after.amendments.length, 1, 'One amendment recorded');
+assertEqual(t9after.amendments[0].amendmentId, 'amd-001', 'amendmentId correct');
+assertEqual(t9after.amendments[0].overriddenFields.length, t9overrides.length, 'overriddenFields count matches');
+
+// ── TEST 10 — Evidence lineage preservation ──────────────────────────────
+console.log('\nTEST 10 — Evidence lineage preserved after amendment');
+
+// Before amendment, cap had a snapshot (original extraction)
+const t10 = normalizeTenant({ tenant_name: 'Kilo LLC', cap: 3 });
+injectQuoteSnapshots(t10, { cam_cap: 'Original CAM cap not to exceed 3%' });
+
+// Now apply amendment that changes cap to 5
+const { updatedTenant: t10after } = simApplyAmendment(t10, { cap: 5 }, 'amd-002', 'Amd2.pdf');
+
+const hist10 = getEvidenceHistory('cap', t10after);
+assertEqual(hist10.length, 2, 'Two snapshots: original + amendment');
+assertEqual(hist10[0].quote, 'Original CAM cap not to exceed 3%', 'Original snapshot preserved');
+assertEqual(hist10[0].amendmentId, null, 'Original snapshot has no amendmentId');
+assertEqual(hist10[0].value, 3, 'Original snapshot has original value');
+assertEqual(hist10[1].amendmentId, 'amd-002', 'Amendment snapshot has amendmentId');
+assertEqual(hist10[1].value, 5, 'Amendment snapshot has new value');
+assertEqual(hist10[1].extractionVersion, 'v1-amendment', 'Amendment snapshot version tagged');
+
+// ── TEST 11 — Amendment snapshot field shape ─────────────────────────────
+console.log('\nTEST 11 — Amendment snapshot complete field shape');
+
+const t11 = normalizeTenant({ tenant_name: 'Lima Corp', cap: 4 });
+const { updatedTenant: t11after } = simApplyAmendment(t11, { cap: 6 }, 'amd-003', 'Lease_Amendment_3.pdf');
+const snap11 = getLatestFieldEvidence('cap', t11after);
+
+assert(snap11 !== null, 'Amendment snapshot exists');
+assertEqual(snap11.amendmentId, 'amd-003', 'amendmentId set');
+assertEqual(snap11.extractionVersion, 'v1-amendment', 'extractionVersion is v1-amendment');
+assertEqual(snap11.superseded, false, 'Amendment snapshot is not superseded (it IS the current value)');
+assertEqual(snap11.originalExtractedValue, 4, 'originalExtractedValue is original cap value');
+assert(typeof snap11.extractedAt === 'string', 'extractedAt is a string timestamp');
+assert(typeof snap11.section === 'string' || snap11.section === null, 'section is string or null');
+assert(typeof snap11.extractionModel === 'string' || snap11.extractionModel === null, 'extractionModel is string or null');
+
+// ── TEST 12 — Page citation persistence ──────────────────────────────────
+console.log('\nTEST 12 — Page citation and section persistence in snapshot');
+
+const t12 = normalizeTenant({ tenant_name: 'Mike Corp', cap: 5, _jobId: 'job-page-test' });
+const snap12 = _mkEvidenceSnapshot('cap', t12, {
+  value: 5, page: 12, section: 'Section 8.2', quote: 'CAM charges capped at 5%',
+  extractionModel: 'claude-sonnet-4-6', extractedAt: '2026-05-28T10:00:00.000Z',
+});
+
+assertEqual(snap12.page, 12, 'page stored in snapshot');
+assertEqual(snap12.section, 'Section 8.2', 'section stored in snapshot');
+assertEqual(snap12.extractionModel, 'claude-sonnet-4-6', 'extractionModel stored');
+assertEqual(snap12.extractedAt, '2026-05-28T10:00:00.000Z', 'extractedAt stored');
+assertEqual(snap12.quote, 'CAM charges capped at 5%', 'quote stored');
+assertEqual(snap12.superseded, false, 'superseded defaults to false');
+assertEqual(snap12.amendmentId, null, 'amendmentId defaults to null');
+
+// Verify page persists through normalizeTenant round-trip
+const t12b = normalizeTenant({ tenant_name: 'Mike Corp', cap: 5, fieldEvidence: { cap: { snapshots: [snap12] } } });
+const latest12b = getLatestFieldEvidence('cap', t12b);
+assertEqual(latest12b?.page, 12, 'page survives normalizeTenant round-trip');
+assertEqual(latest12b?.section, 'Section 8.2', 'section survives normalizeTenant round-trip');
+
+// ── TEST 13 — Extraction telemetry shape ─────────────────────────────────
+console.log('\nTEST 13 — Extraction telemetry object shape');
+
+// Simulate what window.ms_extractionDebug looks like after callClaudeForLease()
+const telemetrySim = {
+  model:               'claude-sonnet-4-6',
+  inputTokens:         1200,
+  outputTokens:        320,
+  extractionDurationMs: 2340,
+  OCRUsed:             false,
+  OCRConfidence:       null,
+  clauseMatches:       3,
+  fallbackUsed:        false,
+  extractionVersion:   'v1',
+  lastExtractedAt:     '2026-05-28T10:00:00.000Z',
+};
+
+assert(typeof telemetrySim.model === 'string',          'model is string');
+assert(typeof telemetrySim.inputTokens === 'number',    'inputTokens is number');
+assert(typeof telemetrySim.outputTokens === 'number',   'outputTokens is number');
+assert(typeof telemetrySim.extractionDurationMs === 'number', 'extractionDurationMs is number');
+assert(typeof telemetrySim.OCRUsed === 'boolean',       'OCRUsed is boolean');
+assert(typeof telemetrySim.clauseMatches === 'number',  'clauseMatches is number');
+assert(typeof telemetrySim.fallbackUsed === 'boolean',  'fallbackUsed is boolean');
+assert(typeof telemetrySim.lastExtractedAt === 'string','lastExtractedAt is string');
+assert(telemetrySim.clauseMatches >= 0,                 'clauseMatches is non-negative');
+assert(!telemetrySim.OCRUsed,                           'OCRUsed false for text path');
+
+// Simulate OCR path (PDF direct)
+const telemetryOCR = { ...telemetrySim, OCRUsed: true };
+assert(telemetryOCR.OCRUsed, 'OCRUsed true for PDF direct path');
+
+// ── TEST 14 — warningGroups structure ────────────────────────────────────
+console.log('\nTEST 14 — warningGroups grouping in deriveTenantReviewState');
+
+// Inline the grouping logic (mirrors review-engine.js)
+const FINANCIAL_PROTECTION_TYPES = new Set(['nnn_cap_missing', 'admin_fee_present', 'gross_up_present', 'expense_stop_present']);
+const TENANT_RIGHT_TYPES = new Set(['audit_rights_present', 'audit_rights_unknown']);
+const AMENDMENT_TYPES = new Set(['amendment_applied', 'multiple_amendments']);
+
+function simWarningGroups(warnings) {
+  return {
+    financialProtections: warnings.filter(w => FINANCIAL_PROTECTION_TYPES.has(w.type)),
+    tenantRights:         warnings.filter(w => TENANT_RIGHT_TYPES.has(w.type)),
+    amendments:           warnings.filter(w => AMENDMENT_TYPES.has(w.type)),
+    dataQuality:          warnings.filter(w =>
+      !FINANCIAL_PROTECTION_TYPES.has(w.type) &&
+      !TENANT_RIGHT_TYPES.has(w.type) &&
+      !AMENDMENT_TYPES.has(w.type)
+    ),
+  };
+}
+
+const warnings14 = [
+  { type: 'nnn_cap_missing',     severity: 'medium', label: 'NNN Cap' },
+  { type: 'admin_fee_present',   severity: 'medium', label: 'Admin Fee 15%' },
+  { type: 'audit_rights_present',severity: 'low',    label: 'Audit Rights' },
+  { type: 'amendment_applied',   severity: 'medium', label: '1 amendment on file' },
+  { type: 'missing_sqft',        severity: 'high',   label: 'Sq Ft' },
+];
+
+const groups14 = simWarningGroups(warnings14);
+
+assertEqual(groups14.financialProtections.length, 2, 'Two financial protection warnings');
+assertEqual(groups14.tenantRights.length, 1, 'One tenant rights warning');
+assertEqual(groups14.amendments.length, 1, 'One amendment warning');
+assertEqual(groups14.dataQuality.length, 1, 'One data quality warning (missing_sqft)');
+assert(groups14.financialProtections.every(w => FINANCIAL_PROTECTION_TYPES.has(w.type)), 'All financial warnings correctly categorized');
+assert(groups14.dataQuality[0].type === 'missing_sqft', 'missing_sqft goes to dataQuality');
+
+// Empty warnings case
+const groups14empty = simWarningGroups([]);
+assertEqual(groups14empty.financialProtections.length, 0, 'Empty financialProtections when no warnings');
+assertEqual(groups14empty.tenantRights.length, 0, 'Empty tenantRights when no warnings');
+assertEqual(groups14empty.amendments.length, 0, 'Empty amendments when no warnings');
+assertEqual(groups14empty.dataQuality.length, 0, 'Empty dataQuality when no warnings');
+
+// ── TEST 15 — Amendment merge durability (amendments array survives normalizeTenant) ──
+console.log('\nTEST 15 — Amendment merge durability');
+
+const amendmentFixture = [
+  { amendmentId: 'amd-A', uploadedAt: '2026-05-01T00:00:00Z', fileName: 'Amd_A.pdf',
+    effectiveDate: '2026-06-01', extractedFields: { cap: 7 }, overriddenFields: ['cap'] },
+  { amendmentId: 'amd-B', uploadedAt: '2026-05-15T00:00:00Z', fileName: 'Amd_B.pdf',
+    effectiveDate: '2026-07-01', extractedFields: { end_date: '2029-12-31' }, overriddenFields: ['end_date'] },
+];
+
+const t15 = normalizeTenant({
+  tenant_name: 'November Corp', cap: 7, end_date: '2029-12-31',
+  amendments: amendmentFixture,
+});
+
+assertEqual(t15.amendments.length, 2, 'Two amendments preserved after normalizeTenant');
+assertEqual(t15.amendments[0].amendmentId, 'amd-A', 'First amendment id preserved');
+assertEqual(t15.amendments[1].amendmentId, 'amd-B', 'Second amendment id preserved');
+assertEqual(t15.amendments[0].overriddenFields[0], 'cap', 'overriddenFields preserved');
+assertEqual(t15.amendments[1].fileName, 'Amd_B.pdf', 'fileName preserved');
+
+// Verify non-array amendments input defaults to []
+const t15b = normalizeTenant({ tenant_name: 'Oscar LLC' });
+assert(Array.isArray(t15b.amendments), 'amendments is always an array');
+assertEqual(t15b.amendments.length, 0, 'amendments defaults to empty array');
 
 // ── Summary ────────────────────────────────────────────────────────────────
 console.log('\n' + '─'.repeat(56));

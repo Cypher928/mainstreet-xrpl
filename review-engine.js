@@ -14,6 +14,17 @@ window.ReviewEngine = (() => {
     'missing_end_date', 'nnn_cap_missing',
     'admin_fee_present', 'gross_up_present', 'expense_stop_present',
     'audit_rights_present', 'audit_rights_unknown',
+    'amendment_applied', 'multiple_amendments',
+  ]);
+
+  const _FINANCIAL_PROTECTION_TYPES = new Set([
+    'nnn_cap_missing', 'admin_fee_present', 'gross_up_present', 'expense_stop_present',
+  ]);
+  const _TENANT_RIGHT_TYPES = new Set([
+    'audit_rights_present', 'audit_rights_unknown',
+  ]);
+  const _AMENDMENT_TYPES = new Set([
+    'amendment_applied', 'multiple_amendments',
   ]);
 
   function getWarnings(flags) {
@@ -76,6 +87,7 @@ window.ReviewEngine = (() => {
   function deriveTenantReviewState(t, reconResults) {
     const _empty = {
       status: 'incomplete', score: 0, warnings: [],
+      warningGroups: { financialProtections: [], tenantRights: [], amendments: [], dataQuality: [] },
       reviewerConfirmed: false, reviewedAt: null, reviewedBy: null, notes: null,
     };
     if (!t) return _empty;
@@ -114,6 +126,18 @@ window.ReviewEngine = (() => {
     const recon = results.find(r => r.name === t.tenant_name);
     if (recon && recon.proRata > 1.0)
       warnings.push({ type: 'pro_rata_overflow', severity: 'high', label: 'Pro-rata > 100%' });
+    // Amendment conflict: one or more amendments have overridden original lease fields
+    const amds = Array.isArray(t.amendments) ? t.amendments : [];
+    const amendmentsWithOverrides = amds.filter(a => Array.isArray(a.overriddenFields) && a.overriddenFields.length > 0);
+    if (amendmentsWithOverrides.length > 0) {
+      const total = amendmentsWithOverrides.reduce((s, a) => s + a.overriddenFields.length, 0);
+      warnings.push({ type: 'amendment_applied', severity: 'medium',
+        label: `${amendmentsWithOverrides.length} amendment${amendmentsWithOverrides.length > 1 ? 's' : ''} on file — ${total} field${total > 1 ? 's' : ''} modified` });
+    }
+    if (amds.length > 1) {
+      warnings.push({ type: 'multiple_amendments', severity: 'low',
+        label: `${amds.length} amendments uploaded — verify clause precedence` });
+    }
 
     // ── Score ──────────────────────────────────────────────────────────────
     let score = 100;
@@ -129,9 +153,21 @@ window.ReviewEngine = (() => {
     const persisted         = t.review || {};
     const reviewerConfirmed = !!(persisted.reviewerConfirmed);
     const hasLegacyOverride = Object.values(t.reviewOverrides || {}).some(ov => ov?.reviewerConfirmed);
+    // ── Warning groups for structured review UI ────────────────────────────
+    const warningGroups = {
+      financialProtections: warnings.filter(w => _FINANCIAL_PROTECTION_TYPES.has(w.type)),
+      tenantRights:         warnings.filter(w => _TENANT_RIGHT_TYPES.has(w.type)),
+      amendments:           warnings.filter(w => _AMENDMENT_TYPES.has(w.type)),
+      dataQuality:          warnings.filter(w =>
+        !_FINANCIAL_PROTECTION_TYPES.has(w.type) &&
+        !_TENANT_RIGHT_TYPES.has(w.type) &&
+        !_AMENDMENT_TYPES.has(w.type)
+      ),
+    };
+
     if (reviewerConfirmed || hasLegacyOverride) {
       return {
-        status: 'manually_verified', score, warnings, reviewerConfirmed,
+        status: 'manually_verified', score, warnings, warningGroups, reviewerConfirmed,
         reviewedAt: persisted.reviewedAt || null, reviewedBy: persisted.reviewedBy || null,
         notes: persisted.notes || null,
       };
@@ -156,7 +192,7 @@ window.ReviewEngine = (() => {
     }
 
     return {
-      status, score, warnings, reviewerConfirmed: false,
+      status, score, warnings, warningGroups, reviewerConfirmed: false,
       reviewedAt: persisted.reviewedAt || null, reviewedBy: persisted.reviewedBy || null,
       notes: persisted.notes || null,
     };

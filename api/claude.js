@@ -95,5 +95,15 @@ module.exports = async function handler(req, res) {
   // Unwrap single-element arrays so callers always receive an object
   if (Array.isArray(data) && data.length === 1) data = data[0];
 
+  // Attach extraction metadata so clients can populate telemetry without a second round-trip.
+  // Uses __meta prefix to avoid colliding with any lease field name Claude might return.
+  if (typeof data === 'object' && !Array.isArray(data)) {
+    data.__meta = {
+      model:        json.model         || model,
+      inputTokens:  json.usage?.input_tokens  ?? null,
+      outputTokens: json.usage?.output_tokens ?? null,
+    };
+  }
+
   return res.status(200).json(data);
 }
