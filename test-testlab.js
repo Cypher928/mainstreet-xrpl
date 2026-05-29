@@ -138,6 +138,51 @@ console.log('─'.repeat(48));
   assert(stats.totalScenarios > 0,                                 'scoreSuite: should have scenarios');
 }
 
+// ── Phase 18 regression: amendment precedence ────────────────────────────────
+
+// P18-1: medium-001 — amendment overrides original lease (cap 5→3)
+{
+  const s = LeaseTestLab.generateScenario('medium-001');
+  const v = LeaseTestLab.validate(s.tenant, s.expected);
+  assert(v.amendmentIssues.length === 0, 'P18-1 medium-001: amendment should win over original_lease (cap 5→3)');
+  assert(!v.amendmentIssues.some(i => i.issue === 'Wrong or missing amendment precedence'), 'P18-1 medium-001: no missing precedence');
+}
+
+// P18-2: hard-001 — two conflicting amendments, latest date wins (cap 4→6)
+{
+  const s = LeaseTestLab.generateScenario('hard-001');
+  const v = LeaseTestLab.validate(s.tenant, s.expected);
+  assert(v.amendmentIssues.length === 0, 'P18-2 hard-001: latest amendment should win (cap=6)');
+}
+
+// P18-3: nightmare-001 — side letter (tier 4) beats amendment (tier 2)
+{
+  const s = LeaseTestLab.generateScenario('nightmare-001');
+  const v = LeaseTestLab.validate(s.tenant, s.expected);
+  assert(v.amendmentIssues.length === 0, 'P18-3 nightmare-001: side_letter should beat amendment for cap');
+}
+
+// P18-4: nightmare-003 — three amendments, latest wins on all three fields
+{
+  const s = LeaseTestLab.generateScenario('nightmare-003');
+  const v = LeaseTestLab.validate(s.tenant, s.expected);
+  assert(v.amendmentIssues.length === 0, 'P18-4 nightmare-003: latest of three amendments should win (cap=4)');
+}
+
+// P18-5: nightmare-004 — amendment governs end_date field specifically
+{
+  const s = LeaseTestLab.generateScenario('nightmare-004');
+  const v = LeaseTestLab.validate(s.tenant, s.expected);
+  assert(v.amendmentIssues.length === 0, 'P18-5 nightmare-004: amendment should govern end_date (2027-12-31)');
+}
+
+// P18-6: nightmare-005 — side letter wins in maximum-complexity scenario
+{
+  const s = LeaseTestLab.generateScenario('nightmare-005');
+  const v = LeaseTestLab.validate(s.tenant, s.expected);
+  assert(v.amendmentIssues.length === 0, 'P18-6 nightmare-005: side_letter should win on cap in max-complexity scenario');
+}
+
 // ── Summary ───────────────────────────────────────────────────────────────────
 console.log('─'.repeat(48));
 console.log(`  ${passed} passed, ${failed} failed`);

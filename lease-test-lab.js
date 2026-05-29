@@ -530,7 +530,7 @@
         renewal_options: null,
         amendments: [
           { amendmentId: 'amd-001', effectiveDate: '2023-06-01', uploadedAt: '2023-06-15T00:00:00Z', fileName: 'Amendment_1.pdf', overriddenFields: ['cap'], extractedFields: { cap: 7 } },
-          { amendmentId: 'sl-001', effectiveDate: '2023-08-01', uploadedAt: '2023-08-10T00:00:00Z', fileName: 'Side_Letter.pdf', overriddenFields: ['cap'], extractedFields: { cap: 2 } }
+          { amendmentId: 'sl-001', effectiveDate: '2023-08-01', uploadedAt: '2023-08-10T00:00:00Z', fileName: 'Side_Letter.pdf', docType: 'side_letter', overriddenFields: ['cap'], extractedFields: { cap: 2 } }
         ],
         fieldEvidence: {
           cap: {
@@ -657,7 +657,8 @@
           fileName: 'Amendment_2.pdf', overriddenFields: ['end_date'], extractedFields: { end_date: '2027-12-31' }
         }],
         fieldEvidence: {
-          renewal_options: { snapshots: [{ value: '1 option; exercise by June 30, 2025 (conflict: lease now expires 2027)', quote: 'renewal option must be exercised no later than June 30, 2025', confidence: 40, source: 'original_lease', timestamp: '2024-01-01T00:00:00Z' }] }
+          renewal_options: { snapshots: [{ value: '1 option; exercise by June 30, 2025 (conflict: lease now expires 2027)', quote: 'renewal option must be exercised no later than June 30, 2025', confidence: 40, source: 'original_lease', timestamp: '2024-01-01T00:00:00Z' }] },
+          end_date: { snapshots: [{ value: '2025-12-31', quote: 'Lease Term expires December 31, 2025', confidence: 85, source: 'original_lease', timestamp: '2020-01-01T00:00:00Z' }] }
         },
         _confidenceScore: 32, _confidence: 'low',
         _edgeCases: { edgeCases: [{ type: 'RENEWAL_DATE_CONFLICT', description: 'Renewal option deadline precedes extended lease expiration date — deadline may have passed without tenant awareness', confidenceAdjustment: -25 }], totalConfidenceAdjustment: -25 },
@@ -690,7 +691,7 @@
         renewal_options: null,
         amendments: [
           { amendmentId: 'amd-001', effectiveDate: '2023-01-01', uploadedAt: '2023-01-15T00:00:00Z', fileName: 'Amendment_1.pdf', overriddenFields: ['cap'], extractedFields: { cap: 6 } },
-          { amendmentId: 'sl-001', effectiveDate: '2023-06-01', uploadedAt: '2023-06-15T00:00:00Z', fileName: 'Side_Letter.pdf', overriddenFields: ['cap'], extractedFields: { cap: 2 } }
+          { amendmentId: 'sl-001', effectiveDate: '2023-06-01', uploadedAt: '2023-06-15T00:00:00Z', fileName: 'Side_Letter.pdf', docType: 'side_letter', overriddenFields: ['cap'], extractedFields: { cap: 2 } }
         ],
         fieldEvidence: {
           cap: {
@@ -756,6 +757,89 @@
     return matching[idx];
   }
 
+  // ─── _resolvePrecedence ──────────────────────────────────────────────────────
+  // Derives per-field governing-document info from a tenant object's amendments[].
+  // Returns { [fieldKey]: { winningDocType, value } } for every field that has
+  // multi-document evidence.  Implements: side_letter(4) > estoppel(3) > amendment(2) > original_lease(1).
+  // Within the same tier, newer effectiveDate wins.
+  var _DOC_TIER = { side_letter: 4, estoppel: 3, amendment: 2, original_lease: 1 };
+
+  function _resolvePrecedence(tenant) {
+    if (!tenant || !Array.isArray(tenant.amendments) || tenant.amendments.length === 0) return null;
+
+    // Build a flat list of { docType, docDate, fieldKey, value } entries
+    var entries = [];
+
+    // Original lease values from fieldEvidence snapshots without amendmentId
+    var fev = tenant.fieldEvidence || {};
+    for (var fk in fev) {
+      var snaps = (fev[fk].snapshots || []);
+      var orig = snaps.find(function(s) { return !s.amendmentId; });
+      if (orig && orig.value != null) {
+        entries.push({ docType: 'original_lease', docDate: tenant.start_date || null, fieldKey: fk, value: orig.value });
+      }
+    }
+
+    // Amendment / side-letter entries
+    for (var i = 0; i < tenant.amendments.length; i++) {
+      var amd = tenant.amendments[i];
+      var dType = amd.docType || 'amendment';
+      var dDate = amd.effectiveDate || amd.uploadedAt || null;
+      var overridden = amd.overriddenFields || [];
+      for (var j = 0; j < overridden.length; j++) {
+        var f = overridden[j];
+        var val = (amd.extractedFields || {})[f];
+        if (val != null) {
+          entries.push({ docType: dType, docDate: dDate, fieldKey: f, value: val });
+        }
+      }
+    }
+
+    // Group by field, sort each group by (tier desc, date desc), pick winner
+    var byField = {};
+    for (var k = 0; k < entries.length; k++) {
+      var e = entries[k];
+      if (!byField[e.fieldKey]) byField[e.fieldKey] = [];
+      byField[e.fieldKey].push(e);
+    }
+
+    var resolved = {};
+    for (var field in byField) {
+      var group = byField[field];
+      if (group.length < 2) continue; // only care about contested fields
+      group.sort(function(a, b) {
+        var td = (_DOC_TIER[b.docType] || 0) - (_DOC_TIER[a.docType] || 0);
+        if (td !== 0) return td;
+        var da = a.docDate ? new Date(a.docDate).getTime() : 0;
+        var db = b.docDate ? new Date(b.docDate).getTime() : 0;
+        return db - da;
+      });
+      resolved[field] = { winningDocType: group[0].docType, value: group[0].value };
+    }
+
+    if (Object.keys(resolved).length === 0) return null;
+
+    // Return the primary contested field: most amendment entries, else first in CANONICAL_FIELDS order
+    var _FIELD_ORDER = ['cap', 'admin_fee_pct', 'gross_up_pct', 'expense_stop', 'audit_rights', 'pro_rata_method', 'renewal_options', 'tenant_name', 'leased_sqft', 'start_date', 'end_date', 'lease_type'];
+    var primaryField = null;
+    var maxEntries = 0;
+    for (var pf in resolved) {
+      var cnt = byField[pf].length;
+      if (cnt > maxEntries) { maxEntries = cnt; primaryField = pf; }
+      else if (cnt === maxEntries && primaryField) {
+        if (_FIELD_ORDER.indexOf(pf) < _FIELD_ORDER.indexOf(primaryField)) primaryField = pf;
+      }
+    }
+
+    return {
+      winningDocType: resolved[primaryField].winningDocType,
+      governingField: primaryField,
+      value: resolved[primaryField].value,
+      // full map available for callers that need to check a specific field
+      _allFields: resolved,
+    };
+  }
+
   // ─── _normalizeResult ────────────────────────────────────────────────────────
   // Accepts tenant, mock result, or packet and extracts common validation fields
   function _normalizeResult(result) {
@@ -808,7 +892,11 @@
 
     // ── Amendment precedence ──────────────────────────────────────────────────
     if (result.amendmentPrecedence && typeof result.amendmentPrecedence === 'object') {
+      // Mock result or packet with explicit precedence object
       actualAmendmentPrecedence = result.amendmentPrecedence;
+    } else if (result.amendments && result.fieldEvidence) {
+      // Tenant object — derive from amendments[] using internal precedence engine
+      actualAmendmentPrecedence = _resolvePrecedence(result);
     } else {
       actualAmendmentPrecedence = null;
     }

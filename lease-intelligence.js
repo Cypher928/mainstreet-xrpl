@@ -599,7 +599,7 @@ window.LeaseIntelligence = (() => {
         if (amdFields[fk] == null && amd.extractedFields?.[fk] != null) amdFields[fk] = amd.extractedFields[fk];
       }
       if (Object.keys(amdFields).length > 0) {
-        docs.push({ docType: 'amendment', docDate: amd.effectiveDate || amd.uploadedAt || null, fileName: amd.fileName || null, extractedFields: amdFields, quotes: amdQuotes });
+        docs.push({ docType: amd.docType || 'amendment', docDate: amd.effectiveDate || amd.uploadedAt || null, fileName: amd.fileName || null, extractedFields: amdFields, quotes: amdQuotes });
       }
     }
     return docs;
