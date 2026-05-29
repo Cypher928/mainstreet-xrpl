@@ -20,6 +20,7 @@ const SUITES = [
   { label: 'Property activity timeline', cmd: 'node test-timeline.js' },
   { label: 'Lease intelligence benchmark', cmd: 'node test-benchmark.js' },
   { label: 'Lease review packets',         cmd: 'node test-packets.js'   },
+  { label: 'Lease test lab',               cmd: 'node test-testlab.js'   },
 ];
 
 let anyFailed = false;

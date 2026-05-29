@@ -11652,6 +11652,21 @@ function generateLenderSummaryReport() {
   }
 }
 
+function generateTestLabBenchmarkReport() {
+  try {
+    if (!window.LeaseTestLab) { showToast('Test Lab module not loaded.', { type: 'error', duration: 3000 }); return; }
+    const levels = ['easy', 'medium', 'hard', 'nightmare'];
+    const suite  = window.LeaseTestLab.runSuite(levels);
+    const stats  = window.LeaseTestLab.scoreSuite(suite);
+    const html   = window.LeaseTestLab.generateBenchmarkReportHtml(suite, stats);
+    logActivity('testlab_benchmark', 'Lease Intelligence Benchmark run', { severity: 'info', actor: 'User' });
+    openReport('Lease Intelligence Benchmark — ' + new Date().toLocaleDateString('en-US', { month: 'short', day: 'numeric', year: 'numeric' }), html);
+  } catch (e) {
+    logError('generateTestLabBenchmarkReport', e);
+    showToast('Benchmark error: ' + (e.message || 'unknown'), { type: 'error', duration: 4000 });
+  }
+}
+
 // ─── CSV + JSON Exports ───────────────────────────────────────────────────────
 
 function _downloadFile(content, filename, mime) {
