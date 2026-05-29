@@ -467,7 +467,9 @@ window.LeaseIntelligence = (() => {
       detect: (t) => {
         const lt = (t.lease_type || '').toLowerCase();
         const isNnn = lt.includes('nnn') || lt.includes('triple') || lt.includes('net');
-        return isNnn && !t.excluded_categories;
+        // Only fire when field was never extracted (null/undefined).
+        // Empty string means Claude confirmed no exclusions — still informative, don't alert.
+        return isNnn && (t.excluded_categories === null || t.excluded_categories === undefined);
       },
     },
     {

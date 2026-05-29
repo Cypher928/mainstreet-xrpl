@@ -428,6 +428,7 @@ Return exactly this structure:
   "audit_rights": true | false | null,
   "pro_rata_method": "rentable" | "leasable" | "occupied" | "gross" | null,
   "renewal_options": string | null,
+  "excluded_categories": string | null,
   "quotes": {
     "cam_cap": string | null,
     "admin_fee_pct": string | null,
@@ -461,6 +462,7 @@ Rules:
 - audit_rights: Return true if tenant has explicit right to audit CAM records. Return false if explicitly waived. Return null if not addressed.
 - pro_rata_method: Return "rentable", "leasable", "occupied", or "gross" based on how the lease defines the pro-rata denominator. Return null if unresolvable.
 - renewal_options: Short description including count, term length, and rate basis (max 120 chars). Null if no renewal options stated.
+- excluded_categories: Comma-separated list of expense categories explicitly excluded from CAM (e.g. "capital expenditures, management fees, structural repairs"). Return null if no exclusion schedule is stated.
 - quotes: For each field where you return a non-null value, copy ≤120 chars of the exact verbatim clause text from the lease that led to that value. Return null for any field where the value is null.
 - Use null only when a field is truly impossible to determine.`;
 
@@ -1227,6 +1229,7 @@ Extract:
   "audit_rights": true | false | null,
   "pro_rata_method": "rentable" | "leasable" | "occupied" | "gross" | null,
   "renewal_options": string or null,
+  "excluded_categories": string or null,
   "quotes": { "cam_cap": string|null, "admin_fee_pct": string|null, "gross_up_pct": string|null, "expense_stop": string|null, "audit_rights": string|null, "pro_rata_method": string|null, "renewal_options": string|null }
 }
 

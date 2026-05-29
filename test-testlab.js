@@ -10,6 +10,7 @@ const fs   = require('fs');
 const path = require('path');
 
 global.window = {};
+eval(fs.readFileSync(path.join(__dirname, 'lease-intelligence.js'), 'utf8')); // eslint-disable-line no-eval
 eval(fs.readFileSync(path.join(__dirname, 'lease-test-lab.js'), 'utf8')); // eslint-disable-line no-eval
 const LeaseTestLab = global.window.LeaseTestLab;
 
@@ -181,6 +182,64 @@ console.log('─'.repeat(48));
   const s = LeaseTestLab.generateScenario('nightmare-005');
   const v = LeaseTestLab.validate(s.tenant, s.expected);
   assert(v.amendmentIssues.length === 0, 'P18-6 nightmare-005: side_letter should win on cap in max-complexity scenario');
+}
+
+// ── Phase 19 regression: benchmark integrity ──────────────────────────────────
+
+// P19-1: runSuite uses live LeaseIntelligence functions (reviewNotes from production, not hardcoded)
+{
+  const suiteResults = LeaseTestLab.runSuite(['easy']);
+  const easy001 = suiteResults.find(r => r.scenario.id === 'easy-001');
+  assert(easy001 !== undefined, 'P19-1 setup: easy-001 in suite results');
+  // easy-001 has audit_rights=false — live generateLeaseExplainability pushes 'Audit rights waived' note
+  // Hardcoded _explainability.reviewNotes was []; live output is non-empty → proves live call happened
+  assert(
+    easy001.result._explainability.reviewNotes.length > 0,
+    'P19-1: runSuite calls live generateLeaseExplainability (easy-001 audit_rights=false produces reviewNote)'
+  );
+}
+
+// P19-2: scoreSuite returns null for amendmentAccuracy when no amendment scenarios present
+{
+  const mockSuiteResults = [{
+    scenario: { level: 'easy', expected: { amendmentPrecedence: null, edgeCases: [] } },
+    validation: { pass: true, breakdown: { fields: 40, confidence: 20, warnings: 20, amendment: 10, edgeCases: 10 } }
+  }];
+  const stats = LeaseTestLab.scoreSuite(mockSuiteResults);
+  assert(stats.amendmentAccuracy === null, 'P19-2: no amendment scenarios → amendmentAccuracy should be null (not 1.0)');
+  assert(stats.amendmentTestedCount === 0,  'P19-2: amendmentTestedCount should be 0');
+}
+
+// P19-3: component veto — zero warning score with expected warnings → pass = false
+{
+  const badResult = {
+    fields: { cap: 5 },
+    confidenceScore: 90,
+    warnings: [],           // deliberately empty — won't match expected
+    amendmentPrecedence: null,
+    edgeCases: []
+  };
+  const expected = {
+    fields: { cap: 5 },
+    confidenceRange: [80, 100],
+    warnings: ['some required warning'],
+    amendmentPrecedence: null,
+    edgeCases: []
+  };
+  const v = LeaseTestLab.validate(badResult, expected);
+  assert(v.warningIssues.length > 0, 'P19-3 setup: warningIssues should be non-empty');
+  assert(v.pass === false,           'P19-3: zero warning score with expected warnings triggers veto → pass=false');
+}
+
+// P19-4: CAM_EXCLUSIONS_UNDEFINED does NOT fire when excluded_categories is empty string
+{
+  const LI = global.window.LeaseIntelligence;
+  const edgeResult = LI.detectLeaseEdgeCases(
+    { lease_type: 'NNN', excluded_categories: '' },
+    {}
+  );
+  const fired = edgeResult.edgeCases.some(e => e.type === 'CAM_EXCLUSIONS_UNDEFINED');
+  assert(!fired, 'P19-4: excluded_categories="" should NOT trigger CAM_EXCLUSIONS_UNDEFINED');
 }
 
 // ── Summary ───────────────────────────────────────────────────────────────────
