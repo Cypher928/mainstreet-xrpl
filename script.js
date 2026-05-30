@@ -3578,9 +3578,70 @@ async function backfillAuditFromProperties() {
   return { written, malformed };
 }
 
+// Rollback: re-hydrates tenant.fieldEvidence in the JSON blob from the normalized
+// tenant_field_evidence table. Required when rolling back ms_useNormalizedEvidence
+// after the blob has been stripped of fieldEvidence by Phase 20 saves.
+//
+// Full rollback procedure:
+//   1. Set window.ms_useNormalizedEvidence = false  (stops stripping fieldEvidence on save)
+//   2. await ms_rollbackEvidenceToBlobForProp()     (re-hydrates in-memory tenants + saves blob)
+//   3. Deploy flag change to false in script.js for all future sessions
+//
+// Safe to re-run — overwrites in-memory fieldEvidence and re-saves; does not touch
+// tenant_field_evidence rows (normalized table is untouched).
+// Console usage: await ms_rollbackEvidenceToBlobForProp()
+async function rollbackEvidenceToBlobForProp() {
+  const prop = currentProperty();
+  if (!prop?.id) { console.warn('[Rollback] No active property loaded'); return; }
+  if (window.ms_useNormalizedEvidence) {
+    console.warn('[Rollback] ms_useNormalizedEvidence is still true — set it to false first, then re-run');
+    return;
+  }
+  if (!db) { console.warn('[Rollback] No db connection'); return; }
+  try {
+    const { data: rows, error } = await db
+      .from('tenant_field_evidence')
+      .select('*')
+      .eq('property_id', prop.id)
+      .order('created_at', { ascending: true });
+    if (error) {
+      console.error('[Rollback] Failed to fetch tenant_field_evidence:', error.message);
+      return;
+    }
+    if (!rows?.length) {
+      console.warn('[Rollback] No rows in tenant_field_evidence for this property — nothing to restore');
+      return { restored: 0, rows: 0 };
+    }
+    // Reconstruct fieldEvidence keyed by tenant then field
+    const evByTenant = {};
+    for (const row of rows) {
+      if (!evByTenant[row.tenant_id]) evByTenant[row.tenant_id] = {};
+      const fk = row.field_key;
+      if (!evByTenant[row.tenant_id][fk]) evByTenant[row.tenant_id][fk] = { snapshots: [] };
+      evByTenant[row.tenant_id][fk].snapshots.push(_evidenceRowToSnapshot(row));
+    }
+    // Overlay onto live in-memory tenantData
+    let restored = 0;
+    tenantData.forEach(t => {
+      if (t?.id && evByTenant[t.id]) {
+        t.fieldEvidence = evByTenant[t.id];
+        restored++;
+      }
+    });
+    console.log(`[Rollback] Restored fieldEvidence for ${restored} tenant(s) from ${rows.length} row(s)`);
+    // Persist to blob — ms_useNormalizedEvidence=false so savePropertyData won't strip it
+    await savePropertyData();
+    console.log('[Rollback] Blob save complete — fieldEvidence is back in properties.data');
+    return { restored, rows: rows.length };
+  } catch (e) {
+    console.error('[Rollback] Exception:', e?.message);
+  }
+}
+
 // Console helpers — available immediately after page load
-window.ms_backfillEvidence = backfillEvidenceFromProperties;
-window.ms_backfillAudit    = backfillAuditFromProperties;
+window.ms_backfillEvidence              = backfillEvidenceFromProperties;
+window.ms_backfillAudit                 = backfillAuditFromProperties;
+window.ms_rollbackEvidenceToBlobForProp = rollbackEvidenceToBlobForProp;
 
 // ── ms_dumpDualWrite — mobile-safe compact summary ───────────────────────────
 // Returns a plain JSON string — paste it anywhere without needing DevTools.
