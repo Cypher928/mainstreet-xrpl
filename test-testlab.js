@@ -242,6 +242,27 @@ console.log('─'.repeat(48));
   assert(!fired, 'P19-4: excluded_categories="" should NOT trigger CAM_EXCLUSIONS_UNDEFINED');
 }
 
+// ── Phase 20.x regression: fail loudly when LeaseIntelligence is missing (Issue #1) ──
+
+// P20-1: runSuite throws (not silently falls back to fixtures) when LeaseIntelligence
+// is unavailable. Guards against silent re-entry of the Phase 19 tautology.
+{
+  const origLI = global.window.LeaseIntelligence;
+  global.window.LeaseIntelligence = undefined;
+  let threw = false;
+  let msg = '';
+  try {
+    LeaseTestLab.runSuite(['easy']);
+  } catch (e) {
+    threw = true;
+    msg = e.message || '';
+  } finally {
+    global.window.LeaseIntelligence = origLI;
+  }
+  assert(threw, 'P20-1: runSuite throws when LeaseIntelligence is not loaded (no silent fixture fallback)');
+  assert(/LeaseIntelligence is not loaded/.test(msg), 'P20-1: error message identifies the missing LeaseIntelligence dependency');
+}
+
 // ── Summary ───────────────────────────────────────────────────────────────────
 console.log('─'.repeat(48));
 console.log(`  ${passed} passed, ${failed} failed`);

@@ -1097,7 +1097,18 @@
   function _processScenario(scenarioDef) {
     var LI = typeof window !== 'undefined' ? window.LeaseIntelligence : null;
     var tenant = JSON.parse(JSON.stringify(scenarioDef.tenant));
-    if (!LI) return tenant;
+    // Fail loudly instead of silently reverting to static fixture data. A missing
+    // LeaseIntelligence means the benchmark would measure hardcoded values rather
+    // than live production functions — the exact tautology Phase 19 eliminated.
+    // See Issue #1.
+    if (!LI) {
+      throw new Error(
+        '_processScenario: window.LeaseIntelligence is not loaded. ' +
+        'Ensure lease-intelligence.js is evaluated before lease-test-lab.js. ' +
+        'Without it, runSuite() would report results derived from static fixture ' +
+        'data rather than live production functions.'
+      );
+    }
 
     // FP-2: real edge-case detector
     // Use scenario ocrContext when provided; otherwise only pass ocrText (not ocrChars)
