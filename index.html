@@ -2669,6 +2669,91 @@
       border: 1px solid rgba(148,163,184,0.2);
     }
     .logout-btn:hover { background: rgba(148,163,184,0.16); color: #E2E8F0; }
+    .dbhealth-btn {
+      padding: 5px 11px; border-radius: 6px; cursor: pointer;
+      font-size: 0.78rem; font-weight: 600; font-family: inherit;
+      background: rgba(148,163,184,0.08); color: #64748B;
+      border: 1px solid rgba(148,163,184,0.15);
+    }
+    .dbhealth-btn:hover { background: rgba(148,163,184,0.14); color: #94A3B8; }
+
+    /* ── DB Health diagnostic modal ─────────────────────────────────── */
+    #dbHealthModal {
+      display: none; position: fixed; inset: 0; z-index: 100000;
+      background: rgba(0,0,0,0.65); backdrop-filter: blur(3px);
+      align-items: center; justify-content: center;
+    }
+    #dbHealthModal.open { display: flex; }
+    .dbh-box {
+      background: #0F172A; border: 1px solid rgba(255,255,255,0.12);
+      border-radius: 14px; padding: 28px 30px 24px;
+      width: min(640px, 96vw); max-height: 86vh; overflow-y: auto;
+      box-shadow: 0 8px 40px rgba(0,0,0,0.6);
+      font-family: inherit; color: #CBD5E1;
+    }
+    .dbh-header {
+      display: flex; align-items: center; justify-content: space-between;
+      margin-bottom: 20px;
+    }
+    .dbh-title { font-size: 1rem; font-weight: 700; color: #E2E8F0; letter-spacing: .01em; }
+    .dbh-close {
+      background: none; border: none; color: #475569; cursor: pointer;
+      font-size: 1.2rem; padding: 4px 8px; border-radius: 5px;
+    }
+    .dbh-close:hover { color: #94A3B8; }
+    .dbh-run-btn {
+      width: 100%; padding: 10px; border-radius: 8px; cursor: pointer;
+      font-size: 0.88rem; font-weight: 600; font-family: inherit;
+      background: rgba(201,151,58,0.15); color: #C9973A;
+      border: 1px solid rgba(201,151,58,0.3); margin-bottom: 20px;
+      transition: background .15s;
+    }
+    .dbh-run-btn:hover { background: rgba(201,151,58,0.24); }
+    .dbh-run-btn:disabled { opacity: .5; cursor: default; }
+    .dbh-section { margin-bottom: 18px; }
+    .dbh-section-title {
+      font-size: 0.72rem; font-weight: 700; letter-spacing: .08em;
+      color: #475569; text-transform: uppercase; margin-bottom: 8px;
+    }
+    .dbh-grid {
+      display: grid; grid-template-columns: auto 1fr;
+      gap: 5px 14px; font-size: 0.82rem; align-items: baseline;
+    }
+    .dbh-label { color: #64748B; white-space: nowrap; }
+    .dbh-val   { color: #E2E8F0; word-break: break-all; font-family: monospace; font-size: 0.8rem; }
+    .dbh-ok    { color: #4ADE80; }
+    .dbh-warn  { color: #FBBF24; }
+    .dbh-err   { color: #F87171; }
+    .dbh-muted { color: #475569; }
+    .dbh-rows-table {
+      width: 100%; border-collapse: collapse; font-size: 0.78rem;
+      font-family: monospace; margin-top: 6px;
+    }
+    .dbh-rows-table th {
+      text-align: left; color: #475569; font-weight: 600;
+      border-bottom: 1px solid rgba(255,255,255,0.07);
+      padding: 4px 8px 4px 0;
+    }
+    .dbh-rows-table td {
+      color: #94A3B8; padding: 4px 8px 4px 0;
+      border-bottom: 1px solid rgba(255,255,255,0.04);
+      max-width: 160px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap;
+    }
+    .dbh-errors-list {
+      background: rgba(248,113,113,0.07); border: 1px solid rgba(248,113,113,0.2);
+      border-radius: 7px; padding: 10px 12px; font-size: 0.78rem;
+      font-family: monospace; color: #F87171; white-space: pre-wrap; word-break: break-word;
+    }
+    .dbh-spinner {
+      display: inline-block; width: 14px; height: 14px; margin-right: 8px;
+      border: 2px solid rgba(201,151,58,0.3); border-top-color: #C9973A;
+      border-radius: 50%; animation: dbh-spin .7s linear infinite; vertical-align: middle;
+    }
+    @keyframes dbh-spin { to { transform: rotate(360deg); } }
+    .dbh-status-bar {
+      font-size: 0.78rem; color: #475569; margin-top: 14px;
+      border-top: 1px solid rgba(255,255,255,0.06); padding-top: 10px;
+    }
 
     /* ── Mobile: header + login + tenant portal ─────────────────────────── */
     /* On narrow screens the h1 + user-bar row clips; stack vertically instead */
@@ -3483,6 +3568,7 @@
   <div class="header-user-bar" id="headerUserBar">
     <span class="header-user-email" id="headerUserEmail"></span>
     <span class="header-role-badge" id="headerRoleBadge" style="display:none;"></span>
+    <button class="dbhealth-btn" id="dbHealthBtn" onclick="openDbHealthModal()" title="Phase 20 DB diagnostic — checks Supabase writes and RLS">&#x1F4CA; DB Health</button>
     <button class="logout-btn" onclick="signOut()">Sign out</button>
   </div>
 </header>
@@ -4151,6 +4237,63 @@
 
 
 </div><!-- /#appContent -->
+
+<!-- ── Phase 20 DB Health diagnostic modal ───────────────────────────── -->
+<div id="dbHealthModal" onclick="if(event.target===this)closeDbHealthModal()">
+  <div class="dbh-box">
+    <div class="dbh-header">
+      <span class="dbh-title">&#x1F4CA; Phase 20 DB Health</span>
+      <button class="dbh-close" onclick="closeDbHealthModal()">&#x2715;</button>
+    </div>
+
+    <button class="dbh-run-btn" id="dbhRunBtn" onclick="runDbHealthDiag()">
+      Run Diagnostic — write &amp; read test rows
+    </button>
+
+    <div id="dbhBody">
+      <div class="dbh-section">
+        <div class="dbh-section-title">Auth</div>
+        <div class="dbh-grid" id="dbhAuthGrid">
+          <span class="dbh-label">Status</span><span class="dbh-val dbh-muted">—</span>
+        </div>
+      </div>
+
+      <div class="dbh-section">
+        <div class="dbh-section-title">Active Property</div>
+        <div class="dbh-grid" id="dbhPropGrid">
+          <span class="dbh-label">Property</span><span class="dbh-val dbh-muted">—</span>
+        </div>
+      </div>
+
+      <div class="dbh-section">
+        <div class="dbh-section-title">tenant_field_evidence</div>
+        <div class="dbh-grid" id="dbhTfeGrid">
+          <span class="dbh-label">Last write</span><span class="dbh-val dbh-muted">—</span>
+          <span class="dbh-label">Rows found</span><span class="dbh-val dbh-muted">—</span>
+        </div>
+        <div id="dbhTfeRows"></div>
+      </div>
+
+      <div class="dbh-section">
+        <div class="dbh-section-title">tenant_review_audit</div>
+        <div class="dbh-grid" id="dbhTraGrid">
+          <span class="dbh-label">Last write</span><span class="dbh-val dbh-muted">—</span>
+          <span class="dbh-label">Rows found</span><span class="dbh-val dbh-muted">—</span>
+        </div>
+        <div id="dbhTraRows"></div>
+      </div>
+
+      <div id="dbhErrorsSection" style="display:none;">
+        <div class="dbh-section-title" style="color:#F87171;">RLS / Permission Errors</div>
+        <div class="dbh-errors-list" id="dbhErrorsList"></div>
+      </div>
+    </div>
+
+    <div class="dbh-status-bar" id="dbhStatusBar">
+      Open a property, then click "Run Diagnostic" to write test rows and verify Phase 20 DB access.
+    </div>
+  </div>
+</div>
 
 </body>
 </html>

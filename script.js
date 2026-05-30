@@ -3760,6 +3760,146 @@ function _updateDualWritePill() {
     '<div style="color:#334155;font-size:9px;margin-top:2px">tap to copy JSON</div>';
 }
 
+// ── DB Health modal — Phase 20 UI diagnostic ─────────────────────────────────
+// Opens from the "DB Health" button in the header. Calls ms_debug_dualwrite()
+// to fire real test inserts, then renders row counts / IDs / errors in-page.
+
+function openDbHealthModal() {
+  const modal = document.getElementById('dbHealthModal');
+  if (modal) modal.classList.add('open');
+}
+window.openDbHealthModal = openDbHealthModal;
+
+function closeDbHealthModal() {
+  const modal = document.getElementById('dbHealthModal');
+  if (modal) modal.classList.remove('open');
+}
+window.closeDbHealthModal = closeDbHealthModal;
+
+function _dbhEsc(s) {
+  return String(s ?? '').replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;');
+}
+
+function _dbhStatusCell(status) {
+  if (!status) return '<span class="dbh-val dbh-muted">—</span>';
+  if (status === 'ok')     return '<span class="dbh-val dbh-ok">&#x2713; ok</span>';
+  if (status === 'no-op')  return '<span class="dbh-val dbh-warn">&#x3f; no-op (ON CONFLICT or silent RLS block)</span>';
+  if (status === 'skipped') return '<span class="dbh-val dbh-muted">skipped (no property loaded)</span>';
+  return '<span class="dbh-val dbh-err">&#x2717; ' + _dbhEsc(status) + '</span>';
+}
+
+function _dbhRenderGrid(id, rows) {
+  const el = document.getElementById(id);
+  if (!el) return;
+  el.innerHTML = rows.map(function(r) {
+    return '<span class="dbh-label">' + _dbhEsc(r[0]) + '</span>' + r[1];
+  }).join('');
+}
+
+function _dbhRenderRowTable(containerId, rows, cols) {
+  const el = document.getElementById(containerId);
+  if (!el) return;
+  if (!rows || !rows.length) { el.innerHTML = ''; return; }
+  var th = cols.map(function(c) { return '<th>' + _dbhEsc(c) + '</th>'; }).join('');
+  var tds = rows.map(function(row) {
+    return '<tr>' + cols.map(function(c) {
+      return '<td title="' + _dbhEsc(row[c]) + '">' + _dbhEsc(row[c]) + '</td>';
+    }).join('') + '</tr>';
+  }).join('');
+  el.innerHTML = '<table class="dbh-rows-table"><thead><tr>' + th + '</tr></thead><tbody>' + tds + '</tbody></table>';
+}
+
+async function runDbHealthDiag() {
+  const btn    = document.getElementById('dbhRunBtn');
+  const status = document.getElementById('dbhStatusBar');
+
+  if (btn) { btn.disabled = true; btn.innerHTML = '<span class="dbh-spinner"></span>Running…'; }
+  if (status) status.textContent = 'Running ms_debug_dualwrite()…';
+
+  var result;
+  try {
+    result = await window.ms_debug_dualwrite();
+  } catch (e) {
+    if (status) status.textContent = 'Error: ' + e.message;
+    if (btn)    { btn.disabled = false; btn.innerHTML = 'Run Diagnostic — write &amp; read test rows'; }
+    return;
+  }
+
+  // ── Auth section ──
+  const auth = result?.auth || window.ms_lastDualWrite?.auth || {};
+  _dbhRenderGrid('dbhAuthGrid', [
+    ['Status', auth.ok
+      ? '<span class="dbh-val dbh-ok">&#x2713; signed in</span>'
+      : '<span class="dbh-val dbh-err">&#x2717; not signed in — RLS will block all writes</span>'],
+    ['Email',  '<span class="dbh-val">' + _dbhEsc(auth.email || '—') + '</span>'],
+    ['UID',    '<span class="dbh-val">' + _dbhEsc(auth.uid   || '—') + '</span>'],
+  ]);
+
+  // ── Property section ──
+  var dw   = window.ms_lastDualWrite;
+  var prop = dw?.property || {};
+  _dbhRenderGrid('dbhPropGrid', [
+    ['Property', prop.id
+      ? '<span class="dbh-val dbh-ok">&#x2713; ' + _dbhEsc(prop.name || prop.id) + '</span>'
+      : '<span class="dbh-val dbh-warn">No active property — open a property first</span>'],
+    ['ID', '<span class="dbh-val">' + _dbhEsc(prop.id || '—') + '</span>'],
+  ]);
+
+  // ── TFE section ──
+  var evStatus = result?.evStatus || dw?.evidence?.status;
+  var evRows   = result?.evRows   || [];
+  _dbhRenderGrid('dbhTfeGrid', [
+    ['Last write', _dbhStatusCell(evStatus)],
+    ['Rows read back', '<span class="dbh-val' + (evRows.length > 0 ? ' dbh-ok' : ' dbh-warn') + '">' +
+      evRows.length + ' row' + (evRows.length !== 1 ? 's' : '') +
+      (evRows.length === 0 ? ' (RLS SELECT may be blocking or no rows written yet)' : '') + '</span>'],
+    ['Last field written', '<span class="dbh-val">' + _dbhEsc(dw?.evidence?.fieldKey || '—') + '</span>'],
+    ['Last row count', '<span class="dbh-val">' + _dbhEsc(dw?.evidence?.rowCount ?? '—') + '</span>'],
+  ]);
+  _dbhRenderRowTable('dbhTfeRows', evRows, ['id','tenant_id','field_key','reviewed_at','value']);
+
+  // ── TRA section ──
+  var audStatus = result?.audStatus || dw?.audit?.status;
+  var audRows   = result?.audRows   || [];
+  _dbhRenderGrid('dbhTraGrid', [
+    ['Last write', _dbhStatusCell(audStatus)],
+    ['Rows read back', '<span class="dbh-val' + (audRows.length > 0 ? ' dbh-ok' : ' dbh-warn') + '">' +
+      audRows.length + ' row' + (audRows.length !== 1 ? 's' : '') +
+      (audRows.length === 0 ? ' (RLS SELECT may be blocking or no rows written yet)' : '') + '</span>'],
+    ['Last action written', '<span class="dbh-val">' + _dbhEsc(dw?.audit?.action || '—') + '</span>'],
+    ['Last row count', '<span class="dbh-val">' + _dbhEsc(dw?.audit?.rowCount ?? '—') + '</span>'],
+  ]);
+  _dbhRenderRowTable('dbhTraRows', audRows, ['id','tenant_id','action','client_ts','severity']);
+
+  // ── Errors section ──
+  var errors = dw?.errors || [];
+  var errSec  = document.getElementById('dbhErrorsSection');
+  var errList = document.getElementById('dbhErrorsList');
+  if (errors.length > 0) {
+    if (errSec)  errSec.style.display  = '';
+    if (errList) errList.textContent = JSON.stringify(errors.slice(-5), null, 2);
+  } else {
+    if (errSec) errSec.style.display = 'none';
+  }
+
+  // ── Status bar ──
+  var allOk = evStatus === 'ok' && audStatus === 'ok' && errors.length === 0 && auth.ok;
+  var statusMsg = allOk
+    ? '✓ All checks passed — Phase 20 DB writes and reads confirmed.'
+    : (errors.length ? errors.length + ' error(s) recorded — see RLS / Permission Errors below.' :
+       (!auth.ok ? 'Not signed in — sign in first, then re-run.' :
+        (!prop.id ? 'No property loaded — open a property first.' :
+         'Diagnostic complete — review sections above for details.')));
+  if (status) {
+    status.innerHTML = (allOk
+      ? '<span class="dbh-ok">' + _dbhEsc(statusMsg) + '</span>'
+      : '<span class="dbh-warn">' + _dbhEsc(statusMsg) + '</span>');
+  }
+
+  if (btn) { btn.disabled = false; btn.innerHTML = '&#x21BB; Re-run Diagnostic'; }
+}
+window.runDbHealthDiag = runDbHealthDiag;
+
 // ── ms_debug_dualwrite — comprehensive fire-and-test diagnostic ───────────────
 // Usage (mobile console or desktop): await ms_debug_dualwrite()
 // Checks auth, active property, fires test inserts, reads back rows.
