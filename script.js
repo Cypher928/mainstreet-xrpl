@@ -3235,20 +3235,17 @@ function appendReviewAuditEntry(entry) {
   }
 }
 
-// ── Normalized Evidence / Audit Tables — Phase 1 dual-write ──────────────────
+// ── Normalized Evidence / Audit Tables — Phase 20 read migration ─────────────
 //
-// Architecture: OLD (authoritative) = properties.data.tenants[].fieldEvidence
-//               NEW (dual-write)    = tenant_field_evidence, tenant_review_audit
+// Architecture: tenant_field_evidence and tenant_review_audit are now authoritative
+//               for reads. The JSON blob (properties.data.tenants[].fieldEvidence)
+//               is no longer written on save and will drain naturally as properties
+//               are re-saved under Phase 20.
 //
-// Feature flags control the READ path only. Writes go to both systems always.
-// Flip a flag to true in the browser console to test normalized reads:
-//   window.ms_useNormalizedEvidence = true
-//   window.ms_useNormalizedAudit    = true
-//
-// Phase 2 will flip these on permanently and remove JSON blob reads.
+// Writes continue to go to both systems (dual-write) for rollback safety.
 
-if (window.ms_useNormalizedEvidence === undefined) window.ms_useNormalizedEvidence = false;
-if (window.ms_useNormalizedAudit    === undefined) window.ms_useNormalizedAudit    = false;
+window.ms_useNormalizedEvidence = true;
+window.ms_useNormalizedAudit    = true;
 
 // ── Dual-write runtime state — populated by every write attempt ───────────────
 // Set window.ms_debugDualWriteUI = true before a write to show the floating pill.
@@ -3311,6 +3308,47 @@ function _dwStatus(data, error) {
   }
   if (!data || data.length === 0) return 'no-op';
   return 'ok';
+}
+
+// Converts a tenant_field_evidence DB row to the in-memory snapshot shape.
+function _evidenceRowToSnapshot(row) {
+  return {
+    value:                  row.value,
+    confidence:             { status: row.confidence_status, note: row.confidence_note },
+    sourceFile:             row.source_file,
+    page:                   row.source_page,
+    extractionId:           row.extraction_id,
+    extractionVersion:      row.extraction_version,
+    reviewerUid:            row.reviewer_uid,
+    reviewerEmail:          row.reviewer_email,
+    reviewedAt:             row.reviewed_at,
+    approved:               row.approved,
+    manuallyEdited:         row.manually_edited,
+    originalExtractedValue: row.original_extracted_value,
+  };
+}
+
+// Converts a tenant_review_audit DB row to the in-memory activityLog entry shape.
+function _auditRowToActivityEntry(row) {
+  return {
+    type:      'field_review_audit',
+    tenantId:  row.tenant_id,
+    timestamp: row.client_ts,
+    actor:     row.reviewer_email  ?? null,
+    title:     row.label           ?? 'Field review',
+    severity:  row.severity        || 'info',
+    detail:    JSON.stringify({
+      fieldKey:          row.field_key,
+      action:            row.action,
+      oldValue:          row.old_value,
+      newValue:          row.new_value,
+      reviewStateBefore: row.review_state_before,
+      reviewStateAfter:  row.review_state_after,
+      reviewerUid:       row.reviewer_uid,
+      reviewerEmail:     row.reviewer_email,
+      ts:                row.client_ts,
+    }),
+  };
 }
 
 // Writes one evidence snapshot to tenant_field_evidence.
@@ -14272,7 +14310,16 @@ async function savePropertyData() {
     if (sqft) prop.totalSqft = sqft;
     // tenantData is the live working buffer; always sync it to prop.tenants before saving
     // so any field edit (even if prop.tenants wasn't updated) is captured.
-    if (tenantData.some(t => t !== null)) prop.tenants = tenantData.filter(t => t !== null);
+    // Phase 20: when normalized evidence reads are active, omit fieldEvidence from the
+    // JSON blob — the normalized table is authoritative and storing it in both places
+    // bloats properties.data unnecessarily.
+    if (tenantData.some(t => t !== null)) {
+      prop.tenants = tenantData.filter(t => t !== null).map(t => {
+        if (!window.ms_useNormalizedEvidence) return t;
+        const { fieldEvidence, ...rest } = t;  // eslint-disable-line no-unused-vars
+        return rest;
+      });
+    }
     // Guard: only overwrite invoices when invoiceData is populated. In tenant portal
     // mode invoiceData is always empty — writing it would wipe the property's invoice list.
     if (invoiceData.length > 0) prop.invoices = Array.from(invoiceData);
@@ -14441,6 +14488,56 @@ async function loadPropertyData(id) {
         }
       }
     }
+
+    // Phase 20: normalized evidence read — fetch all tenant_field_evidence rows for
+    // this property and overlay fieldEvidence on each tenant, making the normalized
+    // table authoritative over whatever the JSON blob may still contain.
+    if (window.ms_useNormalizedEvidence && dbData?.tenants?.length) {
+      try {
+        const { data: evidRows } = await db
+          .from('tenant_field_evidence')
+          .select('*')
+          .eq('property_id', id)
+          .order('created_at', { ascending: true });
+        if (evidRows?.length) {
+          const evByTenant = {};
+          for (const row of evidRows) {
+            if (!evByTenant[row.tenant_id]) evByTenant[row.tenant_id] = {};
+            const fk = row.field_key;
+            if (!evByTenant[row.tenant_id][fk]) evByTenant[row.tenant_id][fk] = { snapshots: [] };
+            evByTenant[row.tenant_id][fk].snapshots.push(_evidenceRowToSnapshot(row));
+          }
+          dbData.tenants = dbData.tenants.map(t =>
+            evByTenant[t.id] ? { ...t, fieldEvidence: evByTenant[t.id] } : t
+          );
+          console.log('[NormalizedEvidence] overlaid fieldEvidence for', Object.keys(evByTenant).length, 'tenant(s) from tenant_field_evidence');
+        }
+      } catch (evErr) {
+        console.warn('[NormalizedEvidence] read failed — falling back to blob fieldEvidence:', evErr?.message);
+      }
+    }
+
+    // Phase 20: normalized audit read — fetch tenant_review_audit rows and merge
+    // them into the activityLog, replacing any stale field_review_audit blob entries.
+    if (window.ms_useNormalizedAudit && dbData) {
+      try {
+        const { data: auditRows } = await db
+          .from('tenant_review_audit')
+          .select('*')
+          .eq('property_id', id)
+          .order('client_ts', { ascending: true });
+        if (auditRows?.length) {
+          const normalizedEntries = auditRows.map(_auditRowToActivityEntry);
+          const nonAuditEntries   = (dbData.activityLog || []).filter(e => e.type !== 'field_review_audit');
+          dbData.activityLog = [...nonAuditEntries, ...normalizedEntries]
+            .sort((a, b) => new Date(a.timestamp || 0) - new Date(b.timestamp || 0));
+          console.log('[NormalizedAudit] merged', auditRows.length, 'audit row(s) from tenant_review_audit');
+        }
+      } catch (auditErr) {
+        console.warn('[NormalizedAudit] read failed — falling back to blob activityLog:', auditErr?.message);
+      }
+    }
+
   } catch (e) {
     const isNet = /load failed|failed to fetch|networkerror|offline/i.test(e?.message || '');
     if (!isNet) logError('loadPropertyData', e, { propId: id });

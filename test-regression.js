@@ -21,6 +21,7 @@ const SUITES = [
   { label: 'Lease intelligence benchmark', cmd: 'node test-benchmark.js' },
   { label: 'Lease review packets',         cmd: 'node test-packets.js'   },
   { label: 'Lease test lab',               cmd: 'node test-testlab.js'   },
+  { label: 'Normalized read migration',    cmd: 'node test-normalized-reads.js' },
 ];
 
 let anyFailed = false;
