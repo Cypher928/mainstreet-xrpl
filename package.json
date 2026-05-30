@@ -4,7 +4,9 @@
   "description": "CAM Logic — Commercial Area Maintenance reconciliation platform for commercial real estate",
   "main": "allocation-engine.js",
   "scripts": {
-    "test": "node test-allocation.js"
+    "test": "node test-allocation.js",
+    "test:disputes":   "node test-disputes.js",
+    "test:regression": "node test-regression.js"
   },
   "license": "MIT",
   "dependencies": {

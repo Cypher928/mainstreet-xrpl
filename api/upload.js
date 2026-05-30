@@ -43,15 +43,20 @@ export default async function handler(req, res) {
     return res.status(405).json({ error: 'Method not allowed' });
   }
 
-  const { fileName, fileType, fileBase64 } = req.body || {};
+  const { fileName, fileType, fileBase64, bucket = 'invoices' } = req.body || {};
   if (!fileName || !fileBase64) {
     return res.status(400).json({ error: 'Missing fileName or fileBase64' });
+  }
+
+  const ALLOWED_BUCKETS = ['invoices', 'leases'];
+  if (!ALLOWED_BUCKETS.includes(bucket)) {
+    return res.status(400).json({ error: `Invalid bucket: ${bucket}` });
   }
 
   const key      = process.env.SUPABASE_SERVICE_ROLE_KEY || SUPABASE_ANON_KEY;
   const buffer   = Buffer.from(fileBase64, 'base64');
   const safeName = fileName.replace(/[^a-zA-Z0-9._-]/g, '_');
-  const uploadUrl = `${SUPABASE_URL}/storage/v1/object/invoices/${safeName}`;
+  const uploadUrl = `${SUPABASE_URL}/storage/v1/object/${bucket}/${safeName}`;
 
   console.log('[api/upload] POST', uploadUrl, 'bytes:', buffer.length);
 
@@ -78,6 +83,6 @@ export default async function handler(req, res) {
     return res.status(status).json({ error: `Supabase Storage error (HTTP ${status}): ${body}` });
   }
 
-  const publicUrl = `${SUPABASE_URL}/storage/v1/object/public/invoices/${safeName}`;
+  const publicUrl = `${SUPABASE_URL}/storage/v1/object/public/${bucket}/${safeName}`;
   return res.status(200).json({ url: publicUrl });
 }

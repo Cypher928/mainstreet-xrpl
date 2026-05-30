@@ -1,0 +1,47 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <title>Mainstreet QA Harness</title>
+  <style>
+    body { font-family: monospace; background: #0f172a; color: #94a3b8; padding: 32px; margin: 0; }
+    h1   { color: #6366f1; font-size: 18px; margin: 0 0 8px; }
+    p    { margin: 0 0 24px; font-size: 13px; }
+    code { background: #1e293b; padding: 2px 6px; border-radius: 4px; color: #e2e8f0; }
+  </style>
+</head>
+<body>
+  <h1>Mainstreet QA Harness</h1>
+  <p>Open DevTools → Console, then call <code>runMainstreetQA()</code>.<br>
+     Results auto-run on load. Pass/fail counts and timing appear in the console.</p>
+
+  <!-- Engines (load order: auth-service → access-control → review → recon → audit → selectors → alloc-integrity → recon-explainer) -->
+  <script src="auth-service.js"></script>
+  <script src="access-control.js"></script>
+  <script src="review-engine.js"></script>
+  <script src="reconciliation-engine.js"></script>
+  <script src="audit-service.js"></script>
+  <script src="selectors.js"></script>
+  <script src="allocation-integrity.js"></script>
+  <script src="reconciliation-explainer.js"></script>
+
+  <!-- Fixtures -->
+  <script src="fixtures/sample-property-a.js"></script>
+  <script src="fixtures/sample-property-b.js"></script>
+  <script src="fixtures/malformed-lease.js"></script>
+  <script src="fixtures/dispute-heavy-property.js"></script>
+  <script src="fixtures/persistence-states.js"></script>
+  <script src="fixtures/allocation-cases.js"></script>
+  <script src="fixtures/auth-sessions.js"></script>
+
+  <!-- Harness -->
+  <script src="qa-harness.js"></script>
+
+  <!-- Auto-run on load -->
+  <script>
+    document.addEventListener('DOMContentLoaded', function () {
+      window.runMainstreetQA();
+    });
+  </script>
+</body>
+</html>
