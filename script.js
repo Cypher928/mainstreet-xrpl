@@ -3871,8 +3871,34 @@ async function runDbHealthDiag() {
   ]);
   _dbhRenderRowTable('dbhTraRows', audRows, ['id','tenant_id','action','client_ts','severity']);
 
+  // ── CAM reconciliations section (Phase 21) ──
+  var cam = await window.ms_debug_cam_persistence(prop.id).catch(function(e) {
+    return { skipped: false, error: e?.message || String(e) };
+  });
+  var camWriteCell = cam.skipped
+    ? '<span class="dbh-val dbh-muted">skipped (' + _dbhEsc(cam.skipReason || 'no property') + ')</span>'
+    : (cam.writeOk
+        ? '<span class="dbh-val dbh-ok">&#x2713; ok</span>'
+        : '<span class="dbh-val dbh-err">&#x2717; ' + _dbhEsc(cam.error || 'failed') + '</span>');
+  var camReadCell = cam.skipped
+    ? '<span class="dbh-val dbh-muted">—</span>'
+    : (cam.readBackOk
+        ? '<span class="dbh-val dbh-ok">&#x2713; test row read back</span>'
+        : '<span class="dbh-val dbh-err">&#x2717; test row not returned</span>');
+  var histRows = cam.historyRows || [];
+  var years    = cam.years || [];
+  _dbhRenderGrid('dbhCamGrid', [
+    ['Write test', camWriteCell],
+    ['Read-back test', camReadCell],
+    ['History rows', '<span class="dbh-val' + (histRows.length > 0 ? ' dbh-ok' : '') + '">' +
+      histRows.length + ' row' + (histRows.length !== 1 ? 's' : '') + '</span>'],
+    ['Years on record', '<span class="dbh-val">' + (years.length ? _dbhEsc(years.join(', ')) : '—') + '</span>'],
+  ]);
+  _dbhRenderRowTable('dbhCamRows', histRows.slice(0, 8), ['year','tenant_name','actual_cam','expected_cam','variance']);
+
   // ── Errors section ──
   var errors = dw?.errors || [];
+  if (cam.error && !cam.skipped) errors = errors.concat([{ table: 'cam_reconciliations', message: cam.error }]);
   var errSec  = document.getElementById('dbhErrorsSection');
   var errList = document.getElementById('dbhErrorsList');
   if (errors.length > 0) {
@@ -3883,13 +3909,15 @@ async function runDbHealthDiag() {
   }
 
   // ── Status bar ──
-  var allOk = evStatus === 'ok' && audStatus === 'ok' && errors.length === 0 && auth.ok;
+  var camOk = cam.skipped || (cam.writeOk && cam.readBackOk);
+  var allOk = evStatus === 'ok' && audStatus === 'ok' && errors.length === 0 && auth.ok && camOk;
   var statusMsg = allOk
-    ? '✓ All checks passed — Phase 20 DB writes and reads confirmed.'
+    ? '✓ All checks passed — Phase 20 + Phase 21 DB writes and reads confirmed.'
     : (errors.length ? errors.length + ' error(s) recorded — see RLS / Permission Errors below.' :
        (!auth.ok ? 'Not signed in — sign in first, then re-run.' :
         (!prop.id ? 'No property loaded — open a property first.' :
-         'Diagnostic complete — review sections above for details.')));
+         (!camOk ? 'CAM reconciliation persistence check failed — see cam_reconciliations section.' :
+          'Diagnostic complete — review sections above for details.'))));
   if (status) {
     status.innerHTML = (allOk
       ? '<span class="dbh-ok">' + _dbhEsc(statusMsg) + '</span>'
@@ -3899,6 +3927,56 @@ async function runDbHealthDiag() {
   if (btn) { btn.disabled = false; btn.innerHTML = '&#x21BB; Re-run Diagnostic'; }
 }
 window.runDbHealthDiag = runDbHealthDiag;
+
+// ── ms_debug_cam_persistence — Phase 21 CAM reconciliation write/read test ────
+// Writes a sentinel test row (year 1900, tenant '__debug_test__') through the
+// production /api/cam-reconciliations path, reads it back, queries full history,
+// then cleans up the sentinel rows. Non-destructive to real reconciliation data.
+// Usage: await ms_debug_cam_persistence(propertyId)
+window.ms_debug_cam_persistence = async function(propertyId) {
+  const SENTINEL_YEAR = 1900;
+  if (!propertyId) return { skipped: true, skipReason: 'no active property' };
+
+  console.group('[ms_debug_cam_persistence] CAM reconciliation persistence test');
+  const out = { skipped: false, writeOk: false, readBackOk: false, historyRows: [], years: [], error: null };
+
+  try {
+    // 1. Write a sentinel row through the real save path.
+    const testResults = [{
+      tenantId: '__debug_test__', tenantName: '__debug_test__',
+      totalAllocated: 1, allocatedAmount: 1, actualCam: 1, expectedCam: 1,
+      variance: 0, proRataPercent: 0,
+    }];
+    const writeRes = await saveCamResults(propertyId, testResults, SENTINEL_YEAR, 1);
+    out.writeOk = !!writeRes?.ok;
+    if (!writeRes?.ok) out.error = writeRes?.reason || 'write failed';
+    console.log('write:', JSON.stringify(writeRes));
+
+    // 2. Read the sentinel row back.
+    const sentinelRows = await loadCamResults(propertyId, SENTINEL_YEAR);
+    out.readBackOk = sentinelRows.some(r => r.tenant_id === '__debug_test__');
+    console.log('read-back sentinel rows:', sentinelRows.length, '| found test row:', out.readBackOk);
+
+    // 3. Query full history (all years) — the real reconciliation record.
+    const history = await loadCamHistory(propertyId);
+    out.historyRows = history.filter(r => r.year !== SENTINEL_YEAR);
+    out.years = [...new Set(out.historyRows.map(r => r.year))].sort((a, b) => b - a);
+    console.log('history rows (excl. sentinel):', out.historyRows.length, '| years:', out.years);
+
+    // 4. Clean up sentinel rows (POST empty rows for the sentinel year deletes them).
+    await fetch('/api/cam-reconciliations', {
+      method: 'POST', headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ propertyId, year: SENTINEL_YEAR, rows: [] }),
+    }).then(r => r.json()).then(() => console.log('cleanup: sentinel rows deleted'))
+      .catch(e => console.warn('cleanup failed:', e?.message));
+  } catch (e) {
+    out.error = e?.message || String(e);
+    console.error('exception:', out.error);
+  }
+
+  console.groupEnd();
+  return out;
+};
 
 // ── ms_debug_dualwrite — comprehensive fire-and-test diagnostic ───────────────
 // Usage (mobile console or desktop): await ms_debug_dualwrite()
@@ -6882,7 +6960,7 @@ async function runAllocation() {
   // must not hold the button in "Running…" after results are already on screen.
   syncPortfolioEntry().catch(() => {});
   await savePropertyData(); // persist CAM allocation results to Supabase
-  await saveCamResults(currentProperty()?.id, fullResults, getCamYear()).catch(e =>
+  await saveCamResults(currentProperty()?.id, fullResults, getCamYear(), totalCost).catch(e =>
     console.error('[saveCamResults]', e)
   );
 
@@ -14297,29 +14375,45 @@ async function syncTenantsToTable(propertyId, tenants) {
   if (error) console.error('[syncTenantsToTable] insert error:', error.message);
 }
 
-async function saveCamResults(propertyId, fullResults, year) {
-  if (!propertyId || !year) return;
+async function saveCamResults(propertyId, fullResults, year, totalExpenses = null) {
+  if (!propertyId || !year) return { ok: false, reason: 'missing propertyId or year' };
+  const reconciledAt = new Date().toISOString();
   const rows = (fullResults || []).map(r => {
     const actual   = r.actualCam ?? r.totalAllocated ?? null;
     const expected = r.expectedCam ?? null;
     return {
-      property_id:  propertyId,
-      tenant_id:    r.tenantId,
-      actual_cam:   actual,
-      expected_cam: expected,
-      variance:     (actual !== null && expected !== null)
+      property_id:      propertyId,
+      tenant_id:        r.tenantId,
+      tenant_name:      r.tenantName ?? r.name ?? null,
+      actual_cam:       actual,
+      expected_cam:     expected,
+      variance:         (actual !== null && expected !== null)
         ? Math.round((actual - expected) * 100) / 100
-        : null,
+        : (r.variance ?? null),
+      allocated_amount: r.allocatedAmount ?? r.totalAllocated ?? actual,
+      pro_rata_percent: r.proRataPercent ?? (r.proRata != null ? r.proRata * 100 : null),
+      total_expenses:   totalExpenses,
+      reconciled_at:    reconciledAt,
       year,
     };
   });
-  const resp = await fetch('/api/cam-reconciliations', {
-    method:  'POST',
-    headers: { 'Content-Type': 'application/json' },
-    body:    JSON.stringify({ propertyId, year, rows }),
-  });
-  const result = await resp.json();
-  if (!resp.ok) console.error('[saveCamResults] error:', result.error, result.detail);
+  try {
+    const resp = await fetch('/api/cam-reconciliations', {
+      method:  'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body:    JSON.stringify({ propertyId, year, rows }),
+    });
+    const result = await resp.json().catch(() => ({}));
+    if (!resp.ok) {
+      console.error('[saveCamResults] error:', result.error, result.detail);
+      return { ok: false, reason: result.error || `HTTP ${resp.status}`, detail: result.detail };
+    }
+    console.log('[saveCamResults] persisted', (result.data || []).length, 'row(s) for', propertyId, 'year', year);
+    return { ok: true, rows: (result.data || []).length };
+  } catch (e) {
+    console.error('[saveCamResults] exception:', e?.message);
+    return { ok: false, reason: e?.message };
+  }
 }
 
 async function loadCamResults(propertyId, year) {
@@ -14333,6 +14427,27 @@ async function loadCamResults(propertyId, year) {
   const { data } = await resp.json();
   return data || [];
 }
+
+// Loads all persisted reconciliation rows for a property across every CAM year.
+// Returns rows sorted by year (desc) then tenant. Used for historical queries
+// and the DB Health diagnostic. Falls back to [] on any error.
+async function loadCamHistory(propertyId) {
+  if (!propertyId) return [];
+  try {
+    const resp = await fetch(`/api/cam-reconciliations?propertyId=${encodeURIComponent(propertyId)}&history=all`);
+    if (!resp.ok) {
+      const err = await resp.json().catch(() => ({}));
+      console.error('[loadCamHistory] error:', err.error);
+      return [];
+    }
+    const { data } = await resp.json();
+    return data || [];
+  } catch (e) {
+    console.error('[loadCamHistory] exception:', e?.message);
+    return [];
+  }
+}
+window.ms_loadCamHistory = loadCamHistory;
 
 async function uploadLeaseToStorage(file, propertyId) {
   if (!propertyId) {
@@ -14553,6 +14668,70 @@ async function savePropertyData() {
 }
 
 // Fetch a single property's full data.
+// Phase 21: merges normalized cam_reconciliations rows back onto dbData. Overlays
+// expectedCam/actualCam/variance per tenant, and — only when the blob snapshot is
+// absent — rebuilds a minimal camReconciliation from the rows so results still
+// restore. Mutates dbData in place. No-op when camRows is empty.
+function _mergeCamReconciliationRows(dbData, camRows) {
+  if (!dbData || !Array.isArray(camRows) || !camRows.length) return;
+
+  dbData.tenants = (dbData.tenants || []).map(t => {
+    const cam = camRows.find(r => r.tenant_id === t.id);
+    if (!cam) return t;
+    return { ...t, expectedCam: cam.expected_cam, actualCam: cam.actual_cam, variance: cam.variance };
+  });
+
+  // Only rebuild from rows when the authoritative blob snapshot is missing.
+  if (dbData.camReconciliation || dbData.results) return;
+
+  const totalSqft    = dbData.totalSqft || 1;
+  const invoiceList  = dbData.invoices || [];
+  const invoiceCount = invoiceList.length;
+  const invoiceTotal = invoiceList.reduce((s, inv) => s + (parseFloat(inv.amount) || 0), 0);
+
+  const snapResults = dbData.tenants
+    .filter(t => t.actualCam != null)
+    .map(t => ({
+      name:             t.tenant_name || '(Unknown)',
+      allocatedAmount:  t.actualCam,
+      totalAllocated:   t.actualCam,
+      proRata:          (Number(t.leased_sqft) || 0) / totalSqft,
+      proRataPercent:   ((Number(t.leased_sqft) || 0) / totalSqft) * 100,
+      // Per-tenant invoice breakdown isn't recoverable from cam_reconciliations
+      // alone; use the full invoice count as the best approximation.
+      eligibleCount:    invoiceCount,
+      capApplied:       false,
+      capAdjustment:    null,
+      includedInvoices: [],
+      ambiguityFlags:   [],
+    }));
+  if (!snapResults.length) return;
+
+  console.log('[CamReconciliation] FALLBACK — rebuilding camReconciliation from cam_reconciliations rows', {
+    snapResultsLen: snapResults.length, dbTenantsLen: (dbData.tenants || []).length, totalSqft,
+  });
+  dbData.camReconciliation = {
+    propId:       dbData.id,
+    propName:     dbData.name || '',
+    camYear:      camRows[0]?.year ?? getCamYear(),
+    total:        invoiceTotal || snapResults.reduce((s, r) => s + (r.allocatedAmount || 0), 0),
+    results:      snapResults,
+    invoices:     invoiceList.map((inv, i) => ({ id: `inv-${i}`, ...inv })),
+    invoicesFull: invoiceList,
+    tenants:      (dbData.tenants || [])
+      .filter(t => t && t.tenant_name)
+      .map(t => ({
+        name:               t.tenant_name,
+        leasedSqft:         Number(t.leased_sqft) || 0,
+        totalSqft:          totalSqft,
+        excludedCategories: t.excluded_categories
+          ? t.excluded_categories.split(',').map(s => s.trim().toLowerCase()).filter(Boolean)
+          : [],
+      })),
+    camRuns:      [],
+  };
+}
+
 // Returns the richer of the two sources — DB or localStorage — measured by tenant count.
 // This prevents a timed-out DB write from making the old (empty) DB record win over
 // the localStorage snapshot that was written before the timeout.
@@ -14611,82 +14790,20 @@ async function loadPropertyData(id) {
           lease_url:   t.lease_url,
           lease_type:  t.lease_type,
         }));
+      }
+    }
 
-        // Merge persisted CAM results into tenant objects so the UI can restore them
-        const camRows = await loadCamResults(id, getCamYear());
-        if (camRows.length) {
-          dbData.tenants = dbData.tenants.map(t => {
-            const cam = camRows.find(r => r.tenant_id === t.id);
-            if (!cam) return t;
-            return {
-              ...t,
-              expectedCam: cam.expected_cam,
-              actualCam:   cam.actual_cam,
-              variance:    cam.variance,
-            };
-          });
-
-          // If the full snapshot is missing from properties.data (e.g. saveProperty
-          // failed while saveCamResults succeeded), rebuild a minimal camReconciliation
-          // from the cam_reconciliations rows so the results section still restores.
-          if (!dbData.camReconciliation && !dbData.results) {
-            const totalSqft   = dbData.totalSqft || 1;
-            // Use the invoices already loaded from properties.data so invoice
-            // counts and totals display correctly instead of showing "0 invoices".
-            const invoiceList = dbData.invoices || [];
-            const invoiceCount = invoiceList.length;
-            const invoiceTotal = invoiceList.reduce(
-              (s, inv) => s + (parseFloat(inv.amount) || 0), 0
-            );
-
-            const snapResults = dbData.tenants
-              .filter(t => t.actualCam != null)
-              .map(t => ({
-                name:             t.tenant_name || '(Unknown)',
-                allocatedAmount:  t.actualCam,
-                totalAllocated:   t.actualCam,
-                proRata:          (Number(t.leased_sqft) || 0) / totalSqft,
-                proRataPercent:   ((Number(t.leased_sqft) || 0) / totalSqft) * 100,
-                // All invoices are eligible for every tenant in a standard CAM run;
-                // we can't recover the per-tenant breakdown from cam_reconciliations
-                // alone, so use the full invoice count as the best approximation.
-                eligibleCount:    invoiceCount,
-                capApplied:       false,
-                capAdjustment:    null,
-                includedInvoices: [],
-                ambiguityFlags:   [],
-              }));
-            if (snapResults.length) {
-              console.log('[loadPropertyData] FALLBACK PATH — rebuilding camReconciliation from cam_reconciliations rows', {
-                snapResultsLen: snapResults.length,
-                dbTenantsLen: (dbData.tenants || []).length,
-                totalSqft,
-              });
-              dbData.camReconciliation = {
-                propId:       dbData.id,
-                propName:     dbData.name || '',
-                camYear:      camRows[0]?.year ?? getCamYear(),
-                // Prefer the sum of stored invoice amounts; fall back to sum of
-                // actual_cam values if no invoices were saved in properties.data.
-                total:        invoiceTotal || snapResults.reduce((s, r) => s + (r.allocatedAmount || 0), 0),
-                results:      snapResults,
-                invoices:     invoiceList.map((inv, i) => ({ id: `inv-${i}`, ...inv })),
-                invoicesFull: invoiceList,
-                tenants:      (dbData.tenants || [])
-                  .filter(t => t && t.tenant_name)
-                  .map(t => ({
-                    name:               t.tenant_name,
-                    leasedSqft:         Number(t.leased_sqft) || 0,
-                    totalSqft:          totalSqft,
-                    excludedCategories: t.excluded_categories
-                      ? t.excluded_categories.split(',').map(s => s.trim().toLowerCase()).filter(Boolean)
-                      : [],
-                  })),
-                camRuns:      [],
-              };
-            }
-          }
-        }
+    // Phase 21: normalized CAM reconciliation read — runs for ALL tenant sources
+    // (both the properties.data path and the legacy tenants-table path), not just
+    // the legacy branch. Merges persisted per-tenant CAM rows back onto tenants and,
+    // when the full snapshot blob is missing, rebuilds a minimal camReconciliation
+    // from cam_reconciliations rows so the results section still restores. The blob
+    // in properties.data remains the primary source; this is the recovery + history path.
+    if (dbData?.tenants?.length) {
+      try {
+        _mergeCamReconciliationRows(dbData, await loadCamResults(id, getCamYear()));
+      } catch (camErr) {
+        console.warn('[CamReconciliation] read failed — relying on blob camReconciliation:', camErr?.message);
       }
     }
 

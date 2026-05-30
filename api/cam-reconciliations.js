@@ -62,11 +62,27 @@ export default async function handler(req, res) {
     return res.status(200).json({ data: ins.json });
   }
 
-  // GET: load rows for a property+year
+  // GET: load rows for a property+year, OR full history (history=all, no year)
   if (method === 'GET') {
-    const { propertyId, year } = req.query || {};
-    if (!propertyId || !year) {
-      return res.status(400).json({ error: 'Missing propertyId or year' });
+    const { propertyId, year, history } = req.query || {};
+    if (!propertyId) {
+      return res.status(400).json({ error: 'Missing propertyId' });
+    }
+
+    // History mode: all years for this property, newest first.
+    if (history === 'all' || (!year && history)) {
+      const result = await sbFetch(
+        `/cam_reconciliations?property_id=eq.${encodeURIComponent(propertyId)}` +
+        `&select=*&order=year.desc,created_at.desc`
+      );
+      if (result.status >= 300) {
+        return res.status(result.status).json({ error: 'Query failed', detail: result.json });
+      }
+      return res.status(200).json({ data: result.json });
+    }
+
+    if (!year) {
+      return res.status(400).json({ error: 'Missing year (or pass history=all for all years)' });
     }
     const result = await sbFetch(
       `/cam_reconciliations?property_id=eq.${encodeURIComponent(propertyId)}&year=eq.${encodeURIComponent(year)}&select=*`

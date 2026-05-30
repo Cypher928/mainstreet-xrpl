@@ -4242,7 +4242,7 @@
 <div id="dbHealthModal" onclick="if(event.target===this)closeDbHealthModal()">
   <div class="dbh-box">
     <div class="dbh-header">
-      <span class="dbh-title">&#x1F4CA; Phase 20 DB Health</span>
+      <span class="dbh-title">&#x1F4CA; DB Health (Phase 20 + 21)</span>
       <button class="dbh-close" onclick="closeDbHealthModal()">&#x2715;</button>
     </div>
 
@@ -4283,6 +4283,17 @@
         <div id="dbhTraRows"></div>
       </div>
 
+      <div class="dbh-section">
+        <div class="dbh-section-title">cam_reconciliations (Phase 21)</div>
+        <div class="dbh-grid" id="dbhCamGrid">
+          <span class="dbh-label">Write test</span><span class="dbh-val dbh-muted">—</span>
+          <span class="dbh-label">Read-back test</span><span class="dbh-val dbh-muted">—</span>
+          <span class="dbh-label">History rows</span><span class="dbh-val dbh-muted">—</span>
+          <span class="dbh-label">Years on record</span><span class="dbh-val dbh-muted">—</span>
+        </div>
+        <div id="dbhCamRows"></div>
+      </div>
+
       <div id="dbhErrorsSection" style="display:none;">
         <div class="dbh-section-title" style="color:#F87171;">RLS / Permission Errors</div>
         <div class="dbh-errors-list" id="dbhErrorsList"></div>
@@ -4290,7 +4301,7 @@
     </div>
 
     <div class="dbh-status-bar" id="dbhStatusBar">
-      Open a property, then click "Run Diagnostic" to write test rows and verify Phase 20 DB access.
+      Open a property, then click "Run Diagnostic" to write test rows and verify Phase 20 + 21 DB access.
     </div>
   </div>
 </div>

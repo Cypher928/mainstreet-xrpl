@@ -22,6 +22,7 @@ const SUITES = [
   { label: 'Lease review packets',         cmd: 'node test-packets.js'   },
   { label: 'Lease test lab',               cmd: 'node test-testlab.js'   },
   { label: 'Normalized read migration',    cmd: 'node test-normalized-reads.js' },
+  { label: 'CAM reconciliation persistence', cmd: 'node test-cam-persistence.js' },
 ];
 
 let anyFailed = false;
