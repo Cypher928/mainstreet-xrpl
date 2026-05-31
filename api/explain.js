@@ -1,5 +1,16 @@
 // Explain endpoint — returns raw Anthropic response so callers can read
 // content[0].text directly. Unlike /api/claude, does NOT parse inner JSON.
+//
+// WHY 20mb: extractTextFromPdfDirect sends scanned PDFs as base64 document blocks.
+// A 10 MB PDF becomes ~13 MB of JSON. Without this override, Vercel's default
+// 4.5 MB bodyParser limit returns 413 before the handler runs.
+module.exports.config = {
+  api: {
+    bodyParser: {
+      sizeLimit: '20mb',
+    },
+  },
+};
 
 module.exports = async function handler(req, res) {
   if (req.method !== 'POST') {

@@ -1105,6 +1105,62 @@ Return best guess — do not leave fields null unless truly impossible.`;
   return data;
 }
 
+// Extracts substantive lease text from a scanned PDF so Ask-the-Lease works
+// on vision-path documents. Runs concurrently with callClaudeWithPdfDirect but
+// uses a different prompt (text transcription, not structured JSON). The result
+// is stored in extracted_text of the lease_documents row.
+//
+// Uses /api/explain (not /api/claude) because explain returns raw content[0].text
+// — no JSON extraction step that would mangle plain-text lease content.
+// Timeout is 85s to accommodate max_tokens=8096 output (~25-30s generation time).
+async function extractTextFromPdfDirect(file) {
+  const base64 = await fileToBase64(file);
+
+  const prompt = `Return the substantive text from this commercial lease document for use in question-answering.
+
+Include the complete text of all provisions relating to:
+- Parties (tenant name, landlord name, guarantors)
+- Premises (address, suite, square footage)
+- Lease term (commencement, expiration, any options)
+- Rent schedule (base rent, percentage rent, escalations)
+- CAM charges, operating expenses, and maintenance obligations
+- Expense exclusions and limitations (caps, expense stops, base years)
+- Administrative fees and gross-up provisions
+- Audit rights
+- Renewal and extension options
+- Assignment and subletting
+- Default and remedies
+
+Also include the complete text of any exhibits, addenda, or schedules that contain financial terms or definitions.
+
+Preserve all section numbers, headings, and exact figures (percentages, dollar amounts, dates).
+Omit: page headers, page footers, page numbers, signature blocks, notary certifications, and table of contents lines.
+
+Return plain text only. No JSON, no markdown, no commentary.`;
+
+  const messages = [{
+    role: 'user',
+    content: [
+      { type: 'document', source: { type: 'base64', media_type: 'application/pdf', data: base64 } },
+      { type: 'text', text: prompt },
+    ],
+  }];
+
+  // 85s timeout — generating 8096 output tokens takes ~25-30s; allow headroom
+  const res = await _fetchWithTimeout('/api/explain', {
+    method:  'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body:    JSON.stringify({ messages, max_tokens: 8096, model: 'claude-sonnet-4-6' }),
+  }, 85000);
+
+  if (!res.ok) throw new Error(`PDF text extraction failed: HTTP ${res.status}`);
+  const data = await res.json();
+  const text = data?.content?.[0]?.text;
+  if (!text) throw new Error('No text returned from PDF text extraction');
+  console.log('[extractTextFromPdfDirect] extracted', text.length, 'chars from', file.name);
+  return text;
+}
+
 async function extractLeaseText(file) {
   // For non-PDFs read as plain text
   if (!file.name.toLowerCase().endsWith('.pdf') && file.type !== 'application/pdf') {
@@ -1498,9 +1554,17 @@ async function handleLease(i, file) {
     // Digital PDF: text layer extracted — send text to Claude
     // Scanned PDF: leaseText is null/short — send PDF bytes directly (vision)
     let extracted;
-    if (leaseText && leaseText.length >= 50) {
+    let _visionTextPromise = null;
+    const _usedPdfDirect = !(leaseText && leaseText.length >= 50);
+    if (!_usedPdfDirect) {
       extracted = await callClaudeForLease(leaseText);
     } else {
+      // Start text extraction concurrently with field extraction — both need the
+      // same file but neither depends on the other's result.
+      _visionTextPromise = extractTextFromPdfDirect(file).catch(e => {
+        console.warn('[extractTextFromPdfDirect:single] failed:', e?.message);
+        return null;
+      });
       extracted = await callClaudeWithPdfDirect(file);
     }
 
@@ -1520,15 +1584,19 @@ async function handleLease(i, file) {
     // Full resync ONCE after save — replaces any stale rows for this property
     await resyncTenantsToTable(property.id, deduped);
 
-    // Phase 22A: persist lease document record (fire-and-forget — don't block UI)
-    const _usedPdfDirect = !(leaseText && leaseText.length >= 50);
+    // Phase 22A/22C: persist lease document record.
+    // For vision-path leases, await the text extraction promise started earlier.
+    // UI is already updated (renderTenantFields ran above) so this wait is invisible.
+    const _extractedText = _usedPdfDirect
+      ? (await _visionTextPromise)
+      : leaseText;
     saveLeaseDocument({
       propertyId:      property.id,
       tenantId:        normalized.id || null,
       tenantName:      normalized.tenant_name || null,
       fileName:        file.name,
       fileUrl:         leaseUrl,
-      extractedText:   _usedPdfDirect ? null : leaseText,
+      extractedText:   _extractedText,
       parsingStatus:   'success',
       extractionModel: 'claude-3-5-sonnet-20241022',
       usedPdfDirect:   _usedPdfDirect,
@@ -2403,10 +2471,11 @@ async function _runLeaseJobPipeline(jobId, placeholderIdx) {
   renderBulkResults();
 
   try {
-    let leaseText     = null;
-    let extracted     = null;
-    let usedPdfDirect = false;
-    let leaseUrl      = null;
+    let leaseText          = null;
+    let extracted          = null;
+    let usedPdfDirect      = false;
+    let leaseUrl           = null;
+    let _visionTextPromise = null; // set when PDF-direct path is taken
 
     // ── Stage: Upload + OCR ───────────────────────────────────────────────────
     console.groupCollapsed(`[LEASE:upload] ${file.name}`);
@@ -2436,6 +2505,12 @@ async function _runLeaseJobPipeline(jobId, placeholderIdx) {
         usedPdfDirect = true;
         console.log('path: PDF direct (text weak/missing, chars:', leaseText?.length ?? 0, ')');
         console.warn('[PIPELINE:diag] pre-pdfDirect | file:', file instanceof File, '| name:', file?.name, '| size:', file?.size, '| elapsedMs:', Date.now() - _startMs);
+        // Start text extraction concurrently — runs in the background while field
+        // extraction completes. Neither call depends on the other's result.
+        _visionTextPromise = extractTextFromPdfDirect(file).catch(e => {
+          console.warn('[extractTextFromPdfDirect:bulk] failed:', e?.message);
+          return null;
+        });
         extracted = await callClaudeWithPdfDirect(file);
         leaseText = extracted ? `[Claude PDF direct: ${file.name}]` : null;
       }
@@ -2578,18 +2653,25 @@ async function _runLeaseJobPipeline(jobId, placeholderIdx) {
       finalizeLeaseJob(jobId, { norm, conf: _conf, meta: _meta, tenantId: jobId });
     }
 
-    // Phase 22A: persist lease document record (fire-and-forget — don't block UI)
-    saveLeaseDocument({
-      propertyId:      propertyId,
-      tenantId:        norm?.id || null,
-      tenantName:      finalEntry.tenant_name || null,
-      fileName:        file.name,
-      fileUrl:         leaseUrl,
-      extractedText:   (!usedPdfDirect && leaseText && !leaseText.startsWith('[Claude')) ? leaseText : null,
-      parsingStatus:   status,
-      extractionModel: 'claude-3-5-sonnet-20241022',
-      usedPdfDirect:   usedPdfDirect,
-    }).catch(e => console.warn('[saveLeaseDocument:bulk] failed:', e?.message));
+    // Phase 22A/22C: persist lease document record.
+    // For vision-path leases, await the text extraction promise started earlier.
+    // finalizeLeaseJob / failLeaseJob have already updated the UI — this wait is invisible.
+    (async () => {
+      const _extractedText = usedPdfDirect
+        ? (await _visionTextPromise)
+        : (leaseText && !leaseText.startsWith('[Claude') ? leaseText : null);
+      saveLeaseDocument({
+        propertyId:      propertyId,
+        tenantId:        norm?.id || null,
+        tenantName:      finalEntry.tenant_name || null,
+        fileName:        file.name,
+        fileUrl:         leaseUrl,
+        extractedText:   _extractedText,
+        parsingStatus:   status,
+        extractionModel: 'claude-3-5-sonnet-20241022',
+        usedPdfDirect:   usedPdfDirect,
+      }).catch(e => console.warn('[saveLeaseDocument:bulk] failed:', e?.message));
+    })();
 
   } catch (err) {
     logError('lease_processFile', err, { propId: propertyId, fileName: file.name, jobId });
