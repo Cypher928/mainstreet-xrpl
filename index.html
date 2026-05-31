@@ -828,6 +828,42 @@
       white-space: nowrap;
     }
     .breadcrumb-clear-btn:hover { background: rgba(239,68,68,0.18); border-color: #ef4444; }
+    .breadcrumb-delete-btn {
+      padding: 5px 12px; border-radius: 7px; font-size: 0.74rem;
+      font-weight: 600; cursor: pointer; border: 1px solid rgba(239,68,68,0.22);
+      background: transparent; color: #94a3b8; transition: all 0.15s;
+      white-space: nowrap;
+    }
+    .breadcrumb-delete-btn:hover { background: rgba(239,68,68,0.1); border-color: rgba(239,68,68,0.5); color: #f87171; }
+    /* Delete Property confirmation modal */
+    #deletePropertyModal {
+      display: none; position: fixed; inset: 0; z-index: 9000;
+      background: rgba(0,0,0,0.7); align-items: center; justify-content: center;
+    }
+    #deletePropertyModal.open { display: flex; }
+    .del-modal-box {
+      background: #0F1929; border: 1px solid rgba(239,68,68,0.3); border-radius: 12px;
+      padding: 28px 28px 24px; max-width: 420px; width: 92%; box-shadow: 0 24px 60px rgba(0,0,0,0.6);
+    }
+    .del-modal-icon { font-size: 1.8rem; margin-bottom: 10px; }
+    .del-modal-title { font-size: 1.05rem; font-weight: 700; color: #f87171; margin-bottom: 6px; }
+    .del-modal-prop  { font-size: 0.95rem; color: #e2e8f0; font-weight: 600; margin-bottom: 14px; }
+    .del-modal-desc  { font-size: 0.8rem; color: #64748b; line-height: 1.55; margin-bottom: 18px; }
+    .del-modal-desc strong { color: #94a3b8; }
+    .del-modal-actions { display: flex; gap: 10px; justify-content: flex-end; }
+    .del-modal-cancel {
+      padding: 8px 18px; border-radius: 7px; font-size: 0.82rem; font-weight: 600;
+      background: rgba(255,255,255,0.04); border: 1px solid rgba(255,255,255,0.1);
+      color: #94a3b8; cursor: pointer; transition: all 0.15s;
+    }
+    .del-modal-cancel:hover { background: rgba(255,255,255,0.08); color: #cbd5e1; }
+    .del-modal-confirm {
+      padding: 8px 18px; border-radius: 7px; font-size: 0.82rem; font-weight: 600;
+      background: rgba(239,68,68,0.15); border: 1px solid rgba(239,68,68,0.4);
+      color: #f87171; cursor: pointer; transition: all 0.15s;
+    }
+    .del-modal-confirm:hover:not(:disabled) { background: rgba(239,68,68,0.28); border-color: #ef4444; }
+    .del-modal-confirm:disabled { opacity: 0.5; cursor: not-allowed; }
 
     /* ── Sync Indicator ─────────────────────────────────────────────── */
     .sync-indicator {
@@ -1013,6 +1049,7 @@
     body.review-mode #reportsSection,
     body.review-mode .breadcrumb-back,
     body.review-mode .breadcrumb-clear-btn,
+    body.review-mode .breadcrumb-delete-btn,
     body.review-mode .rc-open-btn,
     body.review-mode #syncIndicator { display: none !important; }
 
@@ -3816,7 +3853,26 @@
   <span class="breadcrumb-path">Portfolio &rsaquo; <span id="breadcrumbPropName"></span></span>
   <div id="syncIndicator" class="sync-indicator"></div>
   <button class="rc-open-btn" onclick="openRecoveryModal()" title="Recovery Center">&#x1F512; Recovery</button>
-  <button class="breadcrumb-clear-btn" onclick="clearPropertyData()" title="Remove saved tenants, invoices &amp; results for this property">&#x1F5D1; Clear Property Data</button>
+  <button class="breadcrumb-clear-btn" onclick="clearPropertyData()" title="Remove saved tenants, invoices &amp; results for this property">&#x1F5D1; Clear Data</button>
+  <button class="breadcrumb-delete-btn" onclick="openDeletePropertyModal()" title="Permanently delete this property and all its data">&#x1F5D1; Delete Property</button>
+</div>
+
+<!-- ── Delete Property Modal ────────────────────────────────────────────── -->
+<div id="deletePropertyModal" onclick="if(event.target===this)closeDeletePropertyModal()">
+  <div class="del-modal-box">
+    <div class="del-modal-icon">&#x26A0;&#xFE0F;</div>
+    <div class="del-modal-title">Delete Property</div>
+    <div class="del-modal-prop" id="delModalPropName"></div>
+    <div class="del-modal-desc">
+      This will permanently delete this property and all of its data, including:<br><br>
+      <strong>Tenants &amp; leases &nbsp;·&nbsp; CAM reconciliations &nbsp;·&nbsp; Invoices &nbsp;·&nbsp; Disputes &nbsp;·&nbsp; Activity history</strong><br><br>
+      This action cannot be undone.
+    </div>
+    <div class="del-modal-actions">
+      <button class="del-modal-cancel" id="delModalCancelBtn" onclick="closeDeletePropertyModal()">Cancel</button>
+      <button class="del-modal-confirm" id="delModalConfirmBtn" onclick="confirmDeleteProperty()">Delete Property</button>
+    </div>
+  </div>
 </div>
 
 <!-- ── Recovery Center Modal ────────────────────────────────────────────── -->
