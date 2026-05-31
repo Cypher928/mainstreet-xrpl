@@ -1026,7 +1026,9 @@ async function extractPdfText(file) {
     const page = await pdf.getPage(p);
     const content = await page.getTextContent();
     const pageText = content.items.map(item => item.str).join(' ');
-    pages.push(pageText);
+    // WHY marker: ask-lease citations need page numbers. Claude reads these markers
+    // and reports them as citation.page. Format must match the system prompt in ask-lease.js.
+    pages.push(`--- Page ${p} ---\n${pageText}`);
   }
 
   return pages.join('\n\n');
@@ -14788,6 +14790,28 @@ async function _submitLeaseQuestion(docId) {
       const safe = result.answer
         .replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;')
         .replace(/\n/g, '<br>');
+
+      // Citation cards — each citation has { quote, section, page }
+      const citations = Array.isArray(result.citations) ? result.citations : [];
+      let citationsHtml = '';
+      if (citations.length > 0) {
+        const cards = citations.map(c => {
+          if (!c.quote) return '';
+          const qSafe = c.quote.replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;');
+          const parts = [];
+          if (c.section) parts.push(c.section);
+          if (c.page)    parts.push(`Page ${c.page}`);
+          const metaText = parts.length ? `<div class="lc-citation-meta"><span class="lc-citation-source">${parts.join(' · ')}</span></div>` : '';
+          return `<div class="lc-citation"><blockquote class="lc-citation-quote">${qSafe}</blockquote>${metaText}</div>`;
+        }).filter(Boolean).join('');
+        if (cards) citationsHtml = `<div class="lc-citations-label">Source from lease:</div>${cards}`;
+      }
+
+      // "View in Lease" button (opens the stored PDF)
+      const viewBtn = result.fileUrl
+        ? `<button class="lc-view-lease-btn" onclick="openLeaseModal(${JSON.stringify(result.fileUrl)})">View in Lease ↗</button>`
+        : '';
+
       const kbRead  = result.charsAnalyzed ? Math.round(result.charsAnalyzed / 1000) : null;
       const metaLine = kbRead
         ? `<div class="lc-answer-meta">${result.truncated
@@ -14795,7 +14819,7 @@ async function _submitLeaseQuestion(docId) {
             : `Analyzed ${kbRead}k chars of stored lease text.`
           }</div>`
         : '';
-      ansEl.innerHTML = `<div class="lc-answer-text">${safe}</div>${metaLine}`;
+      ansEl.innerHTML = `<div class="lc-answer-text">${safe}</div>${citationsHtml}${viewBtn}${metaLine}`;
     }
   } catch (e) {
     ansEl.innerHTML = `<span class="lc-answer-error">Network error: ${e.message}</span>`;

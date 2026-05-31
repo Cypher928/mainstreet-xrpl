@@ -1,7 +1,7 @@
 'use strict';
 /**
  * test-ask-lease.js
- * Phase 22B regression tests for Ask the Lease API handler.
+ * Phase 22C regression tests for Ask the Lease API handler.
  *
  * All Supabase and Anthropic calls are mocked — no live network required.
  * Run: node test-ask-lease.js
@@ -29,16 +29,42 @@ const MAX_LEASE_TEXT    = 300000;
 const ANTHROPIC_TIMEOUT = 45000;
 const ASK_MODEL         = 'claude-sonnet-4-6';
 
-function buildHandler({
-  sbRows          = null,
-  sbError         = false,
-  anthropicAnswer = null,
-  anthropicError  = null,
-  anthropicAbort  = false,  // simulates AbortError (timeout)
-  captureModel    = false,
-} = {}) {
-  let calledWithModel = null;
+// ---------------------------------------------------------------------------
+// Inline replica of parseStructuredResponse (keep in sync with api/ask-lease.js)
+// ---------------------------------------------------------------------------
 
+function _normalizeCitation(c) {
+  if (!c || typeof c !== 'object') return { quote: null, section: null, page: null };
+  return {
+    quote:   typeof c.quote   === 'string' && c.quote.trim()   ? c.quote.trim()   : null,
+    section: typeof c.section === 'string' && c.section.trim() ? c.section.trim() : null,
+    page:    typeof c.page    === 'number' && Number.isFinite(c.page) ? Math.floor(c.page) : null,
+  };
+}
+
+function parseStructuredResponse(text) {
+  const match = text.match(/\{[\s\S]*\}/);
+  if (!match) return { answer: text.trim(), citations: [] };
+  try {
+    const parsed = JSON.parse(match[0]);
+    if (typeof parsed.answer !== 'string') return { answer: text.trim(), citations: [] };
+    const citations = Array.isArray(parsed.citations)
+      ? parsed.citations.map(_normalizeCitation).filter(c => c.quote)
+      : [];
+    return { answer: parsed.answer.trim(), citations };
+  } catch {
+    return { answer: text.trim(), citations: [] };
+  }
+}
+
+function buildHandler({
+  sbRows             = null,
+  sbError            = false,
+  anthropicAnswer    = null,
+  anthropicCitations = [],
+  anthropicError     = null,
+  anthropicAbort     = false,  // simulates AbortError (timeout)
+} = {}) {
   async function mockFetchLeaseDoc(id) {
     if (sbError) throw new Error('Supabase network failure');
     if (sbRows === null) return null;
@@ -55,6 +81,7 @@ function buildHandler({
 
     return {
       answer:       anthropicAnswer || `Answer for: ${question}`,
+      citations:    anthropicCitations || [],
       truncated,
       charsAnalyzed,
       model:        ASK_MODEL,
@@ -100,6 +127,8 @@ function buildHandler({
       status: 200,
       body: {
         answer:        result.answer,
+        citations:     result.citations,
+        fileUrl:       doc.file_url || null,
         truncated:     result.truncated,
         charsAnalyzed: result.charsAnalyzed,
       },
@@ -172,9 +201,10 @@ async function runTests() {
   console.log('\n[Happy path]');
   {
     const leaseText = 'This is a Net Net Net lease. CAM cap is 5% per year. Tenant: Sunrise Cafe. Term: Jan 1 2024 - Dec 31 2026.';
-    const rows = [{ id: 'doc-good', file_name: 'sunrise.pdf', tenant_name: 'Sunrise Cafe', extracted_text: leaseText, used_pdf_direct: false }];
+    const rows = [{ id: 'doc-good', file_name: 'sunrise.pdf', tenant_name: 'Sunrise Cafe', extracted_text: leaseText, used_pdf_direct: false, file_url: 'https://storage.example.com/sunrise.pdf' }];
 
-    const h = buildHandler({ sbRows: rows, anthropicAnswer: 'The CAM cap is 5% per year as stated in Section 3.' });
+    const citations = [{ quote: 'CAM cap is 5% per year', section: 'Section 3', page: 4 }];
+    const h = buildHandler({ sbRows: rows, anthropicAnswer: 'The CAM cap is 5% per year as stated in Section 3.', anthropicCitations: citations });
     const r = await h.handle({ leaseDocumentId: 'doc-good', question: 'What is the CAM cap?' });
     assert('AL-14: 200 on successful answer',        r.status === 200);
     assert('AL-15: answer field present',            typeof r.body.answer === 'string');
@@ -245,12 +275,13 @@ async function runTests() {
 
   console.log('\n[Response shape]');
   {
-    const rows = [{ id: 'doc-shape', extracted_text: 'lease text', used_pdf_direct: false }];
-    const h = buildHandler({ sbRows: rows, anthropicAnswer: 'The answer is here.' });
+    const rows = [{ id: 'doc-shape', extracted_text: 'lease text', used_pdf_direct: false, file_url: 'https://example.com/lease.pdf' }];
+    const h = buildHandler({ sbRows: rows, anthropicAnswer: 'The answer is here.', anthropicCitations: [{ quote: 'exact language', section: 'Section 1', page: 1 }] });
     const r = await h.handle({ leaseDocumentId: 'doc-shape', question: 'question' });
-    assert('AL-30: answer, truncated, charsAnalyzed in body', 'answer' in r.body && 'truncated' in r.body && 'charsAnalyzed' in r.body);
+    assert('AL-30: answer, citations, fileUrl, truncated, charsAnalyzed in body',
+      'answer' in r.body && 'citations' in r.body && 'fileUrl' in r.body && 'truncated' in r.body && 'charsAnalyzed' in r.body);
     assert('AL-31: answer is a non-empty string',             typeof r.body.answer === 'string' && r.body.answer.length > 0);
-    assert('AL-32: no extra keys leaked',                     Object.keys(r.body).length === 3);
+    assert('AL-32: exactly 5 keys in response body',          Object.keys(r.body).length === 5);
   }
 
   // ── MAX_LEASE_TEXT constant value ────────────────────────────────────────
@@ -260,6 +291,88 @@ async function runTests() {
     assert('AL-33: MAX_LEASE_TEXT is 300000',    MAX_LEASE_TEXT === 300000);
     assert('AL-34: MAX_QUESTION_LEN is 1000',    MAX_QUESTION_LEN === 1000);
     assert('AL-35: ANTHROPIC_TIMEOUT is 45000',  ANTHROPIC_TIMEOUT === 45000);
+  }
+
+  // ── Phase 22C: Citations in response ─────────────────────────────────────
+
+  console.log('\n[Citations in response]');
+  {
+    const rows = [{ id: 'doc-cit', extracted_text: '--- Page 7 ---\nCAM cap shall not exceed 5% per annum. See Section 4.2.', used_pdf_direct: false, file_url: 'https://storage.example.com/lease.pdf' }];
+    const cits = [{ quote: 'CAM cap shall not exceed 5% per annum', section: 'Section 4.2', page: 7 }];
+    const h = buildHandler({ sbRows: rows, anthropicAnswer: 'The CAM cap is 5%.', anthropicCitations: cits });
+    const r = await h.handle({ leaseDocumentId: 'doc-cit', question: 'What is the CAM cap?' });
+    assert('AL-36: citations is an array',                  Array.isArray(r.body.citations));
+    assert('AL-37: citation has quote field',               typeof r.body.citations[0].quote === 'string');
+    assert('AL-38: citation has section field',             r.body.citations[0].section === 'Section 4.2');
+    assert('AL-39: citation has page field',                r.body.citations[0].page === 7);
+    assert('AL-40: fileUrl matches stored file_url',        r.body.fileUrl === 'https://storage.example.com/lease.pdf');
+  }
+
+  // ── fileUrl null when doc has no file_url ────────────────────────────────
+
+  console.log('\n[fileUrl null fallback]');
+  {
+    const rows = [{ id: 'doc-nourl', extracted_text: 'some text', used_pdf_direct: false }];
+    const h = buildHandler({ sbRows: rows });
+    const r = await h.handle({ leaseDocumentId: 'doc-nourl', question: 'question' });
+    assert('AL-41: fileUrl is null when doc has no file_url', r.body.fileUrl === null);
+  }
+
+  // ── Empty citations when nothing relevant ────────────────────────────────
+
+  console.log('\n[Empty citations]');
+  {
+    const rows = [{ id: 'doc-nocit', extracted_text: 'This lease covers retail space.', used_pdf_direct: false }];
+    const h = buildHandler({ sbRows: rows, anthropicAnswer: 'The lease does not mention a management fee cap.', anthropicCitations: [] });
+    const r = await h.handle({ leaseDocumentId: 'doc-nocit', question: 'What is the management fee cap?' });
+    assert('AL-42: 200 with empty citations array',       r.status === 200 && Array.isArray(r.body.citations));
+    assert('AL-43: empty citations array has length 0',   r.body.citations.length === 0);
+  }
+
+  // ── parseStructuredResponse unit tests ───────────────────────────────────
+
+  console.log('\n[parseStructuredResponse]');
+  {
+    // Valid JSON
+    const validJson = JSON.stringify({ answer: 'The cap is 5%.', citations: [{ quote: 'cap is 5%', section: 'Section 3', page: 4 }] });
+    const r1 = parseStructuredResponse(validJson);
+    assert('AL-44: valid JSON → answer extracted',     r1.answer === 'The cap is 5%.');
+    assert('AL-45: valid JSON → citations extracted',  r1.citations.length === 1);
+    assert('AL-46: citation page is integer',          r1.citations[0].page === 4);
+    assert('AL-47: citation section preserved',        r1.citations[0].section === 'Section 3');
+
+    // Malformed JSON → graceful fallback to raw text
+    const rawText = 'The answer is in section 3. The cap is 5 percent.';
+    const r2 = parseStructuredResponse(rawText);
+    assert('AL-48: non-JSON text → raw text as answer',   r2.answer === rawText);
+    assert('AL-49: non-JSON text → empty citations',      r2.citations.length === 0);
+
+    // JSON with no citations key
+    const noCitJson = JSON.stringify({ answer: 'No citations here.' });
+    const r3 = parseStructuredResponse(noCitJson);
+    assert('AL-50: missing citations key → empty array',  r3.citations.length === 0);
+
+    // Citation with null quote is filtered out
+    const nullQuoteJson = JSON.stringify({ answer: 'ok', citations: [{ quote: null, section: 'S1', page: 1 }, { quote: 'real quote', section: 'S2', page: 2 }] });
+    const r4 = parseStructuredResponse(nullQuoteJson);
+    assert('AL-51: citation with null quote is filtered', r4.citations.length === 1);
+    assert('AL-52: valid citation survives filter',       r4.citations[0].quote === 'real quote');
+
+    // JSON embedded in markdown code block (Claude sometimes wraps)
+    const mdWrapped = '```json\n' + JSON.stringify({ answer: 'Wrapped answer.', citations: [] }) + '\n```';
+    const r5 = parseStructuredResponse(mdWrapped);
+    assert('AL-53: JSON inside markdown block extracted', r5.answer === 'Wrapped answer.');
+    assert('AL-54: empty citations from wrapped JSON',    r5.citations.length === 0);
+
+    // Page is a float → floored to integer
+    const floatPageJson = JSON.stringify({ answer: 'ok', citations: [{ quote: 'q', section: 'S1', page: 7.9 }] });
+    const r6 = parseStructuredResponse(floatPageJson);
+    assert('AL-55: float page floored to integer',        r6.citations[0].page === 7);
+
+    // Non-numeric page → null
+    const strPageJson = JSON.stringify({ answer: 'ok', citations: [{ quote: 'q', section: 'S1', page: 'seven' }] });
+    const r7 = parseStructuredResponse(strPageJson);
+    assert('AL-56: string page normalised to null',       r7.citations[0].page === null);
   }
 
   // ── Summary ───────────────────────────────────────────────────────────────
