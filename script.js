@@ -3875,11 +3875,23 @@ async function runDbHealthDiag() {
   var cam = await window.ms_debug_cam_persistence(prop.id).catch(function(e) {
     return { skipped: false, error: e?.message || String(e) };
   });
+  var _camErrLabel = '';
+  if (!cam.skipped && !cam.writeOk) {
+    var _parts = [cam.error || 'failed'];
+    if (cam.keySource) _parts.push('key=' + cam.keySource);
+    if (cam.errorCode) _parts.push('code=' + cam.errorCode);
+    if (cam.errorDetail) {
+      var _det = cam.errorDetail;
+      var _detStr = typeof _det === 'string' ? _det : JSON.stringify(_det);
+      _parts.push(_detStr);
+    }
+    _camErrLabel = _parts.join(' | ');
+  }
   var camWriteCell = cam.skipped
     ? '<span class="dbh-val dbh-muted">skipped (' + _dbhEsc(cam.skipReason || 'no property') + ')</span>'
     : (cam.writeOk
         ? '<span class="dbh-val dbh-ok">&#x2713; ok</span>'
-        : '<span class="dbh-val dbh-err">&#x2717; ' + _dbhEsc(cam.error || 'failed') + '</span>');
+        : '<span class="dbh-val dbh-err" style="word-break:break-all;font-size:0.78rem">&#x2717; ' + _dbhEsc(_camErrLabel) + '</span>');
   var camReadCell = cam.skipped
     ? '<span class="dbh-val dbh-muted">—</span>'
     : (cam.readBackOk
@@ -3949,7 +3961,12 @@ window.ms_debug_cam_persistence = async function(propertyId) {
     }];
     const writeRes = await saveCamResults(propertyId, testResults, SENTINEL_YEAR, 1);
     out.writeOk = !!writeRes?.ok;
-    if (!writeRes?.ok) out.error = writeRes?.reason || 'write failed';
+    if (!writeRes?.ok) {
+      out.error       = writeRes?.reason || 'write failed';
+      out.errorDetail = writeRes?.detail ?? null;
+      out.errorCode   = writeRes?.code   ?? null;
+      out.keySource   = writeRes?.keySource ?? null;
+    }
     console.log('write:', JSON.stringify(writeRes));
 
     // 2. Read the sentinel row back.
