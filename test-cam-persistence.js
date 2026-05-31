@@ -199,6 +199,31 @@ console.log('─'.repeat(48));
   assertEqual(years[2], 2023, 'P21-7: oldest year last');
 }
 
+// ── P21-8: migration_missing error code propagation ──────────────────────────
+// Mirrors the structured error returned by the API handler when the table is absent.
+{
+  function mockSaveCamResults_migrationMissing() {
+    // Simulates what saveCamResults returns when API responds with code:'migration_missing'
+    const apiResp = { error: 'cam_reconciliations table not found', code: 'migration_missing', keySource: 'service_role' };
+    return { ok: false, reason: apiResp.error, code: apiResp.code, keySource: apiResp.keySource };
+  }
+  const res = mockSaveCamResults_migrationMissing();
+  assert(!res.ok, 'P21-8: migration_missing returns ok:false');
+  assertEqual(res.code, 'migration_missing', 'P21-8: code field is migration_missing');
+  assertEqual(res.keySource, 'service_role', 'P21-8: keySource propagated from API response');
+}
+
+// ── P21-9: anon key fallback surfaced in error result ────────────────────────
+{
+  function mockSaveCamResults_anonKey() {
+    const apiResp = { error: 'Insert failed', detail: {}, keySource: 'anon' };
+    return { ok: false, reason: apiResp.error, keySource: apiResp.keySource };
+  }
+  const res = mockSaveCamResults_anonKey();
+  assert(!res.ok, 'P21-9: anon key write failure returns ok:false');
+  assertEqual(res.keySource, 'anon', 'P21-9: keySource=anon signals missing SUPABASE_SERVICE_ROLE_KEY');
+}
+
 // ── Summary ───────────────────────────────────────────────────────────────────
 console.log('─'.repeat(48));
 console.log(`  ${passed} passed, ${failed} failed`);

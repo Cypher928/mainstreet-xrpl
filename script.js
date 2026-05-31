@@ -6960,9 +6960,11 @@ async function runAllocation() {
   // must not hold the button in "Running…" after results are already on screen.
   syncPortfolioEntry().catch(() => {});
   await savePropertyData(); // persist CAM allocation results to Supabase
-  await saveCamResults(currentProperty()?.id, fullResults, getCamYear(), totalCost).catch(e =>
-    console.error('[saveCamResults]', e)
-  );
+  {
+    const _camSave = await saveCamResults(currentProperty()?.id, fullResults, getCamYear(), totalCost)
+      .catch(e => ({ ok: false, reason: e?.message || 'network error' }));
+    if (!_camSave.ok) _showCamSaveWarning(_camSave);
+  }
 
   // Snapshot the full reconciliation and immediately persist to Supabase so
   // results survive logout, browser refresh, and cleared localStorage.
@@ -7014,6 +7016,35 @@ async function runAllocation() {
 }
 
 // Generic toast: bg defaults to green success, pass a hex color for other tones.
+// Shown once per browser session when cam_reconciliations table is absent.
+function _showMigrationMissingWarning() {
+  if (sessionStorage.getItem('_camMigrationWarned')) return;
+  sessionStorage.setItem('_camMigrationWarned', '1');
+  showToast(
+    '⚠ CAM history unavailable — database migration not applied. Run migrations/003_cam_reconciliations.sql in Supabase SQL Editor.',
+    { color: '#78350f', textColor: '#fde68a', duration: 12000 }
+  );
+}
+
+// Called when saveCamResults returns ok:false. Shows a toast + a persistent
+// banner in the results panel so the landlord knows the write failed.
+function _showCamSaveWarning(saveResult) {
+  let msg;
+  if (saveResult.code === 'migration_missing') {
+    msg = '⚠ CAM results were not saved — database migration not applied. Run migrations/003_cam_reconciliations.sql in Supabase SQL Editor. Results are visible now but will be lost on browser close.';
+  } else if (saveResult.keySource === 'anon') {
+    msg = '⚠ CAM results were not saved — SUPABASE_SERVICE_ROLE_KEY is not set on the server. Set it in your deployment environment variables and redeploy.';
+  } else {
+    msg = `⚠ CAM results were not saved — ${saveResult.reason || 'unknown error'}. Results are visible now but will be lost on browser close.`;
+  }
+  showToast(msg, { color: '#7f1d1d', textColor: '#fca5a5', duration: 10000 });
+  const banner = document.getElementById('camSaveWarningBanner');
+  if (banner) {
+    banner.textContent = msg;
+    banner.style.display = 'block';
+  }
+}
+
 function showToast(msg, { color = '#166534', textColor = '#bbf7d0', duration = 3000 } = {}) {
   const toast = document.createElement('div');
   Object.assign(toast.style, {
@@ -14406,13 +14437,13 @@ async function saveCamResults(propertyId, fullResults, year, totalExpenses = nul
     const result = await resp.json().catch(() => ({}));
     if (!resp.ok) {
       console.error('[saveCamResults] error:', result.error, result.detail);
-      return { ok: false, reason: result.error || `HTTP ${resp.status}`, detail: result.detail };
+      return { ok: false, reason: result.error || `HTTP ${resp.status}`, code: result.code, keySource: result.keySource, detail: result.detail };
     }
     console.log('[saveCamResults] persisted', (result.data || []).length, 'row(s) for', propertyId, 'year', year);
     return { ok: true, rows: (result.data || []).length };
   } catch (e) {
     console.error('[saveCamResults] exception:', e?.message);
-    return { ok: false, reason: e?.message };
+    return { ok: false, reason: e?.message || 'network error' };
   }
 }
 
@@ -14422,6 +14453,11 @@ async function loadCamResults(propertyId, year) {
   if (!resp.ok) {
     const err = await resp.json().catch(() => ({}));
     console.error('[loadCamResults] error:', err.error);
+    if (err.code === 'migration_missing') {
+      const e = new Error(err.error || 'migration_missing');
+      e.code = 'migration_missing';
+      throw e;
+    }
     return [];
   }
   const { data } = await resp.json();
@@ -14803,6 +14839,7 @@ async function loadPropertyData(id) {
       try {
         _mergeCamReconciliationRows(dbData, await loadCamResults(id, getCamYear()));
       } catch (camErr) {
+        if (camErr.code === 'migration_missing') _showMigrationMissingWarning();
         console.warn('[CamReconciliation] read failed — relying on blob camReconciliation:', camErr?.message);
       }
     }

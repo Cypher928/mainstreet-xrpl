@@ -4,8 +4,18 @@
 const SUPABASE_URL      = 'https://zhsuhehgehbzkmzurzyf.supabase.co';
 const SUPABASE_ANON_KEY = 'eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6Inpoc3VoZWhnZWhiemttenVyenlmIiwicm9sZSI6ImFub24iLCJpYXQiOjE3NzU4NDkwNDAsImV4cCI6MjA5MTQyNTA0MH0.HUl9ha9hhjIO1F_k8xPkqbZQnWx-ERRGbnmc6KS3lNE';
 
+const KEY_SOURCE = process.env.SUPABASE_SERVICE_ROLE_KEY ? 'service_role' : 'anon';
+
 function key() {
   return process.env.SUPABASE_SERVICE_ROLE_KEY || SUPABASE_ANON_KEY;
+}
+
+// Returns true when Supabase reports the table does not exist (migration not run).
+function _isMigrationMissing(json) {
+  if (!json) return false;
+  const obj = Array.isArray(json) ? (json[0] || {}) : json;
+  const msg = String(obj.message || obj.error || obj.raw || '').toLowerCase();
+  return obj.code === '42P01' || msg.includes('does not exist') || msg.includes('relation') && msg.includes('exist');
 }
 
 async function sbFetch(path, options = {}) {
@@ -33,7 +43,7 @@ export default async function handler(req, res) {
   if (method === 'POST') {
     const { propertyId, year, rows } = req.body || {};
     if (!propertyId || !year) {
-      return res.status(400).json({ error: 'Missing propertyId or year' });
+      return res.status(400).json({ error: 'Missing propertyId or year', keySource: KEY_SOURCE });
     }
 
     // Delete existing rows for this property+year
@@ -43,11 +53,19 @@ export default async function handler(req, res) {
     );
     console.log('[cam-reconciliations] DELETE', del.status, JSON.stringify(del.json));
     if (del.status >= 300) {
-      return res.status(del.status).json({ error: 'Delete failed', detail: del.json });
+      if (_isMigrationMissing(del.json)) {
+        console.error('[cam-reconciliations] migration_missing — run migrations/003_cam_reconciliations.sql');
+        return res.status(503).json({
+          error: 'cam_reconciliations table not found — run migrations/003_cam_reconciliations.sql in Supabase SQL Editor',
+          code:      'migration_missing',
+          keySource: KEY_SOURCE,
+        });
+      }
+      return res.status(del.status).json({ error: 'Delete failed', detail: del.json, keySource: KEY_SOURCE });
     }
 
     if (!rows || !rows.length) {
-      return res.status(200).json({ data: [] });
+      return res.status(200).json({ data: [], keySource: KEY_SOURCE });
     }
 
     // Insert new rows
@@ -57,9 +75,17 @@ export default async function handler(req, res) {
     });
     console.log('[cam-reconciliations] INSERT', ins.status, JSON.stringify(ins.json));
     if (ins.status >= 300) {
-      return res.status(ins.status).json({ error: 'Insert failed', detail: ins.json });
+      if (_isMigrationMissing(ins.json)) {
+        console.error('[cam-reconciliations] migration_missing — run migrations/003_cam_reconciliations.sql');
+        return res.status(503).json({
+          error: 'cam_reconciliations table not found — run migrations/003_cam_reconciliations.sql in Supabase SQL Editor',
+          code:      'migration_missing',
+          keySource: KEY_SOURCE,
+        });
+      }
+      return res.status(ins.status).json({ error: 'Insert failed', detail: ins.json, keySource: KEY_SOURCE });
     }
-    return res.status(200).json({ data: ins.json });
+    return res.status(200).json({ data: ins.json, keySource: KEY_SOURCE });
   }
 
   // GET: load rows for a property+year, OR full history (history=all, no year)
@@ -76,6 +102,9 @@ export default async function handler(req, res) {
         `&select=*&order=year.desc,created_at.desc`
       );
       if (result.status >= 300) {
+        if (_isMigrationMissing(result.json)) {
+          return res.status(503).json({ error: 'Query failed', code: 'migration_missing', detail: result.json });
+        }
         return res.status(result.status).json({ error: 'Query failed', detail: result.json });
       }
       return res.status(200).json({ data: result.json });
@@ -88,6 +117,9 @@ export default async function handler(req, res) {
       `/cam_reconciliations?property_id=eq.${encodeURIComponent(propertyId)}&year=eq.${encodeURIComponent(year)}&select=*`
     );
     if (result.status >= 300) {
+      if (_isMigrationMissing(result.json)) {
+        return res.status(503).json({ error: 'Query failed', code: 'migration_missing', detail: result.json });
+      }
       return res.status(result.status).json({ error: 'Query failed', detail: result.json });
     }
     return res.status(200).json({ data: result.json });
