@@ -13,7 +13,7 @@
 create table if not exists public.cam_reconciliations (
   id                uuid        primary key default gen_random_uuid(),
   property_id       uuid        not null references public.properties(id) on delete cascade,
-  tenant_id         text,                         -- lease.id; text to match tenant_field_evidence
+  tenant_id         uuid,                         -- references the tenant row UUID
   tenant_name       text,
   year              integer     not null,
   actual_cam        numeric,                      -- amount allocated to the tenant this run

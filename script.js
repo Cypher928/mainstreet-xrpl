@@ -3954,8 +3954,10 @@ window.ms_debug_cam_persistence = async function(propertyId) {
 
   try {
     // 1. Write a sentinel row through the real save path.
+    // tenant_id is null — the column is uuid type; a sentinel string would fail type validation.
+    // year=1900 is unique enough to identify this test row on read-back.
     const testResults = [{
-      tenantId: '__debug_test__', tenantName: '__debug_test__',
+      tenantId: null, tenantName: '__debug_test__',
       totalAllocated: 1, allocatedAmount: 1, actualCam: 1, expectedCam: 1,
       variance: 0, proRataPercent: 0,
     }];
@@ -3969,9 +3971,9 @@ window.ms_debug_cam_persistence = async function(propertyId) {
     }
     console.log('write:', JSON.stringify(writeRes));
 
-    // 2. Read the sentinel row back.
+    // 2. Read the sentinel row back — any row at year=1900 for this property is the sentinel.
     const sentinelRows = await loadCamResults(propertyId, SENTINEL_YEAR);
-    out.readBackOk = sentinelRows.some(r => r.tenant_id === '__debug_test__');
+    out.readBackOk = sentinelRows.length > 0;
     console.log('read-back sentinel rows:', sentinelRows.length, '| found test row:', out.readBackOk);
 
     // 3. Query full history (all years) — the real reconciliation record.
