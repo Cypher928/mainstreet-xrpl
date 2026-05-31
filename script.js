@@ -7032,8 +7032,11 @@ async function runAllocation() {
       ${flagsSection}
       ${leaseBtn}
       ${invBreakdown}
-      <button class="explain-btn" onclick="openExplainPanel('${esc(r.name)}')">&#x1F4CA; View Calculation</button>
-      <button class="lv-validate-btn" onclick="_startLeaseValidation('${_lvPanelId}',${tdIdx})">&#x1F50D; Validate Against Lease</button>
+      <div class="result-card-actions">
+        <button class="explain-btn" onclick="openExplainPanel('${esc(r.name)}')">&#x1F4CA; View Calculation</button>
+        <button class="lv-validate-btn" onclick="_startLeaseValidation('${_lvPanelId}',${tdIdx})">&#x1F50D; Validate Against Lease</button>
+        <button class="tenant-stmt-card-btn" onclick="generateTenantStatement('${esc(r.name)}')" title="Generate the tenant-facing CAM statement">&#x1F9FE; Tenant Statement</button>
+      </div>
       <div id="${_lvPanelId}" class="lv-panel" style="display:none;"></div>
     </div>`;
   });
@@ -10957,8 +10960,7 @@ function showReportSection() {
 
   msg.style.display = 'none';
 
-  let html = '<div style="font-size:0.8rem;color:#64748b;margin-bottom:8px;">Tenant Statements</div>';
-  html += '<div class="report-btn-row">';
+  let html = '';
   // Count name occurrences so duplicates get sqft disambiguation
   const _rNameCount = {};
   lastResults.forEach(r => { _rNameCount[r.name] = (_rNameCount[r.name] || 0) + 1; });
@@ -10970,7 +10972,6 @@ function showReportSection() {
       : r.name;
     html += `<button class="tenant-report-btn" onclick="generateTenantStatement('${esc(r.name)}')">${esc(label)}</button>`;
   });
-  html += '</div>';
   wrap.innerHTML = html;
 }
 
@@ -12907,7 +12908,7 @@ function _rqCompactItemHtml(item) {
     <span class="trs-score ${scoreColor}">Score: ${item.reviewScore}</span>
     <div class="rq-chips rq-chips--inline">${missingChips}${warnChips}</div>
     <div class="rq-compact-actions" style="display:flex;gap:4px;align-items:center;">
-      <button class="rq-action-btn rq-btn--primary" onclick="openReviewWorkspace('${tid}')">Review &#x203A;</button>
+      <button class="rq-action-btn rq-btn--primary" onclick="openReviewWorkspace('${tid}')">AI Review &#x203A;</button>
       ${acked
         ? `<span class="rq-chip">Ack'd</span>`
         : `<button class="rq-action-btn rq-btn--ack" onclick="markTenantReviewAcknowledged('${tid}')">Ack</button>`}
@@ -13892,7 +13893,7 @@ function renderPortfolio(props) {
           ${reviewChips.map(c => `<span class="review-chip ${c.cls}">${esc(c.label)}</span>`).join('')}
           <span class="review-health ${healthCls}">${reviewHealth}% Healthy</span>
         </span>
-        <button class="review-queue-btn" onclick="event.stopPropagation();selectProperty('${pid}')">Review ›</button>
+        <button class="review-queue-btn" onclick="event.stopPropagation();selectProperty('${pid}')">AI Review ›</button>
       </div>` : ''}
       <div class="ptf-cam-lbl">CAM This Period</div>
       <div class="ptf-cam-val">${cam > 0 ? '$' + cam.toLocaleString('en-US') : '—'}</div>
