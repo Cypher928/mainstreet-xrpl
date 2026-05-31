@@ -1226,6 +1226,16 @@
     /* ── Phase 23: Lease Validation panel ──────────────────────────────────── */
     .lv-validate-btn { margin-top: 8px; display: inline-block; font-size: 0.78rem; padding: 5px 12px; background: rgba(99,102,241,0.12); border: 1px solid rgba(99,102,241,0.35); border-radius: 4px; color: #818cf8; cursor: pointer; }
     .lv-validate-btn:hover { background: rgba(99,102,241,0.22); }
+    /* Action button row on result cards — flex container for View Calc / Validate / Tenant Statement */
+    .result-card-actions { display: flex; gap: 8px; margin-top: 12px; flex-wrap: wrap; }
+    .result-card-actions .explain-btn,
+    .result-card-actions .lv-validate-btn { margin-top: 0; flex: 1; min-width: 110px; text-align: center; }
+    .tenant-stmt-card-btn {
+      flex: 1; min-width: 110px; display: inline-block; font-size: 0.78rem; font-weight: 600;
+      padding: 8px 12px; background: rgba(34,197,94,0.1); border: 1px solid rgba(34,197,94,0.3);
+      border-radius: 7px; color: #4ade80; cursor: pointer; text-align: center; transition: all 0.15s;
+    }
+    .tenant-stmt-card-btn:hover { background: rgba(34,197,94,0.2); border-color: #22c55e; }
     .lv-panel { margin-top: 10px; border: 1px solid rgba(255,255,255,0.08); border-radius: 6px; overflow: hidden; }
     .lv-header { display: flex; align-items: center; gap: 10px; padding: 8px 12px; background: rgba(15,23,42,0.7); border-bottom: 1px solid rgba(255,255,255,0.06); }
     .lv-title { font-size: 0.68rem; font-weight: 700; letter-spacing: 0.08em; text-transform: uppercase; color: #64748b; }
@@ -3667,6 +3677,12 @@
     }
     .rpt-kpi--alert .kpi-val { color: #f87171; }
     .rpt-kpi--warn  .kpi-val { color: #fbbf24; }
+    /* ── Report group labels ──────────────────────────────────────────── */
+    .rpt-group-label {
+      font-size: 0.67rem; font-weight: 700; text-transform: uppercase; letter-spacing: 0.08em;
+      color: #64748B; margin-bottom: 8px; padding-bottom: 4px;
+      border-bottom: 1px solid rgba(255,255,255,0.05);
+    }
     /* ── Export row in reports section ──────────────────────────────────── */
     .rpt-export-row {
       display: flex; align-items: center; flex-wrap: wrap; gap: 8px;
@@ -3863,9 +3879,9 @@
   <span class="breadcrumb-path">Portfolio &rsaquo; <span id="breadcrumbPropName"></span></span>
   <div id="syncIndicator" class="sync-indicator"></div>
   <button class="rc-open-btn" onclick="openRecoveryModal()" title="Recovery Center">&#x1F512; Recovery</button>
-  <button class="breadcrumb-clear-btn" onclick="clearPropertyData()" title="Remove saved tenants, invoices &amp; results for this property">&#x1F5D1; Clear Data</button>
+  <button class="breadcrumb-clear-btn" onclick="clearPropertyData()" title="Reset tenant &amp; invoice data for this property — the property itself stays in your portfolio">&#x1F5D1; Clear Data</button>
   <span class="breadcrumb-danger-sep" aria-hidden="true"></span>
-  <button class="breadcrumb-delete-btn" onclick="openDeletePropertyModal()" title="Permanently delete this property and all its data">&#x1F5D1; Delete Property</button>
+  <button class="breadcrumb-delete-btn" onclick="openDeletePropertyModal()" title="Permanently remove this property and all its data from your portfolio">&#x1F5D1; Delete Property</button>
 </div>
 
 <!-- ── Delete Property Modal ────────────────────────────────────────────── -->
@@ -3960,9 +3976,9 @@
 
     <!-- Tab bar -->
     <div class="lease-tab-bar">
-      <button class="lease-tab active" id="lTabBulk"   onclick="switchLeaseTab('bulk')">&#x1F4C2; Upload All Leases</button>
+      <button class="lease-tab active" id="lTabBulk"   onclick="switchLeaseTab('bulk')">&#x1F4C2; Upload Leases</button>
       <button class="lease-tab"        id="lTabSingle" onclick="switchLeaseTab('single')">&#x1F4C4; Add One Tenant</button>
-      <button class="lease-tab" id="lTabCenter" onclick="switchLeaseTab('center')" style="display:none;">&#x1F4DA; Lease Center</button>
+      <button class="lease-tab"        id="lTabCenter" onclick="switchLeaseTab('center')">&#x1F4AC; Ask the Lease</button>
     </div>
 
     <!-- SqFt mismatch banner — lives above both panels so it's always visible -->
@@ -4144,56 +4160,34 @@
         <p>Generate printable reports for landlords and tenants</p>
       </div>
     </div>
-    <div class="report-btn-row" style="align-items:flex-end;flex-wrap:wrap;gap:10px;">
-      <div>
-        <div class="view-label landlord" style="margin-bottom:5px;">Landlord View</div>
-        <button class="report-btn" onclick="guardedMasterReport()">
-          &#x1F4CB; Landlord Master Report
-        </button>
-      </div>
-      <div>
-        <div class="view-label landlord" style="margin-bottom:5px;">Landlord View</div>
-        <button class="report-btn" onclick="generateLandlordExport()">
-          &#x1F6A8; Risk &amp; Disputes Export
-        </button>
-      </div>
-      <div>
-        <div class="view-label tenant" style="margin-bottom:5px;">Tenant View</div>
-        <button class="report-btn" onclick="guardedTenantStatement()">
-          &#x1F9FE; Tenant Statement
-        </button>
-      </div>
-      <button class="report-btn report-btn-holes" onclick="generateHolesReport()">
-        &#x1F50D; Monthly Holes Report
-      </button>
-      <button class="report-btn report-btn-holes" onclick="guardedExceptionReport()">
-        &#x26A0; Exception Summary
-      </button>
-      <button class="report-btn report-btn-holes" onclick="guardedReconciliationSummary()">
-        &#x1F4CA; Reconciliation Summary
-      </button>
-      <div>
-        <div class="view-label landlord" style="margin-bottom:5px;">Landlord View</div>
-        <button class="report-btn" onclick="generateLeaseReviewPacketReport()">
-          &#x1F4CB; Lease Review Packet
-        </button>
-      </div>
-      <div>
-        <div class="view-label landlord" style="margin-bottom:5px;">Lender / Auditor View</div>
-        <button class="report-btn" onclick="generateLenderSummaryReport()">
-          &#x1F3E6; Lender Summary
-        </button>
-      </div>
-      <div id="testLabReportSlot" style="display:none;">
-        <div class="view-label landlord" style="margin-bottom:5px;">QA / Testing</div>
-        <button class="report-btn" onclick="generateTestLabBenchmarkReport()">
-          &#x1F9EA; Lease Intelligence Score
-        </button>
-      </div>
-      <button class="report-btn rv-gen-btn" onclick="openReviewLinkModal()" title="Generate a shareable read-only review link for executives">
-        &#x1F517; Generate Review Link
-      </button>
+    <!-- Primary: landlord-facing -->
+    <div class="rpt-group-label">For You</div>
+    <div class="report-btn-row" style="flex-wrap:wrap;gap:10px;margin-bottom:16px;">
+      <button class="report-btn" onclick="guardedMasterReport()">&#x1F4CB; Master Report</button>
+      <button class="report-btn" onclick="generateLandlordExport()">&#x1F6A8; Risk &amp; Disputes</button>
+      <button class="report-btn" onclick="generateLeaseReviewPacketReport()">&#x1F4CB; Lease Review Packet</button>
+      <button class="report-btn" onclick="guardedReconciliationSummary()">&#x1F4CA; Reconciliation Summary</button>
     </div>
+
+    <!-- Tenant-facing -->
+    <div class="rpt-group-label">For Tenants</div>
+    <div class="report-btn-row" style="flex-wrap:wrap;gap:10px;align-items:center;margin-bottom:16px;">
+      <button class="report-btn" onclick="guardedTenantStatement()">&#x1F9FE; Tenant Statement</button>
+      <div id="tenantReportButtons" style="display:contents;"></div>
+    </div>
+
+    <!-- Advanced / lender / share -->
+    <div class="rpt-group-label">Advanced</div>
+    <div class="report-btn-row" style="flex-wrap:wrap;gap:10px;margin-bottom:10px;">
+      <button class="report-btn report-btn-holes" onclick="generateHolesReport()">&#x1F50D; Invoice Gaps</button>
+      <button class="report-btn report-btn-holes" onclick="guardedExceptionReport()">&#x26A0; Exception Summary</button>
+      <button class="report-btn" onclick="generateLenderSummaryReport()">&#x1F3E6; Lender Summary</button>
+      <button class="report-btn rv-gen-btn" onclick="openReviewLinkModal()" title="Share a read-only link with executives or lenders">&#x1F517; Share Read-Only Link</button>
+      <div id="testLabReportSlot" style="display:none;">
+        <button class="report-btn" onclick="generateTestLabBenchmarkReport()">&#x1F9EA; Lease Intelligence Score</button>
+      </div>
+    </div>
+
     <div class="rpt-export-row">
       <span class="rpt-export-lbl">Export:</span>
       <button class="rpt-export-btn" onclick="exportReconciliationCSV()">&#x1F4C8; Reconciliation CSV</button>
@@ -4201,9 +4195,8 @@
       <button class="rpt-export-btn" onclick="exportAuditLog()">&#x1F4BE; Activity Log</button>
     </div>
     <div id="reportsMsg" class="reports-notice">
-      Run a CAM allocation in Section 4 to generate reports.
+      Run a CAM allocation first to generate reports.
     </div>
-    <div id="tenantReportButtons"></div>
   </div>
 
 </div><!-- /container -->
@@ -4288,7 +4281,7 @@
     <div id="allocModalBody"></div>
     <div class="modal-actions">
       <button class="modal-confirm" onclick="confirmAllocation()">Confirm &amp; Run</button>
-      <button class="modal-cancel"  onclick="closeAllocModal()">Go Back &amp; Review</button>
+      <button class="modal-cancel"  onclick="closeAllocModal()">Cancel</button>
     </div>
   </div>
 </div>
