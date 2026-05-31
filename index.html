@@ -1104,6 +1104,38 @@
     .lease-tab:hover { color: #C9973A; }
     .lease-tab.active { color: #C9973A; border-bottom-color: #C9973A; }
 
+    /* Lease Center table */
+    .lc-table {
+      width: 100%; border-collapse: collapse; font-size: 0.85rem;
+    }
+    .lc-table th {
+      text-align: left; padding: 8px 12px;
+      color: #64748b; font-weight: 600; font-size: 0.75rem; text-transform: uppercase; letter-spacing: 0.05em;
+      border-bottom: 1px solid rgba(255,255,255,0.08);
+    }
+    .lc-table td {
+      padding: 10px 12px; border-bottom: 1px solid rgba(255,255,255,0.05); color: #cbd5e1;
+      vertical-align: middle;
+    }
+    .lc-table tr:last-child td { border-bottom: none; }
+    .lc-table tr:hover td { background: rgba(255,255,255,0.025); }
+    .lc-status-badge {
+      display: inline-block; padding: 2px 8px; border-radius: 999px;
+      font-size: 0.72rem; font-weight: 600; text-transform: uppercase; letter-spacing: 0.04em;
+    }
+    .lc-view-btn {
+      padding: 4px 12px; background: rgba(201,151,58,0.15); color: #C9973A;
+      border: 1px solid rgba(201,151,58,0.35); border-radius: 6px;
+      font-size: 0.78rem; font-weight: 600; cursor: pointer; transition: all 0.15s;
+    }
+    .lc-view-btn:hover { background: rgba(201,151,58,0.28); }
+    .lc-del-btn {
+      padding: 4px 8px; background: transparent; color: #64748b;
+      border: 1px solid rgba(255,255,255,0.1); border-radius: 6px;
+      font-size: 0.78rem; cursor: pointer; transition: all 0.15s;
+    }
+    .lc-del-btn:hover { color: #ef4444; border-color: rgba(239,68,68,0.4); background: rgba(239,68,68,0.08); }
+
     /* Bulk upload zone */
     .bulk-upload-zone {
       border: 2px dashed rgba(255,255,255,0.12); border-radius: 12px;
@@ -3765,6 +3797,7 @@
     <div class="lease-tab-bar">
       <button class="lease-tab active" id="lTabBulk"   onclick="switchLeaseTab('bulk')">&#x1F4C2; Upload All Leases</button>
       <button class="lease-tab"        id="lTabSingle" onclick="switchLeaseTab('single')">&#x1F4C4; Add One Tenant</button>
+      <button class="lease-tab"        id="lTabCenter" onclick="switchLeaseTab('center')">&#x1F4DA; Lease Center</button>
     </div>
 
     <!-- SqFt mismatch banner — lives above both panels so it's always visible -->
@@ -3789,6 +3822,10 @@
     <!-- Panel B: Single -->
     <div id="leasePanelSingle" style="display:none;">
       <div id="tenantSlots"></div>
+    </div>
+
+    <!-- Panel C: Lease Center -->
+    <div id="leasePanelCenter" style="display:none;">
     </div>
   </div>
 

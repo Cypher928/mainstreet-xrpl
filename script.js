@@ -1517,6 +1517,20 @@ async function handleLease(i, file) {
     await saveProperty(property);
     // Full resync ONCE after save — replaces any stale rows for this property
     await resyncTenantsToTable(property.id, deduped);
+
+    // Phase 22A: persist lease document record (fire-and-forget — don't block UI)
+    const _usedPdfDirect = !(leaseText && leaseText.length >= 50);
+    saveLeaseDocument({
+      propertyId:      property.id,
+      tenantId:        normalized.id || null,
+      tenantName:      normalized.tenant_name || null,
+      fileName:        file.name,
+      fileUrl:         leaseUrl,
+      extractedText:   _usedPdfDirect ? null : leaseText,
+      parsingStatus:   'success',
+      extractionModel: 'claude-3-5-sonnet-20241022',
+      usedPdfDirect:   _usedPdfDirect,
+    }).catch(e => console.warn('[saveLeaseDocument:single] failed:', e?.message));
   } catch (err) {
     renderTenantError(i, err.message);
   }
@@ -1757,8 +1771,14 @@ function resetTenant(i) {
 function switchLeaseTab(tab) {
   document.getElementById('lTabBulk').classList.toggle('active', tab === 'bulk');
   document.getElementById('lTabSingle').classList.toggle('active', tab === 'single');
+  document.getElementById('lTabCenter').classList.toggle('active', tab === 'center');
   document.getElementById('leasePanelBulk').style.display   = tab === 'bulk'   ? 'block' : 'none';
   document.getElementById('leasePanelSingle').style.display = tab === 'single' ? 'block' : 'none';
+  document.getElementById('leasePanelCenter').style.display = tab === 'center' ? 'block' : 'none';
+  if (tab === 'center') {
+    const prop = currentProperty();
+    if (prop?.id) renderLeaseCenter(prop.id);
+  }
 }
 
 // ─── GL Excel Upload ─────────────────────────────────────────────────────────
@@ -2555,6 +2575,19 @@ async function _runLeaseJobPipeline(jobId, placeholderIdx) {
     } else {
       finalizeLeaseJob(jobId, { norm, conf: _conf, meta: _meta, tenantId: jobId });
     }
+
+    // Phase 22A: persist lease document record (fire-and-forget — don't block UI)
+    saveLeaseDocument({
+      propertyId:      propertyId,
+      tenantId:        norm?.id || null,
+      tenantName:      finalEntry.tenant_name || null,
+      fileName:        file.name,
+      fileUrl:         leaseUrl,
+      extractedText:   (!usedPdfDirect && leaseText && !leaseText.startsWith('[Claude')) ? leaseText : null,
+      parsingStatus:   status,
+      extractionModel: 'claude-3-5-sonnet-20241022',
+      usedPdfDirect:   usedPdfDirect,
+    }).catch(e => console.warn('[saveLeaseDocument:bulk] failed:', e?.message));
 
   } catch (err) {
     logError('lease_processFile', err, { propId: propertyId, fileName: file.name, jobId });
@@ -14503,6 +14536,129 @@ async function loadCamHistory(propertyId) {
   }
 }
 window.ms_loadCamHistory = loadCamHistory;
+
+// ─── Phase 22A: Lease Document Persistence ───────────────────────────────────
+
+async function saveLeaseDocument({ propertyId, tenantId, tenantName, fileName, fileUrl, extractedText, parsingStatus, extractionModel, usedPdfDirect }) {
+  if (!propertyId || !fileName) return { ok: false, reason: 'missing propertyId or fileName' };
+  try {
+    const resp = await fetch('/api/lease-documents', {
+      method:  'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body:    JSON.stringify({ propertyId, tenantId, tenantName, fileName, fileUrl, extractedText, parsingStatus, extractionModel, usedPdfDirect }),
+    });
+    const result = await resp.json().catch(() => ({}));
+    if (!resp.ok) {
+      console.error('[saveLeaseDocument] error:', result.error, result.detail);
+      return { ok: false, reason: result.error || `HTTP ${resp.status}`, code: result.code, keySource: result.keySource, detail: result.detail };
+    }
+    console.log('[saveLeaseDocument] persisted', fileName, 'for property', propertyId);
+    return { ok: true, data: result.data };
+  } catch (e) {
+    console.error('[saveLeaseDocument] exception:', e?.message);
+    return { ok: false, reason: e?.message || 'network error' };
+  }
+}
+
+async function loadLeaseDocuments(propertyId) {
+  if (!propertyId) return [];
+  try {
+    const resp = await fetch(`/api/lease-documents?propertyId=${encodeURIComponent(propertyId)}`);
+    if (!resp.ok) {
+      const err = await resp.json().catch(() => ({}));
+      console.error('[loadLeaseDocuments] error:', err.error);
+      return [];
+    }
+    const { data } = await resp.json();
+    return data || [];
+  } catch (e) {
+    console.error('[loadLeaseDocuments] exception:', e?.message);
+    return [];
+  }
+}
+
+async function deleteLeaseDocument(id) {
+  if (!id) return { ok: false, reason: 'missing id' };
+  try {
+    const resp = await fetch(`/api/lease-documents?id=${encodeURIComponent(id)}`, { method: 'DELETE' });
+    const result = await resp.json().catch(() => ({}));
+    if (!resp.ok) {
+      return { ok: false, reason: result.error || `HTTP ${resp.status}` };
+    }
+    return { ok: true };
+  } catch (e) {
+    return { ok: false, reason: e?.message || 'network error' };
+  }
+}
+
+function renderLeaseCenter(propertyId) {
+  const panel = document.getElementById('leasePanelCenter');
+  if (!panel) return;
+
+  panel.innerHTML = `<div style="padding:16px 0;color:#94a3b8;font-size:0.875rem;">Loading lease documents…</div>`;
+
+  loadLeaseDocuments(propertyId).then(docs => {
+    if (!docs.length) {
+      panel.innerHTML = `
+        <div style="padding:24px 0;text-align:center;color:#64748b;">
+          <div style="font-size:2rem;margin-bottom:8px;">📄</div>
+          <div style="font-weight:600;margin-bottom:4px;">No leases stored yet</div>
+          <div style="font-size:0.8rem;">Upload leases using the Upload tabs — documents will appear here automatically.</div>
+        </div>`;
+      return;
+    }
+
+    const rows = docs.map(doc => {
+      const statusColor = { success: '#22c55e', partial: '#f59e0b', failed: '#ef4444', pending: '#94a3b8' }[doc.parsing_status] || '#94a3b8';
+      const uploadDate  = doc.created_at ? new Date(doc.created_at).toLocaleDateString() : '—';
+      const modelLabel  = doc.used_pdf_direct ? 'PDF vision' : (doc.extraction_model ? 'text' : '—');
+      const tenantLabel = doc.tenant_name || '<span style="color:#64748b;font-style:italic;">Unknown</span>';
+      const viewBtn     = doc.file_url
+        ? `<button class="lc-view-btn" onclick="openLeaseModal('${doc.file_url.replace(/'/g, "\\'")}')">View</button>`
+        : `<span style="color:#475569;font-size:0.75rem;">no file</span>`;
+      const deleteBtn   = `<button class="lc-del-btn" onclick="_deleteLeaseCenterRow('${doc.id}','${propertyId}')">✕</button>`;
+
+      return `<tr>
+        <td>${tenantLabel}</td>
+        <td style="max-width:200px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;" title="${doc.file_name}">${doc.file_name}</td>
+        <td><span class="lc-status-badge" style="background:${statusColor}22;color:${statusColor};border:1px solid ${statusColor}44;">${doc.parsing_status}</span></td>
+        <td style="color:#94a3b8;">${modelLabel}</td>
+        <td style="color:#94a3b8;">${uploadDate}</td>
+        <td style="text-align:right;white-space:nowrap;">${viewBtn} ${deleteBtn}</td>
+      </tr>`;
+    }).join('');
+
+    panel.innerHTML = `
+      <div style="overflow-x:auto;">
+        <table class="lc-table">
+          <thead>
+            <tr>
+              <th>Tenant</th>
+              <th>File</th>
+              <th>Status</th>
+              <th>Method</th>
+              <th>Uploaded</th>
+              <th></th>
+            </tr>
+          </thead>
+          <tbody>${rows}</tbody>
+        </table>
+      </div>`;
+  }).catch(err => {
+    console.error('[renderLeaseCenter] failed:', err?.message);
+    panel.innerHTML = `<div style="padding:16px 0;color:#ef4444;font-size:0.875rem;">Failed to load lease documents: ${err?.message || 'unknown error'}</div>`;
+  });
+}
+
+async function _deleteLeaseCenterRow(id, propertyId) {
+  if (!confirm('Remove this lease document from the database?')) return;
+  const res = await deleteLeaseDocument(id);
+  if (res.ok) {
+    renderLeaseCenter(propertyId);
+  } else {
+    alert('Delete failed: ' + (res.reason || 'unknown error'));
+  }
+}
 
 async function uploadLeaseToStorage(file, propertyId) {
   if (!propertyId) {
