@@ -1,9 +1,10 @@
 {
   "functions": {
-    "api/claude.js":     { "maxDuration": 60 },
-    "api/upload.js":     { "maxDuration": 30 },
-    "api/ask-lease.js":  { "maxDuration": 60 },
-    "api/explain.js":    { "maxDuration": 90 }
+    "api/claude.js":         { "maxDuration": 60 },
+    "api/upload.js":         { "maxDuration": 30 },
+    "api/ask-lease.js":      { "maxDuration": 60 },
+    "api/explain.js":        { "maxDuration": 90 },
+    "api/validate-lease.js": { "maxDuration": 60 }
   },
   "rewrites": [
     { "source": "/api/:path*",      "destination": "/api/:path*"          },

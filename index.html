@@ -1176,6 +1176,40 @@
     .lc-view-lease-btn { margin-top: 10px; display: inline-block; font-size: 0.78rem; padding: 4px 10px; background: rgba(99,102,241,0.15); border: 1px solid rgba(99,102,241,0.35); border-radius: 4px; color: #818cf8; cursor: pointer; }
     .lc-view-lease-btn:hover { background: rgba(99,102,241,0.25); }
 
+    /* ── Phase 23: Lease Validation panel ──────────────────────────────────── */
+    .lv-validate-btn { margin-top: 8px; display: inline-block; font-size: 0.78rem; padding: 5px 12px; background: rgba(99,102,241,0.12); border: 1px solid rgba(99,102,241,0.35); border-radius: 4px; color: #818cf8; cursor: pointer; }
+    .lv-validate-btn:hover { background: rgba(99,102,241,0.22); }
+    .lv-panel { margin-top: 10px; border: 1px solid rgba(255,255,255,0.08); border-radius: 6px; overflow: hidden; }
+    .lv-header { display: flex; align-items: center; gap: 10px; padding: 8px 12px; background: rgba(15,23,42,0.7); border-bottom: 1px solid rgba(255,255,255,0.06); }
+    .lv-title { font-size: 0.68rem; font-weight: 700; letter-spacing: 0.08em; text-transform: uppercase; color: #64748b; }
+    .lv-status { font-size: 0.75rem; color: #94a3b8; }
+    .lv-finding { padding: 10px 12px; border-bottom: 1px solid rgba(255,255,255,0.05); }
+    .lv-finding:last-child { border-bottom: none; }
+    .lv-finding--critical { background: rgba(239,68,68,0.06); }
+    .lv-finding--warning  { background: rgba(251,191,36,0.05); }
+    .lv-finding--info     { background: transparent; }
+    .lv-finding-hdr { display: flex; align-items: center; gap: 7px; margin-bottom: 5px; }
+    .lv-finding-icon { font-size: 0.9rem; }
+    .lv-finding-title { font-size: 0.82rem; font-weight: 600; color: #cbd5e1; flex: 1; }
+    .lv-sev-badge { font-size: 0.65rem; font-weight: 700; letter-spacing: 0.06em; padding: 2px 6px; border-radius: 3px; }
+    .lv-sev-badge--critical { background: rgba(239,68,68,0.25); color: #fca5a5; }
+    .lv-sev-badge--warning  { background: rgba(251,191,36,0.2);  color: #fde68a; }
+    .lv-sev-badge--info     { background: rgba(34,197,94,0.15);  color: #86efac; }
+    .lv-conf { font-size: 0.65rem; padding: 2px 6px; border-radius: 3px; font-weight: 600; }
+    .lv-conf--high   { background: rgba(34,197,94,0.12);  color: #86efac; }
+    .lv-conf--medium { background: rgba(251,191,36,0.12); color: #fde68a; }
+    .lv-conf--low    { background: rgba(148,163,184,0.12);color: #94a3b8; }
+    .lv-finding-body { padding-left: 22px; }
+    .lv-finding-text { font-size: 0.82rem; color: #94a3b8; line-height: 1.5; }
+    .lv-quote { margin: 6px 0 2px; padding-left: 8px; border-left: 2px solid rgba(99,102,241,0.45); font-style: italic; font-size: 0.8rem; color: #94a3b8; white-space: pre-wrap; }
+    .lv-citation { font-size: 0.7rem; color: #64748b; margin-bottom: 4px; }
+    .lv-explanation { margin-top: 5px; font-size: 0.78rem; color: #94a3b8; font-style: italic; }
+    .lv-view-btn { margin-top: 8px; display: inline-block; font-size: 0.75rem; padding: 3px 9px; background: rgba(99,102,241,0.12); border: 1px solid rgba(99,102,241,0.3); border-radius: 4px; color: #818cf8; cursor: pointer; }
+    .lv-view-btn:hover { background: rgba(99,102,241,0.22); }
+    .lv-loading { padding: 10px 12px; font-size: 0.8rem; color: #64748b; font-style: italic; }
+    .lv-meta { padding: 7px 12px; font-size: 0.72rem; color: #475569; border-top: 1px solid rgba(255,255,255,0.05); }
+    .lv-error { padding: 10px 12px; font-size: 0.8rem; color: #f87171; font-style: italic; }
+
     /* Bulk upload zone */
     .bulk-upload-zone {
       border: 2px dashed rgba(255,255,255,0.12); border-radius: 12px;

@@ -7016,6 +7016,7 @@ async function runAllocation() {
         ? `<button class="action-btn" onclick="openLeaseModalFromFile(${tdIdx})">&#x1F4C4; View Lease</button>`
         : `<div class="lease-missing-note">⚠️ Lease not attached — using manual data</div>`
       : '';
+    const _lvPanelId = `lv-panel-${tdIdx >= 0 ? tdIdx : r.name.replace(/[^a-zA-Z0-9]/g, '-')}`;
     const _liveT  = tenantData.find(t => t && t.id === r.tenantId);
     const _calcSt = _deriveCalcState(r, _liveT);
 
@@ -7032,6 +7033,8 @@ async function runAllocation() {
       ${leaseBtn}
       ${invBreakdown}
       <button class="explain-btn" onclick="openExplainPanel('${esc(r.name)}')">&#x1F4CA; View Calculation</button>
+      <button class="lv-validate-btn" onclick="_startLeaseValidation('${_lvPanelId}',${tdIdx})">&#x1F50D; Validate Against Lease</button>
+      <div id="${_lvPanelId}" class="lv-panel" style="display:none;"></div>
     </div>`;
   });
 
@@ -14542,6 +14545,265 @@ async function syncTenantsToTable(propertyId, tenants) {
   if (rows.length === 0) return;
   const { error } = await db.from('tenants').insert(rows).select('id');
   if (error) console.error('[syncTenantsToTable] insert error:', error.message);
+}
+
+// ─────────────────────────────────────────────────────────────────────────────
+// Phase 23 — CAM Validation Against Lease
+// ─────────────────────────────────────────────────────────────────────────────
+
+const _LV_ADMIN_KEYWORDS = ['admin', 'administrative', 'management fee', 'mgmt fee', 'property management'];
+
+// Tier 1: deterministic checks using already-extracted tenant fields. Runs
+// entirely in-browser — no server call, no Claude. Returns findings instantly.
+function _tier1LeaseChecks(tenant, totalExpenses, lineItems, reconciledAt) {
+  const findings  = [];
+  const today     = new Date();
+  const cap       = typeof tenant.admin_fee_pct === 'number' ? tenant.admin_fee_pct : null;
+  const auditText = tenant.audit_rights || null;
+  const adminFeeEvidence = tenant.fieldEvidence?.admin_fee_pct?.snapshots?.[0];
+  const quote     = adminFeeEvidence?.quote || null;
+
+  // MGMT_FEE_CAP ──────────────────────────────────────────────────────────────
+  if (cap !== null && totalExpenses > 0) {
+    const adminLines = (lineItems || []).filter(li => {
+      const cat = (li.category || '').toLowerCase();
+      return _LV_ADMIN_KEYWORDS.some(kw => cat.includes(kw));
+    });
+    if (adminLines.length > 0) {
+      const adminTotal = adminLines.reduce((s, li) => s + (li.amount || 0), 0);
+      const actualPct  = (adminTotal / totalExpenses) * 100;
+      const exceeded   = actualPct > cap + 0.5;   // 0.5% rounding tolerance
+      findings.push({
+        check: 'MGMT_FEE_CAP', source: 'deterministic',
+        severity:    exceeded ? 'warning' : 'info',
+        confidence:  'high',
+        finding:     exceeded
+          ? `Admin fee (${actualPct.toFixed(1)}%) exceeds the ${cap}% lease cap by ${(actualPct - cap).toFixed(1)} percentage points.`
+          : `Admin fee (${actualPct.toFixed(1)}%) is within the ${cap}% lease cap.`,
+        quote, section: null, page: null,
+        explanation: exceeded
+          ? `Reconciliation admin fee of $${adminTotal.toLocaleString()} is ${actualPct.toFixed(1)}% of total CAM ($${totalExpenses.toLocaleString()}), exceeding the ${cap}% cap.`
+          : null,
+      });
+    } else {
+      findings.push({
+        check: 'MGMT_FEE_CAP', source: 'deterministic',
+        severity: 'info', confidence: 'high',
+        finding: 'No administrative fee line items identified in this reconciliation.',
+        quote: null, section: null, page: null, explanation: null,
+      });
+    }
+  } else {
+    findings.push({
+      check: 'MGMT_FEE_CAP', source: 'deterministic',
+      severity: 'info', confidence: 'high',
+      finding: cap === null
+        ? 'No management fee cap was extracted from the lease.'
+        : 'Total expenses are zero — fee cap check skipped.',
+      quote: null, section: null, page: null, explanation: null,
+    });
+  }
+
+  // AUDIT_RIGHTS ──────────────────────────────────────────────────────────────
+  if (auditText) {
+    const daysMatch = auditText.match(/(\d+)\s+days?/i);
+    if (daysMatch && reconciledAt) {
+      const days        = parseInt(daysMatch[1], 10);
+      const reconDate   = new Date(reconciledAt);
+      const windowClose = new Date(reconDate.getTime() + days * 86400000);
+      const expired     = today > windowClose;
+      const daysLeft    = Math.round((windowClose - today) / 86400000);
+      findings.push({
+        check: 'AUDIT_RIGHTS', source: 'deterministic',
+        severity:   expired ? 'warning' : 'info',
+        confidence: 'high',
+        finding:    expired
+          ? `Audit window closed ${windowClose.toISOString().slice(0,10)} — ${Math.abs(daysLeft)} days have elapsed past the ${days}-day limit.`
+          : `Audit window open — ${daysLeft} days remaining (closes ${windowClose.toISOString().slice(0,10)}).`,
+        quote: null, section: null, page: null,
+        explanation: expired
+          ? `The tenant had ${days} days from ${reconDate.toISOString().slice(0,10)} to request an audit. That window has closed.`
+          : null,
+      });
+    } else {
+      findings.push({
+        check: 'AUDIT_RIGHTS', source: 'deterministic',
+        severity: 'info', confidence: 'medium',
+        finding: `Audit rights found but deadline could not be computed: "${(auditText || '').slice(0, 80)}"`,
+        quote: null, section: null, page: null, explanation: null,
+      });
+    }
+  } else {
+    findings.push({
+      check: 'AUDIT_RIGHTS', source: 'deterministic',
+      severity: 'info', confidence: 'high',
+      finding: 'No audit rights clause was extracted from this lease.',
+      quote: null, section: null, page: null, explanation: null,
+    });
+  }
+
+  return findings;
+}
+
+// Renders the validation panel HTML for a given findings array and loading state.
+function _renderValidationPanel(findings, { loading = false, charsAnalyzed = null, truncated = false, fileUrl = null } = {}) {
+  const SEV_ICON  = { critical: '⛔', warning: '⚠️', info: '✅' };
+  const SEV_LABEL = { critical: 'CRITICAL', warning: 'REVIEW', info: 'PASSED' };
+  const SEV_CLS   = { critical: 'lv-finding--critical', warning: 'lv-finding--warning', info: 'lv-finding--info' };
+  const CHECK_LABELS = {
+    MGMT_FEE_CAP:      'Management Fee Cap',
+    AUDIT_RIGHTS:      'Audit Rights',
+    CAM_EXCLUSIONS:    'CAM Exclusions',
+    STRUCT_EXCLUSIONS: 'Structural Exclusions',
+    TAX_ALLOCATION:    'Tax Allocation',
+  };
+
+  const cards = findings.map(f => {
+    const icon    = SEV_ICON[f.severity]  || '✅';
+    const label   = SEV_LABEL[f.severity] || 'PASSED';
+    const cls     = SEV_CLS[f.severity]   || 'lv-finding--info';
+    const title   = CHECK_LABELS[f.check] || f.check;
+    const qSafe   = f.quote ? f.quote.replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;') : null;
+    const fSafe   = esc(f.finding);
+    const eSafe   = f.explanation ? esc(f.explanation) : null;
+    const refParts = [f.section, f.page ? `Page ${f.page}` : null].filter(Boolean);
+
+    const quoteHtml = qSafe
+      ? `<blockquote class="lv-quote">${qSafe}</blockquote>
+         ${refParts.length ? `<div class="lv-citation">${refParts.join(' · ')}</div>` : ''}`
+      : '';
+    const explanHtml = eSafe ? `<div class="lv-explanation">${eSafe}</div>` : '';
+    const viewBtn    = (f.severity !== 'info' && fileUrl)
+      ? `<button class="lv-view-btn" onclick="openLeaseModal(${JSON.stringify(fileUrl)})">View in Lease ↗</button>`
+      : '';
+    const confCls  = { high: 'lv-conf--high', medium: 'lv-conf--medium', low: 'lv-conf--low' }[f.confidence] || 'lv-conf--medium';
+
+    return `<div class="lv-finding ${cls}">
+      <div class="lv-finding-hdr">
+        <span class="lv-finding-icon">${icon}</span>
+        <span class="lv-finding-title">${esc(title)}</span>
+        <span class="lv-sev-badge lv-sev-badge--${f.severity}">${label}</span>
+        <span class="lv-conf ${confCls}">${f.confidence}</span>
+      </div>
+      <div class="lv-finding-body">
+        <div class="lv-finding-text">${fSafe}</div>
+        ${quoteHtml}${explanHtml}${viewBtn}
+      </div>
+    </div>`;
+  }).join('');
+
+  const critCount = findings.filter(f => f.severity === 'critical').length;
+  const warnCount = findings.filter(f => f.severity === 'warning').length;
+  const statusText = loading
+    ? `${findings.length} check${findings.length !== 1 ? 's' : ''} complete · analyzing clauses…`
+    : `${findings.length} check${findings.length !== 1 ? 's' : ''}${warnCount ? ` · ${warnCount} review` : ''}${critCount ? ` · ${critCount} critical` : ''}`;
+
+  const metaLine  = !loading && charsAnalyzed
+    ? `<div class="lv-meta">Analyzed ${Math.round(charsAnalyzed/1000)}k chars of stored lease text${truncated ? ' (truncated)' : ''}</div>`
+    : '';
+  const loadingRow = loading
+    ? `<div class="lv-loading">&#x23F3; Checking lease clauses…</div>`
+    : '';
+
+  return `<div class="lv-header">
+    <span class="lv-title">LEASE VALIDATION</span>
+    <span class="lv-status">${statusText}</span>
+  </div>
+  ${cards}${loadingRow}${metaLine}`;
+}
+
+// Coordinator: runs Tier 1 immediately, then POSTs to /api/validate-lease for Tier 2.
+// panelEl must already be in the DOM; tenant is the tenantData object; recon is a ReconciliationResult.
+async function _runLeaseValidation(panelEl, tenant, recon, totalExpenses) {
+  if (!panelEl) return;
+  panelEl.style.display = 'block';
+
+  const reconciledAt = `${getCamYear() || new Date().getFullYear()}-12-31`;
+  const lineItems    = (recon.includedInvoices || []).map(inv => ({
+    category: inv.category || inv.invoiceCategory || 'other',
+    amount:   inv.amount   || 0,
+  }));
+
+  // Tier 1 — instant, no server call
+  const t1 = _tier1LeaseChecks(tenant, totalExpenses, lineItems, reconciledAt);
+  panelEl.innerHTML = _renderValidationPanel(t1, { loading: true });
+
+  // Look up the lease document for this tenant
+  const prop = currentProperty();
+  if (!prop?.id) {
+    panelEl.innerHTML = _renderValidationPanel(t1, { loading: false });
+    return;
+  }
+
+  let leaseDoc = null;
+  try {
+    const docs = await loadLeaseDocuments(prop.id);
+    const tName = (tenant.tenant_name || '').toLowerCase().trim();
+    const tId   = tenant.id || null;
+    leaseDoc = (docs || []).find(d =>
+      (tId && d.tenant_id === tId) ||
+      (tName && d.tenant_name && d.tenant_name.toLowerCase().trim() === tName)
+    ) || null;
+  } catch (e) {
+    console.warn('[validate-lease] Could not load lease documents:', e.message);
+  }
+
+  if (!leaseDoc?.id) {
+    // No linked lease document — show Tier 1 findings only
+    panelEl.innerHTML = _renderValidationPanel(t1, { loading: false });
+    return;
+  }
+
+  // Tier 2 — clause search via Claude
+  try {
+    const resp = await fetch('/api/validate-lease', {
+      method:  'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body:    JSON.stringify({
+        leaseDocumentId:    leaseDoc.id,
+        reconciliationData: { totalExpenses, year: getCamYear(), lineItems },
+      }),
+    });
+    const result = await resp.json().catch(() => ({}));
+    if (!resp.ok || result.error) {
+      console.error('[validate-lease] Tier 2 error:', result.error);
+      panelEl.innerHTML = _renderValidationPanel(t1, { loading: false });
+      return;
+    }
+    const allFindings = [...t1, ...(result.findings || [])];
+    panelEl.innerHTML = _renderValidationPanel(allFindings, {
+      loading: false, charsAnalyzed: result.charsAnalyzed,
+      truncated: result.truncated, fileUrl: result.fileUrl,
+    });
+  } catch (e) {
+    console.error('[validate-lease] Tier 2 fetch failed:', e.message);
+    panelEl.innerHTML = _renderValidationPanel(t1, { loading: false });
+  }
+}
+
+// Entry point wired to the "Validate Against Lease" button in each result card.
+// tenantIdx is the tenantData[] index for the row.
+function _startLeaseValidation(panelId, tenantIdx) {
+  const panelEl = document.getElementById(panelId);
+  if (!panelEl) return;
+
+  // Toggle off if already open
+  if (panelEl.style.display !== 'none') {
+    panelEl.style.display = 'none';
+    return;
+  }
+
+  const tenant = tenantIdx >= 0 ? (tenantData[tenantIdx] || {}) : {};
+  const name   = tenant.tenant_name || '';
+  const recon  = (lastResults || []).find(r => r.name === name || r.tenantId === tenant.id);
+  if (!recon) {
+    panelEl.style.display = 'block';
+    panelEl.innerHTML = `<div class="lv-header"><span class="lv-title">LEASE VALIDATION</span></div>
+      <div class="lv-error">No reconciliation data found for this tenant.</div>`;
+    return;
+  }
+
+  _runLeaseValidation(panelEl, tenant, recon, lastTotal);
 }
 
 async function saveCamResults(propertyId, fullResults, year, totalExpenses = null) {
