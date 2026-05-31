@@ -167,60 +167,121 @@ function buildAmendmentChronology(tenants) {
 }
 
 function buildEvidenceAppendix(tenants) {
-  const rows = [];
+  const CAM_FINANCIAL = new Set(['cap', 'admin_fee_pct', 'gross_up_pct', 'expense_stop']);
+  const CITE_REQUIRED = new Set(['cap', 'admin_fee_pct', 'gross_up_pct', 'expense_stop', 'audit_rights']);
+
+  let totalExceptions = 0, totalCleanFields = 0, tenantsWithExceptions = 0;
+  const tenantSections = [];
 
   for (const t of (tenants || [])) {
-    const fev  = t.fieldEvidence || {};
-    const ams  = Array.isArray(t.amendments) ? t.amendments : [];
-    const name = t.tenant_name || t.id || '';
-    const tid  = t.id || '';
+    const fev       = t.fieldEvidence || {};
+    const ams       = Array.isArray(t.amendments) ? t.amendments : [];
+    const name      = t.tenant_name || t.id || '';
+    const tid       = t.id || '';
+    const confScore = t._confidenceScore ?? null;
+    const confLevel = t._confidence || (confScore != null ? (confScore >= 80 ? 'high' : confScore >= 55 ? 'medium' : 'low') : null);
+    const isNnn     = (t.lease_type || '').toLowerCase().includes('nnn') || (t.lease_type || '').toLowerCase().includes('triple');
+
+    const criticalExceptions  = [];
+    const leaseRisks          = [];
+    const lowConfidenceFields = [];
+    const missingCitations    = [];
+    let cleanFieldCount = 0;
 
     const fields = new Set([
       ...Object.keys(fev),
       ...CANONICAL_FIELDS.filter(f => t[f] != null),
     ]);
+    if (t.leased_sqft == null) fields.add('leased_sqft');
+    if (t.start_date  == null) fields.add('start_date');
+    if (t.end_date    == null) fields.add('end_date');
+    if (isNnn && t.cap == null) fields.add('cap');
 
     for (const field of fields) {
-      const snapshots  = fev[field]?.snapshots || [];
-      const latestSnap = snapshots[snapshots.length - 1] || null;
-      const value      = t[field] ?? latestSnap?.value ?? null;
-      if (value == null && !snapshots.length) continue;
+      const snapshots   = fev[field]?.snapshots || [];
+      const latestSnap  = snapshots[snapshots.length - 1] || null;
+      const value       = t[field] ?? latestSnap?.value ?? null;
+      const isNullCrit  = ['leased_sqft', 'start_date', 'end_date'].includes(field) && value == null;
+      const isNnnCapGap = isNnn && field === 'cap' && value == null;
 
-      const govAmd = ams.slice().reverse().find(a => (a.overriddenFields || []).includes(field));
-      const govDoc      = govAmd ? 'amendment' : 'original_lease';
-      const govDocDate  = govAmd ? (govAmd.effectiveDate || govAmd.uploadedAt || null) : (t.start_date || null);
-      const quote       = latestSnap?.quote || null;
-      const confScore   = (typeof latestSnap?.confidence === 'object' && latestSnap.confidence !== null)
-        ? null
-        : (t._confidenceScore ?? null);
-      const confLevel   = t._confidence || (confScore != null ? (confScore >= 80 ? 'high' : confScore >= 55 ? 'medium' : 'low') : null);
-      const amdModCount = ams.filter(a => (a.overriddenFields || []).includes(field)).length;
+      if (value == null && !snapshots.length && !isNullCrit && !isNnnCapGap) continue;
 
-      const supersededHistory = snapshots.slice(0, -1).map(s => ({
-        value:       s.value,
-        amendmentId: s.amendmentId || null,
-        sourceFile:  s.sourceFile  || null,
-        extractedAt: s.extractedAt || null,
-      }));
+      const amdModCount    = ams.filter(a => (a.overriddenFields || []).includes(field)).length;
+      const quote          = latestSnap?.quote || null;
+      const displayValue   = value != null ? _displayValue(field, value) : '—';
+      const supersededFrom = snapshots.slice(0, -1).map(s => _displayValue(field, s.value));
 
-      rows.push({
-        tenantName:             name,
-        tenantId:               tid,
-        field,
-        extractedValue:         value,
-        displayValue:           _displayValue(field, value),
-        governingDocument:      govDoc,
-        governingDocumentDate:  govDocDate,
-        quote,
-        confidence:             confScore,
-        confidenceLevel:        confLevel,
-        supersededHistory,
-        reviewerAttentionRequired: (confScore != null && confScore < 70) || amdModCount > 1 || !quote,
-      });
+      // Priority 1: Critical Exceptions
+      if (amdModCount > 1) {
+        criticalExceptions.push({ field, displayValue, issue: `Modified by ${amdModCount} amendments`, supersededFrom });
+        continue;
+      }
+      if (isNullCrit) {
+        criticalExceptions.push({ field, displayValue: '—', issue: 'Required field missing — reconciliation affected', supersededFrom: [] });
+        continue;
+      }
+
+      // Priority 2: Lease Risks
+      let risk = null;
+      if (isNnnCapGap) {
+        risk = 'CAM cap absent — increase exposure unquantified';
+      } else if (field === 'gross_up_pct' && value != null && !quote) {
+        risk = 'Gross-up threshold unverified by clause language';
+      } else if (field === 'audit_rights' && value === true && !quote) {
+        risk = 'Audit window unclear — no clause language found';
+      } else if (field === 'renewal_options' && value != null && !quote) {
+        risk = 'Renewal terms unverified — no clause language found';
+      }
+      if (risk) {
+        leaseRisks.push({ field, displayValue, risk, confidence: confScore, confidenceLevel: confLevel });
+        continue;
+      }
+
+      // Priority 3: Low Confidence Fields (CAM financial, score < 55)
+      if (CAM_FINANCIAL.has(field) && confScore != null && confScore < 55) {
+        lowConfidenceFields.push({ field, displayValue, score: confScore, level: confLevel });
+        continue;
+      }
+
+      // Priority 4: Missing Citations (CAM financial, value, no quote)
+      if (CITE_REQUIRED.has(field) && value != null && !quote) {
+        const govAmd = ams.slice().reverse().find(a => (a.overriddenFields || []).includes(field));
+        missingCitations.push({ field, displayValue, governingDocument: govAmd ? 'amendment' : 'original_lease' });
+        continue;
+      }
+
+      // Priority 5: Verified
+      cleanFieldCount++;
     }
+
+    const exceptionCount = criticalExceptions.length + leaseRisks.length + lowConfidenceFields.length + missingCitations.length;
+    totalExceptions  += exceptionCount;
+    totalCleanFields += cleanFieldCount;
+    if (exceptionCount > 0) tenantsWithExceptions++;
+
+    tenantSections.push({
+      tenantId:           tid,
+      tenantName:         name,
+      confidence:         confLevel,
+      confidenceScore:    confScore,
+      exceptionCount,
+      cleanFieldCount,
+      criticalExceptions,
+      leaseRisks,
+      lowConfidenceFields,
+      missingCitations,
+    });
   }
 
-  return rows;
+  return {
+    tenantSections,
+    summary: {
+      totalTenants:          tenantSections.length,
+      tenantsWithExceptions,
+      totalExceptions,
+      totalCleanFields,
+    },
+  };
 }
 
 function buildDisputeSummary(property) {
@@ -468,19 +529,31 @@ function formatReviewPacketHtml(packet, options) {
     </table>`;
 
   const showEvidence = audience === 'attorney' || audience === 'auditor' || audience === 'landlord';
-  const evidenceHtml = showEvidence ? `<div class="rpt-section-title">Evidence Appendix</div>
-    ${(packet.evidenceAppendix || []).map(e => `<details style="margin-bottom:6px;border:1px solid rgba(100,116,139,0.15);border-radius:6px;padding:4px 10px;">
-      <summary style="cursor:pointer;font-size:0.8rem;color:${e.reviewerAttentionRequired ? '#fbbf24' : '#e2e8f0'};font-weight:${e.reviewerAttentionRequired ? '600' : '400'};">
-        ${_esc(e.tenantName)} — ${_esc(e.field)} : ${_esc(e.displayValue)}
-        ${e.reviewerAttentionRequired ? ' ⚠' : ''}
-      </summary>
-      <div style="font-size:0.73rem;color:#64748b;padding:6px 0;">
-        <div><strong>Governing:</strong> ${_esc(e.governingDocument.replace('_',' '))}${e.governingDocumentDate ? ` (${_esc(_fmtDate(e.governingDocumentDate))})` : ''}</div>
-        ${e.quote ? `<div style="margin:4px 0;padding:4px 8px;background:rgba(99,102,241,0.08);border-left:2px solid #818cf8;font-style:italic;">"${_esc(e.quote.slice(0,200))}${e.quote.length > 200 ? '…' : ''}"</div>` : '<div style="color:#f87171;font-size:0.71rem;">No direct clause quote — manual verification recommended.</div>'}
-        ${e.supersededHistory.length ? `<div><strong>Superseded history:</strong> ${e.supersededHistory.map(h => _esc(String(h.value))).join(' → ')}</div>` : ''}
-        <div><strong>Confidence:</strong> ${_esc(e.confidenceLevel || '—')}${e.confidence != null ? ` (${e.confidence}/100)` : ''}</div>
-      </div>
-    </details>`).join('') || '<div style="color:#64748b;font-size:0.8rem;">No field evidence recorded.</div>'}` : '';
+  let evidenceHtml = '';
+  if (showEvidence) {
+    const ea       = packet.evidenceAppendix || {};
+    const sections = Array.isArray(ea.tenantSections) ? ea.tenantSections : [];
+    const eaSum    = ea.summary || {};
+    const _evRow   = (field, displayValue, detail, badge) =>
+      `<div class="rpt-ev-row"><span class="rpt-ev-field">${_esc(field)}</span><span class="rpt-ev-val">${_esc(displayValue)}</span><span class="rpt-ev-detail">${_esc(detail)}</span>${badge || ''}</div>`;
+    const _evCat   = (items, label, mod, renderFn) =>
+      items.length ? `<div class="rpt-ev-cat rpt-ev-cat--${mod}"><div class="rpt-ev-cat-hdr">${label} (${items.length})</div>${items.map(renderFn).join('')}</div>` : '';
+    const cards = sections.map(s => {
+      const cc = s.confidence === 'high' ? '#4ade80' : s.confidence === 'medium' ? '#fbbf24' : s.confidence === 'low' ? '#f87171' : '#94a3b8';
+      const critH = _evCat(s.criticalExceptions, '⚠ Critical Exceptions', 'critical', e =>
+        _evRow(e.field, e.displayValue, e.issue, e.supersededFrom?.length ? `<span class="rpt-ev-history">Was: ${_esc(e.supersededFrom.join(' → '))}</span>` : ''));
+      const riskH = _evCat(s.leaseRisks, 'Lease Risks', 'risk', e => {
+        const lcc = e.confidenceLevel === 'high' ? '#4ade80' : e.confidenceLevel === 'medium' ? '#fbbf24' : '#f87171';
+        return _evRow(e.field, e.displayValue, e.risk, e.confidence != null ? `<span class="rpt-ev-conf" style="color:${lcc};">${e.confidence}/100 ${_esc(e.confidenceLevel || '')}</span>` : '');
+      });
+      const lcH   = _evCat(s.lowConfidenceFields, 'Low Confidence Fields', 'lowconf', e => _evRow(e.field, e.displayValue, `Score ${e.score}/100 (${_esc(e.level || '')})`));
+      const citeH = _evCat(s.missingCitations, 'Missing Citations', 'cite', e => _evRow(e.field, e.displayValue, `No verbatim clause quote — ${_esc(e.governingDocument.replace('_', ' '))}`));
+      const clean = s.cleanFieldCount > 0 ? `<div class="rpt-ev-clean">✓ ${s.cleanFieldCount} field${s.cleanFieldCount !== 1 ? 's' : ''} verified — no exceptions</div>` : '';
+      return `<details class="rpt-ev-tenant"${s.exceptionCount > 0 ? ' open' : ''}><summary class="rpt-ev-tenant-hdr"><span class="rpt-ev-tenant-name">${_esc(s.tenantName)}</span><span class="rpt-ev-tenant-conf" style="color:${cc};">${_esc(s.confidence || '—')}${s.confidenceScore != null ? ` (${s.confidenceScore}/100)` : ''}</span>${s.exceptionCount > 0 ? `<span class="rpt-ev-tenant-exc">${s.exceptionCount} exception${s.exceptionCount !== 1 ? 's' : ''}</span>` : `<span class="rpt-ev-tenant-clean">✓ Clean</span>`}</summary><div class="rpt-ev-tenant-body">${critH}${riskH}${lcH}${citeH}${clean}</div></details>`;
+    }).join('');
+    const sumBar = eaSum.totalTenants ? `<div class="rpt-ev-summary">${eaSum.totalTenants} tenants · ${eaSum.totalExceptions} exceptions · ${eaSum.totalCleanFields} verified fields</div>` : '';
+    evidenceHtml = `<div class="rpt-section-title">Evidence Appendix</div>${sumBar}${cards || '<div style="color:#64748b;font-size:0.8rem;">No field evidence recorded.</div>'}`;
+  }
 
   const ds = packet.disputeSummary || {};
   const hideDisputeDetail = audience === 'lender';
@@ -628,22 +701,31 @@ console.log('\n═══ TEST 2: buildEvidenceAppendix ═══');
 
 const evidence = buildEvidenceAppendix([tenantA, tenantB]);
 
-// Test 4: includes cap field for tenantA with supersededHistory.length === 1
+// Test 4: tenantA cap in criticalExceptions with supersededFrom history (modified by 2 amendments)
 {
-  const capRow = evidence.find(r => r.tenantId === 'tenant-a' && r.field === 'cap');
-  assert(capRow != null && capRow.supersededHistory.length === 1, 'buildEvidenceAppendix: cap row for tenantA has 1 superseded history entry');
+  const sA = evidence.tenantSections.find(s => s.tenantId === 'tenant-a');
+  assert(
+    sA != null && sA.criticalExceptions.some(e => e.field === 'cap' && e.supersededFrom.length >= 1),
+    'buildEvidenceAppendix: tenantA cap in criticalExceptions with supersededFrom history'
+  );
 }
 
-// Test 5: reviewerAttentionRequired=true for tenantB's gross_up_pct (no quote)
+// Test 5: tenantB gross_up_pct in leaseRisks (no quote — consumes the field before lowConfidenceFields)
 {
-  const grossRow = evidence.find(r => r.tenantId === 'tenant-b' && r.field === 'gross_up_pct');
-  assert(grossRow != null && grossRow.reviewerAttentionRequired === true, 'buildEvidenceAppendix: tenantB gross_up_pct reviewerAttentionRequired=true (no quote)');
+  const sB = evidence.tenantSections.find(s => s.tenantId === 'tenant-b');
+  assert(
+    sB != null && sB.leaseRisks.some(r => r.field === 'gross_up_pct'),
+    'buildEvidenceAppendix: tenantB gross_up_pct in leaseRisks (no quote)'
+  );
 }
 
-// Test 6: only includes non-null fields
+// Test 6: missingCitations and lowConfidenceFields entries have non-null display values
 {
-  const nullValRows = evidence.filter(r => r.extractedValue == null && r.supersededHistory.length === 0);
-  assertEqual(nullValRows.length, 0, 'buildEvidenceAppendix: only includes rows with non-null values or snapshots');
+  const allOk = evidence.tenantSections.every(s =>
+    s.missingCitations.every(m => m.displayValue !== '—') &&
+    s.lowConfidenceFields.every(l => l.displayValue !== '—')
+  );
+  assert(allOk, 'buildEvidenceAppendix: missingCitations and lowConfidenceFields have non-null display values');
 }
 
 // ── TEST GROUP 3: buildDisputeSummary ─────────────────────────────────────────
@@ -725,6 +807,57 @@ assert(
   !lenderHtml.includes('Dispute Summary') && lenderHtml.includes('Dispute Overview') && !lenderHtml.includes('Days Open'),
   'formatReviewPacketHtml (lender): shows "Dispute Overview" without dispute detail table'
 );
+
+// ── TEST GROUP 8: buildEvidenceAppendix — Phase 24 ───────────────────────────
+
+console.log('\n═══ TEST 8: buildEvidenceAppendix Phase 24 ═══');
+
+// Test 17: tenantB leaseRisks gross_up_pct entry includes confidence badge fields
+{
+  const sB = evidence.tenantSections.find(s => s.tenantId === 'tenant-b');
+  const riskEntry = sB?.leaseRisks.find(r => r.field === 'gross_up_pct');
+  assert(
+    riskEntry != null && riskEntry.confidence === 42 && riskEntry.confidenceLevel === 'low',
+    'buildEvidenceAppendix: leaseRisk entry carries confidence badge (score + level) for context'
+  );
+}
+
+// Test 18: tenantA missingCitations contains admin_fee_pct (value present, no quote)
+{
+  const sA = evidence.tenantSections.find(s => s.tenantId === 'tenant-a');
+  assert(
+    sA != null && sA.missingCitations.some(m => m.field === 'admin_fee_pct'),
+    'buildEvidenceAppendix: tenantA admin_fee_pct in missingCitations (value but no quote)'
+  );
+}
+
+// Test 19: tenantA cleanFieldCount >= 1 (audit_rights has quote → verified)
+{
+  const sA = evidence.tenantSections.find(s => s.tenantId === 'tenant-a');
+  assert(
+    sA != null && sA.cleanFieldCount >= 1,
+    'buildEvidenceAppendix: tenantA cleanFieldCount >= 1 (fields with quotes/no exceptions verified)'
+  );
+}
+
+// Test 20: summary totalTenants and tenantsWithExceptions counts
+{
+  assertEqual(evidence.summary.totalTenants, 2, 'buildEvidenceAppendix: summary.totalTenants === 2');
+  assertEqual(evidence.summary.tenantsWithExceptions, 2, 'buildEvidenceAppendix: summary.tenantsWithExceptions === 2');
+}
+
+// Test 21: summary totalCleanFields equals combined clean counts (6 tenantA + 3 tenantB = 9)
+{
+  assertEqual(evidence.summary.totalCleanFields, 9, 'buildEvidenceAppendix: summary.totalCleanFields === 9');
+}
+
+// Test 22: HTML output contains tenant names as rpt-ev-tenant-name elements (not per-field summaries)
+{
+  assert(
+    html.includes('rpt-ev-tenant-name') && html.includes('Acme Corp') && html.includes('Beta LLC'),
+    'formatReviewPacketHtml: evidence section uses tenant-grouped cards with rpt-ev-tenant-name elements'
+  );
+}
 
 // ── Summary ───────────────────────────────────────────────────────────────────
 
