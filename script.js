@@ -1011,12 +1011,14 @@ async function extractPdfText(file) {
   const arrayBuffer = await file.arrayBuffer();
   const pdf = await lib.getDocument({ data: arrayBuffer }).promise;
 
-  const MAX_PAGES = 5;
-  // WHY warn: commercial leases are often 20-60 pages; term sheets and exhibit pages
-  // can appear well past page 5. Silent truncation produced no signal when key fields
-  // (commencement date, tenant name) lived beyond the read window.
+  // WHY 50: Ask-the-Lease needs full lease text for QA. Substantive clauses (CAM,
+  // exclusions, renewals) typically appear on pages 10–40. 5 pages only covered
+  // the cover sheet and recitals, making QA useless for standard commercial leases.
+  // Field extraction (callClaudeForLease) uses prepareLeaseTextForClaude which
+  // caps its own input window — extra stored pages don't affect extraction cost.
+  const MAX_PAGES = 50;
   if (pdf.numPages > MAX_PAGES) {
-    console.warn(`[extractPdfText] PDF has ${pdf.numPages} pages — reading only first ${MAX_PAGES}. Key terms may be truncated; Claude PDF vision path will read the full document.`);
+    console.warn(`[extractPdfText] PDF has ${pdf.numPages} pages — reading only first ${MAX_PAGES}. Exhibits beyond page 50 will not be stored.`);
   }
 
   const pages = [];
@@ -14704,7 +14706,14 @@ async function _submitLeaseQuestion(docId) {
       const safe = result.answer
         .replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;')
         .replace(/\n/g, '<br>');
-      ansEl.innerHTML = `<div class="lc-answer-text">${safe}</div>`;
+      const kbRead  = result.charsAnalyzed ? Math.round(result.charsAnalyzed / 1000) : null;
+      const metaLine = kbRead
+        ? `<div class="lc-answer-meta">${result.truncated
+            ? `⚠ Only the first ${kbRead}k chars of this lease were analyzed — some clauses may be beyond the read window. Re-upload to store more pages.`
+            : `Analyzed ${kbRead}k chars of stored lease text.`
+          }</div>`
+        : '';
+      ansEl.innerHTML = `<div class="lc-answer-text">${safe}</div>${metaLine}`;
     }
   } catch (e) {
     ansEl.innerHTML = `<span class="lc-answer-error">Network error: ${e.message}</span>`;

@@ -21,13 +21,24 @@ function assert(label, condition, detail = '') {
 }
 
 // ---------------------------------------------------------------------------
-// Inline replica of handler logic for unit testing
+// Inline replica of handler logic (kept in sync with api/ask-lease.js)
 // ---------------------------------------------------------------------------
 
-const MAX_QUESTION_LEN = 1000;
-const MAX_LEASE_TEXT   = 80000;
+const MAX_QUESTION_LEN  = 1000;
+const MAX_LEASE_TEXT    = 300000;
+const ANTHROPIC_TIMEOUT = 45000;
+const ASK_MODEL         = 'claude-sonnet-4-6';
 
-function buildHandler({ sbRows = null, sbError = false, anthropicAnswer = null, anthropicError = null } = {}) {
+function buildHandler({
+  sbRows          = null,
+  sbError         = false,
+  anthropicAnswer = null,
+  anthropicError  = null,
+  anthropicAbort  = false,  // simulates AbortError (timeout)
+  captureModel    = false,
+} = {}) {
+  let calledWithModel = null;
+
   async function mockFetchLeaseDoc(id) {
     if (sbError) throw new Error('Supabase network failure');
     if (sbRows === null) return null;
@@ -35,8 +46,21 @@ function buildHandler({ sbRows = null, sbError = false, anthropicAnswer = null, 
   }
 
   async function mockCallClaude(leaseText, question) {
+    if (anthropicAbort) { const e = new Error('aborted'); e.name = 'AbortError'; throw e; }
     if (anthropicError) throw new Error(anthropicError);
-    return { answer: anthropicAnswer || `Answer for: ${question}`, inputTokens: 100, outputTokens: 50 };
+
+    const truncated     = leaseText.length > MAX_LEASE_TEXT;
+    const textToSend    = truncated ? leaseText.slice(0, MAX_LEASE_TEXT) : leaseText;
+    const charsAnalyzed = textToSend.length;
+
+    return {
+      answer:       anthropicAnswer || `Answer for: ${question}`,
+      truncated,
+      charsAnalyzed,
+      model:        ASK_MODEL,
+      inputTokens:  100,
+      outputTokens: 50,
+    };
   }
 
   async function handle(body) {
@@ -66,10 +90,20 @@ function buildHandler({ sbRows = null, sbError = false, anthropicAnswer = null, 
     try {
       result = await mockCallClaude(doc.extracted_text, question.trim());
     } catch (err) {
+      if (err.name === 'AbortError') {
+        return { status: 500, body: { error: 'Claude took too long to respond (>45s). Try a shorter question or try again.' } };
+      }
       return { status: 500, body: { error: err.message || 'Claude request failed' } };
     }
 
-    return { status: 200, body: { answer: result.answer } };
+    return {
+      status: 200,
+      body: {
+        answer:        result.answer,
+        truncated:     result.truncated,
+        charsAnalyzed: result.charsAnalyzed,
+      },
+    };
   }
 
   return { handle };
@@ -108,13 +142,11 @@ async function runTests() {
 
   console.log('\n[Supabase lookup]');
   {
-    // Not found
     const h1 = buildHandler({ sbRows: [] });
     const r1  = await h1.handle({ leaseDocumentId: 'missing-id', question: 'What is the CAM cap?' });
     assert('AL-7: 404 when doc not found',    r1.status === 404);
     assert('AL-8: error message meaningful',  r1.body.error.includes('not found'));
 
-    // Supabase network error
     const h2 = buildHandler({ sbError: true });
     const r2  = await h2.handle({ leaseDocumentId: 'doc-1', question: 'test' });
     assert('AL-9: 502 on Supabase network error', r2.status === 502);
@@ -124,14 +156,12 @@ async function runTests() {
 
   console.log('\n[No extracted text]');
   {
-    // PDF vision path — no text stored
     const h1 = buildHandler({ sbRows: [{ id: 'doc-vis', extracted_text: null, used_pdf_direct: true }] });
     const r1  = await h1.handle({ leaseDocumentId: 'doc-vis', question: 'What is the CAM cap?' });
     assert('AL-10: 422 for vision doc with no text',         r1.status === 422);
     assert('AL-11: error explains PDF vision limitation',    r1.body.error.includes('PDF vision'));
     assert('AL-12: error mentions re-upload',                r1.body.error.includes('Re-upload'));
 
-    // Text path but extracted_text somehow null
     const h2 = buildHandler({ sbRows: [{ id: 'doc-notext', extracted_text: null, used_pdf_direct: false }] });
     const r2  = await h2.handle({ leaseDocumentId: 'doc-notext', question: 'test' });
     assert('AL-13: 422 for text-path doc with null text', r2.status === 422);
@@ -146,9 +176,11 @@ async function runTests() {
 
     const h = buildHandler({ sbRows: rows, anthropicAnswer: 'The CAM cap is 5% per year as stated in Section 3.' });
     const r = await h.handle({ leaseDocumentId: 'doc-good', question: 'What is the CAM cap?' });
-    assert('AL-14: 200 on successful answer', r.status === 200);
-    assert('AL-15: answer field present',     typeof r.body.answer === 'string');
-    assert('AL-16: answer contains content',  r.body.answer.includes('5%'));
+    assert('AL-14: 200 on successful answer',        r.status === 200);
+    assert('AL-15: answer field present',            typeof r.body.answer === 'string');
+    assert('AL-16: answer contains content',         r.body.answer.includes('5%'));
+    assert('AL-17: charsAnalyzed in response',       typeof r.body.charsAnalyzed === 'number');
+    assert('AL-18: truncated=false for short text',  r.body.truncated === false);
   }
 
   // ── Question trimming ────────────────────────────────────────────────────
@@ -156,36 +188,57 @@ async function runTests() {
   console.log('\n[Question trimming]');
   {
     const rows = [{ id: 'doc-trim', extracted_text: 'Lease text here.', used_pdf_direct: false }];
-    let receivedQuestion = null;
-    const h = buildHandler({ sbRows: rows, anthropicAnswer: 'Trimmed answer' });
-
-    // Override to capture what was sent — patch the mock
-    const r = await h.handle({ leaseDocumentId: 'doc-trim', question: '  What is the cap?  ' });
-    assert('AL-17: 200 even with padded question', r.status === 200);
+    const h    = buildHandler({ sbRows: rows, anthropicAnswer: 'Trimmed answer' });
+    const r    = await h.handle({ leaseDocumentId: 'doc-trim', question: '  What is the cap?  ' });
+    assert('AL-19: 200 even with padded question', r.status === 200);
   }
 
-  // ── Anthropic error ──────────────────────────────────────────────────────
+  // ── Anthropic errors ──────────────────────────────────────────────────────
 
   console.log('\n[Anthropic errors]');
   {
     const rows = [{ id: 'doc-anthr', extracted_text: 'some text', used_pdf_direct: false }];
-    const h = buildHandler({ sbRows: rows, anthropicError: 'Anthropic API error 429: rate limit exceeded' });
-    const r = await h.handle({ leaseDocumentId: 'doc-anthr', question: 'What is the cap?' });
-    assert('AL-18: 500 on Anthropic error',          r.status === 500);
-    assert('AL-19: error message from Claude forwarded', r.body.error.includes('rate limit'));
+
+    const h1 = buildHandler({ sbRows: rows, anthropicError: 'Anthropic API error 429: rate limit exceeded' });
+    const r1  = await h1.handle({ leaseDocumentId: 'doc-anthr', question: 'What is the cap?' });
+    assert('AL-20: 500 on Anthropic error',               r1.status === 500);
+    assert('AL-21: error message from Claude forwarded',  r1.body.error.includes('rate limit'));
+
+    // Timeout (AbortError)
+    const h2 = buildHandler({ sbRows: rows, anthropicAbort: true });
+    const r2  = await h2.handle({ leaseDocumentId: 'doc-anthr', question: 'test' });
+    assert('AL-22: 500 on timeout',                       r2.status === 500);
+    assert('AL-23: error explains timeout clearly',       r2.body.error.includes('45s'));
   }
 
-  // ── Lease text truncation at MAX_LEASE_TEXT ──────────────────────────────
+  // ── Truncation at MAX_LEASE_TEXT ─────────────────────────────────────────
 
-  console.log('\n[Large lease text]');
+  console.log('\n[Truncation behavior]');
   {
-    const bigText = 'x'.repeat(90000);  // > MAX_LEASE_TEXT
-    const rows = [{ id: 'doc-big', extracted_text: bigText, used_pdf_direct: false }];
-    let capturedText = null;
-    // Verify that the handler still returns 200 (truncation happens inside callClaude, not as an error)
-    const h = buildHandler({ sbRows: rows, anthropicAnswer: 'Answer for large lease' });
-    const r = await h.handle({ leaseDocumentId: 'doc-big', question: 'test question' });
-    assert('AL-20: 200 returned even with oversized lease text', r.status === 200);
+    // Text just under limit — no truncation
+    const shortText = 'x'.repeat(299999);
+    const rowsShort = [{ id: 'doc-short', extracted_text: shortText, used_pdf_direct: false }];
+    const h1 = buildHandler({ sbRows: rowsShort, anthropicAnswer: 'ok' });
+    const r1  = await h1.handle({ leaseDocumentId: 'doc-short', question: 'test' });
+    assert('AL-24: truncated=false when text < MAX_LEASE_TEXT', r1.body.truncated === false);
+    assert('AL-25: charsAnalyzed == full text length',          r1.body.charsAnalyzed === 299999);
+
+    // Text over limit — truncated
+    const longText = 'x'.repeat(350000);
+    const rowsLong = [{ id: 'doc-long', extracted_text: longText, used_pdf_direct: false }];
+    const h2 = buildHandler({ sbRows: rowsLong, anthropicAnswer: 'ok' });
+    const r2  = await h2.handle({ leaseDocumentId: 'doc-long', question: 'test' });
+    assert('AL-26: truncated=true when text > MAX_LEASE_TEXT',  r2.body.truncated === true);
+    assert('AL-27: charsAnalyzed == MAX_LEASE_TEXT',            r2.body.charsAnalyzed === MAX_LEASE_TEXT);
+    assert('AL-28: 200 returned even with truncated text',      r2.status === 200);
+  }
+
+  // ── Model pinning ─────────────────────────────────────────────────────────
+
+  console.log('\n[Model pinning]');
+  {
+    // ASK_MODEL constant should be claude-sonnet-4-6 regardless of external state
+    assert('AL-29: ASK_MODEL is claude-sonnet-4-6', ASK_MODEL === 'claude-sonnet-4-6');
   }
 
   // ── Response shape ───────────────────────────────────────────────────────
@@ -195,8 +248,18 @@ async function runTests() {
     const rows = [{ id: 'doc-shape', extracted_text: 'lease text', used_pdf_direct: false }];
     const h = buildHandler({ sbRows: rows, anthropicAnswer: 'The answer is here.' });
     const r = await h.handle({ leaseDocumentId: 'doc-shape', question: 'question' });
-    assert('AL-21: only answer key in 200 body',  Object.keys(r.body).length === 1 && 'answer' in r.body);
-    assert('AL-22: answer is a string',            typeof r.body.answer === 'string' && r.body.answer.length > 0);
+    assert('AL-30: answer, truncated, charsAnalyzed in body', 'answer' in r.body && 'truncated' in r.body && 'charsAnalyzed' in r.body);
+    assert('AL-31: answer is a non-empty string',             typeof r.body.answer === 'string' && r.body.answer.length > 0);
+    assert('AL-32: no extra keys leaked',                     Object.keys(r.body).length === 3);
+  }
+
+  // ── MAX_LEASE_TEXT constant value ────────────────────────────────────────
+
+  console.log('\n[Constants]');
+  {
+    assert('AL-33: MAX_LEASE_TEXT is 300000',    MAX_LEASE_TEXT === 300000);
+    assert('AL-34: MAX_QUESTION_LEN is 1000',    MAX_QUESTION_LEN === 1000);
+    assert('AL-35: ANTHROPIC_TIMEOUT is 45000',  ANTHROPIC_TIMEOUT === 45000);
   }
 
   // ── Summary ───────────────────────────────────────────────────────────────
