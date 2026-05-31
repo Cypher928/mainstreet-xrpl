@@ -830,11 +830,13 @@
     .breadcrumb-clear-btn:hover { background: rgba(239,68,68,0.18); border-color: #ef4444; }
     .breadcrumb-delete-btn {
       padding: 5px 12px; border-radius: 7px; font-size: 0.74rem;
-      font-weight: 600; cursor: pointer; border: 1px solid rgba(239,68,68,0.22);
-      background: transparent; color: #94a3b8; transition: all 0.15s;
+      font-weight: 600; cursor: pointer; border: 1px solid rgba(239,68,68,0.45);
+      background: rgba(239,68,68,0.1); color: #f87171; transition: all 0.15s;
       white-space: nowrap;
     }
-    .breadcrumb-delete-btn:hover { background: rgba(239,68,68,0.1); border-color: rgba(239,68,68,0.5); color: #f87171; }
+    .breadcrumb-delete-btn:hover { background: rgba(239,68,68,0.22); border-color: #ef4444; color: #ef4444; }
+    .breadcrumb-delete-btn:active { background: rgba(239,68,68,0.32); }
+    .breadcrumb-danger-sep { display: inline-block; width: 1px; height: 18px; background: rgba(239,68,68,0.25); vertical-align: middle; flex-shrink: 0; }
     /* Delete Property confirmation modal */
     #deletePropertyModal {
       display: none; position: fixed; inset: 0; z-index: 9000;
@@ -1050,6 +1052,7 @@
     body.review-mode .breadcrumb-back,
     body.review-mode .breadcrumb-clear-btn,
     body.review-mode .breadcrumb-delete-btn,
+    body.review-mode .breadcrumb-danger-sep,
     body.review-mode .rc-open-btn,
     body.review-mode #syncIndicator { display: none !important; }
 
@@ -3854,6 +3857,7 @@
   <div id="syncIndicator" class="sync-indicator"></div>
   <button class="rc-open-btn" onclick="openRecoveryModal()" title="Recovery Center">&#x1F512; Recovery</button>
   <button class="breadcrumb-clear-btn" onclick="clearPropertyData()" title="Remove saved tenants, invoices &amp; results for this property">&#x1F5D1; Clear Data</button>
+  <span class="breadcrumb-danger-sep" aria-hidden="true"></span>
   <button class="breadcrumb-delete-btn" onclick="openDeletePropertyModal()" title="Permanently delete this property and all its data">&#x1F5D1; Delete Property</button>
 </div>
 
