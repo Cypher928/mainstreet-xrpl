@@ -14613,19 +14613,38 @@ function renderLeaseCenter(propertyId) {
       const uploadDate  = doc.created_at ? new Date(doc.created_at).toLocaleDateString() : '—';
       const modelLabel  = doc.used_pdf_direct ? 'PDF vision' : (doc.extraction_model ? 'text' : '—');
       const tenantLabel = doc.tenant_name || '<span style="color:#64748b;font-style:italic;">Unknown</span>';
+      const safeUrl     = doc.file_url ? doc.file_url.replace(/\\/g, '\\\\').replace(/'/g, "\\'") : '';
       const viewBtn     = doc.file_url
-        ? `<button class="lc-view-btn" onclick="openLeaseModal('${doc.file_url.replace(/'/g, "\\'")}')">View</button>`
+        ? `<button class="lc-view-btn" onclick="openLeaseModal('${safeUrl}')">View</button>`
         : `<span style="color:#475569;font-size:0.75rem;">no file</span>`;
+      const askBtn      = `<button class="lc-ask-btn" onclick="_toggleLeaseAsk('${doc.id}')" title="Ask a question about this lease">Ask</button>`;
       const deleteBtn   = `<button class="lc-del-btn" onclick="_deleteLeaseCenterRow('${doc.id}','${propertyId}')">✕</button>`;
 
-      return `<tr>
+      const dataRow = `<tr id="lc-row-${doc.id}">
         <td>${tenantLabel}</td>
-        <td style="max-width:200px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;" title="${doc.file_name}">${doc.file_name}</td>
+        <td style="max-width:180px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;" title="${doc.file_name}">${doc.file_name}</td>
         <td><span class="lc-status-badge" style="background:${statusColor}22;color:${statusColor};border:1px solid ${statusColor}44;">${doc.parsing_status}</span></td>
         <td style="color:#94a3b8;">${modelLabel}</td>
         <td style="color:#94a3b8;">${uploadDate}</td>
-        <td style="text-align:right;white-space:nowrap;">${viewBtn} ${deleteBtn}</td>
+        <td style="text-align:right;white-space:nowrap;">${viewBtn} ${askBtn} ${deleteBtn}</td>
       </tr>`;
+
+      const askRow = `<tr id="lc-ask-${doc.id}" class="lc-ask-row" style="display:none;">
+        <td colspan="6" style="padding:0;">
+          <div class="lc-ask-panel">
+            <div class="lc-ask-input-row">
+              <textarea id="lc-q-${doc.id}" class="lc-ask-textarea"
+                placeholder="Ask anything about this lease — CAM terms, renewal options, exclusions…"
+                rows="2"
+                onkeydown="if(event.key==='Enter'&&!event.shiftKey){event.preventDefault();_submitLeaseQuestion('${doc.id}')}"></textarea>
+              <button class="lc-ask-submit-btn" onclick="_submitLeaseQuestion('${doc.id}')">Ask</button>
+            </div>
+            <div id="lc-ans-${doc.id}" class="lc-answer" style="display:none;"></div>
+          </div>
+        </td>
+      </tr>`;
+
+      return dataRow + askRow;
     }).join('');
 
     panel.innerHTML = `
@@ -14648,6 +14667,48 @@ function renderLeaseCenter(propertyId) {
     console.error('[renderLeaseCenter] failed:', err?.message);
     panel.innerHTML = `<div style="padding:16px 0;color:#ef4444;font-size:0.875rem;">Failed to load lease documents: ${err?.message || 'unknown error'}</div>`;
   });
+}
+
+function _toggleLeaseAsk(docId) {
+  const askRow = document.getElementById('lc-ask-' + docId);
+  if (!askRow) return;
+  const opening = askRow.style.display === 'none';
+  askRow.style.display = opening ? 'table-row' : 'none';
+  if (opening) {
+    const q = document.getElementById('lc-q-' + docId);
+    if (q) setTimeout(() => q.focus(), 40);
+  }
+}
+
+async function _submitLeaseQuestion(docId) {
+  const qEl   = document.getElementById('lc-q-'   + docId);
+  const ansEl = document.getElementById('lc-ans-' + docId);
+  if (!qEl || !ansEl) return;
+
+  const question = qEl.value.trim();
+  if (!question) { qEl.focus(); return; }
+
+  ansEl.style.display = 'block';
+  ansEl.innerHTML = '<span class="lc-answer-loading">Thinking…</span>';
+
+  try {
+    const resp   = await fetch('/api/ask-lease', {
+      method:  'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body:    JSON.stringify({ leaseDocumentId: docId, question }),
+    });
+    const result = await resp.json().catch(() => ({}));
+    if (!resp.ok || result.error) {
+      ansEl.innerHTML = `<span class="lc-answer-error">${result.error || 'Request failed — check console for details.'}</span>`;
+    } else {
+      const safe = result.answer
+        .replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;')
+        .replace(/\n/g, '<br>');
+      ansEl.innerHTML = `<div class="lc-answer-text">${safe}</div>`;
+    }
+  } catch (e) {
+    ansEl.innerHTML = `<span class="lc-answer-error">Network error: ${e.message}</span>`;
+  }
 }
 
 async function _deleteLeaseCenterRow(id, propertyId) {

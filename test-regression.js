@@ -24,6 +24,7 @@ const SUITES = [
   { label: 'Normalized read migration',    cmd: 'node test-normalized-reads.js' },
   { label: 'CAM reconciliation persistence', cmd: 'node test-cam-persistence.js' },
   { label: 'Lease document persistence',     cmd: 'node test-lease-persistence.js' },
+  { label: 'Ask the Lease API',              cmd: 'node test-ask-lease.js' },
 ];
 
 let anyFailed = false;
