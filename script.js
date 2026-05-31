@@ -15763,6 +15763,67 @@ async function clearPropertyData() {
   document.getElementById('totalSqft').value    = savedSqft;
 }
 
+function openDeletePropertyModal() {
+  if (!activePropId) return;
+  const prop = _props.find(p => p.id === activePropId);
+  document.getElementById('delModalPropName').textContent = prop?.name || 'This Property';
+  document.getElementById('delModalConfirmBtn').disabled  = false;
+  document.getElementById('delModalConfirmBtn').textContent = 'Delete Property';
+  document.getElementById('delModalCancelBtn').disabled   = false;
+  document.getElementById('deletePropertyModal').classList.add('open');
+}
+
+function closeDeletePropertyModal() {
+  document.getElementById('deletePropertyModal').classList.remove('open');
+}
+
+async function confirmDeleteProperty() {
+  if (!activePropId) return;
+  const propId   = activePropId;
+  const propName = _props.find(p => p.id === propId)?.name || 'Property';
+
+  const confirmBtn = document.getElementById('delModalConfirmBtn');
+  const cancelBtn  = document.getElementById('delModalCancelBtn');
+  confirmBtn.disabled  = true;
+  confirmBtn.textContent = 'Deleting…';
+  cancelBtn.disabled   = true;
+
+  try {
+    // Delete tenants explicitly (cascade from properties may not cover the tenants table)
+    await db.from('tenants').delete().eq('property_id', propId);
+    // Delete the property — all child tables cascade (cam_reconciliations, lease_documents,
+    // lease_jobs, tenant_field_evidence, tenant_review_audit all have ON DELETE CASCADE)
+    const { error } = await db.from('properties').delete().eq('id', propId);
+    if (error) throw error;
+  } catch (e) {
+    confirmBtn.disabled  = false;
+    confirmBtn.textContent = 'Delete Property';
+    cancelBtn.disabled   = false;
+    alert('Delete failed: ' + (e.message || String(e)));
+    return;
+  }
+
+  // Remove from in-memory state
+  const idx = _props.findIndex(p => p.id === propId);
+  if (idx >= 0) _props.splice(idx, 1);
+  const pidx = portfolio.findIndex(p => p.id === propId);
+  if (pidx >= 0) portfolio.splice(pidx, 1);
+
+  // Remove from localStorage
+  try {
+    const stored = JSON.parse(_lsGet(_lsUserKey()) || '{}');
+    delete stored[propId];
+    _lsSet(_lsUserKey(), JSON.stringify(stored));
+  } catch (_) {}
+
+  logActivity('property_deleted', `Property deleted: ${propName}`, { severity: 'warning', actor: 'User' });
+
+  closeDeletePropertyModal();
+  activePropId = null;
+  renderPortfolio(_props);
+  window.scrollTo({ top: 0, behavior: 'smooth' });
+}
+
 // Re-draw the results cards from a reconciliation snapshot.
 // Pass the snapshot object to hydrate globals before rendering, or omit to
 // render from already-set globals (e.g. immediately after runAllocation).
