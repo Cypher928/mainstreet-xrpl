@@ -8293,6 +8293,8 @@ function getCamYear() { return _camYear; }
 function setCamYear(y) {
   _camYear = parseInt(y, 10) || new Date().getFullYear();
   localStorage.setItem(_camYearKey(), _camYear);
+  const glLbl = document.getElementById('glUploadLabel');
+  if (glLbl) glLbl.textContent = `Upload ${_camYear} GL Excel File (.xlsx only)`;
 }
 function initCamYearSelect() {
   const sel = document.getElementById('camYearSelect');
@@ -8306,6 +8308,8 @@ function initCamYearSelect() {
     if (yr === _camYear) opt.selected = true;
     sel.appendChild(opt);
   }
+  const glLbl = document.getElementById('glUploadLabel');
+  if (glLbl) glLbl.textContent = `Upload ${_camYear} GL Excel File (.xlsx only)`;
 }
 let sqftMismatch   = false;
 let isEditingField = false; // true while a text/number/date input has focus
@@ -13899,7 +13903,19 @@ function renderPortfolio(props) {
            </div>`
         : ''}
     </div>`;
-  }).join('');
+  }).join('') || `
+    <div class="ptf-empty-state">
+      <div class="ptf-empty-icon">&#x1F3E2;</div>
+      <div class="ptf-empty-title">No properties yet</div>
+      <div class="ptf-empty-desc">Add your first property to start reconciling CAM charges, or try the live demo to explore the workflow.</div>
+    </div>`;
+
+  // Hide the hero intro / CTA once the user has properties — the cards are the entry point
+  const hasProps = props.length > 0;
+  const heroEl  = document.querySelector('.hero-intro');
+  const startEl = document.querySelector('.start-here');
+  if (heroEl)  heroEl.style.display  = hasProps ? 'none' : '';
+  if (startEl) startEl.style.display = hasProps ? 'none' : '';
 
   renderReviewQueue(props);
 
@@ -16027,6 +16043,15 @@ function _renderTenantPropertyView(property) {
 // ─── Init ─────────────────────────────────────────────────────────────────────
 async function init() {
   _loadCheckpoints();
+
+  // Show developer-only UI elements on localhost only
+  const isLocalDev = location.hostname === 'localhost' || location.hostname === '127.0.0.1';
+  if (isLocalDev) {
+    const dbhBtn = document.getElementById('dbHealthBtn');
+    if (dbhBtn) dbhBtn.style.removeProperty('display');
+    const testLabSlot = document.getElementById('testLabReportSlot');
+    if (testLabSlot) testLabSlot.style.removeProperty('display');
+  }
 
   // ── Tenant portal mode — bypass portfolio for tenant-role users ───────────
   // SECURITY: tenant check must come before review-mode check so that a tenant
