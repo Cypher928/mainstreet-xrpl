@@ -4910,11 +4910,15 @@ function renderBulkResults() {
     if (!d) return '';
 
     // Job progress state — resolved first so the pending branch can early-return
-    const isPending   = d.status === 'pending';
     const _job        = _leaseJobs.get(d.id);
     const _jobStage   = _job?.stage    || 'upload';
     const _jobPct     = _job?.progress ?? 0;
     const _jobElapsed = _job?._startMs ? ((Date.now() - _job._startMs) / 1000).toFixed(1) + 's' : '';
+    // Treat as pending if tenantData status flag says so OR if the matching
+    // _leaseJob is still actively processing (guards against d.status going stale
+    // after a retry or page-restore that repopulates tenantData from localStorage).
+    const isPending   = d.status === 'pending' ||
+      (!!_job && (_job.status === 'processing' || _job.status === 'queued'));
 
     // While extraction is running, render a clean processing card instead of the
     // full review card — prevents scores, risk levels, and field counts from
@@ -5144,7 +5148,7 @@ async function saveBulkTenant(i) {
   // truth and checks all required fields.
   if (d && d._needsReview) {
     const rv = deriveTenantReviewState(d);
-    if (rv.status === 'verified' || rv.status === 'manually_verified') {
+    if (rv.status === 'ready' || rv.status === 'verified' || rv.status === 'manually_verified') {
       d._needsReview = false;
       if (row) {
         row.classList.remove('has-warning', 'has-error');
@@ -5235,11 +5239,15 @@ async function saveBulkTenant(i) {
   }, 550);
 
   // Full re-render after the 0.8s flash animation completes.
-  // Resolves stale warning banners, status icons, review pills, and queue
-  // badges that are only recomputed inside renderBulkResults().
-  // Also refresh portfolio cards so readiness badges (Needs Review → Ready)
-  // reflect the saved fields without requiring a navigation round-trip.
-  setTimeout(() => { renderBulkResults(); renderPortfolio(_props); }, 850);
+  // Resolves stale warning banners, status icons, review pills, and queue badges.
+  // Also refresh portfolio cards if the portfolio is currently visible so readiness
+  // badges update in place. Guard required: renderPortfolio() hides mainWorkflow —
+  // calling it while the user is inside a property would navigate them away.
+  setTimeout(() => {
+    renderBulkResults();
+    const ptfEl = document.getElementById('portfolioDashboard');
+    if (ptfEl && ptfEl.style.display !== 'none') renderPortfolio(_props);
+  }, 850);
 
   showToast('Lease updated');
 }
