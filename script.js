@@ -4971,9 +4971,13 @@ function renderBulkResults() {
     const confLevel = _tenantConfLevel(d);
     const icon = d.extractionFailed ? '❌' : showWarning ? '⚠️' : d.tenant_name ? '✓' : '?';
 
+    // True when basic structural fields are absent — distinct from NNN/compliance warnings
+    // where all 5 required fields are present but the lease has unresolved items.
+    const hasMissingBasicFields = !sqft || !start || !end || !leaseType;
+
     const meta = d.extractionFailed
       ? 'Extraction failed — tap to re-upload'
-      : showWarning
+      : showWarning && hasMissingBasicFields
         ? 'Partial — some fields missing'
         : [
             sqft      !== null && sqft      !== '' ? `${sqft} sqft`   : '— sqft',
@@ -5001,9 +5005,15 @@ function renderBulkResults() {
           ${d._confidenceReasons?.length ? `<div class="cx-reasons">${d._confidenceReasons.map(r => `• ${r}`).join('<br>')}</div>` : ''}
         </div>`;
       }
-      if (confLevel === 'medium' || showWarning) {
+      if (confLevel === 'medium' || (showWarning && hasMissingBasicFields)) {
         return `<div class="cx-detail-banner cx-banner-medium">
           ⚠️ Partial extraction — AI found the tenant but some fields are missing. Please fill them in below.
+        </div>`;
+      }
+      if (showWarning && !hasMissingBasicFields) {
+        return `<div class="cx-detail-banner cx-banner-medium">
+          ⚠️ All fields are extracted. This lease has compliance items that need review — check the warnings below.
+          To mark as reviewed, open the AI Review workspace and confirm each item.
         </div>`;
       }
       return '';
