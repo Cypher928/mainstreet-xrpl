@@ -13817,10 +13817,9 @@ function renderPortfolio(props) {
   const statusLabel = { reconciled: 'Reconciled', 'in-progress': 'In Progress', disputes: 'Has Open Disputes' };
 
   document.getElementById('propertyCardsGrid').innerHTML = sortedPairs.map(({ p, m }) => {
-    const dm           = p._derivedMetrics || derivePropertyMetrics(p);
-    const tenants      = Array.isArray(p.tenants)  ? p.tenants.length  : (Number(p.tenantCount)  || 0);
-    const invoices     = dm.invoiceStats.totalInvoices;
-    const cam          = m.total || Number(p.totalCAM) || 0;
+    const dm      = p._derivedMetrics || derivePropertyMetrics(p);
+    const tenants = Array.isArray(p.tenants) ? p.tenants.length : (Number(p.tenantCount) || 0);
+    const cam     = m.total || Number(p.totalCAM) || 0;
     const status       = p.status || 'in-progress';
 
     const riskBadge = (() => {
@@ -13879,12 +13878,14 @@ function renderPortfolio(props) {
       ${rdInsight}
       <div class="ptf-stats-row">
         <div class="ptf-stat"><strong>${tenants}</strong>Tenants</div>
-        <div class="ptf-stat"><strong>${invoices}</strong>Invoices</div>
+        ${dm.reviewStats.flaggedLeaseCount > 0
+          ? `<div class="ptf-stat ptf-stat--warn"><strong>${dm.reviewStats.flaggedLeaseCount}</strong>Lease Warnings</div>`
+          : ''}
         ${dm.disputeStats.openDisputes > 0
           ? `<div class="ptf-stat ptf-stat--alert"><strong>${dm.disputeStats.openDisputes}</strong>Disputes</div>`
           : ''}
         ${m.missingDocs > 0
-          ? `<div class="ptf-stat ptf-stat--warn"><strong>${m.missingDocs}</strong>No Docs</div>`
+          ? `<div class="ptf-stat ptf-stat--warn"><strong>${m.missingDocs}</strong>Missing Docs</div>`
           : ''}
       </div>
       ${reviewChips.length > 0 ? `
@@ -13895,8 +13896,7 @@ function renderPortfolio(props) {
         </span>
         <button class="review-queue-btn" onclick="event.stopPropagation();selectProperty('${pid}')">AI Review ›</button>
       </div>` : ''}
-      <div class="ptf-cam-lbl">CAM This Period</div>
-      <div class="ptf-cam-val">${cam > 0 ? '$' + cam.toLocaleString('en-US') : '—'}</div>
+      ${cam > 0 ? `<div class="ptf-cam-lbl">CAM Reconciled</div><div class="ptf-cam-val">$${cam.toLocaleString('en-US')}</div>` : ''}
       ${footParts.length ? `<div class="ptf-card-foot">${footParts.join('')}</div>` : ''}
       ${m.avgConf !== null
         ? `<div class="ptf-conf-bar" title="${m.avgConf}% avg. match confidence">
