@@ -5237,7 +5237,9 @@ async function saveBulkTenant(i) {
   // Full re-render after the 0.8s flash animation completes.
   // Resolves stale warning banners, status icons, review pills, and queue
   // badges that are only recomputed inside renderBulkResults().
-  setTimeout(() => { renderBulkResults(); }, 850);
+  // Also refresh portfolio cards so readiness badges (Needs Review → Ready)
+  // reflect the saved fields without requiring a navigation round-trip.
+  setTimeout(() => { renderBulkResults(); renderPortfolio(_props); }, 850);
 
   showToast('Lease updated');
 }
