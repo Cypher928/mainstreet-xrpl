@@ -1316,7 +1316,21 @@
     }
     .bulk-tenant-row.has-error   { border-color: rgba(239,68,68,0.3); }
     .bulk-tenant-row.has-warning { border-color: rgba(245,158,11,0.35); }
-    .bulk-tenant-row.is-pending  { opacity: 0.6; pointer-events: none; }
+    .bulk-tenant-row.is-pending  { pointer-events: none; }
+    /* Processing card — shown while extraction is running */
+    .lx-proc-card { padding: 14px 16px 12px; }
+    .lx-proc-top  { display: flex; align-items: center; gap: 8px; margin-bottom: 10px; }
+    .lx-proc-icon { font-size: 0.9rem; flex-shrink: 0; }
+    .lx-proc-filename {
+      font-size: 0.8rem; font-weight: 600; color: #94a3b8;
+      flex: 1; min-width: 0; white-space: nowrap; overflow: hidden; text-overflow: ellipsis;
+    }
+    .lx-proc-steps { display: flex; align-items: center; gap: 6px; flex-wrap: wrap; margin-bottom: 10px; }
+    .lx-step      { font-size: 0.71rem; font-weight: 600; color: #334155; letter-spacing: 0.01em; }
+    .lx-step--active { color: #818cf8; animation: lx-pulse 1.4s ease-in-out infinite; }
+    .lx-step--done   { color: #4ade80; }
+    .lx-proc-sep  { font-size: 0.65rem; color: #1e293b; }
+    @keyframes lx-pulse { 0%, 100% { opacity: 1; } 50% { opacity: 0.55; } }
 
     /* Extraction confidence badges */
     .cx-badge {

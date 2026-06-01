@@ -4908,6 +4908,48 @@ function renderBulkResults() {
 
   const rows = tenants.map((d, i) => {
     if (!d) return '';
+
+    // Job progress state — resolved first so the pending branch can early-return
+    const isPending   = d.status === 'pending';
+    const _job        = _leaseJobs.get(d.id);
+    const _jobStage   = _job?.stage    || 'upload';
+    const _jobPct     = _job?.progress ?? 0;
+    const _jobElapsed = _job?._startMs ? ((Date.now() - _job._startMs) / 1000).toFixed(1) + 's' : '';
+
+    // While extraction is running, render a clean processing card instead of the
+    // full review card — prevents scores, risk levels, and field counts from
+    // flickering with incomplete data in front of the user.
+    if (isPending) {
+      const _procStep = (() => {
+        if (!_jobStage || _jobStage === 'queued' || _jobStage === 'upload' || _jobStage === 'OCR') return 1;
+        if (_jobStage === 'extraction') return 2;
+        return 3; // normalize, confidence, persistence
+      })();
+      const _fileName = esc(d.fileName || d.file_name || 'Lease file');
+      const _s = (n) => n < _procStep ? 'lx-step--done' : n === _procStep ? 'lx-step--active' : '';
+      return `
+      <div class="bulk-tenant-row is-pending" id="btr-${i}">
+        <div class="lx-proc-card">
+          <div class="lx-proc-top">
+            <span class="lx-proc-icon">&#x1F4C4;</span>
+            <span class="lx-proc-filename">${_fileName}</span>
+            <button class="bulk-t-remove" style="pointer-events:auto;" onclick="event.stopPropagation();removeBulkTenant(${i})">Remove</button>
+          </div>
+          <div class="lx-proc-steps">
+            <span class="lx-step ${_s(1)}">Reading Lease</span>
+            <span class="lx-proc-sep">&#x203A;</span>
+            <span class="lx-step ${_s(2)}">Extracting Terms</span>
+            <span class="lx-proc-sep">&#x203A;</span>
+            <span class="lx-step ${_s(3)}">Validating Fields</span>
+          </div>
+          <div class="cx-job-progress-track" style="max-width:100%;">
+            <div class="cx-job-progress-fill" style="width:${_jobPct}%"></div>
+          </div>
+          ${_jobElapsed ? `<span class="cx-job-elapsed">${_jobElapsed}</span>` : ''}
+        </div>
+      </div>`;
+    }
+
     const sqft      = d.leased_sqft  || null;
     const start     = d.start_date  || null;
     const end       = d.end_date    || null;
@@ -4922,20 +4964,10 @@ function renderBulkResults() {
     const isWeakName  = d.tenant_name ? !isStrongName(d.tenant_name) : false;
     const isDupName   = d.tenant_name ? _dupNames.has(d.tenant_name.trim().toLowerCase()) : false;
 
-    const isPending = d.status === 'pending';
     const confLevel = _tenantConfLevel(d);
-    const icon = isPending ? '⏳' : d.extractionFailed ? '❌' : showWarning ? '⚠️' : d.tenant_name ? '✓' : '?';
+    const icon = d.extractionFailed ? '❌' : showWarning ? '⚠️' : d.tenant_name ? '✓' : '?';
 
-    // Job progress state — only relevant when pending
-    const _job        = _leaseJobs.get(d.id);
-    const _jobStage   = _job?.stage    || 'upload';
-    const _jobPct     = _job?.progress ?? 0;
-    const _jobElapsed = _job?._startMs ? ((Date.now() - _job._startMs) / 1000).toFixed(1) + 's' : '';
-    const _stageLabel = _JOB_STAGES[_jobStage]?.label ?? 'Processing...';
-
-    const meta = isPending
-      ? _stageLabel
-      : d.extractionFailed
+    const meta = d.extractionFailed
       ? 'Extraction failed — tap to re-upload'
       : showWarning
         ? 'Partial — some fields missing'
@@ -4945,13 +4977,6 @@ function renderBulkResults() {
             end       !== null && end       !== '' ? end               : '—',
             leaseType !== null && leaseType !== '' ? leaseType         : '—',
           ].join(' · ');
-
-    const jobProgressHtml = isPending ? `
-      <div class="cx-job-progress-track">
-        <div class="cx-job-progress-fill" style="width:${_jobPct}%"></div>
-      </div>
-      ${_jobElapsed ? `<span class="cx-job-elapsed">${_jobElapsed}</span>` : ''}
-    ` : '';
 
     const dupBadge = isDupName
       ? `<span style="font-size:0.72rem;background:#78350f40;border:1px solid #f59e0b;color:#fbbf24;border-radius:4px;padding:1px 6px;margin-left:6px;white-space:nowrap;">⚠ Duplicate name — add unit # or remove one</span>`
@@ -4984,27 +5009,24 @@ function renderBulkResults() {
     const chevInitialHtml = d._autoExpand ? '&#x25B2; Close' : '&#x25BC; Edit';
 
     return `
-      <div class="bulk-tenant-row${isPending ? ' is-pending' : d.extractionFailed ? ' has-error' : showWarning ? ' has-warning' : ''}" id="btr-${i}">
+      <div class="bulk-tenant-row${d.extractionFailed ? ' has-error' : showWarning ? ' has-warning' : ''}" id="btr-${i}">
         <div class="bulk-tenant-summary" onclick="toggleBulkDetail(${i})">
           <span class="bulk-t-status" id="bstatus-${i}">${icon}</span>
           <div class="bulk-t-info" id="binfo-${i}">
-            <div class="tenant-title" id="bname-${i}"${isWeakName ? ' style="opacity:0.6;font-style:italic;"' : ''}${!isPending && d.tenant_name ? ` data-tdp onclick="event.stopPropagation();openTenantDetailPanel(${i})"` : ''}>
+            <div class="tenant-title" id="bname-${i}"${isWeakName ? ' style="opacity:0.6;font-style:italic;"' : ''}${d.tenant_name ? ` data-tdp onclick="event.stopPropagation();openTenantDetailPanel(${i})"` : ''}>
               ${esc(displayName)}${dupBadge}${_confidenceBadgeHtml(confLevel)}
             </div>
             <div class="tenant-meta" id="bmeta-${i}">${esc(meta)}</div>
-            ${!isPending ? `<div class="lrs-notes-row">${_reviewStatusPillHtml(getLeaseReviewStatus(d))}</div>` : ''}
-            ${jobProgressHtml}
+            <div class="lrs-notes-row">${_reviewStatusPillHtml(getLeaseReviewStatus(d))}</div>
           </div>
           <span class="bulk-t-chevron" id="bchev-${i}">${chevInitialHtml}</span>
           ${showRetryButton
             ? `<button class="view-lease-btn" data-retry data-index="${i}" data-job-id="${d.id || ''}" style="margin-left:0;color:#f97316;">&#x21BA; Retry</button>`
-            : isPending
-              ? ''
-              : d.leaseExpected
-                ? (d.leaseFile instanceof File || d.leaseUrl)
-                  ? `<button class="view-lease-btn" style="margin-left:0" onclick="event.stopPropagation();openLeaseModalFromFile(${i})">View Lease</button>`
-                  : `<span class="lease-missing-note" data-retry data-index="${i}" data-job-id="${d.id || ''}" style="margin-left:6px;cursor:pointer;">No lease file — tap to re-upload</span>`
-                : ''}
+            : d.leaseExpected
+              ? (d.leaseFile instanceof File || d.leaseUrl)
+                ? `<button class="view-lease-btn" style="margin-left:0" onclick="event.stopPropagation();openLeaseModalFromFile(${i})">View Lease</button>`
+                : `<span class="lease-missing-note" data-retry data-index="${i}" data-job-id="${d.id || ''}" style="margin-left:6px;cursor:pointer;">No lease file — tap to re-upload</span>`
+              : ''}
           ${_debugMode ? `<button class="cx-debug-toggle" onclick="event.stopPropagation();toggleLeaseDebug(${i})">🛠 Debug</button>` : ''}
           <button class="bulk-t-remove" onclick="event.stopPropagation();removeBulkTenant(${i})">Remove</button>
         </div>
