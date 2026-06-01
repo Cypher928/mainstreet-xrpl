@@ -13771,7 +13771,7 @@ function renderPortfolio(props) {
   // KPI tiles
   const k = portfolioKPIs(props);
   document.getElementById('pKpiProperties').textContent  = k.properties;
-  document.getElementById('pKpiCAM').textContent         = '$' + k.cam.toLocaleString('en-US');
+  document.getElementById('pKpiCAM').textContent         = k.cam > 0 ? '$' + k.cam.toLocaleString('en-US') : '—';
   document.getElementById('pKpiDisputes').textContent    = k.openDisputes;
   document.getElementById('pKpiCritical').textContent    = k.criticalOrElevated;
   document.getElementById('pKpiMissingDocs').textContent = k.totalMissingDocs;
@@ -13782,7 +13782,7 @@ function renderPortfolio(props) {
   const camEl  = document.getElementById('pKpiCAM');
   const confEl = document.getElementById('pKpiConfidence');
   if (propEl) propEl.style.color = '#C9973A';
-  if (camEl)  camEl.style.color  = '#C9973A';
+  if (camEl)  camEl.style.color  = k.cam > 0 ? '#C9973A' : '';
   if (confEl) confEl.style.color = k.avgConf !== null ? '#C9973A' : '';
 
   // Conditional accent on risk-sensitive KPIs
@@ -13817,10 +13817,9 @@ function renderPortfolio(props) {
   const statusLabel = { reconciled: 'Reconciled', 'in-progress': 'In Progress', disputes: 'Has Open Disputes' };
 
   document.getElementById('propertyCardsGrid').innerHTML = sortedPairs.map(({ p, m }) => {
-    const dm           = p._derivedMetrics || derivePropertyMetrics(p);
-    const tenants      = Array.isArray(p.tenants)  ? p.tenants.length  : (Number(p.tenantCount)  || 0);
-    const invoices     = dm.invoiceStats.totalInvoices;
-    const cam          = m.total || Number(p.totalCAM) || 0;
+    const dm      = p._derivedMetrics || derivePropertyMetrics(p);
+    const tenants = Array.isArray(p.tenants) ? p.tenants.length : (Number(p.tenantCount) || 0);
+    const cam     = m.total || Number(p.totalCAM) || 0;
     const status       = p.status || 'in-progress';
 
     const riskBadge = (() => {
@@ -13867,7 +13866,6 @@ function renderPortfolio(props) {
       <div class="ptf-card-top">
         <div class="ptf-prop-name">${esc(p.name || '—')}</div>
         <div class="ptf-card-badges">
-          ${riskBadge}
           ${rdBadge}
         </div>
       </div>
@@ -13879,12 +13877,14 @@ function renderPortfolio(props) {
       ${rdInsight}
       <div class="ptf-stats-row">
         <div class="ptf-stat"><strong>${tenants}</strong>Tenants</div>
-        <div class="ptf-stat"><strong>${invoices}</strong>Invoices</div>
+        ${dm.reviewStats.flaggedLeaseCount > 0
+          ? `<div class="ptf-stat ptf-stat--warn"><strong>${dm.reviewStats.flaggedLeaseCount}</strong>Lease Warnings</div>`
+          : ''}
         ${dm.disputeStats.openDisputes > 0
           ? `<div class="ptf-stat ptf-stat--alert"><strong>${dm.disputeStats.openDisputes}</strong>Disputes</div>`
           : ''}
         ${m.missingDocs > 0
-          ? `<div class="ptf-stat ptf-stat--warn"><strong>${m.missingDocs}</strong>No Docs</div>`
+          ? `<div class="ptf-stat ptf-stat--warn"><strong>${m.missingDocs}</strong>Missing Docs</div>`
           : ''}
       </div>
       ${reviewChips.length > 0 ? `
@@ -13894,9 +13894,11 @@ function renderPortfolio(props) {
           <span class="review-health ${healthCls}">${reviewHealth}% Healthy</span>
         </span>
         <button class="review-queue-btn" onclick="event.stopPropagation();selectProperty('${pid}')">AI Review ›</button>
-      </div>` : ''}
-      <div class="ptf-cam-lbl">CAM This Period</div>
-      <div class="ptf-cam-val">${cam > 0 ? '$' + cam.toLocaleString('en-US') : '—'}</div>
+      </div>` : `
+      <div class="ptf-card-action-row">
+        <button class="ptf-card-open-btn" onclick="event.stopPropagation();selectProperty('${pid}')">Open ›</button>
+      </div>`}
+      ${cam > 0 ? `<div class="ptf-cam-lbl">CAM Reconciled</div><div class="ptf-cam-val">$${cam.toLocaleString('en-US')}</div>` : ''}
       ${footParts.length ? `<div class="ptf-card-foot">${footParts.join('')}</div>` : ''}
       ${m.avgConf !== null
         ? `<div class="ptf-conf-bar" title="${m.avgConf}% avg. match confidence">
@@ -13911,11 +13913,10 @@ function renderPortfolio(props) {
       <div class="ptf-empty-desc">Add your first property to start reconciling CAM charges, or try the live demo to explore the workflow.</div>
     </div>`;
 
-  // Hide the hero intro / CTA once the user has properties — the cards are the entry point
+  // Hero identity text always visible — it's the brand anchor.
+  // Only hide the first-run CTA ("Start by running a demo…") once the user has properties.
   const hasProps = props.length > 0;
-  const heroEl  = document.querySelector('.hero-intro');
   const startEl = document.querySelector('.start-here');
-  if (heroEl)  heroEl.style.display  = hasProps ? 'none' : '';
   if (startEl) startEl.style.display = hasProps ? 'none' : '';
 
   renderReviewQueue(props);
