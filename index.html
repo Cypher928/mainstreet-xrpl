@@ -1595,6 +1595,14 @@
     }
     .review-queue-btn:hover  { transform: translateY(-1px); }
     .review-queue-btn:active { transform: translateY(0); }
+    .ptf-card-action-row { display: flex; justify-content: flex-end; margin-top: 10px; }
+    .ptf-card-open-btn {
+      padding: 3px 9px; border-radius: 7px;
+      font-size: 0.62rem; font-weight: 600; cursor: pointer; white-space: nowrap;
+      background: transparent; border: 1px solid rgba(100,116,139,0.22); color: #64748b;
+      transition: color 0.15s, border-color 0.15s;
+    }
+    .ptf-card-open-btn:hover { color: #94a3b8; border-color: rgba(148,163,184,0.35); }
     /* Card urgency tinting — very soft overlays, do not override border-left status color */
     .ptf-prop-card.review--incomplete   { background: rgba(239,68,68,0.03); }
     .ptf-prop-card.review--needs-review { background: rgba(245,158,11,0.025); }

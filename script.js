@@ -13771,7 +13771,7 @@ function renderPortfolio(props) {
   // KPI tiles
   const k = portfolioKPIs(props);
   document.getElementById('pKpiProperties').textContent  = k.properties;
-  document.getElementById('pKpiCAM').textContent         = '$' + k.cam.toLocaleString('en-US');
+  document.getElementById('pKpiCAM').textContent         = k.cam > 0 ? '$' + k.cam.toLocaleString('en-US') : '—';
   document.getElementById('pKpiDisputes').textContent    = k.openDisputes;
   document.getElementById('pKpiCritical').textContent    = k.criticalOrElevated;
   document.getElementById('pKpiMissingDocs').textContent = k.totalMissingDocs;
@@ -13782,7 +13782,7 @@ function renderPortfolio(props) {
   const camEl  = document.getElementById('pKpiCAM');
   const confEl = document.getElementById('pKpiConfidence');
   if (propEl) propEl.style.color = '#C9973A';
-  if (camEl)  camEl.style.color  = '#C9973A';
+  if (camEl)  camEl.style.color  = k.cam > 0 ? '#C9973A' : '';
   if (confEl) confEl.style.color = k.avgConf !== null ? '#C9973A' : '';
 
   // Conditional accent on risk-sensitive KPIs
@@ -13866,7 +13866,6 @@ function renderPortfolio(props) {
       <div class="ptf-card-top">
         <div class="ptf-prop-name">${esc(p.name || '—')}</div>
         <div class="ptf-card-badges">
-          ${riskBadge}
           ${rdBadge}
         </div>
       </div>
@@ -13895,7 +13894,10 @@ function renderPortfolio(props) {
           <span class="review-health ${healthCls}">${reviewHealth}% Healthy</span>
         </span>
         <button class="review-queue-btn" onclick="event.stopPropagation();selectProperty('${pid}')">AI Review ›</button>
-      </div>` : ''}
+      </div>` : `
+      <div class="ptf-card-action-row">
+        <button class="ptf-card-open-btn" onclick="event.stopPropagation();selectProperty('${pid}')">Open ›</button>
+      </div>`}
       ${cam > 0 ? `<div class="ptf-cam-lbl">CAM Reconciled</div><div class="ptf-cam-val">$${cam.toLocaleString('en-US')}</div>` : ''}
       ${footParts.length ? `<div class="ptf-card-foot">${footParts.join('')}</div>` : ''}
       ${m.avgConf !== null
