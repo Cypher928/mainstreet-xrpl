@@ -13911,11 +13911,10 @@ function renderPortfolio(props) {
       <div class="ptf-empty-desc">Add your first property to start reconciling CAM charges, or try the live demo to explore the workflow.</div>
     </div>`;
 
-  // Hide the hero intro / CTA once the user has properties — the cards are the entry point
+  // Hero identity text always visible — it's the brand anchor.
+  // Only hide the first-run CTA ("Start by running a demo…") once the user has properties.
   const hasProps = props.length > 0;
-  const heroEl  = document.querySelector('.hero-intro');
   const startEl = document.querySelector('.start-here');
-  if (heroEl)  heroEl.style.display  = hasProps ? 'none' : '';
   if (startEl) startEl.style.display = hasProps ? 'none' : '';
 
   renderReviewQueue(props);
