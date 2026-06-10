@@ -105,6 +105,96 @@
     }
     .step-item.done .step-label { color: #22c55e; }
     .step-item.active .step-label { color: #C9973A; }
+    @media (max-width: 480px) {
+      .step-bar { overflow-x: auto; justify-content: flex-start; padding: 14px 4px 6px; }
+      .step-label { font-size: 0.55rem; }
+      .step-dot { width: 22px; height: 22px; font-size: 0.62rem; }
+    }
+
+    /* Onboarding hint strip */
+    .ob-hint {
+      background: rgba(201,151,58,0.08); border-left: 3px solid #C9973A;
+      border-radius: 4px; padding: 8px 12px; margin: 0 0 10px;
+      font-size: 0.82rem; color: #CBD5E1; line-height: 1.5;
+    }
+    .ob-hint strong { color: #C9973A; }
+
+    /* Portfolio empty state */
+    .ptf-empty-state {
+      text-align: center; padding: 56px 24px; color: #64748b;
+      grid-column: 1 / -1;
+    }
+    .ptf-empty-icon { font-size: 3rem; margin-bottom: 12px; }
+    .ptf-empty-title { font-size: 1.1rem; font-weight: 700; color: #94a3b8; margin-bottom: 8px; }
+    .ptf-empty-desc { font-size: 0.87rem; margin-bottom: 20px; max-width: 320px; margin-left: auto; margin-right: auto; }
+    .ptf-empty-cta { display: flex; gap: 10px; justify-content: center; flex-wrap: wrap; }
+    .ptf-empty-btn-primary {
+      padding: 9px 20px; border-radius: 6px; border: none; cursor: pointer;
+      background: #C9973A; color: #0B1220; font-weight: 700; font-size: 0.85rem;
+      transition: opacity 0.2s;
+    }
+    .ptf-empty-btn-primary:hover { opacity: 0.88; }
+    .ptf-empty-btn-secondary {
+      padding: 9px 20px; border-radius: 6px; cursor: pointer;
+      background: transparent; border: 1px solid rgba(255,255,255,0.15);
+      color: #94a3b8; font-size: 0.85rem; font-weight: 600;
+      transition: border-color 0.2s, color 0.2s;
+    }
+    .ptf-empty-btn-secondary:hover { border-color: #C9973A; color: #C9973A; }
+
+    /* Welcome modal */
+    .ob-backdrop {
+      position: fixed; inset: 0; z-index: 9000;
+      background: rgba(0,0,0,0.72); backdrop-filter: blur(4px);
+      display: flex; align-items: center; justify-content: center;
+      padding: 16px;
+    }
+    .ob-modal {
+      background: #0F1C2E; border: 1px solid rgba(255,255,255,0.1);
+      border-radius: 16px; padding: 36px 32px; max-width: 440px; width: 100%;
+      box-shadow: 0 24px 64px rgba(0,0,0,0.6);
+      text-align: center;
+    }
+    .ob-modal-icon { font-size: 2.6rem; margin-bottom: 12px; }
+    .ob-modal-title { font-size: 1.4rem; font-weight: 800; color: #F1F5F9; margin-bottom: 6px; }
+    .ob-modal-sub { font-size: 0.87rem; color: #94a3b8; margin-bottom: 20px; line-height: 1.5; }
+    .ob-modal-steps {
+      list-style: none; padding: 0; margin: 0 0 24px; text-align: left;
+    }
+    .ob-modal-steps li {
+      display: flex; align-items: flex-start; gap: 12px;
+      padding: 8px 0; border-bottom: 1px solid rgba(255,255,255,0.05);
+      font-size: 0.87rem; color: #CBD5E1; line-height: 1.4;
+    }
+    .ob-modal-steps li:last-child { border-bottom: none; }
+    .ob-step-num {
+      min-width: 22px; height: 22px; border-radius: 50%;
+      background: rgba(201,151,58,0.2); border: 1px solid rgba(201,151,58,0.4);
+      color: #C9973A; font-size: 0.7rem; font-weight: 700;
+      display: flex; align-items: center; justify-content: center; flex-shrink: 0;
+      margin-top: 1px;
+    }
+    .ob-modal-actions { display: flex; flex-direction: column; gap: 10px; margin-bottom: 14px; }
+    .ob-btn-primary {
+      padding: 12px; border-radius: 8px; border: none; cursor: pointer;
+      background: #C9973A; color: #0B1220; font-weight: 700; font-size: 0.92rem;
+      transition: opacity 0.2s;
+    }
+    .ob-btn-primary:hover { opacity: 0.88; }
+    .ob-btn-secondary {
+      padding: 11px; border-radius: 8px; cursor: pointer;
+      background: transparent; border: 1px solid rgba(255,255,255,0.15);
+      color: #94a3b8; font-size: 0.88rem; font-weight: 600;
+      transition: border-color 0.2s, color 0.2s;
+    }
+    .ob-btn-secondary:hover { border-color: #C9973A; color: #C9973A; }
+    .ob-modal-skip {
+      font-size: 0.78rem; color: #475569; cursor: pointer;
+      text-decoration: underline; text-underline-offset: 3px;
+    }
+    .ob-modal-skip:hover { color: #94a3b8; }
+    /* Tenant role never sees the onboarding modal */
+    #appContent[data-role="tenant"] .ob-backdrop { display: none !important; }
 
     /* Form fields */
     .field-row { display: flex; gap: 14px; flex-wrap: wrap; margin-bottom: 14px; }
@@ -3834,21 +3924,25 @@
 
   <!-- ── Step Progress Bar ─────────────────────────────────────────── -->
   <div class="step-bar" id="stepBar">
-    <div class="step-item done" id="step-upload">
-      <div class="step-dot">&#x2713;</div>
-      <div class="step-label">Upload</div>
+    <div class="step-item active" id="step-setup">
+      <div class="step-dot">1</div>
+      <div class="step-label">Setup</div>
+    </div>
+    <div class="step-item" id="step-leases">
+      <div class="step-dot">2</div>
+      <div class="step-label">Leases</div>
+    </div>
+    <div class="step-item" id="step-invoices">
+      <div class="step-dot">3</div>
+      <div class="step-label">Invoices</div>
     </div>
     <div class="step-item" id="step-calculate">
-      <div class="step-dot">2</div>
+      <div class="step-dot">4</div>
       <div class="step-label">Calculate</div>
     </div>
     <div class="step-item" id="step-review">
-      <div class="step-dot">3</div>
+      <div class="step-dot">5</div>
       <div class="step-label">Review</div>
-    </div>
-    <div class="step-item" id="step-resolve">
-      <div class="step-dot">4</div>
-      <div class="step-label">Resolve</div>
     </div>
   </div>
 
@@ -3890,6 +3984,7 @@
         <p>Upload leases and invoices — AI extracts CAM terms automatically</p>
       </div>
     </div>
+    <div id="obHintLeases" class="ob-hint" style="display:none;"></div>
 
     <!-- Tab bar -->
     <div class="lease-tab-bar">
@@ -3967,6 +4062,7 @@
         <p>Upload CAM expense invoices or import from Yardi Genesis</p>
       </div>
     </div>
+    <div id="obHintInvoices" class="ob-hint" style="display:none;"></div>
 
     <!-- Tab bar -->
     <div class="lease-tab-bar">
@@ -4439,6 +4535,28 @@
     <div class="dbh-status-bar" id="dbhStatusBar">
       Open a property, then click "Run Diagnostic" to write test rows and verify Phase 20 + 21 DB access.
     </div>
+  </div>
+</div>
+
+<!-- ── First-Time Onboarding Welcome Modal ───────────────────────────────── -->
+<div id="obWelcomeModal" class="ob-backdrop" style="display:none;"
+     onclick="if(event.target===this)obCloseWelcome('skip')">
+  <div class="ob-modal">
+    <div class="ob-modal-icon">&#x1F3D9;</div>
+    <div class="ob-modal-title">Welcome to MainStreet</div>
+    <div class="ob-modal-sub">CAM reconciliation in about 5 minutes — from lease to dispute in four steps.</div>
+    <ul class="ob-modal-steps">
+      <li><span class="ob-step-num">1</span><span><strong>Set up your property</strong> — enter name &amp; total sq ft</span></li>
+      <li><span class="ob-step-num">2</span><span><strong>Upload lease PDFs</strong> — AI extracts every CAM clause</span></li>
+      <li><span class="ob-step-num">3</span><span><strong>Upload invoices</strong> — drag &amp; drop or bulk import</span></li>
+      <li><span class="ob-step-num">4</span><span><strong>Run reconciliation</strong> — see every tenant's bill in seconds</span></li>
+      <li><span class="ob-step-num">5</span><span><strong>Review &amp; export</strong> — dispute, approve, and send statements</span></li>
+    </ul>
+    <div class="ob-modal-actions">
+      <button class="ob-btn-primary" onclick="obCloseWelcome('property')">+ Create My First Property</button>
+      <button class="ob-btn-secondary" onclick="obCloseWelcome('demo')">&#x1F3AF; Explore Live Demo</button>
+    </div>
+    <span class="ob-modal-skip" onclick="obCloseWelcome('skip')">Skip intro</span>
   </div>
 </div>
 

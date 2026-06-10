@@ -5092,6 +5092,7 @@ function renderBulkResults() {
     const _rqProp = _props.find(p => p.id === activePropId);
     if (_rqProp) renderPropertyReviewQueue(_rqProp);
   }
+  if (tenantData.some(t => t && t.tenant_name)) _obSyncState();
 }
 
 function toggleBulkDetail(i) {
@@ -5694,6 +5695,7 @@ function renderInvResults() {
       <button class="bulk-clear-btn" onclick="clearInvResults()">&#x2715; Clear All</button>
     </div>
     ${rows}`;
+  _obSyncState();
 }
 
 // Returns a clickable confidence badge that opens + highlights weak fields on click.
@@ -7460,9 +7462,87 @@ function showRunCompleteToast() {
 
 // ─── Step Progress Bar ────────────────────────────────────────────────────────
 
+// ─── Onboarding ───────────────────────────────────────────────────────────────
+
+function _obKey()  { return _lsUserId ? `ms_ob_v1_${_lsUserId}` : 'ms_ob_v1_anon'; }
+function _obGet()  { try { return JSON.parse(_lsGet(_obKey()) || 'null'); } catch { return null; } }
+function _obSet(s) { try { _lsSet(_obKey(), JSON.stringify(s)); } catch (_) {} }
+function _obInit() {
+  const s = { steps: [false,false,false,false,false], welcomeSeen: false };
+  _obSet(s); return s;
+}
+
+function _maybeShowWelcome(props) {
+  const ob = _obGet();
+  if (ob?.welcomeSeen) return;
+  const realProps = (props || []).filter(p => p.id !== DEMO_PROPERTY_ID);
+  if (realProps.length > 0) return;
+  const modal = document.getElementById('obWelcomeModal');
+  if (modal) modal.style.display = 'flex';
+}
+
+function obCloseWelcome(action) {
+  const ob = _obGet() || _obInit();
+  ob.welcomeSeen = true;
+  _obSet(ob);
+  const modal = document.getElementById('obWelcomeModal');
+  if (modal) modal.style.display = 'none';
+  if (action === 'property') addNewProperty();
+  else if (action === 'demo') loadDemo();
+}
+
+function _obSyncState() {
+  const propName = document.getElementById('propertyName')?.value || '';
+  const sqft     = parseInt(document.getElementById('totalSqft')?.value || '0', 10);
+  const hasSetup    = !!(propName && propName !== 'New Property' && sqft > 0);
+  const hasLeases   = tenantData.some(t => t && t.tenant_name);
+  const hasInvoices = invoiceData.length > 0;
+  const hasResults  = lastResults.length > 0;
+  const reached = hasResults   ? 'done'
+                : hasInvoices  ? 'calculate'
+                : hasLeases    ? 'invoices'
+                : hasSetup     ? 'leases'
+                :                'setup';
+  updateStepBar(reached);
+  _obUpdateHints(hasSetup, hasLeases, hasInvoices, hasResults);
+}
+
+function _obUpdateHints(hasSetup, hasLeases, hasInvoices, hasResults) {
+  const lHint = document.getElementById('obHintLeases');
+  const iHint = document.getElementById('obHintInvoices');
+  if (lHint) {
+    if (hasSetup && !hasLeases) {
+      lHint.style.display = '';
+      lHint.innerHTML = '<strong>Next step:</strong> Upload your lease PDFs above — AI extracts CAM terms automatically.';
+    } else {
+      lHint.style.display = 'none';
+    }
+  }
+  if (iHint) {
+    if (hasLeases && !hasInvoices) {
+      iHint.style.display = '';
+      iHint.innerHTML = '<strong>Next step:</strong> Upload CAM invoices here — then run the reconciliation.';
+    } else {
+      iHint.style.display = 'none';
+    }
+  }
+}
+
 function updateStepBar(reached) {
-  const steps = ['upload','calculate','review','resolve'];
-  const idx   = steps.indexOf(reached);
+  const aliasMap  = { upload: 'leases', resolve: 'review' };
+  const normalized = aliasMap[reached] || reached;
+  const steps = ['setup','leases','invoices','calculate','review'];
+  if (normalized === 'done') {
+    steps.forEach(s => {
+      const el = document.getElementById(`step-${s}`);
+      if (!el) return;
+      el.classList.remove('active'); el.classList.add('done');
+      const dot = el.querySelector('.step-dot');
+      if (dot) dot.innerHTML = '&#x2713;';
+    });
+    return;
+  }
+  const idx = steps.indexOf(normalized);
   steps.forEach((s, i) => {
     const el = document.getElementById(`step-${s}`);
     if (!el) return;
@@ -13811,6 +13891,25 @@ function renderPortfolio(props) {
   // Property cards
   const statusLabel = { reconciled: 'Reconciled', 'in-progress': 'In Progress', disputes: 'Has Open Disputes' };
 
+  if (sortedPairs.length === 0) {
+    document.getElementById('propertyCardsGrid').innerHTML = `
+      <div class="ptf-empty-state">
+        <div class="ptf-empty-icon">&#x1F3E2;</div>
+        <div class="ptf-empty-title">No properties yet</div>
+        <div class="ptf-empty-desc">Add your first property and run a CAM reconciliation in about 5 minutes.</div>
+        <div class="ptf-empty-cta">
+          <button class="ptf-empty-btn-primary" onclick="addNewProperty()">+ Create First Property</button>
+          <button class="ptf-empty-btn-secondary" onclick="loadDemo()">&#x1F3AF; Try Live Demo</button>
+        </div>
+      </div>`;
+    renderReviewQueue(props);
+    _maybeShowWelcome(props);
+    document.getElementById('portfolioDashboard').style.display = 'block';
+    document.getElementById('propertyBreadcrumb').style.display = 'none';
+    document.getElementById('mainWorkflow').style.display       = 'none';
+    return;
+  }
+
   document.getElementById('propertyCardsGrid').innerHTML = sortedPairs.map(({ p, m }) => {
     const dm           = p._derivedMetrics || derivePropertyMetrics(p);
     const tenants      = Array.isArray(p.tenants)  ? p.tenants.length  : (Number(p.tenantCount)  || 0);
@@ -13902,6 +14001,7 @@ function renderPortfolio(props) {
   }).join('');
 
   renderReviewQueue(props);
+  _maybeShowWelcome(props);
 
   document.getElementById('portfolioDashboard').style.display = 'block';
   document.getElementById('propertyBreadcrumb').style.display = 'none';
@@ -14141,6 +14241,7 @@ function resetWorkflow() {
 function liveUpdateBreadcrumb(name) {
   const el = document.getElementById('breadcrumbPropName');
   if (el) el.textContent = name || 'New Property';
+  _obSyncState();
 }
 
 // ─── Supabase Persistence ─────────────────────────────────────────────────────
@@ -14948,10 +15049,11 @@ function renderLeaseCenter(propertyId) {
   loadLeaseDocuments(propertyId).then(docs => {
     if (!docs.length) {
       panel.innerHTML = `
-        <div style="padding:24px 0;text-align:center;color:#64748b;">
-          <div style="font-size:2rem;margin-bottom:8px;">📄</div>
-          <div style="font-weight:600;margin-bottom:4px;">No leases stored yet</div>
-          <div style="font-size:0.8rem;">Upload leases using the Upload tabs — documents will appear here automatically.</div>
+        <div style="padding:32px 0;text-align:center;color:#64748b;">
+          <div style="font-size:2.2rem;margin-bottom:10px;">&#x1F4C4;</div>
+          <div style="font-weight:700;font-size:1rem;margin-bottom:6px;color:#94a3b8;">No leases stored yet</div>
+          <div style="font-size:0.82rem;margin-bottom:16px;">Upload PDFs in the <strong style="color:#C9973A;">Upload All Leases</strong> tab — documents appear here automatically.</div>
+          <button class="ptf-empty-btn-secondary" onclick="switchLeaseTab('bulk')" style="font-size:0.8rem;">Go to Upload Leases &#x2191;</button>
         </div>`;
       return;
     }
@@ -15738,6 +15840,7 @@ function renderProperty(property) {
   document.getElementById('mainWorkflow').style.display        = 'block';
 
   window.scrollTo({ top: 0, behavior: 'smooth' });
+  _obSyncState();
 }
 
 // Wipe saved data for the active property and reset the workflow UI.
