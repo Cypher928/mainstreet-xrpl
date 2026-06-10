@@ -7473,6 +7473,8 @@ function _obInit() {
 }
 
 function _maybeShowWelcome(props) {
+  // Never interrupt tenant-role users
+  if (document.getElementById('appContent')?.getAttribute('data-role') === 'tenant') return;
   const ob = _obGet();
   if (ob?.welcomeSeen) return;
   const realProps = (props || []).filter(p => p.id !== DEMO_PROPERTY_ID);
@@ -13899,7 +13901,7 @@ function renderPortfolio(props) {
         <div class="ptf-empty-desc">Add your first property and run a CAM reconciliation in about 5 minutes.</div>
         <div class="ptf-empty-cta">
           <button class="ptf-empty-btn-primary" onclick="addNewProperty()">+ Create First Property</button>
-          <button class="ptf-empty-btn-secondary" onclick="loadDemo()">&#x1F3AF; Try Live Demo</button>
+          <button class="ptf-empty-btn-secondary" onclick="obCloseWelcome('demo')">&#x1F3AF; Try Live Demo</button>
         </div>
       </div>`;
     renderReviewQueue(props);
