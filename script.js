@@ -607,6 +607,7 @@ let _acqInvoices   = [];
 let _acqSqFt       = 0;
 let _acqActiveTab  = 'risk';                          // 'risk' | 'rentroll'
 let _acqRentRollSort = { col: 'tenant_name', dir: 'asc' };
+let _leaseAlertsDismissed = false;         // session-only; resets on reload
 
 // Returns the currently selected property object, or null if none is active.
 function currentProperty() {
@@ -13776,6 +13777,80 @@ function renderPropertyActivity(property) {
   </div>`;
 }
 
+// ── Lease Expiration Alert Panel ──────────────────────────────────────────────
+
+function dismissLeaseAlerts() {
+  _leaseAlertsDismissed = true;
+  const el = document.getElementById('leaseAlertPanel');
+  if (el) el.innerHTML = '';
+}
+
+function toggleLeaseAlertMedium() {
+  const rows = document.getElementById('laMediumRows');
+  const icon = document.getElementById('laMediumToggleIcon');
+  if (!rows) return;
+  const expanded = rows.style.display !== 'none';
+  rows.style.display = expanded ? 'none' : '';
+  if (icon) icon.innerHTML = expanded ? '&#x25BC;' : '&#x25B2;';
+}
+
+function _renderLeaseAlertPanel(alerts) {
+  if (_leaseAlertsDismissed || alerts.total === 0) return '';
+
+  const fmtDate = iso => {
+    const d = new Date(iso + 'T12:00:00');
+    return isNaN(d.getTime()) ? iso
+      : d.toLocaleDateString('en-US', { month: 'short', day: 'numeric', year: 'numeric' });
+  };
+
+  const renderRow = (alert, tier) => {
+    const daysBadge = tier === 'expired'
+      ? `<span class="la-days la-days--expired">Expired ${Math.abs(alert.daysToExpiry)}d ago</span>`
+      : `<span class="la-days la-days--${tier}">${alert.daysToExpiry}d</span>`;
+    const renewal = alert.hasRenewal ? '<span class="la-renewal">&#x1F504;&nbsp;option</span>' : '';
+    const suite   = alert.suite ? ` <span class="la-suite">· ${esc(alert.suite)}</span>` : '';
+    return `
+    <div class="la-row" onclick="selectProperty('${esc(alert.propertyId)}')">
+      <span class="la-dot la-dot--${tier}"></span>
+      <div class="la-tenant">${esc(alert.tenantName)}${suite}</div>
+      <div class="la-property">${esc(alert.propertyName)}</div>
+      <div class="la-date">${fmtDate(alert.endDate)}</div>
+      <div class="la-meta">${daysBadge}${renewal}</div>
+    </div>`;
+  };
+
+  const urgentRows = [
+    ...alerts.expired.map(a  => renderRow(a, 'expired')),
+    ...alerts.critical.map(a => renderRow(a, 'critical')),
+    ...alerts.high.map(a     => renderRow(a, 'high')),
+  ].join('');
+
+  const mediumSection = alerts.medium.length ? `
+  <div class="la-expander">
+    <button class="la-expand-btn" onclick="event.stopPropagation();toggleLeaseAlertMedium()">
+      <span id="laMediumToggleIcon">&#x25BC;</span>&nbsp; ${alerts.medium.length} more expiring within 6 months
+    </button>
+    <div id="laMediumRows" style="display:none">
+      ${alerts.medium.map(a => renderRow(a, 'medium')).join('')}
+    </div>
+  </div>` : '';
+
+  const badge = alerts.urgent > 0
+    ? `<span class="la-count--urgent">${alerts.urgent} urgent</span>`
+    : `<span class="la-count--medium">${alerts.medium.length} upcoming</span>`;
+
+  return `
+  <div class="la-panel">
+    <div class="la-header">
+      <span class="la-title">&#x1F514; Lease Expiration Alerts</span>
+      ${badge}
+      <button class="la-dismiss" onclick="dismissLeaseAlerts()" title="Dismiss for this session">&#x2715;</button>
+    </div>
+    ${urgentRows}
+    ${mediumSection}
+  </div>`;
+}
+
 function renderPortfolio(props) {
   props = props || _props; // handle no-arg calls
   if (!Array.isArray(props)) {
@@ -13830,6 +13905,25 @@ function renderPortfolio(props) {
             onclick="_portfolioSort='${key}';renderPortfolio(_props)">${esc(label)}</button>`
         ).join('');
   }
+
+  // Lease expiration alert panel
+  const alerts      = AcquisitionEngine.computeLeaseAlerts(props);
+  const alertPanelEl = document.getElementById('leaseAlertPanel');
+  if (alertPanelEl) alertPanelEl.innerHTML = _renderLeaseAlertPanel(alerts);
+
+  // Build per-property expiry lookup for card badges
+  const _propAlertMap = new Map();
+  const _markProp = (a, tier) => {
+    const cur = _propAlertMap.get(a.propertyId);
+    if (!cur) { _propAlertMap.set(a.propertyId, { total: 1, tier }); return; }
+    cur.total++;
+    if (tier === 'expired' || (tier === 'critical' && cur.tier !== 'expired')) cur.tier = tier;
+    else if (tier === 'high' && !['expired','critical'].includes(cur.tier)) cur.tier = tier;
+  };
+  alerts.expired.forEach(a  => _markProp(a, 'expired'));
+  alerts.critical.forEach(a => _markProp(a, 'critical'));
+  alerts.high.forEach(a     => _markProp(a, 'high'));
+  alerts.medium.forEach(a   => _markProp(a, 'medium'));
 
   // Portfolio intelligence panel (above cards grid)
   renderPortfolioIntelligence(props);
@@ -13896,6 +13990,17 @@ function renderPortfolio(props) {
         ${trendHtml}
       </div>
       ${rdInsight}
+      ${(() => {
+        const ea = _propAlertMap.get(p.id);
+        if (!ea) return '';
+        const isExpired = ea.tier === 'expired';
+        const isUrgent  = isExpired || ea.tier === 'critical';
+        const cls   = isUrgent ? 'ptf-stat--alert' : 'ptf-stat--warn';
+        const label = isExpired ? `Expired` : 'Expiring';
+        return `<div class="ptf-lease-expiry-banner ptf-lease-expiry--${isUrgent ? 'urgent' : 'warn'}">
+          &#x1F514; ${ea.total} lease${ea.total !== 1 ? 's' : ''} ${label}
+        </div>`;
+      })()}
       <div class="ptf-stats-row">
         <div class="ptf-stat"><strong>${tenants}</strong>Tenants</div>
         ${dm.reviewStats.flaggedLeaseCount > 0

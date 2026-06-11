@@ -3903,6 +3903,56 @@
     .acq-ts-cam     { font-size: 0.75rem !important; color: #64748b !important; max-width: 200px; word-break: break-word; }
     .acq-ts-renewal { font-size: 0.78rem !important; max-width: 160px; }
 
+    /* ── Lease Expiration Alert Panel ──────────────────────────────────── */
+    .la-panel          { background: #090f1a; border: 1px solid #1e3a5f; border-radius: 10px;
+                         margin-bottom: 20px; overflow: hidden; }
+    .la-header         { display: flex; align-items: center; gap: 10px;
+                         padding: 11px 16px; border-bottom: 1px solid #0f1b2d; flex-wrap: wrap; }
+    .la-title          { font-size: 0.88rem; font-weight: 700; color: #e2e8f0; letter-spacing: 0.02em; }
+    .la-count--urgent  { font-size: 0.7rem; padding: 2px 8px; border-radius: 10px;
+                         background: #7f1d1d; color: #fca5a5; font-weight: 600; }
+    .la-count--medium  { font-size: 0.7rem; padding: 2px 8px; border-radius: 10px;
+                         background: #422006; color: #fbbf24; font-weight: 600; }
+    .la-dismiss        { margin-left: auto; background: none; border: none; color: #475569;
+                         cursor: pointer; font-size: 1.05rem; padding: 2px 4px; line-height: 1; }
+    .la-dismiss:hover  { color: #94a3b8; }
+    .la-row            { display: flex; align-items: center; gap: 12px; padding: 9px 16px;
+                         border-bottom: 1px solid #0a1020; cursor: pointer;
+                         transition: background 0.1s; }
+    .la-row:hover      { background: #0f1b2d; }
+    .la-row:last-child { border-bottom: none; }
+    .la-dot            { width: 8px; height: 8px; border-radius: 50%; flex-shrink: 0; }
+    .la-dot--expired   { background: #f87171; }
+    .la-dot--critical  { background: #f87171; }
+    .la-dot--high      { background: #fb923c; }
+    .la-dot--medium    { background: #fbbf24; }
+    .la-tenant         { flex: 1.4; min-width: 0; font-size: 0.84rem; color: #e2e8f0;
+                         font-weight: 500; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+    .la-suite          { font-weight: 400; color: #64748b; font-size: 0.76rem; }
+    .la-property       { flex: 1; min-width: 0; font-size: 0.8rem; color: #94a3b8;
+                         overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+    .la-date           { width: 96px; text-align: right; font-size: 0.76rem; color: #64748b;
+                         white-space: nowrap; }
+    .la-meta           { width: 120px; display: flex; align-items: center; justify-content: flex-end; gap: 6px; flex-shrink: 0; }
+    .la-days           { font-size: 0.72rem; padding: 2px 6px; border-radius: 4px; font-weight: 700;
+                         white-space: nowrap; }
+    .la-days--expired  { background: #7f1d1d; color: #fca5a5; }
+    .la-days--critical { background: #7f1d1d; color: #fca5a5; }
+    .la-days--high     { background: #431407; color: #fb923c; }
+    .la-days--medium   { background: #422006; color: #fbbf24; }
+    .la-renewal        { font-size: 0.68rem; color: #60a5fa; white-space: nowrap; }
+    .la-expander       { border-top: 1px solid #0f1b2d; }
+    .la-expand-btn     { background: none; border: none; width: 100%; text-align: left;
+                         padding: 9px 16px 9px 36px; font-size: 0.78rem; color: #64748b;
+                         cursor: pointer; }
+    .la-expand-btn:hover { color: #94a3b8; }
+
+    /* ── Property Card: Lease Expiry Banner ─────────────────────────────── */
+    .ptf-lease-expiry-banner { font-size: 0.74rem; font-weight: 600;
+                               padding: 4px 10px; border-radius: 4px; margin-bottom: 6px; }
+    .ptf-lease-expiry--urgent { background: #450a0a; color: #fca5a5; }
+    .ptf-lease-expiry--warn   { background: #2d1a00; color: #fbbf24; }
+
     /* ── Acquisition: Tab Bar ───────────────────────────────────────────── */
     .acq-report-tabs { display: flex; gap: 4px; margin-bottom: 20px; border-bottom: 1px solid #1e293b; padding-bottom: 0; }
     .acq-tab { background: transparent; border: none; border-bottom: 2px solid transparent; color: #64748b;
@@ -4040,6 +4090,9 @@
       <div class="ptf-kpi-lbl">Avg Confidence</div>
     </div>
   </div>
+
+  <!-- Lease Expiration Alert Panel — populated by renderPortfolio() -->
+  <div id="leaseAlertPanel"></div>
 
   <!-- Portfolio Intelligence Panel -->
   <div id="portfolioIntelPanel" style="display:none;"></div>

@@ -1148,6 +1148,96 @@ const MOCK_REVIEW = {
   assert('validation: topRisks defaults to empty array',      Array.isArray(prop._conversionSource.topRisks));
 }
 
+// ── Group 21: computeLeaseAlerts ──────────────────────────────────────────────
+console.log('\n── Group 21: computeLeaseAlerts ─────────────────────────────────────');
+
+{
+  const MS_DAY = 86400000;
+  const ref    = new Date('2024-06-01T12:00:00Z');
+
+  // Build dates relative to ref
+  const daysOut = n => new Date(ref.getTime() + n * MS_DAY).toISOString().slice(0, 10);
+
+  const makeProps = tenantOverrides => [{
+    id:   'prop-1',
+    name: 'Test Plaza',
+    tenants: tenantOverrides.map((t, i) => Object.assign({ tenant_name: `T${i}` }, t)),
+  }];
+
+  // Bucket routing
+  const expired  = makeProps([{ end_date: daysOut(-10) }]);
+  const critical = makeProps([{ end_date: daysOut(15)  }]);
+  const high     = makeProps([{ end_date: daysOut(60)  }]);
+  const medium   = makeProps([{ end_date: daysOut(150) }]);
+  const far      = makeProps([{ end_date: daysOut(200) }]);
+
+  assert('alerts: expired goes to expired bucket',        AE.computeLeaseAlerts(expired,  ref).expired.length  === 1);
+  assert('alerts: critical goes to critical bucket',      AE.computeLeaseAlerts(critical, ref).critical.length === 1);
+  assert('alerts: high goes to high bucket',              AE.computeLeaseAlerts(high,     ref).high.length     === 1);
+  assert('alerts: medium goes to medium bucket',          AE.computeLeaseAlerts(medium,   ref).medium.length   === 1);
+  assert('alerts: beyond 180d not captured',              AE.computeLeaseAlerts(far,      ref).total           === 0);
+}
+
+{
+  const ref    = new Date('2024-06-01T12:00:00Z');
+  const MS_DAY = 86400000;
+  const daysOut = n => new Date(ref.getTime() + n * MS_DAY).toISOString().slice(0, 10);
+
+  // null end_date excluded
+  const noDate = [{ id: 'p', name: 'P', tenants: [{ tenant_name: 'A', end_date: null }] }];
+  assert('alerts: null end_date excluded from results', AE.computeLeaseAlerts(noDate, ref).total === 0);
+
+  // extractionFailed excluded
+  const failed = [{ id: 'p', name: 'P', tenants: [{ tenant_name: 'B', end_date: daysOut(10), extractionFailed: true }] }];
+  assert('alerts: extractionFailed tenant excluded',    AE.computeLeaseAlerts(failed, ref).total === 0);
+}
+
+{
+  const ref    = new Date('2024-06-01T12:00:00Z');
+  const MS_DAY = 86400000;
+  const daysOut = n => new Date(ref.getTime() + n * MS_DAY).toISOString().slice(0, 10);
+
+  // hasRenewal detection
+  const withOpt  = [{ id: 'p', name: 'P', tenants: [{ tenant_name: 'A', end_date: daysOut(20), renewal_options: '1 × 5 year' }] }];
+  const withNone = [{ id: 'p', name: 'P', tenants: [{ tenant_name: 'B', end_date: daysOut(20), renewal_options: 'None' }] }];
+  const noField  = [{ id: 'p', name: 'P', tenants: [{ tenant_name: 'C', end_date: daysOut(20) }] }];
+  assert('alerts: hasRenewal true for "1 × 5 year"', AE.computeLeaseAlerts(withOpt,  ref).critical[0].hasRenewal === true);
+  assert('alerts: hasRenewal false for "None"',       AE.computeLeaseAlerts(withNone, ref).critical[0].hasRenewal === false);
+  assert('alerts: hasRenewal false when absent',      AE.computeLeaseAlerts(noField,  ref).critical[0].hasRenewal === false);
+}
+
+{
+  const ref    = new Date('2024-06-01T12:00:00Z');
+  const MS_DAY = 86400000;
+  const daysOut = n => new Date(ref.getTime() + n * MS_DAY).toISOString().slice(0, 10);
+
+  // Cross-property aggregation
+  const multiProps = [
+    { id: 'prop-A', name: 'Alpha', tenants: [{ tenant_name: 'T1', end_date: daysOut(-5) }] },
+    { id: 'prop-B', name: 'Beta',  tenants: [{ tenant_name: 'T2', end_date: daysOut(20) }] },
+    { id: 'prop-C', name: 'Gamma', tenants: [{ tenant_name: 'T3', end_date: daysOut(200) }] },
+  ];
+  const r = AE.computeLeaseAlerts(multiProps, ref);
+  assert('alerts: cross-property total = 2',            r.total  === 2);
+  assert('alerts: urgent count = 2',                    r.urgent === 2);
+  assert('alerts: expired from prop-A',                 r.expired[0].propertyId === 'prop-A');
+  assert('alerts: critical from prop-B',                r.critical[0].propertyId === 'prop-B');
+}
+
+{
+  const ref    = new Date('2024-06-01T12:00:00Z');
+  const MS_DAY = 86400000;
+  const daysOut = n => new Date(ref.getTime() + n * MS_DAY).toISOString().slice(0, 10);
+
+  // Sort order: most urgent (smallest daysToExpiry) first within each bucket
+  const props = [{ id: 'p', name: 'P', tenants: [
+    { tenant_name: 'Far',  end_date: daysOut(80) },
+    { tenant_name: 'Near', end_date: daysOut(40) },
+  ]}];
+  const r = AE.computeLeaseAlerts(props, ref);
+  assert('alerts: high bucket sorted near-first', r.high[0].tenantName === 'Near');
+}
+
 // ── Summary ───────────────────────────────────────────────────────────────────
 
 console.log(`\n${'─'.repeat(60)}`);
