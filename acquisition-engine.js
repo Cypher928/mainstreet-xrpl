@@ -7,6 +7,43 @@
 
 (function (root) {
 
+  // ─── Shared expiry threshold table ───────────────────────────────────────
+  // Single source of truth — one edit changes thresholds for all alert,
+  // revenue-at-risk, and pipeline calculations.
+  var _EXPIRY_DAYS = { CRITICAL: 30, HIGH: 90, MEDIUM: 180, PIPELINE: 365 };
+
+  // Alert tier for computeLeaseAlerts / computeRevenueAtRisk.
+  // Returns 'expired' | 'critical' | 'high' | 'medium' | null (beyond medium).
+  function _alertTier(days) {
+    if (days <  0)                      return 'expired';
+    if (days <= _EXPIRY_DAYS.CRITICAL)  return 'critical';
+    if (days <= _EXPIRY_DAYS.HIGH)      return 'high';
+    if (days <= _EXPIRY_DAYS.MEDIUM)    return 'medium';
+    return null;
+  }
+
+  // Pipeline priority for computeRenewalPipeline (no 30-day sub-tier; day-0 = critical).
+  // Returns 'critical' | 'high' | 'medium' | 'low' | null (beyond pipeline window).
+  function _pipelinePriority(days) {
+    if (days > _EXPIRY_DAYS.PIPELINE) return null;
+    if (days <= 0)                    return 'critical';
+    if (days <= _EXPIRY_DAYS.HIGH)    return 'high';
+    if (days <= _EXPIRY_DAYS.MEDIUM)  return 'medium';
+    return 'low';
+  }
+
+  // Safe pro-rata fraction: sqft / totalSqft with explicit zero guard.
+  function _proRata(sqft, totalSqft) {
+    return totalSqft > 0 ? sqft / totalSqft : 0;
+  }
+
+  // True when a tenant should participate in lease-expiry calculations.
+  // Accepts both managed-property shape (end_date) and acquisition shape (lease_end).
+  function _isActiveLease(t) {
+    if (!t || t.extractionFailed) return false;
+    return !!(t.end_date || t.lease_end);
+  }
+
   // ─── Tenant Matching ──────────────────────────────────────────────────────
   // Matches an invoice to the best-fitting tenant using unit number and name.
   // Identical algorithm to matchInvoiceToTenant in script.js — pure copy with
@@ -76,8 +113,8 @@
 
     return tenants.map(t => {
       const name   = t.tenantName || t.tenant_name || '';
-      const sqFt   = parseFloat(t.leased_sqft || t.sqFt || t.sqft || 0);
-      const proRata = totalSqFt > 0 ? sqFt / totalSqFt : 0;
+      const sqFt    = parseFloat(t.leased_sqft || t.sqFt || t.sqft || 0);
+      const proRata = _proRata(sqFt, totalSqFt);
 
       const excluded = _parseExcluded(t);
 
@@ -688,8 +725,9 @@
       var tenants = Array.isArray(prop.tenants) ? prop.tenants : [];
       for (var j = 0; j < tenants.length; j++) {
         var t = tenants[j];
-        if (!t || !t.end_date || t.extractionFailed) continue;
-        var end = new Date(t.end_date + 'T12:00:00');
+        if (!_isActiveLease(t)) continue;
+        var endStr = t.end_date || t.lease_end;
+        var end = new Date(endStr + 'T12:00:00');
         if (isNaN(end.getTime())) continue;
         var days = Math.round((end.getTime() - ref.getTime()) / MS_DAY);
 
@@ -702,15 +740,16 @@
           propertyName: prop.name || '(unnamed)',
           tenantName:   t.tenant_name || t.tenantName || '(unnamed)',
           suite:        t.suite || t.unitNumber || null,
-          endDate:      t.end_date,
+          endDate:      endStr,
           daysToExpiry: days,
           hasRenewal:   hasRenewal,
         };
 
-        if      (days <   0) expired.push(alert);
-        else if (days <=  30) critical.push(alert);
-        else if (days <=  90) high.push(alert);
-        else if (days <= 180) medium.push(alert);
+        var tier = _alertTier(days);
+        if      (tier === 'expired')  expired.push(alert);
+        else if (tier === 'critical') critical.push(alert);
+        else if (tier === 'high')     high.push(alert);
+        else if (tier === 'medium')   medium.push(alert);
       }
     }
 
@@ -749,8 +788,9 @@
       var tenants = Array.isArray(prop.tenants) ? prop.tenants : [];
       for (var j = 0; j < tenants.length; j++) {
         var t = tenants[j];
-        if (!t || !t.end_date || t.extractionFailed) continue;
-        var end = new Date(t.end_date + 'T12:00:00');
+        if (!_isActiveLease(t)) continue;
+        var endStr = t.end_date || t.lease_end;
+        var end = new Date(endStr + 'T12:00:00');
         if (isNaN(end.getTime())) continue;
         var days = Math.round((end.getTime() - ref.getTime()) / MS_DAY);
 
@@ -766,19 +806,19 @@
           propertyName: prop.name || '(unnamed)',
           tenantName:   t.tenant_name || t.tenantName || '(unnamed)',
           suite:        t.suite || t.unitNumber || null,
-          endDate:      t.end_date,
+          endDate:      endStr,
           daysToExpiry: days,
           hasRenewal:   hasRenewal,
           annualRent:   (annualRent !== null && !isNaN(annualRent)) ? annualRent : null,
           sqft:         (sqft       !== null && !isNaN(sqft))       ? sqft       : null,
         };
 
-        var tierKey;
-        if      (days <   0) { tierKey = 'expired';  expired.push(alert);  }
-        else if (days <=  30) { tierKey = 'critical'; critical.push(alert); }
-        else if (days <=  90) { tierKey = 'high';     high.push(alert);     }
-        else if (days <= 180) { tierKey = 'medium';   medium.push(alert);   }
-        else continue;
+        var tierKey = _alertTier(days);
+        if (tierKey === null) continue;
+        if      (tierKey === 'expired')  expired.push(alert);
+        else if (tierKey === 'critical') critical.push(alert);
+        else if (tierKey === 'high')     high.push(alert);
+        else                             medium.push(alert);
 
         var tier = tiers[tierKey];
         tier.count++;
@@ -818,7 +858,11 @@
     var now      = new Date().toISOString();
 
     var tenants = (d.tenants || []).map(function (t) {
-      return Object.assign({}, t, { _fromAcquisition: true });
+      return Object.assign({}, t, {
+        _fromAcquisition: true,
+        start_date: t.start_date || t.lease_start || null,
+        end_date:   t.end_date   || t.lease_end   || null,
+      });
     });
 
     return {
@@ -859,12 +903,12 @@
   // Properties with totalSqft === 0 contribute tenants to rent/WALT but are
   // excluded from occupancy/vacancy (building area unknown).
 
-  function computePortfolioIntelligence(props, refDate) {
+  function computePortfolioIntelligence(props, refDate, preRar) {
     var ref    = refDate ? new Date(refDate) : new Date();
     var MS_DAY = 86400000;
     var MS_24M = 365.25 * 2 * MS_DAY;
 
-    var rar = computeRevenueAtRisk(props, ref);
+    var rar = preRar || computeRevenueAtRisk(props, ref);
 
     var totalBldgSqft = 0, totalOccSqft = 0, totalAnnualRent = 0;
     var allTenants = [];
@@ -1046,19 +1090,12 @@
       var tenants = Array.isArray(prop.tenants) ? prop.tenants : [];
       for (var j = 0; j < tenants.length; j++) {
         var t      = tenants[j];
-        if (!t || t.extractionFailed) continue;
+        if (!_isActiveLease(t)) continue;
         var endStr = t.end_date || t.lease_end;
-        if (!endStr) continue;
         var endMs        = new Date(endStr + 'T12:00:00').getTime();
         var daysRemaining = Math.round((endMs - ref.getTime()) / MS_DAY);
-        // Include expired leases and leases expiring within 365 days
-        if (daysRemaining > 365) continue;
-
-        var priority;
-        if      (daysRemaining <= 0)   priority = 'critical';
-        else if (daysRemaining <= 90)  priority = 'high';
-        else if (daysRemaining <= 180) priority = 'medium';
-        else                           priority = 'low';
+        var priority = _pipelinePriority(daysRemaining);
+        if (priority === null) continue;
 
         var rent = t.base_rent != null ? parseFloat(t.base_rent) : null;
         if (rent !== null && isNaN(rent)) rent = null;
@@ -1110,7 +1147,7 @@
   // Reuses computeRevenueAtRisk, computeRenewalPipeline, computePortfolioIntelligence —
   // no new extraction or DB tables.
 
-  function computePortfolioActions(props, reviews, refDate) {
+  function computePortfolioActions(props, reviews, refDate, preRar) {
     var ref         = refDate ? new Date(refDate) : new Date();
     var safeProps   = Array.isArray(props)   ? props   : [];
     var safeReviews = Array.isArray(reviews) ? reviews : [];
@@ -1119,8 +1156,8 @@
     var warningActions  = [];
     var infoActions     = [];
 
-    // — Lease expiry (reuse computeRevenueAtRisk) —
-    var rar = computeRevenueAtRisk(safeProps, ref);
+    // — Lease expiry (reuse computeRevenueAtRisk, or accept pre-computed result) —
+    var rar = preRar || computeRevenueAtRisk(safeProps, ref);
 
     function _leaseAction(a, severity) {
       // computeRevenueAtRisk alert objects use `daysToExpiry` (negative = expired)

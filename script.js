@@ -6710,7 +6710,7 @@ function runFullReconciliation(property) {
 
 function runCAMAllocation(expenses, tenants) {
   return tenants.map(t => {
-    const proRata  = t.leasedSqft / t.totalSqft;
+    const proRata  = t.totalSqft > 0 ? t.leasedSqft / t.totalSqft : 0;
     const eligible = expenses.filter(e =>
       !t.excludedCategories.includes(e.category.toLowerCase())
     );
@@ -13417,13 +13417,13 @@ function derivePropertyReadiness(p)     { return Selectors.derivePropertyReadine
 function _piComputePortfolioIntel(props){ return Selectors.computePortfolioIntel(props); }
 
 // Renders the Portfolio Intelligence panel above the property grid.
-function renderPortfolioIntelligence(props) {
+function renderPortfolioIntelligence(props, preRar) {
   const panel = document.getElementById('portfolioIntelPanel');
   if (!panel) return;
   const safeProps = Array.isArray(props) ? props : [];
   if (safeProps.length === 0) { panel.style.display = 'none'; return; }
 
-  const pid      = AcquisitionEngine.computePortfolioIntelligence(safeProps);
+  const pid      = AcquisitionEngine.computePortfolioIntelligence(safeProps, undefined, preRar);
   const forecast = AcquisitionEngine.computeRevenueForecast(safeProps);
 
   // ── helpers ───────────────────────────────────────────────────────────
@@ -13616,13 +13616,13 @@ function dismissActionCenter() {
   if (el) el.style.display = 'none';
 }
 
-function renderActionCenter(props, reviews) {
+function renderActionCenter(props, reviews, preRar) {
   var panel = document.getElementById('actionCenterPanel');
   if (!panel || _actionCenterDismissed) return;
   var safeProps = Array.isArray(props) ? props : [];
   if (safeProps.length === 0) { panel.style.display = 'none'; return; }
 
-  var actions = AcquisitionEngine.computePortfolioActions(safeProps, reviews || []);
+  var actions = AcquisitionEngine.computePortfolioActions(safeProps, reviews || [], undefined, preRar);
   var total   = actions.criticalActions.length + actions.warningActions.length + actions.infoActions.length;
   if (total === 0) {
     // All clear — show positive confirmation rather than hiding the panel
@@ -14559,10 +14559,10 @@ function renderPortfolio(props) {
   rar.medium.forEach(a   => _markProp(a, 'medium'));
 
   // Action Center (topmost — shows today's 5-10 priority items)
-  renderActionCenter(props, _acqReviews);
+  renderActionCenter(props, _acqReviews, rar);
 
   // Portfolio intelligence panel (above cards grid)
-  renderPortfolioIntelligence(props);
+  renderPortfolioIntelligence(props, rar);
   renderRenewalPipeline(props);
 
   // Property cards
