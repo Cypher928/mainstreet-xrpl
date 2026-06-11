@@ -3728,6 +3728,122 @@
     .rpt-ev-conf { font-size: 0.71rem; font-weight: 600; white-space: nowrap; }
     .rpt-ev-clean { margin-top: 8px; font-size: 0.75rem; color: #4ade80; padding: 4px 0; }
 
+    /* ── Acquisition Review Section ─────────────────────────────────────── */
+    .acq-section { margin: 32px 0 8px; }
+    .acq-section-head { display: flex; align-items: center; justify-content: space-between; margin-bottom: 12px; }
+    .acq-section-head h2 { font-size: 1.05rem; font-weight: 600; color: #e2e8f0; margin: 0; }
+    .acq-new-btn { background: #1e3a5f; border: 1px solid #2563eb; color: #93c5fd;
+      padding: 6px 14px; border-radius: 6px; font-size: 0.82rem; cursor: pointer; }
+    .acq-new-btn:hover { background: #1e40af; }
+    .acq-cards-grid { display: flex; flex-wrap: wrap; gap: 12px; }
+    .acq-card { background: #0f1b2d; border: 1px solid #1e3a5f; border-radius: 10px;
+      padding: 16px; min-width: 220px; max-width: 280px; cursor: pointer;
+      transition: border-color 0.15s; }
+    .acq-card:hover { border-color: #2563eb; }
+    .acq-card-name { font-size: 0.95rem; font-weight: 600; color: #e2e8f0; margin-bottom: 4px; }
+    .acq-card-meta { font-size: 0.75rem; color: #64748b; margin-bottom: 8px; }
+    .acq-card-status { display: inline-block; padding: 2px 8px; border-radius: 10px;
+      font-size: 0.72rem; font-weight: 600; text-transform: uppercase; letter-spacing: 0.04em; }
+    .acq-card-status.draft     { background: #1e293b; color: #94a3b8; }
+    .acq-card-status.analyzing { background: #1c3045; color: #60a5fa; }
+    .acq-card-status.complete  { background: #14291a; color: #4ade80; }
+    .acq-card-stats { display: flex; gap: 12px; margin-top: 10px; font-size: 0.78rem; color: #94a3b8; }
+    .acq-card-stat strong { color: #e2e8f0; }
+    .acq-empty { padding: 20px; color: #475569; font-size: 0.85rem; text-align: center;
+      border: 1px dashed #1e3a5f; border-radius: 10px; }
+
+    /* ── Acquisition Detail Panel ───────────────────────────────────────── */
+    #acqDetailPanel { display: none; }
+    .acq-detail-header { display: flex; align-items: center; gap: 12px;
+      padding: 12px 0 20px; border-bottom: 1px solid #1e293b; margin-bottom: 24px; }
+    .acq-back-btn { background: none; border: 1px solid #334155; color: #94a3b8;
+      padding: 6px 12px; border-radius: 6px; font-size: 0.82rem; cursor: pointer; }
+    .acq-back-btn:hover { border-color: #475569; color: #e2e8f0; }
+    .acq-detail-title { font-size: 1.1rem; font-weight: 600; color: #e2e8f0; }
+    .acq-detail-badge { font-size: 0.75rem; padding: 3px 10px; border-radius: 10px;
+      font-weight: 600; text-transform: uppercase; }
+    .acq-detail-badge.draft     { background: #1e293b; color: #94a3b8; }
+    .acq-detail-badge.analyzing { background: #1c3045; color: #60a5fa; }
+    .acq-detail-badge.complete  { background: #14291a; color: #4ade80; }
+
+    .acq-upload-grid { display: grid; grid-template-columns: 1fr 1fr; gap: 16px; margin-bottom: 20px; }
+    @media (max-width: 640px) { .acq-upload-grid { grid-template-columns: 1fr; } }
+    .acq-upload-card { background: #0a1628; border: 1px solid #1e3a5f; border-radius: 10px; padding: 20px; }
+    .acq-upload-card h3 { font-size: 0.9rem; font-weight: 600; color: #e2e8f0; margin: 0 0 6px; }
+    .acq-upload-card p  { font-size: 0.78rem; color: #64748b; margin: 0 0 14px; }
+    .acq-upload-btn { display: inline-block; background: #0f3460; border: 1px solid #1d4ed8;
+      color: #93c5fd; padding: 7px 16px; border-radius: 6px; font-size: 0.82rem;
+      cursor: pointer; margin-bottom: 12px; }
+    .acq-upload-btn:hover { background: #1e3a5f; }
+    .acq-file-list { list-style: none; padding: 0; margin: 0; }
+    .acq-file-item { display: flex; align-items: center; gap: 8px; padding: 6px 0;
+      border-bottom: 1px solid #1e293b; font-size: 0.78rem; color: #94a3b8; }
+    .acq-file-item:last-child { border-bottom: none; }
+    .acq-file-dot { width: 8px; height: 8px; border-radius: 50%; flex-shrink: 0; }
+    .acq-file-dot.ok      { background: #4ade80; }
+    .acq-file-dot.pending { background: #fbbf24; }
+    .acq-file-dot.error   { background: #f87171; }
+    .acq-sqft-row { display: flex; align-items: center; gap: 10px; margin: 16px 0; }
+    .acq-sqft-row label { font-size: 0.85rem; color: #94a3b8; white-space: nowrap; }
+    .acq-sqft-row input { background: #0a1628; border: 1px solid #334155; color: #e2e8f0;
+      padding: 6px 10px; border-radius: 6px; font-size: 0.85rem; width: 140px; }
+
+    .acq-analyze-bar { display: flex; align-items: center; gap: 14px; margin: 20px 0; }
+    .acq-analyze-btn { background: #C9973A; border: none; color: #0a0e1a; font-weight: 700;
+      padding: 10px 28px; border-radius: 8px; font-size: 0.92rem; cursor: pointer; }
+    .acq-analyze-btn:hover { background: #d4a843; }
+    .acq-analyze-btn:disabled { background: #3d3219; color: #64748b; cursor: not-allowed; }
+    .acq-analyze-note { font-size: 0.78rem; color: #475569; }
+
+    /* ── Acquisition Report ─────────────────────────────────────────────── */
+    .acq-report { margin-top: 28px; }
+    .acq-report-title { font-size: 1rem; font-weight: 600; color: #e2e8f0; margin-bottom: 16px; }
+    .acq-kpi-row { display: flex; flex-wrap: wrap; gap: 12px; margin-bottom: 24px; }
+    .acq-kpi { background: #0a1628; border: 1px solid #1e293b; border-radius: 8px;
+      padding: 14px 18px; min-width: 140px; flex: 1; }
+    .acq-kpi-val { font-size: 1.4rem; font-weight: 700; color: #C9973A; }
+    .acq-kpi-val.danger { color: #f87171; }
+    .acq-kpi-val.safe   { color: #4ade80; }
+    .acq-kpi-lbl { font-size: 0.72rem; color: #64748b; margin-top: 3px; text-transform: uppercase; letter-spacing: 0.05em; }
+
+    .acq-risk-table { width: 100%; border-collapse: collapse; margin-bottom: 24px; }
+    .acq-risk-table th { text-align: left; font-size: 0.75rem; color: #64748b; padding: 8px 12px;
+      border-bottom: 1px solid #1e293b; text-transform: uppercase; letter-spacing: 0.04em; }
+    .acq-risk-table td { padding: 10px 12px; border-bottom: 1px solid #0f1b2d; font-size: 0.82rem; color: #94a3b8; }
+    .acq-risk-table td:first-child { color: #e2e8f0; font-weight: 500; }
+    .acq-risk-badge { display: inline-block; padding: 2px 8px; border-radius: 10px; font-size: 0.7rem; font-weight: 600; }
+    .acq-risk-badge.cap           { background: #3b1c1c; color: #f87171; }
+    .acq-risk-badge.exclusions    { background: #2d2310; color: #fbbf24; }
+    .acq-risk-badge.none          { background: #14291a; color: #4ade80; }
+    .acq-risk-badge.partial_match { background: #1e293b; color: #94a3b8; }
+
+    .acq-top-risks h3 { font-size: 0.88rem; color: #94a3b8; margin: 0 0 10px; font-weight: 600; }
+    .acq-risk-item { display: flex; align-items: flex-start; gap: 12px;
+      padding: 12px; background: #0a1628; border: 1px solid #1e293b;
+      border-radius: 8px; margin-bottom: 8px; }
+    .acq-risk-icon  { font-size: 1.1rem; flex-shrink: 0; margin-top: 1px; }
+    .acq-risk-label { font-size: 0.85rem; color: #e2e8f0; font-weight: 600; }
+    .acq-risk-detail { font-size: 0.77rem; color: #64748b; margin-top: 2px; }
+    .acq-risk-impact { margin-left: auto; font-size: 0.85rem; font-weight: 700;
+      color: #f87171; white-space: nowrap; flex-shrink: 0; padding-left: 12px; }
+
+    .acq-section-sub { font-size: 0.82rem; color: #64748b; font-weight: 600; margin: 20px 0 8px;
+      text-transform: uppercase; letter-spacing: 0.05em; }
+    .acq-audit-chip { display: inline-block; padding: 4px 10px; border-radius: 12px;
+      font-size: 0.75rem; font-weight: 600; margin: 3px 4px 3px 0; }
+    .acq-audit-chip.open    { background: #14291a; color: #4ade80; }
+    .acq-audit-chip.closing { background: #2d2310; color: #fbbf24; }
+    .acq-audit-chip.expired { background: #3b1c1c; color: #f87171; }
+    .acq-audit-chip.none    { background: #1e293b; color: #64748b; }
+    .acq-audit-chip.unknown { background: #1e293b; color: #94a3b8; }
+
+    .acq-export-bar { margin-top: 28px; padding-top: 20px; border-top: 1px solid #1e293b;
+      display: flex; align-items: center; gap: 12px; }
+    .acq-export-btn { background: #1e293b; border: 1px solid #334155; color: #94a3b8;
+      padding: 8px 18px; border-radius: 6px; font-size: 0.82rem; cursor: pointer; }
+    .acq-export-btn:hover { border-color: #475569; color: #e2e8f0; }
+    .acq-export-note { font-size: 0.75rem; color: #475569; }
+
   </style>
 </head>
 <body>
@@ -3845,6 +3961,17 @@
   <div id="reviewQueuePanel" class="rq-panel" style="display:none;"></div>
   <div class="ptf-cards-grid" id="propertyCardsGrid"></div>
 
+  <!-- ── Acquisition Due Diligence ────────────────────────────────────── -->
+  <div class="acq-section" id="acqSection">
+    <div class="acq-section-head">
+      <h2>&#x1F50D; Acquisition Due Diligence</h2>
+      <button class="acq-new-btn" onclick="createAcquisitionReview()">+ New Review</button>
+    </div>
+    <div id="acqReviewsGrid" class="acq-cards-grid">
+      <div class="acq-empty">No due diligence reviews yet. Start one to analyze a property before acquisition.</div>
+    </div>
+  </div>
+
   <!-- XRPL Trust Strip -->
   <div class="xrpl-trust-strip">
     <div class="xrpl-trust-item">
@@ -3879,6 +4006,62 @@
     <span class="ptf-phase2-badge">Roadmap</span>
   </div>
 
+</div>
+
+<!-- ── Acquisition Detail Panel ──────────────────────────────────────── -->
+<div class="container" id="acqDetailPanel">
+  <div class="acq-detail-header">
+    <button class="acq-back-btn" onclick="closeAcquisitionDetail()">&#x2190; Back to Portfolio</button>
+    <span class="acq-detail-title" id="acqDetailTitle"></span>
+    <span class="acq-detail-badge" id="acqDetailBadge"></span>
+  </div>
+
+  <!-- Document Upload -->
+  <div class="acq-upload-grid">
+    <!-- Lease Upload -->
+    <div class="acq-upload-card">
+      <h3>&#x1F4C4; Leases</h3>
+      <p>Upload PDFs — AI extracts tenant terms, CAM caps, exclusions, and audit rights.</p>
+      <label class="acq-upload-btn">
+        Upload Leases
+        <input type="file" id="acqLeaseInput" accept=".pdf,.txt" multiple style="display:none"
+               onchange="acqHandleLeaseFiles(this.files)">
+      </label>
+      <ul class="acq-file-list" id="acqLeaseList">
+        <li style="color:#475569;font-size:0.78rem;">No leases uploaded</li>
+      </ul>
+    </div>
+
+    <!-- Invoice Upload -->
+    <div class="acq-upload-card">
+      <h3>&#x1F4CB; CAM Invoices</h3>
+      <p>Upload CAM invoices or expense reports — PDF, image, or scanned documents.</p>
+      <label class="acq-upload-btn">
+        Upload Invoices
+        <input type="file" id="acqInvoiceInput" accept=".pdf,.jpg,.jpeg,.png,.webp" multiple style="display:none"
+               onchange="acqHandleInvoiceFiles(this.files)">
+      </label>
+      <ul class="acq-file-list" id="acqInvoiceList">
+        <li style="color:#475569;font-size:0.78rem;">No invoices uploaded</li>
+      </ul>
+    </div>
+  </div>
+
+  <!-- Total SqFt + Analyze -->
+  <div class="acq-sqft-row">
+    <label for="acqTotalSqft">Total Property SqFt:</label>
+    <input type="number" id="acqTotalSqft" placeholder="e.g. 50000" min="0"
+           oninput="acqSaveSqft(this.value)">
+  </div>
+  <div class="acq-analyze-bar">
+    <button class="acq-analyze-btn" id="acqAnalyzeBtn" onclick="runAcquisitionAnalysis()" disabled>
+      &#x26A1; Run Analysis
+    </button>
+    <span class="acq-analyze-note" id="acqAnalyzeNote">Upload leases and invoices to enable analysis.</span>
+  </div>
+
+  <!-- Report output -->
+  <div id="acqReportContainer"></div>
 </div>
 
 <!-- ── Property Breadcrumb ───────────────────────────────────────────── -->
@@ -4420,6 +4603,7 @@
 <script src="lease-test-lab.js"></script>
 <script src="lease-review-packets.js"></script>
 <script src="lease-intelligence.js"></script>
+<script src="acquisition-engine.js"></script>
 <script src="script.js"></script>
 <!-- Dev-only role switcher — activates only on localhost, no-op elsewhere -->
 <script src="dev-switcher.js"></script>

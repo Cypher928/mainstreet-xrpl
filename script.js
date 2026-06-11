@@ -590,6 +590,14 @@ const portfolio = [];
 let activePropId = null; // null = portfolio view
 let _props = []; // canonical merged array from loadProperties()
 
+// ─── Acquisition Review State ─────────────────────────────────────────────────
+// Fully isolated — never touches _props, tenantData, invoiceData, or activePropId.
+let _acqReviews  = [];
+let _activeAcqId = null;
+let _acqTenants  = [];
+let _acqInvoices = [];
+let _acqSqFt     = 0;
+
 // Returns the currently selected property object, or null if none is active.
 function currentProperty() {
   if (!activePropId) return null;
@@ -14052,6 +14060,7 @@ async function backToPortfolio() {
   // ── 2. Show portfolio immediately — no waiting for network ────────────────
   activePropId = null;
   renderPortfolio(_props);
+  _renderAcqSection(_acqReviews);
   window.scrollTo({ top: 0, behavior: 'smooth' });
 }
 
@@ -16042,6 +16051,415 @@ function _renderTenantPropertyView(property) {
   if (welcome) welcome.style.display = 'none';
 }
 
+// ─── Acquisition Review ───────────────────────────────────────────────────────
+
+async function _loadAcqReviews() {
+  try {
+    const { data: { user } } = await db.auth.getUser();
+    if (!user?.id) return [];
+    const { data, error } = await db
+      .from('acquisition_reviews')
+      .select('id, name, status, data, created_at, updated_at')
+      .eq('user_id', user.id)
+      .order('created_at', { ascending: false });
+    if (error) { console.warn('[acq] load error:', error.message); return []; }
+    return data || [];
+  } catch (e) {
+    console.warn('[acq] _loadAcqReviews failed:', e.message);
+    return [];
+  }
+}
+
+async function _saveAcqReview(review) {
+  try {
+    const { data: { user } } = await db.auth.getUser();
+    if (!user?.id) return;
+    const { error } = await db
+      .from('acquisition_reviews')
+      .upsert({ ...review, user_id: user.id }, { onConflict: 'id' });
+    if (error) console.warn('[acq] save error:', error.message);
+  } catch (e) {
+    console.warn('[acq] _saveAcqReview failed:', e.message);
+  }
+}
+
+async function _loadAcqReviewsAndRender() {
+  const reviews = await _loadAcqReviews();
+  _acqReviews = reviews;
+  _renderAcqSection(reviews);
+}
+
+function _renderAcqSection(reviews) {
+  const grid = document.getElementById('acqReviewsGrid');
+  if (!grid) return;
+  if (!reviews.length) {
+    grid.innerHTML = '<div class="acq-empty">No due diligence reviews yet. Start one to analyze a property before acquisition.</div>';
+    return;
+  }
+  grid.innerHTML = reviews.map(r => {
+    const d = r.data || {};
+    const tenantCount  = (d.tenants  || []).length;
+    const invoiceCount = (d.invoices || []).length;
+    const date = r.created_at ? new Date(r.created_at).toLocaleDateString() : '';
+    return `
+    <div class="acq-card" onclick="selectAcquisitionReview('${esc(r.id)}')">
+      <div class="acq-card-name">${esc(r.name)}</div>
+      <div class="acq-card-meta">${esc(date)}</div>
+      <span class="acq-card-status ${esc(r.status)}">${esc(r.status)}</span>
+      <div class="acq-card-stats">
+        <div class="acq-card-stat"><strong>${tenantCount}</strong> Tenants</div>
+        <div class="acq-card-stat"><strong>${invoiceCount}</strong> Invoices</div>
+      </div>
+    </div>`;
+  }).join('');
+}
+
+async function createAcquisitionReview() {
+  const name = prompt('Due diligence review name (e.g. "123 Main Street"):');
+  if (!name || !name.trim()) return;
+  try {
+    const { data: { user } } = await db.auth.getUser();
+    if (!user?.id) { alert('Please sign in first.'); return; }
+    const id = crypto.randomUUID ? crypto.randomUUID() : _genUUID();
+    const review = {
+      id,
+      user_id:    user.id,
+      name:       name.trim(),
+      status:     'draft',
+      data:       { tenants: [], invoices: [], totalSqFt: 0, documents: [], analysis: null },
+      created_at: new Date().toISOString(),
+      updated_at: new Date().toISOString(),
+    };
+    const { error } = await db.from('acquisition_reviews').insert(review);
+    if (error) { console.error('[acq] create error:', error.message); alert('Could not create review.'); return; }
+    _acqReviews.unshift(review);
+    _renderAcqSection(_acqReviews);
+    selectAcquisitionReview(id);
+  } catch (e) {
+    console.error('[acq] createAcquisitionReview:', e.message);
+    alert('Could not create review.');
+  }
+}
+
+function selectAcquisitionReview(id) {
+  const review = _acqReviews.find(r => r.id === id);
+  if (!review) return;
+  _activeAcqId = id;
+  const d = review.data || {};
+  _acqTenants  = Array.isArray(d.tenants)  ? d.tenants  : [];
+  _acqInvoices = Array.isArray(d.invoices) ? d.invoices : [];
+  _acqSqFt     = d.totalSqFt || 0;
+
+  document.getElementById('portfolioDashboard').style.display = 'none';
+  document.getElementById('acqDetailPanel').style.display     = 'block';
+  document.getElementById('propertyBreadcrumb').style.display = 'none';
+  document.getElementById('mainWorkflow').style.display       = 'none';
+
+  document.getElementById('acqDetailTitle').textContent = review.name;
+  const badge = document.getElementById('acqDetailBadge');
+  badge.textContent = review.status;
+  badge.className = 'acq-detail-badge ' + review.status;
+
+  const sqftEl = document.getElementById('acqTotalSqft');
+  if (sqftEl) sqftEl.value = _acqSqFt || '';
+
+  _renderAcqLeaselist();
+  _renderAcqInvoiceList();
+  _updateAcqAnalyzeBtn();
+
+  if (d.analysis) {
+    _renderAcqReport(d.analysis, document.getElementById('acqReportContainer'));
+  } else {
+    document.getElementById('acqReportContainer').innerHTML = '';
+  }
+}
+
+function closeAcquisitionDetail() {
+  _activeAcqId = null;
+  _acqTenants  = [];
+  _acqInvoices = [];
+  document.getElementById('acqDetailPanel').style.display     = 'none';
+  document.getElementById('portfolioDashboard').style.display = 'block';
+  _renderAcqSection(_acqReviews);
+  window.scrollTo({ top: 0, behavior: 'smooth' });
+}
+
+function _renderAcqLeaselist() {
+  const el = document.getElementById('acqLeaseList');
+  if (!el) return;
+  if (!_acqTenants.length) {
+    el.innerHTML = '<li style="color:#475569;font-size:0.78rem;">No leases uploaded</li>';
+    return;
+  }
+  el.innerHTML = _acqTenants.map(t => {
+    const name = esc(t.tenant_name || t.tenantName || '(extracting…)');
+    const dot  = t._status === 'error' ? 'error' : 'ok';
+    return `<li class="acq-file-item"><span class="acq-file-dot ${dot}"></span>${name}</li>`;
+  }).join('');
+}
+
+function _renderAcqInvoiceList() {
+  const el = document.getElementById('acqInvoiceList');
+  if (!el) return;
+  if (!_acqInvoices.length) {
+    el.innerHTML = '<li style="color:#475569;font-size:0.78rem;">No invoices uploaded</li>';
+    return;
+  }
+  el.innerHTML = _acqInvoices.map(inv => {
+    const name = esc(inv.vendorName || inv.fileName || '(processing…)');
+    const amt  = inv.amount ? ' — $' + parseFloat(inv.amount).toLocaleString() : '';
+    const dot  = inv._error ? 'error' : 'ok';
+    return `<li class="acq-file-item"><span class="acq-file-dot ${dot}"></span>${name}${amt}</li>`;
+  }).join('');
+}
+
+function _updateAcqAnalyzeBtn() {
+  const btn  = document.getElementById('acqAnalyzeBtn');
+  const note = document.getElementById('acqAnalyzeNote');
+  if (!btn) return;
+  const hasTenants  = _acqTenants.some(t => t.tenant_name || t.tenantName);
+  const hasInvoices = _acqInvoices.some(i => i.amount);
+  const hasSqFt     = _acqSqFt > 0;
+  const ready = hasTenants && hasInvoices && hasSqFt;
+  btn.disabled = !ready;
+  if (note) {
+    note.textContent = !hasTenants  ? 'Upload at least one lease to enable analysis.'
+                     : !hasInvoices ? 'Upload at least one invoice to enable analysis.'
+                     : !hasSqFt    ? 'Enter total property square footage above.'
+                     : 'Ready — click to run risk analysis.';
+  }
+}
+
+function acqSaveSqft(val) {
+  _acqSqFt = parseFloat(val) || 0;
+  const review = _acqReviews.find(r => r.id === _activeAcqId);
+  if (review) { review.data = review.data || {}; review.data.totalSqFt = _acqSqFt; }
+  _updateAcqAnalyzeBtn();
+}
+
+async function acqHandleLeaseFiles(fileList) {
+  const files = Array.from(fileList);
+  if (!files.length) return;
+  const review = _acqReviews.find(r => r.id === _activeAcqId);
+  if (!review) return;
+
+  for (const file of files) {
+    const placeholder = { tenant_name: file.name, _status: 'pending', _fileName: file.name };
+    _acqTenants.push(placeholder);
+    _renderAcqLeaselist();
+
+    try {
+      const leaseText = await extractLeaseText(file);
+      let extracted;
+      if (leaseText && leaseText.length >= 50) {
+        extracted = await callClaudeForLease(leaseText);
+      } else {
+        extracted = await callClaudeWithPdfDirect(file);
+      }
+      if (!extracted) throw new Error('Extraction returned null');
+      const normalized = normalizeTenant(extracted);
+      Object.assign(placeholder, normalized, { _status: 'ok', _fileName: file.name });
+    } catch (e) {
+      console.warn('[acq] lease extraction failed:', file.name, e.message);
+      placeholder.tenant_name = file.name.replace(/\.[^.]+$/, '');
+      placeholder._status = 'error';
+      placeholder._error  = e.message;
+    }
+
+    _renderAcqLeaselist();
+    _updateAcqAnalyzeBtn();
+  }
+
+  review.data = review.data || {};
+  review.data.tenants = _acqTenants.filter(t => t._status !== 'error');
+  review.updated_at   = new Date().toISOString();
+  _saveAcqReview(review);
+  document.getElementById('acqLeaseInput').value = '';
+}
+
+async function acqHandleInvoiceFiles(fileList) {
+  const files = Array.from(fileList);
+  if (!files.length) return;
+  const review = _acqReviews.find(r => r.id === _activeAcqId);
+  if (!review) return;
+
+  for (const file of files) {
+    const placeholder = { vendorName: file.name, amount: null, _status: 'pending', fileName: file.name };
+    _acqInvoices.push(placeholder);
+    _renderAcqInvoiceList();
+
+    try {
+      const d = await callClaude(file, INVOICE_PROMPT);
+      if (d) {
+        const vendorName = d.vendorName || file.name.replace(/\.(pdf|jpe?g|png|webp)$/i, '');
+        let category     = d.category || 'other';
+        if (category === 'other') {
+          const norm = normalizeCategory(vendorName, '');
+          if (norm) category = norm.category;
+        }
+        Object.assign(placeholder, {
+          vendorName:  cleanHTML(vendorName),
+          amount:      d.amount || null,
+          category,
+          invoiceDate: cleanHTML(d.invoiceDate || ''),
+          _status:     'ok',
+        });
+      } else {
+        placeholder._status = 'error';
+        placeholder._error  = 'Extraction returned null';
+      }
+    } catch (e) {
+      console.warn('[acq] invoice extraction failed:', file.name, e.message);
+      placeholder._status = 'error';
+      placeholder._error  = e.message;
+    }
+
+    _renderAcqInvoiceList();
+    _updateAcqAnalyzeBtn();
+  }
+
+  review.data = review.data || {};
+  review.data.invoices = _acqInvoices.filter(i => i._status !== 'error' && i.amount);
+  review.updated_at    = new Date().toISOString();
+  _saveAcqReview(review);
+  document.getElementById('acqInvoiceInput').value = '';
+}
+
+async function runAcquisitionAnalysis() {
+  const review = _acqReviews.find(r => r.id === _activeAcqId);
+  if (!review) return;
+  const btn = document.getElementById('acqAnalyzeBtn');
+  if (btn) { btn.disabled = true; btn.textContent = '⏳ Analyzing…'; }
+
+  try {
+    const AE = window.AcquisitionEngine;
+    if (!AE) throw new Error('AcquisitionEngine not loaded');
+
+    const tenants  = _acqTenants.filter(t => (t.tenant_name || t.tenantName) && t._status !== 'error');
+    const invoices = _acqInvoices.filter(i => i.amount && i._status !== 'error');
+    const report   = AE.buildAcquisitionReport(tenants, invoices, _acqSqFt);
+
+    review.data      = review.data || {};
+    review.data.analysis = report;
+    review.status    = 'complete';
+    review.updated_at = new Date().toISOString();
+
+    const badge = document.getElementById('acqDetailBadge');
+    if (badge) { badge.textContent = 'complete'; badge.className = 'acq-detail-badge complete'; }
+
+    await _saveAcqReview(review);
+    _renderAcqSection(_acqReviews);
+    _renderAcqReport(report, document.getElementById('acqReportContainer'));
+  } catch (e) {
+    console.error('[acq] analysis failed:', e.message);
+    const cont = document.getElementById('acqReportContainer');
+    if (cont) cont.innerHTML = `<div style="color:#f87171;padding:16px;">Analysis failed: ${esc(e.message)}</div>`;
+  }
+
+  if (btn) { btn.disabled = false; btn.textContent = '⚡ Run Analysis'; }
+}
+
+function _renderAcqReport(report, container) {
+  if (!container) return;
+  if (report.error) {
+    container.innerHTML = `<div style="color:#f87171;padding:16px;">${esc(report.error)}</div>`;
+    return;
+  }
+  const s   = report.summary;
+  const fmt = v => v != null ? '$' + parseFloat(v).toLocaleString('en-US', { maximumFractionDigits: 0 }) : '—';
+  const pct = v => v != null ? v + '%' : '—';
+
+  const missedCls  = s.annualMissedRecovery > 0 ? 'danger' : 'safe';
+  const recoverCls = s.recoveryRate >= 90 ? 'safe' : s.recoveryRate >= 70 ? '' : 'danger';
+
+  const kpis = `
+  <div class="acq-kpi-row">
+    <div class="acq-kpi"><div class="acq-kpi-val ${recoverCls}">${pct(s.recoveryRate)}</div><div class="acq-kpi-lbl">Recovery Rate</div></div>
+    <div class="acq-kpi"><div class="acq-kpi-val ${missedCls}">${fmt(s.annualMissedRecovery)}</div><div class="acq-kpi-lbl">Annual Missed Recovery</div></div>
+    <div class="acq-kpi"><div class="acq-kpi-val ${s.capLeakageAnnualized > 0 ? 'danger' : 'safe'}">${fmt(s.capLeakageAnnualized)}</div><div class="acq-kpi-lbl">Annualized Cap Leakage</div></div>
+    <div class="acq-kpi"><div class="acq-kpi-val">${s.tenantCount}</div><div class="acq-kpi-lbl">Tenants</div></div>
+    <div class="acq-kpi"><div class="acq-kpi-val">${s.openAuditWindows}</div><div class="acq-kpi-lbl">Open Audit Windows</div></div>
+  </div>`;
+
+  const riskItems = report.topRisks.map(r => {
+    const icons = { cap_leakage: '⚠️', structural_gap: '🔒', operational_gap: '🔧', unusual_exclusions: '📋' };
+    return `
+    <div class="acq-risk-item">
+      <span class="acq-risk-icon">${icons[r.type] || '⚠️'}</span>
+      <div>
+        <div class="acq-risk-label">${esc(r.label)}</div>
+        <div class="acq-risk-detail">${esc(r.detail)}</div>
+      </div>
+      ${r.annualImpact ? `<div class="acq-risk-impact">${fmt(r.annualImpact)}/yr</div>` : ''}
+    </div>`;
+  }).join('');
+
+  const topRisksHtml = report.topRisks.length
+    ? `<div class="acq-top-risks"><h3>&#x26A0;&#xFE0F; Top Risks</h3>${riskItems}</div>`
+    : '';
+
+  const rows = (report.underbilling || []).map(r => {
+    const badgeCls = r.cause === 'none' ? 'none' : r.cause;
+    return `
+    <tr>
+      <td>${esc(r.tenantName)}</td>
+      <td>${fmt(r.fullLiability)}</td>
+      <td>${fmt(r.allocatedAmount)}</td>
+      <td>${fmt(r.gap)}</td>
+      <td><span class="acq-risk-badge ${badgeCls}">${esc(r.cause)}</span></td>
+    </tr>`;
+  }).join('');
+
+  const tenantTable = rows ? `
+  <div class="acq-section-sub">Tenant-Level Analysis</div>
+  <table class="acq-risk-table">
+    <thead>
+      <tr>
+        <th>Tenant</th>
+        <th>Full Liability</th>
+        <th>Allocated</th>
+        <th>Gap</th>
+        <th>Cause</th>
+      </tr>
+    </thead>
+    <tbody>${rows}</tbody>
+  </table>` : '';
+
+  const auditChips = (report.auditWindows || []).map(w =>
+    `<span class="acq-audit-chip ${esc(w.windowStatus)}">${esc(w.tenantName)} — ${esc(w.windowStatus)}</span>`
+  ).join('');
+  const auditHtml = auditChips
+    ? `<div class="acq-section-sub">Audit Windows</div><div>${auditChips}</div>`
+    : '';
+
+  const exportBar = `
+  <div class="acq-export-bar">
+    <button class="acq-export-btn" onclick="acqExportPdf()">&#x1F4E5; Export PDF</button>
+    <span class="acq-export-note">PDF export coming soon — full report with citations.</span>
+  </div>`;
+
+  container.innerHTML = `
+  <div class="acq-report">
+    <div class="acq-report-title">Risk Analysis Report</div>
+    ${kpis}
+    ${topRisksHtml}
+    ${tenantTable}
+    ${auditHtml}
+    ${exportBar}
+  </div>`;
+}
+
+function acqExportPdf() {
+  alert('PDF export is coming soon. The full report with citations and evidence appendix will be available in the next release.');
+}
+
+function _genUUID() {
+  return 'xxxxxxxx-xxxx-4xxx-yxxx-xxxxxxxxxxxx'.replace(/[xy]/g, c => {
+    const r = Math.random() * 16 | 0;
+    return (c === 'x' ? r : (r & 0x3 | 0x8)).toString(16);
+  });
+}
+
 // ─── Init ─────────────────────────────────────────────────────────────────────
 async function init() {
   _loadCheckpoints();
@@ -16085,6 +16503,7 @@ async function init() {
     _props = properties || [];
     portfolio.splice(0, portfolio.length, ..._props);
     renderPortfolio(properties);
+    _loadAcqReviewsAndRender();
   } catch (e) {
     const isNet = /load failed|failed to fetch|networkerror|offline/i.test(e?.message || '');
     if (!isNet) logError('init.loadProperties', e, {});
@@ -16094,6 +16513,7 @@ async function init() {
     _props = [];
     portfolio.splice(0, portfolio.length);
     renderPortfolio([]);
+    _renderAcqSection([]);
     document.getElementById('portfolioDashboard').style.display = 'block';
     document.getElementById('mainWorkflow').style.display       = 'none';
   }
