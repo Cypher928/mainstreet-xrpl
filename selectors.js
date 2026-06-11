@@ -95,8 +95,7 @@ window.Selectors = (() => {
     const reconResults = results; // alias for clarity below
 
     const missingDocs  = invoices.filter(i => i && !i.fileUrl && !i.fileName).length;
-    const openDisputes = (prop.disputes || []).filter(d => d.status === 'open').length
-      || Number(prop.openDisputes) || 0;
+    const openDisputes = (prop.disputes || []).filter(d => d.status === 'open').length;
 
     let redCount = 0, yellowCount = 0;
     if (snap) {
@@ -174,7 +173,7 @@ window.Selectors = (() => {
     return {
       properties:        safeProps.length,
       cam:               safeProps.reduce((s, p) => s + (Number(p.totalCAM) || 0), 0),
-      openDisputes:      safeProps.reduce((s, p) => s + (Number(p.openDisputes) || 0), 0),
+      openDisputes:      metas.reduce((s, m) => s + (m.openDisputes || 0), 0),
       criticalOrElevated,
       totalMissingDocs,
       avgConf: confScores.length

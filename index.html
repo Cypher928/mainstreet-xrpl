@@ -665,11 +665,16 @@
     }
     .ptf-props-head {
       display: flex; align-items: center; justify-content: space-between;
-      margin-bottom: 8px;
+      margin-bottom: 8px; gap: 8px;
     }
     .ptf-props-head h2 {
       font-size: 1.05rem; font-weight: 700; color: #E2E8F0; margin: 0;
     }
+    .ptf-head-actions { display: flex; align-items: center; gap: 8px; flex-shrink: 0; }
+    .ptf-export-btn   { background: none; border: 1px solid rgba(100,116,139,0.3); color: #64748b;
+                        padding: 6px 12px; border-radius: 7px; font-size: 0.74rem; font-weight: 600;
+                        cursor: pointer; white-space: nowrap; }
+    .ptf-export-btn:hover { border-color: rgba(201,151,58,0.4); color: #C9973A; background: rgba(201,151,58,0.06); }
     /* Sort row */
     .ptf-sort-row { display: flex; align-items: center; gap: 6px; margin-bottom: 12px; flex-wrap: wrap; }
     .ptf-sort-lbl { font-size: 0.7rem; color: #475569; font-weight: 600; text-transform: uppercase; letter-spacing: 0.06em; margin-right: 2px; }
@@ -3728,6 +3733,507 @@
     .rpt-ev-conf { font-size: 0.71rem; font-weight: 600; white-space: nowrap; }
     .rpt-ev-clean { margin-top: 8px; font-size: 0.75rem; color: #4ade80; padding: 4px 0; }
 
+    /* ── Acquisition Review Section ─────────────────────────────────────── */
+    .acq-section { margin: 32px 0 8px; }
+    .acq-section-head { display: flex; align-items: center; justify-content: space-between; margin-bottom: 12px; }
+    .acq-section-head h2 { font-size: 1.05rem; font-weight: 600; color: #e2e8f0; margin: 0; }
+    .acq-new-btn { background: #1e3a5f; border: 1px solid #2563eb; color: #93c5fd;
+      padding: 6px 14px; border-radius: 6px; font-size: 0.82rem; cursor: pointer; }
+    .acq-new-btn:hover { background: #1e40af; }
+    .acq-cards-grid { display: flex; flex-wrap: wrap; gap: 12px; }
+    .acq-card { background: #0f1b2d; border: 1px solid #1e3a5f; border-radius: 10px;
+      padding: 16px; min-width: 220px; max-width: 280px; cursor: pointer;
+      transition: border-color 0.15s; }
+    .acq-card:hover { border-color: #2563eb; }
+    .acq-card-name { font-size: 0.95rem; font-weight: 600; color: #e2e8f0; margin-bottom: 4px; }
+    .acq-card-meta { font-size: 0.75rem; color: #64748b; margin-bottom: 8px; }
+    .acq-card-status { display: inline-block; padding: 2px 8px; border-radius: 10px;
+      font-size: 0.72rem; font-weight: 600; text-transform: uppercase; letter-spacing: 0.04em; }
+    .acq-card-status.draft     { background: #1e293b; color: #94a3b8; }
+    .acq-card-status.analyzing { background: #1c3045; color: #60a5fa; }
+    .acq-card-status.complete  { background: #14291a; color: #4ade80; }
+    .acq-card-stats { display: flex; gap: 12px; margin-top: 10px; font-size: 0.78rem; color: #94a3b8; }
+    .acq-card-stat strong { color: #e2e8f0; }
+    .acq-empty { padding: 20px; color: #475569; font-size: 0.85rem; text-align: center;
+      border: 1px dashed #1e3a5f; border-radius: 10px; }
+
+    /* ── Acquisition Detail Panel ───────────────────────────────────────── */
+    #acqDetailPanel { display: none; }
+    .acq-detail-header { display: flex; align-items: center; gap: 12px;
+      padding: 12px 0 20px; border-bottom: 1px solid #1e293b; margin-bottom: 24px; }
+    .acq-back-btn { background: none; border: 1px solid #334155; color: #94a3b8;
+      padding: 6px 12px; border-radius: 6px; font-size: 0.82rem; cursor: pointer; }
+    .acq-back-btn:hover { border-color: #475569; color: #e2e8f0; }
+    .acq-detail-title { font-size: 1.1rem; font-weight: 600; color: #e2e8f0; }
+    .acq-detail-badge { font-size: 0.75rem; padding: 3px 10px; border-radius: 10px;
+      font-weight: 600; text-transform: uppercase; }
+    .acq-detail-badge.draft     { background: #1e293b; color: #94a3b8; }
+    .acq-detail-badge.analyzing { background: #1c3045; color: #60a5fa; }
+    .acq-detail-badge.complete  { background: #14291a; color: #4ade80; }
+    .acq-detail-badge.converted { background: #1e1245; color: #a78bfa; }
+    .acq-card-status.converted  { background: #1e1245; color: #a78bfa; }
+    .acq-card.converted         { border-color: #2d1a5e; }
+    .acq-card-converted-note    { font-size: 0.72rem; color: #7c3aed; margin-top: 4px; }
+
+    /* ── Convert button + converted state ──────────────────────────────── */
+    .acq-convert-btn  { margin-left: auto; background: #C9973A; color: #0a0f1a;
+                        border: none; border-radius: 6px; padding: 7px 16px;
+                        font-size: 0.82rem; font-weight: 700; cursor: pointer;
+                        letter-spacing: 0.03em; transition: background 0.15s; white-space: nowrap; }
+    .acq-convert-btn:hover   { background: #d4a84a; }
+    .acq-convert-btn:disabled { opacity: 0.45; cursor: not-allowed; }
+    .acq-converted-link { margin-left: auto; font-size: 0.82rem; color: #a78bfa; cursor: pointer;
+                          text-decoration: underline; white-space: nowrap; }
+    .acq-converted-link:hover { color: #c4b5fd; }
+
+    /* ── Conversion confirmation modal ─────────────────────────────────── */
+    .acq-modal-backdrop { position: fixed; inset: 0; background: rgba(0,0,0,.65);
+                          z-index: 2000; display: flex; align-items: center; justify-content: center; }
+    .acq-modal-box      { background: #0f1b2d; border: 1px solid #1e3a5f; border-radius: 10px;
+                          padding: 28px 32px; max-width: 420px; width: 90%; box-shadow: 0 12px 40px rgba(0,0,0,.5); }
+    .acq-modal-title    { font-size: 1rem; font-weight: 700; color: #e2e8f0; margin-bottom: 10px; }
+    .acq-modal-body     { font-size: 0.85rem; color: #94a3b8; line-height: 1.55; margin-bottom: 22px; }
+    .acq-modal-name     { color: #e2e8f0; font-weight: 600; }
+    .acq-modal-actions  { display: flex; gap: 10px; justify-content: flex-end; }
+    .acq-modal-confirm  { background: #C9973A; color: #0a0f1a; border: none; border-radius: 6px;
+                          padding: 8px 20px; font-weight: 700; cursor: pointer; font-size: 0.85rem; }
+    .acq-modal-confirm:hover   { background: #d4a84a; }
+    .acq-modal-confirm:disabled { opacity: 0.5; cursor: not-allowed; }
+    .acq-modal-cancel   { background: transparent; color: #94a3b8; border: 1px solid #334155;
+                          border-radius: 6px; padding: 8px 18px; cursor: pointer; font-size: 0.85rem; }
+    .acq-modal-cancel:hover { color: #e2e8f0; border-color: #64748b; }
+
+    .acq-upload-grid { display: grid; grid-template-columns: 1fr 1fr; gap: 16px; margin-bottom: 20px; }
+    @media (max-width: 640px) { .acq-upload-grid { grid-template-columns: 1fr; } }
+    .acq-upload-card { background: #0a1628; border: 1px solid #1e3a5f; border-radius: 10px; padding: 20px; }
+    .acq-upload-card h3 { font-size: 0.9rem; font-weight: 600; color: #e2e8f0; margin: 0 0 6px; }
+    .acq-upload-card p  { font-size: 0.78rem; color: #64748b; margin: 0 0 14px; }
+    .acq-upload-btn { display: inline-block; background: #0f3460; border: 1px solid #1d4ed8;
+      color: #93c5fd; padding: 7px 16px; border-radius: 6px; font-size: 0.82rem;
+      cursor: pointer; margin-bottom: 12px; }
+    .acq-upload-btn:hover { background: #1e3a5f; }
+    .acq-file-list { list-style: none; padding: 0; margin: 0; }
+    .acq-file-item { display: flex; align-items: center; gap: 8px; padding: 6px 0;
+      border-bottom: 1px solid #1e293b; font-size: 0.78rem; color: #94a3b8; }
+    .acq-file-item:last-child { border-bottom: none; }
+    .acq-file-dot { width: 8px; height: 8px; border-radius: 50%; flex-shrink: 0; }
+    .acq-file-dot.ok      { background: #4ade80; }
+    .acq-file-dot.pending { background: #fbbf24; }
+    .acq-file-dot.error   { background: #f87171; }
+    .acq-sqft-row { display: flex; align-items: center; gap: 10px; margin: 16px 0; }
+    .acq-sqft-row label { font-size: 0.85rem; color: #94a3b8; white-space: nowrap; }
+    .acq-sqft-row input { background: #0a1628; border: 1px solid #334155; color: #e2e8f0;
+      padding: 6px 10px; border-radius: 6px; font-size: 0.85rem; width: 140px; }
+
+    .acq-analyze-bar { display: flex; align-items: center; gap: 14px; margin: 20px 0; }
+    .acq-analyze-btn { background: #C9973A; border: none; color: #0a0e1a; font-weight: 700;
+      padding: 10px 28px; border-radius: 8px; font-size: 0.92rem; cursor: pointer; }
+    .acq-analyze-btn:hover { background: #d4a843; }
+    .acq-analyze-btn:disabled { background: #3d3219; color: #64748b; cursor: not-allowed; }
+    .acq-analyze-note { font-size: 0.78rem; color: #475569; }
+
+    /* ── Acquisition Report ─────────────────────────────────────────────── */
+    .acq-report { margin-top: 28px; }
+    .acq-report-title { font-size: 1rem; font-weight: 600; color: #e2e8f0; margin-bottom: 16px; }
+    .acq-kpi-row { display: flex; flex-wrap: wrap; gap: 12px; margin-bottom: 24px; }
+    .acq-kpi { background: #0a1628; border: 1px solid #1e293b; border-radius: 8px;
+      padding: 14px 18px; min-width: 140px; flex: 1; }
+    .acq-kpi-val { font-size: 1.4rem; font-weight: 700; color: #C9973A; }
+    .acq-kpi-val.danger { color: #f87171; }
+    .acq-kpi-val.safe   { color: #4ade80; }
+    .acq-kpi-lbl { font-size: 0.72rem; color: #64748b; margin-top: 3px; text-transform: uppercase; letter-spacing: 0.05em; }
+
+    .acq-risk-table { width: 100%; border-collapse: collapse; margin-bottom: 24px; }
+    .acq-risk-table th { text-align: left; font-size: 0.75rem; color: #64748b; padding: 8px 12px;
+      border-bottom: 1px solid #1e293b; text-transform: uppercase; letter-spacing: 0.04em; }
+    .acq-risk-table td { padding: 10px 12px; border-bottom: 1px solid #0f1b2d; font-size: 0.82rem; color: #94a3b8; }
+    .acq-risk-table td:first-child { color: #e2e8f0; font-weight: 500; }
+    .acq-risk-badge { display: inline-block; padding: 2px 8px; border-radius: 10px; font-size: 0.7rem; font-weight: 600; }
+    .acq-risk-badge.cap           { background: #3b1c1c; color: #f87171; }
+    .acq-risk-badge.exclusions    { background: #2d2310; color: #fbbf24; }
+    .acq-risk-badge.none          { background: #14291a; color: #4ade80; }
+    .acq-risk-badge.partial_match { background: #1e293b; color: #94a3b8; }
+
+    .acq-top-risks h3 { font-size: 0.88rem; color: #94a3b8; margin: 0 0 10px; font-weight: 600; }
+    .acq-risk-item { display: flex; align-items: flex-start; gap: 12px;
+      padding: 12px; background: #0a1628; border: 1px solid #1e293b;
+      border-radius: 8px; margin-bottom: 8px; }
+    .acq-risk-icon  { font-size: 1.1rem; flex-shrink: 0; margin-top: 1px; }
+    .acq-risk-label { font-size: 0.85rem; color: #e2e8f0; font-weight: 600; }
+    .acq-risk-detail { font-size: 0.77rem; color: #64748b; margin-top: 2px; }
+    .acq-risk-impact { margin-left: auto; font-size: 0.85rem; font-weight: 700;
+      color: #f87171; white-space: nowrap; flex-shrink: 0; padding-left: 12px; }
+
+    .acq-section-sub { font-size: 0.82rem; color: #64748b; font-weight: 600; margin: 20px 0 8px;
+      text-transform: uppercase; letter-spacing: 0.05em; }
+    .acq-audit-chip { display: inline-block; padding: 4px 10px; border-radius: 12px;
+      font-size: 0.75rem; font-weight: 600; margin: 3px 4px 3px 0; }
+    .acq-audit-chip.open    { background: #14291a; color: #4ade80; }
+    .acq-audit-chip.closing { background: #2d2310; color: #fbbf24; }
+    .acq-audit-chip.expired { background: #3b1c1c; color: #f87171; }
+    .acq-audit-chip.none    { background: #1e293b; color: #64748b; }
+    .acq-audit-chip.unknown { background: #1e293b; color: #94a3b8; }
+
+    .acq-export-bar { margin-top: 28px; padding-top: 20px; border-top: 1px solid #1e293b;
+      display: flex; align-items: center; gap: 12px; }
+    .acq-export-btn { background: #1e293b; border: 1px solid #334155; color: #94a3b8;
+      padding: 8px 18px; border-radius: 6px; font-size: 0.82rem; cursor: pointer; }
+    .acq-export-btn:hover { border-color: #475569; color: #e2e8f0; }
+    .acq-export-note { font-size: 0.75rem; color: #475569; }
+
+    /* ── Citation-backed findings ────────────────────────────────────────── */
+    .acq-findings-list { display: flex; flex-direction: column; gap: 8px; margin-bottom: 24px; }
+    .acq-finding-item { display: flex; align-items: flex-start; gap: 12px;
+      padding: 12px 14px; background: #060d1a; border: 1px solid #1e293b;
+      border-left: 3px solid #C9973A; border-radius: 8px; }
+    .acq-finding-body { flex: 1; min-width: 0; }
+    .acq-finding-header { display: flex; align-items: center; gap: 10px; margin-bottom: 6px; flex-wrap: wrap; }
+    .acq-finding-tenant { font-size: 0.85rem; font-weight: 700; color: #e2e8f0; }
+    .acq-finding-label  { font-size: 0.75rem; color: #64748b; }
+    .acq-finding-cite   { font-size: 0.78rem; color: #94a3b8; font-style: italic;
+      background: #0a1628; border-left: 2px solid #334155; padding: 6px 10px;
+      border-radius: 4px; white-space: pre-wrap; word-break: break-word;
+      max-height: 80px; overflow: hidden; }
+
+    /* ── Acquisition: Tenant Summary table ──────────────────────────── */
+    .acq-ts-section { margin-bottom: 28px; }
+    .acq-ts-scroll  { overflow-x: auto; -webkit-overflow-scrolling: touch; }
+    .acq-ts-table   { width: 100%; border-collapse: collapse; min-width: 720px; }
+    .acq-ts-table th { text-align: left; font-size: 0.72rem; color: #64748b; padding: 8px 12px;
+      border-bottom: 1px solid #1e293b; text-transform: uppercase; letter-spacing: 0.05em; white-space: nowrap; }
+    .acq-ts-table td { padding: 10px 12px; border-bottom: 1px solid #0f1b2d;
+      font-size: 0.82rem; color: #94a3b8; vertical-align: top; }
+    .acq-ts-name    { color: #e2e8f0 !important; font-weight: 600; white-space: nowrap; }
+    .acq-ts-term    { white-space: nowrap; color: #64748b !important; font-size: 0.78rem !important; }
+    .acq-ts-cam     { font-size: 0.75rem !important; color: #64748b !important; max-width: 200px; word-break: break-word; }
+    .acq-ts-renewal { font-size: 0.78rem !important; max-width: 160px; }
+
+    /* ── Portfolio Intelligence Dashboard ──────────────────────────────── */
+    .pid-panel        { background: #090f1a; border: 1px solid #1e3a5f; border-radius: 10px;
+                        margin-bottom: 20px; overflow: hidden; }
+    .pid-panel-head   { padding: 13px 18px 10px; border-bottom: 1px solid #0f1b2d; }
+    .pid-panel-title  { font-size: 0.95rem; font-weight: 700; color: #e2e8f0; letter-spacing: 0.02em; }
+
+    /* Metrics grid */
+    .pid-grid         { display: grid; grid-template-columns: repeat(7, 1fr); gap: 1px;
+                        background: #0f1b2d; }
+    @media (max-width: 760px) { .pid-grid { grid-template-columns: repeat(4, 1fr); } }
+    @media (max-width: 480px) { .pid-grid { grid-template-columns: repeat(2, 1fr); } }
+    .pid-tile         { background: #090f1a; padding: 14px 10px; text-align: center; }
+    .pid-tile-val     { font-size: 1.3rem; font-weight: 700; color: #C9973A; line-height: 1.1; }
+    .pid-tile-lbl     { font-size: 0.65rem; color: #64748b; text-transform: uppercase;
+                        letter-spacing: 0.06em; margin-top: 4px; }
+    .pid-tile--alert .pid-tile-val { color: #f87171; }
+    .pid-tile--warn  .pid-tile-val { color: #fbbf24; }
+
+    /* Sections */
+    .pid-section      { border-top: 1px solid #0f1b2d; padding: 14px 18px; }
+    .pid-section-title { font-size: 0.75rem; text-transform: uppercase; letter-spacing: 0.07em;
+                         color: #64748b; margin-bottom: 10px; display: flex; align-items: center;
+                         justify-content: space-between; }
+    .pid-toggle-icon  { font-size: 0.6rem; color: #475569; }
+
+    /* Top Risks */
+    .pid-risk-row     { display: flex; align-items: center; gap: 10px; padding: 8px 0;
+                        border-bottom: 1px solid #0a1020; cursor: pointer; transition: background 0.1s; }
+    .pid-risk-row:hover { background: #0f1b2d; margin: 0 -18px; padding-left: 18px; padding-right: 18px; }
+    .pid-risk-row:last-child { border-bottom: none; }
+    .pid-risk-rank    { width: 20px; font-size: 0.78rem; font-weight: 700; color: #475569;
+                        flex-shrink: 0; text-align: center; }
+    .pid-risk-icon    { font-size: 0.9rem; flex-shrink: 0; }
+    .pid-risk-body    { display: flex; flex-direction: column; min-width: 0; }
+    .pid-risk-prop    { font-size: 0.84rem; font-weight: 600; color: #e2e8f0;
+                        overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+    .pid-risk-label   { font-size: 0.76rem; color: #94a3b8; }
+
+    /* Revenue Forecast */
+    .pid-fc-summary   { font-size: 0.8rem; color: #94a3b8; display: flex; gap: 10px;
+                        flex-wrap: wrap; margin-bottom: 10px; }
+    .pid-fc-sep       { color: #1e293b; }
+    .pid-fc-expiring  { color: #f87171; }
+    .pid-fc-header    { display: grid; grid-template-columns: 1fr 110px 160px;
+                        font-size: 0.65rem; text-transform: uppercase; letter-spacing: 0.06em;
+                        color: #475569; padding: 4px 0; border-bottom: 1px solid #0f1b2d;
+                        margin-bottom: 2px; }
+    .pid-fc-row       { display: grid; grid-template-columns: 1fr 110px 160px;
+                        align-items: center; padding: 7px 0; border-bottom: 1px solid #0a1020;
+                        font-size: 0.82rem; }
+    .pid-fc-row:last-child { border-bottom: none; }
+    .pid-fc-row--highlight { background: #0a1322; border-radius: 4px; padding: 7px 8px;
+                             margin: 0 -8px; }
+    .pid-fc-label     { color: #94a3b8; }
+    .pid-fc-proj      { color: #e2e8f0; font-weight: 600; }
+    .pid-fc-up        { color: #4ade80; }
+    .pid-fc-down      { color: #f87171; }
+    .pid-fc-flat      { color: #64748b; }
+
+    /* ── Lease Expiration Alert Panel ──────────────────────────────────── */
+    .la-panel          { background: #090f1a; border: 1px solid #1e3a5f; border-radius: 10px;
+                         margin-bottom: 20px; overflow: hidden; }
+    .la-header         { display: flex; align-items: center; gap: 10px;
+                         padding: 11px 16px; border-bottom: 1px solid #0f1b2d; flex-wrap: wrap; }
+    .la-title          { font-size: 0.88rem; font-weight: 700; color: #e2e8f0; letter-spacing: 0.02em; }
+    .la-count--urgent  { font-size: 0.7rem; padding: 2px 8px; border-radius: 10px;
+                         background: #7f1d1d; color: #fca5a5; font-weight: 600; }
+    .la-count--medium  { font-size: 0.7rem; padding: 2px 8px; border-radius: 10px;
+                         background: #422006; color: #fbbf24; font-weight: 600; }
+    .la-dismiss        { margin-left: auto; background: none; border: none; color: #475569;
+                         cursor: pointer; font-size: 1.05rem; padding: 2px 4px; line-height: 1; }
+    .la-dismiss:hover  { color: #94a3b8; }
+    .la-row            { display: flex; align-items: center; gap: 12px; padding: 9px 16px;
+                         border-bottom: 1px solid #0a1020; cursor: pointer;
+                         transition: background 0.1s; }
+    .la-row:hover      { background: #0f1b2d; }
+    .la-row:last-child { border-bottom: none; }
+    .la-dot            { width: 8px; height: 8px; border-radius: 50%; flex-shrink: 0; }
+    .la-dot--expired   { background: #f87171; }
+    .la-dot--critical  { background: #f87171; }
+    .la-dot--high      { background: #fb923c; }
+    .la-dot--medium    { background: #fbbf24; }
+    .la-tenant         { flex: 1.4; min-width: 0; font-size: 0.84rem; color: #e2e8f0;
+                         font-weight: 500; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+    .la-suite          { font-weight: 400; color: #64748b; font-size: 0.76rem; }
+    .la-property       { flex: 1; min-width: 0; font-size: 0.8rem; color: #94a3b8;
+                         overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+    .la-date           { width: 96px; text-align: right; font-size: 0.76rem; color: #64748b;
+                         white-space: nowrap; }
+    .la-meta           { width: 120px; display: flex; align-items: center; justify-content: flex-end; gap: 6px; flex-shrink: 0; }
+    .la-days           { font-size: 0.72rem; padding: 2px 6px; border-radius: 4px; font-weight: 700;
+                         white-space: nowrap; }
+    .la-days--expired  { background: #7f1d1d; color: #fca5a5; }
+    .la-days--critical { background: #7f1d1d; color: #fca5a5; }
+    .la-days--high     { background: #431407; color: #fb923c; }
+    .la-days--medium   { background: #422006; color: #fbbf24; }
+    .la-renewal        { font-size: 0.68rem; color: #60a5fa; white-space: nowrap; }
+    .la-expander       { border-top: 1px solid #0f1b2d; }
+    .la-expand-btn     { background: none; border: none; width: 100%; text-align: left;
+                         padding: 9px 16px 9px 36px; font-size: 0.78rem; color: #64748b;
+                         cursor: pointer; }
+    .la-expand-btn:hover { color: #94a3b8; }
+    /* Revenue-at-Risk summary bar inside alert panel */
+    .la-rar-summary    { display: flex; align-items: center; gap: 10px; flex-wrap: wrap;
+                         padding: 8px 16px; background: #0a1322; border-bottom: 1px solid #0f1b2d;
+                         font-size: 0.76rem; }
+    .la-rar-label      { color: #64748b; text-transform: uppercase; letter-spacing: 0.06em;
+                         font-size: 0.68rem; }
+    .la-rar-urgent     { color: #fca5a5; font-weight: 700; }
+    .la-rar-sep        { color: #1e293b; }
+    .la-rar-total      { color: #fbbf24; font-weight: 600; }
+    .la-rar-sqft       { color: #64748b; margin-left: auto; }
+    /* Per-row revenue */
+    .la-revenue        { font-size: 0.72rem; color: #94a3b8; font-weight: 600;
+                         background: #0f1b2d; padding: 1px 5px; border-radius: 3px; }
+    /* KPI tile sub-value */
+    .ptf-kpi-sub       { font-size: 0.67rem; color: #f87171; margin-top: 3px;
+                         line-height: 1.2; }
+
+    /* ── Property Card: Lease Expiry Banner ─────────────────────────────── */
+    .ptf-lease-expiry-banner { font-size: 0.74rem; font-weight: 600;
+                               padding: 4px 10px; border-radius: 4px; margin-bottom: 6px; }
+    .ptf-lease-expiry--urgent { background: #450a0a; color: #fca5a5; }
+    .ptf-lease-expiry--warn   { background: #2d1a00; color: #fbbf24; }
+
+    /* ── Action Center Panel ────────────────────────────────────────────── */
+    .ac-panel          { background: #060d18; border: 1px solid #1e3a5f; border-radius: 10px;
+                         margin-bottom: 20px; overflow: hidden; }
+    .ac-header         { display: flex; align-items: center; gap: 10px; padding: 12px 18px;
+                         border-bottom: 1px solid #0f1b2d; flex-wrap: wrap; }
+    .ac-header-title   { font-size: 0.9rem; font-weight: 700; color: #e2e8f0; letter-spacing: 0.02em; }
+    .ac-header-counts  { display: flex; gap: 6px; flex-wrap: wrap; }
+    .ac-hcount         { font-size: 0.68rem; padding: 2px 8px; border-radius: 10px; font-weight: 700; }
+    .ac-hcount--critical { background: #7f1d1d; color: #fca5a5; }
+    .ac-hcount--warning  { background: #431407; color: #fb923c; }
+    .ac-hcount--info     { background: #0c1a36; color: #60a5fa; }
+    .ac-dismiss-btn    { margin-left: auto; background: none; border: none; color: #475569;
+                         cursor: pointer; font-size: 1.05rem; padding: 2px 5px; line-height: 1; }
+    .ac-dismiss-btn:hover { color: #94a3b8; }
+    .ac-kpi-bar        { display: flex; gap: 8px; flex-wrap: wrap; padding: 9px 18px;
+                         background: #07111f; border-bottom: 1px solid #0f1b2d; }
+    .ac-kpi            { font-size: 0.72rem; padding: 3px 9px; border-radius: 10px;
+                         font-weight: 700; white-space: nowrap; }
+    .ac-kpi--critical  { background: #450a0a; color: #fca5a5; }
+    .ac-kpi--warn      { background: #2d1a00; color: #fbbf24; }
+    .ac-kpi--info      { background: #0a1830; color: #7dd3fc; }
+    .ac-section        { border-top: 1px solid #0a1020; }
+    .ac-section:first-of-type { border-top: none; }
+    .ac-section-hd     { padding: 8px 18px 4px; font-size: 0.7rem; font-weight: 700;
+                         text-transform: uppercase; letter-spacing: 0.07em; }
+    .ac-section-hd--critical { color: #f87171; }
+    .ac-section-hd--warning  { color: #fb923c; }
+    .ac-section-hd--info     { color: #60a5fa; }
+    .ac-item           { display: flex; align-items: center; gap: 12px; padding: 9px 18px;
+                         border-bottom: 1px solid #080f1c; cursor: pointer;
+                         transition: background 0.1s; }
+    .ac-item:hover     { background: #0f1b2d; }
+    .ac-item:last-child { border-bottom: none; }
+    .ac-dot            { width: 8px; height: 8px; border-radius: 50%; flex-shrink: 0; }
+    .ac-dot--critical  { background: #f87171; }
+    .ac-dot--warning   { background: #fb923c; }
+    .ac-dot--info      { background: #60a5fa; }
+    .ac-item-body      { display: flex; flex-direction: column; min-width: 0; flex: 1; }
+    .ac-item-title     { font-size: 0.84rem; font-weight: 600; color: #e2e8f0;
+                         overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+    .ac-item-detail    { font-size: 0.73rem; color: #64748b; margin-top: 1px; }
+    .ac-badge          { font-size: 0.68rem; padding: 2px 7px; border-radius: 4px;
+                         font-weight: 700; white-space: nowrap; flex-shrink: 0; }
+    .ac-badge--critical { background: #7f1d1d; color: #fca5a5; }
+    .ac-badge--warning  { background: #431407; color: #fb923c; }
+    .ac-badge--info     { background: #0c1a36; color: #60a5fa; }
+    .ac-more           { padding: 7px 18px 9px 38px; font-size: 0.74rem; color: #475569; }
+    /* Highlight row animation — used by navigateToPropertyTenant + scrollToRenewalPipeline */
+    .ac-highlight-row  { animation: ac-highlight-fade 2.5s ease-out forwards; }
+    @keyframes ac-highlight-fade {
+      0%   { background: #1e3a5f; }
+      100% { background: transparent; }
+    }
+    /* Alert panel "Pipeline ↓" mini-button */
+    .la-pipeline-link  { background: none; border: 1px solid #1e3a5f; color: #60a5fa;
+                         font-size: 0.66rem; padding: 1px 6px; border-radius: 4px; cursor: pointer;
+                         white-space: nowrap; margin-left: 4px; }
+    .la-pipeline-link:hover { background: #0c1a36; }
+
+    /* ── Renewal Pipeline Panel ─────────────────────────────────────────── */
+    .rp-panel          { background: #090f1a; border: 1px solid #1e3a5f; border-radius: 10px;
+                         margin-bottom: 20px; overflow: hidden; }
+    .rp-panel-head     { display: flex; align-items: center; gap: 12px; padding: 13px 18px;
+                         border-bottom: 1px solid #0f1b2d; flex-wrap: wrap; }
+    .rp-panel-title    { font-size: 0.88rem; font-weight: 700; color: #e2e8f0;
+                         letter-spacing: 0.02em; }
+    .rp-kpi-bar        { display: flex; gap: 22px; flex-wrap: wrap; padding: 10px 18px;
+                         background: #0a1322; border-bottom: 1px solid #0f1b2d; }
+    .rp-kpi            { display: flex; flex-direction: column; }
+    .rp-kpi-val        { font-size: 1.05rem; font-weight: 700; color: #C9973A; line-height: 1.1; }
+    .rp-kpi-val--alert { color: #f87171; }
+    .rp-kpi-lbl        { font-size: 0.64rem; color: #64748b; text-transform: uppercase;
+                         letter-spacing: 0.06em; margin-top: 2px; }
+    .rp-table          { width: 100%; border-collapse: collapse; font-size: 0.82rem; }
+    .rp-table thead tr { border-bottom: 1px solid #0f1b2d; }
+    .rp-table th       { padding: 8px 14px; font-size: 0.66rem; font-weight: 600; color: #475569;
+                         text-transform: uppercase; letter-spacing: 0.07em; text-align: left; }
+    .rp-table td       { padding: 9px 14px; border-bottom: 1px solid #0a1020;
+                         vertical-align: middle; }
+    .rp-table tbody tr:last-child td { border-bottom: none; }
+    .rp-table tbody tr:hover { background: #0f1b2d; }
+    .rp-tenant-name    { font-weight: 600; color: #e2e8f0; }
+    .rp-suite          { font-size: 0.73rem; color: #64748b; display: block; }
+    .rp-prop           { color: #94a3b8; }
+    .rp-rent           { color: #e2e8f0; font-weight: 600; }
+    .rp-sqft           { color: #94a3b8; }
+    .rp-renewal        { font-size: 0.72rem; color: #60a5fa; white-space: nowrap; }
+    .rp-no-renewal     { font-size: 0.72rem; color: #475569; }
+    .rp-days           { font-size: 0.72rem; padding: 2px 7px; border-radius: 4px;
+                         font-weight: 700; white-space: nowrap; }
+    .rp-days--critical { background: #7f1d1d; color: #fca5a5; }
+    .rp-days--high     { background: #431407; color: #fb923c; }
+    .rp-days--medium   { background: #422006; color: #fbbf24; }
+    .rp-days--low      { background: #0f1b2d; color: #94a3b8; }
+    .rp-status         { font-size: 0.7rem; padding: 2px 7px; border-radius: 10px;
+                         font-weight: 600; white-space: nowrap; }
+    .rp-status--not_started  { background: #1e293b; color: #64748b; }
+    .rp-status--contacted    { background: #0c1a36; color: #60a5fa; }
+    .rp-status--negotiating  { background: #1a2a1a; color: #4ade80; }
+    .rp-status--proposal_sent { background: #1a1a2e; color: #a78bfa; }
+    .rp-status--signed       { background: #052e16; color: #86efac; }
+    .rp-empty          { padding: 22px 18px; text-align: center; font-size: 0.82rem;
+                         color: #475569; }
+
+    /* ── Empty / Clean States ───────────────────────────────────────────── */
+    /* Action Center — all clear */
+    .ac-panel--clean .ac-header-title { color: #4ade80; }
+    .ac-clean-body    { display: flex; align-items: center; gap: 14px;
+                        padding: 14px 18px; border-top: 1px solid #0f1b2d; }
+    .ac-clean-icon    { font-size: 1.3rem; color: #4ade80; flex-shrink: 0; }
+    .ac-clean-text    { font-size: 0.82rem; color: #94a3b8; line-height: 1.45; }
+    .ac-clean-text strong { color: #e2e8f0; }
+    /* Portfolio Intelligence — no risks */
+    .pid-no-risks     { padding: 12px 4px; font-size: 0.8rem; color: #4ade80; }
+    /* Renewal Pipeline — clean */
+    .rp-clean         { display: flex; align-items: center; gap: 14px;
+                        padding: 18px; border-top: 1px solid #0f1b2d; }
+    .rp-clean-icon    { font-size: 1.3rem; color: #4ade80; flex-shrink: 0; }
+    /* Renewal Pipeline table scroll wrapper */
+    .rp-table-wrap    { overflow-x: auto; -webkit-overflow-scrolling: touch; }
+
+    /* ── Mobile: Action Center ───────────────────────────────────────────── */
+    @media (max-width: 600px) {
+      .ac-kpi-bar     { overflow-x: auto; flex-wrap: nowrap; padding: 8px 14px; gap: 6px; }
+      .ac-kpi         { flex-shrink: 0; }
+      .ac-item        { gap: 8px; padding: 8px 14px; }
+      .ac-item-detail { font-size: 0.7rem; }
+    }
+    @media (max-width: 380px) {
+      .ac-header      { flex-wrap: wrap; gap: 6px; }
+      .ac-dismiss-btn { margin-left: 0; }
+    }
+
+    /* ── Mobile: Lease Alert Panel ───────────────────────────────────────── */
+    @media (max-width: 600px) {
+      .la-date        { display: none; }
+      .la-meta        { width: auto; }
+      .la-pipeline-link { display: none; }
+    }
+    @media (max-width: 420px) {
+      .la-property    { display: none; }
+      .la-row         { gap: 8px; padding: 8px 12px; }
+    }
+
+    /* ── Mobile: Renewal Pipeline ────────────────────────────────────────── */
+    @media (max-width: 640px) {
+      .rp-kpi-bar     { flex-wrap: wrap; gap: 12px 20px; }
+      .rp-table th,
+      .rp-table td    { padding: 7px 10px; }
+      .rp-table th:nth-child(4),
+      .rp-table td:nth-child(4) { display: none; } /* hide Sq Ft on mobile */
+    }
+
+    /* ── Mobile: Portfolio Intelligence ──────────────────────────────────── */
+    @media (max-width: 480px) {
+      .pid-fc-summary { flex-direction: column; gap: 4px; }
+      .pid-fc-header,
+      .pid-fc-row     { grid-template-columns: 1fr 90px; }
+      .pid-fc-header span:last-child,
+      .pid-fc-row  span:last-child { display: none; } /* hide Change column */
+    }
+
+    /* ── Mobile: Properties header ───────────────────────────────────────── */
+    @media (max-width: 480px) {
+      .ptf-head-actions { gap: 6px; }
+      .ptf-export-btn   { font-size: 0.7rem; padding: 5px 8px; }
+    }
+
+    /* ── Acquisition: Tab Bar ───────────────────────────────────────────── */
+    .acq-report-tabs { display: flex; gap: 4px; margin-bottom: 20px; border-bottom: 1px solid #1e293b; padding-bottom: 0; }
+    .acq-tab { background: transparent; border: none; border-bottom: 2px solid transparent; color: #64748b;
+               font-size: 0.85rem; font-weight: 500; padding: 8px 16px; cursor: pointer;
+               margin-bottom: -1px; transition: color 0.15s, border-color 0.15s; letter-spacing: 0.03em; }
+    .acq-tab:hover  { color: #cbd5e1; }
+    .acq-tab.active { color: #C9973A; border-bottom-color: #C9973A; }
+    .acq-tab-pane   { }
+
+    /* ── Acquisition: Sortable Rent Roll Table ──────────────────────────── */
+    .acq-sort-th { cursor: pointer; user-select: none; white-space: nowrap; }
+    .acq-sort-th:hover { color: #cbd5e1 !important; }
+    .acq-sort-icon { font-size: 0.7em; opacity: 0.45; margin-left: 3px; }
+    .acq-sort-icon.active { opacity: 1; color: #C9973A; }
+
+    /* ── Acquisition: Expiration Schedule Bar ───────────────────────────── */
+    .acq-exp-bar-wrap { background: #0f1b2d; border-radius: 3px; height: 10px; min-width: 60px; }
+    .acq-exp-bar      { background: #C9973A; border-radius: 3px; height: 10px; min-width: 3px; transition: width 0.3s; }
+
+    /* ── Acquisition: Rollover Risk Cards ───────────────────────────────── */
+    .acq-rollover-grid   { display: flex; gap: 14px; flex-wrap: wrap; margin-bottom: 20px; }
+    .acq-rollover-card   { flex: 1; min-width: 200px; background: #0f1b2d; border: 1px solid #1e293b;
+                           border-radius: 8px; padding: 16px 18px; }
+    .acq-rollover-card.danger { border-color: #f87171; }
+    .acq-rollover-card.warn   { border-color: #fb923c; }
+    .acq-rollover-period { font-size: 0.72rem; color: #64748b; text-transform: uppercase; letter-spacing: 0.05em; }
+    .acq-rollover-count  { font-size: 1.6rem; font-weight: 700; color: #e2e8f0; margin: 4px 0 2px; }
+    .acq-rollover-sqft   { font-size: 0.8rem; color: #94a3b8; }
+    .acq-rollover-names  { font-size: 0.75rem; color: #64748b; margin-top: 6px; }
+
+    /* ── Acquisition: CSV Export Bar ────────────────────────────────────── */
+    .acq-rr-export-bar   { display: flex; align-items: center; gap: 12px; margin: 10px 0 18px; }
+
   </style>
 </head>
 <body>
@@ -3822,6 +4328,7 @@
     <div class="ptf-kpi">
       <div class="ptf-kpi-val" id="pKpiCritical">—</div>
       <div class="ptf-kpi-lbl">At-Risk Properties</div>
+      <div class="ptf-kpi-sub" id="pKpiExpiryRevenue" style="display:none"></div>
     </div>
     <div class="ptf-kpi">
       <div class="ptf-kpi-val" id="pKpiMissingDocs">—</div>
@@ -3833,17 +4340,40 @@
     </div>
   </div>
 
+  <!-- Action Center — populated by renderPortfolio(), topmost priority panel -->
+  <div id="actionCenterPanel" style="display:none;"></div>
+
+  <!-- Lease Expiration Alert Panel — populated by renderPortfolio() -->
+  <div id="leaseAlertPanel"></div>
+
   <!-- Portfolio Intelligence Panel -->
   <div id="portfolioIntelPanel" style="display:none;"></div>
+
+  <!-- Renewal Pipeline Panel -->
+  <div id="renewalPipelinePanel" style="display:none;"></div>
 
   <!-- Property Cards — primary content -->
   <div class="ptf-props-head">
     <h2>Your Properties</h2>
-    <button class="add-prop-btn" onclick="addNewProperty()">+ Add Property</button>
+    <div class="ptf-head-actions">
+      <button class="ptf-export-btn" onclick="exportPortfolioSummary()" title="Export one-page portfolio summary">&#x1F4CA; Export Summary</button>
+      <button class="add-prop-btn" onclick="addNewProperty()">+ Add Property</button>
+    </div>
   </div>
   <div id="ptfSortRow" class="ptf-sort-row"></div>
   <div id="reviewQueuePanel" class="rq-panel" style="display:none;"></div>
   <div class="ptf-cards-grid" id="propertyCardsGrid"></div>
+
+  <!-- ── Acquisition Due Diligence ────────────────────────────────────── -->
+  <div class="acq-section" id="acqSection">
+    <div class="acq-section-head">
+      <h2>&#x1F50D; Acquisition Due Diligence</h2>
+      <button class="acq-new-btn" onclick="createAcquisitionReview()">+ New Review</button>
+    </div>
+    <div id="acqReviewsGrid" class="acq-cards-grid">
+      <div class="acq-empty">No due diligence reviews yet. Start one to analyze a property before acquisition.</div>
+    </div>
+  </div>
 
   <!-- XRPL Trust Strip -->
   <div class="xrpl-trust-strip">
@@ -3879,6 +4409,80 @@
     <span class="ptf-phase2-badge">Roadmap</span>
   </div>
 
+</div>
+
+<!-- ── Acquisition Detail Panel ──────────────────────────────────────── -->
+<div class="container" id="acqDetailPanel">
+  <div class="acq-detail-header">
+    <button class="acq-back-btn" onclick="closeAcquisitionDetail()">&#x2190; Back to Portfolio</button>
+    <span class="acq-detail-title" id="acqDetailTitle"></span>
+    <span class="acq-detail-badge" id="acqDetailBadge"></span>
+    <span id="acqConvertAction"></span>
+  </div>
+
+  <!-- Conversion confirmation modal (hidden until triggered) -->
+  <div id="acqConvertModal" class="acq-modal-backdrop" style="display:none" onclick="if(event.target===this)_hideAcqConvertModal()">
+    <div class="acq-modal-box">
+      <div class="acq-modal-title">&#x1F3E2; Acquire Property</div>
+      <div class="acq-modal-body">
+        Convert <span class="acq-modal-name" id="acqConvertModalName"></span> to a managed
+        property?<br><br>
+        Tenant records, lease metadata, rent roll, and acquisition analysis will be copied.
+        The due diligence review is preserved and marked <em>converted</em> for historical reference.
+      </div>
+      <div class="acq-modal-actions">
+        <button class="acq-modal-cancel" onclick="_hideAcqConvertModal()">Cancel</button>
+        <button class="acq-modal-confirm" id="acqConvertConfirmBtn" onclick="convertAcquisitionToProperty()">Acquire Property</button>
+      </div>
+    </div>
+  </div>
+
+  <!-- Document Upload -->
+  <div class="acq-upload-grid">
+    <!-- Lease Upload -->
+    <div class="acq-upload-card">
+      <h3>&#x1F4C4; Leases</h3>
+      <p>Upload PDFs — AI extracts tenant terms, CAM caps, exclusions, and audit rights.</p>
+      <label class="acq-upload-btn">
+        Upload Leases
+        <input type="file" id="acqLeaseInput" accept=".pdf,.txt" multiple style="display:none"
+               onchange="acqHandleLeaseFiles(this.files)">
+      </label>
+      <ul class="acq-file-list" id="acqLeaseList">
+        <li style="color:#475569;font-size:0.78rem;">No leases uploaded</li>
+      </ul>
+    </div>
+
+    <!-- Invoice Upload -->
+    <div class="acq-upload-card">
+      <h3>&#x1F4CB; CAM Invoices</h3>
+      <p>Upload CAM invoices or expense reports — PDF, image, or scanned documents.</p>
+      <label class="acq-upload-btn">
+        Upload Invoices
+        <input type="file" id="acqInvoiceInput" accept=".pdf,.jpg,.jpeg,.png,.webp" multiple style="display:none"
+               onchange="acqHandleInvoiceFiles(this.files)">
+      </label>
+      <ul class="acq-file-list" id="acqInvoiceList">
+        <li style="color:#475569;font-size:0.78rem;">No invoices uploaded</li>
+      </ul>
+    </div>
+  </div>
+
+  <!-- Total SqFt + Analyze -->
+  <div class="acq-sqft-row">
+    <label for="acqTotalSqft">Total Property SqFt:</label>
+    <input type="number" id="acqTotalSqft" placeholder="e.g. 50000" min="0"
+           oninput="acqSaveSqft(this.value)">
+  </div>
+  <div class="acq-analyze-bar">
+    <button class="acq-analyze-btn" id="acqAnalyzeBtn" onclick="runAcquisitionAnalysis()" disabled>
+      &#x26A1; Run Analysis
+    </button>
+    <span class="acq-analyze-note" id="acqAnalyzeNote">Upload leases and invoices to enable analysis.</span>
+  </div>
+
+  <!-- Report output -->
+  <div id="acqReportContainer"></div>
 </div>
 
 <!-- ── Property Breadcrumb ───────────────────────────────────────────── -->
@@ -4420,6 +5024,7 @@
 <script src="lease-test-lab.js"></script>
 <script src="lease-review-packets.js"></script>
 <script src="lease-intelligence.js"></script>
+<script src="acquisition-engine.js"></script>
 <script src="script.js"></script>
 <!-- Dev-only role switcher — activates only on localhost, no-op elsewhere -->
 <script src="dev-switcher.js"></script>
