@@ -929,6 +929,151 @@ console.log('\n── Group 14: normalizeAcqTenant & tenantSummary ────�
   ));
 }
 
+// ── Group 15: occupancyAnalysis ───────────────────────────────────────────────
+console.log('\n── Group 15: occupancyAnalysis ──────────────────────────────────────');
+
+{
+  const ts = [
+    { tenant_name: 'A', leased_sqft: 3000 },
+    { tenant_name: 'B', leased_sqft: 5000 },
+  ];
+  const r = AE.occupancyAnalysis(ts, 10000);
+  assert('occupancy: buildingSqft stored',     r.buildingSqft   === 10000);
+  assert('occupancy: occupiedSqft sum',        r.occupiedSqft   === 8000);
+  assert('occupancy: vacantSqft = bldg - occ', r.vacantSqft     === 2000);
+  assert('occupancy: occupancyRate = 80%',     r.occupancyRate  === 80.0);
+  assert('occupancy: vacancyRate = 20%',       r.vacancyRate    === 20.0);
+}
+
+{
+  // Zero building sqft => occupancyRate 0, vacancyRate 100
+  const r = AE.occupancyAnalysis([{ leased_sqft: 1000 }], 0);
+  assert('occupancy: 0 bldg sqft => 0% occupancy',  r.occupancyRate === 0);
+  assert('occupancy: 0 bldg sqft => 100% vacancy',  r.vacancyRate   === 100);
+}
+
+{
+  // Full occupancy
+  const ts = [{ leased_sqft: 5000 }, { leased_sqft: 5000 }];
+  const r = AE.occupancyAnalysis(ts, 10000);
+  assert('occupancy: full => vacantSqft is 0', r.vacantSqft === 0);
+}
+
+// ── Group 16: leaseExpirationSchedule ─────────────────────────────────────────
+console.log('\n── Group 16: leaseExpirationSchedule ───────────────────────────────');
+
+{
+  const ts = [
+    { tenant_name: 'A', leased_sqft: 3000, lease_end: '2025-06-30' },
+    { tenant_name: 'B', leased_sqft: 2000, lease_end: '2025-12-31' },
+    { tenant_name: 'C', leased_sqft: 5000, lease_end: '2027-06-30' },
+    { tenant_name: 'D', leased_sqft: 1000, lease_end: null },
+  ];
+  const sched = AE.leaseExpirationSchedule(ts);
+  assert('expSched: null lease_end excluded',   sched.length === 2);
+  assert('expSched: sorted ascending by year',  sched[0].year < sched[1].year);
+  assert('expSched: 2025 count = 2',            sched[0].count === 2);
+  assert('expSched: 2025 sqft = 5000',          sched[0].sqft  === 5000);
+  assert('expSched: 2027 count = 1',            sched[1].count === 1);
+  assert('expSched: tenants array populated',   Array.isArray(sched[0].tenants));
+  assert('expSched: tenant names in array',     sched[0].tenants.includes('A'));
+}
+
+// ── Group 17: waltAnalysis ────────────────────────────────────────────────────
+console.log('\n── Group 17: waltAnalysis ───────────────────────────────────────────');
+
+{
+  const MS_YR = 365.25 * 24 * 3600 * 1000;
+  const ref = new Date('2024-01-01');
+  const ts = [
+    { tenant_name: 'A', leased_sqft: 2000, lease_end: '2026-01-01' },  // ~2 yrs
+    { tenant_name: 'B', leased_sqft: 2000, lease_end: '2025-01-01' },  // ~1 yr
+  ];
+  const r = AE.waltAnalysis(ts, ref);
+  assert('walt: result not null when active leases',  r.walt != null);
+  assert('walt: waltMonths is integer',               Number.isInteger(r.waltMonths));
+  assert('walt: weightedSqft = occupied sqft',        r.weightedSqft === 4000);
+  // Equal sqft weights => avg of 2yr and 1yr ≈ 1.5yr → months ≈ 18
+  assert('walt: waltMonths approximately 18',         r.waltMonths >= 17 && r.waltMonths <= 19);
+}
+
+{
+  // Expired leases should be excluded from WALT
+  const ref = new Date('2030-01-01');
+  const ts = [{ leased_sqft: 5000, lease_end: '2025-01-01' }];
+  const r = AE.waltAnalysis(ts, ref);
+  assert('walt: all-expired => null result',  r.walt === null);
+  assert('walt: weightedSqft = 0 for expired', r.weightedSqft === 0);
+}
+
+{
+  // No tenants with lease_end => null
+  const r = AE.waltAnalysis([{ leased_sqft: 1000, lease_end: null }], new Date());
+  assert('walt: no lease_end => null', r.walt === null);
+}
+
+// ── Group 18: rolloverRiskAnalysis ────────────────────────────────────────────
+console.log('\n── Group 18: rolloverRiskAnalysis ───────────────────────────────────');
+
+{
+  const MS_12 = 365.25 * 24 * 3600 * 1000;
+  const ref   = new Date('2024-01-01');
+  const end12 = new Date(ref.getTime() + MS_12 * 0.5).toISOString().slice(0, 10); // 6 mo
+  const end24 = new Date(ref.getTime() + MS_12 * 1.5).toISOString().slice(0, 10); // 18 mo
+  const far   = '2030-06-30';
+
+  const ts = [
+    { tenant_name: 'Near',   leased_sqft: 2000, lease_end: end12 },
+    { tenant_name: 'Mid',    leased_sqft: 3000, lease_end: end24 },
+    { tenant_name: 'Far',    leased_sqft: 5000, lease_end: far   },
+  ];
+  const r = AE.rolloverRiskAnalysis(ts, 10000, ref);
+
+  assert('rollover: expiring12 count = 1',     r.expiring12.count === 1);
+  assert('rollover: expiring12 sqft = 2000',   r.expiring12.sqft  === 2000);
+  assert('rollover: expiring24 count = 2',     r.expiring24.count === 2);
+  assert('rollover: expiring24 sqft = 5000',   r.expiring24.sqft  === 5000);
+  assert('rollover: totalOccupied = 10000',    r.totalOccupied    === 10000);
+  assert('rollover: exp12 pctOfOccupied = 20', r.expiring12.pctOfOccupied === 20);
+  assert('rollover: exp24 pctOfOccupied = 50', r.expiring24.pctOfOccupied === 50);
+  assert('rollover: near tenant in exp12',     r.expiring12.tenants.includes('Near'));
+}
+
+{
+  // Expired lease IS included in rollover (remMs <= MS_12 when negative)
+  const ts = [{ tenant_name: 'OldTenant', leased_sqft: 4000, lease_end: '2020-01-01' }];
+  const r   = AE.rolloverRiskAnalysis(ts, 10000, new Date('2024-01-01'));
+  assert('rollover: expired lease counts in exp12', r.expiring12.count === 1);
+  assert('rollover: expired lease counts in exp24', r.expiring24.count === 1);
+}
+
+{
+  // No lease_end => not counted in expiring buckets but IS counted in totalOccupied
+  const ts = [{ tenant_name: 'NoEnd', leased_sqft: 3000, lease_end: null }];
+  const r   = AE.rolloverRiskAnalysis(ts, 5000, new Date('2024-01-01'));
+  assert('rollover: null end not in exp12',     r.expiring12.count === 0);
+  assert('rollover: totalOccupied includes sqft', r.totalOccupied === 3000);
+}
+
+// ── Group 19: rentRoll in buildAcquisitionReport ──────────────────────────────
+console.log('\n── Group 19: rentRoll in buildAcquisitionReport ─────────────────────');
+
+{
+  const report = AE.buildAcquisitionReport(TENANTS, INVOICES, TOTAL_SQFT);
+  assert('rentRoll: present in report',               report.rentRoll != null);
+  assert('rentRoll: occupancy sub-object present',    report.rentRoll.occupancy != null);
+  assert('rentRoll: walt sub-object present',         report.rentRoll.walt != null);
+  assert('rentRoll: rolloverRisk sub-object present', report.rentRoll.rolloverRisk != null);
+  assert('rentRoll: expirationSchedule is array',     Array.isArray(report.rentRoll.expirationSchedule));
+}
+
+{
+  // Empty tenant list: occupancy should reflect 0 occupied
+  const report = AE.buildAcquisitionReport([], [], TOTAL_SQFT);
+  assert('rentRoll: empty tenants => occupiedSqft=0', report.rentRoll.occupancy.occupiedSqft === 0);
+  assert('rentRoll: empty tenants => walt is null',   report.rentRoll.walt.walt === null);
+}
+
 // ── Summary ───────────────────────────────────────────────────────────────────
 
 console.log(`\n${'─'.repeat(60)}`);

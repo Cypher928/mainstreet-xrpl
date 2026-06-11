@@ -600,11 +600,13 @@ let _props = []; // canonical merged array from loadProperties()
 
 // ─── Acquisition Review State ─────────────────────────────────────────────────
 // Fully isolated — never touches _props, tenantData, invoiceData, or activePropId.
-let _acqReviews  = [];
-let _activeAcqId = null;
-let _acqTenants  = [];
-let _acqInvoices = [];
-let _acqSqFt     = 0;
+let _acqReviews    = [];
+let _activeAcqId   = null;
+let _acqTenants    = [];
+let _acqInvoices   = [];
+let _acqSqFt       = 0;
+let _acqActiveTab  = 'risk';                          // 'risk' | 'rentroll'
+let _acqRentRollSort = { col: 'tenant_name', dir: 'asc' };
 
 // Returns the currently selected property object, or null if none is active.
 function currentProperty() {
@@ -16163,7 +16165,9 @@ async function createAcquisitionReview() {
 function selectAcquisitionReview(id) {
   const review = _acqReviews.find(r => r.id === id);
   if (!review) return;
-  _activeAcqId = id;
+  _activeAcqId        = id;
+  _acqActiveTab       = 'risk';
+  _acqRentRollSort    = { col: 'tenant_name', dir: 'asc' };
   const d = review.data || {};
   _acqTenants  = Array.isArray(d.tenants)  ? d.tenants  : [];
   _acqInvoices = Array.isArray(d.invoices) ? d.invoices : [];
@@ -16546,19 +16550,213 @@ function _renderAcqReport(report, container) {
     <span class="acq-export-note">PDF export coming soon — full report with citations.</span>
   </div>`;
 
+  const riskTabContent = `${kpis}${topRisksHtml}${findingsHtml}${tenantTable}${auditHtml}${renewalHtml}${proRataHtml}${exportBar}`;
+  const rrTabContent   = _renderRentRollTab(report.rentRoll, report.tenantSummary || []);
+
   container.innerHTML = `
   <div class="acq-report">
-    <div class="acq-report-title">Risk Analysis Report</div>
-    ${tenantSummaryHtml}
-    ${kpis}
-    ${topRisksHtml}
-    ${findingsHtml}
-    ${tenantTable}
-    ${auditHtml}
-    ${renewalHtml}
-    ${proRataHtml}
-    ${exportBar}
+    <div class="acq-report-tabs">
+      <button class="acq-tab${_acqActiveTab === 'risk'    ? ' active' : ''}" data-tab="risk"     onclick="switchAcqTab('risk')">Risk Analysis</button>
+      <button class="acq-tab${_acqActiveTab === 'rentroll'? ' active' : ''}" data-tab="rentroll" onclick="switchAcqTab('rentroll')">&#x1F4CA;&nbsp;Rent Roll</button>
+    </div>
+    <div id="acqTabRisk" class="acq-tab-pane"${_acqActiveTab !== 'risk'     ? ' style="display:none"' : ''}>
+      ${riskTabContent}
+    </div>
+    <div id="acqTabRentRoll" class="acq-tab-pane"${_acqActiveTab !== 'rentroll' ? ' style="display:none"' : ''}>
+      ${rrTabContent}
+    </div>
   </div>`;
+}
+
+// ── Tab switching ──────────────────────────────────────────────────────────────
+function switchAcqTab(tab) {
+  _acqActiveTab = tab;
+  const risk = document.getElementById('acqTabRisk');
+  const rr   = document.getElementById('acqTabRentRoll');
+  if (risk) risk.style.display = tab === 'risk'     ? '' : 'none';
+  if (rr)   rr.style.display   = tab === 'rentroll' ? '' : 'none';
+  document.querySelectorAll('.acq-tab').forEach(b => {
+    b.classList.toggle('active', b.dataset.tab === tab);
+  });
+}
+
+// ── Rent Roll helpers ──────────────────────────────────────────────────────────
+function _acqSortTenantSummary(ts) {
+  const { col, dir } = _acqRentRollSort;
+  return ts.sort((a, b) => {
+    let va = a[col], vb = b[col];
+    if (va == null) va = dir === 'asc' ? '￿' : '';
+    if (vb == null) vb = dir === 'asc' ? '￿' : '';
+    if (typeof va === 'number' && typeof vb === 'number')
+      return dir === 'asc' ? va - vb : vb - va;
+    return dir === 'asc'
+      ? String(va).localeCompare(String(vb))
+      : String(vb).localeCompare(String(va));
+  });
+}
+
+function _renderRentRollRows(ts) {
+  const fmtMoney = v => v != null ? '$' + Number(v).toLocaleString('en-US', { maximumFractionDigits: 0 }) : '—';
+  const fmtSqft  = v => v != null ? Number(v).toLocaleString('en-US') : '—';
+  const fmtDate  = iso => {
+    if (!iso) return '—';
+    const d = new Date(iso + 'T12:00:00');
+    return isNaN(d.getTime()) ? String(iso) : d.toLocaleDateString('en-US', { month: 'short', year: 'numeric' });
+  };
+  return ts.map(t => `
+    <tr>
+      <td class="acq-ts-name">${esc(t.tenant_name)}</td>
+      <td>${esc(t.suite || '—')}</td>
+      <td>${fmtSqft(t.leased_sqft)}</td>
+      <td class="acq-ts-term">${fmtDate(t.lease_start)}&nbsp;–&nbsp;${fmtDate(t.lease_end)}</td>
+      <td>${fmtMoney(t.base_rent)}</td>
+      <td class="acq-ts-renewal">${esc(t.renewal_options || '—')}</td>
+      <td>${fmtMoney(t.security_deposit)}</td>
+      <td class="acq-ts-cam">${esc(t.cam_structure || '—')}</td>
+    </tr>`).join('');
+}
+
+function _sortAcqRentRoll(col) {
+  if (_acqRentRollSort.col === col) {
+    _acqRentRollSort.dir = _acqRentRollSort.dir === 'asc' ? 'desc' : 'asc';
+  } else {
+    _acqRentRollSort = { col, dir: 'asc' };
+  }
+  const review = _acqReviews.find(r => r.id === _activeAcqId);
+  if (!review?.data?.analysis?.tenantSummary) return;
+  const tbody = document.getElementById('acqRentRollTbody');
+  if (!tbody) return;
+  tbody.innerHTML = _renderRentRollRows(_acqSortTenantSummary([...review.data.analysis.tenantSummary]));
+  document.querySelectorAll('.acq-sort-th').forEach(th => {
+    th.classList.remove('sort-asc', 'sort-desc');
+    if (th.dataset.col === col) th.classList.add(_acqRentRollSort.dir === 'asc' ? 'sort-asc' : 'sort-desc');
+  });
+}
+
+function _renderRentRollTab(rentRoll, tenantSummary) {
+  if (!rentRoll) return '<div style="color:#64748b;padding:16px 0;">Run analysis to generate the rent roll.</div>';
+
+  const occ   = rentRoll.occupancy   || {};
+  const walt  = rentRoll.walt        || {};
+  const rr    = rentRoll.rolloverRisk || { expiring12: { count:0, sqft:0, pctOfOccupied:0, tenants:[] }, expiring24: { count:0, sqft:0, pctOfOccupied:0, tenants:[] }, totalOccupied: 0 };
+  const sched = rentRoll.expirationSchedule || [];
+
+  const fmtPct  = v => v != null ? v + '%' : '—';
+  const fmtSqft = v => v != null ? Number(v).toLocaleString('en-US') + ' sf' : '—';
+
+  const kpiCards = `
+  <div class="acq-kpi-row">
+    <div class="acq-kpi">
+      <div class="acq-kpi-val ${occ.occupancyRate >= 90 ? 'safe' : occ.occupancyRate >= 70 ? '' : 'danger'}">${fmtPct(occ.occupancyRate)}</div>
+      <div class="acq-kpi-lbl">Occupancy</div>
+    </div>
+    <div class="acq-kpi">
+      <div class="acq-kpi-val ${occ.vacantSqft > 0 ? 'danger' : 'safe'}">${fmtSqft(occ.vacantSqft)}</div>
+      <div class="acq-kpi-lbl">Vacant Sq Ft</div>
+    </div>
+    <div class="acq-kpi">
+      <div class="acq-kpi-val">${walt.walt != null ? walt.walt + ' yrs' : '—'}</div>
+      <div class="acq-kpi-lbl">WALT</div>
+    </div>
+    <div class="acq-kpi">
+      <div class="acq-kpi-val ${rr.expiring12.count > 0 ? 'danger' : 'safe'}">${rr.expiring12.count}</div>
+      <div class="acq-kpi-lbl">Exp. ≤12 Mo</div>
+    </div>
+    <div class="acq-kpi">
+      <div class="acq-kpi-val ${rr.expiring24.count > 0 ? '' : 'safe'}">${rr.expiring24.count}</div>
+      <div class="acq-kpi-lbl">Exp. ≤24 Mo</div>
+    </div>
+  </div>`;
+
+  const sortIcon = col => {
+    if (_acqRentRollSort.col !== col) return '<span class="acq-sort-icon">&#x21C5;</span>';
+    return _acqRentRollSort.dir === 'asc'
+      ? '<span class="acq-sort-icon active">&#x2191;</span>'
+      : '<span class="acq-sort-icon active">&#x2193;</span>';
+  };
+
+  const COLS = [
+    { key: 'tenant_name',      label: 'Tenant' },
+    { key: 'suite',            label: 'Suite' },
+    { key: 'leased_sqft',      label: 'Sq Ft' },
+    { key: 'lease_end',        label: 'Lease Term' },
+    { key: 'base_rent',        label: 'Base Rent/yr' },
+    { key: 'renewal_options',  label: 'Renewal' },
+    { key: 'security_deposit', label: 'Deposit' },
+    { key: 'cam_structure',    label: 'CAM Structure' },
+  ];
+  const thead = COLS.map(c =>
+    `<th class="acq-sort-th" data-col="${c.key}" onclick="_sortAcqRentRoll('${c.key}')">${esc(c.label)} ${sortIcon(c.key)}</th>`
+  ).join('');
+
+  const tbody = _renderRentRollRows(_acqSortTenantSummary([...tenantSummary]));
+
+  const maxSchedSqft = sched.length ? Math.max(1, ...sched.map(r => r.sqft)) : 1;
+  const schedRows = sched.map(r => `
+    <tr>
+      <td>${r.year}</td>
+      <td>${r.count}</td>
+      <td>${Number(r.sqft).toLocaleString('en-US')} sf</td>
+      <td><div class="acq-exp-bar-wrap"><div class="acq-exp-bar" style="width:${Math.round((r.sqft / maxSchedSqft) * 100)}%"></div></div></td>
+    </tr>`).join('');
+
+  const schedHtml = sched.length ? `
+  <div class="acq-section-sub">Lease Expiration Schedule</div>
+  <table class="acq-ts-table acq-exp-sched">
+    <thead><tr><th>Year</th><th>Leases</th><th>Sq Ft</th><th style="min-width:120px"></th></tr></thead>
+    <tbody>${schedRows}</tbody>
+  </table>` : '';
+
+  const rollCard = (data, cls, label) => `
+  <div class="acq-rollover-card ${data.count > 0 ? cls : ''}">
+    <div class="acq-rollover-period">${label}</div>
+    <div class="acq-rollover-count">${data.count} lease${data.count !== 1 ? 's' : ''}</div>
+    <div class="acq-rollover-sqft">${Number(data.sqft).toLocaleString('en-US')} sf &nbsp;·&nbsp; ${data.pctOfOccupied}% of occupied</div>
+    ${data.tenants.length ? `<div class="acq-rollover-names">${data.tenants.map(esc).join(', ')}</div>` : ''}
+  </div>`;
+
+  return `
+  ${kpiCards}
+  <div class="acq-section-sub">Rent Roll</div>
+  <div class="acq-ts-scroll">
+    <table class="acq-ts-table">
+      <thead><tr>${thead}</tr></thead>
+      <tbody id="acqRentRollTbody">${tbody}</tbody>
+    </table>
+  </div>
+  <div class="acq-rr-export-bar">
+    <button class="acq-export-btn" onclick="acqExportRentRollCsv()">&#x1F4E5; Export CSV</button>
+  </div>
+  ${schedHtml}
+  <div class="acq-section-sub">Lease Rollover Risk</div>
+  <div class="acq-rollover-grid">
+    ${rollCard(rr.expiring12, 'danger', 'Expiring ≤12 Months')}
+    ${rollCard(rr.expiring24, 'warn',   'Expiring ≤24 Months')}
+  </div>`;
+}
+
+function acqExportRentRollCsv() {
+  const review = _acqReviews.find(r => r.id === _activeAcqId);
+  if (!review?.data?.analysis?.tenantSummary?.length) {
+    alert('No rent roll data to export. Run analysis first.');
+    return;
+  }
+  const ts = review.data.analysis.tenantSummary;
+  const headers = ['Tenant','Suite','Sq Ft','Lease Start','Lease End',
+                   'Base Rent/yr','Renewal Options','Security Deposit','CAM Structure'];
+  const escape  = v => { const s = String(v ?? ''); return s.includes(',') || s.includes('"') || s.includes('\n') ? '"' + s.replace(/"/g, '""') + '"' : s; };
+  const lines   = [headers, ...ts.map(t => [
+    t.tenant_name || '', t.suite || '', t.leased_sqft ?? '',
+    t.lease_start || '', t.lease_end || '', t.base_rent ?? '',
+    t.renewal_options || '', t.security_deposit ?? '', t.cam_structure || '',
+  ])].map(r => r.map(escape).join(','));
+  const blob = new Blob([lines.join('\n')], { type: 'text/csv;charset=utf-8;' });
+  const url  = URL.createObjectURL(blob);
+  const a    = Object.assign(document.createElement('a'), {
+    href: url, download: (review.name || 'rent-roll').replace(/[^a-z0-9_\-]/gi, '_') + '.csv',
+  });
+  document.body.appendChild(a); a.click(); document.body.removeChild(a);
+  URL.revokeObjectURL(url);
 }
 
 function acqExportPdf() {

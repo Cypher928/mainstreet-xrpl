@@ -3871,6 +3871,39 @@
     .acq-ts-cam     { font-size: 0.75rem !important; color: #64748b !important; max-width: 200px; word-break: break-word; }
     .acq-ts-renewal { font-size: 0.78rem !important; max-width: 160px; }
 
+    /* ── Acquisition: Tab Bar ───────────────────────────────────────────── */
+    .acq-report-tabs { display: flex; gap: 4px; margin-bottom: 20px; border-bottom: 1px solid #1e293b; padding-bottom: 0; }
+    .acq-tab { background: transparent; border: none; border-bottom: 2px solid transparent; color: #64748b;
+               font-size: 0.85rem; font-weight: 500; padding: 8px 16px; cursor: pointer;
+               margin-bottom: -1px; transition: color 0.15s, border-color 0.15s; letter-spacing: 0.03em; }
+    .acq-tab:hover  { color: #cbd5e1; }
+    .acq-tab.active { color: #C9973A; border-bottom-color: #C9973A; }
+    .acq-tab-pane   { }
+
+    /* ── Acquisition: Sortable Rent Roll Table ──────────────────────────── */
+    .acq-sort-th { cursor: pointer; user-select: none; white-space: nowrap; }
+    .acq-sort-th:hover { color: #cbd5e1 !important; }
+    .acq-sort-icon { font-size: 0.7em; opacity: 0.45; margin-left: 3px; }
+    .acq-sort-icon.active { opacity: 1; color: #C9973A; }
+
+    /* ── Acquisition: Expiration Schedule Bar ───────────────────────────── */
+    .acq-exp-bar-wrap { background: #0f1b2d; border-radius: 3px; height: 10px; min-width: 60px; }
+    .acq-exp-bar      { background: #C9973A; border-radius: 3px; height: 10px; min-width: 3px; transition: width 0.3s; }
+
+    /* ── Acquisition: Rollover Risk Cards ───────────────────────────────── */
+    .acq-rollover-grid   { display: flex; gap: 14px; flex-wrap: wrap; margin-bottom: 20px; }
+    .acq-rollover-card   { flex: 1; min-width: 200px; background: #0f1b2d; border: 1px solid #1e293b;
+                           border-radius: 8px; padding: 16px 18px; }
+    .acq-rollover-card.danger { border-color: #f87171; }
+    .acq-rollover-card.warn   { border-color: #fb923c; }
+    .acq-rollover-period { font-size: 0.72rem; color: #64748b; text-transform: uppercase; letter-spacing: 0.05em; }
+    .acq-rollover-count  { font-size: 1.6rem; font-weight: 700; color: #e2e8f0; margin: 4px 0 2px; }
+    .acq-rollover-sqft   { font-size: 0.8rem; color: #94a3b8; }
+    .acq-rollover-names  { font-size: 0.75rem; color: #64748b; margin-top: 6px; }
+
+    /* ── Acquisition: CSV Export Bar ────────────────────────────────────── */
+    .acq-rr-export-bar   { display: flex; align-items: center; gap: 12px; margin: 10px 0 18px; }
+
   </style>
 </head>
 <body>

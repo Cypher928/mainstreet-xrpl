@@ -256,12 +256,21 @@
   // ─── Full Acquisition Report ──────────────────────────────────────────────
 
   function buildAcquisitionReport(tenants, invoices, totalSqFt) {
+    const tenantSummary = tenants.map(normalizeAcqTenant);
+    const rentRoll = {
+      occupancy:          occupancyAnalysis(tenantSummary, totalSqFt),
+      expirationSchedule: leaseExpirationSchedule(tenantSummary),
+      walt:               waltAnalysis(tenantSummary),
+      rolloverRisk:       rolloverRiskAnalysis(tenantSummary, totalSqFt),
+    };
+
     if (!tenants.length || !invoices.length) {
       return {
         error: 'Insufficient data — upload leases and invoices first',
-        tenants:       tenants.length,
-        invoices:      invoices.length,
-        tenantSummary: tenants.map(normalizeAcqTenant),
+        tenants: tenants.length,
+        invoices: invoices.length,
+        tenantSummary,
+        rentRoll,
       };
     }
 
@@ -345,9 +354,75 @@
       proRataRisk,
       findings,
       topRisks,
-      tenantSummary:   tenants.map(normalizeAcqTenant),
-      generatedAt:     new Date().toISOString(),
+      tenantSummary,
+      rentRoll,
+      generatedAt: new Date().toISOString(),
     };
+  }
+
+  // ─── Rent Roll Analytics ─────────────────────────────────────────────────
+
+  function occupancyAnalysis(tenantSummary, buildingSqft) {
+    const bsqft    = parseFloat(buildingSqft) || 0;
+    const occupied = tenantSummary.reduce((s, t) => s + (parseFloat(t.leased_sqft) || 0), 0);
+    const vacant   = Math.max(0, bsqft - occupied);
+    const occRate  = bsqft > 0 ? parseFloat(((occupied / bsqft) * 100).toFixed(1)) : 0;
+    const vacRate  = bsqft > 0 ? parseFloat((100 - occRate).toFixed(1)) : 100;
+    return { buildingSqft: bsqft, occupiedSqft: occupied, vacantSqft: vacant,
+             occupancyRate: occRate, vacancyRate: vacRate };
+  }
+
+  function leaseExpirationSchedule(tenantSummary) {
+    const byYear = {};
+    for (const t of tenantSummary) {
+      if (!t.lease_end) continue;
+      const yr = new Date(t.lease_end + 'T12:00:00').getFullYear();
+      if (isNaN(yr)) continue;
+      if (!byYear[yr]) byYear[yr] = { year: yr, count: 0, sqft: 0, tenants: [] };
+      byYear[yr].count++;
+      byYear[yr].sqft += parseFloat(t.leased_sqft) || 0;
+      byYear[yr].tenants.push(t.tenant_name);
+    }
+    return Object.values(byYear).sort((a, b) => a.year - b.year);
+  }
+
+  function waltAnalysis(tenantSummary, referenceDate) {
+    const ref    = referenceDate ? new Date(referenceDate) : new Date();
+    const MS_YR  = 365.25 * 24 * 3600 * 1000;
+    let weighted = 0, totalSqft = 0;
+    for (const t of tenantSummary) {
+      const sqft = parseFloat(t.leased_sqft) || 0;
+      if (!t.lease_end || !sqft) continue;
+      const remMs = new Date(t.lease_end + 'T12:00:00') - ref;
+      if (remMs <= 0) continue;  // expired leases excluded
+      weighted  += (remMs / MS_YR) * sqft;
+      totalSqft += sqft;
+    }
+    if (totalSqft === 0) return { walt: null, waltMonths: null, weightedSqft: 0 };
+    const walt       = parseFloat((weighted / totalSqft).toFixed(2));
+    const waltMonths = Math.round(walt * 12);
+    return { walt, waltMonths, weightedSqft: totalSqft };
+  }
+
+  function rolloverRiskAnalysis(tenantSummary, buildingSqft, referenceDate) {
+    const ref   = referenceDate ? new Date(referenceDate) : new Date();
+    const MS_12 = 365.25 * 24 * 3600 * 1000;
+    const MS_24 = 2 * MS_12;
+    const exp12 = { count: 0, sqft: 0, tenants: [] };
+    const exp24 = { count: 0, sqft: 0, tenants: [] };
+    let totalOccupied = 0;
+    for (const t of tenantSummary) {
+      const sqft = parseFloat(t.leased_sqft) || 0;
+      totalOccupied += sqft;
+      if (!t.lease_end) continue;
+      const remMs = new Date(t.lease_end + 'T12:00:00') - ref;
+      if (remMs <= MS_12) { exp12.count++; exp12.sqft += sqft; exp12.tenants.push(t.tenant_name); }
+      if (remMs <= MS_24) { exp24.count++; exp24.sqft += sqft; exp24.tenants.push(t.tenant_name); }
+    }
+    const pct = sqft => totalOccupied > 0 ? parseFloat(((sqft / totalOccupied) * 100).toFixed(1)) : 0;
+    exp12.pctOfOccupied = pct(exp12.sqft);
+    exp24.pctOfOccupied = pct(exp24.sqft);
+    return { expiring12: exp12, expiring24: exp24, totalOccupied };
   }
 
   // ─── Tenant Summary Normalization ────────────────────────────────────────
@@ -614,6 +689,10 @@
     buildFindingsWithCitations,
     buildAcquisitionReport,
     normalizeAcqTenant,
+    occupancyAnalysis,
+    leaseExpirationSchedule,
+    waltAnalysis,
+    rolloverRiskAnalysis,
   };
 
   if (typeof module !== 'undefined' && module.exports) {
