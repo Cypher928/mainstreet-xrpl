@@ -3765,6 +3765,38 @@
     .acq-detail-badge.draft     { background: #1e293b; color: #94a3b8; }
     .acq-detail-badge.analyzing { background: #1c3045; color: #60a5fa; }
     .acq-detail-badge.complete  { background: #14291a; color: #4ade80; }
+    .acq-detail-badge.converted { background: #1e1245; color: #a78bfa; }
+    .acq-card-status.converted  { background: #1e1245; color: #a78bfa; }
+    .acq-card.converted         { border-color: #2d1a5e; }
+    .acq-card-converted-note    { font-size: 0.72rem; color: #7c3aed; margin-top: 4px; }
+
+    /* ── Convert button + converted state ──────────────────────────────── */
+    .acq-convert-btn  { margin-left: auto; background: #C9973A; color: #0a0f1a;
+                        border: none; border-radius: 6px; padding: 7px 16px;
+                        font-size: 0.82rem; font-weight: 700; cursor: pointer;
+                        letter-spacing: 0.03em; transition: background 0.15s; white-space: nowrap; }
+    .acq-convert-btn:hover   { background: #d4a84a; }
+    .acq-convert-btn:disabled { opacity: 0.45; cursor: not-allowed; }
+    .acq-converted-link { margin-left: auto; font-size: 0.82rem; color: #a78bfa; cursor: pointer;
+                          text-decoration: underline; white-space: nowrap; }
+    .acq-converted-link:hover { color: #c4b5fd; }
+
+    /* ── Conversion confirmation modal ─────────────────────────────────── */
+    .acq-modal-backdrop { position: fixed; inset: 0; background: rgba(0,0,0,.65);
+                          z-index: 2000; display: flex; align-items: center; justify-content: center; }
+    .acq-modal-box      { background: #0f1b2d; border: 1px solid #1e3a5f; border-radius: 10px;
+                          padding: 28px 32px; max-width: 420px; width: 90%; box-shadow: 0 12px 40px rgba(0,0,0,.5); }
+    .acq-modal-title    { font-size: 1rem; font-weight: 700; color: #e2e8f0; margin-bottom: 10px; }
+    .acq-modal-body     { font-size: 0.85rem; color: #94a3b8; line-height: 1.55; margin-bottom: 22px; }
+    .acq-modal-name     { color: #e2e8f0; font-weight: 600; }
+    .acq-modal-actions  { display: flex; gap: 10px; justify-content: flex-end; }
+    .acq-modal-confirm  { background: #C9973A; color: #0a0f1a; border: none; border-radius: 6px;
+                          padding: 8px 20px; font-weight: 700; cursor: pointer; font-size: 0.85rem; }
+    .acq-modal-confirm:hover   { background: #d4a84a; }
+    .acq-modal-confirm:disabled { opacity: 0.5; cursor: not-allowed; }
+    .acq-modal-cancel   { background: transparent; color: #94a3b8; border: 1px solid #334155;
+                          border-radius: 6px; padding: 8px 18px; cursor: pointer; font-size: 0.85rem; }
+    .acq-modal-cancel:hover { color: #e2e8f0; border-color: #64748b; }
 
     .acq-upload-grid { display: grid; grid-template-columns: 1fr 1fr; gap: 16px; margin-bottom: 20px; }
     @media (max-width: 640px) { .acq-upload-grid { grid-template-columns: 1fr; } }
@@ -4074,6 +4106,24 @@
     <button class="acq-back-btn" onclick="closeAcquisitionDetail()">&#x2190; Back to Portfolio</button>
     <span class="acq-detail-title" id="acqDetailTitle"></span>
     <span class="acq-detail-badge" id="acqDetailBadge"></span>
+    <span id="acqConvertAction"></span>
+  </div>
+
+  <!-- Conversion confirmation modal (hidden until triggered) -->
+  <div id="acqConvertModal" class="acq-modal-backdrop" style="display:none" onclick="if(event.target===this)_hideAcqConvertModal()">
+    <div class="acq-modal-box">
+      <div class="acq-modal-title">&#x1F3E2; Acquire Property</div>
+      <div class="acq-modal-body">
+        Convert <span class="acq-modal-name" id="acqConvertModalName"></span> to a managed
+        property?<br><br>
+        Tenant records, lease metadata, rent roll, and acquisition analysis will be copied.
+        The due diligence review is preserved and marked <em>converted</em> for historical reference.
+      </div>
+      <div class="acq-modal-actions">
+        <button class="acq-modal-cancel" onclick="_hideAcqConvertModal()">Cancel</button>
+        <button class="acq-modal-confirm" id="acqConvertConfirmBtn" onclick="convertAcquisitionToProperty()">Acquire Property</button>
+      </div>
+    </div>
   </div>
 
   <!-- Document Upload -->

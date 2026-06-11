@@ -672,7 +672,50 @@
     return findings.sort((a, b) => (b.annualValue || 0) - (a.annualValue || 0));
   }
 
-  // ─── Exports ──────────────────────────────────────────────────────────────
+  // ─── Acquisition → Property Converter ────────────────────────────────────
+  // Pure function — no DOM, no Supabase. Returns a property-shaped object
+  // ready to be passed directly to script.js saveProperty().
+
+  function buildPropertyFromReview(review) {
+    var d        = review.data || {};
+    var analysis = d.analysis  || {};
+    var now      = new Date().toISOString();
+
+    var tenants = (d.tenants || []).map(function (t) {
+      return Object.assign({}, t, { _fromAcquisition: true });
+    });
+
+    return {
+      name:             review.name || 'New Property',
+      totalSqft:        d.totalSqFt || 0,
+      tenants:          tenants,
+      invoices:         [],
+      disputes:         [],
+      results:          null,
+      camReconciliation: null,
+      activityLog:      [],
+      timeline:         [],
+      status:           'in-progress',
+      tenantCount:      tenants.length,
+      invoiceCount:     0,
+      totalCAM:         0,
+      openDisputes:     0,
+      createdAt:        now,
+      _conversionSource: {
+        conversionVersion:       1,
+        acquisitionDate:         now,
+        reviewId:                review.id,
+        reviewName:              review.name || '',
+        convertedAt:             now,
+        occupancyAtAcquisition:  (analysis.rentRoll || {}).occupancy  || null,
+        waltAtAcquisition:       (analysis.rentRoll || {}).walt       || null,
+        revenueAtRiskSnapshot:   analysis.summary   || null,
+        topRisks:                analysis.topRisks  || [],
+      },
+    };
+  }
+
+
 
   const AcquisitionEngine = {
     matchInvoiceToTenant,
@@ -693,6 +736,7 @@
     leaseExpirationSchedule,
     waltAnalysis,
     rolloverRiskAnalysis,
+    buildPropertyFromReview,
   };
 
   if (typeof module !== 'undefined' && module.exports) {

@@ -16114,11 +16114,15 @@ function _renderAcqSection(reviews) {
     const tenantCount  = (d.tenants  || []).length;
     const invoiceCount = (d.invoices || []).length;
     const date = r.created_at ? new Date(r.created_at).toLocaleDateString() : '';
+    const convertedNote = r.status === 'converted' && d.conversionRecord?.convertedAt
+      ? `<div class="acq-card-converted-note">Acquired ${new Date(d.conversionRecord.convertedAt).toLocaleDateString()}</div>`
+      : '';
     return `
-    <div class="acq-card" onclick="selectAcquisitionReview('${esc(r.id)}')">
+    <div class="acq-card${r.status === 'converted' ? ' converted' : ''}" onclick="selectAcquisitionReview('${esc(r.id)}')">
       <div class="acq-card-name">${esc(r.name)}</div>
       <div class="acq-card-meta">${esc(date)}</div>
       <span class="acq-card-status ${esc(r.status)}">${esc(r.status)}</span>
+      ${convertedNote}
       <div class="acq-card-stats">
         <div class="acq-card-stat"><strong>${tenantCount}</strong> Tenants</div>
         <div class="acq-card-stat"><strong>${invoiceCount}</strong> Invoices</div>
@@ -16182,6 +16186,7 @@ function selectAcquisitionReview(id) {
   const badge = document.getElementById('acqDetailBadge');
   badge.textContent = review.status;
   badge.className = 'acq-detail-badge ' + review.status;
+  _renderAcqConvertAction(review);
 
   const sqftEl = document.getElementById('acqTotalSqft');
   if (sqftEl) sqftEl.value = _acqSqFt || '';
@@ -16205,6 +16210,102 @@ function closeAcquisitionDetail() {
   document.getElementById('portfolioDashboard').style.display = 'block';
   _renderAcqSection(_acqReviews);
   window.scrollTo({ top: 0, behavior: 'smooth' });
+}
+
+// ── Acquisition → Property conversion ─────────────────────────────────────────
+
+function _renderAcqConvertAction(review) {
+  const el = document.getElementById('acqConvertAction');
+  if (!el) return;
+  const cr = review?.data?.conversionRecord;
+  if (cr?.propertyId) {
+    el.innerHTML = `<span class="acq-converted-link"
+      onclick="event.preventDefault();closeAcquisitionDetail();selectProperty('${esc(cr.propertyId)}')">
+      Converted ✓ — Open Property →</span>`;
+  } else if (review.status === 'complete') {
+    el.innerHTML = `<button class="acq-convert-btn" onclick="_showAcqConvertModal()"
+      title="Create a managed property from this acquisition review">
+      &#x1F3E2; Acquire Property</button>`;
+  } else {
+    el.innerHTML = '';
+  }
+}
+
+function _showAcqConvertModal() {
+  const review = _acqReviews.find(r => r.id === _activeAcqId);
+  if (!review) return;
+  const nameEl = document.getElementById('acqConvertModalName');
+  if (nameEl) nameEl.textContent = review.name;
+  document.getElementById('acqConvertModal').style.display = 'flex';
+}
+
+function _hideAcqConvertModal() {
+  document.getElementById('acqConvertModal').style.display = 'none';
+}
+
+async function convertAcquisitionToProperty() {
+  const review = _acqReviews.find(r => r.id === _activeAcqId);
+  if (!review) return;
+
+  // Duplicate prevention
+  if (review.data?.conversionRecord?.propertyId) {
+    _hideAcqConvertModal();
+    alert('This review has already been converted.\nProperty ID: ' + review.data.conversionRecord.propertyId);
+    return;
+  }
+
+  const confirmBtn = document.getElementById('acqConvertConfirmBtn');
+  if (confirmBtn) { confirmBtn.disabled = true; confirmBtn.textContent = 'Converting…'; }
+
+  try {
+    // Build the property object from the review (pure engine function)
+    const prop = AcquisitionEngine.buildPropertyFromReview(review);
+
+    // Register in _props immediately so portfolio renders without a round-trip
+    _props.push(prop);
+
+    // Persist to Supabase — assigns prop.id
+    await saveProperty(prop);
+
+    // Sync qualified tenants to the tenants table
+    const qualifiedTenants = prop.tenants.filter(
+      t => t?.tenant_name && !t?.extractionFailed
+    );
+    if (prop.id && qualifiedTenants.length) {
+      await resyncTenantsToTable(prop.id, qualifiedTenants);
+    }
+
+    // Build the conversion record stored back on the review
+    const conversionRecord = {
+      propertyId:   prop.id,
+      propertyName: prop.name,
+      convertedAt:  prop._conversionSource.convertedAt,
+      occupancyAtAcquisition: prop._conversionSource.occupancyAtAcquisition,
+      waltAtAcquisition:      prop._conversionSource.waltAtAcquisition,
+    };
+
+    // Mark review as converted (in-memory + DB)
+    review.status = 'converted';
+    review.data   = Object.assign({}, review.data, { conversionRecord });
+    await _saveAcqReview(review);
+
+    // Update detail header badge + action area
+    const badge = document.getElementById('acqDetailBadge');
+    if (badge) { badge.textContent = 'converted'; badge.className = 'acq-detail-badge converted'; }
+    _renderAcqConvertAction(review);
+
+    // Refresh portfolio grid so the card shows 'converted' badge
+    _renderAcqSection(_acqReviews);
+
+    _hideAcqConvertModal();
+
+    console.log('[acq] converted review', review.id, '→ property', prop.id);
+  } catch (e) {
+    console.error('[acq] convertAcquisitionToProperty:', e.message);
+    alert('Conversion failed.\n\n' + e.message);
+  } finally {
+    if (confirmBtn) { confirmBtn.disabled = false; confirmBtn.textContent = 'Acquire Property'; }
+  }
 }
 
 function _renderAcqLeaselist() {

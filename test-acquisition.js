@@ -1074,6 +1074,80 @@ console.log('\n── Group 19: rentRoll in buildAcquisitionReport ────�
   assert('rentRoll: empty tenants => walt is null',   report.rentRoll.walt.walt === null);
 }
 
+// ── Group 20: buildPropertyFromReview ────────────────────────────────────────
+console.log('\n── Group 20: buildPropertyFromReview ────────────────────────────────');
+
+const MOCK_REVIEW = {
+  id:         'review-abc-123',
+  name:       '45 Commerce Plaza',
+  status:     'complete',
+  created_at: '2024-03-01T00:00:00.000Z',
+  data: {
+    tenants:   TENANTS,
+    invoices:  INVOICES,
+    totalSqFt: TOTAL_SQFT,
+    analysis: {
+      summary: { recoveryRate: 82, annualMissedRecovery: 4800, tenantCount: TENANTS.length },
+      topRisks: [{ type: 'cap_leakage', label: 'Cap leakage detected', detail: 'Tenant A' }],
+      rentRoll: {
+        occupancy: { occupancyRate: 80, vacantSqft: 2000 },
+        walt:      { walt: 3.5, waltMonths: 42 },
+      },
+    },
+  },
+};
+
+{
+  // Successful conversion — field mapping
+  const prop = AE.buildPropertyFromReview(MOCK_REVIEW);
+  assert('conversion: name preserved',               prop.name === '45 Commerce Plaza');
+  assert('conversion: totalSqft from totalSqFt',     prop.totalSqft === TOTAL_SQFT);
+  assert('conversion: tenants array copied',         Array.isArray(prop.tenants) && prop.tenants.length === TENANTS.length);
+  assert('conversion: _fromAcquisition flag set',    prop.tenants.every(t => t._fromAcquisition === true));
+  assert('conversion: status is in-progress',        prop.status === 'in-progress');
+  assert('conversion: invoices starts empty',        Array.isArray(prop.invoices) && prop.invoices.length === 0);
+  assert('conversion: tenantCount matches tenants',  prop.tenantCount === prop.tenants.length);
+}
+
+{
+  // Tenant transfer accuracy — original tenant unchanged (no mutation)
+  const prop = AE.buildPropertyFromReview(MOCK_REVIEW);
+  assert('conversion: source tenants not mutated', !TENANTS[0]._fromAcquisition);
+}
+
+{
+  // Snapshot preservation — conversionSource fields
+  const prop = AE.buildPropertyFromReview(MOCK_REVIEW);
+  const cs   = prop._conversionSource;
+  assert('snapshot: conversionVersion = 1',              cs.conversionVersion === 1);
+  assert('snapshot: reviewId matches',                   cs.reviewId === 'review-abc-123');
+  assert('snapshot: reviewName matches',                 cs.reviewName === '45 Commerce Plaza');
+  assert('snapshot: acquisitionDate is ISO string',      typeof cs.acquisitionDate === 'string' && cs.acquisitionDate.includes('T'));
+  assert('snapshot: convertedAt is ISO string',          typeof cs.convertedAt === 'string' && cs.convertedAt.includes('T'));
+  assert('snapshot: occupancyAtAcquisition preserved',   cs.occupancyAtAcquisition?.occupancyRate === 80);
+  assert('snapshot: waltAtAcquisition preserved',        cs.waltAtAcquisition?.walt === 3.5);
+  assert('snapshot: revenueAtRiskSnapshot preserved',    cs.revenueAtRiskSnapshot?.recoveryRate === 82);
+  assert('snapshot: topRisks array preserved',           Array.isArray(cs.topRisks) && cs.topRisks.length === 1);
+}
+
+{
+  // Rent roll transfer accuracy — rent roll present in source maps to snapshot
+  const prop = AE.buildPropertyFromReview(MOCK_REVIEW);
+  assert('rentRoll transfer: walt months in snapshot',   prop._conversionSource.waltAtAcquisition?.waltMonths === 42);
+  assert('rentRoll transfer: vacantSqft in snapshot',    prop._conversionSource.occupancyAtAcquisition?.vacantSqft === 2000);
+}
+
+{
+  // Property creation validation — graceful defaults when fields are missing
+  const bare = { id: 'bare-id', name: '', status: 'complete', data: {} };
+  const prop = AE.buildPropertyFromReview(bare);
+  assert('validation: empty name falls back to New Property', prop.name === 'New Property');
+  assert('validation: missing totalSqFt defaults to 0',       prop.totalSqft === 0);
+  assert('validation: missing tenants defaults to []',        prop.tenants.length === 0);
+  assert('validation: missing analysis yields null snapshot', prop._conversionSource.occupancyAtAcquisition === null);
+  assert('validation: topRisks defaults to empty array',      Array.isArray(prop._conversionSource.topRisks));
+}
+
 // ── Summary ───────────────────────────────────────────────────────────────────
 
 console.log(`\n${'─'.repeat(60)}`);
