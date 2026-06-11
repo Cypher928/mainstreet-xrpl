@@ -1563,6 +1563,119 @@ console.log('\n── Group 26: computeRenewalPipeline ────────�
   assert('rp: _renewalStatus preserved', pl.items[0].status === 'negotiating');
 }
 
+// ── Group 27: computePortfolioActions ────────────────────────────────────────
+console.log('\n── Group 27: computePortfolioActions ────────────────────────────────────');
+
+{
+  const ref = new Date('2024-06-01T12:00:00Z');
+
+  const props = [
+    {
+      id: 'p1', name: 'Main St Office', totalSqft: 10000,
+      tenants: [
+        // expired → critical
+        { tenant_name: 'Acme Corp',   end_date: '2024-05-01', base_rent: 60000, leased_sqft: 2000 },
+        // critical (29d) → critical
+        { tenant_name: 'Beta LLC',    end_date: '2024-06-30', base_rent: 48000, leased_sqft: 1500 },
+        // high (60d) → warning
+        { tenant_name: 'Gamma Inc',   end_date: '2024-07-31', base_rent: 36000, leased_sqft: 1500 },
+      ],
+      disputes: [
+        { status: 'open',   tenantShare: 5000,  tenantName: 'Acme Corp'  },
+        { status: 'open',   tenantShare: 3000,  tenantName: 'Beta LLC'   },
+        { status: 'closed', tenantShare: 10000, tenantName: 'Gamma Inc'  },
+      ]
+    },
+    {
+      id: 'p2', name: 'Harbor Tower', totalSqft: 8000,
+      tenants: [
+        // Only 3000 sf leased → 5000 vacant
+        { tenant_name: 'Delta Co', end_date: '2025-12-01', base_rent: 24000, leased_sqft: 3000 },
+      ],
+      disputes: []
+    }
+  ];
+
+  const reviews = [
+    { id: 'r1', name: 'Harbor Acquisition',  status: 'analyzed'  },
+    { id: 'r2', name: 'Old Deal',            status: 'converted' },
+    { id: 'r3', name: 'Fresh Opportunity',   status: 'analyzed'  },
+  ];
+
+  const pa = AE.computePortfolioActions(props, reviews, ref);
+
+  // --- Structure ---
+  assert('pa: has criticalActions array',  Array.isArray(pa.criticalActions));
+  assert('pa: has warningActions array',   Array.isArray(pa.warningActions));
+  assert('pa: has infoActions array',      Array.isArray(pa.infoActions));
+  assert('pa: has counts object',          typeof pa.counts === 'object');
+
+  // --- Critical: expired + critical-tier leases ---
+  const expiredItem = pa.criticalActions.find(a => a.type === 'lease_expiry' && a.daysRemaining < 0);
+  assert('pa: expired lease in criticalActions',         expiredItem != null);
+  assert('pa: expired item tenantName = Acme Corp',      expiredItem && expiredItem.tenantName === 'Acme Corp');
+  assert('pa: expired item propertyId = p1',             expiredItem && expiredItem.propertyId === 'p1');
+  assert('pa: expired item annualRent = 60000',          expiredItem && expiredItem.annualRent === 60000);
+
+  const critLease = pa.criticalActions.find(a => a.type === 'lease_expiry' && a.daysRemaining >= 0);
+  assert('pa: critical-tier lease in criticalActions',   critLease != null);
+  assert('pa: critical-tier tenantName = Beta LLC',      critLease && critLease.tenantName === 'Beta LLC');
+
+  // --- Warning: high-tier lease + open disputes ---
+  const highLease = pa.warningActions.find(a => a.type === 'lease_expiry');
+  assert('pa: high-tier lease in warningActions',        highLease != null);
+  assert('pa: high-tier tenantName = Gamma Inc',         highLease && highLease.tenantName === 'Gamma Inc');
+
+  const disputeItem = pa.warningActions.find(a => a.type === 'cam_dispute');
+  assert('pa: open disputes in warningActions',          disputeItem != null);
+  assert('pa: dispute item propertyId = p1',             disputeItem && disputeItem.propertyId === 'p1');
+  assert('pa: dispute exposure = 8000',                  disputeItem && disputeItem.exposure === 8000);
+  assert('pa: closed dispute excluded',
+    pa.warningActions.filter(a => a.type === 'cam_dispute').length === 1); // only p1, not p2
+
+  // --- Info: vacancies + analyzed acquisitions ---
+  const vacItems = pa.infoActions.filter(a => a.type === 'vacancy');
+  assert('pa: vacancy items in infoActions',             vacItems.length >= 1);
+  const vacP2 = vacItems.find(a => a.propertyId === 'p2');
+  assert('pa: vacant propertyId = p2 item exists',       vacP2 != null);
+  assert('pa: p2 vacant sqft = 5000',                    vacP2 && vacP2.sqft === 5000);
+
+  const acqItems = pa.infoActions.filter(a => a.type === 'acquisition_pending');
+  assert('pa: analyzed acquisitions in infoActions',     acqItems.length === 2);
+  assert('pa: only analyzed reviews (not converted)',
+    acqItems.every(a => a.reviewId === 'r1' || a.reviewId === 'r3'));
+
+  // --- Counts ---
+  assert('pa: counts.expiredLeases = 1',                 pa.counts.expiredLeases === 1);
+  assert('pa: counts.openCamDisputes = 2',               pa.counts.openCamDisputes === 2);
+  assert('pa: counts.revenueAtRisk > 0',                 pa.counts.revenueAtRisk > 0);
+  assert('pa: counts.renewalsRequiringAction ≥ 2',       pa.counts.renewalsRequiringAction >= 2);
+  assert('pa: counts.vacantSqft = 10000 (portfolio total)', pa.counts.vacantSqft === 10000);
+  assert('pa: counts.acquisitionsAwaitingConversion = 2', pa.counts.acquisitionsAwaitingConversion === 2);
+
+  // --- Edge cases ---
+  const empty = AE.computePortfolioActions([], [], ref);
+  assert('pa: empty → criticalActions empty',    empty.criticalActions.length === 0);
+  assert('pa: empty → warningActions empty',     empty.warningActions.length  === 0);
+  assert('pa: empty → infoActions empty',        empty.infoActions.length     === 0);
+  assert('pa: empty → all counts zero',
+    empty.counts.expiredLeases === 0 &&
+    empty.counts.openCamDisputes === 0 &&
+    empty.counts.revenueAtRisk === 0 &&
+    empty.counts.vacantSqft === 0 &&
+    empty.counts.acquisitionsAwaitingConversion === 0);
+
+  // Vacancy threshold: 499 sf should NOT surface
+  const smallVacProp = [{
+    id: 'sv', name: 'Tiny', totalSqft: 1000,
+    tenants: [{ tenant_name: 'T1', base_rent: 12000, leased_sqft: 502, end_date: '2026-01-01' }],
+    disputes: []
+  }];
+  const svPa = AE.computePortfolioActions(smallVacProp, [], ref);
+  assert('pa: vacancy 498 sf below threshold → not surfaced',
+    svPa.infoActions.filter(a => a.type === 'vacancy').length === 0);
+}
+
 // ── Summary ───────────────────────────────────────────────────────────────────
 
 console.log(`\n${'─'.repeat(60)}`);

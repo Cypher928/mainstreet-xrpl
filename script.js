@@ -607,7 +607,8 @@ let _acqInvoices   = [];
 let _acqSqFt       = 0;
 let _acqActiveTab  = 'risk';                          // 'risk' | 'rentroll'
 let _acqRentRollSort = { col: 'tenant_name', dir: 'asc' };
-let _leaseAlertsDismissed = false;         // session-only; resets on reload
+let _leaseAlertsDismissed   = false;       // session-only; resets on reload
+let _actionCenterDismissed = false;       // session-only; resets on reload
 
 // Returns the currently selected property object, or null if none is active.
 function currentProperty() {
@@ -13549,6 +13550,164 @@ function renderPortfolioIntelligence(props) {
   </div>`;
 }
 
+// ── Deep-link navigation helpers ────────────────────────────────────────────
+
+// Navigate to a property then scroll-to + open the detail panel for a specific tenant.
+async function navigateToPropertyTenant(propId, tenantName) {
+  if (!propId) return;
+  await selectProperty(propId);
+  if (!tenantName) return;
+  setTimeout(function() {
+    var row = document.querySelector('tr[data-tenant-name="' + CSS.escape(tenantName) + '"]');
+    if (row) {
+      row.scrollIntoView({ behavior: 'smooth', block: 'center' });
+      row.classList.add('ac-highlight-row');
+      setTimeout(function() { row.classList.remove('ac-highlight-row'); }, 2500);
+    }
+    var idx = -1;
+    for (var i = 0; i < tenantData.length; i++) {
+      if (tenantData[i] && tenantData[i].tenant_name === tenantName) { idx = i; break; }
+    }
+    if (idx >= 0) openTenantDetailPanel(idx);
+  }, 150);
+}
+
+// Stay on portfolio — scroll the Renewal Pipeline panel into view and highlight matching tenant row.
+function scrollToRenewalPipeline(propId, tenantName) {
+  var panel = document.getElementById('renewalPipelinePanel');
+  if (!panel) return;
+  panel.scrollIntoView({ behavior: 'smooth', block: 'start' });
+  if (!tenantName) return;
+  setTimeout(function() {
+    var rows = panel.querySelectorAll('tbody tr');
+    for (var i = 0; i < rows.length; i++) {
+      var nameEl = rows[i].querySelector('.rp-tenant-name');
+      if (nameEl && nameEl.textContent.trim() === tenantName) {
+        rows[i].classList.add('ac-highlight-row');
+        (function(r) { setTimeout(function() { r.classList.remove('ac-highlight-row'); }, 2500); })(rows[i]);
+        break;
+      }
+    }
+  }, 400);
+}
+
+// ── Action Center ────────────────────────────────────────────────────────────
+
+function dismissActionCenter() {
+  _actionCenterDismissed = true;
+  var el = document.getElementById('actionCenterPanel');
+  if (el) el.style.display = 'none';
+}
+
+function renderActionCenter(props, reviews) {
+  var panel = document.getElementById('actionCenterPanel');
+  if (!panel || _actionCenterDismissed) return;
+  var safeProps = Array.isArray(props) ? props : [];
+  if (safeProps.length === 0) { panel.style.display = 'none'; return; }
+
+  var actions = AcquisitionEngine.computePortfolioActions(safeProps, reviews || []);
+  var total   = actions.criticalActions.length + actions.warningActions.length + actions.infoActions.length;
+  if (total === 0) { panel.style.display = 'none'; return; }
+
+  const fmtM  = v => v >= 1e6 ? '$' + (v / 1e6).toFixed(1) + 'M'
+                  : v >= 1e3  ? '$' + Math.round(v / 1e3) + 'K'
+                  : '$' + Math.round(v);
+  const fmtSf = v => Math.round(v).toLocaleString('en-US') + ' sf';
+
+  // KPI count chips
+  const c = actions.counts;
+  const kpiChips = [
+    c.expiredLeases > 0         ? `<span class="ac-kpi ac-kpi--critical">${c.expiredLeases} Expired Lease${c.expiredLeases !== 1 ? 's' : ''}</span>` : '',
+    c.revenueAtRisk > 0         ? `<span class="ac-kpi ac-kpi--critical">${fmtM(c.revenueAtRisk)} Revenue at Risk</span>` : '',
+    c.renewalsRequiringAction > 0 ? `<span class="ac-kpi ac-kpi--warn">${c.renewalsRequiringAction} Renewal${c.renewalsRequiringAction !== 1 ? 's' : ''} Requiring Action</span>` : '',
+    c.openCamDisputes > 0       ? `<span class="ac-kpi ac-kpi--warn">${c.openCamDisputes} Open Dispute${c.openCamDisputes !== 1 ? 's' : ''}</span>` : '',
+    c.vacantSqft >= 500         ? `<span class="ac-kpi ac-kpi--info">${fmtSf(c.vacantSqft)} Vacant</span>` : '',
+    c.acquisitionsAwaitingConversion > 0 ? `<span class="ac-kpi ac-kpi--info">${c.acquisitionsAwaitingConversion} Acquisition${c.acquisitionsAwaitingConversion !== 1 ? 's' : ''} Ready to Convert</span>` : '',
+  ].filter(Boolean).join('');
+
+  // Single action item row
+  const renderItem = (item, onclick) => {
+    const timeStr = item.daysRemaining != null
+      ? (item.daysRemaining <= 0 ? Math.abs(item.daysRemaining) + 'd expired' : item.daysRemaining + 'd left')
+      : '';
+    const badge = timeStr
+      ? `<span class="ac-badge ac-badge--${esc(item.severity)}">${esc(timeStr)}</span>` : '';
+    const clickAttr = onclick ? ` onclick="${onclick}"` : '';
+    return `
+    <div class="ac-item"${clickAttr}>
+      <span class="ac-dot ac-dot--${esc(item.severity)}"></span>
+      <div class="ac-item-body">
+        <span class="ac-item-title">${esc(item.title)}</span>
+        ${item.detail ? `<span class="ac-item-detail">${esc(item.detail)}</span>` : ''}
+      </div>
+      ${badge}
+    </div>`;
+  };
+
+  // Build onclick for each item type
+  const itemOnclick = (item, forSection) => {
+    const pid = esc(item.propertyId || '');
+    const tid = esc(item.tenantName || '');
+    const rid = esc(item.reviewId   || '');
+    if (forSection === 'critical') {
+      // Critical lease expiry: navigate to property + open tenant
+      return item.tenantName && item.propertyId
+        ? `navigateToPropertyTenant('${pid}','${tid}')`
+        : item.propertyId ? `selectProperty('${pid}')` : '';
+    }
+    if (forSection === 'warning') {
+      if (item.type === 'cam_dispute') return item.propertyId ? `selectProperty('${pid}')` : '';
+      // Lease expiry warnings → jump to Renewal Pipeline
+      return item.tenantName
+        ? `scrollToRenewalPipeline('${pid}','${tid}')`
+        : item.propertyId ? `selectProperty('${pid}')` : '';
+    }
+    if (forSection === 'info') {
+      if (item.type === 'acquisition_pending') return item.reviewId ? `selectAcquisitionReview('${rid}')` : '';
+      return item.propertyId ? `selectProperty('${pid}')` : '';
+    }
+    return '';
+  };
+
+  // Sections with cap at 5/5/3 items
+  const buildSection = (items, sectionKey, headHtml, max) => {
+    if (items.length === 0) return '';
+    const shown = items.slice(0, max);
+    const more  = items.length - shown.length;
+    const rows  = shown.map(item => renderItem(item, itemOnclick(item, sectionKey))).join('');
+    const moreEl = more > 0 ? `<div class="ac-more">+${more} more</div>` : '';
+    return `<div class="ac-section">${headHtml}${rows}${moreEl}</div>`;
+  };
+
+  const critSection = buildSection(
+    actions.criticalActions, 'critical',
+    '<div class="ac-section-hd ac-section-hd--critical">&#x1F534; Requires Immediate Action</div>', 5);
+  const warnSection = buildSection(
+    actions.warningActions, 'warning',
+    '<div class="ac-section-hd ac-section-hd--warning">&#x26A0;&#xFE0F; Needs Attention</div>', 5);
+  const infoSection = buildSection(
+    actions.infoActions, 'info',
+    '<div class="ac-section-hd ac-section-hd--info">&#x2139;&#xFE0F; For Your Attention</div>', 3);
+
+  const hCounts = [
+    actions.criticalActions.length > 0 ? `<span class="ac-hcount ac-hcount--critical">${actions.criticalActions.length} Critical</span>` : '',
+    actions.warningActions.length  > 0 ? `<span class="ac-hcount ac-hcount--warning">${actions.warningActions.length} Warning${actions.warningActions.length !== 1 ? 's' : ''}</span>` : '',
+    actions.infoActions.length     > 0 ? `<span class="ac-hcount ac-hcount--info">${actions.infoActions.length} Info</span>` : '',
+  ].filter(Boolean).join('');
+
+  panel.style.display = 'block';
+  panel.innerHTML = `
+  <div class="ac-panel">
+    <div class="ac-header">
+      <span class="ac-header-title">&#x26A1; Action Center</span>
+      <div class="ac-header-counts">${hCounts}</div>
+      <button class="ac-dismiss-btn" onclick="dismissActionCenter()" title="Dismiss for this session">&#x2715;</button>
+    </div>
+    ${kpiChips ? `<div class="ac-kpi-bar">${kpiChips}</div>` : ''}
+    ${critSection}${warnSection}${infoSection}
+  </div>`;
+}
+
 function _renderRenewalPipeline(pipeline) {
   const fmtM  = v => v >= 1e6 ? '$' + (v / 1e6).toFixed(2) + 'M'
                   : v >= 1e3  ? '$' + Math.round(v / 1e3).toLocaleString('en-US') + 'K'
@@ -13610,7 +13769,7 @@ function _renderRenewalPipeline(pipeline) {
     const statusTxt = statusLabels[item.status] || item.status || 'Not Started';
     const suiteTxt  = item.suite ? `<span class="rp-suite">Suite ${esc(item.suite)}</span>` : '';
     return `
-    <tr onclick="selectProperty('${esc(item.propertyId || '')}')">
+    <tr style="cursor:pointer" onclick="navigateToPropertyTenant('${esc(item.propertyId || '')}','${esc(item.tenantName || '')}')">
       <td>
         <span class="rp-tenant-name">${esc(item.tenantName)}</span>${suiteTxt}
       </td>
@@ -14026,12 +14185,15 @@ function _renderLeaseAlertPanel(rar) {
     const renewal  = alert.hasRenewal ? '<span class="la-renewal">&#x1F504;&nbsp;option</span>' : '';
     const suite    = alert.suite ? ` <span class="la-suite">· ${esc(alert.suite)}</span>` : '';
     return `
-    <div class="la-row" onclick="selectProperty('${esc(alert.propertyId)}')">
+    <div class="la-row" onclick="navigateToPropertyTenant('${esc(alert.propertyId)}','${esc(alert.tenantName)}')">
       <span class="la-dot la-dot--${tier}"></span>
       <div class="la-tenant">${esc(alert.tenantName)}${suite}</div>
       <div class="la-property">${esc(alert.propertyName)}</div>
       <div class="la-date">${fmtDate(alert.endDate)}</div>
-      <div class="la-meta">${daysBadge}${rentHtml}${renewal}</div>
+      <div class="la-meta">
+        ${daysBadge}${rentHtml}${renewal}
+        <button class="la-pipeline-link" onclick="event.stopPropagation();scrollToRenewalPipeline('${esc(alert.propertyId)}','${esc(alert.tenantName)}')" title="View in Renewal Pipeline">Pipeline &#x2193;</button>
+      </div>
     </div>`;
   };
 
@@ -14172,6 +14334,9 @@ function renderPortfolio(props) {
   rar.critical.forEach(a => _markProp(a, 'critical'));
   rar.high.forEach(a     => _markProp(a, 'high'));
   rar.medium.forEach(a   => _markProp(a, 'medium'));
+
+  // Action Center (topmost — shows today's 5-10 priority items)
+  renderActionCenter(props, _acqReviews);
 
   // Portfolio intelligence panel (above cards grid)
   renderPortfolioIntelligence(props);

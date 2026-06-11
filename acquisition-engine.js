@@ -1105,6 +1105,146 @@
     };
   }
 
+  // ─── Portfolio Action Center ──────────────────────────────────────────────
+  // Aggregates all actionable items from the portfolio into three severity buckets.
+  // Reuses computeRevenueAtRisk, computeRenewalPipeline, computePortfolioIntelligence —
+  // no new extraction or DB tables.
+
+  function computePortfolioActions(props, reviews, refDate) {
+    var ref         = refDate ? new Date(refDate) : new Date();
+    var safeProps   = Array.isArray(props)   ? props   : [];
+    var safeReviews = Array.isArray(reviews) ? reviews : [];
+
+    var criticalActions = [];
+    var warningActions  = [];
+    var infoActions     = [];
+
+    // — Lease expiry (reuse computeRevenueAtRisk) —
+    var rar = computeRevenueAtRisk(safeProps, ref);
+
+    function _leaseAction(a, severity) {
+      // computeRevenueAtRisk alert objects use `daysToExpiry` (negative = expired)
+      var days    = a.daysToExpiry != null ? a.daysToExpiry : (a.daysRemaining != null ? a.daysRemaining : null);
+      var dStr    = days != null && days < 0
+        ? Math.abs(days) + 'd expired'
+        : days + 'd remaining';
+      var rentStr = a.annualRent ? ' · $' + Math.round(a.annualRent / 1000) + 'K/yr' : '';
+      return {
+        id:           severity + ':' + (a.propertyId || '') + ':' + (a.tenantName || ''),
+        type:         'lease_expiry',
+        severity:     severity,
+        title:        (a.tenantName || '(unnamed)') + ' — ' + dStr,
+        detail:       (a.propertyName || '') + rentStr,
+        propertyId:   a.propertyId   || null,
+        propertyName: a.propertyName || null,
+        tenantName:   a.tenantName   || null,
+        reviewId:     null,
+        annualRent:   a.annualRent   != null ? a.annualRent : null,
+        sqft:         a.sqft         != null ? a.sqft       : null,
+        daysRemaining: days,
+      };
+    }
+
+    for (var ei = 0; ei < rar.expired.length;  ei++) criticalActions.push(_leaseAction(rar.expired[ei],  'critical'));
+    for (var ci = 0; ci < rar.critical.length; ci++) criticalActions.push(_leaseAction(rar.critical[ci], 'critical'));
+    for (var hi = 0; hi < rar.high.length;     hi++) warningActions.push(_leaseAction(rar.high[hi],      'warning'));
+
+    // — Open CAM disputes (one entry per property) —
+    for (var di = 0; di < safeProps.length; di++) {
+      var dp       = safeProps[di];
+      var openDisps = (dp.disputes || []).filter(function(d) { return d.status === 'open'; });
+      if (openDisps.length === 0) continue;
+      var exposure = openDisps.reduce(function(s, d) { return s + (parseFloat(d.tenantShare) || 0); }, 0);
+      warningActions.push({
+        id:           'dispute:' + (dp.id || ''),
+        type:         'cam_dispute',
+        severity:     'warning',
+        title:        openDisps.length + ' open dispute' + (openDisps.length !== 1 ? 's' : '') + ' — ' + (dp.name || '(unnamed)'),
+        detail:       exposure > 0 ? '$' + Math.round(exposure).toLocaleString('en-US') + ' exposure' : 'Resolution required',
+        propertyId:   dp.id   || null,
+        propertyName: dp.name || null,
+        tenantName:   null,
+        reviewId:     null,
+        annualRent:   null,
+        sqft:         null,
+        daysRemaining: null,
+        disputeCount: openDisps.length,
+        exposure:     parseFloat(exposure.toFixed(2)),
+      });
+    }
+
+    // — Vacancies (vacant sqft ≥500 sf per property) —
+    for (var vi = 0; vi < safeProps.length; vi++) {
+      var vp = safeProps[vi];
+      if (!vp.totalSqft || vp.totalSqft <= 0) continue;
+      var leasedSqft = 0;
+      var vtens = Array.isArray(vp.tenants) ? vp.tenants : [];
+      for (var vj = 0; vj < vtens.length; vj++) {
+        if (vtens[vj] && !vtens[vj].extractionFailed) leasedSqft += parseFloat(vtens[vj].leased_sqft) || 0;
+      }
+      var vSqft = vp.totalSqft - leasedSqft;
+      if (vSqft < 500) continue;
+      var vPct = Math.round((vSqft / vp.totalSqft) * 100);
+      infoActions.push({
+        id:           'vacant:' + (vp.id || ''),
+        type:         'vacancy',
+        severity:     'info',
+        title:        Math.round(vSqft).toLocaleString('en-US') + ' sf vacant — ' + (vp.name || '(unnamed)'),
+        detail:       vPct + '% unoccupied',
+        propertyId:   vp.id   || null,
+        propertyName: vp.name || null,
+        tenantName:   null,
+        reviewId:     null,
+        annualRent:   null,
+        sqft:         parseFloat(vSqft.toFixed(0)),
+        daysRemaining: null,
+        vacantPct:    vPct,
+      });
+    }
+
+    // — Acquisition reviews awaiting conversion (status='analyzed') —
+    for (var ri = 0; ri < safeReviews.length; ri++) {
+      var rev = safeReviews[ri];
+      if (rev.status !== 'analyzed') continue;
+      infoActions.push({
+        id:           'acq:' + (rev.id || ''),
+        type:         'acquisition_pending',
+        severity:     'info',
+        title:        (rev.name || 'Acquisition') + ' — Ready to convert',
+        detail:       'Analysis complete · not yet added to portfolio',
+        propertyId:   null,
+        propertyName: null,
+        tenantName:   null,
+        reviewId:     rev.id || null,
+        annualRent:   null,
+        sqft:         null,
+        daysRemaining: null,
+      });
+    }
+
+    // — Aggregated counts —
+    var pipeline = computeRenewalPipeline(safeProps, ref);
+    var pid      = computePortfolioIntelligence(safeProps, ref);
+    var openDispTotal = safeProps.reduce(function(s, p) {
+      return s + (p.disputes || []).filter(function(d) { return d.status === 'open'; }).length;
+    }, 0);
+    var acqPending = safeReviews.filter(function(r) { return r.status === 'analyzed'; }).length;
+
+    return {
+      criticalActions: criticalActions,
+      warningActions:  warningActions,
+      infoActions:     infoActions,
+      counts: {
+        revenueAtRisk:                  rar.urgentAnnualAtRisk,
+        renewalsRequiringAction:        pipeline.actionCount,
+        expiredLeases:                  rar.expired.length,
+        vacantSqft:                     pid.vacantSqft !== null ? pid.vacantSqft : 0,
+        openCamDisputes:                openDispTotal,
+        acquisitionsAwaitingConversion: acqPending,
+      },
+    };
+  }
+
   const AcquisitionEngine = {
     matchInvoiceToTenant,
     tenantMatchingAnalysis,
@@ -1130,6 +1270,7 @@
     computePortfolioIntelligence,
     computeRevenueForecast,
     computeRenewalPipeline,
+    computePortfolioActions,
   };
 
   if (typeof module !== 'undefined' && module.exports) {
