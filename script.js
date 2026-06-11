@@ -16131,13 +16131,21 @@ async function createAcquisitionReview() {
       updated_at: new Date().toISOString(),
     };
     const { error } = await db.from('acquisition_reviews').insert(review);
-    if (error) { console.error('[acq] create error:', error.message); alert('Could not create review.'); return; }
+    if (error) {
+      const code = error.code || '';
+      let hint = '';
+      if (code === '42P01') hint = '\n\nFix: run migrations/006_acquisition_reviews.sql in Supabase.';
+      else if (code === '42501' || code === 'PGRST301') hint = '\n\nFix: RLS policy blocked the insert — check acq_reviews_owner_all policy.';
+      console.error('[acq] create error:', error.code, error.message);
+      alert('Could not create review.\n\n' + error.message + hint);
+      return;
+    }
     _acqReviews.unshift(review);
     _renderAcqSection(_acqReviews);
     selectAcquisitionReview(id);
   } catch (e) {
     console.error('[acq] createAcquisitionReview:', e.message);
-    alert('Could not create review.');
+    alert('Could not create review.\n\n' + e.message);
   }
 }
 
