@@ -417,10 +417,12 @@ Return ONLY valid JSON. No text. No explanation. No markdown. Start with { and e
 Return exactly this structure:
 {
   "tenant_name": string,
+  "suite": string | null,
   "lease_start_date": "YYYY-MM-DD",
   "lease_end_date": "YYYY-MM-DD",
   "lease_type": string,
   "sqft": number,
+  "base_rent": number | null,
   "cam_cap": number,
   "admin_fee_pct": number | null,
   "gross_up_pct": number | null,
@@ -429,6 +431,7 @@ Return exactly this structure:
   "pro_rata_method": "rentable" | "leasable" | "occupied" | "gross" | null,
   "renewal_options": string | null,
   "excluded_categories": string | null,
+  "security_deposit": number | null,
   "quotes": {
     "cam_cap": string | null,
     "admin_fee_pct": string | null,
@@ -436,7 +439,9 @@ Return exactly this structure:
     "expense_stop": string | null,
     "audit_rights": string | null,
     "pro_rata_method": string | null,
-    "renewal_options": string | null
+    "renewal_options": string | null,
+    "base_rent": string | null,
+    "security_deposit": string | null
   }
 }
 
@@ -463,6 +468,9 @@ Rules:
 - pro_rata_method: Return "rentable", "leasable", "occupied", or "gross" based on how the lease defines the pro-rata denominator. Return null if unresolvable.
 - renewal_options: Short description including count, term length, and rate basis (max 120 chars). Null if no renewal options stated.
 - excluded_categories: Comma-separated list of expense categories explicitly excluded from CAM (e.g. "capital expenditures, management fees, structural repairs"). Return null if no exclusion schedule is stated.
+- suite: The tenant's unit or suite identifier. Look for "Suite", "Unit", "Space", "Ste.", "#" labels. Return the short designator (e.g. "101", "Suite A", "200"). Null if not identified.
+- base_rent: Annual base rent in dollars as a plain number. If the lease states a monthly amount, multiply by 12. Look for "Base Rent", "Annual Rent", "Minimum Rent", "Fixed Rent", "Monthly Rent". Null if not found.
+- security_deposit: Security deposit in dollars as a plain number. Look for "Security Deposit", "Deposit", "Holdback". Null if not found.
 - quotes: For each field where you return a non-null value, copy ≤120 chars of the exact verbatim clause text from the lease that led to that value. Return null for any field where the value is null.
 - Use null only when a field is truly impossible to determine.`;
 
@@ -924,6 +932,7 @@ function normalizeTenant(d) {
   const fallback = extractDatesFromText(d.rawText || '');
   return {
     tenant_name:         cleanTenantName(d.tenant_name ?? d.tenantName ?? d.name ?? ''),
+    suite:               d.suite ?? d.unit ?? d.unitNumber ?? '',
     leased_sqft:         d.leased_sqft         ?? d.leasedSqft ?? d.sqft  ?? '',
     start_date:          toISODate(d.start_date ?? d.startDate ?? d.lease_start_date ?? fallback.startDate ?? ''),
     end_date:            toISODate(d.end_date   ?? d.endDate   ?? d.lease_end_date  ?? fallback.endDate   ?? ''),
@@ -957,6 +966,8 @@ function normalizeTenant(d) {
     audit_rights:        d.audit_rights        ?? null,
     pro_rata_method:     d.pro_rata_method     ?? null,
     renewal_options:     d.renewal_options     ?? null,
+    base_rent:           d.base_rent           ?? null,
+    security_deposit:    d.security_deposit    ?? null,
     amendments:          Array.isArray(d.amendments) ? d.amendments : [],
   };
 }
@@ -16380,6 +16391,43 @@ function _renderAcqReport(report, container) {
   const missedCls  = s.annualMissedRecovery > 0 ? 'danger' : 'safe';
   const recoverCls = s.recoveryRate >= 90 ? 'safe' : s.recoveryRate >= 70 ? '' : 'danger';
 
+  // ── Tenant Summary ──────────────────────────────────────────────────────────
+  const tenantSummaryHtml = (() => {
+    const ts = report.tenantSummary || [];
+    if (!ts.length) return '';
+    const fmtDate = iso => {
+      if (!iso) return '—';
+      const d = new Date(iso + 'T12:00:00');
+      return isNaN(d.getTime()) ? String(iso) : d.toLocaleDateString('en-US', { month: 'short', year: 'numeric' });
+    };
+    const fmtMoney = v => v != null ? '$' + Number(v).toLocaleString('en-US', { maximumFractionDigits: 0 }) : '—';
+    const fmtSqft  = v => v != null ? Number(v).toLocaleString('en-US') + ' sf' : '—';
+    const rows = ts.map(t => `
+      <tr>
+        <td class="acq-ts-name">${esc(t.tenant_name)}</td>
+        <td>${esc(t.suite || '—')}</td>
+        <td>${fmtSqft(t.leased_sqft)}</td>
+        <td class="acq-ts-term">${fmtDate(t.lease_start)}&nbsp;–&nbsp;${fmtDate(t.lease_end)}</td>
+        <td>${fmtMoney(t.base_rent)}/yr</td>
+        <td class="acq-ts-renewal">${esc(t.renewal_options || '—')}</td>
+        <td>${fmtMoney(t.security_deposit)}</td>
+        <td class="acq-ts-cam">${esc(t.cam_structure || '—')}</td>
+      </tr>`).join('');
+    return `
+    <div class="acq-ts-section">
+      <div class="acq-section-sub" style="margin-top:0">Tenant Summary</div>
+      <div class="acq-ts-scroll">
+        <table class="acq-ts-table">
+          <thead><tr>
+            <th>Tenant</th><th>Suite</th><th>Sq Ft</th><th>Lease Term</th>
+            <th>Base Rent/yr</th><th>Renewal</th><th>Deposit</th><th>CAM Structure</th>
+          </tr></thead>
+          <tbody>${rows}</tbody>
+        </table>
+      </div>
+    </div>`;
+  })();
+
   const kpis = `
   <div class="acq-kpi-row">
     <div class="acq-kpi"><div class="acq-kpi-val ${recoverCls}">${pct(s.recoveryRate)}</div><div class="acq-kpi-lbl">Recovery Rate</div></div>
@@ -16501,6 +16549,7 @@ function _renderAcqReport(report, container) {
   container.innerHTML = `
   <div class="acq-report">
     <div class="acq-report-title">Risk Analysis Report</div>
+    ${tenantSummaryHtml}
     ${kpis}
     ${topRisksHtml}
     ${findingsHtml}

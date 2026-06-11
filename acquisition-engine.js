@@ -259,8 +259,9 @@
     if (!tenants.length || !invoices.length) {
       return {
         error: 'Insufficient data — upload leases and invoices first',
-        tenants: tenants.length,
-        invoices: invoices.length,
+        tenants:       tenants.length,
+        invoices:      invoices.length,
+        tenantSummary: tenants.map(normalizeAcqTenant),
       };
     }
 
@@ -344,7 +345,40 @@
       proRataRisk,
       findings,
       topRisks,
+      tenantSummary:   tenants.map(normalizeAcqTenant),
       generatedAt:     new Date().toISOString(),
+    };
+  }
+
+  // ─── Tenant Summary Normalization ────────────────────────────────────────
+  // Projects the full tenant shape to the 9-field acquisition display schema.
+  // Safe on pre-existing tenant objects that lack the newer fields — all null.
+
+  function _deriveCamStructure(t) {
+    const lt    = (t.lease_type || '').toUpperCase().trim();
+    const cap   = t.cap != null ? t.cap : (t.cam_cap != null ? t.cam_cap : null);
+    const parts = [];
+    if (lt) parts.push(lt);
+    if (cap != null && cap > 0) parts.push(cap + '% cap');
+    if (t.admin_fee_pct != null && t.admin_fee_pct > 0) parts.push(t.admin_fee_pct + '% admin');
+    if (t.gross_up_pct  != null && t.gross_up_pct  > 0) parts.push(t.gross_up_pct  + '% gross-up');
+    if (t.expense_stop  != null && t.expense_stop  > 0) parts.push('$' + t.expense_stop + '/sf stop');
+    const excl = (t.excluded_categories || t.excludedCategories || '').toString().trim();
+    if (excl) parts.push('excl: ' + (excl.length > 40 ? excl.slice(0, 40) + '…' : excl));
+    return parts.length ? parts.join(' · ') : null;
+  }
+
+  function normalizeAcqTenant(t) {
+    return {
+      tenant_name:      (t.tenant_name || t.tenantName || '').trim() || '(unnamed)',
+      suite:            (t.suite || t.unit || t.unitNumber || '').trim() || null,
+      leased_sqft:      t.leased_sqft != null ? Number(t.leased_sqft) : null,
+      lease_start:      t.start_date  || t.lease_start || null,
+      lease_end:        t.end_date    || t.lease_end   || null,
+      base_rent:        t.base_rent        != null ? Number(t.base_rent)        : null,
+      renewal_options:  t.renewal_options  || null,
+      security_deposit: t.security_deposit != null ? Number(t.security_deposit) : null,
+      cam_structure:    _deriveCamStructure(t),
     };
   }
 
@@ -579,6 +613,7 @@
     buildCitationIndex,
     buildFindingsWithCitations,
     buildAcquisitionReport,
+    normalizeAcqTenant,
   };
 
   if (typeof module !== 'undefined' && module.exports) {

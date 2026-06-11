@@ -869,6 +869,66 @@ console.log('\n── Group 13: Renewal & Pro-Rata Risk ────────
   assert('cap_leakage renewal_risk appears in topRisks only when relevant', typeof report.topRisks === 'object');
 }
 
+// ── Group 14: normalizeAcqTenant & tenantSummary ──────────────────────────────
+console.log('\n── Group 14: normalizeAcqTenant & tenantSummary ──────────────────────');
+
+{
+  const t = {
+    tenant_name: 'Acme Corp', unitNumber: '101', leased_sqft: 3000,
+    start_date: '2022-01-01', end_date: '2027-06-30',
+    lease_type: 'NNN', cam_cap: 5,
+    renewal_options: '1 × 5 year', security_deposit: 15000, base_rent: 180000,
+    excluded_categories: 'capital expenditures, management fees',
+  };
+  const n = AE.normalizeAcqTenant(t);
+  assert('normalizeAcqTenant: tenant_name preserved',         n.tenant_name === 'Acme Corp');
+  assert('normalizeAcqTenant: suite from unitNumber',         n.suite === '101');
+  assert('normalizeAcqTenant: leased_sqft coerced to number', n.leased_sqft === 3000);
+  assert('normalizeAcqTenant: lease_start from start_date',   n.lease_start === '2022-01-01');
+  assert('normalizeAcqTenant: lease_end from end_date',       n.lease_end   === '2027-06-30');
+  assert('normalizeAcqTenant: base_rent as number',           n.base_rent   === 180000);
+  assert('normalizeAcqTenant: security_deposit as number',    n.security_deposit === 15000);
+  assert('normalizeAcqTenant: renewal_options preserved',     n.renewal_options === '1 × 5 year');
+}
+
+{
+  // cam_structure: NNN + cap + exclusions
+  const t = {
+    lease_type: 'NNN', cam_cap: 5,
+    excluded_categories: 'capital expenditures, management fees',
+  };
+  const n = AE.normalizeAcqTenant(t);
+  assert('cam_structure: includes NNN',        (n.cam_structure || '').includes('NNN'));
+  assert('cam_structure: includes cap',        (n.cam_structure || '').includes('5% cap'));
+  assert('cam_structure: includes excl label', (n.cam_structure || '').includes('excl:'));
+}
+
+{
+  // cam_structure: Gross lease with no extras
+  const n = AE.normalizeAcqTenant({ lease_type: 'Gross', cam_cap: 0 });
+  assert('cam_structure: Gross lease with no cap yields GROSS only', n.cam_structure === 'GROSS');
+}
+
+{
+  // suite priority: suite > unit > unitNumber
+  assert('suite: prefers suite field',     AE.normalizeAcqTenant({ suite: 'A', unit: 'B', unitNumber: 'C' }).suite === 'A');
+  assert('suite: falls back to unit',      AE.normalizeAcqTenant({ unit: 'B', unitNumber: 'C' }).suite === 'B');
+  assert('suite: falls back to unitNumber',AE.normalizeAcqTenant({ unitNumber: 'C' }).suite === 'C');
+  assert('suite: null when all empty',     AE.normalizeAcqTenant({}).suite === null);
+}
+
+{
+  // tenantSummary wired into buildAcquisitionReport
+  const report = AE.buildAcquisitionReport(TENANTS, INVOICES, TOTAL_SQFT);
+  assert('tenantSummary present in full report',         Array.isArray(report.tenantSummary));
+  assert('tenantSummary length matches tenant count',    report.tenantSummary.length === TENANTS.length);
+  assert('tenantSummary entries have all 9 fields', report.tenantSummary.every(t =>
+    'tenant_name' in t && 'suite' in t && 'leased_sqft' in t &&
+    'lease_start' in t && 'lease_end' in t && 'base_rent' in t &&
+    'renewal_options' in t && 'security_deposit' in t && 'cam_structure' in t
+  ));
+}
+
 // ── Summary ───────────────────────────────────────────────────────────────────
 
 console.log(`\n${'─'.repeat(60)}`);
