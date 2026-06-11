@@ -1313,6 +1313,146 @@ console.log('\n── Group 22: computeRevenueAtRisk ─────────
   assert('rar: empty → total = 0',               r.total === 0);
 }
 
+// ── Group 23: computePortfolioIntelligence ────────────────────────────────────
+console.log('\n── Group 23: computePortfolioIntelligence ───────────────────────────');
+
+{
+  const MS_DAY = 86400000;
+  const ref    = new Date('2024-06-01T12:00:00Z');
+  const dOut   = n => new Date(ref.getTime() + n * MS_DAY).toISOString().slice(0, 10);
+
+  const props = [
+    {
+      id: 'p1', name: 'Main Street', totalSqft: 10000,
+      tenants: [
+        { tenant_name: 'A', leased_sqft: 4000, base_rent: 120000, end_date: dOut(20)  },
+        { tenant_name: 'B', leased_sqft: 3000, base_rent:  90000, end_date: dOut(400) },
+      ],
+    },
+    {
+      id: 'p2', name: 'Harbor View', totalSqft: 8000,
+      tenants: [
+        { tenant_name: 'C', leased_sqft: 5000, base_rent: 150000, end_date: dOut(700) },
+        { tenant_name: 'D', leased_sqft: 2000, base_rent:  60000, end_date: dOut(-10) },
+      ],
+    },
+  ];
+
+  const pid = AE.computePortfolioIntelligence(props, ref);
+
+  assert('pid: propertyCount = 2',              pid.propertyCount === 2);
+  // occupancy: (4000+3000) from p1 + (5000+2000) from p2 = 14000 / 18000 = 77.8%
+  assert('pid: occupancyRate correct',           pid.occupancyRate === 77.8);
+  // vacantSqft: 18000 - 14000 = 4000
+  assert('pid: vacantSqft correct',             pid.vacantSqft    === 4000);
+  assert('pid: totalBuildingSqft = 18000',      pid.totalBuildingSqft === 18000);
+  // totalAnnualRent: 120000+90000+150000+60000 = 420000
+  assert('pid: totalAnnualRent = 420000',       pid.totalAnnualRent === 420000);
+  // expiringCount: dOut(20) = critical, dOut(-10) = expired → 2 (≤180d window for total)
+  assert('pid: expiringCount ≥ 2',              pid.expiringCount >= 2);
+  assert('pid: urgentCount ≥ 2',               pid.urgentCount   >= 2);
+  assert('pid: walt is not null',              pid.walt !== null);
+  assert('pid: topRisks is array ≤ 3',         Array.isArray(pid.topRisks) && pid.topRisks.length <= 3);
+}
+
+{
+  // Properties with totalSqft === 0 are excluded from occupancy but included in rent
+  const ref   = new Date('2024-06-01T12:00:00Z');
+  const dOut  = n => new Date(ref.getTime() + n * 86400000).toISOString().slice(0, 10);
+  const props = [
+    { id: 'pX', name: 'X', totalSqft: 0,
+      tenants: [{ tenant_name: 'Z', leased_sqft: 5000, base_rent: 80000, end_date: dOut(400) }] },
+  ];
+  const pid = AE.computePortfolioIntelligence(props, ref);
+  assert('pid: totalSqft=0 → occupancyRate null', pid.occupancyRate === null);
+  assert('pid: totalSqft=0 → vacantSqft null',    pid.vacantSqft    === null);
+  assert('pid: totalSqft=0 still counts rent',    pid.totalAnnualRent === 80000);
+}
+
+{
+  // topRisks: revenue_at_risk property should rank first
+  const ref   = new Date('2024-06-01T12:00:00Z');
+  const dOut  = n => new Date(ref.getTime() + n * 86400000).toISOString().slice(0, 10);
+  const props = [
+    { id: 'rich', name: 'High Rent',   totalSqft: 5000,
+      tenants: [{ tenant_name: 'T1', leased_sqft: 5000, base_rent: 500000, end_date: dOut(15) }] },
+    { id: 'vac',  name: 'High Vacant', totalSqft: 10000,
+      tenants: [{ tenant_name: 'T2', leased_sqft: 1000, base_rent: 20000,  end_date: dOut(400) }] },
+  ];
+  const pid = AE.computePortfolioIntelligence(props, ref);
+  assert('pid: top risk is revenue_at_risk property', pid.topRisks[0].propertyId === 'rich');
+  assert('pid: top risk type = revenue_at_risk',      pid.topRisks[0].riskType === 'revenue_at_risk');
+}
+
+// ── Group 24: computeRevenueForecast ──────────────────────────────────────────
+console.log('\n── Group 24: computeRevenueForecast ─────────────────────────────────');
+
+{
+  const MS_DAY = 86400000;
+  const ref    = new Date('2024-06-01T12:00:00Z');
+  const dOut   = n => new Date(ref.getTime() + n * MS_DAY).toISOString().slice(0, 10);
+
+  const props = [
+    { id: 'p1', name: 'P1',
+      tenants: [
+        { tenant_name: 'Soon',   base_rent: 120000, end_date: dOut(200)  },  // expiring within 365
+        { tenant_name: 'Later',  base_rent:  80000, end_date: dOut(500)  },  // NOT expiring within 365
+        { tenant_name: 'NoRent', base_rent: null,   end_date: dOut(100)  },  // excluded from totals
+      ],
+    },
+  ];
+  const fc = AE.computeRevenueForecast(props, ref);
+
+  assert('forecast: currentAnnualRent = 200000',   fc.currentAnnualRent   === 200000);
+  assert('forecast: expiringNext12Rent = 120000',  fc.expiringNext12Rent  === 120000);
+  assert('forecast: retainedRent = 80000',         fc.retainedRent        === 80000);
+  assert('forecast: expiringLeaseCount = 1',       fc.expiringLeaseCount  === 1);
+  assert('forecast: 4 scenarios',                  fc.scenarios.length    === 4);
+
+  // No renewals: retained only = 80000
+  assert('forecast: no-renewal projected = 80000', fc.scenarios[0].projectedAnnualRent === 80000);
+  assert('forecast: no-renewal delta = -120000',   fc.scenarios[0].delta === -120000);
+
+  // Flat renewal: current stays same
+  assert('forecast: flat projected = 200000',      fc.scenarios[1].projectedAnnualRent === 200000);
+  assert('forecast: flat delta = 0',               fc.scenarios[1].delta === 0);
+
+  // +5% market: 80000 + 120000 * 1.05 = 80000 + 126000 = 206000
+  assert('forecast: +5% projected = 206000',       fc.scenarios[2].projectedAnnualRent === 206000);
+  assert('forecast: +5% delta = +6000',            fc.scenarios[2].delta === 6000);
+
+  // null base_rent excluded
+  assert('forecast: null rent not in current',     fc.currentAnnualRent === 200000);
+}
+
+{
+  // No expiring leases → flat forecast
+  const ref   = new Date('2024-06-01T12:00:00Z');
+  const dOut  = n => new Date(ref.getTime() + n * 86400000).toISOString().slice(0, 10);
+  const props = [{ id: 'p', name: 'P',
+    tenants: [{ tenant_name: 'X', base_rent: 60000, end_date: dOut(700) }] }];
+  const fc = AE.computeRevenueForecast(props, ref);
+  assert('forecast: no expiring → expiringNext12Rent = 0', fc.expiringNext12Rent === 0);
+  assert('forecast: no expiring → all scenarios flat',
+    fc.scenarios.every(s => s.projectedAnnualRent === fc.currentAnnualRent));
+}
+
+// ── Group 25: waltAnalysis accepts end_date (managed property shape) ──────────
+console.log('\n── Group 25: waltAnalysis end_date fallback ─────────────────────────');
+
+{
+  const ref = new Date('2024-01-01T12:00:00Z');
+  const MS_YR = 365.25 * 24 * 3600 * 1000;
+  // Use end_date (managed property field) instead of lease_end (acquisition field)
+  const ts = [
+    { leased_sqft: 2000, end_date: '2026-01-01' },
+    { leased_sqft: 2000, end_date: '2025-01-01' },
+  ];
+  const r = AE.waltAnalysis(ts, ref);
+  assert('walt: end_date field accepted',        r.walt !== null);
+  assert('walt: end_date produces same result as lease_end', r.waltMonths >= 17 && r.waltMonths <= 19);
+}
+
 // ── Summary ───────────────────────────────────────────────────────────────────
 
 console.log(`\n${'─'.repeat(60)}`);

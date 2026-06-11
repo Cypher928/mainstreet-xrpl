@@ -13409,20 +13409,107 @@ function renderPortfolioIntelligence(props) {
   const safeProps = Array.isArray(props) ? props : [];
   if (safeProps.length === 0) { panel.style.display = 'none'; return; }
 
-  const intel      = _piComputePortfolioIntel(safeProps);
+  const pid      = AcquisitionEngine.computePortfolioIntelligence(safeProps);
+  const forecast = AcquisitionEngine.computeRevenueForecast(safeProps);
+
+  // ── helpers ───────────────────────────────────────────────────────────
+  const fmtM  = v => v >= 1e6 ? '$' + (v / 1e6).toFixed(2) + 'M'
+                  : v >= 1e3  ? '$' + Math.round(v / 1e3).toLocaleString('en-US') + 'K'
+                  : '$' + Math.round(v).toLocaleString('en-US');
+  const fmtSf = v => Math.round(v).toLocaleString('en-US');
+  const fmtPct = v => v != null ? v + '%' : '—';
+
+  // ── Metrics grid ──────────────────────────────────────────────────────
+  const tile = (val, lbl, cls = '') =>
+    `<div class="pid-tile${cls ? ' ' + cls : ''}">
+       <div class="pid-tile-val">${val}</div>
+       <div class="pid-tile-lbl">${lbl}</div>
+     </div>`;
+
+  const rarVal = pid.revenueAtRisk.urgentAnnualAtRisk;
+  const metricsGrid = `
+  <div class="pid-grid">
+    ${tile(pid.propertyCount, 'Properties')}
+    ${tile(fmtPct(pid.occupancyRate), 'Occupancy',
+           pid.occupancyRate !== null && pid.occupancyRate < 80 ? 'pid-tile--warn' : '')}
+    ${tile(pid.walt != null ? pid.walt + ' yrs' : '—', 'WALT')}
+    ${tile(rarVal > 0 ? fmtM(rarVal) : '—', 'Revenue at Risk',
+           rarVal > 0 ? 'pid-tile--alert' : '')}
+    ${tile(pid.expiringCount || '—', 'Expiring Leases',
+           pid.expiringCount > 0 ? 'pid-tile--warn' : '')}
+    ${tile(pid.urgentCount || '—', 'Urgent Renewals',
+           pid.urgentCount  > 0 ? 'pid-tile--alert' : '')}
+    ${tile(pid.vacantSqft != null ? fmtSf(pid.vacantSqft) + ' sf' : '—', 'Vacant Sq Ft',
+           pid.vacantSqft  > 0 ? 'pid-tile--warn' : '')}
+  </div>`;
+
+  // ── Top Risks ─────────────────────────────────────────────────────────
+  const riskIcons = { revenue_at_risk: '&#x26A0;&#xFE0F;', vacant_sqft: '&#x1F4CA;', rollover_concentration: '&#x1F501;' };
+  const topRisksHtml = pid.topRisks.length ? `
+  <div class="pid-section">
+    <div class="pid-section-title">Top Risks</div>
+    ${pid.topRisks.map((r, i) => `
+    <div class="pid-risk-row" onclick="selectProperty('${esc(r.propertyId)}')">
+      <span class="pid-risk-rank">${i + 1}</span>
+      <span class="pid-risk-icon">${riskIcons[r.riskType] || '⚠️'}</span>
+      <div class="pid-risk-body">
+        <span class="pid-risk-prop">${esc(r.propertyName)}</span>
+        <span class="pid-risk-label">${esc(r.riskLabel)}</span>
+      </div>
+    </div>`).join('')}
+  </div>` : '';
+
+  // ── Revenue Forecast ──────────────────────────────────────────────────
+  const forecastHtml = (() => {
+    if (forecast.currentAnnualRent === 0) return '';
+    const fmtDelta = (d, pct) => {
+      if (d === 0) return '<span class="pid-fc-flat">No change</span>';
+      const sign = d > 0 ? '+' : '';
+      const cls  = d > 0 ? 'pid-fc-up' : 'pid-fc-down';
+      return `<span class="${cls}">${sign}${fmtM(Math.abs(d))} (${sign}${pct}%)</span>`;
+    };
+    const rows = forecast.scenarios.map((s, i) => {
+      const highlight = i === 2 ? ' pid-fc-row--highlight' : '';
+      return `
+      <div class="pid-fc-row${highlight}">
+        <span class="pid-fc-label">${esc(s.label)}</span>
+        <span class="pid-fc-proj">${fmtM(s.projectedAnnualRent)}</span>
+        <span class="pid-fc-delta">${fmtDelta(s.delta, s.deltaPct)}</span>
+      </div>`;
+    }).join('');
+
+    return `
+  <div class="pid-section pid-forecast-section">
+    <div class="pid-section-title" style="cursor:pointer" onclick="togglePidForecast()">
+      Revenue Forecast — Next 12 Months
+      <span id="pidForecastToggle" class="pid-toggle-icon">&#x25BC;</span>
+    </div>
+    <div id="pidForecastBody" style="display:none">
+      <div class="pid-fc-summary">
+        <span>Current Annual Rent: <strong>${fmtM(forecast.currentAnnualRent)}</strong></span>
+        <span class="pid-fc-sep">·</span>
+        <span>Expiring Next 12 Mo: <strong class="pid-fc-expiring">${fmtM(forecast.expiringNext12Rent)}</strong>
+          (${forecast.expiringLeaseCount} lease${forecast.expiringLeaseCount !== 1 ? 's' : ''})</span>
+      </div>
+      <div class="pid-fc-header">
+        <span>Scenario</span><span>Projected</span><span>Change</span>
+      </div>
+      ${rows}
+    </div>
+  </div>`;
+  })();
+
+  // ── Existing reconciliation health (preserved) ────────────────────────
+  const intel = _piComputePortfolioIntel(safeProps);
   const hasCritical = intel.totalExpired > 0 || intel.proRataGapProps > 0 || intel.totalExposure > 0;
   const hasWarn     = intel.totalMissingCaps > 0 || intel.totalLowConf > 0 || intel.totalUnresolved > 0;
-  const panelCls    = hasCritical ? 'pi-panel--alert' : hasWarn ? 'pi-panel--warn' : 'pi-panel--ok';
+  const reconCls    = hasCritical ? 'pi-panel--alert' : hasWarn ? 'pi-panel--warn' : 'pi-panel--ok';
 
   const rdCounts = { reconciled: 0, reconciliation_ready: 0, partially_verified: 0, needs_review: 0, high_risk: 0 };
   for (const p of safeProps) {
     const rd = derivePropertyReadiness(p);
     if (rd.readiness in rdCounts) rdCounts[rd.readiness]++;
   }
-
-  const m = (val, lbl, cls = '') =>
-    `<div class="pi-metric${cls ? ' ' + cls : ''}"><div class="pi-metric-val">${val}</div><div class="pi-metric-lbl">${lbl}</div></div>`;
-
   const rdyOrder = [
     { key: 'high_risk',            label: 'High Risk',    cls: 'rdy-high_risk' },
     { key: 'needs_review',         label: 'Needs Review', cls: 'rdy-needs-review' },
@@ -13434,24 +13521,41 @@ function renderPortfolioIntelligence(props) {
     .filter(r => rdCounts[r.key] > 0)
     .map(r => `<span class="pi-rdy-chip ${r.cls}">${rdCounts[r.key]} ${esc(r.label)}</span>`)
     .join('');
+  const pm = (val, lbl, cls = '') =>
+    `<div class="pi-metric${cls ? ' ' + cls : ''}"><div class="pi-metric-val">${val}</div><div class="pi-metric-lbl">${lbl}</div></div>`;
+  const reconHtml = `
+  <div class="pid-section pid-recon-section">
+    <div class="pid-section-title">Reconciliation Health</div>
+    <div class="pi-metrics">
+      ${pm(intel.totalUnresolved || '—', 'Unresolved',     intel.totalUnresolved  > 0 ? 'pi-metric--warn'  : '')}
+      ${pm(intel.totalMissingCaps || '—', 'Missing Caps',  intel.totalMissingCaps > 0 ? 'pi-metric--warn'  : '')}
+      ${pm(intel.totalLowConf || '—', 'Low Confidence')}
+      ${pm(intel.totalExposure > 0 ? '$' + Math.round(intel.totalExposure).toLocaleString('en-US') : '—',
+           'Dispute Exposure', intel.totalExposure > 0 ? 'pi-metric--alert' : '')}
+    </div>
+    ${rdyHtml ? `<div class="pi-rdy-row">${rdyHtml}</div>` : ''}
+  </div>`;
 
   panel.style.display = 'block';
   panel.innerHTML = `
-    <div class="pi-panel ${panelCls}">
-      <div class="pi-panel-head">
-        <span class="pi-panel-title">Portfolio Intelligence</span>
-        <span class="pi-summary">${esc(intel.summary)}</span>
-      </div>
-      <div class="pi-metrics">
-        ${m(intel.totalUnresolved || '—', 'Unresolved',     intel.totalUnresolved  > 0 ? 'pi-metric--warn'  : '')}
-        ${m(intel.totalMissingCaps || '—', 'Missing Caps',  intel.totalMissingCaps > 0 ? 'pi-metric--warn'  : '')}
-        ${m(intel.totalExpired || '—', 'Expired Leases',    intel.totalExpired     > 0 ? 'pi-metric--alert' : '')}
-        ${m(intel.totalExpiring || '—', 'Expiring 12mo')}
-        ${m(intel.totalLowConf || '—', 'Low Confidence')}
-        ${m(intel.totalExposure > 0 ? '$' + Math.round(intel.totalExposure).toLocaleString('en-US') : '—', 'Dispute Exposure', intel.totalExposure > 0 ? 'pi-metric--alert' : '')}
-      </div>
-      ${rdyHtml ? `<div class="pi-rdy-row">${rdyHtml}</div>` : ''}
-    </div>`;
+  <div class="pid-panel">
+    <div class="pid-panel-head">
+      <span class="pid-panel-title">&#x1F4CA; Portfolio Intelligence</span>
+    </div>
+    ${metricsGrid}
+    ${topRisksHtml}
+    ${forecastHtml}
+    ${reconHtml}
+  </div>`;
+}
+
+function togglePidForecast() {
+  const body = document.getElementById('pidForecastBody');
+  const icon = document.getElementById('pidForecastToggle');
+  if (!body) return;
+  const open = body.style.display !== 'none';
+  body.style.display = open ? 'none' : '';
+  if (icon) icon.innerHTML = open ? '&#x25BC;' : '&#x25B2;';
 }
 
 // ─────────────────────────────────────────────────────────────────────────────

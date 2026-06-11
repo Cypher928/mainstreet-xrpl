@@ -392,8 +392,9 @@
     let weighted = 0, totalSqft = 0;
     for (const t of tenantSummary) {
       const sqft = parseFloat(t.leased_sqft) || 0;
-      if (!t.lease_end || !sqft) continue;
-      const remMs = new Date(t.lease_end + 'T12:00:00') - ref;
+      const leaseEndDate = t.lease_end || t.end_date;   // acquisition shape uses lease_end; managed property uses end_date
+      if (!leaseEndDate || !sqft) continue;
+      const remMs = new Date(leaseEndDate + 'T12:00:00') - ref;
       if (remMs <= 0) continue;  // expired leases excluded
       weighted  += (remMs / MS_YR) * sqft;
       totalSqft += sqft;
@@ -852,6 +853,185 @@
 
 
 
+  // ─── Portfolio Intelligence Dashboard ────────────────────────────────────
+  // Computes the full portfolio health snapshot: occupancy, WALT, total rent,
+  // revenue-at-risk aggregates, and ranked top-3 per-property risks.
+  // Properties with totalSqft === 0 contribute tenants to rent/WALT but are
+  // excluded from occupancy/vacancy (building area unknown).
+
+  function computePortfolioIntelligence(props, refDate) {
+    var ref    = refDate ? new Date(refDate) : new Date();
+    var MS_DAY = 86400000;
+    var MS_24M = 365.25 * 2 * MS_DAY;
+
+    var rar = computeRevenueAtRisk(props, ref);
+
+    var totalBldgSqft = 0, totalOccSqft = 0, totalAnnualRent = 0;
+    var allTenants = [];
+
+    for (var i = 0; i < props.length; i++) {
+      var prop    = props[i];
+      var bSqft   = parseFloat(prop.totalSqft) || 0;
+      var tenants = Array.isArray(prop.tenants) ? prop.tenants : [];
+
+      for (var j = 0; j < tenants.length; j++) {
+        var t = tenants[j];
+        if (!t) continue;
+        allTenants.push(t);
+        var br = t.base_rent != null ? parseFloat(t.base_rent) : NaN;
+        if (!isNaN(br) && br > 0) totalAnnualRent += br;
+        if (bSqft > 0) {
+          var ls = parseFloat(t.leased_sqft) || 0;
+          totalOccSqft += ls;
+        }
+      }
+      if (bSqft > 0) totalBldgSqft += bSqft;
+    }
+
+    var occupancyRate = totalBldgSqft > 0
+      ? parseFloat(((totalOccSqft / totalBldgSqft) * 100).toFixed(1)) : null;
+    var vacantSqft    = totalBldgSqft > 0
+      ? Math.max(0, totalBldgSqft - totalOccSqft) : null;
+
+    var waltResult = waltAnalysis(allTenants, ref);
+
+    // Per-property risk signals → top 3
+    var propRisks = [];
+    for (var k = 0; k < props.length; k++) {
+      var pr      = props[k];
+      var pts     = Array.isArray(pr.tenants) ? pr.tenants : [];
+      if (!pts.length) continue;
+
+      var pRar       = computeRevenueAtRisk([pr], ref);
+      var pBldgSqft  = parseFloat(pr.totalSqft) || 0;
+      var pOccSqft   = 0, pRent = 0, pExp24Sqft = 0;
+
+      for (var m = 0; m < pts.length; m++) {
+        var pt = pts[m];
+        if (!pt) continue;
+        var pls = parseFloat(pt.leased_sqft) || 0;
+        var pbr = pt.base_rent != null ? parseFloat(pt.base_rent) : 0;
+        pOccSqft += pls;
+        pRent    += pbr;
+        var endStr = pt.end_date || pt.lease_end;
+        if (endStr) {
+          var endMs = new Date(endStr + 'T12:00:00').getTime() - ref.getTime();
+          if (endMs > 0 && endMs <= MS_24M) pExp24Sqft += pls;
+        }
+      }
+
+      var pVacant     = pBldgSqft > 0 ? Math.max(0, pBldgSqft - pOccSqft) : 0;
+      var rolloverPct = pOccSqft  > 0 ? pExp24Sqft / pOccSqft : 0;
+      var rarScore    = pRar.urgentAnnualAtRisk;
+      var vacScore    = pVacant * 50;
+      var rollScore   = rolloverPct > 0.3 ? pRent * rolloverPct : 0;
+      var topScore    = Math.max(rarScore, vacScore, rollScore);
+      if (topScore === 0) continue;
+
+      var riskType, riskValue, riskLabel;
+      if (rarScore >= vacScore && rarScore >= rollScore && rarScore > 0) {
+        riskType  = 'revenue_at_risk';
+        riskValue = rarScore;
+        riskLabel = '$' + Math.round(rarScore).toLocaleString('en-US') + ' revenue at risk';
+      } else if (vacScore >= rollScore && pVacant > 0) {
+        riskType  = 'vacant_sqft';
+        riskValue = pVacant;
+        riskLabel = Math.round(pVacant).toLocaleString('en-US') + ' vacant sqft';
+      } else {
+        riskType  = 'rollover_concentration';
+        riskValue = parseFloat((rolloverPct * 100).toFixed(1));
+        riskLabel = 'Lease rollover concentration ' + riskValue + '%';
+      }
+      propRisks.push({
+        propertyId:   pr.id,
+        propertyName: pr.name || '(unnamed)',
+        riskType:     riskType,
+        riskValue:    riskValue,
+        riskLabel:    riskLabel,
+        impactScore:  topScore,
+      });
+    }
+    propRisks.sort(function (a, b) { return b.impactScore - a.impactScore; });
+
+    return {
+      propertyCount:     props.length,
+      occupancyRate:     occupancyRate,
+      occupiedSqft:      Math.round(totalOccSqft),
+      vacantSqft:        vacantSqft !== null ? Math.round(vacantSqft) : null,
+      totalBuildingSqft: Math.round(totalBldgSqft),
+      walt:              waltResult.walt,
+      waltMonths:        waltResult.waltMonths,
+      totalAnnualRent:   parseFloat(totalAnnualRent.toFixed(2)),
+      revenueAtRisk:     rar,
+      expiringCount:     rar.total,
+      urgentCount:       rar.urgent,
+      topRisks:          propRisks.slice(0, 3),
+    };
+  }
+
+  // ─── Revenue Forecasting ──────────────────────────────────────────────────
+  // Projects annual rental income under four renewal-rate scenarios for leases
+  // expiring within the next 12 months. Only tenants with base_rent contribute.
+
+  function computeRevenueForecast(props, refDate) {
+    var ref    = refDate ? new Date(refDate) : new Date();
+    var MS_365 = 365.25 * 86400000;
+
+    var currentAnnualRent  = 0;
+    var expiringNext12Rent = 0;
+    var expiringTenants    = [];
+
+    for (var i = 0; i < props.length; i++) {
+      var prop    = props[i];
+      var tenants = Array.isArray(prop.tenants) ? prop.tenants : [];
+      for (var j = 0; j < tenants.length; j++) {
+        var t = tenants[j];
+        if (!t || t.extractionFailed) continue;
+        var rent = t.base_rent != null ? parseFloat(t.base_rent) : NaN;
+        if (isNaN(rent) || rent <= 0) continue;
+        currentAnnualRent += rent;
+        var endStr = t.end_date || t.lease_end;
+        if (endStr) {
+          var ms = new Date(endStr + 'T12:00:00').getTime() - ref.getTime();
+          if (ms > 0 && ms <= MS_365) {
+            expiringNext12Rent += rent;
+            expiringTenants.push({
+              propertyId:   prop.id,
+              propertyName: prop.name || '(unnamed)',
+              tenantName:   t.tenant_name || t.tenantName || '(unnamed)',
+              endDate:      endStr,
+              annualRent:   rent,
+            });
+          }
+        }
+      }
+    }
+
+    var retained = currentAnnualRent - expiringNext12Rent;
+    var scenarios = [
+      { rate: 0,    label: 'No renewals (worst case)' },
+      { rate: 1.00, label: 'Flat renewal (0%)'        },
+      { rate: 1.05, label: 'Market renewal (+5%)'     },
+      { rate: 1.10, label: 'Strong market (+10%)'     },
+    ].map(function (s) {
+      var proj     = parseFloat((retained + expiringNext12Rent * s.rate).toFixed(2));
+      var delta    = parseFloat((proj - currentAnnualRent).toFixed(2));
+      var deltaPct = currentAnnualRent > 0
+        ? parseFloat(((delta / currentAnnualRent) * 100).toFixed(1)) : 0;
+      return { rate: s.rate, label: s.label,
+               projectedAnnualRent: proj, delta: delta, deltaPct: deltaPct };
+    });
+
+    return {
+      currentAnnualRent:   parseFloat(currentAnnualRent.toFixed(2)),
+      expiringNext12Rent:  parseFloat(expiringNext12Rent.toFixed(2)),
+      expiringLeaseCount:  expiringTenants.length,
+      retainedRent:        parseFloat(retained.toFixed(2)),
+      scenarios:           scenarios,
+      expiringTenants:     expiringTenants,
+    };
+  }
+
   const AcquisitionEngine = {
     matchInvoiceToTenant,
     tenantMatchingAnalysis,
@@ -874,6 +1054,8 @@
     buildPropertyFromReview,
     computeLeaseAlerts,
     computeRevenueAtRisk,
+    computePortfolioIntelligence,
+    computeRevenueForecast,
   };
 
   if (typeof module !== 'undefined' && module.exports) {
