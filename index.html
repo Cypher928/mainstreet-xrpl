@@ -665,11 +665,16 @@
     }
     .ptf-props-head {
       display: flex; align-items: center; justify-content: space-between;
-      margin-bottom: 8px;
+      margin-bottom: 8px; gap: 8px;
     }
     .ptf-props-head h2 {
       font-size: 1.05rem; font-weight: 700; color: #E2E8F0; margin: 0;
     }
+    .ptf-head-actions { display: flex; align-items: center; gap: 8px; flex-shrink: 0; }
+    .ptf-export-btn   { background: none; border: 1px solid rgba(100,116,139,0.3); color: #64748b;
+                        padding: 6px 12px; border-radius: 7px; font-size: 0.74rem; font-weight: 600;
+                        cursor: pointer; white-space: nowrap; }
+    .ptf-export-btn:hover { border-color: rgba(201,151,58,0.4); color: #C9973A; background: rgba(201,151,58,0.06); }
     /* Sort row */
     .ptf-sort-row { display: flex; align-items: center; gap: 6px; margin-bottom: 12px; flex-wrap: wrap; }
     .ptf-sort-lbl { font-size: 0.7rem; color: #475569; font-weight: 600; text-transform: uppercase; letter-spacing: 0.06em; margin-right: 2px; }
@@ -4132,6 +4137,70 @@
     .rp-empty          { padding: 22px 18px; text-align: center; font-size: 0.82rem;
                          color: #475569; }
 
+    /* ── Empty / Clean States ───────────────────────────────────────────── */
+    /* Action Center — all clear */
+    .ac-panel--clean .ac-header-title { color: #4ade80; }
+    .ac-clean-body    { display: flex; align-items: center; gap: 14px;
+                        padding: 14px 18px; border-top: 1px solid #0f1b2d; }
+    .ac-clean-icon    { font-size: 1.3rem; color: #4ade80; flex-shrink: 0; }
+    .ac-clean-text    { font-size: 0.82rem; color: #94a3b8; line-height: 1.45; }
+    .ac-clean-text strong { color: #e2e8f0; }
+    /* Portfolio Intelligence — no risks */
+    .pid-no-risks     { padding: 12px 4px; font-size: 0.8rem; color: #4ade80; }
+    /* Renewal Pipeline — clean */
+    .rp-clean         { display: flex; align-items: center; gap: 14px;
+                        padding: 18px; border-top: 1px solid #0f1b2d; }
+    .rp-clean-icon    { font-size: 1.3rem; color: #4ade80; flex-shrink: 0; }
+    /* Renewal Pipeline table scroll wrapper */
+    .rp-table-wrap    { overflow-x: auto; -webkit-overflow-scrolling: touch; }
+
+    /* ── Mobile: Action Center ───────────────────────────────────────────── */
+    @media (max-width: 600px) {
+      .ac-kpi-bar     { overflow-x: auto; flex-wrap: nowrap; padding: 8px 14px; gap: 6px; }
+      .ac-kpi         { flex-shrink: 0; }
+      .ac-item        { gap: 8px; padding: 8px 14px; }
+      .ac-item-detail { font-size: 0.7rem; }
+    }
+    @media (max-width: 380px) {
+      .ac-header      { flex-wrap: wrap; gap: 6px; }
+      .ac-dismiss-btn { margin-left: 0; }
+    }
+
+    /* ── Mobile: Lease Alert Panel ───────────────────────────────────────── */
+    @media (max-width: 600px) {
+      .la-date        { display: none; }
+      .la-meta        { width: auto; }
+      .la-pipeline-link { display: none; }
+    }
+    @media (max-width: 420px) {
+      .la-property    { display: none; }
+      .la-row         { gap: 8px; padding: 8px 12px; }
+    }
+
+    /* ── Mobile: Renewal Pipeline ────────────────────────────────────────── */
+    @media (max-width: 640px) {
+      .rp-kpi-bar     { flex-wrap: wrap; gap: 12px 20px; }
+      .rp-table th,
+      .rp-table td    { padding: 7px 10px; }
+      .rp-table th:nth-child(4),
+      .rp-table td:nth-child(4) { display: none; } /* hide Sq Ft on mobile */
+    }
+
+    /* ── Mobile: Portfolio Intelligence ──────────────────────────────────── */
+    @media (max-width: 480px) {
+      .pid-fc-summary { flex-direction: column; gap: 4px; }
+      .pid-fc-header,
+      .pid-fc-row     { grid-template-columns: 1fr 90px; }
+      .pid-fc-header span:last-child,
+      .pid-fc-row  span:last-child { display: none; } /* hide Change column */
+    }
+
+    /* ── Mobile: Properties header ───────────────────────────────────────── */
+    @media (max-width: 480px) {
+      .ptf-head-actions { gap: 6px; }
+      .ptf-export-btn   { font-size: 0.7rem; padding: 5px 8px; }
+    }
+
     /* ── Acquisition: Tab Bar ───────────────────────────────────────────── */
     .acq-report-tabs { display: flex; gap: 4px; margin-bottom: 20px; border-bottom: 1px solid #1e293b; padding-bottom: 0; }
     .acq-tab { background: transparent; border: none; border-bottom: 2px solid transparent; color: #64748b;
@@ -4286,7 +4355,10 @@
   <!-- Property Cards — primary content -->
   <div class="ptf-props-head">
     <h2>Your Properties</h2>
-    <button class="add-prop-btn" onclick="addNewProperty()">+ Add Property</button>
+    <div class="ptf-head-actions">
+      <button class="ptf-export-btn" onclick="exportPortfolioSummary()" title="Export one-page portfolio summary">&#x1F4CA; Export Summary</button>
+      <button class="add-prop-btn" onclick="addNewProperty()">+ Add Property</button>
+    </div>
   </div>
   <div id="ptfSortRow" class="ptf-sort-row"></div>
   <div id="reviewQueuePanel" class="rq-panel" style="display:none;"></div>

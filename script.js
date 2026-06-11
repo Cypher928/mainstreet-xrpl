@@ -12570,8 +12570,9 @@ async function ensureDemoProperty() {
       .eq('id', DEMO_PROPERTY_ID)
       .eq('user_id', user.id)
       .single();
-    if (!error && row?.data?.camReconciliation?.results?.length > 0) {
-      console.log('[ensureDemoProperty] already seeded — skip');
+    if (!error && row?.data?.camReconciliation?.results?.length > 0
+        && row?.data?._demoVersion === 2) {
+      console.log('[ensureDemoProperty] already seeded v2 — skip');
       return DEMO_PROPERTY_ID;
     }
   } catch (_) { /* not found — fall through to seed */ }
@@ -12579,27 +12580,38 @@ async function ensureDemoProperty() {
   console.log('[ensureDemoProperty] seeding Riverside Commons…');
 
   // ── Demo data constants ───────────────────────────────────────────────────
-  const PROP_NAME  = 'Riverside Commons';
-  const PROP_SQFT  = 24000;
-  const CAM_YEAR   = 2025;
+  const PROP_NAME    = 'Riverside Commons';
+  const PROP_SQFT    = 24000;
+  const CAM_YEAR     = 2025;
+  const DEMO_VERSION = 2; // bump to force re-seed when config changes
+
+  // Compute end dates relative to today so the demo always shows realistic pipeline state
+  const _dNow   = new Date();
+  const _daysOut = d => new Date(_dNow.getTime() + d * 86400000).toISOString().slice(0, 10);
 
   const demoTenantConfigs = [
     {
       id: _DEMO_TENANT_IDS[0], tenant_name: 'Fresh Market Foods',
       leased_sqft: '6200', cap: '10', excluded_categories: 'snow',
-      start_date: '2020-01-01', end_date: '2027-12-31', lease_type: 'NNN',
+      base_rent: 155000,                                  // $25/sf NNN anchor tenant
+      start_date: _daysOut(-730), end_date: _daysOut(730), // mid-lease, renews in 2 yrs
+      lease_type: 'NNN', renewal_options: '2 × 5 yr',
       confidence: { tenantName:98, leasedSqft:96, capPercentage:92, excludedCategories:88 },
     },
     {
       id: _DEMO_TENANT_IDS[1], tenant_name: 'Riverside Dental Group',
       leased_sqft: '1800', cap: null, excluded_categories: 'management',
-      start_date: '2021-06-01', end_date: '2026-05-31', lease_type: 'NNN',
+      base_rent: 63000,                                   // $35/sf medical office
+      start_date: _daysOut(-1460), end_date: _daysOut(96), // expiring in ~3 months (high tier)
+      lease_type: 'NNN', renewal_options: '1 × 5 yr',
       confidence: { tenantName:97, leasedSqft:94, excludedCategories:91 },
     },
     {
       id: _DEMO_TENANT_IDS[2], tenant_name: 'FitLife Gym & Wellness',
       leased_sqft: '3400', cap: null, excluded_categories: '',
-      start_date: '2022-01-01', end_date: '2025-12-31', lease_type: 'NNN',
+      base_rent: 95200,                                   // $28/sf fitness
+      start_date: _daysOut(-1095), end_date: _daysOut(50), // expiring in ~7 weeks (high tier)
+      lease_type: 'NNN',
       confidence: { tenantName:99, leasedSqft:97 },
     },
   ];
@@ -12702,6 +12714,7 @@ async function ensureDemoProperty() {
   // invoicesFull is intentionally omitted (matches _stripBlobs convention);
   // on load it is re-hydrated from data.invoices via renderProperty.
   const propertyData = {
+    _demoVersion:      DEMO_VERSION,
     invoices:          demoInvoiceList.map(inv => ({
       vendorName: inv.vendorName, amount: inv.amount,
       category: inv.category, invoiceDate: inv.invoiceDate,
@@ -13458,7 +13471,11 @@ function renderPortfolioIntelligence(props) {
         <span class="pid-risk-label">${esc(r.riskLabel)}</span>
       </div>
     </div>`).join('')}
-  </div>` : '';
+  </div>` : `
+  <div class="pid-section">
+    <div class="pid-section-title">Top Risks</div>
+    <div class="pid-no-risks">&#x2714; No significant risks identified across your portfolio.</div>
+  </div>`;
 
   // ── Revenue Forecast ──────────────────────────────────────────────────
   const forecastHtml = (() => {
@@ -13607,7 +13624,25 @@ function renderActionCenter(props, reviews) {
 
   var actions = AcquisitionEngine.computePortfolioActions(safeProps, reviews || []);
   var total   = actions.criticalActions.length + actions.warningActions.length + actions.infoActions.length;
-  if (total === 0) { panel.style.display = 'none'; return; }
+  if (total === 0) {
+    // All clear — show positive confirmation rather than hiding the panel
+    panel.style.display = 'block';
+    panel.innerHTML = `
+  <div class="ac-panel ac-panel--clean">
+    <div class="ac-header">
+      <span class="ac-header-title">&#x2705; Portfolio Standing</span>
+      <button class="ac-dismiss-btn" onclick="dismissActionCenter()" title="Dismiss">&#x2715;</button>
+    </div>
+    <div class="ac-clean-body">
+      <span class="ac-clean-icon">&#x2714;</span>
+      <div class="ac-clean-text">
+        <strong>No actions required.</strong>
+        Your ${safeProps.length} propert${safeProps.length !== 1 ? 'ies are' : 'y is'} in good standing — no expired leases, open disputes, or urgent renewals.
+      </div>
+    </div>
+  </div>`;
+    return;
+  }
 
   const fmtM  = v => v >= 1e6 ? '$' + (v / 1e6).toFixed(1) + 'M'
                   : v >= 1e3  ? '$' + Math.round(v / 1e3) + 'K'
@@ -13757,7 +13792,13 @@ function _renderRenewalPipeline(pipeline) {
       <span class="rp-panel-title">&#x1F4CB; Renewal Pipeline</span>
     </div>
     ${kpiBarHtml}
-    <div class="rp-empty">No leases expiring within 12 months.</div>
+    <div class="rp-clean">
+      <span class="rp-clean-icon">&#x2714;</span>
+      <div>
+        <strong style="color:#e2e8f0;font-size:0.85rem;">Pipeline clear</strong>
+        <div style="font-size:0.76rem;color:#64748b;margin-top:3px;">No leases expiring within 12 months. All renewals are on track.</div>
+      </div>
+    </div>
   </div>`;
   }
 
@@ -13788,20 +13829,22 @@ function _renderRenewalPipeline(pipeline) {
       <span class="rp-panel-title">&#x1F4CB; Renewal Pipeline</span>
     </div>
     ${kpiBarHtml}
-    <table class="rp-table">
-      <thead>
-        <tr>
-          <th>Tenant</th>
-          <th>Property</th>
-          <th>Annual Rent</th>
-          <th>Sq Ft</th>
-          <th>Renewal Options</th>
-          <th>Timeline</th>
-          <th>Status</th>
-        </tr>
-      </thead>
-      <tbody>${rows}</tbody>
-    </table>
+    <div class="rp-table-wrap">
+      <table class="rp-table">
+        <thead>
+          <tr>
+            <th>Tenant</th>
+            <th>Property</th>
+            <th>Annual Rent</th>
+            <th>Sq Ft</th>
+            <th>Renewal Options</th>
+            <th>Timeline</th>
+            <th>Status</th>
+          </tr>
+        </thead>
+        <tbody>${rows}</tbody>
+      </table>
+    </div>
   </div>`;
 }
 
@@ -13813,6 +13856,184 @@ function renderRenewalPipeline(props) {
   const pipeline = AcquisitionEngine.computeRenewalPipeline(safeProps);
   panel.style.display = 'block';
   panel.innerHTML = _renderRenewalPipeline(pipeline);
+}
+
+// ── Executive Summary Export ─────────────────────────────────────────────────
+
+function exportPortfolioSummary() {
+  const props   = Array.isArray(_props)      ? _props      : [];
+  const reviews = Array.isArray(_acqReviews) ? _acqReviews : [];
+  if (props.length === 0) {
+    showToast('No portfolio data to export. Add properties first.', { color: '#92400e', textColor: '#fef3c7' });
+    return;
+  }
+
+  const pid      = AcquisitionEngine.computePortfolioIntelligence(props);
+  const rar      = AcquisitionEngine.computeRevenueAtRisk(props);
+  const pipeline = AcquisitionEngine.computeRenewalPipeline(props);
+  const forecast = AcquisitionEngine.computeRevenueForecast(props);
+  const actions  = AcquisitionEngine.computePortfolioActions(props, reviews);
+
+  const fmtM   = v => v >= 1e6 ? '$' + (v/1e6).toFixed(2) + 'M' : v >= 1e3 ? '$' + Math.round(v/1e3).toLocaleString('en-US') + 'K' : '$' + Math.round(v).toLocaleString('en-US');
+  const fmtSf  = v => Math.round(v).toLocaleString('en-US') + ' sf';
+  const today  = new Date().toLocaleDateString('en-US', { month: 'long', day: 'numeric', year: 'numeric' });
+  const esc_   = s => String(s).replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;').replace(/"/g,'&quot;');
+
+  const kpis = [
+    { val: props.length,   lbl: 'Properties',       cls: '' },
+    { val: pid.occupancyRate != null ? pid.occupancyRate + '%' : '—', lbl: 'Occupancy',
+      cls: pid.occupancyRate !== null && pid.occupancyRate < 80 ? 'kpi-val--warn' : '' },
+    { val: pid.walt != null ? pid.walt + ' yrs' : '—', lbl: 'WALT', cls: '' },
+    { val: pid.totalAnnualRent > 0 ? fmtM(pid.totalAnnualRent) : '—', lbl: 'Annual Rent', cls: '' },
+    { val: rar.urgentAnnualAtRisk > 0 ? fmtM(rar.urgentAnnualAtRisk) : '—', lbl: 'Revenue at Risk',
+      cls: rar.urgentAnnualAtRisk > 0 ? 'kpi-val--risk' : '' },
+    { val: pipeline.actionCount || '—', lbl: 'Renewals Requiring Action',
+      cls: pipeline.actionCount > 0 ? 'kpi-val--warn' : '' },
+    { val: actions.counts.openCamDisputes || '—', lbl: 'Open Disputes',
+      cls: actions.counts.openCamDisputes > 0 ? 'kpi-val--warn' : '' },
+    { val: actions.counts.vacantSqft >= 500 ? fmtSf(actions.counts.vacantSqft) : '—', lbl: 'Vacant Sq Ft',
+      cls: actions.counts.vacantSqft >= 500 ? 'kpi-val--warn' : '' },
+  ];
+
+  const kpiGrid = kpis.map(k => `
+    <div class="kpi-card">
+      <div class="kpi-val ${k.cls}">${esc_(k.val)}</div>
+      <div class="kpi-lbl">${esc_(k.lbl)}</div>
+    </div>`).join('');
+
+  const topRisksSection = pid.topRisks.length ? `
+  <div class="section">
+    <div class="section-title">Top Risks</div>
+    <table>
+      <thead><tr><th>#</th><th>Property</th><th>Risk</th><th>Impact</th></tr></thead>
+      <tbody>${pid.topRisks.map((r, i) => `
+        <tr>
+          <td>${i + 1}</td>
+          <td>${esc_(r.propertyName || '—')}</td>
+          <td>${esc_(r.riskLabel || r.riskType || '—')}</td>
+          <td>${r.impactScore > 0 ? fmtM(r.impactScore) : '—'}</td>
+        </tr>`).join('')}
+      </tbody>
+    </table>
+  </div>` : '';
+
+  const priorityBadge = p => p === 'critical' ? 'badge-critical' : p === 'high' ? 'badge-warn' : 'badge-ok';
+  const pipelineSection = pipeline.items.length ? `
+  <div class="section">
+    <div class="section-title">Renewal Pipeline — Next 12 Months (${pipeline.items.length} lease${pipeline.items.length !== 1 ? 's' : ''})</div>
+    <table>
+      <thead><tr><th>Tenant</th><th>Property</th><th>Lease End</th><th>Timeline</th><th>Annual Rent</th><th>Renewal Options</th></tr></thead>
+      <tbody>${pipeline.items.slice(0, 20).map(item => `
+        <tr>
+          <td>${esc_(item.tenantName || '—')}</td>
+          <td>${esc_(item.propertyName || '—')}</td>
+          <td>${esc_(item.leaseEnd || '—')}</td>
+          <td><span class="${priorityBadge(item.priority)}">${item.daysRemaining <= 0 ? 'Expired' : item.daysRemaining + 'd'}</span></td>
+          <td>${item.annualRent ? fmtM(item.annualRent) : '—'}</td>
+          <td>${esc_(item.renewalOptions || 'None')}</td>
+        </tr>`).join('')}
+        ${pipeline.items.length > 20 ? `<tr><td colspan="6" style="color:#64748b;font-style:italic">+${pipeline.items.length - 20} more leases</td></tr>` : ''}
+      </tbody>
+    </table>
+  </div>` : '';
+
+  const forecastSection = forecast.currentAnnualRent > 0 ? `
+  <div class="section">
+    <div class="section-title">Revenue Forecast — Next 12 Months</div>
+    <table>
+      <thead><tr><th>Scenario</th><th>Projected Annual</th><th>Change</th></tr></thead>
+      <tbody>${forecast.scenarios.map(s => {
+        const sign = s.delta > 0 ? '+' : '';
+        const cls  = s.delta > 0 ? 'color:#16a34a' : s.delta < 0 ? 'color:#dc2626' : 'color:#64748b';
+        return `<tr>
+          <td>${esc_(s.label)}</td>
+          <td style="font-weight:600">${fmtM(s.projectedAnnualRent)}</td>
+          <td style="${cls}">${s.delta !== 0 ? sign + fmtM(Math.abs(s.delta)) + ' (' + sign + s.deltaPct + '%)' : 'No change'}</td>
+        </tr>`;
+      }).join('')}</tbody>
+    </table>
+  </div>` : '';
+
+  const propSection = `
+  <div class="section">
+    <div class="section-title">Property Summary</div>
+    <table>
+      <thead><tr><th>Property</th><th>Tenants</th><th>Total Sqft</th><th>Annual Rent</th><th>Status</th></tr></thead>
+      <tbody>${props.map(p => {
+        const tens = (p.tenants || []).filter(t => t && !t.extractionFailed);
+        const rent = tens.reduce((s, t) => s + (parseFloat(t.base_rent) || 0), 0);
+        return `<tr>
+          <td style="font-weight:600">${esc_(p.name || '(unnamed)')}</td>
+          <td>${tens.length}</td>
+          <td>${p.totalSqft ? fmtSf(p.totalSqft) : '—'}</td>
+          <td>${rent > 0 ? fmtM(rent) : '—'}</td>
+          <td>${esc_(p.status || 'in-progress')}</td>
+        </tr>`;
+      }).join('')}</tbody>
+    </table>
+  </div>`;
+
+  const html = `<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width,initial-scale=1">
+  <title>Portfolio Executive Summary — ${today}</title>
+  <style>
+    *{box-sizing:border-box;margin:0;padding:0}
+    body{font-family:-apple-system,BlinkMacSystemFont,'Segoe UI',sans-serif;color:#1e293b;background:#fff;padding:40px;max-width:960px;margin:0 auto;font-size:14px}
+    @media print{body{padding:20px}.no-print{display:none!important}@page{margin:20mm}}
+    h1{font-size:1.6rem;font-weight:800;color:#0f172a;margin-bottom:4px}
+    .subtitle{font-size:0.82rem;color:#64748b;margin-bottom:32px}
+    .section{margin-bottom:28px}
+    .section-title{font-size:0.7rem;font-weight:700;text-transform:uppercase;letter-spacing:.08em;color:#64748b;margin-bottom:10px;padding-bottom:6px;border-bottom:1px solid #e2e8f0}
+    .kpi-grid{display:grid;grid-template-columns:repeat(4,1fr);gap:10px;margin-bottom:0}
+    @media(max-width:600px){.kpi-grid{grid-template-columns:repeat(2,1fr)}}
+    .kpi-card{background:#f8fafc;border:1px solid #e2e8f0;border-radius:8px;padding:14px}
+    .kpi-val{font-size:1.45rem;font-weight:700;color:#0f172a;line-height:1.1}
+    .kpi-val--risk{color:#dc2626}.kpi-val--warn{color:#d97706}
+    .kpi-lbl{font-size:.68rem;color:#64748b;text-transform:uppercase;letter-spacing:.06em;margin-top:4px}
+    table{width:100%;border-collapse:collapse;font-size:.83rem}
+    th{background:#f1f5f9;padding:8px 12px;text-align:left;font-size:.68rem;font-weight:600;text-transform:uppercase;letter-spacing:.06em;color:#475569;white-space:nowrap}
+    td{padding:8px 12px;border-bottom:1px solid #f1f5f9;vertical-align:middle}
+    tr:last-child td{border-bottom:none}
+    .badge-critical{background:#fee2e2;color:#dc2626;padding:2px 7px;border-radius:10px;font-size:.7rem;font-weight:700;white-space:nowrap}
+    .badge-warn{background:#fef3c7;color:#d97706;padding:2px 7px;border-radius:10px;font-size:.7rem;font-weight:700;white-space:nowrap}
+    .badge-ok{background:#dcfce7;color:#16a34a;padding:2px 7px;border-radius:10px;font-size:.7rem;font-weight:700;white-space:nowrap}
+    .print-btn{background:#0f172a;color:#fff;border:none;padding:10px 22px;border-radius:6px;cursor:pointer;font-size:.85rem;margin-bottom:24px;display:inline-flex;align-items:center;gap:6px}
+    .print-btn:hover{background:#1e293b}
+    .footer{margin-top:40px;padding-top:14px;border-top:1px solid #e2e8f0;font-size:.7rem;color:#94a3b8;display:flex;justify-content:space-between;flex-wrap:wrap;gap:6px}
+  </style>
+</head>
+<body>
+  <button class="print-btn no-print" onclick="window.print()">&#x1F4E4; Print / Save as PDF</button>
+  <h1>Portfolio Executive Summary</h1>
+  <div class="subtitle">Generated ${today}&nbsp;&nbsp;·&nbsp;&nbsp;${props.length} Propert${props.length !== 1 ? 'ies' : 'y'}&nbsp;&nbsp;·&nbsp;&nbsp;Mainstreet</div>
+  <div class="section">
+    <div class="section-title">Portfolio Overview</div>
+    <div class="kpi-grid">${kpiGrid}</div>
+  </div>
+  ${topRisksSection}${pipelineSection}${forecastSection}${propSection}
+  <div class="footer">
+    <span>Mainstreet &nbsp;·&nbsp; Portfolio Executive Summary</span>
+    <span>Generated ${today}</span>
+  </div>
+</body>
+</html>`;
+
+  const w = window.open('', '_blank');
+  if (w) {
+    w.document.write(html);
+    w.document.close();
+  } else {
+    const blob = new Blob([html], { type: 'text/html;charset=utf-8;' });
+    const url  = URL.createObjectURL(blob);
+    const a    = Object.assign(document.createElement('a'), {
+      href: url, download: 'portfolio-summary-' + new Date().toISOString().slice(0, 10) + '.html',
+    });
+    document.body.appendChild(a); a.click(); document.body.removeChild(a);
+    URL.revokeObjectURL(url);
+  }
 }
 
 function togglePidForecast() {
@@ -14265,9 +14486,11 @@ function renderPortfolio(props) {
 
   // KPI tiles
   const k = portfolioKPIs(props);
+  // Use live dispute count from p.disputes[] — p.openDisputes is only written on save so can be stale
+  const liveOpenDisputes = props.reduce((s, p) => s + (p.disputes || []).filter(d => d.status === 'open').length, 0);
   document.getElementById('pKpiProperties').textContent  = k.properties;
   document.getElementById('pKpiCAM').textContent         = k.cam > 0 ? '$' + k.cam.toLocaleString('en-US') : '—';
-  document.getElementById('pKpiDisputes').textContent    = k.openDisputes;
+  document.getElementById('pKpiDisputes').textContent    = liveOpenDisputes;
   document.getElementById('pKpiCritical').textContent    = k.criticalOrElevated;
   document.getElementById('pKpiMissingDocs').textContent = k.totalMissingDocs;
   document.getElementById('pKpiConfidence').textContent  = k.avgConf !== null ? k.avgConf + '%' : '—';
@@ -14285,7 +14508,7 @@ function renderPortfolio(props) {
   const dispEl = document.getElementById('pKpiDisputes');
   const missEl = document.getElementById('pKpiMissingDocs');
   if (critEl) critEl.style.color = k.criticalOrElevated > 0 ? '#f87171' : '#C9973A';
-  if (dispEl) dispEl.style.color = k.openDisputes        > 0 ? '#f87171' : '#C9973A';
+  if (dispEl) dispEl.style.color = liveOpenDisputes       > 0 ? '#f87171' : '#C9973A';
   if (missEl) missEl.style.color = k.totalMissingDocs    > 0 ? '#fbbf24' : '#C9973A';
 
   // Sort buttons
