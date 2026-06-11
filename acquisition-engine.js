@@ -1032,6 +1032,79 @@
     };
   }
 
+  // ─── Lease Renewal Pipeline ──────────────────────────────────────────────
+  // Returns leases expiring within 365 days (including already-expired)
+  // sorted by daysRemaining ascending (most urgent first).
+
+  function computeRenewalPipeline(props, refDate) {
+    var ref    = refDate ? new Date(refDate) : new Date();
+    var MS_DAY = 86400000;
+    var items  = [];
+
+    for (var i = 0; i < props.length; i++) {
+      var prop    = props[i];
+      var tenants = Array.isArray(prop.tenants) ? prop.tenants : [];
+      for (var j = 0; j < tenants.length; j++) {
+        var t      = tenants[j];
+        if (!t || t.extractionFailed) continue;
+        var endStr = t.end_date || t.lease_end;
+        if (!endStr) continue;
+        var endMs        = new Date(endStr + 'T12:00:00').getTime();
+        var daysRemaining = Math.round((endMs - ref.getTime()) / MS_DAY);
+        // Include expired leases and leases expiring within 365 days
+        if (daysRemaining > 365) continue;
+
+        var priority;
+        if      (daysRemaining <= 0)   priority = 'critical';
+        else if (daysRemaining <= 90)  priority = 'high';
+        else if (daysRemaining <= 180) priority = 'medium';
+        else                           priority = 'low';
+
+        var rent = t.base_rent != null ? parseFloat(t.base_rent) : null;
+        if (rent !== null && isNaN(rent)) rent = null;
+
+        items.push({
+          propertyId:     prop.id        || null,
+          propertyName:   prop.name      || '(unnamed)',
+          tenantName:     t.tenant_name  || t.tenantName || '(unnamed)',
+          suite:          t.unit_number  || t.unitNumber || null,
+          leaseEnd:       endStr,
+          annualRent:     rent,
+          leasedSqft:     t.leased_sqft  != null ? parseFloat(t.leased_sqft) || null : null,
+          renewalOptions: t.renewal_options || null,
+          daysRemaining:  daysRemaining,
+          priority:       priority,
+          status:         t._renewalStatus || 'not_started',
+        });
+      }
+    }
+
+    // Sort: most urgent first; within same day sort by rent desc
+    items.sort(function (a, b) {
+      if (a.daysRemaining !== b.daysRemaining) return a.daysRemaining - b.daysRemaining;
+      var ra = a.annualRent || 0;
+      var rb = b.annualRent || 0;
+      return rb - ra;
+    });
+
+    // Aggregate KPI values (critical + high = "requiring action")
+    var actionItems  = items.filter(function (x) { return x.priority === 'critical' || x.priority === 'high'; });
+    var actionRent   = 0;
+    var actionSqft   = 0;
+    for (var k = 0; k < actionItems.length; k++) {
+      if (actionItems[k].annualRent != null) actionRent += actionItems[k].annualRent;
+      if (actionItems[k].leasedSqft != null) actionSqft += actionItems[k].leasedSqft;
+    }
+
+    return {
+      items:             items,
+      actionCount:       actionItems.length,
+      actionAnnualRent:  parseFloat(actionRent.toFixed(2)),
+      actionSqft:        parseFloat(actionSqft.toFixed(0)),
+      totalCount:        items.length,
+    };
+  }
+
   const AcquisitionEngine = {
     matchInvoiceToTenant,
     tenantMatchingAnalysis,
@@ -1056,6 +1129,7 @@
     computeRevenueAtRisk,
     computePortfolioIntelligence,
     computeRevenueForecast,
+    computeRenewalPipeline,
   };
 
   if (typeof module !== 'undefined' && module.exports) {

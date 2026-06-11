@@ -13549,6 +13549,113 @@ function renderPortfolioIntelligence(props) {
   </div>`;
 }
 
+function _renderRenewalPipeline(pipeline) {
+  const fmtM  = v => v >= 1e6 ? '$' + (v / 1e6).toFixed(2) + 'M'
+                  : v >= 1e3  ? '$' + Math.round(v / 1e3).toLocaleString('en-US') + 'K'
+                  : '$' + Math.round(v).toLocaleString('en-US');
+  const fmtSf = v => Math.round(v).toLocaleString('en-US');
+  const fmtRent = v => v != null && v > 0 ? fmtM(v) : '—';
+
+  const statusLabels = {
+    not_started:   'Not Started',
+    contacted:     'Contacted',
+    negotiating:   'Negotiating',
+    proposal_sent: 'Proposal Sent',
+    signed:        'Signed',
+  };
+
+  const daysBadge = (item) => {
+    const d = item.daysRemaining;
+    const cls = `rp-days rp-days--${item.priority}`;
+    if (d <= 0)  return `<span class="${cls}">Expired ${Math.abs(d)}d ago</span>`;
+    return `<span class="${cls}">${d}d left</span>`;
+  };
+
+  const kpiBarHtml = `
+  <div class="rp-kpi-bar">
+    <div class="rp-kpi">
+      <div class="rp-kpi-val${pipeline.actionCount > 0 ? ' rp-kpi-val--alert' : ''}">${pipeline.actionCount || '—'}</div>
+      <div class="rp-kpi-lbl">Requiring Action</div>
+    </div>
+    <div class="rp-kpi">
+      <div class="rp-kpi-val">${pipeline.actionAnnualRent > 0 ? fmtRent(pipeline.actionAnnualRent) : '—'}</div>
+      <div class="rp-kpi-lbl">Annual Rent</div>
+    </div>
+    <div class="rp-kpi">
+      <div class="rp-kpi-val">${pipeline.actionSqft > 0 ? fmtSf(pipeline.actionSqft) + ' sf' : '—'}</div>
+      <div class="rp-kpi-lbl">Sq Ft</div>
+    </div>
+    <div class="rp-kpi" style="margin-left:auto;">
+      <div class="rp-kpi-val">${pipeline.totalCount}</div>
+      <div class="rp-kpi-lbl">Total in Pipeline</div>
+    </div>
+  </div>`;
+
+  if (pipeline.items.length === 0) {
+    return `
+  <div class="rp-panel">
+    <div class="rp-panel-head">
+      <span class="rp-panel-title">&#x1F4CB; Renewal Pipeline</span>
+    </div>
+    ${kpiBarHtml}
+    <div class="rp-empty">No leases expiring within 12 months.</div>
+  </div>`;
+  }
+
+  const rows = pipeline.items.map(item => {
+    const renewalTxt = item.renewalOptions
+      ? `<span class="rp-renewal">&#x1F501; ${esc(item.renewalOptions)}</span>`
+      : `<span class="rp-no-renewal">No options</span>`;
+    const statusCls = 'rp-status rp-status--' + (item.status || 'not_started');
+    const statusTxt = statusLabels[item.status] || item.status || 'Not Started';
+    const suiteTxt  = item.suite ? `<span class="rp-suite">Suite ${esc(item.suite)}</span>` : '';
+    return `
+    <tr onclick="selectProperty('${esc(item.propertyId || '')}')">
+      <td>
+        <span class="rp-tenant-name">${esc(item.tenantName)}</span>${suiteTxt}
+      </td>
+      <td class="rp-prop">${esc(item.propertyName)}</td>
+      <td class="rp-rent">${fmtRent(item.annualRent)}</td>
+      <td class="rp-sqft">${item.leasedSqft != null ? fmtSf(item.leasedSqft) + ' sf' : '—'}</td>
+      <td>${renewalTxt}</td>
+      <td>${daysBadge(item)}</td>
+      <td><span class="${statusCls}">${esc(statusTxt)}</span></td>
+    </tr>`;
+  }).join('');
+
+  return `
+  <div class="rp-panel">
+    <div class="rp-panel-head">
+      <span class="rp-panel-title">&#x1F4CB; Renewal Pipeline</span>
+    </div>
+    ${kpiBarHtml}
+    <table class="rp-table">
+      <thead>
+        <tr>
+          <th>Tenant</th>
+          <th>Property</th>
+          <th>Annual Rent</th>
+          <th>Sq Ft</th>
+          <th>Renewal Options</th>
+          <th>Timeline</th>
+          <th>Status</th>
+        </tr>
+      </thead>
+      <tbody>${rows}</tbody>
+    </table>
+  </div>`;
+}
+
+function renderRenewalPipeline(props) {
+  const panel = document.getElementById('renewalPipelinePanel');
+  if (!panel) return;
+  const safeProps = Array.isArray(props) ? props : [];
+  if (safeProps.length === 0) { panel.style.display = 'none'; return; }
+  const pipeline = AcquisitionEngine.computeRenewalPipeline(safeProps);
+  panel.style.display = 'block';
+  panel.innerHTML = _renderRenewalPipeline(pipeline);
+}
+
 function togglePidForecast() {
   const body = document.getElementById('pidForecastBody');
   const icon = document.getElementById('pidForecastToggle');
@@ -14068,6 +14175,7 @@ function renderPortfolio(props) {
 
   // Portfolio intelligence panel (above cards grid)
   renderPortfolioIntelligence(props);
+  renderRenewalPipeline(props);
 
   // Property cards
   const statusLabel = { reconciled: 'Reconciled', 'in-progress': 'In Progress', disputes: 'Has Open Disputes' };

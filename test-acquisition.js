@@ -1453,6 +1453,116 @@ console.log('\n── Group 25: waltAnalysis end_date fallback ─────�
   assert('walt: end_date produces same result as lease_end', r.waltMonths >= 17 && r.waltMonths <= 19);
 }
 
+// ── Group 26: computeRenewalPipeline ─────────────────────────────────────────
+console.log('\n── Group 26: computeRenewalPipeline ─────────────────────────────────────');
+
+{
+  const ref = new Date('2024-06-01T12:00:00Z');
+
+  const props = [
+    {
+      id: 'p1', name: 'Main St Office',
+      tenants: [
+        // expired
+        { tenant_name: 'Acme Corp',    unit_number: '101', end_date: '2024-05-01',
+          base_rent: 60000, leased_sqft: 2000, renewal_options: '1 x 5yr' },
+        // critical (30d window)
+        { tenant_name: 'Beta LLC',     unit_number: '102', end_date: '2024-06-20',
+          base_rent: 48000, leased_sqft: 1500 },
+        // high (60d)
+        { tenant_name: 'Gamma Inc',    unit_number: '103', end_date: '2024-07-20',
+          base_rent: 72000, leased_sqft: 3000, renewal_options: '2 x 3yr' },
+        // medium (150d)
+        { tenant_name: 'Delta Co',     unit_number: '104', end_date: '2024-10-28',
+          base_rent: 36000, leased_sqft: 1200 },
+        // low (300d)
+        { tenant_name: 'Epsilon Ltd',  unit_number: '105', end_date: '2025-03-28',
+          base_rent: 24000, leased_sqft: 800 },
+        // beyond 365d — should be excluded
+        { tenant_name: 'Zeta Partners', end_date: '2026-01-01', base_rent: 90000, leased_sqft: 5000 },
+      ]
+    },
+    {
+      id: 'p2', name: 'Harbor Tower',
+      tenants: [
+        // extractionFailed — must be skipped
+        { tenant_name: 'Skipped', end_date: '2024-07-01', base_rent: 50000, extractionFailed: true },
+        // no end_date — must be skipped
+        { tenant_name: 'NoDate',  base_rent: 30000, leased_sqft: 1000 },
+        // null rent — still included, annualRent null
+        { tenant_name: 'NullRent', end_date: '2024-08-01', leased_sqft: 900 },
+      ]
+    }
+  ];
+
+  const pl = AE.computeRenewalPipeline(props, ref);
+
+  assert('rp: items is array',                      Array.isArray(pl.items));
+  assert('rp: 6 items (excludes >365d, failed, noDate)', pl.items.length === 6);
+
+  // Priority assignment
+  const expired  = pl.items.filter(x => x.priority === 'critical' && x.daysRemaining <= 0);
+  const critical = pl.items.filter(x => x.priority === 'critical');
+  const high     = pl.items.filter(x => x.priority === 'high');
+  const medium   = pl.items.filter(x => x.priority === 'medium');
+  const low      = pl.items.filter(x => x.priority === 'low');
+  assert('rp: expired item has priority critical',  expired.length >= 1);
+  assert('rp: high priority item exists',           high.length >= 1);
+  assert('rp: medium priority item exists',         medium.length >= 1);
+  assert('rp: low priority item exists',            low.length >= 1);
+
+  // Sort: most urgent (lowest daysRemaining) first
+  assert('rp: sorted by daysRemaining asc',         pl.items[0].daysRemaining <= pl.items[1].daysRemaining);
+
+  // Field mapping
+  const firstItem = pl.items[0]; // expired Acme Corp
+  assert('rp: propertyName correct',   firstItem.propertyName === 'Main St Office');
+  assert('rp: tenantName correct',     firstItem.tenantName   === 'Acme Corp');
+  assert('rp: suite correct',          firstItem.suite        === '101');
+  assert('rp: annualRent correct',     firstItem.annualRent   === 60000);
+  assert('rp: leasedSqft correct',     firstItem.leasedSqft   === 2000);
+  assert('rp: renewalOptions correct', firstItem.renewalOptions === '1 x 5yr');
+  assert('rp: status default',         firstItem.status       === 'not_started');
+
+  // NullRent item included with null annualRent
+  const nullRentItem = pl.items.find(x => x.tenantName === 'NullRent');
+  assert('rp: null rent item included',             nullRentItem != null);
+  assert('rp: null rent item annualRent is null',   nullRentItem && nullRentItem.annualRent === null);
+
+  // actionCount = critical + high
+  assert('rp: actionCount = critical+high count',   pl.actionCount === critical.length + high.length);
+
+  // actionAnnualRent = sum of rent for critical+high items (excluding null)
+  const actionRentExpected = pl.items
+    .filter(x => x.priority === 'critical' || x.priority === 'high')
+    .reduce((s, x) => s + (x.annualRent || 0), 0);
+  assert('rp: actionAnnualRent correct',            pl.actionAnnualRent === parseFloat(actionRentExpected.toFixed(2)));
+
+  // totalCount
+  assert('rp: totalCount = items.length',           pl.totalCount === pl.items.length);
+}
+
+// ── Group 26b: computeRenewalPipeline edge cases ──────────────────────────────
+{
+  const ref = new Date('2024-06-01T12:00:00Z');
+
+  // Empty props
+  const emptyPl = AE.computeRenewalPipeline([], ref);
+  assert('rp: empty props → items empty',    emptyPl.items.length   === 0);
+  assert('rp: empty props → actionCount 0', emptyPl.actionCount     === 0);
+  assert('rp: empty props → totalCount 0',  emptyPl.totalCount      === 0);
+
+  // _renewalStatus preserved
+  const propWithStatus = [{
+    id: 'px', name: 'Test', tenants: [
+      { tenant_name: 'A', end_date: '2024-07-01', base_rent: 10000,
+        leased_sqft: 500, _renewalStatus: 'negotiating' },
+    ]
+  }];
+  const pl = AE.computeRenewalPipeline(propWithStatus, ref);
+  assert('rp: _renewalStatus preserved', pl.items[0].status === 'negotiating');
+}
+
 // ── Summary ───────────────────────────────────────────────────────────────────
 
 console.log(`\n${'─'.repeat(60)}`);
