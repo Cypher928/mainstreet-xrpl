@@ -3844,6 +3844,20 @@
     .acq-export-btn:hover { border-color: #475569; color: #e2e8f0; }
     .acq-export-note { font-size: 0.75rem; color: #475569; }
 
+    /* ── Citation-backed findings ────────────────────────────────────────── */
+    .acq-findings-list { display: flex; flex-direction: column; gap: 8px; margin-bottom: 24px; }
+    .acq-finding-item { display: flex; align-items: flex-start; gap: 12px;
+      padding: 12px 14px; background: #060d1a; border: 1px solid #1e293b;
+      border-left: 3px solid #C9973A; border-radius: 8px; }
+    .acq-finding-body { flex: 1; min-width: 0; }
+    .acq-finding-header { display: flex; align-items: center; gap: 10px; margin-bottom: 6px; flex-wrap: wrap; }
+    .acq-finding-tenant { font-size: 0.85rem; font-weight: 700; color: #e2e8f0; }
+    .acq-finding-label  { font-size: 0.75rem; color: #64748b; }
+    .acq-finding-cite   { font-size: 0.78rem; color: #94a3b8; font-style: italic;
+      background: #0a1628; border-left: 2px solid #334155; padding: 6px 10px;
+      border-radius: 4px; white-space: pre-wrap; word-break: break-word;
+      max-height: 80px; overflow: hidden; }
+
   </style>
 </head>
 <body>

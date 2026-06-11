@@ -264,13 +264,15 @@
       };
     }
 
-    const recon       = runAcquisitionReconciliation(tenants, invoices, totalSqFt);
+    const recon        = runAcquisitionReconciliation(tenants, invoices, totalSqFt);
     const underbilling = underbillingAnalysis(recon);
-    const caps        = capLeakageAnalysis(recon);
-    const exclusions  = exclusionAnalysis(tenants, invoices);
+    const caps         = capLeakageAnalysis(recon);
+    const exclusions   = exclusionAnalysis(tenants, invoices);
     const auditWindows = auditWindowAnalysis(tenants);
-    const gap         = operationalVsStructuralGap(underbilling);
-    const matching    = tenantMatchingAnalysis(tenants, invoices);
+    const gap          = operationalVsStructuralGap(underbilling);
+    const matching     = tenantMatchingAnalysis(tenants, invoices);
+    const renewalRisk  = renewalRiskAnalysis(tenants);
+    const proRataRisk  = proRataRiskAnalysis(tenants);
 
     const totalExpenses  = invoices.reduce((s, inv) => s + (parseFloat(inv.amount) || 0), 0);
     const totalRecovered = recon.reduce((s, r) => s + r.allocatedAmount, 0);
@@ -278,8 +280,12 @@
       ? parseFloat(((totalRecovered / totalExpenses) * 100).toFixed(1))
       : 0;
 
-    const openAuditWindows       = auditWindows.filter(a => a.windowStatus === 'open' || a.windowStatus === 'closing').length;
+    const openAuditWindows        = auditWindows.filter(a => a.windowStatus === 'open' || a.windowStatus === 'closing').length;
     const unusualExclusionTenants = exclusions.filter(e => e.hasUnusualExclusions).length;
+    const criticalRenewalCount    = renewalRisk.filter(r => r.riskLevel === 'critical' || r.riskLevel === 'high').length;
+
+    const partialReport = { capLeakage: caps, exclusions, auditWindows, underbilling, renewalRisk };
+    const findings      = buildFindingsWithCitations(partialReport, tenants);
 
     const topRisks = [
       caps.annualizedTotal > 0 && {
@@ -306,6 +312,12 @@
         annualImpact: null,
         detail:       `${unusualExclusionTenants} tenant(s) have unusual exclusion language`,
       },
+      criticalRenewalCount > 0 && {
+        type:         'renewal_risk',
+        label:        'Lease Expiry Risk',
+        annualImpact: null,
+        detail:       `${criticalRenewalCount} tenant(s) have leases expiring within 12 months or already expired`,
+      },
     ].filter(Boolean).sort((a, b) => (b.annualImpact || 0) - (a.annualImpact || 0));
 
     return {
@@ -320,6 +332,7 @@
         openAuditWindows,
         unusualExclusionTenants,
         matchRate:               matching.matchRate,
+        criticalRenewalCount,
       },
       reconciliation:  recon,
       underbilling,
@@ -327,6 +340,9 @@
       exclusions,
       auditWindows,
       gap,
+      renewalRisk,
+      proRataRisk,
+      findings,
       topRisks,
       generatedAt:     new Date().toISOString(),
     };
@@ -341,6 +357,212 @@
     return String(raw).split(',').map(s => s.trim().toLowerCase()).filter(Boolean);
   }
 
+  // Returns a citation object for `field` from tenant.quotes, or null.
+  // Field names match the keys Claude returns: cam_cap, audit_rights,
+  // renewal_options, pro_rata_method, excluded_categories, etc.
+  function _extractCitation(tenant, field) {
+    if (!tenant || !field) return null;
+    const quotes = tenant.quotes || tenant._quotes || {};
+    const text   = quotes[field];
+    if (!text || typeof text !== 'string' || !text.trim()) return null;
+    return {
+      field,
+      text:       text.trim(),
+      tenantName: tenant.tenantName || tenant.tenant_name || '',
+      tenantId:   tenant.id || null,
+    };
+  }
+
+  // Builds a fast lookup: { [tenantId]: { [field]: quoteText }, ... }
+  // Falls back to tenantName as key when id is absent.
+  function buildCitationIndex(tenants) {
+    const index = {};
+    for (const t of tenants) {
+      const key    = t.id || (t.tenantName || t.tenant_name || '');
+      if (!key) continue;
+      const quotes = t.quotes || t._quotes || {};
+      index[key]   = {};
+      for (const [f, text] of Object.entries(quotes)) {
+        if (text && typeof text === 'string' && text.trim()) {
+          index[key][f] = text.trim();
+        }
+      }
+    }
+    return index;
+  }
+
+  // ─── Renewal Risk Analysis ────────────────────────────────────────────────
+  // Flags tenants whose leases expire within 2 years and/or lack renewal options.
+  // riskLevel: 'critical' | 'high' | 'medium' | 'low' | 'none'
+
+  const RENEWAL_THRESHOLDS = { critical: 0, high: 365, medium: 730 };
+
+  function renewalRiskAnalysis(tenants) {
+    const now = Date.now();
+    return tenants.map(t => {
+      const name         = t.tenantName || t.tenant_name || '';
+      const endDate      = t.end_date || t.lease_end_date || null;
+      const hasRenewal   = !!(t.renewal_options && String(t.renewal_options).trim());
+      let daysToExpiry   = null;
+
+      if (endDate) {
+        daysToExpiry = Math.round((new Date(endDate).getTime() - now) / 86400000);
+      }
+
+      const riskLevel = daysToExpiry === null          ? 'none'
+                      : daysToExpiry < 0               ? 'critical'
+                      : daysToExpiry < RENEWAL_THRESHOLDS.high    && !hasRenewal ? 'high'
+                      : daysToExpiry < RENEWAL_THRESHOLDS.high    &&  hasRenewal ? 'medium'
+                      : daysToExpiry < RENEWAL_THRESHOLDS.medium  && !hasRenewal ? 'medium'
+                      : daysToExpiry < RENEWAL_THRESHOLDS.medium  &&  hasRenewal ? 'low'
+                      : 'none';
+
+      return {
+        tenantName:       name,
+        tenantId:         t.id || null,
+        leaseEndDate:     endDate,
+        daysToExpiry,
+        hasRenewalOption: hasRenewal,
+        renewalOptions:   t.renewal_options || null,
+        riskLevel,
+        citation:         _extractCitation(t, 'renewal_options'),
+      };
+    }).filter(r => r.riskLevel !== 'none');
+  }
+
+  // ─── Pro-Rata Method Risk Analysis ────────────────────────────────────────
+  // Non-standard methods (occupied, gross) allow tenants to pay less during
+  // vacancy periods, shifting unrecovered costs to the landlord.
+
+  const STANDARD_PRO_RATA = new Set(['rentable', 'leasable']);
+
+  function proRataRiskAnalysis(tenants) {
+    return tenants.map(t => {
+      const name   = t.tenantName || t.tenant_name || '';
+      const method = (t.pro_rata_method || t.proRataMethod || '').toLowerCase().trim();
+      const isNonStandard = !!(method && !STANDARD_PRO_RATA.has(method));
+      const isUnknown     = !method;
+      const riskLevel     = isNonStandard ? 'medium' : isUnknown ? 'low' : 'none';
+
+      return {
+        tenantName:    name,
+        tenantId:      t.id || null,
+        proRataMethod: t.pro_rata_method || t.proRataMethod || null,
+        isNonStandard,
+        isUnknown,
+        riskLevel,
+        citation:      _extractCitation(t, 'pro_rata_method'),
+      };
+    }).filter(r => r.riskLevel !== 'none');
+  }
+
+  // ─── Citation-Backed Findings ─────────────────────────────────────────────
+  // Flattens the report into a single list of actionable findings.
+  // Each finding carries the verbatim lease clause that creates the risk so
+  // a buyer can present evidence to an investment committee.
+  //
+  // Returns array sorted by annualValue descending (highest impact first).
+
+  function buildFindingsWithCitations(report, tenants) {
+    const byId   = {};
+    const byName = {};
+    for (const t of tenants) {
+      const id   = t.id   || null;
+      const name = (t.tenantName || t.tenant_name || '').toLowerCase();
+      if (id)   byId[id]     = t;
+      if (name) byName[name] = t;
+    }
+
+    function lookupTenant(tenantName, tenantId) {
+      if (tenantId && byId[tenantId])           return byId[tenantId];
+      if (tenantName && byName[tenantName.toLowerCase()]) return byName[tenantName.toLowerCase()];
+      return null;
+    }
+
+    const findings = [];
+
+    // ── Cap leakage ────────────────────────────────────────────────────────
+    for (const r of (report.capLeakage?.affectedTenants || [])) {
+      const t = lookupTenant(r.tenantName, r.tenantId);
+      findings.push({
+        type:        'cap_leakage',
+        label:       'CAM Cap Leakage',
+        tenantName:  r.tenantName,
+        tenantId:    r.tenantId,
+        value:       r.capLeakage,
+        annualValue: r.annualizedLeakage,
+        citation:    t ? _extractCitation(t, 'cam_cap') : null,
+      });
+    }
+
+    // ── Non-standard exclusions ────────────────────────────────────────────
+    for (const r of (report.exclusions || [])) {
+      if (!r.hasUnusualExclusions) continue;
+      const t = lookupTenant(r.tenantName, r.tenantId);
+      findings.push({
+        type:        'unusual_exclusion',
+        label:       'Non-Standard CAM Exclusion',
+        tenantName:  r.tenantName,
+        tenantId:    r.tenantId,
+        value:       r.unusualExclusions,
+        annualValue: null,
+        citation:    t ? _extractCitation(t, 'excluded_categories') : null,
+      });
+    }
+
+    // ── Audit window risk ──────────────────────────────────────────────────
+    for (const r of (report.auditWindows || [])) {
+      if (r.windowStatus !== 'closing' && r.windowStatus !== 'expired') continue;
+      const t = lookupTenant(r.tenantName, r.tenantId);
+      findings.push({
+        type:        'audit_window',
+        label:       r.windowStatus === 'expired' ? 'Audit Window Expired' : 'Audit Window Closing',
+        tenantName:  r.tenantName,
+        tenantId:    r.tenantId,
+        value:       r.daysToExpiry,
+        annualValue: null,
+        citation:    t ? _extractCitation(t, 'audit_rights') : null,
+      });
+    }
+
+    // ── Underbilling (significant gaps only — ≥$1) ─────────────────────────
+    for (const r of (report.underbilling || [])) {
+      if (r.gap < 1) continue;
+      const t             = lookupTenant(r.tenantName, r.tenantId);
+      const citationField = r.cause === 'cap'        ? 'cam_cap'
+                          : r.cause === 'exclusions' ? 'excluded_categories'
+                          : null;
+      findings.push({
+        type:        'underbilling',
+        label:       'CAM Underbilling Gap',
+        tenantName:  r.tenantName,
+        tenantId:    r.tenantId,
+        cause:       r.cause,
+        value:       r.gap,
+        annualValue: parseFloat((r.gap * 12).toFixed(2)),
+        gapPct:      r.gapPct,
+        citation:    (t && citationField) ? _extractCitation(t, citationField) : null,
+      });
+    }
+
+    // ── Renewal risk ───────────────────────────────────────────────────────
+    for (const r of (report.renewalRisk || [])) {
+      if (r.riskLevel !== 'critical' && r.riskLevel !== 'high') continue;
+      findings.push({
+        type:        'renewal_risk',
+        label:       r.riskLevel === 'critical' ? 'Lease Expired' : 'Lease Expiring Soon',
+        tenantName:  r.tenantName,
+        tenantId:    r.tenantId,
+        value:       r.daysToExpiry,
+        annualValue: null,
+        riskLevel:   r.riskLevel,
+        citation:    r.citation,
+      });
+    }
+
+    return findings.sort((a, b) => (b.annualValue || 0) - (a.annualValue || 0));
+  }
+
   // ─── Exports ──────────────────────────────────────────────────────────────
 
   const AcquisitionEngine = {
@@ -352,6 +574,10 @@
     exclusionAnalysis,
     auditWindowAnalysis,
     operationalVsStructuralGap,
+    renewalRiskAnalysis,
+    proRataRiskAnalysis,
+    buildCitationIndex,
+    buildFindingsWithCitations,
     buildAcquisitionReport,
   };
 

@@ -16381,9 +16381,10 @@ function _renderAcqReport(report, container) {
     <div class="acq-kpi"><div class="acq-kpi-val">${s.openAuditWindows}</div><div class="acq-kpi-lbl">Open Audit Windows</div></div>
   </div>`;
 
-  const riskItems = report.topRisks.map(r => {
-    const icons = { cap_leakage: '⚠️', structural_gap: '🔒', operational_gap: '🔧', unusual_exclusions: '📋' };
-    return `
+  const icons = { cap_leakage: '⚠️', structural_gap: '🔒', operational_gap: '🔧',
+                  unusual_exclusions: '📋', renewal_risk: '📅' };
+
+  const riskItems = report.topRisks.map(r => `
     <div class="acq-risk-item">
       <span class="acq-risk-icon">${icons[r.type] || '⚠️'}</span>
       <div>
@@ -16391,13 +16392,43 @@ function _renderAcqReport(report, container) {
         <div class="acq-risk-detail">${esc(r.detail)}</div>
       </div>
       ${r.annualImpact ? `<div class="acq-risk-impact">${fmt(r.annualImpact)}/yr</div>` : ''}
-    </div>`;
-  }).join('');
+    </div>`).join('');
 
   const topRisksHtml = report.topRisks.length
     ? `<div class="acq-top-risks"><h3>&#x26A0;&#xFE0F; Top Risks</h3>${riskItems}</div>`
     : '';
 
+  // ── Citation-backed findings ───────────────────────────────────────────────
+  const findingsHtml = (() => {
+    const ff = (report.findings || []);
+    if (!ff.length) return '';
+    const typeIcons = { cap_leakage: '⚠️', unusual_exclusion: '📋', audit_window: '🕐',
+                        underbilling: '💸', renewal_risk: '📅' };
+    const items = ff.map(f => {
+      const citHtml = f.citation
+        ? `<div class="acq-finding-cite">&#x201C;${esc(f.citation.text)}&#x201D;</div>`
+        : '';
+      const valHtml = f.annualValue
+        ? `<div class="acq-risk-impact">${fmt(f.annualValue)}/yr</div>`
+        : '';
+      return `
+      <div class="acq-finding-item">
+        <span class="acq-risk-icon">${typeIcons[f.type] || '⚠️'}</span>
+        <div class="acq-finding-body">
+          <div class="acq-finding-header">
+            <span class="acq-finding-tenant">${esc(f.tenantName)}</span>
+            <span class="acq-finding-label">${esc(f.label)}</span>
+          </div>
+          ${citHtml}
+        </div>
+        ${valHtml}
+      </div>`;
+    }).join('');
+    return `<div class="acq-section-sub">Key Findings with Lease Citations</div>
+    <div class="acq-findings-list">${items}</div>`;
+  })();
+
+  // ── Tenant-level recon table ───────────────────────────────────────────────
   const rows = (report.underbilling || []).map(r => {
     const badgeCls = r.cause === 'none' ? 'none' : r.cause;
     return `
@@ -16411,26 +16442,47 @@ function _renderAcqReport(report, container) {
   }).join('');
 
   const tenantTable = rows ? `
-  <div class="acq-section-sub">Tenant-Level Analysis</div>
+  <div class="acq-section-sub">Tenant-Level Reconciliation</div>
   <table class="acq-risk-table">
-    <thead>
-      <tr>
-        <th>Tenant</th>
-        <th>Full Liability</th>
-        <th>Allocated</th>
-        <th>Gap</th>
-        <th>Cause</th>
-      </tr>
-    </thead>
+    <thead><tr>
+      <th>Tenant</th><th>Full Liability</th><th>Allocated</th><th>Gap</th><th>Cause</th>
+    </tr></thead>
     <tbody>${rows}</tbody>
   </table>` : '';
 
+  // ── Audit windows ──────────────────────────────────────────────────────────
   const auditChips = (report.auditWindows || []).map(w =>
     `<span class="acq-audit-chip ${esc(w.windowStatus)}">${esc(w.tenantName)} — ${esc(w.windowStatus)}</span>`
   ).join('');
   const auditHtml = auditChips
     ? `<div class="acq-section-sub">Audit Windows</div><div>${auditChips}</div>`
     : '';
+
+  // ── Renewal risk ───────────────────────────────────────────────────────────
+  const renewalHtml = (() => {
+    const rr = (report.renewalRisk || []);
+    if (!rr.length) return '';
+    const chips = rr.map(r => {
+      const cls  = r.riskLevel === 'critical' ? 'acq-audit-chip expired'
+                 : r.riskLevel === 'high'     ? 'acq-audit-chip closing'
+                 : 'acq-audit-chip unknown';
+      const days = r.daysToExpiry !== null
+        ? (r.daysToExpiry < 0 ? 'Expired' : `${r.daysToExpiry}d`)
+        : '?';
+      return `<span class="${cls}">${esc(r.tenantName)} — ${days}</span>`;
+    }).join('');
+    return `<div class="acq-section-sub">Lease Expiry Risk</div><div>${chips}</div>`;
+  })();
+
+  // ── Pro-rata flags ─────────────────────────────────────────────────────────
+  const proRataHtml = (() => {
+    const pr = (report.proRataRisk || []).filter(r => r.isNonStandard);
+    if (!pr.length) return '';
+    const chips = pr.map(r =>
+      `<span class="acq-audit-chip closing">${esc(r.tenantName)} — ${esc(r.proRataMethod || 'unknown')}</span>`
+    ).join('');
+    return `<div class="acq-section-sub">Non-Standard Pro-Rata Methods</div><div>${chips}</div>`;
+  })();
 
   const exportBar = `
   <div class="acq-export-bar">
@@ -16443,8 +16495,11 @@ function _renderAcqReport(report, container) {
     <div class="acq-report-title">Risk Analysis Report</div>
     ${kpis}
     ${topRisksHtml}
+    ${findingsHtml}
     ${tenantTable}
     ${auditHtml}
+    ${renewalHtml}
+    ${proRataHtml}
     ${exportBar}
   </div>`;
 }

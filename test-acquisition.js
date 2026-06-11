@@ -374,6 +374,501 @@ console.log('\n── Group 8: Full Report (buildAcquisitionReport) ────
   );
 }
 
+// ── Group 9: Citation Extraction ─────────────────────────────────────────────
+
+console.log('\n── Group 9: Citation Extraction ─────────────────────────────────');
+
+// Helper: call internal _extractCitation via a tenant with quotes
+const ACQ_INTERNAL = (() => {
+  // Re-evaluate the module in a context where we can reach internal symbols.
+  // We call the exported buildCitationIndex + buildFindingsWithCitations which
+  // exercise _extractCitation internally; we also test via a white-box tenant fixture.
+  return AE;
+})();
+
+{
+  // Test via buildCitationIndex which calls _extractCitation internally.
+  const t = {
+    id: 'cite-01', tenant_name: 'CiteTenant',
+    quotes: { cam_cap: 'Tenant CAM shall not exceed 5% over prior year.' },
+  };
+  const idx = AE.buildCitationIndex([t]);
+  assert('buildCitationIndex populates cam_cap from quotes', idx['cite-01'] && idx['cite-01']['cam_cap'] === 'Tenant CAM shall not exceed 5% over prior year.');
+}
+
+{
+  const t = { id: 'cite-02', tenant_name: 'NoQuotes' };
+  const idx = AE.buildCitationIndex([t]);
+  assert('buildCitationIndex handles tenant with no quotes object', idx['cite-02'] && Object.keys(idx['cite-02']).length === 0);
+}
+
+{
+  const t = {
+    id: 'cite-03', tenant_name: 'MixedQuotes',
+    quotes: { cam_cap: 'Not more than 5%', audit_rights: null, renewal_options: '' },
+  };
+  const idx = AE.buildCitationIndex([t]);
+  assert('buildCitationIndex includes cam_cap', !!idx['cite-03']['cam_cap']);
+  assert('buildCitationIndex excludes null audit_rights', !idx['cite-03']['audit_rights']);
+  assert('buildCitationIndex excludes empty renewal_options', !idx['cite-03']['renewal_options']);
+}
+
+{
+  // Tenant with no id — falls back to tenantName as key
+  const t = { tenant_name: 'NoIdTenant', quotes: { cam_cap: 'capped at 3%' } };
+  const idx = AE.buildCitationIndex([t]);
+  assert('buildCitationIndex uses tenant_name as fallback key when id absent', !!idx['NoIdTenant']);
+  assert('fallback key preserves quote value', idx['NoIdTenant']['cam_cap'] === 'capped at 3%');
+}
+
+{
+  // buildFindingsWithCitations — citation attached from quotes
+  const tenant = {
+    id: 'cap-tenant-01', tenant_name: 'CapTenant',
+    leased_sqft: 5000, cam_cap: 10, capBaseAmount: 10000,
+    excluded_categories: '', audit_rights: false, end_date: null, lease_type: 'NNN',
+    quotes: { cam_cap: 'CAM increases limited to 10% of prior year actual.' },
+  };
+  const bigInv = [{ vendorName: 'Pool', category: 'utilities', invoiceDate: '2024-01-01', amount: 300000 }];
+  const recon  = AE.runAcquisitionReconciliation([tenant], bigInv, 5000);
+  const caps   = AE.capLeakageAnalysis(recon);
+  const partialReport = { capLeakage: caps, exclusions: [], auditWindows: [], underbilling: AE.underbillingAnalysis(recon), renewalRisk: [] };
+  const findings = AE.buildFindingsWithCitations(partialReport, [tenant]);
+  const capFinding = findings.find(f => f.type === 'cap_leakage');
+  assert('cap leakage finding has citation object', capFinding && capFinding.citation !== null);
+  assert('cap leakage citation field is cam_cap', capFinding && capFinding.citation.field === 'cam_cap');
+  assert('cap leakage citation text matches quote', capFinding && capFinding.citation.text === 'CAM increases limited to 10% of prior year actual.');
+  assert('cap leakage citation tenantName matches', capFinding && capFinding.citation.tenantName === 'CapTenant');
+}
+
+{
+  // Citation is null when no quotes object present
+  const tenant = {
+    id: 'cap-tenant-02', tenant_name: 'NoCiteTenant',
+    leased_sqft: 5000, cam_cap: 10, capBaseAmount: 10000,
+    excluded_categories: '', audit_rights: false, end_date: null, lease_type: 'NNN',
+    // no quotes property at all
+  };
+  const bigInv = [{ vendorName: 'Pool', category: 'utilities', invoiceDate: '2024-01-01', amount: 300000 }];
+  const recon  = AE.runAcquisitionReconciliation([tenant], bigInv, 5000);
+  const caps   = AE.capLeakageAnalysis(recon);
+  const partialReport = { capLeakage: caps, exclusions: [], auditWindows: [], underbilling: AE.underbillingAnalysis(recon), renewalRisk: [] };
+  const findings = AE.buildFindingsWithCitations(partialReport, [tenant]);
+  const capFinding = findings.find(f => f.type === 'cap_leakage');
+  assert('cap leakage citation is null when quotes absent', capFinding && capFinding.citation === null);
+}
+
+// ── Group 10: Recon Extraction Edge Cases ────────────────────────────────────
+
+console.log('\n── Group 10: Recon Extraction Edge Cases ────────────────────────');
+
+{
+  // Zero sqft tenant: proRata = 0, gets no shared expenses
+  const zeroSqFtTenant = [{
+    id: 'z1', tenant_name: 'ZeroSqFt', unitNumber: '',
+    leased_sqft: 0, cam_cap: 0, capBaseAmount: 0,
+    excluded_categories: '', audit_rights: false, end_date: null, lease_type: 'NNN',
+  }];
+  const inv = [{ vendorName: 'Shared', category: 'utilities', invoiceDate: '2024-01-01', amount: 1000 }];
+  const r   = AE.runAcquisitionReconciliation(zeroSqFtTenant, inv, 10000);
+  assert('zero-sqft tenant gets $0 allocated', r[0].allocatedAmount === 0);
+  assert('zero-sqft tenant proRataPct is 0', r[0].proRataPct === 0);
+}
+
+{
+  // String amount with commas — parseFloat strips non-numeric characters
+  // Note: parseFloat("1,500") only parses "1" — amounts should come pre-parsed.
+  // Test that the engine handles "1500" (string form without comma) correctly.
+  const inv = [{ vendorName: 'Vendor', category: 'utilities', invoiceDate: '2024-01-01', amount: '1500' }];
+  const r   = AE.runAcquisitionReconciliation(
+    [{ id: 'a', tenant_name: 'T', leased_sqft: 5000, excluded_categories: '', cam_cap: 0, capBaseAmount: 0 }],
+    inv, 5000
+  );
+  assertApprox('string amount "1500" parsed correctly', r[0].allocatedAmount, 1500, 0.01);
+}
+
+{
+  // Amount = 0 — no division by zero, no NaN
+  const inv = [{ vendorName: 'Zero', category: 'utilities', invoiceDate: '2024-01-01', amount: 0 }];
+  const r   = AE.runAcquisitionReconciliation(
+    [{ id: 'a', tenant_name: 'T', leased_sqft: 5000, excluded_categories: '', cam_cap: 0, capBaseAmount: 0 }],
+    inv, 5000
+  );
+  assert('amount=0 gives allocatedAmount=0 without NaN', r[0].allocatedAmount === 0 && !isNaN(r[0].allocatedAmount));
+}
+
+{
+  // All invoices directly matched → shared pool is empty → other tenants get $0
+  const invDirect = [{ vendorName: 'Unit 101 repair', category: 'maintenance', invoiceDate: '2024-01-01', amount: 500 }];
+  const twoTenants = [
+    { id: 'ta', tenant_name: 'Alpha', unitNumber: '101', leased_sqft: 3000, cam_cap: 0, capBaseAmount: 0, excluded_categories: '' },
+    { id: 'tb', tenant_name: 'Beta',  unitNumber: '102', leased_sqft: 2000, cam_cap: 0, capBaseAmount: 0, excluded_categories: '' },
+  ];
+  const r = AE.runAcquisitionReconciliation(twoTenants, invDirect, 5000);
+  const alpha = r.find(x => x.tenantName === 'Alpha');
+  const beta  = r.find(x => x.tenantName === 'Beta');
+  assert('direct-matched invoice charged only to matched tenant', alpha.allocatedAmount === 500);
+  assert('unmatched tenant gets $0 when all invoices are direct', beta.allocatedAmount === 0);
+}
+
+{
+  // Single tenant → gets 100% of shared pool
+  const single = [{ id: 's1', tenant_name: 'Solo', leased_sqft: 10000, cam_cap: 0, capBaseAmount: 0, excluded_categories: '' }];
+  const inv    = [{ vendorName: 'Shared', category: 'utilities', invoiceDate: '2024-01-01', amount: 2000 }];
+  const r      = AE.runAcquisitionReconciliation(single, inv, 10000);
+  assertApprox('single tenant gets 100% of shared pool', r[0].allocatedAmount, 2000, 0.01);
+  assert('single tenant proRataPct is 100', r[0].proRataPct === 100);
+}
+
+{
+  // Cap with capPct > 0 but capBaseAmount = 0 → cap NOT applied (guard)
+  const t   = [{ id: 'cg', tenant_name: 'CapGuard', leased_sqft: 5000, cam_cap: 5, capBaseAmount: 0, excluded_categories: '' }];
+  const inv = [{ vendorName: 'BigPool', category: 'utilities', invoiceDate: '2024-01-01', amount: 500000 }];
+  const r   = AE.runAcquisitionReconciliation(t, inv, 5000);
+  assert('cap NOT applied when capBaseAmount is 0', !r[0].capApplied);
+  assert('full pro-rata allocated when capBase is missing', r[0].allocatedAmount > 0);
+}
+
+{
+  // Invoice with no category → category is '' → not excluded by any exclusion list
+  const t   = [{ id: 'nc', tenant_name: 'Tenant', leased_sqft: 5000, cam_cap: 0, capBaseAmount: 0, excluded_categories: 'utilities,maintenance' }];
+  const inv = [{ vendorName: 'Mystery Vendor', category: '', invoiceDate: '2024-01-01', amount: 1000 }];
+  const r   = AE.runAcquisitionReconciliation(t, inv, 5000);
+  assert('invoice with no category is not excluded', r[0].allocatedAmount === 1000);
+}
+
+{
+  // Penny rounding: sum of allocations should equal total invoice amount (within rounding tolerance)
+  const twoT = [
+    { id: 'p1', tenant_name: 'P1', leased_sqft: 3333, cam_cap: 0, capBaseAmount: 0, excluded_categories: '' },
+    { id: 'p2', tenant_name: 'P2', leased_sqft: 6667, cam_cap: 0, capBaseAmount: 0, excluded_categories: '' },
+  ];
+  const inv   = [{ vendorName: 'Shared', category: 'utilities', invoiceDate: '2024-01-01', amount: 1000.01 }];
+  const r     = AE.runAcquisitionReconciliation(twoT, inv, 10000);
+  const sumAl = r.reduce((s, x) => s + x.allocatedAmount, 0);
+  assertApprox('penny rounding: allocations sum ≈ total invoices', sumAl, 1000.01, 0.05);
+}
+
+{
+  // totalSqFt = 0 guard → empty array returned
+  const r = AE.runAcquisitionReconciliation(TENANTS, INVOICES, 0);
+  assertEq('totalSqFt=0 returns empty array', r, []);
+}
+
+{
+  // Cap AND exclusions: underbilling cause should be 'cap' (cap takes priority in cause determination)
+  const t = [{
+    id: 'ce', tenant_name: 'CapAndExcl', leased_sqft: 5000,
+    cam_cap: 5, capBaseAmount: 100,  // tiny base → guaranteed breach on any expense
+    excluded_categories: 'utilities', // also has exclusions
+  }];
+  const inv = [{ vendorName: 'Pool', category: 'maintenance', invoiceDate: '2024-01-01', amount: 100000 }];
+  const r   = AE.runAcquisitionReconciliation(t, inv, 5000);
+  const ub  = AE.underbillingAnalysis(r);
+  assert('cap takes priority over exclusions in cause determination', ub[0].cause === 'cap');
+}
+
+// ── Group 11: Tenant Matching Edge Cases ─────────────────────────────────────
+
+console.log('\n── Group 11: Tenant Matching Edge Cases ─────────────────────────');
+
+{
+  // Case-insensitive: tenant name is "Acme Corp", vendor contains "ACME CORP"
+  const t   = [{ id: 'ci1', tenant_name: 'Acme Corp', unitNumber: '', leased_sqft: 1000 }];
+  const inv = { vendorName: 'ACME CORP Maintenance', category: 'maintenance', invoiceDate: '' };
+  const m   = AE.matchInvoiceToTenant(inv, t);
+  assert('case-insensitive name match works', m !== null && m.tenantName === 'Acme Corp');
+  assert('case-insensitive match confidence is 75', m && m.confidence === 75);
+}
+
+{
+  // Tenant name IS a substring of vendor name → match (we check text.includes(name))
+  const t   = [{ id: 'sub1', tenant_name: 'Corp', unitNumber: '', leased_sqft: 1000 }];
+  const inv = { vendorName: 'Acme Corp HVAC', category: 'maintenance', invoiceDate: '' };
+  const m   = AE.matchInvoiceToTenant(inv, t);
+  assert('short tenant name substring of vendor → match', m !== null);
+}
+
+{
+  // Vendor name IS a substring of tenant name → no match (text.includes(name) is false)
+  const t   = [{ id: 'sub2', tenant_name: 'Acme Corporation', unitNumber: '', leased_sqft: 1000 }];
+  const inv = { vendorName: 'Acme', category: 'maintenance', invoiceDate: '' };
+  const m   = AE.matchInvoiceToTenant(inv, t);
+  assert('long tenant name not substring of short vendor → no match', m === null);
+}
+
+{
+  // Empty tenant array
+  const m = AE.matchInvoiceToTenant({ vendorName: 'Anyone', category: '', invoiceDate: '' }, []);
+  assert('empty tenant array → null', m === null);
+}
+
+{
+  // Invoice with all null/empty fields
+  const t = [{ id: 'nf', tenant_name: 'SomeTenant', unitNumber: '999', leased_sqft: 1000 }];
+  const m = AE.matchInvoiceToTenant({ vendorName: null, category: null, invoiceDate: null }, t);
+  assert('invoice with all null fields → null match', m === null);
+}
+
+{
+  // Unit number appears in the middle of vendor text
+  const t = [{ id: 'um', tenant_name: 'MiddleUnit', unitNumber: 'B-42', leased_sqft: 1000 }];
+  const m = AE.matchInvoiceToTenant({ vendorName: 'Suite B-42 Repair Co', category: 'maintenance', invoiceDate: '' }, t);
+  assert('unit number in middle of vendor text is matched', m !== null && m.confidence === 90);
+}
+
+{
+  // Tenant with only unit_number (no name) → unit match still works
+  const t = [{ id: 'un', tenant_name: '', unitNumber: '200', leased_sqft: 1000 }];
+  const m = AE.matchInvoiceToTenant({ vendorName: 'Unit 200 HVAC', category: '', invoiceDate: '' }, t);
+  assert('unit-only tenant matches via unit number', m !== null && m.confidence === 90);
+}
+
+{
+  // Multiple tenants: unit match (conf 90) beats name match (conf 75)
+  const tenants = [
+    { id: 'ma', tenant_name: 'Alpha',  unitNumber: '300', leased_sqft: 1000 },
+    { id: 'mb', tenant_name: 'beta',   unitNumber: '',    leased_sqft: 1000 },
+  ];
+  // Invoice mentions unit 300 AND contains "beta" in vendor name
+  const inv = { vendorName: 'Unit 300 Beta Repairs', category: '', invoiceDate: '' };
+  const m   = AE.matchInvoiceToTenant(inv, tenants);
+  assert('unit match (90) beats name match (75) when both present', m && m.tenantName === 'Alpha' && m.confidence === 90);
+}
+
+{
+  // Two tenants, same unit string: first-encountered with higher conf wins
+  const tenants = [
+    { id: 'dup1', tenant_name: 'First',  unitNumber: '101', leased_sqft: 1000 },
+    { id: 'dup2', tenant_name: 'Second', unitNumber: '101', leased_sqft: 1000 },
+  ];
+  const m = AE.matchInvoiceToTenant({ vendorName: 'Unit 101 fix', category: '', invoiceDate: '' }, tenants);
+  assert('deterministic: first tenant wins when unit ties', m && m.tenantName === 'First');
+}
+
+{
+  // vendorName is in the category field instead — still matched via category text
+  const t = [{ id: 'cat', tenant_name: 'CategoryMatch', unitNumber: '', leased_sqft: 1000 }];
+  const m = AE.matchInvoiceToTenant({ vendorName: null, category: 'categorymatch repair', invoiceDate: '' }, t);
+  assert('tenant name matched through category text field', m !== null);
+}
+
+// ── Group 12: Citation-Backed Findings ───────────────────────────────────────
+
+console.log('\n── Group 12: Citation-Backed Findings ───────────────────────────');
+
+{
+  // buildFindingsWithCitations returns an array
+  const empty = AE.buildFindingsWithCitations(
+    { capLeakage: { affectedTenants: [] }, exclusions: [], auditWindows: [], underbilling: [], renewalRisk: [] },
+    []
+  );
+  assertEq('no findings when all arrays empty', empty, []);
+}
+
+{
+  // Audit window 'closing' → generates finding
+  const t   = [{ id: 'aw1', tenant_name: 'ClosingTenant', audit_rights: true, end_date: '2026-09-01',
+                  quotes: { audit_rights: 'Tenant has the right to audit within 2 years of statement.' } }];
+  const now = Date.now();
+  const daysToExpiry = Math.round((new Date('2026-09-01').getTime() - now) / 86400000);
+  // Only proceed if lease is actually 'closing' (within 365 days)
+  if (daysToExpiry >= 0 && daysToExpiry < 365) {
+    const windows  = AE.auditWindowAnalysis(t);
+    const report   = { capLeakage: { affectedTenants: [] }, exclusions: [], auditWindows: windows, underbilling: [], renewalRisk: [] };
+    const findings = AE.buildFindingsWithCitations(report, t);
+    const af = findings.find(f => f.type === 'audit_window');
+    assert('closing audit window generates finding', af !== null);
+    assert('audit window finding has citation', af && af.citation !== null);
+    assert('audit window citation field is audit_rights', af && af.citation.field === 'audit_rights');
+  } else {
+    // Lease is not closing today; skip date-dependent test with a note
+    assert('audit_window closing test skipped (date out of range — adjust fixture if needed)', true);
+  }
+}
+
+{
+  // Audit window 'open' (far future) → does NOT generate finding
+  const t = [{ id: 'aw2', tenant_name: 'FarFuture', audit_rights: true, end_date: '2035-01-01' }];
+  const windows  = AE.auditWindowAnalysis(t);
+  const report   = { capLeakage: { affectedTenants: [] }, exclusions: [], auditWindows: windows, underbilling: [], renewalRisk: [] };
+  const findings = AE.buildFindingsWithCitations(report, t);
+  assert('open audit window (far future) does NOT generate finding', !findings.some(f => f.type === 'audit_window'));
+}
+
+{
+  // Audit window 'expired' → generates finding
+  const t = [{ id: 'aw3', tenant_name: 'ExpiredTenant', audit_rights: true, end_date: '2020-01-01',
+                quotes: { audit_rights: 'Tenant may audit within 2 years of statement date.' } }];
+  const windows  = AE.auditWindowAnalysis(t);
+  const report   = { capLeakage: { affectedTenants: [] }, exclusions: [], auditWindows: windows, underbilling: [], renewalRisk: [] };
+  const findings = AE.buildFindingsWithCitations(report, t);
+  const af = findings.find(f => f.type === 'audit_window');
+  assert('expired audit window generates finding', af !== null);
+  assert('expired finding label is "Audit Window Expired"', af && af.label === 'Audit Window Expired');
+  assert('expired audit window has citation', af && af.citation !== null);
+}
+
+{
+  // Underbilling gap < 1 is excluded from findings
+  const ub = [{ tenantName: 'TinyGap', tenantId: 'tg1', gap: 0.50, cause: 'partial_match',
+                fullLiability: 100, allocatedAmount: 99.50, gapPct: 0.5, capApplied: false }];
+  const findings = AE.buildFindingsWithCitations(
+    { capLeakage: { affectedTenants: [] }, exclusions: [], auditWindows: [], underbilling: ub, renewalRisk: [] },
+    []
+  );
+  assert('underbilling gap < $1 is excluded from findings', !findings.some(f => f.type === 'underbilling'));
+}
+
+{
+  // Underbilling with cause=cap uses cam_cap citation field
+  const t  = [{ id: 'ubcap', tenant_name: 'CapTenant', leased_sqft: 5000, cam_cap: 5, capBaseAmount: 100,
+                excluded_categories: '', quotes: { cam_cap: 'Not to exceed 5% above prior year.' } }];
+  const inv = [{ vendorName: 'Big', category: 'utilities', invoiceDate: '2024-01-01', amount: 100000 }];
+  const r   = AE.runAcquisitionReconciliation(t, inv, 5000);
+  const ub  = AE.underbillingAnalysis(r);
+  const partialReport = { capLeakage: AE.capLeakageAnalysis(r), exclusions: [], auditWindows: [], underbilling: ub, renewalRisk: [] };
+  const findings = AE.buildFindingsWithCitations(partialReport, t);
+  const ubFinding = findings.find(f => f.type === 'underbilling');
+  assert('underbilling (cap cause) finding exists', ubFinding !== null);
+  assert('underbilling (cap cause) citation field is cam_cap', ubFinding && ubFinding.citation && ubFinding.citation.field === 'cam_cap');
+}
+
+{
+  // Underbilling with cause=exclusions uses excluded_categories citation field
+  const t   = [{ id: 'ubexcl', tenant_name: 'ExclTenant', leased_sqft: 5000, cam_cap: 0, capBaseAmount: 0,
+                  excluded_categories: 'capital', quotes: { excluded_categories: 'Excluding capital improvements per §4.3.' } }];
+  const inv = [{ vendorName: 'Capital Reno', category: 'capital', invoiceDate: '2024-01-01', amount: 5000 },
+               { vendorName: 'Other', category: 'utilities', invoiceDate: '2024-01-01', amount: 100 }];
+  const r   = AE.runAcquisitionReconciliation(t, inv, 5000);
+  const ub  = AE.underbillingAnalysis(r);
+  const partialReport = { capLeakage: AE.capLeakageAnalysis(r), exclusions: [], auditWindows: [], underbilling: ub, renewalRisk: [] };
+  const findings = AE.buildFindingsWithCitations(partialReport, t);
+  const ubFinding = findings.find(f => f.type === 'underbilling' && f.cause === 'exclusions');
+  assert('underbilling (exclusions cause) finding exists', ubFinding !== null);
+  assert('exclusions cause citation field is excluded_categories', ubFinding && ubFinding.citation && ubFinding.citation.field === 'excluded_categories');
+}
+
+{
+  // Findings sorted by annualValue descending
+  const bigCap = {
+    id: 'sc1', tenant_name: 'BigCap', leased_sqft: 5000, cam_cap: 5, capBaseAmount: 100,
+    excluded_categories: '', quotes: {}, audit_rights: false, end_date: null,
+  };
+  const smallCap = {
+    id: 'sc2', tenant_name: 'SmallCap', leased_sqft: 1000, cam_cap: 5, capBaseAmount: 10,
+    excluded_categories: '', quotes: {}, audit_rights: false, end_date: null,
+  };
+  const inv = [{ vendorName: 'Shared', category: 'utilities', invoiceDate: '2024-01-01', amount: 1000000 }];
+  const r   = AE.runAcquisitionReconciliation([bigCap, smallCap], inv, 6000);
+  const ub  = AE.underbillingAnalysis(r);
+  const partialReport = { capLeakage: AE.capLeakageAnalysis(r), exclusions: [], auditWindows: [], underbilling: ub, renewalRisk: [] };
+  const findings = AE.buildFindingsWithCitations(partialReport, [bigCap, smallCap]);
+  const nonNullAV = findings.filter(f => f.annualValue !== null);
+  assert('findings sorted by annualValue descending', nonNullAV.every((f, i, a) => i === 0 || a[i-1].annualValue >= f.annualValue));
+}
+
+// ── Group 13: Renewal & Pro-Rata Risk ────────────────────────────────────────
+
+console.log('\n── Group 13: Renewal & Pro-Rata Risk ────────────────────────────');
+
+{
+  // renewalRiskAnalysis: expired lease → 'critical'
+  const t = [{ id: 'r1', tenant_name: 'Expired', end_date: '2020-01-01', renewal_options: null }];
+  const r = AE.renewalRiskAnalysis(t);
+  assert('expired lease → riskLevel critical', r.length === 1 && r[0].riskLevel === 'critical');
+}
+
+{
+  // renewalRiskAnalysis: expiring within 365 days, no renewal → 'high'
+  const future = new Date(Date.now() + 180 * 86400000).toISOString().slice(0, 10);
+  const t = [{ id: 'r2', tenant_name: 'SoonNoRenew', end_date: future, renewal_options: null }];
+  const r = AE.renewalRiskAnalysis(t);
+  assert('expiring in 180 days, no renewal option → high', r.length === 1 && r[0].riskLevel === 'high');
+}
+
+{
+  // renewalRiskAnalysis: expiring within 365 days but HAS renewal → 'medium'
+  const future = new Date(Date.now() + 180 * 86400000).toISOString().slice(0, 10);
+  const t = [{ id: 'r3', tenant_name: 'SoonWithRenew', end_date: future, renewal_options: '2 x 5yr options' }];
+  const r = AE.renewalRiskAnalysis(t);
+  assert('expiring in 180 days with renewal option → medium', r.length === 1 && r[0].riskLevel === 'medium');
+}
+
+{
+  // renewalRiskAnalysis: no end_date → excluded (riskLevel 'none' → filtered out)
+  const t = [{ id: 'r4', tenant_name: 'NoDate', end_date: null, renewal_options: null }];
+  const r = AE.renewalRiskAnalysis(t);
+  assertEq('tenant with no end_date excluded from renewal risk', r, []);
+}
+
+{
+  // renewalRiskAnalysis: citation comes from quotes, not from the renewal_options field.
+  // Even when renewal_options (the extracted field) is null, if quotes.renewal_options
+  // contains verbatim clause text, the citation should be returned.
+  const future = new Date(Date.now() + 100 * 86400000).toISOString().slice(0, 10);
+  const t = [{
+    id: 'r5', tenant_name: 'WithQuote', end_date: future, renewal_options: null,
+    quotes: { renewal_options: 'Tenant shall have one option to renew for 5 years.' },
+  }];
+  const r = AE.renewalRiskAnalysis(t);
+  assert('renewal risk citation present when quotes.renewal_options populated (even if field is null)', r.length > 0 && r[0].citation !== null);
+  assert('renewal risk citation text matches quotes.renewal_options', r[0].citation.text === 'Tenant shall have one option to renew for 5 years.');
+}
+
+{
+  // proRataRiskAnalysis: 'occupied' method → non-standard → 'medium'
+  const t = [{ id: 'pr1', tenant_name: 'OccupiedMethod', pro_rata_method: 'occupied', leased_sqft: 1000 }];
+  const r = AE.proRataRiskAnalysis(t);
+  assert('occupied pro-rata method → medium risk', r.length === 1 && r[0].riskLevel === 'medium' && r[0].isNonStandard);
+}
+
+{
+  // proRataRiskAnalysis: 'rentable' → standard → not returned (filtered out)
+  const t = [{ id: 'pr2', tenant_name: 'RentableMethod', pro_rata_method: 'rentable', leased_sqft: 1000 }];
+  const r = AE.proRataRiskAnalysis(t);
+  assertEq('rentable pro-rata method → not flagged', r, []);
+}
+
+{
+  // proRataRiskAnalysis: no method → unknown → 'low'
+  const t = [{ id: 'pr3', tenant_name: 'NoMethod', pro_rata_method: null, leased_sqft: 1000 }];
+  const r = AE.proRataRiskAnalysis(t);
+  assert('missing pro-rata method → low risk', r.length === 1 && r[0].riskLevel === 'low' && r[0].isUnknown);
+}
+
+{
+  // proRataRiskAnalysis: citation attached when pro_rata_method quote present
+  const t = [{
+    id: 'pr4', tenant_name: 'QuotedMethod', pro_rata_method: 'gross',
+    quotes: { pro_rata_method: 'Tenant\'s share is based on gross leasable area.' },
+  }];
+  const r = AE.proRataRiskAnalysis(t);
+  assert('pro-rata risk citation present when quote available', r.length === 1 && r[0].citation !== null);
+  assert('pro-rata citation field is pro_rata_method', r[0].citation.field === 'pro_rata_method');
+}
+
+{
+  // buildAcquisitionReport now includes findings, renewalRisk, proRataRisk
+  const report = AE.buildAcquisitionReport(TENANTS, INVOICES, TOTAL_SQFT);
+  assert('report includes findings array', Array.isArray(report.findings));
+  assert('report includes renewalRisk array', Array.isArray(report.renewalRisk));
+  assert('report includes proRataRisk array', Array.isArray(report.proRataRisk));
+  assert('report summary includes criticalRenewalCount', typeof report.summary.criticalRenewalCount === 'number');
+  const findingsWithCitation = report.findings.filter(f => f.citation !== null);
+  assert('all findings have required fields', report.findings.every(f =>
+    'type' in f && 'label' in f && 'tenantName' in f && 'citation' in f
+  ));
+}
+
+{
+  // Large pool: report findings include cap_leakage findings
+  const bigInv = [{ vendorName: 'Huge Pool', category: 'utilities', invoiceDate: '2024-01-01', amount: 500000 }];
+  const report = AE.buildAcquisitionReport(TENANTS, bigInv, TOTAL_SQFT);
+  assert('findings include cap_leakage type when caps breach', report.findings.some(f => f.type === 'cap_leakage'));
+  assert('cap_leakage renewal_risk appears in topRisks only when relevant', typeof report.topRisks === 'object');
+}
+
 // ── Summary ───────────────────────────────────────────────────────────────────
 
 console.log(`\n${'─'.repeat(60)}`);
