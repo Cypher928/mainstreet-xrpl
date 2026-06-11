@@ -725,6 +725,88 @@
              total: total, urgent: urgent };
   }
 
+  // ─── Revenue-at-Risk for Expiring Leases ─────────────────────────────────
+  // Superset of computeLeaseAlerts: same bucket logic plus annualRent + sqft
+  // on every alert and byTier / urgentAnnualAtRisk roll-ups.
+  // base_rent on normalized tenants is annual dollars; null when not extracted.
+
+  function computeRevenueAtRisk(props, refDate) {
+    var ref    = refDate ? new Date(refDate) : new Date();
+    var MS_DAY = 86400000;
+
+    var makeTier = function () {
+      return { count: 0, sqft: 0, annualRent: 0, knownRentCount: 0 };
+    };
+    var tiers = {
+      expired: makeTier(), critical: makeTier(), high: makeTier(), medium: makeTier(),
+    };
+
+    var expired  = [], critical = [], high = [], medium = [];
+
+    for (var i = 0; i < props.length; i++) {
+      var prop    = props[i];
+      var tenants = Array.isArray(prop.tenants) ? prop.tenants : [];
+      for (var j = 0; j < tenants.length; j++) {
+        var t = tenants[j];
+        if (!t || !t.end_date || t.extractionFailed) continue;
+        var end = new Date(t.end_date + 'T12:00:00');
+        if (isNaN(end.getTime())) continue;
+        var days = Math.round((end.getTime() - ref.getTime()) / MS_DAY);
+
+        var renewalStr = ((t.renewal_options || t.renewalOptions || '')).toString().trim().toLowerCase();
+        var hasRenewal = !!(renewalStr && renewalStr !== 'none' && renewalStr !== 'no'
+                          && renewalStr !== 'n/a' && renewalStr !== '—' && renewalStr !== '-');
+
+        var sqft       = t.leased_sqft != null ? parseFloat(t.leased_sqft) : null;
+        var annualRent = t.base_rent   != null ? parseFloat(t.base_rent)   : null;
+
+        var alert = {
+          propertyId:   prop.id,
+          propertyName: prop.name || '(unnamed)',
+          tenantName:   t.tenant_name || t.tenantName || '(unnamed)',
+          suite:        t.suite || t.unitNumber || null,
+          endDate:      t.end_date,
+          daysToExpiry: days,
+          hasRenewal:   hasRenewal,
+          annualRent:   (annualRent !== null && !isNaN(annualRent)) ? annualRent : null,
+          sqft:         (sqft       !== null && !isNaN(sqft))       ? sqft       : null,
+        };
+
+        var tierKey;
+        if      (days <   0) { tierKey = 'expired';  expired.push(alert);  }
+        else if (days <=  30) { tierKey = 'critical'; critical.push(alert); }
+        else if (days <=  90) { tierKey = 'high';     high.push(alert);     }
+        else if (days <= 180) { tierKey = 'medium';   medium.push(alert);   }
+        else continue;
+
+        var tier = tiers[tierKey];
+        tier.count++;
+        if (alert.sqft       !== null) tier.sqft       += alert.sqft;
+        if (alert.annualRent !== null) { tier.annualRent += alert.annualRent; tier.knownRentCount++; }
+      }
+    }
+
+    var byDays = function (a, b) { return a.daysToExpiry - b.daysToExpiry; };
+    expired.sort(byDays); critical.sort(byDays); high.sort(byDays); medium.sort(byDays);
+
+    var total  = expired.length + critical.length + high.length + medium.length;
+    var urgent = expired.length + critical.length + high.length;
+
+    var urgentAnnualAtRisk = tiers.expired.annualRent + tiers.critical.annualRent + tiers.high.annualRent;
+    var totalAnnualAtRisk  = urgentAnnualAtRisk + tiers.medium.annualRent;
+    var urgentSqftAtRisk   = tiers.expired.sqft + tiers.critical.sqft + tiers.high.sqft;
+    var totalSqftAtRisk    = urgentSqftAtRisk + tiers.medium.sqft;
+
+    return {
+      expired: expired, critical: critical, high: high, medium: medium,
+      total:   total,   urgent:   urgent,
+      byTier:  tiers,
+      urgentAnnualAtRisk: parseFloat(urgentAnnualAtRisk.toFixed(2)),
+      totalAnnualAtRisk:  parseFloat(totalAnnualAtRisk.toFixed(2)),
+      urgentSqftAtRisk:   parseFloat(urgentSqftAtRisk.toFixed(2)),
+      totalSqftAtRisk:    parseFloat(totalSqftAtRisk.toFixed(2)),
+    };
+  }
 
   // Pure function — no DOM, no Supabase. Returns a property-shaped object
   // ready to be passed directly to script.js saveProperty().
@@ -791,6 +873,7 @@
     rolloverRiskAnalysis,
     buildPropertyFromReview,
     computeLeaseAlerts,
+    computeRevenueAtRisk,
   };
 
   if (typeof module !== 'undefined' && module.exports) {

@@ -1238,6 +1238,81 @@ console.log('\n── Group 21: computeLeaseAlerts ─────────�
   assert('alerts: high bucket sorted near-first', r.high[0].tenantName === 'Near');
 }
 
+// ── Group 22: computeRevenueAtRisk ────────────────────────────────────────────
+console.log('\n── Group 22: computeRevenueAtRisk ───────────────────────────────────');
+
+{
+  const MS_DAY = 86400000;
+  const ref    = new Date('2024-06-01T12:00:00Z');
+  const dOut   = n => new Date(ref.getTime() + n * MS_DAY).toISOString().slice(0, 10);
+
+  const props = [{
+    id: 'p1', name: 'Main Street', tenants: [
+      { tenant_name: 'Expired Co',  end_date: dOut(-5),  base_rent: 60000,  leased_sqft: 2000 },
+      { tenant_name: 'Critical Inc',end_date: dOut(20),  base_rent: 96000,  leased_sqft: 3000 },
+      { tenant_name: 'High LLC',    end_date: dOut(70),  base_rent: 120000, leased_sqft: 4000 },
+      { tenant_name: 'Medium LLC',  end_date: dOut(150), base_rent: 48000,  leased_sqft: 1500 },
+      { tenant_name: 'Far Away',    end_date: dOut(300), base_rent: 80000,  leased_sqft: 5000 },
+    ],
+  }];
+  const r = AE.computeRevenueAtRisk(props, ref);
+
+  // annualRent on each alert
+  assert('rar: expired alert has annualRent',          r.expired[0].annualRent === 60000);
+  assert('rar: critical alert has annualRent',         r.critical[0].annualRent === 96000);
+  assert('rar: sqft on alert',                         r.expired[0].sqft === 2000);
+
+  // byTier aggregates
+  assert('rar: byTier.critical.annualRent',            r.byTier.critical.annualRent === 96000);
+  assert('rar: byTier.critical.knownRentCount = 1',    r.byTier.critical.knownRentCount === 1);
+  assert('rar: byTier.high.sqft = 4000',               r.byTier.high.sqft === 4000);
+
+  // Roll-ups
+  assert('rar: urgentAnnualAtRisk = expired+crit+high', r.urgentAnnualAtRisk === 60000 + 96000 + 120000);
+  assert('rar: totalAnnualAtRisk includes medium',       r.totalAnnualAtRisk  === 60000 + 96000 + 120000 + 48000);
+  assert('rar: urgentSqftAtRisk = 2000+3000+4000',      r.urgentSqftAtRisk   === 9000);
+  assert('rar: beyond-180d tenant not counted',         r.total              === 4);
+}
+
+{
+  const ref  = new Date('2024-06-01T12:00:00Z');
+  const MS_DAY = 86400000;
+  const dOut = n => new Date(ref.getTime() + n * MS_DAY).toISOString().slice(0, 10);
+
+  // null base_rent: alert still appears but not counted in revenue totals
+  const props = [{ id: 'p', name: 'P', tenants: [
+    { tenant_name: 'No Rent', end_date: dOut(10) },          // base_rent absent
+    { tenant_name: 'Has Rent', end_date: dOut(15), base_rent: 50000 },
+  ]}];
+  const r = AE.computeRevenueAtRisk(props, ref);
+  assert('rar: null base_rent still produces alert',     r.critical.length === 2);
+  assert('rar: null base_rent excluded from total',      r.urgentAnnualAtRisk === 50000);
+  assert('rar: knownRentCount reflects missing data',    r.byTier.critical.knownRentCount === 1);
+  assert('rar: alert annualRent is null when absent',    r.critical.find(a => a.tenantName === 'No Rent').annualRent === null);
+}
+
+{
+  const ref  = new Date('2024-06-01T12:00:00Z');
+  const MS_DAY = 86400000;
+  const dOut = n => new Date(ref.getTime() + n * MS_DAY).toISOString().slice(0, 10);
+
+  // Cross-property aggregation
+  const props = [
+    { id: 'pA', name: 'Alpha', tenants: [{ tenant_name: 'T1', end_date: dOut(15), base_rent: 40000 }] },
+    { id: 'pB', name: 'Beta',  tenants: [{ tenant_name: 'T2', end_date: dOut(25), base_rent: 60000 }] },
+  ];
+  const r = AE.computeRevenueAtRisk(props, ref);
+  assert('rar: cross-property urgentAnnualAtRisk', r.urgentAnnualAtRisk === 100000);
+  assert('rar: total count = 2',                   r.total === 2);
+}
+
+{
+  // No tenants with end_date → all zeros
+  const r = AE.computeRevenueAtRisk([{ id: 'p', name: 'P', tenants: [{ tenant_name: 'X' }] }], new Date());
+  assert('rar: empty → urgentAnnualAtRisk = 0',  r.urgentAnnualAtRisk === 0);
+  assert('rar: empty → total = 0',               r.total === 0);
+}
+
 // ── Summary ───────────────────────────────────────────────────────────────────
 
 console.log(`\n${'─'.repeat(60)}`);

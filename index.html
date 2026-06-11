@@ -3946,6 +3946,22 @@
                          padding: 9px 16px 9px 36px; font-size: 0.78rem; color: #64748b;
                          cursor: pointer; }
     .la-expand-btn:hover { color: #94a3b8; }
+    /* Revenue-at-Risk summary bar inside alert panel */
+    .la-rar-summary    { display: flex; align-items: center; gap: 10px; flex-wrap: wrap;
+                         padding: 8px 16px; background: #0a1322; border-bottom: 1px solid #0f1b2d;
+                         font-size: 0.76rem; }
+    .la-rar-label      { color: #64748b; text-transform: uppercase; letter-spacing: 0.06em;
+                         font-size: 0.68rem; }
+    .la-rar-urgent     { color: #fca5a5; font-weight: 700; }
+    .la-rar-sep        { color: #1e293b; }
+    .la-rar-total      { color: #fbbf24; font-weight: 600; }
+    .la-rar-sqft       { color: #64748b; margin-left: auto; }
+    /* Per-row revenue */
+    .la-revenue        { font-size: 0.72rem; color: #94a3b8; font-weight: 600;
+                         background: #0f1b2d; padding: 1px 5px; border-radius: 3px; }
+    /* KPI tile sub-value */
+    .ptf-kpi-sub       { font-size: 0.67rem; color: #f87171; margin-top: 3px;
+                         line-height: 1.2; }
 
     /* ── Property Card: Lease Expiry Banner ─────────────────────────────── */
     .ptf-lease-expiry-banner { font-size: 0.74rem; font-weight: 600;
@@ -4080,6 +4096,7 @@
     <div class="ptf-kpi">
       <div class="ptf-kpi-val" id="pKpiCritical">—</div>
       <div class="ptf-kpi-lbl">At-Risk Properties</div>
+      <div class="ptf-kpi-sub" id="pKpiExpiryRevenue" style="display:none"></div>
     </div>
     <div class="ptf-kpi">
       <div class="ptf-kpi-val" id="pKpiMissingDocs">—</div>

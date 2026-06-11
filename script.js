@@ -13794,50 +13794,75 @@ function toggleLeaseAlertMedium() {
   if (icon) icon.innerHTML = expanded ? '&#x25BC;' : '&#x25B2;';
 }
 
-function _renderLeaseAlertPanel(alerts) {
-  if (_leaseAlertsDismissed || alerts.total === 0) return '';
+function _renderLeaseAlertPanel(rar) {
+  if (_leaseAlertsDismissed || rar.total === 0) return '';
 
   const fmtDate = iso => {
     const d = new Date(iso + 'T12:00:00');
     return isNaN(d.getTime()) ? iso
       : d.toLocaleDateString('en-US', { month: 'short', day: 'numeric', year: 'numeric' });
   };
+  const fmtRent = v => v != null && v > 0
+    ? '$' + Math.round(v).toLocaleString('en-US') + '/yr'
+    : null;
 
   const renderRow = (alert, tier) => {
     const daysBadge = tier === 'expired'
       ? `<span class="la-days la-days--expired">Expired ${Math.abs(alert.daysToExpiry)}d ago</span>`
       : `<span class="la-days la-days--${tier}">${alert.daysToExpiry}d</span>`;
-    const renewal = alert.hasRenewal ? '<span class="la-renewal">&#x1F504;&nbsp;option</span>' : '';
-    const suite   = alert.suite ? ` <span class="la-suite">· ${esc(alert.suite)}</span>` : '';
+    const rentStr  = fmtRent(alert.annualRent);
+    const rentHtml = rentStr ? `<span class="la-revenue">${rentStr}</span>` : '';
+    const renewal  = alert.hasRenewal ? '<span class="la-renewal">&#x1F504;&nbsp;option</span>' : '';
+    const suite    = alert.suite ? ` <span class="la-suite">· ${esc(alert.suite)}</span>` : '';
     return `
     <div class="la-row" onclick="selectProperty('${esc(alert.propertyId)}')">
       <span class="la-dot la-dot--${tier}"></span>
       <div class="la-tenant">${esc(alert.tenantName)}${suite}</div>
       <div class="la-property">${esc(alert.propertyName)}</div>
       <div class="la-date">${fmtDate(alert.endDate)}</div>
-      <div class="la-meta">${daysBadge}${renewal}</div>
+      <div class="la-meta">${daysBadge}${rentHtml}${renewal}</div>
     </div>`;
   };
 
   const urgentRows = [
-    ...alerts.expired.map(a  => renderRow(a, 'expired')),
-    ...alerts.critical.map(a => renderRow(a, 'critical')),
-    ...alerts.high.map(a     => renderRow(a, 'high')),
+    ...rar.expired.map(a  => renderRow(a, 'expired')),
+    ...rar.critical.map(a => renderRow(a, 'critical')),
+    ...rar.high.map(a     => renderRow(a, 'high')),
   ].join('');
 
-  const mediumSection = alerts.medium.length ? `
+  const mediumRentNote = rar.byTier?.medium?.annualRent > 0
+    ? ` · ${fmtRent(rar.byTier.medium.annualRent)}`
+    : '';
+  const mediumSection = rar.medium.length ? `
   <div class="la-expander">
     <button class="la-expand-btn" onclick="event.stopPropagation();toggleLeaseAlertMedium()">
-      <span id="laMediumToggleIcon">&#x25BC;</span>&nbsp; ${alerts.medium.length} more expiring within 6 months
+      <span id="laMediumToggleIcon">&#x25BC;</span>&nbsp; ${rar.medium.length} more expiring within 6 months${mediumRentNote}
     </button>
     <div id="laMediumRows" style="display:none">
-      ${alerts.medium.map(a => renderRow(a, 'medium')).join('')}
+      ${rar.medium.map(a => renderRow(a, 'medium')).join('')}
     </div>
   </div>` : '';
 
-  const badge = alerts.urgent > 0
-    ? `<span class="la-count--urgent">${alerts.urgent} urgent</span>`
-    : `<span class="la-count--medium">${alerts.medium.length} upcoming</span>`;
+  // Header badge: count + revenue when data is available
+  const urgentRentStr = fmtRent(rar.urgentAnnualAtRisk);
+  const badgeText = rar.urgent > 0
+    ? `${rar.urgent} urgent${urgentRentStr ? ' · ' + urgentRentStr : ''}`
+    : `${rar.medium.length} upcoming`;
+  const badge = rar.urgent > 0
+    ? `<span class="la-count--urgent">${badgeText}</span>`
+    : `<span class="la-count--medium">${badgeText}</span>`;
+
+  // Revenue summary row when we have totals
+  const rarSummary = rar.totalAnnualAtRisk > 0 ? `
+  <div class="la-rar-summary">
+    <span class="la-rar-label">Revenue at Risk</span>
+    <span class="la-rar-urgent">${fmtRent(rar.urgentAnnualAtRisk) || '—'} urgent</span>
+    <span class="la-rar-sep">·</span>
+    <span class="la-rar-total">${fmtRent(rar.totalAnnualAtRisk) || '—'} total</span>
+    ${rar.totalSqftAtRisk > 0
+      ? `<span class="la-rar-sqft">${Math.round(rar.totalSqftAtRisk).toLocaleString('en-US')} sf exposed</span>`
+      : ''}
+  </div>` : '';
 
   return `
   <div class="la-panel">
@@ -13846,6 +13871,7 @@ function _renderLeaseAlertPanel(alerts) {
       ${badge}
       <button class="la-dismiss" onclick="dismissLeaseAlerts()" title="Dismiss for this session">&#x2715;</button>
     </div>
+    ${rarSummary}
     ${urgentRows}
     ${mediumSection}
   </div>`;
@@ -13906,10 +13932,21 @@ function renderPortfolio(props) {
         ).join('');
   }
 
-  // Lease expiration alert panel
-  const alerts      = AcquisitionEngine.computeLeaseAlerts(props);
+  // Revenue-at-Risk + Lease Expiration Alerts
+  const rar          = AcquisitionEngine.computeRevenueAtRisk(props);
   const alertPanelEl = document.getElementById('leaseAlertPanel');
-  if (alertPanelEl) alertPanelEl.innerHTML = _renderLeaseAlertPanel(alerts);
+  if (alertPanelEl) alertPanelEl.innerHTML = _renderLeaseAlertPanel(rar);
+
+  // Update "At-Risk Properties" KPI sub-value with revenue exposure
+  const rarSubEl = document.getElementById('pKpiExpiryRevenue');
+  if (rarSubEl) {
+    if (rar.urgentAnnualAtRisk > 0) {
+      rarSubEl.textContent = '$' + Math.round(rar.urgentAnnualAtRisk).toLocaleString('en-US') + '/yr at risk';
+      rarSubEl.style.display = '';
+    } else {
+      rarSubEl.style.display = 'none';
+    }
+  }
 
   // Build per-property expiry lookup for card badges
   const _propAlertMap = new Map();
@@ -13920,10 +13957,10 @@ function renderPortfolio(props) {
     if (tier === 'expired' || (tier === 'critical' && cur.tier !== 'expired')) cur.tier = tier;
     else if (tier === 'high' && !['expired','critical'].includes(cur.tier)) cur.tier = tier;
   };
-  alerts.expired.forEach(a  => _markProp(a, 'expired'));
-  alerts.critical.forEach(a => _markProp(a, 'critical'));
-  alerts.high.forEach(a     => _markProp(a, 'high'));
-  alerts.medium.forEach(a   => _markProp(a, 'medium'));
+  rar.expired.forEach(a  => _markProp(a, 'expired'));
+  rar.critical.forEach(a => _markProp(a, 'critical'));
+  rar.high.forEach(a     => _markProp(a, 'high'));
+  rar.medium.forEach(a   => _markProp(a, 'medium'));
 
   // Portfolio intelligence panel (above cards grid)
   renderPortfolioIntelligence(props);
