@@ -12362,7 +12362,7 @@ function generateTenantStatement(tenantName) {
           storedFileUrl: stored ? (stored.fileUrl ? 'PRESENT' : 'MISSING') : 'N/A',
         });
         const viewInvBtn = stored && stored.fileUrl
-          ? `<button class="btn-secondary" onclick="event.stopPropagation();openInvFileViewer('${stored.fileUrl}','${esc(inv.vendor || inv.vendorName || '')}','${esc(stored.fileType || '')}')">&#x1F4C4; View Invoice</button>`
+          ? `<button class="btn-secondary" onclick="event.stopPropagation();openInvFileViewer('${stored.fileUrl.replace(/\\/g,'\\\\').replace(/'/g,"\\'")}','${esc(inv.vendor || inv.vendorName || '')}','${esc(stored.fileType || '')}')">&#x1F4C4; View Invoice</button>`
           : '';
         return `
           <div class="charge-row ts-inv-card" id="crow-${rowId}"

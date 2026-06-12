@@ -65,8 +65,11 @@ module.exports = async function handler(req, res) {
     return res.status(400).json({ error: 'Missing required field: messages' });
   }
 
-  const model = process.env.CLAUDE_MODEL || requestedModel || 'claude-sonnet-4-6';
-  const payload = { model, max_tokens, messages };
+  // Always use the server-configured model — never allow callers to request expensive models.
+  const model = process.env.CLAUDE_MODEL || 'claude-sonnet-4-6';
+  // Cap token output to prevent runaway cost from caller-supplied values.
+  const safeMaxTokens = Math.min(Number.isFinite(max_tokens) ? max_tokens : 4096, 8192);
+  const payload = { model, max_tokens: safeMaxTokens, messages };
   if (system) payload.system = system;
 
   let anthropicResp;
