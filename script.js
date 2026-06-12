@@ -12538,9 +12538,11 @@ function generateTenantStatement(tenantName) {
 // Stable identifiers so the demo property is idempotent across sessions/devices.
 const DEMO_PROPERTY_ID = 'dec00000-0000-4000-a000-000000000001';
 const _DEMO_TENANT_IDS = [
-  'dec00000-0000-4000-a000-000000000002', // Fresh Market Foods
-  'dec00000-0000-4000-a000-000000000003', // Riverside Dental Group
-  'dec00000-0000-4000-a000-000000000004', // FitLife Gym & Wellness
+  'dec00000-0000-4000-a000-000000000002', // Whole Health Market
+  'dec00000-0000-4000-a000-000000000003', // Summit Coffee & Provisions
+  'dec00000-0000-4000-a000-000000000004', // ProActive Physical Therapy
+  'dec00000-0000-4000-a000-000000000005', // FitZone Athletics
+  'dec00000-0000-4000-a000-000000000006', // Harbor Nail & Beauty Studio
 ];
 
 // Deletes every property whose name matches "Riverside Commons*" and whose ID
@@ -12584,7 +12586,7 @@ async function cleanupLegacyDemos(userId) {
   }
 }
 
-// Ensures Riverside Commons exists in Supabase with complete seeded state.
+// Ensures Cascade Commons exists in Supabase with complete seeded state.
 // Idempotent — skips re-seeding if valid camReconciliation already present.
 // Returns DEMO_PROPERTY_ID on success, null on auth failure.
 async function ensureDemoProperty() {
@@ -12601,60 +12603,122 @@ async function ensureDemoProperty() {
       .eq('id', DEMO_PROPERTY_ID)
       .eq('user_id', user.id)
       .single();
-    if (!error && row?.data?.camReconciliation?.results?.length > 0
-        && row?.data?._demoVersion === 2) {
+    if (!error && row?.data?.camReconciliation?.results?.length > 0 && row?.data?._demoV === 2) {
       console.log('[ensureDemoProperty] already seeded v2 — skip');
       return DEMO_PROPERTY_ID;
     }
   } catch (_) { /* not found — fall through to seed */ }
 
-  console.log('[ensureDemoProperty] seeding Riverside Commons…');
+  console.log('[ensureDemoProperty] seeding Cascade Commons v2…');
 
   // ── Demo data constants ───────────────────────────────────────────────────
-  const PROP_NAME    = 'Riverside Commons';
-  const PROP_SQFT    = 24000;
+  const PROP_NAME    = 'Cascade Commons';
+  const PROP_SQFT    = 47500;
   const CAM_YEAR     = 2025;
-  const DEMO_VERSION = 2; // bump to force re-seed when config changes
+  const DEMO_VERSION = 2;
 
-  // Compute end dates relative to today so the demo always shows realistic pipeline state
-  const _dNow   = new Date();
-  const _daysOut = d => new Date(_dNow.getTime() + d * 86400000).toISOString().slice(0, 10);
-
+  // capBaseAmount is prior-year CAM so that cap enforcement fires on this demo.
   const demoTenantConfigs = [
     {
-      id: _DEMO_TENANT_IDS[0], tenant_name: 'Fresh Market Foods',
-      leased_sqft: '6200', cap: '10', excluded_categories: 'snow',
-      base_rent: 155000,                                  // $25/sf NNN anchor tenant
-      start_date: _daysOut(-730), end_date: _daysOut(730), // mid-lease, renews in 2 yrs
-      lease_type: 'NNN', renewal_options: '2 × 5 yr',
-      confidence: { tenantName:98, leasedSqft:96, capPercentage:92, excludedCategories:88 },
+      id: _DEMO_TENANT_IDS[0], tenant_name: 'Whole Health Market',
+      leased_sqft: '9200', cap: '5', capBaseAmount: '33000',
+      excluded_categories: '', audit_rights: '90 days from reconciliation',
+      start_date: '2021-01-01', end_date: '2028-12-31', lease_type: 'NNN',
+      admin_fee_pct: null,
+      _confidenceScore: 94, _confidence: 'high',
+      confidence: { tenantName:98, leasedSqft:97, capPercentage:95, leaseType:96 },
     },
     {
-      id: _DEMO_TENANT_IDS[1], tenant_name: 'Riverside Dental Group',
-      leased_sqft: '1800', cap: null, excluded_categories: 'management',
-      base_rent: 63000,                                   // $35/sf medical office
-      start_date: _daysOut(-1460), end_date: _daysOut(96), // expiring in ~3 months (high tier)
-      lease_type: 'NNN', renewal_options: '1 × 5 yr',
-      confidence: { tenantName:97, leasedSqft:94, excludedCategories:91 },
+      id: _DEMO_TENANT_IDS[1], tenant_name: 'Summit Coffee & Provisions',
+      leased_sqft: '1800', cap: '8', capBaseAmount: '6200',
+      excluded_categories: 'parking',
+      start_date: '2023-03-01', end_date: '2026-02-28', lease_type: 'NNN',
+      admin_fee_pct: null,
+      _confidenceScore: 91, _confidence: 'high',
+      confidence: { tenantName:99, leasedSqft:98, capPercentage:93, excludedCategories:89 },
     },
     {
-      id: _DEMO_TENANT_IDS[2], tenant_name: 'FitLife Gym & Wellness',
-      leased_sqft: '3400', cap: null, excluded_categories: '',
-      base_rent: 95200,                                   // $28/sf fitness
-      start_date: _daysOut(-1095), end_date: _daysOut(50), // expiring in ~7 weeks (high tier)
-      lease_type: 'NNN',
-      confidence: { tenantName:99, leasedSqft:97 },
+      id: _DEMO_TENANT_IDS[2], tenant_name: 'ProActive Physical Therapy',
+      leased_sqft: '4400', cap: '6', capBaseAmount: '13000',
+      excluded_categories: 'management', audit_rights: '45 days from reconciliation',
+      start_date: '2022-07-01', end_date: '2027-06-30', lease_type: 'Modified Gross',
+      admin_fee_pct: null,
+      _confidenceScore: 88, _confidence: 'high',
+      confidence: { tenantName:96, leasedSqft:95, capPercentage:91, excludedCategories:94, leaseType:90 },
+    },
+    {
+      id: _DEMO_TENANT_IDS[3], tenant_name: 'FitZone Athletics',
+      leased_sqft: '6800', cap: '4', capBaseAmount: '24000',
+      excluded_categories: '',
+      start_date: '2022-01-01', end_date: '2026-12-31', lease_type: 'NNN',
+      admin_fee_pct: null,
+      _confidenceScore: 96, _confidence: 'high',
+      confidence: { tenantName:99, leasedSqft:97, capPercentage:94 },
+    },
+    {
+      id: _DEMO_TENANT_IDS[4], tenant_name: 'Harbor Nail & Beauty Studio',
+      leased_sqft: '1200', cap: null, capBaseAmount: null,
+      excluded_categories: '',
+      start_date: '2024-02-01', end_date: '2027-01-31', lease_type: 'NNN',
+      admin_fee_pct: null,
+      _confidenceScore: 97, _confidence: 'high',
+      confidence: { tenantName:99, leasedSqft:98, leaseType:95 },
     },
   ];
 
   const demoInvoiceList = [
-    { vendorName: 'Green Thumb Landscaping', amount: 2400, category: 'landscaping', invoiceDate: '2025-01-15' },
-    { vendorName: 'Metro Snow Services',     amount: 1850, category: 'snow',        invoiceDate: '2025-01-22' },
-    { vendorName: 'Apex Building Repairs',   amount: 3200, category: 'repairs',     invoiceDate: '2025-01-31' },
-    { vendorName: 'City Electric Co',        amount: 4100, category: 'utilities',   invoiceDate: '2025-01-31' },
-    { vendorName: 'CleanRight Janitorial',   amount: 2800, category: 'janitorial',  invoiceDate: '2025-01-31' },
-    { vendorName: 'SecureWatch Inc',         amount: 1600, category: 'security',    invoiceDate: '2025-01-31' },
-    { vendorName: 'Summit Management Group', amount: 3500, category: 'management',  invoiceDate: '2025-01-31' },
+    // Insurance (annual)
+    { vendorName: 'Meridian Property Insurance', amount: 42000, category: 'insurance',    invoiceDate: '2025-01-15' },
+    // Landscaping
+    { vendorName: 'Green Valley Landscape',      amount:  4800, category: 'landscaping',  invoiceDate: '2025-01-20' },
+    // Q1 utilities
+    { vendorName: 'Austin Energy',               amount:  7200, category: 'utilities',    invoiceDate: '2025-03-31' },
+    // Q1 janitorial
+    { vendorName: 'CleanSpace Commercial',       amount:  5200, category: 'janitorial',   invoiceDate: '2025-03-31' },
+    // Q1 management
+    { vendorName: 'Cascade Property Management', amount:  7600, category: 'management',   invoiceDate: '2025-03-31' },
+    // Q1 security
+    { vendorName: 'WatchPoint Security',         amount:  2850, category: 'security',     invoiceDate: '2025-03-31' },
+    // Spring HVAC service
+    { vendorName: 'ComfortFirst HVAC',           amount:  3400, category: 'maintenance',  invoiceDate: '2025-04-15' },
+    // Parking lot repair
+    { vendorName: 'PavePro Inc',                 amount:  5700, category: 'repairs',      invoiceDate: '2025-04-22' },
+    // Spring landscaping surge
+    { vendorName: 'Green Valley Landscape',      amount:  5200, category: 'landscaping',  invoiceDate: '2025-05-01' },
+    // Signage & exterior lighting
+    { vendorName: 'BrightPath Electrical',       amount:  3800, category: 'maintenance',  invoiceDate: '2025-05-15' },
+    // Q2 utilities
+    { vendorName: 'Austin Energy',               amount:  7800, category: 'utilities',    invoiceDate: '2025-06-30' },
+    // Q2 janitorial
+    { vendorName: 'CleanSpace Commercial',       amount:  5200, category: 'janitorial',   invoiceDate: '2025-06-30' },
+    // Q2 management
+    { vendorName: 'Cascade Property Management', amount:  7600, category: 'management',   invoiceDate: '2025-06-30' },
+    // Q2 security
+    { vendorName: 'WatchPoint Security',         amount:  2850, category: 'security',     invoiceDate: '2025-06-30' },
+    // Summer landscaping
+    { vendorName: 'Green Valley Landscape',      amount:  9000, category: 'landscaping',  invoiceDate: '2025-08-01' },
+    // Q3 utilities (peak)
+    { vendorName: 'Austin Energy',               amount:  8600, category: 'utilities',    invoiceDate: '2025-09-30' },
+    // Q3 janitorial
+    { vendorName: 'CleanSpace Commercial',       amount:  5200, category: 'janitorial',   invoiceDate: '2025-09-30' },
+    // Q3 management
+    { vendorName: 'Cascade Property Management', amount:  7600, category: 'management',   invoiceDate: '2025-09-30' },
+    // Fall HVAC service
+    { vendorName: 'ComfortFirst HVAC',           amount:  3200, category: 'maintenance',  invoiceDate: '2025-10-15' },
+    // Q3 security
+    { vendorName: 'WatchPoint Security',         amount:  2850, category: 'security',     invoiceDate: '2025-10-31' },
+    // General repairs (multiple work orders)
+    { vendorName: 'Cascade Handyman Services',   amount: 17100, category: 'repairs',      invoiceDate: '2025-10-31' },
+    // Q4 utilities
+    { vendorName: 'Austin Energy',               amount:  4900, category: 'utilities',    invoiceDate: '2025-12-31' },
+    // Q4 janitorial
+    { vendorName: 'CleanSpace Commercial',       amount:  5300, category: 'janitorial',   invoiceDate: '2025-12-31' },
+    // Q4 management
+    { vendorName: 'Cascade Property Management', amount:  7600, category: 'management',   invoiceDate: '2025-12-31' },
+    // Q4 security
+    { vendorName: 'WatchPoint Security',         amount:  2850, category: 'security',     invoiceDate: '2025-12-31' },
+    // Emergency HVAC repair Nov
+    { vendorName: 'ComfortFirst HVAC',           amount:  2900, category: 'maintenance',  invoiceDate: '2025-11-20' },
   ];
 
   const totalExpenses = demoInvoiceList.reduce((s, inv) => s + inv.amount, 0);
@@ -12669,7 +12733,9 @@ async function ensureDemoProperty() {
     const lease = new Lease(
       t.tenant_name, '', parseSqft(t.leased_sqft),
       t.start_date || '', t.end_date || '', excl,
-      t.cap ? parseFloat(t.cap) : null, null, false, null, t.lease_type || null
+      t.cap ? parseFloat(t.cap) : null,
+      t.capBaseAmount ? parseFloat(t.capBaseAmount) : null,
+      false, null, t.lease_type || null
     );
     lease.id = t.id;
     return lease;
@@ -12727,19 +12793,46 @@ async function ensureDemoProperty() {
     }],
   };
 
-  const repairShare = parseFloat((3200 * (6200 / PROP_SQFT)).toFixed(2));
-  const demoDisputes = [{
-    id: 0,
-    tenantName:  'Fresh Market Foods',
-    invoiceId:   'inv-2',
-    vendor:      'Apex Building Repairs',
-    category:    'repairs',
-    tenantShare: repairShare,
-    reason:      'Work order was not pre-approved per lease Section 8.3. Requesting documentation before accepting this charge.',
-    timestamp:   new Date(Date.now() - 2 * 24 * 60 * 60 * 1000).toISOString(),
-    status:      'open',
-    resolution:  null, resolvedAt: null, hash: null,
-  }];
+  const demoDisputes = [
+    {
+      id: 0,
+      tenantName:  'FitZone Athletics',
+      invoiceId:   'inv-7',
+      vendor:      'PavePro Inc',
+      category:    'repairs',
+      tenantShare: parseFloat((5700 * (6800 / PROP_SQFT)).toFixed(2)),
+      reason:      'Parking lot resurfacing appears to be a capital improvement, not routine maintenance. Tenant requested documentation per lease Section 9.1.',
+      timestamp:   new Date(Date.now() - 31 * 24 * 60 * 60 * 1000).toISOString(),
+      status:      'accepted',
+      resolution:  'Landlord provided work order confirming surface seal coat (maintenance, not capital). Charge accepted.',
+      resolvedAt:  new Date(Date.now() - 22 * 24 * 60 * 60 * 1000).toISOString(),
+      hash: null,
+    },
+    {
+      id: 1,
+      tenantName:  'Whole Health Market',
+      invoiceId:   'inv-20',
+      vendor:      'Cascade Handyman Services',
+      category:    'repairs',
+      tenantShare: parseFloat((17100 * (9200 / PROP_SQFT)).toFixed(2)),
+      reason:      'Invoice references multiple unspecified work orders totaling $17,100. Tenant requests itemized receipts before approving CAM allocation.',
+      timestamp:   new Date(Date.now() - 8 * 24 * 60 * 60 * 1000).toISOString(),
+      status:      'docs_requested',
+      resolution:  null, resolvedAt: null, hash: null,
+    },
+    {
+      id: 2,
+      tenantName:  'Summit Coffee & Provisions',
+      invoiceId:   'inv-25',
+      vendor:      'ComfortFirst HVAC',
+      category:    'maintenance',
+      tenantShare: parseFloat((2900 * (1800 / PROP_SQFT)).toFixed(2)),
+      reason:      'Emergency HVAC repair appears to be outside common area scope. Requesting clarification on which unit was serviced.',
+      timestamp:   new Date(Date.now() - 1 * 24 * 60 * 60 * 1000).toISOString(),
+      status:      'open',
+      resolution:  null, resolvedAt: null, hash: null,
+    },
+  ];
 
   // ── Persist to Supabase ───────────────────────────────────────────────────
   // invoicesFull is intentionally omitted (matches _stripBlobs convention);
@@ -12754,6 +12847,7 @@ async function ensureDemoProperty() {
     camYear:           CAM_YEAR,
     results:           null,
     camReconciliation: { ...camReconciliation, invoicesFull: undefined },
+    _demoV:            2,
   };
 
   const { error: propErr } = await db.from('properties')
