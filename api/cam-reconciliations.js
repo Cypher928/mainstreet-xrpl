@@ -38,6 +38,16 @@ function key() {
   return process.env.SUPABASE_SERVICE_ROLE_KEY || SUPABASE_ANON_KEY;
 }
 
+async function _ownsProperty(propertyId, userId) {
+  const r = await sbFetch(
+    `/properties?id=eq.${encodeURIComponent(propertyId)}&user_id=eq.${encodeURIComponent(userId)}&select=id`,
+    { method: 'GET', headers: { 'Prefer': '' } }
+  );
+  if (r.status >= 300) return false;
+  const rows = Array.isArray(r.json) ? r.json : [];
+  return rows.length > 0;
+}
+
 // Returns true when Supabase reports the table does not exist (migration not run).
 function _isMigrationMissing(json) {
   if (!json) return false;
@@ -78,6 +88,9 @@ export default async function handler(req, res) {
     const { propertyId, year, rows } = req.body || {};
     if (!propertyId || !year) {
       return res.status(400).json({ error: 'Missing propertyId or year', keySource: KEY_SOURCE });
+    }
+    if (!await _ownsProperty(propertyId, user.id)) {
+      return res.status(403).json({ error: 'Forbidden', keySource: KEY_SOURCE });
     }
 
     // Delete existing rows for this property+year
@@ -127,6 +140,9 @@ export default async function handler(req, res) {
     const { propertyId, year, history } = req.query || {};
     if (!propertyId) {
       return res.status(400).json({ error: 'Missing propertyId' });
+    }
+    if (!await _ownsProperty(propertyId, user.id)) {
+      return res.status(403).json({ error: 'Forbidden' });
     }
 
     // History mode: all years for this property, newest first.

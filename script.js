@@ -5881,10 +5881,17 @@ function openInvFileViewer(url, title, fileType) {
   if (!url) return;
   document.getElementById('invFileViewerTitle').textContent = title || 'Invoice';
   const body = document.getElementById('invFileViewerBody');
+  body.innerHTML = '';
   if (fileType && fileType.startsWith('image/')) {
-    body.innerHTML = `<img src="${url}" style="max-width:100%;max-height:calc(100vh - 80px);border-radius:8px;object-fit:contain;" />`;
+    const img = document.createElement('img');
+    img.src = url;
+    img.style.cssText = 'max-width:100%;max-height:calc(100vh - 80px);border-radius:8px;object-fit:contain;';
+    body.appendChild(img);
   } else {
-    body.innerHTML = `<iframe src="${url}" style="width:100%;height:calc(100vh - 80px);border:none;border-radius:8px;"></iframe>`;
+    const iframe = document.createElement('iframe');
+    iframe.src = url;
+    iframe.style.cssText = 'width:100%;height:calc(100vh - 80px);border:none;border-radius:8px;';
+    body.appendChild(iframe);
   }
   document.getElementById('invFileViewer').style.display = 'flex';
 }
@@ -15775,7 +15782,7 @@ function renderLeaseCenter(propertyId) {
       const statusColor = { success: '#22c55e', partial: '#f59e0b', failed: '#ef4444', pending: '#94a3b8' }[doc.parsing_status] || '#94a3b8';
       const uploadDate  = doc.created_at ? new Date(doc.created_at).toLocaleDateString() : '—';
       const modelLabel  = doc.used_pdf_direct ? 'PDF vision' : (doc.extraction_model ? 'text' : '—');
-      const tenantLabel = doc.tenant_name || '<span style="color:#64748b;font-style:italic;">Unknown</span>';
+      const tenantLabel = doc.tenant_name ? esc(doc.tenant_name) : '<span style="color:#64748b;font-style:italic;">Unknown</span>';
       const safeUrl     = doc.file_url ? doc.file_url.replace(/\\/g, '\\\\').replace(/'/g, "\\'") : '';
       const viewBtn     = doc.file_url
         ? `<button class="lc-view-btn" onclick="openLeaseModal('${safeUrl}')">View</button>`
@@ -15785,8 +15792,8 @@ function renderLeaseCenter(propertyId) {
 
       const dataRow = `<tr id="lc-row-${doc.id}">
         <td>${tenantLabel}</td>
-        <td style="max-width:180px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;" title="${doc.file_name}">${doc.file_name}</td>
-        <td><span class="lc-status-badge" style="background:${statusColor}22;color:${statusColor};border:1px solid ${statusColor}44;">${doc.parsing_status}</span></td>
+        <td style="max-width:180px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;" title="${esc(doc.file_name)}">${esc(doc.file_name)}</td>
+        <td><span class="lc-status-badge" style="background:${statusColor}22;color:${statusColor};border:1px solid ${statusColor}44;">${esc(doc.parsing_status)}</span></td>
         <td style="color:#94a3b8;">${modelLabel}</td>
         <td style="color:#94a3b8;">${uploadDate}</td>
         <td style="text-align:right;white-space:nowrap;">${viewBtn} ${askBtn} ${deleteBtn}</td>
@@ -15862,7 +15869,7 @@ async function _submitLeaseQuestion(docId) {
     });
     const result = await resp.json().catch(() => ({}));
     if (!resp.ok || result.error) {
-      ansEl.innerHTML = `<span class="lc-answer-error">${result.error || 'Request failed — check console for details.'}</span>`;
+      ansEl.innerHTML = `<span class="lc-answer-error">${esc(result.error || 'Request failed — check console for details.')}</span>`;
     } else {
       const safe = result.answer
         .replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;')
@@ -16605,7 +16612,8 @@ async function confirmDeleteProperty() {
 
   try {
     // Delete tenants explicitly (cascade from properties may not cover the tenants table)
-    await db.from('tenants').delete().eq('property_id', propId);
+    const { error: tenantErr } = await db.from('tenants').delete().eq('property_id', propId);
+    if (tenantErr) throw tenantErr;
     // Delete the property — all child tables cascade (cam_reconciliations, lease_documents,
     // lease_jobs, tenant_field_evidence, tenant_review_audit all have ON DELETE CASCADE)
     const { error } = await db.from('properties').delete().eq('id', propId);

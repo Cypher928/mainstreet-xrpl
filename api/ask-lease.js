@@ -53,7 +53,7 @@ function sbKey() {
 
 async function fetchLeaseDoc(leaseDocumentId) {
   const k   = sbKey();
-  const url = `${SUPABASE_URL}/rest/v1/lease_documents?id=eq.${encodeURIComponent(leaseDocumentId)}&select=id,file_name,tenant_name,extracted_text,used_pdf_direct,file_url`;
+  const url = `${SUPABASE_URL}/rest/v1/lease_documents?id=eq.${encodeURIComponent(leaseDocumentId)}&select=id,property_id,file_name,tenant_name,extracted_text,used_pdf_direct,file_url`;
   const res = await fetch(url, {
     headers: {
       'apikey':        k,
@@ -65,6 +65,17 @@ async function fetchLeaseDoc(leaseDocumentId) {
   try { rows = JSON.parse(text); } catch { rows = []; }
   if (!Array.isArray(rows) || rows.length === 0) return null;
   return rows[0];
+}
+
+async function _ownsLeaseDoc(doc, userId) {
+  if (!doc.property_id) return false;
+  const k   = sbKey();
+  const url = `${SUPABASE_URL}/rest/v1/properties?id=eq.${encodeURIComponent(doc.property_id)}&user_id=eq.${encodeURIComponent(userId)}&select=id`;
+  const res = await fetch(url, { headers: { 'apikey': k, 'Authorization': `Bearer ${k}` } });
+  const text = await res.text();
+  let rows;
+  try { rows = JSON.parse(text); } catch { rows = []; }
+  return Array.isArray(rows) && rows.length > 0;
 }
 
 // Extracts a JSON { answer, citations } from Claude's response text.
@@ -209,6 +220,10 @@ export default async function handler(req, res) {
 
   if (!doc) {
     return res.status(404).json({ error: 'Lease document not found' });
+  }
+
+  if (!await _ownsLeaseDoc(doc, user.id)) {
+    return res.status(403).json({ error: 'Forbidden' });
   }
 
   if (!doc.extracted_text) {

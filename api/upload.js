@@ -89,7 +89,7 @@ export default async function handler(req, res) {
 
   const key      = process.env.SUPABASE_SERVICE_ROLE_KEY || SUPABASE_ANON_KEY;
   const buffer   = Buffer.from(fileBase64, 'base64');
-  const safeName = fileName.replace(/[^a-zA-Z0-9._-]/g, '_');
+  const safeName = `${user.id}/${fileName.replace(/[^a-zA-Z0-9._-]/g, '_')}`;
   const uploadUrl = `${SUPABASE_URL}/storage/v1/object/${bucket}/${safeName}`;
 
   console.log('[api/upload] POST', uploadUrl, 'bytes:', buffer.length);

@@ -38,6 +38,16 @@ function key() {
   return process.env.SUPABASE_SERVICE_ROLE_KEY || SUPABASE_ANON_KEY;
 }
 
+async function _ownsProperty(propertyId, userId) {
+  const r = await sbFetch(
+    `/properties?id=eq.${encodeURIComponent(propertyId)}&user_id=eq.${encodeURIComponent(userId)}&select=id`,
+    { method: 'GET', headers: { 'Prefer': '' } }
+  );
+  if (r.status >= 300) return false;
+  const rows = Array.isArray(r.json) ? r.json : [];
+  return rows.length > 0;
+}
+
 function _isMigrationMissing(json) {
   if (!json) return false;
   const obj = Array.isArray(json) ? (json[0] || {}) : json;
@@ -78,6 +88,9 @@ export default async function handler(req, res) {
     const { propertyId, fileName, fileUrl, extractedText, parsingStatus, tenantId, tenantName, extractionModel, usedPdfDirect } = req.body || {};
     if (!propertyId || !fileName) {
       return res.status(400).json({ error: 'Missing propertyId or fileName', keySource: KEY_SOURCE });
+    }
+    if (!await _ownsProperty(propertyId, user.id)) {
+      return res.status(403).json({ error: 'Forbidden', keySource: KEY_SOURCE });
     }
 
     // Check if a record exists for this property+file_name to decide insert vs update
@@ -152,6 +165,9 @@ export default async function handler(req, res) {
     if (!propertyId) {
       return res.status(400).json({ error: 'Missing propertyId', keySource: KEY_SOURCE });
     }
+    if (!await _ownsProperty(propertyId, user.id)) {
+      return res.status(403).json({ error: 'Forbidden', keySource: KEY_SOURCE });
+    }
 
     const result = await sbFetch(
       `/lease_documents?property_id=eq.${encodeURIComponent(propertyId)}&order=created_at.desc&select=id,property_id,tenant_id,tenant_name,file_name,file_url,parsing_status,extraction_model,used_pdf_direct,created_at,updated_at`,
@@ -178,6 +194,22 @@ export default async function handler(req, res) {
     const { id } = req.query || {};
     if (!id) {
       return res.status(400).json({ error: 'Missing id', keySource: KEY_SOURCE });
+    }
+
+    // Fetch the document first to get property_id for ownership verification
+    const lookup = await sbFetch(
+      `/lease_documents?id=eq.${encodeURIComponent(id)}&select=id,property_id`,
+      { method: 'GET', headers: { 'Prefer': '' } }
+    );
+    if (lookup.status >= 300) {
+      return res.status(502).json({ error: 'Lookup failed', detail: lookup.json, keySource: KEY_SOURCE });
+    }
+    const docRows = Array.isArray(lookup.json) ? lookup.json : [];
+    if (docRows.length === 0) {
+      return res.status(404).json({ error: 'Document not found', keySource: KEY_SOURCE });
+    }
+    if (!await _ownsProperty(docRows[0].property_id, user.id)) {
+      return res.status(403).json({ error: 'Forbidden', keySource: KEY_SOURCE });
     }
 
     const result = await sbFetch(
