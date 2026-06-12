@@ -13541,6 +13541,210 @@ const _RDY_LABELS = Selectors.RDY_LABELS;
 function derivePropertyReadiness(p)     { return Selectors.derivePropertyReadiness(p); }
 function _piComputePortfolioIntel(props){ return Selectors.computePortfolioIntel(props); }
 
+// ─── Recovered Revenue Dashboard ─────────────────────────────────────────────
+
+function computeRecoveredRevenue(props) {
+  const safeProps = Array.isArray(props) ? props : [];
+  let capSavings = 0, disputeRecoveries = 0, exclusionSavings = 0, auditCoverage = 0;
+  let capCount = 0, disputeCount = 0, exclusionTenantCount = 0, auditCount = 0;
+  const byProperty = [];
+  const timeline   = [];
+
+  for (const p of safeProps) {
+    const recon    = p.camReconciliation ?? p.results ?? {};
+    const results  = Array.isArray(recon.results)  ? recon.results  : [];
+    const tenants  = Array.isArray(p.tenants)       ? p.tenants      : [];
+    const disps    = Array.isArray(p.disputes)      ? p.disputes     : [];
+    const invoices = Array.isArray(recon.invoices)  ? recon.invoices : [];
+    const totalSqft = p.totalSqft || 1;
+
+    // Cap savings: sum of raw-over-cap reduction where cap fired
+    let pCap = 0, pCapN = 0;
+    for (const r of results) {
+      if (r.capApplied && (r.capAdjustment || 0) > 0) {
+        pCap += r.capAdjustment;
+        pCapN++;
+      }
+    }
+
+    // Dispute recoveries: accepted disputes (charge confirmed correct after review)
+    let pDisp = 0, pDispN = 0;
+    for (const d of disps) {
+      if (d.status === 'accepted' && (d.tenantShare || 0) > 0) {
+        pDisp += d.tenantShare;
+        pDispN++;
+        timeline.push({
+          date:     d.resolvedAt || d.timestamp,
+          tenant:   d.tenantName || '',
+          vendor:   d.vendor || d.category || '',
+          amount:   d.tenantShare,
+          type:     'dispute',
+          propName: p.name || '',
+        });
+      }
+    }
+
+    // Exclusion savings: for each excluded category, sum invoice pool × pro-rata
+    let pExcl = 0;
+    const pExclTenants = new Set();
+    for (const t of tenants) {
+      const excl = (t.excluded_categories || '')
+        .split(',').map(s => s.trim().toLowerCase()).filter(Boolean);
+      if (!excl.length) continue;
+      const sqft = parseFloat(t.leased_sqft) || 0;
+      const proRata = sqft / totalSqft;
+      for (const cat of excl) {
+        const catSum = invoices
+          .filter(inv => (inv.category || '').toLowerCase() === cat)
+          .reduce((s, inv) => s + (inv.amount || 0), 0);
+        pExcl += catSum * proRata;
+      }
+      pExclTenants.add(t.id || t.tenant_name);
+    }
+
+    // Audit scope: CAM allocated to tenants with explicit audit rights
+    let pAudit = 0, pAuditN = 0;
+    for (const r of results) {
+      const t = tenants.find(t => (t.tenant_name || '') === (r.tenantName || ''));
+      if (t?.audit_rights === true || t?.audit_rights === 'true') {
+        pAudit += (r.totalAllocated || 0);
+        pAuditN++;
+      }
+    }
+
+    capSavings            += pCap;
+    disputeRecoveries     += pDisp;
+    exclusionSavings      += pExcl;
+    auditCoverage         += pAudit;
+    capCount              += pCapN;
+    disputeCount          += pDispN;
+    exclusionTenantCount  += pExclTenants.size;
+    auditCount            += pAuditN;
+
+    if (pCap + pDisp + pExcl + pAudit > 0) {
+      byProperty.push({
+        id: p.id, name: p.name,
+        capSavings: pCap,     capCount: pCapN,
+        disputes:   pDisp,    disputeCount: pDispN,
+        exclusions: pExcl,    exclusionTenants: pExclTenants.size,
+        auditCoverage: pAudit, auditCount: pAuditN,
+        total: pCap + pDisp + pExcl,
+      });
+    }
+  }
+
+  timeline.sort((a, b) => (b.date || '') > (a.date || '') ? 1 : -1);
+
+  return {
+    capSavings, capCount,
+    disputeRecoveries, disputeCount,
+    exclusionSavings, exclusionTenantCount,
+    auditCoverage, auditCount,
+    total: capSavings + disputeRecoveries + exclusionSavings,
+    byProperty, timeline,
+  };
+}
+
+function renderRecoveredRevenueDashboard(props) {
+  const panel = document.getElementById('rrDashPanel');
+  if (!panel) return;
+  const safeProps = Array.isArray(props) ? props : [];
+  if (safeProps.length === 0) { panel.style.display = 'none'; return; }
+
+  const d = computeRecoveredRevenue(safeProps);
+  if (d.total <= 0 && d.auditCoverage <= 0) { panel.style.display = 'none'; return; }
+
+  const fmtV = n => n > 0 ? fmt(n) : '—';
+  const plur = (n, word) => n + ' ' + word + (n !== 1 ? 's' : '');
+
+  // 4 KPI tiles
+  const tiles = [
+    { val: fmtV(d.capSavings),        lbl: 'Cap Savings',        sub: plur(d.capCount, 'tenant'),             cls: 'rr-kpi--green' },
+    { val: fmtV(d.disputeRecoveries), lbl: 'Disputes Resolved',  sub: d.disputeCount + ' accepted',           cls: ''             },
+    { val: fmtV(d.exclusionSavings),  lbl: 'Exclusion Savings',  sub: plur(d.exclusionTenantCount, 'tenant'), cls: ''             },
+    { val: d.auditCoverage > 0 ? fmt(d.auditCoverage) : '—',
+                                       lbl: 'Audit Scope',         sub: plur(d.auditCount, 'tenant') + ' w/ rights', cls: 'rr-kpi--blue' },
+  ];
+  const tilesHtml = tiles.map(t =>
+    `<div class="rr-kpi ${t.cls}">
+       <div class="rr-kpi-val">${esc(t.val)}</div>
+       <div class="rr-kpi-lbl">${esc(t.lbl)}</div>
+       <div class="rr-kpi-sub">${esc(t.sub)}</div>
+     </div>`
+  ).join('');
+
+  // Property breakdown table
+  let tableHtml = '';
+  if (d.byProperty.length > 0) {
+    const rows = d.byProperty.map(p =>
+      `<tr>
+         <td>${esc(p.name)}</td>
+         <td>${p.capSavings > 0 ? esc(fmt(p.capSavings)) : '—'}</td>
+         <td>${p.disputes   > 0 ? esc(fmt(p.disputes))   : '—'}</td>
+         <td>${p.exclusions > 0 ? esc(fmt(p.exclusions)) : '—'}</td>
+         <td>${esc(fmt(p.total))}</td>
+       </tr>`
+    ).join('');
+    tableHtml = `
+      <table class="rr-table">
+        <thead><tr>
+          <th>Property</th><th>Cap Savings</th><th>Disputes</th><th>Exclusions</th><th>Total</th>
+        </tr></thead>
+        <tbody>${rows}</tbody>
+      </table>`;
+  }
+
+  // Recent recovery events timeline
+  let timelineHtml = '';
+  if (d.timeline.length > 0) {
+    const items = d.timeline.slice(0, 8).map(ev => {
+      const ds = ev.date
+        ? new Date(ev.date).toLocaleDateString('en-US', { month: 'short', day: 'numeric', year: '2-digit' })
+        : '—';
+      const desc = [ev.tenant, ev.vendor].filter(Boolean).join(' — ');
+      return `<div class="rr-tl-item">
+        <div class="rr-tl-dot rr-tl-dot--${esc(ev.type)}"></div>
+        <div class="rr-tl-date">${esc(ds)}</div>
+        <div class="rr-tl-desc">${esc(desc)}</div>
+        <div class="rr-tl-amt">${esc(fmt(ev.amount))}</div>
+      </div>`;
+    }).join('');
+    timelineHtml = `
+      <div>
+        <div class="rr-timeline-title">Recent Recovery Events</div>
+        ${items}
+      </div>`;
+  }
+
+  const methodologyHtml = `
+    <div class="rr-methodology" style="display:none;">
+      <strong>Cap Savings</strong> — Difference between each tenant's raw pro-rata share and their lease cap limit, summed where the cap fired. Money that would have been overbilled without cap enforcement.<br><br>
+      <strong>Disputes Resolved</strong> — Sum of dispute amounts where the landlord's position was accepted after review and documentation.<br><br>
+      <strong>Exclusion Savings</strong> — For each tenant with excluded expense categories, invoice amounts in those categories × their pro-rata share. Charges correctly omitted per lease terms.<br><br>
+      <strong>Audit Scope</strong> — Total CAM billed to tenants with explicit audit rights. Accurate allocation protects against successful audit challenges.
+    </div>`;
+
+  panel.style.display = 'block';
+  panel.innerHTML = `
+    <div class="rr-panel">
+      <div class="rr-panel-head">
+        <span class="rr-panel-title">Recovered Revenue</span>
+        <button class="rr-info-btn"
+          onclick="var m=this.nextElementSibling;m.style.display=m.style.display==='block'?'none':'block'">
+          How we count this
+        </button>
+      </div>
+      ${methodologyHtml}
+      <div class="rr-hero">
+        <div class="rr-hero-val">${esc(fmt(d.total))}</div>
+        <div class="rr-hero-lbl">Total lease compliance value identified</div>
+      </div>
+      <div class="rr-kpis">${tilesHtml}</div>
+      ${tableHtml}
+      ${timelineHtml}
+    </div>`;
+}
+
 // Renders the Portfolio Intelligence panel above the property grid.
 function renderPortfolioIntelligence(props, preRar) {
   const panel = document.getElementById('portfolioIntelPanel');
@@ -14689,6 +14893,9 @@ function renderPortfolio(props) {
   // Portfolio intelligence panel (above cards grid)
   renderPortfolioIntelligence(props, rar);
   renderRenewalPipeline(props);
+
+  // Recovered Revenue Dashboard (below intelligence panel)
+  renderRecoveredRevenueDashboard(props);
 
   // Property cards
   const statusLabel = { reconciled: 'Reconciled', 'in-progress': 'In Progress', disputes: 'Has Open Disputes' };

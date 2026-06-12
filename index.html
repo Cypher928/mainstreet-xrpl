@@ -2975,6 +2975,7 @@
     #appContent[data-role="tenant"] .start-here        { display: none !important; }
     #appContent[data-role="tenant"] .ptf-kpi-bar       { display: none !important; }
     #appContent[data-role="tenant"] #portfolioIntelPanel { display: none !important; }
+    #appContent[data-role="tenant"] #rrDashPanel { display: none !important; }
     #appContent[data-role="tenant"] #reviewQueuePanel  { display: none !important; }
     #appContent[data-role="tenant"] #ptfSortRow        { display: none !important; }
     #appContent[data-role="tenant"] .add-prop-btn      { display: none !important; }
@@ -3294,6 +3295,62 @@
     .pi-metric-lbl { font-size: 0.56rem; color: #64748B; text-transform: uppercase; letter-spacing: 0.04em; margin-top: 3px; }
     .pi-rdy-row { display: flex; gap: 5px; flex-wrap: wrap; }
     .pi-rdy-chip { padding: 2px 8px; border-radius: 20px; font-size: 0.62rem; font-weight: 700; border: 1px solid; }
+
+    /* ─── Recovered Revenue Dashboard ─────────────────────────────────────── */
+    .rr-panel {
+      border-radius: 10px; padding: 14px 16px; margin-bottom: 14px;
+      background: rgba(74,222,128,0.03); border: 1px solid rgba(74,222,128,0.15);
+    }
+    .rr-panel-head { display: flex; align-items: center; gap: 8px; margin-bottom: 10px; flex-wrap: wrap; }
+    .rr-panel-title { font-size: 0.63rem; font-weight: 700; text-transform: uppercase; letter-spacing: 0.08em; color: #4ade80; flex-shrink: 0; }
+    .rr-info-btn {
+      font-size: 0.6rem; color: #64748b; background: rgba(255,255,255,0.05); border: 1px solid rgba(255,255,255,0.09);
+      border-radius: 4px; padding: 2px 7px; cursor: pointer; margin-left: auto; line-height: 1.5;
+    }
+    .rr-info-btn:hover { color: #94a3b8; border-color: rgba(255,255,255,0.15); }
+    .rr-methodology {
+      font-size: 0.65rem; color: #94a3b8; line-height: 1.65; margin-bottom: 10px;
+      padding: 9px 11px; background: rgba(255,255,255,0.03); border-radius: 7px;
+      border: 1px solid rgba(255,255,255,0.06);
+    }
+    .rr-methodology strong { color: #cbd5e1; }
+    .rr-hero { text-align: center; padding: 6px 0 14px; }
+    .rr-hero-val { font-size: 2.1rem; font-weight: 800; color: #4ade80; line-height: 1; font-family: 'DM Sans', sans-serif; }
+    .rr-hero-lbl { font-size: 0.65rem; color: #64748b; text-transform: uppercase; letter-spacing: 0.06em; margin-top: 5px; }
+    .rr-kpis { display: grid; grid-template-columns: repeat(4, 1fr); gap: 6px; margin-bottom: 12px; }
+    @media (max-width: 600px) { .rr-kpis { grid-template-columns: repeat(2, 1fr); } }
+    .rr-kpi {
+      padding: 9px 10px; border-radius: 8px; text-align: center;
+      background: rgba(255,255,255,0.025); border: 1px solid rgba(255,255,255,0.07);
+    }
+    .rr-kpi-val { font-size: 1.05rem; font-weight: 800; color: #e2e8f0; line-height: 1; font-family: 'DM Sans', sans-serif; }
+    .rr-kpi-lbl { font-size: 0.55rem; color: #64748b; text-transform: uppercase; letter-spacing: 0.04em; margin-top: 3px; }
+    .rr-kpi-sub { font-size: 0.58rem; color: #94a3b8; margin-top: 2px; }
+    .rr-kpi--green .rr-kpi-val { color: #4ade80; }
+    .rr-kpi--blue  .rr-kpi-val { color: #7dd3fc; }
+    .rr-table { width: 100%; border-collapse: collapse; font-size: 0.72rem; margin-bottom: 12px; }
+    .rr-table th {
+      font-size: 0.57rem; text-transform: uppercase; letter-spacing: 0.04em;
+      color: #64748b; border-bottom: 1px solid rgba(255,255,255,0.07); padding: 4px 8px; text-align: right; font-weight: 600;
+    }
+    .rr-table th:first-child { text-align: left; }
+    .rr-table td {
+      padding: 5px 8px; border-bottom: 1px solid rgba(255,255,255,0.04);
+      color: #94a3b8; text-align: right; font-size: 0.7rem;
+    }
+    .rr-table td:first-child { text-align: left; color: #e2e8f0; }
+    .rr-table tr:last-child td { border-bottom: none; }
+    .rr-timeline-title { font-size: 0.57rem; color: #64748b; text-transform: uppercase; letter-spacing: 0.04em; margin-bottom: 6px; }
+    .rr-tl-item {
+      display: grid; grid-template-columns: 6px 80px 1fr auto; gap: 8px;
+      align-items: start; padding: 5px 0; border-bottom: 1px solid rgba(255,255,255,0.04); font-size: 0.67rem;
+    }
+    .rr-tl-item:last-child { border-bottom: none; }
+    .rr-tl-dot { width: 6px; height: 6px; border-radius: 50%; background: #4ade80; margin-top: 4px; flex-shrink: 0; }
+    .rr-tl-dot--dispute { background: #7dd3fc; }
+    .rr-tl-date { color: #64748b; }
+    .rr-tl-desc { color: #cbd5e1; }
+    .rr-tl-amt  { color: #4ade80; font-weight: 700; }
 
     /* Readiness state tokens (shared: pi chips + ptf card badges) */
     .rdy-needs-review         { background: rgba(239,68,68,0.08);   border-color: rgba(239,68,68,0.22);   color: #f87171; }
@@ -4348,6 +4405,9 @@
 
   <!-- Portfolio Intelligence Panel -->
   <div id="portfolioIntelPanel" style="display:none;"></div>
+
+  <!-- Recovered Revenue Dashboard -->
+  <div id="rrDashPanel" style="display:none;"></div>
 
   <!-- Renewal Pipeline Panel -->
   <div id="renewalPipelinePanel" style="display:none;"></div>
