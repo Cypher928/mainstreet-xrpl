@@ -28,11 +28,18 @@ async function _verifyUser(req, res) {
   if (!tok) { res.status(401).json({ error: 'Authentication required' }); return null; }
   try {
     const r = await fetch(`${SUPABASE_URL}/auth/v1/user`, {
+      signal: AbortSignal.timeout(3000),
       headers: { apikey: SUPABASE_ANON_KEY, Authorization: `Bearer ${tok}` },
     });
     if (!r.ok) { res.status(401).json({ error: 'Invalid or expired token' }); return null; }
-    return r.json();
-  } catch { res.status(500).json({ error: 'Auth check failed' }); return null; }
+    const user = await r.json();
+    if (!user?.id) { res.status(401).json({ error: 'User identity missing' }); return null; }
+    return user;
+  } catch (e) {
+    const timedOut = e?.name === 'TimeoutError' || e?.name === 'AbortError';
+    res.status(timedOut ? 503 : 500).json({ error: timedOut ? 'Auth service unavailable — try again' : 'Auth check failed' });
+    return null;
+  }
 }
 
 function httpsPost(url, headers, body) {
@@ -66,7 +73,7 @@ export default async function handler(req, res) {
 
   const user = await _verifyUser(req, res);
   if (!user) return;
-  if (!_chkRate(user.id, 10, 60000)) {
+  if (!_chkRate(user.id, 60, 60000)) {
     return res.status(429).json({ error: 'Too many requests — please slow down.' });
   }
 

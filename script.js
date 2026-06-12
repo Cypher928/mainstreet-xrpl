@@ -638,16 +638,25 @@ async function uploadInvoiceFile(file) {
       body: JSON.stringify({ fileName: file.name, fileType: file.type, fileBase64 }),
     });
     const result = await resp.json();
+    if (resp.status === 429) {
+      const err = new Error('Upload rate limit reached — wait a moment and try again');
+      err.isRateLimit = true;
+      throw err;
+    }
     if (!resp.ok || result.error) throw new Error(result.error || `HTTP ${resp.status}`);
     return result.url;
   };
 
-  // Retry up to 2 times with backoff — storage timeouts are usually transient
   for (let i = 0; i < 3; i++) {
     try {
       const url = await attempt();
       return { url, error: null };
     } catch (e) {
+      if (e.isRateLimit) {
+        // Rate-limit window is 60s — short retries won't recover; surface immediately
+        console.warn('[uploadInvoiceFile] rate limited:', e.message);
+        return { url: null, error: 'rate-limited' };
+      }
       if (i < 2) {
         await new Promise(r => setTimeout(r, (i + 1) * 1200));
         continue;
@@ -1129,7 +1138,7 @@ Return best guess — do not leave fields null unless truly impossible.`;
 
   const res = await _fetchWithTimeout('/api/claude', {
     method: 'POST',
-    headers: { 'Content-Type': 'application/json' },
+    headers: { 'Content-Type': 'application/json', ...(await _authHeaders()) },
     body: JSON.stringify({ messages, max_tokens: 1500, system: CLAUDE_LEASE_SYSTEM }),
   });
 
@@ -1185,7 +1194,7 @@ Return plain text only. No JSON, no markdown, no commentary.`;
   // 85s timeout — generating 8096 output tokens takes ~25-30s; allow headroom
   const res = await _fetchWithTimeout('/api/explain', {
     method:  'POST',
-    headers: { 'Content-Type': 'application/json' },
+    headers: { 'Content-Type': 'application/json', ...(await _authHeaders()) },
     body:    JSON.stringify({ messages, max_tokens: 8096, model: 'claude-sonnet-4-6' }),
   }, 85000);
 
@@ -1355,7 +1364,7 @@ ${leaseSnippet}
 
   const res = await _fetchWithTimeout('/api/claude', {
     method: 'POST',
-    headers: { 'Content-Type': 'application/json' },
+    headers: { 'Content-Type': 'application/json', ...(await _authHeaders()) },
     body: JSON.stringify({ messages, max_tokens: 1500, system: CLAUDE_LEASE_SYSTEM }),
   });
 
@@ -5686,7 +5695,11 @@ function renderInvResults() {
           </div>
           <button class="bulk-t-remove" onclick="event.stopPropagation();removeInvItem(${i})">Remove</button>
         </div>
-        ${d._fileUploadError ? `<div class="inv-upload-err-banner">&#x26A0; File backup unavailable — invoice data is saved and CAM will run normally</div>` : ''}
+        ${d._fileUploadError === 'rate-limited'
+          ? `<div class="inv-upload-err-banner inv-upload-err-banner--warn">&#x26A0; File not backed up — upload rate limit reached. Invoice data is saved; re-upload this file to attach it.</div>`
+          : d._fileUploadError
+            ? `<div class="inv-upload-err-banner">&#x26A0; File backup unavailable — invoice data is saved and CAM will run normally</div>`
+            : ''}
         <div class="bulk-tenant-detail" id="idet-${i}" style="display:none;">
           ${d._error ? `<div class="err-banner" style="margin-bottom:10px;">Extraction error: ${esc(d._error)}</div>` : ''}
           <div id="dup-warn-${i}"></div>

@@ -29,11 +29,18 @@ async function _verifyUser(req, res) {
   if (!tok) { res.status(401).json({ error: 'Authentication required' }); return null; }
   try {
     const r = await fetch(`${_SB_URL}/auth/v1/user`, {
+      signal: AbortSignal.timeout(3000),
       headers: { apikey: _SB_ANON, Authorization: `Bearer ${tok}` },
     });
     if (!r.ok) { res.status(401).json({ error: 'Invalid or expired token' }); return null; }
-    return r.json();
-  } catch { res.status(500).json({ error: 'Auth check failed' }); return null; }
+    const user = await r.json();
+    if (!user?.id) { res.status(401).json({ error: 'User identity missing' }); return null; }
+    return user;
+  } catch (e) {
+    const timedOut = e?.name === 'TimeoutError' || e?.name === 'AbortError';
+    res.status(timedOut ? 503 : 500).json({ error: timedOut ? 'Auth service unavailable — try again' : 'Auth check failed' });
+    return null;
+  }
 }
 
 module.exports = async function handler(req, res) {
