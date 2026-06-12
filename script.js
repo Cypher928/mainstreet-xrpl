@@ -271,12 +271,23 @@ function _fetchWithTimeout(url, opts, ms = 58000) {
   return fetch(url, { ...opts, signal: ctrl.signal }).finally(() => clearTimeout(timer));
 }
 
+// Returns the Authorization header object for the current Supabase session.
+// Returns {} (no-op spread) when unauthenticated so calls still go through
+// to get a clean 401 from the server rather than silently failing client-side.
+async function _authHeaders() {
+  try {
+    const { data } = await db.auth.getSession();
+    const tok = data?.session?.access_token;
+    return tok ? { 'Authorization': `Bearer ${tok}` } : {};
+  } catch { return {}; }
+}
+
 // Single entry-point for every Claude API call.
 // Proxies through /api/claude — API key stays server-side.
 async function claudeFetch(body) {
   const resp = await _fetchWithTimeout('/api/claude', {
     method: 'POST',
-    headers: { 'Content-Type': 'application/json' },
+    headers: { 'Content-Type': 'application/json', ...(await _authHeaders()) },
     body: typeof body === 'string' ? body : JSON.stringify(body),
   });
   if (!resp.ok) {
@@ -290,7 +301,7 @@ async function claudeFetch(body) {
 async function explainFetch(body) {
   const resp = await fetch('/api/explain', {
     method: 'POST',
-    headers: { 'Content-Type': 'application/json' },
+    headers: { 'Content-Type': 'application/json', ...(await _authHeaders()) },
     body: typeof body === 'string' ? body : JSON.stringify(body),
   });
   if (!resp.ok) {
@@ -623,7 +634,7 @@ async function uploadInvoiceFile(file) {
     const fileBase64 = await toBase64(file);
     const resp = await fetch('/api/upload', {
       method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
+      headers: { 'Content-Type': 'application/json', ...(await _authHeaders()) },
       body: JSON.stringify({ fileName: file.name, fileType: file.type, fileBase64 }),
     });
     const result = await resp.json();
@@ -4125,10 +4136,10 @@ window.ms_debug_cam_persistence = async function(propertyId) {
     console.log('history rows (excl. sentinel):', out.historyRows.length, '| years:', out.years);
 
     // 4. Clean up sentinel rows (POST empty rows for the sentinel year deletes them).
-    await fetch('/api/cam-reconciliations', {
-      method: 'POST', headers: { 'Content-Type': 'application/json' },
+    await _authHeaders().then(ah => fetch('/api/cam-reconciliations', {
+      method: 'POST', headers: { 'Content-Type': 'application/json', ...ah },
       body: JSON.stringify({ propertyId, year: SENTINEL_YEAR, rows: [] }),
-    }).then(r => r.json()).then(() => console.log('cleanup: sentinel rows deleted'))
+    })).then(r => r.json()).then(() => console.log('cleanup: sentinel rows deleted'))
       .catch(e => console.warn('cleanup failed:', e?.message));
   } catch (e) {
     out.error = e?.message || String(e);
@@ -15540,7 +15551,7 @@ async function _runLeaseValidation(panelEl, tenant, recon, totalExpenses) {
   try {
     const resp = await fetch('/api/validate-lease', {
       method:  'POST',
-      headers: { 'Content-Type': 'application/json' },
+      headers: { 'Content-Type': 'application/json', ...(await _authHeaders()) },
       body:    JSON.stringify({
         leaseDocumentId:    leaseDoc.id,
         reconciliationData: { totalExpenses, year: getCamYear(), lineItems },
@@ -15613,7 +15624,7 @@ async function saveCamResults(propertyId, fullResults, year, totalExpenses = nul
   try {
     const resp = await fetch('/api/cam-reconciliations', {
       method:  'POST',
-      headers: { 'Content-Type': 'application/json' },
+      headers: { 'Content-Type': 'application/json', ...(await _authHeaders()) },
       body:    JSON.stringify({ propertyId, year, rows }),
     });
     const result = await resp.json().catch(() => ({}));
@@ -15631,7 +15642,9 @@ async function saveCamResults(propertyId, fullResults, year, totalExpenses = nul
 
 async function loadCamResults(propertyId, year) {
   if (!propertyId || !year) return [];
-  const resp = await fetch(`/api/cam-reconciliations?propertyId=${encodeURIComponent(propertyId)}&year=${encodeURIComponent(year)}`);
+  const resp = await fetch(`/api/cam-reconciliations?propertyId=${encodeURIComponent(propertyId)}&year=${encodeURIComponent(year)}`, {
+    headers: await _authHeaders(),
+  });
   if (!resp.ok) {
     const err = await resp.json().catch(() => ({}));
     console.error('[loadCamResults] error:', err.error);
@@ -15652,7 +15665,9 @@ async function loadCamResults(propertyId, year) {
 async function loadCamHistory(propertyId) {
   if (!propertyId) return [];
   try {
-    const resp = await fetch(`/api/cam-reconciliations?propertyId=${encodeURIComponent(propertyId)}&history=all`);
+    const resp = await fetch(`/api/cam-reconciliations?propertyId=${encodeURIComponent(propertyId)}&history=all`, {
+      headers: await _authHeaders(),
+    });
     if (!resp.ok) {
       const err = await resp.json().catch(() => ({}));
       console.error('[loadCamHistory] error:', err.error);
@@ -15674,7 +15689,7 @@ async function saveLeaseDocument({ propertyId, tenantId, tenantName, fileName, f
   try {
     const resp = await fetch('/api/lease-documents', {
       method:  'POST',
-      headers: { 'Content-Type': 'application/json' },
+      headers: { 'Content-Type': 'application/json', ...(await _authHeaders()) },
       body:    JSON.stringify({ propertyId, tenantId, tenantName, fileName, fileUrl, extractedText, parsingStatus, extractionModel, usedPdfDirect }),
     });
     const result = await resp.json().catch(() => ({}));
@@ -15693,7 +15708,9 @@ async function saveLeaseDocument({ propertyId, tenantId, tenantName, fileName, f
 async function loadLeaseDocuments(propertyId) {
   if (!propertyId) return [];
   try {
-    const resp = await fetch(`/api/lease-documents?propertyId=${encodeURIComponent(propertyId)}`);
+    const resp = await fetch(`/api/lease-documents?propertyId=${encodeURIComponent(propertyId)}`, {
+      headers: await _authHeaders(),
+    });
     if (!resp.ok) {
       const err = await resp.json().catch(() => ({}));
       console.error('[loadLeaseDocuments] error:', err.error);
@@ -15710,7 +15727,10 @@ async function loadLeaseDocuments(propertyId) {
 async function deleteLeaseDocument(id) {
   if (!id) return { ok: false, reason: 'missing id' };
   try {
-    const resp = await fetch(`/api/lease-documents?id=${encodeURIComponent(id)}`, { method: 'DELETE' });
+    const resp = await fetch(`/api/lease-documents?id=${encodeURIComponent(id)}`, {
+      method: 'DELETE',
+      headers: await _authHeaders(),
+    });
     const result = await resp.json().catch(() => ({}));
     if (!resp.ok) {
       return { ok: false, reason: result.error || `HTTP ${resp.status}` };
@@ -15824,7 +15844,7 @@ async function _submitLeaseQuestion(docId) {
   try {
     const resp   = await fetch('/api/ask-lease', {
       method:  'POST',
-      headers: { 'Content-Type': 'application/json' },
+      headers: { 'Content-Type': 'application/json', ...(await _authHeaders()) },
       body:    JSON.stringify({ leaseDocumentId: docId, question }),
     });
     const result = await resp.json().catch(() => ({}));
@@ -15893,7 +15913,7 @@ async function uploadLeaseToStorage(file, propertyId) {
     const fileBase64 = await toBase64(file);
     const resp = await fetch('/api/upload', {
       method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
+      headers: { 'Content-Type': 'application/json', ...(await _authHeaders()) },
       body: JSON.stringify({ fileName, fileType: file.type, fileBase64, bucket: 'leases' }),
     });
     const result = await resp.json();

@@ -4,6 +4,27 @@
 const SUPABASE_URL      = 'https://zhsuhehgehbzkmzurzyf.supabase.co';
 const SUPABASE_ANON_KEY = 'eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6Inpoc3VoZWhnZWhiemttenVyenlmIiwicm9sZSI6ImFub24iLCJpYXQiOjE3NzU4NDkwNDAsImV4cCI6MjA5MTQyNTA0MH0.HUl9ha9hhjIO1F_k8xPkqbZQnWx-ERRGbnmc6KS3lNE';
 
+const _rl = new Map();
+function _chkRate(uid, max, winMs) {
+  const now = Date.now();
+  let w = _rl.get(uid) || { n: 0, reset: now + winMs };
+  if (now > w.reset) w = { n: 0, reset: now + winMs };
+  w.n++; _rl.set(uid, w);
+  return w.n <= max;
+}
+
+async function _verifyUser(req, res) {
+  const tok = (req.headers['authorization'] || '').replace(/^Bearer\s+/, '');
+  if (!tok) { res.status(401).json({ error: 'Authentication required' }); return null; }
+  try {
+    const r = await fetch(`${SUPABASE_URL}/auth/v1/user`, {
+      headers: { apikey: SUPABASE_ANON_KEY, Authorization: `Bearer ${tok}` },
+    });
+    if (!r.ok) { res.status(401).json({ error: 'Invalid or expired token' }); return null; }
+    return r.json();
+  } catch { res.status(500).json({ error: 'Auth check failed' }); return null; }
+}
+
 const KEY_SOURCE = process.env.SUPABASE_SERVICE_ROLE_KEY ? 'service_role' : 'anon';
 
 function key() {
@@ -37,6 +58,12 @@ async function sbFetch(path, options = {}) {
 
 export default async function handler(req, res) {
   const { method } = req;
+
+  const user = await _verifyUser(req, res);
+  if (!user) return;
+  if (!_chkRate(user.id, 60, 60000)) {
+    return res.status(429).json({ error: 'Too many requests — please slow down.' });
+  }
 
   // POST — upsert a lease document record.
   // If a record with the same property_id + file_name already exists, update it.
