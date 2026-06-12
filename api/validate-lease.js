@@ -6,8 +6,11 @@
 //   3. source is always 'lease_ai' from this endpoint
 //   4. Lease silence → Info/High — never Warning or Critical
 
-const SUPABASE_URL      = 'https://zhsuhehgehbzkmzurzyf.supabase.co';
-const SUPABASE_ANON_KEY = 'eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6Inpoc3VoZWhnZWhiemttenVyenlmIiwicm9sZSI6ImFub24iLCJpYXQiOjE3NzU4NDkwNDAsImV4cCI6MjA5MTQyNTA0MH0.HUl9ha9hhjIO1F_k8xPkqbZQnWx-ERRGbnmc6KS3lNE';
+const SUPABASE_URL      = process.env.SUPABASE_URL;
+const SUPABASE_ANON_KEY = process.env.SUPABASE_ANON_KEY;
+if (!SUPABASE_URL || !SUPABASE_ANON_KEY) {
+  throw new Error('[api/validate-lease] SUPABASE_URL and SUPABASE_ANON_KEY env vars are required');
+}
 
 const _rl = new Map();
 function _chkRate(uid, max, winMs) {

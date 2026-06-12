@@ -15,8 +15,11 @@ module.exports.config = {
   },
 };
 
-const _SB_URL  = 'https://zhsuhehgehbzkmzurzyf.supabase.co';
-const _SB_ANON = 'eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6Inpoc3VoZWhnZWhiemttenVyenlmIiwicm9sZSI6ImFub24iLCJpYXQiOjE3NzU4NDkwNDAsImV4cCI6MjA5MTQyNTA0MH0.HUl9ha9hhjIO1F_k8xPkqbZQnWx-ERRGbnmc6KS3lNE';
+const _SB_URL  = process.env.SUPABASE_URL;
+const _SB_ANON = process.env.SUPABASE_ANON_KEY;
+if (!_SB_URL || !_SB_ANON) {
+  throw new Error('[api/claude] SUPABASE_URL and SUPABASE_ANON_KEY env vars are required');
+}
 
 // In-process sliding-window rate limiter (resets per cold-start; good enough for abuse prevention).
 const _rl = new Map();

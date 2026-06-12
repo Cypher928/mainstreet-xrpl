@@ -11,8 +11,11 @@ export const config = {
   },
 };
 
-const SUPABASE_URL      = 'https://zhsuhehgehbzkmzurzyf.supabase.co';
-const SUPABASE_ANON_KEY = 'eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6Inpoc3VoZWhnZWhiemttenVyenlmIiwicm9sZSI6ImFub24iLCJpYXQiOjE3NzU4NDkwNDAsImV4cCI6MjA5MTQyNTA0MH0.HUl9ha9hhjIO1F_k8xPkqbZQnWx-ERRGbnmc6KS3lNE';
+const SUPABASE_URL      = process.env.SUPABASE_URL;
+const SUPABASE_ANON_KEY = process.env.SUPABASE_ANON_KEY;
+if (!SUPABASE_URL || !SUPABASE_ANON_KEY) {
+  throw new Error('[api/upload] SUPABASE_URL and SUPABASE_ANON_KEY env vars are required');
+}
 
 const _rl = new Map();
 function _chkRate(uid, max, winMs) {
@@ -40,6 +43,29 @@ async function _verifyUser(req, res) {
     res.status(timedOut ? 503 : 500).json({ error: timedOut ? 'Auth service unavailable — try again' : 'Auth check failed' });
     return null;
   }
+}
+
+// Allowed file types: extension → canonical MIME type.
+const ALLOWED_TYPES = {
+  pdf:  'application/pdf',
+  csv:  'text/csv',
+  xlsx: 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet',
+  png:  'image/png',
+  jpg:  'image/jpeg',
+  jpeg: 'image/jpeg',
+};
+
+// Returns an error string if the file is not allowed, or null if valid.
+function _validateUpload(fileName, fileType) {
+  const ext = (fileName.split('.').pop() || '').toLowerCase();
+  const allowed = ALLOWED_TYPES[ext];
+  if (!allowed) {
+    return `File type .${ext} is not allowed. Allowed extensions: ${Object.keys(ALLOWED_TYPES).join(', ')}`;
+  }
+  if (fileType && fileType !== allowed) {
+    return `MIME type "${fileType}" does not match extension .${ext} (expected ${allowed})`;
+  }
+  return null;
 }
 
 function httpsPost(url, headers, body) {
@@ -85,6 +111,11 @@ export default async function handler(req, res) {
   const ALLOWED_BUCKETS = ['invoices', 'leases'];
   if (!ALLOWED_BUCKETS.includes(bucket)) {
     return res.status(400).json({ error: `Invalid bucket: ${bucket}` });
+  }
+
+  const uploadError = _validateUpload(fileName, fileType);
+  if (uploadError) {
+    return res.status(400).json({ error: uploadError });
   }
 
   const key      = process.env.SUPABASE_SERVICE_ROLE_KEY || SUPABASE_ANON_KEY;

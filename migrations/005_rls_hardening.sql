@@ -4,6 +4,14 @@
 --   2. tenants table    — no RLS (all authenticated users could read/delete any tenant)
 --   3. lease_jobs table — over-permissive: any auth user could access all jobs
 --
+-- SCHEMA DEPENDENCY: properties.user_id (uuid, references auth.users) predates this
+-- migration and exists in the live schema. It was first used in script.js commit
+-- 0a490fb (2026-05-03) and referenced without guards in migrations 002–004 before
+-- this file was written. This migration does NOT add the column — it only adds RLS
+-- policies that reference it. If applying to a fresh database, ensure the column
+-- exists before running: ALTER TABLE public.properties ADD COLUMN IF NOT EXISTS
+-- user_id uuid references auth.users(id);
+--
 -- Safe to re-run (uses DROP IF EXISTS / OR REPLACE patterns).
 -- Run in Supabase: Settings → SQL Editor → New query → paste → Run
 
