@@ -5135,6 +5135,9 @@ function renderBulkResults() {
     const _rqProp = _props.find(p => p.id === activePropId);
     if (_rqProp) renderPropertyReviewQueue(_rqProp);
   }
+
+  // Advance onboarding step bar when the first lease is extracted
+  if (tenantData.some(t => t && t.tenant_name)) _obSyncState();
 }
 
 function toggleBulkDetail(i) {
@@ -5741,6 +5744,9 @@ function renderInvResults() {
       <button class="bulk-clear-btn" onclick="clearInvResults()">&#x2715; Clear All</button>
     </div>
     ${rows}`;
+
+  // Advance onboarding step bar when the first invoice is added
+  _obSyncState();
 }
 
 // Returns a clickable confidence badge that opens + highlights weak fields on click.
@@ -7515,11 +7521,125 @@ function showRunCompleteToast() {
   setTimeout(() => { toast.remove(); }, 3100);
 }
 
+// ─── Onboarding ────────────────────────────────────────────────────────────────
+
+function _obKey()   { return _lsUserId ? `ms_ob_v1_${_lsUserId}` : 'ms_ob_v1_anon'; }
+function _obGet()   { try { return JSON.parse(_lsGet(_obKey()) || 'null'); } catch { return null; } }
+function _obSet(s)  { try { _lsSet(_obKey(), JSON.stringify(s)); } catch (_) {} }
+function _obInit()  {
+  const s = { steps: [false,false,false,false,false], welcomeSeen: false };
+  _obSet(s); return s;
+}
+
+// Mark a step complete (0 = Setup, 1 = Leases, 2 = Invoices, 3 = Calculate, 4 = Review)
+function _obMarkStep(idx) {
+  const s = _obGet() || _obInit();
+  if (s.steps[idx]) return;
+  s.steps[idx] = true;
+  _obSet(s);
+}
+
+// Show the welcome modal if the user hasn't seen it and has no real properties
+function _maybeShowWelcome(props) {
+  const s = _obGet() || _obInit();
+  if (s.welcomeSeen) return;
+  const realProps = (Array.isArray(props) ? props : _props).filter(p => p.id !== DEMO_PROPERTY_ID);
+  if (realProps.length > 0) return; // already has properties
+  const modal = document.getElementById('obWelcomeModal');
+  if (modal) modal.style.display = 'flex';
+}
+
+// Called from welcome modal buttons (global so onclick can reach it)
+function obCloseWelcome(action) {
+  const s = _obGet() || _obInit();
+  s.welcomeSeen = true;
+  _obSet(s);
+  const modal = document.getElementById('obWelcomeModal');
+  if (modal) modal.style.display = 'none';
+  if (action === 'property') addNewProperty();
+  else if (action === 'demo') { if (typeof loadDemo === 'function') loadDemo(); }
+}
+
+// Derive current step from live workflow state and update the step bar + hints
+function _obSyncState() {
+  const hasLeases   = tenantData.some(t => t && t.tenant_name);
+  const hasInvoices = invoiceData.length > 0;
+  const hasResults  = lastResults.length > 0;
+
+  // Mark completed steps in localStorage
+  const setupEl = document.getElementById('propertyName');
+  const sqftEl  = document.getElementById('totalSqft');
+  const hasSetup = !!(setupEl?.value?.trim() && setupEl.value.trim() !== 'New Property' && parseFloat(sqftEl?.value) > 0);
+  if (hasSetup)    _obMarkStep(0);
+  if (hasLeases)   _obMarkStep(1);
+  if (hasInvoices) _obMarkStep(2);
+  if (hasResults)  _obMarkStep(3);
+  if (hasResults)  _obMarkStep(4); // review step auto-marks when results present
+
+  // Advance step bar to the current frontier
+  const reached = hasResults ? 'done'
+    : hasInvoices ? 'calculate'
+    : hasLeases   ? 'invoices'
+    : hasSetup    ? 'leases'
+    : 'setup';
+  updateStepBar(reached);
+
+  // Update contextual hints
+  _obUpdateHints(hasSetup, hasLeases, hasInvoices, hasResults);
+}
+
+// Inject contextual hints into section placeholders
+function _obUpdateHints(hasSetup, hasLeases, hasInvoices, hasResults) {
+  const h2 = document.getElementById('obHintLeases');
+  const h3 = document.getElementById('obHintInvoices');
+
+  if (h2) {
+    if (!hasLeases) {
+      h2.innerHTML = '<strong>Step 2 of 5</strong> — Drag &amp; drop your lease PDFs above. '
+        + 'AI reads CAM caps, exclusions, and rent schedules automatically. No templates needed.';
+      h2.style.display = 'block';
+    } else {
+      h2.style.display = 'none';
+    }
+  }
+
+  if (h3) {
+    if (hasLeases && !hasInvoices) {
+      h3.innerHTML = '<strong>Step 3 of 5</strong> — Upload your CAM expense invoices for the reconciliation year. '
+        + 'PDF, image, or Excel GL exports all work. '
+        + (hasLeases ? '' : '<a onclick="document.getElementById(\'cardLeases\').scrollIntoView({behavior:\'smooth\'})">Upload leases first ↑</a>');
+      h3.style.display = 'block';
+    } else {
+      h3.style.display = 'none';
+    }
+  }
+}
+
 // ─── Step Progress Bar ────────────────────────────────────────────────────────
 
 function updateStepBar(reached) {
-  const steps = ['upload','calculate','review','resolve'];
-  const idx   = steps.indexOf(reached);
+  // 5-step system: setup → leases → invoices → calculate → review
+  // Legacy call-site aliases kept for backward compat
+  const aliasMap = { upload: 'leases', resolve: 'review' };
+  const normalized = aliasMap[reached] || reached;
+
+  const steps = ['setup','leases','invoices','calculate','review'];
+
+  if (normalized === 'done') {
+    steps.forEach(s => {
+      const el = document.getElementById(`step-${s}`);
+      if (!el) return;
+      el.classList.remove('active');
+      el.classList.add('done');
+      const dot = el.querySelector('.step-dot');
+      if (dot) dot.innerHTML = '&#x2713;';
+    });
+    return;
+  }
+
+  const idx = steps.indexOf(normalized);
+  if (idx === -1) return;
+
   steps.forEach((s, i) => {
     const el = document.getElementById(`step-${s}`);
     if (!el) return;
@@ -14897,6 +15017,9 @@ function renderPortfolio(props) {
   // Recovered Revenue Dashboard (below intelligence panel)
   renderRecoveredRevenueDashboard(props);
 
+  // First-time welcome modal (no-op if user already has properties or has seen it)
+  _maybeShowWelcome(props);
+
   // Property cards
   const statusLabel = { reconciled: 'Reconciled', 'in-progress': 'In Progress', disputes: 'Has Open Disputes' };
 
@@ -15005,7 +15128,11 @@ function renderPortfolio(props) {
     <div class="ptf-empty-state">
       <div class="ptf-empty-icon">&#x1F3E2;</div>
       <div class="ptf-empty-title">No properties yet</div>
-      <div class="ptf-empty-desc">Add your first property to start reconciling CAM charges, or try the live demo to explore the workflow.</div>
+      <div class="ptf-empty-desc">Add your first property to get CAM reconciliation, cap enforcement, and audit-ready tenant statements — in about 5 minutes.</div>
+      <div class="ptf-empty-cta">
+        <button class="ptf-empty-btn-primary" onclick="addNewProperty()">+ Create First Property</button>
+        <button class="ptf-empty-btn-secondary" onclick="loadDemo()">&#x1F3AF; Try Live Demo</button>
+      </div>
     </div>`;
 
   // Hero identity text always visible — it's the brand anchor.
@@ -15255,6 +15382,11 @@ function resetWorkflow() {
 function liveUpdateBreadcrumb(name) {
   const el = document.getElementById('breadcrumbPropName');
   if (el) el.textContent = name || 'New Property';
+  // Advance step bar once a real name is typed
+  if (name && name.trim() && name.trim() !== 'New Property') {
+    const sqft = parseFloat(document.getElementById('totalSqft')?.value) || 0;
+    if (sqft > 0) _obSyncState();
+  }
 }
 
 // ─── Supabase Persistence ─────────────────────────────────────────────────────
@@ -16073,8 +16205,13 @@ function renderLeaseCenter(propertyId) {
       panel.innerHTML = `
         <div style="padding:24px 0;text-align:center;color:#64748b;">
           <div style="font-size:2rem;margin-bottom:8px;">📄</div>
-          <div style="font-weight:600;margin-bottom:4px;">No leases stored yet</div>
-          <div style="font-size:0.8rem;">Upload leases using the Upload tabs — documents will appear here automatically.</div>
+          <div style="font-weight:600;margin-bottom:4px;color:#94a3b8;">No leases stored yet</div>
+          <div style="font-size:0.8rem;margin-bottom:12px;max-width:320px;margin-left:auto;margin-right:auto;">
+            Upload lease PDFs in the <strong style="color:#818cf8;">Upload Leases</strong> tab.
+            Once extracted, you can ask questions about any lease here.
+          </div>
+          <button style="padding:7px 16px;background:#4f46e5;border:none;border-radius:7px;color:#fff;font-size:0.76rem;font-weight:700;cursor:pointer;"
+            onclick="switchLeaseTab('bulk')">Go to Upload Leases ↑</button>
         </div>`;
       return;
     }
@@ -16859,6 +16996,9 @@ function renderProperty(property) {
   document.getElementById('portfolioDashboard').style.display  = 'none';
   document.getElementById('propertyBreadcrumb').style.display  = 'flex';
   document.getElementById('mainWorkflow').style.display        = 'block';
+
+  // Sync onboarding step bar + contextual hints from current property state
+  _obSyncState();
 
   window.scrollTo({ top: 0, behavior: 'smooth' });
 }
