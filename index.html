@@ -30,43 +30,6 @@
       display: flex; align-items: center; justify-content: space-between;
       border-bottom: 1px solid rgba(255,255,255,0.07);
     }
-    /* ── Desktop layout overrides (≥1024px) ──────────────────────── */
-    @media (min-width: 1024px) {
-      body { padding: 0 40px 64px; }
-      header,
-      .container,
-      #portfolioDashboard { max-width: min(1440px, calc(100% - 48px)); padding-left: 0; padding-right: 0; }
-      header { margin-bottom: 28px; }
-      /* Result cards in 2-column grid on desktop */
-      #resultsBody { display: grid; grid-template-columns: repeat(2, 1fr); gap: 16px; align-items: start; }
-      #resultsBody > .summary-bar,
-      #resultsBody > .reconciliation-summary,
-      #resultsBody > [class*="rec-sum"],
-      #resultsBody > p,
-      #resultsBody > .err-banner,
-      #resultsBody > .cam-sqft-warning,
-      #resultsBody > .cam-skip-warning { grid-column: 1 / -1; }
-      /* 4-column stats inside each result card */
-      .result-grid { grid-template-columns: repeat(4, 1fr); }
-      /* KPI bar expands to 6 cols */
-      .ptf-kpi-bar { grid-template-columns: repeat(6, 1fr); }
-      /* Portfolio cards larger minimum */
-      .ptf-cards-grid { grid-template-columns: repeat(auto-fill, minmax(280px, 1fr)); }
-      /* Cards breathe more on desktop */
-      .card { padding: 28px 32px; }
-      /* Charge rows tighter vertical padding — more rows visible without scroll */
-      .charge-row { padding: 10px 20px; }
-      /* Warning banners: compact inline chips instead of block banners */
-      .warn-banner {
-        display: inline-flex; align-items: center; gap: 8px;
-        padding: 4px 12px; border-radius: 20px; font-size: 0.77rem;
-        line-height: 1.3; margin: 3px 4px 3px 0;
-      }
-      .warn-banner .warn-msg { margin-bottom: 0; display: inline; }
-      .warn-banner-btns { display: inline-flex; gap: 5px; flex-shrink: 0; }
-      /* Wrap warn-banners as a flex row when there are multiple */
-      .warn-list, #warnContainer { display: flex; flex-wrap: wrap; gap: 4px; }
-    }
     header h1 {
       font-family: 'Cormorant Garamond', Georgia, serif;
       font-size: 1.65rem; font-weight: 700; color: #E2E8F0;
@@ -682,9 +645,6 @@
     /* ── Portfolio Dashboard ─────────────────────────────────────────── */
     #portfolioDashboard {
       max-width: 720px; margin: 0 auto; padding: 0 16px 48px;
-    }
-    @media (min-width: 1024px) {
-      #portfolioDashboard { padding: 0 0 48px; }
     }
     .ptf-kpi-bar {
       display: grid; grid-template-columns: repeat(3, 1fr);
@@ -4421,6 +4381,45 @@
       color: #94a3b8; font-size: 0.78rem; font-weight: 600; cursor: pointer;
     }
     .ptf-empty-btn-secondary:hover { color: #cbd5e1; }
+
+    /* ── Desktop layout overrides (≥1024px) ─────────────────────────
+       Placed at end of stylesheet so these rules win the cascade over
+       all base max-width:720px declarations above.                   */
+    @media (min-width: 1024px) {
+      body { padding: 0 40px 64px; }
+      /* Expand all 720px-capped containers to use available screen width */
+      header,
+      .container,
+      #portfolioDashboard,
+      #propertyBreadcrumb { max-width: 1440px; margin-left: auto; margin-right: auto; }
+      header { padding-left: 0; padding-right: 0; margin-bottom: 28px; }
+      #portfolioDashboard { padding-left: 0; padding-right: 0; }
+      #propertyBreadcrumb  { padding-left: 0; padding-right: 0; }
+      /* Result cards in 2-column grid so two tenants sit side-by-side */
+      #resultsBody { display: grid; grid-template-columns: repeat(2, 1fr); gap: 16px; align-items: start; }
+      #resultsBody > .summary-bar,
+      #resultsBody > .reconciliation-summary,
+      #resultsBody > p,
+      #resultsBody > .err-banner,
+      #resultsBody > .cam-sqft-warning,
+      #resultsBody > .cam-skip-warning { grid-column: 1 / -1; }
+      /* 4-column stats per result card instead of 3 */
+      .result-grid { grid-template-columns: repeat(4, 1fr); }
+      /* Portfolio KPI bar: 6 columns */
+      .ptf-kpi-bar { grid-template-columns: repeat(6, 1fr); }
+      /* Portfolio property cards: wider minimum */
+      .ptf-cards-grid { grid-template-columns: repeat(auto-fill, minmax(280px, 1fr)); }
+      /* Tighter charge rows — more rows visible without scrolling */
+      .charge-row { padding: 10px 20px; }
+      /* Warning banners → compact inline chips */
+      .warn-banner {
+        display: inline-flex; align-items: center; gap: 8px;
+        padding: 4px 12px; border-radius: 20px; font-size: 0.77rem;
+        line-height: 1.3; margin: 3px 4px 3px 0;
+      }
+      .warn-banner .warn-msg { margin-bottom: 0; display: inline; }
+      .warn-banner-btns { display: inline-flex; gap: 5px; flex-shrink: 0; }
+    }
 
   </style>
 </head>

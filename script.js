@@ -5858,7 +5858,7 @@ function toggleInvDetail(i) {
   if (!det) return;
   const open = det.style.display === 'block';
   det.style.display = open ? 'none' : 'block';
-  chev.innerHTML    = open ? '&#x25BC; Edit' : '&#x25B2; Close';
+  if (chev) chev.innerHTML = open ? '&#x25BC; Edit' : '&#x25B2; Close';
 }
 
 function viewInvoice(i) {
@@ -5866,7 +5866,7 @@ function viewInvoice(i) {
   const chev = document.getElementById(`ichev-${i}`);
   if (!det) return;
   det.style.display = 'block';
-  chev.innerHTML    = '&#x25B2; Close';
+  if (chev) chev.innerHTML = '&#x25B2; Close';
   det.scrollIntoView({ behavior: 'smooth', block: 'nearest' });
 }
 
