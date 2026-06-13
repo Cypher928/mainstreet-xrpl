@@ -16438,8 +16438,10 @@ async function saveProperty(property) {
     };
 
     if (id) {
+      const { data: { user: _u } } = await db.auth.getUser();
+      if (!_u?.id) throw new Error('Not authenticated');
       const { error } = await db.from('properties')
-        .upsert({ id, ...payload })
+        .upsert({ id, ...payload, user_id: _u.id })
         .select('id');
       if (error) throw error;
     } else {
