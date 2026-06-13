@@ -2703,7 +2703,7 @@ async function _runLeaseJobPipeline(jobId, placeholderIdx) {
     if (status === 'failed') {
       failLeaseJob(jobId, { message: finalEntry._error || 'Extraction failed' }, 'extraction');
     } else {
-      finalizeLeaseJob(jobId, { norm, conf: _conf, meta: _meta, tenantId: jobId });
+      finalizeLeaseJob(jobId, { norm, conf: _conf, meta: _meta, tenantId: norm?.id || null });
     }
 
     // Phase 22A/22C: persist lease document record.
