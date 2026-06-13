@@ -277,8 +277,16 @@ function _fetchWithTimeout(url, opts, ms = 58000) {
 async function _authHeaders() {
   try {
     const { data } = await db.auth.getSession();
-    const tok = data?.session?.access_token;
-    return tok ? { 'Authorization': `Bearer ${tok}` } : {};
+    if (!data?.session) return {};
+    // Refresh if the token expires within the next 60 seconds so API routes
+    // never receive an expired JWT (getSession() returns stale tokens as-is).
+    const expiresAt = data.session.expires_at ?? 0;
+    if (expiresAt - Date.now() / 1000 < 60) {
+      const { data: r } = await db.auth.refreshSession();
+      const tok = r?.session?.access_token;
+      return tok ? { 'Authorization': `Bearer ${tok}` } : {};
+    }
+    return { 'Authorization': `Bearer ${data.session.access_token}` };
   } catch { return {}; }
 }
 
