@@ -1708,17 +1708,19 @@
     .bulk-t-info { flex: 1; min-width: 0; }
     .tenant-title { font-size: 1rem; font-weight: 600; color: #E2E8F0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
     .tenant-meta { font-size: 0.8rem; color: #94A3B8; margin-top: 4px; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+    /* ── Invoice row: mobile base ───────────────────────────────────── */
     .bulk-t-name { font-size: 0.88rem; font-weight: 700; color: #E2E8F0; flex: 1; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
-    .bulk-t-meta { font-size: 0.78rem; color: #64748B; white-space: nowrap; }
-    .bulk-t-chevron { font-size: 0.7rem; color: #64748B; flex-shrink: 0; }
+    .bulk-t-cat  { font-size: 0.78rem; color: #94A3B8; white-space: nowrap; flex-shrink: 0; }
+    .bulk-t-amount { font-size: 0.85rem; font-weight: 700; color: #F59E0B; white-space: nowrap; flex-shrink: 0; }
+    .bulk-t-badges { display: flex; gap: 6px; align-items: center; flex-wrap: wrap; flex-shrink: 0; }
     .bulk-t-remove {
       padding: 3px 10px; border-radius: 6px; font-size: 0.74rem; font-weight: 600;
-      cursor: pointer; border: 1.5px solid rgba(239,68,68,0.3); background: #111827;
-      color: #f87171; transition: all 0.15s; flex-shrink: 0;
+      cursor: pointer; border: 1.5px solid rgba(239,68,68,0.3); background: transparent;
+      color: #f87171; transition: all 0.15s; flex-shrink: 0; white-space: nowrap;
     }
     .bulk-t-remove:hover { background: rgba(239,68,68,0.1); }
     .bulk-tenant-detail { padding: 14px 14px 10px; border-top: 1px solid rgba(255,255,255,0.06); }
-    .inv-action-btns { display: flex; gap: 5px; flex-shrink: 0; align-items: center; }
+    .inv-action-btns { display: flex; gap: 5px; flex-shrink: 0; align-items: center; flex-wrap: wrap; }
     .inv-act-btn {
       font-size: 0.72rem; padding: 3px 9px; border-radius: 5px; border: 1.5px solid #334155;
       background: rgba(51,65,85,0.4); color: #94A3B8; cursor: pointer; font-weight: 600;
@@ -1727,6 +1729,27 @@
     .inv-act-btn:hover { border-color: #3B82F6; color: #93C5FD; background: rgba(59,130,246,0.1); }
     .inv-act-explain:hover { border-color: #8B5CF6; color: #C4B5FD; background: rgba(139,92,246,0.1); }
     .inv-act-dispute:hover { border-color: #ea580c; color: #fb923c; background: rgba(234,88,12,0.1); }
+    /* Duplicate warning as a second row */
+    .inv-dup-row {
+      display: flex; align-items: center; gap: 10px; padding: 5px 14px 5px 42px;
+      background: rgba(234,179,8,0.06); border-top: 1px solid rgba(234,179,8,0.15);
+      font-size: 0.77rem; color: #ca8a04;
+    }
+    /* ── Invoice row: desktop grid ──────────────────────────────────── */
+    @media (min-width: 768px) {
+      .bulk-tenant-summary {
+        display: grid;
+        grid-template-columns: 28px minmax(200px, 3fr) minmax(110px, 1fr) 100px minmax(120px, 1.5fr) auto;
+        align-items: center;
+        gap: 14px;
+        padding: 10px 16px;
+      }
+      .bulk-t-name   { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; min-width: 0; }
+      .bulk-t-cat    { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+      .bulk-t-amount { text-align: right; }
+      .bulk-t-badges { flex-wrap: nowrap; overflow: hidden; }
+      .inv-action-btns { flex-wrap: nowrap; justify-content: flex-end; gap: 6px; }
+    }
     .inv-disputed-badge { font-size: 0.7rem; color: #fb923c; font-weight: 700; flex-shrink: 0; }
     .badge-disputed {
       display: inline-block; background: #7c2d12; color: #fca5a5;
@@ -2055,19 +2078,17 @@
     .warn-btn.dismiss { background: #111827; color: #94A3B8; border: 1px solid rgba(255,255,255,0.1); }
     .warn-btn.dismiss:hover { background: #0F1929; }
 
-    /* ── Inline duplicate badge (summary row) ────────────────────────── */
+    /* ── Duplicate warning second row ────────────────────────────────── */
     .dup-row-badge {
       display: inline-flex; align-items: center; gap: 6px;
-      padding: 3px 9px; border-radius: 20px; font-size: 0.72rem; font-weight: 600;
-      background: rgba(234,88,12,0.12); color: #fb923c;
-      border: 1px solid rgba(234,88,12,0.3); white-space: nowrap; flex-shrink: 0;
+      font-size: 0.77rem; font-weight: 600; color: #ca8a04; white-space: nowrap;
     }
     .dup-row-remove {
-      margin-left: 4px; cursor: pointer; background: none; border: none;
-      color: #fb923c; font-size: 0.72rem; font-weight: 700; padding: 0;
-      text-decoration: underline;
+      margin-left: 4px; cursor: pointer; background: none;
+      border: 1px solid rgba(234,179,8,0.4); border-radius: 4px;
+      color: #ca8a04; font-size: 0.72rem; font-weight: 700; padding: 2px 8px;
     }
-    .dup-row-remove:hover { color: #f97316; }
+    .dup-row-remove:hover { background: rgba(234,179,8,0.1); }
 
     /* ── Tenant match badge (invoice summary row) ───────────────────── */
     .match-badge {

@@ -5693,19 +5693,21 @@ function renderInvResults() {
         <div class="bulk-tenant-summary" onclick="toggleInvDetail(${i})">
           <span class="bulk-t-status">${icon}</span>
           <span class="bulk-t-name" id="iname-${i}">${esc(name)}</span>
-          <span class="bulk-t-meta" id="imeta-${i}">${esc(catStr)} &middot; ${amtStr}</span>
-          <span id="isummaryBadge-${i}">${overallConf !== undefined ? clickableConfBadge(overallConf, i, weakFields) : ''}</span>
-          ${matchBadge}
-          ${dupBadge}
-          ${d._disputed ? `<span class="badge-disputed">Disputed</span>` : ''}
-          <span class="bulk-t-chevron" id="ichev-${i}">&#x25BC; Edit</span>
+          <span class="bulk-t-cat" id="icat-${i}">${esc(catStr)}</span>
+          <span class="bulk-t-amount" id="iamt-${i}">${amtStr}</span>
+          <span class="bulk-t-badges">
+            <span id="isummaryBadge-${i}">${overallConf !== undefined ? clickableConfBadge(overallConf, i, weakFields) : ''}</span>
+            ${matchBadge}
+            ${d._disputed ? `<span class="badge-disputed">Disputed</span>` : ''}
+          </span>
           <div class="inv-action-btns">
             <button class="inv-act-btn" onclick="event.stopPropagation();viewInvoice(${i})">View</button>
             <button class="inv-act-btn inv-act-explain" id="iexplbtn-${i}" onclick="event.stopPropagation();explainCharge(${i})">Explain</button>
             <button class="inv-act-btn inv-act-dispute" onclick="event.stopPropagation();disputeCharge(${i})">Dispute</button>
+            <button class="bulk-t-remove" onclick="event.stopPropagation();removeInvItem(${i})">Remove</button>
           </div>
-          <button class="bulk-t-remove" onclick="event.stopPropagation();removeInvItem(${i})">Remove</button>
         </div>
+        ${dupBadge ? `<div class="inv-dup-row">${dupBadge}</div>` : ''}
         ${d._fileUploadError === 'rate-limited'
           ? `<div class="inv-upload-err-banner inv-upload-err-banner--warn">&#x26A0; File not backed up — upload rate limit reached. Invoice data is saved; re-upload this file to attach it.</div>`
           : d._fileUploadError
@@ -6005,12 +6007,11 @@ function refreshInvSummary(i) {
   const d = invoiceData[i];
   if (!d) return;
   const nameEl = document.getElementById(`iname-${i}`);
-  const metaEl = document.getElementById(`imeta-${i}`);
+  const catEl  = document.getElementById(`icat-${i}`);
+  const amtEl  = document.getElementById(`iamt-${i}`);
   if (nameEl) nameEl.textContent = d.vendorName || '(unknown — click to edit)';
-  if (metaEl) {
-    const amtStr = d.amount !== '' ? fmt(parseFloat(d.amount) || 0) : '—';
-    metaEl.textContent = (d.category || 'other') + ' · ' + amtStr;
-  }
+  if (catEl)  catEl.textContent  = d.category || 'other';
+  if (amtEl)  amtEl.textContent  = d.amount !== '' ? fmt(parseFloat(d.amount) || 0) : '—';
 }
 
 async function removeInvItem(i) {
