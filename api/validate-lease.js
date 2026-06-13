@@ -6,8 +6,8 @@
 //   3. source is always 'lease_ai' from this endpoint
 //   4. Lease silence → Info/High — never Warning or Critical
 
-const SUPABASE_URL      = process.env.SUPABASE_URL;
-const SUPABASE_ANON_KEY = process.env.SUPABASE_ANON_KEY;
+const SUPABASE_URL      = (process.env.SUPABASE_URL      || '').trim();
+const SUPABASE_ANON_KEY = (process.env.SUPABASE_ANON_KEY || '').trim();
 if (!SUPABASE_URL || !SUPABASE_ANON_KEY) {
   throw new Error('[api/validate-lease] SUPABASE_URL and SUPABASE_ANON_KEY env vars are required');
 }
@@ -27,7 +27,7 @@ async function _verifyUser(req, res) {
   try {
     const r = await fetch(`${SUPABASE_URL}/auth/v1/user`, {
       signal: AbortSignal.timeout(3000),
-      headers: { apikey: SUPABASE_ANON_KEY, Authorization: `Bearer ${tok}` },
+      headers: { apikey: (process.env.SUPABASE_SERVICE_ROLE_KEY || SUPABASE_ANON_KEY).trim(), Authorization: `Bearer ${tok}` },
     });
     if (!r.ok) { res.status(401).json({ error: 'Invalid or expired token' }); return null; }
     const user = await r.json();
