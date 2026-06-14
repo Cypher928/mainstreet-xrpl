@@ -1719,6 +1719,68 @@
     }
     .fe-chip-loc { font-weight: 700; margin-right: 5px; color: #818cf8; }
     .fe-chip-quote { font-style: italic; color: #94a3b8; }
+
+    /* ── P6-6 Pre-reconciliation summary strip ─────────────────── */
+    .prerecon-summary {
+      display: flex; flex-wrap: wrap; gap: 8px;
+      padding: 10px 14px; margin-bottom: 10px;
+      background: rgba(255,255,255,0.03);
+      border: 1px solid rgba(255,255,255,0.06);
+      border-radius: 8px;
+    }
+    .prerecon-tile {
+      display: flex; flex-direction: column; align-items: center;
+      padding: 6px 12px; border-radius: 6px;
+      background: rgba(255,255,255,0.04); min-width: 70px;
+    }
+    .prerecon-val  { font-size: 1.1rem; font-weight: 700; color: #C9973A; line-height: 1.2; }
+    .prerecon-lbl  { font-size: 0.65rem; color: #64748b; text-transform: uppercase; letter-spacing: 0.05em; margin-top: 2px; }
+    .prerecon-ok   { color: #4ade80; }
+    .prerecon-warn { color: #fbbf24; }
+    .prerecon-err  { color: #f87171; }
+    .prerecon-pend { color: #94a3b8; }
+
+    /* ── P6-1 Tenant filter bar ─────────────────────────────────── */
+    .bulk-filter-bar {
+      display: flex; flex-wrap: wrap; align-items: center; gap: 8px;
+      padding: 8px 0 10px; margin-bottom: 2px;
+    }
+    .bulk-filter-input {
+      flex: 1; min-width: 160px; max-width: 260px;
+      padding: 6px 10px; border-radius: 6px;
+      background: rgba(255,255,255,0.06); border: 1px solid rgba(255,255,255,0.1);
+      color: #E2E8F0; font-size: 0.82rem; outline: none;
+    }
+    .bulk-filter-input::placeholder { color: #475569; }
+    .bulk-filter-input:focus { border-color: rgba(201,151,58,0.4); }
+    .bulk-filter-pills { display: flex; flex-wrap: wrap; gap: 5px; }
+    .bulk-filter-pill {
+      padding: 3px 10px; border-radius: 10px; font-size: 0.72rem; font-weight: 600;
+      background: rgba(255,255,255,0.05); border: 1px solid rgba(255,255,255,0.1);
+      color: #94a3b8; cursor: pointer; transition: all 0.15s;
+    }
+    .bulk-filter-pill:hover  { background: rgba(255,255,255,0.09); color: #E2E8F0; }
+    .bulk-filter-pill.active { background: rgba(201,151,58,0.15); border-color: rgba(201,151,58,0.4); color: #C9973A; }
+    .bulk-filter-empty { padding: 20px; text-align: center; color: #475569; font-size: 0.85rem; }
+
+    /* ── P6-5 CAM year badge ────────────────────────────────────── */
+    .cam-year-badge {
+      display: inline-block; padding: 2px 9px;
+      background: rgba(201,151,58,0.12); border: 1px solid rgba(201,151,58,0.3);
+      color: #C9973A; border-radius: 10px;
+      font-size: 0.72rem; font-weight: 700; letter-spacing: 0.04em;
+      white-space: nowrap;
+    }
+
+    /* ── P6-7 Portfolio search ──────────────────────────────────── */
+    .ptf-search-input {
+      padding: 6px 12px; border-radius: 6px; font-size: 0.82rem;
+      background: rgba(255,255,255,0.06); border: 1px solid rgba(255,255,255,0.1);
+      color: #E2E8F0; outline: none; width: 200px;
+    }
+    .ptf-search-input::placeholder { color: #475569; }
+    .ptf-search-input:focus { border-color: rgba(201,151,58,0.4); }
+
     .bulk-tenant-summary {
       display: flex; align-items: center; gap: 10px; padding: 10px 14px;
       background: #0F1929; cursor: pointer; user-select: none;
@@ -4605,6 +4667,9 @@
   <div class="ptf-props-head">
     <h2>Your Properties</h2>
     <div class="ptf-head-actions">
+      <input id="ptfSearchInput" class="ptf-search-input" type="text"
+        placeholder="Search properties…"
+        oninput="_portfolioQuery=this.value;_applyPortfolioSearch()" />
       <button class="ptf-export-btn" onclick="exportPortfolioSummary()" title="Export one-page portfolio summary">&#x1F4CA; Export Summary</button>
       <button class="add-prop-btn" onclick="addNewProperty()">+ Add Property</button>
     </div>
@@ -4717,6 +4782,7 @@
 <div id="propertyBreadcrumb">
   <button class="breadcrumb-back" onclick="backToPortfolio()">&#x2190; Back to Portfolio</button>
   <span class="breadcrumb-path">Portfolio &rsaquo; <span id="breadcrumbPropName"></span></span>
+  <span id="camYearBadge" class="cam-year-badge"></span>
   <div id="syncIndicator" class="sync-indicator"></div>
   <button class="rc-open-btn" onclick="openRecoveryModal()" title="Recovery Center">&#x1F512; Recovery</button>
   <button class="breadcrumb-clear-btn" onclick="clearPropertyData()" title="Reset tenant &amp; invoice data for this property — the property itself stays in your portfolio">&#x1F5D1; Clear Data</button>

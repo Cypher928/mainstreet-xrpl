@@ -15228,6 +15228,12 @@ function _renderLeaseAlertPanel(rar) {
   </div>`;
 }
 
+function _applyPortfolioSearch() {
+  // Re-render the full portfolio — fast because _props is in memory
+  // and the search only changes which cards are visible, not the data
+  renderPortfolio(_props);
+}
+
 function renderPortfolio(props) {
   props = props || _props; // handle no-arg calls
   if (!Array.isArray(props)) {
