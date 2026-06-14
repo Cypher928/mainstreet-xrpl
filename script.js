@@ -8383,22 +8383,27 @@ function openTenantDetailPanel(i) {
       <div class="tdp-stat">
         <div class="tdp-stat-label">Lease Type</div>
         <div class="tdp-stat-value${!d.lease_type ? ' tdp-null' : ''}">${esc(_v(d.lease_type))}</div>
+        ${_citationChip(d, 'lease_type')}
       </div>
       <div class="tdp-stat">
         <div class="tdp-stat-label">Leased Sqft</div>
         <div class="tdp-stat-value${!d.leased_sqft ? ' tdp-null' : ''}">${esc(sqft || '—')}</div>
+        ${_citationChip(d, 'leased_sqft')}
       </div>
       <div class="tdp-stat">
         <div class="tdp-stat-label">Start Date</div>
         <div class="tdp-stat-value${!d.start_date ? ' tdp-null' : ''}">${esc(_v(d.start_date))}</div>
+        ${_citationChip(d, 'start_date')}
       </div>
       <div class="tdp-stat">
         <div class="tdp-stat-label">End Date</div>
         <div class="tdp-stat-value${!d.end_date ? ' tdp-null' : ''}">${esc(_v(d.end_date))}</div>
+        ${_citationChip(d, 'end_date')}
       </div>
       <div class="tdp-stat">
         <div class="tdp-stat-label">CAM Cap</div>
         <div class="tdp-stat-value${capPct === null ? ' tdp-null' : ''}">${capPct !== null ? capPct + '%' : '—'}</div>
+        ${_citationChip(d, 'cap')}
       </div>
       <div class="tdp-stat">
         <div class="tdp-stat-label">Pro-Rata %</div>
@@ -12115,11 +12120,12 @@ function renderReportTenantExpansion(tr, tenantName) {
   const _v = (val) =>
     (val !== null && val !== undefined && String(val).trim() !== '') ? esc(String(val)) : null;
 
-  function stat(label, value, gold) {
+  function stat(label, value, gold, chip) {
     const isNull = value === null || value === undefined;
     return `<div class="rpt-exp-stat">
       <div class="rpt-exp-label">${label}</div>
       <div class="rpt-exp-value${gold ? ' hi' : ''}${isNull ? ' nil' : ''}">${isNull ? '—' : value}</div>
+      ${chip || ''}
     </div>`;
   }
 
@@ -12145,11 +12151,11 @@ function renderReportTenantExpansion(tr, tenantName) {
       ${td ? _tenantReviewStateBadgeHtml(td) : ''}
       <div class="rpt-exp-section">Lease Info</div>
       <div class="rpt-exp-grid">
-        ${stat('Lease Type',  _v(td?.lease_type))}
-        ${stat('Leased Sqft', sqftStr)}
-        ${stat('Start Date',  _v(td?.start_date))}
-        ${stat('End Date',    _v(td?.end_date))}
-        ${stat('Pro-Rata',    proRatStr, true)}
+        ${stat('Lease Type',  _v(td?.lease_type), false, td ? _citationChip(td, 'lease_type')  : '')}
+        ${stat('Leased Sqft', sqftStr,            false, td ? _citationChip(td, 'leased_sqft') : '')}
+        ${stat('Start Date',  _v(td?.start_date), false, td ? _citationChip(td, 'start_date')  : '')}
+        ${stat('End Date',    _v(td?.end_date),   false, td ? _citationChip(td, 'end_date')    : '')}
+        ${stat('Pro-Rata',    proRatStr,          true)}
       </div>
       <div class="rpt-exp-section">CAM Summary</div>
       <div class="rpt-exp-grid">

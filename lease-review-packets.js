@@ -480,6 +480,7 @@ window.LeaseReviewPackets = (() => {
       confidence:    t._confidence || null,
       confidenceScore: t._confidenceScore ?? null,
       amendmentCount: (t.amendments || []).length,
+      fieldEvidence: t.fieldEvidence || null,
     }));
   }
 
@@ -537,16 +538,38 @@ window.LeaseReviewPackets = (() => {
       ${es.unresolvedItems.length ? `<div style="margin-top:8px;font-size:0.78rem;font-weight:600;color:#94a3b8;">Unresolved</div>${itemList(es.unresolvedItems, 'lrp-unresolved')}` : ''}`;
 
     // ── Extracted Lease Terms ──────────────────────────────────────────────
-    const termsRows = (packet.extractedLeaseTerms || []).map(t => `<tr>
-      <td>${_esc(t.tenantName)}</td>
-      <td style="text-align:right">${t.leasedSqft != null ? Number(t.leasedSqft).toLocaleString('en-US') : '—'}</td>
-      <td>${_esc(t.leaseType || '—')}</td>
-      <td style="text-align:right">${t.cap != null ? t.cap + '%' : '—'}</td>
-      <td style="text-align:right">${t.adminFeePct != null ? t.adminFeePct + '%' : '—'}</td>
-      <td style="text-align:right">${t.grossUpPct != null ? t.grossUpPct + '%' : '—'}</td>
-      <td>${t.auditRights === true ? '✓' : t.auditRights === false ? '✗' : '—'}</td>
-      <td><span style="color:${t.confidence === 'high' ? '#4ade80' : t.confidence === 'medium' ? '#fbbf24' : t.confidence === 'low' ? '#f87171' : '#94a3b8'}">${_esc(t.confidence || '—')}</span></td>
-    </tr>`).join('');
+    // Local citation chip adapter — reads the same fieldEvidence structure as
+    // _citationChip() in script.js, uses the same .fe-chip CSS classes.
+    function _citeChip(fe, fieldKey, hasValue) {
+      if (!hasValue) return '';
+      const snaps = fe?.[fieldKey]?.snapshots;
+      if (!snaps || !snaps.length) return '';
+      const snap = snaps.find(s => !s.superseded) || snaps[0];
+      if (!snap) return '';
+      if (snap.quote) {
+        const locParts = [];
+        if (snap.page)    locParts.push('p.' + snap.page);
+        if (snap.section) locParts.push(snap.section);
+        const loc     = locParts.join(' · ');
+        const preview = snap.quote.length > 60 ? snap.quote.slice(0, 60) + '…' : snap.quote;
+        return `<div class="fe-chip fe-chip--cited">${loc ? `<span class="fe-chip-loc">${_esc(loc)}</span>` : ''}<span class="fe-chip-quote">"${_esc(preview)}"</span></div>`;
+      }
+      return `<div class="fe-chip fe-chip--uncited">⚠️ No clause quote</div>`;
+    }
+
+    const termsRows = (packet.extractedLeaseTerms || []).map(t => {
+      const fe = t.fieldEvidence || null;
+      return `<tr>
+        <td>${_esc(t.tenantName)}</td>
+        <td style="text-align:right">${t.leasedSqft != null ? Number(t.leasedSqft).toLocaleString('en-US') : '—'}${_citeChip(fe, 'leased_sqft', t.leasedSqft != null)}</td>
+        <td>${_esc(t.leaseType || '—')}${_citeChip(fe, 'lease_type', !!t.leaseType)}</td>
+        <td style="text-align:right">${t.cap != null ? t.cap + '%' : '—'}${_citeChip(fe, 'cap', t.cap != null)}</td>
+        <td style="text-align:right">${t.adminFeePct != null ? t.adminFeePct + '%' : '—'}${_citeChip(fe, 'admin_fee_pct', t.adminFeePct != null)}</td>
+        <td style="text-align:right">${t.grossUpPct != null ? t.grossUpPct + '%' : '—'}</td>
+        <td>${t.auditRights === true ? '✓' : t.auditRights === false ? '✗' : '—'}${_citeChip(fe, 'audit_rights', t.auditRights != null)}</td>
+        <td><span style="color:${t.confidence === 'high' ? '#4ade80' : t.confidence === 'medium' ? '#fbbf24' : t.confidence === 'low' ? '#f87171' : '#94a3b8'}">${_esc(t.confidence || '—')}</span></td>
+      </tr>`;
+    }).join('');
     const termsHtml = `<div class="rpt-section-title">Extracted Lease Terms</div>
       <table class="rpt-table">
         <thead><tr><th>Tenant</th><th style="text-align:right">Sqft</th><th>Type</th><th style="text-align:right">CAM Cap</th><th style="text-align:right">Admin Fee</th><th style="text-align:right">Gross-Up</th><th>Audit Rights</th><th>Confidence</th></tr></thead>
@@ -918,12 +941,33 @@ window.LeaseReviewPackets = (() => {
       </div>`;
 
     // ── SECTION: Tenant Roster Summary ────────────────────────────────────────
+    // Compute lender-facing data quality signal from fieldEvidence.
+    // Checks the four key underwriting fields; returns Verified / Partially Verified /
+    // Inferred / Missing Evidence — lender language, no raw confidence scores.
+    function _lenderVerification(t) {
+      const fe = t.fieldEvidence;
+      const KEY_FIELDS = ['leased_sqft', 'lease_type', 'start_date', 'end_date'];
+      let checked = 0, cited = 0;
+      KEY_FIELDS.forEach(k => {
+        if (t[k] != null && t[k] !== '') {
+          checked++;
+          const snaps = fe?.[k]?.snapshots;
+          if (snaps && snaps.some(s => !s.superseded && s.quote)) cited++;
+        }
+      });
+      if (checked === 0) return { label: 'Missing Evidence', color: '#f87171' };
+      if (cited === checked) return { label: 'Verified',           color: '#4ade80' };
+      if (cited > 0)         return { label: 'Partially Verified', color: '#fbbf24' };
+      return                        { label: 'Inferred',           color: '#fbbf24' };
+    }
+
     const rosterRows = activeTenants.map(t => {
-      const sf  = parseFloat(t.leased_sqft);
-      const pct = (totalSqft > 0 && sf > 0) ? Math.round((sf / totalSqft) * 100) + '%' : '—';
-      const flag = _tenantRiskFlag(t);
+      const sf    = parseFloat(t.leased_sqft);
+      const pct   = (totalSqft > 0 && sf > 0) ? Math.round((sf / totalSqft) * 100) + '%' : '—';
+      const flag  = _tenantRiskFlag(t);
       const flagR = _risk(flag);
       const expired = t.end_date && new Date(t.end_date) < new Date() ? 'Expired' : 'Active';
+      const verif   = _lenderVerification(t);
       return `<tr>
         <td>${_d(t.tenant_name)}</td>
         <td style="text-align:right;">${sf > 0 ? Math.round(sf).toLocaleString('en-US') : '—'}</td>
@@ -931,6 +975,7 @@ window.LeaseReviewPackets = (() => {
         <td>${_d(t.lease_type)}</td>
         <td><span style="color:${expired === 'Expired' ? '#f87171' : '#4ade80'};font-size:0.8rem;">${expired}</span></td>
         <td><span style="color:${flagR.color};font-weight:600;font-size:0.8rem;">${flag}</span></td>
+        <td><span style="color:${verif.color};font-size:0.8rem;font-weight:600;">${_esc(verif.label)}</span></td>
       </tr>`;
     }).join('');
 
@@ -943,8 +988,9 @@ window.LeaseReviewPackets = (() => {
           <th>Lease Type</th>
           <th>Status</th>
           <th>Risk Flag</th>
+          <th>Data Quality</th>
         </tr></thead>
-        <tbody>${rosterRows || '<tr><td colspan="6" style="text-align:center;color:#64748b;">No tenant data available.</td></tr>'}</tbody>
+        <tbody>${rosterRows || '<tr><td colspan="7" style="text-align:center;color:#64748b;">No tenant data available.</td></tr>'}</tbody>
       </table>`;
 
     // ── SECTION: Lease Expiration Schedule ───────────────────────────────────
