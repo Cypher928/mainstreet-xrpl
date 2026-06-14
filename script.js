@@ -5470,6 +5470,7 @@ async function retryExtractionWithFile(index, file) {
 }
 
 async function clearBulkResults() {
+  if (!confirm('Clear all extracted tenants for this property?\n\nThis also removes the tenant records from the database and cannot be undone.')) return;
   const prop = currentProperty();
   tenantData.splice(0, tenantData.length);
   if (prop?.tenants) prop.tenants.splice(0, prop.tenants.length);
@@ -17740,8 +17741,9 @@ async function convertAcquisitionToProperty() {
     if (badge) { badge.textContent = 'converted'; badge.className = 'acq-detail-badge converted'; }
     _renderAcqConvertAction(review);
 
-    // Refresh portfolio grid so the card shows 'converted' badge
+    // Refresh acquisition section and portfolio grid so the new property card appears immediately
     _renderAcqSection(_acqReviews);
+    renderPortfolio();
 
     _hideAcqConvertModal();
 
