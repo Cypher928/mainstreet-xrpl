@@ -2892,17 +2892,56 @@ function updateTenantField(index, field, value) {
   if (td) td[field] = value;
 }
 
+// Enter commits a field edit; Escape reverts to the last saved value and dismisses.
+function _onFieldKeydown(e) {
+  if (e.key === 'Enter' && e.target.type !== 'date') { e.target.blur(); }
+  else if (e.key === 'Escape') {
+    e.target.value = e.target.defaultValue || '';
+    isEditingField = false;
+    e.target.blur();
+  }
+}
+
+// Shows which amendment (by filename + effective date) governs a given field.
+// Returns '' when no amendment overrides the field.
+function _amendmentProvenanceChip(d, fieldKey) {
+  if (!Array.isArray(d.amendments) || !d.amendments.length) return '';
+  const sorted = [...d.amendments].sort((a, b) => (b.effectiveDate || '').localeCompare(a.effectiveDate || ''));
+  const gov = sorted.find(a => Array.isArray(a.overriddenFields) && a.overriddenFields.includes(fieldKey));
+  if (!gov) return '';
+  const label = gov.fileName ? gov.fileName.replace(/\.[^.]+$/, '') : (gov.docType || 'Amendment');
+  const date  = gov.effectiveDate ? ` · ${gov.effectiveDate}` : '';
+  return `<div class="fe-chip fe-chip--amendment" title="Value overridden by this document">&#x1F4C4; ${esc(label)}${esc(date)}</div>`;
+}
+
+// One-click approval for all ready (high-confidence, unconfirmed) tenants.
+async function bulkApproveReady() {
+  const ready = tenantData.map((d, i) => ({ d, i })).filter(({ d }) =>
+    d && !d._needsReview && !d.extractionFailed && d.status !== 'pending' && d.tenant_name && !d._userConfirmed
+  );
+  if (!ready.length) { showToast('All ready tenants are already confirmed.'); return; }
+  for (const { i } of ready) await saveBulkTenant(i);
+  showToast(`✓ ${ready.length} tenant${ready.length !== 1 ? 's' : ''} approved.`);
+}
+
+// Shows/hides the stale-results warning banner based on _resultsStale flag.
+function _updateStaleResultsBanner() {
+  const el = document.getElementById('staleResultsBanner');
+  if (el) el.style.display = _resultsStale ? 'block' : 'none';
+}
+
 function handleFieldBlur(index, field, value) {
   isEditingField = false;
   updateTenantField(index, field, value);
   savePropertyData(); // debounced — collapses rapid edits into one write
+  if (lastResults.length > 0) { _resultsStale = true; _updateStaleResultsBanner(); }
 }
 
 function _confidenceBadgeHtml(level) {
   if (!level || level === 'pending') return '';
   const cfg = {
     high:   { cls: 'cx-high',   label: 'High confidence' },
-    medium: { cls: 'cx-medium', label: 'Review recommended' },
+    medium: { cls: 'cx-medium', label: 'Needs review' },
     low:    { cls: 'cx-low',    label: 'Low confidence' },
     failed: { cls: 'cx-failed', label: 'Extraction failed' },
   }[level];
@@ -4521,8 +4560,9 @@ function _citationChip(d, fieldKey) {
     if (snap.page)    locParts.push('p.​' + snap.page);
     if (snap.section) locParts.push(snap.section);
     const loc     = locParts.join(' · ');
-    const preview = snap.quote.length > 90 ? snap.quote.slice(0, 90) + '…' : snap.quote;
-    return `<div class="fe-chip fe-chip--cited">${loc ? `<span class="fe-chip-loc">${esc(loc)}</span>` : ''}<span class="fe-chip-quote">“${esc(preview)}”</span></div>`;
+    const preview  = snap.quote.length > 90 ? snap.quote.slice(0, 90) + '…' : snap.quote;
+    const fullTip  = snap.quote.length > 90 ? ` title=”${esc(snap.quote)}”` : '';
+    return `<div class=”fe-chip fe-chip--cited”${fullTip}>${loc ? `<span class=”fe-chip-loc”>${esc(loc)}</span>` : ''}<span class=”fe-chip-quote”>”${esc(preview)}”</span></div>`;
   }
   return `<div class="fe-chip fe-chip--uncited">⚠️ No clause quote on file</div>`;
 }
@@ -5086,7 +5126,7 @@ function renderBulkResults() {
       : d.extractionFailed
       ? 'Extraction failed — tap to re-upload'
       : showWarning
-        ? 'Partial — some fields missing'
+        ? 'Needs review — some fields missing'
         : [
             sqft      !== null && sqft      !== '' ? `${sqft} sqft`   : '— sqft',
             start     !== null && start     !== '' ? start             : '—',
@@ -5122,7 +5162,7 @@ function renderBulkResults() {
       }
       if (confLevel === 'medium' || showWarning) {
         return `<div class="cx-detail-banner cx-banner-medium">
-          ⚠️ Partial extraction — AI found the tenant but some fields are missing. Please fill them in below.
+          ⚠️ Needs review — AI found the tenant but some fields are missing. Please fill them in below.
         </div>`;
       }
       return '';
@@ -5166,15 +5206,17 @@ function renderBulkResults() {
               <label>Tenant Name</label>
               <input type="text" value="${esc(d.tenant_name || '')}"
                 onfocus="isEditingField=true"
+                onkeydown="_onFieldKeydown(event)"
                 onblur="handleFieldBlur(${i},'tenant_name',this.value);refreshBulkSummary(${i})"/>
-              ${_citationChip(d, 'tenant_name')}
+              ${_citationChip(d, 'tenant_name')}${_amendmentProvenanceChip(d, 'tenant_name')}
             </div>
             <div class="field">
               <label>Leased Sqft</label>
               <input type="number" value="${d.leased_sqft || ''}"
                 onfocus="isEditingField=true"
+                onkeydown="_onFieldKeydown(event)"
                 onblur="handleFieldBlur(${i},'leased_sqft',this.value);refreshBulkSummary(${i});checkSqftValidation()"/>
-              ${_citationChip(d, 'leased_sqft')}
+              ${_citationChip(d, 'leased_sqft')}${_amendmentProvenanceChip(d, 'leased_sqft')}
             </div>
           </div>
           <div class="field-row">
@@ -5182,15 +5224,17 @@ function renderBulkResults() {
               <label>Lease Start Date</label>
               <input type="date" value="${d.start_date || ''}"
                 onfocus="isEditingField=true"
+                onkeydown="_onFieldKeydown(event)"
                 onblur="handleFieldBlur(${i},'start_date',this.value)"/>
-              ${_citationChip(d, 'start_date')}
+              ${_citationChip(d, 'start_date')}${_amendmentProvenanceChip(d, 'start_date')}
             </div>
             <div class="field">
               <label>Lease End Date</label>
               <input type="date" value="${d.end_date || ''}"
                 onfocus="isEditingField=true"
+                onkeydown="_onFieldKeydown(event)"
                 onblur="handleFieldBlur(${i},'end_date',this.value)"/>
-              ${_citationChip(d, 'end_date')}
+              ${_citationChip(d, 'end_date')}${_amendmentProvenanceChip(d, 'end_date')}
             </div>
           </div>
           <div class="field-row">
@@ -5202,14 +5246,15 @@ function renderBulkResults() {
                 <option value="Gross"${d.lease_type === 'Gross' ? ' selected' : ''}>Gross</option>
                 <option value="Modified Gross"${d.lease_type === 'Modified Gross' ? ' selected' : ''}>Modified Gross</option>
               </select>
-              ${_citationChip(d, 'lease_type')}
+              ${_citationChip(d, 'lease_type')}${_amendmentProvenanceChip(d, 'lease_type')}
             </div>
             <div class="field">
               <label>Excluded Categories (comma-separated)</label>
               <input type="text" value="${esc(d.excluded_categories || '')}"
                 onfocus="isEditingField=true"
+                onkeydown="_onFieldKeydown(event)"
                 onblur="handleFieldBlur(${i},'excluded_categories',this.value)"/>
-              ${_citationChip(d, 'excluded_categories')}
+              ${_citationChip(d, 'excluded_categories')}${_amendmentProvenanceChip(d, 'excluded_categories')}
             </div>
           </div>
           <div style="display:flex;justify-content:space-between;align-items:center;padding-top:10px;">
@@ -5225,6 +5270,7 @@ function renderBulkResults() {
       </div>`;
   }).join('');
 
+  const _readyCount = tenants.filter(d => !d._needsReview && !d.extractionFailed && d.status !== 'pending' && d.tenant_name && !d._userConfirmed).length;
   const filterBarHtml = tenants.length > 0 ? `
   <div class="bulk-filter-bar">
     <input class="bulk-filter-input" type="text" placeholder="Search tenants…"
@@ -5235,6 +5281,7 @@ function renderBulkResults() {
         `<button class="bulk-filter-pill${_bulkFilter.status===v?' active':''}" onclick="setBulkFilter('status','${v}')">${l}</button>`
       ).join('')}
     </div>
+    ${_readyCount > 0 ? `<button class="bulk-approve-all-btn" onclick="bulkApproveReady()">Approve all ready (${_readyCount})</button>` : ''}
   </div>` : '';
 
   el.innerHTML = `
@@ -6932,6 +6979,9 @@ async function runAllocation() {
   }
 
   try {
+
+  _resultsStale = false;
+  _updateStaleResultsBanner();
 
   const propName  = document.getElementById('propertyName').value.trim() || 'Property';
   const totalSqft = parseFloat(document.getElementById('totalSqft').value);
@@ -8719,6 +8769,7 @@ document.getElementById('leaseViewerModal')?.addEventListener('click', (e) => {
 // ─── Report State ─────────────────────────────────────────────────────────────
 const camRuns    = []; // previous run history
 let lastResults  = []; // ReconciliationResult[] — unified with lastFullResults
+let _resultsStale = false; // true when field edits happen after a reconciliation run
 
 // ─── CAM Year ─────────────────────────────────────────────────────────────────
 let _camYear = new Date().getFullYear(); // hydrated from scoped key in _lsMigrateAncillaryKeys()
@@ -13370,6 +13421,32 @@ let _portfolioSort = 'risk'; // 'risk' | 'recent' | 'cam' | 'disputes'
 let _reviewQueueFilter = 'all'; // 'all' | 'incomplete' | 'needs_review' | 'manually_verified'
 let _portfolioQuery      = '';
 let _portfolioSortedPairs = []; // cached after each renderPortfolio() for card-only re-render
+let _globalTenantQuery   = '';
+
+function _applyGlobalTenantSearch() {
+  _globalTenantQuery = (document.getElementById('globalTenantSearch')?.value || '').toLowerCase().trim();
+  const resultsEl = document.getElementById('globalTenantResults');
+  if (!resultsEl) return;
+  if (!_globalTenantQuery) { resultsEl.style.display = 'none'; resultsEl.innerHTML = ''; return; }
+  const matches = [];
+  for (const p of (_props || [])) {
+    for (const t of (Array.isArray(p.tenants) ? p.tenants : [])) {
+      if (!t || !t.tenant_name) continue;
+      if (t.tenant_name.toLowerCase().includes(_globalTenantQuery)) matches.push({ t, p });
+    }
+  }
+  if (!matches.length) {
+    resultsEl.innerHTML = `<div class="gts-empty">No tenants found for "${esc(_globalTenantQuery)}"</div>`;
+  } else {
+    resultsEl.innerHTML = matches.slice(0, 20).map(({ t, p }) => `
+      <div class="gts-result" onclick="selectProperty('${esc(p.id)}')">
+        <div class="gts-tenant-name">${esc(t.tenant_name)}</div>
+        <div class="gts-prop-name">&#x1F3E2; ${esc(p.name || p.address || p.id)}</div>
+      </div>`).join('') +
+      (matches.length > 20 ? `<div class="gts-more">+${matches.length - 20} more — refine your search</div>` : '');
+  }
+  resultsEl.style.display = 'block';
+}
 let _bulkFilter = { query: '', status: 'all' };
 
 // Pure function — derives risk metadata from a stored property snapshot.
@@ -15454,6 +15531,13 @@ function renderPortfolio(props) {
         ${cam > 0 ? `<div class="ptf-stat"><strong>$${cam.toLocaleString('en-US')}</strong>CAM</div>` : ''}
         ${riskLabel ? `<div class="ptf-stat ${riskCls ? 'ptf-risk-stat ' + riskCls : ''}"><strong>${esc(riskLabel)}</strong></div>` : ''}
       </div>
+      ${(() => {
+        const pts = Array.isArray(p.tenants) ? p.tenants.filter(t => t && typeof t === 'object') : [];
+        const failedN  = pts.filter(t => t.extractionFailed).length;
+        const reviewN  = pts.filter(t => t._needsReview && !t.extractionFailed && t.status !== 'pending').length;
+        const parts = [failedN ? `${failedN} failed` : '', reviewN ? `${reviewN} need review` : ''].filter(Boolean);
+        return parts.length ? `<div class="ptf-tenant-health">&#x26A0; ${parts.join(' · ')}</div>` : '';
+      })()}
       ${dm.disputeStats.openDisputes > 0
         ? `<div class="ptf-stat-warning">&#x26A0; ${dm.disputeStats.openDisputes} open dispute${dm.disputeStats.openDisputes !== 1 ? 's' : ''}</div>`
         : ''}
@@ -15690,7 +15774,7 @@ function resetWorkflow() {
   invoiceData.length = 0;
   lastResults = []; lastInvoices = []; lastTenants = [];
   lastPropName = ''; lastTotal = 0; lastInvoicesFull = []; lastFullResults = [];
-  _lastReconIssues = []; _dwActiveDid = null;
+  _lastReconIssues = []; _dwActiveDid = null; _resultsStale = false;
   activityLog.splice(0, activityLog.length);
   disputes.length = 0;
   nextDisputeId = 0;
