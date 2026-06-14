@@ -679,7 +679,7 @@ window.LeaseReviewPackets = (() => {
       <span>Generated ${_esc(now)}</span>
     </div>`;
 
-    return [coverHtml, execHtml, termsHtml, chronoHtml, evidenceHtml, disputeHtml, timelineHtml, confHtml, notesHtml, footerHtml].filter(Boolean).join('\n');
+    return [coverHtml, execHtml, notesHtml, termsHtml, chronoHtml, evidenceHtml, disputeHtml, timelineHtml, confHtml, footerHtml].filter(Boolean).join('\n');
   }
 
   // ── LENDER SUMMARY REPORT ────────────────────────────────────────────────────
@@ -1177,8 +1177,40 @@ window.LeaseReviewPackets = (() => {
       <span>Generated ${_esc(now)}</span>
     </div>`;
 
+    // ── SECTION: Underwriting Recommendation ─────────────────────────────────
+    const highRiskCount = [occRiskLevel, concRiskLevel, docRiskLevel, dispRiskLevel].filter(r => r === 'High').length;
+    const uwVerdict = (healthScore == null || activeTenants.length === 0) ? 'Insufficient Data'
+      : healthScore >= 75 && highRiskCount === 0 ? 'Proceed'
+      : healthScore >= 50 && highRiskCount <= 1 ? 'Proceed with Conditions'
+      : 'Additional Due Diligence Required';
+    const uwColor = uwVerdict === 'Proceed' ? '#4ade80' : uwVerdict === 'Proceed with Conditions' ? '#fbbf24' : '#f87171';
+    const uwBg    = uwVerdict === 'Proceed' ? 'rgba(34,197,94,0.07)' : uwVerdict === 'Proceed with Conditions' ? 'rgba(245,158,11,0.07)' : 'rgba(239,68,68,0.07)';
+
+    const uwSentences = [];
+    if (occupancyPct != null)
+      uwSentences.push(`The property is ${occupancyPct}% occupied${occupancyPct >= 85 ? ', demonstrating strong utilization that supports revenue stability' : occupancyPct >= 70 ? ', with moderate vacancy that warrants review of absorption assumptions' : ', with elevated vacancy exposure that should be factored into debt service coverage analysis'}.`);
+    if (concRiskLevel === 'High' && top1Pct != null)
+      uwSentences.push(`Concentration risk is elevated — the largest tenant represents ${top1Pct}% of rentable square footage, creating meaningful rollover exposure.`);
+    if (docRiskLevel === 'High')
+      uwSentences.push(`${missingCritDocs} lease${missingCritDocs !== 1 ? 's are' : ' is'} missing critical field data; executed documents should be obtained and reviewed prior to commitment.`);
+    else if (docRiskLevel === 'Low' && highRiskCount === 0)
+      uwSentences.push('Lease documentation appears complete and extraction confidence is satisfactory for underwriting purposes.');
+    if (openDisputes.length > 0)
+      uwSentences.push(`${openDisputes.length} open CAM dispute${openDisputes.length !== 1 ? 's' : ''} should be resolved or quantified as a contingency before loan closing.`);
+
+    const uwRecHtml = `<div class="rpt-section-title">Underwriting Recommendation</div>
+      <div style="background:${uwBg};border:1px solid ${uwColor}44;border-radius:10px;padding:16px 20px;margin-bottom:4px;">
+        <div style="display:flex;align-items:center;gap:10px;margin-bottom:10px;">
+          <span style="display:inline-block;width:10px;height:10px;border-radius:50%;background:${uwColor};flex-shrink:0;"></span>
+          <span style="font-size:0.95rem;font-weight:700;color:${uwColor};">${_esc(uwVerdict)}</span>
+          ${healthScore != null ? `<span style="margin-left:auto;font-size:0.78rem;color:#64748b;">Health Score: <strong style="color:#e2e8f0;">${healthScore} / 100</strong></span>` : ''}
+        </div>
+        <div style="font-size:0.83rem;color:#cbd5e1;line-height:1.6;">${uwSentences.map(s => _esc(s)).join(' ')}</div>
+      </div>`;
+
     return [
       coverHtml,
+      uwRecHtml,
       execSummaryHtml,
       riskSnapshotHtml,
       tenantRosterHtml,

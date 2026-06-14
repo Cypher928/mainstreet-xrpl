@@ -11628,11 +11628,21 @@ function generateReconciliationSummary() {
       <td style="text-align:right">${((amt / lastTotal) * 100).toFixed(1)}%</td>
     </tr>`).join('');
 
+  const reconNarrative = buildAuditNarrative();
+  const reconStatusBar = reconNarrative.headline ? `
+    <div style="display:flex;align-items:center;gap:10px;padding:10px 14px;background:#1e293b;border-radius:7px;margin-bottom:14px;font-size:0.82rem;">
+      <span style="color:#64748b;font-weight:600;flex-shrink:0;">Status:</span>
+      <span style="color:#e2e8f0;">${esc(reconNarrative.headline)}</span>
+      ${reconNarrative.financialImpact ? `<span style="margin-left:auto;color:#94a3b8;flex-shrink:0;">${esc(reconNarrative.financialImpact)}</span>` : ''}
+    </div>` : '';
+
   const html = `
     ${_rptHeader(propName, 'CAM Reconciliation Summary', period, now, [
       { label: 'Property sqft', value: propSqft > 0 ? propSqft.toLocaleString() + ' sqft' : '—' },
       { label: 'Tenants',       value: lastResults.length },
     ])}
+
+    ${reconStatusBar}
 
     <div class="rpt-kpi-row">
       <div class="rpt-kpi"><div class="kpi-val">${fmt(lastTotal)}</div><div class="kpi-lbl">Total Expenses</div></div>
@@ -11757,11 +11767,22 @@ function generateExceptionReport() {
       </div>`
     : sections;
 
+  const narrative = buildAuditNarrative();
+  const excNColor = narrative.riskLevel === 'Critical' ? '#f87171' : narrative.riskLevel === 'Elevated' ? '#fbbf24' : narrative.riskLevel === 'Moderate' ? '#93c5fd' : '#4ade80';
+  const excNBg    = narrative.riskLevel === 'Critical' ? 'rgba(239,68,68,0.07)' : narrative.riskLevel === 'Elevated' ? 'rgba(245,158,11,0.07)' : narrative.riskLevel === 'Moderate' ? 'rgba(59,130,246,0.07)' : 'rgba(34,197,94,0.07)';
+  const narrativeBlock = narrative.headline ? `
+    <div style="background:${excNBg};border-left:3px solid ${excNColor};border-radius:6px;padding:12px 16px;margin-bottom:16px;">
+      <div style="font-size:0.95rem;font-weight:700;color:#e2e8f0;margin-bottom:5px;">${esc(narrative.headline)}</div>
+      <div style="font-size:0.82rem;color:#94a3b8;line-height:1.5;">${esc(narrative.summaryParagraph || '')}</div>
+    </div>` : '';
+
   const html = `
     ${_rptHeader(propName, 'Audit Exception Summary', period, now, [
       { label: 'Flags Raised', value: red.length + yellow.length },
       { label: 'Checks Passed', value: green.length },
     ])}
+
+    ${narrativeBlock}
 
     <div class="rpt-kpi-row">
       <div class="rpt-kpi">
@@ -11860,11 +11881,33 @@ function generateMasterReport() {
         'SHA-256: ' + hash + '\nGenerated: ' + new Date().toISOString();
     });
 
+  const n = buildAuditNarrative();
+  const riskColors = { Critical: '#f87171', Elevated: '#fbbf24', Moderate: '#93c5fd', Low: '#4ade80' };
+  const riskBg     = { Critical: 'rgba(239,68,68,0.07)', Elevated: 'rgba(245,158,11,0.07)', Moderate: 'rgba(59,130,246,0.07)', Low: 'rgba(34,197,94,0.07)' };
+  const nColor = riskColors[n.riskLevel] || '#94a3b8';
+  const nBg    = riskBg[n.riskLevel]    || 'rgba(148,163,184,0.07)';
+  const topFindings = (n.keyFindings || []).slice(0, 3).map(f => `<li style="margin-bottom:4px;">${esc(f)}</li>`).join('');
+  const topRec      = (n.recommendations || [])[0];
+  const execSummaryBlock = `
+    <div style="background:${nBg};border:1px solid ${nColor}33;border-radius:10px;padding:18px 20px;margin-bottom:18px;">
+      <div style="display:flex;align-items:center;gap:10px;margin-bottom:10px;">
+        <span style="display:inline-block;width:10px;height:10px;border-radius:50%;background:${nColor};flex-shrink:0;"></span>
+        <span style="font-size:1.05rem;font-weight:700;color:#e2e8f0;">${esc(n.headline)}</span>
+        <span style="margin-left:auto;font-size:0.72rem;font-weight:700;color:${nColor};background:${nColor}22;padding:3px 10px;border-radius:20px;letter-spacing:0.06em;text-transform:uppercase;">${esc(n.riskLevel)} Risk</span>
+      </div>
+      <div style="font-size:0.84rem;color:#cbd5e1;line-height:1.55;margin-bottom:${topFindings ? '12px' : '0'};">${esc(n.summaryParagraph || '')}</div>
+      ${topFindings ? `<ul style="margin:0 0 ${topRec ? '10px' : '0'} 16px;padding:0;font-size:0.81rem;color:#94a3b8;line-height:1.5;">${topFindings}</ul>` : ''}
+      ${topRec ? `<div style="font-size:0.79rem;color:${nColor};border-top:1px solid ${nColor}22;padding-top:9px;margin-top:2px;"><strong>Recommendation:</strong> ${esc(topRec)}</div>` : ''}
+      ${n.financialImpact ? `<div style="font-size:0.78rem;color:#64748b;margin-top:7px;">${esc(n.financialImpact)}</div>` : ''}
+    </div>`;
+
   const html = `
     ${_rptHeader(lastPropName, 'Landlord Master CAM Report', period, now, [
       { label: 'Tenants',        value: lastResults.length },
       { label: 'Total Expenses', value: fmt(lastTotal) },
     ])}
+
+    ${execSummaryBlock}
 
     <div class="ai-risk-box">
       <div class="ai-risk-title">&#x1F9E0; AI Risk Review — Building Summary</div>
