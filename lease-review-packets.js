@@ -764,10 +764,10 @@ window.LeaseReviewPackets = (() => {
 
     function _risk(level) {
       const map = {
-        Low:     { label: 'Low',     bg: '#14291a', color: '#4ade80', dot: '#22c55e' },
-        Medium:  { label: 'Medium',  bg: '#2d1f09', color: '#fbbf24', dot: '#f59e0b' },
-        High:    { label: 'High',    bg: '#2d1010', color: '#f87171', dot: '#ef4444' },
-        Unknown: { label: 'Unknown', bg: '#1e293b', color: '#94a3b8', dot: '#94a3b8' },
+        Low:     { label: 'Low',      bg: '#14291a', color: '#4ade80', dot: '#22c55e' },
+        Medium:  { label: 'Moderate', bg: '#2d1f09', color: '#fbbf24', dot: '#f59e0b' },
+        High:    { label: 'Elevated', bg: '#2d1010', color: '#f87171', dot: '#ef4444' },
+        Unknown: { label: 'Unknown',  bg: '#1e293b', color: '#94a3b8', dot: '#94a3b8' },
       };
       return map[level] || map.Unknown;
     }

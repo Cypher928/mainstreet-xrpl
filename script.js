@@ -2960,7 +2960,7 @@ function _tenantReviewStateBadgeHtml(t) {
     verified:          { cls: 'trs-verified',          label: 'Verified' },
     needs_review:      { cls: 'trs-needs-review',      label: 'Needs Review' },
     incomplete:        { cls: 'trs-incomplete',        label: 'Incomplete' },
-    manually_verified: { cls: 'trs-manually-verified', label: 'Manually Verified' },
+    manually_verified: { cls: 'trs-manually-verified', label: 'Verified' },
   }[state] || { cls: 'trs-needs-review', label: 'Unknown' };
   const scoreColor = score >= 90 ? 'trs-score--high' : score >= 70 ? 'trs-score--mid' : 'trs-score--low';
   return `<div class="trs-header">
@@ -6371,9 +6371,9 @@ function confidenceBadge(score) {
   if (score === null || score === undefined) return '';
   const s = parseInt(score, 10);
   if (isNaN(s)) return '';
-  if (s >= 90) return `<span class="conf-badge conf-high">✓ High confidence</span>`;
-  if (s >= 70) return `<span class="conf-badge conf-mid">⚠ Please verify</span>`;
-  return `<span class="conf-badge conf-low">⚑ Low confidence — review carefully</span>`;
+  if (s >= 80) return `<span class="conf-badge conf-high">✓ High confidence</span>`;
+  if (s >= 55) return `<span class="conf-badge conf-mid">⚠ Review recommended</span>`;
+  return `<span class="conf-badge conf-low">⚑ Low confidence</span>`;
 }
 
 // ─── Duplicate Invoice Detection ──────────────────────────────────────────────
@@ -13293,7 +13293,7 @@ function _rqItemHtml(item) {
   const stateCfg = {
     incomplete:        { cls: 'trs-incomplete',        label: 'Incomplete' },
     needs_review:      { cls: 'trs-needs-review',      label: 'Needs Review' },
-    manually_verified: { cls: 'trs-manually-verified', label: 'Manually Verified' },
+    manually_verified: { cls: 'trs-manually-verified', label: 'Verified' },
   }[item.reviewState] || { cls: 'trs-needs-review', label: item.reviewState };
   const scoreColor = item.reviewScore >= 80 ? 'trs-score--high' : item.reviewScore >= 50 ? 'trs-score--mid' : 'trs-score--low';
 
@@ -13450,7 +13450,7 @@ function renderPropertyReviewQueue(property) {
   if (counts.incomplete        > 0) healthParts.push(`<span class="rq-hs-item rq-hs--incomplete">${counts.incomplete} Incomplete</span>`);
   if (critical                 > 0) healthParts.push(`<span class="rq-hs-item rq-hs--critical">${critical} Critical</span>`);
   if (counts.needs_review      > 0) healthParts.push(`<span class="rq-hs-item rq-hs--moderate">${counts.needs_review} Needs Review</span>`);
-  if (counts.manually_verified > 0) healthParts.push(`<span class="rq-hs-item rq-hs--verified">${counts.manually_verified} Manually Verified</span>`);
+  if (counts.manually_verified > 0) healthParts.push(`<span class="rq-hs-item rq-hs--verified">${counts.manually_verified} Verified</span>`);
 
   const shouldExpand = counts.incomplete > 0;
 
@@ -13533,10 +13533,10 @@ function _rwRenderAll(t) {
 function _rwRenderScoreCard(rv) {
   const scoreCls = rv.score >= 80 ? 'rw-score-num--high' : rv.score >= 50 ? 'rw-score-num--mid' : 'rw-score-num--low';
   const statusLabels = {
-    incomplete:        'Incomplete Data',
+    incomplete:        'Incomplete',
     needs_review:      'Needs Review',
     verified:          'Verified',
-    manually_verified: 'Manually Verified',
+    manually_verified: 'Verified',
   };
   document.getElementById('rwScoreCard').innerHTML = `
     <div class="rw-score-card">
@@ -14204,7 +14204,7 @@ function renderPortfolioIntelligence(props, preRar) {
     if (rd.readiness in rdCounts) rdCounts[rd.readiness]++;
   }
   const rdyOrder = [
-    { key: 'high_risk',            label: 'High Risk',    cls: 'rdy-high_risk' },
+    { key: 'high_risk',            label: 'Critical',     cls: 'rdy-high_risk' },
     { key: 'needs_review',         label: 'Needs Review', cls: 'rdy-needs-review' },
     { key: 'partially_verified',   label: 'Partial',      cls: 'rdy-partially_verified' },
     { key: 'reconciliation_ready', label: 'Ready',        cls: 'rdy-reconciliation_ready' },
@@ -15305,7 +15305,7 @@ function renderPortfolio(props) {
                     : '';
 
     // Risk label for display (maps riskLevel to business-friendly label)
-    const riskLabelMap = { Critical: 'High Risk', Elevated: 'Elevated Risk', Moderate: 'Medium Risk', Low: 'Low Risk', None: '' };
+    const riskLabelMap = { Critical: 'Critical', Elevated: 'Elevated', Moderate: 'Moderate', Low: 'Low', None: '' };
     const riskCssMap   = { Critical: 'ptf-risk--critical', Elevated: 'ptf-risk--elevated', Moderate: 'ptf-risk--moderate', Low: 'ptf-risk--low' };
     const riskLabel    = riskLabelMap[m.riskLevel] || '';
     const riskCls      = riskCssMap[m.riskLevel]  || '';
