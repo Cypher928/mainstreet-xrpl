@@ -1704,6 +1704,21 @@
     }
     .bulk-done-btn:hover { background: rgba(34,197,94,0.22); border-color: rgba(34,197,94,0.65); }
     .bulk-done-btn:disabled { opacity: 0.6; cursor: default; }
+    /* ── Phase 3: Citation chips ──────────────────────────────────────────── */
+    .fe-chip {
+      font-size: 0.71rem; line-height: 1.45; margin-top: 4px;
+      padding: 3px 8px; border-radius: 4px; word-break: break-word;
+    }
+    .fe-chip--cited {
+      background: rgba(129,140,248,0.10); color: #a5b4fc;
+      border-left: 2px solid rgba(129,140,248,0.4);
+    }
+    .fe-chip--uncited {
+      background: rgba(245,158,11,0.08); color: #fbbf24;
+      border-left: 2px solid rgba(245,158,11,0.35);
+    }
+    .fe-chip-loc { font-weight: 700; margin-right: 5px; color: #818cf8; }
+    .fe-chip-quote { font-style: italic; color: #94a3b8; }
     .bulk-tenant-summary {
       display: flex; align-items: center; gap: 10px; padding: 10px 14px;
       background: #0F1929; cursor: pointer; user-select: none;

@@ -4487,6 +4487,27 @@ function _lfcItemInner(key, label, val, td, isEditing = false) {
     ${renderManualVerifiedBadge(key, td)}`;
 }
 
+// Returns a small inline citation chip for a field in the bulk extraction form.
+// Shows page/section + quote preview when the field has a verbatim source quote;
+// shows an amber "no clause quote" notice when a value exists but has no quote.
+function _citationChip(d, fieldKey) {
+  const snaps = d.fieldEvidence?.[fieldKey]?.snapshots;
+  if (!snaps || !snaps.length) return '';
+  const val = d[fieldKey];
+  if (val == null || val === '') return '';
+  const snap = snaps.find(s => !s.superseded) || snaps[0];
+  if (!snap) return '';
+  if (snap.quote) {
+    const locParts = [];
+    if (snap.page)    locParts.push('p.​' + snap.page);
+    if (snap.section) locParts.push(snap.section);
+    const loc     = locParts.join(' · ');
+    const preview = snap.quote.length > 90 ? snap.quote.slice(0, 90) + '…' : snap.quote;
+    return `<div class="fe-chip fe-chip--cited">${loc ? `<span class="fe-chip-loc">${esc(loc)}</span>` : ''}<span class="fe-chip-quote">“${esc(preview)}”</span></div>`;
+  }
+  return `<div class="fe-chip fe-chip--uncited">⚠️ No clause quote on file</div>`;
+}
+
 // Saves a manual override to the tenant object + triggers persistence.
 function saveFieldOverride(tenantId, fieldName, newValue) {
   const idx = tenantData.findIndex(t => t && t.id === tenantId);
@@ -5073,12 +5094,14 @@ function renderBulkResults() {
               <input type="text" value="${esc(d.tenant_name || '')}"
                 onfocus="isEditingField=true"
                 onblur="handleFieldBlur(${i},'tenant_name',this.value);refreshBulkSummary(${i})"/>
+              ${_citationChip(d, 'tenant_name')}
             </div>
             <div class="field">
               <label>Leased Sqft</label>
               <input type="number" value="${d.leased_sqft || ''}"
                 onfocus="isEditingField=true"
                 onblur="handleFieldBlur(${i},'leased_sqft',this.value);refreshBulkSummary(${i});checkSqftValidation()"/>
+              ${_citationChip(d, 'leased_sqft')}
             </div>
           </div>
           <div class="field-row">
@@ -5087,12 +5110,14 @@ function renderBulkResults() {
               <input type="date" value="${d.start_date || ''}"
                 onfocus="isEditingField=true"
                 onblur="handleFieldBlur(${i},'start_date',this.value)"/>
+              ${_citationChip(d, 'start_date')}
             </div>
             <div class="field">
               <label>Lease End Date</label>
               <input type="date" value="${d.end_date || ''}"
                 onfocus="isEditingField=true"
                 onblur="handleFieldBlur(${i},'end_date',this.value)"/>
+              ${_citationChip(d, 'end_date')}
             </div>
           </div>
           <div class="field-row">
@@ -5104,12 +5129,14 @@ function renderBulkResults() {
                 <option value="Gross"${d.lease_type === 'Gross' ? ' selected' : ''}>Gross</option>
                 <option value="Modified Gross"${d.lease_type === 'Modified Gross' ? ' selected' : ''}>Modified Gross</option>
               </select>
+              ${_citationChip(d, 'lease_type')}
             </div>
             <div class="field">
               <label>Excluded Categories (comma-separated)</label>
               <input type="text" value="${esc(d.excluded_categories || '')}"
                 onfocus="isEditingField=true"
                 onblur="handleFieldBlur(${i},'excluded_categories',this.value)"/>
+              ${_citationChip(d, 'excluded_categories')}
             </div>
           </div>
           <div style="display:flex;justify-content:space-between;align-items:center;padding-top:10px;">
