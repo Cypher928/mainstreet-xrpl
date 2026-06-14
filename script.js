@@ -460,7 +460,12 @@ Return exactly this structure:
     "pro_rata_method": string | null,
     "renewal_options": string | null,
     "base_rent": string | null,
-    "security_deposit": string | null
+    "security_deposit": string | null,
+    "tenant_name": string | null,
+    "lease_type": string | null,
+    "sqft": string | null,
+    "lease_start_date": string | null,
+    "lease_end_date": string | null
   }
 }
 
@@ -1413,9 +1418,11 @@ ${leaseSnippet}
     if (v.includes('gross'))                        return 'Gross';
     return val;
   };
+  // Safely parse a numeric value without coercing 0 to null
+  const _pf = v => { const n = parseFloat(v); return Number.isFinite(n) ? n : null; };
   // Normalize CAM cap: "35%" → 35, "0.35" → 35, "35" → 35
   const normalizeCap = val => {
-    if (!val) return null;
+    if (val == null) return null;
     const n = parseFloat(String(val).replace(/[^0-9.]/g, ''));
     if (isNaN(n)) return null;
     return n < 1 ? Math.round(n * 100) : n;
@@ -1455,17 +1462,24 @@ ${leaseSnippet}
     end_date:            resolvedEnd,
     lease_type:          resolvedType,
     cap:                 normalizeCap(raw.capPercentage ?? raw.cam_cap ?? null),
-    excluded_categories: raw.excludedCategories ?? raw.excluded_categories ?? null,
+    excluded_categories: (() => {
+      const v = raw.excludedCategories ?? raw.excluded_categories ?? null;
+      return v === '' ? null : v;
+    })(),
     baseYear:            raw.baseYear ?? null,
     confidence:          raw.confidence || {},
     flags:               finalFlags,
     doc_has_dates,
     doc_has_lease_type,
     _error:              null,
-    admin_fee_pct:       raw.admin_fee_pct  != null ? parseFloat(raw.admin_fee_pct)  || null : null,
-    gross_up_pct:        raw.gross_up_pct   != null ? parseFloat(raw.gross_up_pct)   || null : null,
-    expense_stop:        raw.expense_stop   != null ? parseFloat(raw.expense_stop)   || null : null,
-    audit_rights:        raw.audit_rights   != null ? Boolean(raw.audit_rights)              : null,
+    admin_fee_pct:       _pf(raw.admin_fee_pct),
+    gross_up_pct:        _pf(raw.gross_up_pct),
+    expense_stop:        _pf(raw.expense_stop),
+    audit_rights:        raw.audit_rights != null
+      ? (typeof raw.audit_rights === 'string'
+          ? raw.audit_rights.toLowerCase() === 'true'
+          : Boolean(raw.audit_rights))
+      : null,
     pro_rata_method:     raw.pro_rata_method ?? null,
     renewal_options:     raw.renewal_options ?? null,
   });
@@ -1473,13 +1487,18 @@ ${leaseSnippet}
   // Inject quote-bearing evidence snapshots for fields where Claude returned verbatim clause text.
   // Map: Claude quote key → normalized field key (cam_cap is stored as 'cap' in tenant objects).
   const _quoteMap = {
-    cam_cap:        'cap',
-    admin_fee_pct:  'admin_fee_pct',
-    gross_up_pct:   'gross_up_pct',
-    expense_stop:   'expense_stop',
-    audit_rights:   'audit_rights',
-    pro_rata_method:'pro_rata_method',
-    renewal_options:'renewal_options',
+    cam_cap:          'cap',
+    admin_fee_pct:    'admin_fee_pct',
+    gross_up_pct:     'gross_up_pct',
+    expense_stop:     'expense_stop',
+    audit_rights:     'audit_rights',
+    pro_rata_method:  'pro_rata_method',
+    renewal_options:  'renewal_options',
+    tenant_name:      'tenant_name',
+    lease_type:       'lease_type',
+    sqft:             'leased_sqft',
+    lease_start_date: 'start_date',
+    lease_end_date:   'end_date',
   };
   const _rawQuotes = (raw.quotes && typeof raw.quotes === 'object') ? raw.quotes : {};
   const _qTs = new Date().toISOString();

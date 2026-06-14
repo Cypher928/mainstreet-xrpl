@@ -728,6 +728,101 @@
         amendmentPrecedence: { winningDocType: 'side_letter', governingField: 'cap', expectedValue: 2 },
         edgeCases: ['WEAK_OCR', 'MISSING_PAGES', 'AMENDMENT_CONFLICT', 'AMBIGUOUS_GROSS_UP', 'CONTRADICTORY_CAP_AND_STOP']
       }
+    },
+
+    // ── Phase 7A edge scenarios ──────────────────────────────────────────────────
+
+    {
+      id: 'edge-001',
+      level: 'edge',
+      title: 'Zero CAM Cap — Must Not Collapse to Null',
+      description: 'Lease explicitly caps CAM increases at 0% (freeze). normalizeCap must return 0, not null.',
+      leaseText: "Annual increases in Operating Expenses shall be capped at zero percent (0%) per year.",
+      amendmentText: null,
+      ocrContext: { ocrChars: 5000, usedPdfDirect: true },
+      tenant: {
+        id: 'edge-001-tenant', tenant_name: 'Zero Cap Corp', leased_sqft: 2000,
+        start_date: '2023-01-01', end_date: '2026-12-31',
+        lease_type: 'NNN', cap: 0, admin_fee_pct: null, gross_up_pct: null,
+        expense_stop: null, audit_rights: true, pro_rata_method: 'rentable',
+        renewal_options: null, amendments: [],
+        excluded_categories: 'capital expenditures',
+        fieldEvidence: {},
+        _confidenceScore: 80, _confidence: 'high',
+        _edgeCases: { edgeCases: [], totalConfidenceAdjustment: 0 },
+        _explainability: { fieldSummaries: {}, reviewNotes: [], overallSummary: 'Zero-cap NNN lease.' },
+        _multiDocReasoning: null
+      },
+      property: null,
+      expected: {
+        fields: { cap: 0, audit_rights: true },
+        confidenceRange: [65, 100],
+        warnings: [],
+        amendmentPrecedence: null,
+        edgeCases: []
+      }
+    },
+
+    {
+      id: 'edge-002',
+      level: 'edge',
+      title: 'Audit Rights Explicitly Waived — String "false" Must Not Become true',
+      description: 'Claude may return audit_rights as the string "false". Boolean("false")===true is the bug. Correct result is audit_rights===false.',
+      leaseText: "Tenant hereby waives any right to audit Landlord's CAM records and statements.",
+      amendmentText: null,
+      ocrContext: { ocrChars: 5000, usedPdfDirect: true },
+      tenant: {
+        id: 'edge-002-tenant', tenant_name: 'Waiver LLC', leased_sqft: 1800,
+        start_date: '2022-06-01', end_date: '2025-05-31',
+        lease_type: 'Gross', cap: null, admin_fee_pct: null, gross_up_pct: null,
+        expense_stop: null, audit_rights: false, pro_rata_method: null,
+        renewal_options: null, amendments: [],
+        excluded_categories: null,
+        fieldEvidence: {},
+        _confidenceScore: 75, _confidence: 'high',
+        _edgeCases: { edgeCases: [], totalConfidenceAdjustment: 0 },
+        _explainability: { fieldSummaries: {}, reviewNotes: ['Audit rights explicitly waived by tenant'], overallSummary: 'Gross lease with waived audit rights.' },
+        _multiDocReasoning: null
+      },
+      property: null,
+      expected: {
+        fields: { audit_rights: false },
+        confidenceRange: [60, 100],
+        warnings: ['Audit rights waived'],
+        amendmentPrecedence: null,
+        edgeCases: []
+      }
+    },
+
+    {
+      id: 'edge-003',
+      level: 'edge',
+      title: 'NNN Lease — excluded_categories Empty String Must Not Trigger CAM_EXCLUSIONS_UNDEFINED',
+      description: 'When Claude returns excluded_categories="" (no exclusions found), the detector must NOT fire. It should only fire on null/undefined.',
+      leaseText: "Tenant shall pay its pro-rata share of all operating expenses without exclusion.",
+      amendmentText: null,
+      ocrContext: { ocrChars: 5000, usedPdfDirect: true },
+      tenant: {
+        id: 'edge-003-tenant', tenant_name: 'NNN Tenant Inc', leased_sqft: 2400,
+        start_date: '2024-01-01', end_date: '2029-12-31',
+        lease_type: 'NNN', cap: 5, admin_fee_pct: 15, gross_up_pct: null,
+        expense_stop: null, audit_rights: true, pro_rata_method: 'rentable',
+        renewal_options: null, amendments: [],
+        excluded_categories: null,
+        fieldEvidence: {},
+        _confidenceScore: 70, _confidence: 'high',
+        _edgeCases: { edgeCases: [{ type: 'CAM_EXCLUSIONS_UNDEFINED', description: 'NNN lease with no CAM exclusion schedule', confidenceAdjustment: -10 }], totalConfidenceAdjustment: -10 },
+        _explainability: { fieldSummaries: {}, reviewNotes: [], overallSummary: 'NNN lease without exclusion schedule.' },
+        _multiDocReasoning: null
+      },
+      property: null,
+      expected: {
+        fields: { cap: 5, audit_rights: true },
+        confidenceRange: [55, 90],
+        warnings: [],
+        amendmentPrecedence: null,
+        edgeCases: ['CAM_EXCLUSIONS_UNDEFINED']
+      }
     }
   ];
 

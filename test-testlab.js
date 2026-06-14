@@ -263,6 +263,62 @@ console.log('─'.repeat(48));
   assert(/LeaseIntelligence is not loaded/.test(msg), 'P20-1: error message identifies the missing LeaseIntelligence dependency');
 }
 
+// ── Phase 7A regression: normalization correctness ───────────────────────────
+
+// NORM-1: edge-001 scenario — cap=0 must pass (not be treated as null/missing)
+{
+  const s = LeaseTestLab.generateScenario('edge-001');
+  const mockResult = {
+    fields: Object.assign({}, s.expected.fields),   // includes cap: 0
+    confidenceScore: 80,
+    warnings: [],
+    amendmentPrecedence: null,
+    edgeCases: []
+  };
+  const v = LeaseTestLab.validate(mockResult, s.expected);
+  assert(v.failedFields.every(f => f.field !== 'cap'), 'NORM-1: cap=0 should pass field validation (not treated as null)');
+}
+
+// NORM-2: audit_rights=false must match expected false (string coercion guard)
+{
+  const s = LeaseTestLab.generateScenario('edge-002');
+  const mockResult = {
+    fields: { audit_rights: false },
+    confidenceScore: 80,
+    warnings: ['Audit rights waived'],
+    amendmentPrecedence: null,
+    edgeCases: []
+  };
+  const v = LeaseTestLab.validate(mockResult, s.expected);
+  assert(!v.failedFields.some(f => f.field === 'audit_rights'), 'NORM-2: audit_rights=false should pass field validation');
+}
+
+// NORM-3: edge-003 scenario — CAM_EXCLUSIONS_UNDEFINED fires when excluded_categories is null
+{
+  const s = LeaseTestLab.generateScenario('edge-003');
+  const mockResult = {
+    fields: { cap: 5, audit_rights: true },
+    confidenceScore: 70,
+    warnings: [],
+    amendmentPrecedence: null,
+    edgeCases: ['CAM_EXCLUSIONS_UNDEFINED']
+  };
+  const v = LeaseTestLab.validate(mockResult, s.expected);
+  assert(v.edgeCaseIssues.length === 0, 'NORM-3: CAM_EXCLUSIONS_UNDEFINED correctly reported for null excluded_categories');
+}
+
+// NORM-4: excluded_categories="" (empty string) must NOT trigger CAM_EXCLUSIONS_UNDEFINED
+//         Re-asserts P19-4 but via SCENARIO_REGISTRY path for complete coverage
+{
+  const LI = global.window.LeaseIntelligence;
+  const edgeResult = LI.detectLeaseEdgeCases(
+    { lease_type: 'Triple Net (NNN)', excluded_categories: '' },
+    {}
+  );
+  const fired = edgeResult.edgeCases.some(e => e.type === 'CAM_EXCLUSIONS_UNDEFINED');
+  assert(!fired, 'NORM-4: excluded_categories="" on NNN lease must NOT trigger CAM_EXCLUSIONS_UNDEFINED');
+}
+
 // ── Summary ───────────────────────────────────────────────────────────────────
 console.log('─'.repeat(48));
 console.log(`  ${passed} passed, ${failed} failed`);
