@@ -4959,6 +4959,59 @@ function _tenantConfLevel(d) {
   return d._confidence || (d.extractionFailed ? 'failed' : d._needsReview ? 'medium' : null);
 }
 
+function _buildPreReconSummary(tenants) {
+  const total    = tenants.length;
+  const pending  = tenants.filter(t => t.status === 'pending').length;
+  const failed   = tenants.filter(t => t.extractionFailed).length;
+  const needsAttn = tenants.filter(t => t._needsReview && !t.extractionFailed && t.status !== 'pending').length;
+  const ready    = total - pending - failed - needsAttn;
+
+  // Leases expiring within 12 months from today
+  const today = new Date();
+  const in12  = new Date(today); in12.setFullYear(in12.getFullYear() + 1);
+  const expiring = tenants.filter(t => {
+    if (!t.end_date) return false;
+    const d = new Date(t.end_date + 'T12:00:00');
+    return !isNaN(d) && d >= today && d <= in12;
+  }).length;
+
+  if (total === 0) return '';
+
+  const tile = (val, lbl, cls) =>
+    `<div class="prerecon-tile">
+      <span class="prerecon-val${cls ? ' ' + cls : ''}">${val}</span>
+      <span class="prerecon-lbl">${lbl}</span>
+    </div>`;
+
+  return `
+  <div class="prerecon-summary">
+    ${tile(total,    'Total Tenants', '')}
+    ${ready > 0    ? tile(ready,    'Ready',          'prerecon-ok')   : ''}
+    ${needsAttn > 0? tile(needsAttn,'Needs Attention','prerecon-warn') : ''}
+    ${failed > 0   ? tile(failed,   'Failed',         'prerecon-err')  : ''}
+    ${pending > 0  ? tile(pending,  'Processing',     'prerecon-pend') : ''}
+    ${expiring > 0 ? tile(expiring, 'Expiring ≤12 mo','prerecon-warn') : ''}
+  </div>`;
+}
+
+function setBulkFilter(field, val) {
+  _bulkFilter[field] = val;
+  renderBulkResults();
+}
+
+function _filterBulkTenants(tenants) {
+  const q   = (_bulkFilter.query || '').toLowerCase().trim();
+  const st  = _bulkFilter.status || 'all';
+  return tenants.map((d, i) => ({ d, i })).filter(({ d }) => {
+    if (q && !(d.tenant_name || '').toLowerCase().includes(q)) return false;
+    if (st === 'ready')   return !d._needsReview && !d.extractionFailed && d.status !== 'pending' && d.tenant_name;
+    if (st === 'issues')  return (d._needsReview || d.extractionFailed) && d.status !== 'pending';
+    if (st === 'failed')  return !!d.extractionFailed;
+    if (st === 'pending') return d.status === 'pending';
+    return true; // 'all'
+  });
+}
+
 function renderBulkResults() {
   const el = document.getElementById('bulkResults');
   el.innerHTML = '';
@@ -4981,7 +5034,8 @@ function renderBulkResults() {
   });
   const _dupNames = new Set([..._nameCount.entries()].filter(([, n]) => n > 1).map(([k]) => k));
 
-  const rows = tenants.map((d, i) => {
+  const _filtered = _filterBulkTenants(tenants);
+  const rows = _filtered.map(({ d, i }) => {
     if (!d) return '';
     const sqft      = d.leased_sqft  || null;
     const start     = d.start_date  || null;
@@ -5152,12 +5206,32 @@ function renderBulkResults() {
       </div>`;
   }).join('');
 
+  const filterBarHtml = tenants.length > 0 ? `
+  <div class="bulk-filter-bar">
+    <input class="bulk-filter-input" type="text" placeholder="Search tenants…"
+      value="${esc(_bulkFilter.query)}"
+      oninput="setBulkFilter('query',this.value)" />
+    <div class="bulk-filter-pills">
+      ${[['all','All'],['ready','Ready'],['issues','Needs Attention'],['failed','Failed'],['pending','Processing']].map(([v,l]) =>
+        `<button class="bulk-filter-pill${_bulkFilter.status===v?' active':''}" onclick="setBulkFilter('status','${v}')">${l}</button>`
+      ).join('')}
+    </div>
+  </div>` : '';
+
   el.innerHTML = `
     <div class="bulk-results-head">
       <h3>Extracted Tenants (${tenants.length})</h3>
       <button class="bulk-clear-btn" onclick="clearBulkResults()">&#x2715; Clear All</button>
     </div>
-    ${rows}`;
+    ${_buildPreReconSummary(tenants)}
+    ${filterBarHtml}
+    ${rows || '<div class="bulk-filter-empty">No tenants match your filter.</div>'}`;
+
+  // Re-focus search input after re-render so typing stays smooth
+  if (_bulkFilter.query) {
+    const inp = el.querySelector('.bulk-filter-input');
+    if (inp) { inp.focus(); inp.setSelectionRange(inp.value.length, inp.value.length); }
+  }
 
   // Confirm onclick is in the generated DOM
   const firstSummary = el.querySelector('.bulk-tenant-summary');
@@ -5498,6 +5572,7 @@ async function retryExtractionWithFile(index, file) {
 
 async function clearBulkResults() {
   if (!confirm('Clear all extracted tenants for this property?\n\nThis also removes the tenant records from the database and cannot be undone.')) return;
+  _bulkFilter = { query: '', status: 'all' };
   const prop = currentProperty();
   tenantData.splice(0, tenantData.length);
   if (prop?.tenants) prop.tenants.splice(0, prop.tenants.length);
@@ -8634,6 +8709,8 @@ function setCamYear(y) {
   localStorage.setItem(_camYearKey(), _camYear);
   const glLbl = document.getElementById('glUploadLabel');
   if (glLbl) glLbl.textContent = `Upload ${_camYear} GL Excel File (.xlsx only)`;
+  const _cyb = document.getElementById('camYearBadge');
+  if (_cyb) _cyb.textContent = _camYear + ' CAM';
 }
 function initCamYearSelect() {
   const sel = document.getElementById('camYearSelect');
@@ -8649,6 +8726,8 @@ function initCamYearSelect() {
   }
   const glLbl = document.getElementById('glUploadLabel');
   if (glLbl) glLbl.textContent = `Upload ${_camYear} GL Excel File (.xlsx only)`;
+  const _cyb2 = document.getElementById('camYearBadge');
+  if (_cyb2) _cyb2.textContent = _camYear + ' CAM';
 }
 let sqftMismatch   = false;
 let isEditingField = false; // true while a text/number/date input has focus
@@ -13270,6 +13349,9 @@ async function loadDemo() {
 
 let _portfolioSort = 'risk'; // 'risk' | 'recent' | 'cam' | 'disputes'
 let _reviewQueueFilter = 'all'; // 'all' | 'incomplete' | 'needs_review' | 'manually_verified'
+let _portfolioQuery      = '';
+let _portfolioSortedPairs = []; // cached after each renderPortfolio() for card-only re-render
+let _bulkFilter = { query: '', status: 'all' };
 
 // Pure function — derives risk metadata from a stored property snapshot.
 // Runs without globals so it can compute for any prop, not just the active one.
@@ -15158,6 +15240,7 @@ function renderPortfolio(props) {
 
   // Deterministic sort via Selectors — always has a stable tiebreaker, never returns 0
   const sortedPairs = Selectors.sortProperties(props.map((p, i) => ({ p, m: metas[i] })), _portfolioSort);
+  _portfolioSortedPairs = sortedPairs; // cache for search re-use
 
   // KPI tiles
   const k = portfolioKPIs(props);
@@ -15264,7 +15347,13 @@ function renderPortfolio(props) {
     return;
   }
 
-  document.getElementById('propertyCardsGrid').innerHTML = sortedPairs.map(({ p, m }) => {
+  const _displayPairs = _portfolioQuery
+    ? sortedPairs.filter(({ p }) => (p.name || '').toLowerCase().includes(_portfolioQuery.toLowerCase()) || (p.address || '').toLowerCase().includes(_portfolioQuery.toLowerCase()))
+    : sortedPairs;
+
+  document.getElementById('propertyCardsGrid').innerHTML = _displayPairs.length === 0
+    ? `<div class="ptf-empty-state"><div class="ptf-empty-icon">&#x1F50D;</div><div class="ptf-empty-title">No properties match "${esc(_portfolioQuery)}"</div></div>`
+    : _displayPairs.map(({ p, m }) => {
     const dm      = p._derivedMetrics || derivePropertyMetrics(p);
     const tenants = Array.isArray(p.tenants) ? p.tenants.length : (Number(p.tenantCount) || 0);
     const cam     = m.total || Number(p.totalCAM) || 0;
