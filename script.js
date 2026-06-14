@@ -12443,8 +12443,7 @@ function generateLenderSummaryReport() {
     const prop = currentProperty();
     if (!prop) { showToast('Select a property first.', { color: '#92400e', textColor: '#fef3c7' }); return; }
     if (!window.LeaseReviewPackets) { showToast('Lease Review Packets module not loaded.', { color: '#92400e', textColor: '#fef3c7' }); return; }
-    const packet = window.LeaseReviewPackets.generateLeaseReviewPacket(prop, { audience: 'lender' });
-    const html   = window.LeaseReviewPackets.formatReviewPacketHtml(packet);
+    const html = window.LeaseReviewPackets.generateLenderSummaryHtml(prop);
     logActivity('lender_summary', 'Lender Summary generated', { severity: 'info', actor: 'User', relatedEntity: prop.name || 'Property' });
     openReport('Lender Summary — ' + (prop.name || 'Property'), html);
   } catch (e) {
