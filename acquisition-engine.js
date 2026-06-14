@@ -1239,10 +1239,10 @@
       });
     }
 
-    // — Acquisition reviews awaiting conversion (status='analyzed') —
+    // — Acquisition reviews awaiting conversion (status='complete') —
     for (var ri = 0; ri < safeReviews.length; ri++) {
       var rev = safeReviews[ri];
-      if (rev.status !== 'analyzed') continue;
+      if (rev.status !== 'complete') continue;
       infoActions.push({
         id:           'acq:' + (rev.id || ''),
         type:         'acquisition_pending',
@@ -1265,7 +1265,7 @@
     var openDispTotal = safeProps.reduce(function(s, p) {
       return s + (p.disputes || []).filter(function(d) { return d.status === 'open'; }).length;
     }, 0);
-    var acqPending = safeReviews.filter(function(r) { return r.status === 'analyzed'; }).length;
+    var acqPending = safeReviews.filter(function(r) { return r.status === 'complete'; }).length;
 
     return {
       criticalActions: criticalActions,
