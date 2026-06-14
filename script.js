@@ -18093,8 +18093,8 @@ function _renderAcqReport(report, container) {
 
   const exportBar = `
   <div class="acq-export-bar">
-    <button class="acq-export-btn" onclick="acqExportPdf()">&#x1F4E5; Export PDF</button>
-    <span class="acq-export-note">PDF export coming soon — full report with citations.</span>
+    <button class="acq-export-btn" onclick="acqExportPdf()">&#x1F4E5; Print / Save PDF</button>
+    <button class="acq-export-btn" onclick="acqExportRentRollCsv()">&#x1F4C8; Rent Roll CSV</button>
   </div>`;
 
   const riskTabContent = `${kpis}${topRisksHtml}${findingsHtml}${tenantTable}${auditHtml}${renewalHtml}${proRataHtml}${exportBar}`;
@@ -18307,7 +18307,106 @@ function acqExportRentRollCsv() {
 }
 
 function acqExportPdf() {
-  alert('PDF export is coming soon. The full report with citations and evidence appendix will be available in the next release.');
+  const review  = _acqReviews.find(r => r.id === _activeAcqId);
+  const reportEl = document.getElementById('acqReportContainer');
+  if (!reportEl || !reportEl.innerHTML.trim()) {
+    showToast('Run analysis first to generate a report.', { color: '#92400e', textColor: '#fef3c7' });
+    return;
+  }
+
+  const title   = (review?.name || 'Acquisition Review') + ' — Due Diligence Report';
+  const date    = new Date().toLocaleDateString('en-US', { year: 'numeric', month: 'long', day: 'numeric' });
+  const content = reportEl.innerHTML;
+
+  const win = window.open('', '_blank');
+  if (!win) {
+    showToast('⚠️ Pop-up blocked — allow pop-ups for this site to export PDF.', { color: '#92400e', textColor: '#fef3c7', duration: 5000 });
+    return;
+  }
+
+  win.document.write(`<!DOCTYPE html><html><head>
+    <meta charset="UTF-8">
+    <title>${esc(title)}</title>
+    <style>
+      *, *::before, *::after { box-sizing: border-box; }
+      body { font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', sans-serif;
+             font-size: 13px; color: #1e293b; background: #fff; margin: 0; padding: 24px 32px; }
+      h1 { font-size: 1.25rem; font-weight: 700; margin: 0 0 4px; }
+      .print-header { border-bottom: 2px solid #e2e8f0; padding-bottom: 12px; margin-bottom: 20px; }
+      .print-date   { font-size: 0.8rem; color: #64748b; }
+
+      /* KPIs */
+      .acq-kpi-row  { display: flex; flex-wrap: wrap; gap: 10px; margin-bottom: 18px; }
+      .acq-kpi      { border: 1px solid #e2e8f0; border-radius: 6px; padding: 10px 14px; min-width: 120px; flex: 1; }
+      .acq-kpi-val  { font-size: 1.2rem; font-weight: 700; color: #0f172a; }
+      .acq-kpi-val.danger { color: #dc2626; }
+      .acq-kpi-val.safe   { color: #16a34a; }
+      .acq-kpi-lbl  { font-size: 0.7rem; color: #64748b; text-transform: uppercase; letter-spacing: 0.05em; margin-top: 2px; }
+
+      /* Sections */
+      .acq-section-sub { font-size: 0.72rem; font-weight: 700; text-transform: uppercase;
+                         letter-spacing: 0.06em; color: #64748b; margin: 16px 0 6px; }
+      .acq-report-title { font-size: 0.95rem; font-weight: 700; margin-bottom: 12px; }
+
+      /* Risk items */
+      .acq-top-risks h3 { font-size: 0.82rem; color: #64748b; font-weight: 600; margin: 0 0 8px; }
+      .acq-risk-item { display: flex; gap: 10px; padding: 8px; border: 1px solid #e2e8f0;
+                       border-radius: 6px; margin-bottom: 6px; }
+      .acq-risk-icon  { flex-shrink: 0; }
+      .acq-risk-label { font-size: 0.82rem; font-weight: 600; }
+      .acq-risk-detail { font-size: 0.73rem; color: #64748b; margin-top: 2px; }
+      .acq-risk-impact { margin-left: auto; font-size: 0.82rem; font-weight: 700; color: #dc2626; white-space: nowrap; }
+
+      /* Findings */
+      .acq-findings-list { display: flex; flex-direction: column; gap: 6px; margin-bottom: 18px; }
+      .acq-finding-item  { padding: 8px 10px; border: 1px solid #e2e8f0; border-left: 3px solid #c9973a; border-radius: 6px; }
+      .acq-finding-tenant { font-size: 0.82rem; font-weight: 700; }
+      .acq-finding-label  { font-size: 0.73rem; color: #64748b; }
+      .acq-finding-cite   { font-size: 0.73rem; color: #64748b; font-style: italic;
+                            background: #f8fafc; border-left: 2px solid #cbd5e1; padding: 4px 8px;
+                            margin-top: 4px; border-radius: 2px; white-space: pre-wrap; word-break: break-word; }
+
+      /* Tables */
+      .acq-ts-scroll  { overflow: visible; }
+      .acq-ts-table   { width: 100%; border-collapse: collapse; font-size: 0.75rem; }
+      .acq-ts-table th { text-align: left; border-bottom: 2px solid #e2e8f0; padding: 6px 8px;
+                          font-size: 0.68rem; text-transform: uppercase; letter-spacing: 0.04em; color: #64748b; }
+      .acq-ts-table td { padding: 6px 8px; border-bottom: 1px solid #f1f5f9; color: #374151; vertical-align: top; }
+      .acq-ts-name    { font-weight: 600; color: #0f172a !important; }
+      .acq-risk-badge { display: inline-block; padding: 1px 6px; border-radius: 8px; font-size: 0.68rem; font-weight: 600; }
+      .acq-risk-badge.cap { background: #fee2e2; color: #dc2626; }
+      .acq-risk-badge.none { background: #dcfce7; color: #16a34a; }
+      .acq-risk-badge.exclusions { background: #fef3c7; color: #92400e; }
+      .acq-risk-badge.partial_match { background: #f1f5f9; color: #64748b; }
+
+      /* Audit chips */
+      .acq-audit-chip { display: inline-block; padding: 2px 8px; border-radius: 10px;
+                        font-size: 0.7rem; font-weight: 600; margin: 2px 3px 2px 0; }
+      .acq-audit-chip.open    { background: #dcfce7; color: #15803d; }
+      .acq-audit-chip.closing { background: #fef3c7; color: #92400e; }
+      .acq-audit-chip.expired { background: #fee2e2; color: #b91c1c; }
+      .acq-audit-chip.none, .acq-audit-chip.unknown { background: #f1f5f9; color: #64748b; }
+
+      /* Hide export bar and tabs in print */
+      .acq-export-bar, .acq-report-tabs, .acq-report-tab-btn,
+      .acq-report-tab-content:not([style*="display: block"]):not([style*="display:block"]) { display: none !important; }
+      .acq-report-tab-content { display: block !important; }
+
+      @media print {
+        body { padding: 12px 16px; }
+        @page { margin: 15mm; }
+        .acq-risk-item, .acq-finding-item, .acq-kpi { break-inside: avoid; }
+      }
+    </style>
+  </head><body>
+    <div class="print-header">
+      <h1>${esc(title)}</h1>
+      <div class="print-date">Generated ${esc(date)}</div>
+    </div>
+    ${content}
+    <script>window.onload = function() { window.print(); };<\/script>
+  </body></html>`);
+  win.document.close();
 }
 
 function _genUUID() {
