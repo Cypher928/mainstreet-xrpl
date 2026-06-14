@@ -1,13 +1,54 @@
 // Server-side proxy for cam_reconciliations table operations.
 // Uses the service role key so RLS doesn't block browser inserts.
 
-const SUPABASE_URL      = 'https://zhsuhehgehbzkmzurzyf.supabase.co';
-const SUPABASE_ANON_KEY = 'eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6Inpoc3VoZWhnZWhiemttenVyenlmIiwicm9sZSI6ImFub24iLCJpYXQiOjE3NzU4NDkwNDAsImV4cCI6MjA5MTQyNTA0MH0.HUl9ha9hhjIO1F_k8xPkqbZQnWx-ERRGbnmc6KS3lNE';
+const SUPABASE_URL      = (process.env.SUPABASE_URL      || '').trim();
+const SUPABASE_ANON_KEY = (process.env.SUPABASE_ANON_KEY || '').trim();
+if (!SUPABASE_URL || !SUPABASE_ANON_KEY) {
+  throw new Error('[api/cam-reconciliations] SUPABASE_URL and SUPABASE_ANON_KEY env vars are required');
+}
+
+const _rl = new Map();
+function _chkRate(uid, max, winMs) {
+  const now = Date.now();
+  let w = _rl.get(uid) || { n: 0, reset: now + winMs };
+  if (now > w.reset) w = { n: 0, reset: now + winMs };
+  w.n++; _rl.set(uid, w);
+  return w.n <= max;
+}
+
+async function _verifyUser(req, res) {
+  const tok = (req.headers['authorization'] || '').replace(/^Bearer\s+/, '');
+  if (!tok) { res.status(401).json({ error: 'Authentication required' }); return null; }
+  try {
+    const r = await fetch(`${SUPABASE_URL}/auth/v1/user`, {
+      signal: AbortSignal.timeout(3000),
+      headers: { apikey: (process.env.SUPABASE_SERVICE_ROLE_KEY || SUPABASE_ANON_KEY).trim(), Authorization: `Bearer ${tok}` },
+    });
+    if (!r.ok) { res.status(401).json({ error: 'Invalid or expired token' }); return null; }
+    const user = await r.json();
+    if (!user?.id) { res.status(401).json({ error: 'User identity missing' }); return null; }
+    return user;
+  } catch (e) {
+    const timedOut = e?.name === 'TimeoutError' || e?.name === 'AbortError';
+    res.status(timedOut ? 503 : 500).json({ error: timedOut ? 'Auth service unavailable — try again' : 'Auth check failed' });
+    return null;
+  }
+}
 
 const KEY_SOURCE = process.env.SUPABASE_SERVICE_ROLE_KEY ? 'service_role' : 'anon';
 
 function key() {
   return process.env.SUPABASE_SERVICE_ROLE_KEY || SUPABASE_ANON_KEY;
+}
+
+async function _ownsProperty(propertyId, userId) {
+  const r = await sbFetch(
+    `/properties?id=eq.${encodeURIComponent(propertyId)}&user_id=eq.${encodeURIComponent(userId)}&select=id`,
+    { method: 'GET', headers: { 'Prefer': '' } }
+  );
+  if (r.status >= 300) return false;
+  const rows = Array.isArray(r.json) ? r.json : [];
+  return rows.length > 0;
 }
 
 // Returns true when Supabase reports the table does not exist (migration not run).
@@ -39,11 +80,20 @@ async function sbFetch(path, options = {}) {
 export default async function handler(req, res) {
   const { method } = req;
 
+  const user = await _verifyUser(req, res);
+  if (!user) return;
+  if (!_chkRate(user.id, 60, 60000)) {
+    return res.status(429).json({ error: 'Too many requests — please slow down.' });
+  }
+
   // DELETE then INSERT (upsert-style replace for a property+year)
   if (method === 'POST') {
     const { propertyId, year, rows } = req.body || {};
     if (!propertyId || !year) {
       return res.status(400).json({ error: 'Missing propertyId or year', keySource: KEY_SOURCE });
+    }
+    if (!await _ownsProperty(propertyId, user.id)) {
+      return res.status(403).json({ error: 'Forbidden', keySource: KEY_SOURCE });
     }
 
     // Delete existing rows for this property+year
@@ -93,6 +143,9 @@ export default async function handler(req, res) {
     const { propertyId, year, history } = req.query || {};
     if (!propertyId) {
       return res.status(400).json({ error: 'Missing propertyId' });
+    }
+    if (!await _ownsProperty(propertyId, user.id)) {
+      return res.status(403).json({ error: 'Forbidden' });
     }
 
     // History mode: all years for this property, newest first.

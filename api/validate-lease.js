@@ -6,8 +6,39 @@
 //   3. source is always 'lease_ai' from this endpoint
 //   4. Lease silence → Info/High — never Warning or Critical
 
-const SUPABASE_URL      = 'https://zhsuhehgehbzkmzurzyf.supabase.co';
-const SUPABASE_ANON_KEY = 'eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6Inpoc3VoZWhnZWhiemttenVyenlmIiwicm9sZSI6ImFub24iLCJpYXQiOjE3NzU4NDkwNDAsImV4cCI6MjA5MTQyNTA0MH0.HUl9ha9hhjIO1F_k8xPkqbZQnWx-ERRGbnmc6KS3lNE';
+const SUPABASE_URL      = (process.env.SUPABASE_URL      || '').trim();
+const SUPABASE_ANON_KEY = (process.env.SUPABASE_ANON_KEY || '').trim();
+if (!SUPABASE_URL || !SUPABASE_ANON_KEY) {
+  throw new Error('[api/validate-lease] SUPABASE_URL and SUPABASE_ANON_KEY env vars are required');
+}
+
+const _rl = new Map();
+function _chkRate(uid, max, winMs) {
+  const now = Date.now();
+  let w = _rl.get(uid) || { n: 0, reset: now + winMs };
+  if (now > w.reset) w = { n: 0, reset: now + winMs };
+  w.n++; _rl.set(uid, w);
+  return w.n <= max;
+}
+
+async function _verifyUser(req, res) {
+  const tok = (req.headers['authorization'] || '').replace(/^Bearer\s+/, '');
+  if (!tok) { res.status(401).json({ error: 'Authentication required' }); return null; }
+  try {
+    const r = await fetch(`${SUPABASE_URL}/auth/v1/user`, {
+      signal: AbortSignal.timeout(3000),
+      headers: { apikey: (process.env.SUPABASE_SERVICE_ROLE_KEY || SUPABASE_ANON_KEY).trim(), Authorization: `Bearer ${tok}` },
+    });
+    if (!r.ok) { res.status(401).json({ error: 'Invalid or expired token' }); return null; }
+    const user = await r.json();
+    if (!user?.id) { res.status(401).json({ error: 'User identity missing' }); return null; }
+    return user;
+  } catch (e) {
+    const timedOut = e?.name === 'TimeoutError' || e?.name === 'AbortError';
+    res.status(timedOut ? 503 : 500).json({ error: timedOut ? 'Auth service unavailable — try again' : 'Auth check failed' });
+    return null;
+  }
+}
 
 const MAX_LEASE_TEXT     = 300000;
 const VALIDATION_TIMEOUT = 45000;
@@ -31,7 +62,7 @@ function sbKey() {
 
 async function fetchLeaseDoc(id) {
   const k   = sbKey();
-  const url = `${SUPABASE_URL}/rest/v1/lease_documents?id=eq.${encodeURIComponent(id)}&select=id,extracted_text,file_url`;
+  const url = `${SUPABASE_URL}/rest/v1/lease_documents?id=eq.${encodeURIComponent(id)}&select=id,property_id,extracted_text,file_url`;
   const res = await fetch(url, {
     headers: { 'apikey': k, 'Authorization': `Bearer ${k}` },
   });
@@ -40,6 +71,17 @@ async function fetchLeaseDoc(id) {
   try { rows = JSON.parse(text); } catch { rows = []; }
   if (!Array.isArray(rows) || rows.length === 0) return null;
   return rows[0];
+}
+
+async function _ownsLeaseDoc(doc, userId) {
+  if (!doc.property_id) return false;
+  const k   = sbKey();
+  const url = `${SUPABASE_URL}/rest/v1/properties?id=eq.${encodeURIComponent(doc.property_id)}&user_id=eq.${encodeURIComponent(userId)}&select=id`;
+  const res = await fetch(url, { headers: { 'apikey': k, 'Authorization': `Bearer ${k}` } });
+  const text = await res.text();
+  let rows;
+  try { rows = JSON.parse(text); } catch { rows = []; }
+  return Array.isArray(rows) && rows.length > 0;
 }
 
 // Enforces all hard requirements. Called on every finding before it leaves the server.
@@ -145,6 +187,12 @@ export default async function handler(req, res) {
     return res.status(405).json({ error: 'Method not allowed' });
   }
 
+  const user = await _verifyUser(req, res);
+  if (!user) return;
+  if (!_chkRate(user.id, 10, 60000)) {
+    return res.status(429).json({ error: 'Too many requests — please slow down.' });
+  }
+
   const { leaseDocumentId, reconciliationData } = req.body || {};
 
   if (!leaseDocumentId) {
@@ -172,6 +220,9 @@ export default async function handler(req, res) {
 
   if (!doc) {
     return res.status(404).json({ error: 'Lease document not found' });
+  }
+  if (!await _ownsLeaseDoc(doc, user.id)) {
+    return res.status(403).json({ error: 'Forbidden' });
   }
   if (!doc.extracted_text) {
     return res.status(422).json({ error: 'No extracted text available for this lease document. Re-upload to enable validation.' });

@@ -11,8 +11,62 @@ export const config = {
   },
 };
 
-const SUPABASE_URL      = 'https://zhsuhehgehbzkmzurzyf.supabase.co';
-const SUPABASE_ANON_KEY = 'eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6Inpoc3VoZWhnZWhiemttenVyenlmIiwicm9sZSI6ImFub24iLCJpYXQiOjE3NzU4NDkwNDAsImV4cCI6MjA5MTQyNTA0MH0.HUl9ha9hhjIO1F_k8xPkqbZQnWx-ERRGbnmc6KS3lNE';
+const SUPABASE_URL      = (process.env.SUPABASE_URL      || '').trim();
+const SUPABASE_ANON_KEY = (process.env.SUPABASE_ANON_KEY || '').trim();
+if (!SUPABASE_URL || !SUPABASE_ANON_KEY) {
+  throw new Error('[api/upload] SUPABASE_URL and SUPABASE_ANON_KEY env vars are required');
+}
+
+const _rl = new Map();
+function _chkRate(uid, max, winMs) {
+  const now = Date.now();
+  let w = _rl.get(uid) || { n: 0, reset: now + winMs };
+  if (now > w.reset) w = { n: 0, reset: now + winMs };
+  w.n++; _rl.set(uid, w);
+  return w.n <= max;
+}
+
+async function _verifyUser(req, res) {
+  const tok = (req.headers['authorization'] || '').replace(/^Bearer\s+/, '');
+  if (!tok) { res.status(401).json({ error: 'Authentication required' }); return null; }
+  try {
+    const r = await fetch(`${SUPABASE_URL}/auth/v1/user`, {
+      signal: AbortSignal.timeout(3000),
+      headers: { apikey: (process.env.SUPABASE_SERVICE_ROLE_KEY || SUPABASE_ANON_KEY).trim(), Authorization: `Bearer ${tok}` },
+    });
+    if (!r.ok) { res.status(401).json({ error: 'Invalid or expired token' }); return null; }
+    const user = await r.json();
+    if (!user?.id) { res.status(401).json({ error: 'User identity missing' }); return null; }
+    return user;
+  } catch (e) {
+    const timedOut = e?.name === 'TimeoutError' || e?.name === 'AbortError';
+    res.status(timedOut ? 503 : 500).json({ error: timedOut ? 'Auth service unavailable — try again' : 'Auth check failed' });
+    return null;
+  }
+}
+
+// Allowed file types: extension → canonical MIME type.
+const ALLOWED_TYPES = {
+  pdf:  'application/pdf',
+  csv:  'text/csv',
+  xlsx: 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet',
+  png:  'image/png',
+  jpg:  'image/jpeg',
+  jpeg: 'image/jpeg',
+};
+
+// Returns an error string if the file is not allowed, or null if valid.
+function _validateUpload(fileName, fileType) {
+  const ext = (fileName.split('.').pop() || '').toLowerCase();
+  const allowed = ALLOWED_TYPES[ext];
+  if (!allowed) {
+    return `File type .${ext} is not allowed. Allowed extensions: ${Object.keys(ALLOWED_TYPES).join(', ')}`;
+  }
+  if (fileType && fileType !== allowed) {
+    return `MIME type "${fileType}" does not match extension .${ext} (expected ${allowed})`;
+  }
+  return null;
+}
 
 function httpsPost(url, headers, body) {
   return new Promise((resolve, reject) => {
@@ -43,6 +97,12 @@ export default async function handler(req, res) {
     return res.status(405).json({ error: 'Method not allowed' });
   }
 
+  const user = await _verifyUser(req, res);
+  if (!user) return;
+  if (!_chkRate(user.id, 60, 60000)) {
+    return res.status(429).json({ error: 'Too many requests — please slow down.' });
+  }
+
   const { fileName, fileType, fileBase64, bucket = 'invoices' } = req.body || {};
   if (!fileName || !fileBase64) {
     return res.status(400).json({ error: 'Missing fileName or fileBase64' });
@@ -53,9 +113,14 @@ export default async function handler(req, res) {
     return res.status(400).json({ error: `Invalid bucket: ${bucket}` });
   }
 
+  const uploadError = _validateUpload(fileName, fileType);
+  if (uploadError) {
+    return res.status(400).json({ error: uploadError });
+  }
+
   const key      = process.env.SUPABASE_SERVICE_ROLE_KEY || SUPABASE_ANON_KEY;
   const buffer   = Buffer.from(fileBase64, 'base64');
-  const safeName = fileName.replace(/[^a-zA-Z0-9._-]/g, '_');
+  const safeName = `${user.id}/${fileName.replace(/[^a-zA-Z0-9._-]/g, '_')}`;
   const uploadUrl = `${SUPABASE_URL}/storage/v1/object/${bucket}/${safeName}`;
 
   console.log('[api/upload] POST', uploadUrl, 'bytes:', buffer.length);

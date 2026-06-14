@@ -15,9 +15,52 @@ module.exports.config = {
   },
 };
 
+const _SB_URL  = (process.env.SUPABASE_URL      || '').trim();
+const _SB_ANON = (process.env.SUPABASE_ANON_KEY || '').trim();
+if (!_SB_URL || !_SB_ANON) {
+  throw new Error('[api/claude] SUPABASE_URL and SUPABASE_ANON_KEY env vars are required');
+}
+
+// In-process sliding-window rate limiter (resets per cold-start; good enough for abuse prevention).
+const _rl = new Map();
+function _chkRate(uid, max, winMs) {
+  const now = Date.now();
+  let w = _rl.get(uid) || { n: 0, reset: now + winMs };
+  if (now > w.reset) w = { n: 0, reset: now + winMs };
+  w.n++; _rl.set(uid, w);
+  return w.n <= max;
+}
+
+// Verifies the Supabase JWT from the Authorization header.
+// Returns the user object on success; sends 401/500 and returns null on failure.
+async function _verifyUser(req, res) {
+  const tok = (req.headers['authorization'] || '').replace(/^Bearer\s+/, '');
+  if (!tok) { res.status(401).json({ error: 'Authentication required' }); return null; }
+  try {
+    const r = await fetch(`${_SB_URL}/auth/v1/user`, {
+      signal: AbortSignal.timeout(3000),
+      headers: { apikey: (process.env.SUPABASE_SERVICE_ROLE_KEY || _SB_ANON).trim(), Authorization: `Bearer ${tok}` },
+    });
+    if (!r.ok) { res.status(401).json({ error: 'Invalid or expired token' }); return null; }
+    const user = await r.json();
+    if (!user?.id) { res.status(401).json({ error: 'User identity missing' }); return null; }
+    return user;
+  } catch (e) {
+    const timedOut = e?.name === 'TimeoutError' || e?.name === 'AbortError';
+    res.status(timedOut ? 503 : 500).json({ error: timedOut ? 'Auth service unavailable — try again' : 'Auth check failed' });
+    return null;
+  }
+}
+
 module.exports = async function handler(req, res) {
   if (req.method !== 'POST') {
     return res.status(405).json({ error: 'Method not allowed' });
+  }
+
+  const user = await _verifyUser(req, res);
+  if (!user) return;
+  if (!_chkRate(user.id, 20, 60000)) {
+    return res.status(429).json({ error: 'Too many requests — please slow down.' });
   }
 
   const apiKey = process.env.ANTHROPIC_API_KEY;
@@ -31,8 +74,11 @@ module.exports = async function handler(req, res) {
     return res.status(400).json({ error: 'Missing required field: messages' });
   }
 
-  const model = process.env.CLAUDE_MODEL || requestedModel || 'claude-sonnet-4-6';
-  const payload = { model, max_tokens, messages };
+  // Always use the server-configured model — never allow callers to request expensive models.
+  const model = process.env.CLAUDE_MODEL || 'claude-sonnet-4-6';
+  // Cap token output to prevent runaway cost from caller-supplied values.
+  const safeMaxTokens = Math.min(Number.isFinite(max_tokens) ? max_tokens : 4096, 8192);
+  const payload = { model, max_tokens: safeMaxTokens, messages };
   if (system) payload.system = system;
 
   let anthropicResp;

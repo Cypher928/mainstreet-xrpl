@@ -271,12 +271,31 @@ function _fetchWithTimeout(url, opts, ms = 58000) {
   return fetch(url, { ...opts, signal: ctrl.signal }).finally(() => clearTimeout(timer));
 }
 
+// Returns the Authorization header object for the current Supabase session.
+// Returns {} (no-op spread) when unauthenticated so calls still go through
+// to get a clean 401 from the server rather than silently failing client-side.
+async function _authHeaders() {
+  try {
+    const { data } = await db.auth.getSession();
+    if (!data?.session) return {};
+    // Refresh if the token expires within the next 60 seconds so API routes
+    // never receive an expired JWT (getSession() returns stale tokens as-is).
+    const expiresAt = data.session.expires_at ?? 0;
+    if (expiresAt - Date.now() / 1000 < 60) {
+      const { data: r } = await db.auth.refreshSession();
+      const tok = r?.session?.access_token;
+      return tok ? { 'Authorization': `Bearer ${tok}` } : {};
+    }
+    return { 'Authorization': `Bearer ${data.session.access_token}` };
+  } catch { return {}; }
+}
+
 // Single entry-point for every Claude API call.
 // Proxies through /api/claude — API key stays server-side.
 async function claudeFetch(body) {
   const resp = await _fetchWithTimeout('/api/claude', {
     method: 'POST',
-    headers: { 'Content-Type': 'application/json' },
+    headers: { 'Content-Type': 'application/json', ...(await _authHeaders()) },
     body: typeof body === 'string' ? body : JSON.stringify(body),
   });
   if (!resp.ok) {
@@ -290,7 +309,7 @@ async function claudeFetch(body) {
 async function explainFetch(body) {
   const resp = await fetch('/api/explain', {
     method: 'POST',
-    headers: { 'Content-Type': 'application/json' },
+    headers: { 'Content-Type': 'application/json', ...(await _authHeaders()) },
     body: typeof body === 'string' ? body : JSON.stringify(body),
   });
   if (!resp.ok) {
@@ -417,10 +436,12 @@ Return ONLY valid JSON. No text. No explanation. No markdown. Start with { and e
 Return exactly this structure:
 {
   "tenant_name": string,
+  "suite": string | null,
   "lease_start_date": "YYYY-MM-DD",
   "lease_end_date": "YYYY-MM-DD",
   "lease_type": string,
   "sqft": number,
+  "base_rent": number | null,
   "cam_cap": number,
   "admin_fee_pct": number | null,
   "gross_up_pct": number | null,
@@ -429,6 +450,7 @@ Return exactly this structure:
   "pro_rata_method": "rentable" | "leasable" | "occupied" | "gross" | null,
   "renewal_options": string | null,
   "excluded_categories": string | null,
+  "security_deposit": number | null,
   "quotes": {
     "cam_cap": string | null,
     "admin_fee_pct": string | null,
@@ -436,7 +458,9 @@ Return exactly this structure:
     "expense_stop": string | null,
     "audit_rights": string | null,
     "pro_rata_method": string | null,
-    "renewal_options": string | null
+    "renewal_options": string | null,
+    "base_rent": string | null,
+    "security_deposit": string | null
   }
 }
 
@@ -463,6 +487,9 @@ Rules:
 - pro_rata_method: Return "rentable", "leasable", "occupied", or "gross" based on how the lease defines the pro-rata denominator. Return null if unresolvable.
 - renewal_options: Short description including count, term length, and rate basis (max 120 chars). Null if no renewal options stated.
 - excluded_categories: Comma-separated list of expense categories explicitly excluded from CAM (e.g. "capital expenditures, management fees, structural repairs"). Return null if no exclusion schedule is stated.
+- suite: The tenant's unit or suite identifier. Look for "Suite", "Unit", "Space", "Ste.", "#" labels. Return the short designator (e.g. "101", "Suite A", "200"). Null if not identified.
+- base_rent: Annual base rent in dollars as a plain number. If the lease states a monthly amount, multiply by 12. Look for "Base Rent", "Annual Rent", "Minimum Rent", "Fixed Rent", "Monthly Rent". Null if not found.
+- security_deposit: Security deposit in dollars as a plain number. Look for "Security Deposit", "Deposit", "Holdback". Null if not found.
 - quotes: For each field where you return a non-null value, copy ≤120 chars of the exact verbatim clause text from the lease that led to that value. Return null for any field where the value is null.
 - Use null only when a field is truly impossible to determine.`;
 
@@ -590,6 +617,18 @@ const portfolio = [];
 let activePropId = null; // null = portfolio view
 let _props = []; // canonical merged array from loadProperties()
 
+// ─── Acquisition Review State ─────────────────────────────────────────────────
+// Fully isolated — never touches _props, tenantData, invoiceData, or activePropId.
+let _acqReviews    = [];
+let _activeAcqId   = null;
+let _acqTenants    = [];
+let _acqInvoices   = [];
+let _acqSqFt       = 0;
+let _acqActiveTab  = 'risk';                          // 'risk' | 'rentroll'
+let _acqRentRollSort = { col: 'tenant_name', dir: 'asc' };
+let _leaseAlertsDismissed   = false;       // session-only; resets on reload
+let _actionCenterDismissed = false;       // session-only; resets on reload
+
 // Returns the currently selected property object, or null if none is active.
 function currentProperty() {
   if (!activePropId) return null;
@@ -603,20 +642,29 @@ async function uploadInvoiceFile(file) {
     const fileBase64 = await toBase64(file);
     const resp = await fetch('/api/upload', {
       method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
+      headers: { 'Content-Type': 'application/json', ...(await _authHeaders()) },
       body: JSON.stringify({ fileName: file.name, fileType: file.type, fileBase64 }),
     });
     const result = await resp.json();
+    if (resp.status === 429) {
+      const err = new Error('Upload rate limit reached — wait a moment and try again');
+      err.isRateLimit = true;
+      throw err;
+    }
     if (!resp.ok || result.error) throw new Error(result.error || `HTTP ${resp.status}`);
     return result.url;
   };
 
-  // Retry up to 2 times with backoff — storage timeouts are usually transient
   for (let i = 0; i < 3; i++) {
     try {
       const url = await attempt();
       return { url, error: null };
     } catch (e) {
+      if (e.isRateLimit) {
+        // Rate-limit window is 60s — short retries won't recover; surface immediately
+        console.warn('[uploadInvoiceFile] rate limited:', e.message);
+        return { url: null, error: 'rate-limited' };
+      }
       if (i < 2) {
         await new Promise(r => setTimeout(r, (i + 1) * 1200));
         continue;
@@ -916,6 +964,7 @@ function normalizeTenant(d) {
   const fallback = extractDatesFromText(d.rawText || '');
   return {
     tenant_name:         cleanTenantName(d.tenant_name ?? d.tenantName ?? d.name ?? ''),
+    suite:               d.suite ?? d.unit ?? d.unitNumber ?? '',
     leased_sqft:         d.leased_sqft         ?? d.leasedSqft ?? d.sqft  ?? '',
     start_date:          toISODate(d.start_date ?? d.startDate ?? d.lease_start_date ?? fallback.startDate ?? ''),
     end_date:            toISODate(d.end_date   ?? d.endDate   ?? d.lease_end_date  ?? fallback.endDate   ?? ''),
@@ -949,6 +998,8 @@ function normalizeTenant(d) {
     audit_rights:        d.audit_rights        ?? null,
     pro_rata_method:     d.pro_rata_method     ?? null,
     renewal_options:     d.renewal_options     ?? null,
+    base_rent:           d.base_rent           ?? null,
+    security_deposit:    d.security_deposit    ?? null,
     amendments:          Array.isArray(d.amendments) ? d.amendments : [],
   };
 }
@@ -1095,7 +1146,7 @@ Return best guess — do not leave fields null unless truly impossible.`;
 
   const res = await _fetchWithTimeout('/api/claude', {
     method: 'POST',
-    headers: { 'Content-Type': 'application/json' },
+    headers: { 'Content-Type': 'application/json', ...(await _authHeaders()) },
     body: JSON.stringify({ messages, max_tokens: 1500, system: CLAUDE_LEASE_SYSTEM }),
   });
 
@@ -1151,7 +1202,7 @@ Return plain text only. No JSON, no markdown, no commentary.`;
   // 85s timeout — generating 8096 output tokens takes ~25-30s; allow headroom
   const res = await _fetchWithTimeout('/api/explain', {
     method:  'POST',
-    headers: { 'Content-Type': 'application/json' },
+    headers: { 'Content-Type': 'application/json', ...(await _authHeaders()) },
     body:    JSON.stringify({ messages, max_tokens: 8096, model: 'claude-sonnet-4-6' }),
   }, 85000);
 
@@ -1321,7 +1372,7 @@ ${leaseSnippet}
 
   const res = await _fetchWithTimeout('/api/claude', {
     method: 'POST',
-    headers: { 'Content-Type': 'application/json' },
+    headers: { 'Content-Type': 'application/json', ...(await _authHeaders()) },
     body: JSON.stringify({ messages, max_tokens: 1500, system: CLAUDE_LEASE_SYSTEM }),
   });
 
@@ -2652,7 +2703,7 @@ async function _runLeaseJobPipeline(jobId, placeholderIdx) {
     if (status === 'failed') {
       failLeaseJob(jobId, { message: finalEntry._error || 'Extraction failed' }, 'extraction');
     } else {
-      finalizeLeaseJob(jobId, { norm, conf: _conf, meta: _meta, tenantId: jobId });
+      finalizeLeaseJob(jobId, { norm, conf: _conf, meta: _meta, tenantId: null });
     }
 
     // Phase 22A/22C: persist lease document record.
@@ -4102,10 +4153,10 @@ window.ms_debug_cam_persistence = async function(propertyId) {
     console.log('history rows (excl. sentinel):', out.historyRows.length, '| years:', out.years);
 
     // 4. Clean up sentinel rows (POST empty rows for the sentinel year deletes them).
-    await fetch('/api/cam-reconciliations', {
-      method: 'POST', headers: { 'Content-Type': 'application/json' },
+    await _authHeaders().then(ah => fetch('/api/cam-reconciliations', {
+      method: 'POST', headers: { 'Content-Type': 'application/json', ...ah },
       body: JSON.stringify({ propertyId, year: SENTINEL_YEAR, rows: [] }),
-    }).then(r => r.json()).then(() => console.log('cleanup: sentinel rows deleted'))
+    })).then(r => r.json()).then(() => console.log('cleanup: sentinel rows deleted'))
       .catch(e => console.warn('cleanup failed:', e?.message));
   } catch (e) {
     out.error = e?.message || String(e);
@@ -5092,6 +5143,8 @@ function renderBulkResults() {
     const _rqProp = _props.find(p => p.id === activePropId);
     if (_rqProp) renderPropertyReviewQueue(_rqProp);
   }
+
+  // Advance onboarding step bar when the first lease is extracted
   if (tenantData.some(t => t && t.tenant_name)) _obSyncState();
 }
 
@@ -5640,20 +5693,26 @@ function renderInvResults() {
         <div class="bulk-tenant-summary" onclick="toggleInvDetail(${i})">
           <span class="bulk-t-status">${icon}</span>
           <span class="bulk-t-name" id="iname-${i}">${esc(name)}</span>
-          <span class="bulk-t-meta" id="imeta-${i}">${esc(catStr)} &middot; ${amtStr}</span>
-          <span id="isummaryBadge-${i}">${overallConf !== undefined ? clickableConfBadge(overallConf, i, weakFields) : ''}</span>
-          ${matchBadge}
-          ${dupBadge}
-          ${d._disputed ? `<span class="badge-disputed">Disputed</span>` : ''}
-          <span class="bulk-t-chevron" id="ichev-${i}">&#x25BC; Edit</span>
+          <span class="bulk-t-cat" id="icat-${i}">${esc(catStr)}</span>
+          <span class="bulk-t-amount" id="iamt-${i}">${amtStr}</span>
+          <span class="bulk-t-badges">
+            <span id="isummaryBadge-${i}">${overallConf !== undefined ? clickableConfBadge(overallConf, i, weakFields) : ''}</span>
+            ${matchBadge}
+            ${d._disputed ? `<span class="badge-disputed">Disputed</span>` : ''}
+          </span>
           <div class="inv-action-btns">
             <button class="inv-act-btn" onclick="event.stopPropagation();viewInvoice(${i})">View</button>
             <button class="inv-act-btn inv-act-explain" id="iexplbtn-${i}" onclick="event.stopPropagation();explainCharge(${i})">Explain</button>
             <button class="inv-act-btn inv-act-dispute" onclick="event.stopPropagation();disputeCharge(${i})">Dispute</button>
+            <button class="bulk-t-remove" onclick="event.stopPropagation();removeInvItem(${i})">Remove</button>
           </div>
-          <button class="bulk-t-remove" onclick="event.stopPropagation();removeInvItem(${i})">Remove</button>
         </div>
-        ${d._fileUploadError ? `<div class="inv-upload-err-banner">&#x26A0; File backup unavailable — invoice data is saved and CAM will run normally</div>` : ''}
+        ${dupBadge ? `<div class="inv-dup-row">${dupBadge}</div>` : ''}
+        ${d._fileUploadError === 'rate-limited'
+          ? `<div class="inv-upload-err-banner inv-upload-err-banner--warn">&#x26A0; File not backed up — upload rate limit reached. Invoice data is saved; re-upload this file to attach it.</div>`
+          : d._fileUploadError
+            ? `<div class="inv-upload-err-banner">&#x26A0; File backup unavailable — invoice data is saved and CAM will run normally</div>`
+            : ''}
         <div class="bulk-tenant-detail" id="idet-${i}" style="display:none;">
           ${d._error ? `<div class="err-banner" style="margin-bottom:10px;">Extraction error: ${esc(d._error)}</div>` : ''}
           <div id="dup-warn-${i}"></div>
@@ -5695,6 +5754,8 @@ function renderInvResults() {
       <button class="bulk-clear-btn" onclick="clearInvResults()">&#x2715; Clear All</button>
     </div>
     ${rows}`;
+
+  // Advance onboarding step bar when the first invoice is added
   _obSyncState();
 }
 
@@ -5797,7 +5858,7 @@ function toggleInvDetail(i) {
   if (!det) return;
   const open = det.style.display === 'block';
   det.style.display = open ? 'none' : 'block';
-  chev.innerHTML    = open ? '&#x25BC; Edit' : '&#x25B2; Close';
+  if (chev) chev.innerHTML = open ? '&#x25BC; Edit' : '&#x25B2; Close';
 }
 
 function viewInvoice(i) {
@@ -5805,7 +5866,7 @@ function viewInvoice(i) {
   const chev = document.getElementById(`ichev-${i}`);
   if (!det) return;
   det.style.display = 'block';
-  chev.innerHTML    = '&#x25B2; Close';
+  if (chev) chev.innerHTML = '&#x25B2; Close';
   det.scrollIntoView({ behavior: 'smooth', block: 'nearest' });
 }
 
@@ -5836,10 +5897,17 @@ function openInvFileViewer(url, title, fileType) {
   if (!url) return;
   document.getElementById('invFileViewerTitle').textContent = title || 'Invoice';
   const body = document.getElementById('invFileViewerBody');
+  body.innerHTML = '';
   if (fileType && fileType.startsWith('image/')) {
-    body.innerHTML = `<img src="${url}" style="max-width:100%;max-height:calc(100vh - 80px);border-radius:8px;object-fit:contain;" />`;
+    const img = document.createElement('img');
+    img.src = url;
+    img.style.cssText = 'max-width:100%;max-height:calc(100vh - 80px);border-radius:8px;object-fit:contain;';
+    body.appendChild(img);
   } else {
-    body.innerHTML = `<iframe src="${url}" style="width:100%;height:calc(100vh - 80px);border:none;border-radius:8px;"></iframe>`;
+    const iframe = document.createElement('iframe');
+    iframe.src = url;
+    iframe.style.cssText = 'width:100%;height:calc(100vh - 80px);border:none;border-radius:8px;';
+    body.appendChild(iframe);
   }
   document.getElementById('invFileViewer').style.display = 'flex';
 }
@@ -5939,12 +6007,11 @@ function refreshInvSummary(i) {
   const d = invoiceData[i];
   if (!d) return;
   const nameEl = document.getElementById(`iname-${i}`);
-  const metaEl = document.getElementById(`imeta-${i}`);
+  const catEl  = document.getElementById(`icat-${i}`);
+  const amtEl  = document.getElementById(`iamt-${i}`);
   if (nameEl) nameEl.textContent = d.vendorName || '(unknown — click to edit)';
-  if (metaEl) {
-    const amtStr = d.amount !== '' ? fmt(parseFloat(d.amount) || 0) : '—';
-    metaEl.textContent = (d.category || 'other') + ' · ' + amtStr;
-  }
+  if (catEl)  catEl.textContent  = d.category || 'other';
+  if (amtEl)  amtEl.textContent  = d.amount !== '' ? fmt(parseFloat(d.amount) || 0) : '—';
 }
 
 async function removeInvItem(i) {
@@ -6689,7 +6756,7 @@ function runFullReconciliation(property) {
 
 function runCAMAllocation(expenses, tenants) {
   return tenants.map(t => {
-    const proRata  = t.leasedSqft / t.totalSqft;
+    const proRata  = t.totalSqft > 0 ? t.leasedSqft / t.totalSqft : 0;
     const eligible = expenses.filter(e =>
       !t.excludedCategories.includes(e.category.toLowerCase())
     );
@@ -7034,8 +7101,11 @@ async function runAllocation() {
       ${flagsSection}
       ${leaseBtn}
       ${invBreakdown}
-      <button class="explain-btn" onclick="openExplainPanel('${esc(r.name)}')">&#x1F4CA; View Calculation</button>
-      <button class="lv-validate-btn" onclick="_startLeaseValidation('${_lvPanelId}',${tdIdx})">&#x1F50D; Validate Against Lease</button>
+      <div class="result-card-actions">
+        <button class="explain-btn" onclick="openExplainPanel('${esc(r.name)}')">&#x1F4CA; View Calculation</button>
+        <button class="lv-validate-btn" onclick="_startLeaseValidation('${_lvPanelId}',${tdIdx})">&#x1F50D; Validate Against Lease</button>
+        <button class="tenant-stmt-card-btn" onclick="generateTenantStatement('${esc(r.name)}')" title="Generate the tenant-facing CAM statement">&#x1F9FE; Tenant Statement</button>
+      </div>
       <div id="${_lvPanelId}" class="lv-panel" style="display:none;"></div>
     </div>`;
   });
@@ -7460,6 +7530,100 @@ function showRunCompleteToast() {
   setTimeout(() => { toast.remove(); }, 3100);
 }
 
+// ─── Onboarding ────────────────────────────────────────────────────────────────
+
+function _obKey()   { return _lsUserId ? `ms_ob_v1_${_lsUserId}` : 'ms_ob_v1_anon'; }
+function _obGet()   { try { return JSON.parse(_lsGet(_obKey()) || 'null'); } catch { return null; } }
+function _obSet(s)  { try { _lsSet(_obKey(), JSON.stringify(s)); } catch (_) {} }
+function _obInit()  {
+  const s = { steps: [false,false,false,false,false], welcomeSeen: false };
+  _obSet(s); return s;
+}
+
+// Mark a step complete (0 = Setup, 1 = Leases, 2 = Invoices, 3 = Calculate, 4 = Review)
+function _obMarkStep(idx) {
+  const s = _obGet() || _obInit();
+  if (s.steps[idx]) return;
+  s.steps[idx] = true;
+  _obSet(s);
+}
+
+// Show the welcome modal if the user hasn't seen it and has no real properties
+function _maybeShowWelcome(props) {
+  const s = _obGet() || _obInit();
+  if (s.welcomeSeen) return;
+  const realProps = (Array.isArray(props) ? props : _props).filter(p => p.id !== DEMO_PROPERTY_ID);
+  if (realProps.length > 0) return; // already has properties
+  const modal = document.getElementById('obWelcomeModal');
+  if (modal) modal.style.display = 'flex';
+}
+
+// Called from welcome modal buttons (global so onclick can reach it)
+function obCloseWelcome(action) {
+  const s = _obGet() || _obInit();
+  s.welcomeSeen = true;
+  _obSet(s);
+  const modal = document.getElementById('obWelcomeModal');
+  if (modal) modal.style.display = 'none';
+  if (action === 'property') addNewProperty();
+  else if (action === 'demo') { if (typeof loadDemo === 'function') loadDemo(); }
+}
+
+// Derive current step from live workflow state and update the step bar + hints
+function _obSyncState() {
+  const hasLeases   = tenantData.some(t => t && t.tenant_name);
+  const hasInvoices = invoiceData.length > 0;
+  const hasResults  = lastResults.length > 0;
+
+  // Mark completed steps in localStorage
+  const setupEl = document.getElementById('propertyName');
+  const sqftEl  = document.getElementById('totalSqft');
+  const hasSetup = !!(setupEl?.value?.trim() && setupEl.value.trim() !== 'New Property' && parseFloat(sqftEl?.value) > 0);
+  if (hasSetup)    _obMarkStep(0);
+  if (hasLeases)   _obMarkStep(1);
+  if (hasInvoices) _obMarkStep(2);
+  if (hasResults)  _obMarkStep(3);
+  if (hasResults)  _obMarkStep(4); // review step auto-marks when results present
+
+  // Advance step bar to the current frontier
+  const reached = hasResults ? 'done'
+    : hasInvoices ? 'calculate'
+    : hasLeases   ? 'invoices'
+    : hasSetup    ? 'leases'
+    : 'setup';
+  updateStepBar(reached);
+
+  // Update contextual hints
+  _obUpdateHints(hasSetup, hasLeases, hasInvoices, hasResults);
+}
+
+// Inject contextual hints into section placeholders
+function _obUpdateHints(hasSetup, hasLeases, hasInvoices, hasResults) {
+  const h2 = document.getElementById('obHintLeases');
+  const h3 = document.getElementById('obHintInvoices');
+
+  if (h2) {
+    if (!hasLeases) {
+      h2.innerHTML = '<strong>Step 2 of 5</strong> — Drag &amp; drop your lease PDFs above. '
+        + 'AI reads CAM caps, exclusions, and rent schedules automatically. No templates needed.';
+      h2.style.display = 'block';
+    } else {
+      h2.style.display = 'none';
+    }
+  }
+
+  if (h3) {
+    if (hasLeases && !hasInvoices) {
+      h3.innerHTML = '<strong>Step 3 of 5</strong> — Upload your CAM expense invoices for the reconciliation year. '
+        + 'PDF, image, or Excel GL exports all work. '
+        + (hasLeases ? '' : '<a onclick="document.getElementById(\'cardLeases\').scrollIntoView({behavior:\'smooth\'})">Upload leases first ↑</a>');
+      h3.style.display = 'block';
+    } else {
+      h3.style.display = 'none';
+    }
+  }
+}
+
 // ─── Step Progress Bar ────────────────────────────────────────────────────────
 
 // ─── Onboarding ───────────────────────────────────────────────────────────────
@@ -7531,20 +7695,28 @@ function _obUpdateHints(hasSetup, hasLeases, hasInvoices, hasResults) {
 }
 
 function updateStepBar(reached) {
-  const aliasMap  = { upload: 'leases', resolve: 'review' };
+  // 5-step system: setup → leases → invoices → calculate → review
+  // Legacy call-site aliases kept for backward compat
+  const aliasMap = { upload: 'leases', resolve: 'review' };
   const normalized = aliasMap[reached] || reached;
+
   const steps = ['setup','leases','invoices','calculate','review'];
+
   if (normalized === 'done') {
     steps.forEach(s => {
       const el = document.getElementById(`step-${s}`);
       if (!el) return;
-      el.classList.remove('active'); el.classList.add('done');
+      el.classList.remove('active');
+      el.classList.add('done');
       const dot = el.querySelector('.step-dot');
       if (dot) dot.innerHTML = '&#x2713;';
     });
     return;
   }
+
   const idx = steps.indexOf(normalized);
+  if (idx === -1) return;
+
   steps.forEach((s, i) => {
     const el = document.getElementById(`step-${s}`);
     if (!el) return;
@@ -8375,6 +8547,8 @@ function getCamYear() { return _camYear; }
 function setCamYear(y) {
   _camYear = parseInt(y, 10) || new Date().getFullYear();
   localStorage.setItem(_camYearKey(), _camYear);
+  const glLbl = document.getElementById('glUploadLabel');
+  if (glLbl) glLbl.textContent = `Upload ${_camYear} GL Excel File (.xlsx only)`;
 }
 function initCamYearSelect() {
   const sel = document.getElementById('camYearSelect');
@@ -8388,6 +8562,8 @@ function initCamYearSelect() {
     if (yr === _camYear) opt.selected = true;
     sel.appendChild(opt);
   }
+  const glLbl = document.getElementById('glUploadLabel');
+  if (glLbl) glLbl.textContent = `Upload ${_camYear} GL Excel File (.xlsx only)`;
 }
 let sqftMismatch   = false;
 let isEditingField = false; // true while a text/number/date input has focus
@@ -11035,8 +11211,7 @@ function showReportSection() {
 
   msg.style.display = 'none';
 
-  let html = '<div style="font-size:0.8rem;color:#64748b;margin-bottom:8px;">Tenant Statements</div>';
-  html += '<div class="report-btn-row">';
+  let html = '';
   // Count name occurrences so duplicates get sqft disambiguation
   const _rNameCount = {};
   lastResults.forEach(r => { _rNameCount[r.name] = (_rNameCount[r.name] || 0) + 1; });
@@ -11048,7 +11223,6 @@ function showReportSection() {
       : r.name;
     html += `<button class="tenant-report-btn" onclick="generateTenantStatement('${esc(r.name)}')">${esc(label)}</button>`;
   });
-  html += '</div>';
   wrap.innerHTML = html;
 }
 
@@ -12385,7 +12559,7 @@ function generateTenantStatement(tenantName) {
           storedFileUrl: stored ? (stored.fileUrl ? 'PRESENT' : 'MISSING') : 'N/A',
         });
         const viewInvBtn = stored && stored.fileUrl
-          ? `<button class="btn-secondary" onclick="event.stopPropagation();openInvFileViewer('${stored.fileUrl}','${esc(inv.vendor || inv.vendorName || '')}','${esc(stored.fileType || '')}')">&#x1F4C4; View Invoice</button>`
+          ? `<button class="btn-secondary" onclick="event.stopPropagation();openInvFileViewer('${stored.fileUrl.replace(/\\/g,'\\\\').replace(/'/g,"\\'")}','${esc(inv.vendor || inv.vendorName || '')}','${esc(stored.fileType || '')}')">&#x1F4C4; View Invoice</button>`
           : '';
         return `
           <div class="charge-row ts-inv-card" id="crow-${rowId}"
@@ -12561,9 +12735,11 @@ function generateTenantStatement(tenantName) {
 // Stable identifiers so the demo property is idempotent across sessions/devices.
 const DEMO_PROPERTY_ID = 'dec00000-0000-4000-a000-000000000001';
 const _DEMO_TENANT_IDS = [
-  'dec00000-0000-4000-a000-000000000002', // Fresh Market Foods
-  'dec00000-0000-4000-a000-000000000003', // Riverside Dental Group
-  'dec00000-0000-4000-a000-000000000004', // FitLife Gym & Wellness
+  'dec00000-0000-4000-a000-000000000002', // Whole Health Market
+  'dec00000-0000-4000-a000-000000000003', // Summit Coffee & Provisions
+  'dec00000-0000-4000-a000-000000000004', // ProActive Physical Therapy
+  'dec00000-0000-4000-a000-000000000005', // FitZone Athletics
+  'dec00000-0000-4000-a000-000000000006', // Harbor Nail & Beauty Studio
 ];
 
 // Deletes every property whose name matches "Riverside Commons*" and whose ID
@@ -12607,7 +12783,7 @@ async function cleanupLegacyDemos(userId) {
   }
 }
 
-// Ensures Riverside Commons exists in Supabase with complete seeded state.
+// Ensures Cascade Commons exists in Supabase with complete seeded state.
 // Idempotent — skips re-seeding if valid camReconciliation already present.
 // Returns DEMO_PROPERTY_ID on success, null on auth failure.
 async function ensureDemoProperty() {
@@ -12624,48 +12800,122 @@ async function ensureDemoProperty() {
       .eq('id', DEMO_PROPERTY_ID)
       .eq('user_id', user.id)
       .single();
-    if (!error && row?.data?.camReconciliation?.results?.length > 0) {
-      console.log('[ensureDemoProperty] already seeded — skip');
+    if (!error && row?.data?.camReconciliation?.results?.length > 0 && row?.data?._demoV === 2) {
+      console.log('[ensureDemoProperty] already seeded v2 — skip');
       return DEMO_PROPERTY_ID;
     }
   } catch (_) { /* not found — fall through to seed */ }
 
-  console.log('[ensureDemoProperty] seeding Riverside Commons…');
+  console.log('[ensureDemoProperty] seeding Cascade Commons v2…');
 
   // ── Demo data constants ───────────────────────────────────────────────────
-  const PROP_NAME  = 'Riverside Commons';
-  const PROP_SQFT  = 24000;
-  const CAM_YEAR   = 2025;
+  const PROP_NAME    = 'Cascade Commons';
+  const PROP_SQFT    = 47500;
+  const CAM_YEAR     = 2025;
+  const DEMO_VERSION = 2;
 
+  // capBaseAmount is prior-year CAM so that cap enforcement fires on this demo.
   const demoTenantConfigs = [
     {
-      id: _DEMO_TENANT_IDS[0], tenant_name: 'Fresh Market Foods',
-      leased_sqft: '6200', cap: '10', excluded_categories: 'snow',
-      start_date: '2020-01-01', end_date: '2027-12-31', lease_type: 'NNN',
-      confidence: { tenantName:98, leasedSqft:96, capPercentage:92, excludedCategories:88 },
+      id: _DEMO_TENANT_IDS[0], tenant_name: 'Whole Health Market',
+      leased_sqft: '9200', cap: '5', capBaseAmount: '33000',
+      excluded_categories: '', audit_rights: '90 days from reconciliation',
+      start_date: '2021-01-01', end_date: '2028-12-31', lease_type: 'NNN',
+      admin_fee_pct: null,
+      _confidenceScore: 94, _confidence: 'high',
+      confidence: { tenantName:98, leasedSqft:97, capPercentage:95, leaseType:96 },
     },
     {
-      id: _DEMO_TENANT_IDS[1], tenant_name: 'Riverside Dental Group',
-      leased_sqft: '1800', cap: null, excluded_categories: 'management',
-      start_date: '2021-06-01', end_date: '2026-05-31', lease_type: 'NNN',
-      confidence: { tenantName:97, leasedSqft:94, excludedCategories:91 },
+      id: _DEMO_TENANT_IDS[1], tenant_name: 'Summit Coffee & Provisions',
+      leased_sqft: '1800', cap: '8', capBaseAmount: '6200',
+      excluded_categories: 'parking',
+      start_date: '2023-03-01', end_date: '2026-02-28', lease_type: 'NNN',
+      admin_fee_pct: null,
+      _confidenceScore: 91, _confidence: 'high',
+      confidence: { tenantName:99, leasedSqft:98, capPercentage:93, excludedCategories:89 },
     },
     {
-      id: _DEMO_TENANT_IDS[2], tenant_name: 'FitLife Gym & Wellness',
-      leased_sqft: '3400', cap: null, excluded_categories: '',
-      start_date: '2022-01-01', end_date: '2025-12-31', lease_type: 'NNN',
-      confidence: { tenantName:99, leasedSqft:97 },
+      id: _DEMO_TENANT_IDS[2], tenant_name: 'ProActive Physical Therapy',
+      leased_sqft: '4400', cap: '6', capBaseAmount: '13000',
+      excluded_categories: 'management', audit_rights: '45 days from reconciliation',
+      start_date: '2022-07-01', end_date: '2027-06-30', lease_type: 'Modified Gross',
+      admin_fee_pct: null,
+      _confidenceScore: 88, _confidence: 'high',
+      confidence: { tenantName:96, leasedSqft:95, capPercentage:91, excludedCategories:94, leaseType:90 },
+    },
+    {
+      id: _DEMO_TENANT_IDS[3], tenant_name: 'FitZone Athletics',
+      leased_sqft: '6800', cap: '4', capBaseAmount: '24000',
+      excluded_categories: '',
+      start_date: '2022-01-01', end_date: '2026-12-31', lease_type: 'NNN',
+      admin_fee_pct: null,
+      _confidenceScore: 96, _confidence: 'high',
+      confidence: { tenantName:99, leasedSqft:97, capPercentage:94 },
+    },
+    {
+      id: _DEMO_TENANT_IDS[4], tenant_name: 'Harbor Nail & Beauty Studio',
+      leased_sqft: '1200', cap: null, capBaseAmount: null,
+      excluded_categories: '',
+      start_date: '2024-02-01', end_date: '2027-01-31', lease_type: 'NNN',
+      admin_fee_pct: null,
+      _confidenceScore: 97, _confidence: 'high',
+      confidence: { tenantName:99, leasedSqft:98, leaseType:95 },
     },
   ];
 
   const demoInvoiceList = [
-    { vendorName: 'Green Thumb Landscaping', amount: 2400, category: 'landscaping', invoiceDate: '2025-01-15' },
-    { vendorName: 'Metro Snow Services',     amount: 1850, category: 'snow',        invoiceDate: '2025-01-22' },
-    { vendorName: 'Apex Building Repairs',   amount: 3200, category: 'repairs',     invoiceDate: '2025-01-31' },
-    { vendorName: 'City Electric Co',        amount: 4100, category: 'utilities',   invoiceDate: '2025-01-31' },
-    { vendorName: 'CleanRight Janitorial',   amount: 2800, category: 'janitorial',  invoiceDate: '2025-01-31' },
-    { vendorName: 'SecureWatch Inc',         amount: 1600, category: 'security',    invoiceDate: '2025-01-31' },
-    { vendorName: 'Summit Management Group', amount: 3500, category: 'management',  invoiceDate: '2025-01-31' },
+    // Insurance (annual)
+    { vendorName: 'Meridian Property Insurance', amount: 42000, category: 'insurance',    invoiceDate: '2025-01-15' },
+    // Landscaping
+    { vendorName: 'Green Valley Landscape',      amount:  4800, category: 'landscaping',  invoiceDate: '2025-01-20' },
+    // Q1 utilities
+    { vendorName: 'Austin Energy',               amount:  7200, category: 'utilities',    invoiceDate: '2025-03-31' },
+    // Q1 janitorial
+    { vendorName: 'CleanSpace Commercial',       amount:  5200, category: 'janitorial',   invoiceDate: '2025-03-31' },
+    // Q1 management
+    { vendorName: 'Cascade Property Management', amount:  7600, category: 'management',   invoiceDate: '2025-03-31' },
+    // Q1 security
+    { vendorName: 'WatchPoint Security',         amount:  2850, category: 'security',     invoiceDate: '2025-03-31' },
+    // Spring HVAC service
+    { vendorName: 'ComfortFirst HVAC',           amount:  3400, category: 'maintenance',  invoiceDate: '2025-04-15' },
+    // Parking lot repair
+    { vendorName: 'PavePro Inc',                 amount:  5700, category: 'repairs',      invoiceDate: '2025-04-22' },
+    // Spring landscaping surge
+    { vendorName: 'Green Valley Landscape',      amount:  5200, category: 'landscaping',  invoiceDate: '2025-05-01' },
+    // Signage & exterior lighting
+    { vendorName: 'BrightPath Electrical',       amount:  3800, category: 'maintenance',  invoiceDate: '2025-05-15' },
+    // Q2 utilities
+    { vendorName: 'Austin Energy',               amount:  7800, category: 'utilities',    invoiceDate: '2025-06-30' },
+    // Q2 janitorial
+    { vendorName: 'CleanSpace Commercial',       amount:  5200, category: 'janitorial',   invoiceDate: '2025-06-30' },
+    // Q2 management
+    { vendorName: 'Cascade Property Management', amount:  7600, category: 'management',   invoiceDate: '2025-06-30' },
+    // Q2 security
+    { vendorName: 'WatchPoint Security',         amount:  2850, category: 'security',     invoiceDate: '2025-06-30' },
+    // Summer landscaping
+    { vendorName: 'Green Valley Landscape',      amount:  9000, category: 'landscaping',  invoiceDate: '2025-08-01' },
+    // Q3 utilities (peak)
+    { vendorName: 'Austin Energy',               amount:  8600, category: 'utilities',    invoiceDate: '2025-09-30' },
+    // Q3 janitorial
+    { vendorName: 'CleanSpace Commercial',       amount:  5200, category: 'janitorial',   invoiceDate: '2025-09-30' },
+    // Q3 management
+    { vendorName: 'Cascade Property Management', amount:  7600, category: 'management',   invoiceDate: '2025-09-30' },
+    // Fall HVAC service
+    { vendorName: 'ComfortFirst HVAC',           amount:  3200, category: 'maintenance',  invoiceDate: '2025-10-15' },
+    // Q3 security
+    { vendorName: 'WatchPoint Security',         amount:  2850, category: 'security',     invoiceDate: '2025-10-31' },
+    // General repairs (multiple work orders)
+    { vendorName: 'Cascade Handyman Services',   amount: 17100, category: 'repairs',      invoiceDate: '2025-10-31' },
+    // Q4 utilities
+    { vendorName: 'Austin Energy',               amount:  4900, category: 'utilities',    invoiceDate: '2025-12-31' },
+    // Q4 janitorial
+    { vendorName: 'CleanSpace Commercial',       amount:  5300, category: 'janitorial',   invoiceDate: '2025-12-31' },
+    // Q4 management
+    { vendorName: 'Cascade Property Management', amount:  7600, category: 'management',   invoiceDate: '2025-12-31' },
+    // Q4 security
+    { vendorName: 'WatchPoint Security',         amount:  2850, category: 'security',     invoiceDate: '2025-12-31' },
+    // Emergency HVAC repair Nov
+    { vendorName: 'ComfortFirst HVAC',           amount:  2900, category: 'maintenance',  invoiceDate: '2025-11-20' },
   ];
 
   const totalExpenses = demoInvoiceList.reduce((s, inv) => s + inv.amount, 0);
@@ -12680,7 +12930,9 @@ async function ensureDemoProperty() {
     const lease = new Lease(
       t.tenant_name, '', parseSqft(t.leased_sqft),
       t.start_date || '', t.end_date || '', excl,
-      t.cap ? parseFloat(t.cap) : null, null, false, null, t.lease_type || null
+      t.cap ? parseFloat(t.cap) : null,
+      t.capBaseAmount ? parseFloat(t.capBaseAmount) : null,
+      false, null, t.lease_type || null
     );
     lease.id = t.id;
     return lease;
@@ -12738,24 +12990,52 @@ async function ensureDemoProperty() {
     }],
   };
 
-  const repairShare = parseFloat((3200 * (6200 / PROP_SQFT)).toFixed(2));
-  const demoDisputes = [{
-    id: 0,
-    tenantName:  'Fresh Market Foods',
-    invoiceId:   'inv-2',
-    vendor:      'Apex Building Repairs',
-    category:    'repairs',
-    tenantShare: repairShare,
-    reason:      'Work order was not pre-approved per lease Section 8.3. Requesting documentation before accepting this charge.',
-    timestamp:   new Date(Date.now() - 2 * 24 * 60 * 60 * 1000).toISOString(),
-    status:      'open',
-    resolution:  null, resolvedAt: null, hash: null,
-  }];
+  const demoDisputes = [
+    {
+      id: 0,
+      tenantName:  'FitZone Athletics',
+      invoiceId:   'inv-7',
+      vendor:      'PavePro Inc',
+      category:    'repairs',
+      tenantShare: parseFloat((5700 * (6800 / PROP_SQFT)).toFixed(2)),
+      reason:      'Parking lot resurfacing appears to be a capital improvement, not routine maintenance. Tenant requested documentation per lease Section 9.1.',
+      timestamp:   new Date(Date.now() - 31 * 24 * 60 * 60 * 1000).toISOString(),
+      status:      'accepted',
+      resolution:  'Landlord provided work order confirming surface seal coat (maintenance, not capital). Charge accepted.',
+      resolvedAt:  new Date(Date.now() - 22 * 24 * 60 * 60 * 1000).toISOString(),
+      hash: null,
+    },
+    {
+      id: 1,
+      tenantName:  'Whole Health Market',
+      invoiceId:   'inv-20',
+      vendor:      'Cascade Handyman Services',
+      category:    'repairs',
+      tenantShare: parseFloat((17100 * (9200 / PROP_SQFT)).toFixed(2)),
+      reason:      'Invoice references multiple unspecified work orders totaling $17,100. Tenant requests itemized receipts before approving CAM allocation.',
+      timestamp:   new Date(Date.now() - 8 * 24 * 60 * 60 * 1000).toISOString(),
+      status:      'docs_requested',
+      resolution:  null, resolvedAt: null, hash: null,
+    },
+    {
+      id: 2,
+      tenantName:  'Summit Coffee & Provisions',
+      invoiceId:   'inv-25',
+      vendor:      'ComfortFirst HVAC',
+      category:    'maintenance',
+      tenantShare: parseFloat((2900 * (1800 / PROP_SQFT)).toFixed(2)),
+      reason:      'Emergency HVAC repair appears to be outside common area scope. Requesting clarification on which unit was serviced.',
+      timestamp:   new Date(Date.now() - 1 * 24 * 60 * 60 * 1000).toISOString(),
+      status:      'open',
+      resolution:  null, resolvedAt: null, hash: null,
+    },
+  ];
 
   // ── Persist to Supabase ───────────────────────────────────────────────────
   // invoicesFull is intentionally omitted (matches _stripBlobs convention);
   // on load it is re-hydrated from data.invoices via renderProperty.
   const propertyData = {
+    _demoVersion:      DEMO_VERSION,
     invoices:          demoInvoiceList.map(inv => ({
       vendorName: inv.vendorName, amount: inv.amount,
       category: inv.category, invoiceDate: inv.invoiceDate,
@@ -12764,6 +13044,7 @@ async function ensureDemoProperty() {
     camYear:           CAM_YEAR,
     results:           null,
     camReconciliation: { ...camReconciliation, invoicesFull: undefined },
+    _demoV:            2,
   };
 
   const { error: propErr } = await db.from('properties')
@@ -12985,7 +13266,7 @@ function _rqCompactItemHtml(item) {
     <span class="trs-score ${scoreColor}">Score: ${item.reviewScore}</span>
     <div class="rq-chips rq-chips--inline">${missingChips}${warnChips}</div>
     <div class="rq-compact-actions" style="display:flex;gap:4px;align-items:center;">
-      <button class="rq-action-btn rq-btn--primary" onclick="openReviewWorkspace('${tid}')">Review &#x203A;</button>
+      <button class="rq-action-btn rq-btn--primary" onclick="openReviewWorkspace('${tid}')">AI Review &#x203A;</button>
       ${acked
         ? `<span class="rq-chip">Ack'd</span>`
         : `<button class="rq-action-btn rq-btn--ack" onclick="markTenantReviewAcknowledged('${tid}')">Ack</button>`}
@@ -13457,27 +13738,322 @@ const _RDY_LABELS = Selectors.RDY_LABELS;
 function derivePropertyReadiness(p)     { return Selectors.derivePropertyReadiness(p); }
 function _piComputePortfolioIntel(props){ return Selectors.computePortfolioIntel(props); }
 
+// ─── Recovered Revenue Dashboard ─────────────────────────────────────────────
+
+function computeRecoveredRevenue(props) {
+  const safeProps = Array.isArray(props) ? props : [];
+  let capSavings = 0, disputeRecoveries = 0, exclusionSavings = 0, auditCoverage = 0;
+  let capCount = 0, disputeCount = 0, exclusionTenantCount = 0, auditCount = 0;
+  const byProperty = [];
+  const timeline   = [];
+
+  for (const p of safeProps) {
+    const recon    = p.camReconciliation ?? p.results ?? {};
+    const results  = Array.isArray(recon.results)  ? recon.results  : [];
+    const tenants  = Array.isArray(p.tenants)       ? p.tenants      : [];
+    const disps    = Array.isArray(p.disputes)      ? p.disputes     : [];
+    const invoices = Array.isArray(recon.invoices)  ? recon.invoices : [];
+    const totalSqft = p.totalSqft || 1;
+
+    // Cap savings: sum of raw-over-cap reduction where cap fired
+    let pCap = 0, pCapN = 0;
+    for (const r of results) {
+      if (r.capApplied && (r.capAdjustment || 0) > 0) {
+        pCap += r.capAdjustment;
+        pCapN++;
+      }
+    }
+
+    // Dispute recoveries: accepted disputes (charge confirmed correct after review)
+    let pDisp = 0, pDispN = 0;
+    for (const d of disps) {
+      if (d.status === 'accepted' && (d.tenantShare || 0) > 0) {
+        pDisp += d.tenantShare;
+        pDispN++;
+        timeline.push({
+          date:     d.resolvedAt || d.timestamp,
+          tenant:   d.tenantName || '',
+          vendor:   d.vendor || d.category || '',
+          amount:   d.tenantShare,
+          type:     'dispute',
+          propName: p.name || '',
+        });
+      }
+    }
+
+    // Exclusion savings: for each excluded category, sum invoice pool × pro-rata
+    let pExcl = 0;
+    const pExclTenants = new Set();
+    for (const t of tenants) {
+      const excl = (t.excluded_categories || '')
+        .split(',').map(s => s.trim().toLowerCase()).filter(Boolean);
+      if (!excl.length) continue;
+      const sqft = parseFloat(t.leased_sqft) || 0;
+      const proRata = sqft / totalSqft;
+      for (const cat of excl) {
+        const catSum = invoices
+          .filter(inv => (inv.category || '').toLowerCase() === cat)
+          .reduce((s, inv) => s + (inv.amount || 0), 0);
+        pExcl += catSum * proRata;
+      }
+      pExclTenants.add(t.id || t.tenant_name);
+    }
+
+    // Audit scope: CAM allocated to tenants with explicit audit rights
+    let pAudit = 0, pAuditN = 0;
+    for (const r of results) {
+      const t = tenants.find(t => (t.tenant_name || '') === (r.tenantName || ''));
+      if (t?.audit_rights === true || t?.audit_rights === 'true') {
+        pAudit += (r.totalAllocated || 0);
+        pAuditN++;
+      }
+    }
+
+    capSavings            += pCap;
+    disputeRecoveries     += pDisp;
+    exclusionSavings      += pExcl;
+    auditCoverage         += pAudit;
+    capCount              += pCapN;
+    disputeCount          += pDispN;
+    exclusionTenantCount  += pExclTenants.size;
+    auditCount            += pAuditN;
+
+    if (pCap + pDisp + pExcl + pAudit > 0) {
+      byProperty.push({
+        id: p.id, name: p.name,
+        capSavings: pCap,     capCount: pCapN,
+        disputes:   pDisp,    disputeCount: pDispN,
+        exclusions: pExcl,    exclusionTenants: pExclTenants.size,
+        auditCoverage: pAudit, auditCount: pAuditN,
+        total: pCap + pDisp + pExcl,
+      });
+    }
+  }
+
+  timeline.sort((a, b) => (b.date || '') > (a.date || '') ? 1 : -1);
+
+  return {
+    capSavings, capCount,
+    disputeRecoveries, disputeCount,
+    exclusionSavings, exclusionTenantCount,
+    auditCoverage, auditCount,
+    total: capSavings + disputeRecoveries + exclusionSavings,
+    byProperty, timeline,
+  };
+}
+
+function renderRecoveredRevenueDashboard(props) {
+  const panel = document.getElementById('rrDashPanel');
+  if (!panel) return;
+  const safeProps = Array.isArray(props) ? props : [];
+  if (safeProps.length === 0) { panel.style.display = 'none'; return; }
+
+  const d = computeRecoveredRevenue(safeProps);
+  if (d.total <= 0 && d.auditCoverage <= 0) { panel.style.display = 'none'; return; }
+
+  const fmtV = n => n > 0 ? fmt(n) : '—';
+  const plur = (n, word) => n + ' ' + word + (n !== 1 ? 's' : '');
+
+  // 4 KPI tiles
+  const tiles = [
+    { val: fmtV(d.capSavings),        lbl: 'Cap Savings',        sub: plur(d.capCount, 'tenant'),             cls: 'rr-kpi--green' },
+    { val: fmtV(d.disputeRecoveries), lbl: 'Disputes Resolved',  sub: d.disputeCount + ' accepted',           cls: ''             },
+    { val: fmtV(d.exclusionSavings),  lbl: 'Exclusion Savings',  sub: plur(d.exclusionTenantCount, 'tenant'), cls: ''             },
+    { val: d.auditCoverage > 0 ? fmt(d.auditCoverage) : '—',
+                                       lbl: 'Audit Scope',         sub: plur(d.auditCount, 'tenant') + ' w/ rights', cls: 'rr-kpi--blue' },
+  ];
+  const tilesHtml = tiles.map(t =>
+    `<div class="rr-kpi ${t.cls}">
+       <div class="rr-kpi-val">${esc(t.val)}</div>
+       <div class="rr-kpi-lbl">${esc(t.lbl)}</div>
+       <div class="rr-kpi-sub">${esc(t.sub)}</div>
+     </div>`
+  ).join('');
+
+  // Property breakdown table
+  let tableHtml = '';
+  if (d.byProperty.length > 0) {
+    const rows = d.byProperty.map(p =>
+      `<tr>
+         <td>${esc(p.name)}</td>
+         <td>${p.capSavings > 0 ? esc(fmt(p.capSavings)) : '—'}</td>
+         <td>${p.disputes   > 0 ? esc(fmt(p.disputes))   : '—'}</td>
+         <td>${p.exclusions > 0 ? esc(fmt(p.exclusions)) : '—'}</td>
+         <td>${esc(fmt(p.total))}</td>
+       </tr>`
+    ).join('');
+    tableHtml = `
+      <table class="rr-table">
+        <thead><tr>
+          <th>Property</th><th>Cap Savings</th><th>Disputes</th><th>Exclusions</th><th>Total</th>
+        </tr></thead>
+        <tbody>${rows}</tbody>
+      </table>`;
+  }
+
+  // Recent recovery events timeline
+  let timelineHtml = '';
+  if (d.timeline.length > 0) {
+    const items = d.timeline.slice(0, 8).map(ev => {
+      const ds = ev.date
+        ? new Date(ev.date).toLocaleDateString('en-US', { month: 'short', day: 'numeric', year: '2-digit' })
+        : '—';
+      const desc = [ev.tenant, ev.vendor].filter(Boolean).join(' — ');
+      return `<div class="rr-tl-item">
+        <div class="rr-tl-dot rr-tl-dot--${esc(ev.type)}"></div>
+        <div class="rr-tl-date">${esc(ds)}</div>
+        <div class="rr-tl-desc">${esc(desc)}</div>
+        <div class="rr-tl-amt">${esc(fmt(ev.amount))}</div>
+      </div>`;
+    }).join('');
+    timelineHtml = `
+      <div>
+        <div class="rr-timeline-title">Recent Recovery Events</div>
+        ${items}
+      </div>`;
+  }
+
+  const methodologyHtml = `
+    <div class="rr-methodology" style="display:none;">
+      <strong>Cap Savings</strong> — Difference between each tenant's raw pro-rata share and their lease cap limit, summed where the cap fired. Money that would have been overbilled without cap enforcement.<br><br>
+      <strong>Disputes Resolved</strong> — Sum of dispute amounts where the landlord's position was accepted after review and documentation.<br><br>
+      <strong>Exclusion Savings</strong> — For each tenant with excluded expense categories, invoice amounts in those categories × their pro-rata share. Charges correctly omitted per lease terms.<br><br>
+      <strong>Audit Scope</strong> — Total CAM billed to tenants with explicit audit rights. Accurate allocation protects against successful audit challenges.
+    </div>`;
+
+  panel.style.display = 'block';
+  panel.innerHTML = `
+    <div class="rr-panel">
+      <div class="rr-panel-head">
+        <span class="rr-panel-title">Recovered Revenue</span>
+        <button class="rr-info-btn"
+          onclick="var m=this.nextElementSibling;m.style.display=m.style.display==='block'?'none':'block'">
+          How we count this
+        </button>
+      </div>
+      ${methodologyHtml}
+      <div class="rr-hero">
+        <div class="rr-hero-val">${esc(fmt(d.total))}</div>
+        <div class="rr-hero-lbl">Total lease compliance value identified</div>
+      </div>
+      <div class="rr-kpis">${tilesHtml}</div>
+      ${tableHtml}
+      ${timelineHtml}
+    </div>`;
+}
+
 // Renders the Portfolio Intelligence panel above the property grid.
-function renderPortfolioIntelligence(props) {
+function renderPortfolioIntelligence(props, preRar) {
   const panel = document.getElementById('portfolioIntelPanel');
   if (!panel) return;
   const safeProps = Array.isArray(props) ? props : [];
   if (safeProps.length === 0) { panel.style.display = 'none'; return; }
 
-  const intel      = _piComputePortfolioIntel(safeProps);
+  const pid      = AcquisitionEngine.computePortfolioIntelligence(safeProps, undefined, preRar);
+  const forecast = AcquisitionEngine.computeRevenueForecast(safeProps);
+
+  // ── helpers ───────────────────────────────────────────────────────────
+  const fmtM  = v => v >= 1e6 ? '$' + (v / 1e6).toFixed(2) + 'M'
+                  : v >= 1e3  ? '$' + Math.round(v / 1e3).toLocaleString('en-US') + 'K'
+                  : '$' + Math.round(v).toLocaleString('en-US');
+  const fmtSf = v => Math.round(v).toLocaleString('en-US');
+  const fmtPct = v => v != null ? v + '%' : '—';
+
+  // ── Metrics grid ──────────────────────────────────────────────────────
+  const tile = (val, lbl, cls = '') =>
+    `<div class="pid-tile${cls ? ' ' + cls : ''}">
+       <div class="pid-tile-val">${val}</div>
+       <div class="pid-tile-lbl">${lbl}</div>
+     </div>`;
+
+  const rarVal = pid.revenueAtRisk.urgentAnnualAtRisk;
+  const metricsGrid = `
+  <div class="pid-grid">
+    ${tile(pid.propertyCount, 'Properties')}
+    ${tile(fmtPct(pid.occupancyRate), 'Occupancy',
+           pid.occupancyRate !== null && pid.occupancyRate < 80 ? 'pid-tile--warn' : '')}
+    ${tile(pid.walt != null ? pid.walt + ' yrs' : '—', 'WALT')}
+    ${tile(rarVal > 0 ? fmtM(rarVal) : '—', 'Revenue at Risk',
+           rarVal > 0 ? 'pid-tile--alert' : '')}
+    ${tile(pid.expiringCount || '—', 'Expiring Leases',
+           pid.expiringCount > 0 ? 'pid-tile--warn' : '')}
+    ${tile(pid.urgentCount || '—', 'Urgent Renewals',
+           pid.urgentCount  > 0 ? 'pid-tile--alert' : '')}
+    ${tile(pid.vacantSqft != null ? fmtSf(pid.vacantSqft) + ' sf' : '—', 'Vacant Sq Ft',
+           pid.vacantSqft  > 0 ? 'pid-tile--warn' : '')}
+  </div>`;
+
+  // ── Top Risks ─────────────────────────────────────────────────────────
+  const riskIcons = { revenue_at_risk: '&#x26A0;&#xFE0F;', vacant_sqft: '&#x1F4CA;', rollover_concentration: '&#x1F501;' };
+  const topRisksHtml = pid.topRisks.length ? `
+  <div class="pid-section">
+    <div class="pid-section-title">Top Risks</div>
+    ${pid.topRisks.map((r, i) => `
+    <div class="pid-risk-row" onclick="selectProperty('${esc(r.propertyId)}')">
+      <span class="pid-risk-rank">${i + 1}</span>
+      <span class="pid-risk-icon">${riskIcons[r.riskType] || '⚠️'}</span>
+      <div class="pid-risk-body">
+        <span class="pid-risk-prop">${esc(r.propertyName)}</span>
+        <span class="pid-risk-label">${esc(r.riskLabel)}</span>
+      </div>
+    </div>`).join('')}
+  </div>` : `
+  <div class="pid-section">
+    <div class="pid-section-title">Top Risks</div>
+    <div class="pid-no-risks">&#x2714; No significant risks identified across your portfolio.</div>
+  </div>`;
+
+  // ── Revenue Forecast ──────────────────────────────────────────────────
+  const forecastHtml = (() => {
+    if (forecast.currentAnnualRent === 0) return '';
+    const fmtDelta = (d, pct) => {
+      if (d === 0) return '<span class="pid-fc-flat">No change</span>';
+      const sign = d > 0 ? '+' : '';
+      const cls  = d > 0 ? 'pid-fc-up' : 'pid-fc-down';
+      return `<span class="${cls}">${sign}${fmtM(Math.abs(d))} (${sign}${pct}%)</span>`;
+    };
+    const rows = forecast.scenarios.map((s, i) => {
+      const highlight = i === 2 ? ' pid-fc-row--highlight' : '';
+      return `
+      <div class="pid-fc-row${highlight}">
+        <span class="pid-fc-label">${esc(s.label)}</span>
+        <span class="pid-fc-proj">${fmtM(s.projectedAnnualRent)}</span>
+        <span class="pid-fc-delta">${fmtDelta(s.delta, s.deltaPct)}</span>
+      </div>`;
+    }).join('');
+
+    return `
+  <div class="pid-section pid-forecast-section">
+    <div class="pid-section-title" style="cursor:pointer" onclick="togglePidForecast()">
+      Revenue Forecast — Next 12 Months
+      <span id="pidForecastToggle" class="pid-toggle-icon">&#x25BC;</span>
+    </div>
+    <div id="pidForecastBody" style="display:none">
+      <div class="pid-fc-summary">
+        <span>Current Annual Rent: <strong>${fmtM(forecast.currentAnnualRent)}</strong></span>
+        <span class="pid-fc-sep">·</span>
+        <span>Expiring Next 12 Mo: <strong class="pid-fc-expiring">${fmtM(forecast.expiringNext12Rent)}</strong>
+          (${forecast.expiringLeaseCount} lease${forecast.expiringLeaseCount !== 1 ? 's' : ''})</span>
+      </div>
+      <div class="pid-fc-header">
+        <span>Scenario</span><span>Projected</span><span>Change</span>
+      </div>
+      ${rows}
+    </div>
+  </div>`;
+  })();
+
+  // ── Existing reconciliation health (preserved) ────────────────────────
+  const intel = _piComputePortfolioIntel(safeProps);
   const hasCritical = intel.totalExpired > 0 || intel.proRataGapProps > 0 || intel.totalExposure > 0;
   const hasWarn     = intel.totalMissingCaps > 0 || intel.totalLowConf > 0 || intel.totalUnresolved > 0;
-  const panelCls    = hasCritical ? 'pi-panel--alert' : hasWarn ? 'pi-panel--warn' : 'pi-panel--ok';
+  const reconCls    = hasCritical ? 'pi-panel--alert' : hasWarn ? 'pi-panel--warn' : 'pi-panel--ok';
 
   const rdCounts = { reconciled: 0, reconciliation_ready: 0, partially_verified: 0, needs_review: 0, high_risk: 0 };
   for (const p of safeProps) {
     const rd = derivePropertyReadiness(p);
     if (rd.readiness in rdCounts) rdCounts[rd.readiness]++;
   }
-
-  const m = (val, lbl, cls = '') =>
-    `<div class="pi-metric${cls ? ' ' + cls : ''}"><div class="pi-metric-val">${val}</div><div class="pi-metric-lbl">${lbl}</div></div>`;
-
   const rdyOrder = [
     { key: 'high_risk',            label: 'High Risk',    cls: 'rdy-high_risk' },
     { key: 'needs_review',         label: 'Needs Review', cls: 'rdy-needs-review' },
@@ -13489,24 +14065,510 @@ function renderPortfolioIntelligence(props) {
     .filter(r => rdCounts[r.key] > 0)
     .map(r => `<span class="pi-rdy-chip ${r.cls}">${rdCounts[r.key]} ${esc(r.label)}</span>`)
     .join('');
+  const pm = (val, lbl, cls = '') =>
+    `<div class="pi-metric${cls ? ' ' + cls : ''}"><div class="pi-metric-val">${val}</div><div class="pi-metric-lbl">${lbl}</div></div>`;
+  const reconHtml = `
+  <div class="pid-section pid-recon-section">
+    <div class="pid-section-title">Reconciliation Health</div>
+    <div class="pi-metrics">
+      ${pm(intel.totalUnresolved || '—', 'Unresolved',     intel.totalUnresolved  > 0 ? 'pi-metric--warn'  : '')}
+      ${pm(intel.totalMissingCaps || '—', 'Missing Caps',  intel.totalMissingCaps > 0 ? 'pi-metric--warn'  : '')}
+      ${pm(intel.totalLowConf || '—', 'Low Confidence')}
+      ${pm(intel.totalExposure > 0 ? '$' + Math.round(intel.totalExposure).toLocaleString('en-US') : '—',
+           'Dispute Exposure', intel.totalExposure > 0 ? 'pi-metric--alert' : '')}
+    </div>
+    ${rdyHtml ? `<div class="pi-rdy-row">${rdyHtml}</div>` : ''}
+  </div>`;
 
   panel.style.display = 'block';
   panel.innerHTML = `
-    <div class="pi-panel ${panelCls}">
-      <div class="pi-panel-head">
-        <span class="pi-panel-title">Portfolio Intelligence</span>
-        <span class="pi-summary">${esc(intel.summary)}</span>
+  <div class="pid-panel">
+    <div class="pid-panel-head">
+      <span class="pid-panel-title">&#x1F4CA; Portfolio Intelligence</span>
+    </div>
+    ${metricsGrid}
+    ${topRisksHtml}
+    ${forecastHtml}
+    ${reconHtml}
+  </div>`;
+}
+
+// ── Deep-link navigation helpers ────────────────────────────────────────────
+
+// Navigate to a property then scroll-to + open the detail panel for a specific tenant.
+async function navigateToPropertyTenant(propId, tenantName) {
+  if (!propId) return;
+  await selectProperty(propId);
+  if (!tenantName) return;
+  setTimeout(function() {
+    var row = document.querySelector('tr[data-tenant-name="' + CSS.escape(tenantName) + '"]');
+    if (row) {
+      row.scrollIntoView({ behavior: 'smooth', block: 'center' });
+      row.classList.add('ac-highlight-row');
+      setTimeout(function() { row.classList.remove('ac-highlight-row'); }, 2500);
+    }
+    var idx = -1;
+    for (var i = 0; i < tenantData.length; i++) {
+      if (tenantData[i] && tenantData[i].tenant_name === tenantName) { idx = i; break; }
+    }
+    if (idx >= 0) openTenantDetailPanel(idx);
+  }, 150);
+}
+
+// Stay on portfolio — scroll the Renewal Pipeline panel into view and highlight matching tenant row.
+function scrollToRenewalPipeline(propId, tenantName) {
+  var panel = document.getElementById('renewalPipelinePanel');
+  if (!panel) return;
+  panel.scrollIntoView({ behavior: 'smooth', block: 'start' });
+  if (!tenantName) return;
+  setTimeout(function() {
+    var rows = panel.querySelectorAll('tbody tr');
+    for (var i = 0; i < rows.length; i++) {
+      var nameEl = rows[i].querySelector('.rp-tenant-name');
+      if (nameEl && nameEl.textContent.trim() === tenantName) {
+        rows[i].classList.add('ac-highlight-row');
+        (function(r) { setTimeout(function() { r.classList.remove('ac-highlight-row'); }, 2500); })(rows[i]);
+        break;
+      }
+    }
+  }, 400);
+}
+
+// ── Action Center ────────────────────────────────────────────────────────────
+
+function dismissActionCenter() {
+  _actionCenterDismissed = true;
+  var el = document.getElementById('actionCenterPanel');
+  if (el) el.style.display = 'none';
+}
+
+function renderActionCenter(props, reviews, preRar) {
+  var panel = document.getElementById('actionCenterPanel');
+  if (!panel || _actionCenterDismissed) return;
+  var safeProps = Array.isArray(props) ? props : [];
+  if (safeProps.length === 0) { panel.style.display = 'none'; return; }
+
+  var actions = AcquisitionEngine.computePortfolioActions(safeProps, reviews || [], undefined, preRar);
+  var total   = actions.criticalActions.length + actions.warningActions.length + actions.infoActions.length;
+  if (total === 0) {
+    // All clear — show positive confirmation rather than hiding the panel
+    panel.style.display = 'block';
+    panel.innerHTML = `
+  <div class="ac-panel ac-panel--clean">
+    <div class="ac-header">
+      <span class="ac-header-title">&#x2705; Portfolio Standing</span>
+      <button class="ac-dismiss-btn" onclick="dismissActionCenter()" title="Dismiss">&#x2715;</button>
+    </div>
+    <div class="ac-clean-body">
+      <span class="ac-clean-icon">&#x2714;</span>
+      <div class="ac-clean-text">
+        <strong>No actions required.</strong>
+        Your ${safeProps.length} propert${safeProps.length !== 1 ? 'ies are' : 'y is'} in good standing — no expired leases, open disputes, or urgent renewals.
       </div>
-      <div class="pi-metrics">
-        ${m(intel.totalUnresolved || '—', 'Unresolved',     intel.totalUnresolved  > 0 ? 'pi-metric--warn'  : '')}
-        ${m(intel.totalMissingCaps || '—', 'Missing Caps',  intel.totalMissingCaps > 0 ? 'pi-metric--warn'  : '')}
-        ${m(intel.totalExpired || '—', 'Expired Leases',    intel.totalExpired     > 0 ? 'pi-metric--alert' : '')}
-        ${m(intel.totalExpiring || '—', 'Expiring 12mo')}
-        ${m(intel.totalLowConf || '—', 'Low Confidence')}
-        ${m(intel.totalExposure > 0 ? '$' + Math.round(intel.totalExposure).toLocaleString('en-US') : '—', 'Dispute Exposure', intel.totalExposure > 0 ? 'pi-metric--alert' : '')}
+    </div>
+  </div>`;
+    return;
+  }
+
+  const fmtM  = v => v >= 1e6 ? '$' + (v / 1e6).toFixed(1) + 'M'
+                  : v >= 1e3  ? '$' + Math.round(v / 1e3) + 'K'
+                  : '$' + Math.round(v);
+  const fmtSf = v => Math.round(v).toLocaleString('en-US') + ' sf';
+
+  // KPI count chips
+  const c = actions.counts;
+  const kpiChips = [
+    c.expiredLeases > 0         ? `<span class="ac-kpi ac-kpi--critical">${c.expiredLeases} Expired Lease${c.expiredLeases !== 1 ? 's' : ''}</span>` : '',
+    c.revenueAtRisk > 0         ? `<span class="ac-kpi ac-kpi--critical">${fmtM(c.revenueAtRisk)} Revenue at Risk</span>` : '',
+    c.renewalsRequiringAction > 0 ? `<span class="ac-kpi ac-kpi--warn">${c.renewalsRequiringAction} Renewal${c.renewalsRequiringAction !== 1 ? 's' : ''} Requiring Action</span>` : '',
+    c.openCamDisputes > 0       ? `<span class="ac-kpi ac-kpi--warn">${c.openCamDisputes} Open Dispute${c.openCamDisputes !== 1 ? 's' : ''}</span>` : '',
+    c.vacantSqft >= 500         ? `<span class="ac-kpi ac-kpi--info">${fmtSf(c.vacantSqft)} Vacant</span>` : '',
+    c.acquisitionsAwaitingConversion > 0 ? `<span class="ac-kpi ac-kpi--info">${c.acquisitionsAwaitingConversion} Acquisition${c.acquisitionsAwaitingConversion !== 1 ? 's' : ''} Ready to Convert</span>` : '',
+  ].filter(Boolean).join('');
+
+  // Single action item row
+  const renderItem = (item, onclick) => {
+    const timeStr = item.daysRemaining != null
+      ? (item.daysRemaining <= 0 ? Math.abs(item.daysRemaining) + 'd expired' : item.daysRemaining + 'd left')
+      : '';
+    const badge = timeStr
+      ? `<span class="ac-badge ac-badge--${esc(item.severity)}">${esc(timeStr)}</span>` : '';
+    const clickAttr = onclick ? ` onclick="${onclick}"` : '';
+    return `
+    <div class="ac-item"${clickAttr}>
+      <span class="ac-dot ac-dot--${esc(item.severity)}"></span>
+      <div class="ac-item-body">
+        <span class="ac-item-title">${esc(item.title)}</span>
+        ${item.detail ? `<span class="ac-item-detail">${esc(item.detail)}</span>` : ''}
       </div>
-      ${rdyHtml ? `<div class="pi-rdy-row">${rdyHtml}</div>` : ''}
+      ${badge}
     </div>`;
+  };
+
+  // Build onclick for each item type
+  const itemOnclick = (item, forSection) => {
+    const pid = esc(item.propertyId || '');
+    const tid = esc(item.tenantName || '');
+    const rid = esc(item.reviewId   || '');
+    if (forSection === 'critical') {
+      // Critical lease expiry: navigate to property + open tenant
+      return item.tenantName && item.propertyId
+        ? `navigateToPropertyTenant('${pid}','${tid}')`
+        : item.propertyId ? `selectProperty('${pid}')` : '';
+    }
+    if (forSection === 'warning') {
+      if (item.type === 'cam_dispute') return item.propertyId ? `selectProperty('${pid}')` : '';
+      // Lease expiry warnings → jump to Renewal Pipeline
+      return item.tenantName
+        ? `scrollToRenewalPipeline('${pid}','${tid}')`
+        : item.propertyId ? `selectProperty('${pid}')` : '';
+    }
+    if (forSection === 'info') {
+      if (item.type === 'acquisition_pending') return item.reviewId ? `selectAcquisitionReview('${rid}')` : '';
+      return item.propertyId ? `selectProperty('${pid}')` : '';
+    }
+    return '';
+  };
+
+  // Sections with cap at 5/5/3 items
+  const buildSection = (items, sectionKey, headHtml, max) => {
+    if (items.length === 0) return '';
+    const shown = items.slice(0, max);
+    const more  = items.length - shown.length;
+    const rows  = shown.map(item => renderItem(item, itemOnclick(item, sectionKey))).join('');
+    const moreEl = more > 0 ? `<div class="ac-more">+${more} more</div>` : '';
+    return `<div class="ac-section">${headHtml}${rows}${moreEl}</div>`;
+  };
+
+  const critSection = buildSection(
+    actions.criticalActions, 'critical',
+    '<div class="ac-section-hd ac-section-hd--critical">&#x1F534; Requires Immediate Action</div>', 5);
+  const warnSection = buildSection(
+    actions.warningActions, 'warning',
+    '<div class="ac-section-hd ac-section-hd--warning">&#x26A0;&#xFE0F; Needs Attention</div>', 5);
+  const infoSection = buildSection(
+    actions.infoActions, 'info',
+    '<div class="ac-section-hd ac-section-hd--info">&#x2139;&#xFE0F; For Your Attention</div>', 3);
+
+  const hCounts = [
+    actions.criticalActions.length > 0 ? `<span class="ac-hcount ac-hcount--critical">${actions.criticalActions.length} Critical</span>` : '',
+    actions.warningActions.length  > 0 ? `<span class="ac-hcount ac-hcount--warning">${actions.warningActions.length} Warning${actions.warningActions.length !== 1 ? 's' : ''}</span>` : '',
+    actions.infoActions.length     > 0 ? `<span class="ac-hcount ac-hcount--info">${actions.infoActions.length} Info</span>` : '',
+  ].filter(Boolean).join('');
+
+  panel.style.display = 'block';
+  panel.innerHTML = `
+  <div class="ac-panel">
+    <div class="ac-header">
+      <span class="ac-header-title">&#x26A1; Action Center</span>
+      <div class="ac-header-counts">${hCounts}</div>
+      <button class="ac-dismiss-btn" onclick="dismissActionCenter()" title="Dismiss for this session">&#x2715;</button>
+    </div>
+    ${kpiChips ? `<div class="ac-kpi-bar">${kpiChips}</div>` : ''}
+    ${critSection}${warnSection}${infoSection}
+  </div>`;
+}
+
+function _renderRenewalPipeline(pipeline) {
+  const fmtM  = v => v >= 1e6 ? '$' + (v / 1e6).toFixed(2) + 'M'
+                  : v >= 1e3  ? '$' + Math.round(v / 1e3).toLocaleString('en-US') + 'K'
+                  : '$' + Math.round(v).toLocaleString('en-US');
+  const fmtSf = v => Math.round(v).toLocaleString('en-US');
+  const fmtRent = v => v != null && v > 0 ? fmtM(v) : '—';
+
+  const statusLabels = {
+    not_started:   'Not Started',
+    contacted:     'Contacted',
+    negotiating:   'Negotiating',
+    proposal_sent: 'Proposal Sent',
+    signed:        'Signed',
+  };
+
+  const daysBadge = (item) => {
+    const d = item.daysRemaining;
+    const cls = `rp-days rp-days--${item.priority}`;
+    if (d <= 0)  return `<span class="${cls}">Expired ${Math.abs(d)}d ago</span>`;
+    return `<span class="${cls}">${d}d left</span>`;
+  };
+
+  const kpiBarHtml = `
+  <div class="rp-kpi-bar">
+    <div class="rp-kpi">
+      <div class="rp-kpi-val${pipeline.actionCount > 0 ? ' rp-kpi-val--alert' : ''}">${pipeline.actionCount || '—'}</div>
+      <div class="rp-kpi-lbl">Requiring Action</div>
+    </div>
+    <div class="rp-kpi">
+      <div class="rp-kpi-val">${pipeline.actionAnnualRent > 0 ? fmtRent(pipeline.actionAnnualRent) : '—'}</div>
+      <div class="rp-kpi-lbl">Annual Rent</div>
+    </div>
+    <div class="rp-kpi">
+      <div class="rp-kpi-val">${pipeline.actionSqft > 0 ? fmtSf(pipeline.actionSqft) + ' sf' : '—'}</div>
+      <div class="rp-kpi-lbl">Sq Ft</div>
+    </div>
+    <div class="rp-kpi" style="margin-left:auto;">
+      <div class="rp-kpi-val">${pipeline.totalCount}</div>
+      <div class="rp-kpi-lbl">Total in Pipeline</div>
+    </div>
+  </div>`;
+
+  if (pipeline.items.length === 0) {
+    return `
+  <div class="rp-panel">
+    <div class="rp-panel-head">
+      <span class="rp-panel-title">&#x1F4CB; Renewal Pipeline</span>
+    </div>
+    ${kpiBarHtml}
+    <div class="rp-clean">
+      <span class="rp-clean-icon">&#x2714;</span>
+      <div>
+        <strong style="color:#e2e8f0;font-size:0.85rem;">Pipeline clear</strong>
+        <div style="font-size:0.76rem;color:#64748b;margin-top:3px;">No leases expiring within 12 months. All renewals are on track.</div>
+      </div>
+    </div>
+  </div>`;
+  }
+
+  const rows = pipeline.items.map(item => {
+    const renewalTxt = item.renewalOptions
+      ? `<span class="rp-renewal">&#x1F501; ${esc(item.renewalOptions)}</span>`
+      : `<span class="rp-no-renewal">No options</span>`;
+    const statusCls = 'rp-status rp-status--' + (item.status || 'not_started');
+    const statusTxt = statusLabels[item.status] || item.status || 'Not Started';
+    const suiteTxt  = item.suite ? `<span class="rp-suite">Suite ${esc(item.suite)}</span>` : '';
+    return `
+    <tr style="cursor:pointer" onclick="navigateToPropertyTenant('${esc(item.propertyId || '')}','${esc(item.tenantName || '')}')">
+      <td>
+        <span class="rp-tenant-name">${esc(item.tenantName)}</span>${suiteTxt}
+      </td>
+      <td class="rp-prop">${esc(item.propertyName)}</td>
+      <td class="rp-rent">${fmtRent(item.annualRent)}</td>
+      <td class="rp-sqft">${item.leasedSqft != null ? fmtSf(item.leasedSqft) + ' sf' : '—'}</td>
+      <td>${renewalTxt}</td>
+      <td>${daysBadge(item)}</td>
+      <td><span class="${statusCls}">${esc(statusTxt)}</span></td>
+    </tr>`;
+  }).join('');
+
+  return `
+  <div class="rp-panel">
+    <div class="rp-panel-head">
+      <span class="rp-panel-title">&#x1F4CB; Renewal Pipeline</span>
+    </div>
+    ${kpiBarHtml}
+    <div class="rp-table-wrap">
+      <table class="rp-table">
+        <thead>
+          <tr>
+            <th>Tenant</th>
+            <th>Property</th>
+            <th>Annual Rent</th>
+            <th>Sq Ft</th>
+            <th>Renewal Options</th>
+            <th>Timeline</th>
+            <th>Status</th>
+          </tr>
+        </thead>
+        <tbody>${rows}</tbody>
+      </table>
+    </div>
+  </div>`;
+}
+
+function renderRenewalPipeline(props) {
+  const panel = document.getElementById('renewalPipelinePanel');
+  if (!panel) return;
+  const safeProps = Array.isArray(props) ? props : [];
+  if (safeProps.length === 0) { panel.style.display = 'none'; return; }
+  const pipeline = AcquisitionEngine.computeRenewalPipeline(safeProps);
+  panel.style.display = 'block';
+  panel.innerHTML = _renderRenewalPipeline(pipeline);
+}
+
+// ── Executive Summary Export ─────────────────────────────────────────────────
+
+function exportPortfolioSummary() {
+  const props   = Array.isArray(_props)      ? _props      : [];
+  const reviews = Array.isArray(_acqReviews) ? _acqReviews : [];
+  if (props.length === 0) {
+    showToast('No portfolio data to export. Add properties first.', { color: '#92400e', textColor: '#fef3c7' });
+    return;
+  }
+
+  const pid      = AcquisitionEngine.computePortfolioIntelligence(props);
+  const rar      = AcquisitionEngine.computeRevenueAtRisk(props);
+  const pipeline = AcquisitionEngine.computeRenewalPipeline(props);
+  const forecast = AcquisitionEngine.computeRevenueForecast(props);
+  const actions  = AcquisitionEngine.computePortfolioActions(props, reviews);
+
+  const fmtM   = v => v >= 1e6 ? '$' + (v/1e6).toFixed(2) + 'M' : v >= 1e3 ? '$' + Math.round(v/1e3).toLocaleString('en-US') + 'K' : '$' + Math.round(v).toLocaleString('en-US');
+  const fmtSf  = v => Math.round(v).toLocaleString('en-US') + ' sf';
+  const today  = new Date().toLocaleDateString('en-US', { month: 'long', day: 'numeric', year: 'numeric' });
+  const esc_   = s => String(s).replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;').replace(/"/g,'&quot;');
+
+  const kpis = [
+    { val: props.length,   lbl: 'Properties',       cls: '' },
+    { val: pid.occupancyRate != null ? pid.occupancyRate + '%' : '—', lbl: 'Occupancy',
+      cls: pid.occupancyRate !== null && pid.occupancyRate < 80 ? 'kpi-val--warn' : '' },
+    { val: pid.walt != null ? pid.walt + ' yrs' : '—', lbl: 'WALT', cls: '' },
+    { val: pid.totalAnnualRent > 0 ? fmtM(pid.totalAnnualRent) : '—', lbl: 'Annual Rent', cls: '' },
+    { val: rar.urgentAnnualAtRisk > 0 ? fmtM(rar.urgentAnnualAtRisk) : '—', lbl: 'Revenue at Risk',
+      cls: rar.urgentAnnualAtRisk > 0 ? 'kpi-val--risk' : '' },
+    { val: pipeline.actionCount || '—', lbl: 'Renewals Requiring Action',
+      cls: pipeline.actionCount > 0 ? 'kpi-val--warn' : '' },
+    { val: actions.counts.openCamDisputes || '—', lbl: 'Open Disputes',
+      cls: actions.counts.openCamDisputes > 0 ? 'kpi-val--warn' : '' },
+    { val: actions.counts.vacantSqft >= 500 ? fmtSf(actions.counts.vacantSqft) : '—', lbl: 'Vacant Sq Ft',
+      cls: actions.counts.vacantSqft >= 500 ? 'kpi-val--warn' : '' },
+  ];
+
+  const kpiGrid = kpis.map(k => `
+    <div class="kpi-card">
+      <div class="kpi-val ${k.cls}">${esc_(k.val)}</div>
+      <div class="kpi-lbl">${esc_(k.lbl)}</div>
+    </div>`).join('');
+
+  const topRisksSection = pid.topRisks.length ? `
+  <div class="section">
+    <div class="section-title">Top Risks</div>
+    <table>
+      <thead><tr><th>#</th><th>Property</th><th>Risk</th><th>Impact</th></tr></thead>
+      <tbody>${pid.topRisks.map((r, i) => `
+        <tr>
+          <td>${i + 1}</td>
+          <td>${esc_(r.propertyName || '—')}</td>
+          <td>${esc_(r.riskLabel || r.riskType || '—')}</td>
+          <td>${r.impactScore > 0 ? fmtM(r.impactScore) : '—'}</td>
+        </tr>`).join('')}
+      </tbody>
+    </table>
+  </div>` : '';
+
+  const priorityBadge = p => p === 'critical' ? 'badge-critical' : p === 'high' ? 'badge-warn' : 'badge-ok';
+  const pipelineSection = pipeline.items.length ? `
+  <div class="section">
+    <div class="section-title">Renewal Pipeline — Next 12 Months (${pipeline.items.length} lease${pipeline.items.length !== 1 ? 's' : ''})</div>
+    <table>
+      <thead><tr><th>Tenant</th><th>Property</th><th>Lease End</th><th>Timeline</th><th>Annual Rent</th><th>Renewal Options</th></tr></thead>
+      <tbody>${pipeline.items.slice(0, 20).map(item => `
+        <tr>
+          <td>${esc_(item.tenantName || '—')}</td>
+          <td>${esc_(item.propertyName || '—')}</td>
+          <td>${esc_(item.leaseEnd || '—')}</td>
+          <td><span class="${priorityBadge(item.priority)}">${item.daysRemaining <= 0 ? 'Expired' : item.daysRemaining + 'd'}</span></td>
+          <td>${item.annualRent ? fmtM(item.annualRent) : '—'}</td>
+          <td>${esc_(item.renewalOptions || 'None')}</td>
+        </tr>`).join('')}
+        ${pipeline.items.length > 20 ? `<tr><td colspan="6" style="color:#64748b;font-style:italic">+${pipeline.items.length - 20} more leases</td></tr>` : ''}
+      </tbody>
+    </table>
+  </div>` : '';
+
+  const forecastSection = forecast.currentAnnualRent > 0 ? `
+  <div class="section">
+    <div class="section-title">Revenue Forecast — Next 12 Months</div>
+    <table>
+      <thead><tr><th>Scenario</th><th>Projected Annual</th><th>Change</th></tr></thead>
+      <tbody>${forecast.scenarios.map(s => {
+        const sign = s.delta > 0 ? '+' : '';
+        const cls  = s.delta > 0 ? 'color:#16a34a' : s.delta < 0 ? 'color:#dc2626' : 'color:#64748b';
+        return `<tr>
+          <td>${esc_(s.label)}</td>
+          <td style="font-weight:600">${fmtM(s.projectedAnnualRent)}</td>
+          <td style="${cls}">${s.delta !== 0 ? sign + fmtM(Math.abs(s.delta)) + ' (' + sign + s.deltaPct + '%)' : 'No change'}</td>
+        </tr>`;
+      }).join('')}</tbody>
+    </table>
+  </div>` : '';
+
+  const propSection = `
+  <div class="section">
+    <div class="section-title">Property Summary</div>
+    <table>
+      <thead><tr><th>Property</th><th>Tenants</th><th>Total Sqft</th><th>Annual Rent</th><th>Status</th></tr></thead>
+      <tbody>${props.map(p => {
+        const tens = (p.tenants || []).filter(t => t && !t.extractionFailed);
+        const rent = tens.reduce((s, t) => s + (parseFloat(t.base_rent) || 0), 0);
+        return `<tr>
+          <td style="font-weight:600">${esc_(p.name || '(unnamed)')}</td>
+          <td>${tens.length}</td>
+          <td>${p.totalSqft ? fmtSf(p.totalSqft) : '—'}</td>
+          <td>${rent > 0 ? fmtM(rent) : '—'}</td>
+          <td>${esc_(p.status || 'in-progress')}</td>
+        </tr>`;
+      }).join('')}</tbody>
+    </table>
+  </div>`;
+
+  const html = `<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width,initial-scale=1">
+  <title>Portfolio Executive Summary — ${today}</title>
+  <style>
+    *{box-sizing:border-box;margin:0;padding:0}
+    body{font-family:-apple-system,BlinkMacSystemFont,'Segoe UI',sans-serif;color:#1e293b;background:#fff;padding:40px;max-width:960px;margin:0 auto;font-size:14px}
+    @media print{body{padding:20px}.no-print{display:none!important}@page{margin:20mm}}
+    h1{font-size:1.6rem;font-weight:800;color:#0f172a;margin-bottom:4px}
+    .subtitle{font-size:0.82rem;color:#64748b;margin-bottom:32px}
+    .section{margin-bottom:28px}
+    .section-title{font-size:0.7rem;font-weight:700;text-transform:uppercase;letter-spacing:.08em;color:#64748b;margin-bottom:10px;padding-bottom:6px;border-bottom:1px solid #e2e8f0}
+    .kpi-grid{display:grid;grid-template-columns:repeat(4,1fr);gap:10px;margin-bottom:0}
+    @media(max-width:600px){.kpi-grid{grid-template-columns:repeat(2,1fr)}}
+    .kpi-card{background:#f8fafc;border:1px solid #e2e8f0;border-radius:8px;padding:14px}
+    .kpi-val{font-size:1.45rem;font-weight:700;color:#0f172a;line-height:1.1}
+    .kpi-val--risk{color:#dc2626}.kpi-val--warn{color:#d97706}
+    .kpi-lbl{font-size:.68rem;color:#64748b;text-transform:uppercase;letter-spacing:.06em;margin-top:4px}
+    table{width:100%;border-collapse:collapse;font-size:.83rem}
+    th{background:#f1f5f9;padding:8px 12px;text-align:left;font-size:.68rem;font-weight:600;text-transform:uppercase;letter-spacing:.06em;color:#475569;white-space:nowrap}
+    td{padding:8px 12px;border-bottom:1px solid #f1f5f9;vertical-align:middle}
+    tr:last-child td{border-bottom:none}
+    .badge-critical{background:#fee2e2;color:#dc2626;padding:2px 7px;border-radius:10px;font-size:.7rem;font-weight:700;white-space:nowrap}
+    .badge-warn{background:#fef3c7;color:#d97706;padding:2px 7px;border-radius:10px;font-size:.7rem;font-weight:700;white-space:nowrap}
+    .badge-ok{background:#dcfce7;color:#16a34a;padding:2px 7px;border-radius:10px;font-size:.7rem;font-weight:700;white-space:nowrap}
+    .print-btn{background:#0f172a;color:#fff;border:none;padding:10px 22px;border-radius:6px;cursor:pointer;font-size:.85rem;margin-bottom:24px;display:inline-flex;align-items:center;gap:6px}
+    .print-btn:hover{background:#1e293b}
+    .footer{margin-top:40px;padding-top:14px;border-top:1px solid #e2e8f0;font-size:.7rem;color:#94a3b8;display:flex;justify-content:space-between;flex-wrap:wrap;gap:6px}
+  </style>
+</head>
+<body>
+  <button class="print-btn no-print" onclick="window.print()">&#x1F4E4; Print / Save as PDF</button>
+  <h1>Portfolio Executive Summary</h1>
+  <div class="subtitle">Generated ${today}&nbsp;&nbsp;·&nbsp;&nbsp;${props.length} Propert${props.length !== 1 ? 'ies' : 'y'}&nbsp;&nbsp;·&nbsp;&nbsp;Mainstreet</div>
+  <div class="section">
+    <div class="section-title">Portfolio Overview</div>
+    <div class="kpi-grid">${kpiGrid}</div>
+  </div>
+  ${topRisksSection}${pipelineSection}${forecastSection}${propSection}
+  <div class="footer">
+    <span>Mainstreet &nbsp;·&nbsp; Portfolio Executive Summary</span>
+    <span>Generated ${today}</span>
+  </div>
+</body>
+</html>`;
+
+  const w = window.open('', '_blank');
+  if (w) {
+    w.document.write(html);
+    w.document.close();
+  } else {
+    const blob = new Blob([html], { type: 'text/html;charset=utf-8;' });
+    const url  = URL.createObjectURL(blob);
+    const a    = Object.assign(document.createElement('a'), {
+      href: url, download: 'portfolio-summary-' + new Date().toISOString().slice(0, 10) + '.html',
+    });
+    document.body.appendChild(a); a.click(); document.body.removeChild(a);
+    URL.revokeObjectURL(url);
+  }
+}
+
+function togglePidForecast() {
+  const body = document.getElementById('pidForecastBody');
+  const icon = document.getElementById('pidForecastToggle');
+  if (!body) return;
+  const open = body.style.display !== 'none';
+  body.style.display = open ? 'none' : '';
+  if (icon) icon.innerHTML = open ? '&#x25BC;' : '&#x25B2;';
 }
 
 // ─────────────────────────────────────────────────────────────────────────────
@@ -13832,6 +14894,109 @@ function renderPropertyActivity(property) {
   </div>`;
 }
 
+// ── Lease Expiration Alert Panel ──────────────────────────────────────────────
+
+function dismissLeaseAlerts() {
+  _leaseAlertsDismissed = true;
+  const el = document.getElementById('leaseAlertPanel');
+  if (el) el.innerHTML = '';
+}
+
+function toggleLeaseAlertMedium() {
+  const rows = document.getElementById('laMediumRows');
+  const icon = document.getElementById('laMediumToggleIcon');
+  if (!rows) return;
+  const expanded = rows.style.display !== 'none';
+  rows.style.display = expanded ? 'none' : '';
+  if (icon) icon.innerHTML = expanded ? '&#x25BC;' : '&#x25B2;';
+}
+
+function _renderLeaseAlertPanel(rar) {
+  if (_leaseAlertsDismissed || rar.total === 0) return '';
+
+  const fmtDate = iso => {
+    const d = new Date(iso + 'T12:00:00');
+    return isNaN(d.getTime()) ? iso
+      : d.toLocaleDateString('en-US', { month: 'short', day: 'numeric', year: 'numeric' });
+  };
+  const fmtRent = v => v != null && v > 0
+    ? '$' + Math.round(v).toLocaleString('en-US') + '/yr'
+    : null;
+
+  const renderRow = (alert, tier) => {
+    const daysBadge = tier === 'expired'
+      ? `<span class="la-days la-days--expired">Expired ${Math.abs(alert.daysToExpiry)}d ago</span>`
+      : `<span class="la-days la-days--${tier}">${alert.daysToExpiry}d</span>`;
+    const rentStr  = fmtRent(alert.annualRent);
+    const rentHtml = rentStr ? `<span class="la-revenue">${rentStr}</span>` : '';
+    const renewal  = alert.hasRenewal ? '<span class="la-renewal">&#x1F504;&nbsp;option</span>' : '';
+    const suite    = alert.suite ? ` <span class="la-suite">· ${esc(alert.suite)}</span>` : '';
+    return `
+    <div class="la-row" onclick="navigateToPropertyTenant('${esc(alert.propertyId)}','${esc(alert.tenantName)}')">
+      <span class="la-dot la-dot--${tier}"></span>
+      <div class="la-tenant">${esc(alert.tenantName)}${suite}</div>
+      <div class="la-property">${esc(alert.propertyName)}</div>
+      <div class="la-date">${fmtDate(alert.endDate)}</div>
+      <div class="la-meta">
+        ${daysBadge}${rentHtml}${renewal}
+        <button class="la-pipeline-link" onclick="event.stopPropagation();scrollToRenewalPipeline('${esc(alert.propertyId)}','${esc(alert.tenantName)}')" title="View in Renewal Pipeline">Pipeline &#x2193;</button>
+      </div>
+    </div>`;
+  };
+
+  const urgentRows = [
+    ...rar.expired.map(a  => renderRow(a, 'expired')),
+    ...rar.critical.map(a => renderRow(a, 'critical')),
+    ...rar.high.map(a     => renderRow(a, 'high')),
+  ].join('');
+
+  const mediumRentNote = rar.byTier?.medium?.annualRent > 0
+    ? ` · ${fmtRent(rar.byTier.medium.annualRent)}`
+    : '';
+  const mediumSection = rar.medium.length ? `
+  <div class="la-expander">
+    <button class="la-expand-btn" onclick="event.stopPropagation();toggleLeaseAlertMedium()">
+      <span id="laMediumToggleIcon">&#x25BC;</span>&nbsp; ${rar.medium.length} more expiring within 6 months${mediumRentNote}
+    </button>
+    <div id="laMediumRows" style="display:none">
+      ${rar.medium.map(a => renderRow(a, 'medium')).join('')}
+    </div>
+  </div>` : '';
+
+  // Header badge: count + revenue when data is available
+  const urgentRentStr = fmtRent(rar.urgentAnnualAtRisk);
+  const badgeText = rar.urgent > 0
+    ? `${rar.urgent} urgent${urgentRentStr ? ' · ' + urgentRentStr : ''}`
+    : `${rar.medium.length} upcoming`;
+  const badge = rar.urgent > 0
+    ? `<span class="la-count--urgent">${badgeText}</span>`
+    : `<span class="la-count--medium">${badgeText}</span>`;
+
+  // Revenue summary row when we have totals
+  const rarSummary = rar.totalAnnualAtRisk > 0 ? `
+  <div class="la-rar-summary">
+    <span class="la-rar-label">Revenue at Risk</span>
+    <span class="la-rar-urgent">${fmtRent(rar.urgentAnnualAtRisk) || '—'} urgent</span>
+    <span class="la-rar-sep">·</span>
+    <span class="la-rar-total">${fmtRent(rar.totalAnnualAtRisk) || '—'} total</span>
+    ${rar.totalSqftAtRisk > 0
+      ? `<span class="la-rar-sqft">${Math.round(rar.totalSqftAtRisk).toLocaleString('en-US')} sf exposed</span>`
+      : ''}
+  </div>` : '';
+
+  return `
+  <div class="la-panel">
+    <div class="la-header">
+      <span class="la-title">&#x1F514; Lease Expiration Alerts</span>
+      ${badge}
+      <button class="la-dismiss" onclick="dismissLeaseAlerts()" title="Dismiss for this session">&#x2715;</button>
+    </div>
+    ${rarSummary}
+    ${urgentRows}
+    ${mediumSection}
+  </div>`;
+}
+
 function renderPortfolio(props) {
   props = props || _props; // handle no-arg calls
   if (!Array.isArray(props)) {
@@ -13847,9 +15012,11 @@ function renderPortfolio(props) {
 
   // KPI tiles
   const k = portfolioKPIs(props);
+  // Use live dispute count from p.disputes[] — p.openDisputes is only written on save so can be stale
+  const liveOpenDisputes = props.reduce((s, p) => s + (p.disputes || []).filter(d => d.status === 'open').length, 0);
   document.getElementById('pKpiProperties').textContent  = k.properties;
-  document.getElementById('pKpiCAM').textContent         = '$' + k.cam.toLocaleString('en-US');
-  document.getElementById('pKpiDisputes').textContent    = k.openDisputes;
+  document.getElementById('pKpiCAM').textContent         = k.cam > 0 ? '$' + k.cam.toLocaleString('en-US') : '—';
+  document.getElementById('pKpiDisputes').textContent    = liveOpenDisputes;
   document.getElementById('pKpiCritical').textContent    = k.criticalOrElevated;
   document.getElementById('pKpiMissingDocs').textContent = k.totalMissingDocs;
   document.getElementById('pKpiConfidence').textContent  = k.avgConf !== null ? k.avgConf + '%' : '—';
@@ -13859,7 +15026,7 @@ function renderPortfolio(props) {
   const camEl  = document.getElementById('pKpiCAM');
   const confEl = document.getElementById('pKpiConfidence');
   if (propEl) propEl.style.color = '#C9973A';
-  if (camEl)  camEl.style.color  = '#C9973A';
+  if (camEl)  camEl.style.color  = k.cam > 0 ? '#C9973A' : '';
   if (confEl) confEl.style.color = k.avgConf !== null ? '#C9973A' : '';
 
   // Conditional accent on risk-sensitive KPIs
@@ -13867,7 +15034,7 @@ function renderPortfolio(props) {
   const dispEl = document.getElementById('pKpiDisputes');
   const missEl = document.getElementById('pKpiMissingDocs');
   if (critEl) critEl.style.color = k.criticalOrElevated > 0 ? '#f87171' : '#C9973A';
-  if (dispEl) dispEl.style.color = k.openDisputes        > 0 ? '#f87171' : '#C9973A';
+  if (dispEl) dispEl.style.color = liveOpenDisputes       > 0 ? '#f87171' : '#C9973A';
   if (missEl) missEl.style.color = k.totalMissingDocs    > 0 ? '#fbbf24' : '#C9973A';
 
   // Sort buttons
@@ -13887,8 +15054,48 @@ function renderPortfolio(props) {
         ).join('');
   }
 
+  // Revenue-at-Risk + Lease Expiration Alerts
+  const rar          = AcquisitionEngine.computeRevenueAtRisk(props);
+  const alertPanelEl = document.getElementById('leaseAlertPanel');
+  if (alertPanelEl) alertPanelEl.innerHTML = _renderLeaseAlertPanel(rar);
+
+  // Update "At-Risk Properties" KPI sub-value with revenue exposure
+  const rarSubEl = document.getElementById('pKpiExpiryRevenue');
+  if (rarSubEl) {
+    if (rar.urgentAnnualAtRisk > 0) {
+      rarSubEl.textContent = '$' + Math.round(rar.urgentAnnualAtRisk).toLocaleString('en-US') + '/yr at risk';
+      rarSubEl.style.display = '';
+    } else {
+      rarSubEl.style.display = 'none';
+    }
+  }
+
+  // Build per-property expiry lookup for card badges
+  const _propAlertMap = new Map();
+  const _markProp = (a, tier) => {
+    const cur = _propAlertMap.get(a.propertyId);
+    if (!cur) { _propAlertMap.set(a.propertyId, { total: 1, tier }); return; }
+    cur.total++;
+    if (tier === 'expired' || (tier === 'critical' && cur.tier !== 'expired')) cur.tier = tier;
+    else if (tier === 'high' && !['expired','critical'].includes(cur.tier)) cur.tier = tier;
+  };
+  rar.expired.forEach(a  => _markProp(a, 'expired'));
+  rar.critical.forEach(a => _markProp(a, 'critical'));
+  rar.high.forEach(a     => _markProp(a, 'high'));
+  rar.medium.forEach(a   => _markProp(a, 'medium'));
+
+  // Action Center (topmost — shows today's 5-10 priority items)
+  renderActionCenter(props, _acqReviews, rar);
+
   // Portfolio intelligence panel (above cards grid)
-  renderPortfolioIntelligence(props);
+  renderPortfolioIntelligence(props, rar);
+  renderRenewalPipeline(props);
+
+  // Recovered Revenue Dashboard (below intelligence panel)
+  renderRecoveredRevenueDashboard(props);
+
+  // First-time welcome modal (no-op if user already has properties or has seen it)
+  _maybeShowWelcome(props);
 
   // Property cards
   const statusLabel = { reconciled: 'Reconciled', 'in-progress': 'In Progress', disputes: 'Has Open Disputes' };
@@ -13913,10 +15120,9 @@ function renderPortfolio(props) {
   }
 
   document.getElementById('propertyCardsGrid').innerHTML = sortedPairs.map(({ p, m }) => {
-    const dm           = p._derivedMetrics || derivePropertyMetrics(p);
-    const tenants      = Array.isArray(p.tenants)  ? p.tenants.length  : (Number(p.tenantCount)  || 0);
-    const invoices     = dm.invoiceStats.totalInvoices;
-    const cam          = m.total || Number(p.totalCAM) || 0;
+    const dm      = p._derivedMetrics || derivePropertyMetrics(p);
+    const tenants = Array.isArray(p.tenants) ? p.tenants.length : (Number(p.tenantCount) || 0);
+    const cam     = m.total || Number(p.totalCAM) || 0;
     const status       = p.status || 'in-progress';
 
     const riskBadge = (() => {
@@ -13963,7 +15169,6 @@ function renderPortfolio(props) {
       <div class="ptf-card-top">
         <div class="ptf-prop-name">${esc(p.name || '—')}</div>
         <div class="ptf-card-badges">
-          ${riskBadge}
           ${rdBadge}
         </div>
       </div>
@@ -13973,14 +15178,27 @@ function renderPortfolio(props) {
         ${trendHtml}
       </div>
       ${rdInsight}
+      ${(() => {
+        const ea = _propAlertMap.get(p.id);
+        if (!ea) return '';
+        const isExpired = ea.tier === 'expired';
+        const isUrgent  = isExpired || ea.tier === 'critical';
+        const cls   = isUrgent ? 'ptf-stat--alert' : 'ptf-stat--warn';
+        const label = isExpired ? `Expired` : 'Expiring';
+        return `<div class="ptf-lease-expiry-banner ptf-lease-expiry--${isUrgent ? 'urgent' : 'warn'}">
+          &#x1F514; ${ea.total} lease${ea.total !== 1 ? 's' : ''} ${label}
+        </div>`;
+      })()}
       <div class="ptf-stats-row">
         <div class="ptf-stat"><strong>${tenants}</strong>Tenants</div>
-        <div class="ptf-stat"><strong>${invoices}</strong>Invoices</div>
+        ${dm.reviewStats.flaggedLeaseCount > 0
+          ? `<div class="ptf-stat ptf-stat--warn"><strong>${dm.reviewStats.flaggedLeaseCount}</strong>Lease Warnings</div>`
+          : ''}
         ${dm.disputeStats.openDisputes > 0
           ? `<div class="ptf-stat ptf-stat--alert"><strong>${dm.disputeStats.openDisputes}</strong>Disputes</div>`
           : ''}
         ${m.missingDocs > 0
-          ? `<div class="ptf-stat ptf-stat--warn"><strong>${m.missingDocs}</strong>No Docs</div>`
+          ? `<div class="ptf-stat ptf-stat--warn"><strong>${m.missingDocs}</strong>Missing Docs</div>`
           : ''}
       </div>
       ${reviewChips.length > 0 ? `
@@ -13989,10 +15207,12 @@ function renderPortfolio(props) {
           ${reviewChips.map(c => `<span class="review-chip ${c.cls}">${esc(c.label)}</span>`).join('')}
           <span class="review-health ${healthCls}">${reviewHealth}% Healthy</span>
         </span>
-        <button class="review-queue-btn" onclick="event.stopPropagation();selectProperty('${pid}')">Review ›</button>
-      </div>` : ''}
-      <div class="ptf-cam-lbl">CAM This Period</div>
-      <div class="ptf-cam-val">${cam > 0 ? '$' + cam.toLocaleString('en-US') : '—'}</div>
+        <button class="review-queue-btn" onclick="event.stopPropagation();selectProperty('${pid}')">AI Review ›</button>
+      </div>` : `
+      <div class="ptf-card-action-row">
+        <button class="ptf-card-open-btn" onclick="event.stopPropagation();selectProperty('${pid}')">Open ›</button>
+      </div>`}
+      ${cam > 0 ? `<div class="ptf-cam-lbl">CAM Reconciled</div><div class="ptf-cam-val">$${cam.toLocaleString('en-US')}</div>` : ''}
       ${footParts.length ? `<div class="ptf-card-foot">${footParts.join('')}</div>` : ''}
       ${m.avgConf !== null
         ? `<div class="ptf-conf-bar" title="${m.avgConf}% avg. match confidence">
@@ -14000,7 +15220,22 @@ function renderPortfolio(props) {
            </div>`
         : ''}
     </div>`;
-  }).join('');
+  }).join('') || `
+    <div class="ptf-empty-state">
+      <div class="ptf-empty-icon">&#x1F3E2;</div>
+      <div class="ptf-empty-title">No properties yet</div>
+      <div class="ptf-empty-desc">Add your first property to get CAM reconciliation, cap enforcement, and audit-ready tenant statements — in about 5 minutes.</div>
+      <div class="ptf-empty-cta">
+        <button class="ptf-empty-btn-primary" onclick="addNewProperty()">+ Create First Property</button>
+        <button class="ptf-empty-btn-secondary" onclick="loadDemo()">&#x1F3AF; Try Live Demo</button>
+      </div>
+    </div>`;
+
+  // Hero identity text always visible — it's the brand anchor.
+  // Only hide the first-run CTA ("Start by running a demo…") once the user has properties.
+  const hasProps = props.length > 0;
+  const startEl = document.querySelector('.start-here');
+  if (startEl) startEl.style.display = hasProps ? 'none' : '';
 
   renderReviewQueue(props);
   _maybeShowWelcome(props);
@@ -14136,6 +15371,7 @@ async function backToPortfolio() {
   // ── 2. Show portfolio immediately — no waiting for network ────────────────
   activePropId = null;
   renderPortfolio(_props);
+  _renderAcqSection(_acqReviews);
   window.scrollTo({ top: 0, behavior: 'smooth' });
 }
 
@@ -14243,7 +15479,11 @@ function resetWorkflow() {
 function liveUpdateBreadcrumb(name) {
   const el = document.getElementById('breadcrumbPropName');
   if (el) el.textContent = name || 'New Property';
-  _obSyncState();
+  // Advance step bar once a real name is typed
+  if (name && name.trim() && name.trim() !== 'New Property') {
+    const sqft = parseFloat(document.getElementById('totalSqft')?.value) || 0;
+    if (sqft > 0) _obSyncState();
+  }
 }
 
 // ─── Supabase Persistence ─────────────────────────────────────────────────────
@@ -14584,7 +15824,11 @@ async function _doResyncTenantsToTable(propertyId, tenants) {
   // SECURITY: no client-side auth check here — propertyId comes from the caller.
   // Supabase RLS on the tenants table is the authoritative guard. Add RLS in Phase 8C-hardening.
   const { error: delErr } = await db.from('tenants').delete().eq('property_id', propertyId);
-  if (delErr) { console.error('[resyncTenantsToTable] delete error:', delErr.message); return; }
+  if (delErr) {
+    console.error('[resyncTenantsToTable] delete error:', delErr.message, '| code:', delErr.code);
+    showToast('⚠️ Tenant sync failed — ' + delErr.message, { color: '#92400e', textColor: '#fef3c7', duration: 5000 });
+    return;
+  }
   const rows = (tenants || [])
     .filter(t => t && t.tenant_name && !t._pendingJobReview)
     .map(t => ({
@@ -14600,7 +15844,10 @@ async function _doResyncTenantsToTable(propertyId, tenants) {
     }));
   if (rows.length === 0) return;
   const { error } = await db.from('tenants').insert(rows).select('id');
-  if (error) console.error('[resyncTenantsToTable] insert error:', error.message);
+  if (error) {
+    console.error('[resyncTenantsToTable] insert error:', error.message, '| code:', error.code);
+    showToast('⚠️ Tenant sync failed — ' + error.message, { color: '#92400e', textColor: '#fef3c7', duration: 5000 });
+  }
 }
 
 // Full replace: delete all rows for the property then insert the given list.
@@ -14861,7 +16108,7 @@ async function _runLeaseValidation(panelEl, tenant, recon, totalExpenses) {
   try {
     const resp = await fetch('/api/validate-lease', {
       method:  'POST',
-      headers: { 'Content-Type': 'application/json' },
+      headers: { 'Content-Type': 'application/json', ...(await _authHeaders()) },
       body:    JSON.stringify({
         leaseDocumentId:    leaseDoc.id,
         reconciliationData: { totalExpenses, year: getCamYear(), lineItems },
@@ -14934,7 +16181,7 @@ async function saveCamResults(propertyId, fullResults, year, totalExpenses = nul
   try {
     const resp = await fetch('/api/cam-reconciliations', {
       method:  'POST',
-      headers: { 'Content-Type': 'application/json' },
+      headers: { 'Content-Type': 'application/json', ...(await _authHeaders()) },
       body:    JSON.stringify({ propertyId, year, rows }),
     });
     const result = await resp.json().catch(() => ({}));
@@ -14952,7 +16199,9 @@ async function saveCamResults(propertyId, fullResults, year, totalExpenses = nul
 
 async function loadCamResults(propertyId, year) {
   if (!propertyId || !year) return [];
-  const resp = await fetch(`/api/cam-reconciliations?propertyId=${encodeURIComponent(propertyId)}&year=${encodeURIComponent(year)}`);
+  const resp = await fetch(`/api/cam-reconciliations?propertyId=${encodeURIComponent(propertyId)}&year=${encodeURIComponent(year)}`, {
+    headers: await _authHeaders(),
+  });
   if (!resp.ok) {
     const err = await resp.json().catch(() => ({}));
     console.error('[loadCamResults] error:', err.error);
@@ -14973,7 +16222,9 @@ async function loadCamResults(propertyId, year) {
 async function loadCamHistory(propertyId) {
   if (!propertyId) return [];
   try {
-    const resp = await fetch(`/api/cam-reconciliations?propertyId=${encodeURIComponent(propertyId)}&history=all`);
+    const resp = await fetch(`/api/cam-reconciliations?propertyId=${encodeURIComponent(propertyId)}&history=all`, {
+      headers: await _authHeaders(),
+    });
     if (!resp.ok) {
       const err = await resp.json().catch(() => ({}));
       console.error('[loadCamHistory] error:', err.error);
@@ -14995,7 +16246,7 @@ async function saveLeaseDocument({ propertyId, tenantId, tenantName, fileName, f
   try {
     const resp = await fetch('/api/lease-documents', {
       method:  'POST',
-      headers: { 'Content-Type': 'application/json' },
+      headers: { 'Content-Type': 'application/json', ...(await _authHeaders()) },
       body:    JSON.stringify({ propertyId, tenantId, tenantName, fileName, fileUrl, extractedText, parsingStatus, extractionModel, usedPdfDirect }),
     });
     const result = await resp.json().catch(() => ({}));
@@ -15014,7 +16265,9 @@ async function saveLeaseDocument({ propertyId, tenantId, tenantName, fileName, f
 async function loadLeaseDocuments(propertyId) {
   if (!propertyId) return [];
   try {
-    const resp = await fetch(`/api/lease-documents?propertyId=${encodeURIComponent(propertyId)}`);
+    const resp = await fetch(`/api/lease-documents?propertyId=${encodeURIComponent(propertyId)}`, {
+      headers: await _authHeaders(),
+    });
     if (!resp.ok) {
       const err = await resp.json().catch(() => ({}));
       console.error('[loadLeaseDocuments] error:', err.error);
@@ -15031,7 +16284,10 @@ async function loadLeaseDocuments(propertyId) {
 async function deleteLeaseDocument(id) {
   if (!id) return { ok: false, reason: 'missing id' };
   try {
-    const resp = await fetch(`/api/lease-documents?id=${encodeURIComponent(id)}`, { method: 'DELETE' });
+    const resp = await fetch(`/api/lease-documents?id=${encodeURIComponent(id)}`, {
+      method: 'DELETE',
+      headers: await _authHeaders(),
+    });
     const result = await resp.json().catch(() => ({}));
     if (!resp.ok) {
       return { ok: false, reason: result.error || `HTTP ${resp.status}` };
@@ -15051,11 +16307,15 @@ function renderLeaseCenter(propertyId) {
   loadLeaseDocuments(propertyId).then(docs => {
     if (!docs.length) {
       panel.innerHTML = `
-        <div style="padding:32px 0;text-align:center;color:#64748b;">
-          <div style="font-size:2.2rem;margin-bottom:10px;">&#x1F4C4;</div>
-          <div style="font-weight:700;font-size:1rem;margin-bottom:6px;color:#94a3b8;">No leases stored yet</div>
-          <div style="font-size:0.82rem;margin-bottom:16px;">Upload PDFs in the <strong style="color:#C9973A;">Upload All Leases</strong> tab — documents appear here automatically.</div>
-          <button class="ptf-empty-btn-secondary" onclick="switchLeaseTab('bulk')" style="font-size:0.8rem;">Go to Upload Leases &#x2191;</button>
+        <div style="padding:24px 0;text-align:center;color:#64748b;">
+          <div style="font-size:2rem;margin-bottom:8px;">📄</div>
+          <div style="font-weight:600;margin-bottom:4px;color:#94a3b8;">No leases stored yet</div>
+          <div style="font-size:0.8rem;margin-bottom:12px;max-width:320px;margin-left:auto;margin-right:auto;">
+            Upload lease PDFs in the <strong style="color:#818cf8;">Upload Leases</strong> tab.
+            Once extracted, you can ask questions about any lease here.
+          </div>
+          <button style="padding:7px 16px;background:#4f46e5;border:none;border-radius:7px;color:#fff;font-size:0.76rem;font-weight:700;cursor:pointer;"
+            onclick="switchLeaseTab('bulk')">Go to Upload Leases ↑</button>
         </div>`;
       return;
     }
@@ -15064,7 +16324,7 @@ function renderLeaseCenter(propertyId) {
       const statusColor = { success: '#22c55e', partial: '#f59e0b', failed: '#ef4444', pending: '#94a3b8' }[doc.parsing_status] || '#94a3b8';
       const uploadDate  = doc.created_at ? new Date(doc.created_at).toLocaleDateString() : '—';
       const modelLabel  = doc.used_pdf_direct ? 'PDF vision' : (doc.extraction_model ? 'text' : '—');
-      const tenantLabel = doc.tenant_name || '<span style="color:#64748b;font-style:italic;">Unknown</span>';
+      const tenantLabel = doc.tenant_name ? esc(doc.tenant_name) : '<span style="color:#64748b;font-style:italic;">Unknown</span>';
       const safeUrl     = doc.file_url ? doc.file_url.replace(/\\/g, '\\\\').replace(/'/g, "\\'") : '';
       const viewBtn     = doc.file_url
         ? `<button class="lc-view-btn" onclick="openLeaseModal('${safeUrl}')">View</button>`
@@ -15074,8 +16334,8 @@ function renderLeaseCenter(propertyId) {
 
       const dataRow = `<tr id="lc-row-${doc.id}">
         <td>${tenantLabel}</td>
-        <td style="max-width:180px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;" title="${doc.file_name}">${doc.file_name}</td>
-        <td><span class="lc-status-badge" style="background:${statusColor}22;color:${statusColor};border:1px solid ${statusColor}44;">${doc.parsing_status}</span></td>
+        <td style="max-width:180px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;" title="${esc(doc.file_name)}">${esc(doc.file_name)}</td>
+        <td><span class="lc-status-badge" style="background:${statusColor}22;color:${statusColor};border:1px solid ${statusColor}44;">${esc(doc.parsing_status)}</span></td>
         <td style="color:#94a3b8;">${modelLabel}</td>
         <td style="color:#94a3b8;">${uploadDate}</td>
         <td style="text-align:right;white-space:nowrap;">${viewBtn} ${askBtn} ${deleteBtn}</td>
@@ -15146,12 +16406,12 @@ async function _submitLeaseQuestion(docId) {
   try {
     const resp   = await fetch('/api/ask-lease', {
       method:  'POST',
-      headers: { 'Content-Type': 'application/json' },
+      headers: { 'Content-Type': 'application/json', ...(await _authHeaders()) },
       body:    JSON.stringify({ leaseDocumentId: docId, question }),
     });
     const result = await resp.json().catch(() => ({}));
     if (!resp.ok || result.error) {
-      ansEl.innerHTML = `<span class="lc-answer-error">${result.error || 'Request failed — check console for details.'}</span>`;
+      ansEl.innerHTML = `<span class="lc-answer-error">${esc(result.error || 'Request failed — check console for details.')}</span>`;
     } else {
       const safe = result.answer
         .replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;')
@@ -15215,7 +16475,7 @@ async function uploadLeaseToStorage(file, propertyId) {
     const fileBase64 = await toBase64(file);
     const resp = await fetch('/api/upload', {
       method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
+      headers: { 'Content-Type': 'application/json', ...(await _authHeaders()) },
       body: JSON.stringify({ fileName, fileType: file.type, fileBase64, bucket: 'leases' }),
     });
     const result = await resp.json();
@@ -15282,8 +16542,10 @@ async function saveProperty(property) {
     };
 
     if (id) {
+      const { data: { user: _u } } = await db.auth.getUser();
+      if (!_u?.id) throw new Error('Not authenticated');
       const { error } = await db.from('properties')
-        .upsert({ id, ...payload })
+        .upsert({ id, ...payload, user_id: _u.id })
         .select('id');
       if (error) throw error;
     } else {
@@ -15841,6 +17103,9 @@ function renderProperty(property) {
   document.getElementById('propertyBreadcrumb').style.display  = 'flex';
   document.getElementById('mainWorkflow').style.display        = 'block';
 
+  // Sync onboarding step bar + contextual hints from current property state
+  _obSyncState();
+
   window.scrollTo({ top: 0, behavior: 'smooth' });
   _obSyncState();
 }
@@ -15866,6 +17131,68 @@ async function clearPropertyData() {
   resetWorkflow();
   document.getElementById('propertyName').value = savedName;
   document.getElementById('totalSqft').value    = savedSqft;
+}
+
+function openDeletePropertyModal() {
+  if (!activePropId) return;
+  const prop = _props.find(p => p.id === activePropId);
+  document.getElementById('delModalPropName').textContent = prop?.name || 'This Property';
+  document.getElementById('delModalConfirmBtn').disabled  = false;
+  document.getElementById('delModalConfirmBtn').textContent = 'Delete Property';
+  document.getElementById('delModalCancelBtn').disabled   = false;
+  document.getElementById('deletePropertyModal').classList.add('open');
+}
+
+function closeDeletePropertyModal() {
+  document.getElementById('deletePropertyModal').classList.remove('open');
+}
+
+async function confirmDeleteProperty() {
+  if (!activePropId) return;
+  const propId   = activePropId;
+  const propName = _props.find(p => p.id === propId)?.name || 'Property';
+
+  const confirmBtn = document.getElementById('delModalConfirmBtn');
+  const cancelBtn  = document.getElementById('delModalCancelBtn');
+  confirmBtn.disabled  = true;
+  confirmBtn.textContent = 'Deleting…';
+  cancelBtn.disabled   = true;
+
+  try {
+    // Delete tenants explicitly (cascade from properties may not cover the tenants table)
+    const { error: tenantErr } = await db.from('tenants').delete().eq('property_id', propId);
+    if (tenantErr) throw tenantErr;
+    // Delete the property — all child tables cascade (cam_reconciliations, lease_documents,
+    // lease_jobs, tenant_field_evidence, tenant_review_audit all have ON DELETE CASCADE)
+    const { error } = await db.from('properties').delete().eq('id', propId);
+    if (error) throw error;
+  } catch (e) {
+    confirmBtn.disabled  = false;
+    confirmBtn.textContent = 'Delete Property';
+    cancelBtn.disabled   = false;
+    alert('Delete failed: ' + (e.message || String(e)));
+    return;
+  }
+
+  // Remove from in-memory state
+  const idx = _props.findIndex(p => p.id === propId);
+  if (idx >= 0) _props.splice(idx, 1);
+  const pidx = portfolio.findIndex(p => p.id === propId);
+  if (pidx >= 0) portfolio.splice(pidx, 1);
+
+  // Remove from localStorage
+  try {
+    const stored = JSON.parse(_lsGet(_lsUserKey()) || '{}');
+    delete stored[propId];
+    _lsSet(_lsUserKey(), JSON.stringify(stored));
+  } catch (_) {}
+
+  logActivity('property_deleted', `Property deleted: ${propName}`, { severity: 'warning', actor: 'User' });
+
+  closeDeletePropertyModal();
+  activePropId = null;
+  renderPortfolio(_props);
+  window.scrollTo({ top: 0, behavior: 'smooth' });
 }
 
 // Re-draw the results cards from a reconciliation snapshot.
@@ -16068,9 +17395,832 @@ function _renderTenantPropertyView(property) {
   if (welcome) welcome.style.display = 'none';
 }
 
+// ─── Acquisition Review ───────────────────────────────────────────────────────
+
+async function _loadAcqReviews() {
+  try {
+    const { data: { user } } = await db.auth.getUser();
+    if (!user?.id) return [];
+    const { data, error } = await db
+      .from('acquisition_reviews')
+      .select('id, name, status, data, created_at, updated_at')
+      .eq('user_id', user.id)
+      .order('created_at', { ascending: false });
+    if (error) { console.warn('[acq] load error:', error.message); return []; }
+    return data || [];
+  } catch (e) {
+    console.warn('[acq] _loadAcqReviews failed:', e.message);
+    return [];
+  }
+}
+
+async function _saveAcqReview(review) {
+  try {
+    const { data: { user } } = await db.auth.getUser();
+    if (!user?.id) return false;
+    const { error } = await db
+      .from('acquisition_reviews')
+      .upsert({ ...review, user_id: user.id }, { onConflict: 'id' });
+    if (error) {
+      console.error('[acq] save error:', error.message, '| code:', error.code);
+      showToast('⚠️ Review save failed — ' + error.message, { color: '#92400e', textColor: '#fef3c7', duration: 5000 });
+      return false;
+    }
+    return true;
+  } catch (e) {
+    console.error('[acq] _saveAcqReview failed:', e.message);
+    showToast('⚠️ Review save failed — please try again', { color: '#92400e', textColor: '#fef3c7', duration: 5000 });
+    return false;
+  }
+}
+
+async function _loadAcqReviewsAndRender() {
+  const reviews = await _loadAcqReviews();
+  _acqReviews = reviews;
+  _renderAcqSection(reviews);
+}
+
+function _renderAcqSection(reviews) {
+  const grid = document.getElementById('acqReviewsGrid');
+  if (!grid) return;
+  if (!reviews.length) {
+    grid.innerHTML = '<div class="acq-empty">No due diligence reviews yet. Start one to analyze a property before acquisition.</div>';
+    return;
+  }
+  grid.innerHTML = reviews.map(r => {
+    const d = r.data || {};
+    const tenantCount  = (d.tenants  || []).length;
+    const invoiceCount = (d.invoices || []).length;
+    const date = r.created_at ? new Date(r.created_at).toLocaleDateString() : '';
+    const convertedNote = r.status === 'converted' && d.conversionRecord?.convertedAt
+      ? `<div class="acq-card-converted-note">Acquired ${new Date(d.conversionRecord.convertedAt).toLocaleDateString()}</div>`
+      : '';
+    return `
+    <div class="acq-card${r.status === 'converted' ? ' converted' : ''}" onclick="selectAcquisitionReview('${esc(r.id)}')">
+      <div class="acq-card-name">${esc(r.name)}</div>
+      <div class="acq-card-meta">${esc(date)}</div>
+      <span class="acq-card-status ${esc(r.status)}">${esc(r.status)}</span>
+      ${convertedNote}
+      <div class="acq-card-stats">
+        <div class="acq-card-stat"><strong>${tenantCount}</strong> Tenants</div>
+        <div class="acq-card-stat"><strong>${invoiceCount}</strong> Invoices</div>
+      </div>
+    </div>`;
+  }).join('');
+}
+
+async function createAcquisitionReview() {
+  const name = prompt('Due diligence review name (e.g. "123 Main Street"):');
+  if (!name || !name.trim()) return;
+  try {
+    const { data: { user } } = await db.auth.getUser();
+    if (!user?.id) { alert('Please sign in first.'); return; }
+    const id = crypto.randomUUID ? crypto.randomUUID() : _genUUID();
+    const review = {
+      id,
+      user_id:    user.id,
+      name:       name.trim(),
+      status:     'draft',
+      data:       { tenants: [], invoices: [], totalSqFt: 0, documents: [], analysis: null },
+      created_at: new Date().toISOString(),
+      updated_at: new Date().toISOString(),
+    };
+    const { error } = await db.from('acquisition_reviews').insert(review);
+    if (error) {
+      const code = error.code || '';
+      let hint = '';
+      if (code === '42P01') hint = '\n\nFix: run migrations/006_acquisition_reviews.sql in Supabase.';
+      else if (code === '42501' || code === 'PGRST301') hint = '\n\nFix: RLS policy blocked the insert — check acq_reviews_owner_all policy.';
+      console.error('[acq] create error:', error.code, error.message);
+      alert('Could not create review.\n\n' + error.message + hint);
+      return;
+    }
+    _acqReviews.unshift(review);
+    _renderAcqSection(_acqReviews);
+    selectAcquisitionReview(id);
+  } catch (e) {
+    console.error('[acq] createAcquisitionReview:', e.message);
+    alert('Could not create review.\n\n' + e.message);
+  }
+}
+
+function selectAcquisitionReview(id) {
+  const review = _acqReviews.find(r => r.id === id);
+  if (!review) return;
+  _activeAcqId        = id;
+  _acqActiveTab       = 'risk';
+  _acqRentRollSort    = { col: 'tenant_name', dir: 'asc' };
+  const d = review.data || {};
+  _acqTenants  = Array.isArray(d.tenants)  ? d.tenants  : [];
+  _acqInvoices = Array.isArray(d.invoices) ? d.invoices : [];
+  _acqSqFt     = d.totalSqFt || 0;
+
+  document.getElementById('portfolioDashboard').style.display = 'none';
+  document.getElementById('acqDetailPanel').style.display     = 'block';
+  document.getElementById('propertyBreadcrumb').style.display = 'none';
+  document.getElementById('mainWorkflow').style.display       = 'none';
+
+  document.getElementById('acqDetailTitle').textContent = review.name;
+  const badge = document.getElementById('acqDetailBadge');
+  badge.textContent = review.status;
+  badge.className = 'acq-detail-badge ' + review.status;
+  _renderAcqConvertAction(review);
+
+  const sqftEl = document.getElementById('acqTotalSqft');
+  if (sqftEl) sqftEl.value = _acqSqFt || '';
+
+  _renderAcqLeaselist();
+  _renderAcqInvoiceList();
+  _updateAcqAnalyzeBtn();
+
+  if (d.analysis) {
+    _renderAcqReport(d.analysis, document.getElementById('acqReportContainer'));
+  } else {
+    document.getElementById('acqReportContainer').innerHTML = '';
+  }
+}
+
+function closeAcquisitionDetail() {
+  _activeAcqId = null;
+  _acqTenants  = [];
+  _acqInvoices = [];
+  document.getElementById('acqDetailPanel').style.display     = 'none';
+  document.getElementById('portfolioDashboard').style.display = 'block';
+  _renderAcqSection(_acqReviews);
+  window.scrollTo({ top: 0, behavior: 'smooth' });
+}
+
+// ── Acquisition → Property conversion ─────────────────────────────────────────
+
+function _renderAcqConvertAction(review) {
+  const el = document.getElementById('acqConvertAction');
+  if (!el) return;
+  const cr = review?.data?.conversionRecord;
+  if (cr?.propertyId) {
+    el.innerHTML = `<span class="acq-converted-link"
+      onclick="event.preventDefault();closeAcquisitionDetail();selectProperty('${esc(cr.propertyId)}')">
+      Converted ✓ — Open Property →</span>`;
+  } else if (review.status === 'complete') {
+    el.innerHTML = `<button class="acq-convert-btn" onclick="_showAcqConvertModal()"
+      title="Create a managed property from this acquisition review">
+      &#x1F3E2; Acquire Property</button>`;
+  } else {
+    el.innerHTML = '';
+  }
+}
+
+function _showAcqConvertModal() {
+  const review = _acqReviews.find(r => r.id === _activeAcqId);
+  if (!review) return;
+  const nameEl = document.getElementById('acqConvertModalName');
+  if (nameEl) nameEl.textContent = review.name;
+  document.getElementById('acqConvertModal').style.display = 'flex';
+}
+
+function _hideAcqConvertModal() {
+  document.getElementById('acqConvertModal').style.display = 'none';
+}
+
+async function convertAcquisitionToProperty() {
+  const review = _acqReviews.find(r => r.id === _activeAcqId);
+  if (!review) return;
+
+  // Duplicate prevention
+  if (review.data?.conversionRecord?.propertyId) {
+    _hideAcqConvertModal();
+    alert('This review has already been converted.\nProperty ID: ' + review.data.conversionRecord.propertyId);
+    return;
+  }
+
+  const confirmBtn = document.getElementById('acqConvertConfirmBtn');
+  if (confirmBtn) { confirmBtn.disabled = true; confirmBtn.textContent = 'Converting…'; }
+
+  try {
+    // Build the property object from the review (pure engine function)
+    const prop = AcquisitionEngine.buildPropertyFromReview(review);
+
+    // Register in _props immediately so portfolio renders without a round-trip
+    _props.push(prop);
+
+    // Persist to Supabase — assigns prop.id
+    await saveProperty(prop);
+
+    // Sync qualified tenants to the tenants table
+    const qualifiedTenants = prop.tenants.filter(
+      t => t?.tenant_name && !t?.extractionFailed
+    );
+    if (prop.id && qualifiedTenants.length) {
+      await resyncTenantsToTable(prop.id, qualifiedTenants);
+    }
+
+    // Build the conversion record stored back on the review
+    const conversionRecord = {
+      propertyId:   prop.id,
+      propertyName: prop.name,
+      convertedAt:  prop._conversionSource.convertedAt,
+      occupancyAtAcquisition: prop._conversionSource.occupancyAtAcquisition,
+      waltAtAcquisition:      prop._conversionSource.waltAtAcquisition,
+    };
+
+    // Mark review as converted (in-memory + DB)
+    review.status = 'converted';
+    review.data   = Object.assign({}, review.data, { conversionRecord });
+    await _saveAcqReview(review);
+
+    // Update detail header badge + action area
+    const badge = document.getElementById('acqDetailBadge');
+    if (badge) { badge.textContent = 'converted'; badge.className = 'acq-detail-badge converted'; }
+    _renderAcqConvertAction(review);
+
+    // Refresh portfolio grid so the card shows 'converted' badge
+    _renderAcqSection(_acqReviews);
+
+    _hideAcqConvertModal();
+
+    console.log('[acq] converted review', review.id, '→ property', prop.id);
+  } catch (e) {
+    console.error('[acq] convertAcquisitionToProperty:', e.message);
+    alert('Conversion failed.\n\n' + e.message);
+  } finally {
+    if (confirmBtn) { confirmBtn.disabled = false; confirmBtn.textContent = 'Acquire Property'; }
+  }
+}
+
+function _renderAcqLeaselist() {
+  const el = document.getElementById('acqLeaseList');
+  if (!el) return;
+  if (!_acqTenants.length) {
+    el.innerHTML = '<li style="color:#475569;font-size:0.78rem;">No leases uploaded</li>';
+    return;
+  }
+  el.innerHTML = _acqTenants.map(t => {
+    const name = esc(t.tenant_name || t.tenantName || '(extracting…)');
+    const dot  = t._status === 'error' ? 'error' : 'ok';
+    return `<li class="acq-file-item"><span class="acq-file-dot ${dot}"></span>${name}</li>`;
+  }).join('');
+}
+
+function _renderAcqInvoiceList() {
+  const el = document.getElementById('acqInvoiceList');
+  if (!el) return;
+  if (!_acqInvoices.length) {
+    el.innerHTML = '<li style="color:#475569;font-size:0.78rem;">No invoices uploaded</li>';
+    return;
+  }
+  el.innerHTML = _acqInvoices.map(inv => {
+    const name = esc(inv.vendorName || inv.fileName || '(processing…)');
+    const amt  = inv.amount ? ' — $' + parseFloat(inv.amount).toLocaleString() : '';
+    const dot  = inv._error ? 'error' : 'ok';
+    return `<li class="acq-file-item"><span class="acq-file-dot ${dot}"></span>${name}${amt}</li>`;
+  }).join('');
+}
+
+function _updateAcqAnalyzeBtn() {
+  const btn  = document.getElementById('acqAnalyzeBtn');
+  const note = document.getElementById('acqAnalyzeNote');
+  if (!btn) return;
+  const hasTenants  = _acqTenants.some(t => t.tenant_name || t.tenantName);
+  const hasInvoices = _acqInvoices.some(i => i.amount);
+  const hasSqFt     = _acqSqFt > 0;
+  const ready = hasTenants && hasInvoices && hasSqFt;
+  btn.disabled = !ready;
+  if (note) {
+    note.textContent = !hasTenants  ? 'Upload at least one lease to enable analysis.'
+                     : !hasInvoices ? 'Upload at least one invoice to enable analysis.'
+                     : !hasSqFt    ? 'Enter total property square footage above.'
+                     : 'Ready — click to run risk analysis.';
+  }
+}
+
+function acqSaveSqft(val) {
+  _acqSqFt = parseFloat(val) || 0;
+  const review = _acqReviews.find(r => r.id === _activeAcqId);
+  if (review) { review.data = review.data || {}; review.data.totalSqFt = _acqSqFt; }
+  _updateAcqAnalyzeBtn();
+}
+
+async function acqHandleLeaseFiles(fileList) {
+  const files = Array.from(fileList);
+  if (!files.length) return;
+  const review = _acqReviews.find(r => r.id === _activeAcqId);
+  if (!review) return;
+
+  for (const file of files) {
+    const placeholder = { tenant_name: file.name, _status: 'pending', _fileName: file.name };
+    _acqTenants.push(placeholder);
+    _renderAcqLeaselist();
+
+    try {
+      const leaseText = await extractLeaseText(file);
+      let extracted;
+      if (leaseText && leaseText.length >= 50) {
+        extracted = await callClaudeForLease(leaseText);
+      } else {
+        extracted = await callClaudeWithPdfDirect(file);
+      }
+      if (!extracted) throw new Error('Extraction returned null');
+      const normalized = normalizeTenant(extracted);
+      Object.assign(placeholder, normalized, { _status: 'ok', _fileName: file.name });
+    } catch (e) {
+      console.warn('[acq] lease extraction failed:', file.name, e.message);
+      placeholder.tenant_name = file.name.replace(/\.[^.]+$/, '');
+      placeholder._status = 'error';
+      placeholder._error  = e.message;
+    }
+
+    _renderAcqLeaselist();
+    _updateAcqAnalyzeBtn();
+  }
+
+  review.data = review.data || {};
+  review.data.tenants = _acqTenants.filter(t => t._status !== 'error');
+  review.updated_at   = new Date().toISOString();
+  _saveAcqReview(review);
+  document.getElementById('acqLeaseInput').value = '';
+}
+
+async function acqHandleInvoiceFiles(fileList) {
+  const files = Array.from(fileList);
+  if (!files.length) return;
+  const review = _acqReviews.find(r => r.id === _activeAcqId);
+  if (!review) return;
+
+  for (const file of files) {
+    const placeholder = { vendorName: file.name, amount: null, _status: 'pending', fileName: file.name };
+    _acqInvoices.push(placeholder);
+    _renderAcqInvoiceList();
+
+    try {
+      const d = await callClaude(file, INVOICE_PROMPT);
+      if (d) {
+        const vendorName = d.vendorName || file.name.replace(/\.(pdf|jpe?g|png|webp)$/i, '');
+        let category     = d.category || 'other';
+        if (category === 'other') {
+          const norm = normalizeCategory(vendorName, '');
+          if (norm) category = norm.category;
+        }
+        Object.assign(placeholder, {
+          vendorName:  cleanHTML(vendorName),
+          amount:      d.amount || null,
+          category,
+          invoiceDate: cleanHTML(d.invoiceDate || ''),
+          _status:     'ok',
+        });
+      } else {
+        placeholder._status = 'error';
+        placeholder._error  = 'Extraction returned null';
+      }
+    } catch (e) {
+      console.warn('[acq] invoice extraction failed:', file.name, e.message);
+      placeholder._status = 'error';
+      placeholder._error  = e.message;
+    }
+
+    _renderAcqInvoiceList();
+    _updateAcqAnalyzeBtn();
+  }
+
+  review.data = review.data || {};
+  review.data.invoices = _acqInvoices.filter(i => i._status !== 'error' && i.amount);
+  review.updated_at    = new Date().toISOString();
+  _saveAcqReview(review);
+  document.getElementById('acqInvoiceInput').value = '';
+}
+
+async function runAcquisitionAnalysis() {
+  const review = _acqReviews.find(r => r.id === _activeAcqId);
+  if (!review) return;
+  const btn = document.getElementById('acqAnalyzeBtn');
+  if (btn) { btn.disabled = true; btn.textContent = '⏳ Analyzing…'; }
+
+  try {
+    const AE = window.AcquisitionEngine;
+    if (!AE) throw new Error('AcquisitionEngine not loaded');
+
+    const tenants  = _acqTenants.filter(t => (t.tenant_name || t.tenantName) && t._status !== 'error');
+    const invoices = _acqInvoices.filter(i => i.amount && i._status !== 'error');
+    const report   = AE.buildAcquisitionReport(tenants, invoices, _acqSqFt);
+
+    review.data      = review.data || {};
+    review.data.analysis = report;
+    review.status    = 'complete';
+    review.updated_at = new Date().toISOString();
+
+    const badge = document.getElementById('acqDetailBadge');
+    if (badge) { badge.textContent = 'complete'; badge.className = 'acq-detail-badge complete'; }
+
+    await _saveAcqReview(review);
+    _renderAcqSection(_acqReviews);
+    _renderAcqReport(report, document.getElementById('acqReportContainer'));
+  } catch (e) {
+    console.error('[acq] analysis failed:', e.message);
+    const cont = document.getElementById('acqReportContainer');
+    if (cont) cont.innerHTML = `<div style="color:#f87171;padding:16px;">Analysis failed: ${esc(e.message)}</div>`;
+  }
+
+  if (btn) { btn.disabled = false; btn.textContent = '⚡ Run Analysis'; }
+}
+
+function _renderAcqReport(report, container) {
+  if (!container) return;
+  if (report.error) {
+    container.innerHTML = `<div style="color:#f87171;padding:16px;">${esc(report.error)}</div>`;
+    return;
+  }
+  const s   = report.summary;
+  const fmt = v => v != null ? '$' + parseFloat(v).toLocaleString('en-US', { maximumFractionDigits: 0 }) : '—';
+  const pct = v => v != null ? v + '%' : '—';
+
+  const missedCls  = s.annualMissedRecovery > 0 ? 'danger' : 'safe';
+  const recoverCls = s.recoveryRate >= 90 ? 'safe' : s.recoveryRate >= 70 ? '' : 'danger';
+
+  // ── Tenant Summary ──────────────────────────────────────────────────────────
+  const tenantSummaryHtml = (() => {
+    const ts = report.tenantSummary || [];
+    if (!ts.length) return '';
+    const fmtDate = iso => {
+      if (!iso) return '—';
+      const d = new Date(iso + 'T12:00:00');
+      return isNaN(d.getTime()) ? String(iso) : d.toLocaleDateString('en-US', { month: 'short', year: 'numeric' });
+    };
+    const fmtMoney = v => v != null ? '$' + Number(v).toLocaleString('en-US', { maximumFractionDigits: 0 }) : '—';
+    const fmtSqft  = v => v != null ? Number(v).toLocaleString('en-US') + ' sf' : '—';
+    const rows = ts.map(t => `
+      <tr>
+        <td class="acq-ts-name">${esc(t.tenant_name)}</td>
+        <td>${esc(t.suite || '—')}</td>
+        <td>${fmtSqft(t.leased_sqft)}</td>
+        <td class="acq-ts-term">${fmtDate(t.lease_start)}&nbsp;–&nbsp;${fmtDate(t.lease_end)}</td>
+        <td>${fmtMoney(t.base_rent)}/yr</td>
+        <td class="acq-ts-renewal">${esc(t.renewal_options || '—')}</td>
+        <td>${fmtMoney(t.security_deposit)}</td>
+        <td class="acq-ts-cam">${esc(t.cam_structure || '—')}</td>
+      </tr>`).join('');
+    return `
+    <div class="acq-ts-section">
+      <div class="acq-section-sub" style="margin-top:0">Tenant Summary</div>
+      <div class="acq-ts-scroll">
+        <table class="acq-ts-table">
+          <thead><tr>
+            <th>Tenant</th><th>Suite</th><th>Sq Ft</th><th>Lease Term</th>
+            <th>Base Rent/yr</th><th>Renewal</th><th>Deposit</th><th>CAM Structure</th>
+          </tr></thead>
+          <tbody>${rows}</tbody>
+        </table>
+      </div>
+    </div>`;
+  })();
+
+  const kpis = `
+  <div class="acq-kpi-row">
+    <div class="acq-kpi"><div class="acq-kpi-val ${recoverCls}">${pct(s.recoveryRate)}</div><div class="acq-kpi-lbl">Recovery Rate</div></div>
+    <div class="acq-kpi"><div class="acq-kpi-val ${missedCls}">${fmt(s.annualMissedRecovery)}</div><div class="acq-kpi-lbl">Annual Missed Recovery</div></div>
+    <div class="acq-kpi"><div class="acq-kpi-val ${s.capLeakageAnnualized > 0 ? 'danger' : 'safe'}">${fmt(s.capLeakageAnnualized)}</div><div class="acq-kpi-lbl">Annualized Cap Leakage</div></div>
+    <div class="acq-kpi"><div class="acq-kpi-val">${s.tenantCount}</div><div class="acq-kpi-lbl">Tenants</div></div>
+    <div class="acq-kpi"><div class="acq-kpi-val">${s.openAuditWindows}</div><div class="acq-kpi-lbl">Open Audit Windows</div></div>
+  </div>`;
+
+  const icons = { cap_leakage: '⚠️', structural_gap: '🔒', operational_gap: '🔧',
+                  unusual_exclusions: '📋', renewal_risk: '📅' };
+
+  const riskItems = report.topRisks.map(r => `
+    <div class="acq-risk-item">
+      <span class="acq-risk-icon">${icons[r.type] || '⚠️'}</span>
+      <div>
+        <div class="acq-risk-label">${esc(r.label)}</div>
+        <div class="acq-risk-detail">${esc(r.detail)}</div>
+      </div>
+      ${r.annualImpact ? `<div class="acq-risk-impact">${fmt(r.annualImpact)}/yr</div>` : ''}
+    </div>`).join('');
+
+  const topRisksHtml = report.topRisks.length
+    ? `<div class="acq-top-risks"><h3>&#x26A0;&#xFE0F; Top Risks</h3>${riskItems}</div>`
+    : '';
+
+  // ── Citation-backed findings ───────────────────────────────────────────────
+  const findingsHtml = (() => {
+    const ff = (report.findings || []);
+    if (!ff.length) return '';
+    const typeIcons = { cap_leakage: '⚠️', unusual_exclusion: '📋', audit_window: '🕐',
+                        underbilling: '💸', renewal_risk: '📅' };
+    const items = ff.map(f => {
+      const citHtml = f.citation
+        ? `<div class="acq-finding-cite">&#x201C;${esc(f.citation.text)}&#x201D;</div>`
+        : '';
+      const valHtml = f.annualValue
+        ? `<div class="acq-risk-impact">${fmt(f.annualValue)}/yr</div>`
+        : '';
+      return `
+      <div class="acq-finding-item">
+        <span class="acq-risk-icon">${typeIcons[f.type] || '⚠️'}</span>
+        <div class="acq-finding-body">
+          <div class="acq-finding-header">
+            <span class="acq-finding-tenant">${esc(f.tenantName)}</span>
+            <span class="acq-finding-label">${esc(f.label)}</span>
+          </div>
+          ${citHtml}
+        </div>
+        ${valHtml}
+      </div>`;
+    }).join('');
+    return `<div class="acq-section-sub">Key Findings with Lease Citations</div>
+    <div class="acq-findings-list">${items}</div>`;
+  })();
+
+  // ── Tenant-level recon table ───────────────────────────────────────────────
+  const rows = (report.underbilling || []).map(r => {
+    const badgeCls = r.cause === 'none' ? 'none' : r.cause;
+    return `
+    <tr>
+      <td>${esc(r.tenantName)}</td>
+      <td>${fmt(r.fullLiability)}</td>
+      <td>${fmt(r.allocatedAmount)}</td>
+      <td>${fmt(r.gap)}</td>
+      <td><span class="acq-risk-badge ${badgeCls}">${esc(r.cause)}</span></td>
+    </tr>`;
+  }).join('');
+
+  const tenantTable = rows ? `
+  <div class="acq-section-sub">Tenant-Level Reconciliation</div>
+  <table class="acq-risk-table">
+    <thead><tr>
+      <th>Tenant</th><th>Full Liability</th><th>Allocated</th><th>Gap</th><th>Cause</th>
+    </tr></thead>
+    <tbody>${rows}</tbody>
+  </table>` : '';
+
+  // ── Audit windows ──────────────────────────────────────────────────────────
+  const auditChips = (report.auditWindows || []).map(w =>
+    `<span class="acq-audit-chip ${esc(w.windowStatus)}">${esc(w.tenantName)} — ${esc(w.windowStatus)}</span>`
+  ).join('');
+  const auditHtml = auditChips
+    ? `<div class="acq-section-sub">Audit Windows</div><div>${auditChips}</div>`
+    : '';
+
+  // ── Renewal risk ───────────────────────────────────────────────────────────
+  const renewalHtml = (() => {
+    const rr = (report.renewalRisk || []);
+    if (!rr.length) return '';
+    const chips = rr.map(r => {
+      const cls  = r.riskLevel === 'critical' ? 'acq-audit-chip expired'
+                 : r.riskLevel === 'high'     ? 'acq-audit-chip closing'
+                 : 'acq-audit-chip unknown';
+      const days = r.daysToExpiry !== null
+        ? (r.daysToExpiry < 0 ? 'Expired' : `${r.daysToExpiry}d`)
+        : '?';
+      return `<span class="${cls}">${esc(r.tenantName)} — ${days}</span>`;
+    }).join('');
+    return `<div class="acq-section-sub">Lease Expiry Risk</div><div>${chips}</div>`;
+  })();
+
+  // ── Pro-rata flags ─────────────────────────────────────────────────────────
+  const proRataHtml = (() => {
+    const pr = (report.proRataRisk || []).filter(r => r.isNonStandard);
+    if (!pr.length) return '';
+    const chips = pr.map(r =>
+      `<span class="acq-audit-chip closing">${esc(r.tenantName)} — ${esc(r.proRataMethod || 'unknown')}</span>`
+    ).join('');
+    return `<div class="acq-section-sub">Non-Standard Pro-Rata Methods</div><div>${chips}</div>`;
+  })();
+
+  const exportBar = `
+  <div class="acq-export-bar">
+    <button class="acq-export-btn" onclick="acqExportPdf()">&#x1F4E5; Export PDF</button>
+    <span class="acq-export-note">PDF export coming soon — full report with citations.</span>
+  </div>`;
+
+  const riskTabContent = `${kpis}${topRisksHtml}${findingsHtml}${tenantTable}${auditHtml}${renewalHtml}${proRataHtml}${exportBar}`;
+  const rrTabContent   = _renderRentRollTab(report.rentRoll, report.tenantSummary || []);
+
+  container.innerHTML = `
+  <div class="acq-report">
+    <div class="acq-report-tabs">
+      <button class="acq-tab${_acqActiveTab === 'risk'    ? ' active' : ''}" data-tab="risk"     onclick="switchAcqTab('risk')">Risk Analysis</button>
+      <button class="acq-tab${_acqActiveTab === 'rentroll'? ' active' : ''}" data-tab="rentroll" onclick="switchAcqTab('rentroll')">&#x1F4CA;&nbsp;Rent Roll</button>
+    </div>
+    <div id="acqTabRisk" class="acq-tab-pane"${_acqActiveTab !== 'risk'     ? ' style="display:none"' : ''}>
+      ${riskTabContent}
+    </div>
+    <div id="acqTabRentRoll" class="acq-tab-pane"${_acqActiveTab !== 'rentroll' ? ' style="display:none"' : ''}>
+      ${rrTabContent}
+    </div>
+  </div>`;
+}
+
+// ── Tab switching ──────────────────────────────────────────────────────────────
+function switchAcqTab(tab) {
+  _acqActiveTab = tab;
+  const risk = document.getElementById('acqTabRisk');
+  const rr   = document.getElementById('acqTabRentRoll');
+  if (risk) risk.style.display = tab === 'risk'     ? '' : 'none';
+  if (rr)   rr.style.display   = tab === 'rentroll' ? '' : 'none';
+  document.querySelectorAll('.acq-tab').forEach(b => {
+    b.classList.toggle('active', b.dataset.tab === tab);
+  });
+}
+
+// ── Rent Roll helpers ──────────────────────────────────────────────────────────
+function _acqSortTenantSummary(ts) {
+  const { col, dir } = _acqRentRollSort;
+  return ts.sort((a, b) => {
+    let va = a[col], vb = b[col];
+    if (va == null) va = dir === 'asc' ? '￿' : '';
+    if (vb == null) vb = dir === 'asc' ? '￿' : '';
+    if (typeof va === 'number' && typeof vb === 'number')
+      return dir === 'asc' ? va - vb : vb - va;
+    return dir === 'asc'
+      ? String(va).localeCompare(String(vb))
+      : String(vb).localeCompare(String(va));
+  });
+}
+
+function _renderRentRollRows(ts) {
+  const fmtMoney = v => v != null ? '$' + Number(v).toLocaleString('en-US', { maximumFractionDigits: 0 }) : '—';
+  const fmtSqft  = v => v != null ? Number(v).toLocaleString('en-US') : '—';
+  const fmtDate  = iso => {
+    if (!iso) return '—';
+    const d = new Date(iso + 'T12:00:00');
+    return isNaN(d.getTime()) ? String(iso) : d.toLocaleDateString('en-US', { month: 'short', year: 'numeric' });
+  };
+  return ts.map(t => `
+    <tr>
+      <td class="acq-ts-name">${esc(t.tenant_name)}</td>
+      <td>${esc(t.suite || '—')}</td>
+      <td>${fmtSqft(t.leased_sqft)}</td>
+      <td class="acq-ts-term">${fmtDate(t.lease_start)}&nbsp;–&nbsp;${fmtDate(t.lease_end)}</td>
+      <td>${fmtMoney(t.base_rent)}</td>
+      <td class="acq-ts-renewal">${esc(t.renewal_options || '—')}</td>
+      <td>${fmtMoney(t.security_deposit)}</td>
+      <td class="acq-ts-cam">${esc(t.cam_structure || '—')}</td>
+    </tr>`).join('');
+}
+
+function _sortAcqRentRoll(col) {
+  if (_acqRentRollSort.col === col) {
+    _acqRentRollSort.dir = _acqRentRollSort.dir === 'asc' ? 'desc' : 'asc';
+  } else {
+    _acqRentRollSort = { col, dir: 'asc' };
+  }
+  const review = _acqReviews.find(r => r.id === _activeAcqId);
+  if (!review?.data?.analysis?.tenantSummary) return;
+  const tbody = document.getElementById('acqRentRollTbody');
+  if (!tbody) return;
+  tbody.innerHTML = _renderRentRollRows(_acqSortTenantSummary([...review.data.analysis.tenantSummary]));
+  document.querySelectorAll('.acq-sort-th').forEach(th => {
+    th.classList.remove('sort-asc', 'sort-desc');
+    if (th.dataset.col === col) th.classList.add(_acqRentRollSort.dir === 'asc' ? 'sort-asc' : 'sort-desc');
+  });
+}
+
+function _renderRentRollTab(rentRoll, tenantSummary) {
+  if (!rentRoll) return '<div style="color:#64748b;padding:16px 0;">Run analysis to generate the rent roll.</div>';
+
+  const occ   = rentRoll.occupancy   || {};
+  const walt  = rentRoll.walt        || {};
+  const rr    = rentRoll.rolloverRisk || { expiring12: { count:0, sqft:0, pctOfOccupied:0, tenants:[] }, expiring24: { count:0, sqft:0, pctOfOccupied:0, tenants:[] }, totalOccupied: 0 };
+  const sched = rentRoll.expirationSchedule || [];
+
+  const fmtPct  = v => v != null ? v + '%' : '—';
+  const fmtSqft = v => v != null ? Number(v).toLocaleString('en-US') + ' sf' : '—';
+
+  const kpiCards = `
+  <div class="acq-kpi-row">
+    <div class="acq-kpi">
+      <div class="acq-kpi-val ${occ.occupancyRate >= 90 ? 'safe' : occ.occupancyRate >= 70 ? '' : 'danger'}">${fmtPct(occ.occupancyRate)}</div>
+      <div class="acq-kpi-lbl">Occupancy</div>
+    </div>
+    <div class="acq-kpi">
+      <div class="acq-kpi-val ${occ.vacantSqft > 0 ? 'danger' : 'safe'}">${fmtSqft(occ.vacantSqft)}</div>
+      <div class="acq-kpi-lbl">Vacant Sq Ft</div>
+    </div>
+    <div class="acq-kpi">
+      <div class="acq-kpi-val">${walt.walt != null ? walt.walt + ' yrs' : '—'}</div>
+      <div class="acq-kpi-lbl">WALT</div>
+    </div>
+    <div class="acq-kpi">
+      <div class="acq-kpi-val ${rr.expiring12.count > 0 ? 'danger' : 'safe'}">${rr.expiring12.count}</div>
+      <div class="acq-kpi-lbl">Exp. ≤12 Mo</div>
+    </div>
+    <div class="acq-kpi">
+      <div class="acq-kpi-val ${rr.expiring24.count > 0 ? '' : 'safe'}">${rr.expiring24.count}</div>
+      <div class="acq-kpi-lbl">Exp. ≤24 Mo</div>
+    </div>
+  </div>`;
+
+  const sortIcon = col => {
+    if (_acqRentRollSort.col !== col) return '<span class="acq-sort-icon">&#x21C5;</span>';
+    return _acqRentRollSort.dir === 'asc'
+      ? '<span class="acq-sort-icon active">&#x2191;</span>'
+      : '<span class="acq-sort-icon active">&#x2193;</span>';
+  };
+
+  const COLS = [
+    { key: 'tenant_name',      label: 'Tenant' },
+    { key: 'suite',            label: 'Suite' },
+    { key: 'leased_sqft',      label: 'Sq Ft' },
+    { key: 'lease_end',        label: 'Lease Term' },
+    { key: 'base_rent',        label: 'Base Rent/yr' },
+    { key: 'renewal_options',  label: 'Renewal' },
+    { key: 'security_deposit', label: 'Deposit' },
+    { key: 'cam_structure',    label: 'CAM Structure' },
+  ];
+  const thead = COLS.map(c =>
+    `<th class="acq-sort-th" data-col="${c.key}" onclick="_sortAcqRentRoll('${c.key}')">${esc(c.label)} ${sortIcon(c.key)}</th>`
+  ).join('');
+
+  const tbody = _renderRentRollRows(_acqSortTenantSummary([...tenantSummary]));
+
+  const maxSchedSqft = sched.length ? Math.max(1, ...sched.map(r => r.sqft)) : 1;
+  const schedRows = sched.map(r => `
+    <tr>
+      <td>${r.year}</td>
+      <td>${r.count}</td>
+      <td>${Number(r.sqft).toLocaleString('en-US')} sf</td>
+      <td><div class="acq-exp-bar-wrap"><div class="acq-exp-bar" style="width:${Math.round((r.sqft / maxSchedSqft) * 100)}%"></div></div></td>
+    </tr>`).join('');
+
+  const schedHtml = sched.length ? `
+  <div class="acq-section-sub">Lease Expiration Schedule</div>
+  <table class="acq-ts-table acq-exp-sched">
+    <thead><tr><th>Year</th><th>Leases</th><th>Sq Ft</th><th style="min-width:120px"></th></tr></thead>
+    <tbody>${schedRows}</tbody>
+  </table>` : '';
+
+  const rollCard = (data, cls, label) => `
+  <div class="acq-rollover-card ${data.count > 0 ? cls : ''}">
+    <div class="acq-rollover-period">${label}</div>
+    <div class="acq-rollover-count">${data.count} lease${data.count !== 1 ? 's' : ''}</div>
+    <div class="acq-rollover-sqft">${Number(data.sqft).toLocaleString('en-US')} sf &nbsp;·&nbsp; ${data.pctOfOccupied}% of occupied</div>
+    ${data.tenants.length ? `<div class="acq-rollover-names">${data.tenants.map(esc).join(', ')}</div>` : ''}
+  </div>`;
+
+  return `
+  ${kpiCards}
+  <div class="acq-section-sub">Rent Roll</div>
+  <div class="acq-ts-scroll">
+    <table class="acq-ts-table">
+      <thead><tr>${thead}</tr></thead>
+      <tbody id="acqRentRollTbody">${tbody}</tbody>
+    </table>
+  </div>
+  <div class="acq-rr-export-bar">
+    <button class="acq-export-btn" onclick="acqExportRentRollCsv()">&#x1F4E5; Export CSV</button>
+  </div>
+  ${schedHtml}
+  <div class="acq-section-sub">Lease Rollover Risk</div>
+  <div class="acq-rollover-grid">
+    ${rollCard(rr.expiring12, 'danger', 'Expiring ≤12 Months')}
+    ${rollCard(rr.expiring24, 'warn',   'Expiring ≤24 Months')}
+  </div>`;
+}
+
+function acqExportRentRollCsv() {
+  const review = _acqReviews.find(r => r.id === _activeAcqId);
+  if (!review?.data?.analysis?.tenantSummary?.length) {
+    alert('No rent roll data to export. Run analysis first.');
+    return;
+  }
+  const ts = review.data.analysis.tenantSummary;
+  const headers = ['Tenant','Suite','Sq Ft','Lease Start','Lease End',
+                   'Base Rent/yr','Renewal Options','Security Deposit','CAM Structure'];
+  const escape  = v => { const s = String(v ?? ''); return s.includes(',') || s.includes('"') || s.includes('\n') ? '"' + s.replace(/"/g, '""') + '"' : s; };
+  const lines   = [headers, ...ts.map(t => [
+    t.tenant_name || '', t.suite || '', t.leased_sqft ?? '',
+    t.lease_start || '', t.lease_end || '', t.base_rent ?? '',
+    t.renewal_options || '', t.security_deposit ?? '', t.cam_structure || '',
+  ])].map(r => r.map(escape).join(','));
+  const blob = new Blob([lines.join('\n')], { type: 'text/csv;charset=utf-8;' });
+  const url  = URL.createObjectURL(blob);
+  const a    = Object.assign(document.createElement('a'), {
+    href: url, download: (review.name || 'rent-roll').replace(/[^a-z0-9_\-]/gi, '_') + '.csv',
+  });
+  document.body.appendChild(a); a.click(); document.body.removeChild(a);
+  URL.revokeObjectURL(url);
+}
+
+function acqExportPdf() {
+  alert('PDF export is coming soon. The full report with citations and evidence appendix will be available in the next release.');
+}
+
+function _genUUID() {
+  return 'xxxxxxxx-xxxx-4xxx-yxxx-xxxxxxxxxxxx'.replace(/[xy]/g, c => {
+    const r = Math.random() * 16 | 0;
+    return (c === 'x' ? r : (r & 0x3 | 0x8)).toString(16);
+  });
+}
+
 // ─── Init ─────────────────────────────────────────────────────────────────────
 async function init() {
   _loadCheckpoints();
+
+  // Show developer-only UI elements on localhost only
+  const isLocalDev = location.hostname === 'localhost' || location.hostname === '127.0.0.1';
+  if (isLocalDev) {
+    const dbhBtn = document.getElementById('dbHealthBtn');
+    if (dbhBtn) dbhBtn.style.removeProperty('display');
+    const testLabSlot = document.getElementById('testLabReportSlot');
+    if (testLabSlot) testLabSlot.style.removeProperty('display');
+  }
 
   // ── Tenant portal mode — bypass portfolio for tenant-role users ───────────
   // SECURITY: tenant check must come before review-mode check so that a tenant
@@ -16102,6 +18252,7 @@ async function init() {
     _props = properties || [];
     portfolio.splice(0, portfolio.length, ..._props);
     renderPortfolio(properties);
+    _loadAcqReviewsAndRender();
   } catch (e) {
     const isNet = /load failed|failed to fetch|networkerror|offline/i.test(e?.message || '');
     if (!isNet) logError('init.loadProperties', e, {});
@@ -16111,6 +18262,7 @@ async function init() {
     _props = [];
     portfolio.splice(0, portfolio.length);
     renderPortfolio([]);
+    _renderAcqSection([]);
     document.getElementById('portfolioDashboard').style.display = 'block';
     document.getElementById('mainWorkflow').style.display       = 'none';
   }
