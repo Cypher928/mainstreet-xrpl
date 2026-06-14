@@ -4473,7 +4473,10 @@ function _lfcItemInner(key, label, val, td, isEditing = false) {
   }
 
   const missingCls = val == null ? 'lfc-missing' : '';
-  const showEvBtn  = _LFC_EDITABLE.has(key) && td?.id;
+  const showEvBtn  = td?.id && (
+    _LFC_EDITABLE.has(key) ||
+    !!(td.fieldEvidence?.[key]?.snapshots?.length)
+  );
   return `<div class="lfc-label">${esc(label)}</div>
     <div class="lfc-value-row">
       <div class="lfc-value ${missingCls}">${val ?? '—'}</div>
@@ -8391,10 +8394,53 @@ function openTenantDetailPanel(i) {
 
     <div class="tdp-section">Disputes</div>
     ${_tdpDisputesHtml(d.tenant_name)}
+
+    ${_tdpFieldEvidenceHtml(d)}
   `;
 
   document.body.style.overflow = 'hidden';
   panel.classList.add('open');
+}
+
+// Renders an expandable "Source Evidence" section in the tenant detail panel.
+// Shows only fields that have an extracted quote — fields with no evidence are
+// omitted so the section only appears when there is something useful to show.
+function _tdpFieldEvidenceHtml(t) {
+  const FIELDS = [
+    'lease_type', 'leased_sqft', 'start_date', 'end_date',
+    'cap', 'admin_fee_pct', 'gross_up_pct', 'expense_stop',
+    'audit_rights', 'excluded_categories',
+  ];
+
+  const rows = FIELDS
+    .map(key => {
+      const ev = getFieldEvidence(key, t);
+      if (!ev?.source?.quote && !ev?.source?.page && !ev?.source?.section) return null;
+      const label = _LEV_FIELD_LABELS[key] || key;
+      const src   = ev.source;
+      const meta  = [
+        src.section ? 'Section: ' + src.section : '',
+        src.page    ? 'Page ' + src.page         : '',
+        src.fileName ? src.fileName               : '',
+      ].filter(Boolean).join(' · ');
+      const quoteHtml = src.quote
+        ? `<blockquote class="tdp-ev-quote">${esc(src.quote)}</blockquote>`
+        : '';
+      return `<div class="tdp-ev-row">
+          <div class="tdp-ev-field">${esc(label)}</div>
+          ${meta ? `<div class="tdp-ev-meta">${esc(meta)}</div>` : ''}
+          ${quoteHtml}
+        </div>`;
+    })
+    .filter(Boolean);
+
+  if (!rows.length) return '';
+
+  return `
+    <details class="tdp-ev-details">
+      <summary class="tdp-section tdp-ev-summary">Source Evidence <span class="tdp-ev-count">${rows.length} field${rows.length !== 1 ? 's' : ''}</span></summary>
+      <div class="tdp-ev-body">${rows.join('')}</div>
+    </details>`;
 }
 
 function closeTenantDetailPanel() {

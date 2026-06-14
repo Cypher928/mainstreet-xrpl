@@ -3256,6 +3256,24 @@
     /* Make tenant name in card look tappable */
     .tenant-title[data-tdp] { cursor: pointer; }
     .tenant-title[data-tdp]:hover { text-decoration: underline; text-underline-offset: 3px; }
+
+    /* Source Evidence section inside tenant detail panel */
+    .tdp-ev-details { margin-top: 6px; }
+    .tdp-ev-details > .tdp-section { cursor: pointer; list-style: none; display: flex; align-items: center; gap: 8px; }
+    .tdp-ev-details > .tdp-section::-webkit-details-marker { display: none; }
+    .tdp-ev-summary { margin-top: 18px; }
+    .tdp-ev-count { color: #6366f1; font-size: 0.7rem; font-weight: 600;
+      background: rgba(99,102,241,0.12); border-radius: 10px; padding: 1px 7px; }
+    .tdp-ev-body { padding: 4px 0 0; }
+    .tdp-ev-row { padding: 10px 0; border-bottom: 1px solid rgba(255,255,255,0.05); }
+    .tdp-ev-row:last-child { border-bottom: none; }
+    .tdp-ev-field { font-size: 0.75rem; font-weight: 700; color: #94a3b8;
+      text-transform: uppercase; letter-spacing: 0.05em; margin-bottom: 3px; }
+    .tdp-ev-meta { font-size: 0.72rem; color: #475569; margin-bottom: 5px; }
+    .tdp-ev-quote { margin: 4px 0 0; padding: 6px 10px; border-left: 2px solid rgba(99,102,241,0.5);
+      background: rgba(15,23,42,0.7); border-radius: 0 4px 4px 0;
+      font-size: 0.77rem; color: #94a3b8; font-style: italic;
+      white-space: pre-wrap; word-break: break-word; max-height: 90px; overflow: hidden; }
     /* Live open-dispute count badge in the section heading */
     .ds-open-badge {
       font-size: 0.72rem; font-weight: 700; color: #fb923c;
