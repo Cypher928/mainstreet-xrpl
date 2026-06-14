@@ -18006,6 +18006,22 @@ function _renderAcqReport(report, container) {
   const missedCls  = s.annualMissedRecovery > 0 ? 'danger' : 'safe';
   const recoverCls = s.recoveryRate >= 90 ? 'safe' : s.recoveryRate >= 70 ? '' : 'danger';
 
+  // ── Inline verdict banner ──────────────────────────────────────────────────
+  const _annualAtRisk = (s.annualMissedRecovery || 0) + (s.capLeakageAnnualized || 0);
+  const _verdict = (s.criticalRenewalCount > 0 || s.recoveryRate < 70 || s.openAuditWindows > 0)
+    ? 'Additional Due Diligence Required'
+    : (s.recoveryRate < 90 || _annualAtRisk > 0)
+    ? 'Proceed with Conditions'
+    : 'Proceed';
+  const _vc = _verdict === 'Proceed' ? '#4ade80' : _verdict === 'Proceed with Conditions' ? '#fbbf24' : '#f87171';
+  const execSummaryInline = `
+    <div style="display:flex;align-items:center;gap:10px;padding:10px 14px;background:#1e293b;border-radius:7px;margin-bottom:14px;">
+      <span style="display:inline-block;width:9px;height:9px;border-radius:50%;background:${_vc};flex-shrink:0;"></span>
+      <span style="font-size:0.84rem;font-weight:700;color:${_vc};">${esc(_verdict)}</span>
+      <span style="margin-left:6px;font-size:0.79rem;color:#64748b;">Recovery ${s.recoveryRate != null ? s.recoveryRate + '%' : '—'} &middot; ${fmt(_annualAtRisk)}/yr at risk &middot; ${s.criticalRenewalCount} critical renewal${s.criticalRenewalCount !== 1 ? 's' : ''}</span>
+      <button class="acq-export-btn" style="margin-left:auto;" onclick="generateAcquisitionReport()">&#x1F4CB; Decision Report</button>
+    </div>`;
+
   // ── Tenant Summary ──────────────────────────────────────────────────────────
   const tenantSummaryHtml = (() => {
     const ts = report.tenantSummary || [];
@@ -18161,7 +18177,7 @@ function _renderAcqReport(report, container) {
     <button class="acq-export-btn" onclick="acqExportRentRollCsv()">&#x1F4C8; Rent Roll CSV</button>
   </div>`;
 
-  const riskTabContent = `${kpis}${topRisksHtml}${findingsHtml}${tenantTable}${auditHtml}${renewalHtml}${proRataHtml}${exportBar}`;
+  const riskTabContent = `${execSummaryInline}${kpis}${topRisksHtml}${findingsHtml}${tenantTable}${auditHtml}${renewalHtml}${proRataHtml}${exportBar}`;
   const rrTabContent   = _renderRentRollTab(report.rentRoll, report.tenantSummary || []);
 
   container.innerHTML = `
@@ -18471,6 +18487,215 @@ function acqExportPdf() {
     <script>window.onload = function() { window.print(); };<\/script>
   </body></html>`);
   win.document.close();
+}
+
+function generateAcquisitionReport() {
+  const review = _acqReviews.find(r => r.id === _activeAcqId);
+  if (!review?.data?.analysis) {
+    showToast('Run analysis first to generate a report.', { color: '#92400e', textColor: '#fef3c7' });
+    return;
+  }
+  const a        = review.data.analysis;
+  const s        = a.summary;
+  const now      = new Date().toLocaleDateString('en-US', { year: 'numeric', month: 'long', day: 'numeric' });
+  const propName = review.name || 'Acquisition Review';
+
+  const fmt     = v => v != null ? '$' + parseFloat(v).toLocaleString('en-US', { maximumFractionDigits: 0 }) : '—';
+  const pct     = v => v != null ? v + '%' : '—';
+  const fmtDate = iso => {
+    if (!iso) return '—';
+    const d = new Date(iso + 'T12:00:00');
+    return isNaN(d.getTime()) ? String(iso) : d.toLocaleDateString('en-US', { month: 'short', year: 'numeric' });
+  };
+  const fmtSqft = v => v != null ? Number(v).toLocaleString('en-US') + ' sf' : '—';
+
+  // ── Decision verdict ───────────────────────────────────────────────────────
+  const annualAtRisk = (s.annualMissedRecovery || 0) + (s.capLeakageAnnualized || 0);
+  const verdict = (s.criticalRenewalCount > 0 || s.recoveryRate < 70 || s.openAuditWindows > 0)
+    ? 'Additional Due Diligence Required'
+    : (s.recoveryRate < 90 || annualAtRisk > 0)
+    ? 'Proceed with Conditions'
+    : 'Proceed';
+  const vcColor = verdict === 'Proceed' ? '#4ade80' : verdict === 'Proceed with Conditions' ? '#fbbf24' : '#f87171';
+
+  const rationale = [
+    s.recoveryRate != null && `CAM recovery rate is ${s.recoveryRate}%${s.recoveryRate < 70 ? ' — below the 70% threshold' : s.recoveryRate < 90 ? ' — below the 90% target' : ' — within target range'}.`,
+    annualAtRisk > 0 && `${fmt(annualAtRisk)}/yr at risk from cap leakage and missed recoveries.`,
+    s.criticalRenewalCount > 0 && `${s.criticalRenewalCount} critical lease renewal${s.criticalRenewalCount !== 1 ? 's' : ''} require immediate attention.`,
+    s.openAuditWindows > 0 && `${s.openAuditWindows} open audit window${s.openAuditWindows !== 1 ? 's' : ''} present unresolved liability.`,
+  ].filter(Boolean);
+
+  // ── Section 1: Decision Summary ────────────────────────────────────────────
+  const section1 = `
+  <div style="border:2px solid ${vcColor};border-radius:8px;padding:16px 20px;margin-bottom:24px;background:rgba(255,255,255,0.03);">
+    <div style="font-size:0.69rem;font-weight:700;text-transform:uppercase;letter-spacing:0.1em;color:${vcColor};margin-bottom:6px;">Acquisition Decision</div>
+    <div style="font-size:1.2rem;font-weight:800;color:${vcColor};margin-bottom:12px;">${esc(verdict)}</div>
+    ${rationale.map(r => `<div style="font-size:0.82rem;color:#CBD5E1;margin-bottom:5px;padding-left:10px;border-left:2px solid ${vcColor};">${esc(r)}</div>`).join('')}
+  </div>`;
+
+  // ── Section 2: Revenue Recovery Analysis ──────────────────────────────────
+  const causeLabel = { cap: 'CAM Cap', exclusions: 'Exclusions', partial_match: 'Unmatched Invoices', none: 'Fully Allocated' };
+  const recRateColor = s.recoveryRate >= 90 ? '#4ade80' : s.recoveryRate >= 70 ? '#fbbf24' : '#f87171';
+
+  const underbillingRows = (a.underbilling || []).map(r => `
+    <tr>
+      <td style="font-weight:600;">${esc(r.tenantName)}</td>
+      <td style="text-align:right">${fmt(r.fullLiability)}</td>
+      <td style="text-align:right">${fmt(r.allocatedAmount)}</td>
+      <td style="text-align:right;color:${r.gap > 0 ? '#f87171' : '#4ade80'};font-weight:${r.gap > 0 ? '700' : '400'};">${fmt(r.gap)}</td>
+      <td>${esc(causeLabel[r.cause] || r.cause)}</td>
+    </tr>`).join('');
+
+  const section2 = `
+  <div class="rpt-section-title">Revenue Recovery Analysis</div>
+  <div class="rpt-kpi-row">
+    <div class="rpt-kpi"><div class="kpi-val" style="color:${recRateColor}">${pct(s.recoveryRate)}</div><div class="kpi-lbl">Recovery Rate</div></div>
+    <div class="rpt-kpi"><div class="kpi-val" style="color:${s.annualMissedRecovery > 0 ? '#f87171' : '#4ade80'}">${fmt(s.annualMissedRecovery)}</div><div class="kpi-lbl">Annual Missed Recovery</div></div>
+    <div class="rpt-kpi"><div class="kpi-val" style="color:${s.capLeakageAnnualized > 0 ? '#f87171' : '#4ade80'}">${fmt(s.capLeakageAnnualized)}</div><div class="kpi-lbl">Cap Leakage/yr</div></div>
+    <div class="rpt-kpi"><div class="kpi-val" style="color:${annualAtRisk > 0 ? '#f87171' : '#4ade80'}">${fmt(annualAtRisk)}</div><div class="kpi-lbl">Total At Risk/yr</div></div>
+  </div>
+  ${underbillingRows ? `<table class="rpt-table">
+    <thead><tr>
+      <th>Tenant</th>
+      <th style="text-align:right">Full Liability</th>
+      <th style="text-align:right">Allocated</th>
+      <th style="text-align:right">Gap</th>
+      <th>Cause</th>
+    </tr></thead>
+    <tbody>${underbillingRows}</tbody>
+  </table>` : '<p style="color:#64748b;font-size:0.82rem;margin:0 0 20px;">No underbilling data available.</p>'}`;
+
+  // ── Section 3: Lease Stability ─────────────────────────────────────────────
+  const rr   = a.rentRoll;
+  const occ  = rr?.occupancy  || {};
+  const walt = rr?.walt       || {};
+  const roll = rr?.rolloverRisk || { expiring12: { count: 0, sqft: 0, tenants: [] }, expiring24: { count: 0, sqft: 0, tenants: [] } };
+  const occColor = occ.occupancyRate >= 90 ? '#4ade80' : occ.occupancyRate < 70 ? '#f87171' : '#fbbf24';
+
+  const renewalRiskRows = (a.renewalRisk || []).map(r => {
+    const rLabel = r.riskLevel === 'critical' ? 'Critical' : r.riskLevel === 'high' ? 'Elevated' : 'Moderate';
+    const rColor = r.riskLevel === 'critical' ? '#f87171' : r.riskLevel === 'high' ? '#fbbf24' : '#93c5fd';
+    const days   = r.daysToExpiry !== null ? (r.daysToExpiry < 0 ? 'Expired' : `${r.daysToExpiry} days`) : '—';
+    const cite   = r.citation?.text
+      ? `<div style="font-size:0.71rem;font-style:italic;color:#94a3b8;border-left:2px solid rgba(255,255,255,0.1);padding:2px 6px;margin-top:3px;">"${esc(r.citation.text.length > 100 ? r.citation.text.slice(0, 100) + '…' : r.citation.text)}"</div>`
+      : '';
+    return `<tr>
+      <td style="font-weight:600;">${esc(r.tenantName)}</td>
+      <td>${fmtDate(r.leaseEnd)}</td>
+      <td>${esc(days)}</td>
+      <td style="color:${rColor};font-weight:600;">${esc(rLabel)}</td>
+      <td>${cite}</td>
+    </tr>`;
+  }).join('');
+
+  const section3 = `
+  <div class="rpt-section-title">Lease Stability</div>
+  <div class="rpt-kpi-row">
+    <div class="rpt-kpi"><div class="kpi-val" style="color:${occColor}">${pct(occ.occupancyRate)}</div><div class="kpi-lbl">Occupancy</div></div>
+    <div class="rpt-kpi"><div class="kpi-val">${walt.walt != null ? walt.walt + ' yrs' : '—'}</div><div class="kpi-lbl">WALT</div></div>
+    <div class="rpt-kpi"><div class="kpi-val" style="color:${roll.expiring12.count > 0 ? '#f87171' : '#4ade80'}">${roll.expiring12.count}</div><div class="kpi-lbl">Exp. ≤12 Mo</div></div>
+    <div class="rpt-kpi"><div class="kpi-val" style="color:${roll.expiring24.count > 0 ? '#fbbf24' : '#4ade80'}">${roll.expiring24.count}</div><div class="kpi-lbl">Exp. ≤24 Mo</div></div>
+    <div class="rpt-kpi"><div class="kpi-val" style="color:${s.criticalRenewalCount > 0 ? '#f87171' : '#4ade80'}">${s.criticalRenewalCount}</div><div class="kpi-lbl">Critical Renewals</div></div>
+  </div>
+  ${renewalRiskRows ? `<table class="rpt-table">
+    <thead><tr>
+      <th>Tenant</th><th>Lease End</th><th>Time Remaining</th><th>Risk Level</th><th>Renewal Clause</th>
+    </tr></thead>
+    <tbody>${renewalRiskRows}</tbody>
+  </table>` : ''}`;
+
+  // ── Section 4: Due Diligence Items ─────────────────────────────────────────
+  const findingTypeLabel = {
+    cap_leakage:       'CAM Cap Leakage',
+    unusual_exclusion: 'Unusual Exclusion',
+    audit_window:      'Audit Window',
+    underbilling:      'Underbilling',
+    renewal_risk:      'Renewal Risk',
+  };
+  const findingRisk = {
+    cap_leakage:       { label: 'Elevated', color: '#fbbf24' },
+    unusual_exclusion: { label: 'Moderate', color: '#93c5fd' },
+    audit_window:      { label: 'Elevated', color: '#fbbf24' },
+    underbilling:      { label: 'Critical', color: '#f87171' },
+    renewal_risk:      { label: 'Critical', color: '#f87171' },
+  };
+
+  const findingItems = (a.findings || []).map(f => {
+    const tl   = findingTypeLabel[f.type] || f.label;
+    const risk = findingRisk[f.type] || { label: 'Moderate', color: '#93c5fd' };
+    const cite = f.citation?.text
+      ? `<div style="font-size:0.72rem;font-style:italic;color:#94a3b8;background:rgba(255,255,255,0.04);border-left:2px solid rgba(255,255,255,0.12);padding:4px 8px;margin-top:5px;border-radius:2px;word-break:break-word;">"${esc(f.citation.text.length > 180 ? f.citation.text.slice(0, 180) + '…' : f.citation.text)}"</div>`
+      : '';
+    const val  = f.annualValue ? `<div style="font-size:0.82rem;font-weight:700;color:#f87171;white-space:nowrap;">${fmt(f.annualValue)}/yr</div>` : '';
+    return `
+    <div style="display:flex;gap:12px;align-items:flex-start;padding:10px 12px;border:1px solid rgba(255,255,255,0.07);border-left:3px solid ${risk.color};border-radius:6px;margin-bottom:6px;">
+      <div style="flex:1;min-width:0;">
+        <div style="display:flex;align-items:center;gap:8px;flex-wrap:wrap;margin-bottom:2px;">
+          <span style="font-size:0.83rem;font-weight:700;color:#E2E8F0;">${esc(f.tenantName)}</span>
+          <span style="font-size:0.72rem;color:#64748b;">${esc(tl)}</span>
+          <span style="font-size:0.67rem;font-weight:600;color:${risk.color};">[${risk.label}]</span>
+        </div>
+        ${f.label && f.label !== tl ? `<div style="font-size:0.78rem;color:#94a3b8;margin-bottom:2px;">${esc(f.label)}</div>` : ''}
+        ${cite}
+      </div>
+      ${val}
+    </div>`;
+  }).join('');
+
+  const auditWinItems = (a.auditWindows || []).map(w => {
+    const wColor = w.windowStatus === 'open' ? '#4ade80' : w.windowStatus === 'closing' ? '#fbbf24' : '#f87171';
+    return `<tr>
+      <td style="font-weight:600;">${esc(w.tenantName)}</td>
+      <td style="color:${wColor};font-weight:600;text-transform:capitalize;">${esc(w.windowStatus)}</td>
+      <td>${esc(w.auditPeriod || '—')}</td>
+    </tr>`;
+  }).join('');
+
+  const section4 = `
+  <div class="rpt-section-title">Due Diligence Items</div>
+  ${findingItems || '<p style="color:#64748b;font-size:0.82rem;margin:0 0 16px;">No findings identified.</p>'}
+  ${auditWinItems ? `
+  <div style="margin-top:12px;">
+    <div style="font-size:0.69rem;font-weight:700;text-transform:uppercase;letter-spacing:0.08em;color:#94a3b8;margin-bottom:6px;">Audit Windows</div>
+    <table class="rpt-table">
+      <thead><tr><th>Tenant</th><th>Status</th><th>Audit Period</th></tr></thead>
+      <tbody>${auditWinItems}</tbody>
+    </table>
+  </div>` : ''}`;
+
+  // ── Section 5: Tenant Roster ───────────────────────────────────────────────
+  const tenantRows = (a.tenantSummary || []).map(t => `
+    <tr>
+      <td style="font-weight:600;">${esc(t.tenant_name)}</td>
+      <td>${fmtSqft(t.leased_sqft)}</td>
+      <td>${fmtDate(t.lease_start)} – ${fmtDate(t.lease_end)}</td>
+      <td>${esc(t.renewal_options || '—')}</td>
+      <td>${esc(t.cam_structure || '—')}</td>
+    </tr>`).join('');
+
+  const section5 = `
+  <div class="rpt-section-title">Tenant Roster</div>
+  ${tenantRows ? `<table class="rpt-table">
+    <thead><tr>
+      <th>Tenant</th><th>Sq Ft</th><th>Lease Term</th><th>Renewal Options</th><th>CAM Structure</th>
+    </tr></thead>
+    <tbody>${tenantRows}</tbody>
+  </table>` : '<p style="color:#64748b;font-size:0.82rem;margin:0 0 16px;">No tenant data available.</p>'}`;
+
+  const body = `
+  ${_rptHeader(propName, 'Acquisition Decision Report', now, now, [
+    { label: 'Tenants',       value: s.tenantCount },
+    { label: 'Recovery Rate', value: pct(s.recoveryRate) },
+    { label: 'Verdict',       value: verdict },
+  ])}
+  ${section1}
+  ${section2}
+  ${section3}
+  ${section4}
+  ${section5}
+  ${_rptFooter(propName, 'Acquisition Decision Report', now)}`;
+
+  openReport('Acquisition Decision Report — ' + propName, body);
 }
 
 function _genUUID() {
