@@ -14043,21 +14043,18 @@ function renderPortfolioIntelligence(props, preRar) {
      </div>`;
 
   const rarVal = pid.revenueAtRisk.urgentAnnualAtRisk;
-  const metricsGrid = `
-  <div class="pid-grid">
-    ${tile(pid.propertyCount, 'Properties')}
-    ${tile(fmtPct(pid.occupancyRate), 'Occupancy',
-           pid.occupancyRate !== null && pid.occupancyRate < 80 ? 'pid-tile--warn' : '')}
-    ${tile(pid.walt != null ? pid.walt + ' yrs' : '—', 'WALT')}
-    ${tile(rarVal > 0 ? fmtM(rarVal) : '—', 'Revenue at Risk',
-           rarVal > 0 ? 'pid-tile--alert' : '')}
-    ${tile(pid.expiringCount || '—', 'Expiring Leases',
-           pid.expiringCount > 0 ? 'pid-tile--warn' : '')}
-    ${tile(pid.urgentCount || '—', 'Urgent Renewals',
-           pid.urgentCount  > 0 ? 'pid-tile--alert' : '')}
-    ${tile(pid.vacantSqft != null ? fmtSf(pid.vacantSqft) + ' sf' : '—', 'Vacant Sq Ft',
-           pid.vacantSqft  > 0 ? 'pid-tile--warn' : '')}
-  </div>`;
+  const metricTiles = [
+    tile(pid.propertyCount, 'Properties'),
+    tile(fmtPct(pid.occupancyRate), 'Occupancy',
+         pid.occupancyRate !== null && pid.occupancyRate < 80 ? 'pid-tile--warn' : ''),
+    pid.walt != null ? tile(pid.walt + ' yrs', 'WALT') : '',
+    // Only show Revenue at Risk, Expiring Leases, Urgent Renewals when non-zero
+    rarVal > 0 ? tile(fmtM(rarVal), 'Revenue at Risk', 'pid-tile--alert') : '',
+    pid.expiringCount > 0 ? tile(String(pid.expiringCount), 'Expiring Leases', 'pid-tile--warn') : '',
+    pid.urgentCount  > 0 ? tile(String(pid.urgentCount),   'Urgent Renewals',  'pid-tile--alert') : '',
+    pid.vacantSqft  > 0 ? tile(fmtSf(pid.vacantSqft) + ' sf', 'Vacant Sq Ft', 'pid-tile--warn') : '',
+  ].filter(Boolean).join('');
+  const metricsGrid = `<div class="pid-grid">${metricTiles}</div>`;
 
   // ── Top Risks ─────────────────────────────────────────────────────────
   const riskIcons = { revenue_at_risk: '&#x26A0;&#xFE0F;', vacant_sqft: '&#x1F4CA;', rollover_concentration: '&#x1F501;' };
@@ -15088,30 +15085,26 @@ function renderPortfolio(props) {
 
   // KPI tiles
   const k = portfolioKPIs(props);
-  // Use live dispute count from p.disputes[] — p.openDisputes is only written on save so can be stale
-  const liveOpenDisputes = props.reduce((s, p) => s + (p.disputes || []).filter(d => d.status === 'open').length, 0);
   document.getElementById('pKpiProperties').textContent  = k.properties;
+  document.getElementById('pKpiOccupancy').textContent   = k.occupancyPct !== null ? k.occupancyPct + '%' : '—';
   document.getElementById('pKpiCAM').textContent         = k.cam > 0 ? '$' + k.cam.toLocaleString('en-US') : '—';
-  document.getElementById('pKpiDisputes').textContent    = liveOpenDisputes;
-  document.getElementById('pKpiCritical').textContent    = k.criticalOrElevated;
-  document.getElementById('pKpiMissingDocs').textContent = k.totalMissingDocs;
-  document.getElementById('pKpiConfidence').textContent  = k.avgConf !== null ? k.avgConf + '%' : '—';
+  document.getElementById('pKpiReady').textContent       = k.readyCount;
+  document.getElementById('pKpiInProgress').textContent  = k.inProgressCount;
+  document.getElementById('pKpiNeedsReview').textContent = k.needsReviewCount;
 
-  // Light up non-risk KPIs from muted placeholder to amber once data is populated
-  const propEl = document.getElementById('pKpiProperties');
-  const camEl  = document.getElementById('pKpiCAM');
-  const confEl = document.getElementById('pKpiConfidence');
-  if (propEl) propEl.style.color = '#C9973A';
-  if (camEl)  camEl.style.color  = k.cam > 0 ? '#C9973A' : '';
-  if (confEl) confEl.style.color = k.avgConf !== null ? '#C9973A' : '';
-
-  // Conditional accent on risk-sensitive KPIs
-  const critEl = document.getElementById('pKpiCritical');
-  const dispEl = document.getElementById('pKpiDisputes');
-  const missEl = document.getElementById('pKpiMissingDocs');
-  if (critEl) critEl.style.color = k.criticalOrElevated > 0 ? '#f87171' : '#C9973A';
-  if (dispEl) dispEl.style.color = liveOpenDisputes       > 0 ? '#f87171' : '#C9973A';
-  if (missEl) missEl.style.color = k.totalMissingDocs    > 0 ? '#fbbf24' : '#C9973A';
+  // Accent colors
+  const propEl  = document.getElementById('pKpiProperties');
+  const occEl   = document.getElementById('pKpiOccupancy');
+  const camEl   = document.getElementById('pKpiCAM');
+  const readyEl = document.getElementById('pKpiReady');
+  const progEl  = document.getElementById('pKpiInProgress');
+  const revEl   = document.getElementById('pKpiNeedsReview');
+  if (propEl)  propEl.style.color  = '#C9973A';
+  if (occEl)   occEl.style.color   = k.occupancyPct !== null ? (k.occupancyPct < 80 ? '#fbbf24' : '#C9973A') : '';
+  if (camEl)   camEl.style.color   = k.cam > 0 ? '#C9973A' : '';
+  if (readyEl) readyEl.style.color = k.readyCount > 0 ? '#4ade80' : '#C9973A';
+  if (progEl)  progEl.style.color  = '#C9973A';
+  if (revEl)   revEl.style.color   = k.needsReviewCount > 0 ? '#f87171' : '#C9973A';
 
   // Sort buttons
   const sortCfg = [
@@ -15199,17 +15192,12 @@ function renderPortfolio(props) {
     const dm      = p._derivedMetrics || derivePropertyMetrics(p);
     const tenants = Array.isArray(p.tenants) ? p.tenants.length : (Number(p.tenantCount) || 0);
     const cam     = m.total || Number(p.totalCAM) || 0;
-    const status       = p.status || 'in-progress';
+    const status  = p.status || 'in-progress';
 
-    const riskBadge = (() => {
-      const cfg = {
-        Critical: 'ptf-risk--critical',
-        Elevated: 'ptf-risk--elevated',
-        Moderate: 'ptf-risk--moderate',
-        Low:      'ptf-risk--low',
-      }[m.riskLevel];
-      return cfg ? `<span class="ptf-risk-badge ${cfg}">${esc(m.riskLevel)}</span>` : '';
-    })();
+    // Per-property occupancy
+    const bsqft   = Number(p.totalSqft) || 0;
+    const occSqft = (Array.isArray(p.tenants) ? p.tenants : []).reduce((s, t) => s + (parseFloat(t.leased_sqft) || 0), 0);
+    const occPct  = bsqft > 0 ? Math.round((occSqft / bsqft) * 100) : null;
 
     const trendHtml = (() => {
       if (!m.trendDir) return '';
@@ -15240,6 +15228,12 @@ function renderPortfolio(props) {
                     : rd.readiness === 'reconciled'           ? ' rdy-reconciled-card'
                     : '';
 
+    // Risk label for display (maps riskLevel to business-friendly label)
+    const riskLabelMap = { Critical: 'High Risk', Elevated: 'Elevated Risk', Moderate: 'Medium Risk', Low: 'Low Risk', None: '' };
+    const riskCssMap   = { Critical: 'ptf-risk--critical', Elevated: 'ptf-risk--elevated', Moderate: 'ptf-risk--moderate', Low: 'ptf-risk--low' };
+    const riskLabel    = riskLabelMap[m.riskLevel] || '';
+    const riskCls      = riskCssMap[m.riskLevel]  || '';
+
     return `
     <div class="ptf-prop-card status-${status}${activePropId === p.id ? ' active' : ''}${reviewUrgency}${rdCardCls}" onclick="selectProperty('${pid}')">
       <div class="ptf-card-top">
@@ -15259,42 +15253,35 @@ function renderPortfolio(props) {
         if (!ea) return '';
         const isExpired = ea.tier === 'expired';
         const isUrgent  = isExpired || ea.tier === 'critical';
-        const cls   = isUrgent ? 'ptf-stat--alert' : 'ptf-stat--warn';
         const label = isExpired ? `Expired` : 'Expiring';
         return `<div class="ptf-lease-expiry-banner ptf-lease-expiry--${isUrgent ? 'urgent' : 'warn'}">
           &#x1F514; ${ea.total} lease${ea.total !== 1 ? 's' : ''} ${label}
         </div>`;
       })()}
       <div class="ptf-stats-row">
+        ${occPct !== null ? `<div class="ptf-stat"><strong>${occPct}%</strong>Occupied</div>` : ''}
         <div class="ptf-stat"><strong>${tenants}</strong>Tenants</div>
-        ${dm.reviewStats.flaggedLeaseCount > 0
-          ? `<div class="ptf-stat ptf-stat--warn"><strong>${dm.reviewStats.flaggedLeaseCount}</strong>Lease Warnings</div>`
-          : ''}
-        ${dm.disputeStats.openDisputes > 0
-          ? `<div class="ptf-stat ptf-stat--alert"><strong>${dm.disputeStats.openDisputes}</strong>Disputes</div>`
-          : ''}
-        ${m.missingDocs > 0
-          ? `<div class="ptf-stat ptf-stat--warn"><strong>${m.missingDocs}</strong>Missing Docs</div>`
-          : ''}
+        ${cam > 0 ? `<div class="ptf-stat"><strong>$${cam.toLocaleString('en-US')}</strong>CAM</div>` : ''}
+        ${riskLabel ? `<div class="ptf-stat ${riskCls ? 'ptf-risk-stat ' + riskCls : ''}"><strong>${esc(riskLabel)}</strong></div>` : ''}
       </div>
+      ${dm.disputeStats.openDisputes > 0
+        ? `<div class="ptf-stat-warning">&#x26A0; ${dm.disputeStats.openDisputes} open dispute${dm.disputeStats.openDisputes !== 1 ? 's' : ''}</div>`
+        : ''}
+      ${m.missingDocs > 0
+        ? `<div class="ptf-stat-warning">&#x1F4C4; ${m.missingDocs} missing document${m.missingDocs !== 1 ? 's' : ''}</div>`
+        : ''}
       ${reviewChips.length > 0 ? `
       <div class="property-review-summary">
         <span class="review-info">
           ${reviewChips.map(c => `<span class="review-chip ${c.cls}">${esc(c.label)}</span>`).join('')}
           <span class="review-health ${healthCls}">${reviewHealth}% Healthy</span>
         </span>
-        <button class="review-queue-btn" onclick="event.stopPropagation();selectProperty('${pid}')">AI Review ›</button>
+        <button class="review-queue-btn" onclick="event.stopPropagation();selectProperty('${pid}')">Review ›</button>
       </div>` : `
       <div class="ptf-card-action-row">
-        <button class="ptf-card-open-btn" onclick="event.stopPropagation();selectProperty('${pid}')">Open ›</button>
+        <button class="ptf-card-open-btn" onclick="event.stopPropagation();selectProperty('${pid}')">Open Property ›</button>
       </div>`}
-      ${cam > 0 ? `<div class="ptf-cam-lbl">CAM Reconciled</div><div class="ptf-cam-val">$${cam.toLocaleString('en-US')}</div>` : ''}
       ${footParts.length ? `<div class="ptf-card-foot">${footParts.join('')}</div>` : ''}
-      ${m.avgConf !== null
-        ? `<div class="ptf-conf-bar" title="${m.avgConf}% avg. match confidence">
-             <div class="ptf-conf-fill" style="width:${m.avgConf}%"></div>
-           </div>`
-        : ''}
     </div>`;
   }).join('') || `
     <div class="ptf-empty-state">

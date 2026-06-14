@@ -162,7 +162,8 @@ window.Selectors = (() => {
   /**
    * Aggregates portfolio-level KPI values for the dashboard tiles.
    * @param {Array} props
-   * @returns {{ properties, cam, openDisputes, criticalOrElevated, totalMissingDocs, avgConf }}
+   * @returns {{ properties, cam, openDisputes, criticalOrElevated, totalMissingDocs, avgConf,
+   *             occupancyPct, readyCount, inProgressCount, needsReviewCount }}
    */
   function portfolioKPIs(props) {
     const safeProps = Array.isArray(props) ? props : [];
@@ -170,6 +171,24 @@ window.Selectors = (() => {
     const criticalOrElevated = metas.filter(m => m.riskLevel === 'Critical' || m.riskLevel === 'Elevated').length;
     const totalMissingDocs   = metas.reduce((s, m) => s + m.missingDocs, 0);
     const confScores = metas.map(m => m.avgConf).filter(c => c !== null);
+
+    // Portfolio-wide occupancy
+    const totalBldgSqft = safeProps.reduce((s, p) => s + (Number(p.totalSqft) || 0), 0);
+    const totalOccSqft  = safeProps.reduce((s, p) => {
+      const tenants = Array.isArray(p.tenants) ? p.tenants : [];
+      return s + tenants.reduce((ts, t) => ts + (parseFloat(t.leased_sqft) || 0), 0);
+    }, 0);
+    const occupancyPct = totalBldgSqft > 0 ? Math.round((totalOccSqft / totalBldgSqft) * 100) : null;
+
+    // Readiness-based property counts
+    let readyCount = 0, inProgressCount = 0, needsReviewCount = 0;
+    for (const p of safeProps) {
+      const rd = derivePropertyReadiness(p);
+      if (rd.readiness === 'reconciliation_ready' || rd.readiness === 'reconciled') readyCount++;
+      else if (rd.readiness === 'partially_verified') inProgressCount++;
+      else needsReviewCount++;
+    }
+
     return {
       properties:        safeProps.length,
       cam:               safeProps.reduce((s, p) => s + (Number(p.totalCAM) || 0), 0),
@@ -179,6 +198,10 @@ window.Selectors = (() => {
       avgConf: confScores.length
         ? Math.round(confScores.reduce((s, c) => s + c, 0) / confScores.length)
         : null,
+      occupancyPct,
+      readyCount,
+      inProgressCount,
+      needsReviewCount,
     };
   }
 
@@ -260,19 +283,19 @@ window.Selectors = (() => {
 
     let insight = null;
     if (incomplete.length > 0) {
-      insight = `${incomplete.length} tenant${incomplete.length !== 1 ? 's' : ''} missing critical lease data.`;
+      insight = `${incomplete.length} tenant${incomplete.length !== 1 ? 's' : ''} missing lease information.`;
     } else if (missingCapCount > 0) {
-      insight = `${missingCapCount} NNN tenant${missingCapCount !== 1 ? 's' : ''} missing CAM cap${missingCapCount !== 1 ? 's' : ''}.`;
+      insight = `Missing lease provisions on ${missingCapCount} tenant${missingCapCount !== 1 ? 's' : ''}.`;
     } else if (proRataGap >= 5) {
-      insight = `Pro-rata coverage gap of ${proRataGap.toFixed(0)}% detected.`;
+      insight = `Vacancy reducing recoveries — review space allocation.`;
     } else if (expiredCount > 0) {
-      insight = `${expiredCount} lease${expiredCount !== 1 ? 's' : ''} expired — verify CAM eligibility.`;
+      insight = `${expiredCount} lease${expiredCount !== 1 ? 's' : ''} expired — confirm holdover status.`;
     } else if (expiringCount > 0) {
       insight = `${expiringCount} lease${expiringCount !== 1 ? 's expire' : ' expires'} within 12 months.`;
     } else if (needsRev.length > 0) {
-      insight = `${needsRev.length} tenant${needsRev.length !== 1 ? 's' : ''} flagged for review.`;
+      insight = `${needsRev.length} tenant${needsRev.length !== 1 ? 's' : ''} pending review.`;
     } else if (lowConfCount > 0) {
-      insight = `${lowConfCount} lease${lowConfCount !== 1 ? 's' : ''} extracted with low confidence.`;
+      insight = `Lease terms need review on ${lowConfCount} tenant${lowConfCount !== 1 ? 's' : ''}.`;
     } else if (meta.openDisputes > 0) {
       insight = `${meta.openDisputes} open dispute${meta.openDisputes !== 1 ? 's' : ''} require resolution.`;
     } else if (readiness === 'reconciliation_ready') {

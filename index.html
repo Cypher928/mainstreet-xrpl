@@ -707,13 +707,18 @@
     /* Alert/warn stat variants */
     .ptf-stat--alert strong { color: #f87171; }
     .ptf-stat--warn  strong { color: #fbbf24; }
+    /* Inline warning rows on property cards */
+    .ptf-stat-warning { font-size: 0.74rem; color: #fbbf24; margin-bottom: 5px; }
+    /* Risk level stat on property card */
+    .ptf-risk-stat strong { font-size: 0.78rem; font-weight: 600; }
+    .ptf-risk--critical.ptf-risk-stat strong { color: #f87171; }
+    .ptf-risk--elevated.ptf-risk-stat strong { color: #fbbf24; }
+    .ptf-risk--moderate.ptf-risk-stat strong { color: #e2e8f0; }
+    .ptf-risk--low.ptf-risk-stat strong      { color: #4ade80; }
     /* Card footer — CAM year + timestamp */
     .ptf-card-foot { display: flex; align-items: center; justify-content: space-between; flex-wrap: wrap; gap: 4px; margin-top: 9px; border-top: 1px solid rgba(100,116,139,0.13); padding-top: 7px; }
     .ptf-cam-year  { font-size: 0.64rem; font-weight: 600; color: #94a3b8; }
     .ptf-rec-ts    { font-size: 0.63rem; color: #475569; }
-    /* Confidence bar */
-    .ptf-conf-bar  { height: 3px; background: rgba(100,116,139,0.18); border-radius: 99px; margin-top: 9px; overflow: hidden; }
-    .ptf-conf-fill { height: 100%; background: linear-gradient(90deg, #818cf8, #C9973A); border-radius: 99px; transition: width 0.4s; }
     .add-prop-btn {
       padding: 8px 16px; border-radius: 9px; font-size: 0.83rem;
       font-weight: 700; cursor: pointer; border: 2px dashed rgba(201,151,58,0.4);
@@ -4517,51 +4522,38 @@
     <div id="tenantPropertyView" style="display:none;"></div>
   </div>
 
-  <!-- Portfolio KPI Overview -->
+  <!-- 1. Action Center — topmost priority panel -->
+  <div id="actionCenterPanel"></div>
+
+  <!-- 2. Portfolio Health KPI Bar -->
   <div class="ptf-kpi-bar">
     <div class="ptf-kpi">
       <div class="ptf-kpi-val" id="pKpiProperties">—</div>
       <div class="ptf-kpi-lbl">Properties</div>
     </div>
     <div class="ptf-kpi">
+      <div class="ptf-kpi-val" id="pKpiOccupancy">—</div>
+      <div class="ptf-kpi-lbl">Occupancy</div>
+    </div>
+    <div class="ptf-kpi">
       <div class="ptf-kpi-val" id="pKpiCAM">—</div>
       <div class="ptf-kpi-lbl">Total CAM Managed</div>
     </div>
     <div class="ptf-kpi">
-      <div class="ptf-kpi-val" id="pKpiDisputes">—</div>
-      <div class="ptf-kpi-lbl">Open Disputes</div>
+      <div class="ptf-kpi-val" id="pKpiReady">—</div>
+      <div class="ptf-kpi-lbl">Ready To Reconcile</div>
     </div>
     <div class="ptf-kpi">
-      <div class="ptf-kpi-val" id="pKpiCritical">—</div>
-      <div class="ptf-kpi-lbl">At-Risk Properties</div>
-      <div class="ptf-kpi-sub" id="pKpiExpiryRevenue" style="display:none"></div>
+      <div class="ptf-kpi-val" id="pKpiInProgress">—</div>
+      <div class="ptf-kpi-lbl">In Progress</div>
     </div>
     <div class="ptf-kpi">
-      <div class="ptf-kpi-val" id="pKpiMissingDocs">—</div>
-      <div class="ptf-kpi-lbl">Missing Documents</div>
-    </div>
-    <div class="ptf-kpi">
-      <div class="ptf-kpi-val" id="pKpiConfidence">—</div>
-      <div class="ptf-kpi-lbl">Avg Confidence</div>
+      <div class="ptf-kpi-val" id="pKpiNeedsReview">—</div>
+      <div class="ptf-kpi-lbl">Needs Review</div>
     </div>
   </div>
 
-  <!-- Action Center — populated by renderPortfolio(), topmost priority panel -->
-  <div id="actionCenterPanel" style="display:none;"></div>
-
-  <!-- Lease Expiration Alert Panel — populated by renderPortfolio() -->
-  <div id="leaseAlertPanel"></div>
-
-  <!-- Portfolio Intelligence Panel -->
-  <div id="portfolioIntelPanel" style="display:none;"></div>
-
-  <!-- Recovered Revenue Dashboard -->
-  <div id="rrDashPanel" style="display:none;"></div>
-
-  <!-- Renewal Pipeline Panel -->
-  <div id="renewalPipelinePanel" style="display:none;"></div>
-
-  <!-- Property Cards — primary content -->
+  <!-- 3. Property Cards — primary content -->
   <div class="ptf-props-head">
     <h2>Your Properties</h2>
     <div class="ptf-head-actions">
@@ -4573,7 +4565,19 @@
   <div id="reviewQueuePanel" class="rq-panel" style="display:none;"></div>
   <div class="ptf-cards-grid" id="propertyCardsGrid"></div>
 
-  <!-- ── Acquisition Due Diligence ────────────────────────────────────── -->
+  <!-- 4. Lease Expiration Pipeline -->
+  <div id="leaseAlertPanel"></div>
+
+  <!-- 5. Renewal Pipeline Panel -->
+  <div id="renewalPipelinePanel" style="display:none;"></div>
+
+  <!-- 6. Portfolio Intelligence Panel -->
+  <div id="portfolioIntelPanel" style="display:none;"></div>
+
+  <!-- 7. Recovered Revenue Dashboard -->
+  <div id="rrDashPanel" style="display:none;"></div>
+
+  <!-- 8. Acquisition Due Diligence -->
   <div class="acq-section" id="acqSection">
     <div class="acq-section-head">
       <h2>&#x1F50D; Acquisition Due Diligence</h2>
@@ -4582,17 +4586,6 @@
     <div id="acqReviewsGrid" class="acq-cards-grid">
       <div class="acq-empty">No due diligence reviews yet. Start one to analyze a property before acquisition.</div>
     </div>
-  </div>
-
-
-  <!-- Phase 2 Teaser (subtle — below the fold) -->
-  <div class="ptf-phase2-teaser" style="opacity:0.6;">
-    <span class="ptf-phase2-icon">&#x1F3E6;</span>
-    <div class="ptf-phase2-text">
-      <strong>Lender Escrow Analysis — Coming Soon</strong><br>
-      Verify CAM compliance before releasing escrow funds. Built for commercial mortgage servicers.
-    </div>
-    <span class="ptf-phase2-badge">Roadmap</span>
   </div>
 
 </div>
