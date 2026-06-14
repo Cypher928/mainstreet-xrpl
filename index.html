@@ -764,7 +764,7 @@
     .ptf-status-dot.reconciled  { background: #22c55e; box-shadow: 0 0 0 3px rgba(34,197,94,0.2); }
     .ptf-status-dot.in-progress { background: #f59e0b; box-shadow: 0 0 0 3px rgba(245,158,11,0.2); }
     .ptf-status-dot.disputes    { background: #ef4444; box-shadow: 0 0 0 3px rgba(239,68,68,0.2); }
-    .ptf-stats-row { display: flex; gap: 14px; margin-bottom: 10px; }
+    .ptf-stats-row { display: flex; flex-wrap: wrap; gap: 6px 14px; margin-bottom: 10px; }
     .ptf-stat { font-size: 0.77rem; color: #64748B; }
     .ptf-stat strong { display: block; font-size: 0.92rem; font-weight: 700; color: #E2E8F0; }
     .ptf-cam-lbl { font-size: 0.68rem; color: #64748B; text-transform: uppercase; letter-spacing: 0.04em; font-family: 'DM Mono', monospace; }
@@ -2722,6 +2722,25 @@
     .gl-import-btn:active { transform: scale(0.99); }
 
     /* ── Print styles ─────────────────────────────────────────────────── */
+    /* ── Mobile: Report / Export overlay (Phase 1 — presentation only) ───── */
+    @media (max-width: 600px) {
+      .rpt-toolbar { padding: 10px 14px; gap: 8px; }
+      .rpt-toolbar h2 {
+        font-size: 0.9rem; flex: 1 1 auto; min-width: 0;
+        overflow: hidden; text-overflow: ellipsis; white-space: nowrap;
+      }
+      .rpt-toolbar-actions { flex-shrink: 0; gap: 6px; }
+      .rpt-tool-btn, .rpt-close-btn { padding: 7px 11px; font-size: 0.74rem; }
+      .rpt-body { margin: 20px auto 56px; padding: 0 16px; }
+      .rpt-cover { padding: 22px 0 20px; margin-bottom: 24px; }
+      .rpt-cover-title { font-size: 1.5rem; }
+      .rpt-cover-meta { gap: 14px; }
+      .rpt-section-title { margin: 26px 0 12px; }
+      .rpt-kpi-row { gap: 8px; }
+      .rpt-kpi { min-width: 90px; padding: 14px 10px; }
+      .rpt-kpi .kpi-val { font-size: 1.2rem; }
+    }
+
     @media print {
       body > *:not(#reportOverlay) { display: none !important; }
       #reportOverlay {
@@ -3429,7 +3448,7 @@
     /* Mobile density — ~10% vertical spacing reduction */
     .ptf-prop-card { padding: 15px 15px 13px; }
     .ptf-status-row { margin-bottom: 10px; }
-    .ptf-stats-row { gap: 10px; margin-bottom: 8px; }
+    .ptf-stats-row { gap: 6px 10px; margin-bottom: 8px; }
     .ptf-kpi { padding: 12px 10px; }
     .ptf-kpi-val { font-size: 1.3rem; }
     .property-review-summary { margin: 3px 0 5px; }
@@ -4292,6 +4311,20 @@
       .rp-table td    { padding: 7px 10px; }
       .rp-table th:nth-child(4),
       .rp-table td:nth-child(4) { display: none; } /* hide Sq Ft on mobile */
+    }
+
+    /* ── Mobile: wide data tables — density + scroll hint (Phase 1) ───────── */
+    @media (max-width: 600px) {
+      .acq-ts-table { min-width: 560px; }
+      .acq-ts-table th, .acq-ts-table td { padding: 8px 9px; }
+      .acq-ts-scroll, .yardi-table-scroll,
+      .rcs-table-wrap, .rp-table-wrap { scrollbar-width: thin; scrollbar-color: rgba(201,151,58,0.45) transparent; }
+      .acq-ts-scroll::-webkit-scrollbar, .yardi-table-scroll::-webkit-scrollbar,
+      .rcs-table-wrap::-webkit-scrollbar, .rp-table-wrap::-webkit-scrollbar { height: 6px; }
+      .acq-ts-scroll::-webkit-scrollbar-thumb, .yardi-table-scroll::-webkit-scrollbar-thumb,
+      .rcs-table-wrap::-webkit-scrollbar-thumb, .rp-table-wrap::-webkit-scrollbar-thumb {
+        background: rgba(201,151,58,0.45); border-radius: 3px;
+      }
     }
 
     /* ── Mobile: Portfolio Intelligence ──────────────────────────────────── */
