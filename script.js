@@ -15736,7 +15736,11 @@ async function _doResyncTenantsToTable(propertyId, tenants) {
   // SECURITY: no client-side auth check here — propertyId comes from the caller.
   // Supabase RLS on the tenants table is the authoritative guard. Add RLS in Phase 8C-hardening.
   const { error: delErr } = await db.from('tenants').delete().eq('property_id', propertyId);
-  if (delErr) { console.error('[resyncTenantsToTable] delete error:', delErr.message); return; }
+  if (delErr) {
+    console.error('[resyncTenantsToTable] delete error:', delErr.message, '| code:', delErr.code);
+    showToast('⚠️ Tenant sync failed — ' + delErr.message, { color: '#92400e', textColor: '#fef3c7', duration: 5000 });
+    return;
+  }
   const rows = (tenants || [])
     .filter(t => t && t.tenant_name && !t._pendingJobReview)
     .map(t => ({
@@ -15752,7 +15756,10 @@ async function _doResyncTenantsToTable(propertyId, tenants) {
     }));
   if (rows.length === 0) return;
   const { error } = await db.from('tenants').insert(rows).select('id');
-  if (error) console.error('[resyncTenantsToTable] insert error:', error.message);
+  if (error) {
+    console.error('[resyncTenantsToTable] insert error:', error.message, '| code:', error.code);
+    showToast('⚠️ Tenant sync failed — ' + error.message, { color: '#92400e', textColor: '#fef3c7', duration: 5000 });
+  }
 }
 
 // Full replace: delete all rows for the property then insert the given list.
@@ -17321,13 +17328,20 @@ async function _loadAcqReviews() {
 async function _saveAcqReview(review) {
   try {
     const { data: { user } } = await db.auth.getUser();
-    if (!user?.id) return;
+    if (!user?.id) return false;
     const { error } = await db
       .from('acquisition_reviews')
       .upsert({ ...review, user_id: user.id }, { onConflict: 'id' });
-    if (error) console.warn('[acq] save error:', error.message);
+    if (error) {
+      console.error('[acq] save error:', error.message, '| code:', error.code);
+      showToast('⚠️ Review save failed — ' + error.message, { color: '#92400e', textColor: '#fef3c7', duration: 5000 });
+      return false;
+    }
+    return true;
   } catch (e) {
-    console.warn('[acq] _saveAcqReview failed:', e.message);
+    console.error('[acq] _saveAcqReview failed:', e.message);
+    showToast('⚠️ Review save failed — please try again', { color: '#92400e', textColor: '#fef3c7', duration: 5000 });
+    return false;
   }
 }
 
