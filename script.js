@@ -6018,7 +6018,13 @@ function refreshInvSummary(i) {
 }
 
 async function removeInvItem(i) {
+  if (!confirm('Remove this invoice from the list?')) return;
   invoiceData.splice(i, 1);
+  // Explicitly sync before savePropertyData() — the empty-array guard in
+  // savePropertyData() protects tenant-portal mode from wiping invoices,
+  // but explicit user removes must persist even when the list becomes empty.
+  const _iprop = currentProperty();
+  if (_iprop) _iprop.invoices = Array.from(invoiceData);
   renderInvResults();
   await savePropertyData();
 }
@@ -12471,6 +12477,30 @@ function _downloadFile(content, filename, mime) {
   URL.revokeObjectURL(url);
 }
 
+async function deleteCurrentCAMReconciliation() {
+  const prop = currentProperty();
+  if (!prop?.id) { showToast('No property selected.', { color: '#92400e', textColor: '#fef3c7' }); return; }
+  const year = getCamYear() || new Date().getFullYear();
+  if (!confirm(`Delete the ${year} CAM reconciliation for "${prop.name}"?\n\nThis removes the stored records from the database and cannot be undone.`)) return;
+
+  try {
+    const hdrs = await _authHeaders();
+    const res  = await fetch(`/api/cam-reconciliations?propertyId=${encodeURIComponent(prop.id)}&year=${encodeURIComponent(year)}`, {
+      method: 'DELETE',
+      headers: hdrs,
+    });
+    if (!res.ok) {
+      const err = await res.json().catch(() => ({}));
+      throw new Error(err.error || `HTTP ${res.status}`);
+    }
+    showToast(`${year} CAM reconciliation deleted.`);
+    logActivity('cam_delete', `${year} CAM reconciliation deleted`, { severity: 'warning', actor: 'User', relatedEntity: prop.name });
+  } catch (e) {
+    console.error('[deleteCurrentCAMReconciliation]', e.message);
+    showToast('⚠️ Delete failed — ' + e.message, { color: '#92400e', textColor: '#fef3c7', duration: 5000 });
+  }
+}
+
 function exportReconciliationCSV() {
   if (!lastResults.length) { showToast('Run a CAM allocation first.', { color: '#92400e', textColor: '#fef3c7' }); return; }
   const rows = [
@@ -17594,6 +17624,38 @@ function closeAcquisitionDetail() {
   document.getElementById('portfolioDashboard').style.display = 'block';
   _renderAcqSection(_acqReviews);
   window.scrollTo({ top: 0, behavior: 'smooth' });
+}
+
+async function deleteActiveAcquisitionReview() {
+  const id     = _activeAcqId;
+  const review = _acqReviews.find(r => r.id === id);
+  if (!id || !review) return;
+
+  if (!confirm(`Permanently delete the review "${review.name}"?\n\nThis cannot be undone.`)) return;
+
+  try {
+    const { data: { user } } = await db.auth.getUser();
+    if (!user?.id) { showToast('⚠️ Not signed in', { color: '#92400e', textColor: '#fef3c7' }); return; }
+
+    const { error } = await db
+      .from('acquisition_reviews')
+      .delete()
+      .eq('id', id)
+      .eq('user_id', user.id);
+
+    if (error) {
+      console.error('[deleteAcqReview] error:', error.message, '| code:', error.code);
+      showToast('⚠️ Delete failed — ' + error.message, { color: '#92400e', textColor: '#fef3c7', duration: 5000 });
+      return;
+    }
+
+    _acqReviews = _acqReviews.filter(r => r.id !== id);
+    showToast(`"${review.name}" deleted.`);
+    closeAcquisitionDetail();
+  } catch (e) {
+    console.error('[deleteAcqReview] exception:', e.message);
+    showToast('⚠️ Delete failed — please try again', { color: '#92400e', textColor: '#fef3c7', duration: 5000 });
+  }
 }
 
 // ── Acquisition → Property conversion ─────────────────────────────────────────

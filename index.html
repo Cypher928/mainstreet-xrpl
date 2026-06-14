@@ -3809,6 +3809,8 @@
       color: #94A3B8; cursor: pointer; transition: all 0.15s;
     }
     .rpt-export-btn:hover { background: rgba(255,255,255,0.08); color: #CBD5E1; }
+    .rpt-export-btn--delete { border-color: rgba(239,68,68,0.3); color: #f87171; margin-left: auto; }
+    .rpt-export-btn--delete:hover { background: rgba(239,68,68,0.1); color: #fca5a5; border-color: #ef4444; }
 
     /* ── Evidence Appendix (Phase 24) ──────────────────────────────────── */
     .rpt-ev-summary { font-size: 0.73rem; color: #64748b; margin-bottom: 10px; }
@@ -4625,6 +4627,7 @@
     <span class="acq-detail-title" id="acqDetailTitle"></span>
     <span class="acq-detail-badge" id="acqDetailBadge"></span>
     <span id="acqConvertAction"></span>
+    <button class="acq-back-btn acq-delete-btn" onclick="deleteActiveAcquisitionReview()" title="Delete this review permanently" style="margin-left:auto;border-color:rgba(239,68,68,0.3);color:#f87171;">&#x1F5D1; Delete</button>
   </div>
 
   <!-- Conversion confirmation modal (hidden until triggered) -->
@@ -5039,6 +5042,7 @@
       <button class="rpt-export-btn" onclick="exportReconciliationCSV()">&#x1F4C8; Reconciliation CSV</button>
       <button class="rpt-export-btn" onclick="exportDisputesCSV()">&#x1F4DD; Disputes CSV</button>
       <button class="rpt-export-btn" onclick="exportAuditLog()">&#x1F4BE; Activity Log</button>
+      <button class="rpt-export-btn rpt-export-btn--delete" onclick="deleteCurrentCAMReconciliation()" title="Delete this year&#x2019;s reconciliation records from the database">&#x1F5D1; Delete Reconciliation</button>
     </div>
     <div id="reportsMsg" class="reports-notice">
       Run a CAM allocation first to generate reports.
