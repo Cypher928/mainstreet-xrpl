@@ -9581,9 +9581,9 @@ function renderOpenDisputes() {
         <div class="${badgeClass}">${label}</div>
         ${d.resolvedAt ? `<div class="d-resolved-ts">${statusWord} · ${fmtTs(d.resolvedAt)}</div>` : ''}
         ${d.hash ? `<div class="onchain-record">
-          <div class="oc-label">On-Chain Record</div>
+          <div class="oc-label">Audit Hash</div>
           <div class="oc-hash">${d.hash}</div>
-          <button class="oc-view-btn" onclick="copyOnChainHash(this,'${d.hash}')">&#x1F517; View Record</button>
+          <button class="oc-view-btn" onclick="copyOnChainHash(this,'${d.hash}')">&#x1F512; Copy Hash</button>
         </div>` : ''}`;
     } else {
       actionsHtml = `
@@ -9714,7 +9714,7 @@ async function resolveDispute(id, resolution) {
         relatedDisputeIds: [id] }); }
   }
 
-  // Hash the full dispute record for the on-chain audit trail
+  // Hash the full dispute record for tamper-detection audit trail
   d.hash = await sha256({
     id:          d.id,
     tenantName:  d.tenantName,
@@ -11924,9 +11924,9 @@ function generateMasterReport() {
       </tr></tfoot>
     </table>
 
-    <div class="rpt-section-title">XRPL Audit Record</div>
+    <div class="rpt-section-title">Audit Fingerprint</div>
     <div class="rpt-hash-box">
-      <div class="rpt-hash-lbl">&#x1F517; On-Chain Integrity Hash</div>
+      <div class="rpt-hash-lbl">&#x1F512; Tamper-Detection Hash (SHA-256)</div>
       <div class="rpt-hash-val">Computing…</div>
     </div>
 
@@ -12297,9 +12297,9 @@ function generateDisputePacket(disputeId) {
     </table>` : ''}
 
     ${d.hash ? `
-    <div class="rpt-section-title">Audit Integrity</div>
+    <div class="rpt-section-title">Audit Fingerprint</div>
     <div class="rpt-hash-box">
-      <div class="rpt-hash-lbl">&#x1F517; On-Chain Dispute Hash</div>
+      <div class="rpt-hash-lbl">&#x1F512; Tamper-Detection Hash (SHA-256)</div>
       <div class="rpt-hash-val">${d.hash}</div>
     </div>` : ''}
 
@@ -12785,9 +12785,9 @@ function generateTenantStatement(tenantName) {
       <tbody>${disputeRows}</tbody>
     </table>
 
-    <div class="rpt-section-title">XRPL Audit Record</div>
+    <div class="rpt-section-title">Audit Fingerprint</div>
     <div class="rpt-hash-box">
-      <div class="rpt-hash-lbl">&#x1F517; On-Chain Integrity Hash</div>
+      <div class="rpt-hash-lbl">&#x1F512; Tamper-Detection Hash (SHA-256)</div>
       <div class="rpt-hash-val" id="tenantHashVal">Computing…</div>
     </div>
 
