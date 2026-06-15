@@ -7882,26 +7882,7 @@ function _obMarkStep(idx) {
   _obSet(s);
 }
 
-// Show the welcome modal if the user hasn't seen it and has no real properties
-function _maybeShowWelcome(props) {
-  const s = _obGet() || _obInit();
-  if (s.welcomeSeen) return;
-  const realProps = (Array.isArray(props) ? props : _props).filter(p => p.id !== DEMO_PROPERTY_ID);
-  if (realProps.length > 0) return; // already has properties
-  const modal = document.getElementById('obWelcomeModal');
-  if (modal) modal.style.display = 'flex';
-}
-
-// Called from welcome modal buttons (global so onclick can reach it)
-function obCloseWelcome(action) {
-  const s = _obGet() || _obInit();
-  s.welcomeSeen = true;
-  _obSet(s);
-  const modal = document.getElementById('obWelcomeModal');
-  if (modal) modal.style.display = 'none';
-  if (action === 'property') addNewProperty();
-  else if (action === 'demo') { if (typeof loadDemo === 'function') loadDemo(); }
-}
+// Defined below (second definition is the live one; this block intentionally removed)
 
 // Derive current step from live workflow state and update the step bar + hints
 function _obSyncState() {
@@ -7970,25 +7951,60 @@ function _obInit() {
   _obSet(s); return s;
 }
 
+// Shows the inline #demoWelcomePanel for users who haven't dismissed it yet
+// and have no real (non-demo) properties.  Hides it once user has real data.
 function _maybeShowWelcome(props) {
-  // Never interrupt tenant-role users
   if (document.getElementById('appContent')?.getAttribute('data-role') === 'tenant') return;
   const ob = _obGet();
-  if (ob?.welcomeSeen) return;
+  const panel = document.getElementById('demoWelcomePanel');
+  if (!panel) return;
+  if (ob?.welcomeSeen) { panel.style.display = 'none'; return; }
   const realProps = (props || []).filter(p => p.id !== DEMO_PROPERTY_ID);
-  if (realProps.length > 0) return;
-  const modal = document.getElementById('obWelcomeModal');
-  if (modal) modal.style.display = 'flex';
+  if (realProps.length > 0) { _dismissDemoWelcome(); return; }
+  panel.style.display = 'block';
 }
 
-function obCloseWelcome(action) {
+// Permanently hides the welcome panel and records the dismissal in localStorage.
+// Called by the × button and "Create Property".  NOT called when opening demos
+// so that the panel remains discoverable when the user returns to the dashboard.
+function _dismissDemoWelcome() {
   const ob = _obGet() || _obInit();
   ob.welcomeSeen = true;
   _obSet(ob);
+  const panel = document.getElementById('demoWelcomePanel');
+  if (panel) panel.style.display = 'none';
   const modal = document.getElementById('obWelcomeModal');
   if (modal) modal.style.display = 'none';
+}
+
+// Backward-compat shim — #obWelcomeModal buttons still call this via onclick.
+// New code uses _dismissDemoWelcome() directly.
+function obCloseWelcome(action) {
+  _dismissDemoWelcome();
   if (action === 'property') addNewProperty();
   else if (action === 'demo') loadDemo();
+}
+
+// Seeds (if needed) and opens the Harborview Retail Center acquisition demo.
+async function _openAcqDemo() {
+  const btn = document.getElementById('acqDemoBtn');
+  const orig = btn?.textContent ?? 'Open Acquisition Demo';
+  if (btn) { btn.disabled = true; btn.textContent = 'Loading…'; }
+  try {
+    await ensureDemoAcqReview();
+    if (DEMO_ACQ_REVIEW_ID) {
+      const review = _acqReviews.find(r => r.id === DEMO_ACQ_REVIEW_ID);
+      if (review) { selectAcquisitionReview(DEMO_ACQ_REVIEW_ID); return; }
+    }
+    // Fallback: reload from DB then scroll into view
+    await _loadAcqReviewsAndRender();
+    document.querySelector('.acq-section')?.scrollIntoView({ behavior: 'smooth' });
+  } catch (e) {
+    console.error('[_openAcqDemo]', e);
+    showToast('Could not open acquisition demo — please try again.', { color: '#92400e', textColor: '#fef3c7' });
+  } finally {
+    if (btn) { btn.disabled = false; btn.textContent = orig; }
+  }
 }
 
 function _obSyncState() {
@@ -15911,11 +15927,7 @@ function renderPortfolio(props) {
       </div>
     </div>`;
 
-  // Hero identity text always visible — it's the brand anchor.
-  // Only hide the first-run CTA ("Start by running a demo…") once the user has properties.
-  const hasProps = props.length > 0;
-  const startEl = document.querySelector('.start-here');
-  if (startEl) startEl.style.display = hasProps ? 'none' : '';
+  // #demoWelcomePanel visibility is managed by _maybeShowWelcome() below.
 
   renderReviewQueue(props);
   _maybeShowWelcome(props);

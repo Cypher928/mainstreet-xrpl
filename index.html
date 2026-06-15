@@ -642,6 +642,71 @@
     .btn-secondary:hover { background: rgba(212,169,79,0.08); border-color: rgba(212,169,79,0.75); }
     .btn-secondary:active { transform: scale(0.97); }
 
+    /* ── Demo Welcome Panel ──────────────────────────────────────────── */
+    #demoWelcomePanel {
+      margin: 20px 0 28px;
+      background: linear-gradient(135deg, #1a2234 0%, #1e2a3a 100%);
+      border: 1px solid rgba(201,151,58,0.28);
+      border-radius: 14px;
+      padding: 18px 18px 14px;
+      position: relative;
+    }
+    .dmw-hdr { display: flex; align-items: flex-start; gap: 10px; margin-bottom: 14px; }
+    .dmw-hdr-text { flex: 1; }
+    .dmw-title { font-size: 1rem; font-weight: 700; color: #f1f5f9; }
+    .dmw-sub { font-size: 0.8rem; color: rgba(255,255,255,0.48); margin-top: 3px; }
+    .dmw-close {
+      background: none; border: none; color: rgba(255,255,255,0.35); font-size: 1.3rem;
+      cursor: pointer; line-height: 1; padding: 0 3px; flex-shrink: 0;
+      transition: color 0.15s; font-family: inherit;
+    }
+    .dmw-close:hover { color: rgba(255,255,255,0.68); }
+    .dmw-cards {
+      display: grid;
+      grid-template-columns: repeat(3, 1fr);
+      gap: 10px;
+    }
+    .dmw-card {
+      background: rgba(15,23,42,0.7);
+      border: 1px solid rgba(255,255,255,0.07);
+      border-radius: 10px;
+      padding: 13px 13px 11px;
+      display: flex; flex-direction: column;
+    }
+    .dmw-card-icon { font-size: 1.2rem; margin-bottom: 5px; }
+    .dmw-card-mod {
+      font-size: 0.69rem; font-weight: 700; letter-spacing: 0.06em;
+      text-transform: uppercase; color: #C9973A; margin-bottom: 3px;
+    }
+    .dmw-card-name { font-size: 0.86rem; font-weight: 700; color: #e2e8f0; margin-bottom: 8px; }
+    .dmw-card-feats { list-style: none; padding: 0; margin: 0 0 11px; flex: 1; }
+    .dmw-card-feats li {
+      font-size: 0.76rem; color: rgba(255,255,255,0.52);
+      padding: 2px 0 2px 13px; position: relative;
+    }
+    .dmw-card-feats li::before { content: '·'; position: absolute; left: 0; color: #C9973A; }
+    .dmw-btn-pri {
+      width: 100%; background: linear-gradient(135deg, #d4a94f, #b8892f);
+      color: #111; padding: 8px 12px; border-radius: 7px;
+      font-weight: 600; font-size: 0.79rem; font-family: inherit;
+      border: none; cursor: pointer; transition: opacity 0.15s;
+    }
+    .dmw-btn-pri:hover { opacity: 0.85; }
+    .dmw-btn-pri:disabled { opacity: 0.5; cursor: not-allowed; }
+    .dmw-btn-sec {
+      width: 100%; background: transparent;
+      border: 1px dashed rgba(212,169,79,0.42);
+      color: #d4a94f; padding: 8px 12px; border-radius: 7px;
+      font-size: 0.79rem; font-family: inherit;
+      cursor: pointer; transition: background 0.15s;
+    }
+    .dmw-btn-sec:hover { background: rgba(212,169,79,0.07); border-color: rgba(212,169,79,0.7); }
+    @media (max-width: 560px) { .dmw-cards { grid-template-columns: 1fr; } }
+    @media (min-width: 561px) and (max-width: 799px) {
+      .dmw-cards { grid-template-columns: repeat(2, 1fr); }
+      .dmw-card:last-child { grid-column: 1 / -1; }
+    }
+
     /* ── Portfolio Dashboard ─────────────────────────────────────────── */
     #portfolioDashboard {
       max-width: 720px; margin: 0 auto; padding: 0 16px 48px;
@@ -3202,6 +3267,7 @@
 
     /* ── RBAC: tenant portal CSS gating ───────────────────────────────── */
     #appContent[data-role="tenant"] .start-here        { display: none !important; }
+    #appContent[data-role="tenant"] #demoWelcomePanel  { display: none !important; }
     #appContent[data-role="tenant"] .ptf-kpi-bar       { display: none !important; }
     #appContent[data-role="tenant"] #portfolioIntelPanel { display: none !important; }
     #appContent[data-role="tenant"] #rrDashPanel { display: none !important; }
@@ -4736,12 +4802,59 @@
     <p class="hero-desc">AI-powered CAM reconciliation built for landlords and property managers</p>
   </div>
 
-  <!-- Primary Action -->
-  <div class="start-here">
-    <p class="start-text">See a fully loaded reconciliation — or add your first property to get started</p>
-    <div class="cta-row">
-      <button class="btn-primary" id="demoBtn" onclick="loadDemo()">&#x1F3AF; Try Live Demo</button>
-      <button class="btn-secondary" onclick="addNewProperty()">+ Add Property</button>
+  <!-- Demo Welcome Panel — shown to new users until dismissed; managed by _maybeShowWelcome() -->
+  <div id="demoWelcomePanel" style="display:none;">
+    <div class="dmw-hdr">
+      <div class="dmw-hdr-text">
+        <div class="dmw-title">Welcome to MainStreet</div>
+        <div class="dmw-sub">Explore the platform with sample data, or jump straight in with your own property.</div>
+      </div>
+      <button class="dmw-close" onclick="_dismissDemoWelcome()" title="Dismiss">&times;</button>
+    </div>
+    <div class="dmw-cards">
+
+      <!-- CAM Reconciliation Demo -->
+      <div class="dmw-card">
+        <div class="dmw-card-icon">&#x1F3E2;</div>
+        <div class="dmw-card-mod">CAM Reconciliation</div>
+        <div class="dmw-card-name">Cascade Commons</div>
+        <ul class="dmw-card-feats">
+          <li>5 tenants &middot; 26 invoices</li>
+          <li>Full year CAM allocation</li>
+          <li>Cap &amp; exclusion enforcement</li>
+          <li>Reports &amp; dispute log</li>
+        </ul>
+        <button class="dmw-btn-pri" id="demoBtn" onclick="loadDemo()">Open CAM Demo</button>
+      </div>
+
+      <!-- Acquisition Due Diligence Demo -->
+      <div class="dmw-card">
+        <div class="dmw-card-icon">&#x1F50D;</div>
+        <div class="dmw-card-mod">Acquisition Due Diligence</div>
+        <div class="dmw-card-name">Harborview Retail Center</div>
+        <ul class="dmw-card-feats">
+          <li>Lease risk analysis</li>
+          <li>CAM leakage detection</li>
+          <li>Occupancy &amp; WALT review</li>
+          <li>Investment recommendation</li>
+        </ul>
+        <button class="dmw-btn-pri" id="acqDemoBtn" onclick="_openAcqDemo()">Open Acquisition Demo</button>
+      </div>
+
+      <!-- Create Your Own -->
+      <div class="dmw-card">
+        <div class="dmw-card-icon">&#x2795;</div>
+        <div class="dmw-card-mod">Start From Scratch</div>
+        <div class="dmw-card-name">Your Property</div>
+        <ul class="dmw-card-feats">
+          <li>Upload lease PDFs</li>
+          <li>AI extracts CAM terms</li>
+          <li>Run reconciliation instantly</li>
+          <li>Generate tenant statements</li>
+        </ul>
+        <button class="dmw-btn-sec" onclick="_dismissDemoWelcome();addNewProperty()">+ Create Property</button>
+      </div>
+
     </div>
   </div>
 
