@@ -38,6 +38,7 @@ async function _showApp(user) {
   initCamYearSelect();       // re-sync dropdown now that _camYear may have changed
   document.getElementById('loginScreen').style.display  = 'none';
   document.getElementById('appContent').style.display   = 'block';
+  document.getElementById('setNewPasswordOverlay')?.classList.remove('visible');
   if (user?.email) document.getElementById('headerUserEmail').textContent = user.email;
   const _acNorm = window.AuthService ? window.AuthService.hydrateFromSupabaseUser(user) : null;
   if (_acNorm) {
@@ -51,6 +52,7 @@ async function _showApp(user) {
 function _showLogin() {
   document.getElementById('loginScreen').style.display = 'flex';
   document.getElementById('appContent').style.display  = 'none';
+  document.getElementById('setNewPasswordOverlay')?.classList.remove('visible');
 }
 
 let _authMode = 'signin'; // 'signin' | 'signup'
@@ -11687,7 +11689,7 @@ function _rptFooter(propName, reportType, now) {
   </div>`;
 }
 
-// ─── Monthly Holes Report ─────────────────────────────────────────────────────
+// ─── Coverage Gap Report ──────────────────────────────────────────────────────
 
 function generateHolesReport() {
   const propName = document.getElementById('propertyName').value.trim() || 'Property';
@@ -12708,7 +12710,7 @@ function generateDisputePacket(disputeId) {
   }
 }
 
-// ─── Landlord Risk Export ─────────────────────────────────────────────────────
+// ─── Risk & Disputes Report ─────────────────────────────────────────────────────
 
 function generateLandlordExport() {
   if (!lastResults.length) { showToast('Run a CAM allocation first.', { color: '#92400e', textColor: '#fef3c7' }); return; }
@@ -12716,9 +12718,9 @@ function generateLandlordExport() {
   const _expProp = currentProperty();
   if (_expProp) rebuildDerivedState(_expProp); // ensure cached metrics are fresh before export
   const _expDm = _expProp ? (derivePropertyMetrics(_expProp) || {}) : {};
-  logActivity('landlord_export', 'Landlord Risk Export generated', { severity: 'info', actor: 'User', relatedEntity: lastPropName || 'Property' });
+  logActivity('landlord_export', 'Risk & Disputes Report generated', { severity: 'info', actor: 'User', relatedEntity: lastPropName || 'Property' });
   { if (_expProp) appendPropertyTimelineEvent(_expProp, { type: 'export_generated', severity: 'info',
-      actor: 'User', title: 'Landlord Risk Export generated',
+      actor: 'User', title: 'Risk & Disputes Report generated',
       metadata: { exportType: 'landlord_risk', propName: lastPropName || 'Property' } }); }
   const propName   = lastPropName || 'Property';
   const now        = new Date().toLocaleDateString('en-US', { year: 'numeric', month: 'long', day: 'numeric' });
@@ -12762,7 +12764,7 @@ function generateLandlordExport() {
   const _expTotalCAM = _expDm.financialStats?.totalCAM ?? lastTotal;
   const _expOpenDisp = _expDm.disputeStats?.openDisputes ?? openD.length;
   const html = `
-    ${_rptHeader(propName, 'Landlord Risk Export', period, now, [
+    ${_rptHeader(propName, 'Risk & Disputes Report', period, now, [
       { label: 'Total CAM',   value: fmt(_expTotalCAM) },
       { label: 'Open Disputes', value: _expOpenDisp },
       { label: 'Exposure',    value: fmt(exposure) },
@@ -12809,12 +12811,12 @@ function generateLandlordExport() {
   <tbody>${tlRows}</tbody>
 </table>` : '';
     })()}
-    ${_rptFooter(propName, 'Landlord Risk Export', now)}`;
+    ${_rptFooter(propName, 'Risk & Disputes Report', now)}`;
 
-  openReport('Landlord Risk Export — ' + propName, html);
+  openReport('Risk & Disputes Report — ' + propName, html);
   } catch (e) {
     logError('generateLandlordExport', e, { propName: lastPropName });
-    showToast('Could not generate Landlord Risk Export.', { color: '#92400e', textColor: '#fef3c7' });
+    showToast('Could not generate Risk & Disputes Report.', { color: '#92400e', textColor: '#fef3c7' });
   }
 }
 
@@ -13038,18 +13040,6 @@ function generateTenantStatement(tenantName) {
         const stored = invoiceData.find(d =>
           d.vendorName && d.vendorName.toLowerCase() === vendorKey
         );
-        if (idx === 0) {
-          console.log('[PIPELINE:7b] first inv obj', JSON.parse(JSON.stringify(inv || {})));
-          console.log('[PIPELINE:7b] first stored obj', JSON.parse(JSON.stringify(stored || {})));
-        }
-        console.log('[generateTenantStatement] invoice match', {
-          idx,
-          invVendor:    inv.vendor,
-          invVendorName: inv.vendorName,
-          vendorKey,
-          storedFound:  !!stored,
-          storedFileUrl: stored ? (stored.fileUrl ? 'PRESENT' : 'MISSING') : 'N/A',
-        });
         const viewInvBtn = stored && stored.fileUrl
           ? `<button class="btn-secondary" onclick="event.stopPropagation();openInvFileViewer('${stored.fileUrl.replace(/\\/g,'\\\\').replace(/'/g,"\\'")}','${esc(inv.vendor || inv.vendorName || '')}','${esc(stored.fileType || '')}')">&#x1F4C4; View Invoice</button>`
           : '';
@@ -13176,21 +13166,20 @@ function generateTenantStatement(tenantName) {
       </div>
     </div>
 
-    <button class="primary-pay-btn" style="margin-bottom:24px;">Pay Now &mdash; ${fmt(r.allocatedAmount)} USD</button>
-
     <div class="rpt-section-title">Expense Breakdown</div>
-    <p class="rpt-helper-text">Tap a category to see individual charges. Tap any charge to view details or dispute.</p>
+    <p class="rpt-helper-text">Click a category to expand individual charges.</p>
     <div class="ts-cat-list">${categoryCards}</div>
     ${exclNote}${capNote}
 
     <div class="rpt-section-title">Year-End Reconciliation</div>
     <table class="rpt-table">
       <tbody>
-        <tr><td>Estimated Annual CAM</td><td style="text-align:right">${fmt(estimated)}</td></tr>
-        <tr><td>Actual Reconciled CAM</td><td style="text-align:right">${fmt(actual)}</td></tr>
-        <tr class="total-row"><td>Net Settlement</td><td style="text-align:right">${reconNote}</td></tr>
+        <tr><td>Reconciled CAM Responsibility</td><td style="text-align:right">${fmt(actual)}</td></tr>
+        <tr><td>Pro-Rata Share</td><td style="text-align:right">${(r.proRata * 100).toFixed(2)}%</td></tr>
+        <tr class="total-row"><td>Total Billed</td><td style="text-align:right">${fmt(r.allocatedAmount)}</td></tr>
       </tbody>
     </table>
+    <p style="font-size:0.78rem;color:#64748b;margin-top:6px;">Variance from monthly estimates requires payment history data not yet in this system — please reconcile against your accounts payable records.</p>
 
     <div class="rpt-section-title">Disputes</div>
     <p class="rpt-helper-text">Disputes are reviewed by your landlord. You'll be notified when a decision is made.</p>
@@ -16368,10 +16357,9 @@ async function loadProperties() {
 const _resyncQueues = new Map();
 
 async function _doResyncTenantsToTable(propertyId, tenants) {
-  // Atomic delete+insert via resync_property_tenants() stored procedure.
-  // The RPC wraps both operations in a single PL/pgSQL transaction — if the
-  // insert loop raises an exception, the delete is automatically rolled back.
-  // Migration: migrations/009_atomic_tenant_resync.sql
+  // Primary path: atomic delete+insert via resync_property_tenants() stored procedure.
+  // Requires migrations/009_atomic_tenant_resync.sql to have been applied in Supabase.
+  // If the function is absent (PGRST202), falls back to direct table ops silently.
   const rows = (tenants || [])
     .filter(t => t && t.tenant_name && !t._pendingJobReview)
     .map(t => ({
@@ -16391,6 +16379,14 @@ async function _doResyncTenantsToTable(propertyId, tenants) {
   });
 
   if (error) {
+    // PGRST202: function not found — migration 009 not yet applied.
+    // Fall back to direct table operations so the app keeps working.
+    const isMissing = error.code === 'PGRST202'
+      || (error.message || '').toLowerCase().includes('could not find the function');
+    if (isMissing) {
+      console.warn('[resyncTenantsToTable] stored procedure not found — falling back to direct ops. Apply migrations/009_atomic_tenant_resync.sql in Supabase to enable atomic sync.');
+      return _doResyncTenantsDirectly(propertyId, rows);
+    }
     console.error('[resyncTenantsToTable] RPC error:', error.message, '| code:', error.code);
     showToast('⚠️ Tenant sync failed — ' + error.message, { color: '#92400e', textColor: '#fef3c7', duration: 5000 });
     return;
@@ -16405,6 +16401,37 @@ async function _doResyncTenantsToTable(propertyId, tenants) {
     return;
   }
   console.log('[resyncTenantsToTable] atomic resync OK — inserted:', data?.inserted ?? rows.length, 'rows for property', propertyId);
+}
+
+// Fallback: non-atomic delete+insert used when the stored procedure is unavailable.
+// Less safe than the RPC (insert failure leaves tenants deleted), but prevents total failure.
+async function _doResyncTenantsDirectly(propertyId, rows) {
+  const { error: delErr } = await db.from('tenants').delete().eq('property_id', propertyId);
+  if (delErr) {
+    console.error('[resyncTenantsDirectly] delete error:', delErr.message);
+    return;
+  }
+  if (!rows.length) return;
+  const insertRows = rows
+    .filter(r => r.name && r.name.trim())
+    .map(r => ({
+      id:          r.id,
+      property_id: propertyId,
+      name:        r.name,
+      sqft:        r.sqft,
+      cap:         r.cap,
+      start_date:  r.start_date || null,
+      end_date:    r.end_date   || null,
+      lease_url:   r.lease_url  || null,
+      lease_type:  r.lease_type || null,
+    }));
+  if (!insertRows.length) return;
+  const { error: insErr } = await db.from('tenants').upsert(insertRows, { onConflict: 'id' });
+  if (insErr) {
+    console.error('[resyncTenantsDirectly] insert error:', insErr.message);
+  } else {
+    console.log('[resyncTenantsDirectly] fallback resync OK —', insertRows.length, 'rows for property', propertyId);
+  }
 }
 
 // Full replace: delete all rows for the property then insert the given list.
