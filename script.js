@@ -1873,8 +1873,11 @@ function updatePropertySqft(val) {
   const prop = currentProperty();
   if (!prop) return;
 
-  prop.totalSqft = Number(val) || 0;
+  // Capture name from DOM now — renderProperty() below will reset the field
+  const nameEl = document.getElementById('propertyName');
+  if (nameEl && nameEl.value.trim()) prop.name = nameEl.value.trim();
 
+  prop.totalSqft = Number(val) || 0;
 
   saveProperty(prop);
 
@@ -5537,6 +5540,12 @@ async function saveBulkTenant(i) {
   await savePropertyData();
   const prop = currentProperty();
   if (prop?.id) await resyncTenantsToTable(prop.id, tenantData.filter(t => t?.tenant_name && (!t?.extractionFailed || t?._userConfirmed) && !t?._pendingJobReview));
+  // Flush the blob immediately so a reload within 800ms still reads fresh data.
+  // loadPropertyData() skips the tenants table when the blob exists, so the blob
+  // must be current before the debounce would naturally fire.
+  clearTimeout(_saveDebounceTimer);
+  _saveDebounceTimer = null;
+  if (prop) await saveProperty(prop);
   console.log('[saveBulkTenant] tenant', i, 'saved:', d?.tenant_name);
 
   // Success flash
