@@ -13214,8 +13214,9 @@ function generateTenantStatement(tenantName) {
 // Per-user stable IDs derived in _initDemoIds() when the auth session loads.
 // Using per-user IDs prevents Supabase PK conflicts when multiple users share
 // the same Supabase project — each user seeds their own rows with no collision.
-let DEMO_PROPERTY_ID = null;
-let _DEMO_TENANT_IDS = [];
+let DEMO_PROPERTY_ID    = null;
+let _DEMO_TENANT_IDS   = [];
+let DEMO_ACQ_REVIEW_ID = null;
 
 // Derives stable demo UUIDs from the authenticated user's ID.
 // Called in _showApp() so the values are ready before any demo interaction.
@@ -13224,10 +13225,11 @@ function _initDemoIds(userId) {
   // node component, making each user's demo row unique in the properties table.
   const hex = userId.replace(/-/g, '');
   const node = hex.slice(0, 12);
-  DEMO_PROPERTY_ID = 'dec00000-0000-4000-a000-' + node;
-  _DEMO_TENANT_IDS = [2, 3, 4, 5, 6].map(n =>
+  DEMO_PROPERTY_ID    = 'dec00000-0000-4000-a000-' + node;
+  _DEMO_TENANT_IDS    = [2, 3, 4, 5, 6].map(n =>
     'dec00000-0000-4000-a00' + n + '-' + node
   );
+  DEMO_ACQ_REVIEW_ID  = 'aca00000-0000-4000-b000-' + node;
 }
 
 // Deletes every property whose name matches "Riverside Commons*" and whose ID
@@ -13582,6 +13584,157 @@ async function ensureDemoProperty() {
   return DEMO_PROPERTY_ID;
 }
 
+// Seeds a fully-analyzed demo acquisition review ("Harborview Retail Center")
+// so the Acquisition Due Diligence section is never empty for demo users.
+// Idempotent — skips if DEMO_ACQ_REVIEW_ID already exists in _acqReviews or DB.
+async function ensureDemoAcqReview() {
+  try {
+    const { data: { user } } = await db.auth.getUser();
+    if (!user?.id || !DEMO_ACQ_REVIEW_ID) return;
+
+    // Skip if already in memory
+    if (_acqReviews.some(r => r.id === DEMO_ACQ_REVIEW_ID)) return;
+
+    // Check DB for existing complete review
+    const { data: existing, error: chkErr } = await db
+      .from('acquisition_reviews')
+      .select('id, name, status, data, created_at, updated_at')
+      .eq('id', DEMO_ACQ_REVIEW_ID)
+      .eq('user_id', user.id)
+      .single();
+    if (!chkErr && existing?.status === 'complete') {
+      _acqReviews = _acqReviews.filter(r => r.id !== DEMO_ACQ_REVIEW_ID);
+      _acqReviews.unshift(existing);
+      _renderAcqSection(_acqReviews);
+      return;
+    }
+
+    const AE = window.AcquisitionEngine;
+    if (!AE) { console.warn('[ensureDemoAcqReview] AcquisitionEngine not loaded — skipping'); return; }
+
+    // ── Demo acquisition property ─────────────────────────────────────────────
+    // Harborview Retail Center: 32,000 sqft mixed retail strip mall.
+    // Includes expired leases, cap leakage, and non-standard exclusions to
+    // demonstrate the full range of acquisition risk analysis.
+    const TOTAL_SQFT = 32000;
+    const node = DEMO_ACQ_REVIEW_ID.slice(-12);
+
+    const demoAcqTenants = [
+      {
+        id: 'acqt0001-' + node,
+        tenant_name: 'Pacific Dental Partners',
+        suite: '101',
+        leased_sqft: '2800',
+        start_date: '2019-01-01',
+        end_date: '2025-09-30',     // expired — triggers critical renewal risk
+        lease_type: 'NNN',
+        cam_cap: 3,
+        capBaseAmount: 3750,        // prior-year base; cap fires for this year's invoices
+        excluded_categories: '',
+        audit_rights: true,
+        renewal_options: '1 × 5-year option',
+        base_rent: 36400,
+        security_deposit: 15000,
+      },
+      {
+        id: 'acqt0002-' + node,
+        tenant_name: 'Golden Sushi & Sake',
+        suite: '105',
+        leased_sqft: '1600',
+        start_date: '2022-06-01',
+        end_date: '2028-05-31',
+        lease_type: 'Modified Gross',
+        cam_cap: null,
+        capBaseAmount: null,
+        excluded_categories: 'management fees, capital expenditures', // non-standard exclusions
+        audit_rights: false,
+        renewal_options: null,
+        base_rent: 50400,
+        security_deposit: 8000,
+      },
+      {
+        id: 'acqt0003-' + node,
+        tenant_name: 'Sunrise Yoga & Wellness',
+        suite: '108',
+        leased_sqft: '2400',
+        start_date: '2021-03-01',
+        end_date: '2026-03-31',     // expired — triggers critical renewal risk
+        lease_type: 'NNN',
+        cam_cap: 5,
+        capBaseAmount: 3200,
+        excluded_categories: '',
+        audit_rights: false,
+        renewal_options: '1 × 3-year option',
+        base_rent: 76800,
+        security_deposit: 10000,
+      },
+      {
+        id: 'acqt0004-' + node,
+        tenant_name: 'Harbor Wine & Spirits',
+        suite: '110',
+        leased_sqft: '4800',
+        start_date: '2020-01-01',
+        end_date: '2028-12-31',
+        lease_type: 'NNN',
+        cam_cap: 4,
+        capBaseAmount: 6500,
+        excluded_categories: '',
+        audit_rights: true,
+        renewal_options: '2 × 5-year options',
+        base_rent: 155000,
+        security_deposit: 24000,
+      },
+    ];
+
+    const demoAcqInvoices = [
+      { id: 'acq-inv-1', vendorName: 'County Tax Authority',     amount: 18500, category: 'taxes',       invoiceDate: '2024-12-01' },
+      { id: 'acq-inv-2', vendorName: 'Pacific Mutual Insurance', amount: 14200, category: 'insurance',   invoiceDate: '2024-01-10' },
+      { id: 'acq-inv-3', vendorName: 'CoastGreen Landscaping',   amount:  3800, category: 'landscaping', invoiceDate: '2024-10-15' },
+      { id: 'acq-inv-4', vendorName: 'Harbor Cleaning Services', amount:  4200, category: 'janitorial',  invoiceDate: '2024-12-15' },
+      { id: 'acq-inv-5', vendorName: 'PaveRight Maintenance',    amount:  2600, category: 'maintenance', invoiceDate: '2024-11-01' },
+      { id: 'acq-inv-6', vendorName: 'SecureWatch Systems',      amount:  1900, category: 'security',    invoiceDate: '2024-12-01' },
+      { id: 'acq-inv-7', vendorName: 'Pacific Gas & Electric',   amount:  5100, category: 'utilities',   invoiceDate: '2024-12-31' },
+    ];
+
+    const analysis = AE.buildAcquisitionReport(demoAcqTenants, demoAcqInvoices, TOTAL_SQFT);
+
+    const review = {
+      id:         DEMO_ACQ_REVIEW_ID,
+      user_id:    user.id,
+      name:       'Harborview Retail Center',
+      status:     'complete',
+      data: {
+        tenants:   demoAcqTenants,
+        invoices:  demoAcqInvoices,
+        totalSqFt: TOTAL_SQFT,
+        documents: [],
+        analysis,
+        _demoAcq:  true,
+      },
+      created_at: new Date(Date.now() - 5 * 24 * 60 * 60 * 1000).toISOString(),
+      updated_at: new Date().toISOString(),
+    };
+
+    const { error: upsertErr } = await db
+      .from('acquisition_reviews')
+      .upsert({ ...review }, { onConflict: 'id' });
+    if (upsertErr) {
+      console.warn('[ensureDemoAcqReview] upsert failed:', upsertErr.message);
+    }
+
+    _acqReviews = _acqReviews.filter(r => r.id !== DEMO_ACQ_REVIEW_ID);
+    _acqReviews.unshift(review);
+    _renderAcqSection(_acqReviews);
+    console.log('[ensureDemoAcqReview] seeded Harborview Retail Center', {
+      tenants: demoAcqTenants.length,
+      invoices: demoAcqInvoices.length,
+      verdict: analysis?.summary?.recoveryRate,
+    });
+  } catch (e) {
+    console.warn('[ensureDemoAcqReview] failed (non-fatal):', e.message);
+  }
+}
+
 async function loadDemo() {
   const btn = document.getElementById('demoBtn');
   const origText = btn?.textContent ?? 'Try Live Demo';
@@ -13592,6 +13745,8 @@ async function loadDemo() {
       showToast('Please log in to load the demo.', { color: '#92400e', textColor: '#fef3c7' });
       return;
     }
+    // Seed the acquisition demo in parallel — failure is non-fatal
+    ensureDemoAcqReview().catch(e => console.warn('[loadDemo] acq seed failed:', e.message));
     renderPortfolio(); // refresh card list so demo appears
     await selectProperty(id);
     window.scrollTo({ top: 0, behavior: 'smooth' });
