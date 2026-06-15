@@ -4827,30 +4827,34 @@ function applyAmendmentOverrides(tenantId, amNorm, amendmentId, fileName) {
     // Append amendment evidence snapshot (preserves original snapshot history)
     const fev  = updatedTenant.fieldEvidence || {};
     const prev = (fev[fk] || { snapshots: [] }).snapshots;
-    updatedTenant.fieldEvidence = {
-      ...fev,
-      [fk]: { snapshots: [...prev, {
-        fieldKey:               fk,
-        value:                  amVal,
-        confidence:             { status: 'estimated', note: 'AI-extracted from amendment' },
-        sourceFile:             fileName || null,
-        page:                   null,
-        section:                amSnap?.section ?? null,
-        quote:                  qt,
-        extractionId:           amNorm._jobId || null,
-        extractionVersion:      'v1-amendment',
-        extractionModel:        amModel,
-        extractedAt:            now,
-        superseded:             false,
-        amendmentId,
-        reviewerUid:            null,
-        reviewerEmail:          null,
-        reviewedAt:             now,
-        approved:               false,
-        manuallyEdited:         false,
-        originalExtractedValue: origVal,
-      }]},
+    const newSnap = {
+      fieldKey:               fk,
+      value:                  amVal,
+      confidence:             { status: 'estimated', note: 'AI-extracted from amendment' },
+      sourceFile:             fileName || null,
+      page:                   null,
+      section:                amSnap?.section ?? null,
+      quote:                  qt,
+      extractionId:           amNorm._jobId || null,
+      extractionVersion:      'v1-amendment',
+      extractionModel:        amModel,
+      extractedAt:            now,
+      superseded:             false,
+      amendmentId,
+      reviewerUid:            null,
+      reviewerEmail:          null,
+      reviewedAt:             now,
+      approved:               false,
+      manuallyEdited:         false,
+      originalExtractedValue: origVal,
     };
+    // Sort snapshots deterministically: effectiveDate → uploadTs → amendmentId
+    const sortedSnaps = [...prev, newSnap].sort((a, b) => {
+      const dateA = a.effectiveDate || a.uploadTs || a.amendmentId || '';
+      const dateB = b.effectiveDate || b.uploadTs || b.amendmentId || '';
+      return dateA < dateB ? -1 : dateA > dateB ? 1 : 0;
+    });
+    updatedTenant.fieldEvidence = { ...fev, [fk]: { snapshots: sortedSnaps } };
   }
 
   // Build and store the amendment record
@@ -4882,6 +4886,7 @@ function applyAmendmentOverrides(tenantId, amNorm, amendmentId, fileName) {
     detail:     JSON.stringify({ amendmentId, overriddenFields, fileName }),
   });
 
+  if (lastResults.length > 0) { _resultsStale = true; _updateStaleResultsBanner(); }
   savePropertyData();
   { const _prop = currentProperty();
     if (_prop) appendPropertyTimelineEvent(_prop, { type: 'amendment_applied', severity: 'info',
@@ -5674,6 +5679,7 @@ async function clearBulkResults() {
     const { error } = await db.from('tenants').delete().eq('property_id', prop.id);
     if (error) console.error('[clearBulkResults] delete error:', error.message);
   }
+  if (lastResults.length > 0) { _resultsStale = true; _updateStaleResultsBanner(); }
   await savePropertyData();
 }
 
@@ -12795,6 +12801,10 @@ function exportReconciliationCSV() {
   if (!lastResults.length) { showToast('Run a CAM allocation first.', { color: '#92400e', textColor: '#fef3c7' }); return; }
   if (lastResultsYear && getCamYear() !== lastResultsYear) {
     showToast(`⚠️ Results are from ${lastResultsYear} — re-run reconciliation for ${getCamYear()} before exporting.`, { color: '#92400e', textColor: '#fef3c7', duration: 6000 });
+    return;
+  }
+  if (_resultsStale) {
+    showToast('⚠️ Results may be stale — lease or invoice data changed since last run. Re-run reconciliation before exporting.', { color: '#92400e', textColor: '#fef3c7', duration: 7000 });
     return;
   }
   const rows = [
