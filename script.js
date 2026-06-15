@@ -4740,6 +4740,24 @@ async function handleAmendmentUpload(tenantId, file) {
     if (!extracted) throw new Error('Could not extract amendment fields');
 
     const amendmentId = 'amd-' + Date.now();
+
+    // Warn if amendment effective date is earlier than existing lease date (out-of-order upload)
+    const existingTenant = tenantData.find(t => t && t.id === tenantId);
+    if (existingTenant && extracted.start_date && existingTenant.start_date) {
+      const amdDate = new Date(extracted.start_date);
+      const origDate = new Date(existingTenant.start_date);
+      if (!isNaN(amdDate) && !isNaN(origDate) && amdDate < origDate) {
+        showToast(`⚠️ Amendment effective date (${extracted.start_date}) is before the original lease start (${existingTenant.start_date}). Verify this is correct before applying.`, { color: '#78350f', textColor: '#fef3c7', duration: 8000 });
+      }
+    }
+    if (existingTenant && extracted.end_date && existingTenant.end_date) {
+      const amdEnd = new Date(extracted.end_date);
+      const origEnd = new Date(existingTenant.end_date);
+      if (!isNaN(amdEnd) && !isNaN(origEnd) && amdEnd < origEnd) {
+        showToast(`⚠️ Amendment end date (${extracted.end_date}) is before the original lease end (${existingTenant.end_date}). Verify this is correct.`, { color: '#78350f', textColor: '#fef3c7', duration: 8000 });
+      }
+    }
+
     applyAmendmentOverrides(tenantId, extracted, amendmentId, file.name);
     // Phase 15: multi-document reasoning after amendment applied
     if (window.LeaseIntelligence) {
@@ -5904,7 +5922,7 @@ function renderInvResults() {
             <div class="field">
               <label>Amount ($) ${confidenceBadge(conf.amount)}</label>
               <input id="ifield-${i}-amount" type="number" value="${esc(d.amount)}"
-                oninput="invoiceData[${i}].amount=parseFloat(this.value)||'';markFieldVerified(${i},'amount');refreshInvSummary(${i});savePropertyData()"/>
+                oninput="const _av=parseFloat(this.value);if(!isNaN(_av)&&_av<0){this.value=0;invoiceData[${i}].amount=0;}else{invoiceData[${i}].amount=isNaN(_av)?'':_av;}markFieldVerified(${i},'amount');refreshInvSummary(${i});savePropertyData()"/>
               <span id="ibadgeWrap-${i}-amount">${vAmount}</span>
             </div>
           </div>
@@ -6949,10 +6967,14 @@ function runCAMAllocation(expenses, tenants) {
     // Cap requires a prior-year base amount to calculate correctly.
     // capBaseAmount must be entered manually; without it we skip cap enforcement
     // rather than show wrong math.
-    if (t.capPct !== null && t.capPct !== '' && !isNaN(parseFloat(t.capPct)) &&
+    const _capPctVal = parseFloat(t.capPct);
+    if (t.capPct !== null && t.capPct !== '' && !isNaN(_capPctVal) &&
+        _capPctVal >= 0 && _capPctVal <= 100 &&
         t.capBaseAmount !== null && t.capBaseAmount !== undefined && !isNaN(parseFloat(t.capBaseAmount))) {
-      const cap = parseFloat(t.capBaseAmount) * (1 + parseFloat(t.capPct) / 100);
+      const cap = parseFloat(t.capBaseAmount) * (1 + _capPctVal / 100);
       if (total > cap) { capAdj = total - cap; total = cap; }
+    } else if (t.capPct !== null && t.capPct !== '' && !isNaN(_capPctVal) && (_capPctVal < 0 || _capPctVal > 100)) {
+      console.warn('[CAM] Ignoring out-of-range cap percentage for', t.name, ':', _capPctVal);
     }
 
     return {
@@ -6969,6 +6991,9 @@ function runCAMAllocation(expenses, tenants) {
 async function runAllocation() {
   if (isRunning) return; // prevent concurrent runs
   isRunning = true;
+
+  // Tag this run with the current CAM year for multi-year isolation.
+  const _runYear = getCamYear();
 
   const scrollY    = window.scrollY;
 
@@ -7123,6 +7148,7 @@ async function runAllocation() {
   lastInvoices        = invoices.map((inv, i) => ({ id: `inv-${i}`, ...inv }));
   lastTenants         = tenants;
   lastResults         = fullResults; // unified: ReconciliationResult[] is single source of truth
+  lastResultsYear     = _runYear;
   lastFullResults     = fullResults;
   lastPropName        = propName;
   lastTotal           = totalCost;
@@ -8777,6 +8803,7 @@ document.getElementById('leaseViewerModal')?.addEventListener('click', (e) => {
 // ─── Report State ─────────────────────────────────────────────────────────────
 const camRuns    = []; // previous run history
 let lastResults  = []; // ReconciliationResult[] — unified with lastFullResults
+let lastResultsYear = null; // CAM year of the most recent runAllocation() call
 let _resultsStale = false; // true when field edits happen after a reconciliation run
 
 // ─── CAM Year ─────────────────────────────────────────────────────────────────
@@ -16916,7 +16943,19 @@ async function saveProperty(property) {
     const msg = e?.message || String(e);
     const isNetErr  = /load failed|failed to fetch|networkerror|offline/i.test(msg);
 
-    if (isNetErr) return;
+    if (isNetErr) {
+      // Stay in 'local' — data is safe in localStorage. Show a non-alarming offline notice.
+      const prev = document.getElementById('_offlineToast');
+      if (!prev) {
+        const t = document.createElement('div');
+        t.id = '_offlineToast';
+        t.style.cssText = 'position:fixed;bottom:20px;left:50%;transform:translateX(-50%);background:#1e3a5f;color:#bfdbfe;padding:10px 18px;border-radius:6px;z-index:9999;font-size:13px;box-shadow:0 4px 12px rgba(0,0,0,.3);max-width:90vw;text-align:center;';
+        t.textContent = '📶 Offline — changes saved locally and will sync automatically when reconnected.';
+        document.body.appendChild(t);
+        setTimeout(() => t.remove(), 6000);
+      }
+      return;
+    }
     if (gen !== _saveGeneration) return; // stale error — a newer save supersedes this one
 
     _setSyncStatus('error', msg);
@@ -17033,6 +17072,10 @@ async function savePropertyData() {
 // absent — rebuilds a minimal camReconciliation from the rows so results still
 // restore. Mutates dbData in place. No-op when camRows is empty.
 function _mergeCamReconciliationRows(dbData, camRows) {
+  // NOTE (fieldEvidence fallback): when the tenant_field_evidence normalized table returns 0
+  // rows for a tenant, the JSON blob at property.data.tenants[].fieldEvidence serves as the
+  // fallback. That blob is loaded via loadPropertyData → _props hydration and is already
+  // present in tenantData before this function runs. No additional fallback code is needed here.
   if (!dbData || !Array.isArray(camRows) || !camRows.length) return;
 
   dbData.tenants = (dbData.tenants || []).map(t => {
