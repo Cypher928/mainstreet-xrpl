@@ -2356,13 +2356,14 @@ function dedupeTenants(arr) {
 
 // Appends incoming invoices that don't already exist by vendor+amount+date.
 function mergeInvoicesDedup(existing, incoming) {
+  const _normVendor = s => (s || '').toLowerCase().replace(/\s+/g, ' ').trim();
   const seen = new Set(
     existing.map(inv =>
-      `${(inv.vendorName || '').toLowerCase()}|${inv.amount}|${inv.invoiceDate || ''}`
+      `${_normVendor(inv.vendorName)}|${inv.amount}|${inv.invoiceDate || ''}`
     )
   );
   const novel = incoming.filter(inv => {
-    const key = `${(inv.vendorName || '').toLowerCase()}|${inv.amount}|${inv.invoiceDate || ''}`;
+    const key = `${_normVendor(inv.vendorName)}|${inv.amount}|${inv.invoiceDate || ''}`;
     return !seen.has(key);
   });
   return [...existing, ...novel];
@@ -7091,6 +7092,20 @@ async function runAllocation() {
     section.prepend(warn);
   }
 
+  // Warn when a tenant has a cap percentage but no base amount — cap won't be enforced
+  const tenantsWithIncompleteCapData = tenants.filter(t =>
+    t.capPct !== null && t.capPct !== '' && !isNaN(parseFloat(t.capPct)) &&
+    (t.capBaseAmount === null || t.capBaseAmount === undefined || isNaN(parseFloat(t.capBaseAmount)))
+  );
+  if (tenantsWithIncompleteCapData.length > 0) {
+    const names = tenantsWithIncompleteCapData.map(t => t.name).join(', ');
+    const warn = document.createElement('div');
+    warn.className = 'cam-cap-incomplete-warning';
+    warn.style.cssText = 'background:#431407;border:1px solid #f97316;color:#fed7aa;padding:10px 14px;border-radius:8px;margin-bottom:12px;font-size:0.85rem;';
+    warn.innerHTML = `⚠️ <strong>CAM cap not enforced</strong> for ${esc(names)} — a prior-year base amount is required. Enter "Prior-Year CAM Base ($)" in each tenant card to enable cap enforcement.`;
+    section.prepend(warn);
+  }
+
   const results   = runCAMAllocation(invoices, tenants);
   const totalCost = invoices.reduce((s, e) => s + e.amount, 0);
 
@@ -8840,6 +8855,10 @@ let isRunning      = false; // guard against concurrent runAllocation() calls
 
 function applySqftMismatchUI(mismatch) {
   sqftMismatch = mismatch;
+  if (mismatch && window.innerWidth < 768) {
+    const banner = document.querySelector('.sqft-mismatch-banner');
+    if (banner) setTimeout(() => banner.scrollIntoView({ behavior: 'smooth', block: 'nearest' }), 100);
+  }
 }
 
 function fixSqftToMatch(leaseTotalSqft) {
@@ -12763,15 +12782,23 @@ async function deleteCurrentCAMReconciliation() {
 
 function exportReconciliationCSV() {
   if (!lastResults.length) { showToast('Run a CAM allocation first.', { color: '#92400e', textColor: '#fef3c7' }); return; }
+  if (lastResultsYear && getCamYear() !== lastResultsYear) {
+    showToast(`⚠️ Results are from ${lastResultsYear} — re-run reconciliation for ${getCamYear()} before exporting.`, { color: '#92400e', textColor: '#fef3c7', duration: 6000 });
+    return;
+  }
   const rows = [
     ['Tenant', 'Unit', 'Sqft', 'Pro-Rata %', 'Cap Applied', 'Cap Reduction', 'Allocated', 'Invoices', 'Avg Confidence', 'Calc State', 'Flags'],
     ...lastResults.map(r => {
       const liveT  = tenantData.find(t => t && t.id === r.tenantId);
       const calcSt = _deriveCalcState(r, liveT);
+      // Use extraction confidence (how well Claude read the lease) rather than
+      // invoice-match confidence (which is 0 when no direct matches exist).
+      const extractionConf = liveT?._confidenceScore ?? liveT?._confidence ?? null;
+      const confExport = extractionConf !== null ? extractionConf : (r.averageConfidence > 0 ? r.averageConfidence : '');
       return [
         r.name, r.unitNumber || '', r.sqFt || '', (r.proRata * 100).toFixed(2),
         r.capApplied ? 'Yes' : 'No', r.capApplied ? (r.capAdjustment || 0).toFixed(2) : '',
-        r.totalAllocated.toFixed(2), r.eligibleCount, r.averageConfidence,
+        r.totalAllocated.toFixed(2), r.eligibleCount, confExport,
         calcSt.label, (r.ambiguityFlags || []).map(f => f.code).join('; '),
       ];
     }),
@@ -16996,6 +17023,8 @@ let _saveDebounceTimer = null;
 // Snapshot current in-memory state back into the canonical _props entry and
 // persist to Supabase. Debounced — rapid successive calls collapse into one write.
 async function savePropertyData() {
+  // Tenant-role users have read-only access — writes are not permitted
+  if (window.AuthService?.getCurrentUser()?.role === 'tenant') return;
   // SECURITY: tenant mode never sets activePropId, so this guard stops all saves
   // passively. Most other mutating functions (removeInvItem, clearBulkResults, etc.)
   // are similarly protected — they all return early when activePropId/currentProperty()
