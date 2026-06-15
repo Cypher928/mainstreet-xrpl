@@ -5208,7 +5208,17 @@ function renderBulkResults() {
               ${esc(displayName)}${dupBadge}${_confidenceBadgeHtml(confLevel)}
             </div>
             <div class="tenant-meta" id="bmeta-${i}">${esc(meta)}</div>
-            ${!isPending ? `<div class="lrs-notes-row">${_reviewStatusPillHtml(getLeaseReviewStatus(d))}</div>` : ''}
+            ${!isPending ? (() => {
+              const _lrsStatus = getLeaseReviewStatus(d);
+              const _lrsPill   = _reviewStatusPillHtml(_lrsStatus);
+              const _lrsNotes  = (_lrsStatus === 'needs-review' || _lrsStatus === 'needs_review') && !d.extractionFailed
+                ? getLeaseReviewNotes(d)
+                : [];
+              const _lrsDetail = _lrsNotes.length
+                ? `<span class="lrs-missing-detail">${esc(_lrsNotes.slice(0, 3).join(' · '))}</span>`
+                : '';
+              return `<div class="lrs-notes-row">${_lrsPill}${_lrsDetail}</div>`;
+            })() : ''}
             ${jobProgressHtml}
           </div>
           <span class="bulk-t-chevron" id="bchev-${i}">${chevInitialHtml}</span>
@@ -8709,7 +8719,14 @@ function openLeaseModalFromFile(index) {
   if (d.leaseFile instanceof File) {
     openLeaseModal(d.leaseFile);
   } else if (d.leaseUrl) {
-    openLeaseModal(d.leaseUrl);
+    if (d.leaseUrl.startsWith('blob:')) {
+      // Blob URLs are session-only and cannot survive a page reload
+      showToast('Lease document no longer in memory — please re-upload the lease to view it', { color: '#92400e', textColor: '#fef3c7', duration: 5000 });
+    } else {
+      openLeaseModal(d.leaseUrl);
+    }
+  } else {
+    showToast('Lease document not attached — please re-upload the lease to view it', { color: '#92400e', textColor: '#fef3c7', duration: 5000 });
   }
 }
 
@@ -11677,8 +11694,8 @@ function generateHolesReport() {
     if (validTenants.length > 0) {
       warningItems.push({
         icon: '👤',
-        text: `${emptySlots} tenant slot${emptySlots !== 1 ? 's' : ''} still empty`,
-        detail: 'Upload leases for all tenants or remove unused slots before reconciling',
+        text: `${emptySlots} unused tenant entr${emptySlots !== 1 ? 'ies' : 'y'} — upload leases or remove before reconciling`,
+        detail: 'Unused tenant slots are placeholders that do not affect calculations, but should be filled or removed for a complete reconciliation.',
       });
     }
   }
@@ -11786,7 +11803,7 @@ function generateHolesReport() {
   const html = `
     <div class="rpt-letterhead">
       <h1>${esc(propName)}</h1>
-      <div class="rpt-sub">Monthly Holes Report &nbsp;·&nbsp; ${month} &nbsp;·&nbsp; Generated ${now}</div>
+      <div class="rpt-sub">Coverage Gap Report &nbsp;·&nbsp; ${month} &nbsp;·&nbsp; Generated ${now}</div>
     </div>
 
     <div class="rpt-kpi-row">
@@ -11813,10 +11830,10 @@ function generateHolesReport() {
     ${summaryBar}
 
     <div class="rpt-footer">
-      Mainstreet &nbsp;·&nbsp; ${esc(propName)} &nbsp;·&nbsp; Monthly Holes Report &nbsp;·&nbsp; ${now}
+      Mainstreet &nbsp;·&nbsp; ${esc(propName)} &nbsp;·&nbsp; Coverage Gap Report &nbsp;·&nbsp; ${now}
     </div>`;
 
-  openReport('Monthly Holes Report — ' + propName, html);
+  openReport('Coverage Gap Report — ' + propName, html);
 }
 
 function openReport(title, bodyHtml) {
@@ -15687,9 +15704,17 @@ async function selectProperty(id) {
     return;
   }
 
-  // Fire-and-forget save for the property we're leaving — don't block navigation
+  // Save the property we're leaving — flush DOM values immediately (not debounced)
+  // so edits made between the last keypress and navigation are not discarded when
+  // resetWorkflow() cancels the pending debounce timer.
   if (activePropId && activePropId !== id) {
-    savePropertyData();
+    const leavingProp = _props.find(p => p.id === activePropId);
+    if (leavingProp) {
+      await savePropertyData();      // syncs DOM → leavingProp in _props
+      clearTimeout(_saveDebounceTimer);
+      _saveDebounceTimer = null;
+      saveProperty(leavingProp);     // fire-and-forget immediate write
+    }
   }
 
   // Switch active property and clear workflow state
