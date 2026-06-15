@@ -5809,6 +5809,7 @@ async function handleBatchInvoices(fileList) {
   // Keep invoiceData in sync with merged result so UI shows the full set.
   invoiceData.splice(0, invoiceData.length, ...merged);
   renderInvResults();
+  if (lastResults.length > 0) { _resultsStale = true; _updateStaleResultsBanner(); }
 
   captureCheckpoint(activePropId, 'Before invoice upload');
   await saveProperty(property);
@@ -8404,6 +8405,13 @@ function _buildReconciliationSummaryHtml(results, invoices, propName) {
     </div>`).join('')
   }</div>` : '';
 
+  const variance = Math.abs(totalBilled - totalPool);
+  const varianceBanner = variance > 0.05
+    ? `<div style="background:#431407;border:1px solid #f97316;color:#fed7aa;padding:10px 14px;border-radius:8px;margin-bottom:12px;font-size:0.85rem;">
+        ⚠️ <strong>Reconciliation variance detected</strong> — total billed (${fmt(totalBilled)}) differs from total expense pool (${fmt(totalPool)}) by <strong>${fmt(variance)}</strong>. Re-check invoice amounts or re-run allocation.
+      </div>`
+    : '';
+
   const rows = results.map(r => {
     const liveT  = tenantData.find(t => t && t.id === r.tenantId);
     const calcSt = _deriveCalcState(r, liveT);
@@ -8420,7 +8428,7 @@ function _buildReconciliationSummaryHtml(results, invoices, propName) {
     </tr>`;
   }).join('');
 
-  return `
+  return varianceBanner + `
     <div class="rcs-panel ${panelCls}">
       <div class="rcs-panel-head">
         <span class="rcs-panel-title">&#x1F4CA; Reconciliation Summary</span>
@@ -8943,7 +8951,10 @@ function _saveCheckpoints() {
     Object.keys(_checkpoints).forEach(id => {
       if (_checkpoints[id].length > 2) _checkpoints[id].length = 2;
     });
-    try { localStorage.setItem(_cpKey(), JSON.stringify(_checkpoints)); } catch (_) { }
+    try { localStorage.setItem(_cpKey(), JSON.stringify(_checkpoints)); } catch (_innerE) {
+      logError('_saveCheckpoints', _innerE, { checkpointCount: Object.keys(_checkpoints || {}).length });
+      showToast('⚠️ Checkpoint save failed — recovery history may be incomplete.', { color: '#92400e', textColor: '#fef3c7', duration: 5000 });
+    }
   }
 }
 
@@ -12787,7 +12798,7 @@ function exportReconciliationCSV() {
     return;
   }
   const rows = [
-    ['Tenant', 'Unit', 'Sqft', 'Pro-Rata %', 'Cap Applied', 'Cap Reduction', 'Allocated', 'Invoices', 'Avg Confidence', 'Calc State', 'Flags'],
+    ['Tenant', 'Unit', 'Sqft', 'Pro-Rata % (0-100)', 'Cap Applied', 'Cap Reduction (negative = savings)', 'Allocated', 'Invoices', 'Avg Confidence', 'Calc State', 'Flags'],
     ...lastResults.map(r => {
       const liveT  = tenantData.find(t => t && t.id === r.tenantId);
       const calcSt = _deriveCalcState(r, liveT);
@@ -12797,12 +12808,21 @@ function exportReconciliationCSV() {
       const confExport = extractionConf !== null ? extractionConf : (r.averageConfidence > 0 ? r.averageConfidence : '');
       return [
         r.name, r.unitNumber || '', r.sqFt || '', (r.proRata * 100).toFixed(2),
-        r.capApplied ? 'Yes' : 'No', r.capApplied ? (r.capAdjustment || 0).toFixed(2) : '',
+        r.capApplied ? 'Yes' : 'No', r.capApplied ? (-(r.capAdjustment || 0)).toFixed(2) : '',
         r.totalAllocated.toFixed(2), r.eligibleCount, confExport,
         calcSt.label, (r.ambiguityFlags || []).map(f => f.code).join('; '),
       ];
     }),
   ];
+  const poolTotal   = lastTotal || 0;
+  const billedTotal = lastResults.reduce((s, r) => s + r.totalAllocated, 0);
+  const csvVariance = Math.abs(billedTotal - poolTotal);
+  rows.push(['--- SUMMARY ---', '', '', '', '', '', '', '', '', '', '']);
+  rows.push(['Total Expense Pool', '', '', '', '', '', poolTotal.toFixed(2), '', '', '', '']);
+  rows.push(['Total Billed', '', '', '', '', '', billedTotal.toFixed(2), '', '', '', '']);
+  if (csvVariance > 0.05) {
+    rows.push(['VARIANCE', '', '', '', '', '', csvVariance.toFixed(2), '', '', '', '']);
+  }
   const csv = rows.map(row => row.map(v => `"${String(v).replace(/"/g, '""')}"`).join(',')).join('\n');
   _downloadFile(csv, `cam-reconciliation-${lastPropName || 'export'}-${getCamYear() || new Date().getFullYear()}.csv`, 'text/csv');
   logActivity('csv_export', 'Reconciliation CSV exported', { severity: 'info', actor: 'User', relatedEntity: lastPropName || 'Property' });
@@ -16007,7 +16027,18 @@ function _lsSave(property) {
     const stored = JSON.parse(_lsGet(_lsUserKey()) || '{}');
     stored[property.id] = _stripBlobs(property);
     _lsSet(_lsUserKey(), JSON.stringify(stored));
-  } catch (e) { }
+  } catch (e) {
+    logError('_lsSave', e, { propId: property?.id });
+    // Show once — don't flood the user with toasts on every rapid edit
+    if (!document.getElementById('_lsSaveErrToast')) {
+      const _t = document.createElement('div');
+      _t.id = '_lsSaveErrToast';
+      _t.style.cssText = 'position:fixed;bottom:20px;left:50%;transform:translateX(-50%);background:#92400e;color:#fef3c7;padding:10px 18px;border-radius:6px;z-index:9999;font-size:13px;max-width:90vw;text-align:center;';
+      _t.textContent = '⚠️ Local storage full — data may not be saved offline. Export your data now.';
+      document.body.appendChild(_t);
+      setTimeout(() => _t.remove(), 8000);
+    }
+  }
 }
 
 function _lsLoadAll() {
@@ -16292,8 +16323,17 @@ async function syncTenantsToTable(propertyId, tenants) {
       lease_type:  t.lease_type || null,
     }));
   if (rows.length === 0) return;
-  const { error } = await db.from('tenants').insert(rows).select('id');
-  if (error) console.error('[syncTenantsToTable] insert error:', error.message);
+  const { error } = await db.from('tenants').upsert(rows, { onConflict: 'id' }).select('id');
+  if (error) { console.error('[syncTenantsToTable] upsert error:', error.message); return; }
+
+  // After upsert succeeds, delete orphaned rows
+  const currentIds = rows.map(r => r.id).filter(Boolean);
+  if (currentIds.length > 0) {
+    await db.from('tenants')
+      .delete()
+      .eq('property_id', propertyId)
+      .not('id', 'in', `(${currentIds.map(id => `'${id}'`).join(',')})`);
+  }
 }
 
 // ─────────────────────────────────────────────────────────────────────────────
@@ -16557,6 +16597,14 @@ function _startLeaseValidation(panelId, tenantIdx) {
 
 async function saveCamResults(propertyId, fullResults, year, totalExpenses = null) {
   if (!propertyId || !year) return { ok: false, reason: 'missing propertyId or year' };
+
+  // Delete previous reconciliation rows for this property+year before inserting new ones
+  try {
+    await db.from('cam_reconciliations').delete().match({ property_id: propertyId, year: year });
+  } catch (_delErr) {
+    console.warn('[saveCamResults] pre-delete failed (non-fatal):', _delErr?.message);
+  }
+
   const reconciledAt = new Date().toISOString();
   const rows = (fullResults || []).map(r => {
     const actual   = r.actualCam ?? r.totalAllocated ?? null;
