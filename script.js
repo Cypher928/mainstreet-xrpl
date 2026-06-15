@@ -2930,23 +2930,27 @@ function _updateStaleResultsBanner() {
   if (el) el.style.display = _resultsStale ? 'block' : 'none';
 }
 
-function handleFieldBlur(index, field, value) {
+function handleFieldBlur(index, field, value, el) {
   isEditingField = false;
   updateTenantField(index, field, value);
   savePropertyData(); // debounced — collapses rapid edits into one write
   if (lastResults.length > 0) { _resultsStale = true; _updateStaleResultsBanner(); }
+  if (el) {
+    el.classList.add('field-save-flash');
+    setTimeout(() => el.classList.remove('field-save-flash'), 900);
+  }
 }
 
 function _confidenceBadgeHtml(level) {
   if (!level || level === 'pending') return '';
   const cfg = {
-    high:   { cls: 'cx-high',   label: 'High confidence' },
-    medium: { cls: 'cx-medium', label: 'Needs review' },
-    low:    { cls: 'cx-low',    label: 'Low confidence' },
-    failed: { cls: 'cx-failed', label: 'Extraction failed' },
+    high:   { cls: 'cx-high',   label: 'High confidence',   tip: 'The AI found clear lease language and extracted this value with strong confidence.' },
+    medium: { cls: 'cx-medium', label: 'Needs review',      tip: 'The AI found a likely value but recommends landlord review before approval.' },
+    low:    { cls: 'cx-low',    label: 'Low confidence',    tip: 'The AI could not reliably determine this value — please verify against the original lease.' },
+    failed: { cls: 'cx-failed', label: 'Extraction failed', tip: 'The AI could not read this field from the lease. Please fill it in manually below.' },
   }[level];
   if (!cfg) return '';
-  return `<span class="cx-badge ${cfg.cls}">${cfg.label}</span>`;
+  return `<span class="cx-badge ${cfg.cls}" title="${cfg.tip}">${cfg.label}</span>`;
 }
 
 // ── Lease Review Status helpers ────────────────────────────────────────────
@@ -5201,13 +5205,14 @@ function renderBulkResults() {
             ? `<div class="err-banner" style="margin-bottom:10px;">Extraction error: ${esc(d._error)}</div>`
             : '')}
           ${(() => { const w = getWarnings(computeFlags(d)); return w.length ? `<div class="rc-flags"><div class="rc-flags-title">&#x26A0;&#xFE0F; Needs Review</div>${w.map(m => `<div class="rc-flag-item">${m}</div>`).join('')}</div>` : ''; })()}
+          <div class="citation-hint">&#x1F4CE; The colored chips below each field show the exact lease clause the AI used to determine each value. Hover a chip to read the full clause and verify accuracy.</div>
           <div class="field-row">
             <div class="field">
               <label>Tenant Name</label>
               <input type="text" value="${esc(d.tenant_name || '')}"
                 onfocus="isEditingField=true"
                 onkeydown="_onFieldKeydown(event)"
-                onblur="handleFieldBlur(${i},'tenant_name',this.value);refreshBulkSummary(${i})"/>
+                onblur="handleFieldBlur(${i},'tenant_name',this.value,this);refreshBulkSummary(${i})"/>
               ${_citationChip(d, 'tenant_name')}${_amendmentProvenanceChip(d, 'tenant_name')}
             </div>
             <div class="field">
@@ -5215,7 +5220,7 @@ function renderBulkResults() {
               <input type="number" value="${d.leased_sqft || ''}"
                 onfocus="isEditingField=true"
                 onkeydown="_onFieldKeydown(event)"
-                onblur="handleFieldBlur(${i},'leased_sqft',this.value);refreshBulkSummary(${i});checkSqftValidation()"/>
+                onblur="handleFieldBlur(${i},'leased_sqft',this.value,this);refreshBulkSummary(${i});checkSqftValidation()"/>
               ${_citationChip(d, 'leased_sqft')}${_amendmentProvenanceChip(d, 'leased_sqft')}
             </div>
           </div>
@@ -5225,7 +5230,7 @@ function renderBulkResults() {
               <input type="date" value="${d.start_date || ''}"
                 onfocus="isEditingField=true"
                 onkeydown="_onFieldKeydown(event)"
-                onblur="handleFieldBlur(${i},'start_date',this.value)"/>
+                onblur="handleFieldBlur(${i},'start_date',this.value,this)"/>
               ${_citationChip(d, 'start_date')}${_amendmentProvenanceChip(d, 'start_date')}
             </div>
             <div class="field">
@@ -5233,14 +5238,14 @@ function renderBulkResults() {
               <input type="date" value="${d.end_date || ''}"
                 onfocus="isEditingField=true"
                 onkeydown="_onFieldKeydown(event)"
-                onblur="handleFieldBlur(${i},'end_date',this.value)"/>
+                onblur="handleFieldBlur(${i},'end_date',this.value,this)"/>
               ${_citationChip(d, 'end_date')}${_amendmentProvenanceChip(d, 'end_date')}
             </div>
           </div>
           <div class="field-row">
             <div class="field">
               <label>Lease Type</label>
-              <select onchange="handleFieldBlur(${i},'lease_type',this.value||null)">
+              <select onchange="handleFieldBlur(${i},'lease_type',this.value||null,this)">
                 <option value="">Select lease type</option>
                 <option value="Triple Net (NNN)"${d.lease_type === 'Triple Net (NNN)' ? ' selected' : ''}>Triple Net (NNN)</option>
                 <option value="Gross"${d.lease_type === 'Gross' ? ' selected' : ''}>Gross</option>
@@ -5253,7 +5258,7 @@ function renderBulkResults() {
               <input type="text" value="${esc(d.excluded_categories || '')}"
                 onfocus="isEditingField=true"
                 onkeydown="_onFieldKeydown(event)"
-                onblur="handleFieldBlur(${i},'excluded_categories',this.value)"/>
+                onblur="handleFieldBlur(${i},'excluded_categories',this.value,this)"/>
               ${_citationChip(d, 'excluded_categories')}${_amendmentProvenanceChip(d, 'excluded_categories')}
             </div>
           </div>
@@ -7130,12 +7135,9 @@ async function runAllocation() {
   document.getElementById('resultsTitle').textContent = `${getCamYear()} CAM — ${propName}`;
   applySqftMismatchUI(sqftExceedsProperty);
 
-  let html = _buildReconciliationSummaryHtml(fullResults, invoices, propName) + `<div class="summary-bar">
-    <div class="summary-bar-item"><span class="summary-bar-label">Total Expenses</span><strong>${fmt(totalCost)}</strong></div>
-    <div class="summary-bar-item"><span class="summary-bar-label">Tenants</span><strong>${fullResults.length}</strong></div>
-    <div class="summary-bar-item"><span class="summary-bar-label">Invoices</span><strong>${invoices.length}</strong></div>
-  </div>
-  ${sqftExceedsProperty ? `
+  let html = _buildReconciliationSummaryHtml(fullResults, invoices, propName) +
+  // Warnings appear before numbers so the landlord sees issues before interpreting results.
+  (sqftExceedsProperty ? `
   <div class="sqft-mismatch-banner">
     <div class="smb-title">&#x26A0;&#xFE0F; Sqft mismatch — results may be inaccurate</div>
     <div class="smb-body">
@@ -7147,7 +7149,13 @@ async function runAllocation() {
       <button class="smb-btn smb-btn-primary" onclick="rerunAfterWarning()">Run Anyway</button>
     </div>
   </div>
-  ` : ''}`;
+  ` : '') +
+  `<div class="summary-bar">
+    <div class="summary-bar-item"><span class="summary-bar-label">Total Expenses</span><strong>${fmt(totalCost)}</strong></div>
+    <div class="summary-bar-item"><span class="summary-bar-label">Tenants</span><strong>${fullResults.length}</strong></div>
+    <div class="summary-bar-item"><span class="summary-bar-label">Invoices</span><strong>${invoices.length}</strong></div>
+  </div>
+  <div class="pro-rata-note">Pro-Rata % = Tenant Sqft ÷ Total Property Sqft &nbsp;<span class="pro-rata-note-tip" title="The percentage of the property occupied by a tenant. This percentage determines their share of common area expenses.">&#x24D8;</span></div>`;
 
   fullResults.forEach(r => {
     const flags = r.ambiguityFlags || [];
@@ -7274,7 +7282,7 @@ async function runAllocation() {
       <div class="r-name">${esc(r.name)}${r.unitNumber ? `<span class="rc-unit"> · Unit ${esc(r.unitNumber)}</span>` : ''}<span class="rc-calc-state ${_calcSt.cls}">${_calcSt.label}</span></div>
       <div class="result-grid">
         ${stat('Total', fmt(r.allocatedAmount))}
-        ${stat('Pro-Rata', (r.proRata * 100).toFixed(2) + '%')}
+        <div class="result-stat"><div class="stat-label">Pro-Rata <span class="stat-info-tip" title="The percentage of the property occupied by this tenant. This determines their share of common area expenses: Pro-Rata % = Tenant Sqft ÷ Total Property Sqft.">&#x24D8;</span></div><div class="stat-value">${(r.proRata * 100).toFixed(2)}%</div></div>
         ${confStat}
         ${stat('Included', r.eligibleCount + ' of ' + invoices.length)}
       </div>

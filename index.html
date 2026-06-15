@@ -1721,6 +1721,50 @@
     .fe-chip-quote { font-style: italic; color: #94a3b8; }
     .fe-chip--cited { cursor: default; }
     .fe-chip--cited[title] { cursor: help; }
+
+    /* ── Phase 9: First-Time User Guidance ──────────────────────────── */
+    /* Tooltip ⓘ icon on labels */
+    .field-info-tip {
+      display: inline-block; font-size: 0.7rem; color: #64748b;
+      cursor: help; margin-left: 4px; vertical-align: middle;
+    }
+    .field-info-tip:hover { color: #94a3b8; }
+    /* Helper text below input fields */
+    .field-helper-text {
+      font-size: 0.72rem; color: #64748b; margin-top: 5px; line-height: 1.4;
+    }
+    /* Citation evidence explanation */
+    .citation-hint {
+      font-size: 0.72rem; color: #64748b; padding: 6px 0 10px 0;
+      border-bottom: 1px solid rgba(255,255,255,0.05); margin-bottom: 10px;
+      line-height: 1.4;
+    }
+    /* Inline save flash on field elements */
+    @keyframes fieldSaveFlash {
+      0%   { border-color: #22c55e; box-shadow: 0 0 0 2px rgba(34,197,94,0.35); }
+      100% { border-color: rgba(255,255,255,0.12); box-shadow: none; }
+    }
+    .field-save-flash {
+      animation: fieldSaveFlash 0.9s ease forwards;
+    }
+    /* Pro-rata note below summary bar */
+    .pro-rata-note {
+      font-size: 0.72rem; color: #64748b; padding: 6px 0 12px 0; text-align: right;
+    }
+    .pro-rata-note-tip { cursor: help; }
+    /* Tooltip ⓘ on stat labels */
+    .stat-info-tip { cursor: help; font-size: 0.65rem; color: #64748b; }
+    /* Report button grid + description cells */
+    .rpt-btn-grid {
+      display: flex; flex-wrap: wrap; gap: 12px; margin-bottom: 16px;
+    }
+    .rpt-btn-cell {
+      display: flex; flex-direction: column; gap: 4px;
+      min-width: 160px; max-width: 220px;
+    }
+    .rpt-btn-desc {
+      font-size: 0.68rem; color: #64748b; line-height: 1.4; padding: 0 2px;
+    }
     .fe-chip--amendment {
       background: rgba(34,197,94,0.08); color: #86efac;
       border-left: 2px solid rgba(34,197,94,0.35);
@@ -4935,9 +4979,10 @@
           oninput="liveUpdateBreadcrumb(this.value)" />
       </div>
       <div class="field">
-        <label>Total Property Sqft</label>
+        <label>Total Property Sqft <span class="field-info-tip" title="Total rentable square footage for the property. This number is used to calculate each tenant&#x27;s pro-rata share of common area expenses.">&#x24D8;</span></label>
         <input type="number" id="totalSqft" placeholder="e.g. 20000" min="1"
           oninput="updatePropertySqft(this.value)" />
+        <div class="field-helper-text">Example: If the property is 20,000 sqft and a tenant occupies 2,000 sqft, that tenant&#x27;s pro-rata share is 10%.</div>
       </div>
       <div class="field">
         <label>CAM Year</label>
@@ -5152,27 +5197,54 @@
     </div>
     <!-- Primary: landlord-facing -->
     <div class="rpt-group-label">For You</div>
-    <div class="report-btn-row" style="flex-wrap:wrap;gap:10px;margin-bottom:16px;">
-      <button class="report-btn" onclick="guardedMasterReport()">&#x1F4CB; Master Report</button>
-      <button class="report-btn" onclick="generateLandlordExport()">&#x1F6A8; Risk &amp; Disputes</button>
-      <button class="report-btn" onclick="generateLeaseReviewPacketReport()">&#x1F4CB; Lease Review Packet</button>
-      <button class="report-btn" onclick="guardedReconciliationSummary()">&#x1F4CA; Reconciliation Summary</button>
+    <div class="rpt-btn-grid">
+      <div class="rpt-btn-cell">
+        <button class="report-btn" onclick="guardedMasterReport()">&#x1F4CB; Master Report</button>
+        <div class="rpt-btn-desc">Complete reconciliation showing all tenants, allocations, and invoice detail.</div>
+      </div>
+      <div class="rpt-btn-cell">
+        <button class="report-btn" onclick="generateLandlordExport()">&#x1F6A8; Risk &amp; Disputes</button>
+        <div class="rpt-btn-desc">Open disputes, flagged invoices, and lease risk summary.</div>
+      </div>
+      <div class="rpt-btn-cell">
+        <button class="report-btn" onclick="generateLeaseReviewPacketReport()">&#x1F4CB; Lease Review Packet</button>
+        <div class="rpt-btn-desc">Lease terms, extracted CAM provisions, and review notes for each tenant.</div>
+      </div>
+      <div class="rpt-btn-cell">
+        <button class="report-btn" onclick="guardedReconciliationSummary()">&#x1F4CA; Reconciliation Summary</button>
+        <div class="rpt-btn-desc">One-page summary of this year's CAM pool, tenant shares, and totals.</div>
+      </div>
     </div>
 
     <!-- Tenant-facing -->
     <div class="rpt-group-label">For Tenants</div>
-    <div class="report-btn-row" style="flex-wrap:wrap;gap:10px;align-items:center;margin-bottom:16px;">
-      <button class="report-btn" onclick="guardedTenantStatement()">&#x1F9FE; Tenant Statement</button>
+    <div class="rpt-btn-grid" style="margin-bottom:16px;">
+      <div class="rpt-btn-cell">
+        <button class="report-btn" onclick="guardedTenantStatement()">&#x1F9FE; Tenant Statement</button>
+        <div class="rpt-btn-desc">Tenant-facing CAM statement showing charges, calculations, and invoice breakdown.</div>
+      </div>
       <div id="tenantReportButtons" style="display:contents;"></div>
     </div>
 
     <!-- Advanced / lender / share -->
     <div class="rpt-group-label">Advanced</div>
-    <div class="report-btn-row" style="flex-wrap:wrap;gap:10px;margin-bottom:10px;">
-      <button class="report-btn report-btn-holes" onclick="generateHolesReport()">&#x1F50D; Invoice Gaps</button>
-      <button class="report-btn report-btn-holes" onclick="guardedExceptionReport()">&#x26A0; Exception Summary</button>
-      <button class="report-btn" onclick="generateLenderSummaryReport()">&#x1F3E6; Lender Summary</button>
-      <button class="report-btn rv-gen-btn" onclick="openReviewLinkModal()" title="Share a read-only link with executives or lenders">&#x1F517; Share Read-Only Link</button>
+    <div class="rpt-btn-grid" style="margin-bottom:10px;">
+      <div class="rpt-btn-cell">
+        <button class="report-btn report-btn-holes" onclick="generateHolesReport()">&#x1F50D; Invoice Gaps</button>
+        <div class="rpt-btn-desc">Invoices that could not be matched to any tenant.</div>
+      </div>
+      <div class="rpt-btn-cell">
+        <button class="report-btn report-btn-holes" onclick="guardedExceptionReport()">&#x26A0; Exception Summary</button>
+        <div class="rpt-btn-desc">Allocation flags, cap violations, and pro-rata anomalies requiring attention.</div>
+      </div>
+      <div class="rpt-btn-cell">
+        <button class="report-btn" onclick="generateLenderSummaryReport()">&#x1F3E6; Lender Summary</button>
+        <div class="rpt-btn-desc">High-level income and occupancy summary formatted for lender review.</div>
+      </div>
+      <div class="rpt-btn-cell">
+        <button class="report-btn rv-gen-btn" onclick="openReviewLinkModal()" title="Share a read-only link with executives or lenders">&#x1F517; Share Read-Only Link</button>
+        <div class="rpt-btn-desc">Generate a secure, read-only link to share results with executives or lenders.</div>
+      </div>
       <div id="testLabReportSlot" style="display:none;">
         <button class="report-btn" onclick="generateTestLabBenchmarkReport()">&#x1F9EA; Lease Intelligence Score</button>
       </div>
