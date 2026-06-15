@@ -1832,7 +1832,7 @@ function runCamValidation() {
     return;
   }
 
-  calculateCAM?.();
+  if (typeof calculateCAM === 'function') calculateCAM();
 }
 
 function getValidTenants() {
