@@ -94,6 +94,7 @@ function switchAuthTab(mode) {
   document.getElementById('loginTabSignUp').classList.toggle('active',  isSignUp);
   document.getElementById('loginBtn').textContent = isSignUp ? 'Create Account' : 'Sign In';
   document.getElementById('loginPasswordHint').style.display = isSignUp ? '' : 'none';
+  document.getElementById('loginForgotBtn').style.display    = isSignUp ? 'none' : '';
   document.getElementById('loginPassword').autocomplete = isSignUp ? 'new-password' : 'current-password';
   document.getElementById('loginMsg').className = 'login-msg';
   document.getElementById('loginMsg').textContent = '';
@@ -244,7 +245,13 @@ window.addEventListener('load', () => {
 });
 
 db.auth.onAuthStateChange((event, session) => {
-  if ((event === 'SIGNED_IN' || event === 'INITIAL_SESSION') && session?.user) {
+  if (event === 'PASSWORD_RECOVERY') {
+    // User clicked a password-reset email link. Show the set-new-password screen
+    // instead of logging them into the app — they need to actually set a password.
+    _showSetNewPassword();
+  } else if ((event === 'SIGNED_IN' || event === 'INITIAL_SESSION') && session?.user) {
+    // Don't show the app if we're in PASSWORD_RECOVERY flow
+    if (document.getElementById('setNewPasswordOverlay')?.classList.contains('visible')) return;
     _showApp(session.user);
     if (!_initialized) {
       _initialized = true;
@@ -258,6 +265,81 @@ db.auth.onAuthStateChange((event, session) => {
     _showLogin();
   }
 });
+
+function _showSetNewPassword() {
+  document.getElementById('loginScreen').style.display           = 'none';
+  document.getElementById('setNewPasswordOverlay').classList.add('visible');
+}
+
+async function sendPasswordReset() {
+  const email  = (document.getElementById('loginEmail').value || '').trim();
+  const msgEl  = document.getElementById('loginMsg');
+  const btn    = document.getElementById('loginForgotBtn');
+  if (!email) {
+    msgEl.className   = 'login-msg error';
+    msgEl.textContent = 'Enter your email address above, then click Forgot password?';
+    return;
+  }
+  btn.disabled = true;
+  msgEl.className   = 'login-msg';
+  msgEl.textContent = 'Sending reset email…';
+  try {
+    const { error } = await db.auth.resetPasswordForEmail(email, {
+      redirectTo: window.location.origin,
+    });
+    if (error) throw error;
+    msgEl.className   = 'login-msg success';
+    msgEl.textContent = '✓ Reset email sent — check your inbox and click the link to set a new password.';
+  } catch (e) {
+    msgEl.className   = 'login-msg error';
+    msgEl.textContent = e.message || 'Could not send reset email — please try again.';
+  } finally {
+    btn.disabled = false;
+  }
+}
+
+async function submitNewPassword(event) {
+  if (event) event.preventDefault();
+  const pw1   = document.getElementById('newPasswordInput').value;
+  const pw2   = document.getElementById('newPasswordConfirm').value;
+  const btn   = document.getElementById('setNewPasswordBtn');
+  const msgEl = document.getElementById('setNewPasswordMsg');
+
+  if (!pw1 || pw1.length < 6) {
+    msgEl.className   = 'login-msg error';
+    msgEl.textContent = 'Password must be at least 6 characters.';
+    return;
+  }
+  if (pw1 !== pw2) {
+    msgEl.className   = 'login-msg error';
+    msgEl.textContent = 'Passwords do not match.';
+    return;
+  }
+
+  btn.disabled      = true;
+  btn.textContent   = 'Setting password…';
+  msgEl.className   = 'login-msg';
+  msgEl.textContent = '';
+
+  try {
+    const { data, error } = await db.auth.updateUser({ password: pw1 });
+    if (error) throw error;
+    // Password updated — hide overlay and show app
+    document.getElementById('setNewPasswordOverlay').classList.remove('visible');
+    const user = data?.user || (await db.auth.getUser())?.data?.user;
+    if (user) {
+      _showApp(user);
+      if (!_initialized) { _initialized = true; init(); }
+    } else {
+      _showLogin();
+    }
+  } catch (e) {
+    msgEl.className   = 'login-msg error';
+    msgEl.textContent = e.message || 'Could not update password — please try again.';
+    btn.disabled      = false;
+    btn.textContent   = 'Set Password & Sign In';
+  }
+}
 
 // ─── Constants ────────────────────────────────────────────────────────────────
 const MODEL       = 'claude-sonnet-4-6';

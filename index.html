@@ -3046,6 +3046,14 @@
     .login-tab.active { background: rgba(201,151,58,0.15); color: #C9973A; }
     .login-tab:hover:not(.active) { background: rgba(255,255,255,0.04); color: #94A3B8; }
     .login-hint { font-size: 0.75rem; color: #64748B; margin: -8px 0 10px; text-align: left; }
+    .login-forgot { display: block; text-align: right; font-size: 0.78rem; color: #64748B; margin: -8px 0 14px; cursor: pointer; background: none; border: none; font-family: inherit; padding: 0; }
+    .login-forgot:hover { color: #C9973A; text-decoration: underline; }
+    /* Set-new-password overlay */
+    #setNewPasswordOverlay {
+      position: fixed; inset: 0; z-index: 10000;
+      background: #0B1220; display: none; align-items: center; justify-content: center; padding: 24px;
+    }
+    #setNewPasswordOverlay.visible { display: flex; }
     /* ── Auth: header user bar ───────────────────────────────────────── */
     .header-user-bar {
       display: flex; align-items: center;
@@ -4676,9 +4684,30 @@
 
       <p id="loginPasswordHint" class="login-hint" style="display:none;">Minimum 6 characters</p>
 
+      <button type="button" class="login-forgot" id="loginForgotBtn" onclick="sendPasswordReset()">Forgot password?</button>
+
       <button type="submit" class="login-btn" id="loginBtn">Sign In</button>
     </form>
     <div class="login-msg" id="loginMsg"></div>
+  </div>
+</div>
+
+<!-- ── Set New Password overlay (shown after clicking a password-reset email link) ── -->
+<div id="setNewPasswordOverlay">
+  <div class="login-card">
+    <div class="login-logo">Mainstreet</div>
+    <div class="login-tagline">Set a new password</div>
+    <form onsubmit="submitNewPassword(event)">
+      <label class="login-label" for="newPasswordInput">New password</label>
+      <input class="login-input" type="password" id="newPasswordInput" placeholder="••••••••"
+        autocomplete="new-password" minlength="6" />
+      <p class="login-hint">Minimum 6 characters</p>
+      <label class="login-label" for="newPasswordConfirm">Confirm password</label>
+      <input class="login-input" type="password" id="newPasswordConfirm" placeholder="••••••••"
+        autocomplete="new-password" minlength="6" />
+      <button type="submit" class="login-btn" id="setNewPasswordBtn">Set Password &amp; Sign In</button>
+    </form>
+    <div class="login-msg" id="setNewPasswordMsg"></div>
   </div>
 </div>
 
