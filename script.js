@@ -269,7 +269,9 @@ db.auth.onAuthStateChange((event, session) => {
 });
 
 function _showSetNewPassword() {
-  document.getElementById('loginScreen').style.display           = 'none';
+  document.getElementById('loginScreen').style.display = 'none';
+  const appContent = document.getElementById('appContent');
+  if (appContent) appContent.style.display = 'none';
   document.getElementById('setNewPasswordOverlay').classList.add('visible');
 }
 
@@ -8551,7 +8553,7 @@ function _buildReconciliationSummaryHtml(results, invoices, propName) {
             <th class="rcs-th rcs-num">Pro-Rata</th>
             <th class="rcs-th rcs-num">Cap Adj</th>
             <th class="rcs-th rcs-num">Allocated</th>
-            <th class="rcs-th">Calc State</th>
+            <th class="rcs-th">Billing Method</th>
           </tr></thead>
           <tbody>${rows}</tbody>
           <tfoot><tr class="rcs-total-row">
@@ -8613,12 +8615,7 @@ function _tdpDisputesHtml(tenantName) {
       ? `<div style="font-size:0.73rem;color:#64748B;margin-top:4px;">${isResolved ? 'Resolved' : 'Rejected'} · ${_ts(d.resolvedAt)}</div>`
       : '';
 
-    const actionHtml = (isResolved || isRejected) ? '' : `
-      <div class="tdp-dc-actions">
-        <button class="tdp-dc-btn" onclick="event.stopPropagation();showToast('Invoice viewer — coming soon',{color:'#1e3a5f',textColor:'#93c5fd'})">View Invoice</button>
-        <button class="tdp-dc-btn" onclick="event.stopPropagation();showToast('Lease clause viewer — coming soon',{color:'#1e3a5f',textColor:'#93c5fd'})">View Lease Clause</button>
-        <button class="tdp-dc-btn resolve" onclick="event.stopPropagation();showToast('Dispute resolution — coming soon',{color:'#1e3a5f',textColor:'#93c5fd'})">Resolve Dispute</button>
-      </div>`;
+    const actionHtml = '';
 
     return `
       <div class="tdp-dispute-card${cardCls}">
@@ -12230,8 +12227,8 @@ function generateMasterReport() {
   // Report hash
   sha256({ propName: lastPropName, total: lastTotal, tenants: lastResults.map(r => r.name), generated: now })
     .then(hash => {
-      document.querySelector('.rpt-hash-val').textContent =
-        'SHA-256: ' + hash + '\nGenerated: ' + new Date().toISOString();
+      const hashEl = document.querySelector('.rpt-hash-val');
+      if (hashEl) hashEl.textContent = 'SHA-256: ' + hash + '\nGenerated: ' + new Date().toISOString();
     });
 
   const n = buildAuditNarrative();
@@ -12488,7 +12485,7 @@ function renderReportTenantExpansion(tr, tenantName) {
         ${td && td.amendments && td.amendments.length > 0
           ? `<span class="rpt-exp-amend-count">${td.amendments.length} amendment${td.amendments.length > 1 ? 's' : ''} on file</span>`
           : '<span class="rpt-exp-amend-none">No amendments uploaded</span>'}
-        ${td ? `<button class="rpt-exp-amend-btn" onclick="openAmendmentUpload('${esc(td.id || '')}')">+ Add Amendment</button>` : ''}
+        ${td?.id ? `<button class="rpt-exp-amend-btn" onclick="openAmendmentUpload('${esc(td.id)}')">+ Add Amendment</button>` : ''}
       </div>
       <div class="rpt-exp-section">Disputes</div>
       ${disputeHtml}
@@ -12621,7 +12618,7 @@ function generateDisputePacket(disputeId) {
         <tr><td>Raw Allocation</td><td style="text-align:right">${fmt(recon.capApplied ? recon.totalAllocated + recon.capAdjustment : recon.totalAllocated)}</td></tr>
         ${recon.capApplied ? `<tr><td>Cap Reduction</td><td style="text-align:right;color:#fb923c;">−${fmt(recon.capAdjustment)}</td></tr>` : ''}
         <tr class="total-row"><td>Final CAM Charge</td><td style="text-align:right">${fmt(recon.totalAllocated)}</td></tr>
-        ${calcSt ? `<tr><td>Calculation State</td><td style="text-align:right"><span class="rc-calc-state ${calcSt.cls}">${calcSt.label}</span></td></tr>` : ''}
+        ${calcSt ? `<tr><td>Billing Method</td><td style="text-align:right"><span class="rc-calc-state ${calcSt.cls}">${calcSt.label}</span></td></tr>` : ''}
       </tbody>
     </table>` : '';
 
@@ -12792,7 +12789,7 @@ function generateLandlordExport() {
 
     <div class="rpt-section-title">Reconciliation Completeness by Tenant</div>
     <table class="rpt-table">
-      <thead><tr><th>Tenant</th><th style="text-align:right">Allocated</th><th style="text-align:right">Pro-Rata</th><th>Calc State</th><th style="text-align:center">Flags</th></tr></thead>
+      <thead><tr><th>Tenant</th><th style="text-align:right">Allocated</th><th style="text-align:right">Pro-Rata</th><th>Billing Method</th><th style="text-align:center">Flags</th></tr></thead>
       <tbody>${tenantRows}</tbody>
     </table>
 
@@ -12851,7 +12848,7 @@ function generateLenderSummaryReport() {
 
 function generateTestLabBenchmarkReport() {
   try {
-    if (!window.LeaseTestLab) { showToast('Test Lab module not loaded.', { type: 'error', duration: 3000 }); return; }
+    if (!window.LeaseTestLab) { showToast('Test Lab module not loaded.', { color: '#7f1d1d', textColor: '#fca5a5', duration: 3000 }); return; }
     const levels = ['easy', 'medium', 'hard', 'nightmare'];
     const suite  = window.LeaseTestLab.runSuite(levels);
     const stats  = window.LeaseTestLab.scoreSuite(suite);
@@ -12860,7 +12857,7 @@ function generateTestLabBenchmarkReport() {
     openReport('Lease Intelligence Benchmark — ' + new Date().toLocaleDateString('en-US', { month: 'short', day: 'numeric', year: 'numeric' }), html);
   } catch (e) {
     logError('generateTestLabBenchmarkReport', e);
-    showToast('Benchmark error: ' + (e.message || 'unknown'), { type: 'error', duration: 4000 });
+    showToast('Benchmark error: ' + (e.message || 'unknown'), { color: '#7f1d1d', textColor: '#fca5a5', duration: 4000 });
   }
 }
 
@@ -12909,7 +12906,7 @@ function exportReconciliationCSV() {
     return;
   }
   const rows = [
-    ['Tenant', 'Unit', 'Sqft', 'Pro-Rata % (0-100)', 'Cap Applied', 'Cap Reduction (negative = savings)', 'Allocated', 'Invoices', 'Avg Confidence', 'Calc State', 'Flags'],
+    ['Tenant', 'Unit', 'Sqft', 'Pro-Rata % (0-100)', 'Cap Applied', 'Cap Reduction (negative = savings)', 'Allocated', 'Invoices', 'AI Read Confidence (%)', 'Billing Method', 'Flags'],
     ...lastResults.map(r => {
       const liveT  = tenantData.find(t => t && t.id === r.tenantId);
       const calcSt = _deriveCalcState(r, liveT);
@@ -12921,7 +12918,7 @@ function exportReconciliationCSV() {
         r.name, r.unitNumber || '', r.sqFt || '', (r.proRata * 100).toFixed(2),
         r.capApplied ? 'Yes' : 'No', r.capApplied ? (-(r.capAdjustment || 0)).toFixed(2) : '',
         r.totalAllocated.toFixed(2), r.eligibleCount, confExport,
-        calcSt.label, (r.ambiguityFlags || []).map(f => f.code).join('; '),
+        calcSt.label, (r.ambiguityFlags || []).map(f => f.message || f.code).join('; '),
       ];
     }),
   ];
@@ -16429,6 +16426,14 @@ async function _doResyncTenantsDirectly(propertyId, rows) {
   const { error: insErr } = await db.from('tenants').upsert(insertRows, { onConflict: 'id' });
   if (insErr) {
     console.error('[resyncTenantsDirectly] insert error:', insErr.message);
+    // The delete already committed — tenants table is now empty for this property.
+    // Show a critical error and attempt to re-save from in-memory state so the
+    // data is at least persisted to localStorage until the user reloads.
+    showToast('⚠ Tenant sync error — your lease data is safe in this browser session but could not be saved to the database. Please stay on this page and try saving again.', { color: '#7f1d1d', textColor: '#fca5a5', duration: 10000 });
+    // Re-trigger a full property save (localStorage + Supabase properties table)
+    // so the data is not silently lost if the user navigates away.
+    const _recProp = currentProperty();
+    if (_recProp?.id === propertyId) savePropertyData();
   } else {
     console.log('[resyncTenantsDirectly] fallback resync OK —', insertRows.length, 'rows for property', propertyId);
   }
@@ -18809,10 +18814,12 @@ function _renderRentRollTab(rentRoll, tenantSummary) {
 
   const schedHtml = sched.length ? `
   <div class="acq-section-sub">Lease Expiration Schedule</div>
+  <div class="acq-ts-scroll">
   <table class="acq-ts-table acq-exp-sched">
     <thead><tr><th>Year</th><th>Leases</th><th>Sq Ft</th><th style="min-width:120px"></th></tr></thead>
     <tbody>${schedRows}</tbody>
-  </table>` : '';
+  </table>
+  </div>` : '';
 
   const rollCard = (data, cls, label) => `
   <div class="acq-rollover-card ${data.count > 0 ? cls : ''}">
