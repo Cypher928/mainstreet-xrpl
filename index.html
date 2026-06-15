@@ -4738,9 +4738,9 @@
 
   <!-- Primary Action -->
   <div class="start-here">
-    <p class="start-text">Start by running a demo or adding your first property</p>
+    <p class="start-text">See a fully loaded reconciliation — or add your first property to get started</p>
     <div class="cta-row">
-      <button class="btn-primary" onclick="loadDemo()">&#x1F3AF; Try Live Demo</button>
+      <button class="btn-primary" id="demoBtn" onclick="loadDemo()">&#x1F3AF; Try Live Demo</button>
       <button class="btn-secondary" onclick="addNewProperty()">+ Add Property</button>
     </div>
   </div>
@@ -4934,10 +4934,10 @@
       <li class="ob-modal-step"><div class="ob-modal-step-num">5</div><div class="ob-modal-step-text"><strong>Review &amp; export</strong> — tenant statements, audit reports, and dispute tracking</div></li>
     </ul>
     <div class="ob-modal-actions">
-      <button class="ob-btn-primary" onclick="obCloseWelcome('property')">+ Create My Property</button>
-      <button class="ob-btn-secondary" onclick="obCloseWelcome('demo')">&#x1F3AF; Try Live Demo</button>
+      <button class="ob-btn-primary" onclick="obCloseWelcome('demo')">&#x1F3AF; Try Live Demo</button>
+      <button class="ob-btn-secondary" onclick="obCloseWelcome('property')">+ Create My Property</button>
     </div>
-    <span class="ob-modal-skip" onclick="obCloseWelcome('skip')">Skip intro</span>
+    <span class="ob-modal-skip" onclick="obCloseWelcome('skip')">Skip &mdash; I&rsquo;ll add my own property</span>
   </div>
 </div>
 

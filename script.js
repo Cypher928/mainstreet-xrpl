@@ -34,6 +34,7 @@ setTimeout(() => {
 // ─── Authentication ───────────────────────────────────────────────────────────
 async function _showApp(user) {
   _lsUserId = (user && user.id) ? user.id : null;
+  if (user?.id) _initDemoIds(user.id); // derive per-user demo IDs before any demo interaction
   _lsMigrateAncillaryKeys(); // scope ancillary LS keys + re-hydrate _camYear
   initCamYearSelect();       // re-sync dropdown now that _camYear may have changed
   document.getElementById('loginScreen').style.display  = 'none';
@@ -13210,26 +13211,36 @@ function generateTenantStatement(tenantName) {
 
 // ─── Load Demo ────────────────────────────────────────────────────────────────
 
-// Stable identifiers so the demo property is idempotent across sessions/devices.
-const DEMO_PROPERTY_ID = 'dec00000-0000-4000-a000-000000000001';
-const _DEMO_TENANT_IDS = [
-  'dec00000-0000-4000-a000-000000000002', // Whole Health Market
-  'dec00000-0000-4000-a000-000000000003', // Summit Coffee & Provisions
-  'dec00000-0000-4000-a000-000000000004', // ProActive Physical Therapy
-  'dec00000-0000-4000-a000-000000000005', // FitZone Athletics
-  'dec00000-0000-4000-a000-000000000006', // Harbor Nail & Beauty Studio
-];
+// Per-user stable IDs derived in _initDemoIds() when the auth session loads.
+// Using per-user IDs prevents Supabase PK conflicts when multiple users share
+// the same Supabase project — each user seeds their own rows with no collision.
+let DEMO_PROPERTY_ID = null;
+let _DEMO_TENANT_IDS = [];
+
+// Derives stable demo UUIDs from the authenticated user's ID.
+// Called in _showApp() so the values are ready before any demo interaction.
+function _initDemoIds(userId) {
+  // Use the first 12 hex characters of the user's UUID (without dashes) as the
+  // node component, making each user's demo row unique in the properties table.
+  const hex = userId.replace(/-/g, '');
+  const node = hex.slice(0, 12);
+  DEMO_PROPERTY_ID = 'dec00000-0000-4000-a000-' + node;
+  _DEMO_TENANT_IDS = [2, 3, 4, 5, 6].map(n =>
+    'dec00000-0000-4000-a00' + n + '-' + node
+  );
+}
 
 // Deletes every property whose name matches "Riverside Commons*" and whose ID
 // is NOT the canonical DEMO_PROPERTY_ID.  Cleans Supabase, _props, and
 // localStorage so no duplicate demo entries survive.
 async function cleanupLegacyDemos(userId) {
   try {
-    const { data: rows } = await db.from('properties')
+    let q = db.from('properties')
       .select('id, name, sqft')
       .eq('user_id', userId)
-      .ilike('name', 'riverside commons%')
-      .neq('id', DEMO_PROPERTY_ID);
+      .ilike('name', 'riverside commons%');
+    if (DEMO_PROPERTY_ID) q = q.neq('id', DEMO_PROPERTY_ID);
+    const { data: rows } = await q;
 
     // Belt-and-suspenders: only remove entries whose sqft matches the demo
     const legacyIds = (rows || []).filter(r => r.sqft === 24000).map(r => r.id);
@@ -15612,10 +15623,10 @@ function renderPortfolio(props) {
       <div class="ptf-empty-state">
         <div class="ptf-empty-icon">&#x1F3E2;</div>
         <div class="ptf-empty-title">No properties yet</div>
-        <div class="ptf-empty-desc">Add your first property and run a CAM reconciliation in about 5 minutes.</div>
+        <div class="ptf-empty-desc">Load the demo to see a complete reconciliation — or create your first property and get audit-ready in 5 minutes.</div>
         <div class="ptf-empty-cta">
-          <button class="ptf-empty-btn-primary" onclick="addNewProperty()">+ Create First Property</button>
-          <button class="ptf-empty-btn-secondary" onclick="obCloseWelcome('demo')">&#x1F3AF; Try Live Demo</button>
+          <button class="ptf-empty-btn-primary" onclick="loadDemo()">&#x1F3AF; Try Live Demo</button>
+          <button class="ptf-empty-btn-secondary" onclick="addNewProperty()">+ Create Property</button>
         </div>
       </div>`;
     renderReviewQueue(props);
