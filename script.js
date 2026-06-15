@@ -16261,33 +16261,43 @@ async function loadProperties() {
 const _resyncQueues = new Map();
 
 async function _doResyncTenantsToTable(propertyId, tenants) {
-  // SECURITY: no client-side auth check here — propertyId comes from the caller.
-  // Supabase RLS on the tenants table is the authoritative guard. Add RLS in Phase 8C-hardening.
-  const { error: delErr } = await db.from('tenants').delete().eq('property_id', propertyId);
-  if (delErr) {
-    console.error('[resyncTenantsToTable] delete error:', delErr.message, '| code:', delErr.code);
-    showToast('⚠️ Tenant sync failed — ' + delErr.message, { color: '#92400e', textColor: '#fef3c7', duration: 5000 });
-    return;
-  }
+  // Atomic delete+insert via resync_property_tenants() stored procedure.
+  // The RPC wraps both operations in a single PL/pgSQL transaction — if the
+  // insert loop raises an exception, the delete is automatically rolled back.
+  // Migration: migrations/009_atomic_tenant_resync.sql
   const rows = (tenants || [])
     .filter(t => t && t.tenant_name && !t._pendingJobReview)
     .map(t => ({
-      id:          t.id,
-      property_id: propertyId,
-      name:        t.tenant_name || null,
-      sqft:        Number(t.leased_sqft) || null,
-      cap:         t.cap ?? t.cam_cap ?? t.capPercentage ?? null,
-      start_date:  t.start_date || null,
-      end_date:    t.end_date   || null,
-      ...(t.leaseUrl ? { lease_url: t.leaseUrl } : {}),
-      lease_type:  t.lease_type || null,
+      id:         t.id,
+      name:       t.tenant_name || null,
+      sqft:       Number(t.leased_sqft) || null,
+      cap:        t.cap ?? t.cam_cap ?? t.capPercentage ?? null,
+      start_date: t.start_date || null,
+      end_date:   t.end_date   || null,
+      lease_url:  t.leaseUrl   || null,
+      lease_type: t.lease_type || null,
     }));
-  if (rows.length === 0) return;
-  const { error } = await db.from('tenants').insert(rows).select('id');
+
+  const { data, error } = await db.rpc('resync_property_tenants', {
+    p_property_id: propertyId,
+    p_rows:        rows,
+  });
+
   if (error) {
-    console.error('[resyncTenantsToTable] insert error:', error.message, '| code:', error.code);
+    console.error('[resyncTenantsToTable] RPC error:', error.message, '| code:', error.code);
     showToast('⚠️ Tenant sync failed — ' + error.message, { color: '#92400e', textColor: '#fef3c7', duration: 5000 });
+    return;
   }
+  if (data && !data.ok) {
+    console.error('[resyncTenantsToTable] RPC returned not-ok:', data.error, data.code);
+    if (data.code === 'not_authorized') {
+      showToast('⚠️ Tenant sync blocked — session may have expired. Please refresh and try again.', { color: '#92400e', textColor: '#fef3c7', duration: 6000 });
+    } else {
+      showToast('⚠️ Tenant sync failed — ' + (data.error || 'unknown error'), { color: '#92400e', textColor: '#fef3c7', duration: 5000 });
+    }
+    return;
+  }
+  console.log('[resyncTenantsToTable] atomic resync OK — inserted:', data?.inserted ?? rows.length, 'rows for property', propertyId);
 }
 
 // Full replace: delete all rows for the property then insert the given list.
