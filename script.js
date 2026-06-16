@@ -5176,10 +5176,13 @@ function setBulkFilter(field, val) {
   renderBulkResults();
 }
 
-function _filterBulkTenants(tenants) {
+function _filterBulkTenants(pairs) {
+  // pairs: [{ d, i }] where i is the REAL tenantData index.
+  // Callers must pass tenantData.map((t,i)=>({d:t,i})).filter(({d})=>d&&...) so
+  // that the returned i values index tenantData correctly even when it has leading nulls.
   const q   = (_bulkFilter.query || '').toLowerCase().trim();
   const st  = _bulkFilter.status || 'all';
-  return tenants.map((d, i) => ({ d, i })).filter(({ d }) => {
+  return pairs.filter(({ d }) => {
     if (q && !(d.tenant_name || '').toLowerCase().includes(q)) return false;
     if (st === 'ready')   return !d._needsReview && !d.extractionFailed && d.status !== 'pending' && d.tenant_name;
     if (st === 'issues')  return (d._needsReview || d.extractionFailed) && d.status !== 'pending';
@@ -5196,7 +5199,12 @@ function renderBulkResults() {
 
   // tenantData is the source of truth — contains every file, including failed extractions.
   // Do NOT filter by tenant_name or status here; every file must render a card.
-  const tenants = tenantData.filter(t => t && typeof t === 'object');
+  // Preserve the REAL tenantData index (i) in each pair so button onclick handlers
+  // correctly address tenantData[i] even when resetWorkflow() left leading nulls.
+  const tenantPairs = tenantData
+    .map((t, i) => ({ d: t, i }))
+    .filter(({ d }) => d && typeof d === 'object');
+  const tenants = tenantPairs.map(p => p.d); // plain array for dup-detection below
   const _debugMode = !!(window.DEBUG_LEASES || localStorage.getItem(_lsUserId ? 'ms_debug_leases_' + _lsUserId : 'ms_debug_leases') === '1');
 
   if (!tenants.length) return;
@@ -5211,7 +5219,7 @@ function renderBulkResults() {
   });
   const _dupNames = new Set([..._nameCount.entries()].filter(([, n]) => n > 1).map(([k]) => k));
 
-  const _filtered = _filterBulkTenants(tenants);
+  const _filtered = _filterBulkTenants(tenantPairs);
   const rows = _filtered.map(({ d, i }) => {
     if (!d) return '';
     const sqft      = d.leased_sqft  || null;
