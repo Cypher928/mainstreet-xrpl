@@ -11,6 +11,15 @@ const DEBUG = false;
 const SUPABASE_URL      = 'https://zhsuhehgehbzkmzurzyf.supabase.co';
 const SUPABASE_ANON_KEY = 'eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6Inpoc3VoZWhnZWhiemttenVyenlmIiwicm9sZSI6ImFub24iLCJpYXQiOjE3NzU4NDkwNDAsImV4cCI6MjA5MTQyNTA0MH0.HUl9ha9hhjIO1F_k8xPkqbZQnWx-ERRGbnmc6KS3lNE';
 
+// Auth email redirects (password reset, signup confirmation) must always point at the
+// public production domain — never window.location.origin, which on a Vercel preview/
+// branch deployment is protected by Vercel Authentication and would lock users out of
+// the recovery/confirmation flow before our app code ever runs. Localhost is exempted
+// so the flow is still testable in local dev.
+const PUBLIC_APP_URL = /^(localhost|127\.0\.0\.1)/.test(window.location.hostname)
+  ? window.location.origin
+  : 'https://mainstreet-xrpl.vercel.app';
+
 
 const { createClient: _sbCreateClient } = window.supabase;
 const db = _sbCreateClient(SUPABASE_URL, SUPABASE_ANON_KEY, {
@@ -136,7 +145,7 @@ async function submitAuth(event) {
   let data, error;
   try {
     const attemptAuth = () => _authMode === 'signup'
-      ? db.auth.signUp({ email, password, options: { emailRedirectTo: window.location.origin } })
+      ? db.auth.signUp({ email, password, options: { emailRedirectTo: PUBLIC_APP_URL } })
       : db.auth.signInWithPassword({ email, password });
 
     const withTimeout = (promise, ms) => Promise.race([
@@ -290,7 +299,7 @@ async function sendPasswordReset() {
   msgEl.textContent = 'Sending reset email…';
   try {
     const { error } = await db.auth.resetPasswordForEmail(email, {
-      redirectTo: window.location.origin + '/reset-password',
+      redirectTo: PUBLIC_APP_URL + '/reset-password',
     });
     if (error) throw error;
     msgEl.className   = 'login-msg success';
