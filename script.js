@@ -290,7 +290,7 @@ async function sendPasswordReset() {
   msgEl.textContent = 'Sending reset email…';
   try {
     const { error } = await db.auth.resetPasswordForEmail(email, {
-      redirectTo: window.location.origin,
+      redirectTo: window.location.origin + '/reset-password',
     });
     if (error) throw error;
     msgEl.className   = 'login-msg success';
