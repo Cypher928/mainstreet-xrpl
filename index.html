@@ -642,6 +642,71 @@
     .btn-secondary:hover { background: rgba(212,169,79,0.08); border-color: rgba(212,169,79,0.75); }
     .btn-secondary:active { transform: scale(0.97); }
 
+    /* ── Demo Welcome Panel ──────────────────────────────────────────── */
+    #demoWelcomePanel {
+      margin: 20px 0 28px;
+      background: linear-gradient(135deg, #1a2234 0%, #1e2a3a 100%);
+      border: 1px solid rgba(201,151,58,0.28);
+      border-radius: 14px;
+      padding: 18px 18px 14px;
+      position: relative;
+    }
+    .dmw-hdr { display: flex; align-items: flex-start; gap: 10px; margin-bottom: 14px; }
+    .dmw-hdr-text { flex: 1; }
+    .dmw-title { font-size: 1rem; font-weight: 700; color: #f1f5f9; }
+    .dmw-sub { font-size: 0.8rem; color: rgba(255,255,255,0.48); margin-top: 3px; }
+    .dmw-close {
+      background: none; border: none; color: rgba(255,255,255,0.35); font-size: 1.3rem;
+      cursor: pointer; line-height: 1; padding: 0 3px; flex-shrink: 0;
+      transition: color 0.15s; font-family: inherit;
+    }
+    .dmw-close:hover { color: rgba(255,255,255,0.68); }
+    .dmw-cards {
+      display: grid;
+      grid-template-columns: repeat(3, 1fr);
+      gap: 10px;
+    }
+    .dmw-card {
+      background: rgba(15,23,42,0.7);
+      border: 1px solid rgba(255,255,255,0.07);
+      border-radius: 10px;
+      padding: 13px 13px 11px;
+      display: flex; flex-direction: column;
+    }
+    .dmw-card-icon { font-size: 1.2rem; margin-bottom: 5px; }
+    .dmw-card-mod {
+      font-size: 0.69rem; font-weight: 700; letter-spacing: 0.06em;
+      text-transform: uppercase; color: #C9973A; margin-bottom: 3px;
+    }
+    .dmw-card-name { font-size: 0.86rem; font-weight: 700; color: #e2e8f0; margin-bottom: 8px; }
+    .dmw-card-feats { list-style: none; padding: 0; margin: 0 0 11px; flex: 1; }
+    .dmw-card-feats li {
+      font-size: 0.76rem; color: rgba(255,255,255,0.52);
+      padding: 2px 0 2px 13px; position: relative;
+    }
+    .dmw-card-feats li::before { content: '·'; position: absolute; left: 0; color: #C9973A; }
+    .dmw-btn-pri {
+      width: 100%; background: linear-gradient(135deg, #d4a94f, #b8892f);
+      color: #111; padding: 8px 12px; border-radius: 7px;
+      font-weight: 600; font-size: 0.79rem; font-family: inherit;
+      border: none; cursor: pointer; transition: opacity 0.15s;
+    }
+    .dmw-btn-pri:hover { opacity: 0.85; }
+    .dmw-btn-pri:disabled { opacity: 0.5; cursor: not-allowed; }
+    .dmw-btn-sec {
+      width: 100%; background: transparent;
+      border: 1px dashed rgba(212,169,79,0.42);
+      color: #d4a94f; padding: 8px 12px; border-radius: 7px;
+      font-size: 0.79rem; font-family: inherit;
+      cursor: pointer; transition: background 0.15s;
+    }
+    .dmw-btn-sec:hover { background: rgba(212,169,79,0.07); border-color: rgba(212,169,79,0.7); }
+    @media (max-width: 560px) { .dmw-cards { grid-template-columns: 1fr; } }
+    @media (min-width: 561px) and (max-width: 799px) {
+      .dmw-cards { grid-template-columns: repeat(2, 1fr); }
+      .dmw-card:last-child { grid-column: 1 / -1; }
+    }
+
     /* ── Portfolio Dashboard ─────────────────────────────────────────── */
     #portfolioDashboard {
       max-width: 720px; margin: 0 auto; padding: 0 16px 48px;
@@ -707,13 +772,18 @@
     /* Alert/warn stat variants */
     .ptf-stat--alert strong { color: #f87171; }
     .ptf-stat--warn  strong { color: #fbbf24; }
+    /* Inline warning rows on property cards */
+    .ptf-stat-warning { font-size: 0.74rem; color: #fbbf24; margin-bottom: 5px; }
+    /* Risk level stat on property card */
+    .ptf-risk-stat strong { font-size: 0.78rem; font-weight: 600; }
+    .ptf-risk--critical.ptf-risk-stat strong { color: #f87171; }
+    .ptf-risk--elevated.ptf-risk-stat strong { color: #fbbf24; }
+    .ptf-risk--moderate.ptf-risk-stat strong { color: #e2e8f0; }
+    .ptf-risk--low.ptf-risk-stat strong      { color: #4ade80; }
     /* Card footer — CAM year + timestamp */
     .ptf-card-foot { display: flex; align-items: center; justify-content: space-between; flex-wrap: wrap; gap: 4px; margin-top: 9px; border-top: 1px solid rgba(100,116,139,0.13); padding-top: 7px; }
     .ptf-cam-year  { font-size: 0.64rem; font-weight: 600; color: #94a3b8; }
     .ptf-rec-ts    { font-size: 0.63rem; color: #475569; }
-    /* Confidence bar */
-    .ptf-conf-bar  { height: 3px; background: rgba(100,116,139,0.18); border-radius: 99px; margin-top: 9px; overflow: hidden; }
-    .ptf-conf-fill { height: 100%; background: linear-gradient(90deg, #818cf8, #C9973A); border-radius: 99px; transition: width 0.4s; }
     .add-prop-btn {
       padding: 8px 16px; border-radius: 9px; font-size: 0.83rem;
       font-weight: 700; cursor: pointer; border: 2px dashed rgba(201,151,58,0.4);
@@ -759,7 +829,7 @@
     .ptf-status-dot.reconciled  { background: #22c55e; box-shadow: 0 0 0 3px rgba(34,197,94,0.2); }
     .ptf-status-dot.in-progress { background: #f59e0b; box-shadow: 0 0 0 3px rgba(245,158,11,0.2); }
     .ptf-status-dot.disputes    { background: #ef4444; box-shadow: 0 0 0 3px rgba(239,68,68,0.2); }
-    .ptf-stats-row { display: flex; gap: 14px; margin-bottom: 10px; }
+    .ptf-stats-row { display: flex; flex-wrap: wrap; gap: 6px 14px; margin-bottom: 10px; }
     .ptf-stat { font-size: 0.77rem; color: #64748B; }
     .ptf-stat strong { display: block; font-size: 0.92rem; font-weight: 700; color: #E2E8F0; }
     .ptf-cam-lbl { font-size: 0.68rem; color: #64748B; text-transform: uppercase; letter-spacing: 0.04em; font-family: 'DM Mono', monospace; }
@@ -1349,6 +1419,7 @@
     .lrs-needs-review { background: rgba(245,158,11,0.14); color: #fbbf24;  border: 1px solid rgba(245,158,11,0.3); }
     .lrs-incomplete   { background: rgba(239,68,68,0.12);  color: #f87171;  border: 1px solid rgba(239,68,68,0.25); }
     .lrs-notes-row    { margin-top: 4px; display: flex; align-items: center; gap: 6px; flex-wrap: wrap; }
+    .lrs-missing-detail { font-size: 0.67rem; color: #94a3b8; font-style: italic; }
     /* Review notes list inside report expansion panel */
     .rpt-exp-review-notes {
       margin: 5px 0 0; padding: 0 0 0 14px;
@@ -1699,6 +1770,176 @@
     }
     .bulk-done-btn:hover { background: rgba(34,197,94,0.22); border-color: rgba(34,197,94,0.65); }
     .bulk-done-btn:disabled { opacity: 0.6; cursor: default; }
+    /* ── Phase 3: Citation chips ──────────────────────────────────────────── */
+    .fe-chip {
+      font-size: 0.71rem; line-height: 1.45; margin-top: 4px;
+      padding: 3px 8px; border-radius: 4px; word-break: break-word;
+    }
+    .fe-chip--cited {
+      background: rgba(129,140,248,0.10); color: #a5b4fc;
+      border-left: 2px solid rgba(129,140,248,0.4);
+    }
+    .fe-chip--uncited {
+      background: rgba(245,158,11,0.08); color: #fbbf24;
+      border-left: 2px solid rgba(245,158,11,0.35);
+    }
+    .fe-chip-loc { font-weight: 700; margin-right: 5px; color: #818cf8; }
+    .fe-chip-quote { font-style: italic; color: #94a3b8; }
+    .fe-chip--cited { cursor: default; }
+    .fe-chip--cited[title] { cursor: help; }
+
+    /* ── Phase 9: First-Time User Guidance ──────────────────────────── */
+    /* Tooltip ⓘ icon on labels */
+    .field-info-tip {
+      display: inline-block; font-size: 0.7rem; color: #64748b;
+      cursor: help; margin-left: 4px; vertical-align: middle;
+    }
+    .field-info-tip:hover { color: #94a3b8; }
+    /* Helper text below input fields */
+    .field-helper-text {
+      font-size: 0.72rem; color: #64748b; margin-top: 5px; line-height: 1.4;
+    }
+    /* Citation evidence explanation */
+    .citation-hint {
+      font-size: 0.72rem; color: #64748b; padding: 6px 0 10px 0;
+      border-bottom: 1px solid rgba(255,255,255,0.05); margin-bottom: 10px;
+      line-height: 1.4;
+    }
+    /* Inline save flash on field elements */
+    @keyframes fieldSaveFlash {
+      0%   { border-color: #22c55e; box-shadow: 0 0 0 2px rgba(34,197,94,0.35); }
+      100% { border-color: rgba(255,255,255,0.12); box-shadow: none; }
+    }
+    .field-save-flash {
+      animation: fieldSaveFlash 0.9s ease forwards;
+    }
+    /* Pro-rata note below summary bar */
+    .pro-rata-note {
+      font-size: 0.72rem; color: #64748b; padding: 6px 0 12px 0; text-align: right;
+    }
+    .pro-rata-note-tip { cursor: help; }
+    /* Tooltip ⓘ on stat labels */
+    .stat-info-tip { cursor: help; font-size: 0.65rem; color: #64748b; }
+    /* Report button grid + description cells */
+    .rpt-btn-grid {
+      display: flex; flex-wrap: wrap; gap: 12px; margin-bottom: 16px;
+    }
+    .rpt-btn-cell {
+      display: flex; flex-direction: column; gap: 4px;
+      min-width: 160px; max-width: 220px;
+    }
+    .rpt-btn-desc {
+      font-size: 0.68rem; color: #64748b; line-height: 1.4; padding: 0 2px;
+    }
+    .fe-chip--amendment {
+      background: rgba(34,197,94,0.08); color: #86efac;
+      border-left: 2px solid rgba(34,197,94,0.35);
+    }
+
+    /* ── Phase 8: Bulk approve + filter bar enhancements ───────── */
+    .bulk-approve-all-btn {
+      margin-left: auto; padding: 5px 12px;
+      background: rgba(34,197,94,0.15); color: #86efac;
+      border: 1px solid rgba(34,197,94,0.35); border-radius: 6px;
+      font-size: 0.78rem; font-weight: 600; cursor: pointer; white-space: nowrap;
+    }
+    .bulk-approve-all-btn:hover { background: rgba(34,197,94,0.25); }
+
+    /* ── Phase 8: Portfolio tenant health sub-line ──────────────── */
+    .ptf-tenant-health {
+      font-size: 0.72rem; color: #fbbf24;
+      margin-top: 4px; padding: 3px 0;
+    }
+
+    /* ── Phase 8: Global cross-property tenant search ───────────── */
+    .ptf-global-search-wrap {
+      position: relative; margin: 0 0 16px 0;
+    }
+    .ptf-global-search-input {
+      width: 100%; box-sizing: border-box;
+      padding: 9px 14px; border-radius: 8px;
+      background: rgba(255,255,255,0.05); color: #e2e8f0;
+      border: 1px solid rgba(255,255,255,0.1); font-size: 0.875rem;
+      outline: none;
+    }
+    .ptf-global-search-input:focus { border-color: rgba(201,151,58,0.4); }
+    .gts-dropdown {
+      position: absolute; top: calc(100% + 4px); left: 0; right: 0; z-index: 999;
+      background: #1e293b; border: 1px solid rgba(255,255,255,0.12);
+      border-radius: 8px; max-height: 320px; overflow-y: auto;
+      box-shadow: 0 8px 24px rgba(0,0,0,0.5);
+    }
+    .gts-result {
+      padding: 9px 14px; cursor: pointer; border-bottom: 1px solid rgba(255,255,255,0.06);
+    }
+    .gts-result:last-child { border-bottom: none; }
+    .gts-result:hover { background: rgba(255,255,255,0.06); }
+    .gts-tenant-name { font-size: 0.875rem; font-weight: 600; color: #e2e8f0; }
+    .gts-prop-name   { font-size: 0.75rem; color: #64748b; margin-top: 2px; }
+    .gts-empty { padding: 12px 14px; color: #64748b; font-size: 0.85rem; }
+    .gts-more  { padding: 8px 14px; color: #64748b; font-size: 0.78rem; font-style: italic; }
+
+    /* ── P6-6 Pre-reconciliation summary strip ─────────────────── */
+    .prerecon-summary {
+      display: flex; flex-wrap: wrap; gap: 8px;
+      padding: 10px 14px; margin-bottom: 10px;
+      background: rgba(255,255,255,0.03);
+      border: 1px solid rgba(255,255,255,0.06);
+      border-radius: 8px;
+    }
+    .prerecon-tile {
+      display: flex; flex-direction: column; align-items: center;
+      padding: 6px 12px; border-radius: 6px;
+      background: rgba(255,255,255,0.04); min-width: 70px;
+    }
+    .prerecon-val  { font-size: 1.1rem; font-weight: 700; color: #C9973A; line-height: 1.2; }
+    .prerecon-lbl  { font-size: 0.65rem; color: #64748b; text-transform: uppercase; letter-spacing: 0.05em; margin-top: 2px; }
+    .prerecon-ok   { color: #4ade80; }
+    .prerecon-warn { color: #fbbf24; }
+    .prerecon-err  { color: #f87171; }
+    .prerecon-pend { color: #94a3b8; }
+
+    /* ── P6-1 Tenant filter bar ─────────────────────────────────── */
+    .bulk-filter-bar {
+      display: flex; flex-wrap: wrap; align-items: center; gap: 8px;
+      padding: 8px 0 10px; margin-bottom: 2px;
+    }
+    .bulk-filter-input {
+      flex: 1; min-width: 160px; max-width: 260px;
+      padding: 6px 10px; border-radius: 6px;
+      background: rgba(255,255,255,0.06); border: 1px solid rgba(255,255,255,0.1);
+      color: #E2E8F0; font-size: 0.82rem; outline: none;
+    }
+    .bulk-filter-input::placeholder { color: #475569; }
+    .bulk-filter-input:focus { border-color: rgba(201,151,58,0.4); }
+    .bulk-filter-pills { display: flex; flex-wrap: wrap; gap: 5px; }
+    .bulk-filter-pill {
+      padding: 3px 10px; border-radius: 10px; font-size: 0.72rem; font-weight: 600;
+      background: rgba(255,255,255,0.05); border: 1px solid rgba(255,255,255,0.1);
+      color: #94a3b8; cursor: pointer; transition: all 0.15s;
+    }
+    .bulk-filter-pill:hover  { background: rgba(255,255,255,0.09); color: #E2E8F0; }
+    .bulk-filter-pill.active { background: rgba(201,151,58,0.15); border-color: rgba(201,151,58,0.4); color: #C9973A; }
+    .bulk-filter-empty { padding: 20px; text-align: center; color: #475569; font-size: 0.85rem; }
+
+    /* ── P6-5 CAM year badge ────────────────────────────────────── */
+    .cam-year-badge {
+      display: inline-block; padding: 2px 9px;
+      background: rgba(201,151,58,0.12); border: 1px solid rgba(201,151,58,0.3);
+      color: #C9973A; border-radius: 10px;
+      font-size: 0.72rem; font-weight: 700; letter-spacing: 0.04em;
+      white-space: nowrap;
+    }
+
+    /* ── P6-7 Portfolio search ──────────────────────────────────── */
+    .ptf-search-input {
+      padding: 6px 12px; border-radius: 6px; font-size: 0.82rem;
+      background: rgba(255,255,255,0.06); border: 1px solid rgba(255,255,255,0.1);
+      color: #E2E8F0; outline: none; width: 200px;
+    }
+    .ptf-search-input::placeholder { color: #475569; }
+    .ptf-search-input:focus { border-color: rgba(201,151,58,0.4); }
+
     .bulk-tenant-summary {
       display: flex; align-items: center; gap: 10px; padding: 10px 14px;
       background: #0F1929; cursor: pointer; user-select: none;
@@ -2717,6 +2958,25 @@
     .gl-import-btn:active { transform: scale(0.99); }
 
     /* ── Print styles ─────────────────────────────────────────────────── */
+    /* ── Mobile: Report / Export overlay (Phase 1 — presentation only) ───── */
+    @media (max-width: 600px) {
+      .rpt-toolbar { padding: 10px 14px; gap: 8px; }
+      .rpt-toolbar h2 {
+        font-size: 0.9rem; flex: 1 1 auto; min-width: 0;
+        overflow: hidden; text-overflow: ellipsis; white-space: nowrap;
+      }
+      .rpt-toolbar-actions { flex-shrink: 0; gap: 6px; }
+      .rpt-tool-btn, .rpt-close-btn { padding: 7px 11px; font-size: 0.74rem; }
+      .rpt-body { margin: 20px auto 56px; padding: 0 16px; }
+      .rpt-cover { padding: 22px 0 20px; margin-bottom: 24px; }
+      .rpt-cover-title { font-size: 1.5rem; }
+      .rpt-cover-meta { gap: 14px; }
+      .rpt-section-title { margin: 26px 0 12px; }
+      .rpt-kpi-row { gap: 8px; }
+      .rpt-kpi { min-width: 90px; padding: 14px 10px; }
+      .rpt-kpi .kpi-val { font-size: 1.2rem; }
+    }
+
     @media print {
       body > *:not(#reportOverlay) { display: none !important; }
       #reportOverlay {
@@ -2851,6 +3111,14 @@
     .login-tab.active { background: rgba(201,151,58,0.15); color: #C9973A; }
     .login-tab:hover:not(.active) { background: rgba(255,255,255,0.04); color: #94A3B8; }
     .login-hint { font-size: 0.75rem; color: #64748B; margin: -8px 0 10px; text-align: left; }
+    .login-forgot { display: block; text-align: right; font-size: 0.78rem; color: #64748B; margin: -8px 0 14px; cursor: pointer; background: none; border: none; font-family: inherit; padding: 0; }
+    .login-forgot:hover { color: #C9973A; text-decoration: underline; }
+    /* Set-new-password overlay */
+    #setNewPasswordOverlay {
+      position: fixed; inset: 0; z-index: 10000;
+      background: #0B1220; display: none; align-items: center; justify-content: center; padding: 24px;
+    }
+    #setNewPasswordOverlay.visible { display: flex; }
     /* ── Auth: header user bar ───────────────────────────────────────── */
     .header-user-bar {
       display: flex; align-items: center;
@@ -2999,6 +3267,7 @@
 
     /* ── RBAC: tenant portal CSS gating ───────────────────────────────── */
     #appContent[data-role="tenant"] .start-here        { display: none !important; }
+    #appContent[data-role="tenant"] #demoWelcomePanel  { display: none !important; }
     #appContent[data-role="tenant"] .ptf-kpi-bar       { display: none !important; }
     #appContent[data-role="tenant"] #portfolioIntelPanel { display: none !important; }
     #appContent[data-role="tenant"] #rrDashPanel { display: none !important; }
@@ -3256,6 +3525,24 @@
     /* Make tenant name in card look tappable */
     .tenant-title[data-tdp] { cursor: pointer; }
     .tenant-title[data-tdp]:hover { text-decoration: underline; text-underline-offset: 3px; }
+
+    /* Source Evidence section inside tenant detail panel */
+    .tdp-ev-details { margin-top: 6px; }
+    .tdp-ev-details > .tdp-section { cursor: pointer; list-style: none; display: flex; align-items: center; gap: 8px; }
+    .tdp-ev-details > .tdp-section::-webkit-details-marker { display: none; }
+    .tdp-ev-summary { margin-top: 18px; }
+    .tdp-ev-count { color: #6366f1; font-size: 0.7rem; font-weight: 600;
+      background: rgba(99,102,241,0.12); border-radius: 10px; padding: 1px 7px; }
+    .tdp-ev-body { padding: 4px 0 0; }
+    .tdp-ev-row { padding: 10px 0; border-bottom: 1px solid rgba(255,255,255,0.05); }
+    .tdp-ev-row:last-child { border-bottom: none; }
+    .tdp-ev-field { font-size: 0.75rem; font-weight: 700; color: #94a3b8;
+      text-transform: uppercase; letter-spacing: 0.05em; margin-bottom: 3px; }
+    .tdp-ev-meta { font-size: 0.72rem; color: #475569; margin-bottom: 5px; }
+    .tdp-ev-quote { margin: 4px 0 0; padding: 6px 10px; border-left: 2px solid rgba(99,102,241,0.5);
+      background: rgba(15,23,42,0.7); border-radius: 0 4px 4px 0;
+      font-size: 0.77rem; color: #94a3b8; font-style: italic;
+      white-space: pre-wrap; word-break: break-word; max-height: 90px; overflow: hidden; }
     /* Live open-dispute count badge in the section heading */
     .ds-open-badge {
       font-size: 0.72rem; font-weight: 700; color: #fb923c;
@@ -3406,7 +3693,7 @@
     /* Mobile density — ~10% vertical spacing reduction */
     .ptf-prop-card { padding: 15px 15px 13px; }
     .ptf-status-row { margin-bottom: 10px; }
-    .ptf-stats-row { gap: 10px; margin-bottom: 8px; }
+    .ptf-stats-row { gap: 6px 10px; margin-bottom: 8px; }
     .ptf-kpi { padding: 12px 10px; }
     .ptf-kpi-val { font-size: 1.3rem; }
     .property-review-summary { margin: 3px 0 5px; }
@@ -3791,6 +4078,8 @@
       color: #94A3B8; cursor: pointer; transition: all 0.15s;
     }
     .rpt-export-btn:hover { background: rgba(255,255,255,0.08); color: #CBD5E1; }
+    .rpt-export-btn--delete { border-color: rgba(239,68,68,0.3); color: #f87171; margin-left: auto; }
+    .rpt-export-btn--delete:hover { background: rgba(239,68,68,0.1); color: #fca5a5; border-color: #ef4444; }
 
     /* ── Evidence Appendix (Phase 24) ──────────────────────────────────── */
     .rpt-ev-summary { font-size: 0.73rem; color: #64748b; margin-bottom: 10px; }
@@ -3816,7 +4105,6 @@
     .rpt-ev-conf { font-size: 0.71rem; font-weight: 600; white-space: nowrap; }
     .rpt-ev-clean { margin-top: 8px; font-size: 0.75rem; color: #4ade80; padding: 4px 0; }
 
-<<<<<<< HEAD
     /* ── Acquisition Review Section ─────────────────────────────────────── */
     .acq-section { margin: 32px 0 8px; }
     .acq-section-head { display: flex; align-items: center; justify-content: space-between; margin-bottom: 12px; }
@@ -4270,6 +4558,20 @@
       .rp-table td:nth-child(4) { display: none; } /* hide Sq Ft on mobile */
     }
 
+    /* ── Mobile: wide data tables — density + scroll hint (Phase 1) ───────── */
+    @media (max-width: 600px) {
+      .acq-ts-table { min-width: 560px; }
+      .acq-ts-table th, .acq-ts-table td { padding: 8px 9px; }
+      .acq-ts-scroll, .yardi-table-scroll,
+      .rcs-table-wrap, .rp-table-wrap { scrollbar-width: thin; scrollbar-color: rgba(201,151,58,0.45) transparent; }
+      .acq-ts-scroll::-webkit-scrollbar, .yardi-table-scroll::-webkit-scrollbar,
+      .rcs-table-wrap::-webkit-scrollbar, .rp-table-wrap::-webkit-scrollbar { height: 6px; }
+      .acq-ts-scroll::-webkit-scrollbar-thumb, .yardi-table-scroll::-webkit-scrollbar-thumb,
+      .rcs-table-wrap::-webkit-scrollbar-thumb, .rp-table-wrap::-webkit-scrollbar-thumb {
+        background: rgba(201,151,58,0.45); border-radius: 3px;
+      }
+    }
+
     /* ── Mobile: Portfolio Intelligence ──────────────────────────────────── */
     @media (max-width: 480px) {
       .pid-fc-summary { flex-direction: column; gap: 4px; }
@@ -4448,9 +4750,30 @@
 
       <p id="loginPasswordHint" class="login-hint" style="display:none;">Minimum 6 characters</p>
 
+      <button type="button" class="login-forgot" id="loginForgotBtn" onclick="sendPasswordReset()">Forgot password?</button>
+
       <button type="submit" class="login-btn" id="loginBtn">Sign In</button>
     </form>
     <div class="login-msg" id="loginMsg"></div>
+  </div>
+</div>
+
+<!-- ── Set New Password overlay (shown after clicking a password-reset email link) ── -->
+<div id="setNewPasswordOverlay">
+  <div class="login-card">
+    <div class="login-logo">Mainstreet</div>
+    <div class="login-tagline">Set a new password</div>
+    <form onsubmit="submitNewPassword(event)">
+      <label class="login-label" for="newPasswordInput">New password</label>
+      <input class="login-input" type="password" id="newPasswordInput" placeholder="••••••••"
+        autocomplete="new-password" minlength="6" />
+      <p class="login-hint">Minimum 6 characters</p>
+      <label class="login-label" for="newPasswordConfirm">Confirm password</label>
+      <input class="login-input" type="password" id="newPasswordConfirm" placeholder="••••••••"
+        autocomplete="new-password" minlength="6" />
+      <button type="submit" class="login-btn" id="setNewPasswordBtn">Set Password &amp; Sign In</button>
+    </form>
+    <div class="login-msg" id="setNewPasswordMsg"></div>
   </div>
 </div>
 
@@ -4475,16 +4798,63 @@
   <div class="hero-intro">
     <h1 class="hero-title">Mainstreet</h1>
     <p class="hero-tagline">The smarter way to reconcile CAM charges</p>
-    <p class="hero-sub">CAM Reconciliation &nbsp;&middot;&nbsp; Works Alongside Yardi &nbsp;&middot;&nbsp; Powered by XRPL</p>
+    <p class="hero-sub">CAM Reconciliation &nbsp;&middot;&nbsp; Works Alongside Yardi &nbsp;&middot;&nbsp; AI-Powered Analysis</p>
     <p class="hero-desc">AI-powered CAM reconciliation built for landlords and property managers</p>
   </div>
 
-  <!-- Primary Action -->
-  <div class="start-here">
-    <p class="start-text">Start by running a demo or adding your first property</p>
-    <div class="cta-row">
-      <button class="btn-primary" onclick="loadDemo()">&#x1F3AF; Try Live Demo</button>
-      <button class="btn-secondary" onclick="addNewProperty()">+ Add Property</button>
+  <!-- Demo Welcome Panel — shown to new users until dismissed; managed by _maybeShowWelcome() -->
+  <div id="demoWelcomePanel" style="display:none;">
+    <div class="dmw-hdr">
+      <div class="dmw-hdr-text">
+        <div class="dmw-title">Welcome to MainStreet</div>
+        <div class="dmw-sub">Explore the platform with sample data, or jump straight in with your own property.</div>
+      </div>
+      <button class="dmw-close" onclick="_dismissDemoWelcome()" title="Dismiss">&times;</button>
+    </div>
+    <div class="dmw-cards">
+
+      <!-- CAM Reconciliation Demo -->
+      <div class="dmw-card">
+        <div class="dmw-card-icon">&#x1F3E2;</div>
+        <div class="dmw-card-mod">CAM Reconciliation</div>
+        <div class="dmw-card-name">Cascade Commons</div>
+        <ul class="dmw-card-feats">
+          <li>5 tenants &middot; 26 invoices</li>
+          <li>Full year CAM allocation</li>
+          <li>Cap &amp; exclusion enforcement</li>
+          <li>Reports &amp; dispute log</li>
+        </ul>
+        <button class="dmw-btn-pri" id="demoBtn" onclick="loadDemo()">Open CAM Demo</button>
+      </div>
+
+      <!-- Acquisition Due Diligence Demo -->
+      <div class="dmw-card">
+        <div class="dmw-card-icon">&#x1F50D;</div>
+        <div class="dmw-card-mod">Acquisition Due Diligence</div>
+        <div class="dmw-card-name">Harborview Retail Center</div>
+        <ul class="dmw-card-feats">
+          <li>Lease risk analysis</li>
+          <li>CAM leakage detection</li>
+          <li>Occupancy &amp; WALT review</li>
+          <li>Investment recommendation</li>
+        </ul>
+        <button class="dmw-btn-pri" id="acqDemoBtn" onclick="_openAcqDemo()">Open Acquisition Demo</button>
+      </div>
+
+      <!-- Create Your Own -->
+      <div class="dmw-card">
+        <div class="dmw-card-icon">&#x2795;</div>
+        <div class="dmw-card-mod">Start From Scratch</div>
+        <div class="dmw-card-name">Your Property</div>
+        <ul class="dmw-card-feats">
+          <li>Upload lease PDFs</li>
+          <li>AI extracts CAM terms</li>
+          <li>Run reconciliation instantly</li>
+          <li>Generate tenant statements</li>
+        </ul>
+        <button class="dmw-btn-sec" onclick="_dismissDemoWelcome();addNewProperty()">+ Create Property</button>
+      </div>
+
     </div>
   </div>
 
@@ -4498,63 +4868,72 @@
     <div id="tenantPropertyView" style="display:none;"></div>
   </div>
 
-  <!-- Portfolio KPI Overview -->
+  <!-- 1. Action Center — topmost priority panel -->
+  <div id="actionCenterPanel"></div>
+
+  <!-- 2. Portfolio Health KPI Bar -->
   <div class="ptf-kpi-bar">
     <div class="ptf-kpi">
       <div class="ptf-kpi-val" id="pKpiProperties">—</div>
       <div class="ptf-kpi-lbl">Properties</div>
     </div>
     <div class="ptf-kpi">
+      <div class="ptf-kpi-val" id="pKpiOccupancy">—</div>
+      <div class="ptf-kpi-lbl">Occupancy</div>
+    </div>
+    <div class="ptf-kpi">
       <div class="ptf-kpi-val" id="pKpiCAM">—</div>
       <div class="ptf-kpi-lbl">Total CAM Managed</div>
     </div>
     <div class="ptf-kpi">
-      <div class="ptf-kpi-val" id="pKpiDisputes">—</div>
-      <div class="ptf-kpi-lbl">Open Disputes</div>
+      <div class="ptf-kpi-val" id="pKpiReady">—</div>
+      <div class="ptf-kpi-lbl">Ready To Reconcile</div>
     </div>
     <div class="ptf-kpi">
-      <div class="ptf-kpi-val" id="pKpiCritical">—</div>
-      <div class="ptf-kpi-lbl">At-Risk Properties</div>
-      <div class="ptf-kpi-sub" id="pKpiExpiryRevenue" style="display:none"></div>
+      <div class="ptf-kpi-val" id="pKpiInProgress">—</div>
+      <div class="ptf-kpi-lbl">In Progress</div>
     </div>
     <div class="ptf-kpi">
-      <div class="ptf-kpi-val" id="pKpiMissingDocs">—</div>
-      <div class="ptf-kpi-lbl">Missing Documents</div>
-    </div>
-    <div class="ptf-kpi">
-      <div class="ptf-kpi-val" id="pKpiConfidence">—</div>
-      <div class="ptf-kpi-lbl">Avg Confidence</div>
+      <div class="ptf-kpi-val" id="pKpiNeedsReview">—</div>
+      <div class="ptf-kpi-lbl">Needs Review</div>
     </div>
   </div>
 
-  <!-- Action Center — populated by renderPortfolio(), topmost priority panel -->
-  <div id="actionCenterPanel" style="display:none;"></div>
-
-  <!-- Lease Expiration Alert Panel — populated by renderPortfolio() -->
-  <div id="leaseAlertPanel"></div>
-
-  <!-- Portfolio Intelligence Panel -->
-  <div id="portfolioIntelPanel" style="display:none;"></div>
-
-  <!-- Recovered Revenue Dashboard -->
-  <div id="rrDashPanel" style="display:none;"></div>
-
-  <!-- Renewal Pipeline Panel -->
-  <div id="renewalPipelinePanel" style="display:none;"></div>
-
-  <!-- Property Cards — primary content -->
+  <!-- 3. Property Cards — primary content -->
   <div class="ptf-props-head">
     <h2>Your Properties</h2>
     <div class="ptf-head-actions">
+      <input id="ptfSearchInput" class="ptf-search-input" type="text"
+        placeholder="Search properties…"
+        oninput="_portfolioQuery=this.value;_applyPortfolioSearch()" />
       <button class="ptf-export-btn" onclick="exportPortfolioSummary()" title="Export one-page portfolio summary">&#x1F4CA; Export Summary</button>
       <button class="add-prop-btn" onclick="addNewProperty()">+ Add Property</button>
     </div>
+  </div>
+  <div class="ptf-global-search-wrap">
+    <input id="globalTenantSearch" class="ptf-global-search-input" type="text"
+      placeholder="&#x1F50D; Search tenants across all properties…"
+      oninput="_applyGlobalTenantSearch()"
+      autocomplete="off" />
+    <div id="globalTenantResults" class="gts-dropdown" style="display:none;"></div>
   </div>
   <div id="ptfSortRow" class="ptf-sort-row"></div>
   <div id="reviewQueuePanel" class="rq-panel" style="display:none;"></div>
   <div class="ptf-cards-grid" id="propertyCardsGrid"></div>
 
-  <!-- ── Acquisition Due Diligence ────────────────────────────────────── -->
+  <!-- 4. Lease Expiration Pipeline -->
+  <div id="leaseAlertPanel"></div>
+
+  <!-- 5. Renewal Pipeline Panel -->
+  <div id="renewalPipelinePanel" style="display:none;"></div>
+
+  <!-- 6. Portfolio Intelligence Panel -->
+  <div id="portfolioIntelPanel" style="display:none;"></div>
+
+  <!-- 7. Recovered Revenue Dashboard -->
+  <div id="rrDashPanel" style="display:none;"></div>
+
+  <!-- 8. Acquisition Due Diligence -->
   <div class="acq-section" id="acqSection">
     <div class="acq-section-head">
       <h2>&#x1F50D; Acquisition Due Diligence</h2>
@@ -4563,40 +4942,6 @@
     <div id="acqReviewsGrid" class="acq-cards-grid">
       <div class="acq-empty">No due diligence reviews yet. Start one to analyze a property before acquisition.</div>
     </div>
-  </div>
-
-  <!-- XRPL Trust Strip -->
-  <div class="xrpl-trust-strip">
-    <div class="xrpl-trust-item">
-      <span class="xrpl-icon">&#x1F517;</span>
-      Every reconciliation hashed on XRPL
-    </div>
-    <div class="xrpl-trust-divider"></div>
-    <div class="xrpl-trust-item">
-      <span class="xrpl-icon">&#x1F512;</span>
-      Dispute resolutions recorded immutably
-    </div>
-    <div class="xrpl-trust-divider"></div>
-    <div class="xrpl-trust-item">
-      <span class="xrpl-icon">&#x26A1;</span>
-      Year-end settlement via XRPL Escrow
-    </div>
-    <div class="xrpl-trust-divider"></div>
-    <a class="xrpl-trust-link"
-      href="https://testnet.xrpl.org/transactions/AFAD1E38C7A932C35511DB846A099EE346B7E1D71EF3E9F5E61D1F9BF505E113"
-      target="_blank" rel="noopener">
-      View Live TX &#x2197;
-    </a>
-  </div>
-
-  <!-- Phase 2 Teaser (subtle — below the fold) -->
-  <div class="ptf-phase2-teaser" style="opacity:0.6;">
-    <span class="ptf-phase2-icon">&#x1F3E6;</span>
-    <div class="ptf-phase2-text">
-      <strong>Lender Escrow Analysis — Coming Soon</strong><br>
-      Verify CAM compliance before releasing escrow funds. Built for commercial mortgage servicers.
-    </div>
-    <span class="ptf-phase2-badge">Roadmap</span>
   </div>
 
 </div>
@@ -4608,6 +4953,7 @@
     <span class="acq-detail-title" id="acqDetailTitle"></span>
     <span class="acq-detail-badge" id="acqDetailBadge"></span>
     <span id="acqConvertAction"></span>
+    <button class="acq-back-btn acq-delete-btn" onclick="deleteActiveAcquisitionReview()" title="Delete this review permanently" style="margin-left:auto;border-color:rgba(239,68,68,0.3);color:#f87171;">&#x1F5D1; Delete</button>
   </div>
 
   <!-- Conversion confirmation modal (hidden until triggered) -->
@@ -4679,6 +5025,7 @@
 <div id="propertyBreadcrumb">
   <button class="breadcrumb-back" onclick="backToPortfolio()">&#x2190; Back to Portfolio</button>
   <span class="breadcrumb-path">Portfolio &rsaquo; <span id="breadcrumbPropName"></span></span>
+  <span id="camYearBadge" class="cam-year-badge"></span>
   <div id="syncIndicator" class="sync-indicator"></div>
   <button class="rc-open-btn" onclick="openRecoveryModal()" title="Recovery Center">&#x1F512; Recovery</button>
   <button class="breadcrumb-clear-btn" onclick="clearPropertyData()" title="Reset tenant &amp; invoice data for this property — the property itself stays in your portfolio">&#x1F5D1; Clear Data</button>
@@ -4700,10 +5047,10 @@
       <li class="ob-modal-step"><div class="ob-modal-step-num">5</div><div class="ob-modal-step-text"><strong>Review &amp; export</strong> — tenant statements, audit reports, and dispute tracking</div></li>
     </ul>
     <div class="ob-modal-actions">
-      <button class="ob-btn-primary" onclick="obCloseWelcome('property')">+ Create My Property</button>
-      <button class="ob-btn-secondary" onclick="obCloseWelcome('demo')">&#x1F3AF; Try Live Demo</button>
+      <button class="ob-btn-primary" onclick="obCloseWelcome('demo')">&#x1F3AF; Try Live Demo</button>
+      <button class="ob-btn-secondary" onclick="obCloseWelcome('property')">+ Create My Property</button>
     </div>
-    <span class="ob-modal-skip" onclick="obCloseWelcome('skip')">Skip intro</span>
+    <span class="ob-modal-skip" onclick="obCloseWelcome('skip')">Skip &mdash; I&rsquo;ll add my own property</span>
   </div>
 </div>
 
@@ -4772,12 +5119,13 @@
       <div class="field">
         <label>Property Name</label>
         <input type="text" id="propertyName" placeholder="e.g. Westfield Plaza"
-          oninput="liveUpdateBreadcrumb(this.value)" />
+          oninput="liveUpdateBreadcrumb(this.value);savePropertyData()" />
       </div>
       <div class="field">
-        <label>Total Property Sqft</label>
+        <label>Total Property Sqft <span class="field-info-tip" title="Total rentable square footage for the property. This number is used to calculate each tenant&#x27;s pro-rata share of common area expenses.">&#x24D8;</span></label>
         <input type="number" id="totalSqft" placeholder="e.g. 20000" min="1"
           oninput="updatePropertySqft(this.value)" />
+        <div class="field-helper-text">Example: If the property is 20,000 sqft and a tenant occupies 2,000 sqft, that tenant&#x27;s pro-rata share is 10%.</div>
       </div>
       <div class="field">
         <label>CAM Year</label>
@@ -4949,6 +5297,7 @@
       </div>
     </div>
     <div id="camSaveWarningBanner" style="display:none;background:#450a0a;color:#fca5a5;border:1px solid #7f1d1d;border-radius:6px;padding:10px 14px;margin-bottom:10px;font-size:0.875rem;font-weight:600;line-height:1.4;"></div>
+    <div id="staleResultsBanner" style="display:none;background:#1c1400;color:#fbbf24;border:1px solid #78350f;border-radius:6px;padding:10px 14px;margin-bottom:10px;font-size:0.875rem;font-weight:600;line-height:1.4;">&#x26A0; Fields were edited since the last run — re-run CAM allocation to update results.</div>
     <div id="resultsBody"></div>
   </div>
 
@@ -4991,27 +5340,54 @@
     </div>
     <!-- Primary: landlord-facing -->
     <div class="rpt-group-label">For You</div>
-    <div class="report-btn-row" style="flex-wrap:wrap;gap:10px;margin-bottom:16px;">
-      <button class="report-btn" onclick="guardedMasterReport()">&#x1F4CB; Master Report</button>
-      <button class="report-btn" onclick="generateLandlordExport()">&#x1F6A8; Risk &amp; Disputes</button>
-      <button class="report-btn" onclick="generateLeaseReviewPacketReport()">&#x1F4CB; Lease Review Packet</button>
-      <button class="report-btn" onclick="guardedReconciliationSummary()">&#x1F4CA; Reconciliation Summary</button>
+    <div class="rpt-btn-grid">
+      <div class="rpt-btn-cell">
+        <button class="report-btn" onclick="guardedMasterReport()">&#x1F4CB; Master Report</button>
+        <div class="rpt-btn-desc">Complete reconciliation showing all tenants, allocations, and invoice detail.</div>
+      </div>
+      <div class="rpt-btn-cell">
+        <button class="report-btn" onclick="generateLandlordExport()">&#x1F6A8; Risk &amp; Disputes</button>
+        <div class="rpt-btn-desc">Open disputes, flagged invoices, and lease risk summary.</div>
+      </div>
+      <div class="rpt-btn-cell">
+        <button class="report-btn" onclick="generateLeaseReviewPacketReport()">&#x1F4CB; Lease Review Packet</button>
+        <div class="rpt-btn-desc">Lease terms, extracted CAM provisions, and review notes for each tenant.</div>
+      </div>
+      <div class="rpt-btn-cell">
+        <button class="report-btn" onclick="guardedReconciliationSummary()">&#x1F4CA; Reconciliation Summary</button>
+        <div class="rpt-btn-desc">One-page summary of this year's CAM pool, tenant shares, and totals.</div>
+      </div>
     </div>
 
     <!-- Tenant-facing -->
     <div class="rpt-group-label">For Tenants</div>
-    <div class="report-btn-row" style="flex-wrap:wrap;gap:10px;align-items:center;margin-bottom:16px;">
-      <button class="report-btn" onclick="guardedTenantStatement()">&#x1F9FE; Tenant Statement</button>
+    <div class="rpt-btn-grid" style="margin-bottom:16px;">
+      <div class="rpt-btn-cell">
+        <button class="report-btn" onclick="guardedTenantStatement()">&#x1F9FE; Tenant Statement</button>
+        <div class="rpt-btn-desc">Tenant-facing CAM statement showing charges, calculations, and invoice breakdown.</div>
+      </div>
       <div id="tenantReportButtons" style="display:contents;"></div>
     </div>
 
     <!-- Advanced / lender / share -->
     <div class="rpt-group-label">Advanced</div>
-    <div class="report-btn-row" style="flex-wrap:wrap;gap:10px;margin-bottom:10px;">
-      <button class="report-btn report-btn-holes" onclick="generateHolesReport()">&#x1F50D; Invoice Gaps</button>
-      <button class="report-btn report-btn-holes" onclick="guardedExceptionReport()">&#x26A0; Exception Summary</button>
-      <button class="report-btn" onclick="generateLenderSummaryReport()">&#x1F3E6; Lender Summary</button>
-      <button class="report-btn rv-gen-btn" onclick="openReviewLinkModal()" title="Share a read-only link with executives or lenders">&#x1F517; Share Read-Only Link</button>
+    <div class="rpt-btn-grid" style="margin-bottom:10px;">
+      <div class="rpt-btn-cell">
+        <button class="report-btn report-btn-holes" onclick="generateHolesReport()">&#x1F50D; Coverage Gap Report</button>
+        <div class="rpt-btn-desc">Missing tenants, lease gaps, and low-confidence data before reconciliation.</div>
+      </div>
+      <div class="rpt-btn-cell">
+        <button class="report-btn report-btn-holes" onclick="guardedExceptionReport()">&#x26A0; Exception Summary</button>
+        <div class="rpt-btn-desc">Allocation flags, cap violations, and pro-rata anomalies requiring attention.</div>
+      </div>
+      <div class="rpt-btn-cell">
+        <button class="report-btn" onclick="generateLenderSummaryReport()">&#x1F3E6; Lender Summary</button>
+        <div class="rpt-btn-desc">High-level income and occupancy summary formatted for lender review.</div>
+      </div>
+      <div class="rpt-btn-cell">
+        <button class="report-btn rv-gen-btn" onclick="openReviewLinkModal()" title="Share a read-only link with executives or lenders">&#x1F517; Share Read-Only Link</button>
+        <div class="rpt-btn-desc">Generate a secure, read-only link to share results with executives or lenders.</div>
+      </div>
       <div id="testLabReportSlot" style="display:none;">
         <button class="report-btn" onclick="generateTestLabBenchmarkReport()">&#x1F9EA; Lease Intelligence Score</button>
       </div>
@@ -5022,6 +5398,7 @@
       <button class="rpt-export-btn" onclick="exportReconciliationCSV()">&#x1F4C8; Reconciliation CSV</button>
       <button class="rpt-export-btn" onclick="exportDisputesCSV()">&#x1F4DD; Disputes CSV</button>
       <button class="rpt-export-btn" onclick="exportAuditLog()">&#x1F4BE; Activity Log</button>
+      <button class="rpt-export-btn rpt-export-btn--delete" onclick="deleteCurrentCAMReconciliation()" title="Delete this year&#x2019;s reconciliation records from the database">&#x1F5D1; Delete Reconciliation</button>
     </div>
     <div id="reportsMsg" class="reports-notice">
       Run a CAM allocation first to generate reports.
@@ -5251,8 +5628,7 @@
   <p style="font-size:0.8rem;line-height:1.6;color:#64748B;margin:0;">
     <strong style="color:#E2E8F0;">Your data stays yours.</strong>
     Lease files and invoices are processed securely and never shared with third parties.
-    Reconciliation hashes are anchored on-chain via XRPL for tamper-evident audit trails.
-    &nbsp;&middot;&nbsp; <strong style="color:#C9973A;">Mainstreet on XRPL</strong>
+    Every report includes a SHA-256 audit fingerprint for tamper detection.
   </p>
   <p style="margin:10px 0 0;font-size:0.75rem;">
     <a href="/terms-of-service" style="color:#64748B;text-decoration:none;">Terms of Service</a>

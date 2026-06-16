@@ -1597,9 +1597,9 @@ console.log('\n── Group 27: computePortfolioActions ────────
   ];
 
   const reviews = [
-    { id: 'r1', name: 'Harbor Acquisition',  status: 'analyzed'  },
+    { id: 'r1', name: 'Harbor Acquisition',  status: 'complete'  },
     { id: 'r2', name: 'Old Deal',            status: 'converted' },
-    { id: 'r3', name: 'Fresh Opportunity',   status: 'analyzed'  },
+    { id: 'r3', name: 'Fresh Opportunity',   status: 'complete'  },
   ];
 
   const pa = AE.computePortfolioActions(props, reviews, ref);
@@ -1633,7 +1633,7 @@ console.log('\n── Group 27: computePortfolioActions ────────
   assert('pa: closed dispute excluded',
     pa.warningActions.filter(a => a.type === 'cam_dispute').length === 1); // only p1, not p2
 
-  // --- Info: vacancies + analyzed acquisitions ---
+  // --- Info: vacancies + complete acquisitions awaiting conversion ---
   const vacItems = pa.infoActions.filter(a => a.type === 'vacancy');
   assert('pa: vacancy items in infoActions',             vacItems.length >= 1);
   const vacP2 = vacItems.find(a => a.propertyId === 'p2');
@@ -1641,8 +1641,8 @@ console.log('\n── Group 27: computePortfolioActions ────────
   assert('pa: p2 vacant sqft = 5000',                    vacP2 && vacP2.sqft === 5000);
 
   const acqItems = pa.infoActions.filter(a => a.type === 'acquisition_pending');
-  assert('pa: analyzed acquisitions in infoActions',     acqItems.length === 2);
-  assert('pa: only analyzed reviews (not converted)',
+  assert('pa: complete acquisitions in infoActions',     acqItems.length === 2);
+  assert('pa: only complete reviews (not converted)',
     acqItems.every(a => a.reviewId === 'r1' || a.reviewId === 'r3'));
 
   // --- Counts ---

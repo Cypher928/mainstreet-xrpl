@@ -279,6 +279,12 @@ window.LeaseIntelligence = (() => {
       push('unsupported_inference', -5, 'Inferred without explicit clause support'); reasons.push('Value inferred without explicit clause support');
     }
 
+    // Without a verbatim clause quote the score cannot be rated 'high' — confirming
+    // snapshots improve precision but do not substitute for a direct textual citation.
+    if (!ctx.hasQuote) {
+      score = Math.min(score, 79);
+    }
+
     score = Math.max(0, Math.min(100, score));
     const level = score >= 80 ? 'high' : score >= 55 ? 'medium' : score > 0 ? 'low' : 'failed';
     return { score, level, reasons, signals };

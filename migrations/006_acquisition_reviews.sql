@@ -14,7 +14,7 @@ create table if not exists public.acquisition_reviews (
   user_id     uuid        not null references auth.users(id) on delete cascade,
   name        text        not null,
   status      text        not null default 'draft'
-                check (status in ('draft', 'analyzing', 'complete')),
+                check (status in ('draft', 'analyzing', 'complete', 'converted')),
   data        jsonb       not null default '{}',
   created_at  timestamptz not null default now(),
   updated_at  timestamptz not null default now()

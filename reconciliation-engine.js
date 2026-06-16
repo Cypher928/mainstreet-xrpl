@@ -115,22 +115,40 @@ window.ReconciliationEngine = (() => {
       const t = tenants.find(t => t.id === r.tenantId);
       if (!t) return;
       const lt = (t.lease_type || '').toLowerCase();
-      if (!/^gross$|modified\s*gross|full\s*service/i.test(lt)) return;
+      const isGross    = /^gross$/i.test(lt.trim()) || /full\s*service/i.test(lt);
+      const isModGross = /modified\s*gross/i.test(lt);
+      if (!isGross && !isModGross) return;
       const sharedInvs  = (r.includedInvoices || []).filter(i => i.allocation === 'shared');
       if (!sharedInvs.length) return;
       const sharedTotal = sharedInvs.reduce((s, i) => s + (i.share || 0), 0);
-      flags.push({
-        severity: 'yellow',
-        title:    `Gross-lease tenant receiving shared CAM — ${r.name} (${_fmt(sharedTotal)})`,
-        detail:   `${r.name} holds a ${t.lease_type} lease, which typically bundles operating expenses into base rent. Charging ${_fmt(sharedTotal)} in shared CAM may violate lease terms. Review exclusion clauses.`,
-        conditions: [
-          `Tenant: ${r.name}`,
-          `Lease type: ${t.lease_type}`,
-          `Shared CAM charges: ${_fmt(sharedTotal)} across ${sharedInvs.length} invoice${sharedInvs.length !== 1 ? 's' : ''}`,
-          'Gross leases typically include all operating expenses in base rent',
-          'Action: confirm excluded categories or add this tenant to the NNN pool only',
-        ],
-      });
+      if (isModGross) {
+        // Modified Gross leases vary — some permit CAM pass-throughs, others do not.
+        flags.push({
+          severity: 'yellow',
+          title:    `Modified Gross tenant receiving shared CAM — ${r.name} (${_fmt(sharedTotal)})`,
+          detail:   `${r.name} holds a ${t.lease_type} lease. Modified Gross leases vary — some permit CAM pass-throughs, others bundle expenses into base rent. Verify whether ${_fmt(sharedTotal)} in shared CAM is permitted under this lease's expense provisions.`,
+          conditions: [
+            `Tenant: ${r.name}`,
+            `Lease type: ${t.lease_type}`,
+            `Shared CAM charges: ${_fmt(sharedTotal)} across ${sharedInvs.length} invoice${sharedInvs.length !== 1 ? 's' : ''}`,
+            'Modified Gross leases may or may not include CAM pass-throughs — verify the lease',
+            'Action: confirm expense pass-through provisions in the lease agreement',
+          ],
+        });
+      } else {
+        flags.push({
+          severity: 'yellow',
+          title:    `Gross-lease tenant receiving shared CAM — ${r.name} (${_fmt(sharedTotal)})`,
+          detail:   `${r.name} holds a ${t.lease_type} lease, which typically bundles operating expenses into base rent. Charging ${_fmt(sharedTotal)} in shared CAM may violate lease terms. Review exclusion clauses.`,
+          conditions: [
+            `Tenant: ${r.name}`,
+            `Lease type: ${t.lease_type}`,
+            `Shared CAM charges: ${_fmt(sharedTotal)} across ${sharedInvs.length} invoice${sharedInvs.length !== 1 ? 's' : ''}`,
+            'Gross leases typically include all operating expenses in base rent',
+            'Action: confirm excluded categories or add this tenant to the NNN pool only',
+          ],
+        });
+      }
     });
 
     return flags;

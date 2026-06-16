@@ -10,6 +10,7 @@
     { "source": "/api/:path*",      "destination": "/api/:path*"          },
     { "source": "/terms-of-service","destination": "/terms-of-service.html"},
     { "source": "/privacy-policy",  "destination": "/privacy-policy.html" },
+    { "source": "/reset-password",  "destination": "/reset-password.html" },
     { "source": "/",                "destination": "/index.html"           },
     { "source": "/index",           "destination": "/index.html"           }
   ],

@@ -178,5 +178,25 @@ export default async function handler(req, res) {
     return res.status(200).json({ data: result.json });
   }
 
+  // DELETE: remove all cam_reconciliation rows for a property+year
+  if (method === 'DELETE') {
+    const { propertyId, year } = req.query || {};
+    if (!propertyId || !year) {
+      return res.status(400).json({ error: 'Missing propertyId or year' });
+    }
+    if (!await _ownsProperty(propertyId, user.id)) {
+      return res.status(403).json({ error: 'Forbidden' });
+    }
+    const del = await sbFetch(
+      `/cam_reconciliations?property_id=eq.${encodeURIComponent(propertyId)}&year=eq.${encodeURIComponent(year)}`,
+      { method: 'DELETE' }
+    );
+    if (del.status >= 300) {
+      return res.status(del.status).json({ error: 'Delete failed', detail: del.json });
+    }
+    console.log('[cam-reconciliations] DELETE by user', user.id, '| prop:', propertyId, '| year:', year);
+    return res.status(200).json({ deleted: true });
+  }
+
   return res.status(405).json({ error: 'Method not allowed' });
 }

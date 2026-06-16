@@ -34,10 +34,12 @@ setTimeout(() => {
 // ─── Authentication ───────────────────────────────────────────────────────────
 async function _showApp(user) {
   _lsUserId = (user && user.id) ? user.id : null;
+  if (user?.id) _initDemoIds(user.id); // derive per-user demo IDs before any demo interaction
   _lsMigrateAncillaryKeys(); // scope ancillary LS keys + re-hydrate _camYear
   initCamYearSelect();       // re-sync dropdown now that _camYear may have changed
   document.getElementById('loginScreen').style.display  = 'none';
   document.getElementById('appContent').style.display   = 'block';
+  document.getElementById('setNewPasswordOverlay')?.classList.remove('visible');
   if (user?.email) document.getElementById('headerUserEmail').textContent = user.email;
   const _acNorm = window.AuthService ? window.AuthService.hydrateFromSupabaseUser(user) : null;
   if (_acNorm) {
@@ -51,6 +53,7 @@ async function _showApp(user) {
 function _showLogin() {
   document.getElementById('loginScreen').style.display = 'flex';
   document.getElementById('appContent').style.display  = 'none';
+  document.getElementById('setNewPasswordOverlay')?.classList.remove('visible');
 }
 
 let _authMode = 'signin'; // 'signin' | 'signup'
@@ -94,6 +97,7 @@ function switchAuthTab(mode) {
   document.getElementById('loginTabSignUp').classList.toggle('active',  isSignUp);
   document.getElementById('loginBtn').textContent = isSignUp ? 'Create Account' : 'Sign In';
   document.getElementById('loginPasswordHint').style.display = isSignUp ? '' : 'none';
+  document.getElementById('loginForgotBtn').style.display    = isSignUp ? 'none' : '';
   document.getElementById('loginPassword').autocomplete = isSignUp ? 'new-password' : 'current-password';
   document.getElementById('loginMsg').className = 'login-msg';
   document.getElementById('loginMsg').textContent = '';
@@ -244,7 +248,13 @@ window.addEventListener('load', () => {
 });
 
 db.auth.onAuthStateChange((event, session) => {
-  if ((event === 'SIGNED_IN' || event === 'INITIAL_SESSION') && session?.user) {
+  if (event === 'PASSWORD_RECOVERY') {
+    // User clicked a password-reset email link. Show the set-new-password screen
+    // instead of logging them into the app — they need to actually set a password.
+    _showSetNewPassword();
+  } else if ((event === 'SIGNED_IN' || event === 'INITIAL_SESSION') && session?.user) {
+    // Don't show the app if we're in PASSWORD_RECOVERY flow
+    if (document.getElementById('setNewPasswordOverlay')?.classList.contains('visible')) return;
     _showApp(session.user);
     if (!_initialized) {
       _initialized = true;
@@ -258,6 +268,83 @@ db.auth.onAuthStateChange((event, session) => {
     _showLogin();
   }
 });
+
+function _showSetNewPassword() {
+  document.getElementById('loginScreen').style.display = 'none';
+  const appContent = document.getElementById('appContent');
+  if (appContent) appContent.style.display = 'none';
+  document.getElementById('setNewPasswordOverlay').classList.add('visible');
+}
+
+async function sendPasswordReset() {
+  const email  = (document.getElementById('loginEmail').value || '').trim();
+  const msgEl  = document.getElementById('loginMsg');
+  const btn    = document.getElementById('loginForgotBtn');
+  if (!email) {
+    msgEl.className   = 'login-msg error';
+    msgEl.textContent = 'Enter your email address above, then click Forgot password?';
+    return;
+  }
+  btn.disabled = true;
+  msgEl.className   = 'login-msg';
+  msgEl.textContent = 'Sending reset email…';
+  try {
+    const { error } = await db.auth.resetPasswordForEmail(email, {
+      redirectTo: window.location.origin + '/reset-password',
+    });
+    if (error) throw error;
+    msgEl.className   = 'login-msg success';
+    msgEl.textContent = '✓ Reset email sent — check your inbox and click the link to set a new password.';
+  } catch (e) {
+    msgEl.className   = 'login-msg error';
+    msgEl.textContent = e.message || 'Could not send reset email — please try again.';
+  } finally {
+    btn.disabled = false;
+  }
+}
+
+async function submitNewPassword(event) {
+  if (event) event.preventDefault();
+  const pw1   = document.getElementById('newPasswordInput').value;
+  const pw2   = document.getElementById('newPasswordConfirm').value;
+  const btn   = document.getElementById('setNewPasswordBtn');
+  const msgEl = document.getElementById('setNewPasswordMsg');
+
+  if (!pw1 || pw1.length < 6) {
+    msgEl.className   = 'login-msg error';
+    msgEl.textContent = 'Password must be at least 6 characters.';
+    return;
+  }
+  if (pw1 !== pw2) {
+    msgEl.className   = 'login-msg error';
+    msgEl.textContent = 'Passwords do not match.';
+    return;
+  }
+
+  btn.disabled      = true;
+  btn.textContent   = 'Setting password…';
+  msgEl.className   = 'login-msg';
+  msgEl.textContent = '';
+
+  try {
+    const { data, error } = await db.auth.updateUser({ password: pw1 });
+    if (error) throw error;
+    // Password updated — hide overlay and show app
+    document.getElementById('setNewPasswordOverlay').classList.remove('visible');
+    const user = data?.user || (await db.auth.getUser())?.data?.user;
+    if (user) {
+      _showApp(user);
+      if (!_initialized) { _initialized = true; init(); }
+    } else {
+      _showLogin();
+    }
+  } catch (e) {
+    msgEl.className   = 'login-msg error';
+    msgEl.textContent = e.message || 'Could not update password — please try again.';
+    btn.disabled      = false;
+    btn.textContent   = 'Set Password & Sign In';
+  }
+}
 
 // ─── Constants ────────────────────────────────────────────────────────────────
 const MODEL       = 'claude-sonnet-4-6';
@@ -460,7 +547,12 @@ Return exactly this structure:
     "pro_rata_method": string | null,
     "renewal_options": string | null,
     "base_rent": string | null,
-    "security_deposit": string | null
+    "security_deposit": string | null,
+    "tenant_name": string | null,
+    "lease_type": string | null,
+    "sqft": string | null,
+    "lease_start_date": string | null,
+    "lease_end_date": string | null
   }
 }
 
@@ -1413,9 +1505,11 @@ ${leaseSnippet}
     if (v.includes('gross'))                        return 'Gross';
     return val;
   };
+  // Safely parse a numeric value without coercing 0 to null
+  const _pf = v => { const n = parseFloat(v); return Number.isFinite(n) ? n : null; };
   // Normalize CAM cap: "35%" → 35, "0.35" → 35, "35" → 35
   const normalizeCap = val => {
-    if (!val) return null;
+    if (val == null) return null;
     const n = parseFloat(String(val).replace(/[^0-9.]/g, ''));
     if (isNaN(n)) return null;
     return n < 1 ? Math.round(n * 100) : n;
@@ -1455,17 +1549,24 @@ ${leaseSnippet}
     end_date:            resolvedEnd,
     lease_type:          resolvedType,
     cap:                 normalizeCap(raw.capPercentage ?? raw.cam_cap ?? null),
-    excluded_categories: raw.excludedCategories ?? raw.excluded_categories ?? null,
+    excluded_categories: (() => {
+      const v = raw.excludedCategories ?? raw.excluded_categories ?? null;
+      return v === '' ? null : v;
+    })(),
     baseYear:            raw.baseYear ?? null,
     confidence:          raw.confidence || {},
     flags:               finalFlags,
     doc_has_dates,
     doc_has_lease_type,
     _error:              null,
-    admin_fee_pct:       raw.admin_fee_pct  != null ? parseFloat(raw.admin_fee_pct)  || null : null,
-    gross_up_pct:        raw.gross_up_pct   != null ? parseFloat(raw.gross_up_pct)   || null : null,
-    expense_stop:        raw.expense_stop   != null ? parseFloat(raw.expense_stop)   || null : null,
-    audit_rights:        raw.audit_rights   != null ? Boolean(raw.audit_rights)              : null,
+    admin_fee_pct:       _pf(raw.admin_fee_pct),
+    gross_up_pct:        _pf(raw.gross_up_pct),
+    expense_stop:        _pf(raw.expense_stop),
+    audit_rights:        raw.audit_rights != null
+      ? (typeof raw.audit_rights === 'string'
+          ? raw.audit_rights.toLowerCase() === 'true'
+          : Boolean(raw.audit_rights))
+      : null,
     pro_rata_method:     raw.pro_rata_method ?? null,
     renewal_options:     raw.renewal_options ?? null,
   });
@@ -1473,13 +1574,18 @@ ${leaseSnippet}
   // Inject quote-bearing evidence snapshots for fields where Claude returned verbatim clause text.
   // Map: Claude quote key → normalized field key (cam_cap is stored as 'cap' in tenant objects).
   const _quoteMap = {
-    cam_cap:        'cap',
-    admin_fee_pct:  'admin_fee_pct',
-    gross_up_pct:   'gross_up_pct',
-    expense_stop:   'expense_stop',
-    audit_rights:   'audit_rights',
-    pro_rata_method:'pro_rata_method',
-    renewal_options:'renewal_options',
+    cam_cap:          'cap',
+    admin_fee_pct:    'admin_fee_pct',
+    gross_up_pct:     'gross_up_pct',
+    expense_stop:     'expense_stop',
+    audit_rights:     'audit_rights',
+    pro_rata_method:  'pro_rata_method',
+    renewal_options:  'renewal_options',
+    tenant_name:      'tenant_name',
+    lease_type:       'lease_type',
+    sqft:             'leased_sqft',
+    lease_start_date: 'start_date',
+    lease_end_date:   'end_date',
   };
   const _rawQuotes = (raw.quotes && typeof raw.quotes === 'object') ? raw.quotes : {};
   const _qTs = new Date().toISOString();
@@ -1726,7 +1832,7 @@ function runCamValidation() {
     return;
   }
 
-  calculateCAM?.();
+  if (typeof calculateCAM === 'function') calculateCAM();
 }
 
 function getValidTenants() {
@@ -1767,8 +1873,11 @@ function updatePropertySqft(val) {
   const prop = currentProperty();
   if (!prop) return;
 
-  prop.totalSqft = Number(val) || 0;
+  // Capture name from DOM now — renderProperty() below will reset the field
+  const nameEl = document.getElementById('propertyName');
+  if (nameEl && nameEl.value.trim()) prop.name = nameEl.value.trim();
 
+  prop.totalSqft = Number(val) || 0;
 
   saveProperty(prop);
 
@@ -2337,13 +2446,14 @@ function dedupeTenants(arr) {
 
 // Appends incoming invoices that don't already exist by vendor+amount+date.
 function mergeInvoicesDedup(existing, incoming) {
+  const _normVendor = s => (s || '').toLowerCase().replace(/\s+/g, ' ').trim();
   const seen = new Set(
     existing.map(inv =>
-      `${(inv.vendorName || '').toLowerCase()}|${inv.amount}|${inv.invoiceDate || ''}`
+      `${_normVendor(inv.vendorName)}|${inv.amount}|${inv.invoiceDate || ''}`
     )
   );
   const novel = incoming.filter(inv => {
-    const key = `${(inv.vendorName || '').toLowerCase()}|${inv.amount}|${inv.invoiceDate || ''}`;
+    const key = `${_normVendor(inv.vendorName)}|${inv.amount}|${inv.invoiceDate || ''}`;
     return !seen.has(key);
   });
   return [...existing, ...novel];
@@ -2873,22 +2983,65 @@ function updateTenantField(index, field, value) {
   if (td) td[field] = value;
 }
 
-function handleFieldBlur(index, field, value) {
+// Enter commits a field edit; Escape reverts to the last saved value and dismisses.
+function _onFieldKeydown(e) {
+  if (e.key === 'Enter' && e.target.type !== 'date') { e.target.blur(); }
+  else if (e.key === 'Escape') {
+    e.target.value = e.target.defaultValue || '';
+    isEditingField = false;
+    e.target.blur();
+  }
+}
+
+// Shows which amendment (by filename + effective date) governs a given field.
+// Returns '' when no amendment overrides the field.
+function _amendmentProvenanceChip(d, fieldKey) {
+  if (!Array.isArray(d.amendments) || !d.amendments.length) return '';
+  const sorted = [...d.amendments].sort((a, b) => (b.effectiveDate || '').localeCompare(a.effectiveDate || ''));
+  const gov = sorted.find(a => Array.isArray(a.overriddenFields) && a.overriddenFields.includes(fieldKey));
+  if (!gov) return '';
+  const label = gov.fileName ? gov.fileName.replace(/\.[^.]+$/, '') : (gov.docType || 'Amendment');
+  const date  = gov.effectiveDate ? ` · ${gov.effectiveDate}` : '';
+  return `<div class="fe-chip fe-chip--amendment" title="Value overridden by this document">&#x1F4C4; ${esc(label)}${esc(date)}</div>`;
+}
+
+// One-click approval for all ready (high-confidence, unconfirmed) tenants.
+async function bulkApproveReady() {
+  const ready = tenantData.map((d, i) => ({ d, i })).filter(({ d }) =>
+    d && !d._needsReview && !d.extractionFailed && d.status !== 'pending' && d.tenant_name && !d._userConfirmed
+  );
+  if (!ready.length) { showToast('All ready tenants are already confirmed.'); return; }
+  for (const { i } of ready) await saveBulkTenant(i);
+  showToast(`✓ ${ready.length} tenant${ready.length !== 1 ? 's' : ''} approved.`);
+}
+
+// Shows/hides the stale-results warning banner based on _resultsStale flag.
+function _updateStaleResultsBanner() {
+  const el = document.getElementById('staleResultsBanner');
+  if (el) el.style.display = _resultsStale ? 'block' : 'none';
+}
+
+function handleFieldBlur(index, field, value, el) {
   isEditingField = false;
   updateTenantField(index, field, value);
   savePropertyData(); // debounced — collapses rapid edits into one write
+  if (lastResults.length > 0) { _resultsStale = true; _updateStaleResultsBanner(); }
+  if (el) {
+    el.classList.add('field-save-flash');
+    setTimeout(() => el.classList.remove('field-save-flash'), 900);
+  }
 }
 
 function _confidenceBadgeHtml(level) {
   if (!level || level === 'pending') return '';
   const cfg = {
-    high:   { cls: 'cx-high',   label: 'High confidence' },
-    medium: { cls: 'cx-medium', label: 'Review recommended' },
-    low:    { cls: 'cx-low',    label: 'Low confidence' },
-    failed: { cls: 'cx-failed', label: 'Extraction failed' },
+    high:   { cls: 'cx-high',   label: 'High confidence',   tip: 'The AI found clear lease language and extracted this value with strong confidence.' },
+    medium: { cls: 'cx-medium', label: 'Needs review',      tip: 'The AI found a likely value but recommends landlord review before approval.' },
+    low:    { cls: 'cx-low',    label: 'Low confidence',    tip: 'The AI could not reliably determine this value — please verify against the original lease.' },
+    failed: { cls: 'cx-failed', label: 'Extraction failed', tip: 'The AI could not read this field from the lease. Please fill it in manually below.' },
   }[level];
   if (!cfg) return '';
-  return `<span class="cx-badge ${cfg.cls}">${cfg.label}</span>`;
+  return `<span class="cx-badge ${cfg.cls}" title="${cfg.tip}">${cfg.label}</span>`;
 }
 
 // ── Lease Review Status helpers ────────────────────────────────────────────
@@ -2960,7 +3113,7 @@ function _tenantReviewStateBadgeHtml(t) {
     verified:          { cls: 'trs-verified',          label: 'Verified' },
     needs_review:      { cls: 'trs-needs-review',      label: 'Needs Review' },
     incomplete:        { cls: 'trs-incomplete',        label: 'Incomplete' },
-    manually_verified: { cls: 'trs-manually-verified', label: 'Manually Verified' },
+    manually_verified: { cls: 'trs-manually-verified', label: 'Verified' },
   }[state] || { cls: 'trs-needs-review', label: 'Unknown' };
   const scoreColor = score >= 90 ? 'trs-score--high' : score >= 70 ? 'trs-score--mid' : 'trs-score--low';
   return `<div class="trs-header">
@@ -4473,7 +4626,10 @@ function _lfcItemInner(key, label, val, td, isEditing = false) {
   }
 
   const missingCls = val == null ? 'lfc-missing' : '';
-  const showEvBtn  = _LFC_EDITABLE.has(key) && td?.id;
+  const showEvBtn  = td?.id && (
+    _LFC_EDITABLE.has(key) ||
+    !!(td.fieldEvidence?.[key]?.snapshots?.length)
+  );
   return `<div class="lfc-label">${esc(label)}</div>
     <div class="lfc-value-row">
       <div class="lfc-value ${missingCls}">${val ?? '—'}</div>
@@ -4482,6 +4638,28 @@ function _lfcItemInner(key, label, val, td, isEditing = false) {
     </div>
     ${renderFieldConfidenceHtml(key, td)}
     ${renderManualVerifiedBadge(key, td)}`;
+}
+
+// Returns a small inline citation chip for a field in the bulk extraction form.
+// Shows page/section + quote preview when the field has a verbatim source quote;
+// shows an amber "no clause quote" notice when a value exists but has no quote.
+function _citationChip(d, fieldKey) {
+  const snaps = d.fieldEvidence?.[fieldKey]?.snapshots;
+  if (!snaps || !snaps.length) return '';
+  const val = d[fieldKey];
+  if (val == null || val === '') return '';
+  const snap = snaps.find(s => !s.superseded) || snaps[0];
+  if (!snap) return '';
+  if (snap.quote) {
+    const locParts = [];
+    if (snap.page)    locParts.push('p.​' + snap.page);
+    if (snap.section) locParts.push(snap.section);
+    const loc     = locParts.join(' · ');
+    const preview  = snap.quote.length > 90 ? snap.quote.slice(0, 90) + '…' : snap.quote;
+    const fullTip  = snap.quote.length > 90 ? ` title=”${esc(snap.quote)}”` : '';
+    return `<div class=”fe-chip fe-chip--cited”${fullTip}>${loc ? `<span class=”fe-chip-loc”>${esc(loc)}</span>` : ''}<span class=”fe-chip-quote”>”${esc(preview)}”</span></div>`;
+  }
+  return `<div class="fe-chip fe-chip--uncited">⚠️ No clause quote on file</div>`;
 }
 
 // Saves a manual override to the tenant object + triggers persistence.
@@ -4653,6 +4831,24 @@ async function handleAmendmentUpload(tenantId, file) {
     if (!extracted) throw new Error('Could not extract amendment fields');
 
     const amendmentId = 'amd-' + Date.now();
+
+    // Warn if amendment effective date is earlier than existing lease date (out-of-order upload)
+    const existingTenant = tenantData.find(t => t && t.id === tenantId);
+    if (existingTenant && extracted.start_date && existingTenant.start_date) {
+      const amdDate = new Date(extracted.start_date);
+      const origDate = new Date(existingTenant.start_date);
+      if (!isNaN(amdDate) && !isNaN(origDate) && amdDate < origDate) {
+        showToast(`⚠️ Amendment effective date (${extracted.start_date}) is before the original lease start (${existingTenant.start_date}). Verify this is correct before applying.`, { color: '#78350f', textColor: '#fef3c7', duration: 8000 });
+      }
+    }
+    if (existingTenant && extracted.end_date && existingTenant.end_date) {
+      const amdEnd = new Date(extracted.end_date);
+      const origEnd = new Date(existingTenant.end_date);
+      if (!isNaN(amdEnd) && !isNaN(origEnd) && amdEnd < origEnd) {
+        showToast(`⚠️ Amendment end date (${extracted.end_date}) is before the original lease end (${existingTenant.end_date}). Verify this is correct.`, { color: '#78350f', textColor: '#fef3c7', duration: 8000 });
+      }
+    }
+
     applyAmendmentOverrides(tenantId, extracted, amendmentId, file.name);
     // Phase 15: multi-document reasoning after amendment applied
     if (window.LeaseIntelligence) {
@@ -4721,30 +4917,34 @@ function applyAmendmentOverrides(tenantId, amNorm, amendmentId, fileName) {
     // Append amendment evidence snapshot (preserves original snapshot history)
     const fev  = updatedTenant.fieldEvidence || {};
     const prev = (fev[fk] || { snapshots: [] }).snapshots;
-    updatedTenant.fieldEvidence = {
-      ...fev,
-      [fk]: { snapshots: [...prev, {
-        fieldKey:               fk,
-        value:                  amVal,
-        confidence:             { status: 'estimated', note: 'AI-extracted from amendment' },
-        sourceFile:             fileName || null,
-        page:                   null,
-        section:                amSnap?.section ?? null,
-        quote:                  qt,
-        extractionId:           amNorm._jobId || null,
-        extractionVersion:      'v1-amendment',
-        extractionModel:        amModel,
-        extractedAt:            now,
-        superseded:             false,
-        amendmentId,
-        reviewerUid:            null,
-        reviewerEmail:          null,
-        reviewedAt:             now,
-        approved:               false,
-        manuallyEdited:         false,
-        originalExtractedValue: origVal,
-      }]},
+    const newSnap = {
+      fieldKey:               fk,
+      value:                  amVal,
+      confidence:             { status: 'estimated', note: 'AI-extracted from amendment' },
+      sourceFile:             fileName || null,
+      page:                   null,
+      section:                amSnap?.section ?? null,
+      quote:                  qt,
+      extractionId:           amNorm._jobId || null,
+      extractionVersion:      'v1-amendment',
+      extractionModel:        amModel,
+      extractedAt:            now,
+      superseded:             false,
+      amendmentId,
+      reviewerUid:            null,
+      reviewerEmail:          null,
+      reviewedAt:             now,
+      approved:               false,
+      manuallyEdited:         false,
+      originalExtractedValue: origVal,
     };
+    // Sort snapshots deterministically: effectiveDate → uploadTs → amendmentId
+    const sortedSnaps = [...prev, newSnap].sort((a, b) => {
+      const dateA = a.effectiveDate || a.uploadTs || a.amendmentId || '';
+      const dateB = b.effectiveDate || b.uploadTs || b.amendmentId || '';
+      return dateA < dateB ? -1 : dateA > dateB ? 1 : 0;
+    });
+    updatedTenant.fieldEvidence = { ...fev, [fk]: { snapshots: sortedSnaps } };
   }
 
   // Build and store the amendment record
@@ -4776,6 +4976,7 @@ function applyAmendmentOverrides(tenantId, amNorm, amendmentId, fileName) {
     detail:     JSON.stringify({ amendmentId, overriddenFields, fileName }),
   });
 
+  if (lastResults.length > 0) { _resultsStale = true; _updateStaleResultsBanner(); }
   savePropertyData();
   { const _prop = currentProperty();
     if (_prop) appendPropertyTimelineEvent(_prop, { type: 'amendment_applied', severity: 'info',
@@ -4935,6 +5136,62 @@ function _tenantConfLevel(d) {
   return d._confidence || (d.extractionFailed ? 'failed' : d._needsReview ? 'medium' : null);
 }
 
+function _buildPreReconSummary(tenants) {
+  const total    = tenants.length;
+  const pending  = tenants.filter(t => t.status === 'pending').length;
+  const failed   = tenants.filter(t => t.extractionFailed).length;
+  const needsAttn = tenants.filter(t => t._needsReview && !t.extractionFailed && t.status !== 'pending').length;
+  const ready    = total - pending - failed - needsAttn;
+
+  // Leases expiring within 12 months from today
+  const today = new Date();
+  const in12  = new Date(today); in12.setFullYear(in12.getFullYear() + 1);
+  const expiring = tenants.filter(t => {
+    if (!t.end_date) return false;
+    const d = new Date(t.end_date + 'T12:00:00');
+    return !isNaN(d) && d >= today && d <= in12;
+  }).length;
+
+  if (total === 0) return '';
+
+  const tile = (val, lbl, cls) =>
+    `<div class="prerecon-tile">
+      <span class="prerecon-val${cls ? ' ' + cls : ''}">${val}</span>
+      <span class="prerecon-lbl">${lbl}</span>
+    </div>`;
+
+  return `
+  <div class="prerecon-summary">
+    ${tile(total,    'Total Tenants', '')}
+    ${ready > 0    ? tile(ready,    'Ready',          'prerecon-ok')   : ''}
+    ${needsAttn > 0? tile(needsAttn,'Needs Attention','prerecon-warn') : ''}
+    ${failed > 0   ? tile(failed,   'Failed',         'prerecon-err')  : ''}
+    ${pending > 0  ? tile(pending,  'Processing',     'prerecon-pend') : ''}
+    ${expiring > 0 ? tile(expiring, 'Expiring ≤12 mo','prerecon-warn') : ''}
+  </div>`;
+}
+
+function setBulkFilter(field, val) {
+  _bulkFilter[field] = val;
+  renderBulkResults();
+}
+
+function _filterBulkTenants(pairs) {
+  // pairs: [{ d, i }] where i is the REAL tenantData index.
+  // Callers must pass tenantData.map((t,i)=>({d:t,i})).filter(({d})=>d&&...) so
+  // that the returned i values index tenantData correctly even when it has leading nulls.
+  const q   = (_bulkFilter.query || '').toLowerCase().trim();
+  const st  = _bulkFilter.status || 'all';
+  return pairs.filter(({ d }) => {
+    if (q && !(d.tenant_name || '').toLowerCase().includes(q)) return false;
+    if (st === 'ready')   return !d._needsReview && !d.extractionFailed && d.status !== 'pending' && d.tenant_name;
+    if (st === 'issues')  return (d._needsReview || d.extractionFailed) && d.status !== 'pending';
+    if (st === 'failed')  return !!d.extractionFailed;
+    if (st === 'pending') return d.status === 'pending';
+    return true; // 'all'
+  });
+}
+
 function renderBulkResults() {
   const el = document.getElementById('bulkResults');
   el.innerHTML = '';
@@ -4942,7 +5199,12 @@ function renderBulkResults() {
 
   // tenantData is the source of truth — contains every file, including failed extractions.
   // Do NOT filter by tenant_name or status here; every file must render a card.
-  const tenants = tenantData.filter(t => t && typeof t === 'object');
+  // Preserve the REAL tenantData index (i) in each pair so button onclick handlers
+  // correctly address tenantData[i] even when resetWorkflow() left leading nulls.
+  const tenantPairs = tenantData
+    .map((t, i) => ({ d: t, i }))
+    .filter(({ d }) => d && typeof d === 'object');
+  const tenants = tenantPairs.map(p => p.d); // plain array for dup-detection below
   const _debugMode = !!(window.DEBUG_LEASES || localStorage.getItem(_lsUserId ? 'ms_debug_leases_' + _lsUserId : 'ms_debug_leases') === '1');
 
   if (!tenants.length) return;
@@ -4957,7 +5219,8 @@ function renderBulkResults() {
   });
   const _dupNames = new Set([..._nameCount.entries()].filter(([, n]) => n > 1).map(([k]) => k));
 
-  const rows = tenants.map((d, i) => {
+  const _filtered = _filterBulkTenants(tenantPairs);
+  const rows = _filtered.map(({ d, i }) => {
     if (!d) return '';
     const sqft      = d.leased_sqft  || null;
     const start     = d.start_date  || null;
@@ -4989,7 +5252,7 @@ function renderBulkResults() {
       : d.extractionFailed
       ? 'Extraction failed — tap to re-upload'
       : showWarning
-        ? 'Partial — some fields missing'
+        ? 'Needs review — some fields missing'
         : [
             sqft      !== null && sqft      !== '' ? `${sqft} sqft`   : '— sqft',
             start     !== null && start     !== '' ? start             : '—',
@@ -5025,7 +5288,7 @@ function renderBulkResults() {
       }
       if (confLevel === 'medium' || showWarning) {
         return `<div class="cx-detail-banner cx-banner-medium">
-          ⚠️ Partial extraction — AI found the tenant but some fields are missing. Please fill them in below.
+          ⚠️ Needs review — AI found the tenant but some fields are missing. Please fill them in below.
         </div>`;
       }
       return '';
@@ -5043,7 +5306,17 @@ function renderBulkResults() {
               ${esc(displayName)}${dupBadge}${_confidenceBadgeHtml(confLevel)}
             </div>
             <div class="tenant-meta" id="bmeta-${i}">${esc(meta)}</div>
-            ${!isPending ? `<div class="lrs-notes-row">${_reviewStatusPillHtml(getLeaseReviewStatus(d))}</div>` : ''}
+            ${!isPending ? (() => {
+              const _lrsStatus = getLeaseReviewStatus(d);
+              const _lrsPill   = _reviewStatusPillHtml(_lrsStatus);
+              const _lrsNotes  = (_lrsStatus === 'needs-review' || _lrsStatus === 'needs_review') && !d.extractionFailed
+                ? getLeaseReviewNotes(d)
+                : [];
+              const _lrsDetail = _lrsNotes.length
+                ? `<span class="lrs-missing-detail">${esc(_lrsNotes.slice(0, 3).join(' · '))}</span>`
+                : '';
+              return `<div class="lrs-notes-row">${_lrsPill}${_lrsDetail}</div>`;
+            })() : ''}
             ${jobProgressHtml}
           </div>
           <span class="bulk-t-chevron" id="bchev-${i}">${chevInitialHtml}</span>
@@ -5064,18 +5337,23 @@ function renderBulkResults() {
             ? `<div class="err-banner" style="margin-bottom:10px;">Extraction error: ${esc(d._error)}</div>`
             : '')}
           ${(() => { const w = getWarnings(computeFlags(d)); return w.length ? `<div class="rc-flags"><div class="rc-flags-title">&#x26A0;&#xFE0F; Needs Review</div>${w.map(m => `<div class="rc-flag-item">${m}</div>`).join('')}</div>` : ''; })()}
+          <div class="citation-hint">&#x1F4CE; The colored chips below each field show the exact lease clause the AI used to determine each value. Hover a chip to read the full clause and verify accuracy.</div>
           <div class="field-row">
             <div class="field">
               <label>Tenant Name</label>
               <input type="text" value="${esc(d.tenant_name || '')}"
                 onfocus="isEditingField=true"
-                onblur="handleFieldBlur(${i},'tenant_name',this.value);refreshBulkSummary(${i})"/>
+                onkeydown="_onFieldKeydown(event)"
+                onblur="handleFieldBlur(${i},'tenant_name',this.value,this);refreshBulkSummary(${i})"/>
+              ${_citationChip(d, 'tenant_name')}${_amendmentProvenanceChip(d, 'tenant_name')}
             </div>
             <div class="field">
               <label>Leased Sqft</label>
               <input type="number" value="${d.leased_sqft || ''}"
                 onfocus="isEditingField=true"
-                onblur="handleFieldBlur(${i},'leased_sqft',this.value);refreshBulkSummary(${i});checkSqftValidation()"/>
+                onkeydown="_onFieldKeydown(event)"
+                onblur="handleFieldBlur(${i},'leased_sqft',this.value,this);refreshBulkSummary(${i});checkSqftValidation()"/>
+              ${_citationChip(d, 'leased_sqft')}${_amendmentProvenanceChip(d, 'leased_sqft')}
             </div>
           </div>
           <div class="field-row">
@@ -5083,30 +5361,37 @@ function renderBulkResults() {
               <label>Lease Start Date</label>
               <input type="date" value="${d.start_date || ''}"
                 onfocus="isEditingField=true"
-                onblur="handleFieldBlur(${i},'start_date',this.value)"/>
+                onkeydown="_onFieldKeydown(event)"
+                onblur="handleFieldBlur(${i},'start_date',this.value,this)"/>
+              ${_citationChip(d, 'start_date')}${_amendmentProvenanceChip(d, 'start_date')}
             </div>
             <div class="field">
               <label>Lease End Date</label>
               <input type="date" value="${d.end_date || ''}"
                 onfocus="isEditingField=true"
-                onblur="handleFieldBlur(${i},'end_date',this.value)"/>
+                onkeydown="_onFieldKeydown(event)"
+                onblur="handleFieldBlur(${i},'end_date',this.value,this)"/>
+              ${_citationChip(d, 'end_date')}${_amendmentProvenanceChip(d, 'end_date')}
             </div>
           </div>
           <div class="field-row">
             <div class="field">
               <label>Lease Type</label>
-              <select onchange="handleFieldBlur(${i},'lease_type',this.value||null)">
+              <select onchange="handleFieldBlur(${i},'lease_type',this.value||null,this)">
                 <option value="">Select lease type</option>
                 <option value="Triple Net (NNN)"${d.lease_type === 'Triple Net (NNN)' ? ' selected' : ''}>Triple Net (NNN)</option>
                 <option value="Gross"${d.lease_type === 'Gross' ? ' selected' : ''}>Gross</option>
                 <option value="Modified Gross"${d.lease_type === 'Modified Gross' ? ' selected' : ''}>Modified Gross</option>
               </select>
+              ${_citationChip(d, 'lease_type')}${_amendmentProvenanceChip(d, 'lease_type')}
             </div>
             <div class="field">
               <label>Excluded Categories (comma-separated)</label>
               <input type="text" value="${esc(d.excluded_categories || '')}"
                 onfocus="isEditingField=true"
-                onblur="handleFieldBlur(${i},'excluded_categories',this.value)"/>
+                onkeydown="_onFieldKeydown(event)"
+                onblur="handleFieldBlur(${i},'excluded_categories',this.value,this)"/>
+              ${_citationChip(d, 'excluded_categories')}${_amendmentProvenanceChip(d, 'excluded_categories')}
             </div>
           </div>
           <div style="display:flex;justify-content:space-between;align-items:center;padding-top:10px;">
@@ -5122,12 +5407,34 @@ function renderBulkResults() {
       </div>`;
   }).join('');
 
+  const _readyCount = tenants.filter(d => !d._needsReview && !d.extractionFailed && d.status !== 'pending' && d.tenant_name && !d._userConfirmed).length;
+  const filterBarHtml = tenants.length > 0 ? `
+  <div class="bulk-filter-bar">
+    <input class="bulk-filter-input" type="text" placeholder="Search tenants…"
+      value="${esc(_bulkFilter.query)}"
+      oninput="setBulkFilter('query',this.value)" />
+    <div class="bulk-filter-pills">
+      ${[['all','All'],['ready','Ready'],['issues','Needs Attention'],['failed','Failed'],['pending','Processing']].map(([v,l]) =>
+        `<button class="bulk-filter-pill${_bulkFilter.status===v?' active':''}" onclick="setBulkFilter('status','${v}')">${l}</button>`
+      ).join('')}
+    </div>
+    ${_readyCount > 0 ? `<button class="bulk-approve-all-btn" onclick="bulkApproveReady()">Approve all ready (${_readyCount})</button>` : ''}
+  </div>` : '';
+
   el.innerHTML = `
     <div class="bulk-results-head">
       <h3>Extracted Tenants (${tenants.length})</h3>
       <button class="bulk-clear-btn" onclick="clearBulkResults()">&#x2715; Clear All</button>
     </div>
-    ${rows}`;
+    ${_buildPreReconSummary(tenants)}
+    ${filterBarHtml}
+    ${rows || '<div class="bulk-filter-empty">No tenants match your filter.</div>'}`;
+
+  // Re-focus search input after re-render so typing stays smooth
+  if (_bulkFilter.query) {
+    const inp = el.querySelector('.bulk-filter-input');
+    if (inp) { inp.focus(); inp.setSelectionRange(inp.value.length, inp.value.length); }
+  }
 
   // Confirm onclick is in the generated DOM
   const firstSummary = el.querySelector('.bulk-tenant-summary');
@@ -5241,6 +5548,12 @@ async function saveBulkTenant(i) {
   await savePropertyData();
   const prop = currentProperty();
   if (prop?.id) await resyncTenantsToTable(prop.id, tenantData.filter(t => t?.tenant_name && (!t?.extractionFailed || t?._userConfirmed) && !t?._pendingJobReview));
+  // Flush the blob immediately so a reload within 800ms still reads fresh data.
+  // loadPropertyData() skips the tenants table when the blob exists, so the blob
+  // must be current before the debounce would naturally fire.
+  clearTimeout(_saveDebounceTimer);
+  _saveDebounceTimer = null;
+  if (prop) await saveProperty(prop);
   console.log('[saveBulkTenant] tenant', i, 'saved:', d?.tenant_name);
 
   // Success flash
@@ -5467,6 +5780,8 @@ async function retryExtractionWithFile(index, file) {
 }
 
 async function clearBulkResults() {
+  if (!confirm('Clear all extracted tenants for this property?\n\nThis also removes the tenant records from the database and cannot be undone.')) return;
+  _bulkFilter = { query: '', status: 'all' };
   const prop = currentProperty();
   tenantData.splice(0, tenantData.length);
   if (prop?.tenants) prop.tenants.splice(0, prop.tenants.length);
@@ -5478,6 +5793,7 @@ async function clearBulkResults() {
     const { error } = await db.from('tenants').delete().eq('property_id', prop.id);
     if (error) console.error('[clearBulkResults] delete error:', error.message);
   }
+  if (lastResults.length > 0) { _resultsStale = true; _updateStaleResultsBanner(); }
   await savePropertyData();
 }
 
@@ -5613,6 +5929,7 @@ async function handleBatchInvoices(fileList) {
   // Keep invoiceData in sync with merged result so UI shows the full set.
   invoiceData.splice(0, invoiceData.length, ...merged);
   renderInvResults();
+  if (lastResults.length > 0) { _resultsStale = true; _updateStaleResultsBanner(); }
 
   captureCheckpoint(activePropId, 'Before invoice upload');
   await saveProperty(property);
@@ -5727,7 +6044,7 @@ function renderInvResults() {
             <div class="field">
               <label>Amount ($) ${confidenceBadge(conf.amount)}</label>
               <input id="ifield-${i}-amount" type="number" value="${esc(d.amount)}"
-                oninput="invoiceData[${i}].amount=parseFloat(this.value)||'';markFieldVerified(${i},'amount');refreshInvSummary(${i});savePropertyData()"/>
+                oninput="const _av=parseFloat(this.value);if(!isNaN(_av)&&_av<0){this.value=0;invoiceData[${i}].amount=0;}else{invoiceData[${i}].amount=isNaN(_av)?'':_av;}markFieldVerified(${i},'amount');refreshInvSummary(${i});savePropertyData()"/>
               <span id="ibadgeWrap-${i}-amount">${vAmount}</span>
             </div>
           </div>
@@ -6015,7 +6332,13 @@ function refreshInvSummary(i) {
 }
 
 async function removeInvItem(i) {
+  if (!confirm('Remove this invoice from the list?')) return;
   invoiceData.splice(i, 1);
+  // Explicitly sync before savePropertyData() — the empty-array guard in
+  // savePropertyData() protects tenant-portal mode from wiping invoices,
+  // but explicit user removes must persist even when the list becomes empty.
+  const _iprop = currentProperty();
+  if (_iprop) _iprop.invoices = Array.from(invoiceData);
   renderInvResults();
   await savePropertyData();
 }
@@ -6334,9 +6657,9 @@ function confidenceBadge(score) {
   if (score === null || score === undefined) return '';
   const s = parseInt(score, 10);
   if (isNaN(s)) return '';
-  if (s >= 90) return `<span class="conf-badge conf-high">✓ High confidence</span>`;
-  if (s >= 70) return `<span class="conf-badge conf-mid">⚠ Please verify</span>`;
-  return `<span class="conf-badge conf-low">⚑ Low confidence — review carefully</span>`;
+  if (s >= 80) return `<span class="conf-badge conf-high">✓ High confidence</span>`;
+  if (s >= 55) return `<span class="conf-badge conf-mid">⚠ Review recommended</span>`;
+  return `<span class="conf-badge conf-low">⚑ Low confidence</span>`;
 }
 
 // ─── Duplicate Invoice Detection ──────────────────────────────────────────────
@@ -6766,10 +7089,14 @@ function runCAMAllocation(expenses, tenants) {
     // Cap requires a prior-year base amount to calculate correctly.
     // capBaseAmount must be entered manually; without it we skip cap enforcement
     // rather than show wrong math.
-    if (t.capPct !== null && t.capPct !== '' && !isNaN(parseFloat(t.capPct)) &&
+    const _capPctVal = parseFloat(t.capPct);
+    if (t.capPct !== null && t.capPct !== '' && !isNaN(_capPctVal) &&
+        _capPctVal >= 0 && _capPctVal <= 100 &&
         t.capBaseAmount !== null && t.capBaseAmount !== undefined && !isNaN(parseFloat(t.capBaseAmount))) {
-      const cap = parseFloat(t.capBaseAmount) * (1 + parseFloat(t.capPct) / 100);
+      const cap = parseFloat(t.capBaseAmount) * (1 + _capPctVal / 100);
       if (total > cap) { capAdj = total - cap; total = cap; }
+    } else if (t.capPct !== null && t.capPct !== '' && !isNaN(_capPctVal) && (_capPctVal < 0 || _capPctVal > 100)) {
+      console.warn('[CAM] Ignoring out-of-range cap percentage for', t.name, ':', _capPctVal);
     }
 
     return {
@@ -6787,6 +7114,9 @@ async function runAllocation() {
   if (isRunning) return; // prevent concurrent runs
   isRunning = true;
 
+  // Tag this run with the current CAM year for multi-year isolation.
+  const _runYear = getCamYear();
+
   const scrollY    = window.scrollY;
 
   // Loading state
@@ -6801,6 +7131,9 @@ async function runAllocation() {
   }
 
   try {
+
+  _resultsStale = false;
+  _updateStaleResultsBanner();
 
   const propName  = document.getElementById('propertyName').value.trim() || 'Property';
   const totalSqft = parseFloat(document.getElementById('totalSqft').value);
@@ -6880,6 +7213,20 @@ async function runAllocation() {
     section.prepend(warn);
   }
 
+  // Warn when a tenant has a cap percentage but no base amount — cap won't be enforced
+  const tenantsWithIncompleteCapData = tenants.filter(t =>
+    t.capPct !== null && t.capPct !== '' && !isNaN(parseFloat(t.capPct)) &&
+    (t.capBaseAmount === null || t.capBaseAmount === undefined || isNaN(parseFloat(t.capBaseAmount)))
+  );
+  if (tenantsWithIncompleteCapData.length > 0) {
+    const names = tenantsWithIncompleteCapData.map(t => t.name).join(', ');
+    const warn = document.createElement('div');
+    warn.className = 'cam-cap-incomplete-warning';
+    warn.style.cssText = 'background:#431407;border:1px solid #f97316;color:#fed7aa;padding:10px 14px;border-radius:8px;margin-bottom:12px;font-size:0.85rem;';
+    warn.innerHTML = `⚠️ <strong>CAM cap not enforced</strong> for ${esc(names)} — a prior-year base amount is required. Enter "Prior-Year CAM Base ($)" in each tenant card to enable cap enforcement.`;
+    section.prepend(warn);
+  }
+
   const results   = runCAMAllocation(invoices, tenants);
   const totalCost = invoices.reduce((s, e) => s + e.amount, 0);
 
@@ -6937,6 +7284,7 @@ async function runAllocation() {
   lastInvoices        = invoices.map((inv, i) => ({ id: `inv-${i}`, ...inv }));
   lastTenants         = tenants;
   lastResults         = fullResults; // unified: ReconciliationResult[] is single source of truth
+  lastResultsYear     = _runYear;
   lastFullResults     = fullResults;
   lastPropName        = propName;
   lastTotal           = totalCost;
@@ -6949,12 +7297,9 @@ async function runAllocation() {
   document.getElementById('resultsTitle').textContent = `${getCamYear()} CAM — ${propName}`;
   applySqftMismatchUI(sqftExceedsProperty);
 
-  let html = _buildReconciliationSummaryHtml(fullResults, invoices, propName) + `<div class="summary-bar">
-    <div class="summary-bar-item"><span class="summary-bar-label">Total Expenses</span><strong>${fmt(totalCost)}</strong></div>
-    <div class="summary-bar-item"><span class="summary-bar-label">Tenants</span><strong>${fullResults.length}</strong></div>
-    <div class="summary-bar-item"><span class="summary-bar-label">Invoices</span><strong>${invoices.length}</strong></div>
-  </div>
-  ${sqftExceedsProperty ? `
+  let html = _buildReconciliationSummaryHtml(fullResults, invoices, propName) +
+  // Warnings appear before numbers so the landlord sees issues before interpreting results.
+  (sqftExceedsProperty ? `
   <div class="sqft-mismatch-banner">
     <div class="smb-title">&#x26A0;&#xFE0F; Sqft mismatch — results may be inaccurate</div>
     <div class="smb-body">
@@ -6966,7 +7311,13 @@ async function runAllocation() {
       <button class="smb-btn smb-btn-primary" onclick="rerunAfterWarning()">Run Anyway</button>
     </div>
   </div>
-  ` : ''}`;
+  ` : '') +
+  `<div class="summary-bar">
+    <div class="summary-bar-item"><span class="summary-bar-label">Total Expenses</span><strong>${fmt(totalCost)}</strong></div>
+    <div class="summary-bar-item"><span class="summary-bar-label">Tenants</span><strong>${fullResults.length}</strong></div>
+    <div class="summary-bar-item"><span class="summary-bar-label">Invoices</span><strong>${invoices.length}</strong></div>
+  </div>
+  <div class="pro-rata-note">Pro-Rata % = Tenant Sqft ÷ Total Property Sqft &nbsp;<span class="pro-rata-note-tip" title="The percentage of the property occupied by a tenant. This percentage determines their share of common area expenses.">&#x24D8;</span></div>`;
 
   fullResults.forEach(r => {
     const flags = r.ambiguityFlags || [];
@@ -7093,7 +7444,7 @@ async function runAllocation() {
       <div class="r-name">${esc(r.name)}${r.unitNumber ? `<span class="rc-unit"> · Unit ${esc(r.unitNumber)}</span>` : ''}<span class="rc-calc-state ${_calcSt.cls}">${_calcSt.label}</span></div>
       <div class="result-grid">
         ${stat('Total', fmt(r.allocatedAmount))}
-        ${stat('Pro-Rata', (r.proRata * 100).toFixed(2) + '%')}
+        <div class="result-stat"><div class="stat-label">Pro-Rata <span class="stat-info-tip" title="The percentage of the property occupied by this tenant. This determines their share of common area expenses: Pro-Rata % = Tenant Sqft ÷ Total Property Sqft.">&#x24D8;</span></div><div class="stat-value">${(r.proRata * 100).toFixed(2)}%</div></div>
         ${confStat}
         ${stat('Included', r.eligibleCount + ' of ' + invoices.length)}
       </div>
@@ -7548,26 +7899,7 @@ function _obMarkStep(idx) {
   _obSet(s);
 }
 
-// Show the welcome modal if the user hasn't seen it and has no real properties
-function _maybeShowWelcome(props) {
-  const s = _obGet() || _obInit();
-  if (s.welcomeSeen) return;
-  const realProps = (Array.isArray(props) ? props : _props).filter(p => p.id !== DEMO_PROPERTY_ID);
-  if (realProps.length > 0) return; // already has properties
-  const modal = document.getElementById('obWelcomeModal');
-  if (modal) modal.style.display = 'flex';
-}
-
-// Called from welcome modal buttons (global so onclick can reach it)
-function obCloseWelcome(action) {
-  const s = _obGet() || _obInit();
-  s.welcomeSeen = true;
-  _obSet(s);
-  const modal = document.getElementById('obWelcomeModal');
-  if (modal) modal.style.display = 'none';
-  if (action === 'property') addNewProperty();
-  else if (action === 'demo') { if (typeof loadDemo === 'function') loadDemo(); }
-}
+// Defined below (second definition is the live one; this block intentionally removed)
 
 // Derive current step from live workflow state and update the step bar + hints
 function _obSyncState() {
@@ -7625,6 +7957,109 @@ function _obUpdateHints(hasSetup, hasLeases, hasInvoices, hasResults) {
 }
 
 // ─── Step Progress Bar ────────────────────────────────────────────────────────
+
+// ─── Onboarding ───────────────────────────────────────────────────────────────
+
+function _obKey()  { return _lsUserId ? `ms_ob_v1_${_lsUserId}` : 'ms_ob_v1_anon'; }
+function _obGet()  { try { return JSON.parse(_lsGet(_obKey()) || 'null'); } catch { return null; } }
+function _obSet(s) { try { _lsSet(_obKey(), JSON.stringify(s)); } catch (_) {} }
+function _obInit() {
+  const s = { steps: [false,false,false,false,false], welcomeSeen: false };
+  _obSet(s); return s;
+}
+
+// Shows the inline #demoWelcomePanel for users who haven't dismissed it yet
+// and have no real (non-demo) properties.  Hides it once user has real data.
+function _maybeShowWelcome(props) {
+  if (document.getElementById('appContent')?.getAttribute('data-role') === 'tenant') return;
+  const ob = _obGet();
+  const panel = document.getElementById('demoWelcomePanel');
+  if (!panel) return;
+  if (ob?.welcomeSeen) { panel.style.display = 'none'; return; }
+  const realProps = (props || []).filter(p => p.id !== DEMO_PROPERTY_ID);
+  if (realProps.length > 0) { _dismissDemoWelcome(); return; }
+  panel.style.display = 'block';
+}
+
+// Permanently hides the welcome panel and records the dismissal in localStorage.
+// Called by the × button and "Create Property".  NOT called when opening demos
+// so that the panel remains discoverable when the user returns to the dashboard.
+function _dismissDemoWelcome() {
+  const ob = _obGet() || _obInit();
+  ob.welcomeSeen = true;
+  _obSet(ob);
+  const panel = document.getElementById('demoWelcomePanel');
+  if (panel) panel.style.display = 'none';
+  const modal = document.getElementById('obWelcomeModal');
+  if (modal) modal.style.display = 'none';
+}
+
+// Backward-compat shim — #obWelcomeModal buttons still call this via onclick.
+// New code uses _dismissDemoWelcome() directly.
+function obCloseWelcome(action) {
+  _dismissDemoWelcome();
+  if (action === 'property') addNewProperty();
+  else if (action === 'demo') loadDemo();
+}
+
+// Seeds (if needed) and opens the Harborview Retail Center acquisition demo.
+async function _openAcqDemo() {
+  const btn = document.getElementById('acqDemoBtn');
+  const orig = btn?.textContent ?? 'Open Acquisition Demo';
+  if (btn) { btn.disabled = true; btn.textContent = 'Loading…'; }
+  try {
+    await ensureDemoAcqReview();
+    if (DEMO_ACQ_REVIEW_ID) {
+      const review = _acqReviews.find(r => r.id === DEMO_ACQ_REVIEW_ID);
+      if (review) { selectAcquisitionReview(DEMO_ACQ_REVIEW_ID); return; }
+    }
+    // Fallback: reload from DB then scroll into view
+    await _loadAcqReviewsAndRender();
+    document.querySelector('.acq-section')?.scrollIntoView({ behavior: 'smooth' });
+  } catch (e) {
+    console.error('[_openAcqDemo]', e);
+    showToast('Could not open acquisition demo — please try again.', { color: '#92400e', textColor: '#fef3c7' });
+  } finally {
+    if (btn) { btn.disabled = false; btn.textContent = orig; }
+  }
+}
+
+function _obSyncState() {
+  const propName = document.getElementById('propertyName')?.value || '';
+  const sqft     = parseInt(document.getElementById('totalSqft')?.value || '0', 10);
+  const hasSetup    = !!(propName && propName !== 'New Property' && sqft > 0);
+  const hasLeases   = tenantData.some(t => t && t.tenant_name);
+  const hasInvoices = invoiceData.length > 0;
+  const hasResults  = lastResults.length > 0;
+  const reached = hasResults   ? 'done'
+                : hasInvoices  ? 'calculate'
+                : hasLeases    ? 'invoices'
+                : hasSetup     ? 'leases'
+                :                'setup';
+  updateStepBar(reached);
+  _obUpdateHints(hasSetup, hasLeases, hasInvoices, hasResults);
+}
+
+function _obUpdateHints(hasSetup, hasLeases, hasInvoices, hasResults) {
+  const lHint = document.getElementById('obHintLeases');
+  const iHint = document.getElementById('obHintInvoices');
+  if (lHint) {
+    if (hasSetup && !hasLeases) {
+      lHint.style.display = '';
+      lHint.innerHTML = '<strong>Next step:</strong> Upload your lease PDFs above — AI extracts CAM terms automatically.';
+    } else {
+      lHint.style.display = 'none';
+    }
+  }
+  if (iHint) {
+    if (hasLeases && !hasInvoices) {
+      iHint.style.display = '';
+      iHint.innerHTML = '<strong>Next step:</strong> Upload CAM invoices here — then run the reconciliation.';
+    } else {
+      iHint.style.display = 'none';
+    }
+  }
+}
 
 function updateStepBar(reached) {
   // 5-step system: setup → leases → invoices → calculate → review
@@ -8106,6 +8541,13 @@ function _buildReconciliationSummaryHtml(results, invoices, propName) {
     </div>`).join('')
   }</div>` : '';
 
+  const variance = Math.abs(totalBilled - totalPool);
+  const varianceBanner = variance > 0.05
+    ? `<div style="background:#431407;border:1px solid #f97316;color:#fed7aa;padding:10px 14px;border-radius:8px;margin-bottom:12px;font-size:0.85rem;">
+        ⚠️ <strong>Reconciliation variance detected</strong> — total billed (${fmt(totalBilled)}) differs from total expense pool (${fmt(totalPool)}) by <strong>${fmt(variance)}</strong>. Re-check invoice amounts or re-run allocation.
+      </div>`
+    : '';
+
   const rows = results.map(r => {
     const liveT  = tenantData.find(t => t && t.id === r.tenantId);
     const calcSt = _deriveCalcState(r, liveT);
@@ -8122,7 +8564,7 @@ function _buildReconciliationSummaryHtml(results, invoices, propName) {
     </tr>`;
   }).join('');
 
-  return `
+  return varianceBanner + `
     <div class="rcs-panel ${panelCls}">
       <div class="rcs-panel-head">
         <span class="rcs-panel-title">&#x1F4CA; Reconciliation Summary</span>
@@ -8145,7 +8587,7 @@ function _buildReconciliationSummaryHtml(results, invoices, propName) {
             <th class="rcs-th rcs-num">Pro-Rata</th>
             <th class="rcs-th rcs-num">Cap Adj</th>
             <th class="rcs-th rcs-num">Allocated</th>
-            <th class="rcs-th">Calc State</th>
+            <th class="rcs-th">Billing Method</th>
           </tr></thead>
           <tbody>${rows}</tbody>
           <tfoot><tr class="rcs-total-row">
@@ -8207,12 +8649,7 @@ function _tdpDisputesHtml(tenantName) {
       ? `<div style="font-size:0.73rem;color:#64748B;margin-top:4px;">${isResolved ? 'Resolved' : 'Rejected'} · ${_ts(d.resolvedAt)}</div>`
       : '';
 
-    const actionHtml = (isResolved || isRejected) ? '' : `
-      <div class="tdp-dc-actions">
-        <button class="tdp-dc-btn" onclick="event.stopPropagation();showToast('Invoice viewer — coming soon',{color:'#1e3a5f',textColor:'#93c5fd'})">View Invoice</button>
-        <button class="tdp-dc-btn" onclick="event.stopPropagation();showToast('Lease clause viewer — coming soon',{color:'#1e3a5f',textColor:'#93c5fd'})">View Lease Clause</button>
-        <button class="tdp-dc-btn resolve" onclick="event.stopPropagation();showToast('Dispute resolution — coming soon',{color:'#1e3a5f',textColor:'#93c5fd'})">Resolve Dispute</button>
-      </div>`;
+    const actionHtml = '';
 
     return `
       <div class="tdp-dispute-card${cardCls}">
@@ -8278,22 +8715,27 @@ function openTenantDetailPanel(i) {
       <div class="tdp-stat">
         <div class="tdp-stat-label">Lease Type</div>
         <div class="tdp-stat-value${!d.lease_type ? ' tdp-null' : ''}">${esc(_v(d.lease_type))}</div>
+        ${_citationChip(d, 'lease_type')}
       </div>
       <div class="tdp-stat">
         <div class="tdp-stat-label">Leased Sqft</div>
         <div class="tdp-stat-value${!d.leased_sqft ? ' tdp-null' : ''}">${esc(sqft || '—')}</div>
+        ${_citationChip(d, 'leased_sqft')}
       </div>
       <div class="tdp-stat">
         <div class="tdp-stat-label">Start Date</div>
         <div class="tdp-stat-value${!d.start_date ? ' tdp-null' : ''}">${esc(_v(d.start_date))}</div>
+        ${_citationChip(d, 'start_date')}
       </div>
       <div class="tdp-stat">
         <div class="tdp-stat-label">End Date</div>
         <div class="tdp-stat-value${!d.end_date ? ' tdp-null' : ''}">${esc(_v(d.end_date))}</div>
+        ${_citationChip(d, 'end_date')}
       </div>
       <div class="tdp-stat">
         <div class="tdp-stat-label">CAM Cap</div>
         <div class="tdp-stat-value${capPct === null ? ' tdp-null' : ''}">${capPct !== null ? capPct + '%' : '—'}</div>
+        ${_citationChip(d, 'cap')}
       </div>
       <div class="tdp-stat">
         <div class="tdp-stat-label">Pro-Rata %</div>
@@ -8323,10 +8765,53 @@ function openTenantDetailPanel(i) {
 
     <div class="tdp-section">Disputes</div>
     ${_tdpDisputesHtml(d.tenant_name)}
+
+    ${_tdpFieldEvidenceHtml(d)}
   `;
 
   document.body.style.overflow = 'hidden';
   panel.classList.add('open');
+}
+
+// Renders an expandable "Source Evidence" section in the tenant detail panel.
+// Shows only fields that have an extracted quote — fields with no evidence are
+// omitted so the section only appears when there is something useful to show.
+function _tdpFieldEvidenceHtml(t) {
+  const FIELDS = [
+    'lease_type', 'leased_sqft', 'start_date', 'end_date',
+    'cap', 'admin_fee_pct', 'gross_up_pct', 'expense_stop',
+    'audit_rights', 'excluded_categories',
+  ];
+
+  const rows = FIELDS
+    .map(key => {
+      const ev = getFieldEvidence(key, t);
+      if (!ev?.source?.quote && !ev?.source?.page && !ev?.source?.section) return null;
+      const label = _LEV_FIELD_LABELS[key] || key;
+      const src   = ev.source;
+      const meta  = [
+        src.section ? 'Section: ' + src.section : '',
+        src.page    ? 'Page ' + src.page         : '',
+        src.fileName ? src.fileName               : '',
+      ].filter(Boolean).join(' · ');
+      const quoteHtml = src.quote
+        ? `<blockquote class="tdp-ev-quote">${esc(src.quote)}</blockquote>`
+        : '';
+      return `<div class="tdp-ev-row">
+          <div class="tdp-ev-field">${esc(label)}</div>
+          ${meta ? `<div class="tdp-ev-meta">${esc(meta)}</div>` : ''}
+          ${quoteHtml}
+        </div>`;
+    })
+    .filter(Boolean);
+
+  if (!rows.length) return '';
+
+  return `
+    <details class="tdp-ev-details">
+      <summary class="tdp-section tdp-ev-summary">Source Evidence <span class="tdp-ev-count">${rows.length} field${rows.length !== 1 ? 's' : ''}</span></summary>
+      <div class="tdp-ev-body">${rows.join('')}</div>
+    </details>`;
 }
 
 function closeTenantDetailPanel() {
@@ -8349,7 +8834,14 @@ function openLeaseModalFromFile(index) {
   if (d.leaseFile instanceof File) {
     openLeaseModal(d.leaseFile);
   } else if (d.leaseUrl) {
-    openLeaseModal(d.leaseUrl);
+    if (d.leaseUrl.startsWith('blob:')) {
+      // Blob URLs are session-only and cannot survive a page reload
+      showToast('Lease document no longer in memory — please re-upload the lease to view it', { color: '#92400e', textColor: '#fef3c7', duration: 5000 });
+    } else {
+      openLeaseModal(d.leaseUrl);
+    }
+  } else {
+    showToast('Lease document not attached — please re-upload the lease to view it', { color: '#92400e', textColor: '#fef3c7', duration: 5000 });
   }
 }
 
@@ -8472,6 +8964,8 @@ document.getElementById('leaseViewerModal')?.addEventListener('click', (e) => {
 // ─── Report State ─────────────────────────────────────────────────────────────
 const camRuns    = []; // previous run history
 let lastResults  = []; // ReconciliationResult[] — unified with lastFullResults
+let lastResultsYear = null; // CAM year of the most recent runAllocation() call
+let _resultsStale = false; // true when field edits happen after a reconciliation run
 
 // ─── CAM Year ─────────────────────────────────────────────────────────────────
 let _camYear = new Date().getFullYear(); // hydrated from scoped key in _lsMigrateAncillaryKeys()
@@ -8481,6 +8975,8 @@ function setCamYear(y) {
   localStorage.setItem(_camYearKey(), _camYear);
   const glLbl = document.getElementById('glUploadLabel');
   if (glLbl) glLbl.textContent = `Upload ${_camYear} GL Excel File (.xlsx only)`;
+  const _cyb = document.getElementById('camYearBadge');
+  if (_cyb) _cyb.textContent = _camYear + ' CAM';
 }
 function initCamYearSelect() {
   const sel = document.getElementById('camYearSelect');
@@ -8496,6 +8992,8 @@ function initCamYearSelect() {
   }
   const glLbl = document.getElementById('glUploadLabel');
   if (glLbl) glLbl.textContent = `Upload ${_camYear} GL Excel File (.xlsx only)`;
+  const _cyb2 = document.getElementById('camYearBadge');
+  if (_cyb2) _cyb2.textContent = _camYear + ' CAM';
 }
 let sqftMismatch   = false;
 let isEditingField = false; // true while a text/number/date input has focus
@@ -8503,6 +9001,10 @@ let isRunning      = false; // guard against concurrent runAllocation() calls
 
 function applySqftMismatchUI(mismatch) {
   sqftMismatch = mismatch;
+  if (mismatch && window.innerWidth < 768) {
+    const banner = document.querySelector('.sqft-mismatch-banner');
+    if (banner) setTimeout(() => banner.scrollIntoView({ behavior: 'smooth', block: 'nearest' }), 100);
+  }
 }
 
 function fixSqftToMatch(leaseTotalSqft) {
@@ -8587,7 +9089,10 @@ function _saveCheckpoints() {
     Object.keys(_checkpoints).forEach(id => {
       if (_checkpoints[id].length > 2) _checkpoints[id].length = 2;
     });
-    try { localStorage.setItem(_cpKey(), JSON.stringify(_checkpoints)); } catch (_) { }
+    try { localStorage.setItem(_cpKey(), JSON.stringify(_checkpoints)); } catch (_innerE) {
+      logError('_saveCheckpoints', _innerE, { checkpointCount: Object.keys(_checkpoints || {}).length });
+      showToast('⚠️ Checkpoint save failed — recovery history may be incomplete.', { color: '#92400e', textColor: '#fef3c7', duration: 5000 });
+    }
   }
 }
 
@@ -9461,9 +9966,9 @@ function renderOpenDisputes() {
         <div class="${badgeClass}">${label}</div>
         ${d.resolvedAt ? `<div class="d-resolved-ts">${statusWord} · ${fmtTs(d.resolvedAt)}</div>` : ''}
         ${d.hash ? `<div class="onchain-record">
-          <div class="oc-label">On-Chain Record</div>
+          <div class="oc-label">Audit Hash</div>
           <div class="oc-hash">${d.hash}</div>
-          <button class="oc-view-btn" onclick="copyOnChainHash(this,'${d.hash}')">&#x1F517; View Record</button>
+          <button class="oc-view-btn" onclick="copyOnChainHash(this,'${d.hash}')">&#x1F512; Copy Hash</button>
         </div>` : ''}`;
     } else {
       actionsHtml = `
@@ -9594,7 +10099,7 @@ async function resolveDispute(id, resolution) {
         relatedDisputeIds: [id] }); }
   }
 
-  // Hash the full dispute record for the on-chain audit trail
+  // Hash the full dispute record for tamper-detection audit trail
   d.hash = await sha256({
     id:          d.id,
     tenantName:  d.tenantName,
@@ -11215,7 +11720,7 @@ function _rptFooter(propName, reportType, now) {
   </div>`;
 }
 
-// ─── Monthly Holes Report ─────────────────────────────────────────────────────
+// ─── Coverage Gap Report ──────────────────────────────────────────────────────
 
 function generateHolesReport() {
   const propName = document.getElementById('propertyName').value.trim() || 'Property';
@@ -11304,8 +11809,8 @@ function generateHolesReport() {
     if (validTenants.length > 0) {
       warningItems.push({
         icon: '👤',
-        text: `${emptySlots} tenant slot${emptySlots !== 1 ? 's' : ''} still empty`,
-        detail: 'Upload leases for all tenants or remove unused slots before reconciling',
+        text: `${emptySlots} unused tenant entr${emptySlots !== 1 ? 'ies' : 'y'} — upload leases or remove before reconciling`,
+        detail: 'Unused tenant slots are placeholders that do not affect calculations, but should be filled or removed for a complete reconciliation.',
       });
     }
   }
@@ -11413,7 +11918,7 @@ function generateHolesReport() {
   const html = `
     <div class="rpt-letterhead">
       <h1>${esc(propName)}</h1>
-      <div class="rpt-sub">Monthly Holes Report &nbsp;·&nbsp; ${month} &nbsp;·&nbsp; Generated ${now}</div>
+      <div class="rpt-sub">Coverage Gap Report &nbsp;·&nbsp; ${month} &nbsp;·&nbsp; Generated ${now}</div>
     </div>
 
     <div class="rpt-kpi-row">
@@ -11440,10 +11945,10 @@ function generateHolesReport() {
     ${summaryBar}
 
     <div class="rpt-footer">
-      Mainstreet &nbsp;·&nbsp; ${esc(propName)} &nbsp;·&nbsp; Monthly Holes Report &nbsp;·&nbsp; ${now}
+      Mainstreet &nbsp;·&nbsp; ${esc(propName)} &nbsp;·&nbsp; Coverage Gap Report &nbsp;·&nbsp; ${now}
     </div>`;
 
-  openReport('Monthly Holes Report — ' + propName, html);
+  openReport('Coverage Gap Report — ' + propName, html);
 }
 
 function openReport(title, bodyHtml) {
@@ -11507,11 +12012,21 @@ function generateReconciliationSummary() {
       <td style="text-align:right">${((amt / lastTotal) * 100).toFixed(1)}%</td>
     </tr>`).join('');
 
+  const reconNarrative = buildAuditNarrative();
+  const reconStatusBar = reconNarrative.headline ? `
+    <div style="display:flex;align-items:center;gap:10px;padding:10px 14px;background:#1e293b;border-radius:7px;margin-bottom:14px;font-size:0.82rem;">
+      <span style="color:#64748b;font-weight:600;flex-shrink:0;">Status:</span>
+      <span style="color:#e2e8f0;">${esc(reconNarrative.headline)}</span>
+      ${reconNarrative.financialImpact ? `<span style="margin-left:auto;color:#94a3b8;flex-shrink:0;">${esc(reconNarrative.financialImpact)}</span>` : ''}
+    </div>` : '';
+
   const html = `
     ${_rptHeader(propName, 'CAM Reconciliation Summary', period, now, [
       { label: 'Property sqft', value: propSqft > 0 ? propSqft.toLocaleString() + ' sqft' : '—' },
       { label: 'Tenants',       value: lastResults.length },
     ])}
+
+    ${reconStatusBar}
 
     <div class="rpt-kpi-row">
       <div class="rpt-kpi"><div class="kpi-val">${fmt(lastTotal)}</div><div class="kpi-lbl">Total Expenses</div></div>
@@ -11636,11 +12151,22 @@ function generateExceptionReport() {
       </div>`
     : sections;
 
+  const narrative = buildAuditNarrative();
+  const excNColor = narrative.riskLevel === 'Critical' ? '#f87171' : narrative.riskLevel === 'Elevated' ? '#fbbf24' : narrative.riskLevel === 'Moderate' ? '#93c5fd' : '#4ade80';
+  const excNBg    = narrative.riskLevel === 'Critical' ? 'rgba(239,68,68,0.07)' : narrative.riskLevel === 'Elevated' ? 'rgba(245,158,11,0.07)' : narrative.riskLevel === 'Moderate' ? 'rgba(59,130,246,0.07)' : 'rgba(34,197,94,0.07)';
+  const narrativeBlock = narrative.headline ? `
+    <div style="background:${excNBg};border-left:3px solid ${excNColor};border-radius:6px;padding:12px 16px;margin-bottom:16px;">
+      <div style="font-size:0.95rem;font-weight:700;color:#e2e8f0;margin-bottom:5px;">${esc(narrative.headline)}</div>
+      <div style="font-size:0.82rem;color:#94a3b8;line-height:1.5;">${esc(narrative.summaryParagraph || '')}</div>
+    </div>` : '';
+
   const html = `
     ${_rptHeader(propName, 'Audit Exception Summary', period, now, [
       { label: 'Flags Raised', value: red.length + yellow.length },
       { label: 'Checks Passed', value: green.length },
     ])}
+
+    ${narrativeBlock}
 
     <div class="rpt-kpi-row">
       <div class="rpt-kpi">
@@ -11735,15 +12261,37 @@ function generateMasterReport() {
   // Report hash
   sha256({ propName: lastPropName, total: lastTotal, tenants: lastResults.map(r => r.name), generated: now })
     .then(hash => {
-      document.querySelector('.rpt-hash-val').textContent =
-        'SHA-256: ' + hash + '\nGenerated: ' + new Date().toISOString();
+      const hashEl = document.querySelector('.rpt-hash-val');
+      if (hashEl) hashEl.textContent = 'SHA-256: ' + hash + '\nGenerated: ' + new Date().toISOString();
     });
+
+  const n = buildAuditNarrative();
+  const riskColors = { Critical: '#f87171', Elevated: '#fbbf24', Moderate: '#93c5fd', Low: '#4ade80' };
+  const riskBg     = { Critical: 'rgba(239,68,68,0.07)', Elevated: 'rgba(245,158,11,0.07)', Moderate: 'rgba(59,130,246,0.07)', Low: 'rgba(34,197,94,0.07)' };
+  const nColor = riskColors[n.riskLevel] || '#94a3b8';
+  const nBg    = riskBg[n.riskLevel]    || 'rgba(148,163,184,0.07)';
+  const topFindings = (n.keyFindings || []).slice(0, 3).map(f => `<li style="margin-bottom:4px;">${esc(f)}</li>`).join('');
+  const topRec      = (n.recommendations || [])[0];
+  const execSummaryBlock = `
+    <div style="background:${nBg};border:1px solid ${nColor}33;border-radius:10px;padding:18px 20px;margin-bottom:18px;">
+      <div style="display:flex;align-items:center;gap:10px;margin-bottom:10px;">
+        <span style="display:inline-block;width:10px;height:10px;border-radius:50%;background:${nColor};flex-shrink:0;"></span>
+        <span style="font-size:1.05rem;font-weight:700;color:#e2e8f0;">${esc(n.headline)}</span>
+        <span style="margin-left:auto;font-size:0.72rem;font-weight:700;color:${nColor};background:${nColor}22;padding:3px 10px;border-radius:20px;letter-spacing:0.06em;text-transform:uppercase;">${esc(n.riskLevel)} Risk</span>
+      </div>
+      <div style="font-size:0.84rem;color:#cbd5e1;line-height:1.55;margin-bottom:${topFindings ? '12px' : '0'};">${esc(n.summaryParagraph || '')}</div>
+      ${topFindings ? `<ul style="margin:0 0 ${topRec ? '10px' : '0'} 16px;padding:0;font-size:0.81rem;color:#94a3b8;line-height:1.5;">${topFindings}</ul>` : ''}
+      ${topRec ? `<div style="font-size:0.79rem;color:${nColor};border-top:1px solid ${nColor}22;padding-top:9px;margin-top:2px;"><strong>Recommendation:</strong> ${esc(topRec)}</div>` : ''}
+      ${n.financialImpact ? `<div style="font-size:0.78rem;color:#64748b;margin-top:7px;">${esc(n.financialImpact)}</div>` : ''}
+    </div>`;
 
   const html = `
     ${_rptHeader(lastPropName, 'Landlord Master CAM Report', period, now, [
       { label: 'Tenants',        value: lastResults.length },
       { label: 'Total Expenses', value: fmt(lastTotal) },
     ])}
+
+    ${execSummaryBlock}
 
     <div class="ai-risk-box">
       <div class="ai-risk-title">&#x1F9E0; AI Risk Review — Building Summary</div>
@@ -11804,9 +12352,9 @@ function generateMasterReport() {
       </tr></tfoot>
     </table>
 
-    <div class="rpt-section-title">XRPL Audit Record</div>
+    <div class="rpt-section-title">Audit Fingerprint</div>
     <div class="rpt-hash-box">
-      <div class="rpt-hash-lbl">&#x1F517; On-Chain Integrity Hash</div>
+      <div class="rpt-hash-lbl">&#x1F512; Tamper-Detection Hash (SHA-256)</div>
       <div class="rpt-hash-val">Computing…</div>
     </div>
 
@@ -11924,11 +12472,12 @@ function renderReportTenantExpansion(tr, tenantName) {
   const _v = (val) =>
     (val !== null && val !== undefined && String(val).trim() !== '') ? esc(String(val)) : null;
 
-  function stat(label, value, gold) {
+  function stat(label, value, gold, chip) {
     const isNull = value === null || value === undefined;
     return `<div class="rpt-exp-stat">
       <div class="rpt-exp-label">${label}</div>
       <div class="rpt-exp-value${gold ? ' hi' : ''}${isNull ? ' nil' : ''}">${isNull ? '—' : value}</div>
+      ${chip || ''}
     </div>`;
   }
 
@@ -11954,11 +12503,11 @@ function renderReportTenantExpansion(tr, tenantName) {
       ${td ? _tenantReviewStateBadgeHtml(td) : ''}
       <div class="rpt-exp-section">Lease Info</div>
       <div class="rpt-exp-grid">
-        ${stat('Lease Type',  _v(td?.lease_type))}
-        ${stat('Leased Sqft', sqftStr)}
-        ${stat('Start Date',  _v(td?.start_date))}
-        ${stat('End Date',    _v(td?.end_date))}
-        ${stat('Pro-Rata',    proRatStr, true)}
+        ${stat('Lease Type',  _v(td?.lease_type), false, td ? _citationChip(td, 'lease_type')  : '')}
+        ${stat('Leased Sqft', sqftStr,            false, td ? _citationChip(td, 'leased_sqft') : '')}
+        ${stat('Start Date',  _v(td?.start_date), false, td ? _citationChip(td, 'start_date')  : '')}
+        ${stat('End Date',    _v(td?.end_date),   false, td ? _citationChip(td, 'end_date')    : '')}
+        ${stat('Pro-Rata',    proRatStr,          true)}
       </div>
       <div class="rpt-exp-section">CAM Summary</div>
       <div class="rpt-exp-grid">
@@ -11970,7 +12519,7 @@ function renderReportTenantExpansion(tr, tenantName) {
         ${td && td.amendments && td.amendments.length > 0
           ? `<span class="rpt-exp-amend-count">${td.amendments.length} amendment${td.amendments.length > 1 ? 's' : ''} on file</span>`
           : '<span class="rpt-exp-amend-none">No amendments uploaded</span>'}
-        ${td ? `<button class="rpt-exp-amend-btn" onclick="openAmendmentUpload('${esc(td.id || '')}')">+ Add Amendment</button>` : ''}
+        ${td?.id ? `<button class="rpt-exp-amend-btn" onclick="openAmendmentUpload('${esc(td.id)}')">+ Add Amendment</button>` : ''}
       </div>
       <div class="rpt-exp-section">Disputes</div>
       ${disputeHtml}
@@ -12103,7 +12652,7 @@ function generateDisputePacket(disputeId) {
         <tr><td>Raw Allocation</td><td style="text-align:right">${fmt(recon.capApplied ? recon.totalAllocated + recon.capAdjustment : recon.totalAllocated)}</td></tr>
         ${recon.capApplied ? `<tr><td>Cap Reduction</td><td style="text-align:right;color:#fb923c;">−${fmt(recon.capAdjustment)}</td></tr>` : ''}
         <tr class="total-row"><td>Final CAM Charge</td><td style="text-align:right">${fmt(recon.totalAllocated)}</td></tr>
-        ${calcSt ? `<tr><td>Calculation State</td><td style="text-align:right"><span class="rc-calc-state ${calcSt.cls}">${calcSt.label}</span></td></tr>` : ''}
+        ${calcSt ? `<tr><td>Billing Method</td><td style="text-align:right"><span class="rc-calc-state ${calcSt.cls}">${calcSt.label}</span></td></tr>` : ''}
       </tbody>
     </table>` : '';
 
@@ -12177,9 +12726,9 @@ function generateDisputePacket(disputeId) {
     </table>` : ''}
 
     ${d.hash ? `
-    <div class="rpt-section-title">Audit Integrity</div>
+    <div class="rpt-section-title">Audit Fingerprint</div>
     <div class="rpt-hash-box">
-      <div class="rpt-hash-lbl">&#x1F517; On-Chain Dispute Hash</div>
+      <div class="rpt-hash-lbl">&#x1F512; Tamper-Detection Hash (SHA-256)</div>
       <div class="rpt-hash-val">${d.hash}</div>
     </div>` : ''}
 
@@ -12192,7 +12741,7 @@ function generateDisputePacket(disputeId) {
   }
 }
 
-// ─── Landlord Risk Export ─────────────────────────────────────────────────────
+// ─── Risk & Disputes Report ─────────────────────────────────────────────────────
 
 function generateLandlordExport() {
   if (!lastResults.length) { showToast('Run a CAM allocation first.', { color: '#92400e', textColor: '#fef3c7' }); return; }
@@ -12200,9 +12749,9 @@ function generateLandlordExport() {
   const _expProp = currentProperty();
   if (_expProp) rebuildDerivedState(_expProp); // ensure cached metrics are fresh before export
   const _expDm = _expProp ? (derivePropertyMetrics(_expProp) || {}) : {};
-  logActivity('landlord_export', 'Landlord Risk Export generated', { severity: 'info', actor: 'User', relatedEntity: lastPropName || 'Property' });
+  logActivity('landlord_export', 'Risk & Disputes Report generated', { severity: 'info', actor: 'User', relatedEntity: lastPropName || 'Property' });
   { if (_expProp) appendPropertyTimelineEvent(_expProp, { type: 'export_generated', severity: 'info',
-      actor: 'User', title: 'Landlord Risk Export generated',
+      actor: 'User', title: 'Risk & Disputes Report generated',
       metadata: { exportType: 'landlord_risk', propName: lastPropName || 'Property' } }); }
   const propName   = lastPropName || 'Property';
   const now        = new Date().toLocaleDateString('en-US', { year: 'numeric', month: 'long', day: 'numeric' });
@@ -12246,7 +12795,7 @@ function generateLandlordExport() {
   const _expTotalCAM = _expDm.financialStats?.totalCAM ?? lastTotal;
   const _expOpenDisp = _expDm.disputeStats?.openDisputes ?? openD.length;
   const html = `
-    ${_rptHeader(propName, 'Landlord Risk Export', period, now, [
+    ${_rptHeader(propName, 'Risk & Disputes Report', period, now, [
       { label: 'Total CAM',   value: fmt(_expTotalCAM) },
       { label: 'Open Disputes', value: _expOpenDisp },
       { label: 'Exposure',    value: fmt(exposure) },
@@ -12274,7 +12823,7 @@ function generateLandlordExport() {
 
     <div class="rpt-section-title">Reconciliation Completeness by Tenant</div>
     <table class="rpt-table">
-      <thead><tr><th>Tenant</th><th style="text-align:right">Allocated</th><th style="text-align:right">Pro-Rata</th><th>Calc State</th><th style="text-align:center">Flags</th></tr></thead>
+      <thead><tr><th>Tenant</th><th style="text-align:right">Allocated</th><th style="text-align:right">Pro-Rata</th><th>Billing Method</th><th style="text-align:center">Flags</th></tr></thead>
       <tbody>${tenantRows}</tbody>
     </table>
 
@@ -12293,12 +12842,12 @@ function generateLandlordExport() {
   <tbody>${tlRows}</tbody>
 </table>` : '';
     })()}
-    ${_rptFooter(propName, 'Landlord Risk Export', now)}`;
+    ${_rptFooter(propName, 'Risk & Disputes Report', now)}`;
 
-  openReport('Landlord Risk Export — ' + propName, html);
+  openReport('Risk & Disputes Report — ' + propName, html);
   } catch (e) {
     logError('generateLandlordExport', e, { propName: lastPropName });
-    showToast('Could not generate Landlord Risk Export.', { color: '#92400e', textColor: '#fef3c7' });
+    showToast('Could not generate Risk & Disputes Report.', { color: '#92400e', textColor: '#fef3c7' });
   }
 }
 
@@ -12322,8 +12871,7 @@ function generateLenderSummaryReport() {
     const prop = currentProperty();
     if (!prop) { showToast('Select a property first.', { color: '#92400e', textColor: '#fef3c7' }); return; }
     if (!window.LeaseReviewPackets) { showToast('Lease Review Packets module not loaded.', { color: '#92400e', textColor: '#fef3c7' }); return; }
-    const packet = window.LeaseReviewPackets.generateLeaseReviewPacket(prop, { audience: 'lender' });
-    const html   = window.LeaseReviewPackets.formatReviewPacketHtml(packet);
+    const html = window.LeaseReviewPackets.generateLenderSummaryHtml(prop);
     logActivity('lender_summary', 'Lender Summary generated', { severity: 'info', actor: 'User', relatedEntity: prop.name || 'Property' });
     openReport('Lender Summary — ' + (prop.name || 'Property'), html);
   } catch (e) {
@@ -12334,7 +12882,7 @@ function generateLenderSummaryReport() {
 
 function generateTestLabBenchmarkReport() {
   try {
-    if (!window.LeaseTestLab) { showToast('Test Lab module not loaded.', { type: 'error', duration: 3000 }); return; }
+    if (!window.LeaseTestLab) { showToast('Test Lab module not loaded.', { color: '#7f1d1d', textColor: '#fca5a5', duration: 3000 }); return; }
     const levels = ['easy', 'medium', 'hard', 'nightmare'];
     const suite  = window.LeaseTestLab.runSuite(levels);
     const stats  = window.LeaseTestLab.scoreSuite(suite);
@@ -12343,7 +12891,7 @@ function generateTestLabBenchmarkReport() {
     openReport('Lease Intelligence Benchmark — ' + new Date().toLocaleDateString('en-US', { month: 'short', day: 'numeric', year: 'numeric' }), html);
   } catch (e) {
     logError('generateTestLabBenchmarkReport', e);
-    showToast('Benchmark error: ' + (e.message || 'unknown'), { type: 'error', duration: 4000 });
+    showToast('Benchmark error: ' + (e.message || 'unknown'), { color: '#7f1d1d', textColor: '#fca5a5', duration: 4000 });
   }
 }
 
@@ -12357,21 +12905,66 @@ function _downloadFile(content, filename, mime) {
   URL.revokeObjectURL(url);
 }
 
+async function deleteCurrentCAMReconciliation() {
+  const prop = currentProperty();
+  if (!prop?.id) { showToast('No property selected.', { color: '#92400e', textColor: '#fef3c7' }); return; }
+  const year = getCamYear() || new Date().getFullYear();
+  if (!confirm(`Delete the ${year} CAM reconciliation for "${prop.name}"?\n\nThis removes the stored records from the database and cannot be undone.`)) return;
+
+  try {
+    const hdrs = await _authHeaders();
+    const res  = await fetch(`/api/cam-reconciliations?propertyId=${encodeURIComponent(prop.id)}&year=${encodeURIComponent(year)}`, {
+      method: 'DELETE',
+      headers: hdrs,
+    });
+    if (!res.ok) {
+      const err = await res.json().catch(() => ({}));
+      throw new Error(err.error || `HTTP ${res.status}`);
+    }
+    showToast(`${year} CAM reconciliation deleted.`);
+    logActivity('cam_delete', `${year} CAM reconciliation deleted`, { severity: 'warning', actor: 'User', relatedEntity: prop.name });
+  } catch (e) {
+    console.error('[deleteCurrentCAMReconciliation]', e.message);
+    showToast('⚠️ Delete failed — ' + e.message, { color: '#92400e', textColor: '#fef3c7', duration: 5000 });
+  }
+}
+
 function exportReconciliationCSV() {
   if (!lastResults.length) { showToast('Run a CAM allocation first.', { color: '#92400e', textColor: '#fef3c7' }); return; }
+  if (lastResultsYear && getCamYear() !== lastResultsYear) {
+    showToast(`⚠️ Results are from ${lastResultsYear} — re-run reconciliation for ${getCamYear()} before exporting.`, { color: '#92400e', textColor: '#fef3c7', duration: 6000 });
+    return;
+  }
+  if (_resultsStale) {
+    showToast('⚠️ Results may be stale — lease or invoice data changed since last run. Re-run reconciliation before exporting.', { color: '#92400e', textColor: '#fef3c7', duration: 7000 });
+    return;
+  }
   const rows = [
-    ['Tenant', 'Unit', 'Sqft', 'Pro-Rata %', 'Cap Applied', 'Cap Reduction', 'Allocated', 'Invoices', 'Avg Confidence', 'Calc State', 'Flags'],
+    ['Tenant', 'Unit', 'Sqft', 'Pro-Rata % (0-100)', 'Cap Applied', 'Cap Reduction (negative = savings)', 'Allocated', 'Invoices', 'AI Read Confidence (%)', 'Billing Method', 'Flags'],
     ...lastResults.map(r => {
       const liveT  = tenantData.find(t => t && t.id === r.tenantId);
       const calcSt = _deriveCalcState(r, liveT);
+      // Use extraction confidence (how well Claude read the lease) rather than
+      // invoice-match confidence (which is 0 when no direct matches exist).
+      const extractionConf = liveT?._confidenceScore ?? liveT?._confidence ?? null;
+      const confExport = extractionConf !== null ? extractionConf : (r.averageConfidence > 0 ? r.averageConfidence : '');
       return [
         r.name, r.unitNumber || '', r.sqFt || '', (r.proRata * 100).toFixed(2),
-        r.capApplied ? 'Yes' : 'No', r.capApplied ? (r.capAdjustment || 0).toFixed(2) : '',
-        r.totalAllocated.toFixed(2), r.eligibleCount, r.averageConfidence,
-        calcSt.label, (r.ambiguityFlags || []).map(f => f.code).join('; '),
+        r.capApplied ? 'Yes' : 'No', r.capApplied ? (-(r.capAdjustment || 0)).toFixed(2) : '',
+        r.totalAllocated.toFixed(2), r.eligibleCount, confExport,
+        calcSt.label, (r.ambiguityFlags || []).map(f => f.message || f.code).join('; '),
       ];
     }),
   ];
+  const poolTotal   = lastTotal || 0;
+  const billedTotal = lastResults.reduce((s, r) => s + r.totalAllocated, 0);
+  const csvVariance = Math.abs(billedTotal - poolTotal);
+  rows.push(['--- SUMMARY ---', '', '', '', '', '', '', '', '', '', '']);
+  rows.push(['Total Expense Pool', '', '', '', '', '', poolTotal.toFixed(2), '', '', '', '']);
+  rows.push(['Total Billed', '', '', '', '', '', billedTotal.toFixed(2), '', '', '', '']);
+  if (csvVariance > 0.05) {
+    rows.push(['VARIANCE', '', '', '', '', '', csvVariance.toFixed(2), '', '', '', '']);
+  }
   const csv = rows.map(row => row.map(v => `"${String(v).replace(/"/g, '""')}"`).join(',')).join('\n');
   _downloadFile(csv, `cam-reconciliation-${lastPropName || 'export'}-${getCamYear() || new Date().getFullYear()}.csv`, 'text/csv');
   logActivity('csv_export', 'Reconciliation CSV exported', { severity: 'info', actor: 'User', relatedEntity: lastPropName || 'Property' });
@@ -12478,18 +13071,6 @@ function generateTenantStatement(tenantName) {
         const stored = invoiceData.find(d =>
           d.vendorName && d.vendorName.toLowerCase() === vendorKey
         );
-        if (idx === 0) {
-          console.log('[PIPELINE:7b] first inv obj', JSON.parse(JSON.stringify(inv || {})));
-          console.log('[PIPELINE:7b] first stored obj', JSON.parse(JSON.stringify(stored || {})));
-        }
-        console.log('[generateTenantStatement] invoice match', {
-          idx,
-          invVendor:    inv.vendor,
-          invVendorName: inv.vendorName,
-          vendorKey,
-          storedFound:  !!stored,
-          storedFileUrl: stored ? (stored.fileUrl ? 'PRESENT' : 'MISSING') : 'N/A',
-        });
         const viewInvBtn = stored && stored.fileUrl
           ? `<button class="btn-secondary" onclick="event.stopPropagation();openInvFileViewer('${stored.fileUrl.replace(/\\/g,'\\\\').replace(/'/g,"\\'")}','${esc(inv.vendor || inv.vendorName || '')}','${esc(stored.fileType || '')}')">&#x1F4C4; View Invoice</button>`
           : '';
@@ -12616,21 +13197,20 @@ function generateTenantStatement(tenantName) {
       </div>
     </div>
 
-    <button class="primary-pay-btn" style="margin-bottom:24px;">Pay Now &mdash; ${fmt(r.allocatedAmount)} USD</button>
-
     <div class="rpt-section-title">Expense Breakdown</div>
-    <p class="rpt-helper-text">Tap a category to see individual charges. Tap any charge to view details or dispute.</p>
+    <p class="rpt-helper-text">Click a category to expand individual charges.</p>
     <div class="ts-cat-list">${categoryCards}</div>
     ${exclNote}${capNote}
 
     <div class="rpt-section-title">Year-End Reconciliation</div>
     <table class="rpt-table">
       <tbody>
-        <tr><td>Estimated Annual CAM</td><td style="text-align:right">${fmt(estimated)}</td></tr>
-        <tr><td>Actual Reconciled CAM</td><td style="text-align:right">${fmt(actual)}</td></tr>
-        <tr class="total-row"><td>Net Settlement</td><td style="text-align:right">${reconNote}</td></tr>
+        <tr><td>Reconciled CAM Responsibility</td><td style="text-align:right">${fmt(actual)}</td></tr>
+        <tr><td>Pro-Rata Share</td><td style="text-align:right">${(r.proRata * 100).toFixed(2)}%</td></tr>
+        <tr class="total-row"><td>Total Billed</td><td style="text-align:right">${fmt(r.allocatedAmount)}</td></tr>
       </tbody>
     </table>
+    <p style="font-size:0.78rem;color:#64748b;margin-top:6px;">Variance from monthly estimates requires payment history data not yet in this system — please reconcile against your accounts payable records.</p>
 
     <div class="rpt-section-title">Disputes</div>
     <p class="rpt-helper-text">Disputes are reviewed by your landlord. You'll be notified when a decision is made.</p>
@@ -12641,9 +13221,9 @@ function generateTenantStatement(tenantName) {
       <tbody>${disputeRows}</tbody>
     </table>
 
-    <div class="rpt-section-title">XRPL Audit Record</div>
+    <div class="rpt-section-title">Audit Fingerprint</div>
     <div class="rpt-hash-box">
-      <div class="rpt-hash-lbl">&#x1F517; On-Chain Integrity Hash</div>
+      <div class="rpt-hash-lbl">&#x1F512; Tamper-Detection Hash (SHA-256)</div>
       <div class="rpt-hash-val" id="tenantHashVal">Computing…</div>
     </div>
 
@@ -12664,26 +13244,38 @@ function generateTenantStatement(tenantName) {
 
 // ─── Load Demo ────────────────────────────────────────────────────────────────
 
-// Stable identifiers so the demo property is idempotent across sessions/devices.
-const DEMO_PROPERTY_ID = 'dec00000-0000-4000-a000-000000000001';
-const _DEMO_TENANT_IDS = [
-  'dec00000-0000-4000-a000-000000000002', // Whole Health Market
-  'dec00000-0000-4000-a000-000000000003', // Summit Coffee & Provisions
-  'dec00000-0000-4000-a000-000000000004', // ProActive Physical Therapy
-  'dec00000-0000-4000-a000-000000000005', // FitZone Athletics
-  'dec00000-0000-4000-a000-000000000006', // Harbor Nail & Beauty Studio
-];
+// Per-user stable IDs derived in _initDemoIds() when the auth session loads.
+// Using per-user IDs prevents Supabase PK conflicts when multiple users share
+// the same Supabase project — each user seeds their own rows with no collision.
+let DEMO_PROPERTY_ID    = null;
+let _DEMO_TENANT_IDS   = [];
+let DEMO_ACQ_REVIEW_ID = null;
+
+// Derives stable demo UUIDs from the authenticated user's ID.
+// Called in _showApp() so the values are ready before any demo interaction.
+function _initDemoIds(userId) {
+  // Use the first 12 hex characters of the user's UUID (without dashes) as the
+  // node component, making each user's demo row unique in the properties table.
+  const hex = userId.replace(/-/g, '');
+  const node = hex.slice(0, 12);
+  DEMO_PROPERTY_ID    = 'dec00000-0000-4000-a000-' + node;
+  _DEMO_TENANT_IDS    = [2, 3, 4, 5, 6].map(n =>
+    'dec00000-0000-4000-a00' + n + '-' + node
+  );
+  DEMO_ACQ_REVIEW_ID  = 'aca00000-0000-4000-b000-' + node;
+}
 
 // Deletes every property whose name matches "Riverside Commons*" and whose ID
 // is NOT the canonical DEMO_PROPERTY_ID.  Cleans Supabase, _props, and
 // localStorage so no duplicate demo entries survive.
 async function cleanupLegacyDemos(userId) {
   try {
-    const { data: rows } = await db.from('properties')
+    let q = db.from('properties')
       .select('id, name, sqft')
       .eq('user_id', userId)
-      .ilike('name', 'riverside commons%')
-      .neq('id', DEMO_PROPERTY_ID);
+      .ilike('name', 'riverside commons%');
+    if (DEMO_PROPERTY_ID) q = q.neq('id', DEMO_PROPERTY_ID);
+    const { data: rows } = await q;
 
     // Belt-and-suspenders: only remove entries whose sqft matches the demo
     const legacyIds = (rows || []).filter(r => r.sqft === 24000).map(r => r.id);
@@ -12982,7 +13574,12 @@ async function ensureDemoProperty() {
   const { error: propErr } = await db.from('properties')
     .upsert({ id: DEMO_PROPERTY_ID, user_id: user.id, name: PROP_NAME, sqft: PROP_SQFT, data: propertyData })
     .select('id');
-  if (propErr) { console.error('[ensureDemoProperty] property upsert failed:', propErr.message); throw propErr; }
+  if (propErr) {
+    // DB write failed (RLS, network, cold-start). All reconciliation data is already
+    // in-memory. Log the error and continue so the demo still loads — user just
+    // won't have persistence across a hard refresh.
+    console.warn('[ensureDemoProperty] property upsert failed (demo will run in-memory):', propErr.message, propErr.code);
+  }
 
   // Tenants: delete existing rows then insert with stable IDs so they're
   // always queryable by property_id even if the user has run the old demo.
@@ -13025,6 +13622,157 @@ async function ensureDemoProperty() {
   return DEMO_PROPERTY_ID;
 }
 
+// Seeds a fully-analyzed demo acquisition review ("Harborview Retail Center")
+// so the Acquisition Due Diligence section is never empty for demo users.
+// Idempotent — skips if DEMO_ACQ_REVIEW_ID already exists in _acqReviews or DB.
+async function ensureDemoAcqReview() {
+  try {
+    const { data: { user } } = await db.auth.getUser();
+    if (!user?.id || !DEMO_ACQ_REVIEW_ID) return;
+
+    // Skip if already in memory
+    if (_acqReviews.some(r => r.id === DEMO_ACQ_REVIEW_ID)) return;
+
+    // Check DB for existing complete review
+    const { data: existing, error: chkErr } = await db
+      .from('acquisition_reviews')
+      .select('id, name, status, data, created_at, updated_at')
+      .eq('id', DEMO_ACQ_REVIEW_ID)
+      .eq('user_id', user.id)
+      .single();
+    if (!chkErr && existing?.status === 'complete') {
+      _acqReviews = _acqReviews.filter(r => r.id !== DEMO_ACQ_REVIEW_ID);
+      _acqReviews.unshift(existing);
+      _renderAcqSection(_acqReviews);
+      return;
+    }
+
+    const AE = window.AcquisitionEngine;
+    if (!AE) { console.warn('[ensureDemoAcqReview] AcquisitionEngine not loaded — skipping'); return; }
+
+    // ── Demo acquisition property ─────────────────────────────────────────────
+    // Harborview Retail Center: 32,000 sqft mixed retail strip mall.
+    // Includes expired leases, cap leakage, and non-standard exclusions to
+    // demonstrate the full range of acquisition risk analysis.
+    const TOTAL_SQFT = 32000;
+    const node = DEMO_ACQ_REVIEW_ID.slice(-12);
+
+    const demoAcqTenants = [
+      {
+        id: 'acqt0001-' + node,
+        tenant_name: 'Pacific Dental Partners',
+        suite: '101',
+        leased_sqft: '2800',
+        start_date: '2019-01-01',
+        end_date: '2025-09-30',     // expired — triggers critical renewal risk
+        lease_type: 'NNN',
+        cam_cap: 3,
+        capBaseAmount: 3750,        // prior-year base; cap fires for this year's invoices
+        excluded_categories: '',
+        audit_rights: true,
+        renewal_options: '1 × 5-year option',
+        base_rent: 36400,
+        security_deposit: 15000,
+      },
+      {
+        id: 'acqt0002-' + node,
+        tenant_name: 'Golden Sushi & Sake',
+        suite: '105',
+        leased_sqft: '1600',
+        start_date: '2022-06-01',
+        end_date: '2028-05-31',
+        lease_type: 'Modified Gross',
+        cam_cap: null,
+        capBaseAmount: null,
+        excluded_categories: 'management fees, capital expenditures', // non-standard exclusions
+        audit_rights: false,
+        renewal_options: null,
+        base_rent: 50400,
+        security_deposit: 8000,
+      },
+      {
+        id: 'acqt0003-' + node,
+        tenant_name: 'Sunrise Yoga & Wellness',
+        suite: '108',
+        leased_sqft: '2400',
+        start_date: '2021-03-01',
+        end_date: '2026-03-31',     // expired — triggers critical renewal risk
+        lease_type: 'NNN',
+        cam_cap: 5,
+        capBaseAmount: 3200,
+        excluded_categories: '',
+        audit_rights: false,
+        renewal_options: '1 × 3-year option',
+        base_rent: 76800,
+        security_deposit: 10000,
+      },
+      {
+        id: 'acqt0004-' + node,
+        tenant_name: 'Harbor Wine & Spirits',
+        suite: '110',
+        leased_sqft: '4800',
+        start_date: '2020-01-01',
+        end_date: '2028-12-31',
+        lease_type: 'NNN',
+        cam_cap: 4,
+        capBaseAmount: 6500,
+        excluded_categories: '',
+        audit_rights: true,
+        renewal_options: '2 × 5-year options',
+        base_rent: 155000,
+        security_deposit: 24000,
+      },
+    ];
+
+    const demoAcqInvoices = [
+      { id: 'acq-inv-1', vendorName: 'County Tax Authority',     amount: 18500, category: 'taxes',       invoiceDate: '2024-12-01' },
+      { id: 'acq-inv-2', vendorName: 'Pacific Mutual Insurance', amount: 14200, category: 'insurance',   invoiceDate: '2024-01-10' },
+      { id: 'acq-inv-3', vendorName: 'CoastGreen Landscaping',   amount:  3800, category: 'landscaping', invoiceDate: '2024-10-15' },
+      { id: 'acq-inv-4', vendorName: 'Harbor Cleaning Services', amount:  4200, category: 'janitorial',  invoiceDate: '2024-12-15' },
+      { id: 'acq-inv-5', vendorName: 'PaveRight Maintenance',    amount:  2600, category: 'maintenance', invoiceDate: '2024-11-01' },
+      { id: 'acq-inv-6', vendorName: 'SecureWatch Systems',      amount:  1900, category: 'security',    invoiceDate: '2024-12-01' },
+      { id: 'acq-inv-7', vendorName: 'Pacific Gas & Electric',   amount:  5100, category: 'utilities',   invoiceDate: '2024-12-31' },
+    ];
+
+    const analysis = AE.buildAcquisitionReport(demoAcqTenants, demoAcqInvoices, TOTAL_SQFT);
+
+    const review = {
+      id:         DEMO_ACQ_REVIEW_ID,
+      user_id:    user.id,
+      name:       'Harborview Retail Center',
+      status:     'complete',
+      data: {
+        tenants:   demoAcqTenants,
+        invoices:  demoAcqInvoices,
+        totalSqFt: TOTAL_SQFT,
+        documents: [],
+        analysis,
+        _demoAcq:  true,
+      },
+      created_at: new Date(Date.now() - 5 * 24 * 60 * 60 * 1000).toISOString(),
+      updated_at: new Date().toISOString(),
+    };
+
+    const { error: upsertErr } = await db
+      .from('acquisition_reviews')
+      .upsert({ ...review }, { onConflict: 'id' });
+    if (upsertErr) {
+      console.warn('[ensureDemoAcqReview] upsert failed:', upsertErr.message);
+    }
+
+    _acqReviews = _acqReviews.filter(r => r.id !== DEMO_ACQ_REVIEW_ID);
+    _acqReviews.unshift(review);
+    _renderAcqSection(_acqReviews);
+    console.log('[ensureDemoAcqReview] seeded Harborview Retail Center', {
+      tenants: demoAcqTenants.length,
+      invoices: demoAcqInvoices.length,
+      verdict: analysis?.summary?.recoveryRate,
+    });
+  } catch (e) {
+    console.warn('[ensureDemoAcqReview] failed (non-fatal):', e.message);
+  }
+}
+
 async function loadDemo() {
   const btn = document.getElementById('demoBtn');
   const origText = btn?.textContent ?? 'Try Live Demo';
@@ -13035,6 +13783,8 @@ async function loadDemo() {
       showToast('Please log in to load the demo.', { color: '#92400e', textColor: '#fef3c7' });
       return;
     }
+    // Seed the acquisition demo in parallel — failure is non-fatal
+    ensureDemoAcqReview().catch(e => console.warn('[loadDemo] acq seed failed:', e.message));
     renderPortfolio(); // refresh card list so demo appears
     await selectProperty(id);
     window.scrollTo({ top: 0, behavior: 'smooth' });
@@ -13050,6 +13800,35 @@ async function loadDemo() {
 
 let _portfolioSort = 'risk'; // 'risk' | 'recent' | 'cam' | 'disputes'
 let _reviewQueueFilter = 'all'; // 'all' | 'incomplete' | 'needs_review' | 'manually_verified'
+let _portfolioQuery      = '';
+let _portfolioSortedPairs = []; // cached after each renderPortfolio() for card-only re-render
+let _globalTenantQuery   = '';
+
+function _applyGlobalTenantSearch() {
+  _globalTenantQuery = (document.getElementById('globalTenantSearch')?.value || '').toLowerCase().trim();
+  const resultsEl = document.getElementById('globalTenantResults');
+  if (!resultsEl) return;
+  if (!_globalTenantQuery) { resultsEl.style.display = 'none'; resultsEl.innerHTML = ''; return; }
+  const matches = [];
+  for (const p of (_props || [])) {
+    for (const t of (Array.isArray(p.tenants) ? p.tenants : [])) {
+      if (!t || !t.tenant_name) continue;
+      if (t.tenant_name.toLowerCase().includes(_globalTenantQuery)) matches.push({ t, p });
+    }
+  }
+  if (!matches.length) {
+    resultsEl.innerHTML = `<div class="gts-empty">No tenants found for "${esc(_globalTenantQuery)}"</div>`;
+  } else {
+    resultsEl.innerHTML = matches.slice(0, 20).map(({ t, p }) => `
+      <div class="gts-result" onclick="selectProperty('${esc(p.id)}')">
+        <div class="gts-tenant-name">${esc(t.tenant_name)}</div>
+        <div class="gts-prop-name">&#x1F3E2; ${esc(p.name || p.address || p.id)}</div>
+      </div>`).join('') +
+      (matches.length > 20 ? `<div class="gts-more">+${matches.length - 20} more — refine your search</div>` : '');
+  }
+  resultsEl.style.display = 'block';
+}
+let _bulkFilter = { query: '', status: 'all' };
 
 // Pure function — derives risk metadata from a stored property snapshot.
 // Runs without globals so it can compute for any prop, not just the active one.
@@ -13073,7 +13852,7 @@ function _rqItemHtml(item) {
   const stateCfg = {
     incomplete:        { cls: 'trs-incomplete',        label: 'Incomplete' },
     needs_review:      { cls: 'trs-needs-review',      label: 'Needs Review' },
-    manually_verified: { cls: 'trs-manually-verified', label: 'Manually Verified' },
+    manually_verified: { cls: 'trs-manually-verified', label: 'Verified' },
   }[item.reviewState] || { cls: 'trs-needs-review', label: item.reviewState };
   const scoreColor = item.reviewScore >= 80 ? 'trs-score--high' : item.reviewScore >= 50 ? 'trs-score--mid' : 'trs-score--low';
 
@@ -13230,7 +14009,7 @@ function renderPropertyReviewQueue(property) {
   if (counts.incomplete        > 0) healthParts.push(`<span class="rq-hs-item rq-hs--incomplete">${counts.incomplete} Incomplete</span>`);
   if (critical                 > 0) healthParts.push(`<span class="rq-hs-item rq-hs--critical">${critical} Critical</span>`);
   if (counts.needs_review      > 0) healthParts.push(`<span class="rq-hs-item rq-hs--moderate">${counts.needs_review} Needs Review</span>`);
-  if (counts.manually_verified > 0) healthParts.push(`<span class="rq-hs-item rq-hs--verified">${counts.manually_verified} Manually Verified</span>`);
+  if (counts.manually_verified > 0) healthParts.push(`<span class="rq-hs-item rq-hs--verified">${counts.manually_verified} Verified</span>`);
 
   const shouldExpand = counts.incomplete > 0;
 
@@ -13313,10 +14092,10 @@ function _rwRenderAll(t) {
 function _rwRenderScoreCard(rv) {
   const scoreCls = rv.score >= 80 ? 'rw-score-num--high' : rv.score >= 50 ? 'rw-score-num--mid' : 'rw-score-num--low';
   const statusLabels = {
-    incomplete:        'Incomplete Data',
+    incomplete:        'Incomplete',
     needs_review:      'Needs Review',
     verified:          'Verified',
-    manually_verified: 'Manually Verified',
+    manually_verified: 'Verified',
   };
   document.getElementById('rwScoreCard').innerHTML = `
     <div class="rw-score-card">
@@ -13899,21 +14678,18 @@ function renderPortfolioIntelligence(props, preRar) {
      </div>`;
 
   const rarVal = pid.revenueAtRisk.urgentAnnualAtRisk;
-  const metricsGrid = `
-  <div class="pid-grid">
-    ${tile(pid.propertyCount, 'Properties')}
-    ${tile(fmtPct(pid.occupancyRate), 'Occupancy',
-           pid.occupancyRate !== null && pid.occupancyRate < 80 ? 'pid-tile--warn' : '')}
-    ${tile(pid.walt != null ? pid.walt + ' yrs' : '—', 'WALT')}
-    ${tile(rarVal > 0 ? fmtM(rarVal) : '—', 'Revenue at Risk',
-           rarVal > 0 ? 'pid-tile--alert' : '')}
-    ${tile(pid.expiringCount || '—', 'Expiring Leases',
-           pid.expiringCount > 0 ? 'pid-tile--warn' : '')}
-    ${tile(pid.urgentCount || '—', 'Urgent Renewals',
-           pid.urgentCount  > 0 ? 'pid-tile--alert' : '')}
-    ${tile(pid.vacantSqft != null ? fmtSf(pid.vacantSqft) + ' sf' : '—', 'Vacant Sq Ft',
-           pid.vacantSqft  > 0 ? 'pid-tile--warn' : '')}
-  </div>`;
+  const metricTiles = [
+    tile(pid.propertyCount, 'Properties'),
+    tile(fmtPct(pid.occupancyRate), 'Occupancy',
+         pid.occupancyRate !== null && pid.occupancyRate < 80 ? 'pid-tile--warn' : ''),
+    pid.walt != null ? tile(pid.walt + ' yrs', 'WALT') : '',
+    // Only show Revenue at Risk, Expiring Leases, Urgent Renewals when non-zero
+    rarVal > 0 ? tile(fmtM(rarVal), 'Revenue at Risk', 'pid-tile--alert') : '',
+    pid.expiringCount > 0 ? tile(String(pid.expiringCount), 'Expiring Leases', 'pid-tile--warn') : '',
+    pid.urgentCount  > 0 ? tile(String(pid.urgentCount),   'Urgent Renewals',  'pid-tile--alert') : '',
+    pid.vacantSqft  > 0 ? tile(fmtSf(pid.vacantSqft) + ' sf', 'Vacant Sq Ft', 'pid-tile--warn') : '',
+  ].filter(Boolean).join('');
+  const metricsGrid = `<div class="pid-grid">${metricTiles}</div>`;
 
   // ── Top Risks ─────────────────────────────────────────────────────────
   const riskIcons = { revenue_at_risk: '&#x26A0;&#xFE0F;', vacant_sqft: '&#x1F4CA;', rollover_concentration: '&#x1F501;' };
@@ -13987,7 +14763,7 @@ function renderPortfolioIntelligence(props, preRar) {
     if (rd.readiness in rdCounts) rdCounts[rd.readiness]++;
   }
   const rdyOrder = [
-    { key: 'high_risk',            label: 'High Risk',    cls: 'rdy-high_risk' },
+    { key: 'high_risk',            label: 'Critical',     cls: 'rdy-high_risk' },
     { key: 'needs_review',         label: 'Needs Review', cls: 'rdy-needs-review' },
     { key: 'partially_verified',   label: 'Partial',      cls: 'rdy-partially_verified' },
     { key: 'reconciliation_ready', label: 'Ready',        cls: 'rdy-reconciliation_ready' },
@@ -14929,6 +15705,12 @@ function _renderLeaseAlertPanel(rar) {
   </div>`;
 }
 
+function _applyPortfolioSearch() {
+  // Re-render the full portfolio — fast because _props is in memory
+  // and the search only changes which cards are visible, not the data
+  renderPortfolio(_props);
+}
+
 function renderPortfolio(props) {
   props = props || _props; // handle no-arg calls
   if (!Array.isArray(props)) {
@@ -14941,33 +15723,30 @@ function renderPortfolio(props) {
 
   // Deterministic sort via Selectors — always has a stable tiebreaker, never returns 0
   const sortedPairs = Selectors.sortProperties(props.map((p, i) => ({ p, m: metas[i] })), _portfolioSort);
+  _portfolioSortedPairs = sortedPairs; // cache for search re-use
 
   // KPI tiles
   const k = portfolioKPIs(props);
-  // Use live dispute count from p.disputes[] — p.openDisputes is only written on save so can be stale
-  const liveOpenDisputes = props.reduce((s, p) => s + (p.disputes || []).filter(d => d.status === 'open').length, 0);
   document.getElementById('pKpiProperties').textContent  = k.properties;
+  document.getElementById('pKpiOccupancy').textContent   = k.occupancyPct !== null ? k.occupancyPct + '%' : '—';
   document.getElementById('pKpiCAM').textContent         = k.cam > 0 ? '$' + k.cam.toLocaleString('en-US') : '—';
-  document.getElementById('pKpiDisputes').textContent    = liveOpenDisputes;
-  document.getElementById('pKpiCritical').textContent    = k.criticalOrElevated;
-  document.getElementById('pKpiMissingDocs').textContent = k.totalMissingDocs;
-  document.getElementById('pKpiConfidence').textContent  = k.avgConf !== null ? k.avgConf + '%' : '—';
+  document.getElementById('pKpiReady').textContent       = k.readyCount;
+  document.getElementById('pKpiInProgress').textContent  = k.inProgressCount;
+  document.getElementById('pKpiNeedsReview').textContent = k.needsReviewCount;
 
-  // Light up non-risk KPIs from muted placeholder to amber once data is populated
-  const propEl = document.getElementById('pKpiProperties');
-  const camEl  = document.getElementById('pKpiCAM');
-  const confEl = document.getElementById('pKpiConfidence');
-  if (propEl) propEl.style.color = '#C9973A';
-  if (camEl)  camEl.style.color  = k.cam > 0 ? '#C9973A' : '';
-  if (confEl) confEl.style.color = k.avgConf !== null ? '#C9973A' : '';
-
-  // Conditional accent on risk-sensitive KPIs
-  const critEl = document.getElementById('pKpiCritical');
-  const dispEl = document.getElementById('pKpiDisputes');
-  const missEl = document.getElementById('pKpiMissingDocs');
-  if (critEl) critEl.style.color = k.criticalOrElevated > 0 ? '#f87171' : '#C9973A';
-  if (dispEl) dispEl.style.color = liveOpenDisputes       > 0 ? '#f87171' : '#C9973A';
-  if (missEl) missEl.style.color = k.totalMissingDocs    > 0 ? '#fbbf24' : '#C9973A';
+  // Accent colors
+  const propEl  = document.getElementById('pKpiProperties');
+  const occEl   = document.getElementById('pKpiOccupancy');
+  const camEl   = document.getElementById('pKpiCAM');
+  const readyEl = document.getElementById('pKpiReady');
+  const progEl  = document.getElementById('pKpiInProgress');
+  const revEl   = document.getElementById('pKpiNeedsReview');
+  if (propEl)  propEl.style.color  = '#C9973A';
+  if (occEl)   occEl.style.color   = k.occupancyPct !== null ? (k.occupancyPct < 80 ? '#fbbf24' : '#C9973A') : '';
+  if (camEl)   camEl.style.color   = k.cam > 0 ? '#C9973A' : '';
+  if (readyEl) readyEl.style.color = k.readyCount > 0 ? '#4ade80' : '#C9973A';
+  if (progEl)  progEl.style.color  = '#C9973A';
+  if (revEl)   revEl.style.color   = k.needsReviewCount > 0 ? '#f87171' : '#C9973A';
 
   // Sort buttons
   const sortCfg = [
@@ -15032,21 +15811,41 @@ function renderPortfolio(props) {
   // Property cards
   const statusLabel = { reconciled: 'Reconciled', 'in-progress': 'In Progress', disputes: 'Has Open Disputes' };
 
-  document.getElementById('propertyCardsGrid').innerHTML = sortedPairs.map(({ p, m }) => {
+  if (sortedPairs.length === 0) {
+    document.getElementById('propertyCardsGrid').innerHTML = `
+      <div class="ptf-empty-state">
+        <div class="ptf-empty-icon">&#x1F3E2;</div>
+        <div class="ptf-empty-title">No properties yet</div>
+        <div class="ptf-empty-desc">Load the demo to see a complete reconciliation — or create your first property and get audit-ready in 5 minutes.</div>
+        <div class="ptf-empty-cta">
+          <button class="ptf-empty-btn-primary" onclick="loadDemo()">&#x1F3AF; Try Live Demo</button>
+          <button class="ptf-empty-btn-secondary" onclick="addNewProperty()">+ Create Property</button>
+        </div>
+      </div>`;
+    renderReviewQueue(props);
+    _maybeShowWelcome(props);
+    document.getElementById('portfolioDashboard').style.display = 'block';
+    document.getElementById('propertyBreadcrumb').style.display = 'none';
+    document.getElementById('mainWorkflow').style.display       = 'none';
+    return;
+  }
+
+  const _displayPairs = _portfolioQuery
+    ? sortedPairs.filter(({ p }) => (p.name || '').toLowerCase().includes(_portfolioQuery.toLowerCase()) || (p.address || '').toLowerCase().includes(_portfolioQuery.toLowerCase()))
+    : sortedPairs;
+
+  document.getElementById('propertyCardsGrid').innerHTML = _displayPairs.length === 0
+    ? `<div class="ptf-empty-state"><div class="ptf-empty-icon">&#x1F50D;</div><div class="ptf-empty-title">No properties match "${esc(_portfolioQuery)}"</div></div>`
+    : _displayPairs.map(({ p, m }) => {
     const dm      = p._derivedMetrics || derivePropertyMetrics(p);
     const tenants = Array.isArray(p.tenants) ? p.tenants.length : (Number(p.tenantCount) || 0);
     const cam     = m.total || Number(p.totalCAM) || 0;
-    const status       = p.status || 'in-progress';
+    const status  = p.status || 'in-progress';
 
-    const riskBadge = (() => {
-      const cfg = {
-        Critical: 'ptf-risk--critical',
-        Elevated: 'ptf-risk--elevated',
-        Moderate: 'ptf-risk--moderate',
-        Low:      'ptf-risk--low',
-      }[m.riskLevel];
-      return cfg ? `<span class="ptf-risk-badge ${cfg}">${esc(m.riskLevel)}</span>` : '';
-    })();
+    // Per-property occupancy
+    const bsqft   = Number(p.totalSqft) || 0;
+    const occSqft = (Array.isArray(p.tenants) ? p.tenants : []).reduce((s, t) => s + (parseFloat(t.leased_sqft) || 0), 0);
+    const occPct  = bsqft > 0 ? Math.round((occSqft / bsqft) * 100) : null;
 
     const trendHtml = (() => {
       if (!m.trendDir) return '';
@@ -15077,6 +15876,12 @@ function renderPortfolio(props) {
                     : rd.readiness === 'reconciled'           ? ' rdy-reconciled-card'
                     : '';
 
+    // Risk label for display (maps riskLevel to business-friendly label)
+    const riskLabelMap = { Critical: 'Critical', Elevated: 'Elevated', Moderate: 'Moderate', Low: 'Low', None: '' };
+    const riskCssMap   = { Critical: 'ptf-risk--critical', Elevated: 'ptf-risk--elevated', Moderate: 'ptf-risk--moderate', Low: 'ptf-risk--low' };
+    const riskLabel    = riskLabelMap[m.riskLevel] || '';
+    const riskCls      = riskCssMap[m.riskLevel]  || '';
+
     return `
     <div class="ptf-prop-card status-${status}${activePropId === p.id ? ' active' : ''}${reviewUrgency}${rdCardCls}" onclick="selectProperty('${pid}')">
       <div class="ptf-card-top">
@@ -15096,42 +15901,42 @@ function renderPortfolio(props) {
         if (!ea) return '';
         const isExpired = ea.tier === 'expired';
         const isUrgent  = isExpired || ea.tier === 'critical';
-        const cls   = isUrgent ? 'ptf-stat--alert' : 'ptf-stat--warn';
         const label = isExpired ? `Expired` : 'Expiring';
         return `<div class="ptf-lease-expiry-banner ptf-lease-expiry--${isUrgent ? 'urgent' : 'warn'}">
           &#x1F514; ${ea.total} lease${ea.total !== 1 ? 's' : ''} ${label}
         </div>`;
       })()}
       <div class="ptf-stats-row">
+        ${occPct !== null ? `<div class="ptf-stat"><strong>${occPct}%</strong>Occupied</div>` : ''}
         <div class="ptf-stat"><strong>${tenants}</strong>Tenants</div>
-        ${dm.reviewStats.flaggedLeaseCount > 0
-          ? `<div class="ptf-stat ptf-stat--warn"><strong>${dm.reviewStats.flaggedLeaseCount}</strong>Lease Warnings</div>`
-          : ''}
-        ${dm.disputeStats.openDisputes > 0
-          ? `<div class="ptf-stat ptf-stat--alert"><strong>${dm.disputeStats.openDisputes}</strong>Disputes</div>`
-          : ''}
-        ${m.missingDocs > 0
-          ? `<div class="ptf-stat ptf-stat--warn"><strong>${m.missingDocs}</strong>Missing Docs</div>`
-          : ''}
+        ${cam > 0 ? `<div class="ptf-stat"><strong>$${cam.toLocaleString('en-US')}</strong>CAM</div>` : ''}
+        ${riskLabel ? `<div class="ptf-stat ${riskCls ? 'ptf-risk-stat ' + riskCls : ''}"><strong>${esc(riskLabel)}</strong></div>` : ''}
       </div>
+      ${(() => {
+        const pts = Array.isArray(p.tenants) ? p.tenants.filter(t => t && typeof t === 'object') : [];
+        const failedN  = pts.filter(t => t.extractionFailed).length;
+        const reviewN  = pts.filter(t => t._needsReview && !t.extractionFailed && t.status !== 'pending').length;
+        const parts = [failedN ? `${failedN} failed` : '', reviewN ? `${reviewN} need review` : ''].filter(Boolean);
+        return parts.length ? `<div class="ptf-tenant-health">&#x26A0; ${parts.join(' · ')}</div>` : '';
+      })()}
+      ${dm.disputeStats.openDisputes > 0
+        ? `<div class="ptf-stat-warning">&#x26A0; ${dm.disputeStats.openDisputes} open dispute${dm.disputeStats.openDisputes !== 1 ? 's' : ''}</div>`
+        : ''}
+      ${m.missingDocs > 0
+        ? `<div class="ptf-stat-warning">&#x1F4C4; ${m.missingDocs} missing document${m.missingDocs !== 1 ? 's' : ''}</div>`
+        : ''}
       ${reviewChips.length > 0 ? `
       <div class="property-review-summary">
         <span class="review-info">
           ${reviewChips.map(c => `<span class="review-chip ${c.cls}">${esc(c.label)}</span>`).join('')}
           <span class="review-health ${healthCls}">${reviewHealth}% Healthy</span>
         </span>
-        <button class="review-queue-btn" onclick="event.stopPropagation();selectProperty('${pid}')">AI Review ›</button>
+        <button class="review-queue-btn" onclick="event.stopPropagation();selectProperty('${pid}')">Review ›</button>
       </div>` : `
       <div class="ptf-card-action-row">
-        <button class="ptf-card-open-btn" onclick="event.stopPropagation();selectProperty('${pid}')">Open ›</button>
+        <button class="ptf-card-open-btn" onclick="event.stopPropagation();selectProperty('${pid}')">Open Property ›</button>
       </div>`}
-      ${cam > 0 ? `<div class="ptf-cam-lbl">CAM Reconciled</div><div class="ptf-cam-val">$${cam.toLocaleString('en-US')}</div>` : ''}
       ${footParts.length ? `<div class="ptf-card-foot">${footParts.join('')}</div>` : ''}
-      ${m.avgConf !== null
-        ? `<div class="ptf-conf-bar" title="${m.avgConf}% avg. match confidence">
-             <div class="ptf-conf-fill" style="width:${m.avgConf}%"></div>
-           </div>`
-        : ''}
     </div>`;
   }).join('') || `
     <div class="ptf-empty-state">
@@ -15144,13 +15949,10 @@ function renderPortfolio(props) {
       </div>
     </div>`;
 
-  // Hero identity text always visible — it's the brand anchor.
-  // Only hide the first-run CTA ("Start by running a demo…") once the user has properties.
-  const hasProps = props.length > 0;
-  const startEl = document.querySelector('.start-here');
-  if (startEl) startEl.style.display = hasProps ? 'none' : '';
+  // #demoWelcomePanel visibility is managed by _maybeShowWelcome() below.
 
   renderReviewQueue(props);
+  _maybeShowWelcome(props);
 
   document.getElementById('portfolioDashboard').style.display = 'block';
   document.getElementById('propertyBreadcrumb').style.display = 'none';
@@ -15170,9 +15972,17 @@ async function selectProperty(id) {
     return;
   }
 
-  // Fire-and-forget save for the property we're leaving — don't block navigation
+  // Save the property we're leaving — flush DOM values immediately (not debounced)
+  // so edits made between the last keypress and navigation are not discarded when
+  // resetWorkflow() cancels the pending debounce timer.
   if (activePropId && activePropId !== id) {
-    savePropertyData();
+    const leavingProp = _props.find(p => p.id === activePropId);
+    if (leavingProp) {
+      await savePropertyData();      // syncs DOM → leavingProp in _props
+      clearTimeout(_saveDebounceTimer);
+      _saveDebounceTimer = null;
+      saveProperty(leavingProp);     // fire-and-forget immediate write
+    }
   }
 
   // Switch active property and clear workflow state
@@ -15349,7 +16159,7 @@ function resetWorkflow() {
   invoiceData.length = 0;
   lastResults = []; lastInvoices = []; lastTenants = [];
   lastPropName = ''; lastTotal = 0; lastInvoicesFull = []; lastFullResults = [];
-  _lastReconIssues = []; _dwActiveDid = null;
+  _lastReconIssues = []; _dwActiveDid = null; _resultsStale = false;
   activityLog.splice(0, activityLog.length);
   disputes.length = 0;
   nextDisputeId = 0;
@@ -15520,7 +16330,18 @@ function _lsSave(property) {
     const stored = JSON.parse(_lsGet(_lsUserKey()) || '{}');
     stored[property.id] = _stripBlobs(property);
     _lsSet(_lsUserKey(), JSON.stringify(stored));
-  } catch (e) { }
+  } catch (e) {
+    logError('_lsSave', e, { propId: property?.id });
+    // Show once — don't flood the user with toasts on every rapid edit
+    if (!document.getElementById('_lsSaveErrToast')) {
+      const _t = document.createElement('div');
+      _t.id = '_lsSaveErrToast';
+      _t.style.cssText = 'position:fixed;bottom:20px;left:50%;transform:translateX(-50%);background:#92400e;color:#fef3c7;padding:10px 18px;border-radius:6px;z-index:9999;font-size:13px;max-width:90vw;text-align:center;';
+      _t.textContent = '⚠️ Local storage full — data may not be saved offline. Export your data now.';
+      document.body.appendChild(_t);
+      setTimeout(() => _t.remove(), 8000);
+    }
+  }
 }
 
 function _lsLoadAll() {
@@ -15733,32 +16554,88 @@ async function loadProperties() {
 const _resyncQueues = new Map();
 
 async function _doResyncTenantsToTable(propertyId, tenants) {
-  // SECURITY: no client-side auth check here — propertyId comes from the caller.
-  // Supabase RLS on the tenants table is the authoritative guard. Add RLS in Phase 8C-hardening.
-  const { error: delErr } = await db.from('tenants').delete().eq('property_id', propertyId);
-  if (delErr) {
-    console.error('[resyncTenantsToTable] delete error:', delErr.message, '| code:', delErr.code);
-    showToast('⚠️ Tenant sync failed — ' + delErr.message, { color: '#92400e', textColor: '#fef3c7', duration: 5000 });
-    return;
-  }
+  // Primary path: atomic delete+insert via resync_property_tenants() stored procedure.
+  // Requires migrations/009_atomic_tenant_resync.sql to have been applied in Supabase.
+  // If the function is absent (PGRST202), falls back to direct table ops silently.
   const rows = (tenants || [])
     .filter(t => t && t.tenant_name && !t._pendingJobReview)
     .map(t => ({
-      id:          t.id,
-      property_id: propertyId,
-      name:        t.tenant_name || null,
-      sqft:        Number(t.leased_sqft) || null,
-      cap:         t.cap ?? t.cam_cap ?? t.capPercentage ?? null,
-      start_date:  t.start_date || null,
-      end_date:    t.end_date   || null,
-      ...(t.leaseUrl ? { lease_url: t.leaseUrl } : {}),
-      lease_type:  t.lease_type || null,
+      id:         t.id,
+      name:       t.tenant_name || null,
+      sqft:       Number(t.leased_sqft) || null,
+      cap:        t.cap ?? t.cam_cap ?? t.capPercentage ?? null,
+      start_date: t.start_date || null,
+      end_date:   t.end_date   || null,
+      lease_url:  t.leaseUrl   || null,
+      lease_type: t.lease_type || null,
     }));
-  if (rows.length === 0) return;
-  const { error } = await db.from('tenants').insert(rows).select('id');
+
+  const { data, error } = await db.rpc('resync_property_tenants', {
+    p_property_id: propertyId,
+    p_rows:        rows,
+  });
+
   if (error) {
-    console.error('[resyncTenantsToTable] insert error:', error.message, '| code:', error.code);
+    // PGRST202: function not found — migration 009 not yet applied.
+    // Fall back to direct table operations so the app keeps working.
+    const isMissing = error.code === 'PGRST202'
+      || (error.message || '').toLowerCase().includes('could not find the function');
+    if (isMissing) {
+      console.warn('[resyncTenantsToTable] stored procedure not found — falling back to direct ops. Apply migrations/009_atomic_tenant_resync.sql in Supabase to enable atomic sync.');
+      return _doResyncTenantsDirectly(propertyId, rows);
+    }
+    console.error('[resyncTenantsToTable] RPC error:', error.message, '| code:', error.code);
     showToast('⚠️ Tenant sync failed — ' + error.message, { color: '#92400e', textColor: '#fef3c7', duration: 5000 });
+    return;
+  }
+  if (data && !data.ok) {
+    console.error('[resyncTenantsToTable] RPC returned not-ok:', data.error, data.code);
+    if (data.code === 'not_authorized') {
+      showToast('⚠️ Tenant sync blocked — session may have expired. Please refresh and try again.', { color: '#92400e', textColor: '#fef3c7', duration: 6000 });
+    } else {
+      showToast('⚠️ Tenant sync failed — ' + (data.error || 'unknown error'), { color: '#92400e', textColor: '#fef3c7', duration: 5000 });
+    }
+    return;
+  }
+  console.log('[resyncTenantsToTable] atomic resync OK — inserted:', data?.inserted ?? rows.length, 'rows for property', propertyId);
+}
+
+// Fallback: non-atomic delete+insert used when the stored procedure is unavailable.
+// Less safe than the RPC (insert failure leaves tenants deleted), but prevents total failure.
+async function _doResyncTenantsDirectly(propertyId, rows) {
+  const { error: delErr } = await db.from('tenants').delete().eq('property_id', propertyId);
+  if (delErr) {
+    console.error('[resyncTenantsDirectly] delete error:', delErr.message);
+    return;
+  }
+  if (!rows.length) return;
+  const insertRows = rows
+    .filter(r => r.name && r.name.trim())
+    .map(r => ({
+      id:          r.id,
+      property_id: propertyId,
+      name:        r.name,
+      sqft:        r.sqft,
+      cap:         r.cap,
+      start_date:  r.start_date || null,
+      end_date:    r.end_date   || null,
+      lease_url:   r.lease_url  || null,
+      lease_type:  r.lease_type || null,
+    }));
+  if (!insertRows.length) return;
+  const { error: insErr } = await db.from('tenants').upsert(insertRows, { onConflict: 'id' });
+  if (insErr) {
+    console.error('[resyncTenantsDirectly] insert error:', insErr.message);
+    // The delete already committed — tenants table is now empty for this property.
+    // Show a critical error and attempt to re-save from in-memory state so the
+    // data is at least persisted to localStorage until the user reloads.
+    showToast('⚠ Tenant sync error — your lease data is safe in this browser session but could not be saved to the database. Please stay on this page and try saving again.', { color: '#7f1d1d', textColor: '#fca5a5', duration: 10000 });
+    // Re-trigger a full property save (localStorage + Supabase properties table)
+    // so the data is not silently lost if the user navigates away.
+    const _recProp = currentProperty();
+    if (_recProp?.id === propertyId) savePropertyData();
+  } else {
+    console.log('[resyncTenantsDirectly] fallback resync OK —', insertRows.length, 'rows for property', propertyId);
   }
 }
 
@@ -15805,8 +16682,17 @@ async function syncTenantsToTable(propertyId, tenants) {
       lease_type:  t.lease_type || null,
     }));
   if (rows.length === 0) return;
-  const { error } = await db.from('tenants').insert(rows).select('id');
-  if (error) console.error('[syncTenantsToTable] insert error:', error.message);
+  const { error } = await db.from('tenants').upsert(rows, { onConflict: 'id' }).select('id');
+  if (error) { console.error('[syncTenantsToTable] upsert error:', error.message); return; }
+
+  // After upsert succeeds, delete orphaned rows
+  const currentIds = rows.map(r => r.id).filter(Boolean);
+  if (currentIds.length > 0) {
+    await db.from('tenants')
+      .delete()
+      .eq('property_id', propertyId)
+      .not('id', 'in', `(${currentIds.map(id => `'${id}'`).join(',')})`);
+  }
 }
 
 // ─────────────────────────────────────────────────────────────────────────────
@@ -16070,6 +16956,14 @@ function _startLeaseValidation(panelId, tenantIdx) {
 
 async function saveCamResults(propertyId, fullResults, year, totalExpenses = null) {
   if (!propertyId || !year) return { ok: false, reason: 'missing propertyId or year' };
+
+  // Delete previous reconciliation rows for this property+year before inserting new ones
+  try {
+    await db.from('cam_reconciliations').delete().match({ property_id: propertyId, year: year });
+  } catch (_delErr) {
+    console.warn('[saveCamResults] pre-delete failed (non-fatal):', _delErr?.message);
+  }
+
   const reconciledAt = new Date().toISOString();
   const rows = (fullResults || []).map(r => {
     const actual   = r.actualCam ?? r.totalAllocated ?? null;
@@ -16483,7 +17377,19 @@ async function saveProperty(property) {
     const msg = e?.message || String(e);
     const isNetErr  = /load failed|failed to fetch|networkerror|offline/i.test(msg);
 
-    if (isNetErr) return;
+    if (isNetErr) {
+      // Stay in 'local' — data is safe in localStorage. Show a non-alarming offline notice.
+      const prev = document.getElementById('_offlineToast');
+      if (!prev) {
+        const t = document.createElement('div');
+        t.id = '_offlineToast';
+        t.style.cssText = 'position:fixed;bottom:20px;left:50%;transform:translateX(-50%);background:#1e3a5f;color:#bfdbfe;padding:10px 18px;border-radius:6px;z-index:9999;font-size:13px;box-shadow:0 4px 12px rgba(0,0,0,.3);max-width:90vw;text-align:center;';
+        t.textContent = '📶 Offline — changes saved locally and will sync automatically when reconnected.';
+        document.body.appendChild(t);
+        setTimeout(() => t.remove(), 6000);
+      }
+      return;
+    }
     if (gen !== _saveGeneration) return; // stale error — a newer save supersedes this one
 
     _setSyncStatus('error', msg);
@@ -16524,6 +17430,8 @@ let _saveDebounceTimer = null;
 // Snapshot current in-memory state back into the canonical _props entry and
 // persist to Supabase. Debounced — rapid successive calls collapse into one write.
 async function savePropertyData() {
+  // Tenant-role users have read-only access — writes are not permitted
+  if (window.AuthService?.getCurrentUser()?.role === 'tenant') return;
   // SECURITY: tenant mode never sets activePropId, so this guard stops all saves
   // passively. Most other mutating functions (removeInvItem, clearBulkResults, etc.)
   // are similarly protected — they all return early when activePropId/currentProperty()
@@ -16600,6 +17508,10 @@ async function savePropertyData() {
 // absent — rebuilds a minimal camReconciliation from the rows so results still
 // restore. Mutates dbData in place. No-op when camRows is empty.
 function _mergeCamReconciliationRows(dbData, camRows) {
+  // NOTE (fieldEvidence fallback): when the tenant_field_evidence normalized table returns 0
+  // rows for a tenant, the JSON blob at property.data.tenants[].fieldEvidence serves as the
+  // fallback. That blob is loaded via loadPropertyData → _props hydration and is already
+  // present in tenantData before this function runs. No additional fallback code is needed here.
   if (!dbData || !Array.isArray(camRows) || !camRows.length) return;
 
   dbData.tenants = (dbData.tenants || []).map(t => {
@@ -17019,6 +17931,7 @@ function renderProperty(property) {
   _obSyncState();
 
   window.scrollTo({ top: 0, behavior: 'smooth' });
+  _obSyncState();
 }
 
 // Wipe saved data for the active property and reset the workflow UI.
@@ -17461,6 +18374,38 @@ function closeAcquisitionDetail() {
   window.scrollTo({ top: 0, behavior: 'smooth' });
 }
 
+async function deleteActiveAcquisitionReview() {
+  const id     = _activeAcqId;
+  const review = _acqReviews.find(r => r.id === id);
+  if (!id || !review) return;
+
+  if (!confirm(`Permanently delete the review "${review.name}"?\n\nThis cannot be undone.`)) return;
+
+  try {
+    const { data: { user } } = await db.auth.getUser();
+    if (!user?.id) { showToast('⚠️ Not signed in', { color: '#92400e', textColor: '#fef3c7' }); return; }
+
+    const { error } = await db
+      .from('acquisition_reviews')
+      .delete()
+      .eq('id', id)
+      .eq('user_id', user.id);
+
+    if (error) {
+      console.error('[deleteAcqReview] error:', error.message, '| code:', error.code);
+      showToast('⚠️ Delete failed — ' + error.message, { color: '#92400e', textColor: '#fef3c7', duration: 5000 });
+      return;
+    }
+
+    _acqReviews = _acqReviews.filter(r => r.id !== id);
+    showToast(`"${review.name}" deleted.`);
+    closeAcquisitionDetail();
+  } catch (e) {
+    console.error('[deleteAcqReview] exception:', e.message);
+    showToast('⚠️ Delete failed — please try again', { color: '#92400e', textColor: '#fef3c7', duration: 5000 });
+  }
+}
+
 // ── Acquisition → Property conversion ─────────────────────────────────────────
 
 function _renderAcqConvertAction(review) {
@@ -17543,8 +18488,9 @@ async function convertAcquisitionToProperty() {
     if (badge) { badge.textContent = 'converted'; badge.className = 'acq-detail-badge converted'; }
     _renderAcqConvertAction(review);
 
-    // Refresh portfolio grid so the card shows 'converted' badge
+    // Refresh acquisition section and portfolio grid so the new property card appears immediately
     _renderAcqSection(_acqReviews);
+    renderPortfolio();
 
     _hideAcqConvertModal();
 
@@ -17745,6 +18691,22 @@ function _renderAcqReport(report, container) {
   const missedCls  = s.annualMissedRecovery > 0 ? 'danger' : 'safe';
   const recoverCls = s.recoveryRate >= 90 ? 'safe' : s.recoveryRate >= 70 ? '' : 'danger';
 
+  // ── Inline verdict banner ──────────────────────────────────────────────────
+  const _annualAtRisk = (s.annualMissedRecovery || 0) + (s.capLeakageAnnualized || 0);
+  const _verdict = (s.criticalRenewalCount > 0 || s.recoveryRate < 70 || s.openAuditWindows > 0)
+    ? 'Additional Due Diligence Required'
+    : (s.recoveryRate < 90 || _annualAtRisk > 0)
+    ? 'Proceed with Conditions'
+    : 'Proceed';
+  const _vc = _verdict === 'Proceed' ? '#4ade80' : _verdict === 'Proceed with Conditions' ? '#fbbf24' : '#f87171';
+  const execSummaryInline = `
+    <div style="display:flex;align-items:center;gap:10px;padding:10px 14px;background:#1e293b;border-radius:7px;margin-bottom:14px;">
+      <span style="display:inline-block;width:9px;height:9px;border-radius:50%;background:${_vc};flex-shrink:0;"></span>
+      <span style="font-size:0.84rem;font-weight:700;color:${_vc};">${esc(_verdict)}</span>
+      <span style="margin-left:6px;font-size:0.79rem;color:#64748b;">Recovery ${s.recoveryRate != null ? s.recoveryRate + '%' : '—'} &middot; ${fmt(_annualAtRisk)}/yr at risk &middot; ${s.criticalRenewalCount} critical renewal${s.criticalRenewalCount !== 1 ? 's' : ''}</span>
+      <button class="acq-export-btn" style="margin-left:auto;" onclick="generateAcquisitionReport()">&#x1F4CB; Decision Report</button>
+    </div>`;
+
   // ── Tenant Summary ──────────────────────────────────────────────────────────
   const tenantSummaryHtml = (() => {
     const ts = report.tenantSummary || [];
@@ -17896,11 +18858,11 @@ function _renderAcqReport(report, container) {
 
   const exportBar = `
   <div class="acq-export-bar">
-    <button class="acq-export-btn" onclick="acqExportPdf()">&#x1F4E5; Export PDF</button>
-    <span class="acq-export-note">PDF export coming soon — full report with citations.</span>
+    <button class="acq-export-btn" onclick="acqExportPdf()">&#x1F4E5; Print / Save PDF</button>
+    <button class="acq-export-btn" onclick="acqExportRentRollCsv()">&#x1F4C8; Rent Roll CSV</button>
   </div>`;
 
-  const riskTabContent = `${kpis}${topRisksHtml}${findingsHtml}${tenantTable}${auditHtml}${renewalHtml}${proRataHtml}${exportBar}`;
+  const riskTabContent = `${execSummaryInline}${kpis}${topRisksHtml}${findingsHtml}${tenantTable}${auditHtml}${renewalHtml}${proRataHtml}${exportBar}`;
   const rrTabContent   = _renderRentRollTab(report.rentRoll, report.tenantSummary || []);
 
   container.innerHTML = `
@@ -18052,10 +19014,12 @@ function _renderRentRollTab(rentRoll, tenantSummary) {
 
   const schedHtml = sched.length ? `
   <div class="acq-section-sub">Lease Expiration Schedule</div>
+  <div class="acq-ts-scroll">
   <table class="acq-ts-table acq-exp-sched">
     <thead><tr><th>Year</th><th>Leases</th><th>Sq Ft</th><th style="min-width:120px"></th></tr></thead>
     <tbody>${schedRows}</tbody>
-  </table>` : '';
+  </table>
+  </div>` : '';
 
   const rollCard = (data, cls, label) => `
   <div class="acq-rollover-card ${data.count > 0 ? cls : ''}">
@@ -18110,7 +19074,315 @@ function acqExportRentRollCsv() {
 }
 
 function acqExportPdf() {
-  alert('PDF export is coming soon. The full report with citations and evidence appendix will be available in the next release.');
+  const review  = _acqReviews.find(r => r.id === _activeAcqId);
+  const reportEl = document.getElementById('acqReportContainer');
+  if (!reportEl || !reportEl.innerHTML.trim()) {
+    showToast('Run analysis first to generate a report.', { color: '#92400e', textColor: '#fef3c7' });
+    return;
+  }
+
+  const title   = (review?.name || 'Acquisition Review') + ' — Due Diligence Report';
+  const date    = new Date().toLocaleDateString('en-US', { year: 'numeric', month: 'long', day: 'numeric' });
+  const content = reportEl.innerHTML;
+
+  const win = window.open('', '_blank');
+  if (!win) {
+    showToast('⚠️ Pop-up blocked — allow pop-ups for this site to export PDF.', { color: '#92400e', textColor: '#fef3c7', duration: 5000 });
+    return;
+  }
+
+  win.document.write(`<!DOCTYPE html><html><head>
+    <meta charset="UTF-8">
+    <title>${esc(title)}</title>
+    <style>
+      *, *::before, *::after { box-sizing: border-box; }
+      body { font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', sans-serif;
+             font-size: 13px; color: #1e293b; background: #fff; margin: 0; padding: 24px 32px; }
+      h1 { font-size: 1.25rem; font-weight: 700; margin: 0 0 4px; }
+      .print-header { border-bottom: 2px solid #e2e8f0; padding-bottom: 12px; margin-bottom: 20px; }
+      .print-date   { font-size: 0.8rem; color: #64748b; }
+
+      /* KPIs */
+      .acq-kpi-row  { display: flex; flex-wrap: wrap; gap: 10px; margin-bottom: 18px; }
+      .acq-kpi      { border: 1px solid #e2e8f0; border-radius: 6px; padding: 10px 14px; min-width: 120px; flex: 1; }
+      .acq-kpi-val  { font-size: 1.2rem; font-weight: 700; color: #0f172a; }
+      .acq-kpi-val.danger { color: #dc2626; }
+      .acq-kpi-val.safe   { color: #16a34a; }
+      .acq-kpi-lbl  { font-size: 0.7rem; color: #64748b; text-transform: uppercase; letter-spacing: 0.05em; margin-top: 2px; }
+
+      /* Sections */
+      .acq-section-sub { font-size: 0.72rem; font-weight: 700; text-transform: uppercase;
+                         letter-spacing: 0.06em; color: #64748b; margin: 16px 0 6px; }
+      .acq-report-title { font-size: 0.95rem; font-weight: 700; margin-bottom: 12px; }
+
+      /* Risk items */
+      .acq-top-risks h3 { font-size: 0.82rem; color: #64748b; font-weight: 600; margin: 0 0 8px; }
+      .acq-risk-item { display: flex; gap: 10px; padding: 8px; border: 1px solid #e2e8f0;
+                       border-radius: 6px; margin-bottom: 6px; }
+      .acq-risk-icon  { flex-shrink: 0; }
+      .acq-risk-label { font-size: 0.82rem; font-weight: 600; }
+      .acq-risk-detail { font-size: 0.73rem; color: #64748b; margin-top: 2px; }
+      .acq-risk-impact { margin-left: auto; font-size: 0.82rem; font-weight: 700; color: #dc2626; white-space: nowrap; }
+
+      /* Findings */
+      .acq-findings-list { display: flex; flex-direction: column; gap: 6px; margin-bottom: 18px; }
+      .acq-finding-item  { padding: 8px 10px; border: 1px solid #e2e8f0; border-left: 3px solid #c9973a; border-radius: 6px; }
+      .acq-finding-tenant { font-size: 0.82rem; font-weight: 700; }
+      .acq-finding-label  { font-size: 0.73rem; color: #64748b; }
+      .acq-finding-cite   { font-size: 0.73rem; color: #64748b; font-style: italic;
+                            background: #f8fafc; border-left: 2px solid #cbd5e1; padding: 4px 8px;
+                            margin-top: 4px; border-radius: 2px; white-space: pre-wrap; word-break: break-word; }
+
+      /* Tables */
+      .acq-ts-scroll  { overflow: visible; }
+      .acq-ts-table   { width: 100%; border-collapse: collapse; font-size: 0.75rem; }
+      .acq-ts-table th { text-align: left; border-bottom: 2px solid #e2e8f0; padding: 6px 8px;
+                          font-size: 0.68rem; text-transform: uppercase; letter-spacing: 0.04em; color: #64748b; }
+      .acq-ts-table td { padding: 6px 8px; border-bottom: 1px solid #f1f5f9; color: #374151; vertical-align: top; }
+      .acq-ts-name    { font-weight: 600; color: #0f172a !important; }
+      .acq-risk-badge { display: inline-block; padding: 1px 6px; border-radius: 8px; font-size: 0.68rem; font-weight: 600; }
+      .acq-risk-badge.cap { background: #fee2e2; color: #dc2626; }
+      .acq-risk-badge.none { background: #dcfce7; color: #16a34a; }
+      .acq-risk-badge.exclusions { background: #fef3c7; color: #92400e; }
+      .acq-risk-badge.partial_match { background: #f1f5f9; color: #64748b; }
+
+      /* Audit chips */
+      .acq-audit-chip { display: inline-block; padding: 2px 8px; border-radius: 10px;
+                        font-size: 0.7rem; font-weight: 600; margin: 2px 3px 2px 0; }
+      .acq-audit-chip.open    { background: #dcfce7; color: #15803d; }
+      .acq-audit-chip.closing { background: #fef3c7; color: #92400e; }
+      .acq-audit-chip.expired { background: #fee2e2; color: #b91c1c; }
+      .acq-audit-chip.none, .acq-audit-chip.unknown { background: #f1f5f9; color: #64748b; }
+
+      /* Hide export bar and tabs in print */
+      .acq-export-bar, .acq-report-tabs, .acq-report-tab-btn,
+      .acq-report-tab-content:not([style*="display: block"]):not([style*="display:block"]) { display: none !important; }
+      .acq-report-tab-content { display: block !important; }
+
+      @media print {
+        body { padding: 12px 16px; }
+        @page { margin: 15mm; }
+        .acq-risk-item, .acq-finding-item, .acq-kpi { break-inside: avoid; }
+      }
+    </style>
+  </head><body>
+    <div class="print-header">
+      <h1>${esc(title)}</h1>
+      <div class="print-date">Generated ${esc(date)}</div>
+    </div>
+    ${content}
+    <script>window.onload = function() { window.print(); };<\/script>
+  </body></html>`);
+  win.document.close();
+}
+
+function generateAcquisitionReport() {
+  const review = _acqReviews.find(r => r.id === _activeAcqId);
+  if (!review?.data?.analysis) {
+    showToast('Run analysis first to generate a report.', { color: '#92400e', textColor: '#fef3c7' });
+    return;
+  }
+  const a        = review.data.analysis;
+  const s        = a.summary;
+  const now      = new Date().toLocaleDateString('en-US', { year: 'numeric', month: 'long', day: 'numeric' });
+  const propName = review.name || 'Acquisition Review';
+
+  const fmt     = v => v != null ? '$' + parseFloat(v).toLocaleString('en-US', { maximumFractionDigits: 0 }) : '—';
+  const pct     = v => v != null ? v + '%' : '—';
+  const fmtDate = iso => {
+    if (!iso) return '—';
+    const d = new Date(iso + 'T12:00:00');
+    return isNaN(d.getTime()) ? String(iso) : d.toLocaleDateString('en-US', { month: 'short', year: 'numeric' });
+  };
+  const fmtSqft = v => v != null ? Number(v).toLocaleString('en-US') + ' sf' : '—';
+
+  // ── Decision verdict ───────────────────────────────────────────────────────
+  const annualAtRisk = (s.annualMissedRecovery || 0) + (s.capLeakageAnnualized || 0);
+  const verdict = (s.criticalRenewalCount > 0 || s.recoveryRate < 70 || s.openAuditWindows > 0)
+    ? 'Additional Due Diligence Required'
+    : (s.recoveryRate < 90 || annualAtRisk > 0)
+    ? 'Proceed with Conditions'
+    : 'Proceed';
+  const vcColor = verdict === 'Proceed' ? '#4ade80' : verdict === 'Proceed with Conditions' ? '#fbbf24' : '#f87171';
+
+  const rationale = [
+    s.recoveryRate != null && `CAM recovery rate is ${s.recoveryRate}%${s.recoveryRate < 70 ? ' — below the 70% threshold' : s.recoveryRate < 90 ? ' — below the 90% target' : ' — within target range'}.`,
+    annualAtRisk > 0 && `${fmt(annualAtRisk)}/yr at risk from cap leakage and missed recoveries.`,
+    s.criticalRenewalCount > 0 && `${s.criticalRenewalCount} critical lease renewal${s.criticalRenewalCount !== 1 ? 's' : ''} require immediate attention.`,
+    s.openAuditWindows > 0 && `${s.openAuditWindows} open audit window${s.openAuditWindows !== 1 ? 's' : ''} present unresolved liability.`,
+  ].filter(Boolean);
+
+  // ── Section 1: Decision Summary ────────────────────────────────────────────
+  const section1 = `
+  <div style="border:2px solid ${vcColor};border-radius:8px;padding:16px 20px;margin-bottom:24px;background:rgba(255,255,255,0.03);">
+    <div style="font-size:0.69rem;font-weight:700;text-transform:uppercase;letter-spacing:0.1em;color:${vcColor};margin-bottom:6px;">Acquisition Decision</div>
+    <div style="font-size:1.2rem;font-weight:800;color:${vcColor};margin-bottom:12px;">${esc(verdict)}</div>
+    ${rationale.map(r => `<div style="font-size:0.82rem;color:#CBD5E1;margin-bottom:5px;padding-left:10px;border-left:2px solid ${vcColor};">${esc(r)}</div>`).join('')}
+  </div>`;
+
+  // ── Section 2: Revenue Recovery Analysis ──────────────────────────────────
+  const causeLabel = { cap: 'CAM Cap', exclusions: 'Exclusions', partial_match: 'Unmatched Invoices', none: 'Fully Allocated' };
+  const recRateColor = s.recoveryRate >= 90 ? '#4ade80' : s.recoveryRate >= 70 ? '#fbbf24' : '#f87171';
+
+  const underbillingRows = (a.underbilling || []).map(r => `
+    <tr>
+      <td style="font-weight:600;">${esc(r.tenantName)}</td>
+      <td style="text-align:right">${fmt(r.fullLiability)}</td>
+      <td style="text-align:right">${fmt(r.allocatedAmount)}</td>
+      <td style="text-align:right;color:${r.gap > 0 ? '#f87171' : '#4ade80'};font-weight:${r.gap > 0 ? '700' : '400'};">${fmt(r.gap)}</td>
+      <td>${esc(causeLabel[r.cause] || r.cause)}</td>
+    </tr>`).join('');
+
+  const section2 = `
+  <div class="rpt-section-title">Revenue Recovery Analysis</div>
+  <div class="rpt-kpi-row">
+    <div class="rpt-kpi"><div class="kpi-val" style="color:${recRateColor}">${pct(s.recoveryRate)}</div><div class="kpi-lbl">Recovery Rate</div></div>
+    <div class="rpt-kpi"><div class="kpi-val" style="color:${s.annualMissedRecovery > 0 ? '#f87171' : '#4ade80'}">${fmt(s.annualMissedRecovery)}</div><div class="kpi-lbl">Annual Missed Recovery</div></div>
+    <div class="rpt-kpi"><div class="kpi-val" style="color:${s.capLeakageAnnualized > 0 ? '#f87171' : '#4ade80'}">${fmt(s.capLeakageAnnualized)}</div><div class="kpi-lbl">Cap Leakage/yr</div></div>
+    <div class="rpt-kpi"><div class="kpi-val" style="color:${annualAtRisk > 0 ? '#f87171' : '#4ade80'}">${fmt(annualAtRisk)}</div><div class="kpi-lbl">Total At Risk/yr</div></div>
+  </div>
+  ${underbillingRows ? `<table class="rpt-table">
+    <thead><tr>
+      <th>Tenant</th>
+      <th style="text-align:right">Full Liability</th>
+      <th style="text-align:right">Allocated</th>
+      <th style="text-align:right">Gap</th>
+      <th>Cause</th>
+    </tr></thead>
+    <tbody>${underbillingRows}</tbody>
+  </table>` : '<p style="color:#64748b;font-size:0.82rem;margin:0 0 20px;">No underbilling data available.</p>'}`;
+
+  // ── Section 3: Lease Stability ─────────────────────────────────────────────
+  const rr   = a.rentRoll;
+  const occ  = rr?.occupancy  || {};
+  const walt = rr?.walt       || {};
+  const roll = rr?.rolloverRisk || { expiring12: { count: 0, sqft: 0, tenants: [] }, expiring24: { count: 0, sqft: 0, tenants: [] } };
+  const occColor = occ.occupancyRate >= 90 ? '#4ade80' : occ.occupancyRate < 70 ? '#f87171' : '#fbbf24';
+
+  const renewalRiskRows = (a.renewalRisk || []).map(r => {
+    const rLabel = r.riskLevel === 'critical' ? 'Critical' : r.riskLevel === 'high' ? 'Elevated' : 'Moderate';
+    const rColor = r.riskLevel === 'critical' ? '#f87171' : r.riskLevel === 'high' ? '#fbbf24' : '#93c5fd';
+    const days   = r.daysToExpiry !== null ? (r.daysToExpiry < 0 ? 'Expired' : `${r.daysToExpiry} days`) : '—';
+    const cite   = r.citation?.text
+      ? `<div style="font-size:0.71rem;font-style:italic;color:#94a3b8;border-left:2px solid rgba(255,255,255,0.1);padding:2px 6px;margin-top:3px;">"${esc(r.citation.text.length > 100 ? r.citation.text.slice(0, 100) + '…' : r.citation.text)}"</div>`
+      : '';
+    return `<tr>
+      <td style="font-weight:600;">${esc(r.tenantName)}</td>
+      <td>${fmtDate(r.leaseEnd)}</td>
+      <td>${esc(days)}</td>
+      <td style="color:${rColor};font-weight:600;">${esc(rLabel)}</td>
+      <td>${cite}</td>
+    </tr>`;
+  }).join('');
+
+  const section3 = `
+  <div class="rpt-section-title">Lease Stability</div>
+  <div class="rpt-kpi-row">
+    <div class="rpt-kpi"><div class="kpi-val" style="color:${occColor}">${pct(occ.occupancyRate)}</div><div class="kpi-lbl">Occupancy</div></div>
+    <div class="rpt-kpi"><div class="kpi-val">${walt.walt != null ? walt.walt + ' yrs' : '—'}</div><div class="kpi-lbl">WALT</div></div>
+    <div class="rpt-kpi"><div class="kpi-val" style="color:${roll.expiring12.count > 0 ? '#f87171' : '#4ade80'}">${roll.expiring12.count}</div><div class="kpi-lbl">Exp. ≤12 Mo</div></div>
+    <div class="rpt-kpi"><div class="kpi-val" style="color:${roll.expiring24.count > 0 ? '#fbbf24' : '#4ade80'}">${roll.expiring24.count}</div><div class="kpi-lbl">Exp. ≤24 Mo</div></div>
+    <div class="rpt-kpi"><div class="kpi-val" style="color:${s.criticalRenewalCount > 0 ? '#f87171' : '#4ade80'}">${s.criticalRenewalCount}</div><div class="kpi-lbl">Critical Renewals</div></div>
+  </div>
+  ${renewalRiskRows ? `<table class="rpt-table">
+    <thead><tr>
+      <th>Tenant</th><th>Lease End</th><th>Time Remaining</th><th>Risk Level</th><th>Renewal Clause</th>
+    </tr></thead>
+    <tbody>${renewalRiskRows}</tbody>
+  </table>` : ''}`;
+
+  // ── Section 4: Due Diligence Items ─────────────────────────────────────────
+  const findingTypeLabel = {
+    cap_leakage:       'CAM Cap Leakage',
+    unusual_exclusion: 'Unusual Exclusion',
+    audit_window:      'Audit Window',
+    underbilling:      'Underbilling',
+    renewal_risk:      'Renewal Risk',
+  };
+  const findingRisk = {
+    cap_leakage:       { label: 'Elevated', color: '#fbbf24' },
+    unusual_exclusion: { label: 'Moderate', color: '#93c5fd' },
+    audit_window:      { label: 'Elevated', color: '#fbbf24' },
+    underbilling:      { label: 'Critical', color: '#f87171' },
+    renewal_risk:      { label: 'Critical', color: '#f87171' },
+  };
+
+  const findingItems = (a.findings || []).map(f => {
+    const tl   = findingTypeLabel[f.type] || f.label;
+    const risk = findingRisk[f.type] || { label: 'Moderate', color: '#93c5fd' };
+    const cite = f.citation?.text
+      ? `<div style="font-size:0.72rem;font-style:italic;color:#94a3b8;background:rgba(255,255,255,0.04);border-left:2px solid rgba(255,255,255,0.12);padding:4px 8px;margin-top:5px;border-radius:2px;word-break:break-word;">"${esc(f.citation.text.length > 180 ? f.citation.text.slice(0, 180) + '…' : f.citation.text)}"</div>`
+      : '';
+    const val  = f.annualValue ? `<div style="font-size:0.82rem;font-weight:700;color:#f87171;white-space:nowrap;">${fmt(f.annualValue)}/yr</div>` : '';
+    return `
+    <div style="display:flex;gap:12px;align-items:flex-start;padding:10px 12px;border:1px solid rgba(255,255,255,0.07);border-left:3px solid ${risk.color};border-radius:6px;margin-bottom:6px;">
+      <div style="flex:1;min-width:0;">
+        <div style="display:flex;align-items:center;gap:8px;flex-wrap:wrap;margin-bottom:2px;">
+          <span style="font-size:0.83rem;font-weight:700;color:#E2E8F0;">${esc(f.tenantName)}</span>
+          <span style="font-size:0.72rem;color:#64748b;">${esc(tl)}</span>
+          <span style="font-size:0.67rem;font-weight:600;color:${risk.color};">[${risk.label}]</span>
+        </div>
+        ${f.label && f.label !== tl ? `<div style="font-size:0.78rem;color:#94a3b8;margin-bottom:2px;">${esc(f.label)}</div>` : ''}
+        ${cite}
+      </div>
+      ${val}
+    </div>`;
+  }).join('');
+
+  const auditWinItems = (a.auditWindows || []).map(w => {
+    const wColor = w.windowStatus === 'open' ? '#4ade80' : w.windowStatus === 'closing' ? '#fbbf24' : '#f87171';
+    return `<tr>
+      <td style="font-weight:600;">${esc(w.tenantName)}</td>
+      <td style="color:${wColor};font-weight:600;text-transform:capitalize;">${esc(w.windowStatus)}</td>
+      <td>${esc(w.auditPeriod || '—')}</td>
+    </tr>`;
+  }).join('');
+
+  const section4 = `
+  <div class="rpt-section-title">Due Diligence Items</div>
+  ${findingItems || '<p style="color:#64748b;font-size:0.82rem;margin:0 0 16px;">No findings identified.</p>'}
+  ${auditWinItems ? `
+  <div style="margin-top:12px;">
+    <div style="font-size:0.69rem;font-weight:700;text-transform:uppercase;letter-spacing:0.08em;color:#94a3b8;margin-bottom:6px;">Audit Windows</div>
+    <table class="rpt-table">
+      <thead><tr><th>Tenant</th><th>Status</th><th>Audit Period</th></tr></thead>
+      <tbody>${auditWinItems}</tbody>
+    </table>
+  </div>` : ''}`;
+
+  // ── Section 5: Tenant Roster ───────────────────────────────────────────────
+  const tenantRows = (a.tenantSummary || []).map(t => `
+    <tr>
+      <td style="font-weight:600;">${esc(t.tenant_name)}</td>
+      <td>${fmtSqft(t.leased_sqft)}</td>
+      <td>${fmtDate(t.lease_start)} – ${fmtDate(t.lease_end)}</td>
+      <td>${esc(t.renewal_options || '—')}</td>
+      <td>${esc(t.cam_structure || '—')}</td>
+    </tr>`).join('');
+
+  const section5 = `
+  <div class="rpt-section-title">Tenant Roster</div>
+  ${tenantRows ? `<table class="rpt-table">
+    <thead><tr>
+      <th>Tenant</th><th>Sq Ft</th><th>Lease Term</th><th>Renewal Options</th><th>CAM Structure</th>
+    </tr></thead>
+    <tbody>${tenantRows}</tbody>
+  </table>` : '<p style="color:#64748b;font-size:0.82rem;margin:0 0 16px;">No tenant data available.</p>'}`;
+
+  const body = `
+  ${_rptHeader(propName, 'Acquisition Decision Report', now, now, [
+    { label: 'Tenants',       value: s.tenantCount },
+    { label: 'Recovery Rate', value: pct(s.recoveryRate) },
+    { label: 'Verdict',       value: verdict },
+  ])}
+  ${section1}
+  ${section2}
+  ${section3}
+  ${section4}
+  ${section5}
+  ${_rptFooter(propName, 'Acquisition Decision Report', now)}`;
+
+  openReport('Acquisition Decision Report — ' + propName, body);
 }
 
 function _genUUID() {

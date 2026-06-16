@@ -254,6 +254,13 @@ const MOCK_INVOICES = [
     // Override window.prompt so the dialog auto-returns the test name
     await page.evaluate(() => { window.prompt = () => '123 Main Street Acquisition'; });
 
+    // Dismiss the onboarding welcome modal if it is visible — it intercepts
+    // pointer events and would block all subsequent clicks in the test.
+    await page.evaluate(() => {
+      const m = document.getElementById('obWelcomeModal');
+      if (m && m.style.display !== 'none') { if (typeof obCloseWelcome === 'function') obCloseWelcome('skip'); else m.style.display = 'none'; }
+    });
+
     await page.click('.acq-new-btn');
     // Detail panel should appear
     await page.waitForFunction(() => {
