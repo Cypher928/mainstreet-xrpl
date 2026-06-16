@@ -13566,7 +13566,12 @@ async function ensureDemoProperty() {
   const { error: propErr } = await db.from('properties')
     .upsert({ id: DEMO_PROPERTY_ID, user_id: user.id, name: PROP_NAME, sqft: PROP_SQFT, data: propertyData })
     .select('id');
-  if (propErr) { console.error('[ensureDemoProperty] property upsert failed:', propErr.message); throw propErr; }
+  if (propErr) {
+    // DB write failed (RLS, network, cold-start). All reconciliation data is already
+    // in-memory. Log the error and continue so the demo still loads — user just
+    // won't have persistence across a hard refresh.
+    console.warn('[ensureDemoProperty] property upsert failed (demo will run in-memory):', propErr.message, propErr.code);
+  }
 
   // Tenants: delete existing rows then insert with stable IDs so they're
   // always queryable by property_id even if the user has run the old demo.
