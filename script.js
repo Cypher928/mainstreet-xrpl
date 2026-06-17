@@ -594,6 +594,67 @@ Rules:
 - quotes: For each field where you return a non-null value, copy ≤120 chars of the exact verbatim clause text from the lease that led to that value. Return null for any field where the value is null.
 - Use null only when a field is truly impossible to determine.`;
 
+// ─── Phase 21: Escrow & Reserve Intelligence ─────────────────────────────────
+// Extracts lender reserve terms from mortgage/loan/escrow/reserve agreements,
+// capital expenditure reserve schedules, insurance settlement documents, and
+// lender draw instructions. Mirrors CLAUDE_LEASE_SYSTEM's structure exactly so
+// the same proxy/parsing conventions apply.
+const CLAUDE_ESCROW_SYSTEM = `You are a strict JSON extraction engine for lender reserve and escrow documents (mortgage agreements, loan agreements, escrow agreements, reserve agreements, capital expenditure reserve schedules, insurance settlement documents, lender draw instructions, repair reserve documentation).
+Return ONLY valid JSON. No text. No explanation. No markdown. Start with { and end with }.
+
+Return exactly this structure:
+{
+  "reserve_type": string,
+  "reserve_name": string | null,
+  "current_balance": number | null,
+  "eligible_uses": string | null,
+  "requires_invoices": true | false | null,
+  "requires_photos": true | false | null,
+  "requires_lien_waivers": true | false | null,
+  "requires_contractor_bids": true | false | null,
+  "requires_engineer_certification": true | false | null,
+  "min_draw_amount": number | null,
+  "requires_approval": true | false | null,
+  "draw_request_deadline": "YYYY-MM-DD" | null,
+  "repair_completion_deadline": "YYYY-MM-DD" | null,
+  "reserve_expiration_date": "YYYY-MM-DD" | null,
+  "notes": string | null,
+  "quotes": {
+    "reserve_type": string | null,
+    "current_balance": string | null,
+    "eligible_uses": string | null,
+    "requires_invoices": string | null,
+    "requires_photos": string | null,
+    "requires_lien_waivers": string | null,
+    "requires_contractor_bids": string | null,
+    "requires_engineer_certification": string | null,
+    "min_draw_amount": string | null,
+    "requires_approval": string | null,
+    "draw_request_deadline": string | null,
+    "repair_completion_deadline": string | null,
+    "reserve_expiration_date": string | null
+  }
+}
+
+Rules:
+- reserve_type: Identify which kind of reserve this document governs. Use one of: "Roof Reserve", "HVAC Reserve", "Tenant Improvement Reserve", "Leasing Commission Reserve", "Capital Reserve", "Insurance Recovery Reserve", or the lender's own term if none of those fit.
+- reserve_name: If the lender gives this reserve a specific account name (e.g. "Special Reserve Account No. 4"), return it verbatim. Null otherwise.
+- current_balance: The reserve balance stated in the document, as a plain number (no $ or commas). Null if not stated.
+- eligible_uses: A short description (max 200 chars) of what the reserve funds may be used for (e.g. "Roof repair and replacement only").
+- requires_invoices: true if the lender requires paid/unpaid invoices to support a draw request. Default to true unless the document explicitly says otherwise.
+- requires_photos: true if before/after photos of completed work are required for a draw.
+- requires_lien_waivers: true if lien waivers (conditional or unconditional) are required.
+- requires_contractor_bids: true if contractor bids/estimates must be submitted before work is approved.
+- requires_engineer_certification: true if a licensed engineer or architect must certify the work.
+- min_draw_amount: The minimum dollar amount per draw request, if stated. Null otherwise.
+- requires_approval: true if the lender (or a third party such as a construction inspector) must approve the draw before funding. Default true unless explicitly waived.
+- draw_request_deadline: The deadline by which draw requests must be submitted, if a fixed or recurring deadline is stated.
+- repair_completion_deadline: The deadline by which the underlying repair/improvement work must be completed.
+- reserve_expiration_date: The date after which the reserve account terminates or unused funds are released/forfeited.
+- notes: Any other reserve-specific requirement or condition worth flagging (max 300 chars). Null if nothing additional applies.
+- quotes: For each non-null field, copy ≤120 chars of the exact verbatim clause text that led to that value. Null for any field whose value is null.
+- Use null only when a field is truly impossible to determine.`;
+
 const INVOICE_PROMPT = `You are extracting data from a commercial real estate invoice or bill.
 This document may be a scanned image — tolerate OCR noise, spacing issues, and number formatting quirks.
 Return ONLY valid JSON. No explanation. No markdown.
@@ -1655,6 +1716,419 @@ ${leaseSnippet}
 
   return normalized;
 }
+
+// ── Phase 21: Escrow & Reserve document extraction ──────────────────────────
+//
+// Generic text-extraction helper for non-lease documents. extractLeaseText()
+// can't be reused as-is because its "weak text" heuristic checks for the
+// literal word "lease", which never appears in mortgage/escrow/reserve
+// documents and would force every digital PDF through the (slower, more
+// expensive) vision path. Same PDF.js-first strategy, generic weak check.
+async function extractDocumentText(file) {
+  if (!file.name.toLowerCase().endsWith('.pdf') && file.type !== 'application/pdf') {
+    return file.text();
+  }
+  const text = await extractPdfText(file);
+  const isWeak = !text || text.length < 500 || text.split(' ').length < 60;
+  return isWeak ? null : text;
+}
+
+async function callClaudeForEscrowDocument(text) {
+  const snippet = prepareLeaseTextForClaude(text);
+  const prompt = `
+You are extracting lender reserve/escrow terms from a commercial real estate financing document.
+NOTE: This text may have been extracted via OCR — tolerate minor spelling errors or spacing noise.
+Return ONLY valid JSON. No explanation. No markdown.
+
+Extract:
+{
+  "reserve_type": string,
+  "reserve_name": string or null,
+  "current_balance": number or null,
+  "eligible_uses": string or null,
+  "requires_invoices": true | false | null,
+  "requires_photos": true | false | null,
+  "requires_lien_waivers": true | false | null,
+  "requires_contractor_bids": true | false | null,
+  "requires_engineer_certification": true | false | null,
+  "min_draw_amount": number or null,
+  "requires_approval": true | false | null,
+  "draw_request_deadline": "YYYY-MM-DD" or null,
+  "repair_completion_deadline": "YYYY-MM-DD" or null,
+  "reserve_expiration_date": "YYYY-MM-DD" or null,
+  "notes": string or null,
+  "quotes": { "reserve_type": string|null, "current_balance": string|null, "eligible_uses": string|null }
+}
+
+RESERVE TYPE: Identify the reserve this document governs — "Roof Reserve", "HVAC Reserve", "Tenant Improvement Reserve", "Leasing Commission Reserve", "Capital Reserve", "Insurance Recovery Reserve", or the lender's own term.
+
+DOCUMENT TEXT:
+"""
+${snippet}
+"""
+`;
+  const messages = [{ role: 'user', content: prompt }];
+
+  console.log('[ESCROW EXTRACTION] starting reserve document extraction (text path)');
+
+  const res = await _fetchWithTimeout('/api/claude', {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json', ...(await _authHeaders()) },
+    body: JSON.stringify({ messages, max_tokens: 1200, system: CLAUDE_ESCROW_SYSTEM }),
+  });
+
+  if (!res.ok) throw new Error(`Escrow document extraction failed: HTTP ${res.status}`);
+
+  let parsed = await res.json();
+  if (typeof parsed === 'string') {
+    try { parsed = JSON.parse(parsed); } catch (e) {
+      console.error('[callClaudeForEscrowDocument] invalid JSON string:', parsed);
+      return null;
+    }
+  }
+  if (Array.isArray(parsed)) parsed = parsed.find(p => p && typeof p === 'object') || null;
+  if (!parsed || typeof parsed !== 'object') return null;
+  return parsed;
+}
+
+async function callClaudeForEscrowDocumentPdfDirect(file) {
+  const base64 = await fileToBase64(file);
+
+  const extractionPrompt = `Extract lender reserve/escrow terms from this financing document.
+Return ONLY valid JSON. No explanation. No markdown.
+
+{
+  "reserve_type": string,
+  "reserve_name": string or null,
+  "current_balance": number or null,
+  "eligible_uses": string or null,
+  "requires_invoices": true | false | null,
+  "requires_photos": true | false | null,
+  "requires_lien_waivers": true | false | null,
+  "requires_contractor_bids": true | false | null,
+  "requires_engineer_certification": true | false | null,
+  "min_draw_amount": number or null,
+  "requires_approval": true | false | null,
+  "draw_request_deadline": "YYYY-MM-DD" or null,
+  "repair_completion_deadline": "YYYY-MM-DD" or null,
+  "reserve_expiration_date": "YYYY-MM-DD" or null,
+  "notes": string or null
+}
+
+Return best guess — do not leave reserve_type null.`;
+
+  const messages = [{
+    role: 'user',
+    content: [
+      { type: 'document', source: { type: 'base64', media_type: 'application/pdf', data: base64 } },
+      { type: 'text', text: extractionPrompt },
+    ],
+  }];
+
+  const res = await _fetchWithTimeout('/api/claude', {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json', ...(await _authHeaders()) },
+    body: JSON.stringify({ messages, max_tokens: 1200, system: CLAUDE_ESCROW_SYSTEM }),
+  });
+
+  if (!res.ok) throw new Error(`Escrow PDF direct extraction failed: HTTP ${res.status}`);
+  console.log('[ESCROW EXTRACTION] PDF direct (vision) path used');
+  return res.json();
+}
+
+// Opens a file picker and triggers escrow/reserve document upload for the active property.
+function openEscrowDocumentUpload() {
+  const propertyId = activePropId;
+  if (!propertyId) { showToast('Select a property first.', { color: '#92400e', textColor: '#fef3c7' }); return; }
+  const inp = document.createElement('input');
+  inp.type = 'file';
+  inp.accept = '.pdf,application/pdf';
+  inp.style.display = 'none';
+  inp.addEventListener('change', (e) => {
+    if (e.target.files[0]) handleEscrowDocumentUpload(propertyId, e.target.files[0]);
+    inp.remove();
+  });
+  document.body.appendChild(inp);
+  inp.click();
+}
+
+// Orchestrates escrow/reserve document extraction and storage on the property.
+async function handleEscrowDocumentUpload(propertyId, file) {
+  const prop = _props.find(p => p.id === propertyId);
+  if (!prop) return;
+
+  showToast('Reading reserve document…', { color: '#0c4a6e', textColor: '#7dd3fc', duration: 8000 });
+
+  try {
+    const docText = await extractDocumentText(file);
+    let extracted;
+    if (docText && docText.length >= 50) {
+      extracted = await callClaudeForEscrowDocument(docText);
+    } else {
+      extracted = await callClaudeForEscrowDocumentPdfDirect(file);
+    }
+    if (!extracted) throw new Error('Could not extract reserve fields from this document');
+
+    const fileUrl = await uploadLeaseToStorage(file, propertyId);
+
+    const reserve = window.EscrowReserveEngine.normalizeReserve(extracted, {
+      sourceFileName: file.name,
+      sourceFileUrl:  fileUrl,
+    });
+
+    if (!Array.isArray(prop.escrowReserves)) prop.escrowReserves = [];
+    prop.escrowReserves.push(reserve);
+
+    _lsSave(prop);
+    await saveProperty(prop);
+    logActivity('escrow_document_uploaded', `Reserve document uploaded — ${reserve.reserveTypeLabel}`, {
+      severity: 'success', actor: 'User', relatedEntity: prop.name || 'Property',
+    });
+    showToast(`✓ ${reserve.reserveTypeLabel} extracted`, { color: '#052e16', textColor: '#86efac' });
+    renderEscrowProfile(prop);
+  } catch (err) {
+    console.error('[handleEscrowDocumentUpload]', err);
+    showToast('Reserve document upload failed: ' + (err.message || 'unknown error'), { color: '#7f1d1d', textColor: '#fca5a5', duration: 6000 });
+  }
+}
+
+// ─── Escrow & Reserve Profile (Track 2) ────────────────────────────────────
+
+function renderEscrowProfile(property) {
+  const listEl     = document.getElementById('escrowReservesList');
+  const drawListEl = document.getElementById('escrowDrawRequestsList');
+  if (!listEl || !drawListEl) return;
+
+  const reserves = property.escrowReserves || [];
+  const draws    = property.drawRequests   || [];
+  const Engine   = window.EscrowReserveEngine;
+
+  if (!reserves.length) {
+    listEl.innerHTML = `<p style="color:#94A3B8;font-size:0.875rem;">No reserve documents uploaded yet. Upload a mortgage, loan, escrow, or reserve agreement above to extract reserve terms automatically.</p>`;
+  } else {
+    listEl.innerHTML = reserves.map(r => {
+      const bal = Engine.computeReserveBalance(r, draws);
+      const dl  = r.deadlines     || {};
+      const req = r.requirements  || {};
+      const reqBadges = [
+        req.requiresInvoices               && 'Invoices',
+        req.requiresPhotos                 && 'Photos',
+        req.requiresLienWaivers            && 'Lien Waivers',
+        req.requiresContractorBids         && 'Contractor Bids',
+        req.requiresEngineerCertification  && 'Engineer Cert.',
+        req.requiresApproval               && 'Approval',
+      ].filter(Boolean).map(b => `<span class="escrow-req-badge">${esc(b)}</span>`).join('');
+      return `
+      <div class="escrow-reserve-card">
+        <div class="escrow-reserve-head">
+          <strong>${esc(r.reserveTypeLabel)}</strong>
+          <span class="escrow-reserve-balance">${fmt(bal.availableBalance)} available</span>
+        </div>
+        <div class="escrow-reserve-sub">of ${fmt(bal.currentBalance)} current balance${bal.committedAmount ? ` &middot; ${fmt(bal.committedAmount)} committed to open draws` : ''}</div>
+        ${r.eligibleUses ? `<div class="escrow-reserve-row"><span>Eligible Uses</span><span>${esc(r.eligibleUses)}</span></div>` : ''}
+        ${reqBadges ? `<div class="escrow-req-badges">${reqBadges}</div>` : ''}
+        ${dl.drawRequestDeadline      ? `<div class="escrow-reserve-row"><span>Draw Request Deadline</span><span>${esc(dl.drawRequestDeadline)}</span></div>` : ''}
+        ${dl.repairCompletionDeadline ? `<div class="escrow-reserve-row"><span>Repair Completion Deadline</span><span>${esc(dl.repairCompletionDeadline)}</span></div>` : ''}
+        ${dl.reserveExpirationDate    ? `<div class="escrow-reserve-row"><span>Reserve Expiration</span><span>${esc(dl.reserveExpirationDate)}</span></div>` : ''}
+        ${r.notes ? `<div class="escrow-reserve-notes">${esc(r.notes)}</div>` : ''}
+        <button class="report-btn" style="margin-top:8px;" onclick="openDrawBuilder('${r.id}')">+ New Draw Request</button>
+      </div>`;
+    }).join('');
+  }
+
+  if (!draws.length) {
+    drawListEl.innerHTML = `<p style="color:#94A3B8;font-size:0.875rem;">No draw requests yet.</p>`;
+  } else {
+    drawListEl.innerHTML = draws.slice().reverse().map(dr => {
+      const reserve = reserves.find(r => r.id === dr.reserveId);
+      const statusOptions = Engine.DRAW_STATUSES.map(s =>
+        `<option value="${s}" ${s === dr.status ? 'selected' : ''}>${esc(Engine.DRAW_STATUS_LABELS[s])}</option>`
+      ).join('');
+      return `
+      <div class="escrow-draw-card">
+        <div class="escrow-draw-head">
+          <strong>${esc(reserve ? reserve.reserveTypeLabel : 'Reserve')} &mdash; ${fmt(dr.amountRequested)}</strong>
+          <select class="escrow-status-select" onchange="updateDrawStatus('${dr.id}', this.value)">${statusOptions}</select>
+        </div>
+        <div class="escrow-draw-actions">
+          <button class="report-btn" onclick="generateDrawPackageReport('${dr.id}')">&#x1F4CB; Generate Package</button>
+        </div>
+      </div>`;
+    }).join('');
+  }
+}
+
+// ─── Draw Request Builder (Track 3 / 4) ────────────────────────────────────
+
+let _drawDraft = null;
+const DRAW_DOC_CATEGORY_LABELS = {
+  photos: 'Photo', lienWaivers: 'Lien Waiver',
+  contractorBids: 'Contractor Bid', engineerCertification: 'Engineer Certification',
+};
+
+function openDrawBuilder(reserveId) {
+  const prop = currentProperty();
+  if (!prop) return;
+  const reserve = (prop.escrowReserves || []).find(r => r.id === reserveId);
+  if (!reserve) return;
+
+  _drawDraft = {
+    reserveId, amountRequested: '', invoiceIds: [],
+    attachedDocuments: { photos: [], lienWaivers: [], contractorBids: [], engineerCertification: [] },
+  };
+  _renderDrawBuilderBody(prop, reserve);
+  document.getElementById('drawBuilderModal').style.display = 'flex';
+}
+
+function closeDrawBuilder() {
+  document.getElementById('drawBuilderModal').style.display = 'none';
+  _drawDraft = null;
+}
+
+function _renderDrawBuilderBody(prop, reserve) {
+  const invoices = prop.invoices || [];
+  const invoiceRows = invoices.map((inv, idx) => `
+    <label class="escrow-invoice-row">
+      <input type="checkbox" ${_drawDraft.invoiceIds.includes(idx) ? 'checked' : ''}
+        onchange="_toggleDrawInvoice(${idx}, this.checked)">
+      <span>${esc(inv.vendorName || inv.fileName || 'Vendor')} &mdash; ${fmt(inv.amount || 0)}</span>
+    </label>`).join('') || `<p style="color:#94A3B8;font-size:0.85rem;">No invoices uploaded yet.</p>`;
+
+  const docRows = Object.entries(_drawDraft.attachedDocuments)
+    .flatMap(([cat, docs]) => docs.map((d, idx) => `
+      <div class="escrow-doc-row">
+        <span>${esc(DRAW_DOC_CATEGORY_LABELS[cat] || cat)}: ${esc(d.fileName)}</span>
+        <button class="modal-cancel" style="padding:2px 8px;" onclick="_removeDrawSupportingDoc('${cat}', ${idx})">Remove</button>
+      </div>`)).join('');
+
+  document.getElementById('drawBuilderBody').innerHTML = `
+    <div class="modal-confirm-msg">New draw request against <strong>${esc(reserve.reserveTypeLabel)}</strong></div>
+    <label style="display:block;margin:10px 0;">
+      Amount Requested
+      <input type="number" id="drawAmountInput" step="0.01" min="0" value="${esc(_drawDraft.amountRequested)}"
+        onchange="_drawDraft.amountRequested = this.value" style="display:block;width:100%;margin-top:4px;">
+    </label>
+    <div class="escrow-section-label">Invoices</div>
+    ${invoiceRows}
+    <div class="escrow-section-label" style="margin-top:12px;">Supporting Documents</div>
+    ${docRows}
+    <div style="display:flex;gap:6px;margin-top:6px;flex-wrap:wrap;">
+      <button class="report-btn" onclick="addDrawSupportingDoc('photo')">+ Photo</button>
+      <button class="report-btn" onclick="addDrawSupportingDoc('lien_waiver')">+ Lien Waiver</button>
+      <button class="report-btn" onclick="addDrawSupportingDoc('contractor_bid')">+ Contractor Bid</button>
+      <button class="report-btn" onclick="addDrawSupportingDoc('engineer_certification')">+ Engineer Cert.</button>
+    </div>`;
+}
+
+function _toggleDrawInvoice(idx, checked) {
+  if (!_drawDraft) return;
+  _drawDraft.invoiceIds = checked
+    ? [...new Set([...(_drawDraft.invoiceIds || []), idx])]
+    : _drawDraft.invoiceIds.filter(i => i !== idx);
+}
+
+function _removeDrawSupportingDoc(category, idx) {
+  if (!_drawDraft) return;
+  _drawDraft.attachedDocuments[category].splice(idx, 1);
+  const prop = currentProperty();
+  const reserve = (prop.escrowReserves || []).find(r => r.id === _drawDraft.reserveId);
+  _renderDrawBuilderBody(prop, reserve);
+}
+
+function addDrawSupportingDoc(category) {
+  if (!_drawDraft) return;
+  const propertyId = activePropId;
+  const inp = document.createElement('input');
+  inp.type = 'file';
+  inp.style.display = 'none';
+  inp.addEventListener('change', async (e) => {
+    const file = e.target.files[0];
+    inp.remove();
+    if (!file || !_drawDraft) return;
+    try {
+      showToast('Uploading document…', { color: '#0c4a6e', textColor: '#7dd3fc', duration: 5000 });
+      const fileUrl = await uploadLeaseToStorage(file, propertyId);
+      _drawDraft.attachedDocuments[category].push({ fileName: file.name, fileUrl });
+      const prop = currentProperty();
+      const reserve = (prop.escrowReserves || []).find(r => r.id === _drawDraft.reserveId);
+      _renderDrawBuilderBody(prop, reserve);
+      showToast('✓ Document attached', { color: '#052e16', textColor: '#86efac' });
+    } catch (err) {
+      console.error('[addDrawSupportingDoc]', err);
+      showToast('Upload failed: ' + (err.message || 'unknown error'), { color: '#7f1d1d', textColor: '#fca5a5' });
+    }
+  });
+  document.body.appendChild(inp);
+  inp.click();
+}
+
+async function confirmCreateDrawRequest() {
+  if (!_drawDraft) return;
+  const prop = currentProperty();
+  if (!prop) return;
+  const Engine = window.EscrowReserveEngine;
+  const invoices = (prop.invoices || []).filter((_, idx) => _drawDraft.invoiceIds.includes(idx));
+
+  const drawRequest = {
+    id: 'draw_' + Date.now().toString(36) + Math.random().toString(36).slice(2, 8),
+    reserveId: _drawDraft.reserveId,
+    amountRequested: parseFloat(_drawDraft.amountRequested) || 0,
+    status: 'draft',
+    invoices,
+    attachedDocuments: _drawDraft.attachedDocuments,
+    createdAt: new Date().toISOString(),
+    statusHistory: [{ status: 'draft', at: new Date().toISOString(), actor: 'User' }],
+  };
+
+  if (!Array.isArray(prop.drawRequests)) prop.drawRequests = [];
+  prop.drawRequests.push(drawRequest);
+
+  _lsSave(prop);
+  await saveProperty(prop);
+  logActivity('escrow_draw_created', `Draw request created — ${fmt(drawRequest.amountRequested)}`, {
+    severity: 'info', actor: 'User', relatedEntity: prop.name || 'Property',
+  });
+  showToast('✓ Draw request created', { color: '#052e16', textColor: '#86efac' });
+  closeDrawBuilder();
+  renderEscrowProfile(prop);
+}
+
+// ─── Draw Request Tracking (Track 5) ────────────────────────────────────────
+
+async function updateDrawStatus(drawRequestId, status) {
+  const prop = currentProperty();
+  if (!prop) return;
+  const ok = window.EscrowReserveEngine.applyDrawStatus(prop.drawRequests || [], drawRequestId, status, { actor: 'User' });
+  if (!ok) { showToast('Could not update draw status', { color: '#7f1d1d', textColor: '#fca5a5' }); return; }
+
+  _lsSave(prop);
+  await saveProperty(prop);
+  logActivity('escrow_draw_status', `Draw request status changed to ${window.EscrowReserveEngine.DRAW_STATUS_LABELS[status]}`, {
+    severity: 'info', actor: 'User', relatedEntity: prop.name || 'Property',
+  });
+  renderEscrowProfile(prop);
+}
+
+// ─── Draw Request Package Generation (Track 4) ──────────────────────────────
+
+function generateDrawPackageReport(drawRequestId) {
+  const prop = currentProperty();
+  if (!prop) return;
+  const Engine = window.EscrowReserveEngine;
+  const drawRequest = (prop.drawRequests || []).find(d => d.id === drawRequestId);
+  const reserve     = drawRequest && (prop.escrowReserves || []).find(r => r.id === drawRequest.reserveId);
+  if (!drawRequest || !reserve) return;
+
+  const validation = Engine.validateDrawRequest(reserve, drawRequest, prop.drawRequests || []);
+  const pkg = Engine.buildDrawRequestPackage(prop, reserve, drawRequest, validation);
+  const html = window.EscrowDrawPackets.formatDrawPackageHtml(pkg);
+
+  logActivity('escrow_draw_package', `Draw request package generated — ${pkg.complete ? 'lender-ready' : 'draft'}`, {
+    severity: pkg.complete ? 'success' : 'warning', actor: 'User', relatedEntity: prop.name || 'Property',
+  });
+  openReport('Escrow Draw Request Package', html);
+}
+
 // ─── SVG icons ────────────────────────────────────────────────────────────────
 const CHECK_SVG = `<svg viewBox="0 0 12 12" width="10" height="10" fill="none" stroke="white" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round"><polyline points="2,6 5,9 10,3"/></svg>`;
 const CROSS_SVG = `<svg viewBox="0 0 12 12" width="10" height="10" stroke="white" stroke-width="2.2" stroke-linecap="round"><line x1="2" y1="2" x2="10" y2="10"/><line x1="10" y1="2" x2="2" y2="10"/></svg>`;
@@ -17343,6 +17817,11 @@ async function saveProperty(property) {
       // review state, reviewOverrides, capBaseAmount, and confidence fields
       // survive a full Supabase round-trip without needing schema changes.
       tenants:           stripped.tenants           || [],
+      // Phase 21: Escrow & Reserve Intelligence — stored as a blob here (same
+      // pattern as camReconciliation) rather than normalized tables, since the
+      // feature doesn't yet need cross-property querying.
+      escrowReserves:    stripped.escrowReserves     || [],
+      drawRequests:      stripped.drawRequests       || [],
     };
 
     console.groupCollapsed('[PIPELINE:3] saveProperty post-strip');
@@ -17611,6 +18090,8 @@ async function loadPropertyData(id) {
         // stored in properties.data.tenants. Use when present; fall back to the
         // tenants table (which lacks review fields) for legacy rows.
         tenants:           d.tenants?.length ? d.tenants.map(normalizeTenant) : null,
+        escrowReserves:    d.escrowReserves    || [],
+        drawRequests:      d.drawRequests      || [],
       };
       console.groupCollapsed('[PIPELINE:4] Supabase read');
       console.log('invoices[0]:', JSON.parse(JSON.stringify(dbData.invoices[0] || {})));
@@ -17748,6 +18229,10 @@ async function loadPropertyData(id) {
     disputes:          _mergedDisps,
     results:           dbData.results           ?? base.results           ?? null,
     camReconciliation: dbData.camReconciliation ?? base.camReconciliation ?? null,
+    // Escrow reserves / draw requests: Supabase is authoritative (draw status
+    // changes must not be lost if a stale local snapshot has fewer tenants).
+    escrowReserves:    dbData.escrowReserves?.length ? dbData.escrowReserves : (base.escrowReserves || []),
+    drawRequests:      dbData.drawRequests?.length   ? dbData.drawRequests   : (base.drawRequests   || []),
   };
 
   // Run hydration guards — normalizes arrays, enforces canonical shapes, detects
@@ -17927,6 +18412,13 @@ function renderProperty(property) {
     }
   } catch (e) {
     logError('renderProperty.restoreResults', e, { propId: property?.id, propName: property?.name });
+  }
+
+  // ── Escrow & Reserve Profile (Phase 21) ─────────────────────────────────
+  try {
+    renderEscrowProfile(property);
+  } catch (e) {
+    logError('renderProperty.escrowProfile', e, { propId: property?.id, propName: property?.name });
   }
 
   if (restored) showRestoredBanner();

@@ -2586,6 +2586,45 @@
     }
     .modal-cancel:hover { background: #0B1220; }
 
+    /* ── Escrow & Reserve section (Phase 21) ─────────────────────────── */
+    .escrow-section-label {
+      font-size: 0.78rem; font-weight: 700; text-transform: uppercase; letter-spacing: 0.04em;
+      color: #94A3B8; margin-bottom: 8px;
+    }
+    .escrow-reserve-card, .escrow-draw-card {
+      background: #0F1929; border: 1.5px solid rgba(255,255,255,0.08); border-radius: 10px;
+      padding: 14px 16px; margin-bottom: 12px;
+    }
+    .escrow-reserve-head, .escrow-draw-head {
+      display: flex; justify-content: space-between; align-items: center; flex-wrap: wrap; gap: 8px;
+      color: #E2E8F0; font-size: 0.95rem;
+    }
+    .escrow-reserve-balance { color: #C9973A; font-weight: 700; }
+    .escrow-reserve-sub { color: #64748B; font-size: 0.8rem; margin-top: 2px; margin-bottom: 8px; }
+    .escrow-reserve-row {
+      display: flex; justify-content: space-between; gap: 12px; font-size: 0.83rem;
+      color: #94A3B8; padding: 3px 0;
+    }
+    .escrow-reserve-row span:last-child { color: #E2E8F0; text-align: right; }
+    .escrow-req-badges { display: flex; gap: 6px; flex-wrap: wrap; margin: 8px 0; }
+    .escrow-req-badge {
+      background: rgba(201,151,58,0.12); color: #C9973A; border: 1px solid rgba(201,151,58,0.3);
+      border-radius: 6px; padding: 2px 8px; font-size: 0.72rem; font-weight: 600;
+    }
+    .escrow-reserve-notes { color: #64748B; font-size: 0.8rem; margin-top: 6px; font-style: italic; }
+    .escrow-status-select {
+      background: #0B1220; color: #E2E8F0; border: 1.5px solid rgba(255,255,255,0.12);
+      border-radius: 7px; padding: 6px 10px; font-size: 0.83rem; font-weight: 600;
+    }
+    .escrow-draw-actions { margin-top: 10px; }
+    .escrow-invoice-row {
+      display: flex; align-items: center; gap: 8px; color: #E2E8F0; font-size: 0.85rem; padding: 4px 0;
+    }
+    .escrow-doc-row {
+      display: flex; justify-content: space-between; align-items: center; gap: 8px;
+      color: #E2E8F0; font-size: 0.83rem; padding: 4px 0;
+    }
+
     /* ── Reports section ─────────────────────────────────────────────── */
     #reportsSection { display: block; }
     .report-btn-row { display: flex; gap: 12px; flex-wrap: wrap; margin-top: 8px; }
@@ -5405,6 +5444,24 @@
     </div>
   </div>
 
+  <!-- ── SECTION 7: Escrow & Reserve Documents ───────────────────────── -->
+  <div class="card" id="escrowSection">
+    <div class="sec-head">
+      <div class="sec-num" style="background:#0e7490;">7</div>
+      <div>
+        <h2>Escrow &amp; Reserve Documents</h2>
+        <p>Upload mortgage, loan, and escrow/reserve agreements to extract lender reserve requirements automatically.</p>
+      </div>
+    </div>
+    <button class="report-btn" onclick="openEscrowDocumentUpload()">&#x1F4C2; Upload Reserve Document</button>
+
+    <div class="escrow-section-label" style="margin-top:16px;">Reserve Profile</div>
+    <div id="escrowReservesList"></div>
+
+    <div class="escrow-section-label" style="margin-top:20px;">Draw Requests</div>
+    <div id="escrowDrawRequestsList"></div>
+  </div>
+
 </div><!-- /container -->
 
 <!-- ── Dispute Workspace Overlay ──────────────────────────────────────── -->
@@ -5488,6 +5545,18 @@
     <div class="modal-actions">
       <button class="modal-confirm" onclick="confirmAllocation()">Confirm &amp; Run</button>
       <button class="modal-cancel"  onclick="closeAllocModal()">Cancel</button>
+    </div>
+  </div>
+</div>
+
+<!-- ── Escrow Draw Request Builder Modal ──────────────────────────────── -->
+<div id="drawBuilderModal" class="modal-backdrop" style="display:none;" onclick="if(event.target===this)closeDrawBuilder()">
+  <div class="modal-box">
+    <div class="modal-title">&#x1F4B0; New Draw Request</div>
+    <div id="drawBuilderBody"></div>
+    <div class="modal-actions">
+      <button class="modal-confirm" onclick="confirmCreateDrawRequest()">Create Draw Request</button>
+      <button class="modal-cancel"  onclick="closeDrawBuilder()">Cancel</button>
     </div>
   </div>
 </div>
@@ -5619,6 +5688,8 @@
 <script src="lease-review-packets.js"></script>
 <script src="lease-intelligence.js"></script>
 <script src="acquisition-engine.js"></script>
+<script src="escrow-reserve-engine.js"></script>
+<script src="escrow-draw-packets.js"></script>
 <script src="script.js"></script>
 <!-- Dev-only role switcher — activates only on localhost, no-op elsewhere -->
 <script src="dev-switcher.js"></script>
