@@ -100,7 +100,18 @@ module.exports = async function handler(req, res) {
   if (!anthropicResp.ok) {
     const errText = await anthropicResp.text();
     console.error('[Mainstreet] Anthropic error:', errText);
-    return res.status(500).json({ error: 'Anthropic API error', details: errText });
+    let errType = '';
+    try { errType = JSON.parse(errText)?.error?.type || ''; } catch (_) {}
+    let status = 500;
+    let reason = 'Anthropic API error';
+    if (anthropicResp.status === 429 || errType === 'rate_limit_error') {
+      status = 429; reason = 'Claude rate limit reached — please wait a moment and retry';
+    } else if (errType === 'overloaded_error') {
+      status = 503; reason = 'Claude is temporarily overloaded — please retry shortly';
+    } else if (errType === 'invalid_request_error' && /too long|context|maximum/i.test(errText)) {
+      status = 413; reason = 'Document exceeds Claude\'s context limit — try splitting the file';
+    }
+    return res.status(status).json({ error: reason, details: errText.slice(0, 500) });
   }
 
   let json;

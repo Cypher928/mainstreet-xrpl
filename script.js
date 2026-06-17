@@ -367,6 +367,38 @@ function _fetchWithTimeout(url, opts, ms = 58000) {
   return fetch(url, { ...opts, signal: ctrl.signal }).finally(() => clearTimeout(timer));
 }
 
+// Generic retry wrapper for transient failures (network blips, timeouts, momentary
+// 5xx/overload responses). Modeled on the inline retry loop in uploadInvoiceFile():
+// up to `attempts` tries with linear backoff, short-circuiting immediately when
+// `isRetryable` says the error won't recover from a retry (e.g. rate limits, 4xx).
+async function withRetry(fn, { attempts = 3, isRetryable = () => true, baseDelayMs = 1200 } = {}) {
+  let lastErr;
+  for (let i = 0; i < attempts; i++) {
+    try {
+      return await fn(i);
+    } catch (e) {
+      lastErr = e;
+      if (i >= attempts - 1 || !isRetryable(e, i)) throw e;
+      await new Promise(r => setTimeout(r, (i + 1) * baseDelayMs));
+    }
+  }
+  throw lastErr;
+}
+
+// Turns a raw fetch/Claude error into a short, user-facing reason so bulk lease
+// extraction failures can tell the user WHY (timeout vs rate limit vs malformed
+// PDF vs context limit) instead of a single generic "Extraction failed" message.
+function classifyExtractionFailure(err) {
+  if (!err) return 'Unknown error';
+  if (err.name === 'AbortError') return 'Request timed out — the document may be too large or complex';
+  const status = err.httpStatus;
+  if (status === 429) return 'Rate limit reached — please wait a moment and retry';
+  if (status === 503) return 'Claude is temporarily overloaded — please retry shortly';
+  if (status === 413) return 'Document exceeds the size/context limit — try a smaller or simpler file';
+  if (status === 400) return 'Malformed or unreadable document';
+  return err.message || 'Unknown extraction error';
+}
+
 // Returns the Authorization header object for the current Supabase session.
 // Returns {} (no-op spread) when unauthenticated so calls still go through
 // to get a clean 401 from the server rather than silently failing client-side.
@@ -1251,7 +1283,13 @@ Return best guess — do not leave fields null unless truly impossible.`;
     body: JSON.stringify({ messages, max_tokens: 1500, system: CLAUDE_LEASE_SYSTEM }),
   });
 
-  if (!res.ok) throw new Error(`Claude PDF direct failed: HTTP ${res.status}`);
+  if (!res.ok) {
+    let serverMsg = '';
+    try { serverMsg = (await res.json())?.error || ''; } catch (_) {}
+    const e = new Error(serverMsg || `Claude PDF direct failed: HTTP ${res.status}`);
+    e.httpStatus = res.status;
+    throw e;
+  }
   const data = await res.json();
   // Mark telemetry: PDF direct path uses Claude's native document understanding
   if (window.ms_extractionDebug) window.ms_extractionDebug.OCRUsed = true;
@@ -1478,7 +1516,11 @@ ${leaseSnippet}
   });
 
   if (!res.ok) {
-    throw new Error(`Lease extraction failed: HTTP ${res.status}`);
+    let serverMsg = '';
+    try { serverMsg = (await res.json())?.error || ''; } catch (_) {}
+    const e = new Error(serverMsg || `Lease extraction failed: HTTP ${res.status}`);
+    e.httpStatus = res.status;
+    throw e;
   }
 
   const response = await res.json();
@@ -1865,7 +1907,7 @@ function renderFailedTenants(tenants) {
         <div class="bulk-tenant-summary">
           <span class="bulk-t-status">❌</span>
           <span class="bulk-t-name">${esc(d.fileName || d.tenant_name || 'Unknown')}</span>
-          <span class="bulk-t-meta" data-retry data-index="${i}" style="cursor:pointer;">Extraction failed — tap to re-upload</span>
+          <span class="bulk-t-meta" data-retry data-index="${i}" style="cursor:pointer;">${esc(d._error || 'Extraction failed — tap to re-upload')}</span>
           <button class="view-lease-btn" data-retry data-index="${i}" style="margin-left:0;color:#f97316;">&#x21BA; Retry</button>
           <button class="bulk-t-remove" onclick="event.stopPropagation();removeBulkTenant(${i})">Remove</button>
         </div>
@@ -2648,6 +2690,7 @@ async function _runLeaseJobPipeline(jobId, placeholderIdx) {
     let usedPdfDirect      = false;
     let leaseUrl           = null;
     let _visionTextPromise = null; // set when PDF-direct path is taken
+    let _failureReason     = null; // user-facing reason surfaced on extractionFailed
 
     // ── Stage: Upload + OCR ───────────────────────────────────────────────────
     console.groupCollapsed(`[LEASE:upload] ${file.name}`);
@@ -2661,6 +2704,7 @@ async function _runLeaseJobPipeline(jobId, placeholderIdx) {
     } catch (err) {
       console.error('upload/extract failed:', err.message);
       logError('lease_upload_extract', err, { propId: propertyId, fileName: file.name, jobId });
+      _failureReason = classifyExtractionFailure(err);
     }
     console.groupEnd();
 
@@ -2670,9 +2714,15 @@ async function _runLeaseJobPipeline(jobId, placeholderIdx) {
     // ── Stage: Claude Extraction ──────────────────────────────────────────────
     console.groupCollapsed(`[LEASE:claude] ${file.name}`);
     try {
+      // Transient failures (timeout, momentary overload/5xx) get one retry;
+      // rate limits and malformed-document errors surface immediately instead.
+      const _claudeRetryOpts = {
+        attempts: 2,
+        isRetryable: (e) => e?.name === 'AbortError' || e?.httpStatus === 500 || e?.httpStatus === 503,
+      };
       if (leaseText && leaseText.length >= 50) {
         console.log('path: text extraction, chars:', leaseText.length);
-        extracted = await callClaudeForLease(leaseText);
+        extracted = await withRetry(() => callClaudeForLease(leaseText), _claudeRetryOpts);
       } else {
         usedPdfDirect = true;
         console.log('path: PDF direct (text weak/missing, chars:', leaseText?.length ?? 0, ')');
@@ -2683,13 +2733,14 @@ async function _runLeaseJobPipeline(jobId, placeholderIdx) {
           console.warn('[extractTextFromPdfDirect:bulk] failed:', e?.message);
           return null;
         });
-        extracted = await callClaudeWithPdfDirect(file);
+        extracted = await withRetry(() => callClaudeWithPdfDirect(file), _claudeRetryOpts);
         leaseText = extracted ? `[Claude PDF direct: ${file.name}]` : null;
       }
       console.log('raw extracted:', JSON.stringify(extracted)?.slice(0, 300));
     } catch (err) {
       console.error('[PIPELINE:diag] Claude stage FAILED | msg:', err.message, '| stack:', (err.stack || '').split('\n').slice(0, 4).join(' | '), '| elapsedMs:', Date.now() - _startMs, '| route:', usedPdfDirect ? 'pdf-direct' : 'text', '| file:', file instanceof File, '| name:', file?.name);
       logError('lease_claude_extraction', err, { propId: propertyId, fileName: file.name, jobId });
+      _failureReason = classifyExtractionFailure(err);
     }
     console.groupEnd();
 
@@ -2789,7 +2840,7 @@ async function _runLeaseJobPipeline(jobId, placeholderIdx) {
       _needsReview:         isPartial,
       _showRetry,
       _nameFromClaude:      nameFromClaude,
-      _error:               status === 'failed' ? 'Extraction failed — tap Retry to re-upload' : null,
+      _error:               status === 'failed' ? (_failureReason || 'Extraction failed — tap Retry to re-upload') : null,
       _confidence:          _conf.level,
       _confidenceScore:     _conf.score,
       _confidenceReasons:   _conf.reasons,
@@ -2860,7 +2911,7 @@ async function _runLeaseJobPipeline(jobId, placeholderIdx) {
       extractionFailed:  true,
       _needsReview:      false,
       _showRetry:        true,
-      _error:            err.message || 'Processing error',
+      _error:            classifyExtractionFailure(err),
       id:                jobId,
       _jobId:            jobId,
     };
@@ -5259,7 +5310,7 @@ function renderBulkResults() {
     const meta = isPending
       ? _stageLabel
       : d.extractionFailed
-      ? 'Extraction failed — tap to re-upload'
+      ? (d._error || 'Extraction failed — tap to re-upload')
       : showWarning
         ? 'Needs review — some fields missing'
         : [
@@ -7578,9 +7629,11 @@ async function runAllocation() {
       invoiceCount: invoiceData.length,
       propName:     document.getElementById('propertyName')?.value?.trim() || '',
     });
+    const reason = err?.message ? `: ${err.message}` : '';
     const body = document.getElementById('resultsBody');
     const section = document.getElementById('results');
-    if (body && section) showErr(body, section, 'Calculation error — please check your data and try again.');
+    if (body && section) showErr(body, section, `Calculation error${reason} — please check your data and try again.`);
+    showToast(`CAM calculation failed${reason}`, { color: '#7f1d1d', textColor: '#fecaca' });
   } finally {
     // Always restore button and release the guard, even on error
     if (runBtn) { runBtn.disabled = false; runBtn.textContent = runBtnOrigText; runBtn.style.opacity = '1'; }
@@ -13799,7 +13852,8 @@ async function loadDemo() {
     window.scrollTo({ top: 0, behavior: 'smooth' });
   } catch (e) {
     console.error('[loadDemo]', e);
-    showToast('Demo failed to load — please try again.', { color: '#92400e', textColor: '#fef3c7' });
+    const reason = e?.message ? `: ${e.message}` : '';
+    showToast(`Demo failed to load${reason} — please try again.`, { color: '#92400e', textColor: '#fef3c7' });
   } finally {
     if (btn) { btn.disabled = false; btn.textContent = origText; }
   }
@@ -17356,21 +17410,33 @@ async function saveProperty(property) {
       data,
     };
 
+    // Transient write failures (network blips, momentary Supabase 5xx) get a couple
+    // of quick retries before falling back to the offline/sync-delayed notices below.
+    const _writeRetryOpts = {
+      attempts: 3,
+      baseDelayMs: 800,
+      isRetryable: (e) => /load failed|failed to fetch|networkerror|offline|timeout/i.test(e?.message || ''),
+    };
     if (id) {
       const { data: { user: _u } } = await db.auth.getUser();
       if (!_u?.id) throw new Error('Not authenticated');
-      const { error } = await db.from('properties')
-        .upsert({ id, ...payload, user_id: _u.id })
-        .select('id');
-      if (error) throw error;
+      await withRetry(async () => {
+        const { error } = await db.from('properties')
+          .upsert({ id, ...payload, user_id: _u.id })
+          .select('id');
+        if (error) throw error;
+      }, _writeRetryOpts);
     } else {
       const { data: { user } } = await db.auth.getUser();
       if (!user?.id) throw new Error('Not authenticated');
-      const { data: inserted, error } = await db.from('properties')
-        .insert({ ...payload, user_id: user.id })
-        .select('id')
-        .single();
-      if (error) throw error;
+      const inserted = await withRetry(async () => {
+        const { data: ins, error } = await db.from('properties')
+          .insert({ ...payload, user_id: user.id })
+          .select('id')
+          .single();
+        if (error) throw error;
+        return ins;
+      }, _writeRetryOpts);
       property.id = inserted.id;
       _lsSave(property);
     }

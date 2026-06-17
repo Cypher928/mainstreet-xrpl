@@ -26,6 +26,7 @@ const SUITES = [
   { label: 'Lease document persistence',     cmd: 'node test-lease-persistence.js' },
   { label: 'Ask the Lease API',              cmd: 'node test-ask-lease.js' },
   { label: 'Lease Validation (Phase 23)',    cmd: 'node test-validate-lease.js' },
+  { label: 'Error handling & retry (Phase 20)', cmd: 'node test-error-handling.js' },
 ];
 
 let anyFailed = false;
