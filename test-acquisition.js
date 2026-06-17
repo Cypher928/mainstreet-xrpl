@@ -1676,6 +1676,140 @@ console.log('\n── Group 27: computePortfolioActions ────────
     svPa.infoActions.filter(a => a.type === 'vacancy').length === 0);
 }
 
+// ── Group 28: applyRenewalStatus (Phase 20 Track 2 — renewal status persistence) ──
+console.log('\n── Group 28: applyRenewalStatus ──────────────────────────────────────────');
+
+{
+  assertEq('RENEWAL_STATUSES enum matches Phase 20 locked vocabulary', AE.RENEWAL_STATUSES,
+    ['not_started', 'contacted', 'negotiating', 'renewal_sent', 'renewed', 'vacating']);
+
+  const mkProps = () => [
+    { id: 'p1', name: 'Main St', tenants: [
+      { tenant_name: 'Acme Corp', end_date: '2026-01-01' },
+      { tenant_name: 'Beta LLC',  end_date: '2026-02-01' },
+    ]},
+    { id: 'p2', name: 'Harbor Tower', tenants: [
+      { tenant_name: 'Gamma Inc', end_date: '2026-03-01' },
+    ]},
+  ];
+
+  // --- Happy path: status is written onto the matched tenant ---
+  let props = mkProps();
+  let ok = AE.applyRenewalStatus(props, 'p1', 'Acme Corp', 'contacted');
+  assert('applyRenewalStatus: returns true on match', ok === true);
+  assertEq('applyRenewalStatus: sets _renewalStatus on the matched tenant',
+    props[0].tenants[0]._renewalStatus, 'contacted');
+  assert('applyRenewalStatus: does not touch sibling tenant',
+    props[0].tenants[1]._renewalStatus === undefined);
+  assert('applyRenewalStatus: does not touch tenant on a different property',
+    props[1].tenants[0]._renewalStatus === undefined);
+
+  // --- Round-trip through every value in the locked vocabulary ---
+  props = mkProps();
+  AE.RENEWAL_STATUSES.forEach(status => {
+    AE.applyRenewalStatus(props, 'p2', 'Gamma Inc', status);
+    assertEq(`applyRenewalStatus: round-trips "${status}"`, props[1].tenants[0]._renewalStatus, status);
+  });
+
+  // --- Rejects unknown status values (no enum drift) ---
+  props = mkProps();
+  ok = AE.applyRenewalStatus(props, 'p1', 'Acme Corp', 'bogus_status');
+  assert('applyRenewalStatus: rejects an unrecognized status value', ok === false);
+  assert('applyRenewalStatus: leaves tenant untouched on rejection',
+    props[0].tenants[0]._renewalStatus === undefined);
+
+  // --- No match (unknown property / tenant) is a safe no-op ---
+  props = mkProps();
+  assert('applyRenewalStatus: unknown propertyId returns false',
+    AE.applyRenewalStatus(props, 'nope', 'Acme Corp', 'contacted') === false);
+  assert('applyRenewalStatus: unknown tenantName returns false',
+    AE.applyRenewalStatus(props, 'p1', 'Nobody', 'contacted') === false);
+  assert('applyRenewalStatus: empty props array returns false',
+    AE.applyRenewalStatus([], 'p1', 'Acme Corp', 'contacted') === false);
+}
+
+// ── Group 29: 30/90/180/expired bucket boundaries (Phase 20 Track 2) ─────────────
+console.log('\n── Group 29: 30/90/180/expired bucket boundaries ────────────────────────');
+
+{
+  const ref = new Date('2024-06-01T12:00:00Z');
+  const fmtDays = n => {
+    const d = new Date(ref);
+    d.setUTCDate(d.getUTCDate() + n);
+    return d.toISOString().slice(0, 10);
+  };
+
+  const mkTenant = (name, days) => ({ tenant_name: name, end_date: fmtDays(days), base_rent: 12000, leased_sqft: 1000 });
+
+  const props = [{ id: 'p1', name: 'Boundary Test', tenants: [
+    mkTenant('Expired-1d',  -1),
+    mkTenant('Day0',         0),
+    mkTenant('Day30',       30),
+    mkTenant('Day31',       31),
+    mkTenant('Day90',       90),
+    mkTenant('Day91',       91),
+    mkTenant('Day180',     180),
+    mkTenant('Day181',     181), // outside all RAR tiers
+  ]}];
+
+  const rar = AE.computeRevenueAtRisk(props, ref);
+  const tierOf = name => {
+    if (rar.expired.some(a => a.tenantName === name))  return 'expired';
+    if (rar.critical.some(a => a.tenantName === name))  return 'critical';
+    if (rar.high.some(a => a.tenantName === name))      return 'high';
+    if (rar.medium.some(a => a.tenantName === name))    return 'medium';
+    return null;
+  };
+
+  assertEq('bucket: -1d  → expired',  tierOf('Expired-1d'), 'expired');
+  assertEq('bucket: day0 → critical', tierOf('Day0'),       'critical');
+  assertEq('bucket: day30 → critical (inclusive upper bound)', tierOf('Day30'), 'critical');
+  assertEq('bucket: day31 → high',    tierOf('Day31'),      'high');
+  assertEq('bucket: day90 → high (inclusive upper bound)',    tierOf('Day90'), 'high');
+  assertEq('bucket: day91 → medium',  tierOf('Day91'),      'medium');
+  assertEq('bucket: day180 → medium (inclusive upper bound)', tierOf('Day180'), 'medium');
+  assertEq('bucket: day181 → outside all tiers', tierOf('Day181'), null);
+
+  // Pipeline priority uses the same thresholds beyond day 0 (no separate 30d sub-tier)
+  const pipeline = AE.computeRenewalPipeline(props, ref);
+  const prioOf = name => (pipeline.items.find(i => i.tenantName === name) || {}).priority;
+  assertEq('pipeline: -1d → critical (already expired)', prioOf('Expired-1d'), 'critical');
+  assertEq('pipeline: day31 → high',                     prioOf('Day31'),      'high');
+  assertEq('pipeline: day91 → medium',                   prioOf('Day91'),      'medium');
+  assertEq('pipeline: day181 → low (beyond 180, within 365)', prioOf('Day181'), 'low');
+}
+
+// ── Group 30: Revenue-at-risk fallback to tenant counts (Phase 20 Track 2) ───────
+console.log('\n── Group 30: Revenue-at-risk fallback to tenant counts ──────────────────');
+
+{
+  const ref = new Date('2024-06-01T12:00:00Z');
+  // All tenants expiring soon, but none have base_rent extracted.
+  const noRentProps = [{ id: 'p1', name: 'No Rent Data', tenants: [
+    { tenant_name: 'A', end_date: '2024-06-15', leased_sqft: 1000 }, // critical, no base_rent
+    { tenant_name: 'B', end_date: '2024-08-01', leased_sqft: 2000 }, // high, no base_rent
+  ]}];
+
+  const rar = AE.computeRevenueAtRisk(noRentProps, ref);
+  assertEq('fallback: totalAnnualAtRisk is 0 when no rent is known', rar.totalAnnualAtRisk, 0);
+  assert('fallback: tier counts are still populated for the dashboard/table fallback display',
+    rar.byTier.critical.count === 1 && rar.byTier.high.count === 1);
+  assert('fallback: knownRentCount is 0 per tier when base_rent is absent',
+    rar.byTier.critical.knownRentCount === 0 && rar.byTier.high.knownRentCount === 0);
+  assert('fallback: total expiring count is still correct (2) even with no rent data',
+    rar.total === 2);
+
+  // Mixed: one tenant has rent, the other doesn't, within the same tier.
+  const mixedProps = [{ id: 'p1', name: 'Mixed', tenants: [
+    { tenant_name: 'A', end_date: '2024-06-15', leased_sqft: 1000, base_rent: 24000 },
+    { tenant_name: 'B', end_date: '2024-06-20', leased_sqft: 2000 }, // no base_rent
+  ]}];
+  const mixedRar = AE.computeRevenueAtRisk(mixedProps, ref);
+  assertEq('fallback: annualRent sums only known-rent tenants', mixedRar.byTier.critical.annualRent, 24000);
+  assertEq('fallback: knownRentCount reflects only tenants with rent', mixedRar.byTier.critical.knownRentCount, 1);
+  assertEq('fallback: count includes both tenants regardless of rent', mixedRar.byTier.critical.count, 2);
+}
+
 // ── Summary ───────────────────────────────────────────────────────────────────
 
 console.log(`\n${'─'.repeat(60)}`);

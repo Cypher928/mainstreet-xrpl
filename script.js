@@ -15048,11 +15048,12 @@ function _renderRenewalPipeline(pipeline) {
   const fmtRent = v => v != null && v > 0 ? fmtM(v) : '—';
 
   const statusLabels = {
-    not_started:   'Not Started',
-    contacted:     'Contacted',
-    negotiating:   'Negotiating',
-    proposal_sent: 'Proposal Sent',
-    signed:        'Signed',
+    not_started:  'Not Started',
+    contacted:    'Contacted',
+    negotiating:  'Negotiating',
+    renewal_sent: 'Renewal Sent',
+    renewed:      'Renewed',
+    vacating:     'Vacating',
   };
 
   const daysBadge = (item) => {
@@ -15103,11 +15104,16 @@ function _renderRenewalPipeline(pipeline) {
     const renewalTxt = item.renewalOptions
       ? `<span class="rp-renewal">&#x1F501; ${esc(item.renewalOptions)}</span>`
       : `<span class="rp-no-renewal">No options</span>`;
-    const statusCls = 'rp-status rp-status--' + (item.status || 'not_started');
-    const statusTxt = statusLabels[item.status] || item.status || 'Not Started';
-    const suiteTxt  = item.suite ? `<span class="rp-suite">Suite ${esc(item.suite)}</span>` : '';
+    const statusVal  = item.status || 'not_started';
+    const statusCls  = 'rp-status rp-status--' + statusVal;
+    const suiteTxt   = item.suite ? `<span class="rp-suite">Suite ${esc(item.suite)}</span>` : '';
+    const pidAttr    = esc(item.propertyId || '');
+    const tidAttr    = esc(item.tenantName || '');
+    const statusOpts = Object.keys(statusLabels).map(key =>
+      `<option value="${key}"${key === statusVal ? ' selected' : ''}>${esc(statusLabels[key])}</option>`
+    ).join('');
     return `
-    <tr style="cursor:pointer" onclick="navigateToPropertyTenant('${esc(item.propertyId || '')}','${esc(item.tenantName || '')}')">
+    <tr style="cursor:pointer" onclick="navigateToPropertyTenant('${pidAttr}','${tidAttr}')">
       <td>
         <span class="rp-tenant-name">${esc(item.tenantName)}</span>${suiteTxt}
       </td>
@@ -15116,7 +15122,9 @@ function _renderRenewalPipeline(pipeline) {
       <td class="rp-sqft">${item.leasedSqft != null ? fmtSf(item.leasedSqft) + ' sf' : '—'}</td>
       <td>${renewalTxt}</td>
       <td>${daysBadge(item)}</td>
-      <td><span class="${statusCls}">${esc(statusTxt)}</span></td>
+      <td onclick="event.stopPropagation()">
+        <select class="${statusCls}" onchange="setRenewalStatus('${pidAttr}','${tidAttr}', this.value)">${statusOpts}</select>
+      </td>
     </tr>`;
   }).join('');
 
@@ -15145,14 +15153,165 @@ function _renderRenewalPipeline(pipeline) {
   </div>`;
 }
 
+// Persists a Renewal Pipeline status change. Mutates the matched tenant via the
+// pure AcquisitionEngine helper, then writes through to Supabase (best-effort —
+// local state + UI already reflect the change even if the network write retries).
+function setRenewalStatus(propertyId, tenantName, status) {
+  const ok = AcquisitionEngine.applyRenewalStatus(_props, propertyId, tenantName, status);
+  if (!ok) return;
+  const prop = _props.find(p => p.id === propertyId);
+  if (prop) {
+    _lsSave(prop);
+    saveProperty(prop).catch(err => {
+      console.error('[setRenewalStatus]', err);
+      showToast(`Failed to save renewal status${err?.message ? ': ' + err.message : ''}`, { color: '#7f1d1d', textColor: '#fecaca' });
+    });
+  }
+  renderRenewalPipeline(_props);
+}
+
+// ── Lease Expiration Table ────────────────────────────────────────────────────
+// Read-only triage view (Tenant, Lease End Date, Days Remaining, Sq Ft, Renewal
+// Option Status, Risk Level) — separate from the Renewal Pipeline's workflow
+// table above. Reuses the same already-computed pipeline items, sorted by
+// urgency (computeRenewalPipeline sorts by daysRemaining ascending).
+
+function _renderLeaseExpirationTable(pipeline) {
+  if (!pipeline || pipeline.items.length === 0) return '';
+
+  const fmtDate = iso => {
+    const d = new Date(iso + 'T12:00:00');
+    return isNaN(d.getTime()) ? iso
+      : d.toLocaleDateString('en-US', { month: 'short', day: 'numeric', year: 'numeric' });
+  };
+  const fmtSf     = v => v != null ? Math.round(v).toLocaleString('en-US') + ' sf' : '—';
+  const riskLabel = { critical: 'Critical', high: 'High', medium: 'Medium', low: 'Low' };
+
+  const rows = pipeline.items.map(item => {
+    const days = item.daysRemaining <= 0
+      ? `Expired ${Math.abs(item.daysRemaining)}d ago`
+      : `${item.daysRemaining}d`;
+    return `
+    <tr style="cursor:pointer" onclick="navigateToPropertyTenant('${esc(item.propertyId || '')}','${esc(item.tenantName || '')}')">
+      <td>${esc(item.tenantName)}</td>
+      <td>${fmtDate(item.leaseEnd)}</td>
+      <td>${days}</td>
+      <td>${fmtSf(item.leasedSqft)}</td>
+      <td>${item.renewalOptions ? esc(item.renewalOptions) : 'No options'}</td>
+      <td><span class="rp-status rp-status--${item.priority}">${riskLabel[item.priority] || item.priority}</span></td>
+    </tr>`;
+  }).join('');
+
+  return `
+  <div class="let-panel">
+    <div class="let-panel-head">
+      <span class="let-panel-title">&#x1F4C5; Lease Expiration Table</span>
+      <button class="let-export-btn" onclick="exportLeaseExpirationReport()">Export Report</button>
+    </div>
+    <div class="rp-table-wrap">
+      <table class="rp-table">
+        <thead>
+          <tr>
+            <th>Tenant</th>
+            <th>Lease End Date</th>
+            <th>Days Remaining</th>
+            <th>Sq Ft</th>
+            <th>Renewal Option Status</th>
+            <th>Risk Level</th>
+          </tr>
+        </thead>
+        <tbody>${rows}</tbody>
+      </table>
+    </div>
+  </div>`;
+}
+
+// Printable/exportable "Upcoming Lease Expiration Report" — follows the same
+// window.open + document.write (with Blob/anchor download fallback) pattern as
+// exportPortfolioSummary().
+function exportLeaseExpirationReport() {
+  const props = Array.isArray(_props) ? _props : [];
+  if (props.length === 0) {
+    showToast('No portfolio data to export. Add properties first.', { color: '#92400e', textColor: '#fef3c7' });
+    return;
+  }
+  const pipeline = AcquisitionEngine.computeRenewalPipeline(props);
+  const fmtDate  = iso => {
+    const d = new Date(iso + 'T12:00:00');
+    return isNaN(d.getTime()) ? iso
+      : d.toLocaleDateString('en-US', { month: 'long', day: 'numeric', year: 'numeric' });
+  };
+  const fmtRent   = v => v != null && v > 0 ? '$' + Math.round(v).toLocaleString('en-US') + '/yr' : '—';
+  const riskLabel = { critical: 'Critical', high: 'High', medium: 'Medium', low: 'Low' };
+  const today     = new Date().toLocaleDateString('en-US', { month: 'long', day: 'numeric', year: 'numeric' });
+  const esc_      = s => String(s).replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;').replace(/"/g, '&quot;');
+
+  const rows = pipeline.items.map(item => `
+    <tr>
+      <td>${esc_(item.tenantName)}</td>
+      <td>${fmtDate(item.leaseEnd)}</td>
+      <td>${fmtRent(item.annualRent)}</td>
+      <td>${item.renewalOptions ? esc_(item.renewalOptions) : 'No options'}</td>
+      <td>${riskLabel[item.priority] || item.priority}</td>
+    </tr>`).join('');
+
+  const html = `<!DOCTYPE html><html><head><meta charset="utf-8"><title>Upcoming Lease Expiration Report</title>
+  <style>
+    body{font-family:Arial,sans-serif;margin:40px;color:#1e293b;}
+    h1{font-size:1.4rem;margin-bottom:4px;}
+    .meta{color:#64748b;font-size:0.85rem;margin-bottom:24px;}
+    table{width:100%;border-collapse:collapse;font-size:0.85rem;}
+    th,td{border:1px solid #cbd5e1;padding:8px 10px;text-align:left;}
+    th{background:#f1f5f9;}
+    .print-btn{margin-bottom:20px;padding:8px 16px;background:#C9973A;color:#fff;border:none;border-radius:6px;cursor:pointer;font-size:0.85rem;}
+    @media print{.print-btn{display:none;}}
+  </style></head><body>
+  <button class="print-btn" onclick="window.print()">Print / Save as PDF</button>
+  <h1>Upcoming Lease Expiration Report</h1>
+  <div class="meta">Generated ${today} &middot; ${pipeline.totalCount} lease${pipeline.totalCount !== 1 ? 's' : ''} in pipeline</div>
+  <table>
+    <thead><tr><th>Tenant</th><th>End Date</th><th>Revenue</th><th>Renewal Option</th><th>Risk Status</th></tr></thead>
+    <tbody>${rows || '<tr><td colspan="5">No leases in pipeline window.</td></tr>'}</tbody>
+  </table>
+  </body></html>`;
+
+  const w = window.open('', '_blank');
+  if (w) {
+    w.document.write(html);
+    w.document.close();
+  } else {
+    const blob = new Blob([html], { type: 'text/html' });
+    const url  = URL.createObjectURL(blob);
+    const a    = document.createElement('a');
+    a.href = url;
+    a.download = 'lease-expiration-report.html';
+    a.click();
+    URL.revokeObjectURL(url);
+  }
+}
+
 function renderRenewalPipeline(props) {
-  const panel = document.getElementById('renewalPipelinePanel');
-  if (!panel) return;
-  const safeProps = Array.isArray(props) ? props : [];
-  if (safeProps.length === 0) { panel.style.display = 'none'; return; }
+  const panel      = document.getElementById('renewalPipelinePanel');
+  const tablePanel = document.getElementById('leaseExpirationTablePanel');
+  const safeProps  = Array.isArray(props) ? props : [];
+  if (safeProps.length === 0) {
+    if (panel)      panel.style.display = 'none';
+    if (tablePanel) tablePanel.style.display = 'none';
+    return;
+  }
   const pipeline = AcquisitionEngine.computeRenewalPipeline(safeProps);
-  panel.style.display = 'block';
-  panel.innerHTML = _renderRenewalPipeline(pipeline);
+  if (panel) {
+    panel.style.display = 'block';
+    panel.innerHTML = _renderRenewalPipeline(pipeline);
+  }
+  if (tablePanel) {
+    if (pipeline.items.length === 0) {
+      tablePanel.style.display = 'none';
+    } else {
+      tablePanel.style.display = 'block';
+      tablePanel.innerHTML = _renderLeaseExpirationTable(pipeline);
+    }
+  }
 }
 
 // ── Executive Summary Export ─────────────────────────────────────────────────
@@ -15682,6 +15841,38 @@ function toggleLeaseAlertMedium() {
   if (icon) icon.innerHTML = expanded ? '&#x25BC;' : '&#x25B2;';
 }
 
+// Four explicit, separately-labeled buckets (≤30 / 31–90 / 91–180 days / Expired),
+// matching the _EXPIRY_DAYS thresholds (CRITICAL=30, HIGH=90, MEDIUM=180) already
+// used by AcquisitionEngine.computeRevenueAtRisk(). Falls back to a tenant count
+// per-tile when no base_rent data is available for that tier.
+function _renderLeaseExpirationKPIs(rar) {
+  if (!rar || rar.total === 0) return '';
+
+  const fmtRent = v => '$' + Math.round(v).toLocaleString('en-US') + '/yr';
+  const tile = (label, tier, key) => {
+    const sub = tier.count === 0 ? ''
+      : tier.knownRentCount > 0 ? fmtRent(tier.annualRent)
+      : `${tier.count} tenant${tier.count !== 1 ? 's' : ''}`;
+    return `
+    <div class="lek-tile lek-tile--${key}">
+      <div class="lek-count">${tier.count}</div>
+      <div class="lek-label">${label}</div>
+      <div class="lek-sub">${sub}</div>
+    </div>`;
+  };
+
+  return `
+  <div class="lek-panel">
+    <div class="lek-title">Lease Expiration Dashboard</div>
+    <div class="lek-grid">
+      ${tile('Expiring in 30 Days',  rar.byTier.critical, 'critical')}
+      ${tile('Expiring in 90 Days',  rar.byTier.high,     'high')}
+      ${tile('Expiring in 180 Days', rar.byTier.medium,   'medium')}
+      ${tile('Expired Leases',       rar.byTier.expired,  'expired')}
+    </div>
+  </div>`;
+}
+
 function _renderLeaseAlertPanel(rar) {
   if (_leaseAlertsDismissed || rar.total === 0) return '';
 
@@ -15743,7 +15934,8 @@ function _renderLeaseAlertPanel(rar) {
     ? `<span class="la-count--urgent">${badgeText}</span>`
     : `<span class="la-count--medium">${badgeText}</span>`;
 
-  // Revenue summary row when we have totals
+  // Revenue summary row when we have totals; gracefully falls back to tenant
+  // counts when no base_rent data is available for any expiring tenant.
   const rarSummary = rar.totalAnnualAtRisk > 0 ? `
   <div class="la-rar-summary">
     <span class="la-rar-label">Revenue at Risk</span>
@@ -15753,7 +15945,11 @@ function _renderLeaseAlertPanel(rar) {
     ${rar.totalSqftAtRisk > 0
       ? `<span class="la-rar-sqft">${Math.round(rar.totalSqftAtRisk).toLocaleString('en-US')} sf exposed</span>`
       : ''}
-  </div>` : '';
+  </div>` : (rar.total > 0 ? `
+  <div class="la-rar-summary">
+    <span class="la-rar-label">Revenue at Risk</span>
+    <span class="la-rar-total">${rar.urgent} urgent tenant${rar.urgent !== 1 ? 's' : ''} · ${rar.total} total expiring (rent data unavailable)</span>
+  </div>` : '');
 
   return `
   <div class="la-panel">
@@ -15830,6 +16026,8 @@ function renderPortfolio(props) {
 
   // Revenue-at-Risk + Lease Expiration Alerts
   const rar          = AcquisitionEngine.computeRevenueAtRisk(props);
+  const lekEl         = document.getElementById('leaseExpirationKPIs');
+  if (lekEl) lekEl.innerHTML = _renderLeaseExpirationKPIs(rar);
   const alertPanelEl = document.getElementById('leaseAlertPanel');
   if (alertPanelEl) alertPanelEl.innerHTML = _renderLeaseAlertPanel(rar);
 

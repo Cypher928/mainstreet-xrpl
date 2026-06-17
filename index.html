@@ -4500,14 +4500,48 @@
     .rp-days--medium   { background: #422006; color: #fbbf24; }
     .rp-days--low      { background: #0f1b2d; color: #94a3b8; }
     .rp-status         { font-size: 0.7rem; padding: 2px 7px; border-radius: 10px;
-                         font-weight: 600; white-space: nowrap; }
+                         font-weight: 600; white-space: nowrap; border: none; cursor: pointer; }
     .rp-status--not_started  { background: #1e293b; color: #64748b; }
     .rp-status--contacted    { background: #0c1a36; color: #60a5fa; }
     .rp-status--negotiating  { background: #1a2a1a; color: #4ade80; }
-    .rp-status--proposal_sent { background: #1a1a2e; color: #a78bfa; }
-    .rp-status--signed       { background: #052e16; color: #86efac; }
+    .rp-status--renewal_sent { background: #1a1a2e; color: #a78bfa; }
+    .rp-status--renewed      { background: #052e16; color: #86efac; }
+    .rp-status--vacating     { background: #431407; color: #fb923c; }
+    /* Risk Level reuses the same color scale as rp-days */
+    .rp-status--critical { background: #7f1d1d; color: #fca5a5; }
+    .rp-status--high     { background: #431407; color: #fb923c; }
+    .rp-status--medium   { background: #422006; color: #fbbf24; }
+    .rp-status--low      { background: #0f1b2d; color: #94a3b8; }
     .rp-empty          { padding: 22px 18px; text-align: center; font-size: 0.82rem;
                          color: #475569; }
+
+    /* ── Lease Expiration Dashboard (KPI tiles) ────────────────────────────── */
+    .lek-panel         { background: #090f1a; border: 1px solid #1e3a5f; border-radius: 10px;
+                         margin-bottom: 20px; padding: 14px 18px; }
+    .lek-title         { font-size: 0.88rem; font-weight: 700; color: #e2e8f0;
+                         letter-spacing: 0.02em; margin-bottom: 12px; }
+    .lek-grid          { display: grid; grid-template-columns: repeat(4, 1fr); gap: 12px; }
+    .lek-tile          { background: #0a1322; border: 1px solid #0f1b2d; border-radius: 8px;
+                         padding: 12px; text-align: center; }
+    .lek-count         { font-size: 1.5rem; font-weight: 700; color: #C9973A; line-height: 1.1; }
+    .lek-tile--critical .lek-count { color: #fca5a5; }
+    .lek-tile--high     .lek-count { color: #fb923c; }
+    .lek-tile--medium   .lek-count { color: #fbbf24; }
+    .lek-tile--expired  .lek-count { color: #f87171; }
+    .lek-label         { font-size: 0.7rem; color: #94a3b8; margin-top: 4px; }
+    .lek-sub           { font-size: 0.7rem; color: #64748b; margin-top: 2px; }
+    @media (max-width: 600px) { .lek-grid { grid-template-columns: repeat(2, 1fr); } }
+
+    /* ── Lease Expiration Table ─────────────────────────────────────────── */
+    .let-panel         { background: #090f1a; border: 1px solid #1e3a5f; border-radius: 10px;
+                         margin-bottom: 20px; overflow: hidden; }
+    .let-panel-head     { display: flex; align-items: center; justify-content: space-between;
+                         gap: 12px; padding: 13px 18px; border-bottom: 1px solid #0f1b2d; }
+    .let-panel-title    { font-size: 0.88rem; font-weight: 700; color: #e2e8f0;
+                         letter-spacing: 0.02em; }
+    .let-export-btn     { background: #C9973A; color: #1e1208; border: none; border-radius: 6px;
+                         padding: 6px 12px; font-size: 0.74rem; font-weight: 600; cursor: pointer; }
+    .let-export-btn:hover { background: #d9a94a; }
 
     /* ── Empty / Clean States ───────────────────────────────────────────── */
     /* Action Center — all clear */
@@ -4921,11 +4955,17 @@
   <div id="reviewQueuePanel" class="rq-panel" style="display:none;"></div>
   <div class="ptf-cards-grid" id="propertyCardsGrid"></div>
 
-  <!-- 4. Lease Expiration Pipeline -->
+  <!-- 4. Lease Expiration Dashboard (30/90/180/Expired KPI tiles) -->
+  <div id="leaseExpirationKPIs"></div>
+
+  <!-- 4b. Lease Expiration Pipeline -->
   <div id="leaseAlertPanel"></div>
 
   <!-- 5. Renewal Pipeline Panel -->
   <div id="renewalPipelinePanel" style="display:none;"></div>
+
+  <!-- 5b. Lease Expiration Table (read-only triage view) -->
+  <div id="leaseExpirationTablePanel" style="display:none;"></div>
 
   <!-- 6. Portfolio Intelligence Panel -->
   <div id="portfolioIntelPanel" style="display:none;"></div>

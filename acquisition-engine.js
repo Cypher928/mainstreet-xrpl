@@ -1142,6 +1142,32 @@
     };
   }
 
+  // ─── Renewal Status Mutation ──────────────────────────────────────────────
+  // Pure helper backing the Renewal Pipeline status dropdown: locates the tenant
+  // by propertyId + tenantName and sets _renewalStatus in place. Mutates the
+  // matched tenant object directly — callers own persistence (saveProperty etc).
+
+  var RENEWAL_STATUSES = ['not_started', 'contacted', 'negotiating', 'renewal_sent', 'renewed', 'vacating'];
+
+  function applyRenewalStatus(props, propertyId, tenantName, status) {
+    if (RENEWAL_STATUSES.indexOf(status) === -1) return false;
+    var safeProps = Array.isArray(props) ? props : [];
+    for (var i = 0; i < safeProps.length; i++) {
+      var prop = safeProps[i];
+      if (prop.id !== propertyId) continue;
+      var tenants = Array.isArray(prop.tenants) ? prop.tenants : [];
+      for (var j = 0; j < tenants.length; j++) {
+        var t    = tenants[j];
+        var name = t.tenant_name || t.tenantName;
+        if (name === tenantName) {
+          t._renewalStatus = status;
+          return true;
+        }
+      }
+    }
+    return false;
+  }
+
   // ─── Portfolio Action Center ──────────────────────────────────────────────
   // Aggregates all actionable items from the portfolio into three severity buckets.
   // Reuses computeRevenueAtRisk, computeRenewalPipeline, computePortfolioIntelligence —
@@ -1308,6 +1334,8 @@
     computeRevenueForecast,
     computeRenewalPipeline,
     computePortfolioActions,
+    applyRenewalStatus,
+    RENEWAL_STATUSES,
   };
 
   if (typeof module !== 'undefined' && module.exports) {
