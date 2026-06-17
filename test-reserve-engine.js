@@ -87,6 +87,50 @@ console.log('\n── Group 2: normalizeReserve ──────────�
   assertEq('normalizeReserve: currentBalance is null, not 0, when absent', noBalance.currentBalance, null);
 }
 
+// ── Group 2b: extraction confidence & source-page citation ────────────────────
+console.log('\n── Group 2b: extraction confidence & source-page citation ──────────────────');
+{
+  // Strong evidence: every confidence field has a verbatim quote + page
+  const strong = EE.normalizeReserve({
+    reserve_type: 'Roof Reserve', current_balance: 75000, eligible_uses: 'Roof repair only',
+    evidence: {
+      reserve_type:    { quote: 'Roof Reserve Account', page: 17 },
+      current_balance: { quote: 'balance of $75,000.00', page: 17 },
+      eligible_uses:    { quote: 'used solely for roof repair', page: 18 },
+    },
+  });
+  assertEq('normalizeReserve: confidence level "high" when all fields quoted + paged', strong.extractionConfidence.level, 'high');
+  assertEq('normalizeReserve: sourcePages deduped and sorted', strong.sourcePages, [17, 18]);
+  assert('normalizeReserve: evidence carried through verbatim', strong.evidence.reserve_type.quote === 'Roof Reserve Account');
+
+  // No evidence at all — confidence should be low/failed, no source pages
+  const weak = EE.normalizeReserve({ reserve_type: 'HVAC Reserve', current_balance: 50000 });
+  assert('normalizeReserve: confidence is not "high" with zero quotes', weak.extractionConfidence.level !== 'high');
+  assertEq('normalizeReserve: sourcePages empty when no evidence', weak.sourcePages, []);
+  assert('normalizeReserve: reasons explain missing quotes', weak.extractionConfidence.reasons.length > 0);
+
+  // deriveReserveExtractionConfidence directly — pdf_vision path lowers score
+  const textPath = EE.deriveReserveExtractionConfidence({
+    reserve_type: { quote: 'x', page: 1 }, current_balance: { quote: 'x', page: 1 }, eligible_uses: { quote: 'x', page: 1 },
+  }, { extractionPath: 'text' });
+  const visionPath = EE.deriveReserveExtractionConfidence({
+    reserve_type: { quote: 'x', page: 1 }, current_balance: { quote: 'x', page: 1 }, eligible_uses: { quote: 'x', page: 1 },
+  }, { extractionPath: 'pdf_vision' });
+  assert('deriveReserveExtractionConfidence: pdf_vision path scores lower than text path', visionPath.score < textPath.score);
+
+  const shortOcr = EE.deriveReserveExtractionConfidence({}, { ocrChars: 100 });
+  const noOcrInfo = EE.deriveReserveExtractionConfidence({}, {});
+  assert('deriveReserveExtractionConfidence: short OCR text lowers score further', shortOcr.score < noOcrInfo.score);
+
+  const noQuotePage = EE.deriveReserveExtractionConfidence({
+    reserve_type: { quote: 'x', page: null }, current_balance: { quote: 'x', page: null }, eligible_uses: { quote: 'x', page: null },
+  }, {});
+  const withPage = EE.deriveReserveExtractionConfidence({
+    reserve_type: { quote: 'x', page: 5 }, current_balance: { quote: 'x', page: 5 }, eligible_uses: { quote: 'x', page: 5 },
+  }, {});
+  assert('deriveReserveExtractionConfidence: missing page numbers score lower than same quotes with pages', noQuotePage.score < withPage.score);
+}
+
 // ── Group 3: computeReserveBalance ────────────────────────────────────────────
 console.log('\n── Group 3: computeReserveBalance ──────────────────────────────────────────');
 {

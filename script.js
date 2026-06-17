@@ -619,20 +619,10 @@ Return exactly this structure:
   "repair_completion_deadline": "YYYY-MM-DD" | null,
   "reserve_expiration_date": "YYYY-MM-DD" | null,
   "notes": string | null,
-  "quotes": {
-    "reserve_type": string | null,
-    "current_balance": string | null,
-    "eligible_uses": string | null,
-    "requires_invoices": string | null,
-    "requires_photos": string | null,
-    "requires_lien_waivers": string | null,
-    "requires_contractor_bids": string | null,
-    "requires_engineer_certification": string | null,
-    "min_draw_amount": string | null,
-    "requires_approval": string | null,
-    "draw_request_deadline": string | null,
-    "repair_completion_deadline": string | null,
-    "reserve_expiration_date": string | null
+  "evidence": {
+    "reserve_type":    { "quote": string | null, "page": number | null },
+    "current_balance": { "quote": string | null, "page": number | null },
+    "eligible_uses":    { "quote": string | null, "page": number | null }
   }
 }
 
@@ -652,8 +642,9 @@ Rules:
 - repair_completion_deadline: The deadline by which the underlying repair/improvement work must be completed.
 - reserve_expiration_date: The date after which the reserve account terminates or unused funds are released/forfeited.
 - notes: Any other reserve-specific requirement or condition worth flagging (max 300 chars). Null if nothing additional applies.
-- quotes: For each non-null field, copy ≤120 chars of the exact verbatim clause text that led to that value. Null for any field whose value is null.
-- Use null only when a field is truly impossible to determine.`;
+- evidence: For reserve_type, current_balance, and eligible_uses, copy ≤160 chars of the exact verbatim clause text that produced that value, AND the page number from the nearest preceding "--- Page N ---" marker in the document text. Both null if the value itself is null or the page cannot be determined.
+- Never paraphrase a quote — it must be copied character-for-character from the source text.
+- Use null only when a field is truly impossible to determine. Do not guess a page number; null is acceptable.`;
 
 const INVOICE_PROMPT = `You are extracting data from a commercial real estate invoice or bill.
 This document may be a scanned image — tolerate OCR noise, spacing issues, and number formatting quirks.
@@ -1733,8 +1724,26 @@ async function extractDocumentText(file) {
   return isWeak ? null : text;
 }
 
+// Reserve/escrow clauses can appear anywhere in a 20-50 page financing
+// document (often buried mid-document, not near the top or bottom) — unlike
+// prepareLeaseTextForClaude (lease-keyword-boosted head+tail truncation,
+// tuned for lease term/rent/sqft which cluster near the start), this sends
+// the full cleaned text up to a generous char budget, preserving every
+// "--- Page N ---" marker so Claude can cite source pages accurately.
+function prepareEscrowTextForClaude(rawText) {
+  if (!rawText) return '';
+  const clean = rawText
+    .replace(/\r\n/g, '\n')
+    .replace(/\r/g, '\n')
+    .replace(/[ \t]{3,}/g, '  ')
+    .replace(/\n{4,}/g, '\n\n\n')
+    .trim();
+  const MAX_CHARS = 120000; // ~30k tokens — comfortably inside the model's context window
+  return clean.length > MAX_CHARS ? clean.slice(0, MAX_CHARS) : clean;
+}
+
 async function callClaudeForEscrowDocument(text) {
-  const snippet = prepareLeaseTextForClaude(text);
+  const snippet = prepareEscrowTextForClaude(text);
   const prompt = `
 You are extracting lender reserve/escrow terms from a commercial real estate financing document.
 NOTE: This text may have been extracted via OCR — tolerate minor spelling errors or spacing noise.
@@ -1812,9 +1821,15 @@ Return ONLY valid JSON. No explanation. No markdown.
   "draw_request_deadline": "YYYY-MM-DD" or null,
   "repair_completion_deadline": "YYYY-MM-DD" or null,
   "reserve_expiration_date": "YYYY-MM-DD" or null,
-  "notes": string or null
+  "notes": string or null,
+  "evidence": {
+    "reserve_type":    { "quote": string or null, "page": number or null },
+    "current_balance": { "quote": string or null, "page": number or null },
+    "eligible_uses":    { "quote": string or null, "page": number or null }
+  }
 }
 
+For evidence: copy the exact verbatim clause (≤160 chars) and the page number it appears on (page 1 = first page of the PDF). Never paraphrase. Null both if not determinable.
 Return best guess — do not leave reserve_type null.`;
 
   const messages = [{
@@ -1861,11 +1876,13 @@ async function handleEscrowDocumentUpload(propertyId, file) {
 
   try {
     const docText = await extractDocumentText(file);
-    let extracted;
+    let extracted, extractionPath;
     if (docText && docText.length >= 50) {
       extracted = await callClaudeForEscrowDocument(docText);
+      extractionPath = 'text';
     } else {
       extracted = await callClaudeForEscrowDocumentPdfDirect(file);
+      extractionPath = 'pdf_vision';
     }
     if (!extracted) throw new Error('Could not extract reserve fields from this document');
 
@@ -1874,6 +1891,8 @@ async function handleEscrowDocumentUpload(propertyId, file) {
     const reserve = window.EscrowReserveEngine.normalizeReserve(extracted, {
       sourceFileName: file.name,
       sourceFileUrl:  fileUrl,
+      extractionPath,
+      ocrChars: docText ? docText.length : null,
     });
 
     if (!Array.isArray(prop.escrowReserves)) prop.escrowReserves = [];
@@ -1918,6 +1937,23 @@ function renderEscrowProfile(property) {
         req.requiresEngineerCertification  && 'Engineer Cert.',
         req.requiresApproval               && 'Approval',
       ].filter(Boolean).map(b => `<span class="escrow-req-badge">${esc(b)}</span>`).join('');
+
+      const conf = r.extractionConfidence || { level: 'low', score: 0, reasons: [] };
+      const confCls = { high: 'escrow-conf-high', medium: 'escrow-conf-medium', low: 'escrow-conf-low', failed: 'escrow-conf-low' }[conf.level] || 'escrow-conf-low';
+      const confLabel = { high: 'High', medium: 'Medium', low: 'Low', failed: 'Failed' }[conf.level] || 'Low';
+      const confTitle = (conf.reasons || []).join('; ') || 'Verbatim source quote found for key fields';
+      const confBadge = `<span class="escrow-conf-badge ${confCls}" title="${esc(confTitle)}">Confidence: ${esc(confLabel)}</span>`;
+
+      const pages = Array.isArray(r.sourcePages) ? r.sourcePages : [];
+      const sourceLine = pages.length
+        ? `<div class="escrow-source-pages">&#x1F4CE; Source: Page${pages.length > 1 ? 's' : ''} ${pages.join(', ')}${r.sourceFileName ? ` &middot; ${esc(r.sourceFileName)}` : ''}</div>`
+        : (r.sourceFileName ? `<div class="escrow-source-pages">&#x1F4CE; Source: ${esc(r.sourceFileName)} (no page citation extracted)</div>` : '');
+
+      const evidenceQuote = r.evidence?.current_balance?.quote || r.evidence?.reserve_type?.quote;
+      const evidenceLine = evidenceQuote
+        ? `<div class="escrow-reserve-notes" style="font-style:italic;">&#x201C;${esc(evidenceQuote)}&#x201D;</div>`
+        : '';
+
       return `
       <div class="escrow-reserve-card">
         <div class="escrow-reserve-head">
@@ -1925,6 +1961,9 @@ function renderEscrowProfile(property) {
           <span class="escrow-reserve-balance">${fmt(bal.availableBalance)} available</span>
         </div>
         <div class="escrow-reserve-sub">of ${fmt(bal.currentBalance)} current balance${bal.committedAmount ? ` &middot; ${fmt(bal.committedAmount)} committed to open draws` : ''}</div>
+        ${confBadge}
+        ${sourceLine}
+        ${evidenceLine}
         ${r.eligibleUses ? `<div class="escrow-reserve-row"><span>Eligible Uses</span><span>${esc(r.eligibleUses)}</span></div>` : ''}
         ${reqBadges ? `<div class="escrow-req-badges">${reqBadges}</div>` : ''}
         ${dl.drawRequestDeadline      ? `<div class="escrow-reserve-row"><span>Draw Request Deadline</span><span>${esc(dl.drawRequestDeadline)}</span></div>` : ''}

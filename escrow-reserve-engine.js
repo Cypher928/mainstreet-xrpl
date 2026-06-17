@@ -72,6 +72,50 @@
     return 'other';
   }
 
+  // ── Extraction confidence & source grounding ─────────────────────────────
+  //
+  // Lender documents are legal documents — a property manager will not trust
+  // "Roof Reserve: $75,000" without knowing where that number came from. This
+  // mirrors LeaseIntelligence.deriveExtractionConfidence: a verbatim quote
+  // (with page number, read from the "--- Page N ---" markers script.js's
+  // extractPdfText already injects) raises confidence; absence of a quote,
+  // the lower-fidelity scanned-PDF vision path, or thin OCR text lower it.
+  var CONFIDENCE_FIELDS = ['reserve_type', 'current_balance', 'eligible_uses'];
+
+  function deriveReserveExtractionConfidence(evidence, opts) {
+    evidence = (evidence && typeof evidence === 'object') ? evidence : {};
+    opts = opts || {};
+    var score = 70;
+    var reasons = [];
+
+    CONFIDENCE_FIELDS.forEach(function (f) {
+      var ev = evidence[f];
+      if (ev && ev.quote) {
+        score += 8;
+        if (ev.page == null) {
+          score -= 3;
+          reasons.push('No page citation for ' + f);
+        }
+      } else {
+        score -= 12;
+        reasons.push('No verbatim source quote for ' + f);
+      }
+    });
+
+    if (opts.extractionPath === 'pdf_vision') {
+      score -= 10;
+      reasons.push('Extracted via scanned-document vision path — verify against source document');
+    }
+    if (opts.ocrChars != null && opts.ocrChars < 500) {
+      score -= 10;
+      reasons.push('Source text layer was very short — possible OCR degradation');
+    }
+
+    score = Math.max(0, Math.min(100, score));
+    var level = score >= 80 ? 'high' : score >= 55 ? 'medium' : score > 0 ? 'low' : 'failed';
+    return { score: score, level: level, reasons: reasons };
+  }
+
   // ── TRACK 1: Reserve normalization ───────────────────────────────────────
   //
   // Converts raw Claude extraction output (or a manually-entered reserve) into
@@ -82,6 +126,17 @@
     var reserveTypeKey = RESERVE_TYPE_KEYS.indexOf(raw.reserve_type) !== -1
       ? raw.reserve_type
       : classifyReserveType(raw.reserve_type);
+
+    var evidence = (raw.evidence && typeof raw.evidence === 'object') ? raw.evidence : {};
+    var sourcePages = Object.keys(evidence)
+      .map(function (k) { return evidence[k] && evidence[k].page; })
+      .filter(function (p) { return typeof p === 'number' && p > 0; });
+    sourcePages = sourcePages.filter(function (p, i) { return sourcePages.indexOf(p) === i; }).sort(function (a, b) { return a - b; });
+
+    var confidence = deriveReserveExtractionConfidence(evidence, {
+      extractionPath: meta.extractionPath || null,
+      ocrChars:       meta.ocrChars != null ? meta.ocrChars : null,
+    });
 
     return {
       id:               meta.id || ('reserve-' + Date.now() + '-' + Math.random().toString(36).slice(2, 8)),
@@ -107,9 +162,11 @@
         repairCompletionDeadline: _pd(raw.repair_completion_deadline),
         reserveExpirationDate:    _pd(raw.reserve_expiration_date),
       },
-      notes:        raw.notes ? String(raw.notes).slice(0, 1000) : null,
-      quotes:       (raw.quotes && typeof raw.quotes === 'object') ? raw.quotes : {},
-      extractedAt:  meta.extractedAt || new Date().toISOString(),
+      notes:                 raw.notes ? String(raw.notes).slice(0, 1000) : null,
+      evidence:              evidence,
+      sourcePages:           sourcePages,
+      extractionConfidence:  confidence,
+      extractedAt:           meta.extractedAt || new Date().toISOString(),
     };
   }
 
@@ -299,6 +356,7 @@
     DRAW_STATUS_LABELS,
     COMMITTED_DRAW_STATUSES,
     classifyReserveType,
+    deriveReserveExtractionConfidence,
     normalizeReserve,
     computeReserveBalance,
     validateDrawRequest,
