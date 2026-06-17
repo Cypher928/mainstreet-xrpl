@@ -4349,6 +4349,8 @@
                          background: #7f1d1d; color: #fca5a5; font-weight: 600; }
     .la-count--medium  { font-size: 0.7rem; padding: 2px 8px; border-radius: 10px;
                          background: #422006; color: #fbbf24; font-weight: 600; }
+    .la-count--expired { font-size: 0.7rem; padding: 2px 8px; border-radius: 10px;
+                         background: #450a0a; color: #f87171; font-weight: 700; }
     .la-dismiss        { margin-left: auto; background: none; border: none; color: #475569;
                          cursor: pointer; font-size: 1.05rem; padding: 2px 4px; line-height: 1; }
     .la-dismiss:hover  { color: #94a3b8; }
@@ -4398,6 +4400,8 @@
     /* KPI tile sub-value */
     .ptf-kpi-sub       { font-size: 0.67rem; color: #f87171; margin-top: 3px;
                          line-height: 1.2; }
+    /* Trailing "this row is clickable" affordance */
+    .la-chevron        { color: #334155; font-size: 1rem; flex-shrink: 0; margin-left: 2px; }
 
     /* ── Property Card: Lease Expiry Banner ─────────────────────────────── */
     .ptf-lease-expiry-banner { font-size: 0.74rem; font-weight: 600;
@@ -4512,6 +4516,17 @@
     .rp-status--high     { background: #431407; color: #fb923c; }
     .rp-status--medium   { background: #422006; color: #fbbf24; }
     .rp-status--low      { background: #0f1b2d; color: #94a3b8; }
+    /* Renewal status <select> — reset native OS chrome (iOS/Android render their
+       own background + arrow + text color by default, breaking the pill look)
+       and give it a comfortable touch target. */
+    .rp-status-select {
+      -webkit-appearance: none; -moz-appearance: none; appearance: none;
+      font-family: inherit; min-height: 28px; padding: 4px 24px 4px 9px;
+      background-image: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='10' height='6' viewBox='0 0 10 6'%3E%3Cpath fill='%2394a3b8' d='M0 0l5 6 5-6z'/%3E%3C/svg%3E");
+      background-repeat: no-repeat; background-position: right 8px center;
+    }
+    .rp-status-select option { background: #0a1322; color: #e2e8f0; }
+    @media (max-width: 640px) { .rp-status-select { min-height: 32px; font-size: 0.74rem; } }
     .rp-empty          { padding: 22px 18px; text-align: center; font-size: 0.82rem;
                          color: #475569; }
 
@@ -4536,12 +4551,21 @@
     .let-panel         { background: #090f1a; border: 1px solid #1e3a5f; border-radius: 10px;
                          margin-bottom: 20px; overflow: hidden; }
     .let-panel-head     { display: flex; align-items: center; justify-content: space-between;
-                         gap: 12px; padding: 13px 18px; border-bottom: 1px solid #0f1b2d; }
+                         gap: 12px; padding: 13px 18px; border-bottom: 1px solid #0f1b2d; flex-wrap: wrap; }
     .let-panel-title    { font-size: 0.88rem; font-weight: 700; color: #e2e8f0;
                          letter-spacing: 0.02em; }
     .let-export-btn     { background: #C9973A; color: #1e1208; border: none; border-radius: 6px;
                          padding: 6px 12px; font-size: 0.74rem; font-weight: 600; cursor: pointer; }
     .let-export-btn:hover { background: #d9a94a; }
+    .let-actions        { white-space: nowrap; }
+    .let-action-link     { background: none; border: 1px solid #1e3a5f; color: #60a5fa;
+                         font-size: 0.68rem; padding: 3px 8px; border-radius: 4px; cursor: pointer;
+                         margin-right: 6px; }
+    .let-action-link:hover { background: #0c1a36; }
+    @media (max-width: 640px) {
+      .let-actions      { display: flex; flex-direction: column; gap: 4px; align-items: flex-start; }
+      .let-action-link  { margin-right: 0; }
+    }
 
     /* ── Empty / Clean States ───────────────────────────────────────────── */
     /* Action Center — all clear */
@@ -4574,9 +4598,13 @@
 
     /* ── Mobile: Lease Alert Panel ───────────────────────────────────────── */
     @media (max-width: 600px) {
+      .la-row         { flex-wrap: wrap; }
       .la-date        { display: none; }
-      .la-meta        { width: auto; }
-      .la-pipeline-link { display: none; }
+      /* Meta (days badge, revenue, Update Status button) drops to its own
+         row instead of being squeezed/hidden — keeps the action visible. */
+      .la-meta        { width: 100%; justify-content: flex-start; margin-top: 4px; padding-left: 20px; }
+      .la-pipeline-link { font-size: 0.68rem; padding: 3px 8px; }
+      .la-chevron     { display: none; }
     }
     @media (max-width: 420px) {
       .la-property    { display: none; }

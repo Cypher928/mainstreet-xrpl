@@ -1103,6 +1103,7 @@
         items.push({
           propertyId:     prop.id        || null,
           propertyName:   prop.name      || '(unnamed)',
+          tenantId:       t.id           || null,
           tenantName:     t.tenant_name  || t.tenantName || '(unnamed)',
           suite:          t.unit_number  || t.unitNumber || null,
           leaseEnd:       endStr,
@@ -1144,26 +1145,44 @@
 
   // ─── Renewal Status Mutation ──────────────────────────────────────────────
   // Pure helper backing the Renewal Pipeline status dropdown: locates the tenant
-  // by propertyId + tenantName and sets _renewalStatus in place. Mutates the
-  // matched tenant object directly — callers own persistence (saveProperty etc).
+  // within propertyId and sets _renewalStatus in place. Mutates the matched
+  // tenant object directly — callers own persistence (saveProperty etc).
+  //
+  // `matcher` may be:
+  //   - a stable tenant id:        { tenantId }                — preferred when available
+  //   - name + suite/unit:         { tenantName, suite }        — disambiguates same-name tenants
+  //   - a bare string (legacy):    'Acme Corp'                  — treated as { tenantName }
+  //
+  // When tenantId isn't available and more than one tenant in the property shares
+  // tenantName (with no suite given to disambiguate), the match is ambiguous and
+  // the function safely refuses (returns false) rather than guessing which tenant
+  // to update — multi-suite tenants with identical names previously had this bug.
 
   var RENEWAL_STATUSES = ['not_started', 'contacted', 'negotiating', 'renewal_sent', 'renewed', 'vacating'];
 
-  function applyRenewalStatus(props, propertyId, tenantName, status) {
+  function applyRenewalStatus(props, propertyId, matcher, status) {
     if (RENEWAL_STATUSES.indexOf(status) === -1) return false;
+    var m = (matcher && typeof matcher === 'object') ? matcher : { tenantName: matcher };
     var safeProps = Array.isArray(props) ? props : [];
+
     for (var i = 0; i < safeProps.length; i++) {
       var prop = safeProps[i];
       if (prop.id !== propertyId) continue;
       var tenants = Array.isArray(prop.tenants) ? prop.tenants : [];
-      for (var j = 0; j < tenants.length; j++) {
-        var t    = tenants[j];
+
+      var matches = tenants.filter(function (t) {
+        if (m.tenantId) return t.id != null && t.id === m.tenantId;
         var name = t.tenant_name || t.tenantName;
-        if (name === tenantName) {
-          t._renewalStatus = status;
-          return true;
+        if (name !== m.tenantName) return false;
+        if (m.suite != null && m.suite !== '') {
+          var suite = t.suite || t.unitNumber || t.unit_number || null;
+          return suite === m.suite;
         }
-      }
+        return true;
+      });
+
+      if (matches.length === 1) { matches[0]._renewalStatus = status; return true; }
+      return false; // no match, or ambiguous (multiple same-name tenants, no disambiguator)
     }
     return false;
   }

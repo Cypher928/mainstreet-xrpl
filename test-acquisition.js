@@ -1726,6 +1726,37 @@ console.log('\n── Group 28: applyRenewalStatus ─────────�
     AE.applyRenewalStatus(props, 'p1', 'Nobody', 'contacted') === false);
   assert('applyRenewalStatus: empty props array returns false',
     AE.applyRenewalStatus([], 'p1', 'Acme Corp', 'contacted') === false);
+
+  // --- Priority 4 fix: ambiguous same-name tenants must not be silently mutated ---
+  const mkDupeProps = () => [
+    { id: 'p1', name: 'Main St', tenants: [
+      { id: 't1', tenant_name: 'Acme Corp', suite: '100', end_date: '2026-01-01' },
+      { id: 't2', tenant_name: 'Acme Corp', suite: '200', end_date: '2026-02-01' },
+    ]},
+  ];
+
+  props = mkDupeProps();
+  ok = AE.applyRenewalStatus(props, 'p1', 'Acme Corp', 'contacted');
+  assert('applyRenewalStatus: ambiguous same-name match (no disambiguator) returns false',
+    ok === false);
+  assert('applyRenewalStatus: ambiguous match leaves first tenant untouched',
+    props[0].tenants[0]._renewalStatus === undefined);
+  assert('applyRenewalStatus: ambiguous match leaves second tenant untouched',
+    props[0].tenants[1]._renewalStatus === undefined);
+
+  // --- Suite disambiguates same-name tenants ---
+  props = mkDupeProps();
+  ok = AE.applyRenewalStatus(props, 'p1', { tenantName: 'Acme Corp', suite: '200' }, 'negotiating');
+  assert('applyRenewalStatus: suite disambiguator returns true', ok === true);
+  assert('applyRenewalStatus: suite disambiguator updates only the matching suite',
+    props[0].tenants[0]._renewalStatus === undefined && props[0].tenants[1]._renewalStatus === 'negotiating');
+
+  // --- tenantId disambiguates same-name tenants ---
+  props = mkDupeProps();
+  ok = AE.applyRenewalStatus(props, 'p1', { tenantId: 't1' }, 'renewed');
+  assert('applyRenewalStatus: tenantId disambiguator returns true', ok === true);
+  assert('applyRenewalStatus: tenantId disambiguator updates only the matching id',
+    props[0].tenants[0]._renewalStatus === 'renewed' && props[0].tenants[1]._renewalStatus === undefined);
 }
 
 // ── Group 29: 30/90/180/expired bucket boundaries (Phase 20 Track 2) ─────────────

@@ -15105,10 +15105,14 @@ function _renderRenewalPipeline(pipeline) {
       ? `<span class="rp-renewal">&#x1F501; ${esc(item.renewalOptions)}</span>`
       : `<span class="rp-no-renewal">No options</span>`;
     const statusVal  = item.status || 'not_started';
-    const statusCls  = 'rp-status rp-status--' + statusVal;
+    const statusCls  = 'rp-status rp-status-select rp-status--' + statusVal;
     const suiteTxt   = item.suite ? `<span class="rp-suite">Suite ${esc(item.suite)}</span>` : '';
     const pidAttr    = esc(item.propertyId || '');
     const tidAttr    = esc(item.tenantName || '');
+    // Disambiguator so setRenewalStatus never has to guess between same-named
+    // tenants: prefer the stable tenant id, fall back to suite/unit.
+    const tenantIdAttr = esc(item.tenantId || '');
+    const suiteAttr     = esc(item.suite || '');
     const statusOpts = Object.keys(statusLabels).map(key =>
       `<option value="${key}"${key === statusVal ? ' selected' : ''}>${esc(statusLabels[key])}</option>`
     ).join('');
@@ -15123,7 +15127,7 @@ function _renderRenewalPipeline(pipeline) {
       <td>${renewalTxt}</td>
       <td>${daysBadge(item)}</td>
       <td onclick="event.stopPropagation()">
-        <select class="${statusCls}" onchange="setRenewalStatus('${pidAttr}','${tidAttr}', this.value)">${statusOpts}</select>
+        <select class="${statusCls}" onchange="setRenewalStatus('${pidAttr}','${tidAttr}','${suiteAttr}','${tenantIdAttr}', this.value)">${statusOpts}</select>
       </td>
     </tr>`;
   }).join('');
@@ -15156,8 +15160,9 @@ function _renderRenewalPipeline(pipeline) {
 // Persists a Renewal Pipeline status change. Mutates the matched tenant via the
 // pure AcquisitionEngine helper, then writes through to Supabase (best-effort —
 // local state + UI already reflect the change even if the network write retries).
-function setRenewalStatus(propertyId, tenantName, status) {
-  const ok = AcquisitionEngine.applyRenewalStatus(_props, propertyId, tenantName, status);
+function setRenewalStatus(propertyId, tenantName, suite, tenantId, status) {
+  const matcher = tenantId ? { tenantId } : { tenantName, suite: suite || null };
+  const ok = AcquisitionEngine.applyRenewalStatus(_props, propertyId, matcher, status);
   if (!ok) return;
   const prop = _props.find(p => p.id === propertyId);
   if (prop) {
@@ -15191,14 +15196,20 @@ function _renderLeaseExpirationTable(pipeline) {
     const days = item.daysRemaining <= 0
       ? `Expired ${Math.abs(item.daysRemaining)}d ago`
       : `${item.daysRemaining}d`;
+    const pid = esc(item.propertyId || '');
+    const tid = esc(item.tenantName || '');
     return `
-    <tr style="cursor:pointer" onclick="navigateToPropertyTenant('${esc(item.propertyId || '')}','${esc(item.tenantName || '')}')">
+    <tr style="cursor:pointer" onclick="navigateToPropertyTenant('${pid}','${tid}')" title="Click to review lease">
       <td>${esc(item.tenantName)}</td>
       <td>${fmtDate(item.leaseEnd)}</td>
       <td>${days}</td>
       <td>${fmtSf(item.leasedSqft)}</td>
       <td>${item.renewalOptions ? esc(item.renewalOptions) : 'No options'}</td>
       <td><span class="rp-status rp-status--${item.priority}">${riskLabel[item.priority] || item.priority}</span></td>
+      <td class="let-actions" onclick="event.stopPropagation()">
+        <button class="let-action-link" onclick="navigateToPropertyTenant('${pid}','${tid}')">Review Lease</button>
+        <button class="let-action-link" onclick="scrollToRenewalPipeline('${pid}','${tid}')">Update Status</button>
+      </td>
     </tr>`;
   }).join('');
 
@@ -15218,6 +15229,7 @@ function _renderLeaseExpirationTable(pipeline) {
             <th>Sq Ft</th>
             <th>Renewal Option Status</th>
             <th>Risk Level</th>
+            <th>Action</th>
           </tr>
         </thead>
         <tbody>${rows}</tbody>
@@ -15865,10 +15877,10 @@ function _renderLeaseExpirationKPIs(rar) {
   <div class="lek-panel">
     <div class="lek-title">Lease Expiration Dashboard</div>
     <div class="lek-grid">
+      ${tile('Expired Leases',       rar.byTier.expired,  'expired')}
       ${tile('Expiring in 30 Days',  rar.byTier.critical, 'critical')}
       ${tile('Expiring in 90 Days',  rar.byTier.high,     'high')}
       ${tile('Expiring in 180 Days', rar.byTier.medium,   'medium')}
-      ${tile('Expired Leases',       rar.byTier.expired,  'expired')}
     </div>
   </div>`;
 }
@@ -15894,15 +15906,16 @@ function _renderLeaseAlertPanel(rar) {
     const renewal  = alert.hasRenewal ? '<span class="la-renewal">&#x1F504;&nbsp;option</span>' : '';
     const suite    = alert.suite ? ` <span class="la-suite">· ${esc(alert.suite)}</span>` : '';
     return `
-    <div class="la-row" onclick="navigateToPropertyTenant('${esc(alert.propertyId)}','${esc(alert.tenantName)}')">
+    <div class="la-row" onclick="navigateToPropertyTenant('${esc(alert.propertyId)}','${esc(alert.tenantName)}')" title="Click to review lease">
       <span class="la-dot la-dot--${tier}"></span>
       <div class="la-tenant">${esc(alert.tenantName)}${suite}</div>
       <div class="la-property">${esc(alert.propertyName)}</div>
       <div class="la-date">${fmtDate(alert.endDate)}</div>
       <div class="la-meta">
         ${daysBadge}${rentHtml}${renewal}
-        <button class="la-pipeline-link" onclick="event.stopPropagation();scrollToRenewalPipeline('${esc(alert.propertyId)}','${esc(alert.tenantName)}')" title="View in Renewal Pipeline">Pipeline &#x2193;</button>
+        <button class="la-pipeline-link" onclick="event.stopPropagation();scrollToRenewalPipeline('${esc(alert.propertyId)}','${esc(alert.tenantName)}')" title="Jump to Renewal Pipeline to update status">Update Status</button>
       </div>
+      <span class="la-chevron" aria-hidden="true">&#x203A;</span>
     </div>`;
   };
 
@@ -15933,6 +15946,9 @@ function _renderLeaseAlertPanel(rar) {
   const badge = rar.urgent > 0
     ? `<span class="la-count--urgent">${badgeText}</span>`
     : `<span class="la-count--medium">${badgeText}</span>`;
+  const expiredBadge = rar.expired.length > 0
+    ? `<span class="la-count--expired">${rar.expired.length} expired</span>`
+    : '';
 
   // Revenue summary row when we have totals; gracefully falls back to tenant
   // counts when no base_rent data is available for any expiring tenant.
@@ -15948,13 +15964,14 @@ function _renderLeaseAlertPanel(rar) {
   </div>` : (rar.total > 0 ? `
   <div class="la-rar-summary">
     <span class="la-rar-label">Revenue at Risk</span>
-    <span class="la-rar-total">${rar.urgent} urgent tenant${rar.urgent !== 1 ? 's' : ''} · ${rar.total} total expiring (rent data unavailable)</span>
+    <span class="la-rar-total">${rar.urgent} urgent tenant${rar.urgent !== 1 ? 's' : ''} · ${rar.total} total expiring · rent amounts not on file for these leases</span>
   </div>` : '');
 
   return `
   <div class="la-panel">
     <div class="la-header">
       <span class="la-title">&#x1F514; Lease Expiration Alerts</span>
+      ${expiredBadge}
       ${badge}
       <button class="la-dismiss" onclick="dismissLeaseAlerts()" title="Dismiss for this session">&#x2715;</button>
     </div>
