@@ -71,9 +71,13 @@ async function callClaude(docText) {
   }
   const json = await res.json();
   const text = (json.content || []).map(b => b.text || '').join('');
-  const match = text.match(/\{[\s\S]*\}/);
-  if (!match) throw new Error('No JSON object found in Claude response:\n' + text.slice(0, 500));
-  return JSON.parse(match[0]);
+  const match = text.match(/\[[\s\S]*\]|\{[\s\S]*\}/);
+  if (!match) throw new Error('No JSON found in Claude response:\n' + text.slice(0, 500));
+  const parsed = JSON.parse(match[0]);
+  // The live system prompt now asks for an array (one element per reserve account
+  // the document describes). These fixtures are single-reserve documents, so the
+  // first element is the one under test.
+  return Array.isArray(parsed) ? parsed[0] : parsed;
 }
 
 async function runTestSet(name, docText, checks) {

@@ -600,9 +600,9 @@ Rules:
 // lender draw instructions. Mirrors CLAUDE_LEASE_SYSTEM's structure exactly so
 // the same proxy/parsing conventions apply.
 const CLAUDE_ESCROW_SYSTEM = `You are a strict JSON extraction engine for lender reserve and escrow documents (mortgage agreements, loan agreements, escrow agreements, reserve agreements, capital expenditure reserve schedules, insurance settlement documents, lender draw instructions, repair reserve documentation).
-Return ONLY valid JSON. No text. No explanation. No markdown. Start with { and end with }.
+Return ONLY valid JSON. No text. No explanation. No markdown. Start with [ and end with ].
 
-Return exactly this structure:
+A single document often governs MORE THAN ONE reserve account (e.g. a loan agreement with a separate Roof Reserve, HVAC Reserve, and Capital Reserve, each with its own balance and rules). Return a JSON ARRAY with one element per distinct reserve account the document describes. If the document only describes one reserve, return an array with exactly one element. Each array element follows this structure:
 {
   "reserve_type": string,
   "reserve_name": string | null,
@@ -627,21 +627,22 @@ Return exactly this structure:
 }
 
 Rules:
-- reserve_type: Identify which kind of reserve this document governs. Use one of: "Roof Reserve", "HVAC Reserve", "Tenant Improvement Reserve", "Leasing Commission Reserve", "Capital Reserve", "Insurance Recovery Reserve", or the lender's own term if none of those fit.
+- Treat each named reserve/escrow account as its own array element. Do not merge balances or terms from different reserves into one element.
+- reserve_type: Identify which kind of reserve this element governs. Use one of: "Roof Reserve", "HVAC Reserve", "Tenant Improvement Reserve", "Leasing Commission Reserve", "Capital Reserve", "Insurance Recovery Reserve", or the lender's own term if none of those fit.
 - reserve_name: If the lender gives this reserve a specific account name (e.g. "Special Reserve Account No. 4"), return it verbatim. Null otherwise.
-- current_balance: The reserve balance stated in the document, as a plain number (no $ or commas). Null if not stated.
-- eligible_uses: A short description (max 200 chars) of what the reserve funds may be used for (e.g. "Roof repair and replacement only").
-- requires_invoices: true if the lender requires paid/unpaid invoices to support a draw request. Default to true unless the document explicitly says otherwise.
-- requires_photos: true if before/after photos of completed work are required for a draw.
-- requires_lien_waivers: true if lien waivers (conditional or unconditional) are required.
-- requires_contractor_bids: true if contractor bids/estimates must be submitted before work is approved.
-- requires_engineer_certification: true if a licensed engineer or architect must certify the work.
-- min_draw_amount: The minimum dollar amount per draw request, if stated. Null otherwise.
-- requires_approval: true if the lender (or a third party such as a construction inspector) must approve the draw before funding. Default true unless explicitly waived.
-- draw_request_deadline: The deadline by which draw requests must be submitted, if a fixed or recurring deadline is stated.
-- repair_completion_deadline: The deadline by which the underlying repair/improvement work must be completed.
-- reserve_expiration_date: The date after which the reserve account terminates or unused funds are released/forfeited.
-- notes: Any other reserve-specific requirement or condition worth flagging (max 300 chars). Null if nothing additional applies.
+- current_balance: The reserve balance stated in the document for THIS reserve, as a plain number (no $ or commas). Null if not stated.
+- eligible_uses: A short description (max 200 chars) of what THIS reserve's funds may be used for (e.g. "Roof repair and replacement only").
+- requires_invoices: true if the lender requires paid/unpaid invoices to support a draw request against this reserve. Default to true unless the document explicitly says otherwise.
+- requires_photos: true if before/after photos of completed work are required for a draw against this reserve.
+- requires_lien_waivers: true if lien waivers (conditional or unconditional) are required for this reserve.
+- requires_contractor_bids: true if contractor bids/estimates must be submitted before work funded by this reserve is approved.
+- requires_engineer_certification: true if a licensed engineer or architect must certify work funded by this reserve.
+- min_draw_amount: The minimum dollar amount per draw request against this reserve, if stated. Null otherwise.
+- requires_approval: true if the lender (or a third party such as a construction inspector) must approve a draw against this reserve before funding. Default true unless explicitly waived.
+- draw_request_deadline: The deadline by which draw requests against this reserve must be submitted, if a fixed or recurring deadline is stated.
+- repair_completion_deadline: The deadline by which the underlying repair/improvement work funded by this reserve must be completed.
+- reserve_expiration_date: The date after which this reserve account terminates or unused funds are released/forfeited.
+- notes: Any other reserve-specific requirement or condition worth flagging for this reserve (max 300 chars). Null if nothing additional applies.
 - evidence: For reserve_type, current_balance, and eligible_uses, copy ≤160 chars of the exact verbatim clause text that produced that value, AND the page number from the nearest preceding "--- Page N ---" marker in the document text. Both null if the value itself is null or the page cannot be determined.
 - Never paraphrase a quote — it must be copied character-for-character from the source text.
 - Use null only when a field is truly impossible to determine. Do not guess a page number; null is acceptable.`;
@@ -1747,9 +1748,10 @@ async function callClaudeForEscrowDocument(text) {
   const prompt = `
 You are extracting lender reserve/escrow terms from a commercial real estate financing document.
 NOTE: This text may have been extracted via OCR — tolerate minor spelling errors or spacing noise.
+This document may describe more than one reserve account (e.g. a separate Roof Reserve, HVAC Reserve, and Capital Reserve). Return a JSON ARRAY with one element per distinct reserve account described, even if that means an array of one.
 Return ONLY valid JSON. No explanation. No markdown.
 
-Extract:
+Extract, for each reserve account found:
 {
   "reserve_type": string,
   "reserve_name": string or null,
@@ -1766,10 +1768,10 @@ Extract:
   "repair_completion_deadline": "YYYY-MM-DD" or null,
   "reserve_expiration_date": "YYYY-MM-DD" or null,
   "notes": string or null,
-  "quotes": { "reserve_type": string|null, "current_balance": string|null, "eligible_uses": string|null }
+  "evidence": { "reserve_type": {"quote": string|null, "page": number|null}, "current_balance": {"quote": string|null, "page": number|null}, "eligible_uses": {"quote": string|null, "page": number|null} }
 }
 
-RESERVE TYPE: Identify the reserve this document governs — "Roof Reserve", "HVAC Reserve", "Tenant Improvement Reserve", "Leasing Commission Reserve", "Capital Reserve", "Insurance Recovery Reserve", or the lender's own term.
+RESERVE TYPE: Identify the reserve each element governs — "Roof Reserve", "HVAC Reserve", "Tenant Improvement Reserve", "Leasing Commission Reserve", "Capital Reserve", "Insurance Recovery Reserve", or the lender's own term.
 
 DOCUMENT TEXT:
 """
@@ -1783,7 +1785,7 @@ ${snippet}
   const res = await _fetchWithTimeout('/api/claude', {
     method: 'POST',
     headers: { 'Content-Type': 'application/json', ...(await _authHeaders()) },
-    body: JSON.stringify({ messages, max_tokens: 1200, system: CLAUDE_ESCROW_SYSTEM }),
+    body: JSON.stringify({ messages, max_tokens: 2400, system: CLAUDE_ESCROW_SYSTEM }),
   });
 
   if (!res.ok) throw new Error(`Escrow document extraction failed: HTTP ${res.status}`);
@@ -1795,39 +1797,42 @@ ${snippet}
       return null;
     }
   }
-  if (Array.isArray(parsed)) parsed = parsed.find(p => p && typeof p === 'object') || null;
-  if (!parsed || typeof parsed !== 'object') return null;
-  return parsed;
+  if (!Array.isArray(parsed)) parsed = parsed ? [parsed] : [];
+  parsed = parsed.filter(p => p && typeof p === 'object');
+  return parsed.length ? parsed : null;
 }
 
 async function callClaudeForEscrowDocumentPdfDirect(file) {
   const base64 = await fileToBase64(file);
 
   const extractionPrompt = `Extract lender reserve/escrow terms from this financing document.
+This document may describe more than one reserve account (e.g. a separate Roof Reserve, HVAC Reserve, and Capital Reserve). Return a JSON ARRAY with one element per distinct reserve account described, even if that means an array of one.
 Return ONLY valid JSON. No explanation. No markdown.
 
-{
-  "reserve_type": string,
-  "reserve_name": string or null,
-  "current_balance": number or null,
-  "eligible_uses": string or null,
-  "requires_invoices": true | false | null,
-  "requires_photos": true | false | null,
-  "requires_lien_waivers": true | false | null,
-  "requires_contractor_bids": true | false | null,
-  "requires_engineer_certification": true | false | null,
-  "min_draw_amount": number or null,
-  "requires_approval": true | false | null,
-  "draw_request_deadline": "YYYY-MM-DD" or null,
-  "repair_completion_deadline": "YYYY-MM-DD" or null,
-  "reserve_expiration_date": "YYYY-MM-DD" or null,
-  "notes": string or null,
-  "evidence": {
-    "reserve_type":    { "quote": string or null, "page": number or null },
-    "current_balance": { "quote": string or null, "page": number or null },
-    "eligible_uses":    { "quote": string or null, "page": number or null }
+[
+  {
+    "reserve_type": string,
+    "reserve_name": string or null,
+    "current_balance": number or null,
+    "eligible_uses": string or null,
+    "requires_invoices": true | false | null,
+    "requires_photos": true | false | null,
+    "requires_lien_waivers": true | false | null,
+    "requires_contractor_bids": true | false | null,
+    "requires_engineer_certification": true | false | null,
+    "min_draw_amount": number or null,
+    "requires_approval": true | false | null,
+    "draw_request_deadline": "YYYY-MM-DD" or null,
+    "repair_completion_deadline": "YYYY-MM-DD" or null,
+    "reserve_expiration_date": "YYYY-MM-DD" or null,
+    "notes": string or null,
+    "evidence": {
+      "reserve_type":    { "quote": string or null, "page": number or null },
+      "current_balance": { "quote": string or null, "page": number or null },
+      "eligible_uses":    { "quote": string or null, "page": number or null }
+    }
   }
-}
+]
 
 For evidence: copy the exact verbatim clause (≤160 chars) and the page number it appears on (page 1 = first page of the PDF). Never paraphrase. Null both if not determinable.
 Return best guess — do not leave reserve_type null.`;
@@ -1843,12 +1848,21 @@ Return best guess — do not leave reserve_type null.`;
   const res = await _fetchWithTimeout('/api/claude', {
     method: 'POST',
     headers: { 'Content-Type': 'application/json', ...(await _authHeaders()) },
-    body: JSON.stringify({ messages, max_tokens: 1200, system: CLAUDE_ESCROW_SYSTEM }),
+    body: JSON.stringify({ messages, max_tokens: 2400, system: CLAUDE_ESCROW_SYSTEM }),
   });
 
   if (!res.ok) throw new Error(`Escrow PDF direct extraction failed: HTTP ${res.status}`);
   console.log('[ESCROW EXTRACTION] PDF direct (vision) path used');
-  return res.json();
+  let parsed = await res.json();
+  if (typeof parsed === 'string') {
+    try { parsed = JSON.parse(parsed); } catch (e) {
+      console.error('[callClaudeForEscrowDocumentPdfDirect] invalid JSON string:', parsed);
+      return null;
+    }
+  }
+  if (!Array.isArray(parsed)) parsed = parsed ? [parsed] : [];
+  parsed = parsed.filter(p => p && typeof p === 'object');
+  return parsed.length ? parsed : null;
 }
 
 // Opens a file picker and triggers escrow/reserve document upload for the active property.
@@ -1886,34 +1900,38 @@ async function handleEscrowDocumentUpload(propertyId, file) {
 
   try {
     const docText = await extractDocumentText(file);
-    let extracted, extractionPath;
+    let extractedList, extractionPath;
     if (docText && docText.length >= 50) {
-      extracted = await callClaudeForEscrowDocument(docText);
+      extractedList = await callClaudeForEscrowDocument(docText);
       extractionPath = 'text';
     } else {
-      extracted = await callClaudeForEscrowDocumentPdfDirect(file);
+      extractedList = await callClaudeForEscrowDocumentPdfDirect(file);
       extractionPath = 'pdf_vision';
     }
-    if (!extracted) throw new Error('Could not extract reserve fields from this document');
+    if (!Array.isArray(extractedList)) extractedList = extractedList ? [extractedList] : [];
+    if (!extractedList.length) throw new Error('Could not extract reserve fields from this document');
 
     const fileUrl = await uploadLeaseToStorage(file, propertyId);
 
-    const reserve = window.EscrowReserveEngine.normalizeReserve(extracted, {
+    const reserves = extractedList.map(extracted => window.EscrowReserveEngine.normalizeReserve(extracted, {
       sourceFileName: file.name,
       sourceFileUrl:  fileUrl,
       extractionPath,
       ocrChars: docText ? docText.length : null,
-    });
+    }));
 
     if (!Array.isArray(prop.escrowReserves)) prop.escrowReserves = [];
-    prop.escrowReserves.push(reserve);
+    prop.escrowReserves.push(...reserves);
 
     _lsSave(prop);
     await saveProperty(prop);
-    logActivity('escrow_document_uploaded', `Reserve document uploaded — ${reserve.reserveTypeLabel}`, {
+    const labels = reserves.map(r => r.reserveTypeLabel).join(', ');
+    logActivity('escrow_document_uploaded', `Reserve document uploaded — ${labels}`, {
       severity: 'success', actor: 'User', relatedEntity: prop.name || 'Property',
     });
-    showToast(`✓ ${reserve.reserveTypeLabel} extracted`, { color: '#052e16', textColor: '#86efac' });
+    showToast(reserves.length > 1
+      ? `✓ ${reserves.length} reserves extracted: ${labels}`
+      : `✓ ${labels} extracted`, { color: '#052e16', textColor: '#86efac' });
     renderEscrowProfile(prop);
   } catch (err) {
     console.error('[handleEscrowDocumentUpload]', err);
@@ -8770,7 +8788,8 @@ function togglePrevRunDetail(idx) {
 }
 
 function fmt(n) {
-  return '$' + n.toLocaleString('en-US', { minimumFractionDigits: 2, maximumFractionDigits: 2 });
+  if (n === null || n === undefined || n === '' || isNaN(n)) return '—';
+  return '$' + Number(n).toLocaleString('en-US', { minimumFractionDigits: 2, maximumFractionDigits: 2 });
 }
 
 function cleanHTML(text) {

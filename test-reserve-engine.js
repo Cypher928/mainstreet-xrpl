@@ -336,6 +336,58 @@ console.log('\n── Group 8: Phase 21 hardening pass ────────�
   assert('draw amount guard: accepts a positive amount', isValidDrawAmount('2500.50'));
 }
 
+// ── Group 9: Multi-reserve document extraction ─────────────────────────────
+console.log('\n── Group 9: Multi-reserve document extraction ─────────────────────────────');
+{
+  // Reproduction case: a single loan agreement describing three distinct reserve
+  // accounts (Roof, HVAC, Capital). The extraction prompt now asks Claude for an
+  // array — one element per reserve — instead of collapsing to a single object.
+  const rawReserves = [
+    { reserve_type: 'Roof Reserve', current_balance: 75000, eligible_uses: 'Roof repair and replacement only' },
+    { reserve_type: 'HVAC Reserve', current_balance: 40000, eligible_uses: 'HVAC repair and replacement only' },
+    // A reserve where Claude could not confidently determine a balance — this
+    // must normalize to a null currentBalance, not crash downstream renderers.
+    { reserve_type: 'Capital Reserve', current_balance: null, eligible_uses: 'General capital improvements' },
+  ];
+  const normalized = rawReserves.map(r => EE.normalizeReserve(r, { sourceFileName: 'Reserve_Agreement.pdf' }));
+
+  assertEq('normalizeReserve: produces one reserve per array element', normalized.length, 3);
+  assert('normalizeReserve: each reserve has a distinct id',
+    new Set(normalized.map(r => r.id)).size === 3);
+  assertEq('normalizeReserve: first reserve type preserved', normalized[0].reserveType, 'roof');
+  assertEq('normalizeReserve: second reserve type preserved', normalized[1].reserveType, 'hvac');
+  assertEq('normalizeReserve: third reserve type preserved', normalized[2].reserveType, 'capital');
+  assertEq('normalizeReserve: balances are not cross-contaminated between reserves',
+    normalized[0].currentBalance, 75000);
+  assertEq('normalizeReserve: second reserve balance independent of first', normalized[1].currentBalance, 40000);
+  assertEq('normalizeReserve: null current_balance normalizes to null, not NaN', normalized[2].currentBalance, null);
+
+  // computeReserveBalance must surface a null balance as null (never NaN/undefined)
+  // so a currency formatter can detect it and avoid calling toLocaleString on null.
+  const balForNullReserve = EE.computeReserveBalance(normalized[2], []);
+  assertEq('computeReserveBalance: currentBalance stays null when reserve has no stated balance',
+    balForNullReserve.currentBalance, null);
+  assertEq('computeReserveBalance: availableBalance is null (not NaN) when balance is unknown',
+    balForNullReserve.availableBalance, null);
+
+  // Regression guard for the reported crash: "null is not an object (evaluating
+  // 'n.toLocaleString')". Replicates script.js's fmt() null-safety contract —
+  // a currency formatter must never call .toLocaleString() directly on a value
+  // that can legitimately be null (current_balance is documented as
+  // `number | null` in the extraction schema).
+  const safeFmt = (n) => {
+    if (n === null || n === undefined || n === '' || isNaN(n)) return '—';
+    return '$' + Number(n).toLocaleString('en-US', { minimumFractionDigits: 2, maximumFractionDigits: 2 });
+  };
+  assertEq('fmt-equivalent: renders "—" for a null balance instead of throwing', safeFmt(null), '—');
+  assertEq('fmt-equivalent: renders "—" for an undefined balance instead of throwing', safeFmt(undefined), '—');
+  assertEq('fmt-equivalent: renders a real balance normally', safeFmt(75000), '$75,000.00');
+  assert('fmt-equivalent: does not throw when called on every reserve in a mixed-null batch', (() => {
+    try { normalized.forEach(r => safeFmt(EE.computeReserveBalance(r, []).availableBalance)); return true; }
+    catch (e) { return false; }
+  })());
+}
+
 console.log('\n' + '─'.repeat(62));
 console.log(`Results: ${passed}/${passed + failed} passed`);
 console.log('─'.repeat(62));
