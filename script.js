@@ -1868,9 +1868,19 @@ function openEscrowDocumentUpload() {
 }
 
 // Orchestrates escrow/reserve document extraction and storage on the property.
+let _escrowUploadInProgress = false;
 async function handleEscrowDocumentUpload(propertyId, file) {
   const prop = _props.find(p => p.id === propertyId);
   if (!prop) return;
+
+  if (_escrowUploadInProgress) {
+    showToast('A reserve document is already being processed — please wait.', { color: '#92400e', textColor: '#fef3c7' });
+    return;
+  }
+  _escrowUploadInProgress = true;
+  const uploadBtn = document.getElementById('escrowUploadBtn');
+  const uploadBtnLabel = uploadBtn ? uploadBtn.innerHTML : null;
+  if (uploadBtn) { uploadBtn.disabled = true; uploadBtn.innerHTML = '⏳ Processing…'; }
 
   showToast('Reading reserve document…', { color: '#0c4a6e', textColor: '#7dd3fc', duration: 8000 });
 
@@ -1908,6 +1918,9 @@ async function handleEscrowDocumentUpload(propertyId, file) {
   } catch (err) {
     console.error('[handleEscrowDocumentUpload]', err);
     showToast('Reserve document upload failed: ' + (err.message || 'unknown error'), { color: '#7f1d1d', textColor: '#fca5a5', duration: 6000 });
+  } finally {
+    _escrowUploadInProgress = false;
+    if (uploadBtn) { uploadBtn.disabled = false; uploadBtn.innerHTML = uploadBtnLabel; }
   }
 }
 
@@ -1978,17 +1991,32 @@ function renderEscrowProfile(property) {
   if (!draws.length) {
     drawListEl.innerHTML = `<p style="color:#94A3B8;font-size:0.875rem;">No draw requests yet.</p>`;
   } else {
+    const fmtHistoryDate = (iso) => {
+      if (!iso) return '';
+      const d = new Date(iso);
+      return isNaN(d.getTime()) ? '' : d.toLocaleDateString(undefined, { month: 'short', day: 'numeric', year: 'numeric' }) + ' ' + d.toLocaleTimeString(undefined, { hour: 'numeric', minute: '2-digit' });
+    };
     drawListEl.innerHTML = draws.slice().reverse().map(dr => {
       const reserve = reserves.find(r => r.id === dr.reserveId);
       const statusOptions = Engine.DRAW_STATUSES.map(s =>
         `<option value="${s}" ${s === dr.status ? 'selected' : ''}>${esc(Engine.DRAW_STATUS_LABELS[s])}</option>`
       ).join('');
+      const history = Array.isArray(dr.statusHistory) ? dr.statusHistory : [];
+      const historyRows = history.map(h => `
+        <div class="escrow-status-history-item">
+          <span>${esc(Engine.DRAW_STATUS_LABELS[h.status] || h.status)}</span>
+          <span>${esc(fmtHistoryDate(h.timestamp || h.at))}${h.actor ? ` &middot; ${esc(h.actor)}` : ''}</span>
+        </div>`).join('');
+      const historyBlock = historyRows
+        ? `<div class="escrow-status-history">${historyRows}</div>`
+        : '';
       return `
       <div class="escrow-draw-card">
         <div class="escrow-draw-head">
           <strong>${esc(reserve ? reserve.reserveTypeLabel : 'Reserve')} &mdash; ${fmt(dr.amountRequested)}</strong>
           <select class="escrow-status-select" onchange="updateDrawStatus('${dr.id}', this.value)">${statusOptions}</select>
         </div>
+        ${historyBlock}
         <div class="escrow-draw-actions">
           <button class="report-btn" onclick="generateDrawPackageReport('${dr.id}')">&#x1F4CB; Generate Package</button>
         </div>
@@ -2052,10 +2080,10 @@ function _renderDrawBuilderBody(prop, reserve) {
     <div class="escrow-section-label" style="margin-top:12px;">Supporting Documents</div>
     ${docRows}
     <div style="display:flex;gap:6px;margin-top:6px;flex-wrap:wrap;">
-      <button class="report-btn" onclick="addDrawSupportingDoc('photo')">+ Photo</button>
-      <button class="report-btn" onclick="addDrawSupportingDoc('lien_waiver')">+ Lien Waiver</button>
-      <button class="report-btn" onclick="addDrawSupportingDoc('contractor_bid')">+ Contractor Bid</button>
-      <button class="report-btn" onclick="addDrawSupportingDoc('engineer_certification')">+ Engineer Cert.</button>
+      <button class="report-btn" onclick="addDrawSupportingDoc('photos')">+ Photo</button>
+      <button class="report-btn" onclick="addDrawSupportingDoc('lienWaivers')">+ Lien Waiver</button>
+      <button class="report-btn" onclick="addDrawSupportingDoc('contractorBids')">+ Contractor Bid</button>
+      <button class="report-btn" onclick="addDrawSupportingDoc('engineerCertification')">+ Engineer Cert.</button>
     </div>`;
 }
 
@@ -2106,17 +2134,25 @@ async function confirmCreateDrawRequest() {
   const prop = currentProperty();
   if (!prop) return;
   const Engine = window.EscrowReserveEngine;
+
+  const amountRequested = parseFloat(_drawDraft.amountRequested);
+  if (!amountRequested || isNaN(amountRequested) || amountRequested <= 0) {
+    showToast('Enter an amount greater than $0 before creating a draw request.', { color: '#7f1d1d', textColor: '#fca5a5' });
+    return;
+  }
+
   const invoices = (prop.invoices || []).filter((_, idx) => _drawDraft.invoiceIds.includes(idx));
 
+  const now = new Date().toISOString();
   const drawRequest = {
     id: 'draw_' + Date.now().toString(36) + Math.random().toString(36).slice(2, 8),
     reserveId: _drawDraft.reserveId,
-    amountRequested: parseFloat(_drawDraft.amountRequested) || 0,
+    amountRequested,
     status: 'draft',
     invoices,
     attachedDocuments: _drawDraft.attachedDocuments,
-    createdAt: new Date().toISOString(),
-    statusHistory: [{ status: 'draft', at: new Date().toISOString(), actor: 'User' }],
+    createdAt: now,
+    statusHistory: [{ status: 'draft', timestamp: now, note: null, actor: 'User' }],
   };
 
   if (!Array.isArray(prop.drawRequests)) prop.drawRequests = [];

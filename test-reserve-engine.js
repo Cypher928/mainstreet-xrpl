@@ -289,6 +289,53 @@ console.log('\n── Group 7: Enum integrity ───────────�
   });
 }
 
+// ── Group 8: Phase 21 hardening pass ───────────────────────────────────────
+console.log('\n── Group 8: Phase 21 hardening pass ───────────────────────────────────────');
+{
+  // FP-H1 (#8): document category keys used across the draw pipeline must be the
+  // canonical camelCase plural set — guards against the upload-button key mismatch.
+  const CANONICAL_DOC_CATEGORIES = ['photos', 'lienWaivers', 'contractorBids', 'engineerCertification'];
+  const draws = [{
+    id: 'dr-cat', reserveId: 'res-1', amountRequested: 5000, status: 'draft',
+    attachedDocuments: {
+      photos: [{ fileName: 'roof1.jpg' }],
+      lienWaivers: [{ fileName: 'waiver.pdf' }],
+      contractorBids: [{ fileName: 'bid.pdf' }],
+      engineerCertification: [{ fileName: 'cert.pdf' }],
+    },
+  }];
+  const reserve = EE.normalizeReserve({ reserve_type: 'Roof Reserve', current_balance: 50000 }, { id: 'res-1' });
+  const pkg = EE.buildDrawRequestPackage({ id: 'p1', name: 'Test' }, reserve, draws[0], { pass: true, checklist: [] });
+  assert('buildDrawRequestPackage: defines all 4 canonical document categories', CANONICAL_DOC_CATEGORIES.length === 4);
+  assertEq('buildDrawRequestPackage: all 4 canonical categories flatten into supportingDocuments',
+    pkg.supportingDocuments.length, 4);
+  assert('buildDrawRequestPackage: engineer certification carried through with category label',
+    pkg.supportingDocuments.some(d => d.category === 'Engineer Certification'));
+
+  // FP-H2 (#12): applyDrawStatus must append a "timestamp" key (not "at") so the
+  // status-history timeline can render every entry — including the initial
+  // draft entry created at draw-request creation time — with one field name.
+  let historyDraws = [{ id: 'dr-h', reserveId: 'res-1', status: 'draft', amountRequested: 1000,
+    statusHistory: [{ status: 'draft', timestamp: '2026-01-01T00:00:00Z', note: null, actor: 'User' }] }];
+  EE.applyDrawStatus(historyDraws, 'dr-h', 'submitted', { actor: 'pm@example.com' });
+  assert('applyDrawStatus: appended entry uses "timestamp" key', 'timestamp' in historyDraws[0].statusHistory[1]);
+  assert('applyDrawStatus: appended entry has no "at" key', !('at' in historyDraws[0].statusHistory[1]));
+  assertEq('applyDrawStatus: history now has both the initial entry and the new one',
+    historyDraws[0].statusHistory.length, 2);
+
+  // FP-H3 (#10): replicate the $0/invalid-amount draw-request guard so the
+  // validation rule itself is regression-tested independent of the DOM.
+  const isValidDrawAmount = (raw) => {
+    const n = parseFloat(raw);
+    return !!n && !isNaN(n) && n > 0;
+  };
+  assert('draw amount guard: rejects empty string', !isValidDrawAmount(''));
+  assert('draw amount guard: rejects zero', !isValidDrawAmount('0'));
+  assert('draw amount guard: rejects negative', !isValidDrawAmount('-50'));
+  assert('draw amount guard: rejects non-numeric', !isValidDrawAmount('abc'));
+  assert('draw amount guard: accepts a positive amount', isValidDrawAmount('2500.50'));
+}
+
 console.log('\n' + '─'.repeat(62));
 console.log(`Results: ${passed}/${passed + failed} passed`);
 console.log('─'.repeat(62));

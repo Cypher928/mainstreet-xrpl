@@ -2557,6 +2557,7 @@
       background: #111827; border-radius: 16px; width: 100%; max-width: 480px;
       box-shadow: 0 24px 64px rgba(0,0,0,0.6); padding: 28px 28px 22px;
       border: 1px solid rgba(255,255,255,0.1);
+      max-height: 85vh; overflow-y: auto;
     }
     .modal-title {
       font-size: 1.08rem; font-weight: 700; color: #E2E8F0; margin-bottom: 14px;
@@ -2632,6 +2633,14 @@
       display: flex; justify-content: space-between; align-items: center; gap: 8px;
       color: #E2E8F0; font-size: 0.83rem; padding: 4px 0;
     }
+    .escrow-status-history {
+      margin-top: 8px; padding-top: 8px; border-top: 1px solid rgba(255,255,255,0.06);
+    }
+    .escrow-status-history-item {
+      display: flex; justify-content: space-between; gap: 12px; font-size: 0.78rem;
+      color: #64748B; padding: 2px 0;
+    }
+    .escrow-status-history-item span:first-child { color: #94A3B8; font-weight: 600; }
 
     /* ── Reports section ─────────────────────────────────────────────── */
     #reportsSection { display: block; }
@@ -5461,7 +5470,7 @@
         <p>Upload mortgage, loan, and escrow/reserve agreements to extract lender reserve requirements automatically.</p>
       </div>
     </div>
-    <button class="report-btn" onclick="openEscrowDocumentUpload()">&#x1F4C2; Upload Reserve Document</button>
+    <button id="escrowUploadBtn" class="report-btn" onclick="openEscrowDocumentUpload()">&#x1F4C2; Upload Reserve Document</button>
 
     <div class="escrow-section-label" style="margin-top:16px;">Reserve Profile</div>
     <div id="escrowReservesList"></div>
