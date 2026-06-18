@@ -343,6 +343,63 @@
     return true;
   }
 
+  // Picks the strongest verbatim quote+page citation available on a reserve
+  // (preferring current_balance, since that's the figure a lender will check
+  // first) for display in the draw package and the Source Citation viewer.
+  function _reserveCitation(reserve) {
+    var evidence = (reserve && reserve.evidence) || {};
+    var preferredFields = ['current_balance', 'reserve_type', 'eligible_uses'];
+    for (var i = 0; i < preferredFields.length; i++) {
+      var ev = evidence[preferredFields[i]];
+      if (ev && ev.quote) {
+        return {
+          field: preferredFields[i],
+          quote: ev.quote,
+          page:  ev.page != null ? ev.page : null,
+          sourceFileName: (reserve && reserve.sourceFileName) || null,
+        };
+      }
+    }
+    return null;
+  }
+
+  // ── TRACK 6: Draw submission email draft (structured data only — caller
+  // decides whether to render it into a mailto: link, a copyable text box,
+  // or an actual send-mail API call) ───────────────────────────────────────
+  function buildDrawEmailDraft(property, reserve, drawRequest) {
+    var prop = property || {};
+    var dr   = drawRequest || {};
+    var reserveLabel = (reserve && reserve.reserveTypeLabel) || 'Reserve';
+    var propName     = prop.name || '(unnamed property)';
+    var amount       = dr.amountRequested || 0;
+    var amountStr    = '$' + Number(amount).toLocaleString('en-US', { minimumFractionDigits: 2, maximumFractionDigits: 2 });
+    var drawLabel    = dr.drawNumber ? ('Draw Request #' + dr.drawNumber) : 'Draw Request';
+
+    var docs = (dr.attachedDocuments && typeof dr.attachedDocuments === 'object') ? dr.attachedDocuments : {};
+    var docLabels = []
+      .concat((Array.isArray(dr.invoices) && dr.invoices.length) ? ['Invoice' + (dr.invoices.length > 1 ? 's' : '')] : [])
+      .concat((docs.photos || []).length ? ['Photos'] : [])
+      .concat((docs.lienWaivers || []).length ? ['Lien Waiver' + ((docs.lienWaivers || []).length > 1 ? 's' : '')] : [])
+      .concat((docs.contractorBids || []).length ? ['Contractor Bid' + ((docs.contractorBids || []).length > 1 ? 's' : '')] : [])
+      .concat((docs.engineerCertification || []).length ? ['Engineer Certification'] : []);
+
+    var subject = reserveLabel + ' Draw Request - ' + propName;
+    var bodyLines = [
+      'Attached please find ' + drawLabel,
+      'for reimbursement from the ' + reserveLabel + '.',
+      '',
+    ];
+    if (docLabels.length) {
+      bodyLines.push('Supporting documentation attached:');
+      docLabels.forEach(function (l) { bodyLines.push('- ' + l); });
+      bodyLines.push('');
+    }
+    bodyLines.push('Requested Amount:');
+    bodyLines.push(amountStr);
+
+    return { subject: subject, body: bodyLines.join('\n') };
+  }
+
   // ── TRACK 4: Draw request package (structured data only — HTML formatting
   // lives in escrow-draw-packets.js, mirroring the lease-intelligence /
   // lease-review-packets split) ────────────────────────────────────────────
@@ -374,13 +431,18 @@
         requirements:   reserve.requirements,
         deadlines:      reserve.deadlines,
         notes:          reserve.notes,
+        sourceFileName: reserve.sourceFileName || null,
+        sourcePages:    Array.isArray(reserve.sourcePages) ? reserve.sourcePages : [],
+        citation:       _reserveCitation(reserve),
       } : null,
       drawRequest: {
         id:              dr.id              || null,
+        drawNumber:      dr.drawNumber      || null,
         amountRequested: dr.amountRequested || 0,
         status:          dr.status          || 'draft',
         notes:           dr.notes           || null,
         createdAt:       dr.createdAt       || null,
+        statusHistory:   Array.isArray(dr.statusHistory) ? dr.statusHistory : [],
       },
       invoiceSummary: {
         count: invoices.length,
@@ -406,6 +468,7 @@
     validateDrawRequest,
     applyDrawStatus,
     buildDrawRequestPackage,
+    buildDrawEmailDraft,
   };
 
   if (typeof module !== 'undefined' && module.exports) {

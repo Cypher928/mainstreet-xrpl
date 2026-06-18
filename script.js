@@ -2101,12 +2101,14 @@ function renderEscrowProfile(property) {
         : '';
 
       const docCount = Array.isArray(r.sourceDocuments) ? r.sourceDocuments.length : (r.sourceFileName ? 1 : 0);
+      const hasCitation = !!(r.evidence && Object.values(r.evidence).some(ev => ev && ev.quote));
       const docMgmtLine = `
         <div class="escrow-doc-mgmt">
           <span class="escrow-doc-count">${docCount} document${docCount === 1 ? '' : 's'}</span>
           ${r.sourceFileUrl ? `<button class="escrow-doc-btn" onclick="viewEscrowReserveDocument('${r.id}')">View</button>` : ''}
           <button class="escrow-doc-btn" onclick="openEscrowDocumentReplace('${r.id}')">Replace</button>
           ${r.sourceFileUrl ? `<button class="escrow-doc-btn" onclick="reprocessEscrowReserveDocument('${r.id}')">Reprocess</button>` : ''}
+          ${hasCitation ? `<button class="escrow-doc-btn" onclick="openEscrowSourceCitation('${r.id}')">Source Citation</button>` : ''}
           <button class="escrow-doc-btn escrow-doc-btn-danger" onclick="deleteEscrowReserve('${r.id}')">Delete</button>
         </div>`;
 
@@ -2157,12 +2159,13 @@ function renderEscrowProfile(property) {
       return `
       <div class="escrow-draw-card">
         <div class="escrow-draw-head">
-          <strong>${esc(reserve ? reserve.reserveTypeLabel : 'Reserve')} &mdash; ${fmt(dr.amountRequested)}</strong>
+          <strong>${dr.drawNumber ? `Draw #${esc(dr.drawNumber)} &mdash; ` : ''}${esc(reserve ? reserve.reserveTypeLabel : 'Reserve')} &mdash; ${fmt(dr.amountRequested)}</strong>
           <select class="escrow-status-select" onchange="updateDrawStatus('${dr.id}', this.value)">${statusOptions}</select>
         </div>
         ${historyBlock}
         <div class="escrow-draw-actions">
           <button class="report-btn" onclick="generateDrawPackageReport('${dr.id}')">&#x1F4CB; Generate Package</button>
+          <button class="report-btn" onclick="openDrawEmailModal('${dr.id}')">&#x2709; Generate Email</button>
         </div>
       </div>`;
     }).join('');
@@ -2325,6 +2328,7 @@ async function confirmCreateDrawRequest() {
   const now = new Date().toISOString();
   const drawRequest = {
     id: 'draw_' + Date.now().toString(36) + Math.random().toString(36).slice(2, 8),
+    drawNumber: (prop.drawRequests || []).length + 1,
     reserveId: _drawDraft.reserveId,
     amountRequested,
     status: 'draft',
@@ -2381,6 +2385,77 @@ function generateDrawPackageReport(drawRequestId) {
     severity: pkg.complete ? 'success' : 'warning', actor: 'User', relatedEntity: prop.name || 'Property',
   });
   openReport('Escrow Draw Request Package', html);
+}
+
+// ─── Draw Submission Email (Track 6) ────────────────────────────────────────
+
+let _drawEmailDrawId = null;
+
+function openDrawEmailModal(drawRequestId) {
+  const prop = currentProperty();
+  if (!prop) return;
+  const Engine = window.EscrowReserveEngine;
+  const drawRequest = (prop.drawRequests || []).find(d => d.id === drawRequestId);
+  const reserve     = drawRequest && (prop.escrowReserves || []).find(r => r.id === drawRequest.reserveId);
+  if (!drawRequest || !reserve) return;
+
+  const draft = Engine.buildDrawEmailDraft(prop, reserve, drawRequest);
+  _drawEmailDrawId = drawRequestId;
+  document.getElementById('drawEmailSubject').value = draft.subject;
+  document.getElementById('drawEmailBody').value    = draft.body;
+  document.getElementById('drawEmailMailtoLink').href =
+    'mailto:?subject=' + encodeURIComponent(draft.subject) + '&body=' + encodeURIComponent(draft.body);
+  document.getElementById('drawEmailModal').style.display = 'flex';
+
+  logActivity('escrow_draw_email', `Draw request email draft generated — ${reserve.reserveTypeLabel}`, {
+    severity: 'info', actor: 'User', relatedEntity: prop.name || 'Property',
+  });
+}
+
+function closeDrawEmailModal() {
+  document.getElementById('drawEmailModal').style.display = 'none';
+  _drawEmailDrawId = null;
+}
+
+function copyDrawEmailField(fieldId, btnId) {
+  const input = document.getElementById(fieldId);
+  input.select();
+  try {
+    navigator.clipboard.writeText(input.value).catch(() => document.execCommand('copy'));
+  } catch { document.execCommand('copy'); }
+  const btn  = document.getElementById(btnId);
+  const orig = btn.textContent;
+  btn.textContent = '✓ Copied!';
+  setTimeout(() => { btn.textContent = orig; }, 2000);
+}
+
+// ─── Reserve Source Citation Viewer ─────────────────────────────────────────
+
+function openEscrowSourceCitation(reserveId) {
+  const prop = currentProperty();
+  const reserve = prop && (prop.escrowReserves || []).find(r => r.id === reserveId);
+  if (!reserve) return;
+
+  const evidence = reserve.evidence || {};
+  const fieldLabels = { reserve_type: 'Reserve Type', current_balance: 'Current Balance', eligible_uses: 'Eligible Uses' };
+  const rows = Object.entries(evidence)
+    .filter(([, ev]) => ev && ev.quote)
+    .map(([field, ev]) => `
+      <div class="escrow-citation-item">
+        <div class="escrow-citation-head">
+          <strong>${esc(fieldLabels[field] || field)}</strong>
+          <span>${esc(reserve.sourceFileName || 'Reserve Agreement')}${ev.page != null ? ` &middot; Page ${esc(ev.page)}` : ''}</span>
+        </div>
+        <blockquote class="escrow-citation-quote">&#x201C;${esc(ev.quote)}&#x201D;</blockquote>
+      </div>`).join('');
+
+  document.getElementById('escrowCitationBody').innerHTML = rows ||
+    `<p style="color:#94A3B8;font-size:0.85rem;">No verbatim source citations available for this reserve.</p>`;
+  document.getElementById('escrowCitationModal').style.display = 'flex';
+}
+
+function closeEscrowSourceCitation() {
+  document.getElementById('escrowCitationModal').style.display = 'none';
 }
 
 // ─── SVG icons ────────────────────────────────────────────────────────────────

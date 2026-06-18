@@ -105,6 +105,38 @@ window.EscrowDrawPackets = (() => {
     <table class="rpt-table"><thead><tr><th>Category</th><th>File</th></tr></thead><tbody>${rows}</tbody></table>`;
   }
 
+  // ── Reserve agreement citation ───────────────────────────────────────────
+  function _reserveCitation(pkg) {
+    const r = pkg.reserve;
+    const c = r && r.citation;
+    if (!c) {
+      return `<div class="rpt-section-title">Reserve Agreement Citation</div><p style="color:#94A3B8;font-size:0.85rem;">No verbatim source citation available for this reserve.</p>`;
+    }
+    return `
+    <div class="rpt-section-title">Reserve Agreement Citation</div>
+    <div style="font-size:0.85rem;color:#1a1a1a;margin-bottom:6px;">
+      ${_esc(c.sourceFileName || 'Reserve Agreement')}${c.page != null ? ` &mdash; Page ${_esc(c.page)}` : ''}
+    </div>
+    <blockquote style="border-left:3px solid #C9973A;margin:0;padding:8px 14px;font-style:italic;color:#374151;background:#fafaf9;">
+      &#x201C;${_esc(c.quote)}&#x201D;
+    </blockquote>`;
+  }
+
+  // ── Status history ────────────────────────────────────────────────────────
+  function _statusHistory(pkg) {
+    const history = pkg.drawRequest?.statusHistory || [];
+    if (!history.length) {
+      return `<div class="rpt-section-title">Status History</div><p style="color:#94A3B8;font-size:0.85rem;">No status history recorded.</p>`;
+    }
+    const rows = history.map(h => {
+      const when = h.timestamp ? new Date(h.timestamp).toLocaleString('en-US') : '—';
+      return `<tr><td>${_esc(h.status)}</td><td>${_esc(when)}</td><td>${_esc(h.actor || '—')}</td></tr>`;
+    }).join('');
+    return `
+    <div class="rpt-section-title">Status History</div>
+    <table class="rpt-table"><thead><tr><th>Status</th><th>Date</th><th>Actor</th></tr></thead><tbody>${rows}</tbody></table>`;
+  }
+
   // ── Validation checklist ─────────────────────────────────────────────────
   function _validationChecklist(pkg) {
     const items = pkg.validationChecklist || [];
@@ -134,6 +166,7 @@ window.EscrowDrawPackets = (() => {
       <div class="rpt-cover-title">${_esc(propName)}</div>
       <div class="rpt-cover-type">${_esc(reportType)}</div>
       <div class="rpt-cover-meta">
+        ${pkg.drawRequest?.drawNumber ? `<div class="rpt-cover-meta-item"><span>Draw Request #</span><span>${_esc(pkg.drawRequest.drawNumber)}</span></div>` : ''}
         <div class="rpt-cover-meta-item"><span>Generated</span><span>${_esc(now)}</span></div>
         <div class="rpt-cover-meta-item"><span>Amount Requested</span><span>${_fmt(pkg.drawRequest?.amountRequested)}</span></div>
         <div class="rpt-cover-meta-item"><span>Status</span><span>${_esc(pkg.drawRequest?.status || 'draft')}</span></div>
@@ -141,9 +174,11 @@ window.EscrowDrawPackets = (() => {
     </div>
     ${_coverLetter(pkg)}
     ${_propertyAndReserveInfo(pkg)}
+    ${_reserveCitation(pkg)}
     ${_invoiceSummary(pkg)}
     ${_supportingDocuments(pkg)}
     ${_validationChecklist(pkg)}
+    ${_statusHistory(pkg)}
     <div class="rpt-footer">
       <span class="rpt-footer-brand">Mainstreet CAM Platform</span>
       <span>${_esc(propName)} &nbsp;&middot;&nbsp; ${_esc(reportType)}</span>

@@ -273,6 +273,55 @@ console.log('\n── Group 6: buildDrawRequestPackage ────────�
   // No reserve at all
   const noReservePkg = EE.buildDrawRequestPackage(property, null, badDraw, { pass: false, checklist: [] });
   assertEq('buildDrawRequestPackage: reserve is null when none provided', noReservePkg.reserve, null);
+
+  // Citation + status history + draw number (Priority 1 — lender package additions)
+  const citedReserve = EE.normalizeReserve({
+    reserve_type: 'Roof Reserve', current_balance: 75000,
+    evidence: { current_balance: { quote: 'Lender shall maintain a Roof Reserve Account with an initial balance of $75,000', page: 3 } },
+  }, { id: 'res-2', sourceFileName: 'Reserve_Agreement.pdf' });
+  const numberedDraw = {
+    id: 'dr-3', drawNumber: 3, reserveId: 'res-2', amountRequested: 42179.61, status: 'submitted',
+    invoices: [], attachedDocuments: {},
+    statusHistory: [{ status: 'draft', timestamp: '2026-01-01T00:00:00Z', actor: 'User' }, { status: 'submitted', timestamp: '2026-01-02T00:00:00Z', actor: 'User' }],
+  };
+  const citedValidation = EE.validateDrawRequest(citedReserve, numberedDraw, [numberedDraw]);
+  const citedPkg = EE.buildDrawRequestPackage(property, citedReserve, numberedDraw, citedValidation);
+
+  assertEq('buildDrawRequestPackage: drawNumber carried through', citedPkg.drawRequest.drawNumber, 3);
+  assertEq('buildDrawRequestPackage: statusHistory carried through', citedPkg.drawRequest.statusHistory.length, 2);
+  assert('buildDrawRequestPackage: reserve citation quote present', citedPkg.reserve.citation && citedPkg.reserve.citation.quote.includes('$75,000'));
+  assertEq('buildDrawRequestPackage: reserve citation page present', citedPkg.reserve.citation.page, 3);
+  assertEq('buildDrawRequestPackage: reserve citation source file name present', citedPkg.reserve.citation.sourceFileName, 'Reserve_Agreement.pdf');
+
+  const uncitedPkg = EE.buildDrawRequestPackage(property, reserve, drawRequest, validation);
+  assertEq('buildDrawRequestPackage: citation is null when reserve has no evidence quotes', uncitedPkg.reserve.citation, null);
+}
+
+// ── Group 6b: buildDrawEmailDraft ──────────────────────────────────────────
+console.log('\n── Group 6b: buildDrawEmailDraft ───────────────────────────────────────────');
+{
+  const property = { id: 'p1', name: 'Maple Plaza' };
+  const reserve  = EE.normalizeReserve({ reserve_type: 'Roof Reserve' }, { id: 'res-1' });
+  const drawRequest = {
+    id: 'dr-3', drawNumber: 3, amountRequested: 42179.61,
+    invoices: [{ vendorName: 'ABC Roofing', amount: 42179.61 }],
+    attachedDocuments: { lienWaivers: [{ fileName: 'waiver.pdf' }], photos: [{ fileName: 'p1.jpg' }] },
+  };
+  const draft = EE.buildDrawEmailDraft(property, reserve, drawRequest);
+
+  assertEq('buildDrawEmailDraft: subject follows "{Reserve} Draw Request - {Property}" format',
+    draft.subject, 'Roof Reserve Draw Request - Maple Plaza');
+  assert('buildDrawEmailDraft: body references the draw number', draft.body.includes('Draw Request #3'));
+  assert('buildDrawEmailDraft: body references the reserve type', draft.body.includes('Roof Reserve'));
+  assert('buildDrawEmailDraft: body lists invoices as supporting documentation', draft.body.includes('Invoice'));
+  assert('buildDrawEmailDraft: body lists lien waivers', draft.body.includes('Lien Waiver'));
+  assert('buildDrawEmailDraft: body lists photos', draft.body.includes('Photos'));
+  assert('buildDrawEmailDraft: body includes the formatted requested amount', draft.body.includes('$42,179.61'));
+
+  const noDrawNumberDraft = EE.buildDrawEmailDraft(property, reserve, { amountRequested: 1000, invoices: [], attachedDocuments: {} });
+  assert('buildDrawEmailDraft: falls back to generic "Draw Request" label when no drawNumber set',
+    noDrawNumberDraft.body.includes('Draw Request\n') || noDrawNumberDraft.body.startsWith('Draw Request'));
+  assertEq('buildDrawEmailDraft: handles missing property/reserve/draw gracefully', EE.buildDrawEmailDraft(null, null, null).subject, 'Reserve Draw Request - (unnamed property)');
 }
 
 // ── Group 7: Enum integrity ───────────────────────────────────────────────────

@@ -2653,6 +2653,16 @@
     .escrow-doc-btn:hover { background: rgba(255,255,255,0.1); color: #E2E8F0; }
     .escrow-doc-btn-danger { color: #f87171; border-color: rgba(239,68,68,0.3); }
     .escrow-doc-btn-danger:hover { background: rgba(239,68,68,0.14); color: #f87171; }
+    .escrow-citation-item { margin-bottom: 14px; }
+    .escrow-citation-head {
+      display: flex; justify-content: space-between; gap: 12px; font-size: 0.83rem;
+      color: #E2E8F0; margin-bottom: 4px;
+    }
+    .escrow-citation-head span:last-child { color: #64748B; }
+    .escrow-citation-quote {
+      border-left: 3px solid #C9973A; margin: 0; padding: 8px 14px;
+      font-style: italic; color: #E2E8F0; background: rgba(255,255,255,0.03); font-size: 0.85rem;
+    }
 
     /* ── Reports section ─────────────────────────────────────────────── */
     #reportsSection { display: block; }
@@ -5586,6 +5596,42 @@
     <div class="modal-actions">
       <button class="modal-confirm" onclick="confirmCreateDrawRequest()">Create Draw Request</button>
       <button class="modal-cancel"  onclick="closeDrawBuilder()">Cancel</button>
+    </div>
+  </div>
+</div>
+
+<!-- ── Draw Submission Email Modal ─────────────────────────────────────── -->
+<div id="drawEmailModal" class="modal-backdrop" style="display:none;" onclick="if(event.target===this)closeDrawEmailModal()">
+  <div class="modal-box">
+    <div class="modal-title">&#x2709; Generate Submission Email</div>
+    <label style="display:block;margin:10px 0;">
+      Subject
+      <div style="display:flex;gap:6px;margin-top:4px;">
+        <input id="drawEmailSubject" type="text" readonly style="flex:1;">
+        <button id="drawEmailSubjectCopyBtn" class="modal-cancel" style="padding:6px 10px;" onclick="copyDrawEmailField('drawEmailSubject','drawEmailSubjectCopyBtn')">Copy</button>
+      </div>
+    </label>
+    <label style="display:block;margin:10px 0;">
+      Body
+      <div style="display:flex;gap:6px;margin-top:4px;">
+        <textarea id="drawEmailBody" readonly rows="8" style="flex:1;font-family:inherit;"></textarea>
+        <button id="drawEmailBodyCopyBtn" class="modal-cancel" style="padding:6px 10px;align-self:flex-start;" onclick="copyDrawEmailField('drawEmailBody','drawEmailBodyCopyBtn')">Copy</button>
+      </div>
+    </label>
+    <div class="modal-actions">
+      <a id="drawEmailMailtoLink" class="modal-confirm" style="text-decoration:none;display:inline-block;" href="#">Open in Email Client</a>
+      <button class="modal-cancel" onclick="closeDrawEmailModal()">Close</button>
+    </div>
+  </div>
+</div>
+
+<!-- ── Reserve Source Citation Modal ───────────────────────────────────── -->
+<div id="escrowCitationModal" class="modal-backdrop" style="display:none;" onclick="if(event.target===this)closeEscrowSourceCitation()">
+  <div class="modal-box">
+    <div class="modal-title">&#x1F4CE; Source Citation</div>
+    <div id="escrowCitationBody"></div>
+    <div class="modal-actions">
+      <button class="modal-cancel" onclick="closeEscrowSourceCitation()">Close</button>
     </div>
   </div>
 </div>
