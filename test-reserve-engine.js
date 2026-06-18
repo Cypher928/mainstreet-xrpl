@@ -388,6 +388,44 @@ console.log('\n── Group 9: Multi-reserve document extraction ─────
   })());
 }
 
+// ── Group 10: classifyInvoiceReserveType ───────────────────────────────────
+console.log('\n── Group 10: classifyInvoiceReserveType ────────────────────────────────────');
+{
+  assertEq('classifies a roofing vendor invoice as roof',
+    EE.classifyInvoiceReserveType({ vendorName: 'ABC Roofing Co.' }).reserveType, 'roof');
+  assertEq('classifies an HVAC vendor invoice as hvac',
+    EE.classifyInvoiceReserveType({ vendorName: 'Acme HVAC & Heating Services' }).reserveType, 'hvac');
+  assertEq('classifies an insurance-category invoice as insurance_recovery via category fallback',
+    EE.classifyInvoiceReserveType({ vendorName: 'State Farm', category: 'insurance' }).reserveType, 'insurance_recovery');
+  assertEq('classifies a capital project invoice (parking lot paving) as capital',
+    EE.classifyInvoiceReserveType({ vendorName: 'Statewide Paving Inc.', description: 'parking lot paving' }).reserveType, 'capital');
+  assertEq('classifies an unrelated vendor invoice as other',
+    EE.classifyInvoiceReserveType({ vendorName: 'Acme Office Supplies' }).reserveType, 'other');
+  assertEq('classifies an invoice with no fields as other',
+    EE.classifyInvoiceReserveType({}).reserveType, 'other');
+  assert('roof match returns a confidence score above the "other" fallback score',
+    EE.classifyInvoiceReserveType({ vendorName: 'Roofing Experts LLC' }).confidence >
+    EE.classifyInvoiceReserveType({}).confidence);
+}
+
+// ── Group 11: normalizeReserve sourceDocuments ─────────────────────────────
+console.log('\n── Group 11: normalizeReserve sourceDocuments ──────────────────────────────');
+{
+  const r1 = EE.normalizeReserve({ reserve_type: 'Roof Reserve', current_balance: 75000 }, {
+    sourceFileName: 'loan-agreement.pdf', sourceFileUrl: 'https://example.com/loan-agreement.pdf',
+  });
+  assertEq('normalizeReserve: sourceDocuments seeded from sourceFileName/sourceFileUrl',
+    r1.sourceDocuments.length, 1);
+  assertEq('normalizeReserve: seeded sourceDocuments entry has the right fileName',
+    r1.sourceDocuments[0].fileName, 'loan-agreement.pdf');
+  assertEq('normalizeReserve: seeded sourceDocuments entry has the right fileUrl',
+    r1.sourceDocuments[0].fileUrl, 'https://example.com/loan-agreement.pdf');
+
+  const r2 = EE.normalizeReserve({ reserve_type: 'Roof Reserve' }, {});
+  assertEq('normalizeReserve: sourceDocuments defaults to an empty array when no file metadata given',
+    r2.sourceDocuments.length, 0);
+}
+
 console.log('\n' + '─'.repeat(62));
 console.log(`Results: ${passed}/${passed + failed} passed`);
 console.log('─'.repeat(62));

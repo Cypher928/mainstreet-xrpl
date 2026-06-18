@@ -72,6 +72,42 @@
     return 'other';
   }
 
+  // Maps an invoice's vendor name / category / line-item description to a
+  // reserve type so the Draw Request builder can show only the invoices
+  // relevant to the reserve being drawn against. Rule-based only (mirrors
+  // the structure of classifyReserveType) — purely keyword-driven, no AI
+  // call here; script.js layers a Claude fallback on top when this returns
+  // 'other' with low confidence, following the normalizeCategory/
+  // classifyCategory pattern already used for invoice category extraction.
+  var INVOICE_RESERVE_KEYWORDS = [
+    { type: 'roof',               re: /roof|shingle|membrane|reroof|gutter/i },
+    { type: 'hvac',                re: /hvac|heating|ventilat|air\s*condition|chiller|boiler|rooftop\s*unit|\brtu\b|furnace|condenser/i },
+    { type: 'tenant_improvement',  re: /tenant\s*improvement|\bti\b|build[\s-]?out|fit[\s-]?out/i },
+    { type: 'leasing_commission',  re: /leasing\s*commission|broker\s*commission/i },
+    { type: 'insurance_recovery',  re: /insurance|casualty|storm\s*damage|claim/i },
+    { type: 'capital',             re: /capital\s*(expenditure|improvement|project)|parking\s*lot|paving|elevator|facade|structural/i },
+  ];
+  var CATEGORY_TO_RESERVE_TYPE = {
+    insurance: 'insurance_recovery',
+  };
+
+  function classifyInvoiceReserveType(invoice) {
+    var inv = invoice || {};
+    var haystack = [inv.vendorName, inv.description, inv.lineItems, inv.notes]
+      .filter(Boolean).join(' ');
+
+    for (var i = 0; i < INVOICE_RESERVE_KEYWORDS.length; i++) {
+      if (INVOICE_RESERVE_KEYWORDS[i].re.test(haystack)) {
+        return { reserveType: INVOICE_RESERVE_KEYWORDS[i].type, confidence: 75 };
+      }
+    }
+
+    var byCategory = CATEGORY_TO_RESERVE_TYPE[String(inv.category || '').toLowerCase()];
+    if (byCategory) return { reserveType: byCategory, confidence: 60 };
+
+    return { reserveType: 'other', confidence: 30 };
+  }
+
   // ── Extraction confidence & source grounding ─────────────────────────────
   //
   // Lender documents are legal documents — a property manager will not trust
@@ -146,6 +182,13 @@
         : RESERVE_TYPE_LABELS[reserveTypeKey],
       sourceFileName:    meta.sourceFileName || raw.sourceFileName || null,
       sourceFileUrl:      meta.sourceFileUrl  || raw.sourceFileUrl  || null,
+      sourceDocuments:    Array.isArray(meta.sourceDocuments) ? meta.sourceDocuments : (
+        meta.sourceFileName ? [{
+          fileName:  meta.sourceFileName,
+          fileUrl:   meta.sourceFileUrl || null,
+          uploadedAt: meta.extractedAt || new Date().toISOString(),
+        }] : []
+      ),
       currentBalance:    _pf(raw.current_balance),
       eligibleUses:      raw.eligible_uses ? String(raw.eligible_uses).slice(0, 500) : null,
       requirements: {
@@ -356,6 +399,7 @@
     DRAW_STATUS_LABELS,
     COMMITTED_DRAW_STATUSES,
     classifyReserveType,
+    classifyInvoiceReserveType,
     deriveReserveExtractionConfidence,
     normalizeReserve,
     computeReserveBalance,
