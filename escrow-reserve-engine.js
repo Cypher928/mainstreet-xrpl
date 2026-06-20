@@ -30,11 +30,29 @@
     under_review:  'Under Review',
     approved:      'Approved',
     funded:        'Funded',
-    denied:        'Denied',
+    denied:        'Rejected',
   };
   // Statuses that represent a claim against the reserve balance — used by
   // computeReserveBalance to compute what is "committed" vs truly available.
   var COMMITTED_DRAW_STATUSES = ['submitted', 'under_review', 'approved', 'funded'];
+
+  // Legal forward-progression edges for the draw lifecycle. A draw can be
+  // denied at any stage prior to funding, but cannot skip stages (e.g. draft
+  // straight to funded) or move backward once advanced. funded/denied are
+  // terminal. Enforced by applyDrawStatus; the UI stepper only renders these
+  // as clickable next steps.
+  var VALID_DRAW_TRANSITIONS = {
+    draft:         ['submitted', 'denied'],
+    submitted:     ['under_review', 'denied'],
+    under_review:  ['approved', 'denied'],
+    approved:      ['funded', 'denied'],
+    funded:        [],
+    denied:        [],
+  };
+
+  function getValidNextDrawStatuses(currentStatus) {
+    return (VALID_DRAW_TRANSITIONS[currentStatus] || []).slice();
+  }
 
   function _pf(v) {
     if (v == null || v === '') return null;
@@ -412,6 +430,13 @@
     if (!dr) return false;
 
     opts = opts || {};
+
+    // Reject illegal lifecycle jumps (e.g. draft -> funded) unless the caller
+    // explicitly forces it (used for trusted data migrations/tests only).
+    if (dr.status !== status && !opts.force) {
+      var allowedNext = VALID_DRAW_TRANSITIONS[dr.status] || [];
+      if (allowedNext.indexOf(status) === -1) return false;
+    }
     dr.status    = status;
     dr.updatedAt = opts.timestamp || new Date().toISOString();
     if (!Array.isArray(dr.statusHistory)) dr.statusHistory = [];
@@ -541,6 +566,8 @@
     DRAW_STATUSES,
     DRAW_STATUS_LABELS,
     COMMITTED_DRAW_STATUSES,
+    VALID_DRAW_TRANSITIONS,
+    getValidNextDrawStatuses,
     classifyReserveType,
     classifyInvoiceReserveType,
     deriveReserveExtractionConfidence,

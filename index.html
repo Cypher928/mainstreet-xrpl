@@ -1248,6 +1248,33 @@
     .workspace-tab-pane { animation: wsTabFadeIn 0.12s ease-out; }
     @keyframes wsTabFadeIn { from { opacity: 0.4; } to { opacity: 1; } }
 
+    /* ── Property KPI Header (Phase 23) ──────────────────────────────── */
+    .kpi-header-row {
+      display: grid; grid-template-columns: repeat(6, 1fr); gap: 10px;
+      margin-bottom: 18px;
+    }
+    .kpi-tile {
+      background: rgba(255,255,255,0.03); border: 1px solid rgba(255,255,255,0.08);
+      border-radius: 10px; padding: 12px 14px;
+    }
+    .kpi-tile-label {
+      font-size: 0.7rem; font-weight: 700; text-transform: uppercase;
+      letter-spacing: 0.04em; color: #64748B; margin-bottom: 4px;
+    }
+    .kpi-tile-value { font-size: 1.35rem; font-weight: 700; color: #E2E8F0; line-height: 1.2; }
+    .kpi-tile-sub { font-size: 0.72rem; color: #94A3B8; margin-top: 2px; }
+    .kpi-tile.kpi-alert .kpi-tile-value { color: #f87171; }
+    .kpi-tile.kpi-warn  .kpi-tile-value { color: #fbbf24; }
+    .kpi-last-activity {
+      font-size: 0.78rem; color: #94A3B8; margin: -8px 0 16px; padding: 0 2px;
+    }
+    @media (max-width: 980px) {
+      .kpi-header-row { grid-template-columns: repeat(3, 1fr); }
+    }
+    @media (max-width: 560px) {
+      .kpi-header-row { grid-template-columns: repeat(2, 1fr); }
+    }
+
     /* Lease Center table */
     .lc-table {
       width: 100%; border-collapse: collapse; font-size: 0.85rem;
@@ -2403,6 +2430,20 @@
     .rc-flag-expl {
       font-size: 0.73rem; color: #f8717188; font-weight: 400; line-height: 1.4;
     }
+    /* Lease edge-case / explainability review notes — surfaces what
+       LeaseIntelligence already detected (previously console-only). */
+    .lease-edge-notes {
+      margin: 12px 0 8px; padding: 10px 14px; border-radius: 8px;
+      background: rgba(245,158,11,0.07); border: 1px solid rgba(245,158,11,0.25);
+    }
+    .lease-edge-notes-title {
+      font-size: 0.8rem; font-weight: 700; color: #fbbf24; margin-bottom: 6px;
+    }
+    .lease-edge-note-item {
+      font-size: 0.78rem; color: #fde68a; line-height: 1.5; margin-bottom: 5px;
+      display: flex; gap: 6px;
+    }
+    .lease-edge-note-item .len-icon { flex-shrink: 0; }
     .recon-inv-flag {
       width: 100%; font-size: 0.68rem; color: #f87171; margin-top: 2px; cursor: help;
     }
@@ -2641,6 +2682,35 @@
     .escrow-status-select {
       background: #0B1220; color: #E2E8F0; border: 1.5px solid rgba(255,255,255,0.12);
       border-radius: 7px; padding: 6px 10px; font-size: 0.83rem; font-weight: 600;
+    }
+    /* ── Draw Request status stepper (Phase 23) ─────────────────────────── */
+    .draw-stepper { display: flex; align-items: center; flex-wrap: wrap; gap: 0; margin: 10px 0 2px; }
+    .draw-step {
+      display: flex; align-items: center; gap: 5px; background: none; border: none;
+      cursor: not-allowed; padding: 4px 6px; font-size: 0.72rem; font-weight: 600;
+      color: #475569; white-space: nowrap;
+    }
+    .draw-step-dot { width: 8px; height: 8px; border-radius: 50%; border: 1.5px solid #475569; flex-shrink: 0; }
+    .draw-step--done { color: #4ade80; }
+    .draw-step--done .draw-step-dot { background: #4ade80; border-color: #4ade80; }
+    .draw-step--current { color: #C9973A; }
+    .draw-step--current .draw-step-dot { background: rgba(201,151,58,0.3); border-color: #C9973A; }
+    .draw-step--upcoming.draw-step:not(:disabled) {
+      cursor: pointer; color: #94A3B8;
+    }
+    .draw-step--upcoming.draw-step:not(:disabled):hover { color: #C9973A; }
+    .draw-step-connector { width: 16px; height: 1px; background: rgba(100,116,139,0.3); flex-shrink: 0; }
+    .draw-step-reject {
+      margin-left: 10px; background: none; border: 1px solid rgba(239,68,68,0.35);
+      color: #f87171; border-radius: 6px; padding: 3px 10px; font-size: 0.72rem;
+      font-weight: 600; cursor: pointer;
+    }
+    .draw-step-reject:hover { background: rgba(239,68,68,0.1); }
+    .draw-stepper--rejected { margin: 10px 0 2px; }
+    .draw-step-rejected-badge {
+      color: #f87171; font-size: 0.78rem; font-weight: 700;
+      background: rgba(239,68,68,0.1); border: 1px solid rgba(239,68,68,0.3);
+      border-radius: 6px; padding: 3px 10px;
     }
     .escrow-draw-actions { margin-top: 10px; }
     .escrow-invoice-row {
@@ -3515,6 +3585,14 @@
     .ht-dir--down { color: #34d399; }
     .ht-dir--flat { color: #94a3b8; font-size: 0.6rem; }
     /* ── Activity Timeline Panel ─────────────────────────────────────── */
+    .tl-filter-bar { display: flex; gap: 6px; flex-wrap: wrap; padding: 2px 0 10px; }
+    .tl-filter-chip {
+      font-size: 0.74rem; font-weight: 600; padding: 4px 11px; border-radius: 999px;
+      border: 1px solid rgba(100,116,139,0.3); background: transparent; color: #94a3b8;
+      cursor: pointer; transition: all 0.15s;
+    }
+    .tl-filter-chip:hover { border-color: rgba(201,151,58,0.5); color: #C9973A; }
+    .tl-filter-chip--active { background: rgba(201,151,58,0.15); border-color: #C9973A; color: #C9973A; }
     .tl-list   { display: flex; flex-direction: column; padding: 2px 0; }
     .tl-item   { display: flex; gap: 12px; min-height: 44px; }
     .tl-track  { display: flex; flex-direction: column; align-items: center; flex-shrink: 0; width: 14px; padding-top: 3px; }
@@ -5180,6 +5258,10 @@
 
 <div class="container" id="mainWorkflow" style="display:none;">
 
+  <!-- ── Property KPI Header (Phase 23 — reuses existing computed data;
+       no new engines) ────────────────────────────────────────────────── -->
+  <div id="propertyKpiHeader"></div>
+
   <!-- ── Workspace Tab Navigation (Phase 22 — pure UI reorganization,
        no business logic/data model/extraction changes) ─────────────── -->
   <div class="workspace-tab-bar" id="workspaceTabBar">
@@ -5313,8 +5395,8 @@
     <div class="sec-head">
       <div class="sec-num" style="background:#22c55e;font-size:0.62rem;letter-spacing:-0.02em;">GL</div>
       <div>
-        <h2>GL Excel Upload</h2>
-        <p>Upload your General Ledger export for the CAM year — CAM items auto-detected &amp; categorized</p>
+        <h2>GL Excel Upload <span class="field-info-tip" title="GL = General Ledger — the accounting export from your bookkeeping system (e.g. QuickBooks, Yardi) listing every expense for the CAM year. If you don&#x27;t have one, skip this and upload individual invoices in the next step instead.">&#x24D8;</span></h2>
+        <p>Optional — upload your accounting system&#x27;s General Ledger export for the CAM year and CAM items are auto-detected &amp; categorized. Don&#x27;t have one? Skip to Invoice Upload below.</p>
       </div>
     </div>
 

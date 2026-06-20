@@ -2191,9 +2191,6 @@ function renderEscrowProfile(property) {
     };
     drawListEl.innerHTML = draws.slice().reverse().map(dr => {
       const reserve = reserves.find(r => r.id === dr.reserveId);
-      const statusOptions = Engine.DRAW_STATUSES.map(s =>
-        `<option value="${s}" ${s === dr.status ? 'selected' : ''}>${esc(Engine.DRAW_STATUS_LABELS[s])}</option>`
-      ).join('');
       const history = Array.isArray(dr.statusHistory) ? dr.statusHistory : [];
       const historyRows = history.map(h => `
         <div class="escrow-status-history-item">
@@ -2207,8 +2204,8 @@ function renderEscrowProfile(property) {
       <div class="escrow-draw-card">
         <div class="escrow-draw-head">
           <strong>${dr.drawNumber ? `Draw #${esc(dr.drawNumber)} &mdash; ` : ''}${esc(reserve ? reserve.reserveTypeLabel : 'Reserve')} &mdash; ${fmt(dr.amountRequested)}</strong>
-          <select class="escrow-status-select" onchange="updateDrawStatus('${dr.id}', this.value)">${statusOptions}</select>
         </div>
+        ${_drawStatusStepperHtml(dr, Engine)}
         ${historyBlock}
         <div class="escrow-draw-actions">
           <button class="report-btn" onclick="generateDrawPackageReport('${dr.id}')">&#x1F4CB; Generate Package</button>
@@ -2450,11 +2447,45 @@ async function confirmCreateDrawRequest() {
 
 // ─── Draw Request Tracking (Track 5) ────────────────────────────────────────
 
+// Lifecycle stepper — replaces the old free-form status dropdown. Only
+// renders the statuses Engine.getValidNextDrawStatuses() says are legal next
+// steps as clickable, so a draw can no longer jump straight from Draft to
+// Funded. "Reject" is shown as a separate action since it's a side-branch,
+// not a forward step in the main lifecycle.
+const _DRAW_MAIN_STAGES = ['draft', 'submitted', 'under_review', 'approved', 'funded'];
+
+function _drawStatusStepperHtml(dr, Engine) {
+  if (dr.status === 'denied') {
+    return `<div class="draw-stepper draw-stepper--rejected">
+      <span class="draw-step-rejected-badge">&#x2715; Rejected</span>
+    </div>`;
+  }
+  const currentIdx = _DRAW_MAIN_STAGES.indexOf(dr.status);
+  const nextValid = Engine.getValidNextDrawStatuses(dr.status);
+  const nextForward = nextValid.find(s => s !== 'denied');
+  const pillsHtml = _DRAW_MAIN_STAGES.map((s, idx) => {
+    const state = idx < currentIdx ? 'done' : idx === currentIdx ? 'current' : 'upcoming';
+    const clickable = s === nextForward;
+    return `<button class="draw-step draw-step--${state}"
+      title="${esc(Engine.DRAW_STATUS_LABELS[s])}${clickable ? ' — click to advance' : ''}"
+      ${clickable ? `onclick="updateDrawStatus('${dr.id}','${s}')"` : 'disabled'}>
+      <span class="draw-step-dot"></span><span class="draw-step-label">${esc(Engine.DRAW_STATUS_LABELS[s])}</span>
+    </button>`;
+  }).join('<span class="draw-step-connector"></span>');
+  const rejectBtnHtml = nextValid.includes('denied')
+    ? `<button class="draw-step-reject" onclick="updateDrawStatus('${dr.id}','denied')">Reject</button>`
+    : '';
+  return `<div class="draw-stepper">${pillsHtml}${rejectBtnHtml}</div>`;
+}
+
 async function updateDrawStatus(drawRequestId, status) {
   const prop = currentProperty();
   if (!prop) return;
   const ok = window.EscrowReserveEngine.applyDrawStatus(prop.drawRequests || [], drawRequestId, status, { actor: 'User' });
-  if (!ok) { showToast('Could not update draw status', { color: '#7f1d1d', textColor: '#fca5a5' }); return; }
+  if (!ok) {
+    showToast('That status change isn’t allowed — draws must move through each stage in order.', { color: '#7f1d1d', textColor: '#fca5a5' });
+    return;
+  }
 
   _lsSave(prop);
   await saveProperty(prop);
@@ -2847,7 +2878,7 @@ function renderTenantFields(i) {
             onblur="handleFieldBlur(${i},'tenant_name',this.value)"/>
         </div>
         <div class="field">
-          <label>Leased Sqft</label>
+          <label title="The square footage this tenant occupies — not the total building size. Used to calculate this tenant's pro-rata share of CAM expenses.">Leased Sqft &#x24D8;</label>
           <input type="number" value="${d.leased_sqft ?? ''}"
             onfocus="isEditingField=true"
             onblur="handleFieldBlur(${i},'leased_sqft',this.value);checkSqftValidation()"/>
@@ -2927,6 +2958,72 @@ function switchWorkspaceTab(tab) {
     if (pane) pane.style.display = (t === tab) ? 'block' : 'none';
     if (btn)  btn.classList.toggle('active', t === tab);
   });
+}
+
+// ─── Property KPI Header (Phase 23) ─────────────────────────────────────────
+// Pure aggregation of data already computed elsewhere (Selectors, the escrow
+// engine, camReconciliation) — no new metrics engine, no new persisted fields.
+function _fmtKpiMoney(n) {
+  return '$' + Math.round(Number(n) || 0).toLocaleString();
+}
+
+function renderPropertyKpiHeader(property) {
+  const slot = document.getElementById('propertyKpiHeader');
+  if (!slot || !property) return;
+
+  const tenants = (property.tenants || []).filter(t => t && t.tenant_name);
+  const totalSqft = Number(property.totalSqft) || 0;
+  const occSqft = tenants.reduce((s, t) => s + (parseFloat(t.leased_sqft) || 0), 0);
+  const occupancyPct = totalSqft > 0 ? Math.round((occSqft / totalSqft) * 100) : null;
+
+  const meta = Selectors.buildPropMeta(property);
+  const readiness = Selectors.derivePropertyReadiness(property);
+
+  const reserves = property.escrowReserves || [];
+  const Engine = window.EscrowReserveEngine;
+  const reserveBalanceTotal = Engine
+    ? reserves.reduce((s, r) => s + (Engine.computeReserveBalance(r, property.drawRequests || []).availableBalance || 0), 0)
+    : null;
+
+  const camTotal = meta.total || 0;
+
+  const lastEvent = Array.isArray(property.timeline) && property.timeline.length
+    ? property.timeline[property.timeline.length - 1]
+    : null;
+
+  const tiles = [
+    { label: 'Occupancy', value: occupancyPct !== null ? occupancyPct + '%' : '—',
+      sub: totalSqft ? `${occSqft.toLocaleString()} / ${totalSqft.toLocaleString()} sqft` : 'Set total sqft to enable' },
+    { label: 'Tenants', value: tenants.length, sub: tenants.length === 1 ? '1 active lease' : `${tenants.length} active leases` },
+    { label: 'Active Reserves', value: reserves.length,
+      sub: reserveBalanceTotal !== null ? `${_fmtKpiMoney(reserveBalanceTotal)} available` : 'No reserves yet' },
+    { label: 'Open Disputes', value: meta.openDisputes || 0, alert: (meta.openDisputes || 0) > 0,
+      sub: (meta.openDisputes || 0) > 0 ? 'Needs attention' : 'None open' },
+    { label: 'Lease Expirations', value: readiness.expiringCount || 0,
+      warn: (readiness.expiringCount || 0) > 0, alert: (readiness.expiredCount || 0) > 0,
+      sub: readiness.expiredCount ? `${readiness.expiredCount} already expired` : 'Next 12 months' },
+    { label: 'CAM Recovery', value: _fmtKpiMoney(camTotal), sub: camTotal ? 'Most recent run' : 'No CAM run yet' },
+  ];
+
+  const tileHtml = tiles.map(t => `
+    <div class="kpi-tile${t.alert ? ' kpi-alert' : t.warn ? ' kpi-warn' : ''}">
+      <div class="kpi-tile-label">${esc(t.label)}</div>
+      <div class="kpi-tile-value">${esc(String(t.value))}</div>
+      <div class="kpi-tile-sub">${esc(t.sub)}</div>
+    </div>`).join('');
+
+  const lastActivityHtml = lastEvent
+    ? `<div class="kpi-last-activity">&#x1F553; Last activity: ${esc(lastEvent.title || lastEvent.type)} &middot; ${esc(_fmtKpiTimestamp(lastEvent.timestamp))}</div>`
+    : '';
+
+  slot.innerHTML = `<div class="kpi-header-row">${tileHtml}</div>${lastActivityHtml}`;
+}
+
+function _fmtKpiTimestamp(ts) {
+  try {
+    const d = new Date(ts);
+    return d.toLocaleDateString('en-US', { month: 'short', day: 'numeric' }) + ' ' + d.toLocaleTimeString('en-US', { hour: 'numeric', minute: '2-digit' });
+  } catch { return ts; }
 }
 
 function switchLeaseTab(tab) {
@@ -3971,6 +4068,29 @@ function _confidenceBadgeHtml(level) {
   }[level];
   if (!cfg) return '';
   return `<span class="cx-badge ${cfg.cls}" title="${cfg.tip}">${cfg.label}</span>`;
+}
+
+// Surfaces edge cases (detectLeaseEdgeCases) and review notes
+// (generateLeaseExplainability) that are already computed at extraction time
+// but, before this, were only ever written to the browser console — the
+// property manager reviewing the upload never saw them. Pure rendering of
+// existing data; no new detection logic.
+function _leaseEdgeCaseAndReviewNotesHtml(d) {
+  const edgeCases  = (d._edgeCases && Array.isArray(d._edgeCases.edgeCases)) ? d._edgeCases.edgeCases : [];
+  const reviewNotes = (d._explainability && Array.isArray(d._explainability.reviewNotes)) ? d._explainability.reviewNotes : [];
+  if (!edgeCases.length && !reviewNotes.length) return '';
+
+  const SEV_ICON = { high: '&#x26D4;', medium: '&#x26A0;&#xFE0F;', low: '&#x2139;&#xFE0F;' };
+  const edgeRows = edgeCases.map(e => `
+    <div class="lease-edge-note-item"><span class="len-icon">${SEV_ICON[e.severity] || '&#x2139;&#xFE0F;'}</span>
+      <span>${esc(e.reviewerNote || e.description || e.type)}</span></div>`).join('');
+  const noteRows = reviewNotes.map(n => `
+    <div class="lease-edge-note-item"><span class="len-icon">&#x1F4CB;</span><span>${esc(n)}</span></div>`).join('');
+
+  return `<div class="lease-edge-notes">
+    <div class="lease-edge-notes-title">AI Review Notes — verify before approving</div>
+    ${edgeRows}${noteRows}
+  </div>`;
 }
 
 // ── Lease Review Status helpers ────────────────────────────────────────────
@@ -6266,6 +6386,7 @@ function renderBulkResults() {
             ? `<div class="err-banner" style="margin-bottom:10px;">Extraction error: ${esc(d._error)}</div>`
             : '')}
           ${(() => { const w = getWarnings(computeFlags(d)); return w.length ? `<div class="rc-flags"><div class="rc-flags-title">&#x26A0;&#xFE0F; Needs Review</div>${w.map(m => `<div class="rc-flag-item">${m}</div>`).join('')}</div>` : ''; })()}
+          ${_leaseEdgeCaseAndReviewNotesHtml(d)}
           <div class="citation-hint">&#x1F4CE; The colored chips below each field show the exact lease clause the AI used to determine each value. Hover a chip to read the full clause and verify accuracy.</div>
           <div class="field-row">
             <div class="field">
@@ -6277,7 +6398,7 @@ function renderBulkResults() {
               ${_citationChip(d, 'tenant_name')}${_amendmentProvenanceChip(d, 'tenant_name')}
             </div>
             <div class="field">
-              <label>Leased Sqft</label>
+              <label title="The square footage this tenant occupies — not the total building size. Used to calculate this tenant's pro-rata share of CAM expenses.">Leased Sqft &#x24D8;</label>
               <input type="number" value="${d.leased_sqft || ''}"
                 onfocus="isEditingField=true"
                 onkeydown="_onFieldKeydown(event)"
@@ -6321,6 +6442,23 @@ function renderBulkResults() {
                 onkeydown="_onFieldKeydown(event)"
                 onblur="handleFieldBlur(${i},'excluded_categories',this.value,this)"/>
               ${_citationChip(d, 'excluded_categories')}${_amendmentProvenanceChip(d, 'excluded_categories')}
+            </div>
+          </div>
+          <div class="field-row">
+            <div class="field">
+              <label title="The maximum annual increase allowed on this tenant's CAM charges, as a percentage of the prior year's base amount.">CAM Cap (%) &#x24D8;</label>
+              <input type="number" step="0.1" min="0" max="100" value="${d.cap ?? ''}"
+                onfocus="isEditingField=true"
+                onkeydown="_onFieldKeydown(event)"
+                onblur="handleFieldBlur(${i},'cap',this.value,this)"/>
+              ${_citationChip(d, 'cap')}${_amendmentProvenanceChip(d, 'cap')}
+            </div>
+            <div class="field">
+              <label title="Last year's total CAM charge for this tenant. Required to calculate the cap ceiling (Prior-Year Base × (1 + Cap %)) — without it, the cap above cannot be enforced.">Prior-Year CAM Base ($) &#x24D8;</label>
+              <input type="number" step="0.01" min="0" value="${d.capBaseAmount ?? ''}"
+                onfocus="isEditingField=true"
+                onkeydown="_onFieldKeydown(event)"
+                onblur="handleFieldBlur(${i},'capBaseAmount',this.value,this)"/>
             </div>
           </div>
           <div style="display:flex;justify-content:space-between;align-items:center;padding-top:10px;">
@@ -8535,23 +8673,20 @@ async function runAllocation() {
 function _showMigrationMissingWarning() {
   if (sessionStorage.getItem('_camMigrationWarned')) return;
   sessionStorage.setItem('_camMigrationWarned', '1');
+  console.warn('[CAM] history unavailable — cam_reconciliations migration not applied on the server.');
   showToast(
-    '⚠ CAM history unavailable — database migration not applied. Run migrations/003_cam_reconciliations.sql in Supabase SQL Editor.',
+    '⚠ CAM history isn’t available right now. Your current results still work — this only affects past runs. Contact support if this continues.',
     { color: '#78350f', textColor: '#fde68a', duration: 12000 }
   );
 }
 
 // Called when saveCamResults returns ok:false. Shows a toast + a persistent
 // banner in the results panel so the landlord knows the write failed.
+// User-facing copy stays plain-language; the technical reason (migration
+// missing, anon key, etc.) is logged to the console for support/debugging.
 function _showCamSaveWarning(saveResult) {
-  let msg;
-  if (saveResult.code === 'migration_missing') {
-    msg = '⚠ CAM results were not saved — database migration not applied. Run migrations/003_cam_reconciliations.sql in Supabase SQL Editor. Results are visible now but will be lost on browser close.';
-  } else if (saveResult.keySource === 'anon') {
-    msg = '⚠ CAM results were not saved — SUPABASE_SERVICE_ROLE_KEY is not set on the server. Set it in your deployment environment variables and redeploy.';
-  } else {
-    msg = `⚠ CAM results were not saved — ${saveResult.reason || 'unknown error'}. Results are visible now but will be lost on browser close.`;
-  }
+  console.warn('[CAM] save failed —', saveResult.code || saveResult.reason || 'unknown reason', saveResult);
+  const msg = '⚠ These CAM results weren’t saved to the server. They’re still visible now, but will be lost if you close this tab — export or print them, then contact support.';
   showToast(msg, { color: '#7f1d1d', textColor: '#fca5a5', duration: 10000 });
   const banner = document.getElementById('camSaveWarningBanner');
   if (banner) {
@@ -16495,11 +16630,40 @@ function derivePropertyTimeline(property) {
   };
 }
 
+// Groups the granular timeline `type` taxonomy into the filter chips shown
+// above the Property Activity panel. Purely a display grouping — does not
+// change what gets logged or how appendPropertyTimelineEvent shapes entries.
+const _ACTIVITY_FILTER_GROUPS = {
+  leases:    ['lease_uploaded', 'extraction_completed', 'extraction_warning', 'amendment_uploaded', 'amendment_applied', 'field_overridden', 'review_confirmed'],
+  cam:       ['invoice_imported', 'derived_metrics_rebuilt'],
+  disputes:  ['dispute_created', 'dispute_resolved'],
+  system:    ['sync_restored', 'merge_recovered', 'export_generated'],
+};
+const _ACTIVITY_FILTER_LABELS = { all: 'All', leases: 'Leases', cam: 'CAM', disputes: 'Disputes', system: 'System' };
+let _propertyActivityFilter = 'all';
+
+function _activityGroupForType(type) {
+  for (const [group, types] of Object.entries(_ACTIVITY_FILTER_GROUPS)) {
+    if (types.includes(type)) return group;
+  }
+  return 'system';
+}
+
+function filterPropertyActivity(group) {
+  _propertyActivityFilter = group;
+  const prop = currentProperty();
+  if (prop) renderPropertyActivity(prop);
+}
+
 function renderPropertyActivity(property) {
   const slot = document.getElementById('propertyActivitySlot');
   if (!slot) return;
-  const tl = Array.isArray(property.timeline) ? property.timeline.slice().reverse() : [];
-  if (!tl.length) { slot.innerHTML = ''; return; }
+  const tlAll = Array.isArray(property.timeline) ? property.timeline.slice().reverse() : [];
+  if (!tlAll.length) { slot.innerHTML = ''; return; }
+
+  const tl = _propertyActivityFilter === 'all'
+    ? tlAll
+    : tlAll.filter(ev => _activityGroupForType(ev.type) === _propertyActivityFilter);
 
   const _SEVERITY_DOT = { critical: 'tl-dot--red', warning: 'tl-dot--yellow', success: 'tl-dot--green', info: 'tl-dot--blue' };
   const _SEVERITY_ICON = { critical: '⛔', warning: '⚠', success: '✓', info: 'ℹ' };
@@ -16510,6 +16674,9 @@ function renderPropertyActivity(property) {
     dispute_resolved: 'Dispute', sync_restored: 'Sync', merge_recovered: 'Merge',
     export_generated: 'Export', derived_metrics_rebuilt: 'Metrics',
   };
+  const filterChipsHtml = ['all', 'leases', 'cam', 'disputes', 'system'].map(g =>
+    `<button class="tl-filter-chip${_propertyActivityFilter === g ? ' tl-filter-chip--active' : ''}" onclick="event.stopPropagation();filterPropertyActivity('${g}')">${esc(_ACTIVITY_FILTER_LABELS[g])}</button>`
+  ).join('');
   const fmtTs = ts => {
     try { const d = new Date(ts); return d.toLocaleDateString('en-US', { month:'short', day:'numeric', year:'numeric' }) + ' ' + d.toLocaleTimeString('en-US', { hour:'numeric', minute:'2-digit' }); }
     catch { return ts; }
@@ -16544,11 +16711,12 @@ function renderPropertyActivity(property) {
 
   slot.innerHTML = `<div class="ap-panel" id="propertyActivityPanel">
     <div class="ap-header" onclick="document.getElementById('paBody').classList.toggle('ap-body--open');this.querySelector('.ap-chevron').classList.toggle('ap-chevron--open')">
-      <div class="ap-header-left"><span class="ap-title">&#x1F4CB;&nbsp; Property Activity &mdash; ${tl.length} event${tl.length !== 1 ? 's' : ''}</span></div>
+      <div class="ap-header-left"><span class="ap-title">&#x1F4CB;&nbsp; Property Activity &mdash; ${tlAll.length} event${tlAll.length !== 1 ? 's' : ''}</span></div>
       <div class="ap-header-right"><span class="ap-chevron">&#x25BC;</span></div>
     </div>
     <div id="paBody" class="ap-body ap-body--open">
-      <div class="tl-list">${rows}</div>
+      <div class="tl-filter-bar">${filterChipsHtml}</div>
+      ${tl.length ? `<div class="tl-list">${rows}</div>` : `<div class="tl-detail" style="padding:6px 0">No events in this category.</div>`}
       ${tl.length > 50 ? `<div class="tl-detail" style="padding:6px 0">Showing 50 of ${tl.length} events</div>` : ''}
     </div>
   </div>`;
@@ -18892,6 +19060,13 @@ function renderProperty(property) {
   }
 
   if (restored) showRestoredBanner();
+
+  // ── Property KPI Header (Phase 23) ──────────────────────────────────────
+  try {
+    renderPropertyKpiHeader(property);
+  } catch (e) {
+    logError('renderProperty.kpiHeader', e, { propId: property?.id, propName: property?.name });
+  }
 
   // Keep the active workspace tab in sync on every render (idempotent —
   // defaults to 'overview' for a newly-selected property, preserved across
