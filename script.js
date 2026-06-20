@@ -1866,33 +1866,39 @@ Return best guess — do not leave reserve_type null.`;
 }
 
 // Opens a file picker and triggers escrow/reserve document upload for the active property.
+// Accepts multiple PDFs at once — lender reserve packages typically arrive
+// as several files (mortgage, reserve schedule, exhibits) that all describe
+// the same reserve account(s) and should be processed together as one
+// package rather than one upload at a time.
 function openEscrowDocumentUpload() {
   const propertyId = activePropId;
   if (!propertyId) { showToast('Select a property first.', { color: '#92400e', textColor: '#fef3c7' }); return; }
   const inp = document.createElement('input');
   inp.type = 'file';
   inp.accept = '.pdf,application/pdf';
+  inp.multiple = true;
   inp.style.display = 'none';
   inp.addEventListener('change', (e) => {
-    if (e.target.files[0]) handleEscrowDocumentUpload(propertyId, e.target.files[0]);
+    if (e.target.files.length) handleEscrowDocumentUpload(propertyId, Array.from(e.target.files));
     inp.remove();
   });
   document.body.appendChild(inp);
   inp.click();
 }
 
-// Lets a user pick a new file to replace an existing reserve's source
-// document in place (same reserve card, fresh extraction) instead of
-// creating a duplicate card.
+// Lets a user pick one or more new files to replace an existing reserve's
+// source document(s) in place (same reserve card, fresh extraction) instead
+// of creating a duplicate card.
 function openEscrowDocumentReplace(reserveId) {
   const propertyId = activePropId;
   if (!propertyId) { showToast('Select a property first.', { color: '#92400e', textColor: '#fef3c7' }); return; }
   const inp = document.createElement('input');
   inp.type = 'file';
   inp.accept = '.pdf,application/pdf';
+  inp.multiple = true;
   inp.style.display = 'none';
   inp.addEventListener('change', (e) => {
-    if (e.target.files[0]) handleEscrowDocumentUpload(propertyId, e.target.files[0], { replaceReserveId: reserveId });
+    if (e.target.files.length) handleEscrowDocumentUpload(propertyId, Array.from(e.target.files), { replaceReserveId: reserveId });
     inp.remove();
   });
   document.body.appendChild(inp);
@@ -1921,15 +1927,32 @@ async function reprocessEscrowReserveDocument(reserveId) {
   }
 }
 
-function viewEscrowReserveDocument(reserveId) {
-  const propertyId = activePropId;
-  const prop = _props.find(p => p.id === propertyId);
+// Reserve Package View — lists every source document accumulated onto a
+// reserve card (a reserve commonly arrives as a multi-file lender package:
+// mortgage, reserve schedule, exhibits — this is the one place a user can
+// see and open all of them, instead of only the most recently uploaded one).
+function openEscrowPackageView(reserveId) {
+  const prop = currentProperty();
   const reserve = prop && (prop.escrowReserves || []).find(r => r.id === reserveId);
-  if (!reserve || !reserve.sourceFileUrl) {
-    showToast('No source document available.', { color: '#92400e', textColor: '#fef3c7' });
-    return;
-  }
-  window.open(reserve.sourceFileUrl, '_blank');
+  if (!reserve) return;
+
+  const docs = Array.isArray(reserve.sourceDocuments) ? reserve.sourceDocuments : [];
+  const rows = docs.length
+    ? docs.map(d => `
+      <div class="escrow-doc-row">
+        <span>${esc(d.fileName || 'Document')}</span>
+        ${d.fileUrl ? `<a class="escrow-doc-btn" href="${esc(d.fileUrl)}" target="_blank" rel="noopener">View</a>` : ''}
+      </div>`).join('')
+    : `<p style="color:#94A3B8;font-size:0.85rem;">No source documents recorded for this reserve.</p>`;
+
+  document.getElementById('escrowPackageBody').innerHTML = `
+    <div class="modal-confirm-msg">${esc(reserve.reserveTypeLabel)} &mdash; ${docs.length} document${docs.length === 1 ? '' : 's'}</div>
+    ${rows}`;
+  document.getElementById('escrowPackageModal').style.display = 'flex';
+}
+
+function closeEscrowPackageView() {
+  document.getElementById('escrowPackageModal').style.display = 'none';
 }
 
 function deleteEscrowReserve(reserveId) {
@@ -1961,11 +1984,17 @@ function _mergeEscrowSourceDocuments(existingDocs, newDocs) {
 }
 
 // Orchestrates escrow/reserve document extraction and storage on the property.
-// opts.replaceReserveId: when set, the extracted reserve matching that
-// reserve's type is merged into the existing card (same id) instead of
+// filesOrFile: a single File, or an array/FileList of Files uploaded together
+// as one reserve package — they're extracted individually (each may mention
+// different reserves) but merged as a single batch, so a reserve type that
+// appears in more than one file in the batch (or more than once within the
+// same file) collapses into one card with the union of every source's
+// citations, instead of one card per extraction.
+// opts.replaceReserveId: when set, the extracted reserve(s) matching that
+// reserve's type are merged into the existing card (same id) instead of
 // appending a new one — used by the Replace/Reprocess document actions.
 let _escrowUploadInProgress = false;
-async function handleEscrowDocumentUpload(propertyId, file, opts = {}) {
+async function handleEscrowDocumentUpload(propertyId, filesOrFile, opts = {}) {
   const prop = _props.find(p => p.id === propertyId);
   if (!prop) return;
 
@@ -1978,29 +2007,48 @@ async function handleEscrowDocumentUpload(propertyId, file, opts = {}) {
   const uploadBtnLabel = uploadBtn ? uploadBtn.innerHTML : null;
   if (uploadBtn) { uploadBtn.disabled = true; uploadBtn.innerHTML = '⏳ Processing…'; }
 
-  showToast('Reading reserve document…', { color: '#0c4a6e', textColor: '#7dd3fc', duration: 8000 });
+  const files = Array.isArray(filesOrFile) ? filesOrFile
+    : (filesOrFile instanceof FileList ? Array.from(filesOrFile) : [filesOrFile]);
+
+  const Engine = window.EscrowReserveEngine;
 
   try {
-    const docText = await extractDocumentText(file);
-    let extractedList, extractionPath;
-    if (docText && docText.length >= 50) {
-      extractedList = await callClaudeForEscrowDocument(docText);
-      extractionPath = 'text';
-    } else {
-      extractedList = await callClaudeForEscrowDocumentPdfDirect(file);
-      extractionPath = 'pdf_vision';
+    let batchReserves = [];
+    for (const file of files) {
+      showToast(files.length > 1 ? `Reading ${file.name}…` : 'Reading reserve document…',
+        { color: '#0c4a6e', textColor: '#7dd3fc', duration: 8000 });
+
+      const docText = await extractDocumentText(file);
+      let extractedList, extractionPath;
+      if (docText && docText.length >= 50) {
+        extractedList = await callClaudeForEscrowDocument(docText);
+        extractionPath = 'text';
+      } else {
+        extractedList = await callClaudeForEscrowDocumentPdfDirect(file);
+        extractionPath = 'pdf_vision';
+      }
+      if (!Array.isArray(extractedList)) extractedList = extractedList ? [extractedList] : [];
+      if (!extractedList.length) {
+        console.warn(`[handleEscrowDocumentUpload] no reserve fields extracted from ${file.name}`);
+        continue;
+      }
+
+      const fileUrl = await uploadLeaseToStorage(file, propertyId);
+      const reserves = extractedList.map(extracted => Engine.normalizeReserve(extracted, {
+        sourceFileName: file.name,
+        sourceFileUrl:  fileUrl,
+        extractionPath,
+        ocrChars: docText ? docText.length : null,
+      }));
+      batchReserves = batchReserves.concat(reserves);
     }
-    if (!Array.isArray(extractedList)) extractedList = extractedList ? [extractedList] : [];
-    if (!extractedList.length) throw new Error('Could not extract reserve fields from this document');
 
-    const fileUrl = await uploadLeaseToStorage(file, propertyId);
+    if (!batchReserves.length) throw new Error('Could not extract reserve fields from the uploaded document(s)');
 
-    const reserves = extractedList.map(extracted => window.EscrowReserveEngine.normalizeReserve(extracted, {
-      sourceFileName: file.name,
-      sourceFileUrl:  fileUrl,
-      extractionPath,
-      ocrChars: docText ? docText.length : null,
-    }));
+    // Collapse same-type reserves extracted anywhere in this batch (same
+    // file, multiple pages, or multiple files in the same package) into one
+    // reserve per type, carrying the union of their citations.
+    let mergedBatch = Engine.mergeReserveExtractions(batchReserves);
 
     if (!Array.isArray(prop.escrowReserves)) prop.escrowReserves = [];
     const processedLabels = [];
@@ -2011,8 +2059,8 @@ async function handleEscrowDocumentUpload(propertyId, file, opts = {}) {
       const targetIdx = prop.escrowReserves.findIndex(r => r.id === opts.replaceReserveId);
       if (targetIdx !== -1) {
         const target = prop.escrowReserves[targetIdx];
-        const matchIdx = reserves.findIndex(r => r.reserveType === target.reserveType);
-        const replacement = reserves.splice(matchIdx !== -1 ? matchIdx : 0, 1)[0];
+        const matchIdx = mergedBatch.findIndex(r => r.reserveType === target.reserveType);
+        const replacement = mergedBatch.splice(matchIdx !== -1 ? matchIdx : 0, 1)[0];
         replacement.id = target.id;
         replacement.sourceDocuments = _mergeEscrowSourceDocuments(target.sourceDocuments, replacement.sourceDocuments);
         prop.escrowReserves[targetIdx] = replacement;
@@ -2020,18 +2068,17 @@ async function handleEscrowDocumentUpload(propertyId, file, opts = {}) {
       }
     }
 
-    // De-duplicate: an upload that re-extracts the same source file for a
-    // reserve type already on file updates that card in place rather than
-    // creating a duplicate card (this is also how the same upload's other
-    // reserve types, if any, were already merged above).
-    reserves.forEach(newReserve => {
-      const existingIdx = prop.escrowReserves.findIndex(r =>
-        r.sourceFileName === file.name && r.reserveType === newReserve.reserveType);
+    // De-duplicate against the property's existing reserves by reserve
+    // type (not by source file name) — a property only ever shows one card
+    // per reserve type; any newly-extracted reserve of a type already on
+    // file is merged into that card instead of creating a duplicate.
+    mergedBatch.forEach(newReserve => {
+      const existingIdx = prop.escrowReserves.findIndex(r => r.reserveType === newReserve.reserveType);
       if (existingIdx !== -1) {
         const existing = prop.escrowReserves[existingIdx];
-        newReserve.id = existing.id;
-        newReserve.sourceDocuments = _mergeEscrowSourceDocuments(existing.sourceDocuments, newReserve.sourceDocuments);
-        prop.escrowReserves[existingIdx] = newReserve;
+        const combined = Engine.mergeReserveExtractions([existing, newReserve])[0];
+        combined.id = existing.id;
+        prop.escrowReserves[existingIdx] = combined;
       } else {
         prop.escrowReserves.push(newReserve);
       }
@@ -2041,7 +2088,7 @@ async function handleEscrowDocumentUpload(propertyId, file, opts = {}) {
     _lsSave(prop);
     await saveProperty(prop);
     const labels = processedLabels.join(', ');
-    logActivity('escrow_document_uploaded', `Reserve document uploaded — ${labels}`, {
+    logActivity('escrow_document_uploaded', `Reserve document${files.length > 1 ? 's' : ''} uploaded — ${labels}`, {
       severity: 'success', actor: 'User', relatedEntity: prop.name || 'Property',
     });
     showToast(processedLabels.length > 1
@@ -2104,8 +2151,8 @@ function renderEscrowProfile(property) {
       const hasCitation = !!(r.evidence && Object.values(r.evidence).some(ev => ev && ev.quote));
       const docMgmtLine = `
         <div class="escrow-doc-mgmt">
-          <span class="escrow-doc-count">${docCount} document${docCount === 1 ? '' : 's'}</span>
-          ${r.sourceFileUrl ? `<button class="escrow-doc-btn" onclick="viewEscrowReserveDocument('${r.id}')">View</button>` : ''}
+          <span class="escrow-doc-count">Reserve Package &mdash; ${docCount} document${docCount === 1 ? '' : 's'}</span>
+          <button class="escrow-doc-btn" onclick="openEscrowPackageView('${r.id}')">&#x1F4C1; View Documents</button>
           <button class="escrow-doc-btn" onclick="openEscrowDocumentReplace('${r.id}')">Replace</button>
           ${r.sourceFileUrl ? `<button class="escrow-doc-btn" onclick="reprocessEscrowReserveDocument('${r.id}')">Reprocess</button>` : ''}
           ${hasCitation ? `<button class="escrow-doc-btn" onclick="openEscrowSourceCitation('${r.id}')">Source Citation</button>` : ''}
@@ -2187,7 +2234,7 @@ function openDrawBuilder(reserveId) {
   if (!reserve) return;
 
   _drawDraft = {
-    reserveId, amountRequested: '', invoiceIds: [], showAllInvoices: false,
+    reserveId, amountRequested: '', amountManuallySet: false, invoiceIds: [], showAllInvoices: false,
     attachedDocuments: { photos: [], lienWaivers: [], contractorBids: [], engineerCertification: [] },
   };
   _renderDrawBuilderBody(prop, reserve);
@@ -2197,6 +2244,29 @@ function openDrawBuilder(reserveId) {
 function closeDrawBuilder() {
   document.getElementById('drawBuilderModal').style.display = 'none';
   _drawDraft = null;
+}
+
+// Keeps Amount Requested in sync with the selected invoices' total — a
+// property manager who just picked $3,400 + $3,200 + $2,900 of invoices
+// shouldn't have to re-type $9,500. Stops auto-filling once the user has
+// typed their own value (amountManuallySet), and can be reset via the
+// "Reset to invoice total" control.
+function _autoFillDrawAmount() {
+  if (!_drawDraft || _drawDraft.amountManuallySet) return;
+  const prop = currentProperty();
+  const allInvoices = (prop && prop.invoices) || [];
+  const total = (_drawDraft.invoiceIds || [])
+    .reduce((s, idx) => s + (parseFloat(allInvoices[idx] && allInvoices[idx].amount) || 0), 0);
+  _drawDraft.amountRequested = total ? String(total) : '';
+}
+
+function _resetDrawAmountToInvoiceTotal() {
+  if (!_drawDraft) return;
+  _drawDraft.amountManuallySet = false;
+  _autoFillDrawAmount();
+  const prop = currentProperty();
+  const reserve = prop && (prop.escrowReserves || []).find(r => r.id === _drawDraft.reserveId);
+  if (reserve) _renderDrawBuilderBody(prop, reserve);
 }
 
 function _renderDrawBuilderBody(prop, reserve) {
@@ -2238,16 +2308,42 @@ function _renderDrawBuilderBody(prop, reserve) {
         <button class="modal-cancel" style="padding:2px 8px;" onclick="_removeDrawSupportingDoc('${cat}', ${idx})">Remove</button>
       </div>`)).join('');
 
+  // Submission readiness checklist — reuses the same Engine.validateDrawRequest
+  // logic that gates the actual draw status workflow, so "ready" here means the
+  // same thing it means once the draw is submitted, not a separate UI-only check.
+  const draftForValidation = {
+    amountRequested: _drawDraft.amountRequested,
+    invoices: (_drawDraft.invoiceIds || []).map(idx => allInvoices[idx]).filter(Boolean),
+    attachedDocuments: _drawDraft.attachedDocuments,
+  };
+  const validation = Engine ? Engine.validateDrawRequest(reserve, draftForValidation, prop.drawRequests || []) : null;
+  const DOC_CHECK_KEYS = ['invoices', 'photos', 'lienWaivers', 'contractorBids', 'engineerCertification'];
+  const DOC_CHECK_LABELS = { invoices: 'Invoices', photos: 'Photo', lienWaivers: 'Lien Waiver', contractorBids: 'Contractor Bid', engineerCertification: 'Engineer Certification' };
+  const docChecklist = validation ? validation.checklist.filter(c => DOC_CHECK_KEYS.includes(c.key)) : [];
+  const satisfiedDocs = docChecklist.filter(c => c.met);
+  const missingDocs = docChecklist.filter(c => !c.met);
+  const checklistHtml = docChecklist.length
+    ? `
+      <div class="escrow-section-label" style="margin-top:12px;">Required Documents</div>
+      ${satisfiedDocs.map(c => `<div class="escrow-doc-row"><span>&#x2713; ${esc(DOC_CHECK_LABELS[c.key] || c.label)}</span></div>`).join('')}
+      ${missingDocs.length ? `<div style="margin-top:4px;font-size:0.85rem;color:#fbbf24;">Missing:</div>${missingDocs.map(c => `<div class="escrow-doc-row"><span>&#x2610; ${esc(DOC_CHECK_LABELS[c.key] || c.label)}</span></div>`).join('')}` : ''}
+      <div style="margin-top:6px;font-size:0.85rem;color:${missingDocs.length === 0 ? '#86efac' : '#fbbf24'};">
+        Submission Ready: ${satisfiedDocs.length} of ${docChecklist.length} documents
+      </div>`
+    : '';
+
   document.getElementById('drawBuilderBody').innerHTML = `
     <div class="modal-confirm-msg">New draw request against <strong>${esc(reserve.reserveTypeLabel)}</strong></div>
     <label style="display:block;margin:10px 0;">
       Amount Requested
       <input type="number" id="drawAmountInput" step="0.01" min="0" value="${esc(_drawDraft.amountRequested)}"
-        onchange="_drawDraft.amountRequested = this.value" style="display:block;width:100%;margin-top:4px;">
+        onchange="_drawDraft.amountRequested = this.value; _drawDraft.amountManuallySet = true;" style="display:block;width:100%;margin-top:4px;">
+      ${_drawDraft.invoiceIds.length ? `<button class="modal-cancel" style="padding:2px 8px;margin-top:4px;" onclick="_resetDrawAmountToInvoiceTotal()">Reset to invoice total (${fmt(selectedTotal)})</button>` : ''}
     </label>
     <div class="escrow-section-label">Invoices${selectedTotal ? ` &mdash; ${fmt(selectedTotal)} selected` : ''}</div>
     ${filterToggle}
     ${invoiceRows}
+    ${checklistHtml}
     <div class="escrow-section-label" style="margin-top:12px;">Supporting Documents</div>
     ${docRows}
     <div style="display:flex;gap:6px;margin-top:6px;flex-wrap:wrap;">
@@ -2263,6 +2359,7 @@ function _toggleDrawInvoice(idx, checked) {
   _drawDraft.invoiceIds = checked
     ? [...new Set([...(_drawDraft.invoiceIds || []), idx])]
     : _drawDraft.invoiceIds.filter(i => i !== idx);
+  _autoFillDrawAmount();
   const prop = currentProperty();
   const reserve = prop && (prop.escrowReserves || []).find(r => r.id === _drawDraft.reserveId);
   if (reserve) _renderDrawBuilderBody(prop, reserve);

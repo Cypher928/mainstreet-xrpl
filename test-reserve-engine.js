@@ -475,6 +475,60 @@ console.log('\n── Group 11: normalizeReserve sourceDocuments ─────
     r2.sourceDocuments.length, 0);
 }
 
+// ── Group 12: mergeReserveExtractions ───────────────────────────────────────
+console.log('\n── Group 12: mergeReserveExtractions ───────────────────────────────────────');
+{
+  // Same reserve type extracted from page 1 (with balance + evidence) and
+  // page 2 (no balance restated) of the same upload batch should collapse
+  // into one card carrying both citations — this is the "one card, multiple
+  // citations" fix for the duplicate Capital Reserve cards complaint.
+  const r1 = EE.normalizeReserve({
+    reserve_type: 'Capital Reserve', current_balance: 150000,
+    evidence: { current_balance: { quote: 'Capital Reserve balance: $150,000', page: 1 } },
+  }, { sourceFileName: 'mortgage.pdf', sourceFileUrl: 'https://example.com/mortgage.pdf' });
+
+  const r2 = EE.normalizeReserve({
+    reserve_type: 'Capital Reserve', current_balance: null,
+    evidence: { eligible_uses: { quote: 'May be used for capital improvements', page: 2 } },
+    eligible_uses: 'Capital improvements',
+  }, { sourceFileName: 'mortgage.pdf', sourceFileUrl: 'https://example.com/mortgage.pdf' });
+
+  const merged = EE.mergeReserveExtractions([r1, r2]);
+  assertEq('mergeReserveExtractions: collapses same-type extractions into one reserve', merged.length, 1);
+  assertEq('mergeReserveExtractions: keeps the non-null balance from the first mention', merged[0].currentBalance, 150000);
+  assertEq('mergeReserveExtractions: unions sourcePages from both mentions', merged[0].sourcePages, [1, 2]);
+  assertEq('mergeReserveExtractions: carries forward eligibleUses from the second mention', merged[0].eligibleUses, 'Capital improvements');
+  assert('mergeReserveExtractions: evidence includes both pages\' citations',
+    !!(merged[0].evidence.current_balance && merged[0].evidence.eligible_uses),
+    JSON.stringify(merged[0].evidence));
+
+  // Different reserve types in the same batch should NOT be merged.
+  const r3 = EE.normalizeReserve({ reserve_type: 'Roof Reserve', current_balance: 50000 }, { sourceFileName: 'mortgage.pdf' });
+  const mergedMixed = EE.mergeReserveExtractions([r1, r2, r3]);
+  assertEq('mergeReserveExtractions: leaves distinct reserve types as separate cards', mergedMixed.length, 2);
+
+  // sourceDocuments union, deduplicated by fileUrl+fileName.
+  const a = EE.normalizeReserve({ reserve_type: 'HVAC Reserve' }, { sourceFileName: 'a.pdf', sourceFileUrl: 'https://x/a.pdf' });
+  const b = EE.normalizeReserve({ reserve_type: 'HVAC Reserve' }, { sourceFileName: 'b.pdf', sourceFileUrl: 'https://x/b.pdf' });
+  const mergedDocs = EE.mergeReserveExtractions([a, b]);
+  assertEq('mergeReserveExtractions: unions sourceDocuments across files', mergedDocs[0].sourceDocuments.length, 2);
+
+  // requirements booleans OR together across the group.
+  const c = EE.normalizeReserve({ reserve_type: 'TI Reserve', requires_photos: false, requires_lien_waivers: true }, {});
+  const d = EE.normalizeReserve({ reserve_type: 'TI Reserve', requires_photos: true, requires_lien_waivers: false }, {});
+  const mergedReq = EE.mergeReserveExtractions([c, d]);
+  assertEq('mergeReserveExtractions: ORs requiresPhotos across the group', mergedReq[0].requirements.requiresPhotos, true);
+  assertEq('mergeReserveExtractions: ORs requiresLienWaivers across the group', mergedReq[0].requirements.requiresLienWaivers, true);
+
+  // Single-element groups pass through unchanged.
+  const single = EE.mergeReserveExtractions([r3]);
+  assertEq('mergeReserveExtractions: single-element group passes through unchanged', single[0], r3);
+
+  // Empty/falsy-filled input is handled safely.
+  assertEq('mergeReserveExtractions: filters out null/undefined entries', EE.mergeReserveExtractions([null, r3, undefined]).length, 1);
+  assertEq('mergeReserveExtractions: empty array returns empty array', EE.mergeReserveExtractions([]).length, 0);
+}
+
 console.log('\n' + '─'.repeat(62));
 console.log(`Results: ${passed}/${passed + failed} passed`);
 console.log('─'.repeat(62));

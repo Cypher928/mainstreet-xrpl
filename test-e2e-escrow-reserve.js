@@ -237,9 +237,21 @@ const SUPABASE_MOCK = `
     assert(docCountText.includes('1 document'), 'ESC-E2E-3: reserve card shows a document count badge', docCountText);
 
     const docBtnLabels = await page.$$eval('.escrow-reserve-card:first-child .escrow-doc-btn', els => els.map(e => e.textContent.trim()));
-    ['View', 'Replace', 'Reprocess', 'Source Citation', 'Delete'].forEach(label => {
+    assert(docBtnLabels.some(l => l.includes('View Documents')), 'ESC-E2E-3: "View Documents" button present on reserve card (Reserve Package view)', docBtnLabels.join(', '));
+    ['Replace', 'Reprocess', 'Source Citation', 'Delete'].forEach(label => {
       assert(docBtnLabels.includes(label), `ESC-E2E-3: "${label}" button present on reserve card`, docBtnLabels.join(', '));
     });
+
+    // Reserve Package View modal — opens and lists the reserve's source documents.
+    await page.evaluate(() => {
+      const prop = window.currentProperty();
+      window.openEscrowPackageView(prop.escrowReserves[0].id);
+    });
+    await page.waitForFunction(() => document.getElementById('escrowPackageModal').style.display === 'flex', { timeout: 5000 });
+    const packageBodyText = await page.$eval('#escrowPackageBody', el => el.textContent);
+    assert(/\d+ document/.test(packageBodyText), 'ESC-E2E-3: Package View modal shows the reserve\'s document count', packageBodyText.replace(/\s+/g, ' ').slice(0, 150));
+    await page.evaluate(() => window.closeEscrowPackageView());
+    await page.waitForFunction(() => document.getElementById('escrowPackageModal').style.display === 'none', { timeout: 5000 });
 
     // ── ESC-E2E-4: Source Citation viewer ───────────────────────────────────
     section('ESC-E2E-4: Source Citation viewer');
@@ -271,10 +283,16 @@ const SUPABASE_MOCK = `
     const filterToggleText = await page.$eval('#drawBuilderBody button.modal-cancel', el => el.textContent).catch(() => '');
     assert(filterToggleText.includes('Show all invoices'), 'ESC-E2E-5: a "show all invoices" toggle is offered since invoices were filtered', filterToggleText);
 
-    // Select the visible invoice and set an amount, then create the draw.
+    // Select the visible invoice — the requested amount should auto-fill from
+    // the selected invoice total instead of requiring it to be re-typed.
     await page.check('#drawBuilderBody .escrow-invoice-row input[type=checkbox]');
-    await page.fill('#drawAmountInput', '18500');
-    await page.evaluate(() => { _drawDraft.amountRequested = '18500'; });
+    const autoFilledAmount = await page.$eval('#drawAmountInput', el => el.value);
+    assert(autoFilledAmount === '18500', 'ESC-E2E-5: Amount Requested auto-fills from the selected invoice total', autoFilledAmount);
+
+    // Required Documents checklist reflects what's actually attached/missing.
+    const checklistText = await page.$eval('#drawBuilderBody', el => el.textContent);
+    assert(/Submission Ready: \d+ of \d+ documents/.test(checklistText), 'ESC-E2E-5: Required Documents checklist shows a "Submission Ready: X of Y" count', checklistText.replace(/\s+/g, ' ').slice(0, 200));
+
     await page.click('.modal-confirm:has-text("Create Draw Request")');
     await page.waitForFunction(() => document.getElementById('drawBuilderModal').style.display === 'none', { timeout: 5000 });
 

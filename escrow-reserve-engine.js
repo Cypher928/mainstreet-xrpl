@@ -213,6 +213,87 @@
     };
   }
 
+  // ── Reserve extraction merging ───────────────────────────────────────────
+  //
+  // A single document (or a batch of documents uploaded together) can cause
+  // the same reserve type to be extracted more than once — e.g. a "Capital
+  // Reserve" mentioned with its balance on page 1 and again, contextually,
+  // on page 2 with no balance restated. Left alone this produces two cards
+  // for what a property manager sees as one reserve. mergeReserveExtractions
+  // groups a list of normalizeReserve() outputs by reserveType and collapses
+  // each group into a single reserve carrying the union of every group
+  // member's citations (sourcePages, sourceDocuments, evidence) — "one card,
+  // multiple citations" instead of one card per extraction.
+  function _mergeReserveGroup(group) {
+    if (group.length === 1) return group[0];
+    // Prefer the first member that actually states a balance as the base —
+    // a later "Capital Reserve" mention with no balance shouldn't blank out
+    // a balance an earlier mention already established.
+    var base = group.filter(function (r) { return r.currentBalance != null; })[0] || group[0];
+    var merged = Object.assign({}, base);
+
+    var evidence = {};
+    group.forEach(function (r) {
+      Object.keys(r.evidence || {}).forEach(function (k) {
+        if (!evidence[k] || !evidence[k].quote) evidence[k] = r.evidence[k];
+      });
+    });
+    merged.evidence = evidence;
+
+    var pages = [];
+    group.forEach(function (r) {
+      (r.sourcePages || []).forEach(function (p) { if (pages.indexOf(p) === -1) pages.push(p); });
+    });
+    merged.sourcePages = pages.sort(function (a, b) { return a - b; });
+
+    var docs = [];
+    group.forEach(function (r) {
+      (r.sourceDocuments || []).forEach(function (d) {
+        if (!docs.some(function (x) { return x.fileUrl === d.fileUrl && x.fileName === d.fileName; })) docs.push(d);
+      });
+    });
+    merged.sourceDocuments = docs;
+
+    merged.eligibleUses = group.map(function (r) { return r.eligibleUses; }).filter(Boolean)[0] || null;
+    var notes = group.map(function (r) { return r.notes; }).filter(Boolean);
+    merged.notes = notes.length ? notes.filter(function (n, i) { return notes.indexOf(n) === i; }).join(' ') : null;
+
+    var reqs = group.map(function (r) { return r.requirements || {}; });
+    merged.requirements = {
+      requiresInvoices:              reqs.some(function (r) { return r.requiresInvoices; }),
+      requiresPhotos:                reqs.some(function (r) { return r.requiresPhotos; }),
+      requiresLienWaivers:           reqs.some(function (r) { return r.requiresLienWaivers; }),
+      requiresContractorBids:        reqs.some(function (r) { return r.requiresContractorBids; }),
+      requiresEngineerCertification: reqs.some(function (r) { return r.requiresEngineerCertification; }),
+      requiresApproval:              reqs.some(function (r) { return r.requiresApproval; }),
+      minDrawAmount: (function () {
+        var vals = reqs.map(function (r) { return r.minDrawAmount; }).filter(function (v) { return v != null; });
+        return vals.length ? vals[0] : null;
+      }()),
+    };
+
+    var dls = group.map(function (r) { return r.deadlines || {}; });
+    merged.deadlines = {
+      drawRequestDeadline:      dls.map(function (d) { return d.drawRequestDeadline; }).filter(Boolean)[0] || null,
+      repairCompletionDeadline: dls.map(function (d) { return d.repairCompletionDeadline; }).filter(Boolean)[0] || null,
+      reserveExpirationDate:    dls.map(function (d) { return d.reserveExpirationDate; }).filter(Boolean)[0] || null,
+    };
+
+    merged.extractionConfidence = deriveReserveExtractionConfidence(merged.evidence, {});
+    return merged;
+  }
+
+  function mergeReserveExtractions(reserves) {
+    var safe = Array.isArray(reserves) ? reserves.filter(Boolean) : [];
+    var groups = {};
+    var order = [];
+    safe.forEach(function (r) {
+      if (!groups[r.reserveType]) { groups[r.reserveType] = []; order.push(r.reserveType); }
+      groups[r.reserveType].push(r);
+    });
+    return order.map(function (type) { return _mergeReserveGroup(groups[type]); });
+  }
+
   // ── TRACK 2: Reserve balance ─────────────────────────────────────────────
   //
   // currentBalance is the lender-stated balance as of the source document.
@@ -464,6 +545,7 @@
     classifyInvoiceReserveType,
     deriveReserveExtractionConfidence,
     normalizeReserve,
+    mergeReserveExtractions,
     computeReserveBalance,
     validateDrawRequest,
     applyDrawStatus,
