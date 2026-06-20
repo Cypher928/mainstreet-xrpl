@@ -3851,6 +3851,18 @@
       font-size: 0.55rem; font-weight: 700; padding: 2px 6px; border-radius: 99px; white-space: nowrap; letter-spacing: 0.04em;
     }
 
+    /* Demo property cards — Phase 25: shown directly in "Your Properties" so a
+       first-time user doesn't need to discover a separate panel/button. */
+    .ptf-demo-section-title {
+      font-size: 0.78rem; font-weight: 700; color: #94a3b8; text-transform: uppercase;
+      letter-spacing: 0.05em; margin: 0 0 10px;
+    }
+    .ptf-demo-badge {
+      background: rgba(201,151,58,0.14); border: 1px solid rgba(201,151,58,0.4); color: #C9973A;
+      font-size: 0.55rem; font-weight: 700; padding: 2px 6px; border-radius: 99px; white-space: nowrap; letter-spacing: 0.04em;
+    }
+    .ptf-demo-card { border-style: dashed; cursor: pointer; }
+
     /* Insight sentence below status row */
     .ptf-insight {
       font-size: 0.69rem; color: #94A3B8; margin: -3px 0 8px; line-height: 1.35;
@@ -4976,59 +4988,16 @@
     <p class="hero-desc">AI-powered CAM reconciliation built for landlords and property managers</p>
   </div>
 
-  <!-- Demo Welcome Panel — shown to new users until dismissed; managed by _maybeShowWelcome() -->
+  <!-- Demo Welcome Panel — shown to new users until dismissed; managed by _maybeShowWelcome().
+       Phase 25: simplified to a single pointer (no buttons) since the demo properties now
+       render directly as cards in "Your Properties" below — avoids duplicate CTAs. -->
   <div id="demoWelcomePanel" style="display:none;">
     <div class="dmw-hdr">
       <div class="dmw-hdr-text">
         <div class="dmw-title">Welcome to MainStreet</div>
-        <div class="dmw-sub">Explore the platform with sample data, or jump straight in with your own property.</div>
+        <div class="dmw-sub">Explore the demo properties below with sample data, or create your own property to get started.</div>
       </div>
       <button class="dmw-close" onclick="_dismissDemoWelcome()" title="Dismiss">&times;</button>
-    </div>
-    <div class="dmw-cards">
-
-      <!-- CAM Reconciliation Demo -->
-      <div class="dmw-card">
-        <div class="dmw-card-icon">&#x1F3E2;</div>
-        <div class="dmw-card-mod">CAM Reconciliation</div>
-        <div class="dmw-card-name">Cascade Commons</div>
-        <ul class="dmw-card-feats">
-          <li>5 tenants &middot; 26 invoices</li>
-          <li>Full year CAM allocation</li>
-          <li>Cap &amp; exclusion enforcement</li>
-          <li>Reports &amp; dispute log</li>
-        </ul>
-        <button class="dmw-btn-pri" id="demoBtn" onclick="loadDemo()">Open CAM Demo</button>
-      </div>
-
-      <!-- Acquisition Due Diligence Demo -->
-      <div class="dmw-card">
-        <div class="dmw-card-icon">&#x1F50D;</div>
-        <div class="dmw-card-mod">Acquisition Due Diligence</div>
-        <div class="dmw-card-name">Harborview Retail Center</div>
-        <ul class="dmw-card-feats">
-          <li>Lease risk analysis</li>
-          <li>CAM leakage detection</li>
-          <li>Occupancy &amp; WALT review</li>
-          <li>Investment recommendation</li>
-        </ul>
-        <button class="dmw-btn-pri" id="acqDemoBtn" onclick="_openAcqDemo()">Open Acquisition Demo</button>
-      </div>
-
-      <!-- Create Your Own -->
-      <div class="dmw-card">
-        <div class="dmw-card-icon">&#x2795;</div>
-        <div class="dmw-card-mod">Start From Scratch</div>
-        <div class="dmw-card-name">Your Property</div>
-        <ul class="dmw-card-feats">
-          <li>Upload lease PDFs</li>
-          <li>AI extracts CAM terms</li>
-          <li>Run reconciliation instantly</li>
-          <li>Generate tenant statements</li>
-        </ul>
-        <button class="dmw-btn-sec" onclick="_dismissDemoWelcome();addNewProperty()">+ Create Property</button>
-      </div>
-
     </div>
   </div>
 
@@ -5159,7 +5128,7 @@
                onchange="acqHandleLeaseFiles(this.files)">
       </label>
       <ul class="acq-file-list" id="acqLeaseList">
-        <li style="color:#475569;font-size:0.78rem;">No leases uploaded</li>
+        <li style="color:#475569;font-size:0.78rem;">No leases uploaded yet — use "Upload Leases" above to extract tenant terms.</li>
       </ul>
     </div>
 
@@ -5173,7 +5142,7 @@
                onchange="acqHandleInvoiceFiles(this.files)">
       </label>
       <ul class="acq-file-list" id="acqInvoiceList">
-        <li style="color:#475569;font-size:0.78rem;">No invoices uploaded</li>
+        <li style="color:#475569;font-size:0.78rem;">No invoices uploaded yet — use "Upload Invoices" above to add CAM expense documents.</li>
       </ul>
     </div>
   </div>

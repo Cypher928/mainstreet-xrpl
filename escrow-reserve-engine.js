@@ -491,12 +491,12 @@
 
     var subject = reserveLabel + ' Draw Request - ' + propName;
     var bodyLines = [
-      'Attached please find ' + drawLabel,
+      'This email is to submit ' + drawLabel,
       'for reimbursement from the ' + reserveLabel + '.',
       '',
     ];
     if (docLabels.length) {
-      bodyLines.push('Supporting documentation attached:');
+      bodyLines.push('Supporting documentation prepared for this submission (please attach the draw package separately):');
       docLabels.forEach(function (l) { bodyLines.push('- ' + l); });
       bodyLines.push('');
     }
