@@ -594,6 +594,59 @@ Rules:
 - quotes: For each field where you return a non-null value, copy ≤120 chars of the exact verbatim clause text from the lease that led to that value. Return null for any field where the value is null.
 - Use null only when a field is truly impossible to determine.`;
 
+// ─── Phase 21: Escrow & Reserve Intelligence ─────────────────────────────────
+// Extracts lender reserve terms from mortgage/loan/escrow/reserve agreements,
+// capital expenditure reserve schedules, insurance settlement documents, and
+// lender draw instructions. Mirrors CLAUDE_LEASE_SYSTEM's structure exactly so
+// the same proxy/parsing conventions apply.
+const CLAUDE_ESCROW_SYSTEM = `You are a strict JSON extraction engine for lender reserve and escrow documents (mortgage agreements, loan agreements, escrow agreements, reserve agreements, capital expenditure reserve schedules, insurance settlement documents, lender draw instructions, repair reserve documentation).
+Return ONLY valid JSON. No text. No explanation. No markdown. Start with [ and end with ].
+
+A single document often governs MORE THAN ONE reserve account (e.g. a loan agreement with a separate Roof Reserve, HVAC Reserve, and Capital Reserve, each with its own balance and rules). Return a JSON ARRAY with one element per distinct reserve account the document describes. If the document only describes one reserve, return an array with exactly one element. Each array element follows this structure:
+{
+  "reserve_type": string,
+  "reserve_name": string | null,
+  "current_balance": number | null,
+  "eligible_uses": string | null,
+  "requires_invoices": true | false | null,
+  "requires_photos": true | false | null,
+  "requires_lien_waivers": true | false | null,
+  "requires_contractor_bids": true | false | null,
+  "requires_engineer_certification": true | false | null,
+  "min_draw_amount": number | null,
+  "requires_approval": true | false | null,
+  "draw_request_deadline": "YYYY-MM-DD" | null,
+  "repair_completion_deadline": "YYYY-MM-DD" | null,
+  "reserve_expiration_date": "YYYY-MM-DD" | null,
+  "notes": string | null,
+  "evidence": {
+    "reserve_type":    { "quote": string | null, "page": number | null },
+    "current_balance": { "quote": string | null, "page": number | null },
+    "eligible_uses":    { "quote": string | null, "page": number | null }
+  }
+}
+
+Rules:
+- Treat each named reserve/escrow account as its own array element. Do not merge balances or terms from different reserves into one element.
+- reserve_type: Identify which kind of reserve this element governs. Use one of: "Roof Reserve", "HVAC Reserve", "Tenant Improvement Reserve", "Leasing Commission Reserve", "Capital Reserve", "Insurance Recovery Reserve", or the lender's own term if none of those fit.
+- reserve_name: If the lender gives this reserve a specific account name (e.g. "Special Reserve Account No. 4"), return it verbatim. Null otherwise.
+- current_balance: The reserve balance stated in the document for THIS reserve, as a plain number (no $ or commas). Null if not stated.
+- eligible_uses: A short description (max 200 chars) of what THIS reserve's funds may be used for (e.g. "Roof repair and replacement only").
+- requires_invoices: true if the lender requires paid/unpaid invoices to support a draw request against this reserve. Default to true unless the document explicitly says otherwise.
+- requires_photos: true if before/after photos of completed work are required for a draw against this reserve.
+- requires_lien_waivers: true if lien waivers (conditional or unconditional) are required for this reserve.
+- requires_contractor_bids: true if contractor bids/estimates must be submitted before work funded by this reserve is approved.
+- requires_engineer_certification: true if a licensed engineer or architect must certify work funded by this reserve.
+- min_draw_amount: The minimum dollar amount per draw request against this reserve, if stated. Null otherwise.
+- requires_approval: true if the lender (or a third party such as a construction inspector) must approve a draw against this reserve before funding. Default true unless explicitly waived.
+- draw_request_deadline: The deadline by which draw requests against this reserve must be submitted, if a fixed or recurring deadline is stated.
+- repair_completion_deadline: The deadline by which the underlying repair/improvement work funded by this reserve must be completed.
+- reserve_expiration_date: The date after which this reserve account terminates or unused funds are released/forfeited.
+- notes: Any other reserve-specific requirement or condition worth flagging for this reserve (max 300 chars). Null if nothing additional applies.
+- evidence: For reserve_type, current_balance, and eligible_uses, copy ≤160 chars of the exact verbatim clause text that produced that value, AND the page number from the nearest preceding "--- Page N ---" marker in the document text. Both null if the value itself is null or the page cannot be determined.
+- Never paraphrase a quote — it must be copied character-for-character from the source text.
+- Use null only when a field is truly impossible to determine. Do not guess a page number; null is acceptable.`;
+
 const INVOICE_PROMPT = `You are extracting data from a commercial real estate invoice or bill.
 This document may be a scanned image — tolerate OCR noise, spacing issues, and number formatting quirks.
 Return ONLY valid JSON. No explanation. No markdown.
@@ -1655,6 +1708,884 @@ ${leaseSnippet}
 
   return normalized;
 }
+
+// ── Phase 21: Escrow & Reserve document extraction ──────────────────────────
+//
+// Generic text-extraction helper for non-lease documents. extractLeaseText()
+// can't be reused as-is because its "weak text" heuristic checks for the
+// literal word "lease", which never appears in mortgage/escrow/reserve
+// documents and would force every digital PDF through the (slower, more
+// expensive) vision path. Same PDF.js-first strategy, generic weak check.
+async function extractDocumentText(file) {
+  if (!file.name.toLowerCase().endsWith('.pdf') && file.type !== 'application/pdf') {
+    return file.text();
+  }
+  const text = await extractPdfText(file);
+  const isWeak = !text || text.length < 500 || text.split(' ').length < 60;
+  return isWeak ? null : text;
+}
+
+// Reserve/escrow clauses can appear anywhere in a 20-50 page financing
+// document (often buried mid-document, not near the top or bottom) — unlike
+// prepareLeaseTextForClaude (lease-keyword-boosted head+tail truncation,
+// tuned for lease term/rent/sqft which cluster near the start), this sends
+// the full cleaned text up to a generous char budget, preserving every
+// "--- Page N ---" marker so Claude can cite source pages accurately.
+function prepareEscrowTextForClaude(rawText) {
+  if (!rawText) return '';
+  const clean = rawText
+    .replace(/\r\n/g, '\n')
+    .replace(/\r/g, '\n')
+    .replace(/[ \t]{3,}/g, '  ')
+    .replace(/\n{4,}/g, '\n\n\n')
+    .trim();
+  const MAX_CHARS = 120000; // ~30k tokens — comfortably inside the model's context window
+  return clean.length > MAX_CHARS ? clean.slice(0, MAX_CHARS) : clean;
+}
+
+async function callClaudeForEscrowDocument(text) {
+  const snippet = prepareEscrowTextForClaude(text);
+  const prompt = `
+You are extracting lender reserve/escrow terms from a commercial real estate financing document.
+NOTE: This text may have been extracted via OCR — tolerate minor spelling errors or spacing noise.
+This document may describe more than one reserve account (e.g. a separate Roof Reserve, HVAC Reserve, and Capital Reserve). Return a JSON ARRAY with one element per distinct reserve account described, even if that means an array of one.
+Return ONLY valid JSON. No explanation. No markdown.
+
+Extract, for each reserve account found:
+{
+  "reserve_type": string,
+  "reserve_name": string or null,
+  "current_balance": number or null,
+  "eligible_uses": string or null,
+  "requires_invoices": true | false | null,
+  "requires_photos": true | false | null,
+  "requires_lien_waivers": true | false | null,
+  "requires_contractor_bids": true | false | null,
+  "requires_engineer_certification": true | false | null,
+  "min_draw_amount": number or null,
+  "requires_approval": true | false | null,
+  "draw_request_deadline": "YYYY-MM-DD" or null,
+  "repair_completion_deadline": "YYYY-MM-DD" or null,
+  "reserve_expiration_date": "YYYY-MM-DD" or null,
+  "notes": string or null,
+  "evidence": { "reserve_type": {"quote": string|null, "page": number|null}, "current_balance": {"quote": string|null, "page": number|null}, "eligible_uses": {"quote": string|null, "page": number|null} }
+}
+
+RESERVE TYPE: Identify the reserve each element governs — "Roof Reserve", "HVAC Reserve", "Tenant Improvement Reserve", "Leasing Commission Reserve", "Capital Reserve", "Insurance Recovery Reserve", or the lender's own term.
+
+DOCUMENT TEXT:
+"""
+${snippet}
+"""
+`;
+  const messages = [{ role: 'user', content: prompt }];
+
+  console.log('[ESCROW EXTRACTION] starting reserve document extraction (text path)');
+
+  const res = await _fetchWithTimeout('/api/claude', {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json', ...(await _authHeaders()) },
+    body: JSON.stringify({ messages, max_tokens: 2400, system: CLAUDE_ESCROW_SYSTEM }),
+  });
+
+  if (!res.ok) throw new Error(`Escrow document extraction failed: HTTP ${res.status}`);
+
+  let parsed = await res.json();
+  if (typeof parsed === 'string') {
+    try { parsed = JSON.parse(parsed); } catch (e) {
+      console.error('[callClaudeForEscrowDocument] invalid JSON string:', parsed);
+      return null;
+    }
+  }
+  if (!Array.isArray(parsed)) parsed = parsed ? [parsed] : [];
+  parsed = parsed.filter(p => p && typeof p === 'object');
+  return parsed.length ? parsed : null;
+}
+
+async function callClaudeForEscrowDocumentPdfDirect(file) {
+  const base64 = await fileToBase64(file);
+
+  const extractionPrompt = `Extract lender reserve/escrow terms from this financing document.
+This document may describe more than one reserve account (e.g. a separate Roof Reserve, HVAC Reserve, and Capital Reserve). Return a JSON ARRAY with one element per distinct reserve account described, even if that means an array of one.
+Return ONLY valid JSON. No explanation. No markdown.
+
+[
+  {
+    "reserve_type": string,
+    "reserve_name": string or null,
+    "current_balance": number or null,
+    "eligible_uses": string or null,
+    "requires_invoices": true | false | null,
+    "requires_photos": true | false | null,
+    "requires_lien_waivers": true | false | null,
+    "requires_contractor_bids": true | false | null,
+    "requires_engineer_certification": true | false | null,
+    "min_draw_amount": number or null,
+    "requires_approval": true | false | null,
+    "draw_request_deadline": "YYYY-MM-DD" or null,
+    "repair_completion_deadline": "YYYY-MM-DD" or null,
+    "reserve_expiration_date": "YYYY-MM-DD" or null,
+    "notes": string or null,
+    "evidence": {
+      "reserve_type":    { "quote": string or null, "page": number or null },
+      "current_balance": { "quote": string or null, "page": number or null },
+      "eligible_uses":    { "quote": string or null, "page": number or null }
+    }
+  }
+]
+
+For evidence: copy the exact verbatim clause (≤160 chars) and the page number it appears on (page 1 = first page of the PDF). Never paraphrase. Null both if not determinable.
+Return best guess — do not leave reserve_type null.`;
+
+  const messages = [{
+    role: 'user',
+    content: [
+      { type: 'document', source: { type: 'base64', media_type: 'application/pdf', data: base64 } },
+      { type: 'text', text: extractionPrompt },
+    ],
+  }];
+
+  const res = await _fetchWithTimeout('/api/claude', {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json', ...(await _authHeaders()) },
+    body: JSON.stringify({ messages, max_tokens: 2400, system: CLAUDE_ESCROW_SYSTEM }),
+  });
+
+  if (!res.ok) throw new Error(`Escrow PDF direct extraction failed: HTTP ${res.status}`);
+  console.log('[ESCROW EXTRACTION] PDF direct (vision) path used');
+  let parsed = await res.json();
+  if (typeof parsed === 'string') {
+    try { parsed = JSON.parse(parsed); } catch (e) {
+      console.error('[callClaudeForEscrowDocumentPdfDirect] invalid JSON string:', parsed);
+      return null;
+    }
+  }
+  if (!Array.isArray(parsed)) parsed = parsed ? [parsed] : [];
+  parsed = parsed.filter(p => p && typeof p === 'object');
+  return parsed.length ? parsed : null;
+}
+
+// Opens a file picker and triggers escrow/reserve document upload for the active property.
+// Accepts multiple PDFs at once — lender reserve packages typically arrive
+// as several files (mortgage, reserve schedule, exhibits) that all describe
+// the same reserve account(s) and should be processed together as one
+// package rather than one upload at a time.
+function openEscrowDocumentUpload() {
+  const propertyId = activePropId;
+  if (!propertyId) { showToast('Select a property first.', { color: '#92400e', textColor: '#fef3c7' }); return; }
+  const inp = document.createElement('input');
+  inp.type = 'file';
+  inp.accept = '.pdf,application/pdf';
+  inp.multiple = true;
+  inp.style.display = 'none';
+  inp.addEventListener('change', (e) => {
+    if (e.target.files.length) handleEscrowDocumentUpload(propertyId, Array.from(e.target.files));
+    inp.remove();
+  });
+  document.body.appendChild(inp);
+  inp.click();
+}
+
+// Lets a user pick one or more new files to replace an existing reserve's
+// source document(s) in place (same reserve card, fresh extraction) instead
+// of creating a duplicate card.
+function openEscrowDocumentReplace(reserveId) {
+  const propertyId = activePropId;
+  if (!propertyId) { showToast('Select a property first.', { color: '#92400e', textColor: '#fef3c7' }); return; }
+  const inp = document.createElement('input');
+  inp.type = 'file';
+  inp.accept = '.pdf,application/pdf';
+  inp.multiple = true;
+  inp.style.display = 'none';
+  inp.addEventListener('change', (e) => {
+    if (e.target.files.length) handleEscrowDocumentUpload(propertyId, Array.from(e.target.files), { replaceReserveId: reserveId });
+    inp.remove();
+  });
+  document.body.appendChild(inp);
+  inp.click();
+}
+
+// Re-runs extraction against the document already on file for this reserve
+// (e.g. after an extraction-pipeline fix) without requiring a re-upload.
+async function reprocessEscrowReserveDocument(reserveId) {
+  const propertyId = activePropId;
+  const prop = _props.find(p => p.id === propertyId);
+  const reserve = prop && (prop.escrowReserves || []).find(r => r.id === reserveId);
+  if (!reserve || !reserve.sourceFileUrl) {
+    showToast('No source document available to reprocess.', { color: '#92400e', textColor: '#fef3c7' });
+    return;
+  }
+  try {
+    const res = await fetch(reserve.sourceFileUrl);
+    if (!res.ok) throw new Error('Could not fetch the stored document');
+    const blob = await res.blob();
+    const file = new File([blob], reserve.sourceFileName || 'reserve-document.pdf', { type: blob.type || 'application/pdf' });
+    await handleEscrowDocumentUpload(propertyId, file, { replaceReserveId: reserveId });
+  } catch (err) {
+    console.error('[reprocessEscrowReserveDocument]', err);
+    showToast('Reprocess failed: ' + (err.message || 'unknown error'), { color: '#7f1d1d', textColor: '#fca5a5' });
+  }
+}
+
+// Reserve Package View — lists every source document accumulated onto a
+// reserve card (a reserve commonly arrives as a multi-file lender package:
+// mortgage, reserve schedule, exhibits — this is the one place a user can
+// see and open all of them, instead of only the most recently uploaded one).
+function openEscrowPackageView(reserveId) {
+  const prop = currentProperty();
+  const reserve = prop && (prop.escrowReserves || []).find(r => r.id === reserveId);
+  if (!reserve) return;
+
+  const docs = Array.isArray(reserve.sourceDocuments) ? reserve.sourceDocuments : [];
+  const rows = docs.length
+    ? docs.map(d => `
+      <div class="escrow-doc-row">
+        <span>${esc(d.fileName || 'Document')}</span>
+        ${d.fileUrl ? `<a class="escrow-doc-btn" href="${esc(d.fileUrl)}" target="_blank" rel="noopener">View</a>` : ''}
+      </div>`).join('')
+    : `<p style="color:#94A3B8;font-size:0.85rem;">No source documents recorded for this reserve.</p>`;
+
+  document.getElementById('escrowPackageBody').innerHTML = `
+    <div class="modal-confirm-msg">${esc(reserve.reserveTypeLabel)} &mdash; ${docs.length} document${docs.length === 1 ? '' : 's'}</div>
+    ${rows}`;
+  document.getElementById('escrowPackageModal').style.display = 'flex';
+}
+
+function closeEscrowPackageView() {
+  document.getElementById('escrowPackageModal').style.display = 'none';
+}
+
+function deleteEscrowReserve(reserveId) {
+  const propertyId = activePropId;
+  const prop = _props.find(p => p.id === propertyId);
+  if (!prop) return;
+  const reserve = (prop.escrowReserves || []).find(r => r.id === reserveId);
+  if (!reserve) return;
+  if (!confirm(`Delete the ${reserve.reserveTypeLabel} reserve? This cannot be undone.`)) return;
+  prop.escrowReserves = (prop.escrowReserves || []).filter(r => r.id !== reserveId);
+  _lsSave(prop);
+  saveProperty(prop);
+  logActivity('escrow_reserve_deleted', `Reserve deleted — ${reserve.reserveTypeLabel}`, {
+    severity: 'warning', actor: 'User', relatedEntity: prop.name || 'Property',
+  });
+  showToast('Reserve deleted.', { color: '#052e16', textColor: '#86efac' });
+  renderEscrowProfile(prop);
+}
+
+// Appends any source-document entries from `newDocs` not already present
+// (by fileUrl) in `existingDocs`, so replace/reprocess actions accumulate a
+// document history instead of losing it.
+function _mergeEscrowSourceDocuments(existingDocs, newDocs) {
+  const merged = Array.isArray(existingDocs) ? existingDocs.slice() : [];
+  (Array.isArray(newDocs) ? newDocs : []).forEach(d => {
+    if (!merged.some(m => m.fileUrl === d.fileUrl)) merged.push(d);
+  });
+  return merged;
+}
+
+// Orchestrates escrow/reserve document extraction and storage on the property.
+// filesOrFile: a single File, or an array/FileList of Files uploaded together
+// as one reserve package — they're extracted individually (each may mention
+// different reserves) but merged as a single batch, so a reserve type that
+// appears in more than one file in the batch (or more than once within the
+// same file) collapses into one card with the union of every source's
+// citations, instead of one card per extraction.
+// opts.replaceReserveId: when set, the extracted reserve(s) matching that
+// reserve's type are merged into the existing card (same id) instead of
+// appending a new one — used by the Replace/Reprocess document actions.
+let _escrowUploadInProgress = false;
+async function handleEscrowDocumentUpload(propertyId, filesOrFile, opts = {}) {
+  const prop = _props.find(p => p.id === propertyId);
+  if (!prop) return;
+
+  if (_escrowUploadInProgress) {
+    showToast('A reserve document is already being processed — please wait.', { color: '#92400e', textColor: '#fef3c7' });
+    return;
+  }
+  _escrowUploadInProgress = true;
+  const uploadBtn = document.getElementById('escrowUploadBtn');
+  const uploadBtnLabel = uploadBtn ? uploadBtn.innerHTML : null;
+  if (uploadBtn) { uploadBtn.disabled = true; uploadBtn.innerHTML = '⏳ Processing…'; }
+
+  const files = Array.isArray(filesOrFile) ? filesOrFile
+    : (filesOrFile instanceof FileList ? Array.from(filesOrFile) : [filesOrFile]);
+
+  const Engine = window.EscrowReserveEngine;
+
+  try {
+    let batchReserves = [];
+    for (const file of files) {
+      showToast(files.length > 1 ? `Reading ${file.name}…` : 'Reading reserve document…',
+        { color: '#0c4a6e', textColor: '#7dd3fc', duration: 8000 });
+
+      const docText = await extractDocumentText(file);
+      let extractedList, extractionPath;
+      if (docText && docText.length >= 50) {
+        extractedList = await callClaudeForEscrowDocument(docText);
+        extractionPath = 'text';
+      } else {
+        extractedList = await callClaudeForEscrowDocumentPdfDirect(file);
+        extractionPath = 'pdf_vision';
+      }
+      if (!Array.isArray(extractedList)) extractedList = extractedList ? [extractedList] : [];
+      if (!extractedList.length) {
+        console.warn(`[handleEscrowDocumentUpload] no reserve fields extracted from ${file.name}`);
+        continue;
+      }
+
+      const fileUrl = await uploadLeaseToStorage(file, propertyId);
+      const reserves = extractedList.map(extracted => Engine.normalizeReserve(extracted, {
+        sourceFileName: file.name,
+        sourceFileUrl:  fileUrl,
+        extractionPath,
+        ocrChars: docText ? docText.length : null,
+      }));
+      batchReserves = batchReserves.concat(reserves);
+    }
+
+    if (!batchReserves.length) throw new Error('Could not extract reserve fields from the uploaded document(s)');
+
+    // Collapse same-type reserves extracted anywhere in this batch (same
+    // file, multiple pages, or multiple files in the same package) into one
+    // reserve per type, carrying the union of their citations.
+    let mergedBatch = Engine.mergeReserveExtractions(batchReserves);
+
+    if (!Array.isArray(prop.escrowReserves)) prop.escrowReserves = [];
+    const processedLabels = [];
+
+    // Replace/reprocess: merge the matching extracted reserve into the
+    // targeted card in place (keep its id) instead of appending a new one.
+    if (opts.replaceReserveId) {
+      const targetIdx = prop.escrowReserves.findIndex(r => r.id === opts.replaceReserveId);
+      if (targetIdx !== -1) {
+        const target = prop.escrowReserves[targetIdx];
+        const matchIdx = mergedBatch.findIndex(r => r.reserveType === target.reserveType);
+        const replacement = mergedBatch.splice(matchIdx !== -1 ? matchIdx : 0, 1)[0];
+        replacement.id = target.id;
+        replacement.sourceDocuments = _mergeEscrowSourceDocuments(target.sourceDocuments, replacement.sourceDocuments);
+        prop.escrowReserves[targetIdx] = replacement;
+        processedLabels.push(replacement.reserveTypeLabel);
+      }
+    }
+
+    // De-duplicate against the property's existing reserves by reserve
+    // type (not by source file name) — a property only ever shows one card
+    // per reserve type; any newly-extracted reserve of a type already on
+    // file is merged into that card instead of creating a duplicate.
+    mergedBatch.forEach(newReserve => {
+      const existingIdx = prop.escrowReserves.findIndex(r => r.reserveType === newReserve.reserveType);
+      if (existingIdx !== -1) {
+        const existing = prop.escrowReserves[existingIdx];
+        const combined = Engine.mergeReserveExtractions([existing, newReserve])[0];
+        combined.id = existing.id;
+        prop.escrowReserves[existingIdx] = combined;
+      } else {
+        prop.escrowReserves.push(newReserve);
+      }
+      processedLabels.push(newReserve.reserveTypeLabel);
+    });
+
+    _lsSave(prop);
+    await saveProperty(prop);
+    const labels = processedLabels.join(', ');
+    logActivity('escrow_document_uploaded', `Reserve document${files.length > 1 ? 's' : ''} uploaded — ${labels}`, {
+      severity: 'success', actor: 'User', relatedEntity: prop.name || 'Property',
+    });
+    showToast(processedLabels.length > 1
+      ? `✓ ${processedLabels.length} reserves extracted: ${labels}`
+      : `✓ ${labels} extracted`, { color: '#052e16', textColor: '#86efac' });
+    renderEscrowProfile(prop);
+  } catch (err) {
+    console.error('[handleEscrowDocumentUpload]', err);
+    showToast('Reserve document upload failed: ' + (err.message || 'unknown error'), { color: '#7f1d1d', textColor: '#fca5a5', duration: 6000 });
+  } finally {
+    _escrowUploadInProgress = false;
+    if (uploadBtn) { uploadBtn.disabled = false; uploadBtn.innerHTML = uploadBtnLabel; }
+  }
+}
+
+// ─── Escrow & Reserve Profile (Track 2) ────────────────────────────────────
+
+function renderEscrowProfile(property) {
+  const listEl     = document.getElementById('escrowReservesList');
+  const drawListEl = document.getElementById('escrowDrawRequestsList');
+  if (!listEl || !drawListEl) return;
+
+  const reserves = property.escrowReserves || [];
+  const draws    = property.drawRequests   || [];
+  const Engine   = window.EscrowReserveEngine;
+
+  if (!reserves.length) {
+    listEl.innerHTML = `<p style="color:#94A3B8;font-size:0.875rem;">No reserve documents uploaded yet. Upload a mortgage, loan, escrow, or reserve agreement above to extract reserve terms automatically.</p>`;
+  } else {
+    listEl.innerHTML = reserves.map(r => {
+      const bal = Engine.computeReserveBalance(r, draws);
+      const dl  = r.deadlines     || {};
+      const req = r.requirements  || {};
+      const reqBadges = [
+        req.requiresInvoices               && 'Invoices',
+        req.requiresPhotos                 && 'Photos',
+        req.requiresLienWaivers            && 'Lien Waivers',
+        req.requiresContractorBids         && 'Contractor Bids',
+        req.requiresEngineerCertification  && 'Engineer Cert.',
+        req.requiresApproval               && 'Approval',
+      ].filter(Boolean).map(b => `<span class="escrow-req-badge">${esc(b)}</span>`).join('');
+
+      const conf = r.extractionConfidence || { level: 'low', score: 0, reasons: [] };
+      const confCls = { high: 'escrow-conf-high', medium: 'escrow-conf-medium', low: 'escrow-conf-low', failed: 'escrow-conf-low' }[conf.level] || 'escrow-conf-low';
+      const confLabel = { high: 'High', medium: 'Medium', low: 'Low', failed: 'Failed' }[conf.level] || 'Low';
+      const confTitle = (conf.reasons || []).join('; ') || 'Verbatim source quote found for key fields';
+      const confBadge = `<span class="escrow-conf-badge ${confCls}" title="${esc(confTitle)}">Confidence: ${esc(confLabel)}</span>`;
+
+      const pages = Array.isArray(r.sourcePages) ? r.sourcePages : [];
+      const sourceLine = pages.length
+        ? `<div class="escrow-source-pages">&#x1F4CE; Source: Page${pages.length > 1 ? 's' : ''} ${pages.join(', ')}${r.sourceFileName ? ` &middot; ${esc(r.sourceFileName)}` : ''}</div>`
+        : (r.sourceFileName ? `<div class="escrow-source-pages">&#x1F4CE; Source: ${esc(r.sourceFileName)} (no page citation extracted)</div>` : '');
+
+      const evidenceQuote = r.evidence?.current_balance?.quote || r.evidence?.reserve_type?.quote;
+      const evidenceLine = evidenceQuote
+        ? `<div class="escrow-reserve-notes" style="font-style:italic;">&#x201C;${esc(evidenceQuote)}&#x201D;</div>`
+        : '';
+
+      const docCount = Array.isArray(r.sourceDocuments) ? r.sourceDocuments.length : (r.sourceFileName ? 1 : 0);
+      const hasCitation = !!(r.evidence && Object.values(r.evidence).some(ev => ev && ev.quote));
+      const docMgmtLine = `
+        <div class="escrow-doc-mgmt">
+          <span class="escrow-doc-count">Reserve Package &mdash; ${docCount} document${docCount === 1 ? '' : 's'}</span>
+          <button class="escrow-doc-btn" onclick="openEscrowPackageView('${r.id}')">&#x1F4C1; View Documents</button>
+          <button class="escrow-doc-btn" onclick="openEscrowDocumentReplace('${r.id}')">Replace</button>
+          ${r.sourceFileUrl ? `<button class="escrow-doc-btn" onclick="reprocessEscrowReserveDocument('${r.id}')">Reprocess</button>` : ''}
+          ${hasCitation ? `<button class="escrow-doc-btn" onclick="openEscrowSourceCitation('${r.id}')">Source Citation</button>` : ''}
+          <button class="escrow-doc-btn escrow-doc-btn-danger" onclick="deleteEscrowReserve('${r.id}')">Delete</button>
+        </div>`;
+
+      return `
+      <div class="escrow-reserve-card">
+        <div class="escrow-reserve-head">
+          <strong>${esc(r.reserveTypeLabel)}</strong>
+          <span class="escrow-reserve-balance">${fmt(bal.availableBalance)} available</span>
+        </div>
+        <div class="escrow-reserve-sub">of ${fmt(bal.currentBalance)} current balance${bal.committedAmount ? ` &middot; ${fmt(bal.committedAmount)} committed to open draws` : ''}</div>
+        ${confBadge}
+        ${sourceLine}
+        ${evidenceLine}
+        ${r.eligibleUses ? `<div class="escrow-reserve-row"><span>Eligible Uses</span><span>${esc(r.eligibleUses)}</span></div>` : ''}
+        ${reqBadges ? `<div class="escrow-req-badges">${reqBadges}</div>` : ''}
+        ${dl.drawRequestDeadline      ? `<div class="escrow-reserve-row"><span>Draw Request Deadline</span><span>${esc(dl.drawRequestDeadline)}</span></div>` : ''}
+        ${dl.repairCompletionDeadline ? `<div class="escrow-reserve-row"><span>Repair Completion Deadline</span><span>${esc(dl.repairCompletionDeadline)}</span></div>` : ''}
+        ${dl.reserveExpirationDate    ? `<div class="escrow-reserve-row"><span>Reserve Expiration</span><span>${esc(dl.reserveExpirationDate)}</span></div>` : ''}
+        ${r.notes ? `<div class="escrow-reserve-notes">${esc(r.notes)}</div>` : ''}
+        ${docMgmtLine}
+        <button class="report-btn" style="margin-top:8px;" onclick="openDrawBuilder('${r.id}')">+ New Draw Request</button>
+      </div>`;
+    }).join('');
+  }
+
+  if (!draws.length) {
+    drawListEl.innerHTML = `<p style="color:#94A3B8;font-size:0.875rem;">No draw requests yet.</p>`;
+  } else {
+    const fmtHistoryDate = (iso) => {
+      if (!iso) return '';
+      const d = new Date(iso);
+      return isNaN(d.getTime()) ? '' : d.toLocaleDateString(undefined, { month: 'short', day: 'numeric', year: 'numeric' }) + ' ' + d.toLocaleTimeString(undefined, { hour: 'numeric', minute: '2-digit' });
+    };
+    drawListEl.innerHTML = draws.slice().reverse().map(dr => {
+      const reserve = reserves.find(r => r.id === dr.reserveId);
+      const history = Array.isArray(dr.statusHistory) ? dr.statusHistory : [];
+      const historyRows = history.map(h => `
+        <div class="escrow-status-history-item">
+          <span>${esc(Engine.DRAW_STATUS_LABELS[h.status] || h.status)}</span>
+          <span>${esc(fmtHistoryDate(h.timestamp || h.at))}${h.actor ? ` &middot; ${esc(h.actor)}` : ''}</span>
+        </div>`).join('');
+      const historyBlock = historyRows
+        ? `<div class="escrow-status-history">${historyRows}</div>`
+        : '';
+      return `
+      <div class="escrow-draw-card">
+        <div class="escrow-draw-head">
+          <strong>${dr.drawNumber ? `Draw #${esc(dr.drawNumber)} &mdash; ` : ''}${esc(reserve ? reserve.reserveTypeLabel : 'Reserve')} &mdash; ${fmt(dr.amountRequested)}</strong>
+        </div>
+        ${_drawStatusStepperHtml(dr, Engine)}
+        ${historyBlock}
+        <div class="escrow-draw-actions">
+          <button class="report-btn" onclick="generateDrawPackageReport('${dr.id}')">&#x1F4CB; Generate Package</button>
+          <button class="report-btn" onclick="openDrawEmailModal('${dr.id}')">&#x2709; Generate Email</button>
+        </div>
+      </div>`;
+    }).join('');
+  }
+}
+
+// ─── Draw Request Builder (Track 3 / 4) ────────────────────────────────────
+
+let _drawDraft = null;
+const DRAW_DOC_CATEGORY_LABELS = {
+  photos: 'Photo', lienWaivers: 'Lien Waiver',
+  contractorBids: 'Contractor Bid', engineerCertification: 'Engineer Certification',
+};
+
+function openDrawBuilder(reserveId) {
+  const prop = currentProperty();
+  if (!prop) return;
+  const reserve = (prop.escrowReserves || []).find(r => r.id === reserveId);
+  if (!reserve) return;
+
+  _drawDraft = {
+    reserveId, amountRequested: '', amountManuallySet: false, invoiceIds: [], showAllInvoices: false,
+    attachedDocuments: { photos: [], lienWaivers: [], contractorBids: [], engineerCertification: [] },
+  };
+  _renderDrawBuilderBody(prop, reserve);
+  document.getElementById('drawBuilderModal').style.display = 'flex';
+}
+
+function closeDrawBuilder() {
+  document.getElementById('drawBuilderModal').style.display = 'none';
+  _drawDraft = null;
+}
+
+// Keeps Amount Requested in sync with the selected invoices' total — a
+// property manager who just picked $3,400 + $3,200 + $2,900 of invoices
+// shouldn't have to re-type $9,500. Stops auto-filling once the user has
+// typed their own value (amountManuallySet), and can be reset via the
+// "Reset to invoice total" control.
+function _autoFillDrawAmount() {
+  if (!_drawDraft || _drawDraft.amountManuallySet) return;
+  const prop = currentProperty();
+  const allInvoices = (prop && prop.invoices) || [];
+  const total = (_drawDraft.invoiceIds || [])
+    .reduce((s, idx) => s + (parseFloat(allInvoices[idx] && allInvoices[idx].amount) || 0), 0);
+  _drawDraft.amountRequested = total ? String(total) : '';
+}
+
+function _resetDrawAmountToInvoiceTotal() {
+  if (!_drawDraft) return;
+  _drawDraft.amountManuallySet = false;
+  _autoFillDrawAmount();
+  const prop = currentProperty();
+  const reserve = prop && (prop.escrowReserves || []).find(r => r.id === _drawDraft.reserveId);
+  if (reserve) _renderDrawBuilderBody(prop, reserve);
+}
+
+function _renderDrawBuilderBody(prop, reserve) {
+  const allInvoices = prop.invoices || [];
+  const Engine = window.EscrowReserveEngine;
+  // Lender workflow: only show invoices classified for this reserve's type
+  // (e.g. roofing invoices for a Roof Reserve draw) unless the user opts in
+  // to seeing everything — covers invoices the classifier got wrong, and
+  // properties where no invoices have been classified yet.
+  const relevantIdx = [];
+  allInvoices.forEach((inv, idx) => {
+    const reserveType = inv.reserveType || (Engine ? Engine.classifyInvoiceReserveType(inv).reserveType : 'other');
+    if (reserveType === reserve.reserveType) relevantIdx.push(idx);
+  });
+  const showAll = !!_drawDraft.showAllInvoices || relevantIdx.length === 0;
+  const visibleIdx = showAll ? allInvoices.map((_, idx) => idx) : relevantIdx;
+
+  const invoiceRows = visibleIdx.map(idx => {
+    const inv = allInvoices[idx];
+    return `
+    <label class="escrow-invoice-row">
+      <input type="checkbox" ${_drawDraft.invoiceIds.includes(idx) ? 'checked' : ''}
+        onchange="_toggleDrawInvoice(${idx}, this.checked)">
+      <span>${esc(inv.vendorName || inv.fileName || 'Vendor')} &mdash; ${fmt(inv.amount || 0)}</span>
+    </label>`;
+  }).join('') || `<p style="color:#94A3B8;font-size:0.85rem;">No invoices uploaded yet.</p>`;
+
+  const filterToggle = allInvoices.length > relevantIdx.length
+    ? `<button class="modal-cancel" style="padding:2px 8px;margin-bottom:6px;" onclick="_toggleDrawInvoiceFilter()">${showAll ? 'Show relevant invoices only' : `Show all invoices (${allInvoices.length})`}</button>`
+    : '';
+
+  const selectedTotal = (_drawDraft.invoiceIds || [])
+    .reduce((s, idx) => s + (parseFloat(allInvoices[idx] && allInvoices[idx].amount) || 0), 0);
+
+  const docRows = Object.entries(_drawDraft.attachedDocuments)
+    .flatMap(([cat, docs]) => docs.map((d, idx) => `
+      <div class="escrow-doc-row">
+        <span>${esc(DRAW_DOC_CATEGORY_LABELS[cat] || cat)}: ${esc(d.fileName)}</span>
+        <button class="modal-cancel" style="padding:2px 8px;" onclick="_removeDrawSupportingDoc('${cat}', ${idx})">Remove</button>
+      </div>`)).join('');
+
+  // Submission readiness checklist — reuses the same Engine.validateDrawRequest
+  // logic that gates the actual draw status workflow, so "ready" here means the
+  // same thing it means once the draw is submitted, not a separate UI-only check.
+  const draftForValidation = {
+    amountRequested: _drawDraft.amountRequested,
+    invoices: (_drawDraft.invoiceIds || []).map(idx => allInvoices[idx]).filter(Boolean),
+    attachedDocuments: _drawDraft.attachedDocuments,
+  };
+  const validation = Engine ? Engine.validateDrawRequest(reserve, draftForValidation, prop.drawRequests || []) : null;
+  const DOC_CHECK_KEYS = ['invoices', 'photos', 'lienWaivers', 'contractorBids', 'engineerCertification'];
+  const DOC_CHECK_LABELS = { invoices: 'Invoices', photos: 'Photo', lienWaivers: 'Lien Waiver', contractorBids: 'Contractor Bid', engineerCertification: 'Engineer Certification' };
+  const docChecklist = validation ? validation.checklist.filter(c => DOC_CHECK_KEYS.includes(c.key)) : [];
+  const satisfiedDocs = docChecklist.filter(c => c.met);
+  const missingDocs = docChecklist.filter(c => !c.met);
+  const checklistHtml = docChecklist.length
+    ? `
+      <div class="escrow-section-label" style="margin-top:12px;">Required Documents</div>
+      ${satisfiedDocs.map(c => `<div class="escrow-doc-row"><span>&#x2713; ${esc(DOC_CHECK_LABELS[c.key] || c.label)}</span></div>`).join('')}
+      ${missingDocs.length ? `<div style="margin-top:4px;font-size:0.85rem;color:#fbbf24;">Missing:</div>${missingDocs.map(c => `<div class="escrow-doc-row"><span>&#x2610; ${esc(DOC_CHECK_LABELS[c.key] || c.label)}</span></div>`).join('')}` : ''}
+      <div style="margin-top:6px;font-size:0.85rem;color:${missingDocs.length === 0 ? '#86efac' : '#fbbf24'};">
+        Submission Ready: ${satisfiedDocs.length} of ${docChecklist.length} documents
+      </div>`
+    : '';
+
+  document.getElementById('drawBuilderBody').innerHTML = `
+    <div class="modal-confirm-msg">New draw request against <strong>${esc(reserve.reserveTypeLabel)}</strong></div>
+    <label style="display:block;margin:10px 0;">
+      Amount Requested
+      <input type="number" id="drawAmountInput" step="0.01" min="0" value="${esc(_drawDraft.amountRequested)}"
+        onchange="_drawDraft.amountRequested = this.value; _drawDraft.amountManuallySet = true;" style="display:block;width:100%;margin-top:4px;">
+      ${_drawDraft.invoiceIds.length ? `<button class="modal-cancel" style="padding:2px 8px;margin-top:4px;" onclick="_resetDrawAmountToInvoiceTotal()">Reset to invoice total (${fmt(selectedTotal)})</button>` : ''}
+    </label>
+    <div class="escrow-section-label">Invoices${selectedTotal ? ` &mdash; ${fmt(selectedTotal)} selected` : ''}</div>
+    ${filterToggle}
+    ${invoiceRows}
+    ${checklistHtml}
+    <div class="escrow-section-label" style="margin-top:12px;">Supporting Documents</div>
+    ${docRows}
+    <div style="display:flex;gap:6px;margin-top:6px;flex-wrap:wrap;">
+      <button class="report-btn" onclick="addDrawSupportingDoc('photos')">+ Photo</button>
+      <button class="report-btn" onclick="addDrawSupportingDoc('lienWaivers')">+ Lien Waiver</button>
+      <button class="report-btn" onclick="addDrawSupportingDoc('contractorBids')">+ Contractor Bid</button>
+      <button class="report-btn" onclick="addDrawSupportingDoc('engineerCertification')">+ Engineer Cert.</button>
+    </div>`;
+}
+
+function _toggleDrawInvoice(idx, checked) {
+  if (!_drawDraft) return;
+  _drawDraft.invoiceIds = checked
+    ? [...new Set([...(_drawDraft.invoiceIds || []), idx])]
+    : _drawDraft.invoiceIds.filter(i => i !== idx);
+  _autoFillDrawAmount();
+  const prop = currentProperty();
+  const reserve = prop && (prop.escrowReserves || []).find(r => r.id === _drawDraft.reserveId);
+  if (reserve) _renderDrawBuilderBody(prop, reserve);
+}
+
+function _toggleDrawInvoiceFilter() {
+  if (!_drawDraft) return;
+  _drawDraft.showAllInvoices = !_drawDraft.showAllInvoices;
+  const prop = currentProperty();
+  const reserve = prop && (prop.escrowReserves || []).find(r => r.id === _drawDraft.reserveId);
+  if (reserve) _renderDrawBuilderBody(prop, reserve);
+}
+
+function _removeDrawSupportingDoc(category, idx) {
+  if (!_drawDraft) return;
+  _drawDraft.attachedDocuments[category].splice(idx, 1);
+  const prop = currentProperty();
+  const reserve = (prop.escrowReserves || []).find(r => r.id === _drawDraft.reserveId);
+  _renderDrawBuilderBody(prop, reserve);
+}
+
+function addDrawSupportingDoc(category) {
+  if (!_drawDraft) return;
+  const propertyId = activePropId;
+  const inp = document.createElement('input');
+  inp.type = 'file';
+  inp.style.display = 'none';
+  inp.addEventListener('change', async (e) => {
+    const file = e.target.files[0];
+    inp.remove();
+    if (!file || !_drawDraft) return;
+    try {
+      showToast('Uploading document…', { color: '#0c4a6e', textColor: '#7dd3fc', duration: 5000 });
+      const fileUrl = await uploadLeaseToStorage(file, propertyId);
+      _drawDraft.attachedDocuments[category].push({ fileName: file.name, fileUrl });
+      const prop = currentProperty();
+      const reserve = (prop.escrowReserves || []).find(r => r.id === _drawDraft.reserveId);
+      _renderDrawBuilderBody(prop, reserve);
+      showToast('✓ Document attached', { color: '#052e16', textColor: '#86efac' });
+    } catch (err) {
+      console.error('[addDrawSupportingDoc]', err);
+      showToast('Upload failed: ' + (err.message || 'unknown error'), { color: '#7f1d1d', textColor: '#fca5a5' });
+    }
+  });
+  document.body.appendChild(inp);
+  inp.click();
+}
+
+async function confirmCreateDrawRequest() {
+  if (!_drawDraft) return;
+  const prop = currentProperty();
+  if (!prop) return;
+  const Engine = window.EscrowReserveEngine;
+
+  const amountRequested = parseFloat(_drawDraft.amountRequested);
+  if (!amountRequested || isNaN(amountRequested) || amountRequested <= 0) {
+    showToast('Enter an amount greater than $0 before creating a draw request.', { color: '#7f1d1d', textColor: '#fca5a5' });
+    return;
+  }
+
+  const invoices = (prop.invoices || []).filter((_, idx) => _drawDraft.invoiceIds.includes(idx));
+
+  const now = new Date().toISOString();
+  const drawRequest = {
+    id: 'draw_' + Date.now().toString(36) + Math.random().toString(36).slice(2, 8),
+    drawNumber: (prop.drawRequests || []).length + 1,
+    reserveId: _drawDraft.reserveId,
+    amountRequested,
+    status: 'draft',
+    invoices,
+    attachedDocuments: _drawDraft.attachedDocuments,
+    createdAt: now,
+    statusHistory: [{ status: 'draft', timestamp: now, note: null, actor: 'User' }],
+  };
+
+  if (!Array.isArray(prop.drawRequests)) prop.drawRequests = [];
+  prop.drawRequests.push(drawRequest);
+
+  _lsSave(prop);
+  await saveProperty(prop);
+  logActivity('escrow_draw_created', `Draw request created — ${fmt(drawRequest.amountRequested)}`, {
+    severity: 'info', actor: 'User', relatedEntity: prop.name || 'Property',
+  });
+  showToast('✓ Draw request created', { color: '#052e16', textColor: '#86efac' });
+  closeDrawBuilder();
+  renderEscrowProfile(prop);
+}
+
+// ─── Draw Request Tracking (Track 5) ────────────────────────────────────────
+
+// Lifecycle stepper — replaces the old free-form status dropdown. Only
+// renders the statuses Engine.getValidNextDrawStatuses() says are legal next
+// steps as clickable, so a draw can no longer jump straight from Draft to
+// Funded. "Reject" is shown as a separate action since it's a side-branch,
+// not a forward step in the main lifecycle.
+const _DRAW_MAIN_STAGES = ['draft', 'submitted', 'under_review', 'approved', 'funded'];
+
+function _drawStatusStepperHtml(dr, Engine) {
+  if (dr.status === 'denied') {
+    return `<div class="draw-stepper draw-stepper--rejected">
+      <span class="draw-step-rejected-badge">&#x2715; Rejected</span>
+    </div>`;
+  }
+  const currentIdx = _DRAW_MAIN_STAGES.indexOf(dr.status);
+  const nextValid = Engine.getValidNextDrawStatuses(dr.status);
+  const nextForward = nextValid.find(s => s !== 'denied');
+  const pillsHtml = _DRAW_MAIN_STAGES.map((s, idx) => {
+    const state = idx < currentIdx ? 'done' : idx === currentIdx ? 'current' : 'upcoming';
+    const clickable = s === nextForward;
+    return `<button class="draw-step draw-step--${state}"
+      title="${esc(Engine.DRAW_STATUS_LABELS[s])}${clickable ? ' — click to advance' : ''}"
+      ${clickable ? `onclick="updateDrawStatus('${dr.id}','${s}')"` : 'disabled'}>
+      <span class="draw-step-dot"></span><span class="draw-step-label">${esc(Engine.DRAW_STATUS_LABELS[s])}</span>
+    </button>`;
+  }).join('<span class="draw-step-connector"></span>');
+  const rejectBtnHtml = nextValid.includes('denied')
+    ? `<button class="draw-step-reject" onclick="updateDrawStatus('${dr.id}','denied')">Reject</button>`
+    : '';
+  return `<div class="draw-stepper">${pillsHtml}${rejectBtnHtml}</div>`;
+}
+
+async function updateDrawStatus(drawRequestId, status) {
+  const prop = currentProperty();
+  if (!prop) return;
+  const ok = window.EscrowReserveEngine.applyDrawStatus(prop.drawRequests || [], drawRequestId, status, { actor: 'User' });
+  if (!ok) {
+    showToast('That status change isn’t allowed — draws must move through each stage in order.', { color: '#7f1d1d', textColor: '#fca5a5' });
+    return;
+  }
+
+  _lsSave(prop);
+  await saveProperty(prop);
+  logActivity('escrow_draw_status', `Draw request status changed to ${window.EscrowReserveEngine.DRAW_STATUS_LABELS[status]}`, {
+    severity: 'info', actor: 'User', relatedEntity: prop.name || 'Property',
+  });
+  renderEscrowProfile(prop);
+}
+
+// ─── Draw Request Package Generation (Track 4) ──────────────────────────────
+
+function generateDrawPackageReport(drawRequestId) {
+  const prop = currentProperty();
+  if (!prop) return;
+  const Engine = window.EscrowReserveEngine;
+  const drawRequest = (prop.drawRequests || []).find(d => d.id === drawRequestId);
+  const reserve     = drawRequest && (prop.escrowReserves || []).find(r => r.id === drawRequest.reserveId);
+  if (!drawRequest || !reserve) return;
+
+  const validation = Engine.validateDrawRequest(reserve, drawRequest, prop.drawRequests || []);
+  const pkg = Engine.buildDrawRequestPackage(prop, reserve, drawRequest, validation);
+  const html = window.EscrowDrawPackets.formatDrawPackageHtml(pkg);
+
+  logActivity('escrow_draw_package', `Draw request package generated — ${pkg.complete ? 'lender-ready' : 'draft'}`, {
+    severity: pkg.complete ? 'success' : 'warning', actor: 'User', relatedEntity: prop.name || 'Property',
+  });
+  openReport('Escrow Draw Request Package', html);
+}
+
+// ─── Draw Submission Email (Track 6) ────────────────────────────────────────
+
+let _drawEmailDrawId = null;
+
+function openDrawEmailModal(drawRequestId) {
+  const prop = currentProperty();
+  if (!prop) return;
+  const Engine = window.EscrowReserveEngine;
+  const drawRequest = (prop.drawRequests || []).find(d => d.id === drawRequestId);
+  const reserve     = drawRequest && (prop.escrowReserves || []).find(r => r.id === drawRequest.reserveId);
+  if (!drawRequest || !reserve) return;
+
+  const draft = Engine.buildDrawEmailDraft(prop, reserve, drawRequest);
+  _drawEmailDrawId = drawRequestId;
+  document.getElementById('drawEmailSubject').value = draft.subject;
+  document.getElementById('drawEmailBody').value    = draft.body;
+  document.getElementById('drawEmailMailtoLink').href =
+    'mailto:?subject=' + encodeURIComponent(draft.subject) + '&body=' + encodeURIComponent(draft.body);
+  document.getElementById('drawEmailModal').style.display = 'flex';
+
+  logActivity('escrow_draw_email', `Draw request email draft generated — ${reserve.reserveTypeLabel}`, {
+    severity: 'info', actor: 'User', relatedEntity: prop.name || 'Property',
+  });
+}
+
+function closeDrawEmailModal() {
+  document.getElementById('drawEmailModal').style.display = 'none';
+  _drawEmailDrawId = null;
+}
+
+function copyDrawEmailField(fieldId, btnId) {
+  const input = document.getElementById(fieldId);
+  input.select();
+  try {
+    navigator.clipboard.writeText(input.value).catch(() => document.execCommand('copy'));
+  } catch { document.execCommand('copy'); }
+  const btn  = document.getElementById(btnId);
+  const orig = btn.textContent;
+  btn.textContent = '✓ Copied!';
+  setTimeout(() => { btn.textContent = orig; }, 2000);
+}
+
+// ─── Reserve Source Citation Viewer ─────────────────────────────────────────
+
+function openEscrowSourceCitation(reserveId) {
+  const prop = currentProperty();
+  const reserve = prop && (prop.escrowReserves || []).find(r => r.id === reserveId);
+  if (!reserve) return;
+
+  const evidence = reserve.evidence || {};
+  const fieldLabels = { reserve_type: 'Reserve Type', current_balance: 'Current Balance', eligible_uses: 'Eligible Uses' };
+  const rows = Object.entries(evidence)
+    .filter(([, ev]) => ev && ev.quote)
+    .map(([field, ev]) => `
+      <div class="escrow-citation-item">
+        <div class="escrow-citation-head">
+          <strong>${esc(fieldLabels[field] || field)}</strong>
+          <span>${esc(reserve.sourceFileName || 'Reserve Agreement')}${ev.page != null ? ` &middot; Page ${esc(ev.page)}` : ''}</span>
+        </div>
+        <blockquote class="escrow-citation-quote">&#x201C;${esc(ev.quote)}&#x201D;</blockquote>
+      </div>`).join('');
+
+  document.getElementById('escrowCitationBody').innerHTML = rows ||
+    `<p style="color:#94A3B8;font-size:0.85rem;">No verbatim source citations available for this reserve.</p>`;
+  document.getElementById('escrowCitationModal').style.display = 'flex';
+}
+
+function closeEscrowSourceCitation() {
+  document.getElementById('escrowCitationModal').style.display = 'none';
+}
+
 // ─── SVG icons ────────────────────────────────────────────────────────────────
 const CHECK_SVG = `<svg viewBox="0 0 12 12" width="10" height="10" fill="none" stroke="white" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round"><polyline points="2,6 5,9 10,3"/></svg>`;
 const CROSS_SVG = `<svg viewBox="0 0 12 12" width="10" height="10" stroke="white" stroke-width="2.2" stroke-linecap="round"><line x1="2" y1="2" x2="10" y2="10"/><line x1="10" y1="2" x2="2" y2="10"/></svg>`;
@@ -1947,7 +2878,7 @@ function renderTenantFields(i) {
             onblur="handleFieldBlur(${i},'tenant_name',this.value)"/>
         </div>
         <div class="field">
-          <label>Leased Sqft</label>
+          <label title="The square footage this tenant occupies — not the total building size. Used to calculate this tenant's pro-rata share of CAM expenses.">Leased Sqft &#x24D8;</label>
           <input type="number" value="${d.leased_sqft ?? ''}"
             onfocus="isEditingField=true"
             onblur="handleFieldBlur(${i},'leased_sqft',this.value);checkSqftValidation()"/>
@@ -2008,6 +2939,92 @@ function resetTenant(i) {
 }
 
 // ─── Lease Tab Switching ──────────────────────────────────────────────────────
+
+// ─── Property Workspace Tabs (Phase 22 — pure UI reorganization) ───────────
+// Buckets the same pre-existing workspace sections (cardSetup, cardLeases,
+// cardGL, cardInvoices, results, escrowSection, reportsSection, etc.) under
+// tabbed navigation to cut scrolling. No business logic, data model, or
+// extraction engine touched — this only toggles which already-rendered
+// section is visible.
+const WORKSPACE_TABS = ['overview', 'cam', 'reserves', 'estoppels', 'reports', 'documents'];
+let _activeWorkspaceTab = 'overview';
+
+function switchWorkspaceTab(tab) {
+  if (WORKSPACE_TABS.indexOf(tab) === -1) return;
+  _activeWorkspaceTab = tab;
+  WORKSPACE_TABS.forEach(t => {
+    const pane = document.getElementById('wsPane-' + t);
+    const btn  = document.getElementById('wsTabBtn-' + t);
+    if (pane) pane.style.display = (t === tab) ? 'block' : 'none';
+    if (btn)  btn.classList.toggle('active', t === tab);
+  });
+}
+
+// ─── Property KPI Header (Phase 23) ─────────────────────────────────────────
+// Pure aggregation of data already computed elsewhere (Selectors, the escrow
+// engine, camReconciliation) — no new metrics engine, no new persisted fields.
+function _fmtKpiMoney(n) {
+  return '$' + Math.round(Number(n) || 0).toLocaleString();
+}
+
+function renderPropertyKpiHeader(property) {
+  const slot = document.getElementById('propertyKpiHeader');
+  if (!slot || !property) return;
+
+  const tenants = (property.tenants || []).filter(t => t && t.tenant_name);
+  const totalSqft = Number(property.totalSqft) || 0;
+  const occSqft = tenants.reduce((s, t) => s + (parseFloat(t.leased_sqft) || 0), 0);
+  const occupancyPct = totalSqft > 0 ? Math.round((occSqft / totalSqft) * 100) : null;
+
+  const meta = Selectors.buildPropMeta(property);
+  const readiness = Selectors.derivePropertyReadiness(property);
+
+  const reserves = property.escrowReserves || [];
+  const Engine = window.EscrowReserveEngine;
+  const reserveBalanceTotal = Engine
+    ? reserves.reduce((s, r) => s + (Engine.computeReserveBalance(r, property.drawRequests || []).availableBalance || 0), 0)
+    : null;
+
+  const camTotal = meta.total || 0;
+
+  const lastEvent = Array.isArray(property.timeline) && property.timeline.length
+    ? property.timeline[property.timeline.length - 1]
+    : null;
+
+  const tiles = [
+    { label: 'Occupancy', value: occupancyPct !== null ? occupancyPct + '%' : '—',
+      sub: totalSqft ? `${occSqft.toLocaleString()} / ${totalSqft.toLocaleString()} sqft` : 'Set total sqft to enable' },
+    { label: 'Tenants', value: tenants.length, sub: tenants.length === 1 ? '1 active lease' : `${tenants.length} active leases` },
+    { label: 'Active Reserves', value: reserves.length,
+      sub: reserveBalanceTotal !== null ? `${_fmtKpiMoney(reserveBalanceTotal)} available` : 'No reserves yet' },
+    { label: 'Open Disputes', value: meta.openDisputes || 0, alert: (meta.openDisputes || 0) > 0,
+      sub: (meta.openDisputes || 0) > 0 ? 'Needs attention' : 'None open' },
+    { label: 'Lease Expirations', value: readiness.expiringCount || 0,
+      warn: (readiness.expiringCount || 0) > 0, alert: (readiness.expiredCount || 0) > 0,
+      sub: readiness.expiredCount ? `${readiness.expiredCount} already expired` : 'Next 12 months' },
+    { label: 'CAM Recovery', value: _fmtKpiMoney(camTotal), sub: camTotal ? 'Most recent run' : 'No CAM run yet' },
+  ];
+
+  const tileHtml = tiles.map(t => `
+    <div class="kpi-tile${t.alert ? ' kpi-alert' : t.warn ? ' kpi-warn' : ''}">
+      <div class="kpi-tile-label">${esc(t.label)}</div>
+      <div class="kpi-tile-value">${esc(String(t.value))}</div>
+      <div class="kpi-tile-sub">${esc(t.sub)}</div>
+    </div>`).join('');
+
+  const lastActivityHtml = lastEvent
+    ? `<div class="kpi-last-activity">&#x1F553; Last activity: ${esc(lastEvent.title || lastEvent.type)} &middot; ${esc(_fmtKpiTimestamp(lastEvent.timestamp))}</div>`
+    : '';
+
+  slot.innerHTML = `<div class="kpi-header-row">${tileHtml}</div>${lastActivityHtml}`;
+}
+
+function _fmtKpiTimestamp(ts) {
+  try {
+    const d = new Date(ts);
+    return d.toLocaleDateString('en-US', { month: 'short', day: 'numeric' }) + ' ' + d.toLocaleTimeString('en-US', { hour: 'numeric', minute: '2-digit' });
+  } catch { return ts; }
+}
 
 function switchLeaseTab(tab) {
   document.getElementById('lTabBulk').classList.toggle('active', tab === 'bulk');
@@ -2291,7 +3308,13 @@ function handleGLUpload(input) {
 function renderGLResults() {
   const container   = document.getElementById('glResults');
   const importBarEl = document.getElementById('glImportBar');
-  if (!glData.length) { container.innerHTML = ''; importBarEl.innerHTML = ''; return; }
+  if (!glData.length) {
+    container.innerHTML = _workspaceEmptyStateHtml('&#x1F4D2;',
+      'No General Ledger file has been imported.',
+      'Import a GL Excel file to compare billed expenses against accounting records.');
+    importBarEl.innerHTML = '';
+    return;
+  }
 
   const included = glData.filter(r => r._include).length;
   const total    = glData.filter(r => r._include).reduce((s, r) => s + r.amount, 0);
@@ -3051,6 +4074,29 @@ function _confidenceBadgeHtml(level) {
   }[level];
   if (!cfg) return '';
   return `<span class="cx-badge ${cfg.cls}" title="${cfg.tip}">${cfg.label}</span>`;
+}
+
+// Surfaces edge cases (detectLeaseEdgeCases) and review notes
+// (generateLeaseExplainability) that are already computed at extraction time
+// but, before this, were only ever written to the browser console — the
+// property manager reviewing the upload never saw them. Pure rendering of
+// existing data; no new detection logic.
+function _leaseEdgeCaseAndReviewNotesHtml(d) {
+  const edgeCases  = (d._edgeCases && Array.isArray(d._edgeCases.edgeCases)) ? d._edgeCases.edgeCases : [];
+  const reviewNotes = (d._explainability && Array.isArray(d._explainability.reviewNotes)) ? d._explainability.reviewNotes : [];
+  if (!edgeCases.length && !reviewNotes.length) return '';
+
+  const SEV_ICON = { high: '&#x26D4;', medium: '&#x26A0;&#xFE0F;', low: '&#x2139;&#xFE0F;' };
+  const edgeRows = edgeCases.map(e => `
+    <div class="lease-edge-note-item"><span class="len-icon">${SEV_ICON[e.severity] || '&#x2139;&#xFE0F;'}</span>
+      <span>${esc(e.reviewerNote || e.description || e.type)}</span></div>`).join('');
+  const noteRows = reviewNotes.map(n => `
+    <div class="lease-edge-note-item"><span class="len-icon">&#x1F4CB;</span><span>${esc(n)}</span></div>`).join('');
+
+  return `<div class="lease-edge-notes">
+    <div class="lease-edge-notes-title">AI Review Notes — verify before approving</div>
+    ${edgeRows}${noteRows}
+  </div>`;
 }
 
 // ── Lease Review Status helpers ────────────────────────────────────────────
@@ -5216,7 +6262,12 @@ function renderBulkResults() {
   const tenants = tenantPairs.map(p => p.d); // plain array for dup-detection below
   const _debugMode = !!(window.DEBUG_LEASES || localStorage.getItem(_lsUserId ? 'ms_debug_leases_' + _lsUserId : 'ms_debug_leases') === '1');
 
-  if (!tenants.length) return;
+  if (!tenants.length) {
+    el.innerHTML = _workspaceEmptyStateHtml('&#x1F4C4;',
+      'No lease documents have been uploaded yet.',
+      'Upload a lease PDF in the Documents tab to begin lease extraction.');
+    return;
+  }
 
   // Build a set of tenant names that appear more than once (case-insensitive).
   // Used to show a "possible duplicate" badge so the user knows to review them.
@@ -5346,6 +6397,7 @@ function renderBulkResults() {
             ? `<div class="err-banner" style="margin-bottom:10px;">Extraction error: ${esc(d._error)}</div>`
             : '')}
           ${(() => { const w = getWarnings(computeFlags(d)); return w.length ? `<div class="rc-flags"><div class="rc-flags-title">&#x26A0;&#xFE0F; Needs Review</div>${w.map(m => `<div class="rc-flag-item">${m}</div>`).join('')}</div>` : ''; })()}
+          ${_leaseEdgeCaseAndReviewNotesHtml(d)}
           <div class="citation-hint">&#x1F4CE; The colored chips below each field show the exact lease clause the AI used to determine each value. Hover a chip to read the full clause and verify accuracy.</div>
           <div class="field-row">
             <div class="field">
@@ -5357,7 +6409,7 @@ function renderBulkResults() {
               ${_citationChip(d, 'tenant_name')}${_amendmentProvenanceChip(d, 'tenant_name')}
             </div>
             <div class="field">
-              <label>Leased Sqft</label>
+              <label title="The square footage this tenant occupies — not the total building size. Used to calculate this tenant's pro-rata share of CAM expenses.">Leased Sqft &#x24D8;</label>
               <input type="number" value="${d.leased_sqft || ''}"
                 onfocus="isEditingField=true"
                 onkeydown="_onFieldKeydown(event)"
@@ -5401,6 +6453,23 @@ function renderBulkResults() {
                 onkeydown="_onFieldKeydown(event)"
                 onblur="handleFieldBlur(${i},'excluded_categories',this.value,this)"/>
               ${_citationChip(d, 'excluded_categories')}${_amendmentProvenanceChip(d, 'excluded_categories')}
+            </div>
+          </div>
+          <div class="field-row">
+            <div class="field">
+              <label title="The maximum annual increase allowed on this tenant's CAM charges, as a percentage of the prior year's base amount.">CAM Cap (%) &#x24D8;</label>
+              <input type="number" step="0.1" min="0" max="100" value="${d.cap ?? ''}"
+                onfocus="isEditingField=true"
+                onkeydown="_onFieldKeydown(event)"
+                onblur="handleFieldBlur(${i},'cap',this.value,this)"/>
+              ${_citationChip(d, 'cap')}${_amendmentProvenanceChip(d, 'cap')}
+            </div>
+            <div class="field">
+              <label title="Last year's total CAM charge for this tenant. Required to calculate the cap ceiling (Prior-Year Base × (1 + Cap %)) — without it, the cap above cannot be enforced.">Prior-Year CAM Base ($) &#x24D8;</label>
+              <input type="number" step="0.01" min="0" value="${d.capBaseAmount ?? ''}"
+                onfocus="isEditingField=true"
+                onkeydown="_onFieldKeydown(event)"
+                onblur="handleFieldBlur(${i},'capBaseAmount',this.value,this)"/>
             </div>
           </div>
           <div style="display:flex;justify-content:space-between;align-items:center;padding-top:10px;">
@@ -5906,12 +6975,22 @@ async function handleBatchInvoices(fileList) {
       resolvedConf = { ...resolvedConf, category: 90 };
     }
 
+    // Classify which reserve (Roof, HVAC, Insurance, etc.) this invoice belongs
+    // to so the Draw Request builder can show only relevant invoices for the
+    // reserve being drawn against — rule-based; low confidence is surfaced in
+    // the review table for manual override rather than blocked on an AI call.
+    const reserveClass = window.EscrowReserveEngine
+      ? window.EscrowReserveEngine.classifyInvoiceReserveType({ vendorName, category: resolvedCategory })
+      : { reserveType: 'other', confidence: 30 };
+
     invoiceData.push({
       vendorName:  cleanHTML(vendorName),
       amount:      d?.amount      ?? '',
       category:    resolvedCategory,
       invoiceDate: cleanHTML(d?.invoiceDate ?? ''),
       confidence:  resolvedConf,
+      reserveType:           reserveClass.reserveType,
+      reserveTypeConfidence: reserveClass.confidence,
       _error:           claudeError,
       _fileUploadError: fileUploadError,
       fileUrl, fileName: files[i].name, fileType: files[i].type,
@@ -5956,7 +7035,12 @@ async function handleBatchInvoices(fileList) {
 
 function renderInvResults() {
   const el = document.getElementById('invResults');
-  if (!invoiceData.length) { el.innerHTML = ''; return; }
+  if (!invoiceData.length) {
+    el.innerHTML = _workspaceEmptyStateHtml('&#x1F9FE;',
+      'No invoices have been uploaded yet.',
+      'Upload invoices in the CAM tab before running a reconciliation.');
+    return;
+  }
 
   const rows = invoiceData.map((d, i) => {
     const conf = d.confidence || {};
@@ -5976,6 +7060,10 @@ function renderInvResults() {
     const opts = CATEGORIES.map(c =>
       `<option value="${c}"${d.category === c ? ' selected' : ''}>${c}</option>`
     ).join('');
+    const Engine = window.EscrowReserveEngine;
+    const reserveTypeOpts = Engine ? Engine.RESERVE_TYPES.map(rt =>
+      `<option value="${rt.key}"${d.reserveType === rt.key ? ' selected' : ''}>${esc(rt.label)}</option>`
+    ).join('') : '';
 
     // Inline duplicate detection — check against all other items
     let dupBadge = '';
@@ -6009,10 +7097,11 @@ function renderInvResults() {
       }
       return '';
     }
-    const vVendor   = _vblock(conf.vendorName,  'vendorName');
-    const vAmount   = _vblock(conf.amount,       'amount');
-    const vCategory = _vblock(conf.category,     'category');
-    const vDate     = _vblock(conf.invoiceDate,  'invoiceDate');
+    const vVendor      = _vblock(conf.vendorName,  'vendorName');
+    const vAmount      = _vblock(conf.amount,       'amount');
+    const vCategory    = _vblock(conf.category,     'category');
+    const vDate        = _vblock(conf.invoiceDate,  'invoiceDate');
+    const vReserveType = _vblock(d.reserveTypeConfidence, 'reserveType');
 
     return `
       <div class="bulk-tenant-row${d._error ? ' has-error' : ''}" id="itr-${i}">
@@ -6070,6 +7159,13 @@ function renderInvResults() {
               <span id="ibadgeWrap-${i}-invoiceDate">${vDate}</span>
             </div>
           </div>
+          ${Engine ? `<div class="field-row">
+            <div class="field">
+              <label>Reserve Type ${confidenceBadge(d.reserveTypeConfidence)}</label>
+              <select id="ifield-${i}-reserveType" onchange="invoiceData[${i}].reserveType=this.value;markFieldVerified(${i},'reserveType');savePropertyData()">${reserveTypeOpts}</select>
+              <span id="ibadgeWrap-${i}-reserveType">${vReserveType}</span>
+            </div>
+          </div>` : ''}
         </div>
       </div>`;
   }).join('');
@@ -7593,23 +8689,20 @@ async function runAllocation() {
 function _showMigrationMissingWarning() {
   if (sessionStorage.getItem('_camMigrationWarned')) return;
   sessionStorage.setItem('_camMigrationWarned', '1');
+  console.warn('[CAM] history unavailable — cam_reconciliations migration not applied on the server.');
   showToast(
-    '⚠ CAM history unavailable — database migration not applied. Run migrations/003_cam_reconciliations.sql in Supabase SQL Editor.',
+    '⚠ CAM history isn’t available right now. Your current results still work — this only affects past runs. Contact support if this continues.',
     { color: '#78350f', textColor: '#fde68a', duration: 12000 }
   );
 }
 
 // Called when saveCamResults returns ok:false. Shows a toast + a persistent
 // banner in the results panel so the landlord knows the write failed.
+// User-facing copy stays plain-language; the technical reason (migration
+// missing, anon key, etc.) is logged to the console for support/debugging.
 function _showCamSaveWarning(saveResult) {
-  let msg;
-  if (saveResult.code === 'migration_missing') {
-    msg = '⚠ CAM results were not saved — database migration not applied. Run migrations/003_cam_reconciliations.sql in Supabase SQL Editor. Results are visible now but will be lost on browser close.';
-  } else if (saveResult.keySource === 'anon') {
-    msg = '⚠ CAM results were not saved — SUPABASE_SERVICE_ROLE_KEY is not set on the server. Set it in your deployment environment variables and redeploy.';
-  } else {
-    msg = `⚠ CAM results were not saved — ${saveResult.reason || 'unknown error'}. Results are visible now but will be lost on browser close.`;
-  }
+  console.warn('[CAM] save failed —', saveResult.code || saveResult.reason || 'unknown reason', saveResult);
+  const msg = '⚠ These CAM results weren’t saved to the server. They’re still visible now, but will be lost if you close this tab — export or print them, then contact support.';
   showToast(msg, { color: '#7f1d1d', textColor: '#fca5a5', duration: 10000 });
   const banner = document.getElementById('camSaveWarningBanner');
   if (banner) {
@@ -8221,7 +9314,18 @@ function togglePrevRunDetail(idx) {
 }
 
 function fmt(n) {
-  return '$' + n.toLocaleString('en-US', { minimumFractionDigits: 2, maximumFractionDigits: 2 });
+  if (n === null || n === undefined || n === '' || isNaN(n)) return '—';
+  return '$' + Number(n).toLocaleString('en-US', { minimumFractionDigits: 2, maximumFractionDigits: 2 });
+}
+
+// Reuses the portfolio-level empty-state visual pattern (.ptf-empty-state,
+// defined in index.html) for in-tab empty states (Phase 24).
+function _workspaceEmptyStateHtml(icon, title, desc) {
+  return `<div class="ptf-empty-state">
+    <div class="ptf-empty-icon">${icon}</div>
+    <div class="ptf-empty-title">${esc(title)}</div>
+    <div class="ptf-empty-desc">${esc(desc)}</div>
+  </div>`;
 }
 
 function cleanHTML(text) {
@@ -15552,11 +16656,45 @@ function derivePropertyTimeline(property) {
   };
 }
 
+// Groups the granular timeline `type` taxonomy into the filter chips shown
+// above the Property Activity panel. Purely a display grouping — does not
+// change what gets logged or how appendPropertyTimelineEvent shapes entries.
+const _ACTIVITY_FILTER_GROUPS = {
+  leases:    ['lease_uploaded', 'extraction_completed', 'extraction_warning', 'amendment_uploaded', 'amendment_applied', 'field_overridden', 'review_confirmed'],
+  cam:       ['invoice_imported', 'derived_metrics_rebuilt'],
+  disputes:  ['dispute_created', 'dispute_resolved'],
+  system:    ['sync_restored', 'merge_recovered', 'export_generated'],
+};
+const _ACTIVITY_FILTER_LABELS = { all: 'All', leases: 'Leases', cam: 'CAM', disputes: 'Disputes', system: 'System' };
+let _propertyActivityFilter = 'all';
+
+function _activityGroupForType(type) {
+  for (const [group, types] of Object.entries(_ACTIVITY_FILTER_GROUPS)) {
+    if (types.includes(type)) return group;
+  }
+  return 'system';
+}
+
+function filterPropertyActivity(group) {
+  _propertyActivityFilter = group;
+  const prop = currentProperty();
+  if (prop) renderPropertyActivity(prop);
+}
+
 function renderPropertyActivity(property) {
   const slot = document.getElementById('propertyActivitySlot');
   if (!slot) return;
-  const tl = Array.isArray(property.timeline) ? property.timeline.slice().reverse() : [];
-  if (!tl.length) { slot.innerHTML = ''; return; }
+  const tlAll = Array.isArray(property.timeline) ? property.timeline.slice().reverse() : [];
+  if (!tlAll.length) {
+    slot.innerHTML = _workspaceEmptyStateHtml('&#x1F553;',
+      'No activity has been recorded for this property yet.',
+      'Property activity will appear here as leases, invoices, reserves, and reports are created.');
+    return;
+  }
+
+  const tl = _propertyActivityFilter === 'all'
+    ? tlAll
+    : tlAll.filter(ev => _activityGroupForType(ev.type) === _propertyActivityFilter);
 
   const _SEVERITY_DOT = { critical: 'tl-dot--red', warning: 'tl-dot--yellow', success: 'tl-dot--green', info: 'tl-dot--blue' };
   const _SEVERITY_ICON = { critical: '⛔', warning: '⚠', success: '✓', info: 'ℹ' };
@@ -15567,6 +16705,9 @@ function renderPropertyActivity(property) {
     dispute_resolved: 'Dispute', sync_restored: 'Sync', merge_recovered: 'Merge',
     export_generated: 'Export', derived_metrics_rebuilt: 'Metrics',
   };
+  const filterChipsHtml = ['all', 'leases', 'cam', 'disputes', 'system'].map(g =>
+    `<button class="tl-filter-chip${_propertyActivityFilter === g ? ' tl-filter-chip--active' : ''}" onclick="event.stopPropagation();filterPropertyActivity('${g}')">${esc(_ACTIVITY_FILTER_LABELS[g])}</button>`
+  ).join('');
   const fmtTs = ts => {
     try { const d = new Date(ts); return d.toLocaleDateString('en-US', { month:'short', day:'numeric', year:'numeric' }) + ' ' + d.toLocaleTimeString('en-US', { hour:'numeric', minute:'2-digit' }); }
     catch { return ts; }
@@ -15601,11 +16742,12 @@ function renderPropertyActivity(property) {
 
   slot.innerHTML = `<div class="ap-panel" id="propertyActivityPanel">
     <div class="ap-header" onclick="document.getElementById('paBody').classList.toggle('ap-body--open');this.querySelector('.ap-chevron').classList.toggle('ap-chevron--open')">
-      <div class="ap-header-left"><span class="ap-title">&#x1F4CB;&nbsp; Property Activity &mdash; ${tl.length} event${tl.length !== 1 ? 's' : ''}</span></div>
+      <div class="ap-header-left"><span class="ap-title">&#x1F4CB;&nbsp; Property Activity &mdash; ${tlAll.length} event${tlAll.length !== 1 ? 's' : ''}</span></div>
       <div class="ap-header-right"><span class="ap-chevron">&#x25BC;</span></div>
     </div>
     <div id="paBody" class="ap-body ap-body--open">
-      <div class="tl-list">${rows}</div>
+      <div class="tl-filter-bar">${filterChipsHtml}</div>
+      ${tl.length ? `<div class="tl-list">${rows}</div>` : `<div class="tl-detail" style="padding:6px 0">No events in this category.</div>`}
       ${tl.length > 50 ? `<div class="tl-detail" style="padding:6px 0">Showing 50 of ${tl.length} events</div>` : ''}
     </div>
   </div>`;
@@ -15995,6 +17137,7 @@ async function selectProperty(id) {
   }
 
   // Switch active property and clear workflow state
+  if (id !== activePropId) _activeWorkspaceTab = 'overview';
   activePropId = id;
   resetWorkflow();
 
@@ -16160,7 +17303,7 @@ function resetWorkflow() {
 
   // Reset tenant data for both modes
   tenantData.splice(0, tenantData.length, null, null, null);
-  document.getElementById('bulkResults').innerHTML = '';
+  renderBulkResults(); // shows the "no leases yet" empty state
   document.getElementById('bulkProgress').style.display = 'none';
   document.getElementById('bulkLeaseInput').value = '';
   switchLeaseTab('bulk');
@@ -16178,9 +17321,11 @@ function resetWorkflow() {
 
   document.getElementById('propertyName').value = '';
   document.getElementById('totalSqft').value    = '';
-  document.getElementById('resultsBody').innerHTML = '';
+  document.getElementById('resultsBody').innerHTML = _workspaceEmptyStateHtml('&#x1F4CA;',
+    'No CAM allocation has been run yet.',
+    'Upload leases and invoices, then run CAM Allocation to generate results.');
   document.getElementById('resultsTitle').textContent = `${getCamYear()} CAM Reconciliation`;
-  document.getElementById('results').style.display = 'none';
+  document.getElementById('results').style.display = 'block';
   document.getElementById('disputeSection').style.display = '';
   document.getElementById('disputeInvoiceList').innerHTML = '';
   document.getElementById('openDisputesWrap').style.display = 'none';
@@ -16191,7 +17336,7 @@ function resetWorkflow() {
 
   renderTenantSlots();
   invoiceData.splice(0, invoiceData.length);
-  document.getElementById('invResults').innerHTML = '';
+  renderInvResults(); // shows the "no invoices yet" empty state
   document.getElementById('invProgress').style.display = 'none';
   document.getElementById('invFileInput').value   = '';
   document.getElementById('invFolderInput').value = '';
@@ -16200,11 +17345,10 @@ function resetWorkflow() {
   switchInvTab('files');
   // Reset GL state
   glData = [];
-  document.getElementById('glResults').innerHTML   = '';
-  document.getElementById('glImportBar').innerHTML = '';
   document.getElementById('glStatus').style.display = 'none';
   document.getElementById('glStatus').innerHTML    = '';
   document.getElementById('glFileInput').value     = '';
+  renderGLResults(); // shows the "no GL import" empty state (also clears glImportBar)
 }
 
 function liveUpdateBreadcrumb(name) {
@@ -17343,6 +18487,11 @@ async function saveProperty(property) {
       // review state, reviewOverrides, capBaseAmount, and confidence fields
       // survive a full Supabase round-trip without needing schema changes.
       tenants:           stripped.tenants           || [],
+      // Phase 21: Escrow & Reserve Intelligence — stored as a blob here (same
+      // pattern as camReconciliation) rather than normalized tables, since the
+      // feature doesn't yet need cross-property querying.
+      escrowReserves:    stripped.escrowReserves     || [],
+      drawRequests:      stripped.drawRequests       || [],
     };
 
     console.groupCollapsed('[PIPELINE:3] saveProperty post-strip');
@@ -17611,6 +18760,8 @@ async function loadPropertyData(id) {
         // stored in properties.data.tenants. Use when present; fall back to the
         // tenants table (which lacks review fields) for legacy rows.
         tenants:           d.tenants?.length ? d.tenants.map(normalizeTenant) : null,
+        escrowReserves:    d.escrowReserves    || [],
+        drawRequests:      d.drawRequests      || [],
       };
       console.groupCollapsed('[PIPELINE:4] Supabase read');
       console.log('invoices[0]:', JSON.parse(JSON.stringify(dbData.invoices[0] || {})));
@@ -17748,6 +18899,10 @@ async function loadPropertyData(id) {
     disputes:          _mergedDisps,
     results:           dbData.results           ?? base.results           ?? null,
     camReconciliation: dbData.camReconciliation ?? base.camReconciliation ?? null,
+    // Escrow reserves / draw requests: Supabase is authoritative (draw status
+    // changes must not be lost if a stale local snapshot has fewer tenants).
+    escrowReserves:    dbData.escrowReserves?.length ? dbData.escrowReserves : (base.escrowReserves || []),
+    drawRequests:      dbData.drawRequests?.length   ? dbData.drawRequests   : (base.drawRequests   || []),
   };
 
   // Run hydration guards — normalizes arrays, enforces canonical shapes, detects
@@ -17833,6 +18988,8 @@ function renderProperty(property) {
           switchLeaseTab('bulk');
           renderBulkResults();
           restored = true;
+        } else {
+          renderBulkResults(); // shows the "no leases yet" empty state
         }
       }
     }
@@ -17854,6 +19011,8 @@ function renderProperty(property) {
       switchInvTab('files');
       renderInvResults();
       restored = true;
+    } else {
+      renderInvResults(); // shows the "no invoices yet" empty state
     }
   } catch (e) {
     logError('renderProperty.invoices', e, { propId: property?.id, propName: property?.name });
@@ -17877,9 +19036,7 @@ function renderProperty(property) {
 
   // ── Property Timeline ─────────────────────────────────────────────────
   try {
-    if (Array.isArray(property.timeline)) {
-      renderPropertyActivity(property);
-    }
+    renderPropertyActivity(property);
   } catch (e) { }
 
   // ── CAM Results ───────────────────────────────────────────────────────
@@ -17924,12 +19081,40 @@ function renderProperty(property) {
       renderActivityTimeline();
       showReportSection();
       restored = true;
+    } else {
+      const body    = document.getElementById('resultsBody');
+      const section = document.getElementById('results');
+      if (body) {
+        body.innerHTML = _workspaceEmptyStateHtml('&#x1F4CA;',
+          'No CAM allocation has been run yet.',
+          'Upload leases and invoices, then run CAM Allocation to generate results.');
+      }
+      if (section) section.style.display = 'block';
     }
   } catch (e) {
     logError('renderProperty.restoreResults', e, { propId: property?.id, propName: property?.name });
   }
 
+  // ── Escrow & Reserve Profile (Phase 21) ─────────────────────────────────
+  try {
+    renderEscrowProfile(property);
+  } catch (e) {
+    logError('renderProperty.escrowProfile', e, { propId: property?.id, propName: property?.name });
+  }
+
   if (restored) showRestoredBanner();
+
+  // ── Property KPI Header (Phase 23) ──────────────────────────────────────
+  try {
+    renderPropertyKpiHeader(property);
+  } catch (e) {
+    logError('renderProperty.kpiHeader', e, { propId: property?.id, propName: property?.name });
+  }
+
+  // Keep the active workspace tab in sync on every render (idempotent —
+  // defaults to 'overview' for a newly-selected property, preserved across
+  // re-renders of the same property).
+  switchWorkspaceTab(_activeWorkspaceTab);
 
   // ── Show property view ────────────────────────────────────────────────
   document.getElementById('portfolioDashboard').style.display  = 'none';
