@@ -3308,7 +3308,13 @@ function handleGLUpload(input) {
 function renderGLResults() {
   const container   = document.getElementById('glResults');
   const importBarEl = document.getElementById('glImportBar');
-  if (!glData.length) { container.innerHTML = ''; importBarEl.innerHTML = ''; return; }
+  if (!glData.length) {
+    container.innerHTML = _workspaceEmptyStateHtml('&#x1F4D2;',
+      'No General Ledger file has been imported.',
+      'Import a GL Excel file to compare billed expenses against accounting records.');
+    importBarEl.innerHTML = '';
+    return;
+  }
 
   const included = glData.filter(r => r._include).length;
   const total    = glData.filter(r => r._include).reduce((s, r) => s + r.amount, 0);
@@ -6256,7 +6262,12 @@ function renderBulkResults() {
   const tenants = tenantPairs.map(p => p.d); // plain array for dup-detection below
   const _debugMode = !!(window.DEBUG_LEASES || localStorage.getItem(_lsUserId ? 'ms_debug_leases_' + _lsUserId : 'ms_debug_leases') === '1');
 
-  if (!tenants.length) return;
+  if (!tenants.length) {
+    el.innerHTML = _workspaceEmptyStateHtml('&#x1F4C4;',
+      'No lease documents have been uploaded yet.',
+      'Upload a lease PDF in the Documents tab to begin lease extraction.');
+    return;
+  }
 
   // Build a set of tenant names that appear more than once (case-insensitive).
   // Used to show a "possible duplicate" badge so the user knows to review them.
@@ -7024,7 +7035,12 @@ async function handleBatchInvoices(fileList) {
 
 function renderInvResults() {
   const el = document.getElementById('invResults');
-  if (!invoiceData.length) { el.innerHTML = ''; return; }
+  if (!invoiceData.length) {
+    el.innerHTML = _workspaceEmptyStateHtml('&#x1F9FE;',
+      'No invoices have been uploaded yet.',
+      'Upload invoices in the CAM tab before running a reconciliation.');
+    return;
+  }
 
   const rows = invoiceData.map((d, i) => {
     const conf = d.confidence || {};
@@ -9300,6 +9316,16 @@ function togglePrevRunDetail(idx) {
 function fmt(n) {
   if (n === null || n === undefined || n === '' || isNaN(n)) return '—';
   return '$' + Number(n).toLocaleString('en-US', { minimumFractionDigits: 2, maximumFractionDigits: 2 });
+}
+
+// Reuses the portfolio-level empty-state visual pattern (.ptf-empty-state,
+// defined in index.html) for in-tab empty states (Phase 24).
+function _workspaceEmptyStateHtml(icon, title, desc) {
+  return `<div class="ptf-empty-state">
+    <div class="ptf-empty-icon">${icon}</div>
+    <div class="ptf-empty-title">${esc(title)}</div>
+    <div class="ptf-empty-desc">${esc(desc)}</div>
+  </div>`;
 }
 
 function cleanHTML(text) {
@@ -16659,7 +16685,12 @@ function renderPropertyActivity(property) {
   const slot = document.getElementById('propertyActivitySlot');
   if (!slot) return;
   const tlAll = Array.isArray(property.timeline) ? property.timeline.slice().reverse() : [];
-  if (!tlAll.length) { slot.innerHTML = ''; return; }
+  if (!tlAll.length) {
+    slot.innerHTML = _workspaceEmptyStateHtml('&#x1F553;',
+      'No activity has been recorded for this property yet.',
+      'Property activity will appear here as leases, invoices, reserves, and reports are created.');
+    return;
+  }
 
   const tl = _propertyActivityFilter === 'all'
     ? tlAll
@@ -17272,7 +17303,7 @@ function resetWorkflow() {
 
   // Reset tenant data for both modes
   tenantData.splice(0, tenantData.length, null, null, null);
-  document.getElementById('bulkResults').innerHTML = '';
+  renderBulkResults(); // shows the "no leases yet" empty state
   document.getElementById('bulkProgress').style.display = 'none';
   document.getElementById('bulkLeaseInput').value = '';
   switchLeaseTab('bulk');
@@ -17290,9 +17321,11 @@ function resetWorkflow() {
 
   document.getElementById('propertyName').value = '';
   document.getElementById('totalSqft').value    = '';
-  document.getElementById('resultsBody').innerHTML = '';
+  document.getElementById('resultsBody').innerHTML = _workspaceEmptyStateHtml('&#x1F4CA;',
+    'No CAM allocation has been run yet.',
+    'Upload leases and invoices, then run CAM Allocation to generate results.');
   document.getElementById('resultsTitle').textContent = `${getCamYear()} CAM Reconciliation`;
-  document.getElementById('results').style.display = 'none';
+  document.getElementById('results').style.display = 'block';
   document.getElementById('disputeSection').style.display = '';
   document.getElementById('disputeInvoiceList').innerHTML = '';
   document.getElementById('openDisputesWrap').style.display = 'none';
@@ -17303,7 +17336,7 @@ function resetWorkflow() {
 
   renderTenantSlots();
   invoiceData.splice(0, invoiceData.length);
-  document.getElementById('invResults').innerHTML = '';
+  renderInvResults(); // shows the "no invoices yet" empty state
   document.getElementById('invProgress').style.display = 'none';
   document.getElementById('invFileInput').value   = '';
   document.getElementById('invFolderInput').value = '';
@@ -17312,11 +17345,10 @@ function resetWorkflow() {
   switchInvTab('files');
   // Reset GL state
   glData = [];
-  document.getElementById('glResults').innerHTML   = '';
-  document.getElementById('glImportBar').innerHTML = '';
   document.getElementById('glStatus').style.display = 'none';
   document.getElementById('glStatus').innerHTML    = '';
   document.getElementById('glFileInput').value     = '';
+  renderGLResults(); // shows the "no GL import" empty state (also clears glImportBar)
 }
 
 function liveUpdateBreadcrumb(name) {
@@ -18956,6 +18988,8 @@ function renderProperty(property) {
           switchLeaseTab('bulk');
           renderBulkResults();
           restored = true;
+        } else {
+          renderBulkResults(); // shows the "no leases yet" empty state
         }
       }
     }
@@ -18977,6 +19011,8 @@ function renderProperty(property) {
       switchInvTab('files');
       renderInvResults();
       restored = true;
+    } else {
+      renderInvResults(); // shows the "no invoices yet" empty state
     }
   } catch (e) {
     logError('renderProperty.invoices', e, { propId: property?.id, propName: property?.name });
@@ -19000,9 +19036,7 @@ function renderProperty(property) {
 
   // ── Property Timeline ─────────────────────────────────────────────────
   try {
-    if (Array.isArray(property.timeline)) {
-      renderPropertyActivity(property);
-    }
+    renderPropertyActivity(property);
   } catch (e) { }
 
   // ── CAM Results ───────────────────────────────────────────────────────
@@ -19047,6 +19081,15 @@ function renderProperty(property) {
       renderActivityTimeline();
       showReportSection();
       restored = true;
+    } else {
+      const body    = document.getElementById('resultsBody');
+      const section = document.getElementById('results');
+      if (body) {
+        body.innerHTML = _workspaceEmptyStateHtml('&#x1F4CA;',
+          'No CAM allocation has been run yet.',
+          'Upload leases and invoices, then run CAM Allocation to generate results.');
+      }
+      if (section) section.style.display = 'block';
     }
   } catch (e) {
     logError('renderProperty.restoreResults', e, { propId: property?.id, propName: property?.name });
