@@ -2909,6 +2909,26 @@ function resetTenant(i) {
 
 // ─── Lease Tab Switching ──────────────────────────────────────────────────────
 
+// ─── Property Workspace Tabs (Phase 22 — pure UI reorganization) ───────────
+// Buckets the same pre-existing workspace sections (cardSetup, cardLeases,
+// cardGL, cardInvoices, results, escrowSection, reportsSection, etc.) under
+// tabbed navigation to cut scrolling. No business logic, data model, or
+// extraction engine touched — this only toggles which already-rendered
+// section is visible.
+const WORKSPACE_TABS = ['overview', 'cam', 'reserves', 'estoppels', 'reports', 'documents'];
+let _activeWorkspaceTab = 'overview';
+
+function switchWorkspaceTab(tab) {
+  if (WORKSPACE_TABS.indexOf(tab) === -1) return;
+  _activeWorkspaceTab = tab;
+  WORKSPACE_TABS.forEach(t => {
+    const pane = document.getElementById('wsPane-' + t);
+    const btn  = document.getElementById('wsTabBtn-' + t);
+    if (pane) pane.style.display = (t === tab) ? 'block' : 'none';
+    if (btn)  btn.classList.toggle('active', t === tab);
+  });
+}
+
 function switchLeaseTab(tab) {
   document.getElementById('lTabBulk').classList.toggle('active', tab === 'bulk');
   document.getElementById('lTabSingle').classList.toggle('active', tab === 'single');
@@ -16918,6 +16938,7 @@ async function selectProperty(id) {
   }
 
   // Switch active property and clear workflow state
+  if (id !== activePropId) _activeWorkspaceTab = 'overview';
   activePropId = id;
   resetWorkflow();
 
@@ -18871,6 +18892,11 @@ function renderProperty(property) {
   }
 
   if (restored) showRestoredBanner();
+
+  // Keep the active workspace tab in sync on every render (idempotent —
+  // defaults to 'overview' for a newly-selected property, preserved across
+  // re-renders of the same property).
+  switchWorkspaceTab(_activeWorkspaceTab);
 
   // ── Show property view ────────────────────────────────────────────────
   document.getElementById('portfolioDashboard').style.display  = 'none';

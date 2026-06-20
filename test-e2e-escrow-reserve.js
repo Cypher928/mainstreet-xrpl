@@ -231,6 +231,35 @@ const SUPABASE_MOCK = `
     const noCrash = balancesText.every(t => !/NaN|undefined/.test(t));
     assert(noCrash, 'ESC-E2E-2: null current_balance reserve renders without NaN/undefined (regression: fmt() null-safety crash)', balancesText.join(' | '));
 
+    // ── ESC-E2E-2b: Property Workspace tabs (Phase 22 UI reorganization) ────
+    section('ESC-E2E-2b: Property Workspace tabs');
+    const tabLabels = await page.$$eval('#workspaceTabBar .workspace-tab', els => els.map(e => e.textContent.trim()));
+    const expectedTabLabels = ['Overview', 'CAM', 'Reserves', 'Estoppels', 'Reports', 'Documents'];
+    assert(JSON.stringify(tabLabels) === JSON.stringify(expectedTabLabels),
+      'ESC-E2E-2b: workspace tab bar shows all six tabs in order', tabLabels.join(', '));
+
+    const defaultActiveTab = await page.$eval('#workspaceTabBar .workspace-tab.active', el => el.textContent.trim());
+    assert(defaultActiveTab === 'Overview', 'ESC-E2E-2b: Overview is the default active tab', defaultActiveTab);
+
+    const overviewVisible = await page.$eval('#wsPane-overview', el => getComputedStyle(el).display !== 'none');
+    const reservesHiddenInitially = await page.$eval('#wsPane-reserves', el => getComputedStyle(el).display === 'none');
+    assert(overviewVisible && reservesHiddenInitially, 'ESC-E2E-2b: Overview pane visible and Reserves pane hidden by default');
+
+    await page.click('#wsTabBtn-reserves');
+    const reservesVisibleAfterClick = await page.$eval('#wsPane-reserves', el => getComputedStyle(el).display !== 'none');
+    const overviewHiddenAfterClick  = await page.$eval('#wsPane-overview', el => getComputedStyle(el).display === 'none');
+    const reserveCardVisibleNow = await page.$eval('.escrow-reserve-card', el => getComputedStyle(el).display !== 'none').catch(() => false);
+    assert(reservesVisibleAfterClick && overviewHiddenAfterClick && reserveCardVisibleNow,
+      'ESC-E2E-2b: clicking the Reserves tab shows the Reserves pane (with existing reserve cards) and hides Overview');
+
+    await page.click('#wsTabBtn-overview');
+    const backToOverview = await page.$eval('#wsPane-overview', el => getComputedStyle(el).display !== 'none');
+    assert(backToOverview, 'ESC-E2E-2b: clicking back to Overview restores the Overview pane');
+
+    // Leave the Reserves tab active for the document-management assertions below,
+    // which click real (non-modal) buttons on the reserve cards.
+    await page.evaluate(() => window.switchWorkspaceTab('reserves'));
+
     // ── ESC-E2E-3: Document management buttons present ─────────────────────
     section('ESC-E2E-3: Reserve document management');
     const docCountText = await page.$eval('.escrow-reserve-card .escrow-doc-count', el => el.textContent).catch(() => '');
@@ -304,6 +333,10 @@ const SUPABASE_MOCK = `
 
     // ── ESC-E2E-6: Export Draw Package PDF (report overlay) ─────────────────
     section('ESC-E2E-6: Export Draw Package');
+    // Reserve cards/draw cards live under the Reserves workspace tab (Phase 22) —
+    // switch to it so the underlying buttons are actually clickable (not just
+    // present in the DOM behind a hidden tab pane).
+    await page.evaluate(() => window.switchWorkspaceTab('reserves'));
     await page.click('.escrow-draw-card button:has-text("Generate Package")');
     await page.waitForFunction(() => document.getElementById('reportOverlay').style.display !== 'none', { timeout: 5000 });
     const reportHtml = await page.$eval('#rptBody', el => el.innerHTML);

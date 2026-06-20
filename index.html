@@ -1231,6 +1231,23 @@
     .lease-tab:hover { color: #C9973A; }
     .lease-tab.active { color: #C9973A; border-bottom-color: #C9973A; }
 
+    /* ── Property Workspace Tabs (Phase 22) ──────────────────────────── */
+    .workspace-tab-bar {
+      display: flex; gap: 4px; margin-bottom: 22px; flex-wrap: wrap;
+      border-bottom: 2px solid rgba(255,255,255,0.08);
+      position: sticky; top: 0; z-index: 5; background: #0B1220;
+    }
+    .workspace-tab {
+      padding: 12px 22px; font-size: 0.9rem; font-weight: 700;
+      border: none; background: none; cursor: pointer; color: #64748B;
+      border-bottom: 3px solid transparent; margin-bottom: -2px;
+      transition: all 0.15s;
+    }
+    .workspace-tab:hover { color: #C9973A; }
+    .workspace-tab.active { color: #C9973A; border-bottom-color: #C9973A; }
+    .workspace-tab-pane { animation: wsTabFadeIn 0.12s ease-out; }
+    @keyframes wsTabFadeIn { from { opacity: 0.4; } to { opacity: 1; } }
+
     /* Lease Center table */
     .lc-table {
       width: 100%; border-collapse: collapse; font-size: 0.85rem;
@@ -5163,6 +5180,20 @@
 
 <div class="container" id="mainWorkflow" style="display:none;">
 
+  <!-- ── Workspace Tab Navigation (Phase 22 — pure UI reorganization,
+       no business logic/data model/extraction changes) ─────────────── -->
+  <div class="workspace-tab-bar" id="workspaceTabBar">
+    <button class="workspace-tab active" id="wsTabBtn-overview"  onclick="switchWorkspaceTab('overview')">Overview</button>
+    <button class="workspace-tab"        id="wsTabBtn-cam"       onclick="switchWorkspaceTab('cam')">CAM</button>
+    <button class="workspace-tab"        id="wsTabBtn-reserves"  onclick="switchWorkspaceTab('reserves')">Reserves</button>
+    <button class="workspace-tab"        id="wsTabBtn-estoppels" onclick="switchWorkspaceTab('estoppels')">Estoppels</button>
+    <button class="workspace-tab"        id="wsTabBtn-reports"   onclick="switchWorkspaceTab('reports')">Reports</button>
+    <button class="workspace-tab"        id="wsTabBtn-documents" onclick="switchWorkspaceTab('documents')">Documents</button>
+  </div>
+
+  <!-- ══════════════════════════ TAB: Overview ══════════════════════════ -->
+  <div class="workspace-tab-pane" id="wsPane-overview">
+
   <!-- ── Step Progress Bar ─────────────────────────────────────────── -->
   <div class="step-bar" id="stepBar">
     <div class="step-item active" id="step-setup">
@@ -5217,6 +5248,14 @@
   <!-- ── Property Review Queue (rendered when property has items needing attention) -->
   <div id="propertyReviewQueuePanel" style="display:none;"></div>
 
+  <!-- ── Property Activity Timeline ───────────────────────────────── -->
+  <div id="propertyActivitySlot"></div>
+
+  </div><!-- /wsPane-overview -->
+
+  <!-- ══════════════════════════ TAB: Documents ══════════════════════════ -->
+  <div class="workspace-tab-pane" id="wsPane-documents" style="display:none;">
+
   <!-- ── SECTION 2: Lease Upload ────────────────────────────────────── -->
   <div class="card" id="cardLeases">
     <div class="sec-head">
@@ -5263,6 +5302,11 @@
     <div id="leasePanelCenter" style="display:none;">
     </div>
   </div>
+
+  </div><!-- /wsPane-documents -->
+
+  <!-- ══════════════════════════ TAB: CAM ══════════════════════════════ -->
+  <div class="workspace-tab-pane" id="wsPane-cam" style="display:none;">
 
   <!-- ── GL Excel Upload ───────────────────────────────────────────── -->
   <div class="card" id="cardGL">
@@ -5404,8 +5448,10 @@
     </div>
   </div>
 
-  <!-- ── Property Activity Timeline ───────────────────────────────── -->
-  <div id="propertyActivitySlot"></div>
+  </div><!-- /wsPane-cam -->
+
+  <!-- ══════════════════════════ TAB: Reports ════════════════════════════ -->
+  <div class="workspace-tab-pane" id="wsPane-reports" style="display:none;">
 
   <!-- ── SECTION 6: Reports ─────────────────────────────────────────── -->
   <div class="card" id="reportsSection">
@@ -5483,6 +5529,11 @@
     </div>
   </div>
 
+  </div><!-- /wsPane-reports -->
+
+  <!-- ══════════════════════════ TAB: Reserves ═══════════════════════════ -->
+  <div class="workspace-tab-pane" id="wsPane-reserves" style="display:none;">
+
   <!-- ── SECTION 7: Escrow & Reserve Documents ───────────────────────── -->
   <div class="card" id="escrowSection">
     <div class="sec-head">
@@ -5499,6 +5550,21 @@
 
     <div class="escrow-section-label" style="margin-top:20px;">Draw Requests</div>
     <div id="escrowDrawRequestsList"></div>
+  </div>
+
+  </div><!-- /wsPane-reserves -->
+
+  <!-- ══════════════════════════ TAB: Estoppels ══════════════════════════ -->
+  <div class="workspace-tab-pane" id="wsPane-estoppels" style="display:none;">
+    <div class="card" id="estoppelsPlaceholder">
+      <div class="sec-head">
+        <div class="sec-num" style="background:#475569;">&#x1F4DD;</div>
+        <div>
+          <h2>Estoppels</h2>
+          <p>Estoppel certificate generation and tracking is planned for a future update.</p>
+        </div>
+      </div>
+    </div>
   </div>
 
 </div><!-- /container -->
