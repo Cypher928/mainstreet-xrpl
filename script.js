@@ -2289,7 +2289,7 @@ function _renderDrawBuilderBody(prop, reserve) {
         onchange="_toggleDrawInvoice(${idx}, this.checked)">
       <span>${esc(inv.vendorName || inv.fileName || 'Vendor')} &mdash; ${fmt(inv.amount || 0)}</span>
     </label>`;
-  }).join('') || `<p style="color:#94A3B8;font-size:0.85rem;">No invoices uploaded yet.</p>`;
+  }).join('') || `<p style="color:#94A3B8;font-size:0.85rem;">No invoices uploaded yet — upload invoices in the CAM tab, then return here to attach them to this draw.</p>`;
 
   const filterToggle = allInvoices.length > relevantIdx.length
     ? `<button class="modal-cancel" style="padding:2px 8px;margin-bottom:6px;" onclick="_toggleDrawInvoiceFilter()">${showAll ? 'Show relevant invoices only' : `Show all invoices (${allInvoices.length})`}</button>`
@@ -14437,19 +14437,22 @@ async function ensureDemoProperty() {
       .eq('id', DEMO_PROPERTY_ID)
       .eq('user_id', user.id)
       .single();
-    if (!error && row?.data?.camReconciliation?.results?.length > 0 && row?.data?._demoV === 2) {
-      console.log('[ensureDemoProperty] already seeded v2 — skip');
+    if (!error && row?.data?.camReconciliation?.results?.length > 0 && row?.data?._demoV === 3) {
+      console.log('[ensureDemoProperty] already seeded v3 — skip');
       return DEMO_PROPERTY_ID;
     }
   } catch (_) { /* not found — fall through to seed */ }
 
-  console.log('[ensureDemoProperty] seeding Cascade Commons v2…');
+  console.log('[ensureDemoProperty] seeding Cascade Commons v3…');
 
   // ── Demo data constants ───────────────────────────────────────────────────
   const PROP_NAME    = 'Cascade Commons';
-  const PROP_SQFT    = 47500;
+  // 90% occupancy (23,400 leased / 26,000 total) — Phase 25: a near-full but not
+  // fully-leased building reads as realistic; 47,500 sqft produced ~49% occupancy,
+  // which pilot feedback flagged as making the demo look broken.
+  const PROP_SQFT    = 26000;
   const CAM_YEAR     = 2025;
-  const DEMO_VERSION = 2;
+  const DEMO_VERSION = 3;
 
   // capBaseAmount is prior-year CAM so that cap enforcement fires on this demo.
   const demoTenantConfigs = [
@@ -14681,7 +14684,7 @@ async function ensureDemoProperty() {
     camYear:           CAM_YEAR,
     results:           null,
     camReconciliation: { ...camReconciliation, invoicesFull: undefined },
-    _demoV:            2,
+    _demoV:            3,
   };
 
   const { error: propErr } = await db.from('properties')
@@ -15386,7 +15389,7 @@ function _rwRenderInvoices(t) {
   const recon = lastResults.find(r => r.name === t.tenant_name);
   const el = document.getElementById('rwInvoiceList');
   if (!recon) {
-    el.innerHTML = `<div class="rw-empty">No reconciliation run yet.</div>`;
+    el.innerHTML = `<div class="rw-empty">No reconciliation run yet. Upload invoices in the CAM tab, then run CAM Allocation to see this tenant's allocated share.</div>`;
     return;
   }
   const proRataPct = typeof recon.proRataPercent === 'number' ? recon.proRataPercent : (recon.proRata || 0) * 100;
@@ -15403,7 +15406,7 @@ function _rwRenderInvoices(t) {
     </div>
     <div class="rw-prorata-bar"><div class="rw-prorata-fill" style="width:${proRataFill}%;background:${fillColor};"></div></div>`;
   if (invoices.length === 0) {
-    html += `<div class="rw-empty">No invoices allocated.</div>`;
+    html += `<div class="rw-empty">No invoices allocated to this tenant for the current CAM run.</div>`;
   } else {
     html += invoices.slice(0, 12).map(inv => {
       const name = inv.vendor || inv.description || inv.invoiceId || '—';
@@ -16862,6 +16865,40 @@ function _applyPortfolioSearch() {
   renderPortfolio(_props);
 }
 
+// Phase 25 — renders the two seeded demo properties directly as cards inside
+// "Your Properties" (instead of only inside the separate #demoWelcomePanel)
+// so a first-time user sees them without needing to discover a button first.
+// Only shown when the user has zero real properties — see call site below.
+function _demoPropertyCardHtml(cfg) {
+  return `
+    <div class="ptf-prop-card ptf-demo-card" onclick="${esc(cfg.onclick)}">
+      <div class="ptf-card-top">
+        <div class="ptf-prop-name">${esc(cfg.name)}</div>
+        <div class="ptf-card-badges"><span class="ptf-demo-badge">DEMO</span></div>
+      </div>
+      <div class="ptf-status-row"><span>${esc(cfg.module)}</span></div>
+      <div class="ptf-insight">${esc(cfg.desc)}</div>
+      <div class="ptf-card-action-row">
+        <button class="ptf-card-open-btn" onclick="event.stopPropagation();${esc(cfg.onclick)}">${esc(cfg.cta)} &rsaquo;</button>
+      </div>
+    </div>`;
+}
+
+function _renderDemoPropertiesSection() {
+  return `
+    <div class="ptf-demo-section-title" style="grid-column:1 / -1;">&#x1F3AF; Demo Properties &mdash; explore with sample data</div>
+    ${_demoPropertyCardHtml({
+      name: 'Cascade Commons', module: 'CAM Reconciliation Demo',
+      desc: '5 tenants · 26 invoices · full-year CAM allocation with cap & exclusion enforcement.',
+      onclick: 'loadDemo()', cta: 'Open Demo',
+    })}
+    ${_demoPropertyCardHtml({
+      name: 'Harborview Retail Center', module: 'Acquisition Due Diligence Demo',
+      desc: 'Lease risk analysis, CAM leakage detection, occupancy review, investment recommendation.',
+      onclick: '_openAcqDemo()', cta: 'Open Demo',
+    })}`;
+}
+
 function renderPortfolio(props) {
   props = props || _props; // handle no-arg calls
   if (!Array.isArray(props)) {
@@ -16964,13 +17001,13 @@ function renderPortfolio(props) {
 
   if (sortedPairs.length === 0) {
     document.getElementById('propertyCardsGrid').innerHTML = `
+      ${_renderDemoPropertiesSection()}
       <div class="ptf-empty-state">
         <div class="ptf-empty-icon">&#x1F3E2;</div>
         <div class="ptf-empty-title">No properties yet</div>
-        <div class="ptf-empty-desc">Load the demo to see a complete reconciliation — or create your first property and get audit-ready in 5 minutes.</div>
+        <div class="ptf-empty-desc">Create your first property and get audit-ready in 5 minutes — or open one of the demo properties above to explore with sample data.</div>
         <div class="ptf-empty-cta">
-          <button class="ptf-empty-btn-primary" onclick="loadDemo()">&#x1F3AF; Try Live Demo</button>
-          <button class="ptf-empty-btn-secondary" onclick="addNewProperty()">+ Create Property</button>
+          <button class="ptf-empty-btn-primary" onclick="addNewProperty()">+ Create Property</button>
         </div>
       </div>`;
     renderReviewQueue(props);
@@ -19102,7 +19139,7 @@ function renderProperty(property) {
     logError('renderProperty.escrowProfile', e, { propId: property?.id, propName: property?.name });
   }
 
-  if (restored) showRestoredBanner();
+  if (restored) showRestoredBanner(property?.id === DEMO_PROPERTY_ID);
 
   // ── Property KPI Header (Phase 23) ──────────────────────────────────────
   try {
@@ -19283,8 +19320,10 @@ function restoreResultsDisplay(snapshot) {
   });
 }
 
-// Show a temporary green banner confirming data was loaded from a previous session.
-function showRestoredBanner() {
+// Show a temporary banner confirming data was loaded — wording branches for demo
+// properties (Phase 25) so first-time users don't mistake seeded demo data for
+// their own restored work or another user's session.
+function showRestoredBanner(isDemo) {
   let banner = document.getElementById('restoredBanner');
   if (!banner) {
     banner = document.createElement('div');
@@ -19298,7 +19337,9 @@ function showRestoredBanner() {
     ].join(';');
     document.body.appendChild(banner);
   }
-  banner.textContent = '✅ Data restored from previous session';
+  banner.textContent = isDemo
+    ? '🎯 Viewing demo property — pre-loaded sample data, not your own'
+    : '✅ Data restored from previous session';
   banner.style.opacity = '1';
   clearTimeout(banner._hideTimer);
   banner._hideTimer = setTimeout(() => { banner.style.opacity = '0'; }, 4000);
@@ -19701,7 +19742,7 @@ function _renderAcqLeaselist() {
   const el = document.getElementById('acqLeaseList');
   if (!el) return;
   if (!_acqTenants.length) {
-    el.innerHTML = '<li style="color:#475569;font-size:0.78rem;">No leases uploaded</li>';
+    el.innerHTML = '<li style="color:#475569;font-size:0.78rem;">No leases uploaded yet — use "Upload Leases" above to extract tenant terms.</li>';
     return;
   }
   el.innerHTML = _acqTenants.map(t => {
@@ -19715,7 +19756,7 @@ function _renderAcqInvoiceList() {
   const el = document.getElementById('acqInvoiceList');
   if (!el) return;
   if (!_acqInvoices.length) {
-    el.innerHTML = '<li style="color:#475569;font-size:0.78rem;">No invoices uploaded</li>';
+    el.innerHTML = '<li style="color:#475569;font-size:0.78rem;">No invoices uploaded yet — use "Upload Invoices" above to add CAM expense documents.</li>';
     return;
   }
   el.innerHTML = _acqInvoices.map(inv => {
