@@ -14530,7 +14530,7 @@ async function ensureDemoProperty() {
       .eq('id', DEMO_PROPERTY_ID)
       .eq('user_id', user.id)
       .single();
-    if (!error && row?.data?.camReconciliation?.results?.length > 0 && row?.data?._demoV === 3) {
+    if (!error && row?.data?.camReconciliation?.results?.length > 0 && row?.data?._demoV === 4) {
       console.log('[ensureDemoProperty] already seeded v3 — skip');
       return DEMO_PROPERTY_ID;
     }
@@ -14545,7 +14545,7 @@ async function ensureDemoProperty() {
   // which pilot feedback flagged as making the demo look broken.
   const PROP_SQFT    = 26000;
   const CAM_YEAR     = 2025;
-  const DEMO_VERSION = 3;
+  const DEMO_VERSION = 4;
 
   // capBaseAmount is prior-year CAM so that cap enforcement fires on this demo.
   const demoTenantConfigs = [
@@ -14764,6 +14764,72 @@ async function ensureDemoProperty() {
     },
   ];
 
+  // ── Synthetic activity timeline ───────────────────────────────────────────
+  // The demo property is the first thing most users see, but ensureDemoProperty
+  // never went through the real lease/invoice/dispute flows that call
+  // appendPropertyTimelineEvent(), so property.timeline was always empty and
+  // renderPropertyActivity() showed "No activity has been recorded" despite
+  // the property being fully populated. Seed a realistic-looking history here,
+  // shaped to match appendPropertyTimelineEvent()'s entry format.
+  const daysAgo = n => new Date(Date.now() - n * 24 * 60 * 60 * 1000).toISOString();
+  let _tlSeq = 0;
+  const tlEntry = (daysOffset, type, severity, title, description, extra) => ({
+    id:                  'demo-tl-' + (_tlSeq++),
+    timestamp:           daysAgo(daysOffset),
+    type, severity,
+    propertyId:          DEMO_PROPERTY_ID,
+    tenantId:            (extra && extra.tenantId) || null,
+    actor:               (extra && extra.actor) || 'System',
+    source:              (extra && extra.source) || null,
+    title, description,
+    metadata:            (extra && extra.metadata) || {},
+    relatedEvidenceIds:  [],
+    relatedDisputeIds:   (extra && extra.relatedDisputeIds) || [],
+    relatedInvoiceIds:   (extra && extra.relatedInvoiceIds) || [],
+    derivedStateVersion: null,
+  });
+  const demoTimeline = [
+    ...demoTenants.map((t, i) => tlEntry(
+      60 - i * 2, 'lease_uploaded', 'success',
+      `Lease uploaded — ${t.tenant_name}`,
+      `${t.lease_type || 'Lease'} agreement extracted and added to ${PROP_NAME}.`,
+      { tenantId: t.id, actor: 'Property Manager' }
+    )),
+    ...demoTenants.map((t, i) => tlEntry(
+      59 - i * 2, 'review_confirmed', 'success',
+      `Extraction reviewed — ${t.tenant_name}`,
+      'Lease terms confirmed accurate after manual review.',
+      { tenantId: t.id, actor: 'Property Manager' }
+    )),
+    tlEntry(45, 'invoice_imported', 'info',
+      'Q1 invoices imported', '6 invoices imported covering insurance, landscaping, utilities, janitorial, management, and security.'),
+    tlEntry(31, 'dispute_created', 'warning',
+      'Dispute opened — FitZone Athletics',
+      'Parking lot resurfacing flagged as a possible capital improvement rather than routine maintenance.',
+      { relatedDisputeIds: [0] }),
+    tlEntry(22, 'dispute_resolved', 'success',
+      'Dispute resolved — FitZone Athletics',
+      'Landlord provided a work order confirming the charge was a maintenance seal coat. Charge accepted.',
+      { relatedDisputeIds: [0] }),
+    tlEntry(18, 'invoice_imported', 'info',
+      'Q2 invoices imported', '5 invoices imported covering landscaping, maintenance, utilities, janitorial, management, and security.'),
+    tlEntry(10, 'invoice_imported', 'info',
+      'Q3 invoices imported', '5 invoices imported including peak-season utilities and fall HVAC service.'),
+    tlEntry(8, 'dispute_created', 'warning',
+      'Dispute opened — Whole Health Market',
+      'Tenant requested itemized receipts for a $17,100 repairs invoice before approving CAM allocation.',
+      { relatedDisputeIds: [1] }),
+    tlEntry(3, 'invoice_imported', 'info',
+      'Q4 invoices imported', '6 invoices imported, completing the 2025 expense set.'),
+    tlEntry(1, 'dispute_created', 'warning',
+      'Dispute opened — Summit Coffee & Provisions',
+      'Tenant requested clarification on the unit serviced by an emergency HVAC repair.',
+      { relatedDisputeIds: [2] }),
+    tlEntry(0, 'derived_metrics_rebuilt', 'info',
+      'CAM reconciliation run',
+      `Reconciliation completed for ${fullResults.length} tenants against $${totalExpenses.toLocaleString()} in expenses.`),
+  ];
+
   // ── Persist to Supabase ───────────────────────────────────────────────────
   // invoicesFull is intentionally omitted (matches _stripBlobs convention);
   // on load it is re-hydrated from data.invoices via renderProperty.
@@ -14774,10 +14840,11 @@ async function ensureDemoProperty() {
       category: inv.category, invoiceDate: inv.invoiceDate,
     })),
     disputes:          demoDisputes,
+    timeline:          demoTimeline,
     camYear:           CAM_YEAR,
     results:           null,
     camReconciliation: { ...camReconciliation, invoicesFull: undefined },
-    _demoV:            3,
+    _demoV:            4,
   };
 
   const { error: propErr } = await db.from('properties')
@@ -14815,6 +14882,7 @@ async function ensureDemoProperty() {
     tenants:           demoTenants,
     invoices:          propertyData.invoices,
     disputes:          demoDisputes,
+    timeline:          demoTimeline,
     camYear:           CAM_YEAR,
     camReconciliation, // invoicesFull intact for in-memory rendering
   };
