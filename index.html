@@ -392,7 +392,7 @@
     #explainPanelTitle { font-size: 1rem; font-weight: 700; color: #E2E8F0; }
     #explainPanelSubtitle { font-size: 0.76rem; color: #64748B; margin-top: 2px; }
     .ep-close-btn {
-      padding: 5px 14px; border-radius: 7px; font-size: 0.8rem; font-weight: 700;
+      padding: 10px 16px; min-height: 40px; border-radius: 7px; font-size: 0.8rem; font-weight: 700;
       border: 1.5px solid rgba(255,255,255,0.12); background: transparent;
       color: #94A3B8; cursor: pointer; pointer-events: auto;
     }
@@ -1250,15 +1250,15 @@
     .workspace-tab .ws-tab-icon { font-size: 1rem; line-height: 1; }
     .workspace-tab:hover { color: #C9973A; background: rgba(201,151,58,0.06); }
     .workspace-tab.active {
-      color: #C9973A; border-bottom-color: #C9973A;
-      background: rgba(201,151,58,0.1);
+      color: #C9973A; border-bottom-color: #C9973A; font-weight: 800;
+      background: rgba(201,151,58,0.16);
     }
     .workspace-tab-pane { animation: wsTabFadeIn 0.12s ease-out; }
     @keyframes wsTabFadeIn { from { opacity: 0.4; } to { opacity: 1; } }
     @media (max-width: 480px) {
       .workspace-tab-bar { gap: 4px; margin-bottom: 24px; }
-      .workspace-tab { padding: 11px 14px; font-size: 0.82rem; gap: 5px; flex: 1 1 auto; justify-content: center; }
-      .workspace-tab .ws-tab-icon { font-size: 0.92rem; }
+      .workspace-tab { padding: 13px 14px; font-size: 0.85rem; gap: 5px; flex: 1 1 auto; justify-content: center; min-height: 44px; }
+      .workspace-tab .ws-tab-icon { font-size: 0.95rem; }
     }
 
     /* ── Property KPI Header (Phase 23) ──────────────────────────────── */
@@ -3144,7 +3144,7 @@
         overflow: hidden; text-overflow: ellipsis; white-space: nowrap;
       }
       .rpt-toolbar-actions { flex-shrink: 0; gap: 6px; }
-      .rpt-tool-btn, .rpt-close-btn { padding: 7px 11px; font-size: 0.74rem; }
+      .rpt-tool-btn, .rpt-close-btn { padding: 10px 14px; font-size: 0.78rem; min-height: 40px; }
       .rpt-body { margin: 20px auto 56px; padding: 0 16px; }
       .rpt-cover { padding: 22px 0 20px; margin-bottom: 24px; }
       .rpt-cover-title { font-size: 1.5rem; }
@@ -4366,11 +4366,11 @@
     .acq-modal-name     { color: #e2e8f0; font-weight: 600; }
     .acq-modal-actions  { display: flex; gap: 10px; justify-content: flex-end; }
     .acq-modal-confirm  { background: #C9973A; color: #0a0f1a; border: none; border-radius: 6px;
-                          padding: 8px 20px; font-weight: 700; cursor: pointer; font-size: 0.85rem; }
+                          padding: 11px 20px; min-height: 40px; font-weight: 700; cursor: pointer; font-size: 0.85rem; }
     .acq-modal-confirm:hover   { background: #d4a84a; }
     .acq-modal-confirm:disabled { opacity: 0.5; cursor: not-allowed; }
     .acq-modal-cancel   { background: transparent; color: #94a3b8; border: 1px solid #334155;
-                          border-radius: 6px; padding: 8px 18px; cursor: pointer; font-size: 0.85rem; }
+                          border-radius: 6px; padding: 11px 18px; min-height: 40px; cursor: pointer; font-size: 0.85rem; }
     .acq-modal-cancel:hover { color: #e2e8f0; border-color: #64748b; }
 
     .acq-upload-grid { display: grid; grid-template-columns: 1fr 1fr; gap: 16px; margin-bottom: 20px; }
@@ -4783,7 +4783,7 @@
     @media (max-width: 480px) {
       .ptf-head-actions { gap: 6px; flex-wrap: wrap; width: 100%; }
       .ptf-search-input { width: 100%; flex: 1 1 100%; order: -1; margin-bottom: 6px; }
-      .ptf-export-btn   { font-size: 0.7rem; padding: 5px 8px; flex: 1 1 auto; }
+      .ptf-export-btn   { font-size: 0.78rem; padding: 10px 12px; flex: 1 1 auto; min-height: 40px; }
       .add-prop-btn     { flex: 1 1 auto; }
     }
 
@@ -5339,7 +5339,7 @@
     <!-- Tab bar -->
     <div class="lease-tab-bar">
       <button class="lease-tab active" id="lTabBulk"   onclick="switchLeaseTab('bulk')">&#x1F4C2; Upload Leases</button>
-      <button class="lease-tab"        id="lTabSingle" onclick="switchLeaseTab('single')">&#x1F4C4; Add One Tenant</button>
+      <button class="lease-tab"        id="lTabSingle" onclick="switchLeaseTab('single')">&#x1F464; Add One Tenant</button>
       <button class="lease-tab"        id="lTabCenter" onclick="switchLeaseTab('center')">&#x1F4AC; Ask the Lease</button>
     </div>
 
@@ -5421,7 +5421,7 @@
 
     <!-- Tab bar -->
     <div class="lease-tab-bar">
-      <button class="lease-tab active" id="iTabFiles" onclick="switchInvTab('files')">&#x1F9FE; Upload Files</button>
+      <button class="lease-tab active" id="iTabFiles" onclick="switchInvTab('files')">&#x1F4E4; Upload Files</button>
       <button class="lease-tab"        id="iTabYardi" onclick="switchInvTab('yardi')">&#x1F4CA; Import from Yardi</button>
     </div>
 

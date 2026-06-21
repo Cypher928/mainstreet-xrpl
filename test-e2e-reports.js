@@ -311,7 +311,7 @@ const REPORT_BUTTONS = [
     }, { timeout: 8000 });
 
     const toolBtnFontSize = await page.$eval('.rpt-tool-btn', el => getComputedStyle(el).fontSize).catch(() => '');
-    assert(toolBtnFontSize === '11.84px', 'STEP 3: mobile @media(max-width:600px) report toolbar styling applied', toolBtnFontSize);
+    assert(toolBtnFontSize === '12.48px', 'STEP 3: mobile @media(max-width:600px) report toolbar styling applied', toolBtnFontSize);
 
     const titleEllipsis = await page.$eval('#rptToolbarTitle', el => getComputedStyle(el).textOverflow).catch(() => '');
     assert(titleEllipsis === 'ellipsis', 'STEP 3: report title truncates with ellipsis on narrow viewport', titleEllipsis);
