@@ -337,6 +337,60 @@ const SUPABASE_MOCK = `
     await page.screenshot({ path: path.join(SHOT_DIR, '05-harborview-demo.png'), fullPage: true });
     info('Screenshot: 05-harborview-demo.png');
 
+    // ── Duplicate vendor warning badge — mobile truncation fix ────────────────
+    section('P25-V9: Duplicate vendor warning badge does not truncate on mobile');
+    await page.evaluate(() => loadDemo());
+    await page.waitForFunction(() => {
+      const el = document.getElementById('mainWorkflow');
+      return el && el.style.display !== 'none';
+    }, { timeout: 15000 });
+    await page.evaluate(() => switchWorkspaceTab('cam'));
+    await page.evaluate(() => {
+      invoiceData.splice(0, invoiceData.length,
+        { vendorName: 'Apex Building Services And Maintenance Group', amount: 1450.00, category: 'maintenance', invoiceDate: '2025-01-15', confidence: { vendorName: 95, amount: 95, category: 95 } },
+        { vendorName: 'Apex Building Services & Maintenance Group', amount: 1450.50, category: 'maintenance', invoiceDate: '2025-01-16', confidence: { vendorName: 95, amount: 95, category: 95 } }
+      );
+      renderInvResults();
+    });
+    await page.setViewportSize({ width: 390, height: 844 }); // iPhone 14-class viewport
+    await page.waitForTimeout(300);
+    const dupRowVisible = await page.$eval('.inv-dup-row', el => el.getBoundingClientRect().height > 0).catch(() => false);
+    assert(dupRowVisible, 'P25-V9: duplicate warning row is present and rendered at mobile width');
+
+    const dupClip = await page.evaluate(() => {
+      const row = document.querySelector('.inv-dup-row');
+      const badge = document.querySelector('.dup-row-badge');
+      const removeBtn = document.querySelector('.dup-row-remove');
+      if (!row || !badge || !removeBtn) return null;
+      const ancestorRow = row.closest('.bulk-tenant-row');
+      const ancestorBox = ancestorRow ? ancestorRow.getBoundingClientRect() : null;
+      const removeBox = removeBtn.getBoundingClientRect();
+      // overflow:hidden on the ancestor visually clips content but does not
+      // change getBoundingClientRect() — the only reliable signal is whether
+      // the button's box still falls fully inside the ancestor's box.
+      return {
+        removeBtnVisible: removeBox.width > 0 && removeBox.height > 0,
+        removeBtnWithinAncestor: ancestorBox
+          ? removeBox.right  <= ancestorBox.right + 1 &&
+            removeBox.bottom <= ancestorBox.bottom + 1
+          : null,
+        removeBoxRight: removeBox.right,
+        ancestorRight: ancestorBox ? ancestorBox.right : null,
+      };
+    });
+    assert(!!dupClip && dupClip.removeBtnVisible, 'P25-V9: 🔍 "Remove" button on duplicate badge has nonzero rendered size (not clipped to 0) at 390px width', JSON.stringify(dupClip));
+    assert(!!dupClip && dupClip.removeBtnWithinAncestor, 'P25-V9: 🔍 "Remove" button stays within the row\'s bounding box (not cut off by ancestor overflow:hidden)', JSON.stringify(dupClip));
+
+    await page.screenshot({ path: path.join(SHOT_DIR, '07-mobile-dup-badge.png'), fullPage: true });
+    info('Screenshot: 07-mobile-dup-badge.png');
+    await page.setViewportSize({ width: 1280, height: 900 });
+    await page.evaluate(() => { invoiceData.splice(0, invoiceData.length); renderInvResults(); });
+    await page.evaluate(() => backToPortfolio());
+    await page.waitForFunction(() => {
+      const el = document.getElementById('portfolioDashboard');
+      return el && el.style.display !== 'none';
+    }, { timeout: 10000 });
+
     // ── Console error check ─────────────────────────────────────────────────────
     section('P25-V8: Console error check');
     // Excludes external resource load failures (fonts/analytics CDNs unreachable
