@@ -865,12 +865,12 @@ window.LeaseReviewPackets = (() => {
 
     // ── SECTION: Executive Summary (4 KPI groups) ────────────────────────────
     const kpiGroup = (title, items) => `
-      <div style="background:#1e293b;border-radius:8px;padding:14px 16px;flex:1;min-width:180px;">
-        <div style="font-size:0.68rem;font-weight:700;letter-spacing:0.08em;color:#64748b;text-transform:uppercase;margin-bottom:10px;">${_esc(title)}</div>
+      <div class="lender-kpi-group">
+        <div class="lender-kpi-title">${_esc(title)}</div>
         ${items.map(([label, value, alert]) => `
-          <div style="display:flex;justify-content:space-between;align-items:baseline;margin-bottom:7px;">
-            <span style="font-size:0.78rem;color:#94a3b8;">${_esc(label)}</span>
-            <span style="font-size:0.85rem;font-weight:600;color:${alert ? '#f87171' : '#e2e8f0'};">${_esc(String(value))}</span>
+          <div class="lender-kpi-row">
+            <span class="lender-kpi-label">${_esc(label)}</span>
+            <span class="lender-kpi-value${alert ? ' lender-kpi-value--alert' : ''}">${_esc(String(value))}</span>
           </div>`).join('')}
       </div>`;
 
@@ -904,13 +904,14 @@ window.LeaseReviewPackets = (() => {
     // ── SECTION: Property Risk Snapshot ──────────────────────────────────────
     const riskCard = (label, level, description) => {
       const r = _risk(level);
-      return `<div style="background:${r.bg};border:1px solid ${r.dot}33;border-radius:8px;padding:14px 16px;flex:1;min-width:160px;">
-        <div style="display:flex;align-items:center;gap:8px;margin-bottom:6px;">
-          <div style="width:10px;height:10px;border-radius:50%;background:${r.dot};flex-shrink:0;"></div>
-          <span style="font-size:0.68rem;font-weight:700;letter-spacing:0.08em;color:#94a3b8;text-transform:uppercase;">${_esc(label)}</span>
+      const lvl = (level === 'Low' || level === 'Medium' || level === 'High') ? level.toLowerCase() : 'unknown';
+      return `<div class="lender-risk-card lender-risk-card--${lvl}">
+        <div class="lender-risk-card-header">
+          <div class="lender-risk-dot lender-risk-dot--${lvl}"></div>
+          <span class="lender-risk-card-label">${_esc(label)}</span>
         </div>
-        <div style="font-size:1.1rem;font-weight:700;color:${r.color};margin-bottom:4px;">${r.label}</div>
-        <div style="font-size:0.72rem;color:#64748b;line-height:1.4;">${_esc(description)}</div>
+        <div class="lender-risk-card-value lender-risk-card-value--${lvl}">${r.label}</div>
+        <div class="lender-risk-card-desc">${_esc(description)}</div>
       </div>`;
     };
 
@@ -1046,7 +1047,7 @@ window.LeaseReviewPackets = (() => {
       }
 
       const thresholdHtml = thresholds.map(th =>
-        `<div style="margin-top:10px;padding:10px 14px;background:#1e293b;border-left:3px solid ${th.color};border-radius:4px;font-size:0.79rem;color:${th.color};">
+        `<div class="lender-note-box lender-note-box--warn ${th.color === '#f87171' ? 'lender-note-box--warn-red' : 'lender-note-box--warn-amber'}">
           ⚠ ${_esc(th.note)}
         </div>`
       ).join('');
@@ -1085,7 +1086,7 @@ window.LeaseReviewPackets = (() => {
           ])}
         </div>
         ${(vacantSqft || 0) > 0
-          ? `<div style="font-size:0.79rem;color:#94a3b8;line-height:1.6;padding:10px 14px;background:#1e293b;border-radius:6px;">
+          ? `<div class="lender-note-box">
               Vacant space (${(vacantSqft || 0).toLocaleString('en-US')} SF, ${vacPct}% of building) represents unleased area that may reduce recoverable common area expense reimbursements.
               During vacancy, the property owner typically absorbs the proportionate share of operating expenses for unoccupied space.
               Lenders should evaluate the impact of continued vacancy on net operating income and debt service coverage.

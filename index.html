@@ -2895,16 +2895,6 @@
       font-size: 0.61rem; text-transform: uppercase; letter-spacing: 0.1em; color: #475569;
     }
     .rpt-cover-meta-item span:last-child { font-size: 0.82rem; color: #94A3B8; font-weight: 500; }
-    /* Legacy letterhead for holes report */
-    .rpt-letterhead {
-      text-align: center; border-bottom: 2px solid rgba(201,151,58,0.35);
-      padding-bottom: 20px; margin-bottom: 32px;
-    }
-    .rpt-letterhead h1 {
-      font-size: 1.8rem; margin: 0 0 4px; color: #C9973A;
-      font-family: 'Cormorant Garamond', Georgia, serif; font-weight: 700;
-    }
-    .rpt-letterhead .rpt-sub { font-size: 0.82rem; color: #64748B; }
     /* ── Section title ───────────────────────────────────────────── */
     .rpt-section-title {
       font-size: 0.69rem; font-weight: 700; color: #C9973A;
@@ -2916,6 +2906,44 @@
     .ai-risk-title { font-size: 0.78rem; font-weight: 700; color: #C9973A; text-transform: uppercase; letter-spacing: 0.07em; margin-bottom: 12px; }
     .ai-risk-row { display: flex; align-items: center; gap: 10px; font-size: 0.88rem; color: #CBD5E1; margin-bottom: 6px; }
     .ai-risk-row:last-child { margin-bottom: 0; }
+    .exc-narrative { border-radius: 6px; padding: 12px 16px; margin-bottom: 16px; border-left: 3px solid; }
+    .exc-narrative-headline { font-size: 0.95rem; font-weight: 700; margin-bottom: 5px; }
+    .exc-narrative-summary { font-size: 0.82rem; line-height: 1.5; }
+    .exc-narrative--critical { background: rgba(239,68,68,0.07); border-left-color: #f87171; }
+    .exc-narrative--elevated { background: rgba(245,158,11,0.07); border-left-color: #fbbf24; }
+    .exc-narrative--moderate { background: rgba(59,130,246,0.07); border-left-color: #93c5fd; }
+    .exc-narrative--low { background: rgba(34,197,94,0.07); border-left-color: #4ade80; }
+    .exc-narrative-headline, .exc-narrative-summary { color: #e2e8f0; }
+    .exc-narrative-summary { color: #94a3b8; }
+    .lender-kpi-group { background: #1e293b; border-radius: 8px; padding: 14px 16px; flex: 1; min-width: 180px; }
+    .lender-kpi-title { font-size: 0.68rem; font-weight: 700; letter-spacing: 0.08em; color: #64748b; text-transform: uppercase; margin-bottom: 10px; }
+    .lender-kpi-row { display: flex; justify-content: space-between; align-items: baseline; margin-bottom: 7px; }
+    .lender-kpi-row:last-child { margin-bottom: 0; }
+    .lender-kpi-label { font-size: 0.78rem; color: #94a3b8; }
+    .lender-kpi-value { font-size: 0.85rem; font-weight: 600; color: #e2e8f0; }
+    .lender-kpi-value--alert { color: #f87171; }
+    .lender-risk-card { border-radius: 8px; padding: 14px 16px; flex: 1; min-width: 160px; border: 1px solid; }
+    .lender-risk-card--low { background: #14291a; border-color: #22c55e33; }
+    .lender-risk-card--medium { background: #2d1f09; border-color: #f59e0b33; }
+    .lender-risk-card--high { background: #2d1010; border-color: #ef444433; }
+    .lender-risk-card--unknown { background: #1e293b; border-color: #94a3b833; }
+    .lender-risk-card-header { display: flex; align-items: center; gap: 8px; margin-bottom: 6px; }
+    .lender-risk-dot { width: 10px; height: 10px; border-radius: 50%; flex-shrink: 0; }
+    .lender-risk-dot--low { background: #22c55e; }
+    .lender-risk-dot--medium { background: #f59e0b; }
+    .lender-risk-dot--high { background: #ef4444; }
+    .lender-risk-dot--unknown { background: #94a3b8; }
+    .lender-risk-card-label { font-size: 0.68rem; font-weight: 700; letter-spacing: 0.08em; color: #94a3b8; text-transform: uppercase; }
+    .lender-risk-card-value { font-size: 1.1rem; font-weight: 700; margin-bottom: 4px; }
+    .lender-risk-card-value--low { color: #4ade80; }
+    .lender-risk-card-value--medium { color: #fbbf24; }
+    .lender-risk-card-value--high { color: #f87171; }
+    .lender-risk-card-value--unknown { color: #94a3b8; }
+    .lender-risk-card-desc { font-size: 0.72rem; color: #64748b; line-height: 1.4; }
+    .lender-note-box { margin-top: 10px; padding: 10px 14px; background: #1e293b; border-radius: 4px; font-size: 0.79rem; color: #94a3b8; line-height: 1.6; }
+    .lender-note-box--warn { border-left: 3px solid; }
+    .lender-note-box--warn-red { color: #f87171; border-left-color: #f87171; }
+    .lender-note-box--warn-amber { color: #fbbf24; border-left-color: #fbbf24; }
     .ai-run-btn { margin-top: 14px; background: rgba(201,151,58,0.12); border: 1px solid rgba(201,151,58,0.35); color: #C9973A; border-radius: 8px; padding: 8px 16px; font-size: 0.82rem; font-weight: 600; cursor: pointer; width: 100%; }
     .ai-run-btn:hover { background: rgba(201,151,58,0.2); }
     .ai-inv-review { margin-top: 10px; padding: 12px; background: rgba(139,92,246,0.07); border: 1px solid rgba(139,92,246,0.2); border-radius: 8px; font-size: 0.83rem; color: #CBD5E1; line-height: 1.6; }
@@ -3176,10 +3204,6 @@
       .rpt-cover-type { color: #555 !important; }
       .rpt-cover-meta-item span:first-child { color: #777 !important; }
       .rpt-cover-meta-item span:last-child { color: #333 !important; }
-      /* Letterhead */
-      .rpt-letterhead { border-bottom-color: #c9973a !important; }
-      .rpt-letterhead h1 { color: #7a5a1e !important; }
-      .rpt-letterhead .rpt-sub { color: #555 !important; }
       /* Section titles */
       .rpt-section-title {
         color: #7a5a1e !important; border-bottom-color: #c9973a !important;
@@ -3211,6 +3235,22 @@
       .ai-risk-box { background: #f8f6f0 !important; border-color: #ddd !important; page-break-inside: avoid; }
       .ai-risk-title { color: #7a5a1e !important; }
       .ai-risk-row { color: #333 !important; }
+      /* Exception report AI narrative block */
+      .exc-narrative { background: #f8f6f0 !important; page-break-inside: avoid; }
+      .exc-narrative-headline { color: #1a1a1a !important; }
+      .exc-narrative-summary { color: #4b4b4b !important; }
+      /* Lender summary report boxes */
+      .lender-kpi-group { background: #f8f6f0 !important; page-break-inside: avoid; }
+      .lender-kpi-title { color: #7a5a1e !important; }
+      .lender-kpi-label { color: #4b4b4b !important; }
+      .lender-kpi-value { color: #1a1a1a !important; }
+      .lender-kpi-value--alert { color: #b91c1c !important; }
+      .lender-risk-card { background: #f8f6f0 !important; border-color: #ddd !important; page-break-inside: avoid; }
+      .lender-risk-card-label { color: #4b4b4b !important; }
+      .lender-risk-card-value { color: #1a1a1a !important; }
+      .lender-risk-card-desc { color: #4b4b4b !important; }
+      .lender-note-box { background: #f5f0e8 !important; color: #4b4b4b !important; }
+      .lender-note-box--warn-red, .lender-note-box--warn-amber { color: #7a5a1e !important; }
       /* Hash block */
       .rpt-hash-box { background: #f0fff4 !important; border-color: #86efac !important; page-break-inside: avoid; }
       .rpt-hash-lbl { color: #15803d !important; }

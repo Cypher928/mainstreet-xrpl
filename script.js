@@ -13029,10 +13029,7 @@ function generateHolesReport() {
     </div>`;
 
   const html = `
-    <div class="rpt-letterhead">
-      <h1>${esc(propName)}</h1>
-      <div class="rpt-sub">Coverage Gap Report &nbsp;·&nbsp; ${month} &nbsp;·&nbsp; Generated ${now}</div>
-    </div>
+    ${_rptHeader(propName, 'Coverage Gap Report', month, now)}
 
     <div class="rpt-kpi-row">
       <div class="rpt-kpi">
@@ -13057,9 +13054,7 @@ function generateHolesReport() {
     ${incompleteSection}
     ${summaryBar}
 
-    <div class="rpt-footer">
-      Mainstreet &nbsp;·&nbsp; ${esc(propName)} &nbsp;·&nbsp; Coverage Gap Report &nbsp;·&nbsp; ${now}
-    </div>`;
+    ${_rptFooter(propName, 'Coverage Gap Report', now)}`;
 
   openReport('Coverage Gap Report — ' + propName, html);
 }
@@ -13265,12 +13260,11 @@ function generateExceptionReport() {
     : sections;
 
   const narrative = buildAuditNarrative();
-  const excNColor = narrative.riskLevel === 'Critical' ? '#f87171' : narrative.riskLevel === 'Elevated' ? '#fbbf24' : narrative.riskLevel === 'Moderate' ? '#93c5fd' : '#4ade80';
-  const excNBg    = narrative.riskLevel === 'Critical' ? 'rgba(239,68,68,0.07)' : narrative.riskLevel === 'Elevated' ? 'rgba(245,158,11,0.07)' : narrative.riskLevel === 'Moderate' ? 'rgba(59,130,246,0.07)' : 'rgba(34,197,94,0.07)';
+  const excNClass = narrative.riskLevel === 'Critical' ? 'exc-narrative--critical' : narrative.riskLevel === 'Elevated' ? 'exc-narrative--elevated' : narrative.riskLevel === 'Moderate' ? 'exc-narrative--moderate' : 'exc-narrative--low';
   const narrativeBlock = narrative.headline ? `
-    <div style="background:${excNBg};border-left:3px solid ${excNColor};border-radius:6px;padding:12px 16px;margin-bottom:16px;">
-      <div style="font-size:0.95rem;font-weight:700;color:#e2e8f0;margin-bottom:5px;">${esc(narrative.headline)}</div>
-      <div style="font-size:0.82rem;color:#94a3b8;line-height:1.5;">${esc(narrative.summaryParagraph || '')}</div>
+    <div class="exc-narrative ${excNClass}">
+      <div class="exc-narrative-headline">${esc(narrative.headline)}</div>
+      <div class="exc-narrative-summary">${esc(narrative.summaryParagraph || '')}</div>
     </div>` : '';
 
   const html = `
