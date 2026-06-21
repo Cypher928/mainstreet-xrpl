@@ -1360,6 +1360,20 @@
     .lc-view-lease-btn { margin-top: 10px; display: inline-block; font-size: 0.78rem; padding: 4px 10px; background: rgba(99,102,241,0.15); border: 1px solid rgba(99,102,241,0.35); border-radius: 4px; color: #818cf8; cursor: pointer; }
     .lc-view-lease-btn:hover { background: rgba(99,102,241,0.25); }
 
+    /* Collapses the per-tenant invoice/category breakdown by default — it's the
+       biggest single contributor to CAM page length when many tenants/categories
+       are present, and it duplicates info already summarized in the result stats. */
+    .rc-breakdown-toggle {
+      display: block; width: 100%; text-align: left; margin-top: 10px;
+      padding: 7px 10px; background: rgba(255,255,255,0.03);
+      border: 1px solid rgba(255,255,255,0.08); border-radius: 8px;
+      color: #94A3B8; font-size: 0.78rem; font-weight: 600; cursor: pointer;
+      font-family: inherit;
+    }
+    .rc-breakdown-toggle:hover { background: rgba(255,255,255,0.06); color: #CBD5E1; }
+    .rc-breakdown-toggle--open { color: #E2E8F0; }
+    .rc-breakdown-wrap { margin-top: 4px; }
+
     /* ── Phase 23: Lease Validation panel ──────────────────────────────────── */
     .lv-validate-btn { margin-top: 8px; display: inline-block; font-size: 0.78rem; padding: 5px 12px; background: rgba(99,102,241,0.12); border: 1px solid rgba(99,102,241,0.35); border-radius: 4px; color: #818cf8; cursor: pointer; }
     .lv-validate-btn:hover { background: rgba(99,102,241,0.22); }

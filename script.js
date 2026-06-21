@@ -8625,7 +8625,11 @@ async function runAllocation() {
       ${r.capApplied ? `<div class="cap-badge">Cap applied — ${fmt(r.capAdjustment)} reduced</div>` : ''}
       ${flagsSection}
       ${leaseBtn}
-      ${invBreakdown}
+      ${r.includedInvoices.length ? `<button class="rc-breakdown-toggle" type="button"
+        onclick="(function(btn){var w=btn.nextElementSibling;var open=w.style.display==='block';w.style.display=open?'none':'block';btn.classList.toggle('rc-breakdown-toggle--open',!open);})(this)">
+        &#x25B8; View invoice breakdown (${r.includedInvoices.length} invoice${r.includedInvoices.length !== 1 ? 's' : ''})
+      </button>` : ''}
+      <div class="rc-breakdown-wrap" style="display:none;">${invBreakdown}</div>
       <div class="result-card-actions">
         <button class="explain-btn" onclick="openExplainPanel('${esc(r.name)}')">&#x1F4CA; View Calculation</button>
         <button class="lv-validate-btn" onclick="_startLeaseValidation('${_lvPanelId}',${tdIdx})">&#x1F50D; Validate Against Lease</button>
