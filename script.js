@@ -2194,18 +2194,22 @@ function renderEscrowProfile(property) {
       const history = Array.isArray(dr.statusHistory) ? dr.statusHistory : [];
       const historyRows = history.map(h => `
         <div class="escrow-status-history-item">
-          <span>${esc(Engine.DRAW_STATUS_LABELS[h.status] || h.status)}</span>
-          <span>${esc(fmtHistoryDate(h.timestamp || h.at))}${h.actor ? ` &middot; ${esc(h.actor)}` : ''}</span>
+          <div class="escrow-status-history-row">
+            <span>${esc(Engine.DRAW_STATUS_LABELS[h.status] || h.status)}</span>
+            <span>${esc(fmtHistoryDate(h.timestamp || h.at))}${h.actor ? ` &middot; ${esc(h.actor)}` : ''}</span>
+          </div>
+          ${h.note ? `<div class="escrow-status-history-note">${esc(h.note)}</div>` : ''}
         </div>`).join('');
       const historyBlock = historyRows
         ? `<div class="escrow-status-history">${historyRows}</div>`
         : '';
+      const validation = reserve ? Engine.validateDrawRequest(reserve, dr, draws) : null;
       return `
       <div class="escrow-draw-card">
         <div class="escrow-draw-head">
           <strong>${dr.drawNumber ? `Draw #${esc(dr.drawNumber)} &mdash; ` : ''}${esc(reserve ? reserve.reserveTypeLabel : 'Reserve')} &mdash; ${fmt(dr.amountRequested)}</strong>
         </div>
-        ${_drawStatusStepperHtml(dr, Engine)}
+        ${_drawStatusStepperHtml(dr, Engine, validation)}
         ${historyBlock}
         <div class="escrow-draw-actions">
           <button class="report-btn" onclick="generateDrawPackageReport('${dr.id}')">&#x1F4CB; Generate Package</button>
@@ -2454,11 +2458,75 @@ async function confirmCreateDrawRequest() {
 // not a forward step in the main lifecycle.
 const _DRAW_MAIN_STAGES = ['draft', 'submitted', 'under_review', 'approved', 'funded'];
 
-function _drawStatusStepperHtml(dr, Engine) {
+// Tracks which draw card currently has the inline rejection-reason form open
+// (re-rendered cards lose DOM state, so this lives outside the markup).
+let _drawRejectFormId = null;
+
+function _showDrawRejectForm(drawRequestId) {
+  _drawRejectFormId = drawRequestId;
+  const prop = currentProperty();
+  if (prop) renderEscrowProfile(prop);
+}
+
+function _cancelDrawRejectForm() {
+  _drawRejectFormId = null;
+  const prop = currentProperty();
+  if (prop) renderEscrowProfile(prop);
+}
+
+async function _confirmDrawReject(drawRequestId) {
+  const el = document.getElementById(`drawRejectReason-${drawRequestId}`);
+  const reason = (el?.value || '').trim();
+  if (!reason) {
+    showToast('A rejection reason is required.', { color: '#7f1d1d', textColor: '#fca5a5' });
+    return;
+  }
+  _drawRejectFormId = null;
+  await updateDrawStatus(drawRequestId, 'denied', reason);
+}
+
+function _drawRejectFormHtml(dr) {
+  return `<div class="draw-stepper">
+    <div class="draw-reject-form">
+      <label for="drawRejectReason-${dr.id}">Rejection reason (required)</label>
+      <textarea id="drawRejectReason-${dr.id}" rows="2" placeholder="Explain why this draw is being rejected and what's needed to resubmit…"></textarea>
+      <div class="draw-reject-form-btns">
+        <button class="draw-step-reject" onclick="_confirmDrawReject('${dr.id}')">Confirm Rejection</button>
+        <button class="d-cancel-btn" onclick="_cancelDrawRejectForm()">Cancel</button>
+      </div>
+    </div>
+  </div>`;
+}
+
+// Reviewer-facing summary of why a draw was rejected and what's still
+// unmet, so a property manager knows what to fix before resubmitting —
+// reuses the same checklist the draw package PDF shows, computed live
+// rather than duplicating its logic.
+function _drawRejectionDetailHtml(dr, Engine, validation) {
+  const lastDenied = (Array.isArray(dr.statusHistory) ? dr.statusHistory : [])
+    .slice().reverse().find(h => h.status === 'denied');
+  const reasonHtml = lastDenied && lastDenied.note
+    ? `<div class="draw-rejection-reason"><strong>Reason:</strong> ${esc(lastDenied.note)}</div>`
+    : `<div class="draw-rejection-reason draw-rejection-reason--none">No rejection reason was recorded.</div>`;
+  const missing = (validation && validation.missing) || [];
+  const remediationHtml = missing.length
+    ? `<div class="draw-rejection-remediation">
+        <strong>Before resubmitting, address:</strong>
+        <ul>${missing.map(m => `<li>${esc(m.detail || m.label)}</li>`).join('')}</ul>
+      </div>`
+    : '';
+  return `<div class="draw-rejection-detail">${reasonHtml}${remediationHtml}</div>`;
+}
+
+function _drawStatusStepperHtml(dr, Engine, validation) {
+  if (_drawRejectFormId === dr.id) {
+    return _drawRejectFormHtml(dr);
+  }
   if (dr.status === 'denied') {
     return `<div class="draw-stepper draw-stepper--rejected">
       <span class="draw-step-rejected-badge">&#x2715; Rejected</span>
-    </div>`;
+    </div>
+    ${_drawRejectionDetailHtml(dr, Engine, validation)}`;
   }
   const currentIdx = _DRAW_MAIN_STAGES.indexOf(dr.status);
   const nextValid = Engine.getValidNextDrawStatuses(dr.status);
@@ -2473,15 +2541,15 @@ function _drawStatusStepperHtml(dr, Engine) {
     </button>`;
   }).join('<span class="draw-step-connector"></span>');
   const rejectBtnHtml = nextValid.includes('denied')
-    ? `<button class="draw-step-reject" onclick="updateDrawStatus('${dr.id}','denied')">Reject</button>`
+    ? `<button class="draw-step-reject" onclick="_showDrawRejectForm('${dr.id}')">Reject</button>`
     : '';
   return `<div class="draw-stepper">${pillsHtml}${rejectBtnHtml}</div>`;
 }
 
-async function updateDrawStatus(drawRequestId, status) {
+async function updateDrawStatus(drawRequestId, status, note) {
   const prop = currentProperty();
   if (!prop) return;
-  const ok = window.EscrowReserveEngine.applyDrawStatus(prop.drawRequests || [], drawRequestId, status, { actor: 'User' });
+  const ok = window.EscrowReserveEngine.applyDrawStatus(prop.drawRequests || [], drawRequestId, status, { actor: 'User', note: note || null });
   if (!ok) {
     showToast('That status change isn’t allowed — draws must move through each stage in order.', { color: '#7f1d1d', textColor: '#fca5a5' });
     return;
@@ -2489,7 +2557,7 @@ async function updateDrawStatus(drawRequestId, status) {
 
   _lsSave(prop);
   await saveProperty(prop);
-  logActivity('escrow_draw_status', `Draw request status changed to ${window.EscrowReserveEngine.DRAW_STATUS_LABELS[status]}`, {
+  logActivity('escrow_draw_status', `Draw request status changed to ${window.EscrowReserveEngine.DRAW_STATUS_LABELS[status]}${note ? ` — ${note}` : ''}`, {
     severity: 'info', actor: 'User', relatedEntity: prop.name || 'Property',
   });
   renderEscrowProfile(prop);

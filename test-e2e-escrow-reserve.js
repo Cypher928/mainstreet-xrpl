@@ -362,6 +362,31 @@ const SUPABASE_MOCK = `
     assert(mailtoHref.startsWith('mailto:?subject='), 'ESC-E2E-7: a working mailto: link is generated', mailtoHref.slice(0, 60));
     await page.evaluate(() => window.closeDrawEmailModal());
 
+    // ── ESC-E2E-9: Draw rejection reason & audit trail ───────────────────────
+    section('ESC-E2E-9: Draw rejection reason & audit trail');
+    await page.click('.escrow-draw-card .draw-step-reject');
+    await page.waitForSelector('.draw-reject-form textarea', { timeout: 5000 });
+
+    // Confirming with no reason should be blocked — draw stays non-rejected.
+    await page.click('.draw-reject-form button:has-text("Confirm Rejection")');
+    await page.waitForTimeout(300);
+    const blockedToastText = await page.evaluate(() => document.body.textContent.includes('rejection reason is required'));
+    assert(blockedToastText, 'ESC-E2E-9: confirming with an empty reason is blocked with a toast message');
+    const stillOpenForm = await page.$('.draw-reject-form textarea');
+    assert(!!stillOpenForm, 'ESC-E2E-9: rejection form remains open after a blocked empty submission');
+
+    const REJECTION_REASON = 'Missing engineer certification for the roof repair scope.';
+    await page.fill('.draw-reject-form textarea', REJECTION_REASON);
+    await page.click('.draw-reject-form button:has-text("Confirm Rejection")');
+    await page.waitForSelector('.draw-step-rejected-badge', { timeout: 5000 });
+
+    const rejectionReasonText = await page.$eval('.draw-rejection-reason', el => el.textContent);
+    assert(rejectionReasonText.includes(REJECTION_REASON), 'ESC-E2E-9: rejection reason is displayed on the draw card', rejectionReasonText);
+
+    const historyText = await page.$eval('.escrow-status-history', el => el.textContent);
+    assert(historyText.includes(REJECTION_REASON), 'ESC-E2E-9: rejection reason also appears in the status history audit trail', historyText.replace(/\s+/g, ' ').slice(0, 200));
+    assert(historyText.includes('Rejected'), 'ESC-E2E-9: status history shows the "Rejected" status label', historyText.replace(/\s+/g, ' ').slice(0, 200));
+
     // ── ESC-E2E-8: Console error check ──────────────────────────────────────
     section('ESC-E2E-8: Console error check');
     const escrowErrors = consoleLogs.filter(l =>
