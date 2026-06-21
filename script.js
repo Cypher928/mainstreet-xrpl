@@ -8470,7 +8470,8 @@ async function runAllocation() {
   document.getElementById('resultsTitle').textContent = `${getCamYear()} CAM — ${propName}`;
   applySqftMismatchUI(sqftExceedsProperty);
 
-  let html = _buildReconciliationSummaryHtml(fullResults, invoices, propName) +
+  let html = _buildNeedsReviewRollupHtml(fullResults) +
+  _buildReconciliationSummaryHtml(fullResults, invoices, propName) +
   // Warnings appear before numbers so the landlord sees issues before interpreting results.
   (sqftExceedsProperty ? `
   <div class="sqft-mismatch-banner">
@@ -8613,7 +8614,7 @@ async function runAllocation() {
     const _liveT  = tenantData.find(t => t && t.id === r.tenantId);
     const _calcSt = _deriveCalcState(r, _liveT);
 
-    html += `<div class="result-card${flags.length ? ' result-card--flagged' : ''}">
+    html += `<div class="result-card${flags.length ? ' result-card--flagged' : ''}" id="${_resultCardAnchorId(r.name)}">
       <div class="r-name">${esc(r.name)}${r.unitNumber ? `<span class="rc-unit"> · Unit ${esc(r.unitNumber)}</span>` : ''}<span class="rc-calc-state ${_calcSt.cls}">${_calcSt.label}</span></div>
       <div class="result-grid">
         ${stat('Total', fmt(r.allocatedAmount))}
@@ -9671,6 +9672,36 @@ function _deriveCalcState(result, liveT) {
 }
 function _detectReconciliationIssues(results, property, evaluationDate) {
   return ReconciliationEngine.detectReconciliationIssues(results, property, evaluationDate || `${getCamYear()}-12-31`);
+}
+
+function _resultCardAnchorId(name) {
+  return 'result-card-' + String(name || '').replace(/[^a-zA-Z0-9]/g, '-');
+}
+
+// Builds the dominant "Needs Review" rollup shown at the very top of CAM
+// results, above the Reconciliation Summary — so problems surface before
+// the landlord has to scroll past financial details to find them.
+function _buildNeedsReviewRollupHtml(results) {
+  const flagged = (results || []).filter(r => (r.ambiguityFlags || []).length > 0);
+  if (!flagged.length) return '';
+  const totalFlags = flagged.reduce((s, r) => s + r.ambiguityFlags.length, 0);
+  const items = flagged.map(r => {
+    const anchorId = _resultCardAnchorId(r.name);
+    const msgs = r.ambiguityFlags.map(f => esc(f.message)).join(' &middot; ');
+    return `<button class="nrr-item" onclick="document.getElementById('${anchorId}')?.scrollIntoView({behavior:'smooth',block:'center'})">
+      <span class="nrr-item-tenant">${esc(r.name)}</span>
+      <span class="nrr-item-count">${r.ambiguityFlags.length}</span>
+      <span class="nrr-item-msg">${msgs}</span>
+    </button>`;
+  }).join('');
+  return `<div class="needs-review-rollup">
+    <div class="nrr-head">
+      <span class="nrr-icon">&#x26A0;&#xFE0F;</span>
+      <span class="nrr-title">Needs Review</span>
+      <span class="nrr-count-badge">${flagged.length} tenant${flagged.length !== 1 ? 's' : ''} &middot; ${totalFlags} issue${totalFlags !== 1 ? 's' : ''}</span>
+    </div>
+    <div class="nrr-body">${items}</div>
+  </div>`;
 }
 
 // Builds the in-app Reconciliation Summary HTML panel displayed above result cards.

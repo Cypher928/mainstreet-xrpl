@@ -2211,6 +2211,45 @@
     .cs-estimated { background: rgba(251,191,36,0.12); color: #fbbf24; border: 1px solid rgba(251,191,36,0.25); }
     .cs-partial   { background: rgba(251,146,60,0.12); color: #fb923c; border: 1px solid rgba(251,146,60,0.25); }
     .cs-missing   { background: rgba(248,113,113,0.12); color: #f87171; border: 1px solid rgba(248,113,113,0.25); }
+    /* ── Needs Review rollup — dominant, sits above Reconciliation Summary ── */
+    .needs-review-rollup {
+      border: 2px solid rgba(248,113,113,0.45); border-radius: 12px;
+      background: rgba(248,113,113,0.08); padding: 14px 16px; margin-bottom: 18px;
+      box-shadow: 0 0 0 1px rgba(248,113,113,0.12);
+    }
+    .nrr-head {
+      display: flex; align-items: center; gap: 10px; flex-wrap: wrap; margin-bottom: 10px;
+    }
+    .nrr-icon  { font-size: 1.2rem; line-height: 1; }
+    .nrr-title {
+      font-size: 1rem; font-weight: 800; color: #fca5a5; text-transform: uppercase;
+      letter-spacing: 0.04em;
+    }
+    .nrr-count-badge {
+      font-size: 0.74rem; font-weight: 700; color: #fef2f2; background: rgba(248,113,113,0.25);
+      border: 1px solid rgba(248,113,113,0.4); border-radius: 6px; padding: 3px 9px;
+    }
+    .nrr-body { display: flex; flex-direction: column; gap: 6px; }
+    .nrr-item {
+      display: flex; align-items: center; gap: 10px; width: 100%; text-align: left;
+      background: rgba(0,0,0,0.18); border: 1px solid rgba(248,113,113,0.2);
+      border-radius: 8px; padding: 8px 12px; cursor: pointer; transition: background 0.15s;
+      font-family: inherit; color: inherit;
+    }
+    .nrr-item:hover { background: rgba(248,113,113,0.12); }
+    .nrr-item-tenant { font-size: 0.86rem; font-weight: 700; color: #E2E8F0; flex-shrink: 0; }
+    .nrr-item-count {
+      font-size: 0.7rem; font-weight: 800; color: #fca5a5; background: rgba(248,113,113,0.18);
+      border-radius: 10px; padding: 1px 7px; flex-shrink: 0;
+    }
+    .nrr-item-msg {
+      font-size: 0.78rem; color: #fda4af; overflow: hidden; text-overflow: ellipsis;
+      white-space: nowrap; min-width: 0;
+    }
+    @media (max-width: 640px) {
+      .nrr-item { flex-wrap: wrap; }
+      .nrr-item-msg { white-space: normal; flex-basis: 100%; }
+    }
     /* ── Reconciliation Summary Panel ──────────────────────────────────── */
     .rcs-panel {
       border-radius: 10px; border: 1px solid rgba(255,255,255,0.07); background: rgba(15,23,42,0.6);
