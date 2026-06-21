@@ -233,12 +233,12 @@ const SUPABASE_MOCK = `
 
     // ── ESC-E2E-2b: Property Workspace tabs (Phase 22 UI reorganization) ────
     section('ESC-E2E-2b: Property Workspace tabs');
-    const tabLabels = await page.$$eval('#workspaceTabBar .workspace-tab', els => els.map(e => e.textContent.trim()));
+    const tabLabels = await page.$$eval('#workspaceTabBar .workspace-tab', els => els.map(e => e.lastChild.textContent.trim()));
     const expectedTabLabels = ['Overview', 'CAM', 'Reserves', 'Estoppels', 'Reports', 'Documents'];
     assert(JSON.stringify(tabLabels) === JSON.stringify(expectedTabLabels),
       'ESC-E2E-2b: workspace tab bar shows all six tabs in order', tabLabels.join(', '));
 
-    const defaultActiveTab = await page.$eval('#workspaceTabBar .workspace-tab.active', el => el.textContent.trim());
+    const defaultActiveTab = await page.$eval('#workspaceTabBar .workspace-tab.active', el => el.lastChild.textContent.trim());
     assert(defaultActiveTab === 'Overview', 'ESC-E2E-2b: Overview is the default active tab', defaultActiveTab);
 
     const overviewVisible = await page.$eval('#wsPane-overview', el => getComputedStyle(el).display !== 'none');

@@ -38,7 +38,7 @@ window.EscrowDrawPackets = (() => {
     const today     = new Date().toLocaleDateString('en-US', { year: 'numeric', month: 'long', day: 'numeric' });
     return `
     <div class="rpt-section-title">Cover Letter</div>
-    <div style="line-height:1.7;font-size:0.92rem;color:#1a1a1a;">
+    <div class="edp-cover-letter">
       <p>${_esc(today)}</p>
       <p>RE: Escrow Draw Request — ${_esc(propName)} — ${_esc(reserveType)}</p>
       <p>To Whom It May Concern,</p>
@@ -114,7 +114,7 @@ window.EscrowDrawPackets = (() => {
     }
     return `
     <div class="rpt-section-title">Reserve Agreement Citation</div>
-    <div style="font-size:0.85rem;color:#1a1a1a;margin-bottom:6px;">
+    <div class="edp-citation-source">
       ${_esc(c.sourceFileName || 'Reserve Agreement')}${c.page != null ? ` &mdash; Page ${_esc(c.page)}` : ''}
     </div>
     <blockquote style="border-left:3px solid #C9973A;margin:0;padding:8px 14px;font-style:italic;color:#374151;background:#fafaf9;">
