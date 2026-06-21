@@ -19904,6 +19904,7 @@ async function runAcquisitionAnalysis() {
     await _saveAcqReview(review);
     _renderAcqSection(_acqReviews);
     _renderAcqReport(report, document.getElementById('acqReportContainer'));
+    _renderAcqConvertAction(review);
   } catch (e) {
     console.error('[acq] analysis failed:', e.message);
     const cont = document.getElementById('acqReportContainer');
