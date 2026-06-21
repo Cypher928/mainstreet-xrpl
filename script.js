@@ -3988,7 +3988,7 @@ async function handleBulkLeases(fileList) {
   // Exclude failed extractions — only persist tenants with at minimum a real name
   await resyncTenantsToTable(property.id, property.tenants.filter(t => t?.tenant_name && (!t?.extractionFailed || t?._userConfirmed) && !t?._pendingJobReview));
   {
-    const successCount = tenantData.filter(t => t.status === 'success').length;
+    const successCount = tenantData.filter(t => t && t.status === 'success').length;
     logActivity('lease_uploaded', `${total} lease${total !== 1 ? 's' : ''} uploaded`, {
       severity:      'info',
       actor:         'User',
