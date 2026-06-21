@@ -735,7 +735,7 @@
     }
     .ptf-props-head {
       display: flex; align-items: center; justify-content: space-between;
-      margin-bottom: 8px; gap: 8px;
+      margin-bottom: 8px; gap: 8px; flex-wrap: wrap;
     }
     .ptf-props-head h2 {
       font-size: 1.05rem; font-weight: 700; color: #E2E8F0; margin: 0;
@@ -1229,24 +1229,37 @@
       transition: all 0.15s;
     }
     .lease-tab:hover { color: #C9973A; }
-    .lease-tab.active { color: #C9973A; border-bottom-color: #C9973A; }
+    .lease-tab.active { color: #C9973A; border-bottom-color: #C9973A; background: rgba(201,151,58,0.07); border-radius: 6px 6px 0 0; }
 
-    /* ── Property Workspace Tabs (Phase 22) ──────────────────────────── */
+    /* ── Property Workspace Tabs (Phase 22; Phase A — larger, icons,
+       stronger active state, more separation from page content) ──────── */
     .workspace-tab-bar {
-      display: flex; gap: 4px; margin-bottom: 22px; flex-wrap: wrap;
+      display: flex; gap: 6px; margin-bottom: 32px; flex-wrap: wrap;
       border-bottom: 2px solid rgba(255,255,255,0.08);
       position: sticky; top: 0; z-index: 5; background: #0B1220;
+      padding: 6px 0 0;
     }
     .workspace-tab {
-      padding: 12px 22px; font-size: 0.9rem; font-weight: 700;
+      display: flex; align-items: center; gap: 7px;
+      padding: 14px 24px; font-size: 0.95rem; font-weight: 700;
       border: none; background: none; cursor: pointer; color: #64748B;
       border-bottom: 3px solid transparent; margin-bottom: -2px;
+      border-radius: 8px 8px 0 0;
       transition: all 0.15s;
     }
-    .workspace-tab:hover { color: #C9973A; }
-    .workspace-tab.active { color: #C9973A; border-bottom-color: #C9973A; }
+    .workspace-tab .ws-tab-icon { font-size: 1rem; line-height: 1; }
+    .workspace-tab:hover { color: #C9973A; background: rgba(201,151,58,0.06); }
+    .workspace-tab.active {
+      color: #C9973A; border-bottom-color: #C9973A;
+      background: rgba(201,151,58,0.1);
+    }
     .workspace-tab-pane { animation: wsTabFadeIn 0.12s ease-out; }
     @keyframes wsTabFadeIn { from { opacity: 0.4; } to { opacity: 1; } }
+    @media (max-width: 480px) {
+      .workspace-tab-bar { gap: 4px; margin-bottom: 24px; }
+      .workspace-tab { padding: 11px 14px; font-size: 0.82rem; gap: 5px; flex: 1 1 auto; justify-content: center; }
+      .workspace-tab .ws-tab-icon { font-size: 0.92rem; }
+    }
 
     /* ── Property KPI Header (Phase 23) ──────────────────────────────── */
     .kpi-header-row {
@@ -4766,10 +4779,12 @@
       .pid-fc-row  span:last-child { display: none; } /* hide Change column */
     }
 
-    /* ── Mobile: Properties header ───────────────────────────────────────── */
+    /* ── Mobile: Properties header (Phase A — wrap instead of overflow) ─── */
     @media (max-width: 480px) {
-      .ptf-head-actions { gap: 6px; }
-      .ptf-export-btn   { font-size: 0.7rem; padding: 5px 8px; }
+      .ptf-head-actions { gap: 6px; flex-wrap: wrap; width: 100%; }
+      .ptf-search-input { width: 100%; flex: 1 1 100%; order: -1; margin-bottom: 6px; }
+      .ptf-export-btn   { font-size: 0.7rem; padding: 5px 8px; flex: 1 1 auto; }
+      .add-prop-btn     { flex: 1 1 auto; }
     }
 
     /* ── Acquisition: Tab Bar ───────────────────────────────────────────── */
@@ -4897,6 +4912,8 @@
       .ptf-kpi-bar { grid-template-columns: repeat(6, 1fr); }
       /* Portfolio property cards: wider minimum */
       .ptf-cards-grid { grid-template-columns: repeat(auto-fill, minmax(280px, 1fr)); }
+      /* Phase A — larger tap target for the card "Open"/"Open Demo" button */
+      .ptf-card-open-btn { padding: 9px 16px; font-size: 0.78rem; min-height: 32px; }
       /* Tighter charge rows — more rows visible without scrolling */
       .charge-row { padding: 10px 20px; }
       /* Warning banners → compact inline chips */
@@ -5235,12 +5252,12 @@
   <!-- ── Workspace Tab Navigation (Phase 22 — pure UI reorganization,
        no business logic/data model/extraction changes) ─────────────── -->
   <div class="workspace-tab-bar" id="workspaceTabBar">
-    <button class="workspace-tab active" id="wsTabBtn-overview"  onclick="switchWorkspaceTab('overview')">Overview</button>
-    <button class="workspace-tab"        id="wsTabBtn-cam"       onclick="switchWorkspaceTab('cam')">CAM</button>
-    <button class="workspace-tab"        id="wsTabBtn-reserves"  onclick="switchWorkspaceTab('reserves')">Reserves</button>
-    <button class="workspace-tab"        id="wsTabBtn-estoppels" onclick="switchWorkspaceTab('estoppels')">Estoppels</button>
-    <button class="workspace-tab"        id="wsTabBtn-reports"   onclick="switchWorkspaceTab('reports')">Reports</button>
-    <button class="workspace-tab"        id="wsTabBtn-documents" onclick="switchWorkspaceTab('documents')">Documents</button>
+    <button class="workspace-tab active" id="wsTabBtn-overview"  onclick="switchWorkspaceTab('overview')"><span class="ws-tab-icon">&#x1F3E2;</span>Overview</button>
+    <button class="workspace-tab"        id="wsTabBtn-cam"       onclick="switchWorkspaceTab('cam')"><span class="ws-tab-icon">&#x1F9FE;</span>CAM</button>
+    <button class="workspace-tab"        id="wsTabBtn-reserves"  onclick="switchWorkspaceTab('reserves')"><span class="ws-tab-icon">&#x1F512;</span>Reserves</button>
+    <button class="workspace-tab"        id="wsTabBtn-estoppels" onclick="switchWorkspaceTab('estoppels')"><span class="ws-tab-icon">&#x1F4CB;</span>Estoppels</button>
+    <button class="workspace-tab"        id="wsTabBtn-reports"   onclick="switchWorkspaceTab('reports')"><span class="ws-tab-icon">&#x1F4C1;</span>Reports</button>
+    <button class="workspace-tab"        id="wsTabBtn-documents" onclick="switchWorkspaceTab('documents')"><span class="ws-tab-icon">&#x1F4C4;</span>Documents</button>
   </div>
 
   <!-- ══════════════════════════ TAB: Overview ══════════════════════════ -->
