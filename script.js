@@ -547,6 +547,7 @@ Return exactly this structure:
   "renewal_options": string | null,
   "excluded_categories": string | null,
   "security_deposit": number | null,
+  "property_name": string | null,
   "quotes": {
     "cam_cap": string | null,
     "admin_fee_pct": string | null,
@@ -591,6 +592,7 @@ Rules:
 - suite: The tenant's unit or suite identifier. Look for "Suite", "Unit", "Space", "Ste.", "#" labels. Return the short designator (e.g. "101", "Suite A", "200"). Null if not identified.
 - base_rent: Annual base rent in dollars as a plain number. If the lease states a monthly amount, multiply by 12. Look for "Base Rent", "Annual Rent", "Minimum Rent", "Fixed Rent", "Monthly Rent". Null if not found.
 - security_deposit: Security deposit in dollars as a plain number. Look for "Security Deposit", "Deposit", "Holdback". Null if not found.
+- property_name: The name or address of the building/property the lease covers, as stated in the lease (e.g. "Lakeview Plaza", "123 Main Street"). Look in the premises description, recitals, or property address fields. Null if no property/building name or address is stated.
 - quotes: For each field where you return a non-null value, copy ≤120 chars of the exact verbatim clause text from the lease that led to that value. Return null for any field where the value is null.
 - Use null only when a field is truly impossible to determine.`;
 
@@ -1155,6 +1157,10 @@ function normalizeTenant(d) {
     base_rent:           d.base_rent           ?? null,
     security_deposit:    d.security_deposit    ?? null,
     amendments:          Array.isArray(d.amendments) ? d.amendments : [],
+    property_name:       (() => {
+      const v = d.property_name ?? d.propertyName ?? null;
+      return (typeof v === 'string' && v.trim()) ? v.trim() : null;
+    })(),
   };
 }
 
@@ -1265,8 +1271,11 @@ Return ONLY valid JSON. No explanation. No markdown.
   "lease_end_date": "YYYY-MM-DD" or null,
   "lease_type": "NNN" | "Gross" | "Modified Gross" | null,
   "sqft": number or null,
-  "cam_cap": number or null
+  "cam_cap": number or null,
+  "property_name": string or null
 }
+
+PROPERTY NAME: The name or address of the building/property covered by this lease, as stated in the premises description or recitals (e.g. "Lakeview Plaza", "123 Main Street"). Null if not stated.
 
 TENANT NAME:
 - Look for labels: "Tenant:", "Lessee:", "Occupant:"
@@ -1495,6 +1504,7 @@ Extract:
   "pro_rata_method": "rentable" | "leasable" | "occupied" | "gross" | null,
   "renewal_options": string or null,
   "excluded_categories": string or null,
+  "property_name": string or null,
   "quotes": { "cam_cap": string|null, "admin_fee_pct": string|null, "gross_up_pct": string|null, "expense_stop": string|null, "audit_rights": string|null, "pro_rata_method": string|null, "renewal_options": string|null }
 }
 
@@ -1509,6 +1519,8 @@ DATES:
 - End: Expiration Date → Lease End Date → calculate from start + term length if needed
 
 CAM CAP: Search the entire document for any language limiting CAM increases ("not to exceed", "capped at X%", "expense stop"). Return the number (e.g. 5% → 5). Null if no cap language exists.
+
+PROPERTY NAME: The name or address of the building/property covered by this lease, as stated in the premises description or recitals (e.g. "Lakeview Plaza", "123 Main Street"). Null if not stated.
 
 QUOTES: For each non-null extracted value, copy ≤120 chars of the exact verbatim clause text that led to that value.
 
@@ -1631,6 +1643,10 @@ ${leaseSnippet}
       : null,
     pro_rata_method:     raw.pro_rata_method ?? null,
     renewal_options:     raw.renewal_options ?? null,
+    property_name:       (() => {
+      const v = raw.property_name ?? raw.propertyName ?? null;
+      return (typeof v === 'string' && v.trim()) ? v.trim() : null;
+    })(),
   });
 
   // Inject quote-bearing evidence snapshots for fields where Claude returned verbatim clause text.
@@ -2739,6 +2755,19 @@ async function handleLease(i, file) {
     const normalized = normalizeTenant(extracted);
     if (!isValidTenant(normalized)) throw new Error('Extracted tenant has no usable fields');
 
+    // Phase 19: edge case detection — mirrors the bulk upload pipeline (_runLeaseJobPipeline)
+    // so single-lease uploads also catch property-name mismatches and other extraction risks.
+    if (window.LeaseIntelligence) {
+      const _liCtx = {
+        ocrChars: (!_usedPdfDirect && leaseText) ? leaseText.length : 0,
+        usedPdfDirect: _usedPdfDirect,
+        ocrText: (!_usedPdfDirect && leaseText) ? leaseText.slice(0, 500) : null,
+        currentPropertyName: property.name || null,
+      };
+      normalized._edgeCases = window.LeaseIntelligence.detectLeaseEdgeCases(normalized, _liCtx);
+      normalized._explainability = window.LeaseIntelligence.generateLeaseExplainability(normalized);
+    }
+
     tenantData[i] = { ...normalized, leaseFile: file, leaseExpected: true, fileName: file.name, leaseUrl };
     storeLeaseFile(normalized.id, file);
     renderTenantFields(i);
@@ -2933,6 +2962,7 @@ function renderTenantFields(i) {
         <button class="re-btn" onclick="resetTenant(${i})">Re-upload</button>
       </div>
       ${(() => { const w = getWarnings(flags); return w.length ? `<div class="rc-flags"><div class="rc-flags-title">&#x26A0;&#xFE0F; Needs Review</div>${w.map(m => `<div class="rc-flag-item">${m}</div>`).join('')}</div>` : ''; })()}
+      ${_leaseEdgeCaseAndReviewNotesHtml(d)}
       ${d.leaseExpected
         ? (d.leaseFile instanceof File || d.leaseUrl)
           ? `<button class="action-btn" onclick="openLeaseModalFromFile(${i})">&#x1F4C4; View Lease</button>`
@@ -3812,7 +3842,12 @@ async function _runLeaseJobPipeline(jobId, placeholderIdx) {
 
     // Phase 15: edge case detection + explainability
     if (norm && window.LeaseIntelligence) {
-      const _liCtx = { ocrChars: _meta.ocrChars, usedPdfDirect, ocrText: (!usedPdfDirect && leaseText) ? leaseText.slice(0, 500) : null };
+      // WHY _props.find instead of currentProperty(): propertyId was captured when this
+      // job was created. By the time this async pipeline resolves, the user may have
+      // navigated to a different property — currentProperty() would then reflect the
+      // wrong one. Looking up by the job's own propertyId is always correct.
+      const _jobProperty = _props.find(p => p.id === propertyId);
+      const _liCtx = { ocrChars: _meta.ocrChars, usedPdfDirect, ocrText: (!usedPdfDirect && leaseText) ? leaseText.slice(0, 500) : null, currentPropertyName: _jobProperty?.name || null };
       norm._edgeCases    = window.LeaseIntelligence.detectLeaseEdgeCases(norm, _liCtx);
       norm._explainability = window.LeaseIntelligence.generateLeaseExplainability(norm);
       norm._modelRouting = window.LeaseIntelligence.modelRoutingRecommendation(norm);
@@ -3890,6 +3925,14 @@ async function _runLeaseJobPipeline(jobId, placeholderIdx) {
       _pendingJobReview:    needsJobReview,
       id:                   jobId,
       _jobId:               jobId,
+      property_name:        norm?.property_name      ?? null,
+      // WHY carried over explicitly: norm._edgeCases/_explainability/_modelRouting were
+      // computed above (LEASE INTELLIGENCE block) but finalEntry is a fresh object literal,
+      // not a spread of norm — without this they were silently discarded and never reached
+      // the rendered tenant row, making detectLeaseEdgeCases() a no-op for bulk uploads.
+      _edgeCases:           norm?._edgeCases          ?? null,
+      _explainability:      norm?._explainability     ?? null,
+      _modelRouting:        norm?._modelRouting       ?? null,
     };
 
     tenantData[placeholderIdx] = finalEntry;

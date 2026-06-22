@@ -519,6 +519,27 @@ window.LeaseIntelligence = (() => {
         return parseInt('20' + m[1]) < leaseEndYr;
       },
     },
+    {
+      type: 'PROPERTY_NAME_MISMATCH',
+      severity: 'high',
+      description: 'The property/building name stated in the lease document does not match the property this lease was uploaded into.',
+      confidenceAdjustment: -20,
+      fieldImpact: ['property_name'],
+      reviewerNote: 'Confirm this lease belongs to the current property before approving — it may have been uploaded to the wrong property.',
+      detect: (t, r) => {
+        const extracted = (t.property_name || '').trim();
+        const current = (r?.currentPropertyName || '').trim();
+        if (!extracted || !current) return false; // fail-open: never flag on missing data
+        const tokenize = s => (s.toLowerCase().match(/[a-z0-9]+/g) || []).filter(w => w.length > 2);
+        const extractedTokens = tokenize(extracted);
+        const currentTokens   = tokenize(current);
+        if (extractedTokens.length === 0 || currentTokens.length === 0) return false;
+        // Any shared token (e.g. "Lakeview" in "Lakeview Plaza" vs "Lakeview Towers") counts as a match —
+        // only flag when there is NO overlap at all, to avoid false positives on partial/abbreviated names.
+        const hasOverlap = extractedTokens.some(w => currentTokens.includes(w));
+        return !hasOverlap;
+      },
+    },
   ];
 
   function detectLeaseEdgeCases(tenantState, extractionResult) {

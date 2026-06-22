@@ -138,6 +138,16 @@ window.ReviewEngine = (() => {
       warnings.push({ type: 'multiple_amendments', severity: 'low',
         label: `${amds.length} amendments uploaded — verify clause precedence` });
     }
+    // Cross-property contamination: the lease's own stated property/building name
+    // doesn't match the property it was uploaded into (see lease-intelligence.js
+    // PROPERTY_NAME_MISMATCH edge case, populated by detectLeaseEdgeCases()).
+    const edgeCaseTypes = (t._edgeCases && Array.isArray(t._edgeCases.edgeCases))
+      ? t._edgeCases.edgeCases.map(e => e.type) : [];
+    const hasPropertyMismatch = edgeCaseTypes.includes('PROPERTY_NAME_MISMATCH');
+    if (hasPropertyMismatch) {
+      warnings.push({ type: 'property_name_mismatch', severity: 'high',
+        label: 'Lease document names a different property — confirm this lease belongs here' });
+    }
 
     // ── Score ──────────────────────────────────────────────────────────────
     let score = 100;
@@ -146,6 +156,7 @@ window.ReviewEngine = (() => {
     if (t._usedFallback) score -= 15;
     if (sqftConf != null && sqftConf < 70) score -= 10;
     if (isNNN && (t.cap == null || t.cap === '')) score -= 10;
+    if (hasPropertyMismatch) score -= 30;
     score -= getWarnings(computeFlags(t)).length * 5;
     score = Math.max(0, Math.min(100, score));
 
@@ -184,7 +195,8 @@ window.ReviewEngine = (() => {
       (sqftConf != null && sqftConf < 70) ||
       (isNNN && (t.cap == null || t.cap === '')) ||
       t._needsReview === true ||
-      (recon && recon.proRata > 1.0)
+      (recon && recon.proRata > 1.0) ||
+      hasPropertyMismatch
     ) {
       status = 'needs_review';
     } else {
