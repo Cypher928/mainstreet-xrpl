@@ -1232,16 +1232,17 @@
     .lease-tab.active { color: #C9973A; border-bottom-color: #C9973A; background: rgba(201,151,58,0.07); border-radius: 6px 6px 0 0; }
 
     /* ── Property Workspace Card (Phase 27) — wraps the tab nav in a
-       dedicated full-width card directly beneath the breadcrumb, with a
-       contrasting background + gold border, so it reads as primary
-       navigation rather than dashboard content. ─────────────────────── */
+       dedicated full-width card directly beneath the breadcrumb, styled
+       like every other card in the app (same background/border/shadow as
+       .card) so it reads as a clean, separate section the same way the
+       KPI cards do, rather than via a custom one-off color. ──────────── */
     .property-workspace-card {
       display: none;
       max-width: 720px; margin: 16px auto 32px; padding: 10px 20px 0;
-      background: #0E1A2E;
-      border: 1.5px solid rgba(201,151,58,0.5);
+      background: #111827;
+      border: 1px solid rgba(255,255,255,0.07);
       border-radius: 16px;
-      box-shadow: 0 2px 14px rgba(0,0,0,0.35);
+      box-shadow: 0 2px 12px rgba(0,0,0,0.4);
     }
 
     /* ── Property Workspace Tabs (Phase 22; Phase A — larger, icons,
