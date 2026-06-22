@@ -1231,13 +1231,24 @@
     .lease-tab:hover { color: #C9973A; }
     .lease-tab.active { color: #C9973A; border-bottom-color: #C9973A; background: rgba(201,151,58,0.07); border-radius: 6px 6px 0 0; }
 
+    /* ── Property Workspace Card (Phase 27) — wraps the tab nav in a
+       dedicated full-width card directly beneath the breadcrumb, with a
+       contrasting background + gold border, so it reads as primary
+       navigation rather than dashboard content. ─────────────────────── */
+    .property-workspace-card {
+      display: none;
+      max-width: 720px; margin: 16px auto 32px; padding: 10px 20px 0;
+      background: #0E1A2E;
+      border: 1.5px solid rgba(201,151,58,0.5);
+      border-radius: 16px;
+      box-shadow: 0 2px 14px rgba(0,0,0,0.35);
+    }
+
     /* ── Property Workspace Tabs (Phase 22; Phase A — larger, icons,
        stronger active state, more separation from page content) ──────── */
     .workspace-tab-bar {
-      display: flex; gap: 6px; margin-bottom: 32px; flex-wrap: wrap;
+      display: flex; gap: 6px; flex-wrap: wrap;
       border-bottom: 2px solid rgba(255,255,255,0.08);
-      position: sticky; top: 0; z-index: 5; background: #0B1220;
-      padding: 6px 0 0;
     }
     .workspace-tab {
       display: flex; align-items: center; gap: 7px;
@@ -1256,7 +1267,8 @@
     .workspace-tab-pane { animation: wsTabFadeIn 0.12s ease-out; }
     @keyframes wsTabFadeIn { from { opacity: 0.4; } to { opacity: 1; } }
     @media (max-width: 480px) {
-      .workspace-tab-bar { gap: 4px; margin-bottom: 24px; }
+      .property-workspace-card { padding: 8px 12px 0; }
+      .workspace-tab-bar { gap: 4px; }
       .workspace-tab { padding: 13px 14px; font-size: 0.85rem; gap: 5px; flex: 1 1 auto; justify-content: center; min-height: 44px; }
       .workspace-tab .ws-tab-icon { font-size: 0.95rem; }
     }
@@ -5051,7 +5063,8 @@
       header,
       .container,
       #portfolioDashboard,
-      #propertyBreadcrumb { max-width: 1440px; margin-left: auto; margin-right: auto; }
+      #propertyBreadcrumb,
+      .property-workspace-card { max-width: 1440px; margin-left: auto; margin-right: auto; }
       header { padding-left: 0; padding-right: 0; margin-bottom: 28px; }
       #portfolioDashboard { padding-left: 0; padding-right: 0; }
       #propertyBreadcrumb  { padding-left: 0; padding-right: 0; }
@@ -5351,6 +5364,20 @@
   <button class="breadcrumb-delete-btn" onclick="openDeletePropertyModal()" title="Permanently remove this property and all its data from your portfolio">&#x1F5D1; Delete Property</button>
 </div>
 
+<!-- ── Property Workspace Navigation (Phase 27 — moved directly beneath the
+     breadcrumb and given a dedicated card so it reads as primary navigation
+     rather than dashboard content) ─────────────────────────────────────── -->
+<div class="property-workspace-card" id="propertyWorkspaceNavCard">
+  <div class="workspace-tab-bar" id="workspaceTabBar">
+    <button class="workspace-tab active" id="wsTabBtn-overview"  onclick="switchWorkspaceTab('overview')"><span class="ws-tab-icon">&#x1F3E2;</span>Overview</button>
+    <button class="workspace-tab"        id="wsTabBtn-cam"       onclick="switchWorkspaceTab('cam')"><span class="ws-tab-icon">&#x1F9FE;</span>CAM</button>
+    <button class="workspace-tab"        id="wsTabBtn-reserves"  onclick="switchWorkspaceTab('reserves')"><span class="ws-tab-icon">&#x1F512;</span>Reserves</button>
+    <button class="workspace-tab"        id="wsTabBtn-estoppels" onclick="switchWorkspaceTab('estoppels')"><span class="ws-tab-icon">&#x1F4CB;</span>Estoppels</button>
+    <button class="workspace-tab"        id="wsTabBtn-reports"   onclick="switchWorkspaceTab('reports')"><span class="ws-tab-icon">&#x1F4C1;</span>Reports</button>
+    <button class="workspace-tab"        id="wsTabBtn-documents" onclick="switchWorkspaceTab('documents')"><span class="ws-tab-icon">&#x1F4C4;</span>Documents</button>
+  </div>
+</div>
+
 <!-- ── Onboarding Welcome Modal ──────────────────────────────────────────── -->
 <div id="obWelcomeModal" class="ob-backdrop" style="display:none;" onclick="if(event.target===this)obCloseWelcome('skip')">
   <div class="ob-modal">
@@ -5407,17 +5434,6 @@
        no new engines) ────────────────────────────────────────────────── -->
   <div id="propertyKpiHeader"></div>
   <div id="rlusdSettlementPanel"></div>
-
-  <!-- ── Workspace Tab Navigation (Phase 22 — pure UI reorganization,
-       no business logic/data model/extraction changes) ─────────────── -->
-  <div class="workspace-tab-bar" id="workspaceTabBar">
-    <button class="workspace-tab active" id="wsTabBtn-overview"  onclick="switchWorkspaceTab('overview')"><span class="ws-tab-icon">&#x1F3E2;</span>Overview</button>
-    <button class="workspace-tab"        id="wsTabBtn-cam"       onclick="switchWorkspaceTab('cam')"><span class="ws-tab-icon">&#x1F9FE;</span>CAM</button>
-    <button class="workspace-tab"        id="wsTabBtn-reserves"  onclick="switchWorkspaceTab('reserves')"><span class="ws-tab-icon">&#x1F512;</span>Reserves</button>
-    <button class="workspace-tab"        id="wsTabBtn-estoppels" onclick="switchWorkspaceTab('estoppels')"><span class="ws-tab-icon">&#x1F4CB;</span>Estoppels</button>
-    <button class="workspace-tab"        id="wsTabBtn-reports"   onclick="switchWorkspaceTab('reports')"><span class="ws-tab-icon">&#x1F4C1;</span>Reports</button>
-    <button class="workspace-tab"        id="wsTabBtn-documents" onclick="switchWorkspaceTab('documents')"><span class="ws-tab-icon">&#x1F4C4;</span>Documents</button>
-  </div>
 
   <!-- ══════════════════════════ TAB: Overview ══════════════════════════ -->
   <div class="workspace-tab-pane" id="wsPane-overview">

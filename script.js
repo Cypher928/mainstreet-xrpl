@@ -17312,6 +17312,7 @@ function renderPortfolio(props) {
     _maybeShowWelcome(props);
     document.getElementById('portfolioDashboard').style.display = 'block';
     document.getElementById('propertyBreadcrumb').style.display = 'none';
+    document.getElementById('propertyWorkspaceNavCard').style.display = 'none';
     document.getElementById('mainWorkflow').style.display       = 'none';
     return;
   }
@@ -17442,6 +17443,7 @@ function renderPortfolio(props) {
 
   document.getElementById('portfolioDashboard').style.display = 'block';
   document.getElementById('propertyBreadcrumb').style.display = 'none';
+  document.getElementById('propertyWorkspaceNavCard').style.display = 'none';
   document.getElementById('mainWorkflow').style.display       = 'none';
 }
 
@@ -19457,6 +19459,7 @@ function renderProperty(property) {
   // ── Show property view ────────────────────────────────────────────────
   document.getElementById('portfolioDashboard').style.display  = 'none';
   document.getElementById('propertyBreadcrumb').style.display  = 'flex';
+  document.getElementById('propertyWorkspaceNavCard').style.display = 'block';
   document.getElementById('mainWorkflow').style.display        = 'block';
 
   // Sync onboarding step bar + contextual hints from current property state
@@ -19884,6 +19887,7 @@ function selectAcquisitionReview(id) {
   document.getElementById('portfolioDashboard').style.display = 'none';
   document.getElementById('acqDetailPanel').style.display     = 'block';
   document.getElementById('propertyBreadcrumb').style.display = 'none';
+  document.getElementById('propertyWorkspaceNavCard').style.display = 'none';
   document.getElementById('mainWorkflow').style.display       = 'none';
 
   document.getElementById('acqDetailTitle').textContent = review.name;
