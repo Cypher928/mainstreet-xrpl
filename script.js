@@ -2872,12 +2872,24 @@ function runCamValidation() {
   if (typeof calculateCAM === 'function') calculateCAM();
 }
 
+// True when the lease's own stated property/building name doesn't match the
+// property it was uploaded into (see lease-intelligence.js PROPERTY_NAME_MISMATCH
+// edge case, populated by detectLeaseEdgeCases()). Same check review-engine.js
+// uses to flag "Needs Review" — reused here to keep the tenant out of CAM math
+// until a human resolves the mismatch, rather than just warning about it.
+function _hasPropertyMismatch(t) {
+  const edgeCaseTypes = (t?._edgeCases && Array.isArray(t._edgeCases.edgeCases))
+    ? t._edgeCases.edgeCases.map(e => e.type) : [];
+  return edgeCaseTypes.includes('PROPERTY_NAME_MISMATCH');
+}
+
 function getValidTenants() {
   return (currentProperty()?.tenants || []).filter(t =>
     t &&
     t.tenant_name &&
     Number(t.leased_sqft) > 0 &&
-    !t.extractionFailed
+    !t.extractionFailed &&
+    !_hasPropertyMismatch(t)
   );
 }
 
@@ -8382,6 +8394,16 @@ async function runAllocation() {
     warn.className = 'cam-sqft-warning';
     warn.style.cssText = 'background:#7c2d1220;border:1px solid #f97316;color:#fb923c;padding:10px 14px;border-radius:8px;margin-bottom:14px;font-size:0.85rem;';
     warn.textContent = `⚠️ ${missingSquare.length} tenant${missingSquare.length > 1 ? 's' : ''} excluded from CAM — missing Leased Sqft: ${missingSquare.map(t => t.tenant_name).join(', ')}. Edit those tenants in Section 2 and re-run to include them.`;
+    section.prepend(warn);
+  }
+
+  // Warn about tenants excluded from CAM because the lease names a different property
+  const mismatchedTenants = allNamedTenants.filter(t => _hasPropertyMismatch(t));
+  if (mismatchedTenants.length > 0) {
+    const warn = document.createElement('div');
+    warn.className = 'cam-skip-warning';
+    warn.style.cssText = 'background:#7c2d1220;border:1px solid #f87171;color:#fca5a5;padding:10px 14px;border-radius:8px;margin-bottom:14px;font-size:0.85rem;';
+    warn.textContent = `⚠️ ${mismatchedTenants.length} tenant${mismatchedTenants.length > 1 ? 's' : ''} excluded from CAM — lease names a different property: ${mismatchedTenants.map(t => t.tenant_name).join(', ')}. Confirm the lease belongs here, then resolve the warning on that tenant's card and re-run.`;
     section.prepend(warn);
   }
 

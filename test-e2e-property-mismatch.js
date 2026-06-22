@@ -326,15 +326,69 @@ CAM charges shall not increase more than 4% per annum.
     assert(singleSlotHtml.includes('Confirm this lease belongs to the current property') || singleSlotHtml.includes('different property'),
       'STEP 4: single-slot upload surfaces the property-mismatch warning');
 
-    section('STEP 5: Console error check');
+    section('STEP 5: Mismatched tenant is excluded from CAM allocation and rollups');
+    // At this point currentProperty().tenants holds: "Lakeview Dental Group" (mismatch,
+    // from the bulk path), "Cascade Hardware Co" (matching, from the bulk path), and
+    // whatever the single-slot upload in STEP 4 produced. Confirm the mismatch flag
+    // actually reached the tenant object that feeds CAM math (not just the rendered HTML).
+    const mismatchFlagOnTenant = await page.evaluate(() => {
+      const t = (currentProperty()?.tenants || []).find(t => t?.tenant_name === 'Lakeview Dental Group');
+      const types = (t?._edgeCases?.edgeCases || []).map(e => e.type);
+      return types.includes('PROPERTY_NAME_MISMATCH');
+    });
+    assert(mismatchFlagOnTenant, 'STEP 5: Lakeview Dental Group tenant object carries PROPERTY_NAME_MISMATCH');
+
+    const validTenantNames = await page.evaluate(() => getValidTenants().map(t => t.tenant_name));
+    assert(!validTenantNames.includes('Lakeview Dental Group'), 'STEP 5: getValidTenants() excludes the mismatched tenant', JSON.stringify(validTenantNames));
+    assert(validTenantNames.includes('Cascade Hardware Co'), 'STEP 5: getValidTenants() still includes the matching tenant', JSON.stringify(validTenantNames));
+
+    // Run an actual CAM allocation and confirm the dollar/rollup output never mentions the
+    // mismatched tenant — proving exclusion holds end-to-end, not just at the filter function.
+    await page.evaluate(() => {
+      invoiceData.push({
+        vendorName: 'Evergreen Landscaping', amount: 9000, category: 'landscaping',
+        invoiceDate: '2024-03-15', confidence: {}, _error: null,
+      });
+      const prop = currentProperty();
+      if (prop) prop.invoices = Array.from(invoiceData);
+    });
+
+    const totalSqftVal = await page.$eval('#totalSqft', el => el.value).catch(() => '');
+    if (!totalSqftVal || parseFloat(totalSqftVal) <= 0) await page.fill('#totalSqft', '10000');
+
+    await page.evaluate(() => { if (typeof switchWorkspaceTab === 'function') switchWorkspaceTab('cam'); });
+    await page.click('#runBtn');
+    await page.waitForTimeout(400);
+    const allocModalVisible = await page.$eval('#allocModal', el => el.style.display === 'flex').catch(() => false);
+    if (allocModalVisible) await page.click('.modal-confirm');
+
+    await page.waitForFunction(() => {
+      const body = document.getElementById('resultsBody');
+      return body && body.innerText.trim().length > 20;
+    }, { timeout: 10000 }).catch(() => {});
+
+    const camResultsText = await page.$eval('#resultsBody', el => el.innerText).catch(() => '');
+    assert(camResultsText.includes('Cascade Hardware'), 'STEP 5: CAM ran and includes the matching tenant', camResultsText.slice(0, 150));
+    assert(!camResultsText.includes('Lakeview Dental'), 'STEP 5: CAM results never mention the mismatched tenant', camResultsText.slice(0, 300));
+
+    const resultsSection = await page.$eval('#results', el => el.innerHTML).catch(() => '');
+    assert(/excluded from CAM/.test(resultsSection) && /different property/.test(resultsSection),
+      'STEP 5: an "excluded from CAM — lease names a different property" banner is shown');
+
+    const lastResultsNames = await page.evaluate(() =>
+      (typeof lastResults !== 'undefined' ? lastResults.map(r => r.name) : []));
+    assert(!lastResultsNames.includes('Lakeview Dental Group'), 'STEP 5: lastResults (the allocation/rollup source of truth) excludes the mismatched tenant', JSON.stringify(lastResultsNames));
+
+    section('STEP 6: Console error check');
     const realErrors = consoleLogs.filter(l =>
       (l.type === 'error' || l.type === 'PAGEERROR') &&
       !l.text.includes('favicon') &&
       !l.text.includes('Failed to load resource') &&
       !l.text.includes('ERR_CERT_AUTHORITY_INVALID') &&
-      !l.text.includes('[saveLeaseDocument]')
+      !l.text.includes('[saveLeaseDocument]') &&
+      !l.text.includes('[saveCamResults]')
     );
-    assert(realErrors.length === 0, 'STEP 5: no console errors across the property-mismatch flow', JSON.stringify(realErrors.slice(0, 5)));
+    assert(realErrors.length === 0, 'STEP 6: no console errors across the property-mismatch flow', JSON.stringify(realErrors.slice(0, 5)));
 
   } catch (e) {
     fail('UNCAUGHT', e.message);
