@@ -9815,6 +9815,23 @@ function _buildReconciliationSummaryHtml(results, invoices, propName) {
   const capsCls  = capsCount > 0 ? 'rcs-kpi--warn' : '';
   const flagCls  = flaggedCnt > 0 ? 'rcs-kpi--warn' : '';
 
+  // Overall confidence rollup — surfaced prominently so a skeptical reviewer
+  // sees "how sure are we" before drilling into per-field detail.
+  const _confResults  = results.filter(r => r.averageConfidence > 0);
+  const avgConfidence = _confResults.length
+    ? Math.round(_confResults.reduce((s, r) => s + r.averageConfidence, 0) / _confResults.length)
+    : null;
+  const reviewFieldCount = results.reduce((s, r) => s + (r.ambiguityFlags || []).length, 0);
+  const confCls = avgConfidence === null ? ''
+    : avgConfidence < 70 ? 'rcs-confidence-badge--warn'
+    : avgConfidence < 90 ? 'rcs-confidence-badge--ok'
+    : 'rcs-confidence-badge--high';
+  const confidenceBadgeHtml = avgConfidence !== null
+    ? `<span class="rcs-confidence-badge ${confCls}" title="Average extraction confidence across all tenants in this run">
+        ${avgConfidence}% confidence${reviewFieldCount > 0 ? ` &middot; ${reviewFieldCount} item${reviewFieldCount !== 1 ? 's' : ''} need review` : ''}
+      </span>`
+    : '';
+
   const issueHtml = issues.length > 0 ? `<div class="rcs-issues">${
     issues.map((f, fi) => `<div class="rcs-issue rcs-issue--${f.severity}">
       <span class="rcs-issue-main">${f.severity === 'red' ? '&#x26D4;' : '&#x26A0;'} ${esc(f.title)}</span>
@@ -9849,10 +9866,12 @@ function _buildReconciliationSummaryHtml(results, invoices, propName) {
     <div class="rcs-panel ${panelCls}">
       <div class="rcs-panel-head">
         <span class="rcs-panel-title">&#x1F4CA; Reconciliation Summary</span>
+        ${confidenceBadgeHtml}
         <span class="rcs-coverage-badge">${totalPool > 0 ? (totalBilled / totalPool * 100).toFixed(1) : '—'}% coverage</span>
         ${_balBadgeHtml}
       </div>
       <div class="rcs-kpis">
+        ${avgConfidence !== null ? `<div class="rcs-kpi ${avgConfidence < 70 ? 'rcs-kpi--warn' : ''}"><div class="rcs-kpi-val">${avgConfidence}%</div><div class="rcs-kpi-lbl">Confidence</div></div>` : ''}
         <div class="rcs-kpi"><div class="rcs-kpi-val">${fmt(totalPool)}</div><div class="rcs-kpi-lbl">CAM Pool</div></div>
         <div class="rcs-kpi"><div class="rcs-kpi-val">${fmt(totalBilled)}</div><div class="rcs-kpi-lbl">Total Billed</div></div>
         <div class="rcs-kpi ${proCls}"><div class="rcs-kpi-val">${proRataSum.toFixed(1)}%</div><div class="rcs-kpi-lbl">Pro-Rata Sum</div></div>
