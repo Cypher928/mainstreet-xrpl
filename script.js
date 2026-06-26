@@ -3129,6 +3129,55 @@ function renderPropertyKpiHeader(property) {
   slot.innerHTML = `<div class="kpi-header-row">${tileHtml}</div>${lastActivityHtml}`;
 }
 
+// ── RLUSD Settlement Wallet status panel ─────────────────────────────────────
+// Shows the landlord whether the XRPL mainnet settlement wallet (used to anchor
+// tenant payments as transparent RLUSD transactions) exists, is funded, and has
+// its RLUSD trust line set up. Fire-and-forget: never blocks property rendering.
+async function renderRlusdSettlementPanel(containerId = 'rlusdSettlementPanel') {
+  const slot = document.getElementById(containerId);
+  if (!slot) return;
+  try {
+    const headers = await _authHeaders();
+    if (!headers.Authorization) { slot.innerHTML = ''; return; }
+    const resp = await fetch('/api/rlusd-settlement', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json', ...headers },
+      body: JSON.stringify({ action: 'status' }),
+    });
+    const status = await resp.json();
+    slot.innerHTML = _buildRlusdStatusHtml(status);
+  } catch (e) {
+    console.warn('[rlusd] status check failed:', e?.message);
+    slot.innerHTML = '';
+  }
+}
+
+function _buildRlusdStatusHtml(status) {
+  if (!status || !status.configured) {
+    return `<div class="rlusd-status-panel rlusd-status--pending">
+      <span class="rlusd-status-dot"></span>
+      <span>XRPL settlement wallet not generated yet — RLUSD settlement is not active.</span>
+    </div>`;
+  }
+  if (!status.exists) {
+    return `<div class="rlusd-status-panel rlusd-status--pending">
+      <span class="rlusd-status-dot"></span>
+      <span>Settlement wallet generated (${esc(status.address)}) — awaiting XRP funding before it can settle RLUSD on ${esc(status.network)}.</span>
+    </div>`;
+  }
+  if (!status.trustLineEstablished) {
+    return `<div class="rlusd-status-panel rlusd-status--pending">
+      <span class="rlusd-status-dot"></span>
+      <span>Settlement wallet funded with XRP — RLUSD trust line not established yet.</span>
+    </div>`;
+  }
+  return `<div class="rlusd-status-panel rlusd-status--live">
+    <span class="rlusd-status-dot"></span>
+    <span>RLUSD settlement live on XRPL ${esc(status.network)} &middot; ${Number(status.rlusdBalance).toLocaleString()} RLUSD available
+      &middot; <a href="${esc((status.explorerBase || '').replace('/transactions/', '/accounts/'))}${esc(status.address)}" target="_blank" rel="noopener">view wallet</a></span>
+  </div>`;
+}
+
 function _fmtKpiTimestamp(ts) {
   try {
     const d = new Date(ts);
@@ -19397,6 +19446,9 @@ function renderProperty(property) {
     logError('renderProperty.kpiHeader', e, { propId: property?.id, propName: property?.name });
   }
 
+  // Fire-and-forget — never blocks property rendering on an XRPL network round-trip.
+  renderRlusdSettlementPanel().catch(() => {});
+
   // Keep the active workspace tab in sync on every render (idempotent —
   // defaults to 'overview' for a newly-selected property, preserved across
   // re-renders of the same property).
@@ -19694,6 +19746,10 @@ function _renderTenantPropertyView(property) {
         _dispChip +
       '</div>' +
       '<p class="tp-property-note">Your CAM reconciliation data is managed by your property manager. Contact them to request a detailed statement or to dispute a charge.</p>' +
+    '</div>' +
+    '<div class="tp-settlement-card" id="tpSettlementCard">' +
+      '<div id="tpSettlementStatus"></div>' +
+      '<p class="tp-property-note">Payments to this property are settled transparently on the XRP Ledger using RLUSD (a regulated USD stablecoin) — every settlement is a real, publicly verifiable blockchain transaction, never a hidden transfer.</p>' +
     '</div>';
   container.style.display = 'block';
 
@@ -19701,6 +19757,8 @@ function _renderTenantPropertyView(property) {
   const welcome = document.getElementById('tenantPortalMsg')
     ?.querySelector('.tenant-portal-welcome');
   if (welcome) welcome.style.display = 'none';
+
+  renderRlusdSettlementPanel('tpSettlementStatus').catch(() => {});
 }
 
 // ─── Acquisition Review ───────────────────────────────────────────────────────
