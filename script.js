@@ -13653,7 +13653,9 @@ function generateMasterReport() {
   try {
 
   const now    = new Date().toLocaleDateString('en-US', { year:'numeric', month:'long', day:'numeric' });
-  const period = new Date().getFullYear() + ' CAM Year';
+  // Use the reconciliation's actual year (matches buildAuditNarrative below and the other
+  // reports) instead of the current calendar year, so the header doesn't contradict the body.
+  const period = (getCamYear() || new Date().getFullYear()) + ' CAM Year';
 
   // Category breakdown
   const catTotals = {};
@@ -14493,7 +14495,9 @@ function generateTenantStatement(tenantName) {
   console.groupEnd();
 
   const now    = new Date().toLocaleDateString('en-US', { year:'numeric', month:'long', day:'numeric' });
-  const period = new Date().getFullYear() + ' CAM Year';
+  // Use the reconciliation's actual year (not the current calendar year) so the period
+  // label matches the statement's data and the other reports.
+  const period = (getCamYear() || new Date().getFullYear()) + ' CAM Year';
 
   // Per-invoice breakdown
   const eligible = lastInvoicesFull.filter(inv =>
