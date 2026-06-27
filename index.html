@@ -3406,8 +3406,15 @@
     }
     .login-tagline {
       font-family: 'Cormorant Garamond', Georgia, serif;
-      font-size: 1.05rem; color: #C9973A; margin-bottom: 36px;
+      font-size: 1.05rem; color: #C9973A; margin-bottom: 10px;
     }
+    .login-xrpl-note {
+      display: inline-flex; align-items: center; gap: 7px;
+      font-size: 0.74rem; color: #7dd3fc; margin-bottom: 30px;
+      padding: 5px 12px; border-radius: 999px;
+      background: rgba(56,189,248,0.08); border: 1px solid rgba(56,189,248,0.22);
+    }
+    .login-xrpl-note .stl-dot { width: 7px; height: 7px; border-radius: 50%; background: #38bdf8; }
     .login-label {
       display: block; text-align: left; font-size: 0.78rem; color: #94A3B8;
       text-transform: uppercase; letter-spacing: 0.07em; margin-bottom: 7px;
@@ -5160,6 +5167,7 @@
   <div class="login-card">
     <div class="login-logo">Mainstreet</div>
     <div class="login-tagline">The smarter way to reconcile CAM charges</div>
+    <div class="login-xrpl-note"><span class="stl-dot"></span>Payments settled transparently in RLUSD on the XRP Ledger</div>
 
     <!-- Tab switcher -->
     <div class="login-tabs">

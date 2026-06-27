@@ -3258,9 +3258,13 @@ function _buildSettlementFlowHtml(state, opts = {}) {
     ? `<div class="stl-head stl-head--live"><span class="stl-dot"></span>Settled via RLUSD on XRPL mainnet${amtTxt ? ' · ' + amtTxt : ''}</div>`
     : `<div class="stl-head stl-head--pending"><span class="stl-dot"></span>Settlement via RLUSD on XRPL — launching on mainnet</div>`;
 
-  const note = settled
-    ? `<p class="stl-note">This payment was settled in RLUSD on the XRP Ledger. The transaction is public and permanent — anyone can verify it on the explorer.</p>`
-    : `<p class="stl-note">When a tenant pays, MainStreet settles the matching amount in RLUSD on the XRP Ledger and posts a public, verifiable transaction here. Mainnet settlement goes live once the production wallet is funded.</p>`;
+  // opts.hideNote suppresses the explanatory paragraph for callers that already print
+  // their own (e.g. the tenant statement section header) — avoids duplicated copy.
+  const note = opts.hideNote
+    ? ''
+    : settled
+      ? `<p class="stl-note">This payment was settled in RLUSD on the XRP Ledger. The transaction is public and permanent — anyone can verify it on the explorer.</p>`
+      : `<p class="stl-note">When a tenant pays, MainStreet settles the matching amount in RLUSD on the XRP Ledger and posts a public, verifiable transaction here. Mainnet settlement goes live once the production wallet is funded.</p>`;
 
   return `<div class="stl-flow ${settled ? 'stl-flow--live' : 'stl-flow--pending'}">
     ${head}
@@ -14645,7 +14649,7 @@ function generateTenantStatement(tenantName) {
 
     <div class="rpt-section-title">Settlement via RLUSD on XRPL</div>
     <p class="rpt-helper-text">When you pay, MainStreet settles the matching amount in RLUSD (a regulated USD stablecoin) on the XRP Ledger — a public, permanent transaction you can verify yourself. This is the trust layer behind your statement.</p>
-    ${_buildSettlementFlowHtml(_getSettlementState(currentProperty() || {}), { showPayButton: false })}
+    ${_buildSettlementFlowHtml(_getSettlementState(currentProperty() || {}), { showPayButton: false, hideNote: true })}
 
     <div class="rpt-section-title">Expense Breakdown</div>
     <p class="rpt-helper-text">Click a category to expand individual charges.</p>
