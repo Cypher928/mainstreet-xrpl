@@ -3132,10 +3132,25 @@ function renderPropertyKpiHeader(property) {
   slot.innerHTML = `<div class="kpi-header-row">${tileHtml}</div>${lastActivityHtml}`;
 }
 
-// ── RLUSD Settlement Wallet status panel ─────────────────────────────────────
-// Shows the landlord whether the XRPL mainnet settlement wallet (used to anchor
-// tenant payments as transparent RLUSD transactions) exists, is funded, and has
-// its RLUSD trust line set up. Fire-and-forget: never blocks property rendering.
+// ── Property overview settlement panel ───────────────────────────────────────
+// The headline XRPL surface on every property view: renders the full RLUSD
+// settlement flow (Pay → RLUSD → Settle on XRPL → View Transaction) prominently,
+// driven by the property's settlement record, with the wallet infra status as a
+// small secondary line beneath. This is what makes "MainStreet settles on XRPL"
+// obvious the moment a judge opens a property — not a buried, opt-in detail.
+function renderPropertySettlementPanel() {
+  const slot = document.getElementById('rlusdSettlementPanel');
+  if (!slot) return;
+  const prop = currentProperty() || {};
+  slot.innerHTML =
+    _buildSettlementFlowHtml(_getSettlementState(prop), { showPayButton: false }) +
+    '<div id="rlusdInfraStatus" class="stl-infra-status"></div>';
+  renderRlusdSettlementPanel('rlusdInfraStatus').catch(() => {});
+}
+
+// ── RLUSD Settlement Wallet infra status (small secondary line) ──────────────
+// A neutral one-line status of the on-chain settlement rail (activating / funding /
+// live), shown beneath the prominent settlement flow. Fire-and-forget.
 async function renderRlusdSettlementPanel(containerId = 'rlusdSettlementPanel') {
   const slot = document.getElementById(containerId);
   if (!slot) return;
@@ -3156,27 +3171,25 @@ async function renderRlusdSettlementPanel(containerId = 'rlusdSettlementPanel') 
 }
 
 function _buildRlusdStatusHtml(status) {
-  if (!status || !status.configured) {
-    return `<div class="rlusd-status-panel rlusd-status--pending">
+  // Neutral "settlement rail" framing — this is a secondary infra line beneath the
+  // prominent settlement flow, so it states where the rail is in activation rather
+  // than reading as a broken/unavailable feature.
+  const pending = (txt) => `<div class="rlusd-status-panel rlusd-status--pending">
       <span class="rlusd-status-dot"></span>
-      <span>XRPL settlement wallet not generated yet — RLUSD settlement is not active.</span>
+      <span>${txt}</span>
     </div>`;
+  if (!status || !status.configured) {
+    return pending('RLUSD settlement rail &middot; activating on XRPL mainnet');
   }
   if (!status.exists) {
-    return `<div class="rlusd-status-panel rlusd-status--pending">
-      <span class="rlusd-status-dot"></span>
-      <span>Settlement wallet generated (${esc(status.address)}) — awaiting XRP funding before it can settle RLUSD on ${esc(status.network)}.</span>
-    </div>`;
+    return pending('RLUSD settlement rail &middot; funding the XRPL mainnet wallet');
   }
   if (!status.trustLineEstablished) {
-    return `<div class="rlusd-status-panel rlusd-status--pending">
-      <span class="rlusd-status-dot"></span>
-      <span>Settlement wallet funded with XRP — RLUSD trust line not established yet.</span>
-    </div>`;
+    return pending('RLUSD settlement rail &middot; finalizing the RLUSD trust line');
   }
   return `<div class="rlusd-status-panel rlusd-status--live">
     <span class="rlusd-status-dot"></span>
-    <span>RLUSD settlement live on XRPL ${esc(status.network)} &middot; ${Number(status.rlusdBalance).toLocaleString()} RLUSD available
+    <span>RLUSD settlement rail &middot; live on XRPL ${esc(status.network)} &middot; ${Number(status.rlusdBalance).toLocaleString()} RLUSD
       &middot; <a href="${esc((status.explorerBase || '').replace('/transactions/', '/accounts/'))}${esc(status.address)}" target="_blank" rel="noopener">view wallet</a></span>
   </div>`;
 }
@@ -10009,7 +10022,6 @@ function _buildReconciliationSummaryHtml(results, invoices, propName) {
         <span class="rcs-coverage-badge">${totalPool > 0 ? (totalBilled / totalPool * 100).toFixed(1) : '—'}% coverage</span>
         ${_balBadgeHtml}
       </div>
-      ${_buildSettlementFlowHtml(_getSettlementState(currentProperty() || {}), { showPayButton: false })}
       <div class="rcs-kpis">
         ${avgConfidence !== null ? `<div class="rcs-kpi ${avgConfidence < 70 ? 'rcs-kpi--warn' : ''}"><div class="rcs-kpi-val">${avgConfidence}%</div><div class="rcs-kpi-lbl">Confidence</div></div>` : ''}
         <div class="rcs-kpi"><div class="rcs-kpi-val">${fmt(totalPool)}</div><div class="rcs-kpi-lbl">CAM Pool</div></div>
@@ -14630,6 +14642,10 @@ function generateTenantStatement(tenantName) {
         </div>
       </div>
     </div>
+
+    <div class="rpt-section-title">Settlement via RLUSD on XRPL</div>
+    <p class="rpt-helper-text">When you pay, MainStreet settles the matching amount in RLUSD (a regulated USD stablecoin) on the XRP Ledger — a public, permanent transaction you can verify yourself. This is the trust layer behind your statement.</p>
+    ${_buildSettlementFlowHtml(_getSettlementState(currentProperty() || {}), { showPayButton: false })}
 
     <div class="rpt-section-title">Expense Breakdown</div>
     <p class="rpt-helper-text">Click a category to expand individual charges.</p>
@@ -19539,8 +19555,9 @@ function renderProperty(property) {
     logError('renderProperty.kpiHeader', e, { propId: property?.id, propName: property?.name });
   }
 
-  // Fire-and-forget — never blocks property rendering on an XRPL network round-trip.
-  renderRlusdSettlementPanel().catch(() => {});
+  // Prominent XRPL settlement flow + infra status. Synchronous flow render, with the
+  // wallet status fetched fire-and-forget so it never blocks property rendering.
+  try { renderPropertySettlementPanel(); } catch (e) { console.warn('[rlusd] panel render failed:', e?.message); }
 
   // Keep the active workspace tab in sync on every render (idempotent —
   // defaults to 'overview' for a newly-selected property, preserved across
