@@ -51,11 +51,31 @@ Each item should be checked off in order — several have hard dependencies on t
   correct `Amount` (RLUSD, correct issuer), the memo decodes to the expected JSON, and (once
   step 5 is done) the Source Tag is visible on the transaction.
 
-- [ ] **8. Capture screenshots and transaction IDs for the README and demo video**
+- [ ] **8. Light up the in-app settlement flow with the real transaction**
+  The settlement UI (Pay Now → RLUSD Settlement → Settled on XRPL → View Transaction) is
+  already built and live in the app — it currently shows an honest "launching on mainnet"
+  pending state and **never displays a fabricated hash**. To flip it to the real, verified
+  state, set a `settlement` record on the demo property's data:
+  ```js
+  property.settlement = {
+    status:       'settled',
+    amountUsd:    <amount from step 6>,
+    txHash:       '<txHash from step 6>',
+    explorerLink: 'https://livenet.xrpl.org/transactions/<txHash>',
+    network:      'mainnet',
+    settledAt:    '<ISO timestamp>'
+  };
+  ```
+  (Set this on the seeded *Cascade Commons* demo property — e.g. in `ensureDemoProperty()`'s
+  `propertyData`, or persist it on the property row's `data` JSON.) `_getSettlementState()`
+  reads it and the flow turns green with a working "View Transaction" link everywhere it
+  appears — landlord reconciliation summary and tenant portal — with no other code changes.
+
+- [ ] **9. Capture screenshots and transaction IDs for the README and demo video**
   - Screenshot of the explorer page from step 7.
   - The `txHash` itself, in plain text, for the README's "For Judges" section.
-  - Screenshot of the in-app "View on XRPL" surface showing the same transaction
-    (landlord settlement panel and/or tenant portal transparency card).
+  - Screenshot of the in-app settlement flow (step 8) showing the green "Settled via RLUSD on
+    XRPL — View Transaction" state, in both the landlord and tenant views.
   *This is the last infrastructure step before recording the demo video* — recording before
   this exists means re-recording later.
 
