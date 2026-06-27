@@ -16,7 +16,7 @@ Set these in **Vercel → Project Settings → Environment Variables → Product
 
 | Variable | Value | Secret? |
 |---|---|---|
-| `XRPL_SETTLEMENT_WALLET_ADDRESS` | `rBGMooWB2a82fEkPSvH1tAZR3Xvcq8RmpC` | no |
+| `XRPL_SETTLEMENT_WALLET_ADDRESS` | `rG2ZaUs5SodnNNE23ktTzNbRt55PQZNPrn` | no |
 | `XRPL_SETTLEMENT_WALLET_SEED` | *(the seed sent to you privately)* | **YES** |
 | `XRPL_NETWORK` | `mainnet` | no |
 
@@ -40,7 +40,7 @@ After funding XRP → establishing the trust line → sending the first RLUSD se
 
 ```
 # from a networked environment, with the wallet address exported:
-export XRPL_SETTLEMENT_WALLET_ADDRESS=rBGMooWB2a82fEkPSvH1tAZR3Xvcq8RmpC
+export XRPL_SETTLEMENT_WALLET_ADDRESS=rG2ZaUs5SodnNNE23ktTzNbRt55PQZNPrn
 node scripts/verify-settlement.js <txHash>
 ```
 This checks: type = Payment, result = tesSUCCESS, sender = settlement wallet, amount = RLUSD

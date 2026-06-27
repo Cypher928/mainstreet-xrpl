@@ -14,7 +14,7 @@ explicit hold the team placed on this phase.
 
 - **Wallet generated.** A real XRPL keypair was generated locally via
   `scripts/generate-settlement-wallet.js` (offline — no network call, no funding).
-- **Address:** `rBGMooWB2a82fEkPSvH1tAZR3Xvcq8RmpC` (public — safe to share, safe to put in
+- **Address:** `rG2ZaUs5SodnNNE23ktTzNbRt55PQZNPrn` (public — safe to share, safe to put in
   the README, safe to commit). This is the production settlement wallet's mainnet address.
 - **Seed:** delivered directly to the founder via file transfer, **never** printed to chat,
   **never** written to any tracked file, **never** committed. The local copy used to generate
@@ -32,7 +32,7 @@ explicit hold the team placed on this phase.
 
 | Variable | Value | Secret? |
 |---|---|---|
-| `XRPL_SETTLEMENT_WALLET_ADDRESS` | `rBGMooWB2a82fEkPSvH1tAZR3Xvcq8RmpC` | No — public address |
+| `XRPL_SETTLEMENT_WALLET_ADDRESS` | `rG2ZaUs5SodnNNE23ktTzNbRt55PQZNPrn` | No — public address |
 | `XRPL_SETTLEMENT_WALLET_SEED` | *(from the file sent directly to you — not reproduced here)* | **Yes — secret** |
 | `XRPL_NETWORK` | `mainnet` | No |
 
@@ -48,7 +48,7 @@ directly (`process.env.XRPL_SETTLEMENT_WALLET_ADDRESS`, `XRPL_SETTLEMENT_WALLET_
 ## 3. Funding procedure (DO NOT EXECUTE YET — held pending live-app sign-off)
 
 1. **Buy/transfer real XRP** from an exchange or existing wallet to
-   `rBGMooWB2a82fEkPSvH1tAZR3Xvcq8RmpC`. Minimum: enough to cover the XRP reserve
+   `rG2ZaUs5SodnNNE23ktTzNbRt55PQZNPrn`. Minimum: enough to cover the XRP reserve
    (currently ~1–10 XRP base reserve depending on current network reserve settings —
    check the live reserve requirement at send time, it has changed over XRPL's history)
    plus a small buffer for transaction fees. A modest amount (e.g. 20–30 XRP) covers

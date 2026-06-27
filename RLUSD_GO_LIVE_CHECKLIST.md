@@ -8,7 +8,7 @@ deliberately-deferred sequence that takes it from "ready" to "real."
 Each item should be checked off in order — several have hard dependencies on the one before it.
 
 - [ ] **1. Fund wallet with XRP**
-  Transfer real XRP to `rBGMooWB2a82fEkPSvH1tAZR3Xvcq8RmpC` — enough to cover the current
+  Transfer real XRP to `rG2ZaUs5SodnNNE23ktTzNbRt55PQZNPrn` — enough to cover the current
   mainnet account reserve plus transaction fees (see `RLUSD_FUNDING_PROCEDURE.md` §3.1).
   *Verify:* `POST /api/rlusd-settlement {"action":"status"}` → `exists: true`.
 

@@ -52,7 +52,7 @@ MainStreet is live on XRPL mainnet. First settlement transaction:
 - **Explorer:** `<<EXPLORER_LINK>>`
 - **Amount:** `<<SETTLEMENT_AMOUNT>>` in RLUSD
 - **Date:** `<<SETTLEMENT_DATE>>`
-- **Settlement wallet:** `rBGMooWB2a82fEkPSvH1tAZR3Xvcq8RmpC`
+- **Settlement wallet:** `rG2ZaUs5SodnNNE23ktTzNbRt55PQZNPrn`
 - **RLUSD issuer (mainnet):** `rMxCKbEDwqr76QuheSUMdEGf4B9xJ8m5De`
 - **Source Tag:** `<<SOURCE_TAG>>`
 
