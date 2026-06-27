@@ -7,7 +7,8 @@
     "test": "node test-allocation.js",
     "test:disputes":   "node test-disputes.js",
     "test:regression": "node test-regression.js",
-    "test:rlusd":      "node test-rlusd.js"
+    "test:rlusd":      "node test-rlusd.js",
+    "test:xrpl-ui":    "node test-xrpl-ui.js"
   },
   "license": "UNLICENSED",
   "dependencies": {
