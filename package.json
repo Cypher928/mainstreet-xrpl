@@ -9,7 +9,7 @@
     "test:regression": "node test-regression.js",
     "test:rlusd":      "node test-rlusd.js"
   },
-  "license": "MIT",
+  "license": "UNLICENSED",
   "dependencies": {
     "xrpl": "^4.6.0"
   }

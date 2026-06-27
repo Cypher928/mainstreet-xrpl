@@ -3056,7 +3056,10 @@ function resetTenant(i) {
 // tabbed navigation to cut scrolling. No business logic, data model, or
 // extraction engine touched — this only toggles which already-rendered
 // section is visible.
-const WORKSPACE_TABS = ['overview', 'cam', 'reserves', 'estoppels', 'reports', 'documents'];
+// 'estoppels' is intentionally omitted — the Estoppels feature is not built yet and its
+// tab/pane are hidden so the app reads as production-ready. Re-add 'estoppels' here and
+// un-hide #wsTabBtn-estoppels in index.html once the feature ships.
+const WORKSPACE_TABS = ['overview', 'cam', 'reserves', 'reports', 'documents'];
 let _activeWorkspaceTab = 'overview';
 
 function switchWorkspaceTab(tab) {

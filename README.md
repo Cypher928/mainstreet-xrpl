@@ -1,17 +1,39 @@
-# Mainstreet — AI-Powered CAM Reconciliation for Commercial Real Estate
+# MainStreet — AI-Powered CAM Reconciliation for Commercial Real Estate
 
-> **The CAM reconciliation layer that works alongside Yardi — transparent, automated, and settled on XRPL.**
+> **Transparent CAM reconciliation for commercial real estate — automated allocation, AI document extraction, and tenant-verifiable settlement anchored on the XRP Ledger.**
 
-**Live Demo:** [mainstreet-xrpl.vercel.app](https://mainstreet-xrpl.vercel.app)
+---
 
-**Live XRPL Transaction:**
-[AFAD1E38C7A932C35511DB846A099EE346B7E1D71EF3E9F5E61D1F9BF505E113](https://testnet.xrpl.org/transactions/AFAD1E38C7A932C35511DB846A099EE346B7E1D71EF3E9F5E61D1F9BF505E113)
+## 👋 For Judges — Start Here
+
+**Live demo:** [mainstreet-xrpl.vercel.app](https://mainstreet-xrpl.vercel.app)
+
+**Fastest way to see the product (under 3 minutes):**
+
+1. Open the live demo link above.
+2. **Sign up** with any email — it's free and takes a few seconds (signup is required so your data persists, but no credit card and no setup).
+3. Click **"Try Live Demo"** — this loads a fully seeded example property (*Cascade Commons*) with real tenants, leases, invoices, a completed CAM reconciliation, and a resolved tenant dispute.
+4. Open the property and walk through the workspace tabs: **Overview → CAM → Reserves → Reports**. Everything is populated — no empty states to set up.
+5. To see the XRPL value proposition: open a completed reconciliation and look for the **"Settlement verified on XRPL — view transaction"** surface, and the tenant portal's settlement-transparency card.
+
+**What to look at:**
+
+| | |
+|---|---|
+| **Architecture diagram** | [`architecture.html`](./architecture.html) — visual system overview |
+| **XRPL settlement code** | [`rlusd-integration.js`](./rlusd-integration.js) — RLUSD mainnet settlement (wallet, trust lines, transaction logic) |
+| **On-chain anchoring code** | [`xrpl-integration.js`](./xrpl-integration.js) — SHA-256 reconciliation anchoring |
+| **Allocation engine** | [`allocation-engine.js`](./allocation-engine.js) — standalone, unit-tested CAM pro-rata engine |
+| **Demo video** | _to be added — see go-live checklist_ |
+| **Live mainnet settlement transaction** | _to be added once the production wallet is funded — see [`RLUSD_GO_LIVE_CHECKLIST.md`](./RLUSD_GO_LIVE_CHECKLIST.md)_ |
+
+> **On mainnet status:** the full RLUSD settlement architecture (wallet generation, trust lines, transaction logic, and in-app "View on XRPL" surfaces) is built and unit-tested. The production wallet is generated but **deliberately not yet funded** — funding and the first real mainnet settlement are the final, gated deployment step. A development-time on-chain anchor (testnet) is linked below as proof the anchoring mechanism works end-to-end.
 
 ---
 
 ## What It Does
 
-Mainstreet automates the full Commercial Area Maintenance reconciliation workflow — from uploading leases to generating printable tenant statements — with AI-powered document extraction, on-chain audit trails, and a dispute resolution workflow.
+MainStreet automates the full Commercial Area Maintenance (CAM) reconciliation workflow — from uploading leases to generating printable tenant statements — with AI-powered document extraction, on-chain audit trails, and a dispute-resolution workflow.
 
 | Feature | Description |
 |---|---|
@@ -26,40 +48,30 @@ Mainstreet automates the full Commercial Area Maintenance reconciliation workflo
 | **Tenant Statements** | Per-tenant printable statements showing their share, eligible invoices, and reconciliation status |
 | **AI Confidence Scoring** | Every extracted field is scored 0–100; low-confidence fields flagged for manual review |
 | **Duplicate Detection** | Cross-batch duplicate invoices caught automatically with vendor + amount + date matching |
-| **Pre-Allocation Modal** | Confirmation summary before any allocation runs — shows total, tenant count, category breakdown |
+| **RLUSD Settlement (XRPL)** | Tenant payments settled in RLUSD on the XRP Ledger as a transparent, verifiable proof-of-settlement layer |
 
 ---
 
 ## Why XRPL
 
-CAM reconciliation involves significant money and significant disputes. XRPL provides the audit trail that neither party can alter after the fact.
+CAM reconciliation involves significant money and significant disputes. XRPL provides an audit and settlement trail that neither party can alter after the fact.
 
-- **Every invoice hashed on-chain** — SHA-256 fingerprint anchored to XRPL at allocation time
-- **Year-end settlement via XRPL Escrow** — funds released automatically when both parties agree
-- **Dispute resolutions recorded immutably** — accepted, rejected, or docs-requested status stored on ledger
-- **Neither landlord nor tenant touches crypto directly** — XRPL is the backend, not the interface
+- **Reconciliations hashed on-chain** — a SHA-256 fingerprint of each reconciliation is anchored to XRPL, so the result can't be quietly changed later
+- **Transparent RLUSD settlement** — payments are settled in RLUSD on the XRP Ledger and surfaced in-app as "Settlement verified on XRPL — view transaction," not hidden behind the scenes
+- **Dispute resolutions recorded immutably** — accepted, rejected, or docs-requested status carried in transaction memos
+- **Tenants verify, they don't operate crypto** — the ledger is the trust layer; the interface stays familiar property-management software
 
 ---
 
 ## For the Property Manager
 
-Traditional CAM reconciliation takes weeks, involves outside firms, and produces paper statements tenants can't easily verify. Mainstreet changes that:
+Traditional CAM reconciliation takes weeks, involves outside firms, and produces paper statements tenants can't easily verify. MainStreet changes that:
 
 - **No more mailing statements** — tenants see their share, eligible invoices, and reasoning in real time
-- **Flexible payment cadence** — tenants can pay weekly, monthly, or annually
 - **Dispute any charge directly in the app** — no emails, no phone calls, no he-said-she-said
 - **No outside reconciliation firm needed** — the allocation engine runs in seconds, not weeks
 - **Works alongside Yardi** — import your existing data via CSV, no migration required
-
----
-
-## Roadmap
-
-| Phase | Status |
-|---|---|
-| **Phase 1 — CAM Reconciliation** | Live now |
-| **Phase 2 — Escrow Analysis for Mortgage Companies** | In development |
-| **Phase 3 — Rent Payment Processing via XRPL** | Planned |
+- **Settlement you can point a tenant to** — every settlement is a public, verifiable XRPL transaction
 
 ---
 
@@ -68,72 +80,36 @@ Traditional CAM reconciliation takes weeks, involves outside firms, and produces
 | Layer | Technology |
 |---|---|
 | Frontend | HTML / CSS / Vanilla JavaScript |
-| AI | Claude API (Anthropic) — `claude-sonnet-4-20250514` |
-| Blockchain | XRPL + xrpl.js |
-| Hosting | Vercel (static) |
-| Payments | RLUSD on XRPL *(planned)* |
-
----
-
-## File Structure
-
-```
-mainstreet-xrpl/
-├── index.html                  # Full app — all UI, AI logic, portfolio, reports, dispute workflow
-├── xrpl-integration.js         # XRPL testnet connection, escrow creation, payment anchoring
-├── escrow-reconciliation.js    # Escrow lifecycle: create, finish, cancel with CAM data memos
-├── allocation-engine.js        # Standalone CAM pro-rata allocation engine (Node.js)
-├── architecture.html           # Visual system architecture diagram
-├── test-xrpl.js                # Live XRPL testnet test — funds two wallets, sends 10 XRP with memo
-├── test-allocation.js          # Unit tests for the allocation engine
-├── test-escrow.js              # Integration tests for escrow reconciliation
-├── vercel.json                 # Vercel static hosting config
-├── package.json                # Node.js dependencies (xrpl, etc.)
-└── LICENSE                     # MIT
-```
-
----
-
-## Error Prevention
-
-Mainstreet has four layers of error prevention built in before allocation runs:
-
-1. **AI Confidence Scoring** — every field extracted from a lease or invoice is scored 0–100; anything below 70% is flagged with a visual warning badge
-2. **Duplicate Invoice Detection** — cross-batch matching on vendor name prefix, amount (±$1), and date (±7 days); warns before adding and lets you remove the duplicate
-3. **Amount Sanity Check** — if a new invoice is more than 3× the average for its category, a warning banner appears asking you to verify
-4. **Pre-Allocation Confirmation Modal** — shows total expense amount, tenant count, and category breakdown before any allocation runs
+| AI | Claude API (Anthropic), called via a server-side proxy |
+| Backend | Vercel serverless functions (`/api/*`) |
+| Auth & data | Supabase (authentication + Postgres) |
+| Blockchain | XRPL + xrpl.js; RLUSD settlement |
+| Hosting | Vercel |
 
 ---
 
 ## Security & Privacy
 
-Mainstreet is **100% client-side and read-only**.
-
-- No private keys or seed phrases are ever requested
-- All AI analysis runs in your browser — documents are sent directly to the Anthropic API and never touch a Mainstreet server
-- Wallet addresses are not logged or retained
-- Only publicly visible XRPL data is used for on-chain verification
-- Your Anthropic API key is used in-browser only and never stored
+- **Secrets stay server-side.** The Anthropic API key and the XRPL settlement wallet seed live only in server-side environment variables — they are never exposed to the browser.
+- **Authenticated access.** Requests to sensitive API routes are authenticated against Supabase; the user's token is verified server-side before any privileged operation runs.
+- **Rate limiting.** API endpoints apply per-user rate limiting to prevent abuse.
+- **Public-by-design settlement.** XRPL settlement transactions are intentionally public and verifiable on the ledger — that transparency is the point, not a leak.
 
 ---
 
 ## Quick Start
 
 1. Open [mainstreet-xrpl.vercel.app](https://mainstreet-xrpl.vercel.app)
-2. Paste your Anthropic API key in the key bar at the top
-3. Select a property from the portfolio dashboard (or add a new one)
-4. Upload tenant leases — AI extracts CAM terms automatically
-5. Upload invoices or import from Yardi Genesis CSV
-6. Click **Run CAM Allocation**
-7. Review results, dispute any charges, and generate printable reports
-
-No installation. No account. No data stored.
+2. Sign up with any email (free, no card required)
+3. Click **"Try Live Demo"** to load the seeded *Cascade Commons* property
+4. Explore the workspace tabs, open a reconciliation, and review a tenant dispute
+5. To run your own: add a property, upload leases and invoices (or import a Yardi CSV), and click **Run CAM Allocation**
 
 ---
 
-## Live XRPL Transaction
+## On-Chain Anchor (Development / Testnet)
 
-This transaction was anchored to the XRPL testnet during development to demonstrate the on-chain audit trail:
+This transaction was anchored to the XRPL **testnet** during development to demonstrate the on-chain audit trail end-to-end. The production **mainnet** RLUSD settlement transaction will be added here once the wallet is funded (see [`RLUSD_GO_LIVE_CHECKLIST.md`](./RLUSD_GO_LIVE_CHECKLIST.md)).
 
 ```
 TX Hash:  AFAD1E38C7A932C35511DB846A099EE346B7E1D71EF3E9F5E61D1F9BF505E113
@@ -143,4 +119,15 @@ Explorer: https://testnet.xrpl.org/transactions/AFAD1E38C7A932C35511DB846A099EE3
 
 ---
 
-*Built for the XRPL Grants program. Mainstreet is open source under the MIT License.*
+## Roadmap
+
+| Phase | Status |
+|---|---|
+| **CAM Reconciliation** | Live |
+| **AI Lease & Invoice Extraction** | Live |
+| **Escrow & Reserve Intelligence** | Live |
+| **RLUSD Settlement on XRPL** | Built; mainnet launch pending wallet funding |
+
+---
+
+*Built for XRPL Commons Make Waves. © 2026 Main Street. All rights reserved — see [LICENSE.txt](./LICENSE.txt).*
