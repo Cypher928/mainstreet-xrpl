@@ -10433,6 +10433,10 @@ function setCamYear(y) {
   if (glLbl) glLbl.textContent = `Upload ${_camYear} GL Excel File (.xlsx only)`;
   const _cyb = document.getElementById('camYearBadge');
   if (_cyb) _cyb.textContent = _camYear + ' CAM';
+  // Keep the Property Setup dropdown in sync when the year changes (e.g. a loaded
+  // reconciliation restores a prior year) so it can't disagree with the breadcrumb.
+  const _cys = document.getElementById('camYearSelect');
+  if (_cys && _cys.value !== String(_camYear)) _cys.value = String(_camYear);
 }
 function initCamYearSelect() {
   const sel = document.getElementById('camYearSelect');
@@ -13809,6 +13813,7 @@ function generateMasterReport() {
       <div class="rpt-hash-lbl">&#x1F512; Tamper-Detection Hash (SHA-256)</div>
       <div class="rpt-hash-val">Computing…</div>
     </div>
+    <p style="font-size:0.78rem;color:#64748b;line-height:1.5;margin-top:10px;">Tenant payments against this reconciliation are settled in RLUSD on the XRP Ledger — each settlement is recorded as a public, independently verifiable transaction.</p>
 
     ${_rptFooter(lastPropName, 'Landlord Master CAM Report', now)}`;
 
@@ -17417,8 +17422,8 @@ function renderPortfolio(props) {
       ${_renderDemoPropertiesSection()}
       <div class="ptf-empty-state">
         <div class="ptf-empty-icon">&#x1F3E2;</div>
-        <div class="ptf-empty-title">No properties yet</div>
-        <div class="ptf-empty-desc">Create your first property and get audit-ready in 5 minutes — or open one of the demo properties above to explore with sample data.</div>
+        <div class="ptf-empty-title">Add your first property</div>
+        <div class="ptf-empty-desc">Create your own property and get audit-ready in 5 minutes — or open one of the demo properties above to explore with sample data.</div>
         <div class="ptf-empty-cta">
           <button class="ptf-empty-btn-primary" onclick="addNewProperty()">+ Create Property</button>
         </div>
