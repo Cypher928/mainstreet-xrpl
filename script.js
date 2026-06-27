@@ -3056,7 +3056,10 @@ function resetTenant(i) {
 // tabbed navigation to cut scrolling. No business logic, data model, or
 // extraction engine touched — this only toggles which already-rendered
 // section is visible.
-const WORKSPACE_TABS = ['overview', 'cam', 'reserves', 'estoppels', 'reports', 'documents'];
+// 'estoppels' is intentionally omitted — the Estoppels feature is not built yet and its
+// tab/pane are hidden so the app reads as production-ready. Re-add 'estoppels' here and
+// un-hide #wsTabBtn-estoppels in index.html once the feature ships.
+const WORKSPACE_TABS = ['overview', 'cam', 'reserves', 'reports', 'documents'];
 let _activeWorkspaceTab = 'overview';
 
 function switchWorkspaceTab(tab) {
@@ -3127,6 +3130,142 @@ function renderPropertyKpiHeader(property) {
     : '';
 
   slot.innerHTML = `<div class="kpi-header-row">${tileHtml}</div>${lastActivityHtml}`;
+}
+
+// ── RLUSD Settlement Wallet status panel ─────────────────────────────────────
+// Shows the landlord whether the XRPL mainnet settlement wallet (used to anchor
+// tenant payments as transparent RLUSD transactions) exists, is funded, and has
+// its RLUSD trust line set up. Fire-and-forget: never blocks property rendering.
+async function renderRlusdSettlementPanel(containerId = 'rlusdSettlementPanel') {
+  const slot = document.getElementById(containerId);
+  if (!slot) return;
+  try {
+    const headers = await _authHeaders();
+    if (!headers.Authorization) { slot.innerHTML = ''; return; }
+    const resp = await fetch('/api/rlusd-settlement', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json', ...headers },
+      body: JSON.stringify({ action: 'status' }),
+    });
+    const status = await resp.json();
+    slot.innerHTML = _buildRlusdStatusHtml(status);
+  } catch (e) {
+    console.warn('[rlusd] status check failed:', e?.message);
+    slot.innerHTML = '';
+  }
+}
+
+function _buildRlusdStatusHtml(status) {
+  if (!status || !status.configured) {
+    return `<div class="rlusd-status-panel rlusd-status--pending">
+      <span class="rlusd-status-dot"></span>
+      <span>XRPL settlement wallet not generated yet — RLUSD settlement is not active.</span>
+    </div>`;
+  }
+  if (!status.exists) {
+    return `<div class="rlusd-status-panel rlusd-status--pending">
+      <span class="rlusd-status-dot"></span>
+      <span>Settlement wallet generated (${esc(status.address)}) — awaiting XRP funding before it can settle RLUSD on ${esc(status.network)}.</span>
+    </div>`;
+  }
+  if (!status.trustLineEstablished) {
+    return `<div class="rlusd-status-panel rlusd-status--pending">
+      <span class="rlusd-status-dot"></span>
+      <span>Settlement wallet funded with XRP — RLUSD trust line not established yet.</span>
+    </div>`;
+  }
+  return `<div class="rlusd-status-panel rlusd-status--live">
+    <span class="rlusd-status-dot"></span>
+    <span>RLUSD settlement live on XRPL ${esc(status.network)} &middot; ${Number(status.rlusdBalance).toLocaleString()} RLUSD available
+      &middot; <a href="${esc((status.explorerBase || '').replace('/transactions/', '/accounts/'))}${esc(status.address)}" target="_blank" rel="noopener">view wallet</a></span>
+  </div>`;
+}
+
+// ── XRPL RLUSD Settlement Flow (the demo's headline XRPL surface) ─────────────
+// Renders the full tenant-payment → on-chain-settlement journey:
+//   Pay Now → RLUSD Settlement → Settled on XRPL → View Transaction
+// It is driven entirely by a property's settlement record and NEVER fabricates a
+// transaction hash. Until the production wallet is funded and the first real
+// mainnet settlement is recorded (see RLUSD_GO_LIVE_CHECKLIST.md), it shows an
+// honest "launching on mainnet" pending state. The moment a real settlement is
+// recorded on `property.settlement` (status:'settled' + txHash), every place that
+// calls this lights up with the real explorer link — no further code changes.
+const XRPL_MAINNET_TX_EXPLORER = 'https://livenet.xrpl.org/transactions/';
+
+function _getSettlementState(property) {
+  const s = property && property.settlement;
+  if (s && s.txHash) {
+    return {
+      status:       'settled',
+      amountUsd:    s.amountUsd ?? null,
+      txHash:       s.txHash,
+      explorerLink: s.explorerLink || (XRPL_MAINNET_TX_EXPLORER + s.txHash),
+      network:      s.network || 'mainnet',
+      settledAt:    s.settledAt || null,
+    };
+  }
+  return { status: 'pending', amountUsd: (s && s.amountUsd) ?? null, txHash: null, explorerLink: null, network: 'mainnet', settledAt: null };
+}
+
+// Builds the 4-step settlement flow. opts.showPayButton renders the tenant-facing
+// "Pay Now" affordance; opts.amountUsd overrides the displayed amount.
+function _buildSettlementFlowHtml(state, opts = {}) {
+  const settled = state.status === 'settled';
+  const amount  = opts.amountUsd ?? state.amountUsd;
+  const amtTxt  = (amount != null && !isNaN(amount)) ? fmt(amount) : null;
+
+  const step = (n, label, cls, inner) =>
+    `<div class="stl-step ${cls}"><div class="stl-step-num">${inner || n}</div><div class="stl-step-label">${label}</div></div>`;
+  const connector = (done) => `<div class="stl-connector ${done ? 'stl-connector--done' : ''}"></div>`;
+
+  // Step 1 — payment entry point
+  const payInner = settled ? '&#x2713;' : '';
+  const step1 = opts.showPayButton && !settled
+    ? `<div class="stl-step stl-step--active">
+         <button class="stl-paynow-btn" onclick="payRentNow()">Pay Now${amtTxt ? ' · ' + amtTxt : ''}</button>
+         <div class="stl-step-label">Pay rent / CAM</div>
+       </div>`
+    : step(1, settled ? 'Payment received' : 'Pay rent / CAM', settled ? 'stl-step--done' : 'stl-step--active', payInner);
+
+  // Step 2 — RLUSD settlement
+  const step2 = step(2, 'RLUSD settlement', settled ? 'stl-step--done' : 'stl-step--pending', settled ? '&#x2713;' : '');
+
+  // Step 3 — settled on XRPL
+  const step3 = step(3, settled ? 'Settled on XRPL mainnet' : 'Settle on XRPL mainnet', settled ? 'stl-step--done' : 'stl-step--pending', settled ? '&#x2713;' : '');
+
+  // Step 4 — verifiable transaction
+  const step4 = settled
+    ? `<div class="stl-step stl-step--done">
+         <a class="stl-viewtx" href="${esc(state.explorerLink)}" target="_blank" rel="noopener">View Transaction &#x2197;</a>
+         <div class="stl-step-label">Verified on XRPL</div>
+       </div>`
+    : step(4, 'View on XRPL', 'stl-step--pending', '');
+
+  const head = settled
+    ? `<div class="stl-head stl-head--live"><span class="stl-dot"></span>Settled via RLUSD on XRPL mainnet${amtTxt ? ' · ' + amtTxt : ''}</div>`
+    : `<div class="stl-head stl-head--pending"><span class="stl-dot"></span>Settlement via RLUSD on XRPL — launching on mainnet</div>`;
+
+  const note = settled
+    ? `<p class="stl-note">This payment was settled in RLUSD on the XRP Ledger. The transaction is public and permanent — anyone can verify it on the explorer.</p>`
+    : `<p class="stl-note">When a tenant pays, MainStreet settles the matching amount in RLUSD on the XRP Ledger and posts a public, verifiable transaction here. Mainnet settlement goes live once the production wallet is funded.</p>`;
+
+  return `<div class="stl-flow ${settled ? 'stl-flow--live' : 'stl-flow--pending'}">
+    ${head}
+    <div class="stl-steps">
+      ${step1}${connector(settled)}${step2}${connector(settled)}${step3}${connector(settled)}${step4}
+    </div>
+    ${note}
+  </div>`;
+}
+
+// Honest "Pay Now" handler. There is no live payment processor or funded wallet yet,
+// so this explains the flow rather than faking a payment — clicking it must never
+// imply a real charge occurred.
+function payRentNow() {
+  showToast(
+    'RLUSD settlement on XRPL mainnet is launching soon. Once live, paying here settles on-chain instantly and posts a verifiable transaction link.',
+    { color: '#0E2A3A', textColor: '#bae6fd', duration: 6000 }
+  );
 }
 
 function _fmtKpiTimestamp(ts) {
@@ -9815,6 +9954,23 @@ function _buildReconciliationSummaryHtml(results, invoices, propName) {
   const capsCls  = capsCount > 0 ? 'rcs-kpi--warn' : '';
   const flagCls  = flaggedCnt > 0 ? 'rcs-kpi--warn' : '';
 
+  // Overall confidence rollup — surfaced prominently so a skeptical reviewer
+  // sees "how sure are we" before drilling into per-field detail.
+  const _confResults  = results.filter(r => r.averageConfidence > 0);
+  const avgConfidence = _confResults.length
+    ? Math.round(_confResults.reduce((s, r) => s + r.averageConfidence, 0) / _confResults.length)
+    : null;
+  const reviewFieldCount = results.reduce((s, r) => s + (r.ambiguityFlags || []).length, 0);
+  const confCls = avgConfidence === null ? ''
+    : avgConfidence < 70 ? 'rcs-confidence-badge--warn'
+    : avgConfidence < 90 ? 'rcs-confidence-badge--ok'
+    : 'rcs-confidence-badge--high';
+  const confidenceBadgeHtml = avgConfidence !== null
+    ? `<span class="rcs-confidence-badge ${confCls}" title="Average extraction confidence across all tenants in this run">
+        ${avgConfidence}% confidence${reviewFieldCount > 0 ? ` &middot; ${reviewFieldCount} item${reviewFieldCount !== 1 ? 's' : ''} need review` : ''}
+      </span>`
+    : '';
+
   const issueHtml = issues.length > 0 ? `<div class="rcs-issues">${
     issues.map((f, fi) => `<div class="rcs-issue rcs-issue--${f.severity}">
       <span class="rcs-issue-main">${f.severity === 'red' ? '&#x26D4;' : '&#x26A0;'} ${esc(f.title)}</span>
@@ -9849,10 +10005,13 @@ function _buildReconciliationSummaryHtml(results, invoices, propName) {
     <div class="rcs-panel ${panelCls}">
       <div class="rcs-panel-head">
         <span class="rcs-panel-title">&#x1F4CA; Reconciliation Summary</span>
+        ${confidenceBadgeHtml}
         <span class="rcs-coverage-badge">${totalPool > 0 ? (totalBilled / totalPool * 100).toFixed(1) : '—'}% coverage</span>
         ${_balBadgeHtml}
       </div>
+      ${_buildSettlementFlowHtml(_getSettlementState(currentProperty() || {}), { showPayButton: false })}
       <div class="rcs-kpis">
+        ${avgConfidence !== null ? `<div class="rcs-kpi ${avgConfidence < 70 ? 'rcs-kpi--warn' : ''}"><div class="rcs-kpi-val">${avgConfidence}%</div><div class="rcs-kpi-lbl">Confidence</div></div>` : ''}
         <div class="rcs-kpi"><div class="rcs-kpi-val">${fmt(totalPool)}</div><div class="rcs-kpi-lbl">CAM Pool</div></div>
         <div class="rcs-kpi"><div class="rcs-kpi-val">${fmt(totalBilled)}</div><div class="rcs-kpi-lbl">Total Billed</div></div>
         <div class="rcs-kpi ${proCls}"><div class="rcs-kpi-val">${proRataSum.toFixed(1)}%</div><div class="rcs-kpi-lbl">Pro-Rata Sum</div></div>
@@ -19380,6 +19539,9 @@ function renderProperty(property) {
     logError('renderProperty.kpiHeader', e, { propId: property?.id, propName: property?.name });
   }
 
+  // Fire-and-forget — never blocks property rendering on an XRPL network round-trip.
+  renderRlusdSettlementPanel().catch(() => {});
+
   // Keep the active workspace tab in sync on every render (idempotent —
   // defaults to 'overview' for a newly-selected property, preserved across
   // re-renders of the same property).
@@ -19678,6 +19840,10 @@ function _renderTenantPropertyView(property) {
         _dispChip +
       '</div>' +
       '<p class="tp-property-note">Your CAM reconciliation data is managed by your property manager. Contact them to request a detailed statement or to dispute a charge.</p>' +
+    '</div>' +
+    '<div class="tp-settlement-card" id="tpSettlementCard">' +
+      _buildSettlementFlowHtml(_getSettlementState(property), { showPayButton: true }) +
+      '<div id="tpSettlementStatus" class="stl-infra-status"></div>' +
     '</div>';
   container.style.display = 'block';
 
@@ -19685,6 +19851,8 @@ function _renderTenantPropertyView(property) {
   const welcome = document.getElementById('tenantPortalMsg')
     ?.querySelector('.tenant-portal-welcome');
   if (welcome) welcome.style.display = 'none';
+
+  renderRlusdSettlementPanel('tpSettlementStatus').catch(() => {});
 }
 
 // ─── Acquisition Review ───────────────────────────────────────────────────────

@@ -6,9 +6,10 @@
   "scripts": {
     "test": "node test-allocation.js",
     "test:disputes":   "node test-disputes.js",
-    "test:regression": "node test-regression.js"
+    "test:regression": "node test-regression.js",
+    "test:rlusd":      "node test-rlusd.js"
   },
-  "license": "MIT",
+  "license": "UNLICENSED",
   "dependencies": {
     "xrpl": "^4.6.0"
   }
