@@ -1,0 +1,102 @@
+/**
+ * One-time: establish the RLUSD trust line on the production settlement wallet.
+ *
+ * Run from an environment WITH network access (your machine, not the dev sandbox).
+ * The seed is read from the XRPL_SETTLEMENT_WALLET_SEED environment variable so it
+ * never appears as a command-line argument, in shell history, or in this repo.
+ *
+ * Recommended (seed never echoed, never stored in history):
+ *
+ *   cd <repo>
+ *   read -rs XRPL_SETTLEMENT_WALLET_SEED   # paste seed, press Enter (input hidden)
+ *   export XRPL_SETTLEMENT_WALLET_SEED
+ *   node scripts/setup-trust-line.js
+ *   unset XRPL_SETTLEMENT_WALLET_SEED      # clear it from the shell afterwards
+ *
+ * It is idempotent: if the trust line already exists, it reports that and exits without
+ * sending another transaction. It never prints the seed — only the public address.
+ */
+
+const {
+  walletFromSeed,
+  getAccountStatus,
+  submitTrustLine,
+  getNetworkConfig,
+} = require("../rlusd-integration");
+
+const NETWORK = (process.env.XRPL_NETWORK || "mainnet").trim();
+const SEED = (process.env.XRPL_SETTLEMENT_WALLET_SEED || "").trim();
+
+(async () => {
+  if (!SEED) {
+    console.error(
+      "XRPL_SETTLEMENT_WALLET_SEED is not set.\n" +
+      "Provide it via the environment (not a CLI arg). For example:\n" +
+      "  read -rs XRPL_SETTLEMENT_WALLET_SEED; export XRPL_SETTLEMENT_WALLET_SEED; node scripts/setup-trust-line.js"
+    );
+    process.exit(2);
+  }
+
+  let wallet;
+  try {
+    wallet = walletFromSeed(SEED);
+  } catch (e) {
+    console.error("Could not derive a wallet from the provided seed:", e.message);
+    process.exit(2);
+  }
+
+  const cfg = getNetworkConfig(NETWORK);
+  console.log(`\nNetwork:        ${NETWORK}`);
+  console.log(`Wallet address: ${wallet.address}`);   // public only — never the seed
+  console.log(`RLUSD issuer:   ${cfg.issuer}\n`);
+
+  // Pre-flight: must be funded; skip if the trust line already exists.
+  let status;
+  try {
+    status = await getAccountStatus(wallet.address, NETWORK);
+  } catch (e) {
+    console.error("Could not read account status:", e.message);
+    console.error("Run this from an environment with outbound XRPL network access.");
+    process.exit(1);
+  }
+
+  if (!status.exists) {
+    console.error("Account is not activated on-ledger yet — fund it with XRP first.");
+    process.exit(1);
+  }
+  console.log(`XRP balance:    ${status.xrpBalance}`);
+
+  if (status.trustLineEstablished) {
+    console.log("\n✓ RLUSD trust line already established — nothing to do.");
+    console.log(`  Current RLUSD balance: ${status.rlusdBalance}`);
+    process.exit(0);
+  }
+
+  console.log("\nSubmitting TrustSet (RLUSD)…");
+  let result;
+  try {
+    result = await submitTrustLine(wallet, NETWORK);
+  } catch (e) {
+    console.error("TrustSet failed:", e.message);
+    process.exit(1);
+  }
+
+  if (result.result !== "tesSUCCESS") {
+    console.error(`\n✗ TrustSet did not succeed on-ledger: ${result.result}`);
+    console.error(`  ${result.explorerLink}`);
+    process.exit(1);
+  }
+
+  console.log("\n✓ RLUSD trust line established.");
+  console.log(`  TX hash:  ${result.txHash}`);
+  console.log(`  Explorer: ${result.explorerLink}`);
+
+  // Confirm by re-reading status.
+  try {
+    const after = await getAccountStatus(wallet.address, NETWORK);
+    console.log(`  trustLineEstablished: ${after.trustLineEstablished}  ·  RLUSD balance: ${after.rlusdBalance}`);
+  } catch (_) { /* non-fatal */ }
+
+  console.log("\nNext: acquire a small amount of RLUSD and send it to the wallet address above.");
+  process.exit(0);
+})().catch((e) => { console.error("setup-trust-line crashed:", e); process.exit(2); });
