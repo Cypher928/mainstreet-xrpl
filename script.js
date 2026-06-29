@@ -402,18 +402,35 @@ async function claudeFetch(body) {
   return resp.json();
 }
 
-async function explainFetch(body) {
-  const resp = await fetch('/api/explain', {
+async function explainFetch(body, opts = {}) {
+  // opts.timeoutMs (optional) aborts a stalled request so callers never hang forever.
+  // Backward compatible: with no opts, behavior is unchanged (no timeout).
+  const { timeoutMs } = opts;
+  const fetchOpts = {
     method: 'POST',
     headers: { 'Content-Type': 'application/json', ...(await _authHeaders()) },
     body: typeof body === 'string' ? body : JSON.stringify(body),
-  });
-  if (!resp.ok) {
-    let detail = `HTTP ${resp.status}`;
-    try { const b = await resp.json(); detail = b?.error?.message || b?.message || detail; } catch {}
-    throw new Error(detail);
+  };
+  let timer = null;
+  if (timeoutMs) {
+    const ctrl = new AbortController();
+    fetchOpts.signal = ctrl.signal;
+    timer = setTimeout(() => ctrl.abort(), timeoutMs);
   }
-  return resp.json();
+  try {
+    const resp = await fetch('/api/explain', fetchOpts);
+    if (!resp.ok) {
+      let detail = `HTTP ${resp.status}`;
+      try { const b = await resp.json(); detail = b?.error?.message || b?.message || detail; } catch {}
+      throw new Error(detail);
+    }
+    return await resp.json();
+  } catch (e) {
+    if (e?.name === 'AbortError') throw new Error(`Request timed out after ${Math.round((timeoutMs || 0) / 1000)}s`);
+    throw e;
+  } finally {
+    if (timer) clearTimeout(timer);
+  }
 }
 
 const CAM_EXPLAIN_SYSTEM_PROMPT = `You are an expert in commercial real estate CAM (Common Area Maintenance) charges.
@@ -14032,45 +14049,71 @@ async function runLandlordAIReview() {
   const btn = document.querySelector('.ai-run-btn');
   const container = document.getElementById('aiRiskDetail');
   if (!container) return;
+  const origLabel = btn ? btn.textContent : '';
+  const restoreBtn = () => { if (btn) { btn.disabled = false; btn.textContent = origLabel || '\u{1F9E0} Run AI Review on Flagged Charges'; } };
   if (btn) { btn.disabled = true; btn.textContent = 'Reviewing flagged charges…'; }
 
-  const flagged = invoiceData.filter(inv => {
-    if (!inv || inv._error || !inv.vendorName || !(parseFloat(inv.amount) > 0)) return false;
-    const conf = inv.confidence || {};
-    const scores = [conf.vendorName, conf.amount, conf.category].filter(s => s != null);
-    const minScore = scores.length ? Math.min(...scores) : 0;
-    return minScore < 90 || inv.category === 'other' || !inv.invoiceDate;
-  });
+  // Per-call timeout + an overall cap so a stalled request or a very large flagged set
+  // can never leave the button spinning forever.
+  const PER_CALL_TIMEOUT_MS = 45000;
+  const MAX_REVIEW = 15;
 
-  if (!flagged.length) {
-    container.innerHTML = '<div style="color:#4ade80;font-size:0.83rem;margin-top:10px;">&#x2713; All charges look clear — no AI review needed.</div>';
-    if (btn) btn.remove();
-    return;
-  }
+  try {
+    const flagged = invoiceData.filter(inv => {
+      if (!inv || inv._error || !inv.vendorName || !(parseFloat(inv.amount) > 0)) return false;
+      const conf = inv.confidence || {};
+      const scores = [conf.vendorName, conf.amount, conf.category].filter(s => s != null);
+      const minScore = scores.length ? Math.min(...scores) : 0;
+      return minScore < 90 || inv.category === 'other' || !inv.invoiceDate;
+    });
 
-  let html = '';
-  for (const inv of flagged) {
-    try {
-      const data = await explainFetch({
-        model: MODEL,
-        max_tokens: 512,
-        system: LANDLORD_SYSTEM_PROMPT,
-        messages: [{ role: 'user', content:
-          `Vendor: ${inv.vendorName || 'Unknown'}\n` +
-          `Category: ${inv.category || 'other'}\n` +
-          `Amount: $${inv.amount || '0'}\n` +
-          `Date: ${inv.invoiceDate || 'Unknown'}`
-        }],
-      });
-      const text = data?.content?.[0]?.text || 'No review available.';
-      html += `<div class="ai-inv-review"><strong>${esc(inv.vendorName)} — ${fmt(parseFloat(inv.amount))}</strong>${renderMarkdown(text)}</div>`;
-    } catch (e) {
-      html += `<div class="ai-inv-review"><strong>${esc(inv.vendorName)}</strong>Review failed: ${esc(e.message)}</div>`;
+    if (!flagged.length) {
+      container.innerHTML = '<div style="color:#4ade80;font-size:0.83rem;margin-top:10px;">&#x2713; All charges look clear — no AI review needed.</div>';
+      if (btn) btn.remove();
+      return;
     }
-  }
 
-  container.innerHTML = html;
-  if (btn) btn.remove();
+    const toReview = flagged.slice(0, MAX_REVIEW);
+    let html = '';
+    let anyOk = false;
+    for (const inv of toReview) {
+      try {
+        const data = await explainFetch({
+          model: MODEL,
+          max_tokens: 512,
+          system: LANDLORD_SYSTEM_PROMPT,
+          messages: [{ role: 'user', content:
+            `Vendor: ${inv.vendorName || 'Unknown'}\n` +
+            `Category: ${inv.category || 'other'}\n` +
+            `Amount: $${inv.amount || '0'}\n` +
+            `Date: ${inv.invoiceDate || 'Unknown'}`
+          }],
+        }, { timeoutMs: PER_CALL_TIMEOUT_MS });
+        const text = data?.content?.[0]?.text || 'No review available.';
+        html += `<div class="ai-inv-review"><strong>${esc(inv.vendorName)} — ${fmt(parseFloat(inv.amount))}</strong>${renderMarkdown(text)}</div>`;
+        anyOk = true;
+      } catch (e) {
+        html += `<div class="ai-inv-review"><strong>${esc(inv.vendorName)}</strong>Review unavailable: ${esc(e.message)}</div>`;
+      }
+    }
+    if (flagged.length > MAX_REVIEW) {
+      html += `<div style="color:#94a3b8;font-size:0.78rem;margin-top:8px;">Showing AI review for the first ${MAX_REVIEW} of ${flagged.length} flagged charges.</div>`;
+    }
+
+    if (anyOk) {
+      container.innerHTML = html;
+      if (btn) btn.remove();            // success: replace the button with the review
+    } else {
+      // Every call failed — show why and leave the button so the user can retry.
+      container.innerHTML = html +
+        '<div style="color:#f59e0b;font-size:0.83rem;margin-top:8px;">AI review could not be completed. Check your connection and try again.</div>';
+      restoreBtn();
+    }
+  } catch (e) {
+    console.error('[runLandlordAIReview]', e);
+    container.innerHTML = `<div style="color:#f59e0b;font-size:0.83rem;margin-top:10px;">AI review failed: ${esc(e?.message || 'unexpected error')}. Please try again.</div>`;
+    restoreBtn();                        // failure: always clear the loading state
+  }
 }
 
 // ─── Dispute Packet Report ────────────────────────────────────────────────────
