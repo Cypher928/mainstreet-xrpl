@@ -83,6 +83,11 @@ row).
 grep -rnE "<<[A-Z_]+>>|to be added" README.md submission/   # expect no output
 ```
 
+**e) Flip the tagline back to present tense.** The hero + login taglines were softened to
+"AI-powered CAM reconciliation. **Settling** on the XRP Ledger." until the first real
+settlement. Once it lands, change both back to "**Settled** on the XRP Ledger." in
+`index.html` (2 occurrences), and restore the login pill to a present-tense form if desired.
+
 I can do (a)–(d) with you in one pass once you paste the values.
 
 ---
