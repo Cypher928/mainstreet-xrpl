@@ -13830,7 +13830,7 @@ function generateMasterReport() {
       <div class="rpt-hash-lbl">&#x1F512; Tamper-Detection Hash (SHA-256)</div>
       <div class="rpt-hash-val">Computing…</div>
     </div>
-    <p style="font-size:0.78rem;color:#64748b;line-height:1.5;margin-top:10px;">Tenant payments against this reconciliation are settled in RLUSD on the XRP Ledger — each settlement is recorded as a public, independently verifiable transaction.</p>
+    <p style="font-size:0.78rem;color:#64748b;line-height:1.5;margin-top:10px;">MainStreet settles tenant payments in RLUSD on the XRP Ledger, embedding a SHA-256 fingerprint of each settlement in the transaction memo for public, independent verification. The reconciliation record itself carries the local audit fingerprint above.</p>
 
     ${_rptFooter(lastPropName, 'Landlord Master CAM Report', now)}`;
 

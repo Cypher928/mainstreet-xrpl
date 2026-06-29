@@ -1,6 +1,6 @@
 # MainStreet — AI-Powered CAM Reconciliation for Commercial Real Estate
 
-> **Transparent CAM reconciliation for commercial real estate — automated allocation, AI document extraction, and tenant-verifiable settlement anchored on the XRP Ledger.**
+> **Transparent CAM reconciliation for commercial real estate — automated allocation, AI document extraction, and tenant-verifiable settlement in RLUSD on the XRP Ledger.**
 
 ---
 
@@ -22,7 +22,7 @@
 |---|---|
 | **Architecture diagram** | [`architecture.html`](./architecture.html) — visual system overview |
 | **XRPL settlement code** | [`rlusd-integration.js`](./rlusd-integration.js) — RLUSD mainnet settlement (wallet, trust lines, transaction logic) |
-| **On-chain anchoring code** | [`xrpl-integration.js`](./xrpl-integration.js) — SHA-256 reconciliation anchoring |
+| **Hash-anchoring prototype** | [`xrpl-integration.js`](./xrpl-integration.js) — reference implementation for *optionally* anchoring a SHA-256 reconciliation fingerprint via a transaction memo (testnet; **not wired into the production app**) |
 | **Allocation engine** | [`allocation-engine.js`](./allocation-engine.js) — standalone, unit-tested CAM pro-rata engine |
 | **Demo video** | _to be added — see go-live checklist_ |
 | **Live mainnet settlement transaction** | _to be added once the production wallet is funded — see [`RLUSD_GO_LIVE_CHECKLIST.md`](./RLUSD_GO_LIVE_CHECKLIST.md)_ |
@@ -33,7 +33,7 @@
 
 ## What It Does
 
-MainStreet automates the full Commercial Area Maintenance (CAM) reconciliation workflow — from uploading leases to generating printable tenant statements — with AI-powered document extraction, on-chain audit trails, and a dispute-resolution workflow.
+MainStreet automates the full Commercial Area Maintenance (CAM) reconciliation workflow — from uploading leases to generating printable tenant statements — with AI-powered document extraction, cryptographic (SHA-256) audit fingerprints, and a dispute-resolution workflow.
 
 | Feature | Description |
 |---|---|
@@ -42,7 +42,7 @@ MainStreet automates the full Commercial Area Maintenance (CAM) reconciliation w
 | **Batch Invoice Upload** | Drop multiple invoice files (PDF, JPG, PNG) — AI extracts vendor, amount, category, and date from each |
 | **Yardi Genesis CSV Import** | Export your CAM expense report from Yardi, drop it in — columns auto-detected, categories auto-mapped |
 | **CAM Allocation Engine** | Calculates each tenant's pro-rata share based on their lease terms, exclusions, and caps |
-| **Dispute Workflow** | Tenants can dispute any charge; resolutions are hashed and recorded on-chain via XRPL |
+| **Dispute Workflow** | Tenants can dispute any charge; each resolution gets a SHA-256 audit fingerprint for tamper detection |
 | **Monthly Holes Report** | Flags missing invoice categories and vendors before reconciliation runs — no more surprises |
 | **Landlord Master Report** | Full property-wide summary — expenses by category, tenant allocations, dispute log |
 | **Tenant Statements** | Per-tenant printable statements showing their share, eligible invoices, and reconciliation status |
@@ -54,11 +54,12 @@ MainStreet automates the full Commercial Area Maintenance (CAM) reconciliation w
 
 ## Why XRPL
 
-CAM reconciliation involves significant money and significant disputes. XRPL provides an audit and settlement trail that neither party can alter after the fact.
+CAM reconciliation involves significant money and significant disputes. XRPL gives MainStreet a public, tamper-proof settlement trail that neither party can alter after the fact — paired with cryptographic audit fingerprints for the underlying records.
 
-- **Reconciliations hashed on-chain** — a SHA-256 fingerprint of each reconciliation is anchored to XRPL, so the result can't be quietly changed later
-- **Transparent RLUSD settlement** — payments are settled in RLUSD on the XRP Ledger and surfaced in-app as "Settlement verified on XRPL — view transaction," not hidden behind the scenes
-- **Dispute resolutions recorded immutably** — accepted, rejected, or docs-requested status carried in transaction memos
+- **RLUSD settlement on XRPL Mainnet** — tenant payments are settled in RLUSD on the XRP Ledger and surfaced in-app as "Settlement verified on XRPL — view transaction," not hidden behind the scenes
+- **Settlement fingerprint in the transaction memo** — each settlement embeds a SHA-256 fingerprint of the settlement record in its on-ledger memo, so the payment and what it settled are publicly verifiable together
+- **Local cryptographic audit fingerprints** — every reconciliation and dispute resolution gets a SHA-256 fingerprint computed in-app, so any later change to the record is detectable
+- **Privacy by design, with optional future anchoring** — reconciliation and lease records stay off-chain to protect tenant and landlord confidentiality; the architecture is built to *optionally* anchor a finalized record's fingerprint to XRPL in future, without putting any private data on-chain
 - **Tenants verify, they don't operate crypto** — the ledger is the trust layer; the interface stays familiar property-management software
 
 ---
@@ -109,7 +110,7 @@ Traditional CAM reconciliation takes weeks, involves outside firms, and produces
 
 ## On-Chain Anchor (Development / Testnet)
 
-This transaction was anchored to the XRPL **testnet** during development to demonstrate the on-chain audit trail end-to-end. The production **mainnet** RLUSD settlement transaction will be added here once the wallet is funded (see [`RLUSD_GO_LIVE_CHECKLIST.md`](./RLUSD_GO_LIVE_CHECKLIST.md)).
+This transaction was submitted to the XRPL **testnet** during development to demonstrate the SHA-256 hash-anchoring mechanism (the `xrpl-integration.js` prototype) end-to-end. It is a development artifact, not a production feature. The production **mainnet** RLUSD settlement transaction will be added here once the wallet is funded (see [`RLUSD_GO_LIVE_CHECKLIST.md`](./RLUSD_GO_LIVE_CHECKLIST.md)).
 
 ```
 TX Hash:  AFAD1E38C7A932C35511DB846A099EE346B7E1D71EF3E9F5E61D1F9BF505E113

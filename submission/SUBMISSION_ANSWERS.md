@@ -33,7 +33,7 @@ the lack of verifiability drives disputes that cost both sides time and trust.
   from PDFs, with a 0–100 confidence score on every field so humans know what to check.
 - **Allocation engine** — computes each tenant's pro-rata share in seconds, with built-in
   integrity checks (does it balance? are caps applied correctly?).
-- **Dispute workflow** — tenants challenge charges in-app; resolutions are recorded.
+- **Dispute workflow** — tenants challenge charges in-app; each resolution is recorded with a SHA-256 audit fingerprint for tamper detection.
 - **Transparent RLUSD settlement on XRPL** — payments settle in RLUSD on mainnet and appear
   in-app as "Settled via RLUSD on XRPL — View Transaction," linking to the public explorer.
 - **Works alongside Yardi** — imports existing CAM data via CSV; no migration required.
@@ -45,6 +45,16 @@ and landlord, MainStreet turns "trust my spreadsheet" into "verify it yourself o
 ledger." RLUSD gives a USD-denominated settlement so neither party has to think about crypto —
 the ledger is the trust layer, not the interface. Fast finality and low fees make
 per-settlement on-chain records economical.
+
+**Precisely what is on-chain vs. local (so there's no ambiguity):** each RLUSD settlement is a
+real XRPL Mainnet transaction whose memo carries a SHA-256 fingerprint of the settlement
+record, so the payment and what it settled are publicly verifiable together. Reconciliation,
+lease, and dispute records themselves stay **off-chain** to protect tenant and landlord
+confidentiality — each is protected by a SHA-256 audit fingerprint computed in-app, which makes
+any later change to the record detectable. The architecture is deliberately built to
+*optionally* anchor a finalized record's fingerprint to XRPL in future, without ever putting
+private data on-chain. We chose not to overstate this: today the ledger carries settlements
+(with their memo fingerprints), and the audit fingerprints are local by design.
 
 ### Mainnet status / on-chain proof
 MainStreet is live on XRPL mainnet. First settlement transaction:
