@@ -17,8 +17,11 @@ Set these in **Vercel → Project Settings → Environment Variables → Product
 | Variable | Value | Secret? |
 |---|---|---|
 | `XRPL_SETTLEMENT_WALLET_ADDRESS` | `rG2ZaUs5SodnNNE23ktTzNbRt55PQZNPrn` | no |
-| `XRPL_SETTLEMENT_WALLET_SEED` | *(the seed sent to you privately)* | **YES** |
 | `XRPL_NETWORK` | `mainnet` | no |
+
+> **Do NOT add `XRPL_SETTLEMENT_WALLET_SEED` to Vercel.** The public endpoint is read-only and
+> never signs. The seed is used only locally by the admin scripts (`scripts/setup-trust-line.js`,
+> `scripts/send-settlement.js`), exported into your shell at run time.
 
 (Existing vars that must already be set: `ANTHROPIC_API_KEY`, `CLAUDE_MODEL`,
 `SUPABASE_URL`, `SUPABASE_ANON_KEY`, `SUPABASE_SERVICE_ROLE_KEY`.)

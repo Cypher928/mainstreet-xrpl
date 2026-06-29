@@ -30,20 +30,27 @@ explicit hold the team placed on this phase.
 
 ## 2. Environment variables required (set these in Vercel, not locally)
 
+**In Vercel (Production) — public, non-secret only:**
+
 | Variable | Value | Secret? |
 |---|---|---|
 | `XRPL_SETTLEMENT_WALLET_ADDRESS` | `rG2ZaUs5SodnNNE23ktTzNbRt55PQZNPrn` | No — public address |
-| `XRPL_SETTLEMENT_WALLET_SEED` | *(from the file sent directly to you — not reproduced here)* | **Yes — secret** |
 | `XRPL_NETWORK` | `mainnet` | No |
 
-Set these under **Vercel → Project Settings → Environment Variables → Production**. Do not add
-them to any `.env` file that could be accidentally committed — `.gitignore` already excludes
-`.env`/`.env.*`, but Vercel's dashboard is the only place this seed should ever be typed after
-the one-time generation.
+The public endpoint (`api/rlusd-settlement.js`) is **read-only** — it reads only
+`XRPL_SETTLEMENT_WALLET_ADDRESS` and `XRPL_NETWORK`, never signs, and never touches the seed.
+**Do NOT put `XRPL_SETTLEMENT_WALLET_SEED` in Vercel.**
 
-`api/rlusd-settlement.js` reads exactly these three names — confirmed by reading the source
-directly (`process.env.XRPL_SETTLEMENT_WALLET_ADDRESS`, `XRPL_SETTLEMENT_WALLET_SEED`,
-`XRPL_NETWORK`). No other naming variant will work.
+**Locally (your shell), only when running an admin script — secret:**
+
+| Variable | Used by | Secret? |
+|---|---|---|
+| `XRPL_SETTLEMENT_WALLET_SEED` | `scripts/setup-trust-line.js`, `scripts/send-settlement.js` | **Yes — secret** |
+
+Provide the seed via `read -rs XRPL_SETTLEMENT_WALLET_SEED; export XRPL_SETTLEMENT_WALLET_SEED`
+right before running a script, and `unset` it after. Never put it in any `.env` file, commit,
+or the Vercel dashboard. Keeping the fund-moving key off the production server means no
+web request can ever move funds from the settlement wallet.
 
 ## 3. Funding procedure (DO NOT EXECUTE YET — held pending live-app sign-off)
 
@@ -56,11 +63,11 @@ directly (`process.env.XRPL_SETTLEMENT_WALLET_ADDRESS`, `XRPL_SETTLEMENT_WALLET_
 2. **Confirm activation.** Call `getAccountStatus(address, 'mainnet')` (or
    `POST /api/rlusd-settlement {"action":"status"}` once env vars are set) — `exists` should
    flip from `false` to `true` once the transfer lands.
-3. **Establish the RLUSD trust line.** Call
-   `POST /api/rlusd-settlement {"action":"setup-trust-line"}`. This signs and submits a
-   `TrustSet` transaction from the settlement wallet to Ripple's mainnet RLUSD issuer
-   (`rMxCKbEDwqr76QuheSUMdEGf4B9xJ8m5De`). Confirm `trustLineEstablished: true` on the next
-   status call.
+3. **Establish the RLUSD trust line** via the local admin script (the public endpoint cannot —
+   it's read-only): `read -rs XRPL_SETTLEMENT_WALLET_SEED; export XRPL_SETTLEMENT_WALLET_SEED;
+   node scripts/setup-trust-line.js`. This signs and submits a `TrustSet` from the settlement
+   wallet to Ripple's mainnet RLUSD issuer (`rMxCKbEDwqr76QuheSUMdEGf4B9xJ8m5De`). Confirm
+   `trustLineEstablished: true`.
 4. **Buy/transfer RLUSD** to the now-activated, now-trust-lined wallet address. A modest
    amount (e.g. $25–50 of RLUSD) is enough to execute and prove one real settlement without
    it being a meaningful sum of money.
@@ -76,12 +83,13 @@ authorizes it.
   one place outside this procedure: wherever the founder stored the delivered file's contents.
   If that storage is ever compromised, regenerate a new wallet
   (`node scripts/generate-settlement-wallet.js`) and migrate any funds before continuing.
-- Vercel environment variables are not visible in the repo, in logs, or to the browser — they
-  are only readable by the serverless function at request time
-  (`api/rlusd-settlement.js`'s `_loadSigningWallet()`).
-- Never lower the rate limit or auth check in `api/rlusd-settlement.js` to "ship faster" — the
-  `_verifyUser` + `_chkRate` gate is what stands between this endpoint and an attacker draining
-  the wallet via the `settle` action.
+- The public endpoint `api/rlusd-settlement.js` is **read-only** (`status` only). It does not
+  load the seed and cannot sign or submit transactions, so no authenticated web request can
+  move funds. Fund-moving actions live only in the local admin scripts, which require the seed
+  in the operator's shell. Do not re-add a `settle` or `setup-trust-line` action to the
+  endpoint — that would reintroduce a path for any authenticated user to move funds.
+- The seed never goes on the production server. It lives in the founder's password manager and
+  is exported into a local shell only for the duration of an admin script run.
 
 ## 5. Recommended dry run before the real funding event
 

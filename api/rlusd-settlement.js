@@ -1,15 +1,14 @@
-// Serverless endpoint for MainStreet's XRPL RLUSD settlement layer.
-// Tenants pay rent/CAM via a normal processor (Stripe etc.) — this endpoint settles a
-// matching amount in RLUSD on the XRP Ledger as a transparent, verifiable proof-of-
-// settlement record, never as a hidden rail. The settlement wallet's seed lives only
-// in the XRPL_SETTLEMENT_WALLET_SEED env var — it never reaches the browser.
+// Serverless endpoint for MainStreet's XRPL RLUSD settlement layer — READ-ONLY.
+// It exposes only the `status` action (wallet activation / trust line / RLUSD balance),
+// which is what the in-app settlement panel reads.
 //
-// WHY a single multi-action endpoint instead of three files: all three actions share
-// the same auth/rate-limit gate and the same "wallet not funded yet" guard, and the
-// production wallet is deliberately left unfunded until launch — splitting this into
-// separate files now would mean duplicating that guard with no present benefit.
+// SECURITY: fund-moving actions (establishing the trust line, sending a settlement) are
+// intentionally NOT exposed here. They are performed out-of-band by a local admin who
+// holds the wallet seed, via scripts/setup-trust-line.js and scripts/send-settlement.js.
+// This endpoint therefore never loads the seed and cannot sign or submit any transaction,
+// so no authenticated request can move funds from the settlement wallet.
 
-const { getNetworkConfig, getAccountStatus, walletFromSeed, submitTrustLine, settleRlusdPayment } = require("../rlusd-integration");
+const { getNetworkConfig, getAccountStatus } = require("../rlusd-integration");
 
 const _SB_URL  = (process.env.SUPABASE_URL      || '').trim();
 const _SB_ANON = (process.env.SUPABASE_ANON_KEY || '').trim();
@@ -53,12 +52,6 @@ function _network() {
   return (process.env.XRPL_NETWORK || 'mainnet').trim();
 }
 
-function _loadSigningWallet() {
-  const seed = (process.env.XRPL_SETTLEMENT_WALLET_SEED || '').trim();
-  if (!seed) return null;
-  return walletFromSeed(seed);
-}
-
 module.exports = async function handler(req, res) {
   if (req.method !== 'POST') {
     return res.status(405).json({ error: 'Method not allowed' });
@@ -87,29 +80,14 @@ module.exports = async function handler(req, res) {
       return res.status(200).json({ configured: true, network, ...status, explorerBase: getNetworkConfig(network).explorerBase });
     }
 
-    if (action === 'setup-trust-line') {
-      const wallet = _loadSigningWallet();
-      if (!wallet) {
-        return res.status(503).json({ error: 'XRPL_SETTLEMENT_WALLET_SEED is not configured — wallet has not been generated/funded yet.' });
-      }
-      const result = await submitTrustLine(wallet, network);
-      return res.status(200).json(result);
+    if (action === 'setup-trust-line' || action === 'settle') {
+      // Fund-moving actions are deliberately disabled on the public endpoint. They are
+      // performed by a local admin holding the wallet seed (scripts/setup-trust-line.js,
+      // scripts/send-settlement.js). This endpoint cannot sign or submit transactions.
+      return res.status(403).json({ error: 'This endpoint is read-only. Trust-line setup and settlement are performed via local admin scripts.' });
     }
 
-    if (action === 'settle') {
-      const { destination, amountUsd, metadata } = req.body || {};
-      if (!destination || !(Number(amountUsd) > 0)) {
-        return res.status(400).json({ error: 'destination and a positive amountUsd are required' });
-      }
-      const wallet = _loadSigningWallet();
-      if (!wallet) {
-        return res.status(503).json({ error: 'Settlement wallet is not configured yet — RLUSD settlement is unavailable until the production wallet is funded.' });
-      }
-      const result = await settleRlusdPayment({ wallet, destination, amountUsd, network, metadata: metadata || {} });
-      return res.status(200).json(result);
-    }
-
-    return res.status(400).json({ error: 'Unknown action — expected "status", "setup-trust-line", or "settle"' });
+    return res.status(400).json({ error: 'Unknown action — this endpoint supports only "status".' });
   } catch (err) {
     console.error('[rlusd-settlement] error:', err.message);
     return res.status(502).json({ error: err.message });

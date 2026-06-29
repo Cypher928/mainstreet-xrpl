@@ -13,15 +13,15 @@ Each item should be checked off in order — several have hard dependencies on t
   *Verify:* `POST /api/rlusd-settlement {"action":"status"}` → `exists: true`.
 
 - [ ] **2. Configure environment variables**
-  Set `XRPL_SETTLEMENT_WALLET_ADDRESS`, `XRPL_SETTLEMENT_WALLET_SEED`, `XRPL_NETWORK=mainnet`
-  in Vercel → Production. *Must happen before step 4* — the trust-line action needs the seed
-  to sign. *Verify:* the status endpoint returns `configured: true` instead of the
-  "wallet not generated" message.
+  Set `XRPL_SETTLEMENT_WALLET_ADDRESS` and `XRPL_NETWORK=mainnet` in Vercel → Production.
+  **Do NOT put the seed in Vercel** — the public endpoint is read-only and never signs, so the
+  seed is only needed locally (in your shell) when running the admin scripts. *Verify:* the
+  status endpoint returns `configured: true` instead of the "wallet not generated" message.
 
-- [ ] **3. Establish RLUSD trust line**
-  `POST /api/rlusd-settlement {"action":"setup-trust-line"}`.
-  *Depends on:* steps 1–2 (needs XRP for the tx fee + reserve, needs the seed to sign).
-  *Verify:* status endpoint returns `trustLineEstablished: true`.
+- [ ] **3. Establish RLUSD trust line** *(already done via local script)*
+  `read -rs XRPL_SETTLEMENT_WALLET_SEED; export XRPL_SETTLEMENT_WALLET_SEED; node scripts/setup-trust-line.js`
+  *Depends on:* step 1 (needs XRP for the tx fee + reserve). *Verify:* the script prints
+  `trustLineEstablished: true`, or the status endpoint shows it.
 
 - [ ] **4. Fund wallet with RLUSD**
   Transfer a modest amount of RLUSD (e.g. $25–50) to the now-trust-lined wallet.
@@ -36,14 +36,17 @@ Each item should be checked off in order — several have hard dependencies on t
   *Verify:* re-read the built transaction object before submitting and confirm the field is
   present.
 
-- [ ] **6. Execute the first real mainnet settlement**
-  `POST /api/rlusd-settlement {"action":"settle", "destination": "<recipient address>",
-  "amountUsd": <small amount>, "metadata": {...}}`. Use a small, deliberate amount for this
-  first transaction — it's a proof, not a real tenant payment yet.
-  *Depends on:* steps 1–5 (especially 5, if the Source Tag needs to be present on the
-  transaction that's submitted for attribution credit).
-  *Verify:* response includes `txHash`, `explorerLink`, and `dataHash`; on-ledger result is
-  `tesSUCCESS`.
+- [ ] **6. Execute the first real mainnet settlement** *(local admin script — the public
+  endpoint cannot do this by design)*
+  ```
+  read -rs XRPL_SETTLEMENT_WALLET_SEED; export XRPL_SETTLEMENT_WALLET_SEED
+  node scripts/send-settlement.js <recipient address> <small amount>          # dry run first
+  node scripts/send-settlement.js <recipient address> <small amount> --yes    # then execute
+  unset XRPL_SETTLEMENT_WALLET_SEED
+  ```
+  Use a small, deliberate amount — it's a proof, not a real tenant payment yet.
+  *Depends on:* steps 1–5 (especially 5, if the Source Tag must be present for attribution).
+  *Verify:* the script prints `txHash`, `explorerLink`, and `dataHash`; result is `tesSUCCESS`.
 
 - [ ] **7. Verify the transaction on XRPL Explorer**
   Open the `explorerLink` from step 6 in a browser
