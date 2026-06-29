@@ -96,8 +96,13 @@ const bad = (m) => { console.log("  \x1b[31m✗\x1b[0m " + m); fail++; };
   const hasMemo = Array.isArray(r.Memos) && r.Memos.length > 0;
   hasMemo ? ok("carries a memo (settlement metadata)") : console.log("  · no memo present (optional)");
 
-  if (r.SourceTag != null) ok(`SourceTag present (${r.SourceTag})`);
-  else console.log("  · no SourceTag — add the XRPL Commons tag before relying on leaderboard attribution");
+  // Informational only — the program's attribution mechanism is not yet verified (it may use a
+  // registered wallet address, a Source Tag, a Destination Tag, or a memo). Report what's present.
+  if (r.SourceTag != null) console.log(`  · SourceTag present (${r.SourceTag})`);
+  if (r.DestinationTag != null) console.log(`  · DestinationTag present (${r.DestinationTag})`);
+  if (r.SourceTag == null && r.DestinationTag == null) {
+    console.log("  · no Source/Destination tag — fine if the program attributes by wallet address or memo (verify the program's rules)");
+  }
 
   await client.disconnect();
   console.log(`\n${pass} passed, ${fail} failed`);

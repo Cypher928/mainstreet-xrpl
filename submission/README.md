@@ -21,7 +21,7 @@ ready except the real mainnet transaction details, which are intentionally left 
 | `<<SETTLEMENT_DATE>>` | Date of the first settlement |
 | `<<DEMO_VIDEO_URL>>` | The published demo-video link |
 | `<<REGISTRATION_DATE>>` | The date you registered for Make Waves |
-| `<<SOURCE_TAG>>` | The XRPL Commons Source Tag assigned at registration |
+| `<<ATTRIBUTION_REF>>` | The program's attribution reference, if any — e.g. registered wallet address, Source Tag, Destination Tag, or memo convention (confirm the actual mechanism from Make Waves rules; not yet verified) |
 
 > **Accuracy note:** I could not load the live Make Waves submission form from this
 > environment (network-blocked), so `SUBMISSION_ANSWERS.md` is organized around the fields

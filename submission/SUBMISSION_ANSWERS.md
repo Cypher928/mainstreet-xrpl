@@ -64,7 +64,7 @@ MainStreet is live on XRPL mainnet. First settlement transaction:
 - **Date:** `<<SETTLEMENT_DATE>>`
 - **Settlement wallet:** `rG2ZaUs5SodnNNE23ktTzNbRt55PQZNPrn`
 - **RLUSD issuer (mainnet):** `rMxCKbEDwqr76QuheSUMdEGf4B9xJ8m5De`
-- **Source Tag:** `<<SOURCE_TAG>>`
+- **Attribution reference (per program rules):** `<<ATTRIBUTION_REF>>`
 
 ### Live demo
 - **App:** https://mainstreet-xrpl.vercel.app (sign up free → "Try Live Demo" → seeded
@@ -99,5 +99,7 @@ property-management use.
 - Registered: `<<REGISTRATION_DATE>>`
 - Mainnet launch must be within 30 days of registration — **verify this window against the
   official page**; the first settlement must land inside it.
-- Source Tag (`<<SOURCE_TAG>>`) must be present on mainnet transactions for leaderboard
-  attribution — add it before the first settlement (go-live checklist step 5).
+- Attribution mechanism **not yet verified** — confirm from Make Waves rules / registration /
+  XRPL Commons Discord how on-chain activity is attributed (registered wallet address, Source
+  Tag, Destination Tag, or memo). Apply it before/at the first settlement (go-live checklist
+  step 5). Do not assume a Source Tag.

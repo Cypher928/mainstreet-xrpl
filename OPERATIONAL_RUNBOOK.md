@@ -47,7 +47,8 @@ export XRPL_SETTLEMENT_WALLET_ADDRESS=rG2ZaUs5SodnNNE23ktTzNbRt55PQZNPrn
 node scripts/verify-settlement.js <txHash>
 ```
 This checks: type = Payment, result = tesSUCCESS, sender = settlement wallet, amount = RLUSD
-with Ripple's official issuer, memo present, and whether the **SourceTag** is attached.
+with Ripple's official issuer, memo present, and whether a **SourceTag** is attached (only
+relevant if the program's attribution mechanism turns out to use one — not yet verified).
 All green → the settlement is real and judge-verifiable.
 
 ---
@@ -55,7 +56,8 @@ All green → the settlement is real and judge-verifiable.
 ## 3. Update the README + submission materials (immediately after the tx exists)
 
 You'll have these values from step 2: `txHash`, `amountUsd`, `date`, `explorerLink`,
-plus `demoVideoUrl` and `sourceTag`.
+plus `demoVideoUrl` and the program's attribution reference (if any — see go-live checklist
+step 5; not yet verified).
 
 **a) Flip the in-app settlement flow to "settled"** — set the settlement record on the demo
 property so every stepper turns green with a live "View Transaction" link. In
@@ -79,7 +81,7 @@ row).
 
 **c) Submission docs** — find-and-replace the `<<TOKEN>>` placeholders across `submission/`
 (`<<MAINNET_TX_HASH>>`, `<<EXPLORER_LINK>>`, `<<SETTLEMENT_AMOUNT>>`, `<<SETTLEMENT_DATE>>`,
-`<<DEMO_VIDEO_URL>>`, `<<REGISTRATION_DATE>>`, `<<SOURCE_TAG>>`).
+`<<DEMO_VIDEO_URL>>`, `<<REGISTRATION_DATE>>`, `<<ATTRIBUTION_REF>>`).
 
 **d) Confirm** no `<<...>>` tokens or "to be added" / testnet-as-proof language remain:
 ```

@@ -28,13 +28,16 @@ Each item should be checked off in order — several have hard dependencies on t
   *Depends on:* step 3 (no trust line = transfer will fail/bounce).
   *Verify:* status endpoint shows `rlusdBalance > 0`.
 
-- [ ] **5. Add the official XRPL Commons Source Tag**
-  Once Make Waves registration assigns a Source Tag, add a 1-line change in
-  `rlusd-integration.js` (the `Payment`/`TrustSet` tx objects) to include
-  `SourceTag: <assigned tag>`. *External dependency — requires registering with XRPL Commons
-  first; not something that can be done from code alone.*
-  *Verify:* re-read the built transaction object before submitting and confirm the field is
-  present.
+- [ ] **5. Apply the program's attribution mechanism (whatever it actually is)**
+  Confirm from the Make Waves **official rules / registration flow / XRPL Commons Discord** how
+  a project's on-chain activity is attributed. **Not yet verified** — do not assume a Source
+  Tag. Likely candidates and the work each implies:
+  - **Registered wallet address** → no code change; just register `rG2ZaUs5SodnNNE23ktTzNbRt55PQZNPrn`.
+  - **Source Tag** → add `SourceTag: <tag>` to the tx builders in `rlusd-integration.js` (1 line).
+  - **Destination Tag** → add `DestinationTag: <tag>` to the settlement Payment (1 line).
+  - **Required memo string** → adjust the memo we already write (small change).
+  *Verify:* once the mechanism is known, confirm the settlement transaction carries it (re-read
+  the built tx, or check the explorer after sending).
 
 - [ ] **6. Execute the first real mainnet settlement** *(local admin script — the public
   endpoint cannot do this by design)*
@@ -45,14 +48,15 @@ Each item should be checked off in order — several have hard dependencies on t
   unset XRPL_SETTLEMENT_WALLET_SEED
   ```
   Use a small, deliberate amount — it's a proof, not a real tenant payment yet.
-  *Depends on:* steps 1–5 (especially 5, if the Source Tag must be present for attribution).
+  *Depends on:* steps 1–5 (especially 5, if the attribution identifier must be present on the
+  transaction itself).
   *Verify:* the script prints `txHash`, `explorerLink`, and `dataHash`; result is `tesSUCCESS`.
 
 - [ ] **7. Verify the transaction on XRPL Explorer**
   Open the `explorerLink` from step 6 in a browser
   (`https://livenet.xrpl.org/transactions/<txHash>`). Confirm: transaction type `Payment`,
-  correct `Amount` (RLUSD, correct issuer), the memo decodes to the expected JSON, and (once
-  step 5 is done) the Source Tag is visible on the transaction.
+  correct `Amount` (RLUSD, correct issuer), the memo decodes to the expected JSON, and (if the
+  program requires an on-transaction identifier, per step 5) it is visible on the transaction.
 
 - [ ] **8. Light up the in-app settlement flow with the real transaction**
   The settlement UI (Pay Now → RLUSD Settlement → Settled on XRPL → View Transaction) is
