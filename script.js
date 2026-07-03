@@ -17194,7 +17194,11 @@ function renderPropertyActivity(property) {
       ? Object.entries(ev.metadata).map(([k,v]) => `<span class="pa-meta-kv"><span class="pa-meta-k">${esc(k)}</span><span class="pa-meta-v">${esc(String(v))}</span></span>`).join('')
       : '';
     const expand  = metaStr ? `<details class="pa-meta-row"><summary class="pa-meta-toggle">Details</summary>${metaStr}</details>` : '';
-    const tenantHtml = ev.tenantId ? `<span class="tl-entity">Tenant ${esc(ev.tenantId.slice(0,8))}</span>` : '';
+    // Show the tenant's name (resolved from the property's tenants), never a raw ID.
+    const _evTenantName = ev.tenantId
+      ? ((property.tenants || []).find(t => t && (t.id === ev.tenantId || t.tenant_id === ev.tenantId)) || {}).tenant_name || null
+      : null;
+    const tenantHtml = _evTenantName ? `<span class="tl-entity">${esc(_evTenantName)}</span>` : '';
     return `<div class="tl-item">
       <div class="tl-track"><div class="tl-dot ${dotCls}"></div>${idx < tl.length - 1 ? '<div class="tl-line"></div>' : ''}</div>
       <div class="tl-content">
