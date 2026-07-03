@@ -5221,7 +5221,9 @@
   <div class="header-user-bar" id="headerUserBar">
     <span class="header-user-email" id="headerUserEmail"></span>
     <span class="header-role-badge" id="headerRoleBadge" style="display:none;"></span>
-    <button class="dbhealth-btn" id="dbHealthBtn" onclick="openDbHealthModal()" title="DB Health diagnostic" style="display:none;">&#x1F4CA; DB Health</button>
+    <!-- DB Health diagnostic button removed from the UI for production. The diagnostic
+         functions remain callable from the console (ms_debug_*) for developers. -->
+    <!-- <button class="dbhealth-btn" id="dbHealthBtn" onclick="openDbHealthModal()" title="DB Health diagnostic" style="display:none;">&#x1F4CA; DB Health</button> -->
     <button class="logout-btn" onclick="signOut()">Sign out</button>
   </div>
 </header>
@@ -5420,10 +5422,9 @@
   <span class="breadcrumb-path">Portfolio &rsaquo; <span id="breadcrumbPropName"></span></span>
   <span id="camYearBadge" class="cam-year-badge"></span>
   <div id="syncIndicator" class="sync-indicator"></div>
-  <button class="rc-open-btn" onclick="openRecoveryModal()" title="Recovery Center">&#x1F512; Recovery</button>
-  <button class="breadcrumb-clear-btn" onclick="clearPropertyData()" title="Reset tenant &amp; invoice data for this property — the property itself stays in your portfolio">&#x1F5D1; Clear Data</button>
-  <span class="breadcrumb-danger-sep" aria-hidden="true"></span>
-  <button class="breadcrumb-delete-btn" onclick="openDeletePropertyModal()" title="Permanently remove this property and all its data from your portfolio">&#x1F5D1; Delete Property</button>
+  <button class="rc-open-btn" onclick="openRecoveryModal()" title="Sync status, data integrity, backups, and property management">&#x1F6DF; Data Health</button>
+  <!-- Clear Data / Delete Property moved out of this primary bar into the Data Health panel's
+       "Danger Zone" (see _buildRecoveryModalBody) so destructive actions aren't one stray click away. -->
 </div>
 
 <!-- ── Property Workspace Navigation (Phase 27 — moved directly beneath the
@@ -5485,7 +5486,7 @@
 <div id="recoveryModal" onclick="if(event.target===this)closeRecoveryModal()">
   <div class="rc-modal-box">
     <div class="rc-modal-header">
-      <span class="rc-modal-title">&#x1F512; Recovery Center</span>
+      <span class="rc-modal-title">&#x1F6DF; Data Health</span>
       <button class="rc-modal-close" onclick="closeRecoveryModal()">&#x2715;</button>
     </div>
     <div id="recoveryModalBody"></div>

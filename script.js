@@ -3132,7 +3132,7 @@ function renderPropertyKpiHeader(property) {
     { label: 'Lease Expirations', value: readiness.expiringCount || 0,
       warn: (readiness.expiringCount || 0) > 0, alert: (readiness.expiredCount || 0) > 0,
       sub: readiness.expiredCount ? `${readiness.expiredCount} already expired` : 'Next 12 months' },
-    { label: 'CAM Recovery', value: _fmtKpiMoney(camTotal), sub: camTotal ? 'Most recent run' : 'No CAM run yet' },
+    { label: 'CAM Expenses', value: _fmtKpiMoney(camTotal), sub: camTotal ? 'Total pool, most recent run' : 'No CAM run yet' },
   ];
 
   const tileHtml = tiles.map(t => `
@@ -3253,35 +3253,35 @@ function _buildSettlementFlowHtml(state, opts = {}) {
   const step1 = opts.showPayButton && !settled
     ? `<div class="stl-step stl-step--active">
          <button class="stl-paynow-btn" onclick="payRentNow()">Pay Now${amtTxt ? ' · ' + amtTxt : ''}</button>
-         <div class="stl-step-label">Pay rent / CAM</div>
+         <div class="stl-step-label">Tenant pays</div>
        </div>`
-    : step(1, settled ? 'Payment received' : 'Pay rent / CAM', settled ? 'stl-step--done' : 'stl-step--active', payInner);
+    : step(1, settled ? 'Payment received' : 'Tenant pays', settled ? 'stl-step--done' : 'stl-step--active', payInner);
 
-  // Step 2 — RLUSD settlement
-  const step2 = step(2, 'RLUSD settlement', settled ? 'stl-step--done' : 'stl-step--pending', settled ? '&#x2713;' : '');
+  // Step 2 — settled in RLUSD (a USD stablecoin)
+  const step2 = step(2, 'Settled in RLUSD', settled ? 'stl-step--done' : 'stl-step--pending', settled ? '&#x2713;' : '');
 
-  // Step 3 — settled on XRPL
-  const step3 = step(3, settled ? 'Settled on XRPL mainnet' : 'Settle on XRPL mainnet', settled ? 'stl-step--done' : 'stl-step--pending', settled ? '&#x2713;' : '');
+  // Step 3 — recorded on the XRP Ledger (mainnet)
+  const step3 = step(3, 'On the XRP Ledger', settled ? 'stl-step--done' : 'stl-step--pending', settled ? '&#x2713;' : '');
 
-  // Step 4 — verifiable transaction
+  // Step 4 — public, verifiable receipt
   const step4 = settled
     ? `<div class="stl-step stl-step--done">
          <a class="stl-viewtx" href="${esc(state.explorerLink)}" target="_blank" rel="noopener">View Transaction &#x2197;</a>
-         <div class="stl-step-label">Verified on XRPL</div>
+         <div class="stl-step-label">Verified on-ledger</div>
        </div>`
-    : step(4, 'View on XRPL', 'stl-step--pending', '');
+    : step(4, 'Verify on-ledger', 'stl-step--pending', '');
 
   const head = settled
-    ? `<div class="stl-head stl-head--live"><span class="stl-dot"></span>Settled via RLUSD on XRPL mainnet${amtTxt ? ' · ' + amtTxt : ''}</div>`
-    : `<div class="stl-head stl-head--pending"><span class="stl-dot"></span>Settlement via RLUSD on XRPL — launching on mainnet</div>`;
+    ? `<div class="stl-head stl-head--live"><span class="stl-dot"></span>Payment settled &amp; verified on the XRP Ledger (RLUSD)${amtTxt ? ' · ' + amtTxt : ''}</div>`
+    : `<div class="stl-head stl-head--pending"><span class="stl-dot"></span>Verifiable payment settlement on the XRP Ledger (RLUSD) — going live on mainnet</div>`;
 
   // opts.hideNote suppresses the explanatory paragraph for callers that already print
   // their own (e.g. the tenant statement section header) — avoids duplicated copy.
   const note = opts.hideNote
     ? ''
     : settled
-      ? `<p class="stl-note">This payment was settled in RLUSD on the XRP Ledger. The transaction is public and permanent — anyone can verify it on the explorer.</p>`
-      : `<p class="stl-note">When a tenant pays, MainStreet settles the matching amount in RLUSD on the XRP Ledger and posts a public, verifiable transaction here. Mainnet settlement goes live once the production wallet is funded.</p>`;
+      ? `<p class="stl-note">This payment was settled in RLUSD (a US-dollar stablecoin) on the XRP Ledger — a public, permanent receipt that you and your tenant can each verify independently.</p>`
+      : `<p class="stl-note">When a tenant pays, MainStreet settles the matching amount as RLUSD — a US-dollar stablecoin — on the XRP Ledger, creating a public receipt both you and your tenant can verify independently. This goes live once the settlement wallet is funded.</p>`;
 
   return `<div class="stl-flow ${settled ? 'stl-flow--live' : 'stl-flow--pending'}">
     ${head}
@@ -10801,7 +10801,17 @@ function _buildRecoveryModalBody(prop) {
       <button class="rc-action-btn rc-export-btn" onclick="exportPropertyBackup()">⬇ Export Property Backup</button>
     </div>`;
 
-  body.innerHTML = syncHtml + integrityHtml + cpHtml + exportHtml;
+  // ── Danger Zone (moved here from the property breadcrumb so destructive actions
+  //    aren't one stray click away in the primary bar) ──
+  const dangerHtml = `
+    <div class="rc-section">
+      <div class="rc-section-title" style="color:#fca5a5;">Danger Zone</div>
+      <p class="rc-export-desc">These affect this property's data and can't be undone.</p>
+      <button class="rc-action-btn" style="border-color:rgba(239,68,68,0.35);color:#fca5a5;" onclick="closeRecoveryModal(); clearPropertyData();">&#x1F5D1; Clear Data — reset tenants &amp; invoices (keep the property)</button>
+      <button class="rc-action-btn" style="border-color:rgba(239,68,68,0.35);color:#fca5a5;margin-top:8px;" onclick="closeRecoveryModal(); openDeletePropertyModal();">&#x1F5D1; Delete Property — remove this property and all its data</button>
+    </div>`;
+
+  body.innerHTML = syncHtml + integrityHtml + cpHtml + exportHtml + dangerHtml;
 }
 
 function restoreCheckpoint(index) {
@@ -17373,6 +17383,17 @@ function renderPortfolio(props) {
   // Deterministic sort via Selectors — always has a stable tiebreaker, never returns 0
   const sortedPairs = Selectors.sortProperties(props.map((p, i) => ({ p, m: metas[i] })), _portfolioSort);
   _portfolioSortedPairs = sortedPairs; // cache for search re-use
+
+  // First-time empty state: until there's at least one property, hide the all-zero stats bar,
+  // both search inputs, the sort filters, and the acquisition module. A brand-new user should
+  // see only: welcome → demo properties → create. (Pure show/hide — no data/logic change.)
+  const _hasAny = sortedPairs.length > 0;
+  const _tglEmpty = (sel, show) => { const el = document.querySelector(sel); if (el) el.style.display = show ? '' : 'none'; };
+  _tglEmpty('.ptf-kpi-bar', _hasAny);
+  _tglEmpty('#ptfSearchInput', _hasAny);
+  _tglEmpty('.ptf-global-search-wrap', _hasAny);
+  _tglEmpty('#ptfSortRow', _hasAny);
+  _tglEmpty('#acqSection', _hasAny);
 
   // KPI tiles
   const k = portfolioKPIs(props);
