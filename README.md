@@ -131,4 +131,64 @@ Explorer: https://testnet.xrpl.org/transactions/AFAD1E38C7A932C35511DB846A099EE3
 
 ---
 
+## Local Development & Setup
+
+### Prerequisites
+- **Node.js 18+** (20+ recommended) and npm
+- For the full app: a **Supabase** project (auth + Postgres) and an **Anthropic API key**
+- Optional, to run the serverless API locally: the **Vercel CLI** (`npm i -g vercel`)
+
+### 1. Clone & install
+```bash
+git clone https://github.com/cypher928/mainstreet-xrpl.git
+cd mainstreet-xrpl
+npm install
+```
+
+### 2. Run the test suites (no external services needed)
+The engines and integration logic run fully offline — the fastest way to confirm it works:
+```bash
+node test-regression.js     # full engine/regression suite
+npm test                    # allocation engine unit tests
+npm run test:rlusd          # RLUSD/XRPL settlement unit tests (live checks auto-skip if offline)
+```
+`test-*.js` (37 suites) cover allocation, disputes, extraction, escrow/reserves, persistence, and
+the XRPL settlement builders. None require Supabase or network access.
+
+### 3. Configure environment (for the full app)
+The serverless functions in `api/` read these environment variables. Set them in a local `.env`
+(git-ignored) or via the Vercel dashboard:
+
+| Variable | Purpose |
+|---|---|
+| `ANTHROPIC_API_KEY` | Server-side Claude API key (document extraction) |
+| `CLAUDE_MODEL` | Model id (defaults to a Claude Sonnet model if unset) |
+| `SUPABASE_URL` | Your Supabase project URL |
+| `SUPABASE_ANON_KEY` | Supabase anon key |
+| `SUPABASE_SERVICE_ROLE_KEY` | Supabase service-role key (server-side auth verification) |
+| `XRPL_SETTLEMENT_WALLET_ADDRESS` | Public settlement wallet address (read-only status only) |
+| `XRPL_NETWORK` | `mainnet` or `testnet` |
+
+> The public API is **read-only**. Fund-moving XRPL actions are performed by local admin scripts
+> (`scripts/setup-trust-line.js`, `scripts/send-settlement.js`) that read the wallet seed from the
+> `XRPL_SETTLEMENT_WALLET_SEED` env var in your shell only — the seed is never needed on the server.
+
+### 4. Supabase schema
+Create a Supabase project and apply the migrations in [`migrations/`](./migrations) in order
+(`001_…` → `009_…`) via the Supabase SQL editor or CLI. They create the lease-jobs, evidence/audit,
+CAM-reconciliation, lease-intelligence, acquisition-review tables and the row-level-security policies.
+
+### 5. Run the app locally
+The frontend is static (`index.html` + `script.js`); the API is Vercel serverless functions:
+```bash
+vercel dev        # serves the static app + /api/* functions on http://localhost:3000
+```
+Then open the local URL, sign up, and click **Try Live Demo** to load the seeded demo property.
+
+> **Fork note:** the Supabase URL and anon key are set at the top of `script.js` (they point at the
+> project's own Supabase). To run against **your** Supabase, update those two constants to your
+> project's values.
+
+---
+
 *Built for XRPL Commons Make Waves. © 2026 Main Street. All rights reserved — see [LICENSE.txt](./LICENSE.txt).*
