@@ -928,7 +928,7 @@ window.LeaseReviewPackets = (() => {
     const docDesc = docRiskLevel === 'High'
       ? `${missingCritDocs > 0 ? missingCritDocs + ' lease(s) missing critical fields. ' : ''}${lowConfCount > 0 ? lowConfCount + ' lease(s) require manual document review.' : ''}`
       : docRiskLevel === 'Medium' ? `${lowConfCount} lease${lowConfCount !== 1 ? 's' : ''} flagged for manual verification.`
-      : 'Lease documentation appears complete and verified.';
+      : 'Key lease terms are captured for all tenants with no missing critical fields.';
 
     const dispDesc = openDisputes.length === 0 ? 'No open disputes.'
       : `${openDisputes.length} open dispute${openDisputes.length !== 1 ? 's' : ''} — confirm resolution status before closing.`;
@@ -1241,7 +1241,7 @@ window.LeaseReviewPackets = (() => {
     if (docRiskLevel === 'High')
       uwSentences.push(`${missingCritDocs} lease${missingCritDocs !== 1 ? 's are' : ' is'} missing critical field data; executed documents should be obtained and reviewed prior to commitment.`);
     else if (docRiskLevel === 'Low' && highRiskCount === 0)
-      uwSentences.push('Lease documentation appears complete and extraction confidence is satisfactory for underwriting purposes.');
+      uwSentences.push('Key lease terms are captured for all tenants with no missing critical fields, and extraction confidence is satisfactory for underwriting purposes.');
     if (openDisputes.length > 0)
       uwSentences.push(`${openDisputes.length} open CAM dispute${openDisputes.length !== 1 ? 's' : ''} should be resolved or quantified as a contingency before loan closing.`);
 

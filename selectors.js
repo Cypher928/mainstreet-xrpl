@@ -191,7 +191,10 @@ window.Selectors = (() => {
 
     return {
       properties:        safeProps.length,
-      cam:               safeProps.reduce((s, p) => s + (Number(p.totalCAM) || 0), 0),
+      // Sum from meta.total (derived from each property's saved reconciliation snapshot),
+      // the same source the property overview uses — not p.totalCAM, a mirror field only
+      // populated once a property has been opened, which leaves the tile blank otherwise.
+      cam:               metas.reduce((s, m) => s + (Number(m.total) || 0), 0),
       openDisputes:      metas.reduce((s, m) => s + (m.openDisputes || 0), 0),
       criticalOrElevated,
       totalMissingDocs,
