@@ -13466,6 +13466,9 @@ function generateReconciliationSummary() {
   const totalBilled = lastResults.reduce((s, r) => s + r.allocatedAmount, 0);
   const prop       = currentProperty();
   const propSqft   = parseFloat(prop?.totalSqft || prop?.totalSqFt) || 0;
+  // Sum of the tenants' leased sqft (may be < building sqft when space is vacant) — used so the
+  // "Leased sqft" column total equals the column, rather than showing the building total.
+  const totalLeasedSqft = lastResults.reduce((s, r) => s + (Number(r.sqFt) || 0), 0);
   const avgPerTenant = lastTotal / Math.max(lastResults.length, 1);
 
   const catTotals = {};
@@ -13515,7 +13518,7 @@ function generateReconciliationSummary() {
       <div class="rpt-kpi"><div class="kpi-val">${fmt(totalBilled)}</div><div class="kpi-lbl">Total CAM Billed</div></div>
       <div class="rpt-kpi"><div class="kpi-val">${lastResults.length}</div><div class="kpi-lbl">Tenants</div></div>
       <div class="rpt-kpi"><div class="kpi-val">${lastInvoicesFull.length}</div><div class="kpi-lbl">Invoices</div></div>
-      <div class="rpt-kpi"><div class="kpi-val">${fmt(avgPerTenant)}</div><div class="kpi-lbl">Avg / Tenant</div></div>
+      <div class="rpt-kpi"><div class="kpi-val">${fmt(avgPerTenant)}</div><div class="kpi-lbl">Avg Expense / Tenant</div></div>
     </div>
 
     <div class="rpt-section-title">Tenant Allocation</div>
@@ -13529,7 +13532,7 @@ function generateReconciliationSummary() {
       <tbody>${tenantRows}</tbody>
       <tfoot><tr class="total-row">
         <td>TOTAL</td>
-        <td style="text-align:right">${propSqft > 0 ? propSqft.toLocaleString() : '—'}</td>
+        <td style="text-align:right">${totalLeasedSqft > 0 ? totalLeasedSqft.toLocaleString() : '—'}</td>
         <td></td>
         <td style="text-align:right">${fmt(totalBilled)}</td>
       </tr></tfoot>
