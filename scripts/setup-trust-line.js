@@ -1,22 +1,22 @@
 /**
- * One-time: establish the RLUSD trust line on the production settlement wallet.
+ * One-time: establish the RLUSD trust line on a settlement / landlord wallet.
  *
  * Run from an environment WITH network access (your machine, not the dev sandbox).
- * The seed is read from the XRPL_SETTLEMENT_WALLET_SEED environment variable so it
- * never appears as a command-line argument, in shell history, or in this repo.
+ * The script prompts for the wallet seed directly and reads it with the terminal
+ * echo turned OFF, so the seed is never typed as a CLI argument, never stored in
+ * shell history, and never displayed on screen. Just run:
  *
- * Recommended (seed never echoed, never stored in history):
- *
- *   cd <repo>
- *   read -rs XRPL_SETTLEMENT_WALLET_SEED   # paste seed, press Enter (input hidden)
- *   export XRPL_SETTLEMENT_WALLET_SEED
  *   node scripts/setup-trust-line.js
- *   unset XRPL_SETTLEMENT_WALLET_SEED      # clear it from the shell afterwards
+ *
+ * ...then paste the seed at the hidden prompt and press Enter (you won't see it).
+ * No environment variable or shell wrapper is needed. (For non-interactive/CI use
+ * only, it falls back to the XRPL_SETTLEMENT_WALLET_SEED env var when there is no TTY.)
  *
  * It is idempotent: if the trust line already exists, it reports that and exits without
  * sending another transaction. It never prints the seed — only the public address.
  */
 
+const readline = require("readline");
 const {
   walletFromSeed,
   getAccountStatus,
@@ -25,15 +25,61 @@ const {
 } = require("../rlusd-integration");
 
 const NETWORK = (process.env.XRPL_NETWORK || "mainnet").trim();
-const SEED = (process.env.XRPL_SETTLEMENT_WALLET_SEED || "").trim();
+
+/**
+ * Prompt for a secret on the terminal without echoing what is typed or pasted.
+ * The prompt text itself is shown; every keystroke/paste after it is suppressed,
+ * so the seed never appears on screen. Requires an interactive TTY.
+ */
+function promptSecret(query) {
+  return new Promise((resolve, reject) => {
+    const rl = readline.createInterface({
+      input: process.stdin,
+      output: process.stdout,
+      terminal: true,
+    });
+    rl.stdoutMuted = false;
+    rl._writeToOutput = function _writeToOutput(str) {
+      if (rl.stdoutMuted) return;   // hide the seed as it is typed/pasted
+      rl.output.write(str);         // but still show the prompt itself
+    };
+    rl.on("error", reject);
+    rl.question(query, (answer) => {
+      rl.output.write("\n");
+      rl.close();
+      resolve((answer || "").trim());
+    });
+    rl.stdoutMuted = true;          // mute immediately after the prompt is written
+  });
+}
+
+/**
+ * Resolve the wallet seed. When run interactively, always prompt with echo off
+ * (no env var, no shell wrapper). Only falls back to XRPL_SETTLEMENT_WALLET_SEED
+ * when there is no TTY (non-interactive / CI).
+ */
+async function getSeed() {
+  if (process.stdin.isTTY) {
+    const seed = await promptSecret(
+      "Paste wallet seed (input hidden — you won't see it), then press Enter: "
+    );
+    if (!seed) throw new Error("No seed entered — aborting.");
+    return seed;
+  }
+  const fromEnv = (process.env.XRPL_SETTLEMENT_WALLET_SEED || "").trim();
+  if (fromEnv) return fromEnv;
+  throw new Error(
+    "No seed available. Run this in an interactive terminal so it can prompt you,\n" +
+    "or set XRPL_SETTLEMENT_WALLET_SEED for non-interactive use."
+  );
+}
 
 (async () => {
-  if (!SEED) {
-    console.error(
-      "XRPL_SETTLEMENT_WALLET_SEED is not set.\n" +
-      "Provide it via the environment (not a CLI arg). For example:\n" +
-      "  read -rs XRPL_SETTLEMENT_WALLET_SEED; export XRPL_SETTLEMENT_WALLET_SEED; node scripts/setup-trust-line.js"
-    );
+  let SEED;
+  try {
+    SEED = await getSeed();
+  } catch (e) {
+    console.error(e.message);
     process.exit(2);
   }
 
