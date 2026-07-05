@@ -19296,6 +19296,7 @@ async function loadPropertyData(id) {
         camYear:           d.camYear           ?? null,
         results:           d.results           ?? null,
         camReconciliation: d.camReconciliation ?? null,
+        settlement:        d.settlement        ?? null,
         activityLog:       d.activityLog       || [],
         timeline:          d.timeline          || [],
         // Full tenant state (review, reviewOverrides, capBaseAmount, confidence)
@@ -19441,6 +19442,10 @@ async function loadPropertyData(id) {
     disputes:          _mergedDisps,
     results:           dbData.results           ?? base.results           ?? null,
     camReconciliation: dbData.camReconciliation ?? base.camReconciliation ?? null,
+    // Settlement record (RLUSD proof-of-settlement) — persisted in properties.data;
+    // preserve it through the merge so the settlement flow doesn't fall back to pending
+    // when a property is opened via loadPropertyData (loadProperties already keeps it).
+    settlement:        dbData.settlement        ?? base.settlement        ?? null,
     // Escrow reserves / draw requests: Supabase is authoritative (draw status
     // changes must not be lost if a stale local snapshot has fewer tenants).
     escrowReserves:    dbData.escrowReserves?.length ? dbData.escrowReserves : (base.escrowReserves || []),
