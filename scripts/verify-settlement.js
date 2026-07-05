@@ -4,8 +4,11 @@
  * Run from an environment WITH outbound network access (not the dev sandbox, which is
  * network-blocked from XRPL):
  *
- *   node scripts/verify-settlement.js <txHash>
+ *   node scripts/verify-settlement.js <txHash> [settlementWalletAddress]
  *   # or:  XRPL_SETTLEMENT_TX=<txHash> node scripts/verify-settlement.js
+ *
+ * Pass the settlement wallet address as the optional 2nd argument (or set
+ * XRPL_SETTLEMENT_WALLET_ADDRESS) to also verify the payment was sent from it.
  *
  * It connects to XRPL mainnet, looks up the transaction, and confirms it is a successful
  * RLUSD Payment from the settlement wallet — the exact checks a judge (or you) would do
@@ -23,7 +26,7 @@ const {
 
 const NETWORK = (process.env.XRPL_NETWORK || "mainnet").trim();
 const TXHASH = (process.argv[2] || process.env.XRPL_SETTLEMENT_TX || "").trim();
-const WALLET = (process.env.XRPL_SETTLEMENT_WALLET_ADDRESS || "").trim();
+const WALLET = (process.env.XRPL_SETTLEMENT_WALLET_ADDRESS || process.argv[3] || "").trim();
 
 let pass = 0, fail = 0;
 const ok = (m) => { console.log("  \x1b[32m✓\x1b[0m " + m); pass++; };
@@ -52,26 +55,54 @@ const bad = (m) => { console.log("  \x1b[31m✗\x1b[0m " + m); fail++; };
     console.log("(XRPL_SETTLEMENT_WALLET_ADDRESS not set — skipping wallet status; tx checks still run)\n");
   }
 
-  // 2) Look up the transaction
-  const client = new xrpl.Client(cfg.wss);
-  try {
-    await client.connect();
-  } catch (e) {
-    console.error(`Could not connect to ${NETWORK} (${e.message}). Run this from a networked environment.`);
-    process.exit(2);
+  // 2) Look up the transaction — try several endpoints in order. Some public nodes (and
+  // load-balanced clusters like xrplcluster.com) return "notImpl" for the `tx` command even
+  // though they answer account_info fine; falling back to a full-history server makes the
+  // lookup reliable. Read-only throughout — never signs or submits.
+  const endpoints = NETWORK === "mainnet"
+    ? [cfg.wss, "wss://s2.ripple.com", "wss://s1.ripple.com"]
+    : [cfg.wss];
+
+  let tx = null, usedEndpoint = null, lastErr = null, sawNotFound = false;
+  for (const wss of endpoints) {
+    const client = new xrpl.Client(wss);
+    try {
+      await client.connect();
+    } catch (e) {
+      lastErr = `connect failed (${e.message})`;
+      try { await client.disconnect(); } catch (_) { /* ignore */ }
+      continue;
+    }
+    try {
+      const resp = await client.request({ command: "tx", transaction: TXHASH, binary: false });
+      tx = resp;
+      usedEndpoint = wss;
+      await client.disconnect();
+      break;
+    } catch (e) {
+      const errCode = e && e.data && e.data.error;         // rippled error code, e.g. "notImpl", "txnNotFound"
+      lastErr = errCode || (e && e.message) || String(e);
+      if (errCode === "txnNotFound") sawNotFound = true;    // this node has history but not this tx
+      try { await client.disconnect(); } catch (_) { /* ignore */ }
+      continue;                                             // notImpl / partial history → try the next endpoint
+    }
   }
 
-  let tx;
-  try {
-    tx = await client.request({ command: "tx", transaction: TXHASH });
-  } catch (e) {
-    console.error("Transaction not found / lookup failed:", e.message);
-    await client.disconnect();
+  if (!tx) {
+    if (sawNotFound) {
+      console.error(`Transaction ${TXHASH} was not found on any endpoint.`);
+      console.error("Double-check the hash; if it's very recent, wait a few seconds and retry.");
+    } else {
+      console.error(`Transaction lookup failed on all endpoints (last error: ${lastErr}).`);
+    }
+    console.error(`Endpoints tried: ${endpoints.join(", ")}`);
     process.exit(1);
   }
+
   const r = tx.result;
   const meta = r.meta || r.metaData || {};
 
+  console.log("Looked up via:", usedEndpoint);
   console.log("Transaction:", cfg.explorerBase + TXHASH, "\n");
 
   // 3) Assertions
@@ -93,6 +124,8 @@ const bad = (m) => { console.log("  \x1b[31m✗\x1b[0m " + m); fail++; };
     bad(`amount is ${amt} (XRP drops, not an RLUSD payment)`);
   }
 
+  if (r.Destination) console.log(`  · destination: ${r.Destination}`);
+
   const hasMemo = Array.isArray(r.Memos) && r.Memos.length > 0;
   hasMemo ? ok("carries a memo (settlement metadata)") : console.log("  · no memo present (optional)");
 
@@ -104,7 +137,6 @@ const bad = (m) => { console.log("  \x1b[31m✗\x1b[0m " + m); fail++; };
     console.log("  · no Source/Destination tag — fine if the program attributes by wallet address or memo (verify the program's rules)");
   }
 
-  await client.disconnect();
   console.log(`\n${pass} passed, ${fail} failed`);
   process.exit(fail > 0 ? 1 : 0);
 })().catch((e) => { console.error("verify-settlement crashed:", e); process.exit(2); });
