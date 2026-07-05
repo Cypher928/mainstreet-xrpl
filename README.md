@@ -25,9 +25,9 @@
 | **Hash-anchoring prototype** | [`xrpl-integration.js`](./xrpl-integration.js) — reference implementation for *optionally* anchoring a SHA-256 reconciliation fingerprint via a transaction memo (testnet; **not wired into the production app**) |
 | **Allocation engine** | [`allocation-engine.js`](./allocation-engine.js) — standalone, unit-tested CAM pro-rata engine |
 | **Demo video** | _to be added — see go-live checklist_ |
-| **Live mainnet settlement transaction** | _to be added once the production wallet is funded — see [`RLUSD_GO_LIVE_CHECKLIST.md`](./RLUSD_GO_LIVE_CHECKLIST.md)_ |
+| **Live mainnet settlement transaction** | ✅ [`D5F11B5E…B4D12A`](https://livenet.xrpl.org/transactions/D5F11B5EF7BD9C9BC8062FDA2F6B94BCA1F95DC3417C372548BB5F6082B4D12A) — 1 RLUSD settled on XRPL mainnet |
 
-> **On mainnet status:** the full RLUSD settlement architecture (wallet generation, trust lines, transaction logic, and in-app "View on XRPL" surfaces) is built and unit-tested. The production wallet is generated but **deliberately not yet funded** — funding and the first real mainnet settlement are the final, gated deployment step. A development-time on-chain anchor (testnet) is linked below as proof the anchoring mechanism works end-to-end.
+> **On mainnet status:** ✅ **Live.** The production settlement wallet (`rHLDysh6p6TcJM7QXU15YRLG4mERF5h5pv`) is funded, has an RLUSD trust line to Ripple's official issuer, and has executed a **real RLUSD settlement on XRPL mainnet** — publicly verifiable on the explorer (link above). The transaction is a Payment in RLUSD to the landlord wallet, carrying a SHA-256 settlement fingerprint in its memo. Run `node scripts/verify-settlement.js rHLDysh6p6TcJM7QXU15YRLG4mERF5h5pv` to confirm all checks on-ledger yourself.
 
 ---
 
@@ -108,9 +108,28 @@ Traditional CAM reconciliation takes weeks, involves outside firms, and produces
 
 ---
 
+## Live Mainnet Settlement (Production)
+
+The first real RLUSD settlement on XRPL **mainnet** — a Payment in RLUSD from the settlement
+wallet to the landlord wallet, carrying a SHA-256 settlement fingerprint in its memo. Publicly
+verifiable; anyone can look it up on the explorer.
+
+```
+TX Hash:          D5F11B5EF7BD9C9BC8062FDA2F6B94BCA1F95DC3417C372548BB5F6082B4D12A
+Network:          XRPL Mainnet
+Amount:           1 RLUSD
+Settlement wallet: rHLDysh6p6TcJM7QXU15YRLG4mERF5h5pv
+Landlord wallet:   rw97rJThBJtoVRqR4DsoK5kW2taftzQvAX
+RLUSD issuer:      rMxCKbEDwqr76QuheSUMdEGf4B9xJ8m5De   (Ripple's official mainnet issuer)
+Explorer:         https://livenet.xrpl.org/transactions/D5F11B5EF7BD9C9BC8062FDA2F6B94BCA1F95DC3417C372548BB5F6082B4D12A
+```
+
+Verify it end-to-end: `node scripts/verify-settlement.js rHLDysh6p6TcJM7QXU15YRLG4mERF5h5pv`
+(checks type = Payment, result = tesSUCCESS, RLUSD amount + official issuer, and the memo).
+
 ## On-Chain Anchor (Development / Testnet)
 
-This transaction was submitted to the XRPL **testnet** during development to demonstrate the SHA-256 hash-anchoring mechanism (the `xrpl-integration.js` prototype) end-to-end. It is a development artifact, not a production feature. The production **mainnet** RLUSD settlement transaction will be added here once the wallet is funded (see [`RLUSD_GO_LIVE_CHECKLIST.md`](./RLUSD_GO_LIVE_CHECKLIST.md)).
+This separate transaction was submitted to the XRPL **testnet** during development to demonstrate the SHA-256 hash-anchoring mechanism (the `xrpl-integration.js` prototype) end-to-end. It is a development artifact, not a production feature — the production mainnet settlement is above.
 
 ```
 TX Hash:  AFAD1E38C7A932C35511DB846A099EE346B7E1D71EF3E9F5E61D1F9BF505E113
@@ -127,7 +146,7 @@ Explorer: https://testnet.xrpl.org/transactions/AFAD1E38C7A932C35511DB846A099EE3
 | **CAM Reconciliation** | Live |
 | **AI Lease & Invoice Extraction** | Live |
 | **Escrow & Reserve Intelligence** | Live |
-| **RLUSD Settlement on XRPL** | Built; mainnet launch pending wallet funding |
+| **RLUSD Settlement on XRPL** | Live on mainnet — first settlement executed & verified |
 
 ---
 

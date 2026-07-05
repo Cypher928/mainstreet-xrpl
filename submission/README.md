@@ -1,9 +1,11 @@
 # Make Waves Submission Assets
 
-Drafts of everything needed to submit MainStreet to XRPL Commons **Make Waves**. All are
-ready except the real mainnet transaction details, which are intentionally left as
-**placeholder tokens** to be filled in after the first settlement (see
-`../RLUSD_GO_LIVE_CHECKLIST.md`).
+Drafts of everything needed to submit MainStreet to XRPL Commons **Make Waves**. The mainnet
+settlement is now live and its details are filled in throughout (TX
+`D5F11B5EF7BD9C9BC8062FDA2F6B94BCA1F95DC3417C372548BB5F6082B4D12A`, settlement wallet
+`rHLDysh6p6TcJM7QXU15YRLG4mERF5h5pv`). The only tokens still to fill are the **demo-video URL**,
+the **registration date**, and the **attribution reference** (confirm the Make Waves mechanism).
+The token table below remains as the reference for those.
 
 ## Files
 - `DEMO_SCRIPT.md` — spoken narration for the 2–3 minute demo video

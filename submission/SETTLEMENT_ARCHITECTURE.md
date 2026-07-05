@@ -47,8 +47,13 @@ reconciliation or allocation engines.
 
 ## Deployment Status
 
-Wallet provisioning and RLUSD trust-line setup are complete and verified on XRPL mainnet.
-The **first live RLUSD mainnet settlement is the final gated deployment step**, performed
-only after wallet provisioning and on-ledger trust-line verification — both of which are
-now confirmed. Until that step is executed, the in-app settlement flow shows an honest
+✅ **Live on XRPL mainnet.** Wallet provisioning, the RLUSD trust line, and the first real
+RLUSD settlement are complete and verified on-ledger:
+
+- **Settlement wallet:** `rHLDysh6p6TcJM7QXU15YRLG4mERF5h5pv`
+- **First settlement TX:** `D5F11B5EF7BD9C9BC8062FDA2F6B94BCA1F95DC3417C372548BB5F6082B4D12A`
+  ([explorer](https://livenet.xrpl.org/transactions/D5F11B5EF7BD9C9BC8062FDA2F6B94BCA1F95DC3417C372548BB5F6082B4D12A)) — 1 RLUSD to the landlord wallet, `tesSUCCESS`, carrying a SHA-256 settlement fingerprint in its memo.
+- **Verify independently:** `node scripts/verify-settlement.js rHLDysh6p6TcJM7QXU15YRLG4mERF5h5pv`
+
+Until a settlement is recorded for a given property, the in-app settlement flow shows an honest
 "launching on mainnet" pending state and never displays a fabricated transaction.

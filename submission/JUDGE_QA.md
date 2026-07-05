@@ -136,14 +136,16 @@ recite a script. Answer in your own words.
   spreadsheet" problem.
 
 **Q: Is this actually live on mainnet?**
-- **Concise:** The settlement wallet is live on XRPL mainnet right now, with a real,
-  explorer-visible TrustSet to Ripple's official RLUSD issuer — you can look it up. **[after
-  first settlement]** And here's the first real RLUSD settlement transaction: `<tx hash>`.
-  *(Until then: the first settlement is imminent — RLUSD is clearing through the exchange; the
-  wallet and trust line are already verifiable.)*
-- **Deeper:** Wallet `rG2ZaUs5SodnNNE23ktTzNbRt55PQZNPrn`, RLUSD issuer
-  `rMxCKbEDwqr76QuheSUMdEGf4B9xJ8m5De`. We funded and trust-lined deliberately rather than
-  rushing real funds, which is why the settlement is the last gated step.
+- **Concise:** Yes — live on XRPL mainnet right now. Here's the first real RLUSD settlement
+  transaction, explorer-visible: `D5F11B5EF7BD9C9BC8062FDA2F6B94BCA1F95DC3417C372548BB5F6082B4D12A`
+  — a 1 RLUSD Payment to Ripple's official RLUSD issuer trust line, `tesSUCCESS`. You can look
+  it up, or run our verifier against it.
+- **Deeper:** Settlement wallet `rHLDysh6p6TcJM7QXU15YRLG4mERF5h5pv` → landlord wallet
+  `rw97rJThBJtoVRqR4DsoK5kW2taftzQvAX`, RLUSD issuer `rMxCKbEDwqr76QuheSUMdEGf4B9xJ8m5De`. The
+  payment carries a SHA-256 settlement fingerprint in its memo. Verify end-to-end with
+  `node scripts/verify-settlement.js rHLDysh6p6TcJM7QXU15YRLG4mERF5h5pv` (checks type, tesSUCCESS,
+  RLUSD amount + official issuer, and the memo). We funded and trust-lined deliberately rather
+  than rushing real funds — the settlement was the last gated step, now done.
 
 **Q: Why RLUSD instead of XRP or another stablecoin?**
 - **Concise:** Because it's USD-denominated — a landlord settling $34,650 of CAM sees $34,650,

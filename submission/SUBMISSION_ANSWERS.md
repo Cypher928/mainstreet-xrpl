@@ -58,13 +58,15 @@ private data on-chain. We chose not to overstate this: today the ledger carries 
 
 ### Mainnet status / on-chain proof
 MainStreet is live on XRPL mainnet. First settlement transaction:
-- **TX hash:** `<<MAINNET_TX_HASH>>`
-- **Explorer:** `<<EXPLORER_LINK>>`
-- **Amount:** `<<SETTLEMENT_AMOUNT>>` in RLUSD
-- **Date:** `<<SETTLEMENT_DATE>>`
-- **Settlement wallet:** `rG2ZaUs5SodnNNE23ktTzNbRt55PQZNPrn`
+- **TX hash:** `D5F11B5EF7BD9C9BC8062FDA2F6B94BCA1F95DC3417C372548BB5F6082B4D12A`
+- **Explorer:** https://livenet.xrpl.org/transactions/D5F11B5EF7BD9C9BC8062FDA2F6B94BCA1F95DC3417C372548BB5F6082B4D12A
+- **Amount:** 1 RLUSD
+- **Date:** 2026-07-05 (UTC)
+- **Settlement wallet:** `rHLDysh6p6TcJM7QXU15YRLG4mERF5h5pv`
+- **Landlord (destination) wallet:** `rw97rJThBJtoVRqR4DsoK5kW2taftzQvAX`
 - **RLUSD issuer (mainnet):** `rMxCKbEDwqr76QuheSUMdEGf4B9xJ8m5De`
-- **Attribution reference (per program rules):** `<<ATTRIBUTION_REF>>`
+- **On-chain proof:** Payment · `tesSUCCESS` · RLUSD from Ripple's official issuer · SHA-256 fingerprint in the tx memo. Verify with `node scripts/verify-settlement.js rHLDysh6p6TcJM7QXU15YRLG4mERF5h5pv`.
+- **Attribution reference (per program rules):** `<<ATTRIBUTION_REF>>` — confirm the Make Waves attribution mechanism (registered wallet address vs. Source/Destination tag vs. memo) and fill in before submitting.
 
 ### Live demo
 - **App:** https://mainstreet-xrpl.vercel.app (sign up free → "Try Live Demo" → seeded

@@ -7,8 +7,18 @@ deliberately-deferred sequence that takes it from "ready" to "real."
 
 Each item should be checked off in order — several have hard dependencies on the one before it.
 
-- [ ] **1. Fund wallet with XRP**
-  Transfer real XRP to `rG2ZaUs5SodnNNE23ktTzNbRt55PQZNPrn` — enough to cover the current
+> **STATUS — ✅ LIVE (2026-07-05):** Steps 1, 3, 4, 6, and 7 are complete. The production
+> settlement wallet (`rHLDysh6p6TcJM7QXU15YRLG4mERF5h5pv`) is funded and trust-lined, and the
+> **first real RLUSD settlement is on mainnet and verified**:
+> TX `D5F11B5EF7BD9C9BC8062FDA2F6B94BCA1F95DC3417C372548BB5F6082B4D12A`
+> ([explorer](https://livenet.xrpl.org/transactions/D5F11B5EF7BD9C9BC8062FDA2F6B94BCA1F95DC3417C372548BB5F6082B4D12A)) —
+> 1 RLUSD → `rw97rJThBJtoVRqR4DsoK5kW2taftzQvAX`, `tesSUCCESS`, with a SHA-256 memo. Remaining:
+> **step 2** (point Vercel's `XRPL_SETTLEMENT_WALLET_ADDRESS` at the new wallet), **step 5**
+> (confirm the Make Waves attribution mechanism), **step 8** (set the in-app `property.settlement`
+> record), **step 9** (capture screenshots for the README/demo).
+
+- [x] **1. Fund wallet with XRP**
+  Transfer real XRP to `rHLDysh6p6TcJM7QXU15YRLG4mERF5h5pv` — enough to cover the current
   mainnet account reserve plus transaction fees (see `RLUSD_FUNDING_PROCEDURE.md` §3.1).
   *Verify:* `POST /api/rlusd-settlement {"action":"status"}` → `exists: true`.
 
@@ -18,12 +28,12 @@ Each item should be checked off in order — several have hard dependencies on t
   seed is only needed locally (in your shell) when running the admin scripts. *Verify:* the
   status endpoint returns `configured: true` instead of the "wallet not generated" message.
 
-- [ ] **3. Establish RLUSD trust line** *(already done via local script)*
+- [x] **3. Establish RLUSD trust line** *(done via local script)*
   `read -rs XRPL_SETTLEMENT_WALLET_SEED; export XRPL_SETTLEMENT_WALLET_SEED; node scripts/setup-trust-line.js`
   *Depends on:* step 1 (needs XRP for the tx fee + reserve). *Verify:* the script prints
   `trustLineEstablished: true`, or the status endpoint shows it.
 
-- [ ] **4. Fund wallet with RLUSD**
+- [x] **4. Fund wallet with RLUSD**
   Transfer a modest amount of RLUSD (e.g. $25–50) to the now-trust-lined wallet.
   *Depends on:* step 3 (no trust line = transfer will fail/bounce).
   *Verify:* status endpoint shows `rlusdBalance > 0`.
@@ -32,14 +42,14 @@ Each item should be checked off in order — several have hard dependencies on t
   Confirm from the Make Waves **official rules / registration flow / XRPL Commons Discord** how
   a project's on-chain activity is attributed. **Not yet verified** — do not assume a Source
   Tag. Likely candidates and the work each implies:
-  - **Registered wallet address** → no code change; just register `rG2ZaUs5SodnNNE23ktTzNbRt55PQZNPrn`.
+  - **Registered wallet address** → no code change; just register `rHLDysh6p6TcJM7QXU15YRLG4mERF5h5pv`.
   - **Source Tag** → add `SourceTag: <tag>` to the tx builders in `rlusd-integration.js` (1 line).
   - **Destination Tag** → add `DestinationTag: <tag>` to the settlement Payment (1 line).
   - **Required memo string** → adjust the memo we already write (small change).
   *Verify:* once the mechanism is known, confirm the settlement transaction carries it (re-read
   the built tx, or check the explorer after sending).
 
-- [ ] **6. Execute the first real mainnet settlement** *(local admin script — the public
+- [x] **6. Execute the first real mainnet settlement** *(local admin script — the public
   endpoint cannot do this by design)*
   ```
   read -rs XRPL_SETTLEMENT_WALLET_SEED; export XRPL_SETTLEMENT_WALLET_SEED
@@ -52,7 +62,7 @@ Each item should be checked off in order — several have hard dependencies on t
   transaction itself).
   *Verify:* the script prints `txHash`, `explorerLink`, and `dataHash`; result is `tesSUCCESS`.
 
-- [ ] **7. Verify the transaction on XRPL Explorer**
+- [x] **7. Verify the transaction on XRPL Explorer**
   Open the `explorerLink` from step 6 in a browser
   (`https://livenet.xrpl.org/transactions/<txHash>`). Confirm: transaction type `Payment`,
   correct `Amount` (RLUSD, correct issuer), the memo decodes to the expected JSON, and (if the

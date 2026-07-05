@@ -1,7 +1,9 @@
 # RLUSD Settlement Wallet — Funding Procedure & Deployment Checklist
 
-**Status:** Infrastructure prepared. Wallet generated. **Not funded. No mainnet transactions sent.**
-**Phase:** Pre-launch — Make Waves mainnet requirement not yet satisfied.
+**Status:** ✅ Live. Wallet funded, RLUSD trust line established, and the first real RLUSD
+settlement sent and verified on mainnet (TX `D5F11B5EF7BD9C9BC8062FDA2F6B94BCA1F95DC3417C372548BB5F6082B4D12A`).
+**Phase:** Live — Make Waves mainnet requirement satisfied. (This document is retained as the
+reference procedure; it now reflects the wallet actually in production.)
 
 This document is the exact, ordered procedure for taking the production settlement wallet
 from "generated" to "live on mainnet." Nothing in this document should be executed until
@@ -14,7 +16,7 @@ explicit hold the team placed on this phase.
 
 - **Wallet generated.** A real XRPL keypair was generated locally via
   `scripts/generate-settlement-wallet.js` (offline — no network call, no funding).
-- **Address:** `rG2ZaUs5SodnNNE23ktTzNbRt55PQZNPrn` (public — safe to share, safe to put in
+- **Address:** `rHLDysh6p6TcJM7QXU15YRLG4mERF5h5pv` (public — safe to share, safe to put in
   the README, safe to commit). This is the production settlement wallet's mainnet address.
 - **Seed:** delivered directly to the founder via file transfer, **never** printed to chat,
   **never** written to any tracked file, **never** committed. The local copy used to generate
@@ -34,7 +36,7 @@ explicit hold the team placed on this phase.
 
 | Variable | Value | Secret? |
 |---|---|---|
-| `XRPL_SETTLEMENT_WALLET_ADDRESS` | `rG2ZaUs5SodnNNE23ktTzNbRt55PQZNPrn` | No — public address |
+| `XRPL_SETTLEMENT_WALLET_ADDRESS` | `rHLDysh6p6TcJM7QXU15YRLG4mERF5h5pv` | No — public address |
 | `XRPL_NETWORK` | `mainnet` | No |
 
 The public endpoint (`api/rlusd-settlement.js`) is **read-only** — it reads only
@@ -55,7 +57,7 @@ web request can ever move funds from the settlement wallet.
 ## 3. Funding procedure (DO NOT EXECUTE YET — held pending live-app sign-off)
 
 1. **Buy/transfer real XRP** from an exchange or existing wallet to
-   `rG2ZaUs5SodnNNE23ktTzNbRt55PQZNPrn`. Minimum: enough to cover the XRP reserve
+   `rHLDysh6p6TcJM7QXU15YRLG4mERF5h5pv`. Minimum: enough to cover the XRP reserve
    (currently ~1–10 XRP base reserve depending on current network reserve settings —
    check the live reserve requirement at send time, it has changed over XRPL's history)
    plus a small buffer for transaction fees. A modest amount (e.g. 20–30 XRP) covers
