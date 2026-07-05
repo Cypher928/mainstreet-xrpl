@@ -3,6 +3,14 @@
 Goal: make MainStreet read as production-ready to a first-time judge — no "coming soon"
 cards, no factually false claims, no obvious dead ends.
 
+> **STATUS UPDATE (2026-07-05) — historical audit, partially superseded.** This was a pre-launch
+> credibility pass. Since it was written, the **RLUSD mainnet settlement went live** (tx
+> `D5F11B5EF7BD9C9BC8062FDA2F6B94BCA1F95DC3417C372548BB5F6082B4D12A`, Payment · Success), the
+> production wallet env vars are configured, and the in-app settlement flow renders verified/green.
+> Any statements below about "pending funding," "mainnet tx pending," or the testnet anchor being
+> the only on-chain proof are **superseded** — see `submission/HACKATHON_SUBMISSION.md` and the
+> README's "Live Mainnet Settlement" section for current state.
+
 Scanned: `index.html`, `script.js` (full text), `README.md`, `package.json`, `LICENSE.txt`.
 
 ---

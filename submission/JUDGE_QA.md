@@ -6,9 +6,10 @@ production code and honest about what isn't built** — the goal is to handle ha
 recite a script. Answer in your own words.
 
 **Two honesty guards before you walk in:**
-- Answers tagged **[after first settlement]** assume the first real RLUSD mainnet settlement is
-  done. Until it is, say so plainly: *"the wallet and RLUSD trust line are live on mainnet and
-  verifiable today; the first settlement is imminent — RLUSD is clearing through the exchange."*
+- The first real RLUSD mainnet settlement is **done** — tx
+  `D5F11B5EF7BD9C9BC8062FDA2F6B94BCA1F95DC3417C372548BB5F6082B4D12A`, Payment · Success. So every
+  answer tagged **[after first settlement]** is now simply true: state the live transaction as
+  fact and point judges to the explorer.
 - If you don't know something, say "we haven't built/measured that yet." Every judge respects
   that more than a guess, and we've worked hard to keep our claims exact.
 
