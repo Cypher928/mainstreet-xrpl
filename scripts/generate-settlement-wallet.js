@@ -1,38 +1,59 @@
 /**
- * One-time, local-only generator for MainStreet's production XRPL settlement wallet.
+ * One-time, local-only generator for MainStreet's XRPL settlement wallet.
  *
  * Run this once, manually:   node scripts/generate-settlement-wallet.js
  *
  * It ONLY generates an offline keypair — it does NOT connect to the network and does
- * NOT fund the account. Funding the wallet with real XRP/RLUSD is the deliberately
- * deferred final deployment step, done after the tenant payment flow is complete.
+ * NOT fund the account. Funding the wallet with real XRP/RLUSD is a separate step.
  *
- * After running, store the seed ONLY as a Vercel environment variable
- * (XRPL_SETTLEMENT_WALLET_SEED) — never commit it, never log it anywhere else,
- * never put it in a tracked file. The address is not secret and can be committed
- * (e.g. as XRPL_SETTLEMENT_WALLET_ADDRESS) or just copied into the Vercel dashboard
- * alongside the seed.
+ * SECURITY: the seed is NEVER printed to the terminal (so it can't end up in scrollback
+ * or a screenshot of this window). It is written to a private file OUTSIDE the repo. Open
+ * that file, copy the seed into your password manager, verify with wallet-address.js, then
+ * DELETE the file. Only the public address is printed here.
  */
 
+const os = require("os");
+const path = require("path");
+const fs = require("fs");
 const { generateWallet } = require("../rlusd-integration");
 
 const wallet = generateWallet();
 
+// Write the SECRET seed to a file OUTSIDE the repo (never printed, never committed), with
+// owner-only permissions where the OS honors them. Keeping it off the terminal means a photo
+// or screenshot of this window cannot leak the seed.
+const secretPath = path.join(os.homedir(), "mainstreet-new-wallet-SECRET.txt");
+fs.writeFileSync(
+  secretPath,
+  "MainStreet settlement wallet — GENERATED " + new Date().toISOString() + "\n" +
+  "==============================================================\n" +
+  "Address:    " + wallet.address + "\n" +
+  "Seed:       " + wallet.seed + "\n" +
+  "Public key: " + wallet.publicKey + "\n" +
+  "==============================================================\n\n" +
+  "ACTION REQUIRED (in order):\n" +
+  "  1. Copy the Seed into your password manager now.\n" +
+  "  2. Verify:  node scripts/wallet-address.js " + wallet.address + "\n" +
+  "  3. DELETE this file.\n" +
+  "Never photograph, screenshot, commit, or paste the seed anywhere.\n",
+  { mode: 0o600 }
+);
+
 console.log("==============================================================");
-console.log("  MainStreet — Production Settlement Wallet Generated");
+console.log("  MainStreet — New Settlement Wallet Generated");
 console.log("==============================================================\n");
 console.log("Address:    ", wallet.address);
-console.log("Seed:       ", wallet.seed, "  <-- SECRET, do not commit or share");
 console.log("Public key: ", wallet.publicKey);
-console.log("\nThis wallet is NOT funded and NOT active on the XRP Ledger yet.");
-console.log("Next steps (do these LATER, only when ready to launch):");
-console.log("  1. Set these in the Vercel dashboard (Project Settings → Environment Variables):");
-console.log("       XRPL_SETTLEMENT_WALLET_SEED    =", wallet.seed);
-console.log("       XRPL_SETTLEMENT_WALLET_ADDRESS =", wallet.address);
-console.log("       XRPL_NETWORK                   = mainnet");
-console.log("  2. Transfer enough XRP to the address above to cover the account reserve");
-console.log("     plus a working balance (this activates the account on-ledger).");
-console.log("  3. Call POST /api/rlusd-settlement with { action: 'setup-trust-line' } to");
-console.log("     establish the RLUSD trust line.");
-console.log("  4. Transfer RLUSD into the wallet to fund settlements.");
+console.log("\nThe SEED was NOT printed here — so a photo/screenshot of this window");
+console.log("cannot leak it. It was written to a private file OUTSIDE the repo:");
+console.log("   " + secretPath);
+console.log("\nDo this now, in order:");
+console.log("  1. Open that file and copy the Seed into your password manager.");
+console.log("  2. Verify:  node scripts/wallet-address.js " + wallet.address);
+console.log("  3. DELETE the file when done:");
+console.log("       Windows:      del \"" + secretPath + "\"");
+console.log("       macOS/Linux:  rm \"" + secretPath + "\"");
+console.log("\nTreat that file as radioactive: copy the seed to your password manager,");
+console.log("then delete it. Do NOT photograph, screenshot, or share the seed — including");
+console.log("in chat. (The terminal above is safe to share; it shows only the address.)");
 console.log("==============================================================");
