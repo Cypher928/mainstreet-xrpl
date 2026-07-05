@@ -14843,13 +14843,13 @@ async function ensureDemoProperty() {
       .eq('id', DEMO_PROPERTY_ID)
       .eq('user_id', user.id)
       .single();
-    if (!error && row?.data?.camReconciliation?.results?.length > 0 && row?.data?._demoV === 6 && row?.data?.settlement?.txHash) {
-      console.log('[ensureDemoProperty] already seeded v6 (with settlement) — skip');
+    if (!error && row?.data?.camReconciliation?.results?.length > 0 && row?.data?._demoV === 7 && row?.data?.settlement?.txHash) {
+      console.log('[ensureDemoProperty] already seeded v7 (with settlement) — skip');
       return DEMO_PROPERTY_ID;
     }
   } catch (_) { /* not found — fall through to seed */ }
 
-  console.log('[ensureDemoProperty] seeding Cascade Commons v6…');
+  console.log('[ensureDemoProperty] seeding Cascade Commons v7…');
 
   // ── Demo data constants ───────────────────────────────────────────────────
   const PROP_NAME    = 'Cascade Commons';
@@ -14858,7 +14858,7 @@ async function ensureDemoProperty() {
   // which pilot feedback flagged as making the demo look broken.
   const PROP_SQFT    = 26000;
   const CAM_YEAR     = 2025;
-  const DEMO_VERSION = 6;
+  const DEMO_VERSION = 7;
 
   // capBaseAmount is prior-year CAM so that cap enforcement fires on this demo.
   const demoTenantConfigs = [
@@ -15170,7 +15170,7 @@ async function ensureDemoProperty() {
     camYear:           CAM_YEAR,
     results:           null,
     camReconciliation: { ...camReconciliation, invoicesFull: undefined },
-    _demoV:            6,
+    _demoV:            7,
   };
 
   const { error: propErr } = await db.from('properties')
@@ -17707,6 +17707,10 @@ async function selectProperty(id) {
     // Reconciliation results are always applied — they don't depend on tenant count.
     property.results           = safeResults;
     property.camReconciliation = safeCamRec;
+    // Settlement record (RLUSD proof-of-settlement) is loaded from the data blob here too —
+    // loadProperties() skips the blob, so this lazy load is the only place it arrives. Without
+    // this, the settlement flow renders "pending" because property.settlement stays undefined.
+    property.settlement        = data.settlement ?? property.settlement ?? null;
 
     // Tenant/invoice data: only overwrite when loaded data is at least as rich,
     // preventing a stale DB record from erasing a fresh in-session upload.
