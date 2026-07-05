@@ -133,22 +133,25 @@ function isRlusdAmount(amt) {
     process.exit(1);
   }
   const r = txResp.result;
+  // Newer rippled/xrpl.js nest the transaction fields under `tx_json`; older versions put them
+  // at the top level of `result`. Read from tx_json when present, else fall back to r.
+  const txj = r.tx_json || r;
   const meta = r.meta || r.metaData || {};
 
   console.log("Looked up via:", usedEndpoint);
   console.log("Transaction:", cfg.explorerBase + TXHASH, "\n");
 
   // Assertions
-  (r.TransactionType === "Payment") ? ok("type is Payment") : bad(`type is ${r.TransactionType} (expected Payment)`);
+  (txj.TransactionType === "Payment") ? ok("type is Payment") : bad(`type is ${txj.TransactionType} (expected Payment)`);
 
   const result = meta.TransactionResult;
   (result === "tesSUCCESS") ? ok("on-ledger result tesSUCCESS") : bad(`on-ledger result ${result}`);
 
   if (WALLET) {
-    (r.Account === WALLET) ? ok("sent from the settlement wallet") : bad(`sender ${r.Account} ≠ settlement wallet`);
+    (txj.Account === WALLET) ? ok("sent from the settlement wallet") : bad(`sender ${txj.Account} ≠ settlement wallet`);
   }
 
-  const amt = r.Amount != null ? r.Amount : r.DeliverMax;
+  const amt = txj.Amount != null ? txj.Amount : txj.DeliverMax;
   if (isRlusdAmount(amt)) {
     ok(`amount is RLUSD (${amt.value})`);
     (amt.issuer === cfg.issuer) ? ok("RLUSD issuer matches Ripple's official issuer") : bad(`issuer ${amt.issuer} ≠ ${cfg.issuer}`);
@@ -156,12 +159,12 @@ function isRlusdAmount(amt) {
     bad(`amount is ${JSON.stringify(amt)} (not an RLUSD payment)`);
   }
 
-  const hasMemo = Array.isArray(r.Memos) && r.Memos.length > 0;
+  const hasMemo = Array.isArray(txj.Memos) && txj.Memos.length > 0;
   hasMemo ? ok("carries a memo (settlement metadata)") : console.log("  · no memo present (optional)");
 
-  if (r.Destination) console.log(`  · destination: ${r.Destination}`);
-  if (r.SourceTag != null) console.log(`  · SourceTag present (${r.SourceTag})`);
-  if (r.DestinationTag != null) console.log(`  · DestinationTag present (${r.DestinationTag})`);
+  if (txj.Destination) console.log(`  · destination: ${txj.Destination}`);
+  if (txj.SourceTag != null) console.log(`  · SourceTag present (${txj.SourceTag})`);
+  if (txj.DestinationTag != null) console.log(`  · DestinationTag present (${txj.DestinationTag})`);
 
   console.log(`\n${pass} passed, ${fail} failed`);
   process.exit(fail > 0 ? 1 : 0);
