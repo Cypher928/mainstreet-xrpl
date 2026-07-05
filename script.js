@@ -14843,13 +14843,13 @@ async function ensureDemoProperty() {
       .eq('id', DEMO_PROPERTY_ID)
       .eq('user_id', user.id)
       .single();
-    if (!error && row?.data?.camReconciliation?.results?.length > 0 && row?.data?._demoV === 4) {
-      console.log('[ensureDemoProperty] already seeded v3 — skip');
+    if (!error && row?.data?.camReconciliation?.results?.length > 0 && row?.data?._demoV === 5) {
+      console.log('[ensureDemoProperty] already seeded v5 — skip');
       return DEMO_PROPERTY_ID;
     }
   } catch (_) { /* not found — fall through to seed */ }
 
-  console.log('[ensureDemoProperty] seeding Cascade Commons v3…');
+  console.log('[ensureDemoProperty] seeding Cascade Commons v5…');
 
   // ── Demo data constants ───────────────────────────────────────────────────
   const PROP_NAME    = 'Cascade Commons';
@@ -14858,7 +14858,7 @@ async function ensureDemoProperty() {
   // which pilot feedback flagged as making the demo look broken.
   const PROP_SQFT    = 26000;
   const CAM_YEAR     = 2025;
-  const DEMO_VERSION = 4;
+  const DEMO_VERSION = 5;
 
   // capBaseAmount is prior-year CAM so that cap enforcement fires on this demo.
   const demoTenantConfigs = [
@@ -15146,8 +15146,21 @@ async function ensureDemoProperty() {
   // ── Persist to Supabase ───────────────────────────────────────────────────
   // invoicesFull is intentionally omitted (matches _stripBlobs convention);
   // on load it is re-hydrated from data.invoices via renderProperty.
+  // Real, verified RLUSD mainnet settlement (see RLUSD_GO_LIVE_CHECKLIST.md step 8). Lights up
+  // the demo property's settlement flow as "Settled via RLUSD on XRPL — View Transaction",
+  // linking to the real on-ledger transaction. amountUsd is intentionally omitted so the flow
+  // reads "settled & verified" without a dollar figure — the on-chain proof tx is 1 RLUSD.
+  const DEMO_SETTLEMENT = {
+    status:       'settled',
+    txHash:       'D5F11B5EF7BD9C9BC8062FDA2F6B94BCA1F95DC3417C372548BB5F6082B4D12A',
+    explorerLink: 'https://livenet.xrpl.org/transactions/D5F11B5EF7BD9C9BC8062FDA2F6B94BCA1F95DC3417C372548BB5F6082B4D12A',
+    network:      'mainnet',
+    settledAt:    '2026-07-05T04:34:50Z',
+  };
+
   const propertyData = {
     _demoVersion:      DEMO_VERSION,
+    settlement:        DEMO_SETTLEMENT,
     invoices:          demoInvoiceList.map(inv => ({
       vendorName: inv.vendorName, amount: inv.amount,
       category: inv.category, invoiceDate: inv.invoiceDate,
@@ -15157,7 +15170,7 @@ async function ensureDemoProperty() {
     camYear:           CAM_YEAR,
     results:           null,
     camReconciliation: { ...camReconciliation, invoicesFull: undefined },
-    _demoV:            4,
+    _demoV:            5,
   };
 
   const { error: propErr } = await db.from('properties')
@@ -15190,6 +15203,7 @@ async function ensureDemoProperty() {
   // ── Update in-memory _props with full state ───────────────────────────────
   const demoPropFull = {
     id:                DEMO_PROPERTY_ID,
+    settlement:        DEMO_SETTLEMENT,
     name:              PROP_NAME,
     totalSqft:         PROP_SQFT,
     tenants:           demoTenants,
