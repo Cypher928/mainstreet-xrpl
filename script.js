@@ -14843,13 +14843,13 @@ async function ensureDemoProperty() {
       .eq('id', DEMO_PROPERTY_ID)
       .eq('user_id', user.id)
       .single();
-    if (!error && row?.data?.camReconciliation?.results?.length > 0 && row?.data?._demoV === 5) {
-      console.log('[ensureDemoProperty] already seeded v5 — skip');
+    if (!error && row?.data?.camReconciliation?.results?.length > 0 && row?.data?._demoV === 6 && row?.data?.settlement?.txHash) {
+      console.log('[ensureDemoProperty] already seeded v6 (with settlement) — skip');
       return DEMO_PROPERTY_ID;
     }
   } catch (_) { /* not found — fall through to seed */ }
 
-  console.log('[ensureDemoProperty] seeding Cascade Commons v5…');
+  console.log('[ensureDemoProperty] seeding Cascade Commons v6…');
 
   // ── Demo data constants ───────────────────────────────────────────────────
   const PROP_NAME    = 'Cascade Commons';
@@ -14858,7 +14858,7 @@ async function ensureDemoProperty() {
   // which pilot feedback flagged as making the demo look broken.
   const PROP_SQFT    = 26000;
   const CAM_YEAR     = 2025;
-  const DEMO_VERSION = 5;
+  const DEMO_VERSION = 6;
 
   // capBaseAmount is prior-year CAM so that cap enforcement fires on this demo.
   const demoTenantConfigs = [
@@ -15170,7 +15170,7 @@ async function ensureDemoProperty() {
     camYear:           CAM_YEAR,
     results:           null,
     camReconciliation: { ...camReconciliation, invoicesFull: undefined },
-    _demoV:            5,
+    _demoV:            6,
   };
 
   const { error: propErr } = await db.from('properties')
@@ -19023,6 +19023,14 @@ async function saveProperty(property) {
       camYear:           stripped.camYear           ?? null,
       results:           stripped.results           ?? null,
       camReconciliation: stripped.camReconciliation ?? null,
+      // Settlement record (RLUSD proof-of-settlement). MUST be persisted here — otherwise the
+      // next saveProperty rewrites properties.data without it, wiping the seeded record and
+      // dropping the settlement flow back to "pending".
+      settlement:        stripped.settlement        ?? null,
+      // Preserve the demo-seed markers so a save doesn't strip them (which would force the
+      // demo to needlessly re-seed on every subsequent load). Undefined for real properties.
+      _demoVersion:      stripped._demoVersion,
+      _demoV:            stripped._demoV,
       activityLog:       stripped.activityLog       || [],
       timeline:          stripped.timeline          || [],
       // Tenants are persisted here (not only in the tenants table) so that
