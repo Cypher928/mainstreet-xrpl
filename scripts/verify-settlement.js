@@ -1,69 +1,55 @@
 /**
- * Post-launch verification of the first real RLUSD mainnet settlement.
+ * Verification of an RLUSD mainnet settlement — read-only (never signs or submits).
  *
  * Run from an environment WITH outbound network access (not the dev sandbox, which is
  * network-blocked from XRPL):
  *
+ *   # Easiest — give the settlement wallet address; it finds the latest RLUSD payment itself:
+ *   node scripts/verify-settlement.js <settlementWalletAddress>
+ *
+ *   # Or verify a specific transaction by hash (optionally with the wallet to check the sender):
  *   node scripts/verify-settlement.js <txHash> [settlementWalletAddress]
- *   # or:  XRPL_SETTLEMENT_TX=<txHash> node scripts/verify-settlement.js
  *
- * Pass the settlement wallet address as the optional 2nd argument (or set
- * XRPL_SETTLEMENT_WALLET_ADDRESS) to also verify the payment was sent from it.
- *
- * It connects to XRPL mainnet, looks up the transaction, and confirms it is a successful
- * RLUSD Payment from the settlement wallet — the exact checks a judge (or you) would do
- * on the explorer, automated. It also prints the wallet's current on-ledger status.
- *
- * Read-only: never signs or submits anything.
+ * Arguments are auto-classified: a 64-hex string is treated as a tx hash (stray spaces/
+ * newlines from a paste are stripped), an r... string as a wallet address — order doesn't
+ * matter. It connects to XRPL, looks up the transaction, and confirms it's a successful
+ * RLUSD Payment — the same checks a judge would do on the explorer, automated. It tries
+ * several endpoints so a single node that doesn't implement a command doesn't block it.
  */
 
 const xrpl = require("xrpl");
-const {
-  getNetworkConfig,
-  getAccountStatus,
-  RLUSD_CURRENCY_HEX,
-} = require("../rlusd-integration");
+const { getNetworkConfig, getAccountStatus, RLUSD_CURRENCY_HEX } = require("../rlusd-integration");
 
 const NETWORK = (process.env.XRPL_NETWORK || "mainnet").trim();
-const TXHASH = (process.argv[2] || process.env.XRPL_SETTLEMENT_TX || "").trim();
-const WALLET = (process.env.XRPL_SETTLEMENT_WALLET_ADDRESS || process.argv[3] || "").trim();
+
+// Classify positional args: a string that reduces to 64 hex chars is a tx hash (this tolerates
+// spaces/newlines a terminal may inject into a pasted hash); an r... classic address is a wallet.
+let TXHASH = "";
+let WALLET = (process.env.XRPL_SETTLEMENT_WALLET_ADDRESS || "").trim();
+for (const a of process.argv.slice(2)) {
+  const hex = (a || "").replace(/[^0-9a-fA-F]/g, "").toUpperCase();
+  if (hex.length === 64) { TXHASH = hex; continue; }
+  if (xrpl.isValidClassicAddress((a || "").trim())) { WALLET = a.trim(); continue; }
+}
+if (!TXHASH && process.env.XRPL_SETTLEMENT_TX) {
+  const hex = process.env.XRPL_SETTLEMENT_TX.replace(/[^0-9a-fA-F]/g, "").toUpperCase();
+  if (hex.length === 64) TXHASH = hex;
+}
 
 let pass = 0, fail = 0;
 const ok = (m) => { console.log("  \x1b[32m✓\x1b[0m " + m); pass++; };
 const bad = (m) => { console.log("  \x1b[31m✗\x1b[0m " + m); fail++; };
 
-(async () => {
-  const cfg = getNetworkConfig(NETWORK);
-  console.log(`\nVerifying ${NETWORK} settlement`);
-  console.log("Explorer base:", cfg.explorerBase, "\n");
+const cfg = getNetworkConfig(NETWORK);
+// Try the configured node first, then full-history public servers. Some nodes / load-balanced
+// clusters return "notImpl" for `tx`/`account_tx`; falling through makes lookups reliable.
+const endpoints = NETWORK === "mainnet"
+  ? [cfg.wss, "wss://s2.ripple.com", "wss://s1.ripple.com"]
+  : [cfg.wss];
 
-  if (!TXHASH) {
-    console.error("No transaction hash provided. Pass it as the first argument or set XRPL_SETTLEMENT_TX.");
-    process.exit(2);
-  }
-
-  // 1) Wallet status (informational; needs XRPL_SETTLEMENT_WALLET_ADDRESS)
-  if (WALLET) {
-    try {
-      const s = await getAccountStatus(WALLET, NETWORK);
-      console.log("Settlement wallet:", WALLET);
-      console.log(`  exists=${s.exists} · XRP=${s.xrpBalance} · trustLine=${s.trustLineEstablished} · RLUSD=${s.rlusdBalance}\n`);
-    } catch (e) {
-      console.log("  (wallet status lookup failed:", e.message, ")\n");
-    }
-  } else {
-    console.log("(XRPL_SETTLEMENT_WALLET_ADDRESS not set — skipping wallet status; tx checks still run)\n");
-  }
-
-  // 2) Look up the transaction — try several endpoints in order. Some public nodes (and
-  // load-balanced clusters like xrplcluster.com) return "notImpl" for the `tx` command even
-  // though they answer account_info fine; falling back to a full-history server makes the
-  // lookup reliable. Read-only throughout — never signs or submits.
-  const endpoints = NETWORK === "mainnet"
-    ? [cfg.wss, "wss://s2.ripple.com", "wss://s1.ripple.com"]
-    : [cfg.wss];
-
-  let tx = null, usedEndpoint = null, lastErr = null, sawNotFound = false;
+// Run a read-only request against the endpoints in order; return the first success.
+async function tryEndpoints(fn) {
+  let lastErr = null;
   for (const wss of endpoints) {
     const client = new xrpl.Client(wss);
     try {
@@ -74,38 +60,85 @@ const bad = (m) => { console.log("  \x1b[31m✗\x1b[0m " + m); fail++; };
       continue;
     }
     try {
-      const resp = await client.request({ command: "tx", transaction: TXHASH, binary: false });
-      tx = resp;
-      usedEndpoint = wss;
+      const out = await fn(client);
       await client.disconnect();
-      break;
+      return { out, wss, err: null };
     } catch (e) {
-      const errCode = e && e.data && e.data.error;         // rippled error code, e.g. "notImpl", "txnNotFound"
-      lastErr = errCode || (e && e.message) || String(e);
-      if (errCode === "txnNotFound") sawNotFound = true;    // this node has history but not this tx
+      lastErr = (e && e.data && e.data.error) || (e && e.message) || String(e);
       try { await client.disconnect(); } catch (_) { /* ignore */ }
-      continue;                                             // notImpl / partial history → try the next endpoint
+      continue;
+    }
+  }
+  return { out: null, wss: null, err: lastErr };
+}
+
+function isRlusdAmount(amt) {
+  return amt && typeof amt === "object" && (amt.currency === RLUSD_CURRENCY_HEX || amt.currency === "RLUSD");
+}
+
+(async () => {
+  console.log(`\nVerifying ${NETWORK} settlement`);
+  console.log("Explorer base:", cfg.explorerBase, "\n");
+
+  // Wallet status (informational)
+  if (WALLET) {
+    try {
+      const s = await getAccountStatus(WALLET, NETWORK);
+      console.log("Settlement wallet:", WALLET);
+      console.log(`  exists=${s.exists} · XRP=${s.xrpBalance} · trustLine=${s.trustLineEstablished} · RLUSD=${s.rlusdBalance}\n`);
+    } catch (e) {
+      console.log("  (wallet status lookup failed:", e.message, ")\n");
     }
   }
 
-  if (!tx) {
-    if (sawNotFound) {
-      console.error(`Transaction ${TXHASH} was not found on any endpoint.`);
-      console.error("Double-check the hash; if it's very recent, wait a few seconds and retry.");
-    } else {
-      console.error(`Transaction lookup failed on all endpoints (last error: ${lastErr}).`);
+  // If no valid hash was given, auto-discover the latest RLUSD Payment sent from the wallet.
+  if (!TXHASH) {
+    if (!WALLET) {
+      console.error("Provide a 64-character transaction hash, or the settlement wallet address to auto-find the latest RLUSD settlement.");
+      process.exit(2);
     }
+    console.log("No tx hash given — searching the wallet's recent transactions for the latest RLUSD payment…");
+    const { out, wss, err } = await tryEndpoints((c) => c.request({
+      command: "account_tx", account: WALLET, ledger_index_min: -1, ledger_index_max: -1, limit: 30, binary: false,
+    }));
+    if (!out) {
+      console.error(`Could not read the wallet's transactions (last error: ${err}).`);
+      console.error(`Endpoints tried: ${endpoints.join(", ")}`);
+      process.exit(1);
+    }
+    const rows = out.result.transactions || [];
+    let found = null;
+    for (const row of rows) {
+      const t = row.tx || row.tx_json || row;
+      const amt = t.Amount != null ? t.Amount : t.DeliverMax;
+      if (t.TransactionType === "Payment" && t.Account === WALLET && isRlusdAmount(amt)) {
+        found = t.hash || row.hash || null;
+        if (found) break;
+      }
+    }
+    if (!found) {
+      console.error("No RLUSD Payment sent from this wallet was found in its recent transactions.");
+      process.exit(1);
+    }
+    TXHASH = String(found).toUpperCase();
+    console.log(`Found RLUSD settlement: ${TXHASH}  (via ${wss})\n`);
+  }
+
+  // Look up the transaction by hash.
+  const { out: txResp, wss: usedEndpoint, err } = await tryEndpoints((c) =>
+    c.request({ command: "tx", transaction: TXHASH, binary: false }));
+  if (!txResp) {
+    console.error(`Transaction lookup failed on all endpoints (last error: ${err}).`);
     console.error(`Endpoints tried: ${endpoints.join(", ")}`);
     process.exit(1);
   }
-
-  const r = tx.result;
+  const r = txResp.result;
   const meta = r.meta || r.metaData || {};
 
   console.log("Looked up via:", usedEndpoint);
   console.log("Transaction:", cfg.explorerBase + TXHASH, "\n");
 
-  // 3) Assertions
+  // Assertions
   (r.TransactionType === "Payment") ? ok("type is Payment") : bad(`type is ${r.TransactionType} (expected Payment)`);
 
   const result = meta.TransactionResult;
@@ -115,27 +148,20 @@ const bad = (m) => { console.log("  \x1b[31m✗\x1b[0m " + m); fail++; };
     (r.Account === WALLET) ? ok("sent from the settlement wallet") : bad(`sender ${r.Account} ≠ settlement wallet`);
   }
 
-  const amt = r.Amount;
-  if (amt && typeof amt === "object") {
-    const isRlusd = (amt.currency === RLUSD_CURRENCY_HEX || amt.currency === "RLUSD");
-    isRlusd ? ok(`amount is RLUSD (${amt.value})`) : bad(`amount currency ${amt.currency} is not RLUSD`);
+  const amt = r.Amount != null ? r.Amount : r.DeliverMax;
+  if (isRlusdAmount(amt)) {
+    ok(`amount is RLUSD (${amt.value})`);
     (amt.issuer === cfg.issuer) ? ok("RLUSD issuer matches Ripple's official issuer") : bad(`issuer ${amt.issuer} ≠ ${cfg.issuer}`);
   } else {
-    bad(`amount is ${amt} (XRP drops, not an RLUSD payment)`);
+    bad(`amount is ${JSON.stringify(amt)} (not an RLUSD payment)`);
   }
-
-  if (r.Destination) console.log(`  · destination: ${r.Destination}`);
 
   const hasMemo = Array.isArray(r.Memos) && r.Memos.length > 0;
   hasMemo ? ok("carries a memo (settlement metadata)") : console.log("  · no memo present (optional)");
 
-  // Informational only — the program's attribution mechanism is not yet verified (it may use a
-  // registered wallet address, a Source Tag, a Destination Tag, or a memo). Report what's present.
+  if (r.Destination) console.log(`  · destination: ${r.Destination}`);
   if (r.SourceTag != null) console.log(`  · SourceTag present (${r.SourceTag})`);
   if (r.DestinationTag != null) console.log(`  · DestinationTag present (${r.DestinationTag})`);
-  if (r.SourceTag == null && r.DestinationTag == null) {
-    console.log("  · no Source/Destination tag — fine if the program attributes by wallet address or memo (verify the program's rules)");
-  }
 
   console.log(`\n${pass} passed, ${fail} failed`);
   process.exit(fail > 0 ? 1 : 0);
