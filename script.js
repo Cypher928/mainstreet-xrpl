@@ -14831,7 +14831,8 @@ async function cleanupLegacyDemos(userId) {
 // Returns DEMO_PROPERTY_ID on success, null on auth failure.
 async function ensureDemoProperty() {
   const { data: { user } } = await db.auth.getUser();
-  if (!user?.id) return null;
+  if (!user?.id) { console.log('[ensureDemoProperty] INSTRUMENT — no auth user; abort'); return null; }
+  console.log('[ensureDemoProperty] INSTRUMENT — called', { DEMO_PROPERTY_ID, userId: user.id });
 
   // Always clean up legacy random-UUID demo copies before anything else
   await cleanupLegacyDemos(user.id);
@@ -14843,11 +14844,19 @@ async function ensureDemoProperty() {
       .eq('id', DEMO_PROPERTY_ID)
       .eq('user_id', user.id)
       .single();
+    console.log('[ensureDemoProperty] INSTRUMENT — idempotency read', {
+      id:                   DEMO_PROPERTY_ID,
+      readError:            error?.message || null,
+      persisted_demoV:      row?.data?._demoV,
+      persisted_settlement: row?.data?.settlement?.txHash ? 'SET' : (row?.data ? 'absent/null' : 'no-row'),
+      hasResults:           row?.data?.camReconciliation?.results?.length || 0,
+    });
     if (!error && row?.data?.camReconciliation?.results?.length > 0 && row?.data?._demoV === 7 && row?.data?.settlement?.txHash) {
-      console.log('[ensureDemoProperty] already seeded v7 (with settlement) — skip');
+      console.log('[ensureDemoProperty] INSTRUMENT — already seeded v7 (with settlement) — SKIP re-seed');
       return DEMO_PROPERTY_ID;
     }
-  } catch (_) { /* not found — fall through to seed */ }
+    console.log('[ensureDemoProperty] INSTRUMENT — idempotency NOT satisfied → will RE-SEED');
+  } catch (e) { console.log('[ensureDemoProperty] INSTRUMENT — idempotency read threw → will RE-SEED:', e.message); }
 
   console.log('[ensureDemoProperty] seeding Cascade Commons v7…');
 
@@ -15173,14 +15182,24 @@ async function ensureDemoProperty() {
     _demoV:            7,
   };
 
-  const { error: propErr } = await db.from('properties')
+  console.log('[ensureDemoProperty] INSTRUMENT — upserting canonical row', {
+    id:                 DEMO_PROPERTY_ID,
+    writing_settlement: propertyData.settlement?.txHash ? ('SET(' + propertyData.settlement.txHash.slice(0, 10) + '…)') : 'MISSING',
+    writing_demoV:      propertyData._demoV,
+  });
+  const { data: upsertRows, error: propErr } = await db.from('properties')
     .upsert({ id: DEMO_PROPERTY_ID, user_id: user.id, name: PROP_NAME, sqft: PROP_SQFT, data: propertyData })
-    .select('id');
+    .select('id, data');
   if (propErr) {
     // DB write failed (RLS, network, cold-start). All reconciliation data is already
     // in-memory. Log the error and continue so the demo still loads — user just
     // won't have persistence across a hard refresh.
-    console.warn('[ensureDemoProperty] property upsert failed (demo will run in-memory):', propErr.message, propErr.code);
+    console.warn('[ensureDemoProperty] INSTRUMENT — property upsert FAILED (demo will run in-memory):', propErr.message, propErr.code);
+  } else {
+    // Read-back straight from the DB response — the definitive answer to "did settlement land".
+    console.log('[ensureDemoProperty] INSTRUMENT — upsert OK; DB read-back →',
+      'settlement:', upsertRows?.[0]?.data?.settlement?.txHash ? 'SET' : 'null/absent',
+      '| _demoV:', upsertRows?.[0]?.data?._demoV);
   }
 
   // Tenants: delete existing rows then insert with stable IDs so they're
