@@ -557,6 +557,10 @@ console.log('\n── Group 21B-1: computeEscrowReadiness ───────�
   assert('missing lien waiver → not ready',           rd2.ready === false);
   assert('partial score strictly between 0 and 100',  rd2.score > 0 && rd2.score < 100);
   assert('missing list names the lien waiver item',   rd2.missing.some(i => /lien waiver/i.test(i.label)));
+  assertEq('conversational summary — single missing item',
+    rd2.summary, 'Almost ready — a lien waiver is still needed before this package can be submitted.');
+  assert('ready summary states remaining balance',
+    rd.summary.includes('Ready to submit') && rd.summary.includes('$17,600 will remain'));
 
   const noBalReserve = Object.assign({}, readyReserve, { id: 'rsv-2', currentBalance: null });
   const rd3 = EE.computeEscrowReadiness(noBalReserve, Object.assign({}, readyDraw, { reserveId: 'rsv-2' }), []);
@@ -582,6 +586,9 @@ console.log('\n── Group 21B-2: computeReserveHealth ────────
 
   const h3 = EE.computeReserveHealth({ id: 'rsv-5', currentBalance: null, deadlines: {} }, [], {});
   assert('unknown balance penalized with honest reason', h3.score < 100 && h3.reasons.some(r => /unknown/i.test(r)));
+  assert('shortfall summary reads like an advisor',      /Underfunded — planned work of \$96,300 exceeds the available \$50,000 by \$46,300/.test(h.summary));
+  assert('healthy summary reads like an advisor',        /^Healthy — \$100,000 available/.test(h2.summary));
+  assert('unknown-balance summary says what to do',      /Unverified — no lender-stated balance/.test(h3.summary));
 }
 
 // ── Group 21B-3: projectReserveRunway ────────────────────────────────────────

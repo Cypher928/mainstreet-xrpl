@@ -65,6 +65,9 @@ window.CommandCenter = (() => {
     const recon   = _recon(p);
     const today   = deps.now.toISOString().slice(0, 10);
     const openJs  = `ccOpenProperty('${p.id}')`;
+    // Cross-module context for connection lines (Phase 21C): what else on this
+    // property does each issue touch? Deterministic and data-backed only.
+    const stl = _settlementFor(p);
 
     // 1) Open disputes — real exposure, real dispute records as evidence.
     const openDisps = (p.disputes || []).filter(d => d && d.status !== 'accepted' && d.status !== 'rejected' && d.status !== 'resolved');
@@ -79,6 +82,8 @@ window.CommandCenter = (() => {
         confidence: 95, confidenceBasis: 'dispute records',
         evidence: openDisps.slice(0, 3).map(d =>
           `Dispute — ${d.vendor || d.category || 'charge'} ${_num(d.tenantShare ?? d.amount) ? '(' + _fmt$(d.tenantShare ?? d.amount) + ')' : ''} · ${d.status || 'open'}`),
+        connections: (stl && stl.state === 'ready')
+          ? [`Resolving this clears the way to settle ${_fmt$(stl.billed)} in RLUSD on XRPL.`] : [],
         action: { label: 'Review disputes', js: openJs },
       });
     }
@@ -97,6 +102,8 @@ window.CommandCenter = (() => {
         impact: atRisk || null, impactNote: atRisk ? 'annual CAM share at risk' : null,
         confidence: 90, confidenceBasis: 'lease end dates',
         evidence: expired.slice(0, 3).map(t => `Lease — ${t.tenant_name} · expired ${t.end_date} · ${Number(t.leased_sqft || 0).toLocaleString('en-US')} sf`),
+        connections: atRisk > 0
+          ? [`Also affects CAM: ${_fmt$(atRisk)} of this year's allocations rest on expired lease terms.`] : [],
         action: { label: 'Review leases', js: openJs },
       });
     }
@@ -113,6 +120,8 @@ window.CommandCenter = (() => {
         impact: null, impactNote: 'unquantified — data gap',
         confidence: 92, confidenceBasis: 'lease field completeness',
         evidence: missingCap.slice(0, 3).map(t => `Lease — ${t.tenant_name} (NNN, no cap on file)`),
+        connections: (recon?.results || []).length
+          ? ['CAM impact: these tenants’ allocations cannot be cap-validated until terms are on file.'] : [],
         action: { label: 'Complete lease data', js: openJs },
       });
     }
@@ -215,19 +224,18 @@ window.CommandCenter = (() => {
           recs.push({
             id: `rsv:${dr.id}`, priority: 'high', propertyId: p.id, propertyName: p.name,
             title: `Lender reimbursement ready — ${r.reserveTypeLabel}`,
-            reason: 'Documentation is complete — the draw package can be generated and sent to the lender.',
+            reason: rd.summary || 'Documentation is complete — the draw package can be generated and sent to the lender.',
             impact: amt, impactNote: 'eligible reimbursement',
             confidence: 95, confidenceBasis: 'draw validation checklist',
             evidence: rd.items.filter(i => i.met).slice(0, 4).map(i => `✓ ${i.label}`),
+            connections: [`Cash-flow impact: funding returns ${_fmt$(amt)} to the property.`],
             action: { label: 'Generate lender package', js: openJs },
           });
         } else {
           recs.push({
             id: `rsvdoc:${dr.id}`, priority: 'medium', propertyId: p.id, propertyName: p.name,
             title: `Draw request ${rd.score}% ready — ${r.reserveTypeLabel}`,
-            reason: rd.missing.length
-              ? `Blocking the lender release: ${rd.missing.slice(0, 3).map(i => i.label.toLowerCase()).join('; ')}.`
-              : 'Complete the draw request to submit.',
+            reason: rd.summary || 'Complete the draw request to submit.',
             impact: amt || null, impactNote: amt ? 'estimated reimbursement' : null,
             confidence: 90, confidenceBasis: 'draw validation checklist',
             evidence: rd.missing.slice(0, 3).map(i => `⚠ ${i.label}`),
@@ -284,6 +292,7 @@ window.CommandCenter = (() => {
           impact: atRisk || null, impactNote: atRisk ? 'at risk per year' : null,
           confidence: 90, confidenceBasis: 'acquisition analysis',
           evidence: [`Acquisition review — ${rev.name || ''}`],
+          connections: ['If acquired as-is, this leakage becomes a recurring portfolio priority.'],
           action: { label: 'Open acquisition review', js: 'ccOpenAcquisitions()' },
         });
       }
@@ -383,7 +392,7 @@ window.CommandCenter = (() => {
     }
   }
 
-  function _executiveSummary({ recs, settlements, identifiedTotal, expiring60, reimburseReady }) {
+  function _executiveSummary({ recs, settlements, identifiedTotal, expiring60, reimburseReady, reimburseCount, criticalCount }) {
     const parts = [];
 
     const attentionProps = new Set(recs.filter(r => r.priority === 'high').map(r => r.propertyId || r.propertyName));
@@ -395,12 +404,19 @@ window.CommandCenter = (() => {
       parts.push('The portfolio is clean — everything reconciled, no urgent items today.');
     }
 
+    // Largest opportunity — skipped when it IS the reimbursement package, since
+    // the package sentence below already carries that number (no double-counting
+    // the same dollar figure in an executive's ear).
     const largest = recs.filter(r => (r.impact || 0) > 0).sort((a, b) => b.impact - a.impact)[0];
-    if (largest) parts.push(`The largest opportunity is ${_oppPhrase(largest)} (${_fmt$(largest.impact)}).`);
+    if (largest && !String(largest.id).startsWith('rsv:')) {
+      parts.push(`The largest opportunity is ${_oppPhrase(largest)} (${_fmt$(largest.impact)}).`);
+    }
 
     if (expiring60 > 0) parts.push(`${_countWord(expiring60)} lease expiration${expiring60 === 1 ? ' occurs' : 's occur'} within 60 days.`);
 
-    if (reimburseReady > 0) parts.push(`Lender reimbursements totaling ${_fmt$(reimburseReady)} are ready to request.`);
+    if (reimburseCount > 0) {
+      parts.push(`${_countWord(reimburseCount)} lender reimbursement package${reimburseCount === 1 ? '' : 's'} totaling ${_fmt$(reimburseReady)} ${reimburseCount === 1 ? 'is' : 'are'} ready for submission.`);
+    }
 
     const ready   = settlements.filter(s => s.state === 'ready').length;
     const settled = settlements.filter(s => s.state === 'settled').length;
@@ -408,6 +424,14 @@ window.CommandCenter = (() => {
     else if (settled > 0) parts.push(settled === 1
       ? 'The reconciled settlement is verified on the XRP Ledger.'
       : 'All reconciled settlements are verified on the XRP Ledger.');
+
+    // Risk verdict — an executive briefing should end with a verdict, and it
+    // must be earned: "no critical risks" only when the risk engine agrees.
+    if (criticalCount > 0) {
+      parts.push(`${_countWord(criticalCount)} propert${criticalCount === 1 ? 'y carries' : 'ies carry'} a critical risk flag.`);
+    } else if (recs.length) {
+      parts.push('No critical portfolio risks were detected.');
+    }
 
     if (identifiedTotal > 0) parts.push(`Total identified portfolio opportunity: ${_fmt$(identifiedTotal)}.`);
 
@@ -437,6 +461,22 @@ window.CommandCenter = (() => {
     perProp.forEach(({ p, meta, readiness }) => { recs = recs.concat(_recsForProperty(p, meta, readiness, d)); });
     perProp.forEach(({ p }) => { recs = recs.concat(_recsForReserves(p, d)); });
     recs = recs.concat(_recsForAcquisitions(acqReviews));
+
+    // Asset-manager focus (Phase 21C): several clean properties should read as
+    // one quiet line, not a card apiece — the cards are for things needing action.
+    const okRecs = recs.filter(r => String(r.id).startsWith('ok:'));
+    if (okRecs.length > 1) {
+      recs = recs.filter(r => !String(r.id).startsWith('ok:'));
+      recs.push({
+        id: 'ok:all', priority: 'low', propertyId: null, propertyName: null,
+        title: `${okRecs.length} properties reconciled — no action required`,
+        reason: 'Allocations verified, no open disputes, lease data complete across these properties.',
+        impact: null, impactNote: null, confidence: 95, confidenceBasis: 'reconciliation state',
+        evidence: okRecs.map(r => r.propertyName).filter(Boolean),
+        action: { label: 'View portfolio', js: 'ccShowPortfolio()' },
+      });
+    }
+
     recs.sort((a, b) =>
       (PRIORITY_ORDER[a.priority] - PRIORITY_ORDER[b.priority]) ||
       ((b.impact || 0) - (a.impact || 0)));
@@ -507,8 +547,11 @@ window.CommandCenter = (() => {
       t && t.end_date && t.end_date >= today60 && t.end_date <= cutoff60).length, 0);
 
     const settlements = safeProps.map(_settlementFor).filter(Boolean);
+    const criticalCount  = perProp.filter(({ meta }) => meta && meta.riskLevel === 'Critical').length;
+    const reimburseCount = recs.filter(r => String(r.id).startsWith('rsv:')).length;
     const summary = _executiveSummary({
-      recs, settlements, identifiedTotal: opportunities.identifiedTotal, expiring60, reimburseReady,
+      recs, settlements, identifiedTotal: opportunities.identifiedTotal, expiring60,
+      reimburseReady, reimburseCount, criticalCount,
     });
 
     return {
@@ -537,6 +580,8 @@ window.CommandCenter = (() => {
       : (r.impactNote ? `<div class="cc-impact"><span class="cc-impact-note">${_esc(r.impactNote)}</span></div>` : '');
     const evid = r.evidence?.length
       ? `<div class="cc-evidence">${r.evidence.map(e => `<span class="cc-evid-chip">${_esc(e)}</span>`).join('')}</div>` : '';
+    const conn = r.connections?.length
+      ? `<div class="cc-connect">${r.connections.map(c => `<span>↔ ${_esc(c)}</span>`).join('')}</div>` : '';
     return `<div class="cc-card ${pri.cls}">
       <div class="cc-card-top">
         <span class="cc-pri"><span class="cc-dot" style="background:${pri.dot}"></span>${pri.label}</span>
@@ -545,7 +590,7 @@ window.CommandCenter = (() => {
       <div class="cc-card-prop">${_esc(r.propertyName || '')}</div>
       <div class="cc-card-title">${_esc(r.title)}</div>
       <div class="cc-card-reason">${_esc(r.reason)}</div>
-      ${impact}${evid}
+      ${impact}${evid}${conn}
       <button class="cc-action-btn" onclick="${r.action.js}">${_esc(r.action.label)}</button>
     </div>`;
   }
@@ -559,9 +604,19 @@ window.CommandCenter = (() => {
       `${b.totals.invoices} invoice${b.totals.invoices !== 1 ? 's' : ''} analyzed`,
     ].join(' · ');
 
+    // Focus: an experienced asset manager leads with the few most important
+    // actions. Top 6 render as cards; the remainder collapse behind a toggle.
+    const MAX_TOP = 6;
+    const topRecs  = m.recommendations.slice(0, MAX_TOP);
+    const restRecs = m.recommendations.slice(MAX_TOP);
     const recsHtml = m.recommendations.length
-      ? m.recommendations.map(_recCard).join('')
+      ? topRecs.map(_recCard).join('')
       : `<div class="cc-empty">Add a property or load the demo to see prioritized recommendations.</div>`;
+    const moreHtml = restRecs.length
+      ? `<details class="cc-more"><summary>Show ${restRecs.length} more recommendation${restRecs.length === 1 ? '' : 's'}</summary>
+           <div class="cc-cards" style="margin-top:12px;">${restRecs.map(_recCard).join('')}</div>
+         </details>`
+      : '';
 
     const oppHtml = m.opportunities.items.length
       ? m.opportunities.items.map(o => `<div class="cc-opp-row">
@@ -634,6 +689,7 @@ window.CommandCenter = (() => {
 
     <div class="cc-section-title">Today's Priorities</div>
     <div class="cc-cards">${recsHtml}</div>
+    ${moreHtml}
 
     <div class="cc-two-col">
       <div>

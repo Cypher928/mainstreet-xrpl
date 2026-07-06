@@ -2370,8 +2370,8 @@ function _renderDrawBuilderBody(prop, reserve) {
       <div style="margin-top:10px;font-size:0.95rem;font-weight:700;color:${readiness.ready ? '#86efac' : '#fbbf24'};">
         Escrow Readiness: ${readiness.score}%
       </div>
-      ${readiness.missing.slice(0, 4).map(i => `<div style="font-size:0.8rem;color:#fbbf24;margin-top:2px;">&#x26A0; ${esc(i.label)}${i.detail ? ` — ${esc(i.detail)}` : ''}</div>`).join('')}
-      ${readiness.ready && readiness.remainingAfter != null ? `<div style="font-size:0.8rem;color:#86efac;margin-top:2px;">Ready to submit — ${fmt(readiness.remainingAfter)} will remain in the reserve after this draw.</div>` : ''}`
+      <div style="font-size:0.85rem;color:${readiness.ready ? '#86efac' : '#cbd5e1'};margin-top:3px;line-height:1.5;">${esc(readiness.summary || '')}</div>
+      ${readiness.missing.slice(0, 4).map(i => `<div style="font-size:0.8rem;color:#fbbf24;margin-top:2px;">&#x26A0; ${esc(i.label)}${i.detail ? ` — ${esc(i.detail)}` : ''}</div>`).join('')}`
       : `<div style="margin-top:6px;font-size:0.85rem;color:${missingDocs.length === 0 ? '#86efac' : '#fbbf24'};">
         Submission Ready: ${satisfiedDocs.length} of ${docChecklist.length} documents
       </div>`}`

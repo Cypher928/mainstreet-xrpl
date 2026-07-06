@@ -609,16 +609,50 @@
       : null;
     var remainingAfter = (bal.availableBalance != null) ? bal.availableBalance - amount : null;
 
+    var missing = items.filter(function (i) { return !i.met; });
     return {
       score: score,
       ready: ready,
       level: ready ? 'ready' : (score >= 60 ? 'nearly_ready' : 'blocked'),
       items: items,
-      missing: items.filter(function (i) { return !i.met; }),
+      missing: missing,
       maxReimbursable: maxReimbursable,
       remainingAfter: remainingAfter,
       validation: validation,
+      summary: _readinessSummary(ready, score, missing, remainingAfter),
     };
+  }
+
+  // Human phrasing for each readiness item — used to talk like an advisor
+  // ("a lien waiver is still needed") instead of a checklist ("lienWaivers: false").
+  var _READINESS_PHRASES = {
+    reserveAnalyzed:        'the analyzed reserve document',
+    balanceKnown:           'a lender-stated reserve balance',
+    eligibleReserve:        'an eligible reserve selection',
+    sufficientBalance:      'a sufficient available balance',
+    minDrawAmount:          'a draw meeting the lender minimum',
+    invoices:               'supporting invoices',
+    photos:                 'supporting photos',
+    lienWaivers:            'a lien waiver',
+    contractorBids:         'a contractor bid',
+    engineerCertification:  'an engineer certification',
+  };
+
+  function _readinessSummary(ready, score, missing, remainingAfter) {
+    if (ready) {
+      return 'Ready to submit — documentation is complete' +
+        (remainingAfter != null
+          ? ', and $' + Math.round(remainingAfter).toLocaleString('en-US') + ' will remain in the reserve after this draw.'
+          : '.');
+    }
+    var phrases = missing.map(function (i) { return _READINESS_PHRASES[i.key] || i.label.toLowerCase(); });
+    if (phrases.length === 1) {
+      return 'Almost ready — ' + phrases[0] + ' is still needed before this package can be submitted.';
+    }
+    if (score >= 60) {
+      return 'Almost ready — still needed: ' + phrases.slice(0, 3).join('; ') + '.';
+    }
+    return 'Not ready yet — ' + phrases.length + ' items are outstanding, starting with ' + phrases[0] + '.';
   }
 
   // ── TRACK 8: Reserve health & funding projection (Phase 21B) ─────────────
@@ -671,10 +705,28 @@
 
     score = Math.max(0, Math.min(100, score));
     var level = score >= 80 ? 'strong' : score >= 60 ? 'adequate' : score >= 35 ? 'underfunded' : 'critical';
+
+    // Advisor-voice summary — states what is true and what to do about it.
+    var summary;
+    if (bal.currentBalance == null) {
+      summary = 'Unverified — no lender-stated balance is on file. Upload a current reserve statement to enable health and funding analysis.';
+    } else if (shortfall > 0) {
+      summary = 'Underfunded — planned work of $' + Math.round(upcomingCost).toLocaleString('en-US') +
+        ' exceeds the available $' + Math.round(Math.max(bal.availableBalance, 0)).toLocaleString('en-US') +
+        ' by $' + Math.round(shortfall).toLocaleString('en-US') +
+        '. Increase monthly contributions or re-phase the work to close the gap.';
+    } else if (level === 'strong') {
+      summary = 'Healthy — $' + Math.round(bal.availableBalance).toLocaleString('en-US') + ' available' +
+        (upcomingCost > 0 ? ' with planned work fully funded.' : ' and no planned work outstanding.');
+    } else {
+      summary = 'Needs attention — ' + (reasons[0] || 'review this reserve.');
+    }
+
     return {
       score: score,
       level: level,
       reasons: reasons,
+      summary: summary,
       currentBalance:   bal.currentBalance,
       committedAmount:  bal.committedAmount,
       availableBalance: bal.availableBalance,
