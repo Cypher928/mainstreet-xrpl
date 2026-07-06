@@ -96,11 +96,12 @@ async function getSeed() {
     fail(`Insufficient RLUSD balance (${status.rlusdBalance}) for this settlement (${AMOUNT_USD}).`);
   }
 
-  // Show the fingerprint that will go in the transaction memo.
-  const { dataHash } = buildSettlementPaymentTx({
+  // Show the fingerprint (memo) and the Make Waves Source Tag that will be on the transaction.
+  const { dataHash, tx } = buildSettlementPaymentTx({
     fromAddress: wallet.address, destination: DESTINATION, amountUsd: AMOUNT_USD, network: NETWORK,
   });
   console.log(`Memo dataHash:  ${dataHash}`);
+  console.log(`Source Tag:     ${tx.SourceTag}   (Make Waves Challenge attribution)`);
 
   if (!CONFIRM) {
     console.log("\nDRY RUN — nothing was sent. Re-run with --yes to execute the settlement:");

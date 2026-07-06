@@ -33,6 +33,13 @@ const NETWORKS = {
 // XRPL's 3-character shorthand format, so it's carried as a 160-bit hex code (zero-padded).
 const RLUSD_CURRENCY_HEX = Buffer.from("RLUSD", "ascii").toString("hex").toUpperCase().padEnd(40, "0");
 
+// Make Waves Challenge Source Tag — attributes this project's on-chain activity for the
+// Challenge's metrics (T&C §5/§7: the assigned Source Tag must be on every relevant transaction).
+// It is set on every settlement Payment and on the TrustSet so the signing account's activity is
+// attributable to the project. Overridable via XRPL_SOURCE_TAG, but defaults to the assigned tag
+// so it can never be accidentally omitted from a real settlement.
+const MAKE_WAVES_SOURCE_TAG = Number(process.env.XRPL_SOURCE_TAG || 2606290001);
+
 function getNetworkConfig(network = "mainnet") {
   const cfg = NETWORKS[network];
   if (!cfg) throw new Error(`Unknown XRPL network: "${network}" — expected "mainnet" or "testnet"`);
@@ -139,6 +146,7 @@ function buildTrustSetTx(address, network = "mainnet", limit = "1000000") {
     TransactionType: "TrustSet",
     Account: address,
     LimitAmount: { currency: RLUSD_CURRENCY_HEX, issuer, value: String(limit) },
+    SourceTag: MAKE_WAVES_SOURCE_TAG,
   };
 }
 
@@ -179,6 +187,7 @@ function buildSettlementPaymentTx({ fromAddress, destination, amountUsd, network
       TransactionType: "Payment",
       Account: fromAddress,
       Destination: destination,
+      SourceTag: MAKE_WAVES_SOURCE_TAG,
       Amount: { currency: RLUSD_CURRENCY_HEX, issuer, value: String(amountUsd) },
       Memos: [
         {
