@@ -66,7 +66,7 @@ MainStreet is live on XRPL mainnet. First settlement transaction:
 - **Landlord (destination) wallet:** `rw97rJThBJtoVRqR4DsoK5kW2taftzQvAX`
 - **RLUSD issuer (mainnet):** `rMxCKbEDwqr76QuheSUMdEGf4B9xJ8m5De`
 - **On-chain proof:** Payment · `tesSUCCESS` · RLUSD from Ripple's official issuer · SHA-256 fingerprint in the tx memo. Verify with `node scripts/verify-settlement.js rHLDysh6p6TcJM7QXU15YRLG4mERF5h5pv`.
-- **Attribution reference (per program rules):** `<<ATTRIBUTION_REF>>` — confirm the Make Waves attribution mechanism (registered wallet address vs. Source/Destination tag vs. memo) and fill in before submitting.
+- **Attribution reference (per program rules):** Make Waves **Source Tag `2606290001`** — assigned by XRPL Commons at registration; set on every settlement Payment and TrustSet (per T&C §5/§7), so on-chain activity is attributable to the project. Verify on-chain via the transaction's `SourceTag` field.
 
 ### Live demo
 - **App:** https://mainstreet-xrpl.vercel.app (sign up free → "Try Live Demo" → seeded

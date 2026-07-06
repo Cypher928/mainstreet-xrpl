@@ -19,6 +19,7 @@ reference (confirm the mechanism from the official rules).
 | Settlement wallet (sender) | `rHLDysh6p6TcJM7QXU15YRLG4mERF5h5pv` |
 | Landlord wallet (destination) | `rw97rJThBJtoVRqR4DsoK5kW2taftzQvAX` |
 | RLUSD issuer (mainnet) | `rMxCKbEDwqr76QuheSUMdEGf4B9xJ8m5De` (Ripple's official) |
+| Make Waves Source Tag | `2606290001` (on every settlement Payment + TrustSet; T&C §5/§7) |
 | Settlement amount / date | 1 RLUSD · 2026-07-05 (UTC) |
 | Recoverable value identified (demo property) | **$86,943.98** ($75,548.61 caps + $6,250.75 disputes + $5,144.62 exclusions) |
 | Demo property | Cascade Commons — $188,300 CAM pool, 5 tenants, $88,776.77 billed |
@@ -167,5 +168,6 @@ none fixable in submission copy, none required to place well.
 
 ---
 
-*Fill before submitting: demo-video URL (`<<DEMO_VIDEO_URL>>`), registration date
-(`<<REGISTRATION_DATE>>`), attribution reference (`<<ATTRIBUTION_REF>>`).*
+*Fill before submitting: demo-video URL (`<<DEMO_VIDEO_URL>>`) and registration date
+(`<<REGISTRATION_DATE>>`). Attribution is resolved: Make Waves Source Tag `2606290001`, now set
+on every settlement.*
