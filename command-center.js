@@ -285,6 +285,56 @@ window.CommandCenter = (() => {
     return events.slice(0, limit || 8);
   }
 
+  // ── executive summary (deterministic narrative over the ranked model) ──────
+  // Reads like an analyst, but every sentence is derived from a card below it —
+  // nothing appears here that isn't backed by real data elsewhere on the page.
+
+  const _WORDS = ['No', 'One', 'Two', 'Three', 'Four', 'Five', 'Six', 'Seven', 'Eight', 'Nine', 'Ten'];
+  const _countWord = (n) => (n >= 0 && n <= 10) ? _WORDS[n] : String(n);
+
+  function _oppPhrase(r) {
+    const at = r.propertyName ? ` at ${r.propertyName}` : '';
+    switch (String(r.id).split(':')[0]) {
+      case 'disp':  return `resolving the open disputes${at}`;
+      case 'exp':   return `the expired-lease renewal${at}`;
+      case 'cap':   return `completing CAM cap data${at}`;
+      case 'trend': return `the year-over-year expense increase${at}`;
+      case 'gap':   return `unrecovered CAM from vacancy${at}`;
+      case 'run':   return `running the pending reconciliation${at}`;
+      case 'acq':   return `the below-threshold CAM recovery on ${r.propertyName || 'the acquisition target'}`;
+      default:      return `${r.title}${at}`;
+    }
+  }
+
+  function _executiveSummary({ recs, settlements, identifiedTotal, expiring60 }) {
+    const parts = [];
+
+    const attentionProps = new Set(recs.filter(r => r.priority === 'high').map(r => r.propertyId || r.propertyName));
+    if (attentionProps.size > 0) {
+      parts.push(`${_countWord(attentionProps.size)} propert${attentionProps.size === 1 ? 'y requires' : 'ies require'} immediate attention.`);
+    } else if (recs.some(r => r.priority === 'medium')) {
+      parts.push('No properties require immediate attention, though a few items are worth reviewing this week.');
+    } else if (recs.length) {
+      parts.push('The portfolio is clean — everything reconciled, no urgent items today.');
+    }
+
+    const largest = recs.filter(r => (r.impact || 0) > 0).sort((a, b) => b.impact - a.impact)[0];
+    if (largest) parts.push(`The largest opportunity is ${_oppPhrase(largest)} (${_fmt$(largest.impact)}).`);
+
+    if (expiring60 > 0) parts.push(`${_countWord(expiring60)} lease expiration${expiring60 === 1 ? ' occurs' : 's occur'} within 60 days.`);
+
+    const ready   = settlements.filter(s => s.state === 'ready').length;
+    const settled = settlements.filter(s => s.state === 'settled').length;
+    if (ready > 0) parts.push(`${_countWord(ready)} propert${ready === 1 ? 'y is' : 'ies are'} ready for RLUSD settlement.`);
+    else if (settled > 0) parts.push(settled === 1
+      ? 'The reconciled settlement is verified on the XRP Ledger.'
+      : 'All reconciled settlements are verified on the XRP Ledger.');
+
+    if (identifiedTotal > 0) parts.push(`Total identified portfolio opportunity: ${_fmt$(identifiedTotal)}.`);
+
+    return parts.join(' ');
+  }
+
   // ── model ──────────────────────────────────────────────────────────────────
 
   /**
@@ -363,13 +413,24 @@ window.CommandCenter = (() => {
       priorities: recs.filter(r => r.priority !== 'low').length,
     };
 
+    // Lease expirations inside the next 60 days (real end dates, portfolio-wide)
+    const in60 = new Date(d.now); in60.setDate(in60.getDate() + 60);
+    const today60 = d.now.toISOString().slice(0, 10), cutoff60 = in60.toISOString().slice(0, 10);
+    const expiring60 = safeProps.reduce((s, p) => s + (p.tenants || []).filter(t =>
+      t && t.end_date && t.end_date >= today60 && t.end_date <= cutoff60).length, 0);
+
+    const settlements = safeProps.map(_settlementFor).filter(Boolean);
+    const summary = _executiveSummary({
+      recs, settlements, identifiedTotal: opportunities.identifiedTotal, expiring60,
+    });
+
     return {
-      briefing: { greeting, userName: userName || null, totals, identifiedTotal: opportunities.identifiedTotal, openExposure },
+      briefing: { greeting, userName: userName || null, totals, identifiedTotal: opportunities.identifiedTotal, openExposure, summary, expiring60 },
       recommendations: recs,
       health,
       opportunities,
       timeline: _timeline(safeProps, 8),
-      settlements: safeProps.map(_settlementFor).filter(Boolean),
+      settlements,
       acqCount: (acqReviews || []).length,
     };
   }
@@ -477,6 +538,10 @@ window.CommandCenter = (() => {
         <div class="cc-brief-stat"><div class="cc-bs-num">${b.totals.priorities}</div><div class="cc-bs-lbl">priorit${b.totals.priorities === 1 ? 'y' : 'ies'} today</div></div>
         ${b.openExposure ? `<div class="cc-brief-stat"><div class="cc-bs-num">${_fmt$(b.openExposure)}</div><div class="cc-bs-lbl">open dispute exposure</div></div>` : ''}
       </div>
+      ${b.summary ? `<div class="cc-exec">
+        <div class="cc-exec-title">Today's Executive Summary</div>
+        <p class="cc-exec-p">${_esc(b.summary)}</p>
+      </div>` : ''}
       <div class="cc-brief-honest">Computed live from your portfolio data — leases, invoices, reconciliations, and disputes on file.</div>
     </div>
 
