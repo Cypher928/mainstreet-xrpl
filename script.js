@@ -17393,6 +17393,51 @@ function _renderDemoPropertiesSection() {
     })}`;
 }
 
+// ─── Phase 21: AI Command Center (view glue — orchestration only) ────────────
+// All intelligence lives in command-center.js (pure derivation over the same
+// engines the rest of the app uses). These functions only route views.
+
+function renderCommandCenter() {
+  const root = document.getElementById('commandCenter');
+  if (!root || !window.CommandCenter) return;
+  const user  = window.AuthService?.getCurrentUser?.() || null;
+  const email = user?.email || '';
+  const userName = user?.name || (email ? email.split('@')[0] : null);
+  const model = CommandCenter.buildModel({ props: _props, acqReviews: _acqReviews, userName });
+  root.innerHTML = CommandCenter.renderHtml(model);
+}
+
+function showCommandCenter() {
+  // Tenant portal keeps its own home — the Command Center is a landlord surface.
+  if (window.AuthService?.getCurrentUser?.()?.role === 'tenant') return;
+  renderCommandCenter();
+  const cc  = document.getElementById('commandCenter');
+  const ptf = document.getElementById('portfolioDashboard');
+  const wf  = document.getElementById('mainWorkflow');
+  if (cc)  cc.style.display  = 'block';
+  if (ptf) ptf.style.display = 'none';
+  if (wf)  wf.style.display  = 'none';
+  window.scrollTo({ top: 0 });
+}
+
+function ccShowPortfolio() {
+  const cc = document.getElementById('commandCenter');
+  if (cc) cc.style.display = 'none';
+  document.getElementById('portfolioDashboard').style.display = 'block';
+  renderPortfolio(_props);
+}
+
+function ccOpenProperty(id) {
+  const cc = document.getElementById('commandCenter');
+  if (cc) cc.style.display = 'none';
+  selectProperty(id);
+}
+
+function ccOpenAcquisitions() {
+  ccShowPortfolio();
+  setTimeout(() => document.getElementById('acqSection')?.scrollIntoView({ behavior: 'smooth' }), 50);
+}
+
 function renderPortfolio(props) {
   props = props || _props; // handle no-arg calls
   if (!Array.isArray(props)) {
@@ -21208,6 +21253,11 @@ async function init() {
     portfolio.splice(0, portfolio.length, ..._props);
     renderPortfolio(properties);
     _loadAcqReviewsAndRender();
+    // Phase 21: land on the AI Command Center (landlord only; guarded — any
+    // failure falls back to the portfolio view already rendered above).
+    try {
+      if (window.CommandCenter && window.AuthService?.getCurrentUser?.()?.role !== 'tenant') showCommandCenter();
+    } catch (e) { console.warn('[CommandCenter] landing failed — portfolio shown instead:', e?.message); }
   } catch (e) {
     const isNet = /load failed|failed to fetch|networkerror|offline/i.test(e?.message || '');
     if (!isNet) logError('init.loadProperties', e, {});
