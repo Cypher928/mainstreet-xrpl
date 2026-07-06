@@ -560,6 +560,177 @@
     };
   }
 
+  // ── TRACK 7: Escrow Readiness Score (Phase 21B) ──────────────────────────
+  //
+  // The property-manager-facing answer to "what is preventing the lender from
+  // releasing funds?". A thin scoring layer over the SAME validateDrawRequest
+  // gate the draw workflow already uses (no duplicate logic): document-
+  // intelligence items (was the reserve document analyzed? is a lender-stated
+  // balance on file?) carry 25 points, and the validation checklist carries
+  // the remaining 75, split evenly. `ready` is true only when the underlying
+  // validation passes AND the reserve is analyzed with a known balance — the
+  // score is the percentage feel; `ready` is the hard gate.
+  function computeEscrowReadiness(reserve, drawRequest, allDrawRequests) {
+    var items = [];
+
+    var analyzed = !!(reserve && reserve.extractionConfidence && reserve.extractionConfidence.level !== 'failed');
+    items.push({
+      key: 'reserveAnalyzed', label: 'Reserve document analyzed', met: analyzed, weight: 15,
+      detail: analyzed
+        ? (reserve.sourceFileName
+            ? 'Source: ' + reserve.sourceFileName +
+              ((reserve.sourcePages || []).length ? ' (p. ' + reserve.sourcePages.join(', ') + ')' : '')
+            : null)
+        : 'Upload the mortgage / escrow agreement so eligibility and requirements can be read.',
+    });
+
+    var balanceKnown = !!(reserve && reserve.currentBalance != null);
+    items.push({
+      key: 'balanceKnown', label: 'Reserve balance identified', met: balanceKnown, weight: 10,
+      detail: balanceKnown ? null : 'No lender-stated balance on file.',
+    });
+
+    var validation = validateDrawRequest(reserve, drawRequest, allDrawRequests);
+    var per = validation.checklist.length ? (75 / validation.checklist.length) : 0;
+    validation.checklist.forEach(function (c) {
+      items.push({ key: c.key, label: c.label, met: c.met, weight: per, detail: c.detail || null });
+    });
+
+    var totalW = items.reduce(function (s, i) { return s + i.weight; }, 0) || 1;
+    var metW   = items.filter(function (i) { return i.met; })
+                      .reduce(function (s, i) { return s + i.weight; }, 0);
+    var ready  = !!(validation.pass && analyzed && balanceKnown);
+    var score  = ready ? 100 : Math.min(99, Math.round((metW / totalW) * 100));
+
+    var bal    = computeReserveBalance(reserve || { id: null, currentBalance: null }, allDrawRequests);
+    var amount = drawRequest ? (parseFloat(drawRequest.amountRequested) || 0) : 0;
+    var maxReimbursable = bal.availableBalance != null
+      ? Math.max(0, amount > 0 ? Math.min(amount, bal.availableBalance) : bal.availableBalance)
+      : null;
+    var remainingAfter = (bal.availableBalance != null) ? bal.availableBalance - amount : null;
+
+    return {
+      score: score,
+      ready: ready,
+      level: ready ? 'ready' : (score >= 60 ? 'nearly_ready' : 'blocked'),
+      items: items,
+      missing: items.filter(function (i) { return !i.met; }),
+      maxReimbursable: maxReimbursable,
+      remainingAfter: remainingAfter,
+      validation: validation,
+    };
+  }
+
+  // ── TRACK 8: Reserve health & funding projection (Phase 21B) ─────────────
+  //
+  // Honest by design: both functions only score what is actually on file.
+  // plannedProjects ([{label, estimatedCost, targetDate}]) and
+  // monthlyContribution are OPTIONAL reserve fields — when absent, health
+  // reports the unknowns as reasons instead of inventing a projection, and
+  // projectReserveRunway returns { unknown: true }.
+  function computeReserveHealth(reserve, drawRequests, opts) {
+    opts = opts || {};
+    var now = opts.now ? new Date(opts.now) : new Date();
+    var r   = reserve || {};
+    var bal = computeReserveBalance(r.id != null ? r : { id: null, currentBalance: r.currentBalance != null ? r.currentBalance : null }, drawRequests);
+
+    var score = 100;
+    var reasons = [];
+
+    if (bal.currentBalance == null) {
+      score -= 35;
+      reasons.push('Reserve balance unknown — upload a current lender statement.');
+    }
+    if (bal.availableBalance != null && bal.availableBalance < 0) {
+      score -= 40;
+      reasons.push('Reserve is overcommitted by $' + Math.abs(Math.round(bal.availableBalance)).toLocaleString('en-US') + '.');
+    }
+
+    var confLevel = r.extractionConfidence && r.extractionConfidence.level;
+    if (confLevel === 'low')    { score -= 15; reasons.push('Extraction confidence is low — verify figures against the source document.'); }
+    if (confLevel === 'failed') { score -= 25; reasons.push('Extraction failed — reserve terms are unverified.'); }
+
+    var expiry = r.deadlines && r.deadlines.reserveExpirationDate;
+    if (expiry) {
+      var expDate = new Date(expiry);
+      var days = Math.round((expDate.getTime() - now.getTime()) / 86400000);
+      if (days < 0)        { score -= 20; reasons.push('Reserve expired on ' + expiry + '.'); }
+      else if (days <= 90) { score -= 10; reasons.push('Reserve expires within 90 days (' + expiry + ').'); }
+    }
+
+    var planned = Array.isArray(r.plannedProjects) ? r.plannedProjects.filter(Boolean) : [];
+    var upcomingCost = planned.reduce(function (s, p) { return s + (parseFloat(p.estimatedCost) || 0); }, 0);
+    var shortfall = null;
+    if (upcomingCost > 0 && bal.availableBalance != null) {
+      shortfall = Math.max(0, upcomingCost - Math.max(bal.availableBalance, 0));
+      if (shortfall > 0) {
+        score -= 25;
+        reasons.push('Planned work exceeds available funds by $' + Math.round(shortfall).toLocaleString('en-US') + ' — increase monthly reserve contributions or re-phase the work.');
+      }
+    }
+
+    score = Math.max(0, Math.min(100, score));
+    var level = score >= 80 ? 'strong' : score >= 60 ? 'adequate' : score >= 35 ? 'underfunded' : 'critical';
+    return {
+      score: score,
+      level: level,
+      reasons: reasons,
+      currentBalance:   bal.currentBalance,
+      committedAmount:  bal.committedAmount,
+      availableBalance: bal.availableBalance,
+      upcomingPlannedCost: upcomingCost,
+      shortfall: shortfall,
+    };
+  }
+
+  // Month-by-month runway: available balance + monthly contributions minus
+  // planned project costs (undated projects are treated as due immediately —
+  // the conservative reading). Returns the first month the balance goes
+  // negative and the peak funding gap across the window.
+  function projectReserveRunway(reserve, drawRequests, months, opts) {
+    opts   = opts || {};
+    months = months || 12;
+    var r  = reserve || {};
+    var bal = computeReserveBalance(r.id != null ? r : { id: null, currentBalance: r.currentBalance != null ? r.currentBalance : null }, drawRequests);
+    if (bal.availableBalance == null) return { unknown: true };
+
+    var now     = opts.now ? new Date(opts.now) : new Date();
+    var monthly = parseFloat(r.monthlyContribution) || 0;
+    var planned = (Array.isArray(r.plannedProjects) ? r.plannedProjects.filter(Boolean) : [])
+      .map(function (p) {
+        var cost = parseFloat(p.estimatedCost) || 0;
+        var dueMonth = 1;
+        if (p.targetDate) {
+          var d = new Date(p.targetDate);
+          if (!isNaN(d.getTime())) {
+            dueMonth = Math.max(1, (d.getFullYear() - now.getFullYear()) * 12 + (d.getMonth() - now.getMonth()));
+          }
+        }
+        return { cost: cost, dueMonth: dueMonth };
+      });
+
+    var balance = bal.availableBalance;
+    var minBalance = balance;
+    var depletionInMonths = null;
+    for (var m = 1; m <= months; m++) {
+      balance += monthly;
+      // Costs due after the window are excluded — this projects the window only.
+      planned.forEach(function (p) { if (p.dueMonth === m) balance -= p.cost; });
+      if (balance < minBalance) minBalance = balance;
+      if (balance < 0 && depletionInMonths == null) depletionInMonths = m;
+    }
+
+    return {
+      unknown: false,
+      months: months,
+      startingBalance: bal.availableBalance,
+      monthlyContribution: monthly,
+      endingBalance: Math.round(balance),
+      depletionInMonths: depletionInMonths,
+      fundingGap: Math.max(0, -Math.round(minBalance)),
+    };
+  }
+
   var EscrowReserveEngine = {
     RESERVE_TYPES,
     RESERVE_TYPE_LABELS,
@@ -578,6 +749,9 @@
     applyDrawStatus,
     buildDrawRequestPackage,
     buildDrawEmailDraft,
+    computeEscrowReadiness,
+    computeReserveHealth,
+    projectReserveRunway,
   };
 
   if (typeof module !== 'undefined' && module.exports) {

@@ -35,6 +35,7 @@ window.CommandCenter = (() => {
     return {
       Selectors:         window.Selectors,
       AcquisitionEngine: window.AcquisitionEngine,
+      EscrowEngine:      window.EscrowReserveEngine,
       computeRecovered:  window.computeRecoveredRevenue || null,
       now:               new Date(),
     };
@@ -194,6 +195,78 @@ window.CommandCenter = (() => {
     return recs;
   }
 
+  // Capital reserves → recommendations (Phase 21B — orchestrates EscrowReserveEngine).
+  // Three honest card sources: a draft draw whose readiness gate passes ("money is
+  // recoverable now"), a draft draw with missing items (the Readiness checklist),
+  // and reserves whose planned work exceeds available funds (shortfall / runway).
+  function _recsForReserves(p, d) {
+    const EE = d.EscrowEngine;
+    if (!EE || typeof EE.computeEscrowReadiness !== 'function') return [];
+    const reserves = Array.isArray(p.escrowReserves) ? p.escrowReserves.filter(Boolean) : [];
+    const draws    = Array.isArray(p.drawRequests)   ? p.drawRequests.filter(Boolean)   : [];
+    const recs = [];
+    const openJs = `ccOpenReserves('${p.id}')`;
+
+    for (const r of reserves) {
+      for (const dr of draws.filter(x => x.reserveId === r.id && x.status === 'draft')) {
+        const rd  = EE.computeEscrowReadiness(r, dr, draws);
+        const amt = _num(dr.amountRequested);
+        if (rd.ready && amt > 0) {
+          recs.push({
+            id: `rsv:${dr.id}`, priority: 'high', propertyId: p.id, propertyName: p.name,
+            title: `Lender reimbursement ready — ${r.reserveTypeLabel}`,
+            reason: 'Documentation is complete — the draw package can be generated and sent to the lender.',
+            impact: amt, impactNote: 'eligible reimbursement',
+            confidence: 95, confidenceBasis: 'draw validation checklist',
+            evidence: rd.items.filter(i => i.met).slice(0, 4).map(i => `✓ ${i.label}`),
+            action: { label: 'Generate lender package', js: openJs },
+          });
+        } else {
+          recs.push({
+            id: `rsvdoc:${dr.id}`, priority: 'medium', propertyId: p.id, propertyName: p.name,
+            title: `Draw request ${rd.score}% ready — ${r.reserveTypeLabel}`,
+            reason: rd.missing.length
+              ? `Blocking the lender release: ${rd.missing.slice(0, 3).map(i => i.label.toLowerCase()).join('; ')}.`
+              : 'Complete the draw request to submit.',
+            impact: amt || null, impactNote: amt ? 'estimated reimbursement' : null,
+            confidence: 90, confidenceBasis: 'draw validation checklist',
+            evidence: rd.missing.slice(0, 3).map(i => `⚠ ${i.label}`),
+            action: { label: 'Complete draw request', js: openJs },
+          });
+        }
+      }
+
+      if (typeof EE.computeReserveHealth === 'function') {
+        const h = EE.computeReserveHealth(r, draws, { now: d.now });
+        if (h.shortfall > 0) {
+          recs.push({
+            id: `rshort:${r.id}`, priority: 'high', propertyId: p.id, propertyName: p.name,
+            title: `Reserve shortfall — ${r.reserveTypeLabel}`,
+            reason: 'Planned capital work exceeds available reserve funds — increase monthly contributions or re-phase the work.',
+            impact: h.shortfall, impactNote: 'funding gap',
+            confidence: 88, confidenceBasis: 'reserve balance & planned projects',
+            evidence: [`Available ${_fmt$(Math.max(h.availableBalance || 0, 0))} vs planned ${_fmt$(h.upcomingPlannedCost)}`],
+            action: { label: 'Review reserves', js: openJs },
+          });
+        } else if (typeof EE.projectReserveRunway === 'function') {
+          const rw = EE.projectReserveRunway(r, draws, 12, { now: d.now });
+          if (rw && !rw.unknown && rw.depletionInMonths != null) {
+            recs.push({
+              id: `rdep:${r.id}`, priority: 'medium', propertyId: p.id, propertyName: p.name,
+              title: `${r.reserveTypeLabel} projected to deplete in ${rw.depletionInMonths} month${rw.depletionInMonths === 1 ? '' : 's'}`,
+              reason: 'At the current contribution rate, planned outflows exhaust this reserve within 12 months.',
+              impact: rw.fundingGap || null, impactNote: rw.fundingGap ? 'projected funding gap' : null,
+              confidence: 80, confidenceBasis: 'reserve runway projection',
+              evidence: [`Starting ${_fmt$(rw.startingBalance)} + ${_fmt$(rw.monthlyContribution)}/mo contributions`],
+              action: { label: 'Review reserves', js: openJs },
+            });
+          }
+        }
+      }
+    }
+    return recs;
+  }
+
   // Acquisition reviews → recommendations (reads the analysis the engine already ran).
   function _recsForAcquisitions(acqReviews) {
     const recs = [];
@@ -301,12 +374,16 @@ window.CommandCenter = (() => {
       case 'trend': return `the year-over-year expense increase${at}`;
       case 'gap':   return `unrecovered CAM from vacancy${at}`;
       case 'run':   return `running the pending reconciliation${at}`;
+      case 'rsv':   return `the lender reimbursement ready to request${at}`;
+      case 'rsvdoc': return `completing the escrow draw request${at}`;
+      case 'rshort': return `the reserve funding shortfall${at}`;
+      case 'rdep':  return `the projected reserve depletion${at}`;
       case 'acq':   return `the below-threshold CAM recovery on ${r.propertyName || 'the acquisition target'}`;
       default:      return `${r.title}${at}`;
     }
   }
 
-  function _executiveSummary({ recs, settlements, identifiedTotal, expiring60 }) {
+  function _executiveSummary({ recs, settlements, identifiedTotal, expiring60, reimburseReady }) {
     const parts = [];
 
     const attentionProps = new Set(recs.filter(r => r.priority === 'high').map(r => r.propertyId || r.propertyName));
@@ -322,6 +399,8 @@ window.CommandCenter = (() => {
     if (largest) parts.push(`The largest opportunity is ${_oppPhrase(largest)} (${_fmt$(largest.impact)}).`);
 
     if (expiring60 > 0) parts.push(`${_countWord(expiring60)} lease expiration${expiring60 === 1 ? ' occurs' : 's occur'} within 60 days.`);
+
+    if (reimburseReady > 0) parts.push(`Lender reimbursements totaling ${_fmt$(reimburseReady)} are ready to request.`);
 
     const ready   = settlements.filter(s => s.state === 'ready').length;
     const settled = settlements.filter(s => s.state === 'settled').length;
@@ -356,6 +435,7 @@ window.CommandCenter = (() => {
     // Recommendations
     let recs = [];
     perProp.forEach(({ p, meta, readiness }) => { recs = recs.concat(_recsForProperty(p, meta, readiness, d)); });
+    perProp.forEach(({ p }) => { recs = recs.concat(_recsForReserves(p, d)); });
     recs = recs.concat(_recsForAcquisitions(acqReviews));
     recs.sort((a, b) =>
       (PRIORITY_ORDER[a.priority] - PRIORITY_ORDER[b.priority]) ||
@@ -374,14 +454,21 @@ window.CommandCenter = (() => {
     const openExposure = safeProps.reduce((s, p) =>
       s + (p.disputes || []).filter(dd => dd && dd.status === 'open')
             .reduce((x, dd) => x + _num(dd.tenantShare ?? dd.amount), 0), 0);
+    // Lender reimbursements whose readiness gate passes — recoverable cash, so it
+    // joins the identified total. (Draws still missing documentation are cards
+    // only; their estimates never inflate the total.)
+    const reimburseReady = recs.filter(r => String(r.id).startsWith('rsv:'))
+      .reduce((s, r) => s + (r.impact || 0), 0);
+
     const opportunities = {
       items: [
         { label: 'Cap enforcement savings',        amount: rr.capSavings,        note: `${rr.capCount || 0} tenant cap${(rr.capCount || 0) !== 1 ? 's' : ''} enforced` },
         { label: 'Dispute recoveries',             amount: rr.disputeRecoveries, note: 'charges upheld after review' },
         { label: 'Exclusion savings',              amount: rr.exclusionSavings,  note: 'lease exclusions honored' },
         { label: 'Unrecovered CAM (vacancy gap)',  amount: vacancyGap,           note: 'pool share with no paying tenant' },
+        { label: 'Lender reimbursements ready',    amount: reimburseReady,       note: 'escrow draw packages complete' },
       ].filter(o => o.amount > 0),
-      identifiedTotal: rr.total + vacancyGap,
+      identifiedTotal: rr.total + vacancyGap + reimburseReady,
       openExposure,
     };
 
@@ -421,7 +508,7 @@ window.CommandCenter = (() => {
 
     const settlements = safeProps.map(_settlementFor).filter(Boolean);
     const summary = _executiveSummary({
-      recs, settlements, identifiedTotal: opportunities.identifiedTotal, expiring60,
+      recs, settlements, identifiedTotal: opportunities.identifiedTotal, expiring60, reimburseReady,
     });
 
     return {

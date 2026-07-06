@@ -529,6 +529,73 @@ console.log('\n── Group 12: mergeReserveExtractions ────────
   assertEq('mergeReserveExtractions: empty array returns empty array', EE.mergeReserveExtractions([]).length, 0);
 }
 
+// ── Group 21B-1: computeEscrowReadiness ──────────────────────────────────────
+console.log('\n── Group 21B-1: computeEscrowReadiness ───────────────────────────────────');
+{
+  const readyReserve = {
+    id: 'rsv-1', reserveType: 'roof', reserveTypeLabel: 'Roof Reserve',
+    currentBalance: 200000,
+    sourceFileName: 'loan-agreement.pdf', sourcePages: [12],
+    extractionConfidence: { score: 88, level: 'high', reasons: [] },
+    requirements: { requiresInvoices: true, requiresLienWaivers: true, requiresPhotos: false,
+                    requiresContractorBids: false, requiresEngineerCertification: false,
+                    requiresApproval: true, minDrawAmount: null },
+    deadlines: {},
+  };
+  const readyDraw = { id: 'dw-1', reserveId: 'rsv-1', status: 'draft', amountRequested: 182400,
+    invoices: [{ amount: 182400 }], attachedDocuments: { lienWaivers: [{ fileName: 'waiver.pdf' }] } };
+
+  const rd = EE.computeEscrowReadiness(readyReserve, readyDraw, [readyDraw]);
+  assert('complete draw → ready === true',            rd.ready === true);
+  assertEq('complete draw → score 100',               rd.score, 100);
+  assertEq('maxReimbursable = requested amount',      rd.maxReimbursable, 182400);
+  assertEq('remainingAfter = balance − draw',         rd.remainingAfter, 17600);
+  assert('items carry weights + labels',              rd.items.length >= 4 && rd.items.every(i => i.label && i.weight > 0));
+
+  const partialDraw = Object.assign({}, readyDraw, { id: 'dw-2', attachedDocuments: {} });
+  const rd2 = EE.computeEscrowReadiness(readyReserve, partialDraw, [partialDraw]);
+  assert('missing lien waiver → not ready',           rd2.ready === false);
+  assert('partial score strictly between 0 and 100',  rd2.score > 0 && rd2.score < 100);
+  assert('missing list names the lien waiver item',   rd2.missing.some(i => /lien waiver/i.test(i.label)));
+
+  const noBalReserve = Object.assign({}, readyReserve, { id: 'rsv-2', currentBalance: null });
+  const rd3 = EE.computeEscrowReadiness(noBalReserve, Object.assign({}, readyDraw, { reserveId: 'rsv-2' }), []);
+  assert('unknown balance → not ready',               rd3.ready === false);
+  assert('missing includes balanceKnown',             rd3.missing.some(i => i.key === 'balanceKnown'));
+  assertEq('maxReimbursable null when balance unknown', rd3.maxReimbursable, null);
+}
+
+// ── Group 21B-2: computeReserveHealth ────────────────────────────────────────
+console.log('\n── Group 21B-2: computeReserveHealth ─────────────────────────────────────');
+{
+  const shortReserve = { id: 'rsv-3', reserveTypeLabel: 'Parking Lot Reserve', currentBalance: 50000,
+    extractionConfidence: { level: 'high' }, deadlines: {},
+    plannedProjects: [{ label: 'Lot resurfacing', estimatedCost: 96300 }] };
+  const h = EE.computeReserveHealth(shortReserve, [], {});
+  assertEq('shortfall = planned − available',          h.shortfall, 46300);
+  assert('reasons recommend increasing contributions', h.reasons.some(r => /contributions/.test(r)));
+  assert('shortfall degrades level below strong',      h.level !== 'strong');
+
+  const healthy = { id: 'rsv-4', currentBalance: 100000, extractionConfidence: { level: 'high' }, deadlines: {} };
+  const h2 = EE.computeReserveHealth(healthy, [], {});
+  assertEq('clean reserve scores 100 / strong',        [h2.score, h2.level], [100, 'strong']);
+
+  const h3 = EE.computeReserveHealth({ id: 'rsv-5', currentBalance: null, deadlines: {} }, [], {});
+  assert('unknown balance penalized with honest reason', h3.score < 100 && h3.reasons.some(r => /unknown/i.test(r)));
+}
+
+// ── Group 21B-3: projectReserveRunway ────────────────────────────────────────
+console.log('\n── Group 21B-3: projectReserveRunway ─────────────────────────────────────');
+{
+  const runwayReserve = { id: 'rsv-6', currentBalance: 10000, monthlyContribution: 1000,
+    plannedProjects: [{ label: 'Roof section', estimatedCost: 20000, targetDate: '2026-10-15' }] };
+  const rw = EE.projectReserveRunway(runwayReserve, [], 12, { now: '2026-07-06' });
+  assertEq('depletion detected at month 3',             rw.depletionInMonths, 3);
+  assertEq('funding gap = deepest negative balance',    rw.fundingGap, 7000);
+  assertEq('ending balance recovers with contributions', rw.endingBalance, 2000);
+  assert('unknown balance → { unknown: true }',         EE.projectReserveRunway({ id: 'x', currentBalance: null }, [], 12, {}).unknown === true);
+}
+
 console.log('\n' + '─'.repeat(62));
 console.log(`Results: ${passed}/${passed + failed} passed`);
 console.log('─'.repeat(62));

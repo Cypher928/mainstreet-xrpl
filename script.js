@@ -2351,6 +2351,11 @@ function _renderDrawBuilderBody(prop, reserve) {
     attachedDocuments: _drawDraft.attachedDocuments,
   };
   const validation = Engine ? Engine.validateDrawRequest(reserve, draftForValidation, prop.drawRequests || []) : null;
+  // Phase 21B: Escrow Readiness Score — same validation gate, expressed as the
+  // property-manager-facing "what is preventing the lender from releasing funds?"
+  const readiness = (Engine && Engine.computeEscrowReadiness)
+    ? Engine.computeEscrowReadiness(reserve, draftForValidation, prop.drawRequests || [])
+    : null;
   const DOC_CHECK_KEYS = ['invoices', 'photos', 'lienWaivers', 'contractorBids', 'engineerCertification'];
   const DOC_CHECK_LABELS = { invoices: 'Invoices', photos: 'Photo', lienWaivers: 'Lien Waiver', contractorBids: 'Contractor Bid', engineerCertification: 'Engineer Certification' };
   const docChecklist = validation ? validation.checklist.filter(c => DOC_CHECK_KEYS.includes(c.key)) : [];
@@ -2361,9 +2366,15 @@ function _renderDrawBuilderBody(prop, reserve) {
       <div class="escrow-section-label" style="margin-top:12px;">Required Documents</div>
       ${satisfiedDocs.map(c => `<div class="escrow-doc-row"><span>&#x2713; ${esc(DOC_CHECK_LABELS[c.key] || c.label)}</span></div>`).join('')}
       ${missingDocs.length ? `<div style="margin-top:4px;font-size:0.85rem;color:#fbbf24;">Missing:</div>${missingDocs.map(c => `<div class="escrow-doc-row"><span>&#x2610; ${esc(DOC_CHECK_LABELS[c.key] || c.label)}</span></div>`).join('')}` : ''}
-      <div style="margin-top:6px;font-size:0.85rem;color:${missingDocs.length === 0 ? '#86efac' : '#fbbf24'};">
+      ${readiness ? `
+      <div style="margin-top:10px;font-size:0.95rem;font-weight:700;color:${readiness.ready ? '#86efac' : '#fbbf24'};">
+        Escrow Readiness: ${readiness.score}%
+      </div>
+      ${readiness.missing.slice(0, 4).map(i => `<div style="font-size:0.8rem;color:#fbbf24;margin-top:2px;">&#x26A0; ${esc(i.label)}${i.detail ? ` — ${esc(i.detail)}` : ''}</div>`).join('')}
+      ${readiness.ready && readiness.remainingAfter != null ? `<div style="font-size:0.8rem;color:#86efac;margin-top:2px;">Ready to submit — ${fmt(readiness.remainingAfter)} will remain in the reserve after this draw.</div>` : ''}`
+      : `<div style="margin-top:6px;font-size:0.85rem;color:${missingDocs.length === 0 ? '#86efac' : '#fbbf24'};">
         Submission Ready: ${satisfiedDocs.length} of ${docChecklist.length} documents
-      </div>`
+      </div>`}`
     : '';
 
   document.getElementById('drawBuilderBody').innerHTML = `
@@ -17436,6 +17447,14 @@ function ccOpenProperty(id) {
 function ccOpenAcquisitions() {
   ccShowPortfolio();
   setTimeout(() => document.getElementById('acqSection')?.scrollIntoView({ behavior: 'smooth' }), 50);
+}
+
+// Phase 21B: open a property straight onto its Reserves tab (used by the
+// Command Center's capital-reserve cards). The tab switch waits for
+// selectProperty's first render to land.
+function ccOpenReserves(id) {
+  ccOpenProperty(id);
+  setTimeout(() => { try { switchWorkspaceTab('reserves'); } catch (_) { /* tab unavailable — property view is still correct */ } }, 400);
 }
 
 function renderPortfolio(props) {
