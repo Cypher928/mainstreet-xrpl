@@ -5300,6 +5300,16 @@
   .cc-empty { color: #64748B; font-size: 0.85rem; padding: 10px 0; }
   .cc-portfolio-entry { display: block; width: 100%; text-align: left; background: linear-gradient(135deg, #111827, #17233b); color: #E2E8F0; border: 1px solid rgba(201,151,58,0.35); border-radius: 12px; padding: 14px 20px; margin: 0 0 18px; cursor: pointer; font-size: 0.95rem; }
   .cc-portfolio-entry:hover { border-color: rgba(201,151,58,0.7); }
+  /* Phase 21D — Reserve workflow polish */
+  .escrow-ai-summary { margin: 10px 0 6px; padding: 10px 12px; background: rgba(14,116,144,0.12); border: 1px solid rgba(14,116,144,0.35); border-radius: 8px; font-size: 0.84rem; color: #CBD5E1; line-height: 1.55; }
+  .escrow-ai-summary-lbl { font-size: 0.68rem; font-weight: 700; letter-spacing: 0.06em; text-transform: uppercase; color: #22d3ee; margin-bottom: 4px; }
+  .escrow-docchips { display: flex; flex-wrap: wrap; gap: 6px; margin: 8px 0; }
+  .escrow-docchip { background: #0b1220; border: 1px solid rgba(74,222,128,0.35); color: #86efac; border-radius: 6px; padding: 3px 8px; font-size: 0.74rem; }
+  .escrow-ai-status { display: flex; flex-direction: column; gap: 2px; margin: 8px 0; padding: 8px 12px; border-radius: 8px; font-size: 0.8rem; }
+  .escrow-ai-status--ok { background: rgba(74,222,128,0.08); border: 1px solid rgba(74,222,128,0.35); color: #86efac; }
+  .escrow-ai-status--warn { background: rgba(251,191,36,0.08); border: 1px solid rgba(251,191,36,0.35); color: #fbbf24; }
+  .escrow-ai-status-head { font-weight: 700; }
+  .escrow-ai-status-sub { color: #94A3B8; }
 </style>
 <div id="commandCenter"></div>
 
@@ -5920,21 +5930,38 @@
   <!-- ══════════════════════════ TAB: Reserves ═══════════════════════════ -->
   <div class="workspace-tab-pane" id="wsPane-reserves" style="display:none;">
 
-  <!-- ── SECTION 7: Escrow & Reserve Documents ───────────────────────── -->
+  <!-- ── SECTION 7: Reserve & Loan Documents (Phase 21D: split from requests —
+       "what the lender holds and requires" is a different workflow from
+       "getting reimbursed for a repair") ─────────────────────────────────── -->
   <div class="card" id="escrowSection">
     <div class="sec-head">
       <div class="sec-num" style="background:#0e7490;">7</div>
       <div>
-        <h2>Escrow &amp; Reserve Documents</h2>
-        <p>Upload mortgage, loan, and escrow/reserve agreements to extract lender reserve requirements automatically.</p>
+        <h2>Reserve &amp; Loan Documents</h2>
+        <p>These documents define what reserves exist, current balances, eligible uses, lender
+        requirements, draw procedures, deadlines, and the documentation needed for reimbursement.
+        MainStreet reads them the same way it reads leases — every extracted term carries a
+        verbatim citation back to the page it came from.</p>
       </div>
     </div>
-    <button id="escrowUploadBtn" class="report-btn" onclick="openEscrowDocumentUpload()">&#x1F4C2; Upload Reserve Document</button>
+    <button id="escrowUploadBtn" class="report-btn" onclick="openEscrowDocumentUpload()">&#x1F4C2; Upload Mortgage Documents</button>
 
-    <div class="escrow-section-label" style="margin-top:16px;">Reserve Profile</div>
+    <div class="escrow-section-label" style="margin-top:16px;">Reserve Accounts</div>
     <div id="escrowReservesList"></div>
+  </div>
 
-    <div class="escrow-section-label" style="margin-top:20px;">Draw Requests</div>
+  <!-- ── SECTION 8: Reserve Requests — every repair reimbursement starts here ── -->
+  <div class="card" id="escrowRequestsSection">
+    <div class="sec-head">
+      <div class="sec-num" style="background:#0e7490;">8</div>
+      <div>
+        <h2>Reserve Requests</h2>
+        <p>Every repair reimbursement starts here. Attach the invoices, bids, photos, and
+        certifications for completed work — MainStreet checks them against the lender's
+        documented requirements, tells you exactly what's still missing, and generates the
+        complete submission package when it's ready.</p>
+      </div>
+    </div>
     <div id="escrowDrawRequestsList"></div>
   </div>
 

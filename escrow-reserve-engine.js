@@ -655,6 +655,52 @@
     return 'Not ready yet — ' + phrases.length + ' items are outstanding, starting with ' + phrases[0] + '.';
   }
 
+  // ── TRACK 7b: Reserve narrative (Phase 21D) ──────────────────────────────
+  //
+  // Turns the extracted reserve terms into one assistant-voice paragraph
+  // ("The lender allows these funds to be used for … Each draw request must
+  // include …"). States ONLY what is on file — an empty reserve gets an
+  // honest "nothing extracted" line, never invented terms.
+  function buildReserveNarrative(reserve) {
+    var r = reserve || {};
+    var parts = [];
+
+    if (r.eligibleUses) {
+      var uses = String(r.eligibleUses).trim().replace(/\.+$/, '');
+      uses = uses.charAt(0).toLowerCase() + uses.slice(1);
+      parts.push('The lender allows these funds to be used for ' + uses + '.');
+    }
+
+    var req = r.requirements || {};
+    var docPhrases = [];
+    if (req.requiresInvoices)              docPhrases.push('supporting invoices');
+    if (req.requiresContractorBids)        docPhrases.push('a contractor bid');
+    if (req.requiresPhotos)                docPhrases.push('photos of the completed work');
+    if (req.requiresLienWaivers)           docPhrases.push('lien waivers');
+    if (req.requiresEngineerCertification) docPhrases.push('an engineer certification');
+    if (docPhrases.length) {
+      var list = docPhrases.length === 1
+        ? docPhrases[0]
+        : docPhrases.slice(0, -1).join(', ') + ' and ' + docPhrases[docPhrases.length - 1];
+      parts.push('Each draw request must include ' + list + '.');
+    }
+
+    if (req.minDrawAmount != null) {
+      parts.push('The minimum draw is $' + Math.round(req.minDrawAmount).toLocaleString('en-US') + '.');
+    }
+    if (req.requiresApproval) parts.push('Lender approval is required before funds are released.');
+
+    var dl = r.deadlines || {};
+    if (dl.drawRequestDeadline)      parts.push('Draw requests are due by ' + dl.drawRequestDeadline + '.');
+    if (dl.repairCompletionDeadline) parts.push('Repairs must be completed by ' + dl.repairCompletionDeadline + '.');
+    if (dl.reserveExpirationDate)    parts.push('This reserve expires on ' + dl.reserveExpirationDate + '.');
+
+    if (!parts.length) {
+      return 'No usage restrictions were extracted from the source document — review it directly or reprocess with AI.';
+    }
+    return parts.join(' ');
+  }
+
   // ── TRACK 8: Reserve health & funding projection (Phase 21B) ─────────────
   //
   // Honest by design: both functions only score what is actually on file.
@@ -804,6 +850,7 @@
     computeEscrowReadiness,
     computeReserveHealth,
     projectReserveRunway,
+    buildReserveNarrative,
   };
 
   if (typeof module !== 'undefined' && module.exports) {

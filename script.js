@@ -2192,6 +2192,10 @@ function renderEscrowProfile(property) {
           <button class="escrow-doc-btn escrow-doc-btn-danger" onclick="deleteEscrowReserve('${r.id}')">Delete</button>
         </div>`;
 
+      // Phase 21D: assistant-voice summary of the extracted terms (engine-built,
+      // states only what is on file).
+      const narrative = Engine.buildReserveNarrative ? Engine.buildReserveNarrative(r) : null;
+
       return `
       <div class="escrow-reserve-card">
         <div class="escrow-reserve-head">
@@ -2199,6 +2203,7 @@ function renderEscrowProfile(property) {
           <span class="escrow-reserve-balance">${fmt(bal.availableBalance)} available</span>
         </div>
         <div class="escrow-reserve-sub">of ${fmt(bal.currentBalance)} current balance${bal.committedAmount ? ` &middot; ${fmt(bal.committedAmount)} committed to open draws` : ''}</div>
+        ${narrative ? `<div class="escrow-ai-summary"><div class="escrow-ai-summary-lbl">AI Summary</div>${esc(narrative)}</div>` : ''}
         ${confBadge}
         ${sourceLine}
         ${evidenceLine}
@@ -2215,7 +2220,7 @@ function renderEscrowProfile(property) {
   }
 
   if (!draws.length) {
-    drawListEl.innerHTML = `<p style="color:#94A3B8;font-size:0.875rem;">No draw requests yet.</p>`;
+    drawListEl.innerHTML = `<p style="color:#94A3B8;font-size:0.875rem;">No reserve requests yet. Start one from a reserve account above — for example, after a roof repair is completed, attach its invoices and documentation and MainStreet will assemble the lender package.</p>`;
   } else {
     const fmtHistoryDate = (iso) => {
       if (!iso) return '';
@@ -2237,11 +2242,30 @@ function renderEscrowProfile(property) {
         ? `<div class="escrow-status-history">${historyRows}</div>`
         : '';
       const validation = reserve ? Engine.validateDrawRequest(reserve, dr, draws) : null;
+      // Phase 21D: doc-checkmark chips + AI readiness status on each request card.
+      const readiness = (reserve && Engine.computeEscrowReadiness && dr.status === 'draft')
+        ? Engine.computeEscrowReadiness(reserve, dr, draws) : null;
+      const _docsObj = dr.attachedDocuments || {};
+      const _chip = (n, label) => n ? `<span class="escrow-docchip">&#x2713; ${n} ${label}${n > 1 ? 's' : ''}</span>` : '';
+      const docChips = [
+        _chip((dr.invoices || []).length, 'invoice'),
+        _chip((_docsObj.contractorBids || []).length, 'contractor bid'),
+        _chip((_docsObj.photos || []).length, 'photo'),
+        _chip((_docsObj.lienWaivers || []).length, 'lien waiver'),
+        _chip((_docsObj.engineerCertification || []).length, 'engineer report'),
+      ].filter(Boolean).join('');
+      const aiStatusHtml = readiness ? `
+        <div class="escrow-ai-status ${readiness.ready ? 'escrow-ai-status--ok' : 'escrow-ai-status--warn'}">
+          <span class="escrow-ai-status-head">AI Status: ${readiness.ready ? 'Ready for reimbursement' : 'Not ready yet'} &middot; ${readiness.score}%</span>
+          <span class="escrow-ai-status-sub">${esc(readiness.summary || '')}</span>
+        </div>` : '';
       return `
       <div class="escrow-draw-card">
         <div class="escrow-draw-head">
           <strong>${dr.drawNumber ? `Draw #${esc(dr.drawNumber)} &mdash; ` : ''}${esc(reserve ? reserve.reserveTypeLabel : 'Reserve')} &mdash; ${fmt(dr.amountRequested)}</strong>
         </div>
+        ${docChips ? `<div class="escrow-docchips">${docChips}</div>` : ''}
+        ${aiStatusHtml}
         ${_drawStatusStepperHtml(dr, Engine, validation)}
         ${historyBlock}
         <div class="escrow-draw-actions">

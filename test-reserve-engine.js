@@ -591,6 +591,29 @@ console.log('\n── Group 21B-2: computeReserveHealth ────────
   assert('unknown-balance summary says what to do',      /Unverified — no lender-stated balance/.test(h3.summary));
 }
 
+// ── Group 21D: buildReserveNarrative ─────────────────────────────────────────
+console.log('\n── Group 21D: buildReserveNarrative ──────────────────────────────────────');
+{
+  const hvac = {
+    id: 'rsv-n1', reserveTypeLabel: 'HVAC Reserve',
+    eligibleUses: 'Replacement of rooftop HVAC units, associated ductwork, and labor',
+    requirements: { requiresInvoices: true, requiresContractorBids: true, requiresApproval: true,
+                    requiresPhotos: false, requiresLienWaivers: false, requiresEngineerCertification: false,
+                    minDrawAmount: 10000 },
+    deadlines: { drawRequestDeadline: '2026-09-15' },
+  };
+  const n = EE.buildReserveNarrative(hvac);
+  assert('narrative states eligible uses in lender voice',
+    n.includes('The lender allows these funds to be used for replacement of rooftop HVAC units'));
+  assert('narrative lists required documentation naturally',
+    n.includes('Each draw request must include supporting invoices and a contractor bid.'));
+  assert('narrative states the minimum draw',      n.includes('The minimum draw is $10,000.'));
+  assert('narrative states approval requirement',  n.includes('Lender approval is required before funds are released.'));
+  assert('narrative states the deadline',          n.includes('Draw requests are due by 2026-09-15.'));
+  assert('empty reserve → honest nothing-extracted line',
+    /No usage restrictions were extracted/.test(EE.buildReserveNarrative({ requirements: { requiresInvoices: false, requiresApproval: false } })));
+}
+
 // ── Group 21B-3: projectReserveRunway ────────────────────────────────────────
 console.log('\n── Group 21B-3: projectReserveRunway ─────────────────────────────────────');
 {

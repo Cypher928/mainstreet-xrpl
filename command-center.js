@@ -89,6 +89,8 @@ window.CommandCenter = (() => {
     }
 
     // 2) Expired / soon-expiring leases — date math on real lease records.
+    // Conversational (Phase 21D): name the tenant when there's one; an advisor
+    // says "Beta Cafe's lease has expired", not "1 lease expired".
     const expired = tenants.filter(t => t.end_date && t.end_date < today);
     if (expired.length) {
       const billedByName = {};
@@ -97,8 +99,12 @@ window.CommandCenter = (() => {
       recs.push({
         id: `exp:${p.id}`, priority: 'high',
         propertyId: p.id, propertyName: p.name,
-        title: `${expired.length} lease${expired.length !== 1 ? 's' : ''} expired — renewal not started`,
-        reason: 'Expired leases mean unenforceable CAM terms and rollover risk.',
+        title: expired.length === 1
+          ? `${expired[0].tenant_name}'s lease has expired`
+          : `${expired.length} leases have expired — renewals not started`,
+        reason: expired.length === 1
+          ? `The lease ended ${expired[0].end_date} and a renewal hasn't started. Expired terms are unenforceable — including the CAM recovery language.`
+          : 'These leases have ended without renewals. Expired terms are unenforceable — including the CAM recovery language.',
         impact: atRisk || null, impactNote: atRisk ? 'annual CAM share at risk' : null,
         confidence: 90, confidenceBasis: 'lease end dates',
         evidence: expired.slice(0, 3).map(t => `Lease — ${t.tenant_name} · expired ${t.end_date} · ${Number(t.leased_sqft || 0).toLocaleString('en-US')} sf`),
@@ -112,17 +118,22 @@ window.CommandCenter = (() => {
     const missingCap = tenants.filter(t =>
       /nnn|triple[\s-]?net/i.test(String(t.lease_type || '')) && (t.cap == null || t.cap === ''));
     if (missingCap.length) {
+      const oneName = missingCap.length === 1 ? missingCap[0].tenant_name : null;
       recs.push({
         id: `cap:${p.id}`, priority: 'medium',
         propertyId: p.id, propertyName: p.name,
-        title: `${missingCap.length} NNN lease${missingCap.length !== 1 ? 's' : ''} missing CAM cap data`,
-        reason: 'Without cap terms, the engine cannot enforce billing limits — over- or under-billing goes undetected.',
-        impact: null, impactNote: 'unquantified — data gap',
+        title: oneName
+          ? `${oneName} needs attention`
+          : `${missingCap.length} NNN tenants need attention`,
+        reason: oneName
+          ? "The lease is missing a CAM expense cap. Until it's verified, MainStreet can't confirm this tenant isn't being overcharged."
+          : "These NNN leases are missing CAM expense caps. Until they're verified, MainStreet can't confirm these tenants aren't being overcharged.",
+        impact: null, impactNote: 'estimated risk: unknown',
         confidence: 92, confidenceBasis: 'lease field completeness',
         evidence: missingCap.slice(0, 3).map(t => `Lease — ${t.tenant_name} (NNN, no cap on file)`),
         connections: (recon?.results || []).length
-          ? ['CAM impact: these tenants’ allocations cannot be cap-validated until terms are on file.'] : [],
-        action: { label: 'Complete lease data', js: openJs },
+          ? ['CAM impact: these allocations cannot be cap-validated until terms are on file.'] : [],
+        action: { label: 'Review lease & confirm CAM cap', js: openJs },
       });
     }
 
