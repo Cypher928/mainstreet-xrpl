@@ -2187,7 +2187,7 @@ function renderEscrowProfile(property) {
           <span class="escrow-doc-count">Reserve Package &mdash; ${docCount} document${docCount === 1 ? '' : 's'}</span>
           <button class="escrow-doc-btn" onclick="openEscrowPackageView('${r.id}')">&#x1F4C1; View Documents</button>
           <button class="escrow-doc-btn" onclick="openEscrowDocumentReplace('${r.id}')">Replace</button>
-          ${r.sourceFileUrl ? `<button class="escrow-doc-btn" onclick="reprocessEscrowReserveDocument('${r.id}')">Reprocess</button>` : ''}
+          ${r.sourceFileUrl ? `<button class="escrow-doc-btn" onclick="reprocessEscrowReserveDocument('${r.id}')">Reprocess AI</button>` : ''}
           ${hasCitation ? `<button class="escrow-doc-btn" onclick="openEscrowSourceCitation('${r.id}')">Source Citation</button>` : ''}
           <button class="escrow-doc-btn escrow-doc-btn-danger" onclick="deleteEscrowReserve('${r.id}')">Delete</button>
         </div>`;
@@ -17437,7 +17437,9 @@ function renderCommandCenter() {
   if (!root || !window.CommandCenter) return;
   const user  = window.AuthService?.getCurrentUser?.() || null;
   const email = user?.email || '';
-  const userName = user?.name || (email ? email.split('@')[0] : null);
+  const _rawName = user?.name || (email ? email.split('@')[0] : null);
+  // Greeting polish: a derived email prefix ("lynnie928") still reads better capitalized.
+  const userName = _rawName ? _rawName.charAt(0).toUpperCase() + _rawName.slice(1) : null;
   const model = CommandCenter.buildModel({ props: _props, acqReviews: _acqReviews, userName });
   root.innerHTML = CommandCenter.renderHtml(model);
 }

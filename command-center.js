@@ -73,11 +73,16 @@ window.CommandCenter = (() => {
     const openDisps = (p.disputes || []).filter(d => d && d.status !== 'accepted' && d.status !== 'rejected' && d.status !== 'resolved');
     if (openDisps.length) {
       const exposure = openDisps.reduce((s, d) => s + _num(d.tenantShare ?? d.amount), 0);
+      const oneDisp = openDisps.length === 1 ? openDisps[0] : null;
       recs.push({
         id: `disp:${p.id}`, priority: exposure > 5000 ? 'high' : 'medium',
         propertyId: p.id, propertyName: p.name,
-        title: `${openDisps.length} unresolved dispute${openDisps.length !== 1 ? 's' : ''}`,
-        reason: 'Tenant disputes block reconciliation sign-off and can delay settlement.',
+        title: oneDisp
+          ? `${oneDisp.tenantName || 'A tenant'} is disputing a ${_fmt$(_num(oneDisp.tenantShare ?? oneDisp.amount))} charge`
+          : `${openDisps.length} tenant disputes need decisions`,
+        reason: oneDisp
+          ? `${oneDisp.tenantName || 'The tenant'} has questioned the ${oneDisp.vendor || oneDisp.category || 'charge'} billing. Until you respond, this charge is on hold and the reconciliation can't be signed off.`
+          : "Each open dispute holds a charge in limbo — the reconciliation can't be signed off until you respond.",
         impact: exposure || null, impactNote: exposure ? 'disputed exposure' : null,
         confidence: 95, confidenceBasis: 'dispute records',
         evidence: openDisps.slice(0, 3).map(d =>
@@ -163,12 +168,12 @@ window.CommandCenter = (() => {
       recs.push({
         id: `gap:${p.id}`, priority: 'medium',
         propertyId: p.id, propertyName: p.name,
-        title: `${gapPct.toFixed(1)}% of the CAM pool is unallocated`,
-        reason: 'Vacant or unbilled space means this share of expenses is not recoverable from tenants.',
-        impact: gap$, impactNote: 'unrecovered CAM/yr',
+        title: `${gapPct.toFixed(1)}% of CAM costs have no paying tenant`,
+        reason: 'Vacant or unbilled space means you absorb this share of operating expenses yourself — every point of occupancy recovered goes straight to the bottom line.',
+        impact: gap$, impactNote: 'absorbed by ownership per year',
         confidence: 90, confidenceBasis: 'allocation results',
-        evidence: [`Pool ${_fmt$(pool)} × ${gapPct.toFixed(1)}% coverage gap`],
-        action: { label: 'Review occupancy', js: openJs },
+        evidence: [`${_fmt$(pool)} in CAM costs × ${gapPct.toFixed(1)}% with no tenant to bill`],
+        action: { label: 'Review vacancy & leasing', js: openJs },
       });
     }
 
@@ -178,11 +183,11 @@ window.CommandCenter = (() => {
       recs.push({
         id: `rq:${p.id}`, priority: 'low',
         propertyId: p.id, propertyName: p.name,
-        title: `${unresolved} lease record${unresolved !== 1 ? 's' : ''} awaiting review`,
-        reason: 'Verified lease data raises allocation confidence and audit-readiness.',
+        title: `${unresolved} lease${unresolved !== 1 ? 's' : ''} awaiting review`,
+        reason: "Confirming these leases means every tenant's bill can be defended against an audit — and keeps AI-read terms from silently driving real charges.",
         impact: null, impactNote: null,
         confidence: 85, confidenceBasis: 'review engine flags',
-        evidence: [], action: { label: 'Open review queue', js: openJs },
+        evidence: [], action: { label: 'Verify lease data', js: openJs },
       });
     }
 
@@ -191,8 +196,8 @@ window.CommandCenter = (() => {
       recs.push({
         id: `run:${p.id}`, priority: 'medium',
         propertyId: p.id, propertyName: p.name,
-        title: 'Data ready — CAM reconciliation not yet run',
-        reason: `${tenants.length} leases and ${(p.invoices || []).length} invoices are loaded; run the allocation to surface recoveries.`,
+        title: 'Ready to reconcile — leases and invoices are loaded',
+        reason: `${tenants.length} leases and ${(p.invoices || []).length} invoices are in. Running the reconciliation shows each tenant's share and surfaces any recoverable dollars.`,
         impact: null, impactNote: null,
         confidence: 95, confidenceBasis: 'workflow state',
         evidence: [], action: { label: 'Run reconciliation', js: openJs },
@@ -653,14 +658,15 @@ window.CommandCenter = (() => {
       </div>`).join('');
 
     const tlHtml = m.timeline.length
-      ? m.timeline.map(ev => {
+      ? m.timeline.map(ev => {   // real recorded events with real timestamps
+
           const t = new Date(ev.timestamp);
           const ts = isNaN(t) ? '' : t.toLocaleString('en-US', { month: 'short', day: 'numeric', hour: 'numeric', minute: '2-digit' });
           return `<div class="cc-tl-row"><span class="cc-tl-time">${_esc(ts)}</span>
             <span class="cc-tl-title">${_esc(ev.title)}</span>
             <span class="cc-tl-prop">${_esc(ev.propertyName || '')}</span></div>`;
         }).join('')
-      : `<div class="cc-empty">Activity will appear here as analyses run.</div>`;
+      : `<div class="cc-empty">Activity appears here as MainStreet analyzes your portfolio.</div>`;
 
     // XRPL stays invisible until money is ready to move — only settled/ready rows render.
     const stlHtml = m.settlements.map(s => s.state === 'settled'
@@ -670,7 +676,7 @@ window.CommandCenter = (() => {
          </div>`
       : `<div class="cc-stl-row cc-stl--ready">
            <span class="cc-stl-dot"></span>
-           <span>${_esc(s.propertyName)} — Settlement ready · <b>RLUSD ${Math.round(s.billed).toLocaleString('en-US')}</b> reconciled and billable</span>
+           <span>${_esc(s.propertyName)} — Ready to settle · <b>${_fmt$(s.billed)}</b> reconciled and billable in RLUSD</span>
            <button class="cc-stl-btn" onclick="ccOpenProperty('${s.propertyId}')">Review Settlement</button>
          </div>`).join('');
 
@@ -712,7 +718,7 @@ window.CommandCenter = (() => {
         ${stlHtml ? `<div class="cc-section-title">Settlement</div><div class="cc-stl-panel">${stlHtml}</div>` : ''}
       </div>
       <div>
-        <div class="cc-section-title">Analysis Timeline</div>
+        <div class="cc-section-title">Recent Activity</div>
         <div class="cc-tl-panel">${tlHtml}</div>
       </div>
     </div>
