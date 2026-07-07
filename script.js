@@ -17447,6 +17447,7 @@ function renderCommandCenter() {
 function showCommandCenter() {
   // Tenant portal keeps its own home — the Command Center is a landlord surface.
   if (window.AuthService?.getCurrentUser?.()?.role === 'tenant') return;
+  _aiwHide();
   renderCommandCenter();
   const cc  = document.getElementById('commandCenter');
   const ptf = document.getElementById('portfolioDashboard');
@@ -17460,6 +17461,7 @@ function showCommandCenter() {
 function ccShowPortfolio() {
   const cc = document.getElementById('commandCenter');
   if (cc) cc.style.display = 'none';
+  _aiwHide();
   document.getElementById('portfolioDashboard').style.display = 'block';
   renderPortfolio(_props);
 }
@@ -17467,6 +17469,7 @@ function ccShowPortfolio() {
 function ccOpenProperty(id) {
   const cc = document.getElementById('commandCenter');
   if (cc) cc.style.display = 'none';
+  _aiwHide();
   selectProperty(id);
 }
 
@@ -17482,6 +17485,64 @@ function ccOpenReserves(id) {
   ccOpenProperty(id);
   setTimeout(() => { try { switchWorkspaceTab('reserves'); } catch (_) { /* tab unavailable — property view is still correct */ } }, 400);
 }
+
+// ─── Phase 22: AI Workspace (view glue — all intelligence lives in ai-workspace.js) ──
+
+let _aiwHistory = [];
+let _aiwContext = null;
+
+function _aiwHide() {
+  const ws = document.getElementById('aiWorkspace');
+  if (ws) ws.style.display = 'none';
+}
+
+function openAIWorkspace(context) {
+  if (window.AuthService?.getCurrentUser?.()?.role === 'tenant') return;
+  if (!window.AIWorkspace) return;
+  // Context-aware: called from a property view it scopes itself; a null/absent
+  // context means portfolio-wide. The user can clear it from the chip.
+  _aiwContext = (context && context.propertyId) ? context
+    : (activePropId ? { propertyId: activePropId } : null);
+  ['commandCenter', 'portfolioDashboard', 'mainWorkflow'].forEach(id => {
+    const el = document.getElementById(id); if (el) el.style.display = 'none';
+  });
+  const ws = document.getElementById('aiWorkspace');
+  if (ws) ws.style.display = 'block';
+  renderAIWorkspace();
+  window.scrollTo({ top: 0 });
+}
+
+function aiwClose() { _aiwHide(); showCommandCenter(); }
+
+function aiwClearContext() { _aiwContext = null; renderAIWorkspace(); }
+
+function renderAIWorkspace() {
+  const p = _aiwContext?.propertyId ? _props.find(x => x.id === _aiwContext.propertyId) : null;
+  const ctxEl = document.getElementById('aiwContextChip');
+  if (ctxEl) ctxEl.innerHTML = p
+    ? `Asking about <b>${esc(p.name)}</b> <button class="aiw-ctx-clear" onclick="aiwClearContext()" title="Ask about the whole portfolio instead">&times;</button>`
+    : 'Asking about your whole portfolio';
+  const sugEl = document.getElementById('aiwSuggestions');
+  if (sugEl) sugEl.innerHTML = AIWorkspace.buildSuggestions(_aiwContext, { props: _props })
+    .map(s => `<button class="aiw-chip" data-q="${esc(s)}" onclick="aiwAsk(this.dataset.q)">${esc(s)}</button>`).join('');
+  const msgEl = document.getElementById('aiwMessages');
+  if (msgEl) {
+    msgEl.innerHTML = _aiwHistory.map(m => m.role === 'user' ? `<div class="aiw-user">${esc(m.text)}</div>` : m.html).join('');
+    msgEl.scrollTop = msgEl.scrollHeight;
+  }
+}
+
+function aiwAsk(q) {
+  const input = document.getElementById('aiwInput');
+  const question = String(q != null ? q : (input ? input.value : '')).trim();
+  if (!question) return;
+  if (input && q == null) input.value = '';
+  const ans = AIWorkspace.answer({ question, context: _aiwContext, props: _props, acqReviews: _acqReviews });
+  _aiwHistory.push({ role: 'user', text: question }, { role: 'ai', html: AIWorkspace.renderAnswerHtml(ans) });
+  renderAIWorkspace();
+}
+
+function aiwKey(e) { if (e && e.key === 'Enter') aiwAsk(); }
 
 function renderPortfolio(props) {
   props = props || _props; // handle no-arg calls

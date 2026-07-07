@@ -5313,6 +5313,59 @@
 </style>
 <div id="commandCenter"></div>
 
+<!-- ── Phase 22: AI Workspace (conversational orchestration over existing engines) ── -->
+<style id="aiwStyles">
+  #aiWorkspace { max-width: min(1100px, calc(100% - 48px)); margin: 24px auto 0; display: none; }
+  .aiw-nav { display: flex; justify-content: space-between; align-items: center; margin-bottom: 18px; }
+  .aiw-hero { background: linear-gradient(135deg, #111827, #0f1e33); border: 1px solid rgba(201,151,58,0.25); border-radius: 14px; padding: 22px 26px; margin-bottom: 16px; }
+  .aiw-title { font-size: 1.5rem; font-weight: 700; color: #F8FAFC; }
+  .aiw-sub { color: #94A3B8; margin-top: 4px; font-size: 0.95rem; }
+  .aiw-sub2 { color: #64748B; margin-top: 8px; font-size: 0.82rem; line-height: 1.55; }
+  .aiw-ctx { margin-top: 12px; font-size: 0.8rem; color: #7dd3fc; }
+  .aiw-ctx-clear { background: none; border: none; color: #64748B; cursor: pointer; font-size: 0.9rem; }
+  .aiw-chips { display: flex; flex-wrap: wrap; gap: 8px; margin-bottom: 16px; }
+  .aiw-chip { background: #1e293b; color: #cbd5e1; border: 1px solid rgba(255,255,255,0.1); border-radius: 999px; padding: 7px 14px; cursor: pointer; font-size: 0.82rem; }
+  .aiw-chip:hover { border-color: rgba(201,151,58,0.6); color: #E2E8F0; }
+  .aiw-messages { display: flex; flex-direction: column; gap: 12px; margin-bottom: 14px; }
+  .aiw-user { align-self: flex-end; background: #1e3a5f; color: #E2E8F0; border-radius: 12px 12px 2px 12px; padding: 10px 14px; font-size: 0.9rem; max-width: 80%; }
+  .aiw-answer { align-self: flex-start; background: #111827; border: 1px solid rgba(255,255,255,0.08); border-left: 3px solid #C9973A; border-radius: 2px 12px 12px 12px; padding: 14px 18px; max-width: 92%; }
+  .aiw-heading { font-weight: 700; color: #E2E8F0; margin-bottom: 6px; }
+  .aiw-p { color: #CBD5E1; font-size: 0.88rem; line-height: 1.6; margin: 6px 0; }
+  .aiw-cites { display: flex; flex-wrap: wrap; gap: 6px; margin-top: 10px; }
+  .aiw-cite { background: #0b1220; border: 1px solid rgba(125,211,252,0.3); color: #7dd3fc; border-radius: 6px; padding: 3px 8px; font-size: 0.72rem; cursor: help; }
+  .aiw-conf { margin-top: 8px; font-size: 0.72rem; color: #64748B; }
+  .aiw-next { margin-top: 12px; padding-top: 10px; border-top: 1px solid rgba(255,255,255,0.07); font-size: 0.84rem; font-weight: 700; color: #C9973A; }
+  .aiw-actions { display: flex; flex-wrap: wrap; gap: 8px; margin-top: 8px; }
+  .aiw-action { background: #C9973A; color: #0b1220; border: none; border-radius: 8px; padding: 7px 14px; font-weight: 700; cursor: pointer; font-size: 0.8rem; }
+  .aiw-action:hover { filter: brightness(1.1); }
+  .aiw-inputrow { display: flex; gap: 10px; margin-bottom: 32px; }
+  .aiw-input { flex: 1; background: #111827; border: 1px solid rgba(255,255,255,0.12); border-radius: 10px; color: #E2E8F0; padding: 12px 16px; font-size: 0.92rem; }
+  .aiw-input:focus { outline: none; border-color: rgba(201,151,58,0.6); }
+</style>
+<div id="aiWorkspace">
+  <div class="aiw-nav">
+    <span class="cc-nav-brand">✨ AI Workspace</span>
+    <span class="cc-nav-links">
+      <button class="cc-nav-link" onclick="aiwClose()">Command Center</button>
+      <button class="cc-nav-link" onclick="document.getElementById('aiWorkspace').style.display='none'; ccShowPortfolio();">Portfolio</button>
+    </span>
+  </div>
+  <div class="aiw-hero">
+    <div class="aiw-title">Ask MainStreet AI</div>
+    <div class="aiw-sub">A conversational workspace for your commercial real estate portfolio.</div>
+    <div class="aiw-sub2">Search leases, invoices, reserve documents, reconciliations, acquisitions, disputes, reports,
+      and settlements using natural language. Every answer comes from your own documents and analyses — with citations —
+      and ends with the next step you can take.</div>
+    <div id="aiwContextChip" class="aiw-ctx"></div>
+  </div>
+  <div id="aiwSuggestions" class="aiw-chips"></div>
+  <div id="aiwMessages" class="aiw-messages"></div>
+  <div class="aiw-inputrow">
+    <input id="aiwInput" class="aiw-input" placeholder="Ask about leases, CAM, reserves, disputes, settlements…" onkeydown="aiwKey(event)">
+    <button class="cc-action-btn" onclick="aiwAsk()">Ask</button>
+  </div>
+</div>
+
 <!-- ── Portfolio Dashboard ──────────────────────────────────────────── -->
 <div id="portfolioDashboard">
 
@@ -5509,6 +5562,7 @@
   <span class="breadcrumb-path">Portfolio &rsaquo; <span id="breadcrumbPropName"></span></span>
   <span id="camYearBadge" class="cam-year-badge"></span>
   <div id="syncIndicator" class="sync-indicator"></div>
+  <button class="rc-open-btn" onclick="openAIWorkspace({ propertyId: activePropId })" title="Ask MainStreet AI about this property — leases, CAM, reserves, disputes, settlements">&#x2728; Ask AI</button>
   <button class="rc-open-btn" onclick="openRecoveryModal()" title="Sync status, data integrity, backups, and property management">&#x1F6DF; Data Health</button>
   <!-- Clear Data / Delete Property moved out of this primary bar into the Data Health panel's
        "Danger Zone" (see _buildRecoveryModalBody) so destructive actions aren't one stray click away. -->
@@ -6255,6 +6309,7 @@
 <script src="escrow-reserve-engine.js"></script>
 <script src="escrow-draw-packets.js"></script>
 <script src="command-center.js"></script>
+<script src="ai-workspace.js"></script>
 <script src="script.js"></script>
 <!-- Dev-only role switcher — activates only on localhost, no-op elsewhere -->
 <script src="dev-switcher.js"></script>
