@@ -5366,6 +5366,36 @@
   </div>
 </div>
 
+<!-- ── Phase 23 Stage 1: AI Document Drafting Studio ─────────────────────── -->
+<style id="dftStyles">
+  #draftingModal { display: none; position: fixed; inset: 0; background: rgba(2,6,23,0.75); z-index: 2000; align-items: flex-start; justify-content: center; overflow-y: auto; padding: 40px 16px; }
+  .dft-box { background: #0f172a; border: 1px solid rgba(201,151,58,0.35); border-radius: 14px; max-width: 860px; width: 100%; padding: 20px 24px; }
+  .dft-top { display: flex; justify-content: space-between; align-items: center; margin-bottom: 12px; }
+  .dft-title { font-weight: 700; color: #E2E8F0; font-size: 1.05rem; }
+  .dft-x { background: none; border: none; color: #64748B; font-size: 1.3rem; cursor: pointer; }
+  .dft-status { display: inline-block; background: rgba(251,191,36,0.12); border: 1px solid rgba(251,191,36,0.45); color: #fbbf24; border-radius: 6px; padding: 3px 10px; font-size: 0.72rem; font-weight: 700; letter-spacing: 0.06em; margin-bottom: 10px; }
+  .dft-paper { background: #f8f7f2; color: #1a2333; border-radius: 8px; padding: 28px 32px; font-family: Georgia, 'Times New Roman', serif; font-size: 0.92rem; line-height: 1.65; max-height: 55vh; overflow-y: auto; }
+  .dft-paper:focus { outline: 2px solid rgba(201,151,58,0.5); }
+  .dft-h { font-weight: 700; margin: 14px 0 4px; }
+  .dft-p { margin: 8px 0; white-space: pre-wrap; }
+  .dft-cites-lbl { font-size: 0.68rem; font-weight: 700; letter-spacing: 0.06em; text-transform: uppercase; color: #22d3ee; margin: 12px 0 6px; }
+  .dft-actions { display: flex; gap: 10px; margin-top: 14px; flex-wrap: wrap; }
+  .dft-hint { font-size: 0.74rem; color: #64748B; margin-top: 8px; }
+</style>
+<div id="draftingModal" onclick="if(event.target===this)dftClose()">
+  <div class="dft-box">
+    <div class="dft-top"><span class="dft-title" id="dftTitle">Document Draft</span><button class="dft-x" onclick="dftClose()" title="Close">&times;</button></div>
+    <div id="dftBody"></div>
+    <div class="dft-actions">
+      <button class="aiw-action" onclick="dftSave()">Save Draft</button>
+      <button class="aiw-action" onclick="dftExport()">Export PDF</button>
+      <button class="cc-nav-link" onclick="dftClose()">Close</button>
+    </div>
+    <div class="dft-hint">Click into the document to edit. MainStreet never sends documents automatically — you export and send when you're ready.</div>
+    <div id="dftSaved"></div>
+  </div>
+</div>
+
 <!-- ── Portfolio Dashboard ──────────────────────────────────────────── -->
 <div id="portfolioDashboard">
 
@@ -5563,6 +5593,7 @@
   <span id="camYearBadge" class="cam-year-badge"></span>
   <div id="syncIndicator" class="sync-indicator"></div>
   <button class="rc-open-btn" onclick="openAIWorkspace({ propertyId: activePropId })" title="Ask MainStreet AI about this property — leases, CAM, reserves, disputes, settlements">&#x2728; Ask AI</button>
+  <button class="rc-open-btn" onclick="explainCurrentScreen()" title="Have MainStreet AI explain what you're looking at — what it means, why it matters, and what to do next">&#x2728; Explain This</button>
   <button class="rc-open-btn" onclick="openRecoveryModal()" title="Sync status, data integrity, backups, and property management">&#x1F6DF; Data Health</button>
   <!-- Clear Data / Delete Property moved out of this primary bar into the Data Health panel's
        "Danger Zone" (see _buildRecoveryModalBody) so destructive actions aren't one stray click away. -->
@@ -6310,6 +6341,7 @@
 <script src="escrow-draw-packets.js"></script>
 <script src="command-center.js"></script>
 <script src="ai-workspace.js"></script>
+<script src="document-drafting.js"></script>
 <script src="script.js"></script>
 <!-- Dev-only role switcher — activates only on localhost, no-op elsewhere -->
 <script src="dev-switcher.js"></script>

@@ -131,6 +131,36 @@ window.AIWorkspace = (() => {
   const INTENTS = [];
   function registerIntent(def) { INTENTS.push(def); }
 
+  // 0) Document drafting (Phase 23) — verb-gated so it can't swallow other
+  // intents; routes into the Drafting Studio, which assembles the document
+  // deterministically from evidence already on file.
+  const _DRAFT_MAP = [
+    [/recovery letter|recovery/, 'recoveryLetter',       'CAM Recovery Letter'],
+    [/tenant.*(explanation|statement)|explanation/, 'tenantCamExplanation', 'Tenant CAM Explanation'],
+    [/lender|reimburse|reserve package|draw package|package/, 'lenderReimbursement', 'Lender Reimbursement Letter'],
+    [/dispute/, 'disputeResponse',    'Dispute Response'],
+    [/lease.*summary/, 'leaseReviewSummary', 'Lease Review Summary'],
+    [/acquisition/, 'acquisitionSummary', 'Acquisition Executive Summary'],
+  ];
+  registerIntent({
+    id: 'draft_document',
+    match: (s) => /(generate|draft|write|prepare)\b/.test(s) && /(letter|response|summary|package|explanation|document)/.test(s),
+    handle: (q) => {
+      const s = q.toLowerCase();
+      const picks = _DRAFT_MAP.filter(([re]) => re.test(s));
+      const chosen = picks.length ? picks : _DRAFT_MAP;
+      return {
+        heading: picks.length === 1 ? `Draft: ${picks[0][2]}` : 'What should I draft?',
+        paragraphs: [
+          'I assemble the document from your reconciliation results, lease citations, reserve records, and dispute history — nothing invented, every figure traceable. You review, edit, and send it yourself; MainStreet never sends anything automatically.',
+        ],
+        citations: [],
+        actions: chosen.slice(0, 3).map(([, type, label]) => ({ label: `Draft ${label}`, js: `openDraftingStudio('${type}')` })),
+        confidence: { pct: 95, basis: 'drafting engine (evidence-grounded)' },
+      };
+    },
+  });
+
   // 1) CAM caps across the portfolio
   registerIntent({
     id: 'cam_caps',
@@ -530,8 +560,21 @@ window.AIWorkspace = (() => {
     match: (s, ctx) => /explain (this )?(property|portfolio)|overview|summar(y|ize)/.test(s) || (/^explain/.test(s.trim()) && !!ctx?.propertyId),
     handle: (q, ctx, { props, deps }) => {
       const p = _ctxProperty(ctx, props);
-      if (!p) return null;
       const S = deps.Selectors;
+      if (!p) {
+        // Portfolio-level explain (used by ✨ Explain This on portfolio surfaces).
+        if (!/portfolio/.test(q.toLowerCase())) return null;
+        const k = S?.portfolioKPIs ? S.portfolioKPIs(props) : null;
+        return {
+          heading: 'Your portfolio at a glance',
+          paragraphs: [
+            `${props.length} propert${props.length === 1 ? 'y' : 'ies'}${k?.occupancyPct != null ? `, ${k.occupancyPct}% average occupancy` : ''}${k?.cam ? `, ${_fmt$(k.cam)} in CAM expenses under management` : ''}${k?.openDisputes ? `, ${k.openDisputes} open dispute${k.openDisputes !== 1 ? 's' : ''}` : ''}.`,
+            'Ask about any property, tenant, reserve, or settlement — or open the Command Center for today\'s prioritized actions.',
+          ],
+          citations: [], actions: [_actCommandCenter(), _actPortfolio()],
+          confidence: { pct: 94, basis: 'portfolio records' },
+        };
+      }
       const meta = S?.buildPropMeta ? S.buildPropMeta(p) : {};
       const occupied = (p.tenants || []).reduce((s, t) => s + _num(t && t.leased_sqft), 0);
       const occ = p.totalSqft ? Math.round((occupied / p.totalSqft) * 100) : null;
@@ -637,7 +680,7 @@ window.AIWorkspace = (() => {
     const p = context && context.propertyId && Array.isArray(props) ? props.find(x => x.id === context.propertyId) : null;
     const base = p
       ? [`Explain ${p.name}'s reconciliation`, `Which tenants at ${p.name} have CAM caps?`, 'Why isn\'t this draw ready?', 'Show reserve balances', 'Show settlement status', 'Which leases expire next year?']
-      : ['Find every CAM cap', 'Which leases expire next year?', 'Show unresolved disputes', 'Compare insurance costs', 'Which property recovered the most revenue?', 'Show reserve balances', 'Which reconciliations are ready for RLUSD settlement?', 'Explain lender requirements'];
+      : ['Find every CAM cap', 'Which leases expire next year?', 'Show unresolved disputes', 'Compare insurance costs', 'Which property recovered the most revenue?', 'Show reserve balances', 'Which reconciliations are ready for RLUSD settlement?', 'Generate a recovery letter'];
     return base;
   }
 

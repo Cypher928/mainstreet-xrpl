@@ -17500,8 +17500,10 @@ function openAIWorkspace(context) {
   if (window.AuthService?.getCurrentUser?.()?.role === 'tenant') return;
   if (!window.AIWorkspace) return;
   // Context-aware: called from a property view it scopes itself; a null/absent
-  // context means portfolio-wide. The user can clear it from the chip.
-  _aiwContext = (context && context.propertyId) ? context
+  // context means "infer from the active property"; {scope:'portfolio'} forces
+  // portfolio-wide. The user can clear property scope from the chip.
+  _aiwContext = (context && context.scope === 'portfolio') ? null
+    : (context && context.propertyId) ? context
     : (activePropId ? { propertyId: activePropId } : null);
   ['commandCenter', 'portfolioDashboard', 'mainWorkflow'].forEach(id => {
     const el = document.getElementById(id); if (el) el.style.display = 'none';
@@ -17543,6 +17545,97 @@ function aiwAsk(q) {
 }
 
 function aiwKey(e) { if (e && e.key === 'Enter') aiwAsk(); }
+
+// ─── Phase 23 Stage 1: Document Drafting Studio + Explain Mode (view glue) ──
+
+let _dftDoc = null;
+
+function openDraftingStudio(type, context) {
+  if (!window.DocumentDrafting) return;
+  const ctx = context || _aiwContext || (activePropId ? { propertyId: activePropId } : null);
+  const doc = DocumentDrafting.build(type, { props: _props, context: ctx, acqReviews: _acqReviews });
+  if (!doc) {
+    showToast('Not enough data on file to draft that yet — run the relevant analysis first.', { color: '#92400e', textColor: '#fef3c7' });
+    return;
+  }
+  _dftDoc = doc;
+  document.getElementById('dftTitle').textContent = doc.title + (doc.propertyName ? ' — ' + doc.propertyName : '');
+  document.getElementById('dftBody').innerHTML = DocumentDrafting.renderEditableHtml(doc);
+  _dftRenderSaved();
+  document.getElementById('draftingModal').style.display = 'flex';
+}
+
+function dftClose() {
+  document.getElementById('draftingModal').style.display = 'none';
+  _dftDoc = null;
+}
+
+function dftExport() {
+  if (!_dftDoc) return;
+  const edited = document.getElementById('dftPaper')?.innerHTML || null;
+  const w = window.open('', '_blank');
+  if (!w) { showToast('Allow pop-ups to export the PDF.'); return; }
+  w.document.write(DocumentDrafting.renderPrintHtml(_dftDoc, edited));
+  w.document.close(); w.focus();
+  setTimeout(() => { try { w.print(); } catch (_) {} }, 350);
+}
+
+function dftSave() {
+  if (!_dftDoc) return;
+  const prop = _props.find(p => p.id === _dftDoc.propertyId) || currentProperty();
+  if (!prop) { showToast('Open a property to save drafts.'); return; }
+  const edited = document.getElementById('dftPaper')?.innerHTML || null;
+  if (!Array.isArray(prop.aiDrafts)) prop.aiDrafts = [];
+  const existing = prop.aiDrafts.findIndex(x => x.id === _dftDoc.id);
+  const record = { id: _dftDoc.id, type: _dftDoc.type, title: _dftDoc.title, html: edited,
+                   citations: _dftDoc.citations || [], createdAt: _dftDoc.createdAt, status: 'draft' };
+  if (existing >= 0) prop.aiDrafts[existing] = record; else prop.aiDrafts.push(record);
+  try { saveProperty(prop); } catch (_) { /* localStorage copy still saved by saveProperty */ }
+  showToast(`Draft saved to ${prop.name || 'property'}.`);
+  _dftRenderSaved();
+}
+
+function _dftRenderSaved() {
+  const el = document.getElementById('dftSaved');
+  if (!el) return;
+  const prop = _dftDoc ? (_props.find(p => p.id === _dftDoc.propertyId) || currentProperty()) : null;
+  const drafts = prop?.aiDrafts || [];
+  el.innerHTML = drafts.length
+    ? `<div class="dft-cites-lbl">Saved drafts — ${esc(prop.name || '')}</div>` +
+      drafts.slice().reverse().slice(0, 5).map(x =>
+        `<button class="cc-nav-link" style="margin:4px 6px 0 0;" data-id="${esc(x.id)}" onclick="dftOpenSaved(this.dataset.id)">${esc(x.title)} · ${new Date(x.createdAt).toLocaleDateString()}</button>`).join('')
+    : '';
+}
+
+function dftOpenSaved(id) {
+  const prop = (_dftDoc ? _props.find(p => p.id === _dftDoc.propertyId) : null) || currentProperty();
+  const x = prop?.aiDrafts?.find(dd => dd.id === id);
+  if (!x) return;
+  _dftDoc = { ...x, propertyId: prop.id, propertyName: prop.name, sections: [],
+              confidence: { pct: 0, basis: 'saved draft' }, disclaimer: '' };
+  document.getElementById('dftTitle').textContent = x.title + ' — saved draft';
+  document.getElementById('dftBody').innerHTML =
+    `<div class="dft-status">DRAFT · saved ${esc(new Date(x.createdAt).toLocaleDateString())}</div>
+     <div class="dft-paper" id="dftPaper" contenteditable="true" spellcheck="true">${x.html || ''}</div>`;
+}
+
+// ✨ Explain This — maps whatever the user is looking at to a scoped Workspace
+// question. Pure orchestration: the answer comes from the same intents.
+function explainCurrentScreen() {
+  const vis = (id) => { const el = document.getElementById(id); return !!el && el.style.display !== 'none'; };
+  let q = 'Explain this portfolio';
+  let ctx = { scope: 'portfolio' };
+  if (vis('mainWorkflow') && activePropId) {
+    ctx = { propertyId: activePropId };
+    const tab = (typeof WORKSPACE_TABS !== 'undefined' ? WORKSPACE_TABS : []).find(t => vis('wsPane-' + t));
+    q = tab === 'cam'      ? 'Explain this reconciliation'
+      : tab === 'reserves' ? 'Show reserve balances'
+      : tab === 'reports'  ? 'Explain this reconciliation'
+      : 'Explain this property';
+  }
+  openAIWorkspace(ctx);
+  aiwAsk(q);
+}
 
 function renderPortfolio(props) {
   props = props || _props; // handle no-arg calls
@@ -17864,6 +17957,7 @@ async function selectProperty(id) {
     // loadProperties() skips the blob, so this lazy load is the only place it arrives. Without
     // this, the settlement flow renders "pending" because property.settlement stays undefined.
     property.settlement        = data.settlement ?? property.settlement ?? null;
+    property.aiDrafts          = data.aiDrafts?.length ? data.aiDrafts : (property.aiDrafts || []);
 
     // Tenant/invoice data: only overwrite when loaded data is at least as rich,
     // preventing a stale DB record from erasing a fresh in-session upload.
@@ -19184,6 +19278,8 @@ async function saveProperty(property) {
       // next saveProperty rewrites properties.data without it, wiping the seeded record and
       // dropping the settlement flow back to "pending".
       settlement:        stripped.settlement        ?? null,
+      // AI Document Drafting (Phase 23): saved drafts persist with the property.
+      aiDrafts:          stripped.aiDrafts          || [],
       // Preserve the demo-seed markers so a save doesn't strip them (which would force the
       // demo to needlessly re-seed on every subsequent load). Undefined for real properties.
       _demoVersion:      stripped._demoVersion,
@@ -19462,6 +19558,7 @@ async function loadPropertyData(id) {
         results:           d.results           ?? null,
         camReconciliation: d.camReconciliation ?? null,
         settlement:        d.settlement        ?? null,
+        aiDrafts:          d.aiDrafts          || [],
         activityLog:       d.activityLog       || [],
         timeline:          d.timeline          || [],
         // Full tenant state (review, reviewOverrides, capBaseAmount, confidence)
@@ -19611,6 +19708,7 @@ async function loadPropertyData(id) {
     // preserve it through the merge so the settlement flow doesn't fall back to pending
     // when a property is opened via loadPropertyData (loadProperties already keeps it).
     settlement:        dbData.settlement        ?? base.settlement        ?? null,
+    aiDrafts:          dbData.aiDrafts?.length ? dbData.aiDrafts : (base.aiDrafts || []),
     // Escrow reserves / draw requests: Supabase is authoritative (draw status
     // changes must not be lost if a stale local snapshot has fewer tenants).
     escrowReserves:    dbData.escrowReserves?.length ? dbData.escrowReserves : (base.escrowReserves || []),
