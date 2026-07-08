@@ -5346,6 +5346,7 @@
   <div class="aiw-nav">
     <span class="cc-nav-brand">✨ AI Workspace</span>
     <span class="cc-nav-links">
+      <button class="cc-nav-link" onclick="aiwClearConversation()" title="Start a fresh conversation">Clear</button>
       <button class="cc-nav-link" onclick="aiwClose()">Command Center</button>
       <button class="cc-nav-link" onclick="document.getElementById('aiWorkspace').style.display='none'; ccShowPortfolio();">Portfolio</button>
     </span>
@@ -5396,11 +5397,28 @@
   </div>
 </div>
 
+<!-- ── Phase 23 Stage 3: Guided Tour overlay (non-blocking card; screens stay live) ── -->
+<style id="tourStyles">
+  #tourCard { display: none; position: fixed; right: 24px; bottom: 24px; z-index: 3000; max-width: 380px;
+    background: #0f172a; border: 1px solid rgba(201,151,58,0.55); border-radius: 14px; padding: 18px 20px;
+    box-shadow: 0 8px 40px rgba(0,0,0,0.6); }
+  .tour-step-lbl { font-size: 0.7rem; font-weight: 700; letter-spacing: 0.08em; color: #C9973A; text-transform: uppercase; }
+  .tour-title { font-size: 1.05rem; font-weight: 700; color: #F8FAFC; margin: 4px 0 6px; }
+  .tour-body { font-size: 0.85rem; color: #CBD5E1; line-height: 1.55; }
+  .tour-btns { display: flex; gap: 8px; margin-top: 14px; align-items: center; }
+  .tour-next { background: #C9973A; color: #0b1220; border: none; border-radius: 8px; padding: 8px 16px; font-weight: 700; cursor: pointer; }
+  .tour-back, .tour-skip { background: none; border: 1px solid rgba(255,255,255,0.15); color: #94A3B8; border-radius: 8px; padding: 7px 12px; cursor: pointer; font-size: 0.8rem; }
+  .tour-skip { border: none; margin-left: auto; }
+  .tour-glow { outline: 2px solid #C9973A !important; box-shadow: 0 0 28px rgba(201,151,58,0.55) !important; border-radius: 12px; }
+</style>
+<div id="tourCard"></div>
+
 <!-- ── Portfolio Dashboard ──────────────────────────────────────────── -->
 <div id="portfolioDashboard">
 
   <!-- Phase 21: entry point into the AI Command Center -->
   <button class="cc-portfolio-entry" onclick="showCommandCenter()">✨ <b>AI Command Center</b> — your prioritized daily briefing</button>
+  <button class="cc-nav-link" style="margin: -8px 0 18px;" onclick="startGuidedTour()">▶ Take the 2-minute guided tour</button>
 
   <!-- Hero Intro -->
   <div class="hero-intro">
@@ -6342,6 +6360,7 @@
 <script src="command-center.js"></script>
 <script src="ai-workspace.js"></script>
 <script src="document-drafting.js"></script>
+<script src="guided-tour.js"></script>
 <script src="script.js"></script>
 <!-- Dev-only role switcher — activates only on localhost, no-op elsewhere -->
 <script src="dev-switcher.js"></script>

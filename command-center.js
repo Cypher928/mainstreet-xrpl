@@ -684,6 +684,7 @@ window.CommandCenter = (() => {
     <div class="cc-nav">
       <span class="cc-nav-brand">✨ AI Command Center</span>
       <span class="cc-nav-links">
+        <button class="cc-nav-link" onclick="startGuidedTour()">▶ Guided Tour</button>
         <button class="cc-nav-link" onclick="openAIWorkspace()">✨ AI Workspace</button>
         <button class="cc-nav-link" onclick="ccShowPortfolio()">Portfolio</button>
         ${m.acqCount ? `<button class="cc-nav-link" onclick="ccOpenAcquisitions()">Acquisitions</button>` : ''}

@@ -17512,9 +17512,13 @@ function openAIWorkspace(context) {
   if (ws) ws.style.display = 'block';
   renderAIWorkspace();
   window.scrollTo({ top: 0 });
+  // UX (Phase 23): land ready to type.
+  setTimeout(() => document.getElementById('aiwInput')?.focus(), 50);
 }
 
 function aiwClose() { _aiwHide(); showCommandCenter(); }
+
+function aiwClearConversation() { _aiwHistory = []; renderAIWorkspace(); }
 
 function aiwClearContext() { _aiwContext = null; renderAIWorkspace(); }
 
@@ -17558,12 +17562,24 @@ function openDraftingStudio(type, context) {
     showToast('Not enough data on file to draft that yet — run the relevant analysis first.', { color: '#92400e', textColor: '#fef3c7' });
     return;
   }
+  const titleEl = document.getElementById('dftTitle');
+  const bodyEl  = document.getElementById('dftBody');
+  const modalEl = document.getElementById('draftingModal');
+  if (!titleEl || !bodyEl || !modalEl) return;   // markup missing — degrade silently
   _dftDoc = doc;
-  document.getElementById('dftTitle').textContent = doc.title + (doc.propertyName ? ' — ' + doc.propertyName : '');
-  document.getElementById('dftBody').innerHTML = DocumentDrafting.renderEditableHtml(doc);
+  titleEl.textContent = doc.title + (doc.propertyName ? ' — ' + doc.propertyName : '');
+  bodyEl.innerHTML = DocumentDrafting.renderEditableHtml(doc);
   _dftRenderSaved();
-  document.getElementById('draftingModal').style.display = 'flex';
+  modalEl.style.display = 'flex';
 }
+
+// Esc closes the drafting modal (and steps out of a running tour) — registered once.
+document.addEventListener('keydown', (e) => {
+  if (e.key !== 'Escape') return;
+  const dm = document.getElementById('draftingModal');
+  if (dm && dm.style.display === 'flex') { dftClose(); return; }
+  if (typeof _tour !== 'undefined' && _tour) tourEnd();
+});
 
 function dftClose() {
   document.getElementById('draftingModal').style.display = 'none';
@@ -17617,6 +17633,58 @@ function dftOpenSaved(id) {
   document.getElementById('dftBody').innerHTML =
     `<div class="dft-status">DRAFT · saved ${esc(new Date(x.createdAt).toLocaleDateString())}</div>
      <div class="dft-paper" id="dftPaper" contenteditable="true" spellcheck="true">${x.html || ''}</div>`;
+}
+
+// ─── Phase 23 Stage 3: Guided Tour runner (steps built by guided-tour.js) ────
+
+let _tour = null;
+
+function startGuidedTour() {
+  if (window.AuthService?.getCurrentUser?.()?.role === 'tenant') return;
+  if (!window.GuidedTour) return;
+  _tour = { steps: GuidedTour.buildSteps({ props: _props, acqReviews: _acqReviews }), i: 0 };
+  if (!_tour.steps.length) { _tour = null; return; }
+  _tourShow();
+}
+
+function _tourClearGlow() {
+  document.querySelectorAll('.tour-glow').forEach(el => el.classList.remove('tour-glow'));
+}
+
+function _tourShow() {
+  if (!_tour) return;
+  const s = _tour.steps[_tour.i];
+  _tourClearGlow();
+  if (typeof s.go === 'function') { try { s.go(); } catch (_) { /* keep touring */ } }
+  const card = document.getElementById('tourCard');
+  if (!card) return;
+  const last = _tour.i === _tour.steps.length - 1;
+  card.innerHTML = `
+    <div class="tour-step-lbl">Guided tour · Step ${_tour.i + 1} of ${_tour.steps.length}</div>
+    <div class="tour-title">${esc(s.title)}</div>
+    <div class="tour-body">${esc(s.body)}</div>
+    <div class="tour-btns">
+      ${_tour.i > 0 ? `<button class="tour-back" onclick="tourBack()">Back</button>` : ''}
+      <button class="tour-next" onclick="${last ? 'tourEnd()' : 'tourNext()'}">${last ? 'Finish' : 'Next'}</button>
+      ${!last ? `<button class="tour-skip" onclick="tourEnd()">Skip tour</button>` : ''}
+    </div>`;
+  card.style.display = 'block';
+  // Highlight after navigation settles (some steps load a property asynchronously).
+  setTimeout(() => {
+    if (!_tour || _tour.steps[_tour.i] !== s || !s.highlight) return;
+    const el = document.querySelector(s.highlight);
+    if (el) { el.classList.add('tour-glow'); el.scrollIntoView({ behavior: 'smooth', block: 'center' }); }
+  }, s.delay || 250);
+}
+
+function tourNext() { if (_tour && _tour.i < _tour.steps.length - 1) { _tour.i++; _tourShow(); } }
+function tourBack() { if (_tour && _tour.i > 0) { _tour.i--; _tourShow(); } }
+function tourEnd() {
+  _tourClearGlow();
+  const card = document.getElementById('tourCard');
+  if (card) card.style.display = 'none';
+  _tour = null;
+  try { _lsSet && _lsSet('ms_tour_done', '1'); } catch (_) {}
 }
 
 // ✨ Explain This — maps whatever the user is looking at to a scoped Workspace

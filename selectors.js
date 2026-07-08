@@ -413,14 +413,18 @@ window.Selectors = (() => {
    * Deterministic tiebreaker sort applied after the primary sort key.
    * 1. Active disputes DESC  2. Incomplete reviews DESC
    * 3. Review health ASC (lower = more urgent)  4. Alpha ASC
+   *
+   * `healthOf` supplies the (expensive) review-health value per pair —
+   * precomputed once per property by sortProperties so an n·log n sort doesn't
+   * rebuild the review queue on every comparison. Identical ordering to the
+   * previous per-comparison computation.
    */
-  function _propTiebreaker(a, b) {
+  function _propTiebreaker(a, b, healthOf) {
     if ((a.m.openDisputes || 0) !== (b.m.openDisputes || 0))
       return (b.m.openDisputes || 0) - (a.m.openDisputes || 0);
     if ((a.m.incompleteLeases || 0) !== (b.m.incompleteLeases || 0))
       return (b.m.incompleteLeases || 0) - (a.m.incompleteLeases || 0);
-    const ha = computeReviewHealth(getReviewQueueItems([a.p]).filter(i => !i.reviewerConfirmed));
-    const hb = computeReviewHealth(getReviewQueueItems([b.p]).filter(i => !i.reviewerConfirmed));
+    const ha = healthOf(a), hb = healthOf(b);
     if (ha !== hb) return ha - hb;
     return (a.p.name || '').localeCompare(b.p.name || '');
   }
@@ -432,6 +436,17 @@ window.Selectors = (() => {
    * @returns {{ p, m }[]}
    */
   function sortProperties(pairs, sortKey) {
+    // Perf (Phase 23): compute review health once per property, not once per
+    // comparison — getReviewQueueItems walks every tenant through the review
+    // engine, which is far too heavy to run n·log n times inside a sort.
+    const healthCache = new Map();
+    const healthOf = (pair) => {
+      const key = pair.p.id ?? pair.p;
+      if (!healthCache.has(key)) {
+        healthCache.set(key, computeReviewHealth(getReviewQueueItems([pair.p]).filter(i => !i.reviewerConfirmed)));
+      }
+      return healthCache.get(key);
+    };
     return [...pairs].sort((a, b) => {
       let primary = 0;
       if (sortKey === 'risk')     primary = (RISK_SCORE[b.m.riskLevel] ?? 0) - (RISK_SCORE[a.m.riskLevel] ?? 0);
@@ -439,7 +454,7 @@ window.Selectors = (() => {
       if (sortKey === 'cam')      primary = (b.m.total || 0) - (a.m.total || 0);
       if (sortKey === 'disputes') primary = (b.m.openDisputes || 0) - (a.m.openDisputes || 0);
       if (sortKey === 'review')   primary = (b.m.incompleteLeases + b.m.tenantsNeedingReview) - (a.m.incompleteLeases + a.m.tenantsNeedingReview);
-      return primary !== 0 ? primary : _propTiebreaker(a, b);
+      return primary !== 0 ? primary : _propTiebreaker(a, b, healthOf);
     });
   }
 
