@@ -5423,6 +5423,57 @@
 </style>
 <div id="tourCard"></div>
 
+<!-- ── Phase 24: Interactive Evidence Viewer ─────────────────────────────── -->
+<style id="evdStyles">
+  #evidenceViewer { display: none; position: fixed; inset: 0; background: rgba(2,6,23,0.8); z-index: 2500; align-items: center; justify-content: center; padding: 24px; }
+  .evd-box { background: #0f172a; border: 1px solid rgba(201,151,58,0.4); border-radius: 14px; width: min(1150px, 100%); height: min(86vh, 900px); display: flex; flex-direction: column; padding: 16px 18px; }
+  .evd-top { display: flex; align-items: center; gap: 12px; margin-bottom: 10px; }
+  .evd-find { margin-left: auto; display: flex; gap: 6px; align-items: center; }
+  .evd-find input { background: #111827; border: 1px solid rgba(255,255,255,0.12); border-radius: 8px; color: #E2E8F0; padding: 6px 10px; font-size: 0.82rem; width: 190px; }
+  .evd-banner { background: rgba(251,191,36,0.1); border: 1px solid rgba(251,191,36,0.4); color: #fbbf24; border-radius: 8px; padding: 7px 12px; font-size: 0.8rem; margin-bottom: 8px; }
+  .evd-main { display: flex; gap: 14px; flex: 1; min-height: 0; }
+  .evd-doc { flex: 1; overflow: auto; background: #131c2e; border: 1px solid rgba(255,255,255,0.07); border-radius: 10px; padding: 12px; }
+  .evd-page-lbl { color: #64748B; font-size: 0.74rem; margin-bottom: 8px; }
+  .evd-stage { position: relative; display: inline-block; }
+  .evd-stage canvas { display: block; border-radius: 4px; background: #fff; }
+  .evd-hl-layer { position: absolute; inset: 0; pointer-events: none; }
+  .evd-hl { position: absolute; background: rgba(201,151,58,0.38); border-bottom: 2px solid #C9973A; border-radius: 2px; }
+  .evd-empty { color: #94A3B8; font-size: 0.86rem; padding: 30px 18px; line-height: 1.6; }
+  .evd-empty a { color: #7dd3fc; }
+  .evd-side { width: 320px; flex-shrink: 0; overflow-y: auto; background: #111827; border: 1px solid rgba(255,255,255,0.07); border-radius: 10px; padding: 14px 16px; }
+  .evd-row { display: flex; justify-content: space-between; gap: 10px; padding: 5px 0; font-size: 0.8rem; border-bottom: 1px solid rgba(255,255,255,0.05); }
+  .evd-row span { color: #64748B; } .evd-row b { color: #E2E8F0; text-align: right; }
+  .evd-lbl { font-size: 0.68rem; font-weight: 700; letter-spacing: 0.06em; text-transform: uppercase; color: #22d3ee; margin: 12px 0 5px; }
+  .evd-quote { margin: 0; padding: 10px 12px; background: rgba(14,116,144,0.12); border-left: 3px solid #22d3ee; border-radius: 6px; color: #CBD5E1; font-size: 0.83rem; line-height: 1.55; font-style: italic; }
+  .evd-reason { color: #94A3B8; font-size: 0.8rem; line-height: 1.5; }
+  .evd-note { margin-top: 12px; font-size: 0.75rem; color: #fbbf24; line-height: 1.5; }
+  .evd-actions { display: flex; flex-wrap: wrap; gap: 8px; margin-top: 14px; }
+  .evd-nav { display: flex; align-items: center; justify-content: space-between; gap: 8px; margin-top: 12px; font-size: 0.78rem; color: #64748B; }
+  .evd-jump { display: flex; flex-wrap: wrap; gap: 5px; margin-top: 8px; }
+  .evd-jump-chip { background: #1e293b; border: 1px solid rgba(255,255,255,0.1); color: #94A3B8; border-radius: 6px; padding: 3px 9px; font-size: 0.72rem; cursor: pointer; }
+  .evd-jump-chip--on { border-color: #C9973A; color: #C9973A; }
+  .aiw-cite--live { cursor: pointer; border-color: rgba(201,151,58,0.55); }
+  .aiw-cite--live:hover { background: rgba(201,151,58,0.12); color: #E2E8F0; }
+</style>
+<div id="evidenceViewer" onclick="if(event.target===this)EvidenceViewer.close()">
+  <div class="evd-box">
+    <div class="evd-top">
+      <span class="dft-title" id="evdTitle">Evidence</span>
+      <span class="evd-find">
+        <input id="evdFindInput" placeholder="Find in document…" onkeydown="if(event.key==='Enter')EvidenceViewer.find()">
+        <button class="cc-nav-link" onclick="EvidenceViewer.find()">Find</button>
+        <button class="cc-nav-link" id="evdBackBtn" style="display:none" onclick="EvidenceViewer.backToCitations()">← Back to citations</button>
+      </span>
+      <button class="dft-x" onclick="EvidenceViewer.close()" title="Close">&times;</button>
+    </div>
+    <div id="evdBanner" class="evd-banner" style="display:none"></div>
+    <div class="evd-main">
+      <div id="evdDoc" class="evd-doc"></div>
+      <div id="evdSide" class="evd-side"></div>
+    </div>
+  </div>
+</div>
+
 <!-- ── Portfolio Dashboard ──────────────────────────────────────────── -->
 <div id="portfolioDashboard">
 
@@ -6371,6 +6422,7 @@
 <script src="ai-workspace.js"></script>
 <script src="document-drafting.js"></script>
 <script src="guided-tour.js"></script>
+<script src="evidence-viewer.js"></script>
 <script src="script.js"></script>
 <!-- Dev-only role switcher — activates only on localhost, no-op elsewhere -->
 <script src="dev-switcher.js"></script>

@@ -66,7 +66,12 @@ window.AIWorkspace = (() => {
     return {
       source: `Lease — ${t.tenant_name}`,
       detail: ev && ev.page != null ? `Page ${ev.page}` : (p ? p.name : null),
+      page:   ev && ev.page != null ? ev.page : null,
       quote:  ev ? ev.quote : null,
+      // Interactive evidence (Phase 24): when the lease file itself is on file,
+      // this citation becomes a one-click "open the document at this page".
+      fileUrl:  t.leaseUrl || t.lease_url || null,
+      fileName: t.leaseFileName || null,
     };
   }
 
@@ -77,7 +82,10 @@ window.AIWorkspace = (() => {
     cites.push({
       source: `Mortgage — ${r.sourceFileName || 'reserve document'}`,
       detail: (r.sourcePages || []).length ? `Page ${r.sourcePages.join(', ')}` : null,
+      page:   (best && best.page != null) ? best.page : ((r.sourcePages || [])[0] ?? null),
       quote:  best && best.quote ? best.quote : null,
+      fileUrl:  r.sourceFileUrl || null,
+      fileName: r.sourceFileName || null,
     });
     return cites;
   }
@@ -258,7 +266,7 @@ window.AIWorkspace = (() => {
         const ev = _tenantEvidence(t, ['cam_cap', 'cap', 'audit_rights', 'excluded_categories']);
         if (ev && ev.quote) {
           rows.push(`${it.tenantName}: "${ev.quote}"${ev.page != null ? ` (p. ${ev.page})` : ''}`);
-          citations.push({ source: `Lease — ${it.tenantName}`, detail: ev.page != null ? `Page ${ev.page}` : (p ? p.name : null), quote: ev.quote });
+          citations.push({ source: `Lease — ${it.tenantName}`, detail: ev.page != null ? `Page ${ev.page}` : (p ? p.name : null), page: ev.page ?? null, quote: ev.quote, fileUrl: (t.leaseUrl || t.lease_url || null) });
         } else {
           rows.push(`${it.tenantName}: no verbatim clause extracted — reprocess the lease to capture it.`);
         }
@@ -793,7 +801,7 @@ window.AIWorkspace = (() => {
             const snaps = t.fieldEvidence[k]?.snapshots || [];
             const last = snaps[snaps.length - 1];
             if (last && last.quote && terms.some(w => String(last.quote).toLowerCase().includes(w))) {
-              hits.push({ text: `${t.tenant_name} (${p.name}) — lease ${k.replace(/_/g, ' ')}: "${String(last.quote).slice(0, 120)}"`, cite: { source: `Lease — ${t.tenant_name}`, detail: last.page != null ? `Page ${last.page}` : null, quote: last.quote } });
+              hits.push({ text: `${t.tenant_name} (${p.name}) — lease ${k.replace(/_/g, ' ')}: "${String(last.quote).slice(0, 120)}"`, cite: { source: `Lease — ${t.tenant_name}`, detail: last.page != null ? `Page ${last.page}` : null, page: last.page ?? null, quote: last.quote, fileUrl: t.leaseUrl || t.lease_url || null } });
             }
           }
         }
@@ -904,12 +912,28 @@ window.AIWorkspace = (() => {
 
   // ── renderer — the identity rule lives HERE so every answer carries it ────
   function renderAnswerHtml(a) {
-    const cites = (a.citations || []).filter(c => c && (c.source || c.quote)).map(c => `
-      <span class="aiw-cite" title="${_esc(c.quote || '')}">${_esc(c.source)}${c.detail ? ` · ${_esc(c.detail)}` : ''}</span>`).join('');
+    // Phase 24: citations with real evidence (a quote, a page, or a source file)
+    // become interactive — one click opens the Evidence Viewer at that citation.
+    const liveCites = (a.citations || []).filter(c => c && (c.source || c.quote));
+    const evdPayload = liveCites.map(c => ({
+      source: c.source || null, detail: c.detail || null,
+      page: c.page ?? (c.detail && /Page (\d+)/.exec(c.detail) ? Number(RegExp.$1) : null),
+      quote: c.quote || null, fileUrl: c.fileUrl || null, fileName: c.fileName || null,
+      reason: c.reason || null, confidence: c.confidence ?? null,
+    }));
+    const hasEvidence = evdPayload.some(c => c.quote || c.page != null || c.fileUrl);
+    const evdAttr = hasEvidence ? ` data-evd="${_esc(JSON.stringify(evdPayload))}"` : '';
+    const cites = liveCites.map((c, i) => {
+      const label = `${_esc(c.source)}${c.detail ? ` · ${_esc(c.detail)}` : ''}`;
+      const live = evdPayload[i].quote || evdPayload[i].page != null || evdPayload[i].fileUrl;
+      return live
+        ? `<button class="aiw-cite aiw-cite--live" data-idx="${i}" onclick="EvidenceViewer.openFromChip(this)" title="${_esc(c.quote || 'Open the supporting evidence')}">${label} ↗</button>`
+        : `<span class="aiw-cite" title="${_esc(c.quote || '')}">${label}</span>`;
+    }).join('');
     const actions = (a.actions && a.actions.length ? a.actions : [{ label: 'Open Command Center', js: 'showCommandCenter()' }])
       .map(x => `<button class="aiw-action" onclick="${x.js}">${_esc(x.label)}</button>`).join('');
     return `
-      <div class="aiw-answer">
+      <div class="aiw-answer"${evdAttr}>
         ${a.heading ? `<div class="aiw-heading">${_esc(a.heading)}</div>` : ''}
         ${(a.paragraphs || []).map(t => `<p class="aiw-p">${_esc(t)}</p>`).join('')}
         ${cites ? `<div class="aiw-cites">${cites}</div>` : ''}

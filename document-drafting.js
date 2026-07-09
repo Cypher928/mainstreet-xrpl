@@ -271,12 +271,29 @@ window.DocumentDrafting = (() => {
   }
 
   function renderEditableHtml(doc) {
-    const cites = doc.citations.map(c => `<span class="aiw-cite" title="${_esc(c.quote || '')}">${_esc(c.source)}${c.detail ? ` · ${_esc(c.detail)}` : ''}</span>`).join('');
-    return `
+    // Phase 24: drafting citations are interactive too — inspect the evidence
+    // a document was built from before sending it.
+    const payload = doc.citations.map(c => ({
+      source: c.source || null, detail: c.detail || null,
+      page: c.page ?? (c.detail && /Page (\d+)/.exec(c.detail) ? Number(RegExp.$1) : null),
+      quote: c.quote || null, fileUrl: c.fileUrl || null, fileName: c.fileName || null,
+      reason: c.reason || null, confidence: null,
+    }));
+    const hasEvidence = payload.some(c => c.quote || c.page != null || c.fileUrl);
+    const cites = doc.citations.map((c, i) => {
+      const label = `${_esc(c.source)}${c.detail ? ` · ${_esc(c.detail)}` : ''}`;
+      const live = payload[i].quote || payload[i].page != null || payload[i].fileUrl;
+      return (live && typeof window !== 'undefined' && window.EvidenceViewer)
+        ? `<button class="aiw-cite aiw-cite--live" data-idx="${i}" onclick="EvidenceViewer.openFromChip(this)" title="${_esc(c.quote || 'Open the supporting evidence')}">${label} ↗</button>`
+        : `<span class="aiw-cite" title="${_esc(c.quote || '')}">${label}</span>`;
+    }).join('');
+    // data-evd sits on the wrapper so openFromChip's ancestor walk finds it.
+    return `<div class="dft-inner"${hasEvidence ? ` data-evd="${_esc(JSON.stringify(payload))}"` : ''}>
       <div class="dft-status">DRAFT · ${_esc(doc.title)}${doc.propertyName ? ` · ${_esc(doc.propertyName)}` : ''}</div>
       <div class="dft-paper" id="dftPaper" contenteditable="true" spellcheck="true">${_sectionsHtml(doc)}</div>
       ${cites ? `<div class="dft-cites-lbl">Grounded in</div><div class="aiw-cites">${cites}</div>` : ''}
-      <div class="aiw-conf">Confidence ${doc.confidence.pct}% · ${_esc(doc.confidence.basis)} · ${_esc(doc.disclaimer)}</div>`;
+      <div class="aiw-conf">Confidence ${doc.confidence.pct}% · ${_esc(doc.confidence.basis)} · ${_esc(doc.disclaimer)}</div>
+    </div>`;
   }
 
   function renderPrintHtml(doc, editedInnerHtml) {

@@ -2700,6 +2700,14 @@ function openEscrowSourceCitation(reserveId) {
   const reserve = prop && (prop.escrowReserves || []).find(r => r.id === reserveId);
   if (!reserve) return;
 
+  // Phase 24: route into the Interactive Evidence Viewer (document render +
+  // quote highlight) when available; the legacy quote-only modal remains the
+  // fallback so the button never dead-ends.
+  if (window.EvidenceViewer) {
+    const cites = EvidenceViewer.fromReserve(reserve);
+    if (cites.length) { EvidenceViewer.open({ citations: cites, index: 0 }); return; }
+  }
+
   const evidence = reserve.evidence || {};
   const fieldLabels = { reserve_type: 'Reserve Type', current_balance: 'Current Balance', eligible_uses: 'Eligible Uses' };
   const rows = Object.entries(evidence)
@@ -17595,6 +17603,8 @@ function openDraftingStudio(type, context) {
 // Esc closes the drafting modal (and steps out of a running tour) — registered once.
 document.addEventListener('keydown', (e) => {
   if (e.key !== 'Escape') return;
+  const ev = document.getElementById('evidenceViewer');
+  if (ev && ev.style.display === 'flex' && window.EvidenceViewer) { EvidenceViewer.close(); return; }
   const dm = document.getElementById('draftingModal');
   if (dm && dm.style.display === 'flex') { dftClose(); return; }
   if (typeof _tour !== 'undefined' && _tour) tourEnd();
