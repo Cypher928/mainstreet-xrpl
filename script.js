@@ -17490,6 +17490,10 @@ function ccOpenReserves(id) {
 
 let _aiwHistory = [];
 let _aiwContext = null;
+// Phase 23 Stage 2 — deterministic Workspace Context: the current analytical
+// task (scope, last engine, last result set, last trace). Managed entirely by
+// AIWorkspace.answer(); this is just where the session holds it.
+let _aiwWctx = null;
 
 function _aiwHide() {
   const ws = document.getElementById('aiWorkspace');
@@ -17502,9 +17506,13 @@ function openAIWorkspace(context) {
   // Context-aware: called from a property view it scopes itself; a null/absent
   // context means "infer from the active property"; {scope:'portfolio'} forces
   // portfolio-wide. The user can clear property scope from the chip.
+  const _prevPropId = _aiwContext?.propertyId || null;
   _aiwContext = (context && context.scope === 'portfolio') ? null
     : (context && context.propertyId) ? context
     : (activePropId ? { propertyId: activePropId } : null);
+  // Switching property scope starts a fresh analytical task — old result sets
+  // from another property must not silently drive follow-ups here.
+  if ((_aiwContext?.propertyId || null) !== _prevPropId) _aiwWctx = null;
   ['commandCenter', 'portfolioDashboard', 'mainWorkflow'].forEach(id => {
     const el = document.getElementById(id); if (el) el.style.display = 'none';
   });
@@ -17518,16 +17526,26 @@ function openAIWorkspace(context) {
 
 function aiwClose() { _aiwHide(); showCommandCenter(); }
 
-function aiwClearConversation() { _aiwHistory = []; renderAIWorkspace(); }
+function aiwClearConversation() { _aiwHistory = []; _aiwWctx = null; renderAIWorkspace(); }
+
+function aiwClearWctx() { _aiwWctx = null; renderAIWorkspace(); }
 
 function aiwClearContext() { _aiwContext = null; renderAIWorkspace(); }
 
 function renderAIWorkspace() {
   const p = _aiwContext?.propertyId ? _props.find(x => x.id === _aiwContext.propertyId) : null;
   const ctxEl = document.getElementById('aiwContextChip');
-  if (ctxEl) ctxEl.innerHTML = p
-    ? `Asking about <b>${esc(p.name)}</b> <button class="aiw-ctx-clear" onclick="aiwClearContext()" title="Ask about the whole portfolio instead">&times;</button>`
-    : 'Asking about your whole portfolio';
+  if (ctxEl) {
+    // "Currently working in" panel — the whole context, nothing hidden.
+    const items = [
+      `<span class="aiw-ctx-item"><span>Currently working in</span><b>${p ? esc(p.name) : 'Whole portfolio'}</b>${p ? ` <button class="aiw-ctx-clear" onclick="aiwClearContext()" title="Switch to whole-portfolio scope">&times;</button>` : ''}</span>`,
+      _aiwWctx?.engine ? `<span class="aiw-ctx-item"><span>Engine</span><b>${esc(_aiwWctx.engine)}</b></span>` : '',
+      _aiwWctx?.resultSet ? `<span class="aiw-ctx-item"><span>Result set</span><b>${esc(_aiwWctx.resultSet.label)} (${_aiwWctx.resultSet.items.length})</b></span>` : '',
+      (_aiwWctx?.engine || _aiwWctx?.resultSet) ? `<button class="aiw-ctx-clear" onclick="aiwClearWctx()" title="Clear the current analysis context">Clear context</button>` : '',
+      _aiwHistory.length ? `<button class="aiw-ctx-clear" onclick="aiwClearConversation()" title="Clear the conversation and start fresh">New analysis</button>` : '',
+    ].filter(Boolean).join('');
+    ctxEl.innerHTML = `<span class="aiw-ctx-panel">${items}</span>`;
+  }
   const sugEl = document.getElementById('aiwSuggestions');
   if (sugEl) sugEl.innerHTML = AIWorkspace.buildSuggestions(_aiwContext, { props: _props })
     .map(s => `<button class="aiw-chip" data-q="${esc(s)}" onclick="aiwAsk(this.dataset.q)">${esc(s)}</button>`).join('');
@@ -17543,7 +17561,8 @@ function aiwAsk(q) {
   const question = String(q != null ? q : (input ? input.value : '')).trim();
   if (!question) return;
   if (input && q == null) input.value = '';
-  const ans = AIWorkspace.answer({ question, context: _aiwContext, props: _props, acqReviews: _acqReviews });
+  const ans = AIWorkspace.answer({ question, context: _aiwContext, wctx: _aiwWctx, props: _props, acqReviews: _acqReviews });
+  _aiwWctx = ans.context || null;
   _aiwHistory.push({ role: 'user', text: question }, { role: 'ai', html: AIWorkspace.renderAnswerHtml(ans) });
   renderAIWorkspace();
 }

@@ -131,6 +131,183 @@ window.AIWorkspace = (() => {
   const INTENTS = [];
   function registerIntent(def) { INTENTS.push(def); }
 
+  // ── Workspace Context (Phase 23 Stage 2) ──────────────────────────────────
+  // Deterministic context, NOT chat memory: we remember the user's current
+  // analytical task — the property scope, which engine answered last, and the
+  // structured RESULT SET the last answer produced — so follow-ups reuse that
+  // exact set instead of re-searching the portfolio. It expires naturally:
+  // every fresh (non-follow-up) answer replaces it; clearing the workspace
+  // clears it. Everything is visible via the context panel and the trace.
+
+  const ENGINE_LABELS = {
+    cam_caps: 'Lease Review Engine', audit_rights: 'Lease Review Engine',
+    expirations: 'Lease Review Engine', knowledge_search: 'Lease Review Engine',
+    tenant_charge: 'Reconciliation Engine', explain_recon: 'Reconciliation Engine',
+    compare_costs: 'Reconciliation Engine', forecast: 'Reconciliation Engine',
+    recovered_most: 'Recovery Engine', disputes: 'Dispute Records',
+    reserve_balances: 'Reserve Intelligence Engine', reserve_rules: 'Reserve Intelligence Engine',
+    draw_ready: 'Reserve Intelligence Engine', acquisitions: 'Acquisition Engine',
+    settlements: 'Settlement Records', draft_document: 'Drafting Engine',
+    explain_property: 'Portfolio Records', fallback: 'None (honest fallback)',
+    followup_filter: 'Workspace Context', followup_draft: 'Drafting Engine',
+    followup_evidence: 'Lease Review Engine', followup_open: 'Workspace Context',
+    followup_why: 'Reasoning Trace',
+  };
+
+  const INTENT_SOURCES = {
+    cam_caps: ['extracted lease terms', 'lease fieldEvidence (quotes + pages)'],
+    audit_rights: ['extracted lease terms', 'lease fieldEvidence (quotes + pages)'],
+    expirations: ['lease end dates on file'],
+    tenant_charge: ['reconciliation snapshot', 'lease terms', 'ReconciliationExplainer'],
+    explain_recon: ['reconciliation snapshot'],
+    disputes: ['dispute records'],
+    compare_costs: ['invoice records'],
+    recovered_most: ['computeRecoveredRevenue'],
+    reserve_balances: ['lender-stated balances', 'draw records'],
+    reserve_rules: ['extracted reserve terms', 'reserve narrative'],
+    draw_ready: ['draw validation checklist', 'escrow readiness'],
+    acquisitions: ['acquisition analysis'],
+    settlements: ['settlement records', 'reconciliation state'],
+    forecast: ['reconciliation history (camRuns)'],
+    knowledge_search: ['extracted evidence quotes', 'excluded categories', 'reserve terms', 'dispute reasons'],
+    draft_document: ['drafting engine (evidence-grounded)'],
+    explain_property: ['property records', 'portfolio KPIs'],
+    fallback: [],
+  };
+
+  function _findItem(it, props) {
+    const p = props.find(x => x.id === it.propertyId);
+    const t = p ? (p.tenants || []).find(x => x && (x.id === it.tenantId || x.tenant_name === it.tenantName)) : null;
+    const r = p ? ((_recon(p)?.results) || []).find(x => x.tenantName === it.tenantName) : null;
+    return { p, t, r };
+  }
+
+  // Follow-up pre-pass: runs BEFORE normal routing when the question refers
+  // back to the current context. Each returns an answer object or null.
+  const FOLLOWUP_FILTERS = [
+    { re: /reduc|cap applied|capped|saving/, label: 'whose cap reduced recoveries',
+      pred: ({ r }) => !!(r && r.capApplied && (parseFloat(r.capAdjustment) || 0) > 0),
+      line: ({ it, r }) => `${it.tenantName} — cap reduced billing by ${_fmt$(r.capAdjustment)}` },
+    { re: /expired/, label: 'with expired leases',
+      pred: ({ t }, today) => !!(t && t.end_date && t.end_date < today),
+      line: ({ it, t }) => `${it.tenantName} — lease expired ${t.end_date}` },
+    { re: /no cap|missing cap|without.*cap/, label: 'missing a CAM cap',
+      pred: ({ t }) => !!(t && /nnn|triple/i.test(String(t.lease_type || '')) && (t.cap == null || t.cap === '')),
+      line: ({ it }) => `${it.tenantName} — NNN lease, no cap on file` },
+    { re: /dispute/, label: 'with open disputes',
+      pred: ({ p, it }) => !!(p && (p.disputes || []).some(dd => dd && dd.tenantName === it.tenantName && dd.status !== 'accepted' && dd.status !== 'resolved' && dd.status !== 'rejected')),
+      line: ({ it }) => `${it.tenantName} — open dispute on file` },
+    { re: /audit/, label: 'with audit rights',
+      pred: ({ t }) => !!(t && t.audit_rights),
+      line: ({ it, t }) => `${it.tenantName} — ${typeof t.audit_rights === 'string' ? t.audit_rights : 'audit rights on file'}` },
+  ];
+
+  function _tryFollowup(q, s, wctx, env) {
+    if (!wctx) return null;
+    const { props, deps } = env;
+    const set = wctx.resultSet;
+    const refersBack = /\b(those|these|them|of those|of these|that list)\b/.test(s) || /^which of\b/.test(s);
+
+    // "Which of those …?" — filter the previous deterministic result set.
+    if (set && set.kind === 'tenants' && set.items.length && refersBack) {
+      const f = FOLLOWUP_FILTERS.find(x => x.re.test(s));
+      if (f) {
+        const today = deps.now.toISOString().slice(0, 10);
+        const kept = set.items
+          .map(it => ({ it, ..._findItem(it, props) }))
+          .filter(row => { try { return f.pred(row, today); } catch (_) { return false; } });
+        return {
+          intent: 'followup_filter',
+          heading: `Of ${set.items.length} — ${kept.length} ${f.label}`,
+          paragraphs: kept.length
+            ? [kept.map(row => f.line(row)).join('; ') + '.']
+            : [`None of the ${set.items.length} in "${set.label}" match that — checked each against the same engines, nothing qualified.`],
+          citations: [],
+          actions: kept.slice(0, 2).map(row => _actOpenProperty(row.p)).filter(Boolean),
+          confidence: { pct: 94, basis: `filtered from "${set.label}"` },
+          resultSet: kept.length ? { kind: 'tenants', label: `${set.label} → ${f.label}`, items: kept.map(row => row.it) } : set,
+          _reused: set.label,
+        };
+      }
+    }
+
+    // "Generate recovery letters" — draft for the tenants already selected.
+    if (set && set.kind === 'tenants' && set.items.length && /(generate|draft|write)\b/.test(s) && /(letter|explanation)s?\b/.test(s)) {
+      const type = /explanation/.test(s) ? 'tenantCamExplanation' : 'recoveryLetter';
+      const label = type === 'recoveryLetter' ? 'Recovery Letter' : 'CAM Explanation';
+      return {
+        intent: 'followup_draft',
+        heading: `Draft ${label.toLowerCase()}s for ${set.items.length} tenant${set.items.length !== 1 ? 's' : ''}`,
+        paragraphs: [`Using your current selection — "${set.label}" — no re-searching needed. Each draft is assembled from that tenant's reconciliation results and lease citations, for you to review and send.`],
+        citations: [],
+        actions: set.items.slice(0, 3).map(it => ({
+          label: `Draft for ${it.tenantName}`,
+          js: `openDraftingStudio('${type}', {propertyId:'${it.propertyId}', tenantId:'${it.tenantId}'})`,
+        })),
+        confidence: { pct: 95, basis: 'drafting engine + current result set' },
+        resultSet: set, _reused: set.label,
+      };
+    }
+
+    // "Show supporting lease language" — surface the verbatim evidence for the set.
+    if (set && set.kind === 'tenants' && set.items.length && /(lease language|supporting (language|evidence|clauses?)|show .*clauses?)/.test(s)) {
+      const rows = [], citations = [];
+      for (const it of set.items.slice(0, 5)) {
+        const { p, t } = _findItem(it, props);
+        if (!t) continue;
+        const ev = _tenantEvidence(t, ['cam_cap', 'cap', 'audit_rights', 'excluded_categories']);
+        if (ev && ev.quote) {
+          rows.push(`${it.tenantName}: "${ev.quote}"${ev.page != null ? ` (p. ${ev.page})` : ''}`);
+          citations.push({ source: `Lease — ${it.tenantName}`, detail: ev.page != null ? `Page ${ev.page}` : (p ? p.name : null), quote: ev.quote });
+        } else {
+          rows.push(`${it.tenantName}: no verbatim clause extracted — reprocess the lease to capture it.`);
+        }
+      }
+      return {
+        intent: 'followup_evidence',
+        heading: `Lease language for "${set.label}"`,
+        paragraphs: [rows.join(' · ')],
+        citations, actions: [],
+        confidence: { pct: 92, basis: 'lease fieldEvidence (verbatim quotes)' },
+        resultSet: set, _reused: set.label,
+      };
+    }
+
+    // "Open the reconciliation / property / lease" — navigate with current scope.
+    if (/(open|go to)\b.*(reconciliation|property|lease)/.test(s)) {
+      const pid = wctx.propertyId || (set && set.items && set.items[0] && set.items[0].propertyId);
+      const p = props.find(x => x.id === pid);
+      if (p) {
+        return {
+          intent: 'followup_open',
+          heading: `Opening ${p.name}`,
+          paragraphs: [`Taking you to ${p.name}${/reconciliation/.test(s) ? "'s reconciliation" : ''} — your context stays active here.`],
+          citations: [], actions: [_actOpenProperty(p)],
+          confidence: { pct: 98, basis: 'workspace context' },
+          resultSet: set || null, _reused: set ? set.label : null,
+        };
+      }
+    }
+
+    // "Why?" — explain how the LAST answer was derived, from its stored trace.
+    if (/^(why|how)\b[\s\S]{0,25}\??$/.test(s.trim()) && wctx.lastTrace) {
+      const tr = wctx.lastTrace;
+      return {
+        intent: 'followup_why',
+        heading: 'How I got that answer',
+        paragraphs: [
+          `The previous answer came from the ${tr.engine}, scoped to ${tr.property}. Sources consulted: ${tr.sources.length ? tr.sources.join('; ') : 'none — it was an honest fallback'}. ${tr.citationsUsed ? `${tr.citationsUsed} citation${tr.citationsUsed !== 1 ? 's were' : ' was'} attached — verbatim quotes and page references you can check against the source documents.` : 'No citations were needed for that answer.'}${tr.reusedResultSet ? ` It reused your current selection ("${tr.reusedResultSet}") instead of re-searching.` : ''}`,
+          'Every answer is deterministic: the same question over the same data always produces the same result — nothing is generated from outside your portfolio.',
+        ],
+        citations: [], actions: [],
+        confidence: { pct: 100, basis: 'reasoning trace of the previous answer' },
+        resultSet: set || null, _reused: null,
+      };
+    }
+
+    return null;
+  }
+
   // 0) Document drafting (Phase 23) — verb-gated so it can't swallow other
   // intents; routes into the Drafting Studio, which assembles the document
   // deterministically from evidence already on file.
@@ -167,12 +344,13 @@ window.AIWorkspace = (() => {
     match: (s) => /cam cap|expense cap|caps\b/.test(s) && !/reserve|readiness/.test(s),
     handle: (q, ctx, { props }) => {
       const scoped = _scopedProps(ctx, props);
-      const withCap = [], withoutCap = [], citations = [];
+      const withCap = [], withoutCap = [], citations = [], items = [];
       for (const p of scoped) {
         for (const t of (p.tenants || []).filter(Boolean)) {
           if (t.cap != null && t.cap !== '') {
             withCap.push(`${t.tenant_name} (${p.name}) — ${t.cap}% annual cap${t.capBaseAmount ? ` on a ${_fmt$(t.capBaseAmount)} base` : ''}`);
             citations.push(_leaseCitation(p, t, ['cam_cap', 'cap']));
+            items.push({ propertyId: p.id, propertyName: p.name, tenantId: t.id, tenantName: t.tenant_name });
           } else if (/nnn|triple/i.test(String(t.lease_type || ''))) {
             withoutCap.push(`${t.tenant_name} (${p.name}) — NNN lease, no cap on file`);
           }
@@ -186,6 +364,7 @@ window.AIWorkspace = (() => {
         heading: 'CAM caps on file', paragraphs, citations: citations.slice(0, 4),
         actions: scoped.slice(0, 2).map(_actOpenProperty),
         confidence: { pct: 92, basis: 'extracted lease terms' },
+        resultSet: items.length ? { kind: 'tenants', label: 'Tenants with CAM caps', items } : null,
       };
     },
   });
@@ -196,16 +375,18 @@ window.AIWorkspace = (() => {
     match: (s) => /audit right/.test(s),
     handle: (q, ctx, { props }) => {
       const scoped = _scopedProps(ctx, props);
-      const rows = [], citations = [];
+      const rows = [], citations = [], items = [];
       for (const p of scoped) {
         for (const t of (p.tenants || []).filter(Boolean)) {
           if (t.audit_rights) {
             rows.push(`${t.tenant_name} (${p.name}) — ${typeof t.audit_rights === 'string' ? t.audit_rights : 'audit rights on file'}`);
             citations.push(_leaseCitation(p, t, ['audit_rights']));
+            items.push({ propertyId: p.id, propertyName: p.name, tenantId: t.id, tenantName: t.tenant_name });
           }
         }
       }
       return {
+        resultSet: items.length ? { kind: 'tenants', label: 'Tenants with audit rights', items } : null,
         heading: 'Tenants with audit rights',
         paragraphs: rows.length
           ? [`${rows.length} tenant${rows.length !== 1 ? 's have' : ' has'} audit rights: ${rows.join('; ')}.`,
@@ -228,17 +409,19 @@ window.AIWorkspace = (() => {
       const yearMatch = q.match(/(20\d{2})/);
       const nextYear = /next year/.test(q.toLowerCase()) ? deps.now.getFullYear() + 1 : null;
       const targetYear = yearMatch ? Number(yearMatch[1]) : nextYear;
-      const rows = [];
+      const rows = [], items = [];
       for (const p of scoped) {
         for (const t of (p.tenants || []).filter(x => x && x.end_date)) {
           const inYear = targetYear ? t.end_date.startsWith(String(targetYear)) : true;
           if (!inYear) continue;
           const expired = t.end_date < today;
           rows.push({ line: `${t.tenant_name} (${p.name}) — ${expired ? 'EXPIRED ' : ''}${t.end_date} · ${Number(t.leased_sqft || 0).toLocaleString('en-US')} sf`, date: t.end_date });
+          items.push({ propertyId: p.id, propertyName: p.name, tenantId: t.id, tenantName: t.tenant_name });
         }
       }
       rows.sort((a, b) => a.date.localeCompare(b.date));
       return {
+        resultSet: items.length ? { kind: 'tenants', label: targetYear ? `Leases expiring in ${targetYear}` : 'Lease expirations', items } : null,
         heading: targetYear ? `Leases expiring in ${targetYear}` : 'Lease expirations',
         paragraphs: rows.length
           ? [rows.map(r => r.line).join('; ') + '.', 'Expired or near-term leases weaken CAM enforcement — start renewals early to protect recovery terms.']
@@ -656,24 +839,59 @@ window.AIWorkspace = (() => {
 
   // ── public API ─────────────────────────────────────────────────────────────
 
-  function answer({ question, context, props, acqReviews, deps } = {}) {
+  function answer({ question, context, wctx, props, acqReviews, deps } = {}) {
     const d = { ..._defaultDeps(), ...(deps || {}) };
     const q = String(question || '').trim();
     const safeProps = Array.isArray(props) ? props.filter(Boolean) : [];
     const env = { props: safeProps, acqReviews: acqReviews || [], deps: d };
     const s = q.toLowerCase();
 
-    let result = null, intentId = 'fallback';
-    for (const intent of INTENTS) {
-      let m = false;
-      try { m = intent.match(s, context, env); } catch (_) { m = false; }
-      if (!m) continue;
-      try { result = intent.handle(q, context, env); } catch (_) { result = null; }
-      if (result) { intentId = intent.id; break; }
+    // Follow-up pre-pass: reuse the current deterministic result set when the
+    // question refers back to it ("which of those…", "generate letters", "why?").
+    let result = null, intentId = 'fallback', isFollowup = false;
+    try { result = _tryFollowup(q, s, wctx || null, env); } catch (_) { result = null; }
+    if (result) { intentId = result.intent; isFollowup = true; }
+
+    if (!result) {
+      for (const intent of INTENTS) {
+        let m = false;
+        try { m = intent.match(s, context, env); } catch (_) { m = false; }
+        if (!m) continue;
+        try { result = intent.handle(q, context, env); } catch (_) { result = null; }
+        if (result) { intentId = intent.id; break; }
+      }
     }
     if (!result) result = FALLBACK.handle(q, context, env);
 
-    return { intent: intentId, question: q, ...result };
+    // ── Reasoning trace — the deterministic trail of how this answer was made.
+    const scopedProp = _ctxProperty(context, safeProps);
+    const trace = {
+      intent: intentId,
+      engine: ENGINE_LABELS[intentId] || 'Portfolio Records',
+      property: scopedProp ? scopedProp.name : (wctx && wctx.propertyName && isFollowup ? wctx.propertyName : 'portfolio-wide'),
+      sources: INTENT_SOURCES[intentId] || (isFollowup ? ['workspace context (previous result set)'] : []),
+      citationsUsed: (result.citations || []).filter(c => c && (c.quote || c.detail)).length,
+      reusedResultSet: result._reused || null,
+      resultSetProduced: result.resultSet ? `${result.resultSet.label} (${result.resultSet.items.length})` : null,
+    };
+
+    // ── Next Workspace Context — natural expiry: a fresh answer replaces the
+    // result set (with its own, or with nothing on a topic change); follow-ups
+    // and the honest fallback preserve it.
+    const keepSet = isFollowup || intentId === 'fallback';
+    const nextWctx = {
+      propertyId:   scopedProp ? scopedProp.id : (wctx ? wctx.propertyId : null) || null,
+      propertyName: scopedProp ? scopedProp.name : (wctx ? wctx.propertyName : null) || null,
+      engine:       trace.engine,
+      intent:       intentId,
+      resultSet:    result.resultSet || (keepSet && wctx ? wctx.resultSet : null) || null,
+      lastTrace:    trace,
+      updatedAt:    d.now.toISOString(),
+    };
+
+    const out = { intent: intentId, question: q, ...result, trace, context: nextWctx };
+    delete out._reused;
+    return out;
   }
 
   function buildSuggestions(context, { props } = {}) {
@@ -696,6 +914,18 @@ window.AIWorkspace = (() => {
         ${(a.paragraphs || []).map(t => `<p class="aiw-p">${_esc(t)}</p>`).join('')}
         ${cites ? `<div class="aiw-cites">${cites}</div>` : ''}
         ${a.confidence ? `<div class="aiw-conf">Confidence ${a.confidence.pct}% · ${_esc(a.confidence.basis)}</div>` : ''}
+        ${a.trace ? `<div class="aiw-from">Answer generated from: <b>${_esc(a.trace.engine)}</b> · ${_esc(a.trace.property)}${a.trace.resultSetProduced ? ` · ${_esc(a.trace.resultSetProduced)}` : ''}${a.trace.reusedResultSet ? ` · reused “${_esc(a.trace.reusedResultSet)}”` : ''}</div>
+        <details class="aiw-trace"><summary>Reasoning trace</summary>
+          <div class="aiw-trace-rows">
+            <div><span>Engine</span><b>${_esc(a.trace.engine)}</b></div>
+            <div><span>Intent</span><b>${_esc(a.trace.intent)}</b></div>
+            <div><span>Scope</span><b>${_esc(a.trace.property)}</b></div>
+            <div><span>Sources consulted</span><b>${_esc(a.trace.sources.join('; ') || '—')}</b></div>
+            <div><span>Citations attached</span><b>${a.trace.citationsUsed}</b></div>
+            <div><span>Result set reused</span><b>${_esc(a.trace.reusedResultSet || '—')}</b></div>
+            <div><span>Result set produced</span><b>${_esc(a.trace.resultSetProduced || '—')}</b></div>
+          </div>
+        </details>` : ''}
         <div class="aiw-next">What would you like to do next?</div>
         <div class="aiw-actions">${actions}</div>
       </div>`;
