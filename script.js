@@ -17559,7 +17559,12 @@ function renderAIWorkspace() {
     .map(s => `<button class="aiw-chip" data-q="${esc(s)}" onclick="aiwAsk(this.dataset.q)">${esc(s)}</button>`).join('');
   const msgEl = document.getElementById('aiwMessages');
   if (msgEl) {
-    msgEl.innerHTML = _aiwHistory.map(m => m.role === 'user' ? `<div class="aiw-user">${esc(m.text)}</div>` : m.html).join('');
+    // First-time friction (Phase 25): an empty conversation gets a gentle
+    // starter instead of blank space — tap a suggestion or just type.
+    msgEl.innerHTML = _aiwHistory.length
+      ? _aiwHistory.map(m => m.role === 'user' ? `<div class="aiw-user">${esc(m.text)}</div>` : m.html).join('')
+      : `<div class="aiw-starter">Tap a suggestion above, or just type a question — plain English works.
+         Every answer comes from your own documents, shows its evidence, and ends with the next step you can take.</div>`;
     msgEl.scrollTop = msgEl.scrollHeight;
   }
 }

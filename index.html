@@ -5331,6 +5331,11 @@
   .aiw-answer { align-self: flex-start; background: #111827; border: 1px solid rgba(255,255,255,0.08); border-left: 3px solid #C9973A; border-radius: 2px 12px 12px 12px; padding: 14px 18px; max-width: 92%; }
   .aiw-heading { font-weight: 700; color: #E2E8F0; margin-bottom: 6px; }
   .aiw-p { color: #CBD5E1; font-size: 0.88rem; line-height: 1.6; margin: 6px 0; }
+  .aiw-bullets { margin: 8px 0; padding: 0; list-style: none; display: flex; flex-direction: column; gap: 6px; }
+  .aiw-bullets li { background: #0b1220; border: 1px solid rgba(255,255,255,0.07); border-left: 3px solid rgba(201,151,58,0.5); border-radius: 8px; padding: 8px 12px; color: #CBD5E1; font-size: 0.84rem; line-height: 1.5; }
+  .aiw-cite { cursor: default; }   /* plain citations are labels, not buttons (Phase 25 dead-click audit) */
+  .aiw-cite--live { cursor: pointer; }
+  .aiw-starter { background: #111827; border: 1px dashed rgba(201,151,58,0.35); border-radius: 12px; padding: 14px 18px; color: #94A3B8; font-size: 0.86rem; line-height: 1.6; }
   .aiw-cites { display: flex; flex-wrap: wrap; gap: 6px; margin-top: 10px; }
   .aiw-cite { background: #0b1220; border: 1px solid rgba(125,211,252,0.3); color: #7dd3fc; border-radius: 6px; padding: 3px 8px; font-size: 0.72rem; cursor: help; }
   .aiw-conf { margin-top: 8px; font-size: 0.72rem; color: #64748B; }
@@ -5356,7 +5361,6 @@
   <div class="aiw-nav">
     <span class="cc-nav-brand">✨ AI Workspace</span>
     <span class="cc-nav-links">
-      <button class="cc-nav-link" onclick="aiwClearConversation()" title="Start a fresh conversation">Clear</button>
       <button class="cc-nav-link" onclick="aiwClose()">Command Center</button>
       <button class="cc-nav-link" onclick="document.getElementById('aiWorkspace').style.display='none'; ccShowPortfolio();">Portfolio</button>
     </span>
@@ -5372,7 +5376,7 @@
   <div id="aiwSuggestions" class="aiw-chips"></div>
   <div id="aiwMessages" class="aiw-messages"></div>
   <div class="aiw-inputrow">
-    <input id="aiwInput" class="aiw-input" placeholder="Ask about leases, CAM, reserves, disputes, settlements…" onkeydown="aiwKey(event)">
+    <input id="aiwInput" class="aiw-input" placeholder="Ask anything — “who owes the most CAM?”, “show my rent roll”, “where do I find reserves?”" onkeydown="aiwKey(event)">
     <button class="cc-action-btn" onclick="aiwAsk()">Ask</button>
   </div>
 </div>

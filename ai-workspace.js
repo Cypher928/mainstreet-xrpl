@@ -365,11 +365,12 @@ window.AIWorkspace = (() => {
         }
       }
       const paragraphs = [];
-      if (withCap.length) paragraphs.push(`${withCap.length} lease${withCap.length !== 1 ? 's carry' : ' carries'} a CAM cap: ${withCap.join('; ')}.`);
-      if (withoutCap.length) paragraphs.push(`⚠ ${withoutCap.join('; ')}. Until a cap is confirmed, MainStreet can't verify these tenants aren't being overcharged.`);
+      const bullets = [...withCap, ...withoutCap.map(w => `⚠ ${w}`)];
+      if (withCap.length) paragraphs.push(`${withCap.length} lease${withCap.length !== 1 ? 's carry' : ' carries'} a CAM cap.`);
+      if (withoutCap.length) paragraphs.push(`Until a cap is confirmed, MainStreet can't verify the flagged tenants aren't being overcharged.`);
       if (!withCap.length && !withoutCap.length) paragraphs.push('No CAM caps are on file for this scope — upload leases so cap terms can be extracted and enforced.');
       return {
-        heading: 'CAM caps on file', paragraphs, citations: citations.slice(0, 4),
+        heading: 'CAM caps on file', paragraphs, bullets, citations: citations.slice(0, 4),
         actions: scoped.slice(0, 2).map(_actOpenProperty),
         confidence: { pct: 92, basis: 'extracted lease terms' },
         resultSet: items.length ? { kind: 'tenants', label: 'Tenants with CAM caps', items } : null,
@@ -410,7 +411,7 @@ window.AIWorkspace = (() => {
   // 3) Lease expirations
   registerIntent({
     id: 'expirations',
-    match: (s) => /expir/.test(s) && /lease|tenant|next year|this year|soon/.test(s),
+    match: (s) => (/expir/.test(s) && /lease|tenant|next year|this year|soon/.test(s)) || /renewal|renewals|rollover/.test(s),
     handle: (q, ctx, { props, deps }) => {
       const scoped = _scopedProps(ctx, props);
       const today = deps.now.toISOString().slice(0, 10);
@@ -431,8 +432,9 @@ window.AIWorkspace = (() => {
       return {
         resultSet: items.length ? { kind: 'tenants', label: targetYear ? `Leases expiring in ${targetYear}` : 'Lease expirations', items } : null,
         heading: targetYear ? `Leases expiring in ${targetYear}` : 'Lease expirations',
+        bullets: rows.map(r => r.line),
         paragraphs: rows.length
-          ? [rows.map(r => r.line).join('; ') + '.', 'Expired or near-term leases weaken CAM enforcement — start renewals early to protect recovery terms.']
+          ? ['Expired or near-term leases weaken CAM enforcement — start renewals early to protect recovery terms.']
           : ['No lease expirations found for that scope.'],
         citations: [], actions: scoped.slice(0, 2).map(_actOpenProperty),
         confidence: { pct: 95, basis: 'lease end dates on file' },
@@ -519,11 +521,11 @@ window.AIWorkspace = (() => {
         }
       }
       const paragraphs = [];
-      if (open.length) paragraphs.push(`${open.length} dispute${open.length !== 1 ? 's need' : ' needs'} a decision: ${open.join('; ')}. Each holds its charge in limbo until you respond.`);
+      if (open.length) paragraphs.push(`${open.length} dispute${open.length !== 1 ? 's need' : ' needs'} a decision — each holds its charge in limbo until you respond.`);
       else paragraphs.push('No disputes are awaiting a decision.');
       if (resolved.length) paragraphs.push(`Resolved history: ${resolved.join('; ')}.`);
       return {
-        heading: 'Dispute status', paragraphs, citations: citations.slice(0, 4),
+        heading: 'Dispute status', paragraphs, bullets: open, citations: citations.slice(0, 4),
         actions: scoped.slice(0, 2).map(_actOpenProperty),
         confidence: { pct: 95, basis: 'dispute records' },
       };
@@ -550,9 +552,9 @@ window.AIWorkspace = (() => {
       rows.sort((a, b) => b.sum - a.sum);
       return {
         heading: `${cat.charAt(0).toUpperCase() + cat.slice(1)} costs by property`,
+        bullets: rows.map(r => `${r.name}: ${_fmt$(r.sum)}${r.sqft ? ` (${(r.sum / r.sqft).toFixed(2)}/sf)` : ''}`),
         paragraphs: rows.length
-          ? [rows.map(r => `${r.name}: ${_fmt$(r.sum)}${r.sqft ? ` (${(r.sum / r.sqft).toFixed(2)}/sf)` : ''}`).join('; ') + '.',
-             rows.length > 1 ? 'Per-square-foot cost is the comparable number — a high outlier is a re-bid candidate.' : 'Add more properties to compare across the portfolio.']
+          ? [rows.length > 1 ? 'Per-square-foot cost is the comparable number — a high outlier is a re-bid candidate.' : 'Add more properties to compare across the portfolio.']
           : [`No ${cat} invoices are on file yet.`],
         citations: citations.slice(0, 3), actions: rows.slice(0, 2).map(r => _actOpenProperty(props.find(p => p.name === r.name))),
         confidence: { pct: 93, basis: 'invoice records' },
@@ -598,7 +600,8 @@ window.AIWorkspace = (() => {
       }
       return {
         heading: 'Reserve balances',
-        paragraphs: rows.length ? [rows.join('; ') + '.'] : ['No reserve accounts are on file — upload the mortgage or escrow agreement and MainStreet will extract them.'],
+        bullets: rows,
+        paragraphs: rows.length ? [] : ['No reserve accounts are on file — upload the mortgage or escrow agreement and MainStreet will extract them.'],
         citations: citations.slice(0, 3),
         actions: scoped.filter(p => (p.escrowReserves || []).length).slice(0, 2).map(_actReserves),
         confidence: { pct: 92, basis: 'lender-stated balances & draw records' },
@@ -782,6 +785,99 @@ window.AIWorkspace = (() => {
     },
   });
 
+  // 15b) Outstanding / due balances — honest mapping (Phase 25): MainStreet
+  // computes reconciled BILLINGS; payment status lives in the user's accounting
+  // system. The answer says exactly that instead of pretending to be an A/R ledger.
+  registerIntent({
+    id: 'balances',
+    match: (s) => /outstanding|balance due|balances? due|unpaid|remaining balance|amount due|past due|owes? the most|who owes/.test(s),
+    handle: (q, ctx, { props }) => {
+      const scoped = _scopedProps(ctx, props);
+      const rows = [], items = [];
+      for (const p of scoped) {
+        const recon = _recon(p);
+        for (const r of (recon?.results || [])) {
+          const billed = _num(r.totalAllocated) || _num(r.allocated);
+          if (!(billed > 0)) continue;
+          rows.push({ billed, line: `${r.tenantName} (${p.name}) — ${_fmt$(billed)} reconciled ${recon.camYear || ''} CAM share` });
+          const t = (p.tenants || []).find(x => x && x.tenant_name === r.tenantName);
+          items.push({ propertyId: p.id, propertyName: p.name, tenantId: t ? t.id : null, tenantName: r.tenantName });
+        }
+      }
+      rows.sort((a, b) => b.billed - a.billed);
+      return {
+        heading: 'Reconciled CAM billings by tenant',
+        bullets: rows.map(r => r.line),
+        paragraphs: rows.length
+          ? ['These are the reconciled amounts billed to each tenant. MainStreet computes and documents the billings — actual payment status lives in your accounting system, so "paid vs. outstanding" should be confirmed there.']
+          : ['No completed reconciliation on file yet — run the CAM allocation to compute each tenant\'s share.'],
+        citations: scoped.filter(p => (_recon(p)?.results || []).length).slice(0, 2).map(_camReportCitation),
+        actions: scoped.slice(0, 2).map(_actOpenProperty),
+        confidence: { pct: 93, basis: 'reconciliation results (billings, not payment status)' },
+        resultSet: items.length ? { kind: 'tenants', label: 'Tenants with reconciled billings', items } : null,
+      };
+    },
+  });
+
+  // 15c) Rent roll / tenant roster — a clean view of existing lease data.
+  registerIntent({
+    id: 'rent_roll',
+    match: (s) => /rent roll|tenant (list|roster)|list (of )?(my )?tenants|show (me )?(my |the )?tenants/.test(s),
+    handle: (q, ctx, { props, deps }) => {
+      const scoped = _scopedProps(ctx, props);
+      const today = deps.now.toISOString().slice(0, 10);
+      const bullets = [], items = [];
+      for (const p of scoped) {
+        for (const t of (p.tenants || []).filter(Boolean)) {
+          const expired = t.end_date && t.end_date < today;
+          bullets.push(`${t.tenant_name} (${p.name}) — ${Number(t.leased_sqft || 0).toLocaleString('en-US')} sf · ${t.lease_type || 'lease type n/a'} · ${t.cap != null && t.cap !== '' ? t.cap + '% cap' : 'no cap'} · ${expired ? '⚠ expired ' : 'expires '}${t.end_date || 'n/a'}`);
+          items.push({ propertyId: p.id, propertyName: p.name, tenantId: t.id, tenantName: t.tenant_name });
+        }
+      }
+      return {
+        heading: `Rent roll — ${bullets.length} tenant${bullets.length !== 1 ? 's' : ''}`,
+        bullets,
+        paragraphs: bullets.length ? [] : ['No tenants on file yet — upload leases or add tenants to build the rent roll.'],
+        citations: [],
+        actions: scoped.slice(0, 2).map(_actOpenProperty),
+        confidence: { pct: 95, basis: 'lease records on file' },
+        resultSet: items.length ? { kind: 'tenants', label: 'Rent roll', items } : null,
+      };
+    },
+  });
+
+  // 15d) Navigation awareness (Phase 25) — "where do I find …?" gets a real
+  // answer and a button that goes there, never the fallback.
+  const NAV_MAP = [
+    { re: /command center|daily briefing|dashboard|priorities/, label: 'AI Command Center', how: 'Your daily briefing — ranked priorities, portfolio health, and settlement status.', js: () => 'showCommandCenter()' },
+    { re: /reserve|escrow|draw request|reimburse/, label: 'Reserves tab', how: "Open a property and use the Reserves tab — 'Reserve & Loan Documents' holds the mortgage extraction; 'Reserve Requests' is where reimbursements start.", js: (p) => p ? `ccOpenReserves('${p.id}')` : 'ccShowPortfolio()' },
+    { re: /reconcil|cam charges|allocation/, label: 'CAM tab', how: 'Open a property and use the CAM tab to run and review reconciliations.', js: (p) => p ? `ccOpenProperty('${p.id}')` : 'ccShowPortfolio()' },
+    { re: /report|statement|export|lender summary|master report/, label: 'Reports tab', how: 'Open a property and use the Reports tab — landlord, tenant, and lender reports plus CSV exports.', js: (p) => p ? `ccOpenProperty('${p.id}')` : 'ccShowPortfolio()' },
+    { re: /dispute/, label: 'CAM tab → Disputes', how: 'Disputes live with the reconciliation — open the property and review them from the CAM workflow.', js: (p) => p ? `ccOpenProperty('${p.id}')` : 'ccShowPortfolio()' },
+    { re: /settle|rlusd|xrpl|transaction/, label: 'Property overview / Command Center', how: 'Settlement status shows on the property overview and in the Command Center — settled payments link straight to the XRPL explorer.', js: () => 'showCommandCenter()' },
+    { re: /draft|letter|document studio/, label: 'Drafting Studio', how: 'Ask me to generate any letter or package — the Drafting Studio opens with an editable, evidence-grounded draft.', js: () => null },
+    { re: /tour|walkthrough|guide/, label: 'Guided Tour', how: 'A two-minute walkthrough of the whole platform.', js: () => 'startGuidedTour()' },
+    { re: /upload|lease file|mortgage document|invoice file/, label: 'Property workspace', how: 'Open a property — leases upload in the Leases step, invoices in the Invoices step, and mortgage documents under Reserves.', js: (p) => p ? `ccOpenProperty('${p.id}')` : 'ccShowPortfolio()' },
+  ];
+  registerIntent({
+    id: 'navigation',
+    match: (s) => /(where (is|are|do i|can i)|how do i (find|open|get to|see|start|run)|where do i)/.test(s) && NAV_MAP.some(n => n.re.test(s)),
+    handle: (q, ctx, { props }) => {
+      const s = q.toLowerCase();
+      const hit = NAV_MAP.find(n => n.re.test(s));
+      if (!hit) return null;
+      const p = _ctxProperty(ctx, props) || props[0] || null;
+      const js = hit.js(p);
+      return {
+        heading: `That's in the ${hit.label}`,
+        paragraphs: [hit.how],
+        citations: [],
+        actions: js ? [{ label: `Take me there`, js }] : [{ label: 'Generate a document', js: `aiwAsk('Generate a recovery letter')` }],
+        confidence: { pct: 98, basis: 'application navigation' },
+      };
+    },
+  });
+
   // 16) Generic knowledge search across extracted evidence (last resort before fallback)
   registerIntent({
     id: 'knowledge_search',
@@ -823,7 +919,8 @@ window.AIWorkspace = (() => {
       }
       return {
         heading: `Found ${hits.length} match${hits.length !== 1 ? 'es' : ''} in your documents`,
-        paragraphs: [hits.slice(0, 5).map(h => h.text).join(' · ')],
+        bullets: hits.slice(0, 5).map(h => h.text),
+        paragraphs: [],
         citations: hits.slice(0, 4).map(h => h.cite).filter(Boolean),
         actions: scoped.slice(0, 2).map(_actOpenProperty),
         confidence: { pct: 88, basis: 'extracted evidence (quotes & citations)' },
@@ -906,7 +1003,7 @@ window.AIWorkspace = (() => {
     const p = context && context.propertyId && Array.isArray(props) ? props.find(x => x.id === context.propertyId) : null;
     const base = p
       ? [`Explain ${p.name}'s reconciliation`, `Which tenants at ${p.name} have CAM caps?`, 'Why isn\'t this draw ready?', 'Show reserve balances', 'Show settlement status', 'Which leases expire next year?']
-      : ['Find every CAM cap', 'Which leases expire next year?', 'Show unresolved disputes', 'Compare insurance costs', 'Which property recovered the most revenue?', 'Show reserve balances', 'Which reconciliations are ready for RLUSD settlement?', 'Generate a recovery letter'];
+      : ['Who owes the most CAM this year?', 'Show my rent roll', 'Which leases expire next year?', 'Show unresolved disputes', 'Find every CAM cap', 'Show reserve balances', 'Which reconciliations are ready for RLUSD settlement?', 'Generate a recovery letter'];
     return base;
   }
 
@@ -930,11 +1027,18 @@ window.AIWorkspace = (() => {
         ? `<button class="aiw-cite aiw-cite--live" data-idx="${i}" onclick="EvidenceViewer.openFromChip(this)" title="${_esc(c.quote || 'Open the supporting evidence')}">${label} ↗</button>`
         : `<span class="aiw-cite" title="${_esc(c.quote || '')}">${label}</span>`;
     }).join('');
-    const actions = (a.actions && a.actions.length ? a.actions : [{ label: 'Open Command Center', js: 'showCommandCenter()' }])
+    // Phase 25: whenever real evidence exists, offer it as a first-class action —
+    // the button clicks the first live citation chip (no payload duplication).
+    const baseActions = (a.actions && a.actions.length ? a.actions : [{ label: 'Open Command Center', js: 'showCommandCenter()' }]);
+    const withEvidence = hasEvidence
+      ? [{ label: 'Show Evidence', js: "var c=this.closest('.aiw-answer').querySelector('.aiw-cite--live'); if(c) c.click();" }, ...baseActions]
+      : baseActions;
+    const actions = withEvidence
       .map(x => `<button class="aiw-action" onclick="${x.js}">${_esc(x.label)}</button>`).join('');
     return `
       <div class="aiw-answer"${evdAttr}>
         ${a.heading ? `<div class="aiw-heading">${_esc(a.heading)}</div>` : ''}
+        ${(a.bullets && a.bullets.length) ? `<ul class="aiw-bullets">${a.bullets.map(b => `<li>${_esc(b)}</li>`).join('')}</ul>` : ''}
         ${(a.paragraphs || []).map(t => `<p class="aiw-p">${_esc(t)}</p>`).join('')}
         ${cites ? `<div class="aiw-cites">${cites}</div>` : ''}
         ${a.confidence ? `<div class="aiw-conf">Confidence ${a.confidence.pct}% · ${_esc(a.confidence.basis)}</div>` : ''}
