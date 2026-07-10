@@ -57,7 +57,18 @@ window.CommandCenter = (() => {
   // ── recommendation builders (each returns rec objects; all data real) ──────
   // Rec shape: { id, priority, propertyId, propertyName, title, reason,
   //              impact (number|null), impactNote, confidence, confidenceBasis,
-  //              evidence: string[], action: {label, js} }
+  //              evidence: string[], nextStep (string|null),
+  //              action: {label, js, soon?}, evidenceAction?: {label, js} }
+  //
+  // Phase 29 (Actionable Command Center): every action deep-links to the exact
+  // item requiring attention — a specific dispute, tenant field, reserve card,
+  // or draw request — never a generic property page. Destinations that don't
+  // exist yet are marked {soon: true} and render disabled, honestly.
+
+  // Embed a value as a JS argument inside a single-quoted onclick handler.
+  const _jsArg = (v) => (typeof v === 'number' && isFinite(v))
+    ? String(v)
+    : `'${String(v).replace(/\\/g, '\\\\').replace(/'/g, "\\'")}'`;
 
   function _recsForProperty(p, meta, readiness, deps) {
     const recs    = [];
@@ -89,7 +100,10 @@ window.CommandCenter = (() => {
           `Dispute — ${d.vendor || d.category || 'charge'} ${_num(d.tenantShare ?? d.amount) ? '(' + _fmt$(d.tenantShare ?? d.amount) + ')' : ''} · ${d.status || 'open'}`),
         connections: (stl && stl.state === 'ready')
           ? [`Resolving this clears the way to settle ${_fmt$(stl.billed)} in RLUSD on XRPL.`] : [],
-        action: { label: 'Review disputes', js: openJs },
+        nextStep: 'Accept, reject, or request documentation — each decision is recorded with an audit hash.',
+        action: (oneDisp && oneDisp.id != null)
+          ? { label: 'Open this dispute',    js: `ccOpenDisputes('${p.id}', ${_jsArg(oneDisp.id)})` }
+          : { label: 'Review open disputes', js: `ccOpenDisputes('${p.id}', null)` },
       });
     }
 
@@ -115,7 +129,14 @@ window.CommandCenter = (() => {
         evidence: expired.slice(0, 3).map(t => `Lease — ${t.tenant_name} · expired ${t.end_date} · ${Number(t.leased_sqft || 0).toLocaleString('en-US')} sf`),
         connections: atRisk > 0
           ? [`Also affects CAM: ${_fmt$(atRisk)} of this year's allocations rest on expired lease terms.`] : [],
-        action: { label: 'Review leases', js: openJs },
+        nextStep: 'Confirm the end date against the lease document, then start the renewal or holdover conversation.',
+        action: (() => {
+          const firstExp = expired.find(t => t && t.id);
+          return firstExp
+            ? { label: expired.length === 1 ? 'Open lease review' : `Start with ${firstExp.tenant_name}`,
+                js: `ccOpenLeaseReview('${p.id}', ${_jsArg(firstExp.id)}, 'end_date')` }
+            : { label: 'Open review queue', js: `ccOpenReviewQueue('${p.id}')` };
+        })(),
       });
     }
 
@@ -138,7 +159,14 @@ window.CommandCenter = (() => {
         evidence: missingCap.slice(0, 3).map(t => `Lease — ${t.tenant_name} (NNN, no cap on file)`),
         connections: (recon?.results || []).length
           ? ['CAM impact: these allocations cannot be cap-validated until terms are on file.'] : [],
-        action: { label: 'Review lease & confirm CAM cap', js: openJs },
+        nextStep: 'Verify the CAM cap against the lease document — or enter it manually if the extraction missed it.',
+        action: (() => {
+          const firstCap = missingCap.find(t => t && t.id);
+          return firstCap
+            ? { label: missingCap.length === 1 ? 'Review lease — CAM cap field' : `Start with ${firstCap.tenant_name}'s cap`,
+                js: `ccOpenLeaseReview('${p.id}', ${_jsArg(firstCap.id)}, 'cap')` }
+            : { label: 'Open review queue', js: `ccOpenReviewQueue('${p.id}')` };
+        })(),
       });
     }
 
@@ -155,7 +183,8 @@ window.CommandCenter = (() => {
         impact: delta, impactNote: delta ? 'YoY increase' : null,
         confidence: 88, confidenceBasis: 'reconciliation history',
         evidence: (curr && prev) ? [`CAM ${prev.camYear}: ${_fmt$(prev.totalExpenses)} → ${curr.camYear}: ${_fmt$(curr.totalExpenses)}`] : [],
-        action: { label: 'Review expenses', js: openJs },
+        nextStep: "Compare this year's invoices to last year's — look for one-time charges and vendor price increases.",
+        action: { label: 'Review expense breakdown', js: `ccOpenExpenses('${p.id}')` },
       });
     }
 
@@ -173,7 +202,8 @@ window.CommandCenter = (() => {
         impact: gap$, impactNote: 'absorbed by ownership per year',
         confidence: 90, confidenceBasis: 'allocation results',
         evidence: [`${_fmt$(pool)} in CAM costs × ${gapPct.toFixed(1)}% with no tenant to bill`],
-        action: { label: 'Review vacancy & leasing', js: openJs },
+        nextStep: 'Confirm which space is vacant or unbilled in the allocation results, then price the leasing opportunity.',
+        action: { label: 'See unbilled share in results', js: `ccOpenAllocationResults('${p.id}')` },
       });
     }
 
@@ -187,7 +217,9 @@ window.CommandCenter = (() => {
         reason: "Confirming these leases means every tenant's bill can be defended against an audit — and keeps AI-read terms from silently driving real charges.",
         impact: null, impactNote: null,
         confidence: 85, confidenceBasis: 'review engine flags',
-        evidence: [], action: { label: 'Verify lease data', js: openJs },
+        evidence: [],
+        nextStep: 'Work the queue top-down — verify or correct each flagged field, then mark it reviewed.',
+        action: { label: 'Open review queue', js: `ccOpenReviewQueue('${p.id}')` },
       });
     }
 
@@ -200,7 +232,9 @@ window.CommandCenter = (() => {
         reason: `${tenants.length} leases and ${(p.invoices || []).length} invoices are in. Running the reconciliation shows each tenant's share and surfaces any recoverable dollars.`,
         impact: null, impactNote: null,
         confidence: 95, confidenceBasis: 'workflow state',
-        evidence: [], action: { label: 'Run reconciliation', js: openJs },
+        evidence: [],
+        nextStep: 'Run the allocation — results appear per tenant with caps and exclusions applied.',
+        action: { label: 'Run reconciliation', js: `ccRunReconciliation('${p.id}')` },
       });
     }
 
@@ -230,9 +264,14 @@ window.CommandCenter = (() => {
     const reserves = Array.isArray(p.escrowReserves) ? p.escrowReserves.filter(Boolean) : [];
     const draws    = Array.isArray(p.drawRequests)   ? p.drawRequests.filter(Boolean)   : [];
     const recs = [];
-    const openJs = `ccOpenReserves('${p.id}')`;
 
     for (const r of reserves) {
+      // Citation → Evidence Viewer: reserves extracted from documents carry
+      // verbatim quotes; surface them directly on the recommendation card.
+      const hasCitation = !!(r.evidence && Object.values(r.evidence).some(ev => ev && ev.quote));
+      const citeAction = hasCitation
+        ? { label: 'View source citation', js: `ccOpenReserveCitation('${p.id}', ${_jsArg(r.id)})` }
+        : null;
       for (const dr of draws.filter(x => x.reserveId === r.id && x.status === 'draft')) {
         const rd  = EE.computeEscrowReadiness(r, dr, draws);
         const amt = _num(dr.amountRequested);
@@ -245,7 +284,9 @@ window.CommandCenter = (() => {
             confidence: 95, confidenceBasis: 'draw validation checklist',
             evidence: rd.items.filter(i => i.met).slice(0, 4).map(i => `✓ ${i.label}`),
             connections: [`Cash-flow impact: funding returns ${_fmt$(amt)} to the property.`],
-            action: { label: 'Generate lender package', js: openJs },
+            nextStep: 'Open the draw request and generate the lender package and email — the checklist is complete.',
+            action: { label: 'Generate lender package', js: `ccOpenDraw('${p.id}', ${_jsArg(dr.id)})` },
+            evidenceAction: citeAction,
           });
         } else {
           recs.push({
@@ -255,7 +296,11 @@ window.CommandCenter = (() => {
             impact: amt || null, impactNote: amt ? 'estimated reimbursement' : null,
             confidence: 90, confidenceBasis: 'draw validation checklist',
             evidence: rd.missing.slice(0, 3).map(i => `⚠ ${i.label}`),
-            action: { label: 'Complete draw request', js: openJs },
+            nextStep: rd.missing.length
+              ? `Attach what's missing: ${rd.missing.slice(0, 3).map(i => i.label).join(', ')}${rd.missing.length > 3 ? '…' : ''}.`
+              : 'Complete the remaining checklist items on the draw request.',
+            action: { label: 'Complete draw request', js: `ccOpenDraw('${p.id}', ${_jsArg(dr.id)})` },
+            evidenceAction: citeAction,
           });
         }
       }
@@ -270,7 +315,9 @@ window.CommandCenter = (() => {
             impact: h.shortfall, impactNote: 'funding gap',
             confidence: 88, confidenceBasis: 'reserve balance & planned projects',
             evidence: [`Available ${_fmt$(Math.max(h.availableBalance || 0, 0))} vs planned ${_fmt$(h.upcomingPlannedCost)}`],
-            action: { label: 'Review reserves', js: openJs },
+            nextStep: 'Re-phase the planned work or raise monthly contributions to close the funding gap.',
+            action: { label: 'Review this reserve', js: `ccOpenReserve('${p.id}', ${_jsArg(r.id)})` },
+            evidenceAction: citeAction,
           });
         } else if (typeof EE.projectReserveRunway === 'function') {
           const rw = EE.projectReserveRunway(r, draws, 12, { now: d.now });
@@ -282,7 +329,9 @@ window.CommandCenter = (() => {
               impact: rw.fundingGap || null, impactNote: rw.fundingGap ? 'projected funding gap' : null,
               confidence: 80, confidenceBasis: 'reserve runway projection',
               evidence: [`Starting ${_fmt$(rw.startingBalance)} + ${_fmt$(rw.monthlyContribution)}/mo contributions`],
-              action: { label: 'Review reserves', js: openJs },
+              nextStep: 'Review the contribution rate and upcoming draws on this reserve before it runs dry.',
+              action: { label: 'Review this reserve', js: `ccOpenReserve('${p.id}', ${_jsArg(r.id)})` },
+              evidenceAction: citeAction,
             });
           }
         }
@@ -309,7 +358,10 @@ window.CommandCenter = (() => {
           confidence: 90, confidenceBasis: 'acquisition analysis',
           evidence: [`Acquisition review — ${rev.name || ''}`],
           connections: ['If acquired as-is, this leakage becomes a recurring portfolio priority.'],
-          action: { label: 'Open acquisition review', js: 'ccOpenAcquisitions()' },
+          nextStep: 'Quantify the cap leakage in the decision report before finalizing the bid.',
+          action: rev.id != null
+            ? { label: 'Open this acquisition review', js: `ccOpenAcqReview(${_jsArg(rev.id)})` }
+            : { label: 'Open acquisition reviews',     js: 'ccOpenAcquisitions()' },
         });
       }
     }
@@ -589,15 +641,27 @@ window.CommandCenter = (() => {
     low:    { label: 'Low Priority',    dot: '#4ade80', cls: 'cc-card--low'    },
   };
 
+  // Each card answers, in order: what is the problem (title), why does it
+  // matter (reason + impact), what should I do (nextStep), take me directly
+  // there (action deep-link). Phase 29: actions land on the exact item —
+  // a destination that doesn't exist yet renders disabled as "Coming Soon",
+  // never as a navigation to a generic page.
   function _recCard(r) {
     const pri = PRI[r.priority] || PRI.low;
     const impact = r.impact
       ? `<div class="cc-impact"><span class="cc-impact-num">${_fmt$(r.impact)}</span><span class="cc-impact-note">${_esc(r.impactNote || 'estimated impact')}</span></div>`
       : (r.impactNote ? `<div class="cc-impact"><span class="cc-impact-note">${_esc(r.impactNote)}</span></div>` : '');
+    const next = r.nextStep
+      ? `<div class="cc-next"><span class="cc-next-lbl">Next step</span>${_esc(r.nextStep)}</div>` : '';
     const evid = r.evidence?.length
       ? `<div class="cc-evidence">${r.evidence.map(e => `<span class="cc-evid-chip">${_esc(e)}</span>`).join('')}</div>` : '';
     const conn = r.connections?.length
       ? `<div class="cc-connect">${r.connections.map(c => `<span>↔ ${_esc(c)}</span>`).join('')}</div>` : '';
+    const actionBtn = r.action.soon
+      ? `<button class="cc-action-btn cc-action-btn--soon" disabled title="This destination isn't built yet — the action is shown so you know it's coming.">${_esc(r.action.label)} · Coming Soon</button>`
+      : `<button class="cc-action-btn" onclick="${r.action.js}">${_esc(r.action.label)}</button>`;
+    const evdBtn = r.evidenceAction
+      ? `<button class="cc-evd-btn" onclick="${r.evidenceAction.js}" title="Open the cited document text in the Evidence Viewer">${_esc(r.evidenceAction.label)}</button>` : '';
     return `<div class="cc-card ${pri.cls}">
       <div class="cc-card-top">
         <span class="cc-pri"><span class="cc-dot" style="background:${pri.dot}"></span>${pri.label}</span>
@@ -606,8 +670,8 @@ window.CommandCenter = (() => {
       <div class="cc-card-prop">${_esc(r.propertyName || '')}</div>
       <div class="cc-card-title">${_esc(r.title)}</div>
       <div class="cc-card-reason">${_esc(r.reason)}</div>
-      ${impact}${evid}${conn}
-      <button class="cc-action-btn" onclick="${r.action.js}">${_esc(r.action.label)}</button>
+      ${impact}${next}${evid}${conn}
+      <div class="cc-card-actions">${actionBtn}${evdBtn}</div>
     </div>`;
   }
 

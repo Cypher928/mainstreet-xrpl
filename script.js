@@ -2211,7 +2211,7 @@ function renderEscrowProfile(property) {
       const narrative = Engine.buildReserveNarrative ? Engine.buildReserveNarrative(r) : null;
 
       return `
-      <div class="escrow-reserve-card">
+      <div class="escrow-reserve-card" data-reserve-id="${esc(r.id)}">
         <div class="escrow-reserve-head">
           <strong>${esc(r.reserveTypeLabel)}</strong>
           <span class="escrow-reserve-balance">${fmt(bal.availableBalance)} available</span>
@@ -2274,7 +2274,7 @@ function renderEscrowProfile(property) {
           <span class="escrow-ai-status-sub">${esc(readiness.summary || '')}</span>
         </div>` : '';
       return `
-      <div class="escrow-draw-card">
+      <div class="escrow-draw-card" data-draw-id="${esc(dr.id)}">
         <div class="escrow-draw-head">
           <strong>${dr.drawNumber ? `Draw #${esc(dr.drawNumber)} &mdash; ` : ''}${esc(reserve ? reserve.reserveTypeLabel : 'Reserve')} &mdash; ${fmt(dr.amountRequested)}</strong>
         </div>
@@ -15858,7 +15858,7 @@ function _rwRenderLeaseFields(t) {
       </div>`;
 
     return `
-      <div class="rw-field">
+      <div class="rw-field" data-rw-field="${esc(key)}">
         <div class="rw-field-label">${esc(label)}</div>
         ${valHtml}
         ${confRow}
@@ -17506,6 +17506,156 @@ function ccOpenAcquisitions() {
 function ccOpenReserves(id) {
   ccOpenProperty(id);
   setTimeout(() => { try { switchWorkspaceTab('reserves'); } catch (_) { /* tab unavailable — property view is still correct */ } }, 400);
+}
+
+// ─── Phase 29: Actionable Command Center — deep-link routing ─────────────────
+// Every recommendation lands on the exact item requiring attention, never a
+// generic property page. Pattern: open the property, then poll briefly until
+// the destination element/data exists (selectProperty's load is async), then
+// act — and if the target never materializes, the user is still on the right
+// property tab, one step closer, not on a dead generic view.
+
+// Scroll an element into view and pulse-highlight it so the eye lands on the
+// exact item the recommendation referred to.
+function _ccFlashEl(el) {
+  if (!el) return;
+  el.scrollIntoView({ behavior: 'smooth', block: 'center' });
+  el.classList.add('cc-target-flash');
+  setTimeout(() => el.classList.remove('cc-target-flash'), 2600);
+}
+
+// Poll for a deep-link target after the async property load; give up quietly
+// after ~3s (the property view itself is already the correct fallback).
+function _ccWhenReady(check, act, tries = 12) {
+  const tick = () => {
+    let target = null;
+    try { target = check(); } catch (_) { target = null; }
+    if (target) { act(target); return; }
+    if (--tries > 0) setTimeout(tick, 250);
+  };
+  setTimeout(tick, 300);
+}
+
+// "Review disputes" → CAM tab with the dispute list in view; a single dispute
+// opens straight into its Dispute Workspace.
+function ccOpenDisputes(propId, disputeId) {
+  ccOpenProperty(propId);
+  _ccWhenReady(
+    () => (disputes.length ? document.getElementById('disputeSection') : null),
+    () => {
+      try { switchWorkspaceTab('cam'); } catch (_) {}
+      if (disputeId != null && disputes.some(d => d && d.id === disputeId)) {
+        openDisputeWorkspace(disputeId);
+      } else {
+        _ccFlashEl(document.getElementById('openDisputesWrap') || document.getElementById('disputeSection'));
+      }
+    });
+}
+
+// "Review lease / verify data / confirm CAM cap" → the AI Review Workspace for
+// that tenant, scrolled to the specific field (e.g. 'cap', 'end_date').
+function ccOpenLeaseReview(propId, tenantId, fieldKey) {
+  ccOpenProperty(propId);
+  _ccWhenReady(
+    () => _props.find(p => p.id === propId && (p.tenants || []).some(t => t && t.id === tenantId)),
+    () => {
+      openReviewWorkspace(tenantId);
+      if (fieldKey) {
+        _ccWhenReady(
+          () => document.querySelector(`#reviewWorkspace .rw-field[data-rw-field="${CSS.escape(fieldKey)}"]`),
+          (el) => _ccFlashEl(el), 6);
+      }
+    });
+}
+
+// "Verify lease data" (multiple tenants) → the property Review Queue, expanded.
+function ccOpenReviewQueue(propId) {
+  ccOpenProperty(propId);
+  _ccWhenReady(
+    () => document.getElementById('propertyReviewQueuePanel'),
+    (panel) => {
+      try { switchWorkspaceTab('overview'); } catch (_) {}
+      const details = panel.querySelector('details.rq-prop-details');
+      if (details) details.open = true;
+      _ccFlashEl(panel);
+    });
+}
+
+// "Review expenses" (YoY trend) → CAM tab at the expense/invoice breakdown.
+function ccOpenExpenses(propId) {
+  ccOpenProperty(propId);
+  _ccWhenReady(
+    () => document.getElementById('results') || document.getElementById('cardInvoices'),
+    () => {
+      try { switchWorkspaceTab('cam'); } catch (_) {}
+      const results = document.getElementById('results');
+      const hasResults = results && results.offsetParent !== null;
+      _ccFlashEl(hasResults ? results : document.getElementById('cardInvoices'));
+    });
+}
+
+// "Vacancy / unbilled share" → CAM tab at the allocation results, where the
+// pro-rata coverage gap is visible per tenant.
+function ccOpenAllocationResults(propId) {
+  ccOpenProperty(propId);
+  _ccWhenReady(
+    () => document.getElementById('results') || document.getElementById('runBtn'),
+    () => {
+      try { switchWorkspaceTab('cam'); } catch (_) {}
+      const results = document.getElementById('results');
+      const hasResults = results && results.offsetParent !== null;
+      _ccFlashEl(hasResults ? results : document.getElementById('runBtn'));
+    });
+}
+
+// "Run reconciliation" → CAM tab with the Calculate button highlighted.
+function ccRunReconciliation(propId) {
+  ccOpenProperty(propId);
+  _ccWhenReady(
+    () => document.getElementById('runBtn'),
+    (btn) => { try { switchWorkspaceTab('cam'); } catch (_) {} _ccFlashEl(btn); });
+}
+
+// "Reserve shortfall / runway" → Reserves tab with that reserve's card highlighted.
+function ccOpenReserve(propId, reserveId) {
+  ccOpenProperty(propId);
+  _ccWhenReady(
+    () => document.querySelector(`.escrow-reserve-card[data-reserve-id="${CSS.escape(reserveId)}"]`),
+    (card) => { try { switchWorkspaceTab('reserves'); } catch (_) {} _ccFlashEl(card); });
+}
+
+// "Generate lender package / complete draw" → Reserves tab with that draw
+// request's card highlighted (its Generate Package / status controls live there).
+function ccOpenDraw(propId, drawId) {
+  ccOpenProperty(propId);
+  _ccWhenReady(
+    () => document.querySelector(`.escrow-draw-card[data-draw-id="${CSS.escape(drawId)}"]`),
+    (card) => { try { switchWorkspaceTab('reserves'); } catch (_) {} _ccFlashEl(card); },
+    12);
+}
+
+// Citation on a reserve recommendation → the Evidence Viewer on the cited
+// reserve requirement (falls back to the quote modal inside openEscrowSourceCitation).
+function ccOpenReserveCitation(propId, reserveId) {
+  ccOpenProperty(propId);
+  _ccWhenReady(
+    () => {
+      const prop = _props.find(p => p.id === propId);
+      return prop && (prop.escrowReserves || []).some(r => r && r.id === reserveId) ? prop : null;
+    },
+    () => openEscrowSourceCitation(reserveId));
+}
+
+// Acquisition recommendation → that specific review's detail panel.
+function ccOpenAcqReview(reviewId) {
+  if (_acqReviews.some(r => r && r.id === reviewId)) {
+    const cc = document.getElementById('commandCenter');
+    if (cc) cc.style.display = 'none';
+    _aiwHide();
+    selectAcquisitionReview(reviewId);
+  } else {
+    ccOpenAcquisitions(); // review not loaded — the acquisition section is still the right room
+  }
 }
 
 // ─── Phase 22: AI Workspace (view glue — all intelligence lives in ai-workspace.js) ──
