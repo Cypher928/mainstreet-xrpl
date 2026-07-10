@@ -613,6 +613,41 @@ window.CommandCenter = (() => {
 
   function renderHtml(m) {
     const b = m.briefing;
+
+    // First-run (Phase 26): an empty portfolio gets one clear starting point,
+    // not six empty sections. The demo and Add Property are the two real paths.
+    if (b.totals.properties === 0) {
+      return `
+      <div class="cc-nav">
+        <span class="cc-nav-brand">✨ AI Command Center</span>
+        <span class="cc-nav-links">
+          <button class="cc-nav-link" onclick="startGuidedTour()">▶ Guided Tour</button>
+          <button class="cc-nav-link" onclick="ccShowPortfolio()">Portfolio</button>
+        </span>
+      </div>
+      <div class="cc-brief">
+        <div class="cc-brief-greet">${b.greeting}${b.userName ? `, ${_esc(b.userName)}` : ''}</div>
+        <div class="cc-brief-line">Your briefing starts as soon as there's a property to analyze.</div>
+        <div class="cc-exec">
+          <div class="cc-exec-title">Two ways to begin</div>
+          <p class="cc-exec-p">Add a property and upload its leases and invoices — or open the demo property from the
+          Portfolio to see a completed reconciliation, live recommendations, and an on-ledger RLUSD settlement
+          with sample data.</p>
+        </div>
+      </div>
+      <div class="cc-cards">
+        <div class="cc-card">
+          <div class="cc-card-title">Open the Portfolio</div>
+          <div class="cc-card-reason">Add your first property, or load the demo to explore with realistic data.</div>
+          <button class="cc-action-btn" onclick="ccShowPortfolio()">Go to Portfolio</button>
+        </div>
+        <div class="cc-card">
+          <div class="cc-card-title">Take the 2-minute tour</div>
+          <div class="cc-card-reason">A guided walk through the whole workflow — reconciliation to settlement.</div>
+          <button class="cc-action-btn" onclick="startGuidedTour()">Start Tour</button>
+        </div>
+      </div>`;
+    }
     const name = b.userName ? `, ${_esc(b.userName)}` : '';
     const statLine = [
       `${b.totals.properties} propert${b.totals.properties === 1 ? 'y' : 'ies'}`,
@@ -640,7 +675,7 @@ window.CommandCenter = (() => {
           <span class="cc-opp-amt">${_fmt$(o.amount)}</span></div>`).join('')
       : `<div class="cc-empty">Run a reconciliation to surface identified value.</div>`;
 
-    const healthHtml = m.health.map(h => `<div class="cc-health-card" onclick="ccOpenProperty('${h.propertyId}')">
+    const healthHtml = m.health.map(h => `<div class="cc-health-card" role="button" tabindex="0" aria-label="Open ${_esc(h.propertyName)}" onclick="ccOpenProperty('${h.propertyId}')" onkeydown="if(event.key==='Enter'||event.key===' '){event.preventDefault();this.click();}">
         <div class="cc-health-name">${_esc(h.propertyName)}</div>
         <div class="cc-health-score"><span class="cc-health-num">${h.score}</span><span class="cc-health-den">/ 100</span></div>
         <div class="cc-health-rows">

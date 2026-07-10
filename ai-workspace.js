@@ -397,9 +397,9 @@ window.AIWorkspace = (() => {
       return {
         resultSet: items.length ? { kind: 'tenants', label: 'Tenants with audit rights', items } : null,
         heading: 'Tenants with audit rights',
+        bullets: rows,
         paragraphs: rows.length
-          ? [`${rows.length} tenant${rows.length !== 1 ? 's have' : ' has'} audit rights: ${rows.join('; ')}.`,
-             'Allocations for these tenants should be airtight — they can demand your backup documentation.']
+          ? ['Allocations for these tenants should be airtight — they can demand your backup documentation.']
           : ['No audit-rights clauses are on file in this scope.'],
         citations: citations.slice(0, 4),
         actions: scoped.slice(0, 2).map(_actOpenProperty),
@@ -934,7 +934,14 @@ window.AIWorkspace = (() => {
     handle: (q, ctx, { props }) => ({
       heading: 'I answer from your portfolio, not from the internet',
       paragraphs: [
-        'I can explain reconciliations and tenant charges, search extracted lease and mortgage terms, check reserve eligibility and readiness, review disputes, compare costs, and show RLUSD settlement status — all from the documents and analyses on file. I couldn\'t map that question to your data, so rather than guess, here are things I can answer:',
+        "I couldn't map that question to your data, so rather than guess, here's what I can answer:",
+      ],
+      bullets: [
+        'Explain reconciliations and any tenant\'s charges',
+        'Search extracted lease and mortgage terms — with citations',
+        'Check reserve balances, eligibility, and reimbursement readiness',
+        'Review disputes, compare costs, and show the rent roll',
+        'Show RLUSD settlement status, and draft letters and lender packages',
       ],
       citations: [], actions: [_actCommandCenter(), _actPortfolio()],
       confidence: { pct: 100, basis: 'honest fallback' },

@@ -17547,8 +17547,8 @@ function renderAIWorkspace() {
     // "Currently working in" panel — the whole context, nothing hidden.
     const items = [
       `<span class="aiw-ctx-item"><span>Currently working in</span><b>${p ? esc(p.name) : 'Whole portfolio'}</b>${p ? ` <button class="aiw-ctx-clear" onclick="aiwClearContext()" title="Switch to whole-portfolio scope">&times;</button>` : ''}</span>`,
-      _aiwWctx?.engine ? `<span class="aiw-ctx-item"><span>Engine</span><b>${esc(_aiwWctx.engine)}</b></span>` : '',
-      _aiwWctx?.resultSet ? `<span class="aiw-ctx-item"><span>Result set</span><b>${esc(_aiwWctx.resultSet.label)} (${_aiwWctx.resultSet.items.length})</b></span>` : '',
+      _aiwWctx?.engine ? `<span class="aiw-ctx-item"><span>Answered by</span><b>${esc(_aiwWctx.engine)}</b></span>` : '',
+      _aiwWctx?.resultSet ? `<span class="aiw-ctx-item"><span>Working with</span><b>${esc(_aiwWctx.resultSet.label)} (${_aiwWctx.resultSet.items.length})</b></span>` : '',
       (_aiwWctx?.engine || _aiwWctx?.resultSet) ? `<button class="aiw-ctx-clear" onclick="aiwClearWctx()" title="Clear the current analysis context">Clear context</button>` : '',
       _aiwHistory.length ? `<button class="aiw-ctx-clear" onclick="aiwClearConversation()" title="Clear the conversation and start fresh">New analysis</button>` : '',
     ].filter(Boolean).join('');
@@ -17603,6 +17603,9 @@ function openDraftingStudio(type, context) {
   bodyEl.innerHTML = DocumentDrafting.renderEditableHtml(doc);
   _dftRenderSaved();
   modalEl.style.display = 'flex';
+  // A11y (Phase 26): move focus into the dialog so keyboard/screen-reader
+  // users land inside it instead of behind it.
+  setTimeout(() => modalEl.querySelector('.dft-box')?.focus(), 30);
 }
 
 // Esc closes the drafting modal (and steps out of a running tour) — registered once.

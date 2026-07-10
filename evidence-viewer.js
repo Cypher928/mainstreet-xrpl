@@ -158,6 +158,8 @@ window.EvidenceViewer = (() => {
     const modal = _el('evidenceViewer');
     if (!modal) return;
     modal.style.display = 'flex';
+    // A11y (Phase 26): move focus into the dialog.
+    setTimeout(() => { const box = modal.querySelector('.evd-box'); if (box) box.focus(); }, 30);
     _renderCurrent();
   }
 
