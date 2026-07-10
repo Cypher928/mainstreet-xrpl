@@ -1251,12 +1251,26 @@ async function extractPdfText(file) {
 
   const pages = [];
   for (let p = 1; p <= Math.min(pdf.numPages, MAX_PAGES); p++) {
-    const page = await pdf.getPage(p);
-    const content = await page.getTextContent();
-    const pageText = content.items.map(item => item.str).join(' ');
-    // WHY marker: ask-lease citations need page numbers. Claude reads these markers
-    // and reports them as citation.page. Format must match the system prompt in ask-lease.js.
-    pages.push(`--- Page ${p} ---\n${pageText}`);
+    // Real-document robustness (Phase 27): one corrupt/unreadable page must not
+    // abort the whole document — mark it and keep going, so downstream extraction
+    // sees an explicit gap instead of silently losing everything after it.
+    try {
+      const page = await pdf.getPage(p);
+      const content = await page.getTextContent();
+      const pageText = content.items.map(item => item.str).join(' ');
+      // WHY marker: ask-lease citations need page numbers. Claude reads these markers
+      // and reports them as citation.page. Format must match the system prompt in ask-lease.js.
+      pages.push(`--- Page ${p} ---\n${pageText}`);
+    } catch (pageErr) {
+      console.warn(`[extractPdfText] page ${p} unreadable — continuing:`, pageErr?.message);
+      pages.push(`--- Page ${p} ---\n[This page could not be read — it may be corrupted or image-only.]`);
+    }
+  }
+
+  // Truncation must be visible IN the text, not just the console — otherwise
+  // extraction silently misses exhibits/amendments past the cap and nobody knows.
+  if (pdf.numPages > MAX_PAGES) {
+    pages.push(`--- Document truncated ---\n[Pages ${MAX_PAGES + 1}–${pdf.numPages} were not read. Exhibits or amendments beyond page ${MAX_PAGES} are not reflected in extracted terms.]`);
   }
 
   return pages.join('\n\n');
@@ -17577,6 +17591,9 @@ function aiwAsk(q) {
   const ans = AIWorkspace.answer({ question, context: _aiwContext, wctx: _aiwWctx, props: _props, acqReviews: _acqReviews });
   _aiwWctx = ans.context || null;
   _aiwHistory.push({ role: 'user', text: question }, { role: 'ai', html: AIWorkspace.renderAnswerHtml(ans) });
+  // Scale guard (Phase 27): the conversation re-renders in full each turn — cap
+  // it at 30 exchanges so a long session never degrades the DOM.
+  if (_aiwHistory.length > 60) _aiwHistory = _aiwHistory.slice(-60);
   renderAIWorkspace();
 }
 
@@ -17610,12 +17627,33 @@ function openDraftingStudio(type, context) {
 
 // Esc closes the drafting modal (and steps out of a running tour) — registered once.
 document.addEventListener('keydown', (e) => {
-  if (e.key !== 'Escape') return;
-  const ev = document.getElementById('evidenceViewer');
-  if (ev && ev.style.display === 'flex' && window.EvidenceViewer) { EvidenceViewer.close(); return; }
-  const dm = document.getElementById('draftingModal');
-  if (dm && dm.style.display === 'flex') { dftClose(); return; }
-  if (typeof _tour !== 'undefined' && _tour) tourEnd();
+  const _openModal = () => {
+    const ev = document.getElementById('evidenceViewer');
+    if (ev && ev.style.display === 'flex') return ev;
+    const dm = document.getElementById('draftingModal');
+    if (dm && dm.style.display === 'flex') return dm;
+    return null;
+  };
+  if (e.key === 'Escape') {
+    const ev = document.getElementById('evidenceViewer');
+    if (ev && ev.style.display === 'flex' && window.EvidenceViewer) { EvidenceViewer.close(); return; }
+    const dm = document.getElementById('draftingModal');
+    if (dm && dm.style.display === 'flex') { dftClose(); return; }
+    if (typeof _tour !== 'undefined' && _tour) tourEnd();
+    return;
+  }
+  // A11y (Phase 27): trap Tab inside open dialogs so keyboard users can't
+  // focus the page behind them.
+  if (e.key === 'Tab') {
+    const modal = _openModal();
+    if (!modal) return;
+    const focusables = modal.querySelectorAll('button, [href], input, [contenteditable="true"], [tabindex]:not([tabindex="-1"])');
+    if (!focusables.length) return;
+    const first = focusables[0], last = focusables[focusables.length - 1];
+    if (e.shiftKey && document.activeElement === first) { e.preventDefault(); last.focus(); }
+    else if (!e.shiftKey && document.activeElement === last) { e.preventDefault(); first.focus(); }
+    else if (!modal.contains(document.activeElement)) { e.preventDefault(); first.focus(); }
+  }
 });
 
 function dftClose() {

@@ -269,12 +269,16 @@ window.EvidenceViewer = (() => {
     docWrap.appendChild(stage);
     await page.render({ canvasContext: canvas.getContext('2d'), viewport }).promise;
 
-    // Tier 3 — locate & highlight the quote; honest banner when we can't.
-    if (!c.quote) return;
+    // Tier 3 — locate & highlight; honest banner when we can't.
+    // Search-mode citations locate the search TERM (their "quote" is a
+    // normalized context slice that won't match verbatim), and stay quiet on a
+    // miss — the match-count banner is already showing.
+    const needle = c._search || c.quote;
+    if (!needle) return;
     const tc = await page.getTextContent();
-    const hit = locateQuoteInItems(tc.items, c.quote);
+    const hit = locateQuoteInItems(tc.items, needle);
     if (!hit) {
-      if (banner) {
+      if (banner && !c._search) {
         banner.textContent = `Jumped to page ${pageNum} — the exact paragraph couldn't be automatically identified. The verbatim extracted text is shown in the panel.`;
         banner.style.display = 'block';
       }
@@ -310,7 +314,12 @@ window.EvidenceViewer = (() => {
     const c = st.citations[st.index];
     if (!term || !c || !c.fileUrl) return;
     let pdf;
-    try { pdf = await _ensurePdf(c.fileUrl); } catch (_) { return; }
+    try { pdf = await _ensurePdf(c.fileUrl); }
+    catch (e) {
+      const banner = _el('evdBanner');
+      if (banner) { banner.textContent = `Couldn't search this document (${e.message}).`; banner.style.display = 'block'; }
+      return;
+    }
     if (!st.pageTexts) {
       st.pageTexts = [];
       const maxPages = Math.min(pdf.numPages, 60);
@@ -331,6 +340,12 @@ window.EvidenceViewer = (() => {
     st.searchStack = { citations: st.citations, index: st.index };
     st.citations = matches; st.index = 0;
     _renderCurrent();
+    // UX (Phase 27): say how many matches — "3 matches" beats silent navigation.
+    const banner = _el('evdBanner');
+    if (banner) {
+      banner.textContent = `${matches.length} match${matches.length !== 1 ? 'es' : ''} for "${term}" — use Next/Previous or the page chips to move between them.`;
+      banner.style.display = 'block';
+    }
     const back = _el('evdBackBtn'); if (back) back.style.display = 'inline-block';
   }
 

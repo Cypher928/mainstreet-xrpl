@@ -658,14 +658,17 @@ window.CommandCenter = (() => {
     // Focus: an experienced asset manager leads with the few most important
     // actions. Top 6 render as cards; the remainder collapse behind a toggle.
     const MAX_TOP = 6;
+    const MAX_COLLAPSED = 50;   // scale guard: don't build hundreds of hidden cards
     const topRecs  = m.recommendations.slice(0, MAX_TOP);
-    const restRecs = m.recommendations.slice(MAX_TOP);
+    const restRecs = m.recommendations.slice(MAX_TOP, MAX_TOP + MAX_COLLAPSED);
+    const recOverflow = Math.max(0, m.recommendations.length - MAX_TOP - MAX_COLLAPSED);
     const recsHtml = m.recommendations.length
       ? topRecs.map(_recCard).join('')
       : `<div class="cc-empty">Add a property or load the demo to see prioritized recommendations.</div>`;
     const moreHtml = restRecs.length
       ? `<details class="cc-more"><summary>Show ${restRecs.length} more recommendation${restRecs.length === 1 ? '' : 's'}</summary>
            <div class="cc-cards" style="margin-top:12px;">${restRecs.map(_recCard).join('')}</div>
+           ${recOverflow > 0 ? `<div class="cc-empty">${recOverflow} lower-priority item${recOverflow === 1 ? '' : 's'} not shown — work the list above first, or review per property in the Portfolio.</div>` : ''}
          </details>`
       : '';
 
@@ -675,7 +678,13 @@ window.CommandCenter = (() => {
           <span class="cc-opp-amt">${_fmt$(o.amount)}</span></div>`).join('')
       : `<div class="cc-empty">Run a reconciliation to surface identified value.</div>`;
 
-    const healthHtml = m.health.map(h => `<div class="cc-health-card" role="button" tabindex="0" aria-label="Open ${_esc(h.propertyName)}" onclick="ccOpenProperty('${h.propertyId}')" onkeydown="if(event.key==='Enter'||event.key===' '){event.preventDefault();this.click();}">
+    // Scale guard (Phase 27): at enterprise portfolio sizes, render the 24
+    // properties that most need attention (lowest health first) rather than
+    // hundreds of cards — the rest live in the Portfolio, and we say so.
+    const healthSorted = m.health.slice().sort((a, b) => a.score - b.score);
+    const healthShown = healthSorted.slice(0, 24);
+    const healthOverflow = healthSorted.length - healthShown.length;
+    const healthHtml = healthShown.map(h => `<div class="cc-health-card" role="button" tabindex="0" aria-label="Open ${_esc(h.propertyName)}" onclick="ccOpenProperty('${h.propertyId}')" onkeydown="if(event.key==='Enter'||event.key===' '){event.preventDefault();this.click();}">
         <div class="cc-health-name">${_esc(h.propertyName)}</div>
         <div class="cc-health-score"><span class="cc-health-num">${h.score}</span><span class="cc-health-den">/ 100</span></div>
         <div class="cc-health-rows">
@@ -760,8 +769,9 @@ window.CommandCenter = (() => {
       </div>
     </div>
 
-    <div class="cc-section-title">Portfolio Health</div>
-    <div class="cc-health-grid">${healthHtml || `<div class="cc-empty">No properties yet.</div>`}</div>`;
+    <div class="cc-section-title">Portfolio Health${healthOverflow > 0 ? ` — ${healthShown.length} needing the most attention` : ''}</div>
+    <div class="cc-health-grid">${healthHtml || `<div class="cc-empty">No properties yet.</div>`}</div>
+    ${healthOverflow > 0 ? `<div class="cc-empty" style="margin:-16px 0 24px;">${healthOverflow} more propert${healthOverflow === 1 ? 'y is' : 'ies are'} healthy or stable — see the full list in the <button class="cc-nav-link" onclick="ccShowPortfolio()">Portfolio</button></div>` : ''}`;
   }
 
   return { buildModel, renderHtml };

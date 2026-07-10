@@ -479,7 +479,7 @@ window.AIWorkspace = (() => {
   // 5) Explain the reconciliation / how CAM was calculated
   registerIntent({
     id: 'explain_recon',
-    match: (s) => /explain (this |the )?reconciliation|how was cam calculated|how is cam calculated/.test(s),
+    match: (s) => /explain (this |the )?reconciliation|how was cam calculated|how is cam calculated|what are (the |my )?operating expenses/.test(s),
     handle: (q, ctx, { props }) => {
       const p = _ctxProperty(ctx, props);
       if (!p) return { heading: 'Which property?', paragraphs: ['Open a property (or ask about one by name) and I\'ll walk through its reconciliation.'], citations: [], actions: [_actPortfolio()], confidence: { pct: 95, basis: 'workflow state' } };
@@ -535,7 +535,7 @@ window.AIWorkspace = (() => {
   // 7) Compare costs by category
   registerIntent({
     id: 'compare_costs',
-    match: (s) => /compare .*(cost|expense)|insurance costs|cost of (insurance|janitorial|utilities)/.test(s),
+    match: (s) => /compare .*(cost|expense)|insurance costs|insurance allocation|cost of (insurance|janitorial|utilities)/.test(s),
     handle: (q, ctx, { props }) => {
       const catMatch = q.toLowerCase().match(/compare\s+(\w+)|(insurance|janitorial|utilities|repairs|maintenance|management)/);
       const cat = (catMatch && (catMatch[1] || catMatch[2]) || 'insurance').toLowerCase();
@@ -586,7 +586,7 @@ window.AIWorkspace = (() => {
   // 9) Reserve balances / show reserves
   registerIntent({
     id: 'reserve_balances',
-    match: (s) => /reserve balance|show reserves|reserve accounts?/.test(s),
+    match: (s) => /reserve balance|show reserves|reserve accounts?|(roof|hvac|capital|tenant.improvement) reserve|capital expenditures?/.test(s),
     handle: (q, ctx, { props, deps }) => {
       const EE = deps.EscrowEngine;
       const scoped = _scopedProps(ctx, props);
@@ -878,6 +878,82 @@ window.AIWorkspace = (() => {
     },
   });
 
+  // Shared evidence scanner — the ONE search over extracted terms, evidence
+  // quotes, reserve terms, and dispute records. Used by knowledge_search and
+  // lease_terms; never duplicated.
+  function _scanEvidence(scoped, terms) {
+    const hits = [];
+    if (!terms.length) return hits;
+    for (const p of scoped) {
+      for (const t of (p.tenants || []).filter(Boolean)) {
+        const excl = String(t.excluded_categories || '').toLowerCase();
+        if (terms.some(w => excl.includes(w))) hits.push({ text: `${t.tenant_name} (${p.name}) — lease excludes: ${t.excluded_categories}`, cite: _leaseCitation(p, t, ['excluded_categories']) });
+        for (const k of Object.keys(t.fieldEvidence || {})) {
+          const snaps = t.fieldEvidence[k]?.snapshots || [];
+          const last = snaps[snaps.length - 1];
+          if (last && last.quote && terms.some(w => String(last.quote).toLowerCase().includes(w))) {
+            hits.push({ text: `${t.tenant_name} (${p.name}) — lease ${k.replace(/_/g, ' ')}: "${String(last.quote).slice(0, 120)}"`, cite: { source: `Lease — ${t.tenant_name}`, detail: last.page != null ? `Page ${last.page}` : null, page: last.page ?? null, quote: last.quote, fileUrl: t.leaseUrl || t.lease_url || null } });
+          }
+        }
+      }
+      for (const r of (p.escrowReserves || []).filter(Boolean)) {
+        const hay = [r.eligibleUses, r.notes, r.reserveTypeLabel].filter(Boolean).join(' ').toLowerCase();
+        if (terms.some(w => hay.includes(w))) hits.push({ text: `${r.reserveTypeLabel} (${p.name}) — ${r.eligibleUses || r.notes || 'terms on file'}`, cite: _reserveCitations(r)[0] });
+      }
+      for (const d of (p.disputes || []).filter(Boolean)) {
+        if (d.reason && terms.some(w => String(d.reason).toLowerCase().includes(w))) hits.push({ text: `Dispute — ${d.tenantName || ''} (${p.name}): ${String(d.reason).slice(0, 120)}`, cite: { source: 'Dispute Record', detail: p.name, quote: null } });
+      }
+    }
+    return hits;
+  }
+
+  // 15e) Commercial-lease vocabulary (Phase 27) — base year, tax stop, CPI,
+  // TI allowance, estoppel, SNDA, and friends. Searches the SAME extracted
+  // evidence; where MainStreet doesn't track a concept as a field, the answer
+  // says so plainly instead of guessing.
+  const _LEASE_TERMS = [
+    { re: /base year/,                 term: 'base year' },
+    { re: /tax stop|expense stop/,     term: 'tax stop' },
+    { re: /cpi|consumer price|escalation/, term: 'escalation' },
+    { re: /tenant improvement|ti allowance/, term: 'tenant improvement', reserveType: 'tenant_improvement' },
+    { re: /estoppel/,                  term: 'estoppel', notTracked: 'Estoppel certificates aren\'t a tracked field in MainStreet yet' },
+    { re: /snda|subordination|non.?disturbance/, term: 'subordination', notTracked: 'SNDA agreements aren\'t a tracked field in MainStreet yet' },
+    { re: /landlord responsib/,        term: 'landlord' },
+    { re: /base rent/,                 term: 'base rent' },
+  ];
+  registerIntent({
+    id: 'lease_terms',
+    match: (s) => _LEASE_TERMS.some(x => x.re.test(s)),
+    handle: (q, ctx, { props }) => {
+      const s = q.toLowerCase();
+      const def = _LEASE_TERMS.find(x => x.re.test(s));
+      if (!def) return null;
+      const scoped = _scopedProps(ctx, props);
+      const hits = _scanEvidence(scoped, def.term.split(/\s+/));
+      const paragraphs = [];
+      // TI allowance can also live as a lender reserve — check that too.
+      if (def.reserveType) {
+        for (const p of scoped) {
+          for (const r of (p.escrowReserves || []).filter(x => x && x.reserveType === def.reserveType)) {
+            paragraphs.push(`${p.name} also has a ${r.reserveTypeLabel} with the lender${r.currentBalance != null ? ` (${_fmt$(r.currentBalance)} stated balance)` : ''}.`);
+          }
+        }
+      }
+      if (def.notTracked) paragraphs.push(`${def.notTracked} — what follows is anything the extracted lease language mentions about it.`);
+      if (!hits.length) {
+        paragraphs.push(`Nothing about "${def.term}" appears in the extracted lease terms on file. If a lease covers it, reprocess the document — or the clause may simply not exist in these leases. I won't guess either way.`);
+      }
+      return {
+        heading: `"${def.term}" in your documents`,
+        bullets: hits.slice(0, 6).map(h => h.text),
+        paragraphs,
+        citations: hits.slice(0, 4).map(h => h.cite).filter(Boolean),
+        actions: scoped.slice(0, 2).map(_actOpenProperty),
+        confidence: { pct: hits.length ? 88 : 92, basis: hits.length ? 'extracted evidence (quotes & citations)' : 'extracted terms on file (nothing found — stated honestly)' },
+      };
+    },
+  });
+
   // 16) Generic knowledge search across extracted evidence (last resort before fallback)
   registerIntent({
     id: 'knowledge_search',
@@ -886,29 +962,7 @@ window.AIWorkspace = (() => {
       const scoped = _scopedProps(ctx, props);
       const terms = q.toLowerCase().replace(/[^a-z0-9\s]/g, ' ').split(/\s+/)
         .filter(w => w.length > 3 && !['does', 'which', 'where', 'show', 'find', 'search', 'every', 'lease', 'leases', 'tenant', 'tenants', 'discuss', 'clause', 'clauses', 'document', 'documents', 'pays'].includes(w));
-      const hits = [];
-      for (const p of scoped) {
-        for (const t of (p.tenants || []).filter(Boolean)) {
-          // excluded categories
-          const excl = String(t.excluded_categories || '').toLowerCase();
-          if (terms.some(w => excl.includes(w))) hits.push({ text: `${t.tenant_name} (${p.name}) — lease excludes: ${t.excluded_categories}`, cite: _leaseCitation(p, t, ['excluded_categories']) });
-          // evidence quotes
-          for (const k of Object.keys(t.fieldEvidence || {})) {
-            const snaps = t.fieldEvidence[k]?.snapshots || [];
-            const last = snaps[snaps.length - 1];
-            if (last && last.quote && terms.some(w => String(last.quote).toLowerCase().includes(w))) {
-              hits.push({ text: `${t.tenant_name} (${p.name}) — lease ${k.replace(/_/g, ' ')}: "${String(last.quote).slice(0, 120)}"`, cite: { source: `Lease — ${t.tenant_name}`, detail: last.page != null ? `Page ${last.page}` : null, page: last.page ?? null, quote: last.quote, fileUrl: t.leaseUrl || t.lease_url || null } });
-            }
-          }
-        }
-        for (const r of (p.escrowReserves || []).filter(Boolean)) {
-          const hay = [r.eligibleUses, r.notes].filter(Boolean).join(' ').toLowerCase();
-          if (terms.some(w => hay.includes(w))) hits.push({ text: `${r.reserveTypeLabel} (${p.name}) — ${r.eligibleUses || r.notes}`, cite: _reserveCitations(r)[0] });
-        }
-        for (const d of (p.disputes || []).filter(Boolean)) {
-          if (d.reason && terms.some(w => String(d.reason).toLowerCase().includes(w))) hits.push({ text: `Dispute — ${d.tenantName || ''} (${p.name}): ${String(d.reason).slice(0, 120)}`, cite: { source: 'Dispute Record', detail: p.name, quote: null } });
-        }
-      }
+      const hits = _scanEvidence(scoped, terms);
       if (!hits.length) {
         return {
           heading: 'No matches in your documents',
