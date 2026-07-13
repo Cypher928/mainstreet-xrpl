@@ -5229,8 +5229,293 @@
 </header>
 
 
+<!-- ── Phase 21: AI Command Center (orchestration over existing engines) ── -->
+<style id="ccStyles">
+  #commandCenter { max-width: min(1440px, calc(100% - 48px)); margin: 24px auto 0; display: none; }
+  .cc-nav { display: flex; justify-content: space-between; align-items: center; margin-bottom: 18px; }
+  .cc-nav-brand { font-size: 1.15rem; font-weight: 700; color: #E2E8F0; }
+  .cc-nav-link { background: #1e293b; color: #cbd5e1; border: 1px solid rgba(255,255,255,0.1); border-radius: 8px; padding: 7px 14px; cursor: pointer; margin-left: 8px; font-size: 0.85rem; }
+  .cc-nav-link:hover { background: #273449; }
+  .cc-brief { background: linear-gradient(135deg, #111827, #0f1e33); border: 1px solid rgba(201,151,58,0.25); border-radius: 14px; padding: 22px 26px; margin-bottom: 22px; }
+  .cc-brief-greet { font-size: 1.5rem; font-weight: 700; color: #F8FAFC; margin-bottom: 6px; }
+  .cc-brief-line { color: #94A3B8; font-size: 0.92rem; }
+  .cc-brief-stats { display: flex; gap: 28px; margin-top: 16px; flex-wrap: wrap; }
+  .cc-bs-num { font-size: 1.6rem; font-weight: 700; color: #C9973A; }
+  .cc-bs-lbl { font-size: 0.78rem; color: #64748B; text-transform: uppercase; letter-spacing: 0.04em; }
+  .cc-exec { margin-top: 16px; padding-top: 14px; border-top: 1px solid rgba(255,255,255,0.07); }
+  .cc-exec-title { font-size: 0.72rem; font-weight: 700; color: #C9973A; text-transform: uppercase; letter-spacing: 0.06em; margin-bottom: 6px; }
+  .cc-exec-p { color: #CBD5E1; font-size: 0.95rem; line-height: 1.65; margin: 0; max-width: 78ch; }
+  .cc-brief-honest { margin-top: 14px; font-size: 0.75rem; color: #475569; }
+  .cc-section-title { font-size: 0.85rem; font-weight: 700; color: #C9973A; text-transform: uppercase; letter-spacing: 0.06em; margin: 22px 0 10px; }
+  .cc-cards { display: grid; grid-template-columns: repeat(auto-fill, minmax(320px, 1fr)); gap: 14px; }
+  .cc-card { background: #111827; border: 1px solid rgba(255,255,255,0.08); border-left: 4px solid #4ade80; border-radius: 12px; padding: 16px 18px; }
+  .cc-card--high   { border-left-color: #f87171; }
+  .cc-card--medium { border-left-color: #fbbf24; }
+  .cc-card-top { display: flex; justify-content: space-between; font-size: 0.72rem; color: #94A3B8; margin-bottom: 8px; }
+  .cc-dot { display: inline-block; width: 8px; height: 8px; border-radius: 50%; margin-right: 6px; vertical-align: middle; }
+  .cc-card-prop { font-size: 0.78rem; color: #64748B; }
+  .cc-card-title { font-size: 1.02rem; font-weight: 600; color: #E2E8F0; margin: 3px 0 6px; }
+  .cc-card-reason { font-size: 0.84rem; color: #94A3B8; line-height: 1.5; }
+  .cc-impact { margin-top: 10px; }
+  .cc-impact-num { font-size: 1.25rem; font-weight: 700; color: #4ade80; margin-right: 8px; }
+  .cc-impact-note { font-size: 0.75rem; color: #64748B; }
+  .cc-evidence { margin-top: 10px; display: flex; flex-wrap: wrap; gap: 6px; }
+  .cc-evid-chip { background: #0b1220; border: 1px solid rgba(255,255,255,0.07); border-radius: 6px; padding: 3px 8px; font-size: 0.72rem; color: #94A3B8; }
+  .cc-action-btn { margin-top: 12px; background: #C9973A; color: #0b1220; border: none; border-radius: 8px; padding: 8px 16px; font-weight: 700; cursor: pointer; font-size: 0.82rem; }
+  .cc-action-btn:hover { filter: brightness(1.1); }
+  /* Phase 29: Actionable Command Center */
+  .cc-card-actions { display: flex; flex-wrap: wrap; gap: 8px; align-items: center; }
+  .cc-card-actions .cc-action-btn { margin-top: 12px; }
+  .cc-action-btn--soon { background: #1e293b; color: #64748B; cursor: not-allowed; border: 1px dashed rgba(255,255,255,0.15); }
+  .cc-action-btn--soon:hover { filter: none; }
+  .cc-evd-btn { margin-top: 12px; background: transparent; color: #7dd3fc; border: 1px solid rgba(125,211,252,0.35); border-radius: 8px; padding: 7px 14px; font-weight: 600; cursor: pointer; font-size: 0.78rem; }
+  .cc-evd-btn:hover { background: rgba(125,211,252,0.08); }
+  .cc-next { margin-top: 10px; font-size: 0.8rem; color: #CBD5E1; line-height: 1.45; background: rgba(201,151,58,0.06); border-left: 2px solid rgba(201,151,58,0.5); padding: 7px 10px; border-radius: 0 6px 6px 0; }
+  .cc-next-lbl { display: block; font-size: 0.66rem; font-weight: 700; letter-spacing: 0.06em; text-transform: uppercase; color: #C9973A; margin-bottom: 2px; }
+  .cc-target-flash { animation: ccTargetFlash 2.6s ease-out; }
+  @keyframes ccTargetFlash {
+    0%   { box-shadow: 0 0 0 3px rgba(201,151,58,0.85); }
+    60%  { box-shadow: 0 0 0 3px rgba(201,151,58,0.45); }
+    100% { box-shadow: 0 0 0 3px rgba(201,151,58,0); }
+  }
+  .cc-two-col { display: grid; grid-template-columns: 1fr 1fr; gap: 18px; }
+  @media (max-width: 900px) { .cc-two-col { grid-template-columns: 1fr; } }
+  .cc-opp-panel, .cc-tl-panel, .cc-stl-panel { background: #111827; border: 1px solid rgba(255,255,255,0.08); border-radius: 12px; padding: 14px 18px; }
+  .cc-opp-row { display: flex; justify-content: space-between; align-items: baseline; padding: 9px 0; border-bottom: 1px solid rgba(255,255,255,0.05); }
+  .cc-opp-row:last-of-type { border-bottom: none; }
+  .cc-opp-label { color: #CBD5E1; font-size: 0.88rem; }
+  .cc-opp-note { display: block; color: #64748B; font-size: 0.72rem; }
+  .cc-opp-amt { color: #4ade80; font-weight: 700; }
+  .cc-opp-total { display: flex; justify-content: space-between; padding-top: 12px; margin-top: 6px; border-top: 1px solid rgba(201,151,58,0.35); color: #C9973A; font-weight: 700; }
+  .cc-tl-row { display: flex; gap: 12px; padding: 7px 0; border-bottom: 1px solid rgba(255,255,255,0.05); font-size: 0.82rem; align-items: baseline; }
+  .cc-tl-row:last-child { border-bottom: none; }
+  .cc-tl-time { color: #64748B; white-space: nowrap; font-size: 0.74rem; min-width: 110px; }
+  .cc-tl-title { color: #CBD5E1; flex: 1; }
+  .cc-tl-prop { color: #64748B; font-size: 0.74rem; }
+  .cc-stl-row { display: flex; align-items: center; gap: 10px; padding: 9px 0; font-size: 0.86rem; color: #CBD5E1; flex-wrap: wrap; }
+  .cc-stl-dot { width: 9px; height: 9px; border-radius: 50%; flex-shrink: 0; }
+  .cc-stl--settled .cc-stl-dot { background: #4ade80; box-shadow: 0 0 8px rgba(74,222,128,0.6); }
+  .cc-stl--ready   .cc-stl-dot { background: #C9973A; }
+  .cc-stl-link { color: #4ade80; font-size: 0.8rem; margin-left: auto; }
+  .cc-stl-btn { margin-left: auto; background: #1e293b; color: #E2E8F0; border: 1px solid rgba(201,151,58,0.4); border-radius: 8px; padding: 6px 12px; cursor: pointer; font-size: 0.78rem; }
+  .cc-health-grid { display: grid; grid-template-columns: repeat(auto-fill, minmax(300px, 1fr)); gap: 14px; margin-bottom: 28px; }
+  .cc-health-card { background: #111827; border: 1px solid rgba(255,255,255,0.08); border-radius: 12px; padding: 16px 18px; cursor: pointer; }
+  .cc-health-card:hover { border-color: rgba(201,151,58,0.4); }
+  .cc-health-name { font-weight: 700; color: #E2E8F0; margin-bottom: 6px; }
+  .cc-health-num { font-size: 1.8rem; font-weight: 700; color: #C9973A; }
+  .cc-health-den { color: #64748B; margin-left: 4px; font-size: 0.85rem; }
+  .cc-health-rows { display: flex; flex-wrap: wrap; gap: 6px 14px; margin-top: 8px; font-size: 0.78rem; color: #94A3B8; }
+  .cc-health-rows b { color: #E2E8F0; }
+  .cc-health-intel { margin-top: 10px; padding-top: 10px; border-top: 1px solid rgba(255,255,255,0.06); display: flex; flex-direction: column; gap: 4px; font-size: 0.76rem; color: #64748B; }
+  .cc-health-intel b { color: #CBD5E1; }
+  .cc-connect { margin-top: 10px; display: flex; flex-direction: column; gap: 3px; font-size: 0.76rem; color: #7dd3fc; }
+  .cc-more { margin: 10px 0 4px; }
+  .cc-more summary { cursor: pointer; color: #94A3B8; font-size: 0.85rem; }
+  .cc-more summary:hover { color: #CBD5E1; }
+  .cc-empty { color: #64748B; font-size: 0.85rem; padding: 10px 0; }
+  .cc-portfolio-entry { display: block; width: 100%; text-align: left; background: linear-gradient(135deg, #111827, #17233b); color: #E2E8F0; border: 1px solid rgba(201,151,58,0.35); border-radius: 12px; padding: 14px 20px; margin: 0 0 18px; cursor: pointer; font-size: 0.95rem; }
+  .cc-portfolio-entry:hover { border-color: rgba(201,151,58,0.7); }
+  /* Phase 26 — mobile usability for the AI surfaces (first-pilot readiness) */
+  @media (max-width: 720px) {
+    #commandCenter, #aiWorkspace { max-width: calc(100% - 20px); }
+    .cc-brief { padding: 16px 18px; }
+    .aiw-hero { padding: 16px 18px; }
+    .aiw-answer { max-width: 100%; }
+    .evd-main { flex-direction: column; }
+    .evd-side { width: auto; }
+    .evd-box { height: 94vh; padding: 12px; }
+    .evd-top { flex-wrap: wrap; }
+    .evd-find { margin-left: 0; width: 100%; }
+    .evd-find input { flex: 1; width: auto; }
+    #tourCard { left: 12px; right: 12px; bottom: 12px; max-width: none; }
+    .dft-box { padding: 14px; }
+    .dft-paper { padding: 18px 16px; max-height: 46vh; }
+    #propertyBreadcrumb { flex-wrap: wrap; row-gap: 6px; }
+  }
+  /* Phase 21D — Reserve workflow polish */
+  .escrow-ai-summary { margin: 10px 0 6px; padding: 10px 12px; background: rgba(14,116,144,0.12); border: 1px solid rgba(14,116,144,0.35); border-radius: 8px; font-size: 0.84rem; color: #CBD5E1; line-height: 1.55; }
+  .escrow-ai-summary-lbl { font-size: 0.68rem; font-weight: 700; letter-spacing: 0.06em; text-transform: uppercase; color: #22d3ee; margin-bottom: 4px; }
+  .escrow-docchips { display: flex; flex-wrap: wrap; gap: 6px; margin: 8px 0; }
+  .escrow-docchip { background: #0b1220; border: 1px solid rgba(74,222,128,0.35); color: #86efac; border-radius: 6px; padding: 3px 8px; font-size: 0.74rem; }
+  .escrow-ai-status { display: flex; flex-direction: column; gap: 2px; margin: 8px 0; padding: 8px 12px; border-radius: 8px; font-size: 0.8rem; }
+  .escrow-ai-status--ok { background: rgba(74,222,128,0.08); border: 1px solid rgba(74,222,128,0.35); color: #86efac; }
+  .escrow-ai-status--warn { background: rgba(251,191,36,0.08); border: 1px solid rgba(251,191,36,0.35); color: #fbbf24; }
+  .escrow-ai-status-head { font-weight: 700; }
+  .escrow-ai-status-sub { color: #94A3B8; }
+</style>
+<div id="commandCenter"></div>
+
+<!-- ── Phase 22: AI Workspace (conversational orchestration over existing engines) ── -->
+<style id="aiwStyles">
+  #aiWorkspace { max-width: min(1100px, calc(100% - 48px)); margin: 24px auto 0; display: none; }
+  .aiw-nav { display: flex; justify-content: space-between; align-items: center; margin-bottom: 18px; }
+  .aiw-hero { background: linear-gradient(135deg, #111827, #0f1e33); border: 1px solid rgba(201,151,58,0.25); border-radius: 14px; padding: 22px 26px; margin-bottom: 16px; }
+  .aiw-title { font-size: 1.5rem; font-weight: 700; color: #F8FAFC; }
+  .aiw-sub { color: #94A3B8; margin-top: 4px; font-size: 0.95rem; }
+  .aiw-sub2 { color: #64748B; margin-top: 8px; font-size: 0.82rem; line-height: 1.55; }
+  .aiw-ctx { margin-top: 12px; font-size: 0.8rem; color: #7dd3fc; }
+  .aiw-ctx-clear { background: none; border: none; color: #64748B; cursor: pointer; font-size: 0.9rem; }
+  .aiw-chips { display: flex; flex-wrap: wrap; gap: 8px; margin-bottom: 16px; }
+  .aiw-chip { background: #1e293b; color: #cbd5e1; border: 1px solid rgba(255,255,255,0.1); border-radius: 999px; padding: 7px 14px; cursor: pointer; font-size: 0.82rem; }
+  .aiw-chip:hover { border-color: rgba(201,151,58,0.6); color: #E2E8F0; }
+  .aiw-messages { display: flex; flex-direction: column; gap: 12px; margin-bottom: 14px; }
+  .aiw-user { align-self: flex-end; background: #1e3a5f; color: #E2E8F0; border-radius: 12px 12px 2px 12px; padding: 10px 14px; font-size: 0.9rem; max-width: 80%; }
+  .aiw-answer { align-self: flex-start; background: #111827; border: 1px solid rgba(255,255,255,0.08); border-left: 3px solid #C9973A; border-radius: 2px 12px 12px 12px; padding: 14px 18px; max-width: 92%; }
+  .aiw-heading { font-weight: 700; color: #E2E8F0; margin-bottom: 6px; }
+  .aiw-p { color: #CBD5E1; font-size: 0.88rem; line-height: 1.6; margin: 6px 0; }
+  .aiw-bullets { margin: 8px 0; padding: 0; list-style: none; display: flex; flex-direction: column; gap: 6px; }
+  .aiw-bullets li { background: #0b1220; border: 1px solid rgba(255,255,255,0.07); border-left: 3px solid rgba(201,151,58,0.5); border-radius: 8px; padding: 8px 12px; color: #CBD5E1; font-size: 0.84rem; line-height: 1.5; }
+  .aiw-cite { cursor: default; }   /* plain citations are labels, not buttons (Phase 25 dead-click audit) */
+  .aiw-cite--live { cursor: pointer; }
+  .aiw-starter { background: #111827; border: 1px dashed rgba(201,151,58,0.35); border-radius: 12px; padding: 14px 18px; color: #94A3B8; font-size: 0.86rem; line-height: 1.6; }
+  .aiw-cites { display: flex; flex-wrap: wrap; gap: 6px; margin-top: 10px; }
+  .aiw-cite { background: #0b1220; border: 1px solid rgba(125,211,252,0.3); color: #7dd3fc; border-radius: 6px; padding: 3px 8px; font-size: 0.72rem; cursor: help; }
+  .aiw-conf { margin-top: 8px; font-size: 0.72rem; color: #64748B; }
+  .aiw-from { margin-top: 8px; font-size: 0.74rem; color: #7dd3fc; }
+  .aiw-trace { margin-top: 6px; }
+  .aiw-trace summary { font-size: 0.7rem; color: #475569; cursor: pointer; }
+  .aiw-trace-rows { margin-top: 6px; display: flex; flex-direction: column; gap: 3px; font-size: 0.72rem; }
+  .aiw-trace-rows div { display: flex; gap: 10px; }
+  .aiw-trace-rows span { color: #64748B; min-width: 140px; }
+  .aiw-trace-rows b { color: #94A3B8; font-weight: 500; }
+  .aiw-ctx-panel { display: flex; flex-wrap: wrap; gap: 6px 14px; align-items: baseline; }
+  .aiw-ctx-item span { color: #64748B; font-size: 0.72rem; margin-right: 5px; text-transform: uppercase; letter-spacing: 0.04em; }
+  .aiw-ctx-item b { color: #7dd3fc; font-size: 0.8rem; font-weight: 600; }
+  .aiw-next { margin-top: 12px; padding-top: 10px; border-top: 1px solid rgba(255,255,255,0.07); font-size: 0.84rem; font-weight: 700; color: #C9973A; }
+  .aiw-actions { display: flex; flex-wrap: wrap; gap: 8px; margin-top: 8px; }
+  .aiw-action { background: #C9973A; color: #0b1220; border: none; border-radius: 8px; padding: 7px 14px; font-weight: 700; cursor: pointer; font-size: 0.8rem; }
+  .aiw-action:hover { filter: brightness(1.1); }
+  .aiw-inputrow { display: flex; gap: 10px; margin-bottom: 32px; }
+  .aiw-input { flex: 1; background: #111827; border: 1px solid rgba(255,255,255,0.12); border-radius: 10px; color: #E2E8F0; padding: 12px 16px; font-size: 0.92rem; }
+  .aiw-input:focus { outline: none; border-color: rgba(201,151,58,0.6); }
+</style>
+<div id="aiWorkspace">
+  <div class="aiw-nav">
+    <span class="cc-nav-brand">✨ AI Workspace</span>
+    <span class="cc-nav-links">
+      <button class="cc-nav-link" onclick="aiwClose()">Command Center</button>
+      <button class="cc-nav-link" onclick="document.getElementById('aiWorkspace').style.display='none'; ccShowPortfolio();">Portfolio</button>
+    </span>
+  </div>
+  <div class="aiw-hero">
+    <div class="aiw-title">Ask MainStreet AI</div>
+    <div class="aiw-sub">A conversational workspace for your commercial real estate portfolio.</div>
+    <div class="aiw-sub2">Search leases, invoices, reserve documents, reconciliations, acquisitions, disputes, reports,
+      and settlements using natural language. Every answer comes from your own documents and analyses — with citations —
+      and ends with the next step you can take.</div>
+    <div id="aiwContextChip" class="aiw-ctx"></div>
+  </div>
+  <div id="aiwSuggestions" class="aiw-chips"></div>
+  <div id="aiwMessages" class="aiw-messages" aria-live="polite"></div>
+  <div class="aiw-inputrow">
+    <input id="aiwInput" class="aiw-input" placeholder="Ask anything — “who owes the most CAM?”, “show my rent roll”, “where do I find reserves?”" onkeydown="aiwKey(event)">
+    <button class="cc-action-btn" onclick="aiwAsk()">Ask</button>
+  </div>
+</div>
+
+<!-- ── Phase 23 Stage 1: AI Document Drafting Studio ─────────────────────── -->
+<style id="dftStyles">
+  #draftingModal { display: none; position: fixed; inset: 0; background: rgba(2,6,23,0.75); z-index: 2000; align-items: flex-start; justify-content: center; overflow-y: auto; padding: 40px 16px; }
+  .dft-box { background: #0f172a; border: 1px solid rgba(201,151,58,0.35); border-radius: 14px; max-width: 860px; width: 100%; padding: 20px 24px; }
+  .dft-top { display: flex; justify-content: space-between; align-items: center; margin-bottom: 12px; }
+  .dft-title { font-weight: 700; color: #E2E8F0; font-size: 1.05rem; }
+  .dft-x { background: none; border: none; color: #64748B; font-size: 1.3rem; cursor: pointer; }
+  .dft-status { display: inline-block; background: rgba(251,191,36,0.12); border: 1px solid rgba(251,191,36,0.45); color: #fbbf24; border-radius: 6px; padding: 3px 10px; font-size: 0.72rem; font-weight: 700; letter-spacing: 0.06em; margin-bottom: 10px; }
+  .dft-paper { background: #f8f7f2; color: #1a2333; border-radius: 8px; padding: 28px 32px; font-family: Georgia, 'Times New Roman', serif; font-size: 0.92rem; line-height: 1.65; max-height: 55vh; overflow-y: auto; }
+  .dft-paper:focus { outline: 2px solid rgba(201,151,58,0.5); }
+  .dft-h { font-weight: 700; margin: 14px 0 4px; }
+  .dft-p { margin: 8px 0; white-space: pre-wrap; }
+  .dft-cites-lbl { font-size: 0.68rem; font-weight: 700; letter-spacing: 0.06em; text-transform: uppercase; color: #22d3ee; margin: 12px 0 6px; }
+  .dft-actions { display: flex; gap: 10px; margin-top: 14px; flex-wrap: wrap; }
+  .dft-hint { font-size: 0.74rem; color: #64748B; margin-top: 8px; }
+</style>
+<div id="draftingModal" onclick="if(event.target===this)dftClose()" role="dialog" aria-modal="true" aria-labelledby="dftTitle">
+  <div class="dft-box" tabindex="-1">
+    <div class="dft-top"><span class="dft-title" id="dftTitle">Document Draft</span><button class="dft-x" onclick="dftClose()" title="Close" aria-label="Close draft">&times;</button></div>
+    <div id="dftBody"></div>
+    <div class="dft-actions">
+      <button class="aiw-action" onclick="dftSave()">Save Draft</button>
+      <button class="aiw-action" onclick="dftExport()">Export PDF</button>
+      <button class="cc-nav-link" onclick="dftClose()">Close</button>
+    </div>
+    <div class="dft-hint">Click into the document to edit. MainStreet never sends documents automatically — you export and send when you're ready.</div>
+    <div id="dftSaved"></div>
+  </div>
+</div>
+
+<!-- ── Phase 23 Stage 3: Guided Tour overlay (non-blocking card; screens stay live) ── -->
+<style id="tourStyles">
+  #tourCard { display: none; position: fixed; right: 24px; bottom: 24px; z-index: 3000; max-width: 380px;
+    background: #0f172a; border: 1px solid rgba(201,151,58,0.55); border-radius: 14px; padding: 18px 20px;
+    box-shadow: 0 8px 40px rgba(0,0,0,0.6); }
+  .tour-step-lbl { font-size: 0.7rem; font-weight: 700; letter-spacing: 0.08em; color: #C9973A; text-transform: uppercase; }
+  .tour-title { font-size: 1.05rem; font-weight: 700; color: #F8FAFC; margin: 4px 0 6px; }
+  .tour-body { font-size: 0.85rem; color: #CBD5E1; line-height: 1.55; }
+  .tour-btns { display: flex; gap: 8px; margin-top: 14px; align-items: center; }
+  .tour-next { background: #C9973A; color: #0b1220; border: none; border-radius: 8px; padding: 8px 16px; font-weight: 700; cursor: pointer; }
+  .tour-back, .tour-skip { background: none; border: 1px solid rgba(255,255,255,0.15); color: #94A3B8; border-radius: 8px; padding: 7px 12px; cursor: pointer; font-size: 0.8rem; }
+  .tour-skip { border: none; margin-left: auto; }
+  .tour-glow { outline: 2px solid #C9973A !important; box-shadow: 0 0 28px rgba(201,151,58,0.55) !important; border-radius: 12px; }
+</style>
+<div id="tourCard" role="dialog" aria-label="Guided tour"></div>
+
+<!-- ── Phase 24: Interactive Evidence Viewer ─────────────────────────────── -->
+<style id="evdStyles">
+  #evidenceViewer { display: none; position: fixed; inset: 0; background: rgba(2,6,23,0.8); z-index: 2500; align-items: center; justify-content: center; padding: 24px; }
+  .evd-box { background: #0f172a; border: 1px solid rgba(201,151,58,0.4); border-radius: 14px; width: min(1150px, 100%); height: min(86vh, 900px); display: flex; flex-direction: column; padding: 16px 18px; }
+  .evd-top { display: flex; align-items: center; gap: 12px; margin-bottom: 10px; }
+  .evd-find { margin-left: auto; display: flex; gap: 6px; align-items: center; }
+  .evd-find input { background: #111827; border: 1px solid rgba(255,255,255,0.12); border-radius: 8px; color: #E2E8F0; padding: 6px 10px; font-size: 0.82rem; width: 190px; }
+  .evd-banner { background: rgba(251,191,36,0.1); border: 1px solid rgba(251,191,36,0.4); color: #fbbf24; border-radius: 8px; padding: 7px 12px; font-size: 0.8rem; margin-bottom: 8px; }
+  .evd-main { display: flex; gap: 14px; flex: 1; min-height: 0; }
+  .evd-doc { flex: 1; overflow: auto; background: #131c2e; border: 1px solid rgba(255,255,255,0.07); border-radius: 10px; padding: 12px; }
+  .evd-page-lbl { color: #64748B; font-size: 0.74rem; margin-bottom: 8px; }
+  .evd-stage { position: relative; display: inline-block; }
+  .evd-stage canvas { display: block; border-radius: 4px; background: #fff; }
+  .evd-hl-layer { position: absolute; inset: 0; pointer-events: none; }
+  .evd-hl { position: absolute; background: rgba(201,151,58,0.38); border-bottom: 2px solid #C9973A; border-radius: 2px; }
+  .evd-empty { color: #94A3B8; font-size: 0.86rem; padding: 30px 18px; line-height: 1.6; }
+  .evd-empty a { color: #7dd3fc; }
+  .evd-side { width: 320px; flex-shrink: 0; overflow-y: auto; background: #111827; border: 1px solid rgba(255,255,255,0.07); border-radius: 10px; padding: 14px 16px; }
+  .evd-row { display: flex; justify-content: space-between; gap: 10px; padding: 5px 0; font-size: 0.8rem; border-bottom: 1px solid rgba(255,255,255,0.05); }
+  .evd-row span { color: #64748B; } .evd-row b { color: #E2E8F0; text-align: right; }
+  .evd-lbl { font-size: 0.68rem; font-weight: 700; letter-spacing: 0.06em; text-transform: uppercase; color: #22d3ee; margin: 12px 0 5px; }
+  .evd-quote { margin: 0; padding: 10px 12px; background: rgba(14,116,144,0.12); border-left: 3px solid #22d3ee; border-radius: 6px; color: #CBD5E1; font-size: 0.83rem; line-height: 1.55; font-style: italic; }
+  .evd-reason { color: #94A3B8; font-size: 0.8rem; line-height: 1.5; }
+  .evd-note { margin-top: 12px; font-size: 0.75rem; color: #fbbf24; line-height: 1.5; }
+  .evd-actions { display: flex; flex-wrap: wrap; gap: 8px; margin-top: 14px; }
+  .evd-nav { display: flex; align-items: center; justify-content: space-between; gap: 8px; margin-top: 12px; font-size: 0.78rem; color: #64748B; }
+  .evd-jump { display: flex; flex-wrap: wrap; gap: 5px; margin-top: 8px; }
+  .evd-jump-chip { background: #1e293b; border: 1px solid rgba(255,255,255,0.1); color: #94A3B8; border-radius: 6px; padding: 3px 9px; font-size: 0.72rem; cursor: pointer; }
+  .evd-jump-chip--on { border-color: #C9973A; color: #C9973A; }
+  .aiw-cite--live { cursor: pointer; border-color: rgba(201,151,58,0.55); }
+  .aiw-cite--live:hover { background: rgba(201,151,58,0.12); color: #E2E8F0; }
+</style>
+<div id="evidenceViewer" onclick="if(event.target===this)EvidenceViewer.close()" role="dialog" aria-modal="true" aria-labelledby="evdTitle">
+  <div class="evd-box" tabindex="-1">
+    <div class="evd-top">
+      <span class="dft-title" id="evdTitle">Evidence</span>
+      <span class="evd-find">
+        <input id="evdFindInput" placeholder="Find in document…" onkeydown="if(event.key==='Enter')EvidenceViewer.find()">
+        <button class="cc-nav-link" onclick="EvidenceViewer.find()">Find</button>
+        <button class="cc-nav-link" id="evdBackBtn" style="display:none" onclick="EvidenceViewer.backToCitations()">← Back to citations</button>
+      </span>
+      <button class="dft-x" onclick="EvidenceViewer.close()" title="Close" aria-label="Close evidence viewer">&times;</button>
+    </div>
+    <div id="evdBanner" class="evd-banner" style="display:none"></div>
+    <div class="evd-main">
+      <div id="evdDoc" class="evd-doc"></div>
+      <div id="evdSide" class="evd-side"></div>
+    </div>
+  </div>
+</div>
+
 <!-- ── Portfolio Dashboard ──────────────────────────────────────────── -->
 <div id="portfolioDashboard">
+
+  <!-- Phase 21: entry point into the AI Command Center -->
+  <button class="cc-portfolio-entry" onclick="showCommandCenter()">✨ <b>AI Command Center</b> — your prioritized daily briefing</button>
+  <button class="cc-nav-link" style="margin: -8px 0 18px;" onclick="startGuidedTour()">▶ Take the 2-minute guided tour</button>
 
   <!-- Hero Intro -->
   <div class="hero-intro">
@@ -5419,9 +5704,12 @@
 <!-- ── Property Breadcrumb ───────────────────────────────────────────── -->
 <div id="propertyBreadcrumb">
   <button class="breadcrumb-back" onclick="backToPortfolio()">&#x2190; Back to Portfolio</button>
+  <button class="breadcrumb-back" onclick="showCommandCenter()" title="Return to your daily briefing">&#x2726; Command Center</button>
   <span class="breadcrumb-path">Portfolio &rsaquo; <span id="breadcrumbPropName"></span></span>
   <span id="camYearBadge" class="cam-year-badge"></span>
   <div id="syncIndicator" class="sync-indicator"></div>
+  <button class="rc-open-btn" onclick="openAIWorkspace({ propertyId: activePropId })" title="Ask MainStreet AI about this property — leases, CAM, reserves, disputes, settlements">&#x2728; Ask AI</button>
+  <button class="rc-open-btn" onclick="explainCurrentScreen()" title="Have MainStreet AI explain what you're looking at — what it means, why it matters, and what to do next">&#x2728; Explain This</button>
   <button class="rc-open-btn" onclick="openRecoveryModal()" title="Sync status, data integrity, backups, and property management">&#x1F6DF; Data Health</button>
   <!-- Clear Data / Delete Property moved out of this primary bar into the Data Health panel's
        "Danger Zone" (see _buildRecoveryModalBody) so destructive actions aren't one stray click away. -->
@@ -5843,21 +6131,38 @@
   <!-- ══════════════════════════ TAB: Reserves ═══════════════════════════ -->
   <div class="workspace-tab-pane" id="wsPane-reserves" style="display:none;">
 
-  <!-- ── SECTION 7: Escrow & Reserve Documents ───────────────────────── -->
+  <!-- ── SECTION 7: Reserve & Loan Documents (Phase 21D: split from requests —
+       "what the lender holds and requires" is a different workflow from
+       "getting reimbursed for a repair") ─────────────────────────────────── -->
   <div class="card" id="escrowSection">
     <div class="sec-head">
       <div class="sec-num" style="background:#0e7490;">7</div>
       <div>
-        <h2>Escrow &amp; Reserve Documents</h2>
-        <p>Upload mortgage, loan, and escrow/reserve agreements to extract lender reserve requirements automatically.</p>
+        <h2>Reserve &amp; Loan Documents</h2>
+        <p>These documents define what reserves exist, current balances, eligible uses, lender
+        requirements, draw procedures, deadlines, and the documentation needed for reimbursement.
+        MainStreet reads them the same way it reads leases — every extracted term carries a
+        verbatim citation back to the page it came from.</p>
       </div>
     </div>
-    <button id="escrowUploadBtn" class="report-btn" onclick="openEscrowDocumentUpload()">&#x1F4C2; Upload Reserve Document</button>
+    <button id="escrowUploadBtn" class="report-btn" onclick="openEscrowDocumentUpload()">&#x1F4C2; Upload Mortgage Documents</button>
 
-    <div class="escrow-section-label" style="margin-top:16px;">Reserve Profile</div>
+    <div class="escrow-section-label" style="margin-top:16px;">Reserve Accounts</div>
     <div id="escrowReservesList"></div>
+  </div>
 
-    <div class="escrow-section-label" style="margin-top:20px;">Draw Requests</div>
+  <!-- ── SECTION 8: Reserve Requests — every repair reimbursement starts here ── -->
+  <div class="card" id="escrowRequestsSection">
+    <div class="sec-head">
+      <div class="sec-num" style="background:#0e7490;">8</div>
+      <div>
+        <h2>Reserve Requests</h2>
+        <p>Every repair reimbursement starts here. Attach the invoices, bids, photos, and
+        certifications for completed work — MainStreet checks them against the lender's
+        documented requirements, tells you exactly what's still missing, and generates the
+        complete submission package when it's ready.</p>
+      </div>
+    </div>
     <div id="escrowDrawRequestsList"></div>
   </div>
 
@@ -6150,6 +6455,11 @@
 <script src="acquisition-engine.js"></script>
 <script src="escrow-reserve-engine.js"></script>
 <script src="escrow-draw-packets.js"></script>
+<script src="command-center.js"></script>
+<script src="ai-workspace.js"></script>
+<script src="document-drafting.js"></script>
+<script src="guided-tour.js"></script>
+<script src="evidence-viewer.js"></script>
 <script src="script.js"></script>
 <!-- Dev-only role switcher — activates only on localhost, no-op elsewhere -->
 <script src="dev-switcher.js"></script>

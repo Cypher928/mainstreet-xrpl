@@ -1251,12 +1251,26 @@ async function extractPdfText(file) {
 
   const pages = [];
   for (let p = 1; p <= Math.min(pdf.numPages, MAX_PAGES); p++) {
-    const page = await pdf.getPage(p);
-    const content = await page.getTextContent();
-    const pageText = content.items.map(item => item.str).join(' ');
-    // WHY marker: ask-lease citations need page numbers. Claude reads these markers
-    // and reports them as citation.page. Format must match the system prompt in ask-lease.js.
-    pages.push(`--- Page ${p} ---\n${pageText}`);
+    // Real-document robustness (Phase 27): one corrupt/unreadable page must not
+    // abort the whole document — mark it and keep going, so downstream extraction
+    // sees an explicit gap instead of silently losing everything after it.
+    try {
+      const page = await pdf.getPage(p);
+      const content = await page.getTextContent();
+      const pageText = content.items.map(item => item.str).join(' ');
+      // WHY marker: ask-lease citations need page numbers. Claude reads these markers
+      // and reports them as citation.page. Format must match the system prompt in ask-lease.js.
+      pages.push(`--- Page ${p} ---\n${pageText}`);
+    } catch (pageErr) {
+      console.warn(`[extractPdfText] page ${p} unreadable — continuing:`, pageErr?.message);
+      pages.push(`--- Page ${p} ---\n[This page could not be read — it may be corrupted or image-only.]`);
+    }
+  }
+
+  // Truncation must be visible IN the text, not just the console — otherwise
+  // extraction silently misses exhibits/amendments past the cap and nobody knows.
+  if (pdf.numPages > MAX_PAGES) {
+    pages.push(`--- Document truncated ---\n[Pages ${MAX_PAGES + 1}–${pdf.numPages} were not read. Exhibits or amendments beyond page ${MAX_PAGES} are not reflected in extracted terms.]`);
   }
 
   return pages.join('\n\n');
@@ -2187,18 +2201,23 @@ function renderEscrowProfile(property) {
           <span class="escrow-doc-count">Reserve Package &mdash; ${docCount} document${docCount === 1 ? '' : 's'}</span>
           <button class="escrow-doc-btn" onclick="openEscrowPackageView('${r.id}')">&#x1F4C1; View Documents</button>
           <button class="escrow-doc-btn" onclick="openEscrowDocumentReplace('${r.id}')">Replace</button>
-          ${r.sourceFileUrl ? `<button class="escrow-doc-btn" onclick="reprocessEscrowReserveDocument('${r.id}')">Reprocess</button>` : ''}
+          ${r.sourceFileUrl ? `<button class="escrow-doc-btn" onclick="reprocessEscrowReserveDocument('${r.id}')">Reprocess AI</button>` : ''}
           ${hasCitation ? `<button class="escrow-doc-btn" onclick="openEscrowSourceCitation('${r.id}')">Source Citation</button>` : ''}
           <button class="escrow-doc-btn escrow-doc-btn-danger" onclick="deleteEscrowReserve('${r.id}')">Delete</button>
         </div>`;
 
+      // Phase 21D: assistant-voice summary of the extracted terms (engine-built,
+      // states only what is on file).
+      const narrative = Engine.buildReserveNarrative ? Engine.buildReserveNarrative(r) : null;
+
       return `
-      <div class="escrow-reserve-card">
+      <div class="escrow-reserve-card" data-reserve-id="${esc(r.id)}">
         <div class="escrow-reserve-head">
           <strong>${esc(r.reserveTypeLabel)}</strong>
           <span class="escrow-reserve-balance">${fmt(bal.availableBalance)} available</span>
         </div>
         <div class="escrow-reserve-sub">of ${fmt(bal.currentBalance)} current balance${bal.committedAmount ? ` &middot; ${fmt(bal.committedAmount)} committed to open draws` : ''}</div>
+        ${narrative ? `<div class="escrow-ai-summary"><div class="escrow-ai-summary-lbl">AI Summary</div>${esc(narrative)}</div>` : ''}
         ${confBadge}
         ${sourceLine}
         ${evidenceLine}
@@ -2215,7 +2234,7 @@ function renderEscrowProfile(property) {
   }
 
   if (!draws.length) {
-    drawListEl.innerHTML = `<p style="color:#94A3B8;font-size:0.875rem;">No draw requests yet.</p>`;
+    drawListEl.innerHTML = `<p style="color:#94A3B8;font-size:0.875rem;">No reserve requests yet. Start one from a reserve account above — for example, after a roof repair is completed, attach its invoices and documentation and MainStreet will assemble the lender package.</p>`;
   } else {
     const fmtHistoryDate = (iso) => {
       if (!iso) return '';
@@ -2237,11 +2256,30 @@ function renderEscrowProfile(property) {
         ? `<div class="escrow-status-history">${historyRows}</div>`
         : '';
       const validation = reserve ? Engine.validateDrawRequest(reserve, dr, draws) : null;
+      // Phase 21D: doc-checkmark chips + AI readiness status on each request card.
+      const readiness = (reserve && Engine.computeEscrowReadiness && dr.status === 'draft')
+        ? Engine.computeEscrowReadiness(reserve, dr, draws) : null;
+      const _docsObj = dr.attachedDocuments || {};
+      const _chip = (n, label) => n ? `<span class="escrow-docchip">&#x2713; ${n} ${label}${n > 1 ? 's' : ''}</span>` : '';
+      const docChips = [
+        _chip((dr.invoices || []).length, 'invoice'),
+        _chip((_docsObj.contractorBids || []).length, 'contractor bid'),
+        _chip((_docsObj.photos || []).length, 'photo'),
+        _chip((_docsObj.lienWaivers || []).length, 'lien waiver'),
+        _chip((_docsObj.engineerCertification || []).length, 'engineer report'),
+      ].filter(Boolean).join('');
+      const aiStatusHtml = readiness ? `
+        <div class="escrow-ai-status ${readiness.ready ? 'escrow-ai-status--ok' : 'escrow-ai-status--warn'}">
+          <span class="escrow-ai-status-head">AI Status: ${readiness.ready ? 'Ready for reimbursement' : 'Not ready yet'} &middot; ${readiness.score}%</span>
+          <span class="escrow-ai-status-sub">${esc(readiness.summary || '')}</span>
+        </div>` : '';
       return `
-      <div class="escrow-draw-card">
+      <div class="escrow-draw-card" data-draw-id="${esc(dr.id)}">
         <div class="escrow-draw-head">
           <strong>${dr.drawNumber ? `Draw #${esc(dr.drawNumber)} &mdash; ` : ''}${esc(reserve ? reserve.reserveTypeLabel : 'Reserve')} &mdash; ${fmt(dr.amountRequested)}</strong>
         </div>
+        ${docChips ? `<div class="escrow-docchips">${docChips}</div>` : ''}
+        ${aiStatusHtml}
         ${_drawStatusStepperHtml(dr, Engine, validation)}
         ${historyBlock}
         <div class="escrow-draw-actions">
@@ -2351,6 +2389,11 @@ function _renderDrawBuilderBody(prop, reserve) {
     attachedDocuments: _drawDraft.attachedDocuments,
   };
   const validation = Engine ? Engine.validateDrawRequest(reserve, draftForValidation, prop.drawRequests || []) : null;
+  // Phase 21B: Escrow Readiness Score — same validation gate, expressed as the
+  // property-manager-facing "what is preventing the lender from releasing funds?"
+  const readiness = (Engine && Engine.computeEscrowReadiness)
+    ? Engine.computeEscrowReadiness(reserve, draftForValidation, prop.drawRequests || [])
+    : null;
   const DOC_CHECK_KEYS = ['invoices', 'photos', 'lienWaivers', 'contractorBids', 'engineerCertification'];
   const DOC_CHECK_LABELS = { invoices: 'Invoices', photos: 'Photo', lienWaivers: 'Lien Waiver', contractorBids: 'Contractor Bid', engineerCertification: 'Engineer Certification' };
   const docChecklist = validation ? validation.checklist.filter(c => DOC_CHECK_KEYS.includes(c.key)) : [];
@@ -2361,9 +2404,15 @@ function _renderDrawBuilderBody(prop, reserve) {
       <div class="escrow-section-label" style="margin-top:12px;">Required Documents</div>
       ${satisfiedDocs.map(c => `<div class="escrow-doc-row"><span>&#x2713; ${esc(DOC_CHECK_LABELS[c.key] || c.label)}</span></div>`).join('')}
       ${missingDocs.length ? `<div style="margin-top:4px;font-size:0.85rem;color:#fbbf24;">Missing:</div>${missingDocs.map(c => `<div class="escrow-doc-row"><span>&#x2610; ${esc(DOC_CHECK_LABELS[c.key] || c.label)}</span></div>`).join('')}` : ''}
-      <div style="margin-top:6px;font-size:0.85rem;color:${missingDocs.length === 0 ? '#86efac' : '#fbbf24'};">
+      ${readiness ? `
+      <div style="margin-top:10px;font-size:0.95rem;font-weight:700;color:${readiness.ready ? '#86efac' : '#fbbf24'};">
+        Escrow Readiness: ${readiness.score}%
+      </div>
+      <div style="font-size:0.85rem;color:${readiness.ready ? '#86efac' : '#cbd5e1'};margin-top:3px;line-height:1.5;">${esc(readiness.summary || '')}</div>
+      ${readiness.missing.slice(0, 4).map(i => `<div style="font-size:0.8rem;color:#fbbf24;margin-top:2px;">&#x26A0; ${esc(i.label)}${i.detail ? ` — ${esc(i.detail)}` : ''}</div>`).join('')}`
+      : `<div style="margin-top:6px;font-size:0.85rem;color:${missingDocs.length === 0 ? '#86efac' : '#fbbf24'};">
         Submission Ready: ${satisfiedDocs.length} of ${docChecklist.length} documents
-      </div>`
+      </div>`}`
     : '';
 
   document.getElementById('drawBuilderBody').innerHTML = `
@@ -2664,6 +2713,14 @@ function openEscrowSourceCitation(reserveId) {
   const prop = currentProperty();
   const reserve = prop && (prop.escrowReserves || []).find(r => r.id === reserveId);
   if (!reserve) return;
+
+  // Phase 24: route into the Interactive Evidence Viewer (document render +
+  // quote highlight) when available; the legacy quote-only modal remains the
+  // fallback so the button never dead-ends.
+  if (window.EvidenceViewer) {
+    const cites = EvidenceViewer.fromReserve(reserve);
+    if (cites.length) { EvidenceViewer.open({ citations: cites, index: 0 }); return; }
+  }
 
   const evidence = reserve.evidence || {};
   const fieldLabels = { reserve_type: 'Reserve Type', current_balance: 'Current Balance', eligible_uses: 'Eligible Uses' };
@@ -15801,7 +15858,7 @@ function _rwRenderLeaseFields(t) {
       </div>`;
 
     return `
-      <div class="rw-field">
+      <div class="rw-field" data-rw-field="${esc(key)}">
         <div class="rw-field-label">${esc(label)}</div>
         ${valHtml}
         ${confRow}
@@ -17393,6 +17450,486 @@ function _renderDemoPropertiesSection() {
     })}`;
 }
 
+// ─── Phase 21: AI Command Center (view glue — orchestration only) ────────────
+// All intelligence lives in command-center.js (pure derivation over the same
+// engines the rest of the app uses). These functions only route views.
+
+function renderCommandCenter() {
+  const root = document.getElementById('commandCenter');
+  if (!root || !window.CommandCenter) return;
+  const user  = window.AuthService?.getCurrentUser?.() || null;
+  const email = user?.email || '';
+  const _rawName = user?.name || (email ? email.split('@')[0] : null);
+  // Greeting polish: a derived email prefix ("lynnie928") still reads better capitalized.
+  const userName = _rawName ? _rawName.charAt(0).toUpperCase() + _rawName.slice(1) : null;
+  const model = CommandCenter.buildModel({ props: _props, acqReviews: _acqReviews, userName });
+  root.innerHTML = CommandCenter.renderHtml(model);
+}
+
+function showCommandCenter() {
+  // Tenant portal keeps its own home — the Command Center is a landlord surface.
+  if (window.AuthService?.getCurrentUser?.()?.role === 'tenant') return;
+  _aiwHide();
+  renderCommandCenter();
+  const cc  = document.getElementById('commandCenter');
+  const ptf = document.getElementById('portfolioDashboard');
+  const wf  = document.getElementById('mainWorkflow');
+  if (cc)  cc.style.display  = 'block';
+  if (ptf) ptf.style.display = 'none';
+  if (wf)  wf.style.display  = 'none';
+  window.scrollTo({ top: 0 });
+}
+
+function ccShowPortfolio() {
+  const cc = document.getElementById('commandCenter');
+  if (cc) cc.style.display = 'none';
+  _aiwHide();
+  document.getElementById('portfolioDashboard').style.display = 'block';
+  renderPortfolio(_props);
+}
+
+function ccOpenProperty(id) {
+  const cc = document.getElementById('commandCenter');
+  if (cc) cc.style.display = 'none';
+  _aiwHide();
+  selectProperty(id);
+}
+
+function ccOpenAcquisitions() {
+  ccShowPortfolio();
+  setTimeout(() => document.getElementById('acqSection')?.scrollIntoView({ behavior: 'smooth' }), 50);
+}
+
+// Phase 21B: open a property straight onto its Reserves tab (used by the
+// Command Center's capital-reserve cards). The tab switch waits for
+// selectProperty's first render to land.
+function ccOpenReserves(id) {
+  ccOpenProperty(id);
+  setTimeout(() => { try { switchWorkspaceTab('reserves'); } catch (_) { /* tab unavailable — property view is still correct */ } }, 400);
+}
+
+// ─── Phase 29: Actionable Command Center — deep-link routing ─────────────────
+// Every recommendation lands on the exact item requiring attention, never a
+// generic property page. Pattern: open the property, then poll briefly until
+// the destination element/data exists (selectProperty's load is async), then
+// act — and if the target never materializes, the user is still on the right
+// property tab, one step closer, not on a dead generic view.
+
+// Scroll an element into view and pulse-highlight it so the eye lands on the
+// exact item the recommendation referred to.
+function _ccFlashEl(el) {
+  if (!el) return;
+  el.scrollIntoView({ behavior: 'smooth', block: 'center' });
+  el.classList.add('cc-target-flash');
+  setTimeout(() => el.classList.remove('cc-target-flash'), 2600);
+}
+
+// Poll for a deep-link target after the async property load; give up quietly
+// after ~3s (the property view itself is already the correct fallback).
+function _ccWhenReady(check, act, tries = 12) {
+  const tick = () => {
+    let target = null;
+    try { target = check(); } catch (_) { target = null; }
+    if (target) { act(target); return; }
+    if (--tries > 0) setTimeout(tick, 250);
+  };
+  setTimeout(tick, 300);
+}
+
+// "Review disputes" → CAM tab with the dispute list in view; a single dispute
+// opens straight into its Dispute Workspace.
+function ccOpenDisputes(propId, disputeId) {
+  ccOpenProperty(propId);
+  _ccWhenReady(
+    () => (disputes.length ? document.getElementById('disputeSection') : null),
+    () => {
+      try { switchWorkspaceTab('cam'); } catch (_) {}
+      if (disputeId != null && disputes.some(d => d && d.id === disputeId)) {
+        openDisputeWorkspace(disputeId);
+      } else {
+        _ccFlashEl(document.getElementById('openDisputesWrap') || document.getElementById('disputeSection'));
+      }
+    });
+}
+
+// "Review lease / verify data / confirm CAM cap" → the AI Review Workspace for
+// that tenant, scrolled to the specific field (e.g. 'cap', 'end_date').
+function ccOpenLeaseReview(propId, tenantId, fieldKey) {
+  ccOpenProperty(propId);
+  _ccWhenReady(
+    () => _props.find(p => p.id === propId && (p.tenants || []).some(t => t && t.id === tenantId)),
+    () => {
+      openReviewWorkspace(tenantId);
+      if (fieldKey) {
+        _ccWhenReady(
+          () => document.querySelector(`#reviewWorkspace .rw-field[data-rw-field="${CSS.escape(fieldKey)}"]`),
+          (el) => _ccFlashEl(el), 6);
+      }
+    });
+}
+
+// "Verify lease data" (multiple tenants) → the property Review Queue, expanded.
+function ccOpenReviewQueue(propId) {
+  ccOpenProperty(propId);
+  _ccWhenReady(
+    () => document.getElementById('propertyReviewQueuePanel'),
+    (panel) => {
+      try { switchWorkspaceTab('overview'); } catch (_) {}
+      const details = panel.querySelector('details.rq-prop-details');
+      if (details) details.open = true;
+      _ccFlashEl(panel);
+    });
+}
+
+// "Review expenses" (YoY trend) → CAM tab at the expense/invoice breakdown.
+function ccOpenExpenses(propId) {
+  ccOpenProperty(propId);
+  _ccWhenReady(
+    () => document.getElementById('results') || document.getElementById('cardInvoices'),
+    () => {
+      try { switchWorkspaceTab('cam'); } catch (_) {}
+      const results = document.getElementById('results');
+      const hasResults = results && results.offsetParent !== null;
+      _ccFlashEl(hasResults ? results : document.getElementById('cardInvoices'));
+    });
+}
+
+// "Vacancy / unbilled share" → CAM tab at the allocation results, where the
+// pro-rata coverage gap is visible per tenant.
+function ccOpenAllocationResults(propId) {
+  ccOpenProperty(propId);
+  _ccWhenReady(
+    () => document.getElementById('results') || document.getElementById('runBtn'),
+    () => {
+      try { switchWorkspaceTab('cam'); } catch (_) {}
+      const results = document.getElementById('results');
+      const hasResults = results && results.offsetParent !== null;
+      _ccFlashEl(hasResults ? results : document.getElementById('runBtn'));
+    });
+}
+
+// "Run reconciliation" → CAM tab with the Calculate button highlighted.
+function ccRunReconciliation(propId) {
+  ccOpenProperty(propId);
+  _ccWhenReady(
+    () => document.getElementById('runBtn'),
+    (btn) => { try { switchWorkspaceTab('cam'); } catch (_) {} _ccFlashEl(btn); });
+}
+
+// "Reserve shortfall / runway" → Reserves tab with that reserve's card highlighted.
+function ccOpenReserve(propId, reserveId) {
+  ccOpenProperty(propId);
+  _ccWhenReady(
+    () => document.querySelector(`.escrow-reserve-card[data-reserve-id="${CSS.escape(reserveId)}"]`),
+    (card) => { try { switchWorkspaceTab('reserves'); } catch (_) {} _ccFlashEl(card); });
+}
+
+// "Generate lender package / complete draw" → Reserves tab with that draw
+// request's card highlighted (its Generate Package / status controls live there).
+function ccOpenDraw(propId, drawId) {
+  ccOpenProperty(propId);
+  _ccWhenReady(
+    () => document.querySelector(`.escrow-draw-card[data-draw-id="${CSS.escape(drawId)}"]`),
+    (card) => { try { switchWorkspaceTab('reserves'); } catch (_) {} _ccFlashEl(card); },
+    12);
+}
+
+// Citation on a reserve recommendation → the Evidence Viewer on the cited
+// reserve requirement (falls back to the quote modal inside openEscrowSourceCitation).
+function ccOpenReserveCitation(propId, reserveId) {
+  ccOpenProperty(propId);
+  _ccWhenReady(
+    () => {
+      const prop = _props.find(p => p.id === propId);
+      return prop && (prop.escrowReserves || []).some(r => r && r.id === reserveId) ? prop : null;
+    },
+    () => openEscrowSourceCitation(reserveId));
+}
+
+// Acquisition recommendation → that specific review's detail panel.
+function ccOpenAcqReview(reviewId) {
+  if (_acqReviews.some(r => r && r.id === reviewId)) {
+    const cc = document.getElementById('commandCenter');
+    if (cc) cc.style.display = 'none';
+    _aiwHide();
+    selectAcquisitionReview(reviewId);
+  } else {
+    ccOpenAcquisitions(); // review not loaded — the acquisition section is still the right room
+  }
+}
+
+// ─── Phase 22: AI Workspace (view glue — all intelligence lives in ai-workspace.js) ──
+
+let _aiwHistory = [];
+let _aiwContext = null;
+// Phase 23 Stage 2 — deterministic Workspace Context: the current analytical
+// task (scope, last engine, last result set, last trace). Managed entirely by
+// AIWorkspace.answer(); this is just where the session holds it.
+let _aiwWctx = null;
+
+function _aiwHide() {
+  const ws = document.getElementById('aiWorkspace');
+  if (ws) ws.style.display = 'none';
+}
+
+function openAIWorkspace(context) {
+  if (window.AuthService?.getCurrentUser?.()?.role === 'tenant') return;
+  if (!window.AIWorkspace) return;
+  // Context-aware: called from a property view it scopes itself; a null/absent
+  // context means "infer from the active property"; {scope:'portfolio'} forces
+  // portfolio-wide. The user can clear property scope from the chip.
+  const _prevPropId = _aiwContext?.propertyId || null;
+  _aiwContext = (context && context.scope === 'portfolio') ? null
+    : (context && context.propertyId) ? context
+    : (activePropId ? { propertyId: activePropId } : null);
+  // Switching property scope starts a fresh analytical task — old result sets
+  // from another property must not silently drive follow-ups here.
+  if ((_aiwContext?.propertyId || null) !== _prevPropId) _aiwWctx = null;
+  ['commandCenter', 'portfolioDashboard', 'mainWorkflow'].forEach(id => {
+    const el = document.getElementById(id); if (el) el.style.display = 'none';
+  });
+  const ws = document.getElementById('aiWorkspace');
+  if (ws) ws.style.display = 'block';
+  renderAIWorkspace();
+  window.scrollTo({ top: 0 });
+  // UX (Phase 23): land ready to type.
+  setTimeout(() => document.getElementById('aiwInput')?.focus(), 50);
+}
+
+function aiwClose() { _aiwHide(); showCommandCenter(); }
+
+function aiwClearConversation() { _aiwHistory = []; _aiwWctx = null; renderAIWorkspace(); }
+
+function aiwClearWctx() { _aiwWctx = null; renderAIWorkspace(); }
+
+function aiwClearContext() { _aiwContext = null; renderAIWorkspace(); }
+
+function renderAIWorkspace() {
+  const p = _aiwContext?.propertyId ? _props.find(x => x.id === _aiwContext.propertyId) : null;
+  const ctxEl = document.getElementById('aiwContextChip');
+  if (ctxEl) {
+    // "Currently working in" panel — the whole context, nothing hidden.
+    const items = [
+      `<span class="aiw-ctx-item"><span>Currently working in</span><b>${p ? esc(p.name) : 'Whole portfolio'}</b>${p ? ` <button class="aiw-ctx-clear" onclick="aiwClearContext()" title="Switch to whole-portfolio scope">&times;</button>` : ''}</span>`,
+      _aiwWctx?.engine ? `<span class="aiw-ctx-item"><span>Answered by</span><b>${esc(_aiwWctx.engine)}</b></span>` : '',
+      _aiwWctx?.resultSet ? `<span class="aiw-ctx-item"><span>Working with</span><b>${esc(_aiwWctx.resultSet.label)} (${_aiwWctx.resultSet.items.length})</b></span>` : '',
+      (_aiwWctx?.engine || _aiwWctx?.resultSet) ? `<button class="aiw-ctx-clear" onclick="aiwClearWctx()" title="Clear the current analysis context">Clear context</button>` : '',
+      _aiwHistory.length ? `<button class="aiw-ctx-clear" onclick="aiwClearConversation()" title="Clear the conversation and start fresh">New analysis</button>` : '',
+    ].filter(Boolean).join('');
+    ctxEl.innerHTML = `<span class="aiw-ctx-panel">${items}</span>`;
+  }
+  const sugEl = document.getElementById('aiwSuggestions');
+  if (sugEl) sugEl.innerHTML = AIWorkspace.buildSuggestions(_aiwContext, { props: _props })
+    .map(s => `<button class="aiw-chip" data-q="${esc(s)}" onclick="aiwAsk(this.dataset.q)">${esc(s)}</button>`).join('');
+  const msgEl = document.getElementById('aiwMessages');
+  if (msgEl) {
+    // First-time friction (Phase 25): an empty conversation gets a gentle
+    // starter instead of blank space — tap a suggestion or just type.
+    msgEl.innerHTML = _aiwHistory.length
+      ? _aiwHistory.map(m => m.role === 'user' ? `<div class="aiw-user">${esc(m.text)}</div>` : m.html).join('')
+      : `<div class="aiw-starter">Tap a suggestion above, or just type a question — plain English works.
+         Every answer comes from your own documents, shows its evidence, and ends with the next step you can take.</div>`;
+    msgEl.scrollTop = msgEl.scrollHeight;
+  }
+}
+
+function aiwAsk(q) {
+  const input = document.getElementById('aiwInput');
+  const question = String(q != null ? q : (input ? input.value : '')).trim();
+  if (!question) return;
+  if (input && q == null) input.value = '';
+  const ans = AIWorkspace.answer({ question, context: _aiwContext, wctx: _aiwWctx, props: _props, acqReviews: _acqReviews });
+  _aiwWctx = ans.context || null;
+  _aiwHistory.push({ role: 'user', text: question }, { role: 'ai', html: AIWorkspace.renderAnswerHtml(ans) });
+  // Scale guard (Phase 27): the conversation re-renders in full each turn — cap
+  // it at 30 exchanges so a long session never degrades the DOM.
+  if (_aiwHistory.length > 60) _aiwHistory = _aiwHistory.slice(-60);
+  renderAIWorkspace();
+}
+
+function aiwKey(e) { if (e && e.key === 'Enter') aiwAsk(); }
+
+// ─── Phase 23 Stage 1: Document Drafting Studio + Explain Mode (view glue) ──
+
+let _dftDoc = null;
+
+function openDraftingStudio(type, context) {
+  if (!window.DocumentDrafting) return;
+  const ctx = context || _aiwContext || (activePropId ? { propertyId: activePropId } : null);
+  const doc = DocumentDrafting.build(type, { props: _props, context: ctx, acqReviews: _acqReviews });
+  if (!doc) {
+    showToast('Not enough data on file to draft that yet — run the relevant analysis first.', { color: '#92400e', textColor: '#fef3c7' });
+    return;
+  }
+  const titleEl = document.getElementById('dftTitle');
+  const bodyEl  = document.getElementById('dftBody');
+  const modalEl = document.getElementById('draftingModal');
+  if (!titleEl || !bodyEl || !modalEl) return;   // markup missing — degrade silently
+  _dftDoc = doc;
+  titleEl.textContent = doc.title + (doc.propertyName ? ' — ' + doc.propertyName : '');
+  bodyEl.innerHTML = DocumentDrafting.renderEditableHtml(doc);
+  _dftRenderSaved();
+  modalEl.style.display = 'flex';
+  // A11y (Phase 26): move focus into the dialog so keyboard/screen-reader
+  // users land inside it instead of behind it.
+  setTimeout(() => modalEl.querySelector('.dft-box')?.focus(), 30);
+}
+
+// Esc closes the drafting modal (and steps out of a running tour) — registered once.
+document.addEventListener('keydown', (e) => {
+  const _openModal = () => {
+    const ev = document.getElementById('evidenceViewer');
+    if (ev && ev.style.display === 'flex') return ev;
+    const dm = document.getElementById('draftingModal');
+    if (dm && dm.style.display === 'flex') return dm;
+    return null;
+  };
+  if (e.key === 'Escape') {
+    const ev = document.getElementById('evidenceViewer');
+    if (ev && ev.style.display === 'flex' && window.EvidenceViewer) { EvidenceViewer.close(); return; }
+    const dm = document.getElementById('draftingModal');
+    if (dm && dm.style.display === 'flex') { dftClose(); return; }
+    if (typeof _tour !== 'undefined' && _tour) tourEnd();
+    return;
+  }
+  // A11y (Phase 27): trap Tab inside open dialogs so keyboard users can't
+  // focus the page behind them.
+  if (e.key === 'Tab') {
+    const modal = _openModal();
+    if (!modal) return;
+    const focusables = modal.querySelectorAll('button, [href], input, [contenteditable="true"], [tabindex]:not([tabindex="-1"])');
+    if (!focusables.length) return;
+    const first = focusables[0], last = focusables[focusables.length - 1];
+    if (e.shiftKey && document.activeElement === first) { e.preventDefault(); last.focus(); }
+    else if (!e.shiftKey && document.activeElement === last) { e.preventDefault(); first.focus(); }
+    else if (!modal.contains(document.activeElement)) { e.preventDefault(); first.focus(); }
+  }
+});
+
+function dftClose() {
+  document.getElementById('draftingModal').style.display = 'none';
+  _dftDoc = null;
+}
+
+function dftExport() {
+  if (!_dftDoc) return;
+  const edited = document.getElementById('dftPaper')?.innerHTML || null;
+  const w = window.open('', '_blank');
+  if (!w) { showToast('Allow pop-ups to export the PDF.'); return; }
+  w.document.write(DocumentDrafting.renderPrintHtml(_dftDoc, edited));
+  w.document.close(); w.focus();
+  setTimeout(() => { try { w.print(); } catch (_) {} }, 350);
+}
+
+function dftSave() {
+  if (!_dftDoc) return;
+  const prop = _props.find(p => p.id === _dftDoc.propertyId) || currentProperty();
+  if (!prop) { showToast('Open a property to save drafts.'); return; }
+  const edited = document.getElementById('dftPaper')?.innerHTML || null;
+  if (!Array.isArray(prop.aiDrafts)) prop.aiDrafts = [];
+  const existing = prop.aiDrafts.findIndex(x => x.id === _dftDoc.id);
+  const record = { id: _dftDoc.id, type: _dftDoc.type, title: _dftDoc.title, html: edited,
+                   citations: _dftDoc.citations || [], createdAt: _dftDoc.createdAt, status: 'draft' };
+  if (existing >= 0) prop.aiDrafts[existing] = record; else prop.aiDrafts.push(record);
+  try { saveProperty(prop); } catch (_) { /* localStorage copy still saved by saveProperty */ }
+  showToast(`Draft saved to ${prop.name || 'property'}.`);
+  _dftRenderSaved();
+}
+
+function _dftRenderSaved() {
+  const el = document.getElementById('dftSaved');
+  if (!el) return;
+  const prop = _dftDoc ? (_props.find(p => p.id === _dftDoc.propertyId) || currentProperty()) : null;
+  const drafts = prop?.aiDrafts || [];
+  el.innerHTML = drafts.length
+    ? `<div class="dft-cites-lbl">Saved drafts — ${esc(prop.name || '')}</div>` +
+      drafts.slice().reverse().slice(0, 5).map(x =>
+        `<button class="cc-nav-link" style="margin:4px 6px 0 0;" data-id="${esc(x.id)}" onclick="dftOpenSaved(this.dataset.id)">${esc(x.title)} · ${new Date(x.createdAt).toLocaleDateString()}</button>`).join('')
+    : '';
+}
+
+function dftOpenSaved(id) {
+  const prop = (_dftDoc ? _props.find(p => p.id === _dftDoc.propertyId) : null) || currentProperty();
+  const x = prop?.aiDrafts?.find(dd => dd.id === id);
+  if (!x) return;
+  _dftDoc = { ...x, propertyId: prop.id, propertyName: prop.name, sections: [],
+              confidence: { pct: 0, basis: 'saved draft' }, disclaimer: '' };
+  document.getElementById('dftTitle').textContent = x.title + ' — saved draft';
+  document.getElementById('dftBody').innerHTML =
+    `<div class="dft-status">DRAFT · saved ${esc(new Date(x.createdAt).toLocaleDateString())}</div>
+     <div class="dft-paper" id="dftPaper" contenteditable="true" spellcheck="true">${x.html || ''}</div>`;
+}
+
+// ─── Phase 23 Stage 3: Guided Tour runner (steps built by guided-tour.js) ────
+
+let _tour = null;
+
+function startGuidedTour() {
+  if (window.AuthService?.getCurrentUser?.()?.role === 'tenant') return;
+  if (!window.GuidedTour) return;
+  _tour = { steps: GuidedTour.buildSteps({ props: _props, acqReviews: _acqReviews }), i: 0 };
+  if (!_tour.steps.length) { _tour = null; return; }
+  _tourShow();
+}
+
+function _tourClearGlow() {
+  document.querySelectorAll('.tour-glow').forEach(el => el.classList.remove('tour-glow'));
+}
+
+function _tourShow() {
+  if (!_tour) return;
+  const s = _tour.steps[_tour.i];
+  _tourClearGlow();
+  if (typeof s.go === 'function') { try { s.go(); } catch (_) { /* keep touring */ } }
+  const card = document.getElementById('tourCard');
+  if (!card) return;
+  const last = _tour.i === _tour.steps.length - 1;
+  card.innerHTML = `
+    <div class="tour-step-lbl">Guided tour · Step ${_tour.i + 1} of ${_tour.steps.length}</div>
+    <div class="tour-title">${esc(s.title)}</div>
+    <div class="tour-body">${esc(s.body)}</div>
+    <div class="tour-btns">
+      ${_tour.i > 0 ? `<button class="tour-back" onclick="tourBack()">Back</button>` : ''}
+      <button class="tour-next" onclick="${last ? 'tourEnd()' : 'tourNext()'}">${last ? 'Finish' : 'Next'}</button>
+      ${!last ? `<button class="tour-skip" onclick="tourEnd()">Skip tour</button>` : ''}
+    </div>`;
+  card.style.display = 'block';
+  // Highlight after navigation settles (some steps load a property asynchronously).
+  setTimeout(() => {
+    if (!_tour || _tour.steps[_tour.i] !== s || !s.highlight) return;
+    const el = document.querySelector(s.highlight);
+    if (el) { el.classList.add('tour-glow'); el.scrollIntoView({ behavior: 'smooth', block: 'center' }); }
+  }, s.delay || 250);
+}
+
+function tourNext() { if (_tour && _tour.i < _tour.steps.length - 1) { _tour.i++; _tourShow(); } }
+function tourBack() { if (_tour && _tour.i > 0) { _tour.i--; _tourShow(); } }
+function tourEnd() {
+  _tourClearGlow();
+  const card = document.getElementById('tourCard');
+  if (card) card.style.display = 'none';
+  _tour = null;
+  try { _lsSet && _lsSet('ms_tour_done', '1'); } catch (_) {}
+}
+
+// ✨ Explain This — maps whatever the user is looking at to a scoped Workspace
+// question. Pure orchestration: the answer comes from the same intents.
+function explainCurrentScreen() {
+  const vis = (id) => { const el = document.getElementById(id); return !!el && el.style.display !== 'none'; };
+  let q = 'Explain this portfolio';
+  let ctx = { scope: 'portfolio' };
+  if (vis('mainWorkflow') && activePropId) {
+    ctx = { propertyId: activePropId };
+    const tab = (typeof WORKSPACE_TABS !== 'undefined' ? WORKSPACE_TABS : []).find(t => vis('wsPane-' + t));
+    q = tab === 'cam'      ? 'Explain this reconciliation'
+      : tab === 'reserves' ? 'Show reserve balances'
+      : tab === 'reports'  ? 'Explain this reconciliation'
+      : 'Explain this property';
+  }
+  openAIWorkspace(ctx);
+  aiwAsk(q);
+}
+
 function renderPortfolio(props) {
   props = props || _props; // handle no-arg calls
   if (!Array.isArray(props)) {
@@ -17713,6 +18250,7 @@ async function selectProperty(id) {
     // loadProperties() skips the blob, so this lazy load is the only place it arrives. Without
     // this, the settlement flow renders "pending" because property.settlement stays undefined.
     property.settlement        = data.settlement ?? property.settlement ?? null;
+    property.aiDrafts          = data.aiDrafts?.length ? data.aiDrafts : (property.aiDrafts || []);
 
     // Tenant/invoice data: only overwrite when loaded data is at least as rich,
     // preventing a stale DB record from erasing a fresh in-session upload.
@@ -19033,6 +19571,8 @@ async function saveProperty(property) {
       // next saveProperty rewrites properties.data without it, wiping the seeded record and
       // dropping the settlement flow back to "pending".
       settlement:        stripped.settlement        ?? null,
+      // AI Document Drafting (Phase 23): saved drafts persist with the property.
+      aiDrafts:          stripped.aiDrafts          || [],
       // Preserve the demo-seed markers so a save doesn't strip them (which would force the
       // demo to needlessly re-seed on every subsequent load). Undefined for real properties.
       _demoVersion:      stripped._demoVersion,
@@ -19311,6 +19851,7 @@ async function loadPropertyData(id) {
         results:           d.results           ?? null,
         camReconciliation: d.camReconciliation ?? null,
         settlement:        d.settlement        ?? null,
+        aiDrafts:          d.aiDrafts          || [],
         activityLog:       d.activityLog       || [],
         timeline:          d.timeline          || [],
         // Full tenant state (review, reviewOverrides, capBaseAmount, confidence)
@@ -19460,6 +20001,7 @@ async function loadPropertyData(id) {
     // preserve it through the merge so the settlement flow doesn't fall back to pending
     // when a property is opened via loadPropertyData (loadProperties already keeps it).
     settlement:        dbData.settlement        ?? base.settlement        ?? null,
+    aiDrafts:          dbData.aiDrafts?.length ? dbData.aiDrafts : (base.aiDrafts || []),
     // Escrow reserves / draw requests: Supabase is authoritative (draw status
     // changes must not be lost if a stale local snapshot has fewer tenants).
     escrowReserves:    dbData.escrowReserves?.length ? dbData.escrowReserves : (base.escrowReserves || []),
@@ -21208,6 +21750,11 @@ async function init() {
     portfolio.splice(0, portfolio.length, ..._props);
     renderPortfolio(properties);
     _loadAcqReviewsAndRender();
+    // Phase 21: land on the AI Command Center (landlord only; guarded — any
+    // failure falls back to the portfolio view already rendered above).
+    try {
+      if (window.CommandCenter && window.AuthService?.getCurrentUser?.()?.role !== 'tenant') showCommandCenter();
+    } catch (e) { console.warn('[CommandCenter] landing failed — portfolio shown instead:', e?.message); }
   } catch (e) {
     const isNet = /load failed|failed to fetch|networkerror|offline/i.test(e?.message || '');
     if (!isNet) logError('init.loadProperties', e, {});

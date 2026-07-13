@@ -8,6 +8,8 @@
 
 **Live demo:** [mainstreet-xrpl.vercel.app](https://mainstreet-xrpl.vercel.app)
 
+**🎥 Demo video:** [Watch the full walkthrough](https://1drv.ms/v/c/8adf809cf83a844a/IQAcJhs_Il5hSIlU2PJLiVVPAWmxCY7Fvc3QBzTiSrZsJo0)
+
 **Fastest way to see the product (under 3 minutes):**
 
 1. Open the live demo link above.
@@ -24,7 +26,7 @@
 | **XRPL settlement code** | [`rlusd-integration.js`](./rlusd-integration.js) — RLUSD mainnet settlement (wallet, trust lines, transaction logic) |
 | **Hash-anchoring prototype** | [`xrpl-integration.js`](./xrpl-integration.js) — reference implementation for *optionally* anchoring a SHA-256 reconciliation fingerprint via a transaction memo (testnet; **not wired into the production app**) |
 | **Allocation engine** | [`allocation-engine.js`](./allocation-engine.js) — standalone, unit-tested CAM pro-rata engine |
-| **Demo video** | _to be added — see go-live checklist_ |
+| **Demo video** | 🎥 [Watch the demo](https://1drv.ms/v/c/8adf809cf83a844a/IQAcJhs_Il5hSIlU2PJLiVVPAWmxCY7Fvc3QBzTiSrZsJo0) — full product walkthrough |
 | **Live mainnet settlement transaction** | ✅ [`D5F11B5E…B4D12A`](https://livenet.xrpl.org/transactions/D5F11B5EF7BD9C9BC8062FDA2F6B94BCA1F95DC3417C372548BB5F6082B4D12A) — 1 RLUSD settled on XRPL mainnet |
 
 > **On mainnet status:** ✅ **Live.** The production settlement wallet (`rHLDysh6p6TcJM7QXU15YRLG4mERF5h5pv`) is funded, has an RLUSD trust line to Ripple's official issuer, and has executed a **real RLUSD settlement on XRPL mainnet** — publicly verifiable on the explorer (link above). The transaction is a Payment in RLUSD to the landlord wallet, carrying a SHA-256 settlement fingerprint in its memo. Run `node scripts/verify-settlement.js rHLDysh6p6TcJM7QXU15YRLG4mERF5h5pv` to confirm all checks on-ledger yourself.
