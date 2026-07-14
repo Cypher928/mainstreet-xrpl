@@ -15211,8 +15211,8 @@ async function ensureDemoProperty() {
   // reads "settled & verified" without a dollar figure — the on-chain proof tx is 1 RLUSD.
   const DEMO_SETTLEMENT = {
     status:       'settled',
-    txHash:       'D5F11B5EF7BD9C9BC8062FDA2F6B94BCA1F95DC3417C372548BB5F6082B4D12A',
-    explorerLink: 'https://livenet.xrpl.org/transactions/D5F11B5EF7BD9C9BC8062FDA2F6B94BCA1F95DC3417C372548BB5F6082B4D12A',
+    txHash:       '7FA730B2B78819AE34B3D1B458721FBC52B9CD25E980ED42DD1B15E9F9FC724A',
+    explorerLink: 'https://livenet.xrpl.org/transactions/7FA730B2B78819AE34B3D1B458721FBC52B9CD25E980ED42DD1B15E9F9FC724A',
     network:      'mainnet',
     settledAt:    '2026-07-05T04:34:50Z',
   };
