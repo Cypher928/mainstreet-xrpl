@@ -10,8 +10,8 @@ Each item should be checked off in order — several have hard dependencies on t
 > **STATUS — ✅ LIVE (2026-07-05):** Steps 1, 3, 4, 6, and 7 are complete. The production
 > settlement wallet (`rHLDysh6p6TcJM7QXU15YRLG4mERF5h5pv`) is funded and trust-lined, and the
 > **first real RLUSD settlement is on mainnet and verified**:
-> TX `D5F11B5EF7BD9C9BC8062FDA2F6B94BCA1F95DC3417C372548BB5F6082B4D12A`
-> ([explorer](https://livenet.xrpl.org/transactions/D5F11B5EF7BD9C9BC8062FDA2F6B94BCA1F95DC3417C372548BB5F6082B4D12A)) —
+> TX `7FA730B2B78819AE34B3D1B458721FBC52B9CD25E980ED42DD1B15E9F9FC724A`
+> ([explorer](https://livenet.xrpl.org/transactions/7FA730B2B78819AE34B3D1B458721FBC52B9CD25E980ED42DD1B15E9F9FC724A)) —
 > 1 RLUSD → `rw97rJThBJtoVRqR4DsoK5kW2taftzQvAX`, `tesSUCCESS`, with a SHA-256 memo. Remaining:
 > **step 2** (point Vercel's `XRPL_SETTLEMENT_WALLET_ADDRESS` at the new wallet), **step 5**
 > (confirm the Make Waves attribution mechanism), **step 8** (set the in-app `property.settlement`

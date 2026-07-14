@@ -24,7 +24,7 @@ with:
 
 ```
 | **Demo video** | [Watch the 2-minute demo](<<DEMO_VIDEO_URL>>) |
-| **Live mainnet settlement transaction** | [`D5F11B5EF7BD9C9BC8062FDA2F6B94BCA1F95DC3417C372548BB5F6082B4D12A`](https://livenet.xrpl.org/transactions/D5F11B5EF7BD9C9BC8062FDA2F6B94BCA1F95DC3417C372548BB5F6082B4D12A) — RLUSD on XRPL mainnet |
+| **Live mainnet settlement transaction** | [`7FA730B2B78819AE34B3D1B458721FBC52B9CD25E980ED42DD1B15E9F9FC724A`](https://livenet.xrpl.org/transactions/7FA730B2B78819AE34B3D1B458721FBC52B9CD25E980ED42DD1B15E9F9FC724A) — RLUSD on XRPL mainnet |
 ```
 
 ---
@@ -37,7 +37,7 @@ but deliberately not yet funded) with:
 ```
 > **Live on mainnet:** MainStreet settles in RLUSD on the XRP Ledger. The first settlement
 > ( `$1.00 (1 RLUSD)`, `2026-07-05` ) is live and verifiable:
-> [`D5F11B5EF7BD9C9BC8062FDA2F6B94BCA1F95DC3417C372548BB5F6082B4D12A`](https://livenet.xrpl.org/transactions/D5F11B5EF7BD9C9BC8062FDA2F6B94BCA1F95DC3417C372548BB5F6082B4D12A). The in-app "Settled via RLUSD on XRPL — View
+> [`7FA730B2B78819AE34B3D1B458721FBC52B9CD25E980ED42DD1B15E9F9FC724A`](https://livenet.xrpl.org/transactions/7FA730B2B78819AE34B3D1B458721FBC52B9CD25E980ED42DD1B15E9F9FC724A). The in-app "Settled via RLUSD on XRPL — View
 > Transaction" surface links every settlement to the public ledger.
 ```
 
@@ -54,10 +54,10 @@ block with the testnet hash) with:
 MainStreet's first RLUSD settlement on XRPL mainnet — public and verifiable:
 
 ​```
-TX Hash:  D5F11B5EF7BD9C9BC8062FDA2F6B94BCA1F95DC3417C372548BB5F6082B4D12A
+TX Hash:  7FA730B2B78819AE34B3D1B458721FBC52B9CD25E980ED42DD1B15E9F9FC724A
 Network:  XRPL Mainnet
 Amount:   $1.00 (1 RLUSD) (RLUSD)
-Explorer: https://livenet.xrpl.org/transactions/D5F11B5EF7BD9C9BC8062FDA2F6B94BCA1F95DC3417C372548BB5F6082B4D12A
+Explorer: https://livenet.xrpl.org/transactions/7FA730B2B78819AE34B3D1B458721FBC52B9CD25E980ED42DD1B15E9F9FC724A
 ​```
 ```
 
@@ -85,4 +85,4 @@ to:
 ## After applying
 - Re-read the rendered README top-to-bottom once — confirm no remaining `<<...>>` tokens and no
   lingering "pending funding" / testnet language.
-- Confirm `https://livenet.xrpl.org/transactions/D5F11B5EF7BD9C9BC8062FDA2F6B94BCA1F95DC3417C372548BB5F6082B4D12A` actually resolves to the transaction before committing.
+- Confirm `https://livenet.xrpl.org/transactions/7FA730B2B78819AE34B3D1B458721FBC52B9CD25E980ED42DD1B15E9F9FC724A` actually resolves to the transaction before committing.

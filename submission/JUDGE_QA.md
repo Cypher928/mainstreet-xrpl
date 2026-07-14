@@ -7,7 +7,7 @@ recite a script. Answer in your own words.
 
 **Two honesty guards before you walk in:**
 - The first real RLUSD mainnet settlement is **done** — tx
-  `D5F11B5EF7BD9C9BC8062FDA2F6B94BCA1F95DC3417C372548BB5F6082B4D12A`, Payment · Success. So every
+  `7FA730B2B78819AE34B3D1B458721FBC52B9CD25E980ED42DD1B15E9F9FC724A`, Payment · Success. So every
   answer tagged **[after first settlement]** is now simply true: state the live transaction as
   fact and point judges to the explorer.
 - If you don't know something, say "we haven't built/measured that yet." Every judge respects
@@ -138,7 +138,7 @@ recite a script. Answer in your own words.
 
 **Q: Is this actually live on mainnet?**
 - **Concise:** Yes — live on XRPL mainnet right now. Here's the first real RLUSD settlement
-  transaction, explorer-visible: `D5F11B5EF7BD9C9BC8062FDA2F6B94BCA1F95DC3417C372548BB5F6082B4D12A`
+  transaction, explorer-visible: `7FA730B2B78819AE34B3D1B458721FBC52B9CD25E980ED42DD1B15E9F9FC724A`
   — a 1 RLUSD Payment to Ripple's official RLUSD issuer trust line, `tesSUCCESS`. You can look
   it up, or run our verifier against it.
 - **Deeper:** Settlement wallet `rHLDysh6p6TcJM7QXU15YRLG4mERF5h5pv` → landlord wallet

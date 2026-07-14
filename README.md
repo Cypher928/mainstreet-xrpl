@@ -27,7 +27,7 @@
 | **Hash-anchoring prototype** | [`xrpl-integration.js`](./xrpl-integration.js) — reference implementation for *optionally* anchoring a SHA-256 reconciliation fingerprint via a transaction memo (testnet; **not wired into the production app**) |
 | **Allocation engine** | [`allocation-engine.js`](./allocation-engine.js) — standalone, unit-tested CAM pro-rata engine |
 | **Demo video** | 🎥 [Watch the demo](https://1drv.ms/v/c/8adf809cf83a844a/IQAcJhs_Il5hSIlU2PJLiVVPAWmxCY7Fvc3QBzTiSrZsJo0) — full product walkthrough |
-| **Live mainnet settlement transaction** | ✅ [`D5F11B5E…B4D12A`](https://livenet.xrpl.org/transactions/D5F11B5EF7BD9C9BC8062FDA2F6B94BCA1F95DC3417C372548BB5F6082B4D12A) — 1 RLUSD settled on XRPL mainnet |
+| **Live mainnet settlement transaction** | ✅ [`7FA730B2…FC724A`](https://livenet.xrpl.org/transactions/7FA730B2B78819AE34B3D1B458721FBC52B9CD25E980ED42DD1B15E9F9FC724A) — 1 RLUSD settled on XRPL mainnet |
 
 > **On mainnet status:** ✅ **Live.** The production settlement wallet (`rHLDysh6p6TcJM7QXU15YRLG4mERF5h5pv`) is funded, has an RLUSD trust line to Ripple's official issuer, and has executed a **real RLUSD settlement on XRPL mainnet** — publicly verifiable on the explorer (link above). The transaction is a Payment in RLUSD to the landlord wallet, carrying a SHA-256 settlement fingerprint in its memo. Run `node scripts/verify-settlement.js rHLDysh6p6TcJM7QXU15YRLG4mERF5h5pv` to confirm all checks on-ledger yourself.
 
@@ -117,13 +117,13 @@ wallet to the landlord wallet, carrying a SHA-256 settlement fingerprint in its 
 verifiable; anyone can look it up on the explorer.
 
 ```
-TX Hash:          D5F11B5EF7BD9C9BC8062FDA2F6B94BCA1F95DC3417C372548BB5F6082B4D12A
+TX Hash:          7FA730B2B78819AE34B3D1B458721FBC52B9CD25E980ED42DD1B15E9F9FC724A
 Network:          XRPL Mainnet
 Amount:           1 RLUSD
 Settlement wallet: rHLDysh6p6TcJM7QXU15YRLG4mERF5h5pv
 Landlord wallet:   rw97rJThBJtoVRqR4DsoK5kW2taftzQvAX
 RLUSD issuer:      rMxCKbEDwqr76QuheSUMdEGf4B9xJ8m5De   (Ripple's official mainnet issuer)
-Explorer:         https://livenet.xrpl.org/transactions/D5F11B5EF7BD9C9BC8062FDA2F6B94BCA1F95DC3417C372548BB5F6082B4D12A
+Explorer:         https://livenet.xrpl.org/transactions/7FA730B2B78819AE34B3D1B458721FBC52B9CD25E980ED42DD1B15E9F9FC724A
 ```
 
 Verify it end-to-end: `node scripts/verify-settlement.js rHLDysh6p6TcJM7QXU15YRLG4mERF5h5pv`

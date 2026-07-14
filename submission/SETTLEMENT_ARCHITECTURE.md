@@ -51,8 +51,8 @@ reconciliation or allocation engines.
 RLUSD settlement are complete and verified on-ledger:
 
 - **Settlement wallet:** `rHLDysh6p6TcJM7QXU15YRLG4mERF5h5pv`
-- **First settlement TX:** `D5F11B5EF7BD9C9BC8062FDA2F6B94BCA1F95DC3417C372548BB5F6082B4D12A`
-  ([explorer](https://livenet.xrpl.org/transactions/D5F11B5EF7BD9C9BC8062FDA2F6B94BCA1F95DC3417C372548BB5F6082B4D12A)) — 1 RLUSD to the landlord wallet, `tesSUCCESS`, carrying a SHA-256 settlement fingerprint in its memo.
+- **First settlement TX:** `7FA730B2B78819AE34B3D1B458721FBC52B9CD25E980ED42DD1B15E9F9FC724A`
+  ([explorer](https://livenet.xrpl.org/transactions/7FA730B2B78819AE34B3D1B458721FBC52B9CD25E980ED42DD1B15E9F9FC724A)) — 1 RLUSD to the landlord wallet, `tesSUCCESS`, carrying a SHA-256 settlement fingerprint in its memo.
 - **Verify independently:** `node scripts/verify-settlement.js rHLDysh6p6TcJM7QXU15YRLG4mERF5h5pv`
 
 Until a settlement is recorded for a given property, the in-app settlement flow shows an honest
