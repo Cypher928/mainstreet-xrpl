@@ -401,10 +401,17 @@
   function dismissThen(run) { dismiss(); try { run(); } catch (e) {} }
   function isOpen() { return !!(root && root.style.display !== 'none'); }
 
-  // ── auto-trigger: once per browser when the landlord app first appears ──────
+  // ── auto-trigger ────────────────────────────────────────────────────────────
+  // FALLBACK MODE (post-login onboarding): superseded by the pre-login landing
+  // experience (landing-experience.js). Kept as a working fallback — it no longer
+  // auto-shows unless explicitly opted in via ?onboarding=1 / #tour /
+  // localStorage ms_onboarding_legacy='1'. Still invokable via
+  // window.MainStreetOnboarding.start().
   function maybeAutoStart() {
     var params = new URLSearchParams(location.search);
-    var forced = params.get('onboarding') === '1' || location.hash === '#tour';
+    var legacyFlag = false; try { legacyFlag = localStorage.getItem('ms_onboarding_legacy') === '1'; } catch (e) {}
+    var forced = params.get('onboarding') === '1' || location.hash === '#tour' || legacyFlag;
+    if (!forced) return; // default off — the pre-login landing is the primary experience
     var seen = false; try { seen = localStorage.getItem(LS_KEY) === '1'; } catch (e) {}
     if (!forced && seen) return;
 
