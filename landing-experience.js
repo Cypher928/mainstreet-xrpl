@@ -34,10 +34,17 @@
 
   var root, demoEl, state = { i: 0, timer: null, playing: false };
 
+  // NOTE: use computed display, NOT offsetParent — the login screen and app are
+  // position:fixed, and offsetParent is always null for fixed elements (that was
+  // the bug that stopped the landing from auto-showing).
+  function shown(el) {
+    if (!el) return false;
+    try { return getComputedStyle(el).display !== 'none' && getComputedStyle(el).visibility !== 'hidden'; }
+    catch (e) { return el.style.display !== 'none'; }
+  }
   function isAuthed() {
     try {
-      var app = document.getElementById('appContent');
-      if (app && app.style.display !== 'none' && app.offsetParent !== null) return true;
+      if (shown(document.getElementById('appContent'))) return true;
       var u = window.AuthService && window.AuthService.getCurrentUser && window.AuthService.getCurrentUser();
       return !!(u && u.id);
     } catch (e) { return false; }
@@ -288,14 +295,21 @@
 
     var login = document.getElementById('loginScreen');
     if (!login) return;
-    function loginVisible() { return login.style.display !== 'none' && login.offsetParent !== null; }
-    if (forced || loginVisible()) { show(); return; }
-    var obs = new MutationObserver(function () {
-      if (isAuthed()) { obs.disconnect(); return; }
-      if (loginVisible()) { obs.disconnect(); show(); }
-    });
-    obs.observe(login, { attributes: true, attributeFilter: ['style'] });
-    setTimeout(function () { obs.disconnect(); }, 45000);
+    if (forced || shown(login)) { show(); return; }
+    // The login screen starts display:none and is flipped to flex asynchronously
+    // (getSession resolves on window 'load'). Watch for it, and also poll as a
+    // belt-and-suspenders fallback in case the style flip is missed.
+    var done = false;
+    function tryShow() {
+      if (done) return true;
+      if (isAuthed()) { done = true; obs.disconnect(); clearInterval(poll); return true; }
+      if (shown(login)) { done = true; obs.disconnect(); clearInterval(poll); show(); return true; }
+      return false;
+    }
+    var obs = new MutationObserver(tryShow);
+    obs.observe(login, { attributes: true, attributeFilter: ['style', 'class'] });
+    var poll = setInterval(tryShow, 250);
+    setTimeout(function () { obs.disconnect(); clearInterval(poll); }, 45000);
   }
 
   window.MainStreetLanding = { show: show, hide: hide, playDemo: playDemo };
