@@ -1,29 +1,28 @@
 /**
- * landing-experience.js — premium pre-login landing + continuous product demo.
+ * landing-experience.js — premium pre-login landing + cinematic product film.
  *
- * Enterprise SaaS feel (Stripe / Vercel / Linear / Notion / Apple). Answers
- * What / Who / Why in under 10 seconds, then tells ONE continuous workflow
- * story across eight steps — line icons and real MainStreet UI, minimal text,
- * large type, generous whitespace. Shown BEFORE login; touches no auth,
- * settlement, XRPL, or business logic.
+ * Enterprise SaaS feel (Apple / Stripe / Linear). The hero answers What / Who /
+ * Why in seconds; the demo is a ~40s CINEMATIC WALKTHROUGH where the real
+ * MainStreet UI performs the workflow — documents slide into upload, lease
+ * clauses highlight as they extract, invoices connect to tenants, CAM totals
+ * count up, recovered revenue animates, the tenant statement builds itself, and
+ * an RLUSD settlement confirms and verifies on-chain. Minimal text; line icons
+ * only where unavoidable; no emojis.
  *
- * Purely additive: self-mounts DOM + styles, self-triggers when the login
- * screen appears for an unauthenticated visitor. Re-openable via
- * window.MainStreetLanding.show() or ?landing=1.
- *
- * Exposes: window.MainStreetLanding = { show, hide, playDemo }
+ * Purely additive: self-mounts DOM + styles, self-triggers before login for an
+ * unauthenticated visitor. Touches no auth, settlement, XRPL, or business logic.
+ * Re-openable via window.MainStreetLanding.show() / .playDemo() or ?landing=1.
  */
 (function () {
   'use strict';
 
   var EXPLORER = 'https://livenet.xrpl.org/transactions/7FA730B2B78819AE34B3D1B458721FBC52B9CD25E980ED42DD1B15E9F9FC724A';
-  var STEP_MS = 5200;
+  var ASSET = 'assets/landing/';
 
-  // Line-icon set (stroke SVG, no emoji).
   function icon(name) {
     var d = {
       upload:  '<path d="M12 15V4"/><path d="m7.5 8.5 4.5-4.5 4.5 4.5"/><path d="M4 15v3a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2v-3"/>',
-      ai:      '<rect x="4" y="4" width="16" height="16" rx="3"/><path d="M9 15V9l3 4 3-4v6"/><circle cx="12" cy="4" r="0"/>',
+      ai:      '<rect x="4" y="4" width="16" height="16" rx="3"/><path d="M9 15V9l3 4 3-4v6"/>',
       match:   '<path d="M9 7H6a4 4 0 0 0 0 8h3"/><path d="M15 17h3a4 4 0 0 0 0-8h-3"/><path d="M8 11h8"/>',
       recon:   '<circle cx="12" cy="12" r="9"/><path d="M12 3v9l6 3"/>',
       recover: '<path d="M3 17l6-6 4 4 8-8"/><path d="M21 7v5h-5"/>',
@@ -34,28 +33,33 @@
     return '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round">' + (d[name] || '') + '</svg>';
   }
 
-  // Browser-chrome frame around a real product screenshot.
-  function frame(src, label) {
-    return '<div class="msl-frame"><div class="msl-frame-bar"><span></span><span></span><span></span>' +
-      '<div class="msl-frame-url">' + (label || 'app.mainstreet.xyz') + '</div></div>' +
-      '<div class="msl-frame-body"><img loading="lazy" src="' + src + '" alt=""></div></div>';
-  }
-  // Line-icon "illustration" in an accent halo (for steps without a screenshot).
-  function illo(name) { return '<div class="msl-illo">' + icon(name) + '</div>'; }
-
-  // Eight-step continuous workflow. `real` uses actual UI; others use line art.
-  var STEPS = [
-    { k: 'upload',    n: 'Upload',            t: 'Upload leases and invoices.',        v: illo('upload') },
-    { k: 'ai',        n: 'AI Analysis',       t: 'AI extracts every lease term.',      v: frame('assets/landing/ui-workspace.png', 'mainstreet · ai workspace') },
-    { k: 'match',     n: 'Match',             t: 'Invoices matched automatically.',    v: illo('match') },
-    { k: 'recon',     n: 'Reconcile',         t: 'CAM allocated across every tenant.', v: illo('recon') },
-    { k: 'recover',   n: 'Recover',           t: 'Missed revenue, surfaced.',          v: frame('assets/landing/ui-command-center.png', 'mainstreet · command center') },
-    { k: 'statement', n: 'Statements',        t: 'Tenant-ready in one click.',         v: illo('statement') },
-    { k: 'settle',    n: 'Settle',            t: 'Paid in RLUSD on the XRP Ledger.',   v: illo('settle') },
-    { k: 'verify',    n: 'Verify',            t: 'Public proof, on-chain.',            v: illo('verify') },
+  // Hero workflow rail labels (line icons).
+  var RAIL = [
+    ['upload', 'Upload'], ['ai', 'Extract'], ['match', 'Match'], ['recon', 'Reconcile'],
+    ['recover', 'Recover'], ['statement', 'Statement'], ['settle', 'Settle'], ['verify', 'Verify'],
   ];
 
-  var root, demoEl, state = { i: 0, timer: null, playing: false };
+  // ── helpers ──────────────────────────────────────────────────────────────
+  function reduce() { try { return matchMedia('(prefers-reduced-motion: reduce)').matches; } catch (e) { return false; } }
+  function countUp(el, target, dur, prefix, suffix) {
+    if (!el) return; prefix = prefix || ''; suffix = suffix || '';
+    if (reduce()) { el.textContent = prefix + Math.round(target).toLocaleString('en-US') + suffix; return; }
+    var t0 = null;
+    function step(ts) {
+      if (t0 === null) t0 = ts;
+      var p = Math.min((ts - t0) / dur, 1), e = 1 - Math.pow(1 - p, 3);
+      el.textContent = prefix + Math.round(target * e).toLocaleString('en-US') + suffix;
+      if (p < 1) requestAnimationFrame(step);
+    }
+    requestAnimationFrame(step);
+  }
+  function typeInto(el, text, cps) {
+    if (!el) return; if (reduce()) { el.textContent = text; return; }
+    var i = 0, iv = setInterval(function () { el.textContent = text.slice(0, ++i); if (i >= text.length) clearInterval(iv); }, 1000 / (cps || 34));
+  }
+
+  var root, cineEl, canvas, capEl, tlEl, endEl;
+  var state = { i: 0, playing: false, timer: null };
 
   function shown(el) {
     if (!el) return false;
@@ -70,99 +74,248 @@
     } catch (e) { return false; }
   }
 
+  // ── SCENES — each builds animated real/near-real UI into the frame ─────────
+  // dur in ms; total ≈ 40s. Every scene animates; captions are one short line.
+  var SCENES = [
+    { id: 'upload', dur: 4600, cap: 'Upload leases and invoices',
+      build: function (c) {
+        c.innerHTML =
+          '<img class="msl-bg" src="' + ASSET + 'ui-upload.png" alt="">' +
+          '<div class="msl-drop"><div class="msl-drop-ic">' + icon('upload') + '</div><div class="msl-drop-t">Drop files to begin</div>' +
+          '<div class="msl-drop-bar"><i></i></div></div>' +
+          '<div class="msl-docs">' +
+            '<div class="msl-doc-fly" style="--d:.1s;--x:-120px">Lease — Whole Health Market.pdf</div>' +
+            '<div class="msl-doc-fly" style="--d:.5s;--x:40px">Invoice — SnowCo.pdf</div>' +
+            '<div class="msl-doc-fly" style="--d:.9s;--x:150px">Invoice — GreenScape.pdf</div>' +
+          '</div>';
+      } },
+    { id: 'ai', dur: 5600, cap: 'AI extracts every lease term',
+      build: function (c) {
+        c.innerHTML =
+          '<div class="msl-lease">' +
+            '<div class="msl-lease-doc">' +
+              ['COMMON AREA MAINTENANCE','Tenant shall pay its pro-rata share of','Common Area costs, not to increase more','than five percent (5%) year-over-year.',
+               'Premises: approximately 4,200 rentable','square feet. Lease type: Triple Net (NNN).','Term: January 2021 through December 2028.']
+              .map(function (ln, i) { return '<div class="msl-ln" style="--d:' + (i * .12) + 's">' + ln + '</div>'; }).join('') +
+              '<div class="msl-hl"></div>' +
+            '</div>' +
+            '<div class="msl-fields">' +
+              [['CAM Cap','5% / yr'],['Leased Sq Ft','4,200'],['Lease Type','NNN'],['Term','2021 – 2028']]
+              .map(function (f, i) { return '<div class="msl-field" style="--d:' + (1 + i * .5) + 's"><span>' + f[0] + '</span><b>' + f[1] + '</b><em class="msl-verify-dot"></em></div>'; }).join('') +
+            '</div>' +
+          '</div>';
+      } },
+    { id: 'match', dur: 5000, cap: 'Invoices matched to tenants',
+      build: function (c) {
+        var inv = ['SnowCo · $6,051','GreenScape · $4,120','SecureGuard · $3,480','ProClean · $2,940'];
+        var ten = ['Summit Coffee','Whole Health Market','Harbor Nail & Beauty','Gamma Books'];
+        c.innerHTML =
+          '<div class="msl-match">' +
+            '<div class="msl-col msl-col-l">' + inv.map(function (t, i) { return '<div class="msl-node" data-l="' + i + '" style="--d:' + (i * .12) + 's">' + t + '</div>'; }).join('') + '</div>' +
+            '<svg class="msl-wires" viewBox="0 0 300 240" preserveAspectRatio="none"></svg>' +
+            '<div class="msl-col msl-col-r">' + ten.map(function (t, i) { return '<div class="msl-node" data-r="' + i + '" style="--d:' + (i * .12) + 's">' + t + '</div>'; }).join('') + '</div>' +
+          '</div>';
+        var svg = c.querySelector('.msl-wires');
+        var pairs = [[0, 0], [1, 1], [2, 2], [3, 3], [0, 3], [1, 0]];
+        pairs.forEach(function (pr, i) {
+          var y1 = 30 + pr[0] * 56, y2 = 30 + pr[1] * 56;
+          var path = document.createElementNS('http://www.w3.org/2000/svg', 'path');
+          path.setAttribute('d', 'M8 ' + y1 + ' C 150 ' + y1 + ', 150 ' + y2 + ', 292 ' + y2);
+          path.setAttribute('class', 'msl-wire'); path.style.setProperty('--d', (0.6 + i * 0.22) + 's');
+          svg.appendChild(path);
+        });
+      } },
+    { id: 'recon', dur: 5600, cap: 'CAM allocated across every tenant',
+      build: function (c) {
+        var rows = [['Summit Coffee & Provisions', 34861], ['Whole Health Market', 41204], ['Harbor Nail & Beauty', 18940], ['Gamma Books', 12233]];
+        c.innerHTML =
+          '<div class="msl-alloc">' +
+            '<div class="msl-alloc-head"><span>Tenant</span><span>CAM Share</span></div>' +
+            rows.map(function (r, i) { return '<div class="msl-arow" style="--d:' + (i * .28) + 's"><span>' + r[0] + '</span><b data-v="' + r[1] + '">$0</b></div>'; }).join('') +
+            '<div class="msl-arow msl-atotal" style="--d:1.5s"><span>Total allocated</span><b data-v="107238">$0</b></div>' +
+          '</div>';
+        setTimeout(function () {
+          c.querySelectorAll('[data-v]').forEach(function (b, i) { setTimeout(function () { countUp(b, +b.dataset.v, 900, '$'); }, i * 240); });
+        }, reduce() ? 0 : 300);
+      } },
+    { id: 'recover', dur: 5000, cap: 'Recovered revenue, surfaced',
+      build: function (c) {
+        c.innerHTML =
+          '<img class="msl-bg msl-bg-dim" src="' + ASSET + 'ui-command-center.png" alt="">' +
+          '<div class="msl-spot"></div>' +
+          '<div class="msl-bignum"><div class="msl-bignum-v" id="mslRecover">$0</div><div class="msl-bignum-l">Recoverable revenue identified</div></div>';
+        setTimeout(function () { countUp(document.getElementById('mslRecover'), 99542, 1500, '$'); }, reduce() ? 0 : 500);
+      } },
+    { id: 'statement', dur: 5000, cap: 'Tenant statement, generated',
+      build: function (c) {
+        var items = [['Snow removal', '$1,240'], ['Landscaping', '$980'], ['Security', '$1,410'], ['Janitorial', '$860']];
+        c.innerHTML =
+          '<div class="msl-stmt">' +
+            '<div class="msl-stmt-head" style="--d:0s"><div><b>Whole Health Market</b><span>CAM Statement · FY 2025</span></div><div class="msl-stmt-badge">Verified</div></div>' +
+            items.map(function (it, i) { return '<div class="msl-stmt-row" style="--d:' + (0.4 + i * 0.28) + 's"><span>' + it[0] + '</span><b>' + it[1] + '</b></div>'; }).join('') +
+            '<div class="msl-stmt-total" style="--d:1.7s"><span>Total due</span><b>$41,204</b></div>' +
+            '<div class="msl-stmt-cite" style="--d:2s">Every line cited to the lease — page and clause.</div>' +
+          '</div>';
+      } },
+    { id: 'settle', dur: 5200, cap: 'Settled in RLUSD on the XRP Ledger',
+      build: function (c) {
+        var steps = ['Tenant pays', 'Settled in RLUSD', 'On the XRP Ledger', 'Verified on-ledger'];
+        c.innerHTML =
+          '<div class="msl-settle">' +
+            '<div class="msl-settle-amt" id="mslAmt">1 RLUSD</div>' +
+            '<div class="msl-steps">' + steps.map(function (s, i) {
+              return '<div class="msl-sstep2" style="--d:' + (0.5 + i * 0.7) + 's"><span class="msl-scheck">' + icon('verify') + '</span><span>' + s + '</span></div>' +
+                (i < steps.length - 1 ? '<div class="msl-sline" style="--d:' + (0.9 + i * 0.7) + 's"></div>' : '');
+            }).join('') + '</div>' +
+          '</div>';
+      } },
+    { id: 'verify', dur: 5400, cap: 'Verified on-chain — public proof', end: true,
+      build: function (c) {
+        c.innerHTML =
+          '<div class="msl-onchain">' +
+            '<div class="msl-check-big">' + icon('verify') + '</div>' +
+            '<div class="msl-oc-title">tesSUCCESS · XRPL mainnet</div>' +
+            '<div class="msl-oc-rows">' +
+              '<div class="msl-oc-r"><span>Transaction</span><b id="mslTx">—</b></div>' +
+              '<div class="msl-oc-r"><span>Source Tag</span><b id="mslTag">—</b></div>' +
+              '<div class="msl-oc-r"><span>Memo</span><b id="mslMemo">—</b></div>' +
+            '</div>' +
+          '</div>';
+        setTimeout(function () { typeInto(document.getElementById('mslTx'), '7FA730B2…F9FC724A', 26); }, reduce() ? 0 : 700);
+        setTimeout(function () { typeInto(document.getElementById('mslTag'), '2606290001', 40); }, reduce() ? 0 : 1500);
+        setTimeout(function () { typeInto(document.getElementById('mslMemo'), 'SHA-256 · 0025F7…FA341', 30); }, reduce() ? 0 : 2100);
+      } },
+  ];
+
   function injectStyles() {
     if (document.getElementById('msl-styles')) return;
     var css = [
-      '#msLanding{position:fixed;inset:0;z-index:99000;display:none;overflow-y:auto;color:#EAECEF;',
+      // shared tokens
+      '#msLanding{--ink:#080b12;--pa:#EAECEF;--mut:#9AA4B2;--dim:#5A6472;--gold:#C9973A;--goldl:#E4B75C;--grn:#34C08A;}',
+      '#msLanding{position:fixed;inset:0;z-index:99000;display:none;overflow-y:auto;color:var(--pa);',
       'font-family:-apple-system,system-ui,"Segoe UI",Roboto,Helvetica,Arial,sans-serif;-webkit-font-smoothing:antialiased;',
-      'background:radial-gradient(1200px 700px at 80% -12%,rgba(201,151,58,.10),transparent 60%),#080b12;}',
+      'background:radial-gradient(1200px 700px at 80% -12%,rgba(201,151,58,.10),transparent 60%),var(--ink);}',
       '#msLanding.msl-on{display:block;animation:mslFade .55s ease both;}',
       '@keyframes mslFade{from{opacity:0}to{opacity:1}}',
       '#msLanding::before{content:"";position:absolute;inset:0;pointer-events:none;background:linear-gradient(rgba(255,255,255,.016) 1px,transparent 1px),linear-gradient(90deg,rgba(255,255,255,.016) 1px,transparent 1px);background-size:64px 64px;mask-image:radial-gradient(circle at 50% 30%,#000,transparent 80%);}',
-      // nav
+      // hero (unchanged premium)
       '.msl-nav{position:relative;z-index:2;display:flex;align-items:center;justify-content:space-between;max-width:1120px;margin:0 auto;padding:26px 32px;}',
-      '.msl-logo{font-weight:700;font-size:1.1rem;letter-spacing:-.02em;}',
-      '.msl-logo b{color:#C9973A;}',
-      '.msl-nav-signin{background:none;border:none;color:#9AA4B2;font:inherit;font-size:.9rem;font-weight:500;cursor:pointer;padding:8px;transition:color .2s;}',
-      '.msl-nav-signin:hover{color:#EAECEF;}',
-      // hero
+      '.msl-logo{font-weight:700;font-size:1.1rem;letter-spacing:-.02em;}.msl-logo b{color:var(--gold);}',
+      '.msl-nav-signin{background:none;border:none;color:var(--mut);font:inherit;font-size:.9rem;font-weight:500;cursor:pointer;padding:8px;transition:color .2s;}.msl-nav-signin:hover{color:var(--pa);}',
       '.msl-hero{position:relative;z-index:1;max-width:920px;margin:0 auto;padding:clamp(48px,11vh,120px) 32px 60px;text-align:center;}',
-      '.msl-eyebrow{font-family:ui-monospace,"SF Mono",Menlo,monospace;font-size:.72rem;letter-spacing:.26em;text-transform:uppercase;color:#C9973A;margin-bottom:30px;opacity:0;animation:mslUp .7s .05s ease forwards;}',
+      '.msl-eyebrow{font-family:ui-monospace,"SF Mono",Menlo,monospace;font-size:.72rem;letter-spacing:.26em;text-transform:uppercase;color:var(--gold);margin-bottom:30px;opacity:0;animation:mslUp .7s .05s ease forwards;}',
       '.msl-h1{font-size:clamp(2.9rem,7vw,5.4rem);font-weight:700;letter-spacing:-.04em;line-height:1.02;margin:0;text-wrap:balance;opacity:0;animation:mslUp .85s .16s cubic-bezier(.2,.7,.2,1) forwards;}',
-      '.msl-h1 em{font-style:normal;color:#C9973A;}',
-      '.msl-lede{font-size:clamp(1.05rem,2vw,1.4rem);line-height:1.5;color:#9AA4B2;max-width:30ch;margin:26px auto 0;font-weight:400;opacity:0;animation:mslUp .85s .3s ease forwards;}',
+      '.msl-h1 em{font-style:normal;color:var(--gold);}',
+      '.msl-lede{font-size:clamp(1.05rem,2vw,1.4rem);line-height:1.5;color:var(--mut);max-width:30ch;margin:26px auto 0;opacity:0;animation:mslUp .85s .3s ease forwards;}',
       '.msl-cta{display:flex;gap:12px;flex-wrap:wrap;justify-content:center;margin:40px 0 0;opacity:0;animation:mslUp .85s .44s ease forwards;}',
       '.msl-btn{font:inherit;font-size:1rem;font-weight:600;border-radius:12px;padding:14px 26px;cursor:pointer;border:1px solid transparent;transition:transform .18s,filter .18s,border-color .2s,color .2s,background .2s;display:inline-flex;align-items:center;gap:9px;}',
-      '.msl-btn:hover{transform:translateY(-1px);}',
-      '.msl-btn:focus-visible{outline:2px solid #C9973A;outline-offset:3px;}',
-      '.msl-btn--primary{background:#C9973A;color:#0b0e15;box-shadow:0 14px 34px -14px rgba(201,151,58,.65);}',
-      '.msl-btn--primary:hover{filter:brightness(1.07);}',
-      '.msl-btn--ghost{background:rgba(255,255,255,.045);color:#EAECEF;border-color:rgba(255,255,255,.14);}',
-      '.msl-btn--ghost:hover{border-color:rgba(255,255,255,.32);}',
-      '.msl-btn--text{background:none;color:#9AA4B2;}',
-      '.msl-btn--text:hover{color:#EAECEF;}',
-      '.msl-trust{margin:34px 0 0;font-family:ui-monospace,"SF Mono",Menlo,monospace;font-size:.72rem;letter-spacing:.06em;color:#5A6472;display:inline-flex;align-items:center;gap:10px;opacity:0;animation:mslUp .85s .56s ease forwards;}',
-      '.msl-trust .msl-dot{width:6px;height:6px;border-radius:50%;background:#34C08A;box-shadow:0 0 0 3px rgba(52,192,138,.18);}',
-      // workflow rail (hero)
+      '.msl-btn:hover{transform:translateY(-1px);}.msl-btn:focus-visible{outline:2px solid var(--gold);outline-offset:3px;}',
+      '.msl-btn--primary{background:var(--gold);color:#0b0e15;box-shadow:0 14px 34px -14px rgba(201,151,58,.65);}.msl-btn--primary:hover{filter:brightness(1.07);}',
+      '.msl-btn--ghost{background:rgba(255,255,255,.045);color:var(--pa);border-color:rgba(255,255,255,.14);}.msl-btn--ghost:hover{border-color:rgba(255,255,255,.32);}',
+      '.msl-btn--text{background:none;color:var(--mut);}.msl-btn--text:hover{color:var(--pa);}',
+      '.msl-trust{margin:34px 0 0;font-family:ui-monospace,"SF Mono",Menlo,monospace;font-size:.72rem;letter-spacing:.06em;color:var(--dim);display:inline-flex;align-items:center;gap:10px;opacity:0;animation:mslUp .85s .56s ease forwards;}',
+      '.msl-trust .msl-dot{width:6px;height:6px;border-radius:50%;background:var(--grn);box-shadow:0 0 0 3px rgba(52,192,138,.18);}',
       '.msl-rail{max-width:1000px;margin:64px auto 0;padding:0 32px;display:flex;align-items:flex-start;justify-content:space-between;gap:4px;opacity:0;animation:mslUp .85s .68s ease forwards;}',
       '.msl-rstep{flex:1;display:flex;flex-direction:column;align-items:center;gap:9px;position:relative;}',
-      '.msl-rstep::after{content:"";position:absolute;top:19px;left:50%;width:100%;height:1px;background:rgba(255,255,255,.09);z-index:0;}',
-      '.msl-rstep:last-child::after{display:none;}',
-      '.msl-ric{width:40px;height:40px;border-radius:11px;display:grid;place-items:center;background:#0f1520;border:1px solid rgba(255,255,255,.08);color:#9AA4B2;position:relative;z-index:1;transition:color .2s,border-color .2s;}',
-      '.msl-ric svg{width:20px;height:20px;}',
-      '.msl-rstep:hover .msl-ric{color:#C9973A;border-color:rgba(201,151,58,.4);}',
-      '.msl-rlabel{font-size:.7rem;color:#6B7688;letter-spacing:.02em;}',
+      '.msl-rstep::after{content:"";position:absolute;top:19px;left:50%;width:100%;height:1px;background:rgba(255,255,255,.09);z-index:0;}.msl-rstep:last-child::after{display:none;}',
+      '.msl-ric{width:40px;height:40px;border-radius:11px;display:grid;place-items:center;background:#0f1520;border:1px solid rgba(255,255,255,.08);color:var(--mut);position:relative;z-index:1;transition:color .2s,border-color .2s;}.msl-ric svg{width:20px;height:20px;}',
+      '.msl-rstep:hover .msl-ric{color:var(--gold);border-color:rgba(201,151,58,.4);}',
+      '.msl-rlabel{font-size:.7rem;color:var(--dim);}',
       '@keyframes mslUp{from{opacity:0;transform:translateY(22px)}to{opacity:1;transform:none}}',
       '@media(max-width:720px){.msl-cta{flex-direction:column;width:100%;max-width:340px;margin-left:auto;margin-right:auto;}.msl-btn{justify-content:center;width:100%;}.msl-rail{display:none;}}',
-      // demo
-      '.msl-demo{position:fixed;inset:0;z-index:99001;display:none;background:radial-gradient(1000px 700px at 50% -10%,rgba(201,151,58,.08),transparent 62%),#070a11;}',
-      '.msl-demo.msl-on{display:grid;grid-template-columns:280px 1fr;animation:mslFade .4s ease both;}',
-      '@media(max-width:860px){.msl-demo.msl-on{grid-template-columns:1fr;grid-template-rows:auto 1fr;}}',
-      '.msl-demo-close{position:absolute;top:22px;right:26px;z-index:5;background:rgba(255,255,255,.05);border:none;color:#9AA4B2;font-size:1.05rem;width:36px;height:36px;border-radius:50%;cursor:pointer;display:grid;place-items:center;transition:background .2s,color .2s;}',
-      '.msl-demo-close:hover{background:rgba(255,255,255,.12);color:#EAECEF;}',
-      // left step rail (the "continuous workflow")
-      '.msl-side{border-right:1px solid rgba(255,255,255,.06);padding:38px 26px;display:flex;flex-direction:column;gap:2px;background:rgba(255,255,255,.012);}',
-      '@media(max-width:860px){.msl-side{flex-direction:row;overflow-x:auto;border-right:none;border-bottom:1px solid rgba(255,255,255,.06);padding:16px;gap:8px;}}',
-      '.msl-side-brand{font-family:ui-monospace,"SF Mono",Menlo,monospace;font-size:.68rem;letter-spacing:.2em;text-transform:uppercase;color:#5A6472;margin-bottom:22px;}',
-      '@media(max-width:860px){.msl-side-brand{display:none;}}',
-      '.msl-sstep{display:flex;align-items:center;gap:12px;padding:10px 12px;border-radius:10px;position:relative;transition:background .3s;white-space:nowrap;}',
-      '.msl-sstep .msl-sic{width:30px;height:30px;border-radius:8px;display:grid;place-items:center;background:#0f1520;border:1px solid rgba(255,255,255,.08);color:#6B7688;flex:none;transition:all .3s;}',
-      '.msl-sic svg{width:16px;height:16px;}',
-      '.msl-slabel{font-size:.86rem;color:#6B7688;font-weight:500;transition:color .3s;}',
-      '.msl-sstep.msl-done .msl-sic{color:#34C08A;border-color:rgba(52,192,138,.35);}',
-      '.msl-sstep.msl-cur{background:rgba(201,151,58,.08);}',
-      '.msl-sstep.msl-cur .msl-sic{color:#0b0e15;background:#C9973A;border-color:#C9973A;transform:scale(1.06);}',
-      '.msl-sstep.msl-cur .msl-slabel{color:#EAECEF;}',
-      '@media(max-width:860px){.msl-slabel{display:none;}}',
-      // stage
-      '.msl-stage{position:relative;display:flex;align-items:center;justify-content:center;padding:clamp(30px,6vw,72px);overflow:hidden;}',
-      '.msl-scene{width:100%;max-width:760px;display:flex;flex-direction:column;align-items:center;text-align:center;}',
-      '.msl-scene.msl-anim{animation:mslScene .6s cubic-bezier(.2,.7,.2,1) both;}',
-      '@keyframes mslScene{from{opacity:0;transform:translateY(20px)}to{opacity:1;transform:none}}',
-      '.msl-num{font-family:ui-monospace,"SF Mono",Menlo,monospace;font-size:.78rem;letter-spacing:.18em;color:#C9973A;}',
-      '.msl-title{font-size:clamp(1.9rem,4.4vw,3.2rem);font-weight:700;letter-spacing:-.03em;line-height:1.08;margin:14px 0 0;text-wrap:balance;}',
-      '.msl-visual{margin:38px 0 0;width:100%;display:flex;justify-content:center;}',
-      // illustration
-      '.msl-illo{width:132px;height:132px;border-radius:26px;display:grid;place-items:center;color:#C9973A;background:radial-gradient(circle at 50% 40%,rgba(201,151,58,.16),rgba(201,151,58,.03));border:1px solid rgba(201,151,58,.22);animation:mslFloat 4s ease-in-out infinite;}',
-      '.msl-illo svg{width:56px;height:56px;stroke-width:1.3;}',
-      '@keyframes mslFloat{0%,100%{transform:translateY(0)}50%{transform:translateY(-8px)}}',
-      // frame
-      '.msl-frame{width:100%;max-width:680px;border-radius:14px;overflow:hidden;border:1px solid rgba(255,255,255,.1);box-shadow:0 40px 90px -40px rgba(0,0,0,.85);background:#0f1520;}',
-      '.msl-frame-bar{display:flex;align-items:center;gap:7px;padding:11px 14px;border-bottom:1px solid rgba(255,255,255,.06);background:#0c111a;}',
-      '.msl-frame-bar>span{width:10px;height:10px;border-radius:50%;background:rgba(255,255,255,.14);}',
-      '.msl-frame-url{margin-left:12px;font-family:ui-monospace,"SF Mono",Menlo,monospace;font-size:.7rem;color:#5A6472;letter-spacing:.02em;}',
-      '.msl-frame-body{max-height:46vh;overflow:hidden;}',
-      '.msl-frame-body img{display:block;width:100%;height:auto;}',
-      // progress + end
-      '.msl-prog{position:absolute;left:0;right:0;bottom:0;display:flex;gap:5px;padding:20px clamp(30px,6vw,72px);}',
-      '.msl-seg{flex:1;height:2px;border-radius:2px;background:rgba(255,255,255,.12);overflow:hidden;}',
-      '.msl-seg-f{height:100%;width:0;background:#C9973A;}',
-      '.msl-seg.msl-sdone .msl-seg-f{width:100%;}',
-      '.msl-seg.msl-scur .msl-seg-f{animation:mslSeg linear forwards;}',
+      // ── cinematic film ──
+      '.msl-cine{position:fixed;inset:0;z-index:99001;display:none;flex-direction:column;align-items:center;justify-content:center;',
+      'background:radial-gradient(1100px 760px at 50% -12%,rgba(201,151,58,.08),transparent 62%),#05070c;padding:24px;}',
+      '.msl-cine.msl-on{display:flex;animation:mslFade .45s ease both;}',
+      '.msl-cine-close{position:absolute;top:22px;right:26px;z-index:6;background:rgba(255,255,255,.05);border:none;color:var(--mut);font-size:1rem;width:36px;height:36px;border-radius:50%;cursor:pointer;display:grid;place-items:center;transition:background .2s,color .2s;}',
+      '.msl-cine-close:hover{background:rgba(255,255,255,.12);color:var(--pa);}',
+      // device frame — stays put, content transforms → continuous product feel
+      '.msl-dev{width:min(880px,94vw);border-radius:16px;overflow:hidden;border:1px solid rgba(255,255,255,.1);background:#0c111a;box-shadow:0 60px 130px -50px rgba(0,0,0,.9),0 0 0 1px rgba(255,255,255,.02);}',
+      '.msl-dev-bar{display:flex;align-items:center;gap:7px;padding:12px 16px;border-bottom:1px solid rgba(255,255,255,.06);background:#0a0e16;}',
+      '.msl-dev-bar>i{width:11px;height:11px;border-radius:50%;background:rgba(255,255,255,.14);}',
+      '.msl-dev-url{margin-left:14px;font-family:ui-monospace,"SF Mono",Menlo,monospace;font-size:.72rem;color:var(--dim);}',
+      '.msl-canvas{position:relative;height:min(52vh,460px);overflow:hidden;background:#0b0f17;}',
+      '.msl-canvas>*{animation:mslCanvasIn .6s cubic-bezier(.2,.7,.2,1) both;}',
+      '@keyframes mslCanvasIn{from{opacity:0;transform:scale(1.02)}to{opacity:1;transform:none}}',
+      '.msl-bg{position:absolute;inset:0;width:100%;height:100%;object-fit:cover;object-position:top;}',
+      '.msl-bg-dim{filter:brightness(.4) saturate(.9);}',
+      '.msl-cap{margin:26px 0 0;font-size:clamp(1.05rem,2.2vw,1.5rem);font-weight:600;letter-spacing:-.02em;color:var(--pa);text-align:center;min-height:1.6em;transition:opacity .4s;}',
+      '.msl-timeline{display:flex;gap:5px;width:min(880px,94vw);margin:18px 0 0;}',
+      '.msl-tseg{flex:1;height:2px;border-radius:2px;background:rgba(255,255,255,.12);overflow:hidden;}',
+      '.msl-tseg-f{height:100%;width:0;background:var(--gold);}',
+      '.msl-tseg.msl-tdone .msl-tseg-f{width:100%;}',
+      '.msl-tseg.msl-tcur .msl-tseg-f{animation:mslSeg linear forwards;}',
       '@keyframes mslSeg{from{width:0}to{width:100%}}',
-      '.msl-end{position:absolute;left:0;right:0;bottom:44px;display:flex;gap:12px;justify-content:center;flex-wrap:wrap;padding:0 24px;opacity:0;transition:opacity .45s;pointer-events:none;}',
-      '.msl-end.msl-show{opacity:1;pointer-events:auto;}',
-      '@media(prefers-reduced-motion:reduce){*[class^="msl-"],*[class*=" msl-"]{animation-duration:.001s!important;}.msl-illo{animation:none;}.msl-btn:hover{transform:none;}}',
+      '.msl-cine-end{position:absolute;left:0;right:0;bottom:26px;display:flex;gap:12px;justify-content:center;flex-wrap:wrap;opacity:0;transition:opacity .5s;pointer-events:none;z-index:6;}',
+      '.msl-cine-end.msl-show{opacity:1;pointer-events:auto;}',
+      // scene: upload
+      '.msl-drop{position:absolute;left:50%;top:52%;transform:translate(-50%,-50%);width:280px;text-align:center;background:rgba(11,15,23,.82);border:1.5px dashed rgba(201,151,58,.5);border-radius:16px;padding:26px 20px;backdrop-filter:blur(2px);}',
+      '.msl-drop-ic{width:44px;height:44px;margin:0 auto 12px;color:var(--gold);}.msl-drop-ic svg{width:44px;height:44px;stroke-width:1.3;}',
+      '.msl-drop-t{color:var(--mut);font-size:.9rem;}',
+      '.msl-drop-bar{margin:16px auto 0;width:80%;height:4px;border-radius:3px;background:rgba(255,255,255,.1);overflow:hidden;}',
+      '.msl-drop-bar i{display:block;height:100%;width:0;background:var(--gold);animation:mslFill 2.4s 1.2s cubic-bezier(.4,0,.2,1) forwards;}',
+      '@keyframes mslFill{to{width:100%}}',
+      '.msl-doc-fly{position:absolute;left:50%;top:-40px;transform:translateX(-50%);white-space:nowrap;font-family:ui-monospace,"SF Mono",Menlo,monospace;font-size:.72rem;color:var(--pa);background:#141c2b;border:1px solid rgba(255,255,255,.12);border-radius:8px;padding:7px 12px;opacity:0;animation:mslDrop 1.3s var(--d) cubic-bezier(.4,0,.2,1) forwards;}',
+      '@keyframes mslDrop{0%{opacity:0;transform:translate(calc(-50% + var(--x)),-40px) rotate(-4deg)}30%{opacity:1}100%{opacity:0;transform:translate(-50%,150px) scale(.7)}}',
+      // scene: extract
+      '.msl-lease{display:flex;gap:20px;height:100%;padding:26px 30px;align-items:center;}',
+      '.msl-lease-doc{position:relative;flex:1.3;background:#0f1520;border:1px solid rgba(255,255,255,.08);border-radius:10px;padding:20px 22px;height:82%;overflow:hidden;}',
+      '.msl-ln{font-size:.82rem;color:#B8C0CC;line-height:1.9;opacity:0;animation:mslUp .5s var(--d) ease forwards;}',
+      '.msl-ln:nth-child(3),.msl-ln:nth-child(4){color:var(--goldl);font-weight:600;}',
+      '.msl-hl{position:absolute;left:22px;right:22px;height:26px;top:56px;border-radius:5px;background:rgba(201,151,58,.16);border-left:2px solid var(--gold);opacity:0;animation:mslSweep 2.6s 1.2s ease-in-out;}',
+      '@keyframes mslSweep{0%{opacity:0;top:56px}20%{opacity:1}50%{opacity:1;top:90px}80%{opacity:1;top:118px}100%{opacity:0;top:118px}}',
+      '.msl-fields{flex:1;display:flex;flex-direction:column;gap:9px;}',
+      '.msl-field{display:flex;align-items:center;gap:8px;background:#0f1520;border:1px solid rgba(255,255,255,.08);border-radius:9px;padding:10px 13px;font-size:.82rem;opacity:0;transform:translateY(8px);animation:mslPop .5s var(--d) cubic-bezier(.2,1.3,.4,1) forwards;}',
+      '.msl-field span{color:var(--mut);}.msl-field b{margin-left:auto;color:var(--pa);}',
+      '.msl-verify-dot{width:8px;height:8px;border-radius:50%;background:var(--grn);box-shadow:0 0 0 3px rgba(52,192,138,.18);}',
+      '@keyframes mslPop{to{opacity:1;transform:none}}',
+      // scene: match
+      '.msl-match{position:relative;display:flex;height:100%;align-items:center;justify-content:space-between;padding:28px 26px;}',
+      '.msl-col{display:flex;flex-direction:column;gap:14px;width:150px;z-index:1;}',
+      '.msl-node{font-size:.76rem;background:#0f1520;border:1px solid rgba(255,255,255,.1);border-radius:8px;padding:9px 11px;color:#C6CEDA;opacity:0;transform:translateX(var(--tx,0));animation:mslNode .5s var(--d) ease forwards;}',
+      '.msl-col-l .msl-node{--tx:-16px;font-family:ui-monospace,"SF Mono",Menlo,monospace;}.msl-col-r .msl-node{--tx:16px;text-align:right;}',
+      '@keyframes mslNode{to{opacity:1;transform:none}}',
+      '.msl-wires{position:absolute;inset:0;width:100%;height:100%;z-index:0;}',
+      '.msl-wire{fill:none;stroke:var(--gold);stroke-width:1.4;opacity:.55;stroke-dasharray:600;stroke-dashoffset:600;animation:mslDraw 1s var(--d) ease forwards;}',
+      '@keyframes mslDraw{to{stroke-dashoffset:0}}',
+      // scene: reconcile
+      '.msl-alloc{max-width:560px;margin:0 auto;height:100%;display:flex;flex-direction:column;justify-content:center;padding:0 34px;}',
+      '.msl-alloc-head{display:flex;justify-content:space-between;font-family:ui-monospace,"SF Mono",Menlo,monospace;font-size:.68rem;letter-spacing:.1em;text-transform:uppercase;color:var(--dim);padding:0 4px 10px;}',
+      '.msl-arow{display:flex;justify-content:space-between;align-items:center;padding:11px 4px;border-top:1px solid rgba(255,255,255,.06);font-size:.9rem;opacity:0;transform:translateY(8px);animation:mslPop .5s var(--d) ease forwards;}',
+      '.msl-arow b{font-variant-numeric:tabular-nums;color:var(--pa);}',
+      '.msl-atotal{border-top:1.5px solid rgba(201,151,58,.4);margin-top:4px;}.msl-atotal span{font-weight:600;}.msl-atotal b{color:var(--goldl);font-size:1.05rem;}',
+      // scene: recover
+      '.msl-spot{position:absolute;inset:0;background:radial-gradient(360px 260px at 32% 42%,transparent,rgba(5,7,12,.55) 70%);}',
+      '.msl-bignum{position:absolute;left:50%;top:50%;transform:translate(-50%,-50%);text-align:center;}',
+      '.msl-bignum-v{font-size:clamp(3rem,8vw,5rem);font-weight:800;letter-spacing:-.03em;color:var(--grn);font-variant-numeric:tabular-nums;text-shadow:0 0 40px rgba(52,192,138,.35);}',
+      '.msl-bignum-l{margin-top:8px;font-size:.9rem;color:var(--mut);letter-spacing:.02em;}',
+      // scene: statement
+      '.msl-stmt{max-width:520px;margin:0 auto;height:100%;display:flex;flex-direction:column;justify-content:center;padding:0 34px;}',
+      '.msl-stmt-head,.msl-stmt-row,.msl-stmt-total,.msl-stmt-cite{opacity:0;transform:translateY(8px);animation:mslPop .5s var(--d) ease forwards;}',
+      '.msl-stmt-head{display:flex;justify-content:space-between;align-items:flex-start;padding-bottom:14px;border-bottom:1px solid rgba(255,255,255,.08);}',
+      '.msl-stmt-head b{font-size:1.05rem;}.msl-stmt-head span{display:block;color:var(--dim);font-size:.76rem;margin-top:3px;}',
+      '.msl-stmt-badge{font-size:.7rem;color:var(--grn);border:1px solid rgba(52,192,138,.35);background:rgba(52,192,138,.1);border-radius:6px;padding:4px 9px;}',
+      '.msl-stmt-row{display:flex;justify-content:space-between;padding:9px 2px;font-size:.88rem;color:#C6CEDA;}.msl-stmt-row b{color:var(--pa);font-variant-numeric:tabular-nums;}',
+      '.msl-stmt-total{display:flex;justify-content:space-between;padding:12px 2px 8px;border-top:1.5px solid rgba(201,151,58,.4);margin-top:4px;font-weight:600;}.msl-stmt-total b{color:var(--goldl);}',
+      '.msl-stmt-cite{font-size:.74rem;color:var(--dim);text-align:center;margin-top:8px;}',
+      // scene: settle
+      '.msl-settle{height:100%;display:flex;flex-direction:column;align-items:center;justify-content:center;gap:26px;}',
+      '.msl-settle-amt{font-size:clamp(2rem,6vw,3.4rem);font-weight:800;letter-spacing:-.02em;color:var(--goldl);animation:mslAmt 1s .2s cubic-bezier(.2,1.3,.4,1) both;}',
+      '@keyframes mslAmt{from{opacity:0;transform:scale(.7)}to{opacity:1;transform:none}}',
+      '.msl-steps{display:flex;align-items:center;flex-wrap:wrap;justify-content:center;gap:0;max-width:640px;}',
+      '.msl-sstep2{display:flex;align-items:center;gap:8px;font-size:.82rem;color:#C6CEDA;opacity:0;transform:scale(.9);animation:mslPop .5s var(--d) cubic-bezier(.2,1.3,.4,1) forwards;padding:6px 4px;}',
+      '.msl-scheck{width:24px;height:24px;border-radius:50%;display:grid;place-items:center;color:var(--grn);background:rgba(52,192,138,.14);}.msl-scheck svg{width:14px;height:14px;}',
+      '.msl-sline{width:34px;height:2px;background:rgba(52,192,138,.35);transform-origin:left;transform:scaleX(0);animation:mslLine .5s var(--d) ease forwards;}',
+      '@keyframes mslLine{to{transform:scaleX(1)}}',
+      // scene: verify
+      '.msl-onchain{height:100%;display:flex;flex-direction:column;align-items:center;justify-content:center;gap:16px;padding:0 24px;}',
+      '.msl-check-big{width:80px;height:80px;border-radius:50%;display:grid;place-items:center;color:var(--grn);background:rgba(52,192,138,.14);border:1px solid rgba(52,192,138,.3);animation:mslCheckPop .7s cubic-bezier(.2,1.5,.4,1) both;}.msl-check-big svg{width:40px;height:40px;}',
+      '@keyframes mslCheckPop{from{opacity:0;transform:scale(0)}to{opacity:1;transform:none}}',
+      '.msl-oc-title{font-family:ui-monospace,"SF Mono",Menlo,monospace;font-size:.86rem;color:var(--grn);letter-spacing:.04em;opacity:0;animation:mslUp .5s .4s ease forwards;}',
+      '.msl-oc-rows{width:min(420px,84vw);margin-top:6px;}',
+      '.msl-oc-r{display:flex;justify-content:space-between;padding:9px 2px;border-top:1px solid rgba(255,255,255,.07);font-size:.82rem;}',
+      '.msl-oc-r span{color:var(--mut);}.msl-oc-r b{font-family:ui-monospace,"SF Mono",Menlo,monospace;color:var(--pa);min-height:1em;}',
+      '@media(prefers-reduced-motion:reduce){#msLanding *{animation-duration:.001s!important;animation-delay:0s!important;}}',
     ].join('');
     var s = document.createElement('style'); s.id = 'msl-styles'; s.textContent = css;
     document.head.appendChild(s);
@@ -172,120 +325,97 @@
     if (root) return;
     injectStyles();
     root = document.createElement('div');
-    root.id = 'msLanding';
-    root.setAttribute('role', 'dialog');
-    root.setAttribute('aria-label', 'Welcome to MainStreet');
-    var rail = STEPS.map(function (s) {
-      return '<div class="msl-rstep"><div class="msl-ric">' + icon(s.k) + '</div><div class="msl-rlabel">' + s.n + '</div></div>';
-    }).join('');
+    root.id = 'msLanding'; root.setAttribute('role', 'dialog'); root.setAttribute('aria-label', 'Welcome to MainStreet');
+    var rail = RAIL.map(function (s) { return '<div class="msl-rstep"><div class="msl-ric">' + icon(s[0]) + '</div><div class="msl-rlabel">' + s[1] + '</div></div>'; }).join('');
     root.innerHTML =
-      '<div class="msl-nav"><div class="msl-logo"><b>Main</b>Street</div>' +
-        '<button class="msl-nav-signin" id="mslNavSignin">Sign In</button></div>' +
+      '<div class="msl-nav"><div class="msl-logo"><b>Main</b>Street</div><button class="msl-nav-signin" id="mslNavSignin">Sign In</button></div>' +
       '<div class="msl-hero">' +
         '<div class="msl-eyebrow">AI-Powered CAM Reconciliation</div>' +
         '<h1 class="msl-h1">Reconcile CAM.<br>Recover revenue.<br><em>Settle on-chain.</em></h1>' +
         '<p class="msl-lede">Built for commercial landlords and property managers.</p>' +
         '<div class="msl-cta">' +
-          '<button class="msl-btn msl-btn--primary" id="mslWatch">Watch 60-Second Demo</button>' +
+          '<button class="msl-btn msl-btn--primary" id="mslWatch">Watch the 40-Second Film</button>' +
           '<button class="msl-btn msl-btn--ghost" id="mslStart">Create Free Account</button>' +
           '<button class="msl-btn msl-btn--text" id="mslSignin">Sign In</button>' +
         '</div>' +
         '<div class="msl-trust"><span class="msl-dot"></span> Live on XRPL mainnet · RLUSD settlement · publicly verifiable</div>' +
         '<div class="msl-rail">' + rail + '</div>' +
       '</div>' +
-      '<div class="msl-demo" id="mslDemo">' +
-        '<button class="msl-demo-close" id="mslDemoClose" aria-label="Close demo">✕</button>' +
-        '<aside class="msl-side" id="mslSide"><div class="msl-side-brand">The MainStreet Workflow</div></aside>' +
-        '<div class="msl-stage"><div id="mslScene"></div>' +
-          '<div class="msl-prog" id="mslProg"></div>' +
-          '<div class="msl-end" id="mslEnd"></div>' +
-        '</div>' +
+      '<div class="msl-cine" id="mslCine">' +
+        '<button class="msl-cine-close" id="mslCineClose" aria-label="Close">✕</button>' +
+        '<div class="msl-dev"><div class="msl-dev-bar"><i></i><i></i><i></i><span class="msl-dev-url" id="mslUrl">app.mainstreet.xyz</span></div>' +
+          '<div class="msl-canvas" id="mslCanvas"></div></div>' +
+        '<div class="msl-cap" id="mslCap"></div>' +
+        '<div class="msl-timeline" id="mslTimeline"></div>' +
+        '<div class="msl-cine-end" id="mslEnd"></div>' +
       '</div>';
     document.body.appendChild(root);
-    demoEl = root.querySelector('#mslDemo');
-
-    // build side rail steps
-    var side = root.querySelector('#mslSide');
-    STEPS.forEach(function (s, i) {
-      var d = document.createElement('div');
-      d.className = 'msl-sstep'; d.dataset.i = i;
-      d.innerHTML = '<div class="msl-sic">' + icon(s.k) + '</div><div class="msl-slabel">' + s.n + '</div>';
-      d.addEventListener('click', function () { clearTimeout(state.timer); state.i = i; state.playing = false; renderScene(); });
-      side.appendChild(d);
-    });
+    cineEl = root.querySelector('#mslCine'); canvas = root.querySelector('#mslCanvas');
+    capEl = root.querySelector('#mslCap'); tlEl = root.querySelector('#mslTimeline'); endEl = root.querySelector('#mslEnd');
 
     root.querySelector('#mslWatch').addEventListener('click', playDemo);
     root.querySelector('#mslStart').addEventListener('click', function () { enterApp('signup'); });
     root.querySelector('#mslSignin').addEventListener('click', function () { enterApp('signin'); });
     root.querySelector('#mslNavSignin').addEventListener('click', function () { enterApp('signin'); });
-    root.querySelector('#mslDemoClose').addEventListener('click', stopDemo);
+    root.querySelector('#mslCineClose').addEventListener('click', stopDemo);
     document.addEventListener('keydown', onKey);
   }
 
+  var URLS = { upload:'app.mainstreet.xyz/documents', ai:'app.mainstreet.xyz/review', match:'app.mainstreet.xyz/cam',
+    recon:'app.mainstreet.xyz/cam', recover:'app.mainstreet.xyz/command-center', statement:'app.mainstreet.xyz/reports',
+    settle:'app.mainstreet.xyz/settlement', verify:'livenet.xrpl.org' };
+
   function renderScene() {
     clearTimeout(state.timer);
-    var s = STEPS[state.i], last = state.i === STEPS.length - 1;
-    var sceneEl = root.querySelector('#mslScene');
-    sceneEl.innerHTML =
-      '<div class="msl-scene msl-anim">' +
-        '<div class="msl-num">' + String(state.i + 1).padStart(2, '0') + ' / 08</div>' +
-        '<h2 class="msl-title">' + s.t + '</h2>' +
-        '<div class="msl-visual">' + s.v + '</div>' +
-      '</div>';
-
-    // side rail state
-    root.querySelectorAll('.msl-sstep').forEach(function (el, i) {
-      el.classList.toggle('msl-cur', i === state.i);
-      el.classList.toggle('msl-done', i < state.i);
-    });
-    // progress
-    var prog = root.querySelector('#mslProg');
-    prog.innerHTML = STEPS.map(function (_, i) {
-      var cls = i < state.i ? ' msl-sdone' : (i === state.i ? ' msl-scur' : '');
-      var dur = i === state.i && state.playing ? 'animation-duration:' + STEP_MS + 'ms;' : '';
-      return '<div class="msl-seg' + cls + '"><div class="msl-seg-f" style="' + dur + '"></div></div>';
+    var s = SCENES[state.i];
+    capEl.style.opacity = '0';
+    root.querySelector('#mslUrl').textContent = URLS[s.id] || 'app.mainstreet.xyz';
+    // rebuild canvas content (re-triggers entrance animation)
+    canvas.innerHTML = ''; var wrap = document.createElement('div'); wrap.style.cssText = 'position:absolute;inset:0'; canvas.appendChild(wrap);
+    s.build(wrap);
+    setTimeout(function () { capEl.textContent = s.cap; capEl.style.opacity = '1'; }, 260);
+    // timeline
+    tlEl.innerHTML = SCENES.map(function (_, i) {
+      var cls = i < state.i ? ' msl-tdone' : (i === state.i ? ' msl-tcur' : '');
+      var dur = i === state.i && state.playing ? 'animation-duration:' + s.dur + 'ms;' : '';
+      return '<div class="msl-tseg' + cls + '"><div class="msl-tseg-f" style="' + dur + '"></div></div>';
     }).join('');
-
-    root.querySelector('#mslEnd').classList.remove('msl-show');
-
+    endEl.classList.remove('msl-show');
     if (state.playing) {
-      if (!last) state.timer = setTimeout(function () { state.i++; renderScene(); }, STEP_MS);
-      else state.timer = setTimeout(showEnd, STEP_MS);
-    } else if (last) { setTimeout(showEnd, 300); }
+      if (state.i < SCENES.length - 1) state.timer = setTimeout(function () { state.i++; renderScene(); }, s.dur);
+      else state.timer = setTimeout(showEnd, s.dur);
+    } else if (s.end) setTimeout(showEnd, 300);
   }
 
   function showEnd() {
-    var end = root.querySelector('#mslEnd');
-    end.innerHTML =
+    endEl.innerHTML =
       '<button class="msl-btn msl-btn--primary" id="mslEndStart">Create Free Account</button>' +
       '<button class="msl-btn msl-btn--ghost" id="mslEndVerify">Verify on XRPL ↗</button>' +
       '<button class="msl-btn msl-btn--text" id="mslEndReplay">Replay</button>';
-    end.classList.add('msl-show');
-    end.querySelector('#mslEndStart').addEventListener('click', function () { enterApp('signup'); });
-    end.querySelector('#mslEndVerify').addEventListener('click', function () { window.open(EXPLORER, '_blank', 'noopener'); });
-    end.querySelector('#mslEndReplay').addEventListener('click', function () { state.i = 0; state.playing = true; renderScene(); });
+    endEl.classList.add('msl-show');
+    endEl.querySelector('#mslEndStart').addEventListener('click', function () { enterApp('signup'); });
+    endEl.querySelector('#mslEndVerify').addEventListener('click', function () { window.open(EXPLORER, '_blank', 'noopener'); });
+    endEl.querySelector('#mslEndReplay').addEventListener('click', function () { state.i = 0; state.playing = true; renderScene(); });
   }
 
-  function playDemo() { build(); state.i = 0; state.playing = true; demoEl.classList.add('msl-on'); renderScene(); }
-  function stopDemo() { clearTimeout(state.timer); state.playing = false; demoEl.classList.remove('msl-on'); }
+  function playDemo() { build(); state.i = 0; state.playing = true; cineEl.classList.add('msl-on'); renderScene(); }
+  function stopDemo() { clearTimeout(state.timer); state.playing = false; cineEl.classList.remove('msl-on'); }
 
   function onKey(e) {
     if (!root || root.style.display === 'none') return;
-    if (demoEl.classList.contains('msl-on')) {
+    if (cineEl.classList.contains('msl-on')) {
       if (e.key === 'Escape') stopDemo();
-      else if (e.key === 'ArrowRight' && state.i < STEPS.length - 1) { clearTimeout(state.timer); state.i++; renderScene(); }
+      else if (e.key === 'ArrowRight' && state.i < SCENES.length - 1) { clearTimeout(state.timer); state.i++; renderScene(); }
       else if (e.key === 'ArrowLeft' && state.i > 0) { clearTimeout(state.timer); state.i--; renderScene(); }
     } else if (e.key === 'Escape') { enterApp('signin'); }
   }
 
   function show() { build(); root.classList.add('msl-on'); root.style.display = 'block'; document.body.style.overflow = 'hidden'; }
   function hide() { stopDemo(); if (root) { root.classList.remove('msl-on'); root.style.display = 'none'; } document.body.style.overflow = ''; }
-
   function enterApp(tab) {
     hide();
     try {
-      var login = document.getElementById('loginScreen');
-      if (login) login.style.display = 'flex';
+      var login = document.getElementById('loginScreen'); if (login) login.style.display = 'flex';
       if (typeof window.switchAuthTab === 'function') window.switchAuthTab(tab === 'signup' ? 'signup' : 'signin');
       var email = document.getElementById('loginEmail'); if (email) setTimeout(function () { try { email.focus(); } catch (e) {} }, 60);
     } catch (e) {}
@@ -312,7 +442,6 @@
   }
 
   window.MainStreetLanding = { show: show, hide: hide, playDemo: playDemo };
-
   if (document.readyState === 'loading') document.addEventListener('DOMContentLoaded', maybeShow);
   else maybeShow();
 })();
