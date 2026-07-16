@@ -50,6 +50,7 @@
       var p = Math.min((ts - t0) / dur, 1), e = 1 - Math.pow(1 - p, 3);
       el.textContent = prefix + Math.round(target * e).toLocaleString('en-US') + suffix;
       if (p < 1) requestAnimationFrame(step);
+      else { el.classList.add('msl-landed'); setTimeout(function () { el.classList.remove('msl-landed'); }, 500); }
     }
     requestAnimationFrame(step);
   }
@@ -235,11 +236,11 @@
       '.msl-dev-bar>i{width:11px;height:11px;border-radius:50%;background:rgba(255,255,255,.14);}',
       '.msl-dev-url{margin-left:14px;font-family:ui-monospace,"SF Mono",Menlo,monospace;font-size:.72rem;color:var(--dim);}',
       '.msl-canvas{position:relative;height:min(52vh,460px);overflow:hidden;background:#0b0f17;}',
-      '.msl-canvas>*{animation:mslCanvasIn .6s cubic-bezier(.2,.7,.2,1) both;}',
-      '@keyframes mslCanvasIn{from{opacity:0;transform:scale(1.02)}to{opacity:1;transform:none}}',
+      '.msl-canvas>*{animation:mslCanvasIn .7s cubic-bezier(.2,.7,.2,1) both;}',
+      '@keyframes mslCanvasIn{from{opacity:0;transform:scale(1.015);filter:blur(4px)}to{opacity:1;transform:none;filter:blur(0)}}',
       '.msl-bg{position:absolute;inset:0;width:100%;height:100%;object-fit:cover;object-position:top;}',
       '.msl-bg-dim{filter:brightness(.4) saturate(.9);}',
-      '.msl-cap{margin:26px 0 0;font-size:clamp(1.05rem,2.2vw,1.5rem);font-weight:600;letter-spacing:-.02em;color:var(--pa);text-align:center;min-height:1.6em;transition:opacity .4s;}',
+      '.msl-cap{margin:26px 0 0;font-size:clamp(1.05rem,2.2vw,1.5rem);font-weight:600;letter-spacing:-.02em;color:var(--pa);text-align:center;min-height:1.6em;transition:opacity .38s ease,transform .38s cubic-bezier(.2,.7,.2,1);}',
       '.msl-timeline{display:flex;gap:5px;width:min(880px,94vw);margin:18px 0 0;}',
       '.msl-tseg{flex:1;height:2px;border-radius:2px;background:rgba(255,255,255,.12);overflow:hidden;}',
       '.msl-tseg-f{height:100%;width:0;background:var(--gold);}',
@@ -276,7 +277,7 @@
       '.msl-col-l .msl-node{--tx:-16px;font-family:ui-monospace,"SF Mono",Menlo,monospace;}.msl-col-r .msl-node{--tx:16px;text-align:right;}',
       '@keyframes mslNode{to{opacity:1;transform:none}}',
       '.msl-wires{position:absolute;inset:0;width:100%;height:100%;z-index:0;}',
-      '.msl-wire{fill:none;stroke:var(--gold);stroke-width:1.4;opacity:.55;stroke-dasharray:600;stroke-dashoffset:600;animation:mslDraw 1s var(--d) ease forwards;}',
+      '.msl-wire{fill:none;stroke:var(--gold);stroke-width:1.4;opacity:.55;stroke-dasharray:600;stroke-dashoffset:600;animation:mslDraw 1s var(--d) ease forwards;filter:drop-shadow(0 0 3px rgba(201,151,58,.45));}',
       '@keyframes mslDraw{to{stroke-dashoffset:0}}',
       // scene: reconcile
       '.msl-alloc{max-width:560px;margin:0 auto;height:100%;display:flex;flex-direction:column;justify-content:center;padding:0 34px;}',
@@ -315,6 +316,33 @@
       '.msl-oc-rows{width:min(420px,84vw);margin-top:6px;}',
       '.msl-oc-r{display:flex;justify-content:space-between;padding:9px 2px;border-top:1px solid rgba(255,255,255,.07);font-size:.82rem;}',
       '.msl-oc-r span{color:var(--mut);}.msl-oc-r b{font-family:ui-monospace,"SF Mono",Menlo,monospace;color:var(--pa);min-height:1em;}',
+      // ── final polish: dynamic numbers + mobile readability ──
+      '.msl-arow b,.msl-atotal b,.msl-bignum-v,.msl-stmt-row b,.msl-stmt-total b,.msl-settle-amt,.msl-oc-r b{font-variant-numeric:tabular-nums;}',
+      '.msl-landed{animation:mslLand .45s cubic-bezier(.2,1.4,.4,1);}',
+      '@keyframes mslLand{35%{transform:scale(1.07)}100%{transform:scale(1)}}',
+      '.msl-bignum-v.msl-landed{animation:mslLandGlow .5s ease;}',
+      '@keyframes mslLandGlow{35%{transform:scale(1.05);text-shadow:0 0 60px rgba(52,192,138,.6)}100%{transform:scale(1)}}',
+      '.msl-settle-amt{text-shadow:0 0 34px rgba(228,183,92,.22);}',
+      '.msl-atotal b{transition:color .3s;}',
+      '.msl-drop{animation:mslDropSettle .6s 3.5s ease both;}',
+      '@keyframes mslDropSettle{40%{border-color:rgba(52,192,138,.65)}100%{border-color:rgba(52,192,138,.45)}}',
+      '@media(max-width:600px){',
+        '.msl-canvas{height:46vh;min-height:300px;}',
+        '.msl-cap{font-size:1.08rem;padding:0 14px;margin-top:20px;}',
+        '.msl-btn{min-height:46px;}',
+        '.msl-col{width:118px;}.msl-node{font-size:.66rem;padding:7px 8px;}',
+        '.msl-match{padding:18px 12px;}',
+        '.msl-lease{flex-direction:column;padding:14px 16px;gap:10px;align-items:stretch;overflow-y:auto;}',
+        '.msl-lease-doc{flex:none;height:auto;padding:12px 14px;}.msl-ln{font-size:.7rem;line-height:1.65;}',
+        '.msl-hl{display:none;}',
+        '.msl-fields{flex-direction:row;flex-wrap:wrap;gap:7px;}.msl-field{font-size:.7rem;padding:8px 10px;flex:1 1 45%;}',
+        '.msl-alloc{padding:0 18px;}.msl-arow{font-size:.82rem;padding:9px 2px;}',
+        '.msl-stmt{padding:0 18px;}.msl-stmt-row{font-size:.82rem;}',
+        '.msl-bignum-l{font-size:.8rem;padding:0 10px;}',
+        '.msl-steps{max-width:92vw;}.msl-sstep2{font-size:.74rem;}.msl-sline{width:16px;}',
+        '.msl-oc-rows{width:92vw;}.msl-oc-r{font-size:.74rem;}.msl-oc-r b{font-size:.7rem;}',
+        '.msl-timeline{gap:3px;}',
+      '}',
       '@media(prefers-reduced-motion:reduce){#msLanding *{animation-duration:.001s!important;animation-delay:0s!important;}}',
     ].join('');
     var s = document.createElement('style'); s.id = 'msl-styles'; s.textContent = css;
@@ -368,12 +396,12 @@
   function renderScene() {
     clearTimeout(state.timer);
     var s = SCENES[state.i];
-    capEl.style.opacity = '0';
+    capEl.style.opacity = '0'; capEl.style.transform = 'translateY(6px)';
     root.querySelector('#mslUrl').textContent = URLS[s.id] || 'app.mainstreet.xyz';
     // rebuild canvas content (re-triggers entrance animation)
     canvas.innerHTML = ''; var wrap = document.createElement('div'); wrap.style.cssText = 'position:absolute;inset:0'; canvas.appendChild(wrap);
     s.build(wrap);
-    setTimeout(function () { capEl.textContent = s.cap; capEl.style.opacity = '1'; }, 260);
+    setTimeout(function () { capEl.textContent = s.cap; capEl.style.opacity = '1'; capEl.style.transform = 'translateY(0)'; }, 260);
     // timeline
     tlEl.innerHTML = SCENES.map(function (_, i) {
       var cls = i < state.i ? ' msl-tdone' : (i === state.i ? ' msl-tcur' : '');
