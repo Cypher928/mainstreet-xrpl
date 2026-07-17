@@ -58,8 +58,8 @@ private data on-chain. We chose not to overstate this: today the ledger carries 
 
 ### Mainnet status / on-chain proof
 MainStreet is live on XRPL mainnet. First settlement transaction:
-- **TX hash:** `D5F11B5EF7BD9C9BC8062FDA2F6B94BCA1F95DC3417C372548BB5F6082B4D12A`
-- **Explorer:** https://livenet.xrpl.org/transactions/D5F11B5EF7BD9C9BC8062FDA2F6B94BCA1F95DC3417C372548BB5F6082B4D12A
+- **TX hash:** `7FA730B2B78819AE34B3D1B458721FBC52B9CD25E980ED42DD1B15E9F9FC724A`
+- **Explorer:** https://livenet.xrpl.org/transactions/7FA730B2B78819AE34B3D1B458721FBC52B9CD25E980ED42DD1B15E9F9FC724A
 - **Amount:** 1 RLUSD
 - **Date:** 2026-07-05 (UTC)
 - **Settlement wallet:** `rHLDysh6p6TcJM7QXU15YRLG4mERF5h5pv`
@@ -69,7 +69,7 @@ MainStreet is live on XRPL mainnet. First settlement transaction:
 - **Attribution reference (per program rules):** Make Waves **Source Tag `2606290001`** — assigned by XRPL Commons at registration; set on every settlement Payment and TrustSet (per T&C §5/§7), so on-chain activity is attributable to the project. Verify on-chain via the transaction's `SourceTag` field.
 
 ### Live demo
-- **App:** https://mainstreet-xrpl.vercel.app (sign up free → "Try Live Demo" → seeded
+- **App:** https://mainstreetcam.com (sign up free → "Try Live Demo" → seeded
   Cascade Commons property)
 - **Demo video:** `<<DEMO_VIDEO_URL>>`
 

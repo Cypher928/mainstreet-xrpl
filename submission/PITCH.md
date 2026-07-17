@@ -71,7 +71,7 @@ both parties verify independently. RLUSD = USD-denominated; property managers ne
 crypto; sub-cent fees. Source Tag `2606290001` on every transaction.
 
 **6 — Live Proof (the money slide).** Explorer screenshot: **Payment · Success**, 1 RLUSD,
-Ripple's official issuer, Source Tag `2606290001`. `TX D5F11B5E…B4D12A` + explorer link.
+Ripple's official issuer, Source Tag `2606290001`. `TX 7FA730B2…FC724A` + explorer link.
 *"Live on XRPL Mainnet — verify it yourself."*
 
 **7 — Impact / Traction.** **$86,943.98 recoverable value identified** on one property = $75,549

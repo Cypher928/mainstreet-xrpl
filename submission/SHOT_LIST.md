@@ -14,7 +14,7 @@ shot with a little head/tail room so cuts are easy.
 | 6 | 1:20–1:35 | Tenant portal → a resolved dispute | Dispute status chip; tenant-side view | Use a tenant account/role that has the seeded dispute |
 | 7 | 1:35–1:45 | Back to landlord dispute view | Resolution record visible | — |
 | 8 | 1:45–2:10 | **Settlement flow** (landlord summary or tenant portal) | The 4 steps: Pay Now → RLUSD Settlement → Settled on XRPL → View Transaction, in the green settled state | Must be the post-funding live state, not pending |
-| 9 | 2:10–2:30 | Click **View Transaction** → real explorer page | **The money shot:** `https://livenet.xrpl.org/transactions/D5F11B5EF7BD9C9BC8062FDA2F6B94BCA1F95DC3417C372548BB5F6082B4D12A` showing the `$1.00 (1 RLUSD)` RLUSD payment on the public ledger. Hold ~3s. | Confirm the page fully loads the tx before cutting |
+| 9 | 2:10–2:30 | Click **View Transaction** → real explorer page | **The money shot:** `https://livenet.xrpl.org/transactions/7FA730B2B78819AE34B3D1B458721FBC52B9CD25E980ED42DD1B15E9F9FC724A` showing the `$1.00 (1 RLUSD)` RLUSD payment on the public ledger. Hold ~3s. | Confirm the page fully loads the tx before cutting |
 | 10 | 2:30–2:50 | Settlement flow green state → live URL | Closing brand shot | End on the live URL, readable |
 
 ## Capture order ≠ edit order
@@ -26,5 +26,5 @@ re-stage. You can record screens out of order and assemble them to the script ti
 - [ ] Seeded demo data looks clean (no `$NaN`, no empty tiles, no `—` where a value should be)
 - [ ] Incognito window, 1920×1080, clean chrome
 - [ ] Signed in to the account that can load the demo + the tenant account for the portal shot
-- [ ] `https://livenet.xrpl.org/transactions/D5F11B5EF7BD9C9BC8062FDA2F6B94BCA1F95DC3417C372548BB5F6082B4D12A` opens and shows the real transaction
+- [ ] `https://livenet.xrpl.org/transactions/7FA730B2B78819AE34B3D1B458721FBC52B9CD25E980ED42DD1B15E9F9FC724A` opens and shows the real transaction
 - [ ] Mic test — narration clear, no room echo

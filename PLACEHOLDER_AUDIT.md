@@ -5,7 +5,7 @@ cards, no factually false claims, no obvious dead ends.
 
 > **STATUS UPDATE (2026-07-05) — historical audit, partially superseded.** This was a pre-launch
 > credibility pass. Since it was written, the **RLUSD mainnet settlement went live** (tx
-> `D5F11B5EF7BD9C9BC8062FDA2F6B94BCA1F95DC3417C372548BB5F6082B4D12A`, Payment · Success), the
+> `7FA730B2B78819AE34B3D1B458721FBC52B9CD25E980ED42DD1B15E9F9FC724A`, Payment · Success), the
 > production wallet env vars are configured, and the in-app settlement flow renders verified/green.
 > Any statements below about "pending funding," "mainnet tx pending," or the testnet anchor being
 > the only on-chain proof are **superseded** — see `submission/HACKATHON_SUBMISSION.md` and the

@@ -23,7 +23,7 @@
  *   TEST_EMAIL=you@example.com TEST_PASSWORD=secret node test-prod-smoke.js
  *
  * Optional:
- *   PROD_URL=https://mainstreet-xrpl.vercel.app   (default)
+ *   PROD_URL=https://mainstreetcam.com   (default)
  *   HEADLESS=false                                  (show browser window)
  */
 
@@ -35,7 +35,7 @@ const https = require('https');
 const fs    = require('fs');
 const path  = require('path');
 
-const PROD_URL       = process.env.PROD_URL || 'https://mainstreet-xrpl.vercel.app';
+const PROD_URL       = process.env.PROD_URL || 'https://mainstreetcam.com';
 const EMAIL          = process.env.TEST_EMAIL;
 const PASSWORD       = process.env.TEST_PASSWORD;
 const HEADLESS       = process.env.HEADLESS !== 'false';

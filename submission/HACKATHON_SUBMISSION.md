@@ -12,10 +12,10 @@ reference (confirm the mechanism from the official rules).
 | | |
 |---|---|
 | Product | MainStreet — AI-powered CAM reconciliation for commercial real estate, settled in RLUSD on XRPL |
-| Live app | https://mainstreet-xrpl.vercel.app |
+| Live app | https://mainstreetcam.com |
 | Network | XRPL **mainnet** |
-| First settlement TX | `D5F11B5EF7BD9C9BC8062FDA2F6B94BCA1F95DC3417C372548BB5F6082B4D12A` |
-| Explorer | https://livenet.xrpl.org/transactions/D5F11B5EF7BD9C9BC8062FDA2F6B94BCA1F95DC3417C372548BB5F6082B4D12A |
+| First settlement TX | `7FA730B2B78819AE34B3D1B458721FBC52B9CD25E980ED42DD1B15E9F9FC724A` |
+| Explorer | https://livenet.xrpl.org/transactions/7FA730B2B78819AE34B3D1B458721FBC52B9CD25E980ED42DD1B15E9F9FC724A |
 | Settlement wallet (sender) | `rHLDysh6p6TcJM7QXU15YRLG4mERF5h5pv` |
 | Landlord wallet (destination) | `rw97rJThBJtoVRqR4DsoK5kW2taftzQvAX` |
 | RLUSD issuer (mainnet) | `rMxCKbEDwqr76QuheSUMdEGf4B9xJ8m5De` (Ripple's official) |

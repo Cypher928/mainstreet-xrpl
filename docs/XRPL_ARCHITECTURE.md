@@ -26,7 +26,7 @@ the honest list of what this architecture does and does not yet do.
 | Settlement wallet | `rHLDysh6p6TcJM7QXU15YRLG4mERF5h5pv` |
 | Landlord wallet | `rw97rJThBJtoVRqR4DsoK5kW2taftzQvAX` |
 | Source Tag | `2606290001` (Make Waves; overridable via `XRPL_SOURCE_TAG`) |
-| First live settlement | tx `D5F11B5EF7BD9C9BC8062FDA2F6B94BCA1F95DC3417C372548BB5F6082B4D12A` |
+| First live settlement | tx `7FA730B2B78819AE34B3D1B458721FBC52B9CD25E980ED42DD1B15E9F9FC724A` |
 
 ## 3. Wallet architecture (current)
 

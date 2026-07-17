@@ -189,7 +189,7 @@ settlement wallet signs via **local admin scripts only** (hidden-prompt seeds);
 the public API is read-only status. Every settlement Payment and TrustSet
 carries Make Waves Source Tag `2606290001` and a SHA-256 memo fingerprint of
 the settlement record. First live settlement:
-`D5F11B5EF7BD9C9BC8062FDA2F6B94BCA1F95DC3417C372548BB5F6082B4D12A`.
+`7FA730B2B78819AE34B3D1B458721FBC52B9CD25E980ED42DD1B15E9F9FC724A`.
 
 ## 13. Supabase architecture
 

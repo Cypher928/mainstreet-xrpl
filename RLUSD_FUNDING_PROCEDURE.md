@@ -1,7 +1,7 @@
 # RLUSD Settlement Wallet — Funding Procedure & Deployment Checklist
 
 **Status:** ✅ Live. Wallet funded, RLUSD trust line established, and the first real RLUSD
-settlement sent and verified on mainnet (TX `D5F11B5EF7BD9C9BC8062FDA2F6B94BCA1F95DC3417C372548BB5F6082B4D12A`).
+settlement sent and verified on mainnet (TX `7FA730B2B78819AE34B3D1B458721FBC52B9CD25E980ED42DD1B15E9F9FC724A`).
 **Phase:** Live — Make Waves mainnet requirement satisfied. (This document is retained as the
 reference procedure; it now reflects the wallet actually in production.)
 

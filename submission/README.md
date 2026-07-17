@@ -2,7 +2,7 @@
 
 Drafts of everything needed to submit MainStreet to XRPL Commons **Make Waves**. The mainnet
 settlement is now live and its details are filled in throughout (TX
-`D5F11B5EF7BD9C9BC8062FDA2F6B94BCA1F95DC3417C372548BB5F6082B4D12A`, settlement wallet
+`7FA730B2B78819AE34B3D1B458721FBC52B9CD25E980ED42DD1B15E9F9FC724A`, settlement wallet
 `rHLDysh6p6TcJM7QXU15YRLG4mERF5h5pv`). The only tokens still to fill are the **demo-video URL**,
 the **registration date**, and the **attribution reference** (confirm the Make Waves mechanism).
 The token table below remains as the reference for those.
