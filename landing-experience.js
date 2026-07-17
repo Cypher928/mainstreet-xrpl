@@ -207,7 +207,19 @@
       '.msl-eyebrow{font-family:ui-monospace,"SF Mono",Menlo,monospace;font-size:.72rem;letter-spacing:.26em;text-transform:uppercase;color:var(--gold);margin-bottom:30px;opacity:0;animation:mslUp .7s .05s ease forwards;}',
       '.msl-h1{font-size:clamp(2.9rem,7vw,5.4rem);font-weight:700;letter-spacing:-.04em;line-height:1.02;margin:0;text-wrap:balance;opacity:0;animation:mslUp .85s .16s cubic-bezier(.2,.7,.2,1) forwards;}',
       '.msl-h1 em{font-style:normal;color:var(--gold);}',
-      '.msl-lede{font-size:clamp(1.05rem,2vw,1.4rem);line-height:1.5;color:var(--mut);max-width:30ch;margin:26px auto 0;opacity:0;animation:mslUp .85s .3s ease forwards;}',
+      '.msl-lede{font-size:clamp(1.05rem,2vw,1.35rem);line-height:1.55;color:var(--mut);max-width:44ch;margin:24px auto 0;opacity:0;animation:mslUp .85s .3s ease forwards;}',
+      '.msl-lede em{color:var(--pa);font-style:normal;font-weight:500;}',
+      // problem/value section (marketing) — matches hero language, no new animation system
+      '.msl-why{position:relative;z-index:1;max-width:920px;margin:0 auto;padding:8px 32px clamp(40px,7vh,80px);text-align:center;opacity:0;animation:mslUp .85s .8s ease forwards;}',
+      '.msl-why-h{font-size:clamp(1.4rem,3vw,2.1rem);font-weight:700;letter-spacing:-.025em;color:var(--pa);margin:0 0 30px;text-wrap:balance;}',
+      '.msl-why-grid{display:grid;grid-template-columns:1fr 1fr;gap:14px;max-width:720px;margin:0 auto;text-align:left;}',
+      '.msl-why-item{display:flex;align-items:center;gap:14px;background:#0f1520;border:1px solid rgba(255,255,255,.07);border-radius:12px;padding:16px 18px;transition:border-color .25s;}',
+      '.msl-why-item:hover{border-color:rgba(201,151,58,.35);}',
+      '.msl-why-ic{width:34px;height:34px;border-radius:9px;flex:none;display:grid;place-items:center;background:rgba(201,151,58,.1);color:var(--gold);}.msl-why-ic svg{width:18px;height:18px;}',
+      '.msl-why-item span{font-size:.95rem;color:#C6CEDA;font-weight:500;}',
+      '.msl-why-cta{font-size:clamp(1.05rem,2.2vw,1.35rem);font-weight:600;letter-spacing:-.01em;color:var(--pa);margin:30px auto 0;max-width:34ch;}',
+      '.msl-why-cta b,.msl-why-cta em{color:var(--gold);font-style:normal;}',
+      '@media(max-width:600px){.msl-why-grid{grid-template-columns:1fr;}.msl-why{padding-bottom:48px;}}',
       '.msl-cta{display:flex;gap:12px;flex-wrap:wrap;justify-content:center;margin:40px 0 0;opacity:0;animation:mslUp .85s .44s ease forwards;}',
       '.msl-btn{font:inherit;font-size:1rem;font-weight:600;border-radius:12px;padding:14px 26px;cursor:pointer;border:1px solid transparent;transition:transform .18s,filter .18s,border-color .2s,color .2s,background .2s;display:inline-flex;align-items:center;gap:9px;}',
       '.msl-btn:hover{transform:translateY(-1px);}.msl-btn:focus-visible{outline:2px solid var(--gold);outline-offset:3px;}',
@@ -358,16 +370,26 @@
     root.innerHTML =
       '<div class="msl-nav"><div class="msl-logo"><b>Main</b>Street</div><button class="msl-nav-signin" id="mslNavSignin">Sign In</button></div>' +
       '<div class="msl-hero">' +
-        '<div class="msl-eyebrow">AI-Powered CAM Reconciliation</div>' +
-        '<h1 class="msl-h1">Reconcile CAM.<br>Recover revenue.<br><em>Settle on-chain.</em></h1>' +
-        '<p class="msl-lede">Built for commercial landlords and property managers.</p>' +
+        '<div class="msl-eyebrow">CAM Recovery &amp; Reconciliation for Commercial Real Estate</div>' +
+        '<h1 class="msl-h1">Recover the CAM revenue<br><em>hiding in your leases.</em></h1>' +
+        '<p class="msl-lede">AI reads every lease, finds what manual reviews miss, and cites every charge — then settles it, verified, on the XRP Ledger.</p>' +
         '<div class="msl-cta">' +
-          '<button class="msl-btn msl-btn--primary" id="mslWatch">Watch the 40-Second Film</button>' +
+          '<button class="msl-btn msl-btn--primary" id="mslWatch">See it recover revenue</button>' +
           '<button class="msl-btn msl-btn--ghost" id="mslStart">Create Free Account</button>' +
           '<button class="msl-btn msl-btn--text" id="mslSignin">Sign In</button>' +
         '</div>' +
         '<div class="msl-trust"><span class="msl-dot"></span> Live on XRPL mainnet · RLUSD settlement · publicly verifiable</div>' +
         '<div class="msl-rail">' + rail + '</div>' +
+      '</div>' +
+      '<div class="msl-why">' +
+        '<h2 class="msl-why-h">Where property managers lose recoverable revenue</h2>' +
+        '<div class="msl-why-grid">' +
+          '<div class="msl-why-item"><div class="msl-why-ic">' + icon('recon') + '</div><span>CAM caps get overlooked</span></div>' +
+          '<div class="msl-why-item"><div class="msl-why-ic">' + icon('ai') + '</div><span>Lease clauses get missed</span></div>' +
+          '<div class="msl-why-item"><div class="msl-why-ic">' + icon('match') + '</div><span>Expenses are allocated incorrectly</span></div>' +
+          '<div class="msl-why-item"><div class="msl-why-ic">' + icon('recover') + '</div><span>Recoverable revenue is never billed</span></div>' +
+        '</div>' +
+        '<p class="msl-why-cta">MainStreet finds it, reconciles it, and proves every dollar — automatically.</p>' +
       '</div>' +
       '<div class="msl-cine" id="mslCine">' +
         '<button class="msl-cine-close" id="mslCineClose" aria-label="Close">✕</button>' +
