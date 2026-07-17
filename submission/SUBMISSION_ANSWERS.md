@@ -69,7 +69,7 @@ MainStreet is live on XRPL mainnet. First settlement transaction:
 - **Attribution reference (per program rules):** Make Waves **Source Tag `2606290001`** — assigned by XRPL Commons at registration; set on every settlement Payment and TrustSet (per T&C §5/§7), so on-chain activity is attributable to the project. Verify on-chain via the transaction's `SourceTag` field.
 
 ### Live demo
-- **App:** https://mainstreet-xrpl.vercel.app (sign up free → "Try Live Demo" → seeded
+- **App:** https://mainstreetcam.com (sign up free → "Try Live Demo" → seeded
   Cascade Commons property)
 - **Demo video:** `<<DEMO_VIDEO_URL>>`
 

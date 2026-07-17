@@ -12,7 +12,7 @@ reference (confirm the mechanism from the official rules).
 | | |
 |---|---|
 | Product | MainStreet — AI-powered CAM reconciliation for commercial real estate, settled in RLUSD on XRPL |
-| Live app | https://mainstreet-xrpl.vercel.app |
+| Live app | https://mainstreetcam.com |
 | Network | XRPL **mainnet** |
 | First settlement TX | `7FA730B2B78819AE34B3D1B458721FBC52B9CD25E980ED42DD1B15E9F9FC724A` |
 | Explorer | https://livenet.xrpl.org/transactions/7FA730B2B78819AE34B3D1B458721FBC52B9CD25E980ED42DD1B15E9F9FC724A |

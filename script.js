@@ -18,7 +18,7 @@ const SUPABASE_ANON_KEY = 'eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBh
 // so the flow is still testable in local dev.
 const PUBLIC_APP_URL = /^(localhost|127\.0\.0\.1)/.test(window.location.hostname)
   ? window.location.origin
-  : 'https://mainstreet-xrpl.vercel.app';
+  : 'https://mainstreetcam.com';
 
 
 const { createClient: _sbCreateClient } = window.supabase;

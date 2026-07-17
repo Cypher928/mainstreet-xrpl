@@ -6,7 +6,7 @@
 
 ## 👋 For Judges — Start Here
 
-**Live demo:** [mainstreet-xrpl.vercel.app](https://mainstreet-xrpl.vercel.app)
+**Live demo:** [mainstreetcam.com](https://mainstreetcam.com)
 
 **🎥 Demo video:** [Watch the full walkthrough](https://1drv.ms/v/c/8adf809cf83a844a/IQAcJhs_Il5hSIlU2PJLiVVPAWmxCY7Fvc3QBzTiSrZsJo0)
 
@@ -102,7 +102,7 @@ Traditional CAM reconciliation takes weeks, involves outside firms, and produces
 
 ## Quick Start
 
-1. Open [mainstreet-xrpl.vercel.app](https://mainstreet-xrpl.vercel.app)
+1. Open [mainstreetcam.com](https://mainstreetcam.com)
 2. Sign up with any email (free, no card required)
 3. Click **"Try Live Demo"** to load the seeded *Cascade Commons* property
 4. Explore the workspace tabs, open a reconciliation, and review a tenant dispute
