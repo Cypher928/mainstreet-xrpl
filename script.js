@@ -7727,7 +7727,8 @@ async function explainCharge(i) {
     const mdHtml = renderMarkdown(text);
     expl.innerHTML = `<strong>AI Review</strong><div class="expl-preview">${mdHtml}</div><button class="expl-readmore" onclick="var p=this.previousElementSibling;p.classList.toggle('expanded');this.textContent=p.classList.contains('expanded')?'Show less \u25b2':'Read full explanation \u25be'">Read full explanation &#x25BE;</button>`;
     det.style.display = 'block';
-    document.getElementById(`ichev-${i}`).innerHTML = '&#x25B2; Close';
+    const _chevX = document.getElementById(`ichev-${i}`);
+    if (_chevX) _chevX.innerHTML = '&#x25B2; Close';
     expl.scrollIntoView({ behavior: 'smooth', block: 'nearest' });
     });
   } catch (e) {
@@ -7748,7 +7749,8 @@ function disputeCharge(i) {
   const det = document.getElementById(`idet-${i}`);
   if (!det) return;
   det.style.display = 'block';
-  document.getElementById(`ichev-${i}`).innerHTML = '&#x25B2; Close';
+  const _chevD = document.getElementById(`ichev-${i}`);
+  if (_chevD) _chevD.innerHTML = '&#x25B2; Close';
   const existing = document.getElementById(`idisp-${i}`);
   if (existing) { existing.remove(); return; }
   const form = document.createElement('div');
@@ -9709,7 +9711,8 @@ function esc(v) {
     .replace(/&/g, '&amp;')
     .replace(/</g, '&lt;')
     .replace(/>/g, '&gt;')
-    .replace(/"/g, '&quot;');
+    .replace(/"/g, '&quot;')
+    .replace(/'/g, '&#39;'); // also escape single quotes: keeps apostrophe names (O'Brien) from breaking single-quoted onclick handlers, and closes the injection gap
 }
 
 // Convert a subset of markdown to safe HTML (HTML-escapes first, then renders).
