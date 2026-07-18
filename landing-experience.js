@@ -29,6 +29,7 @@
       statement:'<path d="M7 3h7l4 4v14H7z"/><path d="M14 3v4h4"/><path d="M10 13h5M10 17h5"/>',
       settle:  '<circle cx="8" cy="8" r="3"/><circle cx="16" cy="16" r="3"/><path d="M10.5 10.5 13.5 13.5"/>',
       verify:  '<path d="M12 3l7 3v5c0 4.5-3 8-7 10-4-2-7-5.5-7-10V6z"/><path d="m9 12 2 2 4-4"/>',
+      chev:    '<path d="m6 9 6 6 6-6"/>',
     };
     return '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round">' + (d[name] || '') + '</svg>';
   }
@@ -204,7 +205,8 @@
       '.msl-logo{font-weight:700;font-size:1.1rem;letter-spacing:-.02em;}.msl-logo b{color:var(--gold);}',
       '.msl-nav-signin{background:none;border:none;color:var(--mut);font:inherit;font-size:.9rem;font-weight:500;cursor:pointer;padding:8px;transition:color .2s;}.msl-nav-signin:hover{color:var(--pa);}',
       '.msl-hero{position:relative;z-index:1;max-width:920px;margin:0 auto;padding:clamp(48px,11vh,120px) 32px 60px;text-align:center;}',
-      '.msl-eyebrow{font-family:ui-monospace,"SF Mono",Menlo,monospace;font-size:.72rem;letter-spacing:.26em;text-transform:uppercase;color:var(--gold);margin-bottom:30px;opacity:0;animation:mslUp .7s .05s ease forwards;}',
+      '.msl-eyebrow{display:inline-flex;align-items:center;gap:9px;font-family:ui-monospace,"SF Mono",Menlo,monospace;font-size:.72rem;letter-spacing:.18em;text-transform:uppercase;color:var(--goldl);margin-bottom:30px;padding:8px 16px;border:1px solid rgba(201,151,58,.32);background:rgba(201,151,58,.08);border-radius:999px;opacity:0;animation:mslUp .7s .05s ease forwards;}',
+      '.msl-eyebrow::before{content:"";width:5px;height:5px;border-radius:50%;background:var(--gold);box-shadow:0 0 0 3px rgba(201,151,58,.16);}',
       '.msl-h1{font-size:clamp(2.9rem,7vw,5.4rem);font-weight:700;letter-spacing:-.04em;line-height:1.02;margin:0;text-wrap:balance;opacity:0;animation:mslUp .85s .16s cubic-bezier(.2,.7,.2,1) forwards;}',
       '.msl-h1 em{font-style:normal;color:var(--gold);}',
       '.msl-lede{font-size:clamp(1.05rem,2vw,1.35rem);line-height:1.55;color:var(--mut);max-width:44ch;margin:24px auto 0;opacity:0;animation:mslUp .85s .3s ease forwards;}',
@@ -212,11 +214,18 @@
       // problem/value section (marketing) — matches hero language, no new animation system
       '.msl-why{position:relative;z-index:1;max-width:920px;margin:0 auto;padding:8px 32px clamp(40px,7vh,80px);text-align:center;opacity:0;animation:mslUp .85s .8s ease forwards;}',
       '.msl-why-h{font-size:clamp(1.4rem,3vw,2.1rem);font-weight:700;letter-spacing:-.025em;color:var(--pa);margin:0 0 30px;text-wrap:balance;}',
-      '.msl-why-grid{display:grid;grid-template-columns:1fr 1fr;gap:14px;max-width:720px;margin:0 auto;text-align:left;}',
-      '.msl-why-item{display:flex;align-items:center;gap:14px;background:#0f1520;border:1px solid rgba(255,255,255,.07);border-radius:12px;padding:16px 18px;transition:border-color .25s;}',
+      '.msl-why-grid{display:grid;grid-template-columns:1fr 1fr;gap:14px;max-width:720px;margin:0 auto;text-align:left;align-items:start;}',
+      '.msl-why-item{background:#0f1520;border:1px solid rgba(255,255,255,.07);border-radius:12px;transition:border-color .25s;}',
       '.msl-why-item:hover{border-color:rgba(201,151,58,.35);}',
+      '.msl-why-item[open]{border-color:rgba(201,151,58,.35);}',
+      '.msl-why-head{display:flex;align-items:center;gap:14px;padding:16px 18px;cursor:pointer;list-style:none;-webkit-tap-highlight-color:transparent;}',
+      '.msl-why-head::-webkit-details-marker{display:none;}',
+      '.msl-why-head:focus-visible{outline:2px solid var(--gold);outline-offset:2px;border-radius:12px;}',
       '.msl-why-ic{width:34px;height:34px;border-radius:9px;flex:none;display:grid;place-items:center;background:rgba(201,151,58,.1);color:var(--gold);}.msl-why-ic svg{width:18px;height:18px;}',
-      '.msl-why-item span{font-size:.95rem;color:#C6CEDA;font-weight:500;}',
+      '.msl-why-label{font-size:.95rem;color:#C6CEDA;font-weight:500;flex:1;}',
+      '.msl-why-chev{flex:none;color:#7C8798;display:grid;place-items:center;transition:transform .25s,color .25s;}.msl-why-chev svg{width:16px;height:16px;}',
+      '.msl-why-item[open] .msl-why-chev{transform:rotate(180deg);color:var(--gold);}',
+      '.msl-why-detail{margin:0;padding:0 18px 16px 66px;font-size:.88rem;line-height:1.55;color:#98A2B3;}',
       '.msl-why-cta{font-size:clamp(1.05rem,2.2vw,1.35rem);font-weight:600;letter-spacing:-.01em;color:var(--pa);margin:30px auto 0;max-width:34ch;}',
       '.msl-why-cta b,.msl-why-cta em{color:var(--gold);font-style:normal;}',
       '@media(max-width:600px){.msl-why-grid{grid-template-columns:1fr;}.msl-why{padding-bottom:48px;}}',
@@ -384,16 +393,16 @@
       '<div class="msl-why">' +
         '<h2 class="msl-why-h">Where property managers lose recoverable revenue</h2>' +
         '<div class="msl-why-grid">' +
-          '<div class="msl-why-item"><div class="msl-why-ic">' + icon('recon') + '</div><span>CAM caps get overlooked</span></div>' +
-          '<div class="msl-why-item"><div class="msl-why-ic">' + icon('ai') + '</div><span>Lease clauses get missed</span></div>' +
-          '<div class="msl-why-item"><div class="msl-why-ic">' + icon('match') + '</div><span>Expenses are allocated incorrectly</span></div>' +
-          '<div class="msl-why-item"><div class="msl-why-ic">' + icon('recover') + '</div><span>Recoverable revenue is never billed</span></div>' +
+          '<details class="msl-why-item"><summary class="msl-why-head"><span class="msl-why-ic">' + icon('recon') + '</span><span class="msl-why-label">CAM caps get overlooked</span><span class="msl-why-chev">' + icon('chev') + '</span></summary><p class="msl-why-detail">Many leases cap how much a tenant can be charged for controllable expenses. When those caps aren\'t tracked year over year, landlords quietly absorb costs they were entitled to recover.</p></details>' +
+          '<details class="msl-why-item"><summary class="msl-why-head"><span class="msl-why-ic">' + icon('ai') + '</span><span class="msl-why-label">Lease clauses get missed</span><span class="msl-why-chev">' + icon('chev') + '</span></summary><p class="msl-why-detail">Exclusions, gross-ups, and base-year language differ from lease to lease. A single overlooked clause can turn a recoverable expense into one you can never bill for.</p></details>' +
+          '<details class="msl-why-item"><summary class="msl-why-head"><span class="msl-why-ic">' + icon('match') + '</span><span class="msl-why-label">Expenses are allocated incorrectly</span><span class="msl-why-chev">' + icon('chev') + '</span></summary><p class="msl-why-detail">Shared costs are split across tenants by pro-rata share. Stale square footage or occupancy assumptions send charges to the wrong ledgers and understate what\'s owed.</p></details>' +
+          '<details class="msl-why-item"><summary class="msl-why-head"><span class="msl-why-ic">' + icon('recover') + '</span><span class="msl-why-label">Recoverable revenue is never billed</span><span class="msl-why-chev">' + icon('chev') + '</span></summary><p class="msl-why-detail">Reconciliations that don\'t get finished on time simply never go out. Recoverable dollars expire against the reconciliation deadlines written into the lease.</p></details>' +
         '</div>' +
         '<p class="msl-why-cta">MainStreet finds it, reconciles it, and proves every dollar — automatically.</p>' +
       '</div>' +
       '<div class="msl-cine" id="mslCine">' +
         '<button class="msl-cine-close" id="mslCineClose" aria-label="Close">✕</button>' +
-        '<div class="msl-dev"><div class="msl-dev-bar"><i></i><i></i><i></i><span class="msl-dev-url" id="mslUrl">app.mainstreet.xyz</span></div>' +
+        '<div class="msl-dev"><div class="msl-dev-bar"><i></i><i></i><i></i><span class="msl-dev-url" id="mslUrl">mainstreetcam.com</span></div>' +
           '<div class="msl-canvas" id="mslCanvas"></div></div>' +
         '<div class="msl-cap" id="mslCap"></div>' +
         '<div class="msl-timeline" id="mslTimeline"></div>' +
@@ -411,15 +420,15 @@
     document.addEventListener('keydown', onKey);
   }
 
-  var URLS = { upload:'app.mainstreet.xyz/documents', ai:'app.mainstreet.xyz/review', match:'app.mainstreet.xyz/cam',
-    recon:'app.mainstreet.xyz/cam', recover:'app.mainstreet.xyz/command-center', statement:'app.mainstreet.xyz/reports',
-    settle:'app.mainstreet.xyz/settlement', verify:'livenet.xrpl.org' };
+  var URLS = { upload:'mainstreetcam.com/documents', ai:'mainstreetcam.com/review', match:'mainstreetcam.com/cam',
+    recon:'mainstreetcam.com/cam', recover:'mainstreetcam.com/command-center', statement:'mainstreetcam.com/reports',
+    settle:'mainstreetcam.com/settlement', verify:'livenet.xrpl.org' };
 
   function renderScene() {
     clearTimeout(state.timer);
     var s = SCENES[state.i];
     capEl.style.opacity = '0'; capEl.style.transform = 'translateY(6px)';
-    root.querySelector('#mslUrl').textContent = URLS[s.id] || 'app.mainstreet.xyz';
+    root.querySelector('#mslUrl').textContent = URLS[s.id] || 'mainstreetcam.com';
     // rebuild canvas content (re-triggers entrance animation)
     canvas.innerHTML = ''; var wrap = document.createElement('div'); wrap.style.cssText = 'position:absolute;inset:0'; canvas.appendChild(wrap);
     s.build(wrap);
