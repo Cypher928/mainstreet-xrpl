@@ -3246,9 +3246,42 @@ function _bindKpiNav() {
   document.addEventListener('click', handle);
   document.addEventListener('keydown', handle);
 }
+
+// Give the sticky tab bar a visible "pinned" state the moment it sticks, so the
+// navigation reads as persistent on mobile instead of looking like an ordinary
+// tab bar until you scroll. A zero-height sentinel sits just above the bar; the
+// bar is pinned exactly when the sentinel has scrolled above the viewport top
+// (its rect.top < 0). A passive, rAF-throttled scroll/resize handler drives it —
+// correct even for instant jumps (scroll restoration, programmatic scrollTo)
+// which an IntersectionObserver can miss, and cheap enough to be jank-free.
+// Desktop is unaffected: the .ws-pinned styles live only inside the
+// max-width:768px block, so toggling the class does nothing on desktop.
+var _stickyPinBound = false;
+function _initStickyTabPin() {
+  if (_stickyPinBound) return;
+  var card = document.getElementById('propertyWorkspaceNavCard');
+  var sentinel = document.getElementById('wsStickySentinel');
+  if (!card || !sentinel) return;
+  _stickyPinBound = true;
+  var ticking = false;
+  function apply() {
+    ticking = false;
+    card.classList.toggle('ws-pinned', sentinel.getBoundingClientRect().top < 0);
+  }
+  function onScroll() {
+    if (ticking) return;
+    ticking = true;
+    (window.requestAnimationFrame || window.setTimeout)(apply);
+  }
+  window.addEventListener('scroll', onScroll, { passive: true });
+  window.addEventListener('resize', onScroll, { passive: true });
+  apply();
+}
+
 if (typeof document !== 'undefined') {
-  if (document.readyState === 'loading') document.addEventListener('DOMContentLoaded', _bindKpiNav);
-  else _bindKpiNav();
+  var _navInit = function () { _bindKpiNav(); _initStickyTabPin(); };
+  if (document.readyState === 'loading') document.addEventListener('DOMContentLoaded', _navInit);
+  else _navInit();
 }
 
 // ─── Property KPI Header (Phase 23) ─────────────────────────────────────────

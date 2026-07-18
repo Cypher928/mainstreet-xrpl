@@ -1300,12 +1300,33 @@
     }
     /* Phase A — sticky workspace tab bar on touch devices so tabs stay reachable
        without scrolling back up. Desktop (>768px) is intentionally untouched. The
-       card is opaque (#111827) so content scrolls cleanly beneath the pinned bar. */
+       card is opaque (#111827) so content scrolls cleanly beneath the pinned bar.
+       A rAF-throttled scroll handler watches a zero-height sentinel just above
+       the bar and adds .ws-pinned the moment the bar sticks, fading in a subtle
+       elevation so it reads as a persistent navigation element, not an in-flow
+       tab bar. */
+    /* Net-zero sentinel: occupies 1px but pulls the next element up 1px, so it
+       adds no visible space while remaining observable by IntersectionObserver. */
+    #wsStickySentinel { height: 1px; margin-bottom: -1px; pointer-events: none; }
     @media (max-width: 768px) {
       .property-workspace-card {
         position: sticky; top: 0; z-index: 40;
         margin-top: 0;
         border-top-left-radius: 0; border-top-right-radius: 0;
+        transition: box-shadow 0.22s ease, background-color 0.22s ease, border-color 0.22s ease;
+      }
+      /* Pinned: lift the bar with a deeper background, a stronger shadow, and a
+         brass hairline under the tabs; nudge the active tab a touch brighter.
+         Subtle and premium — no motion beyond the fade. */
+      .property-workspace-card.ws-pinned {
+        background: #0f1522;
+        box-shadow: 0 8px 24px rgba(0,0,0,0.5);
+      }
+      .property-workspace-card.ws-pinned .workspace-tab-bar {
+        border-bottom-color: rgba(201,151,58,0.40);
+      }
+      .property-workspace-card.ws-pinned .workspace-tab.active {
+        background: rgba(201,151,58,0.22);
       }
     }
 
@@ -5762,6 +5783,9 @@
 <!-- ── Property Workspace Navigation (Phase 27 — moved directly beneath the
      breadcrumb and given a dedicated card so it reads as primary navigation
      rather than dashboard content) ─────────────────────────────────────── -->
+<!-- Zero-height sentinel: when it scrolls above the viewport top the sticky tab
+     bar has stuck, and the IntersectionObserver adds .ws-pinned (mobile cue). -->
+<div id="wsStickySentinel" aria-hidden="true"></div>
 <div class="property-workspace-card" id="propertyWorkspaceNavCard">
   <div class="workspace-tab-bar" id="workspaceTabBar">
     <button class="workspace-tab active" id="wsTabBtn-overview"  onclick="switchWorkspaceTabFromNav('overview')"><span class="ws-tab-icon">&#x1F3E2;</span>Overview</button>
