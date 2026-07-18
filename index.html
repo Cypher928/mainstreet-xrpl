@@ -1293,11 +1293,9 @@
     .workspace-tab-pane { animation: wsTabFadeIn 0.12s ease-out; }
     @keyframes wsTabFadeIn { from { opacity: 0.4; } to { opacity: 1; } }
     @media (max-width: 480px) {
-      .property-workspace-card { padding: 6px 12px 0; }
-      .workspace-tab-bar { gap: 3px; }
-      /* Polish: tighter tabs so the two-row tab card is ~10-15% shorter. Active-tab
-         styling (brass fill + underline) is untouched, so its prominence is unchanged. */
-      .workspace-tab { padding: 8px 14px; font-size: 0.85rem; gap: 5px; flex: 1 1 auto; justify-content: center; min-height: 34px; }
+      .property-workspace-card { padding: 8px 12px 0; }
+      .workspace-tab-bar { gap: 4px; }
+      .workspace-tab { padding: 13px 14px; font-size: 0.85rem; gap: 5px; flex: 1 1 auto; justify-content: center; min-height: 44px; }
       .workspace-tab .ws-tab-icon { font-size: 0.95rem; }
     }
     /* Phase A — sticky workspace tab bar on touch devices so tabs stay reachable
@@ -1323,12 +1321,12 @@
     .wsm-back:active { background: #0b1019; }
     .wsm-ctx { flex: 1 1 auto; min-width: 0; }
     .wsm-name {
-      font-size: 1.16rem; font-weight: 800; letter-spacing: -0.015em; color: #F8FAFC;
-      white-space: nowrap; overflow: hidden; text-overflow: ellipsis; line-height: 1.15;
+      font-size: 1.05rem; font-weight: 800; letter-spacing: -0.01em; color: #F1F5F9;
+      white-space: nowrap; overflow: hidden; text-overflow: ellipsis; line-height: 1.2;
     }
     .wsm-year {
       font-size: 0.7rem; font-weight: 600; text-transform: uppercase; letter-spacing: 0.06em;
-      color: #64748B; margin-top: 0;
+      color: #64748B; margin-top: 1px;
     }
     .wsm-ask {
       flex: none; padding: 9px 12px; border-radius: 9px;
@@ -1366,12 +1364,10 @@
         border-top-left-radius: 0; border-top-right-radius: 0;
         transition: box-shadow 0.22s ease, background-color 0.22s ease, border-color 0.22s ease;
       }
-      /* Show the compact context row and separate it from the tabs with a hairline.
-         Polish: tightened bottom spacing (~11px less) so the tabs — and the KPI
-         cards below them — start higher on the screen. */
+      /* Show the compact context row and separate it from the tabs with a hairline. */
       .ws-mobile-bar {
         display: flex; align-items: center; gap: 10px;
-        padding: 8px 0 5px; margin-bottom: 1px;
+        padding: 10px 0 11px; margin-bottom: 8px;
         border-bottom: 1px solid rgba(255,255,255,0.06);
       }
       /* Reclaim vertical space: inside a property the global header and the full
