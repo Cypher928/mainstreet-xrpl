@@ -3284,6 +3284,60 @@ if (typeof document !== 'undefined') {
   else _navInit();
 }
 
+// ─── Option A: compact mobile header overflow menu ──────────────────────────
+// The ⋮ button in the mobile context row opens a small menu of the actions that
+// used to sit above the tabs (Explain This, Data Health, Command Center, Sign
+// out). Ask AI stays a first-class button in the row. Desktop never shows the
+// bar, so these are effectively mobile-only affordances.
+function _closeWsMenu() {
+  var menu = document.getElementById('wsMoreMenu');
+  var btn = document.getElementById('wsMoreBtn');
+  if (menu) menu.style.display = 'none';
+  if (btn) btn.setAttribute('aria-expanded', 'false');
+  document.removeEventListener('click', _onWsMenuOutside, true);
+  document.removeEventListener('keydown', _onWsMenuKey, true);
+}
+function _onWsMenuOutside(e) {
+  var wrap = e.target && e.target.closest ? e.target.closest('.wsm-more-wrap') : null;
+  if (!wrap) _closeWsMenu();
+}
+function _onWsMenuKey(e) {
+  if (e.key === 'Escape') { _closeWsMenu(); var b = document.getElementById('wsMoreBtn'); if (b) b.focus(); }
+}
+function toggleWsMenu(e) {
+  if (e) e.stopPropagation();
+  var menu = document.getElementById('wsMoreMenu');
+  var btn = document.getElementById('wsMoreBtn');
+  if (!menu) return;
+  var isOpen = menu.style.display !== 'none';
+  if (isOpen) { _closeWsMenu(); return; }
+  menu.style.display = 'block';
+  if (btn) btn.setAttribute('aria-expanded', 'true');
+  // Defer binding so this same click doesn't immediately close the menu.
+  setTimeout(function () {
+    document.addEventListener('click', _onWsMenuOutside, true);
+    document.addEventListener('keydown', _onWsMenuKey, true);
+  }, 0);
+}
+function wsMenuAction(kind) {
+  _closeWsMenu();
+  try {
+    if (kind === 'explain') explainCurrentScreen();
+    else if (kind === 'health') openRecoveryModal();
+    else if (kind === 'command') showCommandCenter();
+    else if (kind === 'signout') signOut();
+  } catch (err) { console.warn('[wsMenuAction]', kind, err && err.message); }
+}
+
+// Populate the compact mobile bar's property name (primary) and CAM year
+// (secondary label). Called from the property render path and on CAM-year change.
+function _syncMobilePropHeader(name) {
+  var mn = document.getElementById('wsMobilePropName');
+  if (mn && typeof name === 'string' && name) mn.textContent = name;
+  var my = document.getElementById('wsMobileCamYear');
+  if (my && typeof getCamYear === 'function') my.textContent = getCamYear() + ' CAM';
+}
+
 // ─── Property KPI Header (Phase 23) ─────────────────────────────────────────
 // Pure aggregation of data already computed elsewhere (Selectors, the escrow
 // engine, camReconciliation) — no new metrics engine, no new persisted fields.
@@ -10657,6 +10711,8 @@ function setCamYear(y) {
   if (glLbl) glLbl.textContent = `Upload ${_camYear} GL Excel File (.xlsx only)`;
   const _cyb = document.getElementById('camYearBadge');
   if (_cyb) _cyb.textContent = _camYear + ' CAM';
+  const _cybm = document.getElementById('wsMobileCamYear');
+  if (_cybm) _cybm.textContent = _camYear + ' CAM';
   // Keep the Property Setup dropdown in sync when the year changes (e.g. a loaded
   // reconciliation restores a prior year) so it can't disagree with the breadcrumb.
   const _cys = document.getElementById('camYearSelect');
@@ -18086,6 +18142,8 @@ function renderPortfolio(props) {
     console.error('[renderPortfolio] called with invalid data:', props);
     return;
   }
+  // Leaving any property view — restore the global header + breadcrumb on mobile.
+  document.body.classList.remove('in-property');
 
   // Per-property metadata (risk, confidence, trend, timestamps)
   const metas = props.map(p => Selectors.buildPropMeta(p));
@@ -20378,6 +20436,10 @@ function renderProperty(property) {
   document.getElementById('propertyBreadcrumb').style.display  = 'flex';
   document.getElementById('propertyWorkspaceNavCard').style.display = 'block';
   document.getElementById('mainWorkflow').style.display        = 'block';
+  // Option A: mark the property view so mobile CSS can hide the global header +
+  // full breadcrumb, and feed the compact mobile bar its context labels.
+  document.body.classList.add('in-property');
+  _syncMobilePropHeader(property && property.name);
 
   // Sync onboarding step bar + contextual hints from current property state
   _obSyncState();

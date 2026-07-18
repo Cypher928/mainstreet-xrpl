@@ -1308,6 +1308,55 @@
     /* Net-zero sentinel: occupies 1px but pulls the next element up 1px, so it
        adds no visible space while remaining observable by IntersectionObserver. */
     #wsStickySentinel { height: 1px; margin-bottom: -1px; pointer-events: none; }
+    /* ── Option A — compact mobile property header ───────────────────────
+       The bar is hidden on desktop (the full #propertyBreadcrumb still serves
+       context/actions there), so every .wsm-* rule below only renders on mobile. */
+    .ws-mobile-bar { display: none; }
+    .wsm-back {
+      flex: none; width: 36px; height: 36px; border-radius: 9px;
+      border: 1px solid rgba(255,255,255,0.10); background: #0e1522;
+      color: #94A3B8; font-size: 1.35rem; line-height: 1; cursor: pointer;
+      display: grid; place-items: center;
+    }
+    .wsm-back:active { background: #0b1019; }
+    .wsm-ctx { flex: 1 1 auto; min-width: 0; }
+    .wsm-name {
+      font-size: 1.05rem; font-weight: 800; letter-spacing: -0.01em; color: #F1F5F9;
+      white-space: nowrap; overflow: hidden; text-overflow: ellipsis; line-height: 1.2;
+    }
+    .wsm-year {
+      font-size: 0.7rem; font-weight: 600; text-transform: uppercase; letter-spacing: 0.06em;
+      color: #64748B; margin-top: 1px;
+    }
+    .wsm-ask {
+      flex: none; padding: 9px 12px; border-radius: 9px;
+      border: 1px solid rgba(96,165,250,0.30); background: rgba(96,165,250,0.10);
+      color: #93C5FD; font-size: 0.82rem; font-weight: 700; cursor: pointer; white-space: nowrap;
+    }
+    .wsm-ask:active { background: rgba(96,165,250,0.20); }
+    .wsm-more-wrap { position: relative; flex: none; }
+    .wsm-more {
+      width: 36px; height: 36px; border-radius: 9px;
+      border: 1px solid rgba(255,255,255,0.10); background: #0e1522;
+      color: #94A3B8; font-size: 1.15rem; line-height: 1; cursor: pointer;
+      display: grid; place-items: center;
+    }
+    .wsm-more:active { background: #0b1019; }
+    .wsm-menu {
+      position: absolute; top: calc(100% + 8px); right: 0; z-index: 60;
+      min-width: 208px; padding: 6px;
+      background: #131c2b; border: 1px solid rgba(255,255,255,0.10);
+      border-radius: 12px; box-shadow: 0 12px 32px rgba(0,0,0,0.55);
+    }
+    .wsm-menu-item {
+      display: flex; align-items: center; gap: 11px; width: 100%;
+      padding: 11px 12px; border: none; background: none; border-radius: 8px;
+      color: #E2E8F0; font-size: 0.9rem; font-weight: 600; text-align: left; cursor: pointer;
+    }
+    .wsm-menu-item:active { background: rgba(255,255,255,0.06); }
+    .wsm-menu-item--muted { color: #94A3B8; }
+    .wsm-mi-ic { width: 18px; text-align: center; flex: none; }
+    .wsm-menu-sep { height: 1px; background: rgba(255,255,255,0.08); margin: 6px 4px; }
     @media (max-width: 768px) {
       .property-workspace-card {
         position: sticky; top: 0; z-index: 40;
@@ -1315,6 +1364,16 @@
         border-top-left-radius: 0; border-top-right-radius: 0;
         transition: box-shadow 0.22s ease, background-color 0.22s ease, border-color 0.22s ease;
       }
+      /* Show the compact context row and separate it from the tabs with a hairline. */
+      .ws-mobile-bar {
+        display: flex; align-items: center; gap: 10px;
+        padding: 10px 0 11px; margin-bottom: 8px;
+        border-bottom: 1px solid rgba(255,255,255,0.06);
+      }
+      /* Reclaim vertical space: inside a property the global header and the full
+         breadcrumb are replaced by the compact bar, so the tabs sit near the top. */
+      body.in-property #appHeader { display: none !important; }
+      body.in-property #propertyBreadcrumb { display: none !important; }
       /* Pinned: lift the bar with a deeper background, a stronger shadow, and a
          brass hairline under the tabs; nudge the active tab a touch brighter.
          Subtle and premium — no motion beyond the fade. */
@@ -5281,8 +5340,8 @@
 <!-- ── Authenticated App ─────────────────────────────────────────────────── -->
 <div id="appContent" style="display:none;">
 
-<header>
-  <h1>Mainstreet</h1>
+<header id="appHeader">
+  <h1>MainStreet</h1>
   <div class="header-user-bar" id="headerUserBar">
     <span class="header-user-email" id="headerUserEmail"></span>
     <span class="header-role-badge" id="headerRoleBadge" style="display:none;"></span>
@@ -5787,6 +5846,29 @@
      bar has stuck, and the IntersectionObserver adds .ws-pinned (mobile cue). -->
 <div id="wsStickySentinel" aria-hidden="true"></div>
 <div class="property-workspace-card" id="propertyWorkspaceNavCard">
+  <!-- Compact mobile context row (Option A). Hidden on desktop, where the full
+       #propertyBreadcrumb above still provides context/actions. On mobile the
+       breadcrumb and global header are hidden and this single row carries the
+       property name (primary), CAM year (secondary), Ask AI, and an overflow (⋮)
+       menu — so the workspace tabs directly below are the primary navigation. -->
+  <div class="ws-mobile-bar" id="wsMobileBar">
+    <button class="wsm-back" onclick="backToPortfolio()" aria-label="Back to portfolio">&#x2039;</button>
+    <div class="wsm-ctx">
+      <div class="wsm-name" id="wsMobilePropName">Property</div>
+      <div class="wsm-year" id="wsMobileCamYear"></div>
+    </div>
+    <button class="wsm-ask" onclick="openAIWorkspace({ propertyId: activePropId })" aria-label="Ask MainStreet AI about this property">&#x2728; Ask AI</button>
+    <div class="wsm-more-wrap">
+      <button class="wsm-more" id="wsMoreBtn" onclick="toggleWsMenu(event)" aria-label="More actions" aria-haspopup="true" aria-expanded="false">&#x22EE;</button>
+      <div class="wsm-menu" id="wsMoreMenu" role="menu" style="display:none;">
+        <button class="wsm-menu-item" role="menuitem" onclick="wsMenuAction('explain')"><span class="wsm-mi-ic">&#x2728;</span>Explain This</button>
+        <button class="wsm-menu-item" role="menuitem" onclick="wsMenuAction('health')"><span class="wsm-mi-ic">&#x1F6DF;</span>Data Health</button>
+        <button class="wsm-menu-item" role="menuitem" onclick="wsMenuAction('command')"><span class="wsm-mi-ic">&#x2726;</span>Command Center</button>
+        <div class="wsm-menu-sep"></div>
+        <button class="wsm-menu-item wsm-menu-item--muted" role="menuitem" onclick="wsMenuAction('signout')"><span class="wsm-mi-ic">&#x21AA;</span>Sign out</button>
+      </div>
+    </div>
+  </div>
   <div class="workspace-tab-bar" id="workspaceTabBar">
     <button class="workspace-tab active" id="wsTabBtn-overview"  onclick="switchWorkspaceTabFromNav('overview')"><span class="ws-tab-icon">&#x1F3E2;</span>Overview</button>
     <button class="workspace-tab"        id="wsTabBtn-cam"       onclick="switchWorkspaceTabFromNav('cam')"><span class="ws-tab-icon">&#x1F9FE;</span>CAM</button>
