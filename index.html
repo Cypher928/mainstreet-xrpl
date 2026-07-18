@@ -1298,6 +1298,16 @@
       .workspace-tab { padding: 13px 14px; font-size: 0.85rem; gap: 5px; flex: 1 1 auto; justify-content: center; min-height: 44px; }
       .workspace-tab .ws-tab-icon { font-size: 0.95rem; }
     }
+    /* Phase A — sticky workspace tab bar on touch devices so tabs stay reachable
+       without scrolling back up. Desktop (>768px) is intentionally untouched. The
+       card is opaque (#111827) so content scrolls cleanly beneath the pinned bar. */
+    @media (max-width: 768px) {
+      .property-workspace-card {
+        position: sticky; top: 0; z-index: 40;
+        margin-top: 0;
+        border-top-left-radius: 0; border-top-right-radius: 0;
+      }
+    }
 
     /* ── Property KPI Header (Phase 23) ──────────────────────────────── */
     .kpi-header-row {
@@ -1316,6 +1326,15 @@
     .kpi-tile-sub { font-size: 0.72rem; color: #94A3B8; margin-top: 2px; }
     .kpi-tile.kpi-alert .kpi-tile-value { color: #f87171; }
     .kpi-tile.kpi-warn  .kpi-tile-value { color: #fbbf24; }
+    /* Phase A — KPI tiles are navigation shortcuts (both the property header
+       .kpi-tile--nav and the portfolio .ptf-kpi--nav). */
+    .kpi-tile--nav { cursor: pointer; transition: border-color 0.15s, background 0.15s, transform 0.05s; }
+    .kpi-tile--nav:hover { border-color: rgba(201,151,58,0.40); background: rgba(201,151,58,0.06); }
+    .kpi-tile--nav:active { transform: translateY(1px); }
+    .ptf-kpi--nav { cursor: pointer; }
+    .kpi-tile--nav:focus-visible, .ptf-kpi--nav:focus-visible {
+      outline: 2px solid #C9973A; outline-offset: 2px;
+    }
     .kpi-last-activity {
       font-size: 0.78rem; color: #94A3B8; margin: -8px 0 16px; padding: 0 2px;
     }
@@ -5576,29 +5595,29 @@
   <!-- 1. Action Center — topmost priority panel -->
   <div id="actionCenterPanel"></div>
 
-  <!-- 2. Portfolio Health KPI Bar -->
+  <!-- 2. Portfolio Health KPI Bar (Phase A — each tile is a navigation shortcut) -->
   <div class="ptf-kpi-bar">
-    <div class="ptf-kpi">
+    <div class="ptf-kpi ptf-kpi--nav" role="button" tabindex="0" aria-label="Properties. Go to your properties." data-kpi-nav="propertyCardsGrid">
       <div class="ptf-kpi-val" id="pKpiProperties">—</div>
       <div class="ptf-kpi-lbl">Properties</div>
     </div>
-    <div class="ptf-kpi">
+    <div class="ptf-kpi ptf-kpi--nav" role="button" tabindex="0" aria-label="Occupancy. Go to your properties." data-kpi-nav="propertyCardsGrid">
       <div class="ptf-kpi-val" id="pKpiOccupancy">—</div>
       <div class="ptf-kpi-lbl">Occupancy</div>
     </div>
-    <div class="ptf-kpi">
+    <div class="ptf-kpi ptf-kpi--nav" role="button" tabindex="0" aria-label="Total CAM managed. Go to your properties." data-kpi-nav="propertyCardsGrid">
       <div class="ptf-kpi-val" id="pKpiCAM">—</div>
       <div class="ptf-kpi-lbl">Total CAM Managed</div>
     </div>
-    <div class="ptf-kpi">
+    <div class="ptf-kpi ptf-kpi--nav" role="button" tabindex="0" aria-label="Ready to reconcile. Go to your properties." data-kpi-nav="propertyCardsGrid">
       <div class="ptf-kpi-val" id="pKpiReady">—</div>
       <div class="ptf-kpi-lbl">Ready To Reconcile</div>
     </div>
-    <div class="ptf-kpi">
+    <div class="ptf-kpi ptf-kpi--nav" role="button" tabindex="0" aria-label="In progress. Go to your properties." data-kpi-nav="propertyCardsGrid">
       <div class="ptf-kpi-val" id="pKpiInProgress">—</div>
       <div class="ptf-kpi-lbl">In Progress</div>
     </div>
-    <div class="ptf-kpi">
+    <div class="ptf-kpi ptf-kpi--nav" role="button" tabindex="0" aria-label="Needs review. Go to the review queue." data-kpi-nav="reviewQueuePanel,propertyCardsGrid">
       <div class="ptf-kpi-val" id="pKpiNeedsReview">—</div>
       <div class="ptf-kpi-lbl">Needs Review</div>
     </div>
@@ -5745,14 +5764,14 @@
      rather than dashboard content) ─────────────────────────────────────── -->
 <div class="property-workspace-card" id="propertyWorkspaceNavCard">
   <div class="workspace-tab-bar" id="workspaceTabBar">
-    <button class="workspace-tab active" id="wsTabBtn-overview"  onclick="switchWorkspaceTab('overview')"><span class="ws-tab-icon">&#x1F3E2;</span>Overview</button>
-    <button class="workspace-tab"        id="wsTabBtn-cam"       onclick="switchWorkspaceTab('cam')"><span class="ws-tab-icon">&#x1F9FE;</span>CAM</button>
-    <button class="workspace-tab"        id="wsTabBtn-reserves"  onclick="switchWorkspaceTab('reserves')"><span class="ws-tab-icon">&#x1F512;</span>Reserves</button>
+    <button class="workspace-tab active" id="wsTabBtn-overview"  onclick="switchWorkspaceTabFromNav('overview')"><span class="ws-tab-icon">&#x1F3E2;</span>Overview</button>
+    <button class="workspace-tab"        id="wsTabBtn-cam"       onclick="switchWorkspaceTabFromNav('cam')"><span class="ws-tab-icon">&#x1F9FE;</span>CAM</button>
+    <button class="workspace-tab"        id="wsTabBtn-reserves"  onclick="switchWorkspaceTabFromNav('reserves')"><span class="ws-tab-icon">&#x1F512;</span>Reserves</button>
     <!-- Estoppels tab hidden until the feature is built (placeholder removed for production readiness).
          Re-enable this button and re-add 'estoppels' to WORKSPACE_TABS in script.js when shipping. -->
-    <!-- <button class="workspace-tab"        id="wsTabBtn-estoppels" onclick="switchWorkspaceTab('estoppels')"><span class="ws-tab-icon">&#x1F4CB;</span>Estoppels</button> -->
-    <button class="workspace-tab"        id="wsTabBtn-reports"   onclick="switchWorkspaceTab('reports')"><span class="ws-tab-icon">&#x1F4C1;</span>Reports</button>
-    <button class="workspace-tab"        id="wsTabBtn-documents" onclick="switchWorkspaceTab('documents')"><span class="ws-tab-icon">&#x1F4C4;</span>Documents</button>
+    <!-- <button class="workspace-tab"        id="wsTabBtn-estoppels" onclick="switchWorkspaceTabFromNav('estoppels')"><span class="ws-tab-icon">&#x1F4CB;</span>Estoppels</button> -->
+    <button class="workspace-tab"        id="wsTabBtn-reports"   onclick="switchWorkspaceTabFromNav('reports')"><span class="ws-tab-icon">&#x1F4C1;</span>Reports</button>
+    <button class="workspace-tab"        id="wsTabBtn-documents" onclick="switchWorkspaceTabFromNav('documents')"><span class="ws-tab-icon">&#x1F4C4;</span>Documents</button>
   </div>
 </div>
 

@@ -3147,6 +3147,86 @@ function switchWorkspaceTab(tab) {
   });
 }
 
+// ─── Phase A (mobile nav): tab switching + KPI-tile shortcuts ────────────────
+// Touch-only helpers layered on top of switchWorkspaceTab. Desktop is left
+// byte-for-byte unchanged: every added scroll is gated behind a max-width:768px
+// media check, and switchWorkspaceTab itself is untouched so all existing
+// programmatic callers (Phase 29 deep-link routers, tests) behave exactly as before.
+
+function _navIsTouchViewport() {
+  try { return !!(window.matchMedia && window.matchMedia('(max-width: 768px)').matches); }
+  catch (_) { return false; }
+}
+
+// After a user taps a workspace tab, bring the newly shown pane up under the
+// (sticky, on mobile) tab bar so the change is immediately visible instead of
+// happening below the fold. No-op on desktop.
+function _scrollWorkspaceIntoView(tab) {
+  if (!_navIsTouchViewport()) return;
+  var pane = document.getElementById('wsPane-' + (tab || _activeWorkspaceTab));
+  if (!pane) return;
+  var bar = document.getElementById('workspaceTabBar');
+  // Defer a frame so the just-shown pane has laid out before we measure it.
+  requestAnimationFrame(function () {
+    var barH = bar ? bar.getBoundingClientRect().height : 0;
+    var y = window.pageYOffset + pane.getBoundingClientRect().top - barH - 8;
+    window.scrollTo({ top: Math.max(0, y), behavior: 'smooth' });
+  });
+}
+
+// Tab-bar button handler (item 2). The buttons call this instead of
+// switchWorkspaceTab directly so the reveal-scroll is scoped to real user taps.
+function switchWorkspaceTabFromNav(tab) {
+  switchWorkspaceTab(tab);
+  _scrollWorkspaceIntoView(tab);
+}
+
+// KPI tile → its section (item 1). Switch to the owning workspace tab (if the
+// destination lives in a pane), then smooth-scroll + flash the target, reusing
+// the Phase 29 _ccFlashEl primitive. `anchors` is a comma-separated id list;
+// the first that exists (preferring a visible one) wins, so callers can pass a
+// fallback chain. `tab` may be empty for portfolio tiles that scroll in place.
+function _kpiTileNavigate(tab, anchors) {
+  if (tab) { try { switchWorkspaceTab(tab); } catch (_) {} }
+  var ids = typeof anchors === 'string' ? anchors.split(',') : (Array.isArray(anchors) ? anchors : []);
+  requestAnimationFrame(function () {
+    var el = null;
+    for (var i = 0; i < ids.length; i++) {
+      var id = (ids[i] || '').trim();
+      if (!id) continue;
+      var cand = document.getElementById(id);
+      if (!cand) continue;
+      if (cand.offsetParent !== null) { el = cand; break; } // prefer a visible target
+      if (!el) el = cand;                                    // else first that exists
+    }
+    if (el && typeof _ccFlashEl === 'function') _ccFlashEl(el);
+  });
+}
+
+// One delegated listener pair drives every KPI tile (both the static portfolio
+// bar and the re-rendered property header), so re-renders never need re-binding
+// and keyboard access (Enter/Space) comes for free on the role="button" tiles.
+var _kpiNavBound = false;
+function _bindKpiNav() {
+  if (_kpiNavBound) return;
+  _kpiNavBound = true;
+  function handle(e) {
+    var tile = e.target && e.target.closest ? e.target.closest('[data-kpi-nav]') : null;
+    if (!tile) return;
+    if (e.type === 'keydown') {
+      if (e.key !== 'Enter' && e.key !== ' ' && e.key !== 'Spacebar') return;
+      e.preventDefault();
+    }
+    _kpiTileNavigate(tile.getAttribute('data-kpi-tab') || '', tile.getAttribute('data-kpi-nav') || '');
+  }
+  document.addEventListener('click', handle);
+  document.addEventListener('keydown', handle);
+}
+if (typeof document !== 'undefined') {
+  if (document.readyState === 'loading') document.addEventListener('DOMContentLoaded', _bindKpiNav);
+  else _bindKpiNav();
+}
+
 // ─── Property KPI Header (Phase 23) ─────────────────────────────────────────
 // Pure aggregation of data already computed elsewhere (Selectors, the escrow
 // engine, camReconciliation) — no new metrics engine, no new persisted fields.
@@ -3178,22 +3258,32 @@ function renderPropertyKpiHeader(property) {
     ? property.timeline[property.timeline.length - 1]
     : null;
 
+  // `tab` = owning workspace pane to switch to; `anchor` = comma-separated id
+  // fallback chain to scroll+flash on arrival (Phase A — every tile is a shortcut).
   const tiles = [
     { label: 'Occupancy', value: occupancyPct !== null ? occupancyPct + '%' : '—',
-      sub: totalSqft ? `${occSqft.toLocaleString()} / ${totalSqft.toLocaleString()} sqft` : 'Set total sqft to enable' },
-    { label: 'Tenants', value: tenants.length, sub: tenants.length === 1 ? '1 active lease' : `${tenants.length} active leases` },
+      sub: totalSqft ? `${occSqft.toLocaleString()} / ${totalSqft.toLocaleString()} sqft` : 'Set total sqft to enable',
+      tab: 'documents', anchor: 'cardLeases' },
+    { label: 'Tenants', value: tenants.length, sub: tenants.length === 1 ? '1 active lease' : `${tenants.length} active leases`,
+      tab: 'documents', anchor: 'cardLeases' },
     { label: 'Active Reserves', value: reserves.length,
-      sub: reserveBalanceTotal !== null ? `${_fmtKpiMoney(reserveBalanceTotal)} available` : 'No reserves yet' },
+      sub: reserveBalanceTotal !== null ? `${_fmtKpiMoney(reserveBalanceTotal)} available` : 'No reserves yet',
+      tab: 'reserves', anchor: 'escrowSection' },
     { label: 'Open Disputes', value: meta.openDisputes || 0, alert: (meta.openDisputes || 0) > 0,
-      sub: (meta.openDisputes || 0) > 0 ? 'Needs attention' : 'None open' },
+      sub: (meta.openDisputes || 0) > 0 ? 'Needs attention' : 'None open',
+      tab: 'cam', anchor: 'disputeSection' },
     { label: 'Lease Expirations', value: readiness.expiringCount || 0,
       warn: (readiness.expiringCount || 0) > 0, alert: (readiness.expiredCount || 0) > 0,
-      sub: readiness.expiredCount ? `${readiness.expiredCount} already expired` : 'Next 12 months' },
-    { label: 'CAM Expenses', value: _fmtKpiMoney(camTotal), sub: camTotal ? 'Total pool, most recent run' : 'No CAM run yet' },
+      sub: readiness.expiredCount ? `${readiness.expiredCount} already expired` : 'Next 12 months',
+      tab: 'documents', anchor: 'cardLeases' },
+    { label: 'CAM Expenses', value: _fmtKpiMoney(camTotal), sub: camTotal ? 'Total pool, most recent run' : 'No CAM run yet',
+      tab: 'cam', anchor: 'results,cardInvoices' },
   ];
 
   const tileHtml = tiles.map(t => `
-    <div class="kpi-tile${t.alert ? ' kpi-alert' : t.warn ? ' kpi-warn' : ''}">
+    <div class="kpi-tile kpi-tile--nav${t.alert ? ' kpi-alert' : t.warn ? ' kpi-warn' : ''}"
+      data-kpi-nav="${esc(t.anchor)}" data-kpi-tab="${esc(t.tab)}"
+      role="button" tabindex="0" aria-label="${esc(t.label + ': ' + String(t.value) + '. ' + t.sub + '. Go to section.')}">
       <div class="kpi-tile-label">${esc(t.label)}</div>
       <div class="kpi-tile-value">${esc(String(t.value))}</div>
       <div class="kpi-tile-sub">${esc(t.sub)}</div>
