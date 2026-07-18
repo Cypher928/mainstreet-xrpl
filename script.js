@@ -4979,7 +4979,7 @@ function openLeaseEvidencePanel(tenantId, fieldKey) {
     panel.id = '_msEvidencePanel';
     panel.style.cssText =
       'position:fixed;bottom:68px;right:20px;z-index:99997;width:300px;max-height:420px;overflow-y:auto;' +
-      'background:#1e293b;border:1px solid rgba(99,102,241,0.35);border-radius:10px;' +
+      'background:var(--theme-surface);border:1px solid rgba(99,102,241,0.35);border-radius:10px;' +
       'box-shadow:0 8px 32px rgba(0,0,0,0.55);font-family:inherit;';
     document.body.appendChild(panel);
     st.el = panel;
@@ -11098,7 +11098,7 @@ function restoreCheckpoint(index) {
   savePropertyData();
 
   const banner = document.createElement('div');
-  banner.style.cssText = 'position:fixed;top:16px;left:50%;transform:translateX(-50%);z-index:9999;background:#1e3a5f;color:#93c5fd;padding:10px 20px;border-radius:10px;font-size:0.85rem;font-weight:600;box-shadow:0 4px 20px rgba(0,0,0,.5);pointer-events:none;white-space:nowrap;';
+  banner.style.cssText = 'position:fixed;top:16px;left:50%;transform:translateX(-50%);z-index:9999;background:var(--theme-accent);color:#93c5fd;padding:10px 20px;border-radius:10px;font-size:0.85rem;font-weight:600;box-shadow:0 4px 20px rgba(0,0,0,.5);pointer-events:none;white-space:nowrap;';
   banner.textContent = `↩ Checkpoint restored — ${cp.label}`;
   document.body.appendChild(banner);
   setTimeout(() => banner.remove(), 4000);
@@ -13762,7 +13762,7 @@ function generateReconciliationSummary() {
 
   const reconNarrative = buildAuditNarrative();
   const reconStatusBar = reconNarrative.headline ? `
-    <div style="display:flex;align-items:center;gap:10px;padding:10px 14px;background:#1e293b;border-radius:7px;margin-bottom:14px;font-size:0.82rem;">
+    <div style="display:flex;align-items:center;gap:10px;padding:10px 14px;background:var(--theme-surface);border-radius:7px;margin-bottom:14px;font-size:0.82rem;">
       <span style="color:#64748b;font-weight:600;flex-shrink:0;">Status:</span>
       <span style="color:#e2e8f0;">${esc(reconNarrative.headline)}</span>
       ${reconNarrative.financialImpact ? `<span style="margin-left:auto;color:#94a3b8;flex-shrink:0;">${esc(reconNarrative.financialImpact)}</span>` : ''}
@@ -19845,7 +19845,7 @@ async function saveProperty(property) {
       if (!prev) {
         const t = document.createElement('div');
         t.id = '_offlineToast';
-        t.style.cssText = 'position:fixed;bottom:20px;left:50%;transform:translateX(-50%);background:#1e3a5f;color:#bfdbfe;padding:10px 18px;border-radius:6px;z-index:9999;font-size:13px;box-shadow:0 4px 12px rgba(0,0,0,.3);max-width:90vw;text-align:center;';
+        t.style.cssText = 'position:fixed;bottom:20px;left:50%;transform:translateX(-50%);background:var(--theme-accent);color:#bfdbfe;padding:10px 18px;border-radius:6px;z-index:9999;font-size:13px;box-shadow:0 4px 12px rgba(0,0,0,.3);max-width:90vw;text-align:center;';
         t.textContent = '📶 Offline — changes saved locally and will sync automatically when reconnected.';
         document.body.appendChild(t);
         setTimeout(() => t.remove(), 6000);
@@ -21226,7 +21226,7 @@ function _renderAcqReport(report, container) {
     : 'Proceed';
   const _vc = _verdict === 'Proceed' ? '#4ade80' : _verdict === 'Proceed with Conditions' ? '#fbbf24' : '#f87171';
   const execSummaryInline = `
-    <div style="display:flex;align-items:center;gap:10px;padding:10px 14px;background:#1e293b;border-radius:7px;margin-bottom:14px;">
+    <div style="display:flex;align-items:center;gap:10px;padding:10px 14px;background:var(--theme-surface);border-radius:7px;margin-bottom:14px;">
       <span style="display:inline-block;width:9px;height:9px;border-radius:50%;background:${_vc};flex-shrink:0;"></span>
       <span style="font-size:0.84rem;font-weight:700;color:${_vc};">${esc(_verdict)}</span>
       <span style="margin-left:6px;font-size:0.79rem;color:#64748b;">Recovery ${s.recoveryRate != null ? s.recoveryRate + '%' : '—'} &middot; ${fmt(_annualAtRisk)}/yr at risk &middot; ${s.criticalRenewalCount} critical renewal${s.criticalRenewalCount !== 1 ? 's' : ''}</span>
