@@ -3158,6 +3158,29 @@ function _navIsTouchViewport() {
   catch (_) { return false; }
 }
 
+// Height to reserve at the top of the viewport so the sticky tab bar never
+// covers what we scroll to. Zero on desktop (the bar isn't sticky there), so
+// desktop scrolling lands flush at the top exactly as before.
+function _workspaceStickyOffset() {
+  var card = document.getElementById('propertyWorkspaceNavCard');
+  if (!card) return 0;
+  var pos = '';
+  try { pos = getComputedStyle(card).position; } catch (_) {}
+  if (pos !== 'sticky') return 0;
+  return Math.round(card.getBoundingClientRect().height);
+}
+
+// Smooth-scroll so `el`'s top sits just below the sticky tab bar (top-aligned,
+// never centered) — this is what keeps section headers from hiding behind the
+// pinned bar. One scroll only, so there is no double-scroll/jump. `extraGap`
+// spaces the header a touch below the bar.
+function _scrollBelowStickyBar(el, extraGap) {
+  if (!el) return;
+  var offset = _workspaceStickyOffset();
+  var y = window.pageYOffset + el.getBoundingClientRect().top - offset - (extraGap || 0);
+  window.scrollTo({ top: Math.max(0, y), behavior: 'smooth' });
+}
+
 // After a user taps a workspace tab, bring the newly shown pane up under the
 // (sticky, on mobile) tab bar so the change is immediately visible instead of
 // happening below the fold. No-op on desktop.
@@ -3165,13 +3188,8 @@ function _scrollWorkspaceIntoView(tab) {
   if (!_navIsTouchViewport()) return;
   var pane = document.getElementById('wsPane-' + (tab || _activeWorkspaceTab));
   if (!pane) return;
-  var bar = document.getElementById('workspaceTabBar');
   // Defer a frame so the just-shown pane has laid out before we measure it.
-  requestAnimationFrame(function () {
-    var barH = bar ? bar.getBoundingClientRect().height : 0;
-    var y = window.pageYOffset + pane.getBoundingClientRect().top - barH - 8;
-    window.scrollTo({ top: Math.max(0, y), behavior: 'smooth' });
-  });
+  requestAnimationFrame(function () { _scrollBelowStickyBar(pane, 8); });
 }
 
 // Tab-bar button handler (item 2). The buttons call this instead of
@@ -3182,10 +3200,13 @@ function switchWorkspaceTabFromNav(tab) {
 }
 
 // KPI tile → its section (item 1). Switch to the owning workspace tab (if the
-// destination lives in a pane), then smooth-scroll + flash the target, reusing
-// the Phase 29 _ccFlashEl primitive. `anchors` is a comma-separated id list;
-// the first that exists (preferring a visible one) wins, so callers can pass a
-// fallback chain. `tab` may be empty for portfolio tiles that scroll in place.
+// destination lives in a pane), then top-align + flash the target section so its
+// header lands just under the (sticky, on mobile) tab bar — never centered, so
+// the header is never hidden behind the bar. `anchors` is a comma-separated id
+// list; the first that exists (preferring a visible one) wins, so callers can
+// pass a fallback chain. `tab` may be empty for portfolio tiles that scroll in
+// place. Uses its own single scroll (not _ccFlashEl, which centers) — one
+// smooth scroll, no jump.
 function _kpiTileNavigate(tab, anchors) {
   if (tab) { try { switchWorkspaceTab(tab); } catch (_) {} }
   var ids = typeof anchors === 'string' ? anchors.split(',') : (Array.isArray(anchors) ? anchors : []);
@@ -3199,7 +3220,10 @@ function _kpiTileNavigate(tab, anchors) {
       if (cand.offsetParent !== null) { el = cand; break; } // prefer a visible target
       if (!el) el = cand;                                    // else first that exists
     }
-    if (el && typeof _ccFlashEl === 'function') _ccFlashEl(el);
+    if (!el) return;
+    _scrollBelowStickyBar(el, 12);
+    el.classList.add('cc-target-flash');
+    setTimeout(function () { el.classList.remove('cc-target-flash'); }, 2600);
   });
 }
 
