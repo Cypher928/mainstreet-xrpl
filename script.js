@@ -4979,7 +4979,7 @@ function openLeaseEvidencePanel(tenantId, fieldKey) {
     panel.id = '_msEvidencePanel';
     panel.style.cssText =
       'position:fixed;bottom:68px;right:20px;z-index:99997;width:300px;max-height:420px;overflow-y:auto;' +
-      'background:#1e293b;border:1px solid rgba(99,102,241,0.35);border-radius:10px;' +
+      'background:#191d24;border:1px solid rgba(99,102,241,0.35);border-radius:10px;' +
       'box-shadow:0 8px 32px rgba(0,0,0,0.55);font-family:inherit;';
     document.body.appendChild(panel);
     st.el = panel;
@@ -11098,7 +11098,7 @@ function restoreCheckpoint(index) {
   savePropertyData();
 
   const banner = document.createElement('div');
-  banner.style.cssText = 'position:fixed;top:16px;left:50%;transform:translateX(-50%);z-index:9999;background:#1e3a5f;color:#93c5fd;padding:10px 20px;border-radius:10px;font-size:0.85rem;font-weight:600;box-shadow:0 4px 20px rgba(0,0,0,.5);pointer-events:none;white-space:nowrap;';
+  banner.style.cssText = 'position:fixed;top:16px;left:50%;transform:translateX(-50%);z-index:9999;background:#232833;color:#93c5fd;padding:10px 20px;border-radius:10px;font-size:0.85rem;font-weight:600;box-shadow:0 4px 20px rgba(0,0,0,.5);pointer-events:none;white-space:nowrap;';
   banner.textContent = `↩ Checkpoint restored — ${cp.label}`;
   document.body.appendChild(banner);
   setTimeout(() => banner.remove(), 4000);
@@ -11391,8 +11391,8 @@ function exportReviewPackage() {
 <head>
 <meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1">
 <title>${esc(lastPropName)} — ${year} CAM Audit Package</title>
-<style>*{box-sizing:border-box;margin:0;padding:0}body{background:#0B1120;color:#E2E8F0;font-family:'Inter',system-ui,sans-serif;padding:32px 24px}
-.rv-pkg-header{background:linear-gradient(135deg,#1a2535,#0B1120);border:1px solid rgba(201,151,58,.3);border-radius:12px;padding:24px;margin-bottom:28px}
+<style>*{box-sizing:border-box;margin:0;padding:0}body{background:#07090c;color:#E2E8F0;font-family:'Inter',system-ui,sans-serif;padding:32px 24px}
+.rv-pkg-header{background:linear-gradient(135deg,#191d24,#07090c);border:1px solid rgba(201,151,58,.3);border-radius:12px;padding:24px;margin-bottom:28px}
 .rv-pkg-title{font-size:1.5rem;font-weight:800;color:#C9973A;margin-bottom:4px}
 .rv-pkg-meta{font-size:0.84rem;color:#64748B}
 ${styles}</style>
@@ -13762,7 +13762,7 @@ function generateReconciliationSummary() {
 
   const reconNarrative = buildAuditNarrative();
   const reconStatusBar = reconNarrative.headline ? `
-    <div style="display:flex;align-items:center;gap:10px;padding:10px 14px;background:#1e293b;border-radius:7px;margin-bottom:14px;font-size:0.82rem;">
+    <div style="display:flex;align-items:center;gap:10px;padding:10px 14px;background:#191d24;border-radius:7px;margin-bottom:14px;font-size:0.82rem;">
       <span style="color:#64748b;font-weight:600;flex-shrink:0;">Status:</span>
       <span style="color:#e2e8f0;">${esc(reconNarrative.headline)}</span>
       ${reconNarrative.financialImpact ? `<span style="margin-left:auto;color:#94a3b8;flex-shrink:0;">${esc(reconNarrative.financialImpact)}</span>` : ''}
@@ -17084,16 +17084,16 @@ function exportPortfolioSummary() {
   <title>Portfolio Executive Summary — ${today}</title>
   <style>
     *{box-sizing:border-box;margin:0;padding:0}
-    body{font-family:-apple-system,BlinkMacSystemFont,'Segoe UI',sans-serif;color:#1e293b;background:#fff;padding:40px;max-width:960px;margin:0 auto;font-size:14px}
+    body{font-family:-apple-system,BlinkMacSystemFont,'Segoe UI',sans-serif;color:#191d24;background:#fff;padding:40px;max-width:960px;margin:0 auto;font-size:14px}
     @media print{body{padding:20px}.no-print{display:none!important}@page{margin:20mm}}
-    h1{font-size:1.6rem;font-weight:800;color:#0f172a;margin-bottom:4px}
+    h1{font-size:1.6rem;font-weight:800;color:#0a0d12;margin-bottom:4px}
     .subtitle{font-size:0.82rem;color:#64748b;margin-bottom:32px}
     .section{margin-bottom:28px}
     .section-title{font-size:0.7rem;font-weight:700;text-transform:uppercase;letter-spacing:.08em;color:#64748b;margin-bottom:10px;padding-bottom:6px;border-bottom:1px solid #e2e8f0}
     .kpi-grid{display:grid;grid-template-columns:repeat(4,1fr);gap:10px;margin-bottom:0}
     @media(max-width:600px){.kpi-grid{grid-template-columns:repeat(2,1fr)}}
     .kpi-card{background:#f8fafc;border:1px solid #e2e8f0;border-radius:8px;padding:14px}
-    .kpi-val{font-size:1.45rem;font-weight:700;color:#0f172a;line-height:1.1}
+    .kpi-val{font-size:1.45rem;font-weight:700;color:#0a0d12;line-height:1.1}
     .kpi-val--risk{color:#dc2626}.kpi-val--warn{color:#d97706}
     .kpi-lbl{font-size:.68rem;color:#64748b;text-transform:uppercase;letter-spacing:.06em;margin-top:4px}
     table{width:100%;border-collapse:collapse;font-size:.83rem}
@@ -17103,8 +17103,8 @@ function exportPortfolioSummary() {
     .badge-critical{background:#fee2e2;color:#dc2626;padding:2px 7px;border-radius:10px;font-size:.7rem;font-weight:700;white-space:nowrap}
     .badge-warn{background:#fef3c7;color:#d97706;padding:2px 7px;border-radius:10px;font-size:.7rem;font-weight:700;white-space:nowrap}
     .badge-ok{background:#dcfce7;color:#16a34a;padding:2px 7px;border-radius:10px;font-size:.7rem;font-weight:700;white-space:nowrap}
-    .print-btn{background:#0f172a;color:#fff;border:none;padding:10px 22px;border-radius:6px;cursor:pointer;font-size:.85rem;margin-bottom:24px;display:inline-flex;align-items:center;gap:6px}
-    .print-btn:hover{background:#1e293b}
+    .print-btn{background:#0a0d12;color:#fff;border:none;padding:10px 22px;border-radius:6px;cursor:pointer;font-size:.85rem;margin-bottom:24px;display:inline-flex;align-items:center;gap:6px}
+    .print-btn:hover{background:#191d24}
     .footer{margin-top:40px;padding-top:14px;border-top:1px solid #e2e8f0;font-size:.7rem;color:#94a3b8;display:flex;justify-content:space-between;flex-wrap:wrap;gap:6px}
   </style>
 </head>
@@ -19845,7 +19845,7 @@ async function saveProperty(property) {
       if (!prev) {
         const t = document.createElement('div');
         t.id = '_offlineToast';
-        t.style.cssText = 'position:fixed;bottom:20px;left:50%;transform:translateX(-50%);background:#1e3a5f;color:#bfdbfe;padding:10px 18px;border-radius:6px;z-index:9999;font-size:13px;box-shadow:0 4px 12px rgba(0,0,0,.3);max-width:90vw;text-align:center;';
+        t.style.cssText = 'position:fixed;bottom:20px;left:50%;transform:translateX(-50%);background:#232833;color:#bfdbfe;padding:10px 18px;border-radius:6px;z-index:9999;font-size:13px;box-shadow:0 4px 12px rgba(0,0,0,.3);max-width:90vw;text-align:center;';
         t.textContent = '📶 Offline — changes saved locally and will sync automatically when reconnected.';
         document.body.appendChild(t);
         setTimeout(() => t.remove(), 6000);
@@ -21226,7 +21226,7 @@ function _renderAcqReport(report, container) {
     : 'Proceed';
   const _vc = _verdict === 'Proceed' ? '#4ade80' : _verdict === 'Proceed with Conditions' ? '#fbbf24' : '#f87171';
   const execSummaryInline = `
-    <div style="display:flex;align-items:center;gap:10px;padding:10px 14px;background:#1e293b;border-radius:7px;margin-bottom:14px;">
+    <div style="display:flex;align-items:center;gap:10px;padding:10px 14px;background:#191d24;border-radius:7px;margin-bottom:14px;">
       <span style="display:inline-block;width:9px;height:9px;border-radius:50%;background:${_vc};flex-shrink:0;"></span>
       <span style="font-size:0.84rem;font-weight:700;color:${_vc};">${esc(_verdict)}</span>
       <span style="margin-left:6px;font-size:0.79rem;color:#64748b;">Recovery ${s.recoveryRate != null ? s.recoveryRate + '%' : '—'} &middot; ${fmt(_annualAtRisk)}/yr at risk &middot; ${s.criticalRenewalCount} critical renewal${s.criticalRenewalCount !== 1 ? 's' : ''}</span>
@@ -21623,7 +21623,7 @@ function acqExportPdf() {
     <style>
       *, *::before, *::after { box-sizing: border-box; }
       body { font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', sans-serif;
-             font-size: 13px; color: #1e293b; background: #fff; margin: 0; padding: 24px 32px; }
+             font-size: 13px; color: #191d24; background: #fff; margin: 0; padding: 24px 32px; }
       h1 { font-size: 1.25rem; font-weight: 700; margin: 0 0 4px; }
       .print-header { border-bottom: 2px solid #e2e8f0; padding-bottom: 12px; margin-bottom: 20px; }
       .print-date   { font-size: 0.8rem; color: #64748b; }
@@ -21631,7 +21631,7 @@ function acqExportPdf() {
       /* KPIs */
       .acq-kpi-row  { display: flex; flex-wrap: wrap; gap: 10px; margin-bottom: 18px; }
       .acq-kpi      { border: 1px solid #e2e8f0; border-radius: 6px; padding: 10px 14px; min-width: 120px; flex: 1; }
-      .acq-kpi-val  { font-size: 1.2rem; font-weight: 700; color: #0f172a; }
+      .acq-kpi-val  { font-size: 1.2rem; font-weight: 700; color: #0a0d12; }
       .acq-kpi-val.danger { color: #dc2626; }
       .acq-kpi-val.safe   { color: #16a34a; }
       .acq-kpi-lbl  { font-size: 0.7rem; color: #64748b; text-transform: uppercase; letter-spacing: 0.05em; margin-top: 2px; }
@@ -21665,7 +21665,7 @@ function acqExportPdf() {
       .acq-ts-table th { text-align: left; border-bottom: 2px solid #e2e8f0; padding: 6px 8px;
                           font-size: 0.68rem; text-transform: uppercase; letter-spacing: 0.04em; color: #64748b; }
       .acq-ts-table td { padding: 6px 8px; border-bottom: 1px solid #f1f5f9; color: #374151; vertical-align: top; }
-      .acq-ts-name    { font-weight: 600; color: #0f172a !important; }
+      .acq-ts-name    { font-weight: 600; color: #0a0d12 !important; }
       .acq-risk-badge { display: inline-block; padding: 1px 6px; border-radius: 8px; font-size: 0.68rem; font-weight: 600; }
       .acq-risk-badge.cap { background: #fee2e2; color: #dc2626; }
       .acq-risk-badge.none { background: #dcfce7; color: #16a34a; }
