@@ -1293,11 +1293,11 @@
     .workspace-tab-pane { animation: wsTabFadeIn 0.12s ease-out; }
     @keyframes wsTabFadeIn { from { opacity: 0.4; } to { opacity: 1; } }
     @media (max-width: 480px) {
-      .property-workspace-card { padding: 8px 12px 0; }
-      .workspace-tab-bar { gap: 4px; }
-      /* Polish: ~18% less vertical padding around the tabs (active-tab styling —
-         brass fill + underline — is untouched, so its prominence is unchanged). */
-      .workspace-tab { padding: 9px 14px; font-size: 0.85rem; gap: 5px; flex: 1 1 auto; justify-content: center; min-height: 38px; }
+      .property-workspace-card { padding: 6px 12px 0; }
+      .workspace-tab-bar { gap: 3px; }
+      /* Polish: tighter tabs so the two-row tab card is ~10-15% shorter. Active-tab
+         styling (brass fill + underline) is untouched, so its prominence is unchanged. */
+      .workspace-tab { padding: 8px 14px; font-size: 0.85rem; gap: 5px; flex: 1 1 auto; justify-content: center; min-height: 34px; }
       .workspace-tab .ws-tab-icon { font-size: 0.95rem; }
     }
     /* Phase A — sticky workspace tab bar on touch devices so tabs stay reachable
@@ -1323,12 +1323,12 @@
     .wsm-back:active { background: #0b1019; }
     .wsm-ctx { flex: 1 1 auto; min-width: 0; }
     .wsm-name {
-      font-size: 1.05rem; font-weight: 800; letter-spacing: -0.01em; color: #F1F5F9;
-      white-space: nowrap; overflow: hidden; text-overflow: ellipsis; line-height: 1.2;
+      font-size: 1.16rem; font-weight: 800; letter-spacing: -0.015em; color: #F8FAFC;
+      white-space: nowrap; overflow: hidden; text-overflow: ellipsis; line-height: 1.15;
     }
     .wsm-year {
       font-size: 0.7rem; font-weight: 600; text-transform: uppercase; letter-spacing: 0.06em;
-      color: #64748B; margin-top: 1px;
+      color: #64748B; margin-top: 0;
     }
     .wsm-ask {
       flex: none; padding: 9px 12px; border-radius: 9px;
@@ -1371,7 +1371,7 @@
          cards below them — start higher on the screen. */
       .ws-mobile-bar {
         display: flex; align-items: center; gap: 10px;
-        padding: 10px 0 6px; margin-bottom: 2px;
+        padding: 8px 0 5px; margin-bottom: 1px;
         border-bottom: 1px solid rgba(255,255,255,0.06);
       }
       /* Reclaim vertical space: inside a property the global header and the full
