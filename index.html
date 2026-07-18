@@ -1295,7 +1295,9 @@
     @media (max-width: 480px) {
       .property-workspace-card { padding: 8px 12px 0; }
       .workspace-tab-bar { gap: 4px; }
-      .workspace-tab { padding: 13px 14px; font-size: 0.85rem; gap: 5px; flex: 1 1 auto; justify-content: center; min-height: 44px; }
+      /* Polish: ~18% less vertical padding around the tabs (active-tab styling —
+         brass fill + underline — is untouched, so its prominence is unchanged). */
+      .workspace-tab { padding: 9px 14px; font-size: 0.85rem; gap: 5px; flex: 1 1 auto; justify-content: center; min-height: 38px; }
       .workspace-tab .ws-tab-icon { font-size: 0.95rem; }
     }
     /* Phase A — sticky workspace tab bar on touch devices so tabs stay reachable
@@ -1364,10 +1366,12 @@
         border-top-left-radius: 0; border-top-right-radius: 0;
         transition: box-shadow 0.22s ease, background-color 0.22s ease, border-color 0.22s ease;
       }
-      /* Show the compact context row and separate it from the tabs with a hairline. */
+      /* Show the compact context row and separate it from the tabs with a hairline.
+         Polish: tightened bottom spacing (~11px less) so the tabs — and the KPI
+         cards below them — start higher on the screen. */
       .ws-mobile-bar {
         display: flex; align-items: center; gap: 10px;
-        padding: 10px 0 11px; margin-bottom: 8px;
+        padding: 10px 0 6px; margin-bottom: 2px;
         border-bottom: 1px solid rgba(255,255,255,0.06);
       }
       /* Reclaim vertical space: inside a property the global header and the full
