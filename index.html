@@ -4125,6 +4125,19 @@
       .stl-step-label { font-size: 0.62rem; }
       .stl-step { min-width: 52px; }
     }
+    /* Mobile: the settlement stepper is a fixed-width horizontal flow (steps +
+       the "View Transaction" action) that can exceed a narrow viewport. Contain
+       that overflow to the stepper itself so it scrolls horizontally within its
+       own card and the page never scrolls sideways. Desktop (>=768px) unchanged. */
+    @media (max-width: 767px) {
+      .stl-steps {
+        overflow-x: auto;
+        -webkit-overflow-scrolling: touch;
+        scrollbar-width: none;              /* Firefox — hide the bar, keep swipe */
+        overscroll-behavior-x: contain;     /* don't chain the scroll to the page */
+      }
+      .stl-steps::-webkit-scrollbar { display: none; } /* WebKit — hide the bar */
+    }
 
     /* ── RLUSD settlement status (landlord panel + tenant transparency card) ── */
     .rlusd-status-panel {
