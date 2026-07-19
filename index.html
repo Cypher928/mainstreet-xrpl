@@ -4125,18 +4125,25 @@
       .stl-step-label { font-size: 0.62rem; }
       .stl-step { min-width: 52px; }
     }
-    /* Mobile: the settlement stepper is a fixed-width horizontal flow (steps +
-       the "View Transaction" action) that can exceed a narrow viewport. Contain
-       that overflow to the stepper itself so it scrolls horizontally within its
-       own card and the page never scrolls sideways. Desktop (>=768px) unchanged. */
+    /* Mobile: the settlement flow is a fixed-width horizontal stepper (steps +
+       the wide "View Transaction" action) that can exceed a narrow viewport.
+       Instead of scrolling it (which hides the action), let it WRAP so every
+       step and the button stay fully visible: connectors are dropped, the status
+       steps wrap onto one/two rows, and the "View Transaction" step drops to its
+       own full-width row. Nothing overflows the page. Desktop (>=768px) unchanged. */
     @media (max-width: 767px) {
       .stl-steps {
-        overflow-x: auto;
-        -webkit-overflow-scrolling: touch;
-        scrollbar-width: none;              /* Firefox — hide the bar, keep swipe */
-        overscroll-behavior-x: contain;     /* don't chain the scroll to the page */
+        flex-wrap: wrap; justify-content: center; align-items: flex-start;
+        row-gap: 16px; column-gap: 10px; overflow-x: visible;
       }
-      .stl-steps::-webkit-scrollbar { display: none; } /* WebKit — hide the bar */
+      .stl-connector { display: none; }
+      .stl-step { flex: 0 1 auto; min-width: 62px; max-width: 46%; }
+      /* the step that carries the View Transaction button → its own full-width row */
+      .stl-steps > .stl-step:has(.stl-viewtx) { flex: 1 1 100%; max-width: none; margin-top: 2px; }
+      .stl-steps > .stl-step:has(.stl-viewtx) .stl-viewtx {
+        display: block; width: 100%; max-width: 260px; margin: 0 auto;
+        text-align: center; padding: 10px 16px; box-sizing: border-box;
+      }
     }
 
     /* ── RLUSD settlement status (landlord panel + tenant transparency card) ── */
