@@ -1990,7 +1990,7 @@ function openEscrowPackageView(reserveId) {
         <span>${esc(d.fileName || 'Document')}</span>
         ${d.fileUrl ? `<a class="escrow-doc-btn" href="${esc(d.fileUrl)}" target="_blank" rel="noopener">View</a>` : ''}
       </div>`).join('')
-    : `<p style="color:#94A3B8;font-size:0.85rem;">No source documents recorded for this reserve.</p>`;
+    : `<p style="color:var(--text-3);font-size:0.85rem;">No source documents recorded for this reserve.</p>`;
 
   document.getElementById('escrowPackageBody').innerHTML = `
     <div class="modal-confirm-msg">${esc(reserve.reserveTypeLabel)} &mdash; ${docs.length} document${docs.length === 1 ? '' : 's'}</div>
@@ -2163,7 +2163,7 @@ function renderEscrowProfile(property) {
   const Engine   = window.EscrowReserveEngine;
 
   if (!reserves.length) {
-    listEl.innerHTML = `<p style="color:#94A3B8;font-size:0.875rem;">No reserve documents uploaded yet. Upload a mortgage, loan, escrow, or reserve agreement above to extract reserve terms automatically.</p>`;
+    listEl.innerHTML = `<p style="color:var(--text-3);font-size:0.875rem;">No reserve documents uploaded yet. Upload a mortgage, loan, escrow, or reserve agreement above to extract reserve terms automatically.</p>`;
   } else {
     listEl.innerHTML = reserves.map(r => {
       const bal = Engine.computeReserveBalance(r, draws);
@@ -2234,7 +2234,7 @@ function renderEscrowProfile(property) {
   }
 
   if (!draws.length) {
-    drawListEl.innerHTML = `<p style="color:#94A3B8;font-size:0.875rem;">No reserve requests yet. Start one from a reserve account above — for example, after a roof repair is completed, attach its invoices and documentation and MainStreet will assemble the lender package.</p>`;
+    drawListEl.innerHTML = `<p style="color:var(--text-3);font-size:0.875rem;">No reserve requests yet. Start one from a reserve account above — for example, after a roof repair is completed, attach its invoices and documentation and MainStreet will assemble the lender package.</p>`;
   } else {
     const fmtHistoryDate = (iso) => {
       if (!iso) return '';
@@ -2364,7 +2364,7 @@ function _renderDrawBuilderBody(prop, reserve) {
         onchange="_toggleDrawInvoice(${idx}, this.checked)">
       <span>${esc(inv.vendorName || inv.fileName || 'Vendor')} &mdash; ${fmt(inv.amount || 0)}</span>
     </label>`;
-  }).join('') || `<p style="color:#94A3B8;font-size:0.85rem;">No invoices uploaded yet — upload invoices in the CAM tab, then return here to attach them to this draw.</p>`;
+  }).join('') || `<p style="color:var(--text-3);font-size:0.85rem;">No invoices uploaded yet — upload invoices in the CAM tab, then return here to attach them to this draw.</p>`;
 
   const filterToggle = allInvoices.length > relevantIdx.length
     ? `<button class="modal-cancel" style="padding:2px 8px;margin-bottom:6px;" onclick="_toggleDrawInvoiceFilter()">${showAll ? 'Show relevant invoices only' : `Show all invoices (${allInvoices.length})`}</button>`
@@ -2403,13 +2403,13 @@ function _renderDrawBuilderBody(prop, reserve) {
     ? `
       <div class="escrow-section-label" style="margin-top:12px;">Required Documents</div>
       ${satisfiedDocs.map(c => `<div class="escrow-doc-row"><span>&#x2713; ${esc(DOC_CHECK_LABELS[c.key] || c.label)}</span></div>`).join('')}
-      ${missingDocs.length ? `<div style="margin-top:4px;font-size:0.85rem;color:#fbbf24;">Missing:</div>${missingDocs.map(c => `<div class="escrow-doc-row"><span>&#x2610; ${esc(DOC_CHECK_LABELS[c.key] || c.label)}</span></div>`).join('')}` : ''}
+      ${missingDocs.length ? `<div style="margin-top:4px;font-size:0.85rem;color:var(--c-fbbf24);">Missing:</div>${missingDocs.map(c => `<div class="escrow-doc-row"><span>&#x2610; ${esc(DOC_CHECK_LABELS[c.key] || c.label)}</span></div>`).join('')}` : ''}
       ${readiness ? `
       <div style="margin-top:10px;font-size:0.95rem;font-weight:700;color:${readiness.ready ? '#86efac' : '#fbbf24'};">
         Escrow Readiness: ${readiness.score}%
       </div>
       <div style="font-size:0.85rem;color:${readiness.ready ? '#86efac' : '#cbd5e1'};margin-top:3px;line-height:1.5;">${esc(readiness.summary || '')}</div>
-      ${readiness.missing.slice(0, 4).map(i => `<div style="font-size:0.8rem;color:#fbbf24;margin-top:2px;">&#x26A0; ${esc(i.label)}${i.detail ? ` — ${esc(i.detail)}` : ''}</div>`).join('')}`
+      ${readiness.missing.slice(0, 4).map(i => `<div style="font-size:0.8rem;color:var(--c-fbbf24);margin-top:2px;">&#x26A0; ${esc(i.label)}${i.detail ? ` — ${esc(i.detail)}` : ''}</div>`).join('')}`
       : `<div style="margin-top:6px;font-size:0.85rem;color:${missingDocs.length === 0 ? '#86efac' : '#fbbf24'};">
         Submission Ready: ${satisfiedDocs.length} of ${docChecklist.length} documents
       </div>`}`
@@ -2736,7 +2736,7 @@ function openEscrowSourceCitation(reserveId) {
       </div>`).join('');
 
   document.getElementById('escrowCitationBody').innerHTML = rows ||
-    `<p style="color:#94A3B8;font-size:0.85rem;">No verbatim source citations available for this reserve.</p>`;
+    `<p style="color:var(--text-3);font-size:0.85rem;">No verbatim source citations available for this reserve.</p>`;
   document.getElementById('escrowCitationModal').style.display = 'flex';
 }
 
@@ -2980,14 +2980,14 @@ function renderFailedTenants(tenants) {
           <span class="bulk-t-status">❌</span>
           <span class="bulk-t-name">${esc(d.fileName || d.tenant_name || 'Unknown')}</span>
           <span class="bulk-t-meta" data-retry data-index="${i}" style="cursor:pointer;">Extraction failed — tap to re-upload</span>
-          <button class="view-lease-btn" data-retry data-index="${i}" style="margin-left:0;color:#f97316;">&#x21BA; Retry</button>
+          <button class="view-lease-btn" data-retry data-index="${i}" style="margin-left:0;color:var(--c-f97316);">&#x21BA; Retry</button>
           <button class="bulk-t-remove" onclick="event.stopPropagation();removeBulkTenant(${i})">Remove</button>
         </div>
       </div>`;
   }).join('');
   el.insertAdjacentHTML('beforeend', `
     <div class="bulk-results-head" style="margin-top:16px;border-top:1px solid rgba(239,68,68,0.2);padding-top:12px;">
-      <h3 style="color:#f87171;">Needs Attention (${tenants.length})</h3>
+      <h3 style="color:var(--c-f87171);">Needs Attention (${tenants.length})</h3>
     </div>
     ${rows}`);
 }
@@ -5642,7 +5642,7 @@ function _updateDualWritePill() {
     pill.title = 'Tap to copy diagnostic JSON';
     pill.style.cssText = [
       'position:fixed', 'bottom:16px', 'right:12px', 'z-index:99999',
-      'background:rgba(15,23,42,0.96)', 'border:1px solid rgba(255,255,255,0.18)',
+      'background:rgba(15,23,42,0.96)', 'border:1px solid rgba(var(--line-rgb), 0.18)',
       'border-radius:10px', 'padding:8px 12px', 'font-family:monospace',
       'font-size:12px', 'line-height:1.7', 'cursor:pointer',
       'min-width:148px', 'box-shadow:0 4px 16px rgba(0,0,0,0.5)',
@@ -5652,7 +5652,7 @@ function _updateDualWritePill() {
       const s = window.ms_dumpDualWrite();
       const flash = function(ok) {
         pill.style.borderColor = ok ? '#4ade80' : '#f87171';
-        setTimeout(function() { pill.style.borderColor = 'rgba(255,255,255,0.18)'; }, 900);
+        setTimeout(function() { pill.style.borderColor = 'rgba(var(--line-rgb), 0.18)'; }, 900);
       };
       if (navigator.clipboard && navigator.clipboard.writeText) {
         navigator.clipboard.writeText(s).then(function() { flash(true); }).catch(function() { flash(_pillFallbackCopy(s)); });
@@ -5685,11 +5685,11 @@ function _updateDualWritePill() {
   const errCount   = dw.errors.length;
 
   pill.innerHTML =
-    '<div style="color:#64748b;font-size:10px;letter-spacing:.04em;margin-bottom:2px">DUALWRITE' +
-    (errCount ? ' <span style="color:#f87171">(' + errCount + ' err)</span>' : '') + '</div>' +
+    '<div style="color:var(--text-4);font-size:10px;letter-spacing:.04em;margin-bottom:2px">DUALWRITE' +
+    (errCount ? ' <span style="color:var(--c-f87171)">(' + errCount + ' err)</span>' : '') + '</div>' +
     _ind('AUTH ', authState) + '&nbsp;&nbsp;' + _ind('PROP ', propState) + '<br>' +
     _ind('TFE  ', tfeState)  + '&nbsp;&nbsp;' + _ind('TRA  ', traState)  +
-    '<div style="color:#334155;font-size:9px;margin-top:2px">tap to copy JSON</div>';
+    '<div style="color:var(--text-5);font-size:9px;margin-top:2px">tap to copy JSON</div>';
 }
 
 // ── DB Health modal — Phase 20 UI diagnostic ─────────────────────────────────
@@ -6102,13 +6102,13 @@ function _updateDisputeBadge() {
   const readOk    = !df.auditPropNull && df.ts;
 
   badge.innerHTML =
-    '<div style="color:#92400e;font-size:10px;letter-spacing:.04em;margin-bottom:2px">DISPUTE FLOW' +
+    '<div style="color:var(--c-92400e);font-size:10px;letter-spacing:.04em;margin-bottom:2px">DISPUTE FLOW' +
     (df.errors.length ? ' <span style="color:' + fail + '">(' + df.errors.length + 'err)</span>' : '') + '</div>' +
     _b('AUTH  ', authOk ? ok : (df.auth ? fail : mute), authOk ? '✓' : (df.auth ? '✗' : '·')) + '&nbsp;&nbsp;' +
     _b('PROP  ', propLive ? ok : fail, propLive ? '✓ ' + activePropId.slice(0,6) : '✗ null') + '<br>' +
     _b('WRITE ', writeOk ? ok : (writeFail ? fail : mute), writeOk ? '✓' : (writeFail ? '✗' : '·')) + '&nbsp;&nbsp;' +
     _b('AUDIT ', df.auditPropNull ? fail : (readOk ? ok : mute), df.auditPropNull ? '✗' : (readOk ? '✓' : '·')) +
-    '<div style="color:#334155;font-size:9px;margin-top:2px">tap to copy JSON</div>';
+    '<div style="color:var(--text-5);font-size:9px;margin-top:2px">tap to copy JSON</div>';
 }
 
 // ── ms_testAuditInsert — fire a known row into tenant_review_audit + read it back
@@ -6722,7 +6722,7 @@ function renderLeaseDebugPanel(d, i) {
   let sec6 = '';
   if (dbg.failureStage || dbg.error) {
     sec6 = `<div class="cx-debug-section">
-      <div class="cx-debug-label" style="color:#fca5a5;">Failure Diagnostics</div>
+      <div class="cx-debug-label" style="color:var(--c-fca5a5);">Failure Diagnostics</div>
       <div class="cx-debug-val"><b>Stage:</b> ${esc(dbg.failureStage || '—')}</div>
       ${dbg.error ? `<div class="cx-debug-val" style="margin-top:3px;"><b>Error:</b> ${esc(dbg.error.message || '—')}</div>` : ''}
       ${dbg.error?.stack ? `<pre class="cx-debug-pre">${esc(dbg.error.stack)}</pre>` : ''}
@@ -6731,8 +6731,8 @@ function renderLeaseDebugPanel(d, i) {
 
   return `<div class="cx-debug-panel" id="cxdbg-${i}" style="display:none;">
     <div style="padding-bottom:6px;margin-bottom:8px;border-bottom:1px solid rgba(99,102,241,0.25);">
-      <span style="font-weight:600;color:#a5b4fc;">🛠 Lease Debug</span>
-      <span style="color:#64748b;margin-left:8px;font-size:0.73rem;">${esc(dbg.fileName)}</span>
+      <span style="font-weight:600;color:var(--c-a5b4fc);">🛠 Lease Debug</span>
+      <span style="color:var(--text-4);margin-left:8px;font-size:0.73rem;">${esc(dbg.fileName)}</span>
     </div>
     ${sec1}${sec2}${sec3}${sec4}${sec5}${sec6}
   </div>`;
@@ -6882,7 +6882,7 @@ function renderBulkResults() {
     ` : '';
 
     const dupBadge = isDupName
-      ? `<span style="font-size:0.72rem;background:#78350f40;border:1px solid #f59e0b;color:#fbbf24;border-radius:4px;padding:1px 6px;margin-left:6px;white-space:nowrap;">⚠ Duplicate name — add unit # or remove one</span>`
+      ? `<span style="font-size:0.72rem;background:#78350f40;border:1px solid #f59e0b;color:var(--c-fbbf24);border-radius:4px;padding:1px 6px;margin-left:6px;white-space:nowrap;">⚠ Duplicate name — add unit # or remove one</span>`
       : '';
 
     // Confidence banner text and colour for the expanded detail header
@@ -6935,7 +6935,7 @@ function renderBulkResults() {
           </div>
           <span class="bulk-t-chevron" id="bchev-${i}">${chevInitialHtml}</span>
           ${showRetryButton
-            ? `<button class="view-lease-btn" data-retry data-index="${i}" data-job-id="${d.id || ''}" style="margin-left:0;color:#f97316;">&#x21BA; Retry</button>`
+            ? `<button class="view-lease-btn" data-retry data-index="${i}" data-job-id="${d.id || ''}" style="margin-left:0;color:var(--c-f97316);">&#x21BA; Retry</button>`
             : isPending
               ? ''
               : d.leaseExpected
@@ -7028,7 +7028,7 @@ function renderBulkResults() {
           </div>
           <div style="display:flex;justify-content:space-between;align-items:center;padding-top:10px;">
             ${d.extractionFailed && !d._userConfirmed
-              ? `<span style="font-size:0.78rem;color:#94a3b8;">Fill in fields above, then click Save to confirm manually</span>`
+              ? `<span style="font-size:0.78rem;color:var(--text-3);">Fill in fields above, then click Save to confirm manually</span>`
               : `<span></span>`}
             <button class="bulk-done-btn" id="bdone-${i}" onclick="saveBulkTenant(${i})">
               ${d.extractionFailed && !d._userConfirmed ? 'Confirm &amp; Save' : 'Done ✓'}
@@ -7238,7 +7238,7 @@ function refreshBulkSummary(i) {
     });
     const isDup = d.tenant_name ? (_nc.get(d.tenant_name.trim().toLowerCase()) || 0) > 1 : false;
     const dupBadge = isDup
-      ? `<span style="font-size:0.72rem;background:#78350f40;border:1px solid #f59e0b;color:#fbbf24;border-radius:4px;padding:1px 6px;margin-left:6px;white-space:nowrap;">⚠ Duplicate name — add unit # or remove one</span>`
+      ? `<span style="font-size:0.72rem;background:#78350f40;border:1px solid #f59e0b;color:var(--c-fbbf24);border-radius:4px;padding:1px 6px;margin-left:6px;white-space:nowrap;">⚠ Duplicate name — add unit # or remove one</span>`
       : '';
 
     nameEl.style.opacity     = isWeakName ? '0.6' : '';
@@ -8465,7 +8465,7 @@ function showAllocationModal() {
     .sort((a, b) => b[1] - a[1])
     .map(([cat, amt]) => `
       <tr>
-        <td style="padding-left:14px;color:#64748b;text-transform:capitalize">${esc(cat)}</td>
+        <td style="padding-left:14px;color:var(--text-4);text-transform:capitalize">${esc(cat)}</td>
         <td>${fmt(amt)}</td>
       </tr>`).join('');
 
@@ -8825,7 +8825,7 @@ async function runAllocation() {
   if (missingSquare.length > 0 && validTenants.length > 0) {
     const warn = document.createElement('div');
     warn.className = 'cam-sqft-warning';
-    warn.style.cssText = 'background:#7c2d1220;border:1px solid #f97316;color:#fb923c;padding:10px 14px;border-radius:8px;margin-bottom:14px;font-size:0.85rem;';
+    warn.style.cssText = 'background:#7c2d1220;border:1px solid #f97316;color:var(--c-fb923c);padding:10px 14px;border-radius:8px;margin-bottom:14px;font-size:0.85rem;';
     warn.textContent = `⚠️ ${missingSquare.length} tenant${missingSquare.length > 1 ? 's' : ''} excluded from CAM — missing Leased Sqft: ${missingSquare.map(t => t.tenant_name).join(', ')}. Edit those tenants in Section 2 and re-run to include them.`;
     section.prepend(warn);
   }
@@ -8835,7 +8835,7 @@ async function runAllocation() {
   if (mismatchedTenants.length > 0) {
     const warn = document.createElement('div');
     warn.className = 'cam-skip-warning';
-    warn.style.cssText = 'background:#7c2d1220;border:1px solid #f87171;color:#fca5a5;padding:10px 14px;border-radius:8px;margin-bottom:14px;font-size:0.85rem;';
+    warn.style.cssText = 'background:#7c2d1220;border:1px solid #f87171;color:var(--c-fca5a5);padding:10px 14px;border-radius:8px;margin-bottom:14px;font-size:0.85rem;';
     warn.textContent = `⚠️ ${mismatchedTenants.length} tenant${mismatchedTenants.length > 1 ? 's' : ''} excluded from CAM — lease names a different property: ${mismatchedTenants.map(t => t.tenant_name).join(', ')}. Confirm the lease belongs here, then resolve the warning on that tenant's card and re-run.`;
     section.prepend(warn);
   }
@@ -8879,7 +8879,7 @@ async function runAllocation() {
   if (skippedCount > 0) {
     const warn = document.createElement('div');
     warn.className = 'cam-skip-warning';
-    warn.style.cssText = 'background:#7c3a0020;border:1px solid #f59e0b;color:#fbbf24;padding:10px 14px;border-radius:8px;margin-bottom:14px;font-size:0.85rem;';
+    warn.style.cssText = 'background:#7c3a0020;border:1px solid #f59e0b;color:var(--c-fbbf24);padding:10px 14px;border-radius:8px;margin-bottom:14px;font-size:0.85rem;';
     warn.textContent = `⚠️ ${skippedCount} invoice${skippedCount > 1 ? 's' : ''} with no amount were excluded from this calculation. Open each invoice in Section 3 and enter the missing amount to include them.`;
     section.prepend(warn);
   }
@@ -8893,7 +8893,7 @@ async function runAllocation() {
     const names = tenantsWithIncompleteCapData.map(t => t.name).join(', ');
     const warn = document.createElement('div');
     warn.className = 'cam-cap-incomplete-warning';
-    warn.style.cssText = 'background:#431407;border:1px solid #f97316;color:#fed7aa;padding:10px 14px;border-radius:8px;margin-bottom:12px;font-size:0.85rem;';
+    warn.style.cssText = 'background:#431407;border:1px solid #f97316;color:var(--c-fed7aa);padding:10px 14px;border-radius:8px;margin-bottom:12px;font-size:0.85rem;';
     warn.innerHTML = `⚠️ <strong>CAM cap not enforced</strong> for ${esc(names)} — a prior-year base amount is required. Enter "Prior-Year CAM Base ($)" in each tenant card to enable cap enforcement.`;
     section.prepend(warn);
   }
@@ -9362,7 +9362,7 @@ function logError(type, error, context = {}) {
     ...context,
   };
 
-  console.group(`%c[Mainstreet] ${type}`, 'color:#f87171;font-weight:700');
+  console.group(`%c[Mainstreet] ${type}`, 'color:var(--c-f87171);font-weight:700');
   console.error('Message:', entry.message);
   if (Object.keys(context).length) console.info('Context:', context);
   if (entry.stack) console.debug('Stack:\n' + entry.stack);
@@ -10275,7 +10275,7 @@ function _buildReconciliationSummaryHtml(results, invoices, propName) {
 
   const variance = Math.abs(totalBilled - totalPool);
   const varianceBanner = variance > 0.05
-    ? `<div style="background:#431407;border:1px solid #f97316;color:#fed7aa;padding:10px 14px;border-radius:8px;margin-bottom:12px;font-size:0.85rem;">
+    ? `<div style="background:#431407;border:1px solid #f97316;color:var(--c-fed7aa);padding:10px 14px;border-radius:8px;margin-bottom:12px;font-size:0.85rem;">
         ⚠️ <strong>Reconciliation variance detected</strong> — total billed (${fmt(totalBilled)}) differs from total expense pool (${fmt(totalPool)}) by <strong>${fmt(variance)}</strong>. Re-check invoice amounts or re-run allocation.
       </div>`
     : '';
@@ -10376,11 +10376,11 @@ function _tdpDisputesHtml(tenantName) {
     const category   = d.category || 'Unknown category';
     const reason     = d.reason   || '(no reason given)';
     const docHtml    = d.docName
-      ? `<div style="font-size:0.73rem;color:#4ade80;margin:4px 0 8px;font-family:'DM Mono',monospace;">&#x1F4CE; ${esc(d.docName)}</div>`
+      ? `<div style="font-size:0.73rem;color:var(--c-4ade80);margin:4px 0 8px;font-family:'DM Mono',monospace;">&#x1F4CE; ${esc(d.docName)}</div>`
       : '';
 
     const resolvedTs = (d.resolvedAt && (isResolved || isRejected))
-      ? `<div style="font-size:0.73rem;color:#64748B;margin-top:4px;">${isResolved ? 'Resolved' : 'Rejected'} · ${_ts(d.resolvedAt)}</div>`
+      ? `<div style="font-size:0.73rem;color:var(--text-4);margin-top:4px;">${isResolved ? 'Resolved' : 'Rejected'} · ${_ts(d.resolvedAt)}</div>`
       : '';
 
     const actionHtml = '';
@@ -11068,10 +11068,10 @@ function _buildRecoveryModalBody(prop) {
   //    aren't one stray click away in the primary bar) ──
   const dangerHtml = `
     <div class="rc-section">
-      <div class="rc-section-title" style="color:#fca5a5;">Danger Zone</div>
+      <div class="rc-section-title" style="color:var(--c-fca5a5);">Danger Zone</div>
       <p class="rc-export-desc">These affect this property's data and can't be undone.</p>
-      <button class="rc-action-btn" style="border-color:rgba(239,68,68,0.35);color:#fca5a5;" onclick="closeRecoveryModal(); clearPropertyData();">&#x1F5D1; Clear Data — reset tenants &amp; invoices (keep the property)</button>
-      <button class="rc-action-btn" style="border-color:rgba(239,68,68,0.35);color:#fca5a5;margin-top:8px;" onclick="closeRecoveryModal(); openDeletePropertyModal();">&#x1F5D1; Delete Property — remove this property and all its data</button>
+      <button class="rc-action-btn" style="border-color:rgba(239,68,68,0.35);color:var(--c-fca5a5);" onclick="closeRecoveryModal(); clearPropertyData();">&#x1F5D1; Clear Data — reset tenants &amp; invoices (keep the property)</button>
+      <button class="rc-action-btn" style="border-color:rgba(239,68,68,0.35);color:var(--c-fca5a5);margin-top:8px;" onclick="closeRecoveryModal(); openDeletePropertyModal();">&#x1F5D1; Delete Property — remove this property and all its data</button>
     </div>`;
 
   body.innerHTML = syncHtml + integrityHtml + cpHtml + exportHtml + dangerHtml;
@@ -11098,7 +11098,7 @@ function restoreCheckpoint(index) {
   savePropertyData();
 
   const banner = document.createElement('div');
-  banner.style.cssText = 'position:fixed;top:16px;left:50%;transform:translateX(-50%);z-index:9999;background:var(--theme-accent);color:#93c5fd;padding:10px 20px;border-radius:10px;font-size:0.85rem;font-weight:600;box-shadow:0 4px 20px rgba(0,0,0,.5);pointer-events:none;white-space:nowrap;';
+  banner.style.cssText = 'position:fixed;top:16px;left:50%;transform:translateX(-50%);z-index:9999;background:var(--theme-accent);color:var(--c-93c5fd);padding:10px 20px;border-radius:10px;font-size:0.85rem;font-weight:600;box-shadow:0 4px 20px rgba(0,0,0,.5);pointer-events:none;white-space:nowrap;';
   banner.textContent = `↩ Checkpoint restored — ${cp.label}`;
   document.body.appendChild(banner);
   setTimeout(() => banner.remove(), 4000);
@@ -11136,7 +11136,7 @@ function rebuildReconciliationState() {
     restoreResults(prop);
   }
   const banner = document.createElement('div');
-  banner.style.cssText = 'position:fixed;top:16px;left:50%;transform:translateX(-50%);z-index:9999;background:#134e4a;color:#99f6e4;padding:10px 20px;border-radius:10px;font-size:0.85rem;font-weight:600;box-shadow:0 4px 20px rgba(0,0,0,.5);pointer-events:none;white-space:nowrap;';
+  banner.style.cssText = 'position:fixed;top:16px;left:50%;transform:translateX(-50%);z-index:9999;background:#134e4a;color:var(--c-99f6e4);padding:10px 20px;border-radius:10px;font-size:0.85rem;font-weight:600;box-shadow:0 4px 20px rgba(0,0,0,.5);pointer-events:none;white-space:nowrap;';
   banner.textContent = '↺ Reconciliation state rebuilt from saved data';
   document.body.appendChild(banner);
   setTimeout(() => banner.remove(), 4000);
@@ -11379,7 +11379,7 @@ function exportReviewPackage() {
   const timeline  = gather('timelinePanel');
   const rvBodyEl  = document.getElementById('reviewResultsBody');
   const resultsHtml = rvBodyEl ? `<div class="card" style="margin-bottom:24px;padding:24px;">
-    <h2 style="font-size:1.1rem;font-weight:700;color:#E2E8F0;margin-bottom:16px;">${year} Allocation Results</h2>
+    <h2 style="font-size:1.1rem;font-weight:700;color:var(--text-1);margin-bottom:16px;">${year} Allocation Results</h2>
     ${rvBodyEl.innerHTML}</div>` : '';
 
   const styles = Array.from(document.styleSheets).flatMap(ss => {
@@ -11470,7 +11470,7 @@ async function tsExplainInvoice(rowId, vendor, category, amount, date) {
     });
   } catch (e) {
     const expl = document.getElementById(`tsexpl-${rowId}`);
-    if (expl) { expl.className = 'inv-explain-box'; expl.innerHTML = '<span style="color:#f87171;">Unable to generate explanation — please try again.</span>'; }
+    if (expl) { expl.className = 'inv-explain-box'; expl.innerHTML = '<span style="color:var(--c-f87171);">Unable to generate explanation — please try again.</span>'; }
   }
 }
 
@@ -11699,7 +11699,7 @@ function renderOpenDisputes() {
   function renderCard(d) {
     const isResolved = d.status !== 'open';
     const docHtml = d.docName
-      ? `<div style="font-size:0.75rem;color:#4ade80;margin:4px 0 0;font-family:'DM Mono',monospace;">📎 ${esc(d.docName)}</div>`
+      ? `<div style="font-size:0.75rem;color:var(--c-4ade80);margin:4px 0 0;font-family:'DM Mono',monospace;">📎 ${esc(d.docName)}</div>`
       : '';
 
     let actionsHtml = '';
@@ -11728,7 +11728,7 @@ function renderOpenDisputes() {
           <button class="d-res-btn docs"   onclick="showDocsRequest(${d.id})">📄 Request Documentation</button>
         </div>
         <div id="docs-req-${d.id}" style="display:none;margin-top:8px;padding:10px 12px;background:rgba(201,151,58,0.07);border:1px solid rgba(201,151,58,0.2);border-radius:8px;">
-          <span class="dispute-doc-label" style="color:#C9973A;">Attach landlord documentation for this dispute:</span>
+          <span class="dispute-doc-label" style="color:var(--c-c9973a);">Attach landlord documentation for this dispute:</span>
           <input type="file" id="docs-file-${d.id}" class="dispute-doc-input"
             onchange="document.getElementById('docs-fname-${d.id}').textContent=this.files[0]?'📎 '+this.files[0].name:''" />
           <div id="docs-fname-${d.id}" class="dispute-doc-name"></div>
@@ -13741,7 +13741,7 @@ function generateReconciliationSummary() {
 
   const tenantRows = lastResults.map(r => {
     const capNote = r.capApplied
-      ? ` <span style="font-size:0.72rem;color:#f59e0b;">(cap &minus;${fmt(r.capAdjustment)})</span>`
+      ? ` <span style="font-size:0.72rem;color:var(--c-f59e0b);">(cap &minus;${fmt(r.capAdjustment)})</span>`
       : '';
     return `<tr>
       <td>${esc(r.name)}</td>
@@ -13763,9 +13763,9 @@ function generateReconciliationSummary() {
   const reconNarrative = buildAuditNarrative();
   const reconStatusBar = reconNarrative.headline ? `
     <div style="display:flex;align-items:center;gap:10px;padding:10px 14px;background:var(--theme-surface);border-radius:7px;margin-bottom:14px;font-size:0.82rem;">
-      <span style="color:#64748b;font-weight:600;flex-shrink:0;">Status:</span>
-      <span style="color:#e2e8f0;">${esc(reconNarrative.headline)}</span>
-      ${reconNarrative.financialImpact ? `<span style="margin-left:auto;color:#94a3b8;flex-shrink:0;">${esc(reconNarrative.financialImpact)}</span>` : ''}
+      <span style="color:var(--text-4);font-weight:600;flex-shrink:0;">Status:</span>
+      <span style="color:var(--text-1);">${esc(reconNarrative.headline)}</span>
+      ${reconNarrative.financialImpact ? `<span style="margin-left:auto;color:var(--text-3);flex-shrink:0;">${esc(reconNarrative.financialImpact)}</span>` : ''}
     </div>` : '';
 
   const html = `
@@ -13925,7 +13925,7 @@ function generateExceptionReport() {
         <div class="kpi-lbl">Warnings</div>
       </div>
       <div class="rpt-kpi">
-        <div class="kpi-val" style="color:#4ade80">${green.length}</div>
+        <div class="kpi-val" style="color:var(--c-4ade80)">${green.length}</div>
         <div class="kpi-lbl">Passed Checks</div>
       </div>
       <div class="rpt-kpi">
@@ -14025,13 +14025,13 @@ function generateMasterReport() {
     <div style="background:${nBg};border:1px solid ${nColor}33;border-radius:10px;padding:18px 20px;margin-bottom:18px;">
       <div style="display:flex;align-items:center;gap:10px;margin-bottom:10px;">
         <span style="display:inline-block;width:10px;height:10px;border-radius:50%;background:${nColor};flex-shrink:0;"></span>
-        <span style="font-size:1.05rem;font-weight:700;color:#e2e8f0;">${esc(n.headline)}</span>
+        <span style="font-size:1.05rem;font-weight:700;color:var(--text-1);">${esc(n.headline)}</span>
         <span style="margin-left:auto;font-size:0.72rem;font-weight:700;color:${nColor};background:${nColor}22;padding:3px 10px;border-radius:20px;letter-spacing:0.06em;text-transform:uppercase;">${esc(n.riskLevel)} Risk</span>
       </div>
-      <div style="font-size:0.84rem;color:#cbd5e1;line-height:1.55;margin-bottom:${topFindings ? '12px' : '0'};">${esc(n.summaryParagraph || '')}</div>
-      ${topFindings ? `<ul style="margin:0 0 ${topRec ? '10px' : '0'} 16px;padding:0;font-size:0.81rem;color:#94a3b8;line-height:1.5;">${topFindings}</ul>` : ''}
+      <div style="font-size:0.84rem;color:var(--text-2);line-height:1.55;margin-bottom:${topFindings ? '12px' : '0'};">${esc(n.summaryParagraph || '')}</div>
+      ${topFindings ? `<ul style="margin:0 0 ${topRec ? '10px' : '0'} 16px;padding:0;font-size:0.81rem;color:var(--text-3);line-height:1.5;">${topFindings}</ul>` : ''}
       ${topRec ? `<div style="font-size:0.79rem;color:${nColor};border-top:1px solid ${nColor}22;padding-top:9px;margin-top:2px;"><strong>Recommendation:</strong> ${esc(topRec)}</div>` : ''}
-      ${n.financialImpact ? `<div style="font-size:0.78rem;color:#64748b;margin-top:7px;">${esc(n.financialImpact)}</div>` : ''}
+      ${n.financialImpact ? `<div style="font-size:0.78rem;color:var(--text-4);margin-top:7px;">${esc(n.financialImpact)}</div>` : ''}
     </div>`;
 
   const html = `
@@ -14106,7 +14106,7 @@ function generateMasterReport() {
       <div class="rpt-hash-lbl">&#x1F512; Tamper-Detection Hash (SHA-256)</div>
       <div class="rpt-hash-val">Computing…</div>
     </div>
-    <p style="font-size:0.78rem;color:#64748b;line-height:1.5;margin-top:10px;">MainStreet settles tenant payments in RLUSD on the XRP Ledger, embedding a SHA-256 fingerprint of each settlement in the transaction memo for public, independent verification. The reconciliation record itself carries the local audit fingerprint above.</p>
+    <p style="font-size:0.78rem;color:var(--text-4);line-height:1.5;margin-top:10px;">MainStreet settles tenant payments in RLUSD on the XRP Ledger, embedding a SHA-256 fingerprint of each settlement in the transaction memo for public, independent verification. The reconciliation record itself carries the local audit fingerprint above.</p>
 
     ${_rptFooter(lastPropName, 'Landlord Master CAM Report', now)}`;
 
@@ -14344,7 +14344,7 @@ async function runLandlordAIReview() {
     });
 
     if (!flagged.length) {
-      container.innerHTML = '<div style="color:#4ade80;font-size:0.83rem;margin-top:10px;">&#x2713; All charges look clear — no AI review needed.</div>';
+      container.innerHTML = '<div style="color:var(--c-4ade80);font-size:0.83rem;margin-top:10px;">&#x2713; All charges look clear — no AI review needed.</div>';
       if (btn) btn.remove();
       return;
     }
@@ -14373,7 +14373,7 @@ async function runLandlordAIReview() {
       }
     }
     if (flagged.length > MAX_REVIEW) {
-      html += `<div style="color:#94a3b8;font-size:0.78rem;margin-top:8px;">Showing AI review for the first ${MAX_REVIEW} of ${flagged.length} flagged charges.</div>`;
+      html += `<div style="color:var(--text-3);font-size:0.78rem;margin-top:8px;">Showing AI review for the first ${MAX_REVIEW} of ${flagged.length} flagged charges.</div>`;
     }
 
     if (anyOk) {
@@ -14382,12 +14382,12 @@ async function runLandlordAIReview() {
     } else {
       // Every call failed — show why and leave the button so the user can retry.
       container.innerHTML = html +
-        '<div style="color:#f59e0b;font-size:0.83rem;margin-top:8px;">AI review could not be completed. Check your connection and try again.</div>';
+        '<div style="color:var(--c-f59e0b);font-size:0.83rem;margin-top:8px;">AI review could not be completed. Check your connection and try again.</div>';
       restoreBtn();
     }
   } catch (e) {
     console.error('[runLandlordAIReview]', e);
-    container.innerHTML = `<div style="color:#f59e0b;font-size:0.83rem;margin-top:10px;">AI review failed: ${esc(e?.message || 'unexpected error')}. Please try again.</div>`;
+    container.innerHTML = `<div style="color:var(--c-f59e0b);font-size:0.83rem;margin-top:10px;">AI review failed: ${esc(e?.message || 'unexpected error')}. Please try again.</div>`;
     restoreBtn();                        // failure: always clear the loading state
   }
 }
@@ -14426,7 +14426,7 @@ function generateDisputePacket(disputeId) {
         <tr><td>Square Footage</td><td style="text-align:right">${recon.sqFt ? Number(recon.sqFt).toLocaleString() : '—'} sqft</td></tr>
         <tr><td>Pro-Rata Share</td><td style="text-align:right">${(recon.proRata * 100).toFixed(2)}%</td></tr>
         <tr><td>Raw Allocation</td><td style="text-align:right">${fmt(recon.capApplied ? recon.totalAllocated + recon.capAdjustment : recon.totalAllocated)}</td></tr>
-        ${recon.capApplied ? `<tr><td>Cap Reduction</td><td style="text-align:right;color:#fb923c;">−${fmt(recon.capAdjustment)}</td></tr>` : ''}
+        ${recon.capApplied ? `<tr><td>Cap Reduction</td><td style="text-align:right;color:var(--c-fb923c);">−${fmt(recon.capAdjustment)}</td></tr>` : ''}
         <tr class="total-row"><td>Final CAM Charge</td><td style="text-align:right">${fmt(recon.totalAllocated)}</td></tr>
         ${calcSt ? `<tr><td>Billing Method</td><td style="text-align:right"><span class="rc-calc-state ${calcSt.cls}">${calcSt.label}</span></td></tr>` : ''}
       </tbody>
@@ -14564,7 +14564,7 @@ function generateLandlordExport() {
       <td style="text-align:right">${fmt(r.totalAllocated)}</td>
       <td style="text-align:right">${(r.proRata * 100).toFixed(2)}%</td>
       <td><span class="rc-calc-state ${calcSt.cls}">${calcSt.label}</span></td>
-      <td style="text-align:center">${flagCnt > 0 ? `<span style="color:#fbbf24">${flagCnt}</span>` : '—'}</td>
+      <td style="text-align:center">${flagCnt > 0 ? `<span style="color:var(--c-fbbf24)">${flagCnt}</span>` : '—'}</td>
     </tr>`;
   }).join('');
 
@@ -14595,7 +14595,7 @@ function generateLandlordExport() {
     <table class="rpt-table">
       <thead><tr><th>#</th><th>Tenant</th><th>Charge</th><th style="text-align:right">Amount</th><th>Type</th><th>Severity</th></tr></thead>
       <tbody>${disputeRows}</tbody>
-    </table>` : '<div class="rpt-section-title" style="color:#4ade80">&#x2713; No open disputes</div>'}
+    </table>` : '<div class="rpt-section-title" style="color:var(--c-4ade80)">&#x2713; No open disputes</div>'}
 
     <div class="rpt-section-title">Reconciliation Completeness by Tenant</div>
     <table class="rpt-table">
@@ -14912,12 +14912,12 @@ function generateTenantStatement(tenantName) {
 
   // Excluded categories note
   const exclNote = t.excludedCategories.length
-    ? `<p style="font-size:0.8rem;color:#94a3b8;margin-top:6px;">Excluded categories: ${t.excludedCategories.join(', ')}</p>`
+    ? `<p style="font-size:0.8rem;color:var(--text-3);margin-top:6px;">Excluded categories: ${t.excludedCategories.join(', ')}</p>`
     : '';
 
   // Cap info
   const capNote = r.capApplied
-    ? `<p style="font-size:0.82rem;color:#b45309;margin-top:6px;font-style:italic;">
+    ? `<p style="font-size:0.82rem;color:var(--c-b45309);margin-top:6px;font-style:italic;">
         Cap applied — your allocation was reduced by ${fmt(r.capAdjustment)} to meet the lease cap.</p>`
     : '';
 
@@ -14926,10 +14926,10 @@ function generateTenantStatement(tenantName) {
   const actual     = r.allocatedAmount; // same when no payments entered
   const difference = actual - estimated;
   const reconNote  = difference > 0
-    ? `<span style="color:#dc2626">Underpaid ${fmt(difference)}</span>`
+    ? `<span style="color:var(--c-dc2626)">Underpaid ${fmt(difference)}</span>`
     : difference < 0
-    ? `<span style="color:#16a34a">Overpaid ${fmt(Math.abs(difference))}</span>`
-    : '<span style="color:#16a34a">Settled — no adjustment needed</span>';
+    ? `<span style="color:var(--c-16a34a)">Overpaid ${fmt(Math.abs(difference))}</span>`
+    : '<span style="color:var(--c-16a34a)">Settled — no adjustment needed</span>';
 
   // Disputes for this tenant
   const tenantDisputes = disputes.filter(d => d.tenantName === tenantName);
@@ -14948,7 +14948,7 @@ function generateTenantStatement(tenantName) {
           ${d.hash ? `<td style="font-family:monospace;font-size:0.66rem;word-break:break-all">${d.hash.substring(0,16)}…</td>` : '<td>—</td>'}
         </tr>`;
       }).join('')
-    : '<tr><td colspan="5" style="color:#94a3b8;text-align:center">No disputes filed</td></tr>';
+    : '<tr><td colspan="5" style="color:var(--text-3);text-align:center">No disputes filed</td></tr>';
 
   const html = `
     ${_rptHeader(lastPropName, 'Tenant CAM Statement', period, now, [
@@ -14992,7 +14992,7 @@ function generateTenantStatement(tenantName) {
         <tr class="total-row"><td>Total Billed</td><td style="text-align:right">${fmt(r.allocatedAmount)}</td></tr>
       </tbody>
     </table>
-    <p style="font-size:0.78rem;color:#64748b;margin-top:6px;">Variance from monthly estimates requires payment history data not yet in this system — please reconcile against your accounts payable records.</p>
+    <p style="font-size:0.78rem;color:var(--text-4);margin-top:6px;">Variance from monthly estimates requires payment history data not yet in this system — please reconcile against your accounts payable records.</p>
 
     <div class="rpt-section-title">Disputes</div>
     <p class="rpt-helper-text">Disputes are reviewed by your landlord. You'll be notified when a decision is made.</p>
@@ -16155,7 +16155,7 @@ function _rwRenderInvoices(t) {
   let html = `
     <div class="rw-prorata-row">
       <span class="rw-prorata-label">Pro-rata share</span>
-      <span class="rw-prorata-val" style="${proRataOver ? 'color:#f87171;' : ''}">${esc(proRataDisplay)}</span>
+      <span class="rw-prorata-val" style="${proRataOver ? 'color:var(--c-f87171);' : ''}">${esc(proRataDisplay)}</span>
     </div>
     <div class="rw-prorata-bar"><div class="rw-prorata-fill" style="width:${proRataFill}%;background:${fillColor};"></div></div>`;
   if (invoices.length === 0) {
@@ -16179,7 +16179,7 @@ function _rwRenderInvoices(t) {
     html += `
       <div class="rw-total-row">
         <span class="rw-prorata-label">Total Allocated</span>
-        <span class="rw-prorata-val" style="color:#C9973A;">$${totalAllocated.toLocaleString('en-US', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}</span>
+        <span class="rw-prorata-val" style="color:var(--c-c9973a);">$${totalAllocated.toLocaleString('en-US', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}</span>
       </div>`;
   }
   el.innerHTML = html;
@@ -16898,8 +16898,8 @@ function _renderRenewalPipeline(pipeline) {
     <div class="rp-clean">
       <span class="rp-clean-icon">&#x2714;</span>
       <div>
-        <strong style="color:#e2e8f0;font-size:0.85rem;">Pipeline clear</strong>
-        <div style="font-size:0.76rem;color:#64748b;margin-top:3px;">No leases expiring within 12 months. All renewals are on track.</div>
+        <strong style="color:var(--text-1);font-size:0.85rem;">Pipeline clear</strong>
+        <div style="font-size:0.76rem;color:var(--text-4);margin-top:3px;">No leases expiring within 12 months. All renewals are on track.</div>
       </div>
     </div>
   </div>`;
@@ -17035,7 +17035,7 @@ function exportPortfolioSummary() {
           <td>${item.annualRent ? fmtM(item.annualRent) : '—'}</td>
           <td>${esc_(item.renewalOptions || 'None')}</td>
         </tr>`).join('')}
-        ${pipeline.items.length > 20 ? `<tr><td colspan="6" style="color:#64748b;font-style:italic">+${pipeline.items.length - 20} more leases</td></tr>` : ''}
+        ${pipeline.items.length > 20 ? `<tr><td colspan="6" style="color:var(--text-4);font-style:italic">+${pipeline.items.length - 20} more leases</td></tr>` : ''}
       </tbody>
     </table>
   </div>` : '';
@@ -17047,7 +17047,7 @@ function exportPortfolioSummary() {
       <thead><tr><th>Scenario</th><th>Projected Annual</th><th>Change</th></tr></thead>
       <tbody>${forecast.scenarios.map(s => {
         const sign = s.delta > 0 ? '+' : '';
-        const cls  = s.delta > 0 ? 'color:#16a34a' : s.delta < 0 ? 'color:#dc2626' : 'color:#64748b';
+        const cls  = s.delta > 0 ? 'color:var(--c-16a34a)' : s.delta < 0 ? 'color:var(--c-dc2626)' : 'color:var(--text-4)';
         return `<tr>
           <td>${esc_(s.label)}</td>
           <td style="font-weight:600">${fmtM(s.projectedAnnualRent)}</td>
@@ -18783,7 +18783,7 @@ function _lsSave(property) {
     if (!document.getElementById('_lsSaveErrToast')) {
       const _t = document.createElement('div');
       _t.id = '_lsSaveErrToast';
-      _t.style.cssText = 'position:fixed;bottom:20px;left:50%;transform:translateX(-50%);background:#92400e;color:#fef3c7;padding:10px 18px;border-radius:6px;z-index:9999;font-size:13px;max-width:90vw;text-align:center;';
+      _t.style.cssText = 'position:fixed;bottom:20px;left:50%;transform:translateX(-50%);background:#92400e;color:var(--c-fef3c7);padding:10px 18px;border-radius:6px;z-index:9999;font-size:13px;max-width:90vw;text-align:center;';
       _t.textContent = '⚠️ Local storage full — data may not be saved offline. Export your data now.';
       document.body.appendChild(_t);
       setTimeout(() => _t.remove(), 8000);
@@ -19555,16 +19555,16 @@ function renderLeaseCenter(propertyId) {
   const panel = document.getElementById('leasePanelCenter');
   if (!panel) return;
 
-  panel.innerHTML = `<div style="padding:16px 0;color:#94a3b8;font-size:0.875rem;">Loading lease documents…</div>`;
+  panel.innerHTML = `<div style="padding:16px 0;color:var(--text-3);font-size:0.875rem;">Loading lease documents…</div>`;
 
   loadLeaseDocuments(propertyId).then(docs => {
     if (!docs.length) {
       panel.innerHTML = `
-        <div style="padding:24px 0;text-align:center;color:#64748b;">
+        <div style="padding:24px 0;text-align:center;color:var(--text-4);">
           <div style="font-size:2rem;margin-bottom:8px;">📄</div>
-          <div style="font-weight:600;margin-bottom:4px;color:#94a3b8;">No leases stored yet</div>
+          <div style="font-weight:600;margin-bottom:4px;color:var(--text-3);">No leases stored yet</div>
           <div style="font-size:0.8rem;margin-bottom:12px;max-width:320px;margin-left:auto;margin-right:auto;">
-            Upload lease PDFs in the <strong style="color:#818cf8;">Upload Leases</strong> tab.
+            Upload lease PDFs in the <strong style="color:var(--c-818cf8);">Upload Leases</strong> tab.
             Once extracted, you can ask questions about any lease here.
           </div>
           <button style="padding:7px 16px;background:#4f46e5;border:none;border-radius:7px;color:#fff;font-size:0.76rem;font-weight:700;cursor:pointer;"
@@ -19577,11 +19577,11 @@ function renderLeaseCenter(propertyId) {
       const statusColor = { success: '#22c55e', partial: '#f59e0b', failed: '#ef4444', pending: '#94a3b8' }[doc.parsing_status] || '#94a3b8';
       const uploadDate  = doc.created_at ? new Date(doc.created_at).toLocaleDateString() : '—';
       const modelLabel  = doc.used_pdf_direct ? 'PDF vision' : (doc.extraction_model ? 'text' : '—');
-      const tenantLabel = doc.tenant_name ? esc(doc.tenant_name) : '<span style="color:#64748b;font-style:italic;">Unknown</span>';
+      const tenantLabel = doc.tenant_name ? esc(doc.tenant_name) : '<span style="color:var(--text-4);font-style:italic;">Unknown</span>';
       const safeUrl     = doc.file_url ? doc.file_url.replace(/\\/g, '\\\\').replace(/'/g, "\\'") : '';
       const viewBtn     = doc.file_url
         ? `<button class="lc-view-btn" onclick="openLeaseModal('${safeUrl}')">View</button>`
-        : `<span style="color:#475569;font-size:0.75rem;">no file</span>`;
+        : `<span style="color:var(--text-5);font-size:0.75rem;">no file</span>`;
       const askBtn      = `<button class="lc-ask-btn" onclick="_toggleLeaseAsk('${doc.id}')" title="Ask a question about this lease">Ask</button>`;
       const deleteBtn   = `<button class="lc-del-btn" onclick="_deleteLeaseCenterRow('${doc.id}','${propertyId}')">✕</button>`;
 
@@ -19589,8 +19589,8 @@ function renderLeaseCenter(propertyId) {
         <td>${tenantLabel}</td>
         <td style="max-width:180px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;" title="${esc(doc.file_name)}">${esc(doc.file_name)}</td>
         <td><span class="lc-status-badge" style="background:${statusColor}22;color:${statusColor};border:1px solid ${statusColor}44;">${esc(doc.parsing_status)}</span></td>
-        <td style="color:#94a3b8;">${modelLabel}</td>
-        <td style="color:#94a3b8;">${uploadDate}</td>
+        <td style="color:var(--text-3);">${modelLabel}</td>
+        <td style="color:var(--text-3);">${uploadDate}</td>
         <td style="text-align:right;white-space:nowrap;">${viewBtn} ${askBtn} ${deleteBtn}</td>
       </tr>`;
 
@@ -19630,7 +19630,7 @@ function renderLeaseCenter(propertyId) {
       </div>`;
   }).catch(err => {
     console.error('[renderLeaseCenter] failed:', err?.message);
-    panel.innerHTML = `<div style="padding:16px 0;color:#ef4444;font-size:0.875rem;">Failed to load lease documents: ${err?.message || 'unknown error'}</div>`;
+    panel.innerHTML = `<div style="padding:16px 0;color:var(--c-ef4444);font-size:0.875rem;">Failed to load lease documents: ${err?.message || 'unknown error'}</div>`;
   });
 }
 
@@ -19845,7 +19845,7 @@ async function saveProperty(property) {
       if (!prev) {
         const t = document.createElement('div');
         t.id = '_offlineToast';
-        t.style.cssText = 'position:fixed;bottom:20px;left:50%;transform:translateX(-50%);background:var(--theme-accent);color:#bfdbfe;padding:10px 18px;border-radius:6px;z-index:9999;font-size:13px;box-shadow:0 4px 12px rgba(0,0,0,.3);max-width:90vw;text-align:center;';
+        t.style.cssText = 'position:fixed;bottom:20px;left:50%;transform:translateX(-50%);background:var(--theme-accent);color:var(--c-bfdbfe);padding:10px 18px;border-radius:6px;z-index:9999;font-size:13px;box-shadow:0 4px 12px rgba(0,0,0,.3);max-width:90vw;text-align:center;';
         t.textContent = '📶 Offline — changes saved locally and will sync automatically when reconnected.';
         document.body.appendChild(t);
         setTimeout(() => t.remove(), 6000);
@@ -19866,7 +19866,7 @@ async function saveProperty(property) {
 
     const toast = document.createElement('div');
     toast.id = '_saveErrToast';
-    toast.style.cssText = 'position:fixed;bottom:20px;left:50%;transform:translateX(-50%);background:#92400e;color:#fef3c7;padding:12px 20px;border-radius:6px;z-index:9999;font-size:13px;box-shadow:0 4px 12px rgba(0,0,0,.3);max-width:90vw;text-align:center;';
+    toast.style.cssText = 'position:fixed;bottom:20px;left:50%;transform:translateX(-50%);background:#92400e;color:var(--c-fef3c7);padding:12px 20px;border-radius:6px;z-index:9999;font-size:13px;box-shadow:0 4px 12px rgba(0,0,0,.3);max-width:90vw;text-align:center;';
     toast.textContent = '⚠️ Sync delayed — your data is saved locally and will sync on next save.';
     document.body.appendChild(toast);
     setTimeout(() => toast.remove(), 5000);
@@ -20613,7 +20613,7 @@ function showRestoredBanner(isDemo) {
     banner.id = 'restoredBanner';
     banner.style.cssText = [
       'position:fixed', 'top:16px', 'left:50%', 'transform:translateX(-50%)',
-      'z-index:9999', 'background:#166534', 'color:#dcfce7',
+      'z-index:9999', 'background:#166534', 'color:var(--c-dcfce7)',
       'padding:10px 20px', 'border-radius:10px', 'font-size:0.85rem',
       'font-weight:600', 'box-shadow:0 4px 20px rgba(0,0,0,0.5)',
       'transition:opacity 0.6s', 'pointer-events:none', 'white-space:nowrap',
@@ -21032,7 +21032,7 @@ function _renderAcqLeaselist() {
   const el = document.getElementById('acqLeaseList');
   if (!el) return;
   if (!_acqTenants.length) {
-    el.innerHTML = '<li style="color:#475569;font-size:0.78rem;">No leases uploaded yet — use "Upload Leases" above to extract tenant terms.</li>';
+    el.innerHTML = '<li style="color:var(--text-5);font-size:0.78rem;">No leases uploaded yet — use "Upload Leases" above to extract tenant terms.</li>';
     return;
   }
   el.innerHTML = _acqTenants.map(t => {
@@ -21046,7 +21046,7 @@ function _renderAcqInvoiceList() {
   const el = document.getElementById('acqInvoiceList');
   if (!el) return;
   if (!_acqInvoices.length) {
-    el.innerHTML = '<li style="color:#475569;font-size:0.78rem;">No invoices uploaded yet — use "Upload Invoices" above to add CAM expense documents.</li>';
+    el.innerHTML = '<li style="color:var(--text-5);font-size:0.78rem;">No invoices uploaded yet — use "Upload Invoices" above to add CAM expense documents.</li>';
     return;
   }
   el.innerHTML = _acqInvoices.map(inv => {
@@ -21198,7 +21198,7 @@ async function runAcquisitionAnalysis() {
   } catch (e) {
     console.error('[acq] analysis failed:', e.message);
     const cont = document.getElementById('acqReportContainer');
-    if (cont) cont.innerHTML = `<div style="color:#f87171;padding:16px;">Analysis failed: ${esc(e.message)}</div>`;
+    if (cont) cont.innerHTML = `<div style="color:var(--c-f87171);padding:16px;">Analysis failed: ${esc(e.message)}</div>`;
   }
 
   if (btn) { btn.disabled = false; btn.textContent = '⚡ Run Analysis'; }
@@ -21207,7 +21207,7 @@ async function runAcquisitionAnalysis() {
 function _renderAcqReport(report, container) {
   if (!container) return;
   if (report.error) {
-    container.innerHTML = `<div style="color:#f87171;padding:16px;">${esc(report.error)}</div>`;
+    container.innerHTML = `<div style="color:var(--c-f87171);padding:16px;">${esc(report.error)}</div>`;
     return;
   }
   const s   = report.summary;
@@ -21229,7 +21229,7 @@ function _renderAcqReport(report, container) {
     <div style="display:flex;align-items:center;gap:10px;padding:10px 14px;background:var(--theme-surface);border-radius:7px;margin-bottom:14px;">
       <span style="display:inline-block;width:9px;height:9px;border-radius:50%;background:${_vc};flex-shrink:0;"></span>
       <span style="font-size:0.84rem;font-weight:700;color:${_vc};">${esc(_verdict)}</span>
-      <span style="margin-left:6px;font-size:0.79rem;color:#64748b;">Recovery ${s.recoveryRate != null ? s.recoveryRate + '%' : '—'} &middot; ${fmt(_annualAtRisk)}/yr at risk &middot; ${s.criticalRenewalCount} critical renewal${s.criticalRenewalCount !== 1 ? 's' : ''}</span>
+      <span style="margin-left:6px;font-size:0.79rem;color:var(--text-4);">Recovery ${s.recoveryRate != null ? s.recoveryRate + '%' : '—'} &middot; ${fmt(_annualAtRisk)}/yr at risk &middot; ${s.criticalRenewalCount} critical renewal${s.criticalRenewalCount !== 1 ? 's' : ''}</span>
       <button class="acq-export-btn" style="margin-left:auto;" onclick="generateAcquisitionReport()">&#x1F4CB; Decision Report</button>
     </div>`;
 
@@ -21472,7 +21472,7 @@ function _sortAcqRentRoll(col) {
 }
 
 function _renderRentRollTab(rentRoll, tenantSummary) {
-  if (!rentRoll) return '<div style="color:#64748b;padding:16px 0;">Run analysis to generate the rent roll.</div>';
+  if (!rentRoll) return '<div style="color:var(--text-4);padding:16px 0;">Run analysis to generate the rent roll.</div>';
 
   const occ   = rentRoll.occupancy   || {};
   const walt  = rentRoll.walt        || {};
@@ -21740,10 +21740,10 @@ function generateAcquisitionReport() {
 
   // ── Section 1: Decision Summary ────────────────────────────────────────────
   const section1 = `
-  <div style="border:2px solid ${vcColor};border-radius:8px;padding:16px 20px;margin-bottom:24px;background:rgba(255,255,255,0.03);">
+  <div style="border:2px solid ${vcColor};border-radius:8px;padding:16px 20px;margin-bottom:24px;background:rgba(var(--line-rgb), 0.03);">
     <div style="font-size:0.69rem;font-weight:700;text-transform:uppercase;letter-spacing:0.1em;color:${vcColor};margin-bottom:6px;">Acquisition Decision</div>
     <div style="font-size:1.2rem;font-weight:800;color:${vcColor};margin-bottom:12px;">${esc(verdict)}</div>
-    ${rationale.map(r => `<div style="font-size:0.82rem;color:#CBD5E1;margin-bottom:5px;padding-left:10px;border-left:2px solid ${vcColor};">${esc(r)}</div>`).join('')}
+    ${rationale.map(r => `<div style="font-size:0.82rem;color:var(--text-2);margin-bottom:5px;padding-left:10px;border-left:2px solid ${vcColor};">${esc(r)}</div>`).join('')}
   </div>`;
 
   // ── Section 2: Revenue Recovery Analysis ──────────────────────────────────
@@ -21776,7 +21776,7 @@ function generateAcquisitionReport() {
       <th>Cause</th>
     </tr></thead>
     <tbody>${underbillingRows}</tbody>
-  </table>` : '<p style="color:#64748b;font-size:0.82rem;margin:0 0 20px;">No underbilling data available.</p>'}`;
+  </table>` : '<p style="color:var(--text-4);font-size:0.82rem;margin:0 0 20px;">No underbilling data available.</p>'}`;
 
   // ── Section 3: Lease Stability ─────────────────────────────────────────────
   const rr   = a.rentRoll;
@@ -21790,7 +21790,7 @@ function generateAcquisitionReport() {
     const rColor = r.riskLevel === 'critical' ? '#f87171' : r.riskLevel === 'high' ? '#fbbf24' : '#93c5fd';
     const days   = r.daysToExpiry !== null ? (r.daysToExpiry < 0 ? 'Expired' : `${r.daysToExpiry} days`) : '—';
     const cite   = r.citation?.text
-      ? `<div style="font-size:0.71rem;font-style:italic;color:#94a3b8;border-left:2px solid rgba(255,255,255,0.1);padding:2px 6px;margin-top:3px;">"${esc(r.citation.text.length > 100 ? r.citation.text.slice(0, 100) + '…' : r.citation.text)}"</div>`
+      ? `<div style="font-size:0.71rem;font-style:italic;color:var(--text-3);border-left:2px solid rgba(var(--line-rgb), 0.1);padding:2px 6px;margin-top:3px;">"${esc(r.citation.text.length > 100 ? r.citation.text.slice(0, 100) + '…' : r.citation.text)}"</div>`
       : '';
     return `<tr>
       <td style="font-weight:600;">${esc(r.tenantName)}</td>
@@ -21837,18 +21837,18 @@ function generateAcquisitionReport() {
     const tl   = findingTypeLabel[f.type] || f.label;
     const risk = findingRisk[f.type] || { label: 'Moderate', color: '#93c5fd' };
     const cite = f.citation?.text
-      ? `<div style="font-size:0.72rem;font-style:italic;color:#94a3b8;background:rgba(255,255,255,0.04);border-left:2px solid rgba(255,255,255,0.12);padding:4px 8px;margin-top:5px;border-radius:2px;word-break:break-word;">"${esc(f.citation.text.length > 180 ? f.citation.text.slice(0, 180) + '…' : f.citation.text)}"</div>`
+      ? `<div style="font-size:0.72rem;font-style:italic;color:var(--text-3);background:rgba(var(--line-rgb), 0.04);border-left:2px solid rgba(var(--line-rgb), 0.12);padding:4px 8px;margin-top:5px;border-radius:2px;word-break:break-word;">"${esc(f.citation.text.length > 180 ? f.citation.text.slice(0, 180) + '…' : f.citation.text)}"</div>`
       : '';
-    const val  = f.annualValue ? `<div style="font-size:0.82rem;font-weight:700;color:#f87171;white-space:nowrap;">${fmt(f.annualValue)}/yr</div>` : '';
+    const val  = f.annualValue ? `<div style="font-size:0.82rem;font-weight:700;color:var(--c-f87171);white-space:nowrap;">${fmt(f.annualValue)}/yr</div>` : '';
     return `
-    <div style="display:flex;gap:12px;align-items:flex-start;padding:10px 12px;border:1px solid rgba(255,255,255,0.07);border-left:3px solid ${risk.color};border-radius:6px;margin-bottom:6px;">
+    <div style="display:flex;gap:12px;align-items:flex-start;padding:10px 12px;border:1px solid rgba(var(--line-rgb), 0.07);border-left:3px solid ${risk.color};border-radius:6px;margin-bottom:6px;">
       <div style="flex:1;min-width:0;">
         <div style="display:flex;align-items:center;gap:8px;flex-wrap:wrap;margin-bottom:2px;">
-          <span style="font-size:0.83rem;font-weight:700;color:#E2E8F0;">${esc(f.tenantName)}</span>
-          <span style="font-size:0.72rem;color:#64748b;">${esc(tl)}</span>
+          <span style="font-size:0.83rem;font-weight:700;color:var(--text-1);">${esc(f.tenantName)}</span>
+          <span style="font-size:0.72rem;color:var(--text-4);">${esc(tl)}</span>
           <span style="font-size:0.67rem;font-weight:600;color:${risk.color};">[${risk.label}]</span>
         </div>
-        ${f.label && f.label !== tl ? `<div style="font-size:0.78rem;color:#94a3b8;margin-bottom:2px;">${esc(f.label)}</div>` : ''}
+        ${f.label && f.label !== tl ? `<div style="font-size:0.78rem;color:var(--text-3);margin-bottom:2px;">${esc(f.label)}</div>` : ''}
         ${cite}
       </div>
       ${val}
@@ -21866,10 +21866,10 @@ function generateAcquisitionReport() {
 
   const section4 = `
   <div class="rpt-section-title">Due Diligence Items</div>
-  ${findingItems || '<p style="color:#64748b;font-size:0.82rem;margin:0 0 16px;">No findings identified.</p>'}
+  ${findingItems || '<p style="color:var(--text-4);font-size:0.82rem;margin:0 0 16px;">No findings identified.</p>'}
   ${auditWinItems ? `
   <div style="margin-top:12px;">
-    <div style="font-size:0.69rem;font-weight:700;text-transform:uppercase;letter-spacing:0.08em;color:#94a3b8;margin-bottom:6px;">Audit Windows</div>
+    <div style="font-size:0.69rem;font-weight:700;text-transform:uppercase;letter-spacing:0.08em;color:var(--text-3);margin-bottom:6px;">Audit Windows</div>
     <table class="rpt-table">
       <thead><tr><th>Tenant</th><th>Status</th><th>Audit Period</th></tr></thead>
       <tbody>${auditWinItems}</tbody>
@@ -21893,7 +21893,7 @@ function generateAcquisitionReport() {
       <th>Tenant</th><th>Sq Ft</th><th>Lease Term</th><th>Renewal Options</th><th>CAM Structure</th>
     </tr></thead>
     <tbody>${tenantRows}</tbody>
-  </table>` : '<p style="color:#64748b;font-size:0.82rem;margin:0 0 16px;">No tenant data available.</p>'}`;
+  </table>` : '<p style="color:var(--text-4);font-size:0.82rem;margin:0 0 16px;">No tenant data available.</p>'}`;
 
   const body = `
   ${_rptHeader(propName, 'Acquisition Decision Report', now, now, [
