@@ -17666,7 +17666,7 @@ function renderCommandCenter() {
   const user  = window.AuthService?.getCurrentUser?.() || null;
   const email = user?.email || '';
   const _rawName = user?.name || (email ? email.split('@')[0] : null);
-  // Greeting polish: a derived email prefix ("lynnie928") still reads better capitalized.
+  // Greeting polish: a derived email prefix still reads better capitalized.
   const userName = _rawName ? _rawName.charAt(0).toUpperCase() + _rawName.slice(1) : null;
   const model = CommandCenter.buildModel({ props: _props, acqReviews: _acqReviews, userName });
   root.innerHTML = CommandCenter.renderHtml(model);
