@@ -107,12 +107,14 @@
       --theme-surface:   #E7EBF1;  /* raised/hover surfaces, solid borders    */
       --theme-accent:    #DCE3EC;  /* selected / active neutral surface       */
       --theme-on-accent: #14181F;  /* dark ink on gold/green/colored fills    */
-      --text-1:          #0F1622;  /* primary text / headings                 */
-      --text-2:          #33415A;  /* bright secondary                        */
-      --text-3:          #475569;  /* secondary                               */
-      --text-4:          #5A697E;  /* muted / labels                          */
-      --text-5:          #6E7A8F;  /* faint / disabled (kept legible on white) */
-      --line-rgb:        15, 23, 42; /* subtle slate-black hairlines on light  */
+      /* Torch readability: dark-slate text ladder tuned so even the faintest
+         tier clears WCAG AA on white — readability is prioritized over subtlety. */
+      --text-1:          #0D1522;  /* primary text / headings      (~16:1)     */
+      --text-2:          #263140;  /* bright secondary             (~10:1)     */
+      --text-3:          #38434F;  /* secondary                    (~7.7:1)    */
+      --text-4:          #495463;  /* muted / labels               (~6:1)      */
+      --text-5:          #58636F;  /* faint / metadata / disabled  (~4.9:1)    */
+      --line-rgb:        15, 23, 42; /* slate-black hairlines/outlines on light */
     }
     /* Accent tokens (auto-generated, per-hex). Dark themes keep the original
        hue exactly (Obsidian below; Midnight inherits); Torch darkens each for
@@ -2469,6 +2471,25 @@
       .bulk-t-amount { text-align: right; }
       .bulk-t-badges { flex-wrap: nowrap; overflow: hidden; }
       .inv-action-btns { flex-wrap: nowrap; justify-content: flex-end; gap: 6px; }
+    }
+    /* ── Invoice row: mobile redesign (desktop grid above is untouched) ──────
+       The summary row wraps instead of overflowing: name+amount share the top
+       line (name ellipsizes for long vendors), category/badges wrap beneath, and
+       the action buttons drop to their own full-width row where they wrap with
+       comfortable tap targets — accommodating any combination of buttons. */
+    @media (max-width: 767px) {
+      .bulk-tenant-summary { flex-wrap: wrap; row-gap: 9px; column-gap: 10px; padding: 12px 14px; }
+      .bulk-t-status { order: 0; }
+      .bulk-t-name   { order: 1; flex: 1 1 auto; min-width: 0; }
+      .bulk-t-amount { order: 2; flex: 0 0 auto; margin-left: auto; }
+      .bulk-t-cat    { order: 3; flex: 0 1 auto; }
+      .bulk-t-badges { order: 4; flex: 1 1 auto; }
+      .inv-action-btns { order: 5; flex: 1 1 100%; flex-wrap: wrap; gap: 8px; margin-top: 2px; }
+      .inv-action-btns .inv-act-btn,
+      .inv-action-btns .bulk-t-remove {
+        flex: 1 1 auto; min-height: 40px; padding: 9px 12px; font-size: 0.8rem;
+        display: inline-flex; align-items: center; justify-content: center; white-space: nowrap;
+      }
     }
     .inv-disputed-badge { font-size: 0.7rem; color: var(--c-fb923c); font-weight: 700; flex-shrink: 0; }
     .badge-disputed {
