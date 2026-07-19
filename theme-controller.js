@@ -41,7 +41,12 @@
     var sel = document.getElementById('themeSelect');
     if (sel && sel.value !== id) sel.value = id;
     var cur = document.getElementById('wsThemeCurrent');
-    if (cur) cur.textContent = labelOf(id);
+    if (cur) cur.textContent = labelOf(id).replace(' (Light)', '');
+    // mark the active option in the mobile submenu
+    var subs = document.querySelectorAll('.wsm-sub-item[data-theme-id]');
+    for (var i = 0; i < subs.length; i++) {
+      subs[i].setAttribute('aria-checked', subs[i].getAttribute('data-theme-id') === id ? 'true' : 'false');
+    }
   }
 
   // Keep the browser-chrome color (mobile) matching the current page background.

@@ -5642,7 +5642,7 @@ function _updateDualWritePill() {
     pill.title = 'Tap to copy diagnostic JSON';
     pill.style.cssText = [
       'position:fixed', 'bottom:16px', 'right:12px', 'z-index:99999',
-      'background:rgba(15,23,42,0.96)', 'border:1px solid rgba(var(--line-rgb), 0.18)',
+      'background:rgba(var(--shade-a-rgb), 0.96)', 'border:1px solid rgba(var(--line-rgb), 0.18)',
       'border-radius:10px', 'padding:8px 12px', 'font-family:monospace',
       'font-size:12px', 'line-height:1.7', 'cursor:pointer',
       'min-width:148px', 'box-shadow:0 4px 16px rgba(0,0,0,0.5)',
@@ -6064,7 +6064,7 @@ function _updateDisputeBadge() {
     badge.title = 'Dispute flow diagnostics — tap to copy JSON';
     badge.style.cssText = [
       'position:fixed', 'bottom:80px', 'right:12px', 'z-index:99999',
-      'background:rgba(15,23,42,0.96)', 'border:1px solid rgba(255,165,0,0.35)',
+      'background:rgba(var(--shade-a-rgb), 0.96)', 'border:1px solid rgba(255,165,0,0.35)',
       'border-radius:10px', 'padding:8px 12px', 'font-family:monospace',
       'font-size:12px', 'line-height:1.7', 'cursor:pointer',
       'min-width:148px', 'box-shadow:0 4px 16px rgba(0,0,0,0.5)',
@@ -8893,7 +8893,7 @@ async function runAllocation() {
     const names = tenantsWithIncompleteCapData.map(t => t.name).join(', ');
     const warn = document.createElement('div');
     warn.className = 'cam-cap-incomplete-warning';
-    warn.style.cssText = 'background:#431407;border:1px solid #f97316;color:var(--c-fed7aa);padding:10px 14px;border-radius:8px;margin-bottom:12px;font-size:0.85rem;';
+    warn.style.cssText = 'background:var(--bgc-431407);border:1px solid #f97316;color:var(--c-fed7aa);padding:10px 14px;border-radius:8px;margin-bottom:12px;font-size:0.85rem;';
     warn.innerHTML = `⚠️ <strong>CAM cap not enforced</strong> for ${esc(names)} — a prior-year base amount is required. Enter "Prior-Year CAM Base ($)" in each tenant card to enable cap enforcement.`;
     section.prepend(warn);
   }
@@ -10275,7 +10275,7 @@ function _buildReconciliationSummaryHtml(results, invoices, propName) {
 
   const variance = Math.abs(totalBilled - totalPool);
   const varianceBanner = variance > 0.05
-    ? `<div style="background:#431407;border:1px solid #f97316;color:var(--c-fed7aa);padding:10px 14px;border-radius:8px;margin-bottom:12px;font-size:0.85rem;">
+    ? `<div style="background:var(--bgc-431407);border:1px solid #f97316;color:var(--c-fed7aa);padding:10px 14px;border-radius:8px;margin-bottom:12px;font-size:0.85rem;">
         ⚠️ <strong>Reconciliation variance detected</strong> — total billed (${fmt(totalBilled)}) differs from total expense pool (${fmt(totalPool)}) by <strong>${fmt(variance)}</strong>. Re-check invoice amounts or re-run allocation.
       </div>`
     : '';
@@ -11136,7 +11136,7 @@ function rebuildReconciliationState() {
     restoreResults(prop);
   }
   const banner = document.createElement('div');
-  banner.style.cssText = 'position:fixed;top:16px;left:50%;transform:translateX(-50%);z-index:9999;background:#134e4a;color:var(--c-99f6e4);padding:10px 20px;border-radius:10px;font-size:0.85rem;font-weight:600;box-shadow:0 4px 20px rgba(0,0,0,.5);pointer-events:none;white-space:nowrap;';
+  banner.style.cssText = 'position:fixed;top:16px;left:50%;transform:translateX(-50%);z-index:9999;background:var(--bgc-134e4a);color:var(--c-99f6e4);padding:10px 20px;border-radius:10px;font-size:0.85rem;font-weight:600;box-shadow:0 4px 20px rgba(0,0,0,.5);pointer-events:none;white-space:nowrap;';
   banner.textContent = '↺ Reconciliation state rebuilt from saved data';
   document.body.appendChild(banner);
   setTimeout(() => banner.remove(), 4000);
