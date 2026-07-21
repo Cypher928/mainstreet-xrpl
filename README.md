@@ -35,7 +35,7 @@
 
 ## What It Does
 
-MainStreet automates the full Commercial Area Maintenance (CAM) reconciliation workflow — from uploading leases to generating printable tenant statements — with AI-powered document extraction, cryptographic (SHA-256) audit fingerprints, and a dispute-resolution workflow.
+MainStreet automates the full Common Area Maintenance (CAM) reconciliation workflow — from uploading leases to generating printable tenant statements — with AI-powered document extraction, cryptographic (SHA-256) audit fingerprints, and a dispute-resolution workflow.
 
 | Feature | Description |
 |---|---|
