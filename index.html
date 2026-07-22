@@ -50,6 +50,8 @@
   <script src="https://cdnjs.cloudflare.com/ajax/libs/pdf.js/3.11.174/pdf.min.js"></script>
   <script src="https://cdn.jsdelivr.net/npm/xlsx@0.18.5/dist/xlsx.full.min.js"></script>
   <script src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2"></script>
+  <!-- Host-based Supabase routing: production domain → prod project; previews (incl. pilot) → pilot project. Must precede script.js. -->
+  <script src="supabase-config.js"></script>
   <style>
     /* ── Theme design tokens ─────────────────────────────────────────────────
        The entire neutral palette — surfaces (elevation), text, and hairlines —

@@ -8,8 +8,15 @@
 // Set to true locally to enable verbose extraction/reconciliation tracing.
 const DEBUG = false;
 // ─── Supabase ─────────────────────────────────────────────────────────────────
-const SUPABASE_URL      = 'https://zhsuhehgehbzkmzurzyf.supabase.co';
-const SUPABASE_ANON_KEY = 'eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6Inpoc3VoZWhnZWhiemttenVyenlmIiwicm9sZSI6ImFub24iLCJpYXQiOjE3NzU4NDkwNDAsImV4cCI6MjA5MTQyNTA0MH0.HUl9ha9hhjIO1F_k8xPkqbZQnWx-ERRGbnmc6KS3lNE';
+// Project selection is host-based (see supabase-config.js): the production
+// domain uses the production project; localhost and every *.vercel.app preview
+// (including the pilot branch) use the isolated pilot project. supabase-config.js
+// MUST be loaded before script.js — it publishes window.__MS_SUPABASE.
+if (!window.__MS_SUPABASE) {
+  throw new Error('[script.js] supabase-config.js must be loaded before script.js (window.__MS_SUPABASE missing)');
+}
+const SUPABASE_URL      = window.__MS_SUPABASE.url;
+const SUPABASE_ANON_KEY = window.__MS_SUPABASE.anonKey;
 
 // Auth email redirects (password reset, signup confirmation) must always point at the
 // public production domain — never window.location.origin, which on a Vercel preview/
