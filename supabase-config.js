@@ -38,12 +38,11 @@
   };
 
   // Pilot project — the isolated customer-validation database.
-  // TODO(pilot): replace both placeholders with the Pilot Supabase project's
-  //   Project URL and anon (public) key, then commit. Until then the guard below
-  //   keeps previews from silently using production.
+  // Key is Supabase's publishable (client) key — the anon-key equivalent, safe
+  // to ship; row-level security enforces per-user access.
   var PILOT = {
-    url:     'https://PILOT_PROJECT_REF.supabase.co',
-    anonKey: 'PILOT_ANON_KEY',
+    url:     'https://bhmktujbxdbvdmpybmad.supabase.co',
+    anonKey: 'sb_publishable__Gi3NcVbKmnhu4SfjUxLHw_QpZMYEz1',
   };
 
   var host   = (location.hostname || '').toLowerCase();

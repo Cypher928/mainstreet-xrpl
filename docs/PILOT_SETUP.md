@@ -22,26 +22,18 @@ Do all of this with `main` frozen — no production change is required.
 2. Choose a strong DB password (store it in your password manager).
 3. Wait for it to provision.
 
-## Step 2 — Create schema + storage
-1. **SQL Editor → New query.** Run the migrations **in order**, one at a time:
-   ```
-   migrations/001_lease_jobs.sql
-   migrations/002_evidence_audit_tables.sql
-   migrations/003_cam_reconciliations.sql
-   migrations/004_lease_intelligence.sql
-   migrations/005_rls_hardening.sql
-   migrations/006_acquisition_reviews.sql
-   migrations/007_fix_acq_review_status.sql
-   migrations/008_database_hardening.sql
-   migrations/009_atomic_tenant_resync.sql
-   ```
-   They're idempotent (`IF NOT EXISTS` / `OR REPLACE`), so a re-run is safe.
-   `008b_verification_queries.sql` is **read-only checks** — optional, not a
-   schema step.
-2. **Storage → Create bucket** twice — the app uploads to these exact names:
-   - `leases`
-   - `invoices`
-   (Match the production project's public/private setting for each.)
+## Step 2 — Create schema + storage (one paste)
+1. **SQL Editor → New query.** Open **`docs/pilot-migrations-bundle.sql`**, copy
+   the whole file, paste, **Run.** It concatenates migrations 001–009 in order
+   **and** creates the two required **public** storage buckets (`leases`,
+   `invoices`). It's idempotent — safe to re-run.
+   - Prefer running them separately? The individual files are
+     `migrations/001…009_*.sql` in that order. `008b_verification_queries.sql` is
+     read-only checks — optional.
+   - The buckets must be **public**: uploads return `/object/public/…` URLs
+     (`api/upload.js:151`) that the app and Evidence Viewer fetch directly.
+     Uploads themselves go through the service-role key, so no extra object
+     policies are required for the basic flow.
 
 ## Step 3 — Vercel Preview env vars → point serverless at the pilot project
 Vercel → Project → Settings → **Environment Variables**. Add these for the
