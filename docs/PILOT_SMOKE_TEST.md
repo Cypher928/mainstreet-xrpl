@@ -28,27 +28,30 @@ environment. Re-run the code checks any time with the commands noted below._
 - Settlement endpoint is **read-only** and loads no seed → pilot cannot move funds.
 - Pilot XRPL network = **testnet**.
 
-## ⏳ Remaining
+## ✅ Now complete (live-confirmed)
 
-| Item | Why | Effort |
-|---|---|---|
-| **A. Disable email confirmation** in pilot Supabase (Authentication → Providers → Email → "Confirm email" off), or pre-create the user | so Create Account / Sign In completes (new-project email quota blocks confirmation mail) | 1 toggle |
-| **B. Add `PILOT_SUPABASE_SERVICE_ROLE_KEY`** (Vercel, **Preview** scope) = pilot `sb_secret_…` key | enables file uploads + server-side AI persistence; without it, browsing + login still work | 1 variable |
-| B-hygiene. Re-scope prod `SUPABASE_SERVICE_ROLE_KEY` to **Production only** | remove prod secret from the pilot runtime (code already never uses it there) | 1 edit |
-| **C. Confirm schema in DB** — run the 8-table + 2-bucket verify query in the pilot SQL editor | I can't read your DB from here; confirms migrations landed | 1 query |
+| Item | Status |
+|---|---|
+| **A. Email confirmation disabled** in pilot Supabase | ✅ done — sign-up logs straight in |
+| **B. `PILOT_SUPABASE_SERVICE_ROLE_KEY`** set (Preview) to the pilot `sb_secret_…` key | ✅ done — pilot redeployed to pick it up |
+| **C. Schema confirmed in DB** — all 8 tables present in the pilot Table Editor | ✅ verified |
+| **Live: login → app** on the isolated pilot DB | ✅ account created, dashboard loads |
+| **Live: property persists** — `properties` shows Cascade Commons | ✅ verified in Table Editor |
+| **Live: CAM reconciliation saves to server** ("✓ CAM Reconciliation Complete", no error) | ✅ verified |
 
-## Cannot verify from the sandbox (no network path to Vercel/Supabase)
+### Root cause of the earlier "CAM results weren't saved" (resolved)
+An **API/auth issue**, not migration or RLS policy. The pilot's service-role key
+is the new `sb_secret_…` format; the save endpoint needs a working service-role
+key to bypass RLS in `_ownsProperty` (api/cam-reconciliations.js:96). Setting
+`PILOT_SUPABASE_SERVICE_ROLE_KEY` to the correct **secret** key (not the
+publishable key) and redeploying the pilot fixed it.
 
-These need A+B done, then a ~2-minute live click-through:
-- File upload → lands in the **pilot** storage bucket (not production).
-- AI features (`claude` / `ask-lease` / `explain`) authenticate against the pilot project.
-- Data written in the app appears in the **pilot** DB and **not** in production.
+## Still worth a quick live check when convenient (optional)
+- File upload → lands in the **pilot** storage bucket (uses the same service-role path — expected to work now).
+- AI features (`Ask AI` / explain) against the pilot project.
 - Settlement panel reads **testnet**.
 
-The code paths for all of the above are verified; only the live runtime needs the
-two remaining config items.
-
 ## Bottom line
-The pilot is **operational for browsing and authentication against the isolated
-database right now.** Two small settings (A + B) unlock login and file uploads.
-Production is fully isolated and untouched.
+**The pilot is operational and isolated:** login, property persistence, and CAM
+reconciliation all run on the pilot database; production is untouched. Remaining
+checks are optional confirmations, not blockers.
