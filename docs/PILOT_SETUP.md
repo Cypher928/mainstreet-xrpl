@@ -37,37 +37,40 @@ Do all of this with `main` frozen — no production change is required.
      Uploads themselves go through the service-role key, so no extra object
      policies are required for the basic flow.
 
-## Step 3 — Vercel Preview env vars → point serverless at the pilot project
-Vercel → Project → Settings → **Environment Variables**. Add these for the
-**Preview** environment (ideally **branch-scoped to `pilot`** so throwaway
-`claude/*` previews don't inherit them). Use the **pilot** project's values:
+## Step 3 — Vercel Preview env var → ONE variable
+Project selection is now host/environment-based in code, so almost nothing needs
+Vercel config:
+- **Client** picks the project by hostname (`supabase-config.js`).
+- **Serverless** picks by `VERCEL_ENV` (`api/_pilot-target.js`): `production`
+  keeps its existing env vars unchanged; every preview uses the pilot project's
+  URL + publishable key (embedded, safe) and **testnet**.
 
-| Variable | Value (from the pilot project) |
-|---|---|
-| `SUPABASE_URL` | pilot Project URL |
-| `SUPABASE_ANON_KEY` | pilot anon (public) key |
-| `SUPABASE_SERVICE_ROLE_KEY` | pilot **service-role** key (server-only; never commit) |
-| `ANTHROPIC_API_KEY` | a key you're comfortable using for pilot (can be the same or a separate/limited key) |
-| `CLAUDE_MODEL` | optional; same as production if set |
-| `XRPL_NETWORK` | `testnet` — pilot must not read/report mainnet |
-| `XRPL_SETTLEMENT_WALLET_ADDRESS` | a **testnet** address, or leave unset (endpoint is read-only either way) |
+The only value that can't be embedded is the pilot **service-role secret**. Add
+exactly one variable:
 
-Confirm **no production secret is duplicated into Preview scope.** Production
-values stay in the Production environment only.
+| Variable | Environment | Value |
+|---|---|---|
+| `PILOT_SUPABASE_SERVICE_ROLE_KEY` | **Preview** only | pilot project's **secret** key (`sb_secret_…`, from pilot Supabase → Settings → API) |
+
+That's the whole required server config. `SUPABASE_URL`, `SUPABASE_ANON_KEY`,
+`XRPL_NETWORK`, etc. do **not** need Preview values anymore — the code supplies
+them for previews.
+
+**Recommended hygiene (defense in depth):** the pilot code never reads the
+production `SUPABASE_SERVICE_ROLE_KEY` on a preview, but if that variable is
+currently scoped to Preview/"All Environments," edit it to **Production only** so
+the prod secret isn't even present in the pilot runtime. (We already did this for
+`XRPL_SETTLEMENT_WALLET_SEED` and `..._ADDRESS`.)
 
 > The settlement endpoint (`api/rlusd-settlement.js`) is read-only and holds no
-> wallet seed, so pilot cannot move funds regardless. `XRPL_NETWORK=testnet` just
-> makes the status panel read testnet instead of mainnet.
+> wallet seed, so pilot cannot move funds regardless; on preview it now reads
+> **testnet** automatically.
 
-## Step 4 — Give me the two public pilot values (I finish the wiring)
-From the pilot project: **Settings → API** → copy the **Project URL** and the
-**anon / public** key. Paste both to me. I'll drop them into the `PILOT` block in
-`supabase-config.js` (anon keys are public by design — RLS enforces access — so
-they're safe to commit), then verify and push to `pilot`.
-
-Until those two values are filled, the guard in `supabase-config.js` keeps every
-preview **intentionally unconfigured** rather than letting it fall back to
-production — so nothing leaks in the meantime.
+## Step 4 — (done) pilot URL + publishable key are wired
+The pilot Project URL and publishable key are already embedded in
+`supabase-config.js` (client) and `api/_pilot-target.js` (server). Anon/publishable
+keys are public by design — RLS enforces access — so committing them is safe.
+Nothing further is needed here.
 
 ---
 

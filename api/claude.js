@@ -15,10 +15,11 @@ module.exports.config = {
   },
 };
 
-const _SB_URL  = (process.env.SUPABASE_URL      || '').trim();
-const _SB_ANON = (process.env.SUPABASE_ANON_KEY || '').trim();
+const _t = require('./_pilot-target');
+const _SB_URL  = _t.url;
+const _SB_ANON = _t.anonKey;
 if (!_SB_URL || !_SB_ANON) {
-  throw new Error('[api/claude] SUPABASE_URL and SUPABASE_ANON_KEY env vars are required');
+  throw new Error('[api/claude] Supabase URL/anon not configured for ' + _t.name + ' target');
 }
 
 // In-process sliding-window rate limiter (resets per cold-start; good enough for abuse prevention).
@@ -39,7 +40,7 @@ async function _verifyUser(req, res) {
   try {
     const r = await fetch(`${_SB_URL}/auth/v1/user`, {
       signal: AbortSignal.timeout(3000),
-      headers: { apikey: (process.env.SUPABASE_SERVICE_ROLE_KEY || _SB_ANON).trim(), Authorization: `Bearer ${tok}` },
+      headers: { apikey: (_t.serviceRoleKey || _SB_ANON).trim(), Authorization: `Bearer ${tok}` },
     });
     if (!r.ok) { res.status(401).json({ error: 'Invalid or expired token' }); return null; }
     const user = await r.json();

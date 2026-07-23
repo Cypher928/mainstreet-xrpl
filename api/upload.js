@@ -11,10 +11,11 @@ export const config = {
   },
 };
 
-const SUPABASE_URL      = (process.env.SUPABASE_URL      || '').trim();
-const SUPABASE_ANON_KEY = (process.env.SUPABASE_ANON_KEY || '').trim();
+const _t = require('./_pilot-target');
+const SUPABASE_URL      = _t.url;
+const SUPABASE_ANON_KEY = _t.anonKey;
 if (!SUPABASE_URL || !SUPABASE_ANON_KEY) {
-  throw new Error('[api/upload] SUPABASE_URL and SUPABASE_ANON_KEY env vars are required');
+  throw new Error('[api/upload] Supabase URL/anon not configured for ' + _t.name + ' target');
 }
 
 const _rl = new Map();
@@ -32,7 +33,7 @@ async function _verifyUser(req, res) {
   try {
     const r = await fetch(`${SUPABASE_URL}/auth/v1/user`, {
       signal: AbortSignal.timeout(3000),
-      headers: { apikey: (process.env.SUPABASE_SERVICE_ROLE_KEY || SUPABASE_ANON_KEY).trim(), Authorization: `Bearer ${tok}` },
+      headers: { apikey: (_t.serviceRoleKey || SUPABASE_ANON_KEY).trim(), Authorization: `Bearer ${tok}` },
     });
     if (!r.ok) { res.status(401).json({ error: 'Invalid or expired token' }); return null; }
     const user = await r.json();
@@ -118,7 +119,7 @@ export default async function handler(req, res) {
     return res.status(400).json({ error: uploadError });
   }
 
-  const key      = process.env.SUPABASE_SERVICE_ROLE_KEY || SUPABASE_ANON_KEY;
+  const key      = _t.serviceRoleKey || SUPABASE_ANON_KEY;
   const buffer   = Buffer.from(fileBase64, 'base64');
   const safeName = `${user.id}/${fileName.replace(/[^a-zA-Z0-9._-]/g, '_')}`;
   const uploadUrl = `${SUPABASE_URL}/storage/v1/object/${bucket}/${safeName}`;
