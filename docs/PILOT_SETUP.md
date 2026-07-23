@@ -24,12 +24,14 @@ Do all of this with `main` frozen — no production change is required.
 
 ## Step 2 — Create schema + storage (one paste)
 1. **SQL Editor → New query.** Open **`docs/pilot-migrations-bundle.sql`**, copy
-   the whole file, paste, **Run.** It concatenates migrations 001–009 in order
-   **and** creates the two required **public** storage buckets (`leases`,
-   `invoices`). It's idempotent — safe to re-run.
+   the whole file, paste, **Run.** It creates the base tables (`000_base_schema`:
+   `properties`, `tenants`), then runs migrations 001–009 in order, **and**
+   creates the two required **public** storage buckets (`leases`, `invoices`).
+   It's idempotent — safe to re-run.
    - Prefer running them separately? The individual files are
-     `migrations/001…009_*.sql` in that order. `008b_verification_queries.sql` is
-     read-only checks — optional.
+     `migrations/000…009_*.sql` in that order (000 first — a fresh project has no
+     `properties`/`tenants` tables, and 001 FKs to them).
+     `008b_verification_queries.sql` is read-only checks — optional.
    - The buckets must be **public**: uploads return `/object/public/…` URLs
      (`api/upload.js:151`) that the app and Evidence Viewer fetch directly.
      Uploads themselves go through the service-role key, so no extra object
