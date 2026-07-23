@@ -17394,6 +17394,19 @@ function appendPropertyTimelineEvent(property, event) {
     relatedDisputeIds:   Array.isArray(event.relatedDisputeIds)   ? event.relatedDisputeIds   : [],
     relatedInvoiceIds:   Array.isArray(event.relatedInvoiceIds)   ? event.relatedInvoiceIds   : [],
     derivedStateVersion: event.derivedStateVersion ?? property.derivedStateVersion ?? null,
+    // Property Timeline v1 (Phase 2) — manager logbook fields. Additive: existing
+    // events default these to empty/na, so nothing about prior behavior changes.
+    manual:              event.manual === true,
+    category:            event.category ?? null,
+    responsibility:      (['landlord','tenant','shared','na'].includes(event.responsibility) ? event.responsibility : 'na'),
+    leaseRef:            (typeof event.leaseRef === 'string' && event.leaseRef.trim()) ? event.leaseRef.trim() : null,
+    attachments:         Array.isArray(event.attachments)
+      ? event.attachments.filter(a => a && a.url).map(a => ({
+          name: String(a.name || 'attachment'),
+          url:  String(a.url),
+          kind: (['invoice','pdf','photo','file'].includes(a.kind) ? a.kind : 'file'),
+        }))
+      : [],
   };
   property.timeline.push(entry);
   if (property.timeline.length > 500) property.timeline = property.timeline.slice(-500);
@@ -17447,11 +17460,17 @@ function filterPropertyActivity(group) {
 function renderPropertyActivity(property) {
   const slot = document.getElementById('propertyActivitySlot');
   if (!slot) return;
+  const _ptlAddBtn = `<button class="tl-add-btn" onclick="event.stopPropagation(); if(window.PropertyTimeline){PropertyTimeline.openAddEntry(currentProperty());}">&#x2b;&nbsp;Add</button>`;
+  const _ptlToggle = "document.getElementById('paBody').classList.toggle('ap-body--open');this.querySelector('.ap-chevron').classList.toggle('ap-chevron--open')";
   const tlAll = Array.isArray(property.timeline) ? property.timeline.slice().reverse() : [];
   if (!tlAll.length) {
-    slot.innerHTML = _workspaceEmptyStateHtml('&#x1F553;',
-      'No activity has been recorded for this property yet.',
-      'Property activity will appear here as leases, invoices, reserves, and reports are created.');
+    slot.innerHTML = `<div class="ap-panel" id="propertyActivityPanel">
+      <div class="ap-header" onclick="${_ptlToggle}">
+        <div class="ap-header-left"><span class="ap-title">&#x1F4CB;&nbsp; Property Timeline</span></div>
+        <div class="ap-header-right">${_ptlAddBtn}<span class="ap-chevron ap-chevron--open">&#x25BC;</span></div>
+      </div>
+      <div id="paBody" class="ap-body ap-body--open">${_workspaceEmptyStateHtml('&#x1F553;', 'No timeline entries yet.', 'Add the first note — or activity will appear here as leases, invoices, and reports are created.')}</div>
+    </div>`;
     return;
   }
 
@@ -17475,10 +17494,21 @@ function renderPropertyActivity(property) {
     try { const d = new Date(ts); return d.toLocaleDateString('en-US', { month:'short', day:'numeric', year:'numeric' }) + ' ' + d.toLocaleTimeString('en-US', { hour:'numeric', minute:'2-digit' }); }
     catch { return ts; }
   };
-  const rows = tl.slice(0, 50).map((ev, idx) => {
+  const _dayKey   = ts => { try { return new Date(ts).toDateString(); } catch { return String(ts); } };
+  const _dayLabel = ts => { try { return new Date(ts).toLocaleDateString('en-US', { weekday:'short', month:'short', day:'numeric', year:'numeric' }); } catch { return String(ts); } };
+  const _RESP_LABEL = { landlord: 'Landlord', tenant: 'Tenant', shared: 'Shared' };
+  // Registry-driven label/icon when the Property Timeline module is present;
+  // falls back to the built-in type map so existing auto-events keep rendering.
+  const _describe = ev => (window.PropertyTimeline && typeof PropertyTimeline.describe === 'function')
+    ? PropertyTimeline.describe(ev)
+    : { label: (_TYPE_LABEL[ev.type] || ev.category || ev.type), icon: null };
+  const _visible = tl.slice(0, 50);
+  let _lastDay = null;
+  const rows = _visible.map((ev, idx) => {
+    const _d     = _describe(ev);
     const dotCls = _SEVERITY_DOT[ev.severity] || 'tl-dot--blue';
-    const icon   = _SEVERITY_ICON[ev.severity] || 'ℹ';
-    const lbl    = _TYPE_LABEL[ev.type] || ev.type;
+    const icon   = _d.icon || _SEVERITY_ICON[ev.severity] || 'ℹ';
+    const lbl    = _d.label || ev.type;
     const metaStr = ev.metadata && Object.keys(ev.metadata).length
       ? Object.entries(ev.metadata).map(([k,v]) => `<span class="pa-meta-kv"><span class="pa-meta-k">${esc(k)}</span><span class="pa-meta-v">${esc(String(v))}</span></span>`).join('')
       : '';
@@ -17488,15 +17518,30 @@ function renderPropertyActivity(property) {
       ? ((property.tenants || []).find(t => t && (t.id === ev.tenantId || t.tenant_id === ev.tenantId)) || {}).tenant_name || null
       : null;
     const tenantHtml = _evTenantName ? `<span class="tl-entity">${esc(_evTenantName)}</span>` : '';
-    return `<div class="tl-item">
-      <div class="tl-track"><div class="tl-dot ${dotCls}"></div>${idx < tl.length - 1 ? '<div class="tl-line"></div>' : ''}</div>
+    const respHtml = (ev.responsibility && ev.responsibility !== 'na')
+      ? `<span class="tl-resp tl-resp--${ev.responsibility}">${esc(_RESP_LABEL[ev.responsibility] || ev.responsibility)}</span>` : '';
+    const leaseHtml = ev.leaseRef ? `<div class="tl-refline"><span class="tl-lease-ref">&#x1F4C4;&nbsp;${esc(ev.leaseRef)}</span></div>` : '';
+    const attHtml = (ev.attachments && ev.attachments.length)
+      ? `<div class="tl-attachments">` + ev.attachments.map(a => {
+          if (a.kind === 'photo') return `<a class="tl-attach tl-attach--photo" href="${esc(a.url)}" target="_blank" rel="noopener" title="${esc(a.name)}"><img class="tl-thumb" src="${esc(a.url)}" alt="${esc(a.name)}" loading="lazy"></a>`;
+          const _ic = a.kind === 'invoice' ? '&#x1F9FE;' : (a.kind === 'pdf' ? '&#x1F4C4;' : '&#x1F4CE;');
+          return `<a class="tl-attach" href="${esc(a.url)}" target="_blank" rel="noopener">${_ic}&nbsp;${esc(a.name)}</a>`;
+        }).join('') + `</div>` : '';
+    let _divider = '';
+    const _dk = _dayKey(ev.timestamp);
+    if (_dk !== _lastDay) { _divider = `<div class="tl-day-divider">${esc(_dayLabel(ev.timestamp))}</div>`; _lastDay = _dk; }
+    return _divider + `<div class="tl-item">
+      <div class="tl-track"><div class="tl-dot ${dotCls}"></div>${idx < _visible.length - 1 ? '<div class="tl-line"></div>' : ''}</div>
       <div class="tl-content">
         <div class="tl-top">
           <span class="tl-type-badge">${esc(lbl)}</span>
           <span class="pa-sev-icon">${icon}</span>
           <span class="tl-title">${esc(ev.title)}</span>
+          ${respHtml}
         </div>
         ${ev.description ? `<div class="tl-detail">${esc(ev.description)}</div>` : ''}
+        ${leaseHtml}
+        ${attHtml}
         <div class="tl-meta">
           <span class="tl-ts">${fmtTs(ev.timestamp)}</span>
           ${ev.actor && ev.actor !== 'System' ? `<span class="tl-actor">${esc(ev.actor)}</span>` : ''}
@@ -17508,13 +17553,13 @@ function renderPropertyActivity(property) {
   }).join('');
 
   slot.innerHTML = `<div class="ap-panel" id="propertyActivityPanel">
-    <div class="ap-header" onclick="document.getElementById('paBody').classList.toggle('ap-body--open');this.querySelector('.ap-chevron').classList.toggle('ap-chevron--open')">
-      <div class="ap-header-left"><span class="ap-title">&#x1F4CB;&nbsp; Property Activity &mdash; ${tlAll.length} event${tlAll.length !== 1 ? 's' : ''}</span></div>
-      <div class="ap-header-right"><span class="ap-chevron">&#x25BC;</span></div>
+    <div class="ap-header" onclick="${_ptlToggle}">
+      <div class="ap-header-left"><span class="ap-title">&#x1F4CB;&nbsp; Property Timeline &mdash; ${tlAll.length} event${tlAll.length !== 1 ? 's' : ''}</span></div>
+      <div class="ap-header-right">${_ptlAddBtn}<span class="ap-chevron ap-chevron--open">&#x25BC;</span></div>
     </div>
     <div id="paBody" class="ap-body ap-body--open">
       <div class="tl-filter-bar">${filterChipsHtml}</div>
-      ${tl.length ? `<div class="tl-list">${rows}</div>` : `<div class="tl-detail" style="padding:6px 0">No events in this category.</div>`}
+      ${_visible.length ? `<div class="tl-list">${rows}</div>` : `<div class="tl-detail" style="padding:6px 0">No events in this category.</div>`}
       ${tl.length > 50 ? `<div class="tl-detail" style="padding:6px 0">Showing 50 of ${tl.length} events</div>` : ''}
     </div>
   </div>`;

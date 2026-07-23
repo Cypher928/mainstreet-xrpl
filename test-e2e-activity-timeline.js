@@ -189,9 +189,9 @@ const SUPABASE_MOCK = `
     const slotHtml = await page.$eval('#propertyActivitySlot', el => el.innerHTML).catch(() => '');
     assert(!slotHtml.includes('No activity has been recorded for this property yet.'),
       'ACT-2: empty-state message is NOT shown for the populated demo property');
-    assert(slotHtml.includes('Property Activity'),
-      'ACT-2: Property Activity panel header is rendered');
-    assert(/Property Activity.*?(\d+) event/.test(slotHtml),
+    assert(slotHtml.includes('Property Timeline'),
+      'ACT-2: Property Timeline panel header is rendered');
+    assert(/Property Timeline.*?(\d+) event/.test(slotHtml),
       'ACT-2: panel header shows an event count badge');
 
     section('ACT-3: Timeline includes lease, invoice, and dispute events');
