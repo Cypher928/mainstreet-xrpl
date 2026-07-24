@@ -50,7 +50,7 @@ window.PropertyWorkspace = (function () {
     if (rd.expiredCount > 0) items.push(_mk('critical', '\u{1F534}',
       _plural(rd.expiredCount, 'lease', 'leases') + ' expired',
       'Confirm holdover status before it affects renewals.',
-      { tab: 'documents', anchors: ['cardLeases'] }, 'Review leases'));
+      { tab: 'spaces', anchors: ['cardLeases','spacesSection'] }, 'Review leases'));
     // Warnings — action needed before CAM/recoveries can be trusted.
     if (openDisputes > 0) items.push(_mk('warning', '\u{2696}\u{FE0F}',
       _plural(openDisputes, 'open dispute', 'open disputes'),
@@ -63,7 +63,7 @@ window.PropertyWorkspace = (function () {
     if (rd.missingCapCount > 0) items.push(_mk('warning', '\u{1F6E1}\u{FE0F}',
       'Missing cap on ' + _plural(rd.missingCapCount, 'NNN tenant', 'NNN tenants'),
       'Without a cap, overbilling can’t be caught.',
-      { tab: 'documents', anchors: ['cardLeases'] }, 'Add cap'));
+      { tab: 'spaces', anchors: ['cardLeases','spacesSection'] }, 'Add cap'));
     // Informational — worth knowing, not urgent.
     if (rd.proRataGap >= 5) items.push(_mk('info', '\u{1F4C9}',
       'Vacancy reducing recoveries',
@@ -72,7 +72,7 @@ window.PropertyWorkspace = (function () {
     if (rd.expiringCount > 0) items.push(_mk('info', '\u{1F4C5}',
       _plural(rd.expiringCount, 'lease expires', 'leases expire') + ' within 12 months',
       'Start renewal conversations early.',
-      { tab: 'documents', anchors: ['cardLeases'] }, 'View leases'));
+      { tab: 'spaces', anchors: ['cardLeases','spacesSection'] }, 'View leases'));
     if (rd.lowConfCount > 0) items.push(_mk('info', '\u{1F50D}',
       'Lease terms need review on ' + _plural(rd.lowConfCount, 'tenant', 'tenants'),
       'Low-confidence extractions should be verified.',

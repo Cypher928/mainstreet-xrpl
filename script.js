@@ -3140,7 +3140,12 @@ function resetTenant(i) {
 // 'estoppels' is intentionally omitted — the Estoppels feature is not built yet and its
 // tab/pane are hidden so the app reads as production-ready. Re-add 'estoppels' here and
 // un-hide #wsTabBtn-estoppels in index.html once the feature ships.
-const WORKSPACE_TABS = ['overview', 'spaces', 'cam', 'reserves', 'reports', 'documents'];
+// Information architecture: the app is organized around real estate subjects,
+// not software modules — Property (the building as a whole), Spaces (each
+// suite), CAM (a workflow that references invoices), Reports (outputs only),
+// Reserves (capital planning). 'documents' is retired from navigation: lease
+// intake moved under Spaces, property documents live on Property.
+const WORKSPACE_TABS = ['overview', 'property', 'spaces', 'cam', 'reports', 'reserves'];
 let _activeWorkspaceTab = 'overview';
 
 function switchWorkspaceTab(tab) {
@@ -3381,7 +3386,7 @@ function renderPropertyKpiHeader(property) {
   const tiles = [
     { label: 'Occupancy', value: occupancyPct !== null ? occupancyPct + '%' : '—',
       sub: totalSqft ? `${occSqft.toLocaleString()} / ${totalSqft.toLocaleString()} sqft` : 'Set total sqft to enable',
-      tab: 'documents', anchor: 'cardLeases' },
+      tab: 'spaces', anchor: 'cardLeases,spacesSection' },
     { label: 'Spaces', value: tenants.length, sub: tenants.length === 1 ? '1 tenant space' : `${tenants.length} tenant spaces`,
       tab: 'spaces', anchor: 'spacesSection' },
     { label: 'Active Reserves', value: reserves.length,
@@ -3393,7 +3398,7 @@ function renderPropertyKpiHeader(property) {
     { label: 'Lease Expirations', value: readiness.expiringCount || 0,
       warn: (readiness.expiringCount || 0) > 0, alert: (readiness.expiredCount || 0) > 0,
       sub: readiness.expiredCount ? `${readiness.expiredCount} already expired` : 'Next 12 months',
-      tab: 'documents', anchor: 'cardLeases' },
+      tab: 'spaces', anchor: 'cardLeases,spacesSection' },
     { label: 'CAM Expenses', value: _fmtKpiMoney(camTotal), sub: camTotal ? 'Total pool, most recent run' : 'No CAM run yet',
       tab: 'cam', anchor: 'results,cardInvoices' },
   ];
@@ -20466,6 +20471,11 @@ function renderProperty(property) {
   // ── Spaces (top-level, subject-first navigation) ───────────────────────
   try {
     if (window.TenantSpace && window.TenantSpace.renderList) window.TenantSpace.renderList(property);
+  } catch (e) { }
+
+  // ── Property subject page (building-as-a-whole records) ────────────────
+  try {
+    if (window.PropertyOS) { window.PropertyOS.init(); window.PropertyOS.renderPropertyPage(property); }
   } catch (e) { }
 
   // ── CAM Results ───────────────────────────────────────────────────────

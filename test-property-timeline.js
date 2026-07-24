@@ -282,9 +282,9 @@ srv.listen(PORT, '127.0.0.1', async () => {
       const tenants = (p.tenants || []).map(t => Object.assign({}, t));
       if (tenants[0]) tenants[0].end_date = '2020-01-01';
       PropertyWorkspace.renderAttention(Object.assign({}, p, { tenants, disputes: [] }));
-      PropertyWorkspace.act(0); // first item = expired lease → documents pane
-      const docs = document.getElementById('wsPane-documents');
-      return docs ? getComputedStyle(docs).display !== 'none' : false;
+      PropertyWorkspace.act(0); // first item = expired lease → Spaces (leases live with their space)
+      const pane = document.getElementById('wsPane-spaces');
+      return pane ? getComputedStyle(pane).display !== 'none' : false;
     });
     navd ? ok('clicking an item action navigates to its source pane') : bad('action did not navigate');
     await page.evaluate(() => { renderProperty(currentProperty()); switchWorkspaceTab('overview'); });
@@ -366,8 +366,8 @@ srv.listen(PORT, '127.0.0.1', async () => {
     });
     view.open ? ok('Tenant Space view opens') : bad('space view did not open');
     view.framing ? ok('"everything about this space, in one place" framing present') : bad('no framing');
-    (['Lease & terms', 'Timeline', 'Photos', 'Invoices', 'Warranties', 'Documents', 'Notes', 'CAM activity'].every(s => view.titles.includes(s)))
-      ? ok('all sections render (lease · timeline · photos · invoices · warranties · docs · notes · CAM)') : bad('sections', JSON.stringify(view.titles));
+    (['Lease', 'Financial activity', 'Maintenance', 'Photos', 'Documents', 'Timeline'].every(s => view.titles.includes(s)))
+      ? ok('all sections render (lease · financial · maintenance · photos · documents · timeline)') : bad('sections', JSON.stringify(view.titles));
     view.photoImg ? ok('photos render as thumbnails in the space view') : bad('no photo thumbnails');
 
     const openBtn = await page.evaluate(() => {
@@ -493,6 +493,78 @@ srv.listen(PORT, '127.0.0.1', async () => {
     list.visible ? ok('Spaces tab opens its own pane') : bad('spaces pane not visible');
     (list.cards >= 1) ? ok('Spaces lists each tenant space as a card (' + list.cards + ')') : bad('no space cards');
     list.opens ? ok('each space card has "Open space →"') : bad('no open button');
+
+    sec('Information architecture — subject-based navigation');
+    const ia = await page.evaluate(() => {
+      if (window.PropertyOS) { PropertyOS.init(); PropertyOS.renderPropertyPage(currentProperty()); }
+      return {
+        tabs: (typeof WORKSPACE_TABS !== 'undefined') ? WORKSPACE_TABS.slice() : [],
+        propBtn: !!document.getElementById('wsTabBtn-property'),
+        propPane: !!document.getElementById('wsPane-property'),
+        docsRetired: (typeof WORKSPACE_TABS !== 'undefined') && !WORKSPACE_TABS.includes('documents'),
+        setupOnProperty: !!document.querySelector('#wsPane-property #cardSetup'),
+        leasesOnSpaces: !!document.querySelector('#wsPane-spaces #cardLeases'),
+      };
+    });
+    (ia.tabs.join(',') === 'overview,property,spaces,cam,reports,reserves')
+      ? ok('nav is subject-based: Overview · Property · Spaces · CAM · Reports · Reserves') : bad('tab order', ia.tabs.join(','));
+    (ia.propBtn && ia.propPane) ? ok('Property is a top-level tab with its own pane') : bad('property tab/pane missing');
+    ia.docsRetired ? ok('Documents retired from navigation (records moved to their subjects)') : bad('documents still in nav');
+    ia.setupOnProperty ? ok('Property Setup lives on Property (building as a whole)') : bad('setup not on property');
+    ia.leasesOnSpaces ? ok('Lease intake lives under Spaces (no app-wide Lease section)') : bad('leases not under spaces');
+
+    sec('Invoices belong to the Property — CAM references them');
+    const invArch = await page.evaluate(() => {
+      const p = currentProperty();
+      const before = PropertyOS.invoices(p).length;
+      PropertyOS.setInvoiceRelation(0, 'system', 'roof');
+      PropertyOS.setInvoiceRelation(0, 'camEligible', false);
+      const t = (p.tenants || [])[0];
+      PropertyOS.setInvoiceRelation(1, 'spaceId', t.id);
+      const after = PropertyOS.invoices(p);
+      return {
+        onProperty: Array.isArray(p.invoices) && p.invoices.length > 0,
+        count: before,
+        sys: after[0].system, cam: after[0].camEligible, space: after[1].spaceId, tId: t.id,
+        register: !!document.querySelector('#wsPane-property .pos-reg'),
+        systems: document.querySelectorAll('#wsPane-property .pos-sys-cell').length,
+      };
+    });
+    invArch.onProperty ? ok('invoices are stored on the property record (property.invoices)') : bad('invoices not property-owned');
+    invArch.register ? ok('Property page shows the invoice register (uploaded once to the property)') : bad('no invoice register');
+    (invArch.sys === 'roof') ? ok('an invoice can relate to a Building System') : bad('system relation', invArch.sys);
+    (invArch.cam === false) ? ok('an invoice can be marked not CAM-eligible (CAM references, does not own)') : bad('cam flag', String(invArch.cam));
+    (invArch.space === invArch.tId) ? ok('an invoice can relate to a Space') : bad('space relation', invArch.space);
+    (invArch.systems >= 6) ? ok('Building systems surface on Property (' + invArch.systems + ')') : bad('systems', String(invArch.systems));
+
+    sec('Success test — a manager knows where to go without thinking');
+    const where = await page.evaluate(() => {
+      const has = (sel) => !!document.querySelector(sel);
+      return {
+        insurance: has('#wsPane-property .pos-docs, #wsPane-property .pos-empty'), // property documents section exists
+        taxbill:   has('#wsPane-property #propertyOsBody'),
+        roofwarr:  has('#wsPane-property .pos-sys'),
+        lease:     has('#wsPane-spaces #spacesList'),
+        photos:    has('#wsPane-spaces #spacesList'),
+        cam:       has('#wsPane-cam'),
+        statement: has('#wsPane-reports #reportsSection'),
+      };
+    });
+    (where.insurance && where.taxbill) ? ok('"I need the insurance policy / tax bill" → Property') : bad('property docs missing');
+    where.roofwarr ? ok('"I need the roof warranty" → Property (building systems)') : bad('building systems missing');
+    (where.lease && where.photos) ? ok('"I need the lease / photos for a tenant" → Spaces') : bad('spaces missing');
+    where.cam ? ok('"I need to see why CAM increased" → CAM') : bad('cam missing');
+    where.statement ? ok('"I need to send the tenant statement" → Reports (outputs)') : bad('reports missing');
+
+    const spaceSecs = await page.evaluate(() => {
+      const t = (currentProperty().tenants || [])[0];
+      TenantSpace.openSpace(t.id);
+      const titles = Array.from(document.querySelectorAll('#tsOverlay .ts-sec-title')).map(e => e.textContent);
+      TenantSpace.closeSpace();
+      return titles;
+    });
+    (['Lease', 'Financial activity', 'Maintenance', 'Photos', 'Documents', 'Timeline'].every(s => spaceSecs.includes(s)))
+      ? ok('Space sections match the model (Lease · Financial · Maintenance · Photos · Documents · Timeline)') : bad('space sections', JSON.stringify(spaceSecs));
 
     sec('Console errors');
     const errs = logs.filter(l => (l.t === 'error' || l.t === 'PAGEERROR')

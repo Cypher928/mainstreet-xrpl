@@ -157,7 +157,34 @@ window.TenantSpace = (function () {
     var camEventsHtml = rec.cam.length
       ? '<div class="ts-timeline"' + (camResultHtml ? ' style="margin-top:8px"' : '') + '>' + rec.cam.map(function (e) { return '<div class="ts-tl-row"><span class="ts-tl-when">' + _esc(_fmtDate(e.timestamp)) + '</span><span class="ts-tl-title">' + _esc(e.title) + '</span></div>'; }).join('') + '</div>'
       : '';
-    var camHtml = (camResultHtml || camEventsHtml) ? (camResultHtml + camEventsHtml) : _empty('No CAM activity for this space yet.');
+    var camHtml = (camResultHtml || camEventsHtml) ? (camResultHtml + camEventsHtml) : '';
+
+    // ── Financial activity: CAM allocation + this space's invoices ───────────
+    var finHtml = (camHtml || invHtml !== _empty('No invoices yet.'))
+      ? (camHtml || '') + (rec.invoices.length ? '<div class="ts-lbl">Invoices</div>' + invHtml : '')
+      : '';
+    if (!finHtml) finHtml = _empty('No CAM allocations or invoices for this space yet.');
+
+    // ── Maintenance: work performed on this space + its warranties ───────────
+    var maintEvents = rec.events.filter(function (e) {
+      return /^(maintenance|repair|vendor|inspection|capital_improvement)$/.test(e.category || '');
+    });
+    var maintCount = maintEvents.length + rec.counts.warranties;
+    var maintHtml = '';
+    if (maintEvents.length) {
+      maintHtml += '<div class="ts-timeline">' + maintEvents.slice(0, 8).map(function (e) {
+        var resp = (e.responsibility && e.responsibility !== 'na') ? ' <span class="ts-tl-b">' + _esc(e.responsibility) + '</span>' : '';
+        return '<div class="ts-tl-row"><span class="ts-tl-when">' + _esc(_fmtDate(e.timestamp)) + '</span>' +
+          '<span class="ts-tl-title">' + _esc(e.title) + '</span>' + resp + '</div>';
+      }).join('') + '</div>';
+    }
+    if (rec.warranties.length) maintHtml += '<div class="ts-lbl">Warranties</div>' + warrHtml;
+    if (!maintHtml) maintHtml = _empty('No repairs, vendor work, or warranties recorded for this space yet.');
+
+    // ── Documents & notes ────────────────────────────────────────────────────
+    var docNotesHtml = (rec.documents.length ? docHtml : '') +
+      (rec.notes.length ? '<div class="ts-lbl">Notes</div>' + notesHtml : '');
+    if (!docNotesHtml) docNotesHtml = _empty('No documents or notes for this space yet.');
 
     var ov = document.createElement('div');
     ov.id = 'tsOverlay'; ov.className = 'ts-overlay';
@@ -170,14 +197,12 @@ window.TenantSpace = (function () {
         '</div>' +
         '<div class="ts-summary">' + _esc(rec.summary) + '</div>' +
         '<div class="ts-body">' +
-          _section('Lease & terms', null, leaseHtml) +
-          _section('Timeline', rec.counts.events, timelineHtml) +
+          _section('Lease', null, leaseHtml) +
+          _section('Financial activity', rec.counts.cam + rec.counts.invoices, finHtml) +
+          _section('Maintenance', maintCount, maintHtml) +
           _section('Photos', rec.counts.photos, photosHtml) +
-          _section('Invoices', rec.counts.invoices, invHtml) +
-          _section('Warranties', rec.counts.warranties, warrHtml) +
-          _section('Documents', rec.counts.documents, docHtml) +
-          _section('Notes', rec.counts.notes, notesHtml) +
-          _section('CAM activity', rec.counts.cam, camHtml) +
+          _section('Documents', rec.counts.documents + rec.counts.notes, docNotesHtml) +
+          _section('Timeline', rec.counts.events, timelineHtml) +
         '</div>' +
         '<div class="ts-actbar"><button class="ts-act-btn" id="tsActBtn">\u{26A1}&nbsp;Act on this space</button>' +
           '<div class="ts-act-hint">Review the record above, then take action — grounded in it.</div></div>' +
@@ -240,6 +265,7 @@ window.TenantSpace = (function () {
       '.ts-act-hint{font-size:0.72rem;color:var(--text-4,#64748B);text-align:center;margin-top:6px;}',
       '.ts-actions{padding:0 18px 18px;}',
       '.ts-cam-result{border-left:3px solid ' + gold + ';padding-left:10px;}',
+      '.ts-lbl{font-size:0.68rem;font-weight:800;text-transform:uppercase;letter-spacing:0.04em;color:var(--text-4,#64748B);margin:10px 0 5px;}',
       '.ts-body{padding:8px 18px 20px;max-height:70vh;overflow-y:auto;}',
       '.ts-sec{padding:12px 0;border-bottom:1px solid rgba(var(--line-rgb,255,255,255),0.06);}',
       '.ts-sec:last-child{border-bottom:none;}',

@@ -91,7 +91,7 @@ window.PropertyTimeline = (function () {
   var GROUP_NAV = {
     cam:      { tab: 'cam',       anchors: ['results', 'cardInvoices'] },
     disputes: { tab: 'cam',       anchors: ['disputeSection', 'openDisputesWrap'] },
-    leases:   { tab: 'documents', anchors: ['cardLeases'] },
+    leases:   { tab: 'spaces',    anchors: ['cardLeases','spacesSection'] },
     reserves: { tab: 'reserves',  anchors: ['escrowSection'] },
   };
   // Returns { tab, anchors } for events whose source lives in a pane, else null
