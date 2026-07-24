@@ -1336,6 +1336,9 @@ Return best guess — do not leave fields null unless truly impossible.`;
   if (LI && !LI.fitsInOneRequest(file.size)) {
     return await _visionExtractCompressed(file, extractionPrompt, LI);
   }
+  // Telemetry: vision-direct run (scanned PDF small enough to send whole).
+  const _tel = LI ? LI.begin(file.size) : null;
+  if (_tel) LI.mark(_tel, { path: LI.PATHS.VISION_DIRECT, payloadBytes: LI.estimateEncodedBytes(file.size) });
 
   const messages = [{
     role: 'user',
@@ -1359,15 +1362,28 @@ Return best guess — do not leave fields null unless truly impossible.`;
     // compressed path rather than surfacing a raw HTTP code to the user.
     if (res.status === 413 && LI) {
       console.warn('[EXTRACTION] 413 on direct vision — retrying compressed');
+      if (_tel) LI.end(_tel, 'failure', 'http-413-retried-compressed');
       return await _visionExtractCompressed(file, extractionPrompt, LI);
     }
+    if (_tel) LI.end(_tel, 'failure', 'http-' + res.status);
     throw new Error(`Claude PDF direct failed: HTTP ${res.status}`);
   }
   const data = await res.json();
   // Mark telemetry: PDF direct path uses Claude's native document understanding
   if (window.ms_extractionDebug) window.ms_extractionDebug.OCRUsed = true;
+  if (_tel) { LI.end(_tel, 'success'); _recordIngestTelemetry(LI.summary(_tel)); }
   console.log('[EXTRACTION] PDF direct (vision) path used');
   return data;
+}
+
+// Last ingestion run, attached to the lease job's debug_summary so path mix can
+// be aggregated in SQL. Operational metrics only — no document content.
+let _lastIngestTelemetry = null;
+function _recordIngestTelemetry(s) {
+  try {
+    _lastIngestTelemetry = s || null;
+    if (window.ms_extractionDebug) window.ms_extractionDebug.ingest = s || null;
+  } catch (_) {}
 }
 
 // Downscale a large scanned lease and extract fields in page batches, merging
@@ -1375,10 +1391,30 @@ Return best guess — do not leave fields null unless truly impossible.`;
 // discards the others, so a 40-page scan with one bad page still extracts.
 async function _visionExtractCompressed(file, extractionPrompt, LI) {
   const t0 = Date.now();
-  const pages = await LI.rasterize(file, { dpi: LI.DEFAULT_DPI });
-  if (!pages.length) throw new Error('Could not read any pages from this PDF');
+  const tel = LI.begin(file.size);
+  let pages;
+  try {
+    pages = await LI.rasterize(file, { dpi: LI.DEFAULT_DPI });
+  } catch (e) {
+    LI.end(tel, 'failure', 'rasterize-failed');
+    _recordIngestTelemetry(LI.summary(tel));
+    throw e;
+  }
+  if (!pages.length) {
+    LI.end(tel, 'failure', 'no-readable-pages');
+    _recordIngestTelemetry(LI.summary(tel));
+    throw new Error('Could not read any pages from this PDF');
+  }
 
   const batches = LI.planBatches(pages.map(p => p.bytes));
+  // A single batch is "compressed"; more than one is "chunked" — the distinction
+  // tells us whether copier scans are merely downscaled or genuinely split.
+  LI.mark(tel, {
+    path: batches.length > 1 ? LI.PATHS.VISION_CHUNKED : LI.PATHS.VISION_COMPRESSED,
+    pages: pages.length,
+    batches: batches.length,
+    payloadBytes: pages.reduce((s, p) => s + (p.bytes || 0), 0),
+  });
   console.log(`[EXTRACTION] compressed vision — ${pages.length} pages → ${batches.length} batch(es)`,
     `| ${(file.size / 1048576).toFixed(1)}MB source`);
 
@@ -1412,7 +1448,14 @@ async function _visionExtractCompressed(file, extractionPrompt, LI) {
     }
   }
 
-  if (!parts.length) throw new Error('Could not read this scanned lease — every page batch failed');
+  LI.mark(tel, { batchFailures: failures });
+  if (!parts.length) {
+    LI.end(tel, 'failure', 'all-batches-failed');
+    _recordIngestTelemetry(LI.summary(tel));
+    throw new Error('Could not read this scanned lease — every page batch failed');
+  }
+  LI.end(tel, 'success', failures ? failures + '-of-' + batches.length + '-batches-failed' : null);
+  _recordIngestTelemetry(LI.summary(tel));
   const merged = LI.mergeExtractions(parts);
   if (window.ms_extractionDebug) {
     window.ms_extractionDebug.OCRUsed = true;
@@ -2886,7 +2929,16 @@ async function handleLease(i, file) {
     let _visionTextPromise = null;
     const _usedPdfDirect = !(leaseText && leaseText.length >= 50);
     if (!_usedPdfDirect) {
-      extracted = await callClaudeForLease(leaseText);
+      // Telemetry: the text path — the majority case we want to confirm.
+      const _tt = window.LeaseIngest ? window.LeaseIngest.begin(file.size) : null;
+      if (_tt) window.LeaseIngest.mark(_tt, { path: window.LeaseIngest.PATHS.TEXT, payloadBytes: leaseText.length });
+      try {
+        extracted = await callClaudeForLease(leaseText);
+        if (_tt) { window.LeaseIngest.end(_tt, 'success'); _recordIngestTelemetry(window.LeaseIngest.summary(_tt)); }
+      } catch (e) {
+        if (_tt) { window.LeaseIngest.end(_tt, 'failure', 'text-extraction-failed'); _recordIngestTelemetry(window.LeaseIngest.summary(_tt)); }
+        throw e;
+      }
     } else {
       // Start text extraction concurrently with field extraction — both need the
       // same file but neither depends on the other's result.
@@ -4180,6 +4232,9 @@ function failLeaseJob(jobId, err, stage) {
     progress:                _JOB_STAGES[stage]?.progress ?? 0,
     error_message:           err?.message || String(err),
     processing_completed_at: new Date().toISOString(),
+    // Capture which ingestion path was in flight when it failed — the key
+    // signal for "are large scans still failing?".
+    debug_summary:           { ingest: _lastIngestTelemetry || null },
   });
 }
 
@@ -4206,6 +4261,12 @@ function finalizeLeaseJob(jobId, { norm, conf, meta, tenantId }) {
       leased_sqft:     norm?.leased_sqft  || null,
       start_date:      norm?.start_date   || null,
       end_date:        norm?.end_date     || null,
+      // Ingestion telemetry — which path ran, sizes, pages, batches, timing.
+      // Operational metrics only (no document content). Lives in debug_summary
+      // (jsonb) so no schema migration is required. extraction_route stays
+      // 'text'|'pdf-direct' to satisfy the lease_jobs CHECK constraint; the
+      // finer-grained path is here.
+      ingest:          _lastIngestTelemetry || null,
     },
   });
   return needsReview;
