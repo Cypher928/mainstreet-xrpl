@@ -316,6 +316,55 @@ srv.listen(PORT, '127.0.0.1', async () => {
     spaceSave.hasSpace ? ok('add-entry modal has a "Space" field') : bad('no space field');
     (spaceSave.subjType === 'suite' && spaceSave.subjId === spaceSave.tId) ? ok('saving with a space tags the entry to that tenant space') : bad('space save', JSON.stringify(spaceSave));
 
+    sec('Tenant Space view — the complete story of a space');
+    const wk = await page.evaluate(() => {
+      const p = currentProperty();
+      const e = appendPropertyTimelineEvent(p, { title: 'w', attachments: [{ name: 'w.pdf', url: 'https://m/w.pdf', kind: 'warranty' }] });
+      return e.attachments[0].kind;
+    });
+    (wk === 'warranty') ? ok('warranty is a first-class attachment kind (a record, not a module)') : bad('warranty kind', wk);
+
+    const rec = await page.evaluate(() => {
+      const p = currentProperty(); const t = (p.tenants || [])[0];
+      appendPropertyTimelineEvent(p, {
+        manual: true, type: 'manual_maintenance', category: 'maintenance', title: 'HVAC replaced', tenantId: t.id,
+        responsibility: 'landlord', leaseRef: '§8.3',
+        attachments: [{ name: 'invoice.pdf', url: 'https://m/inv.pdf', kind: 'invoice' },
+                      { name: 'warranty.pdf', url: 'https://m/war.pdf', kind: 'warranty' },
+                      { name: 'unit.jpg', url: 'https://m/u.jpg', kind: 'photo' }],
+      });
+      const r = TenantSpace.assemble(p, t.id);
+      return { inv: r.counts.invoices, warr: r.counts.warranties, ph: r.counts.photos, summary: r.summary };
+    });
+    (rec.inv >= 1) ? ok('space record gathers invoices from the scoped timeline') : bad('invoices', String(rec.inv));
+    (rec.warr >= 1) ? ok('space record gathers warranties') : bad('warranties', String(rec.warr));
+    (rec.ph >= 1) ? ok('space record gathers photos') : bad('photos', String(rec.ph));
+    (/warranty doc/.test(rec.summary)) ? ok('grounded space summary reads the record ("warranty on file")') : bad('summary', rec.summary);
+
+    const view = await page.evaluate(() => {
+      const p = currentProperty(); const t = (p.tenants || [])[0];
+      TenantSpace.openSpace(t.id);
+      const ov = document.getElementById('tsOverlay');
+      const titles = ov ? Array.from(ov.querySelectorAll('.ts-sec-title')).map(e => e.textContent) : [];
+      const photoImg = ov ? !!ov.querySelector('.ts-photo img') : false;
+      TenantSpace.closeSpace();
+      return { open: !!ov, framing: ov ? /Everything about this space/.test(ov.innerHTML) : false, titles, photoImg };
+    });
+    view.open ? ok('Tenant Space view opens') : bad('space view did not open');
+    view.framing ? ok('"everything about this space, in one place" framing present') : bad('no framing');
+    (['Lease & terms', 'Timeline', 'Photos', 'Invoices', 'Warranties', 'Documents', 'Notes', 'CAM activity'].every(s => view.titles.includes(s)))
+      ? ok('all sections render (lease · timeline · photos · invoices · warranties · docs · notes · CAM)') : bad('sections', JSON.stringify(view.titles));
+    view.photoImg ? ok('photos render as thumbnails in the space view') : bad('no photo thumbnails');
+
+    const openBtn = await page.evaluate(() => {
+      const t = (currentProperty().tenants || [])[0];
+      filterTimelineScope(t.id);
+      const has = !!document.querySelector('#propertyActivitySlot .tl-open-space');
+      filterTimelineScope(null);
+      return has;
+    });
+    openBtn ? ok('timeline scope bar offers "Open space →" when a space is selected') : bad('no open-space button');
+
     sec('Console errors');
     const errs = logs.filter(l => (l.t === 'error' || l.t === 'PAGEERROR')
       && !/favicon|Failed to load resource|ERR_CERT|\[saveCamResults\]|\[loadCamResults\]|net::ERR/.test(l.x));

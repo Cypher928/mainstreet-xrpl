@@ -144,7 +144,7 @@ window.PropertyTimeline = (function () {
     var box = document.getElementById('ptlFileList');
     if (!box) return;
     box.innerHTML = _attachments.map(function (a, i) {
-      var ic = a.kind === 'photo' ? '\u{1F5BC}\u{FE0F}' : (a.kind === 'invoice' ? '\u{1F9FE}' : '\u{1F4C4}');
+      var ic = a.kind === 'photo' ? '\u{1F5BC}\u{FE0F}' : (a.kind === 'invoice' ? '\u{1F9FE}' : (a.kind === 'warranty' ? '\u{1F6E1}\u{FE0F}' : '\u{1F4C4}'));
       var badge = a.existing ? '' : ' <span class="ptl-file-new">new</span>';
       return '<div class="ptl-file"><span class="ptl-file-name">' + ic + '&nbsp;' + _esc(a.name) + badge + '</span>' +
         '<button type="button" class="ptl-file-x" data-i="' + i + '" aria-label="Remove">✕</button></div>';
@@ -248,8 +248,9 @@ window.PropertyTimeline = (function () {
           '<div class="ptl-field"><span class="ptl-label">Attachments</span>' +
             '<div class="ptl-file-btns">' +
               '<button type="button" class="ptl-file-btn" id="ptlAddInvoice">+ Invoice</button>' +
-              '<button type="button" class="ptl-file-btn" id="ptlAddPdf">+ PDF</button>' +
+              '<button type="button" class="ptl-file-btn" id="ptlAddWarranty">+ Warranty</button>' +
               '<button type="button" class="ptl-file-btn" id="ptlAddPhoto">+ Photo</button>' +
+              '<button type="button" class="ptl-file-btn" id="ptlAddPdf">+ PDF</button>' +
             '</div><div class="ptl-file-list" id="ptlFileList"></div></div>' +
         '</div>' +
         '<div class="ptl-actions">' +
@@ -265,6 +266,7 @@ window.PropertyTimeline = (function () {
     document.getElementById('ptlClose').onclick = closeModal;
     document.getElementById('ptlCancel').onclick = closeModal;
     document.getElementById('ptlAddInvoice').onclick = function () { _pickFiles('invoice', 'application/pdf,image/*'); };
+    document.getElementById('ptlAddWarranty').onclick = function () { _pickFiles('warranty', 'application/pdf,image/*'); };
     document.getElementById('ptlAddPdf').onclick = function () { _pickFiles('pdf', 'application/pdf'); };
     document.getElementById('ptlAddPhoto').onclick = function () { _pickFiles('photo', 'image/*'); };
     document.getElementById('ptlTitle').addEventListener('input', _syncSave);
@@ -353,6 +355,8 @@ window.PropertyTimeline = (function () {
     var css = [
       '.tl-add-btn{font:700 0.72rem/1 inherit;color:' + gold + ';background:rgba(201,151,58,0.12);border:1px solid rgba(201,151,58,0.4);border-radius:7px;padding:6px 11px;cursor:pointer;margin-right:8px;min-height:30px;}',
       '.tl-add-btn:hover{background:rgba(201,151,58,0.2);}',
+      '.tl-open-space{font:700 0.72rem/1 inherit;color:#07090C;background:' + gold + ';border:1px solid ' + gold + ';border-radius:8px;padding:7px 11px;cursor:pointer;white-space:nowrap;min-height:34px;}',
+      '.tl-open-space:hover{filter:brightness(1.08);}',
       '.tl-edit-btn{font:600 0.68rem/1 inherit;color:var(--text-4,#64748B);background:none;border:1px solid rgba(var(--line-rgb,255,255,255),0.14);border-radius:6px;padding:4px 8px;cursor:pointer;min-height:26px;}',
       '.tl-edit-btn:hover{color:' + gold + ';border-color:' + gold + ';}',
       '.tl-view-btn{font:600 0.68rem/1 inherit;color:var(--text-3,#94A3B8);background:none;border:1px solid rgba(var(--line-rgb,255,255,255),0.14);border-radius:6px;padding:4px 8px;cursor:pointer;min-height:26px;margin-left:auto;}',

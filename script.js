@@ -17417,7 +17417,7 @@ function appendPropertyTimelineEvent(property, event) {
       ? event.attachments.filter(a => a && a.url).map(a => ({
           name: String(a.name || 'attachment'),
           url:  String(a.url),
-          kind: (['invoice','pdf','photo','file'].includes(a.kind) ? a.kind : 'file'),
+          kind: (['invoice','pdf','photo','file','warranty'].includes(a.kind) ? a.kind : 'file'),
         }))
       : [],
     // Contextual-records room: every record declares the real-world object it
@@ -17528,6 +17528,7 @@ function renderPropertyActivity(property) {
         <option value=""${!_tlScopeId ? ' selected' : ''}>All spaces (property)</option>
         ${_spaces.map(t => `<option value="${esc(t.id)}"${_tlScopeId === t.id ? ' selected' : ''}>${esc(t.tenant_name || t.id)}</option>`).join('')}
       </select>
+      ${_tlScopeId ? `<button class="tl-open-space" onclick="event.stopPropagation(); if(window.TenantSpace){TenantSpace.openSpace('${_tlScopeId}');}">Open space &#x2192;</button>` : ''}
     </div>` : '';
 
   const _SEVERITY_DOT = { critical: 'tl-dot--red', warning: 'tl-dot--yellow', success: 'tl-dot--green', info: 'tl-dot--blue' };
@@ -17576,7 +17577,7 @@ function renderPropertyActivity(property) {
     const attHtml = (ev.attachments && ev.attachments.length)
       ? `<div class="tl-attachments">` + ev.attachments.map(a => {
           if (a.kind === 'photo') return `<a class="tl-attach tl-attach--photo" href="${esc(a.url)}" target="_blank" rel="noopener" title="${esc(a.name)}"><img class="tl-thumb" src="${esc(a.url)}" alt="${esc(a.name)}" loading="lazy"></a>`;
-          const _ic = a.kind === 'invoice' ? '&#x1F9FE;' : (a.kind === 'pdf' ? '&#x1F4C4;' : '&#x1F4CE;');
+          const _ic = a.kind === 'invoice' ? '&#x1F9FE;' : (a.kind === 'warranty' ? '&#x1F6E1;&#xFE0F;' : (a.kind === 'pdf' ? '&#x1F4C4;' : '&#x1F4CE;'));
           return `<a class="tl-attach" href="${esc(a.url)}" target="_blank" rel="noopener">${_ic}&nbsp;${esc(a.name)}</a>`;
         }).join('') + `</div>` : '';
     let _divider = '';
