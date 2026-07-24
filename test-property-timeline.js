@@ -55,7 +55,7 @@ srv.listen(PORT, '127.0.0.1', async () => {
     reg.exists ? ok('window.PropertyTimeline loaded') : bad('module missing');
     (reg.maint && reg.maint.label === 'Maintenance') ? ok('describe() resolves manual category → "Maintenance"') : bad('describe manual', JSON.stringify(reg.maint));
     (reg.lease && reg.lease.label === 'Lease') ? ok('describe() resolves auto type → "Lease"') : bad('describe auto', JSON.stringify(reg.lease));
-    (reg.cats && reg.cats.includes('maintenance') && reg.cats.length === 6) ? ok('6 manual categories registered') : bad('categories', JSON.stringify(reg.cats));
+    (reg.cats && reg.cats.includes('maintenance') && reg.cats.includes('capital_improvement') && reg.cats.length === 11) ? ok('11 property-management categories registered') : bad('categories', JSON.stringify(reg.cats));
 
     sec('Schema defaults (additive, back-compatible)');
     const sch = await page.evaluate(() => {
@@ -110,32 +110,62 @@ srv.listen(PORT, '127.0.0.1', async () => {
     nf.thumb ? ok('photo attachment renders as thumbnail') : bad('no photo thumb');
     nf.chip  ? ok('invoice/PDF attachment renders as chip') : bad('no attachment chip');
 
-    sec('Add-entry modal — end-to-end (fill → save → persists)');
+    sec('Add-entry form — field order + Save validation');
     await page.evaluate(() => { window.uploadInvoiceFile = async () => ({ url: 'https://mock.local/up.png', error: null }); });
-    const before = await page.evaluate(() => (currentProperty().timeline || []).length);
     await page.evaluate(() => PropertyTimeline.openAddEntry(currentProperty()));
     await page.waitForSelector('#ptlOverlay', { timeout: 3000 });
     ok('modal opens');
+    const firstLabel = await page.evaluate(() => { const l = document.querySelector('#ptlOverlay .ptl-field .ptl-label'); return l ? l.textContent.trim() : ''; });
+    (firstLabel === 'What happened') ? ok('"What happened" is the first field') : bad('form order', firstLabel);
+    const disabled0 = await page.evaluate(() => document.getElementById('ptlSave').disabled);
+    disabled0 ? ok('Save disabled while "What happened" is empty') : bad('Save not disabled initially');
     await page.fill('#ptlTitle', 'Tenant reported HVAC noise');
-    await page.selectOption('#ptlCat', 'communication');
+    await page.waitForTimeout(60);
+    const enabled1 = await page.evaluate(() => !document.getElementById('ptlSave').disabled);
+    enabled1 ? ok('Save enables once "What happened" has content') : bad('Save not enabled after typing');
+
+    sec('Add-entry — save persists (new category taxonomy)');
+    const before = await page.evaluate(() => (currentProperty().timeline || []).length);
+    await page.selectOption('#ptlCat', 'tenant');
     await page.fill('#ptlNotes', 'Call from tenant 3pm; scheduled vendor.');
     await page.check('input[name="ptlResp"][value="landlord"]');
     await page.fill('#ptlLease', '§9.1 HVAC');
     await page.click('#ptlSave');
     await page.waitForSelector('#ptlOverlay', { state: 'detached', timeout: 5000 });
-    ok('modal closes after Save');
     const saved = await page.evaluate(() => {
-      const tl = currentProperty().timeline || [];
-      const e = tl[tl.length - 1];
-      return { len: tl.length, title: e.title, manual: e.manual, cat: e.category, resp: e.responsibility, lease: e.leaseRef };
+      const tl = currentProperty().timeline || []; const e = tl[tl.length - 1];
+      return { id: e.id, len: tl.length, title: e.title, manual: e.manual, cat: e.category, resp: e.responsibility, lease: e.leaseRef };
     });
     (saved.len === before + 1) ? ok('one entry appended') : bad('count', before + '→' + saved.len);
-    (saved.title === 'Tenant reported HVAC noise' && saved.manual === true && saved.cat === 'communication'
+    (saved.title === 'Tenant reported HVAC noise' && saved.manual === true && saved.cat === 'tenant'
       && saved.resp === 'landlord' && saved.lease === '§9.1 HVAC')
-      ? ok('entry persisted with title, manual, category, responsibility, leaseRef')
+      ? ok('entry persisted (title, category=tenant, responsibility=landlord, leaseRef)')
       : bad('persisted fields', JSON.stringify(saved));
-    const shown = await page.evaluate(() => /Tenant reported HVAC noise/.test(document.getElementById('propertyActivitySlot').innerHTML));
-    shown ? ok('new entry appears in the rendered timeline') : bad('entry not rendered');
+
+    sec('Edit existing entry — same modal, update in place');
+    await page.evaluate(id => PropertyTimeline.openEditEntry(id), saved.id);
+    await page.waitForSelector('#ptlOverlay', { timeout: 3000 });
+    const pf = await page.evaluate(() => ({
+      title: document.getElementById('ptlTitle').value,
+      cat: document.getElementById('ptlCat').value,
+      saveOn: !document.getElementById('ptlSave').disabled,
+      heading: document.querySelector('.ptl-title').textContent,
+    }));
+    (pf.title === 'Tenant reported HVAC noise' && pf.cat === 'tenant' && pf.saveOn && /Edit/.test(pf.heading))
+      ? ok('edit modal prefills fields, Save enabled, "Edit" heading') : bad('edit prefill', JSON.stringify(pf));
+    await page.fill('#ptlTitle', 'Tenant reported HVAC noise — Suite 210');
+    await page.click('#ptlSave');
+    await page.waitForSelector('#ptlOverlay', { state: 'detached', timeout: 5000 });
+    const edited = await page.evaluate(id => {
+      const tl = currentProperty().timeline || []; const e = tl.find(x => x.id === id);
+      return { len: tl.length, title: e ? e.title : null };
+    }, saved.id);
+    (edited.len === before + 1 && edited.title === 'Tenant reported HVAC noise — Suite 210')
+      ? ok('edit updates in place (same id, no new row, new title)') : bad('edit', JSON.stringify(edited));
+    const shown = await page.evaluate(() => /Suite 210/.test(document.getElementById('propertyActivitySlot').innerHTML));
+    shown ? ok('edited text appears in the rendered timeline') : bad('edit not rendered');
+    const hasEditBtn = await page.evaluate(() => !!document.querySelector('#propertyActivitySlot .tl-edit-btn'));
+    hasEditBtn ? ok('manual entries expose an Edit affordance in the timeline') : bad('no edit button rendered');
 
     sec('Console errors');
     const errs = logs.filter(l => (l.t === 'error' || l.t === 'PAGEERROR')

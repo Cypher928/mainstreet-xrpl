@@ -17462,7 +17462,11 @@ function renderPropertyActivity(property) {
   if (!slot) return;
   const _ptlAddBtn = `<button class="tl-add-btn" onclick="event.stopPropagation(); if(window.PropertyTimeline){PropertyTimeline.openAddEntry(currentProperty());}">&#x2b;&nbsp;Add</button>`;
   const _ptlToggle = "document.getElementById('paBody').classList.toggle('ap-body--open');this.querySelector('.ap-chevron').classList.toggle('ap-chevron--open')";
-  const tlAll = Array.isArray(property.timeline) ? property.timeline.slice().reverse() : [];
+  // Clean chronological view: newest first by event timestamp (so backdated
+  // manual entries sort correctly, not by insertion order).
+  const tlAll = Array.isArray(property.timeline)
+    ? property.timeline.slice().sort((a, b) => (new Date(b.timestamp).getTime() || 0) - (new Date(a.timestamp).getTime() || 0))
+    : [];
   if (!tlAll.length) {
     slot.innerHTML = `<div class="ap-panel" id="propertyActivityPanel">
       <div class="ap-header" onclick="${_ptlToggle}">
@@ -17546,6 +17550,7 @@ function renderPropertyActivity(property) {
           <span class="tl-ts">${fmtTs(ev.timestamp)}</span>
           ${ev.actor && ev.actor !== 'System' ? `<span class="tl-actor">${esc(ev.actor)}</span>` : ''}
           ${tenantHtml}
+          ${ev.manual ? `<button class="tl-edit-btn" onclick="event.stopPropagation(); if(window.PropertyTimeline){PropertyTimeline.openEditEntry('${ev.id}');}">&#x270E;&nbsp;Edit</button>` : ''}
         </div>
         ${expand}
       </div>
