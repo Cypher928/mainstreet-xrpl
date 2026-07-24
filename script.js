@@ -1342,6 +1342,16 @@ Only return null if NO cap language exists anywhere in the document.
 
 Return best guess — do not leave fields null unless truly impossible.`;
 
+  // ── Lease Ingestion Hardening ───────────────────────────────────────────
+  // Vercel's Node runtime rejects request bodies over ~4.5 MB BEFORE the
+  // handler runs, and base64 adds ~33%. Sending a copier scan whole used to
+  // fail with HTTP 413. If the encoded payload won't fit, downscale the pages
+  // and send them in batches instead of failing.
+  const LI = window.LeaseIngest;
+  if (LI && !LI.fitsInOneRequest(file.size)) {
+    return await _visionExtractCompressed(file, extractionPrompt, LI);
+  }
+
   const messages = [{
     role: 'user',
     content: [
@@ -1359,12 +1369,74 @@ Return best guess — do not leave fields null unless truly impossible.`;
     body: JSON.stringify({ messages, max_tokens: 1500, system: CLAUDE_LEASE_SYSTEM }),
   });
 
-  if (!res.ok) throw new Error(`Claude PDF direct failed: HTTP ${res.status}`);
+  if (!res.ok) {
+    // A 413 here means the pre-flight budget was wrong — fall back to the
+    // compressed path rather than surfacing a raw HTTP code to the user.
+    if (res.status === 413 && LI) {
+      console.warn('[EXTRACTION] 413 on direct vision — retrying compressed');
+      return await _visionExtractCompressed(file, extractionPrompt, LI);
+    }
+    throw new Error(`Claude PDF direct failed: HTTP ${res.status}`);
+  }
   const data = await res.json();
   // Mark telemetry: PDF direct path uses Claude's native document understanding
   if (window.ms_extractionDebug) window.ms_extractionDebug.OCRUsed = true;
   console.log('[EXTRACTION] PDF direct (vision) path used');
   return data;
+}
+
+// Downscale a large scanned lease and extract fields in page batches, merging
+// the results. Partial success beats total failure: one failed batch never
+// discards the others, so a 40-page scan with one bad page still extracts.
+async function _visionExtractCompressed(file, extractionPrompt, LI) {
+  const t0 = Date.now();
+  const pages = await LI.rasterize(file, { dpi: LI.DEFAULT_DPI });
+  if (!pages.length) throw new Error('Could not read any pages from this PDF');
+
+  const batches = LI.planBatches(pages.map(p => p.bytes));
+  console.log(`[EXTRACTION] compressed vision — ${pages.length} pages → ${batches.length} batch(es)`,
+    `| ${(file.size / 1048576).toFixed(1)}MB source`);
+
+  const parts = [];
+  let failures = 0;
+  for (let b = 0; b < batches.length; b++) {
+    const group = batches[b].map(i => pages[i]).filter(Boolean);
+    if (!group.length) continue;
+    const isFirst = b === 0;
+    const scope = `This is part ${b + 1} of ${batches.length} of one lease (pages ` +
+      `${group[0].page}–${group[group.length - 1].page}). Extract every field you can see in these pages. ` +
+      `Return null for anything not visible here — do not guess; other parts cover the rest.`;
+    const messages = [{
+      role: 'user',
+      content: [
+        ...LI.buildImageBlocks(group),
+        { type: 'text', text: (isFirst ? extractionPrompt : extractionPrompt + '\n\n' + scope) },
+      ],
+    }];
+    try {
+      const res = await _fetchWithTimeout('/api/claude', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json', ...(await _authHeaders()) },
+        body: JSON.stringify({ messages, max_tokens: 1500, system: CLAUDE_LEASE_SYSTEM }),
+      });
+      if (!res.ok) throw new Error(`HTTP ${res.status}`);
+      parts.push(await res.json());
+    } catch (e) {
+      failures++;
+      console.warn(`[EXTRACTION] batch ${b + 1}/${batches.length} failed:`, e?.message);
+    }
+  }
+
+  if (!parts.length) throw new Error('Could not read this scanned lease — every page batch failed');
+  const merged = LI.mergeExtractions(parts);
+  if (window.ms_extractionDebug) {
+    window.ms_extractionDebug.OCRUsed = true;
+    window.ms_extractionDebug.compressedBatches = batches.length;
+    window.ms_extractionDebug.batchFailures = failures;
+  }
+  console.log(`[EXTRACTION] compressed vision done in ${Date.now() - t0}ms`,
+    `| ${parts.length}/${batches.length} batches ok`);
+  return merged;
 }
 
 // Extracts substantive lease text from a scanned PDF so Ask-the-Lease works
@@ -4059,10 +4131,14 @@ function mergeInvoicesDedup(existing, incoming) {
 // NO tenant row is written to Supabase until:
 //   confidence is high/medium  OR  the user explicitly confirms via saveBulkTenant.
 
+// NOTE: the stage KEYS are constrained by the lease_jobs CHECK constraint
+// (migrations/001) — only the labels are display text. 'OCR' is a legacy key:
+// the app runs no OCR engine, it reads the PDF text layer and falls back to
+// Claude vision, so the label says what actually happens.
 const _JOB_STAGES = {
   queued:        { label: 'Queued...',                   progress: 0   },
   upload:        { label: 'Uploading file...',           progress: 10  },
-  OCR:           { label: 'Running OCR...',              progress: 30  },
+  OCR:           { label: 'Reading document...',         progress: 30  },
   extraction:    { label: 'Extracting lease terms...',   progress: 55  },
   normalize:     { label: 'Normalizing...',              progress: 72  },
   confidence:    { label: 'Computing confidence...',     progress: 88  },
@@ -7305,10 +7381,10 @@ function retryUploadForSlot(index) {
       alert("File failed to load. Try re-uploading.");
       return;
     }
-    if (file.size > 25 * 1024 * 1024) {
-      alert("This lease is too large. Please upload a smaller or compressed PDF.");
+    if (file.size > 60 * 1024 * 1024) {
+      alert("This lease is very large (" + (file.size/1048576).toFixed(0) + " MB). Please split it or upload a compressed copy.");
       return;
-    }
+      }
     await retryExtractionWithFile(index, file);
   };
   input.click();
@@ -7329,16 +7405,24 @@ async function retryExtractionWithFile(index, file) {
   const t    = tenantData[index];
   const prop = currentProperty();
 
-  if (file.size > 25 * 1024 * 1024) {
-    alert("This lease is too large. Please upload a smaller or compressed PDF.");
+  if (file.size > 60 * 1024 * 1024) {
+    alert("This lease is very large (" + (file.size/1048576).toFixed(0) + " MB). Please split it or upload a compressed copy.");
     return;
-  }
+    }
 
   const row = document.getElementById(`btr-${index}`);
   if (row) {
     row.style.opacity = '0.5';
     const statusEl = row.querySelector('.bulk-t-meta');
     if (statusEl) statusEl.textContent = 'Processing lease… this may take up to 30 seconds';
+    // Pre-flight: for a large scan, say what is happening so the longer wait
+    // reads as progress rather than a hang.
+    if (statusEl && window.LeaseIngest) {
+      window.LeaseIngest.analyze(file).then(info => {
+        const pf = window.LeaseIngest.preflight(info);
+        if (pf.plan.needsRasterize) statusEl.textContent = pf.title + ' — ' + pf.detail;
+      }).catch(() => {});
+    }
   }
 
   try {

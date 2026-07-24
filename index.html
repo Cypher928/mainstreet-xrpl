@@ -7021,6 +7021,8 @@
 <script src="property-workspace.js"></script>
 <!-- Property Operating System — Tenant Space view ("everything about Suite 210"). Reuses subject-scoped records; must load after property-timeline.js. -->
 <!-- Property Operating System — the Property subject (building-as-a-whole records, invoice register, building systems). Creates the Property tab/pane and re-parents cards to their subjects. -->
+<!-- Lease Ingestion Hardening: pre-flight sizing, page downscaling, and batched vision extraction so large copier scans upload reliably. Must load before script.js uses it. -->
+<script src="lease-ingest.js"></script>
 <!-- Scannable, cited AI explanations (STATUS/WHY/SUGGESTION/EVIDENCE → sections + evidence chips). -->
 <script src="ai-explanation.js"></script>
 <script src="property-os.js"></script>

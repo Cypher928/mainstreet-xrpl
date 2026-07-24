@@ -2,11 +2,20 @@
 // Reads ANTHROPIC_API_KEY from the Vercel environment — never exposed to the browser.
 // Always returns parsed JSON extracted from Claude's text response.
 
-// WHY: callClaudeWithPdfDirect sends entire PDF as base64 inside the JSON body.
-// Base64 adds ~33% overhead, so a 5 MB PDF becomes ~6.7 MB.
-// Vercel's default bodyParser limit is 4.5 MB — anything larger silently returns
-// 413 before the handler runs, causing all large scanned leases to fail with
-// "Claude PDF direct failed: HTTP 413". Setting 20 MB covers leases up to ~15 MB.
+// ⚠ REQUEST BODY LIMIT — READ BEFORE CHANGING
+// callClaudeWithPdfDirect sends a PDF as base64 inside the JSON body, and base64
+// adds ~33%. Vercel's Node serverless runtime rejects bodies over ~4.5 MB BEFORE
+// this handler runs (HTTP 413), so any source PDF over ~3.3 MB used to fail.
+//
+// The `config.api.bodyParser.sizeLimit` export below does NOT raise that limit:
+// `api.bodyParser` is a Next.js API-route construct, and this app is not a
+// Next.js project (no next dependency, no pages/ or app/ dir). It is retained
+// only as documentation of the constraint — it has no runtime effect.
+//
+// The real fix lives client-side in lease-ingest.js: measure the ENCODED size
+// up front, and when it won't fit, downscale pages and send them in batches
+// that each stay under the budget. Keep that budget (BODY_BUDGET) in sync with
+// the 4.5 MB platform limit.
 module.exports.config = {
   api: {
     bodyParser: {
