@@ -252,6 +252,91 @@
     });
   }
 
+  // ── Telemetry ──────────────────────────────────────────────────────────────
+  // Operational metrics only — which path ran, how big, how long, did it work.
+  // Deliberately contains NO document content, file names, tenant names, or user
+  // identifiers, so it is safe to persist and aggregate.
+  //
+  // Answers questions like "are 90% of uploads taking the text path?" and
+  // "are copier scans routinely hitting compression?"
+  //
+  // Never let telemetry break ingestion: every entry point is failure-tolerant.
+  var PATHS = { TEXT: 'text', VISION_DIRECT: 'vision-direct', VISION_COMPRESSED: 'vision-compressed', VISION_CHUNKED: 'vision-chunked' };
+  var _runs = [];          // rolling in-session buffer
+  var MAX_RUNS = 200;
+
+  function begin(fileBytes) {
+    return {
+      path: null,
+      originalBytes: fileBytes || 0,
+      payloadBytes: null,     // what we actually sent (post-compression)
+      pages: null,
+      batches: null,
+      batchFailures: 0,
+      outcome: null,          // 'success' | 'failure'
+      reason: null,           // short failure reason, no document content
+      ms: null,
+      _t0: (typeof performance !== 'undefined' && performance.now) ? performance.now() : Date.now(),
+    };
+  }
+
+  function mark(run, fields) {
+    if (!run || !fields) return run;
+    try { Object.keys(fields).forEach(function (k) { run[k] = fields[k]; }); } catch (_e) {}
+    return run;
+  }
+
+  function end(run, outcome, reason) {
+    if (!run) return null;
+    try {
+      var now = (typeof performance !== 'undefined' && performance.now) ? performance.now() : Date.now();
+      run.ms = Math.round(now - run._t0);
+      run.outcome = outcome || 'success';
+      // Keep the reason short and content-free (an error class, not a payload).
+      run.reason = reason ? String(reason).slice(0, 120) : null;
+      delete run._t0;
+      // Compression ratio is the number that tells us if downscaling is working.
+      if (run.payloadBytes && run.originalBytes) {
+        run.compressionRatio = Math.round((run.payloadBytes / run.originalBytes) * 100) / 100;
+      }
+      _runs.push(run);
+      if (_runs.length > MAX_RUNS) _runs = _runs.slice(-MAX_RUNS);
+      if (typeof console !== 'undefined') {
+        console.log('[INGEST]', run.path, '|', (run.originalBytes / 1048576).toFixed(2) + 'MB',
+          run.payloadBytes ? '→ ' + (run.payloadBytes / 1048576).toFixed(2) + 'MB' : '',
+          '| pages:', run.pages ?? '—', '| batches:', run.batches ?? '—',
+          '|', run.outcome, '|', run.ms + 'ms');
+      }
+    } catch (_e) {}
+    return run;
+  }
+
+  /** The persisted shape — flat, small, no document content. */
+  function summary(run) {
+    if (!run) return null;
+    return {
+      path: run.path, originalBytes: run.originalBytes, payloadBytes: run.payloadBytes,
+      compressionRatio: run.compressionRatio ?? null, pages: run.pages, batches: run.batches,
+      batchFailures: run.batchFailures || 0, outcome: run.outcome, reason: run.reason, ms: run.ms,
+    };
+  }
+
+  /** In-session aggregate — answers the path-mix question without a DB query. */
+  function sessionStats() {
+    var byPath = {}, ok = 0, failed = 0, totalMs = 0;
+    _runs.forEach(function (r) {
+      byPath[r.path || 'unknown'] = (byPath[r.path || 'unknown'] || 0) + 1;
+      if (r.outcome === 'success') ok++; else failed++;
+      totalMs += r.ms || 0;
+    });
+    var n = _runs.length;
+    var pct = {};
+    Object.keys(byPath).forEach(function (k) { pct[k] = n ? Math.round((byPath[k] / n) * 100) + '%' : '0%'; });
+    return { runs: n, byPath: byPath, pathMix: pct, success: ok, failed: failed, avgMs: n ? Math.round(totalMs / n) : 0 };
+  }
+
+  function recentRuns() { return _runs.slice(); }
+
   return {
     // budgets (exported for tests + callers)
     PLATFORM_BODY_LIMIT: PLATFORM_BODY_LIMIT, BODY_BUDGET: BODY_BUDGET, RAW_BUDGET: RAW_BUDGET,
@@ -262,5 +347,8 @@
     mergeExtractions: mergeExtractions, preflight: preflight,
     // browser
     analyze: analyze, rasterize: rasterize, buildImageBlocks: buildImageBlocks,
+    // telemetry (operational metrics only — no document content)
+    PATHS: PATHS, begin: begin, mark: mark, end: end, summary: summary,
+    sessionStats: sessionStats, recentRuns: recentRuns,
   };
 });
