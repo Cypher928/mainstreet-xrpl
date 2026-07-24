@@ -530,15 +530,23 @@ TONE:
 - Practical
 - Never alarmist
 - Never suggest legal wrongdoing
-OUTPUT FORMAT:
+
+OUTPUT FORMAT — use these exact labels, one per line. Be brief: a property
+manager scans this in seconds. Do not add headings, preamble, or markdown.
 STATUS: [No issues / Might get questions / Likely to be challenged]
-WHY:
-One short sentence explaining what a tenant might question
-SUGGESTION:
-One simple, practical way to improve clarity or reduce pushback
+WHY: one sentence (max 20 words) — what a tenant might question.
+SUGGESTION: one sentence (max 20 words) — a practical way to reduce pushback.
+EVIDENCE: a comma-separated list of what would substantiate this charge, using
+only these labels: Lease clause, Invoice, Work order, Vendor contract, Photo,
+Service record. List only what is genuinely relevant — 1 to 3 items. If nothing
+would substantiate it, write: None.
+
 IMPORTANT:
 If the charge looks normal, say "No issues" and do not invent problems.
-If the category appears incorrect based on the vendor or description, gently interpret the charge correctly in your explanation without criticizing the classification.`;
+If the category appears incorrect based on the vendor or description, gently interpret the charge correctly in your explanation without criticizing the classification.
+Never state a fact you were not given. EVIDENCE names the KIND of document that
+would support the charge — it is a pointer for the manager to attach, not a claim
+that the document exists.`;
 
 // WHY single source of truth: previously there were THREE schema definitions
 // (CLAUDE_LEASE_SYSTEM, CLAUDE_LEASE_PROMPT, and inline user prompts in each call
@@ -7910,6 +7918,21 @@ async function handleExplain(button, fn) {
   }
 }
 
+// Maps an invoice to the records that could substantiate it, so AI evidence
+// chips link to what exists and honestly flag what doesn't. Never fabricates a
+// source: a chip is only "live" when a real url/record is present.
+function _explainSourcesForInvoice(inv) {
+  const src = {};
+  try {
+    if (inv && inv.fileUrl) src['invoice'] = { url: inv.fileUrl, label: inv.fileName || 'Invoice' };
+    // A lease clause is available when the disputing tenant's lease is on file.
+    const prop = currentProperty();
+    const t = (prop && prop.tenants || []).find(x => x && (x.leaseUrl || x.lease_url));
+    if (t) src['lease clause'] = { url: t.leaseUrl || t.lease_url, label: 'Lease' };
+  } catch (_) {}
+  return src;
+}
+
 async function explainCharge(i) {
   const inv = invoiceData[i];
   if (!inv) return;
@@ -7937,8 +7960,14 @@ async function explainCharge(i) {
       expl.className = 'inv-explain-box';
       det.appendChild(expl);
     }
-    const mdHtml = renderMarkdown(text);
-    expl.innerHTML = `<strong>AI Review</strong><div class="expl-preview">${mdHtml}</div><button class="expl-readmore" onclick="var p=this.previousElementSibling;p.classList.toggle('expanded');this.textContent=p.classList.contains('expanded')?'Show less \u25b2':'Read full explanation \u25be'">Read full explanation &#x25BE;</button>`;
+    // Scannable, cited rendering. Sources let an evidence chip become a live
+    // link when the record is actually on file; otherwise it stays an honest
+    // "not on file" placeholder rather than a dead link.
+    const _aiSources = _explainSourcesForInvoice(inv);
+    const mdHtml = (window.AIExplanation)
+      ? window.AIExplanation.render(text, { sources: _aiSources })
+      : renderMarkdown(text);
+    expl.innerHTML = `<strong>AI Review</strong>${mdHtml}`;
     det.style.display = 'block';
     const _chevX = document.getElementById(`ichev-${i}`);
     if (_chevX) _chevX.innerHTML = '&#x25B2; Close';
@@ -13480,7 +13509,7 @@ function _rptHeader(propName, reportType, period, now, extra = []) {
       <span>${esc(String(m.value))}</span>
     </div>`).join('');
   return `<div class="rpt-cover">
-    <div class="rpt-cover-brand">Mainstreet CAM Platform</div>
+    <div class="rpt-cover-brand">MainStreet CAM Platform</div>
     <div class="rpt-cover-title">${esc(propName)}</div>
     <div class="rpt-cover-type">${esc(reportType)}</div>
     <div class="rpt-cover-meta">${metaItems}</div>
@@ -13489,7 +13518,7 @@ function _rptHeader(propName, reportType, period, now, extra = []) {
 
 function _rptFooter(propName, reportType, now) {
   return `<div class="rpt-footer">
-    <span class="rpt-footer-brand">Mainstreet CAM Platform</span>
+    <span class="rpt-footer-brand">MainStreet CAM Platform</span>
     <span>${esc(propName)} &nbsp;&middot;&nbsp; ${esc(reportType)}</span>
     <span>Generated ${esc(now)}</span>
   </div>`;
@@ -14391,7 +14420,10 @@ async function runLandlordAIReview() {
           }],
         }, { timeoutMs: PER_CALL_TIMEOUT_MS });
         const text = data?.content?.[0]?.text || 'No review available.';
-        html += `<div class="ai-inv-review"><strong>${esc(inv.vendorName)} — ${fmt(parseFloat(inv.amount))}</strong>${renderMarkdown(text)}</div>`;
+        const _revHtml = (window.AIExplanation)
+          ? window.AIExplanation.render(text, { sources: _explainSourcesForInvoice(inv) })
+          : renderMarkdown(text);
+        html += `<div class="ai-inv-review"><strong>${esc(inv.vendorName)} — ${fmt(parseFloat(inv.amount))}</strong>${_revHtml}</div>`;
         anyOk = true;
       } catch (e) {
         html += `<div class="ai-inv-review"><strong>${esc(inv.vendorName)}</strong>Review unavailable: ${esc(e.message)}</div>`;
@@ -14499,6 +14531,22 @@ function generateDisputePacket(disputeId) {
       <div class="rpt-kpi"><div class="kpi-val">${d.tenantShare != null ? fmt(parseFloat(d.tenantShare)) : '—'}</div><div class="kpi-lbl">Disputed Amount</div></div>
     </div>
 
+    <div class="rpt-section-title">Executive Summary</div>
+    <div class="rpt-exec">
+      <p class="rpt-exec-p">${esc(d.tenantName || 'The tenant')} has disputed
+      ${d.tenantShare != null ? `<b>${fmt(parseFloat(d.tenantShare))}</b>` : 'a charge'}
+      allocated from ${esc(d.vendor || 'a vendor')}${d.category ? ` (${esc(d.category)})` : ''}
+      for the ${camYear} CAM year. The dispute is classified as
+      <b>${esc(typeLabel)}</b> at <b>${esc(sevLabel)}</b> severity and is currently
+      <b>${esc(statusMap[d.status] || d.status)}</b>${d.resolvedAt ? ` as of ${fmtTs(d.resolvedAt)}` : ''}.</p>
+      ${d.resolution ? `<p class="rpt-exec-p"><b>Resolution:</b> ${esc(d.resolution)}</p>` : ''}
+      <div class="rpt-exec-meta">
+        <span><b>Filed</b> ${fmtTs(d.timestamp)}</span>
+        <span><b>Property</b> ${esc(propName)}</span>
+        <span><b>Prepared</b> ${esc(now)}</span>
+      </div>
+    </div>
+
     <div class="rpt-section-title">Tenant Reason</div>
     <div class="rpt-narrative-box">&ldquo;${esc(d.reason || '—')}&rdquo;</div>
 
@@ -14526,12 +14574,37 @@ function generateDisputePacket(disputeId) {
       <tbody>${histRows}</tbody>
     </table>` : ''}
 
+    <div class="rpt-section-title">Evidence Index</div>
+    <table class="rpt-table rpt-evidence-index">
+      <thead><tr><th>Supporting record</th><th>Status</th><th>Reference</th></tr></thead>
+      <tbody>
+        ${[
+          { label: 'Lease clause',      has: !!d.leaseClause,        ref: d.leaseClause ? 'Cited in this packet' : 'Attach the governing lease section' },
+          { label: 'Supporting invoice',has: relatedInvs.length > 0, ref: relatedInvs.length ? `${relatedInvs.length} invoice${relatedInvs.length !== 1 ? 's' : ''} listed above` : 'Attach the vendor invoice' },
+          { label: 'Calculation basis', has: !!recon,                ref: recon ? 'Calculation breakdown included' : 'Run reconciliation to include' },
+          { label: 'Reviewer notes',    has: !!d.reviewerNote,       ref: d.reviewerNote ? 'Included in this packet' : 'No reviewer notes recorded' },
+          { label: 'Resolution history',has: (d.history || []).length > 0, ref: (d.history || []).length ? `${d.history.length} entr${d.history.length !== 1 ? 'ies' : 'y'} logged` : 'No actions logged yet' },
+          { label: 'Audit fingerprint', has: !!d.hash,               ref: d.hash ? 'SHA-256 recorded below' : 'Generated when the dispute is resolved' },
+        ].map(r => `<tr>
+          <td>${esc(r.label)}</td>
+          <td><span class="rpt-ev-flag ${r.has ? 'rpt-ev-flag--on' : 'rpt-ev-flag--off'}">${r.has ? 'On file' : 'Not attached'}</span></td>
+          <td>${esc(r.ref)}</td>
+        </tr>`).join('')}
+      </tbody>
+    </table>
+    <div class="rpt-ev-index-note">Every conclusion in this packet traces to a record above. Items marked &ldquo;Not attached&rdquo; are gaps to close before the packet is sent.</div>
+
     ${d.hash ? `
     <div class="rpt-section-title">Audit Fingerprint</div>
     <div class="rpt-hash-box">
       <div class="rpt-hash-lbl">&#x1F512; Tamper-Detection Hash (SHA-256)</div>
       <div class="rpt-hash-val">${d.hash}</div>
     </div>` : ''}
+
+    <div class="rpt-signoff">
+      <div class="rpt-signoff-col"><div class="rpt-signoff-lbl">Prepared by</div><div class="rpt-signoff-line"></div><div class="rpt-signoff-sub">Property Manager &nbsp;·&nbsp; ${esc(propName)}</div></div>
+      <div class="rpt-signoff-col"><div class="rpt-signoff-lbl">Date</div><div class="rpt-signoff-line"></div><div class="rpt-signoff-sub">${esc(now)}</div></div>
+    </div>
 
     ${_rptFooter(propName, 'Dispute Packet', now)}`;
 
@@ -17143,7 +17216,7 @@ function exportPortfolioSummary() {
   </div>
   ${topRisksSection}${pipelineSection}${forecastSection}${propSection}
   <div class="footer">
-    <span>Mainstreet &nbsp;·&nbsp; Portfolio Executive Summary</span>
+    <span>MainStreet &nbsp;·&nbsp; Portfolio Executive Summary</span>
     <span>Generated ${today}</span>
   </div>
 </body>
