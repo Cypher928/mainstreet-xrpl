@@ -75,6 +75,42 @@ window.PropertyTimeline = (function () {
     return { label: (ev.category || ev.type || ''), icon: null };
   }
 
+  function _groupOf(ev) {
+    var key = ev && ev.manual ? (ev.category || String(ev.type || '').replace(/^manual_/, '')) : (ev && ev.type);
+    var def = REGISTRY[key];
+    return def ? def.group : 'system';
+  }
+
+  // ── Timeline as the map: every event links to its source pane ────────────────
+  // (Connected Property Workspace, move #1.) Reuses switchWorkspaceTab + _ccFlashEl.
+  var GROUP_NAV = {
+    cam:      { tab: 'cam',       anchors: ['results', 'cardInvoices'] },
+    disputes: { tab: 'cam',       anchors: ['disputeSection', 'openDisputesWrap'] },
+    leases:   { tab: 'documents', anchors: ['cardLeases'] },
+  };
+  // Returns { tab, anchors } for events whose source lives in a pane, else null
+  // (manual notes and system events are their own record — no "View").
+  function navFor(ev) {
+    if (!ev) return null;
+    return GROUP_NAV[_groupOf(ev)] || null;
+  }
+  function viewSource(id) {
+    var p = window.currentProperty && window.currentProperty();
+    if (!p) return;
+    var ev = (p.timeline || []).find(function (x) { return x.id === id; });
+    var nav = navFor(ev);
+    if (!nav) return;
+    try { if (window.switchWorkspaceTab) window.switchWorkspaceTab(nav.tab); } catch (_e) {}
+    var el = null, any = null;
+    for (var i = 0; i < nav.anchors.length; i++) {
+      var cand = document.getElementById(nav.anchors[i]);
+      if (cand && !any) any = cand;
+      if (cand && cand.offsetParent !== null) { el = cand; break; }
+    }
+    el = el || any;
+    try { if (el && window._ccFlashEl) window._ccFlashEl(el); } catch (_e) {}
+  }
+
   // ── Add / edit entry modal ──────────────────────────────────────────────────
   // Unified attachment list: existing items carry a url; new items carry a File.
   var _attachments = []; // [{ existing:true, name, url, kind } | { file, kind, name }]
@@ -296,6 +332,8 @@ window.PropertyTimeline = (function () {
       '.tl-add-btn:hover{background:rgba(201,151,58,0.2);}',
       '.tl-edit-btn{font:600 0.68rem/1 inherit;color:var(--text-4,#64748B);background:none;border:1px solid rgba(var(--line-rgb,255,255,255),0.14);border-radius:6px;padding:4px 8px;cursor:pointer;min-height:26px;}',
       '.tl-edit-btn:hover{color:' + gold + ';border-color:' + gold + ';}',
+      '.tl-view-btn{font:600 0.68rem/1 inherit;color:var(--text-3,#94A3B8);background:none;border:1px solid rgba(var(--line-rgb,255,255,255),0.14);border-radius:6px;padding:4px 8px;cursor:pointer;min-height:26px;margin-left:auto;}',
+      '.tl-view-btn:hover{color:' + gold + ';border-color:' + gold + ';}',
       '.tl-day-divider{font-size:0.68rem;font-weight:800;letter-spacing:0.05em;text-transform:uppercase;color:var(--text-4,#64748B);margin:14px 0 6px;padding-bottom:3px;border-bottom:1px solid rgba(var(--line-rgb,255,255,255),0.07);}',
       '.tl-resp{font-size:0.62rem;font-weight:800;text-transform:uppercase;letter-spacing:0.04em;border-radius:5px;padding:2px 6px;margin-left:6px;white-space:nowrap;}',
       '.tl-resp--landlord{color:#7dd3fc;background:rgba(125,211,252,0.14);border:1px solid rgba(125,211,252,0.35);}',
@@ -362,6 +400,8 @@ window.PropertyTimeline = (function () {
   return {
     registerType: registerType,
     describe: describe,
+    navFor: navFor,
+    viewSource: viewSource,
     openAddEntry: openAddEntry,
     openEditEntry: openEditEntry,
     closeModal: closeModal,

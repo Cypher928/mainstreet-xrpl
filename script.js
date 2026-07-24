@@ -17550,6 +17550,7 @@ function renderPropertyActivity(property) {
           <span class="tl-ts">${fmtTs(ev.timestamp)}</span>
           ${ev.actor && ev.actor !== 'System' ? `<span class="tl-actor">${esc(ev.actor)}</span>` : ''}
           ${tenantHtml}
+          ${(window.PropertyTimeline && PropertyTimeline.navFor && PropertyTimeline.navFor(ev)) ? `<button class="tl-view-btn" onclick="event.stopPropagation(); if(window.PropertyTimeline){PropertyTimeline.viewSource('${ev.id}');}">View&nbsp;&#x2192;</button>` : ''}
           ${ev.manual ? `<button class="tl-edit-btn" onclick="event.stopPropagation(); if(window.PropertyTimeline){PropertyTimeline.openEditEntry('${ev.id}');}">&#x270E;&nbsp;Edit</button>` : ''}
         </div>
         ${expand}

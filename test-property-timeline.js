@@ -167,6 +167,32 @@ srv.listen(PORT, '127.0.0.1', async () => {
     const hasEditBtn = await page.evaluate(() => !!document.querySelector('#propertyActivitySlot .tl-edit-btn'));
     hasEditBtn ? ok('manual entries expose an Edit affordance in the timeline') : bad('no edit button rendered');
 
+    sec('Connected workspace — timeline event → source pane (move #1)');
+    const navChecks = await page.evaluate(() => {
+      const tl = currentProperty().timeline || [];
+      const disp = tl.find(e => e.type === 'dispute_created' || e.type === 'dispute_resolved');
+      return {
+        hasDisp: !!disp,
+        dispNav: disp ? !!PropertyTimeline.navFor(disp) : false,
+        manualNav: PropertyTimeline.navFor({ manual: true, category: 'note' }),
+      };
+    });
+    navChecks.dispNav ? ok('dispute event exposes a "View" source link (navFor)') : bad('dispute has no nav');
+    (navChecks.manualNav === null) ? ok('manual note has no "View" (it is its own record)') : bad('manual nav should be null', JSON.stringify(navChecks.manualNav));
+    const hasViewBtn = await page.evaluate(() => !!document.querySelector('#propertyActivitySlot .tl-view-btn'));
+    hasViewBtn ? ok('auto events render a "View →" affordance in the timeline') : bad('no view button rendered');
+    const switched = await page.evaluate(() => {
+      const tl = currentProperty().timeline || [];
+      const disp = tl.find(e => e.type === 'dispute_created' || e.type === 'dispute_resolved');
+      PropertyTimeline.viewSource(disp.id);
+      const cam = document.getElementById('wsPane-cam');
+      return cam ? getComputedStyle(cam).display !== 'none' : false;
+    });
+    switched ? ok('clicking "View" on a dispute event switches to the CAM pane') : bad('did not switch to CAM pane');
+    // return to overview so the console-error scan sees a clean state
+    await page.evaluate(() => switchWorkspaceTab('overview'));
+    await page.waitForTimeout(200);
+
     sec('Console errors');
     const errs = logs.filter(l => (l.t === 'error' || l.t === 'PAGEERROR')
       && !/favicon|Failed to load resource|ERR_CERT|\[saveCamResults\]|\[loadCamResults\]|net::ERR/.test(l.x));
