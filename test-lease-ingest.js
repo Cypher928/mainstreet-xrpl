@@ -54,6 +54,28 @@ srv.listen(PORT, '127.0.0.1', async () => {
       : bad(mb + 'MB text PDF changed route', r.route);
   });
 
+  sec('Telemetry — path, sizes, pages, outcome, timing');
+  {
+    let r = LI.begin(1.2 * MB); LI.mark(r, { path: LI.PATHS.TEXT, payloadBytes: 48000 }); LI.end(r, 'success');
+    const s = LI.summary(r);
+    (s.path === 'text' && s.originalBytes === 1.2 * MB && typeof s.ms === 'number' && s.outcome === 'success')
+      ? ok('text run records path, original size, timing, outcome') : bad('text telemetry', JSON.stringify(s));
+    let c = LI.begin(22 * MB); LI.mark(c, { path: LI.PATHS.VISION_CHUNKED, pages: 38, batches: 4, payloadBytes: 3.1 * MB }); LI.end(c, 'success');
+    const cs = LI.summary(c);
+    (cs.pages === 38 && cs.batches === 4 && cs.payloadBytes === 3.1 * MB)
+      ? ok('chunked run records pages, batches, compressed payload') : bad('chunk telemetry', JSON.stringify(cs));
+    (cs.compressionRatio === 0.14) ? ok('compression ratio derived (' + cs.compressionRatio + ')') : bad('ratio', String(cs.compressionRatio));
+    let f = LI.begin(30 * MB); LI.mark(f, { path: LI.PATHS.VISION_COMPRESSED }); LI.end(f, 'failure', 'all-batches-failed');
+    (LI.summary(f).reason === 'all-batches-failed') ? ok('failure reason recorded') : bad('failure reason');
+    // The two questions this telemetry exists to answer.
+    const st = LI.sessionStats();
+    (st.runs >= 3 && st.pathMix && Object.keys(st.pathMix).length >= 2)
+      ? ok('session aggregate answers path-mix questions (' + JSON.stringify(st.pathMix) + ')') : bad('session stats', JSON.stringify(st));
+    // Privacy: operational metrics only — no document content, names, or ids.
+    const leak = Object.keys(cs).filter(k => /name|tenant|text|content|file|url|user|email/i.test(k));
+    (leak.length === 0) ? ok('telemetry carries no document content or identifiers') : bad('privacy leak', leak.join(','));
+  }
+
   sec('Routing');
   (LI.planIngestion({ fileBytes: MB, pages: 20, textLayerChars: 5000 }).route === 'text') ? ok('digital lease → text route (unchanged, fast)') : bad('text route');
   (LI.planIngestion({ fileBytes: MB, pages: 8, textLayerChars: 0 }).route === 'vision-direct') ? ok('small scan → vision direct') : bad('vision-direct');
