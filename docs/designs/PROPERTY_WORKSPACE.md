@@ -1,21 +1,81 @@
-# Design — The Connected Property Workspace (Phase 2)
+# Design — The Property Operating System (Phase 2)
 
+**Internal goal name:** the **Property Operating System** — not for marketing, for
+design. We build the workspace as the OS for a property, not a connected UI.
 **Status:** Internal build (accumulate toward a cohesive whole; present to Christy
 once the overall workflow is polished — not per-increment).
 **Branch:** `claude/property-workspace` off `pilot` → merge into `pilot` when the
 connected experience is cohesive.
-**Purpose:** Make MainStreet *feel* like an AI operating system for a commercial
-property — one place where a property manager **sees, understands, and acts** on
-everything about a property, connected — without adding disconnected features or
-rewriting anything.
+**Purpose:** Make MainStreet the place a property manager opens to *run* a
+property — see, understand, and act — by connecting systems that already exist.
+No disconnected features, no rewrite.
+
+---
+
+## The design filter
+
+Every screen, object, and connection must answer one question:
+
+> **"If I were responsible for this property today, what would I need to know,
+> what should I do next, and why?"**
+
+If a screen or a link doesn't help answer that, it doesn't earn its place.
+
+## Every object answers three questions
+
+The core principle of the Property Operating System. Every important object —
+lease, invoice, CAM reconciliation, dispute, payment, reserve item, timeline
+event — naturally connects to:
+
+1. **What is it?** — the underlying record or document.
+2. **Why does it matter?** — AI explanation, citations, confidence, lease references.
+3. **What should I do next?** — the suggested action (pay, dispute, review,
+   acknowledge, follow up).
+
+That is the line between software that *stores* information and software that
+*helps people work*. These three questions guide navigation, AI explanations, and
+every future workflow decision.
+
+## Don't over-connect
+
+Connections must always help answer one of the three questions. A useful link:
+
+> Timeline entry **"Roof replaced"** → invoice · warranty · vendor · photos · lease responsibility
+
+Each of those answers what / why / what-next. Do **not** add links just because
+they are technically possible — links everywhere is noise, not an operating system.
+
+## The architecture (how the layers stack)
+
+```
+Property
+   │
+   ▼
+Verified Record        Documents + Timeline + CAM + Payments
+   │
+   ▼
+Explainability Layer   Citations + Evidence + Confidence
+   │
+   ▼
+AI Advisor
+   │
+   ▼
+Recommended Action
+```
+
+**AI is not the center — the verified record is.** AI sits on top of it, explains
+it, and advises the next action. The four moves build this stack: moves 1–2 make
+the verified record navigable and complete ("what is it"); the explainability
+layer threads through all of them ("why does it matter"); move 3 (attention) is
+the advisor surfacing recommended actions ("what should I do next").
 
 ---
 
 ## The idea in one line
 
 We already have the parts (leases, CAM, reserves, disputes, documents,
-settlement, timeline, evidence). Phase 2 makes them feel like **one workspace**
-by giving them a **spine** (the Property Timeline), **explainable links**
+settlement, timeline, evidence). Phase 2 makes them feel like **one operating
+system** via a **spine** (the Property Timeline), **explainable links**
 (everything traces to its source), and a **proactive surface** (what needs
 attention) — all by connecting systems that already exist.
 
