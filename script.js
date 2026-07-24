@@ -3140,7 +3140,7 @@ function resetTenant(i) {
 // 'estoppels' is intentionally omitted — the Estoppels feature is not built yet and its
 // tab/pane are hidden so the app reads as production-ready. Re-add 'estoppels' here and
 // un-hide #wsTabBtn-estoppels in index.html once the feature ships.
-const WORKSPACE_TABS = ['overview', 'cam', 'reserves', 'reports', 'documents'];
+const WORKSPACE_TABS = ['overview', 'spaces', 'cam', 'reserves', 'reports', 'documents'];
 let _activeWorkspaceTab = 'overview';
 
 function switchWorkspaceTab(tab) {
@@ -3382,8 +3382,8 @@ function renderPropertyKpiHeader(property) {
     { label: 'Occupancy', value: occupancyPct !== null ? occupancyPct + '%' : '—',
       sub: totalSqft ? `${occSqft.toLocaleString()} / ${totalSqft.toLocaleString()} sqft` : 'Set total sqft to enable',
       tab: 'documents', anchor: 'cardLeases' },
-    { label: 'Tenants', value: tenants.length, sub: tenants.length === 1 ? '1 active lease' : `${tenants.length} active leases`,
-      tab: 'documents', anchor: 'cardLeases' },
+    { label: 'Spaces', value: tenants.length, sub: tenants.length === 1 ? '1 tenant space' : `${tenants.length} tenant spaces`,
+      tab: 'spaces', anchor: 'spacesSection' },
     { label: 'Active Reserves', value: reserves.length,
       sub: reserveBalanceTotal !== null ? `${_fmtKpiMoney(reserveBalanceTotal)} available` : 'No reserves yet',
       tab: 'reserves', anchor: 'escrowSection' },
@@ -20461,6 +20461,11 @@ function renderProperty(property) {
   // ── What needs your attention (Property OS advisor surface) ────────────
   try {
     if (window.PropertyWorkspace) window.PropertyWorkspace.renderAttention(property);
+  } catch (e) { }
+
+  // ── Spaces (top-level, subject-first navigation) ───────────────────────
+  try {
+    if (window.TenantSpace && window.TenantSpace.renderList) window.TenantSpace.renderList(property);
   } catch (e) { }
 
   // ── CAM Results ───────────────────────────────────────────────────────

@@ -435,6 +435,32 @@ srv.listen(PORT, '127.0.0.1', async () => {
     });
     (honest.insuff && !honest.draft) ? ok('insufficient record → honest "not enough info", never a guessed draft') : bad('honesty path', JSON.stringify(honest));
 
+    sec('Spaces — top-level navigation (Property → Space → Action)');
+    const nav = await page.evaluate(() => ({
+      inTabs: (typeof WORKSPACE_TABS !== 'undefined') && WORKSPACE_TABS.includes('spaces'),
+      btn: !!document.getElementById('wsTabBtn-spaces'),
+      pane: !!document.getElementById('wsPane-spaces'),
+      kpiSpaces: /Spaces/.test((document.getElementById('propertyKpiHeader') || {}).innerHTML || ''),
+      kpiTenants: /kpi-tile-label">Tenants</.test((document.getElementById('propertyKpiHeader') || {}).innerHTML || ''),
+    }));
+    nav.inTabs ? ok('"spaces" is a registered top-level workspace tab') : bad('spaces not in WORKSPACE_TABS');
+    (nav.btn && nav.pane) ? ok('Spaces tab button + pane exist') : bad('spaces tab/pane missing');
+    (nav.kpiSpaces && !nav.kpiTenants) ? ok('KPI promoted "Tenants" → "Spaces"') : bad('KPI tile not promoted');
+
+    const list = await page.evaluate(() => {
+      switchWorkspaceTab('spaces');
+      TenantSpace.renderList(currentProperty());
+      const pane = document.getElementById('wsPane-spaces');
+      const visible = pane ? getComputedStyle(pane).display !== 'none' : false;
+      const cards = document.querySelectorAll('#spacesList .tsl-card').length;
+      const opens = !!document.querySelector('#spacesList .tsl-open');
+      switchWorkspaceTab('overview');
+      return { visible, cards, opens };
+    });
+    list.visible ? ok('Spaces tab opens its own pane') : bad('spaces pane not visible');
+    (list.cards >= 1) ? ok('Spaces lists each tenant space as a card (' + list.cards + ')') : bad('no space cards');
+    list.opens ? ok('each space card has "Open space →"') : bad('no open button');
+
     sec('Console errors');
     const errs = logs.filter(l => (l.t === 'error' || l.t === 'PAGEERROR')
       && !/favicon|Failed to load resource|ERR_CERT|\[saveCamResults\]|\[loadCamResults\]|net::ERR/.test(l.x));

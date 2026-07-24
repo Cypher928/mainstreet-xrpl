@@ -161,6 +161,38 @@ window.TenantSpace = (function () {
   function closeSpace() { var o = _t('tsOverlay'); if (o) o.remove(); _openRec = null; }
   function record() { return _openRec; }
 
+  // Top-level Spaces list — first-class, subject-first navigation for the
+  // property's tenant spaces. Each card opens the full Space view.
+  function renderList(property) {
+    property = property || (window.currentProperty && window.currentProperty());
+    var host = _t('spacesList');
+    if (!host || !property) return;
+    injectStyles();
+    var tenants = (property.tenants || []).filter(function (t) { return t && (t.tenant_name || t.id); });
+    if (!tenants.length) {
+      host.innerHTML = '<div class="ts-empty">No tenant spaces yet. Add tenants under Documents → Add One Tenant, and they’ll appear here as spaces.</div>';
+      return;
+    }
+    host.innerHTML = '<div class="tsl-grid">' + tenants.map(function (t) {
+      var rec = assemble(property, t.id);
+      var meta = [];
+      if (t.lease_type) meta.push(t.lease_type);
+      if (t.leased_sqft || t.sqft) meta.push((t.leased_sqft || t.sqft) + ' sqft');
+      if (t.end_date) meta.push('to ' + t.end_date);
+      var counts = [];
+      if (rec.counts.events) counts.push(rec.counts.events + ' event' + (rec.counts.events !== 1 ? 's' : ''));
+      if (rec.counts.warranties) counts.push(rec.counts.warranties + ' warranty');
+      if (rec.counts.invoices) counts.push(rec.counts.invoices + ' invoice' + (rec.counts.invoices !== 1 ? 's' : ''));
+      if (rec.counts.photos) counts.push(rec.counts.photos + ' photo' + (rec.counts.photos !== 1 ? 's' : ''));
+      return '<div class="tsl-card">' +
+        '<div class="tsl-name">\u{1F4CD}&nbsp;' + _esc(t.tenant_name || 'Space') + '</div>' +
+        (meta.length ? '<div class="tsl-meta">' + _esc(meta.join(' · ')) + '</div>' : '') +
+        (counts.length ? '<div class="tsl-counts">' + _esc(counts.join(' · ')) + '</div>' : '<div class="tsl-counts tsl-counts--empty">No records yet</div>') +
+        '<button class="tsl-open" onclick="if(window.TenantSpace){TenantSpace.openSpace(\'' + _esc(t.id) + '\');}">Open space →</button>' +
+      '</div>';
+    }).join('') + '</div>';
+  }
+
   function injectStyles() {
     if (_t('ts-styles')) return;
     var gold = '#C9973A';
@@ -204,16 +236,26 @@ window.TenantSpace = (function () {
       '.ts-note-t{font-size:0.82rem;font-weight:700;color:var(--text-1,#E2E8F0);}',
       '.ts-note-d{font-size:0.78rem;color:var(--text-3,#94A3B8);margin-top:3px;}',
       '.ts-note-w{font-size:0.7rem;color:var(--text-4,#64748B);margin-top:4px;}',
+      // Spaces list (top-level tab)
+      '.tsl-grid{display:grid;grid-template-columns:repeat(auto-fill,minmax(240px,1fr));gap:12px;}',
+      '.tsl-card{background:var(--theme-card,#0F1217);border:1px solid rgba(var(--line-rgb,255,255,255),0.08);border-radius:12px;padding:14px;display:flex;flex-direction:column;gap:5px;}',
+      '.tsl-name{font-size:0.95rem;font-weight:800;color:var(--text-1,#E2E8F0);}',
+      '.tsl-meta{font-size:0.78rem;color:var(--text-3,#94A3B8);}',
+      '.tsl-counts{font-size:0.74rem;color:var(--text-4,#64748B);}',
+      '.tsl-counts--empty{font-style:italic;}',
+      '.tsl-open{margin-top:8px;min-height:40px;border-radius:9px;font:800 0.82rem/1 inherit;cursor:pointer;color:#07090C;background:' + gold + ';border:1px solid ' + gold + ';}',
+      '.tsl-open:hover{filter:brightness(1.08);}',
       '@media (max-width:480px){',
       '  .ts-overlay{padding:10px 8px;}',
       '  .ts-tl-when{width:74px;}',
       '  .ts-doc-name{max-width:150px;}',
       '  .ts-photo img{width:64px;height:64px;}',
+      '  .tsl-grid{grid-template-columns:1fr;}',
       '}',
     ].join('\n');
     var s = document.createElement('style'); s.id = 'ts-styles'; s.textContent = css;
     document.head.appendChild(s);
   }
 
-  return { assemble: assemble, openSpace: openSpace, closeSpace: closeSpace, record: record };
+  return { assemble: assemble, openSpace: openSpace, closeSpace: closeSpace, record: record, renderList: renderList };
 })();

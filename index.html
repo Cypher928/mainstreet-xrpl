@@ -6207,6 +6207,7 @@
   </div>
   <div class="workspace-tab-bar" id="workspaceTabBar">
     <button class="workspace-tab active" id="wsTabBtn-overview"  onclick="switchWorkspaceTabFromNav('overview')"><span class="ws-tab-icon">&#x1F3E2;</span>Overview</button>
+    <button class="workspace-tab"        id="wsTabBtn-spaces"    onclick="switchWorkspaceTabFromNav('spaces')"><span class="ws-tab-icon">&#x1F4CD;</span>Spaces</button>
     <button class="workspace-tab"        id="wsTabBtn-cam"       onclick="switchWorkspaceTabFromNav('cam')"><span class="ws-tab-icon">&#x1F9FE;</span>CAM</button>
     <button class="workspace-tab"        id="wsTabBtn-reserves"  onclick="switchWorkspaceTabFromNav('reserves')"><span class="ws-tab-icon">&#x1F512;</span>Reserves</button>
     <!-- Estoppels tab hidden until the feature is built (placeholder removed for production readiness).
@@ -6335,6 +6336,20 @@
   <div id="propertyActivitySlot"></div>
 
   </div><!-- /wsPane-overview -->
+
+  <!-- ══════════════════════════ TAB: Spaces ═════════════════════════════ -->
+  <div class="workspace-tab-pane" id="wsPane-spaces" style="display:none;">
+    <div class="card" id="spacesSection">
+      <div class="sec-head">
+        <div class="sec-num" style="background:#C9973A;">&#x1F4CD;</div>
+        <div>
+          <h2>Spaces</h2>
+          <p>Every tenant space in this property — open one to see its complete story and act on it.</p>
+        </div>
+      </div>
+      <div id="spacesList"></div>
+    </div>
+  </div><!-- /wsPane-spaces -->
 
   <!-- ══════════════════════════ TAB: Documents ══════════════════════════ -->
   <div class="workspace-tab-pane" id="wsPane-documents" style="display:none;">
