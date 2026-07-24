@@ -8,14 +8,24 @@ is the tie-breaker._
 
 ## Mission
 
-**Give property managers a trustworthy, single source of truth for every
-property they run — so every number, every decision, and every dollar can be
-explained and defended.**
+**MainStreet is the verified memory for every commercial property.** It captures,
+organizes, and explains everything about a property — so a property manager can
+retrieve any fact, understand what happened, and respond with confidence in
+**seconds**, instead of searching emails, shared drives, and paper files for half
+an hour.
 
-Property management runs on scattered PDFs, email threads, spreadsheets, and
-memory. MainStreet replaces that with one system where the lease, the documents,
-the tenants, the money, and the history of what happened all live together — and
-where every answer comes with its receipts.
+Property management runs on scattered PDFs, email threads, spreadsheets, and human
+memory. MainStreet replaces that with one system that **remembers for you**: the
+lease, the documents, the photos, the invoices, the warranties, the money, and the
+full history of what happened all live together, connected — and every answer
+comes grounded in the record, with its receipts.
+
+The product's job is not to store information. It is to make the knowledge about a
+property **instantly accessible, explainable, and actionable** — so no one has to
+remember where something is, or who remembers it.
+
+> See [PRODUCT_CHARTER.md](./PRODUCT_CHARTER.md) for the principles this mission
+> commits us to.
 
 ---
 
