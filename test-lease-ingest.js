@@ -32,6 +32,28 @@ srv.listen(PORT, '127.0.0.1', async () => {
   !LI.fitsInOneRequest(4 * MB) ? ok('4 MB source exceeds the 4.5 MB body limit') : bad('4MB should not fit');
   LI.fitsInOneRequest(2 * MB) ? ok('2 MB source fits in one request') : bad('2MB should fit');
 
+  sec('REGRESSION GUARD — previously-working uploads must not change path');
+  // Everything Vercel would have accepted before (<=4.5MB encoded) must still
+  // take the original direct path. Compression may ONLY engage for files that
+  // would genuinely have 413ed.
+  const platformRawMax = Math.floor(4.5 * MB * 3 / 4);
+  let trigger = 0;
+  for (let b = MB; b < 6 * MB; b += 1024) { if (!LI.fitsInOneRequest(b)) { trigger = b; break; } }
+  const bandKb = (platformRawMax - trigger) / 1024;
+  (bandKb <= 64)
+    ? ok('compression trigger sits at the real platform ceiling (band ' + bandKb.toFixed(0) + ' KB = prompt/envelope overhead)')
+    : bad('files that used to work would now be compressed', bandKb.toFixed(0) + ' KB band');
+  LI.fitsInOneRequest(3.0 * MB) ? ok('3.0 MB scan (previously worked) → still the unchanged direct path') : bad('3.0MB now compresses — regression');
+  LI.fitsInOneRequest(2.0 * MB) ? ok('2.0 MB scan → unchanged direct path') : bad('2MB regressed');
+  !LI.fitsInOneRequest(4.0 * MB) ? ok('4.0 MB scan (previously a hard 413) → compressed path') : bad('4MB should compress');
+  // Text-layer PDFs must never reach the vision path at all, at any size.
+  [0.5, 5, 30].forEach(mb => {
+    const r = LI.planIngestion({ fileBytes: mb * MB, pages: 40, textLayerChars: 5000 });
+    (r.route === 'text' && !r.needsRasterize)
+      ? ok(mb + ' MB digital PDF → text route, no rasterizing (size is irrelevant)')
+      : bad(mb + 'MB text PDF changed route', r.route);
+  });
+
   sec('Routing');
   (LI.planIngestion({ fileBytes: MB, pages: 20, textLayerChars: 5000 }).route === 'text') ? ok('digital lease → text route (unchanged, fast)') : bad('text route');
   (LI.planIngestion({ fileBytes: MB, pages: 8, textLayerChars: 0 }).route === 'vision-direct') ? ok('small scan → vision direct') : bad('vision-direct');

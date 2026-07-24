@@ -39,7 +39,13 @@
   // Vercel Node serverless hard limit is 4.5 MB of request body. Reserve room
   // for the prompt, JSON envelope, and headers.
   var PLATFORM_BODY_LIMIT = 4.5 * 1024 * 1024;
-  var BODY_BUDGET         = 3.6 * 1024 * 1024;   // usable base64 payload per call
+  // Non-payload bytes in the request: prompt, JSON envelope, headers. Small —
+  // the extraction prompt is ~2 KB; 64 KB is a generous allowance.
+  var REQUEST_OVERHEAD    = 64 * 1024;
+  // Per-CALL packing budget when we are already compressing (many JPEGs in one
+  // body) — deliberately conservative. NOTE: this is NOT the compression
+  // trigger; see fitsInOneRequest.
+  var BODY_BUDGET         = 3.6 * 1024 * 1024;
   var RAW_BUDGET          = Math.floor(BODY_BUDGET * 3 / 4); // pre-base64 bytes (~2.7 MB)
   var DEFAULT_DPI         = 150;                 // legible for lease text
   var MIN_DPI             = 96;                  // fallback for stubborn pages
@@ -56,9 +62,17 @@
     return Math.ceil(rawBytes / 3) * 4;
   }
 
-  /** Would this raw payload survive the platform body limit if sent whole? */
+  /**
+   * Would this payload survive the platform body limit if sent whole?
+   *
+   * THIS IS THE COMPRESSION TRIGGER, and it is deliberately set at the real
+   * platform ceiling (not the conservative packing budget) so that **any file
+   * that previously uploaded successfully still takes the exact same code path
+   * as before**. Compression only engages for files that would genuinely have
+   * been rejected with HTTP 413.
+   */
   function fitsInOneRequest(rawBytes) {
-    return estimateEncodedBytes(rawBytes) <= BODY_BUDGET;
+    return estimateEncodedBytes(rawBytes) + REQUEST_OVERHEAD <= PLATFORM_BODY_LIMIT;
   }
 
   /**
