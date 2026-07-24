@@ -35,6 +35,20 @@ srv.listen(PORT, '127.0.0.1', async () => {
   page.on('console', m => logs.push({ t: m.type(), x: m.text() }));
   page.on('pageerror', e => logs.push({ t: 'PAGEERROR', x: e.message }));
   await page.route('**/supabase-js**', r => r.fulfill({ status: 200, contentType: 'application/javascript', body: '/*mock*/' }));
+  // Mock the AI proxy — the sandbox can't reach Anthropic. api/claude returns
+  // parsed JSON, so the mock returns the grounded structure the client expects.
+  await page.route('**/api/claude', r => r.fulfill({
+    status: 200, contentType: 'application/json', body: JSON.stringify({
+      draft: 'Hi John,\n\nThe HVAC unit for your space was replaced in May 2025 by ABC Mechanical and remains under the manufacturer’s warranty until May 2030. I’ve attached the installation invoice and warranty documentation. Per your lease (§8.3), warranty-covered repairs are the landlord’s responsibility during the warranty period.\n\nPlease let me know if you have any questions.',
+      citations: [
+        { claim: 'HVAC replaced May 2025 by ABC Mechanical', source: 'Timeline: HVAC replaced' },
+        { claim: 'under warranty until May 2030', source: 'warranty.pdf' },
+        { claim: 'landlord responsible during warranty', source: 'lease §8.3' },
+      ],
+      attachmentsToSelect: ['warranty.pdf', 'invoice.pdf'],
+      insufficient: false, missing: '',
+    }),
+  }));
   await page.addInitScript(SUPABASE_MOCK);
 
   try {
@@ -166,6 +180,391 @@ srv.listen(PORT, '127.0.0.1', async () => {
     shown ? ok('edited text appears in the rendered timeline') : bad('edit not rendered');
     const hasEditBtn = await page.evaluate(() => !!document.querySelector('#propertyActivitySlot .tl-edit-btn'));
     hasEditBtn ? ok('manual entries expose an Edit affordance in the timeline') : bad('no edit button rendered');
+
+    sec('Connected workspace — timeline event → source pane (move #1)');
+    const navChecks = await page.evaluate(() => {
+      const tl = currentProperty().timeline || [];
+      const disp = tl.find(e => e.type === 'dispute_created' || e.type === 'dispute_resolved');
+      return {
+        hasDisp: !!disp,
+        dispNav: disp ? !!PropertyTimeline.navFor(disp) : false,
+        manualNav: PropertyTimeline.navFor({ manual: true, category: 'note' }),
+      };
+    });
+    navChecks.dispNav ? ok('dispute event exposes a "View" source link (navFor)') : bad('dispute has no nav');
+    (navChecks.manualNav === null) ? ok('manual note has no "View" (it is its own record)') : bad('manual nav should be null', JSON.stringify(navChecks.manualNav));
+    const hasViewBtn = await page.evaluate(() => !!document.querySelector('#propertyActivitySlot .tl-view-btn'));
+    hasViewBtn ? ok('auto events render a "View →" affordance in the timeline') : bad('no view button rendered');
+    const switched = await page.evaluate(() => {
+      const tl = currentProperty().timeline || [];
+      const disp = tl.find(e => e.type === 'dispute_created' || e.type === 'dispute_resolved');
+      PropertyTimeline.viewSource(disp.id);
+      const cam = document.getElementById('wsPane-cam');
+      return cam ? getComputedStyle(cam).display !== 'none' : false;
+    });
+    switched ? ok('clicking "View" on a dispute event switches to the CAM pane') : bad('did not switch to CAM pane');
+    // return to overview so the console-error scan sees a clean state
+    await page.evaluate(() => switchWorkspaceTab('overview'));
+    await page.waitForTimeout(200);
+
+    sec('Complete event coverage — workflow types register + link (move #2)');
+    const cov = await page.evaluate(() => ({
+      cam:    PropertyTimeline.describe({ type: 'cam_reconciled' }).label,
+      res:    PropertyTimeline.describe({ type: 'reserve_updated' }).label,
+      camTab: (PropertyTimeline.navFor({ type: 'cam_reconciled' }) || {}).tab,
+      resTab: (PropertyTimeline.navFor({ type: 'reserve_updated' }) || {}).tab,
+    }));
+    (cov.cam === 'CAM') ? ok('cam_reconciled registers as "CAM"') : bad('cam label', cov.cam);
+    (cov.res === 'Reserve') ? ok('reserve_updated registers as "Reserve"') : bad('reserve label', cov.res);
+    (cov.camTab === 'cam') ? ok('cam_reconciled links to the CAM pane') : bad('cam nav', cov.camTab);
+    (cov.resTab === 'reserves') ? ok('reserve_updated links to the Reserves pane') : bad('reserve nav', cov.resTab);
+    const camRendered = await page.evaluate(() => {
+      const p = currentProperty();
+      appendPropertyTimelineEvent(p, { type: 'cam_reconciled', severity: 'success', title: 'CAM reconciled — 2025', description: '5 tenants · $185,450 in expenses', actor: 'Property Manager' });
+      renderPropertyActivity(p);
+      const s = document.getElementById('propertyActivitySlot');
+      return Array.from(s.querySelectorAll('.tl-type-badge')).some(b => b.textContent === 'CAM') && /CAM reconciled — 2025/.test(s.innerHTML);
+    });
+    camRendered ? ok('a cam_reconciled event renders with a "CAM" badge + summary') : bad('cam event not rendered');
+    await page.evaluate(() => switchWorkspaceTab('overview'));
+    await page.waitForTimeout(150);
+
+    sec('Advisor surface — "What needs your attention" (move #3)');
+    const attn = await page.evaluate(() => {
+      const p = currentProperty();
+      const tenants = (p.tenants || []).map(t => Object.assign({}, t));
+      if (tenants[0]) tenants[0].end_date = '2020-01-01'; // force an expired lease
+      const test = Object.assign({}, p, { tenants, disputes: [{ id: 9991, status: 'open' }] });
+      const items = PropertyWorkspace.collectAttention(test);
+      return {
+        first: items[0] && items[0].severity,
+        hasExpired: items.some(i => /expired/.test(i.title)),
+        hasDispute: items.some(i => /dispute/.test(i.title)),
+        allHaveWhyAndAction: items.every(i => i.why && i.action),
+      };
+    });
+    (attn.first === 'critical') ? ok('most severe item ranks first (prioritization)') : bad('ranking', attn.first);
+    attn.hasExpired ? ok('expired lease surfaces as an attention item') : bad('no expired item');
+    attn.hasDispute ? ok('open dispute surfaces as an attention item') : bad('no dispute item');
+    attn.allHaveWhyAndAction ? ok('every item carries a "why" and one action (what/why/what-next)') : bad('items missing why/action');
+
+    const rendered = await page.evaluate(() => {
+      const p = currentProperty();
+      const tenants = (p.tenants || []).map(t => Object.assign({}, t));
+      if (tenants[0]) tenants[0].end_date = '2020-01-01';
+      PropertyWorkspace.renderAttention(Object.assign({}, p, { tenants, disputes: [{ id: 1, status: 'open' }] }));
+      const slot = document.getElementById('propertyAttentionSlot');
+      const act = document.getElementById('propertyActivitySlot');
+      const before = slot && act && (slot.compareDocumentPosition(act) & Node.DOCUMENT_POSITION_FOLLOWING);
+      return {
+        exists: !!slot,
+        before: !!before,
+        title: slot ? /What needs your attention/.test(slot.innerHTML) : false,
+        shown: slot ? slot.querySelectorAll('.pw-item').length : 0,
+        action: slot ? !!slot.querySelector('.pw-item-act') : false,
+      };
+    });
+    rendered.exists ? ok('attention panel renders') : bad('no panel');
+    rendered.before ? ok('panel sits above the timeline in the overview') : bad('panel placement');
+    rendered.title ? ok('panel titled "What needs your attention"') : bad('no title');
+    (rendered.shown >= 1 && rendered.shown <= 3) ? ok('shows a ranked, capped set (' + rendered.shown + ' ≤ 3) — prioritization over density') : bad('cap', String(rendered.shown));
+    rendered.action ? ok('each item has one clear action button') : bad('no action button');
+
+    const clear = await page.evaluate(() => {
+      PropertyWorkspace.renderAttention({ id: 'x', tenants: [], disputes: [], camReconciliation: null });
+      const s = document.getElementById('propertyAttentionSlot');
+      return s ? /all caught up/i.test(s.innerHTML) : false;
+    });
+    clear ? ok('"all caught up" state when nothing needs action (reduces load)') : bad('no clear state');
+
+    const navd = await page.evaluate(() => {
+      const p = currentProperty();
+      const tenants = (p.tenants || []).map(t => Object.assign({}, t));
+      if (tenants[0]) tenants[0].end_date = '2020-01-01';
+      PropertyWorkspace.renderAttention(Object.assign({}, p, { tenants, disputes: [] }));
+      PropertyWorkspace.act(0); // first item = expired lease → Spaces (leases live with their space)
+      const pane = document.getElementById('wsPane-spaces');
+      return pane ? getComputedStyle(pane).display !== 'none' : false;
+    });
+    navd ? ok('clicking an item action navigates to its source pane') : bad('action did not navigate');
+    await page.evaluate(() => { renderProperty(currentProperty()); switchWorkspaceTab('overview'); });
+    await page.waitForTimeout(200);
+
+    sec('Contextual records — subject/scope room (Property + Tenant Space)');
+    const subj = await page.evaluate(() => {
+      const p = currentProperty(); const t = (p.tenants || [])[0];
+      const suiteEv = appendPropertyTimelineEvent(p, { type: 'manual_note', manual: true, category: 'note', title: 'suite note', tenantId: t && t.id });
+      const propEv  = appendPropertyTimelineEvent(p, { type: 'manual_note', manual: true, category: 'note', title: 'prop note' });
+      return { suiteType: suiteEv.subject && suiteEv.subject.type, suiteId: suiteEv.subject && suiteEv.subject.id, propType: propEv.subject && propEv.subject.type, tId: t && t.id };
+    });
+    (subj.suiteType === 'suite' && subj.suiteId === subj.tId) ? ok('event with a tenant → subject {type:"suite"}') : bad('suite subject', JSON.stringify(subj));
+    (subj.propType === 'property') ? ok('event without a tenant → subject {type:"property"}') : bad('property subject', subj.propType);
+
+    const scope = await page.evaluate(() => {
+      const p = currentProperty(); renderPropertyActivity(p);
+      const hasSel = !!document.querySelector('#propertyActivitySlot .tl-scope-sel');
+      const t = (p.tenants || [])[0];
+      filterTimelineScope(t.id);
+      const s = document.getElementById('propertyActivitySlot');
+      const shownTitles = Array.from(s.querySelectorAll('.tl-title')).map(e => e.textContent);
+      const belongs = (p.timeline || []).filter(e => (e.subject && e.subject.id === t.id) || e.tenantId === t.id).length;
+      filterTimelineScope(null);
+      return { hasSel, shown: shownTitles.length, belongs };
+    });
+    scope.hasSel ? ok('timeline shows a Space (subject) selector') : bad('no scope selector');
+    (scope.belongs > 0 && scope.shown > 0 && scope.shown <= scope.belongs) ? ok('scoping to a tenant space narrows the timeline to that space') : bad('scope filter', JSON.stringify(scope));
+
+    const spaceSave = await page.evaluate(async () => {
+      window.uploadInvoiceFile = async () => ({ url: 'x', error: null });
+      PropertyTimeline.openAddEntry(currentProperty());
+      const hasSpace = !!document.getElementById('ptlSpace');
+      const t = (currentProperty().tenants || [])[0];
+      const ti = document.getElementById('ptlTitle');
+      ti.value = 'Roof patch — space'; ti.dispatchEvent(new Event('input'));
+      if (document.getElementById('ptlSpace')) document.getElementById('ptlSpace').value = t.id;
+      document.getElementById('ptlSave').click();
+      await new Promise(r => setTimeout(r, 300));
+      const tl = currentProperty().timeline || []; const e = tl[tl.length - 1];
+      return { hasSpace, subjType: e.subject && e.subject.type, subjId: e.subject && e.subject.id, tId: t.id };
+    });
+    spaceSave.hasSpace ? ok('add-entry modal has a "Space" field') : bad('no space field');
+    (spaceSave.subjType === 'suite' && spaceSave.subjId === spaceSave.tId) ? ok('saving with a space tags the entry to that tenant space') : bad('space save', JSON.stringify(spaceSave));
+
+    sec('Tenant Space view — the complete story of a space');
+    const wk = await page.evaluate(() => {
+      const p = currentProperty();
+      const e = appendPropertyTimelineEvent(p, { title: 'w', attachments: [{ name: 'w.pdf', url: 'https://m/w.pdf', kind: 'warranty' }] });
+      return e.attachments[0].kind;
+    });
+    (wk === 'warranty') ? ok('warranty is a first-class attachment kind (a record, not a module)') : bad('warranty kind', wk);
+
+    const rec = await page.evaluate(() => {
+      const p = currentProperty(); const t = (p.tenants || [])[0];
+      appendPropertyTimelineEvent(p, {
+        manual: true, type: 'manual_maintenance', category: 'maintenance', title: 'HVAC replaced', tenantId: t.id,
+        responsibility: 'landlord', leaseRef: '§8.3',
+        attachments: [{ name: 'invoice.pdf', url: 'https://m/inv.pdf', kind: 'invoice' },
+                      { name: 'warranty.pdf', url: 'https://m/war.pdf', kind: 'warranty' },
+                      { name: 'unit.jpg', url: 'https://m/u.jpg', kind: 'photo' }],
+      });
+      const r = TenantSpace.assemble(p, t.id);
+      return { inv: r.counts.invoices, warr: r.counts.warranties, ph: r.counts.photos, summary: r.summary };
+    });
+    (rec.inv >= 1) ? ok('space record gathers invoices from the scoped timeline') : bad('invoices', String(rec.inv));
+    (rec.warr >= 1) ? ok('space record gathers warranties') : bad('warranties', String(rec.warr));
+    (rec.ph >= 1) ? ok('space record gathers photos') : bad('photos', String(rec.ph));
+    (/warranty doc/.test(rec.summary)) ? ok('grounded space summary reads the record ("warranty on file")') : bad('summary', rec.summary);
+
+    const view = await page.evaluate(() => {
+      const p = currentProperty(); const t = (p.tenants || [])[0];
+      TenantSpace.openSpace(t.id);
+      const ov = document.getElementById('tsOverlay');
+      const titles = ov ? Array.from(ov.querySelectorAll('.ts-sec-title')).map(e => e.textContent) : [];
+      const photoImg = ov ? !!ov.querySelector('.ts-photo img') : false;
+      TenantSpace.closeSpace();
+      return { open: !!ov, framing: ov ? /Everything about this space/.test(ov.innerHTML) : false, titles, photoImg };
+    });
+    view.open ? ok('Tenant Space view opens') : bad('space view did not open');
+    view.framing ? ok('"everything about this space, in one place" framing present') : bad('no framing');
+    (['Lease', 'Financial activity', 'Maintenance', 'Photos', 'Documents', 'Timeline'].every(s => view.titles.includes(s)))
+      ? ok('all sections render (lease · financial · maintenance · photos · documents · timeline)') : bad('sections', JSON.stringify(view.titles));
+    view.photoImg ? ok('photos render as thumbnails in the space view') : bad('no photo thumbnails');
+
+    const openBtn = await page.evaluate(() => {
+      const t = (currentProperty().tenants || [])[0];
+      filterTimelineScope(t.id);
+      const has = !!document.querySelector('#propertyActivitySlot .tl-open-space');
+      filterTimelineScope(null);
+      return has;
+    });
+    openBtn ? ok('timeline scope bar offers "Open space →" when a space is selected') : bad('no open-space button');
+
+    sec('Space auto-reflects completed work (living record, not empty container)');
+    const auto = await page.evaluate(() => {
+      const p = currentProperty(); const t = (p.tenants || [])[0];
+      t.leaseUrl = 'https://m/lease.pdf'; t.leaseFileName = 'WholeHealth-lease.pdf'; // real spaces have a lease file
+      const rec = TenantSpace.assemble(p, t.id);
+      return {
+        camAuto: !!rec.camResult,
+        camAlloc: rec.camResult ? (rec.camResult.allocatedAmount != null ? rec.camResult.allocatedAmount : rec.camResult.totalAllocated) : null,
+        leaseDocs: (rec.leaseDocs || []).length,
+        summaryHasCam: /CAM/.test(rec.summary),
+      };
+    });
+    auto.camAuto ? ok('CAM reconciliation auto-populates for the space (no manual step)') : bad('cam not auto-populated');
+    (auto.camAlloc != null) ? ok('space carries the tenant’s allocated CAM amount') : bad('no cam amount', String(auto.camAlloc));
+    (auto.leaseDocs >= 1) ? ok('actual lease document surfaces (not just terms)') : bad('no lease doc');
+    auto.summaryHasCam ? ok('grounded summary reflects the CAM allocation') : bad('summary missing cam');
+
+    const layout = await page.evaluate(() => {
+      const t = (currentProperty().tenants || [])[0];
+      TenantSpace.openSpace(t.id);
+      const ov = document.getElementById('tsOverlay');
+      const camResult = !!ov.querySelector('.ts-cam-result');
+      const leaseDoc = !!ov.querySelector('.ts-lease .ts-doc');
+      const body = ov.querySelector('.ts-body');
+      const actbar = ov.querySelector('.ts-actbar');
+      const actBelow = body && actbar && (body.compareDocumentPosition(actbar) & Node.DOCUMENT_POSITION_FOLLOWING);
+      TenantSpace.closeSpace();
+      return { camResult, leaseDoc, actBelow: !!actBelow };
+    });
+    layout.camResult ? ok('Space view shows the CAM allocation automatically') : bad('no cam result in view');
+    layout.leaseDoc ? ok('Space view shows the actual lease document') : bad('no lease doc in view');
+    layout.actBelow ? ok('"Act on this space" sits below the record (understand first, then act)') : bad('act not below the record');
+
+    sec('Capstone — "Act on this space" (extensible, grounded, cited, honest)');
+    const fw = await page.evaluate(() => ({
+      replyAvail: !!(SpaceActions.ACTIONS.reply && SpaceActions.ACTIONS.reply.available),
+      total: SpaceActions.listActions().length,
+      soon: SpaceActions.listActions().filter(a => !a.available).length,
+      disc: /never use outside or general knowledge/i.test(SpaceActions.SYSTEM) && /cite every factual/i.test(SpaceActions.SYSTEM) && /insufficient/i.test(SpaceActions.SYSTEM),
+    }));
+    fw.replyAvail ? ok('Reply to tenant is the first registered action') : bad('reply not available');
+    (fw.total >= 5 && fw.soon >= 1) ? ok('action registry is extensible — future actions register against the same record') : bad('registry', JSON.stringify(fw));
+    fw.disc ? ok('discipline enforced in the system prompt (record-only · cite · say-if-insufficient)') : bad('discipline missing');
+
+    const ground = await page.evaluate(() => {
+      const p = currentProperty(); const t = (p.tenants || [])[0];
+      const rec = TenantSpace.assemble(p, t.id);
+      const ctx = SpaceActions.recordToContext(rec);
+      const req = SpaceActions.buildRequest(rec, 'reply', 'Is the HVAC under warranty?');
+      return { ctxWarr: /warranty\.pdf/i.test(ctx), ctxHvac: /HVAC/i.test(ctx), reqRecord: /VERIFIED RECORD/.test(req.messages[0].content) && /HVAC/.test(req.messages[0].content), hasSys: /general knowledge/i.test(req.system || '') };
+    });
+    (ground.ctxWarr && ground.ctxHvac) ? ok('the AI context is assembled only from the space’s own records (grounding)') : bad('context', JSON.stringify(ground));
+    (ground.reqRecord && ground.hasSys) ? ok('the request carries the verified record + the discipline system prompt') : bad('request build', JSON.stringify(ground));
+
+    const reply = await page.evaluate(async () => {
+      const t = (currentProperty().tenants || [])[0];
+      TenantSpace.openSpace(t.id);
+      document.getElementById('tsActBtn').click();
+      document.querySelector('.sa-choice[data-key="reply"]').click();
+      document.getElementById('saGo').click();
+      await new Promise(r => setTimeout(r, 350));
+      const draft = document.getElementById('saDraft');
+      const cites = document.querySelectorAll('#saResult .sa-cites li').length;
+      const atts = Array.from(document.querySelectorAll('#saResult .sa-att'));
+      const preselected = atts.filter(a => a.querySelector('input').checked).map(a => a.textContent.trim());
+      const out = { draft: !!(draft && draft.value.length > 20), cites: cites, pre: preselected.length, warr: preselected.some(s => /warranty\.pdf/.test(s)) };
+      TenantSpace.closeSpace();
+      return out;
+    });
+    reply.draft ? ok('grounded reply draft renders for review (manager reviews, not researches)') : bad('no draft');
+    (reply.cites >= 1) ? ok('citations render — every factual claim tied to a record') : bad('no citations');
+    (reply.pre >= 1 && reply.warr) ? ok('supporting attachments pre-selected (warranty + invoice)') : bad('attachments not pre-selected', JSON.stringify(reply));
+
+    await page.unroute('**/api/claude');
+    await page.route('**/api/claude', r => r.fulfill({ status: 200, contentType: 'application/json', body: JSON.stringify({ insufficient: true, missing: 'the warranty document', draft: '', citations: [], attachmentsToSelect: [] }) }));
+    const honest = await page.evaluate(async () => {
+      const t = (currentProperty().tenants || [])[0];
+      TenantSpace.openSpace(t.id);
+      document.getElementById('tsActBtn').click();
+      document.querySelector('.sa-choice[data-key="reply"]').click();
+      document.getElementById('saGo').click();
+      await new Promise(r => setTimeout(r, 350));
+      const insuff = !!document.querySelector('#saResult .sa-insuff');
+      const draft = !!document.getElementById('saDraft');
+      TenantSpace.closeSpace();
+      return { insuff, draft };
+    });
+    (honest.insuff && !honest.draft) ? ok('insufficient record → honest "not enough info", never a guessed draft') : bad('honesty path', JSON.stringify(honest));
+
+    sec('Spaces — top-level navigation (Property → Space → Action)');
+    const nav = await page.evaluate(() => ({
+      inTabs: (typeof WORKSPACE_TABS !== 'undefined') && WORKSPACE_TABS.includes('spaces'),
+      btn: !!document.getElementById('wsTabBtn-spaces'),
+      pane: !!document.getElementById('wsPane-spaces'),
+      kpiSpaces: /Spaces/.test((document.getElementById('propertyKpiHeader') || {}).innerHTML || ''),
+      kpiTenants: /kpi-tile-label">Tenants</.test((document.getElementById('propertyKpiHeader') || {}).innerHTML || ''),
+    }));
+    nav.inTabs ? ok('"spaces" is a registered top-level workspace tab') : bad('spaces not in WORKSPACE_TABS');
+    (nav.btn && nav.pane) ? ok('Spaces tab button + pane exist') : bad('spaces tab/pane missing');
+    (nav.kpiSpaces && !nav.kpiTenants) ? ok('KPI promoted "Tenants" → "Spaces"') : bad('KPI tile not promoted');
+
+    const list = await page.evaluate(() => {
+      switchWorkspaceTab('spaces');
+      TenantSpace.renderList(currentProperty());
+      const pane = document.getElementById('wsPane-spaces');
+      const visible = pane ? getComputedStyle(pane).display !== 'none' : false;
+      const cards = document.querySelectorAll('#spacesList .tsl-card').length;
+      const opens = !!document.querySelector('#spacesList .tsl-open');
+      switchWorkspaceTab('overview');
+      return { visible, cards, opens };
+    });
+    list.visible ? ok('Spaces tab opens its own pane') : bad('spaces pane not visible');
+    (list.cards >= 1) ? ok('Spaces lists each tenant space as a card (' + list.cards + ')') : bad('no space cards');
+    list.opens ? ok('each space card has "Open space →"') : bad('no open button');
+
+    sec('Information architecture — subject-based navigation');
+    const ia = await page.evaluate(() => {
+      if (window.PropertyOS) { PropertyOS.init(); PropertyOS.renderPropertyPage(currentProperty()); }
+      return {
+        tabs: (typeof WORKSPACE_TABS !== 'undefined') ? WORKSPACE_TABS.slice() : [],
+        propBtn: !!document.getElementById('wsTabBtn-property'),
+        propPane: !!document.getElementById('wsPane-property'),
+        docsRetired: (typeof WORKSPACE_TABS !== 'undefined') && !WORKSPACE_TABS.includes('documents'),
+        setupOnProperty: !!document.querySelector('#wsPane-property #cardSetup'),
+        leasesOnSpaces: !!document.querySelector('#wsPane-spaces #cardLeases'),
+      };
+    });
+    (ia.tabs.join(',') === 'overview,property,spaces,cam,reports,reserves')
+      ? ok('nav is subject-based: Overview · Property · Spaces · CAM · Reports · Reserves') : bad('tab order', ia.tabs.join(','));
+    (ia.propBtn && ia.propPane) ? ok('Property is a top-level tab with its own pane') : bad('property tab/pane missing');
+    ia.docsRetired ? ok('Documents retired from navigation (records moved to their subjects)') : bad('documents still in nav');
+    ia.setupOnProperty ? ok('Property Setup lives on Property (building as a whole)') : bad('setup not on property');
+    ia.leasesOnSpaces ? ok('Lease intake lives under Spaces (no app-wide Lease section)') : bad('leases not under spaces');
+
+    sec('Invoices belong to the Property — CAM references them');
+    const invArch = await page.evaluate(() => {
+      const p = currentProperty();
+      const before = PropertyOS.invoices(p).length;
+      PropertyOS.setInvoiceRelation(0, 'system', 'roof');
+      PropertyOS.setInvoiceRelation(0, 'camEligible', false);
+      const t = (p.tenants || [])[0];
+      PropertyOS.setInvoiceRelation(1, 'spaceId', t.id);
+      const after = PropertyOS.invoices(p);
+      return {
+        onProperty: Array.isArray(p.invoices) && p.invoices.length > 0,
+        count: before,
+        sys: after[0].system, cam: after[0].camEligible, space: after[1].spaceId, tId: t.id,
+        register: !!document.querySelector('#wsPane-property .pos-reg'),
+        systems: document.querySelectorAll('#wsPane-property .pos-sys-cell').length,
+      };
+    });
+    invArch.onProperty ? ok('invoices are stored on the property record (property.invoices)') : bad('invoices not property-owned');
+    invArch.register ? ok('Property page shows the invoice register (uploaded once to the property)') : bad('no invoice register');
+    (invArch.sys === 'roof') ? ok('an invoice can relate to a Building System') : bad('system relation', invArch.sys);
+    (invArch.cam === false) ? ok('an invoice can be marked not CAM-eligible (CAM references, does not own)') : bad('cam flag', String(invArch.cam));
+    (invArch.space === invArch.tId) ? ok('an invoice can relate to a Space') : bad('space relation', invArch.space);
+    (invArch.systems >= 6) ? ok('Building systems surface on Property (' + invArch.systems + ')') : bad('systems', String(invArch.systems));
+
+    sec('Success test — a manager knows where to go without thinking');
+    const where = await page.evaluate(() => {
+      const has = (sel) => !!document.querySelector(sel);
+      return {
+        insurance: has('#wsPane-property .pos-docs, #wsPane-property .pos-empty'), // property documents section exists
+        taxbill:   has('#wsPane-property #propertyOsBody'),
+        roofwarr:  has('#wsPane-property .pos-sys'),
+        lease:     has('#wsPane-spaces #spacesList'),
+        photos:    has('#wsPane-spaces #spacesList'),
+        cam:       has('#wsPane-cam'),
+        statement: has('#wsPane-reports #reportsSection'),
+      };
+    });
+    (where.insurance && where.taxbill) ? ok('"I need the insurance policy / tax bill" → Property') : bad('property docs missing');
+    where.roofwarr ? ok('"I need the roof warranty" → Property (building systems)') : bad('building systems missing');
+    (where.lease && where.photos) ? ok('"I need the lease / photos for a tenant" → Spaces') : bad('spaces missing');
+    where.cam ? ok('"I need to see why CAM increased" → CAM') : bad('cam missing');
+    where.statement ? ok('"I need to send the tenant statement" → Reports (outputs)') : bad('reports missing');
+
+    const spaceSecs = await page.evaluate(() => {
+      const t = (currentProperty().tenants || [])[0];
+      TenantSpace.openSpace(t.id);
+      const titles = Array.from(document.querySelectorAll('#tsOverlay .ts-sec-title')).map(e => e.textContent);
+      TenantSpace.closeSpace();
+      return titles;
+    });
+    (['Lease', 'Financial activity', 'Maintenance', 'Photos', 'Documents', 'Timeline'].every(s => spaceSecs.includes(s)))
+      ? ok('Space sections match the model (Lease · Financial · Maintenance · Photos · Documents · Timeline)') : bad('space sections', JSON.stringify(spaceSecs));
 
     sec('Console errors');
     const errs = logs.filter(l => (l.t === 'error' || l.t === 'PAGEERROR')

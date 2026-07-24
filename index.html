@@ -6207,6 +6207,7 @@
   </div>
   <div class="workspace-tab-bar" id="workspaceTabBar">
     <button class="workspace-tab active" id="wsTabBtn-overview"  onclick="switchWorkspaceTabFromNav('overview')"><span class="ws-tab-icon">&#x1F3E2;</span>Overview</button>
+    <button class="workspace-tab"        id="wsTabBtn-spaces"    onclick="switchWorkspaceTabFromNav('spaces')"><span class="ws-tab-icon">&#x1F4CD;</span>Spaces</button>
     <button class="workspace-tab"        id="wsTabBtn-cam"       onclick="switchWorkspaceTabFromNav('cam')"><span class="ws-tab-icon">&#x1F9FE;</span>CAM</button>
     <button class="workspace-tab"        id="wsTabBtn-reserves"  onclick="switchWorkspaceTabFromNav('reserves')"><span class="ws-tab-icon">&#x1F512;</span>Reserves</button>
     <!-- Estoppels tab hidden until the feature is built (placeholder removed for production readiness).
@@ -6335,6 +6336,20 @@
   <div id="propertyActivitySlot"></div>
 
   </div><!-- /wsPane-overview -->
+
+  <!-- ══════════════════════════ TAB: Spaces ═════════════════════════════ -->
+  <div class="workspace-tab-pane" id="wsPane-spaces" style="display:none;">
+    <div class="card" id="spacesSection">
+      <div class="sec-head">
+        <div class="sec-num" style="background:#C9973A;">&#x1F4CD;</div>
+        <div>
+          <h2>Spaces</h2>
+          <p>Every tenant space in this property — open one to see its complete story and act on it.</p>
+        </div>
+      </div>
+      <div id="spacesList"></div>
+    </div>
+  </div><!-- /wsPane-spaces -->
 
   <!-- ══════════════════════════ TAB: Documents ══════════════════════════ -->
   <div class="workspace-tab-pane" id="wsPane-documents" style="display:none;">
@@ -6950,6 +6965,14 @@
 <script src="script.js"></script>
 <!-- Property Timeline v1 (Phase 2): manager logbook layer — add-entry modal, attachments, event-type registry. Reuses the timeline engine in script.js; must load after it. -->
 <script src="property-timeline.js"></script>
+<!-- Property Operating System — advisor surface ("What needs your attention"). Reuses Selectors + navigation; must load after script.js/property-timeline.js. -->
+<script src="property-workspace.js"></script>
+<!-- Property Operating System — Tenant Space view ("everything about Suite 210"). Reuses subject-scoped records; must load after property-timeline.js. -->
+<!-- Property Operating System — the Property subject (building-as-a-whole records, invoice register, building systems). Creates the Property tab/pane and re-parents cards to their subjects. -->
+<script src="property-os.js"></script>
+<script src="tenant-space.js"></script>
+<!-- Property Operating System — "Act on this space" (grounded AI actions; Reply is action #1). Reads TenantSpace.record(); must load after it. -->
+<script src="space-actions.js"></script>
 <!-- Pre-login landing + 60-second animated demo (additive overlay; self-mounts) -->
 <script src="landing-experience.js"></script>
 <!-- Post-login onboarding — FALLBACK, off by default (see landing-experience.js) -->

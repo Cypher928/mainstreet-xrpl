@@ -65,6 +65,11 @@ window.PropertyTimeline = (function () {
     ['derived_metrics_rebuilt', 'Metrics', '\u{1F4CA}', 'cam'],
     ['sync_restored', 'Sync', '\u{1F504}', 'system'],
     ['merge_recovered', 'Merge', '\u{1F500}', 'system'],
+    // Workspace move #2 — the real workflows become part of the property's story.
+    ['cam_reconciled', 'CAM', '\u{1F4CA}', 'cam'],
+    ['document_uploaded', 'Document', '\u{1F4C4}', 'leases'],
+    ['reserve_updated', 'Reserve', '\u{1F3E6}', 'reserves'],
+    ['settlement_completed', 'Settlement', '\u{1F4B8}', 'system'],
   ].forEach(function (r) { registerType(r[0], { label: r[1], icon: r[2], group: r[3] }); });
 
   function describe(ev) {
@@ -73,6 +78,43 @@ window.PropertyTimeline = (function () {
     var def = REGISTRY[key] || REGISTRY[String(ev.type || '').replace(/^manual_/, '')];
     if (def) return { label: def.label, icon: def.icon };
     return { label: (ev.category || ev.type || ''), icon: null };
+  }
+
+  function _groupOf(ev) {
+    var key = ev && ev.manual ? (ev.category || String(ev.type || '').replace(/^manual_/, '')) : (ev && ev.type);
+    var def = REGISTRY[key];
+    return def ? def.group : 'system';
+  }
+
+  // ── Timeline as the map: every event links to its source pane ────────────────
+  // (Connected Property Workspace, move #1.) Reuses switchWorkspaceTab + _ccFlashEl.
+  var GROUP_NAV = {
+    cam:      { tab: 'cam',       anchors: ['results', 'cardInvoices'] },
+    disputes: { tab: 'cam',       anchors: ['disputeSection', 'openDisputesWrap'] },
+    leases:   { tab: 'spaces',    anchors: ['cardLeases','spacesSection'] },
+    reserves: { tab: 'reserves',  anchors: ['escrowSection'] },
+  };
+  // Returns { tab, anchors } for events whose source lives in a pane, else null
+  // (manual notes and system events are their own record — no "View").
+  function navFor(ev) {
+    if (!ev) return null;
+    return GROUP_NAV[_groupOf(ev)] || null;
+  }
+  function viewSource(id) {
+    var p = window.currentProperty && window.currentProperty();
+    if (!p) return;
+    var ev = (p.timeline || []).find(function (x) { return x.id === id; });
+    var nav = navFor(ev);
+    if (!nav) return;
+    try { if (window.switchWorkspaceTab) window.switchWorkspaceTab(nav.tab); } catch (_e) {}
+    var el = null, any = null;
+    for (var i = 0; i < nav.anchors.length; i++) {
+      var cand = document.getElementById(nav.anchors[i]);
+      if (cand && !any) any = cand;
+      if (cand && cand.offsetParent !== null) { el = cand; break; }
+    }
+    el = el || any;
+    try { if (el && window._ccFlashEl) window._ccFlashEl(el); } catch (_e) {}
   }
 
   // ── Add / edit entry modal ──────────────────────────────────────────────────
@@ -102,7 +144,7 @@ window.PropertyTimeline = (function () {
     var box = document.getElementById('ptlFileList');
     if (!box) return;
     box.innerHTML = _attachments.map(function (a, i) {
-      var ic = a.kind === 'photo' ? '\u{1F5BC}\u{FE0F}' : (a.kind === 'invoice' ? '\u{1F9FE}' : '\u{1F4C4}');
+      var ic = a.kind === 'photo' ? '\u{1F5BC}\u{FE0F}' : (a.kind === 'invoice' ? '\u{1F9FE}' : (a.kind === 'warranty' ? '\u{1F6E1}\u{FE0F}' : '\u{1F4C4}'));
       var badge = a.existing ? '' : ' <span class="ptl-file-new">new</span>';
       return '<div class="ptl-file"><span class="ptl-file-name">' + ic + '&nbsp;' + _esc(a.name) + badge + '</span>' +
         '<button type="button" class="ptl-file-x" data-i="' + i + '" aria-label="Remove">✕</button></div>';
@@ -158,6 +200,15 @@ window.PropertyTimeline = (function () {
     var catOpts = MANUAL_CATEGORIES.map(function (c) {
       return '<option value="' + c.key + '"' + (c.key === curCat ? ' selected' : '') + '>' + _esc(c.label) + '</option>';
     }).join('');
+    // Space (subject) — attach this record to a tenant space; default is the whole property.
+    var _spaces = (property.tenants || []).filter(function (t) { return t && (t.tenant_name || t.id); });
+    var _curSpace = isEdit ? String((existing.subject && existing.subject.type === 'suite' && existing.subject.id) || existing.tenantId || '') : '';
+    var _spaceFieldHtml = _spaces.length
+      ? '<div class="ptl-field"><label class="ptl-label" for="ptlSpace">Space (optional)</label>' +
+        '<select class="ptl-input" id="ptlSpace"><option value="">Property (all)</option>' +
+        _spaces.map(function (t) { return '<option value="' + _esc(t.id) + '"' + (_curSpace === String(t.id) ? ' selected' : '') + '>' + _esc(t.tenant_name || t.id) + '</option>'; }).join('') +
+        '</select></div>'
+      : '';
     var curResp = isEdit ? (existing.responsibility || 'na') : 'na';
     var curTitle = isEdit ? (existing.title || '') : '';
     var curNotes = isEdit ? (existing.description || '') : '';
@@ -177,6 +228,7 @@ window.PropertyTimeline = (function () {
           // 2. Category
           '<div class="ptl-field"><label class="ptl-label" for="ptlCat">Category</label>' +
             '<select class="ptl-input" id="ptlCat">' + catOpts + '</select></div>' +
+          _spaceFieldHtml +
           // 3. Date
           '<div class="ptl-field"><label class="ptl-label" for="ptlDate">Date</label>' +
             '<input class="ptl-input" type="date" id="ptlDate" value="' + curDate + '"></div>' +
@@ -196,8 +248,9 @@ window.PropertyTimeline = (function () {
           '<div class="ptl-field"><span class="ptl-label">Attachments</span>' +
             '<div class="ptl-file-btns">' +
               '<button type="button" class="ptl-file-btn" id="ptlAddInvoice">+ Invoice</button>' +
-              '<button type="button" class="ptl-file-btn" id="ptlAddPdf">+ PDF</button>' +
+              '<button type="button" class="ptl-file-btn" id="ptlAddWarranty">+ Warranty</button>' +
               '<button type="button" class="ptl-file-btn" id="ptlAddPhoto">+ Photo</button>' +
+              '<button type="button" class="ptl-file-btn" id="ptlAddPdf">+ PDF</button>' +
             '</div><div class="ptl-file-list" id="ptlFileList"></div></div>' +
         '</div>' +
         '<div class="ptl-actions">' +
@@ -213,6 +266,7 @@ window.PropertyTimeline = (function () {
     document.getElementById('ptlClose').onclick = closeModal;
     document.getElementById('ptlCancel').onclick = closeModal;
     document.getElementById('ptlAddInvoice').onclick = function () { _pickFiles('invoice', 'application/pdf,image/*'); };
+    document.getElementById('ptlAddWarranty').onclick = function () { _pickFiles('warranty', 'application/pdf,image/*'); };
     document.getElementById('ptlAddPdf').onclick = function () { _pickFiles('pdf', 'application/pdf'); };
     document.getElementById('ptlAddPhoto').onclick = function () { _pickFiles('photo', 'image/*'); };
     document.getElementById('ptlTitle').addEventListener('input', _syncSave);
@@ -236,6 +290,10 @@ window.PropertyTimeline = (function () {
     var dateVal  = (document.getElementById('ptlDate').value || '').trim();
     var respEl   = document.querySelector('input[name="ptlResp"]:checked');
     var responsibility = respEl ? respEl.value : 'na';
+    var spaceEl  = document.getElementById('ptlSpace');
+    var spaceId  = spaceEl ? (spaceEl.value || '') : '';
+    var spaceLabel = (spaceId && spaceEl && spaceEl.options[spaceEl.selectedIndex]) ? spaceEl.options[spaceEl.selectedIndex].text : '';
+    var subject  = spaceId ? { type: 'suite', id: spaceId, label: spaceLabel } : null;
 
     var timestamp;
     try { timestamp = dateVal ? new Date(dateVal + 'T12:00:00').toISOString() : new Date().toISOString(); }
@@ -268,6 +326,8 @@ window.PropertyTimeline = (function () {
         target.responsibility = (['landlord', 'tenant', 'shared', 'na'].indexOf(responsibility) >= 0 ? responsibility : 'na');
         target.leaseRef = leaseRef;
         target.attachments = finalAtt;
+        target.tenantId = spaceId || null;
+        target.subject = subject || { type: 'property', id: (property.id || null), label: null };
         target.manual = true;
       }
     } else if (window.appendPropertyTimelineEvent) {
@@ -275,6 +335,7 @@ window.PropertyTimeline = (function () {
         manual: true, type: 'manual_' + category, category: category, severity: 'info',
         title: title, description: notes, timestamp: timestamp,
         responsibility: responsibility, leaseRef: leaseRef, attachments: finalAtt,
+        tenantId: spaceId || null, subject: subject || undefined,
         actor: 'Property Manager',
       });
     }
@@ -294,9 +355,17 @@ window.PropertyTimeline = (function () {
     var css = [
       '.tl-add-btn{font:700 0.72rem/1 inherit;color:' + gold + ';background:rgba(201,151,58,0.12);border:1px solid rgba(201,151,58,0.4);border-radius:7px;padding:6px 11px;cursor:pointer;margin-right:8px;min-height:30px;}',
       '.tl-add-btn:hover{background:rgba(201,151,58,0.2);}',
+      '.tl-open-space{font:700 0.72rem/1 inherit;color:#07090C;background:' + gold + ';border:1px solid ' + gold + ';border-radius:8px;padding:7px 11px;cursor:pointer;white-space:nowrap;min-height:34px;}',
+      '.tl-open-space:hover{filter:brightness(1.08);}',
       '.tl-edit-btn{font:600 0.68rem/1 inherit;color:var(--text-4,#64748B);background:none;border:1px solid rgba(var(--line-rgb,255,255,255),0.14);border-radius:6px;padding:4px 8px;cursor:pointer;min-height:26px;}',
       '.tl-edit-btn:hover{color:' + gold + ';border-color:' + gold + ';}',
+      '.tl-view-btn{font:600 0.68rem/1 inherit;color:var(--text-3,#94A3B8);background:none;border:1px solid rgba(var(--line-rgb,255,255,255),0.14);border-radius:6px;padding:4px 8px;cursor:pointer;min-height:26px;margin-left:auto;}',
+      '.tl-view-btn:hover{color:' + gold + ';border-color:' + gold + ';}',
       '.tl-day-divider{font-size:0.68rem;font-weight:800;letter-spacing:0.05em;text-transform:uppercase;color:var(--text-4,#64748B);margin:14px 0 6px;padding-bottom:3px;border-bottom:1px solid rgba(var(--line-rgb,255,255,255),0.07);}',
+      '.tl-scope-bar{display:flex;align-items:center;gap:8px;margin-bottom:10px;}',
+      '.tl-scope-label{font-size:0.72rem;font-weight:700;color:var(--text-4,#64748B);white-space:nowrap;}',
+      '.tl-scope-sel{flex:1;max-width:260px;padding:7px 9px;border-radius:8px;font:0.8rem inherit;background:var(--theme-panel,#0A0D12);border:1px solid rgba(var(--line-rgb,255,255,255),0.14);color:var(--text-1,#E2E8F0);}',
+      '.tl-scope-sel:focus{outline:none;border-color:' + gold + ';}',
       '.tl-resp{font-size:0.62rem;font-weight:800;text-transform:uppercase;letter-spacing:0.04em;border-radius:5px;padding:2px 6px;margin-left:6px;white-space:nowrap;}',
       '.tl-resp--landlord{color:#7dd3fc;background:rgba(125,211,252,0.14);border:1px solid rgba(125,211,252,0.35);}',
       '.tl-resp--tenant{color:#fbbf24;background:rgba(251,191,36,0.14);border:1px solid rgba(251,191,36,0.35);}',
@@ -362,6 +431,8 @@ window.PropertyTimeline = (function () {
   return {
     registerType: registerType,
     describe: describe,
+    navFor: navFor,
+    viewSource: viewSource,
     openAddEntry: openAddEntry,
     openEditEntry: openEditEntry,
     closeModal: closeModal,

@@ -3140,7 +3140,12 @@ function resetTenant(i) {
 // 'estoppels' is intentionally omitted — the Estoppels feature is not built yet and its
 // tab/pane are hidden so the app reads as production-ready. Re-add 'estoppels' here and
 // un-hide #wsTabBtn-estoppels in index.html once the feature ships.
-const WORKSPACE_TABS = ['overview', 'cam', 'reserves', 'reports', 'documents'];
+// Information architecture: the app is organized around real estate subjects,
+// not software modules — Property (the building as a whole), Spaces (each
+// suite), CAM (a workflow that references invoices), Reports (outputs only),
+// Reserves (capital planning). 'documents' is retired from navigation: lease
+// intake moved under Spaces, property documents live on Property.
+const WORKSPACE_TABS = ['overview', 'property', 'spaces', 'cam', 'reports', 'reserves'];
 let _activeWorkspaceTab = 'overview';
 
 function switchWorkspaceTab(tab) {
@@ -3381,9 +3386,9 @@ function renderPropertyKpiHeader(property) {
   const tiles = [
     { label: 'Occupancy', value: occupancyPct !== null ? occupancyPct + '%' : '—',
       sub: totalSqft ? `${occSqft.toLocaleString()} / ${totalSqft.toLocaleString()} sqft` : 'Set total sqft to enable',
-      tab: 'documents', anchor: 'cardLeases' },
-    { label: 'Tenants', value: tenants.length, sub: tenants.length === 1 ? '1 active lease' : `${tenants.length} active leases`,
-      tab: 'documents', anchor: 'cardLeases' },
+      tab: 'spaces', anchor: 'cardLeases,spacesSection' },
+    { label: 'Spaces', value: tenants.length, sub: tenants.length === 1 ? '1 tenant space' : `${tenants.length} tenant spaces`,
+      tab: 'spaces', anchor: 'spacesSection' },
     { label: 'Active Reserves', value: reserves.length,
       sub: reserveBalanceTotal !== null ? `${_fmtKpiMoney(reserveBalanceTotal)} available` : 'No reserves yet',
       tab: 'reserves', anchor: 'escrowSection' },
@@ -3393,7 +3398,7 @@ function renderPropertyKpiHeader(property) {
     { label: 'Lease Expirations', value: readiness.expiringCount || 0,
       warn: (readiness.expiringCount || 0) > 0, alert: (readiness.expiredCount || 0) > 0,
       sub: readiness.expiredCount ? `${readiness.expiredCount} already expired` : 'Next 12 months',
-      tab: 'documents', anchor: 'cardLeases' },
+      tab: 'spaces', anchor: 'cardLeases,spacesSection' },
     { label: 'CAM Expenses', value: _fmtKpiMoney(camTotal), sub: camTotal ? 'Total pool, most recent run' : 'No CAM run yet',
       tab: 'cam', anchor: 'results,cardInvoices' },
   ];
@@ -9237,6 +9242,19 @@ async function runAllocation() {
     console.log('prop.invoices[0]:', JSON.parse(JSON.stringify(_snapProp.invoices?.[0] || {})));
     console.log('results[0].includedInvoices[0]:', JSON.parse(JSON.stringify(_snapProp.camReconciliation.results?.[0]?.includedInvoices?.[0] || {})));
     console.groupEnd();
+    // Property OS (move #2): the reconciliation becomes part of the property's
+    // story. Logged before this save so it persists with the snapshot. Guarded —
+    // never let timeline logging interfere with the reconciliation itself.
+    try {
+      const _n = (fullResults || []).length;
+      appendPropertyTimelineEvent(_snapProp, {
+        type: 'cam_reconciled', severity: 'success',
+        title: 'CAM reconciled — ' + getCamYear(),
+        description: _n + ' tenant' + (_n !== 1 ? 's' : '') + ' · ' + fmt(totalCost) + ' in expenses',
+        metadata: { year: getCamYear(), totalExpenses: totalCost, tenants: _n },
+        actor: 'Property Manager',
+      });
+    } catch (_e) { console.warn('[timeline] cam_reconciled emit skipped:', _e && _e.message); }
     await saveProperty(_snapProp);
   }
 
@@ -17404,9 +17422,18 @@ function appendPropertyTimelineEvent(property, event) {
       ? event.attachments.filter(a => a && a.url).map(a => ({
           name: String(a.name || 'attachment'),
           url:  String(a.url),
-          kind: (['invoice','pdf','photo','file'].includes(a.kind) ? a.kind : 'file'),
+          kind: (['invoice','pdf','photo','file','warranty'].includes(a.kind) ? a.kind : 'file'),
         }))
       : [],
+    // Contextual-records room: every record declares the real-world object it
+    // belongs to. Property OS scopes to a subject ("everything about Suite 210").
+    // Additive: explicit subject wins; else a tenant space (suite) when tenantId
+    // is present; else the property itself. Building/Asset are future subject types.
+    subject:             (event.subject && event.subject.type)
+      ? { type: event.subject.type, id: event.subject.id ?? null, label: event.subject.label ?? null }
+      : (event.tenantId
+          ? { type: 'suite',    id: event.tenantId, label: (event.subject && event.subject.label) || null }
+          : { type: 'property', id: (event.propertyId ?? property.id ?? null), label: null }),
   };
   property.timeline.push(entry);
   if (property.timeline.length > 500) property.timeline = property.timeline.slice(-500);
@@ -17457,6 +17484,19 @@ function filterPropertyActivity(group) {
   if (prop) renderPropertyActivity(prop);
 }
 
+// Property OS scope: null = all spaces (property scope); else a tenant-space
+// (suite) id. Lets a manager see "everything about Suite 210" on the timeline.
+let _tlScopeId = null;
+function filterTimelineScope(id) {
+  _tlScopeId = id || null;
+  const prop = currentProperty();
+  if (prop) renderPropertyActivity(prop);
+}
+function _tlScopeMatch(ev, id) {
+  if (!id) return true;
+  return (ev.subject && ev.subject.id === id) || ev.tenantId === id;
+}
+
 function renderPropertyActivity(property) {
   const slot = document.getElementById('propertyActivitySlot');
   if (!slot) return;
@@ -17478,9 +17518,23 @@ function renderPropertyActivity(property) {
     return;
   }
 
+  // Scope to a subject (Property = all spaces, or one tenant space) first, then
+  // apply the category chips on top of the scoped set.
+  const _tlScoped = _tlScopeId ? tlAll.filter(ev => _tlScopeMatch(ev, _tlScopeId)) : tlAll;
   const tl = _propertyActivityFilter === 'all'
-    ? tlAll
-    : tlAll.filter(ev => _activityGroupForType(ev.type) === _propertyActivityFilter);
+    ? _tlScoped
+    : _tlScoped.filter(ev => _activityGroupForType(ev.type) === _propertyActivityFilter);
+
+  // Space (subject) selector — reuses the property's tenants as the spaces.
+  const _spaces = (property.tenants || []).filter(t => t && (t.tenant_name || t.id));
+  const _scopeSelHtml = _spaces.length ? `<div class="tl-scope-bar">
+      <span class="tl-scope-label">&#x1F4CD; Space</span>
+      <select class="tl-scope-sel" onclick="event.stopPropagation()" onchange="event.stopPropagation();filterTimelineScope(this.value)">
+        <option value=""${!_tlScopeId ? ' selected' : ''}>All spaces (property)</option>
+        ${_spaces.map(t => `<option value="${esc(t.id)}"${_tlScopeId === t.id ? ' selected' : ''}>${esc(t.tenant_name || t.id)}</option>`).join('')}
+      </select>
+      ${_tlScopeId ? `<button class="tl-open-space" onclick="event.stopPropagation(); if(window.TenantSpace){TenantSpace.openSpace('${_tlScopeId}');}">Open space &#x2192;</button>` : ''}
+    </div>` : '';
 
   const _SEVERITY_DOT = { critical: 'tl-dot--red', warning: 'tl-dot--yellow', success: 'tl-dot--green', info: 'tl-dot--blue' };
   const _SEVERITY_ICON = { critical: '⛔', warning: '⚠', success: '✓', info: 'ℹ' };
@@ -17528,7 +17582,7 @@ function renderPropertyActivity(property) {
     const attHtml = (ev.attachments && ev.attachments.length)
       ? `<div class="tl-attachments">` + ev.attachments.map(a => {
           if (a.kind === 'photo') return `<a class="tl-attach tl-attach--photo" href="${esc(a.url)}" target="_blank" rel="noopener" title="${esc(a.name)}"><img class="tl-thumb" src="${esc(a.url)}" alt="${esc(a.name)}" loading="lazy"></a>`;
-          const _ic = a.kind === 'invoice' ? '&#x1F9FE;' : (a.kind === 'pdf' ? '&#x1F4C4;' : '&#x1F4CE;');
+          const _ic = a.kind === 'invoice' ? '&#x1F9FE;' : (a.kind === 'warranty' ? '&#x1F6E1;&#xFE0F;' : (a.kind === 'pdf' ? '&#x1F4C4;' : '&#x1F4CE;'));
           return `<a class="tl-attach" href="${esc(a.url)}" target="_blank" rel="noopener">${_ic}&nbsp;${esc(a.name)}</a>`;
         }).join('') + `</div>` : '';
     let _divider = '';
@@ -17550,6 +17604,7 @@ function renderPropertyActivity(property) {
           <span class="tl-ts">${fmtTs(ev.timestamp)}</span>
           ${ev.actor && ev.actor !== 'System' ? `<span class="tl-actor">${esc(ev.actor)}</span>` : ''}
           ${tenantHtml}
+          ${(window.PropertyTimeline && PropertyTimeline.navFor && PropertyTimeline.navFor(ev)) ? `<button class="tl-view-btn" onclick="event.stopPropagation(); if(window.PropertyTimeline){PropertyTimeline.viewSource('${ev.id}');}">View&nbsp;&#x2192;</button>` : ''}
           ${ev.manual ? `<button class="tl-edit-btn" onclick="event.stopPropagation(); if(window.PropertyTimeline){PropertyTimeline.openEditEntry('${ev.id}');}">&#x270E;&nbsp;Edit</button>` : ''}
         </div>
         ${expand}
@@ -17559,12 +17614,13 @@ function renderPropertyActivity(property) {
 
   slot.innerHTML = `<div class="ap-panel" id="propertyActivityPanel">
     <div class="ap-header" onclick="${_ptlToggle}">
-      <div class="ap-header-left"><span class="ap-title">&#x1F4CB;&nbsp; Property Timeline &mdash; ${tlAll.length} event${tlAll.length !== 1 ? 's' : ''}</span></div>
+      <div class="ap-header-left"><span class="ap-title">&#x1F4CB;&nbsp; Property Timeline &mdash; ${_tlScoped.length} event${_tlScoped.length !== 1 ? 's' : ''}</span></div>
       <div class="ap-header-right">${_ptlAddBtn}<span class="ap-chevron ap-chevron--open">&#x25BC;</span></div>
     </div>
     <div id="paBody" class="ap-body ap-body--open">
+      ${_scopeSelHtml}
       <div class="tl-filter-bar">${filterChipsHtml}</div>
-      ${_visible.length ? `<div class="tl-list">${rows}</div>` : `<div class="tl-detail" style="padding:6px 0">No events in this category.</div>`}
+      ${_visible.length ? `<div class="tl-list">${rows}</div>` : `<div class="tl-detail" style="padding:6px 0">${_tlScopeId ? 'No timeline entries for this space yet.' : 'No events in this category.'}</div>`}
       ${tl.length > 50 ? `<div class="tl-detail" style="padding:6px 0">Showing 50 of ${tl.length} events</div>` : ''}
     </div>
   </div>`;
@@ -20405,6 +20461,21 @@ function renderProperty(property) {
   // ── Property Timeline ─────────────────────────────────────────────────
   try {
     renderPropertyActivity(property);
+  } catch (e) { }
+
+  // ── What needs your attention (Property OS advisor surface) ────────────
+  try {
+    if (window.PropertyWorkspace) window.PropertyWorkspace.renderAttention(property);
+  } catch (e) { }
+
+  // ── Spaces (top-level, subject-first navigation) ───────────────────────
+  try {
+    if (window.TenantSpace && window.TenantSpace.renderList) window.TenantSpace.renderList(property);
+  } catch (e) { }
+
+  // ── Property subject page (building-as-a-whole records) ────────────────
+  try {
+    if (window.PropertyOS) { window.PropertyOS.init(); window.PropertyOS.renderPropertyPage(property); }
   } catch (e) { }
 
   // ── CAM Results ───────────────────────────────────────────────────────
