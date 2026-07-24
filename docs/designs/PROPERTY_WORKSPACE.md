@@ -21,6 +21,21 @@ Every screen, object, and connection must answer one question:
 
 If a screen or a link doesn't help answer that, it doesn't earn its place.
 
+## Permanent principle: reduce cognitive load, not visibility
+
+**The Property Operating System exists to reduce cognitive load, not increase
+visibility.** Connecting modules is *not* about exposing more information — it is
+about helping a property manager understand **what matters today, why it matters,
+and what to do next.**
+
+- Optimize for **prioritization**, not information density.
+- If a feature makes the user **think harder**, we've missed the goal.
+- If it helps them make a **confident decision faster**, we've succeeded.
+
+This governs every screen — most of all Move #3 (the attention surface): show the
+few things that matter, ranked, each with its reason and one clear action. Never
+a wall of data.
+
 ## Every object answers three questions
 
 The core principle of the Property Operating System. Every important object —

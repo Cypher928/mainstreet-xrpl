@@ -20421,6 +20421,11 @@ function renderProperty(property) {
     renderPropertyActivity(property);
   } catch (e) { }
 
+  // ── What needs your attention (Property OS advisor surface) ────────────
+  try {
+    if (window.PropertyWorkspace) window.PropertyWorkspace.renderAttention(property);
+  } catch (e) { }
+
   // ── CAM Results ───────────────────────────────────────────────────────
   // camReconciliation is the authoritative snapshot (written immediately after
   // each run). property.results is the legacy fallback for older saved data.

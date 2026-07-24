@@ -215,6 +215,67 @@ srv.listen(PORT, '127.0.0.1', async () => {
     await page.evaluate(() => switchWorkspaceTab('overview'));
     await page.waitForTimeout(150);
 
+    sec('Advisor surface — "What needs your attention" (move #3)');
+    const attn = await page.evaluate(() => {
+      const p = currentProperty();
+      const tenants = (p.tenants || []).map(t => Object.assign({}, t));
+      if (tenants[0]) tenants[0].end_date = '2020-01-01'; // force an expired lease
+      const test = Object.assign({}, p, { tenants, disputes: [{ id: 9991, status: 'open' }] });
+      const items = PropertyWorkspace.collectAttention(test);
+      return {
+        first: items[0] && items[0].severity,
+        hasExpired: items.some(i => /expired/.test(i.title)),
+        hasDispute: items.some(i => /dispute/.test(i.title)),
+        allHaveWhyAndAction: items.every(i => i.why && i.action),
+      };
+    });
+    (attn.first === 'critical') ? ok('most severe item ranks first (prioritization)') : bad('ranking', attn.first);
+    attn.hasExpired ? ok('expired lease surfaces as an attention item') : bad('no expired item');
+    attn.hasDispute ? ok('open dispute surfaces as an attention item') : bad('no dispute item');
+    attn.allHaveWhyAndAction ? ok('every item carries a "why" and one action (what/why/what-next)') : bad('items missing why/action');
+
+    const rendered = await page.evaluate(() => {
+      const p = currentProperty();
+      const tenants = (p.tenants || []).map(t => Object.assign({}, t));
+      if (tenants[0]) tenants[0].end_date = '2020-01-01';
+      PropertyWorkspace.renderAttention(Object.assign({}, p, { tenants, disputes: [{ id: 1, status: 'open' }] }));
+      const slot = document.getElementById('propertyAttentionSlot');
+      const act = document.getElementById('propertyActivitySlot');
+      const before = slot && act && (slot.compareDocumentPosition(act) & Node.DOCUMENT_POSITION_FOLLOWING);
+      return {
+        exists: !!slot,
+        before: !!before,
+        title: slot ? /What needs your attention/.test(slot.innerHTML) : false,
+        shown: slot ? slot.querySelectorAll('.pw-item').length : 0,
+        action: slot ? !!slot.querySelector('.pw-item-act') : false,
+      };
+    });
+    rendered.exists ? ok('attention panel renders') : bad('no panel');
+    rendered.before ? ok('panel sits above the timeline in the overview') : bad('panel placement');
+    rendered.title ? ok('panel titled "What needs your attention"') : bad('no title');
+    (rendered.shown >= 1 && rendered.shown <= 3) ? ok('shows a ranked, capped set (' + rendered.shown + ' ≤ 3) — prioritization over density') : bad('cap', String(rendered.shown));
+    rendered.action ? ok('each item has one clear action button') : bad('no action button');
+
+    const clear = await page.evaluate(() => {
+      PropertyWorkspace.renderAttention({ id: 'x', tenants: [], disputes: [], camReconciliation: null });
+      const s = document.getElementById('propertyAttentionSlot');
+      return s ? /all caught up/i.test(s.innerHTML) : false;
+    });
+    clear ? ok('"all caught up" state when nothing needs action (reduces load)') : bad('no clear state');
+
+    const navd = await page.evaluate(() => {
+      const p = currentProperty();
+      const tenants = (p.tenants || []).map(t => Object.assign({}, t));
+      if (tenants[0]) tenants[0].end_date = '2020-01-01';
+      PropertyWorkspace.renderAttention(Object.assign({}, p, { tenants, disputes: [] }));
+      PropertyWorkspace.act(0); // first item = expired lease → documents pane
+      const docs = document.getElementById('wsPane-documents');
+      return docs ? getComputedStyle(docs).display !== 'none' : false;
+    });
+    navd ? ok('clicking an item action navigates to its source pane') : bad('action did not navigate');
+    await page.evaluate(() => { renderProperty(currentProperty()); switchWorkspaceTab('overview'); });
+    await page.waitForTimeout(200);
+
     sec('Console errors');
     const errs = logs.filter(l => (l.t === 'error' || l.t === 'PAGEERROR')
       && !/favicon|Failed to load resource|ERR_CERT|\[saveCamResults\]|\[loadCamResults\]|net::ERR/.test(l.x));
