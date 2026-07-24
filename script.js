@@ -17420,6 +17420,15 @@ function appendPropertyTimelineEvent(property, event) {
           kind: (['invoice','pdf','photo','file'].includes(a.kind) ? a.kind : 'file'),
         }))
       : [],
+    // Contextual-records room: every record declares the real-world object it
+    // belongs to. Property OS scopes to a subject ("everything about Suite 210").
+    // Additive: explicit subject wins; else a tenant space (suite) when tenantId
+    // is present; else the property itself. Building/Asset are future subject types.
+    subject:             (event.subject && event.subject.type)
+      ? { type: event.subject.type, id: event.subject.id ?? null, label: event.subject.label ?? null }
+      : (event.tenantId
+          ? { type: 'suite',    id: event.tenantId, label: (event.subject && event.subject.label) || null }
+          : { type: 'property', id: (event.propertyId ?? property.id ?? null), label: null }),
   };
   property.timeline.push(entry);
   if (property.timeline.length > 500) property.timeline = property.timeline.slice(-500);
@@ -17470,6 +17479,19 @@ function filterPropertyActivity(group) {
   if (prop) renderPropertyActivity(prop);
 }
 
+// Property OS scope: null = all spaces (property scope); else a tenant-space
+// (suite) id. Lets a manager see "everything about Suite 210" on the timeline.
+let _tlScopeId = null;
+function filterTimelineScope(id) {
+  _tlScopeId = id || null;
+  const prop = currentProperty();
+  if (prop) renderPropertyActivity(prop);
+}
+function _tlScopeMatch(ev, id) {
+  if (!id) return true;
+  return (ev.subject && ev.subject.id === id) || ev.tenantId === id;
+}
+
 function renderPropertyActivity(property) {
   const slot = document.getElementById('propertyActivitySlot');
   if (!slot) return;
@@ -17491,9 +17513,22 @@ function renderPropertyActivity(property) {
     return;
   }
 
+  // Scope to a subject (Property = all spaces, or one tenant space) first, then
+  // apply the category chips on top of the scoped set.
+  const _tlScoped = _tlScopeId ? tlAll.filter(ev => _tlScopeMatch(ev, _tlScopeId)) : tlAll;
   const tl = _propertyActivityFilter === 'all'
-    ? tlAll
-    : tlAll.filter(ev => _activityGroupForType(ev.type) === _propertyActivityFilter);
+    ? _tlScoped
+    : _tlScoped.filter(ev => _activityGroupForType(ev.type) === _propertyActivityFilter);
+
+  // Space (subject) selector — reuses the property's tenants as the spaces.
+  const _spaces = (property.tenants || []).filter(t => t && (t.tenant_name || t.id));
+  const _scopeSelHtml = _spaces.length ? `<div class="tl-scope-bar">
+      <span class="tl-scope-label">&#x1F4CD; Space</span>
+      <select class="tl-scope-sel" onclick="event.stopPropagation()" onchange="event.stopPropagation();filterTimelineScope(this.value)">
+        <option value=""${!_tlScopeId ? ' selected' : ''}>All spaces (property)</option>
+        ${_spaces.map(t => `<option value="${esc(t.id)}"${_tlScopeId === t.id ? ' selected' : ''}>${esc(t.tenant_name || t.id)}</option>`).join('')}
+      </select>
+    </div>` : '';
 
   const _SEVERITY_DOT = { critical: 'tl-dot--red', warning: 'tl-dot--yellow', success: 'tl-dot--green', info: 'tl-dot--blue' };
   const _SEVERITY_ICON = { critical: '⛔', warning: '⚠', success: '✓', info: 'ℹ' };
@@ -17573,12 +17608,13 @@ function renderPropertyActivity(property) {
 
   slot.innerHTML = `<div class="ap-panel" id="propertyActivityPanel">
     <div class="ap-header" onclick="${_ptlToggle}">
-      <div class="ap-header-left"><span class="ap-title">&#x1F4CB;&nbsp; Property Timeline &mdash; ${tlAll.length} event${tlAll.length !== 1 ? 's' : ''}</span></div>
+      <div class="ap-header-left"><span class="ap-title">&#x1F4CB;&nbsp; Property Timeline &mdash; ${_tlScoped.length} event${_tlScoped.length !== 1 ? 's' : ''}</span></div>
       <div class="ap-header-right">${_ptlAddBtn}<span class="ap-chevron ap-chevron--open">&#x25BC;</span></div>
     </div>
     <div id="paBody" class="ap-body ap-body--open">
+      ${_scopeSelHtml}
       <div class="tl-filter-bar">${filterChipsHtml}</div>
-      ${_visible.length ? `<div class="tl-list">${rows}</div>` : `<div class="tl-detail" style="padding:6px 0">No events in this category.</div>`}
+      ${_visible.length ? `<div class="tl-list">${rows}</div>` : `<div class="tl-detail" style="padding:6px 0">${_tlScopeId ? 'No timeline entries for this space yet.' : 'No events in this category.'}</div>`}
       ${tl.length > 50 ? `<div class="tl-detail" style="padding:6px 0">Showing 50 of ${tl.length} events</div>` : ''}
     </div>
   </div>`;

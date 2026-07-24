@@ -276,6 +276,46 @@ srv.listen(PORT, '127.0.0.1', async () => {
     await page.evaluate(() => { renderProperty(currentProperty()); switchWorkspaceTab('overview'); });
     await page.waitForTimeout(200);
 
+    sec('Contextual records — subject/scope room (Property + Tenant Space)');
+    const subj = await page.evaluate(() => {
+      const p = currentProperty(); const t = (p.tenants || [])[0];
+      const suiteEv = appendPropertyTimelineEvent(p, { type: 'manual_note', manual: true, category: 'note', title: 'suite note', tenantId: t && t.id });
+      const propEv  = appendPropertyTimelineEvent(p, { type: 'manual_note', manual: true, category: 'note', title: 'prop note' });
+      return { suiteType: suiteEv.subject && suiteEv.subject.type, suiteId: suiteEv.subject && suiteEv.subject.id, propType: propEv.subject && propEv.subject.type, tId: t && t.id };
+    });
+    (subj.suiteType === 'suite' && subj.suiteId === subj.tId) ? ok('event with a tenant → subject {type:"suite"}') : bad('suite subject', JSON.stringify(subj));
+    (subj.propType === 'property') ? ok('event without a tenant → subject {type:"property"}') : bad('property subject', subj.propType);
+
+    const scope = await page.evaluate(() => {
+      const p = currentProperty(); renderPropertyActivity(p);
+      const hasSel = !!document.querySelector('#propertyActivitySlot .tl-scope-sel');
+      const t = (p.tenants || [])[0];
+      filterTimelineScope(t.id);
+      const s = document.getElementById('propertyActivitySlot');
+      const shownTitles = Array.from(s.querySelectorAll('.tl-title')).map(e => e.textContent);
+      const belongs = (p.timeline || []).filter(e => (e.subject && e.subject.id === t.id) || e.tenantId === t.id).length;
+      filterTimelineScope(null);
+      return { hasSel, shown: shownTitles.length, belongs };
+    });
+    scope.hasSel ? ok('timeline shows a Space (subject) selector') : bad('no scope selector');
+    (scope.belongs > 0 && scope.shown > 0 && scope.shown <= scope.belongs) ? ok('scoping to a tenant space narrows the timeline to that space') : bad('scope filter', JSON.stringify(scope));
+
+    const spaceSave = await page.evaluate(async () => {
+      window.uploadInvoiceFile = async () => ({ url: 'x', error: null });
+      PropertyTimeline.openAddEntry(currentProperty());
+      const hasSpace = !!document.getElementById('ptlSpace');
+      const t = (currentProperty().tenants || [])[0];
+      const ti = document.getElementById('ptlTitle');
+      ti.value = 'Roof patch — space'; ti.dispatchEvent(new Event('input'));
+      if (document.getElementById('ptlSpace')) document.getElementById('ptlSpace').value = t.id;
+      document.getElementById('ptlSave').click();
+      await new Promise(r => setTimeout(r, 300));
+      const tl = currentProperty().timeline || []; const e = tl[tl.length - 1];
+      return { hasSpace, subjType: e.subject && e.subject.type, subjId: e.subject && e.subject.id, tId: t.id };
+    });
+    spaceSave.hasSpace ? ok('add-entry modal has a "Space" field') : bad('no space field');
+    (spaceSave.subjType === 'suite' && spaceSave.subjId === spaceSave.tId) ? ok('saving with a space tags the entry to that tenant space') : bad('space save', JSON.stringify(spaceSave));
+
     sec('Console errors');
     const errs = logs.filter(l => (l.t === 'error' || l.t === 'PAGEERROR')
       && !/favicon|Failed to load resource|ERR_CERT|\[saveCamResults\]|\[loadCamResults\]|net::ERR/.test(l.x));

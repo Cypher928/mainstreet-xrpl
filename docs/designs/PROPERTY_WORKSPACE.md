@@ -86,6 +86,51 @@ the advisor surfacing recommended actions ("what should I do next").
 
 ---
 
+## Contextual records — every object is a subject
+
+Christy doesn't only think at the property level. She thinks in **spaces and
+assets**: *"show me everything about Suite 210"* — its photos, the work done
+there, the warranties, invoices, documents.
+
+So the Property Operating System is organized around **subjects**. Every
+real-world object — **Property, Building, Suite (tenant space)**, and eventually a
+major **Asset** (roof, HVAC unit) — can carry its own:
+
+> Timeline · Documents · Photos · Notes · Warranties · AI insights
+
+**No separate Warranty module or Photo module.** A warranty or a photo is a
+*record attached to a subject*, surfaced through that subject's timeline and
+documents. The same machinery serves every subject type.
+
+### Relationships, not just records
+Subjects form a graph, and records hang off the most specific one:
+
+```
+Property
+  └─ Suite 210
+       └─ HVAC Replacement            (asset / work)
+            ├─ Invoice
+            ├─ Warranty
+            ├─ Photos
+            ├─ Vendor
+            ├─ Timeline entry
+            └─ Lease responsibility
+```
+
+A record answers "what is it / why / what next" **and** "what is it attached to" —
+so scoping to Suite 210 shows everything about that space, and a future drill into
+the HVAC replacement shows its invoice, warranty, and photos together.
+
+### Phase 2 scope, and the architectural room
+- **Now:** two subject scopes — **Property** and **Tenant Space (Suite)**.
+- **Later (no redesign):** Building and Asset are just more subject *types* on the
+  same model.
+- **The room we build now:** every record carries a `subject` (`{type, id, label}`);
+  the shell and navigation are **scope-aware from day one**. Adding Suite/Asset
+  views later adds subject types and drill-downs — it does **not** require
+  re-architecting records. This is why the cohesive shell (Move #4) is designed
+  scope-aware even though Phase 2 only surfaces Property and Tenant Space.
+
 ## The idea in one line
 
 We already have the parts (leases, CAM, reserves, disputes, documents,

@@ -200,6 +200,15 @@ window.PropertyTimeline = (function () {
     var catOpts = MANUAL_CATEGORIES.map(function (c) {
       return '<option value="' + c.key + '"' + (c.key === curCat ? ' selected' : '') + '>' + _esc(c.label) + '</option>';
     }).join('');
+    // Space (subject) — attach this record to a tenant space; default is the whole property.
+    var _spaces = (property.tenants || []).filter(function (t) { return t && (t.tenant_name || t.id); });
+    var _curSpace = isEdit ? String((existing.subject && existing.subject.type === 'suite' && existing.subject.id) || existing.tenantId || '') : '';
+    var _spaceFieldHtml = _spaces.length
+      ? '<div class="ptl-field"><label class="ptl-label" for="ptlSpace">Space (optional)</label>' +
+        '<select class="ptl-input" id="ptlSpace"><option value="">Property (all)</option>' +
+        _spaces.map(function (t) { return '<option value="' + _esc(t.id) + '"' + (_curSpace === String(t.id) ? ' selected' : '') + '>' + _esc(t.tenant_name || t.id) + '</option>'; }).join('') +
+        '</select></div>'
+      : '';
     var curResp = isEdit ? (existing.responsibility || 'na') : 'na';
     var curTitle = isEdit ? (existing.title || '') : '';
     var curNotes = isEdit ? (existing.description || '') : '';
@@ -219,6 +228,7 @@ window.PropertyTimeline = (function () {
           // 2. Category
           '<div class="ptl-field"><label class="ptl-label" for="ptlCat">Category</label>' +
             '<select class="ptl-input" id="ptlCat">' + catOpts + '</select></div>' +
+          _spaceFieldHtml +
           // 3. Date
           '<div class="ptl-field"><label class="ptl-label" for="ptlDate">Date</label>' +
             '<input class="ptl-input" type="date" id="ptlDate" value="' + curDate + '"></div>' +
@@ -278,6 +288,10 @@ window.PropertyTimeline = (function () {
     var dateVal  = (document.getElementById('ptlDate').value || '').trim();
     var respEl   = document.querySelector('input[name="ptlResp"]:checked');
     var responsibility = respEl ? respEl.value : 'na';
+    var spaceEl  = document.getElementById('ptlSpace');
+    var spaceId  = spaceEl ? (spaceEl.value || '') : '';
+    var spaceLabel = (spaceId && spaceEl && spaceEl.options[spaceEl.selectedIndex]) ? spaceEl.options[spaceEl.selectedIndex].text : '';
+    var subject  = spaceId ? { type: 'suite', id: spaceId, label: spaceLabel } : null;
 
     var timestamp;
     try { timestamp = dateVal ? new Date(dateVal + 'T12:00:00').toISOString() : new Date().toISOString(); }
@@ -310,6 +324,8 @@ window.PropertyTimeline = (function () {
         target.responsibility = (['landlord', 'tenant', 'shared', 'na'].indexOf(responsibility) >= 0 ? responsibility : 'na');
         target.leaseRef = leaseRef;
         target.attachments = finalAtt;
+        target.tenantId = spaceId || null;
+        target.subject = subject || { type: 'property', id: (property.id || null), label: null };
         target.manual = true;
       }
     } else if (window.appendPropertyTimelineEvent) {
@@ -317,6 +333,7 @@ window.PropertyTimeline = (function () {
         manual: true, type: 'manual_' + category, category: category, severity: 'info',
         title: title, description: notes, timestamp: timestamp,
         responsibility: responsibility, leaseRef: leaseRef, attachments: finalAtt,
+        tenantId: spaceId || null, subject: subject || undefined,
         actor: 'Property Manager',
       });
     }
@@ -341,6 +358,10 @@ window.PropertyTimeline = (function () {
       '.tl-view-btn{font:600 0.68rem/1 inherit;color:var(--text-3,#94A3B8);background:none;border:1px solid rgba(var(--line-rgb,255,255,255),0.14);border-radius:6px;padding:4px 8px;cursor:pointer;min-height:26px;margin-left:auto;}',
       '.tl-view-btn:hover{color:' + gold + ';border-color:' + gold + ';}',
       '.tl-day-divider{font-size:0.68rem;font-weight:800;letter-spacing:0.05em;text-transform:uppercase;color:var(--text-4,#64748B);margin:14px 0 6px;padding-bottom:3px;border-bottom:1px solid rgba(var(--line-rgb,255,255,255),0.07);}',
+      '.tl-scope-bar{display:flex;align-items:center;gap:8px;margin-bottom:10px;}',
+      '.tl-scope-label{font-size:0.72rem;font-weight:700;color:var(--text-4,#64748B);white-space:nowrap;}',
+      '.tl-scope-sel{flex:1;max-width:260px;padding:7px 9px;border-radius:8px;font:0.8rem inherit;background:var(--theme-panel,#0A0D12);border:1px solid rgba(var(--line-rgb,255,255,255),0.14);color:var(--text-1,#E2E8F0);}',
+      '.tl-scope-sel:focus{outline:none;border-color:' + gold + ';}',
       '.tl-resp{font-size:0.62rem;font-weight:800;text-transform:uppercase;letter-spacing:0.04em;border-radius:5px;padding:2px 6px;margin-left:6px;white-space:nowrap;}',
       '.tl-resp--landlord{color:#7dd3fc;background:rgba(125,211,252,0.14);border:1px solid rgba(125,211,252,0.35);}',
       '.tl-resp--tenant{color:#fbbf24;background:rgba(251,191,36,0.14);border:1px solid rgba(251,191,36,0.35);}',
