@@ -379,6 +379,39 @@ srv.listen(PORT, '127.0.0.1', async () => {
     });
     openBtn ? ok('timeline scope bar offers "Open space →" when a space is selected') : bad('no open-space button');
 
+    sec('Space auto-reflects completed work (living record, not empty container)');
+    const auto = await page.evaluate(() => {
+      const p = currentProperty(); const t = (p.tenants || [])[0];
+      t.leaseUrl = 'https://m/lease.pdf'; t.leaseFileName = 'WholeHealth-lease.pdf'; // real spaces have a lease file
+      const rec = TenantSpace.assemble(p, t.id);
+      return {
+        camAuto: !!rec.camResult,
+        camAlloc: rec.camResult ? (rec.camResult.allocatedAmount != null ? rec.camResult.allocatedAmount : rec.camResult.totalAllocated) : null,
+        leaseDocs: (rec.leaseDocs || []).length,
+        summaryHasCam: /CAM/.test(rec.summary),
+      };
+    });
+    auto.camAuto ? ok('CAM reconciliation auto-populates for the space (no manual step)') : bad('cam not auto-populated');
+    (auto.camAlloc != null) ? ok('space carries the tenant’s allocated CAM amount') : bad('no cam amount', String(auto.camAlloc));
+    (auto.leaseDocs >= 1) ? ok('actual lease document surfaces (not just terms)') : bad('no lease doc');
+    auto.summaryHasCam ? ok('grounded summary reflects the CAM allocation') : bad('summary missing cam');
+
+    const layout = await page.evaluate(() => {
+      const t = (currentProperty().tenants || [])[0];
+      TenantSpace.openSpace(t.id);
+      const ov = document.getElementById('tsOverlay');
+      const camResult = !!ov.querySelector('.ts-cam-result');
+      const leaseDoc = !!ov.querySelector('.ts-lease .ts-doc');
+      const body = ov.querySelector('.ts-body');
+      const actbar = ov.querySelector('.ts-actbar');
+      const actBelow = body && actbar && (body.compareDocumentPosition(actbar) & Node.DOCUMENT_POSITION_FOLLOWING);
+      TenantSpace.closeSpace();
+      return { camResult, leaseDoc, actBelow: !!actBelow };
+    });
+    layout.camResult ? ok('Space view shows the CAM allocation automatically') : bad('no cam result in view');
+    layout.leaseDoc ? ok('Space view shows the actual lease document') : bad('no lease doc in view');
+    layout.actBelow ? ok('"Act on this space" sits below the record (understand first, then act)') : bad('act not below the record');
+
     sec('Capstone — "Act on this space" (extensible, grounded, cited, honest)');
     const fw = await page.evaluate(() => ({
       replyAvail: !!(SpaceActions.ACTIONS.reply && SpaceActions.ACTIONS.reply.available),

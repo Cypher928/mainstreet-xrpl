@@ -27,6 +27,7 @@ window.TenantSpace = (function () {
   var _t = function (id) { return document.getElementById(id); };
   var _openRec = null; // the assembled record for the currently-open space (actions read this)
   function _fmtDate(ts) { try { return new Date(ts).toLocaleDateString('en-US', { month: 'short', day: 'numeric', year: 'numeric' }); } catch (_) { return String(ts || ''); } }
+  function _money(n) { try { return '$' + Math.round(Number(n)).toLocaleString('en-US'); } catch (_) { return '$' + n; } }
 
   function _scopedEvents(property, tenantId) {
     return (property.timeline || [])
@@ -53,15 +54,27 @@ window.TenantSpace = (function () {
     var warranties = _attach(events, 'warranty');
     var documents  = _attach(events, 'pdf').concat(_attach(events, 'file'));
     var notes      = events.filter(function (e) { return e.manual && e.category === 'note'; });
-    var cam        = events.filter(function (e) { return /^(cam_reconciled|invoice_imported|derived_metrics_rebuilt|manual_cam)$/.test(e.type); });
+    var camEvents  = events.filter(function (e) { return /^(cam_reconciled|invoice_imported|derived_metrics_rebuilt|manual_cam)$/.test(e.type); });
+    // Auto-reflect completed CAM reconciliation for this space — no manual step.
+    var camRec = property.camReconciliation || null;
+    var camResult = null;
+    if (camRec && Array.isArray(camRec.results)) {
+      camResult = camRec.results.find(function (r) {
+        return r && ((r.tenantId && r.tenantId === tenantId) || (r.tenantName && r.tenantName === t.tenant_name) || (r.name && r.name === t.tenant_name));
+      }) || null;
+    }
     var lease = {
       type: t.lease_type || null, sqft: t.leased_sqft || t.sqft || null,
       start: t.start_date || null, end: t.end_date || null, cap: (t.cap != null && t.cap !== '') ? t.cap : null,
-      url: t.leaseUrl || t.lease_url || null,
+      url: t.leaseUrl || t.lease_url || null, fileName: t.leaseFileName || null,
     };
+    // Actual lease document(s) already on file for this space (not just terms).
+    var leaseDocs = [];
+    if (lease.url) leaseDocs.push({ name: lease.fileName || ((t.tenant_name || 'Tenant') + ' lease'), url: lease.url, kind: 'pdf' });
     // Grounded summary — facts read from the record, not general knowledge.
     var bits = [];
     if (lease.type) bits.push(lease.type + (lease.sqft ? ' · ' + lease.sqft + ' sqft' : ''));
+    if (camResult) bits.push((camRec && camRec.camYear ? camRec.camYear + ' ' : '') + 'CAM ' + _money(camResult.allocatedAmount != null ? camResult.allocatedAmount : camResult.totalAllocated) + ' allocated');
     if (warranties.length) bits.push(warranties.length + ' warranty doc' + (warranties.length !== 1 ? 's' : '') + ' on file');
     if (invoices.length) bits.push(invoices.length + ' invoice' + (invoices.length !== 1 ? 's' : ''));
     if (photos.length) bits.push(photos.length + ' photo' + (photos.length !== 1 ? 's' : ''));
@@ -71,9 +84,10 @@ window.TenantSpace = (function () {
 
     return {
       space: { id: tenantId, name: t.tenant_name || 'Space' },
-      lease: lease, summary: summary,
-      counts: { events: events.length, photos: photos.length, invoices: invoices.length, warranties: warranties.length, documents: documents.length, notes: notes.length, cam: cam.length },
-      events: events, photos: photos, invoices: invoices, warranties: warranties, documents: documents, notes: notes, cam: cam,
+      lease: lease, leaseDocs: leaseDocs, summary: summary,
+      camYear: (camRec && camRec.camYear) || null, camResult: camResult,
+      counts: { events: events.length, photos: photos.length, invoices: invoices.length, warranties: warranties.length, documents: documents.length, notes: notes.length, cam: camEvents.length + (camResult ? 1 : 0) },
+      events: events, photos: photos, invoices: invoices, warranties: warranties, documents: documents, notes: notes, cam: camEvents,
     };
   }
 
@@ -103,9 +117,12 @@ window.TenantSpace = (function () {
     if (rec.lease.sqft)  leaseRows.push(['Leased area', rec.lease.sqft + ' sqft']);
     if (rec.lease.start || rec.lease.end) leaseRows.push(['Term', (rec.lease.start || '?') + ' → ' + (rec.lease.end || '?')]);
     if (rec.lease.cap != null) leaseRows.push(['CAM cap', String(rec.lease.cap)]);
-    var leaseHtml = leaseRows.length
-      ? '<div class="ts-lease">' + leaseRows.map(function (r) { return '<div class="ts-lease-row"><span>' + _esc(r[0]) + '</span><b>' + _esc(r[1]) + '</b></div>'; }).join('') +
-        (rec.lease.url ? '<a class="ts-doc ts-doc--lease" href="' + _esc(rec.lease.url) + '" target="_blank" rel="noopener">\u{1F4C4}&nbsp;Open lease</a>' : '') + '</div>'
+    var leaseDocsHtml = (rec.leaseDocs || []).map(function (a) { return _attachChip(a, '\u{1F4C4}'); }).join('');
+    var leaseHtml = (leaseRows.length || leaseDocsHtml)
+      ? '<div class="ts-lease">' +
+          leaseRows.map(function (r) { return '<div class="ts-lease-row"><span>' + _esc(r[0]) + '</span><b>' + _esc(r[1]) + '</b></div>'; }).join('') +
+          (leaseDocsHtml || '<div class="ts-empty" style="margin-top:6px">Lease terms on file — no lease document uploaded yet.</div>') +
+        '</div>'
       : _empty('No lease on file for this space.');
 
     var timelineHtml = rec.events.length
@@ -126,9 +143,21 @@ window.TenantSpace = (function () {
     var notesHtml = rec.notes.length
       ? '<div class="ts-notes">' + rec.notes.map(function (e) { return '<div class="ts-note"><div class="ts-note-t">' + _esc(e.title) + '</div>' + (e.description ? '<div class="ts-note-d">' + _esc(e.description) + '</div>' : '') + '<div class="ts-note-w">' + _esc(_fmtDate(e.timestamp)) + '</div></div>'; }).join('') + '</div>'
       : _empty('No notes yet.');
-    var camHtml = rec.cam.length
-      ? '<div class="ts-timeline">' + rec.cam.map(function (e) { return '<div class="ts-tl-row"><span class="ts-tl-when">' + _esc(_fmtDate(e.timestamp)) + '</span><span class="ts-tl-title">' + _esc(e.title) + '</span></div>'; }).join('') + '</div>'
-      : _empty('No CAM activity for this space.');
+    var camResultHtml = '';
+    if (rec.camResult) {
+      var cr = rec.camResult;
+      var alloc = cr.allocatedAmount != null ? cr.allocatedAmount : cr.totalAllocated;
+      var crRows = [];
+      if (alloc != null) crRows.push([(rec.camYear ? rec.camYear + ' ' : '') + 'CAM allocated', _money(alloc)]);
+      if (cr.proRataPercent != null) crRows.push(['Pro-rata share', (Math.round(cr.proRataPercent * 100) / 100) + '%']);
+      if (cr.variance != null) crRows.push(['Variance', _money(cr.variance)]);
+      else if (cr.actualCam != null && cr.expectedCam != null) crRows.push(['Variance', _money(cr.actualCam - cr.expectedCam)]);
+      camResultHtml = '<div class="ts-lease ts-cam-result">' + crRows.map(function (r) { return '<div class="ts-lease-row"><span>' + _esc(r[0]) + '</span><b>' + _esc(r[1]) + '</b></div>'; }).join('') + '</div>';
+    }
+    var camEventsHtml = rec.cam.length
+      ? '<div class="ts-timeline"' + (camResultHtml ? ' style="margin-top:8px"' : '') + '>' + rec.cam.map(function (e) { return '<div class="ts-tl-row"><span class="ts-tl-when">' + _esc(_fmtDate(e.timestamp)) + '</span><span class="ts-tl-title">' + _esc(e.title) + '</span></div>'; }).join('') + '</div>'
+      : '';
+    var camHtml = (camResultHtml || camEventsHtml) ? (camResultHtml + camEventsHtml) : _empty('No CAM activity for this space yet.');
 
     var ov = document.createElement('div');
     ov.id = 'tsOverlay'; ov.className = 'ts-overlay';
@@ -140,8 +169,6 @@ window.TenantSpace = (function () {
           '<button class="ts-x" id="tsClose" aria-label="Close">✕</button>' +
         '</div>' +
         '<div class="ts-summary">' + _esc(rec.summary) + '</div>' +
-        '<div class="ts-actbar"><button class="ts-act-btn" id="tsActBtn">\u{26A1}&nbsp;Act on this space</button></div>' +
-        '<div id="tsActions" class="ts-actions"></div>' +
         '<div class="ts-body">' +
           _section('Lease & terms', null, leaseHtml) +
           _section('Timeline', rec.counts.events, timelineHtml) +
@@ -152,6 +179,9 @@ window.TenantSpace = (function () {
           _section('Notes', rec.counts.notes, notesHtml) +
           _section('CAM activity', rec.counts.cam, camHtml) +
         '</div>' +
+        '<div class="ts-actbar"><button class="ts-act-btn" id="tsActBtn">\u{26A1}&nbsp;Act on this space</button>' +
+          '<div class="ts-act-hint">Review the record above, then take action — grounded in it.</div></div>' +
+        '<div id="tsActions" class="ts-actions"></div>' +
       '</div>';
     document.body.appendChild(ov);
     ov.addEventListener('click', function (e) { if (e.target === ov) closeSpace(); });
@@ -204,10 +234,12 @@ window.TenantSpace = (function () {
       '.ts-space-sub{font-size:0.76rem;color:var(--text-3,#94A3B8);margin-top:2px;}',
       '.ts-x{margin-left:auto;background:none;border:none;color:var(--text-3,#94A3B8);font-size:1.1rem;cursor:pointer;padding:4px 8px;min-height:34px;}',
       '.ts-summary{padding:11px 18px;font-size:0.82rem;color:var(--text-2,#CBD5E1);background:rgba(201,151,58,0.06);border-bottom:1px solid rgba(var(--line-rgb,255,255,255),0.06);}',
-      '.ts-actbar{padding:12px 18px 0;}',
+      '.ts-actbar{padding:14px 18px 6px;border-top:1px solid rgba(var(--line-rgb,255,255,255),0.08);}',
       '.ts-act-btn{width:100%;min-height:46px;border-radius:10px;font:800 0.9rem/1 inherit;cursor:pointer;color:#07090C;background:' + gold + ';border:1px solid ' + gold + ';}',
       '.ts-act-btn:hover{filter:brightness(1.08);}',
-      '.ts-actions{padding:0 18px;}',
+      '.ts-act-hint{font-size:0.72rem;color:var(--text-4,#64748B);text-align:center;margin-top:6px;}',
+      '.ts-actions{padding:0 18px 18px;}',
+      '.ts-cam-result{border-left:3px solid ' + gold + ';padding-left:10px;}',
       '.ts-body{padding:8px 18px 20px;max-height:70vh;overflow-y:auto;}',
       '.ts-sec{padding:12px 0;border-bottom:1px solid rgba(var(--line-rgb,255,255,255),0.06);}',
       '.ts-sec:last-child{border-bottom:none;}',
