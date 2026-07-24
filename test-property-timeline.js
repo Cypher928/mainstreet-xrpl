@@ -193,6 +193,28 @@ srv.listen(PORT, '127.0.0.1', async () => {
     await page.evaluate(() => switchWorkspaceTab('overview'));
     await page.waitForTimeout(200);
 
+    sec('Complete event coverage — workflow types register + link (move #2)');
+    const cov = await page.evaluate(() => ({
+      cam:    PropertyTimeline.describe({ type: 'cam_reconciled' }).label,
+      res:    PropertyTimeline.describe({ type: 'reserve_updated' }).label,
+      camTab: (PropertyTimeline.navFor({ type: 'cam_reconciled' }) || {}).tab,
+      resTab: (PropertyTimeline.navFor({ type: 'reserve_updated' }) || {}).tab,
+    }));
+    (cov.cam === 'CAM') ? ok('cam_reconciled registers as "CAM"') : bad('cam label', cov.cam);
+    (cov.res === 'Reserve') ? ok('reserve_updated registers as "Reserve"') : bad('reserve label', cov.res);
+    (cov.camTab === 'cam') ? ok('cam_reconciled links to the CAM pane') : bad('cam nav', cov.camTab);
+    (cov.resTab === 'reserves') ? ok('reserve_updated links to the Reserves pane') : bad('reserve nav', cov.resTab);
+    const camRendered = await page.evaluate(() => {
+      const p = currentProperty();
+      appendPropertyTimelineEvent(p, { type: 'cam_reconciled', severity: 'success', title: 'CAM reconciled — 2025', description: '5 tenants · $185,450 in expenses', actor: 'Property Manager' });
+      renderPropertyActivity(p);
+      const s = document.getElementById('propertyActivitySlot');
+      return Array.from(s.querySelectorAll('.tl-type-badge')).some(b => b.textContent === 'CAM') && /CAM reconciled — 2025/.test(s.innerHTML);
+    });
+    camRendered ? ok('a cam_reconciled event renders with a "CAM" badge + summary') : bad('cam event not rendered');
+    await page.evaluate(() => switchWorkspaceTab('overview'));
+    await page.waitForTimeout(150);
+
     sec('Console errors');
     const errs = logs.filter(l => (l.t === 'error' || l.t === 'PAGEERROR')
       && !/favicon|Failed to load resource|ERR_CERT|\[saveCamResults\]|\[loadCamResults\]|net::ERR/.test(l.x));

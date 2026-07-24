@@ -9237,6 +9237,19 @@ async function runAllocation() {
     console.log('prop.invoices[0]:', JSON.parse(JSON.stringify(_snapProp.invoices?.[0] || {})));
     console.log('results[0].includedInvoices[0]:', JSON.parse(JSON.stringify(_snapProp.camReconciliation.results?.[0]?.includedInvoices?.[0] || {})));
     console.groupEnd();
+    // Property OS (move #2): the reconciliation becomes part of the property's
+    // story. Logged before this save so it persists with the snapshot. Guarded —
+    // never let timeline logging interfere with the reconciliation itself.
+    try {
+      const _n = (fullResults || []).length;
+      appendPropertyTimelineEvent(_snapProp, {
+        type: 'cam_reconciled', severity: 'success',
+        title: 'CAM reconciled — ' + getCamYear(),
+        description: _n + ' tenant' + (_n !== 1 ? 's' : '') + ' · ' + fmt(totalCost) + ' in expenses',
+        metadata: { year: getCamYear(), totalExpenses: totalCost, tenants: _n },
+        actor: 'Property Manager',
+      });
+    } catch (_e) { console.warn('[timeline] cam_reconciled emit skipped:', _e && _e.message); }
     await saveProperty(_snapProp);
   }
 

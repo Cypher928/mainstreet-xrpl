@@ -65,6 +65,11 @@ window.PropertyTimeline = (function () {
     ['derived_metrics_rebuilt', 'Metrics', '\u{1F4CA}', 'cam'],
     ['sync_restored', 'Sync', '\u{1F504}', 'system'],
     ['merge_recovered', 'Merge', '\u{1F500}', 'system'],
+    // Workspace move #2 — the real workflows become part of the property's story.
+    ['cam_reconciled', 'CAM', '\u{1F4CA}', 'cam'],
+    ['document_uploaded', 'Document', '\u{1F4C4}', 'leases'],
+    ['reserve_updated', 'Reserve', '\u{1F3E6}', 'reserves'],
+    ['settlement_completed', 'Settlement', '\u{1F4B8}', 'system'],
   ].forEach(function (r) { registerType(r[0], { label: r[1], icon: r[2], group: r[3] }); });
 
   function describe(ev) {
@@ -87,6 +92,7 @@ window.PropertyTimeline = (function () {
     cam:      { tab: 'cam',       anchors: ['results', 'cardInvoices'] },
     disputes: { tab: 'cam',       anchors: ['disputeSection', 'openDisputesWrap'] },
     leases:   { tab: 'documents', anchors: ['cardLeases'] },
+    reserves: { tab: 'reserves',  anchors: ['escrowSection'] },
   };
   // Returns { tab, anchors } for events whose source lives in a pane, else null
   // (manual notes and system events are their own record — no "View").
