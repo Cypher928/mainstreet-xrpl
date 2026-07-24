@@ -35,6 +35,20 @@ srv.listen(PORT, '127.0.0.1', async () => {
   page.on('console', m => logs.push({ t: m.type(), x: m.text() }));
   page.on('pageerror', e => logs.push({ t: 'PAGEERROR', x: e.message }));
   await page.route('**/supabase-js**', r => r.fulfill({ status: 200, contentType: 'application/javascript', body: '/*mock*/' }));
+  // Mock the AI proxy — the sandbox can't reach Anthropic. api/claude returns
+  // parsed JSON, so the mock returns the grounded structure the client expects.
+  await page.route('**/api/claude', r => r.fulfill({
+    status: 200, contentType: 'application/json', body: JSON.stringify({
+      draft: 'Hi John,\n\nThe HVAC unit for your space was replaced in May 2025 by ABC Mechanical and remains under the manufacturer’s warranty until May 2030. I’ve attached the installation invoice and warranty documentation. Per your lease (§8.3), warranty-covered repairs are the landlord’s responsibility during the warranty period.\n\nPlease let me know if you have any questions.',
+      citations: [
+        { claim: 'HVAC replaced May 2025 by ABC Mechanical', source: 'Timeline: HVAC replaced' },
+        { claim: 'under warranty until May 2030', source: 'warranty.pdf' },
+        { claim: 'landlord responsible during warranty', source: 'lease §8.3' },
+      ],
+      attachmentsToSelect: ['warranty.pdf', 'invoice.pdf'],
+      insufficient: false, missing: '',
+    }),
+  }));
   await page.addInitScript(SUPABASE_MOCK);
 
   try {
@@ -364,6 +378,62 @@ srv.listen(PORT, '127.0.0.1', async () => {
       return has;
     });
     openBtn ? ok('timeline scope bar offers "Open space →" when a space is selected') : bad('no open-space button');
+
+    sec('Capstone — "Act on this space" (extensible, grounded, cited, honest)');
+    const fw = await page.evaluate(() => ({
+      replyAvail: !!(SpaceActions.ACTIONS.reply && SpaceActions.ACTIONS.reply.available),
+      total: SpaceActions.listActions().length,
+      soon: SpaceActions.listActions().filter(a => !a.available).length,
+      disc: /never use outside or general knowledge/i.test(SpaceActions.SYSTEM) && /cite every factual/i.test(SpaceActions.SYSTEM) && /insufficient/i.test(SpaceActions.SYSTEM),
+    }));
+    fw.replyAvail ? ok('Reply to tenant is the first registered action') : bad('reply not available');
+    (fw.total >= 5 && fw.soon >= 1) ? ok('action registry is extensible — future actions register against the same record') : bad('registry', JSON.stringify(fw));
+    fw.disc ? ok('discipline enforced in the system prompt (record-only · cite · say-if-insufficient)') : bad('discipline missing');
+
+    const ground = await page.evaluate(() => {
+      const p = currentProperty(); const t = (p.tenants || [])[0];
+      const rec = TenantSpace.assemble(p, t.id);
+      const ctx = SpaceActions.recordToContext(rec);
+      const req = SpaceActions.buildRequest(rec, 'reply', 'Is the HVAC under warranty?');
+      return { ctxWarr: /warranty\.pdf/i.test(ctx), ctxHvac: /HVAC/i.test(ctx), reqRecord: /VERIFIED RECORD/.test(req.messages[0].content) && /HVAC/.test(req.messages[0].content), hasSys: /general knowledge/i.test(req.system || '') };
+    });
+    (ground.ctxWarr && ground.ctxHvac) ? ok('the AI context is assembled only from the space’s own records (grounding)') : bad('context', JSON.stringify(ground));
+    (ground.reqRecord && ground.hasSys) ? ok('the request carries the verified record + the discipline system prompt') : bad('request build', JSON.stringify(ground));
+
+    const reply = await page.evaluate(async () => {
+      const t = (currentProperty().tenants || [])[0];
+      TenantSpace.openSpace(t.id);
+      document.getElementById('tsActBtn').click();
+      document.querySelector('.sa-choice[data-key="reply"]').click();
+      document.getElementById('saGo').click();
+      await new Promise(r => setTimeout(r, 350));
+      const draft = document.getElementById('saDraft');
+      const cites = document.querySelectorAll('#saResult .sa-cites li').length;
+      const atts = Array.from(document.querySelectorAll('#saResult .sa-att'));
+      const preselected = atts.filter(a => a.querySelector('input').checked).map(a => a.textContent.trim());
+      const out = { draft: !!(draft && draft.value.length > 20), cites: cites, pre: preselected.length, warr: preselected.some(s => /warranty\.pdf/.test(s)) };
+      TenantSpace.closeSpace();
+      return out;
+    });
+    reply.draft ? ok('grounded reply draft renders for review (manager reviews, not researches)') : bad('no draft');
+    (reply.cites >= 1) ? ok('citations render — every factual claim tied to a record') : bad('no citations');
+    (reply.pre >= 1 && reply.warr) ? ok('supporting attachments pre-selected (warranty + invoice)') : bad('attachments not pre-selected', JSON.stringify(reply));
+
+    await page.unroute('**/api/claude');
+    await page.route('**/api/claude', r => r.fulfill({ status: 200, contentType: 'application/json', body: JSON.stringify({ insufficient: true, missing: 'the warranty document', draft: '', citations: [], attachmentsToSelect: [] }) }));
+    const honest = await page.evaluate(async () => {
+      const t = (currentProperty().tenants || [])[0];
+      TenantSpace.openSpace(t.id);
+      document.getElementById('tsActBtn').click();
+      document.querySelector('.sa-choice[data-key="reply"]').click();
+      document.getElementById('saGo').click();
+      await new Promise(r => setTimeout(r, 350));
+      const insuff = !!document.querySelector('#saResult .sa-insuff');
+      const draft = !!document.getElementById('saDraft');
+      TenantSpace.closeSpace();
+      return { insuff, draft };
+    });
+    (honest.insuff && !honest.draft) ? ok('insufficient record → honest "not enough info", never a guessed draft') : bad('honesty path', JSON.stringify(honest));
 
     sec('Console errors');
     const errs = logs.filter(l => (l.t === 'error' || l.t === 'PAGEERROR')

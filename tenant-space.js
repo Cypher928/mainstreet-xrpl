@@ -25,6 +25,7 @@ window.TenantSpace = (function () {
     });
   };
   var _t = function (id) { return document.getElementById(id); };
+  var _openRec = null; // the assembled record for the currently-open space (actions read this)
   function _fmtDate(ts) { try { return new Date(ts).toLocaleDateString('en-US', { month: 'short', day: 'numeric', year: 'numeric' }); } catch (_) { return String(ts || ''); } }
 
   function _scopedEvents(property, tenantId) {
@@ -95,6 +96,7 @@ window.TenantSpace = (function () {
     if (_t('tsOverlay')) return;
     injectStyles();
     var rec = assemble(property, tenantId);
+    _openRec = rec;
 
     var leaseRows = [];
     if (rec.lease.type)  leaseRows.push(['Lease type', rec.lease.type]);
@@ -138,6 +140,8 @@ window.TenantSpace = (function () {
           '<button class="ts-x" id="tsClose" aria-label="Close">✕</button>' +
         '</div>' +
         '<div class="ts-summary">' + _esc(rec.summary) + '</div>' +
+        '<div class="ts-actbar"><button class="ts-act-btn" id="tsActBtn">\u{26A1}&nbsp;Act on this space</button></div>' +
+        '<div id="tsActions" class="ts-actions"></div>' +
         '<div class="ts-body">' +
           _section('Lease & terms', null, leaseHtml) +
           _section('Timeline', rec.counts.events, timelineHtml) +
@@ -152,8 +156,10 @@ window.TenantSpace = (function () {
     document.body.appendChild(ov);
     ov.addEventListener('click', function (e) { if (e.target === ov) closeSpace(); });
     _t('tsClose').onclick = closeSpace;
+    var _ab = _t('tsActBtn'); if (_ab) _ab.onclick = function () { if (window.SpaceActions) window.SpaceActions.open(); };
   }
-  function closeSpace() { var o = _t('tsOverlay'); if (o) o.remove(); }
+  function closeSpace() { var o = _t('tsOverlay'); if (o) o.remove(); _openRec = null; }
+  function record() { return _openRec; }
 
   function injectStyles() {
     if (_t('ts-styles')) return;
@@ -166,6 +172,10 @@ window.TenantSpace = (function () {
       '.ts-space-sub{font-size:0.76rem;color:var(--text-3,#94A3B8);margin-top:2px;}',
       '.ts-x{margin-left:auto;background:none;border:none;color:var(--text-3,#94A3B8);font-size:1.1rem;cursor:pointer;padding:4px 8px;min-height:34px;}',
       '.ts-summary{padding:11px 18px;font-size:0.82rem;color:var(--text-2,#CBD5E1);background:rgba(201,151,58,0.06);border-bottom:1px solid rgba(var(--line-rgb,255,255,255),0.06);}',
+      '.ts-actbar{padding:12px 18px 0;}',
+      '.ts-act-btn{width:100%;min-height:46px;border-radius:10px;font:800 0.9rem/1 inherit;cursor:pointer;color:#07090C;background:' + gold + ';border:1px solid ' + gold + ';}',
+      '.ts-act-btn:hover{filter:brightness(1.08);}',
+      '.ts-actions{padding:0 18px;}',
       '.ts-body{padding:8px 18px 20px;max-height:70vh;overflow-y:auto;}',
       '.ts-sec{padding:12px 0;border-bottom:1px solid rgba(var(--line-rgb,255,255,255),0.06);}',
       '.ts-sec:last-child{border-bottom:none;}',
@@ -205,5 +215,5 @@ window.TenantSpace = (function () {
     document.head.appendChild(s);
   }
 
-  return { assemble: assemble, openSpace: openSpace, closeSpace: closeSpace };
+  return { assemble: assemble, openSpace: openSpace, closeSpace: closeSpace, record: record };
 })();
