@@ -677,6 +677,97 @@ srv.listen(PORT, '127.0.0.1', async () => {
     (sd.sampleTags === sd.refRows && sd.refRows > 0) ? ok('every sample record carries a "sample" tag (' + sd.refRows + ')') : bad('sample tags', JSON.stringify(sd));
     sd.note ? ok('an explainer states these are samples until a file is uploaded') : bad('no sample explainer');
 
+    sec('COMPLETION P1 — every major workflow records a timeline event');
+    const wfc = await page.evaluate(() => {
+      const p = currentProperty();
+      const before = (p.timeline || []).length;
+      // Settlement: recorded on observation, idempotent by txHash.
+      p.settlement = { status: 'settled', txHash: 'ABC123DEADBEEF', amountUsd: 4120, network: 'mainnet', settledAt: '2026-07-01T00:00:00Z' };
+      _recordSettlementIfNew(p);
+      _recordSettlementIfNew(p);   // must not duplicate
+      _recordSettlementIfNew(p);
+      // Count ONLY this txHash — the demo property legitimately records its own
+      // settlement on render, which is the emitter working as intended.
+      const settle = (p.timeline || []).filter(e => e.type === 'settlement_completed'
+        && e.metadata && e.metadata.txHash === 'ABC123DEADBEEF');
+      const demoSettle = (p.timeline || []).filter(e => e.type === 'settlement_completed'
+        && e.metadata && e.metadata.txHash !== 'ABC123DEADBEEF').length;
+      // Dedupe helper is generic across emitters.
+      appendPropertyTimelineEventOnce(p, 'k1', { type: 'document_uploaded', title: 'Doc A' });
+      appendPropertyTimelineEventOnce(p, 'k1', { type: 'document_uploaded', title: 'Doc A' });
+      appendPropertyTimelineEventOnce(p, 'k2', { type: 'reserve_updated', title: 'Roof Reserve' });
+      return {
+        registered: ['cam_reconciled', 'document_uploaded', 'reserve_updated', 'settlement_completed']
+          .filter(t => PropertyTimeline.describe({ type: t }).label && PropertyTimeline.describe({ type: t }).label !== t),
+        settleCount: settle.length, demoSettle: demoSettle,
+        settleTitle: settle[0] && settle[0].title,
+        docs: (p.timeline || []).filter(e => e.type === 'document_uploaded').length,
+        reserves: (p.timeline || []).filter(e => e.type === 'reserve_updated').length,
+        grew: (p.timeline || []).length > before,
+      };
+    });
+    (wfc.registered.length === 4) ? ok('all four workflow event types registered: ' + wfc.registered.join(', ')) : bad('event types', JSON.stringify(wfc.registered));
+    (wfc.settleCount === 1) ? ok('settlement recorded exactly once despite 3 observations (no duplicates)') : bad('settlement duplicated', String(wfc.settleCount));
+    (wfc.demoSettle >= 1) ? ok('the demo property\'s own settlement was auto-recorded on render (emitter live)') : bad('demo settlement not recorded');
+    (/Settlement completed/.test(wfc.settleTitle || '')) ? ok('settlement event reads: "' + wfc.settleTitle + '"') : bad('settlement title', wfc.settleTitle);
+    (wfc.docs === 1 && wfc.reserves === 1) ? ok('document_uploaded and reserve_updated dedupe correctly') : bad('dedupe', JSON.stringify(cov));
+
+    sec('COMPLETION P2 — evidence cross-linking (graceful when unavailable)');
+    const evd = await page.evaluate(() => {
+      const p = currentProperty();
+      const t = (p.tenants || [])[0];
+      // No stored evidence → must return null, never a fabricated citation.
+      const none = DocViewer.evidenceFor({ type: 'lease_uploaded', tenantId: t.id }, p);
+      // Give the tenant real field evidence, then it must resolve.
+      t.fieldEvidence = { cam_cap: { snapshots: [{ quote: 'shall not exceed five percent (5%)', page: 12 }] } };
+      t.leaseUrl = 'https://mock.local/lease.pdf';
+      const some = DocViewer.evidenceFor({ type: 'lease_uploaded', tenantId: t.id }, p);
+      return {
+        noneIsNull: none === null,
+        resolved: !!(some && some.length),
+        page: some && some[0] && some[0].page,
+        quote: some && some[0] && some[0].quote,
+        hasUrl: !!(some && some[0] && some[0].fileUrl),
+        nonEvidenceNull: DocViewer.evidenceFor({ type: 'manual_note', manual: true }, p) === null,
+      };
+    });
+    evd.noneIsNull ? ok('no stored evidence → returns null (never fabricates a citation)') : bad('fabricated citation');
+    evd.resolved ? ok('lease event resolves to a real citation from stored evidence') : bad('evidence not resolved');
+    (evd.page === 12 && /five percent/.test(evd.quote || '')) ? ok('citation carries page ' + evd.page + ' and the verbatim quote') : bad('citation detail', JSON.stringify(evd));
+    evd.hasUrl ? ok('citation points at the source document (opens to the page + highlight)') : bad('no document url');
+    evd.nonEvidenceNull ? ok('non-evidence events degrade gracefully (fall back to the record)') : bad('should be null');
+
+    sec('COMPLETION P3 — Disputes surfaced in the Space (workflow not duplicated)');
+    const dsp = await page.evaluate(() => {
+      const p = currentProperty();
+      const t = (p.tenants || []).find(x => (p.disputes || []).some(d => d.tenantName === x.tenant_name)) || p.tenants[0];
+      TenantSpace.openSpace(t.id);
+      const ov = document.getElementById('tsOverlay');
+      const titles = Array.from(ov.querySelectorAll('.ts-sec-title')).map(e => e.textContent);
+      const rows = ov.querySelectorAll('.ts-disp').length;
+      const hasStatus = !!ov.querySelector('.ts-disp-st');
+      const hasLast = /Last activity/.test(ov.innerHTML);
+      // must NOT duplicate the dispute workflow inside the space
+      const noForm = !ov.querySelector('.dispute-form, #disputeSection');
+      TenantSpace.closeSpace();
+      return { hasSection: titles.includes('Disputes'), rows, hasStatus, hasLast, noForm };
+    });
+    dsp.hasSection ? ok('Disputes section present in the Space') : bad('no disputes section');
+    (dsp.rows >= 1) ? ok(dsp.rows + ' dispute(s) surfaced with status and last activity') : bad('no dispute rows');
+    (dsp.hasStatus && dsp.hasLast) ? ok('shows status + last activity as specified') : bad('missing status/last activity');
+    dsp.noForm ? ok('dispute WORKFLOW not duplicated in the Space (stays in CAM)') : bad('workflow duplicated');
+
+    sec('COMPLETION P4 — timeline reliability across every space');
+    const rel = await page.evaluate(() => {
+      const p = currentProperty();
+      const ids = new Set((p.tenants || []).map(t => t.id));
+      const orphaned = (p.timeline || []).filter(e => e.tenantId && !ids.has(e.tenantId));
+      const per = (p.tenants || []).map(t => ({ n: t.tenant_name, e: TenantSpace.assemble(p, t.id).counts.events }));
+      return { orphaned: orphaned.length, zero: per.filter(x => x.e === 0).map(x => x.n), spaces: per.length };
+    });
+    (rel.orphaned === 0) ? ok('no orphaned events (every tagged event resolves to a live space)') : bad('orphaned events', String(rel.orphaned));
+    (rel.zero.length === 0) ? ok('all ' + rel.spaces + ' spaces resolve their timeline events — "Timeline 0" not reproducible') : bad('spaces showing zero', JSON.stringify(rel.zero));
+
     sec('P1 — every clickable element in the Space actually opens something');
     const clicks = await page.evaluate(async () => {
       const t = (currentProperty().tenants || []).find(x => /Whole Health/.test(x.tenant_name)) || currentProperty().tenants[0];

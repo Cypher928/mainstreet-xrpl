@@ -2261,6 +2261,18 @@ async function handleEscrowDocumentUpload(propertyId, filesOrFile, opts = {}) {
       processedLabels.push(newReserve.reserveTypeLabel);
     });
 
+    // Property memory: reserve work joins the property's history. Guarded and
+    // deduped so a re-processed document cannot double-record.
+    try {
+      const _rk = 'reserve:' + processedLabels.join('|') + ':' + files.map(f => f && f.name).join('|');
+      appendPropertyTimelineEventOnce(prop, _rk, {
+        type: 'reserve_updated', severity: 'info',
+        title: 'Reserve updated — ' + processedLabels.join(', '),
+        description: files.length + ' source document' + (files.length !== 1 ? 's' : '') + ' processed.',
+        metadata: { reserves: processedLabels.join(', '), documents: files.length },
+        actor: 'Property Manager',
+      });
+    } catch (_e) { console.warn('[timeline] reserve_updated skipped:', _e && _e.message); }
     _lsSave(prop);
     await saveProperty(prop);
     const labels = processedLabels.join(', ');
@@ -3622,6 +3634,24 @@ function _buildRlusdStatusHtml(status) {
 // recorded on `property.settlement` (status:'settled' + txHash), every place that
 // calls this lights up with the real explorer link — no further code changes.
 const XRPL_MAINNET_TX_EXPLORER = 'https://livenet.xrpl.org/transactions/';
+
+// Settlement is executed out-of-band (the app's endpoint is read-only and holds
+// no wallet seed), so the app never "completes" one — it observes it. Record it
+// on the property's history the first time a settled txHash is seen. Idempotent
+// by txHash, so re-rendering or reloading cannot duplicate it.
+function _recordSettlementIfNew(property) {
+  try {
+    const s = property && property.settlement;
+    if (!s || !s.txHash) return;
+    appendPropertyTimelineEventOnce(property, 'settlement:' + s.txHash, {
+      type: 'settlement_completed', severity: 'success',
+      title: 'Settlement completed' + (s.amountUsd != null ? ' — ' + fmt(s.amountUsd) : ''),
+      description: 'Settled in RLUSD on the XRP Ledger' + (s.network ? ' (' + s.network + ')' : '') + '.',
+      metadata: { txHash: s.txHash, network: s.network || 'mainnet', settledAt: s.settledAt || null },
+      actor: 'System',
+    });
+  } catch (_e) { console.warn('[timeline] settlement_completed skipped:', _e && _e.message); }
+}
 
 function _getSettlementState(property) {
   const s = property && property.settlement;
@@ -17605,6 +17635,21 @@ function rebuildDerivedState(property, { appendTimeline = false } = {}) {
   }
 }
 
+// Append a timeline event at most once. Every workflow emitter routes through
+// this so re-running a flow (re-upload, re-render, reload) cannot duplicate the
+// property's history. The key is stored in metadata so the check survives a
+// Supabase round-trip.
+function appendPropertyTimelineEventOnce(property, dedupeKey, event) {
+  if (!property || !dedupeKey) return null;
+  try {
+    const existing = (property.timeline || []).some(e => e && e.metadata && e.metadata.dedupeKey === dedupeKey);
+    if (existing) return null;
+  } catch (_) { /* fall through — better one event than none */ }
+  const ev = Object.assign({}, event);
+  ev.metadata = Object.assign({}, event.metadata || {}, { dedupeKey });
+  return appendPropertyTimelineEvent(property, ev);
+}
+
 function appendPropertyTimelineEvent(property, event) {
   if (!property || !event) return null;
   if (!Array.isArray(property.timeline)) property.timeline = [];
@@ -17705,6 +17750,16 @@ function filterTimelineScope(id) {
   const prop = currentProperty();
   if (prop) renderPropertyActivity(prop);
 }
+// Opens a timeline event's supporting evidence in the Evidence Viewer —
+// document, page, and the highlighted language behind the conclusion.
+function openTimelineEvidence(eventId) {
+  try {
+    const prop = currentProperty();
+    const ev = (prop && prop.timeline || []).find(x => x && String(x.id) === String(eventId));
+    if (ev && window.DocViewer) window.DocViewer.openTimelineEvent(ev, { property: prop });
+  } catch (e) { console.warn('[timeline] evidence open failed:', e && e.message); }
+}
+
 function _tlScopeMatch(ev, id) {
   if (!id) return true;
   return (ev.subject && ev.subject.id === id) || ev.tenantId === id;
@@ -17817,6 +17872,7 @@ function renderPropertyActivity(property) {
           <span class="tl-ts">${fmtTs(ev.timestamp)}</span>
           ${ev.actor && ev.actor !== 'System' ? `<span class="tl-actor">${esc(ev.actor)}</span>` : ''}
           ${tenantHtml}
+          ${(window.DocViewer && DocViewer.evidenceFor && DocViewer.evidenceFor(ev, property)) ? `<button class="tl-view-btn tl-view-btn--ev" onclick="event.stopPropagation(); openTimelineEvidence('${ev.id}')">&#x1F4C4;&nbsp;Evidence</button>` : ''}
           ${(window.PropertyTimeline && PropertyTimeline.navFor && PropertyTimeline.navFor(ev)) ? `<button class="tl-view-btn" onclick="event.stopPropagation(); if(window.PropertyTimeline){PropertyTimeline.viewSource('${ev.id}');}">View&nbsp;&#x2192;</button>` : ''}
           ${ev.manual ? `<button class="tl-edit-btn" onclick="event.stopPropagation(); if(window.PropertyTimeline){PropertyTimeline.openEditEntry('${ev.id}');}">&#x270E;&nbsp;Edit</button>` : ''}
         </div>
@@ -19834,6 +19890,25 @@ async function saveLeaseDocument({ propertyId, tenantId, tenantName, fileName, f
       return { ok: false, reason: result.error || `HTTP ${resp.status}`, code: result.code, keySource: result.keySource, detail: result.detail };
     }
     console.log('[saveLeaseDocument] persisted', fileName, 'for property', propertyId);
+    // Property memory: a document reaching the property is part of its history.
+    // Lease extractions already emit `lease_uploaded`, so this only records
+    // documents stored without a tenant context — no duplicate events.
+    try {
+      if (!tenantId && !tenantName) {
+        const _p = (typeof _props !== 'undefined' ? _props : []).find(x => x && x.id === propertyId);
+        if (_p) {
+          appendPropertyTimelineEventOnce(_p, 'doc:' + propertyId + ':' + fileName, {
+            type: 'document_uploaded', severity: 'info',
+            title: 'Document uploaded — ' + fileName,
+            description: 'Added to the property record.',
+            metadata: { fileName: fileName },
+            attachments: fileUrl ? [{ name: fileName, url: fileUrl, kind: 'pdf' }] : [],
+            actor: 'Property Manager',
+          });
+          if (typeof savePropertyData === 'function') savePropertyData();
+        }
+      }
+    } catch (_e) { console.warn('[timeline] document_uploaded skipped:', _e && _e.message); }
     return { ok: true, data: result.data };
   } catch (e) {
     console.error('[saveLeaseDocument] exception:', e?.message);
@@ -20672,6 +20747,7 @@ function renderProperty(property) {
   } catch (e) { }
 
   // ── Property Timeline ─────────────────────────────────────────────────
+  try { _recordSettlementIfNew(property); } catch (e) { }
   try {
     renderPropertyActivity(property);
   } catch (e) { }

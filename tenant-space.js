@@ -29,9 +29,20 @@ window.TenantSpace = (function () {
   function _fmtDate(ts) { try { return new Date(ts).toLocaleDateString('en-US', { month: 'short', day: 'numeric', year: 'numeric' }); } catch (_) { return String(ts || ''); } }
   function _money(n) { try { return '$' + Math.round(Number(n)).toLocaleString('en-US'); } catch (_) { return '$' + n; } }
 
-  function _scopedEvents(property, tenantId) {
+  // Scope events to a space. Matches on subject id and tenantId, and falls back
+  // to the subject's recorded label (the space name). The label fallback makes
+  // scoping resilient if a persisted property's tenant ids ever drift from the
+  // events written against them — the events stay attached to the right space
+  // instead of silently disappearing from it.
+  function _scopedEvents(property, tenantId, tenantName) {
     return (property.timeline || [])
-      .filter(function (e) { return e && ((e.subject && e.subject.id === tenantId) || e.tenantId === tenantId); })
+      .filter(function (e) {
+        if (!e) return false;
+        if (e.subject && e.subject.id === tenantId) return true;
+        if (e.tenantId === tenantId) return true;
+        if (tenantName && e.subject && e.subject.type === 'suite' && e.subject.label === tenantName) return true;
+        return false;
+      })
       .sort(function (a, b) { return (new Date(b.timestamp).getTime() || 0) - (new Date(a.timestamp).getTime() || 0); });
   }
   function _attach(events, kind) {
@@ -48,7 +59,7 @@ window.TenantSpace = (function () {
   // the (future) grounded AI reply read from.
   function assemble(property, tenantId) {
     var t = (property.tenants || []).find(function (x) { return x && x.id === tenantId; }) || {};
-    var events = _scopedEvents(property, tenantId);
+    var events = _scopedEvents(property, tenantId, t.tenant_name);
     var photos     = _attach(events, 'photo');
     var invoices   = _attach(events, 'invoice');
     var warranties = _attach(events, 'warranty');
@@ -82,11 +93,19 @@ window.TenantSpace = (function () {
     if (lastResp) bits.push('most recent work: ' + lastResp + ' responsible');
     var summary = bits.length ? bits.join(' · ') : 'No records yet for this space.';
 
+    // Disputes for this tenant — surfaced here so issues are discovered where a
+    // manager looks; the dispute WORKFLOW stays in CAM (not duplicated).
+    var disputes = (property.disputes || []).filter(function (d) {
+      return d && (d.tenantId === tenantId || d.tenantName === t.tenant_name);
+    }).sort(function (a, b) { return (new Date(b.timestamp || 0)) - (new Date(a.timestamp || 0)); });
+
     return {
+      disputes: disputes,
       space: { id: tenantId, name: t.tenant_name || 'Space' },
       lease: lease, leaseDocs: leaseDocs, summary: summary,
       camYear: (camRec && camRec.camYear) || null, camResult: camResult,
-      counts: { events: events.length, photos: photos.length, invoices: invoices.length, warranties: warranties.length, documents: documents.length, notes: notes.length, cam: camEvents.length + (camResult ? 1 : 0) },
+      counts: { disputes: disputes.length, openDisputes: disputes.filter(function (d) { return d.status === 'open' || d.status === 'docs_requested'; }).length,
+        events: events.length, photos: photos.length, invoices: invoices.length, warranties: warranties.length, documents: documents.length, notes: notes.length, cam: camEvents.length + (camResult ? 1 : 0) },
       events: events, photos: photos, invoices: invoices, warranties: warranties, documents: documents, notes: notes, cam: camEvents,
     };
   }
@@ -196,6 +215,25 @@ window.TenantSpace = (function () {
     if (rec.warranties.length) maintHtml += '<div class="ts-lbl">Warranties</div>' + warrHtml;
     if (!maintHtml) maintHtml = _empty('No repairs, vendor work, or warranties recorded for this space yet.');
 
+    // ── Disputes (surface only — the workflow lives in CAM) ─────────────────
+    var _DSTAT = { open: 'Open', accepted: 'Accepted', rejected: 'Rejected', docs_requested: 'Docs requested' };
+    var disputesHtml = (rec.disputes || []).length
+      ? '<div class="ts-disputes">' + rec.disputes.slice(0, 5).map(function (d) {
+          var st = _DSTAT[d.status] || d.status || 'Open';
+          var isOpen = d.status === 'open' || d.status === 'docs_requested';
+          var last = d.resolvedAt || d.timestamp;
+          return '<button type="button" class="ts-disp" data-dispid="' + _esc(String(d.id)) + '" title="Open the dispute workspace">' +
+            '<span class="ts-disp-st ts-disp-st--' + (isOpen ? 'open' : 'closed') + '">' + _esc(st) + '</span>' +
+            '<span class="ts-disp-main">' +
+              '<span class="ts-disp-t">' + _esc((d.vendor || 'Charge') + (d.category ? ' · ' + d.category : '')) + '</span>' +
+              '<span class="ts-disp-w">Last activity ' + _esc(_fmtDate(last)) + '</span>' +
+            '</span>' +
+            (d.tenantShare != null ? '<span class="ts-disp-amt">' + _esc(_money(parseFloat(d.tenantShare))) + '</span>' : '') +
+            '<span class="ts-tl-go">&#x203A;</span></button>';
+        }).join('') + '</div>' +
+        (rec.disputes.length > 5 ? '<div class="ts-empty">+ ' + (rec.disputes.length - 5) + ' more</div>' : '')
+      : _empty('No disputes for this space.');
+
     // ── Documents & notes ────────────────────────────────────────────────────
     // Demo spaces show the document set a real suite would keep on file
     // (lease, amendments, estoppel, COIs, CAM backup, notices, photos).
@@ -250,6 +288,7 @@ window.TenantSpace = (function () {
         '<div class="ts-body">' +
           _section('Lease', null, leaseHtml) +
           _section('Financial activity', rec.counts.cam + rec.counts.invoices, finHtml) +
+          _section('Disputes', (rec.counts.disputes || 0), disputesHtml) +
           _section('Maintenance', maintCount, maintHtml) +
           _section('Photos', photoCount, photosHtml) +
           _section('Documents', docCount, docNotesHtml) +
@@ -284,6 +323,19 @@ window.TenantSpace = (function () {
         var navigates = !(ev.attachments || []).length && !(ev.manual);
         if (navigates) closeSpace();
         window.DocViewer.openTimelineEvent(ev, { spaceName: _spaceName });
+      };
+    });
+    // Disputes → the existing dispute workspace. The Space only surfaces them.
+    ov.querySelectorAll('[data-dispid]').forEach(function (b) {
+      b.onclick = function () {
+        var id = b.getAttribute('data-dispid');
+        closeSpace();
+        try {
+          if (typeof window.openDisputeWorkspace === 'function') { window.openDisputeWorkspace(isNaN(Number(id)) ? id : Number(id)); return; }
+          if (window.switchWorkspaceTab) window.switchWorkspaceTab('cam');
+          var el = document.getElementById('disputeSection');
+          if (el && window._ccFlashEl) window._ccFlashEl(el);
+        } catch (_e) {}
       };
     });
     // CAM summary → the full reconciliation / the tenant statement (Reports).
@@ -381,6 +433,16 @@ window.TenantSpace = (function () {
       '.ts-tl-row--click{width:100%;text-align:left;background:none;border:none;font:inherit;cursor:pointer;padding:6px 4px;border-radius:7px;}',
       '.ts-tl-row--click:hover{background:rgba(var(--line-rgb,255,255,255),0.05);}',
       '.ts-tl-go{margin-left:auto;color:var(--text-4,#64748B);flex:none;font-size:1rem;}',
+      '.ts-disputes{display:flex;flex-direction:column;gap:7px;}',
+      '.ts-disp{display:flex;align-items:center;gap:10px;width:100%;text-align:left;font:inherit;cursor:pointer;background:var(--theme-panel,#0A0D12);border:1px solid rgba(var(--line-rgb,255,255,255),0.1);border-radius:9px;padding:9px 11px;}',
+      '.ts-disp:hover{border-color:' + gold + ';}',
+      '.ts-disp-st{font-size:0.6rem;font-weight:800;text-transform:uppercase;letter-spacing:0.04em;border-radius:5px;padding:2px 7px;flex:none;}',
+      '.ts-disp-st--open{color:#fbbf24;background:rgba(251,191,36,0.14);border:1px solid rgba(251,191,36,0.35);}',
+      '.ts-disp-st--closed{color:#4ade80;background:rgba(74,222,128,0.12);border:1px solid rgba(74,222,128,0.3);}',
+      '.ts-disp-main{flex:1;min-width:0;display:flex;flex-direction:column;gap:2px;}',
+      '.ts-disp-t{font-size:0.82rem;color:var(--text-1,#E2E8F0);overflow:hidden;text-overflow:ellipsis;white-space:nowrap;}',
+      '.ts-disp-w{font-size:0.7rem;color:var(--text-4,#64748B);}',
+      '.ts-disp-amt{font-size:0.82rem;font-weight:700;color:' + gold + ';flex:none;}',
       '.ts-cam{background:var(--theme-panel,#0A0D12);border:1px solid rgba(var(--line-rgb,255,255,255),0.1);border-left:3px solid ' + gold + ';border-radius:10px;padding:12px 14px;}',
       '.ts-cam-yr{font-size:0.68rem;font-weight:800;text-transform:uppercase;letter-spacing:0.05em;color:' + gold + ';margin-bottom:9px;}',
       '.ts-cam-grid{display:grid;grid-template-columns:repeat(3,1fr);gap:10px;}',

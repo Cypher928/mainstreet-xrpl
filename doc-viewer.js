@@ -130,10 +130,55 @@ window.DocViewer = (function () {
    * Open whatever record produced a timeline event: its document, its note, or
    * the workflow record behind it. Returns true when something was opened.
    */
+  /**
+   * Resolve an event to Evidence-Viewer citations: document + page + the
+   * highlighted supporting language. Uses ONLY the existing evidence adapters —
+   * a citation is returned solely when real extracted evidence exists. Never
+   * fabricates one; returns null so the caller degrades gracefully.
+   */
+  function evidenceFor(ev, property) {
+    try {
+      if (!ev || !window.EvidenceViewer) return null;
+      property = property || (window.currentProperty && window.currentProperty());
+      if (!property) return null;
+
+      // Lease / extraction / review events → the tenant's lease field evidence.
+      var LEASE_TYPES = /^(lease_uploaded|extraction_completed|extraction_warning|amendment_uploaded|amendment_applied|field_overridden|review_confirmed)$/;
+      if (LEASE_TYPES.test(ev.type || '')) {
+        var tid = (ev.subject && ev.subject.id) || ev.tenantId;
+        var t = (property.tenants || []).find(function (x) { return x && (x.id === tid || x.tenant_id === tid); });
+        if (t && window.EvidenceViewer.fromTenantField) {
+          // Prefer the field the event names; else any field with evidence.
+          var keys = (ev.metadata && ev.metadata.fieldKey) ? [ev.metadata.fieldKey]
+            : ['cam_cap', 'lease_type', 'leased_sqft', 'end_date', 'start_date', 'tenant_name'];
+          var c = window.EvidenceViewer.fromTenantField(property, t, keys,
+            'Supports “' + (ev.title || 'this record') + '”.');
+          if (c) return [c];
+        }
+      }
+      // Reserve events → the reserve document's extracted evidence.
+      if (/^reserve_updated$/.test(ev.type || '') && window.EvidenceViewer.fromReserve) {
+        var reserves = property.escrowReserves || [];
+        for (var i = 0; i < reserves.length; i++) {
+          var cites = window.EvidenceViewer.fromReserve(reserves[i]);
+          if (cites && cites.length) return cites;
+        }
+      }
+    } catch (_e) {}
+    return null;   // no real evidence — caller falls back honestly
+  }
+
   function openTimelineEvent(ev, opts) {
     if (!ev) return false;
     opts = opts || {};
-    // An attachment is the most specific thing the event points at.
+    // Evidence first: a lease/extraction/reserve event opens the source document
+    // at the cited page with the supporting language highlighted.
+    var cites = evidenceFor(ev, opts.property);
+    if (cites && cites.length && window.EvidenceViewer && window.EvidenceViewer.open) {
+      window.EvidenceViewer.open({ citations: cites, index: 0 });
+      return true;
+    }
+    // An attachment is the next most specific thing the event points at.
     var att = (ev.attachments || [])[0];
     if (att) { openDoc({ name: att.name, url: att.url, kind: att.kind, category: att.category || 'Attachment', when: ev.timestamp, space: opts.spaceName }); return true; }
 
@@ -195,5 +240,5 @@ window.DocViewer = (function () {
     document.head.appendChild(s);
   }
 
-  return { openDoc: openDoc, openTimelineEvent: openTimelineEvent, hasFile: hasFile, injectStyles: injectStyles };
+  return { openDoc: openDoc, openTimelineEvent: openTimelineEvent, evidenceFor: evidenceFor, hasFile: hasFile, injectStyles: injectStyles };
 })();
