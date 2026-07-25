@@ -400,7 +400,7 @@ srv.listen(PORT, '127.0.0.1', async () => {
       const t = (currentProperty().tenants || [])[0];
       TenantSpace.openSpace(t.id);
       const ov = document.getElementById('tsOverlay');
-      const camResult = !!ov.querySelector('.ts-cam-result');
+      const camResult = !!ov.querySelector('.ts-cam');
       const leaseDoc = !!ov.querySelector('.ts-lease .ts-doc');
       const body = ov.querySelector('.ts-body');
       const actbar = ov.querySelector('.ts-actbar');
@@ -676,6 +676,60 @@ srv.listen(PORT, '127.0.0.1', async () => {
     (sd.refAreLinks === 0) ? ok('sample records are NOT links (no dead clicks)') : bad('sample rows are anchors', String(sd.refAreLinks));
     (sd.sampleTags === sd.refRows && sd.refRows > 0) ? ok('every sample record carries a "sample" tag (' + sd.refRows + ')') : bad('sample tags', JSON.stringify(sd));
     sd.note ? ok('an explainer states these are samples until a file is uploaded') : bad('no sample explainer');
+
+    sec('P1 — every clickable element in the Space actually opens something');
+    const clicks = await page.evaluate(async () => {
+      const t = (currentProperty().tenants || []).find(x => /Whole Health/.test(x.tenant_name)) || currentProperty().tenants[0];
+      TenantSpace.openSpace(t.id);
+      const ov = document.getElementById('tsOverlay');
+      const out = { docRows: 0, docOpened: 0, tlRows: 0, tlOpened: 0, camSummary: false, viewRecon: false, stmt: false };
+
+      // Document rows (lease, amendment, estoppel, COI, CAM backup, notices, photos)
+      const docBtns = Array.from(ov.querySelectorAll('[data-refdoc]'));
+      out.docRows = docBtns.length;
+      for (const b of docBtns.slice(0, 4)) {
+        if (typeof closeReport === 'function') closeReport();
+        b.click();
+        await new Promise(r => setTimeout(r, 120));
+        if (document.querySelector('.dv-doc')) out.docOpened++;
+        if (typeof closeReport === 'function') closeReport();
+      }
+
+      // Timeline entries
+      TenantSpace.closeSpace(); TenantSpace.openSpace(t.id);
+      const ov2 = document.getElementById('tsOverlay');
+      const tlBtns = Array.from(ov2.querySelectorAll('[data-tlid]'));
+      out.tlRows = tlBtns.length;
+      for (const b of tlBtns.slice(0, 3)) {
+        if (typeof closeReport === 'function') closeReport();
+        b.click();
+        await new Promise(r => setTimeout(r, 120));
+        if (document.querySelector('.dv-doc') || document.querySelector('#wsPane-cam')) out.tlOpened++;
+        if (typeof closeReport === 'function') closeReport();
+        if (!document.getElementById('tsOverlay')) TenantSpace.openSpace(t.id);
+      }
+
+      // CAM summary in the Space
+      TenantSpace.closeSpace(); TenantSpace.openSpace(t.id);
+      const ov3 = document.getElementById('tsOverlay');
+      out.camSummary = !!ov3.querySelector('.ts-cam-grid');
+      out.camLabels = Array.from(ov3.querySelectorAll('.ts-cam-l')).map(e => e.textContent);
+      out.viewRecon = !!ov3.querySelector('#tsViewRecon');
+      out.stmt = !!ov3.querySelector('#tsTenantStmt');
+      TenantSpace.closeSpace();
+      return out;
+    });
+    (clicks.docRows > 0 && clicks.docOpened === Math.min(4, clicks.docRows))
+      ? ok('space documents open a viewer (' + clicks.docOpened + '/' + Math.min(4, clicks.docRows) + ' sampled) — lease, amendment, estoppel, COI')
+      : bad('document rows did not open', JSON.stringify(clicks));
+    (clicks.tlRows > 0 && clicks.tlOpened === Math.min(3, clicks.tlRows))
+      ? ok('timeline entries open the record behind them (' + clicks.tlOpened + '/' + Math.min(3, clicks.tlRows) + ')')
+      : bad('timeline rows did not open', JSON.stringify(clicks));
+    clicks.camSummary ? ok('CAM summary renders in the Space: ' + (clicks.camLabels || []).join(' · ')) : bad('no CAM summary');
+    (clicks.camLabels || []).join(',') === 'Allocated,Variance,Status'
+      ? ok('CAM summary shows Allocated · Variance · Status as specified') : bad('cam labels', JSON.stringify(clicks.camLabels));
+    clicks.viewRecon ? ok('"View Full Reconciliation →" present (CAM stays in CAM)') : bad('no reconciliation link');
+    clicks.stmt ? ok('Tenant Statement reachable from the space (generation stays in Reports)') : bad('no tenant statement link');
 
     sec('REGRESSION — "Act on this space" must be visible after tapping (mobile)');
     // Pilot blocker: the button sits at the bottom of a long scrolling drawer, so

@@ -128,9 +128,12 @@ window.TenantSpace = (function () {
     var timelineHtml = rec.events.length
       ? '<div class="ts-timeline">' + rec.events.slice(0, 12).map(function (e) {
           var d = (window.PropertyTimeline && PropertyTimeline.describe) ? PropertyTimeline.describe(e) : { label: e.type, icon: null };
-          return '<div class="ts-tl-row"><span class="ts-tl-when">' + _esc(_fmtDate(e.timestamp)) + '</span>' +
+          // Every entry opens the record that created it.
+          return '<button type="button" class="ts-tl-row ts-tl-row--click" data-tlid="' + _esc(e.id) + '" title="Open this record">' +
+            '<span class="ts-tl-when">' + _esc(_fmtDate(e.timestamp)) + '</span>' +
             '<span class="ts-tl-badge">' + _esc(d.label) + '</span>' +
-            '<span class="ts-tl-title">' + _esc(e.title) + '</span></div>';
+            '<span class="ts-tl-title">' + _esc(e.title) + '</span>' +
+            '<span class="ts-tl-go">&#x203A;</span></button>';
         }).join('') + (rec.events.length > 12 ? '<div class="ts-empty">+ ' + (rec.events.length - 12) + ' earlier</div>' : '') + '</div>'
       : _empty('Nothing recorded for this space yet.');
 
@@ -147,12 +150,24 @@ window.TenantSpace = (function () {
     if (rec.camResult) {
       var cr = rec.camResult;
       var alloc = cr.allocatedAmount != null ? cr.allocatedAmount : cr.totalAllocated;
-      var crRows = [];
-      if (alloc != null) crRows.push([(rec.camYear ? rec.camYear + ' ' : '') + 'CAM allocated', _money(alloc)]);
-      if (cr.proRataPercent != null) crRows.push(['Pro-rata share', (Math.round(cr.proRataPercent * 100) / 100) + '%']);
-      if (cr.variance != null) crRows.push(['Variance', _money(cr.variance)]);
-      else if (cr.actualCam != null && cr.expectedCam != null) crRows.push(['Variance', _money(cr.actualCam - cr.expectedCam)]);
-      camResultHtml = '<div class="ts-lease ts-cam-result">' + crRows.map(function (r) { return '<div class="ts-lease-row"><span>' + _esc(r[0]) + '</span><b>' + _esc(r[1]) + '</b></div>'; }).join('') + '</div>';
+      var vari = (cr.variance != null) ? cr.variance
+        : ((cr.actualCam != null && cr.expectedCam != null) ? (cr.actualCam - cr.expectedCam) : null);
+      var status = (cr.status === 'needs review') ? 'Needs review' : 'Ready';
+      var vStr = vari == null ? '—' : ((vari > 0 ? '+' : '') + _money(vari));
+      // Summary only — the full reconciliation stays in CAM.
+      camResultHtml =
+        '<div class="ts-cam">' +
+          '<div class="ts-cam-yr">' + _esc((rec.camYear || '') + ' CAM') + '</div>' +
+          '<div class="ts-cam-grid">' +
+            '<div class="ts-cam-cell"><div class="ts-cam-v">' + _esc(alloc != null ? _money(alloc) : '—') + '</div><div class="ts-cam-l">Allocated</div></div>' +
+            '<div class="ts-cam-cell"><div class="ts-cam-v' + (vari > 0 ? ' ts-cam-v--up' : '') + '">' + _esc(vStr) + '</div><div class="ts-cam-l">Variance</div></div>' +
+            '<div class="ts-cam-cell"><div class="ts-cam-v">' + _esc(status) + '</div><div class="ts-cam-l">Status</div></div>' +
+          '</div>' +
+          '<div class="ts-cam-links">' +
+            '<button type="button" class="ts-cam-link" id="tsViewRecon">View Full Reconciliation &#x2192;</button>' +
+            '<button type="button" class="ts-cam-link" id="tsTenantStmt">Tenant Statement &#x2192;</button>' +
+          '</div>' +
+        '</div>';
     }
     var camEventsHtml = rec.cam.length
       ? '<div class="ts-timeline"' + (camResultHtml ? ' style="margin-top:8px"' : '') + '>' + rec.cam.map(function (e) { return '<div class="ts-tl-row"><span class="ts-tl-when">' + _esc(_fmtDate(e.timestamp)) + '</span><span class="ts-tl-title">' + _esc(e.title) + '</span></div>'; }).join('') + '</div>'
@@ -197,13 +212,15 @@ window.TenantSpace = (function () {
     // These are reference entries — the document set this space WOULD keep on
     // file. There is no stored file behind them, so they must not look like
     // links. Same honesty rule as the AI evidence chips: never a dead click.
-    var _refRow = function (a) {
+    var _refRow = function (a, i) {
       var ic = a.kind === 'invoice' ? '\u{1F9FE}' : (a.kind === 'photo' ? '\u{1F5BC}\u{FE0F}' : '\u{1F4C4}');
-      return '<div class="ts-doc ts-doc--ref" title="Sample record — no file uploaded yet">' +
+      // Clickable: opens a rendered preview of the document. Sample records are
+      // still labelled honestly, but tapping always does something.
+      return '<button type="button" class="ts-doc ts-doc--ref" data-refdoc="' + i + '" title="Open ' + _esc(a.category) + '">' +
         ic + '&nbsp;<span class="ts-doc-name">' + _esc(a.name) + '</span>' +
         '<span class="ts-doc-cat">' + _esc(a.category) + '</span>' +
         '<span class="ts-doc-sample">sample</span>' +
-        '<span class="ts-doc-when">' + _esc(_fmtDate(a.when)) + '</span></div>';
+        '<span class="ts-doc-when">' + _esc(_fmtDate(a.when)) + '</span></button>';
     };
     var refDocsHtml = refDocs.length ? '<div class="ts-docs">' + refDocs.map(_refRow).join('') + '</div>' : '';
     var docNotesHtml = (rec.documents.length ? docHtml : '') + refDocsHtml +
@@ -246,6 +263,50 @@ window.TenantSpace = (function () {
     ov.addEventListener('click', function (e) { if (e.target === ov) closeSpace(); });
     _t('tsClose').onclick = closeSpace;
     var _ab = _t('tsActBtn'); if (_ab) _ab.onclick = function () { if (window.SpaceActions) window.SpaceActions.open(); };
+
+    // ── Every row opens the record behind it ────────────────────────────────
+    var _spaceName = rec.space.name;
+    // Sample / reference documents → rendered document preview.
+    var _allRef = refDocs.concat(refPhotos);
+    ov.querySelectorAll('[data-refdoc]').forEach(function (b) {
+      b.onclick = function () {
+        var list = b.closest('.ts-sec') && /Photos/.test((b.closest('.ts-sec').querySelector('.ts-sec-title') || {}).textContent || '') ? refPhotos : refDocs;
+        var a = list[Number(b.getAttribute('data-refdoc'))];
+        if (a && window.DocViewer) window.DocViewer.openDoc({ name: a.name, url: a.url, kind: a.kind, category: a.category, when: a.when, space: _spaceName });
+      };
+    });
+    // Timeline entries → the document, note, invoice or dispute behind them.
+    ov.querySelectorAll('[data-tlid]').forEach(function (b) {
+      b.onclick = function () {
+        var ev = (rec.events || []).find(function (x) { return String(x.id) === b.getAttribute('data-tlid'); });
+        if (!ev || !window.DocViewer) return;
+        // Navigating to another pane means leaving the drawer.
+        var navigates = !(ev.attachments || []).length && !(ev.manual);
+        if (navigates) closeSpace();
+        window.DocViewer.openTimelineEvent(ev, { spaceName: _spaceName });
+      };
+    });
+    // CAM summary → the full reconciliation / the tenant statement (Reports).
+    var _vr = _t('tsViewRecon');
+    if (_vr) _vr.onclick = function () {
+      closeSpace();
+      try { if (window.switchWorkspaceTab) window.switchWorkspaceTab('cam'); } catch (_e) {}
+      try {
+        var el = document.getElementById('results') || document.getElementById('cardInvoices');
+        if (el && window._ccFlashEl) window._ccFlashEl(el);
+      } catch (_e) {}
+    };
+    var _stm = _t('tsTenantStmt');
+    if (_stm) _stm.onclick = function () {
+      // Generation stays in Reports — this just makes it reachable from the tenant.
+      closeSpace();
+      try {
+        if (typeof window.generateTenantStatement === 'function') { window.generateTenantStatement(_spaceName); return; }
+        if (window.switchWorkspaceTab) window.switchWorkspaceTab('reports');
+        var rs = document.getElementById('reportsSection');
+        if (rs && window._ccFlashEl) window._ccFlashEl(rs);
+      } catch (_e) {}
+    };
   }
   function closeSpace() { var o = _t('tsOverlay'); if (o) o.remove(); _openRec = null; }
   function record() { return _openRec; }
@@ -315,8 +376,21 @@ window.TenantSpace = (function () {
       '.ts-doc--lease{margin-top:8px;}',
       '.ts-doc-name{overflow:hidden;text-overflow:ellipsis;white-space:nowrap;max-width:220px;}',
       '.ts-doc-when{margin-left:auto;color:var(--text-4,#64748B);font-size:0.7rem;flex:none;}',
-      '.ts-doc--ref{cursor:default;border-style:dashed;opacity:0.72;}',
-      '.ts-doc--ref:hover{border-color:rgba(var(--line-rgb,255,255,255),0.12);}',
+      '.ts-doc--ref{cursor:pointer;border-style:dashed;opacity:0.85;width:100%;text-align:left;font:inherit;}',
+      '.ts-doc--ref:hover{border-color:' + gold + ';opacity:1;}',
+      '.ts-tl-row--click{width:100%;text-align:left;background:none;border:none;font:inherit;cursor:pointer;padding:6px 4px;border-radius:7px;}',
+      '.ts-tl-row--click:hover{background:rgba(var(--line-rgb,255,255,255),0.05);}',
+      '.ts-tl-go{margin-left:auto;color:var(--text-4,#64748B);flex:none;font-size:1rem;}',
+      '.ts-cam{background:var(--theme-panel,#0A0D12);border:1px solid rgba(var(--line-rgb,255,255,255),0.1);border-left:3px solid ' + gold + ';border-radius:10px;padding:12px 14px;}',
+      '.ts-cam-yr{font-size:0.68rem;font-weight:800;text-transform:uppercase;letter-spacing:0.05em;color:' + gold + ';margin-bottom:9px;}',
+      '.ts-cam-grid{display:grid;grid-template-columns:repeat(3,1fr);gap:10px;}',
+      '.ts-cam-v{font-size:0.98rem;font-weight:800;color:var(--text-1,#E2E8F0);}',
+      '.ts-cam-v--up{color:#4ade80;}',
+      '.ts-cam-l{font-size:0.68rem;color:var(--text-4,#64748B);margin-top:2px;}',
+      '.ts-cam-links{display:flex;flex-wrap:wrap;gap:8px;margin-top:12px;}',
+      '.ts-cam-link{flex:1 1 auto;min-height:38px;border-radius:8px;font:700 0.76rem/1 inherit;cursor:pointer;color:' + gold + ';background:rgba(201,151,58,0.1);border:1px solid rgba(201,151,58,0.4);padding:9px 11px;}',
+      '.ts-cam-link:hover{background:rgba(201,151,58,0.2);}',
+      '@media (max-width:480px){ .ts-cam-grid{grid-template-columns:1fr 1fr;} .ts-cam-link{flex:1 1 100%;} }',
       '.ts-doc-sample{font-size:0.58rem;font-weight:800;text-transform:uppercase;letter-spacing:0.04em;color:var(--text-4,#64748B);border:1px dashed rgba(var(--line-rgb,255,255,255),0.28);border-radius:4px;padding:0 4px;margin-left:6px;flex:none;}',
       '.ts-ref-note{font-size:0.7rem;color:var(--text-4,#64748B);font-style:italic;margin-top:8px;line-height:1.5;}',
       '.ts-doc-cat{font-size:0.6rem;font-weight:700;text-transform:uppercase;letter-spacing:0.03em;color:var(--text-4,#64748B);background:rgba(var(--line-rgb,255,255,255),0.06);border-radius:5px;padding:1px 5px;margin-left:7px;flex:none;}',
