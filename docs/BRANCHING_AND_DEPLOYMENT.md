@@ -64,6 +64,32 @@ Vercel's Git integration already gives us most of this for free.
    preview URL for review — no configuration needed. These are ephemeral and
    disappear as branches are deleted.
 
+### Branch names have a hard length budget
+
+Vercel builds the branch preview host as
+`<project>-git-<branch-slug>-<team-slug>.vercel.app`, where `<branch-slug>` is
+the branch with every non-alphanumeric character turned into `-`. That whole
+string is a single **DNS label, capped at 63 characters**. Go over and the
+hostname is not merely wrong, it is *illegal* — no DNS server can answer it, so
+the browser reports "server can't be found" even though the deployment built
+fine and shows **Ready** in the dashboard.
+
+This is easy to miss because `*.vercel.app` is a wildcard: any *valid* name
+resolves, including one for a project that doesn't exist. So a name-resolution
+failure never means "bad deployment" — it means "illegal hostname".
+
+Budget for this project:
+
+```
+63 − len("mainstreet-xrpl") − len("-git-") − 1 − len(<team-slug>) = branch budget
+63 −        15             −       5      − 1 −       19          = 23 characters
+```
+
+So **keep `claude/*` branch names to ~23 characters or fewer**, counting the
+`claude/` prefix. `claude/marketing-homepage` slugifies to 25 and is already
+over. `claude/homepage` (15) is safely inside. Shorter is better — the team
+slug is the part you don't control, and it can change.
+
 ---
 
 ## 4. Environment & data isolation (critical for a mainnet app)

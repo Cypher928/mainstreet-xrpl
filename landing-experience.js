@@ -11,7 +11,8 @@
  *
  * Purely additive: self-mounts DOM + styles, self-triggers before login for an
  * unauthenticated visitor. Touches no auth, settlement, XRPL, or business logic.
- * Re-openable via window.MainStreetLanding.show() / .playDemo() or ?landing=1.
+ * Re-openable via window.MainStreetLanding.show() / .playDemo(), ?landing=1,
+ * or ?demo=1 (opens and plays the film immediately).
  */
 (function () {
   'use strict';
@@ -487,12 +488,20 @@
     if (isAuthed() && !forced) return;
     var login = document.getElementById('loginScreen');
     if (!login) return;
-    if (forced || shown(login)) { show(); return; }
+    // ?demo=1 opens straight into the cinematic film — lets the marketing
+    // homepage's "Watch MainStreet in Action" start the real product demo
+    // rather than a placeholder. It only changes what happens *once* the
+    // landing opens; it must never short-circuit the checks below, because
+    // isAuthed() settles asynchronously and would still read false here for a
+    // signed-in user. Skipping the wait would drop the film over their session.
+    var wantDemo = params.get('demo') === '1';
+    function open() { show(); if (wantDemo) setTimeout(playDemo, 260); }
+    if (forced || shown(login)) { open(); return; }
     var done = false;
     function tryShow() {
       if (done) return;
       if (isAuthed()) { done = true; obs.disconnect(); clearInterval(poll); return; }
-      if (shown(login)) { done = true; obs.disconnect(); clearInterval(poll); show(); }
+      if (shown(login)) { done = true; obs.disconnect(); clearInterval(poll); open(); }
     }
     var obs = new MutationObserver(tryShow);
     obs.observe(login, { attributes: true, attributeFilter: ['style', 'class'] });
