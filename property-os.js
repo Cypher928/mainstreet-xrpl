@@ -160,6 +160,7 @@ window.PropertyOS = (function () {
     if (!body || !property) return;
     injectStyles();
 
+    var PR = window.PropertyReference;   // declared early: the documents section uses it
     var invs = invoices(property);
     var spaces = (property.tenants || []).filter(function (t) { return t && (t.tenant_name || t.id); });
     var tl = (property.timeline || []);
@@ -224,12 +225,21 @@ window.PropertyOS = (function () {
       (e.attachments || []).forEach(function (a) { if (a && a.url) docs.push({ name: a.name, url: a.url, kind: a.kind, when: e.timestamp }); });
     });
     invs.forEach(function (i) { if (i.fileUrl && !i.spaceId) docs.push({ name: i.fileName || i.vendorName, url: i.fileUrl, kind: 'invoice', when: i.invoiceDate }); });
+    // Demo property: show the document set a real building would keep on file.
+    if (PR) docs = docs.concat(PR.propertyDocumentsFor(property));
+    var _docIcon = function (k) {
+      return k === 'photo' ? '\u{1F5BC}\u{FE0F}' : (k === 'invoice' ? '\u{1F9FE}'
+        : (k === 'warranty' ? '\u{1F6E1}\u{FE0F}' : (k === 'plan' ? '\u{1F4D0}' : '\u{1F4C4}')));
+    };
     var docHtml = docs.length
       ? '<div class="pos-docs">' + docs.slice(0, 30).map(function (a) {
-          var ic = a.kind === 'photo' ? '\u{1F5BC}\u{FE0F}' : (a.kind === 'invoice' ? '\u{1F9FE}' : (a.kind === 'warranty' ? '\u{1F6E1}\u{FE0F}' : '\u{1F4C4}'));
-          return '<a class="pos-doc" href="' + _esc(a.url) + '" target="_blank" rel="noopener">' + ic + '&nbsp;<span class="pos-doc-n">' + _esc(a.name) + '</span>' +
-            (a.when ? '<span class="pos-doc-w">' + _esc(_fmtDate(a.when)) + '</span>' : '') + '</a>';
-        }).join('') + '</div>'
+          var inner = _docIcon(a.kind) + '&nbsp;<span class="pos-doc-n">' + _esc(a.name) + '</span>' +
+            (a.category ? '<span class="pos-doc-cat">' + _esc(a.category) + '</span>' : '') +
+            (a.when ? '<span class="pos-doc-w">' + _esc(_fmtDate(a.when)) + '</span>' : '');
+          return a.url
+            ? '<a class="pos-doc" href="' + _esc(a.url) + '" target="_blank" rel="noopener">' + inner + '</a>'
+            : '<div class="pos-doc pos-doc--ref">' + inner + '</div>';
+        }).join('') + '</div>' + (docs.length > 30 ? '<div class="pos-empty">Showing 30 of ' + docs.length + '</div>' : '')
       : _empty('Insurance policies, tax bills, surveys, vendor contracts and building warranties attached to property-wide records appear here.');
 
     // Property-wide timeline — what affects the building as a whole.
@@ -244,7 +254,26 @@ window.PropertyOS = (function () {
         }).join('') + '</div>' + (propEvents.length > 10 ? '<div class="pos-empty">+ ' + (propEvents.length - 10) + ' earlier — full history on Overview</div>' : '')
       : _empty('Roof replacements, insurance renewals, tax appeals and capital improvements appear here.');
 
+    // ── Property Information — reference facts, not operational alerts ──────
+    var infoHtml = '';
+    if (PR) {
+      var info = PR.infoFor(property);
+      if (info) {
+        infoHtml = PR.GROUPS.map(function (g) {
+          var rows = PR.FIELDS.filter(function (f) { return f.group === g; }).map(function (f) {
+            return '<div class="pos-info-row"><span class="pos-info-k">' + _esc(f.label) + '</span>' +
+              '<span class="pos-info-v">' + _esc(PR.formatValue(f, info[f.key], property)) + '</span></div>';
+          }).join('');
+          return '<div class="pos-info-grp"><div class="pos-info-grp-t">' + _esc(g) + '</div>' + rows + '</div>';
+        }).join('');
+        infoHtml = '<div class="pos-info">' + infoHtml + '</div>';
+      } else {
+        infoHtml = _empty('No property information recorded yet. Address, year built, insurance, roof and HVAC details appear here once added.');
+      }
+    }
+
     body.innerHTML =
+      (infoHtml ? _sec('Property information', null, infoHtml) : '') +
       _sec('Financials', null, finHtml) +
       _sec('Invoice register', invs.length, regHtml) +
       _sec('Building systems', null, sysHtml) +
@@ -289,6 +318,15 @@ window.PropertyOS = (function () {
       '.pos-doc:hover{border-color:' + gold + ';}',
       '.pos-doc-n{overflow:hidden;text-overflow:ellipsis;white-space:nowrap;}',
       '.pos-doc-w{margin-left:auto;font-size:0.7rem;color:var(--text-4,#64748B);flex:none;}',
+      '.pos-doc--ref{cursor:default;}',
+      '.pos-doc-cat{font-size:0.62rem;font-weight:700;text-transform:uppercase;letter-spacing:0.03em;color:var(--text-4,#64748B);background:rgba(var(--line-rgb,255,255,255),0.06);border-radius:5px;padding:1px 6px;margin-left:8px;flex:none;}',
+      // Property information — reference facts, calm and scannable
+      '.pos-info{display:grid;grid-template-columns:repeat(auto-fit,minmax(260px,1fr));gap:16px;}',
+      '.pos-info-grp-t{font-size:0.66rem;font-weight:800;text-transform:uppercase;letter-spacing:0.05em;color:' + gold + ';margin-bottom:7px;}',
+      '.pos-info-row{display:flex;gap:10px;padding:5px 0;border-bottom:1px solid rgba(var(--line-rgb,255,255,255),0.05);font-size:0.8rem;}',
+      '.pos-info-row:last-child{border-bottom:none;}',
+      '.pos-info-k{flex:none;width:130px;color:var(--text-4,#64748B);}',
+      '.pos-info-v{flex:1;color:var(--text-1,#E2E8F0);min-width:0;}',
       '.pos-tl{display:flex;flex-direction:column;gap:6px;}',
       '.pos-tl-row{display:flex;align-items:center;gap:9px;font-size:0.8rem;}',
       '.pos-tl-w{color:var(--text-4,#64748B);font-size:0.72rem;flex:none;width:96px;}',
