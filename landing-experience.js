@@ -11,7 +11,8 @@
  *
  * Purely additive: self-mounts DOM + styles, self-triggers before login for an
  * unauthenticated visitor. Touches no auth, settlement, XRPL, or business logic.
- * Re-openable via window.MainStreetLanding.show() / .playDemo() or ?landing=1.
+ * Re-openable via window.MainStreetLanding.show() / .playDemo(), ?landing=1,
+ * or ?demo=1 (opens and plays the film immediately).
  */
 (function () {
   'use strict';
@@ -487,6 +488,10 @@
     if (isAuthed() && !forced) return;
     var login = document.getElementById('loginScreen');
     if (!login) return;
+    // ?demo=1 opens straight into the cinematic film — lets the marketing
+    // homepage's "Watch MainStreet in Action" start the real product demo
+    // rather than a placeholder.
+    if (params.get('demo') === '1') { show(); setTimeout(playDemo, 260); return; }
     if (forced || shown(login)) { show(); return; }
     var done = false;
     function tryShow() {
