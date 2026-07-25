@@ -184,23 +184,41 @@ window.TenantSpace = (function () {
     // ── Documents & notes ────────────────────────────────────────────────────
     // Demo spaces show the document set a real suite would keep on file
     // (lease, amendments, estoppel, COIs, CAM backup, notices, photos).
-    var refDocs = [];
+    var refAll = [];
     try {
       var _pr = window.PropertyReference;
       var _t2 = (property.tenants || []).find(function (x) { return x && x.id === tenantId; });
-      if (_pr && _t2) refDocs = _pr.spaceDocumentsFor(property, _t2);
+      if (_pr && _t2) refAll = _pr.spaceDocumentsFor(property, _t2);
     } catch (_e) {}
-    var refDocsHtml = refDocs.length
-      ? '<div class="ts-docs">' + refDocs.map(function (a) {
-          var ic = a.kind === 'photo' ? '\u{1F5BC}\u{FE0F}' : (a.kind === 'invoice' ? '\u{1F9FE}' : '\u{1F4C4}');
-          return '<div class="ts-doc ts-doc--ref">' + ic + '&nbsp;<span class="ts-doc-name">' + _esc(a.name) + '</span>' +
-            '<span class="ts-doc-cat">' + _esc(a.category) + '</span>' +
-            '<span class="ts-doc-when">' + _esc(_fmtDate(a.when)) + '</span></div>';
-        }).join('') + '</div>'
-      : '';
+    // Photos belong in the Photos section, not buried under Documents.
+    var refPhotos = refAll.filter(function (a) { return a.kind === 'photo'; });
+    var refDocs   = refAll.filter(function (a) { return a.kind !== 'photo'; });
+
+    // These are reference entries — the document set this space WOULD keep on
+    // file. There is no stored file behind them, so they must not look like
+    // links. Same honesty rule as the AI evidence chips: never a dead click.
+    var _refRow = function (a) {
+      var ic = a.kind === 'invoice' ? '\u{1F9FE}' : (a.kind === 'photo' ? '\u{1F5BC}\u{FE0F}' : '\u{1F4C4}');
+      return '<div class="ts-doc ts-doc--ref" title="Sample record — no file uploaded yet">' +
+        ic + '&nbsp;<span class="ts-doc-name">' + _esc(a.name) + '</span>' +
+        '<span class="ts-doc-cat">' + _esc(a.category) + '</span>' +
+        '<span class="ts-doc-sample">sample</span>' +
+        '<span class="ts-doc-when">' + _esc(_fmtDate(a.when)) + '</span></div>';
+    };
+    var refDocsHtml = refDocs.length ? '<div class="ts-docs">' + refDocs.map(_refRow).join('') + '</div>' : '';
     var docNotesHtml = (rec.documents.length ? docHtml : '') + refDocsHtml +
       (rec.notes.length ? '<div class="ts-lbl">Notes</div>' + notesHtml : '');
     if (!docNotesHtml) docNotesHtml = _empty('No documents or notes for this space yet.');
+    if (refDocs.length) docNotesHtml += '<div class="ts-ref-note">Sample records show the documents this space would keep on file. Upload a file to replace one.</div>';
+
+    // Merge reference photos into the Photos section.
+    if (refPhotos.length) {
+      photosHtml = (rec.photos.length ? photosHtml : '') +
+        '<div class="ts-docs">' + refPhotos.map(_refRow).join('') + '</div>';
+    }
+    // Counts must match what is actually on screen.
+    var docCount   = rec.counts.documents + rec.counts.notes + refDocs.length;
+    var photoCount = rec.counts.photos + refPhotos.length;
 
     var ov = document.createElement('div');
     ov.id = 'tsOverlay'; ov.className = 'ts-overlay';
@@ -216,8 +234,8 @@ window.TenantSpace = (function () {
           _section('Lease', null, leaseHtml) +
           _section('Financial activity', rec.counts.cam + rec.counts.invoices, finHtml) +
           _section('Maintenance', maintCount, maintHtml) +
-          _section('Photos', rec.counts.photos, photosHtml) +
-          _section('Documents', rec.counts.documents + rec.counts.notes, docNotesHtml) +
+          _section('Photos', photoCount, photosHtml) +
+          _section('Documents', docCount, docNotesHtml) +
           _section('Timeline', rec.counts.events, timelineHtml) +
         '</div>' +
         '<div class="ts-actbar"><button class="ts-act-btn" id="tsActBtn">\u{26A1}&nbsp;Act on this space</button>' +
@@ -297,7 +315,10 @@ window.TenantSpace = (function () {
       '.ts-doc--lease{margin-top:8px;}',
       '.ts-doc-name{overflow:hidden;text-overflow:ellipsis;white-space:nowrap;max-width:220px;}',
       '.ts-doc-when{margin-left:auto;color:var(--text-4,#64748B);font-size:0.7rem;flex:none;}',
-      '.ts-doc--ref{cursor:default;}',
+      '.ts-doc--ref{cursor:default;border-style:dashed;opacity:0.72;}',
+      '.ts-doc--ref:hover{border-color:rgba(var(--line-rgb,255,255,255),0.12);}',
+      '.ts-doc-sample{font-size:0.58rem;font-weight:800;text-transform:uppercase;letter-spacing:0.04em;color:var(--text-4,#64748B);border:1px dashed rgba(var(--line-rgb,255,255,255),0.28);border-radius:4px;padding:0 4px;margin-left:6px;flex:none;}',
+      '.ts-ref-note{font-size:0.7rem;color:var(--text-4,#64748B);font-style:italic;margin-top:8px;line-height:1.5;}',
       '.ts-doc-cat{font-size:0.6rem;font-weight:700;text-transform:uppercase;letter-spacing:0.03em;color:var(--text-4,#64748B);background:rgba(var(--line-rgb,255,255,255),0.06);border-radius:5px;padding:1px 5px;margin-left:7px;flex:none;}',
       '.ts-docs{display:flex;flex-direction:column;gap:2px;}',
       '.ts-photos{display:flex;flex-wrap:wrap;gap:8px;}',

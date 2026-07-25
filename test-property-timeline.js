@@ -645,6 +645,38 @@ srv.listen(PORT, '127.0.0.1', async () => {
     (signals.count >= 3) ? ok('realistic signal set (' + signals.count + '): ' + signals.titles.slice(0, 110) + '…') : bad('too few signals', String(signals.count));
     signals.allHaveAction ? ok('every item keeps what · why · one action') : bad('item shape regressed');
 
+    sec('Space drawer — counts match what is on screen, samples are honest');
+    const sd = await page.evaluate(() => {
+      const t = (currentProperty().tenants || []).find(x => /Whole Health/.test(x.tenant_name)) || currentProperty().tenants[0];
+      TenantSpace.openSpace(t.id);
+      const ov = document.getElementById('tsOverlay');
+      const secCount = (title) => {
+        const secs = Array.from(ov.querySelectorAll('.ts-sec'));
+        const s = secs.find(x => (x.querySelector('.ts-sec-title') || {}).textContent === title);
+        const c = s && s.querySelector('.ts-sec-count');
+        return { count: c ? Number(c.textContent) : null, rows: s ? s.querySelectorAll('.ts-doc, .ts-photo, .ts-tl-row, .ts-note').length : 0 };
+      };
+      const docs = secCount('Documents'), photos = secCount('Photos'), timeline = secCount('Timeline');
+      const refRows = ov.querySelectorAll('.ts-doc--ref').length;
+      const refAreLinks = ov.querySelectorAll('a.ts-doc--ref').length;
+      const sampleTags = ov.querySelectorAll('.ts-doc-sample').length;
+      const note = /Sample records show/.test(ov.innerHTML);
+      TenantSpace.closeSpace();
+      return { docs, photos, timeline, refRows, refAreLinks, sampleTags, note };
+    });
+    (sd.docs.count === sd.docs.rows)
+      ? ok('Documents count (' + sd.docs.count + ') matches rows shown (' + sd.docs.rows + ')')
+      : bad('document count mismatch', sd.docs.count + ' vs ' + sd.docs.rows + ' rows');
+    (sd.photos.count === sd.photos.rows)
+      ? ok('Photos count (' + sd.photos.count + ') matches rows shown — photos no longer buried under Documents')
+      : bad('photo count mismatch', sd.photos.count + ' vs ' + sd.photos.rows);
+    (sd.timeline.count === sd.timeline.rows || sd.timeline.count > 0)
+      ? ok('Timeline count reflects scoped events (' + sd.timeline.count + ')')
+      : bad('timeline shows 0 despite scoped events', JSON.stringify(sd.timeline));
+    (sd.refAreLinks === 0) ? ok('sample records are NOT links (no dead clicks)') : bad('sample rows are anchors', String(sd.refAreLinks));
+    (sd.sampleTags === sd.refRows && sd.refRows > 0) ? ok('every sample record carries a "sample" tag (' + sd.refRows + ')') : bad('sample tags', JSON.stringify(sd));
+    sd.note ? ok('an explainer states these are samples until a file is uploaded') : bad('no sample explainer');
+
     sec('REGRESSION — "Act on this space" must be visible after tapping (mobile)');
     // Pilot blocker: the button sits at the bottom of a long scrolling drawer, so
     // the panel rendered BELOW THE FOLD and the tap looked like a no-op.
