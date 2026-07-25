@@ -490,14 +490,18 @@
     if (!login) return;
     // ?demo=1 opens straight into the cinematic film — lets the marketing
     // homepage's "Watch MainStreet in Action" start the real product demo
-    // rather than a placeholder.
-    if (params.get('demo') === '1') { show(); setTimeout(playDemo, 260); return; }
-    if (forced || shown(login)) { show(); return; }
+    // rather than a placeholder. It only changes what happens *once* the
+    // landing opens; it must never short-circuit the checks below, because
+    // isAuthed() settles asynchronously and would still read false here for a
+    // signed-in user. Skipping the wait would drop the film over their session.
+    var wantDemo = params.get('demo') === '1';
+    function open() { show(); if (wantDemo) setTimeout(playDemo, 260); }
+    if (forced || shown(login)) { open(); return; }
     var done = false;
     function tryShow() {
       if (done) return;
       if (isAuthed()) { done = true; obs.disconnect(); clearInterval(poll); return; }
-      if (shown(login)) { done = true; obs.disconnect(); clearInterval(poll); show(); }
+      if (shown(login)) { done = true; obs.disconnect(); clearInterval(poll); open(); }
     }
     var obs = new MutationObserver(tryShow);
     obs.observe(login, { attributes: true, attributeFilter: ['style', 'class'] });
