@@ -182,7 +182,23 @@ window.TenantSpace = (function () {
     if (!maintHtml) maintHtml = _empty('No repairs, vendor work, or warranties recorded for this space yet.');
 
     // ── Documents & notes ────────────────────────────────────────────────────
-    var docNotesHtml = (rec.documents.length ? docHtml : '') +
+    // Demo spaces show the document set a real suite would keep on file
+    // (lease, amendments, estoppel, COIs, CAM backup, notices, photos).
+    var refDocs = [];
+    try {
+      var _pr = window.PropertyReference;
+      var _t2 = (property.tenants || []).find(function (x) { return x && x.id === tenantId; });
+      if (_pr && _t2) refDocs = _pr.spaceDocumentsFor(property, _t2);
+    } catch (_e) {}
+    var refDocsHtml = refDocs.length
+      ? '<div class="ts-docs">' + refDocs.map(function (a) {
+          var ic = a.kind === 'photo' ? '\u{1F5BC}\u{FE0F}' : (a.kind === 'invoice' ? '\u{1F9FE}' : '\u{1F4C4}');
+          return '<div class="ts-doc ts-doc--ref">' + ic + '&nbsp;<span class="ts-doc-name">' + _esc(a.name) + '</span>' +
+            '<span class="ts-doc-cat">' + _esc(a.category) + '</span>' +
+            '<span class="ts-doc-when">' + _esc(_fmtDate(a.when)) + '</span></div>';
+        }).join('') + '</div>'
+      : '';
+    var docNotesHtml = (rec.documents.length ? docHtml : '') + refDocsHtml +
       (rec.notes.length ? '<div class="ts-lbl">Notes</div>' + notesHtml : '');
     if (!docNotesHtml) docNotesHtml = _empty('No documents or notes for this space yet.');
 
@@ -280,7 +296,9 @@ window.TenantSpace = (function () {
       '.ts-doc:hover{border-color:' + gold + ';}',
       '.ts-doc--lease{margin-top:8px;}',
       '.ts-doc-name{overflow:hidden;text-overflow:ellipsis;white-space:nowrap;max-width:220px;}',
-      '.ts-doc-when{margin-left:auto;color:var(--text-4,#64748B);font-size:0.7rem;}',
+      '.ts-doc-when{margin-left:auto;color:var(--text-4,#64748B);font-size:0.7rem;flex:none;}',
+      '.ts-doc--ref{cursor:default;}',
+      '.ts-doc-cat{font-size:0.6rem;font-weight:700;text-transform:uppercase;letter-spacing:0.03em;color:var(--text-4,#64748B);background:rgba(var(--line-rgb,255,255,255),0.06);border-radius:5px;padding:1px 5px;margin-left:7px;flex:none;}',
       '.ts-docs{display:flex;flex-direction:column;gap:2px;}',
       '.ts-photos{display:flex;flex-wrap:wrap;gap:8px;}',
       '.ts-photo img{width:74px;height:74px;object-fit:cover;border-radius:9px;border:1px solid rgba(var(--line-rgb,255,255,255),0.14);display:block;}',

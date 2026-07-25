@@ -12,7 +12,7 @@
  * AI model — it surfaces and prioritizes what the verified record already knows.
  *
  * Design rules honored:
- *   - Show the FEW things that matter, ranked (cap at 3; the rest are a quiet count).
+ *   - Show the FEW things that matter, ranked (3–5 shown; the rest behind "View all").
  *   - Every item = what (title) · why (one line) · one action (go to the proof).
  *   - "All caught up" is a first-class state — telling a manager they can relax
  *     is reducing load, not hiding work.
@@ -27,8 +27,9 @@ window.PropertyWorkspace = (function () {
       return ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' })[c];
     });
   };
-  var MAX_SHOWN = 3;
+  var MAX_SHOWN = 5;        // 3–5 prioritized items, then "View all"
   var _lastItems = [];
+  var _expanded = false;
 
   function _plural(n, one, many) { return n + ' ' + (n === 1 ? one : many); }
   function _mk(severity, icon, title, why, nav, action) {
@@ -78,6 +79,57 @@ window.PropertyWorkspace = (function () {
       'Low-confidence extractions should be verified.',
       { tab: 'overview', anchors: ['propertyReviewQueuePanel'] }, 'Verify terms'));
 
+    // ── Reference-driven signals ────────────────────────────────────────────
+    // Read from the property's own reference record (insurance, roof, CAM) —
+    // still "what the verified record already knows", not new prediction.
+    try {
+      var PR = window.PropertyReference;
+      var info = PR && PR.infoFor(p);
+      if (info && info.insuranceExpires) {
+        var days = Math.round((new Date(info.insuranceExpires + 'T12:00:00') - Date.now()) / 86400000);
+        if (days >= 0 && days <= 120) items.push(_mk(days <= 45 ? 'warning' : 'info', '\u{1F6E1}\u{FE0F}',
+          'Insurance renewal in ' + days + ' days',
+          (info.insuranceCarrier || 'Carrier') + ' policy expires ' + info.insuranceExpires + '.',
+          { tab: 'property', anchors: ['propertySection'] }, 'View policy'));
+      }
+      // CAM underbilling: allocated materially below the eligible pool.
+      var snap = p.camReconciliation;
+      if (snap && Array.isArray(snap.results) && snap.results.length && snap.total) {
+        var allocated = snap.results.reduce(function (s, r) {
+          return s + (Number(r.allocatedAmount != null ? r.allocatedAmount : r.totalAllocated) || 0);
+        }, 0);
+        var under = Number(snap.total) - allocated;
+        if (under > Number(snap.total) * 0.05) items.push(_mk('warning', '\u{1F4B0}',
+          'CAM underbilling — ' + '$' + Math.round(under).toLocaleString() + ' unrecovered',
+          'Allocated charges fall short of the eligible expense pool.',
+          { tab: 'cam', anchors: ['results', 'cardInvoices'] }, 'Review allocation'));
+      }
+      // Audit window: tenants typically have a limited period to contest a
+      // reconciliation. Surface it while there is still time to respond.
+      if (snap && snap.savedAt) {
+        var elapsed = Math.round((Date.now() - new Date(snap.savedAt)) / 86400000);
+        var remaining = 90 - elapsed;
+        if (remaining > 0 && remaining <= 30) items.push(_mk('warning', '\u{23F3}',
+          'Audit window closes in ' + remaining + ' days',
+          'Tenants can still contest the ' + (snap.camYear || '') + ' reconciliation.',
+          { tab: 'cam', anchors: ['results'] }, 'Review CAM'));
+      }
+    } catch (_e) {}
+
+    // Maintenance needing review — from the property's own timeline record.
+    try {
+      var maint = (p.timeline || []).filter(function (e) {
+        return e && /^(maintenance|repair)$/.test(e.category || '') &&
+               e.responsibility && e.responsibility !== 'na';
+      });
+      if (maint.length) {
+        var latest = maint[maint.length - 1];
+        items.push(_mk('info', '\u{1F527}', 'Maintenance requires review',
+          String(latest.title || 'Recent work').slice(0, 70) + ' — confirm cost responsibility.',
+          { tab: 'overview', anchors: ['propertyActivitySlot'] }, 'Open timeline'));
+      }
+    } catch (_e) {}
+
     var order = { critical: 0, warning: 1, info: 2 };
     items.sort(function (a, b) { return order[a.severity] - order[b.severity]; });
     return items;
@@ -124,7 +176,7 @@ window.PropertyWorkspace = (function () {
       return;
     }
 
-    var shown = items.slice(0, MAX_SHOWN);
+    var shown = _expanded ? items : items.slice(0, MAX_SHOWN);
     var more = items.length - shown.length;
     var rows = shown.map(function (it, i) {
       return '<div class="pw-item pw-item--' + it.severity + '">' +
@@ -143,8 +195,19 @@ window.PropertyWorkspace = (function () {
         '<div class="pw-attn-head"><span class="pw-attn-title">⚡&nbsp; What needs your attention</span>' +
           '<span class="pw-attn-count">' + items.length + '</span></div>' +
         '<div class="pw-attn-list">' + rows + '</div>' +
-        (more > 0 ? '<div class="pw-attn-more">+ ' + more + ' more — worth a look when you have a moment</div>' : '') +
+        (more > 0
+          ? '<button class="pw-attn-all" onclick="PropertyWorkspace.toggleAll()">View all ' + items.length + ' &#x2192;</button>'
+          : (_expanded && items.length > MAX_SHOWN
+              ? '<button class="pw-attn-all" onclick="PropertyWorkspace.toggleAll()">Show top ' + MAX_SHOWN + ' &#x2191;</button>'
+              : '')) +
       '</div>';
+  }
+
+  // "View all" — the widget stays prioritized by default; the full list is one
+  // click away rather than crowding the dashboard.
+  function toggleAll() {
+    _expanded = !_expanded;
+    try { renderAttention(); } catch (_e) {}
   }
 
   function injectStyles() {
@@ -168,6 +231,8 @@ window.PropertyWorkspace = (function () {
       '.pw-item-act{flex:none;font:700 0.74rem/1 inherit;color:' + gold + ';background:rgba(201,151,58,0.12);border:1px solid rgba(201,151,58,0.4);border-radius:8px;padding:9px 12px;cursor:pointer;white-space:nowrap;min-height:38px;}',
       '.pw-item-act:hover{background:rgba(201,151,58,0.2);}',
       '.pw-attn-more{font-size:0.74rem;color:var(--text-4,#64748B);margin-top:9px;}',
+      '.pw-attn-all{margin-top:10px;width:100%;min-height:36px;border-radius:8px;font:700 0.74rem/1 inherit;cursor:pointer;color:var(--text-3,#94A3B8);background:transparent;border:1px solid rgba(var(--line-rgb,255,255,255),0.14);}',
+      '.pw-attn-all:hover{color:' + gold + ';border-color:' + gold + ';}',
       '.pw-attn--clear{display:flex;align-items:center;gap:12px;}',
       '.pw-attn-check{width:30px;height:30px;flex:none;display:flex;align-items:center;justify-content:center;border-radius:50%;background:rgba(22,101,52,0.2);color:#4ade80;font-weight:800;}',
       '.pw-attn-clear-title{font-size:0.9rem;font-weight:800;color:var(--text-1,#E2E8F0);}',
@@ -186,6 +251,6 @@ window.PropertyWorkspace = (function () {
   return {
     collectAttention: collectAttention,
     renderAttention: renderAttention,
-    act: act,
+    act: act, toggleAll: toggleAll,
   };
 })();

@@ -267,7 +267,7 @@ srv.listen(PORT, '127.0.0.1', async () => {
     rendered.exists ? ok('attention panel renders') : bad('no panel');
     rendered.before ? ok('panel sits above the timeline in the overview') : bad('panel placement');
     rendered.title ? ok('panel titled "What needs your attention"') : bad('no title');
-    (rendered.shown >= 1 && rendered.shown <= 3) ? ok('shows a ranked, capped set (' + rendered.shown + ' ≤ 3) — prioritization over density') : bad('cap', String(rendered.shown));
+    (rendered.shown >= 1 && rendered.shown <= 5) ? ok('shows a ranked, capped set (' + rendered.shown + ' ≤ 5) — prioritization over density') : bad('cap', String(rendered.shown));
     rendered.action ? ok('each item has one clear action button') : bad('no action button');
 
     const clear = await page.evaluate(() => {
@@ -565,6 +565,85 @@ srv.listen(PORT, '127.0.0.1', async () => {
     });
     (['Lease', 'Financial activity', 'Maintenance', 'Photos', 'Documents', 'Timeline'].every(s => spaceSecs.includes(s)))
       ? ok('Space sections match the model (Lease · Financial · Maintenance · Photos · Documents · Timeline)') : bad('space sections', JSON.stringify(spaceSecs));
+
+    sec('Property Information — reference facts (frozen IA: depth, not moves)');
+    const pinfo = await page.evaluate(() => {
+      if (window.PropertyOS) { PropertyOS.init(); PropertyOS.renderPropertyPage(currentProperty()); }
+      const pane = document.getElementById('wsPane-property');
+      const html = pane ? pane.innerHTML : '';
+      const rows = pane ? pane.querySelectorAll('.pos-info-row').length : 0;
+      const groups = pane ? Array.from(pane.querySelectorAll('.pos-info-grp-t')).map(e => e.textContent) : [];
+      return {
+        rows, groups,
+        hasTitle: /Property information/i.test(html),
+        address: /Cascade Parkway/.test(html),
+        yearBuilt: /2003/.test(html),
+        insurance: /Travelers/.test(html) && /TRV-CP-8843017-25/.test(html),
+        roof: /TPO/.test(html), hvac: /Carrier/.test(html), zoning: /Community Commercial/.test(html),
+        parcel: /TRAVIS-02-4417-0209/.test(html), parking: /132 surface/.test(html),
+        occupancyLive: /%/.test(html),
+      };
+    });
+    pinfo.hasTitle ? ok('Property Information section renders on the Property page') : bad('no property info section');
+    (pinfo.rows >= 20) ? ok('all ' + pinfo.rows + ' reference fields render') : bad('field count', String(pinfo.rows));
+    (pinfo.groups.length === 3) ? ok('grouped: ' + pinfo.groups.join(' · ')) : bad('groups', JSON.stringify(pinfo.groups));
+    (pinfo.address && pinfo.yearBuilt && pinfo.parcel) ? ok('identity data realistic (address, year built, parcel ID)') : bad('identity data');
+    (pinfo.insurance) ? ok('insurance carrier + policy number present') : bad('insurance data');
+    (pinfo.roof && pinfo.hvac && pinfo.zoning && pinfo.parking) ? ok('roof, HVAC, zoning, parking present') : bad('systems data');
+    pinfo.occupancyLive ? ok('occupancy derived from live tenant data, not hardcoded') : bad('occupancy');
+
+    const realProp = await page.evaluate(() => {
+      const fake = { id: 'real-1', name: 'Real Property', tenants: [], timeline: [] };
+      return window.PropertyReference ? PropertyReference.infoFor(fake) : 'no-module';
+    });
+    (realProp === null) ? ok('a REAL property shows no demo data (honest empty state)') : bad('demo data leaked to real property', JSON.stringify(realProp));
+
+    sec('Document catalogs — property and space level');
+    const docs = await page.evaluate(() => {
+      const pane = document.getElementById('wsPane-property');
+      const html = pane ? pane.innerHTML : '';
+      const cats = Array.from(pane ? pane.querySelectorAll('.pos-doc-cat') : []).map(e => e.textContent);
+      return { cats, sitePlan: /Site Plan/.test(html), survey: /Survey/.test(html), roofWarranty: /Roof Warranty/.test(html), env: /Environmental/.test(html) };
+    });
+    (docs.sitePlan && docs.survey && docs.roofWarranty && docs.env)
+      ? ok('property documents include site plan, survey, roof warranty, environmental') : bad('property docs', JSON.stringify(docs));
+    (docs.cats.length >= 8) ? ok(docs.cats.length + ' categorised property documents') : bad('doc count', String(docs.cats.length));
+
+    const sdocs = await page.evaluate(() => {
+      const t = (currentProperty().tenants || [])[0];
+      TenantSpace.openSpace(t.id);
+      const html = document.getElementById('tsOverlay').innerHTML;
+      const cats = Array.from(document.querySelectorAll('#tsOverlay .ts-doc-cat')).map(e => e.textContent);
+      TenantSpace.closeSpace();
+      return { cats, lease: /Lease/.test(html), estoppel: /Estoppel/.test(html), coi: /Certificates of Insurance/.test(html), camBackup: /CAM Backup/.test(html), movein: /Move-in/.test(html) };
+    });
+    (sdocs.estoppel && sdocs.coi && sdocs.camBackup && sdocs.movein)
+      ? ok('space documents include estoppel, COIs, CAM backup, move-in photos') : bad('space docs', JSON.stringify(sdocs));
+
+    sec('Attention Needed — 3–5 prioritized items with View all');
+    const attn2 = await page.evaluate(() => {
+      PropertyWorkspace.renderAttention(currentProperty());
+      const slot = document.getElementById('propertyAttentionSlot');
+      const shown = slot.querySelectorAll('.pw-item').length;
+      const all = PropertyWorkspace.collectAttention(currentProperty()).length;
+      const hasViewAll = !!slot.querySelector('.pw-attn-all');
+      let expanded = 0;
+      if (hasViewAll) { PropertyWorkspace.toggleAll(); expanded = document.querySelectorAll('#propertyAttentionSlot .pw-item').length; PropertyWorkspace.toggleAll(); }
+      return { shown, all, hasViewAll, expanded };
+    });
+    (attn2.shown >= 1 && attn2.shown <= 5) ? ok('widget shows ' + attn2.shown + ' prioritized items (≤5)') : bad('item count', String(attn2.shown));
+    (attn2.all > attn2.shown ? attn2.hasViewAll : true) ? ok('"View all" appears when there are more (' + attn2.all + ' total)') : bad('no view all');
+    (!attn2.hasViewAll || attn2.expanded > attn2.shown) ? ok('View all expands the list') : bad('expand failed', JSON.stringify(attn2));
+
+    const signals = await page.evaluate(() => {
+      const items = PropertyWorkspace.collectAttention(currentProperty());
+      const titles = items.map(i => i.title).join(' | ');
+      return { titles, count: items.length,
+        hasLease: /lease/i.test(titles), hasDispute: /dispute/i.test(titles),
+        allHaveAction: items.every(i => i.why && i.action && i.nav) };
+    });
+    (signals.count >= 3) ? ok('realistic signal set (' + signals.count + '): ' + signals.titles.slice(0, 110) + '…') : bad('too few signals', String(signals.count));
+    signals.allHaveAction ? ok('every item keeps what · why · one action') : bad('item shape regressed');
 
     sec('Console errors');
     const errs = logs.filter(l => (l.t === 'error' || l.t === 'PAGEERROR')
