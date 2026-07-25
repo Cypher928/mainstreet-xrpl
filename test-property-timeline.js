@@ -645,6 +645,64 @@ srv.listen(PORT, '127.0.0.1', async () => {
     (signals.count >= 3) ? ok('realistic signal set (' + signals.count + '): ' + signals.titles.slice(0, 110) + '…') : bad('too few signals', String(signals.count));
     signals.allHaveAction ? ok('every item keeps what · why · one action') : bad('item shape regressed');
 
+    sec('REGRESSION — "Act on this space" must be visible after tapping (mobile)');
+    // Pilot blocker: the button sits at the bottom of a long scrolling drawer, so
+    // the panel rendered BELOW THE FOLD and the tap looked like a no-op.
+    {
+      const mctx = await browser.newContext({ viewport: { width: 390, height: 844 } });
+      const mp = await mctx.newPage();
+      await mp.route('**/supabase-js**', r => r.fulfill({ status: 200, contentType: 'application/javascript', body: '/*mock*/' }));
+      await mp.route('**/api/claude', r => r.fulfill({ status: 200, contentType: 'application/json',
+        body: JSON.stringify({ draft: 'Draft reply.', citations: [{ claim: 'c', source: 's' }], attachmentsToSelect: [], insufficient: false }) }));
+      await mp.addInitScript(SUPABASE_MOCK);
+      await mp.goto('http://127.0.0.1:' + PORT + '/', { waitUntil: 'networkidle', timeout: 30000 });
+      await mp.waitForFunction(() => { const a = document.getElementById('appContent'); return a && a.style.display !== 'none' && a.style.display !== ''; }, { timeout: 10000 });
+      await mp.evaluate(() => loadDemo());
+      await mp.waitForFunction(() => { const el = document.getElementById('mainWorkflow'); return el && el.style.display !== 'none'; }, { timeout: 15000 });
+      await mp.waitForTimeout(400);
+
+      const flow = await mp.evaluate(async () => {
+        // Open a space the way a user does.
+        switchWorkspaceTab('spaces');
+        TenantSpace.renderList(currentProperty());
+        const openBtn = document.querySelector('#spacesList .tsl-open');
+        if (!openBtn) return { err: 'no open-space button' };
+        openBtn.click();
+        await new Promise(r => setTimeout(r, 250));
+        const actBtn = document.getElementById('tsActBtn');
+        if (!actBtn) return { err: 'no act button' };
+        actBtn.click();
+        await new Promise(r => setTimeout(r, 450));
+        const box = document.getElementById('tsActions');
+        const r = box.getBoundingClientRect();
+        return {
+          rendered: !!box.querySelector('.sa-panel'),
+          choices: box.querySelectorAll('.sa-choice').length,
+          soon: box.querySelectorAll('.sa-choice--soon[disabled]').length,
+          // the actual regression: is any of it on screen?
+          visibleTop: r.top,
+          onScreen: r.top < window.innerHeight - 40,
+          autoOpened: !!document.getElementById('saGo'),
+        };
+      });
+      flow.err ? bad('flow', flow.err) : ok('space opens and "Act on this space" responds');
+      flow.rendered ? ok('actions panel renders') : bad('panel did not render');
+      flow.onScreen
+        ? ok('panel is ON SCREEN after tapping (top ' + Math.round(flow.visibleTop) + 'px of 844) — was below the fold')
+        : bad('panel still below the fold', 'top=' + Math.round(flow.visibleTop));
+      flow.autoOpened ? ok('the one available action opens straight away (no dead-end menu)') : bad('action did not auto-open');
+      (flow.soon >= 1 && flow.soon === flow.choices - 1)
+        ? ok(flow.soon + ' future actions clearly disabled with "soon" badges') : bad('coming-soon states', JSON.stringify(flow));
+
+      const toggled = await mp.evaluate(async () => {
+        document.getElementById('tsActBtn').click();      // second tap closes
+        await new Promise(r => setTimeout(r, 200));
+        return document.getElementById('tsActions').innerHTML.length;
+      });
+      (toggled === 0) ? ok('tapping again closes the panel (predictable toggle)') : bad('second tap did not close', String(toggled));
+      await mctx.close();
+    }
+
     sec('Console errors');
     const errs = logs.filter(l => (l.t === 'error' || l.t === 'PAGEERROR')
       && !/favicon|Failed to load resource|ERR_CERT|\[saveCamResults\]|\[loadCamResults\]|net::ERR/.test(l.x));

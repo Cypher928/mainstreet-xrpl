@@ -105,8 +105,12 @@ window.SpaceActions = (function () {
     var box = document.getElementById('tsActions');
     var rec = window.TenantSpace && window.TenantSpace.record && window.TenantSpace.record();
     if (!box || !rec) return;
+    // Tapping again closes — otherwise a second tap silently re-renders and
+    // still looks like nothing happened.
+    if (box.innerHTML && box.getAttribute('data-open') === '1') { close(); return; }
     injectStyles();
     var acts = listActions();
+    var available = acts.filter(function (a) { return a.available; });
     box.innerHTML =
       '<div class="sa-panel">' +
         '<div class="sa-choose">' +
@@ -117,10 +121,46 @@ window.SpaceActions = (function () {
         '</div>' +
         '<div id="saRun"></div>' +
       '</div>';
+    box.setAttribute('data-open', '1');
     box.querySelectorAll('.sa-choice[data-key]').forEach(function (b) {
       if (b.disabled) return;
-      b.onclick = function () { _startAction(rec, b.getAttribute('data-key')); };
+      b.onclick = function () { _startAction(rec, b.getAttribute('data-key')); _reveal(box); };
     });
+    // Only one action is built so far — go straight to it rather than making the
+    // user pick from a list that is mostly "coming soon".
+    if (available.length === 1) {
+      _startAction(rec, available[0].key);
+      var only = box.querySelector('.sa-choice[data-key="' + available[0].key + '"]');
+      if (only) only.classList.add('sa-choice--on');
+    }
+    // THE FIX: the actions panel sits at the bottom of a long scrolling drawer,
+    // so without this it renders below the fold and the tap looks like a no-op.
+    _reveal(box);
+  }
+
+  function close() {
+    var box = document.getElementById('tsActions');
+    if (!box) return;
+    box.innerHTML = '';
+    box.removeAttribute('data-open');
+  }
+
+  // Bring the panel into view inside the scrolling overlay (and the page).
+  function _reveal(el) {
+    if (!el) return;
+    setTimeout(function () {
+      try {
+        el.scrollIntoView({ behavior: 'smooth', block: 'nearest', inline: 'nearest' });
+        var ov = document.getElementById('tsOverlay');
+        if (ov && typeof ov.scrollTo === 'function') {
+          // Nudge the overlay so the panel is comfortably visible, not flush to
+          // the bottom edge on a phone.
+          var r = el.getBoundingClientRect();
+          var overflow = r.bottom - window.innerHeight;
+          if (overflow > -24) ov.scrollTop = ov.scrollTop + overflow + 24;
+        }
+      } catch (_e) {}
+    }, 30);
   }
 
   function _startAction(rec, key) {
@@ -218,6 +258,7 @@ window.SpaceActions = (function () {
       '.sa-choice{font:700 0.8rem/1 inherit;color:var(--text-1,#E2E8F0);background:var(--theme-panel,#0A0D12);border:1px solid rgba(var(--line-rgb,255,255,255),0.14);border-radius:9px;padding:9px 12px;cursor:pointer;min-height:38px;}',
       '.sa-choice:hover:not(:disabled){border-color:' + gold + ';}',
       '.sa-choice--soon{opacity:0.5;cursor:default;}',
+      '.sa-choice--on{border-color:' + gold + ';color:' + gold + ';}',
       '.sa-soon{font-size:0.6rem;font-weight:800;text-transform:uppercase;color:var(--text-4,#64748B);border:1px solid rgba(var(--line-rgb,255,255,255),0.2);border-radius:5px;padding:1px 4px;margin-left:4px;}',
       '.sa-label,.sa-lbl{display:block;font-size:0.72rem;font-weight:700;text-transform:uppercase;letter-spacing:0.03em;color:var(--text-4,#64748B);margin:10px 0 5px;}',
       '.sa-input,.sa-draft{width:100%;box-sizing:border-box;padding:10px 11px;border-radius:8px;font:0.85rem inherit;background:var(--theme-panel,#0A0D12);border:1px solid rgba(var(--line-rgb,255,255,255),0.14);color:var(--text-1,#E2E8F0);resize:vertical;}',
@@ -247,6 +288,6 @@ window.SpaceActions = (function () {
   return {
     registerAction: registerAction, listActions: listActions,
     recordToContext: recordToContext, buildRequest: buildRequest, runAction: runAction,
-    open: open, ACTIONS: ACTIONS, SYSTEM: SYSTEM,
+    open: open, close: close, ACTIONS: ACTIONS, SYSTEM: SYSTEM,
   };
 })();
