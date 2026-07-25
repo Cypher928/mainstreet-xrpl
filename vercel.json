@@ -13,7 +13,8 @@
     { "source": "/privacy-policy",  "destination": "/privacy-policy.html" },
     { "source": "/reset-password",  "destination": "/reset-password.html" },
     { "source": "/home",            "destination": "/home.html"            },
-    { "source": "/",                "destination": "/index.html"           },
+    { "source": "/",                "destination": "/home.html"            },
+    { "source": "/app",             "destination": "/index.html"           },
     { "source": "/index",           "destination": "/index.html"           }
   ],
   "headers": [

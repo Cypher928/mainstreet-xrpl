@@ -64,6 +64,32 @@ Vercel's Git integration already gives us most of this for free.
    preview URL for review — no configuration needed. These are ephemeral and
    disappear as branches are deleted.
 
+### ⚠ Temporary: the root serves the marketing page on `pilot`
+
+`vercel.json` on the `pilot` branch currently points `/` at `home.html` so the
+marketing homepage can be reviewed without typing a path. This is a **review
+setting, not a decision** — whether the marketing page should own the root for
+signed-out visitors is still open.
+
+| Path | Serves |
+|---|---|
+| `/` | marketing homepage |
+| `/home` | marketing homepage |
+| `/app`, `/index` | the application (login screen) |
+
+Consequences while this is in place:
+
+- Anyone who bookmarked the pilot root — including the pilot customer — lands
+  on the marketing page instead of the login screen. The nav's **Log in** link
+  reaches the app in one click, and `/app` goes straight there.
+- Auth email redirects are unaffected: `PUBLIC_APP_URL` (script.js) always
+  points at the production domain, never `location.origin`.
+
+**Revert before promoting `pilot` to `main`:** point `/` back at `/index.html`
+and drop the `/app` alias. `test-routing.js` asserts whichever mapping is in
+effect, so update its `EXPECT` table in the same commit — it will fail loudly
+if the two ever disagree.
+
 ### Branch names have a hard length budget
 
 Vercel builds the branch preview host as
