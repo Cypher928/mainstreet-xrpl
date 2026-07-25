@@ -55,3 +55,57 @@ publishable key) and redeploying the pilot fixed it.
 **The pilot is operational and isolated:** login, property persistence, and CAM
 reconciliation all run on the pilot database; production is untouched. Remaining
 checks are optional confirmations, not blockers.
+
+---
+
+## Pilot Completion Branch — verification (final)
+
+### P1 · Property Memory — complete event coverage
+All four workflow emitters are wired and registered:
+
+| Event | Source | Idempotency |
+|---|---|---|
+| `cam_reconciled` | reconciliation complete | per run |
+| `document_uploaded` | `saveLeaseDocument()` for property-level docs (lease flows already emit `lease_uploaded` — no duplicate) | `doc:<propertyId>:<fileName>` |
+| `reserve_updated` | escrow extraction commit | `reserve:<labels>:<files>` |
+| `settlement_completed` | first observation of a settled `txHash` (settlement executes out-of-band; the app observes it) | `settlement:<txHash>` |
+
+Every emitter routes through `appendPropertyTimelineEventOnce()`, which stores a
+`metadata.dedupeKey` so re-running a flow, re-rendering, or reloading cannot
+duplicate history. Verified: a settlement observed three times records **once**;
+the demo property's own settlement is auto-recorded on render.
+
+### P2 · Evidence cross-linking
+Timeline event → Evidence Viewer → document → page → highlighted language.
+Resolution uses only the existing adapters (`EvidenceViewer.fromTenantField`,
+`fromReserve`), so a citation appears **only when real extracted evidence
+exists**. Verified: with no stored evidence the resolver returns `null` (never a
+fabricated citation) and the row falls back to the record; with evidence it
+resolves to the source document at the cited page with the verbatim quote.
+
+### P3 · Disputes in the Space
+A read-only surface: status, last activity, amount, and a link into the existing
+dispute workspace. Verified that the dispute **workflow is not duplicated** in
+the Space.
+
+### P4 · Timeline reliability — the "Timeline 0" investigation
+**Not reproducible.** On a fresh seed, measured across the whole demo property:
+
+- 21 timeline events, 10 tenant-tagged
+- **0 orphaned events** (every tagged event resolves to a live space)
+- **0 spaces showing zero** — all five resolve their events
+
+**Conclusion: stale persisted demo data, not missing event generation.** The
+pilot's demo property was written to the pilot database under `_demoV: 7`, and
+`ensureDemoProperty()` deliberately skips re-seeding an existing demo row — so a
+row written before the current tenant-id derivation keeps its old ids, and
+scoped lookups find nothing.
+
+**Mitigation shipped:** `_scopedEvents()` now also matches a space by the
+subject's recorded label, so events stay attached to the right space even if
+tenant ids drift. A permanent assertion fails the suite if any space shows zero
+events while tagged events exist.
+
+**To confirm on the pilot:** open a space and check the Timeline count. If it
+still reads 0, delete the demo property (it re-seeds on next load) — that
+distinguishes stale data from a live defect.

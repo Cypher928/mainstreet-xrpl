@@ -361,6 +361,7 @@ window.PropertyTimeline = (function () {
       '.tl-edit-btn:hover{color:' + gold + ';border-color:' + gold + ';}',
       '.tl-view-btn{font:600 0.68rem/1 inherit;color:var(--text-3,#94A3B8);background:none;border:1px solid rgba(var(--line-rgb,255,255,255),0.14);border-radius:6px;padding:4px 8px;cursor:pointer;min-height:26px;margin-left:auto;}',
       '.tl-view-btn:hover{color:' + gold + ';border-color:' + gold + ';}',
+      '.tl-view-btn--ev{color:' + gold + ';border-color:rgba(201,151,58,0.45);margin-left:auto;}',
       '.tl-day-divider{font-size:0.68rem;font-weight:800;letter-spacing:0.05em;text-transform:uppercase;color:var(--text-4,#64748B);margin:14px 0 6px;padding-bottom:3px;border-bottom:1px solid rgba(var(--line-rgb,255,255,255),0.07);}',
       '.tl-scope-bar{display:flex;align-items:center;gap:8px;margin-bottom:10px;}',
       '.tl-scope-label{font-size:0.72rem;font-weight:700;color:var(--text-4,#64748B);white-space:nowrap;}',
