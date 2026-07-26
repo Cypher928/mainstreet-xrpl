@@ -1,0 +1,31 @@
+{
+  "plates": [
+    {
+      "beat": 1,
+      "file": "beat1-cap-catch.png",
+      "width": 641,
+      "height": 212
+    },
+    {
+      "beat": "poster",
+      "file": "hero-poster.png",
+      "width": 641,
+      "height": 212
+    },
+    {
+      "beat": 3,
+      "file": "beat3-settlement.png",
+      "width": 711,
+      "height": 63
+    }
+  ],
+  "figures": {
+    "property": "Cascade Commons",
+    "wholeHealth": {
+      "capApplied": true,
+      "capAdjustment": 31979.23,
+      "totalAllocated": 34650
+    },
+    "cappedCount": 4
+  }
+}
