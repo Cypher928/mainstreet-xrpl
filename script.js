@@ -4258,24 +4258,47 @@ function createLeaseJob(file, propertyId) {
   return jobId;
 }
 
-function updateLeaseJob(jobId, updates) {
+function updateLeaseJob(jobId, updates, opts) {
   const job = _leaseJobs.get(jobId);
-  if (!job) return null;
+  if (!job) {
+    // _leaseJobs is in-memory only, so a reload — or any path that loses the
+    // entry — used to make this a silent no-op. Every lifecycle write goes
+    // through here, including finalizeLeaseJob and failLeaseJob, so a job could
+    // record neither its completion nor its failure and sat at 'processing'
+    // forever with no error_message. Write straight through instead: the
+    // database, not a Map, is what has to end up correct.
+    _syncJobToDb({ id: jobId, ...updates, updated_at: new Date().toISOString() }, opts);
+    return null;
+  }
   Object.assign(job, updates, { updated_at: new Date().toISOString() });
-  _syncJobToDb(job);
+  _syncJobToDb(job, opts);
   return job;
 }
 
-function _syncJobToDb(job) {
+// Returns a promise resolving true on a successful write. `terminal` marks the
+// one write we cannot afford to lose — a job's final status — and retries it
+// once, because leaving a finished job looking like a running one is the
+// failure this whole path exists to prevent.
+function _syncJobToDb(job, { terminal = false } = {}) {
   // Strip in-memory-only fields before sending to Supabase
   const row = Object.fromEntries(Object.entries(job).filter(([k]) => !k.startsWith('_')));
-  db.from('lease_jobs').upsert(row).then(({ error }) => {
-    if (error) logError('lease_job_sync', error, { jobId: job.id, stage: job.stage });
-  });
+  const ctx = { jobId: job.id, stage: job.stage, terminal };
+  return Promise.resolve(db.from('lease_jobs').upsert(row))
+    .then(({ error } = {}) => {
+      if (!error) return true;
+      logError('lease_job_sync', error, ctx);
+      if (!terminal) return false;
+      return Promise.resolve(db.from('lease_jobs').upsert(row))
+        .then(({ error: retryError } = {}) => {
+          if (retryError) logError('lease_job_sync_retry', retryError, ctx);
+          return !retryError;
+        });
+    })
+    .catch(e => { logError('lease_job_sync', e, ctx); return false; });
 }
 
 function failLeaseJob(jobId, err, stage) {
-  updateLeaseJob(jobId, {
+  return updateLeaseJob(jobId, {
     status:                  'failed',
     stage:                   stage || 'extraction',
     progress:                _JOB_STAGES[stage]?.progress ?? 0,
@@ -4283,7 +4306,7 @@ function failLeaseJob(jobId, err, stage) {
     processing_completed_at: new Date().toISOString(),
     // Which ingestion path was in flight when it failed.
     debug_summary:           { ingest: _lastIngestTelemetry || null },
-  });
+  }, { terminal: true });
 }
 
 // Returns true if the tenant row requires manual review before Supabase persistence.
@@ -4313,7 +4336,7 @@ function finalizeLeaseJob(jobId, { norm, conf, meta, tenantId }) {
       // debug_summary is jsonb so no migration is required.
       ingest:          _lastIngestTelemetry || null,
     },
-  });
+  }, { terminal: true });
   return needsReview;
 }
 
