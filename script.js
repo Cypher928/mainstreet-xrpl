@@ -19571,7 +19571,15 @@ const _LV_ADMIN_KEYWORDS = ['admin', 'administrative', 'management fee', 'mgmt f
 function _tier1LeaseChecks(tenant, totalExpenses, lineItems, reconciledAt) {
   const findings  = [];
   const today     = new Date();
-  const cap       = typeof tenant.admin_fee_pct === 'number' ? tenant.admin_fee_pct : null;
+  // Parse rather than type-check. admin_fee_pct arrives as a number through the
+  // extraction normalizer (_pf), but the tenant-record loader passes the stored
+  // value through untouched (script.js:1183), so a jsonb-persisted "15" reaches
+  // here as a string. A strict typeof test turns that into a confident
+  // "no cap was extracted" — a false absence, the same failure the audit rights
+  // check had.
+  const _capRaw   = tenant.admin_fee_pct;
+  const _capNum   = typeof _capRaw === 'number' ? _capRaw : parseFloat(_capRaw);
+  const cap       = Number.isFinite(_capNum) ? _capNum : null;
   // audit_rights is a BOOLEAN by extraction contract (true | false | null).
   // The clause text lives in the parallel quotes channel, surfaced here through
   // the same evidence snapshot path the other checks use. Reading the day count
@@ -19581,7 +19589,11 @@ function _tier1LeaseChecks(tenant, totalExpenses, lineItems, reconciledAt) {
   const auditWaived   = tenant.audit_rights === false;
   const auditEvidence = tenant.fieldEvidence?.audit_rights?.snapshots?.slice(-1)[0];
   const auditText     = auditEvidence?.quote || null;
-  const adminFeeEvidence = tenant.fieldEvidence?.admin_fee_pct?.snapshots?.[0];
+  // Latest snapshot, not the first. Snapshots are append-only, so [0] is the
+  // ORIGINAL extraction — after any re-extraction or manual correction the
+  // finding would quote superseded language beside a current number. Matches
+  // getLatestFieldEvidence() (script.js:5272) and the Evidence Viewer.
+  const adminFeeEvidence = tenant.fieldEvidence?.admin_fee_pct?.snapshots?.slice(-1)[0];
   const quote     = adminFeeEvidence?.quote || null;
 
   // MGMT_FEE_CAP ──────────────────────────────────────────────────────────────
