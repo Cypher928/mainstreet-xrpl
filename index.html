@@ -953,6 +953,11 @@
       position: relative;
     }
     .dmw-hdr { display: flex; align-items: flex-start; gap: 10px; margin-bottom: 14px; }
+    /* The welcome panel is only shown when the account has no properties
+       (_maybeShowWelcome), so this is the first-run surface. It carried no
+       action, leaving "Go to Portfolio" and "Start Tour" as the only visible
+       buttons — navigation and explanation, but not the actual first step. */
+    .dmw-cta { margin-top: 2px; }
     .dmw-hdr-text { flex: 1; }
     .dmw-title { font-size: 1rem; font-weight: 700; color: var(--text-1); }
     .dmw-sub { font-size: 0.8rem; color: rgba(var(--line-rgb), 0.48); margin-top: 3px; }
@@ -6039,9 +6044,12 @@
     <div class="dmw-hdr">
       <div class="dmw-hdr-text">
         <div class="dmw-title">Welcome to MainStreet</div>
-        <div class="dmw-sub">Explore the demo properties below with sample data, or create your own property to get started.</div>
+        <div class="dmw-sub">Add your first property to start reconciling CAM. Or explore the demo properties below with sample data.</div>
       </div>
       <button class="dmw-close" onclick="_dismissDemoWelcome()" title="Dismiss">&times;</button>
+    </div>
+    <div class="dmw-cta">
+      <button class="ptf-empty-btn-primary" onclick="addNewProperty()">+ Add your first property</button>
     </div>
   </div>
 
