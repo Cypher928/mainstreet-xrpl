@@ -109,3 +109,23 @@ events while tagged events exist.
 **To confirm on the pilot:** open a space and check the Timeline count. If it
 still reads 0, delete the demo property (it re-seeds on next load) — that
 distinguishes stale data from a live defect.
+
+---
+
+## Demo lease ingestion — one-time step
+
+The demo property now ships with a real lease document
+(`assets/demo/lease-whole-health-market.pdf`) so the Evidence Viewer has
+something true to cite. The document is committed and verified; **evidence is
+deliberately not seeded**, so it has to be produced by running the lease through
+the normal ingestion pipeline once, on the pilot.
+
+Full steps and the four acceptance criteria are in **`docs/DEMO_LEASE.md`**. In
+short: upload the PDF against **Whole Health Market** through the normal lease
+upload flow, then confirm the cap field's evidence opens the lease at **page 2**
+with the section 6.4 clause highlighted and no "couldn't identify the paragraph"
+banner.
+
+Until that run happens, `tenant.fieldEvidence` stays empty and
+`EvidenceViewer.fromTenantField(...'cap')` returns `null` — the correct,
+honest state rather than a fabricated citation.

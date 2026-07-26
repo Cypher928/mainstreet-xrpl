@@ -15,7 +15,7 @@ over._
 | §2 Production bible | ✅ Recorded; binds the studio, no code needed |
 | §3 Real UI vs. motion graphics | ✅ **Implemented** — `tools/capture-hero-plates.js` produces the real-UI plates |
 | §Beat 1 — the catch | ✅ **Plate captured** from a live reconciliation |
-| §Beat 2 — the proof | ⛔ **BLOCKED** — not filmable from the product today. See below |
+| §Beat 2 — the proof | ⚠️ **Document shipped, ingestion pending** — see below and `docs/DEMO_LEASE.md` |
 | §Beat 3 — verified settlement | ✅ **Plate captured** |
 | §Caption schedule | ✅ Recorded; motion-graphics work |
 | §Mobile | ✅ Recorded; re-block rules bind the studio |
@@ -24,14 +24,14 @@ over._
 
 ---
 
-## ⛔ Conflict 1 — Beat 2 cannot be filmed from the product (blocking)
+## ⚠️ Conflict 1 — Beat 2 was not filmable from the product (resolved in part)
 
 **The package says:** the cursor clicks `$34,650`, the Evidence Viewer opens the
 real lease at the cited page, and a gold highlight draws across the cap clause.
 This is the frame the entire film exists to deliver.
 
-**What the product does:** nothing opens. Verified empirically against a live
-demo render — for every one of the five demo tenants:
+**What the product did** (before this package): nothing opened. Verified
+empirically against a live demo render — for every one of the five demo tenants:
 
 ```
 EvidenceViewer.fromTenantField(prop, tenant, ['cap','cam_cap','capPercentage'])
@@ -59,23 +59,29 @@ citation rendered as a real one — precisely the failure mode the Evidence View
 was built to prevent, and a direct violation of the package's grounding rule.
 **Do not do this.**
 
-### Smallest changes that unblock it, in order of preference
+### Resolution — approved and in progress
 
-1. **Add one real demo lease PDF (recommended).** Author an actual lease
-   document for Whole Health Market containing genuine 5% CAM cap language, put
-   it through the normal ingestion path, and let extraction populate
-   `fieldEvidence.cap` and `leaseUrl` the way it does in production. The film
-   then shoots against the real pipeline, and the demo property gains the
-   ability to prove its own headline claim — arguably a product gap worth
-   closing regardless of the film.
-2. **Shoot beat 2 against a pilot lease.** Film the Evidence Viewer on a real
-   uploaded lease (Christy's, with written permission), with tenant-identifying
-   detail cropped or blurred.
-3. **Re-cut beat 2** to something the demo can prove today. Weakest option — it
-   removes the film's reason to exist.
+Option 1 was chosen and **the document half is done**: a genuine lease for Whole
+Health Market now ships at `assets/demo/lease-whole-health-market.pdf`,
+containing real 5% CAM cap language, and is attached to the demo tenant. The cap
+clause is verified locatable on **page 2** by the viewer's own matching logic.
+See **`docs/DEMO_LEASE.md`**.
 
-**Until one of these is done, Film 1 cannot be completed.** Beats 1 and 3 are
-ready; beat 2 is the middle 40% of the runtime and the entire argument.
+What remains is one step: **run the lease through ingestion** so extraction
+populates `fieldEvidence.cap` naturally. That call reaches the Claude API, which
+this environment's network policy blocks, so it has to happen on the pilot.
+Steps and acceptance criteria are in `DEMO_LEASE.md`.
+
+**Beat 2 is unblocked as a design question and pending as a data step.** Once
+ingestion has run, capture the plate with the viewer open on the highlighted
+§6.4 clause, and switch the poster from beat 1 back to beat 2.
+
+Two options were considered and rejected:
+
+- *Shoot against a pilot lease* — workable, but needs written tenant permission
+  and identity redaction for a document we do not own.
+- *Re-cut beat 2 to something the demo can already prove* — removes the film's
+  reason to exist.
 
 ---
 
@@ -175,10 +181,10 @@ Notes on how it works, and why:
 The package specifies the poster should be **beat 2's held clause**: "if the
 video never plays, the still that remains should still show the proof."
 
-Beat 2 is blocked, so the poster is **beat 1's cap catch** instead. It still
-shows a real, provable number — the reduction and the allocation — so the
-still carries meaning on its own. **Revert the poster to beat 2 once conflict 1
-is resolved.**
+Beat 2 is not yet capturable, so the poster is **beat 1's cap catch** instead.
+It still shows a real, provable number — the reduction and the allocation — so
+the still carries meaning on its own. **Switch the poster to beat 2 once the
+ingestion run is done.**
 
 ### `test-hero-video.js` (new)
 
@@ -235,15 +241,16 @@ contract automatically.
 |---|---|
 | `hero-loop.mp4` / `.webm` | Requires a motion studio: camera moves, number animation, highlight draw, typography, grade. No `ffmpeg` in this environment |
 | 9:16 and 1:1 re-blocks | Motion design |
-| Beat 2 plate | Blocked by conflict 1 |
+| Beat 2 plate | Pending the ingestion run (`docs/DEMO_LEASE.md`) |
 | Fable atmosphere plates | External tool, and scoped to texture/light only |
 
 ---
 
 ## Recommended order from here
 
-1. **Decide conflict 1.** Nothing else about Film 1 can finish until beat 2 can
-   be shot. Option 1 (one real demo lease) also closes a genuine product gap.
+1. **Run the demo lease through ingestion on the pilot** (`docs/DEMO_LEASE.md`).
+   The lease itself is committed and verified; this is the last step before
+   beat 2 can be captured.
 2. Apply conflict 2's fix to the package (drop the crossover) before the studio
    boards beat 1.
 3. Re-run `tools/capture-hero-plates.js` on capture day; treat
