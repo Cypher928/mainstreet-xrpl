@@ -15421,7 +15421,10 @@ async function ensureDemoProperty() {
     {
       id: _DEMO_TENANT_IDS[0], tenant_name: 'Whole Health Market',
       leased_sqft: '9200', cap: '5', capBaseAmount: '33000',
-      excluded_categories: '', audit_rights: '90 days from reconciliation',
+      // Boolean per the extraction contract (true | false | null). The ninety-day
+      // window is in the lease itself at section 7.1, not in this field — a
+      // string here normalises to false and silently strips the right.
+      excluded_categories: '', audit_rights: true,
       start_date: '2021-01-01', end_date: '2028-12-31', lease_type: 'NNN',
       admin_fee_pct: null,
       // The source document of record. Every term above appears verbatim in it
@@ -15446,7 +15449,10 @@ async function ensureDemoProperty() {
     {
       id: _DEMO_TENANT_IDS[2], tenant_name: 'ProActive Physical Therapy',
       leased_sqft: '4400', cap: '6', capBaseAmount: '13000',
-      excluded_categories: 'management', audit_rights: '45 days from reconciliation',
+      // No lease document backs this tenant, so the field stays null ("not
+      // addressed") rather than asserting a right we cannot cite. A string here
+      // would violate the boolean contract, as it did before.
+      excluded_categories: 'management', audit_rights: null,
       start_date: '2022-07-01', end_date: '2027-06-30', lease_type: 'Modified Gross',
       admin_fee_pct: null,
       _confidenceScore: 88, _confidence: 'high',
@@ -19566,7 +19572,15 @@ function _tier1LeaseChecks(tenant, totalExpenses, lineItems, reconciledAt) {
   const findings  = [];
   const today     = new Date();
   const cap       = typeof tenant.admin_fee_pct === 'number' ? tenant.admin_fee_pct : null;
-  const auditText = tenant.audit_rights || null;
+  // audit_rights is a BOOLEAN by extraction contract (true | false | null).
+  // The clause text lives in the parallel quotes channel, surfaced here through
+  // the same evidence snapshot path the other checks use. Reading the day count
+  // off the boolean is what previously made this check unusable on any
+  // extracted lease.
+  const auditGranted  = tenant.audit_rights === true;
+  const auditWaived   = tenant.audit_rights === false;
+  const auditEvidence = tenant.fieldEvidence?.audit_rights?.snapshots?.slice(-1)[0];
+  const auditText     = auditEvidence?.quote || null;
   const adminFeeEvidence = tenant.fieldEvidence?.admin_fee_pct?.snapshots?.[0];
   const quote     = adminFeeEvidence?.quote || null;
 
@@ -19612,8 +19626,24 @@ function _tier1LeaseChecks(tenant, totalExpenses, lineItems, reconciledAt) {
   }
 
   // AUDIT_RIGHTS ──────────────────────────────────────────────────────────────
-  if (auditText) {
-    const daysMatch = auditText.match(/(\d+)\s+days?/i);
+  // Four distinct states. "Waived" is not the same as "not addressed": a lease
+  // that strips the tenant's audit right is a materially different contractual
+  // position from one that is simply silent, so it is surfaced as a review item
+  // rather than a passing check.
+  if (auditWaived) {
+    findings.push({
+      check: 'AUDIT_RIGHTS', source: 'deterministic',
+      severity: 'warning', confidence: 'high',
+      finding: 'Audit rights are explicitly waived in this lease.',
+      quote: auditText, section: null, page: auditEvidence?.page ?? null,
+      explanation: 'The tenant has given up the right to audit CAM records. Reconciliation statements cannot be challenged on this lease, so the figures carry more weight and should be reviewed accordingly before they are issued.',
+    });
+  } else if (auditGranted) {
+    // Leases spell numbers out and repeat them in figures — "ninety (90) days"
+    // is the standard convention, so the digits sit inside parentheses. The
+    // original /(\d+)\s+days?/ could not cross that closing paren and so failed
+    // on ordinary legal phrasing. Also tolerates "calendar"/"business" days.
+    const daysMatch = (auditText || '').match(/(\d+)\s*\)?\s*(?:calendar\s+|business\s+)?days?/i);
     if (daysMatch && reconciledAt) {
       const days        = parseInt(daysMatch[1], 10);
       const reconDate   = new Date(reconciledAt);
@@ -19627,7 +19657,7 @@ function _tier1LeaseChecks(tenant, totalExpenses, lineItems, reconciledAt) {
         finding:    expired
           ? `Audit window closed ${windowClose.toISOString().slice(0,10)} — ${Math.abs(daysLeft)} days have elapsed past the ${days}-day limit.`
           : `Audit window open — ${daysLeft} days remaining (closes ${windowClose.toISOString().slice(0,10)}).`,
-        quote: null, section: null, page: null,
+        quote: auditText, section: null, page: auditEvidence?.page ?? null,
         explanation: expired
           ? `The tenant had ${days} days from ${reconDate.toISOString().slice(0,10)} to request an audit. That window has closed.`
           : null,
@@ -19636,15 +19666,17 @@ function _tier1LeaseChecks(tenant, totalExpenses, lineItems, reconciledAt) {
       findings.push({
         check: 'AUDIT_RIGHTS', source: 'deterministic',
         severity: 'info', confidence: 'medium',
-        finding: `Audit rights found but deadline could not be computed: "${(auditText || '').slice(0, 80)}"`,
-        quote: null, section: null, page: null, explanation: null,
+        finding: auditText
+          ? `Audit rights found but deadline could not be computed: "${auditText.slice(0, 80)}"`
+          : 'Audit rights granted, but no deadline was extracted from the clause.',
+        quote: auditText, section: null, page: auditEvidence?.page ?? null, explanation: null,
       });
     }
   } else {
     findings.push({
       check: 'AUDIT_RIGHTS', source: 'deterministic',
       severity: 'info', confidence: 'high',
-      finding: 'No audit rights clause was extracted from this lease.',
+      finding: 'Audit rights are not addressed in this lease.',
       quote: null, section: null, page: null, explanation: null,
     });
   }
