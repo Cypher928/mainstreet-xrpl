@@ -4522,6 +4522,21 @@ async function _runLeaseJobPipeline(jobId, placeholderIdx) {
     const needsJobReview = _conf.level === 'low' || _conf.level === 'failed';
 
     const finalEntry = {
+      // Derive from the normalizer's full output. This was previously a
+      // hand-written list of fields, and anything absent from it was silently
+      // discarded on the way to persistence — audit_rights, fieldEvidence,
+      // admin_fee_pct, gross_up_pct, expense_stop, excluded_categories,
+      // pro_rata_method and renewal_options all extracted correctly and then
+      // vanished here, which is why the validator reported "audit rights are
+      // not addressed" for a lease that plainly granted them.
+      //
+      // Everything below this spread intentionally overrides it: explicit
+      // defaults, UI state, and the job/file identity the normalizer knows
+      // nothing about. Adding a field to the extraction contract now carries it
+      // through automatically; test-tenant-field-preservation.js fails if this
+      // reverts to enumerating fields by hand.
+      ...(norm || {}),
+
       tenant_name:          resolvedName || null,
       leased_sqft:          norm?.leased_sqft        ?? null,
       start_date:           norm?.start_date         ?? null,
@@ -4551,10 +4566,8 @@ async function _runLeaseJobPipeline(jobId, placeholderIdx) {
       id:                   jobId,
       _jobId:               jobId,
       property_name:        norm?.property_name      ?? null,
-      // WHY carried over explicitly: norm._edgeCases/_explainability/_modelRouting were
-      // computed above (LEASE INTELLIGENCE block) but finalEntry is a fresh object literal,
-      // not a spread of norm — without this they were silently discarded and never reached
-      // the rendered tenant row, making detectLeaseEdgeCases() a no-op for bulk uploads.
+      // These three now also arrive via the spread above; kept explicit so the
+      // defaults hold when the LEASE INTELLIGENCE block did not run.
       _edgeCases:           norm?._edgeCases          ?? null,
       _explainability:      norm?._explainability     ?? null,
       _modelRouting:        norm?._modelRouting       ?? null,
