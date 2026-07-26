@@ -15401,6 +15401,13 @@ async function ensureDemoProperty() {
       excluded_categories: '', audit_rights: '90 days from reconciliation',
       start_date: '2021-01-01', end_date: '2028-12-31', lease_type: 'NNN',
       admin_fee_pct: null,
+      // The source document of record. Every term above appears verbatim in it
+      // (test-demo-lease.js asserts that), so a citation resolves to real text
+      // on a real page. Attaching the document is NOT the same as seeding
+      // evidence: fieldEvidence stays empty and is populated only by running
+      // the lease through the normal ingestion pipeline. See docs/DEMO_LEASE.md.
+      leaseUrl: 'assets/demo/lease-whole-health-market.pdf',
+      leaseFileName: 'Lease — Whole Health Market.pdf',
       _confidenceScore: 94, _confidence: 'high',
       confidence: { tenantName:98, leasedSqft:97, capPercentage:95, leaseType:96 },
     },
