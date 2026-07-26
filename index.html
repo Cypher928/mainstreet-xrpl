@@ -3376,7 +3376,11 @@
 
     /* ── Report overlay ───────────────────────────────────────────────── */
     #reportOverlay {
-      display: none; position: fixed; inset: 0; z-index: 1000;
+      /* Above #disputeWorkspace (1060). The Dispute Packet is launched from a
+         button inside that workspace, so at 1000 it rendered behind the panel
+         the user had just clicked. A generated report must always sit above the
+         surface that produced it. */
+      display: none; position: fixed; inset: 0; z-index: 1100;
       background: var(--theme-bg); overflow-y: auto;
     }
     #reportOverlay.open { display: block; }

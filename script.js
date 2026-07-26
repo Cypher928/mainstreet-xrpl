@@ -22461,3 +22461,59 @@ async function init() {
   }
 }
 
+
+// ─── Background scroll lock for modal surfaces ───────────────────────────────
+// A user reading a lease page or a report scrolls with the wheel; without this
+// the page *behind* the modal moves instead, and they lose their place in the
+// reconciliation they were working through.
+//
+// Implemented as a single observer over the known overlay ids rather than as a
+// lock/unlock call at every open and close site. Those sites are spread across
+// several modules and set `display` inline in a dozen places; pairing them by
+// hand is where this kind of fix usually rots. Observing the result instead
+// means a modal opened by any path — including ones added later — is covered,
+// and the lock can never be left on because it is recomputed from what is
+// actually visible.
+(function () {
+  'use strict';
+  var SURFACES = [
+    'evidenceViewer', 'reportOverlay', 'explainPanel', 'leaseViewerModal',
+    'allocModal', 'disputeWorkspace', 'tenantDetailPanel', 'draftingModal',
+    'invFileViewer',
+    'msLanding',   // the cinematic film locks scrolling for the same reason
+  ];
+
+  function visible(el) {
+    if (!el) return false;
+    var cs = window.getComputedStyle(el);
+    if (cs.display === 'none' || cs.visibility === 'hidden') return false;
+    var r = el.getBoundingClientRect();
+    return r.width > 0 && r.height > 0;
+  }
+
+  // This owns the lock outright rather than saving and restoring whatever it
+  // finds. Several call sites already set body overflow directly and at least
+  // one (script.js:10219) never clears it, so a save/restore scheme captures an
+  // already-locked value and faithfully re-applies it — leaving the page frozen.
+  // Deriving the state purely from what is visible is self-healing: it also
+  // releases locks leaked by those older paths.
+  function sync() {
+    var body = document.body;
+    if (!body) return;
+    var anyOpen = SURFACES.some(function (id) { return visible(document.getElementById(id)); });
+    var want = anyOpen ? 'hidden' : '';
+    if (body.style.overflow !== want) body.style.overflow = want;
+  }
+
+  function attach() {
+    var obs = new MutationObserver(sync);
+    SURFACES.forEach(function (id) {
+      var el = document.getElementById(id);
+      if (el) obs.observe(el, { attributes: true, attributeFilter: ['style', 'class', 'hidden'] });
+    });
+    sync();
+  }
+
+  if (document.readyState === 'loading') document.addEventListener('DOMContentLoaded', attach);
+  else attach();
+})();
