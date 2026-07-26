@@ -12038,10 +12038,24 @@ async function confirmDocsRequest(id) {
   await resolveDispute(id, 'docs_requested');
 }
 
+// Dispute lifecycle. Requesting documentation is a waypoint, not an ending:
+// once the documentation arrives the dispute still has to be decided, so
+// docs_requested must lead on to accepted or rejected. accepted and rejected
+// are terminal — a decided dispute is not re-decided.
+const DISPUTE_TRANSITIONS = {
+  open:            ['docs_requested', 'accepted', 'rejected'],
+  docs_requested:  ['accepted', 'rejected'],
+  accepted:        [],
+  rejected:        [],
+};
+
 async function resolveDispute(id, resolution) {
   const d = disputes.find(x => x.id === id);
-  if (!d || d.status !== 'open') return;
+  if (!d) return;
+  const allowed = DISPUTE_TRANSITIONS[d.status];
+  if (!allowed || !allowed.includes(resolution)) return;
 
+  const fromStatus = d.status;
   d.status     = resolution;
   d.resolvedAt = new Date().toISOString();
   if (!d.history) d.history = [];
@@ -12049,7 +12063,7 @@ async function resolveDispute(id, resolution) {
     action:     resolution === 'docs_requested' ? 'docs_requested' : 'resolved',
     by:         'Reviewer',
     at:         d.resolvedAt,
-    fromStatus: 'open',
+    fromStatus,
     toStatus:   resolution,
   });
   {
@@ -12073,19 +12087,24 @@ async function resolveDispute(id, resolution) {
         relatedDisputeIds: [id] }); }
   }
 
-  // Hash the full dispute record for tamper-detection audit trail
-  d.hash = await sha256({
-    id:          d.id,
-    tenantName:  d.tenantName,
-    invoiceId:   d.invoiceId,
-    vendor:      d.vendor,
-    category:    d.category,
-    tenantShare: d.tenantShare,
-    reason:      d.reason,
-    timestamp:   d.timestamp,
-    resolution:  d.resolution,
-    resolvedAt:  d.resolvedAt,
-  });
+  // Hash the full dispute record for tamper-detection audit trail — only once
+  // the dispute is actually decided. Requesting documentation is not a
+  // decision, and the Dispute Packet says so in as many words: "Audit
+  // fingerprint — generated when the dispute is resolved."
+  if (resolution !== 'docs_requested') {
+    d.hash = await sha256({
+      id:          d.id,
+      tenantName:  d.tenantName,
+      invoiceId:   d.invoiceId,
+      vendor:      d.vendor,
+      category:    d.category,
+      tenantShare: d.tenantShare,
+      reason:      d.reason,
+      timestamp:   d.timestamp,
+      resolution:  d.resolution,
+      resolvedAt:  d.resolvedAt,
+    });
+  }
 
   renderOpenDisputes();
   _refreshDisputeCountUI();
@@ -12124,6 +12143,10 @@ function _dwRenderAll(disputeId) {
   const typeInfo = _DISPUTE_TYPES[d.disputeType] || null;
   const sevInfo  = _DISPUTE_SEV[d.severity || 'medium'] || _DISPUTE_SEV.medium;
   const isOpen   = d.status === 'open';
+  // Which decisions are still available, straight from the lifecycle table, so
+  // the panel and the engine can never disagree about what is allowed.
+  const nextStates = DISPUTE_TRANSITIONS[d.status] || [];
+  const canDecide  = nextStates.length > 0;
   const statusMap = { open: 'Open', accepted: 'Accepted', rejected: 'Rejected', docs_requested: 'Docs Requested' };
   const statusCls = { open: 'dw-status-open', accepted: 'dw-status-accepted', rejected: 'dw-status-rejected', docs_requested: 'dw-status-docs' };
 
@@ -12142,14 +12165,14 @@ function _dwRenderAll(disputeId) {
       </div>
     </div>`).join('') : '<div class="dw-hist-empty">No history recorded yet.</div>';
 
-  const resolveSection = isOpen ? `
+  const resolveSection = canDecide ? `
     <div class="dw-section">
-      <div class="dw-section-title">Resolve Dispute</div>
+      <div class="dw-section-title">${isOpen ? 'Resolve Dispute' : 'Documentation requested \u2014 decide when it arrives'}</div>
       <textarea id="dwResolveNote-${d.id}" class="dw-note-input" rows="2" placeholder="Resolution note (optional)…"></textarea>
       <div class="dw-resolve-btns">
-        <button class="dw-res-btn dw-res-accept" onclick="_dwResolveWithNote(${d.id},'accepted')">&#x2705; Accept</button>
-        <button class="dw-res-btn dw-res-reject" onclick="_dwResolveWithNote(${d.id},'rejected')">&#x274C; Reject</button>
-        <button class="dw-res-btn dw-res-docs"   onclick="_dwResolveWithNote(${d.id},'docs_requested')">&#x1F4C4; Request Docs</button>
+        ${nextStates.includes('accepted') ? `<button class="dw-res-btn dw-res-accept" onclick="_dwResolveWithNote(${d.id},'accepted')">&#x2705; Accept</button>` : ''}
+        ${nextStates.includes('rejected') ? `<button class="dw-res-btn dw-res-reject" onclick="_dwResolveWithNote(${d.id},'rejected')">&#x274C; Reject</button>` : ''}
+        ${nextStates.includes('docs_requested') ? `<button class="dw-res-btn dw-res-docs"   onclick="_dwResolveWithNote(${d.id},'docs_requested')">&#x1F4C4; Request Docs</button>` : ''}
       </div>
     </div>` : `
     <div class="dw-resolved-banner dw-resolved-${d.status}">
