@@ -4497,6 +4497,74 @@ async function retryLeaseJob(jobId) {
 // Core extraction pipeline — extracted from processFile so retryLeaseJob can also call it.
 // Writes tenantData[placeholderIdx] on completion (success or failure).
 // Ghost-row protection: sets _pendingJobReview=true for low/failed confidence.
+
+// ─── Tenant matching for lease uploads ───────────────────────────────────────
+// An upload used to append a new tenant unconditionally, so re-uploading a
+// lease for an existing tenant produced a duplicate — the lease landed on a
+// record nothing else pointed at, and surfaces keyed to the original tenant
+// reported no lease on file.
+//
+// Order is deliberate. A suite holds one tenant at a time, which makes it the
+// strongest signal in commercial property; a legal name ("Whole Health Market,
+// Inc") routinely differs from the display name ("Whole Health Market"), so it
+// is the fallback. Anything ambiguous is never merged automatically: a wrong
+// merge silently corrupts CAM allocation across two real tenants and is far
+// worse than a visible duplicate.
+
+const _TENANT_SUFFIXES = /\b(inc|incorporated|llc|l\.l\.c|ltd|limited|corp|corporation|co|company|lp|llp|plc|gmbh|pllc)\b/g;
+
+function _normalizeTenantName(name) {
+  return String(name || '')
+    .toLowerCase()
+    // Periods are dropped, not spaced: "L.L.C." must become "llc" so the suffix
+    // pattern can see it. Spacing them yields "l l c", which matches nothing.
+    .replace(/\./g, '')
+    .replace(/[,'’`"()]/g, ' ')
+    .replace(/&/g, ' and ')
+    .replace(_TENANT_SUFFIXES, ' ')
+    .replace(/[^a-z0-9\s]/g, ' ')
+    .replace(/\s+/g, ' ')
+    .trim();
+}
+
+function _normalizeSuite(suite) {
+  return String(suite || '')
+    .toLowerCase()
+    .replace(/\b(suite|ste|unit|space|no|#)\b/g, ' ')
+    .replace(/[^a-z0-9]/g, '')
+    .trim();
+}
+
+/**
+ * Finds the existing tenant an uploaded lease belongs to.
+ * Returns { index, basis } for a confident match, { ambiguous, candidates } when
+ * more than one tenant fits, or null when it is genuinely a new tenant.
+ * `skipIdx` is the upload's own placeholder, which must never match itself.
+ */
+function findTenantMatch(tenants, incoming, skipIdx) {
+  const list = (tenants || []).map((t, i) => ({ t, i }))
+    .filter(({ t, i }) => t && i !== skipIdx && !t.leaseExpected && (t.tenant_name || t.unitNumber || t.suite));
+  if (!list.length) return null;
+
+  // 1 — suite/unit within the property.
+  const suite = _normalizeSuite(incoming?.suite || incoming?.unitNumber);
+  if (suite) {
+    const hits = list.filter(({ t }) => _normalizeSuite(t.suite || t.unitNumber) === suite);
+    if (hits.length === 1) return { index: hits[0].i, basis: 'suite' };
+    if (hits.length > 1)   return { ambiguous: true, basis: 'suite', candidates: hits.map(h => h.i) };
+  }
+
+  // 2 — normalized tenant name.
+  const name = _normalizeTenantName(incoming?.tenant_name);
+  if (name) {
+    const hits = list.filter(({ t }) => _normalizeTenantName(t.tenant_name) === name);
+    if (hits.length === 1) return { index: hits[0].i, basis: 'name' };
+    if (hits.length > 1)   return { ambiguous: true, basis: 'name', candidates: hits.map(h => h.i) };
+  }
+
+  return null;
+}
+
 async function _runLeaseJobPipeline(jobId, placeholderIdx) {
   const job = _leaseJobs.get(jobId);
   if (!job) { console.error('[_runLeaseJobPipeline] job not found:', jobId); return; }
@@ -4698,7 +4766,28 @@ async function _runLeaseJobPipeline(jobId, placeholderIdx) {
       _modelRouting:        norm?._modelRouting       ?? null,
     };
 
-    tenantData[placeholderIdx] = finalEntry;
+    // Link to an existing tenant rather than appending a duplicate. The existing
+    // record's id is preserved so everything already pointing at it — spaces,
+    // timeline events, disputes, reconciliation results — stays attached.
+    const _match = findTenantMatch(tenantData, finalEntry, placeholderIdx);
+    if (_match && _match.index != null) {
+      const _existing = tenantData[_match.index];
+      tenantData[_match.index] = {
+        ...(_existing || {}), ...finalEntry,
+        id:     _existing?.id     || finalEntry.id,
+        _jobId: finalEntry._jobId,
+        _linkedBy: _match.basis,
+      };
+      tenantData.splice(placeholderIdx, 1);   // drop the placeholder
+      console.log(`[tenantMatch] linked "${finalEntry.tenant_name}" to existing tenant by ${_match.basis}`);
+    } else if (_match && _match.ambiguous) {
+      // Two or more tenants fit. Never guess — keep it separate and flag it.
+      finalEntry._needsTenantConfirm = { basis: _match.basis, candidates: _match.candidates };
+      tenantData[placeholderIdx] = finalEntry;
+      console.warn(`[tenantMatch] ambiguous by ${_match.basis} — left unlinked for confirmation`);
+    } else {
+      tenantData[placeholderIdx] = finalEntry;
+    }
     storeLeaseFile(jobId, file);
 
     _leaseDebug.set(jobId, {
