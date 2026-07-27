@@ -1401,6 +1401,9 @@ function _recordIngestTelemetry(s) {
   try {
     _lastIngestTelemetry = s || null;
     if (window.ms_extractionDebug) window.ms_extractionDebug.ingest = s || null;
+    // Proof of life: a batch finished. Resets the watchdog so a slow but
+    // healthy extraction is never mistaken for a stalled one.
+    if (typeof _touchJobWatchdog === 'function') _touchJobWatchdog();
   } catch (_) {}
 }
 
@@ -4317,7 +4320,18 @@ const _TERMINAL_JOB_STATUSES = new Set(['completed', 'review_required', 'failed'
 // running, so the watchdog guarantees an outcome even when the pipeline stops
 // without throwing. Re-armed on every non-terminal update, cleared on terminal.
 const _jobWatchdogs   = new Map();
-const JOB_WATCHDOG_MS = 120000;
+
+// Derived from the longest single bounded operation, not guessed. The slowest
+// call in the pipeline is extractTextFromPdfDirect at 85s, and /api/explain
+// carries maxDuration 90 — so one legitimate request can occupy ~90s.
+//
+// The watchdog measures time since the last sign of life, NOT total job
+// duration, so it must exceed one bounded call plus margin — never the whole
+// run. A chunked vision extraction issues several of these sequentially and can
+// legitimately exceed any fixed total; that is why _touchJobWatchdog() is
+// called on every ingestion telemetry mark, so each completed batch resets the
+// clock. Without that heartbeat this would kill a large scanned lease mid-run.
+const JOB_WATCHDOG_MS = 240000;   // 4 min of *silence*, ≈2.6× one bounded call
 
 function _clearJobWatchdog(jobId) {
   const t = _jobWatchdogs.get(jobId);
@@ -4359,6 +4373,13 @@ async function _reapStaleLeaseJobs() {
     console.warn('[reapStaleLeaseJobs] skipped:', e?.message);
     return { reaped: 0, error: e?.message };
   }
+}
+
+// Re-arms the watchdog for whichever job is in flight. Long operations that make
+// no stage transition — a multi-batch vision extraction, a slow API call — call
+// this to prove they are still working.
+function _touchJobWatchdog() {
+  for (const jobId of Array.from(_jobWatchdogs.keys())) _armJobWatchdog(jobId);
 }
 
 function _armJobWatchdog(jobId) {

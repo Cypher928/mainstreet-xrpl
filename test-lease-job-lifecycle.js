@@ -198,6 +198,37 @@ const bad = (m, d) => { console.log('  \x1b[31m✗\x1b[0m ' + m + (d ? ' — ' +
     ? ok(`reaped job explains itself: "${rw.error_message.slice(0, 58)}\u2026"`)
     : bad('reaped job lacks an explanation', JSON.stringify(rw));
 
+  console.log('\n\u2500\u2500 The watchdog does not race a slow-but-healthy extraction \u2500\u2500');
+  const race = await page.evaluate(async () => {
+    // Threshold must exceed the longest single bounded call (85s
+    // extractTextFromPdfDirect, /api/explain maxDuration 90) with margin.
+    const longestBoundedCallMs = 90000;
+    return {
+      threshold: JOB_WATCHDOG_MS,
+      exceedsOneCall: JOB_WATCHDOG_MS > longestBoundedCallMs * 1.5,
+      hasHeartbeat: typeof _touchJobWatchdog === 'function',
+    };
+  });
+  race.exceedsOneCall
+    ? ok(`threshold ${race.threshold / 1000}s exceeds one bounded call (90s) with margin`)
+    : bad('threshold too close to a single legitimate call', String(race.threshold));
+  race.hasHeartbeat ? ok('a heartbeat exists for operations that make no stage transition')
+                    : bad('no heartbeat — a multi-batch extraction would be killed mid-run');
+
+  const beat = await page.evaluate(async () => {
+    updateLeaseJob('slow-1', { stage: 'extraction' });
+    const armedAt = _jobWatchdogs.get('slow-1');
+    // A telemetry mark is emitted per batch; it must reset the timer.
+    _recordIngestTelemetry({ path: 'vision-chunked', pages: 40, batches: 4, outcome: 'success' });
+    const afterBeat = _jobWatchdogs.get('slow-1');
+    const stillArmed = _jobWatchdogs.has('slow-1');
+    updateLeaseJob('slow-1', { status: 'completed' });
+    return { reset: armedAt !== afterBeat, stillArmed };
+  });
+  beat.reset ? ok('each batch\u2019s telemetry mark resets the clock — the timer measures silence, not duration')
+             : bad('telemetry mark did not reset the watchdog', 'a chunked extraction could still be killed');
+  beat.stillArmed ? ok('the job stays under watch after a heartbeat') : bad('heartbeat disarmed the watchdog');
+
   console.log('\n' + (fail ? '\x1b[31m' : '\x1b[32m') + `RESULT: ${pass} passed, ${fail} failed\x1b[0m`);
   await b.close(); srv.close(); process.exit(fail ? 1 : 0);
 })();
