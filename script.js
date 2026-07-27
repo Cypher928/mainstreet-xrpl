@@ -51,6 +51,9 @@ setTimeout(() => {
 async function _showApp(user) {
   _lsUserId = (user && user.id) ? user.id : null;
   if (user?.id) _initDemoIds(user.id); // derive per-user demo IDs before any demo interaction
+  // Close out jobs abandoned by a previous session's tab. Fire-and-forget: it
+  // must never delay showing the app, and a failure here is logged, not fatal.
+  try { _reapStaleLeaseJobs(); } catch (_) {}
   _lsMigrateAncillaryKeys(); // scope ancillary LS keys + re-hydrate _camYear
   initCamYearSelect();       // re-sync dropdown now that _camYear may have changed
   document.getElementById('loginScreen').style.display  = 'none';
@@ -4267,12 +4270,22 @@ function updateLeaseJob(jobId, updates, opts) {
     // record neither its completion nor its failure and sat at 'processing'
     // forever with no error_message. Write straight through instead: the
     // database, not a Map, is what has to end up correct.
+    _trackJobLiveness(jobId, updates);
     _syncJobToDb({ id: jobId, ...updates, updated_at: new Date().toISOString() }, opts);
     return null;
   }
+  _trackJobLiveness(jobId, updates);
   Object.assign(job, updates, { updated_at: new Date().toISOString() });
   _syncJobToDb(job, opts);
   return job;
+}
+
+// Every lifecycle write passes through updateLeaseJob, so the watchdog is armed
+// and cleared there rather than at each call site — a new stage cannot forget it.
+function _trackJobLiveness(jobId, updates) {
+  if (!jobId || !updates) return;
+  if (updates.status && _TERMINAL_JOB_STATUSES.has(updates.status)) _clearJobWatchdog(jobId);
+  else if (updates.status || updates.stage) _armJobWatchdog(jobId);
 }
 
 // Returns a promise resolving true on a successful write. `terminal` marks the
@@ -4297,12 +4310,80 @@ function _syncJobToDb(job, { terminal = false } = {}) {
     .catch(e => { logError('lease_job_sync', e, ctx); return false; });
 }
 
+// Terminal statuses. A job in any other state is still considered in flight.
+const _TERMINAL_JOB_STATUSES = new Set(['completed', 'review_required', 'failed']);
+
+// A job that never reaches a terminal state is indistinguishable from one still
+// running, so the watchdog guarantees an outcome even when the pipeline stops
+// without throwing. Re-armed on every non-terminal update, cleared on terminal.
+const _jobWatchdogs   = new Map();
+const JOB_WATCHDOG_MS = 120000;
+
+function _clearJobWatchdog(jobId) {
+  const t = _jobWatchdogs.get(jobId);
+  if (t) { clearTimeout(t); _jobWatchdogs.delete(jobId); }
+}
+
+// A watchdog lives in the page, so it dies with the page. The whole ingestion
+// pipeline is client-side, and a backgrounded or discarded tab takes every
+// in-flight promise with it — no throw, no terminal call, and a job left at
+// 'processing' forever. This sweep runs at startup and closes those out, which
+// is the only point at which they can be observed at all.
+const JOB_STALE_MS = 15 * 60 * 1000;
+
+async function _reapStaleLeaseJobs() {
+  if (!db) return { reaped: 0 };
+  const cutoffMs = Date.now() - JOB_STALE_MS;
+  try {
+    // Deliberately only .select().in() — the age filter is applied in JS rather
+    // than with .lt(). The set of in-flight jobs is tiny, and keeping the query
+    // surface minimal means a startup sweep cannot become a source of console
+    // errors on any client whose builder differs.
+    const { data, error } = await db.from('lease_jobs')
+      .select('id,status,stage,updated_at')
+      .in('status', ['queued', 'processing']);
+    if (error) { console.warn('[reapStaleLeaseJobs] lookup failed:', error.message); return { reaped: 0, error: error.message }; }
+    const stale = (data || []).filter(j =>
+      j && j.updated_at && new Date(j.updated_at).getTime() < cutoffMs);
+    for (const job of stale) {
+      _clearJobWatchdog(job.id);
+      await failLeaseJob(job.id, new Error(
+        'Ingestion did not complete — the browser tab closed or was suspended before the lease finished processing. Re-upload to try again.'
+      ), job.stage || 'extraction');
+    }
+    if (stale.length) console.warn(`[reapStaleLeaseJobs] closed out ${stale.length} abandoned job(s)`);
+    return { reaped: stale.length };
+  } catch (e) {
+    // A sweep failure is housekeeping, not user-facing — warn, never logError,
+    // which surfaces as a console error group on every app load.
+    console.warn('[reapStaleLeaseJobs] skipped:', e?.message);
+    return { reaped: 0, error: e?.message };
+  }
+}
+
+function _armJobWatchdog(jobId) {
+  _clearJobWatchdog(jobId);
+  _jobWatchdogs.set(jobId, setTimeout(() => {
+    _jobWatchdogs.delete(jobId);
+    failLeaseJob(jobId, new Error(
+      `Ingestion stopped responding — no terminal state within ${Math.round(JOB_WATCHDOG_MS / 1000)}s.`
+    ), 'extraction');
+  }, JOB_WATCHDOG_MS));
+}
+
 function failLeaseJob(jobId, err, stage) {
+  // Every diagnostic column is written on failure. Leaving confidence_level and
+  // extraction_route null made a failed job unreadable after the fact — the
+  // columns needed to explain the failure were the ones not being set.
   return updateLeaseJob(jobId, {
     status:                  'failed',
     stage:                   stage || 'extraction',
     progress:                _JOB_STAGES[stage]?.progress ?? 0,
     error_message:           err?.message || String(err),
+    confidence_level:        'failed',
+    confidence_score:        0,
+    extraction_route:        _lastIngestTelemetry?.path === 'text' ? 'text'
+                             : _lastIngestTelemetry?.path ? 'pdf-direct' : 'unknown',
     processing_completed_at: new Date().toISOString(),
     // Which ingestion path was in flight when it failed.
     debug_summary:           { ingest: _lastIngestTelemetry || null },

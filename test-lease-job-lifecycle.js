@@ -145,6 +145,59 @@ const bad = (m, d) => { console.log('  \x1b[31m✗\x1b[0m ' + m + (d ? ' — ' +
   (stripped && !('_secret' in stripped) && !('_alsoSecret' in stripped))
     ? ok('underscore-prefixed fields are still stripped') : bad('internal fields leaked', JSON.stringify(stripped));
 
+  console.log('\n\u2500\u2500 A failure records every diagnostic column \u2500\u2500');
+  let w2 = await page.evaluate(async () => {
+    window.__writes = [];
+    _lastIngestTelemetry = { path: 'text', pages: 3, outcome: 'failure' };
+    failLeaseJob('diag-1', new Error('extraction exploded'), 'extraction');
+    await new Promise(r => setTimeout(r, 200));
+    return window.__writes[0];
+  });
+  for (const [col, want] of [['status','failed'], ['confidence_level','failed'],
+                             ['extraction_route','text'], ['confidence_score', 0]]) {
+    (w2 && w2[col] === want) ? ok(`${col} = ${JSON.stringify(w2[col])}`)
+                             : bad(`${col} not recorded`, JSON.stringify(w2 && w2[col]));
+  }
+  (w2 && w2.error_message && w2.debug_summary && w2.debug_summary.ingest)
+    ? ok('error_message and debug_summary.ingest both present')
+    : bad('diagnostics incomplete', JSON.stringify(w2));
+
+  console.log('\n\u2500\u2500 The watchdog guarantees an outcome \u2500\u2500');
+  const wd = await page.evaluate(async () => {
+    window.__writes = [];
+    // Arm via a normal non-terminal update, then confirm a timer exists.
+    updateLeaseJob('wd-1', { stage: 'extraction' });
+    const armed = _jobWatchdogs.has('wd-1');
+    // A terminal update must disarm it.
+    updateLeaseJob('wd-1', { status: 'completed' });
+    const cleared = !_jobWatchdogs.has('wd-1');
+    return { armed, cleared };
+  });
+  wd.armed   ? ok('a non-terminal update arms the watchdog')  : bad('watchdog not armed');
+  wd.cleared ? ok('a terminal update disarms it')             : bad('watchdog left running');
+
+  console.log('\n\u2500\u2500 Abandoned jobs are closed out at startup \u2500\u2500');
+  const reap = await page.evaluate(async () => {
+    const stale = [{ id: 'stale-1', status: 'processing', stage: 'normalize', updated_at: '2020-01-01T00:00:00Z' }];
+    const origFrom = db.from.bind(db);
+    db.from = (t) => {
+      if (t !== 'lease_jobs') return origFrom(t);
+      return {
+        select: () => ({ in: () => Promise.resolve({ data: stale, error: null }) }),
+        upsert: (row) => { window.__writes.push(JSON.parse(JSON.stringify(row))); return Promise.resolve({ data: [row], error: null }); },
+      };
+    };
+    window.__writes = [];
+    const res = await _reapStaleLeaseJobs();
+    return { res, writes: window.__writes };
+  });
+  (reap.res && reap.res.reaped === 1) ? ok('one abandoned job found and closed out')
+                                      : bad('reaper did not close the stale job', JSON.stringify(reap.res));
+  const rw = reap.writes && reap.writes[0];
+  (rw && rw.status === 'failed' && /tab closed or was suspended/i.test(rw.error_message || ''))
+    ? ok(`reaped job explains itself: "${rw.error_message.slice(0, 58)}\u2026"`)
+    : bad('reaped job lacks an explanation', JSON.stringify(rw));
+
   console.log('\n' + (fail ? '\x1b[31m' : '\x1b[32m') + `RESULT: ${pass} passed, ${fail} failed\x1b[0m`);
   await b.close(); srv.close(); process.exit(fail ? 1 : 0);
 })();
