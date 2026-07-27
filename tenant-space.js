@@ -126,6 +126,21 @@ window.TenantSpace = (function () {
   function openSpace(tenantId) {
     var property = window.currentProperty && window.currentProperty();
     if (!property || !tenantId) return;
+    // TEMPORARY DIAGNOSTIC — remove with the script.js _syncDiag helper.
+    // Reports what the modal actually reads, so a stale placeholder here can be
+    // told apart from a lookup that simply misses.
+    try {
+      var _all = property.tenants || [];
+      var _hit = _all.filter(function (x) { return x && x.id === tenantId; })[0] || null;
+      console.log('[SYNCDIAG] openSpace:read', {
+        askedFor: tenantId,
+        found: !!_hit,
+        record: _hit ? { name: _hit.tenant_name, lease_type: _hit.lease_type,
+                         sqft: _hit.leased_sqft,
+                         placeholder: !!_hit.leaseExpected && !_hit.lease_type } : null,
+        idsPresent: _all.map(function (x) { return x && x.id; }),
+      });
+    } catch (e) { console.warn('[SYNCDIAG] openSpace read failed:', e && e.message); }
     if (_t('tsOverlay')) return;
     injectStyles();
     var rec = assemble(property, tenantId);

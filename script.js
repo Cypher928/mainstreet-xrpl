@@ -4498,6 +4498,39 @@ async function retryLeaseJob(jobId) {
 // Writes tenantData[placeholderIdx] on completion (success or failure).
 // Ghost-row protection: sets _pendingJobReview=true for low/failed confidence.
 
+
+// ─── TEMPORARY DIAGNOSTIC — remove once the sync defect is identified ────────
+// Answers one question: at each point property.tenants is written, does it hold
+// the finalised tenant or still the upload placeholder? Logging only; this
+// changes no behaviour and no control flow.
+function _syncDiag(label, propArg, idx) {
+  try {
+    var prop = propArg || (typeof currentProperty === 'function' ? currentProperty() : null);
+    var td   = (typeof tenantData !== 'undefined' && tenantData) || [];
+    var pt   = prop && prop.tenants;
+    function shape(arr, i) {
+      var t = (arr && i != null) ? arr[i] : null;
+      if (!t) return null;
+      return {
+        name:          t.tenant_name || null,
+        lease_type:    t.lease_type || null,
+        sqft:          t.leased_sqft || null,
+        placeholder:   !!t.leaseExpected && !t.lease_type,
+        id:            t.id,
+      };
+    }
+    console.log('[SYNCDIAG] ' + label, {
+      idx:             idx,
+      inTenantData:    shape(td, idx),
+      inPropertyTents: shape(pt, idx),
+      sharedArray:     pt === td,
+      lens:            { tenantData: td.length, propertyTenants: pt ? pt.length : null },
+      activePropId:    (typeof activePropId !== 'undefined' ? activePropId : null),
+      propId:          prop ? prop.id : null,
+    });
+  } catch (e) { console.warn('[SYNCDIAG] failed at ' + label + ':', e && e.message); }
+}
+
 // ─── Tenant matching for lease uploads ───────────────────────────────────────
 // An upload used to append a new tenant unconditionally, so re-uploading a
 // lease for an existing tenant produced a duplicate — the lease landed on a
@@ -4769,6 +4802,7 @@ async function _runLeaseJobPipeline(jobId, placeholderIdx) {
     // Link to an existing tenant rather than appending a duplicate. The existing
     // record's id is preserved so everything already pointing at it — spaces,
     // timeline events, disputes, reconciliation results — stays attached.
+    _syncDiag('pipeline:before-write', null, placeholderIdx);
     const _match = findTenantMatch(tenantData, finalEntry, placeholderIdx);
     if (_match && _match.index != null) {
       const _existing = tenantData[_match.index];
@@ -4788,6 +4822,7 @@ async function _runLeaseJobPipeline(jobId, placeholderIdx) {
     } else {
       tenantData[placeholderIdx] = finalEntry;
     }
+    _syncDiag('pipeline:after-write', null, placeholderIdx);
     storeLeaseFile(jobId, file);
 
     _leaseDebug.set(jobId, {
@@ -4914,13 +4949,16 @@ async function handleBulkLeases(fileList) {
     const placeholderIdx = tenantData.length;
     tenantData.push({ id: jobId, _jobId: jobId, fileName: file.name, status: 'pending', tenant_name: null, leaseExpected: true, _showRetry: false, _needsReview: false, extractionFailed: false });
     property.tenants = [...tenantData];
+    _syncDiag('bulk:pre-pipeline', property, placeholderIdx);
     renderBulkResults();
 
     await _runLeaseJobPipeline(jobId, placeholderIdx);
+    _syncDiag('bulk:pipeline-resolved', property, placeholderIdx);
 
     completed++;
     _progUpdate();
     property.tenants = [...tenantData];
+    _syncDiag('bulk:post-sync', property, placeholderIdx);
     renderBulkResults();
   };
 
