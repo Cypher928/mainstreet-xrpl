@@ -20990,6 +20990,30 @@ async function loadPropertyData(id) {
 function renderProperty(property) {
   let restored = false;
 
+  // TEMPORARY DIAGNOSTIC — remove with the _syncDiag helper.
+  // The card list renders from this `property` argument while TenantSpace's
+  // modal always re-resolves through currentProperty(). If these are different
+  // objects, the two read different tenant arrays — same field names, different
+  // data — which is the remaining candidate for the stale Space modal.
+  try {
+    var _cp = typeof currentProperty === 'function' ? currentProperty() : null;
+    var _pick = function (p) {
+      var t = p && p.tenants ? p.tenants.filter(function (x) { return x && /Whole Health/i.test(x.tenant_name || ''); })[0] : null;
+      return t ? { id: t.id, name: t.tenant_name, lease_type: t.lease_type || null,
+                   sqft: t.leased_sqft || null, placeholder: !!t.leaseExpected && !t.lease_type } : null;
+    };
+    console.log('[SYNCDIAG] renderProperty:identity', {
+      sameObject:        _cp === property,
+      sameTenantsArray:  !!(_cp && _cp.tenants === (property && property.tenants)),
+      argPropId:         property && property.id,
+      currentPropId:     _cp && _cp.id,
+      activePropId:      typeof activePropId !== 'undefined' ? activePropId : null,
+      tenantsLen:        { arg: property && property.tenants ? property.tenants.length : null,
+                           current: _cp && _cp.tenants ? _cp.tenants.length : null },
+      wholeHealthIn:     { arg: _pick(property), current: _pick(_cp) },
+    });
+  } catch (e) { console.warn('[SYNCDIAG] renderProperty identity check failed:', e && e.message); }
+
   // ── Header ────────────────────────────────────────────────────────────
   document.getElementById('propertyName').value             = property.name;
   document.getElementById('totalSqft').value                = property.totalSqft || '';
