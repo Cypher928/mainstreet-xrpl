@@ -11,19 +11,34 @@ const http = require('http'), fs = require('fs'), path = require('path');
 const ROOT = __dirname, PORT = 8899;
 const CFG = JSON.parse(fs.readFileSync(path.join(ROOT, 'vercel.json'), 'utf8'));
 
+// Models VERCEL'S ORDER, which is the whole point of this test:
+//   redirects → headers → FILESYSTEM → rewrites
+// Rewrites are the last step and only fire when nothing on disk matched. An
+// earlier version of this function applied rewrites first and unconditionally,
+// so it asserted a routing table Vercel never had: `/` "rewrote" to home.html
+// here while production served index.html from disk and the rewrite never ran.
 function resolve(urlPath) {
-  for (const r of CFG.rewrites) {
-    if (r.source.includes(':')) continue;              // param routes: not exercised here
-    if (r.source === urlPath) return r.destination;
+  // 1 — redirects run before anything touches the filesystem.
+  for (const r of (CFG.redirects || [])) {
+    if (r.source === urlPath) return { redirect: r.destination };
   }
-  return urlPath;
+  // 2 — filesystem. `/` resolves to index.html when it exists.
+  const asFile = urlPath === '/' ? '/index.html' : urlPath;
+  if (fs.existsSync(path.join(ROOT, asFile.replace(/^\//, '')))) return { file: asFile };
+  // 3 — rewrites, last.
+  for (const r of (CFG.rewrites || [])) {
+    if (r.source.includes(':')) continue;              // param routes: not exercised here
+    if (r.source === urlPath) return { file: r.destination };
+  }
+  return { file: urlPath };
 }
 
 const MIME = { '.html':'text/html', '.js':'application/javascript', '.css':'text/css',
                '.json':'application/json', '.png':'image/png', '.svg':'image/svg+xml' };
 const srv = http.createServer((rq, rs) => {
-  const dest = resolve(rq.url.split('?')[0]);
-  const file = path.join(ROOT, dest);
+  const r = resolve(rq.url.split('?')[0]);
+  if (r.redirect) { rs.writeHead(308, { Location: r.redirect }); rs.end(); return; }
+  const file = path.join(ROOT, r.file);
   fs.readFile(file, (e, d) => {
     if (e) { rs.writeHead(404); rs.end('not found'); return; }
     rs.writeHead(200, { 'Content-Type': MIME[path.extname(file)] || 'application/octet-stream' });
@@ -34,10 +49,21 @@ const srv = http.createServer((rq, rs) => {
 // Collect Buffers and concat once. Appending chunks to a string would decode
 // each chunk independently and mangle any UTF-8 sequence that straddles a chunk
 // boundary — index.html has emoji, so that corruption is intermittent and real.
-const get = p => new Promise(res => http.get({ host:'127.0.0.1', port:PORT, path:p }, r => {
+const getOnce = p => new Promise(res => http.get({ host:'127.0.0.1', port:PORT, path:p }, r => {
   const cs = []; r.on('data', c => cs.push(c));
-  r.on('end', () => res({ code:r.statusCode, body:Buffer.concat(cs).toString('utf8') }));
+  r.on('end', () => res({ code:r.statusCode, body:Buffer.concat(cs).toString('utf8'),
+                          location:r.headers.location || null }));
 }));
+// A redirect is a legitimate way to land on a page; follow one hop so the test
+// asks "what does the visitor end up seeing", not "what did the first hop say".
+const get = async p => {
+  const first = await getOnce(p);
+  if (first.code >= 300 && first.code < 400 && first.location) {
+    const next = await getOnce(first.location);
+    return { ...next, via: first.code + ' → ' + first.location };
+  }
+  return first;
+};
 
 // Which page each path must return. Identified by exact file contents rather
 // than a text marker — the app's landing overlay reuses the marketing copy, so
@@ -81,6 +107,16 @@ srv.listen(PORT, '127.0.0.1', async () => {
   (identify(app.body) === 'app' && app.body.includes('id="loginScreen"'))
     ? ok('/app reaches the login screen, so the root swap never strands a pilot user')
     : bad('/app does not reach the app');
+
+  console.log('\n\u2500\u2500 Vercel precedence is respected \u2500\u2500');
+  const rootRewrite = (CFG.rewrites || []).some(r => r.source === '/');
+  !rootRewrite
+    ? ok('no rewrite targets "/" \u2014 it could never fire, index.html wins the filesystem check')
+    : bad('a rewrite targets "/"', 'rewrites run AFTER the filesystem; this one is dead config');
+  const rootRedirect = (CFG.redirects || []).find(r => r.source === '/');
+  rootRedirect
+    ? ok(`"/" is handled by a redirect to ${rootRedirect.destination} \u2014 redirects run before the filesystem`)
+    : bad('nothing routes "/" to the marketing page');
 
   console.log('\n' + (fail ? '\x1b[31m' : '\x1b[32m') + 'RESULT: ' + pass + ' passed, ' + fail + ' failed\x1b[0m');
   srv.close(); process.exit(fail ? 1 : 0);
