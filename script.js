@@ -4503,6 +4503,26 @@ async function retryLeaseJob(jobId) {
 // Writes tenantData[placeholderIdx] on completion (success or failure).
 // Ghost-row protection: sets _pendingJobReview=true for low/failed confidence.
 
+
+// Dual-writes the snapshots the normalizer built during extraction to the
+// normalized evidence table. Fail-silent and non-blocking: evidence is
+// supporting material, and losing it must never fail an upload. The JSON blob
+// remains the fallback the Evidence Viewer reads from in-session.
+function _persistExtractedEvidence(propId, tenantId, fieldEvidence) {
+  if (!propId || !tenantId || !fieldEvidence) return 0;
+  var written = 0;
+  Object.keys(fieldEvidence).forEach(function (fieldKey) {
+    var snaps = fieldEvidence[fieldKey] && fieldEvidence[fieldKey].snapshots;
+    if (!Array.isArray(snaps) || !snaps.length) return;
+    var latest = snaps[snaps.length - 1];
+    if (!latest || (!latest.quote && latest.page == null)) return;  // nothing citable
+    try { _writeTenantFieldEvidence(propId, tenantId, fieldKey, latest); written++; }
+    catch (e) { console.warn('[evidence] ' + fieldKey + ' not written:', e && e.message); }
+  });
+  if (written) console.log('[evidence] persisted ' + written + ' extracted snapshot(s) — pending review');
+  return written;
+}
+
 // ─── Tenant matching for lease uploads ───────────────────────────────────────
 // An upload used to append a new tenant unconditionally, so re-uploading a
 // lease for an existing tenant produced a duplicate — the lease landed on a
@@ -4793,6 +4813,23 @@ async function _runLeaseJobPipeline(jobId, placeholderIdx) {
     } else {
       tenantData[placeholderIdx] = finalEntry;
     }
+
+    // Persist the evidence the extraction produced. The normalizer already
+    // builds complete snapshots from the model's `quotes` — verbatim clause,
+    // extraction model, timestamp — and marks them confidence 'estimated' /
+    // 'AI-extracted', approved:false, with no reviewer attributed. Nothing was
+    // writing them to tenant_field_evidence, so the table stayed empty and the
+    // Evidence Viewer could only ever cite a field a human had already touched.
+    //
+    // These are deliberately NOT approved. A citation becomes available
+    // immediately, carrying its own pending-review state, so the viewer can show
+    // the clause while making clear no one has confirmed it yet.
+    try {
+      const _linkedId = (_match && _match.index != null)
+        ? (tenantData[_match.index] && tenantData[_match.index].id)
+        : finalEntry.id;
+      _persistExtractedEvidence(propertyId, _linkedId, finalEntry.fieldEvidence);
+    } catch (e) { console.warn('[evidence] extraction snapshots not persisted:', e && e.message); }
     storeLeaseFile(jobId, file);
 
     _leaseDebug.set(jobId, {
