@@ -26,7 +26,18 @@ window.TenantSpace = (function () {
   };
   var _t = function (id) { return document.getElementById(id); };
   var _openRec = null; // the assembled record for the currently-open space (actions read this)
-  function _fmtDate(ts) { try { return new Date(ts).toLocaleDateString('en-US', { month: 'short', day: 'numeric', year: 'numeric' }); } catch (_) { return String(ts || ''); } }
+  function _fmtDate(ts) {
+    // An absent or unparsable date renders as nothing, not "Invalid Date".
+    // The lease chip has no `when` (assemble() attaches the document without a
+    // date), and new Date(undefined).toLocaleDateString() returns the literal
+    // string "Invalid Date" without throwing — so the catch never helped.
+    if (ts == null || ts === '') return '';
+    try {
+      var d = new Date(ts);
+      if (isNaN(d.getTime())) return '';
+      return d.toLocaleDateString('en-US', { month: 'short', day: 'numeric', year: 'numeric' });
+    } catch (_) { return ''; }
+  }
   function _money(n) { try { return '$' + Math.round(Number(n)).toLocaleString('en-US'); } catch (_) { return '$' + n; } }
 
   // Scope events to a space. Matches on subject id and tenantId, and falls back
