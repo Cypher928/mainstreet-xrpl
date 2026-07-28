@@ -37,8 +37,8 @@
 
   // Hero workflow rail labels (line icons).
   var RAIL = [
-    ['upload', 'Upload'], ['ai', 'Extract'], ['match', 'Match'], ['recon', 'Reconcile'],
-    ['recover', 'Recover'], ['statement', 'Statement'], ['settle', 'Settle'], ['verify', 'Verify'],
+    ['upload', 'Upload'], ['ai', 'Extract'], ['statement', 'Spaces'], ['match', 'Reconcile'],
+    ['recover', 'Recover'], ['recon', 'Timeline'], ['settle', 'Settle'], ['verify', 'Verify'],
   ];
 
   // ── helpers ──────────────────────────────────────────────────────────────
@@ -63,6 +63,15 @@
 
   var root, cineEl, canvas, capEl, tlEl, endEl;
   var state = { i: 0, playing: false, timer: null };
+  // Set when the visitor arrived via the marketing page's ?demo=1 CTA. Closing
+  // the film then returns them to the page they came from instead of dropping
+  // them onto this overlay's own hero — mid-story, on a page they never chose.
+  var fromMarketing = false;
+
+  function closeFilm() {
+    if (fromMarketing) { window.location.href = 'home'; return; }
+    stopDemo();
+  }
 
   function shown(el) {
     if (!el) return false;
@@ -108,25 +117,20 @@
             '</div>' +
           '</div>';
       } },
-    { id: 'match', dur: 5000, cap: 'Invoices matched to tenants',
+    { id: 'spaces', dur: 5200, cap: 'Every space remembers — one record per suite',
       build: function (c) {
-        var inv = ['SnowCo · $6,051','GreenScape · $4,120','SecureGuard · $3,480','ProClean · $2,940'];
-        var ten = ['Summit Coffee','Whole Health Market','Harbor Nail & Beauty','Gamma Books'];
+        var rows = [
+          ['Lease on file', 'NNN · 9,200 sqft · to 2028'],
+          ['2025 CAM', '$34,650 · Ready'],
+          ['Dispute — Cascade Handyman', '$6,051 · docs requested'],
+          ['Documents on file', '7 · photos 2'],
+        ];
         c.innerHTML =
-          '<div class="msl-match">' +
-            '<div class="msl-col msl-col-l">' + inv.map(function (t, i) { return '<div class="msl-node" data-l="' + i + '" style="--d:' + (i * .12) + 's">' + t + '</div>'; }).join('') + '</div>' +
-            '<svg class="msl-wires" viewBox="0 0 300 240" preserveAspectRatio="none"></svg>' +
-            '<div class="msl-col msl-col-r">' + ten.map(function (t, i) { return '<div class="msl-node" data-r="' + i + '" style="--d:' + (i * .12) + 's">' + t + '</div>'; }).join('') + '</div>' +
+          '<div class="msl-stmt">' +
+            '<div class="msl-stmt-head" style="--d:0s"><div><b>Whole Health Market</b><span>Everything about this space, in one place</span></div><div class="msl-stmt-badge">Space</div></div>' +
+            rows.map(function (it, i) { return '<div class="msl-stmt-row" style="--d:' + (0.4 + i * 0.32) + 's"><span>' + it[0] + '</span><b>' + it[1] + '</b></div>'; }).join('') +
+            '<div class="msl-stmt-cite" style="--d:2s">Grounded in the documents behind it — nothing lives in email.</div>' +
           '</div>';
-        var svg = c.querySelector('.msl-wires');
-        var pairs = [[0, 0], [1, 1], [2, 2], [3, 3], [0, 3], [1, 0]];
-        pairs.forEach(function (pr, i) {
-          var y1 = 30 + pr[0] * 56, y2 = 30 + pr[1] * 56;
-          var path = document.createElementNS('http://www.w3.org/2000/svg', 'path');
-          path.setAttribute('d', 'M8 ' + y1 + ' C 150 ' + y1 + ', 150 ' + y2 + ', 292 ' + y2);
-          path.setAttribute('class', 'msl-wire'); path.style.setProperty('--d', (0.6 + i * 0.22) + 's');
-          svg.appendChild(path);
-        });
       } },
     { id: 'recon', dur: 5600, cap: 'CAM allocated across every tenant',
       build: function (c) {
@@ -149,16 +153,33 @@
           '<div class="msl-bignum"><div class="msl-bignum-v" id="mslRecover">$0</div><div class="msl-bignum-l">Recoverable revenue identified</div></div>';
         setTimeout(function () { countUp(document.getElementById('mslRecover'), 99542, 1500, '$'); }, reduce() ? 0 : 500);
       } },
-    { id: 'statement', dur: 5000, cap: 'Tenant statement, generated',
+    { id: 'timeline', dur: 4800, cap: 'Everything that happens, remembered — the Property Timeline',
       build: function (c) {
-        var items = [['Snow removal', '$1,240'], ['Landscaping', '$980'], ['Security', '$1,410'], ['Janitorial', '$860']];
+        var events = ['Lease uploaded', 'CAM reconciled', 'Dispute resolved', 'Settlement verified'];
         c.innerHTML =
-          '<div class="msl-stmt">' +
-            '<div class="msl-stmt-head" style="--d:0s"><div><b>Whole Health Market</b><span>CAM Statement · FY 2025</span></div><div class="msl-stmt-badge">Verified</div></div>' +
-            items.map(function (it, i) { return '<div class="msl-stmt-row" style="--d:' + (0.4 + i * 0.28) + 's"><span>' + it[0] + '</span><b>' + it[1] + '</b></div>'; }).join('') +
-            '<div class="msl-stmt-total" style="--d:1.7s"><span>Total due</span><b>$41,204</b></div>' +
-            '<div class="msl-stmt-cite" style="--d:2s">Every line cited to the lease — page and clause.</div>' +
+          '<div class="msl-settle">' +
+            '<div class="msl-settle-amt" style="font-size:1.05rem;letter-spacing:.08em;">PROPERTY TIMELINE</div>' +
+            '<div class="msl-steps">' + events.map(function (s2, i) {
+              return '<div class="msl-sstep2" style="--d:' + (0.4 + i * 0.65) + 's"><span class="msl-scheck">' + icon('verify') + '</span><span>' + s2 + '</span></div>' +
+                (i < events.length - 1 ? '<div class="msl-sline" style="--d:' + (0.75 + i * 0.65) + 's"></div>' : '');
+            }).join('') + '</div>' +
           '</div>';
+      } },
+    { id: 'workspace', dur: 5400, cap: 'Ask anything — answers grounded in your records',
+      build: function (c) {
+        var hits = [
+          ['Whole Health Market', '5% cap · lease p.2, §6.4'],
+          ['Summit Coffee & Provisions', '8% cap · lease p.3'],
+          ['FitZone Athletics', '4% cap · lease p.2'],
+        ];
+        c.innerHTML =
+          '<img class="msl-bg msl-bg-dim" src="' + ASSET + 'ui-workspace.png" alt="">' +
+          '<div class="msl-stmt">' +
+            '<div class="msl-stmt-head" style="--d:0s"><div><b>Ask MainStreet AI</b><span id="mslAskQ">&nbsp;</span></div><div class="msl-stmt-badge">Cited</div></div>' +
+            hits.map(function (it, i) { return '<div class="msl-stmt-row" style="--d:' + (1.4 + i * 0.35) + 's"><span>' + it[0] + '</span><b>' + it[1] + '</b></div>'; }).join('') +
+            '<div class="msl-stmt-cite" style="--d:2.8s">Every answer cites the document it came from.</div>' +
+          '</div>';
+        typeInto(c.querySelector('#mslAskQ'), 'Which tenants have CAM caps?', 26);
       } },
     { id: 'settle', dur: 5200, cap: 'Settled in RLUSD on the XRP Ledger',
       build: function (c) {
@@ -380,11 +401,11 @@
     root.innerHTML =
       '<div class="msl-nav"><div class="msl-logo"><b>Main</b>Street</div><button class="msl-nav-signin" id="mslNavSignin">Sign In</button></div>' +
       '<div class="msl-hero">' +
-        '<div class="msl-eyebrow">CAM Recovery &amp; Reconciliation for Commercial Real Estate</div>' +
-        '<h1 class="msl-h1">Recover the CAM revenue<br><em>hiding in your leases.</em></h1>' +
-        '<p class="msl-lede">AI reads every lease, finds what manual reviews miss, and cites every charge — then settles it, verified, on the XRP Ledger.</p>' +
+        '<div class="msl-eyebrow">The AI Operating System for Commercial Real Estate</div>' +
+        '<h1 class="msl-h1">The verified memory<br><em>for every commercial property.</em></h1>' +
+        '<p class="msl-lede">MainStreet reads every lease, reconciles every CAM charge, and remembers everything that happens to a property — with the proof behind every number.</p>' +
         '<div class="msl-cta">' +
-          '<button class="msl-btn msl-btn--primary" id="mslWatch">See it recover revenue</button>' +
+          '<button class="msl-btn msl-btn--primary" id="mslWatch">▶ Watch MainStreet in Action</button>' +
           '<button class="msl-btn msl-btn--ghost" id="mslStart">Create Free Account</button>' +
           '<button class="msl-btn msl-btn--text" id="mslSignin">Sign In</button>' +
         '</div>' +
@@ -417,7 +438,7 @@
     root.querySelector('#mslStart').addEventListener('click', function () { enterApp('signup'); });
     root.querySelector('#mslSignin').addEventListener('click', function () { enterApp('signin'); });
     root.querySelector('#mslNavSignin').addEventListener('click', function () { enterApp('signin'); });
-    root.querySelector('#mslCineClose').addEventListener('click', stopDemo);
+    root.querySelector('#mslCineClose').addEventListener('click', closeFilm);
     document.addEventListener('keydown', onKey);
   }
 
@@ -451,11 +472,14 @@
     endEl.innerHTML =
       '<button class="msl-btn msl-btn--primary" id="mslEndStart">Create Free Account</button>' +
       '<button class="msl-btn msl-btn--ghost" id="mslEndVerify">Verify on XRPL ↗</button>' +
-      '<button class="msl-btn msl-btn--text" id="mslEndReplay">Replay</button>';
+      '<button class="msl-btn msl-btn--text" id="mslEndReplay">Replay</button>' +
+      (fromMarketing ? '<button class="msl-btn msl-btn--text" id="mslEndBack">← Back to site</button>' : '');
     endEl.classList.add('msl-show');
     endEl.querySelector('#mslEndStart').addEventListener('click', function () { enterApp('signup'); });
     endEl.querySelector('#mslEndVerify').addEventListener('click', function () { window.open(EXPLORER, '_blank', 'noopener'); });
     endEl.querySelector('#mslEndReplay').addEventListener('click', function () { state.i = 0; state.playing = true; renderScene(); });
+    var back = endEl.querySelector('#mslEndBack');
+    if (back) back.addEventListener('click', function () { window.location.href = 'home'; });
   }
 
   function playDemo() { build(); state.i = 0; state.playing = true; cineEl.classList.add('msl-on'); renderScene(); }
@@ -464,7 +488,7 @@
   function onKey(e) {
     if (!root || root.style.display === 'none') return;
     if (cineEl.classList.contains('msl-on')) {
-      if (e.key === 'Escape') stopDemo();
+      if (e.key === 'Escape') closeFilm();
       else if (e.key === 'ArrowRight' && state.i < SCENES.length - 1) { clearTimeout(state.timer); state.i++; renderScene(); }
       else if (e.key === 'ArrowLeft' && state.i > 0) { clearTimeout(state.timer); state.i--; renderScene(); }
     } else if (e.key === 'Escape') { enterApp('signin'); }
@@ -495,6 +519,7 @@
     // isAuthed() settles asynchronously and would still read false here for a
     // signed-in user. Skipping the wait would drop the film over their session.
     var wantDemo = params.get('demo') === '1';
+    if (wantDemo) fromMarketing = true;
     function open() { show(); if (wantDemo) setTimeout(playDemo, 260); }
     if (forced || shown(login)) { open(); return; }
     var done = false;
