@@ -4492,6 +4492,11 @@ async function retryLeaseJob(jobId) {
 
   if (prop) prop.tenants = [...tenantData];
   renderBulkResults();
+  // Same reason as handleBulkLeases: a retry runs the pipeline, which can change
+  // which tenant ids exist, and the Spaces buttons carry those ids.
+  try {
+    if (prop && window.TenantSpace && window.TenantSpace.renderList) window.TenantSpace.renderList(prop);
+  } catch (e) { console.warn('[retryLeaseJob] spaces list refresh skipped:', e && e.message); }
 }
 
 // Core extraction pipeline — extracted from processFile so retryLeaseJob can also call it.
@@ -4960,6 +4965,16 @@ async function handleBulkLeases(fileList) {
     property.tenants = [...tenantData];
     _syncDiag('bulk:post-sync', property, placeholderIdx);
     renderBulkResults();
+    // The Spaces cards bake tenant ids into their "Open space" buttons, and the
+    // pipeline can change which ids exist: a matched upload writes onto the
+    // existing tenant's id and splices the placeholder out. Without this the
+    // buttons keep pointing at the placeholder id, openSpace() finds nothing,
+    // and the modal reports "No lease on file" for a space whose card is
+    // showing the very terms it claims are missing. renderBulkResults() only
+    // refreshes the upload panel, not this list.
+    try {
+      if (window.TenantSpace && window.TenantSpace.renderList) window.TenantSpace.renderList(property);
+    } catch (e) { console.warn('[bulkLeases] spaces list refresh skipped:', e && e.message); }
   };
 
   for (let i = 0; i < files.length; i += BATCH_SIZE) {
