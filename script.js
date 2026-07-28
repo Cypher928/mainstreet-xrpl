@@ -413,22 +413,22 @@ async function claudeFetch(body) {
 }
 
 async function explainFetch(body, opts = {}) {
-  // opts.timeoutMs (optional) aborts a stalled request so callers never hang forever.
-  // Backward compatible: with no opts, behavior is unchanged (no timeout).
+  // Every other Claude call in this file goes through _fetchWithTimeout. This
+  // one bounded the request only when a caller happened to pass timeoutMs, so
+  // the default path had no AbortController and no timer: if /api/explain
+  // stopped responding the await never settled, the ingestion pipeline stopped
+  // silently, and the job sat at 'processing' with nothing to explain it.
+  // Now always bounded — callers may still tighten or loosen the ceiling.
   const { timeoutMs } = opts;
   const fetchOpts = {
     method: 'POST',
     headers: { 'Content-Type': 'application/json', ...(await _authHeaders()) },
     body: typeof body === 'string' ? body : JSON.stringify(body),
   };
-  let timer = null;
-  if (timeoutMs) {
-    const ctrl = new AbortController();
-    fetchOpts.signal = ctrl.signal;
-    timer = setTimeout(() => ctrl.abort(), timeoutMs);
-  }
   try {
-    const resp = await fetch('/api/explain', fetchOpts);
+    // 90s matches /api/explain's maxDuration in vercel.json — a request that
+    // outlives the function it called can never succeed.
+    const resp = await _fetchWithTimeout('/api/explain', fetchOpts, timeoutMs || 90000);
     if (!resp.ok) {
       let detail = `HTTP ${resp.status}`;
       try { const b = await resp.json(); detail = b?.error?.message || b?.message || detail; } catch {}
@@ -436,10 +436,10 @@ async function explainFetch(body, opts = {}) {
     }
     return await resp.json();
   } catch (e) {
-    if (e?.name === 'AbortError') throw new Error(`Request timed out after ${Math.round((timeoutMs || 0) / 1000)}s`);
+    // The effective ceiling, not `timeoutMs` — which is now optional, so
+    // reporting it directly produced "timed out after 0s" on the default path.
+    if (e?.name === 'AbortError') throw new Error(`Request timed out after ${Math.round((timeoutMs || 90000) / 1000)}s`);
     throw e;
-  } finally {
-    if (timer) clearTimeout(timer);
   }
 }
 

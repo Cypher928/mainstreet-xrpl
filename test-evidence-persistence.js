@@ -118,6 +118,14 @@ const bad = (m, d) => { console.log('  \x1b[31m✗\x1b[0m ' + m + (d ? ' — ' +
   guarded ? ok('a write failure is swallowed — evidence is supporting material, not a gate')
           : bad('a failed evidence write propagated');
 
+  console.log('\n── Networking is consistent ──');
+  const net = fs.readFileSync(path.join(ROOT, 'script.js'), 'utf8');
+  const ef = net.slice(net.indexOf('async function explainFetch'), net.indexOf('const CAM_EXPLAIN_SYSTEM_PROMPT'));
+  /_fetchWithTimeout\('\/api\/explain'/.test(ef)
+    ? ok('explainFetch goes through _fetchWithTimeout like every other Claude call')
+    : bad('explainFetch still calls fetch directly', 'an unbounded request can hang the pipeline');
+  !/await fetch\(/.test(ef) ? ok('no bare fetch left in explainFetch') : bad('a bare fetch remains');
+
   console.log('\n' + (fail ? '\x1b[31m' : '\x1b[32m') + `RESULT: ${pass} passed, ${fail} failed\x1b[0m`);
   await b.close(); srv.close(); process.exit(fail ? 1 : 0);
 })();
