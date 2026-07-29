@@ -20,6 +20,34 @@
   var EXPLORER = 'https://livenet.xrpl.org/transactions/7FA730B2B78819AE34B3D1B458721FBC52B9CD25E980ED42DD1B15E9F9FC724A';
   var ASSET = 'assets/landing/';
 
+  // A visitor arriving from the marketing page is here for the film, not the
+  // product. The app reveals #loginScreen as soon as auth resolves as
+  // signed-out, which paints a password form for a beat before this overlay
+  // mounts over it. Suppress it up front — at script-parse time, well before
+  // auth settles — and lift the suppression the moment they actually choose to
+  // sign in. Scoped to ?demo=1 / ?landing=1 so the normal login path is
+  // untouched.
+  var PREBOOT_ID = 'msl-preboot';
+  (function preboot() {
+    try {
+      var q = new URLSearchParams(location.search);
+      if (q.get('demo') !== '1' && q.get('landing') !== '1') return;
+      var st = document.createElement('style');
+      st.id = PREBOOT_ID;
+      // opacity, NOT display/visibility. The overlay's own trigger waits for
+      // shown(#loginScreen), and shown() tests display and visibility — so
+      // hiding it either of those ways suppresses the flash and the film with
+      // it. Zero opacity paints nothing while leaving the predicate true, so
+      // the overlay still opens the instant auth resolves.
+      st.textContent = '#loginScreen{opacity:0!important;pointer-events:none!important}';
+      (document.head || document.documentElement).appendChild(st);
+    } catch (e) {}
+  })();
+  function liftPreboot() {
+    var st = document.getElementById(PREBOOT_ID);
+    if (st && st.parentNode) st.parentNode.removeChild(st);
+  }
+
   function icon(name) {
     var d = {
       upload:  '<path d="M12 15V4"/><path d="m7.5 8.5 4.5-4.5 4.5 4.5"/><path d="M4 15v3a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2v-3"/>',
@@ -89,125 +117,144 @@
   // ── SCENES — each builds animated real/near-real UI into the frame ─────────
   // dur in ms; total ≈ 40s. Every scene animates; captions are one short line.
   var SCENES = [
-    { id: 'upload', dur: 4600, cap: 'Upload leases and invoices',
+    // Nine beats, ~3.5s each. Each opens already composed — no scene begins on
+    // an empty frame — and each answers "why does this matter" in one line.
+    { id: 'upload', dur: 3400, cap: 'Every lease and invoice, in one place',
       build: function (c) {
         c.innerHTML =
-          '<img class="msl-bg" src="' + ASSET + 'ui-upload.png" alt="">' +
-          '<div class="msl-drop"><div class="msl-drop-ic">' + icon('upload') + '</div><div class="msl-drop-t">Drop files to begin</div>' +
+          '<img class="msl-bg msl-ken" src="' + ASSET + 'ui-upload.png" alt="">' +
+          '<div class="msl-vig"></div>' +
+          '<div class="msl-drop msl-zoomin"><div class="msl-drop-ic">' + icon('upload') + '</div><div class="msl-drop-t">Drop files to begin</div>' +
           '<div class="msl-drop-bar"><i></i></div></div>' +
           '<div class="msl-docs">' +
-            '<div class="msl-doc-fly" style="--d:.1s;--x:-120px">Lease — Whole Health Market.pdf</div>' +
-            '<div class="msl-doc-fly" style="--d:.5s;--x:40px">Invoice — SnowCo.pdf</div>' +
-            '<div class="msl-doc-fly" style="--d:.9s;--x:150px">Invoice — GreenScape.pdf</div>' +
+            '<div class="msl-doc-fly" style="--d:.05s;--x:-130px">Lease — Whole Health Market.pdf</div>' +
+            '<div class="msl-doc-fly" style="--d:.3s;--x:40px">Invoice — Cascade Handyman.pdf</div>' +
+            '<div class="msl-doc-fly" style="--d:.55s;--x:160px">Invoice — Meridian Insurance.pdf</div>' +
           '</div>';
       } },
-    { id: 'ai', dur: 5600, cap: 'AI extracts every lease term',
+
+    // HERO — the cap clause is found. Highlight sweeps the clause, then the
+    // field lands. This is the "AI reads leases" promise, made visible.
+    { id: 'extract', dur: 3900, cap: 'AI reads every clause — and cites it',
       build: function (c) {
         c.innerHTML =
-          '<div class="msl-lease">' +
+          '<div class="msl-lease msl-zoomin">' +
             '<div class="msl-lease-doc">' +
-              ['COMMON AREA MAINTENANCE','Tenant shall pay its pro-rata share of','Common Area costs, not to increase more','than five percent (5%) year-over-year.',
-               'Premises: approximately 4,200 rentable','square feet. Lease type: Triple Net (NNN).','Term: January 2021 through December 2028.']
-              .map(function (ln, i) { return '<div class="msl-ln" style="--d:' + (i * .12) + 's">' + ln + '</div>'; }).join('') +
-              '<div class="msl-hl"></div>' +
+              ['SECTION 6.4  CAP ON COMMON AREA','MAINTENANCE COSTS','Tenant’s Proportionate Share of Common','Area Maintenance Costs payable in respect','of any calendar year shall not increase by','more than five percent (5%) over the amount','payable in the preceding calendar year.']
+              .map(function (ln, i) { return '<div class="msl-ln" style="--d:' + (i * .07) + 's">' + ln + '</div>'; }).join('') +
+              '<div class="msl-hl msl-hl--slow"></div>' +
             '</div>' +
             '<div class="msl-fields">' +
-              [['CAM Cap','5% / yr'],['Leased Sq Ft','4,200'],['Lease Type','NNN'],['Term','2021 – 2028']]
-              .map(function (f, i) { return '<div class="msl-field" style="--d:' + (1 + i * .5) + 's"><span>' + f[0] + '</span><b>' + f[1] + '</b><em class="msl-verify-dot"></em></div>'; }).join('') +
+              [['CAM Cap','5% / yr'],['Base amount','$33,000'],['Leased Sq Ft','9,200'],['Lease Type','NNN']]
+              .map(function (f, i) { return '<div class="msl-field" style="--d:' + (1.15 + i * .28) + 's"><span>' + f[0] + '</span><b>' + f[1] + '</b><em class="msl-verify-dot"></em></div>'; }).join('') +
+              '<div class="msl-cite" style="--d:2.5s">Lease · page 2 · §6.4</div>' +
             '</div>' +
           '</div>';
       } },
-    { id: 'spaces', dur: 5200, cap: 'Every space remembers — one record per suite',
+
+    { id: 'recon', dur: 3600, cap: 'Every charge checked against what the lease allows',
       build: function (c) {
-        var rows = [
-          ['Lease on file', 'NNN · 9,200 sqft · to 2028'],
-          ['2025 CAM', '$34,650 · Ready'],
-          ['Dispute — Cascade Handyman', '$6,051 · docs requested'],
-          ['Documents on file', '7 · photos 2'],
-        ];
+        var rows = [['Whole Health Market', 34650, '−$31,979'], ['Summit Coffee & Provisions', 6696, '−$6,340'],
+                    ['ProActive Physical Therapy', 13780, '−$12,942'], ['FitZone Athletics', 24960, '−$24,288']];
         c.innerHTML =
-          '<div class="msl-stmt">' +
-            '<div class="msl-stmt-head" style="--d:0s"><div><b>Whole Health Market</b><span>Everything about this space, in one place</span></div><div class="msl-stmt-badge">Space</div></div>' +
-            rows.map(function (it, i) { return '<div class="msl-stmt-row" style="--d:' + (0.4 + i * 0.32) + 's"><span>' + it[0] + '</span><b>' + it[1] + '</b></div>'; }).join('') +
-            '<div class="msl-stmt-cite" style="--d:2s">Grounded in the documents behind it — nothing lives in email.</div>' +
-          '</div>';
-      } },
-    { id: 'recon', dur: 5600, cap: 'CAM allocated across every tenant',
-      build: function (c) {
-        var rows = [['Summit Coffee & Provisions', 34861], ['Whole Health Market', 41204], ['Harbor Nail & Beauty', 18940], ['Gamma Books', 12233]];
-        c.innerHTML =
-          '<div class="msl-alloc">' +
-            '<div class="msl-alloc-head"><span>Tenant</span><span>CAM Share</span></div>' +
-            rows.map(function (r, i) { return '<div class="msl-arow" style="--d:' + (i * .28) + 's"><span>' + r[0] + '</span><b data-v="' + r[1] + '">$0</b></div>'; }).join('') +
-            '<div class="msl-arow msl-atotal" style="--d:1.5s"><span>Total allocated</span><b data-v="107238">$0</b></div>' +
+          '<div class="msl-alloc msl-zoomin">' +
+            '<div class="msl-alloc-head"><span>Tenant</span><span>Cap adj</span><span>Allocated</span></div>' +
+            rows.map(function (r, i) {
+              return '<div class="msl-arow msl-arow--3" style="--d:' + (i * .2) + 's"><span>' + r[0] + '</span>' +
+                     '<em class="msl-capadj">' + r[2] + '</em><b data-v="' + r[1] + '">$0</b></div>'; }).join('') +
+            '<div class="msl-arow msl-arow--3 msl-atotal" style="--d:1.1s"><span>Caps enforced</span><em class="msl-capadj">−$75,549</em><b data-v="80086">$0</b></div>' +
           '</div>';
         setTimeout(function () {
-          c.querySelectorAll('[data-v]').forEach(function (b, i) { setTimeout(function () { countUp(b, +b.dataset.v, 900, '$'); }, i * 240); });
-        }, reduce() ? 0 : 300);
+          c.querySelectorAll('[data-v]').forEach(function (b, i) { setTimeout(function () { countUp(b, +b.dataset.v, 700, '$'); }, i * 170); });
+        }, reduce() ? 0 : 260);
       } },
-    { id: 'recover', dur: 5000, cap: 'Recovered revenue, surfaced',
+
+    // HERO — the money. Everything else dims; the number resolves out of blur.
+    { id: 'recover', dur: 3800, cap: 'Revenue you were entitled to recover',
       build: function (c) {
         c.innerHTML =
-          '<img class="msl-bg msl-bg-dim" src="' + ASSET + 'ui-command-center.png" alt="">' +
+          '<img class="msl-bg msl-bg-dim msl-ken" src="' + ASSET + 'ui-command-center.png" alt="">' +
+          '<div class="msl-vig msl-vig--tight"></div>' +
           '<div class="msl-spot"></div>' +
-          '<div class="msl-bignum"><div class="msl-bignum-v" id="mslRecover">$0</div><div class="msl-bignum-l">Recoverable revenue identified</div></div>';
-        setTimeout(function () { countUp(document.getElementById('mslRecover'), 99542, 1500, '$'); }, reduce() ? 0 : 500);
+          '<div class="msl-bignum msl-blin"><div class="msl-bignum-v" id="mslRecover">$0</div>' +
+            '<div class="msl-bignum-l">Recoverable revenue identified</div>' +
+            '<div class="msl-bignum-sub" style="--d:1.9s">Cap enforcement · exclusions · unbilled vacancy</div></div>';
+        setTimeout(function () { countUp(document.getElementById('mslRecover'), 99542, 1400, '$'); }, reduce() ? 0 : 420);
       } },
-    { id: 'timeline', dur: 4800, cap: 'Everything that happens, remembered — the Property Timeline',
+
+    // HERO — the Space. The product's central idea: one record per suite.
+    { id: 'space', dur: 3800, cap: 'Open a space — its whole history is there',
       build: function (c) {
-        var events = ['Lease uploaded', 'CAM reconciled', 'Dispute resolved', 'Settlement verified'];
+        var rows = [['Lease on file', 'NNN · 9,200 sqft · to 2028'],
+                    ['2025 CAM', '$34,650 · Ready'],
+                    ['Dispute — Cascade Handyman', '$6,051 · docs requested'],
+                    ['Documents · photos', '7 · 2']];
         c.innerHTML =
-          '<div class="msl-settle">' +
-            '<div class="msl-settle-amt" style="font-size:1.05rem;letter-spacing:.08em;">PROPERTY TIMELINE</div>' +
-            '<div class="msl-steps">' + events.map(function (s2, i) {
-              return '<div class="msl-sstep2" style="--d:' + (0.4 + i * 0.65) + 's"><span class="msl-scheck">' + icon('verify') + '</span><span>' + s2 + '</span></div>' +
-                (i < events.length - 1 ? '<div class="msl-sline" style="--d:' + (0.75 + i * 0.65) + 's"></div>' : '');
+          '<div class="msl-stmt msl-zoomin">' +
+            '<div class="msl-stmt-head" style="--d:0s"><div><b>📍 Whole Health Market</b><span>Everything about this space, in one place</span></div><div class="msl-stmt-badge">Space</div></div>' +
+            rows.map(function (it, i) { return '<div class="msl-stmt-row" style="--d:' + (0.35 + i * 0.24) + 's"><span>' + it[0] + '</span><b>' + it[1] + '</b></div>'; }).join('') +
+            '<div class="msl-stmt-cite" style="--d:1.6s">Grounded in the documents behind it — not in an inbox.</div>' +
+          '</div>';
+      } },
+
+    // HERO — the answer arrives with its citation, not just a number.
+    { id: 'ask', dur: 3800, cap: 'Ask anything — every answer cites its source',
+      build: function (c) {
+        var hits = [['Whole Health Market', '5% cap · p.2 §6.4'],
+                    ['Summit Coffee & Provisions', '8% cap · p.3'],
+                    ['FitZone Athletics', '4% cap · p.2']];
+        c.innerHTML =
+          '<img class="msl-bg msl-bg-dim msl-ken" src="' + ASSET + 'ui-workspace.png" alt="">' +
+          '<div class="msl-vig"></div>' +
+          '<div class="msl-stmt msl-zoomin">' +
+            '<div class="msl-stmt-head" style="--d:0s"><div><b>Ask MainStreet AI</b><span class="msl-askq" id="mslAskQ">&nbsp;</span></div><div class="msl-stmt-badge">Cited</div></div>' +
+            hits.map(function (it, i) { return '<div class="msl-stmt-row" style="--d:' + (1.5 + i * 0.28) + 's"><span>' + it[0] + '</span><b>' + it[1] + '</b></div>'; }).join('') +
+            '<div class="msl-stmt-cite" style="--d:2.5s">Answers come from your documents — never from guesswork.</div>' +
+          '</div>';
+        typeInto(c.querySelector('#mslAskQ'), 'Which tenants have CAM caps?', 30);
+      } },
+
+    // HERO — memory. Events accrue down the frame as time compresses.
+    { id: 'timeline', dur: 3400, cap: 'Every property keeps a living memory',
+      build: function (c) {
+        var ev = [['Lease uploaded', 'Jan 4'], ['CAM reconciliation run', 'Jan 31'],
+                  ['Dispute opened — Cascade Handyman', 'Feb 2'], ['Settlement completed', 'Feb 9']];
+        c.innerHTML =
+          '<div class="msl-tl msl-zoomin">' +
+            '<div class="msl-tl-h">Property Timeline</div>' +
+            '<div class="msl-tl-rail"></div>' +
+            ev.map(function (e, i) {
+              return '<div class="msl-tl-row" style="--d:' + (0.3 + i * 0.45) + 's">' +
+                     '<span class="msl-tl-dot"></span><span class="msl-tl-t">' + e[0] + '</span><em>' + e[1] + '</em></div>'; }).join('') +
+            '<div class="msl-stmt-cite" style="--d:2.3s">Nothing is lost when someone leaves the company.</div>' +
+          '</div>';
+      } },
+
+    { id: 'settle', dur: 3400, cap: 'Settled in RLUSD on the XRP Ledger',
+      build: function (c) {
+        var steps = ['Tenant pays', 'Settled in RLUSD', 'Written to the ledger'];
+        c.innerHTML =
+          '<div class="msl-settle msl-zoomin">' +
+            '<div class="msl-settle-amt" id="mslAmt">$34,650</div>' +
+            '<div class="msl-steps">' + steps.map(function (s2, i) {
+              return '<div class="msl-sstep2" style="--d:' + (0.35 + i * 0.55) + 's"><span class="msl-scheck">' + icon('verify') + '</span><span>' + s2 + '</span></div>' +
+                (i < steps.length - 1 ? '<div class="msl-sline" style="--d:' + (0.6 + i * 0.55) + 's"></div>' : '');
             }).join('') + '</div>' +
           '</div>';
       } },
-    { id: 'workspace', dur: 5400, cap: 'Ask anything — answers grounded in your records',
-      build: function (c) {
-        var hits = [
-          ['Whole Health Market', '5% cap · lease p.2, §6.4'],
-          ['Summit Coffee & Provisions', '8% cap · lease p.3'],
-          ['FitZone Athletics', '4% cap · lease p.2'],
-        ];
-        c.innerHTML =
-          '<img class="msl-bg msl-bg-dim" src="' + ASSET + 'ui-workspace.png" alt="">' +
-          '<div class="msl-stmt">' +
-            '<div class="msl-stmt-head" style="--d:0s"><div><b>Ask MainStreet AI</b><span id="mslAskQ">&nbsp;</span></div><div class="msl-stmt-badge">Cited</div></div>' +
-            hits.map(function (it, i) { return '<div class="msl-stmt-row" style="--d:' + (1.4 + i * 0.35) + 's"><span>' + it[0] + '</span><b>' + it[1] + '</b></div>'; }).join('') +
-            '<div class="msl-stmt-cite" style="--d:2.8s">Every answer cites the document it came from.</div>' +
-          '</div>';
-        typeInto(c.querySelector('#mslAskQ'), 'Which tenants have CAM caps?', 26);
-      } },
-    { id: 'settle', dur: 5200, cap: 'Settled in RLUSD on the XRP Ledger',
-      build: function (c) {
-        var steps = ['Tenant pays', 'Settled in RLUSD', 'On the XRP Ledger', 'Verified on-ledger'];
-        c.innerHTML =
-          '<div class="msl-settle">' +
-            '<div class="msl-settle-amt" id="mslAmt">1 RLUSD</div>' +
-            '<div class="msl-steps">' + steps.map(function (s, i) {
-              return '<div class="msl-sstep2" style="--d:' + (0.5 + i * 0.7) + 's"><span class="msl-scheck">' + icon('verify') + '</span><span>' + s + '</span></div>' +
-                (i < steps.length - 1 ? '<div class="msl-sline" style="--d:' + (0.9 + i * 0.7) + 's"></div>' : '');
-            }).join('') + '</div>' +
-          '</div>';
-      } },
-    { id: 'verify', dur: 5400, cap: 'Verified on-chain — public proof', end: true,
+
+    // HERO — the close. Public proof anyone can check.
+    { id: 'verify', dur: 3600, cap: 'Verified on-chain — proof anyone can check', end: true,
       build: function (c) {
         c.innerHTML =
-          '<div class="msl-onchain">' +
+          '<div class="msl-onchain msl-zoomin">' +
             '<div class="msl-check-big">' + icon('verify') + '</div>' +
             '<div class="msl-oc-title">tesSUCCESS · XRPL mainnet</div>' +
             '<div class="msl-oc-rows">' +
-              '<div class="msl-oc-r"><span>Transaction</span><b id="mslTx">—</b></div>' +
-              '<div class="msl-oc-r"><span>Source Tag</span><b id="mslTag">—</b></div>' +
-              '<div class="msl-oc-r"><span>Memo</span><b id="mslMemo">—</b></div>' +
+              [['Amount', '$34,650 RLUSD'], ['Ledger', 'validated'], ['Proof', 'publicly verifiable']]
+              .map(function (r, i) { return '<div class="msl-oc-r" style="--d:' + (0.5 + i * 0.3) + 's"><span>' + r[0] + '</span><b>' + r[1] + '</b></div>'; }).join('') +
             '</div>' +
           '</div>';
-        setTimeout(function () { typeInto(document.getElementById('mslTx'), '7FA730B2…F9FC724A', 26); }, reduce() ? 0 : 700);
-        setTimeout(function () { typeInto(document.getElementById('mslTag'), '2606290001', 40); }, reduce() ? 0 : 1500);
-        setTimeout(function () { typeInto(document.getElementById('mslMemo'), 'SHA-256 · 0025F7…FA341', 30); }, reduce() ? 0 : 2100);
       } },
   ];
 
@@ -284,6 +331,41 @@
       '.msl-bg{position:absolute;inset:0;width:100%;height:100%;object-fit:cover;object-position:top;}',
       '.msl-bg-dim{filter:brightness(.4) saturate(.9);}',
       '.msl-cap{margin:26px 0 0;font-size:clamp(1.05rem,2.2vw,1.5rem);font-weight:600;letter-spacing:-.02em;color:var(--pa);text-align:center;min-height:1.6em;transition:opacity .38s ease,transform .38s cubic-bezier(.2,.7,.2,1);}',
+      // ── Cinematic primitives ────────────────────────────────────────────
+      // One easing curve carries the whole film: expo-out. Motion decelerates
+      // hard into place, which is what separates "composed" from "slid in".
+      '.msl-cine{--ez:cubic-bezier(.16,1,.3,1);}',
+      // Ken Burns: the frame is never perfectly still, so a scene reads as a
+      // shot rather than a slide.
+      '.msl-ken{animation:mslKen 9s ease-out both;}',
+      '@keyframes mslKen{from{transform:scale(1.06)}to{transform:scale(1.13)}}',
+      // Vignette + spotlight darken the periphery so the eye lands on the
+      // subject instead of scanning the whole UI equally.
+      '.msl-vig{position:absolute;inset:0;pointer-events:none;background:radial-gradient(ellipse at 50% 46%,transparent 34%,rgba(0,0,0,.55) 78%,rgba(0,0,0,.82) 100%);}',
+      '.msl-vig--tight{background:radial-gradient(ellipse at 50% 46%,transparent 18%,rgba(0,0,0,.72) 62%,rgba(0,0,0,.92) 100%);}',
+      // Every scene enters already composed — scaled and settling, never empty.
+      '.msl-zoomin{animation:mslZoomIn .9s var(--ez,cubic-bezier(.16,1,.3,1)) both;}',
+      '@keyframes mslZoomIn{from{opacity:0;transform:scale(.965) translateY(10px)}to{opacity:1;transform:none}}',
+      // Hero numbers resolve out of blur — the "celebrate it" treatment.
+      '.msl-blin{animation:mslBlurIn 1.1s var(--ez,cubic-bezier(.16,1,.3,1)) both;}',
+      '@keyframes mslBlurIn{from{opacity:0;filter:blur(14px);transform:scale(.94)}to{opacity:1;filter:blur(0);transform:none}}',
+      '.msl-bignum-sub{margin-top:10px;font-size:.82rem;letter-spacing:.05em;text-transform:uppercase;color:var(--mut);opacity:0;animation:mslUp .7s var(--ez,ease) both;animation-delay:var(--d,0s);}',
+      // The clause highlight sweeps slowly enough to read.
+      '.msl-hl--slow{animation-duration:1.5s!important;}',
+      '.msl-cite{margin-top:12px;font-size:.75rem;letter-spacing:.06em;text-transform:uppercase;color:var(--gold);opacity:0;animation:mslUp .6s var(--ez,ease) both;animation-delay:var(--d,0s);}',
+      '.msl-askq{color:var(--gold);}',
+      // Reconciliation gains a third column so the cap adjustment is visible —
+      // the saving is the story, not the allocated figure.
+      '.msl-arow--3{grid-template-columns:1fr auto auto;gap:18px;}',
+      '.msl-capadj{color:#7BE3A6;font-style:normal;font-weight:600;font-size:.9rem;}',
+      // Property Timeline: events accrue down a rail as time compresses.
+      '.msl-tl{position:relative;width:min(660px,90vw);padding:22px 26px;border-radius:14px;background:rgba(255,255,255,.03);border:1px solid rgba(255,255,255,.08);}',
+      '.msl-tl-h{font-size:.72rem;letter-spacing:.16em;text-transform:uppercase;color:var(--mut);margin-bottom:16px;}',
+      '.msl-tl-rail{position:absolute;left:34px;top:56px;bottom:52px;width:1px;background:linear-gradient(180deg,transparent,rgba(216,184,114,.5),transparent);}',
+      '.msl-tl-row{display:grid;grid-template-columns:auto 1fr auto;align-items:center;gap:12px;padding:9px 0;opacity:0;animation:mslUp .6s var(--ez,ease) both;animation-delay:var(--d,0s);}',
+      '.msl-tl-dot{width:9px;height:9px;border-radius:50%;background:var(--gold);box-shadow:0 0 0 4px rgba(216,184,114,.14);}',
+      '.msl-tl-t{color:var(--pa);font-weight:600;font-size:.95rem;}',
+      '.msl-tl-row em{font-style:normal;color:var(--mut);font-size:.82rem;}',
       '.msl-timeline{display:flex;gap:5px;width:min(880px,94vw);margin:18px 0 0;}',
       '.msl-tseg{flex:1;height:2px;border-radius:2px;background:rgba(255,255,255,.12);overflow:hidden;}',
       '.msl-tseg-f{height:100%;width:0;background:var(--gold);}',
@@ -497,6 +579,7 @@
   function show() { build(); root.classList.add('msl-on'); root.style.display = 'block'; document.body.style.overflow = 'hidden'; }
   function hide() { stopDemo(); if (root) { root.classList.remove('msl-on'); root.style.display = 'none'; } document.body.style.overflow = ''; }
   function enterApp(tab) {
+    liftPreboot();   // they chose the product — the login screen is wanted now
     hide();
     try {
       var login = document.getElementById('loginScreen'); if (login) login.style.display = 'flex';
