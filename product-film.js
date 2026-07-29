@@ -67,33 +67,39 @@
     settle:'mainstreetcam.com/settlement', verify:'livenet.xrpl.org' };
 
   var SCENES = [
-    // Ten beats, 43.4s. Hero beats (extract / recover / ask / verify) run ~5.2s
-    // so they breathe; connective beats run 3.6-4.4s. `fw` is that scene's
-    // composition width — each is framed for what should dominate it rather
-    // than a uniform fill, so nothing reads cropped or oversized. `vo` is the
-    // narration line for the launch cut; see NARRATION below. No synthetic
-    // voice is played.
-    { id: 'upload', dur: 4000, fw: 780, cap: 'Every lease and invoice, in one place',
+    // The application is the base layer of every beat: real screenshots of the
+    // shipping product, with animation layered on top to direct the eye. The
+    // previous pass composed minimal cards on black, which read as title slides
+    // rather than software doing work.
+    //
+    // `fw` is the composition width of the overlay content for that beat. `vo`
+    // is the narration line for the launch cut; nothing is spoken.
+    { id: 'upload', dur: 4000, fw: 780, cap: 'It starts reading the moment a lease lands',
       vo: 'It starts with what you already have. Leases, invoices, statements.',
       build: function (c) {
         c.innerHTML =
-          '<img class="msl-bg msl-ken" src="' + ASSET + 'ui-upload.png" alt="">' +
+          '<img class="pf-shot pf-ken" src="' + ASSET + 'ui-upload.png" alt="">' +
           '<div class="msl-vig"></div>' +
-          '<div class="msl-drop msl-zoomin"><div class="msl-drop-ic">' + icon('upload') + '</div><div class="msl-drop-t">Drop files to begin</div>' +
-          '<div class="msl-drop-bar"><i></i></div></div>' +
           '<div class="msl-docs">' +
             '<div class="msl-doc-fly" style="--d:.05s;--x:-150px">Lease — Whole Health Market.pdf</div>' +
-            '<div class="msl-doc-fly" style="--d:.35s;--x:40px">Invoice — Cascade Handyman.pdf</div>' +
-            '<div class="msl-doc-fly" style="--d:.65s;--x:180px">Invoice — Meridian Insurance.pdf</div>' +
+            '<div class="msl-doc-fly" style="--d:.3s;--x:40px">Invoice — Cascade Handyman.pdf</div>' +
+            '<div class="msl-doc-fly" style="--d:.55s;--x:180px">Invoice — Meridian Insurance.pdf</div>' +
+          '</div>' +
+          // The emphasis is the AI starting work, not the drop target.
+          '<div class="pf-worker" style="--d:1.1s">' +
+            '<span class="pf-pulse"></span>' +
+            '<span class="pf-worker-t">Reading 3 documents · extracting lease terms</span>' +
+            '<span class="pf-worker-bar"><i></i></span>' +
           '</div>';
       } },
 
-    // HERO — the clause is found and cited. Wide: the document and the fields
-    // it produces have to sit side by side for the causation to read.
-    { id: 'extract', dur: 5200, fw: 940, cap: 'AI reads every clause — and cites it',
+    // HERO — the clause and the fields it produces, side by side, over the app.
+    { id: 'extract', dur: 5200, fw: 960, cap: 'AI reads every clause — and cites it',
       vo: 'MainStreet reads every clause, and tells you which page it came from.',
       build: function (c) {
         c.innerHTML =
+          '<img class="pf-shot pf-shot--dim pf-ken" src="' + ASSET + 'ui-workspace.png" alt="">' +
+          '<div class="msl-vig"></div>' +
           '<div class="msl-lease msl-zoomin">' +
             '<div class="msl-lease-doc">' +
               ['SECTION 6.4  CAP ON COMMON','AREA MAINTENANCE COSTS','','Tenant’s Proportionate Share of','Common Area Maintenance Costs','payable in respect of any calendar','year shall not increase by more than','five percent (5%) over the amount','payable in the preceding year.']
@@ -108,108 +114,100 @@
           '</div>';
       } },
 
-    // The saving is the story. "Prevented by cap" replaces "CAP ADJ", the green
-    // figures count up in sequence, and one plain sentence lands the point.
-    { id: 'recon', dur: 4400, fw: 820, cap: 'Every charge checked against what the lease allows',
+    // The REAL reconciliation table, with the real figures the engine computed.
+    // A focus band sweeps down the prevented-by-cap column so the eye lands on
+    // the savings rather than scanning the whole grid.
+    { id: 'recon', dur: 4400, fw: 900, cap: 'Every charge checked against what the lease allows',
       vo: 'Every charge is checked against what the lease actually permits.',
       build: function (c) {
-        var rows = [['Whole Health Market', 31979, 34650], ['Summit Coffee & Provisions', 6340, 6696],
-                    ['ProActive Physical Therapy', 12942, 13780], ['FitZone Athletics', 24288, 24960]];
         c.innerHTML =
-          '<div class="msl-alloc msl-zoomin">' +
-            '<div class="msl-alloc-head msl-arow--3"><span>Tenant</span><span>Prevented by cap</span><span>Billed</span></div>' +
-            rows.map(function (r, i) {
-              return '<div class="msl-arow msl-arow--3" style="--d:' + (i * .18) + 's"><span>' + r[0] + '</span>' +
-                     '<em class="msl-capadj" data-p="' + r[1] + '">−$0</em><b>$' + r[2].toLocaleString('en-US') + '</b></div>'; }).join('') +
-            '<div class="msl-alloc-note" style="--d:2.4s"><b>$75,549</b> in charges the lease didn’t allow — caught before billing.</div>' +
-          '</div>';
-        setTimeout(function () {
-          c.querySelectorAll('[data-p]').forEach(function (el, i) {
-            setTimeout(function () { countUp(el, +el.dataset.p, 620, '−$'); }, i * 260);
-          });
-        }, reduce() ? 0 : 380);
+          '<img class="pf-shot pf-shot--sharp msl-zoomin" src="' + ASSET + 'beat1-cap-catch.png" alt="">' +
+          '<div class="pf-focus" style="--d:1.0s;--fx:58%;--fw2:19%"></div>' +
+          '<div class="pf-callout pf-callout--top" style="--d:1.9s">Prevented by lease caps</div>' +
+          '<div class="pf-total" style="--d:2.9s"><b>$75,549</b> the lease didn’t allow — caught before billing</div>';
       } },
 
-    // HERO — the money. No competing background: the Command Center render has
-    // its own "$99,542" in it, and two of the same number in one frame reads as
-    // a rendering fault. Just the number, on black, out of blur.
+    // HERO — the money, over the Command Center it was computed in.
     { id: 'recover', dur: 5200, fw: 700, cap: 'Revenue you were entitled to recover',
       vo: 'And it finds the revenue you were entitled to recover.',
       build: function (c) {
         c.innerHTML =
+          '<img class="pf-shot pf-shot--deep pf-ken" src="' + ASSET + 'ui-command-center.png" alt="">' +
+          '<div class="msl-vig msl-vig--tight"></div>' +
           '<div class="msl-spot msl-spot--center"></div>' +
           '<div class="msl-bignum msl-bignum--center msl-blin">' +
-            '<div class="msl-bignum-v" id="mslRecover">$0</div>' +
+            '<div class="msl-bignum-v" id="pfRecover">$0</div>' +
             '<div class="msl-bignum-l">Recoverable revenue identified</div>' +
             '<div class="msl-bignum-sub" style="--d:2.4s">Cap enforcement · exclusions · unbilled vacancy</div>' +
           '</div>';
-        setTimeout(function () { countUp(document.getElementById('mslRecover'), 99542, 1600, '$'); }, reduce() ? 0 : 480);
+        setTimeout(function () { countUp(document.getElementById('pfRecover'), 99542, 1600, '$'); }, reduce() ? 0 : 480);
       } },
 
-    { id: 'space', dur: 4400, fw: 720, cap: 'Open a space — its whole history is there',
+    // HERO — the REAL Space, with callouts pinned to what matters in it.
+    { id: 'space', dur: 4600, fw: 900, cap: 'Open a space — its whole history is there',
       vo: 'Open any space, and its whole history is already there.',
       build: function (c) {
-        var rows = [['Lease on file', 'NNN · 9,200 sqft · to 2028'],
-                    ['2025 CAM', '$34,650 · Ready'],
-                    ['Dispute — Cascade Handyman', '$6,051 · docs requested'],
-                    ['Documents · photos', '7 · 2']];
         c.innerHTML =
-          '<div class="msl-stmt msl-zoomin">' +
-            '<div class="msl-stmt-head" style="--d:0s"><div><b>📍 Whole Health Market</b><span>Everything about this space, in one place</span></div><div class="msl-stmt-badge">Space</div></div>' +
-            rows.map(function (it, i) { return '<div class="msl-stmt-row" style="--d:' + (0.4 + i * 0.26) + 's"><span>' + it[0] + '</span><b>' + it[1] + '</b></div>'; }).join('') +
-            '<div class="msl-stmt-cite" style="--d:1.8s">Grounded in the documents behind it — not in an inbox.</div>' +
+          '<img class="pf-shot pf-shot--sharp pf-shot--top msl-zoomin" src="' + ASSET + 'ui-space-modal.png" alt="">' +
+          '<div class="pf-edge"></div>' +
+          '<div class="pf-pins">' +
+            [['Lease on file', '.9s'], ['CAM allocated · Ready', '1.5s'], ['Open dispute', '2.1s'], ['Documents & photos', '2.7s']]
+            .map(function (p2, i) { return '<div class="pf-pin" style="--d:' + p2[1] + '"><span class="pf-pin-dot"></span>' + p2[0] + '</div>'; }).join('') +
           '</div>';
       } },
 
-    // HERO — the citation is the payoff, not the answer.
-    { id: 'ask', dur: 5200, fw: 760, cap: 'Ask anything — every answer cites its source',
+    // HERO — the REAL AI workspace, question typed in, citations landing.
+    { id: 'ask', dur: 5200, fw: 820, cap: 'Ask anything — every answer cites its source',
       vo: 'Ask anything. Every answer cites the document it came from.',
       build: function (c) {
         var hits = [['Whole Health Market', '5% cap · p.2 §6.4'],
                     ['Summit Coffee & Provisions', '8% cap · p.3'],
                     ['FitZone Athletics', '4% cap · p.2']];
         c.innerHTML =
+          '<img class="pf-shot pf-shot--dim pf-ken" src="' + ASSET + 'ui-workspace.png" alt="">' +
           '<div class="msl-vig"></div>' +
-          '<div class="msl-stmt msl-zoomin">' +
-            '<div class="msl-stmt-head" style="--d:0s"><div><b>Ask MainStreet AI</b><span class="msl-askq" id="mslAskQ">&nbsp;</span></div><div class="msl-stmt-badge">Cited</div></div>' +
-            hits.map(function (it, i) { return '<div class="msl-stmt-row" style="--d:' + (1.9 + i * 0.3) + 's"><span>' + it[0] + '</span><b>' + it[1] + '</b></div>'; }).join('') +
-            '<div class="msl-stmt-cite" style="--d:3.2s">Answers come from your documents — never from guesswork.</div>' +
+          '<div class="pf-ask msl-zoomin">' +
+            '<div class="pf-ask-bar"><span class="pf-ask-q" id="pfAskQ">&nbsp;</span><span class="pf-ask-go">Ask</span></div>' +
+            '<div class="pf-ask-rows">' +
+              hits.map(function (it, i) {
+                return '<div class="pf-ask-row" style="--d:' + (1.9 + i * 0.3) + 's">' +
+                       '<span>' + it[0] + '</span><b>' + it[1] + '</b>' +
+                       '<em class="pf-chip">cited</em></div>'; }).join('') +
+            '</div>' +
+            '<div class="msl-stmt-cite" style="--d:3.3s">Answers come from your documents — never from guesswork.</div>' +
           '</div>';
-        typeInto(c.querySelector('#mslAskQ'), 'Which tenants have CAM caps?', 26);
+        typeInto(c.querySelector('#pfAskQ'), 'Which tenants have CAM caps?', 26);
       } },
 
-    { id: 'timeline', dur: 4200, fw: 700, cap: 'Every property keeps a living memory',
+    { id: 'timeline', dur: 4200, fw: 720, cap: 'Every property keeps a living memory',
       vo: 'And every property keeps a living memory of what happened to it.',
       build: function (c) {
         var ev = [['Lease uploaded', 'Jan 4'], ['CAM reconciliation run', 'Jan 31'],
                   ['Dispute opened — Cascade Handyman', 'Feb 2'], ['Settlement completed', 'Feb 9']];
         c.innerHTML =
+          '<img class="pf-shot pf-shot--deep pf-ken" src="' + ASSET + 'ui-command-center.png" alt="">' +
+          '<div class="msl-vig"></div>' +
           '<div class="msl-tl msl-zoomin">' +
             '<div class="msl-tl-h">Property Timeline</div>' +
             '<div class="msl-tl-rail"></div>' +
             ev.map(function (e, i) {
               return '<div class="msl-tl-row" style="--d:' + (0.35 + i * 0.5) + 's">' +
                      '<span class="msl-tl-dot"></span><span class="msl-tl-t">' + e[0] + '</span><em>' + e[1] + '</em></div>'; }).join('') +
-            '<div class="msl-stmt-cite" style="--d:2.6s">Nothing is lost when someone leaves the company.</div>' +
+            '<div class="msl-stmt-cite" style="--d:2.7s">Nothing is lost when someone leaves the company.</div>' +
           '</div>';
       } },
 
-    { id: 'settle', dur: 3600, fw: 620, cap: 'Settled in RLUSD on the XRP Ledger',
+    // The REAL settlement row from the product.
+    { id: 'settle', dur: 3600, fw: 820, cap: 'Settled in RLUSD on the XRP Ledger',
       vo: 'Balances settle in RLUSD on the XRP Ledger.',
       build: function (c) {
-        var steps = ['Tenant pays', 'Settled in RLUSD', 'Written to the ledger'];
         c.innerHTML =
-          '<div class="msl-settle msl-zoomin">' +
-            '<div class="msl-settle-amt" id="mslAmt">$34,650</div>' +
-            '<div class="msl-steps">' + steps.map(function (s2, i) {
-              return '<div class="msl-sstep2" style="--d:' + (0.35 + i * 0.6) + 's"><span class="msl-scheck">' + icon('verify') + '</span><span>' + s2 + '</span></div>' +
-                (i < steps.length - 1 ? '<div class="msl-sline" style="--d:' + (0.62 + i * 0.6) + 's"></div>' : '');
-            }).join('') + '</div>' +
-          '</div>';
+          '<img class="pf-shot pf-shot--sharp msl-zoomin" src="' + ASSET + 'ui-settlement.png" alt="">' +
+          '<div class="pf-focus pf-focus--wide" style="--d:.9s;--fx:50%;--fw2:64%"></div>' +
+          '<div class="pf-callout" style="--d:1.8s">Verified on-ledger · publicly checkable</div>';
       } },
 
-    // HERO — public proof. Bigger than before: the verification should be the
-    // largest thing on screen, not smaller than its own caption.
+    // HERO — public proof.
     { id: 'verify', dur: 4400, fw: 660, cap: 'Verified on-chain — proof anyone can check',
       vo: 'Verified on-chain. Proof anyone can check.',
       build: function (c) {
@@ -224,17 +222,14 @@
           '</div>';
       } },
 
-    // CLOSE — the last impression is MainStreet's value, with the ledger proof
-    // reduced to a footnote beneath it. Ending on the XRPL screen alone left the
-    // film feeling like a blockchain demo rather than a property product.
-    { id: 'brand', dur: 3200, fw: 760, cap: '', end: true,
+    { id: 'brand', dur: 3400, fw: 760, cap: '', end: true,
       vo: 'MainStreet. The verified memory for every commercial property.',
       build: function (c) {
         c.innerHTML =
           '<div class="msl-close">' +
             '<div class="msl-close-mark msl-blin">Main<span>Street</span></div>' +
             '<div class="msl-close-line" style="--d:.7s">The verified memory for<br><em>every commercial property.</em></div>' +
-            '<div class="msl-close-proof" style="--d:1.5s"><span class="msl-close-dot"></span>Settlement verified on the XRP Ledger</div>' +
+            '<div class="msl-close-proof" style="--d:1.6s"><span class="msl-close-dot"></span>Settlement verified on the XRP Ledger</div>' +
           '</div>';
       } },
   ];
@@ -262,25 +257,111 @@
   function injectStyles() {
     if (document.getElementById(STYLE_ID)) return;
     var css = [
+      // Design tokens. These were scoped to #msLanding; the film layer needs its
+      // own copy or every var(--pa)/var(--mut)/var(--gold) in the scene CSS below
+      // resolves to nothing — which is exactly why the Spaces and Ask AI beats
+      // rendered blank and the reconciliation table showed no data.
+      // The application, full-bleed, as the base of a beat. pf-shot--sharp keeps a
+      // screenshot legible (it IS the subject); --dim / --deep push it back when
+      // an overlay is the subject and the app is context.
+      '.pf-shot{position:absolute;inset:0;width:100%;height:100%;object-fit:cover;object-position:center;}',
+      '.pf-shot--sharp{object-fit:contain;opacity:1;}',
+      '.pf-shot--top{object-fit:cover;object-position:top center;}',
+      '.pf-shot--dim{opacity:.34;filter:blur(1px) saturate(.85);}',
+      '.pf-shot--deep{opacity:.20;filter:blur(2px) saturate(.8);}',
+      '.pf-ken{animation:pfKen 10s ease-out both;}',
+      '@keyframes pfKen{from{transform:scale(1.04)}to{transform:scale(1.11)}}',
+      // A vertical focus band that dims everything except one column of the
+      // screenshot — how the eye is directed at the savings column.
+      '.pf-focus{position:absolute;inset:0;pointer-events:none;opacity:0;',
+      '  background:linear-gradient(90deg,rgba(5,7,9,.74) 0,rgba(5,7,9,.74) calc(var(--fx) - var(--fw2)/2),',
+      '    transparent calc(var(--fx) - var(--fw2)/2),transparent calc(var(--fx) + var(--fw2)/2),',
+      '    rgba(5,7,9,.74) calc(var(--fx) + var(--fw2)/2),rgba(5,7,9,.74) 100%);',
+      '  animation:mslFade .9s var(--ez) both;animation-delay:var(--d,0s);}',
+      '.pf-focus--wide{background:radial-gradient(ellipse at var(--fx) 50%,transparent 26%,rgba(5,7,9,.78) 68%);}',
+      '.pf-callout{position:absolute;left:50%;bottom:12%;transform:translateX(-50%);padding:8px 16px;border-radius:999px;',
+      '  background:rgba(52,192,138,.14);border:1px solid rgba(52,192,138,.4);color:#7BE3A6;',
+      '  font-size:.82rem;font-weight:700;letter-spacing:.04em;white-space:nowrap;opacity:0;',
+      '  animation:mslUp .7s var(--ez) both;animation-delay:var(--d,0s);}',
+      // Above the frame, clear of the table header it used to sit on top of.
+      '.pf-callout--top{bottom:auto;top:4%;}',
+      '.pf-total{position:absolute;left:50%;bottom:5%;transform:translateX(-50%);font-size:1rem;color:var(--pa);',
+      '  opacity:0;animation:mslUp .8s var(--ez) both;animation-delay:var(--d,0s);white-space:nowrap;}',
+      '.pf-total b{color:#7BE3A6;font-size:1.25rem;}',
+      // The "AI is working" affordance for the upload beat — the emphasis is the
+      // reading, not the drop target.
+      '.pf-worker{position:absolute;left:50%;bottom:13%;transform:translateX(-50%);display:flex;align-items:center;gap:12px;',
+      '  padding:12px 20px;border-radius:14px;background:rgba(8,11,18,.86);border:1px solid rgba(201,151,58,.32);',
+      '  opacity:0;animation:mslUp .8s var(--ez) both;animation-delay:var(--d,0s);}',
+      '.pf-pulse{width:9px;height:9px;border-radius:50%;background:var(--gold);animation:pfPulse 1.3s ease-in-out infinite;}',
+      '@keyframes pfPulse{0%,100%{opacity:.35;transform:scale(.8)}50%{opacity:1;transform:scale(1.15)}}',
+      '.pf-worker-t{font-size:.92rem;color:var(--pa);font-weight:600;white-space:nowrap;}',
+      '.pf-worker-bar{width:120px;height:3px;border-radius:3px;background:rgba(255,255,255,.12);overflow:hidden;}',
+      '.pf-worker-bar i{display:block;height:100%;width:0;background:var(--gold);animation:pfBar 2.4s ease-out .3s forwards;}',
+      '@keyframes pfBar{to{width:100%}}',
+      // Callout pins for the Space beat.
+      '.pf-pins{position:absolute;right:6%;top:50%;transform:translateY(-50%);display:flex;flex-direction:column;gap:12px;}',
+      '.pf-pin{display:flex;align-items:center;gap:10px;padding:10px 16px;border-radius:10px;',
+      '  background:rgba(8,11,18,.9);border:1px solid rgba(255,255,255,.1);color:var(--pa);font-size:.88rem;font-weight:600;',
+      '  white-space:nowrap;opacity:0;animation:mslUp .7s var(--ez) both;animation-delay:var(--d,0s);}',
+      '.pf-pin-dot{width:7px;height:7px;border-radius:50%;background:var(--gold);flex:none;}',
+      '.pf-edge{position:absolute;inset:0;pointer-events:none;background:linear-gradient(180deg,transparent 60%,rgba(5,7,9,.9) 100%);}',
+      // Ask AI overlay — a real query bar and cited rows over the workspace.
+      '.pf-ask{width:min(var(--fw),94%);padding:20px 22px;border-radius:16px;background:rgba(8,11,18,.92);',
+      '  border:1px solid rgba(255,255,255,.1);box-shadow:0 40px 90px -30px rgba(0,0,0,.9);}',
+      '.pf-ask-bar{display:flex;align-items:center;gap:12px;padding:13px 16px;border-radius:11px;',
+      '  background:rgba(255,255,255,.04);border:1px solid rgba(201,151,58,.4);margin-bottom:16px;}',
+      '.pf-ask-q{flex:1;color:var(--pa);font-size:1.02rem;font-weight:600;min-height:1.3em;}',
+      '.pf-ask-go{padding:7px 16px;border-radius:8px;background:var(--gold);color:#0B0804;font-size:.82rem;font-weight:800;}',
+      '.pf-ask-rows{display:flex;flex-direction:column;gap:2px;}',
+      '.pf-ask-row{display:grid;grid-template-columns:1fr auto auto;align-items:center;gap:14px;padding:11px 4px;',
+      '  border-bottom:1px solid rgba(255,255,255,.06);opacity:0;animation:mslUp .6s var(--ez) both;animation-delay:var(--d,0s);}',
+      '.pf-ask-row span{color:var(--pa);font-weight:600;font-size:.95rem;}',
+      '.pf-ask-row b{color:var(--gold);font-size:.9rem;font-weight:700;}',
+      '.pf-chip{font-style:normal;font-size:.66rem;letter-spacing:.09em;text-transform:uppercase;padding:3px 8px;border-radius:999px;',
+      '  background:rgba(52,192,138,.14);border:1px solid rgba(52,192,138,.36);color:#7BE3A6;}',
+      '@media (max-width:720px){.pf-pins{right:auto;left:50%;transform:translate(-50%,0);top:auto;bottom:6%;}',
+      '  .pf-worker-bar{display:none;} .pf-callout{white-space:normal;text-align:center;max-width:80%;}}',
+      '.pf-root{--ink:#080b12;--pa:#EAECEF;--mut:#9AA4B2;--dim:#5A6472;--gold:#C9973A;--goldl:#E4B75C;--grn:#34C08A;',
+      '  --ez:cubic-bezier(.16,1,.3,1);}',
       // shared tokens
+      '#msLanding{--ink:#080b12;--pa:#EAECEF;--mut:#9AA4B2;--dim:#5A6472;--gold:#C9973A;--goldl:#E4B75C;--grn:#34C08A;}',
       '#msLanding{position:fixed;inset:0;z-index:99000;display:none;overflow-y:auto;color:var(--pa);',
+      'font-family:-apple-system,system-ui,"Segoe UI",Roboto,Helvetica,Arial,sans-serif;-webkit-font-smoothing:antialiased;',
       'background:radial-gradient(1200px 700px at 80% -12%,rgba(201,151,58,.10),transparent 60%),var(--ink);}',
+      '#msLanding.msl-on{display:block;animation:mslFade .55s ease both;}',
       '@keyframes mslFade{from{opacity:0}to{opacity:1}}',
+      '#msLanding::before{content:"";position:absolute;inset:0;pointer-events:none;background:linear-gradient(rgba(255,255,255,.016) 1px,transparent 1px),linear-gradient(90deg,rgba(255,255,255,.016) 1px,transparent 1px);background-size:64px 64px;mask-image:radial-gradient(circle at 50% 30%,#000,transparent 80%);}',
       // hero (unchanged premium)
+      '.msl-nav{position:relative;z-index:2;display:flex;align-items:center;justify-content:space-between;max-width:1120px;margin:0 auto;padding:26px 32px;}',
       '.msl-logo{font-weight:700;font-size:1.1rem;letter-spacing:-.02em;}.msl-logo b{color:var(--gold);}',
       '.msl-nav-signin{background:none;border:none;color:var(--mut);font:inherit;font-size:.9rem;font-weight:500;cursor:pointer;padding:8px;transition:color .2s;}.msl-nav-signin:hover{color:var(--pa);}',
+      '.msl-hero{position:relative;z-index:1;max-width:920px;margin:0 auto;padding:clamp(48px,11vh,120px) 32px 60px;text-align:center;}',
       '.msl-eyebrow{display:inline-flex;align-items:center;gap:9px;font-family:ui-monospace,"SF Mono",Menlo,monospace;font-size:.72rem;letter-spacing:.18em;text-transform:uppercase;color:var(--goldl);margin-bottom:30px;padding:8px 16px;border:1px solid rgba(201,151,58,.32);background:rgba(201,151,58,.08);border-radius:999px;opacity:0;animation:mslUp .7s .05s ease forwards;}',
       '.msl-eyebrow::before{content:"";width:5px;height:5px;border-radius:50%;background:var(--gold);box-shadow:0 0 0 3px rgba(201,151,58,.16);}',
+      '.msl-h1{font-size:clamp(2.9rem,7vw,5.4rem);font-weight:700;letter-spacing:-.04em;line-height:1.02;margin:0;text-wrap:balance;opacity:0;animation:mslUp .85s .16s cubic-bezier(.2,.7,.2,1) forwards;}',
       '.msl-h1 em{font-style:normal;color:var(--gold);}',
       '.msl-lede{font-size:clamp(1.05rem,2vw,1.35rem);line-height:1.55;color:var(--mut);max-width:44ch;margin:24px auto 0;opacity:0;animation:mslUp .85s .3s ease forwards;}',
       '.msl-lede em{color:var(--pa);font-style:normal;font-weight:500;}',
       // problem/value section (marketing) — matches hero language, no new animation system
+      '.msl-why{position:relative;z-index:1;max-width:920px;margin:0 auto;padding:8px 32px clamp(40px,7vh,80px);text-align:center;opacity:0;animation:mslUp .85s .8s ease forwards;}',
       '.msl-why-h{font-size:clamp(1.4rem,3vw,2.1rem);font-weight:700;letter-spacing:-.025em;color:var(--pa);margin:0 0 30px;text-wrap:balance;}',
+      '.msl-why-grid{display:grid;grid-template-columns:1fr 1fr;gap:14px;max-width:720px;margin:0 auto;text-align:left;align-items:start;}',
+      '.msl-why-item{background:#0f1520;border:1px solid rgba(255,255,255,.07);border-radius:12px;transition:border-color .25s;}',
+      '.msl-why-item:hover{border-color:rgba(201,151,58,.35);}',
+      '.msl-why-item[open]{border-color:rgba(201,151,58,.35);}',
+      '.msl-why-head{display:flex;align-items:center;gap:14px;padding:16px 18px;cursor:pointer;list-style:none;-webkit-tap-highlight-color:transparent;}',
+      '.msl-why-head::-webkit-details-marker{display:none;}',
       '.msl-why-head:focus-visible{outline:2px solid var(--gold);outline-offset:2px;border-radius:12px;}',
       '.msl-why-ic{width:34px;height:34px;border-radius:9px;flex:none;display:grid;place-items:center;background:rgba(201,151,58,.1);color:var(--gold);}.msl-why-ic svg{width:18px;height:18px;}',
+      '.msl-why-label{font-size:.95rem;color:#C6CEDA;font-weight:500;flex:1;}',
+      '.msl-why-chev{flex:none;color:#7C8798;display:grid;place-items:center;transition:transform .25s,color .25s;}.msl-why-chev svg{width:16px;height:16px;}',
       '.msl-why-item[open] .msl-why-chev{transform:rotate(180deg);color:var(--gold);}',
+      '.msl-why-detail{margin:0;padding:0 18px 16px 66px;font-size:.88rem;line-height:1.55;color:#98A2B3;}',
       '.msl-why-cta{font-size:clamp(1.05rem,2.2vw,1.35rem);font-weight:600;letter-spacing:-.01em;color:var(--pa);margin:30px auto 0;max-width:34ch;}',
       '.msl-why-cta b,.msl-why-cta em{color:var(--gold);font-style:normal;}',
+      '@media(max-width:600px){.msl-why-grid{grid-template-columns:1fr;}.msl-why{padding-bottom:48px;}}',
+      '.msl-cta{display:flex;gap:12px;flex-wrap:wrap;justify-content:center;margin:40px 0 0;opacity:0;animation:mslUp .85s .44s ease forwards;}',
       '.msl-btn{font:inherit;font-size:1rem;font-weight:600;border-radius:12px;padding:14px 26px;cursor:pointer;border:1px solid transparent;transition:transform .18s,filter .18s,border-color .2s,color .2s,background .2s;display:inline-flex;align-items:center;gap:9px;}',
       '.msl-btn:hover{transform:translateY(-1px);}.msl-btn:focus-visible{outline:2px solid var(--gold);outline-offset:3px;}',
       '.msl-btn--primary{background:var(--gold);color:#0b0e15;box-shadow:0 14px 34px -14px rgba(201,151,58,.65);}.msl-btn--primary:hover{filter:brightness(1.07);}',
@@ -288,6 +369,9 @@
       '.msl-btn--text{background:none;color:var(--mut);}.msl-btn--text:hover{color:var(--pa);}',
       '.msl-trust{margin:34px 0 0;font-family:ui-monospace,"SF Mono",Menlo,monospace;font-size:.72rem;letter-spacing:.06em;color:var(--dim);display:inline-flex;align-items:center;gap:10px;opacity:0;animation:mslUp .85s .56s ease forwards;}',
       '.msl-trust .msl-dot{width:6px;height:6px;border-radius:50%;background:var(--grn);box-shadow:0 0 0 3px rgba(52,192,138,.18);}',
+      '.msl-rail{max-width:1000px;margin:64px auto 0;padding:0 32px;display:flex;align-items:flex-start;justify-content:space-between;gap:4px;opacity:0;animation:mslUp .85s .68s ease forwards;}',
+      '.msl-rstep{flex:1;display:flex;flex-direction:column;align-items:center;gap:9px;position:relative;}',
+      '.msl-rstep::after{content:"";position:absolute;top:19px;left:50%;width:100%;height:1px;background:rgba(255,255,255,.09);z-index:0;}.msl-rstep:last-child::after{display:none;}',
       '.msl-ric{width:40px;height:40px;border-radius:11px;display:grid;place-items:center;background:#0f1520;border:1px solid rgba(255,255,255,.08);color:var(--mut);position:relative;z-index:1;transition:color .2s,border-color .2s;}.msl-ric svg{width:20px;height:20px;}',
       '.msl-rstep:hover .msl-ric{color:var(--gold);border-color:rgba(201,151,58,.4);}',
       '.msl-rlabel{font-size:.7rem;color:var(--dim);}',
@@ -295,6 +379,7 @@
       '@media(max-width:720px){.msl-cta{flex-direction:column;width:100%;max-width:340px;margin-left:auto;margin-right:auto;}.msl-btn{justify-content:center;width:100%;}.msl-rail{display:none;}}',
       // ── cinematic film ──
       '.msl-cine{position:fixed;inset:0;z-index:99001;display:none;flex-direction:column;align-items:center;justify-content:center;',
+      'background:radial-gradient(1100px 760px at 50% -12%,rgba(201,151,58,.08),transparent 62%),#05070c;padding:24px;}',
       '.msl-cine.msl-on{display:flex;animation:mslFade .45s ease both;}',
       '.msl-cine-close{position:absolute;top:22px;right:26px;z-index:6;background:rgba(255,255,255,.05);border:none;color:var(--mut);font-size:1rem;width:36px;height:36px;border-radius:50%;cursor:pointer;display:grid;place-items:center;transition:background .2s,color .2s;}',
       '.msl-cine-close:hover{background:rgba(255,255,255,.12);color:var(--pa);}',
@@ -473,6 +558,7 @@
       '.msl-atotal b{transition:color .3s;}',
       '.msl-drop{animation:mslDropSettle .6s 3.5s ease both;}',
       '@keyframes mslDropSettle{40%{border-color:rgba(52,192,138,.65)}100%{border-color:rgba(52,192,138,.45)}}',
+      '@media(max-width:600px){',
         '.msl-canvas{height:46vh;min-height:300px;}',
         '.msl-cap{font-size:1.08rem;padding:0 14px;margin-top:20px;}',
         '.msl-btn{min-height:46px;}',
@@ -489,12 +575,7 @@
         '.msl-oc-rows{width:92vw;}.msl-oc-r{font-size:.74rem;}.msl-oc-r b{font-size:.7rem;}',
         '.msl-timeline{gap:3px;}',
       '}',
-      // This module's root IS the film layer, not a child of a landing overlay,
-      // so it owns full-screen positioning itself.
-      '.pf-root{position:fixed;inset:0;z-index:99900;display:none;background:#050709;',
-      '  align-items:center;justify-content:center;flex-direction:column;padding:28px 16px;overflow-y:auto;}',
-      '.pf-root.msl-on{display:flex;}',
-      '.pf-root .msl-dev{width:min(1040px,96vw);}',
+      '@media(prefers-reduced-motion:reduce){#msLanding *{animation-duration:.001s!important;animation-delay:0s!important;}}',
     ].join('');
     var st = document.createElement('style');
     st.id = STYLE_ID;

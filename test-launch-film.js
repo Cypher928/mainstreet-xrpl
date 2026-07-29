@@ -66,7 +66,7 @@ srv.listen(PORT,'127.0.0.1',async()=>{
     await p.keyboard.press('ArrowRight');
   }
   console.log('   scenes: '+caps.map(c=>c.split(' — ')[0]).join(' | '));
-  const want=[/in one place/i,/reads every clause/i,/checked against/i,/entitled to recover/i,/open a space/i,/ask anything/i,/living memory/i,/settled in rlusd/i,/verified on-chain/i,/^$/];
+  const want=[/starts reading/i,/reads every clause/i,/checked against/i,/entitled to recover/i,/open a space/i,/ask anything/i,/living memory/i,/settled in rlusd/i,/verified on-chain/i,/^$/];
   const misses=want.filter((re,i)=>!re.test(caps[i]||''));
   misses.length===0?ok('all 10 beats play in story order, closing on the brand rather than the ledger screen')
                    :bad(misses.length+' scene caption(s) off',JSON.stringify(caps));
@@ -105,12 +105,27 @@ srv.listen(PORT,'127.0.0.1',async()=>{
   (new Set(fws).size>=4)?ok('widths vary per beat — framed individually, not to one global fill')
     :bad('composition widths too uniform',JSON.stringify(fws));
   /msl-bignum--center/.test(comp)?ok('revenue hero is centre-composed'):bad('revenue hero not centred');
-  !/msl-bg[^']*ui-command-center/.test(comp.slice(comp.indexOf("id: 'recover'"),comp.indexOf("id: 'space'")))
-    ?ok('revenue beat has no competing background — the number stands alone')
-    :bad('revenue beat still layers the command centre behind it');
-  /Prevented by cap/.test(comp)?ok('reconciliation column reads "Prevented by cap", not "CAP ADJ"'):bad('column still jargon');
+  // The app is back as context on the revenue beat, but pushed deep (20%
+  // opacity, blurred) so its own "$99,542" cannot compete with the hero number.
+  /pf-shot--deep/.test(comp.slice(comp.indexOf("id: 'recover'"),comp.indexOf("id: 'space'")))
+    ?ok('revenue beat shows the app as deep context, not a competing foreground')
+    :bad('revenue beat lost its app context');
+  // The reconciliation beat now uses the REAL allocation screenshot, whose
+  // header reads "CAP ADJ" because that is what the product renders. The
+  // plain-language framing comes from an animated callout over it instead of
+  // from re-typing the column, which would no longer be the real UI.
+  /Prevented by lease caps/.test(comp)?ok('a callout labels the savings column in plain language over the real table'):bad('no savings callout');
   /didn’t allow|didn.t allow/.test(comp)?ok('reconciliation lands a plain-language summary'):bad('no summary line');
   /msl-close-mark/.test(comp)?ok('film closes on the MainStreet brand'):bad('no brand close');
+  // The regression this guards: beats composed as minimal cards on black read as
+  // title slides. The product itself has to be the base layer.
+  const shots=(comp.match(/class="pf-shot/g)||[]).length;
+  (shots>=7)?ok(shots+' beats are built on a real product screenshot — the app is the star')
+    :bad('too few beats show the product',shots+' of 10');
+  const realAssets=['ui-upload','beat1-cap-catch','ui-command-center','ui-space-modal','ui-workspace','ui-settlement']
+    .filter(a=>comp.includes(a));
+  (realAssets.length>=6)?ok('drawn from real captures: '+realAssets.join(', '))
+    :bad('missing real captures',JSON.stringify(realAssets));
 
   console.log('\n── Narration scaffold (no synthetic voice) ──');
   const cues=await p.evaluate(()=>window.ProductFilm&&window.ProductFilm.narrationCues?window.ProductFilm.narrationCues():null);

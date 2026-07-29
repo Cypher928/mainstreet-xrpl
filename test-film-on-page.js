@@ -63,7 +63,7 @@ const srv = http.createServer((rq, rs) => {
   (navs.length === navsBefore) ? ok('no navigation occurred — the click and the audio stay on one document')
                                : bad('the page navigated', JSON.stringify(navs.slice(navsBefore)));
   st.on ? ok('the film is open over the page') : bad('film did not open', JSON.stringify(st));
-  /in one place/i.test(st.capText) ? ok(`playing from the first beat: "${st.capText}"`) : bad('wrong opening beat', st.capText);
+  /starts reading/i.test(st.capText) ? ok(`playing from the first beat: "${st.capText}"`) : bad('wrong opening beat', st.capText);
   st.bodyLocked ? ok('the page behind is scroll-locked while the film plays') : bad('background still scrolls');
   st.heroStillThere ? ok('the marketing page is still mounted underneath — nothing was torn down') : bad('page was replaced');
 
