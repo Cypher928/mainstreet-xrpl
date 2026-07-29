@@ -41,25 +41,28 @@ srv.listen(PORT,'127.0.0.1',async()=>{
     if(!l)return false;const cs=getComputedStyle(l);const r=l.getBoundingClientRect();
     return cs.display!=='none'&&cs.visibility!=='hidden'&&parseFloat(cs.opacity||'1')>0.01&&r.width>0&&r.height>0;}));}catch(_){}} ,60);
   await p.goto('http://127.0.0.1:'+PORT+'/index.html?demo=1');
-  await p.waitForSelector('#msLanding',{timeout:12000}).catch(()=>{});
-  await p.waitForTimeout(1400);
+  // Wait for the FILM, not the landing overlay — ?demo=1 no longer renders the
+  // hero at all, so waiting on #msLanding burned a 12s timeout while the film
+  // auto-advanced, and the walk below started two beats in.
+  await p.waitForSelector('#pfFilm.msl-on',{timeout:12000}).catch(()=>{});
+  await p.waitForTimeout(700);
   clearInterval(sampler);
 
   console.log('\n── The film opens and tells the new story ──');
   const hero=await p.evaluate(()=>({
     h1:(document.querySelector('.msl-h1')||{}).innerText||'',
     eyebrow:(document.querySelector('.msl-eyebrow')||{}).innerText||'',
-    filmOn:!!document.querySelector('.msl-cine.msl-on'),
+    filmOn:!!document.querySelector('#pfFilm.msl-on'),
   }));
-  /verified memory/i.test(hero.h1)?ok('overlay hero carries the new message'):bad('hero',JSON.stringify(hero.h1));
-  /AI Operating System/i.test(hero.eyebrow)?ok('overlay eyebrow states the category'):bad('eyebrow',hero.eyebrow);
+  (!hero.h1)?ok('?demo=1 never renders the landing hero — the film is the destination')
+            :bad('landing hero rendered on ?demo=1',JSON.stringify(hero.h1));
   hero.filmOn?ok('?demo=1 starts the film'):bad('film did not start');
 
   // Walk the scenes with ArrowRight, recording each caption.
   const caps=[];
   for(let i=0;i<10;i++){
     await p.waitForTimeout(450);
-    caps.push(await p.evaluate(()=>(document.getElementById('mslCap')||{}).innerText||''));
+    caps.push(await p.evaluate(()=>(document.getElementById('pfCap')||{}).innerText||''));
     await p.keyboard.press('ArrowRight');
   }
   console.log('   scenes: '+caps.map(c=>c.split(' — ')[0]).join(' | '));
@@ -76,7 +79,7 @@ srv.listen(PORT,'127.0.0.1',async()=>{
 
   console.log('\n── Pacing ──');
   const timing=await p.evaluate(()=>{const s=document.querySelector('script[src*="landing-experience"]');return null;});
-  const durs=require('fs').readFileSync(require('path').join(__dirname,'landing-experience.js'),'utf8').match(/dur:\s*(\d+)/g).map(x=>+x.replace(/\D/g,''));
+  const durs=require('fs').readFileSync(require('path').join(__dirname,'product-film.js'),'utf8').match(/dur:\s*(\d+)/g).map(x=>+x.replace(/\D/g,''));
   const total=durs.reduce((a,b)=>a+b,0)/1000;
   (total<=45)?ok('film runs '+total.toFixed(1)+'s — under the 45s ceiling'):bad('film too long',total+'s');
   // Deliberate variation, not uniformity: the four hero beats breathe, the
@@ -95,7 +98,7 @@ srv.listen(PORT,'127.0.0.1',async()=>{
     :bad('hero beats do not stand out from connective ones',JSON.stringify(by));
 
   console.log('\n── Composition ──');
-  const comp=require('fs').readFileSync(require('path').join(__dirname,'landing-experience.js'),'utf8');
+  const comp=require('fs').readFileSync(require('path').join(__dirname,'product-film.js'),'utf8');
   const fws=[...comp.matchAll(/\sfw:\s*(\d+)/g)].map(m=>+m[1]);
   (fws.length===10)?ok('every beat declares its own composition width: '+[...new Set(fws)].sort((a,b)=>a-b).join(' / ')+'px')
     :bad('scenes missing fw',String(fws.length));
@@ -110,7 +113,7 @@ srv.listen(PORT,'127.0.0.1',async()=>{
   /msl-close-mark/.test(comp)?ok('film closes on the MainStreet brand'):bad('no brand close');
 
   console.log('\n── Narration scaffold (no synthetic voice) ──');
-  const cues=await p.evaluate(()=>window.MainStreetLanding&&window.MainStreetLanding.narrationCues?window.MainStreetLanding.narrationCues():null);
+  const cues=await p.evaluate(()=>window.ProductFilm&&window.ProductFilm.narrationCues?window.ProductFilm.narrationCues():null);
   (cues&&cues.length===10)?ok('narration cues exposed for all 10 beats'):bad('narration cues missing',JSON.stringify(cues&&cues.length));
   (cues&&cues.every(c=>c.line&&c.line.length>10))?ok('every beat has a written narration line'):bad('a beat has no narration line');
   (cues&&cues[0].atMs===0&&cues[9].atMs===durs.slice(0,9).reduce((a,b)=>a+b,0))
@@ -121,8 +124,8 @@ srv.listen(PORT,'127.0.0.1',async()=>{
 
   console.log('\n── Exit paths ──');
   // The end card is up now; its own control is the intended way out from here.
-  await p.waitForSelector('#mslEndBack',{timeout:8000}).catch(()=>{});
-  const endBack=await p.$('#mslEndBack');
+  await p.waitForSelector('#pfEndBack',{timeout:8000}).catch(()=>{});
+  const endBack=await p.$('#pfEndBack');
   if(!endBack){bad('end card has no way back to the site');}
   else{ await endBack.click(); await p.waitForTimeout(900);
         /\/home$/.test(p.url())?ok('end card "Back to site" → /home'):bad('end card back went to',p.url()); }
@@ -134,9 +137,9 @@ srv.listen(PORT,'127.0.0.1',async()=>{
   await p3.route('**supabase**',r=>{const u=r.request().url();return u.includes('127.0.0.1')?r.continue():r.fulfill({status:200,body:'/*x*/'});});
   await p3.route('**/api/**',r=>r.fulfill({status:200,contentType:'application/json',body:'{}'}));
   await p3.goto('http://127.0.0.1:'+PORT+'/index.html?demo=1');
-  await p3.waitForSelector('#mslCineClose',{timeout:12000}).catch(()=>{});
+  await p3.waitForSelector('#pfClose',{timeout:12000}).catch(()=>{});
   await p3.waitForTimeout(900);
-  await p3.click('#mslCineClose');
+  await p3.click('#pfClose');
   await p3.waitForTimeout(900);
   /\/home$/.test(p3.url())?ok('close (X) mid-film → /home'):bad('X went to',p3.url());
 
@@ -151,9 +154,9 @@ srv.listen(PORT,'127.0.0.1',async()=>{
   await p2.waitForTimeout(800);
   await p2.evaluate(()=>{if(window.MainStreetLanding)MainStreetLanding.playDemo();});
   await p2.waitForTimeout(600);
-  await p2.click('#mslCineClose');
+  await p2.click('#pfClose');
   await p2.waitForTimeout(600);
-  const st=await p2.evaluate(()=>({url:location.pathname,heroVisible:!!document.querySelector('.msl-h1'),cineOn:!!document.querySelector('.msl-cine.msl-on')}));
+  const st=await p2.evaluate(()=>({url:location.pathname,heroVisible:!!document.querySelector('.msl-h1'),cineOn:!!document.querySelector('#pfFilm.msl-on')}));
   (st.url.includes('index')&&st.heroVisible&&!st.cineOn)
     ?ok('direct visitor closing the film stays on the overlay hero — behaviour unchanged')
     :bad('direct-visit close changed',JSON.stringify(st));

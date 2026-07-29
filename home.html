@@ -524,5 +524,22 @@ footer{border-top:1px solid rgba(var(--line),.07);padding:44px 0;background:var(
   els.forEach(function (el) { io.observe(el); });
 })();
 </script>
+<script src="product-film.js"></script>
+<script>
+/* Play the film in place. The click is the user gesture that permits audio —
+   browsers do not carry user activation across a navigation, so the previous
+   hop to index.html?demo=1 could never autoplay narration. Falls back to the
+   old navigation if the module fails to load, so the CTA is never dead. */
+(function () {
+  var links = document.querySelectorAll('a[href="index.html?demo=1"]');
+  Array.prototype.forEach.call(links, function (a) {
+    a.addEventListener('click', function (e) {
+      if (!window.ProductFilm) return;            // fall through to the href
+      e.preventDefault();
+      window.ProductFilm.play();
+    });
+  });
+})();
+</script>
 </body>
 </html>
