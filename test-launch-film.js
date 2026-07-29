@@ -57,15 +57,15 @@ srv.listen(PORT,'127.0.0.1',async()=>{
 
   // Walk the scenes with ArrowRight, recording each caption.
   const caps=[];
-  for(let i=0;i<9;i++){
+  for(let i=0;i<10;i++){
     await p.waitForTimeout(450);
     caps.push(await p.evaluate(()=>(document.getElementById('mslCap')||{}).innerText||''));
     await p.keyboard.press('ArrowRight');
   }
   console.log('   scenes: '+caps.map(c=>c.split(' — ')[0]).join(' | '));
-  const want=[/in one place/i,/reads every clause/i,/checked against/i,/entitled to recover/i,/open a space/i,/ask anything/i,/living memory/i,/settled in rlusd/i,/verified on-chain/i];
+  const want=[/in one place/i,/reads every clause/i,/checked against/i,/entitled to recover/i,/open a space/i,/ask anything/i,/living memory/i,/settled in rlusd/i,/verified on-chain/i,/^$/];
   const misses=want.filter((re,i)=>!re.test(caps[i]||''));
-  misses.length===0?ok('all 9 scenes play in story order: upload → extract → reconcile → recover → space → ask AI → timeline → settle → verify')
+  misses.length===0?ok('all 10 beats play in story order, closing on the brand rather than the ledger screen')
                    :bad(misses.length+' scene caption(s) off',JSON.stringify(caps));
   const grounded=await p.evaluate(()=>/\$34,650|\$6,051/.test((document.querySelector('.msl-cine')||{}).innerText||''));
 
@@ -79,8 +79,45 @@ srv.listen(PORT,'127.0.0.1',async()=>{
   const durs=require('fs').readFileSync(require('path').join(__dirname,'landing-experience.js'),'utf8').match(/dur:\s*(\d+)/g).map(x=>+x.replace(/\D/g,''));
   const total=durs.reduce((a,b)=>a+b,0)/1000;
   (total<=45)?ok('film runs '+total.toFixed(1)+'s — under the 45s ceiling'):bad('film too long',total+'s');
-  (Math.max(...durs)<=4200&&Math.min(...durs)>=3000)?ok('every scene is 3.0–4.2s — no scene lingers or flashes')
-    :bad('pacing uneven',JSON.stringify(durs.map(d=>d/1000)));
+  // Deliberate variation, not uniformity: the four hero beats breathe, the
+  // connective beats move. A flat cadence is what made the earlier cut feel
+  // like a slideshow.
+  const IDS=['upload','extract','recon','recover','space','ask','timeline','settle','verify','brand'];
+  const by=Object.fromEntries(IDS.map((id,i)=>[id,durs[i]]));
+  const heroes=['extract','recover','ask'];
+  heroes.every(h=>by[h]>=5000)?ok('hero beats breathe: '+heroes.map(h=>h+' '+by[h]/1000+'s').join(', '))
+    :bad('a hero beat is too short',JSON.stringify(by));
+  const connective=IDS.filter(id=>!heroes.includes(id)&&id!=='brand');
+  connective.every(id=>by[id]>=3400&&by[id]<=4600)?ok('connective beats stay 3.4–4.6s — long enough to read, short enough to move')
+    :bad('connective pacing off',JSON.stringify(by));
+  (by.brand>=2600&&by.brand<=4000)?ok('brand close holds '+by.brand/1000+'s'):bad('brand close mistimed',String(by.brand));
+  heroes.every(h=>connective.every(cid=>by[h]>by[cid]))?ok('every hero beat is longer than every connective beat')
+    :bad('hero beats do not stand out from connective ones',JSON.stringify(by));
+
+  console.log('\n── Composition ──');
+  const comp=require('fs').readFileSync(require('path').join(__dirname,'landing-experience.js'),'utf8');
+  const fws=[...comp.matchAll(/\sfw:\s*(\d+)/g)].map(m=>+m[1]);
+  (fws.length===10)?ok('every beat declares its own composition width: '+[...new Set(fws)].sort((a,b)=>a-b).join(' / ')+'px')
+    :bad('scenes missing fw',String(fws.length));
+  (new Set(fws).size>=4)?ok('widths vary per beat — framed individually, not to one global fill')
+    :bad('composition widths too uniform',JSON.stringify(fws));
+  /msl-bignum--center/.test(comp)?ok('revenue hero is centre-composed'):bad('revenue hero not centred');
+  !/msl-bg[^']*ui-command-center/.test(comp.slice(comp.indexOf("id: 'recover'"),comp.indexOf("id: 'space'")))
+    ?ok('revenue beat has no competing background — the number stands alone')
+    :bad('revenue beat still layers the command centre behind it');
+  /Prevented by cap/.test(comp)?ok('reconciliation column reads "Prevented by cap", not "CAP ADJ"'):bad('column still jargon');
+  /didn’t allow|didn.t allow/.test(comp)?ok('reconciliation lands a plain-language summary'):bad('no summary line');
+  /msl-close-mark/.test(comp)?ok('film closes on the MainStreet brand'):bad('no brand close');
+
+  console.log('\n── Narration scaffold (no synthetic voice) ──');
+  const cues=await p.evaluate(()=>window.MainStreetLanding&&window.MainStreetLanding.narrationCues?window.MainStreetLanding.narrationCues():null);
+  (cues&&cues.length===10)?ok('narration cues exposed for all 10 beats'):bad('narration cues missing',JSON.stringify(cues&&cues.length));
+  (cues&&cues.every(c=>c.line&&c.line.length>10))?ok('every beat has a written narration line'):bad('a beat has no narration line');
+  (cues&&cues[0].atMs===0&&cues[9].atMs===durs.slice(0,9).reduce((a,b)=>a+b,0))
+    ?ok('cue times derive from scene durations — a recorded read stays in sync')
+    :bad('cue times do not track durations',JSON.stringify(cues&&cues.map(c=>c.atMs)));
+  const hasAudio=/new Audio|speechSynthesis|<audio/.test(comp);
+  !hasAudio?ok('no synthetic narration is played — scaffold only'):bad('synthetic audio present');
 
   console.log('\n── Exit paths ──');
   // The end card is up now; its own control is the intended way out from here.
