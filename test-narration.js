@@ -136,8 +136,11 @@ for (const c of over) {
 // would be talking about a screen that is no longer on-frame.
 for (const c of voiced) {
   const sceneEnd = c.at + c.dur;
+  const rel = c.start - c.at;
   c.start < sceneEnd
-    ? ok(`${c.id.padEnd(9)} starts ${c.start - c.at}ms into its own scene`)
+    ? ok(`${c.id.padEnd(9)} ` + (rel < 0
+        ? `starts ${-rel}ms before its scene — deliberate L-cut across the opening transition`
+        : `starts ${rel}ms into its own scene`))
     : bad(`${c.id} is pushed past its scene entirely`, `starts ${c.start}ms, scene ends ${sceneEnd}ms`);
 }
 
@@ -171,16 +174,24 @@ stillPending.length
 
 console.log('\n── The opening does not stall ──');
 const open0 = S[0];
-(open0.id === 'open' && open0.silent && open0.dur >= 1500 && open0.dur <= 2000)
-  ? ok(`establishing shot holds ${open0.dur}ms with no voice, inside the 1.5–2.0s brief`)
+(open0.id === 'open' && open0.silent && open0.dur >= 2800 && open0.dur <= 3200)
+  ? ok(`establishing shot runs ${open0.dur}ms, matching the directed 3.0s open`)
   : bad('the establishing shot is wrong', JSON.stringify(open0));
 const firstLine = voiced[0];
-// The complaint this fixes: the first line fired at 0ms, over the 450ms
-// fade-in — the voice arrived before the picture. It must now start after the
-// establishing shot has cut away.
-firstLine.start >= open0.dur + 400
-  ? ok(`the first line starts at ${firstLine.start}ms — after the cut, not over the fade-in`)
-  : bad('the first line still starts too early', `${firstLine.start}ms, establishing shot ends ${open0.dur}ms`);
+// Two separate requirements, and the earlier version only encoded one.
+//   (a) the voice must not start over the fade from black — the original
+//       complaint was that it began at 0ms during a 450ms fade;
+//   (b) it must start BEFORE the cut and finish after it, so the line carries
+//       across the transition. The clip has no internal pause over 140ms, so
+//       there is nowhere inside it to hide a cut — it has to straddle one.
+const FADE = 800;
+firstLine.start >= FADE + 400
+  ? ok(`the first line starts at ${firstLine.start}ms — clear of the ${FADE}ms fade from black`)
+  : bad('the first line starts over the fade-in', `${firstLine.start}ms`);
+(firstLine.start < open0.dur && firstLine.end > open0.dur)
+  ? ok(`it straddles the cut at ${open0.dur}ms — the voice carries into the workflow rather than restarting after it`)
+  : bad('the opening line does not bridge the cut',
+        `line ${firstLine.start}-${firstLine.end}ms, cut at ${open0.dur}ms`);
 
 console.log('\n── The music bed degrades to silence, never to a broken film ──');
 // The bed is optional and not yet supplied. What must hold either way: a

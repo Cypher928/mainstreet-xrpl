@@ -16,7 +16,7 @@
 let pw;try{pw=require('playwright');}catch(_){pw=require('/opt/node22/lib/node_modules/playwright');}
 const http=require('http'),fs=require('fs'),path=require('path');
 const ROOT=__dirname,PORT=8851;
-const MIME={'.html':'text/html','.js':'application/javascript','.css':'text/css','.json':'application/json','.png':'image/png','.svg':'image/svg+xml'};
+const MIME={'.html':'text/html','.js':'application/javascript','.css':'text/css','.json':'application/json','.png':'image/png','.svg':'image/svg+xml','.jpg':'image/jpeg'};
 const MOCK=`(function(){function P(v){return Promise.resolve(v);}
 function q(){var o={select:function(){return o;},insert:function(r){return P({data:r,error:null});},upsert:function(r){return P({data:[r],error:null});},
 eq:function(){return o;},neq:function(){return o;},in:function(){return P({data:[],error:null});},order:function(){return o;},limit:function(){return o;},
@@ -106,7 +106,7 @@ srv.listen(PORT,'127.0.0.1',async()=>{
     :bad('hero beats do not stand out from connective ones',JSON.stringify(by));
   // The opening beat exists to stop the film dropping the viewer mid-workflow.
   // Short enough that it cannot stall: the brief was 1.5–2.0s.
-  (by.open>=1500&&by.open<=2000)?ok('establishing shot holds '+by.open/1000+'s before the first cut')
+  (by.open>=2800&&by.open<=3200)?ok('establishing shot holds '+by.open/1000+'s before the first cut')
     :bad('establishing shot mistimed',String(by.open));
 
   console.log('\n── Composition ──');
@@ -128,6 +128,16 @@ srv.listen(PORT,'127.0.0.1',async()=>{
   // from re-typing the column, which would no longer be the real UI.
   /Prevented by lease caps/.test(comp)?ok('a callout labels the savings column in plain language over the real table'):bad('no savings callout');
   /didn’t allow|didn.t allow/.test(comp)?ok('reconciliation lands a plain-language summary'):bad('no summary line');
+  // The opening frame is the supplied key art, not a UI screenshot dropped on
+  // black, and the lockup over it is live text plus the extracted monogram —
+  // no invented office, no re-typeset wordmark baked into a raster.
+  /keyart-scene\.jpg/.test(comp)?ok('the open uses the real key-art photography'):bad('open lost its plate');
+  /pf-open-mark/.test(comp)&&/MAINSTREET/.test(comp)
+    ?ok('the lockup animates: extracted monogram plus live wordmark and tagline')
+    :bad('opening lockup missing');
+  /pfFromBlack/.test(comp)&&/pfPush/.test(comp)
+    ?ok('fades up from black over a continuous push — the cut lands mid-move')
+    :bad('opening has no fade-from-black or camera push');
   /msl-close-mark/.test(comp)?ok('film closes on the MainStreet brand'):bad('no brand close');
   // The brand card is the last thing anyone sees. It used to carry an XRPL
   // proof line as well, which split the frame between the name and the ledger.

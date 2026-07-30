@@ -36,12 +36,16 @@
   // changes a length, so the table cannot drift away from the audio.
   var VO_DIR = 'assets/vo/';
   var VO_GAP = 250;                      // minimum silence between two lines
-  // The first line used to fire at 0ms, over the 450ms fade-in — the voice
-  // arrived before the picture did. It now waits until the establishing shot
-  // has cut away and the upload screen has settled.
-  var VO_LEAD = 600;                     // delay after the first spoken scene opens
+  // Fallback delay for whichever line comes first, so the voice never starts
+  // over a fade-in. `atMs` on a VO entry overrides it with an absolute anchor.
+  var VO_LEAD = 600;
   var VO = {
-    upload:   { file: 'vo-upload.mp3',   durMs: 4310 },   // overruns its 4.0s scene
+    // Anchored, not scene-relative. The opening line begins at 2.0s — one
+    // second before the cut out of the establishing shot — so the voice carries
+    // across the transition instead of starting after it. Elise reads with no
+    // internal pause over 140ms, so there is no gap inside the clip to hide a
+    // cut behind; the line has to straddle it or the cut lands mid-sentence.
+    upload:   { file: 'vo-upload.mp3',   durMs: 4310, atMs: 2000 },
     extract:  { file: 'vo-extract.mp3',  durMs: 2640 },
     recon:    { file: 'vo-recon.mp3',    durMs: 2460 },
     recover:  { file: 'vo-recover.mp3',  durMs: 2870 },
@@ -103,17 +107,33 @@
     // `fw` is the composition width of the overlay content for that beat. `vo`
     // is the narration line spoken over it, rendered to a clip in assets/vo/.
 
-    // Establishing shot. The film used to open mid-workflow on the upload
-    // screen with the first line already speaking over the 450ms fade-in, which
-    // read as being dropped into the middle of something. This holds the
-    // portfolio wide and quiet first so there is a place to be dropped into.
-    // The same plate returns under the $99,542 at `recover` — establish the
-    // room, then come back to it for the payoff.
-    { id: 'open', dur: 1800, fw: 1000, cap: '',
+    // Establishing shot, cut to the brief:
+    //   0.0-0.8  fade up from black, slow push toward the screen
+    //   0.8-2.3  the lockup fades in over a scrim
+    //   2.0      the first line begins, one second before the cut
+    //   2.3-3.0  lockup out, scrim lifts, push continues into the workflow
+    //
+    // The plate is the supplied key art, cropped right of x=640 so the printed
+    // lockup is out of frame and the animated one can do that job. The office
+    // is real photography from that artwork — nothing here composites the app
+    // into an invented environment.
+    { id: 'open', dur: 3000, fw: 1180, cap: '', bare: true,
       build: function (c) {
         c.innerHTML =
-          '<img class="pf-shot pf-shot--sharp pf-ken" src="' + ASSET + 'ui-command-center.png" alt="">' +
-          '<div class="pf-edge"></div>';
+          '<div class="pf-open">' +
+            '<img class="pf-open-scene" src="' + ASSET + 'keyart-scene.jpg" alt="">' +
+            '<div class="pf-open-dof"></div>' +
+            '<div class="pf-open-rack"></div>' +
+            '<div class="pf-open-gold"></div>' +
+            '<div class="pf-open-scrim"></div>' +
+            '<div class="pf-open-lock">' +
+              '<img class="pf-open-mark" src="' + ASSET + 'keyart-mark.png" alt="">' +
+              '<div class="pf-open-word">MAINSTREET</div>' +
+              '<div class="pf-open-rule"></div>' +
+              '<div class="pf-open-tag">The AI Operating System<br>for Commercial Real&nbsp;Estate.</div>' +
+            '</div>' +
+            '<div class="pf-open-black"></div>' +
+          '</div>';
       } },
 
     { id: 'upload', dur: 4000, fw: 780, cap: 'It starts reading the moment a lease lands',
@@ -295,7 +315,8 @@
       if (vo) {
         cue.audio = VO_DIR + vo.file;
         cue.voMs = vo.durMs;
-        var floor = cue.atMs + (prevEnd === -Infinity ? VO_LEAD : 0);
+        var floor = typeof vo.atMs === 'number' ? vo.atMs
+                  : cue.atMs + (prevEnd === -Infinity ? VO_LEAD : 0);
         cue.startMs = Math.max(floor, prevEnd + VO_GAP);
         cue.endMs = cue.startMs + vo.durMs;
         prevEnd = cue.endMs;
@@ -656,6 +677,60 @@
       // Verification: the largest thing on screen, not smaller than its caption.
       '.msl-cine .msl-onchain--lg{transform:scale(1.14);transform-origin:center;}',
       // Brand close — the last impression is MainStreet, ledger proof beneath.
+      // ── opening beat ────────────────────────────────────────────────────
+      '.pf-bare .msl-dev-bar{display:none;}',
+      '.pf-bare .msl-dev{width:min(1180px,96vw);border:0;border-radius:20px;background:#000;box-shadow:0 70px 150px -60px rgba(0,0,0,.95);}',
+      '.pf-bare .msl-canvas{height:min(62vh,560px);background:#000;}',
+      '.pf-open{position:absolute;inset:0;overflow:hidden;border-radius:inherit;}',
+      // The push runs the full 3s and does not settle, so the cut into the
+      // upload beat lands mid-move — the camera keeps going rather than
+      // stopping and jumping somewhere else.
+      '.pf-open-scene{position:absolute;inset:0;width:100%;height:100%;object-fit:cover;object-position:56% 52%;',
+      '  transform-origin:56% 46%;animation:pfPush 3s linear both;}',
+      '@keyframes pfPush{from{transform:scale(1.005)}to{transform:scale(1.085)}}',
+      // Depth of field: sharp through the middle where the screen sits, falling
+      // off at the edges. backdrop-filter is masked rather than the element
+      // being blurred, so the blur samples the plate underneath it.
+      '.pf-open-dof{position:absolute;inset:0;backdrop-filter:blur(5px);-webkit-backdrop-filter:blur(5px);',
+      '  -webkit-mask-image:radial-gradient(78% 82% at 60% 44%,transparent 34%,#000 88%);',
+      '  mask-image:radial-gradient(78% 82% at 60% 44%,transparent 34%,#000 88%);}',
+      // Brand light. Warm accent from the top-left, matching the gold in the
+      // artwork, plus a vignette so the frame closes down at the corners.
+      '.pf-open-gold{position:absolute;inset:0;pointer-events:none;',
+      '  background:radial-gradient(46% 58% at 14% 8%,rgba(216,184,114,.16),transparent 68%),',
+      '             radial-gradient(120% 120% at 50% 50%,transparent 42%,rgba(3,5,9,.82) 100%);}',
+      '.pf-open-scrim{position:absolute;inset:0;background:rgba(4,6,11,.58);opacity:0;',
+      // Rack focus. The product is sharp while it establishes, softens as the
+      // lockup arrives so the type has something quiet to sit on, then pulls
+      // back into focus as the lockup clears — which is what makes the cut
+      // read as moving closer in rather than jumping somewhere else.
+      '.pf-open-rack{position:absolute;inset:0;animation:pfRack 3s cubic-bezier(.4,0,.2,1) both;}',
+      '@keyframes pfRack{0%{backdrop-filter:blur(0px);-webkit-backdrop-filter:blur(0px)}',
+      '  24%{backdrop-filter:blur(0px);-webkit-backdrop-filter:blur(0px)}',
+      '  40%{backdrop-filter:blur(8px);-webkit-backdrop-filter:blur(8px)}',
+      '  74%{backdrop-filter:blur(8px);-webkit-backdrop-filter:blur(8px)}',
+      '  100%{backdrop-filter:blur(0px);-webkit-backdrop-filter:blur(0px)}}',
+      '  animation:pfScrim 3s cubic-bezier(.4,0,.2,1) both;}',
+      '@keyframes pfScrim{0%{opacity:0}22%{opacity:0}38%{opacity:1}72%{opacity:1}96%{opacity:0}100%{opacity:0}}',
+      '.pf-open-black{position:absolute;inset:0;background:#000;animation:pfFromBlack .8s ease-out both;}',
+      '@keyframes pfFromBlack{from{opacity:1}to{opacity:0}}',
+      '.pf-open-lock{position:absolute;inset:0;display:flex;flex-direction:column;align-items:center;',
+      '  justify-content:center;text-align:center;gap:14px;opacity:0;',
+      '  animation:pfLock 3s cubic-bezier(.4,0,.2,1) both;}',
+      // Holds from 0.8s to 2.3s, then clears the frame before the cut so the
+      // last thing on screen is the product, not the wordmark.
+      '@keyframes pfLock{0%{opacity:0;transform:translateY(10px)}26%{opacity:0;transform:translateY(10px)}',
+      '  40%{opacity:1;transform:translateY(0)}74%{opacity:1;transform:translateY(0)}',
+      '  92%{opacity:0;transform:translateY(-6px)}100%{opacity:0;transform:translateY(-6px)}}',
+      '.pf-open-mark{width:clamp(52px,6.4vw,84px);height:auto;filter:drop-shadow(0 6px 26px rgba(201,151,58,.42));}',
+      '.pf-open-word{font-family:Inter,-apple-system,system-ui,"Segoe UI",sans-serif;',
+      '  font-size:clamp(1.5rem,3.6vw,2.6rem);font-weight:300;letter-spacing:.24em;',
+      '  text-indent:.24em;color:#F4F6F8;line-height:1;}',
+      '.pf-open-rule{width:84px;height:1px;background:linear-gradient(90deg,transparent,var(--goldl),transparent);',
+      '  box-shadow:0 0 14px rgba(228,183,92,.55);}',
+      '.pf-open-tag{font-family:Inter,-apple-system,system-ui,"Segoe UI",sans-serif;',
+      '  font-size:clamp(1rem,2.1vw,1.55rem);font-weight:600;letter-spacing:-.015em;line-height:1.28;color:#EAECEF;}',
+
       '.msl-close{display:flex;flex-direction:column;align-items:center;justify-content:center;text-align:center;gap:18px;}',
       // The final card carries two elements, so it can afford more air between
       // them and a larger mark than the mid-film variant.
@@ -839,6 +914,12 @@
     var urlEl = root.querySelector('#pfUrl');
     if (urlEl) urlEl.textContent = (typeof URLS !== 'undefined' && URLS[s.id]) || 'mainstreetcam.com';
     canvas.style.setProperty('--fw', (s.fw || 760) + 'px');
+    // The opening beat is photography of a laptop in a room. Wrapping that in
+    // the browser chrome put a laptop inside a browser window — a frame within
+    // a frame, which read as a screenshot rather than a room. Bare beats drop
+    // the chrome and fill the frame edge to edge; the chrome returns for every
+    // beat that really is the app.
+    root.classList.toggle('pf-bare', !!s.bare);
     canvas.innerHTML = '';
     var wrap = document.createElement('div');
     wrap.style.cssText = 'position:absolute;inset:0;display:flex;align-items:center;justify-content:center';

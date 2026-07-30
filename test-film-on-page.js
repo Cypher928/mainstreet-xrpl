@@ -18,7 +18,7 @@ const http = require('http'), fs = require('fs'), path = require('path');
 const ROOT = __dirname, PORT = 8855;
 const MIME = { '.html':'text/html', '.js':'application/javascript', '.css':'text/css',
                '.json':'application/json', '.png':'image/png', '.svg':'image/svg+xml',
-               '.mp3':'audio/mpeg' };
+               '.mp3':'audio/mpeg', '.jpg':'image/jpeg' };
 let pass = 0, fail = 0;
 const ok  = m => { console.log('  \x1b[32m✓\x1b[0m ' + m); pass++; };
 const bad = (m, d) => { console.log('  \x1b[31m✗\x1b[0m ' + m + (d ? ' — ' + d : '')); fail++; };
@@ -78,8 +78,10 @@ const srv = http.createServer((rq, rs) => {
     return { mounted: !!f, on: !!(f && f.classList.contains('msl-on')),
              capText: (document.getElementById('pfCap') || {}).innerText || '',
              bodyLocked: getComputedStyle(document.body).overflow === 'hidden',
-             shotSrc: ((document.querySelector('#pfCanvas .pf-shot') || {}).getAttribute
-                        ? document.querySelector('#pfCanvas .pf-shot').getAttribute('src') : ''),
+             // The open beat is .pf-open-scene, not .pf-shot — it is photography
+             // filling the frame, not a screenshot inside the device chrome.
+             shotSrc: (document.querySelector('#pfCanvas .pf-open-scene, #pfCanvas .pf-shot') || {}).src || '',
+             bare: !!document.querySelector('#pfFilm.pf-bare'),
              heroStillThere: !!document.querySelector('h1') };
   });
   (navs.length === navsBefore) ? ok('no navigation occurred — the click and the audio stay on one document')
@@ -88,9 +90,9 @@ const srv = http.createServer((rq, rs) => {
   // The film now opens on a silent, caption-less establishing shot, so at 900ms
   // the correct state is an empty caption over a product screenshot — not the
   // upload beat, which no longer comes first.
-  (st.capText === '' && st.shotSrc && /ui-command-center/.test(st.shotSrc))
-    ? ok('opens on the establishing shot: product on screen, no caption, no voice yet')
-    : bad('wrong opening beat', JSON.stringify({ cap: st.capText, shot: st.shotSrc }));
+  (st.capText === '' && /keyart-scene\.jpg/.test(st.shotSrc) && st.bare)
+    ? ok('opens full-bleed on the key art — no caption, no browser chrome around the photograph')
+    : bad('wrong opening beat', JSON.stringify({ cap: st.capText, shot: st.shotSrc, bare: st.bare }));
   st.bodyLocked ? ok('the page behind is scroll-locked while the film plays') : bad('background still scrolls');
   st.heroStillThere ? ok('the marketing page is still mounted underneath — nothing was torn down') : bad('page was replaced');
 
