@@ -167,15 +167,18 @@ srv.listen(PORT,'127.0.0.1',async()=>{
   /pf-story/.test(comp)&&/has <em>a story/.test(comp)
     ?ok('opens on emotion, not software — a type card with no product in frame')
     :bad('the story card is missing');
-  /pf-arrive/.test(comp)
-    ?ok('the workflow arrives mid-move and settles, rather than cutting in cold')
-    :bad('upload does not arrive from the push');
+  // Was /pf-arrive/, which by this point matched only the comment recording that
+  // pf-arrive had been REMOVED — a false pass on prose. The motion itself is
+  // measured in test-film-motion.js; what belongs here is the declaration.
+  /\{ id: 'upload',[^}]*chain: true/.test(comp)
+    ?ok('the workflow continues the camera into itself rather than starting a new move')
+    :bad('upload does not chain from the beat before it');
   /pf-open-mark/.test(comp)&&/MAINSTREET/.test(comp)
     ?ok('the lockup animates: extracted monogram plus live wordmark and tagline')
     :bad('opening lockup missing');
-  /pfFromBlack/.test(comp)&&/pfPush/.test(comp)
-    ?ok('fades up from black over a continuous push — the cut lands mid-move')
-    :bad('opening has no fade-from-black or camera push');
+  /pfFromBlack/.test(comp)&&/@keyframes pfGlide/.test(comp)
+    ?ok('fades up from black over the continuous glide — the cut lands mid-move')
+    :bad('opening has no fade-from-black or camera glide');
   /msl-close-mark/.test(comp)?ok('film closes on the MainStreet brand'):bad('no brand close');
   // The brand card is the last thing anyone sees. It used to carry an XRPL
   // proof line as well, which split the frame between the name and the ledger.

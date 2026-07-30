@@ -145,7 +145,7 @@
       build: function (c) {
         c.innerHTML =
           '<div class="pf-open">' +
-            '<img class="pf-open-scene pf-scene-a" src="' + ASSET + 'keyart-scene.jpg" alt="">' +
+            '<img class="pf-open-scene" src="' + ASSET + 'keyart-scene.jpg" alt="">' +
             '<div class="pf-soft pf-soft-a"></div>' +
             '<div class="pf-open-dof"></div>' +
             '<div class="pf-veil pf-veil-a"></div>' +
@@ -169,11 +169,11 @@
     //            bits end to end because CBR bit allocation smooths amplitude
     //            through the bit reservoir. A hard cut would need a timing I
     //            cannot verify; a 600ms crossfade is right either way.
-    { id: 'promise', dur: 2500, fw: 1180, cap: '', bare: true,
+    { id: 'promise', dur: 2500, fw: 1180, cap: '', bare: true, chain: true,
       build: function (c) {
         c.innerHTML =
           '<div class="pf-open">' +
-            '<img class="pf-open-scene pf-scene-b" src="' + ASSET + 'keyart-scene.jpg" alt="">' +
+            '<img class="pf-open-scene" src="' + ASSET + 'keyart-scene.jpg" alt="">' +
             '<div class="pf-soft pf-soft-b"></div>' +
             '<div class="pf-open-dof"></div>' +
             '<div class="pf-veil pf-veil-b"></div>' +
@@ -183,11 +183,11 @@
           '</div>';
       } },
 
-    { id: 'upload', dur: 4000, fw: 780, cap: 'It starts reading the moment a lease lands',
+    { id: 'upload', dur: 4000, fw: 780, chain: true, cap: 'It starts reading the moment a lease lands',
       vo: 'It starts with what you already have. Leases, invoices, statements.',
       build: function (c) {
         c.innerHTML =
-          '<img class="pf-shot pf-arrive" src="' + ASSET + 'ui-upload.png" alt="">' +
+          '<img class="pf-shot" src="' + ASSET + 'ui-upload.png" alt="">' +
           '<div class="msl-vig"></div>' +
           '<div class="msl-docs">' +
             '<div class="msl-doc-fly" style="--d:.05s;--x:-150px">Lease — Whole Health Market.pdf</div>' +
@@ -207,7 +207,7 @@
       vo: 'MainStreet reads every clause, and tells you which page it came from.',
       build: function (c) {
         c.innerHTML =
-          '<img class="pf-shot pf-shot--dim pf-ken" src="' + ASSET + 'ui-workspace.png" alt="">' +
+          '<img class="pf-shot pf-shot--dim" src="' + ASSET + 'ui-workspace.png" alt="">' +
           '<div class="msl-vig"></div>' +
           '<div class="msl-lease msl-zoomin">' +
             '<div class="msl-lease-doc">' +
@@ -241,7 +241,7 @@
       vo: 'And it finds the revenue you were entitled to recover.',
       build: function (c) {
         c.innerHTML =
-          '<img class="pf-shot pf-shot--deep pf-ken" src="' + ASSET + 'ui-command-center.png" alt="">' +
+          '<img class="pf-shot pf-shot--deep" src="' + ASSET + 'ui-command-center.png" alt="">' +
           '<div class="msl-vig msl-vig--tight"></div>' +
           '<div class="msl-spot msl-spot--center"></div>' +
           '<div class="msl-bignum msl-bignum--center msl-blin">' +
@@ -273,7 +273,7 @@
                     ['Summit Coffee & Provisions', '8% cap · p.3'],
                     ['FitZone Athletics', '4% cap · p.2']];
         c.innerHTML =
-          '<img class="pf-shot pf-shot--dim pf-ken" src="' + ASSET + 'ui-workspace.png" alt="">' +
+          '<img class="pf-shot pf-shot--dim" src="' + ASSET + 'ui-workspace.png" alt="">' +
           '<div class="msl-vig"></div>' +
           '<div class="pf-ask msl-zoomin">' +
             '<div class="pf-ask-bar"><span class="pf-ask-q" id="pfAskQ">&nbsp;</span><span class="pf-ask-go">Ask</span></div>' +
@@ -294,7 +294,7 @@
         var ev = [['Lease uploaded', 'Jan 4'], ['CAM reconciliation run', 'Jan 31'],
                   ['Dispute opened — Cascade Handyman', 'Feb 2'], ['Settlement completed', 'Feb 9']];
         c.innerHTML =
-          '<img class="pf-shot pf-shot--deep pf-ken" src="' + ASSET + 'ui-command-center.png" alt="">' +
+          '<img class="pf-shot pf-shot--deep" src="' + ASSET + 'ui-command-center.png" alt="">' +
           '<div class="msl-vig"></div>' +
           '<div class="msl-tl msl-zoomin">' +
             '<div class="msl-tl-h">Property Timeline</div>' +
@@ -530,13 +530,29 @@
       // The application, full-bleed, as the base of a beat. pf-shot--sharp keeps a
       // screenshot legible (it IS the subject); --dim / --deep push it back when
       // an overlay is the subject and the app is context.
+      // The camera lives on the LAYER, so everything in the beat moves together —
+      // screenshot, callouts, focus bands, type. Previously only the base image
+      // moved and the overlays sat still on top of it, which read as graphics
+      // pasted onto a photo rather than objects inside a shot.
+      // Opacity is driven from JS via the Web Animations API; no transition here,
+      // so nothing about the CSS can quietly change the dissolve.
+      '.pf-layer{position:absolute;inset:0;will-change:opacity;}',
+      '.pf-layer--out{pointer-events:none;}',
+      // The camera. Constant velocity, one direction, and its timeline outlives
+      // the beat by the dissolve length so the shot is STILL MOVING while it
+      // fades out — which is what makes the two shots read as one move.
+      '.pf-cam{position:absolute;inset:0;display:flex;align-items:center;justify-content:center;',
+      '  transform-origin:56% 48%;will-change:transform;',
+      '  animation:pfGlide var(--gd,4s) linear both;}',
+      '@keyframes pfGlide{from{transform:scale(var(--k0,1))}to{transform:scale(var(--k1,1.06))}}',
       '.pf-shot{position:absolute;inset:0;width:100%;height:100%;object-fit:cover;object-position:center;}',
       '.pf-shot--sharp{object-fit:contain;opacity:1;}',
       '.pf-shot--top{object-fit:cover;object-position:top center;}',
       '.pf-shot--dim{opacity:.34;filter:blur(1px) saturate(.85);}',
       '.pf-shot--deep{opacity:.20;filter:blur(2px) saturate(.8);}',
-      '.pf-ken{animation:pfKen 10s ease-out both;}',
-      '@keyframes pfKen{from{transform:scale(1.04)}to{transform:scale(1.11)}}',
+      // .pf-ken retired: a 10s ease-out on a 4-5s beat only ever played its
+      // decelerating first half, so each beat lurched then stopped. The layer
+      // glide replaces it at constant velocity.
       // A vertical focus band that dims everything except one column of the
       // screenshot — how the eye is directed at the savings column.
       '.pf-focus{position:absolute;inset:0;pointer-events:none;opacity:0;',
@@ -653,11 +669,11 @@
       '.msl-vox:hover{background:rgba(255,255,255,.12);color:var(--pa);}',
       '.msl-vox--off{color:var(--dim);}',
       // device frame — stays put, content transforms → continuous product feel
-      '.msl-dev{width:min(880px,94vw);border-radius:16px;overflow:hidden;border:1px solid rgba(255,255,255,.1);background:#0c111a;box-shadow:0 60px 130px -50px rgba(0,0,0,.9),0 0 0 1px rgba(255,255,255,.02);}',
-      '.msl-dev-bar{display:flex;align-items:center;gap:7px;padding:12px 16px;border-bottom:1px solid rgba(255,255,255,.06);background:#0a0e16;}',
+      '.msl-dev{width:min(880px,94vw);border-radius:16px;overflow:hidden;transition:width .78s linear,border-color .78s linear,border-radius .78s linear,background-color .78s linear,box-shadow .78s linear;border:1px solid rgba(255,255,255,.1);background:#0c111a;box-shadow:0 60px 130px -50px rgba(0,0,0,.9),0 0 0 1px rgba(255,255,255,.02);}',
+      '.msl-dev-bar{display:flex;align-items:center;gap:7px;padding:12px 16px;max-height:48px;overflow:hidden;transition:opacity .78s linear,max-height .78s linear,padding .78s linear,border-bottom-color .78s linear;border-bottom:1px solid rgba(255,255,255,.06);background:#0a0e16;}',
       '.msl-dev-bar>i{width:11px;height:11px;border-radius:50%;background:rgba(255,255,255,.14);}',
       '.msl-dev-url{margin-left:14px;font-family:ui-monospace,"SF Mono",Menlo,monospace;font-size:.72rem;color:var(--dim);}',
-      '.msl-canvas{position:relative;height:min(52vh,460px);overflow:hidden;background:#0b0f17;}',
+      '.msl-canvas{position:relative;height:min(52vh,460px);overflow:hidden;transition:height .78s linear;background:#0b0f17;}',
       '.msl-canvas>*{animation:mslCanvasIn .7s cubic-bezier(.2,.7,.2,1) both;}',
       '@keyframes mslCanvasIn{from{opacity:0;transform:scale(1.015);filter:blur(4px)}to{opacity:1;transform:none;filter:blur(0)}}',
       '.msl-bg{position:absolute;inset:0;width:100%;height:100%;object-fit:cover;object-position:top;}',
@@ -677,7 +693,9 @@
       '.msl-vig--tight{background:radial-gradient(ellipse at 50% 46%,transparent 18%,rgba(0,0,0,.72) 62%,rgba(0,0,0,.92) 100%);}',
       // Every scene enters already composed — scaled and settling, never empty.
       '.msl-zoomin{animation:mslZoomIn .9s var(--ez,cubic-bezier(.16,1,.3,1)) both;}',
-      '@keyframes mslZoomIn{from{opacity:0;transform:scale(.965) translateY(10px)}to{opacity:1;transform:none}}',
+      // Reveal only — no scale. This used to pop from scale(.965) to rest on
+      // every beat, fighting the camera and landing at a standstill.
+      '@keyframes mslZoomIn{from{opacity:0;transform:translateY(12px)}to{opacity:1;transform:none}}',
       // Hero numbers resolve out of blur — the "celebrate it" treatment.
       '.msl-blin{animation:mslBlurIn 1.1s var(--ez,cubic-bezier(.16,1,.3,1)) both;}',
       '@keyframes mslBlurIn{from{opacity:0;filter:blur(14px);transform:scale(.94)}to{opacity:1;filter:blur(0);transform:none}}',
@@ -725,23 +743,23 @@
       '.msl-cine .msl-onchain--lg{transform:scale(1.14);transform-origin:center;}',
       // Brand close — the last impression is MainStreet, ledger proof beneath.
       // ── opening beat ────────────────────────────────────────────────────
-      '.pf-bare .msl-dev-bar{display:none;}',
-      '.pf-bare .msl-dev{width:min(1180px,96vw);border:0;border-radius:20px;background:#000;box-shadow:0 70px 150px -60px rgba(0,0,0,.95);}',
+      // The frame morphs across the dissolve. `display:none` cannot transition,
+      // so the bar collapses by max-height and opacity — otherwise the browser
+      // chrome snapped into existence halfway through the promise->upload
+      // dissolve, which was its own visible discontinuity.
+      '.pf-bare .msl-dev-bar{opacity:0;max-height:0;padding-top:0;padding-bottom:0;border-bottom-color:transparent;}',
+      '.pf-bare .msl-dev{width:min(1180px,96vw);border-color:transparent;border-radius:20px;background:#000;box-shadow:0 70px 150px -60px rgba(0,0,0,.95);}',
       '.pf-bare .msl-canvas{height:min(62vh,560px);background:#000;}',
       '.pf-open{position:absolute;inset:0;overflow:hidden;border-radius:inherit;}',
       // The push runs the full 3s and does not settle, so the cut into the
       // upload beat lands mid-move — the camera keeps going rather than
       // stopping and jumping somewhere else.
-      '.pf-open-scene{position:absolute;inset:0;width:100%;height:100%;object-fit:cover;object-position:56% 52%;',
-      '  transform-origin:56% 46%;animation:pfPush 3s linear both;}',
-      '@keyframes pfPush{from{transform:scale(1.005)}to{transform:scale(1.085)}}',
+      '.pf-open-scene{position:absolute;inset:0;width:100%;height:100%;object-fit:cover;object-position:56% 52%;}',
       // Continuous push. Same rate across both beats (~0.03 scale/sec) so the
       // camera never stops: logo covers 1.000->1.045 in 1.5s, promise picks up
       // at 1.045 and carries to 1.120 in 2.5s.
-      '.pf-scene-a{animation:pfPushA 1.5s linear both;}',
-      '.pf-scene-b{animation:pfPushB 2.5s linear both;}',
-      '@keyframes pfPushA{from{transform:scale(1.000)}to{transform:scale(1.045)}}',
-      '@keyframes pfPushB{from{transform:scale(1.045)}to{transform:scale(1.120)}}',
+      // The opening plates no longer carry their own push — the layer glide does,
+      // so the veil, halo and type travel with the shot instead of over it.
       // Shallow depth of field over the whole frame, pulling into focus as the
       // camera closes. This is what keeps the dashboard from reading as a
       // dashboard while the brand has the frame.
@@ -798,9 +816,9 @@
       '  40%{opacity:0;transform:translateY(calc(-50% + 10px))}',
       '  56%{opacity:1;transform:translateY(-50%)}100%{opacity:1;transform:translateY(-50%)}}',
       // The workflow arrives mid-move and settles, instead of cutting in cold.
-      '.pf-arrive{position:absolute;inset:0;width:100%;height:100%;object-fit:cover;',
-      '  animation:pfArrive 1.1s cubic-bezier(.16,1,.3,1) both;}',
-      '@keyframes pfArrive{from{transform:scale(1.075);opacity:.55}to{transform:scale(1);opacity:1}}',
+      // .pf-arrive retired: it decelerated to a stop, which is the camera
+      // parking. `upload` now enters already pushed in (k0 1.045) and keeps
+      // travelling at the same rate as the beat before it.
 
       // Depth of field: sharp through the middle where the screen sits, falling
       // off at the edges. backdrop-filter is masked rather than the element
@@ -997,6 +1015,38 @@
     return SCENES.slice(0, i).reduce(function (a, sc) { return a + sc.dur; }, 0);
   }
 
+  // ── camera ──────────────────────────────────────────────────────────────────
+  // One move, constant velocity, one direction, for the whole film. Every beat
+  // glides at CAM_RATE scale-units per millisecond, so the outgoing and incoming
+  // shots are travelling at the same speed in the same direction across the
+  // dissolve and the eye reads it as a single continuous move.
+  //
+  // Velocity matching is the whole trick. Absolute scale resets per beat (it
+  // would otherwise reach 2x by the end of the film) and the dissolve hides that
+  // reset — but only while the velocities agree. The previous version had beats
+  // easing OUT to a standstill before each cut, which is why they read as
+  // separate images no matter how well composed they were.
+  var CAM_RATE = 0.000016;   // scale per ms  (1.6% per second)
+  var XFADE    = 780;        // dissolve overlap
+
+  function camStart(i) {
+    var s = SCENES[i];
+    // `chain` continues the previous beat's absolute scale, so the two layers sit
+    // at the SAME scale as well as the same velocity through the dissolve.
+    if (s.chain && i > 0) return camEnd(i - 1);
+    return typeof s.k0 === 'number' ? s.k0 : 1;
+  }
+  // Where the camera has reached when the NEXT beat starts. This is the chain
+  // hand-off point, and it deliberately excludes the dissolve tail.
+  function camEnd(i) { return camStart(i) + CAM_RATE * SCENES[i].dur; }
+  // Where the glide animation must finish. The layer keeps travelling for XFADE
+  // beyond its own beat, so its end scale has to cover that too — otherwise the
+  // same distance is spread over a longer time and the beat glides SLOWER than
+  // CAM_RATE. That was the velocity mismatch: measured 1.05e-5/ms against a
+  // declared 1.6e-5/ms, which is precisely what made each shot read as its own
+  // move rather than part of one.
+  function camGlideEnd(i) { return camStart(i) + CAM_RATE * (SCENES[i].dur + XFADE); }
+
   function renderScene() {
     clearTimeout(state.timer);
     var s = SCENES[state.i];
@@ -1010,11 +1060,56 @@
     // the chrome and fill the frame edge to edge; the chrome returns for every
     // beat that really is the app.
     root.classList.toggle('pf-bare', !!s.bare);
-    canvas.innerHTML = '';
+
+    // Cross-dissolve, not a cut. The outgoing layer stays mounted and keeps
+    // running its own animations while it fades, so it is still moving when the
+    // incoming layer comes up over it. `canvas.innerHTML = ''` was here before,
+    // which made every transition a hard cut between two still frames.
+    // Two nested elements on purpose. The OUTER owns opacity, the INNER owns the
+    // camera transform.
+    //
+    // They were one element at first, with the dissolve and the glide as two
+    // entries in a single `animation` shorthand. Adding the fade-out class
+    // rewrote that shorthand, and changing the animation-name list RESTARTS
+    // every animation in it — so the outgoing shot snapped back to its starting
+    // scale at the exact moment of the cut. Measured: story left frame at scale
+    // 1.0004 when it should have been at 1.024.
+    //
+    // Opacity is a transition here rather than an animation, so toggling it can
+    // never disturb the glide.
+    var prev = canvas.querySelector('.pf-layer:not(.pf-layer--out)');
     var wrap = document.createElement('div');
-    wrap.style.cssText = 'position:absolute;inset:0;display:flex;align-items:center;justify-content:center';
+    wrap.className = 'pf-layer';
+    var cam = document.createElement('div');
+    cam.className = 'pf-cam';
+    // Strings, not numbers. setProperty coerces, but an unparsable value makes
+    // var() fall back silently — which is how k0 was lost: every beat entered at
+    // scale 1 regardless, including `upload` at its declared 1.045.
+    cam.style.setProperty('--k0', String(camStart(state.i)));
+    cam.style.setProperty('--k1', String(camGlideEnd(state.i)));
+    cam.style.setProperty('--gd', (s.dur + XFADE) + 'ms');  // still travelling as it fades
+    wrap.appendChild(cam);
     canvas.appendChild(wrap);
-    s.build(wrap);
+    s.build(cam);
+    // The dissolve: the incoming layer fades UP over an outgoing layer that is
+    // held fully opaque. That composites to new*a + old*(1-a) — a true
+    // cross-dissolve — and it is more robust than fading both, which double-dips
+    // the luminance in the middle of every transition.
+    //
+    // Driven by the Web Animations API rather than a class-toggled transition.
+    // The class version silently did not run on the outgoing layer, and an
+    // accidental effect that happens to look right is one refactor away from
+    // looking wrong.
+    var fade = wrap.animate([{ opacity: 0 }, { opacity: 1 }],
+                            { duration: XFADE, easing: 'linear', fill: 'both' });
+    if (prev) {
+      prev.classList.add('pf-layer--out');       // held opaque; only stops hit-testing
+      var drop = function () { if (prev.parentNode) prev.parentNode.removeChild(prev); };
+      // Removed only once the incoming layer is fully opaque, so the outgoing
+      // shot is never visibly pulled out from underneath.
+      if (fade.finished) fade.finished.then(drop).catch(drop);
+      else setTimeout(drop, XFADE + 80);
+    }
     setTimeout(function () {
       capEl.textContent = s.cap || '';
       capEl.style.opacity = s.cap ? '1' : '0';
