@@ -127,15 +127,25 @@ srv.listen(PORT,'127.0.0.1',async()=>{
   (realAssets.length>=6)?ok('drawn from real captures: '+realAssets.join(', '))
     :bad('missing real captures',JSON.stringify(realAssets));
 
-  console.log('\n── Narration scaffold (no synthetic voice) ──');
+  console.log('\n── Narration (recorded clips, never synthesised) ──');
   const cues=await p.evaluate(()=>window.ProductFilm&&window.ProductFilm.narrationCues?window.ProductFilm.narrationCues():null);
   (cues&&cues.length===10)?ok('narration cues exposed for all 10 beats'):bad('narration cues missing',JSON.stringify(cues&&cues.length));
   (cues&&cues.every(c=>c.line&&c.line.length>10))?ok('every beat has a written narration line'):bad('a beat has no narration line');
   (cues&&cues[0].atMs===0&&cues[9].atMs===durs.slice(0,9).reduce((a,b)=>a+b,0))
     ?ok('cue times derive from scene durations — a recorded read stays in sync')
     :bad('cue times do not track durations',JSON.stringify(cues&&cues.map(c=>c.atMs)));
-  const hasAudio=/new Audio|speechSynthesis|<audio/.test(comp);
-  !hasAudio?ok('no synthetic narration is played — scaffold only'):bad('synthetic audio present');
+  // This used to ban `new Audio` outright, from when the film was a scaffold
+  // with no voice. The film now plays a recorded read, so the guarantee narrows
+  // to the one that still matters: nothing is generated in the browser. A
+  // speech-synthesis fallback would put a robot voice on the launch film the
+  // first time a clip failed to load, which is worse than silence.
+  const synth=/speechSynthesis|SpeechSynthesisUtterance/.test(comp);
+  !synth?ok('no speech synthesis — the voice is a recorded track, not generated at runtime')
+    :bad('the browser is synthesising speech');
+  const srcs=(cues||[]).filter(c=>c.audio).map(c=>c.audio);
+  (srcs.length>0&&srcs.every(s=>/^assets\/vo\/vo-[a-z]+\.mp3$/.test(s)))
+    ?ok(srcs.length+' lines play from assets/vo/ — every source is a file in the repo')
+    :bad('a narration clip has an unexpected source',JSON.stringify(srcs));
 
   console.log('\n── Exit paths ──');
   // The end card is up now; its own control is the intended way out from here.

@@ -292,7 +292,7 @@ footer{border-top:1px solid rgba(var(--line),.07);padding:44px 0;background:var(
           <span>▶ Watch MainStreet in Action<span class="btn-sub">A 40-second product film</span></span>
         </a>
       </div>
-      <div class="hero-note"><b>No slides.</b> The film runs the real product — no narration, no mockups.</div>
+      <div class="hero-note"><b>No slides.</b> The film runs the real product — no mockups, no reenactments.</div>
     </div>
 
     <div class="rv shot shot--float" style="transition-delay:.1s">
@@ -532,7 +532,14 @@ footer{border-top:1px solid rgba(var(--line),.07);padding:44px 0;background:var(
    old navigation if the module fails to load, so the CTA is never dead. */
 (function () {
   var links = document.querySelectorAll('a[href="index.html?demo=1"]');
+  // Warm the narration on intent, not on click. The first line is due at 0ms,
+  // so loading it when the film opens makes it late — and the schedule is
+  // absolute, so a late line eats the gap before the next one.
+  var warm = function () { if (window.ProductFilm) window.ProductFilm.preload(); };
   Array.prototype.forEach.call(links, function (a) {
+    a.addEventListener('pointerenter', warm, { once: true });
+    a.addEventListener('focus', warm, { once: true });
+    a.addEventListener('touchstart', warm, { once: true, passive: true });
     a.addEventListener('click', function (e) {
       if (!window.ProductFilm) return;            // fall through to the href
       e.preventDefault();

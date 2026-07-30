@@ -11,12 +11,13 @@
  *   index.html   landing-experience.js delegates to it for a signed-out visitor.
  *
  * Mounts its own overlay and styles. Touches no auth, settlement, XRPL or
- * business logic. Narration is a scaffold only: cue times are exposed so a
- * recorded track can be dropped in, and no synthetic voice is ever spoken.
+ * business logic. Narration plays from pre-rendered clips in assets/vo/ — one
+ * per spoken line, scheduled so no two lines ever overlap.
  *
  *   ProductFilm.play({ onExit })   open and play from the first beat
  *   ProductFilm.stop()             close
- *   ProductFilm.narrationCues()    [{ id, atMs, durMs, line, caption }]
+ *   ProductFilm.preload()          warm the narration clips before play()
+ *   ProductFilm.narrationCues()    [{ id, atMs, durMs, line, caption, audio, startMs, endMs }]
  *   ProductFilm.narrationScript()  the same, formatted for a voice artist
  */
 (function () {
@@ -25,6 +26,29 @@
   var EXPLORER = 'https://livenet.xrpl.org/transactions/7FA730B2B78819AE34B3D1B458721FBC52B9CD25E980ED42DD1B15E9F9FC724A';
   var ASSET = 'assets/landing/';
   var STYLE_ID = 'pf-styles';
+
+  // ── narration ───────────────────────────────────────────────────────────────
+  // durMs is MEASURED from each rendered mp3 by parsing frame headers, not
+  // estimated from the word count. The schedule below depends on the real
+  // numbers: two lines run past the scene they belong to, and arithmetic on
+  // these values is the only thing keeping them from talking over the next
+  // line. test-narration.js re-measures the files and fails if a re-render
+  // changes a length, so the table cannot drift away from the audio.
+  var VO_DIR = 'assets/vo/';
+  var VO_GAP = 250;                      // minimum silence between two lines
+  var VO = {
+    upload:   { file: 'vo-upload.mp3',   durMs: 4310 },   // overruns its 4.0s scene
+    extract:  { file: 'vo-extract.mp3',  durMs: 2640 },
+    recon:    { file: 'vo-recon.mp3',    durMs: 2460 },
+    recover:  { file: 'vo-recover.mp3',  durMs: 2870 },
+    // space and settle are deliberately silent. The script refuses to narrate
+    // the UI ("now we're looking at Spaces"), and a breath after the $99,542
+    // beat is worth more than a line would be.
+    ask:      { file: 'vo-ask.mp3',      durMs: 5510 },   // overruns its 5.2s scene
+    timeline: { file: 'vo-timeline.mp3', durMs: 2950 },
+    verify:   { file: 'vo-verify.mp3',   durMs: 3600 },
+    brand:    { file: 'vo-brand.mp3',    durMs: 4020 },   // runs past the last cut
+  };
 
   function icon(name) {
     var d = {
@@ -235,12 +259,29 @@
   ];
 
   function narrationCues() {
-    var t = 0;
+    var t = 0, prevEnd = -Infinity;
     return SCENES.map(function (s) {
-      var cue = { id: s.id, atMs: t, durMs: s.dur, line: s.vo || '', caption: s.cap || '' };
+      var cue = { id: s.id, atMs: t, durMs: s.dur, line: s.vo || '', caption: s.cap || '',
+                  audio: null, voMs: 0, startMs: null, endMs: null };
       t += s.dur;
+      // Anchor each line to its scene, then push it later if the previous line
+      // is still speaking. Anchoring naively would put the tail of the opening
+      // line on top of the head of the next one — it runs 4.31s inside a 4.0s
+      // scene. Every line after an overrun has slack in its own window, so the
+      // push absorbs within one scene and never compounds.
+      var vo = VO[s.id];
+      if (vo) {
+        cue.audio = VO_DIR + vo.file;
+        cue.voMs = vo.durMs;
+        cue.startMs = Math.max(cue.atMs, prevEnd + VO_GAP);
+        cue.endMs = cue.startMs + vo.durMs;
+        prevEnd = cue.endMs;
+      }
       return cue;
     });
+  }
+  function narrationEndMs() {
+    return narrationCues().reduce(function (m, c) { return (c.endMs || 0) > m ? c.endMs : m; }, 0);
   }
   function narrationScript() {
     return narrationCues().map(function (c) {
@@ -251,8 +292,75 @@
 
   // ── mount ──────────────────────────────────────────────────────────────────
   var root = null, cineEl = null, canvas = null, capEl = null, tlEl = null, endEl = null;
-  var state = { i: 0, playing: false, timer: null };
+  var state = { i: 0, playing: false, timer: null, t0: 0 };
   var onExit = null;
+  var vox = { on: true, blocked: false, els: {}, timers: [] };
+
+  // Warm the clips before play(). The first line starts at 0ms, so if loading
+  // begins when the film opens it starts late — and because the schedule is
+  // absolute, a late line eats into the gap before the next one. Call this on
+  // hover or focus of a play control; play() also calls it as a backstop.
+  function preload() {
+    narrationCues().forEach(function (c) {
+      if (!c.audio || vox.els[c.id]) return;
+      var a = new Audio();
+      a.preload = 'auto';
+      a.src = c.audio;
+      vox.els[c.id] = a;
+      try { a.load(); } catch (e) {}
+    });
+  }
+
+  function elapsedMs() { return state.t0 ? Date.now() - state.t0 : 0; }
+
+  function clearNarrationTimers() {
+    vox.timers.forEach(function (t) { clearTimeout(t); });
+    vox.timers = [];
+  }
+
+  function silence() {
+    clearNarrationTimers();
+    Object.keys(vox.els).forEach(function (k) {
+      try { vox.els[k].pause(); vox.els[k].currentTime = 0; } catch (e) {}
+    });
+  }
+
+  // Rebuilt from scratch whenever the playhead moves for any reason — open,
+  // replay, arrow-key scrub, unmute. Cues already finished are dropped; a cue
+  // caught mid-line resumes at the right offset rather than restarting.
+  function syncNarration() {
+    silence();
+    if (!vox.on || !state.playing) return;
+    var from = elapsedMs();
+    narrationCues().forEach(function (c) {
+      if (!c.audio || c.endMs <= from) return;
+      var a = vox.els[c.id];
+      if (!a) return;
+      var seek = c.startMs < from ? (from - c.startMs) / 1000 : 0;
+      vox.timers.push(setTimeout(function () {
+        if (!vox.on || !state.playing) return;
+        try { a.currentTime = seek; } catch (e) {}
+        var p = a.play();
+        // A rejected play() is the deep-link case: index.html?demo=1 arrives by
+        // navigation, and user activation does not survive a navigation. Drop
+        // to muted and label the control "Sound on" so the film reads as
+        // deliberately silent rather than broken.
+        if (p && p.catch) p.catch(function () { vox.blocked = true; setMuted(true); });
+      }, Math.max(0, c.startMs - from)));
+    });
+  }
+
+  function setMuted(m) {
+    vox.on = !m;
+    var b = root && root.querySelector('#pfMute');
+    if (b) {
+      b.textContent = m ? (vox.blocked ? 'Sound on' : 'Sound off') : 'Sound on ●';
+      b.setAttribute('aria-pressed', m ? 'false' : 'true');
+      b.setAttribute('aria-label', m ? 'Turn narration on' : 'Turn narration off');
+      b.classList.toggle('msl-vox--off', m);
+    }
+    if (m) silence(); else { vox.blocked = false; syncNarration(); }
+  }
 
   function injectStyles() {
     if (document.getElementById(STYLE_ID)) return;
@@ -383,6 +491,9 @@
       '.msl-cine.msl-on{display:flex;animation:mslFade .45s ease both;}',
       '.msl-cine-close{position:absolute;top:22px;right:26px;z-index:6;background:rgba(255,255,255,.05);border:none;color:var(--mut);font-size:1rem;width:36px;height:36px;border-radius:50%;cursor:pointer;display:grid;place-items:center;transition:background .2s,color .2s;}',
       '.msl-cine-close:hover{background:rgba(255,255,255,.12);color:var(--pa);}',
+      '.msl-vox{position:absolute;top:22px;right:74px;z-index:6;background:rgba(255,255,255,.05);border:none;color:var(--mut);font:inherit;font-size:.72rem;letter-spacing:.08em;text-transform:uppercase;height:36px;padding:0 14px;border-radius:18px;cursor:pointer;transition:background .2s,color .2s;}',
+      '.msl-vox:hover{background:rgba(255,255,255,.12);color:var(--pa);}',
+      '.msl-vox--off{color:var(--dim);}',
       // device frame — stays put, content transforms → continuous product feel
       '.msl-dev{width:min(880px,94vw);border-radius:16px;overflow:hidden;border:1px solid rgba(255,255,255,.1);background:#0c111a;box-shadow:0 60px 130px -50px rgba(0,0,0,.9),0 0 0 1px rgba(255,255,255,.02);}',
       '.msl-dev-bar{display:flex;align-items:center;gap:7px;padding:12px 16px;border-bottom:1px solid rgba(255,255,255,.06);background:#0a0e16;}',
@@ -593,6 +704,7 @@
     root.setAttribute('aria-label', 'MainStreet product film');
     root.innerHTML =
       '<button class="msl-cine-close" id="pfClose" aria-label="Close">\u2715</button>' +
+      '<button class="msl-vox" id="pfMute" aria-pressed="true" aria-label="Turn narration off">Sound on \u25cf</button>' +
       '<div class="msl-dev"><div class="msl-dev-bar"><i></i><i></i><i></i>' +
         '<span class="msl-dev-url" id="pfUrl">mainstreetcam.com</span></div>' +
         '<div class="msl-canvas" id="pfCanvas"></div></div>' +
@@ -604,14 +716,28 @@
     capEl = root.querySelector('#pfCap'); tlEl = root.querySelector('#pfTimeline');
     endEl = root.querySelector('#pfEnd');
     root.querySelector('#pfClose').addEventListener('click', stop);
+    root.querySelector('#pfMute').addEventListener('click', function () { setMuted(vox.on); });
     document.addEventListener('keydown', onKey);
   }
 
   function onKey(e) {
     if (!root || !root.classList.contains('msl-on')) return;
     if (e.key === 'Escape') stop();
-    else if (e.key === 'ArrowRight' && state.i < SCENES.length - 1) { clearTimeout(state.timer); state.i++; renderScene(); }
-    else if (e.key === 'ArrowLeft' && state.i > 0) { clearTimeout(state.timer); state.i--; renderScene(); }
+    else if (e.key === 'ArrowRight' && state.i < SCENES.length - 1) { clearTimeout(state.timer); state.i++; scrubbed(); }
+    else if (e.key === 'ArrowLeft' && state.i > 0) { clearTimeout(state.timer); state.i--; scrubbed(); }
+    else if (e.key === 'm' || e.key === 'M') setMuted(vox.on);
+  }
+
+  // Re-anchor the narration clock to the scene the scrub landed on, otherwise
+  // the voice keeps running against the timeline the viewer just left.
+  function scrubbed() {
+    state.t0 = Date.now() - sceneStartMs(state.i);
+    renderScene();
+    syncNarration();
+  }
+
+  function sceneStartMs(i) {
+    return SCENES.slice(0, i).reduce(function (a, sc) { return a + sc.dur; }, 0);
   }
 
   function renderScene() {
@@ -639,7 +765,14 @@
     endEl.classList.remove('msl-show');
     if (state.playing) {
       if (state.i < SCENES.length - 1) state.timer = setTimeout(function () { state.i++; renderScene(); }, s.dur);
-      else state.timer = setTimeout(showEnd, s.dur);
+      else {
+        // Hold the brand frame until the closing line finishes. It runs 4.02s
+        // against a 3.4s scene, so cutting to the CTA on the scene clock would
+        // clip "…every commercial property" — the one line that has to land.
+        var hold = s.dur;
+        if (vox.on && !vox.blocked) hold = Math.max(hold, narrationEndMs() - elapsed + 280);
+        state.timer = setTimeout(showEnd, hold);
+      }
     } else if (s.end) setTimeout(showEnd, 300);
   }
 
@@ -656,7 +789,10 @@
       if (cta) cta.click();
     });
     endEl.querySelector('#pfEndVerify').addEventListener('click', function () { window.open(EXPLORER, '_blank', 'noopener'); });
-    endEl.querySelector('#pfEndReplay').addEventListener('click', function () { state.i = 0; state.playing = true; renderScene(); });
+    endEl.querySelector('#pfEndReplay').addEventListener('click', function () {
+      state.i = 0; state.playing = true; state.t0 = Date.now();
+      renderScene(); syncNarration();
+    });
     endEl.querySelector('#pfEndBack').addEventListener('click', stop);
   }
 
@@ -668,14 +804,18 @@
     if (state.playing && root && root.classList.contains('msl-on')) return;
     onExit = (opts && opts.onExit) || null;
     build();
-    state.i = 0; state.playing = true;
+    preload();
+    if (opts && opts.muted) setMuted(true);
+    state.i = 0; state.playing = true; state.t0 = Date.now();
     renderScene();
+    syncNarration();
     root.classList.add('msl-on');
     document.body.style.overflow = 'hidden';
   }
 
   function stop() {
     clearTimeout(state.timer);
+    silence();
     state.playing = false;
     if (root) root.classList.remove('msl-on');
     document.body.style.overflow = '';
@@ -683,8 +823,9 @@
   }
 
   window.ProductFilm = {
-    play: play, stop: stop,
+    play: play, stop: stop, preload: preload,
     narrationCues: narrationCues,
+    narrationEndMs: narrationEndMs,
     narrationScript: narrationScript,
     scenes: function () { return SCENES.map(function (s) { return { id: s.id, dur: s.dur, cap: s.cap, vo: s.vo }; }); },
   };
