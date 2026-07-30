@@ -40,12 +40,12 @@
   // over a fade-in. `atMs` on a VO entry overrides it with an absolute anchor.
   var VO_LEAD = 600;
   var VO = {
-    // Anchored, not scene-relative. The opening line begins at 2.0s — one
-    // second before the cut out of the establishing shot — so the voice carries
-    // across the transition instead of starting after it. Elise reads with no
-    // internal pause over 140ms, so there is no gap inside the clip to hide a
-    // cut behind; the line has to straddle it or the cut lands mid-sentence.
-    upload:   { file: 'vo-upload.mp3',   durMs: 4310, atMs: 2000 },
+    // Anchored, not scene-relative. The line begins at 3.0s — as the `promise`
+    // beat opens, 2.5s before the cut into the workflow — and runs to 7.31s, so
+    // it carries across that cut. Elise reads with no pause over 140ms and the
+    // frame-header energy profile is flat end to end, so there is no verifiable
+    // gap inside the clip to hide a cut behind; the line has to bridge it.
+    upload:   { file: 'vo-upload.mp3',   durMs: 4310, atMs: 3000 },
     extract:  { file: 'vo-extract.mp3',  durMs: 2640 },
     recon:    { file: 'vo-recon.mp3',    durMs: 2460 },
     recover:  { file: 'vo-recover.mp3',  durMs: 2870 },
@@ -117,22 +117,69 @@
     // lockup is out of frame and the animated one can do that job. The office
     // is real photography from that artwork — nothing here composites the app
     // into an invented environment.
-    { id: 'open', dur: 3000, fw: 1180, cap: '', bare: true,
+    // ── OPENING SEQUENCE ────────────────────────────────────────────────
+    // Three beats before any feature is shown, per the storyboard: emotion,
+    // then the product's name, then the promise — and only then the workflow.
+    // The earlier single beat opened straight onto the dashboard, which made it
+    // a splash screen for a demo. Nothing here competes with the brand: the app
+    // is present but veiled and defocused until the camera has arrived.
+    //
+    // The push is continuous across `logo` and `promise` at a matched rate
+    // (~0.03 scale/sec), and `upload` arrives already scaled in and settles, so
+    // the cut reads as the camera reaching the software rather than a jump to
+    // another screen.
+
+    // 0.00-1.50  Emotion first. No product at all.
+    { id: 'story', dur: 1500, fw: 940, cap: '', bare: true,
       build: function (c) {
         c.innerHTML =
           '<div class="pf-open">' +
-            '<img class="pf-open-scene" src="' + ASSET + 'keyart-scene.jpg" alt="">' +
+            '<div class="pf-story"><p>Every commercial property<br>has <em>a story.</em></p></div>' +
+            '<div class="pf-open-black"></div>' +
+          '</div>';
+      } },
+
+    // 1.50-3.00  The product's name, lit. The dashboard is behind it, heavily
+    //            veiled and out of focus — supporting the frame, not sharing it.
+    { id: 'logo', dur: 1500, fw: 1180, cap: '', bare: true,
+      build: function (c) {
+        c.innerHTML =
+          '<div class="pf-open">' +
+            '<img class="pf-open-scene pf-scene-a" src="' + ASSET + 'keyart-scene.jpg" alt="">' +
+            '<div class="pf-soft pf-soft-a"></div>' +
             '<div class="pf-open-dof"></div>' +
-            '<div class="pf-open-rack"></div>' +
-            '<div class="pf-open-gold"></div>' +
-            '<div class="pf-open-scrim"></div>' +
+            '<div class="pf-veil pf-veil-a"></div>' +
+            '<div class="pf-halo"></div>' +
             '<div class="pf-open-lock">' +
               '<img class="pf-open-mark" src="' + ASSET + 'keyart-mark.png" alt="">' +
               '<div class="pf-open-word">MAINSTREET</div>' +
               '<div class="pf-open-rule"></div>' +
               '<div class="pf-open-tag">The AI Operating System<br>for Commercial Real&nbsp;Estate.</div>' +
             '</div>' +
-            '<div class="pf-open-black"></div>' +
+          '</div>';
+      } },
+
+    // 3.00-5.50  The promise, spoken and on screen. The veil lifts and focus
+    //            pulls in as the camera closes on the product. The recorded line
+    //            starts here and runs past the cut into `upload`.
+    //
+    //            The two lines CROSSFADE rather than cutting. I could not locate
+    //            the sentence break in vo-upload.mp3: the read has no pause over
+    //            140ms, and the frame-header energy profile is flat 2500-3800
+    //            bits end to end because CBR bit allocation smooths amplitude
+    //            through the bit reservoir. A hard cut would need a timing I
+    //            cannot verify; a 600ms crossfade is right either way.
+    { id: 'promise', dur: 2500, fw: 1180, cap: '', bare: true,
+      build: function (c) {
+        c.innerHTML =
+          '<div class="pf-open">' +
+            '<img class="pf-open-scene pf-scene-b" src="' + ASSET + 'keyart-scene.jpg" alt="">' +
+            '<div class="pf-soft pf-soft-b"></div>' +
+            '<div class="pf-open-dof"></div>' +
+            '<div class="pf-veil pf-veil-b"></div>' +
+            '<div class="pf-lgrad"></div>' +
+            '<div class="pf-line pf-line-a">Commercial real estate<br>moves <em>fast…</em></div>' +
+            '<div class="pf-line pf-line-b">…MainStreet reads<br><em>every lease.</em></div>' +
           '</div>';
       } },
 
@@ -140,7 +187,7 @@
       vo: 'It starts with what you already have. Leases, invoices, statements.',
       build: function (c) {
         c.innerHTML =
-          '<img class="pf-shot pf-ken" src="' + ASSET + 'ui-upload.png" alt="">' +
+          '<img class="pf-shot pf-arrive" src="' + ASSET + 'ui-upload.png" alt="">' +
           '<div class="msl-vig"></div>' +
           '<div class="msl-docs">' +
             '<div class="msl-doc-fly" style="--d:.05s;--x:-150px">Lease — Whole Health Market.pdf</div>' +
@@ -688,6 +735,73 @@
       '.pf-open-scene{position:absolute;inset:0;width:100%;height:100%;object-fit:cover;object-position:56% 52%;',
       '  transform-origin:56% 46%;animation:pfPush 3s linear both;}',
       '@keyframes pfPush{from{transform:scale(1.005)}to{transform:scale(1.085)}}',
+      // Continuous push. Same rate across both beats (~0.03 scale/sec) so the
+      // camera never stops: logo covers 1.000->1.045 in 1.5s, promise picks up
+      // at 1.045 and carries to 1.120 in 2.5s.
+      '.pf-scene-a{animation:pfPushA 1.5s linear both;}',
+      '.pf-scene-b{animation:pfPushB 2.5s linear both;}',
+      '@keyframes pfPushA{from{transform:scale(1.000)}to{transform:scale(1.045)}}',
+      '@keyframes pfPushB{from{transform:scale(1.045)}to{transform:scale(1.120)}}',
+      // Shallow depth of field over the whole frame, pulling into focus as the
+      // camera closes. This is what keeps the dashboard from reading as a
+      // dashboard while the brand has the frame.
+      '.pf-soft{position:absolute;inset:0;}',
+      '.pf-soft-a{backdrop-filter:blur(11px);-webkit-backdrop-filter:blur(11px);}',
+      '.pf-soft-b{animation:pfFocus 2.5s cubic-bezier(.33,0,.25,1) both;}',
+      '@keyframes pfFocus{from{backdrop-filter:blur(11px);-webkit-backdrop-filter:blur(11px)}',
+      '  to{backdrop-filter:blur(2px);-webkit-backdrop-filter:blur(2px)}}',
+      // The veil suppresses the app while the brand holds, then lifts as we
+      // approach it.
+      '.pf-veil{position:absolute;inset:0;background:rgba(4,6,11,.72);}',
+      '.pf-veil-b{animation:pfVeil 2.5s cubic-bezier(.33,0,.25,1) both;}',
+      '@keyframes pfVeil{from{opacity:1}to{opacity:.52}}',
+      // Light behind the lockup. The brief asked for lighting that draws the eye
+      // to the brand, so the source sits behind the type rather than in a corner.
+      '.pf-halo{position:absolute;inset:0;pointer-events:none;',
+      '  background:radial-gradient(38% 44% at 50% 46%,rgba(216,184,114,.20),transparent 70%);',
+      '  animation:pfHalo 1.5s ease-out both;}',
+      '@keyframes pfHalo{from{opacity:0}45%{opacity:1}to{opacity:1}}',
+      '.pf-open-lock{position:absolute;inset:0;display:flex;flex-direction:column;align-items:center;',
+      '  justify-content:center;text-align:center;gap:14px;animation:pfLockIn 1.5s cubic-bezier(.4,0,.2,1) both;}',
+      '@keyframes pfLockIn{0%{opacity:0;transform:translateY(12px) scale(.985)}',
+      '  46%{opacity:1;transform:translateY(0) scale(1)}100%{opacity:1;transform:translateY(0) scale(1.012)}}',
+      // Emotion card. No product, no chrome — just the line.
+      '.pf-story{position:absolute;inset:0;display:flex;align-items:center;justify-content:center;',
+      '  animation:pfStory 1.5s cubic-bezier(.4,0,.2,1) both;}',
+      // The line lives in a block child. When the <em> was a direct child of the
+      // flex container it became a flex ITEM and laid out in a row beside the
+      // text, so "a story." sat next to "property" instead of after the break.
+      '.pf-story p{margin:0;text-align:center;font-family:Inter,-apple-system,system-ui,sans-serif;',
+      '  font-weight:600;font-size:clamp(1.5rem,3.9vw,2.9rem);line-height:1.26;',
+      '  letter-spacing:-.025em;color:#EAECEF;}',
+      '.pf-story p em{font-style:normal;background:linear-gradient(120deg,#EBD49A,#C9A254 55%,#E4C57F);',
+      '  -webkit-background-clip:text;background-clip:text;color:transparent;}',
+      '@keyframes pfStory{0%{opacity:0;transform:translateY(14px)}34%{opacity:1;transform:translateY(0)}',
+      '  100%{opacity:1;transform:translateY(-4px)}}',
+      // Kinetic type for the spoken promise, left-composed per the storyboard so
+      // it does not sit on top of the laptop.
+      // Guarantees the type reads once the veil lifts and the dashboard
+      // brightens underneath it.
+      '.pf-lgrad{position:absolute;inset:0;pointer-events:none;',
+      '  background:linear-gradient(90deg,rgba(3,5,9,.86) 0%,rgba(3,5,9,.62) 34%,transparent 62%);}',
+      '.pf-line{position:absolute;left:7%;right:46%;top:50%;transform:translateY(-50%);text-align:left;',
+      '  font-family:Inter,-apple-system,system-ui,sans-serif;font-weight:600;',
+      '  font-size:clamp(1.3rem,3.2vw,2.35rem);line-height:1.22;letter-spacing:-.025em;color:#EAECEF;opacity:0;}',
+      '.pf-line em{font-style:normal;background:linear-gradient(120deg,#EBD49A,#C9A254 55%,#E4C57F);',
+      '  -webkit-background-clip:text;background-clip:text;color:transparent;}',
+      '.pf-line-a{animation:pfLineA 2.5s cubic-bezier(.4,0,.2,1) both;}',
+      '.pf-line-b{animation:pfLineB 2.5s cubic-bezier(.4,0,.2,1) both;}',
+      '@keyframes pfLineA{0%{opacity:0;transform:translateY(calc(-50% + 10px))}',
+      '  12%{opacity:1;transform:translateY(-50%)}40%{opacity:1;transform:translateY(-50%)}',
+      '  52%{opacity:0;transform:translateY(calc(-50% - 8px))}100%{opacity:0}}',
+      '@keyframes pfLineB{0%{opacity:0;transform:translateY(calc(-50% + 10px))}',
+      '  40%{opacity:0;transform:translateY(calc(-50% + 10px))}',
+      '  56%{opacity:1;transform:translateY(-50%)}100%{opacity:1;transform:translateY(-50%)}}',
+      // The workflow arrives mid-move and settles, instead of cutting in cold.
+      '.pf-arrive{position:absolute;inset:0;width:100%;height:100%;object-fit:cover;',
+      '  animation:pfArrive 1.1s cubic-bezier(.16,1,.3,1) both;}',
+      '@keyframes pfArrive{from{transform:scale(1.075);opacity:.55}to{transform:scale(1);opacity:1}}',
+
       // Depth of field: sharp through the middle where the screen sits, falling
       // off at the edges. backdrop-filter is masked rather than the element
       // being blurred, so the blur samples the plate underneath it.
@@ -696,32 +810,8 @@
       '  mask-image:radial-gradient(78% 82% at 60% 44%,transparent 34%,#000 88%);}',
       // Brand light. Warm accent from the top-left, matching the gold in the
       // artwork, plus a vignette so the frame closes down at the corners.
-      '.pf-open-gold{position:absolute;inset:0;pointer-events:none;',
-      '  background:radial-gradient(46% 58% at 14% 8%,rgba(216,184,114,.16),transparent 68%),',
-      '             radial-gradient(120% 120% at 50% 50%,transparent 42%,rgba(3,5,9,.82) 100%);}',
-      '.pf-open-scrim{position:absolute;inset:0;background:rgba(4,6,11,.58);opacity:0;',
-      // Rack focus. The product is sharp while it establishes, softens as the
-      // lockup arrives so the type has something quiet to sit on, then pulls
-      // back into focus as the lockup clears — which is what makes the cut
-      // read as moving closer in rather than jumping somewhere else.
-      '.pf-open-rack{position:absolute;inset:0;animation:pfRack 3s cubic-bezier(.4,0,.2,1) both;}',
-      '@keyframes pfRack{0%{backdrop-filter:blur(0px);-webkit-backdrop-filter:blur(0px)}',
-      '  24%{backdrop-filter:blur(0px);-webkit-backdrop-filter:blur(0px)}',
-      '  40%{backdrop-filter:blur(8px);-webkit-backdrop-filter:blur(8px)}',
-      '  74%{backdrop-filter:blur(8px);-webkit-backdrop-filter:blur(8px)}',
-      '  100%{backdrop-filter:blur(0px);-webkit-backdrop-filter:blur(0px)}}',
-      '  animation:pfScrim 3s cubic-bezier(.4,0,.2,1) both;}',
-      '@keyframes pfScrim{0%{opacity:0}22%{opacity:0}38%{opacity:1}72%{opacity:1}96%{opacity:0}100%{opacity:0}}',
       '.pf-open-black{position:absolute;inset:0;background:#000;animation:pfFromBlack .8s ease-out both;}',
       '@keyframes pfFromBlack{from{opacity:1}to{opacity:0}}',
-      '.pf-open-lock{position:absolute;inset:0;display:flex;flex-direction:column;align-items:center;',
-      '  justify-content:center;text-align:center;gap:14px;opacity:0;',
-      '  animation:pfLock 3s cubic-bezier(.4,0,.2,1) both;}',
-      // Holds from 0.8s to 2.3s, then clears the frame before the cut so the
-      // last thing on screen is the product, not the wordmark.
-      '@keyframes pfLock{0%{opacity:0;transform:translateY(10px)}26%{opacity:0;transform:translateY(10px)}',
-      '  40%{opacity:1;transform:translateY(0)}74%{opacity:1;transform:translateY(0)}',
-      '  92%{opacity:0;transform:translateY(-6px)}100%{opacity:0;transform:translateY(-6px)}}',
       '.pf-open-mark{width:clamp(52px,6.4vw,84px);height:auto;filter:drop-shadow(0 6px 26px rgba(201,151,58,.42));}',
       '.pf-open-word{font-family:Inter,-apple-system,system-ui,"Segoe UI",sans-serif;',
       '  font-size:clamp(1.5rem,3.6vw,2.6rem);font-weight:300;letter-spacing:.24em;',
@@ -997,6 +1087,10 @@
 
   window.ProductFilm = {
     play: play, stop: stop, preload: preload,
+    // Which beat is on screen. Exposed for tests: asserting the beat order by
+    // scrubbing with arrow keys conflated playback with scrubbing and proved
+    // flaky, and inferring the beat from DOM markers guessed at internals.
+    beatId: function () { return SCENES[state.i] ? SCENES[state.i].id : null; },
     narrationCues: narrationCues,
     narrationEndMs: narrationEndMs,
     narrationScript: narrationScript,

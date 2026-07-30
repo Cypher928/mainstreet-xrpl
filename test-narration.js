@@ -162,10 +162,13 @@ const silent = S.filter(c => c.silent).map(c => c.id);
 // 6.9s and 4.3s in the first narrated cut, and the film is not finished while
 // they are listed here. This asserts the expected state and says which of the
 // two reasons applies, so a pending render never reads as a design decision.
+// story/logo/promise are the opening sequence and stay silent permanently — the
+// spoken line is anchored across them, not to them.
+const BY_DESIGN = ['story', 'logo', 'promise'];
 const PENDING = ['space', 'settle'];
-const expected = ['open'].concat(PENDING.filter(id => silent.includes(id)));
+const expected = BY_DESIGN.concat(PENDING.filter(id => silent.includes(id)));
 JSON.stringify(silent) === JSON.stringify(expected)
-  ? ok('silent scenes: ' + silent.map(id => id + (id === 'open' ? ' (by design)' : ' (clip pending)')).join(', '))
+  ? ok('silent scenes: ' + silent.map(id => id + (BY_DESIGN.includes(id) ? ' (by design)' : ' (clip pending)')).join(', '))
   : bad('the silent scenes changed', 'now ' + JSON.stringify(silent));
 const stillPending = PENDING.filter(id => silent.includes(id));
 stillPending.length
@@ -173,10 +176,12 @@ stillPending.length
   : ok('every planned line is recorded — no gaps left in the read');
 
 console.log('\n── The opening does not stall ──');
-const open0 = S[0];
-(open0.id === 'open' && open0.silent && open0.dur >= 2800 && open0.dur <= 3200)
-  ? ok(`establishing shot runs ${open0.dur}ms, matching the directed 3.0s open`)
-  : bad('the establishing shot is wrong', JSON.stringify(open0));
+const seq = S.slice(0, 3);
+const seqMs = seq.reduce((a, c) => a + c.dur, 0);
+(seq.map(c => c.id).join(',') === 'story,logo,promise' && seq.every(c => c.silent)
+   && seq[0].dur === 1500 && seq[1].dur === 1500 && seq[2].dur === 2500)
+  ? ok(`opening sequence: story 1.5s, logo 1.5s, promise 2.5s — ${seqMs}ms of anticipation before the first feature`)
+  : bad('the opening sequence is wrong', JSON.stringify(seq.map(c => [c.id, c.dur, c.silent])));
 const firstLine = voiced[0];
 // Two separate requirements, and the earlier version only encoded one.
 //   (a) the voice must not start over the fade from black — the original
@@ -188,10 +193,12 @@ const FADE = 800;
 firstLine.start >= FADE + 400
   ? ok(`the first line starts at ${firstLine.start}ms — clear of the ${FADE}ms fade from black`)
   : bad('the first line starts over the fade-in', `${firstLine.start}ms`);
-(firstLine.start < open0.dur && firstLine.end > open0.dur)
-  ? ok(`it straddles the cut at ${open0.dur}ms — the voice carries into the workflow rather than restarting after it`)
+// It must open the `promise` beat and still be speaking when the film cuts into
+// the workflow, so the camera arrives mid-sentence rather than after one.
+(firstLine.start === seq[0].dur + seq[1].dur && firstLine.end > seqMs)
+  ? ok(`it opens the promise beat at ${firstLine.start}ms and is still speaking at the ${seqMs}ms cut — the voice carries into the workflow`)
   : bad('the opening line does not bridge the cut',
-        `line ${firstLine.start}-${firstLine.end}ms, cut at ${open0.dur}ms`);
+        `line ${firstLine.start}-${firstLine.end}ms, cut at ${seqMs}ms`);
 
 console.log('\n── The music bed degrades to silence, never to a broken film ──');
 // The bed is optional and not yet supplied. What must hold either way: a

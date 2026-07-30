@@ -48,7 +48,7 @@ const srv = http.createServer((rq, rs) => {
   const loaded = await page.evaluate(() => !!(window.ProductFilm && window.ProductFilm.play));
   loaded ? ok('ProductFilm is available on home.html') : bad('ProductFilm not loaded');
   const sceneCount = await page.evaluate(() => window.ProductFilm ? window.ProductFilm.scenes().length : 0);
-  (sceneCount === 11) ? ok('the shared module carries all 11 beats') : bad('scene count', String(sceneCount));
+  (sceneCount === 13) ? ok('the shared module carries all 13 beats') : bad('scene count', String(sceneCount));
 
   console.log('\n── Clicking the CTA plays in place, with no navigation ──');
   const navsBefore = navs.length;
@@ -78,21 +78,20 @@ const srv = http.createServer((rq, rs) => {
     return { mounted: !!f, on: !!(f && f.classList.contains('msl-on')),
              capText: (document.getElementById('pfCap') || {}).innerText || '',
              bodyLocked: getComputedStyle(document.body).overflow === 'hidden',
-             // The open beat is .pf-open-scene, not .pf-shot — it is photography
-             // filling the frame, not a screenshot inside the device chrome.
-             shotSrc: (document.querySelector('#pfCanvas .pf-open-scene, #pfCanvas .pf-shot') || {}).src || '',
+             beat: window.ProductFilm.beatId(),
+             storyCard: (document.querySelector('.pf-story p') || {}).innerText || '',
+             anyProduct: !!document.querySelector('#pfCanvas img'),
              bare: !!document.querySelector('#pfFilm.pf-bare'),
              heroStillThere: !!document.querySelector('h1') };
   });
   (navs.length === navsBefore) ? ok('no navigation occurred — the click and the audio stay on one document')
                                : bad('the page navigated', JSON.stringify(navs.slice(navsBefore)));
   st.on ? ok('the film is open over the page') : bad('film did not open', JSON.stringify(st));
-  // The film now opens on a silent, caption-less establishing shot, so at 900ms
-  // the correct state is an empty caption over a product screenshot — not the
-  // upload beat, which no longer comes first.
-  (st.capText === '' && /keyart-scene\.jpg/.test(st.shotSrc) && st.bare)
-    ? ok('opens full-bleed on the key art — no caption, no browser chrome around the photograph')
-    : bad('wrong opening beat', JSON.stringify({ cap: st.capText, shot: st.shotSrc, bare: st.bare }));
+  // At 900ms the film is on `story`: a line of type, no product in frame at all.
+  // That is the point of the sequence — emotion before software.
+  (st.beat === 'story' && st.capText === '' && !st.anyProduct && /has a story/.test(st.storyCard) && st.bare)
+    ? ok('opens on emotion: a type card, no product in frame, no browser chrome')
+    : bad('wrong opening beat', JSON.stringify({ beat: st.beat, cap: st.capText, card: st.storyCard, product: st.anyProduct, bare: st.bare }));
   st.bodyLocked ? ok('the page behind is scroll-locked while the film plays') : bad('background still scrolls');
   st.heroStillThere ? ok('the marketing page is still mounted underneath — nothing was torn down') : bad('page was replaced');
 
@@ -121,7 +120,7 @@ const srv = http.createServer((rq, rs) => {
 
   console.log('\n── Narration scaffold travels with the module ──');
   const cues = await page.evaluate(() => window.ProductFilm.narrationCues());
-  (cues.length === 11 && cues.filter(c => c.line).length === 10) ? ok('all 11 cues exposed from home.html; only the establishing shot is unspoken')
+  (cues.length === 13 && cues.filter(c => c.line).length === 10) ? ok('all 13 cues exposed from home.html; the opening sequence is unspoken')
                                                   : bad('cues incomplete', String(cues.length));
   // Narrowed from a blanket `new Audio` ban when the recorded read landed: the
   // voice is now eight mp3s in the repo, and what must stay true is that none

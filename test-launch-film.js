@@ -58,19 +58,46 @@ srv.listen(PORT,'127.0.0.1',async()=>{
             :bad('landing hero rendered on ?demo=1',JSON.stringify(hero.h1));
   hero.filmOn?ok('?demo=1 starts the film'):bad('film did not start');
 
-  // Walk the scenes with ArrowRight, recording each caption.
-  const caps=[];
-  for(let i=0;i<11;i++){
-    await p.waitForTimeout(450);
-    caps.push(await p.evaluate(()=>(document.getElementById('pfCap')||{}).innerText||''));
-    await p.keyboard.press('ArrowRight');
-  }
-  console.log('   scenes: '+caps.map(c=>c.split(' — ')[0]).join(' | '));
-  // The opening beat carries no caption on purpose — it is an establishing
-  // shot, and a caption over it would make it a title card again.
-  const want=[/^$/,/starts reading/i,/reads every clause/i,/checked against/i,/entitled to recover/i,/open a space/i,/ask anything/i,/living memory/i,/settled in rlusd/i,/verified on/i,/^$/];
-  const misses=want.filter((re,i)=>!re.test(caps[i]||''));
-  misses.length===0?ok('all 11 beats play in story order, closing on the brand rather than the ledger screen')
+  // Rewind to beat 0 before walking. waitForSelector + a 700ms settle used to
+  // leave the film wherever it had drifted to, and with a 1.5s opening beat that
+  // was already past `story` — so the walk sampled 13 captions starting from the
+  // second beat and reported the whole sequence off by one.
+  // Poll the film's own beat id and record every transition. This replaces an
+  // arrow-key walk that was measuring the wrong thing: scrubbing is a separate
+  // feature, and the walk's cadence raced the beat durations — a 1.5s beat was
+  // skipped between two samples and the suite reported the whole sequence wrong.
+  // Polling asks only "which beats does playback pass through, in what order".
+  await p.evaluate(()=>{ window.__seq=[]; window.ProductFilm.play();
+    window.__poll=setInterval(()=>{
+      const b=window.ProductFilm.beatId();
+      const el=document.getElementById('pfCap');
+      // What the viewer can actually READ. renderScene zeroes the caption's
+      // opacity immediately and only swaps its text 260ms later, so innerText
+      // alone reports the previous beat's line across every transition — which
+      // is why this check first came back off by one.
+      const vis=el&&parseFloat(getComputedStyle(el).opacity||'0')>0.01;
+      const cap=vis?(el.innerText||''):'';
+      const last=window.__seq[window.__seq.length-1];
+      if(!last||last.id!==b) window.__seq.push({id:b,cap:cap});
+      else last.cap=cap;                          // settle on the visible text
+    },90); });
+  const runMs=await p.evaluate(()=>window.ProductFilm.scenes().reduce((a,s)=>a+s.dur,0));
+  await p.waitForTimeout(runMs+900);
+  await p.evaluate(()=>clearInterval(window.__poll));
+  const seq=await p.evaluate(()=>window.__seq);
+  const ids=seq.map(x=>x.id), caps=seq.map(x=>x.cap);
+  console.log('   beats:  '+ids.join(' -> '));
+  const WANT=['story','logo','promise','upload','extract','recon','recover','space','ask','timeline','settle','verify','brand'];
+  JSON.stringify(ids)===JSON.stringify(WANT)
+    ?ok('all 13 beats play once, in story order, closing on the brand rather than the ledger screen')
+    :bad('beat order wrong',JSON.stringify(ids));
+  // The three opening beats carry no caption on purpose: they are the film's
+  // establishing sequence, and captions over them would make them title cards.
+  const wantCap=[/^$/,/^$/,/^$/,/starts reading/i,/reads every clause/i,/checked against/i,
+                 /entitled to recover/i,/open a space/i,/ask anything/i,/living memory/i,
+                 /settled in rlusd/i,/verified on/i,/^$/];
+  const misses=wantCap.filter((re,i)=>!re.test(caps[i]||''));
+  misses.length===0?ok('every caption matches its beat, and the opening three carry none')
                    :bad(misses.length+' scene caption(s) off',JSON.stringify(caps));
   const grounded=await p.evaluate(()=>/\$34,650|\$6,051/.test((document.querySelector('.msl-cine')||{}).innerText||''));
 
@@ -91,28 +118,33 @@ srv.listen(PORT,'127.0.0.1',async()=>{
   // Ceiling raised from 45s when the recorded narration landed: a narrated cut
   // needs the two lines the muted cut did without, plus an establishing shot to
   // open on. 48s is the new bound.
-  (total<=48)?ok('film runs '+total.toFixed(1)+'s — under the 48s ceiling'):bad('film too long',total+'s');
+  // Raised again for the directed opening sequence: three beats of anticipation
+  // before the first feature, which the 48s bound predated.
+  (total<=51)?ok('film runs '+total.toFixed(1)+'s — under the 51s ceiling'):bad('film too long',total+'s');
   // Deliberate variation, not uniformity: the hero beats breathe, the
   // connective beats move. A flat cadence is what made the earlier cut feel
   // like a slideshow.
   const heroes=['extract','recover','ask'];
   heroes.every(h=>by[h]>=4800)?ok('hero beats breathe: '+heroes.map(h=>h+' '+by[h]/1000+'s').join(', '))
     :bad('a hero beat is too short',JSON.stringify(by));
-  const connective=SC.map(s=>s.id).filter(id=>!heroes.includes(id)&&id!=='brand'&&id!=='open');
+  const connective=SC.map(s=>s.id).filter(id=>!heroes.includes(id)&&id!=='brand'&&!['story','logo','promise'].includes(id));
   connective.every(id=>by[id]>=3400&&by[id]<=4600)?ok('connective beats stay 3.4–4.6s — long enough to read, short enough to move')
     :bad('connective pacing off',JSON.stringify(by));
   (by.brand>=3600&&by.brand<=4800)?ok('brand close holds '+by.brand/1000+'s'):bad('brand close mistimed',String(by.brand));
   heroes.every(h=>connective.every(cid=>by[h]>=by[cid]))?ok('every hero beat is at least as long as every connective beat')
     :bad('hero beats do not stand out from connective ones',JSON.stringify(by));
-  // The opening beat exists to stop the film dropping the viewer mid-workflow.
-  // Short enough that it cannot stall: the brief was 1.5–2.0s.
-  (by.open>=2800&&by.open<=3200)?ok('establishing shot holds '+by.open/1000+'s before the first cut')
-    :bad('establishing shot mistimed',String(by.open));
+  // The opening sequence: emotion, then the name, then the promise. Order and
+  // lengths come straight from the storyboard.
+  const openSeq=SC.slice(0,3).map(x=>x.id).join(',');
+  const openMs=SC.slice(0,3).reduce((a,x)=>a+x.dur,0);
+  (openSeq==='story,logo,promise'&&by.story===1500&&by.logo===1500&&by.promise===2500)
+    ?ok(`opening sequence runs story 1.5s -> logo 1.5s -> promise 2.5s, cutting to the workflow at ${openMs}ms`)
+    :bad('opening sequence wrong',openSeq+' '+JSON.stringify({s:by.story,l:by.logo,p:by.promise}));
 
   console.log('\n── Composition ──');
   const comp=require('fs').readFileSync(require('path').join(__dirname,'product-film.js'),'utf8');
   const fws=[...comp.matchAll(/\sfw:\s*(\d+)/g)].map(m=>+m[1]);
-  (fws.length===11)?ok('every beat declares its own composition width: '+[...new Set(fws)].sort((a,b)=>a-b).join(' / ')+'px')
+  (fws.length===13)?ok('every beat declares its own composition width: '+[...new Set(fws)].sort((a,b)=>a-b).join(' / ')+'px')
     :bad('scenes missing fw',String(fws.length));
   (new Set(fws).size>=4)?ok('widths vary per beat — framed individually, not to one global fill')
     :bad('composition widths too uniform',JSON.stringify(fws));
@@ -132,6 +164,12 @@ srv.listen(PORT,'127.0.0.1',async()=>{
   // black, and the lockup over it is live text plus the extracted monogram —
   // no invented office, no re-typeset wordmark baked into a raster.
   /keyart-scene\.jpg/.test(comp)?ok('the open uses the real key-art photography'):bad('open lost its plate');
+  /pf-story/.test(comp)&&/has <em>a story/.test(comp)
+    ?ok('opens on emotion, not software — a type card with no product in frame')
+    :bad('the story card is missing');
+  /pf-arrive/.test(comp)
+    ?ok('the workflow arrives mid-move and settles, rather than cutting in cold')
+    :bad('upload does not arrive from the push');
   /pf-open-mark/.test(comp)&&/MAINSTREET/.test(comp)
     ?ok('the lockup animates: extracted monogram plus live wordmark and tagline')
     :bad('opening lockup missing');
@@ -155,9 +193,9 @@ srv.listen(PORT,'127.0.0.1',async()=>{
 
   console.log('\n── Narration (recorded clips, never synthesised) ──');
   const cues=await p.evaluate(()=>window.ProductFilm&&window.ProductFilm.narrationCues?window.ProductFilm.narrationCues():null);
-  (cues&&cues.length===11)?ok('narration cues exposed for all 11 beats'):bad('narration cues missing',JSON.stringify(cues&&cues.length));
-  (cues&&cues.filter(c=>c.line&&c.line.length>10).length===10)?ok('every beat but the establishing shot has a written narration line'):bad('a beat has no narration line');
-  (cues&&cues[0].atMs===0&&cues[10].atMs===durs.slice(0,10).reduce((a,b)=>a+b,0))
+  (cues&&cues.length===13)?ok('narration cues exposed for all 13 beats'):bad('narration cues missing',JSON.stringify(cues&&cues.length));
+  (cues&&cues.filter(c=>c.line&&c.line.length>10).length===10)?ok('every beat outside the opening sequence has a written narration line'):bad('a beat has no narration line');
+  (cues&&cues[0].atMs===0&&cues[12].atMs===durs.slice(0,12).reduce((a,b)=>a+b,0))
     ?ok('cue times derive from scene durations — a recorded read stays in sync')
     :bad('cue times do not track durations',JSON.stringify(cues&&cues.map(c=>c.atMs)));
   // This used to ban `new Audio` outright, from when the film was a scaffold
