@@ -146,8 +146,7 @@
         c.innerHTML =
           '<div class="pf-open">' +
             '<img class="pf-open-scene" src="' + ASSET + 'keyart-scene.jpg" alt="">' +
-            '<div class="pf-soft pf-soft-a"></div>' +
-            '<div class="pf-open-dof"></div>' +
+            '<img class="pf-open-scene pf-blur" src="' + ASSET + 'keyart-scene-blur.jpg" alt="">' +
             '<div class="pf-veil pf-veil-a"></div>' +
             '<div class="pf-halo"></div>' +
             '<div class="pf-open-lock">' +
@@ -173,9 +172,8 @@
       build: function (c) {
         c.innerHTML =
           '<div class="pf-open">' +
-            '<img class="pf-open-scene" src="' + ASSET + 'keyart-scene.jpg" alt="">' +
-            '<div class="pf-soft pf-soft-b"></div>' +
-            '<div class="pf-open-dof"></div>' +
+            '<img class="pf-open-scene pf-approach" src="' + ASSET + 'keyart-scene.jpg" alt="">' +
+            '<img class="pf-open-scene pf-approach pf-blur pf-rack" src="' + ASSET + 'keyart-scene-blur.jpg" alt="">' +
             '<div class="pf-veil pf-veil-b"></div>' +
             '<div class="pf-lgrad"></div>' +
             '<div class="pf-line pf-line-a">Commercial real estate<br>moves <em>fast…</em></div>' +
@@ -183,7 +181,7 @@
           '</div>';
       } },
 
-    { id: 'upload', dur: 4000, fw: 780, chain: true, cap: 'It starts reading the moment a lease lands',
+    { id: 'upload', dur: 4000, fw: 780, enter: 'arrive', cap: 'It starts reading the moment a lease lands',
       vo: 'It starts with what you already have. Leases, invoices, statements.',
       build: function (c) {
         c.innerHTML =
@@ -541,6 +539,36 @@
       // The camera. Constant velocity, one direction, and its timeline outlives
       // the beat by the dissolve length so the shot is STILL MOVING while it
       // fades out — which is what makes the two shots read as one move.
+      // ── matching the opening into the product ────────────────────────────
+      // Measured from keyart-scene.jpg: the laptop's screen fills 77% of the
+      // plate's width, centred at 45% / 57.5% of the image. So at the cut the
+      // Command Center UI was at 0.77x frame while the incoming screenshot
+      // filled it completely — the two UIs were simply different sizes, which is
+      // what read as a cut no matter how well the LAYER scales matched.
+      //
+      // The approach pushes the plate to 1.20 by the cut:
+      //   0.77 (screen) x 1.064 (camera) x 1.195 (approach) = 0.979
+      // against the incoming screenshot at 1.0. Within 2%.
+      //
+      // It holds still for the first third, so the logo->promise cut is not a
+      // lurch, and only starts moving in once the text begins to clear. From
+      // there it is linear — constant speed, so there is a velocity to match.
+      '.pf-approach{transform-origin:45% 64%;animation:pfApproach var(--ed,3540ms) linear both;}',
+      '@keyframes pfApproach{0%{transform:scale(1)}33.9%{transform:scale(1)}100%{transform:scale(1.351)}}',
+      // The arrival continues that move into the workflow. Its opening slope is
+      // 1.03e-4/ms against the plate's 1.23e-4/ms at the cut (within 3%), then it
+      // relaxes to the film's base rate — easing to the base speed, never to a
+      // stop. It also straightens the 1.25deg screen tilt measured off the
+      // plate, so the geometry resolves as the camera squares up to it.
+      '.pf-body{position:absolute;inset:0;display:flex;align-items:center;justify-content:center;}',
+      '.pf-body--arrive{transform-origin:50% 46%;animation:pfArrive var(--ed,5040ms) linear both;}',
+      '@keyframes pfArrive{',
+      '  0%{transform:perspective(1400px) rotateZ(1.25deg) rotateY(4deg) scale(1.000)}',
+      '  6%{transform:perspective(1400px) rotateZ(1.18deg) rotateY(3.8deg) scale(1.031)}',
+      '  16%{transform:perspective(1400px) rotateZ(.95deg) rotateY(3deg) scale(1.068)}',
+      '  34%{transform:perspective(1400px) rotateZ(.55deg) rotateY(1.7deg) scale(1.092)}',
+      '  60%{transform:perspective(1400px) rotateZ(.15deg) rotateY(.5deg) scale(1.103)}',
+      '  100%{transform:perspective(1400px) rotateZ(0deg) rotateY(0deg) scale(1.108)}}',
       '.pf-cam{position:absolute;inset:0;display:flex;align-items:center;justify-content:center;',
       '  transform-origin:56% 48%;will-change:transform;',
       '  animation:pfGlide var(--gd,4s) linear both;}',
@@ -669,11 +697,11 @@
       '.msl-vox:hover{background:rgba(255,255,255,.12);color:var(--pa);}',
       '.msl-vox--off{color:var(--dim);}',
       // device frame — stays put, content transforms → continuous product feel
-      '.msl-dev{width:min(880px,94vw);border-radius:16px;overflow:hidden;transition:width .78s linear,border-color .78s linear,border-radius .78s linear,background-color .78s linear,box-shadow .78s linear;border:1px solid rgba(255,255,255,.1);background:#0c111a;box-shadow:0 60px 130px -50px rgba(0,0,0,.9),0 0 0 1px rgba(255,255,255,.02);}',
-      '.msl-dev-bar{display:flex;align-items:center;gap:7px;padding:12px 16px;max-height:48px;overflow:hidden;transition:opacity .78s linear,max-height .78s linear,padding .78s linear,border-bottom-color .78s linear;border-bottom:1px solid rgba(255,255,255,.06);background:#0a0e16;}',
+      '.msl-dev{width:min(880px,94vw);border-radius:16px;overflow:hidden;transition:width 1.04s linear,border-color 1.04s linear,border-radius 1.04s linear,background-color 1.04s linear,box-shadow 1.04s linear;border:1px solid rgba(255,255,255,.1);background:#0c111a;box-shadow:0 60px 130px -50px rgba(0,0,0,.9),0 0 0 1px rgba(255,255,255,.02);}',
+      '.msl-dev-bar{display:flex;align-items:center;gap:7px;padding:12px 16px;max-height:48px;overflow:hidden;transition:opacity 1.04s linear,max-height 1.04s linear,padding 1.04s linear,border-bottom-color 1.04s linear;border-bottom:1px solid rgba(255,255,255,.06);background:#0a0e16;}',
       '.msl-dev-bar>i{width:11px;height:11px;border-radius:50%;background:rgba(255,255,255,.14);}',
       '.msl-dev-url{margin-left:14px;font-family:ui-monospace,"SF Mono",Menlo,monospace;font-size:.72rem;color:var(--dim);}',
-      '.msl-canvas{position:relative;height:min(52vh,460px);overflow:hidden;transition:height .78s linear;background:#0b0f17;}',
+      '.msl-canvas{position:relative;height:min(52vh,460px);overflow:hidden;transition:height 1.04s linear;background:#0b0f17;}',
       '.msl-canvas>*{animation:mslCanvasIn .7s cubic-bezier(.2,.7,.2,1) both;}',
       '@keyframes mslCanvasIn{from{opacity:0;transform:scale(1.015);filter:blur(4px)}to{opacity:1;transform:none;filter:blur(0)}}',
       '.msl-bg{position:absolute;inset:0;width:100%;height:100%;object-fit:cover;object-position:top;}',
@@ -763,16 +791,14 @@
       // Shallow depth of field over the whole frame, pulling into focus as the
       // camera closes. This is what keeps the dashboard from reading as a
       // dashboard while the brand has the frame.
-      '.pf-soft{position:absolute;inset:0;}',
-      '.pf-soft-a{backdrop-filter:blur(11px);-webkit-backdrop-filter:blur(11px);}',
-      '.pf-soft-b{animation:pfFocus 2.5s cubic-bezier(.33,0,.25,1) both;}',
-      '@keyframes pfFocus{from{backdrop-filter:blur(11px);-webkit-backdrop-filter:blur(11px)}',
-      '  to{backdrop-filter:blur(2px);-webkit-backdrop-filter:blur(2px)}}',
       // The veil suppresses the app while the brand holds, then lifts as we
       // approach it.
       '.pf-veil{position:absolute;inset:0;background:rgba(4,6,11,.72);}',
       '.pf-veil-b{animation:pfVeil 2.5s cubic-bezier(.33,0,.25,1) both;}',
-      '@keyframes pfVeil{from{opacity:1}to{opacity:.52}}',
+      // Subdued until the text clears, then lifts through the approach and
+      // straight on into the workflow, so brightness ramps across the cut
+      // instead of stepping at it.
+      '@keyframes pfVeil{0%{opacity:1}62%{opacity:.94}100%{opacity:.46}}',
       // Light behind the lockup. The brief asked for lighting that draws the eye
       // to the brand, so the source sits behind the type rather than in a corner.
       '.pf-halo{position:absolute;inset:0;pointer-events:none;',
@@ -813,19 +839,26 @@
       '  12%{opacity:1;transform:translateY(-50%)}40%{opacity:1;transform:translateY(-50%)}',
       '  52%{opacity:0;transform:translateY(calc(-50% - 8px))}100%{opacity:0}}',
       '@keyframes pfLineB{0%{opacity:0;transform:translateY(calc(-50% + 10px))}',
-      '  40%{opacity:0;transform:translateY(calc(-50% + 10px))}',
-      '  56%{opacity:1;transform:translateY(-50%)}100%{opacity:1;transform:translateY(-50%)}}',
+      '  36%{opacity:0;transform:translateY(calc(-50% + 10px))}',
+      '  50%{opacity:1;transform:translateY(-50%)}',
+      '  78%{opacity:1;transform:translateY(-50%)}',
+      '  92%{opacity:0;transform:translateY(calc(-50% - 10px))}',
+      '  100%{opacity:0;transform:translateY(calc(-50% - 10px))}}',
       // The workflow arrives mid-move and settles, instead of cutting in cold.
       // .pf-arrive retired: it decelerated to a stop, which is the camera
       // parking. `upload` now enters already pushed in (k0 1.045) and keeps
       // travelling at the same rate as the beat before it.
 
-      // Depth of field: sharp through the middle where the screen sits, falling
-      // off at the edges. backdrop-filter is masked rather than the element
-      // being blurred, so the blur samples the plate underneath it.
-      '.pf-open-dof{position:absolute;inset:0;backdrop-filter:blur(5px);-webkit-backdrop-filter:blur(5px);',
-      '  -webkit-mask-image:radial-gradient(78% 82% at 60% 44%,transparent 34%,#000 88%);',
-      '  mask-image:radial-gradient(78% 82% at 60% 44%,transparent 34%,#000 88%);}',
+      // Defocus by cross-fading a pre-blurred copy of the plate. This replaces
+      // three animated backdrop-filters that were re-blurring the whole frame
+      // every frame inside a scaling ancestor — 15fps on the promise beat
+      // against 54fps where there was no blur. Judder is a cinematography
+      // problem, and it was worst exactly where the camera move matters most.
+      '.pf-blur{opacity:1;}',
+      // Held fully defocused while the brand has the frame.
+      // The rack pulls it off as the camera closes on the screen.
+      '.pf-rack{animation:pfRack var(--ed,3540ms) linear both;}',
+      '@keyframes pfRack{0%{opacity:1}62%{opacity:.92}100%{opacity:.06}}',
       // Brand light. Warm accent from the top-left, matching the gold in the
       // artwork, plus a vignette so the frame closes down at the corners.
       '.pf-open-black{position:absolute;inset:0;background:#000;animation:pfFromBlack .8s ease-out both;}',
@@ -1027,7 +1060,10 @@
   // easing OUT to a standstill before each cut, which is why they read as
   // separate images no matter how well composed they were.
   var CAM_RATE = 0.000016;   // scale per ms  (1.6% per second)
-  var XFADE    = 780;        // dissolve overlap
+  var XFADE    = 1040;       // dissolve overlap
+  // Clamped so a 1.5s beat is not mostly dissolve. The long overlap is wanted
+  // on the wide beats, where there is time for two shots to travel together.
+  function xfadeFor(i) { return Math.min(XFADE, Math.round(SCENES[i].dur * 0.5)); }
 
   function camStart(i) {
     var s = SCENES[i];
@@ -1045,7 +1081,7 @@
   // CAM_RATE. That was the velocity mismatch: measured 1.05e-5/ms against a
   // declared 1.6e-5/ms, which is precisely what made each shot read as its own
   // move rather than part of one.
-  function camGlideEnd(i) { return camStart(i) + CAM_RATE * (SCENES[i].dur + XFADE); }
+  function camGlideEnd(i) { return camStart(i) + CAM_RATE * (SCENES[i].dur + xfadeFor(i)); }
 
   function renderScene() {
     clearTimeout(state.timer);
@@ -1080,6 +1116,7 @@
     var prev = canvas.querySelector('.pf-layer:not(.pf-layer--out)');
     var wrap = document.createElement('div');
     wrap.className = 'pf-layer';
+    var XF = xfadeFor(state.i);
     var cam = document.createElement('div');
     cam.className = 'pf-cam';
     // Strings, not numbers. setProperty coerces, but an unparsable value makes
@@ -1087,10 +1124,17 @@
     // scale 1 regardless, including `upload` at its declared 1.045.
     cam.style.setProperty('--k0', String(camStart(state.i)));
     cam.style.setProperty('--k1', String(camGlideEnd(state.i)));
-    cam.style.setProperty('--gd', (s.dur + XFADE) + 'ms');  // still travelling as it fades
+    cam.style.setProperty('--gd', (s.dur + XF) + 'ms');  // still travelling as it fades
+    // A third element so a beat can carry its OWN entry move (approach, arrival,
+    // perspective straighten) without touching the camera's glide — two
+    // transform animations on one element would fight, last one wins.
+    var body = document.createElement('div');
+    body.className = 'pf-body' + (s.enter ? ' pf-body--' + s.enter : '');
+    body.style.setProperty('--ed', (s.dur + XF) + 'ms');
+    cam.appendChild(body);
     wrap.appendChild(cam);
     canvas.appendChild(wrap);
-    s.build(cam);
+    s.build(body);
     // The dissolve: the incoming layer fades UP over an outgoing layer that is
     // held fully opaque. That composites to new*a + old*(1-a) — a true
     // cross-dissolve — and it is more robust than fading both, which double-dips
@@ -1101,20 +1145,23 @@
     // accidental effect that happens to look right is one refactor away from
     // looking wrong.
     var fade = wrap.animate([{ opacity: 0 }, { opacity: 1 }],
-                            { duration: XFADE, easing: 'linear', fill: 'both' });
+                            { duration: XF, easing: 'linear', fill: 'both' });
     if (prev) {
       prev.classList.add('pf-layer--out');       // held opaque; only stops hit-testing
       var drop = function () { if (prev.parentNode) prev.parentNode.removeChild(prev); };
       // Removed only once the incoming layer is fully opaque, so the outgoing
       // shot is never visibly pulled out from underneath.
       if (fade.finished) fade.finished.then(drop).catch(drop);
-      else setTimeout(drop, XFADE + 80);
+      else setTimeout(drop, XF + 80);
     }
+    // Tied to the dissolve. At a flat 260ms the caption for the incoming beat
+    // appeared while the outgoing shot was still fully opaque — the words
+    // arrived before the picture they describe.
     setTimeout(function () {
       capEl.textContent = s.cap || '';
       capEl.style.opacity = s.cap ? '1' : '0';
       capEl.style.transform = 'translateY(0)';
-    }, 260);
+    }, Math.round(XF * 0.6) + 120);
     if (!tlEl.querySelector('.msl-prog')) tlEl.innerHTML = '<i class="msl-prog"></i>';
     var elapsed = SCENES.slice(0, state.i).reduce(function (a, sc) { return a + sc.dur; }, 0);
     var total = SCENES.reduce(function (a, sc) { return a + sc.dur; }, 0);

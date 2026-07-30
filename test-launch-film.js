@@ -58,10 +58,6 @@ srv.listen(PORT,'127.0.0.1',async()=>{
             :bad('landing hero rendered on ?demo=1',JSON.stringify(hero.h1));
   hero.filmOn?ok('?demo=1 starts the film'):bad('film did not start');
 
-  // Rewind to beat 0 before walking. waitForSelector + a 700ms settle used to
-  // leave the film wherever it had drifted to, and with a 1.5s opening beat that
-  // was already past `story` — so the walk sampled 13 captions starting from the
-  // second beat and reported the whole sequence off by one.
   // Poll the film's own beat id and record every transition. This replaces an
   // arrow-key walk that was measuring the wrong thing: scrubbing is a separate
   // feature, and the walk's cadence raced the beat durations — a 1.5s beat was
@@ -167,12 +163,14 @@ srv.listen(PORT,'127.0.0.1',async()=>{
   /pf-story/.test(comp)&&/has <em>a story/.test(comp)
     ?ok('opens on emotion, not software — a type card with no product in frame')
     :bad('the story card is missing');
-  // Was /pf-arrive/, which by this point matched only the comment recording that
-  // pf-arrive had been REMOVED — a false pass on prose. The motion itself is
-  // measured in test-film-motion.js; what belongs here is the declaration.
-  /\{ id: 'upload',[^}]*chain: true/.test(comp)
-    ?ok('the workflow continues the camera into itself rather than starting a new move')
-    :bad('upload does not chain from the beat before it');
+  // Continuity into the workflow no longer comes from chaining the camera's
+  // absolute scale — it comes from the plate pushing INTO the laptop screen
+  // until the two interfaces are the same apparent size, and the workflow
+  // entering on a matching move. Whether that actually holds is measured in
+  // test-film-motion.js; the declaration is what belongs here.
+  (/\{ id: 'promise'[\s\S]{0,900}?pf-approach/.test(comp) && /\{ id: 'upload',[^}]*enter: 'arrive'/.test(comp))
+    ?ok('the opening pushes into the screen and the workflow enters on that move')
+    :bad('the opening -> product move is not declared');
   /pf-open-mark/.test(comp)&&/MAINSTREET/.test(comp)
     ?ok('the lockup animates: extracted monogram plus live wordmark and tagline')
     :bad('opening lockup missing');

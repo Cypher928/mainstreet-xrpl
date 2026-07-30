@@ -77,9 +77,14 @@ function slope(pts) {
         const cam = l.querySelector('.pf-cam');
         if (!cam) return;
         const m = new DOMMatrixReadOnly(getComputedStyle(cam).transform);
+        const bodyEl = l.querySelector('.pf-body');
+        const bm = bodyEl ? new DOMMatrixReadOnly(getComputedStyle(bodyEl).transform).a : 1;
+        const plate = l.querySelector('.pf-approach');
+        const pm = plate ? new DOMMatrixReadOnly(getComputedStyle(plate).transform).a : 1;
         frame.push({ id: l.__id, beat: window.ProductFilm.beatId(),
                      k0: parseFloat(cam.style.getPropertyValue('--k0')),
-                     s: m.a, o: parseFloat(getComputedStyle(l).opacity),
+                     s: m.a, b: bm, p: pm, plate: !!plate,
+                     o: parseFloat(getComputedStyle(l).opacity),
                      out: l.classList.contains('pf-layer--out') });
       });
       window.__tr.push({ t, frame });
@@ -176,7 +181,7 @@ function slope(pts) {
   console.log('\n── Beats sharing a plate hand off at the same scale ──');
   // promise continues logo, and upload continues promise. For those, a scale
   // reset would show up as the same image changing size mid-dissolve.
-  const CHAINED = ['promise', 'upload'];
+  const CHAINED = ['promise'];
   for (const beat of CHAINED) {
     const inc = layers.find(l => l.beat === beat);
     if (!inc) { bad(`no layer recorded for ${beat}`); continue; }
@@ -190,6 +195,77 @@ function slope(pts) {
       ? ok(`${beat} enters at the scale the previous shot left (${i.s.toFixed(4)} vs ${o.s.toFixed(4)})`)
       : bad(`${beat} jumps scale mid-dissolve`, `${o.s.toFixed(4)} -> ${i.s.toFixed(4)}, Δ${d.toFixed(4)}`);
   }
+
+  console.log('\n── The opening hands the frame to the product at matched size ──');
+  // The transition that still read as a cut. The laptop's screen occupies only
+  // part of its plate, so at the cut the Command Center UI was at that fraction
+  // of frame while the incoming screenshot filled it completely — two pictures
+  // of an interface at different sizes, which no amount of layer-scale matching
+  // can disguise. The approach pushes the plate until the two agree.
+  //
+  // The screen fraction is RE-MEASURED here from keyart-scene.jpg rather than
+  // read from product-film.js, the same way the narration suite re-measures the
+  // mp3s: a constant the film asserts about itself proves nothing.
+  const frac = await page.evaluate(async (src) => {
+    const img = new Image(); img.src = src; await img.decode();
+    const W = img.width, H = img.height;
+    const c = document.createElement('canvas'); c.width = W; c.height = H;
+    c.getContext('2d').drawImage(img, 0, 0);
+    const d = c.getContext('2d').getImageData(0, 0, W, H).data;
+    const L = (x, y) => { const i = (y * W + x) * 4; return 0.2126*d[i] + 0.7152*d[i+1] + 0.0722*d[i+2]; };
+    // The panel is a dark-theme UI, so it is found by its density of edges, not
+    // by brightness — the city behind it is brighter than the screen.
+    const cx = new Array(W).fill(0);
+    for (let y = 2; y < H - 2; y += 2) for (let x = 2; x < W - 2; x += 2)
+      if (Math.abs(L(x, y+1) - L(x, y-1)) > 18) cx[x]++;
+    const tot = cx.reduce((a, b) => a + b, 0), want = tot * 0.90;
+    let bi = 0, bj = W - 1, best = 1e9;
+    for (let a = 0; a < W; a++) { let sum = 0;
+      for (let b = a; b < W; b++) { sum += cx[b];
+        if (sum >= want) { if (b - a < best) { best = b - a; bi = a; bj = b; } break; } } }
+    return (bj - bi) / W;
+  }, '/assets/landing/keyart-scene.jpg');
+  (frac > 0.6 && frac < 0.95)
+    ? ok(`the laptop screen measures ${(frac*100).toFixed(0)}% of its plate's width`)
+    : bad('could not measure the screen fraction', String(frac));
+
+  // Apparent size of the interface in frame: camera x entry x plate, times the
+  // screen fraction for the photograph and 1.0 for the full-bleed screenshot.
+  const uiScale = l => l.s * l.b * l.p * (l.plate ? frac : 1);
+  const uploadStart = tr.find(f => f.frame.some(l => l.beat === 'upload'));
+  const win = uploadStart
+    ? tr.filter(f => f.t >= uploadStart.t && f.t <= uploadStart.t + 1100 && f.frame.length >= 2)
+    : [];
+  const pairs = win.map(f => {
+    const o = f.frame.find(l => l.out), i = f.frame.find(l => !l.out);
+    return (o && i) ? { t: f.t, o: uiScale(o), i: uiScale(i) } : null;
+  }).filter(Boolean);
+  if (!pairs.length) bad('never sampled the opening -> product dissolve');
+  else {
+    const worst = Math.max(...pairs.map(p => Math.abs(p.o - p.i) / p.o));
+    (worst <= 0.05)
+      ? ok(`the two interfaces stay within ${(worst*100).toFixed(1)}% of each other's size across the whole dissolve`)
+      : bad('the interfaces are different sizes across the cut',
+            `worst ${(worst*100).toFixed(1)}% — ${pairs.map(p => p.o.toFixed(2)+'/'+p.i.toFixed(2)).slice(0,4).join(' ')}`);
+    // Same direction and comparable speed, so neither picture is overtaking the
+    // other while they are both on screen.
+    const vo = slope(pairs.map(p => [p.t, p.o])), vi = slope(pairs.map(p => [p.t, p.i]));
+    (vo > 0 && vi > 0 && Math.abs(vo - vi) / vo <= 0.35)
+      ? ok(`both grow together through it (${(vo*1e6).toFixed(1)} vs ${(vi*1e6).toFixed(1)} scale/µs)`)
+      : bad('the two interfaces move apart during the dissolve',
+            `${(vo*1e6).toFixed(1)} vs ${(vi*1e6).toFixed(1)} scale/µs`);
+  }
+  // The approach must be still at the start of promise, or the logo -> promise
+  // cut becomes a lurch, and moving by the end, or there is nothing to match.
+  const prom = tr.filter(f => f.frame.some(l => l.beat === 'promise' && l.plate && !l.out));
+  if (prom.length > 40) {
+    const pick = f => { const l = f.frame.find(x => x.plate && !x.out); return [f.t, l.p]; };
+    const half = Math.floor(prom.length / 2);
+    const v1 = slope(prom.slice(0, half).map(pick)), v2 = slope(prom.slice(half).map(pick));
+    (v1 < v2 * 0.25 && v2 > 0)
+      ? ok(`the approach holds still through the first half, then moves in (${(v1*1e6).toFixed(1)} → ${(v2*1e6).toFixed(1)} scale/µs)`)
+      : bad('the approach is not motivated', `first half ${(v1*1e6).toFixed(1)}, second ${(v2*1e6).toFixed(1)}`);
+  } else bad('too few promise frames to measure the approach', String(prom.length));
 
   console.log('\n── The retired motion is really gone ──');
   const src = fs.readFileSync(path.join(ROOT, 'product-film.js'), 'utf8');
