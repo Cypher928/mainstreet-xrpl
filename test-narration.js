@@ -154,9 +154,52 @@ console.log('\n── Silence is deliberate ──');
 // The script refuses to narrate the UI, so two scenes carry no line. Asserting
 // this stops a future "fill the gap" edit from quietly undoing that decision.
 const silent = S.filter(c => c.silent).map(c => c.id);
-JSON.stringify(silent) === JSON.stringify(['space', 'settle'])
-  ? ok('space and settle are silent by design, matching the approved script')
+// `open` is the establishing shot and stays silent permanently. `space` and
+// `settle` are silent only until their clips are rendered — they were holes of
+// 6.9s and 4.3s in the first narrated cut, and the film is not finished while
+// they are listed here. This asserts the expected state and says which of the
+// two reasons applies, so a pending render never reads as a design decision.
+const PENDING = ['space', 'settle'];
+const expected = ['open'].concat(PENDING.filter(id => silent.includes(id)));
+JSON.stringify(silent) === JSON.stringify(expected)
+  ? ok('silent scenes: ' + silent.map(id => id + (id === 'open' ? ' (by design)' : ' (clip pending)')).join(', '))
   : bad('the silent scenes changed', 'now ' + JSON.stringify(silent));
+const stillPending = PENDING.filter(id => silent.includes(id));
+stillPending.length
+  ? console.log(`  \x1b[33m·\x1b[0m ${stillPending.length} line(s) not yet recorded: ${stillPending.join(', ')} — the film has a gap until they land`)
+  : ok('every planned line is recorded — no gaps left in the read');
+
+console.log('\n── The opening does not stall ──');
+const open0 = S[0];
+(open0.id === 'open' && open0.silent && open0.dur >= 1500 && open0.dur <= 2000)
+  ? ok(`establishing shot holds ${open0.dur}ms with no voice, inside the 1.5–2.0s brief`)
+  : bad('the establishing shot is wrong', JSON.stringify(open0));
+const firstLine = voiced[0];
+// The complaint this fixes: the first line fired at 0ms, over the 450ms
+// fade-in — the voice arrived before the picture. It must now start after the
+// establishing shot has cut away.
+firstLine.start >= open0.dur + 400
+  ? ok(`the first line starts at ${firstLine.start}ms — after the cut, not over the fade-in`)
+  : bad('the first line still starts too early', `${firstLine.start}ms, establishing shot ends ${open0.dur}ms`);
+
+console.log('\n── The music bed degrades to silence, never to a broken film ──');
+// The bed is optional and not yet supplied. What must hold either way: a
+// missing or blocked bed cannot take the narration down with it, because the
+// blocked-audio path mutes everything and losing music is not a reason to lose
+// the voice.
+const bedPath = path.join(ROOT, 'assets', 'audio', 'bed.mp3');
+[['function startBed', 'the bed has its own start path, separate from the narration'],
+ ['vox.bedFailed = true', 'a failed bed marks itself and stops trying'],
+ ['rampVolume', 'the bed fades rather than cutting in and out'],
+ ['BED_DUCK', 'the bed ducks under each spoken line'],
+].forEach(([needle, msg]) => SRC.includes(needle) ? ok(msg) : bad('missing: ' + msg));
+// The narration's own catch must be the only thing that mutes the film.
+!/p\.catch\(function \(\) \{ vox\.bedFailed = true; \}\);[\s\S]{0,40}setMuted/.test(SRC)
+  ? ok('a missing bed does not mute the narration')
+  : bad('a failed bed mutes the whole film');
+fs.existsSync(bedPath)
+  ? ok('assets/audio/bed.mp3 is present — music plays from the first frame')
+  : console.log('  \x1b[33m·\x1b[0m assets/audio/bed.mp3 not supplied yet — the film plays without music, no error');
 
 console.log('\n── Playback is wired correctly ──');
 [['preload: preload',            'preload() is exposed so clips can be warmed before play()'],

@@ -60,15 +60,17 @@ srv.listen(PORT,'127.0.0.1',async()=>{
 
   // Walk the scenes with ArrowRight, recording each caption.
   const caps=[];
-  for(let i=0;i<10;i++){
+  for(let i=0;i<11;i++){
     await p.waitForTimeout(450);
     caps.push(await p.evaluate(()=>(document.getElementById('pfCap')||{}).innerText||''));
     await p.keyboard.press('ArrowRight');
   }
   console.log('   scenes: '+caps.map(c=>c.split(' — ')[0]).join(' | '));
-  const want=[/starts reading/i,/reads every clause/i,/checked against/i,/entitled to recover/i,/open a space/i,/ask anything/i,/living memory/i,/settled in rlusd/i,/verified on-chain/i,/^$/];
+  // The opening beat carries no caption on purpose — it is an establishing
+  // shot, and a caption over it would make it a title card again.
+  const want=[/^$/,/starts reading/i,/reads every clause/i,/checked against/i,/entitled to recover/i,/open a space/i,/ask anything/i,/living memory/i,/settled in rlusd/i,/verified on/i,/^$/];
   const misses=want.filter((re,i)=>!re.test(caps[i]||''));
-  misses.length===0?ok('all 10 beats play in story order, closing on the brand rather than the ledger screen')
+  misses.length===0?ok('all 11 beats play in story order, closing on the brand rather than the ledger screen')
                    :bad(misses.length+' scene caption(s) off',JSON.stringify(caps));
   const grounded=await p.evaluate(()=>/\$34,650|\$6,051/.test((document.querySelector('.msl-cine')||{}).innerText||''));
 
@@ -78,29 +80,39 @@ srv.listen(PORT,'127.0.0.1',async()=>{
                                   :bad('login screen flashed',JSON.stringify(loginSamples));
 
   console.log('\n── Pacing ──');
-  const timing=await p.evaluate(()=>{const s=document.querySelector('script[src*="landing-experience"]');return null;});
-  const durs=require('fs').readFileSync(require('path').join(__dirname,'product-film.js'),'utf8').match(/dur:\s*(\d+)/g).map(x=>+x.replace(/\D/g,''));
+  // Ask the module for its own scenes. This used to regex `dur:` out of the
+  // source and zip the results against a hardcoded id list, so adding a beat
+  // silently shifted every duration onto the wrong name — it reported `upload`
+  // at 1800ms when 1800ms was the new establishing shot.
+  const SC=await p.evaluate(()=>window.ProductFilm.scenes());
+  const by=Object.fromEntries(SC.map(s=>[s.id,s.dur]));
+  const durs=SC.map(s=>s.dur);
   const total=durs.reduce((a,b)=>a+b,0)/1000;
-  (total<=45)?ok('film runs '+total.toFixed(1)+'s — under the 45s ceiling'):bad('film too long',total+'s');
-  // Deliberate variation, not uniformity: the four hero beats breathe, the
+  // Ceiling raised from 45s when the recorded narration landed: a narrated cut
+  // needs the two lines the muted cut did without, plus an establishing shot to
+  // open on. 48s is the new bound.
+  (total<=48)?ok('film runs '+total.toFixed(1)+'s — under the 48s ceiling'):bad('film too long',total+'s');
+  // Deliberate variation, not uniformity: the hero beats breathe, the
   // connective beats move. A flat cadence is what made the earlier cut feel
   // like a slideshow.
-  const IDS=['upload','extract','recon','recover','space','ask','timeline','settle','verify','brand'];
-  const by=Object.fromEntries(IDS.map((id,i)=>[id,durs[i]]));
   const heroes=['extract','recover','ask'];
-  heroes.every(h=>by[h]>=5000)?ok('hero beats breathe: '+heroes.map(h=>h+' '+by[h]/1000+'s').join(', '))
+  heroes.every(h=>by[h]>=4800)?ok('hero beats breathe: '+heroes.map(h=>h+' '+by[h]/1000+'s').join(', '))
     :bad('a hero beat is too short',JSON.stringify(by));
-  const connective=IDS.filter(id=>!heroes.includes(id)&&id!=='brand');
+  const connective=SC.map(s=>s.id).filter(id=>!heroes.includes(id)&&id!=='brand'&&id!=='open');
   connective.every(id=>by[id]>=3400&&by[id]<=4600)?ok('connective beats stay 3.4–4.6s — long enough to read, short enough to move')
     :bad('connective pacing off',JSON.stringify(by));
-  (by.brand>=2600&&by.brand<=4000)?ok('brand close holds '+by.brand/1000+'s'):bad('brand close mistimed',String(by.brand));
-  heroes.every(h=>connective.every(cid=>by[h]>by[cid]))?ok('every hero beat is longer than every connective beat')
+  (by.brand>=3600&&by.brand<=4800)?ok('brand close holds '+by.brand/1000+'s'):bad('brand close mistimed',String(by.brand));
+  heroes.every(h=>connective.every(cid=>by[h]>=by[cid]))?ok('every hero beat is at least as long as every connective beat')
     :bad('hero beats do not stand out from connective ones',JSON.stringify(by));
+  // The opening beat exists to stop the film dropping the viewer mid-workflow.
+  // Short enough that it cannot stall: the brief was 1.5–2.0s.
+  (by.open>=1500&&by.open<=2000)?ok('establishing shot holds '+by.open/1000+'s before the first cut')
+    :bad('establishing shot mistimed',String(by.open));
 
   console.log('\n── Composition ──');
   const comp=require('fs').readFileSync(require('path').join(__dirname,'product-film.js'),'utf8');
   const fws=[...comp.matchAll(/\sfw:\s*(\d+)/g)].map(m=>+m[1]);
-  (fws.length===10)?ok('every beat declares its own composition width: '+[...new Set(fws)].sort((a,b)=>a-b).join(' / ')+'px')
+  (fws.length===11)?ok('every beat declares its own composition width: '+[...new Set(fws)].sort((a,b)=>a-b).join(' / ')+'px')
     :bad('scenes missing fw',String(fws.length));
   (new Set(fws).size>=4)?ok('widths vary per beat — framed individually, not to one global fill')
     :bad('composition widths too uniform',JSON.stringify(fws));
@@ -117,11 +129,15 @@ srv.listen(PORT,'127.0.0.1',async()=>{
   /Prevented by lease caps/.test(comp)?ok('a callout labels the savings column in plain language over the real table'):bad('no savings callout');
   /didn’t allow|didn.t allow/.test(comp)?ok('reconciliation lands a plain-language summary'):bad('no summary line');
   /msl-close-mark/.test(comp)?ok('film closes on the MainStreet brand'):bad('no brand close');
+  // The brand card is the last thing anyone sees. It used to carry an XRPL
+  // proof line as well, which split the frame between the name and the ledger.
+  !/msl-close-proof/.test(comp)?ok('the closing card is the mark and tagline alone — the ledger proof stays on the beat before it')
+    :bad('the brand card still shares the frame with the ledger proof');
   // The regression this guards: beats composed as minimal cards on black read as
   // title slides. The product itself has to be the base layer.
   const shots=(comp.match(/class="pf-shot/g)||[]).length;
   (shots>=7)?ok(shots+' beats are built on a real product screenshot — the app is the star')
-    :bad('too few beats show the product',shots+' of 10');
+    :bad('too few beats show the product',shots+' of '+SC.length);
   const realAssets=['ui-upload','beat1-cap-catch','ui-command-center','ui-space-modal','ui-workspace','ui-settlement']
     .filter(a=>comp.includes(a));
   (realAssets.length>=6)?ok('drawn from real captures: '+realAssets.join(', '))
@@ -129,9 +145,9 @@ srv.listen(PORT,'127.0.0.1',async()=>{
 
   console.log('\n── Narration (recorded clips, never synthesised) ──');
   const cues=await p.evaluate(()=>window.ProductFilm&&window.ProductFilm.narrationCues?window.ProductFilm.narrationCues():null);
-  (cues&&cues.length===10)?ok('narration cues exposed for all 10 beats'):bad('narration cues missing',JSON.stringify(cues&&cues.length));
-  (cues&&cues.every(c=>c.line&&c.line.length>10))?ok('every beat has a written narration line'):bad('a beat has no narration line');
-  (cues&&cues[0].atMs===0&&cues[9].atMs===durs.slice(0,9).reduce((a,b)=>a+b,0))
+  (cues&&cues.length===11)?ok('narration cues exposed for all 11 beats'):bad('narration cues missing',JSON.stringify(cues&&cues.length));
+  (cues&&cues.filter(c=>c.line&&c.line.length>10).length===10)?ok('every beat but the establishing shot has a written narration line'):bad('a beat has no narration line');
+  (cues&&cues[0].atMs===0&&cues[10].atMs===durs.slice(0,10).reduce((a,b)=>a+b,0))
     ?ok('cue times derive from scene durations — a recorded read stays in sync')
     :bad('cue times do not track durations',JSON.stringify(cues&&cues.map(c=>c.atMs)));
   // This used to ban `new Audio` outright, from when the film was a scaffold

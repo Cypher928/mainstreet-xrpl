@@ -36,6 +36,10 @@
   // changes a length, so the table cannot drift away from the audio.
   var VO_DIR = 'assets/vo/';
   var VO_GAP = 250;                      // minimum silence between two lines
+  // The first line used to fire at 0ms, over the 450ms fade-in — the voice
+  // arrived before the picture did. It now waits until the establishing shot
+  // has cut away and the upload screen has settled.
+  var VO_LEAD = 600;                     // delay after the first spoken scene opens
   var VO = {
     upload:   { file: 'vo-upload.mp3',   durMs: 4310 },   // overruns its 4.0s scene
     extract:  { file: 'vo-extract.mp3',  durMs: 2640 },
@@ -97,7 +101,21 @@
     // rather than software doing work.
     //
     // `fw` is the composition width of the overlay content for that beat. `vo`
-    // is the narration line for the launch cut; nothing is spoken.
+    // is the narration line spoken over it, rendered to a clip in assets/vo/.
+
+    // Establishing shot. The film used to open mid-workflow on the upload
+    // screen with the first line already speaking over the 450ms fade-in, which
+    // read as being dropped into the middle of something. This holds the
+    // portfolio wide and quiet first so there is a place to be dropped into.
+    // The same plate returns under the $99,542 at `recover` — establish the
+    // room, then come back to it for the payoff.
+    { id: 'open', dur: 1800, fw: 1000, cap: '',
+      build: function (c) {
+        c.innerHTML =
+          '<img class="pf-shot pf-shot--sharp pf-ken" src="' + ASSET + 'ui-command-center.png" alt="">' +
+          '<div class="pf-edge"></div>';
+      } },
+
     { id: 'upload', dur: 4000, fw: 780, cap: 'It starts reading the moment a lease lands',
       vo: 'It starts with what you already have. Leases, invoices, statements.',
       build: function (c) {
@@ -118,7 +136,7 @@
       } },
 
     // HERO — the clause and the fields it produces, side by side, over the app.
-    { id: 'extract', dur: 5200, fw: 960, cap: 'AI reads every clause — and cites it',
+    { id: 'extract', dur: 4800, fw: 960, cap: 'AI reads every clause — and cites it',
       vo: 'MainStreet reads every clause, and tells you which page it came from.',
       build: function (c) {
         c.innerHTML =
@@ -152,7 +170,7 @@
       } },
 
     // HERO — the money, over the Command Center it was computed in.
-    { id: 'recover', dur: 5200, fw: 700, cap: 'Revenue you were entitled to recover',
+    { id: 'recover', dur: 4800, fw: 700, cap: 'Revenue you were entitled to recover',
       vo: 'And it finds the revenue you were entitled to recover.',
       build: function (c) {
         c.innerHTML =
@@ -169,7 +187,7 @@
 
     // HERO — the REAL Space, with callouts pinned to what matters in it.
     { id: 'space', dur: 4600, fw: 900, cap: 'Open a space — its whole history is there',
-      vo: 'Open any space, and its whole history is already there.',
+      vo: 'Every tenant’s full history lives in one place — not in someone’s inbox.',
       build: function (c) {
         c.innerHTML =
           '<img class="pf-shot pf-shot--sharp pf-shot--top msl-zoomin" src="' + ASSET + 'ui-space-modal.png" alt="">' +
@@ -223,7 +241,7 @@
 
     // The REAL settlement row from the product.
     { id: 'settle', dur: 3600, fw: 820, cap: 'Settled in RLUSD on the XRP Ledger',
-      vo: 'Balances settle in RLUSD on the XRP Ledger.',
+      vo: 'And when it’s time to settle, the balance moves in RLUSD.',
       build: function (c) {
         c.innerHTML =
           '<img class="pf-shot pf-shot--sharp msl-zoomin" src="' + ASSET + 'ui-settlement.png" alt="">' +
@@ -233,7 +251,7 @@
 
     // HERO — public proof.
     { id: 'verify', dur: 4400, fw: 660, cap: 'Verified on-chain — proof anyone can check',
-      vo: 'Verified on-chain. Proof anyone can check.',
+      vo: 'Verified on the XRP Ledger. Proof anyone can check.',
       build: function (c) {
         c.innerHTML =
           '<div class="msl-onchain msl-onchain--lg msl-zoomin">' +
@@ -246,14 +264,18 @@
           '</div>';
       } },
 
-    { id: 'brand', dur: 3400, fw: 760, cap: '', end: true,
+    { id: 'brand', dur: 4400, fw: 760, cap: '', end: true,
       vo: 'MainStreet. The verified memory for every commercial property.',
+      // Mark and tagline, nothing else. This card used to carry a "settlement
+      // verified on the XRP Ledger" line as well, which split the last frame
+      // between the brand and the proof. The proof is the beat immediately
+      // before this one — showing it twice makes the ledger the thing the
+      // viewer leaves with. Give the name the frame to itself.
       build: function (c) {
         c.innerHTML =
-          '<div class="msl-close">' +
+          '<div class="msl-close msl-close--final">' +
             '<div class="msl-close-mark msl-blin">Main<span>Street</span></div>' +
-            '<div class="msl-close-line" style="--d:.7s">The verified memory for<br><em>every commercial property.</em></div>' +
-            '<div class="msl-close-proof" style="--d:1.6s"><span class="msl-close-dot"></span>Settlement verified on the XRP Ledger</div>' +
+            '<div class="msl-close-line" style="--d:.9s">The verified memory for<br><em>every commercial property.</em></div>' +
           '</div>';
       } },
   ];
@@ -273,7 +295,8 @@
       if (vo) {
         cue.audio = VO_DIR + vo.file;
         cue.voMs = vo.durMs;
-        cue.startMs = Math.max(cue.atMs, prevEnd + VO_GAP);
+        var floor = cue.atMs + (prevEnd === -Infinity ? VO_LEAD : 0);
+        cue.startMs = Math.max(floor, prevEnd + VO_GAP);
         cue.endMs = cue.startMs + vo.durMs;
         prevEnd = cue.endMs;
       }
@@ -294,7 +317,7 @@
   var root = null, cineEl = null, canvas = null, capEl = null, tlEl = null, endEl = null;
   var state = { i: 0, playing: false, timer: null, t0: 0 };
   var onExit = null;
-  var vox = { on: true, blocked: false, els: {}, timers: [] };
+  var vox = { on: true, blocked: false, els: {}, timers: [], bed: null, bedFailed: false };
 
   // Warm the clips before play(). The first line starts at 0ms, so if loading
   // begins when the film opens it starts late — and because the schedule is
@@ -309,6 +332,71 @@
       vox.els[c.id] = a;
       try { a.load(); } catch (e) {}
     });
+    if (!vox.bed) {
+      var b = new Audio();
+      b.preload = 'auto';
+      b.src = BED_SRC;
+      b.addEventListener('error', function () { vox.bedFailed = true; });
+      vox.bed = b;
+      try { b.load(); } catch (e) {}
+    }
+  }
+
+  // ── music bed ───────────────────────────────────────────────────────────────
+  // Optional. The film opens on 1.8s of establishing shot with no voice, and
+  // silence over a still frame reads as a stall rather than a beat — the bed is
+  // what makes that pause feel intentional. If the file is absent the film runs
+  // exactly as it does without it: no error, no gap, just no music.
+  var BED_SRC   = 'assets/audio/bed.mp3';
+  var BED_LEVEL = 0.20;   // under the voice, never competing with it
+  var BED_DUCK  = 0.09;   // while a line is speaking
+  var BED_IN    = 900;    // fade up as the first frame lands
+  var BED_OUT   = 1400;   // fade down under the brand card
+
+  function rampVolume(el, to, ms) {
+    if (!el) return;
+    if (el.__ramp) { clearInterval(el.__ramp); el.__ramp = null; }
+    var from = el.volume, t0 = Date.now();
+    if (ms <= 0) { el.volume = to; return; }
+    el.__ramp = setInterval(function () {
+      var k = Math.min(1, (Date.now() - t0) / ms);
+      // Perceptual, not linear: a linear ramp on an audio taper sounds like it
+      // jumps at the top and crawls at the bottom.
+      var v = from + (to - from) * (k * k * (3 - 2 * k));
+      el.volume = Math.max(0, Math.min(1, v));
+      if (k >= 1) { clearInterval(el.__ramp); el.__ramp = null; }
+    }, 40);
+  }
+
+  function startBed(from) {
+    var b = vox.bed;
+    if (!b || !vox.on || vox.bedFailed) return;
+    b.loop = true;
+    b.volume = 0;
+    try { b.currentTime = 0; } catch (e) {}
+    var p = b.play();
+    // A missing or blocked bed must not mute the narration — that path belongs
+    // to the voice alone, and losing music is not a reason to lose the film.
+    if (p && p.catch) p.catch(function () { vox.bedFailed = true; });
+    rampVolume(b, BED_LEVEL, BED_IN);
+
+    // Duck around each line, and fade out under the closing card.
+    narrationCues().forEach(function (c) {
+      if (!c.audio || c.endMs <= from) return;
+      vox.timers.push(setTimeout(function () { rampVolume(vox.bed, BED_DUCK, 420); },
+                                 Math.max(0, c.startMs - from - 260)));
+      vox.timers.push(setTimeout(function () { rampVolume(vox.bed, BED_LEVEL, 700); },
+                                 Math.max(0, c.endMs - from)));
+    });
+    var total = SCENES.reduce(function (a, s) { return a + s.dur; }, 0);
+    vox.timers.push(setTimeout(function () { rampVolume(vox.bed, 0, BED_OUT); },
+                               Math.max(0, total - BED_OUT - from)));
+  }
+
+  function stopBed() {
+    if (!vox.bed) return;
+    if (vox.bed.__ramp) { clearInterval(vox.bed.__ramp); vox.bed.__ramp = null; }
+    try { vox.bed.pause(); vox.bed.currentTime = 0; } catch (e) {}
   }
 
   function elapsedMs() { return state.t0 ? Date.now() - state.t0 : 0; }
@@ -323,6 +411,7 @@
     Object.keys(vox.els).forEach(function (k) {
       try { vox.els[k].pause(); vox.els[k].currentTime = 0; } catch (e) {}
     });
+    stopBed();
   }
 
   // Rebuilt from scratch whenever the playhead moves for any reason — open,
@@ -332,6 +421,7 @@
     silence();
     if (!vox.on || !state.playing) return;
     var from = elapsedMs();
+    startBed(from);
     narrationCues().forEach(function (c) {
       if (!c.audio || c.endMs <= from) return;
       var a = vox.els[c.id];
@@ -567,12 +657,14 @@
       '.msl-cine .msl-onchain--lg{transform:scale(1.14);transform-origin:center;}',
       // Brand close — the last impression is MainStreet, ledger proof beneath.
       '.msl-close{display:flex;flex-direction:column;align-items:center;justify-content:center;text-align:center;gap:18px;}',
+      // The final card carries two elements, so it can afford more air between
+      // them and a larger mark than the mid-film variant.
+      '.msl-close--final{gap:26px;}',
+      '.msl-close--final .msl-close-mark{font-size:clamp(2.6rem,6.2vw,4.2rem);}',
       '.msl-close-mark{font-size:clamp(2.2rem,5vw,3.4rem);font-weight:800;letter-spacing:-.035em;color:var(--pa);}',
       '.msl-close-mark span{background:linear-gradient(120deg,#EBD49A,#C9A254 55%,#E4C57F);-webkit-background-clip:text;background-clip:text;color:transparent;}',
       '.msl-close-line{font-size:clamp(1.05rem,2.2vw,1.5rem);line-height:1.35;color:var(--pa);font-weight:600;letter-spacing:-.02em;opacity:0;animation:mslUp .8s var(--ez,ease) both;animation-delay:var(--d,0s);}',
       '.msl-close-line em{font-style:normal;background:linear-gradient(120deg,#EBD49A,#C9A254 55%,#E4C57F);-webkit-background-clip:text;background-clip:text;color:transparent;}',
-      '.msl-close-proof{display:inline-flex;align-items:center;gap:9px;font-size:.8rem;letter-spacing:.05em;text-transform:uppercase;color:var(--mut);opacity:0;animation:mslUp .7s var(--ez,ease) both;animation-delay:var(--d,0s);}',
-      '.msl-close-dot{width:7px;height:7px;border-radius:50%;background:#7BE3A6;box-shadow:0 0 0 4px rgba(123,227,166,.16);}',
       // Progress: one continuous line, not nine chapter ticks. Ticks made a 44s
       // film read like a task bar.
       '.msl-timeline{position:relative;width:min(880px,94vw);height:2px;margin:20px 0 0;background:rgba(255,255,255,.1);border-radius:2px;overflow:hidden;}',

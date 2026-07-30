@@ -48,7 +48,7 @@ const srv = http.createServer((rq, rs) => {
   const loaded = await page.evaluate(() => !!(window.ProductFilm && window.ProductFilm.play));
   loaded ? ok('ProductFilm is available on home.html') : bad('ProductFilm not loaded');
   const sceneCount = await page.evaluate(() => window.ProductFilm ? window.ProductFilm.scenes().length : 0);
-  (sceneCount === 10) ? ok('the shared module carries all 10 beats') : bad('scene count', String(sceneCount));
+  (sceneCount === 11) ? ok('the shared module carries all 11 beats') : bad('scene count', String(sceneCount));
 
   console.log('\n── Clicking the CTA plays in place, with no navigation ──');
   const navsBefore = navs.length;
@@ -78,12 +78,19 @@ const srv = http.createServer((rq, rs) => {
     return { mounted: !!f, on: !!(f && f.classList.contains('msl-on')),
              capText: (document.getElementById('pfCap') || {}).innerText || '',
              bodyLocked: getComputedStyle(document.body).overflow === 'hidden',
+             shotSrc: ((document.querySelector('#pfCanvas .pf-shot') || {}).getAttribute
+                        ? document.querySelector('#pfCanvas .pf-shot').getAttribute('src') : ''),
              heroStillThere: !!document.querySelector('h1') };
   });
   (navs.length === navsBefore) ? ok('no navigation occurred — the click and the audio stay on one document')
                                : bad('the page navigated', JSON.stringify(navs.slice(navsBefore)));
   st.on ? ok('the film is open over the page') : bad('film did not open', JSON.stringify(st));
-  /starts reading/i.test(st.capText) ? ok(`playing from the first beat: "${st.capText}"`) : bad('wrong opening beat', st.capText);
+  // The film now opens on a silent, caption-less establishing shot, so at 900ms
+  // the correct state is an empty caption over a product screenshot — not the
+  // upload beat, which no longer comes first.
+  (st.capText === '' && st.shotSrc && /ui-command-center/.test(st.shotSrc))
+    ? ok('opens on the establishing shot: product on screen, no caption, no voice yet')
+    : bad('wrong opening beat', JSON.stringify({ cap: st.capText, shot: st.shotSrc }));
   st.bodyLocked ? ok('the page behind is scroll-locked while the film plays') : bad('background still scrolls');
   st.heroStillThere ? ok('the marketing page is still mounted underneath — nothing was torn down') : bad('page was replaced');
 
@@ -112,7 +119,7 @@ const srv = http.createServer((rq, rs) => {
 
   console.log('\n── Narration scaffold travels with the module ──');
   const cues = await page.evaluate(() => window.ProductFilm.narrationCues());
-  (cues.length === 10 && cues.every(c => c.line)) ? ok('all 10 narration cues exposed from home.html')
+  (cues.length === 11 && cues.filter(c => c.line).length === 10) ? ok('all 11 cues exposed from home.html; only the establishing shot is unspoken')
                                                   : bad('cues incomplete', String(cues.length));
   // Narrowed from a blanket `new Audio` ban when the recorded read landed: the
   // voice is now eight mp3s in the repo, and what must stay true is that none
@@ -138,11 +145,14 @@ const srv = http.createServer((rq, rs) => {
   const voEnd = await page.evaluate(() => window.ProductFilm.narrationEndMs());
   await page.evaluate(() => { window.__vo = []; window.ProductFilm.play(); });
 
-  // Sample the end card between the last visual cut and the end of the closing
-  // line. This is the window the hold exists to cover.
-  await waitTill(total + 150);
+  // The invariant is "the CTA never appears while she is still speaking", not
+  // "the line runs past the cut". Sampling at total+150 assumed the latter, and
+  // silently became a false alarm the moment the brand beat grew long enough to
+  // contain its own line. Sample just before the closing line ends instead —
+  // that holds whichever of the two finishes first.
+  await waitTill(Math.max(0, voEnd - 300));
   const endEarly = await page.evaluate(() => document.getElementById('pfEnd').classList.contains('msl-show'));
-  await waitTill(voEnd + 900);
+  await waitTill(Math.max(total, voEnd) + 900);
   const endLate = await page.evaluate(() => document.getElementById('pfEnd').classList.contains('msl-show'));
   const vo = await page.evaluate(() => window.__vo);
 
@@ -150,22 +160,30 @@ const srv = http.createServer((rq, rs) => {
   // filters `vo`, and a filter over an empty array is empty — so if the
   // instrumentation ever breaks again, this is the line that says so instead of
   // three green ticks reporting that nothing failed because nothing happened.
-  vo.length === sched.length
-    ? ok(`${vo.length} play() calls observed, one per line`)
-    : bad('instrumentation captured the wrong number of plays', `${vo.length} of ${sched.length}`);
+  // Split the bed out of the observations. Once assets/audio/bed.mp3 exists it
+  // is a ninth play() call, and counting it as a line would fail this for the
+  // wrong reason.
+  const bedPlays = vo.filter(v => !/^vo-/.test(v.src));
+  const lines = vo.filter(v => /^vo-/.test(v.src));
+  lines.length === sched.length
+    ? ok(`${lines.length} play() calls observed, one per line`)
+    : bad('instrumentation captured the wrong number of plays', `${lines.length} of ${sched.length}`);
+  bedPlays.length
+    ? ok(`the music bed started once (${bedPlays[0].src})`)
+    : console.log('  \x1b[33m·\x1b[0m no music bed present — film ran on voice alone, as designed when the file is absent');
 
-  const fired = sched.map(s => vo.find(v => v.src === s.file));
+  const fired = sched.map(s => lines.find(v => v.src === s.file));
   const missing = sched.filter((s, i) => !fired[i]).map(s => s.id);
   missing.length === 0 ? ok(`all ${sched.length} clips were played`)
                        : bad('clips never played', missing.join(', '));
-  const rejected = vo.filter(v => v.ok === false);
-  (vo.length > 0 && rejected.length === 0)
+  const rejected = lines.filter(v => v.ok === false);
+  (lines.length > 0 && rejected.length === 0)
     ? ok('every clip started — a real click is enough activation, no autoplay flag needed')
     : bad('playback was blocked', rejected.map(v => v.src + ':' + v.err).join(', ') || 'nothing observed');
-  const progressed = vo.filter(v => v.progressed === true);
-  progressed.length === vo.length && vo.length > 0
+  const progressed = lines.filter(v => v.progressed === true);
+  progressed.length === lines.length && lines.length > 0
     ? ok('every clip advanced past 0s — audio decoded, not just requested')
-    : bad('a clip never advanced', `${progressed.length} of ${vo.length} progressed`);
+    : bad('a clip never advanced', `${progressed.length} of ${lines.length} progressed`);
 
   // 400ms covers timer drift under a loaded headless browser. Anything larger
   // is real desync, and at 250ms of designed gap it would be audible.
@@ -173,13 +191,13 @@ const srv = http.createServer((rq, rs) => {
   const drift = sched.map((s, i) => fired[i] ? { id: s.id, off: fired[i].at - s.start } : null);
   const late = drift.filter(x => x && Math.abs(x.off) > TOL);
   (drift.every(Boolean) && late.length === 0)
-    ? ok(`every line fired within ${TOL}ms of its cue — max drift ${
-        Math.max(...drift.map(x => Math.abs(x.off)))}ms`)
+    ? ok(`playback is driven by the cue schedule — every line fired within ${TOL}ms of its startMs (max ${
+        Math.max(...drift.map(x => Math.abs(x.off)))}ms)`)
     : bad('lines fired off-cue', late.map(x => `${x.id} ${x.off > 0 ? '+' : ''}${x.off}ms`).join(', ')
         || 'no timings captured');
 
-  !endEarly ? ok(`the end card is still hidden at ${total + 150}ms — the closing line is not cut off`)
-            : bad('the CTA appeared over the closing line', `visible at ${total + 150}ms, line ends ${voEnd}ms`);
+  !endEarly ? ok(`the end card is still hidden at ${voEnd - 300}ms — the CTA never covers the closing line`)
+            : bad('the CTA appeared over the closing line', `visible at ${voEnd - 300}ms, line ends ${voEnd}ms`);
   endLate ? ok(`the end card appears after the closing line finishes (${voEnd}ms)`)
           : bad('the end card never appeared');
 
