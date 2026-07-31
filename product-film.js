@@ -382,7 +382,7 @@
   var root = null, cineEl = null, canvas = null, capEl = null, tlEl = null, endEl = null;
   var state = { i: 0, playing: false, timer: null, t0: 0 };
   var onExit = null;
-  var vox = { on: true, blocked: false, els: {}, timers: [], bed: null, bedFailed: false };
+  var vox = { on: true, blocked: false, els: {}, timers: [], bedBytes: null, bedFailed: false };
 
   // Warm the clips before play(). The first line starts at 0ms, so if loading
   // begins when the film opens it starts late — and because the schedule is
@@ -397,13 +397,19 @@
       vox.els[c.id] = a;
       try { a.load(); } catch (e) {}
     });
-    if (!vox.bed) {
-      var b = new Audio();
-      b.preload = 'auto';
-      b.src = bedSrc();
-      b.addEventListener('error', function () { vox.bedFailed = true; });
-      vox.bed = b;
-      try { b.load(); } catch (e) {}
+    // The bed is fetched as BYTES, not wrapped in an <audio> element.
+    //
+    // It used to be an element whose .volume carried the mix level, with a
+    // fallback to that same .volume if the WebAudio graph could not be built.
+    // On iOS Safari HTMLMediaElement.volume is READ-ONLY — assignments are
+    // silently ignored — so on an iPhone that fallback played the music at full
+    // system volume, and three rounds of cutting the level changed nothing at
+    // all. An AudioBufferSourceNode cannot bypass the graph, on any platform.
+    if (!vox.bedBytes) {
+      vox.bedBytes = fetch(bedSrc()).then(function (r) {
+        if (!r.ok) throw new Error('bed ' + r.status);
+        return r.arrayBuffer();
+      }).catch(function () { vox.bedFailed = true; return null; });
     }
   }
 
@@ -472,7 +478,7 @@
 
   var dbToGain = function (db) { return Math.pow(10, db / 20); };
 
-  var audio = { ctx: null, bedNode: null, eq: null, base: null, duck: null,
+  var audio = { ctx: null, bedNode: null, bedBuf: null, eq: null, base: null, duck: null,
                 bus: null, ana: null, buf: null, raf: null, srcs: {},
                 depthDb: BED_DUCK_DB, follow: 0 };
 
@@ -511,6 +517,16 @@
     return true;
   }
 
+  // Is a line supposed to be sounding right now, per the cue timeline?
+  function scheduledVoice(ms) {
+    var cs = narrationCues(), i;
+    for (i = 0; i < cs.length; i++) {
+      if (!cs[i].audio) continue;
+      if (ms >= cs[i].startMs - 120 && ms <= cs[i].endMs + 80) return true;
+    }
+    return false;
+  }
+
   function follower() {
     audio.raf = requestAnimationFrame(follower);
     if (!audio.ana || !audio.ctx) return;
@@ -521,6 +537,12 @@
     // 0 when the bus is quiet, 1 when the voice is at full tilt.
     var want = (rms - VOICE_FLOOR) / (VOICE_FULL - VOICE_FLOOR);
     want = want < 0 ? 0 : (want > 1 ? 1 : want);
+    // Floored by the cue schedule. Routing a media element into the graph is
+    // the one part of this that can fail per-platform, and if the voice never
+    // reaches the bus the analyser hears silence and the music never ducks at
+    // all. The schedule knows when a line is playing regardless, so the duck
+    // survives that failure — the follower only ever makes it deeper.
+    if (scheduledVoice(elapsedMs())) want = want < 1 ? 1 : want;
     // Asymmetric smoothing: duck quickly, recover slowly. A symmetric follower
     // pumps audibly in the gaps between words.
     var k = want > audio.follow
@@ -531,21 +553,6 @@
     var t = audio.ctx.currentTime;
     audio.duck.gain.setTargetAtTime(dbToGain(audio.depthDb * f), t, 0.02);
     audio.eq.gain.setTargetAtTime(EQ_IDLE_DB + (EQ_DUCK_DB - EQ_IDLE_DB) * f, t, 0.05);
-  }
-
-  function rampVolume(el, to, ms) {
-    if (!el) return;
-    if (el.__ramp) { clearInterval(el.__ramp); el.__ramp = null; }
-    var from = el.volume, t0 = Date.now();
-    if (ms <= 0) { el.volume = to; return; }
-    el.__ramp = setInterval(function () {
-      var k = Math.min(1, (Date.now() - t0) / ms);
-      // Perceptual, not linear: a linear ramp on an audio taper sounds like it
-      // jumps at the top and crawls at the bottom.
-      var v = from + (to - from) * (k * k * (3 - 2 * k));
-      el.volume = Math.max(0, Math.min(1, v));
-      if (k >= 1) { clearInterval(el.__ramp); el.__ramp = null; }
-    }, 40);
   }
 
   function rampParam(p, to, ms) {
@@ -578,35 +585,48 @@
   }
 
   function startBed(from) {
-    var b = vox.bed;
-    if (!b || !vox.on || vox.bedFailed) return;
-    b.loop = false;   // 52s of bed against a 49.9s film — it never wraps
-    try { b.currentTime = Math.max(0, from) / 1000; } catch (e) {}
+    if (!vox.on || vox.bedFailed || !vox.bedBytes) return;
+    if (!buildGraph()) return;          // no graph, no music — never a fallback
+    if (audio.ctx.state === 'suspended') { try { audio.ctx.resume(); } catch (e) {} }
 
-    var graphed = buildGraph();
-    if (graphed && audio.ctx.state === 'suspended') { try { audio.ctx.resume(); } catch (e) {} }
-    if (graphed && nodeFor(b)) {
-      b.volume = 1;                       // the graph owns the level now
-      if (!b.__wired) { b.__node.connect(audio.eq); b.__wired = true; }
-      audio.base.gain.value = 0;
+    var ctx = audio.ctx;
+    var startAt = Math.max(0, from) / 1000;
+    audio.base.gain.value = 0;
+    // Decoded on the LIVE context so the buffer's rate matches it. Decoding on
+    // an OfflineAudioContext at 44.1k and playing it on a 48k device context
+    // resamples inconsistently across engines.
+    vox.bedBytes.then(function (bytes) {
+      if (!bytes || !vox.on || !state.playing) return;
+      return ctx.decodeAudioData(bytes.slice(0));
+    }).then(function (buf) {
+      if (!buf || !vox.on || !state.playing) return;
+      audio.bedBuf = buf;
+      stopBedSource();
+      var src = ctx.createBufferSource();
+      src.buffer = buf;
+      src.connect(audio.eq);
+      audio.bedNode = src;
+      // Enter the track at wherever the film has actually reached, not at
+      // `from`. Decoding 52s takes a few hundred milliseconds, and starting at
+      // the track's beginning afterwards would leave the music trailing the
+      // picture by however long the decode took — on a slow phone, enough to
+      // pull the closing swell off the brand card.
+      var at = Math.max(0, elapsedMs()) / 1000;
+      try { src.start(0, Math.min(at, buf.duration - 0.05)); } catch (e) {}
       rampParam(audio.base.gain, dbToGain(BED_BASE_DB), BED_IN);
       if (!audio.raf) follower();
-    } else {
-      // No WebAudio: fall back to element volume. Music without the sidechain
-      // is worse than music with it, but it is not a reason to lose the film.
-      b.volume = 0;
-      rampVolume(b, dbToGain(BED_BASE_DB), BED_IN);
-    }
+      var total = SCENES.reduce(function (a, s) { return a + s.dur; }, 0);
+      vox.timers.push(setTimeout(function () {
+        rampParam(audio.base.gain, 0, BED_OUT);
+      }, Math.max(0, total - BED_OUT - from)));
+    }).catch(function () { vox.bedFailed = true; });
+  }
 
-    var p = b.play();
-    // A missing or blocked bed must not mute the narration — that path belongs
-    // to the voice alone, and losing music is not a reason to lose the film.
-    if (p && p.catch) p.catch(function () { vox.bedFailed = true; });
-
-    var total = SCENES.reduce(function (a, s) { return a + s.dur; }, 0);
-    vox.timers.push(setTimeout(function () {
-      if (audio.base) rampParam(audio.base.gain, 0, BED_OUT); else rampVolume(vox.bed, 0, BED_OUT);
-    }, Math.max(0, total - BED_OUT - from)));
+  function stopBedSource() {
+    if (!audio.bedNode) return;
+    try { audio.bedNode.stop(); } catch (e) {}
+    try { audio.bedNode.disconnect(); } catch (e) {}
+    audio.bedNode = null;
   }
 
   function stopBed() {
@@ -614,9 +634,7 @@
     audio.follow = 0;
     if (audio.duck && audio.ctx) audio.duck.gain.setValueAtTime(1, audio.ctx.currentTime);
     if (audio.base && audio.ctx) audio.base.gain.setValueAtTime(0, audio.ctx.currentTime);
-    if (!vox.bed) return;
-    if (vox.bed.__ramp) { clearInterval(vox.bed.__ramp); vox.bed.__ramp = null; }
-    try { vox.bed.pause(); vox.bed.currentTime = 0; } catch (e) {}
+    stopBedSource();
   }
 
   function elapsedMs() { return state.t0 ? Date.now() - state.t0 : 0; }

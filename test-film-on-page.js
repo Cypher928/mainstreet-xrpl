@@ -190,9 +190,19 @@ const srv = http.createServer((rq, rs) => {
   (duck && openv && duck.eqDb < openv.eqDb - 2)
     ? ok(`the 1-4kHz presence dip deepens while speaking (${openv.eqDb.toFixed(1)}dB → ${duck.eqDb.toFixed(1)}dB at ${'2.4'}kHz)`)
     : bad('the presence dip does not follow the voice', JSON.stringify({ duck, openv }));
-  bedPlays.length
-    ? ok(`the music bed started once (${bedPlays[0].src})`)
-    : console.log('  \x1b[33m·\x1b[0m no music bed present — film ran on voice alone, as designed when the file is absent');
+  // The bed must NOT come from a media element. On iOS Safari
+  // HTMLMediaElement.volume is read-only, so an element-based bed cannot be
+  // turned down there at all — it plays at full system volume however the mix
+  // constants are set. A buffer source physically cannot bypass the graph.
+  (bedPlays.length === 0)
+    ? ok('the bed never plays through a media element — its level cannot be bypassed on iOS')
+    : bad('the bed is playing through an <audio> element', bedPlays.map(v => v.src).join(', '));
+  // Sampled at 8.8s, not at mount: the bed is decoded asynchronously, so at
+  // 900ms the base gain is still 0 and reads as the -120dB zero-clamp — an
+  // assertion there would pass even if the music never started.
+  (openv && openv.baseDb > -30 && openv.baseDb < -8)
+    ? ok(`the graph is carrying the bed at ${openv.baseDb.toFixed(1)}dB, not the element`)
+    : bad('the bed is not going through the WebAudio graph at a sane level', JSON.stringify(openv));
 
   const fired = sched.map(s => lines.find(v => v.src === s.file));
   const missing = sched.filter((s, i) => !fired[i]).map(s => s.id);

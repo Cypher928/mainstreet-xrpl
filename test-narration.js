@@ -206,9 +206,16 @@ console.log('\n── The music bed degrades to silence, never to a broken film 
 // blocked-audio path mutes everything and losing music is not a reason to lose
 // the voice.
 const bedPath = path.join(ROOT, 'assets', 'audio', 'bed.mp3');
+// Nothing in the film may set a media element's volume. It is read-only on iOS
+// Safari, so any level that depends on it is simply ignored there — which is
+// how the music played at full volume on an iPhone through three rounds of
+// cutting it.
+/\.volume\s*=/.test(SRC)
+  ? bad('something sets a media element volume', 'read-only on iOS — the level will be ignored there')
+  : ok('no level anywhere depends on element volume');
 [['function startBed', 'the bed has its own start path, separate from the narration'],
  ['vox.bedFailed = true', 'a failed bed marks itself and stops trying'],
- ['rampVolume', 'the bed fades rather than cutting in and out'],
+ ['rampParam', 'the bed fades rather than cutting in and out'],
  ['BED_DUCK', 'the bed ducks under each spoken line'],
 ].forEach(([needle, msg]) => SRC.includes(needle) ? ok(msg) : bad('missing: ' + msg));
 // The narration's own catch must be the only thing that mutes the film.
