@@ -152,9 +152,9 @@ const srv = http.createServer((rq, rs) => {
   // happens rather than trusting the constants. 5.5s is inside the opening
   // line (3.00-7.31s); 8.8s is between it and the next (9.50s).
   await waitTill(5500);
-  const duck = await page.evaluate(() => window.__bed ? window.__bed.volume : null);
+  const duck = await page.evaluate(() => window.ProductFilm.mixState());
   await waitTill(8800);
-  const openv = await page.evaluate(() => window.__bed ? window.__bed.volume : null);
+  const openv = await page.evaluate(() => window.ProductFilm.mixState());
 
   // The invariant is "the CTA never appears while she is still speaking", not
   // "the line runs past the cut". Sampling at total+150 assumed the latter, and
@@ -179,11 +179,17 @@ const srv = http.createServer((rq, rs) => {
   lines.length === sched.length
     ? ok(`${lines.length} play() calls observed, one per line`)
     : bad('instrumentation captured the wrong number of plays', `${lines.length} of ${sched.length}`);
-  // 15% tolerance: the ramps are interval-driven, so a sample can land
-  // mid-ramp. What must hold is that it ducks under a line and comes back.
-  (duck !== null && openv !== null && duck < openv * 0.55 && duck > 0)
-    ? ok(`the bed ducks under the voice and lifts between lines (${duck.toFixed(3)} → ${openv.toFixed(3)})`)
-    : bad('the bed does not duck around the narration', JSON.stringify({ duck, openv }));
+  // The sidechain is driven by an envelope follower listening to the voice bus,
+  // so this samples the graph rather than the element: 5.5s is inside the
+  // opening line, 8.8s is between it and the next. What must hold is that the
+  // duck is deep while speaking and released between lines, and that the
+  // presence dip moves with it.
+  (duck && openv && duck.duckDb <= -7 && openv.duckDb >= -2.5)
+    ? ok(`the sidechain ducks the bed ${duck.duckDb.toFixed(1)}dB under the voice and releases to ${openv.duckDb.toFixed(1)}dB between lines`)
+    : bad('the sidechain is not ducking around the narration', JSON.stringify({ duck, openv }));
+  (duck && openv && duck.eqDb < openv.eqDb - 2)
+    ? ok(`the 1-4kHz presence dip deepens while speaking (${openv.eqDb.toFixed(1)}dB → ${duck.eqDb.toFixed(1)}dB at ${'2.4'}kHz)`)
+    : bad('the presence dip does not follow the voice', JSON.stringify({ duck, openv }));
   bedPlays.length
     ? ok(`the music bed started once (${bedPlays[0].src})`)
     : console.log('  \x1b[33m·\x1b[0m no music bed present — film ran on voice alone, as designed when the file is absent');

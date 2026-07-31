@@ -426,20 +426,104 @@
   }
   // Bed: "A Perfect Day" (Iros Young), first 52s.
   //
-  // Levels are DERIVED, not chosen. Measured over that window the track sits at
-  // -13.0dBFS rms; the ten narration clips average -17.3dBFS rms over their
-  // speech. Holding music 20dB under speech while a line runs and 12dB under
-  // between lines gives the two gains below.
+  // ── why this is a WebAudio graph and not an element volume ──────────────────
+  // The first version set BED_LEVEL from an RMS ratio: music 20dB under the
+  // narration's speech-only mean. On paper that is a conservative broadcast
+  // level. In the room it still fought the voice, because an RMS ratio does not
+  // predict intelligibility. Masking is frequency-specific — music energy
+  // between roughly 1kHz and 4kHz covers consonants at levels where the overall
+  // ratio looks safe. Turning the whole track down far enough to fix that by
+  // level alone would have left no music worth having.
   //
-  // They are far lower than the previous track's 0.20/0.09 because that track
-  // was 12.6dB quieter in absolute terms — the same numbers here would have
-  // buried the voice. Swapping a bed always means re-deriving these.
-  var BED_LEVEL = 0.153;  // between lines   → -29.3dBFS
-  var BED_DUCK  = 0.061;  // under a line    → -37.3dBFS
-  // The track opens at -51dBFS and reaches -14dBFS by 1.5s, so it fades itself
-  // in alongside the film's fade from black. This just avoids a click.
+  // So the fix is spectral and dynamic rather than a single number:
+  //
+  //   source → presence dip (peaking EQ ~2.4kHz) → base gain → duck gain → out
+  //                                                               ↑
+  //                                        envelope follower on the voice bus
+  //
+  // The dip carves the band the voice occupies while leaving the low end and
+  // the air above 6kHz intact, so the track keeps its body and sparkle. The
+  // follower listens to the actual voice bus, so the music dips on speech and
+  // recovers in the gaps without anything being hand-timed per scene.
+  var BED_BASE_DB  = -14.4;  // between lines and over the titles
+  var BED_DUCK_DB  = -11;    // additional, while the voice is present
+  var BED_BRAND_DB = -6;     // ...but only this much under the closing line, so
+                             //    the music swells with the brand card
+  // Q 0.6 puts the skirt roughly across 1.1-4.8kHz, which is the band asked
+  // for. At Q 0.9 the dip was only shifting the mid/low balance by 1.8dB —
+  // audible as a level change but not actually clearing the voice's band.
+  var EQ_HZ = 2200, EQ_Q = 0.6;
+  var EQ_IDLE_DB = -3;       // always a little out of the way
+  var EQ_DUCK_DB = -10;      // and well out of the way while speaking
+  var FOLLOW_ATTACK = 0.055; // fast enough to catch a syllable onset
+  var FOLLOW_RELEASE = 0.42; // slow enough not to pump between words
+  var VOICE_FLOOR = 0.006;   // below this the bus counts as silent
+  var VOICE_FULL  = 0.055;   // at this the duck is at full depth
   var BED_IN    = 400;
-  var BED_OUT   = 1400;   // fade down under the brand card
+  var BED_OUT   = 1400;      // fade down under the brand card
+
+  var dbToGain = function (db) { return Math.pow(10, db / 20); };
+
+  var audio = { ctx: null, bedNode: null, eq: null, base: null, duck: null,
+                bus: null, ana: null, buf: null, raf: null, srcs: {},
+                depthDb: BED_DUCK_DB, follow: 0 };
+
+  // One MediaElementAudioSourceNode per element, ever. Creating a second for the
+  // same element throws, and these elements are reused on replay.
+  function nodeFor(el) {
+    if (!audio.ctx) return null;
+    if (el.__node) return el.__node;
+    try { el.__node = audio.ctx.createMediaElementSource(el); } catch (e) { return null; }
+    return el.__node;
+  }
+
+  function buildGraph() {
+    if (audio.ctx) return true;
+    var AC = window.AudioContext || window.webkitAudioContext;
+    if (!AC) return false;
+    try { audio.ctx = new AC(); } catch (e) { return false; }
+    var c = audio.ctx;
+    audio.eq = c.createBiquadFilter();
+    audio.eq.type = 'peaking';
+    audio.eq.frequency.value = EQ_HZ;
+    audio.eq.Q.value = EQ_Q;
+    audio.eq.gain.value = EQ_IDLE_DB;
+    audio.base = c.createGain(); audio.base.gain.value = 0;
+    audio.duck = c.createGain(); audio.duck.gain.value = 1;
+    audio.eq.connect(audio.base); audio.base.connect(audio.duck);
+    audio.duck.connect(c.destination);
+    // Every line plays into one bus, so the follower has a single thing to
+    // listen to no matter which clip is speaking.
+    audio.bus = c.createGain(); audio.bus.gain.value = 1;
+    audio.bus.connect(c.destination);
+    audio.ana = c.createAnalyser();
+    audio.ana.fftSize = 1024;
+    audio.buf = new Float32Array(audio.ana.fftSize);
+    audio.bus.connect(audio.ana);
+    return true;
+  }
+
+  function follower() {
+    audio.raf = requestAnimationFrame(follower);
+    if (!audio.ana || !audio.ctx) return;
+    audio.ana.getFloatTimeDomainData(audio.buf);
+    var s = 0, i;
+    for (i = 0; i < audio.buf.length; i++) s += audio.buf[i] * audio.buf[i];
+    var rms = Math.sqrt(s / audio.buf.length);
+    // 0 when the bus is quiet, 1 when the voice is at full tilt.
+    var want = (rms - VOICE_FLOOR) / (VOICE_FULL - VOICE_FLOOR);
+    want = want < 0 ? 0 : (want > 1 ? 1 : want);
+    // Asymmetric smoothing: duck quickly, recover slowly. A symmetric follower
+    // pumps audibly in the gaps between words.
+    var k = want > audio.follow
+      ? 1 - Math.exp(-1 / (60 * FOLLOW_ATTACK))
+      : 1 - Math.exp(-1 / (60 * FOLLOW_RELEASE));
+    audio.follow += (want - audio.follow) * k;
+    var f = audio.follow;
+    var t = audio.ctx.currentTime;
+    audio.duck.gain.setTargetAtTime(dbToGain(audio.depthDb * f), t, 0.02);
+    audio.eq.gain.setTargetAtTime(EQ_IDLE_DB + (EQ_DUCK_DB - EQ_IDLE_DB) * f, t, 0.05);
+  }
 
   function rampVolume(el, to, ms) {
     if (!el) return;
@@ -456,32 +540,51 @@
     }, 40);
   }
 
+  function rampParam(p, to, ms) {
+    if (!p || !audio.ctx) return;
+    var t = audio.ctx.currentTime;
+    p.cancelScheduledValues(t);
+    p.setValueAtTime(p.value, t);
+    p.linearRampToValueAtTime(to, t + ms / 1000);
+  }
+
   function startBed(from) {
     var b = vox.bed;
     if (!b || !vox.on || vox.bedFailed) return;
     b.loop = false;   // 52s of bed against a 49.9s film — it never wraps
-    b.volume = 0;
-    try { b.currentTime = 0; } catch (e) {}
+    try { b.currentTime = Math.max(0, from) / 1000; } catch (e) {}
+
+    var graphed = buildGraph();
+    if (graphed && audio.ctx.state === 'suspended') { try { audio.ctx.resume(); } catch (e) {} }
+    if (graphed && nodeFor(b)) {
+      b.volume = 1;                       // the graph owns the level now
+      if (!b.__wired) { b.__node.connect(audio.eq); b.__wired = true; }
+      audio.base.gain.value = 0;
+      rampParam(audio.base.gain, dbToGain(BED_BASE_DB), BED_IN);
+      if (!audio.raf) follower();
+    } else {
+      // No WebAudio: fall back to element volume. Music without the sidechain
+      // is worse than music with it, but it is not a reason to lose the film.
+      b.volume = 0;
+      rampVolume(b, dbToGain(BED_BASE_DB), BED_IN);
+    }
+
     var p = b.play();
     // A missing or blocked bed must not mute the narration — that path belongs
     // to the voice alone, and losing music is not a reason to lose the film.
     if (p && p.catch) p.catch(function () { vox.bedFailed = true; });
-    rampVolume(b, BED_LEVEL, BED_IN);
 
-    // Duck around each line, and fade out under the closing card.
-    narrationCues().forEach(function (c) {
-      if (!c.audio || c.endMs <= from) return;
-      vox.timers.push(setTimeout(function () { rampVolume(vox.bed, BED_DUCK, 420); },
-                                 Math.max(0, c.startMs - from - 260)));
-      vox.timers.push(setTimeout(function () { rampVolume(vox.bed, BED_LEVEL, 700); },
-                                 Math.max(0, c.endMs - from)));
-    });
     var total = SCENES.reduce(function (a, s) { return a + s.dur; }, 0);
-    vox.timers.push(setTimeout(function () { rampVolume(vox.bed, 0, BED_OUT); },
-                               Math.max(0, total - BED_OUT - from)));
+    vox.timers.push(setTimeout(function () {
+      if (audio.base) rampParam(audio.base.gain, 0, BED_OUT); else rampVolume(vox.bed, 0, BED_OUT);
+    }, Math.max(0, total - BED_OUT - from)));
   }
 
   function stopBed() {
+    if (audio.raf) { cancelAnimationFrame(audio.raf); audio.raf = null; }
+    audio.follow = 0;
+    if (audio.duck && audio.ctx) audio.duck.gain.setValueAtTime(1, audio.ctx.currentTime);
+    if (audio.base && audio.ctx) audio.base.gain.setValueAtTime(0, audio.ctx.currentTime);
     if (!vox.bed) return;
     if (vox.bed.__ramp) { clearInterval(vox.bed.__ramp); vox.bed.__ramp = null; }
     try { vox.bed.pause(); vox.bed.currentTime = 0; } catch (e) {}
@@ -509,6 +612,9 @@
     silence();
     if (!vox.on || !state.playing) return;
     var from = elapsedMs();
+    // Built before anything plays, so the voice bus exists for the first line
+    // even if the bed is missing or blocked.
+    buildGraph();
     startBed(from);
     narrationCues().forEach(function (c) {
       if (!c.audio || c.endMs <= from) return;
@@ -518,6 +624,13 @@
       vox.timers.push(setTimeout(function () {
         if (!vox.on || !state.playing) return;
         try { a.currentTime = seek; } catch (e) {}
+        // Into the bus, not straight to the speakers — this is what the
+        // sidechain listens to. Without it the follower hears nothing and the
+        // music never ducks.
+        if (audio.ctx && !a.__wired) {
+          var n = nodeFor(a);
+          if (n) { n.connect(audio.bus); a.__wired = true; }
+        }
         var p = a.play();
         // A rejected play() is the deep-link case: index.html?demo=1 arrives by
         // navigation, and user activation does not survive a navigation. Drop
@@ -1151,6 +1264,9 @@
     // the chrome and fill the frame edge to edge; the chrome returns for every
     // beat that really is the app.
     root.classList.toggle('pf-bare', !!s.bare);
+    // The closing line is the payoff, so the music is allowed to stay closer to
+    // it than anywhere else — the brand card should swell, not duck flat.
+    audio.depthDb = (s.id === 'brand') ? BED_BRAND_DB : BED_DUCK_DB;
 
     // Cross-dissolve, not a cut. The outgoing layer stays mounted and keeps
     // running its own animations while it fades, so it is still moving when the
@@ -1288,6 +1404,15 @@
     // scrubbing with arrow keys conflated playback with scrubbing and proved
     // flaky, and inferring the beat from DOM markers guessed at internals.
     beatId: function () { return SCENES[state.i] ? SCENES[state.i].id : null; },
+    // Test seam. The bed's level lives in the graph now, not on the element, so
+    // reading el.volume tells you nothing — it is pinned at 1.
+    mixState: function () {
+      if (!audio.ctx) return null;
+      return { follow: audio.follow,
+               duckDb: 20 * Math.log10(Math.max(audio.duck.gain.value, 1e-6)),
+               baseDb: 20 * Math.log10(Math.max(audio.base.gain.value, 1e-6)),
+               eqDb: audio.eq.gain.value, depthDb: audio.depthDb };
+    },
     narrationCues: narrationCues,
     narrationEndMs: narrationEndMs,
     narrationScript: narrationScript,
