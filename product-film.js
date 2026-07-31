@@ -424,9 +424,21 @@
     }
     return BED_SRCS[BED_SRCS.length - 1][1];
   }
-  var BED_LEVEL = 0.20;   // under the voice, never competing with it
-  var BED_DUCK  = 0.09;   // while a line is speaking
-  var BED_IN    = 900;    // fade up as the first frame lands
+  // Bed: "A Perfect Day" (Iros Young), first 52s.
+  //
+  // Levels are DERIVED, not chosen. Measured over that window the track sits at
+  // -13.0dBFS rms; the ten narration clips average -17.3dBFS rms over their
+  // speech. Holding music 20dB under speech while a line runs and 12dB under
+  // between lines gives the two gains below.
+  //
+  // They are far lower than the previous track's 0.20/0.09 because that track
+  // was 12.6dB quieter in absolute terms — the same numbers here would have
+  // buried the voice. Swapping a bed always means re-deriving these.
+  var BED_LEVEL = 0.153;  // between lines   → -29.3dBFS
+  var BED_DUCK  = 0.061;  // under a line    → -37.3dBFS
+  // The track opens at -51dBFS and reaches -14dBFS by 1.5s, so it fades itself
+  // in alongside the film's fade from black. This just avoids a click.
+  var BED_IN    = 400;
   var BED_OUT   = 1400;   // fade down under the brand card
 
   function rampVolume(el, to, ms) {
