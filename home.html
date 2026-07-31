@@ -37,8 +37,22 @@
   /* Champagne on layered obsidian. The previous gold (#D8B872) leaned orange
      and sat on near-flat black; this palette lifts the metal toward champagne
      and separates the surfaces so depth comes from tone, not borders. */
-  --bg:#050709; --bg-2:#090C10; --card:#0D1117; --panel:#080B0F;
+  /* Elevation ladder. The page measured six of seven sections rendering at
+     luminance 0 — every surface was the page itself, which is exactly why it
+     read as flat rather than dark. Each rung is ~4 luminance apart: far enough
+     to separate, close enough that nothing looks grey. */
+  --bg:#050709;        /* e0 — the page                       L  6.7 */
+  --bg-2:#090C10;      /* e1 — a section that steps forward   L 11.7 */
+  --panel:#0B0F15;     /* e1.5 — chapter panels               L 14.4 */
+  --card:#111721;      /* e2 — a card on a panel              L 21.6 */
+  --card-hi:#161D28;   /* e3 — the same card, lifted          L 28.1 */
   --line:255,255,255;
+  /* Depth comes from light as well as tone: a hairline top highlight on every
+     raised surface, and shadow underneath it. */
+  --edge:inset 0 1px 0 rgba(255,255,255,.045);
+  --lift-1:0 1px 2px rgba(0,0,0,.4), 0 12px 30px -18px rgba(0,0,0,.85);
+  --lift-2:0 2px 4px rgba(0,0,0,.45), 0 28px 60px -26px rgba(0,0,0,.9);
+  --lift-3:0 40px 90px -30px rgba(0,0,0,.92), 0 0 0 1px rgba(255,255,255,.04);
   --gold:#D8B872; --gold-deep:#A8813E; --gold-soft:rgba(216,184,114,.09);
   --gold-grad:linear-gradient(120deg,#EBD49A 0%,#C9A254 55%,#E4C57F 100%);
   --t1:#F4F6F9; --t2:#CFD7E1; --t3:#98A4B3; --t4:#68727F;
@@ -58,13 +72,27 @@ img{max-width:100%;display:block}
 
 /* ── Type scale ─────────────────────────────────────────────────────────── */
 h1,h2,h3{color:var(--t1);margin:0;letter-spacing:-.028em;line-height:1.08;font-weight:800}
-h1{font-size:clamp(2.5rem,6.2vw,4.15rem)}
-h2{font-size:clamp(1.9rem,3.9vw,2.7rem)}
-h3{font-size:1.02rem;letter-spacing:-.01em;font-weight:700}
-.lede{font-size:clamp(1.03rem,1.7vw,1.2rem);color:var(--t3);line-height:1.65;max-width:37em}
+/* Sized to the column it actually sits in. At 4.35rem the hero headline broke
+   to five lines in a 515px column and orphaned "for" on its own line; balance
+   distributes the remaining words instead of leaving a runt. */
+h1{font-size:clamp(2.35rem,5.1vw,3.55rem);text-wrap:balance}
+h2{font-size:clamp(1.9rem,3.6vw,2.6rem);text-wrap:balance}
+h3{font-size:1.06rem;letter-spacing:-.012em;font-weight:700;line-height:1.35}
+/* Four distinct levels, each separated by size AND colour so the ranking is
+   readable at a glance: heading (t1) / lede (t3, larger) / body (t4, smaller) /
+   caption (t4, smallest, letterspaced). */
+.lede{font-size:clamp(1.05rem,1.75vw,1.24rem);color:var(--t3);line-height:1.68;max-width:37em}
+.cap{font-size:.78rem;letter-spacing:.04em;color:var(--t4);line-height:1.55}
+/* The eyebrow is the one place gold is allowed to be decorative — it labels the
+   chapter. Everywhere else it must point at an action or a number. */
 .eyebrow{
-  font-size:.68rem;font-weight:800;letter-spacing:.16em;text-transform:uppercase;
-  color:var(--gold-deep);
+  display:inline-flex;align-items:center;gap:8px;
+  font-size:.68rem;font-weight:800;letter-spacing:.18em;text-transform:uppercase;
+  color:var(--gold);
+}
+.eyebrow::before{
+  content:"";width:5px;height:5px;border-radius:50%;flex:none;
+  background:var(--gold);box-shadow:0 0 0 3px rgba(216,184,114,.14);
 }
 .accent{
   background:var(--gold-grad);
@@ -112,7 +140,7 @@ h3{font-size:1.02rem;letter-spacing:-.01em;font-weight:700}
   background:radial-gradient(closest-side,rgba(216,184,114,.09),transparent 72%);
   pointer-events:none;
 }
-.hero-in{position:relative;display:grid;grid-template-columns:1.02fr .98fr;gap:clamp(30px,5vw,62px);align-items:center}
+.hero-in{position:relative;display:grid;grid-template-columns:minmax(0,.95fr) minmax(0,1.05fr);gap:clamp(30px,5vw,62px);align-items:center}
 .badge{
   display:inline-flex;align-items:center;gap:9px;font-size:.68rem;font-weight:700;
   color:var(--gold);background:var(--gold-soft);border:1px solid rgba(216,184,114,.24);
@@ -131,10 +159,28 @@ h3{font-size:1.02rem;letter-spacing:-.01em;font-weight:700}
   position:relative;border-radius:var(--r);overflow:hidden;
   border:1px solid rgba(var(--line),.08);background:var(--card);
   box-shadow:
-    0 44px 96px -32px rgba(0,0,0,.9),
-    0 0 0 1px rgba(var(--line),.03),
-    0 1px 0 rgba(255,255,255,.06) inset,
-    0 -30px 60px -40px rgba(216,184,114,.14) inset;
+    0 60px 120px -34px rgba(0,0,0,.92),
+    0 8px 24px -12px rgba(0,0,0,.8),
+    0 0 0 1px rgba(var(--line),.045),
+    0 1px 0 rgba(255,255,255,.08) inset,
+    0 -30px 60px -40px rgba(216,184,114,.16) inset;
+  transition:box-shadow .35s ease, transform .35s ease;
+}
+/* A rim of champagne light behind the frame. The screenshot is the strongest
+   thing on the page, so it gets the only real glow — separation by light rather
+   than by making it bigger. */
+.shot::after{
+  content:"";position:absolute;inset:-1px;border-radius:inherit;pointer-events:none;
+  background:linear-gradient(160deg,rgba(216,184,114,.22),transparent 34%,transparent 68%,rgba(216,184,114,.10));
+  -webkit-mask:linear-gradient(#000,#000) content-box,linear-gradient(#000,#000);
+  -webkit-mask-composite:xor;mask-composite:exclude;padding:1px;
+}
+.shot-wrap{position:relative;padding:clamp(6px,1.4vw,18px)}
+/* The pool of light the frame sits in. */
+.shot-wrap::before{
+  content:"";position:absolute;left:6%;right:6%;bottom:-6%;height:44%;pointer-events:none;
+  background:radial-gradient(closest-side,rgba(216,184,114,.10),transparent 76%);
+  filter:blur(6px);
 }
 .shot-bar{
   display:flex;align-items:center;gap:7px;padding:11px 14px;
@@ -151,7 +197,7 @@ h3{font-size:1.02rem;letter-spacing:-.01em;font-weight:700}
 
 /* ── Trust strip — verifiable capabilities, not borrowed logos ──────────── */
 .trust{border-top:1px solid rgba(var(--line),.06);border-bottom:1px solid rgba(var(--line),.06);background:var(--bg-2)}
-.trust-in{display:grid;grid-template-columns:repeat(3,1fr);gap:26px;padding:34px 0}
+.trust-in{display:grid;grid-template-columns:repeat(3,minmax(0,1fr));gap:30px;padding:40px 0}
 .trust-item{display:flex;gap:13px;align-items:flex-start}
 .trust-ic{
   width:34px;height:34px;border-radius:10px;flex:none;display:grid;place-items:center;
@@ -162,19 +208,46 @@ h3{font-size:1.02rem;letter-spacing:-.01em;font-weight:700}
 .trust-d{font-size:.85rem;color:var(--t4);line-height:1.55}
 
 /* ── Sections ───────────────────────────────────────────────────────────── */
-section{padding:clamp(64px,9vw,104px) 0}
-.sec-head{text-align:center;max-width:660px;margin:0 auto clamp(38px,5vw,58px)}
-.sec-head .lede{margin:14px auto 0}
+/* Rhythm: every section used to carry identical 104px padding, so scrolling was
+   one uninterrupted surface. Panelled chapters get tighter outer padding
+   (their own inset supplies the air) and open sections get more. */
+section{padding:clamp(72px,10vw,116px) 0}
+section.is-panelled{padding:clamp(26px,3.5vw,40px) 0}
+.sec-head{text-align:center;max-width:680px;margin:0 auto clamp(44px,5.5vw,64px)}
+.sec-head .lede{margin:16px auto 0}
+
+/* ── Chapter panel ──────────────────────────────────────────────────────────
+   A raised surface with a hairline edge and a light source above it. This is
+   what turns one continuous dark page into chapters you scroll through. */
+.panel{
+  position:relative;
+  background:
+    radial-gradient(120% 80% at 50% -20%, rgba(255,255,255,.028), transparent 62%),
+    var(--panel);
+  border:1px solid rgba(var(--line),.055);
+  border-radius:clamp(18px,2vw,26px);
+  padding:clamp(34px,5vw,68px) clamp(22px,4vw,56px);
+  box-shadow:var(--lift-2), var(--edge);
+}
+/* A soft champagne bloom on the panels that carry the product, so the eye is
+   drawn to the screenshots rather than to the chrome. */
+.panel--warm::before{
+  content:"";position:absolute;inset:0;border-radius:inherit;pointer-events:none;
+  background:radial-gradient(70% 55% at 78% 6%, rgba(216,184,114,.055), transparent 66%);
+}
+.panel > *{position:relative}
 
 /* Three steps */
-.steps{display:grid;grid-template-columns:repeat(3,1fr);gap:20px;position:relative}
+.steps{display:grid;grid-template-columns:repeat(3,minmax(0,1fr));gap:22px;position:relative}
 .step{
-  background:var(--card);border:1px solid rgba(var(--line),.08);border-radius:var(--r);
-  padding:28px 24px;position:relative;transition:border-color .2s ease,transform .2s ease;
+  background:var(--card);border:1px solid rgba(var(--line),.07);border-radius:var(--r);
+  padding:30px 26px;position:relative;box-shadow:var(--lift-1), var(--edge);
+  transition:border-color .2s ease,transform .2s ease,background .2s ease,box-shadow .2s ease;
 }
-.step:hover{border-color:rgba(216,184,114,.4);transform:translateY(-3px)}
+.step:hover{border-color:rgba(216,184,114,.34);transform:translateY(-3px);
+  background:var(--card-hi);box-shadow:var(--lift-2), var(--edge)}
 .step-n{
-  font-size:.7rem;font-weight:800;color:var(--gold);letter-spacing:.1em;margin-bottom:16px;
+  font-size:.7rem;font-weight:800;color:var(--t4);letter-spacing:.14em;margin-bottom:18px;
 }
 .step-ic{
   width:46px;height:46px;border-radius:12px;display:grid;place-items:center;margin-bottom:16px;
@@ -184,18 +257,31 @@ section{padding:clamp(64px,9vw,104px) 0}
 .step p{margin:0;font-size:.92rem;color:var(--t4);line-height:1.6}
 
 /* Split feature */
-.split{display:grid;grid-template-columns:1.05fr .95fr;gap:clamp(30px,5vw,64px);align-items:center}
+/* The product gets the larger half. Prominence through framing and space, not
+   by scaling the image up. */
+/* minmax(0,…), not 1fr. A `1fr` track is minmax(auto,1fr) and `auto` floors at
+   min-content — which for an image is its INTRINSIC width. The screenshots were
+   therefore forcing a 405px track inside a 310px box on a phone, pushing the
+   whole page 71px wider than the viewport. body{overflow-x:hidden} hid the
+   scrollbar, so it showed up only as everything being slightly too big. */
+.split{display:grid;grid-template-columns:minmax(0,.92fr) minmax(0,1.08fr);gap:clamp(30px,5vw,68px);align-items:center}
+.split > *,.hero-in > *,.steps > *,.cards > *,.trust-in > *{min-width:0}
 .split--rev .split-copy{order:2}
-.proof{display:grid;grid-template-columns:1fr 1fr;gap:18px;margin-top:28px}
-.proof-item{border-left:2px solid rgba(216,184,114,.5);padding-left:14px}
+.proof{display:grid;grid-template-columns:minmax(0,1fr) minmax(0,1fr);gap:22px;margin-top:34px}
+.proof-item{border-left:2px solid rgba(var(--line),.12);padding-left:15px;transition:border-color .2s ease}
+.proof-item:hover{border-left-color:rgba(216,184,114,.55)}
 .proof-t{color:var(--t1);font-weight:700;font-size:.92rem;margin-bottom:3px}
 .proof-d{font-size:.84rem;color:var(--t4);line-height:1.5}
 
 /* Watch band */
 .band{
-  background:linear-gradient(135deg,#0F1217,#12161d);
-  border:1px solid rgba(216,184,114,.24);border-radius:18px;
-  padding:clamp(30px,4.5vw,46px);display:flex;align-items:center;gap:28px;flex-wrap:wrap;
+  position:relative;
+  background:
+    radial-gradient(90% 120% at 8% 0%, rgba(216,184,114,.07), transparent 60%),
+    linear-gradient(135deg,#0F131A,#141922);
+  border:1px solid rgba(var(--line),.075);border-radius:clamp(18px,2vw,24px);
+  padding:clamp(34px,5vw,56px);display:flex;align-items:center;gap:30px;flex-wrap:wrap;
+  box-shadow:var(--lift-2), var(--edge);
 }
 .band-ic{
   width:56px;height:56px;border-radius:15px;flex:none;display:grid;place-items:center;
@@ -206,18 +292,20 @@ section{padding:clamp(64px,9vw,104px) 0}
 .band p{margin:0;color:var(--t3);font-size:.96rem}
 
 /* Feature cards */
-.cards{display:grid;grid-template-columns:repeat(4,1fr);gap:18px}
+.cards{display:grid;grid-template-columns:repeat(4,minmax(0,1fr));gap:20px}
 .card{
-  background:var(--card);border:1px solid rgba(var(--line),.08);border-radius:var(--r);
-  padding:24px 22px;transition:border-color .2s ease,transform .2s ease;
+  background:var(--card);border:1px solid rgba(var(--line),.07);border-radius:var(--r);
+  padding:26px 24px;box-shadow:var(--lift-1), var(--edge);
+  transition:border-color .2s ease,transform .2s ease,background .2s ease,box-shadow .2s ease;
 }
-.card:hover{border-color:rgba(216,184,114,.34);transform:translateY(-3px)}
+.card:hover{border-color:rgba(216,184,114,.30);transform:translateY(-3px);
+  background:var(--card-hi);box-shadow:var(--lift-2), var(--edge)}
 .card-ic{
   width:40px;height:40px;border-radius:11px;display:grid;place-items:center;margin-bottom:15px;
   background:var(--gold-soft);border:1px solid rgba(216,184,114,.24);color:var(--gold);font-size:1.05rem;
 }
 .card h3{margin-bottom:7px}
-.card p{margin:0;font-size:.88rem;color:var(--t4);line-height:1.6}
+.card p{margin:0;font-size:.875rem;color:var(--t4);line-height:1.62}
 
 /* Footer */
 footer{border-top:1px solid rgba(var(--line),.07);padding:44px 0;background:var(--bg-2)}
@@ -238,20 +326,35 @@ footer{border-top:1px solid rgba(var(--line),.07);padding:44px 0;background:var(
 
 /* ── Responsive ─────────────────────────────────────────────────────────── */
 @media (max-width:960px){
-  .hero-in,.split{grid-template-columns:1fr;gap:38px}
+  .hero-in,.split{grid-template-columns:minmax(0,1fr);gap:42px}
   .split--rev .split-copy{order:0}
-  .steps{grid-template-columns:1fr}
-  .cards{grid-template-columns:1fr 1fr}
-  .trust-in{grid-template-columns:1fr;gap:20px;padding:28px 0}
+  .steps{grid-template-columns:minmax(0,1fr)}
+  .cards{grid-template-columns:repeat(2,minmax(0,1fr))}
+  .trust-in{grid-template-columns:minmax(0,1fr);gap:22px;padding:30px 0}
   .nav-hide{display:none}
 }
 @media (max-width:560px){
   body{font-size:16px}
-  .wrap{padding:0 18px}
-  .cards{grid-template-columns:1fr}
-  .proof{grid-template-columns:1fr}
+  .wrap{padding:0 16px}
+  .cards,.proof{grid-template-columns:minmax(0,1fr)}
   .cta-row .btn{width:100%}
-  .band{gap:20px}
+  .band{gap:22px;padding:30px 22px}
+  .band .btn{width:100%}
+  /* The panel inset costs 44px of a 390px screen. The screenshots take it back
+     — they are the reason anyone is on this page. */
+  .panel{padding-left:16px;padding-right:16px;border-radius:18px}
+  .panel .shot-wrap{margin-left:-16px;margin-right:-16px;padding-left:0;padding-right:0}
+  .panel .shot{border-radius:12px}
+  /* Every link is a tap target on a phone, including the ones that are only
+     text on the desktop. Measured: six of twelve were under 44px tall. */
+  /* :not(.nav-hide) matters — this rule sits after .nav-hide{display:none} and
+     setting display here un-hid the whole desktop nav, which then overflowed
+     the phone by 192px. */
+  .nav-link:not(.nav-hide),.foot-links a{min-height:44px;display:inline-flex;align-items:center}
+  .nav .btn--sm{min-height:44px;padding:11px 16px}
+  .brand{min-height:44px}
+  .foot-links{gap:6px 22px}
+  .sec-head{margin-bottom:34px}
 }
 </style>
 </head>
@@ -295,7 +398,7 @@ footer{border-top:1px solid rgba(var(--line),.07);padding:44px 0;background:var(
       <div class="hero-note"><b>No slides.</b> The film runs the real product — no mockups, no reenactments.</div>
     </div>
 
-    <div class="rv shot shot--float" style="transition-delay:.1s">
+    <div class="rv shot-wrap" style="transition-delay:.1s"><div class="shot shot--float">
       <div class="shot-bar">
         <span class="shot-dot"></span><span class="shot-dot"></span><span class="shot-dot"></span>
         <span class="shot-cap">MainStreet — AI Command Center</span>
@@ -303,6 +406,7 @@ footer{border-top:1px solid rgba(var(--line),.07);padding:44px 0;background:var(
       <img src="assets/landing/ui-command-center.png" alt="The MainStreet AI Command Center: value identified, today&#39;s priorities, and the next step for each." loading="eager" width="1440" height="1840">
     </div>
   </div>
+    </div>
 </header>
 
 <!-- ── Trust: what we can actually demonstrate ──────────────────────────── -->
@@ -334,8 +438,8 @@ footer{border-top:1px solid rgba(var(--line),.07);padding:44px 0;background:var(
 
 
 <!-- ── Spaces: the memory of a space ────────────────────────────────────── -->
-<section id="spaces">
-  <div class="wrap split">
+<section id="spaces" class="is-panelled">
+  <div class="wrap"><div class="panel panel--warm split">
     <div class="split-copy rv">
       <div class="eyebrow">Spaces</div>
       <h2 style="margin:12px 0 16px">Every space<br>remembers.</h2>
@@ -364,19 +468,20 @@ footer{border-top:1px solid rgba(var(--line),.07);padding:44px 0;background:var(
         </div>
       </div>
     </div>
-    <div class="rv shot" style="transition-delay:.1s">
+    <div class="rv shot-wrap" style="transition-delay:.1s"><div class="shot">
       <div class="shot-bar">
         <span class="shot-dot"></span><span class="shot-dot"></span><span class="shot-dot"></span>
         <span class="shot-cap">A Space — lease, CAM, disputes, documents, timeline</span>
       </div>
       <img src="assets/landing/ui-space-modal.png" alt="A MainStreet Space: lease terms on file, CAM allocated with status, an open dispute, photos and documents, ready to act on." loading="lazy" width="1440" height="1400">
-    </div>
+    </div></div>
   </div>
+</div>
 </section>
 
 <!-- ── How it works ─────────────────────────────────────────────────────── -->
-<section id="how">
-  <div class="wrap">
+<section id="how" class="is-panelled">
+  <div class="wrap"><div class="panel">
     <div class="sec-head rv">
       <div class="eyebrow">How it works</div>
       <h2 style="margin-top:12px">From lease to recovery in three steps</h2>
@@ -403,11 +508,12 @@ footer{border-top:1px solid rgba(var(--line),.07);padding:44px 0;background:var(
       </div>
     </div>
   </div>
+</div>
 </section>
 
 <!-- ── Evidence ─────────────────────────────────────────────────────────── -->
-<section id="evidence" style="background:var(--bg-2);border-top:1px solid rgba(255,255,255,.05);border-bottom:1px solid rgba(255,255,255,.05)">
-  <div class="wrap split">
+<section id="evidence" class="is-panelled">
+  <div class="wrap"><div class="panel panel--warm split">
     <div class="split-copy rv">
       <div class="eyebrow">Explainability</div>
       <h2 style="margin:12px 0 16px">Every number.<br>Every explanation.</h2>
@@ -435,14 +541,15 @@ footer{border-top:1px solid rgba(var(--line),.07);padding:44px 0;background:var(
         </div>
       </div>
     </div>
-    <div class="rv shot" style="transition-delay:.1s">
+    <div class="rv shot-wrap" style="transition-delay:.1s"><div class="shot">
       <div class="shot-bar">
         <span class="shot-dot"></span><span class="shot-dot"></span><span class="shot-dot"></span>
         <span class="shot-cap">AI Workspace — grounded answers about your portfolio</span>
       </div>
       <img src="assets/landing/ui-workspace.png" alt="The MainStreet AI Workspace answering questions about a portfolio from its own records." loading="lazy" width="1440" height="492">
-    </div>
+    </div></div>
   </div>
+</div>
 </section>
 
 <!-- ── Watch band ───────────────────────────────────────────────────────── -->
@@ -461,8 +568,8 @@ footer{border-top:1px solid rgba(var(--line),.07);padding:44px 0;background:var(
 </section>
 
 <!-- ── Platform ─────────────────────────────────────────────────────────── -->
-<section id="platform" style="padding-top:0">
-  <div class="wrap">
+<section id="platform" class="is-panelled">
+  <div class="wrap"><div class="panel">
     <div class="sec-head rv">
       <div class="eyebrow">The platform</div>
       <h2 style="margin-top:12px">Built for the way property managers work</h2>
@@ -490,6 +597,7 @@ footer{border-top:1px solid rgba(var(--line),.07);padding:44px 0;background:var(
       </div>
     </div>
   </div>
+</div>
 </section>
 
 <!-- ── Footer ───────────────────────────────────────────────────────────── -->
