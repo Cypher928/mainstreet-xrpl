@@ -18,7 +18,7 @@ const http = require('http'), fs = require('fs'), path = require('path');
 const ROOT = __dirname, PORT = 8855;
 const MIME = { '.html':'text/html', '.js':'application/javascript', '.css':'text/css',
                '.json':'application/json', '.png':'image/png', '.svg':'image/svg+xml',
-               '.mp3':'audio/mpeg', '.jpg':'image/jpeg' };
+               '.mp3':'audio/mpeg', '.jpg':'image/jpeg', '.webm':'audio/webm' };
 let pass = 0, fail = 0;
 const ok  = m => { console.log('  \x1b[32m✓\x1b[0m ' + m); pass++; };
 const bad = (m, d) => { console.log('  \x1b[31m✗\x1b[0m ' + m + (d ? ' — ' + d : '')); fail++; };
@@ -129,8 +129,8 @@ const srv = http.createServer((rq, rs) => {
   !synth ? ok('no speech synthesis — narration is a recorded track')
          : bad('the browser is synthesising speech');
   const voiced = cues.filter(c => c.audio);
-  (voiced.length === 8 && voiced.every(c => /^assets\/vo\/vo-[a-z]+\.mp3$/.test(c.audio)))
-    ? ok('8 lines resolve to clips in assets/vo/')
+  (voiced.length === 10 && voiced.every(c => /^assets\/vo\/vo-[a-z]+\.mp3$/.test(c.audio)))
+    ? ok('all 10 lines resolve to clips in assets/vo/')
     : bad('narration sources are wrong', JSON.stringify(voiced.map(c => c.audio)));
 
   console.log('\n── Narration actually plays, on schedule ──');
@@ -201,6 +201,42 @@ const srv = http.createServer((rq, rs) => {
             : bad('the CTA appeared over the closing line', `visible at ${voEnd - 300}ms, line ends ${voEnd}ms`);
   endLate ? ok(`the end card appears after the closing line finishes (${voEnd}ms)`)
           : bad('the end card never appeared');
+
+  console.log('\n── On a phone ──');
+  // The film is composed landscape and a phone is portrait, so "fill the screen"
+  // has two different right answers.
+  //
+  // The opening beats are photography and type: cropping those to a portrait
+  // frame is what a camera does, and they take the whole screen.
+  //
+  // The product beats are wide screenshots of a dense UI. Filling the screen
+  // with one crops it to roughly a third of its width — measured at 66vh, the
+  // tenant names rendered as "...ket" and "...rovisions" and "Reading 3
+  // documents" ran off the edge. This ceiling is the legibility limit, not a
+  // layout preference, and raising it makes those beats worse.
+  const phone = await b.newContext({ viewport: { width: 390, height: 844 },
+                                     isMobile: true, hasTouch: true });
+  const ph = await phone.newPage();
+  await ph.route('**fonts.g**', r => r.fulfill({ status: 200, contentType: 'text/css', body: '' }));
+  await ph.goto(`http://127.0.0.1:${PORT}/`, { waitUntil: 'networkidle' });
+  const frac = async ms => {
+    await ph.goto(`http://127.0.0.1:${PORT}/`, { waitUntil: 'networkidle' });
+    await ph.evaluate(() => { window.__t0 = Date.now(); window.ProductFilm.play(); });
+    await ph.waitForFunction(t => Date.now() - window.__t0 >= t, ms, { timeout: ms + 6000, polling: 25 });
+    return ph.evaluate(() => {
+      const c = document.querySelector('#pfFilm .msl-canvas').getBoundingClientRect();
+      return { w: c.width / innerWidth, h: c.height / innerHeight,
+               bare: !!document.querySelector('#pfFilm.pf-bare') };
+    });
+  };
+  const open = await frac(2300), prod = await frac(7500);
+  (open.bare && open.w >= 0.99 && open.h >= 0.75)
+    ? ok(`the opening fills the phone — ${Math.round(open.w*100)}% wide, ${Math.round(open.h*100)}% tall, edge to edge`)
+    : bad('the opening does not fill the phone', JSON.stringify(open));
+  (!prod.bare && prod.w >= 0.99 && prod.h >= 0.5 && prod.h <= 0.62)
+    ? ok(`the product beats take the full width and ${Math.round(prod.h*100)}% of the height — below the crop ceiling`)
+    : bad('the product beats are mis-sized on a phone', JSON.stringify(prod));
+  await phone.close();
 
   console.log('\n── Console ──');
   (errs.length === 0) ? ok('no page errors') : bad('errors', JSON.stringify(errs.slice(0, 3)));

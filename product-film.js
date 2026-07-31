@@ -49,12 +49,11 @@
     extract:  { file: 'vo-extract.mp3',  durMs: 2640 },
     recon:    { file: 'vo-recon.mp3',    durMs: 2460 },
     recover:  { file: 'vo-recover.mp3',  durMs: 2870 },
-    // space and settle are deliberately silent. The script refuses to narrate
-    // the UI ("now we're looking at Spaces"), and a breath after the $99,542
-    // beat is worth more than a line would be.
+    space:    { file: 'vo-space.mp3',    durMs: 4410 },
     ask:      { file: 'vo-ask.mp3',      durMs: 5510 },   // overruns its 5.2s scene
     timeline: { file: 'vo-timeline.mp3', durMs: 2950 },
-    verify:   { file: 'vo-verify.mp3',   durMs: 3600 },
+    settle:   { file: 'vo-settle.mp3',   durMs: 3530 },
+    verify:   { file: 'vo-verify.mp3',   durMs: 3710 },
     brand:    { file: 'vo-brand.mp3',    durMs: 4020 },   // runs past the last cut
   };
 
@@ -401,7 +400,7 @@
     if (!vox.bed) {
       var b = new Audio();
       b.preload = 'auto';
-      b.src = BED_SRC;
+      b.src = bedSrc();
       b.addEventListener('error', function () { vox.bedFailed = true; });
       vox.bed = b;
       try { b.load(); } catch (e) {}
@@ -413,7 +412,18 @@
   // silence over a still frame reads as a stall rather than a beat — the bed is
   // what makes that pause feel intentional. If the file is absent the film runs
   // exactly as it does without it: no error, no gap, just no music.
-  var BED_SRC   = 'assets/audio/bed.mp3';
+  // Opus where it plays, MP3 everywhere else. Same 52s of the same track: the
+  // Opus copy is 614KB against 2.03MB, and this is the heaviest asset in the
+  // film — it matters most on the phone, where there is no hover to preload on.
+  var BED_SRCS  = [['audio/webm; codecs=opus', 'assets/audio/bed.webm'],
+                   ['audio/mpeg',              'assets/audio/bed.mp3']];
+  function bedSrc() {
+    var a = document.createElement('audio');
+    for (var i = 0; i < BED_SRCS.length; i++) {
+      if (a.canPlayType(BED_SRCS[i][0]).replace('no', '')) return BED_SRCS[i][1];
+    }
+    return BED_SRCS[BED_SRCS.length - 1][1];
+  }
   var BED_LEVEL = 0.20;   // under the voice, never competing with it
   var BED_DUCK  = 0.09;   // while a line is speaking
   var BED_IN    = 900;    // fade up as the first frame lands
@@ -437,7 +447,7 @@
   function startBed(from) {
     var b = vox.bed;
     if (!b || !vox.on || vox.bedFailed) return;
-    b.loop = true;
+    b.loop = false;   // 52s of bed against a 49.9s film — it never wraps
     b.volume = 0;
     try { b.currentTime = 0; } catch (e) {}
     var p = b.play();
@@ -833,16 +843,24 @@
       '  font-size:clamp(1.3rem,3.2vw,2.35rem);line-height:1.22;letter-spacing:-.025em;color:#EAECEF;opacity:0;}',
       '.pf-line em{font-style:normal;background:linear-gradient(120deg,#EBD49A,#C9A254 55%,#E4C57F);',
       '  -webkit-background-clip:text;background-clip:text;color:transparent;}',
-      '.pf-line-a{animation:pfLineA 2.5s cubic-bezier(.4,0,.2,1) both;}',
-      '.pf-line-b{animation:pfLineB 2.5s cubic-bezier(.4,0,.2,1) both;}',
+      // Timed to the READ, not to the beat. Decoding vo-upload.mp3 to PCM shows
+      // 400ms of true silence from 1.84s to 2.24s — the sentence break. Earlier
+      // I reported there was no pause over 140ms in this clip; that came from
+      // the MP3 frame-header proxy, which is flat for speech, and it was wrong.
+      // Against --ed (2500 + 1040 = 3540ms): the break is 52-63%, so line A
+      // holds to 52% and line B arrives at 65%, as the second sentence starts.
+      '.pf-line-a{animation:pfLineA var(--ed,3540ms) cubic-bezier(.4,0,.2,1) both;}',
+      '.pf-line-b{animation:pfLineB var(--ed,3540ms) cubic-bezier(.4,0,.2,1) both;}',
       '@keyframes pfLineA{0%{opacity:0;transform:translateY(calc(-50% + 10px))}',
-      '  12%{opacity:1;transform:translateY(-50%)}40%{opacity:1;transform:translateY(-50%)}',
-      '  52%{opacity:0;transform:translateY(calc(-50% - 8px))}100%{opacity:0}}',
+      '  8%{opacity:1;transform:translateY(-50%)}52%{opacity:1;transform:translateY(-50%)}',
+      '  58%{opacity:0;transform:translateY(calc(-50% - 8px))}100%{opacity:0}}',
+      // Line B carries across the cut, fading with its layer as the workflow
+      // comes up — the type bridges the transition the way the voice does.
       '@keyframes pfLineB{0%{opacity:0;transform:translateY(calc(-50% + 10px))}',
-      '  36%{opacity:0;transform:translateY(calc(-50% + 10px))}',
-      '  50%{opacity:1;transform:translateY(-50%)}',
-      '  78%{opacity:1;transform:translateY(-50%)}',
-      '  92%{opacity:0;transform:translateY(calc(-50% - 10px))}',
+      '  65%{opacity:0;transform:translateY(calc(-50% + 10px))}',
+      '  71%{opacity:1;transform:translateY(-50%)}',
+      '  88%{opacity:1;transform:translateY(-50%)}',
+      '  96%{opacity:0;transform:translateY(calc(-50% - 10px))}',
       '  100%{opacity:0;transform:translateY(calc(-50% - 10px))}}',
       // The workflow arrives mid-move and settles, instead of cutting in cold.
       // .pf-arrive retired: it decelerated to a stop, which is the camera
@@ -890,8 +908,33 @@
       // caption — 13,680px² of overlap, invisible at desktop widths.
       '@media (max-width:720px){',
       '  .msl-cine-end{position:static!important;flex-wrap:wrap;justify-content:center;gap:10px;margin:18px 0 8px;padding:0 12px;}',
-      '  .msl-cap{margin-bottom:4px;}',
       '  .msl-onchain--lg{transform:none;}',
+      // Phones: go edge to edge. The frame was taking 43% of a 390x844 screen —
+      // a landscape film sitting in the middle of a portrait phone with black
+      // above and below. Dropping the page padding, the device border and the
+      // radius, and floating the caption over the picture instead of below it,
+      // takes it past 70%.
+      '  .msl-cine{padding:0;}',
+      '  .msl-dev{width:100%!important;border:0!important;border-radius:0!important;box-shadow:none!important;}',
+      '  .msl-dev-bar{display:none;}',
+      // Two different answers, because the beats are two different things.
+      //
+      // The opening beats are photography and type. Cropping a photograph to a
+      // portrait frame is what a camera does, so they take the whole screen.
+      //
+      // The product beats are landscape screenshots of a wide UI. Filling a
+      // 390x844 phone with one crops it to about a third of its width: at 66vh
+      // the tenant names came out as "...ket" and "...rovisions", and "Reading 3
+      // documents" ran off the edge. More screen made them WORSE. They get the
+      // full width and as much height as stays legible, and no more.
+      '  .msl-canvas{height:56vh!important;}',
+      '  .pf-bare .msl-canvas{height:82vh!important;}',
+      // Over the picture, on its own scrim, so it costs no vertical space.
+      '  .msl-cap{position:absolute;left:0;right:0;bottom:26px;margin:0;padding:0 20px 0;z-index:5;',
+      '    font-size:1.02rem;text-shadow:0 2px 18px rgba(0,0,0,.85);}',
+      '  .msl-timeline{position:absolute;left:0;right:0;bottom:12px;width:auto;margin:0 20px;z-index:5;}',
+      '  .msl-vox{top:14px;right:60px;height:32px;padding:0 11px;font-size:.64rem;}',
+      '  .msl-cine-close{top:14px;right:14px;width:32px;height:32px;}',
       '}',
       '.msl-tseg{flex:1;height:2px;border-radius:2px;background:rgba(255,255,255,.12);overflow:hidden;}',
       '.msl-tseg-f{height:100%;width:0;background:var(--gold);}',
