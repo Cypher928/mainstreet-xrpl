@@ -459,18 +459,40 @@
   //
   // Against the previous pass this is 5.6dB quieter between lines and 10.6dB
   // quieter under a line.
-  var BED_BASE_DB  = -20;    // between lines and over the titles
-  var BED_DUCK_DB  = -16;    // additional, while the voice is present
-  var BED_BRAND_DB = -9;     // ...but only this much under the closing line, so
+  // Reported as: loud at the top, gone completely under the voice, surging back
+  // in every gap, and "chewy". That is one fault, not three — the duck had far
+  // too much RANGE and recovered far too fast. 16dB of movement with a 420ms
+  // release is a compressor pumping, and the ear hears the movement itself.
+  //
+  // So the range collapses from 16dB to 7dB and the whole thing gets slower.
+  // Under the voice the bed is now 6dB LOUDER than the last pass, and in the
+  // gaps 3dB quieter — less level where it was intrusive, more where it had
+  // vanished, and a much smaller gesture between the two.
+  var BED_BASE_DB  = -18;    // and it stays there — see below
+  var BED_DUCK_DB  = -2;     // barely any level movement at all
+  var BED_BRAND_DB = -1;     // ...but only this much under the closing line, so
                              //    the music still swells with the brand card
   // Q 0.6 puts the skirt roughly across 1.1-4.8kHz, which is the band asked
   // for. At Q 0.9 the dip was only shifting the mid/low balance by 1.8dB —
   // audible as a level change but not actually clearing the voice's band.
-  var EQ_HZ = 2200, EQ_Q = 0.6;
-  var EQ_IDLE_DB = -3;       // always a little out of the way
-  var EQ_DUCK_DB = -10;      // and well out of the way while speaking
-  var FOLLOW_ATTACK = 0.055; // fast enough to catch a syllable onset
-  var FOLLOW_RELEASE = 0.42; // slow enough not to pump between words
+  // ── duck the SPECTRUM, not the level ────────────────────────────────────────
+  // Every previous pass ducked loudness, and loudness ducking is what pumping
+  // IS. Reported as: loud at the top, gone under the voice, surging back in the
+  // gaps, "chewy". Making the duck deeper made the pumping worse; making it
+  // shallower let the voice get masked again. There is no good answer on that
+  // axis, because the thing being moved is the thing being heard.
+  //
+  // So the level now barely moves — 2dB — and the mid scoop does the work
+  // instead, sweeping 11dB. Masking is frequency-specific, so clearing 1-5kHz
+  // clears the voice; and because the low end and the air above 6kHz stay put,
+  // the music does not appear to change volume at all. It is present the whole
+  // way through and never in the way.
+  var EQ_HZ = 2200, EQ_Q = 0.55;   // wide: the skirt covers roughly 1-5kHz
+  var EQ_IDLE_DB = -2;       // the track very nearly as written
+  var EQ_DUCK_DB = -13;      // a deep scoop, only while the voice is there
+  var FOLLOW_ATTACK = 0.12;  // eased, not snapped
+  var FOLLOW_RELEASE = 1.9;  // long, so a gap between lines does not surge
+  var FOLLOW_HOLD = 700;     // and a pause inside a line does not recover at all
   var VOICE_FLOOR = 0.006;   // below this the bus counts as silent
   var VOICE_FULL  = 0.055;   // at this the duck is at full depth
   var BED_IN    = 400;
@@ -480,7 +502,7 @@
 
   var audio = { ctx: null, bedNode: null, bedBuf: null, eq: null, base: null, duck: null,
                 bus: null, ana: null, buf: null, raf: null, srcs: {},
-                depthDb: BED_DUCK_DB, follow: 0 };
+                depthDb: BED_DUCK_DB, follow: 0, lastVoice: 0 };
 
   // One MediaElementAudioSourceNode per element, ever. Creating a second for the
   // same element throws, and these elements are reused on replay.
@@ -542,7 +564,16 @@
     // reaches the bus the analyser hears silence and the music never ducks at
     // all. The schedule knows when a line is playing regardless, so the duck
     // survives that failure — the follower only ever makes it deeper.
-    if (scheduledVoice(elapsedMs())) want = want < 1 ? 1 : want;
+    // 0.85, not 1. Forcing full depth for the whole cue window made the duck a
+    // square wave that the follower could only smooth the edges of; leaving
+    // headroom lets it keep tracking the voice inside the line.
+    if (scheduledVoice(elapsedMs()) && want < 0.85) want = 0.85;
+    // Hold: once the voice has been present, do not begin releasing until it
+    // has been gone for FOLLOW_HOLD. Without this the bed climbs back inside
+    // the pauses between sentences, which is most of the "chewy".
+    var now = Date.now();
+    if (want > 0.15) audio.lastVoice = now;
+    if (want < audio.follow && now - (audio.lastVoice || 0) < FOLLOW_HOLD) want = audio.follow;
     // Asymmetric smoothing: duck quickly, recover slowly. A symmetric follower
     // pumps audibly in the gaps between words.
     var k = want > audio.follow

@@ -184,12 +184,16 @@ const srv = http.createServer((rq, rs) => {
   // opening line, 8.8s is between it and the next. What must hold is that the
   // duck is deep while speaking and released between lines, and that the
   // presence dip moves with it.
-  (duck && openv && duck.duckDb <= -7 && openv.duckDb >= -2.5)
-    ? ok(`the sidechain ducks the bed ${duck.duckDb.toFixed(1)}dB under the voice and releases to ${openv.duckDb.toFixed(1)}dB between lines`)
-    : bad('the sidechain is not ducking around the narration', JSON.stringify({ duck, openv }));
-  (duck && openv && duck.eqDb < openv.eqDb - 2)
-    ? ok(`the 1-4kHz presence dip deepens while speaking (${openv.eqDb.toFixed(1)}dB → ${duck.eqDb.toFixed(1)}dB at ${'2.4'}kHz)`)
-    : bad('the presence dip does not follow the voice', JSON.stringify({ duck, openv }));
+  // The sidechain moves the SPECTRUM, not the fader. Ducking loudness is what
+  // pumping is, and it was reported as "chewy" — loud, gone, surging back. So
+  // the level is expected to barely move here (a couple of dB at most) while
+  // the filter does the real work.
+  (duck && openv && duck.duckDb > -4 && duck.duckDb < -0.5)
+    ? ok(`the level barely moves under the voice (${duck.duckDb.toFixed(1)}dB) — no pumping`)
+    : bad('the level is swinging around the narration', JSON.stringify({ duck, openv }));
+  (duck && openv && duck.eqDb < openv.eqDb - 2 && duck.eqDb < -10)
+    ? ok(`the 1-4kHz scoop is what follows the voice (${openv.eqDb.toFixed(1)}dB → ${duck.eqDb.toFixed(1)}dB at 2.2kHz)`)
+    : bad('the scoop is not doing the ducking', JSON.stringify({ duck, openv }));
   // The bed must NOT come from a media element. On iOS Safari
   // HTMLMediaElement.volume is read-only, so an element-based bed cannot be
   // turned down there at all — it plays at full system volume however the mix
