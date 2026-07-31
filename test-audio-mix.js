@@ -125,8 +125,14 @@ console.log('  constants read from product-film.js:', JSON.stringify(CFG));
       // few seconds of music rather than against the track's own arrangement.
       const nx=cues[i+1] ? cues[i+1].startMs/1000 : 50.5;
       const g=(nx-z>0.8) ? {a:z+0.35, z:Math.min(nx-0.05, z+1.6)} : null;
+      // The tilt windows are inset by 250ms at each end. The bed is now ~16dB
+      // down inside a line and up in the gap either side, and at that dynamic
+      // range the band filters' settling tails from the loud gaps leak into the
+      // quiet window and flatten the measured balance. Insetting removes the
+      // settling, not the signal.
+      const ia=a+0.25, iz=Math.max(ia+0.3, z-0.25);
       return {id:c.id, v:rms(vB,a,z), m:rms(mB,a,z),
-              mid:rms(mB,a,z), low:rms(mLow,a,z),
+              mid:rms(mB,ia,iz), low:rms(mLow,ia,iz),
               gapMid:g?rms(mB,g.a,g.z):null, gapLow:g?rms(mLow,g.a,g.z):null};
     });
     // Where there is no voice at all: the titles and the gaps.
@@ -146,7 +152,11 @@ console.log('  constants read from product-film.js:', JSON.stringify(CFG));
 
   console.log('\n── The voice is always above the music where it counts ──');
   console.log('   speech-to-music ratio inside 1-4kHz, per line\n');
-  const FLOOR=10, CEIL=32;
+  // FLOOR is the broadcast intelligibility standard and is not mine to move.
+  // CEIL is a judgement — "past this the bed has stopped contributing" — and it
+  // moved from 32 to 40 after two rounds of the mix being reported as too loud
+  // at levels this measurement called correct. Ears outrank the bound.
+  const FLOOR=10, CEIL=40;
   let worst=99, best=-99;
   for(const r of out.rows){
     const d=dB(r.v)-dB(r.m);

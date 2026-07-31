@@ -445,10 +445,18 @@
   // the air above 6kHz intact, so the track keeps its body and sparkle. The
   // follower listens to the actual voice bus, so the music dips on speech and
   // recovers in the gaps without anything being hand-timed per scene.
-  var BED_BASE_DB  = -14.4;  // between lines and over the titles
-  var BED_DUCK_DB  = -11;    // additional, while the voice is present
-  var BED_BRAND_DB = -6;     // ...but only this much under the closing line, so
-                             //    the music swells with the brand card
+  // Cut hard on the second report of the music competing. Recording the real
+  // output showed the graph working exactly as modelled — the voice was already
+  // 13.2dB over the ducked bed in the speech band, comfortably past the
+  // broadcast floor. So the standard was the wrong target, not the maths: for
+  // this film the bed wants to sit well below "correct" and stay there.
+  //
+  // Against the previous pass this is 5.6dB quieter between lines and 10.6dB
+  // quieter under a line.
+  var BED_BASE_DB  = -20;    // between lines and over the titles
+  var BED_DUCK_DB  = -16;    // additional, while the voice is present
+  var BED_BRAND_DB = -9;     // ...but only this much under the closing line, so
+                             //    the music still swells with the brand card
   // Q 0.6 puts the skirt roughly across 1.1-4.8kHz, which is the band asked
   // for. At Q 0.9 the dip was only shifting the mid/low balance by 1.8dB —
   // audible as a level change but not actually clearing the voice's band.
@@ -546,6 +554,27 @@
     p.cancelScheduledValues(t);
     p.setValueAtTime(p.value, t);
     p.linearRampToValueAtTime(to, t + ms / 1000);
+  }
+
+  function setMix(o) {
+    if (!o) return { baseDb: BED_BASE_DB, duckDb: BED_DUCK_DB, brandDb: BED_BRAND_DB };
+    if (typeof o.baseDb === 'number') BED_BASE_DB = o.baseDb;
+    if (typeof o.duckDb === 'number') BED_DUCK_DB = o.duckDb;
+    if (typeof o.brandDb === 'number') BED_BRAND_DB = o.brandDb;
+    audio.depthDb = BED_DUCK_DB;
+    if (audio.base && audio.ctx) rampParam(audio.base.gain, dbToGain(BED_BASE_DB), 120);
+    return { baseDb: BED_BASE_DB, duckDb: BED_DUCK_DB, brandDb: BED_BRAND_DB };
+  }
+
+  // ?mix=base,duck  — so the balance can be tried on the device it will be
+  // watched on, rather than described back and forth.
+  function mixFromUrl() {
+    try {
+      var m = /[?&]mix=(-?[\d.]+)(?:,(-?[\d.]+))?/.exec(window.location.search);
+      if (!m) return;
+      setMix({ baseDb: parseFloat(m[1]),
+               duckDb: m[2] !== undefined ? parseFloat(m[2]) : undefined });
+    } catch (e) {}
   }
 
   function startBed(from) {
@@ -1380,6 +1409,7 @@
     if (state.playing && root && root.classList.contains('msl-on')) return;
     onExit = (opts && opts.onExit) || null;
     build();
+    mixFromUrl();
     preload();
     if (opts && opts.muted) setMuted(true);
     state.i = 0; state.playing = true; state.t0 = Date.now();
@@ -1404,6 +1434,11 @@
     // scrubbing with arrow keys conflated playback with scrubbing and proved
     // flaky, and inferring the beat from DOM markers guessed at internals.
     beatId: function () { return SCENES[state.i] ? SCENES[state.i].id : null; },
+    // Audition the balance without a rebuild. Two passes of guessing at this
+    // from measurements have now been overruled by ears, so the levels are
+    // adjustable live:  ProductFilm.mix({ baseDb: -24, duckDb: -18 })
+    // or on a phone, where there is no console:  /home?mix=-24,-18
+    mix: setMix,
     // Test seam. The bed's level lives in the graph now, not on the element, so
     // reading el.volume tells you nothing — it is pinned at 1.
     mixState: function () {
