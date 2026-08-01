@@ -116,11 +116,30 @@ function slope(pts) {
                          off: Math.round(Math.abs((r2.left + r2.right) / 2 - mid)),
                          out: Math.round(Math.max(host2.left - r2.left, r2.right - host2.right)) });
         });
+        // Effective legibility of the opening type: the element's own opacity,
+        // times its layer's, times whatever is painted OVER it. The last term is
+        // the one that matters and the one I first forgot — the story card sits
+        // under an .pf-open-black fade-from-black, so the text can be at full
+        // opacity and still be invisible.
+        const scrim = l.querySelector('.pf-open-black');
+        const veil = scrim ? parseFloat(getComputedStyle(scrim).opacity) : 0;
+        const lo = parseFloat(getComputedStyle(l).opacity);
+        //
+        // Enumerated from the DOM, not from a list of keys I remember to keep up
+        // to date. The first cut sampled ['story','lockup','lineA'] by name, so
+        // when the ghost line was pasted back in as a mutation test the detector
+        // could not see it and passed — a check that only finds the defect it
+        // was written for is not a check.
+        const type = {};
+        l.querySelectorAll('.pf-story,.pf-open-lock,.pf-line').forEach(el => {
+          const k = (el.className.match(/pf-line-[a-z]|pf-open-lock|pf-story/) || ['?'])[0];
+          type[k] = parseFloat(getComputedStyle(el).opacity) * lo * (1 - veil);
+        });
         const rec = l.querySelector('#pfRecover'), askq = l.querySelector('#pfAskQ');
         frame.push({ id: l.__id, beat: window.ProductFilm.beatId(),
                      k0: parseFloat(cam.style.getPropertyValue('--k0')),
                      s: m.a, b: bm, p: pm, plate: !!plate,
-                     shotCls: shot ? shot.className : null, ovl, ovr, shotW, centred, rot,
+                     shotCls: shot ? shot.className : null, ovl, ovr, shotW, centred, rot, type,
                      rec: rec ? rec.textContent : null,
                      askq: askq ? askq.textContent : null,
                      o: parseFloat(getComputedStyle(l).opacity),
@@ -508,6 +527,45 @@ function slope(pts) {
     bad('the camera crops a plate the viewer is meant to read',
         Object.entries(byBeat).map(([b, px]) => `${b} ${px}px`).join(', '));
   }
+
+  console.log('\n── Every card in the opening is on screen long enough to read ──');
+  // The opening carries display type on three silent cards before any feature.
+  // Measured rather than assumed, because the beat length is not the answer:
+  // the fade-from-black and the lock-in were eating most of each beat, and the
+  // type was legible for 768ms (six words) and 945ms (a wordmark and an
+  // eight-word tagline). A fourth line, "…MainStreet reads every lease.", was
+  // scheduled to arrive 13ms AFTER its beat ended and never reached legibility
+  // at all — it peaked at 0.89 for a single frame, which reads as something
+  // starting to appear and then vanishing.
+  //
+  // The floor is per line and scaled to its length, at 180ms a word. That is
+  // deliberately below comfortable reading speed: it is the point past which a
+  // viewer stops being able to take the line in at all, not the point at which
+  // it feels unhurried.
+  const LINES = [['pf-story', 6, 'Every commercial property has a story.'],
+                 ['pf-open-lock', 8, 'the wordmark and its tagline'],
+                 ['pf-line-a', 5, 'Commercial real estate moves fast…']];
+  for (const [key, words, what] of LINES) {
+    const on = tr.filter(f => f.frame.some(l => l.type && l.type[key] >= 0.9));
+    const floor = words * 180;
+    if (!on.length) { bad(`"${what}" is never legible`, 'peaked below 0.9 opacity'); continue; }
+    const held = on[on.length - 1].t - on[0].t;
+    (held >= floor)
+      ? ok(`${key}: legible ${held}ms for ${words} words (${Math.round(held / words)}ms each)`)
+      : bad(`"${what}" is gone before it can be read`, `${held}ms for ${words} words, floor ${floor}ms`);
+  }
+  // Nothing may appear and then be taken away before it lands. Any type that
+  // gets partway up and never reaches legibility is the ghost, by definition.
+  const ghosts = [];
+  const seenType = new Set(tr.flatMap(f => f.frame.flatMap(l => Object.keys(l.type || {}))));
+  for (const key of seenType) {
+    const peak = Math.max(...tr.flatMap(f => f.frame.map(l => (l.type && l.type[key]) || 0)));
+    if (peak > 0.25 && peak < 0.9) ghosts.push(`${key} peaks at ${peak.toFixed(2)}`);
+  }
+  console.log(`   opening type on screen: ${[...seenType].join(', ')}`);
+  (ghosts.length === 0)
+    ? ok('no line half-appears and is removed before it lands')
+    : bad('a line appears and vanishes without ever being legible', ghosts.join(', '));
 
   console.log('\n── The arriving screen straightens up, it does not sit crooked ──');
   // The rotation on pfArrive is motivated: it is the screen's own angle,
