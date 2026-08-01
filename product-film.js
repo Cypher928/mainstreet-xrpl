@@ -827,12 +827,44 @@
       // side padding so even that is eaten by margin rather than by content.
       // End slope 1.7e-6/ms on top of the glide's 1.6e-5 — still moving into
       // the next beat, which is the whole point of the arrival.
+      // The tilt resolves inside the first 420ms; the push is untouched.
+      //
+      // The rotation is motivated — it is the screen's own angle, straightening
+      // as the camera squares up to it — but it only READS that way while the
+      // UI is still inside something. At the cut this beat carries the browser
+      // chrome (.msl-dev), and a window sitting at an angle is a window sitting
+      // at an angle. The chrome morphs away over .42s, and from that moment the
+      // screenshot is edge-to-edge with nothing to attribute the angle to, so
+      // the same 1.25deg stops reading as a camera and starts reading as a
+      // skewed interface: on a 1262px frame it drops the right-hand end of every
+      // horizontal rule 26px below the left, and it used to take 1.7s to clear.
+      // Watched at desktop size it looks like a rendering fault, not a move.
+      //
+      // So the rotation now lands on the same schedule as the chrome that
+      // justifies it — 8.5% of 5040ms = 428ms — decelerating into square, and
+      // it is already down to .26deg by the time the 320ms dissolve finishes.
+      // Every scale value is unchanged, and the two added stops sit exactly on
+      // the existing line between 0% and 16%, so the push, the size match at
+      // the cut and the velocity match through it are all bit-for-bit as they
+      // were. This changes when the frame is straight, and nothing else.
+      //
+      // The tail is softer than it was. 0% and 6% scale are untouched — that
+      // pair IS the velocity match, and nothing after it affects the cut. What
+      // follows used to keep climbing to 1.108, which multiplied against the
+      // camera glide to 1.18 and cropped 101px off each side of a full-bleed
+      // screenshot; the beat's own headline read "cted Tenants (5)". It now
+      // settles at 1.071 (total 1.145), and the plate is captured with 8% of
+      // side padding so even that is eaten by margin rather than by content.
+      // End slope 1.7e-6/ms on top of the glide's 1.6e-5 — still moving into
+      // the next beat, which is the whole point of the arrival.
       '@keyframes pfArrive{',
       '  0%{transform:perspective(1400px) rotateZ(1.25deg) rotateY(4deg) scale(1.000)}',
-      '  6%{transform:perspective(1400px) rotateZ(1.18deg) rotateY(3.8deg) scale(1.031)}',
-      '  16%{transform:perspective(1400px) rotateZ(.95deg) rotateY(3deg) scale(1.052)}',
-      '  34%{transform:perspective(1400px) rotateZ(.55deg) rotateY(1.7deg) scale(1.063)}',
-      '  60%{transform:perspective(1400px) rotateZ(.15deg) rotateY(.5deg) scale(1.068)}',
+      '  3%{transform:perspective(1400px) rotateZ(.72deg) rotateY(2.3deg) scale(1.0155)}',
+      '  6%{transform:perspective(1400px) rotateZ(.26deg) rotateY(.8deg) scale(1.031)}',
+      '  8.5%{transform:perspective(1400px) rotateZ(0deg) rotateY(0deg) scale(1.0363)}',
+      '  16%{transform:perspective(1400px) rotateZ(0deg) rotateY(0deg) scale(1.052)}',
+      '  34%{transform:perspective(1400px) rotateZ(0deg) rotateY(0deg) scale(1.063)}',
+      '  60%{transform:perspective(1400px) rotateZ(0deg) rotateY(0deg) scale(1.068)}',
       '  100%{transform:perspective(1400px) rotateZ(0deg) rotateY(0deg) scale(1.071)}}',
       // Origin 50% horizontally, not 56%. Off-centre, the push crops unevenly:
       // measured at 1440px the recon table lost 43px off the left and 34px off
