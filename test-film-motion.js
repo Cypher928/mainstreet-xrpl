@@ -267,6 +267,86 @@ function slope(pts) {
       : bad('the approach is not motivated', `first half ${(v1*1e6).toFixed(1)}, second ${(v2*1e6).toFixed(1)}`);
   } else bad('too few promise frames to measure the approach', String(prom.length));
 
+  console.log('\n── The film fills a large screen ──');
+  // Every measurement in this suite used to be taken at 1280x820, where the
+  // frame's fixed 880x460 box filled 61% of the viewport and looked fine. On a
+  // 1440p monitor that same box was 11% of the screen — and 19 checks passed
+  // while the film was a postage stamp. Large sizes are measured now.
+  for (const [w, h, label] of [[1920, 1080, '1080p'], [2560, 1440, '1440p']]) {
+    const ctx = await b.newContext({ viewport: { width: w, height: h } });
+    const p2 = await ctx.newPage();
+    await p2.route('**fonts.g**', r => r.continue());
+    await p2.goto(`http://127.0.0.1:${PORT}/`, { waitUntil: 'networkidle' });
+    await p2.evaluate(() => { window.__t0 = Date.now(); window.ProductFilm.play(); });
+    await p2.waitForFunction(() => Date.now() - window.__t0 >= 9000, null, { timeout: 15000, polling: 40 });
+    const m = await p2.evaluate(() => {
+      const c = document.querySelector('#pfFilm .msl-canvas').getBoundingClientRect();
+      return { areaPct: +((c.width * c.height) / (innerWidth * innerHeight) * 100).toFixed(1),
+               w: Math.round(c.width), h: Math.round(c.height) };
+    });
+    (m.areaPct >= 28)
+      ? ok(`${label}: the film covers ${m.areaPct}% of the screen (${m.w}x${m.h})`)
+      : bad(`${label}: the film is too small on this screen`, `${m.areaPct}% — ${m.w}x${m.h}`);
+    await ctx.close();
+  }
+
+  console.log('\n── One beat at a time is readable ──');
+  // The complaint was reading two screens at once on a 27-inch monitor. Layer
+  // opacity cannot see this — the fix cuts overlays INSIDE a layer that is
+  // deliberately held opaque — so this counts elements that actually carry
+  // legible words on each layer.
+  {
+    const ctx = await b.newContext({ viewport: { width: 2560, height: 1440 } });
+    const p3 = await ctx.newPage();
+    await p3.route('**fonts.g**', r => r.continue());
+    await p3.goto(`http://127.0.0.1:${PORT}/`, { waitUntil: 'networkidle' });
+    const trace = await p3.evaluate(async () => {
+      window.__t0 = Date.now(); window.ProductFilm.play();
+      const out = [];
+      await new Promise(res => {
+        const iv = setInterval(() => {
+          const t = Date.now() - window.__t0;
+          const words = l => {
+            if (parseFloat(getComputedStyle(l).opacity) < 0.12) return 0;
+            return [...l.querySelectorAll('*')].filter(e => {
+              if (e.tagName === 'IMG') return false;
+              const cs = getComputedStyle(e);
+              if (parseFloat(cs.opacity) < 0.25 || cs.visibility === 'hidden' || cs.display === 'none') return false;
+              const txt = (e.textContent || '').trim();
+              if (txt.length < 3) return false;
+              if ([...e.children].some(c => (c.textContent || '').trim().length >= 3)) return false;
+              const b = e.getBoundingClientRect();
+              return b.width > 8 && b.height > 6;
+            }).length;
+          };
+          out.push({ t, words: [...document.querySelectorAll('#pfCanvas .pf-layer')].map(words) });
+          if (t > 26000) { clearInterval(iv); res(); }
+        }, 40);
+      });
+      return out;
+    });
+    const runs = []; let cur = null;
+    for (const s of trace) {
+      const on = s.words.filter(x => x > 0).length >= 2;
+      if (on) { cur ? cur.b = s.t : (cur = { a: s.t, b: s.t }); }
+      else if (cur) { runs.push(cur); cur = null; }
+    }
+    if (cur) runs.push(cur);
+    const total = runs.reduce((a, x) => a + (x.b - x.a), 0);
+    const worst = runs.length ? Math.max(...runs.map(x => x.b - x.a)) : 0;
+    console.log(`   double-reading windows: ${runs.map(x => (x.b - x.a) + 'ms').join(', ') || 'none'}`);
+    // The overlays fade over 260ms, so a couple of frames of overlap per
+    // transition is the floor. 300ms per window is the ceiling above which you
+    // can actually read the old beat over the new one.
+    (worst <= 300)
+      ? ok(`no window longer than ${worst}ms — the old beat's text is gone before the new one lands`)
+      : bad('two beats are readable at once', `worst window ${worst}ms`);
+    (total <= 1200)
+      ? ok(`${total}ms of overlap across ${runs.length} transitions, all of it the 260ms fade`)
+      : bad('too much double-reading overall', `${total}ms`);
+    await ctx.close();
+  }
+
   console.log('\n── The retired motion is really gone ──');
   const src = fs.readFileSync(path.join(ROOT, 'product-film.js'), 'utf8');
   const build = src.slice(0, src.indexOf('function injectStyles'));

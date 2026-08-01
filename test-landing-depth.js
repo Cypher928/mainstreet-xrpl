@@ -143,6 +143,63 @@ const settle = async p => p.evaluate(async () => {
     : bad('not enough contrast between headline and body', `${(t.h1/t.body).toFixed(1)}x`);
 
   // ── phones ─────────────────────────────────────────────────────────────────
+  console.log('\n── Every Request a Pilot goes to the same place, and stays here ──');
+  // The three buttons were mailto: links. A mailto: hands off to whichever
+  // application owns the mail protocol, which is why one of them opened an
+  // unrelated browser. Nothing may leave the page.
+  const cta = await desk.evaluate(() => {
+    const btns = [...document.querySelectorAll('a,button')]
+      .filter(e => /request a pilot/i.test((e.innerText || '').trim()));
+    return btns.map(e => ({
+      text: (e.innerText || '').trim().split('\n')[0],
+      href: e.getAttribute('href'), target: e.getAttribute('target'),
+      pilot: e.hasAttribute('data-pilot'),
+    }));
+  });
+  console.log('   ' + cta.map(c => `${c.href}${c.target ? ' target=' + c.target : ''}`).join('  |  '));
+  (cta.length >= 3) ? ok(`${cta.length} Request a Pilot buttons found`)
+                    : bad('missing CTAs', String(cta.length));
+  cta.every(c => c.pilot) ? ok('every one opens the in-page pilot modal')
+                          : bad('a CTA does not open the modal', JSON.stringify(cta));
+  cta.every(c => !/^mailto:/i.test(c.href || '')) ? ok('none is a mailto: — nothing hands off to another application')
+                                                  : bad('a CTA is still a mailto:', JSON.stringify(cta));
+  cta.every(c => !c.target) ? ok('none opens a new tab') : bad('a CTA has a target', JSON.stringify(cta));
+  (new Set(cta.map(c => c.href)).size === 1)
+    ? ok(`all ${cta.length} share one destination (${cta[0].href})`)
+    : bad('the CTAs disagree', JSON.stringify([...new Set(cta.map(c => c.href))]));
+  const noMailto = !/href="mailto:/i.test(fs.readFileSync(path.join(ROOT, 'home.html'), 'utf8'));
+  noMailto ? ok('no mailto: href anywhere in the page') : bad('a mailto: href survives in home.html');
+
+  console.log('\n── The modal opens, traps focus and closes ──');
+  const modal = await desk.evaluate(async () => {
+    const out = {};
+    const before = document.querySelectorAll('.pm.on').length;
+    document.querySelector('[data-pilot]').click();
+    await new Promise(r => setTimeout(r, 120));
+    const m = document.getElementById('pilotModal');
+    out.opensOnClick = !!m && m.classList.contains('on') && !m.hidden;
+    out.scrollLocked = getComputedStyle(document.body).overflow === 'hidden';
+    out.fields = [...m.querySelectorAll('input,select')].map(e => e.name);
+    out.hasSubmit = !!m.querySelector('button[type=submit]');
+    document.dispatchEvent(new KeyboardEvent('keydown', { key: 'Escape', bubbles: true }));
+    await new Promise(r => setTimeout(r, 120));
+    out.closesOnEscape = !m.classList.contains('on') && m.hidden;
+    out.scrollRestored = getComputedStyle(document.body).overflow !== 'hidden';
+    out.before = before;
+    return out;
+  });
+  modal.opensOnClick ? ok('clicking a CTA opens the modal in place') : bad('the modal did not open');
+  modal.closesOnEscape ? ok('Escape closes it') : bad('Escape does not close the modal');
+  (modal.scrollLocked && modal.scrollRestored)
+    ? ok('the page behind is locked while it is open and released after')
+    : bad('scroll lock is wrong', JSON.stringify(modal));
+  // The fields the brief asked for.
+  const want = ['name', 'company', 'email', 'properties', 'lease'];
+  want.every(f => modal.fields.includes(f))
+    ? ok(`collects ${want.join(', ')}`)
+    : bad('a field is missing', JSON.stringify(modal.fields));
+  modal.hasSubmit ? ok('and has a submit button') : bad('no submit button');
+
   console.log('\n── On a phone ──');
   for (const vp of [{ width: 390, height: 844 }, { width: 360, height: 780 }]) {
     const ctx = await b.newContext({ viewport: vp, isMobile: true, hasTouch: true });
@@ -188,6 +245,45 @@ const settle = async p => p.evaluate(async () => {
     (Math.max(...m.shots) >= vp.width - 40)
       ? ok(`${tag}: screenshots run to ${Math.max(...m.shots)}px, near the full width of the screen`)
       : bad(`${tag}: screenshots are cramped`, `widest ${Math.max(...m.shots)}px of ${vp.width}px`);
+    await ctx.close();
+  }
+
+  console.log('\n── On a large monitor ──');
+  for (const [w, h, label] of [[1920, 1080, '1080p'], [2560, 1440, '1440p']]) {
+    const ctx = await b.newContext({ viewport: { width: w, height: h } });
+    const p = await ctx.newPage();
+    p.on('pageerror', e => errs.push(e.message));
+    await p.route('**fonts.g**', r => r.continue());
+    await p.goto(`http://127.0.0.1:${PORT}/`, { waitUntil: 'networkidle' });
+    const m = await p.evaluate(() => {
+      const wrap = document.querySelector('.wrap').getBoundingClientRect();
+      const panel = document.querySelector('.panel');
+      const pr = panel ? panel.getBoundingClientRect() : null;
+      return { share: +(wrap.width / innerWidth * 100).toFixed(1),
+               // does the first chapter's top edge show without scrolling?
+               panelPeeks: pr ? pr.top < innerHeight - 20 : false,
+               panelTop: pr ? Math.round(pr.top) : null, vh: innerHeight,
+               heroOverflows: document.querySelector('.hero').getBoundingClientRect().bottom > innerHeight,
+               cue: !!document.querySelector('.scroll-cue'),
+               trustBottomBorder: getComputedStyle(document.querySelector('.trust')).borderBottomWidth };
+    });
+    // A fixed 1140px container was 44% of a 1440p screen. 55% is the floor at
+    // which the page stops reading as a column on a billboard.
+    (m.share >= 55) ? ok(`${label}: content uses ${m.share}% of the width`)
+                    : bad(`${label}: content is too narrow`, `${m.share}%`);
+    // Either the next chapter's edge shows, OR the hero itself already runs past
+    // the fold — both mean content visibly continues. Requiring the panel
+    // specifically failed at 1080p, where the hero alone is taller than the
+    // screen and there is no dead band to fix.
+    (m.panelPeeks || m.heroOverflows)
+      ? ok(`${label}: ` + (m.panelPeeks
+            ? `the first chapter's top edge is visible at ${m.panelTop}px against a ${m.vh}px fold`
+            : `the hero itself continues past the fold`))
+      : bad(`${label}: the fold looks like the end of the page`, `panel top ${m.panelTop}, fold ${m.vh}`);
+    (m.trustBottomBorder === '0px')
+      ? ok(`${label}: the trust strip has no bottom rule — no false ending`)
+      : bad(`${label}: a full-width rule still terminates the fold`, m.trustBottomBorder);
+    m.cue ? ok(`${label}: a scroll affordance is present`) : bad('no scroll cue');
     await ctx.close();
   }
 

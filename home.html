@@ -56,8 +56,15 @@
   --gold:#D8B872; --gold-deep:#A8813E; --gold-soft:rgba(216,184,114,.09);
   --gold-grad:linear-gradient(120deg,#EBD49A 0%,#C9A254 55%,#E4C57F 100%);
   --t1:#F4F6F9; --t2:#CFD7E1; --t3:#98A4B3; --t4:#68727F;
-  --max:1140px; --r:16px;
+  --max:1180px; --r:16px;
 }
+/* The container grew with the screen. At a fixed 1140px the page was 44% of a
+   1440p display and 33% of an ultrawide — a column on a billboard. Copy is
+   still bounded by .lede{max-width:37em}, so the extra width goes to the
+   screenshots and the panels rather than to line length. */
+@media (min-width:1600px){ :root{ --max:1360px } }
+@media (min-width:1900px){ :root{ --max:1500px } }
+@media (min-width:2300px){ :root{ --max:1620px } }
 *{box-sizing:border-box}
 html{-webkit-text-size-adjust:100%}
 body{
@@ -196,7 +203,12 @@ h3{font-size:1.06rem;letter-spacing:-.012em;font-weight:700;line-height:1.35}
 @keyframes float{0%,100%{transform:translateY(0)}50%{transform:translateY(-9px)}}
 
 /* ── Trust strip — verifiable capabilities, not borrowed logos ──────────── */
-.trust{border-top:1px solid rgba(var(--line),.06);border-bottom:1px solid rgba(var(--line),.06);background:var(--bg-2)}
+/* The bottom border is gone. A full-width rule with empty space under it is a
+   terminus: it told visitors the page had ended, right where the fold lands on
+   a large screen. The strip now fades out downward instead, and the first
+   chapter panel is pulled up so its top edge shows above the fold. */
+.trust{border-top:1px solid rgba(var(--line),.06);
+  background:linear-gradient(180deg,var(--bg-2) 0%,var(--bg-2) 62%,var(--bg) 100%)}
 .trust-in{display:grid;grid-template-columns:repeat(3,minmax(0,1fr));gap:30px;padding:40px 0}
 .trust-item{display:flex;gap:13px;align-items:flex-start}
 .trust-ic{
@@ -213,6 +225,30 @@ h3{font-size:1.06rem;letter-spacing:-.012em;font-weight:700;line-height:1.35}
    (their own inset supplies the air) and open sections get more. */
 section{padding:clamp(72px,10vw,116px) 0}
 section.is-panelled{padding:clamp(26px,3.5vw,40px) 0}
+/* On a tall screen the hero + strip left a dead band before the first chapter.
+   Tightening the hero's tail and the first panel's lead-in brings that panel's
+   top edge into view, which is the strongest "keep going" cue there is. */
+@media (min-height:900px){
+  .hero{padding-bottom:clamp(24px,2.4vw,36px)}
+  .trust-in{padding:26px 0}
+  /* Measured at 2560x1440: the first panel's top edge landed at 1445px against
+     a 1440px fold — five pixels short of visible. These reclaim 44px so it
+     clears, and the visitor sees a chapter beginning rather than a rule with
+     nothing under it. */
+  section.is-panelled:first-of-type{padding-top:14px}
+}
+/* A quiet scroll affordance, only where the page is taller than the screen. */
+.scroll-cue{
+  display:flex;justify-content:center;margin-top:clamp(22px,3vw,38px);
+  color:var(--t4);font-size:.72rem;letter-spacing:.16em;text-transform:uppercase;font-weight:700;
+  gap:9px;align-items:center;
+}
+.scroll-cue i{
+  width:1px;height:26px;background:linear-gradient(180deg,transparent,rgba(216,184,114,.75));
+  animation:cueDrop 2.4s ease-in-out infinite;
+}
+@keyframes cueDrop{0%,100%{transform:scaleY(.6);opacity:.5}50%{transform:scaleY(1);opacity:1}}
+@media (prefers-reduced-motion:reduce){ .scroll-cue i{animation:none} }
 .sec-head{text-align:center;max-width:680px;margin:0 auto clamp(44px,5.5vw,64px)}
 .sec-head .lede{margin:16px auto 0}
 
@@ -315,6 +351,56 @@ footer{border-top:1px solid rgba(var(--line),.07);padding:44px 0;background:var(
 .foot-links a{font-size:.84rem;color:var(--t3)}
 .foot-links a:hover{color:var(--gold)}
 
+/* ── Pilot request modal ────────────────────────────────────────────────────
+   All three Request a Pilot buttons used to be mailto: links. A mailto: hands
+   off to whichever application owns the mail protocol — which is why clicking
+   one opened an unrelated browser. Nothing here leaves the page. */
+.pm{position:fixed;inset:0;z-index:200;display:none;align-items:center;justify-content:center;padding:20px}
+.pm.on{display:flex}
+.pm-bd{position:absolute;inset:0;background:rgba(3,5,8,.78);backdrop-filter:blur(6px);animation:pmFade .25s ease both}
+.pm-card{
+  position:relative;width:min(560px,100%);max-height:calc(100vh - 40px);overflow:auto;
+  background:radial-gradient(120% 70% at 50% -10%,rgba(255,255,255,.035),transparent 60%),var(--panel);
+  border:1px solid rgba(var(--line),.09);border-radius:22px;
+  padding:clamp(26px,3.4vw,38px);box-shadow:var(--lift-3);animation:pmIn .32s cubic-bezier(.2,.7,.3,1) both;
+}
+@keyframes pmFade{from{opacity:0}to{opacity:1}}
+@keyframes pmIn{from{opacity:0;transform:translateY(14px) scale(.985)}to{opacity:1;transform:none}}
+.pm-x{position:absolute;top:14px;right:14px;width:38px;height:38px;border-radius:50%;border:none;cursor:pointer;
+  background:rgba(var(--line),.06);color:var(--t3);font-size:1rem;display:grid;place-items:center}
+.pm-x:hover{background:rgba(var(--line),.12);color:var(--t1)}
+.pm-card h2{font-size:clamp(1.5rem,2.4vw,1.9rem);margin:0 0 8px}
+.pm-sub{margin:0 0 24px;font-size:.94rem;color:var(--t3);line-height:1.6}
+.pm-f{display:grid;gap:6px;margin-bottom:16px}
+.pm-f label{font-size:.78rem;font-weight:700;letter-spacing:.05em;text-transform:uppercase;color:var(--t4)}
+.pm-f input,.pm-f select{
+  font:inherit;font-size:.96rem;color:var(--t1);background:var(--bg);border:1px solid rgba(var(--line),.12);
+  border-radius:11px;padding:12px 14px;min-height:48px;width:100%;transition:border-color .18s ease,background .18s ease;
+}
+.pm-f input:focus,.pm-f select:focus{outline:none;border-color:rgba(216,184,114,.6);background:#070A0E}
+.pm-f select{appearance:none;cursor:pointer;
+  background-image:linear-gradient(45deg,transparent 50%,var(--t4) 50%),linear-gradient(135deg,var(--t4) 50%,transparent 50%);
+  background-position:calc(100% - 20px) 21px,calc(100% - 15px) 21px;background-size:5px 5px;background-repeat:no-repeat}
+.pm-row{display:grid;grid-template-columns:minmax(0,1fr) minmax(0,1fr);gap:14px}
+.pm-file{
+  display:flex;align-items:center;gap:12px;border:1px dashed rgba(var(--line),.18);border-radius:11px;
+  padding:13px 14px;min-height:48px;cursor:pointer;color:var(--t3);font-size:.9rem;transition:border-color .18s ease,color .18s ease;
+}
+.pm-file:hover{border-color:rgba(216,184,114,.5);color:var(--t1)}
+.pm-file input{position:absolute;width:1px;height:1px;opacity:0;pointer-events:none}
+.pm-file b{color:var(--gold);font-weight:700}
+.pm-opt{font-weight:500;text-transform:none;letter-spacing:0;color:var(--t4);font-size:.74rem}
+.pm-actions{margin-top:22px}
+.pm-actions .btn{width:100%}
+.pm-note{margin:14px 0 0;font-size:.78rem;color:var(--t4);line-height:1.55;text-align:center}
+.pm-msg{margin:16px 0 0;font-size:.9rem;line-height:1.6;padding:13px 15px;border-radius:11px;display:none}
+.pm-msg.on{display:block}
+.pm-msg--ok{background:rgba(52,192,138,.1);border:1px solid rgba(52,192,138,.32);color:#9FE9C6}
+.pm-msg--err{background:rgba(255,120,110,.08);border:1px solid rgba(255,120,110,.3);color:#FFB4AE}
+.pm-msg a{color:inherit;text-decoration:underline}
+@media (max-width:560px){ .pm{padding:0} .pm-card{border-radius:20px 20px 0 0;max-height:92vh;align-self:flex-end}
+  .pm-row{grid-template-columns:minmax(0,1fr)} }
+
 /* ── Motion: subtle, and disabled when the visitor prefers less ─────────── */
 .js-rv .rv{opacity:0;transform:translateY(16px);transition:opacity .6s cubic-bezier(.2,.7,.3,1),transform .6s cubic-bezier(.2,.7,.3,1)}
 .js-rv .rv.in{opacity:1;transform:none}
@@ -370,9 +456,7 @@ footer{border-top:1px solid rgba(var(--line),.07);padding:44px 0;background:var(
     <a class="nav-link nav-hide" href="#spaces">Spaces</a>
     <a class="nav-link nav-hide" href="#platform">Platform</a>
     <a class="nav-link" href="index.html">Log in</a>
-    <!-- Pilot requests route to the founder inbox for now; swap the address in
-         one place (search "mailto:") once a team inbox exists. -->
-    <a class="btn btn--primary btn--sm" href="mailto:lynnie928@me.com?subject=MainStreet%20Pilot%20Request&body=Hi%20MainStreet%20%E2%80%94%20I%27d%20like%20to%20run%20a%20pilot%20on%20one%20of%20my%20properties.">Request a Pilot</a>
+    <a class="btn btn--primary btn--sm" href="#pilot" data-pilot>Request a Pilot</a>
   </div>
 </nav>
 
@@ -388,7 +472,7 @@ footer{border-top:1px solid rgba(var(--line),.07);padding:44px 0;background:var(
         proof behind every number. Nothing lives in email threads anymore.
       </p>
       <div class="cta-row">
-        <a class="btn btn--primary" href="mailto:lynnie928@me.com?subject=MainStreet%20Pilot%20Request&body=Hi%20MainStreet%20%E2%80%94%20I%27d%20like%20to%20run%20a%20pilot%20on%20one%20of%20my%20properties.">
+        <a class="btn btn--primary" href="#pilot" data-pilot>
           <span>Request a Pilot<span class="btn-sub">Your property, your leases, real results</span></span>
         </a>
         <a class="btn btn--ghost" href="index.html?demo=1">
@@ -396,6 +480,7 @@ footer{border-top:1px solid rgba(var(--line),.07);padding:44px 0;background:var(
         </a>
       </div>
       <div class="hero-note"><b>No slides.</b> The film runs the real product — no mockups, no reenactments.</div>
+      <div class="scroll-cue" aria-hidden="true"><i></i>See how it works</div>
     </div>
 
     <div class="rv shot-wrap" style="transition-delay:.1s"><div class="shot shot--float">
@@ -561,7 +646,7 @@ footer{border-top:1px solid rgba(var(--line),.07);padding:44px 0;background:var(
         <h2>Run your first property through it</h2>
         <p>A pilot is your real property and your real leases — uploaded, reconciled, and provable. Or watch the product run a full reconciliation first, upload to settlement, in about forty seconds.</p>
       </div>
-      <a class="btn btn--primary" href="mailto:lynnie928@me.com?subject=MainStreet%20Pilot%20Request&body=Hi%20MainStreet%20%E2%80%94%20I%27d%20like%20to%20run%20a%20pilot%20on%20one%20of%20my%20properties.">Request a Pilot</a>
+      <a class="btn btn--primary" href="#pilot" data-pilot>Request a Pilot</a>
       <a class="btn btn--ghost" href="index.html?demo=1">▶&nbsp; Watch the demo</a>
     </div>
   </div>
@@ -613,6 +698,52 @@ footer{border-top:1px solid rgba(var(--line),.07);padding:44px 0;background:var(
     </div>
   </div>
 </footer>
+<!-- ── Pilot request ────────────────────────────────────────────────────── -->
+<div class="pm" id="pilotModal" role="dialog" aria-modal="true" aria-labelledby="pmTitle" hidden>
+  <div class="pm-bd" data-pm-close></div>
+  <div class="pm-card">
+    <button class="pm-x" type="button" aria-label="Close" data-pm-close>&#10005;</button>
+    <h2 id="pmTitle">Request a pilot</h2>
+    <p class="pm-sub">One of your properties, your real leases. We&rsquo;ll reconcile it and show you the evidence behind every number.</p>
+    <form id="pmForm" novalidate>
+      <div class="pm-f">
+        <label for="pmName">Name</label>
+        <input id="pmName" name="name" type="text" autocomplete="name" required>
+      </div>
+      <div class="pm-f">
+        <label for="pmCompany">Company</label>
+        <input id="pmCompany" name="company" type="text" autocomplete="organization" required>
+      </div>
+      <div class="pm-row">
+        <div class="pm-f">
+          <label for="pmEmail">Email</label>
+          <input id="pmEmail" name="email" type="email" autocomplete="email" required>
+        </div>
+        <div class="pm-f">
+          <label for="pmProps">Properties</label>
+          <select id="pmProps" name="properties" required>
+            <option value="">Select…</option>
+            <option>1</option><option>2&ndash;5</option><option>6&ndash;20</option>
+            <option>21&ndash;50</option><option>50+</option>
+          </select>
+        </div>
+      </div>
+      <div class="pm-f">
+        <label for="pmFile">Sample lease <span class="pm-opt">optional</span></label>
+        <label class="pm-file" for="pmFile">
+          <b>Choose a file</b><span id="pmFileName">PDF or DOCX, up to 8&nbsp;MB</span>
+          <input id="pmFile" name="lease" type="file" accept=".pdf,.doc,.docx,application/pdf">
+        </label>
+      </div>
+      <div class="pm-actions">
+        <button class="btn btn--primary" type="submit" id="pmSubmit">Request Pilot</button>
+      </div>
+      <div class="pm-msg" id="pmMsg" role="status" aria-live="polite"></div>
+      <p class="pm-note">We reply personally. No sales sequence, no drip campaign.</p>
+    </form>
+  </div>
+</div>
+
 
 <script>
 /* Reveal on scroll — progressive enhancement. Without JS (or with reduced
@@ -639,6 +770,110 @@ footer{border-top:1px solid rgba(var(--line),.07);padding:44px 0;background:var(
    hop to index.html?demo=1 could never autoplay narration. Falls back to the
    old navigation if the module fails to load, so the CTA is never dead. */
 (function () {
+  // ── Pilot request modal ───────────────────────────────────────────────────
+  // Every "Request a Pilot" opens this. There is exactly one destination and it
+  // is on this page — the previous mailto: links handed off to whichever app
+  // owns the mail protocol, which is why one of them opened another browser.
+  (function () {
+    var modal = document.getElementById('pilotModal');
+    if (!modal) return;
+    var form = document.getElementById('pmForm');
+    var msg = document.getElementById('pmMsg');
+    var submit = document.getElementById('pmSubmit');
+    var fileIn = document.getElementById('pmFile');
+    var fileName = document.getElementById('pmFileName');
+    var lastFocus = null;
+
+    function say(kind, html) {
+      msg.className = 'pm-msg on pm-msg--' + kind;
+      msg.innerHTML = html;
+    }
+    function open(e) {
+      if (e) e.preventDefault();
+      lastFocus = document.activeElement;
+      modal.hidden = false; modal.classList.add('on');
+      document.body.style.overflow = 'hidden';
+      var first = modal.querySelector('input,select,button');
+      if (first) setTimeout(function () { first.focus(); }, 40);
+    }
+    function close() {
+      modal.classList.remove('on'); modal.hidden = true;
+      document.body.style.overflow = '';
+      if (lastFocus && lastFocus.focus) lastFocus.focus();
+    }
+    Array.prototype.forEach.call(document.querySelectorAll('[data-pilot]'), function (a) {
+      a.addEventListener('click', open);
+    });
+    Array.prototype.forEach.call(modal.querySelectorAll('[data-pm-close]'), function (b) {
+      b.addEventListener('click', close);
+    });
+    document.addEventListener('keydown', function (e) {
+      if (!modal.classList.contains('on')) return;
+      if (e.key === 'Escape') { close(); return; }
+      // Keep tabbing inside the dialog while it is open.
+      if (e.key !== 'Tab') return;
+      var f = modal.querySelectorAll('input,select,button,a[href]');
+      if (!f.length) return;
+      var first = f[0], last = f[f.length - 1];
+      if (e.shiftKey && document.activeElement === first) { e.preventDefault(); last.focus(); }
+      else if (!e.shiftKey && document.activeElement === last) { e.preventDefault(); first.focus(); }
+    });
+    if (fileIn) fileIn.addEventListener('change', function () {
+      var f = fileIn.files && fileIn.files[0];
+      fileName.textContent = f ? f.name + ' · ' + Math.round(f.size / 1024) + ' KB'
+                               : 'PDF or DOCX, up to 8\u00a0MB';
+    });
+
+    var MAX = 8 * 1024 * 1024;
+    form.addEventListener('submit', function (e) {
+      e.preventDefault();
+      // form.elements.x, not form.x — HTMLFormElement.name is the FORM's own
+      // name attribute and shadows the named input, so form.name.value throws.
+      var F = form.elements;
+      var data = {
+        name: F.name.value.trim(), company: F.company.value.trim(),
+        email: F.email.value.trim(), properties: F.properties.value,
+      };
+      if (!data.name || !data.company || !data.email || !data.properties) {
+        say('err', 'Please fill in every field except the sample lease.'); return;
+      }
+      if (!/^[^@\s]+@[^@\s]+\.[^@\s]+$/.test(data.email)) {
+        say('err', 'That email address does not look right.'); return;
+      }
+      var f = fileIn && fileIn.files && fileIn.files[0];
+      if (f && f.size > MAX) { say('err', 'That file is over 8&nbsp;MB. Send it in your reply instead.'); return; }
+
+      submit.disabled = true; submit.textContent = 'Sending…';
+      var go = function (payload) {
+        fetch('/api/pilot-request', {
+          method: 'POST', headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify(payload),
+        }).then(function (r) { return r.json().then(function (j) { return { ok: r.ok, j: j }; }); })
+          .then(function (res) {
+            if (!res.ok) throw new Error((res.j && res.j.error) || 'Request failed');
+            form.style.display = 'none';
+            say('ok', '<b>Thank you — that\'s in.</b><br>We\'ll reply personally, usually within a day.');
+            msg.style.display = 'block';
+          })
+          .catch(function (err) {
+            submit.disabled = false; submit.textContent = 'Request Pilot';
+            // Never a silent failure and never a mailto: the address is text so
+            // it can be copied without handing off to another application.
+            say('err', 'We could not send that just now (' + String(err.message).slice(0, 90) +
+                       ').<br>Please email <b>lynnie928@me.com</b> and we will pick it up.');
+          });
+      };
+      if (!f) { go(data); return; }
+      var fr = new FileReader();
+      fr.onload = function () {
+        data.lease = { name: f.name, size: f.size, type: f.type || '', data: String(fr.result).split(',')[1] };
+        go(data);
+      };
+      fr.onerror = function () { go(data); };
+      fr.readAsDataURL(f);
+    });
+  })();
+
   var links = document.querySelectorAll('a[href="index.html?demo=1"]');
   // Warm the narration on intent, not on click. The first line is due at 0ms,
   // so loading it when the film opens makes it late — and the schedule is
@@ -656,5 +891,6 @@ footer{border-top:1px solid rgba(var(--line),.07);padding:44px 0;background:var(
   });
 })();
 </script>
+
 </body>
 </html>
