@@ -1,0 +1,91 @@
+{
+  "plates": [
+    {
+      "scene": "S3",
+      "file": "s3-upload.png",
+      "width": 1386,
+      "height": 108
+    },
+    {
+      "scene": "S1+S5",
+      "file": "s1-s5-allocation.png",
+      "width": 641,
+      "height": 212
+    },
+    {
+      "scene": "S6",
+      "file": "s6-timeline.png",
+      "width": 1440,
+      "height": 2398
+    },
+    {
+      "scene": "S7",
+      "file": "s7-evidence-index.png",
+      "width": 824,
+      "height": 326
+    },
+    {
+      "scene": "S4",
+      "file": "s4-honest-gap.png",
+      "width": 309,
+      "height": 60
+    },
+    {
+      "scene": "S8",
+      "file": "s8-settlement.png",
+      "width": 711,
+      "height": 63
+    },
+    {
+      "scene": "S9",
+      "file": "s9-command-center.png",
+      "width": 1440,
+      "height": 1797
+    }
+  ],
+  "facts": {
+    "timeline": {
+      "events": 20
+    },
+    "dispute": {
+      "resolved": true,
+      "id": 1,
+      "statusBefore": "docs_requested",
+      "statusAfter": "docs_requested",
+      "hashGenerated": false,
+      "hashPrefix": null
+    },
+    "evidenceIndex": [
+      [
+        "Lease clause",
+        "Not attached",
+        "Attach the governing lease section"
+      ],
+      [
+        "Supporting invoice",
+        "On file",
+        "1 invoice listed above"
+      ],
+      [
+        "Calculation basis",
+        "On file",
+        "Calculation breakdown included"
+      ],
+      [
+        "Reviewer notes",
+        "Not attached",
+        "No reviewer notes recorded"
+      ],
+      [
+        "Resolution history",
+        "Not attached",
+        "No actions logged yet"
+      ],
+      [
+        "Audit fingerprint",
+        "Not attached",
+        "Generated when the dispute is resolved"
+      ]
+    ]
+  }
+}

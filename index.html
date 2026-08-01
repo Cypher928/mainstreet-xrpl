@@ -50,6 +50,8 @@
   <script src="https://cdnjs.cloudflare.com/ajax/libs/pdf.js/3.11.174/pdf.min.js"></script>
   <script src="https://cdn.jsdelivr.net/npm/xlsx@0.18.5/dist/xlsx.full.min.js"></script>
   <script src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2"></script>
+  <!-- Host-based Supabase routing: production domain → prod project; previews (incl. pilot) → pilot project. Must precede script.js. -->
+  <script src="supabase-config.js"></script>
   <style>
     /* ── Theme design tokens ─────────────────────────────────────────────────
        The entire neutral palette — surfaces (elevation), text, and hairlines —
@@ -825,6 +827,20 @@
     }
     .d-cancel-btn:hover { color: var(--text-3); border-color: rgba(var(--line-rgb), 0.2); }
 
+    /* ── Dispute workflow: mobile spacing, typography, tap targets ─────────── */
+    @media (max-width: 640px) {
+      .dispute-form { padding: 16px 0; }
+      /* 16px prevents iOS from zooming the viewport when the field is focused */
+      .dispute-form textarea { font-size: 16px; min-height: 88px; padding: 12px; margin-bottom: 10px; }
+      .dispute-form-title { font-size: 0.92rem; margin-bottom: 12px; }
+      .dispute-attach-label { font-size: 0.8rem; min-height: 36px; margin-bottom: 12px; }
+      .dispute-form-btns { flex-wrap: wrap; gap: 10px; }
+      .d-submit-btn, .d-cancel-btn { flex: 1 1 auto; min-height: 44px; font-size: 0.86rem; padding: 12px 18px; }
+      .inv-explain-box { padding: 12px; line-height: 1.6; }
+      .ai-inv-review { padding: 13px; }
+      .ai-inv-review strong { margin-bottom: 7px; }
+    }
+
     /* Open disputes */
     .disputes-heading {
       font-size: 0.9rem; font-weight: 700; color: var(--text-1);
@@ -937,6 +953,11 @@
       position: relative;
     }
     .dmw-hdr { display: flex; align-items: flex-start; gap: 10px; margin-bottom: 14px; }
+    /* The welcome panel is only shown when the account has no properties
+       (_maybeShowWelcome), so this is the first-run surface. It carried no
+       action, leaving "Go to Portfolio" and "Start Tour" as the only visible
+       buttons — navigation and explanation, but not the actual first step. */
+    .dmw-cta { margin-top: 2px; }
     .dmw-hdr-text { flex: 1; }
     .dmw-title { font-size: 1rem; font-weight: 700; color: var(--text-1); }
     .dmw-sub { font-size: 0.8rem; color: rgba(var(--line-rgb), 0.48); margin-top: 3px; }
@@ -3360,7 +3381,11 @@
 
     /* ── Report overlay ───────────────────────────────────────────────── */
     #reportOverlay {
-      display: none; position: fixed; inset: 0; z-index: 1000;
+      /* Above #disputeWorkspace (1060). The Dispute Packet is launched from a
+         button inside that workspace, so at 1000 it rendered behind the panel
+         the user had just clicked. A generated report must always sit above the
+         surface that produced it. */
+      display: none; position: fixed; inset: 0; z-index: 1100;
       background: var(--theme-bg); overflow-y: auto;
     }
     #reportOverlay.open { display: block; }
@@ -3627,6 +3652,44 @@
     }
     .rpt-pill.open   { background: rgba(245,158,11,0.15); color: var(--c-fbbf24); }
     .rpt-pill.closed { background: rgba(34,197,94,0.15); color: var(--c-4ade80); }
+    /* ── Dispute packet: executive summary, evidence index, sign-off ──────── */
+    .rpt-exec {
+      padding: 14px 18px; background: rgba(255,255,255,0.02);
+      border-left: 3px solid var(--c-c9973a, #C9973A); border-radius: 0 8px 8px 0;
+    }
+    .rpt-exec-p { margin: 0 0 8px; line-height: 1.65; font-size: 0.88rem; }
+    .rpt-exec-p:last-of-type { margin-bottom: 0; }
+    .rpt-exec-meta {
+      display: flex; flex-wrap: wrap; gap: 8px 22px; margin-top: 12px; padding-top: 10px;
+      border-top: 1px solid rgba(var(--line-rgb,255,255,255), 0.08);
+      font-size: 0.76rem; color: var(--text-3);
+    }
+    .rpt-exec-meta b { color: var(--text-4); font-weight: 700; text-transform: uppercase; letter-spacing: 0.04em; font-size: 0.68rem; margin-right: 5px; }
+    .rpt-ev-flag {
+      display: inline-block; font-size: 0.68rem; font-weight: 700; border-radius: 5px;
+      padding: 2px 8px; white-space: nowrap;
+    }
+    .rpt-ev-flag--on  { color: #4ade80; background: rgba(74,222,128,0.12); border: 1px solid rgba(74,222,128,0.3); }
+    .rpt-ev-flag--off { color: var(--text-4); background: transparent; border: 1px dashed rgba(var(--line-rgb,255,255,255), 0.25); }
+    .rpt-ev-index-note { margin-top: 8px; font-size: 0.75rem; color: var(--text-4); font-style: italic; line-height: 1.5; }
+    .rpt-signoff {
+      display: flex; flex-wrap: wrap; gap: 32px; margin-top: 34px; padding-top: 8px;
+    }
+    .rpt-signoff-col { flex: 1 1 220px; }
+    .rpt-signoff-lbl { font-size: 0.68rem; font-weight: 700; text-transform: uppercase; letter-spacing: 0.05em; color: var(--text-4); }
+    .rpt-signoff-line { height: 1px; background: rgba(var(--line-rgb,255,255,255), 0.28); margin: 26px 0 6px; }
+    .rpt-signoff-sub { font-size: 0.74rem; color: var(--text-4); }
+    @media print {
+      .rpt-exec { break-inside: avoid; }
+      .rpt-evidence-index { break-inside: avoid; }
+      .rpt-signoff { break-inside: avoid; }
+    }
+    @media (max-width: 640px) {
+      .rpt-exec { padding: 12px 14px; }
+      .rpt-exec-meta { gap: 6px 14px; }
+      .rpt-signoff { gap: 18px; margin-top: 24px; }
+    }
+
     .rpt-hash-box {
       margin-top: 8px; padding: 10px 14px;
       background: rgba(34,197,94,0.08); border: 1.5px solid rgba(34,197,94,0.25); border-radius: 8px;
@@ -5968,7 +6031,7 @@
 
   <!-- Hero Intro -->
   <div class="hero-intro">
-    <h1 class="hero-title">Mainstreet</h1>
+    <h1 class="hero-title">MainStreet</h1>
     <p class="hero-tagline">AI-powered CAM reconciliation. Settling on the XRP Ledger.</p>
     <p class="hero-sub">CAM Reconciliation &nbsp;&middot;&nbsp; Works Alongside Yardi &nbsp;&middot;&nbsp; AI-Powered Analysis</p>
     <p class="hero-desc">AI-powered CAM reconciliation built for landlords and property managers</p>
@@ -5981,9 +6044,12 @@
     <div class="dmw-hdr">
       <div class="dmw-hdr-text">
         <div class="dmw-title">Welcome to MainStreet</div>
-        <div class="dmw-sub">Explore the demo properties below with sample data, or create your own property to get started.</div>
+        <div class="dmw-sub">Add your first property to start reconciling CAM. Or explore the demo properties below with sample data.</div>
       </div>
       <button class="dmw-close" onclick="_dismissDemoWelcome()" title="Dismiss">&times;</button>
+    </div>
+    <div class="dmw-cta">
+      <button class="ptf-empty-btn-primary" onclick="addNewProperty()">+ Add your first property</button>
     </div>
   </div>
 
@@ -6205,6 +6271,7 @@
   </div>
   <div class="workspace-tab-bar" id="workspaceTabBar">
     <button class="workspace-tab active" id="wsTabBtn-overview"  onclick="switchWorkspaceTabFromNav('overview')"><span class="ws-tab-icon">&#x1F3E2;</span>Overview</button>
+    <button class="workspace-tab"        id="wsTabBtn-spaces"    onclick="switchWorkspaceTabFromNav('spaces')"><span class="ws-tab-icon">&#x1F4CD;</span>Spaces</button>
     <button class="workspace-tab"        id="wsTabBtn-cam"       onclick="switchWorkspaceTabFromNav('cam')"><span class="ws-tab-icon">&#x1F9FE;</span>CAM</button>
     <button class="workspace-tab"        id="wsTabBtn-reserves"  onclick="switchWorkspaceTabFromNav('reserves')"><span class="ws-tab-icon">&#x1F512;</span>Reserves</button>
     <!-- Estoppels tab hidden until the feature is built (placeholder removed for production readiness).
@@ -6333,6 +6400,20 @@
   <div id="propertyActivitySlot"></div>
 
   </div><!-- /wsPane-overview -->
+
+  <!-- ══════════════════════════ TAB: Spaces ═════════════════════════════ -->
+  <div class="workspace-tab-pane" id="wsPane-spaces" style="display:none;">
+    <div class="card" id="spacesSection">
+      <div class="sec-head">
+        <div class="sec-num" style="background:#C9973A;">&#x1F4CD;</div>
+        <div>
+          <h2>Spaces</h2>
+          <p>Every tenant space in this property — open one to see its complete story and act on it.</p>
+        </div>
+      </div>
+      <div id="spacesList"></div>
+    </div>
+  </div><!-- /wsPane-spaces -->
 
   <!-- ══════════════════════════ TAB: Documents ══════════════════════════ -->
   <div class="workspace-tab-pane" id="wsPane-documents" style="display:none;">
@@ -6949,7 +7030,27 @@
      extraction so large scanned leases upload reliably instead of failing with HTTP 413. -->
 <script src="lease-ingest.js"></script>
 <script src="script.js"></script>
+<!-- Property Timeline v1 (Phase 2): manager logbook layer — add-entry modal, attachments, event-type registry. Reuses the timeline engine in script.js; must load after it. -->
+<script src="property-timeline.js"></script>
+<!-- Property Operating System — advisor surface ("What needs your attention"). Reuses Selectors + navigation; must load after script.js/property-timeline.js. -->
+<script src="property-workspace.js"></script>
+<!-- Property Operating System — Tenant Space view ("everything about Suite 210"). Reuses subject-scoped records; must load after property-timeline.js. -->
+<!-- Property Operating System — the Property subject (building-as-a-whole records, invoice register, building systems). Creates the Property tab/pane and re-parents cards to their subjects. -->
+<!-- Lease Ingestion Hardening: pre-flight sizing, page downscaling, and batched vision extraction so large copier scans upload reliably. Must load before script.js uses it. -->
+<script src="lease-ingest.js"></script>
+<!-- Scannable, cited AI explanations (STATUS/WHY/SUGGESTION/EVIDENCE → sections + evidence chips). -->
+<script src="ai-explanation.js"></script>
+<!-- Property Information reference data + property/space document catalogs (realistic demo data for the seeded demo property only). -->
+<script src="property-reference.js"></script>
+<script src="property-os.js"></script>
+<!-- One place to open any record: real files, sample previews, and timeline entries. -->
+<script src="doc-viewer.js"></script>
+<script src="tenant-space.js"></script>
+<!-- Property Operating System — "Act on this space" (grounded AI actions; Reply is action #1). Reads TenantSpace.record(); must load after it. -->
+<script src="space-actions.js"></script>
 <!-- Pre-login landing + 60-second animated demo (additive overlay; self-mounts) -->
+<!-- The product film, shared with home.html so there is one implementation. -->
+<script src="product-film.js"></script>
 <script src="landing-experience.js"></script>
 <!-- Post-login onboarding — FALLBACK, off by default (see landing-experience.js) -->
 <script src="onboarding-experience.js"></script>

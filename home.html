@@ -1,0 +1,896 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+<title>MainStreet — The AI Operating System for Commercial Real Estate</title>
+<meta name="description" content="MainStreet is the AI operating system for commercial real estate — the verified memory for every property. It reads every lease, reconciles every CAM charge, remembers everything that happens to a space, and proves it with clause-level citations.">
+<meta name="theme-color" content="#050709">
+<link rel="icon" href="assets/brand/favicon.svg" type="image/svg+xml">
+<link rel="apple-touch-icon" href="assets/brand/apple-touch-icon.png">
+<meta property="og:title" content="MainStreet — The verified memory for every commercial property">
+<meta property="og:description" content="The AI operating system for commercial real estate. Reads every lease, reconciles every charge, remembers every space — and proves it.">
+<meta property="og:image" content="assets/brand/og-image.png">
+<meta property="og:type" content="website">
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700;800&display=swap" rel="stylesheet">
+<script>
+/* Opt into the entrance animation only when scripting and motion allow it.
+   Without this class every section is visible by default — a marketing page
+   must never depend on JS to be readable. */
+(function(){try{
+  if(!window.matchMedia||!window.matchMedia('(prefers-reduced-motion: reduce)').matches){
+    if('IntersectionObserver' in window) document.documentElement.className+=' js-rv';
+  }
+}catch(e){}})();
+</script>
+<style>
+/* ═══════════════════════════════════════════════════════════════════════════
+   MainStreet marketing homepage.
+   Brand identity preserved: obsidian surfaces + the MainStreet gold accent.
+   Design intent: clarity over decoration. Every element earns its place; the
+   value proposition is legible in under ten seconds; nothing is claimed that
+   the product cannot demonstrate.
+   ═══════════════════════════════════════════════════════════════════════════ */
+:root{
+  /* Champagne on layered obsidian. The previous gold (#D8B872) leaned orange
+     and sat on near-flat black; this palette lifts the metal toward champagne
+     and separates the surfaces so depth comes from tone, not borders. */
+  /* Elevation ladder. The page measured six of seven sections rendering at
+     luminance 0 — every surface was the page itself, which is exactly why it
+     read as flat rather than dark. Each rung is ~4 luminance apart: far enough
+     to separate, close enough that nothing looks grey. */
+  --bg:#050709;        /* e0 — the page                       L  6.7 */
+  --bg-2:#090C10;      /* e1 — a section that steps forward   L 11.7 */
+  --panel:#0B0F15;     /* e1.5 — chapter panels               L 14.4 */
+  --card:#111721;      /* e2 — a card on a panel              L 21.6 */
+  --card-hi:#161D28;   /* e3 — the same card, lifted          L 28.1 */
+  --line:255,255,255;
+  /* Depth comes from light as well as tone: a hairline top highlight on every
+     raised surface, and shadow underneath it. */
+  --edge:inset 0 1px 0 rgba(255,255,255,.045);
+  --lift-1:0 1px 2px rgba(0,0,0,.4), 0 12px 30px -18px rgba(0,0,0,.85);
+  --lift-2:0 2px 4px rgba(0,0,0,.45), 0 28px 60px -26px rgba(0,0,0,.9);
+  --lift-3:0 40px 90px -30px rgba(0,0,0,.92), 0 0 0 1px rgba(255,255,255,.04);
+  --gold:#D8B872; --gold-deep:#A8813E; --gold-soft:rgba(216,184,114,.09);
+  --gold-grad:linear-gradient(120deg,#EBD49A 0%,#C9A254 55%,#E4C57F 100%);
+  --t1:#F4F6F9; --t2:#CFD7E1; --t3:#98A4B3; --t4:#68727F;
+  --max:1180px; --r:16px;
+}
+/* The container grew with the screen. At a fixed 1140px the page was 44% of a
+   1440p display and 33% of an ultrawide — a column on a billboard. Copy is
+   still bounded by .lede{max-width:37em}, so the extra width goes to the
+   screenshots and the panels rather than to line length. */
+@media (min-width:1600px){ :root{ --max:1360px } }
+@media (min-width:1900px){ :root{ --max:1500px } }
+@media (min-width:2300px){ :root{ --max:1620px } }
+*{box-sizing:border-box}
+html{-webkit-text-size-adjust:100%}
+body{
+  margin:0; background:var(--bg); color:var(--t2);
+  font-family:Inter,-apple-system,BlinkMacSystemFont,"Segoe UI",sans-serif;
+  font-size:17px; line-height:1.65; -webkit-font-smoothing:antialiased;
+  overflow-x:hidden;
+}
+a{color:inherit;text-decoration:none}
+img{max-width:100%;display:block}
+.wrap{max-width:var(--max);margin:0 auto;padding:0 24px}
+
+/* ── Type scale ─────────────────────────────────────────────────────────── */
+h1,h2,h3{color:var(--t1);margin:0;letter-spacing:-.028em;line-height:1.08;font-weight:800}
+/* Sized to the column it actually sits in. At 4.35rem the hero headline broke
+   to five lines in a 515px column and orphaned "for" on its own line; balance
+   distributes the remaining words instead of leaving a runt. */
+h1{font-size:clamp(2.35rem,5.1vw,3.55rem);text-wrap:balance}
+h2{font-size:clamp(1.9rem,3.6vw,2.6rem);text-wrap:balance}
+h3{font-size:1.06rem;letter-spacing:-.012em;font-weight:700;line-height:1.35}
+/* Four distinct levels, each separated by size AND colour so the ranking is
+   readable at a glance: heading (t1) / lede (t3, larger) / body (t4, smaller) /
+   caption (t4, smallest, letterspaced). */
+.lede{font-size:clamp(1.05rem,1.75vw,1.24rem);color:var(--t3);line-height:1.68;max-width:37em}
+.cap{font-size:.78rem;letter-spacing:.04em;color:var(--t4);line-height:1.55}
+/* The eyebrow is the one place gold is allowed to be decorative — it labels the
+   chapter. Everywhere else it must point at an action or a number. */
+.eyebrow{
+  display:inline-flex;align-items:center;gap:8px;
+  font-size:.68rem;font-weight:800;letter-spacing:.18em;text-transform:uppercase;
+  color:var(--gold);
+}
+.eyebrow::before{
+  content:"";width:5px;height:5px;border-radius:50%;flex:none;
+  background:var(--gold);box-shadow:0 0 0 3px rgba(216,184,114,.14);
+}
+.accent{
+  background:var(--gold-grad);
+  -webkit-background-clip:text;background-clip:text;color:transparent;
+}
+
+/* ── Nav ────────────────────────────────────────────────────────────────── */
+.nav{
+  position:sticky;top:0;z-index:50;background:rgba(7,9,12,.82);
+  backdrop-filter:saturate(160%) blur(14px);
+  border-bottom:1px solid rgba(var(--line),.06);
+}
+.nav-in{display:flex;align-items:center;gap:14px;height:66px}
+.brand{display:flex;align-items:center;gap:10px;font-weight:800;color:var(--t1);font-size:1.06rem;letter-spacing:-.02em}
+.brand-mk{
+  width:26px;height:26px;border-radius:7px;flex:none;
+  background:var(--gold-grad);
+  display:grid;place-items:center;color:#07090C;font-size:.8rem;font-weight:900;
+}
+.nav-sp{flex:1}
+.nav-link{color:var(--t3);font-size:.9rem;font-weight:500;padding:8px 4px}
+.nav-link:hover{color:var(--t1)}
+.btn{
+  display:inline-flex;align-items:center;justify-content:center;gap:9px;
+  border-radius:12px;font-weight:700;font-size:.92rem;cursor:pointer;letter-spacing:.005em;
+  border:1px solid transparent;padding:13px 20px;min-height:46px;
+  transition:transform .15s ease,filter .15s ease,background .15s ease,border-color .15s ease;
+  font-family:inherit;
+}
+.btn:active{transform:translateY(1px)}
+.btn--primary{
+  background:var(--gold-grad);color:#0B0804;border:1px solid rgba(255,255,255,.16);
+  box-shadow:0 10px 26px -12px rgba(216,184,114,.5), inset 0 1px 0 rgba(255,255,255,.4);
+}
+.btn--primary:hover{filter:brightness(1.05);box-shadow:0 12px 30px -12px rgba(216,184,114,.62), inset 0 1px 0 rgba(255,255,255,.4)}
+.btn--ghost{background:transparent;color:var(--t1);border-color:rgba(var(--line),.16)}
+.btn--ghost:hover{border-color:rgba(216,184,114,.55);color:var(--gold)}
+.btn--sm{padding:9px 15px;min-height:38px;font-size:.85rem}
+.btn-sub{display:block;font-size:.74rem;font-weight:500;opacity:.72;margin-top:2px}
+
+/* ── Hero ───────────────────────────────────────────────────────────────── */
+.hero{position:relative;padding:clamp(60px,9vw,110px) 0 clamp(40px,6vw,64px);overflow:hidden}
+.hero::before{
+  content:"";position:absolute;inset:-30% 30% auto -20%;height:620px;
+  background:radial-gradient(closest-side,rgba(216,184,114,.09),transparent 72%);
+  pointer-events:none;
+}
+.hero-in{position:relative;display:grid;grid-template-columns:minmax(0,.95fr) minmax(0,1.05fr);gap:clamp(30px,5vw,62px);align-items:center}
+.badge{
+  display:inline-flex;align-items:center;gap:9px;font-size:.68rem;font-weight:700;
+  color:var(--gold);background:var(--gold-soft);border:1px solid rgba(216,184,114,.24);
+  border-radius:999px;padding:8px 16px;margin-bottom:24px;
+  letter-spacing:.09em;text-transform:uppercase;
+}
+.badge i{width:6px;height:6px;border-radius:50%;background:var(--gold);flex:none}
+.hero h1{margin-bottom:20px}
+.hero .lede{margin-bottom:30px}
+.cta-row{display:flex;flex-wrap:wrap;gap:12px;margin-bottom:34px}
+.hero-note{font-size:.8rem;color:var(--t4);display:flex;align-items:center;gap:8px;flex-wrap:wrap}
+.hero-note b{color:var(--t3);font-weight:600}
+
+/* Product frame — a real screenshot, not an illustration */
+.shot{
+  position:relative;border-radius:var(--r);overflow:hidden;
+  border:1px solid rgba(var(--line),.08);background:var(--card);
+  box-shadow:
+    0 60px 120px -34px rgba(0,0,0,.92),
+    0 8px 24px -12px rgba(0,0,0,.8),
+    0 0 0 1px rgba(var(--line),.045),
+    0 1px 0 rgba(255,255,255,.08) inset,
+    0 -30px 60px -40px rgba(216,184,114,.16) inset;
+  transition:box-shadow .35s ease, transform .35s ease;
+}
+/* A rim of champagne light behind the frame. The screenshot is the strongest
+   thing on the page, so it gets the only real glow — separation by light rather
+   than by making it bigger. */
+.shot::after{
+  content:"";position:absolute;inset:-1px;border-radius:inherit;pointer-events:none;
+  background:linear-gradient(160deg,rgba(216,184,114,.22),transparent 34%,transparent 68%,rgba(216,184,114,.10));
+  -webkit-mask:linear-gradient(#000,#000) content-box,linear-gradient(#000,#000);
+  -webkit-mask-composite:xor;mask-composite:exclude;padding:1px;
+}
+.shot-wrap{position:relative;padding:clamp(6px,1.4vw,18px)}
+/* The pool of light the frame sits in. */
+.shot-wrap::before{
+  content:"";position:absolute;left:6%;right:6%;bottom:-6%;height:44%;pointer-events:none;
+  background:radial-gradient(closest-side,rgba(216,184,114,.10),transparent 76%);
+  filter:blur(6px);
+}
+.shot-bar{
+  display:flex;align-items:center;gap:7px;padding:11px 14px;
+  border-bottom:1px solid rgba(var(--line),.07);background:var(--panel);
+}
+.shot-dot{width:9px;height:9px;border-radius:50%;background:rgba(var(--line),.16)}
+.shot-cap{
+  margin-left:8px;font-size:.72rem;color:var(--t4);font-weight:600;letter-spacing:.02em;
+  overflow:hidden;text-overflow:ellipsis;white-space:nowrap;
+}
+.shot img{width:100%;height:auto}
+.shot--float{animation:float 7s ease-in-out infinite}
+@keyframes float{0%,100%{transform:translateY(0)}50%{transform:translateY(-9px)}}
+
+/* ── Trust strip — verifiable capabilities, not borrowed logos ──────────── */
+/* The bottom border is gone. A full-width rule with empty space under it is a
+   terminus: it told visitors the page had ended, right where the fold lands on
+   a large screen. The strip now fades out downward instead, and the first
+   chapter panel is pulled up so its top edge shows above the fold. */
+.trust{border-top:1px solid rgba(var(--line),.06);
+  background:linear-gradient(180deg,var(--bg-2) 0%,var(--bg-2) 62%,var(--bg) 100%)}
+.trust-in{display:grid;grid-template-columns:repeat(3,minmax(0,1fr));gap:30px;padding:40px 0}
+.trust-item{display:flex;gap:13px;align-items:flex-start}
+.trust-ic{
+  width:34px;height:34px;border-radius:10px;flex:none;display:grid;place-items:center;
+  background:var(--gold-soft);border:1px solid rgba(216,184,114,.22);color:var(--gold);font-size:.95rem;
+  box-shadow:inset 0 1px 0 rgba(255,255,255,.08);
+}
+.trust-t{color:var(--t1);font-weight:700;font-size:.94rem;margin-bottom:2px}
+.trust-d{font-size:.85rem;color:var(--t4);line-height:1.55}
+
+/* ── Sections ───────────────────────────────────────────────────────────── */
+/* Rhythm: every section used to carry identical 104px padding, so scrolling was
+   one uninterrupted surface. Panelled chapters get tighter outer padding
+   (their own inset supplies the air) and open sections get more. */
+section{padding:clamp(72px,10vw,116px) 0}
+section.is-panelled{padding:clamp(26px,3.5vw,40px) 0}
+/* On a tall screen the hero + strip left a dead band before the first chapter.
+   Tightening the hero's tail and the first panel's lead-in brings that panel's
+   top edge into view, which is the strongest "keep going" cue there is. */
+@media (min-height:900px){
+  .hero{padding-bottom:clamp(24px,2.4vw,36px)}
+  .trust-in{padding:26px 0}
+  /* Measured at 2560x1440: the first panel's top edge landed at 1445px against
+     a 1440px fold — five pixels short of visible. These reclaim 44px so it
+     clears, and the visitor sees a chapter beginning rather than a rule with
+     nothing under it. */
+  section.is-panelled:first-of-type{padding-top:14px}
+}
+/* A quiet scroll affordance, only where the page is taller than the screen. */
+.scroll-cue{
+  display:flex;justify-content:center;margin-top:clamp(22px,3vw,38px);
+  color:var(--t4);font-size:.72rem;letter-spacing:.16em;text-transform:uppercase;font-weight:700;
+  gap:9px;align-items:center;
+}
+.scroll-cue i{
+  width:1px;height:26px;background:linear-gradient(180deg,transparent,rgba(216,184,114,.75));
+  animation:cueDrop 2.4s ease-in-out infinite;
+}
+@keyframes cueDrop{0%,100%{transform:scaleY(.6);opacity:.5}50%{transform:scaleY(1);opacity:1}}
+@media (prefers-reduced-motion:reduce){ .scroll-cue i{animation:none} }
+.sec-head{text-align:center;max-width:680px;margin:0 auto clamp(44px,5.5vw,64px)}
+.sec-head .lede{margin:16px auto 0}
+
+/* ── Chapter panel ──────────────────────────────────────────────────────────
+   A raised surface with a hairline edge and a light source above it. This is
+   what turns one continuous dark page into chapters you scroll through. */
+.panel{
+  position:relative;
+  background:
+    radial-gradient(120% 80% at 50% -20%, rgba(255,255,255,.028), transparent 62%),
+    var(--panel);
+  border:1px solid rgba(var(--line),.055);
+  border-radius:clamp(18px,2vw,26px);
+  padding:clamp(34px,5vw,68px) clamp(22px,4vw,56px);
+  box-shadow:var(--lift-2), var(--edge);
+}
+/* A soft champagne bloom on the panels that carry the product, so the eye is
+   drawn to the screenshots rather than to the chrome. */
+.panel--warm::before{
+  content:"";position:absolute;inset:0;border-radius:inherit;pointer-events:none;
+  background:radial-gradient(70% 55% at 78% 6%, rgba(216,184,114,.055), transparent 66%);
+}
+.panel > *{position:relative}
+
+/* Three steps */
+.steps{display:grid;grid-template-columns:repeat(3,minmax(0,1fr));gap:22px;position:relative}
+.step{
+  background:var(--card);border:1px solid rgba(var(--line),.07);border-radius:var(--r);
+  padding:30px 26px;position:relative;box-shadow:var(--lift-1), var(--edge);
+  transition:border-color .2s ease,transform .2s ease,background .2s ease,box-shadow .2s ease;
+}
+.step:hover{border-color:rgba(216,184,114,.34);transform:translateY(-3px);
+  background:var(--card-hi);box-shadow:var(--lift-2), var(--edge)}
+.step-n{
+  font-size:.7rem;font-weight:800;color:var(--t4);letter-spacing:.14em;margin-bottom:18px;
+}
+.step-ic{
+  width:46px;height:46px;border-radius:12px;display:grid;place-items:center;margin-bottom:16px;
+  background:var(--gold-soft);border:1px solid rgba(216,184,114,.26);color:var(--gold);font-size:1.2rem;
+}
+.step h3{margin-bottom:8px}
+.step p{margin:0;font-size:.92rem;color:var(--t4);line-height:1.6}
+
+/* Split feature */
+/* The product gets the larger half. Prominence through framing and space, not
+   by scaling the image up. */
+/* minmax(0,…), not 1fr. A `1fr` track is minmax(auto,1fr) and `auto` floors at
+   min-content — which for an image is its INTRINSIC width. The screenshots were
+   therefore forcing a 405px track inside a 310px box on a phone, pushing the
+   whole page 71px wider than the viewport. body{overflow-x:hidden} hid the
+   scrollbar, so it showed up only as everything being slightly too big. */
+.split{display:grid;grid-template-columns:minmax(0,.92fr) minmax(0,1.08fr);gap:clamp(30px,5vw,68px);align-items:center}
+.split > *,.hero-in > *,.steps > *,.cards > *,.trust-in > *{min-width:0}
+.split--rev .split-copy{order:2}
+.proof{display:grid;grid-template-columns:minmax(0,1fr) minmax(0,1fr);gap:22px;margin-top:34px}
+.proof-item{border-left:2px solid rgba(var(--line),.12);padding-left:15px;transition:border-color .2s ease}
+.proof-item:hover{border-left-color:rgba(216,184,114,.55)}
+.proof-t{color:var(--t1);font-weight:700;font-size:.92rem;margin-bottom:3px}
+.proof-d{font-size:.84rem;color:var(--t4);line-height:1.5}
+
+/* Watch band */
+.band{
+  position:relative;
+  background:
+    radial-gradient(90% 120% at 8% 0%, rgba(216,184,114,.07), transparent 60%),
+    linear-gradient(135deg,#0F131A,#141922);
+  border:1px solid rgba(var(--line),.075);border-radius:clamp(18px,2vw,24px);
+  padding:clamp(34px,5vw,56px);display:flex;align-items:center;gap:30px;flex-wrap:wrap;
+  box-shadow:var(--lift-2), var(--edge);
+}
+.band-ic{
+  width:56px;height:56px;border-radius:15px;flex:none;display:grid;place-items:center;
+  background:var(--gold);color:#07090C;font-size:1.3rem;
+}
+.band-copy{flex:1;min-width:250px}
+.band h2{font-size:clamp(1.5rem,2.6vw,1.95rem);margin-bottom:7px}
+.band p{margin:0;color:var(--t3);font-size:.96rem}
+
+/* Feature cards */
+.cards{display:grid;grid-template-columns:repeat(4,minmax(0,1fr));gap:20px}
+.card{
+  background:var(--card);border:1px solid rgba(var(--line),.07);border-radius:var(--r);
+  padding:26px 24px;box-shadow:var(--lift-1), var(--edge);
+  transition:border-color .2s ease,transform .2s ease,background .2s ease,box-shadow .2s ease;
+}
+.card:hover{border-color:rgba(216,184,114,.30);transform:translateY(-3px);
+  background:var(--card-hi);box-shadow:var(--lift-2), var(--edge)}
+.card-ic{
+  width:40px;height:40px;border-radius:11px;display:grid;place-items:center;margin-bottom:15px;
+  background:var(--gold-soft);border:1px solid rgba(216,184,114,.24);color:var(--gold);font-size:1.05rem;
+}
+.card h3{margin-bottom:7px}
+.card p{margin:0;font-size:.875rem;color:var(--t4);line-height:1.62}
+
+/* Footer */
+footer{border-top:1px solid rgba(var(--line),.07);padding:44px 0;background:var(--bg-2)}
+.foot{display:flex;align-items:center;gap:16px;flex-wrap:wrap}
+.foot p{margin:0;font-size:.84rem;color:var(--t4)}
+.foot-links{margin-left:auto;display:flex;gap:20px;flex-wrap:wrap}
+.foot-links a{font-size:.84rem;color:var(--t3)}
+.foot-links a:hover{color:var(--gold)}
+
+/* ── Pilot request modal ────────────────────────────────────────────────────
+   All three Request a Pilot buttons used to be mailto: links. A mailto: hands
+   off to whichever application owns the mail protocol — which is why clicking
+   one opened an unrelated browser. Nothing here leaves the page. */
+.pm{position:fixed;inset:0;z-index:200;display:none;align-items:center;justify-content:center;padding:20px}
+.pm.on{display:flex}
+.pm-bd{position:absolute;inset:0;background:rgba(3,5,8,.78);backdrop-filter:blur(6px);animation:pmFade .25s ease both}
+.pm-card{
+  position:relative;width:min(560px,100%);max-height:calc(100vh - 40px);overflow:auto;
+  background:radial-gradient(120% 70% at 50% -10%,rgba(255,255,255,.035),transparent 60%),var(--panel);
+  border:1px solid rgba(var(--line),.09);border-radius:22px;
+  padding:clamp(26px,3.4vw,38px);box-shadow:var(--lift-3);animation:pmIn .32s cubic-bezier(.2,.7,.3,1) both;
+}
+@keyframes pmFade{from{opacity:0}to{opacity:1}}
+@keyframes pmIn{from{opacity:0;transform:translateY(14px) scale(.985)}to{opacity:1;transform:none}}
+.pm-x{position:absolute;top:14px;right:14px;width:38px;height:38px;border-radius:50%;border:none;cursor:pointer;
+  background:rgba(var(--line),.06);color:var(--t3);font-size:1rem;display:grid;place-items:center}
+.pm-x:hover{background:rgba(var(--line),.12);color:var(--t1)}
+.pm-card h2{font-size:clamp(1.5rem,2.4vw,1.9rem);margin:0 0 8px}
+.pm-sub{margin:0 0 24px;font-size:.94rem;color:var(--t3);line-height:1.6}
+.pm-f{display:grid;gap:6px;margin-bottom:16px}
+.pm-f label{font-size:.78rem;font-weight:700;letter-spacing:.05em;text-transform:uppercase;color:var(--t4)}
+.pm-f input,.pm-f select{
+  font:inherit;font-size:.96rem;color:var(--t1);background:var(--bg);border:1px solid rgba(var(--line),.12);
+  border-radius:11px;padding:12px 14px;min-height:48px;width:100%;transition:border-color .18s ease,background .18s ease;
+}
+.pm-f input:focus,.pm-f select:focus{outline:none;border-color:rgba(216,184,114,.6);background:#070A0E}
+.pm-f select{appearance:none;cursor:pointer;
+  background-image:linear-gradient(45deg,transparent 50%,var(--t4) 50%),linear-gradient(135deg,var(--t4) 50%,transparent 50%);
+  background-position:calc(100% - 20px) 21px,calc(100% - 15px) 21px;background-size:5px 5px;background-repeat:no-repeat}
+.pm-row{display:grid;grid-template-columns:minmax(0,1fr) minmax(0,1fr);gap:14px}
+.pm-file{
+  display:flex;align-items:center;gap:12px;border:1px dashed rgba(var(--line),.18);border-radius:11px;
+  padding:13px 14px;min-height:48px;cursor:pointer;color:var(--t3);font-size:.9rem;transition:border-color .18s ease,color .18s ease;
+}
+.pm-file:hover{border-color:rgba(216,184,114,.5);color:var(--t1)}
+.pm-file input{position:absolute;width:1px;height:1px;opacity:0;pointer-events:none}
+.pm-file b{color:var(--gold);font-weight:700}
+.pm-opt{font-weight:500;text-transform:none;letter-spacing:0;color:var(--t4);font-size:.74rem}
+.pm-actions{margin-top:22px}
+.pm-actions .btn{width:100%}
+.pm-note{margin:14px 0 0;font-size:.78rem;color:var(--t4);line-height:1.55;text-align:center}
+.pm-msg{margin:16px 0 0;font-size:.9rem;line-height:1.6;padding:13px 15px;border-radius:11px;display:none}
+.pm-msg.on{display:block}
+.pm-msg--ok{background:rgba(52,192,138,.1);border:1px solid rgba(52,192,138,.32);color:#9FE9C6}
+.pm-msg--err{background:rgba(255,120,110,.08);border:1px solid rgba(255,120,110,.3);color:#FFB4AE}
+.pm-msg a{color:inherit;text-decoration:underline}
+@media (max-width:560px){ .pm{padding:0} .pm-card{border-radius:20px 20px 0 0;max-height:92vh;align-self:flex-end}
+  .pm-row{grid-template-columns:minmax(0,1fr)} }
+
+/* ── Motion: subtle, and disabled when the visitor prefers less ─────────── */
+.js-rv .rv{opacity:0;transform:translateY(16px);transition:opacity .6s cubic-bezier(.2,.7,.3,1),transform .6s cubic-bezier(.2,.7,.3,1)}
+.js-rv .rv.in{opacity:1;transform:none}
+@media (prefers-reduced-motion:reduce){
+  .js-rv .rv{opacity:1;transform:none;transition:none}
+  .shot--float{animation:none}
+  *{scroll-behavior:auto!important}
+}
+
+/* ── Responsive ─────────────────────────────────────────────────────────── */
+@media (max-width:960px){
+  .hero-in,.split{grid-template-columns:minmax(0,1fr);gap:42px}
+  .split--rev .split-copy{order:0}
+  .steps{grid-template-columns:minmax(0,1fr)}
+  .cards{grid-template-columns:repeat(2,minmax(0,1fr))}
+  .trust-in{grid-template-columns:minmax(0,1fr);gap:22px;padding:30px 0}
+  .nav-hide{display:none}
+}
+@media (max-width:560px){
+  body{font-size:16px}
+  .wrap{padding:0 16px}
+  .cards,.proof{grid-template-columns:minmax(0,1fr)}
+  .cta-row .btn{width:100%}
+  .band{gap:22px;padding:30px 22px}
+  .band .btn{width:100%}
+  /* The panel inset costs 44px of a 390px screen. The screenshots take it back
+     — they are the reason anyone is on this page. */
+  .panel{padding-left:16px;padding-right:16px;border-radius:18px}
+  .panel .shot-wrap{margin-left:-16px;margin-right:-16px;padding-left:0;padding-right:0}
+  .panel .shot{border-radius:12px}
+  /* Every link is a tap target on a phone, including the ones that are only
+     text on the desktop. Measured: six of twelve were under 44px tall. */
+  /* :not(.nav-hide) matters — this rule sits after .nav-hide{display:none} and
+     setting display here un-hid the whole desktop nav, which then overflowed
+     the phone by 192px. */
+  .nav-link:not(.nav-hide),.foot-links a{min-height:44px;display:inline-flex;align-items:center}
+  .nav .btn--sm{min-height:44px;padding:11px 16px}
+  .brand{min-height:44px}
+  .foot-links{gap:6px 22px}
+  .sec-head{margin-bottom:34px}
+}
+</style>
+</head>
+<body>
+
+<!-- ── Nav ──────────────────────────────────────────────────────────────── -->
+<nav class="nav">
+  <div class="wrap nav-in">
+    <a class="brand" href="./"><span class="brand-mk">M</span>MainStreet</a>
+    <div class="nav-sp"></div>
+    <a class="nav-link nav-hide" href="#how">How it works</a>
+    <a class="nav-link nav-hide" href="#evidence">Evidence</a>
+    <a class="nav-link nav-hide" href="#spaces">Spaces</a>
+    <a class="nav-link nav-hide" href="#platform">Platform</a>
+    <a class="nav-link" href="index.html">Log in</a>
+    <a class="btn btn--primary btn--sm" href="#pilot" data-pilot>Request a Pilot</a>
+  </div>
+</nav>
+
+<!-- ── Hero ─────────────────────────────────────────────────────────────── -->
+<header class="hero">
+  <div class="wrap hero-in">
+    <div class="rv">
+      <div class="badge"><i></i>The AI Operating System for Commercial Real Estate</div>
+      <h1>The <span class="accent">verified memory</span> for every commercial property.</h1>
+      <p class="lede">
+        MainStreet reads every lease, reconciles every CAM charge, and remembers
+        everything that happens to a property — with the clause, the page, and the
+        proof behind every number. Nothing lives in email threads anymore.
+      </p>
+      <div class="cta-row">
+        <a class="btn btn--primary" href="#pilot" data-pilot>
+          <span>Request a Pilot<span class="btn-sub">Your property, your leases, real results</span></span>
+        </a>
+        <a class="btn btn--ghost" href="index.html?demo=1">
+          <span>▶ Watch MainStreet in Action<span class="btn-sub">A 40-second product film</span></span>
+        </a>
+      </div>
+      <div class="hero-note"><b>No slides.</b> The film runs the real product — no mockups, no reenactments.</div>
+      <div class="scroll-cue" aria-hidden="true"><i></i>See how it works</div>
+    </div>
+
+    <div class="rv shot-wrap" style="transition-delay:.1s"><div class="shot shot--float">
+      <div class="shot-bar">
+        <span class="shot-dot"></span><span class="shot-dot"></span><span class="shot-dot"></span>
+        <span class="shot-cap">MainStreet — AI Command Center</span>
+      </div>
+      <img src="assets/landing/ui-command-center.png" alt="The MainStreet AI Command Center: value identified, today&#39;s priorities, and the next step for each." loading="eager" width="1440" height="1840">
+    </div>
+  </div>
+    </div>
+</header>
+
+<!-- ── Trust: what we can actually demonstrate ──────────────────────────── -->
+<div class="trust">
+  <div class="wrap trust-in">
+    <div class="trust-item rv">
+      <div class="trust-ic">◆</div>
+      <div>
+        <div class="trust-t">Every figure has a receipt</div>
+        <div class="trust-d">Each number links to the lease clause or invoice it came from — page and quote included.</div>
+      </div>
+    </div>
+    <div class="trust-item rv" style="transition-delay:.08s">
+      <div class="trust-ic">⛊</div>
+      <div>
+        <div class="trust-t">Audit-ready by default</div>
+        <div class="trust-d">Every upload, edit, reconciliation and resolution is recorded in a tamper-evident history.</div>
+      </div>
+    </div>
+    <div class="trust-item rv" style="transition-delay:.16s">
+      <div class="trust-ic">↗</div>
+      <div>
+        <div class="trust-t">Settlement you can verify</div>
+        <div class="trust-d">Balances settle in RLUSD on the XRP Ledger, publicly verifiable on-chain.</div>
+      </div>
+    </div>
+  </div>
+</div>
+
+
+<!-- ── Spaces: the memory of a space ────────────────────────────────────── -->
+<section id="spaces" class="is-panelled">
+  <div class="wrap"><div class="panel panel--warm split">
+    <div class="split-copy rv">
+      <div class="eyebrow">Spaces</div>
+      <h2 style="margin:12px 0 16px">Every space<br>remembers.</h2>
+      <p class="lede">
+        Open any suite and its whole story is there — the lease and its terms, CAM
+        allocated and its status, open disputes, photos, documents, and a timeline
+        of everything that ever happened. One record per space, grounded in the
+        documents behind it.
+      </p>
+      <div class="proof">
+        <div class="proof-item">
+          <div class="proof-t">The lease, on file</div>
+          <div class="proof-d">Terms extracted from the document itself — type, area, term, CAM cap.</div>
+        </div>
+        <div class="proof-item">
+          <div class="proof-t">CAM, in context</div>
+          <div class="proof-d">The space's allocation and status, one tap from the full reconciliation.</div>
+        </div>
+        <div class="proof-item">
+          <div class="proof-t">Disputes, surfaced</div>
+          <div class="proof-d">Open issues appear where a manager actually looks — on the space.</div>
+        </div>
+        <div class="proof-item">
+          <div class="proof-t">Act on it</div>
+          <div class="proof-d">Review the record, then take action — grounded in it, not from memory.</div>
+        </div>
+      </div>
+    </div>
+    <div class="rv shot-wrap" style="transition-delay:.1s"><div class="shot">
+      <div class="shot-bar">
+        <span class="shot-dot"></span><span class="shot-dot"></span><span class="shot-dot"></span>
+        <span class="shot-cap">A Space — lease, CAM, disputes, documents, timeline</span>
+      </div>
+      <img src="assets/landing/ui-space-modal.png" alt="A MainStreet Space: lease terms on file, CAM allocated with status, an open dispute, photos and documents, ready to act on." loading="lazy" width="1440" height="1400">
+    </div></div>
+  </div>
+</div>
+</section>
+
+<!-- ── How it works ─────────────────────────────────────────────────────── -->
+<section id="how" class="is-panelled">
+  <div class="wrap"><div class="panel">
+    <div class="sec-head rv">
+      <div class="eyebrow">How it works</div>
+      <h2 style="margin-top:12px">From lease to recovery in three steps</h2>
+      <p class="lede">No implementation project. Upload what you already have and MainStreet does the reading.</p>
+    </div>
+    <div class="steps">
+      <div class="step rv">
+        <div class="step-n">STEP 01</div>
+        <div class="step-ic">↑</div>
+        <h3>Upload</h3>
+        <p>Drop in leases, CAM statements and vendor invoices — including scanned copier PDFs. MainStreet handles the file so you don't have to think about format or size.</p>
+      </div>
+      <div class="step rv" style="transition-delay:.09s">
+        <div class="step-n">STEP 02</div>
+        <div class="step-ic">✦</div>
+        <h3>AI analysis</h3>
+        <p>Lease terms, caps and exclusions are extracted and reviewed. Every charge is checked against what the lease actually permits — with a confidence score and a human review gate.</p>
+      </div>
+      <div class="step rv" style="transition-delay:.18s">
+        <div class="step-n">STEP 03</div>
+        <div class="step-ic">$</div>
+        <h3>Recover revenue</h3>
+        <p>Under-billed recoveries surface with the evidence attached. Generate the tenant statement, resolve disputes, and settle — with the full trail preserved.</p>
+      </div>
+    </div>
+  </div>
+</div>
+</section>
+
+<!-- ── Evidence ─────────────────────────────────────────────────────────── -->
+<section id="evidence" class="is-panelled">
+  <div class="wrap"><div class="panel panel--warm split">
+    <div class="split-copy rv">
+      <div class="eyebrow">Explainability</div>
+      <h2 style="margin:12px 0 16px">Every number.<br>Every explanation.</h2>
+      <p class="lede">
+        MainStreet doesn't hand you a total and ask you to trust it. Open any figure
+        and you see the clause it came from, the page it sits on, and the language
+        that supports it.
+      </p>
+      <div class="proof">
+        <div class="proof-item">
+          <div class="proof-t">Clause-level citations</div>
+          <div class="proof-d">Jump from a charge to the exact lease language behind it.</div>
+        </div>
+        <div class="proof-item">
+          <div class="proof-t">Confidence, stated</div>
+          <div class="proof-d">Low-confidence extractions are flagged for review, never hidden.</div>
+        </div>
+        <div class="proof-item">
+          <div class="proof-t">Complete history</div>
+          <div class="proof-d">A property's full timeline: documents, reconciliations, disputes, payments.</div>
+        </div>
+        <div class="proof-item">
+          <div class="proof-t">Honest gaps</div>
+          <div class="proof-d">When a document isn't on file, MainStreet says so rather than guessing.</div>
+        </div>
+      </div>
+    </div>
+    <div class="rv shot-wrap" style="transition-delay:.1s"><div class="shot">
+      <div class="shot-bar">
+        <span class="shot-dot"></span><span class="shot-dot"></span><span class="shot-dot"></span>
+        <span class="shot-cap">AI Workspace — grounded answers about your portfolio</span>
+      </div>
+      <img src="assets/landing/ui-workspace.png" alt="The MainStreet AI Workspace answering questions about a portfolio from its own records." loading="lazy" width="1440" height="492">
+    </div></div>
+  </div>
+</div>
+</section>
+
+<!-- ── Watch band ───────────────────────────────────────────────────────── -->
+<section>
+  <div class="wrap">
+    <div class="band rv">
+      <div class="band-ic">▶</div>
+      <div class="band-copy">
+        <h2>Run your first property through it</h2>
+        <p>A pilot is your real property and your real leases — uploaded, reconciled, and provable. Or watch the product run a full reconciliation first, upload to settlement, in about forty seconds.</p>
+      </div>
+      <a class="btn btn--primary" href="#pilot" data-pilot>Request a Pilot</a>
+      <a class="btn btn--ghost" href="index.html?demo=1">▶&nbsp; Watch the demo</a>
+    </div>
+  </div>
+</section>
+
+<!-- ── Platform ─────────────────────────────────────────────────────────── -->
+<section id="platform" class="is-panelled">
+  <div class="wrap"><div class="panel">
+    <div class="sec-head rv">
+      <div class="eyebrow">The platform</div>
+      <h2 style="margin-top:12px">Built for the way property managers work</h2>
+    </div>
+    <div class="cards">
+      <div class="card rv">
+        <div class="card-ic">⛊</div>
+        <h3>Enterprise security</h3>
+        <p>Row-level access control, encrypted storage, and a full audit log of every action taken on a property.</p>
+      </div>
+      <div class="card rv" style="transition-delay:.07s">
+        <div class="card-ic">▤</div>
+        <h3>Document intelligence</h3>
+        <p>Leases, amendments, invoices and certificates are read, organised and searchable — scans included.</p>
+      </div>
+      <div class="card rv" style="transition-delay:.14s">
+        <div class="card-ic">◷</div>
+        <h3>Property memory</h3>
+        <p>A complete timeline of everything that happened at a property, and at every tenant space within it.</p>
+      </div>
+      <div class="card rv" style="transition-delay:.21s">
+        <div class="card-ic">↗</div>
+        <h3>Settlement support</h3>
+        <p>Close the loop with RLUSD settlement on the XRP Ledger and a verifiable record of the transaction.</p>
+      </div>
+    </div>
+  </div>
+</div>
+</section>
+
+<!-- ── Footer ───────────────────────────────────────────────────────────── -->
+<footer>
+  <div class="wrap foot">
+    <a class="brand" href="./"><span class="brand-mk">M</span>MainStreet</a>
+    <p>The AI operating system for commercial real estate.</p>
+    <div class="foot-links">
+      <a href="index.html?demo=1">Watch the demo</a>
+      <a href="index.html">Log in</a>
+      <a href="privacy-policy.html">Privacy</a>
+      <a href="terms-of-service.html">Terms</a>
+    </div>
+  </div>
+</footer>
+<!-- ── Pilot request ────────────────────────────────────────────────────── -->
+<div class="pm" id="pilotModal" role="dialog" aria-modal="true" aria-labelledby="pmTitle" hidden>
+  <div class="pm-bd" data-pm-close></div>
+  <div class="pm-card">
+    <button class="pm-x" type="button" aria-label="Close" data-pm-close>&#10005;</button>
+    <h2 id="pmTitle">Request a pilot</h2>
+    <p class="pm-sub">One of your properties, your real leases. We&rsquo;ll reconcile it and show you the evidence behind every number.</p>
+    <form id="pmForm" novalidate>
+      <div class="pm-f">
+        <label for="pmName">Name</label>
+        <input id="pmName" name="name" type="text" autocomplete="name" required>
+      </div>
+      <div class="pm-f">
+        <label for="pmCompany">Company</label>
+        <input id="pmCompany" name="company" type="text" autocomplete="organization" required>
+      </div>
+      <div class="pm-row">
+        <div class="pm-f">
+          <label for="pmEmail">Email</label>
+          <input id="pmEmail" name="email" type="email" autocomplete="email" required>
+        </div>
+        <div class="pm-f">
+          <label for="pmProps">Properties</label>
+          <select id="pmProps" name="properties" required>
+            <option value="">Select…</option>
+            <option>1</option><option>2&ndash;5</option><option>6&ndash;20</option>
+            <option>21&ndash;50</option><option>50+</option>
+          </select>
+        </div>
+      </div>
+      <div class="pm-f">
+        <label for="pmFile">Sample lease <span class="pm-opt">optional</span></label>
+        <label class="pm-file" for="pmFile">
+          <b>Choose a file</b><span id="pmFileName">PDF or DOCX, up to 8&nbsp;MB</span>
+          <input id="pmFile" name="lease" type="file" accept=".pdf,.doc,.docx,application/pdf">
+        </label>
+      </div>
+      <div class="pm-actions">
+        <button class="btn btn--primary" type="submit" id="pmSubmit">Request Pilot</button>
+      </div>
+      <div class="pm-msg" id="pmMsg" role="status" aria-live="polite"></div>
+      <p class="pm-note">We reply personally. No sales sequence, no drip campaign.</p>
+    </form>
+  </div>
+</div>
+
+
+<script>
+/* Reveal on scroll — progressive enhancement. Without JS (or with reduced
+   motion) everything is already visible; this only adds the entrance. */
+(function () {
+  var els = document.querySelectorAll('.rv');
+  var reduce = window.matchMedia && window.matchMedia('(prefers-reduced-motion: reduce)').matches;
+  if (reduce || !('IntersectionObserver' in window)) {
+    els.forEach(function (el) { el.classList.add('in'); });
+    return;
+  }
+  var io = new IntersectionObserver(function (entries) {
+    entries.forEach(function (e) {
+      if (e.isIntersecting) { e.target.classList.add('in'); io.unobserve(e.target); }
+    });
+  }, { rootMargin: '0px 0px -8% 0px', threshold: .12 });
+  els.forEach(function (el) { io.observe(el); });
+})();
+</script>
+<script src="product-film.js"></script>
+<script>
+/* Play the film in place. The click is the user gesture that permits audio —
+   browsers do not carry user activation across a navigation, so the previous
+   hop to index.html?demo=1 could never autoplay narration. Falls back to the
+   old navigation if the module fails to load, so the CTA is never dead. */
+(function () {
+  // ── Pilot request modal ───────────────────────────────────────────────────
+  // Every "Request a Pilot" opens this. There is exactly one destination and it
+  // is on this page — the previous mailto: links handed off to whichever app
+  // owns the mail protocol, which is why one of them opened another browser.
+  (function () {
+    var modal = document.getElementById('pilotModal');
+    if (!modal) return;
+    var form = document.getElementById('pmForm');
+    var msg = document.getElementById('pmMsg');
+    var submit = document.getElementById('pmSubmit');
+    var fileIn = document.getElementById('pmFile');
+    var fileName = document.getElementById('pmFileName');
+    var lastFocus = null;
+
+    function say(kind, html) {
+      msg.className = 'pm-msg on pm-msg--' + kind;
+      msg.innerHTML = html;
+    }
+    function open(e) {
+      if (e) e.preventDefault();
+      lastFocus = document.activeElement;
+      modal.hidden = false; modal.classList.add('on');
+      document.body.style.overflow = 'hidden';
+      var first = modal.querySelector('input,select,button');
+      if (first) setTimeout(function () { first.focus(); }, 40);
+    }
+    function close() {
+      modal.classList.remove('on'); modal.hidden = true;
+      document.body.style.overflow = '';
+      if (lastFocus && lastFocus.focus) lastFocus.focus();
+    }
+    Array.prototype.forEach.call(document.querySelectorAll('[data-pilot]'), function (a) {
+      a.addEventListener('click', open);
+    });
+    Array.prototype.forEach.call(modal.querySelectorAll('[data-pm-close]'), function (b) {
+      b.addEventListener('click', close);
+    });
+    document.addEventListener('keydown', function (e) {
+      if (!modal.classList.contains('on')) return;
+      if (e.key === 'Escape') { close(); return; }
+      // Keep tabbing inside the dialog while it is open.
+      if (e.key !== 'Tab') return;
+      var f = modal.querySelectorAll('input,select,button,a[href]');
+      if (!f.length) return;
+      var first = f[0], last = f[f.length - 1];
+      if (e.shiftKey && document.activeElement === first) { e.preventDefault(); last.focus(); }
+      else if (!e.shiftKey && document.activeElement === last) { e.preventDefault(); first.focus(); }
+    });
+    if (fileIn) fileIn.addEventListener('change', function () {
+      var f = fileIn.files && fileIn.files[0];
+      fileName.textContent = f ? f.name + ' · ' + Math.round(f.size / 1024) + ' KB'
+                               : 'PDF or DOCX, up to 8\u00a0MB';
+    });
+
+    var MAX = 8 * 1024 * 1024;
+    form.addEventListener('submit', function (e) {
+      e.preventDefault();
+      // form.elements.x, not form.x — HTMLFormElement.name is the FORM's own
+      // name attribute and shadows the named input, so form.name.value throws.
+      var F = form.elements;
+      var data = {
+        name: F.name.value.trim(), company: F.company.value.trim(),
+        email: F.email.value.trim(), properties: F.properties.value,
+      };
+      if (!data.name || !data.company || !data.email || !data.properties) {
+        say('err', 'Please fill in every field except the sample lease.'); return;
+      }
+      if (!/^[^@\s]+@[^@\s]+\.[^@\s]+$/.test(data.email)) {
+        say('err', 'That email address does not look right.'); return;
+      }
+      var f = fileIn && fileIn.files && fileIn.files[0];
+      if (f && f.size > MAX) { say('err', 'That file is over 8&nbsp;MB. Send it in your reply instead.'); return; }
+
+      submit.disabled = true; submit.textContent = 'Sending…';
+      var go = function (payload) {
+        fetch('/api/pilot-request', {
+          method: 'POST', headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify(payload),
+        }).then(function (r) { return r.json().then(function (j) { return { ok: r.ok, j: j }; }); })
+          .then(function (res) {
+            if (!res.ok) throw new Error((res.j && res.j.error) || 'Request failed');
+            form.style.display = 'none';
+            say('ok', '<b>Thank you — that\'s in.</b><br>We\'ll reply personally, usually within a day.');
+            msg.style.display = 'block';
+          })
+          .catch(function (err) {
+            submit.disabled = false; submit.textContent = 'Request Pilot';
+            // Never a silent failure and never a mailto: the address is text so
+            // it can be copied without handing off to another application.
+            say('err', 'We could not send that just now (' + String(err.message).slice(0, 90) +
+                       ').<br>Please email <b>lynnie928@me.com</b> and we will pick it up.');
+          });
+      };
+      if (!f) { go(data); return; }
+      var fr = new FileReader();
+      fr.onload = function () {
+        data.lease = { name: f.name, size: f.size, type: f.type || '', data: String(fr.result).split(',')[1] };
+        go(data);
+      };
+      fr.onerror = function () { go(data); };
+      fr.readAsDataURL(f);
+    });
+  })();
+
+  var links = document.querySelectorAll('a[href="index.html?demo=1"]');
+  // Warm the narration on intent, not on click. The first line is due at 0ms,
+  // so loading it when the film opens makes it late — and the schedule is
+  // absolute, so a late line eats the gap before the next one.
+  var warm = function () { if (window.ProductFilm) window.ProductFilm.preload(); };
+  Array.prototype.forEach.call(links, function (a) {
+    a.addEventListener('pointerenter', warm, { once: true });
+    a.addEventListener('focus', warm, { once: true });
+    a.addEventListener('touchstart', warm, { once: true, passive: true });
+    a.addEventListener('click', function (e) {
+      if (!window.ProductFilm) return;            // fall through to the href
+      e.preventDefault();
+      window.ProductFilm.play();
+    });
+  });
+})();
+</script>
+
+</body>
+</html>

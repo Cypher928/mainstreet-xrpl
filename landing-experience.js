@@ -11,13 +11,42 @@
  *
  * Purely additive: self-mounts DOM + styles, self-triggers before login for an
  * unauthenticated visitor. Touches no auth, settlement, XRPL, or business logic.
- * Re-openable via window.MainStreetLanding.show() / .playDemo() or ?landing=1.
+ * Re-openable via window.MainStreetLanding.show() / .playDemo(), ?landing=1,
+ * or ?demo=1 (opens and plays the film immediately).
  */
 (function () {
   'use strict';
 
   var EXPLORER = 'https://livenet.xrpl.org/transactions/7FA730B2B78819AE34B3D1B458721FBC52B9CD25E980ED42DD1B15E9F9FC724A';
   var ASSET = 'assets/landing/';
+
+  // A visitor arriving from the marketing page is here for the film, not the
+  // product. The app reveals #loginScreen as soon as auth resolves as
+  // signed-out, which paints a password form for a beat before this overlay
+  // mounts over it. Suppress it up front — at script-parse time, well before
+  // auth settles — and lift the suppression the moment they actually choose to
+  // sign in. Scoped to ?demo=1 / ?landing=1 so the normal login path is
+  // untouched.
+  var PREBOOT_ID = 'msl-preboot';
+  (function preboot() {
+    try {
+      var q = new URLSearchParams(location.search);
+      if (q.get('demo') !== '1' && q.get('landing') !== '1') return;
+      var st = document.createElement('style');
+      st.id = PREBOOT_ID;
+      // opacity, NOT display/visibility. The overlay's own trigger waits for
+      // shown(#loginScreen), and shown() tests display and visibility — so
+      // hiding it either of those ways suppresses the flash and the film with
+      // it. Zero opacity paints nothing while leaving the predicate true, so
+      // the overlay still opens the instant auth resolves.
+      st.textContent = '#loginScreen{opacity:0!important;pointer-events:none!important}';
+      (document.head || document.documentElement).appendChild(st);
+    } catch (e) {}
+  })();
+  function liftPreboot() {
+    var st = document.getElementById(PREBOOT_ID);
+    if (st && st.parentNode) st.parentNode.removeChild(st);
+  }
 
   function icon(name) {
     var d = {
@@ -36,8 +65,8 @@
 
   // Hero workflow rail labels (line icons).
   var RAIL = [
-    ['upload', 'Upload'], ['ai', 'Extract'], ['match', 'Match'], ['recon', 'Reconcile'],
-    ['recover', 'Recover'], ['statement', 'Statement'], ['settle', 'Settle'], ['verify', 'Verify'],
+    ['upload', 'Upload'], ['ai', 'Extract'], ['statement', 'Spaces'], ['match', 'Reconcile'],
+    ['recover', 'Recover'], ['recon', 'Timeline'], ['settle', 'Settle'], ['verify', 'Verify'],
   ];
 
   // ── helpers ──────────────────────────────────────────────────────────────
@@ -60,8 +89,16 @@
     var i = 0, iv = setInterval(function () { el.textContent = text.slice(0, ++i); if (i >= text.length) clearInterval(iv); }, 1000 / (cps || 34));
   }
 
-  var root, cineEl, canvas, capEl, tlEl, endEl;
-  var state = { i: 0, playing: false, timer: null };
+  var root;
+  // Set when the visitor arrived via the marketing page's ?demo=1 CTA. Closing
+  // the film then returns them to the page they came from instead of dropping
+  // them onto this overlay's own hero — mid-story, on a page they never chose.
+  var fromMarketing = false;
+
+  function closeFilm() {
+    if (fromMarketing) { window.location.href = 'home'; return; }
+    stopDemo();
+  }
 
   function shown(el) {
     if (!el) return false;
@@ -78,116 +115,7 @@
 
   // ── SCENES — each builds animated real/near-real UI into the frame ─────────
   // dur in ms; total ≈ 40s. Every scene animates; captions are one short line.
-  var SCENES = [
-    { id: 'upload', dur: 4600, cap: 'Upload leases and invoices',
-      build: function (c) {
-        c.innerHTML =
-          '<img class="msl-bg" src="' + ASSET + 'ui-upload.png" alt="">' +
-          '<div class="msl-drop"><div class="msl-drop-ic">' + icon('upload') + '</div><div class="msl-drop-t">Drop files to begin</div>' +
-          '<div class="msl-drop-bar"><i></i></div></div>' +
-          '<div class="msl-docs">' +
-            '<div class="msl-doc-fly" style="--d:.1s;--x:-120px">Lease — Whole Health Market.pdf</div>' +
-            '<div class="msl-doc-fly" style="--d:.5s;--x:40px">Invoice — SnowCo.pdf</div>' +
-            '<div class="msl-doc-fly" style="--d:.9s;--x:150px">Invoice — GreenScape.pdf</div>' +
-          '</div>';
-      } },
-    { id: 'ai', dur: 5600, cap: 'AI extracts every lease term',
-      build: function (c) {
-        c.innerHTML =
-          '<div class="msl-lease">' +
-            '<div class="msl-lease-doc">' +
-              ['COMMON AREA MAINTENANCE','Tenant shall pay its pro-rata share of','Common Area costs, not to increase more','than five percent (5%) year-over-year.',
-               'Premises: approximately 4,200 rentable','square feet. Lease type: Triple Net (NNN).','Term: January 2021 through December 2028.']
-              .map(function (ln, i) { return '<div class="msl-ln" style="--d:' + (i * .12) + 's">' + ln + '</div>'; }).join('') +
-              '<div class="msl-hl"></div>' +
-            '</div>' +
-            '<div class="msl-fields">' +
-              [['CAM Cap','5% / yr'],['Leased Sq Ft','4,200'],['Lease Type','NNN'],['Term','2021 – 2028']]
-              .map(function (f, i) { return '<div class="msl-field" style="--d:' + (1 + i * .5) + 's"><span>' + f[0] + '</span><b>' + f[1] + '</b><em class="msl-verify-dot"></em></div>'; }).join('') +
-            '</div>' +
-          '</div>';
-      } },
-    { id: 'match', dur: 5000, cap: 'Invoices matched to tenants',
-      build: function (c) {
-        var inv = ['SnowCo · $6,051','GreenScape · $4,120','SecureGuard · $3,480','ProClean · $2,940'];
-        var ten = ['Summit Coffee','Whole Health Market','Harbor Nail & Beauty','Gamma Books'];
-        c.innerHTML =
-          '<div class="msl-match">' +
-            '<div class="msl-col msl-col-l">' + inv.map(function (t, i) { return '<div class="msl-node" data-l="' + i + '" style="--d:' + (i * .12) + 's">' + t + '</div>'; }).join('') + '</div>' +
-            '<svg class="msl-wires" viewBox="0 0 300 240" preserveAspectRatio="none"></svg>' +
-            '<div class="msl-col msl-col-r">' + ten.map(function (t, i) { return '<div class="msl-node" data-r="' + i + '" style="--d:' + (i * .12) + 's">' + t + '</div>'; }).join('') + '</div>' +
-          '</div>';
-        var svg = c.querySelector('.msl-wires');
-        var pairs = [[0, 0], [1, 1], [2, 2], [3, 3], [0, 3], [1, 0]];
-        pairs.forEach(function (pr, i) {
-          var y1 = 30 + pr[0] * 56, y2 = 30 + pr[1] * 56;
-          var path = document.createElementNS('http://www.w3.org/2000/svg', 'path');
-          path.setAttribute('d', 'M8 ' + y1 + ' C 150 ' + y1 + ', 150 ' + y2 + ', 292 ' + y2);
-          path.setAttribute('class', 'msl-wire'); path.style.setProperty('--d', (0.6 + i * 0.22) + 's');
-          svg.appendChild(path);
-        });
-      } },
-    { id: 'recon', dur: 5600, cap: 'CAM allocated across every tenant',
-      build: function (c) {
-        var rows = [['Summit Coffee & Provisions', 34861], ['Whole Health Market', 41204], ['Harbor Nail & Beauty', 18940], ['Gamma Books', 12233]];
-        c.innerHTML =
-          '<div class="msl-alloc">' +
-            '<div class="msl-alloc-head"><span>Tenant</span><span>CAM Share</span></div>' +
-            rows.map(function (r, i) { return '<div class="msl-arow" style="--d:' + (i * .28) + 's"><span>' + r[0] + '</span><b data-v="' + r[1] + '">$0</b></div>'; }).join('') +
-            '<div class="msl-arow msl-atotal" style="--d:1.5s"><span>Total allocated</span><b data-v="107238">$0</b></div>' +
-          '</div>';
-        setTimeout(function () {
-          c.querySelectorAll('[data-v]').forEach(function (b, i) { setTimeout(function () { countUp(b, +b.dataset.v, 900, '$'); }, i * 240); });
-        }, reduce() ? 0 : 300);
-      } },
-    { id: 'recover', dur: 5000, cap: 'Recovered revenue, surfaced',
-      build: function (c) {
-        c.innerHTML =
-          '<img class="msl-bg msl-bg-dim" src="' + ASSET + 'ui-command-center.png" alt="">' +
-          '<div class="msl-spot"></div>' +
-          '<div class="msl-bignum"><div class="msl-bignum-v" id="mslRecover">$0</div><div class="msl-bignum-l">Recoverable revenue identified</div></div>';
-        setTimeout(function () { countUp(document.getElementById('mslRecover'), 99542, 1500, '$'); }, reduce() ? 0 : 500);
-      } },
-    { id: 'statement', dur: 5000, cap: 'Tenant statement, generated',
-      build: function (c) {
-        var items = [['Snow removal', '$1,240'], ['Landscaping', '$980'], ['Security', '$1,410'], ['Janitorial', '$860']];
-        c.innerHTML =
-          '<div class="msl-stmt">' +
-            '<div class="msl-stmt-head" style="--d:0s"><div><b>Whole Health Market</b><span>CAM Statement · FY 2025</span></div><div class="msl-stmt-badge">Verified</div></div>' +
-            items.map(function (it, i) { return '<div class="msl-stmt-row" style="--d:' + (0.4 + i * 0.28) + 's"><span>' + it[0] + '</span><b>' + it[1] + '</b></div>'; }).join('') +
-            '<div class="msl-stmt-total" style="--d:1.7s"><span>Total due</span><b>$41,204</b></div>' +
-            '<div class="msl-stmt-cite" style="--d:2s">Every line cited to the lease — page and clause.</div>' +
-          '</div>';
-      } },
-    { id: 'settle', dur: 5200, cap: 'Settled in RLUSD on the XRP Ledger',
-      build: function (c) {
-        var steps = ['Tenant pays', 'Settled in RLUSD', 'On the XRP Ledger', 'Verified on-ledger'];
-        c.innerHTML =
-          '<div class="msl-settle">' +
-            '<div class="msl-settle-amt" id="mslAmt">1 RLUSD</div>' +
-            '<div class="msl-steps">' + steps.map(function (s, i) {
-              return '<div class="msl-sstep2" style="--d:' + (0.5 + i * 0.7) + 's"><span class="msl-scheck">' + icon('verify') + '</span><span>' + s + '</span></div>' +
-                (i < steps.length - 1 ? '<div class="msl-sline" style="--d:' + (0.9 + i * 0.7) + 's"></div>' : '');
-            }).join('') + '</div>' +
-          '</div>';
-      } },
-    { id: 'verify', dur: 5400, cap: 'Verified on-chain — public proof', end: true,
-      build: function (c) {
-        c.innerHTML =
-          '<div class="msl-onchain">' +
-            '<div class="msl-check-big">' + icon('verify') + '</div>' +
-            '<div class="msl-oc-title">tesSUCCESS · XRPL mainnet</div>' +
-            '<div class="msl-oc-rows">' +
-              '<div class="msl-oc-r"><span>Transaction</span><b id="mslTx">—</b></div>' +
-              '<div class="msl-oc-r"><span>Source Tag</span><b id="mslTag">—</b></div>' +
-              '<div class="msl-oc-r"><span>Memo</span><b id="mslMemo">—</b></div>' +
-            '</div>' +
-          '</div>';
-        setTimeout(function () { typeInto(document.getElementById('mslTx'), '7FA730B2…F9FC724A', 26); }, reduce() ? 0 : 700);
-        setTimeout(function () { typeInto(document.getElementById('mslTag'), '2606290001', 40); }, reduce() ? 0 : 1500);
-        setTimeout(function () { typeInto(document.getElementById('mslMemo'), 'SHA-256 · 0025F7…FA341', 30); }, reduce() ? 0 : 2100);
-      } },
-  ];
+
 
   function injectStyles() {
     if (document.getElementById('msl-styles')) return;
@@ -262,7 +190,86 @@
       '.msl-bg{position:absolute;inset:0;width:100%;height:100%;object-fit:cover;object-position:top;}',
       '.msl-bg-dim{filter:brightness(.4) saturate(.9);}',
       '.msl-cap{margin:26px 0 0;font-size:clamp(1.05rem,2.2vw,1.5rem);font-weight:600;letter-spacing:-.02em;color:var(--pa);text-align:center;min-height:1.6em;transition:opacity .38s ease,transform .38s cubic-bezier(.2,.7,.2,1);}',
-      '.msl-timeline{display:flex;gap:5px;width:min(880px,94vw);margin:18px 0 0;}',
+      // ── Cinematic primitives ────────────────────────────────────────────
+      // One easing curve carries the whole film: expo-out. Motion decelerates
+      // hard into place, which is what separates "composed" from "slid in".
+      '.msl-cine{--ez:cubic-bezier(.16,1,.3,1);}',
+      // Ken Burns: the frame is never perfectly still, so a scene reads as a
+      // shot rather than a slide.
+      '.msl-ken{animation:mslKen 9s ease-out both;}',
+      '@keyframes mslKen{from{transform:scale(1.06)}to{transform:scale(1.13)}}',
+      // Vignette + spotlight darken the periphery so the eye lands on the
+      // subject instead of scanning the whole UI equally.
+      '.msl-vig{position:absolute;inset:0;pointer-events:none;background:radial-gradient(ellipse at 50% 46%,transparent 34%,rgba(0,0,0,.55) 78%,rgba(0,0,0,.82) 100%);}',
+      '.msl-vig--tight{background:radial-gradient(ellipse at 50% 46%,transparent 18%,rgba(0,0,0,.72) 62%,rgba(0,0,0,.92) 100%);}',
+      // Every scene enters already composed — scaled and settling, never empty.
+      '.msl-zoomin{animation:mslZoomIn .9s var(--ez,cubic-bezier(.16,1,.3,1)) both;}',
+      '@keyframes mslZoomIn{from{opacity:0;transform:scale(.965) translateY(10px)}to{opacity:1;transform:none}}',
+      // Hero numbers resolve out of blur — the "celebrate it" treatment.
+      '.msl-blin{animation:mslBlurIn 1.1s var(--ez,cubic-bezier(.16,1,.3,1)) both;}',
+      '@keyframes mslBlurIn{from{opacity:0;filter:blur(14px);transform:scale(.94)}to{opacity:1;filter:blur(0);transform:none}}',
+      '.msl-bignum-sub{margin-top:10px;font-size:.82rem;letter-spacing:.05em;text-transform:uppercase;color:var(--mut);opacity:0;animation:mslUp .7s var(--ez,ease) both;animation-delay:var(--d,0s);}',
+      // The clause highlight sweeps slowly enough to read.
+      '.msl-hl--slow{animation-duration:1.5s!important;}',
+      '.msl-cite{margin-top:12px;font-size:.75rem;letter-spacing:.06em;text-transform:uppercase;color:var(--gold);opacity:0;animation:mslUp .6s var(--ez,ease) both;animation-delay:var(--d,0s);}',
+      '.msl-askq{color:var(--gold);}',
+      // Reconciliation gains a third column so the cap adjustment is visible —
+      // the saving is the story, not the allocated figure.
+      '.msl-arow--3{grid-template-columns:1fr auto auto;gap:18px;}',
+      '.msl-capadj{color:#7BE3A6;font-style:normal;font-weight:600;font-size:.9rem;}',
+      // Property Timeline: events accrue down a rail as time compresses.
+      '.msl-tl{position:relative;width:min(660px,90vw);padding:22px 26px;border-radius:14px;background:rgba(255,255,255,.03);border:1px solid rgba(255,255,255,.08);}',
+      '.msl-tl-h{font-size:.72rem;letter-spacing:.16em;text-transform:uppercase;color:var(--mut);margin-bottom:16px;}',
+      '.msl-tl-rail{position:absolute;left:34px;top:56px;bottom:52px;width:1px;background:linear-gradient(180deg,transparent,rgba(216,184,114,.5),transparent);}',
+      '.msl-tl-row{display:grid;grid-template-columns:auto 1fr auto;align-items:center;gap:12px;padding:9px 0;opacity:0;animation:mslUp .6s var(--ez,ease) both;animation-delay:var(--d,0s);}',
+      '.msl-tl-dot{width:9px;height:9px;border-radius:50%;background:var(--gold);box-shadow:0 0 0 4px rgba(216,184,114,.14);}',
+      '.msl-tl-t{color:var(--pa);font-weight:600;font-size:.95rem;}',
+      '.msl-tl-row em{font-style:normal;color:var(--mut);font-size:.82rem;}',
+      // Per-scene composition. Each scene declares its own `fw`, applied here as
+      // --fw, so the block that should dominate is sized for that beat rather
+      // than to one global percentage. Nothing reads cropped or oversized.
+      '.msl-canvas{--fw:760px;}',
+      // Scoped under .msl-cine: the base scene rules are emitted later in this
+      // array, so an unscoped rule loses on source order.
+      '.msl-cine .msl-alloc,.msl-cine .msl-stmt,.msl-cine .msl-tl,.msl-cine .msl-onchain,.msl-cine .msl-settle,.msl-cine .msl-close{width:min(var(--fw),92%);max-width:none;}',
+      '.msl-cine .msl-lease{width:min(var(--fw),94%);max-width:none;}',
+      // Reconciliation: the prevented column is the subject, so it gets the
+      // emphasis and a plain-language summary beneath.
+      '.msl-arow--3{display:grid;grid-template-columns:1.5fr auto auto;gap:26px;align-items:center;}',
+      '.msl-capadj{color:#7BE3A6;font-style:normal;font-weight:700;font-size:1rem;letter-spacing:-.01em;text-align:right;min-width:5.5em;}',
+      '.msl-alloc-note{margin-top:16px;padding-top:14px;border-top:1px solid rgba(255,255,255,.08);font-size:.95rem;color:var(--mut);opacity:0;animation:mslUp .7s var(--ez,ease) both;animation-delay:var(--d,0s);}',
+      '.msl-alloc-note b{color:#7BE3A6;font-size:1.1rem;}',
+      // Revenue hero: dead centre in the frame, no competing background.
+      // Centred by FLEX, not by transform. .msl-blin's keyframes end on
+      // transform:none, which silently wipes a translate(-50%,-50%) the moment
+      // the animation completes — the number drifted half a canvas off-centre.
+      // The animation owns transform; layout must not depend on it.
+      // Scoped under .msl-cine so this wins regardless of where it lands in the
+      // stylesheet — the base .msl-bignum is emitted later in the array.
+      '.msl-cine .msl-bignum--center{position:static;left:auto;top:auto;transform:none;text-align:center;width:min(var(--fw),92%);}',
+      '.msl-cine .msl-spot--center{position:absolute;left:50%;top:50%;transform:translate(-50%,-50%);width:120%;height:120%;background:radial-gradient(ellipse at center,rgba(123,227,166,.10),transparent 62%);}',
+      // Verification: the largest thing on screen, not smaller than its caption.
+      '.msl-cine .msl-onchain--lg{transform:scale(1.14);transform-origin:center;}',
+      // Brand close — the last impression is MainStreet, ledger proof beneath.
+      '.msl-close{display:flex;flex-direction:column;align-items:center;justify-content:center;text-align:center;gap:18px;}',
+      '.msl-close-mark{font-size:clamp(2.2rem,5vw,3.4rem);font-weight:800;letter-spacing:-.035em;color:var(--pa);}',
+      '.msl-close-mark span{background:linear-gradient(120deg,#EBD49A,#C9A254 55%,#E4C57F);-webkit-background-clip:text;background-clip:text;color:transparent;}',
+      '.msl-close-line{font-size:clamp(1.05rem,2.2vw,1.5rem);line-height:1.35;color:var(--pa);font-weight:600;letter-spacing:-.02em;opacity:0;animation:mslUp .8s var(--ez,ease) both;animation-delay:var(--d,0s);}',
+      '.msl-close-line em{font-style:normal;background:linear-gradient(120deg,#EBD49A,#C9A254 55%,#E4C57F);-webkit-background-clip:text;background-clip:text;color:transparent;}',
+      '.msl-close-proof{display:inline-flex;align-items:center;gap:9px;font-size:.8rem;letter-spacing:.05em;text-transform:uppercase;color:var(--mut);opacity:0;animation:mslUp .7s var(--ez,ease) both;animation-delay:var(--d,0s);}',
+      '.msl-close-dot{width:7px;height:7px;border-radius:50%;background:#7BE3A6;box-shadow:0 0 0 4px rgba(123,227,166,.16);}',
+      // Progress: one continuous line, not nine chapter ticks. Ticks made a 44s
+      // film read like a task bar.
+      '.msl-timeline{position:relative;width:min(880px,94vw);height:2px;margin:20px 0 0;background:rgba(255,255,255,.1);border-radius:2px;overflow:hidden;}',
+      '.msl-prog{position:absolute;inset:0 auto 0 0;width:0;background:linear-gradient(90deg,rgba(216,184,114,.5),var(--gold));transition:width .45s linear;}',
+      // Mobile: the end card must sit BELOW the caption with real spacing. Its
+      // buttons wrapped to 232px tall on a narrow screen and rode up over the
+      // caption — 13,680px² of overlap, invisible at desktop widths.
+      '@media (max-width:720px){',
+      '  .msl-cine-end{position:static!important;flex-wrap:wrap;justify-content:center;gap:10px;margin:18px 0 8px;padding:0 12px;}',
+      '  .msl-cap{margin-bottom:4px;}',
+      '  .msl-onchain--lg{transform:none;}',
+      '}',
       '.msl-tseg{flex:1;height:2px;border-radius:2px;background:rgba(255,255,255,.12);overflow:hidden;}',
       '.msl-tseg-f{height:100%;width:0;background:var(--gold);}',
       '.msl-tseg.msl-tdone .msl-tseg-f{width:100%;}',
@@ -379,11 +386,11 @@
     root.innerHTML =
       '<div class="msl-nav"><div class="msl-logo"><b>Main</b>Street</div><button class="msl-nav-signin" id="mslNavSignin">Sign In</button></div>' +
       '<div class="msl-hero">' +
-        '<div class="msl-eyebrow">CAM Recovery &amp; Reconciliation for Commercial Real Estate</div>' +
-        '<h1 class="msl-h1">Recover the CAM revenue<br><em>hiding in your leases.</em></h1>' +
-        '<p class="msl-lede">AI reads every lease, finds what manual reviews miss, and cites every charge — then settles it, verified, on the XRP Ledger.</p>' +
+        '<div class="msl-eyebrow">The AI Operating System for Commercial Real Estate</div>' +
+        '<h1 class="msl-h1">The verified memory<br><em>for every commercial property.</em></h1>' +
+        '<p class="msl-lede">MainStreet reads every lease, reconciles every CAM charge, and remembers everything that happens to a property — with the proof behind every number.</p>' +
         '<div class="msl-cta">' +
-          '<button class="msl-btn msl-btn--primary" id="mslWatch">See it recover revenue</button>' +
+          '<button class="msl-btn msl-btn--primary" id="mslWatch">▶ Watch MainStreet in Action</button>' +
           '<button class="msl-btn msl-btn--ghost" id="mslStart">Create Free Account</button>' +
           '<button class="msl-btn msl-btn--text" id="mslSignin">Sign In</button>' +
         '</div>' +
@@ -399,24 +406,13 @@
           '<details class="msl-why-item"><summary class="msl-why-head"><span class="msl-why-ic">' + icon('recover') + '</span><span class="msl-why-label">Missed deadlines cost real money</span><span class="msl-why-chev">' + icon('chev') + '</span></summary><p class="msl-why-detail">Every lease sets a deadline to bill reconciled CAM charges. Miss that window, and recoverable revenue can be permanently lost.</p></details>' +
         '</div>' +
         '<p class="msl-why-cta">MainStreet finds it, reconciles it, and proves every dollar — automatically.</p>' +
-      '</div>' +
-      '<div class="msl-cine" id="mslCine">' +
-        '<button class="msl-cine-close" id="mslCineClose" aria-label="Close">✕</button>' +
-        '<div class="msl-dev"><div class="msl-dev-bar"><i></i><i></i><i></i><span class="msl-dev-url" id="mslUrl">mainstreetcam.com</span></div>' +
-          '<div class="msl-canvas" id="mslCanvas"></div></div>' +
-        '<div class="msl-cap" id="mslCap"></div>' +
-        '<div class="msl-timeline" id="mslTimeline"></div>' +
-        '<div class="msl-cine-end" id="mslEnd"></div>' +
       '</div>';
     document.body.appendChild(root);
-    cineEl = root.querySelector('#mslCine'); canvas = root.querySelector('#mslCanvas');
-    capEl = root.querySelector('#mslCap'); tlEl = root.querySelector('#mslTimeline'); endEl = root.querySelector('#mslEnd');
 
     root.querySelector('#mslWatch').addEventListener('click', playDemo);
     root.querySelector('#mslStart').addEventListener('click', function () { enterApp('signup'); });
     root.querySelector('#mslSignin').addEventListener('click', function () { enterApp('signin'); });
     root.querySelector('#mslNavSignin').addEventListener('click', function () { enterApp('signin'); });
-    root.querySelector('#mslCineClose').addEventListener('click', stopDemo);
     document.addEventListener('keydown', onKey);
   }
 
@@ -424,54 +420,26 @@
     recon:'mainstreetcam.com/cam', recover:'mainstreetcam.com/command-center', statement:'mainstreetcam.com/reports',
     settle:'mainstreetcam.com/settlement', verify:'livenet.xrpl.org' };
 
-  function renderScene() {
-    clearTimeout(state.timer);
-    var s = SCENES[state.i];
-    capEl.style.opacity = '0'; capEl.style.transform = 'translateY(6px)';
-    root.querySelector('#mslUrl').textContent = URLS[s.id] || 'mainstreetcam.com';
-    // rebuild canvas content (re-triggers entrance animation)
-    canvas.innerHTML = ''; var wrap = document.createElement('div'); wrap.style.cssText = 'position:absolute;inset:0'; canvas.appendChild(wrap);
-    s.build(wrap);
-    setTimeout(function () { capEl.textContent = s.cap; capEl.style.opacity = '1'; capEl.style.transform = 'translateY(0)'; }, 260);
-    // timeline
-    tlEl.innerHTML = SCENES.map(function (_, i) {
-      var cls = i < state.i ? ' msl-tdone' : (i === state.i ? ' msl-tcur' : '');
-      var dur = i === state.i && state.playing ? 'animation-duration:' + s.dur + 'ms;' : '';
-      return '<div class="msl-tseg' + cls + '"><div class="msl-tseg-f" style="' + dur + '"></div></div>';
-    }).join('');
-    endEl.classList.remove('msl-show');
-    if (state.playing) {
-      if (state.i < SCENES.length - 1) state.timer = setTimeout(function () { state.i++; renderScene(); }, s.dur);
-      else state.timer = setTimeout(showEnd, s.dur);
-    } else if (s.end) setTimeout(showEnd, 300);
-  }
 
-  function showEnd() {
-    endEl.innerHTML =
-      '<button class="msl-btn msl-btn--primary" id="mslEndStart">Create Free Account</button>' +
-      '<button class="msl-btn msl-btn--ghost" id="mslEndVerify">Verify on XRPL ↗</button>' +
-      '<button class="msl-btn msl-btn--text" id="mslEndReplay">Replay</button>';
-    endEl.classList.add('msl-show');
-    endEl.querySelector('#mslEndStart').addEventListener('click', function () { enterApp('signup'); });
-    endEl.querySelector('#mslEndVerify').addEventListener('click', function () { window.open(EXPLORER, '_blank', 'noopener'); });
-    endEl.querySelector('#mslEndReplay').addEventListener('click', function () { state.i = 0; state.playing = true; renderScene(); });
-  }
 
-  function playDemo() { build(); state.i = 0; state.playing = true; cineEl.classList.add('msl-on'); renderScene(); }
-  function stopDemo() { clearTimeout(state.timer); state.playing = false; cineEl.classList.remove('msl-on'); }
+  // The film lives in product-film.js so there is one implementation. On
+  // home.html it plays in place (the click is the gesture that permits audio);
+  // here it is the same module, opened over the landing hero.
+  function playDemo() {
+    if (!window.ProductFilm) return;
+    ProductFilm.play({ onExit: function () { if (fromMarketing) window.location.href = 'home'; } });
+  }
+  function stopDemo() { if (window.ProductFilm) ProductFilm.stop(); }
 
   function onKey(e) {
     if (!root || root.style.display === 'none') return;
-    if (cineEl.classList.contains('msl-on')) {
-      if (e.key === 'Escape') stopDemo();
-      else if (e.key === 'ArrowRight' && state.i < SCENES.length - 1) { clearTimeout(state.timer); state.i++; renderScene(); }
-      else if (e.key === 'ArrowLeft' && state.i > 0) { clearTimeout(state.timer); state.i--; renderScene(); }
-    } else if (e.key === 'Escape') { enterApp('signin'); }
+    if (e.key === 'Escape') enterApp('signin');
   }
 
   function show() { build(); root.classList.add('msl-on'); root.style.display = 'block'; document.body.style.overflow = 'hidden'; }
   function hide() { stopDemo(); if (root) { root.classList.remove('msl-on'); root.style.display = 'none'; } document.body.style.overflow = ''; }
   function enterApp(tab) {
+    liftPreboot();   // they chose the product — the login screen is wanted now
     hide();
     try {
       var login = document.getElementById('loginScreen'); if (login) login.style.display = 'flex';
@@ -487,12 +455,30 @@
     if (isAuthed() && !forced) return;
     var login = document.getElementById('loginScreen');
     if (!login) return;
-    if (forced || shown(login)) { show(); return; }
+    // ?demo=1 opens straight into the cinematic film — lets the marketing
+    // homepage's "Watch MainStreet in Action" start the real product demo
+    // rather than a placeholder. It only changes what happens *once* the
+    // landing opens; it must never short-circuit the checks below, because
+    // isAuthed() settles asynchronously and would still read false here for a
+    // signed-in user. Skipping the wait would drop the film over their session.
+    var wantDemo = params.get('demo') === '1';
+    if (wantDemo) fromMarketing = true;
+    // Arriving from the marketing page, the film IS the destination. Compose the
+    // first frame and raise the film layer BEFORE the overlay is revealed, so the
+    // landing hero never composites. Previously show() ran and playDemo() was
+    // scheduled 260ms later, and that gap was the visible flash of the hero.
+    // ?demo=1 goes straight to the film. The landing hero is never shown, so it
+    // cannot flash underneath.
+    function open() {
+      if (wantDemo) { playDemo(); return; }
+      show();
+    }
+    if (forced || shown(login)) { open(); return; }
     var done = false;
     function tryShow() {
       if (done) return;
       if (isAuthed()) { done = true; obs.disconnect(); clearInterval(poll); return; }
-      if (shown(login)) { done = true; obs.disconnect(); clearInterval(poll); show(); }
+      if (shown(login)) { done = true; obs.disconnect(); clearInterval(poll); open(); }
     }
     var obs = new MutationObserver(tryShow);
     obs.observe(login, { attributes: true, attributeFilter: ['style', 'class'] });
@@ -500,7 +486,14 @@
     setTimeout(function () { obs.disconnect(); clearInterval(poll); }, 45000);
   }
 
-  window.MainStreetLanding = { show: show, hide: hide, playDemo: playDemo };
+  window.MainStreetLanding = {
+    show: show, hide: hide,
+    // The film — and its narration scaffold — live in product-film.js. Kept on
+    // this API so existing callers keep working.
+    playDemo: playDemo,
+    narrationCues: function () { return window.ProductFilm ? ProductFilm.narrationCues() : []; },
+    narrationScript: function () { return window.ProductFilm ? ProductFilm.narrationScript() : ''; },
+  };
   if (document.readyState === 'loading') document.addEventListener('DOMContentLoaded', maybeShow);
   else maybeShow();
 })();

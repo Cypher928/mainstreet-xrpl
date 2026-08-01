@@ -8,8 +8,15 @@
 // Set to true locally to enable verbose extraction/reconciliation tracing.
 const DEBUG = false;
 // ─── Supabase ─────────────────────────────────────────────────────────────────
-const SUPABASE_URL      = 'https://zhsuhehgehbzkmzurzyf.supabase.co';
-const SUPABASE_ANON_KEY = 'eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6Inpoc3VoZWhnZWhiemttenVyenlmIiwicm9sZSI6ImFub24iLCJpYXQiOjE3NzU4NDkwNDAsImV4cCI6MjA5MTQyNTA0MH0.HUl9ha9hhjIO1F_k8xPkqbZQnWx-ERRGbnmc6KS3lNE';
+// Project selection is host-based (see supabase-config.js): the production
+// domain uses the production project; localhost and every *.vercel.app preview
+// (including the pilot branch) use the isolated pilot project. supabase-config.js
+// MUST be loaded before script.js — it publishes window.__MS_SUPABASE.
+if (!window.__MS_SUPABASE) {
+  throw new Error('[script.js] supabase-config.js must be loaded before script.js (window.__MS_SUPABASE missing)');
+}
+const SUPABASE_URL      = window.__MS_SUPABASE.url;
+const SUPABASE_ANON_KEY = window.__MS_SUPABASE.anonKey;
 
 // Auth email redirects (password reset, signup confirmation) must always point at the
 // public production domain — never window.location.origin, which on a Vercel preview/
@@ -44,6 +51,9 @@ setTimeout(() => {
 async function _showApp(user) {
   _lsUserId = (user && user.id) ? user.id : null;
   if (user?.id) _initDemoIds(user.id); // derive per-user demo IDs before any demo interaction
+  // Close out jobs abandoned by a previous session's tab. Fire-and-forget: it
+  // must never delay showing the app, and a failure here is logged, not fatal.
+  try { _reapStaleLeaseJobs(); } catch (_) {}
   _lsMigrateAncillaryKeys(); // scope ancillary LS keys + re-hydrate _camYear
   initCamYearSelect();       // re-sync dropdown now that _camYear may have changed
   document.getElementById('loginScreen').style.display  = 'none';
@@ -403,22 +413,22 @@ async function claudeFetch(body) {
 }
 
 async function explainFetch(body, opts = {}) {
-  // opts.timeoutMs (optional) aborts a stalled request so callers never hang forever.
-  // Backward compatible: with no opts, behavior is unchanged (no timeout).
+  // Every other Claude call in this file goes through _fetchWithTimeout. This
+  // one bounded the request only when a caller happened to pass timeoutMs, so
+  // the default path had no AbortController and no timer: if /api/explain
+  // stopped responding the await never settled, the ingestion pipeline stopped
+  // silently, and the job sat at 'processing' with nothing to explain it.
+  // Now always bounded — callers may still tighten or loosen the ceiling.
   const { timeoutMs } = opts;
   const fetchOpts = {
     method: 'POST',
     headers: { 'Content-Type': 'application/json', ...(await _authHeaders()) },
     body: typeof body === 'string' ? body : JSON.stringify(body),
   };
-  let timer = null;
-  if (timeoutMs) {
-    const ctrl = new AbortController();
-    fetchOpts.signal = ctrl.signal;
-    timer = setTimeout(() => ctrl.abort(), timeoutMs);
-  }
   try {
-    const resp = await fetch('/api/explain', fetchOpts);
+    // 90s matches /api/explain's maxDuration in vercel.json — a request that
+    // outlives the function it called can never succeed.
+    const resp = await _fetchWithTimeout('/api/explain', fetchOpts, timeoutMs || 90000);
     if (!resp.ok) {
       let detail = `HTTP ${resp.status}`;
       try { const b = await resp.json(); detail = b?.error?.message || b?.message || detail; } catch {}
@@ -426,10 +436,10 @@ async function explainFetch(body, opts = {}) {
     }
     return await resp.json();
   } catch (e) {
-    if (e?.name === 'AbortError') throw new Error(`Request timed out after ${Math.round((timeoutMs || 0) / 1000)}s`);
+    // The effective ceiling, not `timeoutMs` — which is now optional, so
+    // reporting it directly produced "timed out after 0s" on the default path.
+    if (e?.name === 'AbortError') throw new Error(`Request timed out after ${Math.round((timeoutMs || 90000) / 1000)}s`);
     throw e;
-  } finally {
-    if (timer) clearTimeout(timer);
   }
 }
 
@@ -523,15 +533,23 @@ TONE:
 - Practical
 - Never alarmist
 - Never suggest legal wrongdoing
-OUTPUT FORMAT:
+
+OUTPUT FORMAT — use these exact labels, one per line. Be brief: a property
+manager scans this in seconds. Do not add headings, preamble, or markdown.
 STATUS: [No issues / Might get questions / Likely to be challenged]
-WHY:
-One short sentence explaining what a tenant might question
-SUGGESTION:
-One simple, practical way to improve clarity or reduce pushback
+WHY: one sentence (max 20 words) — what a tenant might question.
+SUGGESTION: one sentence (max 20 words) — a practical way to reduce pushback.
+EVIDENCE: a comma-separated list of what would substantiate this charge, using
+only these labels: Lease clause, Invoice, Work order, Vendor contract, Photo,
+Service record. List only what is genuinely relevant — 1 to 3 items. If nothing
+would substantiate it, write: None.
+
 IMPORTANT:
 If the charge looks normal, say "No issues" and do not invent problems.
-If the category appears incorrect based on the vendor or description, gently interpret the charge correctly in your explanation without criticizing the classification.`;
+If the category appears incorrect based on the vendor or description, gently interpret the charge correctly in your explanation without criticizing the classification.
+Never state a fact you were not given. EVIDENCE names the KIND of document that
+would support the charge — it is a pointer for the manager to attach, not a claim
+that the document exists.`;
 
 // WHY single source of truth: previously there were THREE schema definitions
 // (CLAUDE_LEASE_SYSTEM, CLAUDE_LEASE_PROMPT, and inline user prompts in each call
@@ -1383,6 +1401,9 @@ function _recordIngestTelemetry(s) {
   try {
     _lastIngestTelemetry = s || null;
     if (window.ms_extractionDebug) window.ms_extractionDebug.ingest = s || null;
+    // Proof of life: a batch finished. Resets the watchdog so a slow but
+    // healthy extraction is never mistaken for a stalled one.
+    if (typeof _touchJobWatchdog === 'function') _touchJobWatchdog();
   } catch (_) {}
 }
 
@@ -2247,6 +2268,18 @@ async function handleEscrowDocumentUpload(propertyId, filesOrFile, opts = {}) {
       processedLabels.push(newReserve.reserveTypeLabel);
     });
 
+    // Property memory: reserve work joins the property's history. Guarded and
+    // deduped so a re-processed document cannot double-record.
+    try {
+      const _rk = 'reserve:' + processedLabels.join('|') + ':' + files.map(f => f && f.name).join('|');
+      appendPropertyTimelineEventOnce(prop, _rk, {
+        type: 'reserve_updated', severity: 'info',
+        title: 'Reserve updated — ' + processedLabels.join(', '),
+        description: files.length + ' source document' + (files.length !== 1 ? 's' : '') + ' processed.',
+        metadata: { reserves: processedLabels.join(', '), documents: files.length },
+        actor: 'Property Manager',
+      });
+    } catch (_e) { console.warn('[timeline] reserve_updated skipped:', _e && _e.message); }
     _lsSave(prop);
     await saveProperty(prop);
     const labels = processedLabels.join(', ');
@@ -3257,7 +3290,12 @@ function resetTenant(i) {
 // 'estoppels' is intentionally omitted — the Estoppels feature is not built yet and its
 // tab/pane are hidden so the app reads as production-ready. Re-add 'estoppels' here and
 // un-hide #wsTabBtn-estoppels in index.html once the feature ships.
-const WORKSPACE_TABS = ['overview', 'cam', 'reserves', 'reports', 'documents'];
+// Information architecture: the app is organized around real estate subjects,
+// not software modules — Property (the building as a whole), Spaces (each
+// suite), CAM (a workflow that references invoices), Reports (outputs only),
+// Reserves (capital planning). 'documents' is retired from navigation: lease
+// intake moved under Spaces, property documents live on Property.
+const WORKSPACE_TABS = ['overview', 'property', 'spaces', 'cam', 'reports', 'reserves'];
 let _activeWorkspaceTab = 'overview';
 
 function switchWorkspaceTab(tab) {
@@ -3498,9 +3536,9 @@ function renderPropertyKpiHeader(property) {
   const tiles = [
     { label: 'Occupancy', value: occupancyPct !== null ? occupancyPct + '%' : '—',
       sub: totalSqft ? `${occSqft.toLocaleString()} / ${totalSqft.toLocaleString()} sqft` : 'Set total sqft to enable',
-      tab: 'documents', anchor: 'cardLeases' },
-    { label: 'Tenants', value: tenants.length, sub: tenants.length === 1 ? '1 active lease' : `${tenants.length} active leases`,
-      tab: 'documents', anchor: 'cardLeases' },
+      tab: 'spaces', anchor: 'cardLeases,spacesSection' },
+    { label: 'Spaces', value: tenants.length, sub: tenants.length === 1 ? '1 tenant space' : `${tenants.length} tenant spaces`,
+      tab: 'spaces', anchor: 'spacesSection' },
     { label: 'Active Reserves', value: reserves.length,
       sub: reserveBalanceTotal !== null ? `${_fmtKpiMoney(reserveBalanceTotal)} available` : 'No reserves yet',
       tab: 'reserves', anchor: 'escrowSection' },
@@ -3510,7 +3548,7 @@ function renderPropertyKpiHeader(property) {
     { label: 'Lease Expirations', value: readiness.expiringCount || 0,
       warn: (readiness.expiringCount || 0) > 0, alert: (readiness.expiredCount || 0) > 0,
       sub: readiness.expiredCount ? `${readiness.expiredCount} already expired` : 'Next 12 months',
-      tab: 'documents', anchor: 'cardLeases' },
+      tab: 'spaces', anchor: 'cardLeases,spacesSection' },
     { label: 'CAM Expenses', value: _fmtKpiMoney(camTotal), sub: camTotal ? 'Total pool, most recent run' : 'No CAM run yet',
       tab: 'cam', anchor: 'results,cardInvoices' },
   ];
@@ -3603,6 +3641,24 @@ function _buildRlusdStatusHtml(status) {
 // recorded on `property.settlement` (status:'settled' + txHash), every place that
 // calls this lights up with the real explorer link — no further code changes.
 const XRPL_MAINNET_TX_EXPLORER = 'https://livenet.xrpl.org/transactions/';
+
+// Settlement is executed out-of-band (the app's endpoint is read-only and holds
+// no wallet seed), so the app never "completes" one — it observes it. Record it
+// on the property's history the first time a settled txHash is seen. Idempotent
+// by txHash, so re-rendering or reloading cannot duplicate it.
+function _recordSettlementIfNew(property) {
+  try {
+    const s = property && property.settlement;
+    if (!s || !s.txHash) return;
+    appendPropertyTimelineEventOnce(property, 'settlement:' + s.txHash, {
+      type: 'settlement_completed', severity: 'success',
+      title: 'Settlement completed' + (s.amountUsd != null ? ' — ' + fmt(s.amountUsd) : ''),
+      description: 'Settled in RLUSD on the XRP Ledger' + (s.network ? ' (' + s.network + ')' : '') + '.',
+      metadata: { txHash: s.txHash, network: s.network || 'mainnet', settledAt: s.settledAt || null },
+      actor: 'System',
+    });
+  } catch (_e) { console.warn('[timeline] settlement_completed skipped:', _e && _e.message); }
+}
 
 function _getSettlementState(property) {
   const s = property && property.settlement;
@@ -4209,33 +4265,152 @@ function createLeaseJob(file, propertyId) {
   return jobId;
 }
 
-function updateLeaseJob(jobId, updates) {
+function updateLeaseJob(jobId, updates, opts) {
   const job = _leaseJobs.get(jobId);
-  if (!job) return null;
+  if (!job) {
+    // _leaseJobs is in-memory only, so a reload — or any path that loses the
+    // entry — used to make this a silent no-op. Every lifecycle write goes
+    // through here, including finalizeLeaseJob and failLeaseJob, so a job could
+    // record neither its completion nor its failure and sat at 'processing'
+    // forever with no error_message. Write straight through instead: the
+    // database, not a Map, is what has to end up correct.
+    _trackJobLiveness(jobId, updates);
+    _syncJobToDb({ id: jobId, ...updates, updated_at: new Date().toISOString() }, opts);
+    return null;
+  }
+  _trackJobLiveness(jobId, updates);
   Object.assign(job, updates, { updated_at: new Date().toISOString() });
-  _syncJobToDb(job);
+  _syncJobToDb(job, opts);
   return job;
 }
 
-function _syncJobToDb(job) {
+// Every lifecycle write passes through updateLeaseJob, so the watchdog is armed
+// and cleared there rather than at each call site — a new stage cannot forget it.
+function _trackJobLiveness(jobId, updates) {
+  if (!jobId || !updates) return;
+  if (updates.status && _TERMINAL_JOB_STATUSES.has(updates.status)) _clearJobWatchdog(jobId);
+  else if (updates.status || updates.stage) _armJobWatchdog(jobId);
+}
+
+// Returns a promise resolving true on a successful write. `terminal` marks the
+// one write we cannot afford to lose — a job's final status — and retries it
+// once, because leaving a finished job looking like a running one is the
+// failure this whole path exists to prevent.
+function _syncJobToDb(job, { terminal = false } = {}) {
   // Strip in-memory-only fields before sending to Supabase
   const row = Object.fromEntries(Object.entries(job).filter(([k]) => !k.startsWith('_')));
-  db.from('lease_jobs').upsert(row).then(({ error }) => {
-    if (error) logError('lease_job_sync', error, { jobId: job.id, stage: job.stage });
-  });
+  const ctx = { jobId: job.id, stage: job.stage, terminal };
+  return Promise.resolve(db.from('lease_jobs').upsert(row))
+    .then(({ error } = {}) => {
+      if (!error) return true;
+      logError('lease_job_sync', error, ctx);
+      if (!terminal) return false;
+      return Promise.resolve(db.from('lease_jobs').upsert(row))
+        .then(({ error: retryError } = {}) => {
+          if (retryError) logError('lease_job_sync_retry', retryError, ctx);
+          return !retryError;
+        });
+    })
+    .catch(e => { logError('lease_job_sync', e, ctx); return false; });
+}
+
+// Terminal statuses. A job in any other state is still considered in flight.
+const _TERMINAL_JOB_STATUSES = new Set(['completed', 'review_required', 'failed']);
+
+// A job that never reaches a terminal state is indistinguishable from one still
+// running, so the watchdog guarantees an outcome even when the pipeline stops
+// without throwing. Re-armed on every non-terminal update, cleared on terminal.
+const _jobWatchdogs   = new Map();
+
+// Derived from the longest single bounded operation, not guessed. The slowest
+// call in the pipeline is extractTextFromPdfDirect at 85s, and /api/explain
+// carries maxDuration 90 — so one legitimate request can occupy ~90s.
+//
+// The watchdog measures time since the last sign of life, NOT total job
+// duration, so it must exceed one bounded call plus margin — never the whole
+// run. A chunked vision extraction issues several of these sequentially and can
+// legitimately exceed any fixed total; that is why _touchJobWatchdog() is
+// called on every ingestion telemetry mark, so each completed batch resets the
+// clock. Without that heartbeat this would kill a large scanned lease mid-run.
+const JOB_WATCHDOG_MS = 240000;   // 4 min of *silence*, ≈2.6× one bounded call
+
+function _clearJobWatchdog(jobId) {
+  const t = _jobWatchdogs.get(jobId);
+  if (t) { clearTimeout(t); _jobWatchdogs.delete(jobId); }
+}
+
+// A watchdog lives in the page, so it dies with the page. The whole ingestion
+// pipeline is client-side, and a backgrounded or discarded tab takes every
+// in-flight promise with it — no throw, no terminal call, and a job left at
+// 'processing' forever. This sweep runs at startup and closes those out, which
+// is the only point at which they can be observed at all.
+const JOB_STALE_MS = 15 * 60 * 1000;
+
+async function _reapStaleLeaseJobs() {
+  if (!db) return { reaped: 0 };
+  const cutoffMs = Date.now() - JOB_STALE_MS;
+  try {
+    // Deliberately only .select().in() — the age filter is applied in JS rather
+    // than with .lt(). The set of in-flight jobs is tiny, and keeping the query
+    // surface minimal means a startup sweep cannot become a source of console
+    // errors on any client whose builder differs.
+    const { data, error } = await db.from('lease_jobs')
+      .select('id,status,stage,updated_at')
+      .in('status', ['queued', 'processing']);
+    if (error) { console.warn('[reapStaleLeaseJobs] lookup failed:', error.message); return { reaped: 0, error: error.message }; }
+    const stale = (data || []).filter(j =>
+      j && j.updated_at && new Date(j.updated_at).getTime() < cutoffMs);
+    for (const job of stale) {
+      _clearJobWatchdog(job.id);
+      await failLeaseJob(job.id, new Error(
+        'Ingestion did not complete — the browser tab closed or was suspended before the lease finished processing. Re-upload to try again.'
+      ), job.stage || 'extraction');
+    }
+    if (stale.length) console.warn(`[reapStaleLeaseJobs] closed out ${stale.length} abandoned job(s)`);
+    return { reaped: stale.length };
+  } catch (e) {
+    // A sweep failure is housekeeping, not user-facing — warn, never logError,
+    // which surfaces as a console error group on every app load.
+    console.warn('[reapStaleLeaseJobs] skipped:', e?.message);
+    return { reaped: 0, error: e?.message };
+  }
+}
+
+// Re-arms the watchdog for whichever job is in flight. Long operations that make
+// no stage transition — a multi-batch vision extraction, a slow API call — call
+// this to prove they are still working.
+function _touchJobWatchdog() {
+  for (const jobId of Array.from(_jobWatchdogs.keys())) _armJobWatchdog(jobId);
+}
+
+function _armJobWatchdog(jobId) {
+  _clearJobWatchdog(jobId);
+  _jobWatchdogs.set(jobId, setTimeout(() => {
+    _jobWatchdogs.delete(jobId);
+    failLeaseJob(jobId, new Error(
+      `Ingestion stopped responding — no terminal state within ${Math.round(JOB_WATCHDOG_MS / 1000)}s.`
+    ), 'extraction');
+  }, JOB_WATCHDOG_MS));
 }
 
 function failLeaseJob(jobId, err, stage) {
-  updateLeaseJob(jobId, {
+  // Every diagnostic column is written on failure. Leaving confidence_level and
+  // extraction_route null made a failed job unreadable after the fact — the
+  // columns needed to explain the failure were the ones not being set.
+  return updateLeaseJob(jobId, {
     status:                  'failed',
     stage:                   stage || 'extraction',
     progress:                _JOB_STAGES[stage]?.progress ?? 0,
     error_message:           err?.message || String(err),
+    confidence_level:        'failed',
+    confidence_score:        0,
+    extraction_route:        _lastIngestTelemetry?.path === 'text' ? 'text'
+                             : _lastIngestTelemetry?.path ? 'pdf-direct' : 'unknown',
     processing_completed_at: new Date().toISOString(),
     // Capture which ingestion path was in flight when it failed — the key
     // signal for "are large scans still failing?".
     debug_summary:           { ingest: _lastIngestTelemetry || null },
-  });
+  }, { terminal: true });
 }
 
 // Returns true if the tenant row requires manual review before Supabase persistence.
@@ -4268,7 +4443,7 @@ function finalizeLeaseJob(jobId, { norm, conf, meta, tenantId }) {
       // finer-grained path is here.
       ingest:          _lastIngestTelemetry || null,
     },
-  });
+  }, { terminal: true });
   return needsReview;
 }
 
@@ -4322,11 +4497,104 @@ async function retryLeaseJob(jobId) {
 
   if (prop) prop.tenants = [...tenantData];
   renderBulkResults();
+  // Same reason as handleBulkLeases: a retry runs the pipeline, which can change
+  // which tenant ids exist, and the Spaces buttons carry those ids.
+  try {
+    if (prop && window.TenantSpace && window.TenantSpace.renderList) window.TenantSpace.renderList(prop);
+  } catch (e) { console.warn('[retryLeaseJob] spaces list refresh skipped:', e && e.message); }
 }
 
 // Core extraction pipeline — extracted from processFile so retryLeaseJob can also call it.
 // Writes tenantData[placeholderIdx] on completion (success or failure).
 // Ghost-row protection: sets _pendingJobReview=true for low/failed confidence.
+
+
+// Dual-writes the snapshots the normalizer built during extraction to the
+// normalized evidence table. Fail-silent and non-blocking: evidence is
+// supporting material, and losing it must never fail an upload. The JSON blob
+// remains the fallback the Evidence Viewer reads from in-session.
+function _persistExtractedEvidence(propId, tenantId, fieldEvidence) {
+  if (!propId || !tenantId || !fieldEvidence) return 0;
+  var written = 0;
+  Object.keys(fieldEvidence).forEach(function (fieldKey) {
+    var snaps = fieldEvidence[fieldKey] && fieldEvidence[fieldKey].snapshots;
+    if (!Array.isArray(snaps) || !snaps.length) return;
+    var latest = snaps[snaps.length - 1];
+    if (!latest || (!latest.quote && latest.page == null)) return;  // nothing citable
+    try { _writeTenantFieldEvidence(propId, tenantId, fieldKey, latest); written++; }
+    catch (e) { console.warn('[evidence] ' + fieldKey + ' not written:', e && e.message); }
+  });
+  if (written) console.log('[evidence] persisted ' + written + ' extracted snapshot(s) — pending review');
+  return written;
+}
+
+// ─── Tenant matching for lease uploads ───────────────────────────────────────
+// An upload used to append a new tenant unconditionally, so re-uploading a
+// lease for an existing tenant produced a duplicate — the lease landed on a
+// record nothing else pointed at, and surfaces keyed to the original tenant
+// reported no lease on file.
+//
+// Order is deliberate. A suite holds one tenant at a time, which makes it the
+// strongest signal in commercial property; a legal name ("Whole Health Market,
+// Inc") routinely differs from the display name ("Whole Health Market"), so it
+// is the fallback. Anything ambiguous is never merged automatically: a wrong
+// merge silently corrupts CAM allocation across two real tenants and is far
+// worse than a visible duplicate.
+
+const _TENANT_SUFFIXES = /\b(inc|incorporated|llc|l\.l\.c|ltd|limited|corp|corporation|co|company|lp|llp|plc|gmbh|pllc)\b/g;
+
+function _normalizeTenantName(name) {
+  return String(name || '')
+    .toLowerCase()
+    // Periods are dropped, not spaced: "L.L.C." must become "llc" so the suffix
+    // pattern can see it. Spacing them yields "l l c", which matches nothing.
+    .replace(/\./g, '')
+    .replace(/[,'’`"()]/g, ' ')
+    .replace(/&/g, ' and ')
+    .replace(_TENANT_SUFFIXES, ' ')
+    .replace(/[^a-z0-9\s]/g, ' ')
+    .replace(/\s+/g, ' ')
+    .trim();
+}
+
+function _normalizeSuite(suite) {
+  return String(suite || '')
+    .toLowerCase()
+    .replace(/\b(suite|ste|unit|space|no|#)\b/g, ' ')
+    .replace(/[^a-z0-9]/g, '')
+    .trim();
+}
+
+/**
+ * Finds the existing tenant an uploaded lease belongs to.
+ * Returns { index, basis } for a confident match, { ambiguous, candidates } when
+ * more than one tenant fits, or null when it is genuinely a new tenant.
+ * `skipIdx` is the upload's own placeholder, which must never match itself.
+ */
+function findTenantMatch(tenants, incoming, skipIdx) {
+  const list = (tenants || []).map((t, i) => ({ t, i }))
+    .filter(({ t, i }) => t && i !== skipIdx && !t.leaseExpected && (t.tenant_name || t.unitNumber || t.suite));
+  if (!list.length) return null;
+
+  // 1 — suite/unit within the property.
+  const suite = _normalizeSuite(incoming?.suite || incoming?.unitNumber);
+  if (suite) {
+    const hits = list.filter(({ t }) => _normalizeSuite(t.suite || t.unitNumber) === suite);
+    if (hits.length === 1) return { index: hits[0].i, basis: 'suite' };
+    if (hits.length > 1)   return { ambiguous: true, basis: 'suite', candidates: hits.map(h => h.i) };
+  }
+
+  // 2 — normalized tenant name.
+  const name = _normalizeTenantName(incoming?.tenant_name);
+  if (name) {
+    const hits = list.filter(({ t }) => _normalizeTenantName(t.tenant_name) === name);
+    if (hits.length === 1) return { index: hits[0].i, basis: 'name' };
+    if (hits.length > 1)   return { ambiguous: true, basis: 'name', candidates: hits.map(h => h.i) };
+  }
+
+  return null;
+}
+
 async function _runLeaseJobPipeline(jobId, placeholderIdx) {
   const job = _leaseJobs.get(jobId);
   if (!job) { console.error('[_runLeaseJobPipeline] job not found:', jobId); return; }
@@ -4477,6 +4745,21 @@ async function _runLeaseJobPipeline(jobId, placeholderIdx) {
     const needsJobReview = _conf.level === 'low' || _conf.level === 'failed';
 
     const finalEntry = {
+      // Derive from the normalizer's full output. This was previously a
+      // hand-written list of fields, and anything absent from it was silently
+      // discarded on the way to persistence — audit_rights, fieldEvidence,
+      // admin_fee_pct, gross_up_pct, expense_stop, excluded_categories,
+      // pro_rata_method and renewal_options all extracted correctly and then
+      // vanished here, which is why the validator reported "audit rights are
+      // not addressed" for a lease that plainly granted them.
+      //
+      // Everything below this spread intentionally overrides it: explicit
+      // defaults, UI state, and the job/file identity the normalizer knows
+      // nothing about. Adding a field to the extraction contract now carries it
+      // through automatically; test-tenant-field-preservation.js fails if this
+      // reverts to enumerating fields by hand.
+      ...(norm || {}),
+
       tenant_name:          resolvedName || null,
       leased_sqft:          norm?.leased_sqft        ?? null,
       start_date:           norm?.start_date         ?? null,
@@ -4506,16 +4789,52 @@ async function _runLeaseJobPipeline(jobId, placeholderIdx) {
       id:                   jobId,
       _jobId:               jobId,
       property_name:        norm?.property_name      ?? null,
-      // WHY carried over explicitly: norm._edgeCases/_explainability/_modelRouting were
-      // computed above (LEASE INTELLIGENCE block) but finalEntry is a fresh object literal,
-      // not a spread of norm — without this they were silently discarded and never reached
-      // the rendered tenant row, making detectLeaseEdgeCases() a no-op for bulk uploads.
+      // These three now also arrive via the spread above; kept explicit so the
+      // defaults hold when the LEASE INTELLIGENCE block did not run.
       _edgeCases:           norm?._edgeCases          ?? null,
       _explainability:      norm?._explainability     ?? null,
       _modelRouting:        norm?._modelRouting       ?? null,
     };
 
-    tenantData[placeholderIdx] = finalEntry;
+    // Link to an existing tenant rather than appending a duplicate. The existing
+    // record's id is preserved so everything already pointing at it — spaces,
+    // timeline events, disputes, reconciliation results — stays attached.
+    const _match = findTenantMatch(tenantData, finalEntry, placeholderIdx);
+    if (_match && _match.index != null) {
+      const _existing = tenantData[_match.index];
+      tenantData[_match.index] = {
+        ...(_existing || {}), ...finalEntry,
+        id:     _existing?.id     || finalEntry.id,
+        _jobId: finalEntry._jobId,
+        _linkedBy: _match.basis,
+      };
+      tenantData.splice(placeholderIdx, 1);   // drop the placeholder
+      console.log(`[tenantMatch] linked "${finalEntry.tenant_name}" to existing tenant by ${_match.basis}`);
+    } else if (_match && _match.ambiguous) {
+      // Two or more tenants fit. Never guess — keep it separate and flag it.
+      finalEntry._needsTenantConfirm = { basis: _match.basis, candidates: _match.candidates };
+      tenantData[placeholderIdx] = finalEntry;
+      console.warn(`[tenantMatch] ambiguous by ${_match.basis} — left unlinked for confirmation`);
+    } else {
+      tenantData[placeholderIdx] = finalEntry;
+    }
+
+    // Persist the evidence the extraction produced. The normalizer already
+    // builds complete snapshots from the model's `quotes` — verbatim clause,
+    // extraction model, timestamp — and marks them confidence 'estimated' /
+    // 'AI-extracted', approved:false, with no reviewer attributed. Nothing was
+    // writing them to tenant_field_evidence, so the table stayed empty and the
+    // Evidence Viewer could only ever cite a field a human had already touched.
+    //
+    // These are deliberately NOT approved. A citation becomes available
+    // immediately, carrying its own pending-review state, so the viewer can show
+    // the clause while making clear no one has confirmed it yet.
+    try {
+      const _linkedId = (_match && _match.index != null)
+        ? (tenantData[_match.index] && tenantData[_match.index].id)
+        : finalEntry.id;
+      _persistExtractedEvidence(propertyId, _linkedId, finalEntry.fieldEvidence);
+    } catch (e) { console.warn('[evidence] extraction snapshots not persisted:', e && e.message); }
     storeLeaseFile(jobId, file);
 
     _leaseDebug.set(jobId, {
@@ -4650,6 +4969,16 @@ async function handleBulkLeases(fileList) {
     _progUpdate();
     property.tenants = [...tenantData];
     renderBulkResults();
+    // The Spaces cards bake tenant ids into their "Open space" buttons, and the
+    // pipeline can change which ids exist: a matched upload writes onto the
+    // existing tenant's id and splices the placeholder out. Without this the
+    // buttons keep pointing at the placeholder id, openSpace() finds nothing,
+    // and the modal reports "No lease on file" for a space whose card is
+    // showing the very terms it claims are missing. renderBulkResults() only
+    // refreshes the upload panel, not this list.
+    try {
+      if (window.TenantSpace && window.TenantSpace.renderList) window.TenantSpace.renderList(property);
+    } catch (e) { console.warn('[bulkLeases] spaces list refresh skipped:', e && e.message); }
   };
 
   for (let i = 0; i < files.length; i += BATCH_SIZE) {
@@ -8043,6 +8372,21 @@ async function handleExplain(button, fn) {
   }
 }
 
+// Maps an invoice to the records that could substantiate it, so AI evidence
+// chips link to what exists and honestly flag what doesn't. Never fabricates a
+// source: a chip is only "live" when a real url/record is present.
+function _explainSourcesForInvoice(inv) {
+  const src = {};
+  try {
+    if (inv && inv.fileUrl) src['invoice'] = { url: inv.fileUrl, label: inv.fileName || 'Invoice' };
+    // A lease clause is available when the disputing tenant's lease is on file.
+    const prop = currentProperty();
+    const t = (prop && prop.tenants || []).find(x => x && (x.leaseUrl || x.lease_url));
+    if (t) src['lease clause'] = { url: t.leaseUrl || t.lease_url, label: 'Lease' };
+  } catch (_) {}
+  return src;
+}
+
 async function explainCharge(i) {
   const inv = invoiceData[i];
   if (!inv) return;
@@ -8070,8 +8414,14 @@ async function explainCharge(i) {
       expl.className = 'inv-explain-box';
       det.appendChild(expl);
     }
-    const mdHtml = renderMarkdown(text);
-    expl.innerHTML = `<strong>AI Review</strong><div class="expl-preview">${mdHtml}</div><button class="expl-readmore" onclick="var p=this.previousElementSibling;p.classList.toggle('expanded');this.textContent=p.classList.contains('expanded')?'Show less \u25b2':'Read full explanation \u25be'">Read full explanation &#x25BE;</button>`;
+    // Scannable, cited rendering. Sources let an evidence chip become a live
+    // link when the record is actually on file; otherwise it stays an honest
+    // "not on file" placeholder rather than a dead link.
+    const _aiSources = _explainSourcesForInvoice(inv);
+    const mdHtml = (window.AIExplanation)
+      ? window.AIExplanation.render(text, { sources: _aiSources })
+      : renderMarkdown(text);
+    expl.innerHTML = `<strong>AI Review</strong>${mdHtml}`;
     det.style.display = 'block';
     const _chevX = document.getElementById(`ichev-${i}`);
     if (_chevX) _chevX.innerHTML = '&#x25B2; Close';
@@ -9375,6 +9725,19 @@ async function runAllocation() {
     console.log('prop.invoices[0]:', JSON.parse(JSON.stringify(_snapProp.invoices?.[0] || {})));
     console.log('results[0].includedInvoices[0]:', JSON.parse(JSON.stringify(_snapProp.camReconciliation.results?.[0]?.includedInvoices?.[0] || {})));
     console.groupEnd();
+    // Property OS (move #2): the reconciliation becomes part of the property's
+    // story. Logged before this save so it persists with the snapshot. Guarded —
+    // never let timeline logging interfere with the reconciliation itself.
+    try {
+      const _n = (fullResults || []).length;
+      appendPropertyTimelineEvent(_snapProp, {
+        type: 'cam_reconciled', severity: 'success',
+        title: 'CAM reconciled — ' + getCamYear(),
+        description: _n + ' tenant' + (_n !== 1 ? 's' : '') + ' · ' + fmt(totalCost) + ' in expenses',
+        metadata: { year: getCamYear(), totalExpenses: totalCost, tenants: _n },
+        actor: 'Property Manager',
+      });
+    } catch (_e) { console.warn('[timeline] cam_reconciled emit skipped:', _e && _e.message); }
     await saveProperty(_snapProp);
   }
 
@@ -11959,10 +12322,24 @@ async function confirmDocsRequest(id) {
   await resolveDispute(id, 'docs_requested');
 }
 
+// Dispute lifecycle. Requesting documentation is a waypoint, not an ending:
+// once the documentation arrives the dispute still has to be decided, so
+// docs_requested must lead on to accepted or rejected. accepted and rejected
+// are terminal — a decided dispute is not re-decided.
+const DISPUTE_TRANSITIONS = {
+  open:            ['docs_requested', 'accepted', 'rejected'],
+  docs_requested:  ['accepted', 'rejected'],
+  accepted:        [],
+  rejected:        [],
+};
+
 async function resolveDispute(id, resolution) {
   const d = disputes.find(x => x.id === id);
-  if (!d || d.status !== 'open') return;
+  if (!d) return;
+  const allowed = DISPUTE_TRANSITIONS[d.status];
+  if (!allowed || !allowed.includes(resolution)) return;
 
+  const fromStatus = d.status;
   d.status     = resolution;
   d.resolvedAt = new Date().toISOString();
   if (!d.history) d.history = [];
@@ -11970,7 +12347,7 @@ async function resolveDispute(id, resolution) {
     action:     resolution === 'docs_requested' ? 'docs_requested' : 'resolved',
     by:         'Reviewer',
     at:         d.resolvedAt,
-    fromStatus: 'open',
+    fromStatus,
     toStatus:   resolution,
   });
   {
@@ -11994,19 +12371,24 @@ async function resolveDispute(id, resolution) {
         relatedDisputeIds: [id] }); }
   }
 
-  // Hash the full dispute record for tamper-detection audit trail
-  d.hash = await sha256({
-    id:          d.id,
-    tenantName:  d.tenantName,
-    invoiceId:   d.invoiceId,
-    vendor:      d.vendor,
-    category:    d.category,
-    tenantShare: d.tenantShare,
-    reason:      d.reason,
-    timestamp:   d.timestamp,
-    resolution:  d.resolution,
-    resolvedAt:  d.resolvedAt,
-  });
+  // Hash the full dispute record for tamper-detection audit trail — only once
+  // the dispute is actually decided. Requesting documentation is not a
+  // decision, and the Dispute Packet says so in as many words: "Audit
+  // fingerprint — generated when the dispute is resolved."
+  if (resolution !== 'docs_requested') {
+    d.hash = await sha256({
+      id:          d.id,
+      tenantName:  d.tenantName,
+      invoiceId:   d.invoiceId,
+      vendor:      d.vendor,
+      category:    d.category,
+      tenantShare: d.tenantShare,
+      reason:      d.reason,
+      timestamp:   d.timestamp,
+      resolution:  d.resolution,
+      resolvedAt:  d.resolvedAt,
+    });
+  }
 
   renderOpenDisputes();
   _refreshDisputeCountUI();
@@ -12045,6 +12427,10 @@ function _dwRenderAll(disputeId) {
   const typeInfo = _DISPUTE_TYPES[d.disputeType] || null;
   const sevInfo  = _DISPUTE_SEV[d.severity || 'medium'] || _DISPUTE_SEV.medium;
   const isOpen   = d.status === 'open';
+  // Which decisions are still available, straight from the lifecycle table, so
+  // the panel and the engine can never disagree about what is allowed.
+  const nextStates = DISPUTE_TRANSITIONS[d.status] || [];
+  const canDecide  = nextStates.length > 0;
   const statusMap = { open: 'Open', accepted: 'Accepted', rejected: 'Rejected', docs_requested: 'Docs Requested' };
   const statusCls = { open: 'dw-status-open', accepted: 'dw-status-accepted', rejected: 'dw-status-rejected', docs_requested: 'dw-status-docs' };
 
@@ -12063,14 +12449,14 @@ function _dwRenderAll(disputeId) {
       </div>
     </div>`).join('') : '<div class="dw-hist-empty">No history recorded yet.</div>';
 
-  const resolveSection = isOpen ? `
+  const resolveSection = canDecide ? `
     <div class="dw-section">
-      <div class="dw-section-title">Resolve Dispute</div>
+      <div class="dw-section-title">${isOpen ? 'Resolve Dispute' : 'Documentation requested \u2014 decide when it arrives'}</div>
       <textarea id="dwResolveNote-${d.id}" class="dw-note-input" rows="2" placeholder="Resolution note (optional)…"></textarea>
       <div class="dw-resolve-btns">
-        <button class="dw-res-btn dw-res-accept" onclick="_dwResolveWithNote(${d.id},'accepted')">&#x2705; Accept</button>
-        <button class="dw-res-btn dw-res-reject" onclick="_dwResolveWithNote(${d.id},'rejected')">&#x274C; Reject</button>
-        <button class="dw-res-btn dw-res-docs"   onclick="_dwResolveWithNote(${d.id},'docs_requested')">&#x1F4C4; Request Docs</button>
+        ${nextStates.includes('accepted') ? `<button class="dw-res-btn dw-res-accept" onclick="_dwResolveWithNote(${d.id},'accepted')">&#x2705; Accept</button>` : ''}
+        ${nextStates.includes('rejected') ? `<button class="dw-res-btn dw-res-reject" onclick="_dwResolveWithNote(${d.id},'rejected')">&#x274C; Reject</button>` : ''}
+        ${nextStates.includes('docs_requested') ? `<button class="dw-res-btn dw-res-docs"   onclick="_dwResolveWithNote(${d.id},'docs_requested')">&#x1F4C4; Request Docs</button>` : ''}
       </div>
     </div>` : `
     <div class="dw-resolved-banner dw-resolved-${d.status}">
@@ -13600,7 +13986,7 @@ function _rptHeader(propName, reportType, period, now, extra = []) {
       <span>${esc(String(m.value))}</span>
     </div>`).join('');
   return `<div class="rpt-cover">
-    <div class="rpt-cover-brand">Mainstreet CAM Platform</div>
+    <div class="rpt-cover-brand">MainStreet CAM Platform</div>
     <div class="rpt-cover-title">${esc(propName)}</div>
     <div class="rpt-cover-type">${esc(reportType)}</div>
     <div class="rpt-cover-meta">${metaItems}</div>
@@ -13609,7 +13995,7 @@ function _rptHeader(propName, reportType, period, now, extra = []) {
 
 function _rptFooter(propName, reportType, now) {
   return `<div class="rpt-footer">
-    <span class="rpt-footer-brand">Mainstreet CAM Platform</span>
+    <span class="rpt-footer-brand">MainStreet CAM Platform</span>
     <span>${esc(propName)} &nbsp;&middot;&nbsp; ${esc(reportType)}</span>
     <span>Generated ${esc(now)}</span>
   </div>`;
@@ -14511,7 +14897,10 @@ async function runLandlordAIReview() {
           }],
         }, { timeoutMs: PER_CALL_TIMEOUT_MS });
         const text = data?.content?.[0]?.text || 'No review available.';
-        html += `<div class="ai-inv-review"><strong>${esc(inv.vendorName)} — ${fmt(parseFloat(inv.amount))}</strong>${renderMarkdown(text)}</div>`;
+        const _revHtml = (window.AIExplanation)
+          ? window.AIExplanation.render(text, { sources: _explainSourcesForInvoice(inv) })
+          : renderMarkdown(text);
+        html += `<div class="ai-inv-review"><strong>${esc(inv.vendorName)} — ${fmt(parseFloat(inv.amount))}</strong>${_revHtml}</div>`;
         anyOk = true;
       } catch (e) {
         html += `<div class="ai-inv-review"><strong>${esc(inv.vendorName)}</strong>Review unavailable: ${esc(e.message)}</div>`;
@@ -14619,6 +15008,22 @@ function generateDisputePacket(disputeId) {
       <div class="rpt-kpi"><div class="kpi-val">${d.tenantShare != null ? fmt(parseFloat(d.tenantShare)) : '—'}</div><div class="kpi-lbl">Disputed Amount</div></div>
     </div>
 
+    <div class="rpt-section-title">Executive Summary</div>
+    <div class="rpt-exec">
+      <p class="rpt-exec-p">${esc(d.tenantName || 'The tenant')} has disputed
+      ${d.tenantShare != null ? `<b>${fmt(parseFloat(d.tenantShare))}</b>` : 'a charge'}
+      allocated from ${esc(d.vendor || 'a vendor')}${d.category ? ` (${esc(d.category)})` : ''}
+      for the ${camYear} CAM year. The dispute is classified as
+      <b>${esc(typeLabel)}</b> at <b>${esc(sevLabel)}</b> severity and is currently
+      <b>${esc(statusMap[d.status] || d.status)}</b>${d.resolvedAt ? ` as of ${fmtTs(d.resolvedAt)}` : ''}.</p>
+      ${d.resolution ? `<p class="rpt-exec-p"><b>Resolution:</b> ${esc(d.resolution)}</p>` : ''}
+      <div class="rpt-exec-meta">
+        <span><b>Filed</b> ${fmtTs(d.timestamp)}</span>
+        <span><b>Property</b> ${esc(propName)}</span>
+        <span><b>Prepared</b> ${esc(now)}</span>
+      </div>
+    </div>
+
     <div class="rpt-section-title">Tenant Reason</div>
     <div class="rpt-narrative-box">&ldquo;${esc(d.reason || '—')}&rdquo;</div>
 
@@ -14646,12 +15051,37 @@ function generateDisputePacket(disputeId) {
       <tbody>${histRows}</tbody>
     </table>` : ''}
 
+    <div class="rpt-section-title">Evidence Index</div>
+    <table class="rpt-table rpt-evidence-index">
+      <thead><tr><th>Supporting record</th><th>Status</th><th>Reference</th></tr></thead>
+      <tbody>
+        ${[
+          { label: 'Lease clause',      has: !!d.leaseClause,        ref: d.leaseClause ? 'Cited in this packet' : 'Attach the governing lease section' },
+          { label: 'Supporting invoice',has: relatedInvs.length > 0, ref: relatedInvs.length ? `${relatedInvs.length} invoice${relatedInvs.length !== 1 ? 's' : ''} listed above` : 'Attach the vendor invoice' },
+          { label: 'Calculation basis', has: !!recon,                ref: recon ? 'Calculation breakdown included' : 'Run reconciliation to include' },
+          { label: 'Reviewer notes',    has: !!d.reviewerNote,       ref: d.reviewerNote ? 'Included in this packet' : 'No reviewer notes recorded' },
+          { label: 'Resolution history',has: (d.history || []).length > 0, ref: (d.history || []).length ? `${d.history.length} entr${d.history.length !== 1 ? 'ies' : 'y'} logged` : 'No actions logged yet' },
+          { label: 'Audit fingerprint', has: !!d.hash,               ref: d.hash ? 'SHA-256 recorded below' : 'Generated when the dispute is resolved' },
+        ].map(r => `<tr>
+          <td>${esc(r.label)}</td>
+          <td><span class="rpt-ev-flag ${r.has ? 'rpt-ev-flag--on' : 'rpt-ev-flag--off'}">${r.has ? 'On file' : 'Not attached'}</span></td>
+          <td>${esc(r.ref)}</td>
+        </tr>`).join('')}
+      </tbody>
+    </table>
+    <div class="rpt-ev-index-note">Every conclusion in this packet traces to a record above. Items marked &ldquo;Not attached&rdquo; are gaps to close before the packet is sent.</div>
+
     ${d.hash ? `
     <div class="rpt-section-title">Audit Fingerprint</div>
     <div class="rpt-hash-box">
       <div class="rpt-hash-lbl">&#x1F512; Tamper-Detection Hash (SHA-256)</div>
       <div class="rpt-hash-val">${d.hash}</div>
     </div>` : ''}
+
+    <div class="rpt-signoff">
+      <div class="rpt-signoff-col"><div class="rpt-signoff-lbl">Prepared by</div><div class="rpt-signoff-line"></div><div class="rpt-signoff-sub">Property Manager &nbsp;·&nbsp; ${esc(propName)}</div></div>
+      <div class="rpt-signoff-col"><div class="rpt-signoff-lbl">Date</div><div class="rpt-signoff-line"></div><div class="rpt-signoff-sub">${esc(now)}</div></div>
+    </div>
 
     ${_rptFooter(propName, 'Dispute Packet', now)}`;
 
@@ -15275,9 +15705,19 @@ async function ensureDemoProperty() {
     {
       id: _DEMO_TENANT_IDS[0], tenant_name: 'Whole Health Market',
       leased_sqft: '9200', cap: '5', capBaseAmount: '33000',
-      excluded_categories: '', audit_rights: '90 days from reconciliation',
+      // Boolean per the extraction contract (true | false | null). The ninety-day
+      // window is in the lease itself at section 7.1, not in this field — a
+      // string here normalises to false and silently strips the right.
+      excluded_categories: '', audit_rights: true,
       start_date: '2021-01-01', end_date: '2028-12-31', lease_type: 'NNN',
       admin_fee_pct: null,
+      // The source document of record. Every term above appears verbatim in it
+      // (test-demo-lease.js asserts that), so a citation resolves to real text
+      // on a real page. Attaching the document is NOT the same as seeding
+      // evidence: fieldEvidence stays empty and is populated only by running
+      // the lease through the normal ingestion pipeline. See docs/DEMO_LEASE.md.
+      leaseUrl: 'assets/demo/lease-whole-health-market.pdf',
+      leaseFileName: 'Lease — Whole Health Market.pdf',
       _confidenceScore: 94, _confidence: 'high',
       confidence: { tenantName:98, leasedSqft:97, capPercentage:95, leaseType:96 },
     },
@@ -15293,7 +15733,10 @@ async function ensureDemoProperty() {
     {
       id: _DEMO_TENANT_IDS[2], tenant_name: 'ProActive Physical Therapy',
       leased_sqft: '4400', cap: '6', capBaseAmount: '13000',
-      excluded_categories: 'management', audit_rights: '45 days from reconciliation',
+      // No lease document backs this tenant, so the field stays null ("not
+      // addressed") rather than asserting a right we cannot cite. A string here
+      // would violate the boolean contract, as it did before.
+      excluded_categories: 'management', audit_rights: null,
       start_date: '2022-07-01', end_date: '2027-06-30', lease_type: 'Modified Gross',
       admin_fee_pct: null,
       _confidenceScore: 88, _confidence: 'high',
@@ -17263,7 +17706,7 @@ function exportPortfolioSummary() {
   </div>
   ${topRisksSection}${pipelineSection}${forecastSection}${propSection}
   <div class="footer">
-    <span>Mainstreet &nbsp;·&nbsp; Portfolio Executive Summary</span>
+    <span>MainStreet &nbsp;·&nbsp; Portfolio Executive Summary</span>
     <span>Generated ${today}</span>
   </div>
 </body>
@@ -17512,6 +17955,21 @@ function rebuildDerivedState(property, { appendTimeline = false } = {}) {
   }
 }
 
+// Append a timeline event at most once. Every workflow emitter routes through
+// this so re-running a flow (re-upload, re-render, reload) cannot duplicate the
+// property's history. The key is stored in metadata so the check survives a
+// Supabase round-trip.
+function appendPropertyTimelineEventOnce(property, dedupeKey, event) {
+  if (!property || !dedupeKey) return null;
+  try {
+    const existing = (property.timeline || []).some(e => e && e.metadata && e.metadata.dedupeKey === dedupeKey);
+    if (existing) return null;
+  } catch (_) { /* fall through — better one event than none */ }
+  const ev = Object.assign({}, event);
+  ev.metadata = Object.assign({}, event.metadata || {}, { dedupeKey });
+  return appendPropertyTimelineEvent(property, ev);
+}
+
 function appendPropertyTimelineEvent(property, event) {
   if (!property || !event) return null;
   if (!Array.isArray(property.timeline)) property.timeline = [];
@@ -17532,6 +17990,28 @@ function appendPropertyTimelineEvent(property, event) {
     relatedDisputeIds:   Array.isArray(event.relatedDisputeIds)   ? event.relatedDisputeIds   : [],
     relatedInvoiceIds:   Array.isArray(event.relatedInvoiceIds)   ? event.relatedInvoiceIds   : [],
     derivedStateVersion: event.derivedStateVersion ?? property.derivedStateVersion ?? null,
+    // Property Timeline v1 (Phase 2) — manager logbook fields. Additive: existing
+    // events default these to empty/na, so nothing about prior behavior changes.
+    manual:              event.manual === true,
+    category:            event.category ?? null,
+    responsibility:      (['landlord','tenant','shared','na'].includes(event.responsibility) ? event.responsibility : 'na'),
+    leaseRef:            (typeof event.leaseRef === 'string' && event.leaseRef.trim()) ? event.leaseRef.trim() : null,
+    attachments:         Array.isArray(event.attachments)
+      ? event.attachments.filter(a => a && a.url).map(a => ({
+          name: String(a.name || 'attachment'),
+          url:  String(a.url),
+          kind: (['invoice','pdf','photo','file','warranty'].includes(a.kind) ? a.kind : 'file'),
+        }))
+      : [],
+    // Contextual-records room: every record declares the real-world object it
+    // belongs to. Property OS scopes to a subject ("everything about Suite 210").
+    // Additive: explicit subject wins; else a tenant space (suite) when tenantId
+    // is present; else the property itself. Building/Asset are future subject types.
+    subject:             (event.subject && event.subject.type)
+      ? { type: event.subject.type, id: event.subject.id ?? null, label: event.subject.label ?? null }
+      : (event.tenantId
+          ? { type: 'suite',    id: event.tenantId, label: (event.subject && event.subject.label) || null }
+          : { type: 'property', id: (event.propertyId ?? property.id ?? null), label: null }),
   };
   property.timeline.push(entry);
   if (property.timeline.length > 500) property.timeline = property.timeline.slice(-500);
@@ -17582,20 +18062,67 @@ function filterPropertyActivity(group) {
   if (prop) renderPropertyActivity(prop);
 }
 
+// Property OS scope: null = all spaces (property scope); else a tenant-space
+// (suite) id. Lets a manager see "everything about Suite 210" on the timeline.
+let _tlScopeId = null;
+function filterTimelineScope(id) {
+  _tlScopeId = id || null;
+  const prop = currentProperty();
+  if (prop) renderPropertyActivity(prop);
+}
+// Opens a timeline event's supporting evidence in the Evidence Viewer —
+// document, page, and the highlighted language behind the conclusion.
+function openTimelineEvidence(eventId) {
+  try {
+    const prop = currentProperty();
+    const ev = (prop && prop.timeline || []).find(x => x && String(x.id) === String(eventId));
+    if (ev && window.DocViewer) window.DocViewer.openTimelineEvent(ev, { property: prop });
+  } catch (e) { console.warn('[timeline] evidence open failed:', e && e.message); }
+}
+
+function _tlScopeMatch(ev, id) {
+  if (!id) return true;
+  return (ev.subject && ev.subject.id === id) || ev.tenantId === id;
+}
+
 function renderPropertyActivity(property) {
   const slot = document.getElementById('propertyActivitySlot');
   if (!slot) return;
-  const tlAll = Array.isArray(property.timeline) ? property.timeline.slice().reverse() : [];
+  const _ptlAddBtn = `<button class="tl-add-btn" onclick="event.stopPropagation(); if(window.PropertyTimeline){PropertyTimeline.openAddEntry(currentProperty());}">&#x2b;&nbsp;Add</button>`;
+  const _ptlToggle = "document.getElementById('paBody').classList.toggle('ap-body--open');this.querySelector('.ap-chevron').classList.toggle('ap-chevron--open')";
+  // Clean chronological view: newest first by event timestamp (so backdated
+  // manual entries sort correctly, not by insertion order).
+  const tlAll = Array.isArray(property.timeline)
+    ? property.timeline.slice().sort((a, b) => (new Date(b.timestamp).getTime() || 0) - (new Date(a.timestamp).getTime() || 0))
+    : [];
   if (!tlAll.length) {
-    slot.innerHTML = _workspaceEmptyStateHtml('&#x1F553;',
-      'No activity has been recorded for this property yet.',
-      'Property activity will appear here as leases, invoices, reserves, and reports are created.');
+    slot.innerHTML = `<div class="ap-panel" id="propertyActivityPanel">
+      <div class="ap-header" onclick="${_ptlToggle}">
+        <div class="ap-header-left"><span class="ap-title">&#x1F4CB;&nbsp; Property Timeline</span></div>
+        <div class="ap-header-right">${_ptlAddBtn}<span class="ap-chevron ap-chevron--open">&#x25BC;</span></div>
+      </div>
+      <div id="paBody" class="ap-body ap-body--open">${_workspaceEmptyStateHtml('&#x1F553;', 'No timeline entries yet.', 'Add the first note — or activity will appear here as leases, invoices, and reports are created.')}</div>
+    </div>`;
     return;
   }
 
+  // Scope to a subject (Property = all spaces, or one tenant space) first, then
+  // apply the category chips on top of the scoped set.
+  const _tlScoped = _tlScopeId ? tlAll.filter(ev => _tlScopeMatch(ev, _tlScopeId)) : tlAll;
   const tl = _propertyActivityFilter === 'all'
-    ? tlAll
-    : tlAll.filter(ev => _activityGroupForType(ev.type) === _propertyActivityFilter);
+    ? _tlScoped
+    : _tlScoped.filter(ev => _activityGroupForType(ev.type) === _propertyActivityFilter);
+
+  // Space (subject) selector — reuses the property's tenants as the spaces.
+  const _spaces = (property.tenants || []).filter(t => t && (t.tenant_name || t.id));
+  const _scopeSelHtml = _spaces.length ? `<div class="tl-scope-bar">
+      <span class="tl-scope-label">&#x1F4CD; Space</span>
+      <select class="tl-scope-sel" onclick="event.stopPropagation()" onchange="event.stopPropagation();filterTimelineScope(this.value)">
+        <option value=""${!_tlScopeId ? ' selected' : ''}>All spaces (property)</option>
+        ${_spaces.map(t => `<option value="${esc(t.id)}"${_tlScopeId === t.id ? ' selected' : ''}>${esc(t.tenant_name || t.id)}</option>`).join('')}
+      </select>
+      ${_tlScopeId ? `<button class="tl-open-space" onclick="event.stopPropagation(); if(window.TenantSpace){TenantSpace.openSpace('${_tlScopeId}');}">Open space &#x2192;</button>` : ''}
+    </div>` : '';
 
   const _SEVERITY_DOT = { critical: 'tl-dot--red', warning: 'tl-dot--yellow', success: 'tl-dot--green', info: 'tl-dot--blue' };
   const _SEVERITY_ICON = { critical: '⛔', warning: '⚠', success: '✓', info: 'ℹ' };
@@ -17613,10 +18140,21 @@ function renderPropertyActivity(property) {
     try { const d = new Date(ts); return d.toLocaleDateString('en-US', { month:'short', day:'numeric', year:'numeric' }) + ' ' + d.toLocaleTimeString('en-US', { hour:'numeric', minute:'2-digit' }); }
     catch { return ts; }
   };
-  const rows = tl.slice(0, 50).map((ev, idx) => {
+  const _dayKey   = ts => { try { return new Date(ts).toDateString(); } catch { return String(ts); } };
+  const _dayLabel = ts => { try { return new Date(ts).toLocaleDateString('en-US', { weekday:'short', month:'short', day:'numeric', year:'numeric' }); } catch { return String(ts); } };
+  const _RESP_LABEL = { landlord: 'Landlord', tenant: 'Tenant', shared: 'Shared' };
+  // Registry-driven label/icon when the Property Timeline module is present;
+  // falls back to the built-in type map so existing auto-events keep rendering.
+  const _describe = ev => (window.PropertyTimeline && typeof PropertyTimeline.describe === 'function')
+    ? PropertyTimeline.describe(ev)
+    : { label: (_TYPE_LABEL[ev.type] || ev.category || ev.type), icon: null };
+  const _visible = tl.slice(0, 50);
+  let _lastDay = null;
+  const rows = _visible.map((ev, idx) => {
+    const _d     = _describe(ev);
     const dotCls = _SEVERITY_DOT[ev.severity] || 'tl-dot--blue';
-    const icon   = _SEVERITY_ICON[ev.severity] || 'ℹ';
-    const lbl    = _TYPE_LABEL[ev.type] || ev.type;
+    const icon   = _d.icon || _SEVERITY_ICON[ev.severity] || 'ℹ';
+    const lbl    = _d.label || ev.type;
     const metaStr = ev.metadata && Object.keys(ev.metadata).length
       ? Object.entries(ev.metadata).map(([k,v]) => `<span class="pa-meta-kv"><span class="pa-meta-k">${esc(k)}</span><span class="pa-meta-v">${esc(String(v))}</span></span>`).join('')
       : '';
@@ -17626,19 +18164,37 @@ function renderPropertyActivity(property) {
       ? ((property.tenants || []).find(t => t && (t.id === ev.tenantId || t.tenant_id === ev.tenantId)) || {}).tenant_name || null
       : null;
     const tenantHtml = _evTenantName ? `<span class="tl-entity">${esc(_evTenantName)}</span>` : '';
-    return `<div class="tl-item">
-      <div class="tl-track"><div class="tl-dot ${dotCls}"></div>${idx < tl.length - 1 ? '<div class="tl-line"></div>' : ''}</div>
+    const respHtml = (ev.responsibility && ev.responsibility !== 'na')
+      ? `<span class="tl-resp tl-resp--${ev.responsibility}">${esc(_RESP_LABEL[ev.responsibility] || ev.responsibility)}</span>` : '';
+    const leaseHtml = ev.leaseRef ? `<div class="tl-refline"><span class="tl-lease-ref">&#x1F4C4;&nbsp;${esc(ev.leaseRef)}</span></div>` : '';
+    const attHtml = (ev.attachments && ev.attachments.length)
+      ? `<div class="tl-attachments">` + ev.attachments.map(a => {
+          if (a.kind === 'photo') return `<a class="tl-attach tl-attach--photo" href="${esc(a.url)}" target="_blank" rel="noopener" title="${esc(a.name)}"><img class="tl-thumb" src="${esc(a.url)}" alt="${esc(a.name)}" loading="lazy"></a>`;
+          const _ic = a.kind === 'invoice' ? '&#x1F9FE;' : (a.kind === 'warranty' ? '&#x1F6E1;&#xFE0F;' : (a.kind === 'pdf' ? '&#x1F4C4;' : '&#x1F4CE;'));
+          return `<a class="tl-attach" href="${esc(a.url)}" target="_blank" rel="noopener">${_ic}&nbsp;${esc(a.name)}</a>`;
+        }).join('') + `</div>` : '';
+    let _divider = '';
+    const _dk = _dayKey(ev.timestamp);
+    if (_dk !== _lastDay) { _divider = `<div class="tl-day-divider">${esc(_dayLabel(ev.timestamp))}</div>`; _lastDay = _dk; }
+    return _divider + `<div class="tl-item">
+      <div class="tl-track"><div class="tl-dot ${dotCls}"></div>${idx < _visible.length - 1 ? '<div class="tl-line"></div>' : ''}</div>
       <div class="tl-content">
         <div class="tl-top">
           <span class="tl-type-badge">${esc(lbl)}</span>
           <span class="pa-sev-icon">${icon}</span>
           <span class="tl-title">${esc(ev.title)}</span>
+          ${respHtml}
         </div>
         ${ev.description ? `<div class="tl-detail">${esc(ev.description)}</div>` : ''}
+        ${leaseHtml}
+        ${attHtml}
         <div class="tl-meta">
           <span class="tl-ts">${fmtTs(ev.timestamp)}</span>
           ${ev.actor && ev.actor !== 'System' ? `<span class="tl-actor">${esc(ev.actor)}</span>` : ''}
           ${tenantHtml}
+          ${(window.DocViewer && DocViewer.evidenceFor && DocViewer.evidenceFor(ev, property)) ? `<button class="tl-view-btn tl-view-btn--ev" onclick="event.stopPropagation(); openTimelineEvidence('${ev.id}')">&#x1F4C4;&nbsp;Evidence</button>` : ''}
+          ${(window.PropertyTimeline && PropertyTimeline.navFor && PropertyTimeline.navFor(ev)) ? `<button class="tl-view-btn" onclick="event.stopPropagation(); if(window.PropertyTimeline){PropertyTimeline.viewSource('${ev.id}');}">View&nbsp;&#x2192;</button>` : ''}
+          ${ev.manual ? `<button class="tl-edit-btn" onclick="event.stopPropagation(); if(window.PropertyTimeline){PropertyTimeline.openEditEntry('${ev.id}');}">&#x270E;&nbsp;Edit</button>` : ''}
         </div>
         ${expand}
       </div>
@@ -17646,13 +18202,14 @@ function renderPropertyActivity(property) {
   }).join('');
 
   slot.innerHTML = `<div class="ap-panel" id="propertyActivityPanel">
-    <div class="ap-header" onclick="document.getElementById('paBody').classList.toggle('ap-body--open');this.querySelector('.ap-chevron').classList.toggle('ap-chevron--open')">
-      <div class="ap-header-left"><span class="ap-title">&#x1F4CB;&nbsp; Property Activity &mdash; ${tlAll.length} event${tlAll.length !== 1 ? 's' : ''}</span></div>
-      <div class="ap-header-right"><span class="ap-chevron">&#x25BC;</span></div>
+    <div class="ap-header" onclick="${_ptlToggle}">
+      <div class="ap-header-left"><span class="ap-title">&#x1F4CB;&nbsp; Property Timeline &mdash; ${_tlScoped.length} event${_tlScoped.length !== 1 ? 's' : ''}</span></div>
+      <div class="ap-header-right">${_ptlAddBtn}<span class="ap-chevron ap-chevron--open">&#x25BC;</span></div>
     </div>
     <div id="paBody" class="ap-body ap-body--open">
+      ${_scopeSelHtml}
       <div class="tl-filter-bar">${filterChipsHtml}</div>
-      ${tl.length ? `<div class="tl-list">${rows}</div>` : `<div class="tl-detail" style="padding:6px 0">No events in this category.</div>`}
+      ${_visible.length ? `<div class="tl-list">${rows}</div>` : `<div class="tl-detail" style="padding:6px 0">${_tlScopeId ? 'No timeline entries for this space yet.' : 'No events in this category.'}</div>`}
       ${tl.length > 50 ? `<div class="tl-detail" style="padding:6px 0">Showing 50 of ${tl.length} events</div>` : ''}
     </div>
   </div>`;
@@ -19298,9 +19855,29 @@ const _LV_ADMIN_KEYWORDS = ['admin', 'administrative', 'management fee', 'mgmt f
 function _tier1LeaseChecks(tenant, totalExpenses, lineItems, reconciledAt) {
   const findings  = [];
   const today     = new Date();
-  const cap       = typeof tenant.admin_fee_pct === 'number' ? tenant.admin_fee_pct : null;
-  const auditText = tenant.audit_rights || null;
-  const adminFeeEvidence = tenant.fieldEvidence?.admin_fee_pct?.snapshots?.[0];
+  // Parse rather than type-check. admin_fee_pct arrives as a number through the
+  // extraction normalizer (_pf), but the tenant-record loader passes the stored
+  // value through untouched (script.js:1183), so a jsonb-persisted "15" reaches
+  // here as a string. A strict typeof test turns that into a confident
+  // "no cap was extracted" — a false absence, the same failure the audit rights
+  // check had.
+  const _capRaw   = tenant.admin_fee_pct;
+  const _capNum   = typeof _capRaw === 'number' ? _capRaw : parseFloat(_capRaw);
+  const cap       = Number.isFinite(_capNum) ? _capNum : null;
+  // audit_rights is a BOOLEAN by extraction contract (true | false | null).
+  // The clause text lives in the parallel quotes channel, surfaced here through
+  // the same evidence snapshot path the other checks use. Reading the day count
+  // off the boolean is what previously made this check unusable on any
+  // extracted lease.
+  const auditGranted  = tenant.audit_rights === true;
+  const auditWaived   = tenant.audit_rights === false;
+  const auditEvidence = tenant.fieldEvidence?.audit_rights?.snapshots?.slice(-1)[0];
+  const auditText     = auditEvidence?.quote || null;
+  // Latest snapshot, not the first. Snapshots are append-only, so [0] is the
+  // ORIGINAL extraction — after any re-extraction or manual correction the
+  // finding would quote superseded language beside a current number. Matches
+  // getLatestFieldEvidence() (script.js:5272) and the Evidence Viewer.
+  const adminFeeEvidence = tenant.fieldEvidence?.admin_fee_pct?.snapshots?.slice(-1)[0];
   const quote     = adminFeeEvidence?.quote || null;
 
   // MGMT_FEE_CAP ──────────────────────────────────────────────────────────────
@@ -19345,8 +19922,24 @@ function _tier1LeaseChecks(tenant, totalExpenses, lineItems, reconciledAt) {
   }
 
   // AUDIT_RIGHTS ──────────────────────────────────────────────────────────────
-  if (auditText) {
-    const daysMatch = auditText.match(/(\d+)\s+days?/i);
+  // Four distinct states. "Waived" is not the same as "not addressed": a lease
+  // that strips the tenant's audit right is a materially different contractual
+  // position from one that is simply silent, so it is surfaced as a review item
+  // rather than a passing check.
+  if (auditWaived) {
+    findings.push({
+      check: 'AUDIT_RIGHTS', source: 'deterministic',
+      severity: 'warning', confidence: 'high',
+      finding: 'Audit rights are explicitly waived in this lease.',
+      quote: auditText, section: null, page: auditEvidence?.page ?? null,
+      explanation: 'The tenant has given up the right to audit CAM records. Reconciliation statements cannot be challenged on this lease, so the figures carry more weight and should be reviewed accordingly before they are issued.',
+    });
+  } else if (auditGranted) {
+    // Leases spell numbers out and repeat them in figures — "ninety (90) days"
+    // is the standard convention, so the digits sit inside parentheses. The
+    // original /(\d+)\s+days?/ could not cross that closing paren and so failed
+    // on ordinary legal phrasing. Also tolerates "calendar"/"business" days.
+    const daysMatch = (auditText || '').match(/(\d+)\s*\)?\s*(?:calendar\s+|business\s+)?days?/i);
     if (daysMatch && reconciledAt) {
       const days        = parseInt(daysMatch[1], 10);
       const reconDate   = new Date(reconciledAt);
@@ -19360,7 +19953,7 @@ function _tier1LeaseChecks(tenant, totalExpenses, lineItems, reconciledAt) {
         finding:    expired
           ? `Audit window closed ${windowClose.toISOString().slice(0,10)} — ${Math.abs(daysLeft)} days have elapsed past the ${days}-day limit.`
           : `Audit window open — ${daysLeft} days remaining (closes ${windowClose.toISOString().slice(0,10)}).`,
-        quote: null, section: null, page: null,
+        quote: auditText, section: null, page: auditEvidence?.page ?? null,
         explanation: expired
           ? `The tenant had ${days} days from ${reconDate.toISOString().slice(0,10)} to request an audit. That window has closed.`
           : null,
@@ -19369,15 +19962,17 @@ function _tier1LeaseChecks(tenant, totalExpenses, lineItems, reconciledAt) {
       findings.push({
         check: 'AUDIT_RIGHTS', source: 'deterministic',
         severity: 'info', confidence: 'medium',
-        finding: `Audit rights found but deadline could not be computed: "${(auditText || '').slice(0, 80)}"`,
-        quote: null, section: null, page: null, explanation: null,
+        finding: auditText
+          ? `Audit rights found but deadline could not be computed: "${auditText.slice(0, 80)}"`
+          : 'Audit rights granted, but no deadline was extracted from the clause.',
+        quote: auditText, section: null, page: auditEvidence?.page ?? null, explanation: null,
       });
     }
   } else {
     findings.push({
       check: 'AUDIT_RIGHTS', source: 'deterministic',
       severity: 'info', confidence: 'high',
-      finding: 'No audit rights clause was extracted from this lease.',
+      finding: 'Audit rights are not addressed in this lease.',
       quote: null, section: null, page: null, explanation: null,
     });
   }
@@ -19653,6 +20248,25 @@ async function saveLeaseDocument({ propertyId, tenantId, tenantName, fileName, f
       return { ok: false, reason: result.error || `HTTP ${resp.status}`, code: result.code, keySource: result.keySource, detail: result.detail };
     }
     console.log('[saveLeaseDocument] persisted', fileName, 'for property', propertyId);
+    // Property memory: a document reaching the property is part of its history.
+    // Lease extractions already emit `lease_uploaded`, so this only records
+    // documents stored without a tenant context — no duplicate events.
+    try {
+      if (!tenantId && !tenantName) {
+        const _p = (typeof _props !== 'undefined' ? _props : []).find(x => x && x.id === propertyId);
+        if (_p) {
+          appendPropertyTimelineEventOnce(_p, 'doc:' + propertyId + ':' + fileName, {
+            type: 'document_uploaded', severity: 'info',
+            title: 'Document uploaded — ' + fileName,
+            description: 'Added to the property record.',
+            metadata: { fileName: fileName },
+            attachments: fileUrl ? [{ name: fileName, url: fileUrl, kind: 'pdf' }] : [],
+            actor: 'Property Manager',
+          });
+          if (typeof savePropertyData === 'function') savePropertyData();
+        }
+      }
+    } catch (_e) { console.warn('[timeline] document_uploaded skipped:', _e && _e.message); }
     return { ok: true, data: result.data };
   } catch (e) {
     console.error('[saveLeaseDocument] exception:', e?.message);
@@ -20491,8 +21105,24 @@ function renderProperty(property) {
   } catch (e) { }
 
   // ── Property Timeline ─────────────────────────────────────────────────
+  try { _recordSettlementIfNew(property); } catch (e) { }
   try {
     renderPropertyActivity(property);
+  } catch (e) { }
+
+  // ── What needs your attention (Property OS advisor surface) ────────────
+  try {
+    if (window.PropertyWorkspace) window.PropertyWorkspace.renderAttention(property);
+  } catch (e) { }
+
+  // ── Spaces (top-level, subject-first navigation) ───────────────────────
+  try {
+    if (window.TenantSpace && window.TenantSpace.renderList) window.TenantSpace.renderList(property);
+  } catch (e) { }
+
+  // ── Property subject page (building-as-a-whole records) ────────────────
+  try {
+    if (window.PropertyOS) { window.PropertyOS.init(); window.PropertyOS.renderPropertyPage(property); }
   } catch (e) { }
 
   // ── CAM Results ───────────────────────────────────────────────────────
@@ -22127,3 +22757,59 @@ async function init() {
   }
 }
 
+
+// ─── Background scroll lock for modal surfaces ───────────────────────────────
+// A user reading a lease page or a report scrolls with the wheel; without this
+// the page *behind* the modal moves instead, and they lose their place in the
+// reconciliation they were working through.
+//
+// Implemented as a single observer over the known overlay ids rather than as a
+// lock/unlock call at every open and close site. Those sites are spread across
+// several modules and set `display` inline in a dozen places; pairing them by
+// hand is where this kind of fix usually rots. Observing the result instead
+// means a modal opened by any path — including ones added later — is covered,
+// and the lock can never be left on because it is recomputed from what is
+// actually visible.
+(function () {
+  'use strict';
+  var SURFACES = [
+    'evidenceViewer', 'reportOverlay', 'explainPanel', 'leaseViewerModal',
+    'allocModal', 'disputeWorkspace', 'tenantDetailPanel', 'draftingModal',
+    'invFileViewer',
+    'msLanding',   // the cinematic film locks scrolling for the same reason
+  ];
+
+  function visible(el) {
+    if (!el) return false;
+    var cs = window.getComputedStyle(el);
+    if (cs.display === 'none' || cs.visibility === 'hidden') return false;
+    var r = el.getBoundingClientRect();
+    return r.width > 0 && r.height > 0;
+  }
+
+  // This owns the lock outright rather than saving and restoring whatever it
+  // finds. Several call sites already set body overflow directly and at least
+  // one (script.js:10219) never clears it, so a save/restore scheme captures an
+  // already-locked value and faithfully re-applies it — leaving the page frozen.
+  // Deriving the state purely from what is visible is self-healing: it also
+  // releases locks leaked by those older paths.
+  function sync() {
+    var body = document.body;
+    if (!body) return;
+    var anyOpen = SURFACES.some(function (id) { return visible(document.getElementById(id)); });
+    var want = anyOpen ? 'hidden' : '';
+    if (body.style.overflow !== want) body.style.overflow = want;
+  }
+
+  function attach() {
+    var obs = new MutationObserver(sync);
+    SURFACES.forEach(function (id) {
+      var el = document.getElementById(id);
+      if (el) obs.observe(el, { attributes: true, attributeFilter: ['style', 'class', 'hidden'] });
+    });
+    sync();
+  }
+
+  if (document.readyState === 'loading') document.addEventListener('DOMContentLoaded', attach);
+  else attach();
+})();

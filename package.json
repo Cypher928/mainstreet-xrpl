@@ -5,13 +5,16 @@
   "main": "allocation-engine.js",
   "scripts": {
     "test": "node test-allocation.js",
-    "test:disputes":   "node test-disputes.js",
+    "test:disputes": "node test-disputes.js",
     "test:regression": "node test-regression.js",
-    "test:rlusd":      "node test-rlusd.js",
-    "test:xrpl-ui":    "node test-xrpl-ui.js"
+    "test:rlusd": "node test-rlusd.js",
+    "test:xrpl-ui": "node test-xrpl-ui.js"
   },
   "license": "UNLICENSED",
   "dependencies": {
     "xrpl": "^4.6.0"
+  },
+  "devDependencies": {
+    "pdfjs-dist": "^4.0.379"
   }
 }

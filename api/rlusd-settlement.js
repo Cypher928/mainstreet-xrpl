@@ -9,11 +9,12 @@
 // so no authenticated request can move funds from the settlement wallet.
 
 const { getNetworkConfig, getAccountStatus } = require("../rlusd-integration");
+const _t = require('./_pilot-target');
 
-const _SB_URL  = (process.env.SUPABASE_URL      || '').trim();
-const _SB_ANON = (process.env.SUPABASE_ANON_KEY || '').trim();
+const _SB_URL  = _t.url;
+const _SB_ANON = _t.anonKey;
 if (!_SB_URL || !_SB_ANON) {
-  throw new Error('[api/rlusd-settlement] SUPABASE_URL and SUPABASE_ANON_KEY env vars are required');
+  throw new Error('[api/rlusd-settlement] Supabase URL/anon not configured for ' + _t.name + ' target');
 }
 
 const _rl = new Map();
@@ -31,7 +32,7 @@ async function _verifyUser(req, res) {
   try {
     const r = await fetch(`${_SB_URL}/auth/v1/user`, {
       signal: AbortSignal.timeout(3000),
-      headers: { apikey: (process.env.SUPABASE_SERVICE_ROLE_KEY || _SB_ANON).trim(), Authorization: `Bearer ${tok}` },
+      headers: { apikey: (_t.serviceRoleKey || _SB_ANON).trim(), Authorization: `Bearer ${tok}` },
     });
     if (!r.ok) { res.status(401).json({ error: 'Invalid or expired token' }); return null; }
     const user = await r.json();
@@ -49,7 +50,7 @@ function _walletAddress() {
 }
 
 function _network() {
-  return (process.env.XRPL_NETWORK || 'mainnet').trim();
+  return _t.network;   // production → mainnet (env), preview/pilot → testnet
 }
 
 module.exports = async function handler(req, res) {
