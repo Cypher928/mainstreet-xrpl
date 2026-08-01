@@ -78,7 +78,11 @@ function slope(pts) {
         if (!cam) return;
         const m = new DOMMatrixReadOnly(getComputedStyle(cam).transform);
         const bodyEl = l.querySelector('.pf-body');
-        const bm = bodyEl ? new DOMMatrixReadOnly(getComputedStyle(bodyEl).transform).a : 1;
+        const bmx = bodyEl ? new DOMMatrixReadOnly(getComputedStyle(bodyEl).transform) : null;
+        const bm = bmx ? bmx.a : 1;
+        // In-plane tilt of the arriving screen, in degrees.
+        const rot = (bodyEl && bodyEl.classList.contains('pf-body--arrive'))
+          ? Math.atan2(bmx.b, bmx.a) * 180 / Math.PI : null;
         const plate = l.querySelector('.pf-approach');
         const pm = plate ? new DOMMatrixReadOnly(getComputedStyle(plate).transform).a : 1;
         // How far the plate's VISIBLE CONTENT runs past the frame, in px a side.
@@ -116,7 +120,7 @@ function slope(pts) {
         frame.push({ id: l.__id, beat: window.ProductFilm.beatId(),
                      k0: parseFloat(cam.style.getPropertyValue('--k0')),
                      s: m.a, b: bm, p: pm, plate: !!plate,
-                     shotCls: shot ? shot.className : null, ovl, ovr, shotW, centred,
+                     shotCls: shot ? shot.className : null, ovl, ovr, shotW, centred, rot,
                      rec: rec ? rec.textContent : null,
                      askq: askq ? askq.textContent : null,
                      o: parseFloat(getComputedStyle(l).opacity),
@@ -503,6 +507,37 @@ function slope(pts) {
     for (const c of cropped) byBeat[c.beat] = Math.max(byBeat[c.beat] || 0, c.px);
     bad('the camera crops a plate the viewer is meant to read',
         Object.entries(byBeat).map(([b, px]) => `${b} ${px}px`).join(', '));
+  }
+
+  console.log('\n── The arriving screen straightens up, it does not sit crooked ──');
+  // The rotation on pfArrive is motivated: it is the screen's own angle,
+  // squaring up as the camera settles onto it. But it only READS as a camera
+  // while the UI is still framed by the browser chrome this beat carries in
+  // with it, and that chrome morphs away over .42s. After that the screenshot
+  // is edge-to-edge and the same angle reads as a skewed interface.
+  //
+  // It used to be scheduled across the whole beat, which meant it was held
+  // rather than resolved: 1.20deg still on screen at 320ms when the dissolve
+  // finished and the screen went fully opaque, 0.95deg at 900ms, 0.50deg at
+  // 2s — a static crooked UI leaking away over four seconds. Both ends are
+  // asserted: the tilt must EXIST at the cut, or the geometric match with the
+  // photographed screen is gone, and it must be square by the time the chrome
+  // that justifies it has.
+  const arrive = tr.flatMap(f => f.frame.filter(l => l.rot !== null && !l.out).map(l => ({ t: f.t, rot: Math.abs(l.rot) })));
+  if (arrive.length < 30) bad('never sampled the arriving screen', String(arrive.length));
+  else {
+    const t0 = arrive[0].t;
+    const atCut = Math.max(...arrive.filter(a => a.t - t0 <= 60).map(a => a.rot));
+    const late = arrive.filter(a => a.t - t0 >= 600);
+    const worstLate = Math.max(...late.map(a => a.rot));
+    const px = deg => (1262 * Math.tan(deg * Math.PI / 180)).toFixed(1);
+    (atCut >= 0.8)
+      ? ok(`the screen arrives at ${atCut.toFixed(2)}deg — the plate's own angle, still matched at the cut`)
+      : bad('the arrival tilt has been removed, not resolved', `${atCut.toFixed(2)}deg at the cut`);
+    (worstLate <= 0.1)
+      ? ok(`square within 600ms — ${px(worstLate)}px of skew left across a 1262px frame`)
+      : bad('the arriving screen is still tilted after the chrome has gone',
+            `${worstLate.toFixed(2)}deg = ${px(worstLate)}px at 600ms+`);
   }
 
   console.log('\n── Centred overlays are actually centred ──');
