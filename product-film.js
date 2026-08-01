@@ -653,6 +653,34 @@
     }).catch(function () { vox.bedFailed = true; });
   }
 
+  // Backgrounds dissolve; everything ON them leaves quickly.
+  //
+  // Holding the outgoing layer opaque under a fading incoming one is a correct
+  // cross-dissolve, and on a phone it reads as one. On a 27-inch monitor it
+  // means both screens are legible at once for up to 880ms — measured — and the
+  // eye reads the previous beat's number on top of the new beat's screen. That
+  // looks like a fault rather than a transition.
+  //
+  // So the plate keeps the long dissolve, which is what makes the camera move
+  // continuous, and everything drawn ON the plate is cut in 260ms. Done here
+  // rather than in CSS because thirteen beats have thirteen different internal
+  // structures and no set of sibling selectors covered them all — the first
+  // attempt matched almost nothing and the double-reading was unchanged.
+  var PLATE = '.pf-shot,.pf-open-scene,.pf-blur,.pf-open,.pf-soft,.pf-veil,.pf-halo,.pf-lgrad,.pf-open-black';
+  function cutOverlays(layer) {
+    var body = layer.querySelector('.pf-body');
+    if (!body) return;
+    var kids = body.querySelectorAll('*');
+    for (var i = 0; i < kids.length; i++) {
+      var el = kids[i];
+      if (el.matches && el.matches(PLATE)) continue;          // background: let it dissolve
+      if (el.closest && el.closest('.pf-open') && el.matches && el.matches('img')) continue;
+      el.style.animation = 'none';
+      el.style.transition = 'opacity .26s cubic-bezier(.4,0,1,1)';
+      el.style.opacity = '0';
+    }
+  }
+
   function stopBedSource() {
     if (!audio.bedNode) return;
     try { audio.bedNode.stop(); } catch (e) {}
@@ -910,11 +938,16 @@
       '.msl-vox:hover{background:rgba(255,255,255,.12);color:var(--pa);}',
       '.msl-vox--off{color:var(--dim);}',
       // device frame — stays put, content transforms → continuous product feel
-      '.msl-dev{width:min(880px,94vw);border-radius:16px;overflow:hidden;transition:width 1.04s linear,border-color 1.04s linear,border-radius 1.04s linear,background-color 1.04s linear,box-shadow 1.04s linear;border:1px solid rgba(255,255,255,.1);background:#0c111a;box-shadow:0 60px 130px -50px rgba(0,0,0,.9),0 0 0 1px rgba(255,255,255,.02);}',
+      // Sized to the SCREEN, not to a fixed box. At 880x460 the film occupied 11%
+      // of a 1440p display and 8% of an ultrawide — the same physical size as on
+      // a laptop, ringed by black. That is why it read as rushed: at a tenth of
+      // the field of view there is no time to take a beat in. The aspect is held
+      // at 16:10 so nothing is cropped differently than before.
+      '.msl-dev{width:min(1560px,92vw,calc((100vh - 210px) * 1.6));border-radius:16px;overflow:hidden;transition:width 1.04s linear,border-color 1.04s linear,border-radius 1.04s linear,background-color 1.04s linear,box-shadow 1.04s linear;border:1px solid rgba(255,255,255,.1);background:#0c111a;box-shadow:0 60px 130px -50px rgba(0,0,0,.9),0 0 0 1px rgba(255,255,255,.02);}',
       '.msl-dev-bar{display:flex;align-items:center;gap:7px;padding:12px 16px;max-height:48px;overflow:hidden;transition:opacity 1.04s linear,max-height 1.04s linear,padding 1.04s linear,border-bottom-color 1.04s linear;border-bottom:1px solid rgba(255,255,255,.06);background:#0a0e16;}',
       '.msl-dev-bar>i{width:11px;height:11px;border-radius:50%;background:rgba(255,255,255,.14);}',
       '.msl-dev-url{margin-left:14px;font-family:ui-monospace,"SF Mono",Menlo,monospace;font-size:.72rem;color:var(--dim);}',
-      '.msl-canvas{position:relative;height:min(52vh,460px);overflow:hidden;transition:height 1.04s linear;background:#0b0f17;}',
+      '.msl-canvas{position:relative;aspect-ratio:16/10;height:auto;overflow:hidden;transition:height 1.04s linear;background:#0b0f17;}',
       '.msl-canvas>*{animation:mslCanvasIn .7s cubic-bezier(.2,.7,.2,1) both;}',
       '@keyframes mslCanvasIn{from{opacity:0;transform:scale(1.015);filter:blur(4px)}to{opacity:1;transform:none;filter:blur(0)}}',
       '.msl-bg{position:absolute;inset:0;width:100%;height:100%;object-fit:cover;object-position:top;}',
@@ -989,8 +1022,8 @@
       // chrome snapped into existence halfway through the promise->upload
       // dissolve, which was its own visible discontinuity.
       '.pf-bare .msl-dev-bar{opacity:0;max-height:0;padding-top:0;padding-bottom:0;border-bottom-color:transparent;}',
-      '.pf-bare .msl-dev{width:min(1180px,96vw);border-color:transparent;border-radius:20px;background:#000;box-shadow:0 70px 150px -60px rgba(0,0,0,.95);}',
-      '.pf-bare .msl-canvas{height:min(62vh,560px);background:#000;}',
+      '.pf-bare .msl-dev{width:min(1700px,96vw,calc((100vh - 170px) * 1.72));border-color:transparent;border-radius:20px;background:#000;box-shadow:0 70px 150px -60px rgba(0,0,0,.95);}',
+      '.pf-bare .msl-canvas{aspect-ratio:1.72;height:auto;background:#000;}',
       '.pf-open{position:absolute;inset:0;overflow:hidden;border-radius:inherit;}',
       // The push runs the full 3s and does not settle, so the cut into the
       // upload beat lands mid-move — the camera keeps going rather than
@@ -1130,8 +1163,9 @@
       // the tenant names came out as "...ket" and "...rovisions", and "Reading 3
       // documents" ran off the edge. More screen made them WORSE. They get the
       // full width and as much height as stays legible, and no more.
-      '  .msl-canvas{height:56vh!important;}',
-      '  .pf-bare .msl-canvas{height:82vh!important;}',
+      '  .msl-canvas{height:56vh!important;aspect-ratio:auto!important;}',
+      '  .pf-bare .msl-canvas{height:82vh!important;aspect-ratio:auto!important;}',
+      '  .msl-dev{width:100%!important;}',
       // Over the picture, on its own scrim, so it costs no vertical space.
       '  .msl-cap{position:absolute;left:0;right:0;bottom:26px;margin:0;padding:0 20px 0;z-index:5;',
       '    font-size:1.02rem;text-shadow:0 2px 18px rgba(0,0,0,.85);}',
@@ -1397,6 +1431,7 @@
                             { duration: XF, easing: 'linear', fill: 'both' });
     if (prev) {
       prev.classList.add('pf-layer--out');       // held opaque; only stops hit-testing
+      cutOverlays(prev);
       var drop = function () { if (prev.parentNode) prev.parentNode.removeChild(prev); };
       // Removed only once the incoming layer is fully opaque, so the outgoing
       // shot is never visibly pulled out from underneath.

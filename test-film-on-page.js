@@ -151,10 +151,14 @@ const srv = http.createServer((rq, rs) => {
   // Bed levels are derived from measured loudness, so check the duck actually
   // happens rather than trusting the constants. 5.5s is inside the opening
   // line (3.00-7.31s); 8.8s is between it and the next (9.50s).
+  // 2.6s is before ANY voice — the titles run silent until 3.0s. The previous
+  // comparison point was 8.8s, "between lines", but the release is 1.9s with a
+  // 700ms hold and that gap is only 2.19s: the follower was still at 0.85 there,
+  // so it was comparing two ducked samples and reading a 1.1dB difference.
+  await waitTill(2600);
+  const openv = await page.evaluate(() => window.ProductFilm.mixState());
   await waitTill(5500);
   const duck = await page.evaluate(() => window.ProductFilm.mixState());
-  await waitTill(8800);
-  const openv = await page.evaluate(() => window.ProductFilm.mixState());
 
   // The invariant is "the CTA never appears while she is still speaking", not
   // "the line runs past the cut". Sampling at total+150 assumed the latter, and
@@ -187,7 +191,8 @@ const srv = http.createServer((rq, rs) => {
   // The sidechain moves the SPECTRUM, not the fader. Ducking loudness is what
   // pumping is, and it was reported as "chewy" — loud, gone, surging back. So
   // the level is expected to barely move here (a couple of dB at most) while
-  // the filter does the real work.
+  // the filter does the real work. Compared against 2.6s, which is genuinely
+  // voice-free rather than merely between two lines.
   (duck && openv && duck.duckDb > -4 && duck.duckDb < -0.5)
     ? ok(`the level barely moves under the voice (${duck.duckDb.toFixed(1)}dB) — no pumping`)
     : bad('the level is swinging around the narration', JSON.stringify({ duck, openv }));
