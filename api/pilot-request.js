@@ -11,7 +11,9 @@
  * the isolated pilot project on every preview. A marketing lead is not worth
  * a second connection story.
  *
- * REQUIRES a table. Run this once per project:
+ * REQUIRES a table. Run this in the SQL editor of each project this will serve
+ * — the pilot project to test on a preview, the production project before this
+ * ever reaches production. See docs/PILOT_REQUESTS_SETUP.md.
  *
  *   create table if not exists public.pilot_requests (
  *     id          uuid primary key default gen_random_uuid(),
@@ -27,6 +29,9 @@
  *   );
  *   alter table public.pilot_requests enable row level security;
  *   -- no policies: the service role bypasses RLS, and nothing else may read it
+ *
+ * The storage bucket is OPTIONAL. Without it the request still saves and the
+ * row records the filename; only the attached file is not kept.
  *
  * If the table is absent this returns 503 with the reason rather than a cheerful
  * 200. A lead that silently evaporates is worse than one that visibly fails —
@@ -78,43 +83,67 @@ module.exports = async function handler(req, res) {
     }
   }
 
-  let supabase;
-  try {
-    const { createClient } = require('@supabase/supabase-js');
-    // target exports { name, url, anonKey, serviceRoleKey, network } — `url`,
-    // not `supabaseUrl`. Checked against the module rather than assumed.
-    supabase = createClient(target.url, target.serviceRoleKey, {
-      auth: { persistSession: false, autoRefreshToken: false },
-    });
-  } catch (e) {
-    return res.status(503).json({ error: 'Request store is not reachable' });
+  // Direct REST, like every other function here. The first version used
+  // @supabase/supabase-js — which is NOT a dependency of this project (package
+  // .json carries only xrpl), so the require threw on every request and this
+  // endpoint returned 503 unconditionally. The form could never have worked.
+  const BASE = (target.url || '').replace(/\/+$/, '');
+  const KEY = target.serviceRoleKey;
+  if (!BASE || !KEY) {
+    console.error('[pilot-request] no', target.name, 'url/service key configured');
+    return res.status(503).json({ error: 'Request store is not configured' });
   }
+  const auth = { apikey: KEY, Authorization: `Bearer ${KEY}` };
 
-  // The file is best-effort: a failed upload must not lose the request itself.
+  // Best-effort: a failed upload must not lose the request itself. If the
+  // bucket does not exist the row still records the filename.
   if (fileBuf) {
     try {
       const safe = leaseName.replace(/[^\w.\-]+/g, '_');
-      const path = `pilot-requests/${Date.now()}-${safe}`;
-      const up = await supabase.storage.from('pilot-requests').upload(path, fileBuf, {
-        contentType: clean(body.lease.type, 100) || 'application/octet-stream',
-        upsert: false,
+      const key = `${Date.now()}-${safe}`;
+      const up = await fetch(`${BASE}/storage/v1/object/pilot-requests/${encodeURIComponent(key)}`, {
+        method: 'POST',
+        headers: Object.assign({}, auth, {
+          'Content-Type': clean(body.lease.type, 100) || 'application/octet-stream',
+          'x-upsert': 'false',
+        }),
+        body: fileBuf,
       });
-      if (!up.error) leasePath = path;
-    } catch (e) { /* keep leasePath null; the row still records the filename */ }
+      if (up.ok) leasePath = `pilot-requests/${key}`;
+      else console.warn('[pilot-request] lease upload failed:', up.status);
+    } catch (e) { console.warn('[pilot-request] lease upload threw:', e.message); }
   }
 
-  const { error } = await supabase.from('pilot_requests').insert({
-    name, company, email, properties,
-    lease_name: leaseName, lease_path: leasePath,
-    source: clean(req.headers && req.headers.referer, 300) || 'home',
-    user_agent: clean(req.headers && req.headers['user-agent'], 300),
-  });
+  let ins;
+  try {
+    ins = await fetch(`${BASE}/rest/v1/pilot_requests`, {
+      method: 'POST',
+      headers: Object.assign({}, auth, {
+        'Content-Type': 'application/json',
+        Prefer: 'return=minimal',
+      }),
+      body: JSON.stringify({
+        name, company, email, properties,
+        lease_name: leaseName, lease_path: leasePath,
+        source: clean(req.headers && req.headers.referer, 300) || 'home',
+        user_agent: clean(req.headers && req.headers['user-agent'], 300),
+      }),
+    });
+  } catch (e) {
+    console.error('[pilot-request] insert threw:', e.message);
+    return res.status(503).json({ error: 'Could not reach the request store' });
+  }
 
-  if (error) {
+  if (!ins.ok) {
     // Surfaced, never swallowed. The modal shows the address so the visitor has
     // a way through even when this fails.
-    console.error('[pilot-request] insert failed:', error.message);
-    return res.status(503).json({ error: 'Could not record the request' });
+    const detail = await ins.text().catch(function () { return ''; });
+    console.error('[pilot-request] insert failed:', ins.status, detail.slice(0, 300));
+    return res.status(503).json({
+      error: ins.status === 404 || /does not exist/i.test(detail)
+        ? 'The pilot_requests table has not been created yet'
+        : 'Could not record the request',
+    });
   }
 
   return res.status(200).json({ ok: true, storedLease: !!leasePath });
