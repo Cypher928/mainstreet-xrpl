@@ -228,7 +228,7 @@
       build: function (c) {
         c.innerHTML =
           '<img class="pf-shot pf-shot--sharp msl-zoomin" src="' + ASSET + 'beat1-cap-catch.png" alt="">' +
-          '<div class="pf-focus" style="--d:1.0s;--fx:58%;--fw2:19%"></div>' +
+          '<div class="pf-focus" style="--d:1.0s;--fx:60%;--fw2:14%"></div>' +
           '<div class="pf-callout pf-callout--top" style="--d:1.9s">Prevented by lease caps</div>' +
           '<div class="pf-total" style="--d:2.9s"><b>$75,549</b> the lease didn’t allow — caught before billing</div>';
       } },
@@ -242,11 +242,18 @@
           '<div class="msl-vig msl-vig--tight"></div>' +
           '<div class="msl-spot msl-spot--center"></div>' +
           '<div class="msl-bignum msl-bignum--center msl-blin">' +
-            '<div class="msl-bignum-v" id="pfRecover">$0</div>' +
+            // Starts EMPTY, not "$0". The markup used to ship a literal $0 and
+            // wait 480ms to start counting, so the beat whose whole point is
+            // money recovered spent its entire entrance dissolve reading zero —
+            // and the shot before it was still on screen, which made "$0" the
+            // answer to the previous beat's question. The count now starts on
+            // the next frame, so the number is already climbing before the
+            // layer is legible.
+            '<div class="msl-bignum-v" id="pfRecover">&nbsp;</div>' +
             '<div class="msl-bignum-l">Recoverable revenue identified</div>' +
             '<div class="msl-bignum-sub" style="--d:2.4s">Cap enforcement · exclusions · unbilled vacancy</div>' +
           '</div>';
-        setTimeout(function () { countUp(document.getElementById('pfRecover'), 99542, 1600, '$'); }, reduce() ? 0 : 480);
+        countUp(document.getElementById('pfRecover'), 99542, 1600, '$');
       } },
 
     // HERO — the REAL Space, with callouts pinned to what matters in it.
@@ -282,7 +289,15 @@
             '</div>' +
             '<div class="msl-stmt-cite" style="--d:3.3s">Answers come from your documents — never from guesswork.</div>' +
           '</div>';
-        typeInto(c.querySelector('#pfAskQ'), 'Which tenants have CAM caps?', 26);
+        // Held back until the dissolve from `space` has finished, then typed
+        // fast enough to complete well before the citations land at 1.9s. It
+        // used to start on frame one at 26cps, so the crossfade caught the
+        // query at "Which ten" superimposed on the previous screen — which
+        // reads as the film stuttering, not as someone typing. An empty search
+        // bar during the dissolve is a state software is actually in.
+        setTimeout(function () {
+          typeInto(c.querySelector('#pfAskQ'), 'Which tenants have CAM caps?', 42);
+        }, reduce() ? 0 : XFADE + 40);
       } },
 
     { id: 'timeline', dur: 4200, fw: 720, cap: 'Every property keeps a living memory',
@@ -676,7 +691,7 @@
       if (el.matches && el.matches(PLATE)) continue;          // background: let it dissolve
       if (el.closest && el.closest('.pf-open') && el.matches && el.matches('img')) continue;
       el.style.animation = 'none';
-      el.style.transition = 'opacity .26s cubic-bezier(.4,0,1,1)';
+      el.style.transition = 'opacity .2s cubic-bezier(.4,0,1,1)';
       el.style.opacity = '0';
     }
   }
@@ -803,20 +818,49 @@
       // plate, so the geometry resolves as the camera squares up to it.
       '.pf-body{position:absolute;inset:0;display:flex;align-items:center;justify-content:center;}',
       '.pf-body--arrive{transform-origin:50% 46%;animation:pfArrive var(--ed,5040ms) linear both;}',
+      // The tail is softer than it was. 0% and 6% are untouched — that pair IS
+      // the velocity match, and nothing after it affects the cut. What follows
+      // used to keep climbing to 1.108, which multiplied against the camera
+      // glide to 1.18 and cropped 101px off each side of a full-bleed
+      // screenshot; the beat's own headline read "cted Tenants (5)". It now
+      // settles at 1.071 (total 1.145), and the plate is captured with 8% of
+      // side padding so even that is eaten by margin rather than by content.
+      // End slope 1.7e-6/ms on top of the glide's 1.6e-5 — still moving into
+      // the next beat, which is the whole point of the arrival.
       '@keyframes pfArrive{',
       '  0%{transform:perspective(1400px) rotateZ(1.25deg) rotateY(4deg) scale(1.000)}',
       '  6%{transform:perspective(1400px) rotateZ(1.18deg) rotateY(3.8deg) scale(1.031)}',
-      '  16%{transform:perspective(1400px) rotateZ(.95deg) rotateY(3deg) scale(1.068)}',
-      '  34%{transform:perspective(1400px) rotateZ(.55deg) rotateY(1.7deg) scale(1.092)}',
-      '  60%{transform:perspective(1400px) rotateZ(.15deg) rotateY(.5deg) scale(1.103)}',
-      '  100%{transform:perspective(1400px) rotateZ(0deg) rotateY(0deg) scale(1.108)}}',
+      '  16%{transform:perspective(1400px) rotateZ(.95deg) rotateY(3deg) scale(1.052)}',
+      '  34%{transform:perspective(1400px) rotateZ(.55deg) rotateY(1.7deg) scale(1.063)}',
+      '  60%{transform:perspective(1400px) rotateZ(.15deg) rotateY(.5deg) scale(1.068)}',
+      '  100%{transform:perspective(1400px) rotateZ(0deg) rotateY(0deg) scale(1.071)}}',
+      // Origin 50% horizontally, not 56%. Off-centre, the push crops unevenly:
+      // measured at 1440px the recon table lost 43px off the left and 34px off
+      // the right, and losing the FIRST letter of five stacked tenant names in a
+      // row ("ENANT / hole Health Market / ummit Coffee") reads as a rendering
+      // fault, not as framing. Symmetric is the only crop a viewer forgives.
       '.pf-cam{position:absolute;inset:0;display:flex;align-items:center;justify-content:center;',
-      '  transform-origin:56% 48%;will-change:transform;',
+      '  transform-origin:50% 48%;will-change:transform;',
       '  animation:pfGlide var(--gd,4s) linear both;}',
       '@keyframes pfGlide{from{transform:scale(var(--k0,1))}to{transform:scale(var(--k1,1.06))}}',
       '.pf-shot{position:absolute;inset:0;width:100%;height:100%;object-fit:cover;object-position:center;}',
-      '.pf-shot--sharp{object-fit:contain;opacity:1;}',
-      '.pf-shot--top{object-fit:cover;object-position:top center;}',
+      // Headroom for the push. A contain-fitted plate lands flush against the
+      // frame edge, so the camera glide (up to +7.9% over a beat) had nowhere to
+      // go but into the content. Insetting the BOX by 4.6% a side renders the
+      // plate that much smaller at the top of the beat and lets the push close
+      // the gap: by the end the screen fills the frame, which is the arrival the
+      // move was always trying to make. Nothing is cropped on the way.
+      // The width is stated, not inferred. Two earlier attempts got this wrong:
+      // `inset:0 4.6%` alone left .pf-shot's width:100% in force, so the plate
+      // was merely SHIFTED right and the right edge clipped worse ("BILLING
+      // MET…"); `width:auto` then resolved to the replaced element's intrinsic
+      // width capped by max-width:100% — still 100% — which over-constrains
+      // left/width/right, and the browser drops `right`. 90.8% + 4.6% a side is
+      // the same geometry with nothing left to resolve.
+      '.pf-shot--sharp{object-fit:contain;opacity:1;left:4.6%;right:4.6%;width:90.8%;}',
+      // --top is a full-bleed cover plate that happens to also carry --sharp for
+      // its opacity; it must keep the frame's full width, not --sharp's inset.
+      '.pf-shot--top{object-fit:cover;object-position:top center;left:0;right:0;width:100%;}',
       '.pf-shot--dim{opacity:.34;filter:blur(1px) saturate(.85);}',
       '.pf-shot--deep{opacity:.20;filter:blur(2px) saturate(.8);}',
       // .pf-ken retired: a 10s ease-out on a 4-5s beat only ever played its
@@ -824,26 +868,41 @@
       // glide replaces it at constant velocity.
       // A vertical focus band that dims everything except one column of the
       // screenshot — how the eye is directed at the savings column.
+      // The edges ramp rather than switch. Hard stops put a dead-straight
+      // vertical line through whatever they land on, and at 74% dim that reads
+      // as a rendering fault, not as focus — on the recon table it bisected
+      // "35.38%" into a dim half and a bright half. A 3% ramp a side means a
+      // small mis-registration softens a number instead of cutting it in two.
       '.pf-focus{position:absolute;inset:0;pointer-events:none;opacity:0;',
-      '  background:linear-gradient(90deg,rgba(5,7,9,.74) 0,rgba(5,7,9,.74) calc(var(--fx) - var(--fw2)/2),',
+      '  background:linear-gradient(90deg,rgba(5,7,9,.74) 0,',
+      '    rgba(5,7,9,.74) calc(var(--fx) - var(--fw2)/2 - 3%),',
       '    transparent calc(var(--fx) - var(--fw2)/2),transparent calc(var(--fx) + var(--fw2)/2),',
-      '    rgba(5,7,9,.74) calc(var(--fx) + var(--fw2)/2),rgba(5,7,9,.74) 100%);',
+      '    rgba(5,7,9,.74) calc(var(--fx) + var(--fw2)/2 + 3%),rgba(5,7,9,.74) 100%);',
       '  animation:mslFade .9s var(--ez) both;animation-delay:var(--d,0s);}',
       '.pf-focus--wide{background:radial-gradient(ellipse at var(--fx) 50%,transparent 26%,rgba(5,7,9,.78) 68%);}',
+      // These three are horizontally centred by transform, so they get their OWN
+      // entry keyframes. mslUp ends on `transform:none`, which wipes the
+      // translateX(-50%) the instant the animation lands — every one of them was
+      // anchoring its LEFT edge to the centre of the frame and hanging off to
+      // the right. The upload beat's worker chip ran clean off the edge, bar and
+      // all. Same trap already documented on .msl-bignum, which was fixed by
+      // centring with flex instead; these are absolutely positioned, so the
+      // translate has to survive inside the keyframes.
+      '@keyframes pfUpC{from{opacity:0;transform:translate(-50%,22px)}to{opacity:1;transform:translate(-50%,0)}}',
       '.pf-callout{position:absolute;left:50%;bottom:12%;transform:translateX(-50%);padding:8px 16px;border-radius:999px;',
       '  background:rgba(52,192,138,.14);border:1px solid rgba(52,192,138,.4);color:#7BE3A6;',
       '  font-size:.82rem;font-weight:700;letter-spacing:.04em;white-space:nowrap;opacity:0;',
-      '  animation:mslUp .7s var(--ez) both;animation-delay:var(--d,0s);}',
+      '  animation:pfUpC .7s var(--ez) both;animation-delay:var(--d,0s);}',
       // Above the frame, clear of the table header it used to sit on top of.
       '.pf-callout--top{bottom:auto;top:4%;}',
       '.pf-total{position:absolute;left:50%;bottom:5%;transform:translateX(-50%);font-size:1rem;color:var(--pa);',
-      '  opacity:0;animation:mslUp .8s var(--ez) both;animation-delay:var(--d,0s);white-space:nowrap;}',
+      '  opacity:0;animation:pfUpC .8s var(--ez) both;animation-delay:var(--d,0s);white-space:nowrap;}',
       '.pf-total b{color:#7BE3A6;font-size:1.25rem;}',
       // The "AI is working" affordance for the upload beat — the emphasis is the
       // reading, not the drop target.
       '.pf-worker{position:absolute;left:50%;bottom:13%;transform:translateX(-50%);display:flex;align-items:center;gap:12px;',
       '  padding:12px 20px;border-radius:14px;background:rgba(8,11,18,.86);border:1px solid rgba(201,151,58,.32);',
-      '  opacity:0;animation:mslUp .8s var(--ez) both;animation-delay:var(--d,0s);}',
+      '  opacity:0;animation:pfUpC .8s var(--ez) both;animation-delay:var(--d,0s);}',
       '.pf-pulse{width:9px;height:9px;border-radius:50%;background:var(--gold);animation:pfPulse 1.3s ease-in-out infinite;}',
       '@keyframes pfPulse{0%,100%{opacity:.35;transform:scale(.8)}50%{opacity:1;transform:scale(1.15)}}',
       '.pf-worker-t{font-size:.92rem;color:var(--pa);font-weight:600;white-space:nowrap;}',
@@ -943,11 +1002,11 @@
       // a laptop, ringed by black. That is why it read as rushed: at a tenth of
       // the field of view there is no time to take a beat in. The aspect is held
       // at 16:10 so nothing is cropped differently than before.
-      '.msl-dev{width:min(1560px,92vw,calc((100vh - 210px) * 1.6));border-radius:16px;overflow:hidden;transition:width 1.04s linear,border-color 1.04s linear,border-radius 1.04s linear,background-color 1.04s linear,box-shadow 1.04s linear;border:1px solid rgba(255,255,255,.1);background:#0c111a;box-shadow:0 60px 130px -50px rgba(0,0,0,.9),0 0 0 1px rgba(255,255,255,.02);}',
-      '.msl-dev-bar{display:flex;align-items:center;gap:7px;padding:12px 16px;max-height:48px;overflow:hidden;transition:opacity 1.04s linear,max-height 1.04s linear,padding 1.04s linear,border-bottom-color 1.04s linear;border-bottom:1px solid rgba(255,255,255,.06);background:#0a0e16;}',
+      '.msl-dev{width:min(1560px,92vw,calc((100vh - 210px) * 1.6));border-radius:16px;overflow:hidden;transition:width .42s linear,border-color .42s linear,border-radius .42s linear,background-color .42s linear,box-shadow .42s linear;border:1px solid rgba(255,255,255,.1);background:#0c111a;box-shadow:0 60px 130px -50px rgba(0,0,0,.9),0 0 0 1px rgba(255,255,255,.02);}',
+      '.msl-dev-bar{display:flex;align-items:center;gap:7px;padding:12px 16px;max-height:48px;overflow:hidden;transition:opacity .42s linear,max-height .42s linear,padding .42s linear,border-bottom-color .42s linear;border-bottom:1px solid rgba(255,255,255,.06);background:#0a0e16;}',
       '.msl-dev-bar>i{width:11px;height:11px;border-radius:50%;background:rgba(255,255,255,.14);}',
       '.msl-dev-url{margin-left:14px;font-family:ui-monospace,"SF Mono",Menlo,monospace;font-size:.72rem;color:var(--dim);}',
-      '.msl-canvas{position:relative;aspect-ratio:16/10;height:auto;overflow:hidden;transition:height 1.04s linear;background:#0b0f17;}',
+      '.msl-canvas{position:relative;aspect-ratio:16/10;height:auto;overflow:hidden;transition:height .42s linear;background:#0b0f17;}',
       '.msl-canvas>*{animation:mslCanvasIn .7s cubic-bezier(.2,.7,.2,1) both;}',
       '@keyframes mslCanvasIn{from{opacity:0;transform:scale(1.015);filter:blur(4px)}to{opacity:1;transform:none;filter:blur(0)}}',
       '.msl-bg{position:absolute;inset:0;width:100%;height:100%;object-fit:cover;object-position:top;}',
@@ -1340,10 +1399,36 @@
   // easing OUT to a standstill before each cut, which is why they read as
   // separate images no matter how well composed they were.
   var CAM_RATE = 0.000016;   // scale per ms  (1.6% per second)
-  var XFADE    = 1040;       // dissolve overlap
-  // Clamped so a 1.5s beat is not mostly dissolve. The long overlap is wanted
-  // on the wide beats, where there is time for two shots to travel together.
+  // 320ms, down from 1040ms.
+  //
+  // A long cross-dissolve is correct compositing and it was correct on a phone.
+  // On a large monitor it means two complete, dense screenshots are legibly
+  // superimposed for about a second, and a viewer reads that as the page
+  // failing to render rather than as a transition. Cutting the overlays at
+  // 260ms fixed the TEXT double-reading but not this: the plates themselves
+  // were still both fully on screen.
+  //
+  // Continuity does not depend on the overlap. It comes from the camera, which
+  // travels at a constant speed in one direction across the join — that is what
+  // makes two shots read as one move, and it is unaffected by shortening this.
+  // The blended middle is now brief enough to read as a dissolve rather than as
+  // a double exposure.
+  var XFADE    = 320;
   function xfadeFor(i) { return Math.min(XFADE, Math.round(SCENES[i].dur * 0.5)); }
+
+  // How long a beat's ENTRY animation (pfApproach, pfArrive) runs past the end
+  // of its beat. Deliberately NOT XFADE.
+  //
+  // Those animations are authored as percentages, so their duration decides
+  // where each keyframe lands in real time. Both were tuned against a 1040ms
+  // overlap; when XFADE dropped to 320 the durations shrank with it and every
+  // keyframe slid earlier — the approach reached the cut at scale 1.29 instead
+  // of 1.20, so the photographed laptop screen was 7% larger than the
+  // screenshot dissolving in over it, and the two interfaces visibly changed
+  // size mid-transition. Pinning the tail keeps the curves exactly where they
+  // were tuned. They still outlive the crossfade, which is all the tail was
+  // ever for; the layer is removed at XF regardless.
+  var ENTRY_TAIL = 1040;
 
   function camStart(i) {
     var s = SCENES[i];
@@ -1413,7 +1498,7 @@
     // transform animations on one element would fight, last one wins.
     var body = document.createElement('div');
     body.className = 'pf-body' + (s.enter ? ' pf-body--' + s.enter : '');
-    body.style.setProperty('--ed', (s.dur + XF) + 'ms');
+    body.style.setProperty('--ed', (s.dur + ENTRY_TAIL) + 'ms');
     cam.appendChild(body);
     wrap.appendChild(cam);
     canvas.appendChild(wrap);

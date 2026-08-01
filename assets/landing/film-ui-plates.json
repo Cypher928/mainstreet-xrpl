@@ -1,0 +1,16 @@
+{
+  "plates": [
+    {
+      "file": "ui-upload.png",
+      "width": 1200,
+      "height": 1049,
+      "devSwitcherPresent": false
+    },
+    {
+      "file": "ui-settlement.png",
+      "width": 1200,
+      "height": 158,
+      "devSwitcherPresent": false
+    }
+  ]
+}
