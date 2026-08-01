@@ -27,6 +27,21 @@ const PUBLIC_APP_URL = /^(localhost|127\.0\.0\.1)/.test(window.location.hostname
   ? window.location.origin
   : 'https://mainstreetcam.com';
 
+// Where an auth email must DROP THE USER: the application, not the website.
+// PUBLIC_APP_URL on its own used to be the app. It is not any more — the
+// marketing page took the root, so https://mainstreetcam.com now 307s to /home,
+// which loads neither supabase-config.js nor script.js. The #access_token
+// fragment Supabase appends to the confirmation redirect would be carried there
+// by the browser and read by nothing at all, leaving a user who had just
+// confirmed their email sitting on marketing, still signed out.
+//
+// /app is a REWRITE rather than a redirect, so the fragment survives in the
+// address bar for supabase-js (detectSessionInUrl) to pick up. Locally the app
+// is still served from the root, so localhost keeps using the origin.
+const APP_ENTRY_URL = /^(localhost|127\.0\.0\.1)/.test(window.location.hostname)
+  ? window.location.origin
+  : PUBLIC_APP_URL + '/app';
+
 
 const { createClient: _sbCreateClient } = window.supabase;
 const db = _sbCreateClient(SUPABASE_URL, SUPABASE_ANON_KEY, {
@@ -155,7 +170,7 @@ async function submitAuth(event) {
   let data, error;
   try {
     const attemptAuth = () => _authMode === 'signup'
-      ? db.auth.signUp({ email, password, options: { emailRedirectTo: PUBLIC_APP_URL } })
+      ? db.auth.signUp({ email, password, options: { emailRedirectTo: APP_ENTRY_URL } })
       : db.auth.signInWithPassword({ email, password });
 
     const withTimeout = (promise, ms) => Promise.race([

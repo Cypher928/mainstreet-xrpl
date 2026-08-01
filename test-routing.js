@@ -118,6 +118,52 @@ srv.listen(PORT, '127.0.0.1', async () => {
     ? ok(`"/" is handled by a redirect to ${rootRedirect.destination} \u2014 redirects run before the filesystem`)
     : bad('nothing routes "/" to the marketing page');
 
+  // ── Auth emails must land somewhere that can sign the user in ───────────
+  // When the marketing page took the root, every auth redirect pointing at the
+  // bare origin quietly started landing on it. home.html loads no Supabase
+  // client at all, so the #access_token fragment Supabase appends is read by
+  // nothing and a user who has just confirmed their email ends up on marketing,
+  // still signed out.
+  //
+  // The property under test is NOT "is this the app" — /reset-password is a
+  // standalone page and legitimately is not. It is "can the document served at
+  // this URL establish a session from the fragment", i.e. does it load a
+  // Supabase client. Each target is resolved through the same routing table the
+  // rest of this suite uses, and the constants are read out of script.js rather
+  // than restated here.
+  console.log('\n── Auth email redirects land where a session can be established ──');
+  const src = fs.readFileSync(path.join(ROOT, 'script.js'), 'utf8');
+  // Production value of each PUBLIC_/APP_ constant, as a path.
+  const consts = {};
+  let cm; const reConst = /const (PUBLIC_APP_URL|APP_ENTRY_URL) =[\s\S]*?:\s*(?:'([^']+)'|([A-Z_]+)\s*\+\s*'([^']+)');/g;
+  while ((cm = reConst.exec(src))) {
+    consts[cm[1]] = cm[2] ? '/' : ((consts[cm[3]] === '/' ? '' : consts[cm[3]] || '') + cm[4]);
+  }
+  (consts.PUBLIC_APP_URL && consts.APP_ENTRY_URL)
+    ? ok(`resolved PUBLIC_APP_URL -> "${consts.PUBLIC_APP_URL}", APP_ENTRY_URL -> "${consts.APP_ENTRY_URL}"`)
+    : bad('could not resolve the auth URL constants', JSON.stringify(consts));
+
+  const targets = [];
+  let m; const reTarget = /(?:emailRedirectTo|redirectTo):\s*(PUBLIC_APP_URL|APP_ENTRY_URL)(?:\s*\+\s*'([^']+)')?/g;
+  while ((m = reTarget.exec(src))) targets.push({ base: m[1], suffix: m[2] || '' });
+  (targets.length >= 2)
+    ? ok(`found ${targets.length} auth redirect target(s) in script.js`)
+    : bad('could not find the auth redirect targets', String(targets.length));
+
+  for (const t of targets) {
+    const label = t.base + (t.suffix ? " + '" + t.suffix + "'" : '');
+    const base = consts[t.base] || '/';
+    const url = t.suffix ? (base === '/' ? t.suffix : base + t.suffix) : base;
+    const r = await get(url);
+    const canAuth = /supabase-config\.js|@supabase\/supabase-js|createClient/.test(r.body || '');
+    const isMarketing = /product-film\.js/.test(r.body || '') && !canAuth;
+    canAuth
+      ? ok(`${label} -> ${url}, which loads a Supabase client and can complete the sign-in`)
+      : bad(`${label} -> ${url} cannot establish a session`,
+            isMarketing ? 'it serves the MARKETING page — the auth fragment is dropped and the user stays signed out'
+                        : 'the document loads no Supabase client');
+  }
+
   console.log('\n' + (fail ? '\x1b[31m' : '\x1b[32m') + 'RESULT: ' + pass + ' passed, ' + fail + ' failed\x1b[0m');
   srv.close(); process.exit(fail ? 1 : 0);
 });
