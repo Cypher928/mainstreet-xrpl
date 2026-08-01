@@ -252,17 +252,34 @@ const settle = async p => p.evaluate(async () => {
     await fill();
     await p.click('#pmSubmit');
     await p.waitForTimeout(400);
-    const after = await p.evaluate(() => ({
-      msg: document.getElementById('pmMsg').innerText,
-      formHidden: getComputedStyle(document.getElementById('pmForm')).display === 'none',
-    }));
+    // Geometry, not innerText. innerText silently falls back to textContent for
+    // an element that is NOT being rendered, so this assertion passed for weeks
+    // while the confirmation was invisible: #pmMsg lived inside #pmForm, and the
+    // success handler hides the form before showing the message — display:block
+    // on a node whose parent is display:none, a 0x0 box. A visitor who submitted
+    // successfully watched the form vanish and got nothing back. Requiring a
+    // real painted box inside the card is the only form of this check that can
+    // tell "confirmed" from "silently swallowed".
+    const after = await p.evaluate(() => {
+      const el = document.getElementById('pmMsg');
+      const r = el.getBoundingClientRect();
+      const card = document.querySelector('#pilotModal .pm-card').getBoundingClientRect();
+      return {
+        msg: el.innerText,
+        w: Math.round(r.width), h: Math.round(r.height),
+        insideCard: r.width > 0 && r.height > 0 && r.top >= card.top - 1 && r.bottom <= card.bottom + 1,
+        formHidden: getComputedStyle(document.getElementById('pmForm')).display === 'none',
+      };
+    });
     (seen && seen.name === 'Dana Reyes' && seen.company === 'Reyes Property Group'
         && seen.email === 'dana@reyespg.com' && seen.properties)
       ? ok(`the payload carries every field (${Object.keys(seen).join(', ')})`)
       : bad('payload is wrong', JSON.stringify(seen));
-    (/thank you/i.test(after.msg) && after.formHidden)
-      ? ok('a successful submit confirms and retires the form')
-      : bad('success state did not render', JSON.stringify(after));
+    (/thank you/i.test(after.msg) && after.formHidden && after.insideCard)
+      ? ok(`a successful submit confirms and retires the form (confirmation painted ${after.w}x${after.h} inside the card)`)
+      : bad(after.formHidden && !after.insideCard
+              ? 'the form was retired but the confirmation is not visible'
+              : 'success state did not render', JSON.stringify(after));
 
     // 3 — a real failure must say so, and must not offer a mailto:
     mode = 'fail'; seen = null;
@@ -270,14 +287,18 @@ const settle = async p => p.evaluate(async () => {
     await fill();
     await p.click('#pmSubmit');
     await p.waitForTimeout(400);
-    const failed = await p.evaluate(() => ({
-      msg: document.getElementById('pmMsg').innerText,
-      html: document.getElementById('pmMsg').innerHTML,
-      canRetry: !document.getElementById('pmSubmit').disabled,
-    }));
-    (/table has not been created/i.test(failed.msg) && /lynnie928@me\.com/.test(failed.msg))
-      ? ok('a failure states the reason and shows the address as text')
-      : bad('failure state is wrong', JSON.stringify(failed.msg));
+    const failed = await p.evaluate(() => {
+      const el = document.getElementById('pmMsg');
+      const r = el.getBoundingClientRect();
+      return {
+        msg: el.innerText, html: el.innerHTML,
+        visible: r.width > 0 && r.height > 0,
+        canRetry: !document.getElementById('pmSubmit').disabled,
+      };
+    });
+    (/table has not been created/i.test(failed.msg) && /lynnie928@me\.com/.test(failed.msg) && failed.visible)
+      ? ok('a failure states the reason and shows the address as text, on screen')
+      : bad('failure state is wrong', JSON.stringify({ msg: failed.msg, visible: failed.visible }));
     !/mailto:/i.test(failed.html)
       ? ok('and it is NOT a mailto: link — nothing hands off to another application')
       : bad('the failure path offers a mailto:');

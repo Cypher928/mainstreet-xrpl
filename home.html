@@ -738,9 +738,16 @@ footer{border-top:1px solid rgba(var(--line),.07);padding:44px 0;background:var(
       <div class="pm-actions">
         <button class="btn btn--primary" type="submit" id="pmSubmit">Request Pilot</button>
       </div>
-      <div class="pm-msg" id="pmMsg" role="status" aria-live="polite"></div>
       <p class="pm-note">We reply personally. No sales sequence, no drip campaign.</p>
     </form>
+    <!-- OUTSIDE the form, deliberately. This lived inside it, and the success
+         handler hides the form before showing this — so a visitor who submitted
+         successfully watched the form disappear and got NOTHING in its place:
+         the card collapsed to its heading and the request looked like it had
+         evaporated. Measured, the node was display:block with a 0x0 box because
+         its parent was display:none. The error path only ever looked right by
+         accident, because that path leaves the form on screen. -->
+    <div class="pm-msg" id="pmMsg" role="status" aria-live="polite"></div>
   </div>
 </div>
 
