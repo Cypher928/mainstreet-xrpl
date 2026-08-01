@@ -200,6 +200,105 @@ const settle = async p => p.evaluate(async () => {
     : bad('a field is missing', JSON.stringify(modal.fields));
   modal.hasSubmit ? ok('and has a submit button') : bad('no submit button');
 
+  console.log('\n── The form actually submits ──');
+  // The endpoint is verified separately; this is the CLIENT half — payload
+  // shape, success and failure rendering, and the file path. It is the half
+  // that already hid one bug (form.name is the FORM's name attribute and
+  // shadows the named input, so form.name.value threw on submit).
+  {
+    const ctx = await b.newContext({ viewport: { width: 1280, height: 900 } });
+    const p = await ctx.newPage();
+    p.on('pageerror', e => errs.push(e.message));
+    await p.route('**fonts.g**', r => r.continue());
+    let seen = null, mode = 'ok';
+    await p.route('**/api/pilot-request', route => {
+      try { seen = JSON.parse(route.request().postData() || '{}'); } catch (e) { seen = null; }
+      if (mode === 'ok') return route.fulfill({ status: 200, contentType: 'application/json', body: '{"ok":true}' });
+      return route.fulfill({ status: 503, contentType: 'application/json',
+        body: '{"error":"The pilot_requests table has not been created yet"}' });
+    });
+    await p.goto(`http://127.0.0.1:${PORT}/`, { waitUntil: 'networkidle' });
+
+    const fill = async () => {
+      await p.click('[data-pilot]');
+      await p.fill('#pmName', 'Dana Reyes');
+      await p.fill('#pmCompany', 'Reyes Property Group');
+      await p.fill('#pmEmail', 'dana@reyespg.com');
+      await p.selectOption('#pmProps', { index: 2 });
+    };
+
+    // 1 — client-side validation must fire before any request goes out
+    await p.click('[data-pilot]');
+    await p.click('#pmSubmit');
+    await p.waitForTimeout(150);
+    const emptyMsg = await p.evaluate(() => document.getElementById('pmMsg').innerText);
+    (seen === null && /fill in every field/i.test(emptyMsg))
+      ? ok('an empty form is rejected in the browser, without hitting the endpoint')
+      : bad('empty form was not caught client-side', JSON.stringify({ seen, emptyMsg }));
+
+    await p.fill('#pmName', 'Dana');
+    await p.fill('#pmCompany', 'Reyes');
+    await p.fill('#pmEmail', 'not-an-email');
+    await p.selectOption('#pmProps', { index: 1 });
+    await p.click('#pmSubmit');
+    await p.waitForTimeout(150);
+    const badEmail = await p.evaluate(() => document.getElementById('pmMsg').innerText);
+    (seen === null && /email/i.test(badEmail))
+      ? ok('a malformed email is caught before the request')
+      : bad('bad email reached the endpoint', JSON.stringify({ seen, badEmail }));
+
+    // 2 — the happy path
+    await p.reload({ waitUntil: 'networkidle' });
+    await fill();
+    await p.click('#pmSubmit');
+    await p.waitForTimeout(400);
+    const after = await p.evaluate(() => ({
+      msg: document.getElementById('pmMsg').innerText,
+      formHidden: getComputedStyle(document.getElementById('pmForm')).display === 'none',
+    }));
+    (seen && seen.name === 'Dana Reyes' && seen.company === 'Reyes Property Group'
+        && seen.email === 'dana@reyespg.com' && seen.properties)
+      ? ok(`the payload carries every field (${Object.keys(seen).join(', ')})`)
+      : bad('payload is wrong', JSON.stringify(seen));
+    (/thank you/i.test(after.msg) && after.formHidden)
+      ? ok('a successful submit confirms and retires the form')
+      : bad('success state did not render', JSON.stringify(after));
+
+    // 3 — a real failure must say so, and must not offer a mailto:
+    mode = 'fail'; seen = null;
+    await p.reload({ waitUntil: 'networkidle' });
+    await fill();
+    await p.click('#pmSubmit');
+    await p.waitForTimeout(400);
+    const failed = await p.evaluate(() => ({
+      msg: document.getElementById('pmMsg').innerText,
+      html: document.getElementById('pmMsg').innerHTML,
+      canRetry: !document.getElementById('pmSubmit').disabled,
+    }));
+    (/table has not been created/i.test(failed.msg) && /lynnie928@me\.com/.test(failed.msg))
+      ? ok('a failure states the reason and shows the address as text')
+      : bad('failure state is wrong', JSON.stringify(failed.msg));
+    !/mailto:/i.test(failed.html)
+      ? ok('and it is NOT a mailto: link — nothing hands off to another application')
+      : bad('the failure path offers a mailto:');
+    failed.canRetry ? ok('the button re-enables so the visitor can try again')
+                    : bad('the form is stuck after a failure');
+
+    // 4 — an attached lease is base64'd into the payload
+    mode = 'ok'; seen = null;
+    await p.reload({ waitUntil: 'networkidle' });
+    await fill();
+    await p.setInputFiles('#pmFile', { name: 'sample-lease.pdf', mimeType: 'application/pdf',
+                                       buffer: Buffer.from('%PDF-1.4 pretend lease') });
+    await p.click('#pmSubmit');
+    await p.waitForTimeout(600);
+    (seen && seen.lease && seen.lease.name === 'sample-lease.pdf' && seen.lease.data
+       && Buffer.from(seen.lease.data, 'base64').toString().startsWith('%PDF'))
+      ? ok('an attached lease arrives base64-encoded and decodes back to the file')
+      : bad('the file did not make it into the payload', JSON.stringify(seen && seen.lease));
+    await ctx.close();
+  }
+
   console.log('\n── On a phone ──');
   for (const vp of [{ width: 390, height: 844 }, { width: 360, height: 780 }]) {
     const ctx = await b.newContext({ viewport: vp, isMobile: true, hasTouch: true });
