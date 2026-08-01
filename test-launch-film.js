@@ -129,13 +129,18 @@ srv.listen(PORT,'127.0.0.1',async()=>{
   (by.brand>=3600&&by.brand<=4800)?ok('brand close holds '+by.brand/1000+'s'):bad('brand close mistimed',String(by.brand));
   heroes.every(h=>connective.every(cid=>by[h]>=by[cid]))?ok('every hero beat is at least as long as every connective beat')
     :bad('hero beats do not stand out from connective ones',JSON.stringify(by));
-  // The opening sequence: emotion, then the name, then the promise. Order and
-  // lengths come straight from the storyboard.
+  // The opening sequence: emotion, then the name, then the promise. The ORDER
+  // is the storyboard and is pinned. The lengths are not — this used to pin
+  // 1500/1500/2500, and those beats turned out to be too short to read the type
+  // on them (768ms and 945ms of legible text once the fade-from-black and the
+  // lock-in had taken their share). Bounded instead: long enough to carry a
+  // sentence, and capped so the film still reaches the product quickly. What is
+  // actually legible, and for how long, is measured in test-film-motion.js.
   const openSeq=SC.slice(0,3).map(x=>x.id).join(',');
   const openMs=SC.slice(0,3).reduce((a,x)=>a+x.dur,0);
-  (openSeq==='story,logo,promise'&&by.story===1500&&by.logo===1500&&by.promise===2500)
-    ?ok(`opening sequence runs story 1.5s -> logo 1.5s -> promise 2.5s, cutting to the workflow at ${openMs}ms`)
-    :bad('opening sequence wrong',openSeq+' '+JSON.stringify({s:by.story,l:by.logo,p:by.promise}));
+  (openSeq==='story,logo,promise'&&by.story>=1800&&by.logo>=1800&&by.promise>=2000&&openMs<=7500)
+    ?ok(`opening sequence runs story ${by.story/1000}s -> logo ${by.logo/1000}s -> promise ${by.promise/1000}s, cutting to the workflow at ${openMs}ms`)
+    :bad('opening sequence wrong',openSeq+' '+JSON.stringify({s:by.story,l:by.logo,p:by.promise,total:openMs}));
 
   console.log('\n── Composition ──');
   const comp=require('fs').readFileSync(require('path').join(__dirname,'product-film.js'),'utf8');

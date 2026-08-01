@@ -175,13 +175,25 @@ stillPending.length
   ? console.log(`  \x1b[33m·\x1b[0m ${stillPending.length} line(s) not yet recorded: ${stillPending.join(', ')} — the film has a gap until they land`)
   : ok('every planned line is recorded — no gaps left in the read');
 
-console.log('\n── The opening does not stall ──');
+console.log('\n── The opening does not stall, and it can be read ──');
 const seq = S.slice(0, 3);
 const seqMs = seq.reduce((a, c) => a + c.dur, 0);
+// Bounded at BOTH ends, rather than pinned to the three literals this used to
+// carry (1500/1500/2500). Those numbers were not a contract, they were just
+// what the beats happened to be — and they were too short: measured in the
+// browser, "Every commercial property has a story." was legible for 768ms and
+// the wordmark plus an eight-word tagline for 945ms, because a fade-from-black
+// and a slow lock-in were eating most of each beat. A card nobody can read is
+// not anticipation, it is a flash. 1800ms is the floor for a card carrying a
+// sentence; 7.5s is the ceiling on the whole silent run before the first
+// feature. How long the type is actually legible inside those beats is
+// measured for real in test-film-motion.js — this only guarantees the room.
+const titles = seq.filter(c => c.id !== 'promise');
 (seq.map(c => c.id).join(',') === 'story,logo,promise' && seq.every(c => c.silent)
-   && seq[0].dur === 1500 && seq[1].dur === 1500 && seq[2].dur === 2500)
-  ? ok(`opening sequence: story 1.5s, logo 1.5s, promise 2.5s — ${seqMs}ms of anticipation before the first feature`)
-  : bad('the opening sequence is wrong', JSON.stringify(seq.map(c => [c.id, c.dur, c.silent])));
+   && titles.every(c => c.dur >= 1800) && seqMs <= 7500)
+  ? ok(`opening sequence: ${seq.map(c => c.id + ' ' + (c.dur / 1000).toFixed(1) + 's').join(', ')}`
+       + ` — ${seqMs}ms of anticipation, every card held long enough to read`)
+  : bad('the opening sequence is wrong', JSON.stringify(seq.map(c => [c.id, c.dur, c.silent])) + ` total ${seqMs}ms`);
 const firstLine = voiced[0];
 // Two separate requirements, and the earlier version only encoded one.
 //   (a) the voice must not start over the fade from black — the original

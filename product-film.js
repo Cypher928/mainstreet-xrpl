@@ -37,15 +37,19 @@
   var VO_DIR = 'assets/vo/';
   var VO_GAP = 250;                      // minimum silence between two lines
   // Fallback delay for whichever line comes first, so the voice never starts
-  // over a fade-in. `atMs` on a VO entry overrides it with an absolute anchor.
+  // over a fade-in. `atMs` (absolute) or `atScene` (the start of a named beat)
+  // on a VO entry overrides it.
   var VO_LEAD = 600;
   var VO = {
-    // Anchored, not scene-relative. The line begins at 3.0s — as the `promise`
-    // beat opens, 2.5s before the cut into the workflow — and runs to 7.31s, so
-    // it carries across that cut. Elise reads with no pause over 140ms and the
-    // frame-header energy profile is flat end to end, so there is no verifiable
-    // gap inside the clip to hide a cut behind; the line has to bridge it.
-    upload:   { file: 'vo-upload.mp3',   durMs: 4310, atMs: 3000 },
+    // Anchored to the START OF `promise`, by name rather than by the literal
+    // 3000ms it used to carry. The literal was correct only while story and
+    // logo happened to be 1500ms each; lengthening either one would have left
+    // the voice starting during the logo card, with nothing to tie it to and no
+    // test that would have noticed. The line runs 4.31s from there, so it
+    // carries across the cut into the workflow — Elise reads with no pause over
+    // 140ms, so there is no verifiable gap inside the clip to hide a cut
+    // behind; the line has to bridge it.
+    upload:   { file: 'vo-upload.mp3',   durMs: 4310, atScene: 'promise' },
     extract:  { file: 'vo-extract.mp3',  durMs: 2640 },
     recon:    { file: 'vo-recon.mp3',    durMs: 2460 },
     recover:  { file: 'vo-recover.mp3',  durMs: 2870 },
@@ -129,7 +133,7 @@
     // another screen.
 
     // 0.00-1.50  Emotion first. No product at all.
-    { id: 'story', dur: 1500, fw: 940, cap: '', bare: true,
+    { id: 'story', dur: 2100, fw: 940, cap: '', bare: true,
       build: function (c) {
         c.innerHTML =
           '<div class="pf-open">' +
@@ -140,7 +144,7 @@
 
     // 1.50-3.00  The product's name, lit. The dashboard is behind it, heavily
     //            veiled and out of focus — supporting the frame, not sharing it.
-    { id: 'logo', dur: 1500, fw: 1180, cap: '', bare: true,
+    { id: 'logo', dur: 2000, fw: 1180, cap: '', bare: true,
       build: function (c) {
         c.innerHTML =
           '<div class="pf-open">' +
@@ -175,8 +179,22 @@
             '<img class="pf-open-scene pf-approach pf-blur pf-rack" src="' + ASSET + 'keyart-scene-blur.jpg" alt="">' +
             '<div class="pf-veil pf-veil-b"></div>' +
             '<div class="pf-lgrad"></div>' +
+            // One line, not two. "…MainStreet reads every lease." used to follow
+            // this one, timed to arrive at 71% of a 3540ms animation — 2513ms,
+            // thirteen milliseconds AFTER the 2500ms beat ends and the overlay
+            // cut has already begun killing it. Measured, it peaked at 0.89
+            // opacity for a single frame and was gone: it read as something
+            // starting to appear and then thinking better of it. That timing
+            // worked when the dissolve was 1040ms and the outgoing layer lived
+            // to 3540ms; shortening the dissolve to 320ms is what broke it.
+            //
+            // Two display lines do not fit in 2500ms. Splitting the beat evenly
+            // gives each about 900ms, and the line that currently WORKS has
+            // 1512ms — so rescuing the second one would have cost the first.
+            // The idea is not lost either: `upload` follows 2.5s later captioned
+            // "It starts reading the moment a lease lands", and `extract` speaks
+            // "MainStreet reads every clause". This line now holds the beat.
             '<div class="pf-line pf-line-a">Commercial real estate<br>moves <em>fast…</em></div>' +
-            '<div class="pf-line pf-line-b">…MainStreet reads<br><em>every lease.</em></div>' +
           '</div>';
       } },
 
@@ -359,6 +377,20 @@
       } },
   ];
 
+  // Start offset of a beat BY NAME, summed from the scene table itself so it can
+  // never disagree with it. Deliberately not called sceneStartMs — that name is
+  // already taken further down by the by-INDEX version, and because both are
+  // function declarations the later one hoists over the earlier: the first cut
+  // of this silently resolved 'promise' to index 0 and anchored the opening
+  // narration at 0ms.
+  function beatStartMs(id) {
+    var t = 0;
+    for (var i = 0; i < SCENES.length; i++) {
+      if (SCENES[i].id === id) return t;
+      t += SCENES[i].dur;
+    }
+    return null;
+  }
   function narrationCues() {
     var t = 0, prevEnd = -Infinity;
     return SCENES.map(function (s) {
@@ -374,7 +406,9 @@
       if (vo) {
         cue.audio = VO_DIR + vo.file;
         cue.voMs = vo.durMs;
-        var floor = typeof vo.atMs === 'number' ? vo.atMs
+        var anchored = vo.atScene ? beatStartMs(vo.atScene)
+                     : (typeof vo.atMs === 'number' ? vo.atMs : null);
+        var floor = anchored !== null ? anchored
                   : cue.atMs + (prevEnd === -Infinity ? VO_LEAD : 0);
         cue.startMs = Math.max(floor, prevEnd + VO_GAP);
         cue.endMs = cue.startMs + vo.durMs;
@@ -1144,8 +1178,11 @@
       '@keyframes pfHalo{from{opacity:0}45%{opacity:1}to{opacity:1}}',
       '.pf-open-lock{position:absolute;inset:0;display:flex;flex-direction:column;align-items:center;',
       '  justify-content:center;text-align:center;gap:14px;animation:pfLockIn 1.5s cubic-bezier(.4,0,.2,1) both;}',
+      // Lands at 16%, not 46%. At 46% of a 1500ms beat the wordmark and an
+      // eight-word tagline were legible for 945ms, which is not long enough to
+      // read the sentence that says what the company IS.
       '@keyframes pfLockIn{0%{opacity:0;transform:translateY(12px) scale(.985)}',
-      '  46%{opacity:1;transform:translateY(0) scale(1)}100%{opacity:1;transform:translateY(0) scale(1.012)}}',
+      '  16%{opacity:1;transform:translateY(0) scale(1)}100%{opacity:1;transform:translateY(0) scale(1.012)}}',
       // Emotion card. No product, no chrome — just the line.
       '.pf-story{position:absolute;inset:0;display:flex;align-items:center;justify-content:center;',
       '  animation:pfStory 1.5s cubic-bezier(.4,0,.2,1) both;}',
@@ -1157,7 +1194,12 @@
       '  letter-spacing:-.025em;color:#EAECEF;}',
       '.pf-story p em{font-style:normal;background:linear-gradient(120deg,#EBD49A,#C9A254 55%,#E4C57F);',
       '  -webkit-background-clip:text;background-clip:text;color:transparent;}',
-      '@keyframes pfStory{0%{opacity:0;transform:translateY(14px)}34%{opacity:1;transform:translateY(0)}',
+      // Lands at 12%, not 34%. The line used to arrive at 510ms into a 1500ms
+      // beat while the fade-from-black was still lifting over it, so it was not
+      // actually clear until 734ms and the beat took it away at 1500 — 768ms to
+      // read six words. It is now up before the black clears, so the black
+      // lifting IS the reveal, which is the better read anyway.
+      '@keyframes pfStory{0%{opacity:0;transform:translateY(14px)}12%{opacity:1;transform:translateY(0)}',
       '  100%{opacity:1;transform:translateY(-4px)}}',
       // Kinetic type for the spoken promise, left-composed per the storyboard so
       // it does not sit on top of the laptop.
@@ -1176,19 +1218,13 @@
       // the MP3 frame-header proxy, which is flat for speech, and it was wrong.
       // Against --ed (2500 + 1040 = 3540ms): the break is 52-63%, so line A
       // holds to 52% and line B arrives at 65%, as the second sentence starts.
+      // Up fast, then held. It used to fade out at 52-58% to hand over to a
+      // second line; with that line gone there is nothing to hand over to, and
+      // the exit is the overlay cut at the end of the beat, same as every other
+      // beat's type. Legible window 248ms to the cut instead of 1512ms.
       '.pf-line-a{animation:pfLineA var(--ed,3540ms) cubic-bezier(.4,0,.2,1) both;}',
-      '.pf-line-b{animation:pfLineB var(--ed,3540ms) cubic-bezier(.4,0,.2,1) both;}',
       '@keyframes pfLineA{0%{opacity:0;transform:translateY(calc(-50% + 10px))}',
-      '  8%{opacity:1;transform:translateY(-50%)}52%{opacity:1;transform:translateY(-50%)}',
-      '  58%{opacity:0;transform:translateY(calc(-50% - 8px))}100%{opacity:0}}',
-      // Line B carries across the cut, fading with its layer as the workflow
-      // comes up — the type bridges the transition the way the voice does.
-      '@keyframes pfLineB{0%{opacity:0;transform:translateY(calc(-50% + 10px))}',
-      '  65%{opacity:0;transform:translateY(calc(-50% + 10px))}',
-      '  71%{opacity:1;transform:translateY(-50%)}',
-      '  88%{opacity:1;transform:translateY(-50%)}',
-      '  96%{opacity:0;transform:translateY(calc(-50% - 10px))}',
-      '  100%{opacity:0;transform:translateY(calc(-50% - 10px))}}',
+      '  7%{opacity:1;transform:translateY(-50%)}100%{opacity:1;transform:translateY(-50%)}}',
       // The workflow arrives mid-move and settles, instead of cutting in cold.
       // .pf-arrive retired: it decelerated to a stop, which is the camera
       // parking. `upload` now enters already pushed in (k0 1.045) and keeps
