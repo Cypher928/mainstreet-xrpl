@@ -108,7 +108,7 @@ const choices = await p.evaluate(async()=>{
   await new Promise(r=>setTimeout(r,350));
   return [...document.querySelectorAll('#tsAddPanel .ts-add-choice')].map(b=>(b.innerText||'').trim());
 });
-const want=['Add Photos','Add Maintenance','Upload Document','Add Note','Add Vendor Invoice','Report Damage','Add Warranty'];
+const want=['Add Photos','Add Maintenance','Add Space Document','Add Note','Add Vendor Invoice','Report Damage','Add Warranty'];
 const missing=want.filter(w=>!choices.some(c=>c.includes(w)));
 (missing.length===0)?ok(`all seven activities offered (${choices.length})`)
                     :bad('activities missing from the picker',missing.join(', '));
@@ -311,6 +311,78 @@ const allTypes = await p.evaluate(async()=>{
 (allTypes.allManual&&allTypes.allSourced)
   ? ok('all of them carry manual + source, so history stays attributable')
   : bad('some events lack manual/source',JSON.stringify(allTypes));
+
+// ── the control that records things must stay reachable ─────────────────
+console.log('\n── Add Activity stays with you while you scroll ──');
+const sticky = await p.evaluate(async()=>{
+  const bar=document.querySelector('.ts-addbar');
+  const ov=document.getElementById('tsOverlay');
+  if(!bar||!ov) return {err:'no space open'};
+  const before=bar.getBoundingClientRect().top;
+  // Scroll the space the way someone reading its history would.
+  ov.scrollTop = ov.scrollHeight;
+  await new Promise(r=>setTimeout(r,400));
+  const r=bar.getBoundingClientRect();
+  return {position:getComputedStyle(bar).position,
+          before:Math.round(before), after:Math.round(r.top),
+          stillOnScreen:r.top>=-2 && r.top < window.innerHeight,
+          btnVisible:!!document.getElementById('tsAddBtn') &&
+                     document.getElementById('tsAddBtn').getBoundingClientRect().height>2};
+});
+(sticky.position==='sticky')
+  ? ok('the Add Activity bar is sticky')
+  : bad('the bar scrolls away with the content', JSON.stringify(sticky));
+(sticky.stillOnScreen && sticky.btnVisible)
+  ? ok(`still on screen after scrolling to the bottom (top ${sticky.after}px)`)
+  : bad('Add Activity is off screen once you scroll', JSON.stringify(sticky));
+
+// ── empty sections should teach, not just report emptiness ──────────────
+console.log('\n── empty states explain what belongs there ──');
+const empties = await p.evaluate(()=>{
+  const ov=document.getElementById('tsOverlay');
+  return [...ov.querySelectorAll('.ts-empty')].map(e=>(e.innerText||'').trim());
+});
+const terse = empties.filter(t=>t.length<60);
+(empties.length>0 && terse.length===0)
+  ? ok(`all ${empties.length} empty states teach what belongs there (shortest ${Math.min(...empties.map(t=>t.length))} chars)`)
+  : bad(`${terse.length} empty state(s) just report emptiness`, terse.join(' | '));
+// Checked on a FRESH space: by this point the space under test has maintenance,
+// so its maintenance section is populated and there is no empty state to read.
+const freshEmpties = await p.evaluate(async()=>{
+  await addNewProperty();
+  await new Promise(r=>setTimeout(r,2000));
+  const rows=[{tenant_name:'Suite 300 — Untouched',leased_sqft:900,lease_type:'NNN',cap:3}].map(normalizeTenant);
+  const prop=_props.find(y=>y.id===activePropId);
+  prop.tenants=rows; tenantData.splice(0,tenantData.length,...rows);
+  switchWorkspaceTab('spaces'); renderBulkResults();
+  await new Promise(r=>setTimeout(r,400));
+  TenantSpace.openSpace((currentProperty().tenants||[])[0].id);
+  await new Promise(r=>setTimeout(r,700));
+  const ov=document.getElementById('tsOverlay');
+  // Report which SECTION each empty state belongs to — a bare list cannot tell
+  // you that Maintenance is showing someone else's text.
+  return [...ov.querySelectorAll('.ts-sec')].map(sec=>({
+    section:(sec.querySelector('.ts-sec-title')||{}).innerText||'?',
+    empty:(sec.querySelector('.ts-empty')||{}).innerText||null}));
+});
+console.log('   ' + freshEmpties.map(x=>x.section+': '+(x.empty?'"'+x.empty.slice(0,40)+'…"':'(has content)')).join('\n   '));
+const maintEmpty=(freshEmpties.find(x=>/Maintenance/i.test(x.section))||{}).empty||'';
+(/repairs, inspections/i.test(maintEmpty))
+  ? ok('an untouched space explains what maintenance is for')
+  : bad('the Maintenance section does not explain what to record — OPEN, see commit',
+        'Maintenance, Documents and Timeline render something other than their empty state on an untouched space. ' +
+        'The empty text exists and is correct; something is filling those sections before it can be used. Not yet diagnosed.');
+const shortOnes=freshEmpties.filter(x=>x.empty&&x.empty.length<60);
+(shortOnes.length===0)
+  ? ok(`every empty section on an untouched space teaches (${freshEmpties.filter(x=>x.empty).length} of ${freshEmpties.length})`)
+  : bad('some sections still just report emptiness', shortOnes.map(x=>x.section).join(', '));
+
+// ── the document activity is named for what it is ───────────────────────
+console.log('\n── activity labels are specific ──');
+const labels = await p.evaluate(()=>TenantSpace.activityTypes().map(t=>t.label));
+(!labels.includes('Upload Document') && labels.some(l=>/Space Document/.test(l)))
+  ? ok(`the generic "Upload Document" is gone (now "${labels.find(l=>/Document/.test(l))}")`)
+  : bad('the document activity is still generically labelled', labels.join(', '));
 
 console.log('\n'+(fail?'\x1b[31m':'\x1b[32m')+`RESULT: ${pass} passed, ${fail} failed`+'\x1b[0m');
 await b.close();srv.close();process.exit(fail?1:0);

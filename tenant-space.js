@@ -169,7 +169,7 @@ window.TenantSpace = (function () {
           leaseRows.map(function (r) { return '<div class="ts-lease-row"><span>' + _esc(r[0]) + '</span><b>' + _esc(r[1]) + '</b></div>'; }).join('') +
           (leaseDocsHtml || '<div class="ts-empty" style="margin-top:6px">Lease terms on file — no lease document uploaded yet.</div>') +
         '</div>'
-      : _empty('No lease on file for this space.');
+      : _empty('No lease document on file. Upload the executed lease and any amendments so every CAM figure can cite its source.');
 
     var timelineHtml = rec.events.length
       ? '<div class="ts-timeline">' + rec.events.slice(0, 12).map(function (e) {
@@ -192,17 +192,17 @@ window.TenantSpace = (function () {
             '</span>' +
             '<span class="ts-tl-go">&#x203A;</span></button>';
         }).join('') + (rec.events.length > 12 ? '<div class="ts-empty">+ ' + (rec.events.length - 12) + ' earlier</div>' : '') + '</div>'
-      : _empty('Nothing recorded for this space yet.');
+      : _empty('Nothing recorded yet. Every repair, photo, note and document you add appears here as a dated record of what happened in this suite.');
 
     var photosHtml = rec.photos.length
       ? '<div class="ts-photos">' + rec.photos.map(function (a) { return '<a class="ts-photo" href="' + _esc(a.url) + '" target="_blank" rel="noopener" title="' + _esc(a.name) + '"><img src="' + _esc(a.url) + '" alt="' + _esc(a.name) + '" loading="lazy"></a>'; }).join('') + '</div>'
-      : _empty('No photos yet.');
-    var invHtml = rec.invoices.length ? '<div class="ts-docs">' + rec.invoices.map(function (a) { return _attachChip(a, '\u{1F9FE}'); }).join('') + '</div>' : _empty('No invoices yet.');
-    var warrHtml = rec.warranties.length ? '<div class="ts-docs">' + rec.warranties.map(function (a) { return _attachChip(a, '\u{1F6E1}\u{FE0F}'); }).join('') + '</div>' : _empty('No warranties on file.');
-    var docHtml = rec.documents.length ? '<div class="ts-docs">' + rec.documents.map(function (a) { return _attachChip(a, '\u{1F4C4}'); }).join('') + '</div>' : _empty('No other documents.');
+      : _empty('No photos yet. Move-in and move-out condition, damage, and completed repairs \u2014 photographed here, they stay attached to this suite.');
+    var invHtml = rec.invoices.length ? '<div class="ts-docs">' + rec.invoices.map(function (a) { return _attachChip(a, '\u{1F9FE}'); }).join('') + '</div>' : _empty('No vendor invoices yet. Add the bills for work done in this suite so the cost history sits with the space it belongs to.');
+    var warrHtml = rec.warranties.length ? '<div class="ts-docs">' + rec.warranties.map(function (a) { return _attachChip(a, '\u{1F6E1}\u{FE0F}'); }).join('') + '</div>' : _empty('No warranties on file. Record equipment and workmanship warranties with their expiry, so a future repair can be checked against them first.');
+    var docHtml = rec.documents.length ? '<div class="ts-docs">' + rec.documents.map(function (a) { return _attachChip(a, '\u{1F4C4}'); }).join('') + '</div>' : _empty('No documents yet. Inspection reports, correspondence, certificates of insurance \u2014 anything about this tenant that is not the lease itself.');
     var notesHtml = rec.notes.length
       ? '<div class="ts-notes">' + rec.notes.map(function (e) { return '<div class="ts-note"><div class="ts-note-t">' + _esc(e.title) + '</div>' + (e.description ? '<div class="ts-note-d">' + _esc(e.description) + '</div>' : '') + '<div class="ts-note-w">' + _esc(_fmtDate(e.timestamp)) + '</div></div>'; }).join('') + '</div>'
-      : _empty('No notes yet.');
+      : _empty('No notes yet. Conversations, requests and decisions \u2014 written down here they survive staff turnover.');
     var camResultHtml = '';
     if (rec.camResult) {
       var cr = rec.camResult;
@@ -232,10 +232,10 @@ window.TenantSpace = (function () {
     var camHtml = (camResultHtml || camEventsHtml) ? (camResultHtml + camEventsHtml) : '';
 
     // ── Financial activity: CAM allocation + this space's invoices ───────────
-    var finHtml = (camHtml || invHtml !== _empty('No invoices yet.'))
+    var finHtml = (camHtml || invHtml !== _empty('No vendor invoices yet. Add the bills for work done in this suite so the cost history sits with the space it belongs to.'))
       ? (camHtml || '') + (rec.invoices.length ? '<div class="ts-lbl">Invoices</div>' + invHtml : '')
       : '';
-    if (!finHtml) finHtml = _empty('No CAM allocations or invoices for this space yet.');
+    if (!finHtml) finHtml = _empty('No CAM activity yet. Once a reconciliation runs, this space\u2019s allocation, variance and statement appear here.');
 
     // ── Maintenance: work performed on this space + its warranties ───────────
     var maintEvents = rec.events.filter(function (e) {
@@ -251,7 +251,7 @@ window.TenantSpace = (function () {
       }).join('') + '</div>';
     }
     if (rec.warranties.length) maintHtml += '<div class="ts-lbl">Warranties</div>' + warrHtml;
-    if (!maintHtml) maintHtml = _empty('No repairs, vendor work, or warranties recorded for this space yet.');
+    if (!maintHtml) maintHtml = _empty('No maintenance recorded yet. Record repairs, inspections, vendor work and warranties here \u2014 with cost, vendor and the invoice attached.');
 
     // ── Disputes (surface only — the workflow lives in CAM) ─────────────────
     var _DSTAT = { open: 'Open', accepted: 'Accepted', rejected: 'Rejected', docs_requested: 'Docs requested' };
@@ -270,7 +270,7 @@ window.TenantSpace = (function () {
             '<span class="ts-tl-go">&#x203A;</span></button>';
         }).join('') + '</div>' +
         (rec.disputes.length > 5 ? '<div class="ts-empty">+ ' + (rec.disputes.length - 5) + ' more</div>' : '')
-      : _empty('No disputes for this space.');
+      : _empty('No disputes. If this tenant challenges a CAM charge, the dispute and its evidence will be tracked here.');
 
     // ── Documents & notes ────────────────────────────────────────────────────
     // Demo spaces show the document set a real suite would keep on file
@@ -305,7 +305,7 @@ window.TenantSpace = (function () {
     var refDocsHtml = refDocs.length ? '<div class="ts-docs">' + refDocs.map(_refRow).join('') + '</div>' : '';
     var docNotesHtml = (rec.documents.length ? docHtml : '') + refDocsHtml +
       (rec.notes.length ? '<div class="ts-lbl">Notes</div>' + notesHtml : '');
-    if (!docNotesHtml) docNotesHtml = _empty('No documents or notes for this space yet.');
+    if (!docNotesHtml) docNotesHtml = _empty('No documents or notes yet. Upload repair invoices, warranty certificates, inspection reports and correspondence \u2014 or write a note about what was agreed.');
     if (refDocs.length) docNotesHtml += '<div class="ts-ref-note">Sample records show the documents this space would keep on file \u2014 they disappear as soon as you add anything real.</div>';
 
     // Merge reference photos into the Photos section.
@@ -454,19 +454,25 @@ window.TenantSpace = (function () {
     var gold = '#C9973A';
     var css = [
       '.ts-overlay{position:fixed;inset:0;z-index:99820;background:rgba(0,0,0,0.55);display:flex;align-items:flex-start;justify-content:center;overflow-y:auto;padding:24px 12px;-webkit-overflow-scrolling:touch;}',
-      '.ts-panel{width:100%;max-width:640px;margin:auto;background:var(--theme-bg,#07090C);border:1px solid rgba(var(--line-rgb,255,255,255),0.1);border-radius:16px;box-shadow:0 30px 80px rgba(0,0,0,0.6);overflow:hidden;}',
+      '.ts-panel{width:100%;max-width:640px;margin:auto;background:var(--theme-bg,#07090C);border:1px solid rgba(var(--line-rgb,255,255,255),0.1);border-radius:16px;box-shadow:0 30px 80px rgba(0,0,0,0.6);overflow:visible;}',
       '.ts-head{display:flex;align-items:flex-start;gap:12px;padding:16px 18px;background:var(--theme-card,#0F1217);border-bottom:1px solid rgba(var(--line-rgb,255,255,255),0.08);}',
       '.ts-space-name{font-size:1.08rem;font-weight:800;color:var(--text-1,#E2E8F0);}',
       '.ts-space-sub{font-size:0.76rem;color:var(--text-3,#94A3B8);margin-top:2px;}',
       '.ts-x{margin-left:auto;background:none;border:none;color:var(--text-3,#94A3B8);font-size:1.1rem;cursor:pointer;padding:4px 8px;min-height:34px;}',
       '.ts-summary{padding:11px 18px;font-size:0.82rem;color:var(--text-2,#CBD5E1);background:rgba(201,151,58,0.06);border-bottom:1px solid rgba(var(--line-rgb,255,255,255),0.06);}',
       // Add Activity — the way anything gets INTO a space record.
-      '.ts-addbar{display:flex;align-items:center;gap:12px;flex-wrap:wrap;padding:12px 18px 4px;}',
+      // Sticky: a space is scrolled through, and the one control that puts
+      // anything INTO it was only reachable from the top. Recording something
+      // should never require scrolling back to where you started.
+      '.ts-addbar{display:flex;align-items:center;gap:12px;flex-wrap:wrap;padding:12px 18px 10px;',
+      '  position:sticky;top:0;z-index:6;background:var(--theme-bg,#07090C);',
+      '  border-bottom:1px solid rgba(var(--line-rgb,255,255,255),0.08);}',
+      '.ts-add-panel{position:sticky;top:58px;z-index:5;background:var(--theme-bg,#07090C);}',
       '.ts-add-btn{min-height:42px;padding:0 16px;border-radius:10px;font:800 0.86rem/1 inherit;cursor:pointer;',
       '  color:#07090C;background:' + gold + ';border:1px solid ' + gold + ';}',
       '.ts-add-btn:hover{filter:brightness(1.08);}',
       '.ts-add-hint{font-size:0.76rem;color:rgba(255,255,255,0.5);}',
-      '.ts-add-panel{padding:8px 18px 4px;}',
+      '.ts-add-panel{padding:8px 18px 10px;}',
       '.ts-add-grid{display:grid;grid-template-columns:repeat(auto-fit,minmax(150px,1fr));gap:8px;}',
       '.ts-add-choice{display:flex;align-items:center;gap:8px;padding:11px 12px;border-radius:10px;cursor:pointer;',
       '  font:600 0.82rem/1.2 inherit;text-align:left;color:rgba(255,255,255,0.92);',
@@ -593,8 +599,8 @@ window.TenantSpace = (function () {
       titlePlaceholder: 'Move-out inspection', verb: 'Added photos' },
     { key: 'maintenance', icon: '\u{1F527}', label: 'Add Maintenance',   kind: 'document', category: 'maintenance', accept: 'image/*,application/pdf', multiple: true,
       titlePlaceholder: 'HVAC serviced by ABC Mechanical', verb: 'Added maintenance', cost: true, vendor: true, warranty: true },
-    { key: 'document',    icon: '\u{1F4C4}', label: 'Upload Document',   kind: 'document', category: 'document',    accept: 'application/pdf,image/*,.doc,.docx', multiple: true,
-      titlePlaceholder: 'Estoppel certificate', verb: 'Uploaded document' },
+    { key: 'document',    icon: '\u{1F4C4}', label: 'Add Space Document',   kind: 'document', category: 'document',    accept: 'application/pdf,image/*,.doc,.docx', multiple: true,
+      titlePlaceholder: 'Estoppel certificate', verb: 'Added document' },
     { key: 'note',        icon: '\u{1F4DD}', label: 'Add Note',          kind: null,       category: 'note',        accept: null,                      multiple: false,
       titlePlaceholder: 'Tenant requested repaint before renewal', verb: 'Added note' },
     { key: 'invoice',     icon: '\u{1F4B0}', label: 'Add Vendor Invoice', kind: 'invoice', category: 'invoice',     accept: 'application/pdf,image/*', multiple: true,
