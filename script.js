@@ -7709,7 +7709,10 @@ async function saveBulkTenant(i) {
   // Persist to Supabase immediately — don't rely on debounced oninput
   await savePropertyData();
   const prop = currentProperty();
-  if (prop?.id) await resyncTenantsToTable(prop.id, tenantData.filter(t => t?.tenant_name && (!t?.extractionFailed || t?._userConfirmed) && !t?._pendingJobReview));
+  {
+    const _rows = tenantData.filter(t => t?.tenant_name && (!t?.extractionFailed || t?._userConfirmed) && !t?._pendingJobReview);
+    if (prop?.id && _tenantsBelongTo(prop.id, _rows)) await resyncTenantsToTable(prop.id, _rows);
+  }
   // Flush the blob immediately so a reload within 800ms still reads fresh data.
   // loadPropertyData() skips the tenants table when the blob exists, so the blob
   // must be current before the debounce would naturally fire.
@@ -7794,7 +7797,10 @@ async function removeBulkTenant(i) {
   renderBulkResults();
   checkSqftValidation();
   // Full re-sync: delete all rows for this property then re-insert what remains
-  if (prop?.id) await resyncTenantsToTable(prop.id, tenantData.filter(t => t?.tenant_name && (!t?.extractionFailed || t?._userConfirmed) && !t?._pendingJobReview));
+  {
+    const _rows = tenantData.filter(t => t?.tenant_name && (!t?.extractionFailed || t?._userConfirmed) && !t?._pendingJobReview);
+    if (prop?.id && _tenantsBelongTo(prop.id, _rows)) await resyncTenantsToTable(prop.id, _rows);
+  }
   await savePropertyData();
 }
 
@@ -20061,6 +20067,34 @@ async function _doResyncTenantsDirectly(propertyId, rows) {
 // Full replace: delete all rows for the property then insert the given list.
 // Serialized per-property (last-writer wins): if a resync is already in flight,
 // coalesces concurrent callers so the final state always wins with no interleaving.
+// Ownership guard for the tenants table.
+//
+// The two callers that pass the live `tenantData` buffer take the property id
+// from currentProperty() and the rows from a module-level global. Nothing binds
+// those two together: if the active property changes while the buffer still
+// holds the previous property's rows, this writes those rows into the tenants
+// table stamped with the NEW property's id. loadProperties() then attaches them
+// to the new property entirely correctly, and because the buffer is empty the
+// lease list still reads "No lease documents have been uploaded yet" — a brand
+// new property showing another property's tenants, which is what was reported
+// from the pilot ("SafeShield Insurance from Maple Plaza showed up in Lakeview").
+//
+// Refuse any write whose rows do not belong to the property being written to.
+// A tenant belongs if the property already lists it, or if it is genuinely new
+// (no id yet, i.e. freshly extracted and not persisted anywhere).
+function _tenantsBelongTo(propertyId, rows) {
+  const prop = (typeof _props !== 'undefined' ? _props : []).find(p => p && p.id === propertyId);
+  if (!prop) return false;
+  const own = new Set((prop.tenants || []).filter(Boolean).map(t => t.id));
+  const foreign = (rows || []).filter(t => t && t.id && !own.has(t.id));
+  if (foreign.length) {
+    console.error('[resyncTenantsToTable] REFUSED — %d tenant(s) do not belong to property %s: %s',
+      foreign.length, propertyId, foreign.map(t => t.tenant_name).join(', '));
+    return false;
+  }
+  return true;
+}
+
 async function resyncTenantsToTable(propertyId, tenants) {
   if (!propertyId || typeof propertyId !== 'string' || propertyId.length < 10) return;
   let state = _resyncQueues.get(propertyId);
