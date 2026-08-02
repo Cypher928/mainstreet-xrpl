@@ -247,6 +247,39 @@ const postNarr=await p.evaluate(()=>{
   ? ok(`and the narrative now generates: "${(postNarr.text||'').slice(0,80)}…"`)
   : bad('the narrative never appeared even after reconciliation',JSON.stringify(postNarr));
 
+// ── 4. a deleted property must not leave its banner behind ──────────────
+// Reported from the pilot: the whole portfolio was deleted, a new property
+// created, and it showed "1 of 5 leases need a human — SafeShield Insurance"
+// with an empty drop zone. Nothing had leaked; the extraction banner was a
+// stale DOM node surviving from a property that no longer existed, because
+// _renderExtractionNextStep() returned before removing it when its property
+// lookup came back undefined.
+console.log('\n── 4. no banner survives the property it described ──');
+const stale = await p.evaluate(async () => {
+  // Get a banner on screen for the CURRENT property.
+  switchWorkspaceTab('spaces');
+  renderBulkResults();
+  await new Promise(r => setTimeout(r, 400));
+  const had = !!document.getElementById('extractionNextStep');
+
+  // Now make the active property vanish from _props, exactly as deleting it does,
+  // and re-render. activePropId still points at the deleted id.
+  const gone = activePropId;
+  const i = _props.findIndex(x => x.id === gone);
+  if (i > -1) _props.splice(i, 1);
+  renderBulkResults();
+  await new Promise(r => setTimeout(r, 400));
+  const survived = !!document.getElementById('extractionNextStep');
+  const text = survived ? (document.getElementById('extractionNextStep').innerText || '').replace(/\s+/g, ' ').slice(0, 80) : null;
+  return { had, survived, text };
+});
+(stale.had)
+  ? ok('a banner renders for a property with outstanding reviews')
+  : bad('fixture produced no banner to begin with');
+(!stale.survived)
+  ? ok('and it is gone the moment that property no longer exists')
+  : bad('the banner outlived its property — it will reappear on the next one', stale.text);
+
 console.log('\n'+(fail?'\x1b[31m':'\x1b[32m')+`RESULT: ${pass} passed, ${fail} failed`+'\x1b[0m');
 await b.close();srv.close();process.exit(fail?1:0);
 })();

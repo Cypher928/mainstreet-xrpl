@@ -7588,10 +7588,26 @@ function renderBulkResults() {
 // nothing to resolve it says what comes next instead, so the screen is never a
 // dead end in either state.
 function _renderExtractionNextStep(prop) {
-  const host = document.getElementById('bulkResults');
-  if (!host || !prop) return;
+  // CLEAR FIRST, ALWAYS. This banner is stale the moment the property changes,
+  // so removing it must not sit behind any early return.
+  //
+  // It used to read `if (!host || !prop) return;` BEFORE the remove. renderBulkResults
+  // calls this with _props.find(p => p.id === activePropId), which is undefined
+  // whenever activePropId points at a property that is no longer in _props —
+  // exactly what happens the moment a property is deleted. The banner from the
+  // previous property then stayed in the DOM permanently, and reappeared over
+  // every property opened afterwards.
+  //
+  // Reported from the pilot as a data leak: a brand-new property, on an account
+  // whose portfolio had just been emptied, showing "1 of 5 leases need a human —
+  // SafeShield Insurance". Nothing had leaked. The drop zone was empty and the
+  // list said "No lease documents have been uploaded yet" — the only thing on
+  // screen claiming otherwise was this node, left behind from a property that
+  // no longer existed. My bug, and it wasted a round of database forensics.
   const old = document.getElementById('extractionNextStep');
   if (old) old.remove();
+  const host = document.getElementById('bulkResults');
+  if (!host || !prop) return;
   const tenants = (prop.tenants || []).filter(Boolean);
   if (!tenants.length) return;
 
@@ -19529,6 +19545,10 @@ function resetWorkflow() {
   // The setup prompt is part of the workflow state, so it resets with it —
   // otherwise a freshly created property inherits the previous one's "Ready".
   if (typeof _setupNextSync === 'function') _setupNextSync();
+  // Same for the extraction banner: it names a specific tenant on a specific
+  // property and must never outlive the property it was rendered for.
+  const _ens = document.getElementById('extractionNextStep');
+  if (_ens) _ens.remove();
 }
 
 // ─── Property Setup → Upload Leases ───────────────────────────────────────────
