@@ -112,9 +112,9 @@ directly, rather than closing and reopening the space on a timer.
 
 ---
 
-# BACKLOG — "⚡ Act on this space": reframe as the record's payoff
+# DONE — "⚡ Act on this space" reframed as "Draft from this record"
 
-**Status:** open · **Raised:** Space workspace review · **Recommendation:** keep, reframe, demote
+**Status:** implemented · **Raised:** Space workspace review · Kept, reframed, demoted, gated
 
 ## What it actually is
 

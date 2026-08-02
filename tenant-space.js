@@ -126,6 +126,26 @@ window.TenantSpace = (function () {
   // any real attachment both count; seeded/derived system events do not, or a
   // brand-new space would look "live" purely because the app logged its own
   // creation.
+  // A draft is only as good as what it can cite. With an empty record the strict
+  // prompt behind this correctly returns "insufficient" — so offering the button
+  // produces a refusal, which reads as the feature being broken. Better to say
+  // why it is not available yet, which also teaches what the record is for.
+  function _citableRecord(rec) {
+    if (!rec) return { ok: false, why: 'This space has no record yet.' };
+    var lease = rec.lease || {};
+    var hasLease = !!(lease.type || lease.sqft || lease.start || lease.end || lease.cap != null);
+    var hasDocs = (rec.photos || []).length || (rec.documents || []).length ||
+                  (rec.invoices || []).length || (rec.warranties || []).length ||
+                  (rec.leaseDocs || []).length;
+    var hasHistory = (rec.events || []).length > 0;
+    var hasCam = !!rec.camResult;
+    if (hasHistory || hasDocs || hasCam) return { ok: true };
+    if (hasLease) return { ok: false,
+      why: 'Only the lease terms are on file. Record something that happened here \u2014 a repair, a note, a document \u2014 and a draft can cite it.' };
+    return { ok: false,
+      why: 'Nothing is recorded for this space yet. Drafts quote the record, so there is nothing to write from.' };
+  }
+
   function _hasRealActivity(rec) {
     if (!rec) return false;
     var ev = rec.events || [];
@@ -317,6 +337,8 @@ window.TenantSpace = (function () {
     var docCount   = rec.counts.documents + rec.counts.notes + refDocs.length;
     var photoCount = rec.counts.photos + refPhotos.length;
 
+    var _draftable = _citableRecord(rec);
+
     var ov = document.createElement('div');
     ov.id = 'tsOverlay'; ov.className = 'ts-overlay';
     ov.innerHTML =
@@ -346,8 +368,18 @@ window.TenantSpace = (function () {
           _section('Documents', docCount, docNotesHtml) +
           _section('Timeline', rec.counts.events, timelineHtml) +
         '</div>' +
-        '<div class="ts-actbar"><button class="ts-act-btn" id="tsActBtn">\u{26A1}&nbsp;Act on this space</button>' +
-          '<div class="ts-act-hint">Review the record above, then take action — grounded in it.</div></div>' +
+        // The counterpart to Add Activity, and deliberately quieter than it.
+        // Add Activity WRITES to the verified record; this READS from it. One
+        // primary per screen, and on a Space that primary is recording what
+        // happened — this is the payoff for having done so.
+        '<div class="ts-actbar">' +
+          '<button class="ts-act-btn" id="tsActBtn"' + (_draftable.ok ? '' : ' disabled') + '>' +
+            '\u{270D}\u{FE0F}&nbsp;Draft from this record</button>' +
+          '<div class="ts-act-hint">' +
+            _esc(_draftable.ok
+              ? 'Every draft quotes this space\u2019s own record and cites what it used.'
+              : _draftable.why) +
+          '</div></div>' +
         '<div id="tsActions" class="ts-actions"></div>' +
       '</div>';
     document.body.appendChild(ov);
@@ -355,7 +387,8 @@ window.TenantSpace = (function () {
     _t('tsClose').onclick = closeSpace;
     var _addBtn = _t('tsAddBtn');
     if (_addBtn) _addBtn.onclick = function () { _openAddPicker(tenantId); };
-    var _ab = _t('tsActBtn'); if (_ab) _ab.onclick = function () { if (window.SpaceActions) window.SpaceActions.open(); };
+    var _ab = _t('tsActBtn');
+    if (_ab && !_ab.disabled) _ab.onclick = function () { if (window.SpaceActions) window.SpaceActions.open(); };
 
     // ── Every row opens the record behind it ────────────────────────────────
     var _spaceName = rec.space.name;
@@ -539,8 +572,13 @@ window.TenantSpace = (function () {
       '@media(max-width:560px){.ts-add-grid{grid-template-columns:1fr 1fr;}.ts-af-actions{flex-direction:column-reverse;}',
       '  .ts-af-cancel,.ts-af-save{width:100%;}}',
       '.ts-actbar{padding:14px 18px 6px;border-top:1px solid rgba(var(--line-rgb,255,255,255),0.08);}',
-      '.ts-act-btn{width:100%;min-height:46px;border-radius:10px;font:800 0.9rem/1 inherit;cursor:pointer;color:#07090C;background:' + gold + ';border:1px solid ' + gold + ';}',
-      '.ts-act-btn:hover{filter:brightness(1.08);}',
+      // Secondary on purpose: two gold primaries made Add Activity and this look
+      // like alternatives rather than opposites.
+      '.ts-act-btn{width:100%;min-height:44px;border-radius:10px;font:700 0.86rem/1 inherit;cursor:pointer;',
+      '  color:rgba(255,255,255,0.9);background:rgba(255,255,255,0.05);',
+      '  border:1px solid rgba(var(--line-rgb,255,255,255),0.18);}',
+      '.ts-act-btn:hover:not(:disabled){background:rgba(255,255,255,0.1);border-color:' + gold + ';}',
+      '.ts-act-btn:disabled{opacity:0.45;cursor:not-allowed;}',
       '.ts-act-hint{font-size:0.72rem;color:var(--text-4,#64748B);text-align:center;margin-top:6px;}',
       '.ts-actions{padding:0 18px 18px;}',
       '.ts-cam-result{border-left:3px solid ' + gold + ';padding-left:10px;}',

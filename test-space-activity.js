@@ -506,6 +506,90 @@ const life = await p.evaluate(async()=>{
   ? ok('and every entry says who made it')
   : bad('some history entries have no author',JSON.stringify(life.revisions));
 
+// ── write to the record vs draft from it ────────────────────────────────
+// The two controls on a Space run in opposite directions and must read that
+// way: Add Activity WRITES to the verified record, Draft from this record
+// READS from it. It used to be "⚡ Act on this space", styled as a second gold
+// primary, offering five actions of which four were disabled "soon" chips.
+console.log('\n── the record\'s two directions are legible ──');
+const twoWay = await p.evaluate(()=>{
+  const ov=document.getElementById('tsOverlay');
+  const add=document.getElementById('tsAddBtn');
+  const draft=document.getElementById('tsActBtn');
+  const cs=e=>e?getComputedStyle(e):null;
+  return {addLabel:(add&&add.innerText||'').trim(), draftLabel:(draft&&draft.innerText||'').trim(),
+    draftDisabled:draft?draft.disabled:null,
+    hint:((ov.querySelector('.ts-act-hint')||{}).innerText||'').trim(),
+    // The primary must be visually singular.
+    addBg:cs(add)&&cs(add).backgroundColor, draftBg:cs(draft)&&cs(draft).backgroundColor,
+    soon:(ov.innerText||'').match(/soon/gi)||[]};
+});
+(/Draft from this record/i.test(twoWay.draftLabel))
+  ? ok(`the drafting control says what it produces ("${twoWay.draftLabel}")`)
+  : bad('the drafting control is still vaguely labelled', twoWay.draftLabel);
+(twoWay.addBg !== twoWay.draftBg)
+  ? ok('it is styled secondary, so Add Activity remains the one primary')
+  : bad('both controls have the same weight', JSON.stringify(twoWay));
+(twoWay.soon.length===0)
+  ? ok('no "soon" placeholders are offered anywhere in the space')
+  : bad(`${twoWay.soon.length} unbuilt action(s) still advertised`);
+
+// Only what is built is registered.
+const registered = await p.evaluate(()=>{
+  if(!window.SpaceActions||!SpaceActions.listActions) return null;
+  return SpaceActions.listActions().map(a=>({label:a.label,available:a.available}));
+});
+if(registered){
+  (registered.every(a=>a.available))
+    ? ok(`all ${registered.length} registered action(s) are built (${registered.map(a=>a.label).join(', ')})`)
+    : bad('unbuilt actions are still registered', JSON.stringify(registered.filter(a=>!a.available)));
+}
+
+// ── drafting is refused, with a reason, when there is nothing to cite ───
+console.log('\n── an empty record cannot be drafted from, and says why ──');
+const gated = await (async()=>{
+  const fresh = await p.context().newPage();
+  await fresh.addInitScript('window.__TEST_AUTHED=true;');
+  await fresh.addInitScript(DB);
+  await fresh.route('**jsdelivr**',r=>r.fulfill({status:200,body:'/*x*/'}));
+  await fresh.route('**supabase**',r=>r.request().url().includes('127.0.0.1')?r.continue():r.fulfill({status:200,body:'/*x*/'}));
+  await fresh.goto(`http://127.0.0.1:${PORT}/`);
+  await fresh.waitForSelector('#appContent',{state:'visible',timeout:20000}).catch(()=>{});
+  await fresh.waitForTimeout(1800);
+  const out = await fresh.evaluate(async()=>{
+    const x=[...document.querySelectorAll('button')].find(e=>/go to portfolio/i.test(e.innerText)); if(x)x.click();
+    await new Promise(r=>setTimeout(r,700));
+    await addNewProperty(); await new Promise(r=>setTimeout(r,2200));
+    const rows=[{tenant_name:'Suite 401 — Empty',leased_sqft:800,lease_type:'NNN',cap:3}].map(normalizeTenant);
+    const prop=_props.find(y=>y.id===activePropId);
+    prop.tenants=rows; tenantData.splice(0,tenantData.length,...rows);
+    switchWorkspaceTab('spaces'); renderBulkResults(); await new Promise(r=>setTimeout(r,400));
+    const tid=(currentProperty().tenants||[])[0].id;
+    TenantSpace.openSpace(tid); await new Promise(r=>setTimeout(r,700));
+    const before={disabled:document.getElementById('tsActBtn').disabled,
+                  why:(document.querySelector('.ts-act-hint')||{}).innerText||''};
+    // Record one thing, and it becomes available.
+    document.getElementById('tsAddBtn').click(); await new Promise(r=>setTimeout(r,300));
+    document.querySelector('#tsAddPanel .ts-add-choice[data-act="note"]').click();
+    await new Promise(r=>setTimeout(r,300));
+    document.getElementById('tsAfTitle').value='Walked the suite';
+    document.getElementById('tsAfSave').click(); await new Promise(r=>setTimeout(r,1800));
+    const after={disabled:document.getElementById('tsActBtn').disabled,
+                 why:(document.querySelector('.ts-act-hint')||{}).innerText||''};
+    return {before,after};
+  });
+  await fresh.close(); return out;
+})();
+(gated.before.disabled===true)
+  ? ok('an empty space cannot be drafted from')
+  : bad('drafting is offered on a space with nothing to cite', JSON.stringify(gated.before));
+(/nothing to write from|record something that happened/i.test(gated.before.why))
+  ? ok(`and it says why ("${gated.before.why.slice(0,70)}…")`)
+  : bad('no explanation is given for the disabled state', gated.before.why);
+(gated.after.disabled===false)
+  ? ok('recording one thing makes drafting available — the loop is visible')
+  : bad('drafting stayed disabled after something was recorded', JSON.stringify(gated.after));
+
 console.log('\n'+(fail?'\x1b[31m':'\x1b[32m')+`RESULT: ${pass} passed, ${fail} failed`+'\x1b[0m');
 await b.close();srv.close();process.exit(fail?1:0);
 })();
