@@ -91,3 +91,81 @@ are currently unused for this. The work is to populate them and render a
 
 This is what turns the Space from a record of what happened into an
 explanation of what it cost.
+
+---
+
+# BACKLOG — Focus the newly created activity
+
+**Status:** open · **Raised:** Space workspace walkthrough · **After:** pilot
+
+After recording an activity you land back at the top of the space and must find
+the row on the timeline and click it before you can attach the photo already in
+your hand. Small, but it is on the most common path.
+
+I built this and reverted it: landing on the new record raced the panel state
+(the deferred open could replace a picker the user had just opened) and I could
+not verify it. `tenant-space.js` carries a note where the revert sits.
+
+Revisit with a deterministic approach — resolve the new event id from
+`appendPropertyTimelineEvent`'s return value and render the record view
+directly, rather than closing and reopening the space on a timer.
+
+---
+
+# BACKLOG — "⚡ Act on this space": reframe as the record's payoff
+
+**Status:** open · **Raised:** Space workspace review · **Recommendation:** keep, reframe, demote
+
+## What it actually is
+
+Not an action menu. `SpaceActions` is an **AI drafting surface grounded in the
+verified record** — it serialises the space (lease terms, invoices, warranties,
+service history, timeline) into a context block and drafts against it under a
+strict system prompt: use only facts in the record, cite every claim to a named
+item, list the supporting documents, and set `insufficient: true` rather than
+guess.
+
+One action is built — **Reply to tenant** — and four are registered as `available:
+false`: draft landlord update, explain CAM charges, review warranty coverage,
+maintenance summary.
+
+## Why it does not compete with Add Activity
+
+They run in opposite directions:
+
+- **Add Activity** writes *to* the record — input.
+- **Act on this space** reads *from* it and produces something — output.
+
+It is the payoff for keeping the record well. Record the repair, and MainStreet
+can draft a tenant reply that cites the actual invoice and the actual lease
+clause. That is the product's whole argument, made concrete on one screen.
+
+## Why it nonetheless feels like a rival
+
+Presentation, not purpose:
+
+1. **The label says nothing.** "Act on this space" reads as a generic action
+   menu, so it looks like a second front door.
+2. **Two gold primary buttons.** It has the same visual weight as Add Activity,
+   which makes them look like alternatives rather than opposites.
+3. **Four of five options are "soon".** A menu that is mostly disabled reads as
+   unfinished rather than forthcoming.
+4. **`review_warranty` is now stale** — standalone warranties were removed;
+   warranty coverage belongs to a maintenance record.
+
+## Recommendation — contextual action area, not a peer
+
+- **Rename to what it does**: "Draft from this record" (or "Ask MainStreet about
+  this space"). The verb should promise a document, not an unspecified action.
+- **Demote visually** to a secondary control. One primary per screen, and on a
+  Space that primary is Add Activity.
+- **Show only what is built.** One working action is a feature; five where four
+  are disabled is a roadmap. Replace the "soon" chips with a single quiet line.
+- **Gate it on having a record.** With nothing recorded there is nothing to cite,
+  and the strict prompt will correctly return `insufficient`. Disable it with the
+  reason — "Record something about this space first; drafts cite the record" —
+  which teaches the loop instead of producing an empty draft.
+- **Retire `review_warranty`** or fold it into a maintenance summary.
+
+Doing this makes the relationship legible: you put things in with Add Activity,
+and you get things out with Draft from this record.
