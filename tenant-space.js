@@ -372,7 +372,12 @@ window.TenantSpace = (function () {
     ov.querySelectorAll('[data-tlid]').forEach(function (b) {
       b.onclick = function () {
         var ev = (rec.events || []).find(function (x) { return String(x.id) === b.getAttribute('data-tlid'); });
-        if (!ev || !window.DocViewer) return;
+        if (!ev) return;
+        // An activity someone recorded is a living record — it opens for
+        // continuing, not just for reading. Derived and system events keep the
+        // document viewer, which is the right destination for them.
+        if (ev.manual === true) { openActivity(rec.space.id, ev.id); return; }
+        if (!window.DocViewer) return;
         // Navigating to another pane means leaving the drawer.
         var navigates = !(ev.attachments || []).length && !(ev.manual);
         if (navigates) closeSpace();
@@ -483,6 +488,35 @@ window.TenantSpace = (function () {
       '.ts-add-sub{font-size:0.76rem;line-height:1.45;color:rgba(255,255,255,0.55);margin:-2px 0 4px;}',
       '.ts-add-sub b{color:rgba(255,255,255,0.85);}',
       '.ts-prov{font-size:0.72rem;color:rgba(255,255,255,0.42);margin-top:3px;}',
+      // Living record view
+      '.ts-act-rec{padding:12px;border-radius:12px;background:rgba(255,255,255,0.03);',
+      '  border:1px solid rgba(var(--line-rgb,255,255,255),0.12);}',
+      '.ts-ar-head{display:flex;align-items:center;gap:10px;flex-wrap:wrap;}',
+      '.ts-ar-title{font:800 0.95rem/1.3 inherit;color:#fff;flex:1 1 auto;min-width:0;}',
+      '.ts-ar-status{font:700 0.7rem/1 inherit;padding:5px 9px;border-radius:999px;white-space:nowrap;}',
+      '.ts-ar-status--open{background:rgba(234,179,8,0.14);color:#fde68a;border:1px solid rgba(234,179,8,0.35);}',
+      '.ts-ar-status--in_progress{background:rgba(59,130,246,0.14);color:#bfdbfe;border:1px solid rgba(59,130,246,0.35);}',
+      '.ts-ar-status--complete{background:rgba(52,211,153,0.14);color:#a7f3d0;border:1px solid rgba(52,211,153,0.35);}',
+      '.ts-ar-desc{font-size:0.83rem;line-height:1.5;color:rgba(255,255,255,0.78);margin-top:6px;}',
+      '.ts-ar-meta{display:flex;flex-wrap:wrap;gap:10px;margin-top:8px;font-size:0.76rem;color:rgba(255,255,255,0.55);}',
+      '.ts-ar-meta b{color:rgba(255,255,255,0.85);}',
+      '.ts-ar-sec{margin-top:14px;font:700 0.74rem/1 inherit;letter-spacing:0.05em;text-transform:uppercase;',
+      '  color:rgba(255,255,255,0.5);display:flex;align-items:center;gap:8px;}',
+      '.ts-ar-n{font-size:0.7rem;padding:2px 7px;border-radius:999px;background:rgba(255,255,255,0.08);}',
+      '.ts-ar-hist{cursor:pointer;user-select:none;}',
+      '.ts-ar-hist:hover{color:rgba(255,255,255,0.8);}',
+      '.ts-ar-acts{display:flex;flex-wrap:wrap;gap:7px;margin-top:12px;}',
+      '.ts-ar-btn{padding:8px 12px;border-radius:8px;cursor:pointer;font:700 0.76rem/1 inherit;',
+      '  color:rgba(255,255,255,0.86);background:rgba(255,255,255,0.05);',
+      '  border:1px solid rgba(var(--line-rgb,255,255,255),0.14);}',
+      '.ts-ar-btn:hover{background:rgba(255,255,255,0.1);}',
+      '.ts-ar-btn--go{background:' + gold + ';color:#07090C;border-color:' + gold + ';}',
+      '.ts-ar-revs{margin-top:8px;display:flex;flex-direction:column;gap:6px;}',
+      '.ts-rev{font-size:0.76rem;color:rgba(255,255,255,0.62);padding:7px 9px;border-radius:8px;',
+      '  background:rgba(255,255,255,0.03);border-left:2px solid rgba(var(--line-rgb,255,255,255),0.2);}',
+      '.ts-rev-w{color:rgba(255,255,255,0.42);margin-right:8px;}',
+      '.ts-rev-note{margin-top:4px;color:rgba(255,255,255,0.8);font-style:italic;}',
+      '.ts-ar-back{margin-top:12px;}',
       '.ts-add-form{display:flex;flex-direction:column;gap:6px;padding:12px;border-radius:12px;',
       '  background:rgba(255,255,255,0.03);border:1px solid rgba(var(--line-rgb,255,255,255),0.12);}',
       '.ts-add-head{font:800 0.9rem/1.2 inherit;color:#fff;margin-bottom:4px;}',
@@ -586,6 +620,222 @@ window.TenantSpace = (function () {
     ].join('\n');
     var s = document.createElement('style'); s.id = 'ts-styles'; s.textContent = css;
     document.head.appendChild(s);
+  }
+
+  // ── Living records ────────────────────────────────────────────────────────
+  // An activity is not a log line. A roof repair is reported, a vendor is
+  // assigned, photos arrive, an invoice lands, a warranty is filed, it goes in
+  // progress, it completes, it reopens. All of that is ONE repair — "the roof
+  // repair we did last September" — not six unrelated records.
+  //
+  // So amendments APPEND. The event carries its current, easily-read values and
+  // a revisions[] log of how it got them: what changed, from what, to what, by
+  // whom, when. Nothing is overwritten without leaving a trace, which is the
+  // whole claim behind "verified memory". revisions[0] is the creation snapshot,
+  // so the original record is always recoverable.
+  var STATUS_FLOW = ['open', 'in_progress', 'complete'];
+  var STATUS_LABEL = { open: 'Open', in_progress: 'In progress', complete: 'Complete' };
+  // Status belongs on work. A note or a document is not work and does not get one.
+  function _hasStatus(ev) { return /^space_(maintenance|damage)$/.test(ev && ev.type || ''); }
+
+  function _who() {
+    try {
+      var u = window.AuthService && window.AuthService.getCurrentUser && window.AuthService.getCurrentUser();
+      if (u && (u.name || u.email)) return u.name || u.email;
+    } catch (_e) {}
+    return 'Property Manager';
+  }
+
+  function _findEvent(eventId) {
+    var prop = window.currentProperty && window.currentProperty();
+    if (!prop) return null;
+    return (prop.timeline || []).find(function (e) { return String(e.id) === String(eventId); }) || null;
+  }
+
+  // Every amendment goes through here, so nothing can change without a record.
+  function _amend(ev, changes, note, added) {
+    if (!Array.isArray(ev.revisions)) {
+      // First amendment: capture what the record looked like when created, so
+      // the original survives even though the current values move on.
+      ev.revisions = [{
+        at: ev.timestamp, by: (ev.metadata && ev.metadata.recordedBy) || ev.actor || 'Unknown',
+        via: (ev.metadata && ev.metadata.recordedVia) || 'Manual', action: 'created',
+        snapshot: { title: ev.title, description: ev.description,
+                    status: ev.status || null, metadata: Object.assign({}, ev.metadata || {}) },
+      }];
+    }
+    var rev = { at: new Date().toISOString(), by: _who(), via: 'Manual', action: 'amended', changes: [] };
+    Object.keys(changes || {}).forEach(function (k) {
+      var from = k === 'status' ? (ev.status || null)
+               : (k === 'title' || k === 'description') ? ev[k]
+               : (ev.metadata || {})[k];
+      var to = changes[k];
+      if (String(from == null ? '' : from) === String(to == null ? '' : to)) return;
+      rev.changes.push({ field: k, from: from == null ? null : from, to: to });
+      if (k === 'status') ev.status = to;
+      else if (k === 'title' || k === 'description') ev[k] = to;
+      else { ev.metadata = ev.metadata || {}; ev.metadata[k] = to; }
+    });
+    if (note && note.trim()) rev.note = note.trim();
+    if (added && added.length) {
+      ev.attachments = (ev.attachments || []).concat(added);
+      rev.added = added.map(function (a) { return { name: a.name, kind: a.kind }; });
+    }
+    if (!rev.changes.length && !rev.note && !rev.added) return false;  // nothing happened
+    ev.revisions.push(rev);
+    return true;
+  }
+
+  function _revLine(r) {
+    var when = _fmtDate(r.at);
+    if (r.action === 'created') return '<div class="ts-rev"><span class="ts-rev-w">' + _esc(when) + '</span>' +
+      '<span class="ts-rev-t">Recorded by ' + _esc(r.by) + '</span></div>';
+    var parts = (r.changes || []).map(function (c) {
+      var label = c.field === 'status' ? 'Status' : c.field.charAt(0).toUpperCase() + c.field.slice(1);
+      if (c.field === 'status') return label + ': ' + _esc(STATUS_LABEL[c.from] || c.from || 'none') +
+        ' → ' + _esc(STATUS_LABEL[c.to] || c.to);
+      return label + ' changed';
+    });
+    if (r.added && r.added.length) parts.push(r.added.length + ' file' + (r.added.length === 1 ? '' : 's') + ' added');
+    if (r.note) parts.push('note added');
+    return '<div class="ts-rev"><span class="ts-rev-w">' + _esc(when) + '</span>' +
+      '<span class="ts-rev-t">' + _esc(parts.join(' · ') || 'updated') + ' — ' + _esc(r.by) + '</span>' +
+      (r.note ? '<div class="ts-rev-note">' + _esc(r.note) + '</div>' : '') + '</div>';
+  }
+
+  function openActivity(tenantId, eventId) {
+    var ev = _findEvent(eventId); if (!ev) return;
+    var host = _t('tsAddPanel'); if (!host) return;
+    var st = ev.status || (_hasStatus(ev) ? 'open' : null);
+    var m = ev.metadata || {};
+    var atts = ev.attachments || [];
+    var revs = ev.revisions || [];
+
+    host.setAttribute('data-mode', 'activity');
+    host.style.display = 'block';
+    host.innerHTML =
+      '<div class="ts-act-rec">' +
+        '<div class="ts-ar-head">' +
+          '<div class="ts-ar-title">' + _esc(ev.title || 'Activity') + '</div>' +
+          (st ? '<span class="ts-ar-status ts-ar-status--' + _esc(st) + '">' + _esc(STATUS_LABEL[st] || st) + '</span>' : '') +
+        '</div>' +
+        (ev.description ? '<div class="ts-ar-desc">' + _esc(ev.description) + '</div>' : '') +
+        '<div class="ts-ar-meta">' +
+          (m.vendor ? '<span>Vendor: <b>' + _esc(m.vendor) + '</b></span>' : '') +
+          (m.costUsd != null ? '<span>Cost: <b>' + _esc(_money(m.costUsd)) + '</b></span>' : '') +
+          (m.warrantyExpires ? '<span>Warranty to: <b>' + _esc(m.warrantyExpires) + '</b></span>' : '') +
+          '<span>Recorded by <b>' + _esc(m.recordedBy || ev.actor || 'Unknown') + '</b> · ' + _esc(_fmtDate(ev.timestamp)) + '</span>' +
+        '</div>' +
+        // Related Items: everything filed against THIS activity, in one place.
+        // The roof repair, not the invoice and the photo and the warranty.
+        '<div class="ts-ar-sec">Related items <span class="ts-ar-n">' + atts.length + '</span></div>' +
+        (atts.length
+          ? '<div class="ts-docs">' + atts.map(function (a) { return _attachChip(a, a.kind === 'photo' ? '\u{1F5BC}\u{FE0F}' : (a.kind === 'invoice' ? '\u{1F9FE}' : '\u{1F4C4}')); }).join('') + '</div>'
+          : '<div class="ts-empty">Nothing attached yet. Photos, the invoice and the warranty for this job all belong here, on the job — not scattered across the space.</div>') +
+        '<div class="ts-ar-acts">' +
+          '<button class="ts-ar-btn" data-amend="note">\u{1F4DD} Follow-up note</button>' +
+          '<button class="ts-ar-btn" data-amend="photos">\u{1F4F7} Add photos</button>' +
+          '<button class="ts-ar-btn" data-amend="files">\u{1F4C4} Attach document or invoice</button>' +
+          '<button class="ts-ar-btn" data-amend="edit">✏️ Edit details</button>' +
+          (st === 'open'        ? '<button class="ts-ar-btn ts-ar-btn--go" data-status="in_progress">Mark in progress</button>' : '') +
+          (st === 'in_progress' ? '<button class="ts-ar-btn ts-ar-btn--go" data-status="complete">Mark complete</button>' : '') +
+          (st === 'complete'    ? '<button class="ts-ar-btn" data-status="open">Reopen</button>' : '') +
+        '</div>' +
+        '<div id="tsArForm"></div>' +
+        '<div class="ts-ar-sec ts-ar-hist" id="tsArHistToggle">History <span class="ts-ar-n">' + revs.length + '</span> <span class="ts-ar-chev">▾</span></div>' +
+        '<div id="tsArHist" class="ts-ar-revs" style="display:none">' +
+          (revs.length ? revs.slice().reverse().map(_revLine).join('')
+                       : '<div class="ts-empty">No changes yet — this is the record as first entered.</div>') +
+        '</div>' +
+        '<div class="ts-ar-back"><button class="ts-af-cancel" id="tsArBack">‹ Back to the space</button></div>' +
+      '</div>';
+
+    var hist = _t('tsArHist'), tog = _t('tsArHistToggle');
+    if (tog) tog.onclick = function () { hist.style.display = hist.style.display === 'none' ? 'block' : 'none'; };
+    _t('tsArBack').onclick = function () { _closeAddPanel(); };
+    host.querySelectorAll('[data-status]').forEach(function (b) {
+      b.onclick = function () { _applyAmend(tenantId, eventId, { status: b.getAttribute('data-status') }, null, []); };
+    });
+    host.querySelectorAll('[data-amend]').forEach(function (b) {
+      b.onclick = function () { _amendForm(tenantId, eventId, b.getAttribute('data-amend')); };
+    });
+    host.scrollIntoView({ behavior: 'smooth', block: 'nearest' });
+  }
+
+  function _amendForm(tenantId, eventId, mode) {
+    var ev = _findEvent(eventId); if (!ev) return;
+    var slot = _t('tsArForm'); if (!slot) return;
+    var m = ev.metadata || {};
+    var isEdit = mode === 'edit';
+    slot.innerHTML =
+      '<div class="ts-add-form">' +
+        '<div class="ts-add-head">' +
+          (isEdit ? '✏️ Edit details' : mode === 'note' ? '\u{1F4DD} Follow-up note'
+            : mode === 'photos' ? '\u{1F4F7} Add photos' : '\u{1F4C4} Attach document or invoice') + '</div>' +
+        '<div class="ts-add-sub">Nothing is overwritten — the change is added to this record’s history.</div>' +
+        (isEdit
+          ? '<label class="ts-af-l">What happened</label><input class="ts-af-i" id="tsAmTitle" value="' + _esc(ev.title || '') + '">' +
+            '<label class="ts-af-l">Details</label><textarea class="ts-af-i ts-af-ta" id="tsAmDetail" rows="2">' + _esc(ev.description || '') + '</textarea>' +
+            '<label class="ts-af-l">Vendor</label><input class="ts-af-i" id="tsAmVendor" value="' + _esc(m.vendor || '') + '">' +
+            '<label class="ts-af-l">Cost</label><input class="ts-af-i" id="tsAmCost" type="number" step="0.01" value="' + _esc(m.costUsd != null ? m.costUsd : '') + '">' +
+            '<label class="ts-af-l">Warranty expires</label><input class="ts-af-i" id="tsAmWarranty" type="date" value="' + _esc(m.warrantyExpires || '') + '">'
+          : '<label class="ts-af-l">Note</label><textarea class="ts-af-i ts-af-ta" id="tsAmNote" rows="2" placeholder="What has happened since?"></textarea>') +
+        (mode === 'photos' || mode === 'files'
+          ? '<label class="ts-af-l">Attach</label><input class="ts-af-i ts-af-file" id="tsAmFiles" type="file" multiple accept="' +
+            (mode === 'photos' ? 'image/*' : 'application/pdf,image/*') + '">' : '') +
+        '<div class="ts-af-err" id="tsAmErr" style="display:none"></div>' +
+        '<div class="ts-af-actions">' +
+          '<button class="ts-af-cancel" id="tsAmCancel">Cancel</button>' +
+          '<button class="ts-af-save" id="tsAmSave">Save to this record</button>' +
+        '</div>' +
+      '</div>';
+    _t('tsAmCancel').onclick = function () { slot.innerHTML = ''; };
+    _t('tsAmSave').onclick = function () {
+      var changes = {}, note = null;
+      if (isEdit) {
+        changes.title = (_t('tsAmTitle') || {}).value || '';
+        changes.description = (_t('tsAmDetail') || {}).value || '';
+        var v = (_t('tsAmVendor') || {}).value || ''; if (v.trim()) changes.vendor = v.trim();
+        var c = (_t('tsAmCost') || {}).value || ''; if (c !== '' && !isNaN(Number(c))) changes.costUsd = Number(c);
+        var w = (_t('tsAmWarranty') || {}).value || ''; if (w) changes.warrantyExpires = w;
+      } else {
+        note = (_t('tsAmNote') || {}).value || '';
+      }
+      var fEl = _t('tsAmFiles');
+      var btn = _t('tsAmSave'); if (btn) { btn.disabled = true; btn.textContent = 'Saving…'; }
+      _readFiles(fEl && fEl.files ? fEl.files : []).then(function (files) {
+        var kind = mode === 'photos' ? 'photo' : 'document';
+        var added = files.map(function (f) {
+          return { name: f.name, url: f.url, kind: kind, size: f.size, mime: f.mime,
+                   oversize: !!f.oversize, unreadable: !!f.unreadable };
+        });
+        if (!Object.keys(changes).length && !(note && note.trim()) && !added.length) {
+          var e = _t('tsAmErr');
+          if (e) { e.textContent = 'Add a note, change something, or attach a file.'; e.style.display = 'block'; }
+          if (btn) { btn.disabled = false; btn.textContent = 'Save to this record'; }
+          return;
+        }
+        _applyAmend(tenantId, eventId, changes, note, added);
+      });
+    };
+  }
+
+  function _applyAmend(tenantId, eventId, changes, note, added) {
+    var prop = window.currentProperty && window.currentProperty();
+    var ev = _findEvent(eventId);
+    if (!prop || !ev) return;
+    if (!_amend(ev, changes, note, added)) return;
+    var reopen = function () { closeSpace(); openSpace(tenantId); setTimeout(function () { openActivity(tenantId, eventId); }, 260); };
+    var saved = window.saveProperty ? window.saveProperty(prop) : null;
+    if (saved && typeof saved.then === 'function') {
+      saved.then(function () { reopen(); if (window.showToast) window.showToast('Record updated'); })
+           .catch(function (e) {
+             reopen();
+             if (window.showToast) window.showToast('Updated here, but saving to the server failed: ' +
+               (e && e.message ? e.message : 'unknown error') + ' — it may not survive a reload.',
+               { color: '#92400e', textColor: '#fef3c7', duration: 8000 });
+           });
+    } else { reopen(); }
   }
 
   // ── Add Activity ──────────────────────────────────────────────────────────
@@ -794,5 +1044,6 @@ window.TenantSpace = (function () {
   }
 
   return { assemble: assemble, openSpace: openSpace, closeSpace: closeSpace, record: record, renderList: renderList,
-           addActivity: _openAddPicker, activityTypes: function () { return ACTIVITY_TYPES.slice(); } };
+           addActivity: _openAddPicker, activityTypes: function () { return ACTIVITY_TYPES.slice(); },
+           openActivity: openActivity };
 })();

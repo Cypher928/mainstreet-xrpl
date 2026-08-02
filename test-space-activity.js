@@ -399,6 +399,103 @@ const labels = await p.evaluate(()=>TenantSpace.activityTypes().map(t=>t.label))
   ? ok(`the generic "Upload Document" is gone (now "${labels.find(l=>/Document/.test(l))}")`)
   : bad('the document activity is still generically labelled', labels.join(', '));
 
+// ── an activity is a living record, not a log line ──────────────────────
+// The roof-repair test: report it, assign a vendor, add photos, attach the
+// invoice, take it through in-progress and complete, reopen it. All of that is
+// ONE repair with everything hanging off it — and every step is recoverable.
+console.log('\n── an activity evolves without losing its past ──');
+const life = await p.evaluate(async()=>{
+  const t=(TenantSpace.record()||{}).space?.id;
+  // Record the repair.
+  document.getElementById('tsAddBtn').click();
+  await new Promise(r=>setTimeout(r,250));
+  document.querySelector('#tsAddPanel .ts-add-choice[data-act="maintenance"]').click();
+  await new Promise(r=>setTimeout(r,250));
+  document.getElementById('tsAfTitle').value='Roof leak over the stockroom';
+  document.getElementById('tsAfVendor').value='Summit Roofing';
+  document.getElementById('tsAfCost').value='1200';
+  document.getElementById('tsAfSave').click();
+  await new Promise(r=>setTimeout(r,1800));
+
+  const prop=currentProperty();
+  const ev=(prop.timeline||[]).filter(e=>e.tenantId===t&&e.type==='space_maintenance').pop();
+  const original={title:ev.title,cost:ev.metadata.costUsd};
+
+  // Open it as a record.
+  TenantSpace.openActivity(t, ev.id);
+  await new Promise(r=>setTimeout(r,500));
+  const detail=document.getElementById('tsAddPanel');
+  const opened={related:/Related items/i.test(detail.innerText),
+                history:/History/i.test(detail.innerText),
+                status:(detail.querySelector('.ts-ar-status')||{}).innerText||null,
+                canEdit:!!detail.querySelector('[data-amend="edit"]'),
+                canNote:!!detail.querySelector('[data-amend="note"]'),
+                canPhoto:!!detail.querySelector('[data-amend="photos"]'),
+                canFiles:!!detail.querySelector('[data-amend="files"]')};
+
+  // Follow-up note.
+  detail.querySelector('[data-amend="note"]').click();
+  await new Promise(r=>setTimeout(r,250));
+  document.getElementById('tsAmNote').value='Contractor found a second cracked seam.';
+  document.getElementById('tsAmSave').click();
+  await new Promise(r=>setTimeout(r,1800));
+
+  // Correct the cost — the original must survive.
+  document.querySelector('#tsAddPanel [data-amend="edit"]').click();
+  await new Promise(r=>setTimeout(r,250));
+  document.getElementById('tsAmCost').value='1850';
+  document.getElementById('tsAmSave').click();
+  await new Promise(r=>setTimeout(r,1800));
+
+  // In progress → complete → reopen.
+  const step=async(sel)=>{const b=document.querySelector(`#tsAddPanel [data-status="${sel}"]`);
+    if(b){b.click(); await new Promise(r=>setTimeout(r,1700));} return !!b;};
+  const toProg=await step('in_progress');
+  const toDone=await step('complete');
+  const reopened=await step('open');
+
+  const now=(currentProperty().timeline||[]).find(e=>String(e.id)===String(ev.id));
+  const panel=document.getElementById('tsAddPanel');
+  return {opened, original,
+    current:{title:now.title,cost:now.metadata.costUsd,status:now.status},
+    revisions:(now.revisions||[]).map(r=>({action:r.action,by:r.by,
+      changes:(r.changes||[]).map(c=>c.field+':'+c.from+'>'+c.to), note:r.note||null})),
+    firstSnapshot:(now.revisions||[])[0]?.snapshot||null,
+    toProg,toDone,reopened,
+    historyOnScreen:/Status.*Complete|Reopen|Recorded by/i.test(panel.innerText||'')};
+});
+
+(life.opened.related && life.opened.history)
+  ? ok('the activity opens as a record with Related items and History')
+  : bad('the activity detail view is missing its sections',JSON.stringify(life.opened));
+(life.opened.canEdit&&life.opened.canNote&&life.opened.canPhoto&&life.opened.canFiles)
+  ? ok('it offers edit, follow-up note, add photos and attach document/invoice')
+  : bad('some continuation actions are missing',JSON.stringify(life.opened));
+(life.opened.status==='Open')
+  ? ok('maintenance starts Open, so work has a state')
+  : bad('maintenance has no status',JSON.stringify(life.opened.status));
+(life.toProg&&life.toDone&&life.reopened)
+  ? ok('and moves Open → In progress → Complete → Reopened')
+  : bad('the status flow is incomplete',JSON.stringify(life));
+(life.current.cost===1850)
+  ? ok(`the current record reads the corrected value (${life.current.cost})`)
+  : bad('the edit did not take',JSON.stringify(life.current));
+(life.firstSnapshot && life.firstSnapshot.metadata && life.firstSnapshot.metadata.costUsd===1200)
+  ? ok('and the ORIGINAL is preserved in the creation snapshot (1200)')
+  : bad('the original value was overwritten and lost',JSON.stringify(life.firstSnapshot));
+(life.revisions.some(r=>r.changes.some(c=>/costUsd:1200>1850/.test(c))))
+  ? ok('the change itself is recorded, from and to')
+  : bad('the cost change left no from→to record',JSON.stringify(life.revisions));
+(life.revisions.some(r=>/cracked seam/.test(r.note||'')))
+  ? ok('the follow-up note is part of the history')
+  : bad('the follow-up note was lost',JSON.stringify(life.revisions));
+(life.revisions.filter(r=>r.changes.some(c=>/^status:/.test(c))).length>=3)
+  ? ok(`every status move is its own history entry (${life.revisions.length} revisions total)`)
+  : bad('status changes are not individually recorded',JSON.stringify(life.revisions));
+(life.revisions.every(r=>!!r.by))
+  ? ok('and every entry says who made it')
+  : bad('some history entries have no author',JSON.stringify(life.revisions));
+
 console.log('\n'+(fail?'\x1b[31m':'\x1b[32m')+`RESULT: ${pass} passed, ${fail} failed`+'\x1b[0m');
 await b.close();srv.close();process.exit(fail?1:0);
 })();
