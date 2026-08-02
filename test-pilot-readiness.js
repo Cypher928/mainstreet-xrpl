@@ -401,6 +401,35 @@ const stale = await p.evaluate(async () => {
   ? ok('and it is gone the moment that property no longer exists')
   : bad('the banner outlived its property — it will reappear on the next one', stale.text);
 
+// ── no reconciliation result outlives its property ──────────────────────
+// Reported from the pilot: a newly opened property showed "The 2026 CAM
+// reconciliation for Lakeview covers $12,300.00 across 3 tenants" on its CAM
+// tab, naming a tenant from another building. Nothing leaked — the narrative,
+// audit and trends panels are separate elements appended into #results rather
+// than into #resultsBody, so clearing the body left them on screen, still built
+// from the module-level lastResults/lastPropName of the last property run.
+console.log('\n── reconciliation panels do not outlive their property ──');
+const carried = await p.evaluate(async()=>{
+  // This page has already run a reconciliation for the current property.
+  const before = ['narrativePanel','auditPanel','trendsPanel']
+    .filter(id=>document.getElementById(id));
+  const firstName = (document.getElementById('narrativePanel')||{}).innerText || '';
+  // Now open a different property, as the user did.
+  await addNewProperty();
+  await new Promise(r=>setTimeout(r,2500));
+  const after = ['narrativePanel','auditPanel','trendsPanel']
+    .filter(id=>document.getElementById(id));
+  return {before, after, firstName:firstName.replace(/\s+/g,' ').slice(0,60),
+          lastResults: typeof lastResults!=='undefined' ? lastResults.length : null};
+});
+(carried.before.length>0)
+  ? ok(`a reconciled property renders ${carried.before.length} result panel(s)`)
+  : bad('no result panels to test — the fixture never reconciled');
+(carried.after.length===0)
+  ? ok('and none of them survive into the next property')
+  : bad(`${carried.after.length} panel(s) carried over to a different property`,
+        carried.after.join(', ') + ' — showing: ' + carried.firstName);
+
 // ── onboarding: the dashboard leads with the user's work ────────────────
 // Reported from the pilot: after signing in there is no obvious Add Property,
 // and the AI Command Center dominates the top while the portfolio sits below

@@ -19561,6 +19561,20 @@ function resetWorkflow() {
     'Upload leases and invoices, then run CAM Allocation to generate results.');
   document.getElementById('resultsTitle').textContent = `${getCamYear()} CAM Reconciliation`;
   document.getElementById('results').style.display = 'block';
+  // Per-run panels are separate elements appended INTO #results, not into
+  // #resultsBody — so clearing resultsBody above leaves them on screen. They
+  // are built from the module-level lastResults/lastPropName/lastTotal, which
+  // belong to whichever property was reconciled last.
+  //
+  // Reported from the pilot: opening a new property showed "The 2026 CAM
+  // reconciliation for Lakeview covers $12,300.00 across 3 tenants" under a
+  // different property's CAM tab, naming a tenant that lives elsewhere. Nothing
+  // had leaked — the panel was simply never removed. Same failure as the
+  // extraction banner that outlived its property.
+  ['narrativePanel', 'auditPanel', 'trendsPanel'].forEach(function (id) {
+    var el = document.getElementById(id);
+    if (el) el.remove();
+  });
   document.getElementById('disputeSection').style.display = '';
   document.getElementById('disputeInvoiceList').innerHTML = '';
   document.getElementById('openDisputesWrap').style.display = 'none';
