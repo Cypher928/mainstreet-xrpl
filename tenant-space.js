@@ -296,6 +296,15 @@ window.TenantSpace = (function () {
           '<button class="ts-x" id="tsClose" aria-label="Close">✕</button>' +
         '</div>' +
         '<div class="ts-summary">' + _esc(rec.summary) + '</div>' +
+        // Everything about Suite 204 happens inside Suite 204. This is the only
+        // way anything gets INTO a space record — before it, the panel could
+        // show a maintenance history and a photo set it had no means of
+        // accepting, which made the sample rows read as real ones.
+        '<div class="ts-addbar">' +
+          '<button class="ts-add-btn" id="tsAddBtn">\u2795&nbsp;Add Activity</button>' +
+          '<div class="ts-add-hint">Photos, repairs, documents, notes \u2014 filed to this space.</div>' +
+        '</div>' +
+        '<div id="tsAddPanel" class="ts-add-panel" style="display:none"></div>' +
         '<div class="ts-body">' +
           _section('Lease', null, leaseHtml) +
           _section('Financial activity', rec.counts.cam + rec.counts.invoices, finHtml) +
@@ -312,6 +321,8 @@ window.TenantSpace = (function () {
     document.body.appendChild(ov);
     ov.addEventListener('click', function (e) { if (e.target === ov) closeSpace(); });
     _t('tsClose').onclick = closeSpace;
+    var _addBtn = _t('tsAddBtn');
+    if (_addBtn) _addBtn.onclick = function () { _openAddPicker(tenantId); };
     var _ab = _t('tsActBtn'); if (_ab) _ab.onclick = function () { if (window.SpaceActions) window.SpaceActions.open(); };
 
     // ── Every row opens the record behind it ────────────────────────────────
@@ -417,6 +428,40 @@ window.TenantSpace = (function () {
       '.ts-space-sub{font-size:0.76rem;color:var(--text-3,#94A3B8);margin-top:2px;}',
       '.ts-x{margin-left:auto;background:none;border:none;color:var(--text-3,#94A3B8);font-size:1.1rem;cursor:pointer;padding:4px 8px;min-height:34px;}',
       '.ts-summary{padding:11px 18px;font-size:0.82rem;color:var(--text-2,#CBD5E1);background:rgba(201,151,58,0.06);border-bottom:1px solid rgba(var(--line-rgb,255,255,255),0.06);}',
+      // Add Activity — the way anything gets INTO a space record.
+      '.ts-addbar{display:flex;align-items:center;gap:12px;flex-wrap:wrap;padding:12px 18px 4px;}',
+      '.ts-add-btn{min-height:42px;padding:0 16px;border-radius:10px;font:800 0.86rem/1 inherit;cursor:pointer;',
+      '  color:#07090C;background:' + gold + ';border:1px solid ' + gold + ';}',
+      '.ts-add-btn:hover{filter:brightness(1.08);}',
+      '.ts-add-hint{font-size:0.76rem;color:rgba(255,255,255,0.5);}',
+      '.ts-add-panel{padding:8px 18px 4px;}',
+      '.ts-add-grid{display:grid;grid-template-columns:repeat(auto-fit,minmax(150px,1fr));gap:8px;}',
+      '.ts-add-choice{display:flex;align-items:center;gap:8px;padding:11px 12px;border-radius:10px;cursor:pointer;',
+      '  font:600 0.82rem/1.2 inherit;text-align:left;color:rgba(255,255,255,0.92);',
+      '  background:rgba(255,255,255,0.04);border:1px solid rgba(var(--line-rgb,255,255,255),0.12);}',
+      '.ts-add-choice:hover{background:rgba(255,255,255,0.08);border-color:' + gold + ';}',
+      '.ts-add-ic{font-size:1rem;flex:0 0 auto;}',
+      '.ts-add-form{display:flex;flex-direction:column;gap:6px;padding:12px;border-radius:12px;',
+      '  background:rgba(255,255,255,0.03);border:1px solid rgba(var(--line-rgb,255,255,255),0.12);}',
+      '.ts-add-head{font:800 0.9rem/1.2 inherit;color:#fff;margin-bottom:4px;}',
+      '.ts-af-l{font-size:0.74rem;letter-spacing:0.04em;text-transform:uppercase;color:rgba(255,255,255,0.55);margin-top:6px;}',
+      '.ts-af-opt{text-transform:none;letter-spacing:0;color:rgba(255,255,255,0.35);}',
+      '.ts-af-i{width:100%;box-sizing:border-box;padding:9px 11px;border-radius:8px;font:400 0.86rem/1.35 inherit;',
+      '  color:#fff;background:rgba(0,0,0,0.28);border:1px solid rgba(var(--line-rgb,255,255,255),0.16);}',
+      '.ts-af-i:focus{outline:none;border-color:' + gold + ';}',
+      '.ts-af-ta{resize:vertical;min-height:44px;}',
+      '.ts-af-file{padding:7px;font-size:0.78rem;}',
+      '.ts-af-note{font-size:0.74rem;color:rgba(255,255,255,0.5);}',
+      '.ts-af-err{font-size:0.78rem;color:#FFB4AE;background:rgba(255,120,110,0.08);',
+      '  border:1px solid rgba(255,120,110,0.3);border-radius:8px;padding:8px 10px;}',
+      '.ts-af-actions{display:flex;gap:8px;justify-content:flex-end;margin-top:10px;flex-wrap:wrap;}',
+      '.ts-af-cancel{padding:9px 14px;border-radius:8px;cursor:pointer;font:700 0.8rem/1 inherit;',
+      '  color:rgba(255,255,255,0.75);background:transparent;border:1px solid rgba(var(--line-rgb,255,255,255),0.18);}',
+      '.ts-af-save{padding:9px 16px;border-radius:8px;cursor:pointer;font:800 0.8rem/1 inherit;',
+      '  color:#07090C;background:' + gold + ';border:1px solid ' + gold + ';}',
+      '.ts-af-save:disabled{opacity:0.6;cursor:default;}',
+      '@media(max-width:560px){.ts-add-grid{grid-template-columns:1fr 1fr;}.ts-af-actions{flex-direction:column-reverse;}',
+      '  .ts-af-cancel,.ts-af-save{width:100%;}}',
       '.ts-actbar{padding:14px 18px 6px;border-top:1px solid rgba(var(--line-rgb,255,255,255),0.08);}',
       '.ts-act-btn{width:100%;min-height:46px;border-radius:10px;font:800 0.9rem/1 inherit;cursor:pointer;color:#07090C;background:' + gold + ';border:1px solid ' + gold + ';}',
       '.ts-act-btn:hover{filter:brightness(1.08);}',
@@ -501,5 +546,194 @@ window.TenantSpace = (function () {
     document.head.appendChild(s);
   }
 
-  return { assemble: assemble, openSpace: openSpace, closeSpace: closeSpace, record: record, renderList: renderList };
+  // ── Add Activity ──────────────────────────────────────────────────────────
+  // A space's record IS its timeline: assemble() scopes property.timeline to the
+  // tenant, and _attach(events, kind) files each event's attachments into the
+  // Photos / Documents / Financial sections. So adding an activity is appending
+  // one correctly-shaped timeline event — every section then updates itself,
+  // with no separate stores to keep in sync.
+  var ACTIVITY_TYPES = [
+    { key: 'photos',      icon: '\u{1F4F7}', label: 'Add Photos',        kind: 'photo',    category: 'inspection',  accept: 'image/*',                multiple: true,
+      titlePlaceholder: 'Move-out inspection', verb: 'Added photos' },
+    { key: 'maintenance', icon: '\u{1F527}', label: 'Add Maintenance',   kind: 'document', category: 'maintenance', accept: 'image/*,application/pdf', multiple: true,
+      titlePlaceholder: 'HVAC serviced by ABC Mechanical', verb: 'Added maintenance', cost: true, vendor: true, warranty: true },
+    { key: 'document',    icon: '\u{1F4C4}', label: 'Upload Document',   kind: 'document', category: 'document',    accept: 'application/pdf,image/*,.doc,.docx', multiple: true,
+      titlePlaceholder: 'Estoppel certificate', verb: 'Uploaded document' },
+    { key: 'note',        icon: '\u{1F4DD}', label: 'Add Note',          kind: null,       category: 'note',        accept: null,                      multiple: false,
+      titlePlaceholder: 'Tenant requested repaint before renewal', verb: 'Added note' },
+    { key: 'invoice',     icon: '\u{1F4B0}', label: 'Add Vendor Invoice', kind: 'invoice', category: 'invoice',     accept: 'application/pdf,image/*', multiple: true,
+      titlePlaceholder: 'ABC Mechanical \u2014 invoice 4417', verb: 'Added vendor invoice', cost: true, vendor: true },
+    { key: 'damage',      icon: '\u{26A0}',  label: 'Report Damage',     kind: 'photo',    category: 'damage',      accept: 'image/*',                multiple: true,
+      titlePlaceholder: 'Water damage \u2014 rear stockroom ceiling', verb: 'Reported damage', severity: 'warning', cost: true },
+    { key: 'warranty',    icon: '\u{1F6E1}', label: 'Add Warranty',      kind: 'warranty', category: 'warranty',    accept: 'application/pdf,image/*', multiple: true,
+      titlePlaceholder: 'Rooftop unit \u2014 5 year parts & labour', verb: 'Added warranty', vendor: true, warranty: true },
+  ];
+
+  function _typeByKey(k) { for (var i = 0; i < ACTIVITY_TYPES.length; i++) if (ACTIVITY_TYPES[i].key === k) return ACTIVITY_TYPES[i]; return null; }
+
+  function _openAddPicker(tenantId) {
+    var panel = _t('tsAddPanel');
+    if (!panel) return;
+    if (panel.style.display !== 'none' && panel.getAttribute('data-mode') === 'picker') { _closeAddPanel(); return; }
+    panel.setAttribute('data-mode', 'picker');
+    panel.style.display = 'block';
+    panel.innerHTML =
+      '<div class="ts-add-grid">' +
+        ACTIVITY_TYPES.map(function (t) {
+          return '<button class="ts-add-choice" data-act="' + t.key + '">' +
+                   '<span class="ts-add-ic">' + t.icon + '</span>' + _esc(t.label) +
+                 '</button>';
+        }).join('') +
+      '</div>';
+    Array.prototype.forEach.call(panel.querySelectorAll('.ts-add-choice'), function (b) {
+      b.onclick = function () { _openAddForm(tenantId, b.getAttribute('data-act')); };
+    });
+  }
+
+  function _closeAddPanel() {
+    var panel = _t('tsAddPanel');
+    if (panel) { panel.style.display = 'none'; panel.innerHTML = ''; panel.removeAttribute('data-mode'); }
+  }
+
+  function _openAddForm(tenantId, key) {
+    var t = _typeByKey(key); if (!t) return;
+    var panel = _t('tsAddPanel'); if (!panel) return;
+    panel.setAttribute('data-mode', 'form');
+    panel.innerHTML =
+      '<div class="ts-add-form" id="tsAddForm">' +
+        '<div class="ts-add-head">' + t.icon + '&nbsp;' + _esc(t.label) + '</div>' +
+        '<label class="ts-af-l" for="tsAfTitle">What happened</label>' +
+        '<input class="ts-af-i" id="tsAfTitle" type="text" placeholder="' + _esc(t.titlePlaceholder) + '">' +
+        '<label class="ts-af-l" for="tsAfDetail">Details <span class="ts-af-opt">optional</span></label>' +
+        '<textarea class="ts-af-i ts-af-ta" id="tsAfDetail" rows="2"></textarea>' +
+        (t.vendor ? '<label class="ts-af-l" for="tsAfVendor">Vendor <span class="ts-af-opt">optional</span></label>' +
+                    '<input class="ts-af-i" id="tsAfVendor" type="text" placeholder="ABC Mechanical">' : '') +
+        (t.cost ? '<label class="ts-af-l" for="tsAfCost">Cost <span class="ts-af-opt">optional</span></label>' +
+                  '<input class="ts-af-i" id="tsAfCost" type="number" min="0" step="0.01" placeholder="480">' : '') +
+        (t.warranty ? '<label class="ts-af-l" for="tsAfWarranty">Warranty expires <span class="ts-af-opt">optional</span></label>' +
+                      '<input class="ts-af-i" id="tsAfWarranty" type="date">' : '') +
+        (t.accept ? '<label class="ts-af-l" for="tsAfFiles">Attach <span class="ts-af-opt">' +
+                      (t.key === 'photos' || t.key === 'damage' ? 'photos' : 'files') + '</span></label>' +
+                    '<input class="ts-af-i ts-af-file" id="tsAfFiles" type="file" accept="' + t.accept + '"' +
+                      (t.multiple ? ' multiple' : '') + '>' +
+                    '<div class="ts-af-note" id="tsAfFileNote"></div>' : '') +
+        '<div class="ts-af-err" id="tsAfErr" style="display:none"></div>' +
+        '<div class="ts-af-actions">' +
+          '<button class="ts-af-cancel" id="tsAfCancel">Cancel</button>' +
+          '<button class="ts-af-save" id="tsAfSave">Save to this space</button>' +
+        '</div>' +
+      '</div>';
+    var files = _t('tsAfFiles');
+    if (files) files.onchange = function () {
+      var n = files.files ? files.files.length : 0;
+      var note = _t('tsAfFileNote');
+      if (note) note.textContent = n ? (n + (n === 1 ? ' file selected' : ' files selected')) : '';
+    };
+    _t('tsAfCancel').onclick = function () { _openAddPicker(tenantId); };
+    _t('tsAfSave').onclick   = function () { _submitActivity(tenantId, key); };
+    var ti = _t('tsAfTitle'); if (ti) ti.focus();
+  }
+
+  // Files are read to data URLs so a pilot user's photos survive a reload with no
+  // storage bucket wired up. Capped, because properties.data is a JSON blob and a
+  // 12-megapixel photo would bloat every subsequent save of the whole property.
+  var MAX_INLINE_BYTES = 1200000;
+  function _readFiles(list) {
+    var out = [], arr = Array.prototype.slice.call(list || []);
+    if (!arr.length) return Promise.resolve(out);
+    return Promise.all(arr.map(function (f) {
+      return new Promise(function (resolve) {
+        var base = { name: f.name, size: f.size, mime: f.type || '' };
+        if (f.size > MAX_INLINE_BYTES) { out.push(Object.assign(base, { url: null, oversize: true })); return resolve(); }
+        var fr = new FileReader();
+        fr.onload  = function () { out.push(Object.assign(base, { url: String(fr.result) })); resolve(); };
+        fr.onerror = function () { out.push(Object.assign(base, { url: null, unreadable: true })); resolve(); };
+        fr.readAsDataURL(f);
+      });
+    })).then(function () { return out; });
+  }
+
+  function _submitActivity(tenantId, key) {
+    var t = _typeByKey(key); if (!t) return;
+    var errEl  = _t('tsAfErr');
+    var saveBtn = _t('tsAfSave');
+    var title  = (_t('tsAfTitle') || {}).value || '';
+    var detail = (_t('tsAfDetail') || {}).value || '';
+    var vendor = (_t('tsAfVendor') || {}).value || '';
+    var cost   = (_t('tsAfCost') || {}).value || '';
+    var warr   = (_t('tsAfWarranty') || {}).value || '';
+    var fileEl = _t('tsAfFiles');
+    var picked = fileEl && fileEl.files ? fileEl.files : [];
+
+    var fail = function (msg) {
+      if (errEl) { errEl.textContent = msg; errEl.style.display = 'block'; }
+      if (saveBtn) { saveBtn.disabled = false; saveBtn.textContent = 'Save to this space'; }
+    };
+    // Something must actually be recorded — an empty event is not memory.
+    if (!title.trim() && !picked.length) return fail('Describe what happened, or attach at least one file.');
+    if (saveBtn) { saveBtn.disabled = true; saveBtn.textContent = 'Saving\u2026'; }
+    if (errEl) errEl.style.display = 'none';
+
+    var property = window.currentProperty && window.currentProperty();
+    if (!property) return fail('No property is open — reopen the space and try again.');
+
+    _readFiles(picked).then(function (files) {
+      var attachments = files.map(function (f) {
+        return { name: f.name, url: f.url, kind: t.kind || 'document', size: f.size, mime: f.mime,
+                 oversize: !!f.oversize, unreadable: !!f.unreadable };
+      });
+      var meta = {};
+      if (vendor.trim()) meta.vendor = vendor.trim();
+      if (cost !== '' && !isNaN(Number(cost))) meta.costUsd = Number(cost);
+      if (warr) meta.warrantyExpires = warr;
+      if (attachments.length) meta.fileCount = attachments.length;
+
+      var headline = title.trim() || (attachments.length + ' file' + (attachments.length === 1 ? '' : 's') + ' attached');
+      var bits = [];
+      if (meta.vendor) bits.push(meta.vendor);
+      if (meta.costUsd != null) bits.push(_money(meta.costUsd));
+      if (meta.warrantyExpires) bits.push('warranty to ' + meta.warrantyExpires);
+      if (attachments.length) bits.push(attachments.length + (attachments.length === 1 ? ' file' : ' files'));
+
+      var evt = {
+        type: 'space_' + t.key,
+        severity: t.severity || 'info',
+        actor: 'Property Manager',
+        manual: true,
+        category: t.category,
+        tenantId: tenantId,
+        subject: { type: 'suite', id: tenantId, label: (_openRec && _openRec.space && _openRec.space.name) || '' },
+        title: t.verb + ' \u2014 ' + headline,
+        description: [detail.trim(), bits.join(' \u00B7 ')].filter(Boolean).join(' \u2014 '),
+        metadata: meta,
+        attachments: attachments,
+      };
+
+      try {
+        window.appendPropertyTimelineEvent(property, evt);
+      } catch (e) {
+        return fail('Could not record that: ' + (e && e.message ? e.message : 'unknown error'));
+      }
+
+      var done = function () {
+        // Re-open the space so Timeline, Maintenance, Photos and Documents all
+        // re-assemble from the event that was just written.
+        closeSpace();
+        openSpace(tenantId);
+        if (window.showToast) window.showToast(t.verb + ' to ' + ((_openRec && _openRec.space && _openRec.space.name) || 'this space'));
+      };
+      var saved = window.saveProperty ? window.saveProperty(property) : null;
+      if (saved && typeof saved.then === 'function') {
+        saved.then(done).catch(function (e) {
+          // The event is already on the in-memory record; say the persistence failed.
+          done();
+          if (window.showToast) window.showToast('Recorded, but saving to the server failed: ' + (e && e.message ? e.message : 'unknown error') + ' \u2014 it may not survive a reload.',
+            { color: '#92400e', textColor: '#fef3c7', duration: 8000 });
+        });
+      } else { done(); }
+    }).catch(function (e) { fail('Could not read those files: ' + (e && e.message ? e.message : 'unknown error')); });
+  }
+
+  return { assemble: assemble, openSpace: openSpace, closeSpace: closeSpace, record: record, renderList: renderList,
+           addActivity: _openAddPicker, activityTypes: function () { return ACTIVITY_TYPES.slice(); } };
 })();
