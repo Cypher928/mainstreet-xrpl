@@ -108,9 +108,12 @@ const choices = await p.evaluate(async()=>{
   await new Promise(r=>setTimeout(r,350));
   return [...document.querySelectorAll('#tsAddPanel .ts-add-choice')].map(b=>(b.innerText||'').trim());
 });
-const want=['Add Photos','Add Maintenance','Add Space Document','Add Note','Add Vendor Invoice','Report Damage','Add Warranty'];
+// 'Add Warranty' was removed on purpose: a warranty belongs to the repair it
+// came from, not to a separate record nobody sets out to create.
+const want=['Add Photos','Add Maintenance','Add Space Document','Add Note','Add Vendor Invoice','Report Damage'];
 const missing=want.filter(w=>!choices.some(c=>c.includes(w)));
-(missing.length===0)?ok(`all seven activities offered (${choices.length})`)
+(missing.length===0 && !choices.some(c=>/Warranty/i.test(c)))
+  ?ok(`the six activities are offered, warranty folded into maintenance (${choices.length})`)
                     :bad('activities missing from the picker',missing.join(', '));
 
 // ── Christy records maintenance on the space ────────────────────────────
@@ -405,10 +408,17 @@ const labels = await p.evaluate(()=>TenantSpace.activityTypes().map(t=>t.label))
 // ONE repair with everything hanging off it — and every step is recoverable.
 console.log('\n── an activity evolves without losing its past ──');
 const life = await p.evaluate(async()=>{
+  // Always start this block from a freshly opened space. openSpace() returns
+  // early if an overlay already exists, so close first — assuming an overlay
+  // is both open and in a known state is what made this throw on a null button.
+  TenantSpace.closeSpace();
+  await new Promise(r=>setTimeout(r,200));
+  TenantSpace.openSpace((currentProperty().tenants||[])[0].id);
+  await new Promise(r=>setTimeout(r,800));
   const t=(TenantSpace.record()||{}).space?.id;
   // Record the repair.
   document.getElementById('tsAddBtn').click();
-  await new Promise(r=>setTimeout(r,250));
+  await new Promise(r=>setTimeout(r,300));
   document.querySelector('#tsAddPanel .ts-add-choice[data-act="maintenance"]').click();
   await new Promise(r=>setTimeout(r,250));
   document.getElementById('tsAfTitle').value='Roof leak over the stockroom';

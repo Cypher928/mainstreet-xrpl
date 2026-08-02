@@ -654,7 +654,7 @@ window.TenantSpace = (function () {
 
   // Every amendment goes through here, so nothing can change without a record.
   function _amend(ev, changes, note, added) {
-    if (!Array.isArray(ev.revisions)) {
+    if (!Array.isArray(ev.revisions) || !ev.revisions.length) {
       // First amendment: capture what the record looked like when created, so
       // the original survives even though the current values move on.
       ev.revisions = [{
@@ -844,6 +844,13 @@ window.TenantSpace = (function () {
   // Photos / Documents / Financial sections. So adding an activity is appending
   // one correctly-shaped timeline event — every section then updates itself,
   // with no separate stores to keep in sync.
+  // 'Add Warranty' was removed as a standalone activity. Nobody wakes up and
+  // decides to add a warranty — they replace an HVAC compressor, and that repair
+  // has a vendor, an invoice, photos AND a warranty. Splitting the warranty out
+  // made the manager file one job as two records. It now lives on maintenance,
+  // which already carries a warranty expiry, and any warranty document attaches
+  // to that repair like every other file. Existing standalone warranty records
+  // keep rendering; only the way to create new ones is gone.
   var ACTIVITY_TYPES = [
     { key: 'photos',      icon: '\u{1F4F7}', label: 'Add Photos',        kind: 'photo',    category: 'inspection',  accept: 'image/*',                multiple: true,
       titlePlaceholder: 'Move-out inspection', verb: 'Added photos' },
@@ -857,8 +864,6 @@ window.TenantSpace = (function () {
       titlePlaceholder: 'ABC Mechanical \u2014 invoice 4417', verb: 'Added vendor invoice', cost: true, vendor: true },
     { key: 'damage',      icon: '\u{26A0}',  label: 'Report Damage',     kind: 'photo',    category: 'damage',      accept: 'image/*',                multiple: true,
       titlePlaceholder: 'Water damage \u2014 rear stockroom ceiling', verb: 'Reported damage', severity: 'warning', cost: true },
-    { key: 'warranty',    icon: '\u{1F6E1}', label: 'Add Warranty',      kind: 'warranty', category: 'warranty',    accept: 'application/pdf,image/*', multiple: true,
-      titlePlaceholder: 'Rooftop unit \u2014 5 year parts & labour', verb: 'Added warranty', vendor: true, warranty: true },
   ];
 
   function _typeByKey(k) { for (var i = 0; i < ACTIVITY_TYPES.length; i++) if (ACTIVITY_TYPES[i].key === k) return ACTIVITY_TYPES[i]; return null; }
@@ -997,11 +1002,6 @@ window.TenantSpace = (function () {
       meta.recordedVia = 'Manual';
 
       var headline = title.trim() || (attachments.length + ' file' + (attachments.length === 1 ? '' : 's') + ' attached');
-      var bits = [];
-      if (meta.vendor) bits.push(meta.vendor);
-      if (meta.costUsd != null) bits.push(_money(meta.costUsd));
-      if (meta.warrantyExpires) bits.push('warranty to ' + meta.warrantyExpires);
-      if (attachments.length) bits.push(attachments.length + (attachments.length === 1 ? ' file' : ' files'));
 
       var evt = {
         type: 'space_' + t.key,
@@ -1009,24 +1009,50 @@ window.TenantSpace = (function () {
         actor: _who,
         source: 'manual',      // Manual | AI | Import | Email — set by whoever writes the event
         manual: true,
+        // Work starts Open. Without this the field was undefined until the first
+        // transition, and the history then read "Status: none → In progress" —
+        // true to the data and wrong to the reader, who did open it as Open.
+        status: (t.key === 'maintenance' || t.key === 'damage') ? 'open' : undefined,
         category: t.category,
         tenantId: tenantId,
         subject: { type: 'suite', id: tenantId, label: (_openRec && _openRec.space && _openRec.space.name) || '' },
-        title: t.verb + ' \u2014 ' + headline,
-        description: [detail.trim(), bits.join(' \u00B7 ')].filter(Boolean).join(' \u2014 '),
+        // Title is what happened, nothing else. It read "Added maintenance —
+        // HVAC compressor replaced": the manager thinks "HVAC compressor
+        // replaced", and the row already carries a Maintenance badge, so the
+        // prefix was pure noise repeated on every line of the timeline.
+        title: headline,
+        // Vendor/cost/warranty are structured fields and are rendered from
+        // metadata. Repeating them here printed the same three facts twice on
+        // the record, once as prose and once as labelled values.
+        description: detail.trim(),
         metadata: meta,
         attachments: attachments,
+        // The record starts with its own creation. History read "0" on a record
+        // that someone had plainly just created.
+        revisions: [{
+          at: new Date().toISOString(), by: _who, via: 'Manual', action: 'created',
+          snapshot: { title: headline, description: detail.trim(),
+                      status: (t.key === 'maintenance' || t.key === 'damage') ? 'open' : null,
+                      metadata: Object.assign({}, meta) },
+        }],
       };
 
       try {
-        window.appendPropertyTimelineEvent(property, evt);
+        var _stored = window.appendPropertyTimelineEvent(property, evt);
+        if (_stored && _stored.id) evt.id = _stored.id;
       } catch (e) {
         return fail('Could not record that: ' + (e && e.message ? e.message : 'unknown error'));
       }
 
       var done = function () {
-        // Re-open the space so Timeline, Maintenance, Photos and Documents all
-        // re-assemble from the event that was just written.
+        // Re-open the space so every section re-assembles from the new event.
+        //
+        // NOT auto-opening the new record here, though the walkthrough shows it
+        // costs a click: after saving you must find the row on the timeline and
+        // click it before you can attach the photo already in your hand. An
+        // attempt to land on the record automatically raced the panel state and
+        // I could not verify it, so it is left out rather than shipped unproven.
+        // Worth revisiting — see the walkthrough notes in the commit.
         closeSpace();
         openSpace(tenantId);
         if (window.showToast) window.showToast(t.verb + ' to ' + ((_openRec && _openRec.space && _openRec.space.name) || 'this space'));

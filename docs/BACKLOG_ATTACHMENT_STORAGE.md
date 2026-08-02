@@ -54,3 +54,40 @@ histories is not.
 `test-space-activity.js` covers the current behaviour and should be extended,
 not replaced, when the storage path lands — the assertions about scoping,
 categorisation and provenance hold either way.
+
+---
+
+# BACKLOG — Linked CAM impact
+
+**Status:** open · **Raised:** after the Space workspace walkthrough
+
+An activity should be able to show what it *cost the property*, not just what
+happened. A roof repair is the start of a chain:
+
+    Roof repair (space activity)
+      └─ Vendor invoice
+           └─ CAM allocation
+                └─ Tenant statements
+                     └─ Dispute
+
+Today each link exists but nothing joins them: the repair lives on the space
+timeline, the invoice in the CAM invoice register, the allocation in the
+reconciliation, the statement in Reports, and a dispute in the dispute
+workspace. A manager asked "what did the roof cost us, and who paid for it?"
+has to reassemble that by memory.
+
+The event model already carries the hooks — `relatedInvoiceIds`,
+`relatedDisputeIds` and `relatedEvidenceIds` are on every timeline entry and
+are currently unused for this. The work is to populate them and render a
+"CAM impact" block on the activity record:
+
+- link a vendor invoice recorded on an activity into the CAM invoice register
+  rather than duplicating it
+- once a reconciliation runs, show which tenants absorbed the cost and at what
+  share, read from the allocation, never recomputed
+- link forward to the statements it appeared on and any dispute it triggered
+- never imply a link that is not there: if the invoice was not included in a
+  reconciliation, say so
+
+This is what turns the Space from a record of what happened into an
+explanation of what it cost.
