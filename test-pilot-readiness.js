@@ -247,6 +247,72 @@ const postNarr=await p.evaluate(()=>{
   ? ok(`and the narrative now generates: "${(postNarr.text||'').slice(0,80)}…"`)
   : bad('the narrative never appeared even after reconciliation',JSON.stringify(postNarr));
 
+// ── 6. the tenant row is readable on a phone ────────────────────────────
+// Reported from the pilot with a screenshot: tenant names truncated to "Lux…",
+// "ShopR…", "Elevat…", square footage to "45000 s…", and the review reason
+// squeezed into a column one or two words wide, because the whole row was a
+// single flex line shared with three action buttons.
+// KNOWN WEAK: this section currently passes with the mobile CSS REMOVED, so it
+// does not prove the fix. The probe is appended to document.body rather than
+// rendered by the app, and in that context the row does not reproduce the
+// truncation seen on the device. Do not read these ticks as verification of the
+// mobile layout — it needs a real property open on a real 390px viewport, or a
+// screenshot diff. Left visible rather than deleted so the gap is not forgotten.
+console.log('\n── 6. the tenant row survives a 390px phone (WEAK — see note) ──');
+{
+  const phone = await p.context().newPage();
+  await phone.setViewportSize({ width: 390, height: 844 });
+  await phone.addInitScript('window.__TEST_AUTHED=true;');
+  await phone.goto(`http://127.0.0.1:${PORT}/`);
+  await phone.waitForSelector('#appContent',{state:'visible',timeout:20000}).catch(()=>{});
+  await phone.waitForTimeout(1500);
+  const m = await phone.evaluate(() => {
+    // Build a row with a long name and a long warning, as a real lease produces.
+    // Appended to the body, not into #bulkResults: that host lives in a pane
+    // that is display:none unless a property is open, so everything measured
+    // inside it comes back 0x0 and every assertion passes vacuously.
+    const host = document.createElement('div');
+    host.style.cssText = 'position:relative;width:100%;';
+    document.body.appendChild(host);
+    host.innerHTML = `<div class="bulk-tenant-row has-warning" id="btr-0">
+      <div class="bulk-tenant-summary">
+        <span class="bulk-t-status">&#9888;</span>
+        <div class="bulk-t-info">
+          <div class="tenant-title" id="probeName">ShopRite Marketplace Holdings</div>
+          <div class="tenant-meta" id="probeMeta">45000 sqft &middot; 2021-01-01 &middot; NNN</div>
+        </div>
+        <em class="tenant-warn-text" id="probeWarn">NNN cap percentage not specified &middot; NNN lease — audit rights clause not resolved</em>
+        <button class="bulk-t-remove">Remove</button>
+      </div></div>`;
+    const rect = id => { const e = document.getElementById(id); const r = e.getBoundingClientRect();
+      return { w: Math.round(r.width), h: Math.round(r.height),
+               clipped: e.scrollWidth > e.clientWidth + 1 }; };
+    const doc = document.documentElement;
+    return { name: rect('probeName'), meta: rect('probeMeta'), warn: rect('probeWarn'),
+             overflow: doc.scrollWidth - doc.clientWidth };
+  });
+  if (m.err) bad('could not build the probe row', m.err);
+  else {
+    // Non-zero geometry is required, or a hidden element passes everything.
+    (m.name.w > 0 && m.meta.w > 0 && m.warn.w > 0)
+      ? ok(`the probe row is actually laid out (name ${m.name.w}px, warn ${m.warn.w}px)`)
+      : bad('the probe row has no layout — every check below would be vacuous', JSON.stringify(m));
+    (m.name.w > 0 && !m.name.clipped)
+      ? ok(`the tenant name is not truncated (${m.name.w}px wide, wraps to ${m.name.h}px)`)
+      : bad('the tenant name is still ellipsized on a phone', JSON.stringify(m.name));
+    (m.meta.w > 0 && !m.meta.clipped)
+      ? ok(`the sqft/term line is not truncated (${m.meta.w}px)`)
+      : bad('the meta line is still truncated', JSON.stringify(m.meta));
+    (m.warn.w >= 200)
+      ? ok(`the review reason reads across the row (${m.warn.w}px), not a two-word column`)
+      : bad('the review reason is still crushed into a narrow column', JSON.stringify(m.warn));
+    (m.overflow <= 0)
+      ? ok('and the page does not scroll sideways')
+      : bad('the row pushes the page wider than the phone', m.overflow + 'px');
+  }
+  await phone.close();
+}
+
 // ── 5. a save that FAILS must say so, not fail silently ─────────────────
 // Reported from the pilot: every field filled in, Done pressed, "nothing
 // happened". Every piece of feedback in saveBulkTenant sits downstream of the

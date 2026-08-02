@@ -2527,6 +2527,46 @@
       background: rgba(234,179,8,0.06); border-top: 1px solid rgba(234,179,8,0.15);
       font-size: 0.77rem; color: var(--c-ca8a04); flex-wrap: wrap;
     }
+    /* ── Tenant row: mobile ────────────────────────────────────────────
+       On a phone this was one flex line — status, name, the review reason, and
+       three buttons — so .bulk-t-info collapsed and tenant names truncated to
+       six characters ("Lux…", "ShopR…", "Elevat…"), square footage to
+       "45000 s…", and the reason for the flag was squeezed into a column one or
+       two words wide. Nothing on the row was readable.
+       Below 768px the summary becomes two rows: the tenant identifies itself on
+       a full-width line, and the actions get their own line beneath. The desktop
+       grid further down is untouched. */
+    @media (max-width: 767px) {
+      .bulk-tenant-summary {
+        display: grid;
+        grid-template-columns: auto 1fr;
+        grid-template-areas: "status info" "actions actions";
+        row-gap: 8px; column-gap: 10px;
+        align-items: start;
+        padding: 12px 14px;
+      }
+      .bulk-t-status { grid-area: status; padding-top: 2px; }
+      .bulk-t-info   { grid-area: info; min-width: 0; }
+      /* The name is the thing you are looking for — never truncate it. */
+      .tenant-title  { white-space: normal; overflow: visible; text-overflow: clip; line-height: 1.3; }
+      .tenant-meta   { white-space: normal; overflow: visible; text-overflow: clip; line-height: 1.4; }
+      /* Everything that is not the status or the identity is an action. */
+      .bulk-tenant-summary > *:not(.bulk-t-status):not(.bulk-t-info) { grid-area: actions; }
+      .bulk-tenant-summary .bulk-t-actions,
+      .bulk-tenant-summary .lease-row-actions {
+        display: flex; flex-wrap: wrap; gap: 8px; align-items: center; width: 100%;
+      }
+      /* The review reason reads as a sentence under the name, not as a column. */
+      .bulk-tenant-summary .tenant-warn-text,
+      .bulk-tenant-summary em,
+      .bulk-tenant-summary i {
+        grid-area: info; display: block; white-space: normal; font-size: 0.78rem;
+        line-height: 1.45; margin-top: 6px; max-width: 100%;
+      }
+      .bulk-tenant-summary .view-lease-btn,
+      .bulk-tenant-summary .bulk-t-remove,
+      .bulk-tenant-summary .bulk-t-chevron { flex: 0 0 auto; }
+    }
     /* ── Invoice row: desktop grid ──────────────────────────────────── */
     @media (min-width: 768px) {
       .bulk-tenant-summary {

@@ -23163,3 +23163,81 @@ async function init() {
   if (document.readyState === 'loading') document.addEventListener('DOMContentLoaded', attach);
   else attach();
 })();
+
+// ─── No async user action may fail silently ───────────────────────────────────
+// Audited every async function reachable from an inline handler: 20 of 45 had no
+// try/catch at all. Each ends with its user feedback downstream of bare awaits,
+// so a rejected promise skipped the feedback and rejected into nothing — the
+// button simply appeared not to work. That is how the lease Done button
+// presented in the pilot: every field filled in, pressed, nothing happened.
+//
+// Wrapping at the dispatch level rather than editing twenty bodies, because the
+// twenty is not the point — the next async handler someone adds would have the
+// same hole. This guarantees the invariant for all of them: a failure leaves the
+// user's data untouched, says what broke, and is logged for debugging.
+//
+// Handlers that already catch are still wrapped; their own catch runs first and
+// this only sees what they rethrow.
+const _ASYNC_USER_ACTIONS = [
+  'addNewProperty', 'clearBulkResults', 'removeBulkTenant', 'selectProperty',
+  'submitDispute', '_confirmDrawReject', '_deleteLeaseCenterRow', '_dwResolveWithNote',
+  'bulkApproveReady', 'clearInvResults', 'clearPropertyData', 'confirmCreateDrawRequest',
+  'confirmDocsRequest', 'confirmYardiImport', 'importGLToInvoices', 'navigateToPropertyTenant',
+  'removeInvItem', 'resolveDispute', 'submitInvDispute', 'updateDrawStatus',
+  'saveBulkTenant', 'savePropertyAndContinue', 'confirmDeleteProperty', 'confirmAllocation',
+  'runAllocation', 'handleBulkLeases', 'handleBatchInvoices', 'generateTenantStatement',
+  'loadDemo', 'openReviewItem', 'markTenantReviewAcknowledged',
+];
+
+// What the user is told when an action fails. Names the action in their words.
+const _ACTION_LABEL = {
+  saveBulkTenant: 'save this lease', savePropertyAndContinue: 'save the property',
+  addNewProperty: 'create the property', confirmDeleteProperty: 'delete the property',
+  handleBulkLeases: 'upload those leases', handleBatchInvoices: 'upload those invoices',
+  runAllocation: 'run the reconciliation', confirmAllocation: 'run the reconciliation',
+  generateTenantStatement: 'generate that statement', submitDispute: 'submit the dispute',
+  resolveDispute: 'resolve the dispute', importGLToInvoices: 'import the GL file',
+  confirmYardiImport: 'import from Yardi', removeBulkTenant: 'remove that tenant',
+  clearPropertyData: 'clear the property data', updateDrawStatus: 'update the draw request',
+};
+
+function _guardAsyncUserActions(scope) {
+  const g = scope || (typeof window !== 'undefined' ? window : null);
+  if (!g || g.__asyncActionsGuarded) return 0;
+  let wrapped = 0;
+  for (const name of _ASYNC_USER_ACTIONS) {
+    const fn = g[name];
+    if (typeof fn !== 'function' || fn.__guarded) continue;
+    const guarded = async function (...args) {
+      try {
+        return await fn.apply(this, args);
+      } catch (e) {
+        // Logged for debugging, surfaced for the user, data left as it was.
+        try { logError('asyncAction/' + name, e, {}); } catch (_) {}
+        const what = _ACTION_LABEL[name] || 'complete that action';
+        try {
+          showToast(`Could not ${what} — ${e?.message || 'something went wrong'}. Nothing was changed; please try again.`,
+                    { color: '#92400e', textColor: '#fef3c7', duration: 8000 });
+        } catch (_) { console.error('[asyncAction]', name, e); }
+        return undefined;
+      }
+    };
+    guarded.__guarded = true;
+    guarded.__wraps = name;
+    g[name] = guarded;
+    wrapped++;
+  }
+  g.__asyncActionsGuarded = true;
+  return wrapped;
+}
+
+if (typeof window !== 'undefined') {
+  // Exposed so the invariant can be asserted from outside. A top-level `const`
+  // in a classic script is NOT a window property, so without this the guard is
+  // unobservable and any test of it silently measures nothing.
+  window._ASYNC_USER_ACTIONS = _ASYNC_USER_ACTIONS;
+  window._guardAsyncUserActions = _guardAsyncUserActions;
+  const _install = () => { window.__asyncGuardCount = _guardAsyncUserActions(); };
+  if (document.readyState === 'loading') document.addEventListener('DOMContentLoaded', _install);
+  else _install();
+}
