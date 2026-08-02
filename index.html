@@ -5703,6 +5703,26 @@
     }
     .ob-hint strong { color: var(--c-818cf8); font-weight: 600; }
     .ob-hint a { color: var(--c-818cf8); cursor: pointer; text-decoration: underline; }
+    /* Dashboard lead-in: the user's work, and the one action that starts it. */
+    .ptf-start {
+      display: flex; align-items: flex-end; justify-content: space-between; gap: 16px;
+      flex-wrap: wrap; margin: 4px 0 18px;
+    }
+    .ptf-start-title { font-size: clamp(1.5rem, 4vw, 2rem); font-weight: 800; margin: 0; color: var(--text-1); }
+    .ptf-start-sub { margin: 6px 0 0; font-size: 0.86rem; color: var(--text-3); }
+    .ptf-start-cta {
+      padding: 12px 22px; border: none; border-radius: 10px; background: #16a34a; color: #fff;
+      font-size: 0.9rem; font-weight: 800; cursor: pointer; white-space: nowrap; flex-shrink: 0;
+    }
+    .ptf-start-cta:hover { background: #15803d; }
+    /* The assistant sits after the work it assists. */
+    .ptf-assist { margin-top: 26px; padding-top: 18px; border-top: 1px solid rgba(var(--line-rgb), 0.08); }
+    .ptf-assist .cc-nav-link { margin-top: 6px; }
+    @media (max-width: 560px) {
+      .ptf-start { align-items: stretch; }
+      .ptf-start-cta { width: 100%; }
+    }
+
     /* Empty state CTA buttons */
     .ptf-empty-cta { display: flex; gap: 8px; justify-content: center; flex-wrap: wrap; margin-top: 14px; }
     .ptf-empty-btn-primary {
@@ -6115,16 +6135,19 @@
 <!-- ── Portfolio Dashboard ──────────────────────────────────────────── -->
 <div id="portfolioDashboard">
 
-  <!-- Phase 21: entry point into the AI Command Center -->
-  <button class="cc-portfolio-entry" onclick="showCommandCenter()">✨ <b>AI Command Center</b> — your prioritized daily briefing</button>
-  <button class="cc-nav-link" style="margin: -8px 0 18px;" onclick="startGuidedTour()">▶ Take the 2-minute guided tour</button>
-
-  <!-- Hero Intro -->
-  <div class="hero-intro">
-    <h1 class="hero-title">MainStreet</h1>
-    <p class="hero-tagline">AI-powered CAM reconciliation. Settling on the XRP Ledger.</p>
-    <p class="hero-sub">CAM Reconciliation &nbsp;&middot;&nbsp; Works Alongside Yardi &nbsp;&middot;&nbsp; AI-Powered Analysis</p>
-    <p class="hero-desc">AI-powered CAM reconciliation built for landlords and property managers</p>
+  <!-- The dashboard leads with the user's work.
+       It used to open with the AI Command Center as a full-width primary and a
+       marketing hero beneath it, pushing the portfolio — the reason anyone signs
+       in — below both. A first-time user arrived with nothing to do and no
+       obvious way to start. MainStreet is the operating system for managing
+       properties; the assistant helps throughout, it is not the front door.
+       The Command Center now sits under the portfolio, as an assistant to it. -->
+  <div class="ptf-start">
+    <div class="ptf-start-text">
+      <h1 class="ptf-start-title">Your properties</h1>
+      <p class="ptf-start-sub">Every lease, invoice, repair and reconciliation, by building.</p>
+    </div>
+    <button class="ptf-start-cta" onclick="addNewProperty()">＋ Add Property</button>
   </div>
 
   <!-- Demo Welcome Panel — shown to new users until dismissed; managed by _maybeShowWelcome().
@@ -6227,6 +6250,13 @@
     <div id="acqReviewsGrid" class="acq-cards-grid">
       <div class="acq-empty">No due diligence reviews yet. Start one to analyze a property before acquisition.</div>
     </div>
+  </div>
+
+
+  <!-- Assistant to the work above, not ahead of it. -->
+  <div class="ptf-assist">
+    <button class="cc-portfolio-entry" onclick="showCommandCenter()">✨ <b>AI Command Center</b> — your prioritized daily briefing</button>
+    <button class="cc-nav-link" onclick="startGuidedTour()">▶ Take the 2-minute guided tour</button>
   </div>
 
 </div>

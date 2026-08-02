@@ -401,6 +401,45 @@ const stale = await p.evaluate(async () => {
   ? ok('and it is gone the moment that property no longer exists')
   : bad('the banner outlived its property — it will reappear on the next one', stale.text);
 
+// ── onboarding: the dashboard leads with the user's work ────────────────
+// Reported from the pilot: after signing in there is no obvious Add Property,
+// and the AI Command Center dominates the top while the portfolio sits below
+// it. MainStreet is the operating system for managing properties; the
+// assistant helps throughout, it is not the front door.
+console.log('\n── the dashboard leads with properties, not the assistant ──');
+const dash = await p.evaluate(async()=>{
+  renderPortfolio();
+  await new Promise(r=>setTimeout(r,600));
+  const vis=e=>{if(!e)return false;const r=e.getBoundingClientRect();return getComputedStyle(e).display!=='none'&&r.height>2;};
+  const cta=document.querySelector('.ptf-start-cta');
+  const cc=document.querySelector('.ptf-assist .cc-portfolio-entry');
+  const board=document.getElementById('portfolioDashboard');
+  const top=e=>e?Math.round(e.getBoundingClientRect().top):null;
+  return {ctaVisible:vis(cta), ctaLabel:(cta&&cta.innerText||'').trim(),
+          ctaTop:top(cta), ccTop:top(cc), ccVisible:vis(cc),
+          firstScreen: board ? (board.innerText||'').replace(/\s+/g,' ').slice(0,90) : null};
+});
+(dash.ctaVisible && /Add Property/i.test(dash.ctaLabel))
+  ? ok(`a first-time user is offered "${dash.ctaLabel}" on the dashboard itself`)
+  : bad('there is no Add Property action on the dashboard', JSON.stringify(dash));
+(dash.ccVisible && dash.ccTop > dash.ctaTop)
+  ? ok(`the AI Command Center sits below the work it assists (y ${dash.ccTop} vs CTA y ${dash.ctaTop})`)
+  : bad('the assistant is still ahead of the portfolio', JSON.stringify(dash));
+(/your properties/i.test(dash.firstScreen||''))
+  ? ok(`the dashboard opens on "${(dash.firstScreen||'').slice(0,40)}…"`)
+  : bad('the dashboard does not lead with the portfolio', dash.firstScreen);
+
+// ── signing in from the marketing page is one click ─────────────────────
+console.log('\n── the marketing page sends you straight to the form ──');
+const marketing = fs.readFileSync(path.join(ROOT,'home.html'),'utf8');
+const logins = [...marketing.matchAll(/<a[^>]*href="([^"]*)"[^>]*>\s*Log in\s*<\/a>/gi)].map(m=>m[1]);
+(logins.length>0 && logins.every(h=>/\/app\?signin=1/.test(h)))
+  ? ok(`every "Log in" link declares its intent (${logins.length} of them -> ${logins[0]})`)
+  : bad('a Log in link does not carry sign-in intent', JSON.stringify(logins));
+(!/href="index\.html"/.test(marketing))
+  ? ok('and none of them bypass the /app route with a raw file path')
+  : bad('a link still points at index.html directly');
+
 console.log('\n'+(fail?'\x1b[31m':'\x1b[32m')+`RESULT: ${pass} passed, ${fail} failed`+'\x1b[0m');
 await b.close();srv.close();process.exit(fail?1:0);
 })();

@@ -84,6 +84,23 @@ async function _showApp(user) {
   }
 }
 
+// Someone who clicked "Log in" on the marketing page has already declared what
+// they want. Show the form at once rather than making them wait on the auth
+// round-trip and then click a second Sign In on whatever was rendered
+// meanwhile — that intermediate state is the second click reported from the
+// pilot walkthrough.
+function _maybeShowLoginFromIntent() {
+  try {
+    if (!/[?&]signin=1/.test(location.search)) return false;
+    _showLogin();
+    var t = document.getElementById('loginTabSignIn');
+    if (t && typeof switchAuthTab === 'function') { try { switchAuthTab('signin'); } catch (_) {} }
+    var e = document.getElementById('loginEmail');
+    if (e) setTimeout(function () { try { e.focus(); } catch (_) {} }, 60);
+    return true;
+  } catch (_) { return false; }
+}
+
 function _showLogin() {
   document.getElementById('loginScreen').style.display = 'flex';
   document.getElementById('appContent').style.display  = 'none';
@@ -23238,6 +23255,9 @@ if (typeof window !== 'undefined') {
   window._ASYNC_USER_ACTIONS = _ASYNC_USER_ACTIONS;
   window._guardAsyncUserActions = _guardAsyncUserActions;
   const _install = () => { window.__asyncGuardCount = _guardAsyncUserActions(); };
-  if (document.readyState === 'loading') document.addEventListener('DOMContentLoaded', _install);
-  else _install();
+  // Sign-in intent runs before the async auth check resolves, so the form is on
+  // screen the moment the page paints.
+  const _boot = () => { _install(); _maybeShowLoginFromIntent(); };
+  if (document.readyState === 'loading') document.addEventListener('DOMContentLoaded', _boot);
+  else _boot();
 }
