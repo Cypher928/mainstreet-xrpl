@@ -7722,19 +7722,44 @@ async function saveBulkTenant(i) {
     });
   }
 
-  // Persist to Supabase immediately — don't rely on debounced oninput
-  await savePropertyData();
+  // Persist to Supabase immediately — don't rely on debounced oninput.
+  //
+  // WRAPPED, because every line of user feedback below this point — the row
+  // flash, the "Saved ✓" button state, the collapse, the re-render and the
+  // "Lease updated" toast — is downstream of these awaits. Any rejection
+  // skipped all of it, and the onclick does not catch, so a failed save was
+  // completely silent: the user fills in every field, presses Done, and
+  // nothing whatsoever happens. Reported from the pilot exactly that way.
+  //
+  // A save that fails must say so and must leave the editor open with the
+  // user's values intact, so the work is not lost and can be retried.
+  const _doneBtn = document.getElementById(`bdone-${i}`);
   const prop = currentProperty();
-  {
+  try {
+    await savePropertyData();
     const _rows = tenantData.filter(t => t?.tenant_name && (!t?.extractionFailed || t?._userConfirmed) && !t?._pendingJobReview);
     if (prop?.id && _tenantsBelongTo(prop.id, _rows)) await resyncTenantsToTable(prop.id, _rows);
+  } catch (e) {
+    logError('saveBulkTenant', e, { tenant: d?.tenant_name, propId: prop?.id });
+    if (_doneBtn) { _doneBtn.disabled = false; _doneBtn.textContent = 'Done \u2713'; }
+    showToast(`Could not save ${d?.tenant_name || 'this lease'} \u2014 ${e?.message || 'the save failed'}. Your changes are still on screen; try again.`,
+              { color: '#92400e', textColor: '#fef3c7', duration: 8000 });
+    return;
   }
   // Flush the blob immediately so a reload within 800ms still reads fresh data.
   // loadPropertyData() skips the tenants table when the blob exists, so the blob
   // must be current before the debounce would naturally fire.
   clearTimeout(_saveDebounceTimer);
   _saveDebounceTimer = null;
-  if (prop) await saveProperty(prop);
+  try {
+    if (prop) await saveProperty(prop);
+  } catch (e) {
+    logError('saveBulkTenant/saveProperty', e, { tenant: d?.tenant_name, propId: prop?.id });
+    if (_doneBtn) { _doneBtn.disabled = false; _doneBtn.textContent = 'Done \u2713'; }
+    showToast(`Could not save ${d?.tenant_name || 'this lease'} \u2014 ${e?.message || 'the save failed'}. Your changes are still on screen; try again.`,
+              { color: '#92400e', textColor: '#fef3c7', duration: 8000 });
+    return;
+  }
   console.log('[saveBulkTenant] tenant', i, 'saved:', d?.tenant_name);
 
   // Success flash

@@ -247,6 +247,45 @@ const postNarr=await p.evaluate(()=>{
   ? ok(`and the narrative now generates: "${(postNarr.text||'').slice(0,80)}…"`)
   : bad('the narrative never appeared even after reconciliation',JSON.stringify(postNarr));
 
+// ── 5. a save that FAILS must say so, not fail silently ─────────────────
+// Reported from the pilot: every field filled in, Done pressed, "nothing
+// happened". Every piece of feedback in saveBulkTenant sits downstream of the
+// persistence awaits, and the onclick does not catch — so any rejection
+// skipped the flash, the button state, the collapse, the re-render and the
+// toast, leaving no trace at all.
+console.log('\n── 5. a failed save is reported, not swallowed ──');
+const failSave = await p.evaluate(async () => {
+  const idx = tenantData.findIndex(t => t && t.tenant_name);
+  if (idx < 0) return { skipped: true };
+  const toasts = [];
+  const realToast = window.showToast;
+  window.showToast = m => { toasts.push(String(m)); };
+  // Make the persistence layer reject, as a network or RLS failure would.
+  const realSave = window.saveProperty;
+  window.saveProperty = async () => { throw new Error('simulated network failure'); };
+  let threwOut = false;
+  try { await saveBulkTenant(idx); } catch (_) { threwOut = true; }
+  window.saveProperty = realSave; window.showToast = realToast;
+  const btn = document.getElementById(`bdone-${idx}`);
+  return { toasts, threwOut,
+           btnEnabled: btn ? !btn.disabled : null,
+           btnLabel: btn ? (btn.innerText || '').trim() : null,
+           valuesIntact: !!tenantData[idx]?.tenant_name };
+});
+if (failSave.skipped) bad('no tenant available to test a failing save');
+else {
+  (failSave.toasts.some(t => /could not save/i.test(t)))
+    ? ok(`a failed save tells the user (\"${(failSave.toasts.find(t=>/could not save/i.test(t))||'').slice(0,70)}…\")`)
+    : bad('a failed save produced no message at all — this is the silent Done button',
+          JSON.stringify(failSave.toasts));
+  (failSave.btnEnabled)
+    ? ok('and Done is re-enabled so the save can be retried')
+    : bad('Done is left disabled after a failure — the user is stuck');
+  (failSave.valuesIntact)
+    ? ok('and the entered values are still there')
+    : bad('the failure discarded the user\'s input');
+}
+
 // ── 4. a deleted property must not leave its banner behind ──────────────
 // Reported from the pilot: the whole portfolio was deleted, a new property
 // created, and it showed "1 of 5 leases need a human — SafeShield Insurance"
