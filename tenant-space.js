@@ -167,7 +167,7 @@ window.TenantSpace = (function () {
     var leaseHtml = (leaseRows.length || leaseDocsHtml)
       ? '<div class="ts-lease">' +
           leaseRows.map(function (r) { return '<div class="ts-lease-row"><span>' + _esc(r[0]) + '</span><b>' + _esc(r[1]) + '</b></div>'; }).join('') +
-          (leaseDocsHtml || '<div class="ts-empty" style="margin-top:6px">Lease terms on file — no lease document uploaded yet.</div>') +
+          (leaseDocsHtml || '<div class="ts-empty" style="margin-top:6px">Lease terms are on file but the document is not \u2014 upload the executed lease so every CAM figure can cite the clause it came from.</div>') +
         '</div>'
       : _empty('No lease document on file. Upload the executed lease and any amendments so every CAM figure can cite its source.');
 

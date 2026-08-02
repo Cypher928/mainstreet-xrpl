@@ -346,36 +346,51 @@ const terse = empties.filter(t=>t.length<60);
 (empties.length>0 && terse.length===0)
   ? ok(`all ${empties.length} empty states teach what belongs there (shortest ${Math.min(...empties.map(t=>t.length))} chars)`)
   : bad(`${terse.length} empty state(s) just report emptiness`, terse.join(' | '));
-// Checked on a FRESH space: by this point the space under test has maintenance,
-// so its maintenance section is populated and there is no empty state to read.
-const freshEmpties = await p.evaluate(async()=>{
-  await addNewProperty();
-  await new Promise(r=>setTimeout(r,2000));
-  const rows=[{tenant_name:'Suite 300 — Untouched',leased_sqft:900,lease_type:'NNN',cap:3}].map(normalizeTenant);
-  const prop=_props.find(y=>y.id===activePropId);
-  prop.tenants=rows; tenantData.splice(0,tenantData.length,...rows);
-  switchWorkspaceTab('spaces'); renderBulkResults();
-  await new Promise(r=>setTimeout(r,400));
-  TenantSpace.openSpace((currentProperty().tenants||[])[0].id);
-  await new Promise(r=>setTimeout(r,700));
-  const ov=document.getElementById('tsOverlay');
-  // Report which SECTION each empty state belongs to — a bare list cannot tell
-  // you that Maintenance is showing someone else's text.
-  return [...ov.querySelectorAll('.ts-sec')].map(sec=>({
-    section:(sec.querySelector('.ts-sec-title')||{}).innerText||'?',
-    empty:(sec.querySelector('.ts-empty')||{}).innerText||null}));
-});
-console.log('   ' + freshEmpties.map(x=>x.section+': '+(x.empty?'"'+x.empty.slice(0,40)+'…"':'(has content)')).join('\n   '));
+// Checked on a genuinely untouched space, in its OWN page.
+//
+// The first version created the "fresh" property inside the same page session
+// that had already recorded seven activities, and reported that Maintenance,
+// Documents and Timeline never showed their empty states. That was wrong — the
+// product was correct all along and I reported a product bug that did not
+// exist. A page that has been driven through a whole workflow is not a clean
+// room; the only way to observe a first-run state is to start one.
+const freshEmpties = await (async () => {
+  const fresh = await p.context().newPage();
+  await fresh.addInitScript('window.__TEST_AUTHED=true;');
+  await fresh.addInitScript(DB);
+  await fresh.route('**jsdelivr**',r=>r.fulfill({status:200,body:'/*x*/'}));
+  await fresh.route('**supabase**',r=>r.request().url().includes('127.0.0.1')?r.continue():r.fulfill({status:200,body:'/*x*/'}));
+  await fresh.goto(`http://127.0.0.1:${PORT}/`);
+  await fresh.waitForSelector('#appContent',{state:'visible',timeout:20000}).catch(()=>{});
+  await fresh.waitForTimeout(1800);
+  const out = await fresh.evaluate(async()=>{
+    const x=[...document.querySelectorAll('button')].find(e=>/go to portfolio/i.test(e.innerText)); if(x)x.click();
+    await new Promise(r=>setTimeout(r,800));
+    await addNewProperty(); await new Promise(r=>setTimeout(r,2200));
+    const rows=[{tenant_name:'Suite 300 — Untouched',leased_sqft:900,lease_type:'NNN',cap:3}].map(normalizeTenant);
+    const prop=_props.find(y=>y.id===activePropId);
+    prop.tenants=rows; tenantData.splice(0,tenantData.length,...rows);
+    switchWorkspaceTab('spaces'); renderBulkResults(); await new Promise(r=>setTimeout(r,400));
+    TenantSpace.openSpace((currentProperty().tenants||[])[0].id);
+    await new Promise(r=>setTimeout(r,700));
+    const ov=document.getElementById('tsOverlay');
+    return [...ov.querySelectorAll('.ts-sec')].map(sec=>({
+      section:(sec.querySelector('.ts-sec-title')||{}).innerText||'?',
+      empty:(sec.querySelector('.ts-empty')||{}).innerText||null}));
+  });
+  await fresh.close();
+  return out;
+})();
+console.log('   ' + freshEmpties.map(x=>x.section+': '+(x.empty?'teaches':'(has content)')).join('\n   '));
 const maintEmpty=(freshEmpties.find(x=>/Maintenance/i.test(x.section))||{}).empty||'';
 (/repairs, inspections/i.test(maintEmpty))
   ? ok('an untouched space explains what maintenance is for')
-  : bad('the Maintenance section does not explain what to record — OPEN, see commit',
-        'Maintenance, Documents and Timeline render something other than their empty state on an untouched space. ' +
-        'The empty text exists and is correct; something is filling those sections before it can be used. Not yet diagnosed.');
+  : bad('the Maintenance section does not explain what to record', JSON.stringify(maintEmpty).slice(0,160));
+const noEmpty=freshEmpties.filter(x=>!x.empty);
 const shortOnes=freshEmpties.filter(x=>x.empty&&x.empty.length<60);
-(shortOnes.length===0)
-  ? ok(`every empty section on an untouched space teaches (${freshEmpties.filter(x=>x.empty).length} of ${freshEmpties.length})`)
-  : bad('some sections still just report emptiness', shortOnes.map(x=>x.section).join(', '));
+(noEmpty.length===0 && shortOnes.length===0)
+  ? ok(`all ${freshEmpties.length} sections of an untouched space teach what belongs there`)
+  : bad('some sections do not teach', [...noEmpty.map(x=>x.section+' (no empty state)'), ...shortOnes.map(x=>x.section+' (too terse)')].join(', '));
 
 // ── the document activity is named for what it is ───────────────────────
 console.log('\n── activity labels are specific ──');
