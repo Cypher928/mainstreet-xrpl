@@ -9004,8 +9004,18 @@ function parseSqft(v) {
 
 function showAllocationModal() {
   const totalSqft = parseFloat(document.getElementById('totalSqft').value);
-  const tenants   = tenantData.filter(t => t && t.tenantName && parseSqft(t.leasedSqft) > 0);
-  const invoices  = invoiceData.filter(inv => inv && inv.vendorName && parseFloat(inv.amount) > 0);
+  // Canonical tenant fields are snake_case — normalizeTenant() produces
+  // tenant_name / leased_sqft, and that is what every tenant in the app
+  // actually carries. This filter read t.tenantName / t.leasedSqft, which no
+  // tenant has ever had, so it matched ZERO tenants on every property
+  // including the demo. The effect was silent: the guard below fell through to
+  // runAllocation() and the confirmation step — "You are about to allocate $X
+  // across N tenants" — never appeared for anybody. camelCase is still accepted
+  // in case an older record carries it.
+  const tName = t => t && (t.tenant_name ?? t.tenantName);
+  const tSqft = t => t && (t.leased_sqft ?? t.leasedSqft);
+  const tenants   = tenantData.filter(t => t && tName(t) && parseSqft(tSqft(t)) > 0);
+  const invoices  = invoiceData.filter(inv => inv && (inv.vendorName ?? inv.vendor) && parseFloat(inv.amount) > 0);
 
   // If data isn't ready let runAllocation() surface the validation error
   if (!totalSqft || totalSqft <= 0 || !tenants.length || !invoices.length) {
@@ -16401,6 +16411,7 @@ async function openReviewItem(propertyId, tenantId, intent) {
   switchWorkspaceTab('spaces');
   if (window.TenantSpace && typeof window.TenantSpace.openSpace === 'function') {
     window.TenantSpace.openSpace(tenantId);
+    _emphasiseReviewGap(propertyId, tenantId);
     return;
   }
   // No space modal available — scroll the actual row into view and flash it,
@@ -16409,6 +16420,48 @@ async function openReviewItem(propertyId, tenantId, intent) {
   if (row) { row.scrollIntoView({ behavior: 'smooth', block: 'center' }); row.classList.add('rq-flash'); }
   else showToast('Could not open that tenant directly — it is in the Spaces list below.',
                  { color: '#92400e', textColor: '#fef3c7', duration: 5000 });
+}
+
+// Landing on the right record is not enough — the user must not have to hunt
+// for the problem once they get there. Walked as a first-time user: clicking
+// "Resolve Willow & Vine Florist" opened her space, and the space showed the
+// lease terms it DID find. The missing CAM cap — the entire reason the item was
+// flagged — was nowhere on the panel, so the screen looked fine and the user was
+// left to work out what was wrong with it.
+//
+// This states the gap at the top of the record, in the review engine's own
+// words, and offers the action that closes it.
+function _emphasiseReviewGap(propertyId, tenantId) {
+  const prop = _props.find(p => p.id === propertyId);
+  if (!prop) return;
+  const item = (typeof getReviewQueueItems === 'function' ? getReviewQueueItems([prop]) : [])
+    .find(i => i.tenantId === tenantId);
+  // Nothing wrong with this one — say nothing rather than invent a problem.
+  if (!item || item.reviewerConfirmed) return;
+
+  const reasons = [...(item.missingFields || []), ...(item.warningReasons || [])];
+  if (!reasons.length) return;
+
+  const paint = (tries) => {
+    const host = document.querySelector('#tsOverlay .ts-body, #tsOverlay .ts-card, #tsOverlay');
+    if (!host) { if (tries > 0) setTimeout(() => paint(tries - 1), 120); return; }
+    if (host.querySelector('#tsReviewGap')) return;
+    const box = document.createElement('div');
+    box.id = 'tsReviewGap';
+    box.className = 'ts-review-gap';
+    box.innerHTML =
+      '<div class="ts-review-gap-h">\u26A0 This lease needs a human before CAM can be trusted</div>' +
+      '<ul class="ts-review-gap-list">' +
+        reasons.map(r => '<li>' + esc(r) + '</li>').join('') +
+      '</ul>' +
+      '<div class="ts-review-gap-act">' +
+        '<button class="ts-review-gap-btn" onclick="markTenantReviewAcknowledged(\'' + esc(tenantId) + '\');' +
+          'var g=document.getElementById(\'tsReviewGap\');if(g)g.remove();">Mark reviewed</button>' +
+      '</div>';
+    host.insertBefore(box, host.firstChild);
+    box.scrollIntoView({ behavior: 'smooth', block: 'nearest' });
+  };
+  paint(12);   // the space modal builds asynchronously; retry briefly
 }
 
 function _rqItemHtml(item) {

@@ -267,6 +267,13 @@ const landed = await p.evaluate(() => {
     mentionsOtherTenants: vis(ov) ? ['Cedar Park Dental','Bright Leaf Grocers','Anvil Coffee'].filter(n=>(ov.innerText||'').includes(n)) : []};
 });
 console.log('   landed on the specific tenant? '+JSON.stringify(landed));
+const gap=await p.evaluate(()=>{
+  const vis=e=>{if(!e)return false;const r=e.getBoundingClientRect();return getComputedStyle(e).display!=='none'&&r.height>2;};
+  const g=document.getElementById('tsReviewGap');
+  return {revealed:vis(g),text:vis(g)?(g.innerText||'').replace(/\s+/g,' ').trim().slice(0,140):null};
+});
+console.log('   issue revealed on the record? '+JSON.stringify(gap));
+if(!gap.revealed) console.log('\x1b[31m   the user must still hunt for the problem after clicking\x1b[0m');
 if(!landed.spaceModalOpen) console.log('\x1b[31m   BROKEN PROMISE: "Resolve <tenant>" did not open that tenant\x1b[0m');
 await snap(p,'07 review item opened');
 await p.evaluate(()=>{const b=document.querySelector('#tsOverlay .ts-close,#tsOverlay [onclick*=close]');if(b)b.click();
@@ -302,10 +309,10 @@ console.log('   run button: '+(runBtn?JSON.stringify(runBtn):'\x1b[31mNOT FOUND\
 console.log('\n   seeding uploaded CAM invoices...');
 await p.evaluate(async () => {
   const inv = [
-    { vendor:'Northside Landscaping', category:'landscaping', amount:18400, date:'2025-04-12', description:'Grounds maintenance' },
-    { vendor:'Talon Security',        category:'security',    amount:26100, date:'2025-05-03', description:'Site patrol' },
-    { vendor:'Pacific Facilities',    category:'janitorial',  amount:31250, date:'2025-06-21', description:'Common area cleaning' },
-    { vendor:'Cascade Insurance',     category:'insurance',   amount:42000, date:'2025-02-01', description:'Property policy' },
+    { vendorName:'Northside Landscaping', category:'landscaping', amount:18400, invoiceDate:'2025-04-12', description:'Grounds maintenance' },
+    { vendorName:'Talon Security',        category:'security',    amount:26100, invoiceDate:'2025-05-03', description:'Site patrol' },
+    { vendorName:'Pacific Facilities',    category:'janitorial',  amount:31250, invoiceDate:'2025-06-21', description:'Common area cleaning' },
+    { vendorName:'Cascade Insurance',     category:'insurance',   amount:42000, invoiceDate:'2025-02-01', description:'Property policy' },
   ];
   invoiceData.splice(0, invoiceData.length, ...inv);
   const prop = _props.find(x => x.id === activePropId);
@@ -345,6 +352,78 @@ if(runNow.found && !runNow.disabled){
   if(!res.statementActions.length) console.log('\x1b[31m   DEAD END: no way to generate tenant statements\x1b[0m');
 }
 
+  // What did "Calculate CAM Charges" actually open? Look at the modal BACKDROP,
+  // not the first matching descendant — grabbing an inner .modal-summary-table
+  // reported "no buttons" on a modal whose Confirm button was one level up.
+  const modal = await p.evaluate(()=>{
+    const vis=e=>{if(!e)return false;const r=e.getBoundingClientRect();return getComputedStyle(e).display!=='none'&&r.height>2;};
+    const m=[...document.querySelectorAll('.modal-backdrop,[id$=Modal],[id$=modal]')].filter(vis)[0];
+    if(!m)return null;
+    return {id:m.id,title:(m.querySelector('.modal-title')||{}).innerText||'',
+      text:(m.innerText||'').replace(/\s+/g,' ').trim().slice(0,200),
+      buttons:[...m.querySelectorAll('button')].filter(vis).map(b=>(b.innerText||'').replace(/\s+/g,' ').trim()).filter(Boolean)};
+  });
+  console.log('\n── step 9: what "Calculate CAM Charges" opened ──');
+  console.log('   '+(modal?JSON.stringify(modal):'\x1b[31m(nothing opened)\x1b[0m'));
+  await snap(p,'10 allocation confirm');
+
+  if(modal && modal.buttons.length){
+    await click(p,/confirm/i,'confirm the allocation');
+    await p.waitForTimeout(8000);
+    await snap(p,'11 results');
+  } else if(modal){
+    console.log('\x1b[31m   DEAD END: the confirmation modal offers no way forward\x1b[0m');
+  }
+
+  const results = await p.evaluate(()=>{
+    const vis=e=>{if(!e)return false;const r=e.getBoundingClientRect();return getComputedStyle(e).display!=='none'&&r.height>2;};
+    const body=(document.body.innerText||'');
+    const rows=[...document.querySelectorAll('#resultsBody tr')].filter(vis).length;
+    const acts=[...document.querySelectorAll('button,a')].filter(vis)
+      .map(e=>(e.innerText||'').replace(/\s+/g,' ').trim()).filter(t=>t&&t.length<50);
+    return {resultsRows:rows,
+      tenantsInResults:['Cedar Park Dental','Bright Leaf Grocers','Anvil Coffee Roasters','Willow & Vine Florist'].filter(n=>body.includes(n)),
+      statementActions:[...new Set(acts.filter(t=>/statement|export|pdf|report/i.test(t)))],
+      allActions:[...new Set(acts)].slice(0,20)};
+  });
+  console.log('\n── step 9: results on screen ──');
+  console.log('   result rows      : '+results.resultsRows);
+  console.log('   tenants shown    : '+(results.tenantsInResults.join(', ')||'\x1b[31mNONE\x1b[0m'));
+  console.log('   statement actions: '+(results.statementActions.join(' | ')||'\x1b[31mNONE\x1b[0m'));
+  console.log('   all actions      : '+results.allActions.join(' | '));
+
+// ── Step 10: generate and review a tenant statement ─────────────────────
+console.log('\n── step 10: tenant statements ──');
+const stmtCta = await p.evaluate(()=>{
+  const vis=e=>{const r=e.getBoundingClientRect();return getComputedStyle(e).display!=='none'&&r.height>2;};
+  return [...document.querySelectorAll('button,a')].filter(vis)
+    .map(e=>({label:(e.innerText||'').replace(/\s+/g,' ').trim(),onclick:(e.getAttribute('onclick')||'').slice(0,90)}))
+    .filter(x=>/statement/i.test(x.label));
+});
+console.log('   statement CTAs: '+JSON.stringify(stmtCta));
+// Does the button name a tenant, or is it generic?
+const generic = stmtCta.filter(x=>!/cedar|bright|anvil|willow/i.test(x.label));
+if(generic.length) console.log('   \x1b[33mnote: statement CTA is generic ("'+generic[0].label+'") — does it ask WHICH tenant?\x1b[0m');
+
+await click(p,/tenant statement/i,'generate a tenant statement');
+await p.waitForTimeout(4000);
+await snap(p,'12 tenant statement');
+const stmt = await p.evaluate(()=>{
+  const vis=e=>{if(!e)return false;const r=e.getBoundingClientRect();return getComputedStyle(e).display!=='none'&&r.height>2;};
+  const ov=[...document.querySelectorAll('.modal-backdrop,#reportOverlay,[id$=Overlay]')].filter(vis)[0];
+  const scope=ov||document.body;
+  const txt=(scope.innerText||'').replace(/\s+/g,' ').trim();
+  const named=['Cedar Park Dental','Bright Leaf Grocers','Anvil Coffee Roasters','Willow & Vine Florist'].filter(n=>txt.includes(n));
+  return {overlayOpen:!!ov, overlayId:ov?ov.id:null,
+    tenantsNamed:named, perTenantPicker:named.length>1,
+    hasMoney:/\$[\d,]+/.test(txt),
+    hasProRata:/pro[- ]rata|share|%/i.test(txt),
+    actions:[...scope.querySelectorAll('button')].filter(vis).map(b=>(b.innerText||'').replace(/\s+/g,' ').trim()).filter(Boolean).slice(0,10),
+    excerpt:txt.slice(0,220)};
+});
+console.log('   statement view: '+JSON.stringify(stmt,null,1));
+if(!stmt.overlayOpen) console.log('\x1b[31m   DEAD END: nothing opened for tenant statements\x1b[0m');
+
 // ── Where does the product say to go next? ──────────────────────────────
 const guidance=await p.evaluate(()=>{
   const vis=e=>{const r=e.getBoundingClientRect();return getComputedStyle(e).display!=='none'&&r.height>2;};
@@ -355,9 +434,27 @@ const guidance=await p.evaluate(()=>{
   return {hints,stepBar:step,stepBarVisible:!!step.length};
 });
 console.log('\n── what the product tells the user to do next ──');
-console.log('   step bar : '+(guidance.stepBarVisible?guidance.stepBar.map(x=>(x.active?'['+x.label+']':x.label)).join(' > '):'\x1b[31mNOT VISIBLE\x1b[0m'));
 console.log('   hints    : '+(guidance.hints.length?guidance.hints.join(' // ').slice(0,300):'\x1b[31mnone\x1b[0m'));
 
+// The step indicator must be visible on EVERY tab, not just the one the user
+// happens to be on. It used to live inside #wsPane-overview.
+console.log('\n── the step indicator is visible wherever the user is ──');
+let barEverywhere=true;
+for (const t of ['overview','property','spaces','cam','reports']) {
+  const r=await p.evaluate(async tab=>{
+    switchWorkspaceTab(tab);
+    await new Promise(r=>setTimeout(r,250));
+    const e=document.getElementById('stepBar');
+    if(!e)return {tab,visible:false,text:'MISSING'};
+    const b=e.getBoundingClientRect();
+    return {tab,visible:getComputedStyle(e).display!=='none'&&b.height>2,
+      text:(e.innerText||'').replace(/\s+/g,' ').trim()};
+  },t);
+  if(!r.visible)barEverywhere=false;
+  console.log(`   ${r.tab.padEnd(9)} ${r.visible?'\x1b[32mvisible\x1b[0m':'\x1b[31mHIDDEN\x1b[0m'}  ${r.text.slice(0,60)}`);
+}
+console.log(barEverywhere?'   \x1b[32m✓ the user can always see where they are\x1b[0m'
+                        :'   \x1b[31m✗ the step indicator disappears on some tabs\x1b[0m');
 
 await b.close();srv.close();
 })();

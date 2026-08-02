@@ -2301,6 +2301,22 @@
     .field-helper-text {
       font-size: 0.72rem; color: var(--text-4); margin-top: 5px; line-height: 1.4;
     }
+    /* The reason a flagged record was flagged, stated on the record itself. */
+    .ts-review-gap {
+      margin: 0 0 14px 0; padding: 12px 14px; border-radius: 10px;
+      background: rgba(234,179,8,0.1); border: 1px solid rgba(234,179,8,0.38);
+      color: #fde68a; font-size: 0.82rem; line-height: 1.5;
+    }
+    .ts-review-gap-h { font-weight: 700; color: #fff; margin-bottom: 6px; }
+    .ts-review-gap-list { margin: 0; padding-left: 18px; }
+    .ts-review-gap-list li { margin: 2px 0; }
+    .ts-review-gap-act { margin-top: 10px; }
+    .ts-review-gap-btn {
+      padding: 6px 13px; border: none; border-radius: 7px; background: #16a34a;
+      color: #fff; font-size: 0.76rem; font-weight: 700; cursor: pointer;
+    }
+    .ts-review-gap-btn:hover { background: #15803d; }
+
     /* Extraction → the next step, stated where the user is standing. */
     .ens {
       display: flex; align-items: center; gap: 12px; flex-wrap: wrap;
@@ -6372,10 +6388,13 @@
   <div id="propertyKpiHeader"></div>
   <div id="rlusdSettlementPanel"></div>
 
-  <!-- ══════════════════════════ TAB: Overview ══════════════════════════ -->
-  <div class="workspace-tab-pane" id="wsPane-overview">
-
-  <!-- ── Step Progress Bar ─────────────────────────────────────────── -->
+  <!-- ── Step Progress Bar ───────────────────────────────────────────────
+       OUTSIDE the tab panes on purpose. It used to live inside
+       #wsPane-overview, so the one thing telling a first-time user where they
+       are in the sequence disappeared the moment they left Overview — which is
+       immediately, because every step of the workflow (Property, Spaces, CAM,
+       Reports) happens on another tab. It renders fine; it was just only ever
+       visible on the one screen where the user is not working. -->
   <div class="step-bar" id="stepBar">
     <div class="step-item active" id="step-setup">
       <div class="step-dot">1</div>
@@ -6398,6 +6417,11 @@
       <div class="step-label">Review</div>
     </div>
   </div>
+
+  <!-- ══════════════════════════ TAB: Overview ══════════════════════════ -->
+  <div class="workspace-tab-pane" id="wsPane-overview">
+
+  <!-- ── Step Progress Bar ─────────────────────────────────────────── -->
 
   <!-- ── SECTION 1: Property Setup ─────────────────────────────────── -->
   <div class="card" id="cardSetup">
