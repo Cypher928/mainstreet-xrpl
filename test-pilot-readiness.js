@@ -430,6 +430,72 @@ const carried = await p.evaluate(async()=>{
   : bad(`${carried.after.length} panel(s) carried over to a different property`,
         carried.after.join(', ') + ' — showing: ' + carried.firstName);
 
+// ── nothing on screen belongs to the previous property ──────────────────
+// The generic form of a bug seen four times: an element built for one property,
+// attached outside the container that gets cleared, surviving the switch. Rather
+// than enumerate suspects, switch properties and ask the page whether ANY
+// visible text still names the one we left — including nodes appended to
+// document.body, which sit outside every workspace container.
+console.log('\n── after switching property, nothing on screen names the old one ──');
+const ctx = await p.evaluate(async()=>{
+  // Give the current property a name and tenants nothing else could produce.
+  const prop=_props.find(x=>x.id===activePropId);
+  const MARK='Zzyzx Holdings';
+  prop.name=MARK;
+  const rows=[{tenant_name:'Qwertyville Bakers',leased_sqft:1000,lease_type:'NNN',cap:5}].map(normalizeTenant);
+  prop.tenants=rows; tenantData.splice(0,tenantData.length,...rows);
+  document.getElementById('propertyName').value=MARK;
+  await savePropertyData(); await saveProperty(prop);
+  switchWorkspaceTab('cam');
+  if(typeof renderInvResults==='function') renderInvResults();
+  await new Promise(r=>setTimeout(r,600));
+
+  // Switch to a brand-new property, as a user would.
+  await addNewProperty();
+  await new Promise(r=>setTimeout(r,2600));
+
+  // Sweep EVERYTHING visible, including document.body children outside the app.
+  const vis=e=>{const r=e.getBoundingClientRect();const cs=getComputedStyle(e);
+    return cs.display!=='none'&&cs.visibility!=='hidden'&&r.width>1&&r.height>1;};
+  const hits=[];
+  document.querySelectorAll('body *').forEach(e=>{
+    if(!vis(e)) return;
+    if([...e.children].some(c=>vis(c))) return;         // leaf-most only
+    const t=(e.innerText||'').trim();
+    if(!t) return;
+    if(t.includes(MARK)||t.includes('Qwertyville')){
+      let owner=e, chain=[];
+      while(owner&&owner!==document.body){ if(owner.id) chain.push('#'+owner.id); owner=owner.parentElement; }
+      hits.push({text:t.slice(0,60), chain:chain.slice(0,3).join(' < ')||'(no id ancestor)'});
+    }
+  });
+  // Module-level state that should have been reset with the workflow.
+  const stale={
+    lastPropName: typeof lastPropName!=='undefined'?lastPropName:null,
+    lastResults: typeof lastResults!=='undefined'?lastResults.length:null,
+    lastTotal: typeof lastTotal!=='undefined'?lastTotal:null,
+    tenantData: tenantData.filter(Boolean).length,
+    invoiceData: typeof invoiceData!=='undefined'?invoiceData.length:null,
+    disputes: typeof disputes!=='undefined'?disputes.length:null,
+    // Content, not count: addNewProperty() logs the NEW property's own creation,
+    // so a non-zero log is expected. What matters is whether any entry belongs
+    // to the property we left.
+    activityLogForeign: typeof activityLog!=='undefined'
+      ? activityLog.filter(e=>JSON.stringify(e||{}).includes(MARK)||JSON.stringify(e||{}).includes('Qwertyville')).length
+      : null,
+  };
+  return {hits, stale, newName:(_props.find(x=>x.id===activePropId)||{}).name};
+});
+(ctx.hits.length===0)
+  ? ok(`nothing on screen names the property we left (swept every visible leaf incl. document.body)`)
+  : bad(`${ctx.hits.length} element(s) still show the previous property`,
+        ctx.hits.slice(0,5).map(h=>`"${h.text}" in ${h.chain}`).join('\n      '));
+const dirty = Object.entries(ctx.stale).filter(([k,v])=>k!=='lastPropName' ? (v||0)>0 : !!v);
+(dirty.length===0)
+  ? ok('and every module-level workflow global is reset')
+  : bad('module-level state carried into the new property',
+        dirty.map(([k,v])=>`${k}=${JSON.stringify(v)}`).join(', '));
+
 // ── onboarding: the dashboard leads with the user's work ────────────────
 // Reported from the pilot: after signing in there is no obvious Add Property,
 // and the AI Command Center dominates the top while the portfolio sits below
