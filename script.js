@@ -23118,11 +23118,19 @@ async function init() {
     portfolio.splice(0, portfolio.length, ..._props);
     renderPortfolio(properties);
     _loadAcqReviewsAndRender();
-    // Phase 21: land on the AI Command Center (landlord only; guarded — any
-    // failure falls back to the portfolio view already rendered above).
-    try {
-      if (window.CommandCenter && window.AuthService?.getCurrentUser?.()?.role !== 'tenant') showCommandCenter();
-    } catch (e) { console.warn('[CommandCenter] landing failed — portfolio shown instead:', e?.message); }
+    // Land on the PORTFOLIO, not the Command Center.
+    //
+    // Phase 21 landed here on the AI Command Center, and showCommandCenter()
+    // sets portfolioDashboard.style.display = 'none'. So renderPortfolio() ran
+    // and was immediately hidden: a signed-in user saw the assistant, never the
+    // properties, and never the Add Property button — which is why it only
+    // appeared after opening a property and coming back, since that route calls
+    // renderPortfolio() again.
+    //
+    // MainStreet is the operating system for managing properties. The portfolio
+    // is the work; the Command Center assists it and is one tap away, below the
+    // property list and from the header. Reordering content inside the dashboard
+    // achieved nothing while the app opened on a different view entirely.
   } catch (e) {
     const isNet = /load failed|failed to fetch|networkerror|offline/i.test(e?.message || '');
     if (!isNet) logError('init.loadProperties', e, {});

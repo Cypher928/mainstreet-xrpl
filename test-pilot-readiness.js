@@ -430,6 +430,43 @@ const carried = await p.evaluate(async()=>{
   : bad(`${carried.after.length} panel(s) carried over to a different property`,
         carried.after.join(', ') + ' — showing: ' + carried.firstName);
 
+// ── what a user actually sees the moment they sign in ───────────────────
+// Loads the app and asserts on the FIRST PAINT, calling nothing. The previous
+// version of these checks invoked renderPortfolio() by hand and passed while
+// the deployed preview showed the Command Center with no Add Property in sight.
+console.log('\n── the first screen after signing in ──');
+const firstPaint = await (async()=>{
+  const fresh = await p.context().newPage();
+  await fresh.addInitScript('window.__TEST_AUTHED=true;');
+  await fresh.addInitScript(DB);
+  await fresh.route('**jsdelivr**',r=>r.fulfill({status:200,body:'/*x*/'}));
+  await fresh.route('**supabase**',r=>r.request().url().includes('127.0.0.1')?r.continue():r.fulfill({status:200,body:'/*x*/'}));
+  await fresh.goto(`http://127.0.0.1:${PORT}/`);
+  await fresh.waitForSelector('#appContent',{state:'visible',timeout:20000}).catch(()=>{});
+  await fresh.waitForTimeout(4000);
+  const out = await fresh.evaluate(()=>{
+    const vis=e=>{if(!e)return false;const r=e.getBoundingClientRect();return getComputedStyle(e).display!=='none'&&r.height>2;};
+    const board=document.getElementById('portfolioDashboard');
+    const cc=document.getElementById('commandCenter');
+    return {dashboard:vis(board), addProperty:vis(document.querySelector('.ptf-start-cta')),
+            commandCenter:vis(cc),
+            text:((document.getElementById('appContent')||{}).innerText||'').replace(/\s+/g,' ').trim().slice(0,120)};
+  });
+  await fresh.close(); return out;
+})();
+(firstPaint.dashboard)
+  ? ok('the portfolio is what loads — not the assistant')
+  : bad('the app still lands somewhere other than the portfolio', JSON.stringify(firstPaint));
+(firstPaint.addProperty)
+  ? ok('Add Property is on screen without navigating anywhere first')
+  : bad('Add Property is not visible on the first screen', JSON.stringify(firstPaint));
+(!firstPaint.commandCenter)
+  ? ok('the Command Center is available but not in the way')
+  : bad('the Command Center still takes the first screen', JSON.stringify(firstPaint));
+(/your properties/i.test(firstPaint.text))
+  ? ok(`the first words are "${firstPaint.text.slice(firstPaint.text.search(/your properties/i)).slice(0,44)}…"`)
+  : bad('the first screen does not lead with the portfolio', firstPaint.text);
+
 // ── nothing on screen belongs to the previous property ──────────────────
 // The generic form of a bug seen four times: an element built for one property,
 // attached outside the container that gets cleared, surviving the switch. Rather
@@ -502,6 +539,11 @@ const dirty = Object.entries(ctx.stale).filter(([k,v])=>k!=='lastPropName' ? (v|
 // it. MainStreet is the operating system for managing properties; the
 // assistant helps throughout, it is not the front door.
 console.log('\n── the dashboard leads with properties, not the assistant ──');
+// NOTE: this block used to call renderPortfolio() itself, which is exactly why
+// it passed while the deployed app was broken — the real boot path landed on
+// the AI Command Center, which hides #portfolioDashboard. A test that renders
+// the thing it is testing proves only that the renderer works. The boot-path
+// assertions below load the app and touch nothing.
 const dash = await p.evaluate(async()=>{
   renderPortfolio();
   await new Promise(r=>setTimeout(r,600));
