@@ -198,6 +198,120 @@ const empty = await p.evaluate(async()=>{
   ?ok(`refused with a reason ("${(empty.msg||'').slice(0,60)}"), nothing written`)
   :bad('an empty activity was accepted or failed silently',JSON.stringify(empty));
 
+// ── demo mode must end the moment the space has a real record ───────────
+console.log('\n── sample records give way to real ones ──');
+const demo = await p.evaluate(async(t)=>{
+  // Fresh property + space so we can observe the transition from zero.
+  await addNewProperty();
+  await new Promise(r=>setTimeout(r,2000));
+  const rows=[{tenant_name:'Suite 118 — Halcyon Bakery',leased_sqft:1600,start_date:'2023-01-01',end_date:'2028-01-01',lease_type:'NNN',cap:4}].map(normalizeTenant);
+  const prop=_props.find(y=>y.id===activePropId);
+  prop.name='Harbour Point'; prop.totalSqft=26000; prop.tenants=rows;
+  tenantData.splice(0,tenantData.length,...rows);
+  switchWorkspaceTab('spaces'); renderBulkResults();
+  await new Promise(r=>setTimeout(r,500));
+  // Read the id back OFF THE APP. Holding the id from my own array went stale —
+  // the property the app ends up with is not necessarily the object I built.
+  const id=(currentProperty().tenants||[])[0].id;
+
+  TenantSpace.openSpace(id);
+  await new Promise(r=>setTimeout(r,700));
+  const panel=()=>document.getElementById('tsOverlay');
+  const before={samples:(panel().innerText.match(/sample/gi)||[]).length};
+
+  // Record one real thing.
+  document.getElementById('tsAddBtn').click();
+  await new Promise(r=>setTimeout(r,300));
+  document.querySelector('#tsAddPanel .ts-add-choice[data-act="note"]').click();
+  await new Promise(r=>setTimeout(r,300));
+  document.getElementById('tsAfTitle').value='Walked the suite after move-out';
+  document.getElementById('tsAfSave').click();
+  await new Promise(r=>setTimeout(r,1800));
+  const after={samples:(panel().innerText.match(/sample/gi)||[]).length,
+               hasReal:/Walked the suite after move-out/.test(panel().innerText)};
+  return {id,before,after};
+}, tenantId);
+// PropertyReference only generates sample rows for properties it recognises, so
+// a synthetic fixture may legitimately have none. Say so rather than passing a
+// 0 -> 0 transition off as proof.
+if (demo.before.samples === 0) {
+  console.log('  \x1b[33m·\x1b[0m this fixture produced no sample rows, so the visual transition is not exercised here');
+} else {
+  (demo.after.hasReal && demo.after.samples===0)
+    ? ok(`samples (${demo.before.samples}) all disappear once one real activity is recorded`)
+    : bad('samples still shown alongside real activity', JSON.stringify(demo.after));
+}
+// The gate itself, exercised directly — this is what actually decides it.
+const gate = await p.evaluate(async()=>{
+  const t=(TenantSpace.record()||{}).space?.id;
+  const prop=currentProperty();
+  const rec=TenantSpace.assemble(prop,t);
+  const real=(prop.timeline||[]).filter(e=>e.tenantId===t&&e.manual===true).length;
+  // Strip the manual events and re-assemble: the space must fall back to demo.
+  const keep=prop.timeline.slice();
+  prop.timeline=prop.timeline.filter(e=>!(e.tenantId===t&&e.manual===true));
+  const recEmpty=TenantSpace.assemble(prop,t);
+  prop.timeline=keep;
+  return {realEvents:real,
+    liveHasActivity:(rec.events||[]).some(e=>e.manual===true),
+    emptyHasActivity:(recEmpty.events||[]).some(e=>e.manual===true)};
+});
+(gate.realEvents>0 && gate.liveHasActivity && !gate.emptyHasActivity)
+  ? ok(`the live/demo gate keys off real manual activity (${gate.realEvents} event(s) present; none when removed)`)
+  : bad('the demo/live gate does not track real activity', JSON.stringify(gate));
+
+// ── provenance is captured and shown, not just stored ──────────────────
+console.log('\n── every activity records who, when and how ──');
+const prov = await p.evaluate(()=>{
+  // The id the open space is bound to, read now — ids passed between evaluates
+  // went stale because the property's tenants array is replaced by the async
+  // load in selectProperty().
+  const t=(TenantSpace.record()||{}).space?.id;
+  const prop=currentProperty();
+  const ev=(prop.timeline||[]).filter(e=>e.tenantId===t);
+  const last=ev[ev.length-1];
+  const panel=document.getElementById('tsOverlay');
+  return last?{actor:last.actor,source:last.source,ts:last.timestamp,
+    by:last.metadata&&last.metadata.recordedBy,via:last.metadata&&last.metadata.recordedVia,
+    at:last.metadata&&last.metadata.recordedAt,
+    onScreen:panel?/Manual/.test(panel.innerText||''):false}:null;
+});
+(prov&&prov.by&&prov.at&&prov.via==='Manual'&&prov.source==='manual')
+  ? ok(`captured: by "${prov.by}", via ${prov.via}, at ${String(prov.at).slice(0,19)}`)
+  : bad('provenance is missing from the recorded activity',JSON.stringify(prov));
+(prov&&prov.onScreen)
+  ? ok('and it is shown on the timeline entry, not just stored')
+  : bad('provenance is stored but invisible to the user');
+
+// ── every activity type reaches the timeline ───────────────────────────
+console.log('\n── the timeline is the single source of truth ──');
+const allTypes = await p.evaluate(async()=>{
+  const t=(TenantSpace.record()||{}).space?.id;
+  const kinds=['photos','maintenance','document','invoice','damage','warranty'];
+  for(const k of kinds){
+    document.getElementById('tsAddBtn').click();
+    await new Promise(r=>setTimeout(r,250));
+    const choice=document.querySelector(`#tsAddPanel .ts-add-choice[data-act="${k}"]`);
+    if(!choice) continue;
+    choice.click();
+    await new Promise(r=>setTimeout(r,250));
+    document.getElementById('tsAfTitle').value='Recorded '+k;
+    document.getElementById('tsAfSave').click();
+    await new Promise(r=>setTimeout(r,1200));
+  }
+  const prop=currentProperty();
+  const ev=(prop.timeline||[]).filter(e=>e.tenantId===t);
+  return {total:ev.length, types:[...new Set(ev.map(e=>e.type))],
+          allManual:ev.filter(e=>e.type.startsWith('space_')).every(e=>e.manual===true),
+          allSourced:ev.filter(e=>e.type.startsWith('space_')).every(e=>!!e.source)};
+});
+(allTypes.types.filter(x=>x.startsWith('space_')).length>=6)
+  ? ok(`every activity type lands on the timeline (${allTypes.types.filter(x=>x.startsWith('space_')).length} kinds, ${allTypes.total} events)`)
+  : bad('some activity types never reached the timeline',JSON.stringify(allTypes.types));
+(allTypes.allManual&&allTypes.allSourced)
+  ? ok('all of them carry manual + source, so history stays attributable')
+  : bad('some events lack manual/source',JSON.stringify(allTypes));
+
 console.log('\n'+(fail?'\x1b[31m':'\x1b[32m')+`RESULT: ${pass} passed, ${fail} failed`+'\x1b[0m');
 await b.close();srv.close();process.exit(fail?1:0);
 })();

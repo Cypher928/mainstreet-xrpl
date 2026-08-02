@@ -122,6 +122,22 @@ window.TenantSpace = (function () {
   }
 
   // ── View ────────────────────────────────────────────────────────────────────
+  // Has a human actually put something in this space? Manual timeline events and
+  // any real attachment both count; seeded/derived system events do not, or a
+  // brand-new space would look "live" purely because the app logged its own
+  // creation.
+  function _hasRealActivity(rec) {
+    if (!rec) return false;
+    var ev = rec.events || [];
+    for (var i = 0; i < ev.length; i++) {
+      if (ev[i] && ev[i].manual === true) return true;
+      if (ev[i] && (ev[i].attachments || []).length) return true;
+    }
+    return (rec.photos || []).length > 0 || (rec.documents || []).length > 0 ||
+           (rec.notes || []).length > 0  || (rec.invoices || []).length > 0 ||
+           (rec.warranties || []).length > 0;
+  }
+
   function _attachChip(a, icon) {
     return '<a class="ts-doc" href="' + _esc(a.url) + '" target="_blank" rel="noopener" title="' + _esc(a.name) + '">' +
       icon + '&nbsp;<span class="ts-doc-name">' + _esc(a.name) + '</span>' +
@@ -162,7 +178,18 @@ window.TenantSpace = (function () {
           return '<button type="button" class="ts-tl-row ts-tl-row--click" data-tlid="' + _esc(e.id) + '" title="Open this record">' +
             '<span class="ts-tl-when">' + _esc(_fmtDate(e.timestamp)) + '</span>' +
             '<span class="ts-tl-badge">' + _esc(d.label) + '</span>' +
-            '<span class="ts-tl-title">' + _esc(e.title) + '</span>' +
+            '<span class="ts-tl-title">' + _esc(e.title) +
+              // Provenance, shown rather than merely stored: a verified memory
+              // that cannot say who recorded an entry is not verified.
+              (function () {
+                var by  = (e.metadata && e.metadata.recordedBy) || e.actor;
+                var via = (e.metadata && e.metadata.recordedVia) ||
+                          (e.source ? (e.source.charAt(0).toUpperCase() + e.source.slice(1)) : null) ||
+                          (e.manual ? 'Manual' : 'System');
+                if (!by) return '';
+                return '<span class="ts-prov">' + _esc(by) + ' \u00B7 ' + _esc(via) + '</span>';
+              })() +
+            '</span>' +
             '<span class="ts-tl-go">&#x203A;</span></button>';
         }).join('') + (rec.events.length > 12 ? '<div class="ts-empty">+ ' + (rec.events.length - 12) + ' earlier</div>' : '') + '</div>'
       : _empty('Nothing recorded for this space yet.');
@@ -252,7 +279,11 @@ window.TenantSpace = (function () {
     try {
       var _pr = window.PropertyReference;
       var _t2 = (property.tenants || []).find(function (x) { return x && x.id === tenantId; });
-      if (_pr && _t2) refAll = _pr.spaceDocumentsFor(property, _t2);
+      // Demo mode ends the moment this space has a real record of its own.
+      // Showing sample rows beside genuine ones asks a property manager to tell
+      // demonstration data from their own building at a glance, which nobody
+      // should have to do — and the sample rows carry no file behind them.
+      if (_pr && _t2 && !_hasRealActivity(rec)) refAll = _pr.spaceDocumentsFor(property, _t2);
     } catch (_e) {}
     // Photos belong in the Photos section, not buried under Documents.
     var refPhotos = refAll.filter(function (a) { return a.kind === 'photo'; });
@@ -275,7 +306,7 @@ window.TenantSpace = (function () {
     var docNotesHtml = (rec.documents.length ? docHtml : '') + refDocsHtml +
       (rec.notes.length ? '<div class="ts-lbl">Notes</div>' + notesHtml : '');
     if (!docNotesHtml) docNotesHtml = _empty('No documents or notes for this space yet.');
-    if (refDocs.length) docNotesHtml += '<div class="ts-ref-note">Sample records show the documents this space would keep on file. Upload a file to replace one.</div>';
+    if (refDocs.length) docNotesHtml += '<div class="ts-ref-note">Sample records show the documents this space would keep on file \u2014 they disappear as soon as you add anything real.</div>';
 
     // Merge reference photos into the Photos section.
     if (refPhotos.length) {
@@ -302,7 +333,8 @@ window.TenantSpace = (function () {
         // accepting, which made the sample rows read as real ones.
         '<div class="ts-addbar">' +
           '<button class="ts-add-btn" id="tsAddBtn">\u2795&nbsp;Add Activity</button>' +
-          '<div class="ts-add-hint">Photos, repairs, documents, notes \u2014 filed to this space.</div>' +
+          '<div class="ts-add-hint">Record something that happened in ' +
+            _esc(rec.space.name || 'this suite') + '.</div>' +
         '</div>' +
         '<div id="tsAddPanel" class="ts-add-panel" style="display:none"></div>' +
         '<div class="ts-body">' +
@@ -441,6 +473,10 @@ window.TenantSpace = (function () {
       '  background:rgba(255,255,255,0.04);border:1px solid rgba(var(--line-rgb,255,255,255),0.12);}',
       '.ts-add-choice:hover{background:rgba(255,255,255,0.08);border-color:' + gold + ';}',
       '.ts-add-ic{font-size:1rem;flex:0 0 auto;}',
+      '.ts-add-lead{font:700 0.84rem/1.3 inherit;color:rgba(255,255,255,0.82);margin:2px 0 8px;}',
+      '.ts-add-sub{font-size:0.76rem;line-height:1.45;color:rgba(255,255,255,0.55);margin:-2px 0 4px;}',
+      '.ts-add-sub b{color:rgba(255,255,255,0.85);}',
+      '.ts-prov{font-size:0.72rem;color:rgba(255,255,255,0.42);margin-top:3px;}',
       '.ts-add-form{display:flex;flex-direction:column;gap:6px;padding:12px;border-radius:12px;',
       '  background:rgba(255,255,255,0.03);border:1px solid rgba(var(--line-rgb,255,255,255),0.12);}',
       '.ts-add-head{font:800 0.9rem/1.2 inherit;color:#fff;margin-bottom:4px;}',
@@ -578,6 +614,7 @@ window.TenantSpace = (function () {
     panel.setAttribute('data-mode', 'picker');
     panel.style.display = 'block';
     panel.innerHTML =
+      '<div class="ts-add-lead">What happened in this suite?</div>' +
       '<div class="ts-add-grid">' +
         ACTIVITY_TYPES.map(function (t) {
           return '<button class="ts-add-choice" data-act="' + t.key + '">' +
@@ -602,6 +639,9 @@ window.TenantSpace = (function () {
     panel.innerHTML =
       '<div class="ts-add-form" id="tsAddForm">' +
         '<div class="ts-add-head">' + t.icon + '&nbsp;' + _esc(t.label) + '</div>' +
+        '<div class="ts-add-sub">Recording this against <b>' +
+          _esc((_openRec && _openRec.space && _openRec.space.name) || 'this suite') +
+          '</b>. It joins the timeline and files itself into the right section.</div>' +
         '<label class="ts-af-l" for="tsAfTitle">What happened</label>' +
         '<input class="ts-af-i" id="tsAfTitle" type="text" placeholder="' + _esc(t.titlePlaceholder) + '">' +
         '<label class="ts-af-l" for="tsAfDetail">Details <span class="ts-af-opt">optional</span></label>' +
@@ -682,11 +722,23 @@ window.TenantSpace = (function () {
         return { name: f.name, url: f.url, kind: t.kind || 'document', size: f.size, mime: f.mime,
                  oversize: !!f.oversize, unreadable: !!f.unreadable };
       });
+      // Provenance is the point of a verified memory: every entry carries who put
+      // it there, when, and by what route. Resolved HERE, above the metadata it
+      // feeds — declared below it first time round, and `var` hoisting meant
+      // meta.recordedBy was silently set to undefined on every activity.
+      var _who = 'Property Manager';
+      try {
+        var u = window.AuthService && window.AuthService.getCurrentUser && window.AuthService.getCurrentUser();
+        if (u && (u.email || u.name)) _who = u.name || u.email;
+      } catch (_e) {}
       var meta = {};
       if (vendor.trim()) meta.vendor = vendor.trim();
       if (cost !== '' && !isNaN(Number(cost))) meta.costUsd = Number(cost);
       if (warr) meta.warrantyExpires = warr;
       if (attachments.length) meta.fileCount = attachments.length;
+      meta.recordedBy = _who;
+      meta.recordedAt = new Date().toISOString();
+      meta.recordedVia = 'Manual';
 
       var headline = title.trim() || (attachments.length + ' file' + (attachments.length === 1 ? '' : 's') + ' attached');
       var bits = [];
@@ -698,7 +750,8 @@ window.TenantSpace = (function () {
       var evt = {
         type: 'space_' + t.key,
         severity: t.severity || 'info',
-        actor: 'Property Manager',
+        actor: _who,
+        source: 'manual',      // Manual | AI | Import | Email — set by whoever writes the event
         manual: true,
         category: t.category,
         tenantId: tenantId,
