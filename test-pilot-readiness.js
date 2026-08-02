@@ -248,67 +248,83 @@ const postNarr=await p.evaluate(()=>{
   : bad('the narrative never appeared even after reconciliation',JSON.stringify(postNarr));
 
 // ── 6. the tenant row is readable on a phone ────────────────────────────
-// Reported from the pilot with a screenshot: tenant names truncated to "Lux…",
-// "ShopR…", "Elevat…", square footage to "45000 s…", and the review reason
-// squeezed into a column one or two words wide, because the whole row was a
-// single flex line shared with three action buttons.
-// KNOWN WEAK: this section currently passes with the mobile CSS REMOVED, so it
-// does not prove the fix. The probe is appended to document.body rather than
-// rendered by the app, and in that context the row does not reproduce the
-// truncation seen on the device. Do not read these ticks as verification of the
-// mobile layout — it needs a real property open on a real 390px viewport, or a
-// screenshot diff. Left visible rather than deleted so the gap is not forgotten.
-console.log('\n── 6. the tenant row survives a 390px phone (WEAK — see note) ──');
+// Two real defects, both seen on device:
+//   * names truncated to "Lux…" / "ShopR…" / "Elevat…", sqft to "45000 s…",
+//     and the review reason crushed into a two-word column;
+//   * then, from my first fix, Edit / View Lease / Remove rendered ON TOP OF
+//     each other because they all shared one grid-area.
+// The row is rendered BY THE APP, in an open property, at 390px — an earlier
+// version of this check injected markup into document.body, where the row does
+// not reproduce either defect and every assertion passed vacuously (it passed
+// with the CSS deleted).
+console.log('\n── 6. the tenant row survives a 390px phone ──');
 {
   const phone = await p.context().newPage();
   await phone.setViewportSize({ width: 390, height: 844 });
   await phone.addInitScript('window.__TEST_AUTHED=true;');
+  await phone.addInitScript(DB);
+  await phone.route('**jsdelivr**',r=>r.fulfill({status:200,body:'/*x*/'}));
+  await phone.route('**supabase**',r=>r.request().url().includes('127.0.0.1')?r.continue():r.fulfill({status:200,body:'/*x*/'}));
   await phone.goto(`http://127.0.0.1:${PORT}/`);
   await phone.waitForSelector('#appContent',{state:'visible',timeout:20000}).catch(()=>{});
-  await phone.waitForTimeout(1500);
-  const m = await phone.evaluate(() => {
-    // Build a row with a long name and a long warning, as a real lease produces.
-    // Appended to the body, not into #bulkResults: that host lives in a pane
-    // that is display:none unless a property is open, so everything measured
-    // inside it comes back 0x0 and every assertion passes vacuously.
-    const host = document.createElement('div');
-    host.style.cssText = 'position:relative;width:100%;';
-    document.body.appendChild(host);
-    host.innerHTML = `<div class="bulk-tenant-row has-warning" id="btr-0">
-      <div class="bulk-tenant-summary">
-        <span class="bulk-t-status">&#9888;</span>
-        <div class="bulk-t-info">
-          <div class="tenant-title" id="probeName">ShopRite Marketplace Holdings</div>
-          <div class="tenant-meta" id="probeMeta">45000 sqft &middot; 2021-01-01 &middot; NNN</div>
-        </div>
-        <em class="tenant-warn-text" id="probeWarn">NNN cap percentage not specified &middot; NNN lease — audit rights clause not resolved</em>
-        <button class="bulk-t-remove">Remove</button>
-      </div></div>`;
-    const rect = id => { const e = document.getElementById(id); const r = e.getBoundingClientRect();
-      return { w: Math.round(r.width), h: Math.round(r.height),
-               clipped: e.scrollWidth > e.clientWidth + 1 }; };
-    const doc = document.documentElement;
-    return { name: rect('probeName'), meta: rect('probeMeta'), warn: rect('probeWarn'),
-             overflow: doc.scrollWidth - doc.clientWidth };
+  await phone.waitForTimeout(2000);
+  const m = await phone.evaluate(async () => {
+    // Drive the real app: create a property and render real tenants into it.
+    const x=[...document.querySelectorAll('button')].find(e=>/go to portfolio/i.test(e.innerText)); if(x)x.click();
+    await new Promise(r=>setTimeout(r,800));
+    await addNewProperty();
+    await new Promise(r=>setTimeout(r,2000));
+    // leaseUrl matters: without it the row renders a single control and the
+    // overlap assertion below has nothing to compare, so it passes vacuously —
+    // it failed to catch the grid-area overlap it was written for until this
+    // fixture produced Edit + View Lease + Remove like the real screen does.
+    const rows=[{tenant_name:'ShopRite Marketplace Holdings',leased_sqft:45000,start_date:'2021-01-01',end_date:'2028-12-31',lease_type:null,cap:null,
+                 leaseUrl:'https://example.invalid/shoprite-lease.pdf',
+                 _needsReview:true,flags:['NNN cap percentage not specified']}].map(normalizeTenant);
+    const prop=_props.find(y=>y.id===activePropId);
+    prop.tenants=rows; tenantData.splice(0,tenantData.length,...rows);
+    switchWorkspaceTab('spaces');
+    renderBulkResults();
+    await new Promise(r=>setTimeout(r,900));
+
+    const summary=document.querySelector('#bulkResults .bulk-tenant-summary');
+    if(!summary) return {err:'the app rendered no tenant row'};
+    const title=summary.querySelector('.tenant-title');
+    const meta=summary.querySelector('.tenant-meta');
+    const box=e=>{const r=e.getBoundingClientRect();
+      return {w:Math.round(r.width),h:Math.round(r.height),t:Math.round(r.top),l:Math.round(r.left),
+              r:Math.round(r.right),b:Math.round(r.bottom),clipped:e.scrollWidth>e.clientWidth+1};};
+    // Every interactive control in the row must occupy its own space.
+    const controls=[...summary.querySelectorAll('button,a')].filter(e=>e.getBoundingClientRect().width>2);
+    const overlaps=[];
+    for(let i=0;i<controls.length;i++)for(let j=i+1;j<controls.length;j++){
+      const A=controls[i].getBoundingClientRect(),B=controls[j].getBoundingClientRect();
+      const ox=Math.min(A.right,B.right)-Math.max(A.left,B.left);
+      const oy=Math.min(A.bottom,B.bottom)-Math.max(A.top,B.top);
+      if(ox>2&&oy>2) overlaps.push(`"${(controls[i].innerText||'').trim()}" over "${(controls[j].innerText||'').trim()}"`);
+    }
+    const doc=document.documentElement;
+    return {title:box(title),meta:box(meta),controls:controls.length,overlaps,
+            overflow:doc.scrollWidth-doc.clientWidth};
   });
-  if (m.err) bad('could not build the probe row', m.err);
+  if (m.err) bad('could not render a tenant row on the phone', m.err);
   else {
-    // Non-zero geometry is required, or a hidden element passes everything.
-    (m.name.w > 0 && m.meta.w > 0 && m.warn.w > 0)
-      ? ok(`the probe row is actually laid out (name ${m.name.w}px, warn ${m.warn.w}px)`)
-      : bad('the probe row has no layout — every check below would be vacuous', JSON.stringify(m));
-    (m.name.w > 0 && !m.name.clipped)
-      ? ok(`the tenant name is not truncated (${m.name.w}px wide, wraps to ${m.name.h}px)`)
-      : bad('the tenant name is still ellipsized on a phone', JSON.stringify(m.name));
-    (m.meta.w > 0 && !m.meta.clipped)
+    // At least two controls, or the overlap check below proves nothing.
+    (m.title.w>0 && m.controls>=2)
+      ? ok(`the app rendered a real row at 390px (${m.controls} controls to compare)`)
+      : bad('too few controls rendered — the overlap check would be vacuous', JSON.stringify({controls:m.controls}));
+    (m.title.w>0 && !m.title.clipped)
+      ? ok(`the tenant name is not truncated (${m.title.w}px, ${m.title.h}px tall)`)
+      : bad('the tenant name is still ellipsized', JSON.stringify(m.title));
+    (m.meta.w>0 && !m.meta.clipped)
       ? ok(`the sqft/term line is not truncated (${m.meta.w}px)`)
       : bad('the meta line is still truncated', JSON.stringify(m.meta));
-    (m.warn.w >= 200)
-      ? ok(`the review reason reads across the row (${m.warn.w}px), not a two-word column`)
-      : bad('the review reason is still crushed into a narrow column', JSON.stringify(m.warn));
-    (m.overflow <= 0)
+    (m.overlaps.length===0)
+      ? ok('no two action controls overlap')
+      : bad(`${m.overlaps.length} pair(s) of controls are stacked on top of each other`, m.overlaps.join('; '));
+    (m.overflow<=0)
       ? ok('and the page does not scroll sideways')
-      : bad('the row pushes the page wider than the phone', m.overflow + 'px');
+      : bad('the row pushes the page wider than the phone', m.overflow+'px');
   }
   await phone.close();
 }

@@ -2528,44 +2528,45 @@
       font-size: 0.77rem; color: var(--c-ca8a04); flex-wrap: wrap;
     }
     /* ── Tenant row: mobile ────────────────────────────────────────────
-       On a phone this was one flex line — status, name, the review reason, and
+       On a phone this was one flex line — status, name, the review reason and
        three buttons — so .bulk-t-info collapsed and tenant names truncated to
-       six characters ("Lux…", "ShopR…", "Elevat…"), square footage to
-       "45000 s…", and the reason for the flag was squeezed into a column one or
-       two words wide. Nothing on the row was readable.
-       Below 768px the summary becomes two rows: the tenant identifies itself on
-       a full-width line, and the actions get their own line beneath. The desktop
-       grid further down is untouched. */
+       six characters ("Lux…", "ShopR…", "Elevat…"), sqft to "45000 s…", and the
+       reason for the flag was squeezed into a column one or two words wide.
+
+       Flex WRAP, not a named grid. The first attempt made this a grid and put
+       every action on the same `grid-area: actions` — items sharing one grid
+       area are placed on top of one another, so Edit, View Lease and Remove
+       rendered stacked over each other in a single box. Wrapping is what was
+       wanted: identity takes the first line, the actions flow onto the next and
+       sit side by side.
+
+       The desktop grid further down is untouched. */
     @media (max-width: 767px) {
       .bulk-tenant-summary {
-        display: grid;
-        grid-template-columns: auto 1fr;
-        grid-template-areas: "status info" "actions actions";
-        row-gap: 8px; column-gap: 10px;
-        align-items: start;
-        padding: 12px 14px;
+        display: flex; flex-wrap: wrap; align-items: flex-start;
+        row-gap: 10px; column-gap: 10px; padding: 12px 14px;
       }
-      .bulk-t-status { grid-area: status; padding-top: 2px; }
-      .bulk-t-info   { grid-area: info; min-width: 0; }
+      .bulk-t-status { order: 0; flex: 0 0 auto; padding-top: 2px; }
+      /* Identity CLAIMS the first line. flex-basis 0 let it shrink to share the
+         line with the buttons instead — measured 89px wide and still clipped.
+         Basing it on the full width minus the status glyph forces everything
+         after it to wrap onto the next line, which is the whole point. */
+      .bulk-t-info   { order: 1; flex: 1 1 calc(100% - 44px); min-width: 0; }
       /* The name is the thing you are looking for — never truncate it. */
       .tenant-title  { white-space: normal; overflow: visible; text-overflow: clip; line-height: 1.3; }
       .tenant-meta   { white-space: normal; overflow: visible; text-overflow: clip; line-height: 1.4; }
-      /* Everything that is not the status or the identity is an action. */
-      .bulk-tenant-summary > *:not(.bulk-t-status):not(.bulk-t-info) { grid-area: actions; }
-      .bulk-tenant-summary .bulk-t-actions,
-      .bulk-tenant-summary .lease-row-actions {
-        display: flex; flex-wrap: wrap; gap: 8px; align-items: center; width: 100%;
-      }
-      /* The review reason reads as a sentence under the name, not as a column. */
+      /* The review reason reads as a sentence on its own full-width line. */
       .bulk-tenant-summary .tenant-warn-text,
-      .bulk-tenant-summary em,
-      .bulk-tenant-summary i {
-        grid-area: info; display: block; white-space: normal; font-size: 0.78rem;
-        line-height: 1.45; margin-top: 6px; max-width: 100%;
+      .bulk-tenant-summary > em,
+      .bulk-tenant-summary > i {
+        order: 2; flex: 1 1 100%; display: block; white-space: normal;
+        font-size: 0.78rem; line-height: 1.45; margin: 0;
       }
-      .bulk-tenant-summary .view-lease-btn,
-      .bulk-tenant-summary .bulk-t-remove,
-      .bulk-tenant-summary .bulk-t-chevron { flex: 0 0 auto; }
+      /* Everything else is an action: its own line, laid out in a row. */
+      .bulk-tenant-summary > *:not(.bulk-t-status):not(.bulk-t-info):not(em):not(i):not(.tenant-warn-text) {
+        order: 3; flex: 0 0 auto;
+      }
+      .bulk-tenant-summary .bulk-t-chevron { margin-right: auto; }
     }
     /* ── Invoice row: desktop grid ──────────────────────────────────── */
     @media (min-width: 768px) {
