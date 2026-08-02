@@ -9017,9 +9017,29 @@ function showAllocationModal() {
   const tenants   = tenantData.filter(t => t && tName(t) && parseSqft(tSqft(t)) > 0);
   const invoices  = invoiceData.filter(inv => inv && (inv.vendorName ?? inv.vendor) && parseFloat(inv.amount) > 0);
 
-  // If data isn't ready let runAllocation() surface the validation error
+  // If data isn't ready, SAY SO WHERE THE USER IS STANDING.
+  //
+  // This used to hand straight to runAllocation(), which writes its validation
+  // message into #resultsBody — inside the CAM pane. A user who presses this
+  // before the property is set up is usually on Property or Spaces, so the
+  // guidance was rendered into a hidden tab and the button did nothing at all:
+  // no toast, no message, no visible change. Verified by walking it.
+  //
+  // The old wording pointed at "Section 1" and "Section 2", which stopped
+  // existing when the workspace became tabbed.
   if (!totalSqft || totalSqft <= 0 || !tenants.length || !invoices.length) {
-    runAllocation();
+    const missing = [];
+    if (!totalSqft || totalSqft <= 0) missing.push('the property\u2019s total square footage (Property tab)');
+    if (!tenants.length)              missing.push('at least one lease with a tenant name and leased sqft (Spaces tab)');
+    if (!invoices.length)             missing.push('this year\u2019s CAM invoices (CAM tab)');
+    showToast('Not ready to reconcile yet \u2014 still needed: ' + missing.join('; ') + '.',
+              { color: '#1e3a5f', textColor: '#dbeafe', duration: 7000 });
+    // Take them to the first thing that is missing rather than leaving them to
+    // work out which tab it was.
+    if (!totalSqft || totalSqft <= 0)      switchWorkspaceTab('property');
+    else if (!tenants.length)              switchWorkspaceTab('spaces');
+    else                                   switchWorkspaceTab('cam');
+    runAllocation();   // still records the validation state for the CAM pane
     return;
   }
 
@@ -9371,7 +9391,7 @@ async function runAllocation() {
   const body      = document.getElementById('resultsBody');
 
   if (!totalSqft || totalSqft <= 0) {
-    showErr(body, section, 'Please enter a valid Total Property Sqft in Section 1.');
+    showErr(body, section, 'Enter the property\u2019s Total Property Sqft on the Property tab before reconciling.');
     return;
   }
 
@@ -9395,7 +9415,7 @@ async function runAllocation() {
     const warn = document.createElement('div');
     warn.className = 'cam-sqft-warning';
     warn.style.cssText = 'background:#7c2d1220;border:1px solid #f97316;color:var(--c-fb923c);padding:10px 14px;border-radius:8px;margin-bottom:14px;font-size:0.85rem;';
-    warn.textContent = `⚠️ ${missingSquare.length} tenant${missingSquare.length > 1 ? 's' : ''} excluded from CAM — missing Leased Sqft: ${missingSquare.map(t => t.tenant_name).join(', ')}. Edit those tenants in Section 2 and re-run to include them.`;
+    warn.textContent = `⚠️ ${missingSquare.length} tenant${missingSquare.length > 1 ? 's' : ''} excluded from CAM — missing Leased Sqft: ${missingSquare.map(t => t.tenant_name).join(', ')}. Edit those tenants on the Spaces tab and re-run to include them.`;
     section.prepend(warn);
   }
 
