@@ -12,6 +12,15 @@ Start from an empty account, or a brand-new property in an existing one.
 
 ---
 
+## Getting in
+
+The walk starts on the marketing page, signed out — the way a pilot customer
+arrives. Count your clicks. There are two.
+
+- ☐ **Log in** — tapping "Log in" on the marketing page lands you **on the sign-in form**. Not on a hero, not on a product tour, not on anything with a second "Sign in" on it.
+- ☐ **Sign in** — one submit, and you are in the application.
+- ☐ **Land on your properties** — the first thing on screen is the portfolio, and **＋ Add Property** is already visible. You must not have to open a property and come back for it to appear.
+
 ## The workflow
 
 - ☐ **Create property** — a visible way to create one exists from the portfolio, and clicking it lands you where the property is described (not on a tab with nothing to do).
@@ -53,6 +62,7 @@ Run these first; they are fast and catch regressions in the paths below.
 
 | Suite | Covers |
 |---|---|
+| `node test-signin-walkthrough.js` | marketing page → sign-in form → signed in → portfolio → Add Property, in exactly two clicks, asserted by hit-testing |
 | `node test-first-run-walkthrough.js` | create → describe → save → upload leases → review → resolve → invoices → calculate → results → statement, clicking only by visible label |
 | `node test-broken-promises.js` | every control whose label promises a specific object carries an identifier for it |
 | `node test-pilot-readiness.js` | edit-lease-then-Done; narrative gating; incomplete-setup guidance |
@@ -84,6 +94,17 @@ debugging cycle. When a harness says something is missing, confirm it is missing
 - `#wsPane-property` is built at runtime by `property-os.js`; grepping the HTML finds nothing
 - `switchWorkspaceTab()` does not re-show `#mainWorkflow`, so switching tabs from the portfolio leaves you on the portfolio
 - `/NaN/i` matches the "nan" in "tenant"
+- blocking a CDN (`cdnjs`, `jsdelivr`) inside a sandbox resets the connection
+  **mid-parse**, and the browser truncates `index.html` at the failing tag — so
+  `script.js` never instantiates and every global reads as `undefined`. It looks
+  exactly like a top-level throw in the application. Stub the CDNs.
+
+And one lesson that belongs to the checklist rather than the harnesses: **an
+element cannot report whether something is covering it.** `getBoundingClientRect`
+and `getComputedStyle` both said the sign-in form was 292×40 and `display:block`
+while a marketing hero sat on top of it at `z-index:99000`. If a check is meant
+to prove a control is usable, it has to go through `document.elementFromPoint` —
+ask the browser what a click would actually land on.
 
 ---
 
