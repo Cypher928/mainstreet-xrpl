@@ -16464,43 +16464,12 @@ function _emphasiseReviewGap(propertyId, tenantId) {
   paint(12);   // the space modal builds asynchronously; retry briefly
 }
 
-function _rqItemHtml(item) {
-  const acked = item.reviewerConfirmed;
-  const urgCls = _rqUrgencyClass(item.reviewScore);
-  const stateCfg = {
-    incomplete:        { cls: 'trs-incomplete',        label: 'Incomplete' },
-    needs_review:      { cls: 'trs-needs-review',      label: 'Needs Review' },
-    manually_verified: { cls: 'trs-manually-verified', label: 'Verified' },
-  }[item.reviewState] || { cls: 'trs-needs-review', label: item.reviewState };
-  const scoreColor = item.reviewScore >= 80 ? 'trs-score--high' : item.reviewScore >= 50 ? 'trs-score--mid' : 'trs-score--low';
-
-  const missingChips = item.missingFields.map(f => `<span class="rq-chip rq-chip--missing">${esc(f)}</span>`).join('');
-  const warnChips    = item.warningReasons.map(w => `<span class="rq-chip rq-chip--warn">${esc(w)}</span>`).join('');
-
-  const pid = esc(item.propertyId);
-  const tid = esc(item.tenantId);
-
-  return `
-  <div class="rq-card ${urgCls}${acked ? ' rq-acknowledged' : ''}" data-rq-tenant-id="${tid}">
-    <div class="rq-card-main">
-      <div class="rq-tenant-name">${esc(item.tenantName)}</div>
-      <div class="rq-prop-name">${esc(item.propertyName)}</div>
-      <div class="rq-badges">
-        <span class="trs-badge ${stateCfg.cls}">${stateCfg.label}</span>
-        <span class="trs-score ${scoreColor}">Score: ${item.reviewScore}</span>
-      </div>
-      ${(missingChips || warnChips) ? `<div class="rq-chips">${missingChips}${warnChips}</div>` : ''}
-    </div>
-    <div class="rq-actions">
-      <button class="rq-action-btn rq-btn--primary" onclick="openReviewItem('${pid}','${tid}','lease')">Review Lease</button>
-      <button class="rq-action-btn rq-btn--secondary" onclick="openReviewItem('${pid}','${tid}','tenant')">Open ${esc(item.tenantName)}</button>
-      ${acked
-        ? `<span class="rq-chip" style="text-align:center;justify-content:center;">Acknowledged</span>`
-        : `<button class="rq-action-btn rq-btn--ack" onclick="markTenantReviewAcknowledged('${tid}')">Mark Reviewed</button>`
-      }
-    </div>
-  </div>`;
-}
+// _rqItemHtml() was deleted here. It rendered review cards with "Review Lease"
+// and "Jump to Tenant" buttons and had ZERO callers — the property review panel
+// builds its own markup in renderPropertyReviewQueue(). Worth recording because
+// I "fixed" those two buttons earlier in this sprint: the fix was real but the
+// template was dead, so no user ever saw either the bug or the repair. The live
+// equivalents are asserted in test-broken-promises.js.
 
 // Portfolio homepage: banner only — detailed queue lives inside each property view.
 function renderReviewQueue(props) {
@@ -16595,10 +16564,10 @@ function _rqCompactItemHtml(item) {
     <span class="trs-score ${scoreColor}">Score: ${item.reviewScore}</span>
     <div class="rq-chips rq-chips--inline">${missingChips}${warnChips}</div>
     <div class="rq-compact-actions" style="display:flex;gap:4px;align-items:center;">
-      <button class="rq-action-btn rq-btn--primary" onclick="openReviewWorkspace('${tid}')">AI Review &#x203A;</button>
+      <button class="rq-action-btn rq-btn--primary" onclick="openReviewWorkspace('${tid}')">Review ${esc(item.tenantName)} &#x203A;</button>
       ${acked
         ? `<span class="rq-chip">Ack'd</span>`
-        : `<button class="rq-action-btn rq-btn--ack" onclick="markTenantReviewAcknowledged('${tid}')">Ack</button>`}
+        : `<button class="rq-action-btn rq-btn--ack" onclick="markTenantReviewAcknowledged('${tid}')">Mark ${esc(item.tenantName)} reviewed</button>`}
     </div>
   </div>`;
 }
