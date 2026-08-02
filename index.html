@@ -2301,6 +2301,22 @@
     .field-helper-text {
       font-size: 0.72rem; color: var(--text-4); margin-top: 5px; line-height: 1.4;
     }
+    /* Property Setup → the explicit save and the handoff to lease upload. */
+    .setup-next {
+      display: flex; align-items: center; justify-content: space-between; gap: 14px;
+      flex-wrap: wrap; margin-top: 18px; padding-top: 16px;
+      border-top: 1px solid rgba(var(--line-rgb), 0.08);
+    }
+    .setup-next-msg { font-size: 0.8rem; color: var(--text-3); line-height: 1.5; }
+    .setup-next-msg b { color: var(--text-1); }
+    .setup-next-btn {
+      padding: 9px 20px; background: #16a34a; border: none; border-radius: 8px;
+      color: #fff; font-size: 0.82rem; font-weight: 700; cursor: pointer;
+      white-space: nowrap; transition: background .15s;
+    }
+    .setup-next-btn:hover:not(:disabled) { background: #15803d; }
+    .setup-next-btn:disabled { background: rgba(var(--line-rgb), 0.12); color: var(--text-4); cursor: not-allowed; }
+    .setup-next--saved .setup-next-msg b { color: #4ade80; }
     /* Citation evidence explanation */
     .citation-hint {
       font-size: 0.72rem; color: var(--text-4); padding: 6px 0 10px 0;
@@ -6376,12 +6392,12 @@
       <div class="field">
         <label>Property Name</label>
         <input type="text" id="propertyName" placeholder="e.g. Westfield Plaza"
-          oninput="liveUpdateBreadcrumb(this.value);savePropertyData()" />
+          oninput="liveUpdateBreadcrumb(this.value);savePropertyData();_setupNextSync()" />
       </div>
       <div class="field">
         <label>Total Property Sqft <span class="field-info-tip" title="Total rentable square footage for the property. This number is used to calculate each tenant&#x27;s pro-rata share of common area expenses.">&#x24D8;</span></label>
         <input type="number" id="totalSqft" placeholder="e.g. 20000" min="1"
-          oninput="updatePropertySqft(this.value)" />
+          oninput="updatePropertySqft(this.value);_setupNextSync()" />
         <div class="field-helper-text">Example: If the property is 20,000 sqft and a tenant occupies 2,000 sqft, that tenant&#x27;s pro-rata share is 10%.</div>
       </div>
       <div class="field">
@@ -6390,6 +6406,16 @@
           <!-- Options populated by initCamYearSelect() on load -->
         </select>
       </div>
+    </div>
+
+    <!-- The fields above save themselves on every keystroke, which is good
+         behaviour and completely invisible: a first-time user fills them in and
+         has no way to tell whether anything was kept, and nothing tells them
+         what happens next. This is the explicit confirmation and the handoff. -->
+    <div class="setup-next" id="setupNext">
+      <div class="setup-next-msg" id="setupNextMsg">Name your property and enter its total square footage to begin.</div>
+      <button class="btn-primary setup-next-btn" id="setupSaveBtn" type="button"
+              onclick="savePropertyAndContinue()" disabled>Save &amp; Continue &rsaquo;</button>
     </div>
   </div>
 
@@ -6413,59 +6439,68 @@
       </div>
       <div id="spacesList"></div>
     </div>
+
+    <!-- ── Lease Upload ──────────────────────────────────────────────────
+         Lives HERE, under Spaces, because that is where the information
+         architecture says lease intake belongs (script.js: "'documents' is
+         retired from navigation: lease intake moved under Spaces").
+
+         It did not actually move. Only the tab was removed — the card stayed
+         behind in #wsPane-documents, a pane that 'documents' being absent from
+         WORKSPACE_TABS means switchWorkspaceTab() can never display and nothing
+         else displays either. So the entire lease-upload workflow, and the
+         "Next step: upload your lease PDFs" hint that lives with it, were
+         unreachable in the shipped app: a new property had nowhere to go.
+         This completes the migration the comment describes. -->
+
+      <!-- ── SECTION 2: Lease Upload ────────────────────────────────────── -->
+      <div class="card" id="cardLeases">
+        <div class="sec-head">
+          <div class="sec-num">2</div>
+          <div>
+            <h2>Lease Upload</h2>
+            <p>Upload leases and invoices — AI extracts CAM terms automatically</p>
+          </div>
+        </div>
+        <div id="obHintLeases" class="ob-hint" style="display:none;"></div>
+
+        <!-- Tab bar -->
+        <div class="lease-tab-bar">
+          <button class="lease-tab active" id="lTabBulk"   onclick="switchLeaseTab('bulk')">&#x1F4C2; Upload Leases</button>
+          <button class="lease-tab"        id="lTabSingle" onclick="switchLeaseTab('single')">&#x1F464; Add One Tenant</button>
+          <button class="lease-tab"        id="lTabCenter" onclick="switchLeaseTab('center')">&#x1F4AC; Ask the Lease</button>
+        </div>
+
+        <!-- SqFt mismatch banner — lives above both panels so it's always visible -->
+        <div id="sqft-error" class="sqft-error-banner hidden"></div>
+
+        <!-- Panel A: Bulk -->
+        <div id="leasePanelBulk">
+          <div class="bulk-upload-zone" id="bulkZone"
+            ondragover="event.preventDefault();this.classList.add('drag-over')"
+            ondragleave="this.classList.remove('drag-over')"
+            ondrop="event.preventDefault();this.classList.remove('drag-over');handleBulkLeases(event.dataTransfer.files)">
+            <div class="bulk-uz-icon">&#x1F4C2;</div>
+            <div class="bulk-uz-label">Drop all lease PDFs here, or click to select</div>
+            <div class="bulk-uz-sub">Multiple PDFs accepted &middot; AI processes each one sequentially</div>
+            <input type="file" id="bulkLeaseInput" multiple accept=".pdf,application/pdf"
+              onchange="handleBulkLeases(this.files)" />
+          </div>
+          <div id="bulkProgress" style="display:none;"></div>
+          <div id="bulkResults"></div>
+        </div>
+
+        <!-- Panel B: Single -->
+        <div id="leasePanelSingle" style="display:none;">
+          <div id="tenantSlots"></div>
+        </div>
+
+        <!-- Panel C: Lease Center -->
+        <div id="leasePanelCenter" style="display:none;">
+        </div>
+      </div>
+
   </div><!-- /wsPane-spaces -->
-
-  <!-- ══════════════════════════ TAB: Documents ══════════════════════════ -->
-  <div class="workspace-tab-pane" id="wsPane-documents" style="display:none;">
-
-  <!-- ── SECTION 2: Lease Upload ────────────────────────────────────── -->
-  <div class="card" id="cardLeases">
-    <div class="sec-head">
-      <div class="sec-num">2</div>
-      <div>
-        <h2>Lease Upload</h2>
-        <p>Upload leases and invoices — AI extracts CAM terms automatically</p>
-      </div>
-    </div>
-    <div id="obHintLeases" class="ob-hint" style="display:none;"></div>
-
-    <!-- Tab bar -->
-    <div class="lease-tab-bar">
-      <button class="lease-tab active" id="lTabBulk"   onclick="switchLeaseTab('bulk')">&#x1F4C2; Upload Leases</button>
-      <button class="lease-tab"        id="lTabSingle" onclick="switchLeaseTab('single')">&#x1F464; Add One Tenant</button>
-      <button class="lease-tab"        id="lTabCenter" onclick="switchLeaseTab('center')">&#x1F4AC; Ask the Lease</button>
-    </div>
-
-    <!-- SqFt mismatch banner — lives above both panels so it's always visible -->
-    <div id="sqft-error" class="sqft-error-banner hidden"></div>
-
-    <!-- Panel A: Bulk -->
-    <div id="leasePanelBulk">
-      <div class="bulk-upload-zone" id="bulkZone"
-        ondragover="event.preventDefault();this.classList.add('drag-over')"
-        ondragleave="this.classList.remove('drag-over')"
-        ondrop="event.preventDefault();this.classList.remove('drag-over');handleBulkLeases(event.dataTransfer.files)">
-        <div class="bulk-uz-icon">&#x1F4C2;</div>
-        <div class="bulk-uz-label">Drop all lease PDFs here, or click to select</div>
-        <div class="bulk-uz-sub">Multiple PDFs accepted &middot; AI processes each one sequentially</div>
-        <input type="file" id="bulkLeaseInput" multiple accept=".pdf,application/pdf"
-          onchange="handleBulkLeases(this.files)" />
-      </div>
-      <div id="bulkProgress" style="display:none;"></div>
-      <div id="bulkResults"></div>
-    </div>
-
-    <!-- Panel B: Single -->
-    <div id="leasePanelSingle" style="display:none;">
-      <div id="tenantSlots"></div>
-    </div>
-
-    <!-- Panel C: Lease Center -->
-    <div id="leasePanelCenter" style="display:none;">
-    </div>
-  </div>
-
-  </div><!-- /wsPane-documents -->
 
   <!-- ══════════════════════════ TAB: CAM ══════════════════════════════ -->
   <div class="workspace-tab-pane" id="wsPane-cam" style="display:none;">

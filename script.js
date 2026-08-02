@@ -3310,6 +3310,11 @@ function resetTenant(i) {
 // suite), CAM (a workflow that references invoices), Reports (outputs only),
 // Reserves (capital planning). 'documents' is retired from navigation: lease
 // intake moved under Spaces, property documents live on Property.
+// BUG (pre-existing, not fixed here): 'property' has a tab button and is listed
+// here, but there is no #wsPane-property element anywhere in index.html. Clicking
+// Property therefore hides every other pane and shows nothing at all. Removing it
+// from this list would hide the button and is the one-line fix, but which content
+// belongs on that tab is a product decision, so it is flagged rather than guessed.
 const WORKSPACE_TABS = ['overview', 'property', 'spaces', 'cam', 'reports', 'reserves'];
 let _activeWorkspaceTab = 'overview';
 
@@ -19119,6 +19124,12 @@ function renderPortfolio(props) {
 async function selectProperty(id) {
   // Tenants use _initTenantPortal() as their data path — they never enter the main workflow
   if (window.AuthService?.getCurrentUser()?.role === 'tenant') return;
+  // Refuse a falsy id. _props.find(p => p.id === undefined) matches ANY property
+  // that has not been assigned one yet, so an id-less property could select a
+  // different id-less property; and the staleness guard further down reads
+  // `activePropId !== id`, which is false when BOTH are undefined — so a load
+  // for the wrong record would be applied rather than discarded.
+  if (!id) { console.warn('[selectProperty] refusing a falsy property id'); return; }
   const property = _props.find(p => p.id === id);
   if (!property) return;
 
@@ -19142,7 +19153,11 @@ async function selectProperty(id) {
     }
   }
 
-  // Switch active property and clear workflow state
+  // Switch active property and clear workflow state. Overview is correct — that
+  // is the pane #cardSetup renders into. (Do NOT send a new property to
+  // 'property': WORKSPACE_TABS lists that tab but no #wsPane-property element
+  // exists, so switchWorkspaceTab('property') hides every pane and shows a
+  // blank workspace. Pre-existing; see the note on WORKSPACE_TABS.)
   if (id !== activePropId) _activeWorkspaceTab = 'overview';
   activePropId = id;
   resetWorkflow();
@@ -19271,6 +19286,17 @@ async function addNewProperty() {
   _props.push(newProp);
   portfolio.push(newProp);
   await saveProperty(newProp); // patches newProp.id in-place
+  // If the INSERT did not come back with an id the property does not exist yet.
+  // Carrying on would open a record that cannot be saved, cannot be reloaded,
+  // and collides with every other id-less property. Fail visibly instead.
+  if (!newProp.id) {
+    const i = _props.indexOf(newProp);       if (i > -1) _props.splice(i, 1);
+    const j = portfolio.indexOf(newProp);    if (j > -1) portfolio.splice(j, 1);
+    showToast('Could not create the property — check your connection and try again.',
+              { color: '#92400e', textColor: '#fef3c7', duration: 6000 });
+    renderPortfolio();
+    return;
+  }
   logActivity('property_created', 'Property created', { severity: 'success', actor: 'User', relatedEntity: newProp.name || 'New Property' });
   await selectProperty(newProp.id);
   setTimeout(() => {
@@ -19360,11 +19386,85 @@ function resetWorkflow() {
   document.getElementById('glStatus').innerHTML    = '';
   document.getElementById('glFileInput').value     = '';
   renderGLResults(); // shows the "no GL import" empty state (also clears glImportBar)
+  // The setup prompt is part of the workflow state, so it resets with it —
+  // otherwise a freshly created property inherits the previous one's "Ready".
+  if (typeof _setupNextSync === 'function') _setupNextSync();
+}
+
+// ─── Property Setup → Upload Leases ───────────────────────────────────────────
+// The setup fields save on every keystroke. That is the right behaviour and it
+// is completely invisible: a first-time user fills in a name and a square
+// footage, sees no Save, no confirmation and no next step, and reasonably
+// concludes the app is waiting for something. These two functions are the
+// visible half of the flow the product already performs:
+//
+//   Create Property -> Save -> Upload Leases -> AI Processing
+//
+// _setupNextSync() keeps the prompt and the button honest about which of those
+// the user is standing on; savePropertyAndContinue() commits and hands over.
+
+function _setupNextSync() {
+  const row  = document.getElementById('setupNext');
+  const msg  = document.getElementById('setupNextMsg');
+  const btn  = document.getElementById('setupSaveBtn');
+  if (!row || !msg || !btn) return;
+  const name = (document.getElementById('propertyName')?.value || '').trim();
+  const sqft = parseFloat(document.getElementById('totalSqft')?.value) || 0;
+  const named = !!name && name !== 'New Property';
+  const hasLeases = tenantData.some(t => t && t.tenant_name);
+
+  if (hasLeases) {
+    row.classList.add('setup-next--saved');
+    msg.innerHTML = '<b>Property saved.</b> Leases are uploaded — run the CAM reconciliation when you are ready.';
+    btn.textContent = 'Go to Leases \u203A';
+    btn.disabled = false;
+    return;
+  }
+  row.classList.toggle('setup-next--saved', named && sqft > 0);
+  btn.disabled = !(named && sqft > 0);
+  btn.textContent = 'Save & Continue \u203A';
+  msg.innerHTML = !named
+    ? 'Name your property and enter its total square footage to begin.'
+    : sqft > 0
+      ? '<b>Ready.</b> Save this, then upload your leases &mdash; the AI reads each one and extracts its CAM terms.'
+      : 'Now enter the total square footage &mdash; it is what every tenant\u2019s pro-rata share is calculated from.';
+}
+
+async function savePropertyAndContinue() {
+  const nameEl = document.getElementById('propertyName');
+  const sqftEl = document.getElementById('totalSqft');
+  const name = (nameEl?.value || '').trim();
+  const sqft = parseFloat(sqftEl?.value) || 0;
+  if (!name || name === 'New Property') { nameEl?.focus(); return; }
+  if (!(sqft > 0))                      { sqftEl?.focus(); return; }
+
+  const btn = document.getElementById('setupSaveBtn');
+  if (btn) { btn.disabled = true; btn.textContent = 'Saving\u2026'; }
+  try {
+    await savePropertyData();                       // DOM -> model
+    const prop = _props.find(p => p.id === activePropId);
+    if (prop) await saveProperty(prop);             // model -> localStorage + Supabase
+    renderPortfolio();
+  } catch (e) {
+    logError('savePropertyAndContinue', e, { propId: activePropId });
+    showToast('Could not save the property — check your connection and try again.',
+              { color: '#92400e', textColor: '#fef3c7', duration: 6000 });
+    if (btn) { btn.disabled = false; btn.textContent = 'Save & Continue \u203A'; }
+    return;
+  }
+  // Hand over to lease intake, which is where the workflow actually continues.
+  switchWorkspaceTab('spaces');
+  const card = document.getElementById('cardLeases');
+  if (card) card.scrollIntoView({ behavior: 'smooth', block: 'start' });
+  if (typeof switchLeaseTab === 'function') { try { switchLeaseTab('bulk'); } catch (_) {} }
+  _setupNextSync();
+  _obSyncState();
 }
 
 function liveUpdateBreadcrumb(name) {
   const el = document.getElementById('breadcrumbPropName');
   if (el) el.textContent = name || 'New Property';
+  if (typeof _setupNextSync === 'function') _setupNextSync();
   // Advance step bar once a real name is typed
   if (name && name.trim() && name.trim() !== 'New Property') {
     const sqft = parseFloat(document.getElementById('totalSqft')?.value) || 0;
@@ -19490,6 +19590,17 @@ function _stripBlobs(property) {
 }
 
 function _lsSave(property) {
+  // A property with no id must never be written. stored[undefined] stringifies
+  // to the literal key "undefined", and every id-less property in the app's
+  // lifetime then shares that one slot — so the next brand-new property loads
+  // whatever the last one left there. That is a cross-property data leak, and
+  // it is reachable in normal use: addNewProperty() calls saveProperty() BEFORE
+  // the INSERT assigns an id, so any failed or slow insert (offline, RLS hiccup,
+  // expired session) drops a record into that slot.
+  if (!property || !property.id) {
+    console.warn('[_lsSave] refusing to persist a property with no id — nothing written');
+    return;
+  }
   try {
     const stored = JSON.parse(_lsGet(_lsUserKey()) || '{}');
     stored[property.id] = _stripBlobs(property);
@@ -19517,6 +19628,8 @@ function _lsLoadAll() {
 }
 
 function _lsLoad(id) {
+  // Symmetric with _lsSave: a falsy id would read the shared "undefined" slot.
+  if (!id) return null;
   try {
     const stored = JSON.parse(_lsGet(_lsUserKey()) || '{}');
     return stored[id] || null;
@@ -20811,6 +20924,7 @@ function _mergeCamReconciliationRows(dbData, camRows) {
 // This prevents a timed-out DB write from making the old (empty) DB record win over
 // the localStorage snapshot that was written before the timeout.
 async function loadPropertyData(id) {
+  if (!id) { console.warn('[loadPropertyData] called with no id — returning null'); return null; }
   let dbData  = null;
   let lsData  = _lsLoad(id);
 
