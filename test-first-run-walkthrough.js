@@ -193,6 +193,158 @@ if(lease.fileInput&&leaseFile){
   await snap(p,'06 after choosing a lease');
 }
 
+// ── Step 5: review the AI extraction ────────────────────────────────────
+// The AI endpoint is not reachable offline, so the state a successful upload
+// WOULD have produced is seeded here — through the product's own
+// normalizeTenant() and its own persistence, not hand-built objects — and the
+// walk continues from there exactly as a pilot customer would experience it.
+// Four leases for a 26,000 sqft property, one of which the extractor could not
+// find a CAM cap in. That last one is the whole point: it is what a review
+// queue exists for.
+console.log('\n── seeding the state a successful lease upload produces ──');
+await p.evaluate(async () => {
+  const raw = [
+    { tenant_name:'Cedar Park Dental',      leased_sqft:4200, start_date:'2022-03-01', end_date:'2027-02-28', lease_type:'NNN', cap:5 },
+    { tenant_name:'Bright Leaf Grocers',    leased_sqft:9100, start_date:'2021-06-01', end_date:'2028-05-31', lease_type:'NNN', cap:4 },
+    { tenant_name:'Anvil Coffee Roasters',  leased_sqft:1800, start_date:'2023-01-01', end_date:'2026-12-31', lease_type:'NNN', cap:6 },
+    // The extractor read the lease but found no cap percentage — needs a human.
+    { tenant_name:'Willow & Vine Florist',  leased_sqft:1500, start_date:'2024-02-01', end_date:'2029-01-31', lease_type:'NNN', cap:null,
+      _needsReview:true, flags:['NNN cap percentage not specified'] },
+  ];
+  const rows = raw.map(normalizeTenant);
+  const prop = _props.find(x => x.id === activePropId);
+  prop.tenants = rows;
+  tenantData.splice(0, tenantData.length, ...rows);
+  if (typeof rebuildDerivedState === 'function') rebuildDerivedState(prop);
+  if (typeof renderBulkResults === 'function') renderBulkResults();
+  if (typeof renderProperty === 'function') renderProperty(prop);
+  await saveProperty(prop);
+});
+await p.waitForTimeout(2500);
+await snap(p,'06 extraction reviewed');
+
+const extraction = await p.evaluate(() => {
+  const vis=e=>{if(!e)return false;const r=e.getBoundingClientRect();return getComputedStyle(e).display!=='none'&&r.height>2;};
+  const body=(document.body.innerText||'');
+  const named=['Cedar Park Dental','Bright Leaf Grocers','Anvil Coffee Roasters','Willow & Vine Florist']
+    .filter(n=>body.includes(n));
+  const flagged=body.includes('Willow & Vine Florist') &&
+    /needs review|needs attention|incomplete|cap percentage/i.test(body);
+  const rq=document.getElementById('propertyReviewQueuePanel');
+  return {tenantsOnScreen:named, flaggedVisible:flagged, reviewPanelVisible:vis(rq),
+    reviewPanelText:vis(rq)?(rq.innerText||'').replace(/\s+/g,' ').trim().slice(0,180):null};
+});
+console.log('   tenants on screen : '+extraction.tenantsOnScreen.join(', '));
+console.log('   review flagged    : '+extraction.flaggedVisible);
+console.log('   review queue panel: '+(extraction.reviewPanelVisible?extraction.reviewPanelText:'\x1b[31mNOT VISIBLE\x1b[0m'));
+console.log('   review engine says: '+JSON.stringify(await p.evaluate(()=>{
+  const prop=_props.find(x=>x.id===activePropId);
+  const items=getReviewQueueItems([prop]);
+  return {itemCount:items.length,items:items.map(i=>({t:i.tenantName,state:i.reviewState,score:i.reviewScore,missing:i.missingFields,warn:i.warningReasons})),
+    perTenant:(prop.tenants||[]).map(t=>({n:t.tenant_name,st:ReviewEngine.deriveTenantReviewState(t,[]).status}))};
+})));
+
+// ── Step 6: resolve the review item ─────────────────────────────────────
+console.log('\n── step 6: resolve the review item ──');
+const resolveCta = await p.evaluate(() => {
+  const vis=e=>{const r=e.getBoundingClientRect();return getComputedStyle(e).display!=='none'&&r.height>2;};
+  return [...document.querySelectorAll('button,a,[role=button]')].filter(vis)
+    .map(e=>(e.innerText||'').replace(/\s+/g,' ').trim())
+    .filter(t=>/review|resolve|fix|complete|verify|attention/i.test(t)&&t.length<60);
+});
+console.log('   review CTAs offered: '+(resolveCta.length?JSON.stringify(resolveCta.slice(0,8)):'\x1b[31mNONE — dead end\x1b[0m'));
+
+// Does "Resolve <tenant>" actually land on THAT tenant?
+const opened = await click(p,/^Resolve /i,'resolve the flagged tenant');
+await p.waitForTimeout(1500);
+const landed = await p.evaluate(() => {
+  const vis=e=>{if(!e)return false;const r=e.getBoundingClientRect();return getComputedStyle(e).display!=='none'&&r.height>2;};
+  const ov=document.getElementById('tsOverlay');
+  const body=(document.body.innerText||'');
+  return {spaceModalOpen:vis(ov),
+    modalNamesTenant: vis(ov) ? (ov.innerText||'').includes('Willow & Vine Florist') : false,
+    modalShowsTheGap: vis(ov) ? /cap/i.test(ov.innerText||'') : false,
+    mentionsOtherTenants: vis(ov) ? ['Cedar Park Dental','Bright Leaf Grocers','Anvil Coffee'].filter(n=>(ov.innerText||'').includes(n)) : []};
+});
+console.log('   landed on the specific tenant? '+JSON.stringify(landed));
+if(!landed.spaceModalOpen) console.log('\x1b[31m   BROKEN PROMISE: "Resolve <tenant>" did not open that tenant\x1b[0m');
+await snap(p,'07 review item opened');
+await p.evaluate(()=>{const b=document.querySelector('#tsOverlay .ts-close,#tsOverlay [onclick*=close]');if(b)b.click();
+  else if(window.TenantSpace&&TenantSpace.closeSpace)TenantSpace.closeSpace();});
+await p.waitForTimeout(800);
+
+// ── Step 7: upload invoices ─────────────────────────────────────────────
+console.log('\n── step 7: upload invoices ──');
+await click(p,/go to invoices/i,'follow the next step to invoices') ||
+  await p.evaluate(()=>switchWorkspaceTab('cam'));
+await p.waitForTimeout(1500);
+const inv = await p.evaluate(()=>{
+  const vis=e=>{if(!e)return false;const r=e.getBoundingClientRect();return getComputedStyle(e).display!=='none'&&r.height>2;};
+  const card=document.getElementById('cardInvoices');
+  return {invoiceCard:vis(card), fileInput:!!document.querySelector('#cardInvoices input[type=file]'),
+    fileInputVisible:vis(document.querySelector('#cardInvoices input[type=file]')),
+    heading:card?(card.innerText||'').replace(/\s+/g,' ').trim().slice(0,90):'MISSING'};
+});
+console.log('   invoices reachable: '+JSON.stringify(inv));
+await snap(p,'08 invoices');
+
+// ── Step 8: run CAM ─────────────────────────────────────────────────────
+console.log('\n── step 8: run the reconciliation ──');
+const runBtn = await p.evaluate(()=>{
+  const vis=e=>{const r=e.getBoundingClientRect();return getComputedStyle(e).display!=='none'&&r.height>2;};
+  const b=[...document.querySelectorAll('button')].filter(vis)
+    .find(x=>/run .*(cam|allocation|reconcil)/i.test(x.innerText||''));
+  return b?{label:(b.innerText||'').replace(/\s+/g,' ').trim(),disabled:b.disabled}:null;
+});
+console.log('   run button: '+(runBtn?JSON.stringify(runBtn):'\x1b[31mNOT FOUND\x1b[0m'));
+
+// Seed the invoices a user would have uploaded, then look for Run CAM.
+console.log('\n   seeding uploaded CAM invoices...');
+await p.evaluate(async () => {
+  const inv = [
+    { vendor:'Northside Landscaping', category:'landscaping', amount:18400, date:'2025-04-12', description:'Grounds maintenance' },
+    { vendor:'Talon Security',        category:'security',    amount:26100, date:'2025-05-03', description:'Site patrol' },
+    { vendor:'Pacific Facilities',    category:'janitorial',  amount:31250, date:'2025-06-21', description:'Common area cleaning' },
+    { vendor:'Cascade Insurance',     category:'insurance',   amount:42000, date:'2025-02-01', description:'Property policy' },
+  ];
+  invoiceData.splice(0, invoiceData.length, ...inv);
+  const prop = _props.find(x => x.id === activePropId);
+  prop.invoices = inv;
+  if (typeof renderInvResults === 'function') renderInvResults();
+  if (typeof rebuildDerivedState === 'function') rebuildDerivedState(prop);
+  await saveProperty(prop);
+});
+await p.waitForTimeout(2000);
+const runNow = await p.evaluate(()=>{
+  const vis=e=>{const r=e.getBoundingClientRect();return getComputedStyle(e).display!=='none'&&r.height>2;};
+  const all=[...document.querySelectorAll('button')];
+  const b=all.filter(vis).find(x=>/run|calculate|reconcile/i.test(x.innerText||'')&&/cam|allocation|charge|reconcil/i.test(x.innerText||''));
+  const hidden=all.find(x=>x.id==='runBtn');
+  return b?{found:true,label:(b.innerText||'').trim(),disabled:b.disabled}
+          :{found:false,existsButHidden:!!hidden,hiddenLabel:hidden?(hidden.innerText||'').trim():null,
+            hiddenId:hidden?hidden.id:null};
+});
+console.log('   run button after invoices: '+JSON.stringify(runNow));
+await snap(p,'09 ready to reconcile');
+
+if(runNow.found && !runNow.disabled){
+  await click(p,/calculate cam|run cam|run allocation/i,'run the reconciliation');
+  await p.waitForTimeout(6000);
+  await snap(p,'10 reconciliation results');
+  const res=await p.evaluate(()=>{
+    const vis=e=>{if(!e)return false;const r=e.getBoundingClientRect();return getComputedStyle(e).display!=='none'&&r.height>2;};
+    const body=(document.body.innerText||'');
+    const stmtBtns=[...document.querySelectorAll('button,a')].filter(vis)
+      .map(e=>(e.innerText||'').replace(/\s+/g,' ').trim())
+      .filter(t=>/statement|export|report|pdf/i.test(t)&&t.length<50);
+    return {resultsVisible:vis(document.getElementById('resultsBody'))||/allocated/i.test(body),
+      showsTenants:['Cedar Park Dental','Bright Leaf Grocers'].filter(n=>body.includes(n)),
+      statementActions:[...new Set(stmtBtns)].slice(0,8)};
+  });
+  console.log('   results: '+JSON.stringify(res));
+  if(!res.statementActions.length) console.log('\x1b[31m   DEAD END: no way to generate tenant statements\x1b[0m');
+}
+
 // ── Where does the product say to go next? ──────────────────────────────
 const guidance=await p.evaluate(()=>{
   const vis=e=>{const r=e.getBoundingClientRect();return getComputedStyle(e).display!=='none'&&r.height>2;};
@@ -206,6 +358,6 @@ console.log('\n── what the product tells the user to do next ──');
 console.log('   step bar : '+(guidance.stepBarVisible?guidance.stepBar.map(x=>(x.active?'['+x.label+']':x.label)).join(' > '):'\x1b[31mNOT VISIBLE\x1b[0m'));
 console.log('   hints    : '+(guidance.hints.length?guidance.hints.join(' // ').slice(0,300):'\x1b[31mnone\x1b[0m'));
 
+
 await b.close();srv.close();
-fs.writeFileSync(path.join(OUT,'walk.json'),JSON.stringify(seen,null,1));
 })();

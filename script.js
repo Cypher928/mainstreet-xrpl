@@ -7568,10 +7568,53 @@ function renderBulkResults() {
   if (activePropId) {
     const _rqProp = _props.find(p => p.id === activePropId);
     if (_rqProp) renderPropertyReviewQueue(_rqProp);
+    _renderExtractionNextStep(_rqProp);
   }
 
   // Advance onboarding step bar when the first lease is extracted
   if (tenantData.some(t => t && t.tenant_name)) _obSyncState();
+}
+
+// After extraction, say what to do next — on the screen the user is standing on.
+//
+// #propertyReviewQueuePanel renders into the OVERVIEW pane. Uploading leases
+// leaves the user on Spaces, looking at the extracted tenants, with the review
+// queue and every resolve action one tab away and nothing pointing there. The
+// tenant is flagged inline, but nothing tells them a flag is actionable or what
+// resolving it involves — so the workflow stops at step 5.
+//
+// This banner sits with the extraction results and names the specific tenant,
+// the specific missing field, and the button that opens it. When there is
+// nothing to resolve it says what comes next instead, so the screen is never a
+// dead end in either state.
+function _renderExtractionNextStep(prop) {
+  const host = document.getElementById('bulkResults');
+  if (!host || !prop) return;
+  const old = document.getElementById('extractionNextStep');
+  if (old) old.remove();
+  const tenants = (prop.tenants || []).filter(Boolean);
+  if (!tenants.length) return;
+
+  const items = (typeof getReviewQueueItems === 'function' ? getReviewQueueItems([prop]) : [])
+    .filter(i => !i.reviewerConfirmed);
+  const box = document.createElement('div');
+  box.id = 'extractionNextStep';
+  box.className = 'ob-hint ens' + (items.length ? ' ens--todo' : ' ens--ready');
+
+  if (items.length) {
+    const first = items[0];
+    const why = (first.missingFields[0] || first.warningReasons[0] || 'needs a check');
+    box.innerHTML =
+      `<strong>Next step:</strong> ${esc(String(items.length))} of ${esc(String(tenants.length))} leases need a human before CAM can be trusted — ` +
+      `<b>${esc(first.tenantName)}</b> is missing <b>${esc(why)}</b>.` +
+      `<button class="ens-btn" onclick="openReviewItem('${esc(prop.id)}','${esc(first.tenantId)}','tenant')">Resolve ${esc(first.tenantName)} &rsaquo;</button>`;
+  } else {
+    box.innerHTML =
+      `<strong>Next step:</strong> all ${esc(String(tenants.length))} leases are verified. ` +
+      `Upload this year&rsquo;s CAM invoices, then run the reconciliation.` +
+      `<button class="ens-btn" onclick="switchWorkspaceTab('cam');var c=document.getElementById('cardInvoices');if(c)c.scrollIntoView({behavior:'smooth',block:'start'});">Go to Invoices &rsaquo;</button>`;
+  }
+  host.parentNode.insertBefore(box, host);
 }
 
 function toggleBulkDetail(i) {
@@ -16324,6 +16367,50 @@ function _fmtCardTs(ts) {
 function getReviewQueueItems(props) { return Selectors.getReviewQueueItems(props); }
 function _rqUrgencyClass(score)     { return ReviewEngine.urgencyClass(score); }
 
+// Open the specific thing a review item is about, not the property it lives in.
+//
+// Both buttons on a review card used to call selectProperty(propertyId): "Review
+// Lease" opened the property, and "Jump to Tenant" — which promises a tenant by
+// name — also opened the property, leaving the user to find the row themselves
+// among however many tenants there are. Generic navigation dressed as specific
+// navigation is worse than no button, because the user believes they have been
+// taken somewhere.
+//
+// If the destination genuinely cannot be opened, say which one and why, rather
+// than silently landing somewhere adjacent.
+async function openReviewItem(propertyId, tenantId, intent) {
+  if (activePropId !== propertyId) await selectProperty(propertyId);
+  const prop = _props.find(p => p.id === propertyId);
+  const tenant = (prop?.tenants || []).find(t => t && t.id === tenantId);
+  if (!tenant) {
+    showToast('That tenant is no longer on this property — it may have been removed.',
+              { color: '#92400e', textColor: '#fef3c7', duration: 5000 });
+    return;
+  }
+  if (intent === 'lease') {
+    // "Review Lease" must open the lease. If none was ever attached, the honest
+    // answer is to say so and open the record where it would be attached.
+    if (!tenant.leaseUrl) {
+      showToast(`No lease document is attached to ${tenant.tenant_name || 'this tenant'} — opening its record so you can add one.`,
+                { color: '#1e3a5f', textColor: '#dbeafe', duration: 5000 });
+    } else if (typeof openLeaseModal === 'function') {
+      // openLeaseModal takes a File or a URL — leaseUrl is the persisted one.
+      try { openLeaseModal(tenant.leaseUrl); return; } catch (_) {}
+    }
+  }
+  switchWorkspaceTab('spaces');
+  if (window.TenantSpace && typeof window.TenantSpace.openSpace === 'function') {
+    window.TenantSpace.openSpace(tenantId);
+    return;
+  }
+  // No space modal available — scroll the actual row into view and flash it,
+  // which is still specific.
+  const row = document.querySelector(`[data-rq-tenant-id="${tenantId}"], [data-tenant-id="${tenantId}"]`);
+  if (row) { row.scrollIntoView({ behavior: 'smooth', block: 'center' }); row.classList.add('rq-flash'); }
+  else showToast('Could not open that tenant directly — it is in the Spaces list below.',
+                 { color: '#92400e', textColor: '#fef3c7', duration: 5000 });
+}
+
 function _rqItemHtml(item) {
   const acked = item.reviewerConfirmed;
   const urgCls = _rqUrgencyClass(item.reviewScore);
@@ -16352,8 +16439,8 @@ function _rqItemHtml(item) {
       ${(missingChips || warnChips) ? `<div class="rq-chips">${missingChips}${warnChips}</div>` : ''}
     </div>
     <div class="rq-actions">
-      <button class="rq-action-btn rq-btn--primary" onclick="selectProperty('${pid}')">Review Lease</button>
-      <button class="rq-action-btn rq-btn--secondary" onclick="selectProperty('${pid}')">Jump to Tenant</button>
+      <button class="rq-action-btn rq-btn--primary" onclick="openReviewItem('${pid}','${tid}','lease')">Review Lease</button>
+      <button class="rq-action-btn rq-btn--secondary" onclick="openReviewItem('${pid}','${tid}','tenant')">Open ${esc(item.tenantName)}</button>
       ${acked
         ? `<span class="rq-chip" style="text-align:center;justify-content:center;">Acknowledged</span>`
         : `<button class="rq-action-btn rq-btn--ack" onclick="markTenantReviewAcknowledged('${tid}')">Mark Reviewed</button>`

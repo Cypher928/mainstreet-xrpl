@@ -2301,6 +2301,23 @@
     .field-helper-text {
       font-size: 0.72rem; color: var(--text-4); margin-top: 5px; line-height: 1.4;
     }
+    /* Extraction → the next step, stated where the user is standing. */
+    .ens {
+      display: flex; align-items: center; gap: 12px; flex-wrap: wrap;
+      margin: 0 0 14px 0; padding: 12px 14px; border-radius: 10px;
+      font-size: 0.82rem; line-height: 1.5;
+    }
+    .ens--todo  { background: rgba(234,179,8,0.08);  border: 1px solid rgba(234,179,8,0.3); color: #fde68a; }
+    .ens--ready { background: rgba(52,211,153,0.08); border: 1px solid rgba(52,211,153,0.3); color: #a7f3d0; }
+    .ens b { color: #fff; }
+    .ens-btn {
+      margin-left: auto; padding: 7px 14px; border: none; border-radius: 7px;
+      background: #16a34a; color: #fff; font-size: 0.78rem; font-weight: 700;
+      cursor: pointer; white-space: nowrap;
+    }
+    .ens-btn:hover { background: #15803d; }
+    .rq-flash { outline: 2px solid #34D399; outline-offset: 2px; transition: outline .3s; }
+
     /* Property Setup → the explicit save and the handoff to lease upload. */
     .setup-next {
       display: flex; align-items: center; justify-content: space-between; gap: 14px;
