@@ -3310,11 +3310,9 @@ function resetTenant(i) {
 // suite), CAM (a workflow that references invoices), Reports (outputs only),
 // Reserves (capital planning). 'documents' is retired from navigation: lease
 // intake moved under Spaces, property documents live on Property.
-// BUG (pre-existing, not fixed here): 'property' has a tab button and is listed
-// here, but there is no #wsPane-property element anywhere in index.html. Clicking
-// Property therefore hides every other pane and shows nothing at all. Removing it
-// from this list would hide the button and is the one-line fix, but which content
-// belongs on that tab is a product decision, so it is flagged rather than guessed.
+// 'property' has no pane in index.html — property-os.js builds #wsPane-property
+// at runtime (property-os.js:97). Grepping the HTML for it finds nothing, which
+// is misleading; the tab works.
 const WORKSPACE_TABS = ['overview', 'property', 'spaces', 'cam', 'reports', 'reserves'];
 let _activeWorkspaceTab = 'overview';
 
@@ -7305,7 +7303,10 @@ function renderBulkResults() {
   if (!tenants.length) {
     el.innerHTML = _workspaceEmptyStateHtml('&#x1F4C4;',
       'No lease documents have been uploaded yet.',
-      'Upload a lease PDF in the Documents tab to begin lease extraction.');
+      // Was "in the Documents tab" — that tab was retired from navigation and the
+      // upload card now lives here under Spaces. Pointing a first-time user at a
+      // tab that does not exist is worse than saying nothing.
+      'Use "Upload Leases" above — the AI reads each lease and extracts its CAM terms.');
     return;
   }
 
@@ -19153,12 +19154,16 @@ async function selectProperty(id) {
     }
   }
 
-  // Switch active property and clear workflow state. Overview is correct — that
-  // is the pane #cardSetup renders into. (Do NOT send a new property to
-  // 'property': WORKSPACE_TABS lists that tab but no #wsPane-property element
-  // exists, so switchWorkspaceTab('property') hides every pane and shows a
-  // blank workspace. Pre-existing; see the note on WORKSPACE_TABS.)
-  if (id !== activePropId) _activeWorkspaceTab = 'overview';
+  // A property that has not been described yet opens on Property, not Overview.
+  // Walked as a first-time user: creating a property lands on Overview, which
+  // reports "OCCUPANCY — Set total sqft to enable" and offers no field to set it
+  // in. The name and square-footage inputs live in #cardSetup, which renders into
+  // the Property pane (built at runtime by property-os.js), and nothing on
+  // Overview points there. That is the first dead end in the product.
+  if (id !== activePropId) {
+    const described = !!(property.name && property.name !== 'New Property' && property.totalSqft > 0);
+    _activeWorkspaceTab = described ? 'overview' : 'property';
+  }
   activePropId = id;
   resetWorkflow();
 
@@ -19444,7 +19449,11 @@ async function savePropertyAndContinue() {
     await savePropertyData();                       // DOM -> model
     const prop = _props.find(p => p.id === activePropId);
     if (prop) await saveProperty(prop);             // model -> localStorage + Supabase
-    renderPortfolio();
+    // Deliberately NOT renderPortfolio(): it does not just refresh the card
+    // list, it shows #portfolioDashboard and hides #mainWorkflow. Calling it
+    // here threw the user back out to the portfolio the moment they saved,
+    // which is the opposite of continuing. The portfolio re-renders itself when
+    // they navigate back to it.
   } catch (e) {
     logError('savePropertyAndContinue', e, { propId: activePropId });
     showToast('Could not save the property — check your connection and try again.',
@@ -19454,9 +19463,13 @@ async function savePropertyAndContinue() {
   }
   // Hand over to lease intake, which is where the workflow actually continues.
   switchWorkspaceTab('spaces');
+  // Select the upload sub-tab BEFORE scrolling: the Lease Upload card opens on
+  // whichever sub-tab was last active, so arriving here could show "Add One
+  // Tenant" or "Ask the Lease" and no drop zone at all — the user is told to
+  // upload leases and handed a screen with nowhere to drop one.
+  if (typeof switchLeaseTab === 'function') { try { switchLeaseTab('bulk'); } catch (_) {} }
   const card = document.getElementById('cardLeases');
   if (card) card.scrollIntoView({ behavior: 'smooth', block: 'start' });
-  if (typeof switchLeaseTab === 'function') { try { switchLeaseTab('bulk'); } catch (_) {} }
   _setupNextSync();
   _obSyncState();
 }
