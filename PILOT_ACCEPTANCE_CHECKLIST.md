@@ -35,7 +35,7 @@ arrives. Count your clicks. There are two.
 - ☐ **Review allocations** — results list every tenant with their share.
 - ☐ **Generate tenant statement** — opens a statement for **one named tenant**, with their own percentage.
 - ☐ **Dashboard alerts deep-link correctly** — every card, CTA and review action opens the specific object it names, or says why it cannot.
-- ☐ **Archive property** — *not implemented. Leave unchecked until Property Lifecycle ships.*
+- ☐ **Archive property** — *not implemented. Leave unchecked until Property Lifecycle ships; the agreed model is in `docs/PROPERTY_LIFECYCLE.md`.*
 
 ## State integrity
 
