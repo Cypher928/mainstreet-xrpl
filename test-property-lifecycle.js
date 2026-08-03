@@ -233,6 +233,35 @@ const CLICK_LABEL = function (rx) {
   check('the wrong case does not unlock Delete', typing.wrongCase === true);
   check('the exact name unlocks Delete', typing.exact === false);
 
+  // ── Archive must be reachable WITHOUT going through Delete ───────────────
+  // It shipped reachable only from the Delete dialog's "Archive Instead"
+  // button, which made the normal lifecycle a subordinate of the exceptional
+  // one. Nothing in the suite noticed, because every archive test called
+  // archiveActiveProperty() directly.
+  const reach = await page.evaluate(() => {
+    // Close whatever an earlier step left open, or this assertion measures the
+    // previous test's state rather than this one's.
+    closeDeletePropertyModal();
+    _props = [{ id: 'p-reach', name: 'Reachable Plaza', totalSqft: 1000, tenants: [{ tenant_name: 'A' }] }];
+    activePropId = 'p-reach';
+    openRecoveryModal();
+    const body = document.getElementById('recoveryModalBody');
+    const txt  = (body.innerText || body.textContent || '');
+    const btns = [].slice.call(body.querySelectorAll('button'))
+      .map(b => (b.innerText || b.textContent || '').trim());
+    const deleteModalOpen = document.getElementById('deletePropertyModal').classList.contains('open');
+    closeRecoveryModal();
+    return { archiveBtn: btns.find(t => /archive/i.test(t)) || null,
+             deleteBtn:  btns.find(t => /delete property/i.test(t)) || null,
+             deleteModalOpen, mentionsRestore: /undone|restore/i.test(txt) };
+  });
+  check('Archive has its own entry point, not only the Delete dialog',
+        !!reach.archiveBtn, reach.archiveBtn || 'no Archive control in Data Health');
+  check('and reaching it did not require opening the Delete dialog',
+        reach.deleteModalOpen === false);
+  check('it says the history is kept and the action can be undone', reach.mentionsRestore);
+  check('Delete is still reachable too — demoted, not hidden', !!reach.deleteBtn, reach.deleteBtn || '');
+
   // ── Archive: nothing destroyed, gone from the portfolio ──────────────────
   const archived = await page.evaluate(async () => {
     __rows.properties = [{ id: 'p-busy', user_id: 'u1', name: 'Maple Plaza', sqft: 32000, archived_at: null }];

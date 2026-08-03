@@ -11734,6 +11734,22 @@ function _buildRecoveryModalBody(prop) {
       <button class="rc-action-btn rc-export-btn" onclick="exportPropertyBackup()">⬇ Export Property Backup</button>
     </div>`;
 
+  // ── Property Lifecycle ──
+  // Archive is the NORMAL end of a property's life, so it needs its own way in.
+  // It shipped reachable only from inside the Delete modal's "Archive Instead"
+  // button — which made the normal path a subordinate of the exceptional one,
+  // and meant the only route to a non-destructive action was through the
+  // destructive dialog. ARCHITECTURE_PRINCIPLES §4.
+  //
+  // No confirmation: archiving destroys nothing and Restore is one click from
+  // the portfolio. Ceremony belongs to the irreversible action, not this one.
+  const lifecycleHtml = `
+    <div class="rc-section">
+      <div class="rc-section-title">Property Lifecycle</div>
+      <p class="rc-export-desc">No longer managing this building? Archive keeps every lease, timeline entry, document and reconciliation, removes it from your active portfolio, and can be undone at any time.</p>
+      <button class="rc-action-btn" onclick="closeRecoveryModal(); archiveActiveProperty();">&#x1F4E6; Archive Property — keep the history, clear it from the portfolio</button>
+    </div>`;
+
   // ── Danger Zone (moved here from the property breadcrumb so destructive actions
   //    aren't one stray click away in the primary bar) ──
   const dangerHtml = `
@@ -11744,7 +11760,7 @@ function _buildRecoveryModalBody(prop) {
       <button class="rc-action-btn" style="border-color:rgba(239,68,68,0.35);color:var(--c-fca5a5);margin-top:8px;" onclick="closeRecoveryModal(); openDeletePropertyModal();">&#x1F5D1; Delete Property — remove this property and all its data</button>
     </div>`;
 
-  body.innerHTML = syncHtml + integrityHtml + cpHtml + exportHtml + dangerHtml;
+  body.innerHTML = syncHtml + integrityHtml + cpHtml + exportHtml + lifecycleHtml + dangerHtml;
 }
 
 function restoreCheckpoint(index) {
@@ -21792,13 +21808,16 @@ async function archiveActiveProperty() {
   const prop   = _props.find(p => p.id === propId);
   const name   = prop?.name || 'Property';
 
+  // Reachable from Data Health as well as from the Delete dialog, so the
+  // modal's button may not be on screen at all.
   const btn = document.getElementById('delModalArchiveBtn');
-  if (btn) { btn.disabled = true; btn.textContent = 'Archiving…'; }
+  const fromModal = !!(btn && document.getElementById('deletePropertyModal')?.classList.contains('open'));
+  if (fromModal) { btn.disabled = true; btn.textContent = 'Archiving…'; }
 
   try {
     await _setPropertyArchived(propId, new Date().toISOString());
   } catch (e) {
-    if (btn) { btn.disabled = false; btn.textContent = 'Archive Instead'; }
+    if (fromModal) { btn.disabled = false; btn.textContent = 'Archive Instead'; }
     showToast('⚠️ Archive failed — ' + (e.message || String(e)),
       { color: '#92400e', textColor: '#fef3c7', duration: 6000 });
     logError('archiveActiveProperty', e, { propId, propName: name });
