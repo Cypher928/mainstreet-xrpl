@@ -624,6 +624,62 @@ const CLICK_LABEL = function (rx) {
   check('and nothing is added to the record when the upload failed',
         failPath.after === failPath.before, `${failPath.before} → ${failPath.after}`);
 
+  // ── mobile: the workspace must not scroll sideways ───────────────────────
+  // Found by looking at the page rather than by an assertion: a record card
+  // measured 623px inside a 284px column and the whole page scrolled sideways.
+  // Every row here is flex with nowrap text in it, and a flex child will not
+  // shrink below its content unless min-width:0 says so.
+  const mobile = await (async () => {
+    const mctx = await browser.newContext({ viewport: { width: 390, height: 900 } });
+    const mp = await mctx.newPage();
+    await mp.route('**cdnjs**',   r => r.fulfill({ status: 200, body: '/*x*/' }));
+    await mp.route('**jsdelivr**', r => r.fulfill({ status: 200, body: '/*x*/' }));
+    await mp.route('**fonts.g**', r => r.fulfill({ status: 200, contentType: 'text/css', body: '' }));
+    await mp.addInitScript(`window.supabase={createClient:function(){return {auth:{
+      getUser:function(){return Promise.resolve({data:{user:{id:'u1',email:'dana@example.com'}},error:null});},
+      getSession:function(){return Promise.resolve({data:{session:{user:{id:'u1',email:'dana@example.com'}}},error:null});},
+      onAuthStateChange:function(){return {data:{subscription:{unsubscribe:function(){}}}};},
+      signOut:function(){return Promise.resolve({error:null});}},
+      rpc:function(){return Promise.resolve({data:null,error:null});},
+      from:function(){var q={select:function(){return q;},eq:function(){return q;},neq:function(){return q;},
+        is:function(){return q;},not:function(){return q;},order:function(){return q;},limit:function(){return q;},
+        ilike:function(){return q;},in:function(){return Promise.resolve({data:[],error:null});},
+        single:function(){return Promise.resolve({data:null,error:null});},
+        then:function(f){return Promise.resolve({data:[],error:null}).then(f);}};return q;},
+      storage:{from:function(){return {getPublicUrl:function(){return {data:{publicUrl:''}};}};}}};}};`);
+    await mp.goto(`http://127.0.0.1:${PORT}/`, { waitUntil: 'domcontentloaded' });
+    await mp.waitForTimeout(2200);
+    const out = await mp.evaluate(() => {
+      _props = [{ id: 'pm', name: 'Maple Plaza', totalSqft: 32000,
+        tenants: [{ id: 't1', tenant_name: 'Sage Shield' }], invoices: [], timeline: [], disputes: [] }];
+      activePropId = 'pm'; window.currentProperty = function () { return _props[0]; };
+      const mk = (t, c, sys, att) => appendPropertyTimelineEvent(_props[0], {
+        manual: true, type: 'manual_' + c, category: c, title: t, timestamp: new Date().toISOString(),
+        subject: sys ? { type: 'system', id: sys, label: sys } : { type: 'property', id: 'pm' },
+        attachments: att || [], actor: 'dana@example.com', metadata: { recordedBy: 'dana@example.com' } });
+      const job = mk('Roof replaced — full tear-off with parapet reflashing', 'capital_improvement', 'roof',
+        [{ name: 'apex-roofing-contract-signed-2026.pdf', url: 'https://x/c.pdf', kind: 'document' }]);
+      const w = mk('Roof membrane warranty — 20 year', 'warranty', 'roof', []);
+      PropertyOS.init();
+      document.getElementById('wsPane-property').style.display = 'block';
+      const ws = document.getElementById('mainWorkflow'); if (ws) ws.style.display = 'block';
+      const pd = document.getElementById('portfolioDashboard'); if (pd) pd.style.display = 'none';
+      PropertyOS.linkRecord(w.id, 'event', job.id);
+      PropertyOS.renderPropertyPage(_props[0]);
+      const body = document.getElementById('propertyOsBody');
+      const over = [].slice.call(body.querySelectorAll('*'))
+        .filter(function (e) { return e.scrollWidth > e.clientWidth + 4 && getComputedStyle(e).overflowX === 'visible'; })
+        .map(function (e) { return (typeof e.className === 'string' ? e.className : e.tagName) + ' ' + e.scrollWidth + '>' + e.clientWidth; });
+      return { sideways: document.documentElement.scrollWidth > window.innerWidth + 2, over: over.slice(0, 4) };
+    });
+    await mctx.close();
+    return out;
+  })();
+  check('the Property workspace does not scroll sideways at 390px',
+        mobile.sideways === false, mobile.sideways ? 'page is wider than the viewport' : 'fits');
+  check('and no element inside it overflows its container',
+        mobile.over.length === 0, mobile.over.join(' | '));
+
   check('no uncaught errors across the workspace', errs.length === 0,
         errs.slice(0, 2).join(' | ') || 'clean');
 

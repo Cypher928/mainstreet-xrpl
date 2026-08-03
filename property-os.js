@@ -910,7 +910,32 @@ window.PropertyOS = (function () {
       '.pos-rev-t{color:var(--text-3,#94A3B8);}',
       '.pos-sys-cell{cursor:pointer;}',
       '.pos-sys-cell--sel{border-color:rgba(201,151,58,0.5)!important;background:rgba(201,151,58,0.08)!important;}',
-      '@media(max-width:600px){.pos-add{width:100%;}.pos-rec-top{flex-direction:column;gap:2px;}}',
+      // Mobile: every one of these rows is flex with nowrap text in it, and a
+      // flex child will not shrink below its content unless min-width:0 says
+      // so. Without this a record card measured 623px inside a 284px column and
+      // the whole page scrolled sideways. Wrap the rows — do NOT reach for
+      // overflow-x:auto, which hides a layout bug behind a scrollbar.
+      '.pos-rec,.pos-rel,.pos-rel-list,.pos-docs-list{min-width:0;}',
+      // A grid track is min-content by default, so a cell holding "Fire
+      // Suppression" refuses to go below its widest word and pushes the grid
+      // 5px past its column. Predates this work; fixed here because Building
+      // Systems is the surface this sprint is building on.
+      '.pos-sys-cell{min-width:0;box-sizing:border-box;}',
+      '.pos-sys-l{min-width:0;overflow-wrap:anywhere;}',
+      '.pos-rec-t{min-width:0;overflow-wrap:anywhere;}',
+      '.pos-rel-t,.pos-doc,.pos-doc-on{min-width:0;}',
+      '@media(max-width:600px){',
+      '  .pos-add{width:100%;}',
+      '  .pos-rec-top{flex-direction:column;gap:2px;}',
+      '  .pos-rel-head{flex-wrap:wrap;}',
+      '  .pos-rel-head .pos-rel-add{margin-left:0;}',
+      '  .pos-rel-row,.pos-doc-row{flex-wrap:wrap;row-gap:2px;}',
+      '  .pos-rel-t{flex:1 1 100%;white-space:normal;overflow-wrap:anywhere;}',
+      '  .pos-rel-w,.pos-doc-w{margin-left:0;}',
+      '  .pos-rel-x{margin-left:auto;}',
+      '  .pos-doc{flex:1 1 100%;overflow-wrap:anywhere;}',
+      '  .pos-doc-on{max-width:100%;white-space:normal;text-align:left;}',
+      '}',
       '.pos-sec:last-child{border-bottom:none;}',
       '.pos-sec-head{display:flex;align-items:center;gap:8px;margin-bottom:9px;}',
       '.pos-sec-title{font-size:0.74rem;font-weight:800;text-transform:uppercase;letter-spacing:0.04em;color:var(--text-4,#64748B);}',

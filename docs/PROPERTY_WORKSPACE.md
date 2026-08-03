@@ -201,3 +201,4 @@ Walked as a property manager, not asserted from component tests.
 - ☑ A document can be attached to an existing record, and the attachment is in
       the history.
 - ☑ A failed attachment is reported and changes nothing.
+- ☑ The workspace does not scroll sideways at 390px.

@@ -54,6 +54,7 @@ Walk this on a building with real work on it, not the demo.
 - ☐ **Every document names its record** — no document appears without saying what it is filed on, and clicking that opens the record itself.
 - ☐ **Edits preserve history** — change a record, then open "Edited N times — view history". The original values and each change are both there, with who made them.
 - ☐ **A failed attachment says so** — nothing is added silently, and the record is unchanged.
+- ☐ **On a phone** — the Property tab does not scroll sideways, and no record card runs past the screen.
 
 ## State integrity
 
