@@ -295,6 +295,102 @@ const CLICK_LABEL = function (rx) {
   check('and choosing a System clears the Space',
         exclusive.skipped || exclusive.afterSystemPick.space === '', JSON.stringify(exclusive.afterSystemPick));
 
+  // ── amending preserves the original (ARCHITECTURE_PRINCIPLES §6) ─────────
+  // _save() used to assign straight onto the event (target.title = title), so
+  // an edit destroyed what the record previously said — on the timeline whose
+  // whole purpose is being the building's verified memory.
+  const amended = await page.evaluate(async () => {
+    const p = _props[0];
+    const ev = (p.timeline || []).find(e => e.category === 'warranty');
+    const originalTitle = ev.title;
+    const originalSubject = ev.subject && ev.subject.id;
+
+    // openEditEntry(id) — it resolves the property itself via currentProperty().
+    PropertyTimeline.openEditEntry(ev.id);
+    await new Promise(r => setTimeout(r, 300));
+    if (!document.getElementById('ptlTitle')) return { modalDidNotOpen: true };
+    document.getElementById('ptlTitle').value = 'Roof membrane warranty — 20 year (Carlisle)';
+    document.getElementById('ptlTitle').dispatchEvent(new Event('input'));
+    const sys = document.getElementById('ptlSystem');
+    if (sys) { sys.value = 'hvac'; sys.dispatchEvent(new Event('change')); }
+    document.getElementById('ptlSave').click();
+    await new Promise(r => setTimeout(r, 700));
+
+    const after = (p.timeline || []).find(e => e.id === ev.id);
+    const revs = after.revisions || [];
+    const created = revs[0];
+    const edit = revs[revs.length - 1];
+    return {
+      originalTitle, originalSubject,
+      eventCount: (p.timeline || []).length,      // amend, not append-a-duplicate
+      currentTitle: after.title,
+      currentSubject: after.subject && after.subject.id,
+      revCount: revs.length,
+      createdAction: created && created.action,
+      snapshotTitle: created && created.snapshot && created.snapshot.title,
+      snapshotSubject: created && created.snapshot && created.snapshot.subject && created.snapshot.subject.id,
+      editBy: edit && edit.by,
+      changedFields: (edit && edit.changes || []).map(c => c.field),
+      titleChange: (edit && edit.changes || []).find(c => c.field === 'title'),
+      subjectChange: (edit && edit.changes || []).find(c => c.field === 'subject'),
+    };
+  });
+
+  check('the edit modal opens for an existing record', !amended.modalDidNotOpen,
+        amended.modalDidNotOpen ? 'openEditEntry did not open the modal' : 'ok');
+  check('editing amends the existing record — it does not create a second one',
+        amended.eventCount === 2, String(amended.eventCount));
+  check('the current values move on, as an edit should',
+        /Carlisle/.test(amended.currentTitle || '') && amended.currentSubject === 'hvac',
+        `${amended.currentTitle} / ${amended.currentSubject}`);
+  check('revisions[0] snapshots the record AS CREATED',
+        amended.createdAction === 'created' && amended.snapshotTitle === amended.originalTitle,
+        `${amended.createdAction} / ${amended.snapshotTitle}`);
+  check('...including the subject it originally carried',
+        amended.snapshotSubject === amended.originalSubject,
+        `${amended.snapshotSubject} vs ${amended.originalSubject}`);
+  check('the edit is appended as its own revision', amended.revCount === 2, String(amended.revCount));
+  check('and names who made it', amended.editBy === 'dana@example.com', amended.editBy);
+  check('the revision reports the title change from → to',
+        !!amended.titleChange && amended.titleChange.from === amended.originalTitle,
+        JSON.stringify(amended.titleChange));
+  check('and reports the subject moving Roof → HVAC in readable terms',
+        !!amended.subjectChange && /Roof/.test(amended.subjectChange.from) && /HVAC/.test(amended.subjectChange.to),
+        JSON.stringify(amended.subjectChange));
+
+  // History that cannot be read is not preserved.
+  const historyUi = await page.evaluate(() => {
+    PropertyOS.setRecordFilter('all', null);
+    const body = document.getElementById('propertyOsBody');
+    const det = body.querySelector('.pos-revs');
+    if (!det) return { present: false };
+    const summary = det.querySelector('summary').textContent.trim();
+    det.open = true;
+    return { present: true, summary, text: det.textContent.replace(/\s+/g, ' ').trim(),
+             lines: det.querySelectorAll('.pos-rev').length };
+  });
+  check('the record shows that it was edited', historyUi.present && /Edited 1 time/.test(historyUi.summary || ''),
+        historyUi.summary || 'no history control');
+  check('opening it shows the original and the change',
+        /Recorded by/.test(historyUi.text || '') && /Roof/.test(historyUi.text || '') && /HVAC/.test(historyUi.text || ''),
+        (historyUi.text || '').slice(0, 120));
+  check('one line per revision', historyUi.lines === 2, String(historyUi.lines));
+
+  // A no-op edit must not manufacture history.
+  const noop = await page.evaluate(async () => {
+    const p = _props[0];
+    const ev = (p.timeline || []).find(e => e.category === 'warranty');
+    const before = (ev.revisions || []).length;
+    PropertyTimeline.openEditEntry(ev.id);
+    await new Promise(r => setTimeout(r, 300));
+    if (!document.getElementById('ptlSave')) return { before, after: before, modalDidNotOpen: true };
+    document.getElementById('ptlSave').click();
+    await new Promise(r => setTimeout(r, 600));
+    return { before, after: ((p.timeline || []).find(e => e.id === ev.id).revisions || []).length };
+  });
+  check('saving without changing anything adds no revision',
+        noop.after === noop.before, `${noop.before} → ${noop.after}`);
+
   check('no uncaught errors across the workspace', errs.length === 0,
         errs.slice(0, 2).join(' | ') || 'clean');
 

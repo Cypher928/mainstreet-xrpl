@@ -213,6 +213,90 @@ window.PropertyTimeline = (function () {
     } catch (_) { return 'Property Manager'; }
   }
 
+  // Human labels for the fields a revision can report, so the history reads as
+  // sentences rather than as property names.
+  var FIELD_LABEL = {
+    title: 'Title', description: 'Notes', category: 'Category', timestamp: 'Date',
+    responsibility: 'Responsibility', leaseRef: 'Lease reference', subject: 'Attached to',
+  };
+
+  function _subjectLabel(sub) {
+    if (!sub || sub.type === 'property') return 'Property-wide';
+    if (sub.type === 'system') {
+      return (window.PropertyOS && PropertyOS.systemLabel && PropertyOS.systemLabel(sub.id)) || sub.id;
+    }
+    return sub.label || sub.id || String(sub.type);
+  }
+
+  function _fieldValue(ev, k) {
+    if (k === 'subject') return _subjectLabel(ev.subject);
+    if (k === 'timestamp') return _isoToDateInput(ev.timestamp);
+    if (k === 'category') return (describe({ category: ev.category, type: ev.type }) || {}).label || ev.category;
+    return ev[k];
+  }
+
+  /**
+   * Append-only edit. Returns true if anything actually changed.
+   *
+   * Attachment REMOVAL is recorded, not silently applied: a document that was
+   * on the record yesterday and is gone today is exactly the kind of thing the
+   * timeline exists to still know about. The file reference survives in the
+   * revision even though it leaves the current attachment list.
+   */
+  function _amendEvent(ev, next, finalAtt) {
+    if (!Array.isArray(ev.revisions) || !ev.revisions.length) {
+      ev.revisions = [{
+        at: ev.timestamp,
+        by: (ev.metadata && ev.metadata.recordedBy) || ev.actor || 'Unknown',
+        action: 'created',
+        snapshot: {
+          title: ev.title, description: ev.description, category: ev.category,
+          timestamp: ev.timestamp, responsibility: ev.responsibility,
+          leaseRef: ev.leaseRef, subject: ev.subject ? Object.assign({}, ev.subject) : null,
+          attachments: (ev.attachments || []).map(function (a) { return { name: a.name, url: a.url, kind: a.kind }; }),
+        },
+      }];
+    }
+
+    var rev = { at: new Date().toISOString(), by: _who(), action: 'amended', changes: [] };
+
+    Object.keys(next).forEach(function (k) {
+      if (k === 'tenantId') { ev.tenantId = next[k]; return; }   // derived, not reported
+      var from = _fieldValue(ev, k);
+      var applied = next[k];
+      var to = k === 'subject' ? _subjectLabel(applied)
+             : k === 'timestamp' ? _isoToDateInput(applied)
+             : k === 'category' ? ((describe({ category: applied, type: applied }) || {}).label || applied)
+             : applied;
+      if (String(from == null ? '' : from) === String(to == null ? '' : to)) {
+        // Unchanged as far as the user is concerned, but still assign: the raw
+        // value may differ in form (an ISO timestamp vs a date input) while the
+        // meaning is identical, and we do not want a spurious revision line.
+        if (k === 'subject') ev.subject = applied; else if (k !== 'category') ev[k] = applied;
+        return;
+      }
+      rev.changes.push({ field: k, label: FIELD_LABEL[k] || k, from: from == null ? null : String(from), to: to == null ? null : String(to) });
+      if (k === 'subject') ev.subject = applied;
+      else if (k === 'category') { ev.category = applied; ev.type = 'manual_' + applied; }
+      else ev[k] = applied;
+    });
+
+    // Attachments: what arrived, and what left.
+    var before = (ev.attachments || []);
+    var afterUrls = (finalAtt || []).map(function (a) { return a.url; });
+    var beforeUrls = before.map(function (a) { return a.url; });
+    var added   = (finalAtt || []).filter(function (a) { return beforeUrls.indexOf(a.url) < 0; });
+    var removed = before.filter(function (a) { return afterUrls.indexOf(a.url) < 0; });
+    if (added.length)   rev.added   = added.map(function (a) { return { name: a.name, url: a.url, kind: a.kind }; });
+    if (removed.length) rev.removed = removed.map(function (a) { return { name: a.name, url: a.url, kind: a.kind }; });
+    ev.attachments = finalAtt || [];
+
+    ev.manual = true;
+    if (!rev.changes.length && !rev.added && !rev.removed) return false;
+    ev.revisions.push(rev);
+    return true;
+  }
+
   function openAddEntry(property, existing) {
     property = property || (window.currentProperty && window.currentProperty());
     if (!property) { _toast('Open a property first', 'err'); return; }
@@ -380,21 +464,25 @@ window.PropertyTimeline = (function () {
     }
 
     if (existing && existing.id) {
-      // Edit in place — same modal, complete the workflow.
+      // AMEND, never overwrite. This used to assign straight onto the event —
+      // target.title = title — so an edit destroyed what the record previously
+      // said, on a timeline whose entire purpose is being the building's
+      // verified memory. ARCHITECTURE_PRINCIPLES §6.
+      //
+      // Same shape as the Space workspace's _amend(): revisions[0] is a
+      // snapshot of the record AS CREATED, captured lazily on the first edit,
+      // and every edit after that appends a field-level diff. The current
+      // values do move on — that is what an edit is — but the original and the
+      // path it took are both still readable.
       var target = (property.timeline || []).find(function (x) { return x.id === existing.id; });
-      if (target) {
-        target.title = title;
-        target.description = notes;
-        target.category = category;
-        target.type = 'manual_' + category;
-        target.timestamp = timestamp;
-        target.responsibility = (['landlord', 'tenant', 'shared', 'na'].indexOf(responsibility) >= 0 ? responsibility : 'na');
-        target.leaseRef = leaseRef;
-        target.attachments = finalAtt;
-        target.tenantId = spaceId || null;
-        target.subject = subject || { type: 'property', id: (property.id || null), label: null };
-        target.manual = true;
-      }
+      if (target) _amendEvent(target, {
+        title: title, description: notes, category: category,
+        timestamp: timestamp,
+        responsibility: (['landlord', 'tenant', 'shared', 'na'].indexOf(responsibility) >= 0 ? responsibility : 'na'),
+        leaseRef: leaseRef,
+        subject: subject || { type: 'property', id: (property.id || null), label: null },
+        tenantId: spaceId || null,
+      }, finalAtt);
     } else if (window.appendPropertyTimelineEvent) {
       window.appendPropertyTimelineEvent(property, {
         manual: true, type: 'manual_' + category, category: category, severity: 'info',
@@ -505,6 +593,7 @@ window.PropertyTimeline = (function () {
     navFor: navFor,
     viewSource: viewSource,
     openAddEntry: openAddEntry,
+    amendEvent: _amendEvent,
     openEditEntry: openEditEntry,
     closeModal: closeModal,
     categories: MANUAL_CATEGORIES,

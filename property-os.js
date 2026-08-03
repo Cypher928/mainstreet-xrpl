@@ -174,6 +174,34 @@ window.PropertyOS = (function () {
       });
   }
 
+  // Revision history, rendered from event.revisions[]. Preserved history that
+  // cannot be read is not preserved — the point of amending instead of
+  // overwriting is that someone can see what the record used to say.
+  //
+  // Collapsed by default: the current state is what a manager needs, and the
+  // history is what they go looking for.
+  function _revHtml(e) {
+    var revs = e && e.revisions;
+    if (!Array.isArray(revs) || revs.length < 2) return '';   // 1 = created only
+    var edits = revs.length - 1;
+    var lines = revs.map(function (r) {
+      var when = _fmtDate(r.at);
+      if (r.action === 'created') {
+        return '<div class="pos-rev"><span class="pos-rev-w">' + _esc(when) + '</span>' +
+          '<span class="pos-rev-t">Recorded by ' + _esc(r.by || 'Unknown') + '</span></div>';
+      }
+      var bits = (r.changes || []).map(function (c) {
+        return _esc(c.label || c.field) + ': ' + _esc(c.from || 'empty') + ' \u2192 ' + _esc(c.to || 'empty');
+      });
+      (r.added   || []).forEach(function (a) { bits.push('Added ' + _esc(a.name)); });
+      (r.removed || []).forEach(function (a) { bits.push('Removed ' + _esc(a.name)); });
+      return '<div class="pos-rev"><span class="pos-rev-w">' + _esc(when) + '</span>' +
+        '<span class="pos-rev-t">' + bits.join(' \u00b7 ') + ' \u2014 ' + _esc(r.by || 'Unknown') + '</span></div>';
+    }).join('');
+    return '<details class="pos-revs"><summary>Edited ' + edits + ' time' + (edits !== 1 ? 's' : '') +
+      ' \u2014 view history</summary>' + lines + '</details>';
+  }
+
   function _applyFilter(records) {
     return records.filter(function (e) {
       if (_filter.system) {
@@ -362,6 +390,7 @@ window.PropertyOS = (function () {
               (by ? '<span class="pos-rec-by">Recorded by ' + _esc(by) + '</span>' : '') +
             '</div>' +
             (e.description ? '<div class="pos-rec-note">' + _esc(e.description) + '</div>' : '') +
+            _revHtml(e) +
             (atts.length ? '<div class="pos-rec-att">' + atts.map(function (a) {
               return '<a class="pos-doc" href="' + _esc(a.url) + '" target="_blank" rel="noopener">' +
                 _docIcon(a.kind) + '&nbsp;<span class="pos-doc-n">' + _esc(a.name) + '</span></a>';
@@ -420,6 +449,14 @@ window.PropertyOS = (function () {
       '.pos-rec-cat{color:' + gold + ';}',
       '.pos-rec-note{margin-top:6px;font-size:0.79rem;color:var(--text-3,#94A3B8);line-height:1.5;}',
       '.pos-rec-att{display:flex;flex-wrap:wrap;gap:6px;margin-top:8px;}',
+      '.pos-revs{margin-top:8px;}',
+      '.pos-revs>summary{font-size:0.72rem;color:var(--text-4,#64748B);cursor:pointer;list-style:none;}',
+      '.pos-revs>summary::-webkit-details-marker{display:none;}',
+      '.pos-revs>summary:hover{color:var(--text-2,#CBD5E1);}',
+      '.pos-revs[open]>summary{color:var(--text-3,#94A3B8);margin-bottom:5px;}',
+      '.pos-rev{display:flex;gap:9px;padding:3px 0;font-size:0.72rem;color:var(--text-4,#64748B);border-top:1px solid rgba(var(--line-rgb,255,255,255),0.05);}',
+      '.pos-rev-w{white-space:nowrap;opacity:0.8;}',
+      '.pos-rev-t{color:var(--text-3,#94A3B8);}',
       '.pos-sys-cell{cursor:pointer;}',
       '.pos-sys-cell--sel{border-color:rgba(201,151,58,0.5)!important;background:rgba(201,151,58,0.08)!important;}',
       '@media(max-width:600px){.pos-add{width:100%;}.pos-rec-top{flex-direction:column;gap:2px;}}',

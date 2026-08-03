@@ -96,7 +96,8 @@ overwritten the conversion it replaced.
 `obj.data = {...}` where `Object.assign({}, obj.data, {...})` was meant — that
 one line is how an analysis silently disappears.
 
-*Enforced by:* `test-space-activity.js`, `test-acq-orphan-repair.js`.
+*Enforced by:* `test-space-activity.js`, `test-acq-orphan-repair.js`,
+`test-property-workspace.js`.
 
 ### 7. Recovery mechanisms remain even after prevention exists
 
