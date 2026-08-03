@@ -112,21 +112,38 @@ go wrong; there is only the ordering whose failure is recoverable.
 *Violation shape:* removing a recovery path in the same change that adds
 prevention. Prevention is best-effort in any system with more than one write.
 
+### 8. Absence of evidence is not evidence of absence
+
+Before the product tells a user that something is missing, gone, or unanswerable,
+it must know the lookup actually succeeded. A failed read and an empty result are
+different facts, and only one of them is safe to report.
+
+*Earned by:* four surfaces now, which is why it is here rather than in a comment.
+`_acqOrphaned()` is gated on `_propsLoadedOk` — without it a failed properties
+load makes every converted review look orphaned, and the product announces that
+someone's buildings were deleted because the network blipped. The same distinction
+is what separates a lease refusal ("this document does not cover that") from a
+lookup that never ran; what makes the Evidence Viewer say a citation carries no
+page rather than that the page is wrong; and what stops a truncated read being
+reported as a complete one.
+
+*Violation shape:* an empty collection read as a deletion. Also `if (!x.length)`
+branching straight to a user-facing "none found" with no state saying the fetch
+returned. Silence is the correct output until the read is known to have
+succeeded — a wrong "it's gone" costs more trust than a slow "loading".
+
+*Enforced by:* `test-acq-orphan-repair.js` (two checks assert silence on a failed
+load), `test-ask-lease.js`.
+
 ---
 
 ## Candidates — proposed, not adopted
 
-Two more that keep recurring. Recorded here rather than promoted, so the list
-above stays the set we actually hold ourselves to.
+Recorded here rather than promoted, so the list above stays the set we actually
+hold ourselves to. A candidate is promoted once it has earned its place across
+another feature or two — not because it sounds right.
 
-**8. Absence of evidence is not evidence of absence.** Before the product tells a
-user something is missing, it must know the lookup succeeded. `_acqOrphaned()`
-is gated on `_propsLoadedOk` for exactly this: without it a failed properties
-load makes every converted review look orphaned, and the product announces that
-someone's buildings were deleted because the network blipped. *Violation shape:*
-an empty collection read as a deletion.
-
-**9. When the product cannot do something, it names the thing it could not do.**
+**When the product cannot do something, it names the thing it could not do.**
 "Jumped to page 1 — the exact paragraph couldn't be automatically identified"
 blamed navigation, which had not failed; the quote was verbatim, and what failed
 was mapping it onto a rendered page. *Violation shape:* an error message
