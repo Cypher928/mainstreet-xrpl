@@ -31,6 +31,16 @@ comment on column public.properties.archived_at is
 -- govern this column. Archiving is an UPDATE by the owner, which those policies
 -- already allow — no new policy, and no new way to reach another user's rows.
 
+-- Rehearsed before shipping, against the full migration chain (000-007) on
+-- PostgreSQL 16 with the real RLS policies from 005_rls_hardening.sql applied:
+--   * runs clean, and is idempotent — a second run only NOTICEs the index
+--   * every pre-existing property comes out Active (archived_at null)
+--   * the OWNER can archive and restore under `role authenticated`
+--   * a DIFFERENT authenticated user sees 0 rows and archives 0 rows, so this
+--     column adds no route to another tenant's data
+-- Supabase itself was not reachable from that environment; the pilot project
+-- still needs this applied by hand.
+
 -- Verify: every existing property is active, and the column is nullable.
 select
   count(*)                                        as total_properties,
