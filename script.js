@@ -8349,8 +8349,12 @@ function clickableConfBadge(score, i, weakFields) {
   if (isNaN(s) || s >= 90 || !weakFields.length) return confidenceBadge(score);
   const label = s >= 70 ? '&#x26A0; Please verify' : '&#x2691; Low confidence — click to review';
   const cls   = s >= 70 ? 'conf-mid' : 'conf-low';
+  // data-* not string interpolation: JSON.stringify emits double quotes, which
+  // terminate a double-quoted attribute and leave the handler a syntax error.
+  // This badge had been dead since it shipped — clicking it ran nothing.
   return `<span class="conf-badge ${cls} conf-clickable"
-    onclick="event.stopPropagation();openInvoiceAndHighlight(${i},${JSON.stringify(weakFields)})"
+    data-inv-idx="${i}" data-weak-fields="${esc(JSON.stringify(weakFields))}"
+    onclick="event.stopPropagation();openInvoiceAndHighlight(Number(this.dataset.invIdx),JSON.parse(this.dataset.weakFields||'[]'))"
     title="Click to jump to fields that need review">${label}</span>`;
 }
 
@@ -20430,7 +20434,7 @@ function _renderValidationPanel(findings, { loading = false, charsAnalyzed = nul
       : '';
     const explanHtml = eSafe ? `<div class="lv-explanation">${eSafe}</div>` : '';
     const viewBtn    = (f.severity !== 'info' && fileUrl)
-      ? `<button class="lv-view-btn" onclick="openLeaseModal(${JSON.stringify(fileUrl)})">View in Lease ↗</button>`
+      ? `<button class="lv-view-btn" data-lease-url="${esc(fileUrl)}" onclick="openLeaseModal(this.dataset.leaseUrl)">View in Lease ↗</button>`
       : '';
     const confCls  = { high: 'lv-conf--high', medium: 'lv-conf--medium', low: 'lv-conf--low' }[f.confidence] || 'lv-conf--medium';
 
@@ -20879,7 +20883,7 @@ async function _submitLeaseQuestion(docId) {
       // there is nothing to jump to, but reading the lease yourself is the
       // obvious next move when the assistant says it cannot help.
       const viewBtn = result.fileUrl
-        ? `<button class="lc-view-lease-btn" onclick="openLeaseModal(${JSON.stringify(result.fileUrl)})">View in Lease ↗</button>`
+        ? `<button class="lc-view-lease-btn" data-lease-url="${esc(result.fileUrl)}" onclick="openLeaseModal(this.dataset.leaseUrl)">View in Lease ↗</button>`
         : '';
 
       const kbRead  = result.charsAnalyzed ? Math.round(result.charsAnalyzed / 1000) : null;
@@ -21883,6 +21887,18 @@ function _renderArchivedList() {
     list.innerHTML = '<div class="ptf-arch-empty">Nothing archived.</div>';
     return;
   }
+  // Values go through data-* attributes, never interpolated into the onclick
+  // string. The first version built the handler as
+  //   onclick="restoreProperty('${esc(p.id)}', ${JSON.stringify(p.name)})"
+  // and JSON.stringify emits DOUBLE quotes, inside a double-quoted attribute.
+  // The browser terminated the attribute at the first one, so the handler was
+  // the fragment `restoreProperty('p-1', ` — a syntax error, which compiles to
+  // a null onclick. Restore did nothing at all: no error, no toast, no request,
+  // because the click never reached any code. The property name also leaked out
+  // as two junk attributes.
+  //
+  // esc() into a data attribute is safe for every name — quotes, apostrophes,
+  // ampersands, a building called O'Neill & Sons "Annex".
   list.innerHTML = rows.map(p => {
     const when = p.archivedAt ? new Date(p.archivedAt).toLocaleDateString() : null;
     return `<div class="ptf-arch-row">
@@ -21890,7 +21906,8 @@ function _renderArchivedList() {
         <div class="ptf-arch-name">${esc(p.name || 'Property')}</div>
         <div class="ptf-arch-meta">${when ? 'Archived ' + esc(when) : 'Archived'} — history intact</div>
       </div>
-      <button class="ptf-arch-restore" onclick="restoreProperty('${esc(p.id)}', ${JSON.stringify(p.name || '')})">Restore</button>
+      <button class="ptf-arch-restore" data-prop-id="${esc(p.id)}" data-prop-name="${esc(p.name || '')}"
+        onclick="restoreProperty(this.dataset.propId, this.dataset.propName)">Restore</button>
     </div>`;
   }).join('');
 }

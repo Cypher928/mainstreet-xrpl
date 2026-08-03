@@ -164,6 +164,12 @@ that proves nothing is worse than no test — it reports safety:
 - **A test that reimplements the thing it tests.** `test-ask-lease.js` carried a
   hand-maintained "inline replica" of the parser and passed while the shipped
   parser knew nothing about refusals.
+- **A test that calls the handler instead of clicking the control.** Restore
+  shipped completely dead — a truncated `onclick` attribute compiles to null, so
+  clicking ran nothing and nothing could report it. The suite passed throughout,
+  because it called `restoreProperty()` directly. Proving a function works says
+  nothing about whether a user can reach it. This is the same miss as Archive
+  having no entry point, one release earlier.
 - **A test that passes vacuously.** The evidence banner test passed on its first
   run by finding no banner at all, because the pdf.js worker was stubbed and the
   code path never ran. Checks that cannot run must **fail**, never skip.

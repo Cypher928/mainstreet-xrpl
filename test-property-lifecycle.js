@@ -296,16 +296,95 @@ const CLICK_LABEL = function (rx) {
   check('portfolio intelligence sees no archived property', agg.propsIn === 0,
         JSON.stringify(agg));
 
-  // ── Restore ──────────────────────────────────────────────────────────────
+  // ── Restore — by CLICKING the button, not by calling the function ────────
+  //
+  // The previous version of this section called restoreProperty() directly. It
+  // passed for weeks while Restore was completely dead in the browser: the
+  // button was rendered as
+  //   onclick="restoreProperty('${esc(p.id)}', ${JSON.stringify(p.name)})"
+  // and JSON.stringify emits double quotes inside a double-quoted attribute, so
+  // the browser truncated the handler to `restoreProperty('p-1', ` — a syntax
+  // error, therefore a null onclick. Nothing happened on click, and nothing
+  // could report that, because no code ran.
+  //
+  // Calling the handler proves the handler works. It says nothing about whether
+  // a user can trigger it. Everything below goes through the rendered control,
+  // with a name chosen to break naive quoting.
+  const HOSTILE_NAME = 'O\'Neill & Sons "Annex"';
+
+  const rendered = await page.evaluate(async (nm) => {
+    __rows.properties = [{ id: 'p-restore', user_id: 'u1', name: nm, sqft: 24000,
+                           archived_at: '2026-07-01T10:00:00.000Z' }];
+    _props = [];
+    _archivedProps = null;                 // force a real read
+    await _refreshArchivedLink();
+    const list = document.getElementById('ptfArchivedList');
+    list.style.display = 'block';
+    _renderArchivedList();
+    const btn = list.querySelector('.ptf-arch-restore');
+    return {
+      barShown:   document.getElementById('ptfArchivedBar').style.display !== 'none',
+      linkText:   document.getElementById('ptfArchivedLink').textContent,
+      buttonThere: !!btn,
+      // The whole bug, in one value: a broken onclick attribute compiles to null.
+      handlerBound: !!(btn && typeof btn.onclick === 'function'),
+      nameRendered: btn ? (btn.parentElement.parentElement.querySelector('.ptf-arch-name') || {}).textContent : null,
+      junkAttrs: btn ? [].slice.call(btn.attributes).map(a => a.name)
+        .filter(n => !/^(class|data-prop-id|data-prop-name|onclick)$/.test(n)) : null,
+    };
+  }, HOSTILE_NAME);
+
+  check('the archived link appears and counts correctly',
+        rendered.barShown && /1 archived property/.test(rendered.linkText), rendered.linkText);
+  check('a Restore button is rendered', rendered.buttonThere);
+  check('and it has a WORKING click handler, not a truncated one',
+        rendered.handlerBound, 'onclick compiled to ' + (rendered.handlerBound ? 'a function' : 'null'));
+  check('a name with quotes and an ampersand survives rendering',
+        rendered.nameRendered === HOSTILE_NAME, rendered.nameRendered);
+  check('and it did not leak into stray attributes',
+        Array.isArray(rendered.junkAttrs) && rendered.junkAttrs.length === 0,
+        JSON.stringify(rendered.junkAttrs));
+
+  // Now actually click it, the way a person does.
+  const clicked = await page.evaluate(CLICK_LABEL, '^restore$');
+  check('Restore is findable and clickable by its visible label', !!clicked, clicked || 'not found');
+  await page.waitForTimeout(900);
+
   const restored = await page.evaluate(async () => {
-    await restoreProperty('p-busy', 'Maple Plaza');
+    const row = __rows.properties.find(r => r.id === 'p-restore');
     const active = await loadProperties();
     const arch   = await loadProperties({ archived: true });
-    return { active: active.length, archived: arch.length, name: active[0] ? active[0].name : null };
+    const bar    = document.getElementById('ptfArchivedBar');
+    return {
+      archivedAtInDb: row ? row.archived_at : 'ROW GONE',
+      active: active.length,
+      archivedRows: arch.length,
+      name: active[0] ? active[0].name : null,
+      inMemory: _props.length,
+      barShown: bar.style.display !== 'none',
+      linkText: document.getElementById('ptfArchivedLink').textContent,
+    };
   });
-  check('restoring returns the property to the portfolio',
-        restored.active === 1 && restored.name === 'Maple Plaza');
-  check('and it is no longer in the archived view', restored.archived === 0);
+
+  check('clicking Restore sets archived_at back to NULL in the database',
+        restored.archivedAtInDb === null, String(restored.archivedAtInDb));
+  check('the property returns to the active list',
+        restored.active === 1 && restored.name === HOSTILE_NAME, restored.name);
+  check('and to the in-memory portfolio, without a page reload',
+        restored.inMemory === 1, String(restored.inMemory));
+  check('it is no longer in the archived view', restored.archivedRows === 0);
+  check('the archived count decrements — the link hides at zero',
+        restored.barShown === false, restored.barShown ? restored.linkText : 'hidden');
+
+  // Portfolio metrics must move with it: restoring puts the building back into
+  // every aggregate, the mirror of archiving taking it out.
+  const metricsBack = await page.evaluate(async () => {
+    const active = await loadProperties();
+    const pid = AcquisitionEngine.computePortfolioIntelligence(active);
+    return { propsIn: active.length, sqft: pid.totalBldgSqft ?? null };
+  });
+  check('portfolio intelligence counts the restored property again',
+        metricsBack.propsIn === 1, JSON.stringify(metricsBack));
 
   // ── PREVENTION: deleting a converted property reverts its acquisition ────
   const reverted = await page.evaluate(async () => {

@@ -37,7 +37,7 @@ arrives. Count your clicks. There are two.
 - ☐ **Dashboard alerts deep-link correctly** — every card, CTA and review action opens the specific object it names, or says why it cannot.
 - ☐ **Archive property** — reachable from **Data Health → Property Lifecycle** without opening the Delete dialog. It removes the property from the portfolio and from every total, and keeps every lease, timeline entry, document and reconciliation. *Requires `migrations/010_property_archive.sql`.*
 - ☐ **Archived properties do not move the numbers** — occupancy, WALT, revenue-at-risk, renewal counts and the dashboards are all computed as though the property were not there.
-- ☐ **Restore** — the archived link under "Your properties" lists it, Restore returns it to the portfolio, and its history is intact.
+- ☐ **Restore** — the archived link under "Your properties" lists it, tapping Restore returns it to the portfolio without a page reload, the archived count decrements, and the portfolio totals include it again.
 - ☐ **Delete a property created by mistake** — an empty property deletes without ceremony; one with history names what would be destroyed, recommends Archive, and requires the name typed.
 - ☐ **Delete a converted property** — its acquisition returns to Ready to Convert and can be converted again.
 
@@ -70,6 +70,7 @@ Run these first; they are fast and catch regressions in the paths below.
 | `node test-first-run-walkthrough.js` | create → describe → save → upload leases → review → resolve → invoices → calculate → results → statement, clicking only by visible label |
 | `node test-broken-promises.js` | every control whose label promises a specific object carries an identifier for it |
 | `node test-pilot-readiness.js` | edit-lease-then-Done; narrative gating; incomplete-setup guidance |
+| `node test-inline-handlers.js` | every inline `onclick` compiles and calls through with a hostile value — a truncated attribute is a silently dead control |
 | `node test-property-lifecycle.js` | archive → aggregates → restore; delete with and without history; deleting a converted property reverts its acquisition |
 | `node test-acq-orphan-repair.js` | the orphan backstop, including that an archived property is never reported as deleted |
 | `node test-regression.js` | 182 engine/allocation/persistence checks |
