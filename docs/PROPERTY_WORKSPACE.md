@@ -3,7 +3,7 @@
 **Status:** first increment SHIPPED. Property Records, building-level
 categories, the Building System subject, and provenance are in.
 **Walked by:** `test-property-workspace.js` (28 checks).
-**Not yet done:** Related Items and the Mortgage/Financing link to the escrow
+**Not yet done:** Documents, and the Mortgage/Financing link to the escrow
 engine — see "Still open" below.
 
 The Space workspace made a suite the operational record for a tenancy. This does
@@ -114,11 +114,41 @@ Settled patterns. Reuse them; do not re-decide them.
    environmental report or survey can be cited in a reconciliation, and if so,
    through the same Evidence Viewer path.
 
+## Related Items — the relationship model (shipped)
+
+A roof replacement is one story, not six records: the job, the warranty, the
+contractor invoice, the photos, the inspection, and the insurance claim.
+
+**Storage** is a single `relatedTo` array on the timeline event, holding
+`{ kind: 'event' | 'invoice', id }`. No join table, no link store — the same
+rule as everywhere else here.
+
+**Direction:** links are stored ONE way and read UNDIRECTED. Storing both ends
+means keeping two copies in step, and the copy that drifts is the one nobody
+looks at. The reverse costs a scan of the timeline, which at property scale is
+nothing.
+
+**Shape:** the story is the CONNECTED COMPONENT, not the immediate neighbours.
+If the warranty links to the invoice and the invoice links to the job, opening
+the warranty must still show the whole job — otherwise "one connected story" is
+only true when you happen to start at the anchor. BFS with a visited set, so a
+cycle terminates rather than hangs.
+
+**Linking is an amendment.** Who connected the invoice to the roof job, and
+when, is in `revisions[]` like every other change. The connective tissue is not
+the one part of the record without provenance.
+
+**Clicking a Building System ends the search.** "Roof" shows records whose
+subject is the system, plus invoices tagged to it, plus anything linked into
+those stories — an invoice attached to the roof job belongs under Roof even if
+only the job carries the tag.
+
 ## Still open
 
 The first increment deliberately stopped at the surface. What remains:
 
-1. **Related Items**, so a roof replacement is one thing rather than six.
+1. **Documents.** Now that relationships exist, documents attach to a story
+   rather than becoming another flat list — which is why this came second.
 2. **Mortgage / Financing** should surface what `escrow-reserve-engine.js`
    already extracted and cited, rather than being a category a user types into.
 3. **Archived property's workspace** — must stay readable. Not yet walked.
@@ -142,3 +172,7 @@ Walked as a property manager, not asserted from component tests.
       record count, and is findable by opening the system.
 - ☐ An archived property's records and timeline are still readable.
 - ☑ Empty categories say what to record there, and why.
+- ☑ A roof replacement reads as one story from any record in it, including the
+      contractor invoice.
+- ☑ Clicking a Building System shows its complete history in one place.
+- ☑ Linking and unlinking are recorded in the revision history.

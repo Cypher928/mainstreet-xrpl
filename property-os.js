@@ -174,6 +174,49 @@ window.PropertyOS = (function () {
       });
   }
 
+  // Related Items on a record: the rest of its story, plus the way to add to it.
+  // Shown even when empty, because an empty Related Items is the prompt that
+  // teaches the feature — a roof job with nothing attached is the case this
+  // exists to fix.
+  function _relatedHtml(property, e) {
+    var g = relatedGroup(property, e.id);
+    var others = g.events.filter(function (x) { return String(x.id) !== String(e.id); });
+    var invs   = g.invoices;
+    var n = others.length + invs.length;
+
+    var rows = others.map(function (x) {
+      var d = (window.PropertyTimeline && PropertyTimeline.describe) ? PropertyTimeline.describe(x) : { label: x.type, icon: '' };
+      var atts = (x.attachments || []).filter(function (a) { return a && a.url; }).length;
+      return '<div class="pos-rel-row">' +
+        '<span class="pos-rel-ic">' + (d.icon || '\u{1F4CC}') + '</span>' +
+        '<span class="pos-rel-t">' + _esc(x.title || d.label || x.type) + '</span>' +
+        '<span class="pos-rel-m">' + _esc(d.label || '') + (atts ? ' \u00b7 ' + atts + ' file' + (atts !== 1 ? 's' : '') : '') + '</span>' +
+        '<span class="pos-rel-w">' + _esc(_fmtDate(x.timestamp)) + '</span>' +
+        '<button type="button" class="pos-rel-x" title="Remove this link"' +
+          ' data-ev="' + _esc(e.id) + '" data-kind="event" data-id="' + _esc(x.id) + '"' +
+          ' onclick="PropertyOS.unlinkRecord(this.dataset.ev, this.dataset.kind, this.dataset.id)">\u2715</button>' +
+      '</div>';
+    }).join('') + invs.map(function (i) {
+      return '<div class="pos-rel-row">' +
+        '<span class="pos-rel-ic">\u{1F9FE}</span>' +
+        '<span class="pos-rel-t">' + _esc(i.vendorName) + '</span>' +
+        '<span class="pos-rel-m">Invoice \u00b7 ' + _esc(_money(i.amount)) + '</span>' +
+        '<span class="pos-rel-w">' + _esc(i.invoiceDate ? _fmtDate(i.invoiceDate) : '') + '</span>' +
+        '<button type="button" class="pos-rel-x" title="Remove this link"' +
+          ' data-ev="' + _esc(e.id) + '" data-kind="invoice" data-id="' + _esc(_invoiceKeyOf(i)) + '"' +
+          ' onclick="PropertyOS.unlinkRecord(this.dataset.ev, this.dataset.kind, this.dataset.id)">\u2715</button>' +
+      '</div>';
+    }).join('');
+
+    return '<div class="pos-rel">' +
+      '<div class="pos-rel-head">Related items <span class="pos-rel-n">' + n + '</span>' +
+        '<button type="button" class="pos-rel-add" data-ev="' + _esc(e.id) + '"' +
+          ' onclick="PropertyOS.openLinkPicker(this.dataset.ev)">\uFF0B Link</button></div>' +
+      (n ? '<div class="pos-rel-list">' + rows + '</div>'
+         : '<div class="pos-rel-empty">Nothing linked yet. The warranty, the contractor invoice, the inspection and the photos for this job belong here \u2014 on the job, not scattered across the building.</div>') +
+    '</div>';
+  }
+
   // Revision history, rendered from event.revisions[]. Preserved history that
   // cannot be read is not preserved — the point of amending instead of
   // overwriting is that someone can see what the record used to say.
@@ -193,6 +236,7 @@ window.PropertyOS = (function () {
       var bits = (r.changes || []).map(function (c) {
         return _esc(c.label || c.field) + ': ' + _esc(c.from || 'empty') + ' \u2192 ' + _esc(c.to || 'empty');
       });
+      if (r.note) bits.push(_esc(r.note));
       (r.added   || []).forEach(function (a) { bits.push('Added ' + _esc(a.name)); });
       (r.removed || []).forEach(function (a) { bits.push('Removed ' + _esc(a.name)); });
       return '<div class="pos-rev"><span class="pos-rev-w">' + _esc(when) + '</span>' +
@@ -202,11 +246,219 @@ window.PropertyOS = (function () {
       ' \u2014 view history</summary>' + lines + '</details>';
   }
 
-  function _applyFilter(records) {
+  // ── Related Items — the connective tissue ─────────────────────────────────
+  // A roof replacement is not six records. It is one story: the timeline event,
+  // the warranty, the contractor, the invoice, the photos, the inspection, and
+  // the insurance claim if there was one. Related Items is what makes those one
+  // thing.
+  //
+  // STORAGE: a single `relatedTo` array on the timeline event, holding
+  // { kind:'event'|'invoice', id }. Nothing else. No join table, no link store —
+  // the same rule as everywhere else here.
+  //
+  // DIRECTION: links are stored one-way and read UNDIRECTED. Storing both ends
+  // would mean keeping two copies in step, and the copy that drifts is the one
+  // nobody looks at. Reading the reverse costs a scan of the timeline, which at
+  // property scale is nothing.
+  //
+  // SHAPE: the story is the CONNECTED COMPONENT, not the immediate neighbours.
+  // If the invoice links to the roof job and the warranty links to the invoice,
+  // opening the warranty must still show the whole job — otherwise "one
+  // connected story" is only true when you happen to start at the anchor. BFS
+  // with a visited set, so a cycle terminates instead of hanging.
+  function _refKey(kind, id) { return kind + ':' + String(id); }
+
+  function _invoiceKeyOf(inv) {
+    // Invoices have no stable id in the record, so the register index is the
+    // handle. _i is assigned by invoices() and is stable for a given property
+    // load — good enough to link within a session and to persist, because the
+    // array is append-only in practice.
+    return (inv && (inv.id != null ? String(inv.id) : String(inv._i)));
+  }
+
+  function _linksOf(node) {
+    return (node && Array.isArray(node.relatedTo) ? node.relatedTo : [])
+      .filter(function (r) { return r && r.kind && r.id != null; });
+  }
+
+  /**
+   * Everything in the same story as `startId`, including the starting record.
+   * Returns { events: [...], invoices: [...] }.
+   */
+  function relatedGroup(property, startId) {
+    var events = (property && property.timeline) || [];
+    var invs   = invoices(property || {});
+    var byEvent = {}, byInv = {};
+    events.forEach(function (e) { if (e && e.id != null) byEvent[String(e.id)] = e; });
+    invs.forEach(function (i) { byInv[_invoiceKeyOf(i)] = i; });
+
+    // Undirected adjacency, built once per call.
+    var adj = {};
+    function edge(a, b) {
+      (adj[a] = adj[a] || []).push(b);
+      (adj[b] = adj[b] || []).push(a);
+    }
+    events.forEach(function (e) {
+      if (!e || e.id == null) return;
+      _linksOf(e).forEach(function (r) { edge(_refKey('event', e.id), _refKey(r.kind, r.id)); });
+    });
+
+    var start = _refKey('event', startId);
+    var seen = {}, queue = [start], outE = [], outI = [];
+    while (queue.length) {
+      var k = queue.shift();
+      if (seen[k]) continue;
+      seen[k] = true;
+      var parts = k.split(':'), kind = parts[0], id = parts.slice(1).join(':');
+      if (kind === 'event' && byEvent[id]) outE.push(byEvent[id]);
+      else if (kind === 'invoice' && byInv[id]) outI.push(byInv[id]);
+      (adj[k] || []).forEach(function (n) { if (!seen[n]) queue.push(n); });
+    }
+    return { events: outE, invoices: outI };
+  }
+
+  /**
+   * Everything about one building system, in one place — which is what a
+   * manager means by "show me the Roof". Not just records whose subject IS the
+   * system: also the invoices related to it, and anything linked into those
+   * stories. Clicking Roof should end the search, not start one.
+   */
+  function systemStory(property, systemKey) {
+    var events = (property && property.timeline) || [];
+    var invs   = invoices(property || {});
+    var seedE = events.filter(function (e) {
+      return e && e.subject && e.subject.type === 'system' && e.subject.id === systemKey;
+    });
+    var seedI = invs.filter(function (i) { return i.system === systemKey; });
+
+    var eIds = {}, iIds = {};
+    seedE.forEach(function (e) { eIds[String(e.id)] = e; });
+    seedI.forEach(function (i) { iIds[_invoiceKeyOf(i)] = i; });
+    // Pull in each seed's connected story, so the invoice attached to the roof
+    // job arrives even if only the job carries the system tag.
+    seedE.forEach(function (e) {
+      var g = relatedGroup(property, e.id);
+      g.events.forEach(function (x) { eIds[String(x.id)] = x; });
+      g.invoices.forEach(function (x) { iIds[_invoiceKeyOf(x)] = x; });
+    });
+    return {
+      events: Object.keys(eIds).map(function (k) { return eIds[k]; })
+        .sort(function (a, b) { return (new Date(b.timestamp).getTime() || 0) - (new Date(a.timestamp).getTime() || 0); }),
+      invoices: Object.keys(iIds).map(function (k) { return iIds[k]; }),
+    };
+  }
+
+  // Linking is an AMENDMENT, not a silent write. Who connected the invoice to
+  // the roof job, and when, is part of the record — the same standard as every
+  // other edit. ARCHITECTURE_PRINCIPLES §6.
+  function linkRecord(eventId, kind, targetId) {
+    var property = window.currentProperty && window.currentProperty();
+    if (!property) return false;
+    var ev = (property.timeline || []).find(function (x) { return String(x.id) === String(eventId); });
+    if (!ev) return false;
+    var already = _linksOf(ev).some(function (r) { return r.kind === kind && String(r.id) === String(targetId); });
+    if (already) return false;
+
+    var label = kind === 'invoice'
+      ? (function () {
+          var i = invoices(property).find(function (x) { return _invoiceKeyOf(x) === String(targetId); });
+          return i ? (i.vendorName + ' ' + _money(i.amount)) : 'invoice';
+        })()
+      : (function () {
+          var t = (property.timeline || []).find(function (x) { return String(x.id) === String(targetId); });
+          return t ? (t.title || t.type) : 'record';
+        })();
+
+    var next = _linksOf(ev).concat([{ kind: kind, id: String(targetId) }]);
+    var PT = window.PropertyTimeline;
+    if (PT && PT.amendRelated) PT.amendRelated(ev, next, label);
+    else ev.relatedTo = next;   // degraded, but never silently lost
+
+    try { if (window.savePropertyData) window.savePropertyData(); } catch (_) {}
+    renderPropertyPage(property);
+    return true;
+  }
+
+  function unlinkRecord(eventId, kind, targetId) {
+    var property = window.currentProperty && window.currentProperty();
+    if (!property) return false;
+    var ev = (property.timeline || []).find(function (x) { return String(x.id) === String(eventId); });
+    if (!ev) return false;
+    var next = _linksOf(ev).filter(function (r) { return !(r.kind === kind && String(r.id) === String(targetId)); });
+    if (next.length === _linksOf(ev).length) return false;
+    var PT = window.PropertyTimeline;
+    if (PT && PT.amendRelated) PT.amendRelated(ev, next, null, true);
+    else ev.relatedTo = next;
+    try { if (window.savePropertyData) window.savePropertyData(); } catch (_) {}
+    renderPropertyPage(property);
+    return true;
+  }
+
+  // The picker. Offers every OTHER property record and every invoice, minus
+  // whatever is already in this story — a list that offers what you already
+  // have is a list people stop reading.
+  function openLinkPicker(eventId) {
+    var property = window.currentProperty && window.currentProperty();
+    if (!property) return;
+    var story = relatedGroup(property, eventId);
+    var haveE = {}, haveI = {};
+    story.events.forEach(function (e) { haveE[String(e.id)] = 1; });
+    story.invoices.forEach(function (i) { haveI[_invoiceKeyOf(i)] = 1; });
+
+    var evOpts = propertyRecords(property)
+      .filter(function (e) { return !haveE[String(e.id)]; })
+      .slice(0, 60)
+      .map(function (e) {
+        return '<option value="event:' + _esc(e.id) + '">' + _esc((e.title || e.type) + '  —  ' + _fmtDate(e.timestamp)) + '</option>';
+      }).join('');
+    var invOpts = invoices(property)
+      .filter(function (i) { return !haveI[_invoiceKeyOf(i)]; })
+      .slice(0, 60)
+      .map(function (i) {
+        return '<option value="invoice:' + _esc(_invoiceKeyOf(i)) + '">' + _esc(i.vendorName + '  —  ' + _money(i.amount)) + '</option>';
+      }).join('');
+
+    var old = _d('posLinkOverlay'); if (old) old.remove();
+    var ov = document.createElement('div');
+    ov.id = 'posLinkOverlay'; ov.className = 'pos-link-ov';
+    ov.innerHTML =
+      '<div class="pos-link-box" role="dialog" aria-modal="true" aria-label="Link a related record">' +
+        '<div class="pos-link-head">Link a related record' +
+          '<button type="button" class="pos-link-x" id="posLinkX" aria-label="Close">\u2715</button></div>' +
+        '<p class="pos-link-sub">Connect the warranty, the invoice, the inspection and the photos to the job they belong to, so the building remembers them as one thing.</p>' +
+        (evOpts || invOpts
+          ? '<select class="pos-link-sel" id="posLinkSel">' +
+              (evOpts ? '<optgroup label="Property records">' + evOpts + '</optgroup>' : '') +
+              (invOpts ? '<optgroup label="Invoices">' + invOpts + '</optgroup>' : '') +
+            '</select>' +
+            '<div class="pos-link-acts">' +
+              '<button type="button" class="pos-link-cancel" id="posLinkCancel">Cancel</button>' +
+              '<button type="button" class="pos-link-go" id="posLinkGo" data-ev="' + _esc(eventId) + '">Link</button>' +
+            '</div>'
+          : '<div class="pos-empty">Nothing left to link — everything on this property is already part of this story.</div>') +
+      '</div>';
+    document.body.appendChild(ov);
+    var close = function () { ov.remove(); };
+    _d('posLinkX').onclick = close;
+    if (_d('posLinkCancel')) _d('posLinkCancel').onclick = close;
+    ov.addEventListener('click', function (e) { if (e.target === ov) close(); });
+    if (_d('posLinkGo')) _d('posLinkGo').onclick = function () {
+      var v = (_d('posLinkSel') || {}).value || '';
+      var ix = v.indexOf(':');
+      if (ix < 0) { close(); return; }
+      close();
+      linkRecord(this.dataset.ev, v.slice(0, ix), v.slice(ix + 1));
+    };
+  }
+
+  function _applyFilter(records, property) {
+    var storyIds = null;
+    if (_filter.system && property) {
+      storyIds = {};
+      systemStory(property, _filter.system).events.forEach(function (e) { storyIds[String(e.id)] = 1; });
+    }
     return records.filter(function (e) {
-      if (_filter.system) {
-        if (!(e.subject && e.subject.type === 'system' && e.subject.id === _filter.system)) return false;
-      }
+      if (storyIds && !storyIds[String(e.id)]) return false;
       if (_filter.cat !== 'all' && (e.category || '') !== _filter.cat) return false;
       return true;
     });
@@ -343,7 +595,7 @@ window.PropertyOS = (function () {
 
     // ── Property Records — the operating surface ──────────────────────────
     var allRecs  = propertyRecords(property);
-    var shown    = _applyFilter(allRecs);
+    var shown    = _applyFilter(allRecs, property);
     var PT       = window.PropertyTimeline;
     var catKeys  = (PT && PT.propertyCategories) || [];
     // Only offer a chip for a category that exists here or is a building-level
@@ -366,11 +618,31 @@ window.PropertyOS = (function () {
         return chip(k, d.label || k, present[k] || 0, _filter.cat === k);
       }).join('') + '</div>';
 
-    var sysFilterHtml = _filter.system
-      ? '<div class="pos-filter-note">Showing <b>' + _esc(systemLabel(_filter.system) || _filter.system) +
-        '</b> only <button type="button" class="pos-clear" onclick="PropertyOS.setRecordFilter(\'' +
-        _esc(_filter.cat) + '\', null)">Clear</button></div>'
-      : '';
+    // Clicking a Building System must END the search, not start one: everything
+    // about the Roof, in one place. That is the records whose subject IS the
+    // system, PLUS the invoices tagged to it, PLUS anything linked into those
+    // stories — an invoice attached to the roof job belongs under Roof even if
+    // only the job carries the tag.
+    var sysFilterHtml = '';
+    if (_filter.system) {
+      var story = systemStory(property, _filter.system);
+      var sysInvTotal = story.invoices.reduce(function (t, i) { return t + i.amount; }, 0);
+      sysFilterHtml = '<div class="pos-filter-note">Showing <b>' +
+        _esc(systemLabel(_filter.system) || _filter.system) + '</b> \u2014 ' +
+        story.events.length + ' record' + (story.events.length !== 1 ? 's' : '') +
+        (story.invoices.length ? ', ' + story.invoices.length + ' invoice' +
+          (story.invoices.length !== 1 ? 's' : '') + ' (' + _esc(_money(sysInvTotal)) + ')' : '') +
+        ' <button type="button" class="pos-clear" onclick="PropertyOS.setRecordFilter(\'' +
+        _esc(_filter.cat) + '\', null)">Clear</button></div>' +
+        (story.invoices.length
+          ? '<div class="pos-rel-list pos-sys-invs">' + story.invoices.map(function (i) {
+              return '<div class="pos-rel-row"><span class="pos-rel-ic">\u{1F9FE}</span>' +
+                '<span class="pos-rel-t">' + _esc(i.vendorName) + '</span>' +
+                '<span class="pos-rel-m">Invoice \u00b7 ' + _esc(_money(i.amount)) + '</span>' +
+                '<span class="pos-rel-w">' + _esc(i.invoiceDate ? _fmtDate(i.invoiceDate) : '') + '</span></div>';
+            }).join('') + '</div>'
+          : '');
+    }
 
     var recHtml = shown.length
       ? '<div class="pos-recs">' + shown.slice(0, 40).map(function (e) {
@@ -390,6 +662,7 @@ window.PropertyOS = (function () {
               (by ? '<span class="pos-rec-by">Recorded by ' + _esc(by) + '</span>' : '') +
             '</div>' +
             (e.description ? '<div class="pos-rec-note">' + _esc(e.description) + '</div>' : '') +
+            _relatedHtml(property, e) +
             _revHtml(e) +
             (atts.length ? '<div class="pos-rec-att">' + atts.map(function (a) {
               return '<a class="pos-doc" href="' + _esc(a.url) + '" target="_blank" rel="noopener">' +
@@ -449,6 +722,29 @@ window.PropertyOS = (function () {
       '.pos-rec-cat{color:' + gold + ';}',
       '.pos-rec-note{margin-top:6px;font-size:0.79rem;color:var(--text-3,#94A3B8);line-height:1.5;}',
       '.pos-rec-att{display:flex;flex-wrap:wrap;gap:6px;margin-top:8px;}',
+      '.pos-rel{margin-top:9px;padding-top:8px;border-top:1px solid rgba(var(--line-rgb,255,255,255),0.06);}',
+      '.pos-rel-head{display:flex;align-items:center;gap:8px;font-size:0.72rem;font-weight:600;color:var(--text-3,#94A3B8);margin-bottom:5px;}',
+      '.pos-rel-n{font-weight:500;color:var(--text-4,#64748B);}',
+      '.pos-rel-add{margin-left:auto;font:600 0.7rem/1 inherit;color:' + gold + ';background:rgba(201,151,58,0.1);border:1px solid rgba(201,151,58,0.35);border-radius:6px;padding:4px 9px;cursor:pointer;min-height:26px;}',
+      '.pos-rel-add:hover{background:rgba(201,151,58,0.2);}',
+      '.pos-rel-empty{font-size:0.72rem;color:var(--text-4,#64748B);line-height:1.5;}',
+      '.pos-rel-list{display:flex;flex-direction:column;gap:3px;}',
+      '.pos-rel-row{display:flex;align-items:center;gap:8px;font-size:0.74rem;padding:4px 0;}',
+      '.pos-rel-t{color:var(--text-2,#CBD5E1);font-weight:600;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;}',
+      '.pos-rel-m{color:var(--text-4,#64748B);white-space:nowrap;}',
+      '.pos-rel-w{color:var(--text-4,#64748B);margin-left:auto;white-space:nowrap;}',
+      '.pos-rel-x{background:none;border:none;color:var(--text-4,#64748B);cursor:pointer;font-size:0.7rem;padding:2px 4px;}',
+      '.pos-rel-x:hover{color:var(--c-f87171,#f87171);}',
+      '.pos-sys-invs{margin:6px 0 10px;}',
+      '.pos-link-ov{position:fixed;inset:0;z-index:9600;background:rgba(0,0,0,0.66);display:flex;align-items:center;justify-content:center;padding:18px;}',
+      '.pos-link-box{background:var(--theme-panel,#11161F);border:1px solid rgba(var(--line-rgb,255,255,255),0.12);border-radius:12px;padding:18px;max-width:520px;width:100%;}',
+      '.pos-link-head{display:flex;align-items:center;font-size:0.95rem;font-weight:700;color:var(--text-1,#E2E8F0);margin-bottom:6px;}',
+      '.pos-link-x{margin-left:auto;background:none;border:none;color:var(--text-4,#64748B);font-size:0.95rem;cursor:pointer;}',
+      '.pos-link-sub{font-size:0.78rem;color:var(--text-3,#94A3B8);line-height:1.55;margin:0 0 12px;}',
+      '.pos-link-sel{width:100%;box-sizing:border-box;padding:9px 10px;border-radius:8px;border:1px solid rgba(var(--line-rgb,255,255,255),0.16);background:var(--theme-surface,#0d1218);color:var(--text-1,#E2E8F0);font-size:0.84rem;}',
+      '.pos-link-acts{display:flex;gap:9px;justify-content:flex-end;margin-top:14px;}',
+      '.pos-link-cancel{padding:8px 16px;border-radius:7px;font:600 0.8rem/1 inherit;background:rgba(var(--line-rgb,255,255,255),0.04);border:1px solid rgba(var(--line-rgb,255,255,255),0.1);color:var(--text-3,#94A3B8);cursor:pointer;}',
+      '.pos-link-go{padding:8px 16px;border-radius:7px;font:700 0.8rem/1 inherit;background:' + gold + ';border:1px solid ' + gold + ';color:#07090C;cursor:pointer;}',
       '.pos-revs{margin-top:8px;}',
       '.pos-revs>summary{font-size:0.72rem;color:var(--text-4,#64748B);cursor:pointer;list-style:none;}',
       '.pos-revs>summary::-webkit-details-marker{display:none;}',
@@ -519,6 +815,8 @@ window.PropertyOS = (function () {
   return {
     BUILDING_SYSTEMS: BUILDING_SYSTEMS, systemLabel: systemLabel,
     setRecordFilter: setRecordFilter, addRecord: addRecord, propertyRecords: propertyRecords,
+    relatedGroup: relatedGroup, systemStory: systemStory,
+    linkRecord: linkRecord, unlinkRecord: unlinkRecord, openLinkPicker: openLinkPicker,
     invoices: invoices, setInvoiceRelation: setInvoiceRelation,
     init: init, renderPropertyPage: renderPropertyPage,
   };

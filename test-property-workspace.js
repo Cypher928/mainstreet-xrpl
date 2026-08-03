@@ -391,6 +391,118 @@ const CLICK_LABEL = function (rx) {
   check('saving without changing anything adds no revision',
         noop.after === noop.before, `${noop.before} → ${noop.after}`);
 
+  // ── Related Items — the connective tissue ────────────────────────────────
+  // A roof replacement is one story, not six records. Built here as a CHAIN
+  // rather than a star, deliberately: the warranty links to the invoice, the
+  // invoice links to the job. If the story were only immediate neighbours,
+  // opening the warranty would show the invoice and stop — and "one connected
+  // story" would only be true when you happened to start at the anchor.
+  const story = await page.evaluate(async () => {
+    const p = _props[0];
+    p.timeline = [];
+    p.invoices = [{ vendorName: 'Apex Roofing', amount: 84500, invoiceDate: '2026-05-02', system: 'roof' }];
+
+    const mk = (title, cat, sys) => appendPropertyTimelineEvent(p, {
+      manual: true, type: 'manual_' + cat, category: cat, title: title,
+      timestamp: new Date().toISOString(),
+      subject: sys ? { type: 'system', id: sys, label: sys } : { type: 'property', id: p.id },
+      actor: 'dana@example.com', metadata: { recordedBy: 'dana@example.com' },
+    });
+    const job        = mk('Roof replaced — full tear-off', 'capital_improvement', 'roof');
+    const warranty   = mk('Roof membrane warranty — 20 year', 'warranty', 'roof');
+    const inspection = mk('Post-installation roof inspection', 'inspection', 'roof');
+    const photos     = mk('Roof photos — before and after', 'building_photo', null);
+    const claim      = mk('Insurance claim #4471 — storm damage', 'insurance', null);
+
+    PropertyOS.renderPropertyPage(p);
+    // A chain: claim → photos → inspection → warranty → invoice → job
+    PropertyOS.linkRecord(warranty.id, 'event', job.id);
+    PropertyOS.linkRecord(inspection.id, 'event', warranty.id);
+    PropertyOS.linkRecord(photos.id, 'event', inspection.id);
+    PropertyOS.linkRecord(claim.id, 'event', photos.id);
+    PropertyOS.linkRecord(job.id, 'invoice', '0');
+
+    const fromJob   = PropertyOS.relatedGroup(p, job.id);
+    const fromClaim = PropertyOS.relatedGroup(p, claim.id);
+    const unrelated = mk('2026 assessment notice', 'real_estate_taxes', null);
+    const fromUnrelated = PropertyOS.relatedGroup(p, unrelated.id);
+
+    return {
+      ids: { job: job.id, warranty: warranty.id, claim: claim.id },
+      fromJobEvents: fromJob.events.length, fromJobInvoices: fromJob.invoices.length,
+      fromClaimEvents: fromClaim.events.length, fromClaimInvoices: fromClaim.invoices.length,
+      fromClaimTitles: fromClaim.events.map(e => e.title),
+      unrelatedEvents: fromUnrelated.events.length,
+      linkRev: (p.timeline.find(e => e.id === warranty.id).revisions || []).map(r => r.action),
+      linkNote: (p.timeline.find(e => e.id === warranty.id).revisions || []).slice(-1)[0].note,
+      linkBy: (p.timeline.find(e => e.id === warranty.id).revisions || []).slice(-1)[0].by,
+      strayStores: Object.keys(p).filter(k => /^(links|relations|graph|edges)$/i.test(k)),
+    };
+  });
+
+  check('the whole story is reachable from the job', story.fromJobEvents === 5,
+        story.fromJobEvents + ' events');
+  check('including the contractor invoice', story.fromJobInvoices === 1, String(story.fromJobInvoices));
+  check('and the SAME story is reachable from the far end of the chain',
+        story.fromClaimEvents === 5 && story.fromClaimInvoices === 1,
+        `${story.fromClaimEvents} events / ${story.fromClaimInvoices} invoices`);
+  check('opening the insurance claim shows the roof job itself',
+        story.fromClaimTitles.some(t => /Roof replaced/.test(t)), story.fromClaimTitles.join(' | '));
+  check('an unrelated record is a story of one — links do not leak',
+        story.unrelatedEvents === 1, String(story.unrelatedEvents));
+  check('linking is recorded as an amendment, not a silent write',
+        story.linkRev.includes('linked'), story.linkRev.join(','));
+  check('the history names what was linked and who linked it',
+        /Linked to/.test(story.linkNote || '') && story.linkBy === 'dana@example.com',
+        `${story.linkNote} — ${story.linkBy}`);
+  check('no link store appeared beside the timeline',
+        story.strayStores.length === 0, story.strayStores.join(','));
+
+  // Links are stored one way and read both ways — no second copy to drift.
+  const oneWay = await page.evaluate((ids) => {
+    const p = _props[0];
+    const job = p.timeline.find(e => e.id === ids.job);
+    const warranty = p.timeline.find(e => e.id === ids.warranty);
+    return {
+      jobLinks: (job.relatedTo || []).map(r => r.kind + ':' + r.id),
+      warrantyLinks: (warranty.relatedTo || []).map(r => r.kind + ':' + r.id),
+      jobSeesWarranty: PropertyOS.relatedGroup(p, ids.job).events.some(e => e.id === ids.warranty),
+    };
+  }, story.ids);
+  check('the reverse direction is computed, not stored twice',
+        !oneWay.jobLinks.includes('event:' + story.ids.warranty), oneWay.jobLinks.join(','));
+  check('yet the job still sees the warranty', oneWay.jobSeesWarranty);
+
+  // ── clicking a Building System ends the search ───────────────────────────
+  const roofView = await page.evaluate(() => {
+    PropertyOS.setRecordFilter('all', 'roof');
+    const body = document.getElementById('propertyOsBody');
+    return {
+      recs: body.querySelectorAll('.pos-rec').length,
+      note: (body.querySelector('.pos-filter-note') || {}).textContent || '',
+      invRows: body.querySelectorAll('.pos-sys-invs .pos-rel-row').length,
+      text: (body.innerText || body.textContent || '').replace(/\s+/g, ' ').trim(),
+    };
+  });
+  check('clicking Roof shows the whole roof story, not only system-tagged records',
+        roofView.recs === 5, roofView.recs + ' records');
+  check('including records never tagged to Roof but linked into the job',
+        /Insurance claim/.test(roofView.text) && /Roof photos/.test(roofView.text));
+  check('and the roof invoices, with their total',
+        roofView.invRows === 1 && /\$84,500/.test(roofView.note), roofView.note.trim().slice(0, 90));
+
+  // ── unlink ───────────────────────────────────────────────────────────────
+  const unlinked = await page.evaluate((ids) => {
+    PropertyOS.setRecordFilter('all', null);
+    const p = _props[0];
+    PropertyOS.unlinkRecord(ids.warranty, 'event', ids.job);
+    const g = PropertyOS.relatedGroup(p, ids.job);
+    const w = p.timeline.find(e => e.id === ids.warranty);
+    return { fromJob: g.events.length, lastAction: (w.revisions || []).slice(-1)[0].action };
+  }, story.ids);
+  check('unlinking splits the story', unlinked.fromJob === 1, String(unlinked.fromJob));
+  check('and is itself recorded in the history', unlinked.lastAction === 'unlinked', unlinked.lastAction);
+
   check('no uncaught errors across the workspace', errs.length === 0,
         errs.slice(0, 2).join(' | ') || 'clean');
 

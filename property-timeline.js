@@ -297,6 +297,34 @@ window.PropertyTimeline = (function () {
     return true;
   }
 
+  /**
+   * Linking is an edit, and edits are recorded. Who connected the invoice to
+   * the roof job, and when, belongs in the history for exactly the reason every
+   * other change does — otherwise the connective tissue is the one part of the
+   * record with no provenance.
+   */
+  function _amendRelated(ev, nextLinks, label, removed) {
+    if (!ev) return false;
+    if (!Array.isArray(ev.revisions) || !ev.revisions.length) {
+      ev.revisions = [{
+        at: ev.timestamp,
+        by: (ev.metadata && ev.metadata.recordedBy) || ev.actor || 'Unknown',
+        action: 'created',
+        snapshot: { title: ev.title, description: ev.description, category: ev.category,
+                    timestamp: ev.timestamp, subject: ev.subject ? Object.assign({}, ev.subject) : null,
+                    relatedTo: (ev.relatedTo || []).slice() },
+      }];
+    }
+    ev.relatedTo = nextLinks;
+    ev.revisions.push({
+      at: new Date().toISOString(), by: _who(),
+      action: removed ? 'unlinked' : 'linked',
+      changes: [],
+      note: removed ? 'Removed a link' : ('Linked to ' + (label || 'a related record')),
+    });
+    return true;
+  }
+
   function openAddEntry(property, existing) {
     property = property || (window.currentProperty && window.currentProperty());
     if (!property) { _toast('Open a property first', 'err'); return; }
@@ -594,6 +622,7 @@ window.PropertyTimeline = (function () {
     viewSource: viewSource,
     openAddEntry: openAddEntry,
     amendEvent: _amendEvent,
+    amendRelated: _amendRelated,
     openEditEntry: openEditEntry,
     closeModal: closeModal,
     categories: MANUAL_CATEGORIES,
