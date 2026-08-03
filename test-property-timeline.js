@@ -69,7 +69,17 @@ srv.listen(PORT, '127.0.0.1', async () => {
     reg.exists ? ok('window.PropertyTimeline loaded') : bad('module missing');
     (reg.maint && reg.maint.label === 'Maintenance') ? ok('describe() resolves manual category → "Maintenance"') : bad('describe manual', JSON.stringify(reg.maint));
     (reg.lease && reg.lease.label === 'Lease') ? ok('describe() resolves auto type → "Lease"') : bad('describe auto', JSON.stringify(reg.lease));
-    (reg.cats && reg.cats.includes('maintenance') && reg.cats.includes('capital_improvement') && reg.cats.length === 11) ? ok('11 property-management categories registered') : bad('categories', JSON.stringify(reg.cats));
+    // 11 tenancy/operations categories, plus the 8 building-level ones the
+    // Property Workspace added (taxes, financing, survey, site plan, building
+    // plan, environmental, photo, warranty). They live on ONE registry on
+    // purpose — a building category is a category on the same timeline, not a
+    // new store. docs/PROPERTY_WORKSPACE.md.
+    var _needCats = ['maintenance', 'capital_improvement', 'real_estate_taxes', 'mortgage_financing',
+      'survey', 'site_plan', 'building_plan', 'environmental', 'building_photo', 'warranty'];
+    var _missCats = _needCats.filter(function (k) { return !(reg.cats || []).includes(k); });
+    (reg.cats && !_missCats.length && reg.cats.length === 19)
+      ? ok('19 categories registered — 11 operational + 8 building-level')
+      : bad('categories', 'missing: ' + (_missCats.join(',') || 'none') + ' | n=' + (reg.cats || []).length);
 
     sec('Schema defaults (additive, back-compatible)');
     const sch = await page.evaluate(() => {

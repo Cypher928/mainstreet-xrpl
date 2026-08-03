@@ -45,8 +45,28 @@ window.PropertyTimeline = (function () {
     { key: 'payment',             label: 'Payment',             icon: '\u{1F4B5}' },        // 💵
     { key: 'inspection',          label: 'Inspection',          icon: '\u{1F50D}' },        // 🔍
     { key: 'capital_improvement', label: 'Capital Improvement', icon: '\u{1F3D7}\u{FE0F}' },// 🏗️
+    // Building-level records. These are what makes the Property tab the
+    // operating system for the building rather than a report about it — and
+    // they are CATEGORIES on the one timeline, not new stores. Adding an
+    // entry here is the whole of "supporting Real Estate Taxes"; nothing else
+    // needs to know.
+    { key: 'real_estate_taxes',   label: 'Real Estate Taxes',   icon: '\u{1F3DB}\u{FE0F}' },// 🏛️
+    { key: 'mortgage_financing',  label: 'Mortgage / Financing',icon: '\u{1F3E6}' },        // 🏦
+    { key: 'survey',              label: 'Survey',              icon: '\u{1F4CF}' },        // 📏
+    { key: 'site_plan',           label: 'Site Plan',           icon: '\u{1F5FA}\u{FE0F}' },// 🗺️
+    { key: 'building_plan',       label: 'Building Plan',       icon: '\u{1F4D0}' },        // 📐
+    { key: 'environmental',       label: 'Environmental Report',icon: '\u{1F33F}' },        // 🌿
+    { key: 'building_photo',      label: 'Building Photo',      icon: '\u{1F5BC}\u{FE0F}' },// 🖼️
+    { key: 'warranty',            label: 'Warranty',            icon: '\u{1F6E1}\u{FE0F}' },// 🛡️
     { key: 'other',               label: 'Other',               icon: '\u{1F4CC}' },        // 📌
   ];
+
+  // Categories that describe the BUILDING rather than a tenancy. Used by the
+  // Property Records filter; a category absent from this list still works, it
+  // just is not offered as a building-level filter chip.
+  var PROPERTY_CATEGORIES = ['real_estate_taxes', 'insurance', 'mortgage_financing', 'survey',
+    'site_plan', 'building_plan', 'environmental', 'capital_improvement', 'building_photo',
+    'warranty', 'inspection', 'vendor'];
   MANUAL_CATEGORIES.forEach(function (c) { registerType(c.key, { label: c.label, icon: c.icon, group: 'manual' }); });
 
   // Existing auto types (so they render through the same registry path).
@@ -185,6 +205,14 @@ window.PropertyTimeline = (function () {
     openAddEntry(p, e);
   }
 
+  // The signed-in user, by the same route the Space workspace uses.
+  function _who() {
+    try {
+      var u = window.AuthService && AuthService.getCurrentUser && AuthService.getCurrentUser();
+      return (u && (u.email || u.name)) || 'Property Manager';
+    } catch (_) { return 'Property Manager'; }
+  }
+
   function openAddEntry(property, existing) {
     property = property || (window.currentProperty && window.currentProperty());
     if (!property) { _toast('Open a property first', 'err'); return; }
@@ -209,6 +237,25 @@ window.PropertyTimeline = (function () {
         _spaces.map(function (t) { return '<option value="' + _esc(t.id) + '"' + (_curSpace === String(t.id) ? ' selected' : '') + '>' + _esc(t.tenant_name || t.id) + '</option>'; }).join('') +
         '</select></div>'
       : '';
+
+    // Building system (subject) — the piece the subject model always supported
+    // and the UI never offered. property-os.js has counted
+    // subject.type === 'system' events since it shipped; nothing could create
+    // one. This is how a warranty gets attached to the Roof.
+    //
+    // A record has ONE subject. Space and System are mutually exclusive, and
+    // choosing one clears the other rather than silently winning — a warranty
+    // that claims to be both Suite 210 and the HVAC is not a record anyone can
+    // act on.
+    var _systems = (window.PropertyOS && PropertyOS.BUILDING_SYSTEMS) || [];
+    var _curSys = isEdit ? String((existing.subject && existing.subject.type === 'system' && existing.subject.id) || '') : '';
+    var _sysFieldHtml = _systems.length
+      ? '<div class="ptl-field"><label class="ptl-label" for="ptlSystem">Building system (optional)</label>' +
+        '<select class="ptl-input" id="ptlSystem"><option value="">Not system-specific</option>' +
+        _systems.map(function (sy) { return '<option value="' + _esc(sy.key) + '"' + (_curSys === String(sy.key) ? ' selected' : '') + '>' + _esc(sy.label) + '</option>'; }).join('') +
+        '</select>' +
+        '<div class="ptl-hint" id="ptlSubjHint">Warranties, inspections and repairs belong to a system.</div></div>'
+      : '';
     var curResp = isEdit ? (existing.responsibility || 'na') : 'na';
     var curTitle = isEdit ? (existing.title || '') : '';
     var curNotes = isEdit ? (existing.description || '') : '';
@@ -229,6 +276,7 @@ window.PropertyTimeline = (function () {
           '<div class="ptl-field"><label class="ptl-label" for="ptlCat">Category</label>' +
             '<select class="ptl-input" id="ptlCat">' + catOpts + '</select></div>' +
           _spaceFieldHtml +
+          _sysFieldHtml +
           // 3. Date
           '<div class="ptl-field"><label class="ptl-label" for="ptlDate">Date</label>' +
             '<input class="ptl-input" type="date" id="ptlDate" value="' + curDate + '"></div>' +
@@ -270,6 +318,16 @@ window.PropertyTimeline = (function () {
     document.getElementById('ptlAddPdf').onclick = function () { _pickFiles('pdf', 'application/pdf'); };
     document.getElementById('ptlAddPhoto').onclick = function () { _pickFiles('photo', 'image/*'); };
     document.getElementById('ptlTitle').addEventListener('input', _syncSave);
+
+    // One subject per record: picking a Space clears the System and vice versa.
+    // Enforced in the form, so the user sees which one they chose rather than
+    // discovering later that the other silently won.
+    var _sp = document.getElementById('ptlSpace');
+    var _sy = document.getElementById('ptlSystem');
+    if (_sp && _sy) {
+      _sp.addEventListener('change', function () { if (_sp.value) _sy.value = ''; });
+      _sy.addEventListener('change', function () { if (_sy.value) _sp.value = ''; });
+    }
     document.getElementById('ptlSave').onclick = function () { _save(property, isEdit ? existing : null); };
     _syncSave();
     setTimeout(function () { var el = document.getElementById('ptlTitle'); if (el) el.focus(); }, 40);
@@ -293,7 +351,14 @@ window.PropertyTimeline = (function () {
     var spaceEl  = document.getElementById('ptlSpace');
     var spaceId  = spaceEl ? (spaceEl.value || '') : '';
     var spaceLabel = (spaceId && spaceEl && spaceEl.options[spaceEl.selectedIndex]) ? spaceEl.options[spaceEl.selectedIndex].text : '';
-    var subject  = spaceId ? { type: 'suite', id: spaceId, label: spaceLabel } : null;
+    var sysEl    = document.getElementById('ptlSystem');
+    var sysId    = sysEl ? (sysEl.value || '') : '';
+    var sysLabel = (sysId && window.PropertyOS && PropertyOS.systemLabel) ? PropertyOS.systemLabel(sysId) : '';
+    // One subject per record. A space wins if somehow both are set, because the
+    // space is the narrower claim — but the form clears the other on change, so
+    // this is a guard rather than a policy.
+    var subject  = spaceId ? { type: 'suite', id: spaceId, label: spaceLabel }
+                 : (sysId ? { type: 'system', id: sysId, label: sysLabel } : null);
 
     var timestamp;
     try { timestamp = dateVal ? new Date(dateVal + 'T12:00:00').toISOString() : new Date().toISOString(); }
@@ -336,7 +401,11 @@ window.PropertyTimeline = (function () {
         title: title, description: notes, timestamp: timestamp,
         responsibility: responsibility, leaseRef: leaseRef, attachments: finalAtt,
         tenantId: spaceId || null, subject: subject || undefined,
-        actor: 'Property Manager',
+        // Who recorded it, mirroring the Space workspace. 'Property Manager'
+        // was a placeholder that named nobody; metadata.recordedBy is what
+        // every Space record already carries and what the UI already reads.
+        actor: _who(),
+        metadata: { recordedBy: _who() },
       });
     }
 
@@ -355,6 +424,7 @@ window.PropertyTimeline = (function () {
     var css = [
       '.tl-add-btn{font:700 0.72rem/1 inherit;color:' + gold + ';background:rgba(201,151,58,0.12);border:1px solid rgba(201,151,58,0.4);border-radius:7px;padding:6px 11px;cursor:pointer;margin-right:8px;min-height:30px;}',
       '.tl-add-btn:hover{background:rgba(201,151,58,0.2);}',
+      '.ptl-hint{font-size:0.7rem;color:var(--text-4,#64748B);margin-top:4px;}',
       '.tl-open-space{font:700 0.72rem/1 inherit;color:#07090C;background:' + gold + ';border:1px solid ' + gold + ';border-radius:8px;padding:7px 11px;cursor:pointer;white-space:nowrap;min-height:34px;}',
       '.tl-open-space:hover{filter:brightness(1.08);}',
       '.tl-edit-btn{font:600 0.68rem/1 inherit;color:var(--text-4,#64748B);background:none;border:1px solid rgba(var(--line-rgb,255,255,255),0.14);border-radius:6px;padding:4px 8px;cursor:pointer;min-height:26px;}',
@@ -438,6 +508,7 @@ window.PropertyTimeline = (function () {
     openEditEntry: openEditEntry,
     closeModal: closeModal,
     categories: MANUAL_CATEGORIES,
+    propertyCategories: PROPERTY_CATEGORIES,
     _registry: REGISTRY,
   };
 })();

@@ -147,6 +147,43 @@ window.PropertyOS = (function () {
   }
 
   // ── Property page ───────────────────────────────────────────────────────────
+  // ── Property Records ────────────────────────────────────────────────────────
+  // ONE surface over ONE store. Categories are a filter, not screens, and every
+  // record below is a property-scoped timeline event — the same events the
+  // Building Systems grid counts and the Property documents list draws files
+  // from. Nothing here has its own array. docs/PROPERTY_WORKSPACE.md.
+  var _filter = { cat: 'all', system: null };
+  var _docIcon = function () { return '\u{1F4C4}'; };
+
+  function setRecordFilter(cat, system) {
+    _filter = { cat: cat || 'all', system: system || null };
+    renderPropertyPage();
+  }
+
+  // Every property-scoped event: the building as a whole, plus each system.
+  // Space-scoped events belong to the Space workspace and are deliberately out.
+  function propertyRecords(property) {
+    return (property.timeline || [])
+      .filter(function (e) {
+        if (!e) return false;
+        var t = e.subject && e.subject.type;
+        return !e.subject || t === 'property' || t === 'system';
+      })
+      .sort(function (a, b) {
+        return (new Date(b.timestamp).getTime() || 0) - (new Date(a.timestamp).getTime() || 0);
+      });
+  }
+
+  function _applyFilter(records) {
+    return records.filter(function (e) {
+      if (_filter.system) {
+        if (!(e.subject && e.subject.type === 'system' && e.subject.id === _filter.system)) return false;
+      }
+      if (_filter.cat !== 'all' && (e.category || '') !== _filter.cat) return false;
+      return true;
+    });
+  }
+
   function _sec(title, count, body) {
     return '<section class="pos-sec"><div class="pos-sec-head"><span class="pos-sec-title">' + _esc(title) + '</span>' +
       (count != null ? '<span class="pos-sec-count">' + count + '</span>' : '') + '</div>' +
@@ -212,7 +249,11 @@ window.PropertyOS = (function () {
       var n = invs.filter(function (i) { return i.system === s.key; }).length;
       var ev = tl.filter(function (e) { return e && e.subject && e.subject.type === 'system' && e.subject.id === s.key; }).length;
       var tot = n + ev;
-      return '<div class="pos-sys-cell' + (tot ? ' pos-sys-cell--on' : '') + '"><span class="pos-sys-ic">' + s.icon + '</span>' +
+      return '<div class="pos-sys-cell' + (tot ? ' pos-sys-cell--on' : '') +
+        (_filter.system === s.key ? ' pos-sys-cell--sel' : '') + '" role="button" tabindex="0"' +
+        ' data-sys="' + _esc(s.key) + '"' +
+        ' onclick="PropertyOS.setRecordFilter(\'all\', this.dataset.sys)"' +
+        ' title="Show only records for this system"><span class="pos-sys-ic">' + s.icon + '</span>' +
         '<span class="pos-sys-l">' + _esc(s.label) + '</span>' +
         '<span class="pos-sys-n">' + (tot ? tot + ' record' + (tot !== 1 ? 's' : '') : '—') + '</span></div>';
     }).join('') + '</div>';
@@ -227,7 +268,7 @@ window.PropertyOS = (function () {
     invs.forEach(function (i) { if (i.fileUrl && !i.spaceId) docs.push({ name: i.fileName || i.vendorName, url: i.fileUrl, kind: 'invoice', when: i.invoiceDate }); });
     // Demo property: show the document set a real building would keep on file.
     if (PR) docs = docs.concat(PR.propertyDocumentsFor(property));
-    var _docIcon = function (k) {
+    _docIcon = function (k) {
       return k === 'photo' ? '\u{1F5BC}\u{FE0F}' : (k === 'invoice' ? '\u{1F9FE}'
         : (k === 'warranty' ? '\u{1F6E1}\u{FE0F}' : (k === 'plan' ? '\u{1F4D0}' : '\u{1F4C4}')));
     };
@@ -272,13 +313,87 @@ window.PropertyOS = (function () {
       }
     }
 
+    // ── Property Records — the operating surface ──────────────────────────
+    var allRecs  = propertyRecords(property);
+    var shown    = _applyFilter(allRecs);
+    var PT       = window.PropertyTimeline;
+    var catKeys  = (PT && PT.propertyCategories) || [];
+    // Only offer a chip for a category that exists here or is a building-level
+    // one — a filter that always returns nothing teaches people not to use it.
+    var present  = {};
+    allRecs.forEach(function (e) { if (e.category) present[e.category] = (present[e.category] || 0) + 1; });
+    var chipKeys = catKeys.filter(function (k) { return present[k]; });
+    Object.keys(present).forEach(function (k) { if (chipKeys.indexOf(k) < 0) chipKeys.push(k); });
+
+    var chip = function (key, label, count, on) {
+      return '<button type="button" class="pos-chip' + (on ? ' pos-chip--on' : '') + '" ' +
+        'data-cat="' + _esc(key) + '" onclick="PropertyOS.setRecordFilter(this.dataset.cat, ' +
+        (_filter.system ? "'" + _esc(_filter.system) + "'" : 'null') + ')">' +
+        _esc(label) + (count != null ? ' <span class="pos-chip-n">' + count + '</span>' : '') + '</button>';
+    };
+    var chipsHtml = '<div class="pos-chips">' +
+      chip('all', 'All records', allRecs.length, _filter.cat === 'all') +
+      chipKeys.map(function (k) {
+        var d = (PT && PT.describe) ? PT.describe({ category: k, type: k }) : { label: k };
+        return chip(k, d.label || k, present[k] || 0, _filter.cat === k);
+      }).join('') + '</div>';
+
+    var sysFilterHtml = _filter.system
+      ? '<div class="pos-filter-note">Showing <b>' + _esc(systemLabel(_filter.system) || _filter.system) +
+        '</b> only <button type="button" class="pos-clear" onclick="PropertyOS.setRecordFilter(\'' +
+        _esc(_filter.cat) + '\', null)">Clear</button></div>'
+      : '';
+
+    var recHtml = shown.length
+      ? '<div class="pos-recs">' + shown.slice(0, 40).map(function (e) {
+          var d = (PT && PT.describe) ? PT.describe(e) : { label: e.type, icon: null };
+          var subj = e.subject && e.subject.type === 'system'
+            ? (systemLabel(e.subject.id) || e.subject.id) : 'Property-wide';
+          var by = (e.metadata && e.metadata.recordedBy) || e.actor || null;
+          var atts = (e.attachments || []).filter(function (a) { return a && a.url; });
+          return '<div class="pos-rec">' +
+            '<div class="pos-rec-top">' +
+              '<span class="pos-rec-t">' + _esc(e.title || d.label || e.type) + '</span>' +
+              '<span class="pos-rec-w">' + _esc(_fmtDate(e.timestamp)) + '</span>' +
+            '</div>' +
+            '<div class="pos-rec-meta">' +
+              '<span class="pos-rec-cat">' + (d.icon || '') + ' ' + _esc(d.label || e.category || e.type) + '</span>' +
+              '<span class="pos-rec-subj">' + _esc(subj) + '</span>' +
+              (by ? '<span class="pos-rec-by">Recorded by ' + _esc(by) + '</span>' : '') +
+            '</div>' +
+            (e.description ? '<div class="pos-rec-note">' + _esc(e.description) + '</div>' : '') +
+            (atts.length ? '<div class="pos-rec-att">' + atts.map(function (a) {
+              return '<a class="pos-doc" href="' + _esc(a.url) + '" target="_blank" rel="noopener">' +
+                _docIcon(a.kind) + '&nbsp;<span class="pos-doc-n">' + _esc(a.name) + '</span></a>';
+            }).join('') + '</div>' : '') +
+          '</div>';
+        }).join('') + '</div>' +
+        (shown.length > 40 ? '<div class="pos-empty">Showing 40 of ' + shown.length + '</div>' : '')
+      : _empty(allRecs.length
+          ? 'Nothing recorded under this filter yet. Choose another category, or add a record.'
+          : 'Nothing recorded for this building yet. Tax bills, insurance policies, surveys, site and building plans, environmental reports, capital improvements, photos and system warranties all live here — each one a dated entry on the property timeline.');
+
+    var addBtn = '<button type="button" class="pos-add" onclick="PropertyOS.addRecord()">\u2795 Add Record</button>';
+
     body.innerHTML =
       (infoHtml ? _sec('Property information', null, infoHtml) : '') +
+      _sec('Property records', allRecs.length, addBtn + chipsHtml + sysFilterHtml + recHtml) +
+      _sec('Building systems', null, sysHtml) +
       _sec('Financials', null, finHtml) +
       _sec('Invoice register', invs.length, regHtml) +
-      _sec('Building systems', null, sysHtml) +
       _sec('Property documents', docs.length, docHtml) +
       _sec('Property timeline', propEvents.length, tlHtml);
+  }
+
+  // Opens the EXISTING timeline modal. No new persistence, no second writer —
+  // the same path the Overview timeline uses, so a record added here is the
+  // same kind of object as one added there.
+  function addRecord() {
+    var property = window.currentProperty && window.currentProperty();
+    if (!property) return;
+    if (window.PropertyTimeline && PropertyTimeline.openAddEntry) {
+      PropertyTimeline.openAddEntry(property);
+    }
   }
 
   function injectStyles() {
@@ -286,6 +401,28 @@ window.PropertyOS = (function () {
     var gold = '#C9973A';
     var css = [
       '.pos-sec{padding:14px 0;border-bottom:1px solid rgba(var(--line-rgb,255,255,255),0.06);}',
+      // ── Property Records ──
+      '.pos-add{font:700 0.76rem/1 inherit;color:#07090C;background:' + gold + ';border:1px solid ' + gold + ';border-radius:8px;padding:9px 15px;cursor:pointer;margin-bottom:12px;min-height:36px;}',
+      '.pos-add:hover{filter:brightness(1.08);}',
+      '.pos-chips{display:flex;flex-wrap:wrap;gap:6px;margin-bottom:10px;}',
+      '.pos-chip{font:600 0.72rem/1 inherit;color:var(--text-3,#94A3B8);background:rgba(var(--line-rgb,255,255,255),0.04);border:1px solid rgba(var(--line-rgb,255,255,255),0.1);border-radius:999px;padding:6px 11px;cursor:pointer;min-height:30px;}',
+      '.pos-chip:hover{background:rgba(var(--line-rgb,255,255,255),0.09);color:var(--text-1,#E2E8F0);}',
+      '.pos-chip--on{background:rgba(201,151,58,0.15);border-color:rgba(201,151,58,0.45);color:' + gold + ';}',
+      '.pos-chip-n{opacity:0.65;font-weight:500;}',
+      '.pos-filter-note{font-size:0.76rem;color:var(--text-3,#94A3B8);margin-bottom:9px;}',
+      '.pos-clear{font:600 0.7rem/1 inherit;color:var(--text-4,#64748B);background:none;border:1px solid rgba(var(--line-rgb,255,255,255),0.14);border-radius:6px;padding:3px 8px;margin-left:8px;cursor:pointer;}',
+      '.pos-recs{display:flex;flex-direction:column;gap:8px;}',
+      '.pos-rec{border:1px solid rgba(var(--line-rgb,255,255,255),0.08);background:rgba(var(--line-rgb,255,255,255),0.02);border-radius:9px;padding:10px 12px;}',
+      '.pos-rec-top{display:flex;justify-content:space-between;gap:10px;align-items:baseline;}',
+      '.pos-rec-t{font-size:0.88rem;font-weight:600;color:var(--text-1,#E2E8F0);}',
+      '.pos-rec-w{font-size:0.72rem;color:var(--text-4,#64748B);white-space:nowrap;}',
+      '.pos-rec-meta{display:flex;flex-wrap:wrap;gap:10px;margin-top:4px;font-size:0.72rem;color:var(--text-4,#64748B);}',
+      '.pos-rec-cat{color:' + gold + ';}',
+      '.pos-rec-note{margin-top:6px;font-size:0.79rem;color:var(--text-3,#94A3B8);line-height:1.5;}',
+      '.pos-rec-att{display:flex;flex-wrap:wrap;gap:6px;margin-top:8px;}',
+      '.pos-sys-cell{cursor:pointer;}',
+      '.pos-sys-cell--sel{border-color:rgba(201,151,58,0.5)!important;background:rgba(201,151,58,0.08)!important;}',
+      '@media(max-width:600px){.pos-add{width:100%;}.pos-rec-top{flex-direction:column;gap:2px;}}',
       '.pos-sec:last-child{border-bottom:none;}',
       '.pos-sec-head{display:flex;align-items:center;gap:8px;margin-bottom:9px;}',
       '.pos-sec-title{font-size:0.74rem;font-weight:800;text-transform:uppercase;letter-spacing:0.04em;color:var(--text-4,#64748B);}',
@@ -344,6 +481,7 @@ window.PropertyOS = (function () {
 
   return {
     BUILDING_SYSTEMS: BUILDING_SYSTEMS, systemLabel: systemLabel,
+    setRecordFilter: setRecordFilter, addRecord: addRecord, propertyRecords: propertyRecords,
     invoices: invoices, setInvoiceRelation: setInvoiceRelation,
     init: init, renderPropertyPage: renderPropertyPage,
   };

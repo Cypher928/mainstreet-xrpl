@@ -1,7 +1,10 @@
 # Property Workspace
 
-**Status:** agreed direction, not started. Begins once the Property Lifecycle
-walkthrough passes.
+**Status:** first increment SHIPPED. Property Records, building-level
+categories, the Building System subject, and provenance are in.
+**Walked by:** `test-property-workspace.js` (28 checks).
+**Not yet done:** amend-with-revisions, Related Items, and the
+Mortgage/Financing link to the escrow engine — see "Still open" below.
 
 The Space workspace made a suite the operational record for a tenancy. This does
 the same for the building itself — and reuses that implementation rather than
@@ -111,19 +114,37 @@ Settled patterns. Reuse them; do not re-decide them.
    environmental report or survey can be cited in a reconciliation, and if so,
    through the same Evidence Viewer path.
 
-## Acceptance, when it is built
+## Still open
+
+The first increment deliberately stopped at the surface. What remains:
+
+1. **Amend with revisions.** `PropertyTimeline._save()` edits a timeline event
+   IN PLACE (`target.title = title`). That is an ARCHITECTURE_PRINCIPLES §6
+   violation on a user-visible record, and it predates this work — Spaces solved
+   it with `event.revisions[]` and the same treatment belongs here. **This is
+   the next thing to do.**
+2. **Related Items**, so a roof replacement is one thing rather than six.
+3. **Mortgage / Financing** should surface what `escrow-reserve-engine.js`
+   already extracted and cited, rather than being a category a user types into.
+4. **Archived property's workspace** — must stay readable. Not yet walked.
+5. **Records as evidence** — whether a survey or environmental report can be
+   cited in a reconciliation through the Evidence Viewer.
+
+## Acceptance
 
 Walked as a property manager, not asserted from component tests.
 
-- ☐ Every category is reachable from one Property Records surface via a filter,
+- ☑ Every category is reachable from one Property Records surface via a filter,
       not by navigating to a different screen.
-- ☐ Adding a record of any category produces a **property timeline event**, and
+- ☑ Adding a record of any category produces a **property timeline event**, and
       the timeline shows it.
-- ☐ No category renders from a store other than the timeline. *(The regression
-      test is the point of this line — a violation is invisible on screen.)*
+- ☑ No category renders from a store other than the timeline. *(Checked by
+      emptying the timeline and requiring the surface to empty with it — a
+      violation is otherwise invisible on screen.)*
 - ☐ Amending a record preserves the original and shows the revision history.
-- ☐ Every record names who created it and when.
-- ☐ A warranty is recorded against a Building System, appears in that system's
+      *(Still edits in place — item 1 above.)*
+- ☑ Every record names who created it and when.
+- ☑ A warranty is recorded against a Building System, appears in that system's
       record count, and is findable by opening the system.
 - ☐ An archived property's records and timeline are still readable.
-- ☐ Empty categories say what to record there, and why.
+- ☑ Empty categories say what to record there, and why.
