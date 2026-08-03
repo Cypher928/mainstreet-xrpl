@@ -193,12 +193,19 @@ window.EvidenceViewer = (() => {
   }
 
   function _sidePanelHtml(c, tierNote) {
+    // A dash in a value slot reads as a rendering failure — the field looks
+    // like it should have had something in it and didn't. Say what is actually
+    // true instead: this document never carried a page or section reference, so
+    // there is nothing missing. Styled as absence rather than as a value so the
+    // eye doesn't read "Not available" as the section number.
+    const NA = 'Not available for this document';
     const rows = [
-      ['Document', c.source || '—'],
-      ['Citation', c.detail || (c.page != null ? `Page ${c.page}` : '—')],
-      ['Page', c.page != null ? String(c.page) : '—'],
-      c.confidence != null ? ['Confidence', `${c.confidence}%`] : null,
-    ].filter(Boolean).map(([k, v]) => `<div class="evd-row"><span>${_esc(k)}</span><b>${_esc(v)}</b></div>`).join('');
+      ['Document', c.source || 'Not available', !c.source],
+      ['Citation', c.detail || (c.page != null ? `Page ${c.page}` : NA), !c.detail && c.page == null],
+      ['Page', c.page != null ? String(c.page) : NA, c.page == null],
+      c.confidence != null ? ['Confidence', `${c.confidence}%`, false] : null,
+    ].filter(Boolean).map(([k, v, absent]) =>
+      `<div class="evd-row"><span>${_esc(k)}</span><b${absent ? ' class="evd-na"' : ''}>${_esc(v)}</b></div>`).join('');
     return `
       ${rows}
       ${c.quote ? `<div class="evd-lbl">Extracted text</div><blockquote class="evd-quote">“${_esc(c.quote)}”</blockquote>` : ''}
@@ -279,7 +286,15 @@ window.EvidenceViewer = (() => {
     const hit = locateQuoteInItems(tc.items, needle);
     if (!hit) {
       if (banner && !c._search) {
-        banner.textContent = `Jumped to page ${pageNum} — the exact paragraph couldn't be automatically identified. The verbatim extracted text is shown in the panel.`;
+        // What failed here is citation MAPPING, not navigation. The old wording
+        // ("Jumped to page N — the exact paragraph couldn't be automatically
+        // identified") led with the jump, so it read as though the viewer had
+        // failed to go somewhere. It hadn't: the quote is verbatim from this
+        // document, and it is the mapping back onto a rendered page that the
+        // PDF's text layer defeats — it splits and reorders words that the
+        // stored text keeps together. Lead with what is true of the evidence,
+        // then say what is unavailable.
+        banner.textContent = `This quote is verbatim from the document — what couldn’t be done automatically is pinpointing it on the page, because the PDF’s text layer lays the words out differently from the stored text. Showing page ${pageNum}; the exact text is in the panel.`;
         banner.style.display = 'block';
       }
       return;

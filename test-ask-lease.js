@@ -30,38 +30,26 @@ const ANTHROPIC_TIMEOUT = 45000;
 const ASK_MODEL         = 'claude-sonnet-4-6';
 
 // ---------------------------------------------------------------------------
-// Inline replica of parseStructuredResponse (keep in sync with api/ask-lease.js)
+// The REAL contract, not a copy of it
 // ---------------------------------------------------------------------------
-
-function _normalizeCitation(c) {
-  if (!c || typeof c !== 'object') return { quote: null, section: null, page: null };
-  return {
-    quote:   typeof c.quote   === 'string' && c.quote.trim()   ? c.quote.trim()   : null,
-    section: typeof c.section === 'string' && c.section.trim() ? c.section.trim() : null,
-    page:    typeof c.page    === 'number' && Number.isFinite(c.page) ? Math.floor(c.page) : null,
-  };
-}
-
-function parseStructuredResponse(text) {
-  const match = text.match(/\{[\s\S]*\}/);
-  if (!match) return { answer: text.trim(), citations: [] };
-  try {
-    const parsed = JSON.parse(match[0]);
-    if (typeof parsed.answer !== 'string') return { answer: text.trim(), citations: [] };
-    const citations = Array.isArray(parsed.citations)
-      ? parsed.citations.map(_normalizeCitation).filter(c => c.quote)
-      : [];
-    return { answer: parsed.answer.trim(), citations };
-  } catch {
-    return { answer: text.trim(), citations: [] };
-  }
-}
+// This block used to be a hand-maintained "inline replica" of
+// parseStructuredResponse, kept in sync by hand. That is a test that can pass
+// while the shipped code says something else — and it did: the replica never
+// knew about refusals. Both the handler and this suite now require the same
+// module, so a green run means the shipped parser behaved.
+const {
+  SYSTEM_PROMPT,
+  normalizeCitation: _normalizeCitation,
+  parseStructuredResponse,
+} = require('./api/_ask-lease-contract');
 
 function buildHandler({
   sbRows             = null,
   sbError            = false,
   anthropicAnswer    = null,
   anthropicCitations = [],
+  anthropicRaw       = null,   // raw model text — drives the REAL parser
+  anthropicAnswered  = true,
   anthropicError     = null,
   anthropicAbort     = false,  // simulates AbortError (timeout)
 } = {}) {
@@ -79,9 +67,18 @@ function buildHandler({
     const textToSend    = truncated ? leaseText.slice(0, MAX_LEASE_TEXT) : leaseText;
     const charsAnalyzed = textToSend.length;
 
+    // When a raw reply is supplied, run it through the shipped parser — that is
+    // the code path that must drop citations on a refusal.
+    const parsed = anthropicRaw
+      ? parseStructuredResponse(anthropicRaw)
+      : { answered: anthropicAnswered,
+          answer: anthropicAnswer || `Answer for: ${question}`,
+          citations: anthropicAnswered ? (anthropicCitations || []) : [] };
+
     return {
-      answer:       anthropicAnswer || `Answer for: ${question}`,
-      citations:    anthropicCitations || [],
+      answered:     parsed.answered,
+      answer:       parsed.answer,
+      citations:    parsed.citations,
       truncated,
       charsAnalyzed,
       model:        ASK_MODEL,
@@ -126,6 +123,7 @@ function buildHandler({
     return {
       status: 200,
       body: {
+        answered:      result.answered,
         answer:        result.answer,
         citations:     result.citations,
         fileUrl:       doc.file_url || null,
@@ -278,10 +276,76 @@ async function runTests() {
     const rows = [{ id: 'doc-shape', extracted_text: 'lease text', used_pdf_direct: false, file_url: 'https://example.com/lease.pdf' }];
     const h = buildHandler({ sbRows: rows, anthropicAnswer: 'The answer is here.', anthropicCitations: [{ quote: 'exact language', section: 'Section 1', page: 1 }] });
     const r = await h.handle({ leaseDocumentId: 'doc-shape', question: 'question' });
-    assert('AL-30: answer, citations, fileUrl, truncated, charsAnalyzed in body',
-      'answer' in r.body && 'citations' in r.body && 'fileUrl' in r.body && 'truncated' in r.body && 'charsAnalyzed' in r.body);
+    assert('AL-30: answered, answer, citations, fileUrl, truncated, charsAnalyzed in body',
+      'answered' in r.body && 'answer' in r.body && 'citations' in r.body && 'fileUrl' in r.body && 'truncated' in r.body && 'charsAnalyzed' in r.body);
     assert('AL-31: answer is a non-empty string',             typeof r.body.answer === 'string' && r.body.answer.length > 0);
-    assert('AL-32: exactly 5 keys in response body',          Object.keys(r.body).length === 5);
+    // The exact key SET, not a count — a count passes when one key is swapped
+    // for another, which is precisely how a contract drifts.
+    assert('AL-32: response body carries exactly the contract keys',
+      JSON.stringify(Object.keys(r.body).sort()) ===
+      JSON.stringify(['answer', 'answered', 'charsAnalyzed', 'citations', 'fileUrl', 'truncated']),
+      Object.keys(r.body).sort().join(','));
+  }
+
+  // ── The refusal contract ─────────────────────────────────────────────────
+  // Asked "who pays the most rent?", the assistant returned a pro-rata
+  // allocation clause — the nearest semantic match — presented as an answer,
+  // with a citation under it. Nothing in the response said it had failed.
+  //
+  // A cited answer carries the whole product's claim. Spending that on the
+  // closest paragraph is worse than saying "I can't answer that", so refusal is
+  // a first-class outcome and the server drops citations rather than trusting
+  // the model to have withheld them.
+  {
+    console.log('\n── Refusal contract ──');
+
+    const refusal = JSON.stringify({
+      answered: false,
+      answer: 'This lease covers a single tenant, so it cannot say which tenant pays the most rent. Comparing tenants needs the rent roll for the whole property.',
+      citations: [{ quote: "Tenant's Proportionate Share shall be 12.4%", section: 'Section 4.2', page: 7 }],
+    });
+
+    const p = parseStructuredResponse(refusal);
+    assert('AL-57: an explicit answered:false is carried through', p.answered === false);
+    assert('AL-58: a refusal NEVER carries citations, even when the model sends them',
+      p.citations.length === 0, JSON.stringify(p.citations));
+    assert('AL-59: the refusal text survives intact', /cannot say which tenant/.test(p.answer));
+
+    // The whole flow, not just the parser: a refusal must reach the client with
+    // answered:false and an empty citation array.
+    const rows = [{ id: 'doc-refuse', extracted_text: 'lease text', used_pdf_direct: false, file_url: 'https://example.com/lease.pdf' }];
+    const h = buildHandler({ sbRows: rows, anthropicRaw: refusal });
+    const r = await h.handle({ leaseDocumentId: 'doc-refuse', question: 'Who pays the most rent?' });
+    assert('AL-60: the handler returns 200 for a refusal (it is an answer, not an error)', r.status === 200);
+    assert('AL-61: the client is told answered:false',  r.body.answered === false);
+    assert('AL-62: the client receives no citations',   r.body.citations.length === 0);
+
+    // Absence of the flag is NOT a refusal. Inferring one would silently strip
+    // citations from every ordinary answer.
+    const legacy = parseStructuredResponse(JSON.stringify({
+      answer: 'The cap is 5% annually.',
+      citations: [{ quote: 'shall not increase by more than five percent', section: 'Section 7.3', page: 12 }],
+    }));
+    assert('AL-63: a reply with no "answered" field is treated as answered', legacy.answered === true);
+    assert('AL-64: and keeps its citations',                                 legacy.citations.length === 1);
+
+    // Unparseable text falls back to an answer, not a refusal — the user gets
+    // the model's words rather than a spurious "cannot answer".
+    const bare = parseStructuredResponse('Rent is $4,200 per month.');
+    assert('AL-65: unparseable output is an answer with no citations',
+      bare.answered === true && bare.citations.length === 0 && /4,200/.test(bare.answer));
+
+    // The prompt is half the contract. These are the instructions that make the
+    // model refuse instead of reaching for the nearest clause; losing them is
+    // the regression, and a parser test cannot see it.
+    assert('AL-66: the prompt names the cross-tenant case that caused this bug',
+      /who pays the most rent/i.test(SYSTEM_PROMPT));
+    assert('AL-67: the prompt forbids citing a merely related clause',
+      /related subject is not an answer/i.test(SYSTEM_PROMPT));
+    assert('AL-68: the prompt requires empty citations on a refusal',
+      /"citations" MUST be empty/.test(SYSTEM_PROMPT));
+    assert('AL-69: the prompt declares the answered field in its JSON shape',
+      /"answered":\s*true/.test(SYSTEM_PROMPT));
   }
 
   // ── MAX_LEASE_TEXT constant value ────────────────────────────────────────

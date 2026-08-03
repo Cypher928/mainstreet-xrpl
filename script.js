@@ -20809,8 +20809,17 @@ async function _submitLeaseQuestion(docId) {
         .replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;')
         .replace(/\n/g, '<br>');
 
+      // A refusal is not an answer with the sources missing — it is a different
+      // outcome and has to read as one. Asked "who pays the most rent?", the
+      // assistant used to return the nearest pro-rata allocation clause, cited,
+      // and the screen presented it exactly like a real answer. Nothing said it
+      // had failed. When the server reports answered:false the citation block is
+      // suppressed here as well as server-side, so no path can pair "this lease
+      // cannot answer that" with evidence.
+      const answered = result.answered !== false;
+
       // Citation cards — each citation has { quote, section, page }
-      const citations = Array.isArray(result.citations) ? result.citations : [];
+      const citations = answered && Array.isArray(result.citations) ? result.citations : [];
       let citationsHtml = '';
       if (citations.length > 0) {
         const cards = citations.map(c => {
@@ -20825,7 +20834,9 @@ async function _submitLeaseQuestion(docId) {
         if (cards) citationsHtml = `<div class="lc-citations-label">Source from lease:</div>${cards}`;
       }
 
-      // "View in Lease" button (opens the stored PDF)
+      // "View in Lease" button (opens the stored PDF). Kept on a refusal too —
+      // there is nothing to jump to, but reading the lease yourself is the
+      // obvious next move when the assistant says it cannot help.
       const viewBtn = result.fileUrl
         ? `<button class="lc-view-lease-btn" onclick="openLeaseModal(${JSON.stringify(result.fileUrl)})">View in Lease ↗</button>`
         : '';
@@ -20837,7 +20848,9 @@ async function _submitLeaseQuestion(docId) {
             : `Analyzed ${kbRead}k chars of stored lease text.`
           }</div>`
         : '';
-      ansEl.innerHTML = `<div class="lc-answer-text">${safe}</div>${citationsHtml}${viewBtn}${metaLine}`;
+      const unanswered = answered ? '' :
+        `<div class="lc-answer-noanswer">This lease doesn’t answer that</div>`;
+      ansEl.innerHTML = `${unanswered}<div class="lc-answer-text">${safe}</div>${citationsHtml}${viewBtn}${metaLine}`;
     }
   } catch (e) {
     ansEl.innerHTML = `<span class="lc-answer-error">Network error: ${e.message}</span>`;

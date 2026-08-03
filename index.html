@@ -1781,6 +1781,12 @@
     }
     .lc-answer-text { color: var(--text-2); line-height: 1.65; white-space: pre-wrap; }
     .lc-answer-error { color: var(--c-f87171); font-style: italic; }
+    /* A refusal is a distinct outcome from an answer, and has to look like one
+       before the sentence is read. Amber, not red: nothing went wrong. */
+    .lc-answer-noanswer { display: inline-block; margin-bottom: 8px; padding: 3px 10px;
+      border: 1px solid rgba(201, 151, 58, 0.35); background: rgba(201, 151, 58, 0.09);
+      border-radius: 999px; color: var(--c-fbbf24, #fbbf24);
+      font-size: 0.72rem; font-weight: 600; letter-spacing: 0.04em; }
     .lc-answer-loading { color: var(--text-4); font-style: italic; }
     .lc-answer-meta { margin-top: 8px; font-size: 0.75rem; color: var(--text-4); border-top: 1px solid rgba(var(--line-rgb), 0.06); padding-top: 6px; }
     .lc-citations-label { margin-top: 12px; font-size: 0.72rem; text-transform: uppercase; letter-spacing: 0.06em; color: var(--text-4); }
@@ -6101,6 +6107,9 @@
   .evd-side { width: 320px; flex-shrink: 0; overflow-y: auto; background: var(--theme-card); border: 1px solid rgba(var(--line-rgb), 0.07); border-radius: 10px; padding: 14px 16px; }
   .evd-row { display: flex; justify-content: space-between; gap: 10px; padding: 5px 0; font-size: 0.8rem; border-bottom: 1px solid rgba(var(--line-rgb), 0.05); }
   .evd-row span { color: var(--text-4); } .evd-row b { color: var(--text-1); text-align: right; }
+  /* Absence, not a value: dimmed and unemphasised so "Not available for this
+     document" cannot be misread as the section reference itself. */
+  .evd-row b.evd-na { color: var(--text-4); font-weight: 400; font-style: italic; }
   .evd-lbl { font-size: 0.68rem; font-weight: 700; letter-spacing: 0.06em; text-transform: uppercase; color: var(--c-22d3ee); margin: 12px 0 5px; }
   .evd-quote { margin: 0; padding: 10px 12px; background: rgba(14,116,144,0.12); border-left: 3px solid #22d3ee; border-radius: 6px; color: var(--text-2); font-size: 0.83rem; line-height: 1.55; font-style: italic; }
   .evd-reason { color: var(--text-3); font-size: 0.8rem; line-height: 1.5; }
