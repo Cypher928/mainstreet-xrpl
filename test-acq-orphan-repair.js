@@ -122,8 +122,14 @@ const CLICK_LABEL = function (rx) {
   // assignment resolves to the real binding.
   const setup = await page.evaluate((rid) => {
     if (typeof _acqOrphaned !== 'function') return { missing: '_acqOrphaned' };
-    _props = [];                 // the property was deleted
+    _props = [];                 // not in the active portfolio
     _propsLoadedOk = true;       // ...and we know that, because the load worked
+    // AND not in the archived list either — which is what makes it deleted
+    // rather than archived. _acqPropertyState() answers 'unknown' while this is
+    // null, deliberately: an archived property is not a missing one, and
+    // reporting one as the other is how archiving Lakeview announced that its
+    // property had been deleted. [] means "read, and it is not in there".
+    _archivedProps = [];
     _acqReviews = [{
       id: rid, name: 'Harborview Retail Center', status: 'converted',
       created_at: '2026-01-14T10:00:00.000Z',
@@ -257,6 +263,7 @@ const CLICK_LABEL = function (rx) {
   // ── the false positive: a FAILED load must never look like a deletion ────
   const blip = await page.evaluate(() => {
     _props = [];
+    _archivedProps = [];
     _propsLoadedOk = false;   // the load failed; we know nothing
     const r = { id: 'x', name: 'Somewhere', status: 'converted',
                 data: { conversionRecord: { propertyId: 'prop-real-9999' } } };
@@ -265,6 +272,29 @@ const CLICK_LABEL = function (rx) {
              cardText: (document.querySelector('#acqReviewsGrid .acq-card') || {}).innerText || '' };
   });
   check('a failed properties load does NOT report properties as deleted', blip.orphan === false);
+
+  // The other way to be ignorant: properties loaded fine, but the archived list
+  // has not come back. Not-in-_props is then either archived or deleted, and
+  // guessing produces the Lakeview report — "property no longer exists" about a
+  // property that was merely archived.
+  // Caught inside the page: without the 'unknown' gate this throws on
+  // _archivedProps.some(), and an uncaught throw kills the run with a stack
+  // trace instead of reporting which invariant broke. A test that crashes is a
+  // test whose result nobody reads.
+  const unread = await page.evaluate(() => {
+    try {
+      _props = [];
+      _propsLoadedOk = true;
+      _archivedProps = null;        // never read
+      const r = { id: 'y', name: 'Lakeview', status: 'converted',
+                  data: { conversionRecord: { propertyId: 'prop-arch-1' } } };
+      return { state: _acqPropertyState(r), orphan: _acqOrphaned(r) };
+    } catch (e) { return { threw: String(e.message).split('\n')[0] }; }
+  });
+  check('an unread archived list is "unknown", not "missing"',
+        unread.state === 'unknown', unread.threw ? 'threw: ' + unread.threw : unread.state);
+  check('and nothing is reported as deleted on that basis',
+        unread.orphan === false, unread.threw ? 'threw: ' + unread.threw : String(unread.orphan));
   check('and the card says nothing about a missing property',
         !/no longer exists/i.test(blip.cardText), blip.cardText.replace(/\s+/g, ' ').slice(0, 70));
 

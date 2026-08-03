@@ -1245,7 +1245,31 @@
     .del-modal-prop  { font-size: 0.95rem; color: var(--text-1); font-weight: 600; margin-bottom: 14px; }
     .del-modal-desc  { font-size: 0.8rem; color: var(--text-4); line-height: 1.55; margin-bottom: 18px; }
     .del-modal-desc strong { color: var(--text-3); }
-    .del-modal-actions { display: flex; gap: 10px; justify-content: flex-end; }
+    /* What would be destroyed, counted. Amber not red: this is the thing worth
+       keeping, not the danger. */
+    .del-modal-guard {
+      border: 1px solid rgba(201,151,58,0.35); background: rgba(201,151,58,0.07);
+      border-radius: 9px; padding: 10px 12px; margin-bottom: 14px;
+    }
+    .del-modal-guard-head { color: var(--c-fbbf24, #fbbf24); font-weight: 600; font-size: 0.78rem; margin-bottom: 4px; }
+    .del-modal-activity { color: var(--text-2); font-size: 0.82rem; line-height: 1.5; }
+    .del-modal-advice { font-size: 0.8rem; color: var(--text-3); line-height: 1.6; margin-bottom: 16px; }
+    .del-modal-advice strong { color: var(--text-1); }
+    .del-modal-confirm-label { display: block; font-size: 0.74rem; color: var(--text-4); margin-bottom: 5px; }
+    .del-modal-confirm-name {
+      width: 100%; box-sizing: border-box; padding: 8px 10px; margin-bottom: 16px;
+      border-radius: 7px; border: 1px solid rgba(var(--line-rgb), 0.16);
+      background: var(--theme-surface); color: var(--text-1); font-size: 0.85rem;
+    }
+    .del-modal-actions { display: flex; gap: 10px; justify-content: flex-end; flex-wrap: wrap; }
+    /* Archive is the recommended action, so it carries the emphasis Delete used
+       to have. Delete stays reachable and stays red — demoted, not hidden. */
+    .del-modal-archive {
+      padding: 8px 18px; border-radius: 7px; font-size: 0.82rem; font-weight: 600;
+      background: rgba(201,151,58,0.16); border: 1px solid rgba(201,151,58,0.45);
+      color: var(--c-fbbf24, #fbbf24); cursor: pointer; transition: all 0.15s;
+    }
+    .del-modal-archive:hover { background: rgba(201,151,58,0.28); }
     .del-modal-cancel {
       padding: 8px 18px; border-radius: 7px; font-size: 0.82rem; font-weight: 600;
       background: rgba(var(--line-rgb), 0.04); border: 1px solid rgba(var(--line-rgb), 0.1);
@@ -5185,6 +5209,9 @@
     .acq-card-status.orphaned   { background: rgba(201,151,58,0.12); color: var(--c-fbbf24, #fbbf24); }
     .acq-detail-badge.orphaned  { background: rgba(201,151,58,0.12); color: var(--c-fbbf24, #fbbf24); }
     .acq-card-orphan-note       { color: var(--c-fbbf24, #fbbf24); }
+    .acq-archived-badge { display: inline-block; margin-left: 8px; padding: 2px 8px;
+      border-radius: 10px; font-size: 0.7rem; font-weight: 600;
+      background: rgba(var(--line-rgb), 0.07); color: var(--text-4); }
     .acq-orphan { border: 1px solid rgba(201,151,58,0.35); background: rgba(201,151,58,0.07);
       border-radius: 10px; padding: 12px 14px; max-width: 480px; }
     .acq-orphan-head { color: var(--c-fbbf24, #fbbf24); font-weight: 600; font-size: 0.85rem; margin-bottom: 4px; }
@@ -5733,6 +5760,29 @@
       font-size: 0.9rem; font-weight: 800; cursor: pointer; white-space: nowrap; flex-shrink: 0;
     }
     .ptf-start-cta:hover { background: #15803d; }
+    /* Archived properties: present, quiet, never competing with Add Property. */
+    .ptf-archived-bar { margin: -4px 0 14px; }
+    .ptf-archived-link {
+      background: none; border: none; padding: 4px 0; cursor: pointer;
+      font: inherit; font-size: 0.8rem; color: var(--text-4);
+      border-bottom: 1px dashed rgba(var(--line-rgb), 0.25);
+    }
+    .ptf-archived-link:hover { color: var(--text-2); }
+    .ptf-archived-list { margin: 0 0 18px; }
+    .ptf-arch-row {
+      display: flex; align-items: center; justify-content: space-between; gap: 12px;
+      padding: 10px 12px; margin-bottom: 6px; border-radius: 8px;
+      border: 1px solid rgba(var(--line-rgb), 0.09); background: rgba(var(--line-rgb), 0.03);
+    }
+    .ptf-arch-name { font-size: 0.88rem; color: var(--text-2); font-weight: 600; }
+    .ptf-arch-meta { font-size: 0.74rem; color: var(--text-4); margin-top: 2px; }
+    .ptf-arch-restore {
+      padding: 6px 14px; border-radius: 7px; font-size: 0.78rem; font-weight: 600; cursor: pointer;
+      background: rgba(var(--line-rgb), 0.05); border: 1px solid rgba(var(--line-rgb), 0.14);
+      color: var(--text-2); flex: none;
+    }
+    .ptf-arch-restore:hover { background: rgba(var(--line-rgb), 0.1); }
+    .ptf-arch-empty { font-size: 0.8rem; color: var(--text-4); padding: 8px 2px; }
     /* The assistant sits after the work it assists. */
     .ptf-assist { margin-top: 26px; padding-top: 18px; border-top: 1px solid rgba(var(--line-rgb), 0.08); }
     .ptf-assist .cc-nav-link { margin-top: 6px; }
@@ -6171,6 +6221,14 @@
     <button class="ptf-start-cta" onclick="addNewProperty()">＋ Add Property</button>
   </div>
 
+  <!-- Archived properties. Hidden until there is at least one — an empty link to
+       an empty screen is clutter on the first-run portfolio, which is the one
+       screen that must not be. Populated by _renderArchivedLink(). -->
+  <div class="ptf-archived-bar" id="ptfArchivedBar" style="display:none">
+    <button class="ptf-archived-link" id="ptfArchivedLink" onclick="toggleArchivedProperties()"></button>
+  </div>
+  <div class="ptf-archived-list" id="ptfArchivedList" style="display:none"></div>
+
   <!-- Demo Welcome Panel — shown to new users until dismissed; managed by _maybeShowWelcome().
        Phase 25: simplified to a single pointer (no buttons) since the demo properties now
        render directly as cards in "Your Properties" below — avoids duplicate CTAs. -->
@@ -6453,13 +6511,35 @@
     <div class="del-modal-icon">&#x26A0;&#xFE0F;</div>
     <div class="del-modal-title">Delete Property</div>
     <div class="del-modal-prop" id="delModalPropName"></div>
+    <!-- Shown only when the property actually has history. A warning that
+         appears every time is one people learn to dismiss unread. -->
+    <div class="del-modal-guard" id="delModalGuard" style="display:none">
+      <div class="del-modal-guard-head">This property has history</div>
+      <div class="del-modal-activity" id="delModalActivity"></div>
+    </div>
+    <div class="del-modal-advice" id="delModalAdvice" style="display:none">
+      This property contains leases, timeline history, reconciliations, and
+      supporting documents.<br><br>
+      If the property is no longer managed, <strong>Archive</strong> preserves its
+      history while removing it from your active portfolio.<br><br>
+      <strong>Delete</strong> permanently removes all records and should only be
+      used for properties created by mistake.
+    </div>
     <div class="del-modal-desc">
       This will permanently delete this property and all of its data, including:<br><br>
       <strong>Tenants &amp; leases &nbsp;·&nbsp; CAM reconciliations &nbsp;·&nbsp; Invoices &nbsp;·&nbsp; Disputes &nbsp;·&nbsp; Activity history</strong><br><br>
       This action cannot be undone.
     </div>
+    <label class="del-modal-confirm-label" id="delModalConfirmLabel" for="delModalConfirmName" style="display:none">
+      Type the property name to confirm
+    </label>
+    <input class="del-modal-confirm-name" id="delModalConfirmName" type="text"
+      autocomplete="off" spellcheck="false" style="display:none"
+      oninput="_delModalNameTyped()" />
     <div class="del-modal-actions">
       <button class="del-modal-cancel" id="delModalCancelBtn" onclick="closeDeletePropertyModal()">Cancel</button>
+      <!-- Archive is the primary action wherever there is history to preserve. -->
+      <button class="del-modal-archive" id="delModalArchiveBtn" onclick="archiveActiveProperty()">Archive Instead</button>
       <button class="del-modal-confirm" id="delModalConfirmBtn" onclick="confirmDeleteProperty()">Delete Property</button>
     </div>
   </div>

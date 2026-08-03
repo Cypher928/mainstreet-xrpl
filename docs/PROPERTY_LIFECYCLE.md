@@ -1,14 +1,13 @@
 # Property Lifecycle
 
-**Status:** agreed design, not implemented. Not a pilot blocker.
-**Shipped from this document:** §6, the orphaned-conversion repair — now
-**frozen**. It stays in place as a safety net and nothing further is built on
-top of it.
-**Next work:** §5. The goal is to stop orphans being created at all, by
-integrating Archive and Delete with the acquisition lifecycle. Everything else
-below is still design.
-**Supersedes:** the "Archive property" line in `PILOT_ACCEPTANCE_CHECKLIST.md`,
-which stays unchecked until this ships.
+**Status:** IMPLEMENTED. Migration `010_property_archive.sql` must be applied
+in Supabase before Archive works — until then the app degrades to
+all-properties-active rather than emptying the portfolio.
+**§6** (orphan repair) is frozen and remains as the backstop.
+**§5** (prevention) shipped: deleting a converted property now reverts its
+acquisition, so orphan repair is the exception rather than the normal path.
+**Walked by:** `test-property-lifecycle.js` (37 checks),
+`test-acq-orphan-repair.js` (30).
 
 ---
 

@@ -35,7 +35,9 @@ arrives. Count your clicks. There are two.
 - ☐ **Review allocations** — results list every tenant with their share.
 - ☐ **Generate tenant statement** — opens a statement for **one named tenant**, with their own percentage.
 - ☐ **Dashboard alerts deep-link correctly** — every card, CTA and review action opens the specific object it names, or says why it cannot.
-- ☐ **Archive property** — *not implemented. Leave unchecked until Property Lifecycle ships; the agreed model is in `docs/PROPERTY_LIFECYCLE.md`.*
+- ☐ **Archive property** — Archive is offered wherever a property has history, removes it from the portfolio and from every aggregate, and Restore brings it back intact. *Requires `migrations/010_property_archive.sql`.*
+- ☐ **Delete a property created by mistake** — an empty property deletes without ceremony; one with history names what would be destroyed, recommends Archive, and requires the name typed.
+- ☐ **Delete a converted property** — its acquisition returns to Ready to Convert and can be converted again.
 
 ## State integrity
 

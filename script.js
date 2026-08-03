@@ -20006,15 +20006,35 @@ function recoverLastSnapshot(propertyId) {
 }
 window.recoverLastSnapshot = recoverLastSnapshot;
 
-async function loadProperties() {
+async function loadProperties(opts) {
   const { data: { user } } = await db.auth.getUser();
   if (!user?.id) throw new Error('Not authenticated');
 
+  // THE read path, and therefore the one place the active/archived filter
+  // belongs. Everything downstream — renderPortfolio, the dashboards, and
+  // computePortfolioIntelligence(props, …) which simply takes the array it is
+  // given — inherits it from here. An archived building that still moves your
+  // occupancy number is a wrong number, not a preserved memory.
+  const archived = !!(opts && opts.archived);
+
   // Select only the columns needed for the property list — skip the large data blob.
-  const { data, error } = await db
+  let q = db
     .from('properties')
-    .select('id, name, sqft, user_id')
+    .select('id, name, sqft, user_id, archived_at')
     .eq('user_id', user.id);
+  q = archived ? q.not('archived_at', 'is', null) : q.is('archived_at', null);
+  let { data, error } = await q;
+
+  // Pre-migration fallback. Until migrations/010_property_archive.sql is
+  // applied the column does not exist and PostgREST rejects the whole query
+  // (42703) — which would empty the portfolio rather than degrade. Retry
+  // without the filter and treat every row as active, which is what it is.
+  if (error && /archived_at/.test(error.message || '')) {
+    console.warn('[loadProperties] archived_at missing — apply migrations/010_property_archive.sql. Treating all properties as active.');
+    if (archived) return [];
+    ({ data, error } = await db.from('properties')
+      .select('id, name, sqft, user_id').eq('user_id', user.id));
+  }
 
   if (error) throw error;
 
@@ -20022,6 +20042,7 @@ async function loadProperties() {
     id:         p.id,
     name:       p.name,
     totalSqft:  p.sqft || 0,
+    archivedAt: p.archived_at || null,
   }));
 
   if (properties.length === 0) return properties;
@@ -21644,18 +21665,312 @@ async function clearPropertyData() {
   document.getElementById('totalSqft').value    = savedSqft;
 }
 
+// ─── Property Lifecycle ───────────────────────────────────────────────────────
+// Archive is the normal end state; Delete is for mistakes. See
+// docs/PROPERTY_LIFECYCLE.md and docs/ARCHITECTURE_PRINCIPLES.md §4, §5.
+
+// THE activity predicate. One function, one place — Archive-vs-Delete must never
+// disagree between screens, and it will the moment two callers each decide for
+// themselves what "has history" means.
+//
+// Returns the COUNTS as well as the verdict, because the delete confirmation has
+// to name what it would destroy and re-counting it elsewhere is how the dialog
+// starts lying. Sibling of _hasRealActivity() in tenant-space.js, which draws
+// the same line for a Space.
+//
+// Name and square footage are deliberately NOT activity: a property carrying
+// only those is exactly the "wrong address, start again" case Delete exists for.
+function _propertyActivity(prop) {
+  const p = prop || {};
+  const cam = (p.camReconciliation ?? p.results);
+  const counts = {
+    tenants:          (p.tenants  || []).filter(t => t && (t.tenant_name || t.tenantName)).length,
+    leases:           (p.tenants  || []).filter(t => t && (t.leaseUrl || t.lease_url)).length,
+    invoices:         (p.invoices || []).length,
+    reconciliations:  cam && (cam.results || []).length ? 1 : 0,
+    timelineEntries:  (p.timeline || []).length,
+    disputes:         (p.disputes || []).length,
+  };
+  // Settlements live on the reconciliation snapshot when one has been settled.
+  counts.settlements = cam && cam.settlement ? 1 : 0;
+  const total = Object.keys(counts).reduce((n, k) => n + counts[k], 0);
+  return { counts, total, hasActivity: total > 0 };
+}
+
+function _propertyHasActivity(prop) { return _propertyActivity(prop).hasActivity; }
+
+// "3 tenants · 2 leases · 14 timeline entries" — only the non-zero ones, in the
+// order a manager would grieve them.
+function _describePropertyActivity(prop) {
+  const { counts } = _propertyActivity(prop);
+  const LABEL = [
+    ['tenants',         'tenant',            'tenants'],
+    ['leases',          'lease document',    'lease documents'],
+    ['invoices',        'invoice',           'invoices'],
+    ['reconciliations', 'CAM reconciliation','CAM reconciliations'],
+    ['settlements',     'settlement',        'settlements'],
+    ['timelineEntries', 'timeline entry',    'timeline entries'],
+    ['disputes',        'dispute',           'disputes'],
+  ];
+  return LABEL
+    .filter(([k]) => counts[k] > 0)
+    .map(([k, one, many]) => `${counts[k]} ${counts[k] === 1 ? one : many}`)
+    .join(' · ');
+}
+
 function openDeletePropertyModal() {
   if (!activePropId) return;
   const prop = _props.find(p => p.id === activePropId);
-  document.getElementById('delModalPropName').textContent = prop?.name || 'This Property';
-  document.getElementById('delModalConfirmBtn').disabled  = false;
+  const name = prop?.name || 'This Property';
+  document.getElementById('delModalPropName').textContent = name;
   document.getElementById('delModalConfirmBtn').textContent = 'Delete Property';
   document.getElementById('delModalCancelBtn').disabled   = false;
   document.getElementById('deletePropertyModal').classList.add('open');
+
+  const act     = _propertyActivity(prop);
+  const guard   = document.getElementById('delModalGuard');
+  const summary = document.getElementById('delModalActivity');
+  const advice  = document.getElementById('delModalAdvice');
+  const input   = document.getElementById('delModalConfirmName');
+  const btn     = document.getElementById('delModalConfirmBtn');
+
+  // The guidance appears ONLY where there is history to preserve. On an empty
+  // property there is no case for Archive and nothing to explain — showing the
+  // warning anyway trains people to dismiss it unread, which is exactly how it
+  // stops working on the day it matters.
+  if (guard) guard.style.display = act.hasActivity ? 'block' : 'none';
+  if (summary) summary.textContent = act.hasActivity ? _describePropertyActivity(prop) : '';
+  if (advice) advice.style.display = act.hasActivity ? 'block' : 'none';
+
+  if (input) {
+    input.value = '';
+    input.placeholder = name;
+    input.dataset.expect = name;
+    input.style.display = act.hasActivity ? 'block' : 'none';
+  }
+  // Typing the name is required only when there is something to lose. Deleting
+  // a blank property the user just mistyped should not be a ceremony.
+  if (btn) btn.disabled = act.hasActivity;
+  const lbl = document.getElementById('delModalConfirmLabel');
+  if (lbl) lbl.style.display = act.hasActivity ? 'block' : 'none';
+  if (act.hasActivity && input) setTimeout(() => { try { input.focus(); } catch (_) {} }, 60);
+}
+
+// Enables Delete only on an exact name match. Trimmed, because a trailing space
+// pasted from the header is not a different intent — but not case-folded: this
+// is the last gate in front of an irreversible cascade.
+function _delModalNameTyped() {
+  const input = document.getElementById('delModalConfirmName');
+  const btn   = document.getElementById('delModalConfirmBtn');
+  if (!input || !btn) return;
+  btn.disabled = (input.value || '').trim() !== (input.dataset.expect || '');
 }
 
 function closeDeletePropertyModal() {
   document.getElementById('deletePropertyModal').classList.remove('open');
+}
+
+// ─── Archive / Restore ────────────────────────────────────────────────────────
+// The normal end of a property's life. Nothing is destroyed and nothing
+// cascades: one timestamp moves the property out of the active portfolio and
+// out of every aggregate, and clearing it puts it back exactly as it was.
+async function _setPropertyArchived(propId, archivedAt) {
+  const { error } = await db.from('properties')
+    .update({ archived_at: archivedAt })
+    .eq('id', propId);
+  if (error) {
+    if (/archived_at/.test(error.message || '')) {
+      throw new Error('Archiving is not available yet — apply migrations/010_property_archive.sql in Supabase.');
+    }
+    throw error;
+  }
+}
+
+async function archiveActiveProperty() {
+  if (!activePropId) return;
+  const propId = activePropId;
+  const prop   = _props.find(p => p.id === propId);
+  const name   = prop?.name || 'Property';
+
+  const btn = document.getElementById('delModalArchiveBtn');
+  if (btn) { btn.disabled = true; btn.textContent = 'Archiving…'; }
+
+  try {
+    await _setPropertyArchived(propId, new Date().toISOString());
+  } catch (e) {
+    if (btn) { btn.disabled = false; btn.textContent = 'Archive Instead'; }
+    showToast('⚠️ Archive failed — ' + (e.message || String(e)),
+      { color: '#92400e', textColor: '#fef3c7', duration: 6000 });
+    logError('archiveActiveProperty', e, { propId, propName: name });
+    return;
+  }
+
+  // The property still EXISTS, so a converted acquisition stays converted and
+  // keeps its link. Only deletion makes that record untrue.
+  const idx = _props.findIndex(p => p.id === propId);
+  if (idx >= 0) _props.splice(idx, 1);
+  const pidx = portfolio.findIndex(p => p.id === propId);
+  if (pidx >= 0) portfolio.splice(pidx, 1);
+
+  logActivity('property_archived', `Property archived: ${name}`, { severity: 'info', actor: 'User' });
+  _archivedProps = null;            // force a re-read; do not guess the new list
+  _refreshArchivedLink();
+  closeDeletePropertyModal();
+  activePropId = null;
+  renderPortfolio(_props);
+  if (_acqReviews && _acqReviews.length) _renderAcqSection(_acqReviews);
+  showToast(`📦 ${name} archived — its history is intact and it can be restored.`,
+    { duration: 5000 });
+  window.scrollTo({ top: 0, behavior: 'smooth' });
+}
+
+// The Archived view. Loaded on demand rather than kept in memory: archived
+// properties are the rare read, and holding them alongside _props is how one of
+// them ends up in an aggregate.
+let _archivedProps = null;   // null = never loaded; [] = loaded and empty
+
+async function _refreshArchivedLink() {
+  const bar  = document.getElementById('ptfArchivedBar');
+  const link = document.getElementById('ptfArchivedLink');
+  if (!bar || !link) return;
+  let rows = [];
+  try { rows = await loadProperties({ archived: true }); }
+  catch (e) {
+    // Absence of evidence is not evidence of absence (ARCHITECTURE_PRINCIPLES
+    // §8): a failed read must not render "0 archived". Leave the bar as it was.
+    logError('_refreshArchivedLink', e, {});
+    return;
+  }
+  _archivedProps = rows || [];
+  bar.style.display = _archivedProps.length ? 'block' : 'none';
+  link.textContent = _archivedProps.length === 1
+    ? '1 archived property'
+    : `${_archivedProps.length} archived properties`;
+  const list = document.getElementById('ptfArchivedList');
+  if (list && list.style.display !== 'none') _renderArchivedList();
+  // _acqPropertyState() answers 'unknown' until this list exists, so anything
+  // rendered before now was rendered without it. Re-render, or an archived
+  // property's acquisition keeps whatever it guessed at boot.
+  if (_acqReviews && _acqReviews.length) {
+    try { _renderAcqSection(_acqReviews); } catch (_) {}
+  }
+}
+
+function _renderArchivedList() {
+  const list = document.getElementById('ptfArchivedList');
+  if (!list) return;
+  const rows = _archivedProps || [];
+  if (!rows.length) {
+    list.innerHTML = '<div class="ptf-arch-empty">Nothing archived.</div>';
+    return;
+  }
+  list.innerHTML = rows.map(p => {
+    const when = p.archivedAt ? new Date(p.archivedAt).toLocaleDateString() : null;
+    return `<div class="ptf-arch-row">
+      <div>
+        <div class="ptf-arch-name">${esc(p.name || 'Property')}</div>
+        <div class="ptf-arch-meta">${when ? 'Archived ' + esc(when) : 'Archived'} — history intact</div>
+      </div>
+      <button class="ptf-arch-restore" onclick="restoreProperty('${esc(p.id)}', ${JSON.stringify(p.name || '')})">Restore</button>
+    </div>`;
+  }).join('');
+}
+
+async function toggleArchivedProperties() {
+  const list = document.getElementById('ptfArchivedList');
+  if (!list) return;
+  const opening = list.style.display === 'none';
+  list.style.display = opening ? 'block' : 'none';
+  if (opening) {
+    if (_archivedProps === null) await _refreshArchivedLink();
+    _renderArchivedList();
+  }
+}
+
+async function restoreProperty(propId, name) {
+  try {
+    await _setPropertyArchived(propId, null);
+  } catch (e) {
+    showToast('⚠️ Restore failed — ' + (e.message || String(e)),
+      { color: '#92400e', textColor: '#fef3c7', duration: 6000 });
+    logError('restoreProperty', e, { propId });
+    return;
+  }
+  logActivity('property_restored', `Property restored: ${name || propId}`, { severity: 'info', actor: 'User' });
+  _archivedProps = null;
+  await _refreshArchivedLink();
+  showToast(`✓ ${name || 'Property'} restored to your portfolio.`, { duration: 4000 });
+  await _reloadPortfolioAfterLifecycleChange();
+}
+
+async function _reloadPortfolioAfterLifecycleChange() {
+  try {
+    const properties = await loadProperties();
+    _props = properties || [];
+    _propsLoadedOk = true;
+    portfolio.splice(0, portfolio.length, ..._props);
+    renderPortfolio(_props);
+    if (_acqReviews && _acqReviews.length) _renderAcqSection(_acqReviews);
+  } catch (e) {
+    logError('_reloadPortfolioAfterLifecycleChange', e, {});
+  }
+}
+
+// Reverts any acquisition review whose converted property has just been deleted.
+//
+// PREVENTION — the orphan repair (_acqOrphaned) becomes the backstop rather than
+// the normal path. The record said "converted to this property"; that property no
+// longer exists, so the record is no longer true and must not be kept as though
+// it were.
+//
+// The superseded record is MOVED, never discarded: a reverted acquisition must
+// still be able to say it was converted once and what became of that property.
+// Same rule as the repair path.
+//
+// Called AFTER the property row is gone, deliberately. These are two writes to
+// two tables with no transaction between them, so one of the two orderings has
+// to be chosen for the failure it leaves behind. A failure here leaves an
+// orphan, which _acqOrphaned() detects and offers to repair. Reverting first and
+// then failing to delete would leave a live property that no acquisition points
+// at — and nothing detects that.
+async function _revertAcquisitionsForDeletedProperty(propId) {
+  const reviews = (_acqReviews || []).filter(
+    r => r && r.data && r.data.conversionRecord && r.data.conversionRecord.propertyId === propId
+  );
+  for (const review of reviews) {
+    try {
+      const prior = review.data.conversionRecord;
+      const conversionHistory = Array.isArray(review.data.conversionHistory)
+        ? review.data.conversionHistory.slice() : [];
+      conversionHistory.push(Object.assign({}, prior, {
+        supersededAt: new Date().toISOString(),
+        supersededReason: 'The property created by this conversion was deleted.',
+      }));
+      // Merge, never replace — the analysis, tenants and invoices live here.
+      const nextData = Object.assign({}, review.data, { conversionHistory });
+      delete nextData.conversionRecord;   // the claim is no longer true
+      review.data   = nextData;
+      review.status = 'complete';         // back to Ready to Convert
+      // _saveAcqReview never throws — it toasts and returns false. Read the
+      // result, or a failed write looks exactly like a successful one.
+      const saved = await _saveAcqReview(review);
+      if (!saved) {
+        // In-memory is reverted, the row is not. On the next load the stored
+        // record comes back and _acqOrphaned() flags it — the repair path is
+        // the backstop this ordering was chosen to leave.
+        console.warn('[acq] revert not persisted for review', review.id,
+          '— it will be detected as orphaned on next load');
+      } else {
+        console.log('[acq] reverted review', review.id, 'after property', propId, 'was deleted');
+      }
+    } catch (e) {
+      // Non-fatal by design: the property is already gone, so the review is now
+      // an orphan and the repair path will offer Convert Again. Better a
+      // recoverable state than a half-failed delete.
+      logError('_revertAcquisitionsForDeletedProperty', e, { propId, reviewId: review.id });
+    }
+  }
+  return reviews.length;
 }
 
 async function confirmDeleteProperty() {
@@ -21699,6 +22014,16 @@ async function confirmDeleteProperty() {
   } catch (_) {}
 
   logActivity('property_deleted', `Property deleted: ${propName}`, { severity: 'warning', actor: 'User' });
+
+  // Prevention: an acquisition that pointed at this property is no longer
+  // converted to anything. Runs after the delete has succeeded — see the
+  // ordering note on the function.
+  const reverted = await _revertAcquisitionsForDeletedProperty(propId);
+  if (reverted) {
+    _renderAcqSection(_acqReviews);
+    showToast(`${propName} deleted — its acquisition review is available to convert again.`,
+      { duration: 5000 });
+  }
 
   closeDeletePropertyModal();
   activePropId = null;
@@ -22124,11 +22449,46 @@ async function deleteActiveAcquisitionReview() {
 // make EVERY converted review look orphaned, and the product would tell a user
 // their buildings had been deleted because the network blipped. Absence of
 // evidence is not evidence of deletion — say nothing until the load succeeded.
-function _acqOrphaned(review) {
-  if (!_propsLoadedOk) return false;
+// What became of the property this review was converted to?
+//
+//   'none'     — the review was never converted
+//   'active'   — the property exists in the portfolio
+//   'archived' — it exists but has been archived; the conversion is still true
+//   'missing'  — it is gone, and this review is an orphan
+//   'unknown'  — we have not established which, and must say nothing
+//
+// The 'unknown' case is not defensive padding, it is the whole point.
+// ARCHITECTURE_PRINCIPLES §8: absence of evidence is not evidence of absence.
+// Two separate reads can leave us ignorant here — a failed properties load
+// (_propsLoadedOk false) and an archived list that has not come back yet
+// (_archivedProps null). Either one, and an existing property looks deleted.
+// Archiving Lakeview used to report its acquisition as "property no longer
+// exists"; the property was fine, it was just not in the list being searched.
+function _acqPropertyState(review) {
   const pid = review?.data?.conversionRecord?.propertyId;
-  if (!pid || review.status !== 'converted') return false;
-  return !(_props || []).some(p => p && p.id === pid);
+  if (!pid || review.status !== 'converted') return 'none';
+  if (!_propsLoadedOk) return 'unknown';
+  if ((_props || []).some(p => p && p.id === pid)) return 'active';
+  // Not active. It is either archived or deleted, and until the archived list
+  // has been read those are indistinguishable — so do not guess.
+  if (_archivedProps === null) return 'unknown';
+  if (_archivedProps.some(p => p && p.id === pid)) return 'archived';
+  return 'missing';
+}
+
+// Is this review pointing at a property that no longer exists?
+//
+// A converted review keeps conversionRecord.propertyId forever, and deleting
+// the property never touched it — so the review went on claiming Converted with
+// nothing behind it, and the duplicate guard in convertAcquisitionToProperty()
+// (which tests for the RECORD, not the property) sealed it shut permanently.
+//
+// Deletion now reverts the acquisition directly
+// (_revertAcquisitionsForDeletedProperty), so this is the BACKSTOP rather than
+// the normal path — it catches the case where the property row is gone but the
+// revert did not land.
+function _acqOrphaned(review) {
+  return _acqPropertyState(review) === 'missing';
 }
 
 function _renderAcqConvertAction(review) {
@@ -22147,9 +22507,13 @@ function _renderAcqConvertAction(review) {
         title="Rebuild the property from this review's analysis">&#x1F3E2; Convert Again</button>
     </div>`;
   } else if (cr?.propertyId) {
+    // Archived is still converted — the property exists, so the record is true.
+    // The badge makes the state legible rather than merely consistent.
+    const archivedBadge = _acqPropertyState(review) === 'archived'
+      ? ' <span class="acq-archived-badge">Archived</span>' : '';
     el.innerHTML = `<span class="acq-converted-link"
       onclick="event.preventDefault();closeAcquisitionDetail();selectProperty('${esc(cr.propertyId)}')">
-      Converted ✓ — Open Property →</span>`;
+      Converted ✓ — Open Property →</span>${archivedBadge}`;
   } else if (review.status === 'complete') {
     el.innerHTML = `<button class="acq-convert-btn" onclick="_showAcqConvertModal()"
       title="Create a managed property from this acquisition review">
@@ -23211,6 +23575,7 @@ async function init() {
     _props = properties || [];
     _propsLoadedOk = true;   // gates the orphaned-acquisition check
     portfolio.splice(0, portfolio.length, ..._props);
+    _refreshArchivedLink();  // fire-and-forget; the portfolio must not wait on it
     renderPortfolio(properties);
     _loadAcqReviewsAndRender();
     // Land on the PORTFOLIO, not the Command Center.
