@@ -1,6 +1,8 @@
 # Property Lifecycle
 
 **Status:** agreed design, not implemented. Not a pilot blocker.
+**Shipped from this document:** §6, the orphaned-conversion repair. Everything
+else below is still design.
 **Supersedes:** the "Archive property" line in `PILOT_ACCEPTANCE_CHECKLIST.md`,
 which stays unchecked until this ships.
 
@@ -78,15 +80,20 @@ Delete is demoted, with the modal saying plainly what would be destroyed.
 
 ---
 
-## Decisions this leaves open, and what I recommend
+## Decisions — all confirmed
 
-These are the points where the model above is not yet specific enough to build
-from. Each carries a recommendation rather than a menu.
+These were the points where the model was not yet specific enough to build from.
+Every one is now agreed; they are recorded with their reasoning so the next
+person does not have to re-derive it.
 
-### 1. What counts as "meaningful activity"?
+**Archive is the normal lifecycle. Delete is the exception.** That sentence
+governs everything below — where the two actions sit, which one is styled as
+primary, and what the confirmation says.
 
-Needs to be one predicate, evaluated in one place, or Archive-vs-Delete will
-disagree between screens. Recommend a property-scoped sibling of
+### 1. What counts as "meaningful activity"? — one predicate
+
+One predicate, evaluated in one place, or Archive-vs-Delete will disagree
+between screens. A property-scoped sibling of
 `_hasRealActivity()` (`tenant-space.js:149`), which already draws this line for
 Spaces:
 
@@ -97,18 +104,38 @@ Spaces:
 Name and total square footage are *not* activity — a property with only those
 is exactly the "wrong address, start again" case Delete is for.
 
-### 2. Should Delete be blocked outright when there is activity?
+### 2. Delete is demoted, not blocked
 
-Recommend **no** — demote it, don't remove it. A bad import can be large. But
-make the cost visible and deliberate: the confirmation names the counts it is
-about to destroy ("14 timeline entries, 3 reconciliations, 6 leases") and
-requires typing the property name. Archive is the default button; Delete is the
-quiet one.
+Delete stays available: a bad import can be large, and forbidding the action
+would just push people to work around it. But the cost is made visible and
+deliberate — the confirmation names the counts it is about to destroy ("14
+timeline entries, 3 reconciliations, 6 leases") and requires typing the property
+name. Archive is the default button; Delete is the quiet one.
+
+**And the dialog explains why Archive is recommended.** Hiding Delete would be
+the weaker product: it treats the user as someone to be steered rather than
+informed, and it gives them no way to understand the choice. Explaining it
+teaches the model the product is built on. Copy:
+
+> This property contains leases, timeline history, reconciliations, and
+> supporting documents.
+>
+> If the property is no longer managed, **Archive** preserves its history while
+> removing it from your active portfolio.
+>
+> **Delete** permanently removes all records and should only be used for
+> properties created by mistake.
+
+This paragraph appears only when the activity predicate in §1 returns true. On a
+property with nothing in it there is no history to preserve, no case for
+Archive, and nothing to explain — showing the warning there would train people
+to dismiss it unread, which is exactly how it stops working on the day it
+matters.
 
 ### 3. Schema
 
-Recommend `properties.archived_at timestamptz null` rather than a boolean or a
-status enum. It answers *when*, it is trivially indexable, and `is null` is the
+`properties.archived_at timestamptz null`, not a boolean and not a status enum.
+It answers *when*, it is trivially indexable, and `is null` is the
 active filter. Pair it with an `property_archived` / `property_restored` entry
 through the existing `logActivity()` so *who and when* survives in the record.
 
@@ -138,19 +165,40 @@ find the review by scanning `_acqReviews` for a matching
 change; a reverse `acquisition_review_id` on the property is the optimisation to
 reach for only if that scan ever becomes a real cost.
 
-### 6. Existing orphans — this is the part the lifecycle does **not** fix
+### 6. Existing orphans — SHIPPED
 
 Archive prevents the *next* Harborview. It does nothing for the one that already
-exists, because that property row is already gone. Without a repair step,
-Harborview stays Converted-and-invisible forever, and stays unconvertible.
+exists, because that property row is already gone. This is a self-healing read
+rather than a data migration, and it shipped independently of everything else in
+this document.
 
-Recommend a self-healing read rather than a data migration: when a review is
-`converted` and its `conversionRecord.propertyId` is not in the loaded
-portfolio, render it as **"Converted — property no longer exists"** with a
-**Convert again** action, and let that action bypass the duplicate guard.
+`_acqOrphaned(review)` is the single predicate: status is `converted`, a
+`conversionRecord.propertyId` exists, and no loaded property carries that id.
+Everything else reads from it — the card, the detail badge, the action panel,
+the modal copy, and the duplicate-guard bypass.
 
-This is small, has no schema change, and is **separable from the rest of this
-document** — it can ship on its own, before or after the lifecycle work.
+- The card and the badge say **"Converted — property no longer exists"** instead
+  of a healthy Converted, in amber: a state to resolve, not an error.
+- The detail panel offers **Convert Again** and states that the review, its
+  documents and its analysis are all still present.
+- The duplicate guard is bypassed **only** for this state. It tests for the
+  conversion *record*, which outlived the property it was protecting against —
+  so it had stopped preventing a duplicate and started preventing the repair.
+  The moment the repair succeeds the guard is live again.
+- The superseded conversion is **kept, not overwritten**: it moves to
+  `conversionHistory[]` with `supersededAt` and `supersededReason`. Same rule as
+  the Space workspace — nothing important disappears, and the record shows how
+  it evolved. `review.data` is merged, never replaced, so the analysis, tenants
+  and invoices survive.
+
+**`_propsLoadedOk` gates the predicate, and this is not optional.** Without it a
+failed properties load leaves `_props` empty and every converted review looks
+orphaned — the product would tell someone their buildings had been deleted
+because the network blipped. Absence of evidence is not evidence of deletion:
+say nothing until a load has actually succeeded.
+
+Walked end-to-end in `test-acq-orphan-repair.js` (28 checks), including that
+false positive.
 
 ---
 
@@ -171,7 +219,9 @@ tests. Every one of these is a regression test as well as a checklist line.
       Convert**, and converting it again succeeds.
 - ☐ Archiving a converted property leaves the acquisition **Converted**, badged
       Archived.
-- ☐ A converted review whose property no longer exists says so, and offers
-      Convert again.
+- ☑ A converted review whose property no longer exists says so, and offers
+      Convert Again. *(shipped — `test-acq-orphan-repair.js`)*
 - ☐ Deleting a property with activity states the counts it will destroy and
       requires the property name to be typed.
+- ☐ That dialog explains why Archive is recommended, and does so only when the
+      property actually has history to preserve.

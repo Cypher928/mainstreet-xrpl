@@ -839,6 +839,10 @@ class ReconciliationResult {
 const portfolio = [];
 let activePropId = null; // null = portfolio view
 let _props = []; // canonical merged array from loadProperties()
+// Has a properties load actually SUCCEEDED this session? Consulted by
+// _acqOrphaned(): "this property is gone" is only sayable once we know what
+// exists. An empty _props after a failed load must never be read as deletion.
+let _propsLoadedOk = false;
 
 // ─── Acquisition Review State ─────────────────────────────────────────────────
 // Fully isolated — never touches _props, tenantData, invoiceData, or activePropId.
@@ -21969,14 +21973,17 @@ function _renderAcqSection(reviews) {
     const tenantCount  = (d.tenants  || []).length;
     const invoiceCount = (d.invoices || []).length;
     const date = r.created_at ? new Date(r.created_at).toLocaleDateString() : '';
-    const convertedNote = r.status === 'converted' && d.conversionRecord?.convertedAt
-      ? `<div class="acq-card-converted-note">Acquired ${new Date(d.conversionRecord.convertedAt).toLocaleDateString()}</div>`
-      : '';
+    const orphaned = _acqOrphaned(r);
+    const convertedNote = orphaned
+      ? '<div class="acq-card-converted-note acq-card-orphan-note">Property no longer exists — open to convert again</div>'
+      : (r.status === 'converted' && d.conversionRecord?.convertedAt
+        ? `<div class="acq-card-converted-note">Acquired ${new Date(d.conversionRecord.convertedAt).toLocaleDateString()}</div>`
+        : '');
     return `
     <div class="acq-card${r.status === 'converted' ? ' converted' : ''}" onclick="selectAcquisitionReview('${esc(r.id)}')">
       <div class="acq-card-name">${esc(r.name)}</div>
       <div class="acq-card-meta">${esc(date)}</div>
-      <span class="acq-card-status ${esc(r.status)}">${esc(r.status)}</span>
+      <span class="acq-card-status ${orphaned ? 'orphaned' : esc(r.status)}">${orphaned ? 'converted' : esc(r.status)}</span>
       ${convertedNote}
       <div class="acq-card-stats">
         <div class="acq-card-stat"><strong>${tenantCount}</strong> Tenants</div>
@@ -22040,8 +22047,11 @@ function selectAcquisitionReview(id) {
 
   document.getElementById('acqDetailTitle').textContent = review.name;
   const badge = document.getElementById('acqDetailBadge');
-  badge.textContent = review.status;
-  badge.className = 'acq-detail-badge ' + review.status;
+  // "converted" on its own is the claim that misled: it stayed true-looking
+  // after the property it referred to was deleted.
+  const _orphan = _acqOrphaned(review);
+  badge.textContent = _orphan ? 'converted — property no longer exists' : review.status;
+  badge.className = 'acq-detail-badge ' + (_orphan ? 'orphaned' : review.status);
   _renderAcqConvertAction(review);
 
   const sqftEl = document.getElementById('acqTotalSqft');
@@ -22102,11 +22112,41 @@ async function deleteActiveAcquisitionReview() {
 
 // ── Acquisition → Property conversion ─────────────────────────────────────────
 
+// Is this review pointing at a property that no longer exists?
+//
+// A converted review keeps conversionRecord.propertyId forever, and deleting
+// the property never touched it — so the review went on claiming Converted with
+// nothing behind it, and the duplicate guard in convertAcquisitionToProperty()
+// (which tests for the RECORD, not the property) sealed it shut permanently.
+// This predicate is the whole repair: everything else reads from it.
+//
+// _propsLoadedOk is not optional. Without it a failed properties load would
+// make EVERY converted review look orphaned, and the product would tell a user
+// their buildings had been deleted because the network blipped. Absence of
+// evidence is not evidence of deletion — say nothing until the load succeeded.
+function _acqOrphaned(review) {
+  if (!_propsLoadedOk) return false;
+  const pid = review?.data?.conversionRecord?.propertyId;
+  if (!pid || review.status !== 'converted') return false;
+  return !(_props || []).some(p => p && p.id === pid);
+}
+
 function _renderAcqConvertAction(review) {
   const el = document.getElementById('acqConvertAction');
   if (!el) return;
   const cr = review?.data?.conversionRecord;
-  if (cr?.propertyId) {
+  if (_acqOrphaned(review)) {
+    // Say what is true, then offer the way out. The analysis, tenants and
+    // invoices on this review are untouched — only the property built from
+    // them is gone, so converting again rebuilds it from the same evidence.
+    el.innerHTML = `<div class="acq-orphan">
+      <div class="acq-orphan-head">Converted — property no longer exists</div>
+      <div class="acq-orphan-body">The property created from this review has been deleted.
+        This review, its documents and its analysis are all still here.</div>
+      <button class="acq-convert-btn" onclick="_showAcqConvertModal()"
+        title="Rebuild the property from this review's analysis">&#x1F3E2; Convert Again</button>
+    </div>`;
+  } else if (cr?.propertyId) {
     el.innerHTML = `<span class="acq-converted-link"
       onclick="event.preventDefault();closeAcquisitionDetail();selectProperty('${esc(cr.propertyId)}')">
       Converted ✓ — Open Property →</span>`;
@@ -22124,6 +22164,22 @@ function _showAcqConvertModal() {
   if (!review) return;
   const nameEl = document.getElementById('acqConvertModalName');
   if (nameEl) nameEl.textContent = review.name;
+  // A repair is not a first conversion and must not be described as one. The
+  // standard copy promises the review will be "preserved and marked converted",
+  // which reads as nonsense to someone who is here precisely because that
+  // marking outlived the property.
+  const orphan = _acqOrphaned(review);
+  const titleEl = document.getElementById('acqConvertModalTitle');
+  const repairEl = document.getElementById('acqConvertModalRepair');
+  const btn = document.getElementById('acqConvertConfirmBtn');
+  if (titleEl) titleEl.innerHTML = orphan ? '&#x1F3E2; Convert Again' : '&#x1F3E2; Acquire Property';
+  if (btn) btn.textContent = orphan ? 'Convert Again' : 'Acquire Property';
+  if (repairEl) {
+    repairEl.style.display = orphan ? 'block' : 'none';
+    repairEl.textContent = orphan
+      ? 'The property built from this review was deleted. Converting again rebuilds it from the same analysis — a new property is created, and the record of the previous one is kept on this review.'
+      : '';
+  }
   document.getElementById('acqConvertModal').style.display = 'flex';
 }
 
@@ -22135,10 +22191,17 @@ async function convertAcquisitionToProperty() {
   const review = _acqReviews.find(r => r.id === _activeAcqId);
   if (!review) return;
 
-  // Duplicate prevention
-  if (review.data?.conversionRecord?.propertyId) {
+  // Duplicate prevention — but NOT when the duplicate no longer exists.
+  //
+  // This guard tests for the conversion RECORD. Once the property was deleted
+  // the record outlived the thing it was protecting against, so it stopped
+  // preventing a duplicate and started preventing a repair. The bypass is
+  // scoped to exactly that state: an orphan, and nothing else.
+  const _priorRecord = review.data?.conversionRecord;
+  const _isRepair    = _acqOrphaned(review);
+  if (_priorRecord?.propertyId && !_isRepair) {
     _hideAcqConvertModal();
-    alert('This review has already been converted.\nProperty ID: ' + review.data.conversionRecord.propertyId);
+    alert('This review has already been converted.\nProperty ID: ' + _priorRecord.propertyId);
     return;
   }
 
@@ -22172,9 +22235,27 @@ async function convertAcquisitionToProperty() {
       waltAtAcquisition:      prop._conversionSource.waltAtAcquisition,
     };
 
-    // Mark review as converted (in-memory + DB)
+    // Mark review as converted (in-memory + DB).
+    //
+    // A repair does not erase the conversion it replaces. Same rule as the
+    // Space workspace: nothing important disappears, the original record is
+    // preserved and the history shows how it evolved. The superseded record
+    // moves to conversionHistory with the reason it was superseded, so the
+    // review can still answer "this was converted once before, and that
+    // property was deleted".
+    //
+    // Object.assign onto review.data, never a replacement — analysis, tenants
+    // and invoices live on that object and are the point of preserving it.
+    const conversionHistory = Array.isArray(review.data?.conversionHistory)
+      ? review.data.conversionHistory.slice() : [];
+    if (_isRepair && _priorRecord?.propertyId) {
+      conversionHistory.push(Object.assign({}, _priorRecord, {
+        supersededAt: new Date().toISOString(),
+        supersededReason: 'The property created by this conversion no longer exists.',
+      }));
+    }
     review.status = 'converted';
-    review.data   = Object.assign({}, review.data, { conversionRecord });
+    review.data   = Object.assign({}, review.data, { conversionRecord, conversionHistory });
     await _saveAcqReview(review);
 
     // Update detail header badge + action area
@@ -23128,6 +23209,7 @@ async function init() {
   try {
     const properties = await loadProperties();
     _props = properties || [];
+    _propsLoadedOk = true;   // gates the orphaned-acquisition check
     portfolio.splice(0, portfolio.length, ..._props);
     renderPortfolio(properties);
     _loadAcqReviewsAndRender();

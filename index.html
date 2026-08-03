@@ -5180,6 +5180,18 @@
     .acq-detail-badge.complete  { background: var(--bgc-14291a); color: var(--c-4ade80); }
     .acq-detail-badge.converted { background: var(--bgc-1e1245); color: var(--c-a78bfa); }
     .acq-card-status.converted  { background: var(--bgc-1e1245); color: var(--c-a78bfa); }
+    /* Orphaned: converted, but the property it names is gone. Amber — this is a
+       state to resolve, not an error and not a healthy Converted. */
+    .acq-card-status.orphaned   { background: rgba(201,151,58,0.12); color: var(--c-fbbf24, #fbbf24); }
+    .acq-detail-badge.orphaned  { background: rgba(201,151,58,0.12); color: var(--c-fbbf24, #fbbf24); }
+    .acq-card-orphan-note       { color: var(--c-fbbf24, #fbbf24); }
+    .acq-orphan { border: 1px solid rgba(201,151,58,0.35); background: rgba(201,151,58,0.07);
+      border-radius: 10px; padding: 12px 14px; max-width: 480px; }
+    .acq-orphan-head { color: var(--c-fbbf24, #fbbf24); font-weight: 600; font-size: 0.85rem; margin-bottom: 4px; }
+    .acq-orphan-body { color: var(--text-3); font-size: 0.8rem; line-height: 1.5; margin-bottom: 10px; }
+    .acq-modal-repair { margin-top: 14px; padding: 10px 12px; border-radius: 8px;
+      border: 1px solid rgba(201,151,58,0.35); background: rgba(201,151,58,0.07);
+      color: var(--c-fbbf24, #fbbf24); font-size: 0.82rem; line-height: 1.55; }
     .acq-card.converted         { border-color: #2d1a5e; }
     .acq-card-converted-note    { font-size: 0.72rem; color: var(--c-7c3aed); margin-top: 4px; }
 
@@ -6283,12 +6295,15 @@
   <!-- Conversion confirmation modal (hidden until triggered) -->
   <div id="acqConvertModal" class="acq-modal-backdrop" style="display:none" onclick="if(event.target===this)_hideAcqConvertModal()">
     <div class="acq-modal-box">
-      <div class="acq-modal-title">&#x1F3E2; Acquire Property</div>
+      <div class="acq-modal-title" id="acqConvertModalTitle">&#x1F3E2; Acquire Property</div>
       <div class="acq-modal-body">
         Convert <span class="acq-modal-name" id="acqConvertModalName"></span> to a managed
         property?<br><br>
         Tenant records, lease metadata, rent roll, and acquisition analysis will be copied.
         The due diligence review is preserved and marked <em>converted</em> for historical reference.
+        <!-- Shown only when repairing an orphaned conversion; the copy above
+             describes a first conversion and is wrong for that case. -->
+        <div class="acq-modal-repair" id="acqConvertModalRepair" style="display:none"></div>
       </div>
       <div class="acq-modal-actions">
         <button class="acq-modal-cancel" onclick="_hideAcqConvertModal()">Cancel</button>
