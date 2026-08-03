@@ -1,5 +1,29 @@
 # Pilot Acceptance Checklist
 
+> ## 🧊 FROZEN — pending Christy's walkthrough
+>
+> **The only changes permitted are fixes for bugs Christy finds while walking
+> the product.** No new functionality, no refactors, no polish, no
+> restructuring — including the Documents / Timeline / Records question, which
+> is deliberately waiting on how she actually uses the workspace.
+>
+> A change qualifies if it is repairing something that behaved wrongly during
+> her walkthrough. "While I was in there" does not qualify. If something looks
+> wrong but she did not hit it, record it here and leave it.
+>
+> Frozen at `bd0f5bb` on `pilot`. Production (`main`) remains at `9c6d905`.
+>
+> **Observed but not fixed** — waiting for her walkthrough to say whether they
+> matter:
+> - Property Information promises data ("appears here once added") with no
+>   control to add it.
+> - `Recorded by <full email address>` on every record; a name would read
+>   better, and it repeats on every card.
+> - A Building System with nothing on it shows `—`, which does not distinguish
+>   "none" from "unknown".
+> - Documents, Property Timeline and Property Records each show the same
+>   records; every document appears twice on one screen.
+
 The product's definition of "ready". Walk it before every release.
 
 Walk it **as a first-time commercial property manager**, from a blank property,

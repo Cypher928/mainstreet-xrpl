@@ -1,6 +1,8 @@
 # Property Workspace
 
-**Status:** first increment SHIPPED. Property Records, building-level
+**Status:** 🧊 FROZEN pending Christy's walkthrough — bug fixes only, no new
+work. See the freeze notice at the top of `PILOT_ACCEPTANCE_CHECKLIST.md`.
+First increment SHIPPED. Property Records, building-level
 categories, the Building System subject, and provenance are in.
 **Walked by:** `test-property-workspace.js` (28 checks).
 **Not yet done:** the Mortgage/Financing link to the escrow engine, and an
