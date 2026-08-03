@@ -25,7 +25,33 @@ reconciliation or property switch clears one of them and not the other.
 *Violation shape:* a new `prop.insurance = []`, `prop.taxes = []`, or a category
 that renders from anything except the timeline.
 
-## Categories
+## What already exists — read this before designing anything
+
+Surveying `property-os.js` before starting changes the shape of this work. The
+subject-scoped timeline model is **already implemented**; what is missing is the
+surface over it, not the storage under it.
+
+- **`PropertyOS.BUILDING_SYSTEMS`** (`property-os.js:43`) — eight shared physical
+  assets already defined: Roof, Parking Lot, HVAC, Fire Suppression,
+  Landscaping, Electrical, Plumbing, Other/Shared. Exported, with a
+  `systemLabel()` lookup.
+- **Timeline events already carry a subject**: `e.subject = { type, id }`, where
+  type is `property`, `system`, or a space/tenant. The Building Systems grid
+  counts records per system by reading exactly that
+  (`e.subject.type === 'system' && e.subject.id === s.key`).
+- **Property documents already derive from the timeline** — files are collected
+  from events whose subject is the property or a system, not from a document
+  store.
+
+So the no-parallel-stores rule is not an aspiration to implement; it is the
+model already in place, and the risk is a new category quietly departing from
+it. A warranty is a timeline event with `subject: { type: 'system', id: 'roof' }`
+and nothing more. The existing systems grid will count it without being told.
+
+This makes the Property Workspace mostly an information-architecture problem:
+one Property Records surface, categories as a filter, `➕ Add Activity` writing
+subject-scoped timeline events. Very little new persistence should be needed —
+and needing some is a signal to re-read this section before writing it.
 
 Categories are a **filter**, not separate screens — one Property Records surface
 with a category selector, the same shape as the Space workspace's Add Activity.
@@ -39,7 +65,7 @@ with a category selector, the same shape as the Space workspace's Add Activity.
 - Environmental Reports
 - Capital Improvements
 - Building Photos
-- Warranties — tied to building systems where appropriate
+- Warranties — as part of **Building Systems**, not as a loose category
 
 Two of these carry existing work that must be reused, not re-implemented:
 
@@ -49,8 +75,9 @@ Two of these carry existing work that must be reused, not re-implemented:
   re-extract them.
 - **Warranties** were deliberately removed from the Space activity types during
   the pilot freeze, on the grounds that a warranty belongs to the building
-  system rather than the tenancy. This is where they come back — attached to a
-  building system, not floating in a category.
+  system rather than the tenancy. They come back as part of Building Systems —
+  a warranty is recorded against Roof or HVAC, and is found by opening that
+  system. A warranty with no system is the shape to reject in review.
 
 ## What carries over from Spaces, unchanged
 
@@ -68,12 +95,11 @@ Settled patterns. Reuse them; do not re-decide them.
 
 ## Open questions — to answer before building, not during
 
-1. **Where does a property record live in storage?** Spaces keep records on the
-   tenant subject. The property timeline already exists
-   (`property-timeline.js`); the question is whether a property activity is a
-   timeline event with a category field, or a subject-scoped record that emits
-   one. The first is simpler and is the default unless something argues against
-   it.
+1. **Does a category need anything beyond `subject` + a category field?** The
+   subject model already exists and already distinguishes property-wide from
+   system-scoped. The default answer is no: a property activity is a timeline
+   event with `subject: { type: 'property' | 'system', id }` and a category.
+   Anything more needs a reason.
 2. **Do categories need per-category fields?** Taxes have an assessment year and
    amount; a site plan has a revision date and little else. Either one form with
    optional fields, or a per-category form like the Space activity types. The
@@ -97,7 +123,7 @@ Walked as a property manager, not asserted from component tests.
       test is the point of this line — a violation is invisible on screen.)*
 - ☐ Amending a record preserves the original and shows the revision history.
 - ☐ Every record names who created it and when.
-- ☐ A warranty attaches to a building system, and that system's records are
-      findable from it.
+- ☐ A warranty is recorded against a Building System, appears in that system's
+      record count, and is findable by opening the system.
 - ☐ An archived property's records and timeline are still readable.
 - ☐ Empty categories say what to record there, and why.
