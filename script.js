@@ -23720,6 +23720,9 @@ const _ASYNC_USER_ACTIONS = [
   'confirmDocsRequest', 'confirmYardiImport', 'importGLToInvoices', 'navigateToPropertyTenant',
   'removeInvItem', 'resolveDispute', 'submitInvDispute', 'updateDrawStatus',
   'saveBulkTenant', 'savePropertyAndContinue', 'confirmDeleteProperty', 'confirmAllocation',
+  // Property Lifecycle. toggleArchivedProperties awaits a read that can fail;
+  // unguarded, a rejection there is a click that does nothing and says nothing.
+  'archiveActiveProperty', 'restoreProperty', 'toggleArchivedProperties',
   'runAllocation', 'handleBulkLeases', 'handleBatchInvoices', 'generateTenantStatement',
   'loadDemo', 'openReviewItem', 'markTenantReviewAcknowledged',
 ];
@@ -23728,6 +23731,8 @@ const _ASYNC_USER_ACTIONS = [
 const _ACTION_LABEL = {
   saveBulkTenant: 'save this lease', savePropertyAndContinue: 'save the property',
   addNewProperty: 'create the property', confirmDeleteProperty: 'delete the property',
+  archiveActiveProperty: 'archive the property', restoreProperty: 'restore the property',
+  toggleArchivedProperties: 'open the archived properties',
   handleBulkLeases: 'upload those leases', handleBatchInvoices: 'upload those invoices',
   runAllocation: 'run the reconciliation', confirmAllocation: 'run the reconciliation',
   generateTenantStatement: 'generate that statement', submitDispute: 'submit the dispute',

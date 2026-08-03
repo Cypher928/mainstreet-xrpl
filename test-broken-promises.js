@@ -241,6 +241,80 @@ else {
         : bad('no action names the tenant it opens');
 }
 
+// ── Property Workspace ─────────────────────────────────────────────────────
+// Two new classes of control, both of which promise a specific object:
+//
+//   "on: Roof replaced — full tear-off"   must open THAT record
+//   a Building System cell                must show THAT system's history
+//
+// A document chip that opens the section you were already looking at is the
+// same broken promise as "Jump to Tenant" opening the property — it just looks
+// more innocent, because a file name feels like a label rather than a claim.
+console.log('\n── Property Workspace: documents and systems ──');
+{
+  const pw2 = await p.evaluate(() => {
+    if (!window.PropertyOS || !window.currentProperty) return { missing: true };
+    const prop = window.currentProperty();
+    if (!prop) return { missing: true };
+    prop.timeline = prop.timeline || [];
+    const job = appendPropertyTimelineEvent(prop, {
+      manual: true, type: 'manual_capital_improvement', category: 'capital_improvement',
+      title: 'Roof replaced — full tear-off', timestamp: new Date().toISOString(),
+      subject: { type: 'system', id: 'roof', label: 'Roof' },
+      attachments: [{ name: 'roof-warranty.pdf', url: 'https://x/roof-warranty.pdf', kind: 'document' }],
+      actor: 'qa@example.com', metadata: { recordedBy: 'qa@example.com' },
+    });
+    const pane = document.getElementById('wsPane-property');
+    if (pane) pane.style.display = 'block';
+    PropertyOS.init();
+    PropertyOS.renderPropertyPage(prop);
+    const body = document.getElementById('propertyOsBody');
+    const docBtn = body.querySelector('.pos-doc-on');
+    const sysCell = [].slice.call(body.querySelectorAll('.pos-sys-cell'))
+      .find(c => /Roof/.test(c.textContent));
+    return {
+      jobId: job.id,
+      docLabel: docBtn ? docBtn.textContent.trim() : null,
+      docCarries: docBtn ? docBtn.dataset.rec : null,
+      docHandler: docBtn ? typeof docBtn.onclick === 'function' : false,
+      sysCarries: sysCell ? sysCell.dataset.sys : null,
+      sysHandler: sysCell ? typeof sysCell.onclick === 'function' : false,
+    };
+  });
+
+  if (pw2.missing) {
+    bad('Property Workspace not reachable — fixture produced no property');
+  } else {
+    (pw2.docLabel && /Roof replaced/.test(pw2.docLabel))
+      ? ok(`a document row names the record it is filed on ("${pw2.docLabel}")`)
+      : bad('a document row does not name its record', String(pw2.docLabel));
+    (pw2.docCarries === pw2.jobId)
+      ? ok('and carries that record\'s id, not a generic jump')
+      : bad('document control does not carry a record id', `${pw2.docCarries} vs ${pw2.jobId}`);
+    pw2.docHandler ? ok('its handler compiles') : bad('document control has a null onclick');
+    (pw2.sysCarries === 'roof')
+      ? ok('a Building System cell carries the system it names')
+      : bad('Building System cell does not carry its key', String(pw2.sysCarries));
+    pw2.sysHandler ? ok('and its handler compiles') : bad('Building System cell has a null onclick');
+
+    // The promise kept: clicking actually lands on that object.
+    const landed = await p.evaluate((jobId) => {
+      const body = document.getElementById('propertyOsBody');
+      body.querySelector('.pos-doc-on').click();
+      const f = body.querySelector('.pos-rec--focus');
+      const okFocus = !!f && f.dataset.recId === jobId;
+      PropertyOS.setRecordFilter('all', 'roof');
+      const note = (document.querySelector('#propertyOsBody .pos-filter-note') || {}).textContent || '';
+      PropertyOS.setRecordFilter('all', null);
+      return { okFocus, note: note.replace(/\s+/g, ' ').trim() };
+    }, pw2.jobId);
+    landed.okFocus ? ok('clicking the document opens THAT record, not the section')
+                   : bad('clicking a document did not open its record');
+    /Roof/.test(landed.note) ? ok(`clicking a system shows that system ("${landed.note.slice(0, 46)}")`)
+                             : bad('clicking a system did not scope the view', landed.note);
+  }
+}
+
 console.log('\n'+(fail?'\x1b[31m':'\x1b[32m')+`RESULT: ${pass} passed, ${fail} failed`+'\x1b[0m');
 await b.close();srv.close();process.exit(fail?1:0);
 })();

@@ -503,6 +503,127 @@ const CLICK_LABEL = function (rx) {
   check('unlinking splits the story', unlinked.fromJob === 1, String(unlinked.fromJob));
   check('and is itself recorded in the history', unlinked.lastAction === 'unlinked', unlinked.lastAction);
 
+  // ── Documents are a VIEW of records, not a repository ────────────────────
+  // The old section scraped attachments into a flat list with no idea which
+  // record each came from — "another flat document repository", which is what
+  // this workspace must not be. Every row must name its record and open it.
+  const docs = await page.evaluate(async () => {
+    const p = _props[0];
+    p.timeline = [];
+    p.invoices = [];
+    const job = appendPropertyTimelineEvent(p, {
+      manual: true, type: 'manual_capital_improvement', category: 'capital_improvement',
+      title: 'Roof replaced — full tear-off', timestamp: new Date().toISOString(),
+      subject: { type: 'system', id: 'roof', label: 'Roof' },
+      actor: 'dana@example.com', metadata: { recordedBy: 'dana@example.com' },
+    });
+    PropertyOS.renderPropertyPage(p);
+
+    // Attach through the REAL path: a real File, the real upload hook, the real
+    // amend. Only the network is faked.
+    window.uploadInvoiceFile = function (f) {
+      return Promise.resolve({ url: 'https://x.supabase.co/docs/' + encodeURIComponent(f.name) });
+    };
+    const file = new File([new Blob(['%PDF-1.4 fake'])], 'roof-warranty.pdf', { type: 'application/pdf' });
+    const dt = new DataTransfer(); dt.items.add(file);
+
+    PropertyOS.pickAttachment(job.id);
+    const inp = document.getElementById('posAttachInput');
+    inp.files = dt.files;
+    inp.dispatchEvent(new Event('change'));
+    await new Promise(r => setTimeout(r, 600));
+
+    const after = p.timeline.find(e => e.id === job.id);
+    const list = PropertyOS.propertyDocuments(p);
+    return {
+      attachedCount: (after.attachments || []).length,
+      attachedName: (after.attachments || [])[0] && after.attachments[0].name,
+      revActions: (after.revisions || []).map(r => r.action),
+      revNote: (after.revisions || []).slice(-1)[0].note,
+      revBy: (after.revisions || []).slice(-1)[0].by,
+      docCount: list.length,
+      docCarriesRecord: list[0] && list[0].recordId === job.id,
+      docNamesRecord: list[0] && list[0].recordTitle,
+      docSystem: list[0] && list[0].system,
+      strayStores: Object.keys(p).filter(k => /^(documents|files|docs|attachments)$/i.test(k)),
+      jobId: job.id,
+    };
+  });
+
+  check('attaching a file to an existing record works through the real input',
+        docs.attachedCount === 1 && docs.attachedName === 'roof-warranty.pdf',
+        `${docs.attachedCount} / ${docs.attachedName}`);
+  check('the attachment is recorded in the history',
+        docs.revActions.includes('attached'), docs.revActions.join(','));
+  check('naming the file and who attached it',
+        /roof-warranty\.pdf/.test(docs.revNote || '') && docs.revBy === 'dana@example.com',
+        `${docs.revNote} — ${docs.revBy}`);
+  check('the document appears in the Documents view', docs.docCount === 1, String(docs.docCount));
+  check('carrying the record it is filed on — not floating free',
+        docs.docCarriesRecord, docs.docNamesRecord || 'no record');
+  check('and inheriting that record\'s building system', docs.docSystem === 'roof', docs.docSystem);
+  check('no document store appeared beside the timeline',
+        docs.strayStores.length === 0, docs.strayStores.join(','));
+
+  // Emptying the timeline must empty Documents too — same invariant as records.
+  const docsGone = await page.evaluate(() => {
+    const p = _props[0];
+    const keep = p.timeline.slice();
+    p.timeline = [];
+    const n = PropertyOS.propertyDocuments(p).length;
+    PropertyOS.renderPropertyPage(p);
+    const rows = document.querySelectorAll('#propertyOsBody .pos-doc-row').length;
+    p.timeline = keep; PropertyOS.renderPropertyPage(p);
+    return { n, rows };
+  });
+  check('clearing the timeline empties Documents — no second store',
+        docsGone.n === 0 && docsGone.rows === 0, `${docsGone.n} / ${docsGone.rows}`);
+
+  // THE PROMISE: a document row says which record it is on, and opens it.
+  const promise = await page.evaluate((jobId) => {
+    const body = document.getElementById('propertyOsBody');
+    const btn = body.querySelector('.pos-doc-on');
+    if (!btn) return { noButton: true };
+    const label = btn.textContent.trim();
+    const carriesId = btn.dataset.rec === jobId;
+    const handlerBound = typeof btn.onclick === 'function';
+    btn.click();
+    const focused = body.querySelector('.pos-rec--focus');
+    return { label, carriesId, handlerBound,
+             focusedIsJob: !!focused && focused.dataset.recId === jobId };
+  }, docs.jobId);
+
+  check('each document row names the record it is filed on',
+        !promise.noButton && /on: Roof replaced/.test(promise.label || ''), promise.label || 'no control');
+  check('the control carries that record\'s id — not a generic jump',
+        promise.carriesId);
+  check('its handler compiles', promise.handlerBound === true);
+  check('and clicking it opens THAT record', promise.focusedIsJob === true);
+
+  // ── no silent failures on attach ─────────────────────────────────────────
+  const failPath = await page.evaluate(async () => {
+    const p = _props[0];
+    const job = p.timeline[0];
+    const toasts = [];
+    const realToast = window.showToast;
+    window.showToast = function (m) { toasts.push(String(m)); };
+    window.uploadInvoiceFile = function () { return Promise.reject(new Error('network down')); };
+    const before = (job.attachments || []).length;
+    const file = new File([new Blob(['x'])], 'insurance.pdf', { type: 'application/pdf' });
+    const dt = new DataTransfer(); dt.items.add(file);
+    PropertyOS.pickAttachment(job.id);
+    const inp = document.getElementById('posAttachInput');
+    inp.files = dt.files;
+    inp.dispatchEvent(new Event('change'));
+    await new Promise(r => setTimeout(r, 600));
+    window.showToast = realToast;
+    return { toasts, before, after: (p.timeline[0].attachments || []).length };
+  });
+  check('a failed upload says so — it does not fail silently',
+        failPath.toasts.some(t => /couldn.t upload|unavailable/i.test(t)), failPath.toasts.join(' | ') || 'no toast');
+  check('and nothing is added to the record when the upload failed',
+        failPath.after === failPath.before, `${failPath.before} → ${failPath.after}`);
+
   check('no uncaught errors across the workspace', errs.length === 0,
         errs.slice(0, 2).join(' | ') || 'clean');
 

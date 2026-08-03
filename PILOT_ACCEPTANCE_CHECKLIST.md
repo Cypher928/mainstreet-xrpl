@@ -41,6 +41,20 @@ arrives. Count your clicks. There are two.
 - ☐ **Delete a property created by mistake** — an empty property deletes without ceremony; one with history names what would be destroyed, recommends Archive, and requires the name typed.
 - ☐ **Delete a converted property** — its acquisition returns to Ready to Convert and can be converted again.
 
+## The Property workspace
+
+Walk this on a building with real work on it, not the demo.
+
+- ☐ **Add a record** — ＋ Add Record on the Property tab opens the form; every building category is there (taxes, insurance, financing, survey, site plan, building plan, environmental, capital improvement, photo, warranty).
+- ☐ **Scope it to a building system** — a warranty recorded against the Roof appears in the Roof cell's count, and choosing a System clears the Space (a record has one subject).
+- ☐ **Categories filter in place** — picking a category narrows the one list; it does not navigate to a different screen.
+- ☐ **Related Items** — link the warranty, the invoice, the photos and the inspection to the roof job. Opening **any** of them shows the whole story, including the ones you did not start from.
+- ☐ **Clicking a Building System ends the search** — "Roof" shows its records, its invoices and their total, including records linked into the job but never tagged to Roof.
+- ☐ **Attach a document to an existing record** — 📎 Attach on the record. The file appears under Documents naming that record, and the record's history says who attached it.
+- ☐ **Every document names its record** — no document appears without saying what it is filed on, and clicking that opens the record itself.
+- ☐ **Edits preserve history** — change a record, then open "Edited N times — view history". The original values and each change are both there, with who made them.
+- ☐ **A failed attachment says so** — nothing is added silently, and the record is unchanged.
+
 ## State integrity
 
 - ☐ A brand-new property is completely empty — no demo data, no previous property's tenants.
@@ -71,6 +85,7 @@ Run these first; they are fast and catch regressions in the paths below.
 | `node test-broken-promises.js` | every control whose label promises a specific object carries an identifier for it |
 | `node test-pilot-readiness.js` | edit-lease-then-Done; narrative gating; incomplete-setup guidance |
 | `node test-inline-handlers.js` | every inline `onclick` compiles and calls through with a hostile value — a truncated attribute is a silently dead control |
+| `node test-property-workspace.js` | add a record → scope to a system → filter → link a story → attach a document → amend with history, all through the real controls |
 | `node test-property-lifecycle.js` | archive → aggregates → restore; delete with and without history; deleting a converted property reverts its acquisition |
 | `node test-acq-orphan-repair.js` | the orphan backstop, including that an archived property is never reported as deleted |
 | `node test-regression.js` | 182 engine/allocation/persistence checks |

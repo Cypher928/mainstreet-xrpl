@@ -153,6 +153,7 @@ window.PropertyOS = (function () {
   // Building Systems grid counts and the Property documents list draws files
   // from. Nothing here has its own array. docs/PROPERTY_WORKSPACE.md.
   var _filter = { cat: 'all', system: null };
+  var _focusId = null;   // record to highlight after a jump from Documents
   var _docIcon = function () { return '\u{1F4C4}'; };
 
   function setRecordFilter(cat, system) {
@@ -172,6 +173,129 @@ window.PropertyOS = (function () {
       .sort(function (a, b) {
         return (new Date(b.timestamp).getTime() || 0) - (new Date(a.timestamp).getTime() || 0);
       });
+  }
+
+  /**
+   * Every document on this building, derived from the records that hold it.
+   *
+   * NOT a repository. A document is an attachment on a record — the roof
+   * warranty PDF belongs to the roof job, not to a folder that happens to
+   * mention roofs. So each entry carries the record it came from, and the
+   * Documents view is a VIEW of records rather than a second place files live.
+   *
+   * That is also what makes the "open" promise keepable: a chip labelled with a
+   * file name has to be able to say which record it is on, or it is a link into
+   * nowhere. ARCHITECTURE_PRINCIPLES — no broken promises.
+   */
+  function propertyDocuments(property) {
+    var out = [];
+    propertyRecords(property).forEach(function (e) {
+      (e.attachments || []).forEach(function (a) {
+        if (!a || !a.url) return;
+        out.push({
+          name: a.name, url: a.url, kind: a.kind,
+          recordId: e.id, recordTitle: e.title || e.type,
+          category: e.category || null,
+          system: (e.subject && e.subject.type === 'system') ? e.subject.id : null,
+          when: e.timestamp,
+        });
+      });
+    });
+    // Invoices carry their own file and are their own record in the register.
+    invoices(property).forEach(function (i) {
+      if (!i.fileUrl || i.spaceId) return;
+      out.push({
+        name: i.fileName || i.vendorName, url: i.fileUrl, kind: 'invoice',
+        recordId: null, recordTitle: i.vendorName, invoiceKey: _invoiceKeyOf(i),
+        category: 'invoice', system: i.system || null, when: i.invoiceDate,
+      });
+    });
+    return out.sort(function (a, b) {
+      return (new Date(b.when).getTime() || 0) - (new Date(a.when).getTime() || 0);
+    });
+  }
+
+  // Jump to the record a document sits on: filter to it and scroll it into
+  // view. The label names a file on a record, so the control has to open THAT
+  // record — not the Documents section it was already looking at.
+  function openRecord(recordId) {
+    var property = window.currentProperty && window.currentProperty();
+    if (!property || !recordId) return false;
+    var ev = (property.timeline || []).find(function (x) { return String(x.id) === String(recordId); });
+    if (!ev) return false;
+    _filter = { cat: 'all', system: null };
+    _focusId = String(recordId);
+    renderPropertyPage(property);
+    setTimeout(function () {
+      var el = document.querySelector('.pos-rec[data-rec-id="' + String(recordId).replace(/"/g, '') + '"]');
+      if (el && el.scrollIntoView) el.scrollIntoView({ behavior: 'smooth', block: 'center' });
+    }, 40);
+    return true;
+  }
+
+  // Attach a document to an EXISTING record. Without this the only way to add a
+  // file was at creation time, so the invoice that arrives three weeks after the
+  // roof job had nowhere to go but a flat list. Recorded as an amendment.
+  function attachToRecord(recordId, fileList) {
+    var property = window.currentProperty && window.currentProperty();
+    if (!property) return Promise.resolve(false);
+    var ev = (property.timeline || []).find(function (x) { return String(x.id) === String(recordId); });
+    if (!ev) return Promise.resolve(false);
+    var files = [].slice.call(fileList || []);
+    if (!files.length) return Promise.resolve(false);
+
+    var kindOf = function (f) {
+      return /^image\//.test(f.type) ? 'photo' : (/pdf$/i.test(f.type || '') ? 'document' : 'document');
+    };
+    var uploads = files.map(function (f) {
+      if (!window.uploadInvoiceFile) return Promise.resolve(null);
+      return window.uploadInvoiceFile(f)
+        .then(function (r) { return (r && r.url) ? { name: f.name, url: r.url, kind: kindOf(f) } : null; })
+        .catch(function () { return null; });
+    });
+
+    return Promise.all(uploads).then(function (res) {
+      var okFiles = res.filter(Boolean);
+      var failed = res.length - okFiles.length;
+      // No silent failures: a file that did not upload is said out loud, and
+      // the ones that did are still kept.
+      if (failed && window.showToast) {
+        window.showToast('\u26A0\uFE0F ' + failed + ' file' + (failed !== 1 ? 's' : '') +
+          " couldn't upload — the others were attached.",
+          { color: '#92400e', textColor: '#fef3c7', duration: 6000 });
+      }
+      if (!okFiles.length) {
+        if (!failed && window.showToast) window.showToast('\u26A0\uFE0F Nothing was attached — upload is unavailable.',
+          { color: '#92400e', textColor: '#fef3c7', duration: 6000 });
+        return false;
+      }
+      var PT = window.PropertyTimeline;
+      if (PT && PT.amendAttachments) PT.amendAttachments(ev, okFiles);
+      else ev.attachments = (ev.attachments || []).concat(okFiles);
+      try { if (window.savePropertyData) window.savePropertyData(); } catch (_) {}
+      renderPropertyPage(property);
+      if (window.showToast) window.showToast('\u2713 Attached to \u201C' + (ev.title || 'record') + '\u201D', { duration: 3500 });
+      return true;
+    });
+  }
+
+  // Hidden input, one per page, reused. Created on demand so nothing is
+  // appended to document.body on a property that never attaches anything.
+  function pickAttachment(recordId) {
+    var inp = _d('posAttachInput');
+    if (!inp) {
+      inp = document.createElement('input');
+      inp.type = 'file'; inp.id = 'posAttachInput'; inp.multiple = true;
+      inp.style.display = 'none';
+      inp.addEventListener('change', function () {
+        var rid = inp.dataset.recordId;
+        var files = inp.files;
+        attachToRecord(rid, files).then(function () { inp.value = ''; });
+      });
+      document.body.appendChild(inp);
+    }
+    inp.dataset.recordId = String(recordId);
+    inp.click();
   }
 
   // Related Items on a record: the rest of its story, plus the way to add to it.
@@ -210,6 +334,8 @@ window.PropertyOS = (function () {
 
     return '<div class="pos-rel">' +
       '<div class="pos-rel-head">Related items <span class="pos-rel-n">' + n + '</span>' +
+        '<button type="button" class="pos-rel-add" data-ev="' + _esc(e.id) + '"' +
+          ' onclick="PropertyOS.pickAttachment(this.dataset.ev)">\u{1F4CE} Attach</button>' +
         '<button type="button" class="pos-rel-add" data-ev="' + _esc(e.id) + '"' +
           ' onclick="PropertyOS.openLinkPicker(this.dataset.ev)">\uFF0B Link</button></div>' +
       (n ? '<div class="pos-rel-list">' + rows + '</div>'
@@ -538,30 +664,49 @@ window.PropertyOS = (function () {
         '<span class="pos-sys-n">' + (tot ? tot + ' record' + (tot !== 1 ? 's' : '') : '—') + '</span></div>';
     }).join('') + '</div>';
 
-    // Property documents — files attached to property-wide records.
-    var docs = [];
-    tl.forEach(function (e) {
-      var isProp = !e.subject || e.subject.type === 'property' || e.subject.type === 'system';
-      if (!isProp) return;
-      (e.attachments || []).forEach(function (a) { if (a && a.url) docs.push({ name: a.name, url: a.url, kind: a.kind, when: e.timestamp }); });
-    });
-    invs.forEach(function (i) { if (i.fileUrl && !i.spaceId) docs.push({ name: i.fileName || i.vendorName, url: i.fileUrl, kind: 'invoice', when: i.invoiceDate }); });
-    // Demo property: show the document set a real building would keep on file.
-    if (PR) docs = docs.concat(PR.propertyDocumentsFor(property));
+    // The flat document scrape that used to live here is gone. It built a
+    // second list of files with no idea which record each came from, which is
+    // exactly the "another flat document repository" this workspace must not
+    // be. propertyDocuments() derives the same files FROM the records.
     _docIcon = function (k) {
       return k === 'photo' ? '\u{1F5BC}\u{FE0F}' : (k === 'invoice' ? '\u{1F9FE}'
         : (k === 'warranty' ? '\u{1F6E1}\u{FE0F}' : (k === 'plan' ? '\u{1F4D0}' : '\u{1F4C4}')));
     };
-    var docHtml = docs.length
-      ? '<div class="pos-docs">' + docs.slice(0, 30).map(function (a) {
-          var inner = _docIcon(a.kind) + '&nbsp;<span class="pos-doc-n">' + _esc(a.name) + '</span>' +
-            (a.category ? '<span class="pos-doc-cat">' + _esc(a.category) + '</span>' : '') +
-            (a.when ? '<span class="pos-doc-w">' + _esc(_fmtDate(a.when)) + '</span>' : '');
-          return a.url
-            ? '<a class="pos-doc" href="' + _esc(a.url) + '" target="_blank" rel="noopener">' + inner + '</a>'
-            : '<div class="pos-doc pos-doc--ref">' + inner + '</div>';
-        }).join('') + '</div>' + (docs.length > 30 ? '<div class="pos-empty">Showing 30 of ' + docs.length + '</div>' : '')
-      : _empty('Insurance policies, tax bills, surveys, vendor contracts and building warranties attached to property-wide records appear here.');
+    // Documents is a VIEW of records, not a repository. Every row names the
+    // record its file sits on and opens THAT record — a file chip that opens
+    // nothing, or opens the section you were already looking at, is a broken
+    // promise. Files arrive here by being attached to a record; there is no
+    // other way in, which is the point.
+    var recDocs = propertyDocuments(property);
+    var docHtml = recDocs.length
+      ? '<div class="pos-docs-list">' + recDocs.slice(0, 40).map(function (a) {
+          var on = a.recordId
+            ? '<button type="button" class="pos-doc-on" data-rec="' + _esc(a.recordId) + '"' +
+              ' onclick="PropertyOS.openRecord(this.dataset.rec)"' +
+              ' title="Open the record this document is filed on">on: ' + _esc(a.recordTitle) + '</button>'
+            : '<span class="pos-doc-on pos-doc-on--inv">on: ' + _esc(a.recordTitle) + ' (invoice register)</span>';
+          return '<div class="pos-doc-row">' +
+            '<a class="pos-doc" href="' + _esc(a.url) + '" target="_blank" rel="noopener">' +
+              _docIcon(a.kind) + '&nbsp;<span class="pos-doc-n">' + _esc(a.name) + '</span></a>' +
+            on +
+            (a.system ? '<span class="pos-doc-sys">' + _esc(systemLabel(a.system) || a.system) + '</span>' : '') +
+            (a.when ? '<span class="pos-doc-w">' + _esc(_fmtDate(a.when)) + '</span>' : '') +
+          '</div>';
+        }).join('') + '</div>' +
+        (recDocs.length > 40 ? '<div class="pos-empty">Showing 40 of ' + recDocs.length + '</div>' : '') +
+        '<div class="pos-note">Every document is filed on a record. Attach one from the record it belongs to \u2014 that is what keeps the roof warranty with the roof job.</div>'
+      : _empty('No documents yet. Insurance policies, tax bills, surveys, plans and warranties are attached to the record they belong to \u2014 add a record, then attach its files.');
+
+    // Reference samples exist only on the seeded demo property. Kept visibly
+    // apart so a preview can never be mistaken for a record on file.
+    var sampleDocs = PR ? PR.propertyDocumentsFor(property) : [];
+    if (sampleDocs.length) {
+      docHtml += '<div class="pos-sample-head">Reference samples \u2014 examples of what a building keeps on file. Not records on this property.</div>' +
+        '<div class="pos-docs">' + sampleDocs.slice(0, 20).map(function (a) {
+          return '<div class="pos-doc pos-doc--ref">' + _docIcon(a.kind) + '&nbsp;<span class="pos-doc-n">' + _esc(a.name) + '</span>' +
+            (a.category ? '<span class="pos-doc-cat">' + _esc(a.category) + '</span>' : '') + '</div>';
+        }).join('') + '</div>';
+    }
 
     // Property-wide timeline — what affects the building as a whole.
     var propEvents = tl.filter(function (e) { return !e.subject || e.subject.type === 'property' || e.subject.type === 'system'; })
@@ -651,7 +796,8 @@ window.PropertyOS = (function () {
             ? (systemLabel(e.subject.id) || e.subject.id) : 'Property-wide';
           var by = (e.metadata && e.metadata.recordedBy) || e.actor || null;
           var atts = (e.attachments || []).filter(function (a) { return a && a.url; });
-          return '<div class="pos-rec">' +
+          return '<div class="pos-rec' + (_focusId && String(e.id) === _focusId ? ' pos-rec--focus' : '') +
+            '" data-rec-id="' + _esc(e.id) + '">' +
             '<div class="pos-rec-top">' +
               '<span class="pos-rec-t">' + _esc(e.title || d.label || e.type) + '</span>' +
               '<span class="pos-rec-w">' + _esc(_fmtDate(e.timestamp)) + '</span>' +
@@ -683,7 +829,7 @@ window.PropertyOS = (function () {
       _sec('Building systems', null, sysHtml) +
       _sec('Financials', null, finHtml) +
       _sec('Invoice register', invs.length, regHtml) +
-      _sec('Property documents', docs.length, docHtml) +
+      _sec('Documents', recDocs.length, docHtml) +
       _sec('Property timeline', propEvents.length, tlHtml);
   }
 
@@ -722,6 +868,15 @@ window.PropertyOS = (function () {
       '.pos-rec-cat{color:' + gold + ';}',
       '.pos-rec-note{margin-top:6px;font-size:0.79rem;color:var(--text-3,#94A3B8);line-height:1.5;}',
       '.pos-rec-att{display:flex;flex-wrap:wrap;gap:6px;margin-top:8px;}',
+      '.pos-docs-list{display:flex;flex-direction:column;gap:4px;}',
+      '.pos-doc-row{display:flex;align-items:center;gap:9px;flex-wrap:wrap;padding:5px 0;border-bottom:1px solid rgba(var(--line-rgb,255,255,255),0.04);}',
+      '.pos-doc-on{font:600 0.7rem/1 inherit;color:' + gold + ';background:rgba(201,151,58,0.09);border:1px solid rgba(201,151,58,0.3);border-radius:6px;padding:4px 9px;cursor:pointer;max-width:260px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;min-height:26px;}',
+      '.pos-doc-on:hover{background:rgba(201,151,58,0.19);}',
+      '.pos-doc-on--inv{cursor:default;color:var(--text-4,#64748B);background:none;border-color:rgba(var(--line-rgb,255,255,255),0.1);}',
+      '.pos-doc-sys{font-size:0.7rem;color:var(--text-4,#64748B);}',
+      '.pos-doc-w{font-size:0.7rem;color:var(--text-4,#64748B);margin-left:auto;}',
+      '.pos-sample-head{margin:14px 0 7px;font-size:0.72rem;color:var(--text-4,#64748B);font-style:italic;}',
+      '.pos-rec--focus{border-color:rgba(201,151,58,0.55)!important;box-shadow:0 0 0 2px rgba(201,151,58,0.14);}',
       '.pos-rel{margin-top:9px;padding-top:8px;border-top:1px solid rgba(var(--line-rgb,255,255,255),0.06);}',
       '.pos-rel-head{display:flex;align-items:center;gap:8px;font-size:0.72rem;font-weight:600;color:var(--text-3,#94A3B8);margin-bottom:5px;}',
       '.pos-rel-n{font-weight:500;color:var(--text-4,#64748B);}',
@@ -816,6 +971,8 @@ window.PropertyOS = (function () {
     BUILDING_SYSTEMS: BUILDING_SYSTEMS, systemLabel: systemLabel,
     setRecordFilter: setRecordFilter, addRecord: addRecord, propertyRecords: propertyRecords,
     relatedGroup: relatedGroup, systemStory: systemStory,
+    propertyDocuments: propertyDocuments, openRecord: openRecord,
+    attachToRecord: attachToRecord, pickAttachment: pickAttachment,
     linkRecord: linkRecord, unlinkRecord: unlinkRecord, openLinkPicker: openLinkPicker,
     invoices: invoices, setInvoiceRelation: setInvoiceRelation,
     init: init, renderPropertyPage: renderPropertyPage,

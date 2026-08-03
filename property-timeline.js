@@ -325,6 +325,31 @@ window.PropertyTimeline = (function () {
     return true;
   }
 
+  /**
+   * Files added to an existing record. An amendment like any other: the record
+   * gained something, so the history says so and says who did it.
+   */
+  function _amendAttachments(ev, added) {
+    if (!ev || !added || !added.length) return false;
+    if (!Array.isArray(ev.revisions) || !ev.revisions.length) {
+      ev.revisions = [{
+        at: ev.timestamp,
+        by: (ev.metadata && ev.metadata.recordedBy) || ev.actor || 'Unknown',
+        action: 'created',
+        snapshot: { title: ev.title, description: ev.description, category: ev.category,
+                    timestamp: ev.timestamp, subject: ev.subject ? Object.assign({}, ev.subject) : null,
+                    attachments: (ev.attachments || []).map(function (a) { return { name: a.name, url: a.url, kind: a.kind }; }) },
+      }];
+    }
+    ev.attachments = (ev.attachments || []).concat(added);
+    ev.revisions.push({
+      at: new Date().toISOString(), by: _who(), action: 'attached', changes: [],
+      added: added.map(function (a) { return { name: a.name, url: a.url, kind: a.kind }; }),
+      note: 'Attached ' + added.map(function (a) { return a.name; }).join(', '),
+    });
+    return true;
+  }
+
   function openAddEntry(property, existing) {
     property = property || (window.currentProperty && window.currentProperty());
     if (!property) { _toast('Open a property first', 'err'); return; }
@@ -623,6 +648,7 @@ window.PropertyTimeline = (function () {
     openAddEntry: openAddEntry,
     amendEvent: _amendEvent,
     amendRelated: _amendRelated,
+    amendAttachments: _amendAttachments,
     openEditEntry: openEditEntry,
     closeModal: closeModal,
     categories: MANUAL_CATEGORIES,

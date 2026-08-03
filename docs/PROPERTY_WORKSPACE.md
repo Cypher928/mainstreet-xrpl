@@ -3,8 +3,8 @@
 **Status:** first increment SHIPPED. Property Records, building-level
 categories, the Building System subject, and provenance are in.
 **Walked by:** `test-property-workspace.js` (28 checks).
-**Not yet done:** Documents, and the Mortgage/Financing link to the escrow
-engine — see "Still open" below.
+**Not yet done:** the Mortgage/Financing link to the escrow engine, and an
+archived property's workspace — see "Still open" below.
 
 The Space workspace made a suite the operational record for a tenancy. This does
 the same for the building itself — and reuses that implementation rather than
@@ -143,16 +143,36 @@ subject is the system, plus invoices tagged to it, plus anything linked into
 those stories — an invoice attached to the roof job belongs under Roof even if
 only the job carries the tag.
 
+## Documents — a view of records (shipped)
+
+Documents is **not a repository**. A document is an attachment on a record: the
+roof warranty PDF belongs to the roof job, not to a folder that mentions roofs.
+`propertyDocuments()` derives every file FROM the records that hold it, so each
+row carries `recordId` and can open it — a file chip that cannot say which
+record it sits on is a link into nowhere.
+
+The flat scrape that used to build this section is gone. It collected files from
+the timeline and the invoice register into one list with no idea where each came
+from, which is precisely the flat document repository this workspace must not
+be.
+
+**Files get in one way: by being attached to a record.** 📎 Attach on the record
+uploads and amends, so the history says who attached what and when. A failed
+upload is reported and changes nothing — partial success keeps the files that
+did upload and names the ones that did not.
+
+Reference samples (seeded demo property only) are rendered visibly apart, under
+a heading saying they are examples rather than records on this property. A
+preview must never be mistakable for something on file.
+
 ## Still open
 
 The first increment deliberately stopped at the surface. What remains:
 
-1. **Documents.** Now that relationships exist, documents attach to a story
-   rather than becoming another flat list — which is why this came second.
-2. **Mortgage / Financing** should surface what `escrow-reserve-engine.js`
+1. **Mortgage / Financing** should surface what `escrow-reserve-engine.js`
    already extracted and cited, rather than being a category a user types into.
-3. **Archived property's workspace** — must stay readable. Not yet walked.
-4. **Records as evidence** — whether a survey or environmental report can be
+2. **Archived property's workspace** — must stay readable. Not yet walked.
+3. **Records as evidence** — whether a survey or environmental report can be
    cited in a reconciliation through the Evidence Viewer.
 
 ## Acceptance
@@ -176,3 +196,8 @@ Walked as a property manager, not asserted from component tests.
       contractor invoice.
 - ☑ Clicking a Building System shows its complete history in one place.
 - ☑ Linking and unlinking are recorded in the revision history.
+- ☑ Documents are derived from records; every one names the record it is filed
+      on and opens it.
+- ☑ A document can be attached to an existing record, and the attachment is in
+      the history.
+- ☑ A failed attachment is reported and changes nothing.
