@@ -34,10 +34,11 @@ if (review.data?.conversionRecord?.propertyId) {
 ```
 
 The guard tests for the *record*, not for the property. Once the property is
-deleted, that acquisition can never be converted again — the only route to
-re-creating it is blocked by a duplicate check protecting a duplicate that no
-longer exists. Harborview is not merely mislabelled; it is stuck, permanently,
-with no way out through the UI.
+deleted, that review can never be converted again — it is held shut by a
+duplicate check protecting a duplicate that no longer exists. The only way back
+to the property is to redo the entire acquisition as a new review, discarding
+the original analysis. Harborview is not merely mislabelled; that review is a
+dead end.
 
 Deleting a property is also unconditional today. There is no archive, no
 activity check, and no typed confirmation — one modal and every lease, timeline
