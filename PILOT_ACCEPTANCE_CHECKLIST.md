@@ -62,6 +62,7 @@ Walk this on a building with real work on it, not the demo.
 - ☐ Occupancy, spaces and totals recalculate after edits.
 - ☐ CAM results recalculate after leases or invoices change.
 - ☐ The review queue refreshes the moment an item is resolved.
+- ☐ **"What needs your attention" clears itself** — fixing the thing it names (adding a missing cap, completing lease info) removes the warning without re-entering the property.
 - ☐ The AI Auditor Narrative does not appear until a reconciliation has run.
 - ☐ An incomplete property produces setup guidance naming what is missing and where — never a silent no-op or a raw failure.
 

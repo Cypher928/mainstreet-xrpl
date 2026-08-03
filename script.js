@@ -21088,6 +21088,24 @@ let _saveDebounceTimer = null;
 
 // Snapshot current in-memory state back into the canonical _props entry and
 // persist to Supabase. Debounced — rapid successive calls collapse into one write.
+// Re-render everything computed FROM the property record rather than stored on
+// it. Debounced: a bulk upload calls savePropertyData() once per file, and the
+// panel only needs to be right when the burst ends.
+let _advisorRefreshTimer = null;
+function _refreshAdvisorSurfaces(prop) {
+  clearTimeout(_advisorRefreshTimer);
+  _advisorRefreshTimer = setTimeout(() => {
+    try {
+      if (window.PropertyWorkspace && window.PropertyWorkspace.renderAttention) {
+        window.PropertyWorkspace.renderAttention(prop);
+      }
+    } catch (e) { logError('_refreshAdvisorSurfaces:attention', e, { propId: prop && prop.id }); }
+    try {
+      if (window.TenantSpace && window.TenantSpace.renderList) window.TenantSpace.renderList(prop);
+    } catch (e) { logError('_refreshAdvisorSurfaces:spaces', e, { propId: prop && prop.id }); }
+  }, 120);
+}
+
 async function savePropertyData() {
   // Tenant-role users have read-only access — writes are not permitted
   if (window.AuthService?.getCurrentUser()?.role === 'tenant') return;
@@ -21156,6 +21174,21 @@ async function savePropertyData() {
     _setSyncStatus('pending');
     clearTimeout(_saveDebounceTimer);
     _saveDebounceTimer = setTimeout(() => saveProperty(prop), 800);
+
+    // The advisor surface is DERIVED state — recompute it whenever the record
+    // it describes changes.
+    //
+    // Reported from the pilot: a CAM cap added from Spaces saved correctly and
+    // showed on the tenant, but Overview went on saying "Missing cap on 1 NNN
+    // tenant". The data was right; the panel had simply been rendered once, on
+    // entry to the property, and nothing recomputed it. A warning that survives
+    // its own fix is worse than no warning — it teaches people the panel is
+    // decorative.
+    //
+    // Hooked here rather than at each call site because every path that changes
+    // a property passes through this function, and adding the refresh per
+    // caller is how one gets forgotten.
+    _refreshAdvisorSurfaces(prop);
   } catch (e) {
     logError('savePropertyData', e, { propId: prop.id, propName: prop.name });
   }

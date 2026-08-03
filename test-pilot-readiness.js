@@ -577,6 +577,54 @@ const logins = [...marketing.matchAll(/<a[^>]*href="([^"]*)"[^>]*>\s*Log in\s*<\
   ? ok('and none of them bypass the /app route with a raw file path')
   : bad('a link still points at index.html directly');
 
+// ── "What needs your attention" must not survive its own fix ───────────────
+// Reported from the pilot: a CAM cap added from Spaces saved correctly and
+// showed on the tenant, but Overview kept saying "Missing cap on 1 NNN tenant".
+// The data was right; the panel had been rendered once on entry and nothing
+// recomputed it. A warning that outlives the thing it warns about is worse than
+// no warning — it teaches people the panel is decorative.
+//
+// The save goes through savePropertyData(), the real path every field edit uses.
+console.log('\n── the attention panel recomputes after a save ──');
+{
+  const attn = await p.evaluate(async () => {
+    const prop = window.currentProperty && window.currentProperty();
+    if (!prop) return { noProp: true };
+    if (!window.PropertyWorkspace || !window.PropertyWorkspace.renderAttention) return { noPanel: true };
+
+    // An NNN tenant with no cap — the exact state the warning describes.
+    const t = { id: 'attn-t1', tenant_name: 'Cap Test Co', leased_sqft: 2000,
+                lease_type: 'NNN', cap: null,
+                start_date: '2025-01-01', end_date: '2028-12-31' };
+    prop.tenants = [t];
+    tenantData.splice(0, tenantData.length, t);
+    window.PropertyWorkspace.renderAttention(prop);
+    const before = (document.getElementById('propertyAttentionSlot') || {}).innerText || '';
+
+    // Add the cap and save the way the product does.
+    tenantData[0].cap = 5;
+    prop.tenants[0].cap = 5;
+    await savePropertyData();
+    await new Promise(r => setTimeout(r, 400));   // past the 120ms refresh debounce
+
+    const after = (document.getElementById('propertyAttentionSlot') || {}).innerText || '';
+    return { before: before.replace(/\s+/g, ' ').trim(),
+             after: after.replace(/\s+/g, ' ').trim() };
+  });
+
+  if (attn.noProp || attn.noPanel) {
+    bad('attention panel not reachable in this fixture', JSON.stringify(attn));
+  } else {
+    /missing cap/i.test(attn.before)
+      ? ok('an NNN tenant with no cap raises "Missing cap"')
+      : bad('the fixture did not raise the missing-cap warning', attn.before.slice(0, 100));
+    !/missing cap/i.test(attn.after)
+      ? ok('and adding the cap clears it WITHOUT re-entering the property')
+      : bad('the warning survived its own fix — panel is stale after a save',
+            attn.after.slice(0, 120));
+  }
+}
+
 console.log('\n'+(fail?'\x1b[31m':'\x1b[32m')+`RESULT: ${pass} passed, ${fail} failed`+'\x1b[0m');
 await b.close();srv.close();process.exit(fail?1:0);
 })();
