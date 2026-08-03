@@ -1,8 +1,12 @@
 # Property Lifecycle
 
 **Status:** agreed design, not implemented. Not a pilot blocker.
-**Shipped from this document:** §6, the orphaned-conversion repair. Everything
-else below is still design.
+**Shipped from this document:** §6, the orphaned-conversion repair — now
+**frozen**. It stays in place as a safety net and nothing further is built on
+top of it.
+**Next work:** §5. The goal is to stop orphans being created at all, by
+integrating Archive and Delete with the acquisition lifecycle. Everything else
+below is still design.
 **Supersedes:** the "Archive property" line in `PILOT_ACCEPTANCE_CHECKLIST.md`,
 which stays unchecked until this ships.
 
@@ -150,20 +154,40 @@ active filter belongs there, with an explicit opt-in for the Archived view.
 inherits the filter for free — provided nothing else passes it an unfiltered
 list. That is worth a test rather than an assumption.
 
-### 5. Acquisition integration
+### 5. Acquisition integration — THE NEXT WORK
 
-Agreed as proposed:
+This is prevention, and it is where the lifecycle effort goes next. §6 repairs
+an orphan after the fact; this stops one being created.
 
 - Property **Archived** → the acquisition stays **Converted**, with an Archived
-  badge so the state is legible rather than merely consistent.
+  badge so the state is legible rather than merely consistent. The property still
+  exists, so the conversion record is still true.
 - Property **Deleted** → the acquisition reverts to **Ready to Convert**, and
-  `conversionRecord` is cleared so the duplicate guard stops firing.
+  `conversionRecord` is cleared so the duplicate guard stops firing. The property
+  it referred to is gone, so the record is no longer true and must not be kept as
+  though it were.
 
 The link is currently one-way (review → `propertyId`). Delete therefore has to
 find the review by scanning `_acqReviews` for a matching
 `conversionRecord.propertyId`. That is fine at pilot scale and needs no schema
 change; a reverse `acquisition_review_id` on the property is the optimisation to
 reach for only if that scan ever becomes a real cost.
+
+Two things to get right, because both are ways this can quietly fail:
+
+- **Clearing `conversionRecord` must not lose the history.** Move it to
+  `conversionHistory[]` exactly as the repair path does, with a
+  `supersededReason` naming the deletion. A reverted acquisition should still be
+  able to say it was converted once, and what happened to that property.
+- **Deletion can fail after the review has been updated, or the reverse.** These
+  are two writes to two tables with no transaction between them. Order them so
+  the survivable failure is the one that happens: delete the property first, then
+  revert the review. If the second write fails the result is an orphan — which
+  §6 already detects and offers to repair. Reverting first and then failing to
+  delete leaves a live property no acquisition points at, which nothing detects.
+
+That ordering is the reason §6 stays. It is not redundant once prevention ships;
+it is the backstop prevention falls back to.
 
 ### 6. Existing orphans — SHIPPED
 
@@ -200,6 +224,10 @@ say nothing until a load has actually succeeded.
 Walked end-to-end in `test-acq-orphan-repair.js` (28 checks), including that
 false positive.
 
+**Frozen.** This path stays for safety and nothing more is built on it. If a new
+requirement seems to want extending the repair, it almost certainly belongs in
+§5 instead — repairing more states is not the same as producing fewer of them.
+
 ---
 
 ## Acceptance
@@ -217,6 +245,10 @@ tests. Every one of these is a regression test as well as a checklist line.
 - ☐ Restoring returns it to the portfolio with all of the above intact.
 - ☐ Deleting a converted property reverts its acquisition to **Ready to
       Convert**, and converting it again succeeds.
+- ☐ That revert keeps the superseded conversion in `conversionHistory[]` rather
+      than discarding it.
+- ☐ If the revert fails after the property is deleted, the review is detected as
+      orphaned rather than left silently wrong.
 - ☐ Archiving a converted property leaves the acquisition **Converted**, badged
       Archived.
 - ☑ A converted review whose property no longer exists says so, and offers

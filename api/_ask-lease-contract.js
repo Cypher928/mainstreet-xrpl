@@ -22,6 +22,14 @@
 // empty rather than trusting it to have done so. A refusal that still carries
 // a citation is the exact failure being fixed, and the prompt is not the place
 // to guarantee it.
+//
+// ── This refusal is permanent, not temporary ────────────────────────────────
+// Cross-lease questions are eventually meant to ROUTE to Portfolio Intelligence
+// (docs/BACKLOG_CROSS_LEASE_QUESTIONS.md), which compares rent schedules across
+// every lease and answers with a citation from each. That routing happens
+// BEFORE this engine is consulted. It does not make a single lease able to
+// answer a portfolio question, so nothing below should be relaxed to
+// accommodate it — the refusal stays correct after that feature ships.
 
 'use strict';
 
