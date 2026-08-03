@@ -54,7 +54,10 @@ Walk this on a building with real work on it, not the demo.
 - ☐ **Every document names its record** — no document appears without saying what it is filed on, and clicking that opens the record itself.
 - ☐ **Edits preserve history** — change a record, then open "Edited N times — view history". The original values and each change are both there, with who made them.
 - ☐ **A failed attachment says so** — nothing is added silently, and the record is unchanged.
-- ☐ **On a phone** — the Property tab does not scroll sideways, and no record card runs past the screen.
+- ☐ **On a phone** — the Property tab does not scroll sideways, no record card runs past the screen, and no Building System label splits a word ("Fire Suppressio n").
+- ☐ **Edit a record from the record** — ✏️ Edit is on the card itself; you never go to the timeline to fix a typo. System-generated entries do not offer it.
+- ☐ **Empty Related Items reads about THIS record** — a tax notice is not told about contractor invoices and photos.
+- ☐ **A configured property does not open with onboarding** — the Property tab shows a one-line summary (name · sqft · CAM year) with Edit, not the first-run setup form.
 
 ## State integrity
 

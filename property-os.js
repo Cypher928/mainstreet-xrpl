@@ -128,6 +128,7 @@ window.PropertyOS = (function () {
     // Property Setup belongs to the Property subject.
     var setup = _d('cardSetup');
     if (setup && body && !body.contains(setup)) body.parentNode.insertBefore(setup, body);
+    _ensureSetupSummary(setup, body);
     // Lease intake creates spaces → it belongs under Spaces (no app-wide Lease section).
     var leases = _d('cardLeases'), spacesPane = _d('wsPane-spaces');
     if (leases && spacesPane && !spacesPane.contains(leases)) spacesPane.appendChild(leases);
@@ -137,6 +138,68 @@ window.PropertyOS = (function () {
     var docsBtn = _d('wsTabBtn-documents');
     if (docsBtn) docsBtn.style.display = 'none';
     _reparented = true;
+  }
+
+  // ── Property Setup, once it is no longer setup ──────────────────────────────
+  // The Property tab opened with "Property Setup — Enter property details to
+  // begin the CAM reconciliation" and a worked pro-rata example, forever, on a
+  // building configured months ago. First-run copy that never retires reads as
+  // unfinished.
+  //
+  // COLLAPSED, not hidden. #propertyName and #totalSqft exist in exactly one
+  // place in the app, so removing the card removes the only way to correct a
+  // building's name or square footage — trading an eyesore for a dead end. A
+  // configured property gets a one-line summary with Edit; nothing is lost.
+  function _ensureSetupSummary(setup, body) {
+    if (!setup || !body || _d('posSetupSummary')) return;
+    var bar = document.createElement('div');
+    bar.id = 'posSetupSummary';
+    bar.className = 'pos-setup-sum';
+    bar.style.display = 'none';
+    setup.parentNode.insertBefore(bar, setup);
+  }
+
+  function _isConfigured() {
+    var n = _d('propertyName'), q = _d('totalSqft');
+    var name = n ? String(n.value || '').trim() : '';
+    var sqft = q ? parseFloat(q.value) : NaN;
+    return !!name && sqft > 0;
+  }
+
+  function toggleSetup(force) {
+    var setup = _d('cardSetup'), bar = _d('posSetupSummary');
+    if (!setup || !bar) return;
+    var open = (force != null) ? !!force : (setup.style.display === 'none');
+    setup.style.display = open ? '' : 'none';
+    bar.classList.toggle('pos-setup-sum--open', open);
+    var btn = _d('posSetupEdit');
+    if (btn) btn.textContent = open ? 'Done' : 'Edit';
+  }
+
+  function renderSetupSummary(property) {
+    var setup = _d('cardSetup'), bar = _d('posSetupSummary');
+    if (!setup || !bar) return;
+    if (!_isConfigured()) {
+      // Not set up yet — the setup card IS the job. Leave it alone.
+      bar.style.display = 'none';
+      setup.style.display = '';
+      return;
+    }
+    var name = (_d('propertyName') || {}).value || (property && property.name) || 'This property';
+    var sqft = parseFloat((_d('totalSqft') || {}).value) || (property && property.totalSqft) || 0;
+    var yearEl = _d('camYearSelect') || _d('camYear');
+    var year = yearEl ? (yearEl.options && yearEl.options[yearEl.selectedIndex]
+      ? yearEl.options[yearEl.selectedIndex].text : yearEl.value) : null;
+    bar.style.display = '';
+    bar.innerHTML =
+      '<span class="pos-setup-name">' + _esc(name) + '</span>' +
+      '<span class="pos-setup-meta">' + _esc(Math.round(sqft).toLocaleString('en-US')) + ' sq ft' +
+        (year ? ' \u00b7 ' + _esc(year) : '') + '</span>' +
+      '<button type="button" class="pos-setup-edit" id="posSetupEdit"' +
+        ' onclick="PropertyOS.toggleSetup()">Edit</button>';
+    // Collapsed by default on a configured property; re-opening is one tap.
+    if (setup.style.display !== '') setup.style.display = 'none';
+    else if (!bar.classList.contains('pos-setup-sum--open')) setup.style.display = 'none';
   }
 
   function init() {
@@ -298,6 +361,35 @@ window.PropertyOS = (function () {
     inp.click();
   }
 
+  // What belongs alongside THIS record. The first version said "the warranty,
+  // the contractor invoice, the inspection and the photos for this job" on
+  // every record — roof-repair copy on a tax assessment, three times on one
+  // screen. Copy written for one example and shown everywhere reads as
+  // unfinished, because it is describing something the user is not looking at.
+  var REL_EMPTY = {
+    real_estate_taxes:  'Nothing linked yet. The assessment notice, the appeal and the paid receipt for this tax year belong together.',
+    insurance:          'Nothing linked yet. The policy, its certificates and any claim made against it belong together.',
+    mortgage_financing: 'Nothing linked yet. The note, the amendments and the reserve draws against it belong together.',
+    survey:             'Nothing linked yet. Link the survey to the work that required it.',
+    site_plan:          'Nothing linked yet. Link the site plan to the work it governs.',
+    building_plan:      'Nothing linked yet. Link the plan set to the work it governs.',
+    environmental:      'Nothing linked yet. The report, any follow-up testing and the remediation it triggered belong together.',
+    capital_improvement:'Nothing linked yet. The contractor invoice, the warranty, the inspection and the photos for this job belong here \u2014 on the job, not scattered across the building.',
+    warranty:           'Nothing linked yet. Link this warranty to the work it covers, so the job and its cover stay together.',
+    building_photo:     'Nothing linked yet. Link these photos to what they show.',
+    inspection:         'Nothing linked yet. Link this inspection to the work or system it was carried out on.',
+    maintenance:        'Nothing linked yet. The invoice, the photos and the vendor for this work belong here.',
+    repair:             'Nothing linked yet. The invoice, the photos and the vendor for this repair belong here.',
+    vendor:             'Nothing linked yet. Link this vendor to the work they carried out.',
+  };
+  function _relEmptyCopy(e) {
+    var c = e && e.category;
+    if (c && REL_EMPTY[c]) return REL_EMPTY[c];
+    // Generic, and still true of anything: the invoice, the document and the
+    // photograph that go with a record belong on it.
+    return 'Nothing linked yet. Anything that belongs with this record \u2014 an invoice, a document, a related job \u2014 can be linked here so they stay one thing.';
+  }
+
   // Related Items on a record: the rest of its story, plus the way to add to it.
   // Shown even when empty, because an empty Related Items is the prompt that
   // teaches the feature — a roof job with nothing attached is the case this
@@ -311,35 +403,44 @@ window.PropertyOS = (function () {
     var rows = others.map(function (x) {
       var d = (window.PropertyTimeline && PropertyTimeline.describe) ? PropertyTimeline.describe(x) : { label: x.type, icon: '' };
       var atts = (x.attachments || []).filter(function (a) { return a && a.url; }).length;
-      return '<div class="pos-rel-row">' +
-        '<span class="pos-rel-ic">' + (d.icon || '\u{1F4CC}') + '</span>' +
-        '<span class="pos-rel-t">' + _esc(x.title || d.label || x.type) + '</span>' +
-        '<span class="pos-rel-m">' + _esc(d.label || '') + (atts ? ' \u00b7 ' + atts + ' file' + (atts !== 1 ? 's' : '') : '') + '</span>' +
-        '<span class="pos-rel-w">' + _esc(_fmtDate(x.timestamp)) + '</span>' +
-        '<button type="button" class="pos-rel-x" title="Remove this link"' +
+      return '<div class="pos-ri-row">' +
+        '<span class="pos-ri-ic">' + (d.icon || '\u{1F4CC}') + '</span>' +
+        '<span class="pos-ri-t">' + _esc(x.title || d.label || x.type) + '</span>' +
+        '<span class="pos-ri-m">' + _esc(d.label || '') + (atts ? ' \u00b7 ' + atts + ' file' + (atts !== 1 ? 's' : '') : '') + '</span>' +
+        '<span class="pos-ri-w">' + _esc(_fmtDate(x.timestamp)) + '</span>' +
+        '<button type="button" class="pos-ri-x" title="Remove this link"' +
           ' data-ev="' + _esc(e.id) + '" data-kind="event" data-id="' + _esc(x.id) + '"' +
           ' onclick="PropertyOS.unlinkRecord(this.dataset.ev, this.dataset.kind, this.dataset.id)">\u2715</button>' +
       '</div>';
     }).join('') + invs.map(function (i) {
-      return '<div class="pos-rel-row">' +
-        '<span class="pos-rel-ic">\u{1F9FE}</span>' +
-        '<span class="pos-rel-t">' + _esc(i.vendorName) + '</span>' +
-        '<span class="pos-rel-m">Invoice \u00b7 ' + _esc(_money(i.amount)) + '</span>' +
-        '<span class="pos-rel-w">' + _esc(i.invoiceDate ? _fmtDate(i.invoiceDate) : '') + '</span>' +
-        '<button type="button" class="pos-rel-x" title="Remove this link"' +
+      return '<div class="pos-ri-row">' +
+        '<span class="pos-ri-ic">\u{1F9FE}</span>' +
+        '<span class="pos-ri-t">' + _esc(i.vendorName) + '</span>' +
+        '<span class="pos-ri-m">Invoice \u00b7 ' + _esc(_money(i.amount)) + '</span>' +
+        '<span class="pos-ri-w">' + _esc(i.invoiceDate ? _fmtDate(i.invoiceDate) : '') + '</span>' +
+        '<button type="button" class="pos-ri-x" title="Remove this link"' +
           ' data-ev="' + _esc(e.id) + '" data-kind="invoice" data-id="' + _esc(_invoiceKeyOf(i)) + '"' +
           ' onclick="PropertyOS.unlinkRecord(this.dataset.ev, this.dataset.kind, this.dataset.id)">\u2715</button>' +
       '</div>';
     }).join('');
 
-    return '<div class="pos-rel">' +
-      '<div class="pos-rel-head">Related items <span class="pos-rel-n">' + n + '</span>' +
-        '<button type="button" class="pos-rel-add" data-ev="' + _esc(e.id) + '"' +
+    return '<div class="pos-ri">' +
+      '<div class="pos-ri-head">Related items <span class="pos-ri-n">' + n + '</span>' +
+        // Edit lives ON the record. Without it the only way to fix a typo was to
+      // scroll to Property Timeline at the bottom and find the pencil there —
+      // everything else about the record is here, and editing was not.
+      //
+      // Shown only for MANUAL records: openEditEntry() refuses anything the
+      // system generated ("Only manager entries can be edited"), and offering a
+      // button that will refuse is a broken promise.
+      (e.manual ? '<button type="button" class="pos-ri-add" data-ev="' + _esc(e.id) + '"' +
+          ' onclick="PropertyOS.editRecord(this.dataset.ev)">\u270F\uFE0F Edit</button>' : '') +
+        '<button type="button" class="pos-ri-add" data-ev="' + _esc(e.id) + '"' +
           ' onclick="PropertyOS.pickAttachment(this.dataset.ev)">\u{1F4CE} Attach</button>' +
-        '<button type="button" class="pos-rel-add" data-ev="' + _esc(e.id) + '"' +
+        '<button type="button" class="pos-ri-add" data-ev="' + _esc(e.id) + '"' +
           ' onclick="PropertyOS.openLinkPicker(this.dataset.ev)">\uFF0B Link</button></div>' +
-      (n ? '<div class="pos-rel-list">' + rows + '</div>'
-         : '<div class="pos-rel-empty">Nothing linked yet. The warranty, the contractor invoice, the inspection and the photos for this job belong here \u2014 on the job, not scattered across the building.</div>') +
+      (n ? '<div class="pos-ri-list">' + rows + '</div>'
+         : '<div class="pos-ri-empty">' + _esc(_relEmptyCopy(e)) + '</div>') +
     '</div>';
   }
 
@@ -602,6 +703,8 @@ window.PropertyOS = (function () {
     var body = _d('propertyOsBody');
     if (!body || !property) return;
     injectStyles();
+    // Collapse the first-run setup card once the building is configured.
+    try { renderSetupSummary(property); } catch (_) {}
 
     var PR = window.PropertyReference;   // declared early: the documents section uses it
     var invs = invoices(property);
@@ -780,11 +883,11 @@ window.PropertyOS = (function () {
         ' <button type="button" class="pos-clear" onclick="PropertyOS.setRecordFilter(\'' +
         _esc(_filter.cat) + '\', null)">Clear</button></div>' +
         (story.invoices.length
-          ? '<div class="pos-rel-list pos-sys-invs">' + story.invoices.map(function (i) {
-              return '<div class="pos-rel-row"><span class="pos-rel-ic">\u{1F9FE}</span>' +
-                '<span class="pos-rel-t">' + _esc(i.vendorName) + '</span>' +
-                '<span class="pos-rel-m">Invoice \u00b7 ' + _esc(_money(i.amount)) + '</span>' +
-                '<span class="pos-rel-w">' + _esc(i.invoiceDate ? _fmtDate(i.invoiceDate) : '') + '</span></div>';
+          ? '<div class="pos-ri-list pos-sys-invs">' + story.invoices.map(function (i) {
+              return '<div class="pos-ri-row"><span class="pos-ri-ic">\u{1F9FE}</span>' +
+                '<span class="pos-ri-t">' + _esc(i.vendorName) + '</span>' +
+                '<span class="pos-ri-m">Invoice \u00b7 ' + _esc(_money(i.amount)) + '</span>' +
+                '<span class="pos-ri-w">' + _esc(i.invoiceDate ? _fmtDate(i.invoiceDate) : '') + '</span></div>';
             }).join('') + '</div>'
           : '');
     }
@@ -836,6 +939,13 @@ window.PropertyOS = (function () {
   // Opens the EXISTING timeline modal. No new persistence, no second writer —
   // the same path the Overview timeline uses, so a record added here is the
   // same kind of object as one added there.
+  // Opens the SAME modal Add Record uses, in edit mode.
+  function editRecord(recordId) {
+    if (window.PropertyTimeline && PropertyTimeline.openEditEntry) {
+      PropertyTimeline.openEditEntry(recordId);
+    }
+  }
+
   function addRecord() {
     var property = window.currentProperty && window.currentProperty();
     if (!property) return;
@@ -850,6 +960,11 @@ window.PropertyOS = (function () {
     var css = [
       '.pos-sec{padding:14px 0;border-bottom:1px solid rgba(var(--line-rgb,255,255,255),0.06);}',
       // ── Property Records ──
+      '.pos-setup-sum{display:flex;align-items:center;gap:12px;flex-wrap:wrap;padding:11px 13px;margin-bottom:14px;border:1px solid rgba(var(--line-rgb,255,255,255),0.09);background:rgba(var(--line-rgb,255,255,255),0.03);border-radius:10px;}',
+      '.pos-setup-name{font-size:0.92rem;font-weight:700;color:var(--text-1,#E2E8F0);}',
+      '.pos-setup-meta{font-size:0.78rem;color:var(--text-4,#64748B);}',
+      '.pos-setup-edit{margin-left:auto;font:600 0.74rem/1 inherit;color:var(--text-3,#94A3B8);background:rgba(var(--line-rgb,255,255,255),0.05);border:1px solid rgba(var(--line-rgb,255,255,255),0.14);border-radius:7px;padding:6px 12px;cursor:pointer;min-height:28px;}',
+      '.pos-setup-edit:hover{color:var(--text-1,#E2E8F0);}',
       '.pos-add{font:700 0.76rem/1 inherit;color:#07090C;background:' + gold + ';border:1px solid ' + gold + ';border-radius:8px;padding:9px 15px;cursor:pointer;margin-bottom:12px;min-height:36px;}',
       '.pos-add:hover{filter:brightness(1.08);}',
       '.pos-chips{display:flex;flex-wrap:wrap;gap:6px;margin-bottom:10px;}',
@@ -877,19 +992,19 @@ window.PropertyOS = (function () {
       '.pos-doc-w{font-size:0.7rem;color:var(--text-4,#64748B);margin-left:auto;}',
       '.pos-sample-head{margin:14px 0 7px;font-size:0.72rem;color:var(--text-4,#64748B);font-style:italic;}',
       '.pos-rec--focus{border-color:rgba(201,151,58,0.55)!important;box-shadow:0 0 0 2px rgba(201,151,58,0.14);}',
-      '.pos-rel{margin-top:9px;padding-top:8px;border-top:1px solid rgba(var(--line-rgb,255,255,255),0.06);}',
-      '.pos-rel-head{display:flex;align-items:center;gap:8px;font-size:0.72rem;font-weight:600;color:var(--text-3,#94A3B8);margin-bottom:5px;}',
-      '.pos-rel-n{font-weight:500;color:var(--text-4,#64748B);}',
-      '.pos-rel-add{margin-left:auto;font:600 0.7rem/1 inherit;color:' + gold + ';background:rgba(201,151,58,0.1);border:1px solid rgba(201,151,58,0.35);border-radius:6px;padding:4px 9px;cursor:pointer;min-height:26px;}',
-      '.pos-rel-add:hover{background:rgba(201,151,58,0.2);}',
-      '.pos-rel-empty{font-size:0.72rem;color:var(--text-4,#64748B);line-height:1.5;}',
-      '.pos-rel-list{display:flex;flex-direction:column;gap:3px;}',
-      '.pos-rel-row{display:flex;align-items:center;gap:8px;font-size:0.74rem;padding:4px 0;}',
-      '.pos-rel-t{color:var(--text-2,#CBD5E1);font-weight:600;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;}',
-      '.pos-rel-m{color:var(--text-4,#64748B);white-space:nowrap;}',
-      '.pos-rel-w{color:var(--text-4,#64748B);margin-left:auto;white-space:nowrap;}',
-      '.pos-rel-x{background:none;border:none;color:var(--text-4,#64748B);cursor:pointer;font-size:0.7rem;padding:2px 4px;}',
-      '.pos-rel-x:hover{color:var(--c-f87171,#f87171);}',
+      '.pos-ri{margin-top:9px;padding-top:8px;border-top:1px solid rgba(var(--line-rgb,255,255,255),0.06);}',
+      '.pos-ri-head{display:flex;align-items:center;gap:8px;font-size:0.72rem;font-weight:600;color:var(--text-3,#94A3B8);margin-bottom:5px;}',
+      '.pos-ri-n{font-weight:500;color:var(--text-4,#64748B);}',
+      '.pos-ri-add{margin-left:auto;font:600 0.7rem/1 inherit;color:' + gold + ';background:rgba(201,151,58,0.1);border:1px solid rgba(201,151,58,0.35);border-radius:6px;padding:4px 9px;cursor:pointer;min-height:26px;}',
+      '.pos-ri-add:hover{background:rgba(201,151,58,0.2);}',
+      '.pos-ri-empty{font-size:0.72rem;color:var(--text-4,#64748B);line-height:1.5;}',
+      '.pos-ri-list{display:flex;flex-direction:column;gap:3px;}',
+      '.pos-ri-row{display:flex;align-items:center;gap:8px;font-size:0.74rem;padding:4px 0;}',
+      '.pos-ri-t{color:var(--text-2,#CBD5E1);font-weight:600;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;}',
+      '.pos-ri-m{color:var(--text-4,#64748B);white-space:nowrap;}',
+      '.pos-ri-w{color:var(--text-4,#64748B);margin-left:auto;white-space:nowrap;}',
+      '.pos-ri-x{background:none;border:none;color:var(--text-4,#64748B);cursor:pointer;font-size:0.7rem;padding:2px 4px;}',
+      '.pos-ri-x:hover{color:var(--c-f87171,#f87171);}',
       '.pos-sys-invs{margin:6px 0 10px;}',
       '.pos-link-ov{position:fixed;inset:0;z-index:9600;background:rgba(0,0,0,0.66);display:flex;align-items:center;justify-content:center;padding:18px;}',
       '.pos-link-box{background:var(--theme-panel,#11161F);border:1px solid rgba(var(--line-rgb,255,255,255),0.12);border-radius:12px;padding:18px;max-width:520px;width:100%;}',
@@ -915,24 +1030,33 @@ window.PropertyOS = (function () {
       // so. Without this a record card measured 623px inside a 284px column and
       // the whole page scrolled sideways. Wrap the rows — do NOT reach for
       // overflow-x:auto, which hides a layout bug behind a scrollbar.
-      '.pos-rec,.pos-rel,.pos-rel-list,.pos-docs-list{min-width:0;}',
+      '.pos-rec,.pos-ri,.pos-ri-list,.pos-docs-list{min-width:0;}',
       // A grid track is min-content by default, so a cell holding "Fire
       // Suppression" refuses to go below its widest word and pushes the grid
       // 5px past its column. Predates this work; fixed here because Building
       // Systems is the surface this sprint is building on.
       '.pos-sys-cell{min-width:0;box-sizing:border-box;}',
-      '.pos-sys-l{min-width:0;overflow-wrap:anywhere;}',
+      // Wrap BETWEEN words, never inside them. overflow-wrap:anywhere fixed a
+      // 5px overflow and produced "Fire Suppressio n" / "Landscapin g", which
+      // reads as broken software. Balanced wrapping plus a narrower minimum
+      // column keeps the grid inside its container without cutting words.
+      '.pos-sys-l{min-width:0;overflow-wrap:normal;word-break:normal;hyphens:none;line-height:1.25;text-wrap:balance;}',
       '.pos-rec-t{min-width:0;overflow-wrap:anywhere;}',
-      '.pos-rel-t,.pos-doc,.pos-doc-on{min-width:0;}',
+      '.pos-ri-t,.pos-doc,.pos-doc-on{min-width:0;}',
       '@media(max-width:600px){',
       '  .pos-add{width:100%;}',
       '  .pos-rec-top{flex-direction:column;gap:2px;}',
-      '  .pos-rel-head{flex-wrap:wrap;}',
-      '  .pos-rel-head .pos-rel-add{margin-left:0;}',
-      '  .pos-rel-row,.pos-doc-row{flex-wrap:wrap;row-gap:2px;}',
-      '  .pos-rel-t{flex:1 1 100%;white-space:normal;overflow-wrap:anywhere;}',
-      '  .pos-rel-w,.pos-doc-w{margin-left:0;}',
-      '  .pos-rel-x{margin-left:auto;}',
+      // Three actions (Edit, Attach, Link) will not sit beside the label on a
+      // phone. Give the label its own line so the buttons get a full-width row
+      // instead of stacking one per line and squeezing the list beside them.
+      '  .pos-ri-head{flex-wrap:wrap;row-gap:7px;}',
+      '  .pos-ri-head>span:first-child,.pos-ri-head>.pos-ri-n{flex:0 0 auto;}',
+      '  .pos-ri-head .pos-ri-add{margin-left:0;flex:0 1 auto;text-align:center;}',
+      '  .pos-ri-head .pos-ri-add:first-of-type{margin-left:0;}',
+      '  .pos-ri-row,.pos-doc-row{flex-wrap:wrap;row-gap:2px;}',
+      '  .pos-ri-t{flex:1 1 100%;white-space:normal;overflow-wrap:anywhere;}',
+      '  .pos-ri-w,.pos-doc-w{margin-left:0;}',
+      '  .pos-ri-x{margin-left:auto;}',
       '  .pos-doc{flex:1 1 100%;overflow-wrap:anywhere;}',
       '  .pos-doc-on{max-width:100%;white-space:normal;text-align:left;}',
       '}',
@@ -958,7 +1082,7 @@ window.PropertyOS = (function () {
       '.pos-rel select:focus{outline:none;border-color:' + gold + ';}',
       '.pos-rel--chk{background:var(--theme-card,#0F1217);border:1px solid rgba(var(--line-rgb,255,255,255),0.14);border-radius:7px;padding:6px 9px;cursor:pointer;}',
       '.pos-rel--chk input{accent-color:' + gold + ';width:15px;height:15px;}',
-      '.pos-sys{display:grid;grid-template-columns:repeat(auto-fill,minmax(150px,1fr));gap:8px;}',
+      '.pos-sys{display:grid;grid-template-columns:repeat(auto-fill,minmax(132px,1fr));gap:8px;}',
       '.pos-sys-cell{display:flex;align-items:center;gap:7px;background:var(--theme-panel,#0A0D12);border:1px solid rgba(var(--line-rgb,255,255,255),0.08);border-radius:9px;padding:9px 11px;}',
       '.pos-sys-cell--on{border-color:rgba(201,151,58,0.4);}',
       '.pos-sys-l{font-size:0.8rem;color:var(--text-2,#CBD5E1);}',
@@ -986,6 +1110,7 @@ window.PropertyOS = (function () {
       '  .pos-tl-w{width:74px;}',
       '  .pos-rel select{max-width:120px;}',
       '  .pos-sys{grid-template-columns:1fr 1fr;}',
+      '  .pos-sys-cell{align-items:flex-start;}',
       '}',
     ].join('\n');
     var s = document.createElement('style'); s.id = 'pos-styles'; s.textContent = css;
@@ -994,7 +1119,8 @@ window.PropertyOS = (function () {
 
   return {
     BUILDING_SYSTEMS: BUILDING_SYSTEMS, systemLabel: systemLabel,
-    setRecordFilter: setRecordFilter, addRecord: addRecord, propertyRecords: propertyRecords,
+    setRecordFilter: setRecordFilter, addRecord: addRecord, editRecord: editRecord, propertyRecords: propertyRecords,
+    toggleSetup: toggleSetup, renderSetupSummary: renderSetupSummary,
     relatedGroup: relatedGroup, systemStory: systemStory,
     propertyDocuments: propertyDocuments, openRecord: openRecord,
     attachToRecord: attachToRecord, pickAttachment: pickAttachment,

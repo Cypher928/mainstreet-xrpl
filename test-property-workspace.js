@@ -480,7 +480,7 @@ const CLICK_LABEL = function (rx) {
     return {
       recs: body.querySelectorAll('.pos-rec').length,
       note: (body.querySelector('.pos-filter-note') || {}).textContent || '',
-      invRows: body.querySelectorAll('.pos-sys-invs .pos-rel-row').length,
+      invRows: body.querySelectorAll('.pos-sys-invs .pos-ri-row').length,
       text: (body.innerText || body.textContent || '').replace(/\s+/g, ' ').trim(),
     };
   });
@@ -679,6 +679,108 @@ const CLICK_LABEL = function (rx) {
         mobile.sideways === false, mobile.sideways ? 'page is wider than the viewport' : 'fits');
   check('and no element inside it overflows its container',
         mobile.over.length === 0, mobile.over.join(' | '));
+
+  // ── Christy's first-impression pass ──────────────────────────────────────
+  const polish = await page.evaluate(() => {
+    const p = _props[0];
+    p.timeline = [];
+    const mk = (t, c, sys) => appendPropertyTimelineEvent(p, {
+      manual: true, type: 'manual_' + c, category: c, title: t, timestamp: new Date().toISOString(),
+      subject: sys ? { type: 'system', id: sys, label: sys } : { type: 'property', id: p.id },
+      actor: 'dana@example.com', metadata: { recordedBy: 'dana@example.com' } });
+    mk('2026 assessment notice', 'real_estate_taxes', null);
+    mk('General liability renewal', 'insurance', null);
+    mk('Roof replaced', 'capital_improvement', 'roof');
+    // A system-generated entry: not editable, so it must not offer Edit.
+    appendPropertyTimelineEvent(p, { type: 'lease_uploaded', title: 'Lease uploaded — Suite 210',
+      timestamp: new Date().toISOString(), subject: { type: 'property', id: p.id } });
+    document.getElementById('propertyName').value = 'Maple Plaza';
+    document.getElementById('totalSqft').value = '32000';
+    PropertyOS.renderPropertyPage(p);
+
+    const body = document.getElementById('propertyOsBody');
+    const cards = [].slice.call(body.querySelectorAll('.pos-rec'));
+    const empties = [].slice.call(body.querySelectorAll('.pos-ri-empty')).map(e => e.textContent.trim());
+    const byCat = {};
+    cards.forEach(c => {
+      const cat = (c.querySelector('.pos-rec-cat') || {}).textContent || '';
+      const em  = (c.querySelector('.pos-ri-empty') || {}).textContent || '';
+      const btns = [].slice.call(c.querySelectorAll('.pos-ri-add')).map(b => b.textContent.trim());
+      byCat[cat.trim()] = { empty: em.trim(), btns: btns };
+    });
+    const setup = document.getElementById('cardSetup');
+    const sum = document.getElementById('posSetupSummary');
+    return {
+      empties, byCat,
+      uniqueEmpties: new Set(empties).size,
+      relBlockDisplay: getComputedStyle(body.querySelector('.pos-ri')).display,
+      setupHidden: getComputedStyle(setup).display === 'none',
+      summaryText: sum ? (sum.innerText || '').replace(/\s+/g, ' ').trim() : null,
+    };
+  });
+
+  // 1 · empty-state copy must describe THIS record, not a roof repair
+  check('the related-items empty state differs by category',
+        polish.uniqueEmpties === polish.empties.length && polish.empties.length >= 3,
+        polish.uniqueEmpties + ' distinct of ' + polish.empties.length);
+  check('a tax record is not told about contractor invoices and photos',
+        !/contractor invoice|photos for this job/i.test(
+          (polish.byCat['🏛️ Real Estate Taxes'] || {}).empty || ''),
+        ((polish.byCat['🏛️ Real Estate Taxes'] || {}).empty || '').slice(0, 80));
+  check('an insurance record talks about policies and claims',
+        /polic|claim/i.test((polish.byCat['🛡️ Insurance'] || {}).empty || ''),
+        ((polish.byCat['🛡️ Insurance'] || {}).empty || '').slice(0, 80));
+
+  // 2 · Edit on the record, and only where it works
+  check('every manual record offers Edit on the card itself',
+        Object.keys(polish.byCat).filter(k => /Taxes|Insurance|Capital/.test(k))
+          .every(k => (polish.byCat[k].btns || []).some(b => /Edit/.test(b))),
+        JSON.stringify(polish.byCat['🏛️ Real Estate Taxes'] && polish.byCat['🏛️ Real Estate Taxes'].btns));
+  const autoKey = Object.keys(polish.byCat).find(k => /Lease/i.test(k));
+  check('a system-generated record does NOT offer an Edit that would refuse',
+        !autoKey || !(polish.byCat[autoKey].btns || []).some(b => /Edit/.test(b)),
+        autoKey ? JSON.stringify(polish.byCat[autoKey].btns) : 'no auto record rendered');
+
+  // 3 · class collision — .pos-rel already meant "invoice relation label"
+  check('the Related Items block is not styled by the invoice-register .pos-rel rule',
+        polish.relBlockDisplay === 'block', polish.relBlockDisplay);
+
+  // 4 · setup collapses once configured, without losing the only edit path
+  check('the first-run setup card is hidden once the property is configured',
+        polish.setupHidden, polish.setupHidden ? 'hidden' : 'still showing');
+  check('and is replaced by a summary that still offers Edit',
+        /Maple Plaza/.test(polish.summaryText || '') && /32,000 sq ft/.test(polish.summaryText || '')
+          && /Edit/.test(polish.summaryText || ''), polish.summaryText);
+
+  // The hidden-once-configured check passes vacuously if something ELSE is
+  // hiding the card. Prove the mechanism by clearing the configuration: an
+  // unconfigured property must show the setup card, because then it is the job.
+  const unconfigured = await page.evaluate(() => {
+    document.getElementById('propertyName').value = '';
+    document.getElementById('totalSqft').value = '';
+    PropertyOS.renderPropertyPage(_props[0]);
+    const setup = document.getElementById('cardSetup');
+    const sum = document.getElementById('posSetupSummary');
+    const out = { setupShown: getComputedStyle(setup).display !== 'none',
+                  summaryShown: !!sum && getComputedStyle(sum).display !== 'none' };
+    document.getElementById('propertyName').value = 'Maple Plaza';
+    document.getElementById('totalSqft').value = '32000';
+    PropertyOS.renderPropertyPage(_props[0]);
+    return out;
+  });
+  check('an UNconfigured property still shows the setup card — it is the job',
+        unconfigured.setupShown, unconfigured.setupShown ? 'shown' : 'hidden even when unconfigured');
+  check('and shows no summary of a property that has none',
+        !unconfigured.summaryShown);
+
+  const reopened = await page.evaluate(() => {
+    PropertyOS.toggleSetup();
+    const setup = document.getElementById('cardSetup');
+    return { shown: getComputedStyle(setup).display !== 'none',
+             nameField: !!document.getElementById('propertyName') };
+  });
+  check('Edit re-opens setup, so name and sqft stay reachable',
+        reopened.shown && reopened.nameField, JSON.stringify(reopened));
 
   check('no uncaught errors across the workspace', errs.length === 0,
         errs.slice(0, 2).join(' | ') || 'clean');
