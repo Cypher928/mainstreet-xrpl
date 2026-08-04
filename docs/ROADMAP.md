@@ -6,8 +6,12 @@ finds during it get fixed. This document exists so that when the freeze lifts,
 the order of work is already decided and not re-argued.
 
 The organising judgement: **the risk is not that MainStreet does too little. It
-is that nobody has measured whether what it does is correct.** Every phase below
-is ordered by that.
+is that nobody has measured whether what it does is correct, or whether being
+correct saves anyone any time.** Every phase below is ordered by that.
+
+Success is **time and confidence gained**, not extraction accuracy. Accuracy is
+a means; if it rises and the manager's day does not get shorter, we optimised
+the wrong thing.
 
 ---
 
@@ -32,8 +36,57 @@ be scoped, because the benchmark decides what Phase 1 contains.
    abstraction service (see *Build vs integrate*). ~$500 buys an external
    baseline and answers "are we behind, and by how much" in a week.
 
-**Exit criterion:** a written accuracy figure per field, a reconciliation
-parity result, and a ranked list of where the product is wrong.
+### The metric that actually matters: time and confidence gained
+
+Extraction accuracy is a **proxy**, and optimising a proxy is how products get
+technically excellent and commercially useless. A 97% field-accuracy score means
+nothing if the manager re-checks every lease by hand anyway — and 88% would be a
+triumph if she stops checking. What she is buying is hours back and the nerve to
+send a statement without re-deriving it.
+
+So measure the outcome directly, alongside the technical numbers:
+
+6. **Baseline her work FIRST, before she uses MainStreet in anger.** How long
+   does a lease abstraction take today? A full reconciliation? This has to be
+   captured up front — ask afterwards and you get a remembered number, which is
+   always flattering to whichever tool she is currently annoyed by. Without a
+   baseline, "17 minutes per lease" is a number with no meaning.
+7. **Review time per lease and per reconciliation**, wall-clock, from opening
+   the document to accepting the result. The saving is baseline minus this.
+8. **Correction count, by field.** How many extracted values did she change?
+   This is the bridge between the two kinds of measurement, and the most
+   diagnostic number available:
+   - high error, high corrections → an extraction problem;
+   - **low error, high corrections → a TRUST problem.** She is re-checking a
+     field the product got right, which means the presentation has not earned
+     her confidence. That is a UX finding wearing an accuracy costume, and it
+     would be invisible if we only scored the model.
+   - low error, low corrections → the field is done. Stop working on it.
+9. **Confidence, asked as a decision rather than a feeling.** After each
+   reconciliation: *"Would you send this to the tenant without re-checking it by
+   hand?"* Yes or no, and if no, what she checked. That binary is the actual
+   purchase decision, and a five-point satisfaction scale would obscure it.
+10. **Work avoided, in her words.** What did she not have to do — pull a lease
+    from a filing cabinet, email a colleague, rebuild last year's spreadsheet?
+    This is anecdotal and it is still the most persuasive material we will have,
+    both for the roadmap and for the next sales conversation.
+
+**Instrument this by observation, not by building telemetry.** A stopwatch, a
+shared sheet, and sitting with her. Adding analytics is a feature, the product
+is frozen, and hand-timing 30 leases is faster than shipping event tracking —
+with the side benefit that watching her work will produce findings no event
+stream would have captured.
+
+**Exit criterion.** Not a single score. Four results:
+
+- accuracy per field, segmented by document quality;
+- reconciliation parity in dollars against her completed work;
+- **hours saved per lease and per reconciliation, against a measured baseline;**
+- **the send-it-without-checking answer, and what she still checks.**
+
+A ranked list of where the product is wrong falls out of these. If the technical
+numbers are good and the time saving is not, the roadmap is wrong — and better
+to learn that from 30 leases than from a year of building.
 
 ---
 
@@ -171,7 +224,7 @@ product.
 
 ## The one-line version
 
-Measure first. Fix what the measurement finds. Charge a small number of design
-partners. Buy the commodity layers. Spend every remaining hour on the parts
-that make a property's history verifiable — because that, not lease reading, is
-what nobody else has.
+Measure first — hours and confidence, not just accuracy. Fix what the
+measurement finds. Charge a small number of design partners. Buy the commodity
+layers. Spend every remaining hour on the parts that make a property's history
+verifiable — because that, not lease reading, is what nobody else has.
