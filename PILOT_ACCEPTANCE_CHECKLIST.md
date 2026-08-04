@@ -13,6 +13,22 @@
 >
 > Frozen at `bd0f5bb` on `pilot`. Production (`main`) remains at `9c6d905`.
 >
+> **⚠️ Known-wrong during this walkthrough.** Three CAM correctness defects are
+> confirmed and are Phase 1A blockers to charging anyone
+> (`docs/CAM_ENGINE_GAP_ANALYSIS.md`). They are NOT fixed, because the freeze
+> permits only bugs found during the walkthrough. They affect what the
+> walkthrough can conclude:
+> - **The "CAM eligible" checkbox does nothing.** It changes a display total and
+>   not the reconciliation. **Do not use it during validation** — a property
+>   where it was touched produces a reconciliation-parity number that is
+>   measuring the wrong thing.
+> - **There is no final balance due/credit**, because estimated payments are not
+>   held. Expect the reconciliation to stop at the tenant's share of actual
+>   expenses. The remaining step is done in Excel, and that time still counts
+>   against the baseline.
+> - **The CAM cap is applied to the tenant's whole total**, not to controllables
+>   only. On any property with a cap, expect the tenant share to come out low.
+>
 > **Observed but not fixed** — waiting for her walkthrough to say whether they
 > matter:
 > - Property Information promises data ("appears here once added") with no

@@ -92,35 +92,71 @@ to learn that from 30 leases than from a year of building.
 
 ## Phase 1 — Required before the first paying customer
 
-Ruthless list. Everything here is either "we cannot honestly take money without
-it" or "the benchmark said it is broken".
+Two kinds of item, and the distinction matters when someone later argues for
+shipping early.
 
-0. **Three CAM defects** — see `docs/CAM_ENGINE_GAP_ANALYSIS.md`. The
-   "CAM eligible" control does not affect the reconciliation; there is no
-   estimated-payments ledger so no final balance due/credit; and the cap is
-   applied to the tenant's whole total rather than to controllables only. The
-   first and third are wrong answers in the money path, and the second means the
-   product stops one step before the deliverable. Found by benchmarking against
-   CapVeri, but none of them are parity items — they are things we assumed we
-   already had.
-1. **Whatever Phase 0 found.** This is the largest item and it cannot be scoped
-   in advance. Extraction fixes, engine fixes, or an integration decision.
-2. **Live extraction proven in production.** As of the freeze, no lease has been
+### 1A · Correctness — mandatory, not negotiable
+
+These are **not feature gaps and not parity items**. They are cases where the
+product produces a wrong number, or stops short of the number it exists to
+produce. They were found by benchmarking against CapVeri, but a competitor has
+nothing to do with why they must be fixed: we cannot charge money for a
+reconciliation that is arithmetically wrong. Full detail and code references in
+`docs/CAM_ENGINE_GAP_ANALYSIS.md`.
+
+**C1 · "CAM eligible" does not affect the reconciliation.**
+The checkbox in the invoice register (`property-os.js:748`) is referenced zero
+times in the allocation path. A manager who unticks it and sends the statement
+bills a tenant for an expense she believed she had removed. Silently wrong, in
+the money path, in a direction that reaches a tenant. Either wire it into the
+calculation or remove it — a control that lies is worse than no control.
+
+**C2 · No estimated payments, therefore no final balance.**
+A CAM reconciliation's output is "you owe $4,212" or "you are owed $1,180". The
+engine computes the tenant's share of actual expenses and stops; the product
+says so itself at `script.js:15752`. Everything before the true-up is
+intermediate work, and without it the manager finishes the job in Excel —
+which structurally caps the time saving Phase 0 exists to measure.
+
+**C3 · The cap is applied to the tenant's entire total.**
+Standard lease language caps *controllable* expenses only, with taxes,
+insurance and utilities passing through uncapped. Applying the cap to
+everything under-bills the landlord. The customer loses money and has no way to
+notice. Requires a controllable/uncontrollable classification, which does not
+exist today.
+
+**Gate:** none of these may be waived for a first customer, and none of them
+qualify as "a design partner tolerates known gaps". A partner can tolerate a
+missing feature they were told about. A partner cannot tolerate a number that is
+wrong without telling them.
+
+### 1B · Readiness — required before taking money
+
+4. **Whatever Phase 0 found.** The largest item, unscopable in advance.
+   Extraction fixes, engine fixes, or an integration decision.
+5. **Live extraction proven in production.** As of the freeze, no lease has been
    verified end-to-end through the real pipeline with real credentials. The
    "AI extraction completes" box on the acceptance checklist has never been
    ticked. Everything downstream runs on seeded state.
-3. **Their data can leave.** Full export of every property, lease, document,
+6. **Their data can leave.** Full export of every property, lease, document,
    reconciliation and timeline entry, in a format a human and a CPA can read.
    Charging for a system of record you cannot get data out of is not defensible.
-4. **Backup and restore, verified by drill.** Not "Supabase has backups" —
+7. **Backup and restore, verified by drill.** Not "Supabase has backups" —
    an actual restore performed and checked.
-5. **A dead-control sweep.** Four controls were found shipped completely
+8. **A dead-control sweep.** Four controls were found shipped completely
    non-functional in a single session (Restore, both View in Lease, Archive's
    entry point). `test-inline-handlers.js` covers one cause. The others need
    the same treatment: every interactive surface exercised by a real click.
-6. **Commercial minimum.** A written scope of what the product does and does not
+9. **Commercial minimum.** A written scope of what the product does and does not
    do, a simple agreement, a support channel with a response commitment you can
    actually keep, and a named path for incidents.
+
+### Everything else is demand-driven
+
+No other CAM capability enters Phase 1. Gross-up, base year, admin fee, expense
+pools, cap banks and BOMA alignment are prioritised by **what Phase 0 and paying
+customers actually ask for**, not by what a competitor lists. Building them
+speculatively is how a roadmap gets spent on nobody.
 
 **Deliberately NOT in Phase 1:** multi-user, integrations, gross-up/base-year,
 dispute packages. One manager can run a pilot alone, and a design partner

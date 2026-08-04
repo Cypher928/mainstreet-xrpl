@@ -149,11 +149,15 @@ expectations. *Edge case for our first customers.*
 
 ## 3. Prioritised roadmap, ranked by customer impact
 
-**Critical before charging**
-1. Fix or remove the "CAM eligible" control *(defect, money path)*
-2. Estimated payments ledger → final balance due/credit *(the deliverable)*
-3. Controllable/uncontrollable classification → cap the controllables only
+**Critical before charging — now Phase 1A, mandatory** (`docs/ROADMAP.md`)
+1. **C1** Fix or remove the "CAM eligible" control *(defect, money path)*
+2. **C2** Estimated payments ledger → final balance due/credit *(the deliverable)*
+3. **C3** Controllable/uncontrollable classification → cap the controllables only
    *(defect, costs the landlord money)*
+
+These are classified as **correctness**, not as feature gaps. They cannot be
+waived for a design partner: a partner tolerates a missing feature they were
+told about, not a number that is wrong without telling them.
 
 **Important after pilot**
 4. Admin fee on the controllable pool
