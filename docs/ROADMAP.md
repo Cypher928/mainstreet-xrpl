@@ -95,6 +95,14 @@ to learn that from 30 leases than from a year of building.
 Ruthless list. Everything here is either "we cannot honestly take money without
 it" or "the benchmark said it is broken".
 
+0. **Three CAM defects** — see `docs/CAM_ENGINE_GAP_ANALYSIS.md`. The
+   "CAM eligible" control does not affect the reconciliation; there is no
+   estimated-payments ledger so no final balance due/credit; and the cap is
+   applied to the tenant's whole total rather than to controllables only. The
+   first and third are wrong answers in the money path, and the second means the
+   product stops one step before the deliverable. Found by benchmarking against
+   CapVeri, but none of them are parity items — they are things we assumed we
+   already had.
 1. **Whatever Phase 0 found.** This is the largest item and it cannot be scoped
    in advance. Extraction fixes, engine fixes, or an integration decision.
 2. **Live extraction proven in production.** As of the freeze, no lease has been
@@ -130,7 +138,8 @@ After paying pilots, ordered by customer value per unit of work.
    already the right architecture for it. Nobody buys reconciliation software
    enthusiastically; people buy the thing that saves them from a fight.
 2. **CAM depth, if and only if customers need it.** Gross-up, base year stops,
-   expense pools, cap carry-forward, admin fee on controllables. Today the math
+   expense pools, cap carry-forward, admin fee on controllables — ranked in
+   `docs/CAM_ENGINE_GAP_ANALYSIS.md`. Today the math
    is `proRata = sqFt / totalSqFt` (`script.js:9282`), with caps and exclusions;
    base year exists as a warning code, not a computation. That is correct for
    retail and industrial NNN and wrong for office. Let the customer mix decide,
