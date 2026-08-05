@@ -21088,6 +21088,35 @@ let _saveDebounceTimer = null;
 
 // Snapshot current in-memory state back into the canonical _props entry and
 // persist to Supabase. Debounced — rapid successive calls collapse into one write.
+/**
+ * Save NOW, and cancel any debounced save that is already queued.
+ *
+ * S9 — two writers for one record. savePropertyData() debounces an 800ms write;
+ * the Space workspace called saveProperty(prop) directly and immediately. Add an
+ * activity while a debounced write is pending and both fired, racing on the same
+ * row. Today they serialise the same shared object so the outcome happens to
+ * match — that is luck, and it stops being true the moment either path prunes or
+ * transforms before writing.
+ *
+ * Anything that needs "saved, and tell me when" uses this. It clears the pending
+ * timer first, so there is exactly one write in flight and the caller's promise
+ * is the one that resolves it.
+ */
+function savePropertyNow(property) {
+  const prop = property || _props.find(p => p.id === activePropId);
+  if (!prop) return Promise.reject(new Error('No property is open.'));
+  clearTimeout(_saveDebounceTimer);   // the queued write is superseded by this one
+  _saveDebounceTimer = null;
+  let out;
+  try { out = saveProperty(prop); } catch (e) { return Promise.reject(e); }
+  return Promise.resolve(out).then(function (r) {
+    // Derived surfaces are recomputed on any write, wherever it came from.
+    try { _refreshAdvisorSurfaces(prop); } catch (_) {}
+    return r;
+  });
+}
+window.savePropertyNow = savePropertyNow;
+
 // Re-render everything computed FROM the property record rather than stored on
 // it. Debounced: a bulk upload calls savePropertyData() once per file, and the
 // panel only needs to be right when the burst ends.

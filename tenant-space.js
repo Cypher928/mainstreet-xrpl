@@ -46,12 +46,41 @@ window.TenantSpace = (function () {
   // events written against them — the events stay attached to the right space
   // instead of silently disappearing from it.
   function _scopedEvents(property, tenantId, tenantName) {
+    // S1 — NO IDENTITY, NO RECORD.
+    //
+    // `e.tenantId === tenantId` is true when BOTH are undefined, and every
+    // property-wide event (lease uploaded, CAM reconciled, settlement) has no
+    // tenantId. So a tenant whose id has not been assigned yet — freshly
+    // extracted, before resyncTenantsToTable runs — used to scope in the whole
+    // building's history as if it had happened in that suite. Counts, summary
+    // and citability all became the property's, and a draft would quote them
+    // back as the tenant's own record.
+    //
+    // Refusing to scope without an identity is the only safe answer: an empty
+    // record is recoverable, a wrong one reaches a tenant.
+    if (tenantId == null || tenantId === '') return [];
+
+    // S2 — the label fallback must not fire on a duplicated name.
+    //
+    // The fallback exists so events survive if tenant ids ever drift. But
+    // "Vacant" is the most common tenant name in a real rent roll, and a chain
+    // occupying two suites is routine — so matching on label alone made two
+    // spaces share each other's records. Trade: keep the resilience only where
+    // the name identifies exactly one space.
+    var nameIsUnique = false;
+    if (tenantName) {
+      var sameName = (property.tenants || []).filter(function (x) {
+        return x && x.tenant_name === tenantName;
+      }).length;
+      nameIsUnique = sameName <= 1;
+    }
+
     return (property.timeline || [])
       .filter(function (e) {
         if (!e) return false;
-        if (e.subject && e.subject.id === tenantId) return true;
-        if (e.tenantId === tenantId) return true;
-        if (tenantName && e.subject && e.subject.type === 'suite' && e.subject.label === tenantName) return true;
+        if (e.subject && e.subject.id != null && e.subject.id === tenantId) return true;
+        if (e.tenantId != null && e.tenantId === tenantId) return true;
+        if (nameIsUnique && e.subject && e.subject.type === 'suite' && e.subject.label === tenantName) return true;
         return false;
       })
       .sort(function (a, b) { return (new Date(b.timestamp).getTime() || 0) - (new Date(a.timestamp).getTime() || 0); });
@@ -70,6 +99,9 @@ window.TenantSpace = (function () {
   // the (future) grounded AI reply read from.
   function assemble(property, tenantId) {
     var t = (property.tenants || []).find(function (x) { return x && x.id === tenantId; }) || {};
+    // Surfaced rather than swallowed: a space with no id shows nothing, and the
+    // view has to be able to explain why instead of looking like an empty one.
+    var noIdentity = (tenantId == null || tenantId === '');
     var events = _scopedEvents(property, tenantId, t.tenant_name);
     var photos     = _attach(events, 'photo');
     var invoices   = _attach(events, 'invoice');
@@ -111,6 +143,7 @@ window.TenantSpace = (function () {
     }).sort(function (a, b) { return (new Date(b.timestamp || 0)) - (new Date(a.timestamp || 0)); });
 
     return {
+      noIdentity: noIdentity,
       disputes: disputes,
       space: { id: tenantId, name: t.tenant_name || 'Space' },
       lease: lease, leaseDocs: leaseDocs, summary: summary,
@@ -132,14 +165,23 @@ window.TenantSpace = (function () {
   // why it is not available yet, which also teaches what the record is for.
   function _citableRecord(rec) {
     if (!rec) return { ok: false, why: 'This space has no record yet.' };
+    if (rec.noIdentity) return { ok: false,
+      why: 'This space has no identifier yet \u2014 finish saving the tenant, then its record can be cited.' };
     var lease = rec.lease || {};
     var hasLease = !!(lease.type || lease.sqft || lease.start || lease.end || lease.cap != null);
-    var hasDocs = (rec.photos || []).length || (rec.documents || []).length ||
-                  (rec.invoices || []).length || (rec.warranties || []).length ||
-                  (rec.leaseDocs || []).length;
-    var hasHistory = (rec.events || []).length > 0;
-    var hasCam = !!rec.camResult;
-    if (hasHistory || hasDocs || hasCam) return { ok: true };
+
+    // S7 — ONE predicate. This used to count `rec.events.length > 0`, which is
+    // true of a system-generated event like "lease uploaded", directly against
+    // the comment above saying seeded/derived events must not count.
+    // _hasRealActivity already draws the line correctly (manual === true, or a
+    // real attachment); two predicates for one question is how they disagree.
+    //
+    // Two things _hasRealActivity does not cover are genuinely citable and are
+    // added explicitly: a completed CAM allocation, and the lease document
+    // itself on file.
+    var hasCam  = !!rec.camResult;
+    var hasLeaseDoc = (rec.leaseDocs || []).length > 0;
+    if (_hasRealActivity(rec) || hasCam || hasLeaseDoc) return { ok: true };
     if (hasLease) return { ok: false,
       why: 'Only the lease terms are on file. Record something that happened here \u2014 a repair, a note, a document \u2014 and a draft can cite it.' };
     return { ok: false,
@@ -861,19 +903,49 @@ window.TenantSpace = (function () {
   function _applyAmend(tenantId, eventId, changes, note, added) {
     var prop = window.currentProperty && window.currentProperty();
     var ev = _findEvent(eventId);
-    if (!prop || !ev) return;
-    if (!_amend(ev, changes, note, added)) return;
-    var reopen = function () { closeSpace(); openSpace(tenantId); setTimeout(function () { openActivity(tenantId, eventId); }, 260); };
-    var saved = window.saveProperty ? window.saveProperty(prop) : null;
+    // S4 — every exit says something. These used to return silently, so
+    // "Mark complete" on a record whose property had been switched underneath
+    // did nothing at all: no toast, no error, no console line.
+    if (!prop) { if (window.showToast) window.showToast('No property is open — reopen the space and try again.',
+      { color: '#92400e', textColor: '#fef3c7', duration: 6000 }); return; }
+    if (!ev) { if (window.showToast) window.showToast('That record is no longer open — it may belong to another property.',
+      { color: '#92400e', textColor: '#fef3c7', duration: 6000 }); return; }
+    if (!_amend(ev, changes, note, added)) {
+      if (window.showToast) window.showToast('Nothing changed — the record is as it was.');
+      return;
+    }
+
+    // S8 — re-render IN PLACE. This used to close the space, reopen it, and
+    // then fire openActivity() on a 260ms timer: a magic number that silently
+    // failed to reopen the record on a slow device or a long timeline, leaving
+    // the user on the space list unsure whether the save had worked.
+    //
+    // _refreshOpenRecord() re-assembles from the mutated property and repaints
+    // the record synchronously — no teardown, no timer, and the panel keeps its
+    // scroll position.
+    var saved = window.savePropertyNow ? window.savePropertyNow(prop)
+              : (window.saveProperty ? window.saveProperty(prop) : null);
+    _refreshOpenRecord(tenantId, eventId);
     if (saved && typeof saved.then === 'function') {
-      saved.then(function () { reopen(); if (window.showToast) window.showToast('Record updated'); })
+      saved.then(function () { if (window.showToast) window.showToast('Record updated'); })
            .catch(function (e) {
-             reopen();
              if (window.showToast) window.showToast('Updated here, but saving to the server failed: ' +
                (e && e.message ? e.message : 'unknown error') + ' — it may not survive a reload.',
                { color: '#92400e', textColor: '#fef3c7', duration: 8000 });
            });
-    } else { reopen(); }
+    }
+  }
+
+  // Re-assemble the open space from the current property and repaint the open
+  // record, synchronously. Used after an amendment so the change is visible
+  // without a close/open cycle.
+  function _refreshOpenRecord(tenantId, eventId) {
+    var property = window.currentProperty && window.currentProperty();
+    if (!property) return false;
+    _openRec = assemble(property, tenantId);
+    if (!_t('tsAddPanel')) return false;   // panel gone — nothing to repaint
+    openActivity(tenantId, eventId);
+    return true;
   }
 
   // ── Add Activity ──────────────────────────────────────────────────────────
@@ -977,12 +1049,28 @@ window.TenantSpace = (function () {
   // storage bucket wired up. Capped, because properties.data is a JSON blob and a
   // 12-megapixel photo would bloat every subsequent save of the whole property.
   var MAX_INLINE_BYTES = 1200000;
+
+  // S10 — what a property record legitimately holds. Everything here becomes a
+  // data: URL in an href; an uploaded .html would be data:text/html, which
+  // modern browsers refuse to open top-level but which has no business on a
+  // lease record either. Allow-list, not block-list: the set of things a
+  // manager attaches is small and known, and the set of dangerous types is not.
+  var ALLOWED_MIME = /^(image\/(jpeg|png|gif|webp|heic|heif)|application\/pdf|application\/msword|application\/vnd\.openxmlformats-officedocument\.|application\/vnd\.ms-excel|text\/plain|text\/csv)/i;
+  // Some browsers report an empty type for known-safe extensions; fall back to
+  // the extension rather than rejecting a legitimate photo.
+  var ALLOWED_EXT = /\.(jpe?g|png|gif|webp|heic|heif|pdf|docx?|xlsx?|txt|csv)$/i;
+  function _mimeAllowed(f) {
+    var type = (f && f.type) || '';
+    if (type) return ALLOWED_MIME.test(type);
+    return ALLOWED_EXT.test((f && f.name) || '');
+  }
   function _readFiles(list) {
     var out = [], arr = Array.prototype.slice.call(list || []);
     if (!arr.length) return Promise.resolve(out);
     return Promise.all(arr.map(function (f) {
       return new Promise(function (resolve) {
         var base = { name: f.name, size: f.size, mime: f.type || '' };
+        if (!_mimeAllowed(f)) { out.push(Object.assign(base, { url: null, rejectedType: true })); return resolve(); }
         if (f.size > MAX_INLINE_BYTES) { out.push(Object.assign(base, { url: null, oversize: true })); return resolve(); }
         var fr = new FileReader();
         fr.onload  = function () { out.push(Object.assign(base, { url: String(fr.result) })); resolve(); };
@@ -1016,11 +1104,43 @@ window.TenantSpace = (function () {
     var property = window.currentProperty && window.currentProperty();
     if (!property) return fail('No property is open — reopen the space and try again.');
 
+    // S11 — reject before anything is written, and say which field.
+    if (cost !== '') {
+      var costNum = Number(cost);
+      if (!isFinite(costNum)) return fail('Cost must be a number.');
+      if (costNum < 0) return fail('Cost cannot be negative. Record a credit as a note instead.');
+      if (costNum > 100000000) return fail('That cost looks wrong — check the figure before saving.');
+    }
+    // S12 — a warranty that has already expired is almost always a mistyped
+    // year. Compared against TODAY, which is when the work is being recorded.
+    if (warr) {
+      var wExp = new Date(warr + 'T12:00:00');
+      if (isNaN(wExp.getTime())) return fail('That warranty date is not a valid date.');
+      var today = new Date(); today.setHours(0, 0, 0, 0);
+      if (wExp < today) return fail('That warranty expiry is in the past — check the year.');
+    }
+
     _readFiles(picked).then(function (files) {
-      var attachments = files.map(function (f) {
-        return { name: f.name, url: f.url, kind: t.kind || 'document', size: f.size, mime: f.mime,
-                 oversize: !!f.oversize, unreadable: !!f.unreadable };
+      // S3 — a file that did not read is NOT an attachment. These used to be
+      // stored with url:null and the save reported success, so a record claimed
+      // two photos and held two nulls. A phone photo over 1.2MB is the normal
+      // case, not an edge case.
+      var attachments = files.filter(function (f) { return f && f.url; }).map(function (f) {
+        return { name: f.name, url: f.url, kind: t.kind || 'document', size: f.size, mime: f.mime };
       });
+      var rejected = files.filter(function (f) { return !f || !f.url; });
+      if (rejected.length) {
+        var why = rejected.map(function (f) {
+          var r = f.rejectedType ? 'unsupported type' : f.oversize ? 'over 1.2 MB' : 'could not be read';
+          return (f.name || 'file') + ' (' + r + ')';
+        }).join(', ');
+        if (window.showToast) window.showToast('\u26A0\uFE0F Not attached \u2014 ' + why,
+          { color: '#92400e', textColor: '#fef3c7', duration: 8000 });
+      }
+      // Nothing survived and nothing was typed: there is no record to make.
+      if (!attachments.length && !title.trim()) {
+        return fail('None of those files could be attached, and no description was given.');
+      }
       // Provenance is the point of a verified memory: every entry carries who put
       // it there, when, and by what route. Resolved HERE, above the metadata it
       // feeds — declared below it first time round, and `var` hoisting meant
@@ -1032,7 +1152,9 @@ window.TenantSpace = (function () {
       } catch (_e) {}
       var meta = {};
       if (vendor.trim()) meta.vendor = vendor.trim();
-      if (cost !== '' && !isNaN(Number(cost))) meta.costUsd = Number(cost);
+      // S11 — min="0" on the input is a hint the browser does not enforce on
+      // paste or on programmatic set. Validate the value we are about to store.
+      if (cost !== '') meta.costUsd = Number(cost);
       if (warr) meta.warrantyExpires = warr;
       if (attachments.length) meta.fileCount = attachments.length;
       meta.recordedBy = _who;
@@ -1095,7 +1217,12 @@ window.TenantSpace = (function () {
         openSpace(tenantId);
         if (window.showToast) window.showToast(t.verb + ' to ' + ((_openRec && _openRec.space && _openRec.space.name) || 'this space'));
       };
-      var saved = window.saveProperty ? window.saveProperty(property) : null;
+      // S9 — savePropertyNow cancels any debounced write first, so there is
+      // exactly one write in flight and this promise is the one that resolves
+      // it. Calling saveProperty() directly raced the 800ms timer queued by
+      // savePropertyData().
+      var _save = window.savePropertyNow || window.saveProperty;
+      var saved = _save ? _save(property) : null;
       if (saved && typeof saved.then === 'function') {
         saved.then(done).catch(function (e) {
           // The event is already on the in-memory record; say the persistence failed.

@@ -590,6 +590,266 @@ const gated = await (async()=>{
   ? ok('recording one thing makes drafting available — the loop is visible')
   : bad('drafting stayed disabled after something was recorded', JSON.stringify(gated.after));
 
+// ── Code-review fixes (S1, S2, S3, S7, S10, S11, S12) ─────────────────────
+// Each of these is a case where the workspace produced a wrong record rather
+// than failing loudly. They are grouped because they share one property of
+// being invisible on screen: the space looks populated, the save looks like it
+// worked, and only the stored record is wrong.
+console.log('\n── data integrity: scoping, citability, attachments ──');
+{
+  const S = await p.evaluate(async () => {
+    const prop = currentProperty();
+    prop.timeline = [];
+    prop.tenants = [
+      { id: 'tA', tenant_name: 'Sage Shield',  leased_sqft: 4200, lease_type: 'NNN' },
+      { id: 'tB', tenant_name: 'Vacant',       leased_sqft: 1200 },
+      { id: 'tC', tenant_name: 'Vacant',       leased_sqft: 900  },
+    ];
+    // Property-wide events carry NO tenantId — the shape that used to leak.
+    appendPropertyTimelineEvent(prop, { type: 'lease_uploaded', title: 'Lease uploaded — building',
+      subject: { type: 'property', id: prop.id } });
+    appendPropertyTimelineEvent(prop, { type: 'cam_reconciled', title: 'CAM reconciled — building',
+      subject: { type: 'property', id: prop.id } });
+    // One real, manual event in each of the two identically-named spaces.
+    appendPropertyTimelineEvent(prop, { type: 'space_maintenance', manual: true, category: 'maintenance',
+      title: 'Suite B sign replaced', tenantId: 'tB', subject: { type: 'suite', id: 'tB', label: 'Vacant' } });
+    appendPropertyTimelineEvent(prop, { type: 'space_damage', manual: true, category: 'damage',
+      title: 'Suite C flood damage', tenantId: 'tC', subject: { type: 'suite', id: 'tC', label: 'Vacant' } });
+
+    // appendPropertyTimelineEvent stores `tenantId: event.tenantId ?? null`, so
+    // NULL — not undefined — is the value a property-wide event actually holds,
+    // and therefore the value that used to collide with an id-less space.
+    const noIdU = TenantSpace.assemble(prop, undefined);
+    const noId  = TenantSpace.assemble(prop, null);
+    const dupB  = TenantSpace.assemble(prop, 'tB');
+    const sysOnly = TenantSpace.assemble(prop, 'tA');   // lease terms + no manual activity
+    return {
+      noIdEvents: noId.events.length,
+      noIdEventsU: noIdU.events.length,
+      noIdFlag:   noId.noIdentity === true && noIdU.noIdentity === true,
+      dupBTitles: dupB.events.map(e => e.title),
+      sysOnlyEvents: sysOnly.events.length,
+    };
+  });
+
+  // S1
+  (S.noIdEvents === 0 && S.noIdEventsU === 0)
+    ? ok('a space with no id (null OR undefined) scopes in NOTHING')
+    : bad('a space with no id absorbed property-wide events',
+          'null=' + S.noIdEvents + ' undefined=' + S.noIdEventsU);
+  S.noIdFlag ? ok('and the record says so (noIdentity) instead of looking merely empty')
+             : bad('no identity is indistinguishable from an empty space');
+  // S2
+  (S.dupBTitles.length === 1 && /Suite B/.test(S.dupBTitles[0]))
+    ? ok('two spaces named "Vacant" do not see each other\'s records')
+    : bad('duplicate tenant names cross-contaminate', JSON.stringify(S.dupBTitles));
+
+  // S7 — _citableRecord is private, but the DRAFT GATE is what it controls, and
+  // that is user-visible. A space holding only a SYSTEM-generated event must
+  // still refuse: there is nothing a draft could honestly quote.
+  const G = await p.evaluate(async () => {
+    const prop = currentProperty();
+    prop.tenants.push({ id: 'tSys', tenant_name: 'System Only Ltd', leased_sqft: 800 });
+    // Not manual, no attachments — exactly what "lease uploaded" looks like.
+    appendPropertyTimelineEvent(prop, { type: 'lease_uploaded', title: 'Lease uploaded — Suite S',
+      tenantId: 'tSys', subject: { type: 'suite', id: 'tSys', label: 'System Only Ltd' } });
+    TenantSpace.closeSpace();
+    TenantSpace.openSpace('tSys');
+    await new Promise(r => setTimeout(r, 500));
+    const btn = document.getElementById('tsActBtn');
+    const rec = TenantSpace.record();
+    return { events: rec ? rec.events.length : -1,
+             disabled: btn ? btn.disabled : null,
+             why: (document.querySelector('.ts-act-hint') || {}).innerText || '' };
+  });
+  (G.events === 1)
+    ? ok('the probe space holds exactly one system-generated event')
+    : bad('the S7 probe did not build the state it needs', 'events=' + G.events);
+  (G.disabled === true)
+    ? ok('a space with only a system event still cannot be drafted from')
+    : bad('a system-generated event alone made the record "citable"', JSON.stringify(G));
+}
+
+console.log('\n── attachments that fail are not recorded as attached (S3, S10) ──');
+{
+  const A = await p.evaluate(async () => {
+    const prop = currentProperty();
+    const before = (prop.timeline || []).length;
+    const toasts = []; const realToast = window.showToast;
+    window.showToast = m => toasts.push(String(m));
+
+    TenantSpace.closeSpace();
+    TenantSpace.openSpace('tA');
+    await new Promise(r => setTimeout(r, 250));
+    document.getElementById('tsAddBtn').click();
+    await new Promise(r => setTimeout(r, 300));
+    // "maintenance" carries both a file input and the cost/warranty fields.
+    document.querySelector('#tsAddPanel .ts-add-choice[data-act="maintenance"]').click();
+    await new Promise(r => setTimeout(r, 300));
+    if (!document.getElementById('tsAfTitle')) { window.showToast = realToast; return { formMissing: true }; }
+    const pick = document.getElementById('tsAfFiles') || document.getElementById('tsAfPhotos')
+              || document.querySelector('#tsAddPanel input[type=file]');
+    document.getElementById('tsAfTitle').value = 'Roof patch photos';
+    const big  = new File([new Uint8Array(1300000)], 'huge-photo.jpg', { type: 'image/jpeg' });
+    const evil = new File([new Blob(['<script>x</script>'])], 'note.html', { type: 'text/html' });
+    const dt = new DataTransfer(); dt.items.add(big); dt.items.add(evil);
+    if (pick) pick.files = dt.files;
+    const save = document.getElementById('tsAfSave');
+    if (save) save.click();
+    await new Promise(r => setTimeout(r, 900));
+    window.showToast = realToast;
+
+    const tl = currentProperty().timeline || [];
+    const newest = tl.find(e => e.title === 'Roof patch photos');
+    return { toasts, created: !!newest,
+             atts: newest ? (newest.attachments || []) : [],
+             pickFound: !!pick, pickCount: pick && pick.files ? pick.files.length : -1,
+             grew: tl.length - before };
+  });
+
+  if (A.formMissing) bad('the Add Activity form did not open for the attachment probe');
+  // Non-vacuous: [].every() is TRUE, so the record must exist before "no null
+  // attachments" means anything. Both files here are legitimately rejected, so
+  // the correct outcome is a saved record carrying ZERO attachments.
+  A.pickFound && A.pickCount === 2
+    ? ok('the file input received both test files')
+    : bad('the probe never delivered files to the form — the checks below prove nothing',
+          'pickFound=' + A.pickFound + ' files=' + A.pickCount);
+  A.created ? ok('the record was created from its title alone')
+            : bad('no record was created — the checks below would pass vacuously');
+  // Two layers hold this: tenant-space filters before building the event, and
+  // appendPropertyTimelineEvent (script.js:18237) filters `a && a.url` again on
+  // append. The stored record is what matters, so that is what is asserted.
+  (A.created && A.atts.length === 0)
+    ? ok('and it stores no attachment at all, rather than two null ones')
+    : bad('a failed file was recorded as an attachment', JSON.stringify(A.atts));
+  (A.atts.every(a => a && a.url))
+    ? ok('no attachment anywhere carries a null url')
+    : bad('an attachment has a null url', JSON.stringify(A.atts));
+  A.toasts.some(t => /Not attached/i.test(t))
+    ? ok('and the user is told which files did not attach')
+    : bad('files failed silently', A.toasts.join(' | ') || 'no toast');
+  A.toasts.some(t => /unsupported type/i.test(t))
+    ? ok('an .html upload is refused by the mime allow-list')
+    : bad('the mime allow-list did not reject text/html', A.toasts.join(' | '));
+}
+
+console.log('\n── amend repaints in place, and saves once (S8, S9) ──');
+{
+  const R = await p.evaluate(async () => {
+    const prop = currentProperty();
+    // A record with a status, so "Mark in progress" is offered.
+    const ev = appendPropertyTimelineEvent(prop, {
+      type: 'space_maintenance', manual: true, category: 'maintenance', status: 'open',
+      title: 'Compressor rattle', tenantId: 'tA',
+      subject: { type: 'suite', id: 'tA', label: 'Sage Shield' } });
+
+    // Count writes, and prove the debounced timer is cancelled rather than
+    // left to fire alongside.
+    let writes = 0;
+    const realSave = window.saveProperty;
+    window.saveProperty = function (pr) { writes++; return realSave ? realSave(pr) : Promise.resolve(); };
+
+    TenantSpace.closeSpace();
+    TenantSpace.openSpace('tA');
+    await new Promise(r => setTimeout(r, 250));
+    TenantSpace.openActivity('tA', ev.id);
+    await new Promise(r => setTimeout(r, 250));
+
+    const btn = [].slice.call(document.querySelectorAll('#tsAddPanel [data-status]'))
+      .find(b => b.getAttribute('data-status') === 'in_progress');
+    if (!btn) { window.saveProperty = realSave; return { noButton: true }; }
+
+    // Arm the debounced writer so there is genuinely a pending write to race.
+    // Without this the probe proves nothing: removing clearTimeout() changes
+    // nothing when no timer was ever set.
+    if (window.savePropertyData) await window.savePropertyData();
+    const armed = true;
+    const t0 = Date.now();
+    btn.click();
+    // Read the panel IMMEDIATELY — an in-place repaint is synchronous, a
+    // close/open/setTimeout(260) cycle is not.
+    const panelAfter = document.getElementById('tsAddPanel');
+    const textNow = panelAfter ? (panelAfter.innerText || panelAfter.textContent || '') : '';
+    const syncMs = Date.now() - t0;
+
+    // Wait past the 800ms debounce window: if the queued write was not
+    // cancelled it fires in here and the count goes to 2.
+    await new Promise(r => setTimeout(r, 1600));
+    window.saveProperty = realSave;
+    const after = (currentProperty().timeline || []).find(e => e.id === ev.id);
+    return {
+      syncMs,
+      repaintedSynchronously: /in progress|complete/i.test(textNow),
+      status: after ? after.status : null,
+      revisions: after ? (after.revisions || []).length : 0,
+      writes, armed,
+      panelStillOpen: !!document.getElementById('tsAddPanel'),
+    };
+  });
+
+  if (R.noButton) { bad('no status control was offered — the S8/S9 probe proves nothing'); }
+  else {
+    R.repaintedSynchronously
+      ? ok(`the record repaints in place, synchronously (${R.syncMs}ms, no 260ms timer)`)
+      : bad('the panel did not update synchronously after an amendment', JSON.stringify(R));
+    (R.status === 'in_progress')
+      ? ok('the status change is applied to the stored record')
+      : bad('status was not applied', String(R.status));
+    (R.revisions >= 2)
+      ? ok('and appended to the revision history rather than overwriting')
+      : bad('the amendment left no revision', String(R.revisions));
+    R.armed ? ok('a debounced write was pending before the amendment')
+            : bad('the debounce was never armed — the write-count check proves nothing');
+    (R.writes === 1)
+      ? ok('exactly ONE write reached saveProperty — the pending write was cancelled, not raced')
+      : bad('concurrent or duplicated writes', R.writes + ' write(s)');
+    R.panelStillOpen
+      ? ok('and the panel is still open — no close/reopen flash')
+      : bad('the panel was torn down');
+  }
+}
+
+console.log('\n── cost and warranty validation (S11, S12) ──');
+{
+  const V = await p.evaluate(async () => {
+    const out = {};
+    const run = async (cost, warr) => {
+      TenantSpace.closeSpace();
+      TenantSpace.openSpace('tA');
+      await new Promise(r => setTimeout(r, 250));
+      document.getElementById('tsAddBtn').click();
+      await new Promise(r => setTimeout(r, 250));
+      document.querySelector('#tsAddPanel .ts-add-choice[data-act="maintenance"]').click();
+      await new Promise(r => setTimeout(r, 250));
+      const t = document.getElementById('tsAfTitle'); if (t) t.value = 'Compressor swap';
+      const c = document.getElementById('tsAfCost'); if (c) c.value = cost;
+      const w = document.getElementById('tsAfWarranty'); if (w) w.value = warr;
+      const diag = { hasCost: !!c, hasWarr: !!w,
+                     costVal: c ? c.value : null, warrVal: w ? w.value : null,
+                     dupCost: document.querySelectorAll('#tsAfCost').length,
+                     dupWarr: document.querySelectorAll('#tsAfWarranty').length };
+      const before = (currentProperty().timeline || []).length;
+      const s = document.getElementById('tsAfSave'); if (s) s.click();
+      await new Promise(r => setTimeout(r, 500));
+      const err = document.getElementById('tsAfErr');
+      return { msg: err && err.style.display !== 'none' ? err.textContent : '',
+               saved: (currentProperty().timeline || []).length > before, diag: diag };
+    };
+    out.negative = await run('-4800', '');
+    out.past     = await run('', '2019-01-01');
+    out.diag = { negMsg: out.negative.msg, pastMsg: out.past.msg };
+    return out;
+  });
+
+  (!V.negative.saved && /negative/i.test(V.negative.msg))
+    ? ok('a negative cost is refused, with a reason')
+    : bad('a negative cost was accepted', JSON.stringify(V.negative));
+  (!V.past.saved && /past/i.test(V.past.msg))
+    ? ok('a warranty expiring in the past is refused')
+    : bad('an already-expired warranty was accepted', JSON.stringify(V.past));
+}
+
 console.log('\n'+(fail?'\x1b[31m':'\x1b[32m')+`RESULT: ${pass} passed, ${fail} failed`+'\x1b[0m');
 await b.close();srv.close();process.exit(fail?1:0);
 })();
