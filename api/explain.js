@@ -12,6 +12,7 @@ module.exports.config = {
   },
 };
 
+const { resolveExplainTask, resolveMaxTokens } = require('./_explain-tasks');
 const _t = require('./_pilot-target');
 const _SB_URL  = _t.url;
 const _SB_ANON = _t.anonKey;
@@ -64,17 +65,31 @@ module.exports = async function handler(req, res) {
     return res.status(500).json({ error: 'API key not configured on server' });
   }
 
-  const { max_tokens, messages, model: requestedModel, system } = req.body || {};
+  const { max_tokens, messages } = req.body || {};
   if (!messages) {
     return res.status(400).json({ error: 'Missing required field: messages' });
   }
 
+  // AI-2 — the instructions are the server's, not the caller's.
+  //
+  // This handler used to read `system` off the request body and forward it to
+  // Anthropic verbatim. Every promise MainStreet makes about how its AI behaves
+  // lived in a browser string that anyone could rewrite, and the server had no
+  // idea what it had just been asked to say. The client now names a task; the
+  // server decides what the model is told. See api/_explain-tasks.js.
+  const resolved = resolveExplainTask(req.body);
+  if (!resolved.ok) {
+    return res.status(resolved.status).json({ error: resolved.error });
+  }
+
   // Always use the server-configured model — never allow callers to request expensive models.
   const model = process.env.CLAUDE_MODEL || 'claude-sonnet-4-6';
-  // Cap token output to prevent runaway cost from caller-supplied values.
-  const safeMaxTokens = Math.min(Number.isFinite(max_tokens) ? max_tokens : 4096, 8192);
-  const payload = { model, max_tokens: safeMaxTokens, messages };
-  if (system) payload.system = system;
+  const payload = {
+    model,
+    max_tokens: resolveMaxTokens(max_tokens, resolved.task),
+    system:     resolved.task.system,
+    messages,
+  };
 
   let anthropicResp;
   try {

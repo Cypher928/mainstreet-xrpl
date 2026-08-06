@@ -475,113 +475,17 @@ async function explainFetch(body, opts = {}) {
   }
 }
 
-const CAM_EXPLAIN_SYSTEM_PROMPT = `You are an expert in commercial real estate CAM (Common Area Maintenance) charges.
-
-Your job is to help tenants understand charges in a calm, neutral, and practical way — WITHOUT creating unnecessary concern or conflict with landlords.
-
-PRIMARY GOAL:
-Make charges feel understandable and normal unless there is a clear reason not to.
-
-CLASSIFY EACH CHARGE AS:
-- Looks standard
-- Needs clarification
-- Potential issue
-
-STRICT CLASSIFICATION RULES:
-
-DEFAULT TO "Looks standard" unless there is a clear and meaningful problem.
-
-DO NOT use "Needs clarification" for:
-- Missing dates
-- Generic categories like "other"
-- Limited detail
-- Common vendor types (insurance, landscaping, snow, repairs)
-
-Use "Needs clarification" ONLY if:
-- The tenant cannot reasonably understand what the charge is
-- OR something directly impacts how much they are paying
-
-Use "Potential issue" ONLY if:
-- The charge appears clearly incorrect, duplicated, or unusually high
-- OR it violates common CAM practices
-
-TONE RULES:
-- Calm, confident, matter-of-fact
-- Reassuring, not investigative
-- Do NOT imply something is wrong unless it clearly is
-- Avoid phrases like:
-  - "it might be worth checking"
-  - "you may want to verify"
-  - "this could be an issue"
-
-QUESTION RULES:
-- Do NOT include questions if the charge looks standard
-- ONLY include questions if classification is "Needs clarification" or "Potential issue"
-- Maximum ONE short, casual question
-- Keep it simple and optional
-
-OUTPUT FORMAT:
-
-STATUS: [Looks standard / Needs clarification / Potential issue]
-
-SUMMARY:
-One short, plain-English sentence
-
-EXPLANATION:
-Clear, confident explanation of what the charge is and why it exists
-
-CONTEXT:
-Brief explanation of how this is typically handled in commercial leases
-
-IF NEEDED:
-(Optional — only if necessary)
-One short, simple question
-
-FINAL RULE:
-When in doubt → choose "Looks standard" and do NOT include questions.
-
-If the category appears incorrect based on the vendor or description, gently interpret the charge correctly in your explanation without criticizing the classification.`;
-
-const LANDLORD_SYSTEM_PROMPT = `You are an expert in commercial real estate CAM (Common Area Maintenance) reconciliation.
-You are advising a landlord reviewing expenses before sending them to tenants.
-Your job is NOT to audit for correctness, but to identify which charges tenants may question and how to make them clearer.
-Focus on:
-- Clarity
-- Presentation
-- Reducing tenant confusion and disputes
-CLASSIFICATIONS:
-- No issues → Clear and typical
-- Might get questions → Minor clarity issues
-- Likely to be challenged → High risk of pushback
-ONLY flag something if it could realistically confuse or concern a tenant.
-COMMON TRIGGERS:
-- Missing dates
-- Vague categories like "other"
-- Large or unusual amounts
-- Unclear vendor names
-TONE:
-- Calm
-- Professional
-- Practical
-- Never alarmist
-- Never suggest legal wrongdoing
-
-OUTPUT FORMAT — use these exact labels, one per line. Be brief: a property
-manager scans this in seconds. Do not add headings, preamble, or markdown.
-STATUS: [No issues / Might get questions / Likely to be challenged]
-WHY: one sentence (max 20 words) — what a tenant might question.
-SUGGESTION: one sentence (max 20 words) — a practical way to reduce pushback.
-EVIDENCE: a comma-separated list of what would substantiate this charge, using
-only these labels: Lease clause, Invoice, Work order, Vendor contract, Photo,
-Service record. List only what is genuinely relevant — 1 to 3 items. If nothing
-would substantiate it, write: None.
-
-IMPORTANT:
-If the charge looks normal, say "No issues" and do not invent problems.
-If the category appears incorrect based on the vendor or description, gently interpret the charge correctly in your explanation without criticizing the classification.
-Never state a fact you were not given. EVIDENCE names the KIND of document that
-would support the charge — it is a pointer for the manager to attach, not a claim
-that the document exists.`;
+// AI-2 — CAM_EXPLAIN_SYSTEM_PROMPT and LANDLORD_SYSTEM_PROMPT used to be
+// defined here and shipped to /api/explain in the request body. Every promise
+// they make — "never state a fact you were not given", "EVIDENCE names the KIND
+// of document ... not a claim that the document exists", "do not invent
+// problems" — was a browser string the caller could rewrite, and the server
+// forwarded it to the model unread.
+//
+// They now live in api/_explain-tasks.js and are selected by name. The client
+// says WHICH task it wants; the server decides what the model is told. They are
+// deliberately not duplicated here: a copy in the client is a copy that will
+// drift, and a copy that drifts is the version nobody is actually running.
 
 // WHY single source of truth: previously there were THREE schema definitions
 // (CLAUDE_LEASE_SYSTEM, CLAUDE_LEASE_PROMPT, and inline user prompts in each call
@@ -1583,7 +1487,11 @@ async function _visionExtractCompressed(file, extractionPrompt, LI) {
 async function extractTextFromPdfDirect(file) {
   const base64 = await fileToBase64(file);
 
-  const prompt = `Return the substantive text from this commercial lease document for use in question-answering.
+  // AI-2 — the transcription RULES moved to the server
+  // (api/_explain-tasks.js, lease_text_extraction). What stays here is the
+  // request: which provisions this product needs out of the document. Rules are
+  // instructions; a list of wanted sections is a query.
+  const prompt = `Return the substantive text from this commercial lease document.
 
 Include the complete text of all provisions relating to:
 - Parties (tenant name, landlord name, guarantors)
@@ -1598,12 +1506,7 @@ Include the complete text of all provisions relating to:
 - Assignment and subletting
 - Default and remedies
 
-Also include the complete text of any exhibits, addenda, or schedules that contain financial terms or definitions.
-
-Preserve all section numbers, headings, and exact figures (percentages, dollar amounts, dates).
-Omit: page headers, page footers, page numbers, signature blocks, notary certifications, and table of contents lines.
-
-Return plain text only. No JSON, no markdown, no commentary.`;
+Also include the complete text of any exhibits, addenda, or schedules that contain financial terms or definitions.`;
 
   const messages = [{
     role: 'user',
@@ -1617,7 +1520,7 @@ Return plain text only. No JSON, no markdown, no commentary.`;
   const res = await _fetchWithTimeout('/api/explain', {
     method:  'POST',
     headers: { 'Content-Type': 'application/json', ...(await _authHeaders()) },
-    body:    JSON.stringify({ messages, max_tokens: 8096, model: 'claude-sonnet-4-6' }),
+    body:    JSON.stringify({ task: 'lease_text_extraction', messages, max_tokens: 8096 }),
   }, 85000);
 
   if (!res.ok) throw new Error(`PDF text extraction failed: HTTP ${res.status}`);
@@ -8646,9 +8549,8 @@ async function explainCharge(i) {
   try {
     await handleExplain(btn, async () => {
     const data = await explainFetch({
-      model: MODEL,
+      task: 'invoice_explanation_landlord',
       max_tokens: 1024,
-      system: LANDLORD_SYSTEM_PROMPT,
       messages: [{ role: 'user', content:
         `Vendor: ${inv.vendorName || 'Unknown'}\n` +
         `Category: ${inv.category || 'other'}\n` +
@@ -12394,9 +12296,8 @@ async function tsExplainInvoice(rowId, vendor, category, amount, date) {
   try {
     await handleExplain(btn, async () => {
     const data = await explainFetch({
-      model: MODEL,
+      task: 'invoice_explanation_tenant',
       max_tokens: 1024,
-      system: CAM_EXPLAIN_SYSTEM_PROMPT,
       messages: [{ role: 'user', content:
         `Vendor: ${vendor || 'Unknown'}\n` +
         `Category: ${category || 'other'}\n` +
@@ -13137,9 +13038,8 @@ Be neutral, practical, factual. Use markdown.`;
 
   try {
     const data = await explainFetch({
-      model:      MODEL,
+      task:       'dispute_analysis',
       max_tokens: 700,
-      system:     'You are a CAM reconciliation expert. Provide concise, neutral dispute analysis. Focus on lease compliance, financial exposure, and resolution paths. Use markdown with headers and bullet points.',
       messages:   [{ role: 'user', content: prompt }],
     });
     const text = data?.content?.[0]?.text || '';
@@ -15324,9 +15224,8 @@ async function runLandlordAIReview() {
     for (const inv of toReview) {
       try {
         const data = await explainFetch({
-          model: MODEL,
+          task: 'invoice_explanation_landlord',
           max_tokens: 512,
-          system: LANDLORD_SYSTEM_PROMPT,
           messages: [{ role: 'user', content:
             `Vendor: ${inv.vendorName || 'Unknown'}\n` +
             `Category: ${inv.category || 'other'}\n` +
