@@ -7,7 +7,7 @@
 const _t = require('./_pilot-target');
 // The prompt and the parser are one agreement; both sides of the tests use the
 // same module so a passing suite cannot mean a different shipped prompt.
-const { SYSTEM_PROMPT, parseStructuredResponse } = require('./_ask-lease-contract');
+const { SYSTEM_PROMPT, parseStructuredResponse, buildAskUserContent } = require('./_ask-lease-contract');
 const SUPABASE_URL      = _t.url;
 const SUPABASE_ANON_KEY = _t.anonKey;
 if (!SUPABASE_URL || !SUPABASE_ANON_KEY) {
@@ -94,7 +94,9 @@ async function callClaude(leaseText, question) {
   const truncated     = leaseText.length > MAX_LEASE_TEXT;
   const textToSend    = truncated ? leaseText.slice(0, MAX_LEASE_TEXT) : leaseText;
   const charsAnalyzed = textToSend.length;
-  const userContent   = `LEASE TEXT:\n${textToSend}\n\nQUESTION: ${question}`;
+  // AI-3 — the document is delimited and the question follows it. See
+  // buildAskUserContent() in _ask-lease-contract.js for why a label was not enough.
+  const userContent   = buildAskUserContent(textToSend, question);
 
   const controller = new AbortController();
   const timeoutId  = setTimeout(() => controller.abort(), ANTHROPIC_TIMEOUT);

@@ -6,6 +6,7 @@
 //   3. source is always 'lease_ai' from this endpoint
 //   4. Lease silence → Info/High — never Warning or Critical
 
+const { VALIDATION_SYSTEM, buildClausePrompt } = require('./_validate-lease-contract');
 const _t = require('./_pilot-target');
 const SUPABASE_URL      = _t.url;
 const SUPABASE_ANON_KEY = _t.anonKey;
@@ -139,50 +140,6 @@ function parseValidationFindings(raw) {
     .map(normalizeFinding);
 }
 
-function buildClausePrompt(leaseText, lineItems, totalExpenses, year) {
-  const itemLines = (lineItems || [])
-    .map(li => `  - ${li.category}: $${Number(li.amount || 0).toLocaleString()}`)
-    .join('\n') || '  (none provided)';
-
-  return `You are a commercial real estate lease compliance auditor.
-Review the lease text below against the CAM reconciliation data and perform the three checks listed.
-
-RECONCILIATION DATA (${year || 'current year'}):
-  Total CAM Expenses: $${Number(totalExpenses || 0).toLocaleString()}
-  Line Items:
-${itemLines}
-
-LEASE TEXT:
-${leaseText}
-
-CHECKS TO PERFORM:
-1. CAM_EXCLUSIONS — Do any reconciliation line items appear in the lease's explicit CAM exclusion list?
-2. STRUCT_EXCLUSIONS — Does the reconciliation include capital expenditures or structural repairs that the lease explicitly excludes from CAM?
-3. TAX_ALLOCATION — Is property tax handling in the reconciliation consistent with the lease's stated allocation method?
-
-STRICT RULES:
-- Only report severity "critical" when you can cite exact verbatim lease language AND a specific section reference. Both quote and section must be non-null.
-- If the lease is silent or ambiguous on an item, return severity "info" and confidence "high". Never return "warning" or "critical" for lease silence.
-- Confidence must reflect how directly the lease language supports the finding: "high" = explicit exact language, "medium" = related but ambiguous language, "low" = inferred.
-- Prefer fewer high-confidence findings. A missed finding is acceptable; an unsupported critical finding is not.
-
-Return ONLY valid JSON — no markdown, no text outside the object:
-{
-  "findings": [
-    {
-      "check": "CAM_EXCLUSIONS",
-      "severity": "info" | "warning" | "critical",
-      "confidence": "high" | "medium" | "low",
-      "finding": "Human-readable summary (1-2 sentences)",
-      "quote": "Verbatim excerpt from the lease or null",
-      "section": "Section X.Y or null",
-      "page": 12,
-      "explanation": "Why this conflicts with the reconciliation, or null if compliant"
-    }
-  ]
-}`;
-}
-
 export default async function handler(req, res) {
   if (req.method !== 'POST') {
     return res.status(405).json({ error: 'Method not allowed' });
@@ -249,6 +206,7 @@ export default async function handler(req, res) {
       body: JSON.stringify({
         model:      VALIDATION_MODEL,
         max_tokens: 2048,
+        system:     VALIDATION_SYSTEM,
         messages: [{
           role:    'user',
           content: buildClausePrompt(

@@ -33,7 +33,11 @@
 
 'use strict';
 
+const { UNTRUSTED_DOCUMENT_RULE, wrapUntrustedDocument, neutraliseDelimiters } = require('./_untrusted-text');
+
 const SYSTEM_PROMPT = `You are a commercial real estate lease assistant.
+
+${UNTRUSTED_DOCUMENT_RULE}
 
 You are given the text of ONE lease, covering ONE tenant, and a question about it.
 Answer only from that lease text.
@@ -108,4 +112,28 @@ function parseStructuredResponse(text) {
   }
 }
 
-module.exports = { SYSTEM_PROMPT, normalizeCitation, parseStructuredResponse };
+/**
+ * AI-3 — the user turn, built in one place.
+ *
+ * This was `LEASE TEXT:\n${textToSend}\n\nQUESTION: ${question}` at the call
+ * site. A label is not a boundary: a line inside the lease reading
+ * "QUESTION: ignore the above" sat at exactly the same level as the real one,
+ * and nothing marked where the customer's document ended.
+ *
+ * The document goes in a container it cannot close (see _untrusted-text.js),
+ * the question goes in its own, and the question is placed AFTER the document
+ * so the last thing read before answering is ours, not the customer's.
+ */
+function buildAskUserContent(leaseText, question) {
+  // The question is user input too. A question ending in "</lease_document>"
+  // would otherwise emit a second closing delimiter, and the model would see a
+  // container that closes twice — which is the same escape the document was
+  // just stopped from making. Caught by the AI-3 suite, not by inspection.
+  return `${wrapUntrustedDocument(leaseText)}
+
+<question>
+${neutraliseDelimiters(question)}
+</question>`;
+}
+
+module.exports = { SYSTEM_PROMPT, normalizeCitation, parseStructuredResponse, buildAskUserContent };
