@@ -3,6 +3,11 @@
 
 import { request } from 'https';
 
+// ⚠ This export has NO runtime effect. `api.bodyParser` is a Next.js API-route
+// construct and this is not a Next.js project. The real ceiling is Vercel's
+// ~4.5 MB request body limit, enforced before this handler runs. It is retained
+// only as documentation of the constraint. The limit that IS real lives in
+// request-limits.js and is checked below.
 export const config = {
   api: {
     bodyParser: {
@@ -10,6 +15,8 @@ export const config = {
     },
   },
 };
+
+const { checkEncodedSize } = require('../request-limits.js');
 
 const _t = require('./_pilot-target');
 const SUPABASE_URL      = _t.url;
@@ -117,6 +124,15 @@ export default async function handler(req, res) {
   const uploadError = _validateUpload(fileName, fileType);
   if (uploadError) {
     return res.status(400).json({ error: uploadError });
+  }
+
+  // The client gate in script.js can be bypassed — a direct POST, or a stale
+  // tab running the build that allowed 60 MB. Check here too, against the same
+  // constant and with the same sentence, so a user who reaches it is not told
+  // two different stories about the same limit.
+  const sizeVerdict = checkEncodedSize(fileBase64.length, bucket === 'leases' ? 'lease' : 'invoice');
+  if (!sizeVerdict.ok) {
+    return res.status(413).json({ error: sizeVerdict.error });
   }
 
   const key      = _t.serviceRoleKey || SUPABASE_ANON_KEY;

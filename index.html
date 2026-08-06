@@ -49,9 +49,19 @@
   <link href="https://fonts.googleapis.com/css2?family=Cormorant+Garamond:wght@400;600;700&family=DM+Sans:ital,wght@0,400;0,500;0,600;0,700;1,400&family=DM+Mono:wght@400;500&display=swap" rel="stylesheet" />
   <script src="https://cdnjs.cloudflare.com/ajax/libs/pdf.js/3.11.174/pdf.min.js"></script>
   <script src="https://cdn.jsdelivr.net/npm/xlsx@0.18.5/dist/xlsx.full.min.js"></script>
-  <script src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2"></script>
+  <!-- PINNED. `@2` is a moving tag: jsDelivr serves whatever the newest 2.x is,
+       and there are 241 of them. Production behaviour could change with no
+       deploy, no commit, and nothing in git to explain it — and the version that
+       broke would not be the version anyone tested. 2.112.1 is exactly what `@2`
+       resolved to when this pin was taken, so pinning changed nothing today; it
+       only stops tomorrow from changing by itself. Bump deliberately. -->
+  <script src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2.112.1"></script>
   <!-- Host-based Supabase routing: production domain → prod project; previews (incl. pilot) → pilot project. Must precede script.js. -->
   <script src="supabase-config.js"></script>
+  <!-- ONE definition of how large a request body may be, shared byte-for-byte with
+       the serverless handlers via require(). Must precede lease-ingest.js and
+       script.js, which both gate uploads on it. -->
+  <script src="request-limits.js"></script>
   <style>
     /* ── Theme design tokens ─────────────────────────────────────────────────
        The entire neutral palette — surfaces (elevation), text, and hairlines —
@@ -2045,6 +2055,8 @@
     .lev-src-row { display: flex; justify-content: space-between; align-items: baseline; gap: 8px; }
     .lev-src-lbl { font-size: 0.62rem; color: var(--text-5); text-transform: uppercase; letter-spacing: 0.05em; flex-shrink: 0; }
     .lev-src-val { font-size: 0.75rem; color: var(--text-3); text-align: right; word-break: break-all; }
+    /* Absence, styled as absence — so the eye doesn't read it as a value. */
+    .lev-src-val.lev-na { color: var(--text-4); font-style: italic; word-break: normal; }
     .lev-jobid { font-family: monospace; font-size: 0.68rem; color: var(--text-4); }
     .lev-excerpt-lbl { font-size: 0.6rem; color: var(--text-5); text-transform: uppercase; letter-spacing: 0.05em; margin-top: 4px; }
     .lev-quote {

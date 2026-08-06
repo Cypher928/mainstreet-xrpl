@@ -816,7 +816,46 @@ function currentProperty() {
 
 // ─── Supabase Storage upload ──────────────────────────────────────────────────
 
+/**
+ * The one client-side size gate, checked BEFORE the file is read or encoded.
+ *
+ * Two guards used to sit in this file at 60 MB — eighteen times what the
+ * platform accepts. Everything between ~3.3 MB and 60 MB passed, was read into
+ * memory, base64-encoded (seconds of main-thread work and ~1.33× the
+ * allocation), sent, and came back as a bare HTTP 413 that no code path
+ * explained. Failing here costs nothing and says why.
+ *
+ * The limit itself lives in request-limits.js, which the serverless handlers
+ * require() — so the two sides cannot drift apart.
+ *
+ * Returns true when the file may be sent. On refusal it has already told the
+ * user, in one sentence naming the size, the ceiling, and what to do.
+ */
+function _guardUploadSize(file, what) {
+  const L = window.MSRequestLimits;
+  if (!L) {
+    // The gate is not optional. Without it this function would return true and
+    // silently restore the behaviour it exists to prevent.
+    console.error('[upload] request-limits.js did not load — refusing rather than guessing');
+    showToast('⚠️ Upload is unavailable — the page did not load completely. Refresh and try again.',
+      { color: '#92400e', textColor: '#fef3c7', duration: 8000 });
+    return false;
+  }
+  const verdict = L.checkUploadSize(file && file.size, what);
+  if (verdict.ok) return true;
+  console.warn('[upload] refused before encoding:', file && file.name, verdict.error);
+  showToast('⚠️ ' + verdict.error, { color: '#92400e', textColor: '#fef3c7', duration: 14000 });
+  return false;
+}
+window._guardUploadSize = _guardUploadSize;
+
 async function uploadInvoiceFile(file) {
+  // Fail before toBase64, not after the round trip.
+  if (!_guardUploadSize(file, 'invoice')) {
+    throw new Error(window.MSRequestLimits
+      ? window.MSRequestLimits.checkUploadSize(file && file.size, 'invoice').error
+      : 'Upload is unavailable — the page did not load completely.');
+  }
   const attempt = async () => {
     const fileBase64 = await toBase64(file);
     const resp = await fetch('/api/upload', {
@@ -1485,6 +1524,16 @@ async function _visionExtractCompressed(file, extractionPrompt, LI) {
 // — no JSON extraction step that would mangle plain-text lease content.
 // Timeout is 85s to accommodate max_tokens=8096 output (~25-30s generation time).
 async function extractTextFromPdfDirect(file) {
+  // This path sends the WHOLE PDF as one base64 body. lease-ingest.js batches
+  // and downscales for /api/claude; nothing did so here, so a scanned lease
+  // over ~3.3 MB spent up to 85 seconds on a request the platform had already
+  // rejected, and surfaced as "PDF text extraction failed: HTTP 413" with no
+  // explanation. Refuse up front, in words, before encoding.
+  const _L = window.MSRequestLimits;
+  if (!_L) throw new Error('Upload is unavailable — the page did not load completely. Refresh and try again.');
+  const _verdict = _L.checkUploadSize(file && file.size, 'lease');
+  if (!_verdict.ok) throw new Error(_verdict.error);
+
   const base64 = await fileToBase64(file);
 
   // AI-2 — the transcription RULES moved to the server
@@ -1856,6 +1905,19 @@ ${leaseSnippet}
     };
   }
   normalized.fieldEvidence = _fev;
+
+  // The model that ACTUALLY served this extraction, reported by Anthropic in
+  // its own response and forwarded by api/claude.js as __meta.model. It was
+  // already being written into each fieldEvidence snapshot here, but it stopped
+  // at this function — so saveLeaseDocument() had nothing to record and two
+  // call sites wrote the literal 'claude-3-5-sonnet-20241022' instead. That
+  // model had not run in this product for some time; the Evidence Viewer
+  // displayed it as provenance anyway.
+  //
+  // null when the response did not name a model. Never a default: a provenance
+  // field that guesses is worse than one that is blank, because a blank one
+  // cannot be mistaken for a record of what happened.
+  normalized._extractionModel = _extractionModel;
 
   // Populate extraction telemetry for debugging / diagnostics panel
   const _extractMs = Date.now() - _extractStart;
@@ -3012,7 +3074,8 @@ async function handleLease(i, file) {
       fileUrl:         leaseUrl,
       extractedText:   _extractedText,
       parsingStatus:   'success',
-      extractionModel: 'claude-3-5-sonnet-20241022',
+      // The model that ran, not a literal. See normalizeExtractedTenant().
+      extractionModel: normalized._extractionModel ?? null,
       usedPdfDirect:   _usedPdfDirect,
     }).catch(e => console.warn('[saveLeaseDocument:single] failed:', e?.message));
   } catch (err) {
@@ -4863,7 +4926,8 @@ async function _runLeaseJobPipeline(jobId, placeholderIdx) {
         fileUrl:         leaseUrl,
         extractedText:   _extractedText,
         parsingStatus:   status,
-        extractionModel: 'claude-3-5-sonnet-20241022',
+        // The model that ran, not a literal. See normalizeExtractedTenant().
+        extractionModel: norm?._extractionModel ?? null,
         usedPdfDirect:   usedPdfDirect,
       }).catch(e => console.warn('[saveLeaseDocument:bulk] failed:', e?.message));
     })();
@@ -5446,8 +5510,13 @@ function renderLeaseEvidencePanel(fieldKey, t) {
     `<div class="lev-src-row"><span class="lev-src-lbl">Section</span><span class="lev-src-val">${esc(src.section)}</span></div>`);
   if (src.extractionVersion) srcRows.push(
     `<div class="lev-src-row"><span class="lev-src-lbl">Extraction</span><span class="lev-src-val">${esc(src.extractionVersion)}</span></div>`);
-  if (src.extractionModel) srcRows.push(
-    `<div class="lev-src-row"><span class="lev-src-lbl">Model</span><span class="lev-src-val lev-model-tag">${esc(src.extractionModel)}</span></div>`);
+  // Model is provenance — the row appears either way. An extraction that did
+  // not report its model says so, rather than the row vanishing and leaving the
+  // panel looking complete. Same reasoning as the Citation/Page rows above:
+  // absence is a fact about the record, not a rendering gap.
+  srcRows.push(src.extractionModel
+    ? `<div class="lev-src-row"><span class="lev-src-lbl">Model</span><span class="lev-src-val lev-model-tag">${esc(src.extractionModel)}</span></div>`
+    : `<div class="lev-src-row"><span class="lev-src-lbl">Model</span><span class="lev-src-val lev-na">Not recorded for this extraction</span></div>`);
   if (src.extractedAt) srcRows.push(
     `<div class="lev-src-row"><span class="lev-src-lbl">Extracted</span><span class="lev-src-val">${esc(src.extractedAt.slice(0, 10))}</span></div>`);
   if (src.extractionId) srcRows.push(
@@ -7898,14 +7967,15 @@ function retryUploadForSlot(index) {
       alert("No file selected.");
       return;
     }
+    // NO raw-size gate here. This path goes through LeaseIngest, which
+    // rasterizes and batches a 40 MB copier scan so the original file is never
+    // sent whole — gating it on raw size would reject the documents that
+    // feature exists to accept. The 60 MB guard removed from here was doing
+    // nothing useful either; the real limits apply per-request, downstream.
     if (file.size === 0) {
       alert("File failed to load. Try re-uploading.");
       return;
     }
-    if (file.size > 60 * 1024 * 1024) {
-      alert("This lease is very large (" + (file.size/1048576).toFixed(0) + " MB). Please split it or upload a compressed copy.");
-      return;
-      }
     await retryExtractionWithFile(index, file);
   };
   input.click();
@@ -7926,11 +7996,8 @@ async function retryExtractionWithFile(index, file) {
   const t    = tenantData[index];
   const prop = currentProperty();
 
-  if (file.size > 60 * 1024 * 1024) {
-    alert("This lease is very large (" + (file.size/1048576).toFixed(0) + " MB). Please split it or upload a compressed copy.");
-    return;
-    }
-
+  // No raw-size gate — see retryUploadForSlot. LeaseIngest.preflight below
+  // handles large scans by downscaling them, not by refusing them.
   const row = document.getElementById(`btr-${index}`);
   if (row) {
     row.style.opacity = '0.5';
@@ -21068,6 +21135,25 @@ async function _deleteLeaseCenterRow(id, propertyId) {
 async function uploadLeaseToStorage(file, propertyId) {
   if (!propertyId) {
     console.warn('[uploadLeaseToStorage] skipped — property has no id yet');
+    return null;
+  }
+
+  // Fail before toBase64 — and before the three retries below, which would
+  // otherwise spend three round trips re-earning the same 413.
+  //
+  // This stores the ORIGINAL file, whole. Unlike extraction (which LeaseIngest
+  // downscales and batches), there is no way to shrink it and still have it be
+  // the source document. So a large scan still EXTRACTS fine; what it loses is
+  // the stored copy the Evidence Viewer would otherwise show. That is a real
+  // limitation and it is now stated, rather than three silent retries and a
+  // null. Raising it needs chunked or direct-to-Supabase upload — new work,
+  // deliberately not started under the freeze.
+  const _L = window.MSRequestLimits;
+  const _v = _L && _L.checkUploadSize(file && file.size, 'lease');
+  if (!_L || !_v.ok) {
+    console.warn('[uploadLeaseToStorage] original not stored:', _v ? _v.error : 'request-limits.js missing');
+    showToast(`⚠️ ${file.name} was read and extracted, but the original is too large to store (${(file.size / 1048576).toFixed(1)} MB; limit ${(_L ? _L.MAX_UPLOAD_BYTES / 1048576 : 0).toFixed(1)} MB). The lease data is saved — the source document just won’t open in the Evidence Viewer. Upload a compressed copy to attach it.`,
+      { color: '#92400e', textColor: '#fef3c7', duration: 14000 });
     return null;
   }
 

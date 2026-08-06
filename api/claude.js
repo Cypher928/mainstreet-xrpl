@@ -24,6 +24,7 @@ module.exports.config = {
   },
 };
 
+const { checkEncodedSize, base64DocBytes } = require('../request-limits.js');
 const _t = require('./_pilot-target');
 const _SB_URL  = _t.url;
 const _SB_ANON = _t.anonKey;
@@ -82,6 +83,15 @@ module.exports = async function handler(req, res) {
   const { max_tokens, messages, model: requestedModel, system } = req.body || {};
   if (!messages) {
     return res.status(400).json({ error: 'Missing required field: messages' });
+  }
+
+  // Same ceiling, same words, same constant as the client and every other
+  // handler. lease-ingest.js batches to stay under it; this is the backstop for
+  // anything that reaches here unbatched.
+  const _docBytes = base64DocBytes(messages);
+  if (_docBytes > 0) {
+    const v = checkEncodedSize(_docBytes, 'lease');
+    if (!v.ok) return res.status(413).json({ error: v.error });
   }
 
   // Always use the server-configured model — never allow callers to request expensive models.

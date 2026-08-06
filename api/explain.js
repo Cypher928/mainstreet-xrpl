@@ -1,9 +1,18 @@
 // Explain endpoint — returns raw Anthropic response so callers can read
 // content[0].text directly. Unlike /api/claude, does NOT parse inner JSON.
 //
-// WHY 20mb: extractTextFromPdfDirect sends scanned PDFs as base64 document blocks.
-// A 10 MB PDF becomes ~13 MB of JSON. Without this override, Vercel's default
-// 4.5 MB bodyParser limit returns 413 before the handler runs.
+// ⚠ CORRECTION: this export does NOT raise any limit.
+//
+// It used to say the 20mb override prevented a 413. It does not.
+// `api.bodyParser` is a Next.js API-route construct and this is not a Next.js
+// project (no next dependency, no pages/ or app/ dir) — api/claude.js has
+// documented that correctly all along while this file claimed the opposite.
+//
+// extractTextFromPdfDirect sends scanned PDFs as base64 document blocks, and
+// base64 adds a third. Vercel rejects the body over ~4.5 MB BEFORE this handler
+// runs, so the real ceiling is ~3.3 MB of source PDF. The export is retained
+// only as documentation of the constraint; the limit that IS real lives in
+// request-limits.js and is checked below.
 module.exports.config = {
   api: {
     bodyParser: {
@@ -13,6 +22,7 @@ module.exports.config = {
 };
 
 const { resolveExplainTask, resolveMaxTokens } = require('./_explain-tasks');
+const { checkEncodedSize, base64DocBytes } = require('../request-limits.js');
 const _t = require('./_pilot-target');
 const _SB_URL  = _t.url;
 const _SB_ANON = _t.anonKey;
@@ -68,6 +78,17 @@ module.exports = async function handler(req, res) {
   const { max_tokens, messages } = req.body || {};
   if (!messages) {
     return res.status(400).json({ error: 'Missing required field: messages' });
+  }
+
+  // A base64 document block that got this far is under the platform limit by
+  // definition — the runtime would have rejected the body otherwise. The check
+  // is here anyway so the ONE place that defines this ceiling is also the one
+  // place that reports it, and so a body that squeaks past the platform but
+  // cannot be served gets the explaining sentence rather than a generic error.
+  const _docBytes = base64DocBytes(messages);
+  if (_docBytes > 0) {
+    const v = checkEncodedSize(_docBytes, 'lease');
+    if (!v.ok) return res.status(413).json({ error: v.error });
   }
 
   // AI-2 — the instructions are the server's, not the caller's.
