@@ -8663,23 +8663,41 @@ function closeInvFileViewer() {
   document.getElementById('invFileViewerBody').innerHTML = '';
 }
 
-function openInvFileViewer(url, title, fileType) {
+async function openInvFileViewer(url, title, fileType) {
   if (!url) return;
   document.getElementById('invFileViewerTitle').textContent = title || 'Invoice';
   const body = document.getElementById('invFileViewerBody');
   body.innerHTML = '';
+  document.getElementById('invFileViewer').style.display = 'flex';
+
+  // SEC-1 — invoices are UPLOADED FILES (PDFs, phone photos, scans), stored in
+  // the same bucket family as leases. Setting .src straight from the stored
+  // /object/public/ URL worked only while that bucket was public; once it is
+  // private the image is a broken icon and the iframe is a blank rectangle,
+  // with nothing on screen to say why. This surface was missed when the Evidence
+  // Viewer, lease modal and Documents were routed through the resolver.
+  body.innerHTML = '<div class="inv-file-loading" style="padding:24px;color:var(--text-4);font-size:0.85rem;">Loading document…</div>';
+  const readable = await resolveDocumentUrl(url);
+  if (!readable) {
+    body.innerHTML = '<div style="padding:24px;color:var(--c-fed7aa);font-size:0.88rem;line-height:1.5;">'
+      + 'This invoice could not be opened — you may not have access to it, or it is no longer stored.'
+      + '</div>';
+    return;
+  }
+  body.innerHTML = '';
+
   if (fileType && fileType.startsWith('image/')) {
     const img = document.createElement('img');
-    img.src = url;
+    img.src = readable;
+    img.alt = title || 'Invoice';
     img.style.cssText = 'max-width:100%;max-height:calc(100vh - 80px);border-radius:8px;object-fit:contain;';
     body.appendChild(img);
   } else {
     const iframe = document.createElement('iframe');
-    iframe.src = url;
+    iframe.src = readable;
     iframe.style.cssText = 'width:100%;height:calc(100vh - 80px);border:none;border-radius:8px;';
     body.appendChild(iframe);
   }
-  document.getElementById('invFileViewer').style.display = 'flex';
 }
 
 async function handleExplain(button, fn) {

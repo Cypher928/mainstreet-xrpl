@@ -443,6 +443,18 @@ sec('SEC-1 · a stored document is authorised before it can be read');
   const app = fs.readFileSync(path.join(ROOT, 'script.js'), 'utf8');
   assert('the lease modal resolves before loading the iframe',
     /async function openLeaseModal[\s\S]{0,600}resolveDocumentUrl/.test(app));
+  // Invoices are uploaded files too — PDFs, phone photos, scans — in the same
+  // bucket family. This surface was missed on the first pass: it set .src
+  // straight from the stored URL, so a private bucket would have produced a
+  // broken image and a blank iframe with nothing explaining either.
+  const invViewer = app.slice(app.indexOf('async function openInvFileViewer'),
+                              app.indexOf('async function openInvFileViewer') + 1600);
+  assert('the invoice viewer resolves before rendering',
+    /resolveDocumentUrl\(url\)/.test(invViewer), 'openInvFileViewer still uses the raw stored URL');
+  assert('and says so when it cannot',
+    /could not be opened/.test(invViewer));
+  assert('neither sink is fed the unresolved URL',
+    !/img\.src = url;/.test(invViewer) && !/iframe\.src = url;/.test(invViewer));
   assert('the external-open button pins the scheme',
     /leaseViewerOpenExternal[\s\S]{0,500}u\.protocol !== 'https:'/.test(app));
 
