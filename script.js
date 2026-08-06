@@ -795,8 +795,15 @@ class Lease {
 }
 
 class Invoice {
-  constructor(id, date, amount, vendor, category, description = '') {
+  // PW-3 — relations set in the invoice register (CAM eligible, space, building
+  // system) used to be dropped at this boundary. The engine therefore could not
+  // honour them however carefully the manager set them, and the "CAM eligible"
+  // checkbox changed a display total and nothing else.
+  constructor(id, date, amount, vendor, category, description = '', rel = {}) {
     this.id              = id || null;
+    this.camEligible     = rel.camEligible !== false;   // absent → recoverable
+    this.spaceId         = rel.spaceId || null;
+    this.system          = rel.system  || null;
     this.date            = date     || '';
     this.amount          = parseFloat(amount) || 0;
     this.vendorName      = vendor   || '';  // field matchInvoiceToTenant expects
@@ -8625,6 +8632,17 @@ function refreshInvSummary(i) {
 
 async function removeInvItem(i) {
   if (!confirm('Remove this invoice from the list?')) return;
+  // PW-1 — stamp stable ids and migrate any positional Related-Items link
+  // BEFORE the splice. After it, every index past `i` means a different
+  // invoice, and a link recorded as "invoice 3" would silently re-point.
+  try {
+    const _p = currentProperty();
+    if (_p && window.PropertyOS && PropertyOS.ensureInvoiceIds) {
+      _p.invoices = Array.from(invoiceData);
+      PropertyOS.ensureInvoiceIds(_p);
+      invoiceData.splice(0, invoiceData.length, ..._p.invoices);
+    }
+  } catch (e) { logError('removeInvItem:ensureInvoiceIds', e, {}); }
   invoiceData.splice(i, 1);
   // Explicitly sync before savePropertyData() — the empty-array guard in
   // savePropertyData() protects tenant-portal mode from wiping invoices,
@@ -9273,8 +9291,18 @@ function runFullReconciliation(property) {
     });
   });
 
-  const directInvoices = invoices.filter(inv => inv.matchConfidence >= 75);
-  const sharedInvoices = invoices.filter(inv => inv.matchConfidence <  75);
+  // PW-3 — an invoice the manager marked NOT CAM-eligible is excluded from the
+  // reconciliation entirely. Default is recoverable (`!== false`), so existing
+  // and AI-imported invoices are unaffected: only an explicit untick changes
+  // the number, which is exactly what the control promises.
+  const recoverable   = invoices.filter(inv => inv.camEligible !== false);
+  const notRecoverable = invoices.filter(inv => inv.camEligible === false);
+  if (notRecoverable.length) {
+    console.log('[runFullReconciliation] excluded as not CAM-eligible:',
+      notRecoverable.map(i => `${i.vendorName} ${i.amount}`));
+  }
+  const directInvoices = recoverable.filter(inv => inv.matchConfidence >= 75);
+  const sharedInvoices = recoverable.filter(inv => inv.matchConfidence <  75);
 
   const results = leases.map(lease => {
     // Look up current tenant state directly from property.tenants by stable id
@@ -9578,7 +9606,8 @@ async function runAllocation() {
     return lease;
   }));
   _prop.addInvoices(invoiceData.filter(inv => inv && inv.vendorName && parseFloat(inv.amount) > 0).map(inv =>
-    new Invoice(null, inv.invoiceDate, inv.amount, inv.vendorName, inv.category)
+    new Invoice(inv.id || null, inv.invoiceDate, inv.amount, inv.vendorName, inv.category, '',
+      { camEligible: inv.camEligible, spaceId: inv.spaceId, system: inv.system })
   ));
   const fullResults = runFullReconciliation(_prop);
 
@@ -11377,6 +11406,10 @@ let _resultsStale = false; // true when field edits happen after a reconciliatio
 
 // ─── CAM Year ─────────────────────────────────────────────────────────────────
 let _camYear = new Date().getFullYear(); // hydrated from scoped key in _lsMigrateAncillaryKeys()
+// Top-level `let` in a classic script is NOT a window property, so other
+// modules cannot read it. property-os.js needs the active CAM year to scope the
+// Financials panel; expose a reader rather than the binding.
+window.currentCamYear = function () { return _camYear != null ? _camYear : null; };
 function getCamYear() { return _camYear; }
 function setCamYear(y) {
   _camYear = parseInt(y, 10) || new Date().getFullYear();

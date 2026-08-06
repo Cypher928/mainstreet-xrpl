@@ -36,7 +36,25 @@ window.PropertyOS = (function () {
     });
   };
   var _d = function (id) { return document.getElementById(id); };
-  function _money(n) { try { return '$' + Math.round(Number(n) || 0).toLocaleString('en-US'); } catch (_) { return '$' + n; } }
+  // PW-5 — Math.round(Number(n)) silently dropped cents on every figure in the
+  // pane, and Number(undefined) rendered "$NaN" beside a tenant's name. The
+  // try/catch never fired because nothing throws. Parse what extraction
+  // actually produces ("1,250.00", "$84,500"), keep cents, and say "—" when
+  // there is genuinely no number rather than inventing one.
+  function _num(v) {
+    if (v == null || v === '') return null;
+    if (typeof v === 'number') return Number.isFinite(v) ? v : null;
+    var cleaned = String(v).replace(/[$,\s]/g, '');
+    if (cleaned === '' || cleaned === '-') return null;
+    var n = Number(cleaned);
+    return Number.isFinite(n) ? n : null;
+  }
+  function _money(v) {
+    var n = _num(v);
+    if (n === null) return '\u2014';
+    return n.toLocaleString('en-US', { style: 'currency', currency: 'USD',
+                                       minimumFractionDigits: 2, maximumFractionDigits: 2 });
+  }
   function _fmtDate(ts) { try { return new Date(ts).toLocaleDateString('en-US', { month: 'short', day: 'numeric', year: 'numeric' }); } catch (_) { return String(ts || ''); } }
 
   // Shared building systems — the physical assets of the building as a whole.
@@ -62,8 +80,9 @@ window.PropertyOS = (function () {
     return (property && Array.isArray(property.invoices) ? property.invoices : []).map(function (inv, i) {
       return {
         _i: i,
+        id: inv.id != null ? String(inv.id) : null,
         vendorName: inv.vendorName || inv.fileName || 'Vendor',
-        amount: Number(inv.amount) || 0,
+        amount: _num(inv.amount) || 0,   // PW-4: "84,500.00" used to become 0
         category: inv.category || null,
         invoiceDate: inv.invoiceDate || null,
         fileUrl: inv.fileUrl || null,
@@ -76,11 +95,23 @@ window.PropertyOS = (function () {
     });
   }
 
-  function setInvoiceRelation(index, field, value) {
+  // PW-2 — resolve by id, never by the index baked into the rendered control.
+  // The onchange used to carry the render-time position; an invoice removed
+  // between render and click meant the relation (including `system`, which
+  // feeds the Roof/HVAC story) was written onto a different invoice.
+  function setInvoiceRelation(invoiceId, field, value) {
     var p = window.currentProperty && window.currentProperty();
     if (!p || !Array.isArray(p.invoices)) return;
-    var inv = p.invoices[index];
-    if (!inv) return;
+    var inv = null;
+    for (var i = 0; i < p.invoices.length; i++) {
+      if (p.invoices[i] && String(p.invoices[i].id) === String(invoiceId)) { inv = p.invoices[i]; break; }
+    }
+    if (!inv) {
+      if (window.showToast) window.showToast('That invoice is no longer in the register — the page has been refreshed.',
+        { color: '#92400e', textColor: '#fef3c7', duration: 6000 });
+      renderPropertyPage(p);
+      return;
+    }
     if (field === 'camEligible') inv.camEligible = !!value;
     else inv[field] = value || null;
     try { if (window.savePropertyData) window.savePropertyData(); } catch (_e) {}
@@ -398,7 +429,7 @@ window.PropertyOS = (function () {
     var g = relatedGroup(property, e.id);
     var others = g.events.filter(function (x) { return String(x.id) !== String(e.id); });
     var invs   = g.invoices;
-    var n = others.length + invs.length;
+    var n = others.length + invs.length + (g.missingInvoices || []).length;
 
     var rows = others.map(function (x) {
       var d = (window.PropertyTimeline && PropertyTimeline.describe) ? PropertyTimeline.describe(x) : { label: x.type, icon: '' };
@@ -410,6 +441,17 @@ window.PropertyOS = (function () {
         '<span class="pos-ri-w">' + _esc(_fmtDate(x.timestamp)) + '</span>' +
         '<button type="button" class="pos-ri-x" title="Remove this link"' +
           ' data-ev="' + _esc(e.id) + '" data-kind="event" data-id="' + _esc(x.id) + '"' +
+          ' onclick="PropertyOS.unlinkRecord(this.dataset.ev, this.dataset.kind, this.dataset.id)">\u2715</button>' +
+      '</div>';
+    }).join('') + (g.missingInvoices || []).map(function (ref) {
+      // PW-1 — a link whose invoice is gone is reported, not silently dropped
+      // and never resolved positionally to whatever now sits at that index.
+      return '<div class="pos-ri-row pos-ri-row--missing">' +
+        '<span class="pos-ri-ic">\u26A0\uFE0F</span>' +
+        '<span class="pos-ri-t">Linked invoice no longer on file</span>' +
+        '<span class="pos-ri-m">removed from the register</span>' +
+        '<button type="button" class="pos-ri-x" title="Remove this dead link"' +
+          ' data-ev="' + _esc(e.id) + '" data-kind="invoice" data-id="' + _esc(ref) + '"' +
           ' onclick="PropertyOS.unlinkRecord(this.dataset.ev, this.dataset.kind, this.dataset.id)">\u2715</button>' +
       '</div>';
     }).join('') + invs.map(function (i) {
@@ -495,12 +537,62 @@ window.PropertyOS = (function () {
   // with a visited set, so a cycle terminates instead of hanging.
   function _refKey(kind, id) { return kind + ':' + String(id); }
 
+  // PW-1 — a link must survive the register changing underneath it.
+  //
+  // This used to persist the ARRAY INDEX as the link id, on the stated premise
+  // that "the array is append-only in practice". It is not: removeInvItem()
+  // (script.js:8628) splices, shifting every later invoice down one, and
+  // mergeInvoicesDedup() rewrites the array wholesale. So a roof job linked to
+  // invoice 3 silently pointed at a different vendor and a different amount
+  // after any earlier invoice was removed — wrong money, no warning, in the one
+  // feature sold as verified memory.
+  //
+  // Links now key on a stable id. Ids that look like a bare integer are legacy
+  // positional links and are migrated once, while the positions are still
+  // correct (see _ensureInvoiceIds).
   function _invoiceKeyOf(inv) {
-    // Invoices have no stable id in the record, so the register index is the
-    // handle. _i is assigned by invoices() and is stable for a given property
-    // load — good enough to link within a session and to persist, because the
-    // array is append-only in practice.
-    return (inv && (inv.id != null ? String(inv.id) : String(inv._i)));
+    return inv && inv.id != null ? String(inv.id) : null;
+  }
+  function _isLegacyIndexKey(k) { return /^\d+$/.test(String(k)); }
+
+  /**
+   * Stamp a stable id on every invoice that lacks one, and rewrite any
+   * positional link to the id now at that position.
+   *
+   * MUST run before the invoice array is mutated — at that moment the indices
+   * still mean what the old links assumed. Called from renderPropertyPage (the
+   * only place links are created) and from removeInvItem (the destructive path)
+   * so the window between the two is closed.
+   *
+   * Ids are prefixed and random so they can never collide with a legacy
+   * positional key, which is how the migration stays idempotent.
+   */
+  function ensureInvoiceIds(property) {
+    if (!property || !Array.isArray(property.invoices)) return false;
+    var changed = false;
+    var idAt = [];
+    property.invoices.forEach(function (inv, i) {
+      if (!inv) { idAt[i] = null; return; }
+      if (inv.id == null || _isLegacyIndexKey(inv.id)) {
+        inv.id = 'inv-' + Math.random().toString(36).slice(2, 10) + '-' + i;
+        changed = true;
+      }
+      idAt[i] = String(inv.id);
+    });
+    // Migrate positional links on the timeline, once.
+    (property.timeline || []).forEach(function (e) {
+      if (!e || !Array.isArray(e.relatedTo)) return;
+      e.relatedTo.forEach(function (r) {
+        if (!r || r.kind !== 'invoice') return;
+        if (!_isLegacyIndexKey(r.id)) return;
+        var pos = Number(r.id);
+        // Out of range means the invoice it pointed at is already gone. Mark it
+        // unresolved rather than silently re-pointing at whatever sits there.
+        r.id = (pos >= 0 && pos < idAt.length && idAt[pos]) ? idAt[pos] : ('missing:' + pos);
+        changed = true;
+      });
+    });
+    return changed;
   }
 
   function _linksOf(node) {
@@ -531,7 +623,7 @@ window.PropertyOS = (function () {
     });
 
     var start = _refKey('event', startId);
-    var seen = {}, queue = [start], outE = [], outI = [];
+    var seen = {}, queue = [start], outE = [], outI = [], outMissing = [];
     while (queue.length) {
       var k = queue.shift();
       if (seen[k]) continue;
@@ -539,9 +631,12 @@ window.PropertyOS = (function () {
       var parts = k.split(':'), kind = parts[0], id = parts.slice(1).join(':');
       if (kind === 'event' && byEvent[id]) outE.push(byEvent[id]);
       else if (kind === 'invoice' && byInv[id]) outI.push(byInv[id]);
+      // A referenced invoice that is not in the register is DEAD, not absent:
+      // the link was made deliberately and the target has gone. Report it.
+      else if (kind === 'invoice' && k !== start) outMissing.push(id);
       (adj[k] || []).forEach(function (n) { if (!seen[n]) queue.push(n); });
     }
-    return { events: outE, invoices: outI };
+    return { events: outE, invoices: outI, missingInvoices: outMissing };
   }
 
   /**
@@ -703,6 +798,8 @@ window.PropertyOS = (function () {
     var body = _d('propertyOsBody');
     if (!body || !property) return;
     injectStyles();
+    // PW-1 — stamp ids and migrate positional links BEFORE anything reads them.
+    try { if (ensureInvoiceIds(property) && window.savePropertyData) window.savePropertyData(); } catch (_) {}
     // Collapse the first-run setup card once the building is configured.
     try { renderSetupSummary(property); } catch (_) {}
 
@@ -712,15 +809,49 @@ window.PropertyOS = (function () {
     var tl = (property.timeline || []);
 
     // Financial snapshot — property-wide money, read from the record.
-    var total = invs.reduce(function (s, i) { return s + i.amount; }, 0);
-    var camPool = invs.filter(function (i) { return i.camEligible; }).reduce(function (s, i) { return s + i.amount; }, 0);
-    var nonCam = total - camPool;
+    // PW-4 — the panel used to sum EVERY invoice on the property under a header
+    // the app elsewhere labels with a CAM year. Three separate ways to be wrong:
+    // invoices from other years were included, space-scoped (tenant-direct)
+    // invoices inflated the property pool, and "84,500.00" coerced to 0.
+    //
+    // Scope is now explicit and stated on screen, because a total whose basis
+    // is invisible is a total a manager cannot check.
+    var camYear = (window.currentCamYear && window.currentCamYear()) ||
+                  (window._camYear != null ? window._camYear : null);
+    var invYear = function (i) {
+      if (!i.invoiceDate) return null;
+      var d = new Date(i.invoiceDate);
+      return isNaN(d.getTime()) ? null : d.getFullYear();
+    };
+    var undated = invs.filter(function (i) { return invYear(i) === null; });
+    var inYear = invs.filter(function (i) {
+      if (camYear == null) return true;               // no year selected → all
+      var y = invYear(i);
+      return y === null ? true : String(y) === String(camYear);  // undated counted, and said so
+    });
+    var propertyScoped = inYear.filter(function (i) { return !i.spaceId; });
+    var spaceScoped    = inYear.filter(function (i) { return !!i.spaceId; });
+
+    var total   = propertyScoped.reduce(function (s, i) { return s + i.amount; }, 0);
+    var camPool = propertyScoped.filter(function (i) { return i.camEligible; })
+                                .reduce(function (s, i) { return s + i.amount; }, 0);
+    var nonCam  = total - camPool;
+
+    var scopeBits = [];
+    if (camYear != null) scopeBits.push(_esc(String(camYear)) + ' only');
+    scopeBits.push(propertyScoped.length + ' property invoice' + (propertyScoped.length !== 1 ? 's' : ''));
+    if (spaceScoped.length) scopeBits.push(spaceScoped.length + ' tenant-direct excluded');
+    if (undated.length)     scopeBits.push(undated.length + ' undated, counted');
+    var excludedYear = camYear != null ? invs.length - inYear.length : 0;
+    if (excludedYear > 0) scopeBits.push(excludedYear + ' from other years excluded');
+
     var finHtml = invs.length
       ? '<div class="pos-fin">' +
           '<div class="pos-fin-cell"><div class="pos-fin-v">' + _money(total) + '</div><div class="pos-fin-l">Total invoiced</div></div>' +
           '<div class="pos-fin-cell"><div class="pos-fin-v">' + _money(camPool) + '</div><div class="pos-fin-l">CAM-eligible</div></div>' +
           '<div class="pos-fin-cell"><div class="pos-fin-v">' + _money(nonCam) + '</div><div class="pos-fin-l">Not CAM</div></div>' +
-        '</div>'
+        '</div>' +
+        '<div class="pos-fin-scope">' + scopeBits.join(' \u00b7 ') + '</div>'
       : _empty('No invoices on file for this property yet.');
 
     // Invoice register — uploaded once to the property, related outward.
@@ -743,9 +874,9 @@ window.PropertyOS = (function () {
             '</div>' +
             '<div class="pos-inv-meta">' + _esc([inv.category, inv.invoiceDate ? _fmtDate(inv.invoiceDate) : null].filter(Boolean).join(' · ') || '—') + '</div>' +
             '<div class="pos-inv-rel">' +
-              '<label class="pos-rel"><span>Space</span><select onchange="PropertyOS.setInvoiceRelation(' + inv._i + ',\'spaceId\',this.value)">' + spaceOpts(inv.spaceId) + '</select></label>' +
-              '<label class="pos-rel"><span>System</span><select onchange="PropertyOS.setInvoiceRelation(' + inv._i + ',\'system\',this.value)">' + sysOpts(inv.system) + '</select></label>' +
-              '<label class="pos-rel pos-rel--chk"><input type="checkbox"' + (inv.camEligible ? ' checked' : '') + ' onchange="PropertyOS.setInvoiceRelation(' + inv._i + ',\'camEligible\',this.checked)"><span>CAM eligible</span></label>' +
+              '<label class="pos-rel"><span>Space</span><select onchange="PropertyOS.setInvoiceRelation(this.dataset.invId,\'spaceId\',this.value)" data-inv-id="' + _esc(inv.id) + '">' + spaceOpts(inv.spaceId) + '</select></label>' +
+              '<label class="pos-rel"><span>System</span><select onchange="PropertyOS.setInvoiceRelation(this.dataset.invId,\'system\',this.value)" data-inv-id="' + _esc(inv.id) + '">' + sysOpts(inv.system) + '</select></label>' +
+              '<label class="pos-rel pos-rel--chk"><input type="checkbox"' + (inv.camEligible ? ' checked' : '') + ' onchange="PropertyOS.setInvoiceRelation(this.dataset.invId,\'camEligible\',this.checked)" data-inv-id="' + _esc(inv.id) + '"><span>CAM eligible</span></label>' +
             '</div>' +
           '</div>';
         }).join('') + '</div>' +
@@ -1005,7 +1136,10 @@ window.PropertyOS = (function () {
       '.pos-ri-w{color:var(--text-4,#64748B);margin-left:auto;white-space:nowrap;}',
       '.pos-ri-x{background:none;border:none;color:var(--text-4,#64748B);cursor:pointer;font-size:0.7rem;padding:2px 4px;}',
       '.pos-ri-x:hover{color:var(--c-f87171,#f87171);}',
+      '.pos-ri-row--missing .pos-ri-t{color:var(--c-fbbf24,#fbbf24);}',
+      '.pos-ri-row--missing .pos-ri-m{font-style:italic;}',
       '.pos-sys-invs{margin:6px 0 10px;}',
+      '.pos-fin-scope{margin-top:7px;font-size:0.72rem;color:var(--text-4,#64748B);}',
       '.pos-link-ov{position:fixed;inset:0;z-index:9600;background:rgba(0,0,0,0.66);display:flex;align-items:center;justify-content:center;padding:18px;}',
       '.pos-link-box{background:var(--theme-panel,#11161F);border:1px solid rgba(var(--line-rgb,255,255,255),0.12);border-radius:12px;padding:18px;max-width:520px;width:100%;}',
       '.pos-link-head{display:flex;align-items:center;font-size:0.95rem;font-weight:700;color:var(--text-1,#E2E8F0);margin-bottom:6px;}',
@@ -1122,7 +1256,7 @@ window.PropertyOS = (function () {
     setRecordFilter: setRecordFilter, addRecord: addRecord, editRecord: editRecord, propertyRecords: propertyRecords,
     toggleSetup: toggleSetup, renderSetupSummary: renderSetupSummary,
     relatedGroup: relatedGroup, systemStory: systemStory,
-    propertyDocuments: propertyDocuments, openRecord: openRecord,
+    propertyDocuments: propertyDocuments, openRecord: openRecord, ensureInvoiceIds: ensureInvoiceIds,
     attachToRecord: attachToRecord, pickAttachment: pickAttachment,
     linkRecord: linkRecord, unlinkRecord: unlinkRecord, openLinkPicker: openLinkPicker,
     invoices: invoices, setInvoiceRelation: setInvoiceRelation,

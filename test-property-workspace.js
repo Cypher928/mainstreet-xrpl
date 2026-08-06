@@ -782,6 +782,136 @@ const CLICK_LABEL = function (rx) {
   check('Edit re-opens setup, so name and sqft stay reachable',
         reopened.shown && reopened.nameField, JSON.stringify(reopened));
 
+  // ── PW-1/PW-2 · invoice links survive the register changing ──────────────
+  const link = await page.evaluate(async () => {
+    const p = _props[0];
+    p.timeline = [];
+    // Three invoices; the roof job links to the LAST one.
+    p.invoices = [
+      { vendorName: 'Duplicate To Delete', amount: 100,   invoiceDate: '2026-01-05' },
+      { vendorName: 'Bright Landscaping',  amount: 2400,  invoiceDate: '2026-04-11' },
+      { vendorName: 'Apex Roofing',        amount: 84500, invoiceDate: '2026-05-02', system: 'roof' },
+    ];
+    const job = appendPropertyTimelineEvent(p, {
+      manual: true, type: 'manual_capital_improvement', category: 'capital_improvement',
+      title: 'Roof replaced', timestamp: new Date().toISOString(),
+      subject: { type: 'system', id: 'roof', label: 'Roof' },
+      actor: 'dana@example.com', metadata: { recordedBy: 'dana@example.com' } });
+    PropertyOS.renderPropertyPage(p);          // stamps ids
+
+    const apexId = p.invoices[2].id;
+    PropertyOS.linkRecord(job.id, 'invoice', apexId);
+    const before = PropertyOS.relatedGroup(p, job.id).invoices.map(i => i.vendorName + ':' + i.amount);
+
+    // Remove the FIRST invoice — everything after it used to shift down one.
+    p.invoices.splice(0, 1);
+    PropertyOS.renderPropertyPage(p);
+    const after = PropertyOS.relatedGroup(p, job.id).invoices.map(i => i.vendorName + ':' + i.amount);
+
+    // And a link whose invoice is gone entirely must SAY so.
+    p.invoices = p.invoices.filter(i => i.vendorName !== 'Apex Roofing');
+    PropertyOS.renderPropertyPage(p);
+    const g = PropertyOS.relatedGroup(p, job.id);
+    const body = document.getElementById('propertyOsBody');
+    return { before, after, storedKey: (p.timeline[0].relatedTo || [])[0],
+             missing: g.missingInvoices || [],
+             saysMissing: /no longer on file/i.test(body.innerText || body.textContent || ''),
+             idsAreNotIndices: p.invoices.every(i => !/^\d+$/.test(String(i.id))) };
+  });
+
+  check('an invoice link is stored by a stable id, not an array position',
+        link.storedKey && !/^\d+$/.test(String(link.storedKey.id)), JSON.stringify(link.storedKey));
+  check('and ids never look like an index, so migration stays idempotent', link.idsAreNotIndices);
+  check('the link still resolves to the SAME invoice after an earlier one is removed',
+        link.before.length === 1 && link.after.length === 1 && link.before[0] === link.after[0],
+        link.before + '  →  ' + link.after);
+  check('a link whose invoice is deleted is reported, not silently re-pointed',
+        link.missing.length === 1 && link.saysMissing,
+        'missing=' + link.missing.length + ' saysMissing=' + link.saysMissing);
+
+  // Legacy positional links are migrated while the positions are still correct.
+  const migrated = await page.evaluate(() => {
+    const p = _props[0];
+    p.invoices = [
+      { vendorName: 'First',  amount: 10, invoiceDate: '2026-01-01' },
+      { vendorName: 'Second', amount: 20, invoiceDate: '2026-01-02' },
+    ];
+    p.timeline = [];
+    const ev = appendPropertyTimelineEvent(p, { manual: true, type: 'manual_other', category: 'other',
+      title: 'Legacy link', timestamp: new Date().toISOString(), subject: { type: 'property', id: p.id } });
+    ev.relatedTo = [{ kind: 'invoice', id: '1' }];       // the OLD positional form
+    PropertyOS.ensureInvoiceIds(p);
+    return { key: ev.relatedTo[0].id, secondId: p.invoices[1].id,
+             resolves: PropertyOS.relatedGroup(p, ev.id).invoices.map(i => i.vendorName) };
+  });
+  check('a legacy positional link is migrated to the id at that position',
+        migrated.key === migrated.secondId && migrated.resolves[0] === 'Second',
+        migrated.key + ' → ' + JSON.stringify(migrated.resolves));
+
+  // ── PW-5 · money ─────────────────────────────────────────────────────────
+  const mny = await page.evaluate(() => {
+    const p = _props[0];
+    p.invoices = [{ vendorName: 'String Amount Co', amount: '84,500.00', invoiceDate: '2026-05-02' }];
+    PropertyOS.renderPropertyPage(p);
+    const txt = (document.getElementById('propertyOsBody').innerText || '');
+    return { hasNaN: /NaN/.test(txt), parsed: /84,500\.00/.test(txt) };
+  });
+  check('no figure in the workspace renders as NaN', !mny.hasNaN);
+  check('a currency STRING from extraction is parsed, not coerced to zero',
+        mny.parsed, mny.parsed ? '$84,500.00' : 'not found');
+
+  // ── PW-4 · the Financials panel states its scope ─────────────────────────
+  const fin = await page.evaluate(() => {
+    const p = _props[0];
+    window.currentCamYear = function () { return 2026; };
+    p.invoices = [
+      { vendorName: 'This Year',    amount: 1000, invoiceDate: '2026-03-01' },
+      { vendorName: 'Last Year',    amount: 5000, invoiceDate: '2025-03-01' },
+      { vendorName: 'Tenant Direct',amount: 700,  invoiceDate: '2026-04-01', spaceId: 't1' },
+      { vendorName: 'Not CAM',      amount: 300,  invoiceDate: '2026-05-01', camEligible: false },
+    ];
+    PropertyOS.renderPropertyPage(p);
+    const sec = [].slice.call(document.querySelectorAll('#propertyOsBody .pos-sec'))
+      .find(x => /FINANCIALS/i.test(x.textContent));
+    return { text: (sec ? sec.innerText : '').replace(/\s+/g, ' ').trim() };
+  });
+  check('Financials excludes other years and tenant-direct invoices',
+        /\$1,300\.00/.test(fin.text), fin.text.slice(0, 90));
+  check('and CAM-eligible excludes the invoice marked not recoverable',
+        /\$1,000\.00/.test(fin.text), fin.text.slice(0, 90));
+  check('and the panel states the basis it used',
+        /2026 only/.test(fin.text) && /excluded/.test(fin.text), fin.text.slice(-110));
+
+  // ── PW-3 · "CAM eligible" must reach the reconciliation ──────────────────
+  // The control lived in the invoice register, changed a display total, and was
+  // referenced ZERO times in the allocation. Worse than a missing feature: a
+  // manager who unticked it and sent the statement billed a tenant for an
+  // expense she believed she had removed. Driven through the real engine.
+  const cam = await page.evaluate(() => {
+    const mk = (eligible) => {
+      const prop = new Property('Maple Plaza', 10000);
+      prop.addLeases([Object.assign(new Lease('Tenant A', '', 5000, '', '', [], null, null, false, null, 'NNN'),
+                                    { id: 'tA' })]);
+      prop.addInvoices([
+        new Invoice('i1', '2026-03-01', 1000, 'Landscaping Co', 'grounds', '', { camEligible: true }),
+        new Invoice('i2', '2026-03-02', 4000, 'Roof Capital Co', 'repairs', '', { camEligible: eligible }),
+      ]);
+      const res = runFullReconciliation(prop) || [];
+      const r = res[0] || {};
+      return r.allocatedAmount != null ? r.allocatedAmount : r.totalAllocated;
+    };
+    return { withBoth: mk(true), withOneExcluded: mk(false) };
+  });
+
+  // 50% pro-rata: both invoices → $2,500; excluding the $4,000 → $500.
+  check('an invoice marked CAM-eligible is included in the allocation',
+        Math.round(cam.withBoth) === 2500, String(cam.withBoth));
+  check('and unticking "CAM eligible" actually removes it from the tenant\'s share',
+        Math.round(cam.withOneExcluded) === 500, String(cam.withOneExcluded));
+  check('the control changes the number it claims to change',
+        cam.withBoth !== cam.withOneExcluded,
+        cam.withBoth + ' → ' + cam.withOneExcluded);
+
   check('no uncaught errors across the workspace', errs.length === 0,
         errs.slice(0, 2).join(' | ') || 'clean');
 

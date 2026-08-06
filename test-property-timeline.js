@@ -527,10 +527,17 @@ srv.listen(PORT, '127.0.0.1', async () => {
     const invArch = await page.evaluate(() => {
       const p = currentProperty();
       const before = PropertyOS.invoices(p).length;
-      PropertyOS.setInvoiceRelation(0, 'system', 'roof');
-      PropertyOS.setInvoiceRelation(0, 'camEligible', false);
+      // PW-2 — relations are written by stable invoice ID, not array position.
+      // A positional write is unsafe by construction: an invoice removed
+      // between render and click silently retargets the write onto a different
+      // invoice, and `system` feeds the Roof/HVAC story. Stamp ids, then
+      // address the invoices the way the product now does.
+      PropertyOS.ensureInvoiceIds(p);
+      const inv0 = p.invoices[0].id, inv1 = p.invoices[1].id;
+      PropertyOS.setInvoiceRelation(inv0, 'system', 'roof');
+      PropertyOS.setInvoiceRelation(inv0, 'camEligible', false);
       const t = (p.tenants || [])[0];
-      PropertyOS.setInvoiceRelation(1, 'spaceId', t.id);
+      PropertyOS.setInvoiceRelation(inv1, 'spaceId', t.id);
       const after = PropertyOS.invoices(p);
       return {
         onProperty: Array.isArray(p.invoices) && p.invoices.length > 0,
