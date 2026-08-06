@@ -230,6 +230,92 @@ function check(name, ok, detail) {
     }
   }
 
+  // ── 4 · AI-4: a citation naming a page the document does not have ────────
+  //
+  // The viewer clamped it: `Math.min(Math.max(c.page || 1, 1), pdf.numPages)`.
+  // A citation claiming page 47 of a 12-page lease rendered the last page and
+  // labelled it "Page 12 of 12". The user saw a real page from the real
+  // document with nothing to suggest anything had gone wrong — a wrong citation
+  // silently converted into a plausible one. This is the surface where the
+  // product's central claim gets checked; it is the last place that should
+  // round a bad citation into a believable one.
+  if (!havePdf || !pdfjs) {
+    check('the citation-page checks can run at all', false,
+          `demo PDF: ${havePdf}, classic pdf.js: ${!!pdfjs} — run: npm install`);
+  } else {
+    const readViewer = () => page.evaluate(() => {
+      const lbl = document.querySelector('.evd-page-lbl');
+      const b   = document.getElementById('evdBanner');
+      return {
+        label:     lbl ? (lbl.textContent || '').trim() : null,
+        labelBad:  !!(lbl && lbl.classList.contains('evd-page-lbl--bad')),
+        banner:    (b && getComputedStyle(b).display !== 'none') ? (b.textContent || '').trim() : null,
+      };
+    });
+    const show = (cit) => page.evaluate((c) => {
+      window.EvidenceViewer.close();
+      window.EvidenceViewer.open({ citations: [c] });
+    }, cit);
+
+    const url = `http://127.0.0.1:${PORT}/${demoPdf}`;
+    // A real quote from the demo lease, so the only thing wrong is the page.
+    const QUOTE = 'proportionate share of Common Area Maintenance';
+
+    // How many pages the document really has — asserted against, not assumed.
+    const realPages = await page.evaluate(async (u) => {
+      const pdf = await window.pdfjsLib.getDocument({ url: u }).promise;
+      return pdf.numPages;
+    }, url);
+    check('the demo document has a known page count', realPages > 0, String(realPages));
+
+    // (a) a page number beyond the end of the document
+    await show({ source: 'Lease — Whole Health Market', quote: QUOTE, page: realPages + 35, fileUrl: url });
+    await page.waitForTimeout(4500);
+    const over = await readViewer();
+
+    check('an out-of-range citation still renders a page',
+          !!over.label, JSON.stringify(over));
+    // THE REGRESSION. The old label was "Page N of N" and nothing else.
+    check('the label says the cited page does not exist',
+          !!over.label && /no such page/i.test(over.label), over.label);
+    check('the label names the page the citation actually claimed',
+          !!over.label && over.label.includes(String(realPages + 35)), over.label);
+    check('the label is marked as a fault, not styled as an ordinary caption',
+          over.labelBad, `class evd-page-lbl--bad present: ${over.labelBad}`);
+    check('a banner explains it in words', !!over.banner, over.banner || 'no banner');
+    check('the banner says the page reference is wrong',
+          !!over.banner && /page reference is wrong/i.test(over.banner), (over.banner || '').slice(0, 100));
+    check('the banner states the real page count',
+          !!over.banner && over.banner.includes(String(realPages)), (over.banner || '').slice(0, 120));
+    // The mapping banner would talk over the real fault.
+    check('it does NOT blame quote-mapping when the page is the problem',
+          !!over.banner && !/pinpointing it on the page/i.test(over.banner), (over.banner || '').slice(0, 90));
+
+    // (b) page 0 — out of range at the other end
+    await show({ source: 'Lease — Whole Health Market', quote: QUOTE, page: 0, fileUrl: url });
+    await page.waitForTimeout(4500);
+    const zero = await readViewer();
+    check('page 0 is reported as no such page, not silently floored to 1',
+          !!zero.label && /no such page/i.test(zero.label), zero.label);
+
+    // (c) no page number at all — a different thing from a wrong one
+    await show({ source: 'Lease — Whole Health Market', quote: QUOTE, page: null, fileUrl: url });
+    await page.waitForTimeout(4500);
+    const none = await readViewer();
+    check('a citation with no page says so rather than implying page 1 was cited',
+          !!none.label && /gave no page/i.test(none.label), none.label);
+    check('and it is not reported as a wrong page',
+          !!none.label && !/no such page/i.test(none.label), none.label);
+
+    // (d) a page that IS in range — the honest case must stay quiet
+    await show({ source: 'Lease — Whole Health Market', quote: QUOTE, page: 1, fileUrl: url });
+    await page.waitForTimeout(4500);
+    const good = await readViewer();
+    check('a valid page renders the plain label with no fault text',
+          !!good.label && /^Page 1 of \d+$/.test(good.label), good.label);
+    check('and is not styled as a fault', !good.labelBad, `labelBad=${good.labelBad}`);
+  }
+
   await ctx.close(); await browser.close(); srv.close();
 
   const failed = results.filter(r => !r.ok);

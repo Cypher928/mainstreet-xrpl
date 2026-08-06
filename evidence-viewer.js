@@ -261,7 +261,29 @@ window.EvidenceViewer = (() => {
       return;
     }
     if (st.citations[st.index] !== c) return; // user navigated away meanwhile
-    const pageNum = Math.min(Math.max(c.page || 1, 1), pdf.numPages);
+
+    // AI-4 — a citation that names a page this document does not have is a
+    // DETECTABLE failure, and it was being hidden.
+    //
+    // `Math.min(Math.max(c.page || 1, 1), pdf.numPages)` silently clamped it: a
+    // citation claiming page 47 of a 12-page lease rendered page 12 and labelled
+    // it "Page 12 of 12". The user saw a real page from the real document with
+    // nothing to suggest anything had gone wrong — a wrong citation converted
+    // into a plausible one, which is worse than an obviously broken one. The
+    // Evidence Viewer is where this product's central claim is checked; it is
+    // the last surface that should round a bad citation into a believable one.
+    //
+    // A missing page number is a different thing from a wrong one, and both are
+    // different from a good one. Three states, named.
+    const claimedPage  = Number.isFinite(c.page) ? Math.floor(c.page) : null;
+    const pageOutOfRange = claimedPage != null && (claimedPage < 1 || claimedPage > pdf.numPages);
+    const pageNum = (claimedPage != null && !pageOutOfRange) ? claimedPage : 1;
+    const pageNote = pageOutOfRange
+      ? `This citation names page ${claimedPage}, but the document has ${pdf.numPages} page${pdf.numPages === 1 ? '' : 's'}. The page reference is wrong — showing page ${pageNum} so you can check the quote yourself.`
+      : (claimedPage == null
+          ? `This citation carries no page number. Showing page ${pageNum}; the quoted text is in the panel.`
+          : null);
+
     const page = await pdf.getPage(pageNum);
     const scale = Math.min(1.5, (docWrap.clientWidth - 24) / page.getViewport({ scale: 1 }).width) || 1.2;
     const viewport = page.getViewport({ scale });
@@ -270,7 +292,19 @@ window.EvidenceViewer = (() => {
     const hlLayer = document.createElement('div');
     hlLayer.className = 'evd-hl-layer';
     hlLayer.style.width = viewport.width + 'px'; hlLayer.style.height = viewport.height + 'px';
-    docWrap.innerHTML = `<div class="evd-page-lbl">Page ${pageNum} of ${pdf.numPages}</div>`;
+    // The label says which page is ON SCREEN and, when they differ, which page
+    // the citation claimed. "Page 12 of 12" alone is a true sentence that tells
+    // a lie about the citation.
+    const pageLabel = pageOutOfRange
+      ? `Page ${pageNum} of ${pdf.numPages} · citation named page ${claimedPage} — no such page`
+      : (claimedPage == null
+          ? `Page ${pageNum} of ${pdf.numPages} · citation gave no page`
+          : `Page ${pageNum} of ${pdf.numPages}`);
+    docWrap.innerHTML = `<div class="evd-page-lbl${pageOutOfRange ? ' evd-page-lbl--bad' : ''}">${_esc(pageLabel)}</div>`;
+    if (pageNote && banner) {
+      banner.textContent = pageNote;
+      banner.style.display = 'block';
+    }
     const stage = document.createElement('div'); stage.className = 'evd-stage';
     stage.appendChild(canvas); stage.appendChild(hlLayer);
     docWrap.appendChild(stage);
@@ -285,6 +319,10 @@ window.EvidenceViewer = (() => {
     const tc = await page.getTextContent();
     const hit = locateQuoteInItems(tc.items, needle);
     if (!hit) {
+      // AI-4 — when the cited page is wrong, "we just couldn't pinpoint it on
+      // the page" is the wrong explanation and would bury the real one. The
+      // page note wins; it names a fault the mapping note would talk over.
+      if (banner && pageNote) return;
       if (banner && !c._search) {
         // What failed here is citation MAPPING, not navigation. The old wording
         // ("Jumped to page N — the exact paragraph couldn't be automatically
@@ -315,7 +353,7 @@ window.EvidenceViewer = (() => {
       hlLayer.appendChild(div);
       if (firstTop == null) firstTop = tx[5] - h;
     });
-    if (!hit.exact && banner) {
+    if (!hit.exact && banner && !pageNote) {
       banner.textContent = 'Highlighted the start of the cited passage — the full quote spans formatting the text layer splits differently.';
       banner.style.display = 'block';
     }

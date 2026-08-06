@@ -6160,6 +6160,9 @@
   .evd-main { display: flex; gap: 14px; flex: 1; min-height: 0; }
   .evd-doc { flex: 1; overflow: auto; background: var(--theme-surface); border: 1px solid rgba(var(--line-rgb), 0.07); border-radius: 10px; padding: 12px; }
   .evd-page-lbl { color: var(--text-4); font-size: 0.74rem; margin-bottom: 8px; }
+  /* AI-4 — a citation naming a page the document does not have. Read as a
+     fault, not as a caption: this is the surface where a citation gets checked. */
+  .evd-page-lbl--bad { color: #fbbf24; font-weight: 600; }
   .evd-stage { position: relative; display: inline-block; }
   .evd-stage canvas { display: block; border-radius: 4px; background: #fff; }
   .evd-hl-layer { position: absolute; inset: 0; pointer-events: none; }
