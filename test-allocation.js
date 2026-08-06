@@ -174,6 +174,43 @@ const sec = t => console.log('\n── ' + t + ' ──');
       ? ok('an undated invoice is kept rather than silently dropped')
       : bad('undated invoice handling', String(r[0].allocated));
   }
+  {
+    // CAM-2 shipped with a bare `return []` when the year filter emptied the
+    // pool. The CAM year defaults to the CURRENT year, and CAM reconciliation
+    // is done after the year closes — so a manager uploading last year's
+    // invoices in August got an empty run and no explanation. The correctness
+    // fix had converted an inflated number into a missing one.
+    //
+    // This is the only case in the engine where every input is discarded. It
+    // must say so out loud.
+    const r = await p.evaluate(() => {
+      const said = [];
+      const orig = window.showToast;
+      window.showToast = (msg) => { said.push(String(msg)); };
+      try {
+        const prop = new Property('Test Center', 10000);
+        prop.camYear = 2026;
+        const l = new Lease('A', '', 5000, '', '', [], null, null, false, null, 'NNN');
+        l.id = 't1'; prop.addLeases([l]);
+        prop.addInvoices([new Invoice('i0', '2025-03-01', 50000, 'LastYear', 'utilities', '', {})]);
+        window.currentProperty = () => ({ id: 'p1', tenants: [{ id: 't1', tenant_name: 'A', leased_sqft: 5000 }] });
+        const res = runFullReconciliation(prop) || [];
+        return { count: res.length, said, scope: prop._yearScope || null };
+      } finally { window.showToast = orig; }
+    });
+    (r.count === 0)
+      ? ok('an all-out-of-year pool still produces no allocation — the refusal stands')
+      : bad('out-of-year invoices were allocated anyway', String(r.count));
+    (r.said.length > 0)
+      ? ok('the refusal is announced to the manager, not just to the console')
+      : bad('the engine discarded every invoice in silence — no toast was raised');
+    (r.said.some(m => /2026/.test(m) && /outside/i.test(m)))
+      ? ok('the message names the CAM year and says the invoices fall outside it')
+      : bad('the message does not explain what went wrong', JSON.stringify(r.said));
+    (r.scope && r.scope.refused === true && r.scope.excluded === 1)
+      ? ok('_yearScope records the refusal and the count that caused it')
+      : bad('_yearScope did not record the refusal', JSON.stringify(r.scope));
+  }
 
   // ── CAM-3 · exclusions apply to direct matches too ──────────────────────
   sec('CAM-3 · the exclusion schedule binds direct matches');

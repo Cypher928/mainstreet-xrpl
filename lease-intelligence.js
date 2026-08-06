@@ -581,12 +581,17 @@ window.LeaseIntelligence = (() => {
     const t = tenantState || {};
     const amendments = Array.isArray(t.amendments) ? t.amendments : [];
     const { edgeCases, overallRisk } = detectLeaseEdgeCases(t, null);
-    const confScore = t._confidenceScore ?? 100;
+    // AI-1 — `?? 100` routed an unmeasured lease to the lightweight model on the
+    // strength of a score nobody computed. Unknown confidence is a reason to
+    // spend more reasoning, not less: null routes conservatively.
+    const confScore = (typeof t._confidenceScore === 'number' && Number.isFinite(t._confidenceScore))
+      ? t._confidenceScore : null;
 
     const signals = [];
     if (amendments.length > 0)           signals.push(`${amendments.length} amendment(s) require precedence reasoning`);
     if (overallRisk === 'high')           signals.push('High-risk edge cases detected');
-    if (confScore < 60)                   signals.push(`Low confidence score (${confScore})`);
+    if (confScore == null)                signals.push('Extraction confidence unknown — routing conservatively');
+    else if (confScore < 60)              signals.push(`Low confidence score (${confScore})`);
     if (edgeCases.some(e => e.type === 'AMENDMENT_CONFLICT'))       signals.push('Amendment conflict — governing version uncertain');
     if (edgeCases.some(e => e.type === 'CONTRADICTORY_CAP_AND_STOP')) signals.push('Contradictory CAM clauses present');
     if (t.expense_stop != null && t.cap != null)                    signals.push('Both expense stop and CAM cap present');

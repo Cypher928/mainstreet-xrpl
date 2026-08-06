@@ -11,184 +11,31 @@
 // ── Minimal global stubs ──────────────────────────────────────────────────────
 global.window = global.window || {};
 
-// ── Inline: LeaseIntelligence module ─────────────────────────────────────────
+// ── The module under test — the real one ─────────────────────────────────────
+//
+// This file used to inline a COPY of every function in lease-intelligence.js
+// and benchmark that. The copy drifted: it still carried
+// `t._confidenceScore ?? 100` after AI-1 removed it from the shipped module,
+// so the benchmark went on certifying "100% accuracy" for routing behaviour
+// the product no longer had. A benchmark of a replica measures the replica.
+//
+// lease-intelligence.js is a pure module — no DOM, no network — so it loads
+// here directly and every number below now describes the code that ships.
+const fs = require('fs');
+const path = require('path');
+new Function(fs.readFileSync(path.join(__dirname, 'lease-intelligence.js'), 'utf8'))();
+const {
+  CANONICAL_FIELDS,
+  CAM_CONCEPT_MAP,
+  normalizeClauseConcept,
+  reasonMultiDocumentLease,
+  deriveExtractionConfidence,
+  generateLeaseExplainability,
+  detectLeaseEdgeCases,
+  modelRoutingRecommendation,
+  buildMultiDocReasoningDocs,
+} = window.LeaseIntelligence;
 
-const CANONICAL_FIELDS = [
-  'cap', 'admin_fee_pct', 'gross_up_pct', 'expense_stop',
-  'audit_rights', 'pro_rata_method', 'renewal_options',
-  'tenant_name', 'leased_sqft', 'start_date', 'end_date', 'lease_type',
-];
-
-const CAM_CONCEPT_MAP = [
-  { canonical: 'ADMIN_FEE', label: 'Administrative / Management Fee', patterns: [/admin(?:istrative)?\s+fee/i, /management\s+(?:fee|surcharge|charge|overhead)/i, /operating\s+overhead\s+allocation/i, /supervision\s+fee/i, /property\s+management\s+fee/i, /management\s+services\s+fee/i] },
-  { canonical: 'CAM_CAP', label: 'CAM / Expense Increase Cap', patterns: [/cam\s+cap/i, /expense\s+(?:increase\s+)?cap/i, /capped\s+at\s+[\d.]+\s*%/i, /not\s+to\s+exceed\s+[\d.]+\s*%/i, /annual\s+increase\s+(?:is\s+)?(?:limited|capped)/i, /controllable\s+expense\s+cap/i, /shall\s+not\s+(?:pay|increase)\s+more\s+than/i, /increases\s+(?:shall\s+be\s+)?limited\s+to/i, /cam\s+increases\s+(?:limited|capped)/i] },
-  { canonical: 'EXPENSE_STOP', label: 'Expense Stop / Base Year Stop', patterns: [/expense\s+stop/i, /base\s+year\s+(?:stop|expense)/i, /base\s+(?:year\s+)?operating\s+expenses?\s+of\s+\$/i, /tenant\s+(?:shall\s+)?pay\s+(?:the\s+)?excess/i, /gross\s+rent\s+(?:with\s+)?expense\s+stop/i] },
-  { canonical: 'GROSS_UP', label: 'Gross-Up / Occupancy Normalization', patterns: [/gross[\s-]?up/i, /grossed[\s-]?up\s+to/i, /occupancy\s+factor/i, /occupancy\s+(?:threshold|level)\s+of\s+[\d.]+\s*%/i, /as\s+if\s+(?:the\s+)?(?:building|project)\s+were\s+[\d.]+\s*%\s+occupied/i, /normalized\s+to\s+[\d.]+\s*%\s+occupancy/i] },
-  { canonical: 'CAM_EXCLUSION', label: 'CAM Exclusion', patterns: [/excluded?\s+(?:from\s+)?(?:cam|operating\s+expenses?)/i, /cam\s+exclusion/i, /non[-\s]?(?:allocable|cam)\s+expense/i, /shall\s+not\s+(?:be\s+)?included\s+in\s+(?:cam|operating)/i, /excluded\s+(?:from\s+)?tenant'?s?\s+(?:pro[\s-]?rata\s+)?share/i] },
-  { canonical: 'AUDIT_RIGHTS', label: 'Tenant Audit Rights', patterns: [/audit\s+rights?/i, /right\s+to\s+audit/i, /inspection\s+(?:and\s+audit\s+)?rights?/i, /books\s+and\s+records/i, /tenant\s+(?:may|shall\s+have\s+the\s+right\s+to)\s+(?:examine|inspect|audit)/i, /right\s+to\s+examine\s+(?:landlord'?s?\s+)?(?:books|records)/i, /\d+[\s-]year\s+(?:audit\s+)?(?:look[\s-]?back|reimbursement\s+period)/i] },
-  { canonical: 'RENEWAL_OPTION', label: 'Renewal Option', patterns: [/renewal\s+option/i, /option\s+to\s+(?:renew|extend)/i, /extension\s+option/i, /renewal\s+term/i, /(?:tenant|lessee)\s+shall\s+have\s+(?:the\s+)?(?:option|right)\s+to\s+(?:renew|extend)/i] },
-  { canonical: 'PRO_RATA', label: 'Pro-Rata Share Method', patterns: [/pro[\s-]?rata\s+share/i, /proportionate\s+share/i, /tenant'?s?\s+(?:pro[\s-]?rata|proportionate)\s+share/i, /rentable\s+(?:area|square\s+(?:feet|footage))/i, /(?:leasable|occupied|gross)\s+(?:area|square\s+(?:feet|footage))/i] },
-  { canonical: 'LEASE_TYPE', label: 'Lease Type', patterns: [/triple[\s-]?net/i, /\bnnn\b/i, /modified\s+gross/i, /gross\s+lease/i, /net[\s-]?net[\s-]?net/i, /full[\s-]?service\s+(?:gross\s+)?lease/i] },
-];
-
-function normalizeClauseConcept(rawText) {
-  if (!rawText || typeof rawText !== 'string') return { canonical: null, label: null, candidates: [], preservedText: rawText || '', confidence: 0 };
-  const text = rawText.trim();
-  const matches = [];
-  for (const c of CAM_CONCEPT_MAP) {
-    const h = c.patterns.filter(p => p.test(text)).length;
-    if (h > 0) matches.push({ canonical: c.canonical, label: c.label, hitCount: h });
-  }
-  matches.sort((a, b) => b.hitCount - a.hitCount);
-  const best = matches[0] || null;
-  const confidence = !best ? 0 : matches.length === 1 ? (best.hitCount >= 2 ? 90 : 70) : best.hitCount > matches[1].hitCount ? 75 : 50;
-  return { canonical: best?.canonical ?? null, label: best?.label ?? null, candidates: matches, preservedText: text, confidence };
-}
-
-const DOC_TYPE_TIER = { side_letter: 4, estoppel: 3, amendment: 2, original_lease: 1 };
-
-function reasonMultiDocumentLease(documents) {
-  if (!Array.isArray(documents) || !documents.length) return {};
-  const sorted = [...documents].sort((a, b) => {
-    const td = (DOC_TYPE_TIER[b.docType] || 0) - (DOC_TYPE_TIER[a.docType] || 0);
-    if (td !== 0) return td;
-    return (b.docDate ? new Date(b.docDate).getTime() : 0) - (a.docDate ? new Date(a.docDate).getTime() : 0);
-  });
-  const result = {};
-  for (const field of CANONICAL_FIELDS) {
-    const history = [];
-    for (const doc of sorted) {
-      const val = doc.extractedFields?.[field];
-      if (val == null || val === '') continue;
-      history.push({ value: val, docType: doc.docType, docDate: doc.docDate || null, fileName: doc.fileName || null, quote: doc.quotes?.[field] || null });
-    }
-    if (!history.length) continue;
-    const governing = history[0];
-    const supersededValues = history.slice(1);
-    const contradictions = [];
-    const byTier = {};
-    for (const v of history) { const t = DOC_TYPE_TIER[v.docType] || 0; (byTier[t] = byTier[t] || []).push(v); }
-    for (const group of Object.values(byTier)) {
-      if (group.length < 2) continue;
-      const unique = new Set(group.map(v => String(v.value)));
-      if (unique.size > 1) contradictions.push({ tier: DOC_TYPE_TIER[group[0].docType] || 0, documents: group.map(v => v.fileName), values: [...unique] });
-    }
-    let fieldConf = 80;
-    if (contradictions.length > 0) fieldConf -= 25;
-    if (history.length > 1 && !contradictions.length) fieldConf = Math.min(95, fieldConf + 10);
-    if (!governing.quote) fieldConf -= 10;
-    fieldConf = Math.max(10, Math.min(100, fieldConf));
-    const docLabel = d => `${(d.docType || '').replace('_', ' ')}${d.docDate ? ' dated ' + d.docDate : ''}${d.fileName ? ' (' + d.fileName + ')' : ''}`;
-    const reasoning = history.length === 1
-      ? `${field} set to ${JSON.stringify(governing.value)} in ${docLabel(governing)}.`
-      : `${field} changed from ${JSON.stringify(history[1].value)} to ${JSON.stringify(governing.value)} by ${docLabel(governing)}.`
-        + (contradictions.length ? ` WARNING: Conflicting values detected.` : '');
-    result[field] = { currentValue: governing.value, supersededValues, governingDocument: governing.docType, governingClause: governing.quote || null, confidence: fieldConf, reasoning, contradictions };
-  }
-  return result;
-}
-
-function deriveExtractionConfidence(snapshots, context) {
-  const ctx = context || {};
-  let score = 70;
-  const reasons = [], signals = [];
-  const push = (type, adj, desc) => { score += adj; signals.push({ type, adjustment: adj, description: desc }); };
-  if (ctx.hasQuote)                push('direct_quote', +20, 'Direct verbatim clause found');
-  if (ctx.multiDocAgreement)       push('multi_doc_agreement', +10, 'Multiple documents agree');
-  if (Array.isArray(snapshots) && snapshots.length > 1) push('confirming_snapshots', Math.min(10, (snapshots.length - 1) * 5), `${snapshots.length} snapshots`);
-  if (ctx.ocrQuality === 'poor' || (ctx.ocrChars != null && ctx.ocrChars < 200))  { push('poor_ocr', -15, 'Poor OCR quality'); reasons.push('Poor OCR'); }
-  else if (ctx.ocrChars != null && ctx.ocrChars < 500)                            { push('short_ocr', -8, 'Short OCR text'); reasons.push('Short OCR'); }
-  if (ctx.amendmentConflict)       { push('amendment_conflict', -20, 'Amendment conflict'); reasons.push('Amendment conflict'); }
-  if (ctx.candidateCount > 1)      { push('ambiguous_clauses', -10, 'Ambiguous clauses'); reasons.push('Ambiguous clauses'); }
-  if (ctx.governingClauseUncertain){ push('uncertain_clause', -10, 'Uncertain clause'); reasons.push('Uncertain clause'); }
-  if (ctx.inferenceType === 'unsupported') { push('unsupported_inference', -5, 'Unsupported inference'); reasons.push('Unsupported inference'); }
-  score = Math.max(0, Math.min(100, score));
-  return { score, level: score >= 80 ? 'high' : score >= 55 ? 'medium' : score > 0 ? 'low' : 'failed', reasons, signals };
-}
-
-function generateLeaseExplainability(tenantState) {
-  if (!tenantState) return { fieldSummaries: {}, overallSummary: '', reviewNotes: [] };
-  const t = tenantState;
-  const amendments = Array.isArray(t.amendments) ? t.amendments : [];
-  const fev = t.fieldEvidence || {};
-  const fieldSummaries = {}, reviewNotes = [];
-  const govAmd = fk => amendments.slice().reverse().find(a => Array.isArray(a.overriddenFields) && a.overriddenFields.includes(fk));
-  const amdLabel = a => { const idx = amendments.indexOf(a); const dt = a.effectiveDate || a.uploadedAt; return `Amendment #${idx + 1}${dt ? ' dated ' + new Date(dt).toLocaleDateString('en-US', { year: 'numeric', month: 'long', day: 'numeric' }) : ''}`; };
-  const latestQuote = fk => { const s = (fev[fk]?.snapshots || []); return s.length ? s[s.length - 1].quote || null : null; };
-  if (t.cap != null) {
-    const gov = govAmd('cap');
-    const prior = (fev['cap']?.snapshots || []).slice(0, -1);
-    if (gov && prior.length) { const pv = prior[prior.length - 1].value; fieldSummaries.cap = `CAM Cap ${pv != null ? `reduced from ${pv}% to ` : 'set to '}${t.cap}% by ${amdLabel(gov)}.`; }
-    else if (gov)             fieldSummaries.cap = `CAM Cap of ${t.cap}% applied by ${amdLabel(gov)}.`;
-    else                      fieldSummaries.cap = `CAM Cap of ${t.cap}% defined in original lease.`;
-  } else {
-    fieldSummaries.cap = 'No CAM Cap found — tenant bears full proportionate share of expense increases.';
-    reviewNotes.push('CAM Cap not specified.');
-  }
-  if (t.admin_fee_pct != null) {
-    const gov = govAmd('admin_fee_pct');
-    fieldSummaries.admin_fee_pct = gov ? `Administrative fee of ${t.admin_fee_pct}% per ${amdLabel(gov)}.` : `Administrative fee of ${t.admin_fee_pct}% per lease.`;
-  } else { fieldSummaries.admin_fee_pct = 'Administrative / management fee not specified.'; }
-  if (t.gross_up_pct != null) {
-    const qt = latestQuote('gross_up_pct');
-    fieldSummaries.gross_up_pct = qt ? `Gross-up set to ${t.gross_up_pct}% occupancy.` : 'Gross-up language detected with ambiguous occupancy threshold.';
-    if (!qt) reviewNotes.push('Gross-up clause detected but occupancy percentage not confirmed by direct quote.');
-  } else { fieldSummaries.gross_up_pct = 'No gross-up provision found.'; }
-  fieldSummaries.audit_rights = t.audit_rights === true
-    ? 'Audit rights clause exists' + (latestQuote('audit_rights') ? '.' : ' but reimbursement window could not be determined.')
-    : t.audit_rights === false ? 'Audit rights explicitly waived in lease.' : 'Audit rights not addressed.';
-  if (t.audit_rights === false) reviewNotes.push('Audit rights have been waived.');
-  fieldSummaries.pro_rata_method = t.pro_rata_method ? `Pro-rata share on ${t.pro_rata_method} basis.` : 'Pro-rata method not specified.';
-  fieldSummaries.renewal_options = t.renewal_options ? `Renewal options: ${t.renewal_options}.` : 'No renewal options specified.';
-  if (amendments.length > 0) {
-    const modified = [...new Set(amendments.flatMap(a => a.overriddenFields || []))];
-    reviewNotes.push(`${amendments.length} amendment(s) on file, modifying: ${modified.join(', ')}.`);
-  }
-  const missing = ['tenant_name', 'leased_sqft', 'start_date', 'end_date'].filter(f => !t[f]);
-  const overallSummary = !missing.length
-    ? `Lease complete. ${amendments.length ? amendments.length + ' amendment(s) applied. ' : ''}${t.cap != null ? 'CAM Cap: ' + t.cap + '%.' : 'No CAM Cap.'}`
-    : `Lease incomplete — missing: ${missing.join(', ')}.`;
-  return { fieldSummaries, overallSummary, reviewNotes };
-}
-
-const EDGE_CASE_DEFINITIONS = [
-  { type: 'WEAK_OCR', severity: 'high', confidenceAdjustment: -20, fieldImpact: ['tenant_name'], reviewerNote: 'Retry with PDF direct mode.', detect: (t, r) => !r?.usedPdfDirect && r?.ocrChars != null && r.ocrChars < 300, description: 'Very short OCR text layer.' },
-  { type: 'MISSING_PAGES', severity: 'medium', confidenceAdjustment: -15, fieldImpact: ['cap'], reviewerNote: 'Ensure full lease uploaded.', detect: (t, r) => r?.ocrChars != null && r.ocrChars > 0 && r.ocrChars < 800 && !r?.usedPdfDirect, description: 'Document appears truncated.' },
-  { type: 'AMENDMENT_CONFLICT', severity: 'high', confidenceAdjustment: -25, fieldImpact: [], reviewerNote: 'Confirm governing amendment.', detect: (t) => { const ams = Array.isArray(t.amendments) ? t.amendments : []; if (ams.length < 2) return false; const seen = {}; for (const a of ams) for (const f of (a.overriddenFields || [])) seen[f] = (seen[f] || 0) + 1; return Object.values(seen).some(c => c > 1); }, description: 'Two amendments modify the same field.' },
-  { type: 'CONTRADICTORY_CAP_AND_STOP', severity: 'medium', confidenceAdjustment: -10, fieldImpact: ['cap', 'expense_stop'], reviewerNote: 'Confirm which mechanism applies.', detect: (t) => t.cap != null && t.expense_stop != null, description: 'Both CAM Cap and Expense Stop present.' },
-  { type: 'CAM_EXCLUSIONS_UNDEFINED', severity: 'low', confidenceAdjustment: -5, fieldImpact: ['excluded_categories'], reviewerNote: 'Check expense category exposure.', detect: (t) => { const lt = (t.lease_type || '').toLowerCase(); return (lt.includes('nnn') || lt.includes('triple') || lt.includes('net')) && !t.excluded_categories; }, description: 'NNN lease with no CAM exclusions.' },
-  { type: 'AMBIGUOUS_GROSS_UP', severity: 'medium', confidenceAdjustment: -10, fieldImpact: ['gross_up_pct'], reviewerNote: 'Verify gross-up against lease.', detect: (t) => { const s = t.fieldEvidence?.gross_up_pct?.snapshots || []; return t.gross_up_pct != null && !s.some(x => x.quote); }, description: 'Gross-up percentage lacks direct quote.' },
-  { type: 'MALFORMED_OCR', severity: 'medium', confidenceAdjustment: -15, fieldImpact: ['tenant_name'], reviewerNote: 'Re-upload at higher quality.', detect: (t, r) => { if (!r?.ocrText || r.ocrText.length < 100) return false; const n = (r.ocrText.slice(0, 500).match(/[^a-zA-Z0-9\s$%.,;:'"()\-/]/g) || []).length; return n / Math.min(r.ocrText.length, 500) > 0.08; }, description: 'High OCR noise ratio.' },
-  { type: 'RENEWAL_DATE_CONFLICT', severity: 'low', confidenceAdjustment: -5, fieldImpact: ['renewal_options'], reviewerNote: 'Verify renewal dates.', detect: (t) => { if (!t.renewal_options || !t.end_date) return false; const ey = new Date(t.end_date).getFullYear(); const m = t.renewal_options.match(/20(\d{2})/); return m && parseInt('20' + m[1]) < ey; }, description: 'Renewal date inconsistency.' },
-];
-
-function detectLeaseEdgeCases(tenantState, extractionResult) {
-  const t = tenantState || {}, r = extractionResult || {};
-  const edgeCases = [];
-  for (const def of EDGE_CASE_DEFINITIONS) {
-    let triggered = false; try { triggered = !!def.detect(t, r); } catch (_) {}
-    if (triggered) edgeCases.push({ type: def.type, severity: def.severity, description: def.description, fieldImpact: def.fieldImpact.slice(), confidenceAdjustment: def.confidenceAdjustment, reviewerNote: def.reviewerNote });
-  }
-  const hasHigh = edgeCases.some(e => e.severity === 'high'), hasMedium = edgeCases.some(e => e.severity === 'medium');
-  return { edgeCases, overallRisk: hasHigh ? 'high' : hasMedium ? 'medium' : edgeCases.length ? 'low' : 'none', shouldFlagReview: hasHigh || (hasMedium && edgeCases.length >= 2), totalConfidenceAdjustment: edgeCases.reduce((s, e) => s + e.confidenceAdjustment, 0) };
-}
-
-function modelRoutingRecommendation(tenantState) {
-  const t = tenantState || {};
-  const amendments = Array.isArray(t.amendments) ? t.amendments : [];
-  const { edgeCases, overallRisk } = detectLeaseEdgeCases(t, null);
-  const confScore = t._confidenceScore ?? 100;
-  const signals = [];
-  if (amendments.length)  signals.push(`${amendments.length} amendment(s)`);
-  if (overallRisk === 'high') signals.push('High-risk edge cases');
-  if (confScore < 60)     signals.push(`Low confidence (${confScore})`);
-  if (edgeCases.some(e => e.type === 'AMENDMENT_CONFLICT'))        signals.push('Amendment conflict');
-  if (edgeCases.some(e => e.type === 'CONTRADICTORY_CAP_AND_STOP')) signals.push('Contradictory CAM clauses');
-  if (t.expense_stop != null && t.cap != null)                     signals.push('Both expense stop and CAM cap');
-  return signals.length
-    ? { model: 'claude-opus-4-8',           tier: 'complex', reason: signals.join('; '), signals }
-    : { model: 'claude-haiku-4-5-20251001', tier: 'simple',  reason: 'Simple single-doc lease', signals: [] };
-}
 
 // ── Test harness ──────────────────────────────────────────────────────────────
 
@@ -423,14 +270,26 @@ const conflictRoute = modelRoutingRecommendation({ amendments: [{ amendmentId: '
 assertEqual(conflictRoute.tier, 'complex', 'Amendment conflict routes to complex tier');
 assert(conflictRoute.signals.length > 0, 'Amendment conflict: signals populated');
 
+// AI-1 — no confidence score at all → Opus.
+//
+// Every case above hands the router an explicit score, which is why the whole
+// benchmark stayed green while `?? 100` was still in the module: no fixture
+// ever exercised the state that actually occurs in production. The lease
+// extraction prompt does not ask the model for a confidence score, so this —
+// not `_confidenceScore: 92` — is the common case. Unknown routes conservatively.
+const unknownConfRoute = modelRoutingRecommendation({ tenant_name: 'Unscored Co', leased_sqft: 1000, start_date: '2022-01-01', end_date: '2027-01-01', cap: 5, amendments: [], fieldEvidence: {} });
+assertEqual(unknownConfRoute.tier, 'complex', 'Unknown confidence routes to complex tier');
+assert(unknownConfRoute.signals.some(s => /confidence unknown/i.test(s)), 'Unknown confidence: the reason names it');
+
 const routeCorrect = [
   simpleRoute.tier === 'simple',
   amendRoute.tier === 'complex',
   lowConfRoute.tier === 'complex',
   conflictRoute.tier === 'complex',
+  unknownConfRoute.tier === 'complex',
 ].filter(Boolean).length;
-results.routing = { correct: routeCorrect, total: 4, accuracy: Math.round((routeCorrect / 4) * 100) };
-console.log(`  Model routing: ${routeCorrect}/4 correct`);
+results.routing = { correct: routeCorrect, total: 5, accuracy: Math.round((routeCorrect / 5) * 100) };
+console.log(`  Model routing: ${routeCorrect}/5 correct`);
 
 // ── BENCHMARK SUMMARY ─────────────────────────────────────────────────────────
 
@@ -442,8 +301,8 @@ const overallPct   = Math.round((totalCorrect / totalTests) * 100);
 const halluRate = Math.round(((normFixtures.length - normCorrect) / normFixtures.length) * 100);
 
 // Model routing split (simple vs complex)
-const complexSignalCount = 3; // amendment, low-conf, conflict scenarios
-const routingComplexPct  = Math.round((complexSignalCount / 4) * 100);
+const complexSignalCount = 4; // amendment, low-conf, conflict, unknown-conf scenarios
+const routingComplexPct  = Math.round((complexSignalCount / 5) * 100);
 
 console.log('\n' + '═'.repeat(60));
 console.log('  PHASE 15 BENCHMARK RESULTS');

@@ -5287,6 +5287,65 @@ function _tenantReviewStateBadgeHtml(t) {
 
 // ── Field Confidence + Source Trace helpers ────────────────────────────────
 // Pure functions — read tenant fields and metadata only, no mutations.
+
+/**
+ * AI-1 — the extractor's per-field confidence for square footage, or null when
+ * it reported none.
+ *
+ * There is no `?? 100` here, and there must never be one. The lease extraction
+ * prompt (CLAUDE_LEASE_SYSTEM) does not ask the model for a per-field
+ * confidence block at all — it asks for `quotes`. So for every AI-extracted
+ * lease this value is ABSENT, and each `?? 100` in the codebase was quietly
+ * converting "the extractor told us nothing" into "the extractor was certain".
+ *
+ * That is the exact inversion Architecture Principle #8 forbids: absence of
+ * evidence is not evidence of absence. It also corrupts Phase 0, whose whole
+ * purpose is to count how often a reviewer had to correct a field — a lease
+ * that never gets flagged never gets reviewed, and the measurement reads as
+ * success.
+ *
+ * Returns a finite number or null. Callers must branch on null explicitly.
+ */
+function sqftConfidenceScore(t) {
+  const fc = t?.confidence?.leased_sqft ?? t?.confidence?.leasedSqft;
+  return (typeof fc === 'number' && Number.isFinite(fc)) ? fc : null;
+}
+
+/**
+ * AI-1 — true when extraction stored a verbatim clause for this field.
+ *
+ * This is the OTHER kind of evidence a field can carry. MainStreet is
+ * evidence-first, so a field backed by the clause it came from is legitimately
+ * "verified" even without a numeric score. A field with neither a score nor a
+ * quote has nothing behind it and must not be badged as though it does.
+ */
+function hasFieldQuote(fieldKey, t) {
+  return (t?.fieldEvidence?.[fieldKey]?.snapshots || []).some(s => s && s.quote);
+}
+
+/**
+ * AI-1 — is this tenant's square footage approximate?
+ *
+ * Square footage is the denominator of every pro-rata share on every tenant
+ * statement, so "we don't actually know how good this number is" has to be
+ * expressible. Three states, not two:
+ *
+ *   score reported        → approximate when it is below the 70 threshold
+ *   no score, but a quote → not approximate; the clause is the evidence
+ *   no score, no quote    → approximate. Nothing stands behind the number.
+ *
+ * A reviewer who has confirmed the field takes precedence over all of it.
+ */
+function sqftIsApproximate(t) {
+  if (isFieldManuallyVerified('leased_sqft', t)) return false;
+  const fc = sqftConfidenceScore(t);
+  if (fc != null) return fc < 70;
+  return !hasFieldQuote('leased_sqft', t);
+}
+window.sqftConfidenceScore = sqftConfidenceScore;
+window.hasFieldQuote       = hasFieldQuote;
+window.sqftIsApproximate   = sqftIsApproximate;
+
 function getFieldConfidence(fieldName, t) {
   if (!t) return { status: 'missing', source: 'missing', note: 'No lease data' };
   // Manual override takes precedence — field was corrected by a reviewer.
@@ -5312,8 +5371,17 @@ function getFieldConfidence(fieldName, t) {
     }
     case 'leased_sqft': {
       if (isEmpty) return { status: 'missing', source: 'missing', note: 'Square footage not found' };
-      const fc = t.confidence?.leased_sqft ?? t.confidence?.leasedSqft;
+      const fc = sqftConfidenceScore(t);
       if (fc != null && fc < 70) return { status: 'estimated', source: 'ocr', note: 'Confidence below threshold — verify against lease' };
+      // AI-1 — no score AND no source clause is not verification. This branch
+      // used to fall through to 'verified / Extracted from lease document',
+      // which put a ✓ on a number nothing stands behind. Square footage drives
+      // every pro-rata share on every tenant statement; it is the last field
+      // that should be assumed correct.
+      if (fc == null && !hasFieldQuote('leased_sqft', t)) {
+        return { status: 'estimated', source: 'extraction',
+                 note: 'No confidence score and no source clause — verify against lease' };
+      }
       return { status: 'verified', source: 'structured', note: 'Extracted from lease document' };
     }
     case 'cap': {
@@ -9369,7 +9437,25 @@ function runFullReconciliation(property) {
     if (_outOfYear || _undated) {
       console.log(`[runFullReconciliation] year ${_year}: excluded ${_outOfYear} out-of-year invoice(s); ${_undated} undated invoice(s) included`);
     }
-    if (!invoices.length) return [];
+    // CAM-2 follow-on — the year filter must not fail silently.
+    //
+    // The filter shipped with a bare `return []`, and the default CAM year is
+    // the CURRENT year. A manager reconciling last year's CAM in August — which
+    // is when CAM reconciliation actually happens — fed the engine a full set of
+    // real invoices, every one of them out of year, and got back an empty run
+    // with nothing on screen to say why. The correctness fix had turned an
+    // inflated number into a missing one, which is not an improvement.
+    //
+    // Refusing is still right. Refusing quietly is not.
+    if (!invoices.length) {
+      console.error(`[runFullReconciliation] refused: all ${_outOfYear} invoice(s) fall outside CAM year ${_year}`);
+      if (typeof showToast === 'function') {
+        showToast(`⚠️ Nothing to reconcile — all ${_outOfYear} invoice${_outOfYear !== 1 ? 's' : ''} are dated outside the ${_year} CAM year. Switch the CAM year to match your invoices, or upload invoices for ${_year}.`,
+          { color: '#92400e', textColor: '#fef3c7', duration: 12000 });
+      }
+      property._yearScope = { year: _year, excluded: _outOfYear, undated: _undated, refused: true };
+      return [];
+    }
   }
   property._yearScope = { year: _year, excluded: _outOfYear, undated: _undated };
 
@@ -9724,7 +9810,10 @@ async function runAllocation() {
     const lease = new Lease(t.tenant_name, t.unitNumber || '', parseSqft(t.leased_sqft), t.start_date || '', t.end_date || '',
       t.excluded_categories ? t.excluded_categories.split(',').map(s => s.trim()) : [],
       t.cap ?? null, t.capBaseAmount ?? null,
-      (t.confidence?.leased_sqft ?? t.confidence?.leasedSqft ?? 100) < 70,
+      // AI-1 — sqFtApproximate. `?? 100` meant an unreported confidence read as
+      // a perfect one, so this flag could never be true for an AI-extracted
+      // lease. See sqftIsApproximate().
+      sqftIsApproximate(t),
       t.baseYear ?? null,
       t.lease_type || null);
     lease.id = t.id || null; // stable id for invoice linking
@@ -16974,9 +17063,7 @@ function _rwConfChip(key, t) {
   if (key !== 'tenant_name' && isFieldManuallyVerified(key, t))
     return { label: 'Manual', cls: 'rw-conf-chip--manual' };
   // leased_sqft has a numeric per-field confidence score
-  const numericConf = key === 'leased_sqft'
-    ? (t.confidence?.leased_sqft ?? t.confidence?.leasedSqft ?? null)
-    : null;
+  const numericConf = key === 'leased_sqft' ? sqftConfidenceScore(t) : null;
   if (numericConf !== null) {
     if (numericConf >= 80) return { label: 'High',   cls: 'rw-conf-chip--high' };
     if (numericConf >= 50) return { label: 'Medium', cls: 'rw-conf-chip--mid' };
@@ -17002,7 +17089,7 @@ function _rwExtractionMethod(key, t) {
   if (key === 'lease_type' && t.doc_has_lease_type === false)
     return 'Estimated from Context';
   if (key === 'leased_sqft') {
-    const nc = t.confidence?.leased_sqft ?? t.confidence?.leasedSqft;
+    const nc = sqftConfidenceScore(t);
     if (nc != null && nc < 50) return 'Estimated from Context';
   }
   return 'AI Extraction';

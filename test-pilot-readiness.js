@@ -219,10 +219,17 @@ const preNarr=await p.evaluate(()=>{
   : bad('a narrative was produced with no reconciliation behind it',JSON.stringify(preNarr));
 
 // Supply invoices and actually reconcile.
+//
+// The CAM year must be set to the year the invoices belong to. This used to be
+// implicit — the year defaulted to "now" and the engine ignored it — and the
+// walkthrough passed only because every invoice was allocated regardless of its
+// date (CAM-2). Now that the engine scopes its own inputs, a real manager has
+// to pick the year, so the walkthrough picks it too, through the same control.
 await p.evaluate(async()=>{
   const inv=[{vendorName:'Talon Security',category:'security',amount:26100,invoiceDate:'2025-05-03'},
              {vendorName:'Cascade Insurance',category:'insurance',amount:42000,invoiceDate:'2025-02-01'},
              {vendorName:'Pacific Facilities',category:'janitorial',amount:31250,invoiceDate:'2025-06-21'}];
+  setCamYear(2025);
   invoiceData.splice(0,invoiceData.length,...inv);
   const prop=_props.find(x=>x.id===activePropId); prop.invoices=inv;
   switchWorkspaceTab('cam');

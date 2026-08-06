@@ -83,8 +83,15 @@ window.LeaseReviewPackets = (() => {
     if (auditNoTimeline.length > 0) warningItems.push(`Audit rights language missing reimbursement timeline in ${auditNoTimeline.length} lease${auditNoTimeline.length !== 1 ? 's' : ''}.`);
 
     // Low confidence leases
-    const lowConf = tenants.filter(t => t._confidence === 'low' || t._confidenceScore < 55);
+    // AI-1 — the null guard is explicit. `undefined < 55` is false, so a lease
+    // with no score was silently counted as fine; the packet then reported
+    // nothing at all about it. Unknown gets its own line rather than being
+    // folded into "low" (which would overstate) or dropped (which understates).
+    const _score = t => (typeof t._confidenceScore === 'number' && Number.isFinite(t._confidenceScore)) ? t._confidenceScore : null;
+    const lowConf = tenants.filter(t => t._confidence === 'low' || (_score(t) != null && _score(t) < 55));
     if (lowConf.length > 0) warningItems.push(`${lowConf.length} lease${lowConf.length !== 1 ? 's' : ''} extracted with low confidence — manual field verification recommended.`);
+    const unknownConf = tenants.filter(t => !t._confidence && _score(t) == null);
+    if (unknownConf.length > 0) unresolvedItems.push(`${unknownConf.length} lease${unknownConf.length !== 1 ? 's' : ''} carry no extraction confidence score — this packet cannot say how reliable those fields are.`);
 
     // Missing critical fields
     const missingCrit = tenants.filter(t => !t.leased_sqft || !t.start_date || !t.end_date);
@@ -350,17 +357,24 @@ window.LeaseReviewPackets = (() => {
   // ── TASK 8: CONFIDENCE NARRATIVES ────────────────────────────────────────
 
   function buildConfidenceNarratives(tenants) {
-    const high = [], medium = [], low = [];
+    const high = [], medium = [], low = [], unknown = [];
     const narratives = [];
     let scoreSum = 0, scoreCount = 0;
 
     for (const t of (tenants || [])) {
       const name  = t.tenant_name || t.id || 'Unknown';
-      const score = t._confidenceScore ?? 70;
-      const level = t._confidence || (score >= 80 ? 'high' : score >= 55 ? 'medium' : 'low');
-      scoreSum += score; scoreCount++;
+      // AI-1 — `?? 70` invented a passing grade for a lease nobody scored, then
+      // averaged that invention into the packet's headline confidence number.
+      // A landlord reading "average confidence 74" had no way to tell how much
+      // of it was measured. Unmeasured leases are counted, named, and excluded
+      // from the average instead.
+      const score = (typeof t._confidenceScore === 'number' && Number.isFinite(t._confidenceScore))
+        ? t._confidenceScore : null;
+      const level = t._confidence
+        || (score == null ? 'unknown' : score >= 80 ? 'high' : score >= 55 ? 'medium' : 'low');
+      if (score != null) { scoreSum += score; scoreCount++; }
 
-      const bucket = level === 'high' ? high : level === 'medium' ? medium : low;
+      const bucket = level === 'high' ? high : level === 'medium' ? medium : level === 'low' ? low : unknown;
       bucket.push({ tenantName: name, score, level });
 
       const ams = Array.isArray(t.amendments) ? t.amendments : [];
@@ -401,9 +415,15 @@ window.LeaseReviewPackets = (() => {
     }
 
     const avgScore = scoreCount > 0 ? Math.round(scoreSum / scoreCount) : null;
-    const overallLevel = !avgScore ? 'low' : avgScore >= 80 ? 'high' : avgScore >= 55 ? 'medium' : 'low';
+    // AI-1 — no measured lease means no overall level. This used to report
+    // 'low', which is a claim; the truthful answer is that we don't know.
+    const overallLevel = avgScore == null ? 'unknown'
+      : avgScore >= 80 ? 'high' : avgScore >= 55 ? 'medium' : 'low';
+    if (unknown.length > 0) {
+      narratives.push(`${unknown.length} lease${unknown.length !== 1 ? 's' : ''} carry no extraction confidence score and are excluded from the average.`);
+    }
 
-    return { highConfidence: high, mediumConfidence: medium, lowConfidence: low, narratives: [...new Set(narratives)], overallConfidenceLevel: overallLevel, averageScore: avgScore };
+    return { highConfidence: high, mediumConfidence: medium, lowConfidence: low, unknownConfidence: unknown, narratives: [...new Set(narratives)], overallConfidenceLevel: overallLevel, averageScore: avgScore };
   }
 
   // ── TASK 1: MAIN GENERATOR ────────────────────────────────────────────────
