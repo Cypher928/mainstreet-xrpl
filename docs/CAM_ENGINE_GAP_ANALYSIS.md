@@ -1,5 +1,15 @@
 # CAM Engine — capability matrix and gap analysis
 
+> **Update (Aug 2026).** A production-readiness audit of the engine found six
+> defects distinct from C1–C3, all now fixed: currency strings silently valued
+> at $0 or $1, invoices from every year included in a single-year run, the lease
+> exclusion schedule not binding direct matches, a matcher that billed whole
+> invoices on a naive substring hit, an unguarded divide-by-zero, and a SECOND
+> CAM engine that the test suite covered while production used the other one.
+> The worst of them — unit "1" matching every dated invoice at 90% confidence —
+> was found while writing the test, not during the audit. See the CAM-1..CAM-6
+> section at the end of this file.
+
 Benchmarked against CapVeri's publicly described methodology, August 2026.
 Every row below was verified against the code, not inferred from feature names.
 
@@ -225,3 +235,63 @@ does not retain the history to answer it with.
 
 **Deliberately near zero:** XRPL/RLUSD settlement, acquisitions, escrow/reserves,
 marketing production. All built; none of them are why a first customer pays.
+
+
+---
+
+## Production audit findings CAM-1..CAM-6 (fixed)
+
+Separate from C1–C3. These were defects in what already existed, not gaps.
+
+**CAM-1 · Currency strings were silently mis-valued.** `parseFloat` stops at the
+first non-numeric character: `"1,250.00"` became `1`, `"$84,500"` became `NaN`
+and then `0` via `|| 0`. A zeroed invoice leaves the pool with no signal — every
+tenant under-billed, the landlord absorbing it. One parser, `parseMoney()`, is
+now shared by the engine and the Property Workspace, which had been fixed
+separately and therefore *disagreed with the engine about the same invoice*.
+It returns **null** for unreadable, never 0, because zero is a real amount and
+must not be how the system says "I could not read this". Unreadable invoices are
+excluded from the pool and named in a toast.
+
+**CAM-2 · A single-year reconciliation summed every year.** `_runYear` tagged
+the result and never filtered the inputs, so a run headed "2026 CAM" included
+2025's invoices. Undated invoices are kept — dropping them would lose real
+expenses — but counted and reported.
+
+**CAM-3 · The exclusion schedule did not bind direct matches.** Exclusions
+filtered only the shared pool. A $50,000 capital expenditure the lease
+explicitly excludes was billed 100% to whichever tenant it matched. Now applied
+to both pools, with a flag naming what was recognised and why it was not billed.
+
+**CAM-4 · Whole-invoice assignments were invisible.** A direct match bills the
+entire invoice to one tenant; nothing listed them. Every direct assignment now
+carries a flag with vendor, amount and match reason.
+
+**CAM-4b · THE MATCHER — the most severe finding, and it was found while writing
+the test rather than during the audit.** The haystack included the invoice
+*date*, and matching was naive substring:
+
+    unit "1"    vs "apex roofing 2026-05-01"  -> 90%, whole invoice
+    unit "2"    vs "...2026-..."              -> 90%
+    name "A"    vs "...repairs..."            -> 75%
+    name "Roof" vs "Apex Roofing"             -> 75%
+
+Units 1 and 2 are the commonest unit numbers there are. On any property with a
+Unit 1 tenant, **every** 2026-dated invoice was billed in full to them. Now:
+dates are out of the haystack, matching is on token boundaries, and identifiers
+too short to be evidence (names under 4 chars, units under 2) cannot trigger a
+whole-invoice assignment. Legitimate matches — a real vendor/tenant name, a
+"Suite 210" reference — still resolve.
+
+**CAM-5 · Zero rentable area produced `$∞`.** `proRata = sqFt / 0` is Infinity;
+with both zero it is NaN. The engine now refuses and names the missing field.
+
+**CAM-6 · Two CAM engines, and the tests covered the dead one.**
+`runCAMAllocation` was computed in `runAllocation()` and discarded four lines
+later by `lastResults = fullResults`. `test-allocation.js` tested it. Every green
+run of that suite was evidence about a function no tenant statement ever came
+from — and the two disagreed: the dead one guarded divide-by-zero and validated
+the cap range, the live one did neither. The dead function is removed;
+`test-allocation.js` now drives `runFullReconciliation` in a browser.
+`allocation-engine.js` is retained as the package entry point with a header
+saying plainly that it is not the production engine.

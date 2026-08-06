@@ -41,7 +41,12 @@ window.PropertyOS = (function () {
   // try/catch never fired because nothing throws. Parse what extraction
   // actually produces ("1,250.00", "$84,500"), keep cents, and say "—" when
   // there is genuinely no number rather than inventing one.
+  // CAM-1 — the SAME parser the engine uses. This pane and the reconciliation
+  // disagreeing about one invoice is worse than either being wrong alone: the
+  // panel is the more convincing of the two, so a manager would trust the
+  // number that never reached the math. Local copy is a fallback only.
   function _num(v) {
+    if (window.parseMoney) return window.parseMoney(v);
     if (v == null || v === '') return null;
     if (typeof v === 'number') return Number.isFinite(v) ? v : null;
     var cleaned = String(v).replace(/[$,\s]/g, '');

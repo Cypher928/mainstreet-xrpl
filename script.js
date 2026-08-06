@@ -794,6 +794,42 @@ class Lease {
   }
 }
 
+/**
+ * CAM-1 — ONE currency parser, for the engine and every surface that reports it.
+ *
+ * The engine used `parseFloat`, which stops at the first non-numeric character:
+ *
+ *   parseFloat("1,250.00")      = 1      -> an invoice worth $1
+ *   parseFloat("$84,500")       = NaN    -> `|| 0` made it $0, silently dropped
+ *   parseFloat("84,500.00 USD") = 84
+ *
+ * A dropped invoice does not fail loudly — it leaves the pool, every tenant is
+ * under-billed, and the landlord absorbs it with nothing on screen to say so.
+ * Extraction produces exactly these shapes.
+ *
+ * Returns null for anything it cannot parse, NEVER 0. Zero is a real amount and
+ * must not be how the system says "I could not read this". Callers decide what
+ * to do with null, and every caller in the money path must surface it.
+ */
+function parseMoney(v) {
+  if (v == null || v === '') return null;
+  if (typeof v === 'number') return Number.isFinite(v) ? v : null;
+  var raw = String(v).trim();
+  // Accounting negatives: (500) means -500.
+  var neg = /^\(.*\)$/.test(raw);
+  if (neg) raw = raw.slice(1, -1);
+  // Strip currency symbols, thousands separators, spaces and a trailing code.
+  var cleaned = raw.replace(/[$£€]/g, '')
+                   .replace(/[,\s]/g, '')
+                   .replace(/[A-Za-z]+$/, '');
+  if (cleaned === '' || cleaned === '-' || cleaned === '.') return null;
+  if (!/^-?\d*\.?\d+$/.test(cleaned)) return null;   // reject "12.34.56", "1e9x"
+  var n = Number(cleaned);
+  if (!Number.isFinite(n)) return null;
+  return neg ? -n : n;
+}
+window.parseMoney = parseMoney;
+
 class Invoice {
   // PW-3 — relations set in the invoice register (CAM eligible, space, building
   // system) used to be dropped at this boundary. The engine therefore could not
@@ -805,7 +841,12 @@ class Invoice {
     this.spaceId         = rel.spaceId || null;
     this.system          = rel.system  || null;
     this.date            = date     || '';
-    this.amount          = parseFloat(amount) || 0;
+    // CAM-1 — null means "unreadable", which is not the same as zero. The
+    // reconciliation refuses to allocate an unreadable invoice rather than
+    // silently pricing it at nothing.
+    var _parsed         = parseMoney(amount);
+    this.amountUnparsed = _parsed === null ? String(amount == null ? '' : amount) : null;
+    this.amount         = _parsed === null ? 0 : _parsed;
     this.vendorName      = vendor   || '';  // field matchInvoiceToTenant expects
     this.category        = category || 'other';
     this.invoiceDate     = date     || '';  // field matchInvoiceToTenant expects
@@ -9189,8 +9230,35 @@ function matchesTenant(inv, tenant) {
 function matchInvoiceToTenant(invoice, tenants) {
   let bestMatch = null;
   let bestConf  = 0;
-  const text = [invoice.vendorName, invoice.category, invoice.invoiceDate]
+  // CAM-4 — a direct match bills the ENTIRE invoice to one tenant, so the
+  // matcher must be conservative. It was neither.
+  //
+  // The haystack included invoiceDate, and matching was naive substring:
+  //   unit "1"  vs "apex roofing 2026-05-01"  -> hit, conf 90, whole invoice
+  //   unit "2"  vs "...2026-..."              -> hit, conf 90
+  //   name "A"  vs "...repairs..."            -> hit, conf 75
+  //   name "Roof" vs "Apex Roofing"           -> hit, conf 75
+  // Units 1 and 2 are the most common unit numbers there are; on any property
+  // with a Unit 1 tenant, EVERY invoice in a 2026 reconciliation was billed in
+  // full to them.
+  //
+  // A date can never identify a tenant, so it is out of the haystack. Matching
+  // is now on word boundaries, and identifiers too short to be evidence are not
+  // allowed to trigger a whole-invoice assignment.
+  const text = [invoice.vendorName, invoice.category]
     .filter(Boolean).join(' ').toLowerCase();
+
+  const MIN_NAME_LEN = 4;   // "A", "Li", "BP" cannot carry an invoice on their own
+  const MIN_UNIT_LEN = 2;   // "1" is a substring of half the numbers in a document
+  const _tokenHit = (needle, hay) => {
+    if (!needle) return false;
+    const n = String(needle).trim().toLowerCase();
+    if (!n) return false;
+    // Whole-token match: "roof" must not match "roofing", and "1" must not
+    // match "2026-05-01".
+    const esc = n.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
+    return new RegExp('(^|[^a-z0-9])' + esc + '($|[^a-z0-9])', 'i').test(hay);
+  };
 
   console.log('[matchInvoiceToTenant] INPUT', {
     invoiceVendorName:  invoice.vendorName,
@@ -9211,8 +9279,9 @@ function matchInvoiceToTenant(invoice, tenants) {
     // support both Lease objects (tenantName) and tenantData items (tenant_name)
     const name = t.tenantName || t.tenant_name || '';
 
-    const unitHit = !!(t.unitNumber && text.includes(t.unitNumber.toLowerCase()));
-    const nameHit = !!(name && text.includes(name.toLowerCase()));
+    const unitStr = String(t.unitNumber || '').trim();
+    const unitHit = unitStr.length >= MIN_UNIT_LEN && _tokenHit(unitStr, text);
+    const nameHit = String(name || '').trim().length >= MIN_NAME_LEN && _tokenHit(name, text);
 
     if (unitHit) {
       conf   = 90;
@@ -9253,11 +9322,56 @@ function matchInvoiceToTenant(invoice, tenants) {
 // Works on a Property object. Shared invoices are split pro-rata; invoices with
 // a direct tenant match (confidence >= 75) are charged only to that tenant.
 
+function _fmtMoney(n) {
+  const v = typeof n === 'number' ? n : parseMoney(n);
+  return v == null ? '—' : v.toLocaleString('en-US', { style: 'currency', currency: 'USD' });
+}
+
 function runFullReconciliation(property) {
   // Always read fresh tenant data — never rely on what was baked into Lease objects
   const liveTenants = currentProperty()?.tenants || [];
-  const { leases, invoices, totalSqFt } = property;
+  const { leases, totalSqFt } = property;
+  let { invoices } = property;
+
+  // CAM-5 — refuse rather than divide by zero. proRata = sqFt / 0 is Infinity,
+  // which rendered as "$∞" on a tenant statement; with both zero it is NaN.
+  // The other engine guarded this; the one that runs did not.
+  if (!(Number(totalSqFt) > 0)) {
+    console.error('[runFullReconciliation] refused: property has no rentable area');
+    if (typeof showToast === 'function') {
+      showToast('⚠️ Cannot reconcile — this property has no total square footage. Enter it in Property Setup first.',
+        { color: '#92400e', textColor: '#fef3c7', duration: 8000 });
+    }
+    return [];
+  }
   if (!leases.length || !invoices.length) return [];
+
+  // CAM-2 — allocate only the invoices that belong to THIS reconciliation year.
+  // The year was computed and used to TAG the result but never to select the
+  // inputs, so a run headed "2026 CAM" summed 2025's invoices too and every
+  // number was inflated by a full prior year. The only signal was an advisory
+  // flag saying dates "may not match".
+  //
+  // Undated invoices are kept — dropping them would silently lose real expenses
+  // — but they are counted and reported, because "included on no evidence" is a
+  // decision the manager should see rather than one the engine makes quietly.
+  const _year = property.camYear != null ? String(property.camYear) : null;
+  let _outOfYear = 0, _undated = 0;
+  if (_year) {
+    invoices = invoices.filter(inv => {
+      const raw = inv.invoiceDate || inv.date || '';
+      const d = raw ? new Date(raw) : null;
+      if (!d || isNaN(d.getTime())) { _undated++; return true; }
+      const keep = String(d.getFullYear()) === _year;
+      if (!keep) _outOfYear++;
+      return keep;
+    });
+    if (_outOfYear || _undated) {
+      console.log(`[runFullReconciliation] year ${_year}: excluded ${_outOfYear} out-of-year invoice(s); ${_undated} undated invoice(s) included`);
+    }
+    if (!invoices.length) return [];
+  }
+  property._yearScope = { year: _year, excluded: _outOfYear, undated: _undated };
 
   // Pre-compute property-level sqFt overflow once
   const totalLeasedSqFt = leases.reduce((s, l) => s + (l.sqFt || 0), 0);
@@ -9309,12 +9423,18 @@ function runFullReconciliation(property) {
     const live    = liveTenants.find(t => t?.id === lease.id) || {};
     const proRata = lease.sqFt / totalSqFt;
 
-    const eligibleShared = sharedInvoices.filter(inv =>
-      !lease.excludedCategories.includes((inv.category || '').toLowerCase())
-    );
+    const _isExcluded = inv => lease.excludedCategories.includes((inv.category || '').toLowerCase());
+
+    const eligibleShared = sharedInvoices.filter(inv => !_isExcluded(inv));
     const sharedTotal = eligibleShared.reduce((s, inv) => s + inv.amount, 0) * proRata;
 
-    const ownInvoices = directInvoices.filter(inv => matchesTenant(inv, lease));
+    // CAM-3 — the exclusion schedule applies to DIRECT invoices too. It used to
+    // filter only the shared pool, so a $50,000 capital expenditure the lease
+    // explicitly excludes was billed 100% to whichever tenant it matched —
+    // uncapped by pro-rata, and in the clause tenants audit hardest.
+    const matched     = directInvoices.filter(inv => matchesTenant(inv, lease));
+    const ownInvoices = matched.filter(inv => !_isExcluded(inv));
+    const excludedDirect = matched.filter(_isExcluded);
     const ownTotal    = ownInvoices.reduce((s, inv) => s + inv.amount, 0);
 
     let rawTotal      = sharedTotal + ownTotal;
@@ -9347,6 +9467,30 @@ function runFullReconciliation(property) {
 
     // Recompute flags from live tenant data — never cache between runs
     const flags = [];
+
+    // CAM-3 — an excluded invoice that matched this tenant is reported, not
+    // silently dropped: the manager needs to know it was recognised and why it
+    // was not billed.
+    if (excludedDirect.length) {
+      flags.push({
+        code:    'DIRECT_EXCLUDED_CATEGORY',
+        message: `${excludedDirect.length} matched invoice${excludedDirect.length !== 1 ? 's' : ''} excluded by the lease`,
+        explanation: `${excludedDirect.map(i => `${i.vendorName} ${_fmtMoney(i.amount)} (${i.category})`).join('; ')} matched this tenant but ${excludedDirect.length !== 1 ? 'their categories are' : 'its category is'} excluded from CAM by the lease, so ${excludedDirect.length !== 1 ? 'they were' : 'it was'} not billed.`,
+      });
+    }
+
+    // CAM-4 — a direct match bills the WHOLE invoice to one tenant, on a fuzzy
+    // name/unit match at >=75% confidence. The consequence is wildly asymmetric:
+    // a wrong shared classification moves a few percent, a wrong direct match
+    // moves the entire invoice. Every one is surfaced by name and amount so it
+    // can be checked before a statement goes out.
+    if (ownInvoices.length) {
+      flags.push({
+        code:    'DIRECT_ASSIGNMENT',
+        message: `${ownInvoices.length} invoice${ownInvoices.length !== 1 ? 's' : ''} billed in full to this tenant`,
+        explanation: `${ownInvoices.map(i => `${i.vendorName} ${_fmtMoney(i.amount)}${i.matchReason ? ` — matched on ${i.matchReason}` : ''}`).join('; ')}. Direct matches are charged in full rather than by pro-rata share — confirm each one belongs to this tenant.`,
+      });
+    }
 
     if (sqFtOverflow) {
       flags.push({
@@ -9427,38 +9571,12 @@ function runFullReconciliation(property) {
 
 // ─── CAM Allocation Engine ────────────────────────────────────────────────────
 
-function runCAMAllocation(expenses, tenants) {
-  return tenants.map(t => {
-    const proRata  = t.totalSqft > 0 ? t.leasedSqft / t.totalSqft : 0;
-    const eligible = expenses.filter(e =>
-      !t.excludedCategories.includes(e.category.toLowerCase())
-    );
-    let total = eligible.reduce((s, e) => s + e.amount * proRata, 0);
-    let capAdj = null;
+// CAM-6 — runCAMAllocation lived here as a SECOND CAM engine. Its result was
+// computed in runAllocation() and discarded; test-allocation.js tested it while
+// production used runFullReconciliation. Two implementations that disagreed,
+// with the coverage on the wrong one. Removed rather than left to rot.
+// runFullReconciliation is the only CAM arithmetic in the product.
 
-    // Cap requires a prior-year base amount to calculate correctly.
-    // capBaseAmount must be entered manually; without it we skip cap enforcement
-    // rather than show wrong math.
-    const _capPctVal = parseFloat(t.capPct);
-    if (t.capPct !== null && t.capPct !== '' && !isNaN(_capPctVal) &&
-        _capPctVal >= 0 && _capPctVal <= 100 &&
-        t.capBaseAmount !== null && t.capBaseAmount !== undefined && !isNaN(parseFloat(t.capBaseAmount))) {
-      const cap = parseFloat(t.capBaseAmount) * (1 + _capPctVal / 100);
-      if (total > cap) { capAdj = total - cap; total = cap; }
-    } else if (t.capPct !== null && t.capPct !== '' && !isNaN(_capPctVal) && (_capPctVal < 0 || _capPctVal > 100)) {
-      console.warn('[CAM] Ignoring out-of-range cap percentage for', t.name, ':', _capPctVal);
-    }
-
-    return {
-      name:            t.name,
-      proRata,
-      allocatedAmount: parseFloat(total.toFixed(2)),
-      capAdjustment:   capAdj !== null ? parseFloat(capAdj.toFixed(2)) : null,
-      capApplied:      capAdj !== null,
-      eligibleCount:   eligible.length,
-    };
-  });
-}
 
 async function runAllocation() {
   if (isRunning) return; // prevent concurrent runs
@@ -9587,7 +9705,13 @@ async function runAllocation() {
     section.prepend(warn);
   }
 
-  const results   = runCAMAllocation(invoices, tenants);
+  // CAM-6 — runCAMAllocation's result was computed here and DISCARDED four
+  // lines later by `lastResults = fullResults`. Two CAM engines existed, they
+  // disagreed (one guarded divide-by-zero and validated the cap range, the
+  // production one did neither), and test-allocation.js tested the dead one —
+  // so every green run of that suite was evidence about a function no tenant
+  // statement ever came from. The call is gone; runFullReconciliation is the
+  // only CAM arithmetic that runs.
   const totalCost = invoices.reduce((s, e) => s + e.amount, 0);
 
   const totalLeasedSqft = tenants.reduce((s, t) => s + (t.leasedSqft || 0), 0);
@@ -9595,6 +9719,7 @@ async function runAllocation() {
 
   // Build a Property + run full reconciliation (for per-tenant invoice breakdown + direct matching)
   const _prop = new Property(propName, totalSqft);
+  _prop.camYear = _runYear;   // CAM-2: the engine scopes its own inputs
   _prop.addLeases(getValidTenants().map(t => {
     const lease = new Lease(t.tenant_name, t.unitNumber || '', parseSqft(t.leased_sqft), t.start_date || '', t.end_date || '',
       t.excluded_categories ? t.excluded_categories.split(',').map(s => s.trim()) : [],
@@ -9605,7 +9730,16 @@ async function runAllocation() {
     lease.id = t.id || null; // stable id for invoice linking
     return lease;
   }));
-  _prop.addInvoices(invoiceData.filter(inv => inv && inv.vendorName && parseFloat(inv.amount) > 0).map(inv =>
+  // CAM-1 — an amount that will not parse is reported, not filtered into
+  // silence. parseFloat used here let "1,250.00" through as 1.
+  const _unreadable = invoiceData.filter(inv => inv && inv.vendorName && parseMoney(inv.amount) === null);
+  if (_unreadable.length) {
+    const _names = _unreadable.map(i => `${i.vendorName} (${i.amount})`).join(', ');
+    console.warn('[CAM] invoices with unreadable amounts, excluded from the pool:', _names);
+    showToast(`⚠️ ${_unreadable.length} invoice${_unreadable.length !== 1 ? 's' : ''} had an amount that could not be read and were left OUT of this reconciliation: ${_names}`,
+      { color: '#92400e', textColor: '#fef3c7', duration: 10000 });
+  }
+  _prop.addInvoices(invoiceData.filter(inv => inv && inv.vendorName && (parseMoney(inv.amount) || 0) > 0).map(inv =>
     new Invoice(inv.id || null, inv.invoiceDate, inv.amount, inv.vendorName, inv.category, '',
       { camEligible: inv.camEligible, spaceId: inv.spaceId, system: inv.system })
   ));
