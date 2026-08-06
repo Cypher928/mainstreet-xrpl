@@ -31,6 +31,55 @@ window.AIWorkspace = (() => {
 
   const _esc = (s) => String(s ?? '').replace(/[&<>"']/g, (c) =>
     ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[c]));
+
+  /**
+   * SEC-6 — the only place an action verb becomes a call.
+   *
+   * Every verb is a fixed name in this table. A value that arrives in a data
+   * attribute is passed as an ARGUMENT, never concatenated into source. There is
+   * no default branch: an unrecognised verb does nothing rather than guessing.
+   */
+  const _AIW_ACTIONS = {
+    openProperty:      (id)   => window.ccOpenProperty      && window.ccOpenProperty(id),
+    openReserves:      (id)   => window.ccOpenReserves      && window.ccOpenReserves(id),
+    showPortfolio:     ()     => window.ccShowPortfolio     && window.ccShowPortfolio(),
+    showCommandCenter: ()     => window.showCommandCenter   && window.showCommandCenter(),
+    openAcquisitions:  ()     => window.ccOpenAcquisitions  && window.ccOpenAcquisitions(),
+    startTour:         ()     => window.startGuidedTour     && window.startGuidedTour(),
+    ask:               (text) => window.aiwAsk              && window.aiwAsk(text),
+    openDrafting:      (type, ctxJson) => {
+      if (!window.openDraftingStudio) return;
+      let ctx = null;
+      // The context is JSON in a data attribute, parsed — not interpolated into
+      // an object literal, which is what let a tenant id become code.
+      if (ctxJson) { try { ctx = JSON.parse(ctxJson); } catch (_) { ctx = null; } }
+      return ctx ? window.openDraftingStudio(type, ctx) : window.openDraftingStudio(type);
+    },
+    // SEC-6 — a URL from a settlement record is data. Only https may be opened;
+    // a stored javascript: URL would otherwise execute in the app's origin.
+    openUrl: (url) => {
+      let u;
+      try { u = new URL(String(url), window.location.origin); } catch (_) { return; }
+      if (u.protocol !== 'https:') {
+        console.warn('[aiw] refused to open a non-https URL:', u.protocol);
+        return;
+      }
+      window.open(u.href, '_blank', 'noopener');
+    },
+    showEvidence: (_a, _b, btn) => {
+      const c = btn && btn.closest('.aiw-answer') && btn.closest('.aiw-answer').querySelector('.aiw-cite--live');
+      if (c) c.click();
+    },
+  };
+
+  document.addEventListener('click', function (e) {
+    const btn = e.target && e.target.closest && e.target.closest('.aiw-action[data-aiw-act]');
+    if (!btn) return;
+    const fn = Object.prototype.hasOwnProperty.call(_AIW_ACTIONS, btn.dataset.aiwAct)
+      ? _AIW_ACTIONS[btn.dataset.aiwAct] : null;
+    if (!fn) { console.warn('[aiw] unknown action verb:', btn.dataset.aiwAct); return; }
+    fn(btn.dataset.aiwArg, btn.dataset.aiwArg2, btn);
+  });
   const _fmt$ = (n) => '$' + Math.round(Number(n) || 0).toLocaleString('en-US');
   const _num  = (v) => { const n = parseFloat(v); return isNaN(n) ? 0 : n; };
 
@@ -128,11 +177,11 @@ window.AIWorkspace = (() => {
 
   // ── standard action builders (route into real workflows) ─────────────────
 
-  const _actOpenProperty  = (p) => ({ label: `Open ${p.name}`, js: `ccOpenProperty('${p.id}')` });
-  const _actReserves      = (p) => ({ label: 'Open Reserve Requests', js: `ccOpenReserves('${p.id}')` });
-  const _actCommandCenter = () => ({ label: 'Open Command Center', js: 'showCommandCenter()' });
-  const _actPortfolio     = () => ({ label: 'View Portfolio', js: 'ccShowPortfolio()' });
-  const _actAcquisitions  = () => ({ label: 'Open Acquisition Review', js: 'ccOpenAcquisitions()' });
+  const _actOpenProperty  = (p) => ({ label: `Open ${p.name}`, act: 'openProperty', arg: p.id });
+  const _actReserves      = (p) => ({ label: 'Open Reserve Requests', act: 'openReserves', arg: p.id });
+  const _actCommandCenter = () => ({ label: 'Open Command Center', act: 'showCommandCenter' });
+  const _actPortfolio     = () => ({ label: 'View Portfolio', act: 'showPortfolio' });
+  const _actAcquisitions  = () => ({ label: 'Open Acquisition Review', act: 'openAcquisitions' });
 
   // ── intent registry ───────────────────────────────────────────────────────
 
@@ -250,7 +299,8 @@ window.AIWorkspace = (() => {
         citations: [],
         actions: set.items.slice(0, 3).map(it => ({
           label: `Draft for ${it.tenantName}`,
-          js: `openDraftingStudio('${type}', {propertyId:'${it.propertyId}', tenantId:'${it.tenantId}'})`,
+          act: 'openDrafting', arg: type,
+          arg2: JSON.stringify({ propertyId: it.propertyId, tenantId: it.tenantId }),
         })),
         confidence: { pct: 95, basis: 'drafting engine + current result set' },
         resultSet: set, _reused: set.label,
@@ -340,7 +390,7 @@ window.AIWorkspace = (() => {
           'I assemble the document from your reconciliation results, lease citations, reserve records, and dispute history — nothing invented, every figure traceable. You review, edit, and send it yourself; MainStreet never sends anything automatically.',
         ],
         citations: [],
-        actions: chosen.slice(0, 3).map(([, type, label]) => ({ label: `Draft ${label}`, js: `openDraftingStudio('${type}')` })),
+        actions: chosen.slice(0, 3).map(([, type, label]) => ({ label: `Draft ${label}`, act: 'openDrafting', arg: type })),
         confidence: { pct: 95, basis: 'drafting engine (evidence-grounded)' },
       };
     },
@@ -658,7 +708,7 @@ window.AIWorkspace = (() => {
           const rd = EE.computeEscrowReadiness(r, dr, draws);
           paragraphs.push(`${r.reserveTypeLabel} draw for ${_fmt$(dr.amountRequested)} (${p.name}) — ${rd.score}% ready. ${rd.summary}`);
           citations.push(..._reserveCitations(r));
-          actions.push(rd.ready ? { label: 'Generate Lender Package', js: `ccOpenReserves('${p.id}')` } : { label: 'Complete Draw Request', js: `ccOpenReserves('${p.id}')` });
+          actions.push(rd.ready ? { label: 'Generate Lender Package', act: 'openReserves', arg: p.id } : { label: 'Complete Draw Request', act: 'openReserves', arg: p.id });
         }
       }
       if (!found) paragraphs.push('No draft reserve requests are in progress. Start one from a reserve account after completing eligible work.');
@@ -706,10 +756,10 @@ window.AIWorkspace = (() => {
         if (s && s.txHash) {
           settled.push(`${p.name} — settled${s.amountUsd ? ' (' + _fmt$(s.amountUsd) + ')' : ''} and verified on the XRP Ledger`);
           citations.push({ source: 'XRPL Transaction', detail: s.txHash.slice(0, 12) + '…', quote: null, href: s.explorerLink || null });
-          if (s.explorerLink) actions.push({ label: 'View Transaction on XRPL', js: `window.open('${s.explorerLink}','_blank')` });
+          if (s.explorerLink) actions.push({ label: 'View Transaction on XRPL', act: 'openUrl', arg: s.explorerLink });
         } else if (billed > 0) {
           ready.push(`${p.name} — ${_fmt$(billed)} reconciled and billable in RLUSD`);
-          actions.push({ label: `Review ${p.name} Settlement`, js: `ccOpenProperty('${p.id}')` });
+          actions.push({ label: `Review ${p.name} Settlement`, act: 'openProperty', arg: p.id });
         }
       }
       const paragraphs = [];
@@ -849,15 +899,15 @@ window.AIWorkspace = (() => {
   // 15d) Navigation awareness (Phase 25) — "where do I find …?" gets a real
   // answer and a button that goes there, never the fallback.
   const NAV_MAP = [
-    { re: /command center|daily briefing|dashboard|priorities/, label: 'AI Command Center', how: 'Your daily briefing — ranked priorities, portfolio health, and settlement status.', js: () => 'showCommandCenter()' },
-    { re: /reserve|escrow|draw request|reimburse/, label: 'Reserves tab', how: "Open a property and use the Reserves tab — 'Reserve & Loan Documents' holds the mortgage extraction; 'Reserve Requests' is where reimbursements start.", js: (p) => p ? `ccOpenReserves('${p.id}')` : 'ccShowPortfolio()' },
-    { re: /reconcil|cam charges|allocation/, label: 'CAM tab', how: 'Open a property and use the CAM tab to run and review reconciliations.', js: (p) => p ? `ccOpenProperty('${p.id}')` : 'ccShowPortfolio()' },
-    { re: /report|statement|export|lender summary|master report/, label: 'Reports tab', how: 'Open a property and use the Reports tab — landlord, tenant, and lender reports plus CSV exports.', js: (p) => p ? `ccOpenProperty('${p.id}')` : 'ccShowPortfolio()' },
-    { re: /dispute/, label: 'CAM tab → Disputes', how: 'Disputes live with the reconciliation — open the property and review them from the CAM workflow.', js: (p) => p ? `ccOpenProperty('${p.id}')` : 'ccShowPortfolio()' },
-    { re: /settle|rlusd|xrpl|transaction/, label: 'Property overview / Command Center', how: 'Settlement status shows on the property overview and in the Command Center — settled payments link straight to the XRPL explorer.', js: () => 'showCommandCenter()' },
-    { re: /draft|letter|document studio/, label: 'Drafting Studio', how: 'Ask me to generate any letter or package — the Drafting Studio opens with an editable, evidence-grounded draft.', js: () => null },
-    { re: /tour|walkthrough|guide/, label: 'Guided Tour', how: 'A two-minute walkthrough of the whole platform.', js: () => 'startGuidedTour()' },
-    { re: /upload|lease file|mortgage document|invoice file/, label: 'Property workspace', how: 'Open a property — leases upload in the Leases step, invoices in the Invoices step, and mortgage documents under Reserves.', js: (p) => p ? `ccOpenProperty('${p.id}')` : 'ccShowPortfolio()' },
+    { re: /command center|daily briefing|dashboard|priorities/, label: 'AI Command Center', how: 'Your daily briefing — ranked priorities, portfolio health, and settlement status.', act: () => ({ act: 'showCommandCenter' }) },
+    { re: /reserve|escrow|draw request|reimburse/, label: 'Reserves tab', how: "Open a property and use the Reserves tab — 'Reserve & Loan Documents' holds the mortgage extraction; 'Reserve Requests' is where reimbursements start.", act: (p) => p ? { act: 'openReserves', arg: p.id } : { act: 'showPortfolio' } },
+    { re: /reconcil|cam charges|allocation/, label: 'CAM tab', how: 'Open a property and use the CAM tab to run and review reconciliations.', act: (p) => p ? { act: 'openProperty', arg: p.id } : { act: 'showPortfolio' } },
+    { re: /report|statement|export|lender summary|master report/, label: 'Reports tab', how: 'Open a property and use the Reports tab — landlord, tenant, and lender reports plus CSV exports.', act: (p) => p ? { act: 'openProperty', arg: p.id } : { act: 'showPortfolio' } },
+    { re: /dispute/, label: 'CAM tab → Disputes', how: 'Disputes live with the reconciliation — open the property and review them from the CAM workflow.', act: (p) => p ? { act: 'openProperty', arg: p.id } : { act: 'showPortfolio' } },
+    { re: /settle|rlusd|xrpl|transaction/, label: 'Property overview / Command Center', how: 'Settlement status shows on the property overview and in the Command Center — settled payments link straight to the XRPL explorer.', act: () => ({ act: 'showCommandCenter' }) },
+    { re: /draft|letter|document studio/, label: 'Drafting Studio', how: 'Ask me to generate any letter or package — the Drafting Studio opens with an editable, evidence-grounded draft.', act: () => null },
+    { re: /tour|walkthrough|guide/, label: 'Guided Tour', how: 'A two-minute walkthrough of the whole platform.', act: () => ({ act: 'startTour' }) },
+    { re: /upload|lease file|mortgage document|invoice file/, label: 'Property workspace', how: 'Open a property — leases upload in the Leases step, invoices in the Invoices step, and mortgage documents under Reserves.', act: (p) => p ? { act: 'openProperty', arg: p.id } : { act: 'showPortfolio' } },
   ];
   registerIntent({
     id: 'navigation',
@@ -867,12 +917,14 @@ window.AIWorkspace = (() => {
       const hit = NAV_MAP.find(n => n.re.test(s));
       if (!hit) return null;
       const p = _ctxProperty(ctx, props) || props[0] || null;
-      const js = hit.js(p);
+      const nav = hit.act(p);
       return {
         heading: `That's in the ${hit.label}`,
         paragraphs: [hit.how],
         citations: [],
-        actions: js ? [{ label: `Take me there`, js }] : [{ label: 'Generate a document', js: `aiwAsk('Generate a recovery letter')` }],
+        actions: nav
+          ? [{ label: `Take me there`, ...nav }]
+          : [{ label: 'Generate a document', act: 'ask', arg: 'Generate a recovery letter' }],
         confidence: { pct: 98, basis: 'application navigation' },
       };
     },
@@ -1090,12 +1142,25 @@ window.AIWorkspace = (() => {
     }).join('');
     // Phase 25: whenever real evidence exists, offer it as a first-class action —
     // the button clicks the first live citation chip (no payload duplication).
-    const baseActions = (a.actions && a.actions.length ? a.actions : [{ label: 'Open Command Center', js: 'showCommandCenter()' }]);
+    const baseActions = (a.actions && a.actions.length ? a.actions : [{ label: 'Open Command Center', act: 'showCommandCenter' }]);
     const withEvidence = hasEvidence
-      ? [{ label: 'Show Evidence', js: "var c=this.closest('.aiw-answer').querySelector('.aiw-cite--live'); if(c) c.click();" }, ...baseActions]
+      ? [{ label: 'Show Evidence', act: 'showEvidence' }, ...baseActions]
       : baseActions;
+    // SEC-6 — actions no longer carry constructed JavaScript.
+    //
+    // This was `onclick="${x.js}"` where x.js was built by interpolating values
+    // into a JS string: `window.open('${s.explorerLink}','_blank')`,
+    // `ccOpenProperty('${p.id}')`. Escaping the attribute does not help — HTML
+    // entities decode BEFORE the JS parses, so &#39; becomes a real quote and
+    // closes the string anyway. The only fix is to stop building code from data.
+    //
+    // The verb is now an allow-listed name and the value rides in a data
+    // attribute, where it is inert. Same pattern as the Restore button fix.
     const actions = withEvidence
-      .map(x => `<button class="aiw-action" onclick="${x.js}">${_esc(x.label)}</button>`).join('');
+      .map(x => `<button class="aiw-action" data-aiw-act="${_esc(x.act || '')}"` +
+                `${x.arg  != null ? ` data-aiw-arg="${_esc(x.arg)}"` : ''}` +
+                `${x.arg2 != null ? ` data-aiw-arg2="${_esc(x.arg2)}"` : ''}` +
+                `>${_esc(x.label)}</button>`).join('');
     return `
       <div class="aiw-answer"${evdAttr}>
         ${a.heading ? `<div class="aiw-heading">${_esc(a.heading)}</div>` : ''}

@@ -117,16 +117,52 @@ function _cpKey()       { return _lsUserId ? `mainstreet_ckpt_v1_${_lsUserId}`  
 function _rvKey()       { return _lsUserId ? `mainstreet_review_v1_${_lsUserId}`  : 'mainstreet_review_v1'; }
 function _camYearKey()  { return _lsUserId ? `ms_camYear_${_lsUserId}`            : 'ms_camYear_anon'; }
 
+// SEC-9 — a legacy unscoped key belongs to whoever wrote it, and we cannot know
+// who that was.
+//
+// This migration copied unscoped keys into the CURRENT user's scoped key. On a
+// shared browser holding keys from an older build, whoever signed in FIRST
+// inherited them — including `mainstreet_errors_v1`, which records email and
+// role. That is a cross-tenant read, narrow but real, and the app performed it
+// automatically at sign-in.
+//
+// There is no ownership stamp on those keys to check against, so adoption
+// cannot be made safe — only refused. They are DELETED instead: the data is
+// unattributable, its only consumers are diagnostics, and leaving it on disk
+// keeps the leak available to the next migration someone writes.
+//
+// `camYear` is the one exception. It is a UI preference with no tenant content
+// (an integer year), so it is migrated rather than discarded.
+const _LS_UNSCOPED_UNATTRIBUTABLE = [
+  'mainstreet_errors_v1',
+  'mainstreet_ckpt_v1',
+  'mainstreet_review_v1',
+  'ms_debug_leases',
+];
+
+function _lsPurgeUnattributableKeys() {
+  let purged = 0;
+  for (const k of _LS_UNSCOPED_UNATTRIBUTABLE) {
+    try {
+      if (localStorage.getItem(k) !== null) { localStorage.removeItem(k); purged++; }
+    } catch (_) {}
+  }
+  if (purged) console.warn(`[storage] discarded ${purged} unscoped legacy key(s) — owner unknown, not adopted`);
+  return purged;
+}
+window._lsPurgeUnattributableKeys = _lsPurgeUnattributableKeys;
+
 // One-time migration: if the unscoped key has data and the scoped key does not,
 // move the value to the scoped key and delete the unscoped one.
 function _lsMigrateAncillaryKeys() {
   if (!_lsUserId) return;
+  // SEC-9 — refuse the unattributable ones before anything else runs.
+  _lsPurgeUnattributableKeys();
+  // Only camYear survives the SEC-9 cut: an integer year is a UI preference,
+  // not tenant content, so adopting it leaks nothing. The other four carried
+  // diagnostics and PII and are purged above rather than migrated.
   [
-    ['mainstreet_errors_v1',  _errKey()],
-    ['mainstreet_ckpt_v1',   _cpKey()],
-    ['mainstreet_review_v1', _rvKey()],
-    ['camYear',              _camYearKey()],
-    ['ms_debug_leases',      'ms_debug_leases_' + _lsUserId],
+    ['camYear', _camYearKey()],
   ].forEach(function(pair) {
     var old = pair[0], scoped = pair[1];
     if (old === scoped) return;
@@ -243,7 +279,12 @@ async function submitAuth(event) {
 }
 
 async function signOut() {
+  // SEC-10 — capture the id BEFORE _clearAppState() nulls it, then wipe this
+  // user's local data. An explicit sign-out is the one point where the user has
+  // said they are done with this device.
+  const _outgoing = _lsUserId;
   if (window.AuthService) window.AuthService.clear();
+  _lsClearUserData(_outgoing);
   _clearAppState();
   _initialized = false;
   _showLogin(); // Reset UI immediately — don't wait on Supabase
@@ -253,6 +294,38 @@ async function signOut() {
     console.warn('[signOut] Supabase error:', e?.message);
   }
 }
+
+/**
+ * SEC-10 — remove this user's data from disk, not just from memory.
+ *
+ * _clearAppState() nulled the in-memory state and left `_ms_props_v2_<uuid>`
+ * and every scoped ancillary key sitting in localStorage. Another account
+ * couldn't read them (the keys are UUID-scoped), but a signed-out user's whole
+ * portfolio stayed on a shared machine indefinitely. "Sign out" implies the data
+ * is gone from the device; it wasn't.
+ *
+ * Called from the sign-out path ONLY, never from the session-expiry path —
+ * SEC-3 deliberately preserves work there so it can be recovered on re-entry.
+ * Wiping on expiry would destroy exactly what that fix rescues.
+ */
+function _lsClearUserData(userId) {
+  if (!userId) return 0;
+  let removed = 0;
+  try {
+    // Enumerate rather than reconstruct: the key helpers are the source of
+    // truth for the current shape, but a key written by an older build with a
+    // different prefix would survive a hard-coded list.
+    const doomed = [];
+    for (let i = 0; i < localStorage.length; i++) {
+      const k = localStorage.key(i);
+      if (k && k.endsWith('_' + userId)) doomed.push(k);
+    }
+    for (const k of doomed) { localStorage.removeItem(k); removed++; }
+  } catch (e) { console.warn('[storage] could not clear user data:', e && e.message); }
+  if (removed) console.log(`[storage] cleared ${removed} local key(s) for the signed-out user`);
+  return removed;
+}
+window._lsClearUserData = _lsClearUserData;
 
 function _clearAppState() {
   _lsUserId        = null;
@@ -314,6 +387,10 @@ db.auth.onAuthStateChange((event, session) => {
   } else if (event === 'TOKEN_REFRESHED') {
     console.log('[Auth] Token refreshed');
   } else if (event === 'SIGNED_OUT') {
+    // SEC-10 — Supabase can raise SIGNED_OUT without signOut() running (another
+    // tab signed out, or the refresh token was revoked server-side). Clear disk
+    // here too, or the sign-out only counts when it starts in this tab.
+    _lsClearUserData(_lsUserId);
     _clearAppState();
     _initialized = false;
     _showLogin();
@@ -403,10 +480,104 @@ const MAX_LEASES  = 3;
 
 // Wraps fetch with a hard client-side abort timeout.
 // Vercel Pro maxDuration is 60 s; 58 s gives a clean abort before platform kills the lambda.
+/**
+ * SEC-3 — the one place the app learns its session is gone.
+ *
+ * `_authHeaders()` returns {} when there is no session, so the request goes out
+ * unauthenticated and the server correctly answers 401. Nothing on the client
+ * read that 401. A manager whose refresh token expired mid-session kept working
+ * in a fully-rendered UI while every save failed — and because savePropertyData
+ * is debounced, the failure wasn't attached to anything they did. That is the
+ * worst shape a session bug can take: silent, delayed, and indistinguishable
+ * from working normally.
+ *
+ * ORDER MATTERS HERE. Work is preserved BEFORE anything is shown and before any
+ * state is touched, because the in-memory edits are the thing being rescued.
+ * _clearAppState() is deliberately NOT called: it would destroy exactly what
+ * this function exists to save.
+ */
+let _authLostHandled = false;
+function _onAuthLost(where) {
+  if (_authLostHandled) return;       // one banner, not one per in-flight request
+  _authLostHandled = true;
+  console.warn('[auth] session lost at', where, '— preserving work locally');
+
+  // 1. Rescue first. _lsSave writes per-property under the user-scoped key, so
+  //    a re-sign-in as the same user finds it again.
+  let saved = 0;
+  try {
+    for (const p of (Array.isArray(_props) ? _props : [])) {
+      if (p && p.id) { _lsSave(p); saved++; }
+    }
+  } catch (e) { console.error('[auth] could not preserve work:', e && e.message); }
+
+  // 2. Then say so. A toast is not enough for something that stops all saving —
+  //    this stays on screen until acted on.
+  try { _setSyncStatus('error', 'Session expired — work saved on this device'); } catch (_) {}
+  try {
+    _showAuthLostBanner(saved);
+  } catch (e) {
+    // Never let the notification path swallow the rescue.
+    console.error('[auth] banner failed:', e && e.message);
+    alert('Your session expired. Your work is saved on this device — sign in again to continue.');
+  }
+}
+
+function _showAuthLostBanner(savedCount) {
+  if (document.getElementById('msAuthLostBanner')) return;
+  const bar = document.createElement('div');
+  bar.id = 'msAuthLostBanner';
+  bar.className = 'ms-authlost';
+  bar.setAttribute('role', 'alert');
+  bar.innerHTML =
+    `<span class="ms-authlost-msg"><strong>Your session expired.</strong> ` +
+    `${savedCount > 0
+        ? `Your work on ${savedCount} propert${savedCount === 1 ? 'y is' : 'ies is'} saved on this device and will be restored when you sign back in.`
+        : `Nothing was lost — no unsaved changes were pending.`} ` +
+    `Changes made from now on will not be saved until you sign in.</span>` +
+    `<button class="ms-authlost-btn" onclick="_reauthenticate()">Sign in again</button>`;
+  document.body.appendChild(bar);
+}
+
+/**
+ * Re-sign-in WITHOUT wiping state. The normal signOut() path clears app state,
+ * which would discard the unsaved edits just rescued. Here the login overlay is
+ * shown over the top and the in-memory work is left intact, so a successful
+ * sign-in as the same user lands back on the same data.
+ */
+function _reauthenticate() {
+  const b = document.getElementById('msAuthLostBanner');
+  if (b) b.remove();
+  _authLostHandled = false;
+  if (window.AuthService) window.AuthService.clear();
+  _showLogin();
+}
+window._reauthenticate = _reauthenticate;
+window._onAuthLost     = _onAuthLost;
+
+/** True for the errors Supabase/PostgREST raise when a JWT is missing or dead. */
+function _isAuthError(e) {
+  if (!e) return false;
+  const msg  = String(e.message || e.error_description || e.error || e || '');
+  const code = String(e.code || e.status || '');
+  return code === '401' || code === 'PGRST301' || e.status === 401 ||
+         /jwt (expired|invalid|malformed)|invalid token|not authenticated|authentication required|no api key/i.test(msg);
+}
+window._isAuthError = _isAuthError;
+
 function _fetchWithTimeout(url, opts, ms = 58000) {
   const ctrl = new AbortController();
   const timer = setTimeout(() => ctrl.abort(), ms);
-  return fetch(url, { ...opts, signal: ctrl.signal }).finally(() => clearTimeout(timer));
+  return fetch(url, { ...opts, signal: ctrl.signal })
+    .then(resp => {
+      // SEC-3 — every API call in this app goes through here, which is why the
+      // interception lives here rather than at each call site. A 401 means the
+      // session is gone; the response is still returned so callers keep their
+      // own error handling.
+      if (resp && resp.status === 401) _onAuthLost(url);
+      return resp;
+    })
+    .finally(() => clearTimeout(timer));
 }
 
 // Returns the Authorization header object for the current Supabase session.
@@ -497,163 +668,30 @@ async function explainFetch(body, opts = {}) {
 //   lease_type, sqft, cam_cap.
 // The resolver in callClaudeForLease handles aliases (sqft→leased_sqft, etc.)
 // for backward compatibility with any previously-cached extraction results.
-const CLAUDE_LEASE_SYSTEM = `You are a strict JSON extraction engine for commercial leases.
-Return ONLY valid JSON. No text. No explanation. No markdown. Start with { and end with }.
-
-Return exactly this structure:
-{
-  "tenant_name": string,
-  "suite": string | null,
-  "lease_start_date": "YYYY-MM-DD",
-  "lease_end_date": "YYYY-MM-DD",
-  "lease_type": string,
-  "sqft": number,
-  "base_rent": number | null,
-  "cam_cap": number,
-  "admin_fee_pct": number | null,
-  "gross_up_pct": number | null,
-  "expense_stop": number | null,
-  "audit_rights": true | false | null,
-  "pro_rata_method": "rentable" | "leasable" | "occupied" | "gross" | null,
-  "renewal_options": string | null,
-  "excluded_categories": string | null,
-  "security_deposit": number | null,
-  "property_name": string | null,
-  "quotes": {
-    "cam_cap": string | null,
-    "admin_fee_pct": string | null,
-    "gross_up_pct": string | null,
-    "expense_stop": string | null,
-    "audit_rights": string | null,
-    "pro_rata_method": string | null,
-    "renewal_options": string | null,
-    "base_rent": string | null,
-    "security_deposit": string | null,
-    "tenant_name": string | null,
-    "lease_type": string | null,
-    "sqft": string | null,
-    "lease_start_date": string | null,
-    "lease_end_date": string | null
-  }
-}
-
-Rules:
-- tenant_name: HIGHEST PRIORITY. The text may be OCR'd from a scanned document — tolerate spacing/character noise.
-  Step 1: Look for labels "Tenant:", "Lessee:", "Occupant:" and take the name that follows.
-  Step 2: If no label, find the first entity name with a suffix: LLC, Inc, Corp, Ltd, Co., L.P.
-  Step 3: If multiple entities exist, EXCLUDE any containing: Properties, Realty, Real Estate, Holdings, Capital, Investments, Partners, Trust.
-  Step 4: Return the most prominent remaining company name.
-  NEVER return null if any company name exists anywhere in the text.
-- lease_start_date: YYYY-MM-DD. Hierarchy: "Commencement Date" → "Lease Start Date" → "Term begins" → "Effective Date" → "Execution Date". Calculate from context if needed. Never null if any date exists.
-- lease_end_date: YYYY-MM-DD. Hierarchy: "Expiration Date" → "Lease End Date" → "Term ends". Calculate from start_date + term length if needed. Never null if start date and term length are both known.
-- lease_type: One of "NNN", "Gross", "Modified Gross".
-  Explicit: "Triple Net" / "Triple-Net" / "NNN" → "NNN". "Modified Gross" → "Modified Gross". "Gross" → "Gross".
-  Inferred: If tenant pays "Pro Rata Share" of taxes + insurance + operating expenses → "NNN".
-  If landlord pays operating expenses → "Gross".
-  If some expenses split → "Modified Gross". Null only if completely unresolvable.
-- sqft: Integer. Strip commas, units, and the word "approximately". Null if not found.
-- cam_cap: CRITICAL — you MUST search the entire document for any language that limits CAM or operating expense increases. Look for ALL of the following phrases: "CAM cap", "operating expense cap", "expense stop", "base year stop", "not to exceed", "shall not pay more than", "increases limited to", "capped at", "no more than X% increase", "annual increase cap", "controllable expense cap". If a percentage is found (e.g. "5%" or "5 percent"), return 5. If a dollar amount is found, return that number. Only return null if absolutely no cap-related language exists anywhere in the document.
-- admin_fee_pct: Look for "management fee", "administrative fee not to exceed X%", "admin fee cap". Return percentage number only (e.g. 15 for "15%"). Null if not found.
-- gross_up_pct: Look for "gross up", "grossed up to X% occupancy", "occupancy factor". Return percentage (e.g. 95 for "95% occupancy"). Null if not found.
-- expense_stop: Look for "expense stop", "base year stop", "base operating expenses of $X per square foot". Return dollar amount per sqft if found, else null.
-- audit_rights: Return true if tenant has explicit right to audit CAM records. Return false if explicitly waived. Return null if not addressed.
-- pro_rata_method: Return "rentable", "leasable", "occupied", or "gross" based on how the lease defines the pro-rata denominator. Return null if unresolvable.
-- renewal_options: Short description including count, term length, and rate basis (max 120 chars). Null if no renewal options stated.
-- excluded_categories: Comma-separated list of expense categories explicitly excluded from CAM (e.g. "capital expenditures, management fees, structural repairs"). Return null if no exclusion schedule is stated.
-- suite: The tenant's unit or suite identifier. Look for "Suite", "Unit", "Space", "Ste.", "#" labels. Return the short designator (e.g. "101", "Suite A", "200"). Null if not identified.
-- base_rent: Annual base rent in dollars as a plain number. If the lease states a monthly amount, multiply by 12. Look for "Base Rent", "Annual Rent", "Minimum Rent", "Fixed Rent", "Monthly Rent". Null if not found.
-- security_deposit: Security deposit in dollars as a plain number. Look for "Security Deposit", "Deposit", "Holdback". Null if not found.
-- property_name: The name or address of the building/property the lease covers, as stated in the lease (e.g. "Lakeview Plaza", "123 Main Street"). Look in the premises description, recitals, or property address fields. Null if no property/building name or address is stated.
-- quotes: For each field where you return a non-null value, copy ≤120 chars of the exact verbatim clause text from the lease that led to that value. Return null for any field where the value is null.
-- Use null only when a field is truly impossible to determine.`;
+// SEC-2 — CLAUDE_LEASE_SYSTEM and CLAUDE_ESCROW_SYSTEM used to be defined here
+// and shipped to /api/claude in the request body, which forwarded them to
+// Anthropic verbatim. They define the extraction schema itself — what counts as
+// a CAM cap, how sqft is parsed, which entity is the tenant — so every
+// extraction guarantee was a browser string the caller could rewrite, and its
+// output flows into the fieldEvidence snapshots the Evidence Viewer presents as
+// provenance.
+//
+// They now live in api/_claude-tasks.js and are selected by name
+// ('lease_extraction' / 'escrow_extraction'), the same contract AI-2 gave
+// /api/explain. Deliberately not duplicated here: a copy in the client is a
+// copy that drifts, and a copy that drifts is the version nobody is running.
 
 // ─── Phase 21: Escrow & Reserve Intelligence ─────────────────────────────────
-// Extracts lender reserve terms from mortgage/loan/escrow/reserve agreements,
-// capital expenditure reserve schedules, insurance settlement documents, and
-// lender draw instructions. Mirrors CLAUDE_LEASE_SYSTEM's structure exactly so
+// The escrow extraction schema moved to api/_claude-tasks.js with the lease one
+// (task: 'escrow_extraction'). It still mirrors the lease schema's structure, so
 // the same proxy/parsing conventions apply.
-const CLAUDE_ESCROW_SYSTEM = `You are a strict JSON extraction engine for lender reserve and escrow documents (mortgage agreements, loan agreements, escrow agreements, reserve agreements, capital expenditure reserve schedules, insurance settlement documents, lender draw instructions, repair reserve documentation).
-Return ONLY valid JSON. No text. No explanation. No markdown. Start with [ and end with ].
 
-A single document often governs MORE THAN ONE reserve account (e.g. a loan agreement with a separate Roof Reserve, HVAC Reserve, and Capital Reserve, each with its own balance and rules). Return a JSON ARRAY with one element per distinct reserve account the document describes. If the document only describes one reserve, return an array with exactly one element. Each array element follows this structure:
-{
-  "reserve_type": string,
-  "reserve_name": string | null,
-  "current_balance": number | null,
-  "eligible_uses": string | null,
-  "requires_invoices": true | false | null,
-  "requires_photos": true | false | null,
-  "requires_lien_waivers": true | false | null,
-  "requires_contractor_bids": true | false | null,
-  "requires_engineer_certification": true | false | null,
-  "min_draw_amount": number | null,
-  "requires_approval": true | false | null,
-  "draw_request_deadline": "YYYY-MM-DD" | null,
-  "repair_completion_deadline": "YYYY-MM-DD" | null,
-  "reserve_expiration_date": "YYYY-MM-DD" | null,
-  "notes": string | null,
-  "evidence": {
-    "reserve_type":    { "quote": string | null, "page": number | null },
-    "current_balance": { "quote": string | null, "page": number | null },
-    "eligible_uses":    { "quote": string | null, "page": number | null }
-  }
-}
-
-Rules:
-- Treat each named reserve/escrow account as its own array element. Do not merge balances or terms from different reserves into one element.
-- reserve_type: Identify which kind of reserve this element governs. Use one of: "Roof Reserve", "HVAC Reserve", "Tenant Improvement Reserve", "Leasing Commission Reserve", "Capital Reserve", "Insurance Recovery Reserve", or the lender's own term if none of those fit.
-- reserve_name: If the lender gives this reserve a specific account name (e.g. "Special Reserve Account No. 4"), return it verbatim. Null otherwise.
-- current_balance: The reserve balance stated in the document for THIS reserve, as a plain number (no $ or commas). Null if not stated.
-- eligible_uses: A short description (max 200 chars) of what THIS reserve's funds may be used for (e.g. "Roof repair and replacement only").
-- requires_invoices: true if the lender requires paid/unpaid invoices to support a draw request against this reserve. Default to true unless the document explicitly says otherwise.
-- requires_photos: true if before/after photos of completed work are required for a draw against this reserve.
-- requires_lien_waivers: true if lien waivers (conditional or unconditional) are required for this reserve.
-- requires_contractor_bids: true if contractor bids/estimates must be submitted before work funded by this reserve is approved.
-- requires_engineer_certification: true if a licensed engineer or architect must certify work funded by this reserve.
-- min_draw_amount: The minimum dollar amount per draw request against this reserve, if stated. Null otherwise.
-- requires_approval: true if the lender (or a third party such as a construction inspector) must approve a draw against this reserve before funding. Default true unless explicitly waived.
-- draw_request_deadline: The deadline by which draw requests against this reserve must be submitted, if a fixed or recurring deadline is stated.
-- repair_completion_deadline: The deadline by which the underlying repair/improvement work funded by this reserve must be completed.
-- reserve_expiration_date: The date after which this reserve account terminates or unused funds are released/forfeited.
-- notes: Any other reserve-specific requirement or condition worth flagging for this reserve (max 300 chars). Null if nothing additional applies.
-- evidence: For reserve_type, current_balance, and eligible_uses, copy ≤160 chars of the exact verbatim clause text that produced that value, AND the page number from the nearest preceding "--- Page N ---" marker in the document text. Both null if the value itself is null or the page cannot be determined.
-- Never paraphrase a quote — it must be copied character-for-character from the source text.
-- Use null only when a field is truly impossible to determine. Do not guess a page number; null is acceptable.`;
-
-const INVOICE_PROMPT = `You are extracting data from a commercial real estate invoice or bill.
-This document may be a scanned image — tolerate OCR noise, spacing issues, and number formatting quirks.
-Return ONLY valid JSON. No explanation. No markdown.
-
-{
-  "vendorName": string,
-  "amount": number,
-  "invoiceDate": "YYYY-MM-DD" or null,
-  "category": string,
-  "confidence": { "vendorName": 0-100, "amount": 0-100, "invoiceDate": 0-100, "category": 0-100 }
-}
-
-RULES:
-- vendorName: The company that issued the invoice (top of page, "From:", "Bill From:", or largest company name). Not the property owner.
-- amount: Total due / Amount due / Invoice total. Numbers only — strip $, commas. If you see periods used as thousand separators (e.g. "1.200,00") convert correctly. Never null if any dollar amount exists.
-- invoiceDate: Invoice date / Bill date / Date issued. YYYY-MM-DD format. Not the due date.
-- category: One of: insurance, landscaping, snow, repairs, utilities, janitorial, security, management, other.
-  - insurance → any insurance company, premium, policy, or coverage
-  - utilities → electric, gas, water, sewer, telecom
-  - landscaping → lawn, grounds, irrigation, tree, mulch
-  - snow → snow removal, plowing, salting, ice
-  - repairs → maintenance, HVAC, plumbing, roof, painting, carpentry
-  - janitorial → cleaning, custodial, sanitation
-  - security → alarm, guard, monitoring, access control
-  - management → property management, admin fee
-- confidence: 0 = not found, 100 = explicitly labeled`;
-
-const CATEGORY_PROMPT = `Classify this invoice into ONE category:
-[insurance, landscaping, snow, repairs, janitorial, utilities, other]
-
-Prioritize vendor name when obvious (e.g. insurance companies → insurance).
-
-Return JSON:
-{ "category": "...", "confidence": 0.0-1.0 }`;
+// SEC-2 — INVOICE_PROMPT and CATEGORY_PROMPT moved to api/_claude-tasks.js
+// ('invoice_extraction' / 'category_classification'). They travelled in the USER
+// turn beside the invoice image, which put instructions and customer data at the
+// same level; they are system prompts on the server now. CATEGORIES below stays
+// here — the client validates the returned category against it, which is a check
+// on the model's answer, not an instruction to it.
 
 const CATEGORIES = ['insurance','landscaping','snow','repairs','utilities','janitorial','security','management','other'];
 
@@ -917,7 +955,9 @@ function parseJSON(text) {
   }
 }
 
-async function callClaude(file, prompt) {
+// SEC-2 — takes a TASK NAME, not a prompt. The instructions live in
+// api/_claude-tasks.js; this sends only the document.
+async function callClaude(file, task) {
   let base64;
   try {
     base64 = await toBase64(file);
@@ -937,9 +977,9 @@ async function callClaude(file, prompt) {
   let data;
   try {
     data = await claudeFetch({
-      model: MODEL,
+      task,
       max_tokens: 1024,
-      messages: [{ role: 'user', content: [contentBlock, { type: 'text', text: prompt }] }],
+      messages: [{ role: 'user', content: [contentBlock] }],
     });
   } catch (e) {
     console.error('[Mainstreet] fetch error:', e);
@@ -1399,7 +1439,7 @@ Return best guess — do not leave fields null unless truly impossible.`;
   const res = await _fetchWithTimeout('/api/claude', {
     method: 'POST',
     headers: { 'Content-Type': 'application/json', ...(await _authHeaders()) },
-    body: JSON.stringify({ messages, max_tokens: 1500, system: CLAUDE_LEASE_SYSTEM }),
+    body: JSON.stringify({ messages, max_tokens: 1500, task: 'lease_extraction' }),
   });
 
   if (!res.ok) {
@@ -1486,7 +1526,7 @@ async function _visionExtractCompressed(file, extractionPrompt, LI) {
       const res = await _fetchWithTimeout('/api/claude', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json', ...(await _authHeaders()) },
-        body: JSON.stringify({ messages, max_tokens: 1500, system: CLAUDE_LEASE_SYSTEM }),
+        body: JSON.stringify({ messages, max_tokens: 1500, task: 'lease_extraction' }),
       });
       if (!res.ok) throw new Error(`HTTP ${res.status}`);
       parts.push(await res.json());
@@ -1742,7 +1782,7 @@ ${leaseSnippet}
   const res = await _fetchWithTimeout('/api/claude', {
     method: 'POST',
     headers: { 'Content-Type': 'application/json', ...(await _authHeaders()) },
-    body: JSON.stringify({ messages, max_tokens: 1500, system: CLAUDE_LEASE_SYSTEM }),
+    body: JSON.stringify({ messages, max_tokens: 1500, task: 'lease_extraction' }),
   });
 
   if (!res.ok) {
@@ -2017,7 +2057,7 @@ ${snippet}
   const res = await _fetchWithTimeout('/api/claude', {
     method: 'POST',
     headers: { 'Content-Type': 'application/json', ...(await _authHeaders()) },
-    body: JSON.stringify({ messages, max_tokens: 2400, system: CLAUDE_ESCROW_SYSTEM }),
+    body: JSON.stringify({ messages, max_tokens: 2400, task: 'escrow_extraction' }),
   });
 
   if (!res.ok) throw new Error(`Escrow document extraction failed: HTTP ${res.status}`);
@@ -2080,7 +2120,7 @@ Return best guess — do not leave reserve_type null.`;
   const res = await _fetchWithTimeout('/api/claude', {
     method: 'POST',
     headers: { 'Content-Type': 'application/json', ...(await _authHeaders()) },
-    body: JSON.stringify({ messages, max_tokens: 2400, system: CLAUDE_ESCROW_SYSTEM }),
+    body: JSON.stringify({ messages, max_tokens: 2400, task: 'escrow_extraction' }),
   });
 
   if (!res.ok) throw new Error(`Escrow PDF direct extraction failed: HTTP ${res.status}`);
@@ -8136,11 +8176,13 @@ function normalizeCategory(vendor, description) {
 
 async function classifyCategory(vendorName, amount) {
   try {
+    // SEC-2 — the classification rules are server-side now; the user turn
+    // carries only the invoice facts.
     const data = await claudeFetch({
-      model: MODEL,
+      task: 'category_classification',
       max_tokens: 64,
       messages: [{ role: 'user', content:
-        CATEGORY_PROMPT + `\n\nVendor: ${vendorName || 'Unknown'}\nAmount: $${amount || '0'}`
+        `Vendor: ${vendorName || 'Unknown'}\nAmount: $${amount || '0'}`
       }],
     });
     if (data?.category && CATEGORIES.includes(data.category)) return data;
@@ -8187,7 +8229,7 @@ async function handleBatchInvoices(fileList) {
     let d = null;
     let claudeError = null;
     try {
-      d = await callClaude(files[i], INVOICE_PROMPT);
+      d = await callClaude(files[i], 'invoice_extraction');
     } catch (err) {
       console.error('[Mainstreet] Claude extraction failed:', err.message, err);
       claudeError = err.message;
@@ -21275,6 +21317,15 @@ async function saveProperty(property) {
     const msg = e?.message || String(e);
     const isNetErr  = /load failed|failed to fetch|networkerror|offline/i.test(msg);
 
+    // SEC-3 — the direct Supabase write does not go through _fetchWithTimeout,
+    // so an expired JWT surfaces here as a PostgREST error rather than a 401.
+    // Route it to the same place: _lsSave() already ran at the top of this
+    // function, so the work is on disk before the user is told anything.
+    if (_isAuthError(e)) {
+      _onAuthLost('saveProperty');
+      return;
+    }
+
     if (isNetErr) {
       // Stay in 'local' — data is safe in localStorage. Show a non-alarming offline notice.
       const prev = document.getElementById('_offlineToast');
@@ -21541,11 +21592,23 @@ async function loadPropertyData(id) {
 
   try {
     if (!id || typeof id !== 'string') throw new Error('invalid id');
-    const { data, error } = await db
-      .from('properties')
-      .select('id, name, sqft, data')
-      .eq('id', id)
-      .single();
+    // SEC-11 — RLS stays the primary protection; this is the second layer.
+    //
+    // This read selected by id alone and let the policy decide. That is correct
+    // today — every table has RLS and the properties policy is
+    // `user_id = auth.uid()`. But there was no second layer: one policy
+    // regression in a future migration turns this into a cross-tenant read with
+    // nothing in the application to stop it and no test that would notice.
+    //
+    // The serverless handlers already model the right shape (_ownsProperty
+    // filters on user_id explicitly AND runs behind RLS). The client can do the
+    // same for the cost of one filter. If the session is gone, `uid` is null and
+    // the filter matches nothing — which fails closed, not open.
+    const { data: { user: _sessUser } = {} } = await db.auth.getUser();
+    const uid = _sessUser?.id || null;
+    let _q = db.from('properties').select('id, name, sqft, data').eq('id', id);
+    if (uid) _q = _q.eq('user_id', uid);
+    const { data, error } = await _q.single();
     if (!error && data) {
       const d = data.data || {};
       dbData = {
@@ -23084,7 +23147,7 @@ async function acqHandleInvoiceFiles(fileList) {
     _renderAcqInvoiceList();
 
     try {
-      const d = await callClaude(file, INVOICE_PROMPT);
+      const d = await callClaude(file, 'invoice_extraction');
       if (d) {
         const vendorName = d.vendorName || file.name.replace(/\.(pdf|jpe?g|png|webp)$/i, '');
         let category     = d.category || 'other';

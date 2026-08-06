@@ -6171,6 +6171,23 @@
   .evd-banner { background: rgba(251,191,36,0.1); border: 1px solid rgba(251,191,36,0.4); color: var(--c-fbbf24); border-radius: 8px; padding: 7px 12px; font-size: 0.8rem; margin-bottom: 8px; }
   .evd-main { display: flex; gap: 14px; flex: 1; min-height: 0; }
   .evd-doc { flex: 1; overflow: auto; background: var(--theme-surface); border: 1px solid rgba(var(--line-rgb), 0.07); border-radius: 10px; padding: 12px; }
+  /* SEC-3 — session lost. Deliberately a fixed bar, not a toast: it reports that
+     saving has stopped, which stays true until it is acted on. */
+  .ms-authlost {
+    position: fixed; top: 0; left: 0; right: 0; z-index: 100000;
+    display: flex; align-items: center; justify-content: center; gap: 14px; flex-wrap: wrap;
+    padding: 12px 18px; background: #7c2d12; color: #fed7aa;
+    font-size: 0.86rem; line-height: 1.45; text-align: center;
+    box-shadow: 0 2px 12px rgba(0,0,0,.35);
+  }
+  .ms-authlost strong { color: #ffedd5; }
+  .ms-authlost-btn {
+    background: #fed7aa; color: #7c2d12; border: 0; border-radius: 6px;
+    padding: 7px 16px; font-size: 0.84rem; font-weight: 700; cursor: pointer; white-space: nowrap;
+  }
+  .ms-authlost-btn:hover { background: #ffedd5; }
+  @media (max-width: 560px) { .ms-authlost { font-size: 0.8rem; padding: 10px 12px; } }
+
   .evd-page-lbl { color: var(--text-4); font-size: 0.74rem; margin-bottom: 8px; }
   /* AI-4 — a citation naming a page the document does not have. Read as a
      fault, not as a caption: this is the surface where a citation gets checked. */

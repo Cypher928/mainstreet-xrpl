@@ -30,14 +30,10 @@ if (!_SB_URL || !_SB_ANON) {
   throw new Error('[api/explain] Supabase URL/anon not configured for ' + _t.name + ' target');
 }
 
-const _rl = new Map();
-function _chkRate(uid, max, winMs) {
-  const now = Date.now();
-  let w = _rl.get(uid) || { n: 0, reset: now + winMs };
-  if (now > w.reset) w = { n: 0, reset: now + winMs };
-  w.n++; _rl.set(uid, w);
-  return w.n <= max;
-}
+// SEC-12 — one sliding-window limiter, shared. See api/_rate-limit.js for what
+// it can and cannot do: it is per-instance and Vercel scales instances, so it
+// brakes runaway loops and single-client hammering, not a determined attacker.
+const { checkRate, sendRateLimited } = require('./_rate-limit');
 
 async function _verifyUser(req, res) {
   const tok = (req.headers['authorization'] || '').replace(/^Bearer\s+/, '');
@@ -65,8 +61,9 @@ module.exports = async function handler(req, res) {
 
   const user = await _verifyUser(req, res);
   if (!user) return;
-  if (!_chkRate(user.id, 20, 60000)) {
-    return res.status(429).json({ error: 'Too many requests — please slow down.' });
+  {
+    const _rl = checkRate(user.id, 20, 60000);
+    if (!_rl.ok) return sendRateLimited(res, _rl);
   }
 
   const apiKey = process.env.ANTHROPIC_API_KEY;
