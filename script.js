@@ -852,6 +852,62 @@ function currentProperty() {
   return _props.find(p => p.id === activePropId) || null;
 }
 
+// ─── Supabase Storage: reading a stored document ──────────────────────────────
+
+/**
+ * SEC-1 — turn a stored document reference into a URL that may actually be read.
+ *
+ * The `leases` and `invoices` buckets were public, so `/object/public/...` URLs
+ * worked for anyone who had one. Once those buckets are private, every stored
+ * URL stops resolving — and every surface that renders a document
+ * (Evidence Viewer, lease modal, Documents, Ask-the-Lease citations) goes
+ * through here instead.
+ *
+ * The server re-derives the object path from whatever is passed and checks that
+ * it belongs to the caller before signing, so nothing here needs to be trusted.
+ * Signed URLs are short-lived, which is why they are fetched at view time rather
+ * than stored: a URL kept in a row would be expired by the time anyone used it.
+ *
+ * Returns null rather than throwing — every caller has a real "can't show it"
+ * path already, and a throw here would take out the surface around it.
+ */
+const _signedUrlCache = new Map();   // ref → { url, until }
+
+async function resolveDocumentUrl(ref) {
+  if (!ref) return null;
+  // Anything not in our storage (a sample fixture, an external link) is
+  // returned untouched — there is nothing for us to sign.
+  if (!/\/storage\/v1\/object\//.test(String(ref)) && !/^(leases|invoices)\//.test(String(ref))) {
+    return ref;
+  }
+
+  const hit = _signedUrlCache.get(ref);
+  // 30s of headroom so a URL fetched now is not handed to pdf.js as it expires.
+  if (hit && hit.until - 30000 > Date.now()) return hit.url;
+
+  try {
+    const resp = await _fetchWithTimeout('/api/document-url', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json', ...(await _authHeaders()) },
+      body: JSON.stringify({ ref }),
+    }, 15000);
+    if (!resp.ok) {
+      let msg = `HTTP ${resp.status}`;
+      try { msg = (await resp.json()).error || msg; } catch (_) {}
+      console.warn('[document] could not authorise', ref, '—', msg);
+      return null;
+    }
+    const body = await resp.json();
+    if (!body || !body.url) return null;
+    _signedUrlCache.set(ref, { url: body.url, until: Date.now() + (body.expiresIn || 300) * 1000 });
+    return body.url;
+  } catch (e) {
+    console.warn('[document] authorisation request failed:', e && e.message);
+    return null;
+  }
+}
+window.resolveDocumentUrl = resolveDocumentUrl;
+
 // ─── Supabase Storage upload ──────────────────────────────────────────────────
 
 /**
@@ -11517,8 +11573,20 @@ function openLeaseModalFromFile(index) {
 }
 
 // Modal viewer — accepts a File object (local) or a URL string (persisted).
-function openLeaseModal(fileOrUrl) {
+async function openLeaseModal(fileOrUrl) {
   if (!fileOrUrl) return;
+  // SEC-1 — a stored /object/public/ URL will not load in the iframe once the
+  // bucket is private. Resolve it to a signed URL first; a File object is a
+  // local blob and needs nothing.
+  if (typeof fileOrUrl === 'string') {
+    const _readable = await resolveDocumentUrl(fileOrUrl);
+    if (!_readable) {
+      showToast('⚠️ That lease could not be opened — you may not have access, or it is no longer stored.',
+        { color: '#92400e', textColor: '#fef3c7', duration: 8000 });
+      return;
+    }
+    fileOrUrl = _readable;
+  }
   const modal = document.getElementById('leaseViewerModal');
   const frame = document.getElementById('leaseViewerFrame');
   const title = document.getElementById('leaseViewerTitle');
@@ -11559,7 +11627,14 @@ function closeLeaseModal() {
 
 function leaseViewerOpenExternal() {
   const modal = document.getElementById('leaseViewerModal');
-  if (modal?._leaseUrl) window.open(modal._leaseUrl, '_blank');
+  if (!modal?._leaseUrl) return;
+  // The modal holds an already-resolved URL, but this opens whatever is in it —
+  // and a blob: or javascript: value must never reach window.open from a field
+  // that other code writes. Allow only what can legitimately be here.
+  let u;
+  try { u = new URL(modal._leaseUrl, window.location.origin); } catch (_) { return; }
+  if (u.protocol !== 'https:' && u.protocol !== 'blob:' && u.protocol !== 'http:') return;
+  window.open(u.href, '_blank', 'noopener');
 }
 
 // ESC key always closes modal — user can never be trapped

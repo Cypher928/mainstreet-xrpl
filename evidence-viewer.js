@@ -228,7 +228,12 @@ window.EvidenceViewer = (() => {
     if (st.pdf && st.fileUrl === fileUrl) return st.pdf;
     const lib = window.pdfjsLib;
     if (!lib) throw new Error('PDF renderer unavailable');
-    const res = await fetch(fileUrl);
+    // SEC-1 — the leases bucket is private, so the stored /object/public/ URL
+    // no longer resolves. Exchange it for a short-lived signed URL that the
+    // server issues only after checking the object belongs to this user.
+    const readable = window.resolveDocumentUrl ? await window.resolveDocumentUrl(fileUrl) : fileUrl;
+    if (!readable) throw new Error('You do not have access to this document, or it is no longer stored');
+    const res = await fetch(readable);
     if (!res.ok) throw new Error('Could not fetch the document');
     const buf = await res.arrayBuffer();
     st.pdf = await lib.getDocument({ data: buf }).promise;

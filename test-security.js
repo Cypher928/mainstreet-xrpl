@@ -345,6 +345,140 @@ else {
   }
 }
 
+
+// ══ SEC-1 ══════════════════════════════════════════════════════════════════
+sec('SEC-1 · a stored document is authorised before it can be read');
+{
+  const DU = require('./api/document-url.js');
+  const P  = DU.parseStoragePath;
+
+  // Both URL shapes must resolve to the same object — old rows hold full public
+  // URLs, new code may pass a bare path.
+  const fromPublic = P('https://x.supabase.co/storage/v1/object/public/leases/user-A/lease.pdf');
+  const fromBare   = P('leases/user-A/lease.pdf');
+  const fromSigned = P('https://x.supabase.co/storage/v1/object/sign/leases/user-A/lease.pdf?token=abc');
+  assert('an existing public URL still resolves to its object',
+    fromPublic && fromPublic.bucket === 'leases' && fromPublic.path === 'user-A/lease.pdf', JSON.stringify(fromPublic));
+  assert('a bare bucket/path resolves', fromBare && fromBare.path === 'user-A/lease.pdf');
+  assert('a signed URL resolves, token stripped', fromSigned && fromSigned.path === 'user-A/lease.pdf');
+
+  assert('path traversal is refused', P('leases/user-A/../user-B/x.pdf') === null);
+  assert('percent-encoded traversal is refused', P('leases/user-A/%2e%2e/user-B/x.pdf') === null);
+  assert('an unknown bucket is refused', P('secrets/user-A/x.pdf') === null);
+  assert('junk is refused, not guessed', P('') === null && P(null) === null && P('nonsense') === null);
+
+  // THE OWNERSHIP RULE. api/upload.js writes to `${user.id}/…`, so the first
+  // segment is the owner and the check needs no lookup.
+  assert('the owner is the first path segment', DU.pathOwner('user-A/lease.pdf') === 'user-A');
+  assert('a nested path still resolves to the top-level owner',
+    DU.pathOwner('user-A/2026/lease.pdf') === 'user-A');
+  assert('signed URLs are short-lived', DU.SIGN_TTL_SECONDS > 0 && DU.SIGN_TTL_SECONDS <= 900,
+    String(DU.SIGN_TTL_SECONDS));
+
+  // Drive the real handler.
+  const realFetch = global.fetch;
+  let signCalls = 0;
+  global.fetch = async (url, opts) => {
+    const u = String(url);
+    if (u.includes('/auth/v1/user')) {
+      const tok = (opts.headers.Authorization || '').replace('Bearer ', '');
+      if (tok === 'tok-A') return { ok: true, json: async () => ({ id: 'user-A' }) };
+      if (tok === 'tok-B') return { ok: true, json: async () => ({ id: 'user-B' }) };
+      return { ok: false, json: async () => ({}) };
+    }
+    if (u.includes('/storage/v1/object/sign/')) {
+      signCalls++;
+      return { ok: true, status: 200, text: async () => JSON.stringify({ signedURL: '/object/sign/leases/user-A/lease.pdf?token=xyz' }) };
+    }
+    throw new Error('unexpected fetch ' + u);
+  };
+  const mkRes = () => ({ statusCode: null, body: null, headers: {},
+    setHeader(k, v) { this.headers[k] = v; },
+    status(c) { this.statusCode = c; return this; }, json(b) { this.body = b; return this; } });
+  const call = async (token, body) => {
+    signCalls = 0;
+    const res = mkRes();
+    await DU({ method: 'POST', headers: token ? { authorization: 'Bearer ' + token } : {}, body }, res);
+    return { res, signCalls };
+  };
+  const A_DOC = 'https://x.supabase.co/storage/v1/object/public/leases/user-A/lease.pdf';
+
+  // 1. ANONYMOUS.
+  const anon = await call(null, { ref: A_DOC });
+  assert('an anonymous request is rejected', anon.res.statusCode === 401, String(anon.res.statusCode));
+  assert('and nothing is signed for it', anon.signCalls === 0);
+
+  // 2. ANOTHER AUTHENTICATED USER.
+  const other = await call('tok-B', { ref: A_DOC });
+  assert('another signed-in user cannot fetch someone else\'s lease',
+    other.res.statusCode === 403, String(other.res.statusCode));
+  assert('and no signed URL is minted for them', other.signCalls === 0,
+    'a URL was signed before the ownership check');
+
+  // 3. THE OWNER.
+  const owner = await call('tok-A', { ref: A_DOC });
+  assert('the owner gets a signed URL', owner.res.statusCode === 200, JSON.stringify(owner.res.body));
+  assert('the URL is absolute and signed',
+    /^https:\/\/.*\/object\/sign\/.*token=/.test((owner.res.body || {}).url || ''), (owner.res.body || {}).url);
+  assert('and it is not the public URL', !/\/object\/public\//.test((owner.res.body || {}).url || ''));
+  assert('an expiry is reported to the client', (owner.res.body || {}).expiresIn > 0);
+
+  // Traversal through the handler, not only the parser.
+  const trav = await call('tok-A', { ref: 'leases/user-A/../user-B/secret.pdf' });
+  assert('traversal is refused by the handler too', trav.res.statusCode === 400, String(trav.res.statusCode));
+  assert('nothing is signed for a traversal attempt', trav.signCalls === 0);
+  // A caller claiming another user's path directly.
+  const claim = await call('tok-A', { ref: 'leases/user-B/lease.pdf' });
+  assert('a caller cannot name another user\'s path', claim.res.statusCode === 403);
+
+  global.fetch = realFetch;
+
+  // The surfaces that render documents must all go through the resolver.
+  const ev = fs.readFileSync(path.join(ROOT, 'evidence-viewer.js'), 'utf8');
+  assert('the Evidence Viewer resolves before fetching', /resolveDocumentUrl\(fileUrl\)/.test(ev));
+  assert('and refuses rather than fetching a URL it could not resolve',
+    /if \(!readable\) throw new Error/.test(ev));
+  const dv = fs.readFileSync(path.join(ROOT, 'doc-viewer.js'), 'utf8');
+  assert('Documents resolves before opening', /resolveDocumentUrl\(rec\.url\)/.test(dv));
+  const app = fs.readFileSync(path.join(ROOT, 'script.js'), 'utf8');
+  assert('the lease modal resolves before loading the iframe',
+    /async function openLeaseModal[\s\S]{0,600}resolveDocumentUrl/.test(app));
+  assert('the external-open button pins the scheme',
+    /leaseViewerOpenExternal[\s\S]{0,500}u\.protocol !== 'https:'/.test(app));
+
+  // The migration must exist and must not leave the bucket public.
+  const mig = fs.readFileSync(path.join(ROOT, 'migrations/011_private_document_buckets.sql'), 'utf8');
+  assert('the migration sets both buckets private',
+    /set public = false[\s\S]{0,80}in \('leases', 'invoices'\)/.test(mig));
+  assert('it adds an owner-scoped read policy',
+    /docs_owner_read[\s\S]{0,400}foldername\(name\)\)\[1\] = auth\.uid\(\)::text/.test(mig));
+  // Match a POLICY CLAUSE, not prose. The first version of this check used
+  // /to anon/ and matched the rollback note's "re-opens every lease to
+  // anonymous access" — a test that fails on its own documentation.
+  const migCode = mig.split('\n').filter(l => !/^\s*--/.test(l)).join('\n');
+  assert('no policy is granted to the anon role', !/\bto\s+anon\b/.test(migCode));
+  assert('every policy is scoped to authenticated',
+    (migCode.match(/create policy/g) || []).length === (migCode.match(/to authenticated/g) || []).length,
+    'a policy exists without a "to authenticated" clause');
+  assert('it states the deploy order', /DEPLOY ORDER MATTERS/.test(mig));
+}
+
+// ══ pilot-request ══════════════════════════════════════════════════════════
+sec('the public lead endpoint is bounded');
+{
+  const src = fs.readFileSync(path.join(ROOT, 'api/pilot-request.js'), 'utf8');
+  assert('it is rate limited by client IP', /checkRate\('ip:' \+ _clientIp\(req\)/.test(src));
+  assert('the limit runs before any parsing work',
+    src.indexOf('checkRate(') < src.indexOf('const name = clean('));
+  assert('an attached file must be a known document type', /LEAD_FILE_TYPES/.test(src));
+  assert('the stored Content-Type is ours, not the caller\'s',
+    /'Content-Type': leaseMime,/.test(src) && !/clean\(body\.lease\.type/.test(src));
+  assert('it uses the shared size ceiling, not a private constant',
+    /MAX_UPLOAD_BYTES/.test(src) && !/const MAX_FILE\s*=/.test(src));
+  assert('why it is public is documented', /UNAUTHENTICATED BY DESIGN/.test(src));
+  assert('and why no origin allowlist was added', /trivially forged/.test(src));
+}
+
 console.log(`\n${failed === 0 ? '\x1b[32m' : '\x1b[31m'}RESULT: ${passed} passed, ${failed} failed\x1b[0m`);
 process.exit(failed === 0 ? 0 : 1);
 })().catch(e => { console.error(e); process.exit(1); });
