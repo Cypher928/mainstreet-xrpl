@@ -724,6 +724,48 @@ sec('SEC-1 · a stored document is authorised before it can be read');
     }
   }
 
+  // ── PILOT WALKTHROUGH FIXES ─────────────────────────────────────────────
+  {
+    const app = code('script.js');
+
+    // After an upload, the manager must be shown what was extracted. Measured
+    // in the walkthrough: visibleTenantRow=false on the active pane after a
+    // successful extraction, because the rows render in Overview and the upload
+    // finishes wherever the user was.
+    // Scope to handleBulkLeases. The first version of this check matched the
+    // FUNCTION DEFINITION `function _revealExtractedLeases(successCount, total)`
+    // rather than the call, so deleting the call still passed — a vacuous
+    // assertion against the exact regression it exists to catch.
+    // End the slice where handleBulkLeases ends — _revealExtractedLeases is
+    // DEFINED just below it, and a slice that reached past the closing brace
+    // matched the definition instead of the call. Twice.
+    const _hbl = app.slice(app.indexOf('async function handleBulkLeases'),
+                           app.indexOf('function _revealExtractedLeases'));
+    assert('the upload handler itself reveals the extracted rows',
+      /_revealExtractedLeases\(/.test(_hbl),
+      'handleBulkLeases finishes without showing the result');
+    assert('and the scope is real, not an empty slice', _hbl.length > 500, `${_hbl.length} chars`);
+    assert('it navigates only when the results are not already visible',
+      /alreadyVisible[\s\S]{0,220}switchWorkspaceTab\('overview'\)/.test(app),
+      'moving the page under a user who is already looking at the rows');
+    assert('and it says how many were extracted',
+      /extracted — review the fields below/.test(app));
+    assert('a navigation failure cannot take out a successful upload',
+      /could not reveal results/.test(app));
+
+    // A tenant name is not an action.
+    assert('per-tenant report buttons carry a verb, not a bare name',
+      /trb-verb[\s\S]{0,80}Statement for/.test(app),
+      'the Reports pane renders tenant names as if they were actions');
+    assert('and they are grouped under their own label',
+      /rpt-tenant-list-lbl[\s\S]{0,40}Per tenant/.test(app));
+
+    // One action, one label.
+    assert('the empty-state CTAs use one consistent label',
+      !/\+ Create Property|\+ Create First Property/.test(app),
+      'multiple labels for addNewProperty()');
+  }
+
   // ── The shared renderer, exercised ──────────────────────────────────────
   {
     const app = code('script.js');

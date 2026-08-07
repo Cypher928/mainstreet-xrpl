@@ -5244,8 +5244,55 @@ async function handleBulkLeases(fileList) {
       actor: 'User', title: `${total} lease${total !== 1 ? 's' : ''} uploaded`,
       description: `${successCount} of ${total} extracted successfully`,
       metadata: { total, successCount } });
+
+    // Show the manager what was extracted.
+    //
+    // Walkthrough finding: the upload finishes on whichever pane the user was
+    // on, but the extracted tenant rows render in Overview. So the single most
+    // important moment in the product — did the AI read my lease correctly? —
+    // ended with the screen apparently unchanged, and nothing said where to
+    // look. Measured: visibleTenantRow=false on the active pane after a
+    // successful extraction.
+    //
+    // No new UI. The rows already exist and are already correct; this just puts
+    // the user in front of them.
+    _revealExtractedLeases(successCount, total);
   }
 }
+
+/**
+ * Bring the extracted lease rows on screen after an upload.
+ *
+ * Navigates only when the results are NOT already visible — if the user is
+ * looking at them, moving the page under them is its own kind of rude.
+ */
+function _revealExtractedLeases(successCount, total) {
+  try {
+    const results = document.getElementById('bulkResults');
+    const alreadyVisible = !!(results && results.getBoundingClientRect().height > 2);
+
+    if (!alreadyVisible && typeof switchWorkspaceTab === 'function') {
+      switchWorkspaceTab('overview');
+    }
+    // After the pane swap, scroll the rows into view and say what happened.
+    setTimeout(() => {
+      const r = document.getElementById('bulkResults');
+      if (r && r.getBoundingClientRect().height > 2) {
+        r.scrollIntoView({ behavior: 'smooth', block: 'start' });
+      }
+      if (typeof showToast === 'function') {
+        showToast(successCount === total
+          ? `✓ ${successCount} lease${successCount !== 1 ? 's' : ''} extracted — review the fields below before approving.`
+          : `${successCount} of ${total} lease${total !== 1 ? 's' : ''} extracted. The rest need attention below.`,
+          { duration: 7000 });
+      }
+    }, 250);
+  } catch (e) {
+    // Navigation is a courtesy; never let it take out the upload that succeeded.
+    console.warn('[lease upload] could not reveal results:', e && e.message);
+  }
+}
+window._revealExtractedLeases = _revealExtractedLeases;
 
 function updateTenantField(index, field, value) {
   // Primary write: property.tenants by stable id
@@ -14558,9 +14605,18 @@ function showReportSection() {
     const label = isDup && t?.leasedSqft
       ? `${r.name} (${Number(t.leasedSqft).toLocaleString()} sqft)`
       : r.name;
-    html += `<button class="tenant-report-btn" onclick="generateTenantStatement('${esc(r.name)}')">${esc(label)}</button>`;
+    // Walkthrough finding: these rendered as bare tenant names sitting in the
+    // same grid as "🧾 Tenant Statement", so the Reports pane read as
+    //   [Tenant Statement] [Sunrise Cafe LLC] [Coverage Gap Report]
+    // — one action, one name, one action. A name is not a verb; say what the
+    // button does and let the name be the subject.
+    html += `<button class="tenant-report-btn" onclick="generateTenantStatement('${esc(r.name)}')">`
+         +  `<span class="trb-verb">Statement for</span>`
+         +  `<span class="trb-who">${esc(label)}</span></button>`;
   });
-  wrap.innerHTML = html;
+  wrap.innerHTML = html
+    ? `<div class="rpt-btn-cell rpt-tenant-list"><div class="rpt-tenant-list-lbl">Per tenant</div>${html}</div>`
+    : '';
 }
 
 function guardedMasterReport() {
@@ -19638,7 +19694,7 @@ function renderPortfolio(props) {
         <div class="ptf-empty-title">Add your first property</div>
         <div class="ptf-empty-desc">Create your own property and get audit-ready in 5 minutes — or open one of the demo properties above to explore with sample data.</div>
         <div class="ptf-empty-cta">
-          <button class="ptf-empty-btn-primary" onclick="addNewProperty()">+ Create Property</button>
+          <button class="ptf-empty-btn-primary" onclick="addNewProperty()">+ Add Property</button>
         </div>
       </div>`;
     renderReviewQueue(props);
@@ -19764,7 +19820,7 @@ function renderPortfolio(props) {
       <div class="ptf-empty-title">No properties yet</div>
       <div class="ptf-empty-desc">Add your first property to get CAM reconciliation, cap enforcement, and audit-ready tenant statements — in about 5 minutes.</div>
       <div class="ptf-empty-cta">
-        <button class="ptf-empty-btn-primary" onclick="addNewProperty()">+ Create First Property</button>
+        <button class="ptf-empty-btn-primary" onclick="addNewProperty()">+ Add Property</button>
         <button class="ptf-empty-btn-secondary" onclick="loadDemo()">&#x1F3AF; Try Live Demo</button>
       </div>
     </div>`;
