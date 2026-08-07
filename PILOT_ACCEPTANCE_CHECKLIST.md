@@ -12,6 +12,35 @@
 > wrong but she did not hit it, record it here and leave it.
 >
 > Frozen at `bd0f5bb` on `pilot`. Production (`main`) remains at `9c6d905`.
+
+---
+
+## SEC-1 — CLOSED 2026-08-07
+
+The `leases` and `invoices` buckets were created `public = true`, so every
+uploaded lease and invoice PDF was retrievable by anyone holding the URL — no
+authentication, no expiry. RLS protected the *row*; nothing protected the
+*object*.
+
+**Storage** — applied to the pilot (`bhmktujbxdbvdmpybmad`) and verified:
+
+| | before | after |
+|---|---|---|
+| `leases.public` | `true` | `false` |
+| `invoices.public` | `true` | `false` |
+| policies on `storage.objects` | 0 | 4, all `{authenticated}` |
+| policies granted to `anon` | — | **0** |
+
+**Application** — every document path routed through `/api/document-url`, which
+checks ownership by storage path prefix and returns a 5-minute signed URL.
+Confirmed working end to end after the flip: invoice, lease, Space document,
+Property Document, timeline attachment, reserve source document, AI evidence
+citation.
+
+**Not applied to production** (`zhsuhehgehbzkmzurzyf`). Production storage is
+unverified and probably has the same defect — the same setup doc created it.
+Run the before/after capture there before shipping to real customers.
+
 >
 > **⚠️ Known-wrong during this walkthrough.** Three CAM correctness defects are
 > confirmed and are Phase 1A blockers to charging anyone
