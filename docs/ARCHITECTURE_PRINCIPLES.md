@@ -136,6 +136,41 @@ succeeded — a wrong "it's gone" costs more trust than a slow "loading".
 *Enforced by:* `test-acq-orphan-repair.js` (two checks assert silence on a failed
 load), `test-ask-lease.js`.
 
+### 9. A stored document is always reachable from the screen you are on
+
+If the application stores a document, there must be an obvious user-visible
+control on that same screen to open the original. Not one screen away, not after
+running a report — on the screen where the record lives.
+
+*Earned by:* an invoice whose PDF was stored, whose row offered a button labelled
+"View", and whose expanded panel contained eight controls — four "Mark Verified",
+four "Change" — and no way to reach the document. "View" meant *view the
+extracted fields*. The only openers in the app were inside CAM results and an
+export packet, so a manager had to run a reconciliation to see a file they had
+just uploaded. The plumbing was correct: `viewInvFile()` worked, resolved through
+`resolveDocumentUrl()`, handled private buckets. It was simply not wired to
+anywhere a user looks.
+
+*Violation shape:* a control named for the metadata rather than the document
+("View" that expands fields). An opener that exists only on a downstream screen.
+A button gated on a transient in-memory `File` when a persisted URL is also
+available. And the subtler one — a document surface that renders `name`, `size`
+and `date` but never the file, because the record was treated as the artefact.
+
+*Why it is separate from #8:* that principle governs what the product SAYS about
+missing things. This one governs what it OFFERS for things that are present. A
+suite can verify every link resolves correctly and still not notice there is no
+link — which is exactly what happened: 164 assertions passed while the invoice
+was unreachable. "Does this open correctly" and "can this be opened at all" are
+different questions, and only the second one catches a missing control.
+
+*Enforced by:* `test-security.js` — one assertion per document-bearing surface
+(invoice detail, tenant lease card, Space documents, Property Documents, timeline
+attachments, reserve source documents, AI evidence citations), each rendering a
+stored document and requiring a control that opens it.
+
+---
+
 ---
 
 ## Candidates — proposed, not adopted

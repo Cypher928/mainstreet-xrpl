@@ -8551,6 +8551,10 @@ function renderInvResults() {
           ${d._error ? `<div class="err-banner" style="margin-bottom:10px;">Extraction error: ${esc(d._error)}</div>` : ''}
           <div id="dup-warn-${i}"></div>
           <div id="sanity-warn-${i}"></div>
+          ${d.fileUrl ? `<div class="inv-source-row">
+            <button class="inv-view-file-btn" onclick="event.stopPropagation();viewInvFile(${i})">&#x1F4C4; View Invoice</button>
+            <span class="inv-source-name">${esc(d.fileName || 'source document')}</span>
+          </div>` : ''}
           <div class="field-row">
             <div class="field" style="flex:2;">
               <label>Vendor ${confidenceBadge(conf.vendorName)}</label>

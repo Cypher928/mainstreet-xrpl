@@ -610,6 +610,120 @@ sec('SEC-1 · a stored document is authorised before it can be read');
     assert('no file constructs or reads a public storage URL', publicRefs.length === 0, publicRefs.join(', '));
   }
 
+  // ── THE INVARIANT ───────────────────────────────────────────────────────
+  //
+  //   If the application STORES a document, there must be an obvious
+  //   user-visible control on that same screen to open the original.
+  //
+  // Every check in this file until now asked "does the link resolve correctly?"
+  // None asked "is there a link at all." So an invoice whose PDF was stored,
+  // and whose row said "View", expanded a panel of extracted fields with no way
+  // to reach the document — and passed 164 assertions doing it. Correct
+  // plumbing to a control that does not exist is still a dead end for the user.
+  //
+  // This renders each surface with a stored document and requires an opener.
+  if (!pw) { bad('playwright unavailable — the document-access invariant went unchecked'); }
+  else {
+    const PORT2 = 8981;
+    const MIME2 = { '.html':'text/html', '.js':'application/javascript', '.css':'text/css', '.json':'application/json' };
+    const srv2 = http.createServer((rq, rs) => {
+      let u = decodeURIComponent(rq.url.split('?')[0]); if (u === '/') u = '/index.html';
+      if (u.startsWith('/api/')) { rs.writeHead(200, { 'Content-Type': 'application/json' }); rs.end('{}'); return; }
+      fs.readFile(path.join(ROOT, u), (e, d) => {
+        if (e) { rs.writeHead(404); rs.end(); return; }
+        rs.writeHead(200, { 'Content-Type': MIME2[path.extname(u)] || 'application/octet-stream' }); rs.end(d);
+      });
+    });
+    await new Promise(r => srv2.listen(PORT2, '127.0.0.1', r));
+    const b2 = await pw.chromium.launch({ headless: true, args: ['--no-sandbox'] });
+    const p2 = await (await b2.newContext({ viewport: { width: 1280, height: 900 } })).newPage();
+    await p2.route('**cdnjs**',    r => r.fulfill({ status: 200, body: '/*x*/' }));
+    await p2.route('**jsdelivr**', r => r.fulfill({ status: 200, body: '/*x*/' }));
+    await p2.route('**fonts.g**',  r => r.fulfill({ status: 200, contentType: 'text/css', body: '' }));
+    await p2.addInitScript(`window.supabase={createClient:function(){return {auth:{
+      getUser:function(){return Promise.resolve({data:{user:{id:'u1'}},error:null});},
+      getSession:function(){return Promise.resolve({data:{session:{access_token:'t',user:{id:'u1'}}},error:null});},
+      onAuthStateChange:function(){return {data:{subscription:{unsubscribe:function(){}}}};},
+      signOut:function(){return Promise.resolve({error:null});}},
+      rpc:function(){return Promise.resolve({data:null,error:null});},
+      from:function(){var q={select:function(){return q;},eq:function(){return q;},neq:function(){return q;},
+        is:function(){return q;},not:function(){return q;},order:function(){return q;},limit:function(){return q;},
+        ilike:function(){return q;},in:function(){return Promise.resolve({data:[],error:null});},
+        single:function(){return Promise.resolve({data:null,error:null});},
+        then:function(f){return Promise.resolve({data:[],error:null}).then(f);}};return q;},
+      storage:{from:function(){return {getPublicUrl:function(){return {data:{publicUrl:''}};}};}}};}};`);
+    try {
+      await p2.goto(`http://127.0.0.1:${PORT2}/`, { waitUntil: 'domcontentloaded' });
+      await p2.waitForTimeout(2400);
+
+      const surfaces = await p2.evaluate(() => {
+        // An "opener" is the shared marker, or a call to one of the approved
+        // document-opening functions. Anything else is not a way in.
+        const opens = (root) => {
+          if (!root) return 0;
+          let n = root.querySelectorAll('[data-doc-url]').length;
+          root.querySelectorAll('[onclick]').forEach(e => {
+            if (/viewInvFile|openInvFileViewer|openLeaseModal|DocViewer|openStoredDocument|EvidenceViewer\.open/
+                .test(e.getAttribute('onclick') || '')) n++;
+          });
+          return n;
+        };
+        const INV = 'invoices/u1/doc.pdf', LEASE = 'leases/u1/lease.pdf';
+        const r = {};
+
+        invoiceData.splice(0, invoiceData.length, { vendorName: 'Vendor Co', category: 'utilities',
+          amount: 5000, invoiceDate: '2024-04-15', fileUrl: INV, fileName: 'doc.pdf',
+          fileType: 'application/pdf', confidence: { category: 92 } });
+        const host = document.getElementById('invResults'); if (host) host.style.display = 'block';
+        renderInvResults();
+        r.invoiceDetail = opens(document.getElementById('idet-0'));
+
+        // Normalized the way the app does it — leaseExpected is DERIVED there,
+        // and a fixture that omits it fakes a gap that does not exist.
+        tenantData[0] = normalizeTenant({ id: 't1', tenant_name: 'Sunrise Cafe', leased_sqft: 2000,
+          leaseUrl: LEASE, leaseFileName: 'lease.pdf', start_date: '2022-01-01',
+          end_date: '2027-01-01', lease_type: 'NNN' });
+        r.leaseExpected = tenantData[0].leaseExpected;
+        if (typeof renderBulkResults === 'function') renderBulkResults();
+        r.tenantLeaseCard = opens(document.getElementById('btr-0') || document.getElementById('bulkResults'));
+
+        const chip = window.TenantSpace && window.TenantSpace._attachChip
+          ? window.TenantSpace._attachChip({ url: LEASE, name: 'lease.pdf', kind: 'pdf' }, '') : '';
+        r.spaceDocument      = /data-doc-url/.test(chip) ? 1 : 0;
+        r.propertyDocuments  = /data-doc-url/.test(window.docLinkHtml(INV, 'doc.pdf', { className: 'pos-doc' })) ? 1 : 0;
+        r.timelineAttachment = /data-doc-url/.test(window.docLinkHtml(INV, 'x', { className: 'tl-attach' })) ? 1 : 0;
+        r.reserveDocument    = /data-doc-url/.test(window.docLinkHtml(INV, 'View', { className: 'escrow-doc-btn' })) ? 1 : 0;
+
+        const aix = document.createElement('div');
+        aix.innerHTML = window.AIExplanation.render(
+          'STATUS: No issues\nWHY: x\nSUGGESTION: y\nEVIDENCE: Invoice',
+          { sources: { invoice: { url: INV, label: 'doc.pdf' } } });
+        r.aiEvidenceChip = opens(aix);
+        return r;
+      });
+
+      assert('the fixture is normalized like the app (leaseExpected derived)',
+        surfaces.leaseExpected === true, String(surfaces.leaseExpected));
+
+      // THE INVARIANT, one assertion per surface that can hold a stored document.
+      for (const [key, label] of [
+        ['invoiceDetail',      'an invoice with a stored PDF'],
+        ['tenantLeaseCard',    'a tenant whose lease is stored'],
+        ['spaceDocument',      'a Space lease document'],
+        ['propertyDocuments',  'a Property Document'],
+        ['timelineAttachment', 'a timeline attachment'],
+        ['reserveDocument',    'a reserve source document'],
+        ['aiEvidenceChip',     'an AI evidence citation'],
+      ]) {
+        assert(`${label} offers a control that opens it`,
+          surfaces[key] > 0,
+          `${key} rendered ${surfaces[key]} openers — the document is stored and unreachable from this screen`);
+      }
+    } finally {
+      await b2.close(); srv2.close();
+    }
+  }
+
   // ── The shared renderer, exercised ──────────────────────────────────────
   {
     const app = code('script.js');
