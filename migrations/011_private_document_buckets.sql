@@ -54,7 +54,19 @@ update storage.buckets
 --    and if the service-role key ever leaks the blast radius is unchanged
 --    rather than made worse by a permissive policy.
 -- ─────────────────────────────────────────────────────────────────────────────
-alter table storage.objects enable row level security;
+-- NOT `alter table storage.objects enable row level security;`
+--
+-- Applied 2026-08-07 against the pilot (bhmktujbxdbvdmpybmad). That statement
+-- fails with `42501: must be owner of table objects` — the Supabase connector
+-- role does not own storage.objects, and neither does the SQL editor's role.
+--
+-- It is also unnecessary: RLS is already ON for storage.objects in a Supabase
+-- project. Verified before applying:
+--   select relrowsecurity from pg_class c join pg_namespace n on n.oid=c.relnamespace
+--    where n.nspname='storage' and c.relname='objects';   -- => true
+--
+-- Leaving the statement in would abort the whole migration in a transaction and
+-- roll back the bucket flip, which is the part that actually closes SEC-1.
 
 drop policy if exists "docs_owner_read"   on storage.objects;
 drop policy if exists "docs_owner_insert" on storage.objects;
@@ -122,3 +134,18 @@ create policy "docs_owner_delete"
 -- immediately. This RE-OPENS every lease to anonymous access — it is an outage
 -- workaround, not a resting state.
 --   update storage.buckets set public = true where id in ('leases','invoices');
+
+-- ─── APPLIED ─────────────────────────────────────────────────────────────────
+-- 2026-08-07 · pilot project bhmktujbxdbvdmpybmad (mainstreet-pilot, ca-central-1)
+--
+-- Before:  leases public=true,  invoices public=true,  0 policies on storage.objects
+-- After:   leases public=false, invoices public=false, 4 policies, all {authenticated}
+--          anon policies: 0
+--
+-- Applied as separate statements rather than one migration, because the
+-- `alter table` above aborts the batch. The bucket flip went first — it is the
+-- part that closes SEC-1; the policies are the defence-in-depth layer behind it.
+--
+-- NOT yet applied to production (zhsuhehgehbzkmzurzyf). Production storage is
+-- unverified — this migration should be run there only after the same
+-- before/after capture.
