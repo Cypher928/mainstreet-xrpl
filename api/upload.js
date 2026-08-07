@@ -162,6 +162,17 @@ export default async function handler(req, res) {
     return res.status(status).json({ error: `Supabase Storage error (HTTP ${status}): ${body}` });
   }
 
-  const publicUrl = `${SUPABASE_URL}/storage/v1/object/public/${bucket}/${safeName}`;
-  return res.status(200).json({ url: publicUrl });
+  // SEC-1 — return a storage REFERENCE, not a public URL.
+  //
+  // This used to mint `${SUPABASE_URL}/storage/v1/object/public/${bucket}/...`
+  // and the app stored it on the invoice and the lease_documents row. Once the
+  // buckets are private that URL resolves for nobody, and it goes on claiming
+  // in the database — and in any log or export it reaches — that the object is
+  // publicly readable.
+  //
+  // `bucket/path` is what /api/document-url needs to sign, and
+  // resolveDocumentUrl() accepts it. Rows written before this change hold the
+  // full public URL; the resolver parses the path back out of those too, so
+  // both shapes work and no data migration is required.
+  return res.status(200).json({ url: `${bucket}/${safeName}` });
 }

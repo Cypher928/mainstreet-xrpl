@@ -24,6 +24,21 @@ const assert = (m, c, d) => c ? ok(m) : bad(m, d);
 const sec = (t) => console.log(`\n── ${t} ──`);
 const ROOT = __dirname;
 
+/**
+ * Source text with comment lines removed.
+ *
+ * Three assertions in this file have now failed by matching the FIX'S OWN
+ * COMMENT — which quotes the defective pattern verbatim in order to explain it.
+ * A test that fails on its own documentation teaches people to delete the
+ * documentation, so every source-text assertion goes through this.
+ */
+function code(relPath) {
+  return fs.readFileSync(path.join(ROOT, relPath), 'utf8')
+    .split('\n')
+    .filter(l => !/^\s*(\/\/|\*|\/\*|--)/.test(l))
+    .join('\n');
+}
+
 process.env.ANTHROPIC_API_KEY = 'sk-test-not-a-real-key';
 for (const k of ['PILOT_SUPABASE_URL', 'SUPABASE_URL']) process.env[k] = process.env[k] || 'https://stub.supabase.co';
 for (const k of ['PILOT_SUPABASE_ANON_KEY', 'SUPABASE_ANON_KEY']) process.env[k] = process.env[k] || 'stub-anon-key';
@@ -457,6 +472,76 @@ sec('SEC-1 · a stored document is authorised before it can be read');
     !/img\.src = url;/.test(invViewer) && !/iframe\.src = url;/.test(invViewer));
   assert('the external-open button pins the scheme',
     /leaseViewerOpenExternal[\s\S]{0,500}u\.protocol !== 'https:'/.test(app));
+
+  // ── Every surface that reads an uploaded file ────────────────────────────
+  // Swept term by term before migration 011: fileUrl, file_url,
+  // storage/v1/object/public, getPublicUrl, supabase.storage, href=, iframe.src,
+  // img.src, document/invoice/evidence viewers, attachment previews, downloads.
+  // Load the real module and exercise the decision, rather than grepping for
+  // the branch. The first version of this check asserted that the string
+  // `data-ts-doc-url=` appeared in the file — which stayed true even with the
+  // branch disabled, so it passed against a reverted fix. A test that survives
+  // its own mutation is not a test.
+  global.window = global.window || {};
+  global.document = global.document || { addEventListener() {} };
+  new Function('window', 'document', fs.readFileSync(path.join(ROOT, 'tenant-space.js'), 'utf8'))
+    (global.window, global.document);
+  const TS = global.window.TenantSpace;
+  assert('the Space module loaded', !!(TS && TS._attachChip));
+  if (TS && TS._attachChip) {
+    const stored = TS._attachChip({ url: 'leases/user-A/lease.pdf', name: 'Lease', kind: 'pdf' }, '');
+    const storedAbs = TS._attachChip({ url: 'https://x.supabase.co/storage/v1/object/public/leases/user-A/l.pdf', name: 'L', kind: 'pdf' }, '');
+    const inline = TS._attachChip({ url: 'data:image/png;base64,AAAA', name: 'Photo', kind: 'photo' }, '');
+    assert('a STORED lease renders as a button, not a raw <a href>',
+      /^<button/.test(stored) && !/<a /.test(stored), stored.slice(0, 80));
+    assert('an absolute stored URL does too', /^<button/.test(storedAbs), storedAbs.slice(0, 80));
+    assert('it carries the reference for the resolver', /data-ts-doc-url="/.test(stored));
+    assert('an inline data: attachment still opens directly — nothing to sign',
+      /^<a /.test(inline), inline.slice(0, 80));
+    assert('_isStoredObject tells them apart',
+      TS._isStoredObject('leases/u/x.pdf') === true &&
+      TS._isStoredObject('invoices/u/x.pdf') === true &&
+      TS._isStoredObject('data:image/png;base64,AA') === false &&
+      TS._isStoredObject(null) === false);
+  }
+  const ts = fs.readFileSync(path.join(ROOT, 'tenant-space.js'), 'utf8');
+  assert('and it opens through DocViewer, which resolves',
+    /button\.ts-doc\[data-ts-doc-url\][\s\S]{0,400}DocViewer\.openDoc/.test(ts));
+
+  assert('the Evidence Viewer fallback is not a raw link to the stored URL',
+    !/<a href="\$\{_esc\(c\.fileUrl\)\}"/.test(ev),
+    'the "open the original" escape hatch would itself be dead');
+  assert('it resolves before opening', /async function openOriginal[\s\S]{0,500}resolveDocumentUrl/.test(ev));
+  assert('and is exported so the button can reach it', /\n    openOriginal,/.test(ev));
+
+  const up = code('api/upload.js');
+  assert('upload no longer mints a public URL',
+    !/object\/public\/\$\{bucket\}/.test(up), 'new rows would still claim public access');
+  assert('it returns a storage reference instead', /url: `\$\{bucket\}\/\$\{safeName\}`/.test(up));
+  // Both shapes must resolve, or old rows break.
+  assert('the resolver accepts the new reference shape',
+    (P('leases/user-A/x.pdf') || {}).path === 'user-A/x.pdf');
+  assert('and still accepts rows written before this change',
+    (P('https://x.supabase.co/storage/v1/object/public/leases/user-A/x.pdf') || {}).path === 'user-A/x.pdf');
+
+  // Nothing anywhere may construct a public URL any more.
+  const EXCLUDE = /node_modules|^test-|^tools\/|^fixtures\/|^verify-|^qa-harness/;
+  const walk = (dir, acc) => {
+    for (const f of fs.readdirSync(dir, { withFileTypes: true })) {
+      const rel = path.relative(ROOT, path.join(dir, f.name));
+      if (EXCLUDE.test(rel) || f.name === 'node_modules' || f.name.startsWith('.')) continue;
+      if (f.isDirectory()) walk(path.join(dir, f.name), acc);
+      else if (/\.(js|html)$/.test(f.name)) acc.push(rel);
+    }
+    return acc;
+  };
+  const offenders = walk(ROOT, []).filter(rel => {
+    const body = fs.readFileSync(path.join(ROOT, rel), 'utf8')
+      .split('\n').filter(l => !/^\s*(\/\/|\*|--)/.test(l)).join('\n');
+    return /object\/public\//.test(body) || /getPublicUrl\s*\(/.test(body);
+  });
+  assert('no file constructs or reads a public storage URL',
+    offenders.length === 0, offenders.join(', '));
 
   // The migration must exist and must not leave the bucket public.
   const mig = fs.readFileSync(path.join(ROOT, 'migrations/011_private_document_buckets.sql'), 'utf8');

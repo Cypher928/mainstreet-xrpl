@@ -173,6 +173,32 @@ window.EvidenceViewer = (() => {
   function prev() { if (st.index > 0) { st.index--; _renderCurrent(); } }
   function jump(i) { if (i >= 0 && i < st.citations.length) { st.index = i; _renderCurrent(); } }
 
+  /**
+   * SEC-1 — open the source document in a new tab, via a signed URL.
+   *
+   * Deliberately not an <a href>: the stored /object/public/ URL no longer
+   * resolves, and a dead link offered as the fallback for a failed render is
+   * worse than no fallback at all — it reads as a second failure of the same
+   * thing.
+   */
+  async function openOriginal() {
+    const c = st.citations[st.index];
+    if (!c || !c.fileUrl) return;
+    const readable = window.resolveDocumentUrl ? await window.resolveDocumentUrl(c.fileUrl) : c.fileUrl;
+    if (!readable) {
+      const banner = _el('evdBanner');
+      if (banner) {
+        banner.textContent = 'That document could not be opened — you may not have access to it, or it is no longer stored.';
+        banner.style.display = 'block';
+      }
+      return;
+    }
+    let u;
+    try { u = new URL(readable, window.location.origin); } catch (_) { return; }
+    if (u.protocol !== 'https:' && u.protocol !== 'http:') return;
+    window.open(u.href, '_blank', 'noopener');
+  }
+
   function copyCitation() {
     const c = st.citations[st.index]; if (!c) return;
     const txt = `${c.source || 'Document'}${c.detail ? ' · ' + c.detail : ''}${c.quote ? ` — "${c.quote}"` : ''}`;
@@ -262,7 +288,12 @@ window.EvidenceViewer = (() => {
     let pdf;
     try { pdf = await _ensurePdf(c.fileUrl); }
     catch (e) {
-      docWrap.innerHTML = `<div class="evd-empty">Couldn't open the document here (${_esc(e.message)}). <a href="${_esc(c.fileUrl)}" target="_blank" rel="noopener">Open the original in a new tab ↗</a></div>`;
+      // SEC-1 — the escape hatch cannot be a raw link to the stored URL. That
+      // URL stopped resolving when the bucket went private, so the one control
+      // offered at the exact moment the in-app render failed would itself fail.
+      // The button resolves first and reports it if it cannot.
+      docWrap.innerHTML = `<div class="evd-empty">Couldn't open the document here (${_esc(e.message)}). ` +
+        `<button type="button" class="evd-open-original" onclick="EvidenceViewer.openOriginal()">Open the original in a new tab ↗</button></div>`;
       return;
     }
     if (st.citations[st.index] !== c) return; // user navigated away meanwhile
@@ -426,6 +457,7 @@ window.EvidenceViewer = (() => {
   }
 
   return {
+    openOriginal,
     open, close, next, prev, jump, find, backToCitations, copyCitation, explainClause, openFromChip,
     fromReserve, fromTenantField,
     // pure core (exported for tests)

@@ -200,11 +200,45 @@ window.TenantSpace = (function () {
            (rec.warranties || []).length > 0;
   }
 
-  function _attachChip(a, icon) {
-    return '<a class="ts-doc" href="' + _esc(a.url) + '" target="_blank" rel="noopener" title="' + _esc(a.name) + '">' +
-      icon + '&nbsp;<span class="ts-doc-name">' + _esc(a.name) + '</span>' +
-      '<span class="ts-doc-when">' + _esc(_fmtDate(a.when)) + '</span></a>';
+  // SEC-1 — a chip may point at either kind of attachment, and they open
+  // differently.
+  //
+  // Activity attachments are inlined base64 data: URLs (see
+  // docs/BACKLOG_ATTACHMENT_STORAGE.md) and open directly. A lease document is
+  // an object in the now-private leases bucket, and its stored URL does not
+  // resolve on its own — it has to be exchanged for a signed one first.
+  //
+  // A bare <a href> could only ever serve the first case. Anything in storage
+  // goes through DocViewer, which resolves before opening and reports it when
+  // it cannot.
+  function _isStoredObject(url) {
+    return typeof url === 'string' &&
+      (/\/storage\/v1\/object\//.test(url) || /^(leases|invoices)\//.test(url));
   }
+
+  function _attachChip(a, icon) {
+    var inner = icon + '&nbsp;<span class="ts-doc-name">' + _esc(a.name) + '</span>' +
+      '<span class="ts-doc-when">' + _esc(_fmtDate(a.when)) + '</span>';
+    if (_isStoredObject(a.url)) {
+      return '<button type="button" class="ts-doc" title="' + _esc(a.name) + '"' +
+        ' data-ts-doc-url="' + _esc(a.url) + '" data-ts-doc-name="' + _esc(a.name) + '"' +
+        ' data-ts-doc-kind="' + _esc(a.kind || 'document') + '">' + inner + '</button>';
+    }
+    return '<a class="ts-doc" href="' + _esc(a.url) + '" target="_blank" rel="noopener" title="' + _esc(a.name) + '">' +
+      inner + '</a>';
+  }
+
+  // One delegated handler for every stored-object chip.
+  document.addEventListener('click', function (e) {
+    var btn = e.target && e.target.closest && e.target.closest('button.ts-doc[data-ts-doc-url]');
+    if (!btn) return;
+    e.preventDefault();
+    if (window.DocViewer && window.DocViewer.openDoc) {
+      window.DocViewer.openDoc({
+        name: btn.dataset.tsDocName, url: btn.dataset.tsDocUrl, kind: btn.dataset.tsDocKind,
+      });
+    }
+  });
   function _section(title, count, bodyHtml) {
     return '<section class="ts-sec"><div class="ts-sec-head"><span class="ts-sec-title">' + _esc(title) + '</span>' +
       (count != null ? '<span class="ts-sec-count">' + count + '</span>' : '') + '</div>' +
@@ -1236,5 +1270,9 @@ window.TenantSpace = (function () {
 
   return { assemble: assemble, openSpace: openSpace, closeSpace: closeSpace, record: record, renderList: renderList,
            addActivity: _openAddPicker, activityTypes: function () { return ACTIVITY_TYPES.slice(); },
-           openActivity: openActivity };
+           openActivity: openActivity,
+           // SEC-1 test seam. The stored-vs-inline decision picks between a
+           // signed-URL round trip and a direct open, so it is worth asserting
+           // as BEHAVIOUR rather than grepping for the branch in the source.
+           _isStoredObject: _isStoredObject, _attachChip: _attachChip };
 })();
