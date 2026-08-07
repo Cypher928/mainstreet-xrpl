@@ -908,6 +908,78 @@ async function resolveDocumentUrl(ref) {
 }
 window.resolveDocumentUrl = resolveDocumentUrl;
 
+/**
+ * SEC-1 — the ONE way a stored document reaches the browser.
+ *
+ * Every previous fix converted one call site at a time, and each pass missed
+ * some: the invoice viewer, then the Space chips, then the AI evidence chips,
+ * then Property Documents, then timeline attachments. A per-site fix is a fix
+ * that has to be remembered, and this has now been forgotten four times.
+ *
+ * So the render sites stop deciding. They emit a marker; these three functions
+ * and the observer below do the rest:
+ *
+ *   docLinkHtml()   a clickable document  → <button data-doc-url> or <a href>
+ *   docImageHtml()  an inline thumbnail   → <img data-doc-src> (src filled later)
+ *   the observer    fills every data-doc-src the moment it enters the DOM
+ *
+ * A caller that forgets to hydrate cannot exist, because nothing calls hydrate.
+ */
+// isStoredDocumentRef / docLinkHtml / docImageHtml live in document-links.js —
+// a pure module both the browser and Node can load, so the rendering decision
+// is exercised by tests directly rather than only through a browser. What stays
+// here is what needs the DOM and the network.
+
+/** Resolve, then open. The scheme is pinned: a stored ref must never navigate. */
+async function openStoredDocument(ref) {
+  const readable = await resolveDocumentUrl(ref);
+  if (!readable) {
+    showToast('⚠️ That document could not be opened — you may not have access to it, or it is no longer stored.',
+      { color: '#92400e', textColor: '#fef3c7', duration: 8000 });
+    return;
+  }
+  let u;
+  try { u = new URL(readable, window.location.origin); } catch (_) { return; }
+  if (u.protocol !== 'https:' && u.protocol !== 'http:' && u.protocol !== 'blob:') return;
+  window.open(u.href, '_blank', 'noopener');
+}
+window.openStoredDocument = openStoredDocument;
+
+// One delegated handler for every document button, anywhere in the app.
+document.addEventListener('click', function (e) {
+  const btn = e.target && e.target.closest && e.target.closest('[data-doc-url]');
+  if (!btn) return;
+  e.preventDefault();
+  openStoredDocument(btn.getAttribute('data-doc-url'));
+});
+
+/**
+ * Fill in every stored thumbnail as it enters the DOM.
+ *
+ * An observer rather than a hydrate() call at each render site, because "call
+ * hydrate after you render" is exactly the instruction that gets forgotten —
+ * this whole exercise is the evidence.
+ */
+async function _hydrateDocImages(root) {
+  const imgs = [];
+  if (root.nodeType === 1) {
+    if (root.matches && root.matches('img[data-doc-src]')) imgs.push(root);
+    if (root.querySelectorAll) imgs.push(...root.querySelectorAll('img[data-doc-src]'));
+  }
+  for (const img of imgs) {
+    const ref = img.getAttribute('data-doc-src');
+    img.removeAttribute('data-doc-src');   // claim it before awaiting — no double work
+    const readable = await resolveDocumentUrl(ref);
+    if (readable) img.src = readable;
+    else img.alt = (img.alt || 'Image') + ' — not available';
+  }
+}
+if (typeof MutationObserver === 'function') {
+  new MutationObserver(function (records) {
+    for (const r of records) for (const n of r.addedNodes) _hydrateDocImages(n);
+  }).observe(document.documentElement, { childList: true, subtree: true });
+}
+
 // ─── Supabase Storage upload ──────────────────────────────────────────────────
 
 /**
@@ -2244,7 +2316,10 @@ async function reprocessEscrowReserveDocument(reserveId) {
     return;
   }
   try {
-    const res = await fetch(reserve.sourceFileUrl);
+    // SEC-1 — the stored URL will not fetch once the bucket is private.
+    const _readable = await resolveDocumentUrl(reserve.sourceFileUrl);
+    if (!_readable) throw new Error('You do not have access to that document, or it is no longer stored');
+    const res = await fetch(_readable);
     if (!res.ok) throw new Error('Could not fetch the stored document');
     const blob = await res.blob();
     const file = new File([blob], reserve.sourceFileName || 'reserve-document.pdf', { type: blob.type || 'application/pdf' });
@@ -2269,7 +2344,7 @@ function openEscrowPackageView(reserveId) {
     ? docs.map(d => `
       <div class="escrow-doc-row">
         <span>${esc(d.fileName || 'Document')}</span>
-        ${d.fileUrl ? `<a class="escrow-doc-btn" href="${esc(d.fileUrl)}" target="_blank" rel="noopener">View</a>` : ''}
+        ${d.fileUrl ? docLinkHtml(d.fileUrl, 'View', { className: 'escrow-doc-btn' }) : ''}
       </div>`).join('')
     : `<p style="color:var(--text-3);font-size:0.85rem;">No source documents recorded for this reserve.</p>`;
 
@@ -18762,9 +18837,16 @@ function renderPropertyActivity(property) {
     const leaseHtml = ev.leaseRef ? `<div class="tl-refline"><span class="tl-lease-ref">&#x1F4C4;&nbsp;${esc(ev.leaseRef)}</span></div>` : '';
     const attHtml = (ev.attachments && ev.attachments.length)
       ? `<div class="tl-attachments">` + ev.attachments.map(a => {
-          if (a.kind === 'photo') return `<a class="tl-attach tl-attach--photo" href="${esc(a.url)}" target="_blank" rel="noopener" title="${esc(a.name)}"><img class="tl-thumb" src="${esc(a.url)}" alt="${esc(a.name)}" loading="lazy"></a>`;
+          // SEC-1 — a timeline attachment may be an inline data: URL (Add
+          // Activity) or a stored object (Property OS uploads via
+          // uploadInvoiceFile). docLinkHtml/docImageHtml tell them apart.
+          if (a.kind === 'photo') {
+            return docLinkHtml(a.url,
+              docImageHtml(a.url, a.name, { className: 'tl-thumb' }),
+              { className: 'tl-attach tl-attach--photo', title: a.name });
+          }
           const _ic = a.kind === 'invoice' ? '&#x1F9FE;' : (a.kind === 'warranty' ? '&#x1F6E1;&#xFE0F;' : (a.kind === 'pdf' ? '&#x1F4C4;' : '&#x1F4CE;'));
-          return `<a class="tl-attach" href="${esc(a.url)}" target="_blank" rel="noopener">${_ic}&nbsp;${esc(a.name)}</a>`;
+          return docLinkHtml(a.url, `${_ic}&nbsp;${esc(a.name)}`, { className: 'tl-attach' });
         }).join('') + `</div>` : '';
     let _divider = '';
     const _dk = _dayKey(ev.timestamp);

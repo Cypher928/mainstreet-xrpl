@@ -62,6 +62,9 @@
        the serverless handlers via require(). Must precede lease-ingest.js and
        script.js, which both gate uploads on it. -->
   <script src="request-limits.js"></script>
+  <!-- ONE renderer for every stored document link and thumbnail, shared with the
+       tests via require(). Must precede script.js and every render module. -->
+  <script src="document-links.js"></script>
   <style>
     /* ── Theme design tokens ─────────────────────────────────────────────────
        The entire neutral palette — surfaces (elevation), text, and hairlines —

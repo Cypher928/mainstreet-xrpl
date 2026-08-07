@@ -484,6 +484,9 @@ sec('SEC-1 · a stored document is authorised before it can be read');
   // its own mutation is not a test.
   global.window = global.window || {};
   global.document = global.document || { addEventListener() {} };
+  // The REAL renderer, not a stub — document-links.js is a pure module for
+  // exactly this reason.
+  Object.assign(global.window, require('./document-links.js'));
   new Function('window', 'document', fs.readFileSync(path.join(ROOT, 'tenant-space.js'), 'utf8'))
     (global.window, global.document);
   const TS = global.window.TenantSpace;
@@ -495,7 +498,7 @@ sec('SEC-1 · a stored document is authorised before it can be read');
     assert('a STORED lease renders as a button, not a raw <a href>',
       /^<button/.test(stored) && !/<a /.test(stored), stored.slice(0, 80));
     assert('an absolute stored URL does too', /^<button/.test(storedAbs), storedAbs.slice(0, 80));
-    assert('it carries the reference for the resolver', /data-ts-doc-url="/.test(stored));
+    assert('it carries the reference for the resolver', /data-doc-url="/.test(stored));
     assert('an inline data: attachment still opens directly — nothing to sign',
       /^<a /.test(inline), inline.slice(0, 80));
     assert('_isStoredObject tells them apart',
@@ -504,9 +507,8 @@ sec('SEC-1 · a stored document is authorised before it can be read');
       TS._isStoredObject('data:image/png;base64,AA') === false &&
       TS._isStoredObject(null) === false);
   }
-  const ts = fs.readFileSync(path.join(ROOT, 'tenant-space.js'), 'utf8');
-  assert('and it opens through DocViewer, which resolves',
-    /button\.ts-doc\[data-ts-doc-url\][\s\S]{0,400}DocViewer\.openDoc/.test(ts));
+  assert('Space chips use the shared renderer, not a private copy',
+    /docLinkHtml\(a\.url/.test(code('tenant-space.js')));
 
   assert('the Evidence Viewer fallback is not a raw link to the stored URL',
     !/<a href="\$\{_esc\(c\.fileUrl\)\}"/.test(ev),
@@ -542,6 +544,118 @@ sec('SEC-1 · a stored document is authorised before it can be read');
   });
   assert('no file constructs or reads a public storage URL',
     offenders.length === 0, offenders.join(', '));
+
+  // ── THE SWEEP, AS A TEST ────────────────────────────────────────────────
+  //
+  // Every previous sweep was a grep I read the top of. The one before this
+  // returned 166 matches and I displayed 40, so ai-explanation.js and
+  // property-os.js were never in the output — and the AI evidence chip shipped
+  // a raw <a href> that 404'd in production.
+  //
+  // This walks every file, counts what it finds, and fails on anything it does
+  // not recognise. It cannot be truncated, and a new render site cannot be
+  // added without either using docLinkHtml/docImageHtml or failing here.
+  {
+    const SKIP_DIR = /^(node_modules|\.git|fixtures|tools)$/;
+    const SKIP_FILE = /^(test-|verify-|qa-harness)/;
+    const files = [];
+    (function walk(d) {
+      for (const e of fs.readdirSync(d, { withFileTypes: true })) {
+        if (e.name.startsWith('.') || SKIP_DIR.test(e.name)) continue;
+        const fp = path.join(d, e.name);
+        if (e.isDirectory()) { walk(fp); continue; }
+        if (!/\.(js|html)$/.test(e.name) || SKIP_FILE.test(e.name)) continue;
+        files.push(path.relative(ROOT, fp));
+      }
+    })(ROOT);
+    assert('the sweep actually walked the repository', files.length > 50, `${files.length} files`);
+
+    // A variable name that could hold a stored document reference.
+    const DOCISH = /\b(fileUrl|file_url|leaseUrl|lease_url|sourceFileUrl|a\.url|src\.url|rec\.url|d\.fileUrl|i\.fileUrl)\b/;
+    // Values proven safe: already resolved, or never a stored object.
+    const RESOLVED = /\b(readable|_readable|signedUrl|u\.href)\b/;
+
+    const offenders = [];
+    for (const f of files) {
+      const lines = fs.readFileSync(path.join(ROOT, f), 'utf8').split('\n');
+      lines.forEach((line, i) => {
+        if (/^\s*(\/\/|\*|\/\*|--|<!--)/.test(line)) return;
+        // The sink test is deliberately BROAD and dumb. The precise version I
+        // wrote first could not match the `href="' + esc(x) + '"` concatenation
+        // idiom, so it passed against a reverted AI-chip fix and a reverted
+        // Property Documents fix — the exact defect that reached production.
+        // Narrow detectors miss; a broad one plus an explicit allowlist does not.
+        const isSink = /\bhref\s*=/.test(line)
+                    || /\bsrc\s*=/.test(line)
+                    || /window\.open\s*\(/.test(line);
+        if (!isSink) return;
+        if (!DOCISH.test(line)) return;
+        if (RESOLVED.test(line)) return;
+        // The approved renderers are allowed to build the anchor.
+        if (/function (docLinkHtml|docImageHtml)/.test(line)) return;
+        offenders.push(`${f}:${i + 1}  ${line.trim().slice(0, 110)}`);
+      });
+    }
+    // THE REGRESSION. This is the check that would have caught the 404.
+    assert('no file sends a document URL straight to href / src / window.open',
+      offenders.length === 0,
+      '\n      ' + offenders.join('\n      '));
+
+    // And nothing constructs a public storage URL anywhere.
+    const publicRefs = files.filter(f => {
+      const body = fs.readFileSync(path.join(ROOT, f), 'utf8')
+        .split('\n').filter(l => !/^\s*(\/\/|\*|\/\*|--|<!--)/.test(l)).join('\n');
+      return /object\/public\//.test(body) || /getPublicUrl\s*\(/.test(body);
+    });
+    assert('no file constructs or reads a public storage URL', publicRefs.length === 0, publicRefs.join(', '));
+  }
+
+  // ── The shared renderer, exercised ──────────────────────────────────────
+  {
+    const app = code('script.js');
+    const DL = require('./document-links.js');
+    // Behaviour, not source text — the renderer is a loadable module now.
+    assert('a stored ref renders as a button carrying the reference',
+      /^<button[^>]*data-doc-url="leases\/u\/a\.pdf"/.test(DL.docLinkHtml('leases/u/a.pdf', 'x')));
+    assert('an absolute stored URL does too',
+      /^<button/.test(DL.docLinkHtml('https://x.co/storage/v1/object/public/leases/u/a.pdf', 'x')));
+    assert('a data: URL stays a direct anchor',
+      /^<a [^>]*href="data:/.test(DL.docLinkHtml('data:image/png;base64,AA', 'x')));
+    assert('a missing url is inert, not a link to nowhere',
+      /^<span/.test(DL.docLinkHtml(null, 'x')));
+    assert('a stored thumbnail carries NO src until it is resolved',
+      /data-doc-src=/.test(DL.docImageHtml('invoices/u/a.png', 'a')) &&
+      !/ src=/.test(DL.docImageHtml('invoices/u/a.png', 'a')));
+    assert('a data: thumbnail gets its src immediately',
+      / src="data:/.test(DL.docImageHtml('data:image/png;base64,AA', 'a')));
+    assert('the renderer escapes what it interpolates',
+      !/"onerror/.test(DL.docLinkHtml('leases/u/a".pdf" onerror="x', 'y')));
+    assert('the browser loads the shared renderer',
+      /<script src="document-links\.js">/.test(fs.readFileSync(path.join(ROOT, 'index.html'), 'utf8')));
+    assert('one delegated handler serves every document button',
+      /closest\('\[data-doc-url\]'\)/.test(app));
+    // The observer is what makes "forgetting to hydrate" impossible.
+    assert('stored thumbnails hydrate via an observer, not a per-site call',
+      /new MutationObserver/.test(app) && /img\[data-doc-src\]/.test(app));
+    assert('opening a stored document pins the scheme',
+      /async function openStoredDocument[\s\S]{0,700}u\.protocol !== 'https:'/.test(app));
+
+    // Every converted surface must call the shared renderer.
+    for (const [file, label] of [
+      ['ai-explanation.js', 'AI evidence citations'],
+      ['property-os.js',    'Property Documents'],
+      ['tenant-space.js',   'Space documents'],
+    ]) {
+      assert(`${label} render through docLinkHtml`, /docLinkHtml\(/.test(code(file)), file);
+    }
+    for (const [needle, label] of [
+      ['docLinkHtml(d.fileUrl',           'reserve/escrow source documents'],
+      ['docLinkHtml(a.url',               'timeline attachments'],
+      ['resolveDocumentUrl(reserve.sourceFileUrl', 'reserve document reprocess (download path)'],
+    ]) {
+      assert(`${label} go through the resolver`, app.includes(needle), needle);
+    }
+  }
 
   // The migration must exist and must not leave the bucket public.
   const mig = fs.readFileSync(path.join(ROOT, 'migrations/011_private_document_buckets.sql'), 'utf8');

@@ -925,8 +925,12 @@ window.PropertyOS = (function () {
               ' title="Open the record this document is filed on">on: ' + _esc(a.recordTitle) + '</button>'
             : '<span class="pos-doc-on pos-doc-on--inv">on: ' + _esc(a.recordTitle) + ' (invoice register)</span>';
           return '<div class="pos-doc-row">' +
-            '<a class="pos-doc" href="' + _esc(a.url) + '" target="_blank" rel="noopener">' +
-              _docIcon(a.kind) + '&nbsp;<span class="pos-doc-n">' + _esc(a.name) + '</span></a>' +
+            // SEC-1 — attachments added here go through uploadInvoiceFile
+            // (see _uploadAttachments below), so a.url can be a stored object.
+            (window.docLinkHtml
+              ? window.docLinkHtml(a.url, _docIcon(a.kind) + '&nbsp;<span class="pos-doc-n">' + _esc(a.name) + '</span>',
+                                   { className: 'pos-doc' })
+              : '<span class="pos-doc">' + _esc(a.name) + '</span>') +
             on +
             (a.system ? '<span class="pos-doc-sys">' + _esc(systemLabel(a.system) || a.system) + '</span>' : '') +
             (a.when ? '<span class="pos-doc-w">' + _esc(_fmtDate(a.when)) + '</span>' : '') +
@@ -1050,8 +1054,11 @@ window.PropertyOS = (function () {
             _relatedHtml(property, e) +
             _revHtml(e) +
             (atts.length ? '<div class="pos-rec-att">' + atts.map(function (a) {
-              return '<a class="pos-doc" href="' + _esc(a.url) + '" target="_blank" rel="noopener">' +
-                _docIcon(a.kind) + '&nbsp;<span class="pos-doc-n">' + _esc(a.name) + '</span></a>';
+              // SEC-1 — same as above: a stored object needs a signed URL.
+              return window.docLinkHtml
+                ? window.docLinkHtml(a.url, _docIcon(a.kind) + '&nbsp;<span class="pos-doc-n">' + _esc(a.name) + '</span>',
+                                     { className: 'pos-doc' })
+                : '<span class="pos-doc">' + _esc(a.name) + '</span>';
             }).join('') + '</div>' : '') +
           '</div>';
         }).join('') + '</div>' +

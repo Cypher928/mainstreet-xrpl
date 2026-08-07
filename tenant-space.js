@@ -211,34 +211,27 @@ window.TenantSpace = (function () {
   // A bare <a href> could only ever serve the first case. Anything in storage
   // goes through DocViewer, which resolves before opening and reports it when
   // it cannot.
+  // Delegates to the app-wide definition so there is one answer to "is this a
+  // stored object?", not two that can drift.
   function _isStoredObject(url) {
-    return typeof url === 'string' &&
-      (/\/storage\/v1\/object\//.test(url) || /^(leases|invoices)\//.test(url));
+    return window.isStoredDocumentRef ? window.isStoredDocumentRef(url)
+      : (typeof url === 'string' && (/\/storage\/v1\/object\//.test(url) || /^(leases|invoices)\//.test(url)));
   }
 
+  // SEC-1 — one renderer for every document chip in the app.
+  //
+  // This used to build its own <a href>/<button> pair and its own delegated
+  // handler. That was the fourth place to grow a private copy of the same
+  // decision, and the copies kept diverging — which is how the AI evidence
+  // chips shipped a raw href that 404'd. docLinkHtml() is the single answer.
   function _attachChip(a, icon) {
     var inner = icon + '&nbsp;<span class="ts-doc-name">' + _esc(a.name) + '</span>' +
       '<span class="ts-doc-when">' + _esc(_fmtDate(a.when)) + '</span>';
-    if (_isStoredObject(a.url)) {
-      return '<button type="button" class="ts-doc" title="' + _esc(a.name) + '"' +
-        ' data-ts-doc-url="' + _esc(a.url) + '" data-ts-doc-name="' + _esc(a.name) + '"' +
-        ' data-ts-doc-kind="' + _esc(a.kind || 'document') + '">' + inner + '</button>';
-    }
-    return '<a class="ts-doc" href="' + _esc(a.url) + '" target="_blank" rel="noopener" title="' + _esc(a.name) + '">' +
-      inner + '</a>';
+    return window.docLinkHtml
+      ? window.docLinkHtml(a.url, inner, { className: 'ts-doc', title: a.name })
+      : '<span class="ts-doc">' + inner + '</span>';
   }
 
-  // One delegated handler for every stored-object chip.
-  document.addEventListener('click', function (e) {
-    var btn = e.target && e.target.closest && e.target.closest('button.ts-doc[data-ts-doc-url]');
-    if (!btn) return;
-    e.preventDefault();
-    if (window.DocViewer && window.DocViewer.openDoc) {
-      window.DocViewer.openDoc({
-        name: btn.dataset.tsDocName, url: btn.dataset.tsDocUrl, kind: btn.dataset.tsDocKind,
-      });
-    }
-  });
   function _section(title, count, bodyHtml) {
     return '<section class="ts-sec"><div class="ts-sec-head"><span class="ts-sec-title">' + _esc(title) + '</span>' +
       (count != null ? '<span class="ts-sec-count">' + count + '</span>' : '') + '</div>' +
@@ -291,7 +284,13 @@ window.TenantSpace = (function () {
       : _empty('Nothing recorded yet. Every repair, photo, note and document you add appears here as a dated record of what happened in this suite.');
 
     var photosHtml = rec.photos.length
-      ? '<div class="ts-photos">' + rec.photos.map(function (a) { return '<a class="ts-photo" href="' + _esc(a.url) + '" target="_blank" rel="noopener" title="' + _esc(a.name) + '"><img src="' + _esc(a.url) + '" alt="' + _esc(a.name) + '" loading="lazy"></a>'; }).join('') + '</div>'
+      ? '<div class="ts-photos">' + rec.photos.map(function (a) {
+          // SEC-1 — Add Activity inlines photos as data: URLs, but Property OS
+          // uploads them to storage. Both land here.
+          return window.docLinkHtml
+            ? window.docLinkHtml(a.url, window.docImageHtml(a.url, a.name), { className: 'ts-photo', title: a.name })
+            : '<span class="ts-photo"></span>';
+        }).join('') + '</div>'
       : _empty('No photos yet. Move-in and move-out condition, damage, and completed repairs \u2014 photographed here, they stay attached to this suite.');
     var invHtml = rec.invoices.length ? '<div class="ts-docs">' + rec.invoices.map(function (a) { return _attachChip(a, '\u{1F9FE}'); }).join('') + '</div>' : _empty('No vendor invoices yet. Add the bills for work done in this suite so the cost history sits with the space it belongs to.');
     var warrHtml = rec.warranties.length ? '<div class="ts-docs">' + rec.warranties.map(function (a) { return _attachChip(a, '\u{1F6E1}\u{FE0F}'); }).join('') + '</div>' : _empty('No warranties on file. Record equipment and workmanship warranties with their expiry, so a future repair can be checked against them first.');
