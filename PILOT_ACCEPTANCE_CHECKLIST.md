@@ -1,6 +1,15 @@
 # Pilot Acceptance Checklist
 
-> ## 🧊 FROZEN — pending Christy's walkthrough
+> ## 🧊 FROZEN FOR CHRISTY'S WALKTHROUGH
+>
+> **Frozen at tag `pilot-freeze-2026-08-07` on `pilot`.**
+> Resolve it with `git rev-list -n 1 pilot-freeze-2026-08-07`.
+> Last code change: `46eec99`; this commit adds the notice.
+>
+> The notice names the TAG, not a hash. The previous version named a commit
+> and went 68 commits stale; a commit also cannot name its own hash, so any
+> hash written here is either wrong or one behind. The tag is the reference.
+> Production (`main`) remains at `9c6d905` — untouched, 68 commits behind.
 >
 > **The only changes permitted are fixes for bugs Christy finds while walking
 > the product.** No new functionality, no refactors, no polish, no
@@ -9,9 +18,38 @@
 >
 > A change qualifies if it is repairing something that behaved wrongly during
 > her walkthrough. "While I was in there" does not qualify. If something looks
-> wrong but she did not hit it, record it here and leave it.
+> wrong but she did not hit it, record it below and leave it.
 >
-> Frozen at `bd0f5bb` on `pilot`. Production (`main`) remains at `9c6d905`.
+> ### What this build contains that the previous freeze did not
+>
+> The previous notice said `bd0f5bb` and was 68 commits stale, which made it
+> useless as a reference point. This one names a tag so it cannot drift.
+>
+> - **SEC-1 closed** — document buckets private, signed URLs, ownership checked
+> - **SEC-2, 3, 6, 9, 10, 11, 12** — server-owned prompts, session-loss
+>   recovery, no constructed JS in AI actions, storage hygiene, defence in depth
+> - **AI-1..AI-4** — confidence honesty, server-owned instructions, untrusted
+>   document boundaries, citation page honesty
+> - **CAM-1..CAM-6** — one engine, year scoping, exclusions on direct matches
+> - **Principle 9** — a stored document is always reachable from the screen
+>   you are on
+>
+> ### Known and deliberately NOT fixed
+>
+> - `_normalizeRole()` fails open to `landlord` (SEC-4) — client-side only
+> - `dev-switcher` activates on `*.vercel.app` with `?devRole=1` (SEC-5)
+> - Production Supabase storage unverified — probably public, same as the pilot
+>   was. Not touched; production is out of scope for this freeze.
+> - AI-5..10, CAM-7..11, PW-6..13 — deferred pending evidence they block a real
+>   workflow
+>
+> ### The thing this freeze cannot tell you
+>
+> No real lease has been through this build. Every verification — 180
+> assertions, four end-to-end workflows, the full document sweep — ran against
+> fixtures and stubs. The pipeline is sound; whether the extraction is good
+> enough to be worth paying for is unmeasured, and only Christy's leases will
+> say.
 
 ---
 
