@@ -2,13 +2,23 @@
 
 > ## 🧊 FROZEN FOR CHRISTY'S WALKTHROUGH
 >
-> **Frozen at tag `pilot-freeze-2026-08-07` on `pilot`.**
-> Resolve it with `git rev-list -n 1 pilot-freeze-2026-08-07`.
-> Last code change: `46eec99`; this commit adds the notice.
+> **Frozen at `73041d1` on `pilot`** — tag `pilot-freeze-2026-08-07`.
+> Last code change: `46eec99`; `73041d1` adds this notice.
 >
-> The notice names the TAG, not a hash. The previous version named a commit
-> and went 68 commits stale; a commit also cannot name its own hash, so any
-> hash written here is either wrong or one behind. The tag is the reference.
+> Both are given on purpose. The tag is the readable name; the hash is what
+> works if you do not have the tag — it could not be pushed from the authoring
+> environment (its git proxy permits `refs/heads/*` but not `refs/tags/*`), so
+> it may exist only locally. `73041d1` is on `origin/pilot` and is the
+> reference that always resolves.
+>
+> To recreate the tag from any clone:
+>
+>     git tag -a pilot-freeze-2026-08-07 73041d1 -m "Pilot freeze for Christy's walkthrough"
+>     git push origin pilot-freeze-2026-08-07
+>
+> The previous notice named `bd0f5bb` and went 68 commits stale, which is worse
+> than no reference — it looked authoritative and was wrong. A freeze marker is
+> only useful if it still points at the freeze.
 > Production (`main`) remains at `9c6d905` — untouched, 68 commits behind.
 >
 > **The only changes permitted are fixes for bugs Christy finds while walking
