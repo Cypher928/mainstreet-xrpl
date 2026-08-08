@@ -23,6 +23,16 @@ window.LeaseIntelligence = (() => {
     'tenant_name', 'leased_sqft', 'start_date', 'end_date', 'lease_type',
   ];
 
+  // ── Fields without which a CAM reconciliation cannot be computed ─────────────
+  // Phase 0 (M5): the ingest gate in script.js used to derive "partial" from
+  // start_date/end_date/lease_type only, so a lease with no square footage —
+  // which cannot be allocated a pro-rata share at all — passed as status
+  // 'success', _needsReview false, confidence 'high', while the explainability
+  // summary generated from THIS list said "Review required before
+  // reconciliation". Two lists, two answers, and the machine-readable one gated
+  // the workflow. Exported so both consumers read the same array.
+  const RECONCILIATION_CRITICAL_FIELDS = ['tenant_name', 'leased_sqft', 'start_date', 'end_date'];
+
   // ── TASK 2: CLAUSE SEMANTIC NORMALIZATION ─────────────────────────────────────
   //
   // Maps natural-language CAM clause variants to canonical codes.
@@ -301,6 +311,20 @@ window.LeaseIntelligence = (() => {
     catch (_) { return d; }
   }
 
+  // Mirrors the enforcement condition in script.js runCAMAllocation (the stricter
+  // of the two engine sites — runFullReconciliation only null-checks). Kept in
+  // this module so the summary and the engine cannot disagree about whether a
+  // cap is live. If the engine's condition changes, change this with it.
+  function capIsEnforceable(t) {
+    if (!t) return false;
+    const pct = parseFloat(t.cap);
+    if (t.cap == null || t.cap === '' || !Number.isFinite(pct) || pct < 0 || pct > 100) return false;
+    // parseFloat(null/undefined/'') is NaN, so this one check covers absence and
+    // non-numeric alike. Note 0 IS enforceable here: the engine treats a zero
+    // base the same way, and this helper must not diverge from it.
+    return Number.isFinite(parseFloat(t.capBaseAmount));
+  }
+
   function generateLeaseExplainability(tenantState) {
     if (!tenantState) return { fieldSummaries: {}, overallSummary: '', reviewNotes: [] };
     const t = tenantState;
@@ -335,6 +359,17 @@ window.LeaseIntelligence = (() => {
         fieldSummaries.cap = `CAM Cap of ${t.cap}% applied by ${amdLabel(gov)}.`;
       } else {
         fieldSummaries.cap = `CAM Cap of ${t.cap}% defined in original lease.`;
+      }
+      // Phase 0 (M1a): a cap percentage alone does not cap anything. The engine
+      // (script.js runFullReconciliation / runCAMAllocation) requires BOTH
+      // capPercentage and capBaseAmount and skips enforcement when the base is
+      // absent — deliberately, rather than invent a base. capBaseAmount is
+      // manual entry and extraction never sets it, so every extracted cap is
+      // inert on arrival. Saying "CAM Cap of 5.25%" without saying that is a
+      // claim the reconciliation does not honour.
+      if (!capIsEnforceable(t)) {
+        fieldSummaries.cap += ' NOT ENFORCED — no prior-year base amount on file, so the cap cannot be calculated and this reconciliation applies no limit.';
+        reviewNotes.push(`CAM Cap of ${t.cap}% found in the lease but NOT being enforced. Enter the prior-year CAM base amount for this tenant to apply it.`);
       }
     } else {
       fieldSummaries.cap = 'No CAM Cap found — tenant bears full proportionate share of expense increases.';
@@ -405,9 +440,12 @@ window.LeaseIntelligence = (() => {
       reviewNotes.push(`${amendments.length} amendment${amendments.length > 1 ? 's' : ''} on file, modifying: ${modified.join(', ')}.`);
     }
 
-    const missingCritical = ['tenant_name', 'leased_sqft', 'start_date', 'end_date'].filter(f => !t[f]);
+    const missingCritical = RECONCILIATION_CRITICAL_FIELDS.filter(f => !t[f]);
+    const capPhrase = t.cap == null
+      ? 'No CAM Cap.'
+      : (capIsEnforceable(t) ? `CAM Cap: ${t.cap}%.` : `CAM Cap: ${t.cap}% (not enforced — no base amount).`);
     const overallSummary = missingCritical.length === 0
-      ? `Lease complete. ${amendments.length > 0 ? amendments.length + ' amendment(s) applied. ' : ''}${t.cap != null ? 'CAM Cap: ' + t.cap + '%.' : 'No CAM Cap.'}`
+      ? `Lease complete. ${amendments.length > 0 ? amendments.length + ' amendment(s) applied. ' : ''}${capPhrase}`
       : `Lease incomplete — missing: ${missingCritical.join(', ')}. Review required before reconciliation.`;
 
     return { fieldSummaries, overallSummary, reviewNotes };
@@ -642,6 +680,8 @@ window.LeaseIntelligence = (() => {
   // ── Public API ────────────────────────────────────────────────────────────────
   return {
     CANONICAL_FIELDS,
+    RECONCILIATION_CRITICAL_FIELDS,
+    capIsEnforceable,
     CAM_CONCEPT_MAP,
     normalizeClauseConcept,
     reasonMultiDocumentLease,

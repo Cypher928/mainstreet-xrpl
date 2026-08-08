@@ -1850,7 +1850,24 @@ function prepareLeaseTextForClaude(rawText) {
   ].filter(Boolean).join('\n\n...\n\n');
 }
 
-async function callClaudeForLease(text) {
+// Phase 0 (M5): the single source of truth for "can this lease be reconciled".
+// Reads the list from lease-intelligence.js so the ingest gate and the
+// explainability summary cannot drift apart again; the literal is a fallback for
+// load-order and for Node test harnesses that have not evaluated the module.
+function _reconciliationCriticalFields() {
+  const fromModule = window.LeaseIntelligence?.RECONCILIATION_CRITICAL_FIELDS;
+  return Array.isArray(fromModule) && fromModule.length
+    ? fromModule
+    : ['tenant_name', 'leased_sqft', 'start_date', 'end_date'];
+}
+
+// Lowers a confidence level by one step so it can never read 'high' for a lease
+// that cannot be reconciled. Mirrors the thresholds in deriveExtractionConfidence.
+function _capConfidenceLevel(level) {
+  return level === 'high' ? 'medium' : level;
+}
+
+async function callClaudeForLease(text, fileName) {
   const leaseSnippet = prepareLeaseTextForClaude(text);
   // WHY cam_cap added: the system prompt (CLAUDE_LEASE_SYSTEM) always asks for cam_cap,
   // but the user prompt previously omitted it. Conflicting instructions caused Claude to
@@ -2053,7 +2070,11 @@ ${leaseSnippet}
         fieldKey,
         value:                  normalized[fieldKey] ?? null,
         confidence:             { status: 'estimated', note: 'AI-extracted' },
-        sourceFile:             normalized.fileName || null,
+        // Phase 0 (P1b): this read `normalized.fileName`, which is not set here —
+        // the filename is spread onto the tenant later (processLeaseFile), so
+        // every evidence snapshot persisted source_file NULL and the Evidence
+        // Viewer had no document to name. The filename now arrives as a parameter.
+        sourceFile:             fileName || normalized.fileName || null,
         page:                   null,
         section:                null,
         quote:                  qt,
@@ -3186,7 +3207,7 @@ async function handleLease(i, file) {
       const _tt = window.LeaseIngest ? window.LeaseIngest.begin(file.size) : null;
       if (_tt) window.LeaseIngest.mark(_tt, { path: window.LeaseIngest.PATHS.TEXT, payloadBytes: leaseText.length });
       try {
-        extracted = await callClaudeForLease(leaseText);
+        extracted = await callClaudeForLease(leaseText, file.name);
         if (_tt) { window.LeaseIngest.end(_tt, 'success'); _recordIngestTelemetry(window.LeaseIngest.summary(_tt)); }
       } catch (e) {
         if (_tt) { window.LeaseIngest.end(_tt, 'failure', 'text-extraction-failed'); _recordIngestTelemetry(window.LeaseIngest.summary(_tt)); }
@@ -4865,7 +4886,7 @@ async function _runLeaseJobPipeline(jobId, placeholderIdx) {
     try {
       if (leaseText && leaseText.length >= 50) {
         console.log('path: text extraction, chars:', leaseText.length);
-        extracted = await callClaudeForLease(leaseText);
+        extracted = await callClaudeForLease(leaseText, file.name);
       } else {
         usedPdfDirect = true;
         console.log('path: PDF direct (text weak/missing, chars:', leaseText?.length ?? 0, ')');
@@ -4952,10 +4973,28 @@ async function _runLeaseJobPipeline(jobId, placeholderIdx) {
     const hasLeaseType  = !!norm?.lease_type;
     const hadExtraction = !!extracted;
 
+    // Phase 0 (M5): a lease missing any reconciliation-critical field cannot be
+    // allocated a CAM share, so it must not pass the review gate. leased_sqft was
+    // absent from this condition, so Wink Davis — no square footage anywhere in
+    // the document — came through status 'success', _needsReview false,
+    // confidence 'high', while the explainability summary built from the SAME
+    // field list said "Review required before reconciliation". The gate is
+    // machine-readable and the summary is prose, so the gate won.
+    // Evaluated against the values that actually land on the tenant row, not the
+    // raw extraction — tenant_name has regex and filename fallbacks, and gating
+    // on norm.tenant_name would newly fail leases those fallbacks already rescue.
+    const _criticalState = {
+      tenant_name: resolvedName,
+      leased_sqft: norm?.leased_sqft,
+      start_date:  norm?.start_date,
+      end_date:    norm?.end_date,
+    };
+    const _missingCritical = _reconciliationCriticalFields().filter(f => !_criticalState[f]);
+
     let status;
     if (!hadExtraction || !hasTenant) {
       status = 'failed';
-    } else if (!norm?.start_date || !norm?.end_date || !hasLeaseType) {
+    } else if (_missingCritical.length > 0 || !hasLeaseType) {
       status = 'partial';
     } else {
       status = 'success';
@@ -5003,9 +5042,16 @@ async function _runLeaseJobPipeline(jobId, placeholderIdx) {
       _showRetry,
       _nameFromClaude:      nameFromClaude,
       _error:               status === 'failed' ? 'Extraction failed — tap Retry to re-upload' : null,
-      _confidence:          _conf.level,
-      _confidenceScore:     _conf.score,
-      _confidenceReasons:   _conf.reasons,
+      // Phase 0 (M5): confidence describes how well the document was read, but a
+      // lease missing a reconciliation-critical field cannot be reconciled at
+      // ANY reading quality. Wink Davis scored 90/'high' with no square footage.
+      // Cap below the 'high' threshold (80, lease-intelligence.js
+      // deriveExtractionConfidence) so the badge cannot contradict the gate.
+      _confidence:          _missingCritical.length ? _capConfidenceLevel(_conf.level) : _conf.level,
+      _confidenceScore:     _missingCritical.length ? Math.min(_conf.score, 79)        : _conf.score,
+      _confidenceReasons:   _missingCritical.length
+        ? _conf.reasons.concat([`Cannot reconcile — missing: ${_missingCritical.join(', ')}`])
+        : _conf.reasons,
       _meta,
       _autoExpand:          _conf.level === 'low' || _conf.level === 'failed',
       _userConfirmed:       false,
@@ -7244,7 +7290,7 @@ async function handleAmendmentUpload(tenantId, file) {
     const leaseText = await extractLeaseText(file);
     let extracted;
     if (leaseText && leaseText.length >= 50) {
-      extracted = await callClaudeForLease(leaseText);
+      extracted = await callClaudeForLease(leaseText, file.name);
     } else {
       extracted = await callClaudeWithPdfDirect(file);
     }
@@ -8239,7 +8285,7 @@ async function retryExtractionWithFile(index, file) {
       if (!leaseText) {
         extracted = { tenant_name: null, status: 'failed' };
       } else {
-        extracted = await callClaudeForLease(leaseText);
+        extracted = await callClaudeForLease(leaseText, file.name);
       }
     } catch (err) {
       console.error('[retryExtraction] extraction error:', err);
@@ -23345,7 +23391,7 @@ async function acqHandleLeaseFiles(fileList) {
       const leaseText = await extractLeaseText(file);
       let extracted;
       if (leaseText && leaseText.length >= 50) {
-        extracted = await callClaudeForLease(leaseText);
+        extracted = await callClaudeForLease(leaseText, file.name);
       } else {
         extracted = await callClaudeWithPdfDirect(file);
       }
