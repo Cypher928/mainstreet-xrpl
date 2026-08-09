@@ -295,6 +295,93 @@ t('full coverage raises no coverage finding at all', () => {
   eq(gapFlag(full), undefined, 'a fully-leased property should raise nothing');
 });
 
+console.log('\n── Variance banner: partial coverage is expected, not a defect ──');
+
+t('[source] the banner branches on coverage before warning', () => {
+  const i = scriptCode.indexOf('const variance = Math.abs(totalBilled - totalPool)');
+  ok(i !== -1, 'variance banner not found');
+  const slice = scriptCode.slice(i, i + 1800);
+  ok(/const _coverageIncomplete = proRataSum < 98;/.test(slice),
+     'the banner does not consider property coverage');
+  ok(/_coverageIncomplete\s*\n?\s*\?/.test(slice) || /\? *`[\s\S]{0,80}Expected — partial property coverage/.test(slice),
+     'the banner does not branch on coverage');
+});
+
+t('[source] partial coverage does not tell the user to re-check invoices', () => {
+  const i = scriptCode.indexOf('const _coverageIncomplete');
+  const slice = scriptCode.slice(i, i + 1400);
+  const expectedBranch = slice.slice(0, slice.indexOf('Reconciliation variance detected'));
+  ok(/Expected — partial property coverage/.test(expectedBranch),
+     'no expected-coverage wording');
+  ok(!/Re-check invoice amounts or re-run allocation/.test(expectedBranch),
+     'the partial-coverage branch still gives defect advice');
+  ok(/no action needed/i.test(expectedBranch),
+     'the partial-coverage branch does not tell the user nothing is wrong');
+});
+
+t('[source] the diagnostic warning survives for complete coverage', () => {
+  ok(/Reconciliation variance detected/.test(scriptCode),
+     'the genuine variance warning was removed');
+  ok(/Re-check invoice amounts or re-run allocation/.test(scriptCode),
+     'the diagnostic advice was removed — it is still correct when coverage is complete');
+});
+
+t('[source] the variance arithmetic is untouched', () => {
+  ok(/const totalPool   = invoices\.reduce\(\(s, inv\) => s \+ \(parseFloat\(inv\.amount\) \|\| 0\), 0\);/.test(scriptCode),
+     'totalPool changed');
+  ok(/const totalBilled = results\.reduce\(\(s, r\) => s \+ r\.totalAllocated, 0\);/.test(scriptCode),
+     'totalBilled changed');
+  ok(/const variance = Math\.abs\(totalBilled - totalPool\);/.test(scriptCode),
+     'variance changed');
+  ok(/variance <= 0\.05/.test(scriptCode),
+     'the 0.05 suppression threshold changed');
+});
+
+console.log('\n── Modified Gross is a lease question, not a dispute ──');
+
+// Two tenants, both receiving shared CAM: one Modified Gross, one pure Gross.
+const inv = n => ({ vendorName: n, category: 'repairs', amount: 1000, allocation: 'shared', share: 500 });
+const grossResults = [
+  { tenantId: 'mg', name: 'ModGross', proRataPercent: 50, totalAllocated: 500, includedInvoices: [inv('A')] },
+  { tenantId: 'gr', name: 'PureGross', proRataPercent: 50, totalAllocated: 500, includedInvoices: [inv('B')] },
+];
+const grossProp = { tenants: [
+  { id: 'mg', lease_type: 'Modified Gross' },
+  { id: 'gr', lease_type: 'Gross' },
+]};
+const grossFlags = () => RCE.detectReconciliationIssues(grossResults, grossProp, '2025-12-31');
+const modGrossFlag  = () => grossFlags().find(f => /Modified Gross tenant receiving/i.test(f.title));
+const pureGrossFlag = () => grossFlags().find(f => /Gross-lease tenant receiving/i.test(f.title));
+
+t('the Modified Gross finding is non-disputable and typed as lease verification', () => {
+  const f = modGrossFlag();
+  ok(f, 'Modified Gross finding not raised');
+  eq(f.disputable, false, 'it asks whether the charge is permitted — it does not allege an error —');
+  eq(f.kind, 'lease_verification');
+  eq(f.severity, 'yellow', 'severity must not change —');
+});
+
+t('the Modified Gross finding points at Validate Against Lease', () => {
+  const f = modGrossFlag();
+  ok(/Validate Against Lease/.test(f.detail), 'detail does not name the existing workflow');
+  ok(f.conditions.some(c => /Validate Against Lease/.test(c)), 'conditions do not name the workflow');
+  ok(f.conditions.some(c => /Not a dispute/i.test(c)), 'conditions do not say this is not a dispute');
+});
+
+t('the pure Gross-lease finding is UNCHANGED and still disputable', () => {
+  const f = pureGrossFlag();
+  ok(f, 'Gross-lease finding not raised');
+  ok(f.disputable !== false, 'pure Gross alleges a possible violation and must stay disputable —');
+  ok(f.kind === undefined, 'pure Gross must not be reclassified —');
+  eq(f.severity, 'yellow');
+  ok(/may violate lease terms/.test(f.detail), 'pure Gross wording changed');
+});
+
+t('[source] the renderer already suppresses the button for non-disputable findings', () => {
+  ok(/f\.disputable === false \? '' :/.test(scriptCode),
+     'the shared suppression path was removed');
+});
+
 console.log('\n── AI Auditor: unallocated space ──');
 
 t('[source] the gap is described as "not covered by loaded leases", not "untenanted"', () => {
@@ -322,7 +409,7 @@ t('[source] the recommendation asks which cause applies before concluding', () =
      'the recommendation does not ask which cause applies');
 });
 
-const TOTAL_EXPECTED = 27;
+const TOTAL_EXPECTED = 35;
 t(`suite runs all ${TOTAL_EXPECTED} checks`, () => {
   eq(pass + fail + 1, TOTAL_EXPECTED, 'test count changed — update TOTAL_EXPECTED deliberately');
 });

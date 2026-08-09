@@ -161,16 +161,32 @@ window.ReconciliationEngine = (() => {
       const sharedTotal = sharedInvs.reduce((s, i) => s + (i.share || 0), 0);
       if (isModGross) {
         // Modified Gross leases vary — some permit CAM pass-throughs, others do not.
+        //
+        // This finding asks a question; it does not allege an error. Its own text
+        // says "verify whether ... is permitted", and until the lease is read
+        // nobody knows whether the charge is wrong. It carried an "Open Dispute"
+        // button anyway, and openDisputeFromFlag's typeKeyMap does not match this
+        // title (/gross-lease/i matches the pure-Gross variant, not "Modified
+        // Gross"), so the button raised an UNTYPED dispute against a tenant whose
+        // allocation may well be correct.
+        //
+        // The right next action already exists: "Validate Against Lease" on that
+        // tenant's result card (script.js _startLeaseValidation). Point there.
+        // The pure-Gross branch below is deliberately left disputable — its text
+        // says the charge "may violate lease terms", which is an allegation.
         flags.push({
           severity: 'yellow',
+          kind:       'lease_verification',
+          disputable: false,
           title:    `Modified Gross tenant receiving shared CAM — ${r.name} (${_fmt(sharedTotal)})`,
-          detail:   `${r.name} holds a ${t.lease_type} lease. Modified Gross leases vary — some permit CAM pass-throughs, others bundle expenses into base rent. Verify whether ${_fmt(sharedTotal)} in shared CAM is permitted under this lease's expense provisions.`,
+          detail:   `${r.name} holds a ${t.lease_type} lease. Modified Gross leases vary — some permit CAM pass-throughs, others bundle expenses into base rent. Verify whether ${_fmt(sharedTotal)} in shared CAM is permitted under this lease's expense provisions. This is a question about the lease, not a finding that the allocation is wrong — use "Validate Against Lease" on ${r.name}'s result card to check the expense provisions.`,
           conditions: [
             `Tenant: ${r.name}`,
             `Lease type: ${t.lease_type}`,
             `Shared CAM charges: ${_fmt(sharedTotal)} across ${sharedInvs.length} invoice${sharedInvs.length !== 1 ? 's' : ''}`,
             'Modified Gross leases may or may not include CAM pass-throughs — verify the lease',
-            'Action: confirm expense pass-through provisions in the lease agreement',
+            'Action: run "Validate Against Lease" on this tenant\'s result card',
+            'Not a dispute: nothing here shows the allocation is wrong until the lease is read',
           ],
         });
       } else {

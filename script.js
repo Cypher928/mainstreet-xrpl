@@ -11508,12 +11508,35 @@ function _buildReconciliationSummaryHtml(results, invoices, propName) {
     </div>`).join('')
   }</div>` : '';
 
+  // totalBilled and totalPool are structurally different quantities and are only
+  // expected to agree when the property is fully covered by loaded leases.
+  // totalPool is the gross invoice total; totalBilled is what the engine
+  // allocated AFTER four legitimate reductions: property coverage below 100%,
+  // invoices marked not CAM-eligible (PW-3 — note the summary's invoice list is
+  // built without the camEligible flag, so those sit in totalPool and never in
+  // totalBilled), per-tenant category exclusions, and cap adjustments.
+  //
+  // Comparing them unconditionally meant a landlord validating on a subset of
+  // leases was told to "re-check invoice amounts or re-run allocation" — advice
+  // that would change nothing, because nothing was wrong. Same mistake the
+  // coverage flag made: a completeness signal presented as a defect.
+  //
+  // The diagnostic case is variance WITH complete coverage: the shares add up,
+  // and the pool still does not reconcile. That one keeps the original warning.
+  // Threshold matches reconciliation-engine.js section 3 (gap > 2 = incomplete).
+  //
+  // No arithmetic changed: totalPool, totalBilled and variance are as they were.
   const variance = Math.abs(totalBilled - totalPool);
-  const varianceBanner = variance > 0.05
-    ? `<div style="background:var(--bgc-431407);border:1px solid #f97316;color:var(--c-fed7aa);padding:10px 14px;border-radius:8px;margin-bottom:12px;font-size:0.85rem;">
-        ⚠️ <strong>Reconciliation variance detected</strong> — total billed (${fmt(totalBilled)}) differs from total expense pool (${fmt(totalPool)}) by <strong>${fmt(variance)}</strong>. Re-check invoice amounts or re-run allocation.
+  const _coverageIncomplete = proRataSum < 98;
+  const varianceBanner = variance <= 0.05
+    ? ''
+    : _coverageIncomplete
+      ? `<div style="background:var(--theme-surface);border:1px solid rgba(148,163,184,0.28);color:var(--text-3);padding:10px 14px;border-radius:8px;margin-bottom:12px;font-size:0.85rem;">
+        &#x1F4D0; <strong>Expected — partial property coverage.</strong> Total billed (${fmt(totalBilled)}) is less than the expense pool (${fmt(totalPool)}) by ${fmt(variance)} because the loaded leases cover ${proRataSum.toFixed(1)}% of the property. The unallocated share belongs to space no loaded lease covers, and any invoices marked not CAM-eligible, excluded by a lease, or reduced by a cap are also outside the billed total. Each tenant is billed only its own share — no action needed.
       </div>`
-    : '';
+      : `<div style="background:var(--bgc-431407);border:1px solid #f97316;color:var(--c-fed7aa);padding:10px 14px;border-radius:8px;margin-bottom:12px;font-size:0.85rem;">
+        ⚠️ <strong>Reconciliation variance detected</strong> — total billed (${fmt(totalBilled)}) differs from total expense pool (${fmt(totalPool)}) by <strong>${fmt(variance)}</strong>. Re-check invoice amounts or re-run allocation.
+      </div>`;
 
   const rows = results.map(r => {
     const liveT  = tenantData.find(t => t && t.id === r.tenantId);
