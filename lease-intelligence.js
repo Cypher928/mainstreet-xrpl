@@ -511,9 +511,26 @@ window.LeaseIntelligence = (() => {
       detect: (t) => {
         const lt = (t.lease_type || '').toLowerCase();
         const isNnn = lt.includes('nnn') || lt.includes('triple') || lt.includes('net');
-        // Only fire when field was never extracted (null/undefined).
-        // Empty string means Claude confirmed no exclusions — still informative, don't alert.
+        // F-02: this could never fire before, because script.js collapsed '' to
+        // null at extraction and normalizeTenant turned null back into '' — so
+        // the stored value was '' either way. Both sides are fixed; null now
+        // genuinely means "never extracted" and reaches this branch.
         return isNnn && (t.excluded_categories === null || t.excluded_categories === undefined);
+      },
+    },
+    {
+      type: 'CAM_EXCLUSIONS_EMPTY',
+      severity: 'low',
+      description: 'NNN lease where extraction found no exclusion schedule at all.',
+      confidenceAdjustment: -5,
+      fieldImpact: ['excluded_categories'],
+      reviewerNote: 'Extraction returned no exclusions for a net lease. Confirm against the lease — SIGA returned none twice and five exclusions on a third run of the identical document.',
+      // '' means extraction ran and found nothing. That is a real answer, but on
+      // a net lease it is an unusual one and F-02 showed it can be wrong.
+      detect: (t) => {
+        const lt = (t.lease_type || '').toLowerCase();
+        const isNnn = lt.includes('nnn') || lt.includes('triple') || lt.includes('net');
+        return isNnn && t.excluded_categories === '';
       },
     },
     {

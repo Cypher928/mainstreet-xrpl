@@ -280,8 +280,42 @@ window.AllocationIntegrity = (() => {
     });
   }
 
+  // ── detectUnappliedExclusions ─────────────────────────────────────────────
+
+  /**
+   * F-02: an exclusion the engine could not resolve fails OPEN — the expense
+   * stays in the pool and is allocated. This module validated allocation sums,
+   * precision and anomalies but never looked at exclusions at all, so that
+   * failure was silent. Surfacing it here puts it alongside the other financial
+   * invariants rather than leaving it to the UI to notice.
+   *
+   * @param {Array<{ tenantId, name, exclusionsNotApplied }>} tenants
+   * @returns {Array<{ type, severity, tenantId, tenantName, message, unapplied }>}
+   */
+  function detectUnappliedExclusions(tenants) {
+    const safe = Array.isArray(tenants) ? tenants : [];
+    const issues = [];
+    safe.forEach(t => {
+      if (!t) return;
+      const unapplied = Array.isArray(t.exclusionsNotApplied) ? t.exclusionsNotApplied : [];
+      if (!unapplied.length) return;
+      const applied = Array.isArray(t.excludedCategories) ? t.excludedCategories.length : 0;
+      issues.push({
+        type:       'EXCLUSIONS_NOT_APPLIED',
+        severity:   'high',
+        tenantId:   t.tenantId ?? t.id ?? null,
+        tenantName: t.name ?? t.tenantName ?? null,
+        message:    `${unapplied.length} lease exclusion${unapplied.length !== 1 ? 's' : ''} could not be applied `
+                  + `(${applied} applied). Those expenses remain in this tenant's pool.`,
+        unapplied:  unapplied.map(u => u && u.raw).filter(Boolean),
+      });
+    });
+    return issues;
+  }
+
   return {
     BALANCE_TOLERANCE,
+    detectUnappliedExclusions,
     validateAllocationSet,
     normalizeAllocationPrecision,
     detectAllocationAnomalies,

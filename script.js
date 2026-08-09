@@ -695,6 +695,40 @@ async function explainFetch(body, opts = {}) {
 
 const CATEGORIES = ['insurance','landscaping','snow','repairs','utilities','janitorial','security','management','other'];
 
+// F-02 — lease exclusion prose resolved against CATEGORIES.
+//
+// `excluded_categories` is free text; CATEGORIES is a closed nine-value enum;
+// the allocation filter compared them with exact equality, so 52 of 55 phrases
+// extracted across Runs 1-3 were inert. A non-matching exclusion fails OPEN —
+// the expense stays in the pool — so the tenant was billed for categories their
+// lease excludes while the statement said otherwise.
+//
+// Every array builder below now emits APPLIED categories only, which is why the
+// nine downstream `.includes(inv.category)` predicates did not have to change:
+// they receive a list that is true rather than one that is aspirational.
+//
+// If the resolver module is missing this fails CLOSED — no categories applied
+// and a synthetic unapplied entry, which blocks the tenant statement (see
+// _exclusionBlockReason). Failing open here would silently over-bill.
+function _exclusionState(rawExcluded) {
+  const CX = (typeof window !== 'undefined' && window.CamExclusions) || null;
+  if (!CX) {
+    console.error('[CAM] cam-exclusions.js not loaded — exclusions cannot be resolved; statements will be blocked.');
+    return {
+      resolved: [], applied: [],
+      notApplied: [{ raw: String(rawExcluded || ''), category: null, status: 'unmapped', candidates: [],
+                     reason: 'Exclusion resolver unavailable — cannot verify which exclusions apply.' }],
+      fingerprint: '', extracted: rawExcluded !== null && rawExcluded !== undefined, empty: rawExcluded === '',
+    };
+  }
+  return CX.tenantExclusionState(rawExcluded);
+}
+
+// Applied-only category list for a tenant record (the shape stored in tenantData).
+function _appliedExclusions(t) {
+  return _exclusionState(t && t.excluded_categories).applied;
+}
+
 // ─── State ────────────────────────────────────────────────────────────────────
 // tenantData[i] = null | { tenantName, leasedSqft, capPercentage, excludedCategories, baseYear }
 const tenantData  = [null, null, null];
@@ -1355,7 +1389,7 @@ function normalizeTenant(d) {
     start_date:          toISODate(d.start_date ?? d.startDate ?? d.lease_start_date ?? fallback.startDate ?? ''),
     end_date:            toISODate(d.end_date   ?? d.endDate   ?? d.lease_end_date  ?? fallback.endDate   ?? ''),
     lease_type:          d.lease_type          ?? d.leaseType                     ?? '',
-    excluded_categories: d.excluded_categories ?? d.excludedCategories            ?? '',
+    excluded_categories: d.excluded_categories ?? d.excludedCategories            ?? null,  // F-02: null = never extracted, '' = none found
     cap:                 d.cap                 ?? d.cam_cap ?? d.capPercentage    ?? null,
     flags:               d.flags               ?? [],
     confidence:          d.confidence          ?? {},
@@ -2011,10 +2045,12 @@ ${leaseSnippet}
     end_date:            resolvedEnd,
     lease_type:          resolvedType,
     cap:                 normalizeCap(raw.capPercentage ?? raw.cam_cap ?? null),
-    excluded_categories: (() => {
-      const v = raw.excludedCategories ?? raw.excluded_categories ?? null;
-      return v === '' ? null : v;
-    })(),
+    // F-02: '' and null are DIFFERENT. '' means extraction ran and found no
+    // exclusion schedule; null means the field was never extracted. This used to
+    // collapse '' into null, and normalizeTenant then turned null back into '',
+    // so CAM_EXCLUSIONS_UNDEFINED could never fire. SIGA proved it matters:
+    // '' in Runs 1-2, five exclusions in Run 3, from byte-identical input.
+    excluded_categories: raw.excludedCategories ?? raw.excluded_categories ?? null,
     baseYear:            raw.baseYear ?? null,
     confidence:          raw.confidence || {},
     flags:               finalFlags,
@@ -9996,9 +10032,9 @@ async function runAllocation() {
       totalSqft,
       capPct:             t.cap,
       capBaseAmount:      t.capBaseAmount ?? null,
-      excludedCategories: t.excluded_categories
-        ? t.excluded_categories.split(',').map(s => s.trim().toLowerCase()).filter(Boolean)
-        : [],
+      excludedCategories:   _appliedExclusions(t),   // F-02: applied only
+      exclusionsNotApplied: _exclusionState(t.excluded_categories).notApplied,
+      exclusionFingerprint: _exclusionState(t.excluded_categories).fingerprint,
     }));
 
   if (!tenants.length) {
@@ -10065,7 +10101,7 @@ async function runAllocation() {
   _prop.camYear = _runYear;   // CAM-2: the engine scopes its own inputs
   _prop.addLeases(getValidTenants().map(t => {
     const lease = new Lease(t.tenant_name, t.unitNumber || '', parseSqft(t.leased_sqft), t.start_date || '', t.end_date || '',
-      t.excluded_categories ? t.excluded_categories.split(',').map(s => s.trim()) : [],
+      _appliedExclusions(t),   // F-02: applied only — see _exclusionState
       t.cap ?? null, t.capBaseAmount ?? null,
       // AI-1 — sqFtApproximate. `?? 100` meant an unreported confidence read as
       // a perfect one, so this flag could never be true for an AI-extracted
@@ -11193,8 +11229,17 @@ function openExplainPanel(tenantName) {
   const adjHtml = r.capApplied
     ? `<div class="ep-adj">&#x26A0; Cap applied — your share reduced by ${fmt(r.capAdjustment)}</div>`
     : '';
-  const exclHtml = t.excludedCategories.length
-    ? `<div class="ep-excl">Excluded from your CAM: ${t.excludedCategories.join(', ')}</div>`
+  // F-02: list only what was actually filtered out of the pool, and say so when
+  // the lease excludes more than the engine could apply. Printing the raw AI
+  // phrases told the tenant seven categories were excluded when one was; simply
+  // dropping the other six would replace one untruth with another.
+  const _exUnapplied = (t.exclusionsNotApplied || []);
+  const exclHtml = (t.excludedCategories.length || _exUnapplied.length)
+    ? `<div class="ep-excl">${t.excludedCategories.length
+          ? `Excluded from your CAM: ${esc(t.excludedCategories.join(', '))}`
+          : 'No exclusions were applied to your CAM.'}${_exUnapplied.length
+          ? `<br><span class="ep-excl-warn">&#x26A0; ${_exUnapplied.length} further exclusion${_exUnapplied.length !== 1 ? 's' : ''} in this lease could not be applied automatically and ${_exUnapplied.length !== 1 ? 'are' : 'is'} under review: ${esc(_exUnapplied.map(u => u.raw).join(', '))}</span>`
+          : ''}</div>`
     : '';
   const narrativeHtml = (() => {
     if (!window.ReconciliationExplainer) return '';
@@ -16096,8 +16141,108 @@ function exportAuditLog() {
   logActivity('audit_log_export', 'Audit log exported (JSON)', { severity: 'info', actor: 'User', relatedEntity: lastPropName || 'Property' });
 }
 
+// ─── F-02: unapplied-exclusion lifecycle guard ────────────────────────────────
+//
+// A statement is "issued" the moment generateTenantStatement renders it into the
+// report overlay — there is no separate send/approve step, and the tenant prints
+// from that overlay. So the guard has to sit inside this function, before any
+// HTML is built. All three entry points (guardedTenantStatement, the per-result
+// card button, the Reports tab buttons) funnel through here, which makes it a
+// single choke point rather than a warning the user can scroll past.
+//
+// Returns null when the statement may be issued, or the reason it may not.
+function _exclusionBlockReason(tenantName) {
+  const t = lastTenants.find(x => x.name === tenantName);
+  if (!t) return null;
+  const notApplied = t.exclusionsNotApplied || [];
+  if (!notApplied.length) return null;
+
+  const rec = tenantData.find(d => d && d.tenant_name === tenantName);
+  const fp  = t.exclusionFingerprint || '';
+  const ack = rec && rec._exclusionAck;
+
+  // The acknowledgement is keyed to the exclusion set it was given for. Editing
+  // the lease's exclusions changes the fingerprint and re-blocks automatically —
+  // a landlord cannot acknowledge one set and issue against another.
+  if (ack && fp && ack.fingerprint === fp) return null;
+
+  return { tenantName, notApplied, fingerprint: fp, staleAck: !!(ack && ack.fingerprint !== fp) };
+}
+
+// Records the landlord's review of exclusions the engine could not apply, then
+// re-attempts the statement. Auditable: written to the activity log and
+// persisted on the tenant record.
+function acknowledgeUnappliedExclusions(tenantName) {
+  const block = _exclusionBlockReason(tenantName);
+  if (!block) { closeReport(); generateTenantStatement(tenantName); return; }
+  const idx = tenantData.findIndex(d => d && d.tenant_name === tenantName);
+  if (idx === -1) { showToast('Could not find that tenant to record the review.', { color: '#92400e', textColor: '#fef3c7' }); return; }
+  const user = window.AuthService?.getCurrentUser?.() || null;
+  tenantData[idx] = {
+    ...tenantData[idx],
+    _exclusionAck: {
+      fingerprint: block.fingerprint,
+      at:          new Date().toISOString(),
+      by:          user?.email || null,
+      unapplied:   block.notApplied.map(u => u.raw),
+    },
+  };
+  savePropertyData();
+  logActivity('exclusion_review', `Unapplied lease exclusions reviewed — ${tenantName}`, {
+    severity: 'warning', actor: 'User', relatedEntity: tenantName,
+    detail: `${block.notApplied.length} exclusion(s) acknowledged as not automatically applied: ${block.notApplied.map(u => u.raw).join(', ')}`,
+  });
+  closeReport();
+  generateTenantStatement(tenantName);
+}
+
+function _renderExclusionBlock(block) {
+  const rows = block.notApplied.map(u => `<tr>
+      <td>${esc(u.raw)}</td>
+      <td>${esc(u.status)}</td>
+      <td>${esc(u.candidates && u.candidates.length ? u.candidates.join(', ') : '—')}</td>
+      <td>${esc(u.reason)}</td>
+    </tr>`).join('');
+  const staleNote = block.staleAck
+    ? `<p class="rpt-helper-text"><strong>The previous review no longer applies</strong> — this lease's exclusions have changed since it was recorded.</p>`
+    : '';
+  openReport(`Statement blocked — ${block.tenantName}`, `
+    <div class="rpt-section-title">This statement has not been issued</div>
+    <p class="rpt-helper-text">
+      ${block.notApplied.length} exclusion${block.notApplied.length !== 1 ? 's' : ''} in this lease could not be
+      applied to the reconciliation automatically. Those expenses are still in the tenant's pool, so issuing the
+      statement now would bill them for categories the lease may exclude.
+    </p>
+    ${staleNote}
+    <table class="rpt-table">
+      <thead><tr><th>Lease exclusion</th><th>Status</th><th>Nearest category</th><th>Why it was not applied</th></tr></thead>
+      <tbody>${rows}</tbody>
+    </table>
+    <div class="rpt-section-title">To proceed</div>
+    <p class="rpt-helper-text">
+      Either edit the lease's excluded categories so they match a billable category, or record that you have
+      reviewed these and accept that they are not being applied. The review is stored against this exact set of
+      exclusions — changing them will block the statement again.
+    </p>
+    <button class="rpt-action-btn" onclick="acknowledgeUnappliedExclusions('${esc(block.tenantName).replace(/'/g, "\\'")}')">
+      I have reviewed these — issue the statement
+    </button>`);
+}
+
 function generateTenantStatement(tenantName) {
   if (!lastResults.length) { showToast('Run a CAM allocation first to generate reports.', { color: '#92400e', textColor: '#fef3c7' }); return; }
+
+  // F-02 lifecycle guard — refuse to build the statement at all. Not a banner.
+  const _block = _exclusionBlockReason(tenantName);
+  if (_block) {
+    logActivity('tenant_statement_blocked', `Tenant statement blocked — ${tenantName}`, {
+      severity: 'warning', actor: 'System', relatedEntity: tenantName,
+      detail: `${_block.notApplied.length} lease exclusion(s) could not be applied: ${_block.notApplied.map(u => u.raw).join(', ')}`,
+    });
+    _renderExclusionBlock(_block);
+    return;
+  }
+
   try {
   logActivity('tenant_statement', `Tenant statement generated — ${tenantName}`, { severity: 'info', actor: 'User', relatedEntity: tenantName });
 
@@ -16205,9 +16350,16 @@ function generateTenantStatement(tenantName) {
         </div>`;
     }).join('');
 
-  // Excluded categories note
-  const exclNote = t.excludedCategories.length
-    ? `<p style="font-size:0.8rem;color:var(--text-3);margin-top:6px;">Excluded categories: ${t.excludedCategories.join(', ')}</p>`
+  // Excluded categories note — F-02: applied only, plus an explicit count of
+  // what could not be applied. The statement must never imply a category was
+  // excluded unless it was filtered out of the pool.
+  const _stmtUnapplied = (t.exclusionsNotApplied || []);
+  const exclNote = (t.excludedCategories.length || _stmtUnapplied.length)
+    ? `<p style="font-size:0.8rem;color:var(--text-3);margin-top:6px;">${t.excludedCategories.length
+         ? `Excluded categories: ${esc(t.excludedCategories.join(', '))}`
+         : 'No lease exclusions were applied to this reconciliation.'}${_stmtUnapplied.length
+         ? `<br><strong>&#x26A0; ${_stmtUnapplied.length} lease exclusion${_stmtUnapplied.length !== 1 ? 's' : ''} could not be applied automatically:</strong> ${esc(_stmtUnapplied.map(u => u.raw).join(', '))}. These expenses remain in the pool above.`
+         : ''}</p>`
     : '';
 
   // Cap info
@@ -16545,7 +16697,7 @@ async function ensureDemoProperty() {
   // ── Build Property object for reconciliation engine ───────────────────────
   const reconProp = new Property(PROP_NAME, PROP_SQFT);
   reconProp.addLeases(demoTenants.map(t => {
-    const excl  = (t.excluded_categories || '').split(',').map(s => s.trim()).filter(Boolean);
+    const excl  = _appliedExclusions(t);   // F-02: applied only
     const lease = new Lease(
       t.tenant_name, '', parseSqft(t.leased_sqft),
       t.start_date || '', t.end_date || '', excl,
@@ -16585,7 +16737,7 @@ async function ensureDemoProperty() {
     leasedSqft:         parseSqft(t.leased_sqft),
     totalSqft:          PROP_SQFT,
     capPct:             t.cap ? parseFloat(t.cap) : null,
-    excludedCategories: (t.excluded_categories || '').split(',').map(s => s.trim().toLowerCase()).filter(Boolean),
+    excludedCategories: _appliedExclusions(t),   // F-02: applied only
   }));
 
   const camReconciliation = {
@@ -17727,8 +17879,7 @@ function computeRecoveredRevenue(props) {
     let pExcl = 0;
     const pExclTenants = new Set();
     for (const t of tenants) {
-      const excl = (t.excluded_categories || '')
-        .split(',').map(s => s.trim().toLowerCase()).filter(Boolean);
+      const excl = _appliedExclusions(t);   // F-02: applied only
       if (!excl.length) continue;
       const sqft = parseFloat(t.leased_sqft) || 0;
       const proRata = sqft / totalSqft;
@@ -21855,9 +22006,8 @@ function _mergeCamReconciliationRows(dbData, camRows) {
         name:               t.tenant_name,
         leasedSqft:         Number(t.leased_sqft) || 0,
         totalSqft:          totalSqft,
-        excludedCategories: t.excluded_categories
-          ? t.excluded_categories.split(',').map(s => s.trim().toLowerCase()).filter(Boolean)
-          : [],
+        excludedCategories: _appliedExclusions(t),   // F-02: applied only
+        exclusionsNotApplied: _exclusionState(t.excluded_categories).notApplied,
       })),
     camRuns:      [],
   };
