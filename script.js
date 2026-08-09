@@ -11221,9 +11221,12 @@ function openExplainPanel(tenantName) {
   const totalSqft   = parseFloat(t.totalSqft)  || 0;
   const totalCamAll = lastInvoicesFull.reduce((s, inv) => s + (parseFloat(inv.amount) || 0), 0);
 
-  const eligible = lastInvoicesFull.filter(inv =>
-    !t.excludedCategories.includes((inv.category || '').toLowerCase())
-  );
+  // ONE authoritative source: the invoices runFullReconciliation actually
+  // allocated, carrying the share it computed. Re-deriving from
+  // lastInvoicesFull disagreed with the reconciliation three ways — it skipped
+  // the camEligible filter (PW-3, script.js:9791), pro-rated directly-matched
+  // invoices that are charged in full, and re-rounded from raw amounts.
+  const eligible = r.includedInvoices || [];
 
   // Section 1 — Summary
   const adjHtml = r.capApplied
@@ -11282,9 +11285,10 @@ function openExplainPanel(tenantName) {
   const catMap = {};
   eligible.forEach(inv => {
     const cat = (inv.category || 'other').toLowerCase();
-    if (!catMap[cat]) catMap[cat] = { total: 0, count: 0, invs: [] };
+    if (!catMap[cat]) catMap[cat] = { total: 0, count: 0, share: 0, invs: [] };
     const amt = parseFloat(inv.amount) || 0;
     catMap[cat].total += amt;
+    catMap[cat].share += parseFloat(inv.share) || 0;   // engine's share, not amount * proRata
     catMap[cat].count++;
     catMap[cat].invs.push(inv);
   });
@@ -11292,7 +11296,7 @@ function openExplainPanel(tenantName) {
   const s2rows = Object.entries(catMap)
     .sort((a, b) => b[1].total - a[1].total)
     .map(([cat, data]) => {
-      const yourShare = parseFloat((data.total * r.proRata).toFixed(2));
+      const yourShare = parseFloat(data.share.toFixed(2));   // sums the engine's per-invoice shares
       return `
         <div class="ep-cat-row" id="epcat-${esc(cat.replace(/\s+/g,'-'))}"
           onclick="epToggleDrill('${esc(cat)}','${esc(tenantName)}')">
@@ -11355,8 +11359,7 @@ function epToggleDrill(category, tenantName) {
   if (open)   return;
 
   // Build drill-down invoice list for this category
-  const invs = lastInvoicesFull.filter(inv =>
-    !t.excludedCategories.includes((inv.category || '').toLowerCase()) &&
+  const invs = (r.includedInvoices || []).filter(inv =>
     (inv.category || 'other').toLowerCase() === category.toLowerCase()
   );
 
@@ -12744,12 +12747,12 @@ function tsToggleDispute(rowId, tenantName, idx) {
   const t = lastTenants.find(x => x.name === tenantName);
   const r = lastResults.find(x => x.name === tenantName);
   if (!t || !r) return;
-  const eligible = lastInvoicesFull.filter(inv =>
-    !t.excludedCategories.includes(inv.category.toLowerCase())
-  );
+  // Indexes the SAME array generateTenantStatement rendered, or a dispute
+  // attaches to the wrong invoice.
+  const eligible = r.includedInvoices || [];
   const inv = eligible[idx];
   if (!inv) return;
-  const share = parseFloat((inv.amount * r.proRata).toFixed(2));
+  const share = parseFloat((parseFloat(inv.share) || 0).toFixed(2));
   toggleDisputeForm(rowId, tenantName, `inv-${idx}`, inv.vendor, inv.category, share);
 }
 
@@ -13870,7 +13873,7 @@ function buildAuditSummary() {
     const propSqft    = parseFloat(prop?.totalSqft || prop?.totalSqFt) || 0;
     const leasedSqft  = results.reduce((s, r) => s + (r.sqFt || 0), 0);
     const sqftCtx     = propSqft > 0 && leasedSqft > 0
-      ? `Tenant leases cover ${leasedSqft.toLocaleString()} of ${propSqft.toLocaleString()} total sqft.`
+      ? `The leases currently loaded cover ${leasedSqft.toLocaleString()} of ${propSqft.toLocaleString()} total sqft.`
       : null;
     if (results.length > 0) {
       if (Math.abs(totalPR - 100) < 2) {
@@ -13886,14 +13889,22 @@ function buildAuditSummary() {
         const gap = (100 - totalPR).toFixed(1);
         yellow.push({
           group:  'allocation',
-          title:  `Pro-rata totals ${totalPR.toFixed(1)}% — ${gap}% of expenses unallocated`,
+          title:  `Pro-rata totals ${totalPR.toFixed(1)}% — ${gap}% of expenses not allocated to a loaded lease`,
+          // This measures the leases MainStreet holds, not the building's real
+          // occupancy. A gap means one of two things and the tool cannot tell
+          // them apart: the space is genuinely vacant, in which case the
+          // landlord absorbs that share; or it is leased and the lease has not
+          // been uploaded, in which case the share is recoverable and the
+          // statements are wrong. Asserting "untenanted" and "not recoverable"
+          // stated the first as fact.
           detail: sqftCtx
-            ? `${sqftCtx} The remaining ${(propSqft - leasedSqft).toLocaleString()} sqft is untenanted — its share of CAM expenses (${gap}%) is not recoverable under current leases.`
-            : `Total leased sqft is less than the property total, leaving ${gap}% of CAM expenses unallocated. Review tenant sqft entries.`,
+            ? `${sqftCtx} The remaining ${(propSqft - leasedSqft).toLocaleString()} sqft is not covered by any lease currently loaded. That is either vacant space — whose ${gap}% share of CAM the landlord absorbs — or space under a lease that has not been uploaded yet, in which case that share is recoverable and is currently missing from the reconciliation. Confirm which before treating the ${gap}% as unrecoverable.`
+            : `The square footage on the loaded leases is less than the property total, leaving ${gap}% of CAM expenses unallocated. Either leases are missing or a tenant sqft entry is wrong — check both.`,
           conditions: [
             `Sum of tenant pro-rata: ${totalPR.toFixed(1)}%`,
-            `Unrecoverable gap: ${gap}%`,
-            ...(sqftCtx ? [`Leased sqft: ${leasedSqft.toLocaleString()} of ${propSqft.toLocaleString()} total`] : []),
+            `Gap not covered by loaded leases: ${gap}%`,
+            ...(sqftCtx ? [`Loaded leases: ${leasedSqft.toLocaleString()} of ${propSqft.toLocaleString()} sqft`] : []),
+            'Cause not determined: vacant space, or a lease not yet uploaded',
           ],
         });
       } else {
@@ -14195,8 +14206,9 @@ function buildAuditNarrative() {
   }
   if (yellow.some(f => f.group === 'allocation' && f.title.includes('unallocated'))) {
     recommendations.push(
-      'Review tenant square footage entries — the current unallocated gap represents CAM expenses ' +
-      'that cannot be recovered under existing leases without amendment.'
+      'Confirm whether the unallocated square footage is vacant or simply not yet loaded into MainStreet. ' +
+      'If every lease for the property is loaded, that share of CAM expenses is unrecoverable without amendment; ' +
+      'if any lease is missing, upload it and re-run the reconciliation before issuing statements.'
     );
   }
   if (recommendations.length === 0) {
@@ -16289,16 +16301,22 @@ function generateTenantStatement(tenantName) {
   // label matches the statement's data and the other reports.
   const period = (getCamYear() || new Date().getFullYear()) + ' CAM Year';
 
-  // Per-invoice breakdown
-  const eligible = lastInvoicesFull.filter(inv =>
-    !t.excludedCategories.includes(inv.category.toLowerCase())
-  );
-  // Group eligible invoices by category, preserving per-invoice indices
+  // Per-invoice breakdown — ONE authoritative source.
+  //
+  // This used to re-derive from lastInvoicesFull and multiply every invoice by
+  // proRata. That disagreed with the reconciliation total three ways: it ignored
+  // the camEligible filter (PW-3, script.js:9791) so invoices the manager had
+  // marked not-recoverable were still shown and summed; it pro-rated
+  // directly-matched invoices the engine charges in full; and it re-rounded from
+  // raw amounts instead of using the share the engine computed. The result was a
+  // breakdown that did not add up to the number in the summary, the tenant
+  // allocation and the audit narrative.
+  const eligible = r.includedInvoices || [];
   const catMap = {};
   eligible.forEach((inv, idx) => {
     const key = (inv.category || 'other').toLowerCase();
     if (!catMap[key]) catMap[key] = { label: inv.category || 'Other', share: 0, invoices: [] };
-    const share = parseFloat((inv.amount * r.proRata).toFixed(2));
+    const share = parseFloat(inv.share) || 0;
     catMap[key].share += share;
     catMap[key].invoices.push({ inv, idx, share });
   });
@@ -16306,6 +16324,18 @@ function generateTenantStatement(tenantName) {
   const pct = (r.proRata * 100).toFixed(2);
 
   // Build accordion: one card per category, invoices expand inside
+  // The authoritative figure is r.allocatedAmount — what runFullReconciliation
+  // computed and what the summary, the tenant allocation and the audit
+  // narrative all print. Per-invoice shares are rounded individually and the
+  // engine may absorb a sub-cent pro-rata gap into the largest tenant, so their
+  // sum can land a few cents away. Show that difference rather than letting the
+  // breakdown quietly disagree with the total above it.
+  const _breakdownSum  = Object.values(catMap).reduce((s2, d) => s2 + d.share, 0);
+  const _breakdownGap  = parseFloat((r.allocatedAmount - _breakdownSum).toFixed(2));
+  const _breakdownReconcileNote = Math.abs(_breakdownGap) >= 0.01
+    ? `<p style="font-size:0.78rem;color:var(--text-4);margin-top:6px;">Line items above total ${fmt(_breakdownSum)}; rounding adjustment ${_breakdownGap >= 0 ? '+' : '&minus;'}${fmt(Math.abs(_breakdownGap))} brings your billed total to ${fmt(r.allocatedAmount)}.</p>`
+    : '';
+
   const categoryCards = Object.entries(catMap)
     .sort((a, b) => b[1].share - a[1].share)
     .map(([, data]) => {
@@ -16340,8 +16370,12 @@ function generateTenantStatement(tenantName) {
               <div class="ts-detail-row"><span>Category</span><span class="ts-detail-val">${esc(inv.category)}</span></div>
               <div class="ts-detail-row"><span>Invoice Total</span><span class="ts-detail-val">${fmt(inv.amount)}</span></div>
               <div class="ts-detail-row ts-detail-highlight"><span>Your Share</span><span class="ts-detail-val">${fmt(share)}</span></div>
-              <div class="ts-detail-basis">Based on ${pct}% pro-rata allocation by square footage</div>
-              <div class="ts-detail-formula">${fmt(inv.amount)} &times; ${pct}% = ${fmt(share)}</div>
+              <div class="ts-detail-basis">${inv.allocation === 'direct'
+                ? 'Billed directly to your space — not shared with other tenants'
+                : `Based on ${pct}% pro-rata allocation by square footage`}</div>
+              <div class="ts-detail-formula">${inv.allocation === 'direct'
+                ? `${fmt(inv.amount)} charged in full (100%)`
+                : `${fmt(inv.amount)} &times; ${pct}% = ${fmt(share)}`}</div>
               <div class="ts-detail-actions">
                 ${viewInvBtn}
                 <button class="inv-act-btn inv-act-explain" id="tsexplbtn-${rowId}"
@@ -16455,7 +16489,7 @@ function generateTenantStatement(tenantName) {
     <div class="rpt-section-title">Expense Breakdown</div>
     <p class="rpt-helper-text">Click a category to expand individual charges.</p>
     <div class="ts-cat-list">${categoryCards}</div>
-    ${exclNote}${capNote}
+    ${_breakdownReconcileNote}${exclNote}${capNote}
 
     <div class="rpt-section-title">Year-End Reconciliation</div>
     <table class="rpt-table">
