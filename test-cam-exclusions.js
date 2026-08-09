@@ -227,12 +227,98 @@ t('allocation-integrity stays silent when everything applied', () => {
 // _exclusionBlockReason reads two module globals; extract and run it for real
 // rather than asserting on its text, so acknowledgement semantics are measured.
 function loadBlockReason(lastTenants, tenantData) {
-  const src = extract(/\nfunction _exclusionBlockReason\(tenantName\) \{[\s\S]*?\n\}\n/, '_exclusionBlockReason');
-  const sandbox = { lastTenants, tenantData, console };
+  const src = [
+    extract(/\nfunction _exclusionState\(rawExcluded\) \{[\s\S]*?\n\}\n/, '_exclusionState'),
+    extract(/\nfunction _exclusionBlockReason\(tenantName\) \{[\s\S]*?\n\}\n/, '_exclusionBlockReason'),
+  ].join('\n');
+  const sandbox = { lastTenants, tenantData, console, window: { CamExclusions: CX } };
   vm.createContext(sandbox);
   vm.runInContext(src + '\nthis.__fn = _exclusionBlockReason;', sandbox);
   return sandbox.__fn;
 }
+
+// The six acknowledgement-lifecycle cases. Each builds lastTenants the way a
+// particular code path really builds it, so the difference between them is the
+// presence or absence of exclusionFingerprint — the defect this covers.
+const ACK_RAW = 'capital expenditures, taxes';
+const ackState = CX.tenantExclusionState(ACK_RAW);
+const freshTenant   = () => [{ name: 'T', excludedCategories: ackState.applied,
+                               exclusionsNotApplied: ackState.notApplied,
+                               exclusionFingerprint: ackState.fingerprint }];
+// _mergeCamReconciliationRows / pre-F-02 snapshots: no exclusionFingerprint key.
+const restoredTenant = () => [{ name: 'T', excludedCategories: ackState.applied,
+                                exclusionsNotApplied: ackState.notApplied }];
+const recWithAck = (raw, fp) => [{ tenant_name: 'T', excluded_categories: raw,
+                                   ...(fp ? { _exclusionAck: { fingerprint: fp, at: 'x' } } : {}) }];
+
+console.log('\n── Acknowledgement lifecycle across every path that builds lastTenants ──');
+
+t('1. fresh reconciliation: acknowledge unblocks', () => {
+  ok(loadBlockReason(freshTenant(), recWithAck(ACK_RAW, null))('T'), 'must block before acknowledgement');
+  eq(loadBlockReason(freshTenant(), recWithAck(ACK_RAW, ackState.fingerprint))('T'), null,
+     'acknowledgement must clear the block');
+});
+
+t('2. reloaded reconciliation with no exclusionFingerprint: acknowledge unblocks', () => {
+  const before = loadBlockReason(restoredTenant(), recWithAck(ACK_RAW, null))('T');
+  ok(before, 'must block before acknowledgement');
+  ok(before.fingerprint, 'fingerprint must be DERIVED from the tenant record, not left empty');
+  eq(before.fingerprint, ackState.fingerprint, 'derived fingerprint must equal the run-computed one');
+  eq(loadBlockReason(restoredTenant(), recWithAck(ACK_RAW, before.fingerprint))('T'), null,
+     'this is the loop the review found: acknowledgement must now clear the block');
+});
+
+t('3. older snapshot with a pre-existing acknowledgement unblocks', () => {
+  eq(loadBlockReason(restoredTenant(), recWithAck(ACK_RAW, ackState.fingerprint))('T'), null,
+     'an ack recorded earlier must still be honoured after a reload');
+});
+
+t('4. changing an exclusion after acknowledgement blocks again', () => {
+  const changed = CX.tenantExclusionState(ACK_RAW + ', roof replacement');
+  const lt = [{ name: 'T', excludedCategories: changed.applied, exclusionsNotApplied: changed.notApplied }];
+  const r = loadBlockReason(lt, recWithAck(ACK_RAW + ', roof replacement', ackState.fingerprint))('T');
+  ok(r, 'editing the exclusions must re-block');
+  eq(r.staleAck, true, 'and must report the earlier review as stale');
+});
+
+t('5. reordering and re-spacing keeps the acknowledgement valid', () => {
+  const respaced = ' TAXES ,  capital expenditures ';
+  const st = CX.tenantExclusionState(respaced);
+  const lt = [{ name: 'T', excludedCategories: st.applied, exclusionsNotApplied: st.notApplied }];
+  eq(loadBlockReason(lt, recWithAck(respaced, ackState.fingerprint))('T'), null,
+     'the same exclusion set written differently must not invalidate the review');
+});
+
+t('6. unapplied exclusions with no acknowledgement stay blocked', () => {
+  const r = loadBlockReason(restoredTenant(), recWithAck(ACK_RAW, null))('T');
+  ok(r, 'must block');
+  eq(r.staleAck, false, 'no prior ack, so nothing is stale');
+  eq(r.notApplied.length, 2);
+});
+
+t('no fingerprint is fabricated when the record cannot supply one', () => {
+  // No tenant record at all, and a blank record: both must leave the fingerprint
+  // empty and keep the statement blocked rather than invent an identity.
+  const a = loadBlockReason(restoredTenant(), [])('T');
+  ok(a && a.fingerprint === '', 'missing record must not yield a fingerprint');
+  const b = loadBlockReason(restoredTenant(), [{ tenant_name: 'T', excluded_categories: '   ' }])('T');
+  ok(b && b.fingerprint === '', 'blank exclusions must not yield a fingerprint');
+});
+
+t('[source] acknowledgement refuses to store an empty fingerprint', () => {
+  const i = scriptCode.indexOf('function acknowledgeUnappliedExclusions');
+  const body = scriptCode.slice(i, i + 900);
+  ok(/if \(!block\.fingerprint\)/.test(body), 'no guard against storing a meaningless acknowledgement');
+});
+
+t('[source] the fingerprint is derived from the record, never defaulted', () => {
+  const i = scriptCode.indexOf('function _exclusionBlockReason');
+  const body = scriptCode.slice(i, i + 1400);
+  ok(/_recRaw \? _exclusionState\(_recRaw\)\.fingerprint : ''/.test(body),
+     'fingerprint is not derived from the tenant record');
+  ok(/typeof rec\.excluded_categories === 'string' && rec\.excluded_categories\.trim\(\)/.test(body),
+     'derivation does not require a real stored string');
+});
 
 t('a stale acknowledgement does NOT clear the block', () => {
   const raw = 'capital expenditures, taxes';
@@ -365,7 +451,7 @@ t('acknowledgement fingerprint is set-based, not string-based', () => {
   ok(CX.exclusionFingerprint('a, b') !== CX.exclusionFingerprint('a, b, c'), 'adding one must invalidate');
 });
 
-const TOTAL_EXPECTED = 29;
+const TOTAL_EXPECTED = 38;
 t(`suite runs all ${TOTAL_EXPECTED} checks`, () => {
   eq(pass + fail + 1, TOTAL_EXPECTED, 'test count changed — update TOTAL_EXPECTED deliberately');
 });

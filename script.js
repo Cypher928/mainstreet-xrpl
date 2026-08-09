@@ -16158,7 +16158,24 @@ function _exclusionBlockReason(tenantName) {
   if (!notApplied.length) return null;
 
   const rec = tenantData.find(d => d && d.tenant_name === tenantName);
-  const fp  = t.exclusionFingerprint || '';
+
+  // The fingerprint normally rides along on lastTenants from the run that
+  // produced it. Two paths do not carry it: _mergeCamReconciliationRows, which
+  // rebuilds tenants from DB rows on reload, and any snapshot written before
+  // this field existed. Without a fingerprint the acknowledgement check below
+  // can never match, so the landlord clicks "I have reviewed these", the ack is
+  // stored, and the same block screen returns — an unbreakable loop on every
+  // reloaded reconciliation.
+  //
+  // So derive it from the tenant record's own raw exclusions, which is the same
+  // input the run used. Derive ONLY from a real stored string: if there is no
+  // record, or its exclusions are absent or blank, the fingerprint stays empty
+  // and the statement stays blocked. A default or fabricated value here would
+  // let an acknowledgement match a set nobody has actually reviewed.
+  const _recRaw = rec && typeof rec.excluded_categories === 'string' && rec.excluded_categories.trim()
+    ? rec.excluded_categories
+    : null;
+  const fp  = t.exclusionFingerprint || (_recRaw ? _exclusionState(_recRaw).fingerprint : '');
   const ack = rec && rec._exclusionAck;
 
   // The acknowledgement is keyed to the exclusion set it was given for. Editing
@@ -16177,6 +16194,15 @@ function acknowledgeUnappliedExclusions(tenantName) {
   if (!block) { closeReport(); generateTenantStatement(tenantName); return; }
   const idx = tenantData.findIndex(d => d && d.tenant_name === tenantName);
   if (idx === -1) { showToast('Could not find that tenant to record the review.', { color: '#92400e', textColor: '#fef3c7' }); return; }
+  // Refuse to store an acknowledgement that identifies nothing. An empty
+  // fingerprint means neither the run nor the tenant record could tell us which
+  // exclusion set is being reviewed, and an ack that matches nothing is worse
+  // than no ack — it looks like a completed review.
+  if (!block.fingerprint) {
+    showToast('Cannot record this review — the lease exclusions could not be identified. Re-run the reconciliation and try again.',
+              { color: '#92400e', textColor: '#fef3c7' });
+    return;
+  }
   const user = window.AuthService?.getCurrentUser?.() || null;
   tenantData[idx] = {
     ...tenantData[idx],
