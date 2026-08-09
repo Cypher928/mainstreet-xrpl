@@ -90,21 +90,59 @@ window.ReconciliationEngine = (() => {
       });
     });
 
-    // ── 3. Pro-rata coverage gap ───────────────────────────────────────────
+    // ── 3. Property coverage vs pro-rata over-allocation ───────────────────
+    //
+    // These are two different things and used to share one red flag.
+    //
+    // UNDER (shares sum below 100%): the leases loaded into MainStreet cover
+    // less of the building than its total square footage. That is not an error
+    // — a landlord validating on three of twenty leases sees exactly this — and
+    // it does not change what any tenant is billed, because each tenant is
+    // charged only its own share. Calling it red, saying "expected 100%", and
+    // asserting a tenant "may be missing" told the operator their reconciliation
+    // was broken when it was complete for the leases they had loaded.
+    //
+    // OVER (shares sum above 100%): tenants are collectively billed more than
+    // the expense pool. That is a genuine money error and stays red.
     {
       const totalPR = results.reduce((s, r) => s + (r.proRataPercent || 0), 0);
       const gap     = parseFloat((100 - totalPR).toFixed(2));
-      if (Math.abs(gap) > 2) {
-        const dir = gap > 0 ? 'under-allocated' : 'over-allocated';
+      if (gap > 2) {
         flags.push({
-          severity: Math.abs(gap) > 5 ? 'red' : 'yellow',
-          title:    `Pro-rata coverage gap: ${gap > 0 ? '+' : ''}${gap.toFixed(1)}% — pool is ${dir}`,
-          detail:   `The sum of all tenant pro-rata shares is ${totalPR.toFixed(2)}% (expected 100%). A ${Math.abs(gap).toFixed(1)}% gap suggests a tenant may be missing from the reconciliation or square footage data needs correction.`,
+          severity: 'yellow',
+          // Presentation contract for the renderer:
+          //   kind 'coverage'  → this is about how much of the PROPERTY is
+          //                      loaded, not about whether a tenant's number is
+          //                      right. It must not be styled as an exception.
+          //   disputable false → there is no counterparty. Offering "Open
+          //                      Dispute" here used to raise an
+          //                      allocation_mismatch dispute against a tenant
+          //                      whose allocation is correct.
+          kind:       'coverage',
+          disputable: false,
+          title:    `Coverage gap: loaded leases cover ${totalPR.toFixed(1)}% of the property`,
+          detail:   `The leases currently loaded account for ${totalPR.toFixed(2)}% of the property's square footage, leaving ${gap.toFixed(1)}% unallocated. That remainder is either vacant space — whose share of CAM the landlord absorbs — or space under a lease that has not been uploaded yet, in which case that share is recoverable and is missing from this reconciliation. The amounts billed to the tenants above are unaffected: each is charged only its own share.`,
           conditions: [
-            `Pro-rata sum: ${totalPR.toFixed(2)}%`,
-            `Gap: ${gap > 0 ? '+' : ''}${gap.toFixed(2)}%`,
-            `${results.length} tenant${results.length !== 1 ? 's' : ''} in reconciliation`,
-            'Verify all tenants are included and square footage is correct',
+            `Loaded leases cover: ${totalPR.toFixed(2)}% of the property`,
+            `Unallocated: ${gap.toFixed(2)}%`,
+            `${results.length} lease${results.length !== 1 ? 's' : ''} in this reconciliation`,
+            'Cause not determined: vacant space, or a lease not yet uploaded',
+            'Tenant charges are unaffected — each tenant is billed only its own share',
+            'To resolve: upload any lease still missing, then re-run the reconciliation',
+            'If every lease is loaded, the remainder is vacant and the landlord absorbs its share',
+          ],
+        });
+      } else if (gap < -2) {
+        const over = Math.abs(gap);
+        flags.push({
+          severity: 'red',
+          title:    `Pro-rata over-allocation: shares total ${totalPR.toFixed(1)}% of the property`,
+          detail:   `The sum of tenant pro-rata shares is ${totalPR.toFixed(2)}%, which exceeds 100%. Tenants are collectively being billed ${over.toFixed(1)}% more than the expense pool. Check for a duplicated tenant or square footage entries that add up to more than the property total.`,
+          conditions: [
+            `Pro-rata sum: ${totalPR.toFixed(2)}% (must not exceed 100%)`,
+            `Over-allocated by: ${over.toFixed(2)}%`,
+            `${results.length} lease${results.length !== 1 ? 's' : ''} in this reconciliation`,
+            'Check for duplicate tenants or square footage exceeding the property total',
           ],
         });
       }

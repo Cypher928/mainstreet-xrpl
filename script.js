@@ -11497,10 +11497,14 @@ function _buildReconciliationSummaryHtml(results, invoices, propName) {
       </span>`
     : '';
 
+  // A finding that is not disputable gets no dispute button. The property
+  // coverage gap has no counterparty — offering "Open Dispute" there raised an
+  // allocation_mismatch dispute against a tenant whose allocation is correct.
+  // It is also labelled so it reads as incomplete coverage, not an exception.
   const issueHtml = issues.length > 0 ? `<div class="rcs-issues">${
-    issues.map((f, fi) => `<div class="rcs-issue rcs-issue--${f.severity}">
-      <span class="rcs-issue-main">${f.severity === 'red' ? '&#x26D4;' : '&#x26A0;'} ${esc(f.title)}</span>
-      <button class="rcs-dispute-btn" onclick="openDisputeFromFlag(${fi})">Open Dispute</button>
+    issues.map((f, fi) => `<div class="rcs-issue rcs-issue--${f.severity}${f.kind === 'coverage' ? ' rcs-issue--coverage' : ''}">
+      <span class="rcs-issue-main">${f.kind === 'coverage' ? '&#x1F4D0;' : f.severity === 'red' ? '&#x26D4;' : '&#x26A0;'} ${f.kind === 'coverage' ? '<span class="rcs-issue-kind">Property coverage</span> ' : ''}${esc(f.title)}</span>
+      ${f.disputable === false ? '' : `<button class="rcs-dispute-btn" onclick="openDisputeFromFlag(${fi})">Open Dispute</button>`}
     </div>`).join('')
   }</div>` : '';
 
@@ -13379,6 +13383,13 @@ async function _dwResolveWithNote(disputeId, resolution) {
 function openDisputeFromFlag(flagIdx) {
   const flag = _lastReconIssues[flagIdx];
   if (!flag) return;
+  // Defence in depth: the button is not rendered for these, but the function is
+  // global. A property-level coverage finding has no tenant to dispute with.
+  if (flag.disputable === false) {
+    showToast('That finding is about how much of the property is loaded, not a tenant charge — there is nothing to dispute.',
+              { color: '#92400e', textColor: '#fef3c7' });
+    return;
+  }
 
   const typeKeyMap = [
     [/expired lease/i,  'expired_lease_billing'],

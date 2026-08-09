@@ -203,6 +203,98 @@ t('[source] the dispute row indexes the same array the statement rendered', () =
      'tsToggleDispute indexes a different array than the statement — disputes would attach to the wrong invoice');
 });
 
+console.log('\n── Coverage gap is not an allocation error ──');
+
+// The real reconciliation-engine, loaded from disk.
+function loadReconEngine() {
+  const sandbox = { window: {}, console };
+  vm.createContext(sandbox);
+  vm.runInContext(fs.readFileSync(path.join(__dirname, 'reconciliation-engine.js'), 'utf8'), sandbox);
+  return sandbox.window.ReconciliationEngine;
+}
+const RCE = loadReconEngine();
+
+// Two leases covering 23.57% of the building — the pilot's Olenox case.
+const partial = [
+  { tenantId: 't1', name: 'T',     proRataPercent: 23.57, totalAllocated: 12960.75, includedInvoices: [] },
+];
+const overish = [
+  { tenantId: 't1', name: 'T',     proRataPercent: 70,  totalAllocated: 1, includedInvoices: [] },
+  { tenantId: 't2', name: 'Other', proRataPercent: 38,  totalAllocated: 1, includedInvoices: [] },
+];
+const propStub = { tenants: [{ id: 't1', lease_type: 'NNN' }, { id: 't2', lease_type: 'NNN' }] };
+const gapFlag = rs => RCE.detectReconciliationIssues(rs, propStub, '2025-12-31')
+  .find(f => /Coverage gap|over-allocation/i.test(f.title));
+
+t('a 76.4% coverage gap is yellow, not red', () => {
+  const f = gapFlag(partial);
+  ok(f, 'no coverage finding raised');
+  eq(f.severity, 'yellow', 'partial lease coverage is not an allocation error —');
+});
+
+t('the coverage finding no longer says "expected 100%" or blames a missing tenant', () => {
+  const f = gapFlag(partial);
+  ok(!/expected 100%/i.test(f.detail), 'still asserts 100% was expected');
+  ok(!/tenant may be missing/i.test(f.detail), 'still asserts a tenant may be missing');
+  ok(!/under-allocated/i.test(f.title), 'still calls the pool under-allocated');
+});
+
+t('the coverage finding offers both causes and protects the billed amounts', () => {
+  const f = gapFlag(partial);
+  ok(/vacant space/i.test(f.detail), 'does not mention vacant space');
+  ok(/has not been uploaded yet/i.test(f.detail), 'does not mention an unloaded lease');
+  ok(/unaffected/i.test(f.detail), 'does not say tenant charges are unaffected');
+  ok(f.conditions.some(c => /Cause not determined/i.test(c)), 'conditions assert a cause');
+});
+
+t('over-allocation above 100% is still red — that one IS an error', () => {
+  const f = gapFlag(overish);
+  ok(f, 'no over-allocation finding raised');
+  eq(f.severity, 'red', 'billing tenants more than the pool must stay red —');
+  ok(/over-allocation/i.test(f.title), `title was: ${f.title}`);
+});
+
+t('the coverage finding is marked non-disputable and typed as coverage', () => {
+  const f = gapFlag(partial);
+  eq(f.kind, 'coverage', 'not typed as a coverage finding —');
+  eq(f.disputable, false, 'a property coverage gap has no counterparty to dispute with —');
+});
+
+t('over-allocation stays disputable — it IS a tenant-facing billing error', () => {
+  const f = gapFlag(overish);
+  ok(f.disputable !== false, 'over-allocation must remain actionable as a dispute');
+  ok(f.kind !== 'coverage', 'over-allocation is not a coverage finding');
+});
+
+t('the coverage finding tells the user how to resolve the ambiguity', () => {
+  const f = gapFlag(partial);
+  ok(f.conditions.some(c => /upload any lease still missing/i.test(c)),
+     'no path offered for the "lease not uploaded" case');
+  ok(f.conditions.some(c => /every lease is loaded, the remainder is vacant/i.test(c)),
+     'no path offered for the "vacant space" case');
+});
+
+t('[source] a non-disputable finding renders no Open Dispute button', () => {
+  ok(/f\.disputable === false \? '' :/.test(scriptCode),
+     'the renderer still offers a dispute button on every finding');
+  ok(/f\.kind === 'coverage' \? ' rcs-issue--coverage' : ''/.test(scriptCode),
+     'coverage findings are not visually distinguished from exceptions');
+  ok(/Property coverage<\/span>/.test(scriptCode),
+     'no label marks the finding as property coverage rather than an exception');
+});
+
+t('[source] openDisputeFromFlag refuses a non-disputable finding', () => {
+  const i = scriptCode.indexOf('function openDisputeFromFlag');
+  const body = scriptCode.slice(i, i + 700);
+  ok(/if \(flag\.disputable === false\)/.test(body),
+     'the global entry point still opens a dispute for a property-level finding');
+});
+
+t('full coverage raises no coverage finding at all', () => {
+  const full = [{ tenantId: 't1', name: 'T', proRataPercent: 100, totalAllocated: 1, includedInvoices: [] }];
+  eq(gapFlag(full), undefined, 'a fully-leased property should raise nothing');
+});
+
 console.log('\n── AI Auditor: unallocated space ──');
 
 t('[source] the gap is described as "not covered by loaded leases", not "untenanted"', () => {
@@ -230,7 +322,7 @@ t('[source] the recommendation asks which cause applies before concluding', () =
      'the recommendation does not ask which cause applies');
 });
 
-const TOTAL_EXPECTED = 17;
+const TOTAL_EXPECTED = 27;
 t(`suite runs all ${TOTAL_EXPECTED} checks`, () => {
   eq(pass + fail + 1, TOTAL_EXPECTED, 'test count changed — update TOTAL_EXPECTED deliberately');
 });
