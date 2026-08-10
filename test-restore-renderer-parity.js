@@ -17,12 +17,37 @@
  * card" — an instruction with no button behind it on that path. The restored
  * card also omitted the lv-panel mount div (_runLeaseValidation opens with
  * `if (!panelEl) return;`, so the button would have been a no-op even once
- * added) and the result-card anchor id the Needs Review rollup scrolls to.
+ * added).
  *
  * These tests assert BOTH renderers emit the same action set, so adding a
  * button to one renderer and forgetting the other fails CI rather than
  * shipping a half-wired card. They are source-level on purpose: the point is
  * that the two templates cannot diverge, which is a property of the source.
+ *
+ * ── On the result-card anchor id, precisely ──────────────────────────────────
+ *
+ * The anchor assertion below is structural parity, NOT a repair of a broken
+ * control. State of play today:
+ *
+ *   · _buildNeedsReviewRollupHtml (script.js) is called from exactly one place,
+ *     inside runAllocation. The fresh-run renderer emits the "Needs Review"
+ *     rollup above the Reconciliation Summary, and only when at least one
+ *     tenant carries ambiguityFlags — it returns '' otherwise.
+ *   · restoreResultsDisplay does NOT call it. There is no Needs Review rollup
+ *     on a saved reconciliation, so on that path there are no rollup buttons,
+ *     working or broken.
+ *   · The anchor id is therefore live on the fresh card (the rollup's scroll
+ *     target) and, on the restored card, retained as parity/preparation for a
+ *     possible future restore-path rollup.
+ *
+ * So: the anchor assertion for the restored renderer does not currently
+ * correspond to any user-visible action. It is kept deliberately, because it is
+ * a precondition for wiring the rollup into that path later and costs nothing
+ * to hold. Do not read it as evidence that Needs Review works on saved runs.
+ *
+ * Rendering the rollup on the restore path is deliberately NOT done here — see
+ * PHASE2_FOLLOWUP_RESTORE_ROLLUP.md. It first needs an answer to whether
+ * ambiguityFlags survive the snapshot/restore cycle at all.
  */
 
 const fs = require('fs');
@@ -91,9 +116,14 @@ for (const [label, fnSrc] of [['fresh (runAllocation)', FRESH], ['restored (rest
        'the lv-panel id is not derived the same way as the other renderer');
   });
 
-  t(`${label}: the card carries the Needs Review anchor id`, () => {
+  // Fresh renderer: this is the live scroll target for the Needs Review rollup.
+  // Restored renderer: parity only — that path emits no rollup today, so this
+  // guards a target with no user-visible entry point. See the docblock.
+  t(`${label}: the card carries the result-card anchor id`, () => {
     ok(/<div class="result-card[^"]*"[^>]*id="\$\{_resultCardAnchorId\(r\.name\)\}"/.test(fnSrc),
-       'the result card has no _resultCardAnchorId — the Needs Review rollup cannot scroll to it');
+       'the result card has no _resultCardAnchorId — on the fresh renderer this is the ' +
+       'Needs Review rollup scroll target; on the restored renderer it is structural parity ' +
+       'held for a future restore-path rollup');
   });
 }
 

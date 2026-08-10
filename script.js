@@ -23037,12 +23037,16 @@ function restoreResultsDisplay(snapshot) {
     // that instruction a dead end on this path.
     //
     // Three things are restored here, all presentation:
-    //   · the anchor id — _buildNeedsReviewRollupHtml scrolls to
-    //     result-card-<name>, and its optional chaining swallowed the miss, so
-    //     the rollup buttons silently did nothing on a restored run;
     //   · the full action row;
     //   · the lv-panel mount div — _runLeaseValidation starts with
-    //     `if (!panelEl) return;`, so the button without the panel is a no-op.
+    //     `if (!panelEl) return;`, so the button without the panel is a no-op;
+    //   · the result-card anchor id — structural parity with the fresh card.
+    //     To be precise about that last one: _buildNeedsReviewRollupHtml is
+    //     called only from runAllocation, so the "Needs Review" rollup that
+    //     scrolls to result-card-<name> is NOT emitted on this path. The anchor
+    //     repairs no broken control here; it is held as a precondition for
+    //     wiring that rollup into the restore path later. See
+    //     PHASE2_FOLLOWUP_RESTORE_ROLLUP.md.
     //
     // tdIdx / _lvPanelId are derived exactly as runAllocation derives them so
     // both renderers address the same tenant record and the same panel node.
