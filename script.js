@@ -23028,7 +23028,31 @@ function restoreResultsDisplay(snapshot) {
   </div>`;
 
   lastResults.forEach(r => {
-    html += `<div class="result-card">
+    // This renderer and the one in runAllocation both write to #resultsBody, but
+    // this one is what a landlord sees when they OPEN a saved reconciliation
+    // rather than run a fresh one. It carried only "View Calculation", so the
+    // saved view silently lost two actions the fresh view has — including the
+    // one the Modified Gross finding tells the user to run
+    // ("use 'Validate Against Lease' on <tenant>'s result card"), which made
+    // that instruction a dead end on this path.
+    //
+    // Three things are restored here, all presentation:
+    //   · the anchor id — _buildNeedsReviewRollupHtml scrolls to
+    //     result-card-<name>, and its optional chaining swallowed the miss, so
+    //     the rollup buttons silently did nothing on a restored run;
+    //   · the full action row;
+    //   · the lv-panel mount div — _runLeaseValidation starts with
+    //     `if (!panelEl) return;`, so the button without the panel is a no-op.
+    //
+    // tdIdx / _lvPanelId are derived exactly as runAllocation derives them so
+    // both renderers address the same tenant record and the same panel node.
+    //
+    // Deliberately NOT unified with runAllocation's card yet: the shared-helper
+    // refactor is the durable fix, but this is a pilot-window change and the
+    // drift is now caught by test-restore-renderer-parity.js instead.
+    const tdIdx      = tenantData.findIndex(t => t && t.tenant_name === r.name);
+    const _lvPanelId = `lv-panel-${tdIdx >= 0 ? tdIdx : r.name.replace(/[^a-zA-Z0-9]/g, '-')}`;
+    html += `<div class="result-card" id="${_resultCardAnchorId(r.name)}">
       <div class="r-name">${esc(r.name)}</div>
       <div class="result-grid">
         ${stat('Allocated Amount',  fmt(r.allocatedAmount))}
@@ -23038,7 +23062,12 @@ function restoreResultsDisplay(snapshot) {
       ${r.capApplied
         ? `<div class="cap-badge">Cap applied — ${fmt(r.capAdjustment)} reduced</div>`
         : ''}
-      <button class="explain-btn" onclick="openExplainPanel('${esc(r.name)}')">&#x1F4CA; View Calculation</button>
+      <div class="result-card-actions">
+        <button class="explain-btn" onclick="openExplainPanel('${esc(r.name)}')">&#x1F4CA; View Calculation</button>
+        <button class="lv-validate-btn" onclick="_startLeaseValidation('${_lvPanelId}',${tdIdx})">&#x1F50D; Validate Against Lease</button>
+        <button class="tenant-stmt-card-btn" onclick="generateTenantStatement('${esc(r.name)}')" title="Generate the tenant-facing CAM statement">&#x1F9FE; Tenant Statement</button>
+      </div>
+      <div id="${_lvPanelId}" class="lv-panel" style="display:none;"></div>
     </div>`;
   });
 

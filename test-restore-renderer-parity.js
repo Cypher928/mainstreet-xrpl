@@ -1,0 +1,132 @@
+'use strict';
+/**
+ * test-restore-renderer-parity.js — the saved-reconciliation card must offer the
+ * same tenant actions as the fresh-run card.
+ *
+ *   node test-restore-renderer-parity.js
+ *
+ * Two functions render tenant result cards into #resultsBody:
+ *
+ *   runAllocation()          — after a fresh reconciliation
+ *   restoreResultsDisplay()  — when a landlord OPENS a saved reconciliation
+ *
+ * They were written separately and drifted. The restored card carried only
+ * "View Calculation", so opening a saved run silently lost "Validate Against
+ * Lease" and "Tenant Statement". That mattered because the Modified Gross
+ * finding tells the user to "use 'Validate Against Lease' on <tenant>'s result
+ * card" — an instruction with no button behind it on that path. The restored
+ * card also omitted the lv-panel mount div (_runLeaseValidation opens with
+ * `if (!panelEl) return;`, so the button would have been a no-op even once
+ * added) and the result-card anchor id the Needs Review rollup scrolls to.
+ *
+ * These tests assert BOTH renderers emit the same action set, so adding a
+ * button to one renderer and forgetting the other fails CI rather than
+ * shipping a half-wired card. They are source-level on purpose: the point is
+ * that the two templates cannot diverge, which is a property of the source.
+ */
+
+const fs = require('fs');
+const path = require('path');
+
+let pass = 0, fail = 0;
+const failures = [];
+function t(name, fn) {
+  try { fn(); pass++; console.log(`  ok   ${name}`); }
+  catch (e) { fail++; failures.push(`${name}: ${e.message}`); console.log(`  FAIL ${name}\n       ${e.message}`); }
+}
+function ok(c, m) { if (!c) throw new Error(m || 'expected truthy'); }
+function eq(a, b, m) { if (a !== b) throw new Error(`${m || ''} expected ${JSON.stringify(b)}, got ${JSON.stringify(a)}`); }
+
+const src = fs.readFileSync(path.join(__dirname, 'script.js'), 'utf8');
+
+function fnSource(pattern, label) {
+  const m = src.match(pattern);
+  if (!m) throw new Error(`${label} not found in script.js`);
+  return m[0];
+}
+
+const FRESH   = fnSource(/\nasync function runAllocation\(\) \{[\s\S]*?\n\}\n/, 'runAllocation');
+const RESTORE = fnSource(/\nfunction restoreResultsDisplay\(snapshot\) \{[\s\S]*?\n\}\n/, 'restoreResultsDisplay');
+
+// The action row each renderer emits, and the button classes inside it.
+function actionRow(fnSrc, label) {
+  const m = fnSrc.match(/<div class="result-card-actions">([\s\S]*?)<\/div>/);
+  if (!m) throw new Error(`${label} emits no <div class="result-card-actions"> block`);
+  return m[1];
+}
+function buttonClasses(rowHtml) {
+  return (rowHtml.match(/<button class="([a-zA-Z0-9_-]+)"/g) || [])
+    .map(s => s.replace(/^<button class="/, '').replace(/"$/, ''))
+    .sort();
+}
+
+// The three actions a tenant result card must offer, and the handler each must
+// be wired to. Adding a fourth action to either renderer without adding it to
+// the other is exactly the drift these tests exist to catch.
+const REQUIRED_ACTIONS = [
+  ['explain-btn',           /openExplainPanel\('\$\{esc\(r\.name\)\}'\)/,        'View Calculation'],
+  ['lv-validate-btn',       /_startLeaseValidation\('\$\{_lvPanelId\}',\$\{tdIdx\}\)/, 'Validate Against Lease'],
+  ['tenant-stmt-card-btn',  /generateTenantStatement\('\$\{esc\(r\.name\)\}'\)/, 'Tenant Statement'],
+];
+
+for (const [label, fnSrc] of [['fresh (runAllocation)', FRESH], ['restored (restoreResultsDisplay)', RESTORE]]) {
+  console.log(`\n── ${label} renderer ──`);
+
+  t(`${label}: emits a result-card-actions row`, () => {
+    ok(/<div class="result-card-actions">/.test(fnSrc), 'no action row emitted');
+  });
+
+  for (const [cls, handler, human] of REQUIRED_ACTIONS) {
+    t(`${label}: offers ${human}`, () => {
+      const row = actionRow(fnSrc, label);
+      ok(row.includes(`<button class="${cls}"`), `${human} button (.${cls}) missing from the action row`);
+      ok(handler.test(row), `${human} is not wired to its handler`);
+    });
+  }
+
+  t(`${label}: emits the lv-panel mount point _runLeaseValidation requires`, () => {
+    ok(/<div id="\$\{_lvPanelId\}" class="lv-panel"/.test(fnSrc),
+       'no lv-panel div — _startLeaseValidation would find no panel and return silently');
+    ok(/const _lvPanelId = `lv-panel-\$\{tdIdx >= 0 \? tdIdx : r\.name\.replace\(\/\[\^a-zA-Z0-9\]\/g, '-'\)\}`/.test(fnSrc),
+       'the lv-panel id is not derived the same way as the other renderer');
+  });
+
+  t(`${label}: the card carries the Needs Review anchor id`, () => {
+    ok(/<div class="result-card[^"]*"[^>]*id="\$\{_resultCardAnchorId\(r\.name\)\}"/.test(fnSrc),
+       'the result card has no _resultCardAnchorId — the Needs Review rollup cannot scroll to it');
+  });
+}
+
+console.log('\n── Drift guard: the two renderers must stay in step ──');
+
+t('both renderers expose an identical set of tenant actions', () => {
+  const fresh    = buttonClasses(actionRow(FRESH, 'fresh'));
+  const restored = buttonClasses(actionRow(RESTORE, 'restored'));
+  eq(restored.join(','), fresh.join(','),
+     'the saved-reconciliation card offers a different action set than the fresh card —\n' +
+     `       fresh:    [${fresh.join(', ')}]\n` +
+     `       restored: [${restored.join(', ')}]\n` +
+     '       add the new action to BOTH renderers (or neither) —');
+});
+
+t('the action set is exactly the three documented actions', () => {
+  const expected = REQUIRED_ACTIONS.map(a => a[0]).sort().join(',');
+  eq(buttonClasses(actionRow(FRESH, 'fresh')).join(','), expected,
+     'the fresh renderer gained or lost an action without this test being updated —');
+  eq(buttonClasses(actionRow(RESTORE, 'restored')).join(','), expected,
+     'the restored renderer gained or lost an action without this test being updated —');
+});
+
+t('the lease-validation guard that makes the mount point mandatory still exists', () => {
+  ok(/async function _runLeaseValidation\(panelEl[^)]*\) \{\s*if \(!panelEl\) return;/.test(src),
+     '_runLeaseValidation no longer early-returns on a missing panel — if this guard changed, ' +
+     'the lv-panel assertions above may no longer describe why the mount point is required');
+});
+
+const TOTAL_EXPECTED = 16;
+t(`suite runs all ${TOTAL_EXPECTED} checks`, () => {
+  eq(pass + fail + 1, TOTAL_EXPECTED, 'test count changed — update TOTAL_EXPECTED deliberately');
+});
+
+console.log(`\n${fail === 0 ? 'PASS' : 'FAIL'} — ${pass} passed, ${fail} failed`);
+if (fail) { failures.forEach(f => console.log(`  · ${f}`)); process.exit(1); }
