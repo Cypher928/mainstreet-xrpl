@@ -409,7 +409,171 @@ t('[source] the recommendation asks which cause applies before concluding', () =
      'the recommendation does not ask which cause applies');
 });
 
-const TOTAL_EXPECTED = 35;
+console.log('\n── The green allocation finding is scoped to the loaded leases ──');
+
+// The pilot fixture: one $55,000 invoice, one loaded lease covering 18,852 of
+// the property's 80,000 sqft. The engine bills that lease 23.57% = $12,960.75;
+// the remaining $42,039.25 is the share of space no loaded lease covers.
+//
+// buildAuditSummary reads module globals and calls a handful of helpers, so it
+// runs here against stubs. Only its own output is asserted on.
+function auditSummary({ invoices, results, tenants, total, camYear }) {
+  const sandbox = {
+    console: { log() {}, warn() {}, error() {} },
+    parseFloat, isNaN, Number, Math, Date, JSON, Set, Array, Object, String,
+    lastInvoicesFull: invoices.map(i => ({ vendor: i.vendorName, amount: i.amount, category: i.category })),
+    invoiceData:  invoices,
+    lastResults:  results,
+    lastTenants:  tenants,
+    lastTotal:    total,
+    camRuns:      [],
+    fmt: n => '$' + Number(n).toLocaleString('en-US', { minimumFractionDigits: 2, maximumFractionDigits: 2 }),
+    getCamYear:   () => camYear,
+    currentProperty: () => ({ tenants }),
+    _detectInvoiceSuspicions:   () => [],
+    _detectReconciliationIssues: () => [],
+  };
+  vm.createContext(sandbox);
+  vm.runInContext(
+    extract(/\nfunction buildAuditSummary\(\) \{[\s\S]*?\n\}\n/, 'buildAuditSummary') +
+    '\nthis.__s = buildAuditSummary();', sandbox);
+  return sandbox.__s;
+}
+
+const PILOT_INV = [{ vendorName: 'Acme Landscaping', amount: 55000, category: 'landscaping', matchConfidence: 0, invoiceDate: null }];
+const partialCoverage = auditSummary({
+  invoices: PILOT_INV,
+  results:  [{ tenantId: 'ol', name: 'Olenox Corp', proRataPercent: 23.57, totalAllocated: 12960.75, includedInvoices: [] }],
+  tenants:  [{ id: 'ol', name: 'Olenox Corp', lease_type: 'Modified Gross', excludedCategories: [] }],
+  total: 55000, camYear: 2026,
+});
+const allocFinding = () => partialCoverage.green.find(f => /allocated as shared CAM expense/i.test(f.title));
+
+t('the green finding no longer says "All 1 invoices"', () => {
+  const f = allocFinding();
+  ok(f, 'the shared-allocation green finding was not raised');
+  ok(!/All 1 invoices/.test(f.title), 'the title still reads "All 1 invoices"');
+  ok(!/^All /.test(f.title), 'the title still opens with an "All" claim —');
+  eq(f.title, '1 invoice allocated as shared CAM expense (pro-rata)');
+});
+
+t('the green finding cannot claim the whole pool was distributed', () => {
+  const f = allocFinding();
+  ok(!/all \$55,000\.00 of CAM expenses were distributed/.test(f.detail),
+     'the detail still claims the entire pool was distributed');
+  ok(!/across all tenants/.test(f.detail),
+     'the detail still says the pool went across all tenants, not the loaded leases');
+  ok(!/\ball \$55,000\.00\b/.test(f.detail),
+     'the detail still asserts the full pool amount as distributed');
+});
+
+t('the green finding scopes the allocation to the loaded leases', () => {
+  const f = allocFinding();
+  ok(/currently loaded tenant leases/.test(f.detail),
+     'the detail does not scope the allocation to the loaded leases');
+  ok(/loaded leases cover 23\.57% of the property/.test(f.detail),
+     'the detail does not name the coverage the leases actually provide');
+  ok(f.conditions.some(c => /loaded lease/i.test(c)),
+     'no condition scopes the allocation basis to the loaded leases');
+  ok(f.conditions.some(c => /unallocated remainder is reported separately under property coverage/.test(c)),
+     'the finding does not defer the remainder to the property-coverage finding');
+});
+
+t('the green finding names the amount actually billed, not the pool', () => {
+  const f = allocFinding();
+  ok(/\$12,960\.75 of the \$55,000\.00 expense pool is billed/.test(f.detail),
+     'the detail does not separate the billed amount from the pool');
+  ok(/is not allocated in this reconciliation/.test(f.detail),
+     'the detail does not say the remainder goes unallocated');
+});
+
+t('full coverage reads cleanly and pluralises', () => {
+  const s = auditSummary({
+    invoices: [
+      { vendorName: 'Acme Landscaping', amount: 30000, category: 'landscaping', matchConfidence: 0, invoiceDate: '2026-03-01' },
+      { vendorName: 'Beta Snow',        amount: 25000, category: 'snow',        matchConfidence: 0, invoiceDate: '2026-03-02' },
+    ],
+    results: [
+      { tenantId: 'a', name: 'A', proRataPercent: 60, totalAllocated: 33000, includedInvoices: [] },
+      { tenantId: 'b', name: 'B', proRataPercent: 40, totalAllocated: 22000, includedInvoices: [] },
+    ],
+    tenants: [{ id: 'a', name: 'A', excludedCategories: [] }, { id: 'b', name: 'B', excludedCategories: [] }],
+    total: 55000, camYear: 2026,
+  });
+  const f = s.green.find(x => /allocated as shared CAM expense/i.test(x.title));
+  ok(f, 'the finding was not raised at full coverage');
+  eq(f.title, '2 invoices allocated as shared CAM expenses (pro-rata)');
+  ok(!/is not allocated in this reconciliation/.test(f.detail),
+     'full coverage must not talk about an unallocated remainder —');
+  ok(!f.conditions.some(c => /unallocated remainder/.test(c)),
+     'the remainder condition must only appear when coverage is incomplete —');
+  ok(/\$55,000\.00 of the \$55,000\.00 expense pool is billed across them/.test(f.detail),
+     'at full coverage the billed total should equal the pool');
+});
+
+console.log('\n── The missing invoice date finding states a requirement, not a confirmation ──');
+
+const dateFinding = () => partialCoverage.yellow.find(f => /missing invoice date/i.test(f.title));
+
+t('the missing-date finding does not claim the date was confirmed', () => {
+  const f = dateFinding();
+  ok(f, 'the missing invoice date finding was not raised');
+  ok(!/^Invoice date confirms/.test(f.detail),
+     'the detail still opens by saying the invoice date confirms the period');
+  ok(!/Invoice date confirms that a charge falls within/.test(f.detail),
+     'the detail still asserts the date confirms the charge falls in the period');
+  ok(/required to establish that a charge falls within the 2026 CAM reconciliation period/.test(f.detail),
+     'the detail no longer states the requirement an invoice date exists to meet');
+  ok(/no recorded date/.test(f.detail),
+     'the detail does not say this invoice has no recorded date');
+});
+
+t('the missing-date finding keeps its meaning, severity and affected vendors', () => {
+  const f = dateFinding();
+  eq(f.group, 'missing_docs', 'group changed —');
+  eq(f.title, '1 invoice missing invoice date', 'title changed —');
+  ok(/Acme Landscaping/.test(f.detail), 'the affected vendor was dropped from the detail');
+  ok(/may be excluded or challenged in a formal tenant audit/.test(f.detail),
+     'the audit-exposure warning was dropped');
+  ok(f.conditions.some(c => /Affected vendors: Acme Landscaping/.test(c)),
+     'the affected-vendor condition was dropped');
+  ok(f.conditions.some(c => /must fall within the 2026 reconciliation year/.test(c)),
+     'the requirement condition was dropped');
+});
+
+t('the missing-date count agrees with its verb in both singular and plural', () => {
+  const one = dateFinding();
+  ok(one.conditions.some(c => /^Count: 1 invoice has no recorded invoice date$/.test(c)),
+     'the singular count line does not read "1 invoice has" — got: ' +
+     JSON.stringify(one.conditions.filter(c => /^Count:/.test(c))));
+  ok(!one.conditions.some(c => /1 invoice have/.test(c)),
+     'the singular count line still reads "1 invoice have"');
+
+  const many = auditSummary({
+    invoices: [
+      { vendorName: 'Acme', amount: 30000, category: 'x', matchConfidence: 0, invoiceDate: null },
+      { vendorName: 'Beta', amount: 25000, category: 'y', matchConfidence: 0, invoiceDate: null },
+    ],
+    results:  [{ tenantId: 'a', name: 'A', proRataPercent: 100, totalAllocated: 55000, includedInvoices: [] }],
+    tenants:  [{ id: 'a', name: 'A', excludedCategories: [] }],
+    total: 55000, camYear: 2026,
+  }).yellow.find(f => /missing invoice date/i.test(f.title));
+  ok(many, 'the plural missing-date finding was not raised');
+  eq(many.title, '2 invoices missing invoice date', 'plural title changed —');
+  ok(many.conditions.some(c => /^Count: 2 invoices have no recorded invoice date$/.test(c)),
+     'the plural count line does not read "2 invoices have" — got: ' +
+     JSON.stringify(many.conditions.filter(c => /^Count:/.test(c))));
+  ok(!many.conditions.some(c => /2 invoices has/.test(c)),
+     'the plural count line was over-corrected to "2 invoices has"');
+});
+
+t('the allocation figures themselves are untouched', () => {
+  const f = allocFinding();
+  ok(/\$12,960\.75/.test(f.detail), '$12,960.75 no longer appears in the finding');
+  ok(/\$55,000\.00/.test(f.detail), 'the pool total no longer appears in the finding');
+});
+
+const TOTAL_EXPECTED = 44;
 t(`suite runs all ${TOTAL_EXPECTED} checks`, () => {
   eq(pass + fail + 1, TOTAL_EXPECTED, 'test count changed — update TOTAL_EXPECTED deliberately');
 });

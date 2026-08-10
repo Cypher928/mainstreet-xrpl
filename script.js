@@ -13842,9 +13842,15 @@ function buildAuditSummary() {
       yellow.push({
         group:  'missing_docs',
         title:  `${noDates.length} invoice${noDates.length > 1 ? 's' : ''} missing invoice date`,
-        detail: `Invoice date confirms that a charge falls within the ${camYr} CAM reconciliation period. Undated invoices may be excluded or challenged in a formal tenant audit. Affected: ${noDateNames}.`,
+        // The detail used to open "Invoice date confirms that a charge falls
+        // within the <year> CAM reconciliation period" — a general statement of
+        // why dates matter, but written in the present tense at the head of a
+        // finding whose own title says the date is MISSING. It read as though the
+        // date had been checked and confirmed, contradicting the finding.
+        // State the requirement, then state that this invoice does not meet it.
+        detail: `An invoice date is required to establish that a charge falls within the ${camYr} CAM reconciliation period. ${noDates.length === 1 ? 'This invoice has' : 'These invoices have'} no recorded date, so ${noDates.length === 1 ? 'it cannot' : 'they cannot'} be placed in the period from the document alone. Undated invoices may be excluded or challenged in a formal tenant audit. Affected: ${noDateNames}.`,
         conditions: [
-          `Count: ${noDates.length} invoice${noDates.length > 1 ? 's' : ''} have no recorded invoice date`,
+          `Count: ${noDates.length} invoice${noDates.length > 1 ? 's' : ''} ${noDates.length > 1 ? 'have' : 'has'} no recorded invoice date`,
           `Affected vendors: ${noDateNames}`,
           `Required: invoice date must fall within the ${camYr} reconciliation year`,
         ],
@@ -13880,12 +13886,37 @@ function buildAuditSummary() {
     const shared  = paidInvData.length - matched;
     if (paidInvData.length > 0) {
       if (matched === 0) {
+        // This finding describes HOW the invoices were allocated. It used to say
+        // "all <total> of CAM expenses were distributed pro-rata across all
+        // tenants" — false whenever the loaded leases cover less than the whole
+        // property, because the pool is only billed out to the leases actually
+        // loaded. On the pilot's 23.57%-covered property it claimed the full
+        // $55,000 pool had been distributed while the coverage finding directly
+        // above it, and the variance banner, both reported the opposite.
+        //
+        // Scope the claim to the loaded leases, and when coverage is incomplete
+        // name the amount actually billed. totalAllocated is the same engine
+        // field _buildReconciliationSummaryHtml sums for totalBilled, so this
+        // figure cannot drift from the banner. Threshold matches
+        // reconciliation-engine.js section 3 and the banner (gap > 2).
+        //
+        // No allocation math is touched here — this reads engine output only.
+        const _n          = paidInvData.length;
+        const _invWord    = _n === 1 ? 'invoice' : 'invoices';
+        const _prSum      = results.reduce((s, r) => s + (r.proRataPercent || 0), 0);
+        const _billed     = results.reduce((s, r) => s + (r.totalAllocated || 0), 0);
+        const _incomplete = _prSum < 98;
         green.push({
-          title:  `All ${paidInvData.length} invoices allocated as shared CAM expenses (pro-rata)`,
-          detail: `No invoices were matched to an individual tenant — all ${fmt(total)} of CAM expenses were distributed pro-rata across all tenants using their square footage share of the total building.`,
+          title:  `${_n} ${_invWord} allocated as shared CAM expense${_n === 1 ? '' : 's'} (pro-rata)`,
+          detail: _incomplete
+            ? `No invoice was matched to an individual tenant — each was distributed pro-rata across the currently loaded tenant leases, using each lease's leased square footage as a share of total building square footage. The loaded leases cover ${_prSum.toFixed(2)}% of the property, so ${fmt(_billed)} of the ${fmt(total)} expense pool is billed to them. The remainder is the share of space no loaded lease covers and is not allocated in this reconciliation.`
+            : `No invoice was matched to an individual tenant — each was distributed pro-rata across the loaded tenant leases, using each lease's leased square footage as a share of total building square footage. The loaded leases cover ${_prSum.toFixed(2)}% of the property, and ${fmt(_billed)} of the ${fmt(total)} expense pool is billed across them.`,
           conditions: [
-            `${paidInvData.length} invoices distributed pro-rata; none directly charged to a single tenant`,
-            'Allocation basis: each tenant\'s leased sqft as a percentage of total building sqft',
+            `${_n} ${_invWord} distributed pro-rata; none directly charged to a single tenant`,
+            'Allocation basis: each loaded lease\'s leased sqft as a percentage of total building sqft',
+            ...(_incomplete
+              ? [`Loaded leases cover ${_prSum.toFixed(2)}% of the property — the unallocated remainder is reported separately under property coverage`]
+              : []),
           ],
         });
       } else {
