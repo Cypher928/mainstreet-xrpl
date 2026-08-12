@@ -6,8 +6,13 @@
  *   TENANT_B_EMAIL=… TENANT_B_PASS=… \
  *   TENANT_C_EMAIL=… TENANT_C_PASS=… \   (revoked membership)
  *   LANDLORD_EMAIL=… LANDLORD_PASS=… \
- *   TENANT_A_TENANT_ID=… TENANT_B_TENANT_ID=… OTHER_PROPERTY_TENANT_ID=… \
+ *   TENANT_A_TENANT_ID=… TENANT_B_TENANT_ID=… TENANT_B_PROPERTY_ID=… \
+ *   OTHER_PROPERTY_TENANT_ID=… \
  *   node test-tenant-authz.js
+ *
+ * Credentials are read from the environment only. Nothing is written to disk,
+ * nothing is echoed: emails and passwords never appear in output, and the only
+ * identifier printed is a row count.
  *
  * PILOT ONLY. The URL is pinned to bhmktujbxdbvdmpybmad and the suite refuses
  * to run against anything else — note that the older test-rls-cross-user.js
@@ -59,6 +64,18 @@ async function signIn(email, password) {
   return j.access_token;
 }
 
+// The authenticated user's own id, read back from GoTrue rather than supplied
+// as an env var — it must be the id the server actually associates with this
+// token, otherwise T11 is not testing a genuine self-grant.
+async function currentUserId(token) {
+  const r = await fetch(`${SUPABASE_URL}/auth/v1/user`, {
+    headers: { apikey: ANON_KEY, Authorization: `Bearer ${token}` },
+  });
+  const j = await r.json().catch(() => ({}));
+  if (!r.ok || !j.id) abort(`could not read current user id: ${r.status}`);
+  return j.id;
+}
+
 // Returns row count. token omitted ⇒ anonymous (anon key only).
 async function count(path, token) {
   const headers = { 'apikey': ANON_KEY };
@@ -79,9 +96,10 @@ async function main() {
           'Run from a host with egress to the pilot project.');
   }
 
-  const A_ID     = need('TENANT_A_TENANT_ID');
-  const B_ID     = need('TENANT_B_TENANT_ID');
-  const OTHER_ID = need('OTHER_PROPERTY_TENANT_ID');
+  const A_ID          = need('TENANT_A_TENANT_ID');
+  const B_ID          = need('TENANT_B_TENANT_ID');
+  const B_PROPERTY_ID = need('TENANT_B_PROPERTY_ID'); // T11: makes the forged row well formed
+  const OTHER_ID      = need('OTHER_PROPERTY_TENANT_ID');
 
   const aTok = await signIn(need('TENANT_A_EMAIL'),  need('TENANT_A_PASS'));
   const bTok = await signIn(need('TENANT_B_EMAIL'),  need('TENANT_B_PASS'));
@@ -104,14 +122,46 @@ async function main() {
   expectRows('T12 A reads tenant_users (own row only)', await count('tenant_users?select=id', aTok), 1);
   expectRows('T12b B reads tenant_users (own row only)', await count('tenant_users?select=id', bTok), 1);
 
-  // A tenant that could INSERT its own membership could grant itself any space.
+  // T11 — a tenant that could INSERT its own membership could grant itself any
+  // space, so this is the single most important negative test in the suite.
+  //
+  // The row below is deliberately WELL FORMED: every NOT NULL column is present,
+  // both foreign keys resolve, the composite (tenant_id, property_id) pair is
+  // real, and it collides with no unique constraint. Nothing about the row's
+  // shape can refuse it — the only thing that can is authorization.
+  //
+  // The assertion is on the SQLSTATE, not merely on "the request failed".
+  // Accepting any non-2xx would let an expired token, a typo in the URL or a
+  // 404 masquerade as a passing security test. 42501 is Postgres'
+  // insufficient_privilege, which is what an RLS WITH CHECK refusal raises;
+  // PostgREST surfaces it as HTTP 403 with code "42501" in the body.
+  //
+  // Verified against the pilot database before shipping this assertion:
+  //   · well-formed self-grant, policies as shipped  → 42501, insert refused
+  //   · same insert with an INSERT policy opened up  → SUCCEEDS
+  // so this test fails if the tenant INSERT policy is ever accidentally opened.
+  const aUserId = await currentUserId(aTok);
+  const insBody = {
+    user_id:     aUserId,        // A's own id: a genuine self-grant attempt
+    tenant_id:   B_ID,           // ... to tenant B's space
+    property_id: B_PROPERTY_ID,  // ... with the property that actually holds B
+    accepted_at: new Date().toISOString(),
+  };
   const ins = await fetch(`${SUPABASE_URL}/rest/v1/tenant_users`, {
     method: 'POST',
     headers: { apikey: ANON_KEY, Authorization: `Bearer ${aTok}`, 'Content-Type': 'application/json' },
-    body: JSON.stringify({ tenant_id: B_ID, property_id: '00000000-0000-0000-0000-000000000000' }),
+    body: JSON.stringify(insBody),
   });
-  if (ins.ok) bad('T11 tenant self-grant INSERT was ACCEPTED (security failure)');
-  else ok(`T11 tenant self-grant INSERT rejected (${ins.status})`);
+  const insBodyJson = await ins.json().catch(() => ({}));
+  if (ins.ok) {
+    bad('T11 tenant self-grant INSERT was ACCEPTED — the tenant INSERT policy is open (SECURITY FAILURE)');
+  } else if (insBodyJson.code === '42501') {
+    ok('T11 tenant self-grant INSERT refused by RLS (42501 insufficient_privilege)');
+  } else {
+    // Refused, but not by the policy — the test did not prove what it claims.
+    bad(`T11 self-grant refused for a NON-RLS reason (http ${ins.status}, code ${insBodyJson.code || 'none'}: ` +
+        `${(insBodyJson.message || '').slice(0, 120)}) — this test proves nothing about RLS until the row is accepted as well formed`);
+  }
 
   console.log('\n── Revoked and unauthenticated ──');
   expectRows('T9  revoked membership reads tenants',  await count('tenants?select=id', cTok), 0);
