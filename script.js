@@ -10388,7 +10388,9 @@ async function runAllocation() {
     const trendsData = buildHistoricalTrends();
     if (trendsData && trendsData.trends.length) {
       logActivity('historical_comparison',
-        `Historical comparison — ${trendsData.priorYear} vs ${trendsData.currYear}`,
+        trendsData.comparisonKind === 'year-over-year'
+          ? `Historical comparison — ${trendsData.priorYear} vs ${trendsData.currYear}`
+          : `Run comparison — previous ${trendsData.priorYear} run vs current run`,
         { severity: 'info', actor: 'System', relatedEntity: propName, detail: `${trendsData.trends.length} trend${trendsData.trends.length > 1 ? 's' : ''} detected` }
       );
     }
@@ -14177,9 +14179,17 @@ function buildAuditNarrative() {
   if (trends) {
     const nonGreenTrends = trends.trends.filter(t => t.severity !== 'green').length;
     if (nonGreenTrends > 0) {
+      // Only call it year-over-year when the years actually differ. Re-running
+      // the same property in one session compares 2026 against 2026, which is a
+      // run-over-run delta; naming it year-over-year invites a landlord to read
+      // a same-year re-run as an annual expense trend.
       parts.push(
-        `Year-over-year comparison against ${trends.priorYear} identified ${nonGreenTrends}` +
-        ` trend${nonGreenTrends > 1 ? 's' : ''} warranting further review.`
+        trends.comparisonKind === 'year-over-year'
+          ? `Year-over-year comparison against ${trends.priorYear} identified ${nonGreenTrends}` +
+            ` trend${nonGreenTrends > 1 ? 's' : ''} warranting further review.`
+          : `Comparison against the previous ${trends.priorYear} reconciliation run identified ${nonGreenTrends}` +
+            ` trend${nonGreenTrends > 1 ? 's' : ''} warranting further review. This is a run-over-run` +
+            ` comparison within ${trends.currYear}, not a year-over-year trend.`
       );
     }
   }
@@ -14325,6 +14335,7 @@ function renderNarrativePanel() {
         <div>
           <div class="an-label">AI Auditor Narrative</div>
           <div class="an-headline">${esc(n.headline)}</div>
+          <div class="an-scope">Scope: reconciliation and invoice evidence for this property. Lease-clause compliance is assessed separately under Validate Against Lease on each tenant.</div>
         </div>
       </div>
       <div class="an-header-right">
@@ -14387,7 +14398,7 @@ function renderAuditPanel() {
       this.querySelector('.ap-chevron').classList.toggle('ap-chevron--open');
     ">
       <div class="ap-header-left">
-        <span class="ap-title">&#x1F50D;&nbsp; AI Audit Summary</span>
+        <span class="ap-title">&#x1F50D;&nbsp; AI Audit Summary <span class="ap-scope">&mdash; reconciliation &amp; invoice evidence</span></span>
       </div>
       <div class="ap-header-right">
         ${badge(red.length, 'red')}
@@ -14412,13 +14423,26 @@ function buildHistoricalTrends() {
 
   const curr  = camRuns[0];
   // Find the most recent prior run for the same property with a different year
-  const prior = camRuns.slice(1).find(r =>
+  const priorDifferentYear = camRuns.slice(1).find(r =>
     r.propName === curr.propName && r.camYear !== curr.camYear
-  ) || camRuns.slice(1).find(r => r.propName === curr.propName);
+  );
+  // Fallback: the most recent prior run for this property regardless of year.
+  // camRuns.unshift() records EVERY runAllocation, so re-running the same
+  // property twice in one session puts two same-year runs at the head of the
+  // list and this fallback selects one of them. The comparison is still useful
+  // — it is how the pilot noticed $55,000 becoming $110,000 — but it is a
+  // run-over-run comparison, not year-over-year, and calling a 2026 vs 2026
+  // delta "year-over-year" is simply false. Callers get comparisonKind so they
+  // can label it honestly rather than having to re-derive it from the years.
+  const prior = priorDifferentYear
+    || camRuns.slice(1).find(r => r.propName === curr.propName);
   if (!prior) return null;
 
   const currYear  = curr.camYear  || 'Current';
   const priorYear = prior.camYear || 'Prior';
+  const comparisonKind = (priorDifferentYear && String(priorYear) !== String(currYear))
+    ? 'year-over-year'
+    : 'run-over-run';
   const trends    = [];
 
   // ── Total Expenses trend ───────────────────────────────────────────────────
@@ -14570,7 +14594,7 @@ function buildHistoricalTrends() {
     });
   }
 
-  return { trends, currYear, priorYear };
+  return { trends, currYear, priorYear, comparisonKind };
 }
 
 function renderHistoricalTrendsPanel() {
@@ -14633,7 +14657,9 @@ function renderHistoricalTrendsPanel() {
       this.querySelector('.ap-chevron').classList.toggle('ap-chevron--open');
     ">
       <div class="ap-header-left">
-        <span class="ap-title">&#x1F4C8;&nbsp; Historical Trends &mdash; ${esc(String(priorYear))} &rarr; ${esc(String(currYear))}</span>
+        <span class="ap-title">&#x1F4C8;&nbsp; ${data.comparisonKind === 'year-over-year'
+          ? `Historical Trends &mdash; ${esc(String(priorYear))} &rarr; ${esc(String(currYear))}`
+          : `Run Comparison &mdash; previous ${esc(String(priorYear))} run &rarr; current run`}</span>
       </div>
       <div class="ap-header-right">
         ${badge(redCount, 'red')}
@@ -16334,6 +16360,30 @@ function _renderExclusionBlock(block) {
 
 function generateTenantStatement(tenantName) {
   if (!lastResults.length) { showToast('Run a CAM allocation first to generate reports.', { color: '#92400e', textColor: '#fef3c7' }); return; }
+
+  // Staleness guards — the same two exportReconciliationCSV has applied all
+  // along. They were missing here, which had the protection backwards: the
+  // internal CSV export refused to emit when the run no longer matched the
+  // data, while the TENANT-FACING statement — the document a tenant is billed
+  // from — was generated regardless.
+  //
+  // Cross-property staleness is already impossible (selectProperty calls
+  // resetWorkflow, and restored snapshots are propId-checked), and rerun and
+  // restore both overwrite lastResults wholesale. The uncovered case is an
+  // EDIT after a run: handleFieldBlur, applyAmendmentOverrides and
+  // handleBatchInvoices each set _resultsStale, and until now nothing on this
+  // path looked at it. Same for a CAM year change after the run.
+  //
+  // Refusing, rather than warning, matches the CSV export and F-02: a statement
+  // that cannot be trusted should not be produced at all.
+  if (lastResultsYear && getCamYear() !== lastResultsYear) {
+    showToast(`⚠️ Results are from ${lastResultsYear} — re-run the reconciliation for ${getCamYear()} before generating a tenant statement.`, { color: '#92400e', textColor: '#fef3c7', duration: 6000 });
+    return;
+  }
+  if (_resultsStale) {
+    showToast('⚠️ Results may be stale — lease or invoice data changed since the last run. Re-run the reconciliation before generating a tenant statement.', { color: '#92400e', textColor: '#fef3c7', duration: 7000 });
+    return;
+  }
 
   // F-02 lifecycle guard — refuse to build the statement at all. Not a banner.
   const _block = _exclusionBlockReason(tenantName);
@@ -21284,10 +21334,18 @@ function _renderValidationPanel(findings, { loading = false, charsAnalyzed = nul
     ? `<div class="lv-loading">&#x23F3; Checking lease clauses…</div>`
     : '';
 
+  // Scope line. Pilot QA surfaced "Lease Validation: all PASSED" sitting beside
+  // "Critical Audit Risk" and read the two as contradicting each other. They
+  // never were: this panel checks THIS TENANT'S LEASE CLAUSES, while the AI
+  // Audit Summary judges the property's reconciliation and invoice evidence.
+  // Both can be true at once — a lease can permit every charge while the
+  // invoices backing those charges are unverifiable. Naming each scope is
+  // enough; neither engine's determination changes.
   return `<div class="lv-header">
     <span class="lv-title">LEASE VALIDATION</span>
     <span class="lv-status">${statusText}</span>
   </div>
+  <div class="lv-scope">Scope: this tenant's lease clauses. Property-level reconciliation findings are reported separately in the AI Audit Summary.</div>
   ${cards}${loadingRow}${metaLine}`;
 }
 

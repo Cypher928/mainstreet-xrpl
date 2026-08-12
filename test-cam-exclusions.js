@@ -354,7 +354,13 @@ t('a tenant with everything applied is never blocked', () => {
 t('[source] the statement is BLOCKED, not merely warned', () => {
   ok(/function _exclusionBlockReason/.test(scriptCode), 'no block function');
   const i = scriptCode.indexOf('function generateTenantStatement');
-  const body = scriptCode.slice(i, i + 1200);
+  // Window widened from 1200. It was sized to the function as it stood, and the
+  // pilot smoke-test staleness guards (_resultsStale / CAM-year, added ahead of
+  // the F-02 check) pushed "logActivity('tenant_statement'" so it straddled the
+  // 1200 boundary — indexOf then returned -1 and this test failed even though
+  // the ordering it asserts was intact. A fixed window makes an ordering test
+  // fail on unrelated edits above it; 2400 restores headroom.
+  const body = scriptCode.slice(i, i + 2400);
   ok(/const _block = _exclusionBlockReason\(tenantName\);/.test(body), 'guard not called');
   ok(/if \(_block\) \{/.test(body) && /return;/.test(body), 'guard does not return early');
   // The guard must precede statement construction: no openReport of a statement
