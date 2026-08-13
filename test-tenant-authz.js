@@ -182,6 +182,58 @@ async function main() {
   expectRows('T10b A (now role=landlord) reads all tenants', await count('tenants?select=id', aTok2), 1);
   expectRows('T10c A (now role=landlord) reads evidence',   await count('tenant_field_evidence?select=id', aTok2), 0);
 
+  console.log('\n── Invitations are invisible to tenants (B1) ──');
+  // tenant_invitations has NO tenant policy by design. A tenant proves an
+  // invitation by presenting its token to the API, never by reading the row —
+  // so a tenant who can list invitations can enumerate other tenants' spaces
+  // and their token hashes.
+  expectRows('T13  A reads tenant_invitations',            await count('tenant_invitations?select=id', aTok), 0);
+  expectRows('T13b B reads tenant_invitations',            await count('tenant_invitations?select=id', bTok), 0);
+  expectRows('T13c revoked member reads tenant_invitations', await count('tenant_invitations?select=id', cTok), 0);
+  expectRows('T13d anonymous reads tenant_invitations',    await count('tenant_invitations?select=id'), 0);
+
+  // Selecting only token_hash is the enumeration a leaky policy would enable.
+  expectRows('T13e A reads invitation token hashes',       await count('tenant_invitations?select=token_hash', aTok), 0);
+
+  // A tenant forging an invitation for itself is a self-grant with extra steps.
+  const invIns = await fetch(`${SUPABASE_URL}/rest/v1/tenant_invitations`, {
+    method: 'POST',
+    headers: { apikey: ANON_KEY, Authorization: `Bearer ${aTok}`, 'Content-Type': 'application/json' },
+    body: JSON.stringify({
+      tenant_id: B_ID, property_id: B_PROPERTY_ID,
+      email: process.env.TENANT_A_EMAIL, token_hash: 'a'.repeat(64),
+      invited_by: await currentUserId(aTok),
+    }),
+  });
+  const invInsBody = await invIns.json().catch(() => ({}));
+  if (invIns.ok) bad('T14 tenant forged an invitation — the invitation INSERT policy is open (SECURITY FAILURE)');
+  else if (invInsBody.code === '42501') ok('T14 tenant invitation forge refused by RLS (42501)');
+  else bad(`T14 invitation forge refused for a NON-RLS reason (http ${invIns.status}, code ${invInsBody.code || 'none'})`);
+
+  console.log('\n── Accept-invite endpoint (B1) ──');
+  // The route lives on the app origin, not on Supabase. APP_ORIGIN is required
+  // to exercise it; fail loudly rather than skip silently if it is absent.
+  if (!process.env.APP_ORIGIN) {
+    bad('T15/T16 skipped — APP_ORIGIN not set, so the accept-invite route was never exercised');
+  } else {
+    const origin = process.env.APP_ORIGIN.replace(/\/$/, '');
+    const bogus = await fetch(`${origin}/api/tenant-accept-invite`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${aTok}` },
+      body: JSON.stringify({ token: 'x'.repeat(64) }),
+    });
+    if (bogus.status === 400) ok('T15 accept-invite refuses an unknown token (400)');
+    else bad(`T15 accept-invite returned ${bogus.status} for an unknown token — expected 400`);
+
+    const noAuth = await fetch(`${origin}/api/tenant-accept-invite`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ token: 'x'.repeat(64) }),
+    });
+    if (noAuth.status === 401) ok('T16 accept-invite requires authentication (401)');
+    else bad(`T16 accept-invite returned ${noAuth.status} unauthenticated — expected 401`);
+  }
+
   console.log('\n── Landlord regression ──');
   const lp = await count('properties?select=id', lTok);
   const lt = await count('tenants?select=id', lTok);
