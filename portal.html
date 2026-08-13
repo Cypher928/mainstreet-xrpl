@@ -65,6 +65,7 @@
     }
     .p-facts dd { margin: 0; font-variant-numeric: tabular-nums; }
     .p-soon { margin: 18px 0 0; padding-top: 14px; border-top: 1px solid var(--line); color: var(--muted); font-size: 0.88rem; }
+    .p-lede { margin: 0 0 18px; color: var(--muted); font-size: 0.92rem; }
 
     label { display: block; font-size: 0.85rem; color: var(--muted); margin-bottom: 5px; }
     input {
@@ -90,17 +91,27 @@
       <button id="pSignOut" type="button">Sign out</button>
     </header>
 
-    <!-- Sign in -->
+    <!-- Sign in — magic link, no tenant password. See portal.js requestLink(). -->
     <section id="pViewAuth" hidden>
       <div class="p-card">
         <h1 class="p-card-name">Sign in</h1>
+        <p class="p-lede">We&rsquo;ll email you a link that signs you in. There&rsquo;s no
+           password to remember.</p>
         <form id="pAuthForm" novalidate>
           <label for="pEmail">Email</label>
-          <input id="pEmail" type="email" autocomplete="email" required>
-          <label for="pPassword">Password</label>
-          <input id="pPassword" type="password" autocomplete="current-password" required>
-          <button id="pSignIn" class="p-primary" type="submit">Sign in</button>
+          <input id="pEmail" type="email" autocomplete="email" inputmode="email" required>
+          <button id="pSignIn" class="p-primary" type="submit">Email me a sign-in link</button>
         </form>
+      </div>
+    </section>
+
+    <!-- Link sent -->
+    <section id="pViewSent" hidden>
+      <div class="p-card">
+        <h1 class="p-card-name">Check your email</h1>
+        <p>We sent a sign-in link to <strong id="pSentTo"></strong>. Open it on this
+           device to continue. The link works once and expires shortly.</p>
+        <p class="p-soon">Nothing arrived? Check spam, then request another link.</p>
       </div>
     </section>
 

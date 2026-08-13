@@ -27,11 +27,19 @@
 // existed; there is no legitimate caller who benefits from the distinction.
 //
 // ── WHAT THIS ENDPOINT WILL NOT DO ──────────────────────────────────────────
-// It will not create the auth user. Account creation stays with Supabase Auth,
-// which already sends MainStreet's transactional mail (signUp confirmation and
-// password reset). The tenant signs in first, then redeems. That keeps password
-// policy — including leaked-password protection — in one place rather than
-// giving this route a second, weaker way to mint an account.
+// It will not create the auth user, and it will not authenticate anyone. Both
+// stay with Supabase Auth. The tenant is signed in BEFORE calling this, and the
+// route only binds an already-authenticated identity to a tenant space.
+//
+// Tenants authenticate by magic link (portal.js requestLink), so there is no
+// tenant password anywhere in this flow — which is why the endpoint can be this
+// small. It never sees, sets or verifies a credential; it verifies a token that
+// grants membership, and nothing else.
+//
+// The magic-link redirect carries the invite token back through email, so by the
+// time this route is called the caller holds both a real session and the token.
+// Checking the invited email against the session email is what stops a forwarded
+// link from becoming someone else's access.
 'use strict';
 
 const crypto = require('crypto');
