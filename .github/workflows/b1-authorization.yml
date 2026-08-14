@@ -56,7 +56,12 @@ jobs:
       PILOT_REF: bhmktujbxdbvdmpybmad
       PRODUCTION_REF: zhsuhehgehbzkmzurzyf
       PILOT_SUPABASE_SERVICE_ROLE_KEY: ${{ secrets.PILOT_SUPABASE_SERVICE_ROLE_KEY }}
-      APP_ORIGIN: ${{ vars.PILOT_APP_ORIGIN }}
+      # Hardcoded, not a repository variable. It is a public URL, so making it
+      # configuration bought nothing except one more thing to set up wrongly —
+      # and the same reasoning applies here as to the project ref in
+      # scripts/b1-ci-fixture.js: a gate that can be re-pointed by editing a
+      # setting is one bad edit from testing the wrong thing.
+      APP_ORIGIN: https://www.mainstreet-review.com
 
     steps:
       - uses: actions/checkout@v4
