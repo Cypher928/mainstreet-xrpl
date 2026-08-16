@@ -694,20 +694,63 @@ async function main() {
   console.log('\n── B2: the tenant write surface is empty ──');
   // Each must be refused by RLS with 42501 specifically. Accepting any non-2xx
   // would let a typo or a dropped table pass for a policy that is not there.
-  async function expectRefused(label, path, method, body) {
+  // A tenant write can be refused two different ways, and both are correct:
+  //
+  //   INSERT        -> 42501. There is no tenant INSERT policy, so the WITH
+  //                    CHECK fails and Postgres raises insufficient_privilege.
+  //   UPDATE/DELETE -> 0 rows. The only policy an `authenticated` caller can
+  //                    match for those commands is the landlord one, whose
+  //                    USING requires owning the property. A tenant owns none,
+  //                    so no row is visible to modify and the statement is a
+  //                    no-op rather than an error.
+  //
+  // Counting affected rows is not enough on its own — an earlier version of this
+  // helper read a PostgREST 204 (no body, which is what a 0-row PATCH returns
+  // without return=representation) as an acceptance and reported a SECURITY
+  // FAILURE that did not exist. So: ask for the representation, AND read the row
+  // back with the service role to prove it is untouched. State is the assertion;
+  // the row count is corroboration.
+  async function expectRefused(label, path, method, body, verify) {
     const r = await fetch(`${SUPABASE_URL}/rest/v1/${path}`, {
       method,
-      headers: { apikey: ANON_KEY, Authorization: `Bearer ${aTok}`, 'Content-Type': 'application/json' },
+      headers: {
+        apikey: ANON_KEY, Authorization: `Bearer ${aTok}`,
+        'Content-Type': 'application/json', Prefer: 'return=representation',
+      },
       ...(body ? { body: JSON.stringify(body) } : {}),
     });
-    const j = await r.json().catch(() => ({}));
-    if (r.ok) {
-      // A PATCH/DELETE that matches no row is a 200 with an empty array — that
-      // is RLS filtering the row away, which is the refusal we want.
-      if (method !== 'POST' && Array.isArray(j) && j.length === 0) { ok(`${label} — 0 rows affected (RLS)`); return; }
-      bad(`${label} was ACCEPTED (SECURITY FAILURE)`);
-    } else if (j.code === '42501') ok(`${label} refused by RLS (42501)`);
-    else bad(`${label} refused for a NON-RLS reason (http ${r.status}, code ${j.code || 'none'})`);
+    const txt = await r.text();
+    let j = {};
+    try { j = txt ? JSON.parse(txt) : {}; } catch (_) { j = {}; }
+
+    if (!r.ok) {
+      if (j.code === '42501') ok(`${label} refused by RLS (42501)`);
+      else bad(`${label} refused for a NON-RLS reason (http ${r.status}, code ${j.code || 'none'})`);
+      return;
+    }
+
+    const affected = Array.isArray(j) ? j.length : (r.status === 204 ? 0 : null);
+    if (affected !== 0) {
+      bad(`${label} was ACCEPTED (SECURITY FAILURE) — http ${r.status}, ${affected} row(s)`);
+      return;
+    }
+    if (verify) {
+      const intact = await verify();
+      if (!intact) { bad(`${label} reported 0 rows but the data CHANGED (SECURITY FAILURE)`); return; }
+      ok(`${label} — 0 rows affected and the row is verifiably unchanged`);
+      return;
+    }
+    ok(`${label} — 0 rows affected (RLS)`);
+  }
+
+  // Service-role reads used to prove the writes above changed nothing. Read this
+  // way deliberately: through the tenant's own token a modified row could simply
+  // have become invisible, which is indistinguishable from unchanged.
+  async function svcGet(path) {
+    if (!_svc) return null;
+    const r = await fetch(`${SUPABASE_URL}/rest/v1/${path}`,
+      { headers: { apikey: _svc, Authorization: `Bearer ${_svc}` } });
+    return r.ok ? await r.json().catch(() => null) : null;
   }
   await expectRefused('T32  A INSERTs a statement', 'tenant_statements', 'POST', {
     tenant_id: A_ID, property_id: B_PROPERTY_ID, cam_year: 2025,
@@ -715,9 +758,17 @@ async function main() {
     statement_json: {}, status: 'published', published_at: new Date().toISOString(),
   });
   await expectRefused('T33  A publishes its own draft',
-    'tenant_statements?cam_year=eq.2023', 'PATCH', { status: 'published' });
+    `tenant_statements?tenant_id=eq.${A_ID}&cam_year=eq.2023`, 'PATCH', { status: 'published' },
+    async () => {
+      const rows = await svcGet(`tenant_statements?tenant_id=eq.${A_ID}&cam_year=eq.2023&select=status`);
+      return !!rows && rows.length === 1 && rows[0].status === 'draft';
+    });
   await expectRefused('T34  A DELETEs its statement',
-    `tenant_statements?id=eq.${STMT_A}`, 'DELETE');
+    `tenant_statements?id=eq.${STMT_A}`, 'DELETE', null,
+    async () => {
+      const rows = await svcGet(`tenant_statements?id=eq.${STMT_A}&select=id,status`);
+      return !!rows && rows.length === 1 && rows[0].status === 'published';
+    });
   await expectRefused('T39  A writes a space profile', 'tenant_space_profiles', 'POST', {
     tenant_id: A_ID, property_id: B_PROPERTY_ID, property_name: 'x', status: 'published',
     published_at: new Date().toISOString(),
