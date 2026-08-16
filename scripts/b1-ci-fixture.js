@@ -219,7 +219,8 @@ async function setup() {
   if (!tenants.ok || tenants.body.length !== 3) die(`could not create fixture tenants: ${JSON.stringify(tenants.body)}`);
   const [tenant1, tenant2, tenant3] = tenants.body;
 
-  // A active, B active on the SAME property, C revoked on the other property.
+  // A active, B active on the SAME property, C revoked on the other property,
+  // and A additionally PENDING on that other property.
   //
   // Every object carries revoked_at explicitly, including the two where it is
   // null. PostgREST derives the column list for a bulk insert from the first
@@ -234,9 +235,17 @@ async function setup() {
       { user_id: tA.id, tenant_id: tenant1.id, property_id: p1.id, accepted_at: now, revoked_at: null },
       { user_id: tB.id, tenant_id: tenant2.id, property_id: p1.id, accepted_at: now, revoked_at: null },
       { user_id: tC.id, tenant_id: tenant3.id, property_id: p2.id, accepted_at: now, revoked_at: now },
+      // A PENDING membership for A on the other property's tenant: invited,
+      // never accepted. Without it, tenant_users_self_select's
+      // `accepted_at is not null` conjunct is untested — a truth table over the
+      // predicate shows deleting that conjunct changes the outcome for exactly
+      // one shape of row, a pending one, and the first three rows above have
+      // none. It is also the case that matters in practice: an invitation that
+      // was issued and never redeemed must grant nothing.
+      { user_id: tA.id, tenant_id: tenant3.id, property_id: p2.id, accepted_at: null, revoked_at: null },
     ]),
   });
-  if (!mem.ok || mem.body.length !== 3) die(`could not create fixture memberships: ${JSON.stringify(mem.body)}`);
+  if (!mem.ok || mem.body.length !== 4) die(`could not create fixture memberships: ${JSON.stringify(mem.body)}`);
 
   // Merge, never overwrite — the id lists were built incrementally as each
   // object was created and rewriting them here would defeat that.
@@ -255,6 +264,12 @@ async function setup() {
     TENANT_B_TENANT_ID: tenant2.id,
     TENANT_B_PROPERTY_ID: p1.id,
     OTHER_PROPERTY_TENANT_ID: tenant3.id,
+    // C's own space, under its own names. Same ids as OTHER_PROPERTY_* above,
+    // but the re-invitation test (T17/T18) reads them as "the space C was
+    // revoked from", not as "a space A cannot see" — aliasing the two roles to
+    // one variable would make that test read as if it were about A.
+    TENANT_C_TENANT_ID: tenant3.id,
+    TENANT_C_PROPERTY_ID: p2.id,
   };
 
   if (process.env.GITHUB_ENV) {
@@ -266,7 +281,7 @@ async function setup() {
     console.log(Object.entries(env).map(([k, v]) => `export ${k}='${v}'`).join('\n'));
   }
 
-  log(`✓ fixtures created — 1 landlord, 2 properties, 3 tenants, 3 memberships (run ${runId})`);
+  log(`✓ fixtures created — 1 landlord, 2 properties, 3 tenants, 4 memberships (2 active, 1 revoked, 1 pending) (run ${runId})`);
 }
 
 // ── teardown ────────────────────────────────────────────────────────────────

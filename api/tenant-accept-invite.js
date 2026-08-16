@@ -148,11 +148,21 @@ module.exports = async function handler(req, res) {
     const membership = await sbFetch('/tenant_users', {
       method: 'POST',
       headers: { Prefer: 'resolution=merge-duplicates,return=representation' },
+      // revoked_at is set EXPLICITLY, and that is load-bearing on the
+      // re-invitation path. `resolution=merge-duplicates` becomes ON CONFLICT
+      // (user_id, tenant_id) DO UPDATE SET ... for the columns present in this
+      // payload and no others, so omitting revoked_at leaves a previously
+      // revoked row revoked: the tenant redeems a valid invitation, gets 200,
+      // and still reads nothing, because tenant_ids_for_current_user() filters
+      // on revoked_at. Accepting a landlord-issued invitation IS the authority
+      // to restore access, so clearing it here is the correct semantics.
+      // Asserted by T17/T18 in test-tenant-authz.js.
       body: JSON.stringify({
         user_id:     user.id,
         tenant_id:   inv.tenant_id,
         property_id: inv.property_id,
         accepted_at: new Date().toISOString(),
+        revoked_at:  null,
         invited_by:  null,
       }),
     }, key);

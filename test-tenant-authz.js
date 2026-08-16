@@ -8,7 +8,12 @@
  *   LANDLORD_EMAIL=… LANDLORD_PASS=… \
  *   TENANT_A_TENANT_ID=… TENANT_B_TENANT_ID=… TENANT_B_PROPERTY_ID=… \
  *   OTHER_PROPERTY_TENANT_ID=… \
+ *   TENANT_C_TENANT_ID=… TENANT_C_PROPERTY_ID=… \   (T17/T18)
+ *   PILOT_SUPABASE_SERVICE_ROLE_KEY=… \             (T17/T18)
+ *   APP_ORIGIN=… \                                  (T15/T16)
  *   node test-tenant-authz.js
+ *
+ * scripts/b1-ci-fixture.js setup emits every one of these except the last two.
  *
  * Credentials are read from the environment only. Nothing is written to disk,
  * nothing is echoed: emails and passwords never appear in output, and the only
@@ -109,7 +114,11 @@ async function main() {
   console.log('\n── Tenant A: own record readable, nothing else ──');
   expectRows('T1  A reads own tenant row',            await count(`tenants?id=eq.${A_ID}&select=id`, aTok), 1);
   expectRows('T2  A reads tenant B',                  await count(`tenants?id=eq.${B_ID}&select=id`, aTok), 0);
-  expectRows('T3  A reads a tenant on another property', await count(`tenants?id=eq.${OTHER_ID}&select=id`, aTok), 0);
+  // Doubles as the data-side proof for a pending membership: A holds an
+  // unaccepted membership on exactly this tenant, so a 0 here says an issued
+  // invitation grants no read until it is redeemed.
+  expectRows('T3  A reads a tenant on another property (A is PENDING on it)',
+    await count(`tenants?id=eq.${OTHER_ID}&select=id`, aTok), 0);
   expectRows('T2b A reads all tenants',               await count('tenants?select=id', aTok), 1);
   expectRows('T4  A reads properties',                await count('properties?select=id', aTok), 0);
   expectRows('T5a A reads tenant_field_evidence',     await count('tenant_field_evidence?select=id', aTok), 0);
@@ -121,6 +130,30 @@ async function main() {
   console.log('\n── Membership table is not a lateral channel ──');
   expectRows('T12 A reads tenant_users (own row only)', await count('tenant_users?select=id', aTok), 1);
   expectRows('T12b B reads tenant_users (own row only)', await count('tenant_users?select=id', bTok), 1);
+
+  // T12c — the positive half of 015. The policy now reads
+  //   user_id = auth.uid() and accepted_at is not null and revoked_at is null
+  // and a predicate that hides a revoked row is worthless if it also hides an
+  // ACTIVE one: the tenant portal would show every signed-in tenant an empty
+  // state and the failure would look like "no data" rather than "denied".
+  // T12 above proves A sees one row; this proves that row is genuinely active,
+  // so the two together pin both directions of the predicate.
+  expectRows('T12c A\'s visible membership is accepted and not revoked',
+    await count('tenant_users?accepted_at=not.is.null&revoked_at=is.null&select=id', aTok), 1);
+
+  // T12d — a PENDING membership grants nothing and is not even visible.
+  // The fixture gives A a second, unaccepted membership on the other property's
+  // tenant. This is the assertion that makes the `accepted_at is not null`
+  // conjunct in tenant_users_self_select load-bearing: a truth table over the
+  // predicate shows deleting that conjunct changes the result for a pending row
+  // and for no other shape, so without a pending row in the fixture the conjunct
+  // could be deleted with every test still green.
+  //
+  // Note T12 above is the sharper of the two — with the conjunct gone A reads 2
+  // rows there, not 1. T12d states the property directly so the intent survives
+  // a future change to the fixture's row counts.
+  expectRows('T12d A\'s pending membership is invisible to A',
+    await count('tenant_users?accepted_at=is.null&select=id', aTok), 0);
 
   // T11 — a tenant that could INSERT its own membership could grant itself any
   // space, so this is the single most important negative test in the suite.
@@ -164,8 +197,37 @@ async function main() {
   }
 
   console.log('\n── Revoked and unauthenticated ──');
+  // Revocation must cut off BOTH the data and the membership row that grants it.
+  //
+  // T9 is the one that matters for confidentiality and it passed even before
+  // migration 015, because tenant_ids_for_current_user() has always filtered
+  // revoked_at. T9b failed: tenant_users_self_select said only
+  // `user_id = auth.uid()`, so C kept reading its own revoked row. Nothing
+  // lateral leaked through it — but the database was carrying two different
+  // definitions of "membership", and the looser one was the one a policy edit
+  // would land on. 015 removed the split; this assertion is what holds it
+  // removed, and it was NOT relaxed to match the old behaviour.
+  const C_TENANT_ID = need('TENANT_C_TENANT_ID');
   expectRows('T9  revoked membership reads tenants',  await count('tenants?select=id', cTok), 0);
   expectRows('T9b revoked membership reads tenant_users', await count('tenant_users?select=id', cTok), 0);
+
+  // T9c — the same read, aimed. An unfiltered SELECT returning 0 could also be
+  // a PostgREST quirk or an empty table; asking for the row C knows exists, by
+  // its own tenant_id, can only return 0 because the policy refused it.
+  expectRows('T9c revoked membership reads its own row by tenant_id',
+    await count(`tenant_users?tenant_id=eq.${C_TENANT_ID}&select=id`, cTok), 0);
+
+  // T9d/e — revocation reaches the data, not just the membership table. If a
+  // future policy ever grants tenant reads on these directly rather than
+  // through tenant_ids_for_current_user(), revocation would stop meaning
+  // anything and T9 alone would not notice.
+  expectRows('T9d revoked membership reads properties',
+    await count('properties?select=id', cTok), 0);
+  expectRows('T9e revoked membership reads cam_reconciliations',
+    await count('cam_reconciliations?select=id', cTok), 0);
+  expectRows('T9f revoked membership reads tenant_field_evidence',
+    await count('tenant_field_evidence?select=id', cTok), 0);
+
   expectRows('T8  anonymous reads tenants',           await count('tenants?select=id'), 0);
   expectRows('T8b anonymous reads properties',        await count('properties?select=id'), 0);
 
@@ -222,8 +284,19 @@ async function main() {
       headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${aTok}` },
       body: JSON.stringify({ token: 'x'.repeat(64) }),
     });
+    // A 404 here means the route is not deployed at APP_ORIGIN, which is a
+    // different condition from "deployed and answering wrongly" — and right now
+    // it is the expected one: api/tenant-accept-invite.js is on the held B1
+    // checkpoint, not on origin/pilot, which is what serves that domain.
+    //
+    // It still counts as a FAILURE, deliberately. B1's exit criterion is that
+    // this route was exercised over real HTTP; an undeployed route has not been.
+    // Naming the cause makes the run readable without letting it read as a pass.
+    const undeployed = (s) => s === 404
+      ? ' — the route is NOT DEPLOYED at APP_ORIGIN (B1 is unverified here, not broken); deploy B1 to pilot to exercise it'
+      : '';
     if (bogus.status === 400) ok('T15 accept-invite refuses an unknown token (400)');
-    else bad(`T15 accept-invite returned ${bogus.status} for an unknown token — expected 400`);
+    else bad(`T15 accept-invite returned ${bogus.status} for an unknown token — expected 400${undeployed(bogus.status)}`);
 
     const noAuth = await fetch(`${origin}/api/tenant-accept-invite`, {
       method: 'POST',
@@ -231,7 +304,7 @@ async function main() {
       body: JSON.stringify({ token: 'x'.repeat(64) }),
     });
     if (noAuth.status === 401) ok('T16 accept-invite requires authentication (401)');
-    else bad(`T16 accept-invite returned ${noAuth.status} unauthenticated — expected 401`);
+    else bad(`T16 accept-invite returned ${noAuth.status} unauthenticated — expected 401${undeployed(noAuth.status)}`);
   }
 
   console.log('\n── Landlord regression ──');
@@ -241,6 +314,107 @@ async function main() {
   else bad('T7  landlord can no longer read properties — REGRESSION');
   if (lt > 0) ok(`T7b landlord still reads own tenants (${lt})`);
   else bad('T7b landlord can no longer read tenants — REGRESSION');
+
+  // T7c — 015 narrowed tenant_users_self_select and MUST NOT have narrowed
+  // tenant_users_landlord_all. The landlord's own view is the one place a
+  // revoked membership still has to be visible: it is the record of who was
+  // removed and the row the landlord edits to restore them. Expect all three
+  // fixture memberships, including C's revoked one.
+  //
+  // Asserted as an exact count, not "> 0". At `> 0` this test would pass with
+  // the revoked row filtered out — which is precisely the regression it exists
+  // to catch — because A's and B's active rows would still be there.
+  expectRows('T7c landlord reads all memberships incl. the revoked and pending ones',
+    await count('tenant_users?select=id', lTok), 4);
+
+  // ── Re-invitation restores a revoked tenant (B1) ─────────────────────────
+  // RUNS LAST, DELIBERATELY. It un-revokes tenant C, so every assertion above
+  // that depends on C being revoked (T9, T9b, T9c, T9d/e/f, T13c) must already
+  // have executed. Do not move this block up.
+  //
+  // WHAT IT PROVES, and why it is not redundant with T15/T16:
+  // T15/T16 exercise the HTTP route and are currently blocked — the route is
+  // not deployed to pilot. This proves the WRITE PATH that route depends on:
+  // that the service role can still create a membership RLS forbids the tenant
+  // to create (T11), and that doing so restores a revoked tenant's access.
+  //
+  // Migration 015 is what makes this test necessary. Once a revoked row is
+  // invisible to its own tenant, a re-acceptance that silently fails to clear
+  // revoked_at leaves the tenant with no access AND no way to see why. Writing
+  // it found exactly that bug: the endpoint's upsert payload omitted
+  // revoked_at, and `resolution=merge-duplicates` only updates the columns the
+  // payload carries, so a re-invited tenant got a 200 and stayed locked out.
+  console.log('\n── Re-invitation restores a revoked tenant (B1) ──');
+  const svcKey = process.env.PILOT_SUPABASE_SERVICE_ROLE_KEY;
+  if (!svcKey) {
+    bad('T17/T18 skipped — PILOT_SUPABASE_SERVICE_ROLE_KEY not set, so the acceptance write path was never exercised');
+  } else {
+    const C_PROPERTY_ID = need('TENANT_C_PROPERTY_ID');
+    const cEmail = process.env.TENANT_C_EMAIL;
+    const svc = (path, opts = {}) => fetch(`${SUPABASE_URL}/rest/v1/${path}`, {
+      ...opts,
+      headers: {
+        apikey: svcKey, Authorization: `Bearer ${svcKey}`,
+        'Content-Type': 'application/json', ...(opts.headers || {}),
+      },
+    });
+
+    // The landlord issues the invitation. Only the hash is stored, exactly as
+    // the endpoint expects to find it.
+    const rawToken = require('crypto').randomBytes(32).toString('hex');
+    const tokenHash = require('crypto').createHash('sha256').update(rawToken).digest('hex');
+    const invIns2 = await svc('tenant_invitations', {
+      method: 'POST',
+      headers: { Prefer: 'return=representation' },
+      body: JSON.stringify({
+        tenant_id: C_TENANT_ID, property_id: C_PROPERTY_ID, email: cEmail,
+        token_hash: tokenHash,
+        expires_at: new Date(Date.now() + 7 * 864e5).toISOString(),
+      }),
+    });
+    const invRow = (await invIns2.json().catch(() => []))[0];
+    if (!invIns2.ok || !invRow) {
+      bad(`T17 landlord could not issue an invitation via the service role (http ${invIns2.status})`);
+    } else {
+      // Byte-for-byte the membership write api/tenant-accept-invite.js performs.
+      const acc = await svc('tenant_users', {
+        method: 'POST',
+        headers: { Prefer: 'resolution=merge-duplicates,return=representation' },
+        body: JSON.stringify({
+          user_id: await currentUserId(cTok),
+          tenant_id: invRow.tenant_id,
+          property_id: invRow.property_id,
+          accepted_at: new Date().toISOString(),
+          revoked_at: null,
+          invited_by: null,
+        }),
+      });
+      if (acc.ok) ok('T17 service role writes the membership RLS forbids the tenant to write');
+      else bad(`T17 acceptance write failed (http ${acc.status}) — the endpoint's write path is broken`);
+
+      // Single use, conditioned on still being open — as the endpoint does.
+      const closed = await svc(
+        `tenant_invitations?id=eq.${invRow.id}&accepted_at=is.null&revoked_at=is.null`,
+        { method: 'PATCH', headers: { Prefer: 'return=representation' },
+          body: JSON.stringify({ accepted_at: new Date().toISOString() }) });
+      const closedRows = await closed.json().catch(() => []);
+      if (closed.ok && closedRows.length === 1) ok('T17b invitation is closed on acceptance (single use)');
+      else bad(`T17b invitation was not closed (http ${closed.status}, ${closedRows.length} row(s))`);
+
+      // The payoff. Same JWT as before — RLS is evaluated per request against
+      // current data, so no re-login is needed for access to come back.
+      expectRows('T18  restored tenant reads its membership again',
+        await count('tenant_users?select=id', cTok), 1);
+      expectRows('T18b restored tenant reads its tenant row again',
+        await count('tenants?select=id', cTok), 1);
+
+      // Restoration must not overshoot into someone else's space.
+      expectRows('T18c restored tenant still reads no properties',
+        await count('properties?select=id', cTok), 0);
+      expectRows('T18d restored tenant still reads no invitations',
+        await count('tenant_invitations?select=id', cTok), 0);
+    }
+  }
 
   console.log(`\n${failed === 0 ? 'PASS' : 'FAIL'} — ${passed} passed, ${failed} failed`);
   if (failed) { failures.forEach(f => console.log(`  · ${f}`)); process.exit(1); }
