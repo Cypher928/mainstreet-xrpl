@@ -369,12 +369,20 @@ async function main() {
       body: JSON.stringify({
         tenant_id: C_TENANT_ID, property_id: C_PROPERTY_ID, email: cEmail,
         token_hash: tokenHash,
+        // NOT NULL in 014, and correct on the merits: the landlord who owns the
+        // property is the one issuing this invitation.
+        invited_by: await currentUserId(lTok),
         expires_at: new Date(Date.now() + 7 * 864e5).toISOString(),
       }),
     });
-    const invRow = (await invIns2.json().catch(() => []))[0];
+    const invBody = await invIns2.json().catch(() => null);
+    const invRow  = Array.isArray(invBody) ? invBody[0] : null;
     if (!invIns2.ok || !invRow) {
-      bad(`T17 landlord could not issue an invitation via the service role (http ${invIns2.status})`);
+      // Carry the PostgREST message through. The first cut of this test omitted
+      // invited_by (NOT NULL in 014) and reported only "http 400", which said
+      // nothing about which column was wrong.
+      bad(`T17 landlord could not issue an invitation via the service role (http ${invIns2.status}: ` +
+          `${JSON.stringify(invBody).slice(0, 200)})`);
     } else {
       // Byte-for-byte the membership write api/tenant-accept-invite.js performs.
       const acc = await svc('tenant_users', {
