@@ -822,6 +822,153 @@ async function main() {
   expectRows('T72  pending membership reads the other property\'s projections',
     await count(`tenant_statements?property_id=neq.${B_PROPERTY_ID}&select=id`, aTok), 0);
 
+  // ══ B2 · endpoints, over real HTTP ════════════════════════════════════════
+  // These need the routes deployed at APP_ORIGIN. A 404 means B2 is not on the
+  // branch that domain serves — that is a FAILURE, never a skip, for the same
+  // reason T15/T16 were: an unrun security test must not read as a pass.
+  if (!process.env.APP_ORIGIN) {
+    bad('T45-T53 skipped — APP_ORIGIN not set, so no B2 endpoint was exercised');
+  } else {
+    const origin = process.env.APP_ORIGIN.replace(/\/$/, '');
+    const P_PROP = need('PUBLISH_PROPERTY_ID');
+    const P_TEN  = need('PUBLISH_TENANT_ID');
+    const P_YEAR = Number(need('PUBLISH_CAM_YEAR'));
+    const DOC_A_DRAFT = need('DOC_A_DRAFT_ID');
+
+    const post = (path, tok, payload) => fetch(`${origin}${path}`, {
+      method: 'POST',
+      headers: {
+        'Content-Type': 'application/json',
+        ...(tok ? { Authorization: `Bearer ${tok}` } : {}),
+      },
+      body: JSON.stringify(payload),
+    });
+    const notDeployed = (s) => s === 404
+      ? ' — the route is NOT DEPLOYED at APP_ORIGIN; deploy B2 to pilot to exercise it' : '';
+
+    // ── T53a · the landlord publishes ────────────────────────────────────────
+    console.log('\n── B2: landlord publishes over HTTP (T53) ──');
+    const pub = await post('/api/tenant-publish-statement', lTok,
+      { property_id: P_PROP, tenant_id: P_TEN, cam_year: P_YEAR });
+    const pubBody = await pub.json().catch(() => ({}));
+    if (pub.status === 200 && pubBody.ok) {
+      ok(`T53a landlord published over HTTP (version ${pubBody.version})`);
+    } else {
+      bad(`T53a publish returned ${pub.status} — ${JSON.stringify(pubBody).slice(0, 200)}${notDeployed(pub.status)}`);
+    }
+
+    // The figures must come from cam_reconciliations, not from the request —
+    // the request never carried any. Read back with the service role.
+    const pubRows = await svcGet(`tenant_statements?tenant_id=eq.${P_TEN}&cam_year=eq.${P_YEAR}&status=eq.published&select=id,version,allocated_amount,pro_rata_percent,total_pool,amount_billed,balance_due`);
+    if (pubRows && pubRows.length === 1 && Number(pubRows[0].allocated_amount) === 8200) {
+      ok(`T53a2 published figures were derived from the reconciliation (allocated ${pubRows[0].allocated_amount}, balance ${pubRows[0].balance_due})`);
+    } else {
+      bad(`T53a2 published figures are wrong or missing: ${JSON.stringify(pubRows)}`);
+    }
+
+    // ── T53b · the tenant can now see it ─────────────────────────────────────
+    expectRows('T53b tenant B sees the newly published statement',
+      await count(`tenant_statements?cam_year=eq.${P_YEAR}&select=id`, bTok), 1);
+    expectRows('T53b2 tenant A does NOT see B\'s new statement',
+      await count(`tenant_statements?cam_year=eq.${P_YEAR}&select=id`, aTok), 0);
+
+    // ── T53c · republish supersedes ──────────────────────────────────────────
+    const re = await post('/api/tenant-publish-statement', lTok,
+      { property_id: P_PROP, tenant_id: P_TEN, cam_year: P_YEAR });
+    const reBody = await re.json().catch(() => ({}));
+    (re.status === 200 && reBody.version === 2)
+      ? ok('T53c republishing produced version 2')
+      : bad(`T53c republish returned ${re.status} v${reBody.version} — ${JSON.stringify(reBody).slice(0, 160)}`);
+
+    expectRows('T53c2 exactly one LIVE statement remains for that year',
+      await count(`tenant_statements?tenant_id=eq.${P_TEN}&cam_year=eq.${P_YEAR}&status=eq.published&select=id`, bTok), 1);
+    const superseded = await svcGet(`tenant_statements?tenant_id=eq.${P_TEN}&cam_year=eq.${P_YEAR}&status=eq.superseded&select=id,version`);
+    (superseded && superseded.length === 1 && superseded[0].version === 1)
+      ? ok('T53c3 version 1 was superseded, not deleted')
+      : bad(`T53c3 the previous version was not superseded: ${JSON.stringify(superseded)}`);
+    expectRows('T53c4 the superseded version is invisible to the tenant',
+      await count(`tenant_statements?tenant_id=eq.${P_TEN}&cam_year=eq.${P_YEAR}&status=eq.superseded&select=id`, bTok), 0);
+
+    // ── T53d · unpublish ─────────────────────────────────────────────────────
+    const un = await post('/api/tenant-unpublish-statement', lTok,
+      { property_id: P_PROP, tenant_id: P_TEN, cam_year: P_YEAR });
+    const unBody = await un.json().catch(() => ({}));
+    (un.status === 200 && unBody.ok)
+      ? ok('T53d landlord withdrew the statement over HTTP')
+      : bad(`T53d unpublish returned ${un.status} — ${JSON.stringify(unBody).slice(0, 160)}${notDeployed(un.status)}`);
+    expectRows('T53d2 the tenant can no longer see it',
+      await count(`tenant_statements?cam_year=eq.${P_YEAR}&select=id`, bTok), 0);
+    const voided = await svcGet(`tenant_statements?tenant_id=eq.${P_TEN}&cam_year=eq.${P_YEAR}&status=eq.void&select=id`);
+    (voided && voided.length === 1)
+      ? ok('T53d3 the withdrawn statement was voided, not deleted')
+      : bad(`T53d3 the statement was deleted rather than voided: ${JSON.stringify(voided)}`);
+
+    // ── The publish boundary refuses the things it must ──────────────────────
+    console.log('\n── B2: the publish boundary refuses (T59-T62) ──');
+    const tamper = await post('/api/tenant-publish-statement', lTok,
+      { property_id: P_PROP, tenant_id: P_TEN, cam_year: P_YEAR, allocated_amount: 1.00 });
+    (tamper.status === 400)
+      ? ok('T59 a client-supplied amount is rejected (400), not ignored')
+      : bad(`T59 a client-supplied amount returned ${tamper.status} — expected 400`);
+
+    const notOwner = await post('/api/tenant-publish-statement', aTok,
+      { property_id: P_PROP, tenant_id: P_TEN, cam_year: P_YEAR });
+    (notOwner.status === 403)
+      ? ok('T60 a tenant cannot publish (403 — not the property owner)')
+      : bad(`T60 a tenant publishing returned ${notOwner.status} — expected 403`);
+
+    const noAuth = await post('/api/tenant-publish-statement', null,
+      { property_id: P_PROP, tenant_id: P_TEN, cam_year: P_YEAR });
+    (noAuth.status === 401)
+      ? ok('T61b publishing unauthenticated is refused (401)')
+      : bad(`T61b unauthenticated publish returned ${noAuth.status} — expected 401`);
+
+    const wrongTenant = await post('/api/tenant-publish-statement', lTok,
+      { property_id: P_PROP, tenant_id: OTHER_ID, cam_year: P_YEAR });
+    (wrongTenant.status === 400)
+      ? ok('T62 a tenant from another property is refused (400)')
+      : bad(`T62 cross-property publish returned ${wrongTenant.status} — expected 400`);
+
+    // ── T45-T47 · document access ────────────────────────────────────────────
+    console.log('\n── B2: tenant document access (T45-T47) ──');
+    const mine = await post('/api/tenant-document-url', aTok, { document_id: DOC_A });
+    const mineBody = await mine.json().catch(() => ({}));
+    if (mine.status === 200 && typeof mineBody.url === 'string' && mineBody.url.includes('/storage/v1')) {
+      ok(`T45a tenant A gets a signed URL for its own published document (expires in ${mineBody.expires_in}s)`);
+      // The response must carry a URL and nothing about where the file lives.
+      (!/storage_path/.test(JSON.stringify(mineBody)))
+        ? ok('T45b the response exposes no storage_path field')
+        : bad('T45b the document response leaked storage_path');
+    } else {
+      bad(`T45a own-document URL returned ${mine.status} — ${JSON.stringify(mineBody).slice(0, 200)}${notDeployed(mine.status)}`);
+    }
+
+    // All three refusals must be the SAME sentence — otherwise the endpoint is
+    // an oracle for which ids exist and which are merely unpublished.
+    const others = await post('/api/tenant-document-url', aTok, { document_id: DOC_B });
+    const othersBody = await others.json().catch(() => ({}));
+    const draft = await post('/api/tenant-document-url', aTok, { document_id: DOC_A_DRAFT });
+    const draftBody = await draft.json().catch(() => ({}));
+    const ghost = await post('/api/tenant-document-url', aTok,
+      { document_id: '00000000-0000-4000-8000-000000000000' });
+    const ghostBody = await ghost.json().catch(() => ({}));
+
+    (others.status === 400) ? ok("T46a another tenant's document is refused (400)")
+                            : bad(`T46a another tenant's document returned ${others.status} — expected 400`);
+    (draft.status === 400)  ? ok('T46b an unpublished document is refused (400)')
+                            : bad(`T46b a draft document returned ${draft.status} — expected 400`);
+    (ghost.status === 400)  ? ok('T46c a non-existent document is refused (400)')
+                            : bad(`T46c a non-existent document returned ${ghost.status} — expected 400`);
+    (othersBody.error && othersBody.error === draftBody.error && draftBody.error === ghostBody.error)
+      ? ok('T46d all three refusals are byte-identical — no enumeration oracle')
+      : bad(`T46d refusals differ: ${JSON.stringify([othersBody.error, draftBody.error, ghostBody.error])}`);
+
+    const docNoAuth = await post('/api/tenant-document-url', null, { document_id: DOC_A });
+    (docNoAuth.status === 401)
+      ? ok('T47 an unauthenticated document request is refused (401)')
+      : bad(`T47 unauthenticated document request returned ${docNoAuth.status} — expected 401`);
+  }
+
   console.log(`\n${failed === 0 ? 'PASS' : 'FAIL'} — ${passed} passed, ${failed} failed`);
   if (failed) { failures.forEach(f => console.log(`  · ${f}`)); process.exit(1); }
 }

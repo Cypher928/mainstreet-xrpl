@@ -247,6 +247,29 @@ async function setup() {
   });
   if (!mem.ok || mem.body.length !== 4) die(`could not create fixture memberships: ${JSON.stringify(mem.body)}`);
 
+  // ── B2 publish source ─────────────────────────────────────────────────────
+  // The publish endpoint refuses without exactly one cam_reconciliations row for
+  // (property, tenant, year), and refuses again if the property changed after it
+  // was computed. reconciled_at is set to now(), which is after the property was
+  // created a moment ago, so the staleness check passes for the right reason
+  // rather than because the check is inert.
+  //
+  // Tenant B gets the reconciliation, deliberately: tenant A's statements are
+  // already fixed rows above, and publishing over them would make T22's count
+  // depend on whether T53 had run yet. B has one published statement and no
+  // publish traffic, so a new version there is unambiguous.
+  const recon = await rest('/cam_reconciliations', {
+    method: 'POST',
+    headers: { Prefer: 'return=representation' },
+    body: JSON.stringify([{
+      property_id: p1.id, tenant_id: tenant2.id, tenant_name: 'CI Tenant Bravo',
+      year: 2025, actual_cam: 8200.00, expected_cam: 7000.00, variance: 1200.00,
+      allocated_amount: 8200.00, pro_rata_percent: 6.1000, total_expenses: 134426.23,
+      reconciled_at: new Date().toISOString(),
+    }]),
+  });
+  if (!recon.ok || recon.body.length !== 1) die(`could not create fixture reconciliation: ${JSON.stringify(recon.body)}`);
+
   // ── B2 projections ────────────────────────────────────────────────────────
   // Every status the tenant policies discriminate on has to exist, or the
   // negative cases pass by accident: a "draft returns 0 rows" assertion is
@@ -386,6 +409,11 @@ async function setup() {
     DOC_A_PUBLISHED_ID:  docAPublished.id,
     DOC_B_PUBLISHED_ID:  docBPublished.id,
     LANDLORD_USER_ID:    landlord.id,
+    // The publish round-trip targets B on P1, for the 2025 reconciliation above.
+    PUBLISH_PROPERTY_ID: p1.id,
+    PUBLISH_TENANT_ID:   tenant2.id,
+    PUBLISH_CAM_YEAR:    '2025',
+    DOC_A_DRAFT_ID:      docs.body.find(d => d.status === 'draft').id,
   };
 
   if (process.env.GITHUB_ENV) {
