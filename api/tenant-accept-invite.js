@@ -145,7 +145,12 @@ module.exports = async function handler(req, res) {
 
     // Membership first. If this fails the invitation stays open and the tenant
     // can retry; the reverse order would burn the token and strand them.
-    const membership = await sbFetch('/tenant_users', {
+    // on_conflict names the constraint to merge on. Without it PostgREST
+    // targets the PRIMARY KEY (id), which this payload does not carry, so a
+    // re-invited tenant collides with tenant_users_user_tenant_uniq instead —
+    // an unhandled unique violation, 409, and a 502 back to the tenant. The
+    // first acceptance succeeds either way, which is what hid this.
+    const membership = await sbFetch('/tenant_users?on_conflict=user_id,tenant_id', {
       method: 'POST',
       headers: { Prefer: 'resolution=merge-duplicates,return=representation' },
       // revoked_at is set EXPLICITLY, and that is load-bearing on the

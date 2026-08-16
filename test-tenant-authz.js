@@ -385,7 +385,7 @@ async function main() {
           `${JSON.stringify(invBody).slice(0, 200)})`);
     } else {
       // Byte-for-byte the membership write api/tenant-accept-invite.js performs.
-      const acc = await svc('tenant_users', {
+      const acc = await svc('tenant_users?on_conflict=user_id,tenant_id', {
         method: 'POST',
         headers: { Prefer: 'resolution=merge-duplicates,return=representation' },
         body: JSON.stringify({
@@ -398,7 +398,9 @@ async function main() {
         }),
       });
       if (acc.ok) ok('T17 service role writes the membership RLS forbids the tenant to write');
-      else bad(`T17 acceptance write failed (http ${acc.status}) — the endpoint's write path is broken`);
+      else bad(`T17 acceptance write failed (http ${acc.status}: ` +
+               `${JSON.stringify(await acc.json().catch(() => null)).slice(0, 200)}) — ` +
+               `the endpoint's write path is broken`);
 
       // Single use, conditioned on still being open — as the endpoint does.
       const closed = await svc(
@@ -408,6 +410,19 @@ async function main() {
       const closedRows = await closed.json().catch(() => []);
       if (closed.ok && closedRows.length === 1) ok('T17b invitation is closed on acceptance (single use)');
       else bad(`T17b invitation was not closed (http ${closed.status}, ${closedRows.length} row(s))`);
+
+      // T17c — this block MIRRORS the endpoint's write; it does not call it
+      // (T15/T16 do, once the route is deployed). A mirror that silently drifts
+      // proves nothing, and both of the bugs found here live in exactly the two
+      // details being checked: the conflict target and the revoked_at reset.
+      // Cheap coupling check, so the mirror cannot rot unnoticed.
+      const epSrc = require('fs').readFileSync(
+        require('path').join(__dirname, 'api/tenant-accept-invite.js'), 'utf8');
+      const mirrored = ['on_conflict=user_id,tenant_id', 'revoked_at:  null']
+        .filter(s => !epSrc.includes(s));
+      mirrored.length === 0
+        ? ok('T17c the endpoint still performs the write this test mirrors')
+        : bad(`T17c api/tenant-accept-invite.js no longer matches what T17 mirrors — missing: ${mirrored.join(', ')}`);
 
       // The payoff. Same JWT as before — RLS is evaluated per request against
       // current data, so no re-login is needed for access to come back.
