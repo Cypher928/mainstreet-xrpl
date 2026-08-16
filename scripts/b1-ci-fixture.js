@@ -48,6 +48,19 @@ const FIXTURE_PREFIX       = 'b1ci-';
 
 const STATE_FILE = path.join(process.cwd(), '.b1-ci-state.json');
 
+// Teardown can only remove what state knows about, so state is recorded the
+// moment each object exists rather than once at the end. The first run of this
+// gate proved why: setup failed after creating four users, two properties and
+// three tenants but before the single end-of-setup write, so teardown reported
+// "nothing to tear down" and left all nine behind. Cleanup that only works on
+// the happy path is not cleanup.
+function remember(key, id) {
+  let s = { runId: null, userIds: [], propertyIds: [] };
+  if (fs.existsSync(STATE_FILE)) s = JSON.parse(fs.readFileSync(STATE_FILE, 'utf8'));
+  if (!s[key].includes(id)) s[key].push(id);
+  fs.writeFileSync(STATE_FILE, JSON.stringify(s, null, 2));
+}
+
 const KEY = (process.env.PILOT_SUPABASE_SERVICE_ROLE_KEY || '').trim();
 
 function die(msg, code = 1) {
@@ -167,6 +180,7 @@ async function createUser(tag, runId) {
     }
     die(`could not create fixture user ${tag} (http ${r.status}): ${detail}`);
   }
+  remember('userIds', r.body.id);
   return { id: r.body.id, email, password };
 }
 
@@ -191,6 +205,8 @@ async function setup() {
   });
   if (!props.ok || props.body.length !== 2) die(`could not create fixture properties: ${JSON.stringify(props.body)}`);
   const [p1, p2] = props.body;
+  remember('propertyIds', p1.id);
+  remember('propertyIds', p2.id);
 
   const tenants = await rest('/tenants', {
     method: 'POST',
@@ -204,22 +220,29 @@ async function setup() {
   const [tenant1, tenant2, tenant3] = tenants.body;
 
   // A active, B active on the SAME property, C revoked on the other property.
+  //
+  // Every object carries revoked_at explicitly, including the two where it is
+  // null. PostgREST derives the column list for a bulk insert from the first
+  // object and rejects the batch with PGRST102 "All object keys must match" if
+  // a later one differs — so omitting the key on the active rows and setting it
+  // only on the revoked row fails the whole insert. Uniform keys, varying
+  // values.
+  const now = new Date().toISOString();
   const mem = await rest('/tenant_users', {
     method: 'POST',
     body: JSON.stringify([
-      { user_id: tA.id, tenant_id: tenant1.id, property_id: p1.id, accepted_at: new Date().toISOString() },
-      { user_id: tB.id, tenant_id: tenant2.id, property_id: p1.id, accepted_at: new Date().toISOString() },
-      { user_id: tC.id, tenant_id: tenant3.id, property_id: p2.id,
-        accepted_at: new Date().toISOString(), revoked_at: new Date().toISOString() },
+      { user_id: tA.id, tenant_id: tenant1.id, property_id: p1.id, accepted_at: now, revoked_at: null },
+      { user_id: tB.id, tenant_id: tenant2.id, property_id: p1.id, accepted_at: now, revoked_at: null },
+      { user_id: tC.id, tenant_id: tenant3.id, property_id: p2.id, accepted_at: now, revoked_at: now },
     ]),
   });
   if (!mem.ok || mem.body.length !== 3) die(`could not create fixture memberships: ${JSON.stringify(mem.body)}`);
 
-  fs.writeFileSync(STATE_FILE, JSON.stringify({
-    runId,
-    userIds: [landlord.id, tA.id, tB.id, tC.id],
-    propertyIds: [p1.id, p2.id],
-  }, null, 2));
+  // Merge, never overwrite — the id lists were built incrementally as each
+  // object was created and rewriting them here would defeat that.
+  const st = JSON.parse(fs.readFileSync(STATE_FILE, 'utf8'));
+  st.runId = runId;
+  fs.writeFileSync(STATE_FILE, JSON.stringify(st, null, 2));
 
   // tenant3 does double duty: C's revoked space, and the tenant on a property
   // A has no membership on — which is exactly the cross-property case.
