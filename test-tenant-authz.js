@@ -609,6 +609,168 @@ async function main() {
     }
   }
 
+  // ══ B2 · projections ══════════════════════════════════════════════════════
+  // Runs AFTER the B1 block. Tenant C has been restored by T21, so the
+  // revoked-member cases here re-revoke explicitly rather than assuming a state
+  // an earlier section left behind.
+  const STMT_A = need('STMT_A_PUBLISHED_ID');
+  const DOC_A  = need('DOC_A_PUBLISHED_ID');
+  const DOC_B  = need('DOC_B_PUBLISHED_ID');
+
+  // T21 left C active. The projection cases need it revoked again, and the
+  // revocation must be a real one written the way a landlord would write it —
+  // not a token that merely stops being sent.
+  const _svc = process.env.PILOT_SUPABASE_SERVICE_ROLE_KEY;
+  async function svcRevokeC() {
+    if (!_svc) { bad('T71 could not re-revoke C — service role key absent'); return; }
+    const r = await fetch(
+      `${SUPABASE_URL}/rest/v1/tenant_users?user_id=eq.${await currentUserId(cTok)}` +
+      `&tenant_id=eq.${C_TENANT_ID}`,
+      { method: 'PATCH',
+        headers: { apikey: _svc, Authorization: `Bearer ${_svc}`,
+                   'Content-Type': 'application/json', Prefer: 'return=representation' },
+        body: JSON.stringify({ revoked_at: new Date().toISOString() }) });
+    if (!r.ok) bad(`T71 could not re-revoke C (http ${r.status})`);
+  }
+
+  console.log('\n── B2: statements — published only, own only ──');
+  expectRows('T22  A reads its published statement',
+    await count('tenant_statements?select=id', aTok), 1);
+  expectRows('T23  A reads its DRAFT statement (2023)',
+    await count('tenant_statements?cam_year=eq.2023&select=id', aTok), 0);
+  expectRows('T24  A reads its SUPERSEDED statement (2022)',
+    await count('tenant_statements?cam_year=eq.2022&select=id', aTok), 0);
+  expectRows('T25  A reads its VOID statement (2021)',
+    await count('tenant_statements?cam_year=eq.2021&select=id', aTok), 0);
+  // B's 2024 statement is real and published — this is isolation, not emptiness.
+  expectRows('T26  A reads B\'s published statement (same property)',
+    await count(`tenant_statements?tenant_id=eq.${B_ID}&select=id`, aTok), 0);
+  expectRows('T27  A reads statements on the other property',
+    await count(`tenant_statements?property_id=neq.${B_PROPERTY_ID}&select=id`, aTok), 0);
+  expectRows('T28  anonymous reads tenant_statements',
+    await count('tenant_statements?select=id'), 0);
+  expectRows('T31  A (role=landlord) reads statements',
+    await count('tenant_statements?select=id', aTok2), 1);
+
+  console.log('\n── B2: space profiles and documents ──');
+  expectRows('T36  A reads its published space profile',
+    await count('tenant_space_profiles?select=id', aTok), 1);
+  expectRows('T37  B reads its DRAFT space profile',
+    await count('tenant_space_profiles?select=id', bTok), 0);
+  expectRows('T38  A reads B\'s space profile',
+    await count(`tenant_space_profiles?tenant_id=eq.${B_ID}&select=id`, aTok), 0);
+  expectRows('T40  A reads its published document',
+    await count('tenant_documents?status=eq.published&select=id', aTok), 1);
+  expectRows('T41  A reads its draft and withdrawn documents',
+    await count('tenant_documents?status=neq.published&select=id', aTok), 0);
+  expectRows('T42  A reads B\'s published document',
+    await count(`tenant_documents?id=eq.${DOC_B}&select=id`, aTok), 0);
+
+  console.log('\n── B2: _sources tables are unreachable ──');
+  // No tenant policy exists on any of these. The assertion is aimed at rows
+  // that certainly exist — the fixture wrote one companion row per projection
+  // row — so 0 here is a refusal, not an empty table.
+  expectRows('T56  A reads tenant_statement_sources',
+    await count('tenant_statement_sources?select=statement_id', aTok), 0);
+  expectRows('T56b A reads a source run hash by statement id',
+    await count(`tenant_statement_sources?statement_id=eq.${STMT_A}&select=source_run_hash`, aTok), 0);
+  expectRows('T57  A reads tenant_document_sources',
+    await count('tenant_document_sources?select=document_id', aTok), 0);
+  expectRows('T57b A reads a storage path by document id',
+    await count(`tenant_document_sources?document_id=eq.${DOC_A}&select=storage_path`, aTok), 0);
+  expectRows('T58  A reads tenant_space_profile_sources',
+    await count('tenant_space_profile_sources?select=profile_id', aTok), 0);
+  expectRows('T58b anonymous reads every _sources table',
+    (await count('tenant_statement_sources?select=statement_id')) +
+    (await count('tenant_document_sources?select=document_id')) +
+    (await count('tenant_space_profile_sources?select=profile_id')), 0);
+
+  console.log('\n── B2: landlord source tables stay closed ──');
+  expectRows('T48  A reads properties',            await count('properties?select=id', aTok), 0);
+  expectRows('T49  A reads properties(data)',      await count('properties?select=data', aTok), 0);
+  expectRows('T51a A reads cam_reconciliations',   await count('cam_reconciliations?select=id', aTok), 0);
+  expectRows('T51b A reads lease_documents',       await count('lease_documents?select=id', aTok), 0);
+
+  console.log('\n── B2: the tenant write surface is empty ──');
+  // Each must be refused by RLS with 42501 specifically. Accepting any non-2xx
+  // would let a typo or a dropped table pass for a policy that is not there.
+  async function expectRefused(label, path, method, body) {
+    const r = await fetch(`${SUPABASE_URL}/rest/v1/${path}`, {
+      method,
+      headers: { apikey: ANON_KEY, Authorization: `Bearer ${aTok}`, 'Content-Type': 'application/json' },
+      ...(body ? { body: JSON.stringify(body) } : {}),
+    });
+    const j = await r.json().catch(() => ({}));
+    if (r.ok) {
+      // A PATCH/DELETE that matches no row is a 200 with an empty array — that
+      // is RLS filtering the row away, which is the refusal we want.
+      if (method !== 'POST' && Array.isArray(j) && j.length === 0) { ok(`${label} — 0 rows affected (RLS)`); return; }
+      bad(`${label} was ACCEPTED (SECURITY FAILURE)`);
+    } else if (j.code === '42501') ok(`${label} refused by RLS (42501)`);
+    else bad(`${label} refused for a NON-RLS reason (http ${r.status}, code ${j.code || 'none'})`);
+  }
+  await expectRefused('T32  A INSERTs a statement', 'tenant_statements', 'POST', {
+    tenant_id: A_ID, property_id: B_PROPERTY_ID, cam_year: 2025,
+    allocated_amount: 1, pro_rata_percent: 1, total_pool: 1,
+    statement_json: {}, status: 'published', published_at: new Date().toISOString(),
+  });
+  await expectRefused('T33  A publishes its own draft',
+    'tenant_statements?cam_year=eq.2023', 'PATCH', { status: 'published' });
+  await expectRefused('T34  A DELETEs its statement',
+    `tenant_statements?id=eq.${STMT_A}`, 'DELETE');
+  await expectRefused('T39  A writes a space profile', 'tenant_space_profiles', 'POST', {
+    tenant_id: A_ID, property_id: B_PROPERTY_ID, property_name: 'x', status: 'published',
+    published_at: new Date().toISOString(),
+  });
+  await expectRefused('T44  A writes a document', 'tenant_documents', 'POST', {
+    tenant_id: A_ID, property_id: B_PROPERTY_ID, title: 'x', doc_kind: 'other',
+    status: 'published', published_at: new Date().toISOString(),
+  });
+  await expectRefused('T61  A writes a _sources row', 'tenant_statement_sources', 'POST', {
+    statement_id: STMT_A, property_id: B_PROPERTY_ID, source_run_hash: 'x',
+  });
+
+  console.log('\n── B2: landlord regression ──');
+  // Exact counts, not "> 0". At "> 0" these still pass if the landlord loses
+  // sight of exactly the rows a tenant must not see, which is the regression
+  // most likely to be introduced by a policy edit.
+  expectRows('T52  landlord reads every statement, all statuses',
+    await count('tenant_statements?select=id', lTok), 5);
+  expectRows('T52b landlord reads statement sources incl. run hashes',
+    await count('tenant_statement_sources?select=source_run_hash', lTok), 5);
+  expectRows('T52c landlord reads every document, all statuses',
+    await count('tenant_documents?select=id', lTok), 4);
+  expectRows('T52d landlord reads document sources incl. storage paths',
+    await count('tenant_document_sources?select=storage_path', lTok), 4);
+  expectRows('T52e landlord reads every space profile, all statuses',
+    await count('tenant_space_profiles?select=id', lTok), 2);
+
+  // The landlord's own write path must survive everything B2 added. This is the
+  // half of the shared-`authenticated`-role risk that a tenant-only suite cannot
+  // see: if a grant or policy edit breaks landlord writes, every case above
+  // still passes.
+  const lWrite = await fetch(`${SUPABASE_URL}/rest/v1/tenant_space_profiles?tenant_id=eq.${B_ID}`, {
+    method: 'PATCH',
+    headers: { apikey: ANON_KEY, Authorization: `Bearer ${lTok}`, 'Content-Type': 'application/json',
+               Prefer: 'return=representation' },
+    body: JSON.stringify({ space_label: 'Suite 120A' }),
+  });
+  const lWriteRows = await lWrite.json().catch(() => []);
+  (lWrite.ok && Array.isArray(lWriteRows) && lWriteRows.length === 1)
+    ? ok('T53e landlord can still UPDATE a draft projection row directly')
+    : bad(`T53e landlord UPDATE on a projection failed (http ${lWrite.status}) — REGRESSION`);
+
+  console.log('\n── B2: revoked and pending memberships ──');
+  // C is active at this point (T21 restored it). Re-revoke to test the
+  // projection surface specifically, rather than inheriting an earlier state.
+  await svcRevokeC();
+  expectRows('T71a revoked member reads statements',      await count('tenant_statements?select=id', cTok), 0);
+  expectRows('T71b revoked member reads space profiles',  await count('tenant_space_profiles?select=id', cTok), 0);
+  expectRows('T71c revoked member reads documents',       await count('tenant_documents?select=id', cTok), 0);
+  // A's PENDING membership on the other property must grant nothing either.
+  expectRows('T72  pending membership reads the other property\'s projections',
+    await count(`tenant_statements?property_id=neq.${B_PROPERTY_ID}&select=id`, aTok), 0);
+
   console.log(`\n${failed === 0 ? 'PASS' : 'FAIL'} — ${passed} passed, ${failed} failed`);
   if (failed) { failures.forEach(f => console.log(`  · ${f}`)); process.exit(1); }
 }

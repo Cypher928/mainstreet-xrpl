@@ -247,6 +247,116 @@ async function setup() {
   });
   if (!mem.ok || mem.body.length !== 4) die(`could not create fixture memberships: ${JSON.stringify(mem.body)}`);
 
+  // ── B2 projections ────────────────────────────────────────────────────────
+  // Every status the tenant policies discriminate on has to exist, or the
+  // negative cases pass by accident: a "draft returns 0 rows" assertion is
+  // vacuous when no draft row was ever created. So each projection gets a
+  // published row AND at least one row in every state that must stay hidden.
+  //
+  // These are written with the service role, which is how the publish endpoints
+  // write in production. No tenant policy is involved on the way in.
+  const profiles = await rest('/tenant_space_profiles', {
+    method: 'POST',
+    headers: { Prefer: 'return=representation' },
+    body: JSON.stringify([
+      // A: published — the one row tenant A may read.
+      { tenant_id: tenant1.id, property_id: p1.id, property_name: `B1 CI ${runId} P1`,
+        property_address: '1400 Maple Ave', space_label: 'Suite 210',
+        rentable_sqft: 12000, lease_type: 'NNN', lease_start: '2023-01-01',
+        lease_end: '2027-12-31', pro_rata_percent: 8.4210,
+        manager_name: 'CI Manager', manager_email: 'ci@pilot.invalid',
+        status: 'published', published_at: now },
+      // B: draft — must stay invisible to B.
+      { tenant_id: tenant2.id, property_id: p1.id, property_name: `B1 CI ${runId} P1`,
+        property_address: null, space_label: 'Suite 120',
+        rentable_sqft: 9000, lease_type: 'Modified Gross', lease_start: null,
+        lease_end: null, pro_rata_percent: null,
+        manager_name: null, manager_email: null,
+        status: 'draft', published_at: null },
+    ]),
+  });
+  if (!profiles.ok || profiles.body.length !== 2) die(`could not create fixture space profiles: ${JSON.stringify(profiles.body)}`);
+
+  const stmts = await rest('/tenant_statements', {
+    method: 'POST',
+    headers: { Prefer: 'return=representation' },
+    body: JSON.stringify([
+      // A 2024 published — the only statement A may read.
+      { tenant_id: tenant1.id, property_id: p1.id, cam_year: 2024, version: 1,
+        allocated_amount: 12960.75, pro_rata_percent: 8.4210, total_pool: 153900.00,
+        amount_billed: 11400.00, balance_due: 1560.75, currency: 'usd',
+        statement_json: { line_items: [{ label: 'Landscaping', pool_amount: 18400, your_share: 1549.46 }],
+                          method_note: 'Allocated by rentable square footage.' },
+        status: 'published', published_at: now },
+      // A 2023 draft, 2022 superseded, 2021 void — three ways to be hidden.
+      { tenant_id: tenant1.id, property_id: p1.id, cam_year: 2023, version: 1,
+        allocated_amount: 11204.10, pro_rata_percent: 8.4210, total_pool: 133000.00,
+        amount_billed: 11204.10, balance_due: 0, currency: 'usd',
+        statement_json: { line_items: [] }, status: 'draft', published_at: null },
+      { tenant_id: tenant1.id, property_id: p1.id, cam_year: 2022, version: 1,
+        allocated_amount: 9000.00, pro_rata_percent: 8.4210, total_pool: 106000.00,
+        amount_billed: 9000.00, balance_due: 0, currency: 'usd',
+        statement_json: { line_items: [] }, status: 'superseded', published_at: now },
+      { tenant_id: tenant1.id, property_id: p1.id, cam_year: 2021, version: 1,
+        allocated_amount: 8000.00, pro_rata_percent: 8.4210, total_pool: 95000.00,
+        amount_billed: 8000.00, balance_due: 0, currency: 'usd',
+        statement_json: { line_items: [] }, status: 'void', published_at: now },
+      // B published — proves cross-tenant isolation against a REAL published row
+      // rather than against an empty table.
+      { tenant_id: tenant2.id, property_id: p1.id, cam_year: 2024, version: 1,
+        allocated_amount: 7777.00, pro_rata_percent: 6.1000, total_pool: 153900.00,
+        amount_billed: 7000.00, balance_due: 777.00, currency: 'usd',
+        statement_json: { line_items: [] }, status: 'published', published_at: now },
+    ]),
+  });
+  if (!stmts.ok || stmts.body.length !== 5) die(`could not create fixture statements: ${JSON.stringify(stmts.body)}`);
+  const stmtAPublished = stmts.body.find(s => s.tenant_id === tenant1.id && s.status === 'published');
+
+  // Companion rows: what a tenant must never reach.
+  const stmtSrc = await rest('/tenant_statement_sources', {
+    method: 'POST',
+    body: JSON.stringify(stmts.body.map(s => ({
+      statement_id: s.id, property_id: s.property_id,
+      source_reconciliation_id: null,
+      source_run_hash: 'ci-' + s.id.slice(0, 8),
+      superseded_by: null, published_by: landlord.id,
+    }))),
+  });
+  if (!stmtSrc.ok) die(`could not create fixture statement sources: ${JSON.stringify(stmtSrc.body)}`);
+
+  const docs = await rest('/tenant_documents', {
+    method: 'POST',
+    headers: { Prefer: 'return=representation' },
+    body: JSON.stringify([
+      { tenant_id: tenant1.id, property_id: p1.id, title: '2024 CAM Statement',
+        doc_kind: 'statement', content_type: 'application/pdf', byte_size: 184320,
+        status: 'published', published_at: now },
+      { tenant_id: tenant1.id, property_id: p1.id, title: 'Draft notice',
+        doc_kind: 'notice', content_type: 'application/pdf', byte_size: 1024,
+        status: 'draft', published_at: null },
+      { tenant_id: tenant1.id, property_id: p1.id, title: 'Withdrawn notice',
+        doc_kind: 'notice', content_type: 'application/pdf', byte_size: 2048,
+        status: 'withdrawn', published_at: now },
+      { tenant_id: tenant2.id, property_id: p1.id, title: "B's lease",
+        doc_kind: 'lease', content_type: 'application/pdf', byte_size: 4096,
+        status: 'published', published_at: now },
+    ]),
+  });
+  if (!docs.ok || docs.body.length !== 4) die(`could not create fixture documents: ${JSON.stringify(docs.body)}`);
+  const docAPublished = docs.body.find(d => d.tenant_id === tenant1.id && d.status === 'published');
+  const docBPublished = docs.body.find(d => d.tenant_id === tenant2.id);
+
+  const docSrc = await rest('/tenant_document_sources', {
+    method: 'POST',
+    body: JSON.stringify(docs.body.map(d => ({
+      document_id: d.id, property_id: d.property_id,
+      storage_path: `${landlord.id}/ci-${d.id.slice(0, 8)}.pdf`,
+      storage_bucket: 'lease-documents',
+      lease_document_id: null, statement_id: null, published_by: landlord.id,
+    }))),
+  });
+  if (!docSrc.ok) die(`could not create fixture document sources: ${JSON.stringify(docSrc.body)}`);
+
   // Merge, never overwrite — the id lists were built incrementally as each
   // object was created and rewriting them here would defeat that.
   const st = JSON.parse(fs.readFileSync(STATE_FILE, 'utf8'));
@@ -270,6 +380,12 @@ async function setup() {
     // one variable would make that test read as if it were about A.
     TENANT_C_TENANT_ID: tenant3.id,
     TENANT_C_PROPERTY_ID: p2.id,
+    // B2 — ids the projection cases aim at, so a 0-row result can be shown to
+    // be a refusal rather than an empty table.
+    STMT_A_PUBLISHED_ID: stmtAPublished.id,
+    DOC_A_PUBLISHED_ID:  docAPublished.id,
+    DOC_B_PUBLISHED_ID:  docBPublished.id,
+    LANDLORD_USER_ID:    landlord.id,
   };
 
   if (process.env.GITHUB_ENV) {

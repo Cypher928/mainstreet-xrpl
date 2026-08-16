@@ -1,9 +1,9 @@
 # B1 tenant authorization gate
 # ============================================================================
-# Runs the 19-case negative-authorization suite against the PILOT project over
+# Runs the negative-authorization suite against the PILOT project over
 # real HTTP — GoTrue for sign-in, PostgREST for every read and write.
 #
-# This is B1's exit criterion. Phase A and B1 were both verified at the database
+# This is B1's exit criterion, and now B2's. Phase A and B1 were both verified at the database
 # layer with injected JWT claims, which exercises the real RLS engine but not
 # the request path a tenant actually uses. This job closes that gap, and keeps
 # it closed: the boundary is re-proved whenever anything on the auth surface
@@ -22,6 +22,14 @@ on:
     paths: &auth_surface
       - 'migrations/**'
       - 'api/tenant-accept-invite.js'
+      - 'api/tenant-publish-statement.js'
+      - 'api/tenant-unpublish-statement.js'
+      - 'api/tenant-publish-document.js'
+      - 'api/tenant-document-url.js'
+      - 'api/_exclusion-block.js'
+      - 'api/_landlord-auth.js'
+      - 'cam-exclusions.js'
+      - 'test-b2-contract.js'
       - 'portal.js'
       - 'portal.html'
       - 'test-tenant-authz.js'
@@ -46,7 +54,7 @@ concurrency:
 
 jobs:
   gate:
-    name: 19-case authorization suite (pilot)
+    name: tenant authorization suite (pilot)
     runs-on: ubuntu-latest
     # Secrets live in this environment. Production secrets are not in scope here
     # and cannot be reached by this job.
@@ -121,7 +129,13 @@ jobs:
       # The suite exits non-zero on any failed assertion, and exits 2 rather
       # than skipping if it cannot reach the host or a variable is missing —
       # an unrun security test must never read as a pass.
-      - name: Run the 19-case authorization suite
+      # Source-level invariants first: they are fast, they need no fixtures, and
+      # one of them (no REVOKE against `authenticated`) guards a failure the HTTP
+      # suite cannot see.
+      - name: B2 contract invariants
+        run: node test-b2-contract.js
+
+      - name: Run the authorization suite
         run: node test-tenant-authz.js
 
       # Always. A failed suite must still leave the database as it found it, or

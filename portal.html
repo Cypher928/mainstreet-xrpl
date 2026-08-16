@@ -77,6 +77,36 @@
     .p-status--ok    { color: var(--ok);  border-color: var(--ok); }
     .p-status--error { color: var(--err); border-color: var(--err); }
     .p-foot { margin-top: 34px; color: var(--muted); font-size: 0.82rem; }
+
+    /* ── B2: tab navigation ─────────────────────────────────────────────── */
+    .p-nav { display: flex; gap: 4px; margin-bottom: 22px; border-bottom: 1px solid var(--line); }
+    .p-nav button {
+      border: 0; border-bottom: 2px solid transparent; border-radius: 0;
+      background: none; padding: 9px 14px; color: var(--muted); font-size: 0.92rem;
+    }
+    .p-nav button:hover { color: var(--ink); border-color: var(--line); }
+    .p-nav button[aria-current="page"] { color: var(--accent); border-bottom-color: var(--accent); font-weight: 600; }
+
+    /* ── B2: statements ─────────────────────────────────────────────────── */
+    .p-row {
+      display: flex; justify-content: space-between; align-items: baseline; gap: 14px;
+      width: 100%; text-align: left; padding: 13px 0; border: 0; border-top: 1px solid var(--line);
+      background: none; color: inherit; font-size: 0.94rem;
+    }
+    .p-row:first-of-type { border-top: 0; }
+    .p-row:hover { color: var(--accent); }
+    .p-row-y { font-weight: 650; }
+    .p-row-m { font-variant-numeric: tabular-nums; color: var(--muted); font-size: 0.88rem; }
+    .p-back { margin-bottom: 14px; }
+    .p-lines { margin-top: 18px; border-top: 1px solid var(--line); }
+    .p-line { display: flex; justify-content: space-between; gap: 14px; padding: 9px 0; border-bottom: 1px solid var(--line); font-size: 0.9rem; }
+    .p-line:last-child { border-bottom: 0; }
+    .p-line-a { font-variant-numeric: tabular-nums; color: var(--muted); }
+    .p-doc { display: flex; justify-content: space-between; align-items: center; gap: 14px; padding: 13px 0; border-top: 1px solid var(--line); }
+    .p-doc:first-of-type { border-top: 0; }
+    .p-doc-t { font-weight: 600; font-size: 0.94rem; }
+    .p-doc-m { color: var(--muted); font-size: 0.82rem; }
+    .p-empty { color: var(--muted); }
   </style>
 </head>
 <body>
@@ -115,9 +145,40 @@
       </div>
     </section>
 
-    <!-- Your space -->
+    <!-- B2: tabs. Shown only once a membership is active. -->
+    <nav class="p-nav" id="pNav" hidden>
+      <button type="button" id="pTabSpace"      data-view="pViewSpace">My Space</button>
+      <button type="button" id="pTabStatements" data-view="pViewStatements">CAM Statements</button>
+      <button type="button" id="pTabDocuments"  data-view="pViewDocuments">Documents</button>
+    </nav>
+
+    <!-- My Space — from tenant_space_profiles, never from properties -->
     <section id="pViewSpace" hidden>
       <div id="pSpaces"></div>
+    </section>
+
+    <!-- CAM Statements — published rows only, newest year first -->
+    <section id="pViewStatements" hidden>
+      <div class="p-card">
+        <h1 class="p-card-name">CAM Statements</h1>
+        <div id="pStatementList"></div>
+      </div>
+    </section>
+
+    <!-- One statement, expanded -->
+    <section id="pViewStatementDetail" hidden>
+      <div class="p-card">
+        <button type="button" class="p-back" id="pStatementBack">&larr; All statements</button>
+        <div id="pStatementDetail"></div>
+      </div>
+    </section>
+
+    <!-- Documents the landlord has published to this tenant -->
+    <section id="pViewDocuments" hidden>
+      <div class="p-card">
+        <h1 class="p-card-name">Documents</h1>
+        <div id="pDocumentList"></div>
+      </div>
     </section>
 
     <!-- Signed in, but no active membership -->

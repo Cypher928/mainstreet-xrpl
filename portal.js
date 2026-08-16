@@ -54,11 +54,44 @@
       .replace(/"/g, '&quot;').replace(/'/g, '&#39;');
   }
 
+  var VIEWS = ['pViewAuth', 'pViewSent', 'pViewSpace', 'pViewStatements',
+               'pViewStatementDetail', 'pViewDocuments', 'pViewEmpty'];
+  var TABS  = { pViewSpace: 'pTabSpace', pViewStatements: 'pTabStatements',
+                pViewDocuments: 'pTabDocuments' };
+
   function show(id) {
-    ['pViewAuth', 'pViewSent', 'pViewSpace', 'pViewEmpty'].forEach(function (v) {
+    VIEWS.forEach(function (v) {
       var el = $(v); if (el) el.hidden = (v !== id);
     });
+    // The tab bar exists only for a tenant with an active membership; the auth,
+    // sent and empty views are states where there is nothing to navigate between.
+    var nav = $('pNav');
+    if (nav) nav.hidden = !(id in TABS || id === 'pViewStatementDetail');
+    Object.keys(TABS).forEach(function (v) {
+      var b = $(TABS[v]);
+      if (!b) return;
+      // The detail view is still "CAM Statements" as far as the tab bar goes.
+      var active = (v === id) || (id === 'pViewStatementDetail' && v === 'pViewStatements');
+      if (active) b.setAttribute('aria-current', 'page');
+      else b.removeAttribute('aria-current');
+    });
   }
+
+  var money = function (v) {
+    if (v === null || v === undefined || v === '') return '—';
+    return '$' + Number(v).toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 });
+  };
+  var bytes = function (n) {
+    if (!n && n !== 0) return '';
+    return n < 1024 ? n + ' B'
+         : n < 1048576 ? Math.round(n / 1024) + ' KB'
+         : (n / 1048576).toFixed(1) + ' MB';
+  };
+  var day = function (s) {
+    if (!s) return '';
+    var d = new Date(s);
+    return isNaN(d) ? '' : d.toLocaleDateString(undefined, { year: 'numeric', month: 'short', day: 'numeric' });
+  };
 
   function status(msg, kind) {
     var el = $('pStatus');
@@ -114,29 +147,165 @@
 
     if (!active.length) { show('pViewEmpty'); return; }
 
-    var sp = await db.from('tenants')
-      .select('id, name, sqft, lease_type, start_date, end_date');
+    await renderSpace();
+    show('pViewSpace');
+  }
+
+  // ── B2 · My Space ─────────────────────────────────────────────────────────
+  // Reads tenant_space_profiles, NOT properties and NOT properties.data. The
+  // landlord published these values; nothing here is derived from a live
+  // landlord table, and a fact the landlord has not published simply is not
+  // shown. RLS returns published rows only, so an unpublished profile arrives
+  // as zero rows rather than as a draft.
+  async function renderSpace() {
+    var sp = await db.from('tenant_space_profiles')
+      .select('property_name, property_address, space_label, rentable_sqft, ' +
+              'lease_type, lease_start, lease_end, pro_rata_percent, ' +
+              'manager_name, manager_email');
     if (sp.error) { status('Could not load your space.', 'error'); return; }
 
     var rows = sp.data || [];
-    if (!rows.length) { show('pViewEmpty'); return; }
+    if (!rows.length) {
+      $('pSpaces').innerHTML =
+        '<div class="p-card"><h1 class="p-card-name">Your space</h1>' +
+        '<p class="p-empty">Your property manager hasn&rsquo;t published your space details yet.</p></div>';
+      return;
+    }
 
-    $('pSpaces').innerHTML = rows.map(function (t) {
-      var term = (t.start_date && t.end_date)
-        ? esc(t.start_date) + ' &ndash; ' + esc(t.end_date)
-        : 'Not on file';
+    $('pSpaces').innerHTML = rows.map(function (s) {
+      var term = (s.lease_start && s.lease_end)
+        ? esc(day(s.lease_start)) + ' &ndash; ' + esc(day(s.lease_end)) : 'Not on file';
+      var name = s.property_name + (s.space_label ? ' — ' + s.space_label : '');
       return '<article class="p-card">' +
-        '<h2 class="p-card-name">' + esc(t.name || 'Your space') + '</h2>' +
+        '<h2 class="p-card-name">' + esc(name) + '</h2>' +
         '<dl class="p-facts">' +
-          '<div><dt>Lease type</dt><dd>' + esc(t.lease_type || 'Not on file') + '</dd></div>' +
-          '<div><dt>Square feet</dt><dd>' + (t.sqft ? esc(Number(t.sqft).toLocaleString()) : 'Not on file') + '</dd></div>' +
+          (s.property_address ? '<div><dt>Address</dt><dd>' + esc(s.property_address) + '</dd></div>' : '') +
+          '<div><dt>Rentable area</dt><dd>' + (s.rentable_sqft ? esc(Number(s.rentable_sqft).toLocaleString()) + ' sq ft' : 'Not on file') + '</dd></div>' +
+          '<div><dt>Lease type</dt><dd>' + esc(s.lease_type || 'Not on file') + '</dd></div>' +
           '<div><dt>Term</dt><dd>' + term + '</dd></div>' +
+          (s.pro_rata_percent != null ? '<div><dt>Your share</dt><dd>' + esc(s.pro_rata_percent) + '%</dd></div>' : '') +
+          (s.manager_name ? '<div><dt>Property manager</dt><dd>' + esc(s.manager_name) + '</dd></div>' : '') +
         '</dl>' +
-        '<p class="p-soon">Statements, documents and payments arrive in a later release.</p>' +
+        (s.manager_email
+          ? '<p class="p-soon">Questions about a charge go to ' + esc(s.manager_email) + '.</p>' : '') +
       '</article>';
     }).join('');
+  }
 
-    show('pViewSpace');
+  // ── B2 · CAM Statements ───────────────────────────────────────────────────
+  // Only published statements exist as far as this client is concerned. The
+  // status predicate is in the RLS policy, so this query asking for everything
+  // still returns published rows only — the filter below is presentation, not
+  // protection.
+  var _statements = [];
+
+  async function renderStatements() {
+    var r = await db.from('tenant_statements')
+      .select('id, cam_year, version, allocated_amount, pro_rata_percent, total_pool, ' +
+              'amount_billed, balance_due, currency, statement_json, published_at')
+      .order('cam_year', { ascending: false });
+    if (r.error) { status('Could not load your statements.', 'error'); return; }
+
+    _statements = r.data || [];
+    if (!_statements.length) {
+      $('pStatementList').innerHTML =
+        '<p class="p-empty">No statements have been published for your space yet.</p>';
+      return;
+    }
+
+    $('pStatementList').innerHTML = _statements.map(function (s, i) {
+      return '<button type="button" class="p-row" data-idx="' + i + '">' +
+        '<span><span class="p-row-y">' + esc(s.cam_year) + '</span>' +
+          (s.published_at ? '<br><span class="p-row-m">published ' + esc(day(s.published_at)) + '</span>' : '') +
+        '</span>' +
+        '<span class="p-row-m">' + esc(money(s.allocated_amount)) +
+          (s.balance_due != null ? ' &middot; balance ' + esc(money(s.balance_due)) : '') +
+        '</span></button>';
+    }).join('');
+
+    Array.prototype.forEach.call($('pStatementList').querySelectorAll('.p-row'), function (b) {
+      b.addEventListener('click', function () { openStatement(Number(b.dataset.idx)); });
+    });
+  }
+
+  function openStatement(i) {
+    var s = _statements[i];
+    if (!s) return;
+    var j = s.statement_json || {};
+    var items = Array.isArray(j.line_items) ? j.line_items : [];
+
+    $('pStatementDetail').innerHTML =
+      '<h1 class="p-card-name">' + esc(s.cam_year) + ' CAM Statement</h1>' +
+      '<dl class="p-facts">' +
+        '<div><dt>Total pool</dt><dd>' + esc(money(s.total_pool)) + '</dd></div>' +
+        '<div><dt>Your share</dt><dd>' + esc(s.pro_rata_percent) + '%</dd></div>' +
+        '<div><dt>Your allocation</dt><dd>' + esc(money(s.allocated_amount)) + '</dd></div>' +
+        '<div><dt>Already billed</dt><dd>' + esc(money(s.amount_billed)) + '</dd></div>' +
+        '<div><dt>Balance due</dt><dd>' + esc(money(s.balance_due)) + '</dd></div>' +
+      '</dl>' +
+      (items.length
+        ? '<div class="p-lines">' + items.map(function (it) {
+            return '<div class="p-line"><span>' + esc(it.label || it.category || 'Item') + '</span>' +
+              '<span class="p-line-a">pool ' + esc(money(it.pool_amount)) +
+              ' &middot; yours ' + esc(money(it.your_share)) + '</span></div>';
+          }).join('') + '</div>'
+        : '') +
+      (j.method_note ? '<p class="p-soon">' + esc(j.method_note) + '</p>' : '');
+
+    show('pViewStatementDetail');
+  }
+
+  // ── B2 · Documents ────────────────────────────────────────────────────────
+  // The list carries no storage path — that column lives in
+  // tenant_document_sources, which has no tenant policy. Downloading means
+  // asking the server, which re-checks membership and publication before it
+  // signs anything.
+  async function renderDocuments() {
+    var r = await db.from('tenant_documents')
+      .select('id, title, doc_kind, content_type, byte_size, published_at')
+      .order('published_at', { ascending: false });
+    if (r.error) { status('Could not load your documents.', 'error'); return; }
+
+    var rows = r.data || [];
+    if (!rows.length) {
+      $('pDocumentList').innerHTML =
+        '<p class="p-empty">No documents have been shared with you yet.</p>';
+      return;
+    }
+
+    $('pDocumentList').innerHTML = rows.map(function (d) {
+      var meta = [d.doc_kind, bytes(d.byte_size), day(d.published_at)].filter(Boolean).join(' · ');
+      return '<div class="p-doc">' +
+        '<span><span class="p-doc-t">' + esc(d.title) + '</span>' +
+          '<br><span class="p-doc-m">' + esc(meta) + '</span></span>' +
+        '<button type="button" data-doc="' + esc(d.id) + '">Download</button></div>';
+    }).join('');
+
+    Array.prototype.forEach.call($('pDocumentList').querySelectorAll('[data-doc]'), function (b) {
+      b.addEventListener('click', function () { downloadDoc(b.dataset.doc, b); });
+    });
+  }
+
+  async function downloadDoc(id, btn) {
+    btn.disabled = true;
+    status('Preparing your download…');
+    try {
+      var s = await db.auth.getSession();
+      var tok = s.data && s.data.session ? s.data.session.access_token : null;
+      var r = await fetch('/api/tenant-document-url', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json', Authorization: 'Bearer ' + tok },
+        body: JSON.stringify({ document_id: id }),
+      });
+      var body = await r.json().catch(function () { return {}; });
+      if (!r.ok || !body.url) { status(body.error || 'That document is not available.', 'error'); return; }
+      status('');
+      window.open(body.url, '_blank', 'noopener');
+    } catch (e) {
+      status('Could not start the download. Try again.', 'error');
+    } finally {
+      btn.disabled = false;
+    }
   }
 
   async function afterSignIn(session) {
@@ -212,6 +381,20 @@
 
     $('pAuthForm').addEventListener('submit', requestLink);
     $('pSignOut').addEventListener('click', signOut);
+
+    // Tabs render on demand. Each loader re-queries rather than caching, so a
+    // membership revoked mid-session shows as the empty state on the next tab
+    // switch instead of continuing to display data the tenant may no longer read.
+    $('pTabSpace').addEventListener('click', async function () {
+      await renderSpace(); show('pViewSpace');
+    });
+    $('pTabStatements').addEventListener('click', async function () {
+      await renderStatements(); show('pViewStatements');
+    });
+    $('pTabDocuments').addEventListener('click', async function () {
+      await renderDocuments(); show('pViewDocuments');
+    });
+    $('pStatementBack').addEventListener('click', function () { show('pViewStatements'); });
 
     if (cfg.target) {
       var badge = $('pEnv');
