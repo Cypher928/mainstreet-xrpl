@@ -339,18 +339,41 @@ async function main() {
   // to create (T11), and that doing so restores a revoked tenant's access.
   //
   // Migration 015 is what makes this test necessary. Once a revoked row is
-  // invisible to its own tenant, a re-acceptance that silently fails to clear
-  // revoked_at leaves the tenant with no access AND no way to see why. Writing
-  // it found exactly that bug: the endpoint's upsert payload omitted
-  // revoked_at, and `resolution=merge-duplicates` only updates the columns the
-  // payload carries, so a re-invited tenant got a 200 and stayed locked out.
+  // invisible to its own tenant, a re-acceptance that silently fails leaves the
+  // tenant with no access AND no way to see why. Writing it found TWO such
+  // failures in the endpoint, both only reachable on a RE-invitation — a first
+  // acceptance has no row to collide with, which is what hid them:
+  //
+  //   1. `resolution=merge-duplicates` merges on the PRIMARY KEY unless
+  //      on_conflict names another constraint. The payload carries no id, so
+  //      PostgREST targeted id while the row actually collided with
+  //      tenant_users_user_tenant_uniq — an unhandled unique violation, 409,
+  //      surfaced to the tenant as 502. Nothing merged at all.
+  //   2. revoked_at was absent from the payload, and merge-duplicates updates
+  //      only the columns the payload carries, so the row stayed revoked. The
+  //      tenant got a 200 and remained locked out.
+  //
+  // THREE ROUNDS, in order, each depending on the state the last one left:
+  //   1  revoked -> invited -> accepted -> access restored      (T17, T18)
+  //   2  an already-active tenant invited again, no duplicate   (T19)
+  //   3  revoked again; an OUTSTANDING invitation restores
+  //      nothing until the flow is completed                    (T20, T21)
+  //
+  // Round 3 is the security property the design rests on: authority comes from
+  // completing acceptance, never from an invitation existing. Membership counts
+  // are read with the SERVICE ROLE — through RLS a duplicate or a revoked
+  // leftover is invisible, which is precisely what these tests look for.
   console.log('\n── Re-invitation restores a revoked tenant (B1) ──');
   const svcKey = process.env.PILOT_SUPABASE_SERVICE_ROLE_KEY;
   if (!svcKey) {
-    bad('T17/T18 skipped — PILOT_SUPABASE_SERVICE_ROLE_KEY not set, so the acceptance write path was never exercised');
+    bad('T17-T21 skipped — PILOT_SUPABASE_SERVICE_ROLE_KEY not set, so the acceptance write path was never exercised');
   } else {
     const C_PROPERTY_ID = need('TENANT_C_PROPERTY_ID');
-    const cEmail = process.env.TENANT_C_EMAIL;
+    const cEmail  = process.env.TENANT_C_EMAIL;
+    const cUserId = await currentUserId(cTok);
+    const lUserId = await currentUserId(lTok);
+    const crypto  = require('crypto');
+
     const svc = (path, opts = {}) => fetch(`${SUPABASE_URL}/rest/v1/${path}`, {
       ...opts,
       headers: {
@@ -358,70 +381,103 @@ async function main() {
         'Content-Type': 'application/json', ...(opts.headers || {}),
       },
     });
+    // Counts read with the SERVICE ROLE, so they see the table as it really is.
+    // count() above reads through RLS and would report 0 for a revoked row even
+    // if a duplicate existed — exactly the bug these tests look for.
+    const svcCount = async (path) => {
+      const r = await svc(path);
+      const b = await r.json().catch(() => []);
+      return Array.isArray(b) ? b.length : 0;
+    };
+    const memberships = () =>
+      svcCount(`tenant_users?user_id=eq.${cUserId}&tenant_id=eq.${C_TENANT_ID}&select=id`);
+    const openInvites = () =>
+      svcCount(`tenant_invitations?tenant_id=eq.${C_TENANT_ID}&accepted_at=is.null&revoked_at=is.null&select=id`);
 
-    // The landlord issues the invitation. Only the hash is stored, exactly as
-    // the endpoint expects to find it.
-    const rawToken = require('crypto').randomBytes(32).toString('hex');
-    const tokenHash = require('crypto').createHash('sha256').update(rawToken).digest('hex');
-    const invIns2 = await svc('tenant_invitations', {
-      method: 'POST',
-      headers: { Prefer: 'return=representation' },
-      body: JSON.stringify({
-        tenant_id: C_TENANT_ID, property_id: C_PROPERTY_ID, email: cEmail,
-        token_hash: tokenHash,
-        // NOT NULL in 014, and correct on the merits: the landlord who owns the
-        // property is the one issuing this invitation.
-        invited_by: await currentUserId(lTok),
-        expires_at: new Date(Date.now() + 7 * 864e5).toISOString(),
-      }),
-    });
-    const invBody = await invIns2.json().catch(() => null);
-    const invRow  = Array.isArray(invBody) ? invBody[0] : null;
-    if (!invIns2.ok || !invRow) {
-      // Carry the PostgREST message through. The first cut of this test omitted
-      // invited_by (NOT NULL in 014) and reported only "http 400", which said
-      // nothing about which column was wrong.
-      bad(`T17 landlord could not issue an invitation via the service role (http ${invIns2.status}: ` +
-          `${JSON.stringify(invBody).slice(0, 200)})`);
-    } else {
-      // Byte-for-byte the membership write api/tenant-accept-invite.js performs.
+    // The landlord issues an invitation. Only the hash is stored, exactly as the
+    // endpoint expects to find it. Returns the row, or null with a reported fail.
+    async function issueInvitation(label) {
+      const token = crypto.randomBytes(32).toString('hex');
+      const r = await svc('tenant_invitations', {
+        method: 'POST',
+        headers: { Prefer: 'return=representation' },
+        body: JSON.stringify({
+          tenant_id: C_TENANT_ID, property_id: C_PROPERTY_ID, email: cEmail,
+          token_hash: crypto.createHash('sha256').update(token).digest('hex'),
+          // NOT NULL in 014, and correct on the merits: the landlord who owns
+          // the property is the one issuing this invitation.
+          invited_by: lUserId,
+          expires_at: new Date(Date.now() + 7 * 864e5).toISOString(),
+        }),
+      });
+      const body = await r.json().catch(() => null);
+      const row  = Array.isArray(body) ? body[0] : null;
+      if (!r.ok || !row) {
+        // Carry the PostgREST message through. The first cut of this test
+        // omitted invited_by (NOT NULL in 014) and reported only "http 400",
+        // which said nothing about which column was wrong.
+        bad(`${label} could not issue an invitation via the service role (http ${r.status}: ` +
+            `${JSON.stringify(body).slice(0, 200)})`);
+        return null;
+      }
+      return row;
+    }
+
+    // Byte-for-byte the two writes api/tenant-accept-invite.js performs, in the
+    // same order: membership first, then close the invitation. Both details that
+    // were broken live here — the conflict target and the revoked_at reset — so
+    // this helper is the thing under test, not scaffolding around it.
+    async function acceptInvitation(inv) {
       const acc = await svc('tenant_users?on_conflict=user_id,tenant_id', {
         method: 'POST',
         headers: { Prefer: 'resolution=merge-duplicates,return=representation' },
         body: JSON.stringify({
-          user_id: await currentUserId(cTok),
-          tenant_id: invRow.tenant_id,
-          property_id: invRow.property_id,
+          user_id: cUserId,
+          tenant_id: inv.tenant_id,
+          property_id: inv.property_id,
           accepted_at: new Date().toISOString(),
           revoked_at: null,
           invited_by: null,
         }),
       });
-      if (acc.ok) ok('T17 service role writes the membership RLS forbids the tenant to write');
-      else bad(`T17 acceptance write failed (http ${acc.status}: ` +
-               `${JSON.stringify(await acc.json().catch(() => null)).slice(0, 200)}) — ` +
-               `the endpoint's write path is broken`);
-
+      const accBody = acc.ok ? null : await acc.json().catch(() => null);
       // Single use, conditioned on still being open — as the endpoint does.
       const closed = await svc(
-        `tenant_invitations?id=eq.${invRow.id}&accepted_at=is.null&revoked_at=is.null`,
+        `tenant_invitations?id=eq.${inv.id}&accepted_at=is.null&revoked_at=is.null`,
         { method: 'PATCH', headers: { Prefer: 'return=representation' },
-          body: JSON.stringify({ accepted_at: new Date().toISOString() }) });
+          body: JSON.stringify({ accepted_at: new Date().toISOString(), accepted_by: cUserId }) });
       const closedRows = await closed.json().catch(() => []);
-      if (closed.ok && closedRows.length === 1) ok('T17b invitation is closed on acceptance (single use)');
-      else bad(`T17b invitation was not closed (http ${closed.status}, ${closedRows.length} row(s))`);
+      return { ok: acc.ok, status: acc.status, body: accBody,
+               closedCount: Array.isArray(closedRows) ? closedRows.length : 0 };
+    }
 
-      // T17c — this block MIRRORS the endpoint's write; it does not call it
+    const revoke = () => svc(
+      `tenant_users?user_id=eq.${cUserId}&tenant_id=eq.${C_TENANT_ID}`,
+      { method: 'PATCH', headers: { Prefer: 'return=representation' },
+        body: JSON.stringify({ revoked_at: new Date().toISOString() }) });
+
+    // ── Round 1: the revoked tenant is invited back and accepts ─────────────
+    const inv1 = await issueInvitation('T17');
+    if (inv1) {
+      const r1 = await acceptInvitation(inv1);
+      if (r1.ok) ok('T17 service role writes the membership RLS forbids the tenant to write');
+      else bad(`T17 acceptance write failed (http ${r1.status}: ${JSON.stringify(r1.body).slice(0, 200)}) — ` +
+               `the endpoint's write path is broken`);
+
+      r1.closedCount === 1
+        ? ok('T17b invitation is closed on acceptance (single use)')
+        : bad(`T17b invitation was not closed (${r1.closedCount} row(s))`);
+
+      // T17c — this block MIRRORS the endpoint's writes; it does not call them
       // (T15/T16 do, once the route is deployed). A mirror that silently drifts
-      // proves nothing, and both of the bugs found here live in exactly the two
-      // details being checked: the conflict target and the revoked_at reset.
-      // Cheap coupling check, so the mirror cannot rot unnoticed.
+      // proves nothing, and both bugs found here live in exactly the two details
+      // checked below. Cheap coupling check, so the mirror cannot rot unnoticed.
       const epSrc = require('fs').readFileSync(
         require('path').join(__dirname, 'api/tenant-accept-invite.js'), 'utf8');
       const mirrored = ['on_conflict=user_id,tenant_id', 'revoked_at:  null']
         .filter(s => !epSrc.includes(s));
       mirrored.length === 0
-        ? ok('T17c the endpoint still performs the write this test mirrors')
+        ? ok('T17c the endpoint still performs the writes this test mirrors')
         : bad(`T17c api/tenant-accept-invite.js no longer matches what T17 mirrors — missing: ${mirrored.join(', ')}`);
 
       // The payoff. Same JWT as before — RLS is evaluated per request against
@@ -436,6 +492,120 @@ async function main() {
         await count('properties?select=id', cTok), 0);
       expectRows('T18d restored tenant still reads no invitations',
         await count('tenant_invitations?select=id', cTok), 0);
+
+      // The upsert MERGED rather than inserting a second row. Read with the
+      // service role: through RLS a duplicate would be indistinguishable from
+      // the single row, since the tenant sees at most its own active membership.
+      expectRows('T18e exactly one membership row exists after re-acceptance',
+        await memberships(), 1);
+    }
+
+    // ── Round 2: inviting an ALREADY-ACTIVE tenant again ────────────────────
+    // The upsert must be idempotent. Without on_conflict naming
+    // (user_id, tenant_id) this is the 409 that broke round 1; with a plain
+    // INSERT it would be a duplicate membership.
+    console.log('\n── A repeated invitation does not multiply membership ──');
+    const inv2 = await issueInvitation('T19');
+    if (inv2) {
+      const r2 = await acceptInvitation(inv2);
+      r2.ok ? ok('T19  a second acceptance for an already-active tenant succeeds (idempotent)')
+            : bad(`T19  second acceptance failed (http ${r2.status}: ${JSON.stringify(r2.body).slice(0, 200)})`);
+
+      expectRows('T19b still exactly one membership row — no duplicate created',
+        await memberships(), 1);
+      expectRows('T19c tenant still reads exactly one membership',
+        await count('tenant_users?select=id', cTok), 1);
+
+      // Every invitation issued so far has been redeemed, so none is left
+      // redeemable. An invitation that stayed open after acceptance would be a
+      // second, unexpired key to the same space.
+      expectRows('T19d no invitation is left open after acceptance',
+        await openInvites(), 0);
+
+      // Re-closing an already-closed invitation must affect nothing. This is
+      // what makes the token single-use under concurrency: the PATCH is
+      // conditioned on the row still being open.
+      const reClose = await svc(
+        `tenant_invitations?id=eq.${inv2.id}&accepted_at=is.null&revoked_at=is.null`,
+        { method: 'PATCH', headers: { Prefer: 'return=representation' },
+          body: JSON.stringify({ accepted_at: new Date().toISOString() }) });
+      const reClosed = await reClose.json().catch(() => []);
+      (Array.isArray(reClosed) && reClosed.length === 0)
+        ? ok('T19e redeeming an already-closed invitation affects 0 rows (single use holds)')
+        : bad(`T19e a closed invitation was redeemable again (${reClosed.length} row(s))`);
+
+      // T19f — what actually makes a duplicate membership impossible is the
+      // unique constraint, not the upsert. T19b/T21d count rows and would still
+      // read 1 if that constraint were dropped and no second write happened, so
+      // on their own they assert an invariant they cannot break. This asserts it
+      // directly: a PLAIN insert of the same pair — no on_conflict, no
+      // merge-duplicates — must be REFUSED by the database.
+      //
+      // On the SQLSTATE, not merely "it failed": 23505 is unique_violation.
+      // Accepting any non-2xx would let a typo, a dropped column or an expired
+      // key pass for a constraint that is no longer there.
+      const dup = await svc('tenant_users', {
+        method: 'POST',
+        body: JSON.stringify({
+          user_id: cUserId, tenant_id: C_TENANT_ID, property_id: C_PROPERTY_ID,
+          accepted_at: new Date().toISOString(), revoked_at: null,
+        }),
+      });
+      const dupBody = await dup.json().catch(() => ({}));
+      if (dup.ok) bad('T19f a DUPLICATE membership row was accepted — tenant_users_user_tenant_uniq is gone (SECURITY FAILURE)');
+      else if (dupBody.code === '23505') ok('T19f duplicate membership refused by the unique constraint (23505)');
+      else bad(`T19f duplicate refused for a NON-CONSTRAINT reason (http ${dup.status}, code ${dupBody.code || 'none'}) — ` +
+               `this proves nothing about duplicate prevention`);
+
+      expectRows('T19g and the refused duplicate left the single row intact',
+        await memberships(), 1);
+    }
+
+    // ── Round 3: an invitation ALONE must not restore access ────────────────
+    // The security property behind the whole design: authority comes from
+    // completing the acceptance flow, never from an invitation existing. If
+    // merely being invited restored a revoked tenant, revocation would be
+    // undone by any landlord mis-click, and a leaked invitation would be
+    // equivalent to access.
+    console.log('\n── An invitation alone does not restore a revoked tenant ──');
+    const rev = await revoke();
+    if (!rev.ok) {
+      bad(`T20 could not re-revoke the membership to set up the test (http ${rev.status})`);
+    } else {
+      expectRows('T20  re-revoked tenant reads no membership',  await count('tenant_users?select=id', cTok), 0);
+      expectRows('T20b re-revoked tenant reads no tenant row',  await count('tenants?select=id', cTok), 0);
+
+      const inv3 = await issueInvitation('T20c-issue');
+      if (inv3) {
+        // Issued and OUTSTANDING — deliberately not accepted.
+        expectRows('T20c an invitation is outstanding for the revoked tenant', await openInvites(), 1);
+
+        expectRows('T20d holding an invitation grants NO membership read',
+          await count('tenant_users?select=id', cTok), 0);
+        expectRows('T20e holding an invitation grants NO tenant read',
+          await count('tenants?select=id', cTok), 0);
+        expectRows('T20f holding an invitation grants no property read',
+          await count('properties?select=id', cTok), 0);
+        expectRows('T20g the invited tenant still cannot see the invitation itself',
+          await count('tenant_invitations?select=id', cTok), 0);
+        expectRows('T20h and the membership row is still the same single row',
+          await memberships(), 1);
+
+        // Only now is the flow completed.
+        console.log('\n── Completing the flow is what restores access ──');
+        const r3 = await acceptInvitation(inv3);
+        r3.ok ? ok('T21  acceptance of the outstanding invitation succeeds')
+              : bad(`T21  acceptance failed (http ${r3.status}: ${JSON.stringify(r3.body).slice(0, 200)})`);
+
+        expectRows('T21b access is restored only after acceptance — membership readable',
+          await count('tenant_users?select=id', cTok), 1);
+        expectRows('T21c access is restored only after acceptance — tenant row readable',
+          await count('tenants?select=id', cTok), 1);
+        expectRows('T21d still exactly one membership row after three acceptances',
+          await memberships(), 1);
+        expectRows('T21e no invitation left open',
+          await openInvites(), 0);
+      }
     }
   }
 
