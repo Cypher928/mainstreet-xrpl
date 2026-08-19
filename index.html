@@ -6712,8 +6712,13 @@
       </div>
       <div class="field">
         <label>Total Property Sqft <span class="field-info-tip" title="Total rentable square footage for the property. This number is used to calculate each tenant&#x27;s pro-rata share of common area expenses.">&#x24D8;</span></label>
+        <!-- inputmode="numeric" gives phones the digit keypad rather than the
+             full keyboard; `change` fires on blur (and Enter), which is where the
+             deferred re-render happens — see updatePropertySqft/commitPropertySqft. -->
         <input type="number" id="totalSqft" placeholder="e.g. 20000" min="1"
-          oninput="updatePropertySqft(this.value);_setupNextSync()" />
+          inputmode="numeric" enterkeyhint="done"
+          oninput="updatePropertySqft(this.value);_setupNextSync()"
+          onchange="commitPropertySqft(this.value);_setupNextSync()" />
         <div class="field-helper-text">Example: If the property is 20,000 sqft and a tenant occupies 2,000 sqft, that tenant&#x27;s pro-rata share is 10%.</div>
       </div>
       <div class="field">

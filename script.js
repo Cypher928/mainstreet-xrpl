@@ -3468,7 +3468,6 @@ function updatePropertySqft(val) {
   const prop = currentProperty();
   if (!prop) return;
 
-  // Capture name from DOM now — renderProperty() below will reset the field
   const nameEl = document.getElementById('propertyName');
   if (nameEl && nameEl.value.trim()) prop.name = nameEl.value.trim();
 
@@ -3479,7 +3478,35 @@ function updatePropertySqft(val) {
   checkSqftValidation();
   runCamValidation();
 
+  // Do NOT re-render the property while the number is still being typed.
+  //
+  // renderProperty() rebuilds the whole pane — including switchLeaseTab('bulk')
+  // and renderBulkResults() — and it ran on every keystroke. On a phone that
+  // relayout under an open keyboard threw the page to the top and dropped focus
+  // after the FIRST digit, so "25550" needed five separate taps. The model,
+  // localStorage, the sqft banner and CAM validation above are all already
+  // up to date; the only thing deferred is redrawing the surrounding DOM.
+  //
+  // The full render happens on commit (blur / Enter) via commitPropertySqft().
+  const sqftEl = document.getElementById('totalSqft');
+  if (document.activeElement === sqftEl) return;
+
   renderProperty(prop);
+}
+
+// Commit point for Total Sqft: the user has finished typing (blur, or Enter).
+// This is where the deferred renderProperty() from updatePropertySqft() happens,
+// so the pane catches up exactly once instead of once per digit.
+function commitPropertySqft(val) {
+  const prop = currentProperty();
+  if (!prop) return;
+  prop.totalSqft = Number(val) || 0;
+  saveProperty(prop);
+  checkSqftValidation();
+  runCamValidation();
+  // Refresh, not navigation: the user is still on this screen and may be
+  // reaching for Save. Jumping to the top here is the same defect one beat later.
+  renderProperty(prop, { scrollToTop: false });
 }
 
 function showSqftBanner(msg, severity) {
@@ -22594,12 +22621,23 @@ async function loadPropertyData(id) {
 
 // Restore a property's saved state into working arrays and render the detail view.
 // Called exactly once from selectProperty — after data has been attached to `property`.
-function renderProperty(property) {
+function renderProperty(property, opts = {}) {
   let restored = false;
 
   // ── Header ────────────────────────────────────────────────────────────
-  document.getElementById('propertyName').value             = property.name;
-  document.getElementById('totalSqft').value                = property.totalSqft || '';
+  // NEVER overwrite a field the user is currently typing in. Assigning .value
+  // collapses the caret to the end of the input, and on a phone that reflow
+  // under an open keyboard is enough to drop focus entirely — which is what made
+  // Total Sqft unusable on mobile: every digit re-rendered the property, this
+  // line rewrote the input mid-entry, and the field had to be tapped again.
+  //
+  // The value being written is one this very keystroke just put into the model,
+  // so skipping it loses nothing; the field already shows it.
+  const _active = document.activeElement;
+  const _nameEl = document.getElementById('propertyName');
+  const _sqftEl = document.getElementById('totalSqft');
+  if (_nameEl && _active !== _nameEl) _nameEl.value = property.name;
+  if (_sqftEl && _active !== _sqftEl) _sqftEl.value = property.totalSqft || '';
   document.getElementById('breadcrumbPropName').textContent = property.name;
 
   // ── Tenants ───────────────────────────────────────────────────────────
@@ -22710,7 +22748,12 @@ function renderProperty(property) {
 
   // ── Property subject page (building-as-a-whole records) ────────────────
   try {
-    if (window.PropertyOS) { window.PropertyOS.init(); window.PropertyOS.renderPropertyPage(property); }
+    // Pass the render intent through: a refresh must not collapse the setup card
+    // the user is still filling in (see property-os.js renderSetupSummary).
+    if (window.PropertyOS) {
+      window.PropertyOS.init();
+      window.PropertyOS.renderPropertyPage(property, { allowCollapse: opts.scrollToTop !== false });
+    }
   } catch (e) { }
 
   // ── CAM Results ───────────────────────────────────────────────────────
@@ -22807,7 +22850,15 @@ function renderProperty(property) {
   // Sync onboarding step bar + contextual hints from current property state
   _obSyncState();
 
-  window.scrollTo({ top: 0, behavior: 'smooth' });
+  // Scrolling to the top is right when renderProperty() is a NAVIGATION — the
+  // user just opened a property and should start at its top. It is wrong when
+  // renderProperty() is a REFRESH triggered by an edit: this line ran on every
+  // keystroke in Total Sqft and threw the page to the top mid-number, which on a
+  // phone moved the field out from under the keyboard and dropped focus.
+  //
+  // Defaults to true so every existing navigation caller is unchanged; only the
+  // refresh paths opt out.
+  if (opts.scrollToTop !== false) window.scrollTo({ top: 0, behavior: 'smooth' });
   _obSyncState();
 }
 

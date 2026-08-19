@@ -212,7 +212,7 @@ window.PropertyOS = (function () {
     if (btn) btn.textContent = open ? 'Done' : 'Edit';
   }
 
-  function renderSetupSummary(property) {
+  function renderSetupSummary(property, opts) {
     var setup = _d('cardSetup'), bar = _d('posSetupSummary');
     if (!setup || !bar) return;
     if (!_isConfigured()) {
@@ -233,6 +233,24 @@ window.PropertyOS = (function () {
         (year ? ' \u00b7 ' + _esc(year) : '') + '</span>' +
       '<button type="button" class="pos-setup-edit" id="posSetupEdit"' +
         ' onclick="PropertyOS.toggleSetup()">Edit</button>';
+    // NEVER collapse the card out from under someone using it.
+    //
+    // This is the mobile Total Sqft bug. _isConfigured() becomes true the moment
+    // sqft > 0 — which the FIRST digit satisfies — so typing "2" of "25550"
+    // collapsed the whole setup card mid-entry, dropped focus, reflowed the page,
+    // and left an "Edit" button where the field had been. That is exactly the
+    // reported loop: type one digit, tap Edit, type one more.
+    //
+    // Two guards, and both are needed:
+    //   · focus inside the card  → they are typing right now
+    //   · a refresh, not a visit → they are still on this screen, mid-setup
+    // Collapsing is for RETURNING to a property that was configured earlier,
+    // which is what the copy above describes. It is not for the moment someone
+    // finishes typing the last required field.
+    var active = document.activeElement;
+    if (active && setup.contains(active)) return;
+    if (opts && opts.allowCollapse === false) return;
+
     // Collapsed by default on a configured property; re-opening is one tap.
     if (setup.style.display !== '') setup.style.display = 'none';
     else if (!bar.classList.contains('pos-setup-sum--open')) setup.style.display = 'none';
@@ -798,7 +816,7 @@ window.PropertyOS = (function () {
   }
   function _empty(m) { return '<div class="pos-empty">' + _esc(m) + '</div>'; }
 
-  function renderPropertyPage(property) {
+  function renderPropertyPage(property, opts) {
     property = property || (window.currentProperty && window.currentProperty());
     var body = _d('propertyOsBody');
     if (!body || !property) return;
@@ -806,7 +824,7 @@ window.PropertyOS = (function () {
     // PW-1 — stamp ids and migrate positional links BEFORE anything reads them.
     try { if (ensureInvoiceIds(property) && window.savePropertyData) window.savePropertyData(); } catch (_) {}
     // Collapse the first-run setup card once the building is configured.
-    try { renderSetupSummary(property); } catch (_) {}
+    try { renderSetupSummary(property, opts); } catch (_) {}
 
     var PR = window.PropertyReference;   // declared early: the documents section uses it
     var invs = invoices(property);
