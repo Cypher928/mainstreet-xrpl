@@ -3392,13 +3392,50 @@ function _hasPropertyMismatch(t) {
   return edgeCaseTypes.includes('PROPERTY_NAME_MISMATCH');
 }
 
+// Whether a detected mismatch is STILL BLOCKING, i.e. detected and not resolved
+// by an explicit landlord confirmation. _hasPropertyMismatch() above is the raw
+// detector and is deliberately left alone — a confirmed lease still carries its
+// mismatch on _edgeCases, still shows in AI Review Notes, and still reads as a
+// mismatch to anything that asks. Confirmation resolves the CONSEQUENCE, never
+// the finding.
+//
+// Returns null when CAM may proceed; otherwise the reason, for the card and the
+// banner. Mirrors _exclusionBlockReason()'s shape on purpose, including its
+// stale case: a confirmation that no longer matches the lease in front of us is
+// reported as stale rather than quietly ignored, so the landlord is told why
+// they are being asked again.
+function _propertyMismatchBlockReason(t) {
+  if (!_hasPropertyMismatch(t)) return null;
+
+  const LI = window.LeaseIntelligence;
+  const confirmed = LI && typeof LI.isPropertyMismatchConfirmed === 'function'
+    ? LI.isPropertyMismatchConfirmed(t)
+    : false;   // module missing ⇒ nothing is confirmed ⇒ stays blocked
+
+  // A confirmation belongs to the property it was made in. If this record has
+  // been copied or moved to a different property, the human verification does
+  // not travel with it.
+  const c = t && t._propertyConfirm;
+  const sameProperty = !c || !c.propertyId || !activePropId || c.propertyId === activePropId;
+
+  if (confirmed && sameProperty) return null;
+
+  return {
+    tenantName:    t.tenant_name,
+    extractedName: (t.property_name || '').trim(),
+    propertyName:  (currentProperty()?.name || '').trim(),
+    hasConfirm:    !!c,
+    staleConfirm:  !!c && (!confirmed || !sameProperty),
+  };
+}
+
 function getValidTenants() {
   return (currentProperty()?.tenants || []).filter(t =>
     t &&
     t.tenant_name &&
     Number(t.leased_sqft) > 0 &&
     !t.extractionFailed &&
-    !_hasPropertyMismatch(t)
+    !_propertyMismatchBlockReason(t)
   );
 }
 
@@ -3483,7 +3520,7 @@ function renderTenantFields(i) {
         <button class="re-btn" onclick="resetTenant(${i})">Re-upload</button>
       </div>
       ${(() => { const w = getWarnings(flags); return w.length ? `<div class="rc-flags"><div class="rc-flags-title">&#x26A0;&#xFE0F; Needs Review</div>${w.map(m => `<div class="rc-flag-item">${m}</div>`).join('')}</div>` : ''; })()}
-      ${_leaseEdgeCaseAndReviewNotesHtml(d)}
+      ${_leaseEdgeCaseAndReviewNotesHtml(d, i)}
       ${d.leaseExpected
         ? (d.leaseFile instanceof File || d.leaseUrl)
           ? `<button class="action-btn" onclick="openLeaseModalFromFile(${i})">&#x1F4C4; View Lease</button>`
@@ -5455,15 +5492,49 @@ function _confidenceBadgeHtml(level) {
 // but, before this, were only ever written to the browser console — the
 // property manager reviewing the upload never saw them. Pure rendering of
 // existing data; no new detection logic.
-function _leaseEdgeCaseAndReviewNotesHtml(d) {
+function _leaseEdgeCaseAndReviewNotesHtml(d, i) {
   const edgeCases  = (d._edgeCases && Array.isArray(d._edgeCases.edgeCases)) ? d._edgeCases.edgeCases : [];
   const reviewNotes = (d._explainability && Array.isArray(d._explainability.reviewNotes)) ? d._explainability.reviewNotes : [];
   if (!edgeCases.length && !reviewNotes.length) return '';
 
   const SEV_ICON = { high: '&#x26D4;', medium: '&#x26A0;&#xFE0F;', low: '&#x2139;&#xFE0F;' };
-  const edgeRows = edgeCases.map(e => `
-    <div class="lease-edge-note-item"><span class="len-icon">${SEV_ICON[e.severity] || '&#x2139;&#xFE0F;'}</span>
-      <span>${esc(e.reviewerNote || e.description || e.type)}</span></div>`).join('');
+
+  // PROPERTY_NAME_MISMATCH is the one edge case a landlord can resolve here, so
+  // it gets an action rather than only a note. Every other edge case renders
+  // exactly as before — this is not a general "dismiss warning" affordance.
+  const edgeRows = edgeCases.map(e => {
+    const note = `<div class="lease-edge-note-item"><span class="len-icon">${SEV_ICON[e.severity] || '&#x2139;&#xFE0F;'}</span>
+      <span>${esc(e.reviewerNote || e.description || e.type)}</span></div>`;
+    if (e.type !== 'PROPERTY_NAME_MISMATCH' || i == null) return note;
+
+    const block = _propertyMismatchBlockReason(d);
+    if (!block) {
+      const c = d._propertyConfirm || {};
+      const who  = c.by ? ` by ${esc(c.by)}` : '';
+      const when = c.at ? ` on ${esc(new Date(c.at).toLocaleDateString())}` : '';
+      return note + `<div class="lease-prop-confirmed">
+        <span class="lpc-check">&#x2713;</span>
+        <span><strong>Property confirmed</strong>${who}${when}.
+        The lease names &ldquo;${esc(c.extractedName || '')}&rdquo;; confirmed as part of
+        &ldquo;${esc(c.propertyName || '')}&rdquo;. Extracted values were not changed.</span>
+      </div>`;
+    }
+
+    const stale = block.staleConfirm
+      ? `<div class="lpm-stale">This lease was confirmed before, but the document or the
+         property name it states has changed since. Please confirm again.</div>`
+      : '';
+    return note + `<div class="lease-prop-confirm">
+      ${stale}
+      <div class="lpm-detail">Lease states <strong>${esc(block.extractedName || 'an unnamed property')}</strong>
+        &middot; uploaded into <strong>${esc(block.propertyName || 'this property')}</strong></div>
+      <button class="lpm-btn" type="button" onclick="confirmLeaseBelongsToProperty(${i})">
+        &#x2713; Confirm lease belongs to this property</button>
+      <div class="lpm-hint">Confirming records who verified it and when, and lets this tenant
+        take part in CAM. It does not change any extracted value or clear other warnings.</div>
+    </div>`;
+  }).join('');
+
   const noteRows = reviewNotes.map(n => `
     <div class="lease-edge-note-item"><span class="len-icon">&#x1F4CB;</span><span>${esc(n)}</span></div>`).join('');
 
@@ -7847,7 +7918,7 @@ function renderBulkResults() {
             ? `<div class="err-banner" style="margin-bottom:10px;">Extraction error: ${esc(d._error)}</div>`
             : '')}
           ${(() => { const w = getWarnings(computeFlags(d)); return w.length ? `<div class="rc-flags"><div class="rc-flags-title">&#x26A0;&#xFE0F; Needs Review</div>${w.map(m => `<div class="rc-flag-item">${m}</div>`).join('')}</div>` : ''; })()}
-          ${_leaseEdgeCaseAndReviewNotesHtml(d)}
+          ${_leaseEdgeCaseAndReviewNotesHtml(d, i)}
           <div class="citation-hint">&#x1F4CE; The colored chips below each field show the exact lease clause the AI used to determine each value. Hover a chip to read the full clause and verify accuracy.</div>
           <div class="field-row">
             <div class="field">
@@ -10016,14 +10087,30 @@ async function runAllocation() {
     section.prepend(warn);
   }
 
-  // Warn about tenants excluded from CAM because the lease names a different property
-  const mismatchedTenants = allNamedTenants.filter(t => _hasPropertyMismatch(t));
+  // Warn about tenants excluded from CAM because the lease names a different
+  // property. Counts only leases that are STILL blocking: one the landlord has
+  // explicitly confirmed is no longer excluded, so listing it here would tell
+  // them to go and fix something they already fixed. The mismatch itself is still
+  // recorded on the tenant's card either way.
+  const mismatchedTenants = allNamedTenants.filter(t => _propertyMismatchBlockReason(t));
   if (mismatchedTenants.length > 0) {
     const warn = document.createElement('div');
     warn.className = 'cam-skip-warning';
     warn.style.cssText = 'background:#7c2d1220;border:1px solid #f87171;color:var(--c-fca5a5);padding:10px 14px;border-radius:8px;margin-bottom:14px;font-size:0.85rem;';
-    warn.textContent = `⚠️ ${mismatchedTenants.length} tenant${mismatchedTenants.length > 1 ? 's' : ''} excluded from CAM — lease names a different property: ${mismatchedTenants.map(t => t.tenant_name).join(', ')}. Confirm the lease belongs here, then resolve the warning on that tenant's card and re-run.`;
+    warn.textContent = `⚠️ ${mismatchedTenants.length} tenant${mismatchedTenants.length > 1 ? 's' : ''} excluded from CAM — lease names a different property: ${mismatchedTenants.map(t => t.tenant_name).join(', ')}. Open that tenant's card on the Spaces tab and use "Confirm lease belongs to this property", then re-run.`;
     section.prepend(warn);
+  }
+
+  // Confirmed leases are reported separately rather than silently disappearing.
+  // A tenant taking part in CAM on a human's say-so is a fact the next person to
+  // read these results needs, and it is exactly what an auditor would ask about.
+  const confirmedTenants = allNamedTenants.filter(t => _hasPropertyMismatch(t) && !_propertyMismatchBlockReason(t));
+  if (confirmedTenants.length > 0) {
+    const okBanner = document.createElement('div');
+    okBanner.className = 'cam-confirmed-note';
+    okBanner.style.cssText = 'background:#064e3b20;border:1px solid #34d399;color:var(--c-6ee7b7,#6ee7b7);padding:10px 14px;border-radius:8px;margin-bottom:14px;font-size:0.85rem;';
+    okBanner.textContent = `✓ ${confirmedTenants.length} lease${confirmedTenants.length > 1 ? 's' : ''} named a different property and ${confirmedTenants.length > 1 ? 'were' : 'was'} confirmed by the property owner as belonging here: ${confirmedTenants.map(t => t.tenant_name).join(', ')}. Included in CAM.`;
+    section.prepend(okBanner);
   }
 
   const tenants = validTenants.map(t => ({
@@ -16287,6 +16374,90 @@ function _exclusionBlockReason(tenantName) {
   if (ack && fp && ack.fingerprint === fp) return null;
 
   return { tenantName, notApplied, fingerprint: fp, staleAck: !!(ack && ack.fingerprint !== fp) };
+}
+
+// Records the landlord's explicit verification that a lease whose document names
+// a different property does, in fact, belong to this one.
+//
+// WHAT THIS IS NOT. It does not accept the lease, does not touch a single
+// AI-extracted value, and does not clear any other warning. The extracted
+// property_name stays exactly as the model read it, the PROPERTY_NAME_MISMATCH
+// edge case stays on the record, and every other CAM exclusion, staleness guard
+// and lease-review check is untouched. The only thing that changes is that this
+// one tenant stops being held out of CAM.
+//
+// PER LEASE, DELIBERATELY. There is no "confirm all". A blanket override is the
+// one thing that would turn a human verification step back into a checkbox — the
+// landlord has to look at each lease that was flagged and say so about that lease.
+//
+// AUTHORIZATION. The button is landlord-only in the UI, but the real boundary is
+// the database: this writes into properties.data, and properties carries
+// `properties_owner_all USING (user_id = auth.uid())`, so a save by anyone who
+// does not own the property affects zero rows. The check below is defence in
+// depth and an affordance, not the control — role lives in client-writable
+// user_metadata and is not an authorization input (see T10 in the auth suite).
+function confirmLeaseBelongsToProperty(i) {
+  if (window.AuthService?.getCurrentUser?.()?.role === 'tenant' ||
+      (window.AuthService?.isLandlord && !window.AuthService.isLandlord())) {
+    showToast('Only the property owner can confirm a lease.', { color: '#92400e', textColor: '#fef3c7' });
+    return;
+  }
+  const prop = currentProperty();
+  if (!prop || !activePropId) {
+    showToast('Select a property before confirming a lease.', { color: '#92400e', textColor: '#fef3c7' });
+    return;
+  }
+  const t = tenantData[i];
+  if (!t) { showToast('Could not find that lease to confirm.', { color: '#92400e', textColor: '#fef3c7' }); return; }
+
+  // Never record a confirmation for something that was not flagged. An
+  // acknowledgement of a finding that does not exist is noise in the audit trail
+  // and would look, later, like a review that happened.
+  if (!_hasPropertyMismatch(t)) {
+    showToast('That lease is not flagged for a property mismatch.', { color: '#92400e', textColor: '#fef3c7' });
+    return;
+  }
+
+  const extractedName = (t.property_name || '').trim();
+  const documentKey   = window.LeaseIntelligence?.propertyDocumentKey?.(t) || '';
+
+  // Refuse to store a confirmation that identifies nothing — the same refusal
+  // acknowledgeUnappliedExclusions() makes for an empty fingerprint. Without the
+  // extracted name there is nothing to invalidate against later, so a re-upload
+  // naming a third property would inherit this confirmation.
+  if (!extractedName) {
+    showToast('Cannot confirm this lease — the property name could not be read from the document. Re-upload the lease and try again.',
+              { color: '#92400e', textColor: '#fef3c7' });
+    return;
+  }
+
+  const user = window.AuthService?.getCurrentUser?.() || null;
+  tenantData[i] = {
+    ...tenantData[i],
+    _propertyConfirm: {
+      extractedName,                       // what the lease said, at confirmation
+      documentKey,                         // which document was verified
+      propertyId:   activePropId,
+      propertyName: (prop.name || '').trim(),
+      at:           new Date().toISOString(),
+      by:           user?.email || null,
+    },
+  };
+
+  savePropertyData();
+  logActivity('property_confirmed',
+    `Lease confirmed as belonging to this property — ${t.tenant_name}`, {
+      severity: 'warning', actor: 'User', relatedEntity: t.tenant_name,
+      detail: `Lease document names "${extractedName}"; confirmed by ${user?.email || 'unknown user'} ` +
+              `as belonging to "${(prop.name || '').trim()}". Extracted values unchanged; ` +
+              `tenant is now eligible for CAM. Document: ${documentKey || 'not recorded'}.`,
+    });
+
+  showToast(`✓ Property confirmed for ${t.tenant_name}. Re-run the reconciliation to include them.`,
+            { color: '#064e3b', textColor: '#d1fae5' });
+
+  if (typeof renderTenantCards === 'function') renderTenantCards();
+  if (typeof renderBulkResults === 'function') renderBulkResults();
 }
 
 // Records the landlord's review of exclusions the engine could not apply, then

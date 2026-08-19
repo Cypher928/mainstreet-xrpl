@@ -144,9 +144,26 @@ window.ReviewEngine = (() => {
     const edgeCaseTypes = (t._edgeCases && Array.isArray(t._edgeCases.edgeCases))
       ? t._edgeCases.edgeCases.map(e => e.type) : [];
     const hasPropertyMismatch = edgeCaseTypes.includes('PROPERTY_NAME_MISMATCH');
-    if (hasPropertyMismatch) {
+
+    // The landlord may have explicitly confirmed this lease belongs here. That
+    // resolves the warning; it does not erase it — the warning stays, at low
+    // severity, saying a human vouched for it. A reviewer three months from now
+    // needs to see that this lease was flagged AND who cleared it.
+    //
+    // Delegated to LeaseIntelligence so this module and the CAM gate cannot form
+    // two different opinions of "confirmed". Guarded, and FAILS CLOSED: if that
+    // module is unavailable the lease reads as unconfirmed and keeps the high
+    // severity warning, which is the safe direction.
+    const _LI = (typeof window !== 'undefined' && window.LeaseIntelligence) || null;
+    const propertyConfirmed = !!(hasPropertyMismatch && _LI &&
+      typeof _LI.isPropertyMismatchConfirmed === 'function' && _LI.isPropertyMismatchConfirmed(t));
+
+    if (hasPropertyMismatch && !propertyConfirmed) {
       warnings.push({ type: 'property_name_mismatch', severity: 'high',
         label: 'Lease document names a different property — confirm this lease belongs here' });
+    } else if (propertyConfirmed) {
+      warnings.push({ type: 'property_name_confirmed', severity: 'low',
+        label: 'Lease names a different property — confirmed by the property owner as belonging here' });
     }
 
     // ── Score ──────────────────────────────────────────────────────────────
@@ -156,7 +173,11 @@ window.ReviewEngine = (() => {
     if (t._usedFallback) score -= 15;
     if (sqftConf != null && sqftConf < 70) score -= 10;
     if (isNNN && (t.cap == null || t.cap === '')) score -= 10;
-    if (hasPropertyMismatch) score -= 30;
+    // The -30 is for an UNRESOLVED mismatch. Once the owner has verified the
+    // lease belongs here, the doubt the penalty represents has been answered, so
+    // it lifts. Every other penalty is untouched — confirmation says nothing
+    // about missing sqft, a missing cap, or a low-confidence extraction.
+    if (hasPropertyMismatch && !propertyConfirmed) score -= 30;
     score -= getWarnings(computeFlags(t)).length * 5;
     score = Math.max(0, Math.min(100, score));
 

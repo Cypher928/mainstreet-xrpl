@@ -3109,6 +3109,40 @@
       display: flex; gap: 6px;
     }
     .lease-edge-note-item .len-icon { flex-shrink: 0; }
+
+    /* ── Property-mismatch confirmation (landlord verification step) ─────
+       Deliberately NOT styled as a dismiss/ignore control. The unresolved
+       state restates what the lease says versus where it was uploaded, so the
+       landlord is deciding on facts rather than clicking a warning away. */
+    .lease-prop-confirm {
+      margin: 8px 0 2px; padding: 10px 12px; border-radius: 6px;
+      background: rgba(248,113,113,0.08); border: 1px solid rgba(248,113,113,0.32);
+    }
+    .lpm-detail { font-size: 0.78rem; color: var(--c-fca5a5); line-height: 1.5; margin-bottom: 8px; }
+    .lpm-detail strong { color: var(--c-fecaca, #fecaca); }
+    .lpm-stale {
+      font-size: 0.75rem; color: var(--c-fbbf24); line-height: 1.5; margin-bottom: 8px;
+      padding-bottom: 8px; border-bottom: 1px solid rgba(248,113,113,0.22);
+    }
+    .lpm-btn {
+      font-size: 0.78rem; font-weight: 600; cursor: pointer;
+      background: rgba(52,211,153,0.14); color: var(--c-6ee7b7, #6ee7b7);
+      border: 1px solid rgba(52,211,153,0.45); border-radius: 6px; padding: 7px 12px;
+    }
+    .lpm-btn:hover { background: rgba(52,211,153,0.24); border-color: #34d399; }
+    .lpm-btn:focus-visible { outline: 2px solid #34d399; outline-offset: 2px; }
+    .lpm-hint { font-size: 0.72rem; color: var(--c-fca5a5); opacity: 0.85; margin-top: 7px; line-height: 1.45; }
+
+    .lease-prop-confirmed {
+      margin: 8px 0 2px; padding: 9px 12px; border-radius: 6px;
+      display: flex; gap: 8px; align-items: flex-start;
+      font-size: 0.78rem; line-height: 1.5;
+      background: rgba(52,211,153,0.10); border: 1px solid rgba(52,211,153,0.38);
+      color: var(--c-6ee7b7, #6ee7b7);
+    }
+    .lease-prop-confirmed .lpc-check { flex-shrink: 0; font-weight: 700; }
+    .lease-prop-confirmed strong { color: #a7f3d0; }
+
     .recon-inv-flag {
       width: 100%; font-size: 0.68rem; color: var(--c-f87171); margin-top: 2px; cursor: help;
     }

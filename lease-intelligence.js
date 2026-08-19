@@ -597,6 +597,54 @@ window.LeaseIntelligence = (() => {
     },
   ];
 
+  // ── PROPERTY_NAME_MISMATCH: the landlord's explicit resolution ─────────────
+  // Detection above is deliberately unchanged and stays unchanged: a mismatch is
+  // always detected, always recorded on _edgeCases, and always visible. What
+  // follows only answers a second, separate question — has a human who owns this
+  // property said "yes, this lease really does belong here".
+  //
+  // Lives here, beside the detector, so script.js (the CAM gate) and
+  // review-engine.js (Needs Review) cannot drift into two different opinions of
+  // what "confirmed" means. Same reasoning as F-02's single resolver.
+  //
+  // WHY THIS COMPARES VALUES RATHER THAN HASHING THEM
+  // The exclusion acknowledgement (_exclusionAck) keys on a fingerprint because
+  // its input is free-text prose that has to be normalised before two versions
+  // can be compared. The facts here are already discrete — a property name and a
+  // document identity — so storing and comparing them directly is both simpler
+  // and strictly more auditable: a person reading the record sees exactly what
+  // was confirmed, instead of an opaque eight-character hash.
+
+  /**
+   * Stable identity of the lease document a confirmation was made against.
+   * Re-uploading a different document changes this, which invalidates the
+   * confirmation — the landlord verified one document, not the tenant forever.
+   */
+  function propertyDocumentKey(t) {
+    if (!t) return '';
+    return String(t.leaseUrl || t.fileName || (t.leaseFile && t.leaseFile.name) || '').trim();
+  }
+
+  /**
+   * True when a landlord confirmation is present AND still describes the lease
+   * as it stands now.
+   *
+   * FAILS CLOSED in every ambiguous case. A confirmation that cannot be matched
+   * to the current extracted property name and document is treated as absent, so
+   * the mismatch re-blocks rather than silently persisting across a re-upload or
+   * a re-extraction that changed what the lease says.
+   */
+  function isPropertyMismatchConfirmed(t) {
+    const c = t && t._propertyConfirm;
+    if (!c || typeof c !== 'object') return false;
+    const confirmedName = String(c.extractedName == null ? '' : c.extractedName).trim();
+    const currentName   = String((t && t.property_name) == null ? '' : t.property_name).trim();
+    // An empty confirmed name identifies nothing and must never match.
+    if (!confirmedName) return false;
+    if (confirmedName !== currentName) return false;
+    return String(c.documentKey == null ? '' : c.documentKey) === propertyDocumentKey(t);
+  }
+
   function detectLeaseEdgeCases(tenantState, extractionResult) {
     const t = tenantState || {};
     const r = extractionResult || {};
@@ -707,5 +755,7 @@ window.LeaseIntelligence = (() => {
     detectLeaseEdgeCases,
     modelRoutingRecommendation,
     buildMultiDocReasoningDocs,
+    propertyDocumentKey,
+    isPropertyMismatchConfirmed,
   };
 })();
