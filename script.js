@@ -14252,18 +14252,33 @@ function buildAuditNarrative() {
   }
 
   // ── Financial Impact ──────────────────────────────────────────────────────
+  // Derived from the FINDINGS THEMSELVES via the canonical model, not from a
+  // separate set of inputs.
+  //
+  // This line used to be computed from exactly three things — undocumented
+  // invoices, open disputes and cap savings — none of which is a red flag. With
+  // every invoice documented, no disputes and no caps applied, all three were
+  // zero and the fallback printed "no at-risk amounts identified" directly
+  // beneath "5 critical exceptions". Both numbers were right; they were simply
+  // computed from disjoint inputs and had never been reconciled.
+  //
+  // Those three amounts are still counted — they are now attached to the
+  // findings that report them (see below), so they flow in through the same
+  // path as everything else instead of bypassing it.
   const disputeAmt   = openDisputes.reduce((s, d) => s + (parseFloat(d.tenantShare) || 0), 0);
   const capSavings   = lastResults.filter(r => r.capApplied).reduce((s, r) => s + (r.capAdjustment || 0), 0);
   const missingDocAmt = invAll
     .filter(i => !i.fileUrl && !i.fileName)
     .reduce((s, i) => s + (parseFloat(i.amount) || 0), 0);
-  const impactParts = [];
-  if (missingDocAmt > 0) impactParts.push(`${fmt(missingDocAmt)} in undocumented charges`);
-  if (disputeAmt   > 0) impactParts.push(`${fmt(disputeAmt)} in open dispute`);
-  if (capSavings   > 0) impactParts.push(`${fmt(capSavings)} reduced via CAM caps`);
-  const financialImpact = impactParts.length > 0
-    ? impactParts.join(' · ')
-    : total > 0 ? `${fmt(total)} total CAM pool — no at-risk amounts identified` : 'Insufficient data';
+
+  const AX = window.AuditExposure;
+  const exposure = AX
+    ? AX.deriveExposure({ red, yellow, green }, total)
+    : null;
+  const readiness = AX && exposure ? AX.billingReadiness(exposure) : null;
+  const financialImpact = (AX && exposure)
+    ? AX.describeExposure(exposure)
+    : (total > 0 ? `${fmt(total)} total CAM pool` : 'Insufficient data');
 
   // ── Summary Paragraph ─────────────────────────────────────────────────────
   const parts = [];
@@ -14415,6 +14430,11 @@ function buildAuditNarrative() {
     recommendations,
     financialImpact,
     confidence,
+    // Canonical audit state, exposed so every other surface — the exposure
+    // breakdown, the Lender Summary health score — reads the same numbers
+    // instead of deriving its own from a different set of inputs.
+    exposure,
+    readiness,
   };
 }
 
@@ -14465,6 +14485,36 @@ function renderNarrativePanel() {
         <span class="an-impact-label">Estimated Financial Exposure</span>
         <span class="an-impact-val">${esc(n.financialImpact)}</span>
       </div>
+      ${(() => {
+        // The four buckets, itemised. A single sentence could still be read as
+        // "the pool is fine" — the breakdown makes the difference between money
+        // that is at risk, money that is merely unresolved, and money nobody has
+        // priced yet impossible to conflate.
+        const x = n.exposure;
+        if (!x || !x.totalPool) return '';
+        const money = (v) => '$' + Math.round(v).toLocaleString('en-US');
+        const rows = [
+          ['Total CAM pool', money(x.totalPool), null],
+          ['Confirmed at risk', money(x.confirmedAtRisk),
+            x.confirmedAtRisk > 0 ? 'an-exp--risk' : null],
+          ['Requiring review', money(x.requiringReview),
+            x.requiringReview > 0 ? 'an-exp--review' : null],
+          ['Excluded or recovered', money(x.excludedRecoverable), null],
+        ];
+        const unq = x.unquantified > 0
+          ? `<div class="an-exp-note">${x.unquantified} finding${x.unquantified === 1 ? '' : 's'} not yet quantified — these carry no dollar figure and are NOT counted as zero.</div>`
+          : '';
+        return `<div class="an-exposure">
+          ${rows.map(([l, v, cls]) => `<div class="an-exp-row ${cls || ''}">
+            <span class="an-exp-label">${esc(l)}</span><span class="an-exp-val">${esc(v)}</span></div>`).join('')}
+          ${unq}
+        </div>`;
+      })()}
+      ${n.readiness ? `<div class="an-readiness an-readiness--${n.readiness.canBill ? 'ok' : 'blocked'}">
+        <span class="an-readiness-q">Can I bill these tenants?</span>
+        <span class="an-readiness-a">${esc(n.readiness.label)}</span>
+        <span class="an-readiness-why">${esc(n.readiness.reason)}</span>
+      </div>` : ''}
     </div>`;
 
   // Insert before auditPanel so narrative sits above the flag detail panel
@@ -16204,7 +16254,12 @@ function generateLenderSummaryReport() {
     const prop = currentProperty();
     if (!prop) { showToast('Select a property first.', { color: '#92400e', textColor: '#fef3c7' }); return; }
     if (!window.LeaseReviewPackets) { showToast('Lease Review Packets module not loaded.', { color: '#92400e', textColor: '#fef3c7' }); return; }
-    const html = window.LeaseReviewPackets.generateLenderSummaryHtml(prop);
+    // Hand the Lender Summary the SAME audit state the on-screen summary shows.
+    // Without it the health score can only see document completeness, which is
+    // how a property with five critical exceptions reported 100/100.
+    let _auditState = null;
+    try { if (lastResults.length) _auditState = buildAuditNarrative(); } catch (_) {}
+    const html = window.LeaseReviewPackets.generateLenderSummaryHtml(prop, _auditState);
     logActivity('lender_summary', 'Lender Summary generated', { severity: 'info', actor: 'User', relatedEntity: prop.name || 'Property' });
     openReport('Lender Summary — ' + (prop.name || 'Property'), html);
   } catch (e) {
@@ -21397,17 +21452,19 @@ function _tier1LeaseChecks(tenant, totalExpenses, lineItems, reconciledAt) {
     } else {
       findings.push({
         check: 'MGMT_FEE_CAP', source: 'deterministic',
-        severity: 'info', confidence: 'high',
-        finding: 'No administrative fee line items identified in this reconciliation.',
+        // Nothing to measure the cap against. Not a pass — the cap was never tested.
+        severity: 'unconfirmed', confidence: 'high',
+        finding: 'No administrative fee line items identified in this reconciliation, so the cap could not be tested.',
         quote: null, section: null, page: null, explanation: null,
       });
     }
   } else {
     findings.push({
       check: 'MGMT_FEE_CAP', source: 'deterministic',
-      severity: 'info', confidence: 'high',
+      // Absence of a cap clause is absence of evidence, not a passing check.
+      severity: 'unconfirmed', confidence: 'high',
       finding: cap === null
-        ? 'No management fee cap was extracted from the lease.'
+        ? 'No management fee cap was extracted from the lease, so no cap could be checked against this reconciliation.'
         : 'Total expenses are zero — fee cap check skipped.',
       quote: null, section: null, page: null, explanation: null,
     });
@@ -21453,9 +21510,11 @@ function _tier1LeaseChecks(tenant, totalExpenses, lineItems, reconciledAt) {
     } else {
       findings.push({
         check: 'AUDIT_RIGHTS', source: 'deterministic',
-        severity: 'info', confidence: 'medium',
+        // The right exists but its deadline does not parse, so the window cannot
+        // be confirmed open or closed.
+        severity: 'unconfirmed', confidence: 'medium',
         finding: auditText
-          ? `Audit rights found but deadline could not be computed: "${auditText.slice(0, 80)}"`
+          ? `Audit rights found but the deadline could not be computed: "${auditText.slice(0, 80)}"`
           : 'Audit rights granted, but no deadline was extracted from the clause.',
         quote: auditText, section: null, page: auditEvidence?.page ?? null, explanation: null,
       });
@@ -21463,8 +21522,11 @@ function _tier1LeaseChecks(tenant, totalExpenses, lineItems, reconciledAt) {
   } else {
     findings.push({
       check: 'AUDIT_RIGHTS', source: 'deterministic',
-      severity: 'info', confidence: 'high',
-      finding: 'Audit rights are not addressed in this lease.',
+      // Silence is not consent. A lease that says nothing about audit rights
+      // leaves the tenant's position undetermined, which is materially different
+      // from one that grants them — and from one that waives them.
+      severity: 'unconfirmed', confidence: 'high',
+      finding: 'Audit rights are not addressed in this lease. The tenant\u2019s audit position cannot be confirmed from this document.',
       quote: null, section: null, page: null, explanation: null,
     });
   }
@@ -21474,9 +21536,32 @@ function _tier1LeaseChecks(tenant, totalExpenses, lineItems, reconciledAt) {
 
 // Renders the validation panel HTML for a given findings array and loading state.
 function _renderValidationPanel(findings, { loading = false, charsAnalyzed = null, truncated = false, fileUrl = null } = {}) {
-  const SEV_ICON  = { critical: '⛔', warning: '⚠️', info: '✅' };
-  const SEV_LABEL = { critical: 'CRITICAL', warning: 'REVIEW', info: 'PASSED' };
-  const SEV_CLS   = { critical: 'lv-finding--critical', warning: 'lv-finding--warning', info: 'lv-finding--info' };
+  // Four verdicts, not three. `info` previously rendered as "PASSED", so
+  // "No management fee cap was extracted from the lease" and "Audit rights are
+  // not addressed in this lease" both displayed a green tick — absence of
+  // evidence presented as confirmation, which is indefensible in front of a
+  // tenant auditor. `unconfirmed` separates "we checked and it holds" from
+  // "the lease does not say".
+  const SEV_ICON  = { critical: '⛔', warning: '⚠️', unconfirmed: '❓', info: '✅' };
+  const SEV_LABEL = { critical: 'EXCEPTION', warning: 'REVIEW', unconfirmed: 'NOT CONFIRMED', info: 'PASSED' };
+  const SEV_CLS   = { critical: 'lv-finding--critical', warning: 'lv-finding--warning',
+                      unconfirmed: 'lv-finding--unconfirmed', info: 'lv-finding--info' };
+  // One line saying what the verdict means for billing, so the reader never has
+  // to infer it from a coloured badge.
+  const SEV_MEANING = {
+    critical:    'The reconciliation conflicts with the lease.',
+    warning:     'Resolve before billing: the lease and the reconciliation may not agree.',
+    unconfirmed: 'The lease does not provide enough information to confirm this. Not a failure — not a pass either.',
+    info:        'The lease explicitly supports this condition.',
+  };
+  // Where the finding came from. Already recorded on every deterministic
+  // finding and never rendered — which is why two CAM Exclusions cards could
+  // appear, one PASSED and one REVIEW, with nothing on screen explaining that
+  // they answer different questions.
+  const SRC_LABEL = {
+    deterministic: 'Computed from the reconciliation',
+    ai:            'AI clause reading',
+  };
   const CHECK_LABELS = {
     MGMT_FEE_CAP:      'Management Fee Cap',
     AUDIT_RIGHTS:      'Audit Rights',
@@ -21505,6 +21590,11 @@ function _renderValidationPanel(findings, { loading = false, charsAnalyzed = nul
       : '';
     const confCls  = { high: 'lv-conf--high', medium: 'lv-conf--medium', low: 'lv-conf--low' }[f.confidence] || 'lv-conf--medium';
 
+    const meaning  = SEV_MEANING[f.severity];
+    const srcText  = f.subject || SRC_LABEL[f.source] || (f.source ? esc(f.source) : null);
+    const srcHtml  = srcText ? `<div class="lv-source">Source: ${esc(srcText)}</div>` : '';
+    const meanHtml = meaning ? `<div class="lv-meaning">${esc(meaning)}</div>` : '';
+
     return `<div class="lv-finding ${cls}">
       <div class="lv-finding-hdr">
         <span class="lv-finding-icon">${icon}</span>
@@ -21514,7 +21604,7 @@ function _renderValidationPanel(findings, { loading = false, charsAnalyzed = nul
       </div>
       <div class="lv-finding-body">
         <div class="lv-finding-text">${fSafe}</div>
-        ${quoteHtml}${explanHtml}${viewBtn}
+        ${meanHtml}${quoteHtml}${explanHtml}${srcHtml}${viewBtn}
       </div>
     </div>`;
   }).join('');
@@ -21523,7 +21613,18 @@ function _renderValidationPanel(findings, { loading = false, charsAnalyzed = nul
   const warnCount = findings.filter(f => f.severity === 'warning').length;
   const statusText = loading
     ? `${findings.length} check${findings.length !== 1 ? 's' : ''} complete · analyzing clauses…`
-    : `${findings.length} check${findings.length !== 1 ? 's' : ''}${warnCount ? ` · ${warnCount} review` : ''}${critCount ? ` · ${critCount} critical` : ''}`;
+    : (() => {
+        const unconfCount = findings.filter(f => f.severity === 'unconfirmed').length;
+        const passCount   = findings.filter(f => f.severity === 'info').length;
+        // Spelled out rather than reduced to "N checks": "8 checks" beside a row
+        // of green ticks reads as eight confirmations even when four of them
+        // only mean the lease was silent.
+        return `${findings.length} check${findings.length !== 1 ? 's' : ''}` +
+               `${passCount ? ` · ${passCount} passed` : ''}` +
+               `${unconfCount ? ` · ${unconfCount} not confirmed` : ''}` +
+               `${warnCount ? ` · ${warnCount} review` : ''}` +
+               `${critCount ? ` · ${critCount} exception${critCount !== 1 ? 's' : ''}` : ''}`;
+      })();
 
   const metaLine  = !loading && charsAnalyzed
     ? `<div class="lv-meta">Analyzed ${Math.round(charsAnalyzed/1000)}k chars of stored lease text${truncated ? ' (truncated)' : ''}</div>`

@@ -13,6 +13,15 @@ window.ReconciliationEngine = (() => {
     return '$' + Number(n).toLocaleString('en-US', { minimumFractionDigits: 2, maximumFractionDigits: 2 });
   }
 
+  // Finite numbers only. A lease field that is null, '', 'N/A' or unparseable
+  // must read as ABSENT, not as 0 — a 0% stated share would otherwise look like
+  // a real figure and raise a conflict against every computed share.
+  function _num(v) {
+    if (v === null || v === undefined || v === '') return null;
+    const n = typeof v === 'number' ? v : parseFloat(String(v).replace(/[%,\s]/g, ''));
+    return Number.isFinite(n) ? n : null;
+  }
+
   /**
    * Derives the calculation state badge for a single reconciliation result.
    * @param {object} result - ReconciliationResult
@@ -57,18 +66,96 @@ window.ReconciliationEngine = (() => {
     results.forEach(r => {
       const t = tenants.find(t => t.id === r.tenantId);
       if (t?.end_date && t.end_date < evalDate && r.totalAllocated > 0) {
+        // The CAM year being billed, not today — a 2026 reconciliation against a
+        // lease that ended in 2003 is the sentence a manager needs to read.
+        const camYear   = String(evalDate).slice(0, 4);
+        const endYear   = String(t.end_date).slice(0, 4);
+        const yearsGone = (Number(camYear) - Number(endYear)) || 0;
         flags.push({
           severity: 'red',
-          title:    `Expired lease receiving allocation — ${r.name} (ended ${t.end_date})`,
-          detail:   `${r.name}'s lease ended ${t.end_date}, but this reconciliation allocates ${_fmt(r.totalAllocated)} to them. Confirm occupancy or remove this tenant before issuing statements.`,
+          title:    `${r.name} is being billed ${camYear} CAM on a lease that ended ${t.end_date}`,
+          detail:   `This reconciliation allocates ${_fmt(r.totalAllocated)} of ${camYear} CAM to ${r.name}, but the lease on file expired ${t.end_date}` +
+                    (yearsGone > 0 ? ` — ${yearsGone} year${yearsGone === 1 ? '' : 's'} before the period being billed` : '') +
+                    `. Unless a holdover or renewal extends the CAM obligation, there is no lease on file supporting this charge.`,
+          // The whole allocation is at risk: without a current lease there is no
+          // documented basis for any of it. This amount previously existed only
+          // as prose and never reached the exposure total, which is why the
+          // summary could report "no at-risk amounts identified" beside it.
+          impact:  { amount: r.totalAllocated, kind: 'at_risk',
+                     basis: `Full ${camYear} allocation to ${r.name}; no unexpired lease on file` },
+          actions: ['Confirm occupancy', 'Update lease', 'Remove allocation'],
+          source:  'Lease record (end_date) vs reconciliation allocation',
           conditions: [
             `Tenant: ${r.name}`,
             `Lease end date: ${t.end_date}`,
+            `CAM year billed: ${camYear}`,
             `Allocated amount: ${_fmt(r.totalAllocated)}`,
-            'Action: confirm occupancy status or exclude from this reconciliation',
           ],
         });
       }
+    });
+
+    // ── 1b. Pro-rata allocation conflict — lease-stated vs computed ────────
+    //
+    // Two numbers for the same tenant, from two different sources:
+    //   · the proportionate share written in the executed lease
+    //   · leased_sqft / property total sqft, which is what CAM was allocated on
+    //
+    // Nothing previously compared them, so a tenant could display 22.25% on the
+    // card while a clause check quoted 18.54% from the lease, with no finding
+    // raised. The AI validator cannot catch it either — it is never given the
+    // computed share (see api/_validate-lease-contract.js buildClausePrompt).
+    //
+    // FLAG BOTH, ASSERT NEITHER. Which figure governs depends on the lease's
+    // allocation methodology, and that is a contractual question this engine has
+    // no basis to settle. A fixed proportionate share may control regardless of
+    // remeasurement; equally, the lease figure may be stale after a remeasure.
+    // Declaring either one correct would manufacture an over- or under-recovery
+    // finding out of an unresolved question — so the impact is 'under_review',
+    // never 'at_risk', and the difference is stated in percentage points rather
+    // than converted into a dollar loss.
+    results.forEach(r => {
+      const t = tenants.find(t => t.id === r.tenantId);
+      const stated   = _num(t && (t.pro_rata_share ?? t.proportionate_share ?? t.pro_rata_percent));
+      const computed = _num(r.proRataPercent != null ? r.proRataPercent
+                            : (r.proRata != null ? r.proRata * 100 : null));
+      if (stated === null || computed === null) return;
+
+      // 0.10pp tolerance absorbs rounding in the lease text and in display.
+      const diff = Math.abs(stated - computed);
+      if (diff <= 0.10) return;
+
+      // Both readings of the same pool, so the manager can see the size of the
+      // question without being told which answer is right.
+      const pool      = _num(r.totalAllocated != null && computed
+        ? (r.totalAllocated / (computed / 100)) : null);
+      const atStated  = pool != null ? pool * (stated / 100) : null;
+      const spread    = (atStated != null && r.totalAllocated != null)
+        ? Math.abs(r.totalAllocated - atStated) : null;
+
+      flags.push({
+        severity: 'yellow',
+        title:    `Pro-rata allocation conflict — ${r.name}`,
+        detail:   `Lease-stated proportionate share differs from the square-footage-derived allocation. ` +
+                  `Verify the executed lease and applicable allocation methodology before billing.`,
+        impact:   { amount: spread, kind: 'under_review',
+                    basis: 'Difference between the two methodologies. Not a confirmed over- or under-recovery — ' +
+                           'which figure governs is unresolved.' },
+        actions:  ['Review lease clause', 'Confirm allocation methodology',
+                   'Update tenant allocation if verified', 'Re-run reconciliation'],
+        source:   'Lease-stated share (lease document) vs computed share (leased sqft ÷ property sqft)',
+        conditions: [
+          `Tenant: ${r.name}`,
+          `Lease-stated proportionate share: ${stated.toFixed(2)}%`,
+          `Computed square-footage share: ${computed.toFixed(2)}%`,
+          `Difference: ${diff.toFixed(2)} percentage points`,
+          spread != null
+            ? `Allocation differs by ${_fmt(spread)} between the two methodologies`
+            : 'Dollar difference could not be computed from the available figures',
+          'Potential impact: allocation may over- or under-recover depending on which contractual methodology governs.',
+          'MainStreet does not assert which figure is controlling. Confirm against the executed lease.',
+        ],
+      });
     });
 
     // ── 2. Cap applied — document and verify source ────────────────────────

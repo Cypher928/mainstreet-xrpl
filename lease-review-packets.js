@@ -733,7 +733,13 @@ window.LeaseReviewPackets = (() => {
   // Completely separate from formatReviewPacketHtml. No internal extraction
   // metadata, confidence scores, or evidence appendix.
 
-  function generateLenderSummaryHtml(property) {
+  /**
+   * @param {object} property
+   * @param {object} [auditState] canonical audit state from buildAuditNarrative():
+   *        { exposure, readiness }. Optional so existing callers keep working,
+   *        but WITHOUT it the health score can only see document completeness.
+   */
+  function generateLenderSummaryHtml(property, auditState) {
     const tenants  = Array.isArray(property.tenants)  ? property.tenants  : [];
     const disputes = Array.isArray(property.disputes) ? property.disputes : [];
     const timeline = Array.isArray(property.timeline) ? property.timeline : [];
@@ -773,12 +779,41 @@ window.LeaseReviewPackets = (() => {
 
     // Health score: simple weighted formula
     const lowConfCount = activeTenants.filter(t => t._confidence === 'low' || (t._confidenceScore != null && t._confidenceScore < 55)).length;
+    // The audit's own findings, via the canonical model.
+    //
+    // This score was 100 minus penalties for missing documents, low extraction
+    // confidence, open disputes and lease exceptions — four inputs, none of
+    // which is the audit finding set. A property with five critical exceptions,
+    // complete documents and no disputes therefore scored 100/100 and was
+    // presented to a lender as pristine.
+    //
+    // The document-completeness penalties are kept: they measure something real
+    // that the audit findings do not. They were simply never the whole picture.
+    const _AX = (typeof window !== 'undefined' && window.AuditExposure)
+      || (typeof require === 'function' ? (function () { try { return require('./audit-exposure.js'); } catch (_) { return null; } })() : null);
+    const _exposure = auditState && auditState.exposure ? auditState.exposure : null;
+    const _auditPenalty = (_AX && _exposure) ? _AX.healthDeductions(_exposure) : { deduction: 0, reasons: [] };
+
     const rawHealth    = 100
       - (missingCritDocs  * 15)
       - (lowConfCount     * 8)
       - (openDisputes.length * 5)
-      - (leaseExceptions  * 2);
+      - (leaseExceptions  * 2)
+      - _auditPenalty.deduction;
     const healthScore  = activeTenants.length > 0 ? Math.max(0, Math.min(100, Math.round(rawHealth))) : null;
+
+    // Show the working. An unexplained score invites the reader to trust it;
+    // a score with its deductions listed invites them to check it.
+    const _healthBasis = []
+      .concat(missingCritDocs      ? [`${missingCritDocs} lease${missingCritDocs === 1 ? '' : 's'} missing critical dates or sqft (−${missingCritDocs * 15})`] : [])
+      .concat(lowConfCount         ? [`${lowConfCount} low-confidence extraction${lowConfCount === 1 ? '' : 's'} (−${lowConfCount * 8})`] : [])
+      .concat(openDisputes.length  ? [`${openDisputes.length} open dispute${openDisputes.length === 1 ? '' : 's'} (−${openDisputes.length * 5})`] : [])
+      .concat(leaseExceptions      ? [`${leaseExceptions} lease exception${leaseExceptions === 1 ? '' : 's'} (−${leaseExceptions * 2})`] : [])
+      .concat(_auditPenalty.reasons);
+
+    // A lender summary must never imply the reconciliation is billable when the
+    // audit says otherwise. Read from the same canonical state, not re-derived.
+    const _readiness = auditState && auditState.readiness ? auditState.readiness : null;
 
     // ── Risk levels ───────────────────────────────────────────────────────────
 
@@ -919,6 +954,13 @@ window.LeaseReviewPackets = (() => {
           ['Missing Documents',  missingCritDocs, missingCritDocs > 0],
           ['Health Score',       healthScore != null ? healthScore + ' / 100' : '—', healthScore != null && healthScore < 60],
         ])}
+        ${_healthBasis.length ? `<div style="margin-top:8px;font-size:11px;line-height:1.6;color:#94a3b8;"><strong>Health score basis:</strong> ${_healthBasis.map(_esc).join(' &middot; ')}</div>` : ''}
+        ${_readiness ? `<div style="margin-top:10px;padding:8px 11px;border-radius:5px;font-size:12px;line-height:1.5;${
+            _readiness.canBill
+              ? 'background:#0f2a1c;color:#86efac;border:1px solid #14532d;'
+              : 'background:#2d1010;color:#fca5a5;border:1px solid #7f1d1d;'}">
+          <strong>${_esc(_readiness.label)}</strong> &mdash; ${_esc(_readiness.reason)}
+        </div>` : ''}
       </div>`;
 
     // ── SECTION: Property Risk Snapshot ──────────────────────────────────────
