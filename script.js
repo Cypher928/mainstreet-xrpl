@@ -13855,8 +13855,16 @@ function buildAuditSummary() {
         const vendor  = inv.vendor || inv.vendorName || 'Unknown';
         red.push({
           group:  'red_flags',
+          severity: 'red',
           title:  `Unusually large invoice — ${vendor}: ${fmt(amt)} (${pct}% of total CAM)`,
           detail: `This invoice represents ${pct}% of total CAM expenses (${fmt(amt)} of ${fmt(total)}), exceeding the 40% materiality threshold by ${excess}. A single vendor accounting for more than 40% of the total expense pool warrants independent verification before billing.`,
+          // Expense-side, not allocation-side: the concentration is a reason to
+          // verify this invoice, not a claim that the money is lost. Scoped to
+          // the vendor so an invoice flagged twice is still counted once.
+          impact: { amount: amt, kind: 'unsubstantiated', scope: `invoice:${vendor}`,
+                    basis: `Single invoice at ${pct}% of the pool, pending independent verification` },
+          actions: ['Obtain competitive bids', 'Verify against vendor contract', 'Attach supporting detail'],
+          source: 'Invoice amount vs total CAM pool',
           conditions: [
             `Vendor: "${vendor}"`,
             `Invoice amount: ${fmt(amt)}`,
@@ -13931,9 +13939,20 @@ function buildAuditSummary() {
         (missing.length > 3 ? ` +${missing.length - 3} more` : '');
       const bucket = pct === 100 ? red : yellow;
       const allMissing = pct === 100;
+      const missingAmt = missing.reduce((s, inv) => s + (parseFloat(inv.amount) || 0), 0);
       bucket.push({
         group:  'missing_docs',
+        severity: allMissing ? 'red' : 'yellow',
         title:  `${missing.length} of ${allInvData.length} invoice${missing.length > 1 ? 's' : ''} missing source document`,
+        // The dollars that cannot be independently verified. Expense-side: it is
+        // a documentation gap, not a determination that the charge is wrong.
+        impact: missingAmt > 0
+          ? { amount: missingAmt, kind: 'unsubstantiated',
+              scope: `invoices:${missing.map(i => i.vendorName).sort().join('|')}`,
+              basis: 'Charges with no attached invoice or receipt' }
+          : undefined,
+        actions: ['Attach source invoices', 'Request copies from vendor', 'Exclude from billing until documented'],
+        source: 'Invoice records — attachment presence',
         detail: allMissing
           ? `No invoices have attached source documents — the entire CAM expense pool of ${fmt(total)} cannot be independently verified. Standard CAM audit requirements mandate supporting documentation for all billed charges.`
           : `CAM audits require source documentation for all billed expenses. Without attachments, ${names} cannot be independently verified and are susceptible to tenant challenge. ${missing.length} of ${allInvData.length} invoices (${pct}%) are affected.`,
@@ -13955,8 +13974,19 @@ function buildAuditSummary() {
       const noDateNames = noDates.slice(0, 3).map(inv => inv.vendorName).join(', ') +
         (noDates.length > 3 ? ` +${noDates.length - 3} more` : '');
       const camYr = getCamYear() || 'the reconciliation period';
+      const noDateAmt = noDates.reduce((s, inv) => s + (parseFloat(inv.amount) || 0), 0);
       yellow.push({
         group:  'missing_docs',
+        severity: 'yellow',
+        // Same expense-side axis, scoped by vendor so an invoice that is both
+        // undated and undocumented is one sum of money, counted once.
+        impact: noDateAmt > 0
+          ? { amount: noDateAmt, kind: 'unsubstantiated',
+              scope: `invoices:${noDates.map(i => i.vendorName).sort().join('|')}`,
+              basis: `Charges that cannot be placed in the ${camYr} period from the document alone` }
+          : undefined,
+        actions: ['Obtain dated invoice', 'Confirm service period with vendor', 'Exclude if outside the CAM year'],
+        source: 'Invoice records — invoice date field',
         title:  `${noDates.length} invoice${noDates.length > 1 ? 's' : ''} missing invoice date`,
         // The detail used to open "Invoice date confirms that a charge falls
         // within the <year> CAM reconciliation period" — a general statement of
@@ -13983,8 +14013,17 @@ function buildAuditSummary() {
         return `"${inv.vendorName}": matched on "${reason}" at ${inv.matchConfidence}% — below 75% threshold, allocated pro-rata`;
       });
       if (lowConf.length > 5) lowConfConditions.push(`+${lowConf.length - 5} more`);
+      const lowConfAmt = lowConf.reduce((s, inv) => s + (parseFloat(inv.amount) || 0), 0);
       yellow.push({
         group:  'allocation',
+        severity: 'yellow',
+        impact: lowConfAmt > 0
+          ? { amount: lowConfAmt, kind: 'unsubstantiated',
+              scope: `invoices:${lowConf.map(i => i.vendorName).sort().join('|')}`,
+              basis: 'Charges whose tenant attribution was too weak to direct-bill, so they were spread pro-rata' }
+          : undefined,
+        actions: ['Confirm the tenant on the invoice', 'Correct the unit or tenant name', 'Re-run reconciliation'],
+        source: 'Invoice-to-tenant matching engine — match confidence',
         title:  `${lowConf.length} invoice${lowConf.length > 1 ? 's' : ''} matched with insufficient confidence for direct tenant charge`,
         detail: `The matching engine assigns confidence based on unit number hits (90%) and tenant name hits (75%). These invoices matched partially but fell below the 75% direct-charge threshold, so they were distributed pro-rata across all tenants rather than charged to a specific tenant.`,
         conditions: [
@@ -14047,7 +14086,23 @@ function buildAuditSummary() {
     }
   }
 
-  // ── 8. Pro-rata allocation coverage ─────────────────────────────────────
+  // ── 8. Pro-rata allocation coverage — CONFIRMATION ONLY ─────────────────
+  //
+  // This section used to raise its own finding when the shares did not sum to
+  // 100%, in both directions. So does reconciliation-engine.js section 3, on
+  // identical thresholds (gap > 2 under, gap < -2 over). The Test 2 audit
+  // therefore listed the same fact twice — "Pro-rata totals 56.8% — 43.3% of
+  // expenses not allocated to a loaded lease" directly above "Coverage gap:
+  // loaded leases cover 56.8% of the property" — which inflated the warning
+  // count by one and deducted twice from the Lender Summary health score.
+  //
+  // The engine's version is the one to keep: it carries `kind: 'coverage'` and
+  // `disputable: false`, which the renderer needs in order not to style a
+  // property-level coverage figure as a tenant exception or offer a dispute
+  // against a tenant whose allocation is correct.
+  //
+  // What is left here is the case the engine says nothing about: the shares DO
+  // sum to 100%, which is a passed check worth showing.
   {
     const totalPR     = results.reduce((s, r) => s + (r.proRataPercent || 0), 0);
     const prop        = currentProperty();
@@ -14056,53 +14111,17 @@ function buildAuditSummary() {
     const sqftCtx     = propSqft > 0 && leasedSqft > 0
       ? `The leases currently loaded cover ${leasedSqft.toLocaleString()} of ${propSqft.toLocaleString()} total sqft.`
       : null;
-    if (results.length > 0) {
-      if (Math.abs(totalPR - 100) < 2) {
-        green.push({
-          group: 'allocation',
-          title: `Pro-rata percentages sum to ${totalPR.toFixed(1)}% — all expenses accounted for`,
-          conditions: [
-            `Sum of tenant pro-rata: ${totalPR.toFixed(1)}% (within ±2% of 100%)`,
-            ...(sqftCtx ? [sqftCtx + ' Full building is under lease.'] : []),
-          ],
-        });
-      } else if (totalPR < 98) {
-        const gap = (100 - totalPR).toFixed(1);
-        yellow.push({
-          group:  'allocation',
-          title:  `Pro-rata totals ${totalPR.toFixed(1)}% — ${gap}% of expenses not allocated to a loaded lease`,
-          // This measures the leases MainStreet holds, not the building's real
-          // occupancy. A gap means one of two things and the tool cannot tell
-          // them apart: the space is genuinely vacant, in which case the
-          // landlord absorbs that share; or it is leased and the lease has not
-          // been uploaded, in which case the share is recoverable and the
-          // statements are wrong. Asserting "untenanted" and "not recoverable"
-          // stated the first as fact.
-          detail: sqftCtx
-            ? `${sqftCtx} The remaining ${(propSqft - leasedSqft).toLocaleString()} sqft is not covered by any lease currently loaded. That is either vacant space — whose ${gap}% share of CAM the landlord absorbs — or space under a lease that has not been uploaded yet, in which case that share is recoverable and is currently missing from the reconciliation. Confirm which before treating the ${gap}% as unrecoverable.`
-            : `The square footage on the loaded leases is less than the property total, leaving ${gap}% of CAM expenses unallocated. Either leases are missing or a tenant sqft entry is wrong — check both.`,
-          conditions: [
-            `Sum of tenant pro-rata: ${totalPR.toFixed(1)}%`,
-            `Gap not covered by loaded leases: ${gap}%`,
-            ...(sqftCtx ? [`Loaded leases: ${leasedSqft.toLocaleString()} of ${propSqft.toLocaleString()} sqft`] : []),
-            'Cause not determined: vacant space, or a lease not yet uploaded',
-          ],
-        });
-      } else {
-        const excess = (totalPR - 100).toFixed(1);
-        yellow.push({
-          group:  'allocation',
-          title:  `Pro-rata totals ${totalPR.toFixed(1)}% — exceeds 100%`,
-          detail: sqftCtx
-            ? `${sqftCtx} Tenant sqft entries sum to ${leasedSqft.toLocaleString()}, which exceeds the property total of ${propSqft.toLocaleString()} sqft. This overallocates CAM by ${excess}% and must be corrected to avoid overbilling.`
-            : `Tenant sqft entries sum to more than the property total, overallocating CAM by ${excess}%. Review and correct sqft entries.`,
-          conditions: [
-            `Sum of tenant pro-rata: ${totalPR.toFixed(1)}%`,
-            `Overallocation: ${excess}% above 100%`,
-            ...(sqftCtx ? [`Leased sqft: ${leasedSqft.toLocaleString()} vs property total: ${propSqft.toLocaleString()}`] : []),
-          ],
-        });
-      }
+    if (results.length > 0 && Math.abs(totalPR - 100) < 2) {
+      green.push({
+        group: 'allocation',
+        severity: 'green',
+        source: 'Sum of tenant pro-rata shares vs 100%',
+        title: `Pro-rata percentages sum to ${totalPR.toFixed(1)}% — all expenses accounted for`,
+        conditions: [
+          `Sum of tenant pro-rata: ${totalPR.toFixed(1)}% (within ±2% of 100%)`,
+          ...(sqftCtx ? [sqftCtx + ' Full building is under lease.'] : []),
+        ],
+      });
     }
   }
 
@@ -14123,6 +14142,17 @@ function buildAuditSummary() {
       });
       yellow.push({
         group:  'allocation',
+        severity: 'yellow',
+        // Allocation-side, and the one bucket that is good news: the cap already
+        // reduced what tenants owe. Recording it here is what stops the exposure
+        // line from being computed out of cap savings, which is one of the three
+        // disjoint inputs that produced the original contradiction.
+        impact: totalSaved > 0
+          ? { amount: totalSaved, kind: 'recoverable', scope: 'cap:aggregate',
+              basis: 'Reduction already applied under lease cap language' }
+          : undefined,
+        actions: ['Verify cap percentage against the lease', 'Confirm the cap base year amount'],
+        source: 'Lease cap terms vs uncapped pro-rata allocation',
         title:  `CAM cap applied for ${capped.length} tenant${capped.length > 1 ? 's' : ''}: ${capped.map(r => r.name).join(', ')}`,
         detail: `Tenant responsibility was reduced due to annual controllable CAM cap language in the lease${capped.length > 1 ? 's' : ''}. Affected tenant${capped.length > 1 ? 's' : ''} paid ${fmt(totalSaved)} less in aggregate than their uncapped pro-rata share.`,
         conditions: [
@@ -14435,6 +14465,12 @@ function buildAuditNarrative() {
     // instead of deriving its own from a different set of inputs.
     exposure,
     readiness,
+    camYear,
+    // Fields where two sources disagree, keyed by tenant. Passed to surfaces
+    // that summarise data quality so a known disagreement is reported as a
+    // CONFLICT rather than collapsing into "Inferred" — which reads as a
+    // missing citation, not as two documents saying different things.
+    conflicts: [...red, ...yellow].map(f => f.conflict).filter(Boolean),
   };
 }
 
@@ -15214,15 +15250,61 @@ function generateHolesReport() {
       </div>
     </div>`;
 
+  // WHAT THIS REPORT DOES AND DOES NOT ANSWER.
+  //
+  // Coverage Gap is a pre-flight check on the INPUTS: are the invoices and
+  // leases you need in front of you before you reconcile? Every item above is
+  // month-over-month vendor and category continuity, upload completeness, and
+  // extraction quality. It never looks at reconciliation output.
+  //
+  // The Audit Exception Summary asks the opposite question — given this
+  // reconciliation, what is wrong with the result? On the Test 2 property this
+  // report showed "1 item needs attention" while that one showed five critical
+  // exceptions, and nothing on either page said why two counts of the same
+  // property differed. They are answering different questions, so the fix is to
+  // say which question, not to force the numbers together.
+  const _auditFindingCount = (() => {
+    try {
+      if (!lastResults.length) return null;
+      const { red, yellow } = buildAuditSummary();
+      return { red: red.length, yellow: yellow.length };
+    } catch (_) { return null; }
+  })();
+
+  const scopeNote = `
+    <div class="rpt-scope-note">
+      <strong>Scope:</strong> this report checks whether the inputs are complete
+      <em>before</em> you reconcile — missing vendors or categories against the last run,
+      leases not yet uploaded, and low-confidence extractions. It does not evaluate a
+      reconciliation that has already been produced.
+      ${_auditFindingCount && (_auditFindingCount.red + _auditFindingCount.yellow) > 0
+        ? `The current reconciliation additionally carries
+           <strong>${_auditFindingCount.red} critical</strong> and
+           <strong>${_auditFindingCount.yellow} advisory</strong> audit finding${
+             _auditFindingCount.red + _auditFindingCount.yellow === 1 ? '' : 's'};
+           those are enumerated in the Audit Exception Summary, not here.`
+        : ''}
+    </div>`;
+
   const summaryBar = totalIssues === 0 ? `
-    <div class="holes-summary-bar all-clear">
-      <div class="holes-summary-count">&#x2713;</div>
-      <div class="holes-summary-msg">Everything looks good — ready to run reconciliation</div>
+    <div class="holes-summary-bar ${_auditFindingCount && _auditFindingCount.red > 0 ? 'has-issues' : 'all-clear'}">
+      <div class="holes-summary-count">${_auditFindingCount && _auditFindingCount.red > 0 ? '&#x26A0;' : '&#x2713;'}</div>
+      <div class="holes-summary-msg">
+        ${_auditFindingCount && _auditFindingCount.red > 0
+          ? `Inputs are complete — but the reconciliation already run has
+             ${_auditFindingCount.red} critical exception${_auditFindingCount.red === 1 ? '' : 's'}`
+          : 'Inputs look complete — ready to run reconciliation'}
+        <span style="display:block;font-size:0.78rem;font-weight:400;margin-top:2px;opacity:0.8;">
+          ${_auditFindingCount && _auditFindingCount.red > 0
+            ? 'See the Audit Exception Summary before billing.'
+            : 'This covers input completeness only.'}
+        </span>
+      </div>
     </div>` : `
     <div class="holes-summary-bar has-issues">
       <div class="holes-summary-count">${totalIssues}</div>
       <div class="holes-summary-msg">
-        ${totalIssues} item${totalIssues !== 1 ? 's' : ''} need${totalIssues === 1 ? 's' : ''} attention before running reconciliation
+        ${totalIssues} input${totalIssues !== 1 ? 's' : ''} need${totalIssues === 1 ? 's' : ''} attention before running reconciliation
         <span style="display:block;font-size:0.78rem;font-weight:400;margin-top:2px;opacity:0.8;">
           ${criticalItems.length} critical &nbsp;·&nbsp; ${warningItems.length} warning${warningItems.length !== 1 ? 's' : ''}
         </span>
@@ -15231,6 +15313,8 @@ function generateHolesReport() {
 
   const html = `
     ${_rptHeader(propName, 'Coverage Gap Report', month, now)}
+
+    ${scopeNote}
 
     <div class="rpt-kpi-row">
       <div class="rpt-kpi">
@@ -15262,9 +15346,42 @@ function generateHolesReport() {
 
 function openReport(title, bodyHtml) {
   document.getElementById('rptToolbarTitle').textContent = title;
-  document.getElementById('rptBody').innerHTML = bodyHtml;
+  const body = document.getElementById('rptBody');
+  body.innerHTML = bodyHtml;
+  _rptMakeTablesScrollable(body);
   document.getElementById('reportOverlay').style.display = 'block';
   window.scrollTo(0, 0);
+}
+
+/**
+ * Give every report table its own horizontal scroller.
+ *
+ * Report tables set `white-space: nowrap` on every column but the first, which
+ * is right for a wide screen and right for print — a lease term or a dollar
+ * figure should never wrap mid-value. On a 390px phone it made the Lender
+ * Summary's seven-column roster wider than the viewport, and because nothing
+ * contained it the whole PAGE scrolled sideways: the sticky toolbar slid off,
+ * taking Print and Close with it.
+ *
+ * Doing this here rather than in each report generator means the twelve or so
+ * places that emit `<table class="rpt-table">` keep emitting plain tables, and
+ * the containment is applied once, to markup that is already built. No report's
+ * content, columns or numbers are altered — the table is moved inside a div.
+ */
+function _rptMakeTablesScrollable(root) {
+  if (!root || !root.querySelectorAll) return;
+  root.querySelectorAll('table.rpt-table').forEach(tbl => {
+    if (tbl.parentElement && tbl.parentElement.classList.contains('rpt-table-scroll')) return;
+    const wrap = document.createElement('div');
+    wrap.className = 'rpt-table-scroll';
+    // Announced to assistive tech and reachable by keyboard, since a scrollable
+    // region that only a trackpad can reach is not actually accessible.
+    wrap.setAttribute('tabindex', '0');
+    wrap.setAttribute('role', 'region');
+    wrap.setAttribute('aria-label', 'Scrollable table');
+    tbl.parentNode.insertBefore(wrap, tbl);
+    wrap.appendChild(tbl);
+  });
 }
 
 function closeReport() {
@@ -15435,15 +15552,38 @@ function generateExceptionReport() {
     buckets[key].push(f);
   });
 
+  // Every finding renders the same four parts — what, how much, on what
+  // evidence, what to do — so a manager reads them the same way each time
+  // instead of learning a different layout per finding type. `impact` and
+  // `source` were already recorded on the findings and simply never displayed
+  // here, which is why the report could enumerate five critical exceptions
+  // without stating a single dollar figure.
+  const _AXe = window.AuditExposure;
+  const _KIND_LBL = {
+    at_risk:         'at risk',
+    under_review:    'requiring review',
+    recoverable:     'excluded or already recovered',
+    unsubstantiated: 'weakly evidenced (expense-side)',
+  };
   const renderFlag = f => {
     const sevLabel = f.severity === 'red' ? 'Critical' : 'Warning';
+    const imp = _AXe ? _AXe.normalizeImpact(f.impact) : { amount: null, kind: 'none' };
+    const impLine = imp.amount != null && _KIND_LBL[imp.kind]
+      ? `<div class="exc-flag-impact"><strong>${esc(fmt(imp.amount))}</strong> ${esc(_KIND_LBL[imp.kind])}${
+          imp.basis ? ` &mdash; ${esc(imp.basis)}` : ''}</div>`
+      : (f.severity === 'red' || f.severity === 'yellow'
+          ? `<div class="exc-flag-impact exc-flag-impact--none">Not yet quantified &mdash; this finding carries no dollar figure, which is not the same as carrying none.</div>`
+          : '');
     return `<div class="exc-flag exc-flag--${f.severity}">
       <div class="exc-flag-header">
         <span class="exc-sev exc-sev--${f.severity}">${sevLabel}</span>
         <span class="exc-flag-title">${esc(f.title)}</span>
       </div>
       ${f.detail ? `<div class="exc-flag-detail">${esc(f.detail)}</div>` : ''}
+      ${impLine}
+      ${f.source ? `<div class="exc-flag-source">Source: ${esc(f.source)}</div>` : ''}
       ${f.conditions?.length ? `<ul class="exc-conditions">${f.conditions.map(c => `<li>${esc(c)}</li>`).join('')}</ul>` : ''}
+      ${f.actions?.length ? `<div class="exc-flag-actions">${f.actions.map(a => `<span class="exc-action">${esc(a)}</span>`).join('')}</div>` : ''}
     </div>`;
   };
 
@@ -15465,10 +15605,18 @@ function generateExceptionReport() {
 
   const narrative = buildAuditNarrative();
   const excNClass = narrative.riskLevel === 'Critical' ? 'exc-narrative--critical' : narrative.riskLevel === 'Elevated' ? 'exc-narrative--elevated' : narrative.riskLevel === 'Moderate' ? 'exc-narrative--moderate' : 'exc-narrative--low';
+  // The same exposure line and readiness verdict the on-screen summary, the
+  // Risk & Disputes report and the Lender Summary state. This report enumerated
+  // the findings without ever totalling them, so it was the one place a reader
+  // could count five exceptions and still not learn what they came to.
   const narrativeBlock = narrative.headline ? `
     <div class="exc-narrative ${excNClass}">
       <div class="exc-narrative-headline">${esc(narrative.headline)}</div>
       <div class="exc-narrative-summary">${esc(narrative.summaryParagraph || '')}</div>
+      ${narrative.financialImpact ? `<div class="exc-narrative-impact">${esc(narrative.financialImpact)}</div>` : ''}
+      ${narrative.readiness ? `<div class="rpt-readiness rpt-readiness--${narrative.readiness.canBill ? 'ok' : 'blocked'}">
+        <strong>${esc(narrative.readiness.label)}</strong> &mdash; ${esc(narrative.readiness.reason)}
+      </div>` : ''}
     </div>` : '';
 
   const html = `
@@ -16140,18 +16288,58 @@ function generateLandlordExport() {
   const now        = new Date().toLocaleDateString('en-US', { year: 'numeric', month: 'long', day: 'numeric' });
   const period     = (getCamYear() || new Date().getFullYear()) + ' CAM Year';
   const openD      = disputes.filter(d => d.status === 'open');
-  const exposure   = openD.reduce((s, d) => s + (parseFloat(d.tenantShare) || 0), 0);
-  const reconIss   = _detectReconciliationIssues(lastResults, currentProperty());
-  const redIss     = reconIss.filter(f => f.severity === 'red');
-  const yellowIss  = reconIss.filter(f => f.severity === 'yellow');
+  const disputeExposure = openD.reduce((s, d) => s + (parseFloat(d.tenantShare) || 0), 0);
+
+  // THE SAME FINDING SET AS THE AUDIT EXCEPTION SUMMARY.
+  //
+  // This report used to call _detectReconciliationIssues directly, which is a
+  // strict subset of buildAuditSummary — it sees the engine's structural flags
+  // and nothing else. On the Test 2 reconciliation that produced "4 Critical
+  // Issues / 2 Warnings" here beside "5 Critical Flags / 5 Warnings" in the
+  // Audit Exception Summary, for one reconciliation, on the same day. The
+  // $38,000 concentration flag, the undated invoice and the low-confidence
+  // match existed only in the other report.
+  //
+  // The two reports still differ in PURPOSE — this one is about counterparty
+  // risk and disputes, that one enumerates every audit finding — but a count
+  // labelled "Critical Issues" has to mean the same thing in both.
+  const { red: auditRed, yellow: auditYellow, green: auditGreen } = buildAuditSummary();
+  const redIss     = auditRed;
+  const yellowIss  = auditYellow;
   const invSusp    = _detectInvoiceSuspicions(invoiceData.filter(inv => inv && inv.vendorName));
   const redSusp    = invSusp.filter(f => f.severity === 'red');
   const proRataSum = lastResults.reduce((s, r) => s + (r.proRataPercent || 0), 0);
 
-  const issueRows = [...redIss, ...yellowIss].map(f => `<tr>
-    <td><span style="color:${f.severity === 'red' ? '#f87171' : '#fbbf24'}">${f.severity === 'red' ? '⛔' : '⚠'}</span></td>
-    <td>${esc(f.title)}</td>
-  </tr>`).join('');
+  // Canonical exposure, so "exposure" in this report means what it means
+  // everywhere else. The dispute figure is a different measure and keeps its
+  // own label rather than borrowing the word.
+  const _AXr = window.AuditExposure;
+  const _rExp = _AXr
+    ? _AXr.deriveExposure({ red: auditRed, yellow: auditYellow, green: auditGreen }, lastTotal || 0)
+    : null;
+  const _rReady = _AXr && _rExp ? _AXr.billingReadiness(_rExp) : null;
+
+  const issueRows = [...redIss, ...yellowIss].map(f => {
+    const sev = _AXr ? _AXr.severityOf(f, redIss.indexOf(f) >= 0 ? 'red' : 'yellow')
+                     : (f.severity || 'yellow');
+    const imp = _AXr ? _AXr.normalizeImpact(f.impact) : { amount: null, kind: 'none' };
+    const money = imp.amount != null
+      ? fmt(imp.amount)
+      : '<span style="color:#64748b">not yet quantified</span>';
+    const KIND_LBL = {
+      at_risk: 'At risk', under_review: 'Under review',
+      recoverable: 'Excluded', unsubstantiated: 'Weakly evidenced', none: '—',
+    };
+    return `<tr>
+      <td><span style="color:${sev === 'red' ? '#f87171' : '#fbbf24'}">${sev === 'red' ? '⛔' : '⚠'}</span></td>
+      <td>${esc(f.title)}</td>
+      <td style="text-align:right;white-space:nowrap">${money}</td>
+      <!-- Treatment is the one column that may wrap: its longest value is two
+           words, and holding it on one line pushed the table past the report
+           column on a desktop screen. -->
+      <td style="white-space:normal;color:#94a3b8">${esc(KIND_LBL[imp.kind] || '—')}</td>
+    </tr>`;
+  }).join('');
 
   const disputeRows = openD.map(d => `<tr>
     <td>#${d.id + 1}</td>
@@ -16179,26 +16367,43 @@ function generateLandlordExport() {
   const _expOpenDisp = _expDm.disputeStats?.openDisputes ?? openD.length;
   const html = `
     ${_rptHeader(propName, 'Risk & Disputes Report', period, now, [
-      { label: 'Total CAM',   value: fmt(_expTotalCAM) },
-      { label: 'Open Disputes', value: _expOpenDisp },
-      { label: 'Exposure',    value: fmt(exposure) },
+      { label: 'Total CAM',        value: fmt(_expTotalCAM) },
+      { label: 'Open Disputes',    value: _expOpenDisp },
+      { label: 'Dispute Exposure', value: fmt(disputeExposure) },
+      ...(_rExp ? [{ label: 'Allocation At Risk', value: fmt(_rExp.confirmedAtRisk) }] : []),
     ])}
+
+    ${_rReady ? `<div class="rpt-readiness rpt-readiness--${_rReady.canBill ? 'ok' : 'blocked'}">
+      <strong>${esc(_rReady.label)}</strong> &mdash; ${esc(_rReady.reason)}
+    </div>` : ''}
 
     <div class="rpt-kpi-row">
       <div class="rpt-kpi${redIss.length > 0 ? ' rpt-kpi--alert' : ''}"><div class="kpi-val">${redIss.length}</div><div class="kpi-lbl">Critical Issues</div></div>
       <div class="rpt-kpi${yellowIss.length > 0 ? ' rpt-kpi--warn' : ''}"><div class="kpi-val">${yellowIss.length}</div><div class="kpi-lbl">Warnings</div></div>
       <div class="rpt-kpi${openD.length > 0 ? ' rpt-kpi--warn' : ''}"><div class="kpi-val">${openD.length}</div><div class="kpi-lbl">Open Disputes</div></div>
-      <div class="rpt-kpi${exposure > 0 ? ' rpt-kpi--alert' : ''}"><div class="kpi-val">${fmt(exposure)}</div><div class="kpi-lbl">Dispute Exposure</div></div>
+      <div class="rpt-kpi${disputeExposure > 0 ? ' rpt-kpi--alert' : ''}"><div class="kpi-val">${fmt(disputeExposure)}</div><div class="kpi-lbl">Dispute Exposure</div></div>
+      ${_rExp ? `<div class="rpt-kpi${_rExp.confirmedAtRisk > 0 ? ' rpt-kpi--alert' : ''}"><div class="kpi-val">${fmt(_rExp.confirmedAtRisk)}</div><div class="kpi-lbl">Allocation At Risk</div></div>
+      <div class="rpt-kpi${_rExp.requiringReview > 0 ? ' rpt-kpi--warn' : ''}"><div class="kpi-val">${fmt(_rExp.requiringReview)}</div><div class="kpi-lbl">Requiring Review</div></div>` : ''}
       <div class="rpt-kpi${redSusp.length > 0 ? ' rpt-kpi--alert' : ''}"><div class="kpi-val">${redSusp.length}</div><div class="kpi-lbl">Invoice Red Flags</div></div>
       <div class="rpt-kpi${Math.abs(proRataSum - 100) > 5 ? ' rpt-kpi--alert' : ''}"><div class="kpi-val">${proRataSum.toFixed(1)}%</div><div class="kpi-lbl">Pro-Rata Sum</div></div>
     </div>
 
+    ${_rExp && _rExp.poolUnsubstantiated > 0 ? `<div class="rpt-scope-note">
+      A further ${esc(fmt(_rExp.poolUnsubstantiated))} of the expense pool is weakly evidenced — undated,
+      undocumented or concentrated in a single vendor. That is a measure of the expenses, not of the
+      amounts billed out, so it is reported separately and is not added to the figures above.
+    </div>` : ''}
+
     ${(redIss.length + yellowIss.length) > 0 ? `
     <div class="rpt-section-title">Reconciliation Issues</div>
-    <table class="rpt-table"><tbody>${issueRows}</tbody></table>` : ''}
+    <div class="rpt-scope-note">Every audit finding for this reconciliation — the same set the Audit Exception Summary enumerates.</div>
+    <table class="rpt-table">
+      <thead><tr><th style="width:32px"></th><th>Finding</th><th style="text-align:right">Amount</th><th>Treatment</th></tr></thead>
+      <tbody>${issueRows}</tbody>
+    </table>` : ''}
 
     ${openD.length > 0 ? `
-    <div class="rpt-section-title">Open Disputes — ${fmt(exposure)} Total Exposure</div>
+    <div class="rpt-section-title">Open Disputes — ${fmt(disputeExposure)} Total Dispute Exposure</div>
     <table class="rpt-table">
       <thead><tr><th>#</th><th>Tenant</th><th>Charge</th><th style="text-align:right">Amount</th><th>Type</th><th>Severity</th></tr></thead>
       <tbody>${disputeRows}</tbody>

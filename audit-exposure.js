@@ -41,7 +41,24 @@
   if (root) root.AuditExposure = api;
 })(typeof globalThis !== 'undefined' ? globalThis : this, function () {
 
-  const IMPACT_KINDS = ['at_risk', 'under_review', 'recoverable', 'none'];
+  // TWO AXES, NEVER ADDED TOGETHER
+  //
+  // at_risk / under_review / recoverable measure the ALLOCATION side: dollars
+  // billed out to tenants. `unsubstantiated` measures the EXPENSE side: dollars
+  // in the pool whose supporting evidence is thin — an undated invoice, a
+  // missing receipt, a vendor holding an outsized share of the pool.
+  //
+  // The same dollar is usually on both axes at once. In the Test 2
+  // reconciliation the four expired leases carry $40,832 of allocation risk and
+  // the weakly-evidenced invoices come to $57,750, against a $71,950 pool. Add
+  // them and the report claims $98,582 of exposure on a $71,950 pool, which is
+  // the same species of nonsense this module was written to stop. So the
+  // expense-side figure is totalled separately, labelled by what it measures,
+  // and never folded into the allocation total.
+  const IMPACT_KINDS = ['at_risk', 'under_review', 'recoverable', 'unsubstantiated', 'none'];
+
+  // Allocation-side kinds. `unsubstantiated` is deliberately absent.
+  const ALLOCATION_KINDS = ['at_risk', 'under_review', 'recoverable'];
 
   // Verdict vocabulary for clause-level (tenant) checks.
   //
@@ -88,9 +105,36 @@
    * always returns a well-formed object, so callers never branch on shape.
    */
   function normalizeImpact(impact) {
-    if (!impact || typeof impact !== 'object') return { amount: null, kind: 'none' };
+    if (!impact || typeof impact !== 'object') return { amount: null, kind: 'none', scope: null };
     const kind = IMPACT_KINDS.indexOf(impact.kind) >= 0 ? impact.kind : 'none';
-    return { amount: num(impact.amount), kind, basis: impact.basis || null };
+    return {
+      amount: num(impact.amount),
+      kind,
+      basis: impact.basis || null,
+      // Optional identifier for the dollars this finding is about, e.g.
+      // "invoice:Harbor Snow Removal". Two findings naming the same scope are
+      // two observations about one sum of money, not two sums — see dedupe in
+      // deriveExposure. Findings without a scope are assumed distinct.
+      scope: impact.scope ? String(impact.scope) : null,
+    };
+  }
+
+  /**
+   * Which severity bucket a finding is in.
+   *
+   * Detectors are inconsistent about the `severity` field: the reconciliation
+   * engine sets it, buildAuditSummary does not — it expresses severity purely by
+   * pushing into the red or yellow array. Reading `f.severity` alone therefore
+   * saw one unpriced finding in the Test 2 set when there were five, and quietly
+   * treated the other four as costing nothing. Which array a finding is in is
+   * the authoritative answer, because that is the same thing every report
+   * renders "Critical" or "Warning" from.
+   */
+  function severityOf(finding, bucket) {
+    if (finding && (finding.severity === 'red' || finding.severity === 'yellow' || finding.severity === 'green')) {
+      return finding.severity;
+    }
+    return bucket;
   }
 
   /**
@@ -102,43 +146,75 @@
    * without `impact` counts as unquantified rather than as zero.
    */
   function deriveExposure(findings, totalPool) {
-    const all = []
-      .concat(findings && findings.red    || [])
-      .concat(findings && findings.yellow || [])
-      .concat(findings && findings.green  || []);
+    const buckets = [
+      ['red',    (findings && findings.red)    || []],
+      ['yellow', (findings && findings.yellow) || []],
+      ['green',  (findings && findings.green)  || []],
+    ];
 
     const out = {
       totalPool:           num(totalPool) || 0,
       confirmedAtRisk:     0,
       requiringReview:     0,
       excludedRecoverable: 0,
+      poolUnsubstantiated: 0,   // expense-side; NOT part of the allocation total
       unquantified:        0,   // findings that matter but carry no amount yet
-      counts: {
-        red:    (findings && findings.red    || []).length,
-        yellow: (findings && findings.yellow || []).length,
-        green:  (findings && findings.green  || []).length,
-      },
-      contributors: { at_risk: [], under_review: [], recoverable: [] },
+      counts: { red: buckets[0][1].length, yellow: buckets[1][1].length, green: buckets[2][1].length },
+      contributors: { at_risk: [], under_review: [], recoverable: [], unsubstantiated: [] },
     };
 
-    all.forEach((f) => {
-      if (!f) return;
-      const imp = normalizeImpact(f.impact);
-      const material = f.severity === 'red' || f.severity === 'yellow'
-        || (f.group && f.group !== 'green');
-      if (imp.amount === null) {
-        // Only red/yellow findings are "unquantified"; a green finding with no
-        // amount is simply a verification, not a gap in pricing.
-        if (f.severity === 'red' || f.severity === 'yellow') out.unquantified++;
-        return;
-      }
-      if (imp.kind === 'at_risk')      { out.confirmedAtRisk     += imp.amount; out.contributors.at_risk.push(f.title); }
-      else if (imp.kind === 'under_review') { out.requiringReview += imp.amount; out.contributors.under_review.push(f.title); }
-      else if (imp.kind === 'recoverable')  { out.excludedRecoverable += imp.amount; out.contributors.recoverable.push(f.title); }
-      else if (material) { /* kind 'none' with an amount: informational only */ }
+    // scope key -> the largest amount claimed for it, per kind. Two findings
+    // about one invoice (undated AND undocumented, say) describe one sum of
+    // money twice; counting it twice would inflate the total past the pool.
+    const seen = {};
+    let anon = 0;
+
+    buckets.forEach(([bucket, list]) => {
+      list.forEach((f) => {
+        if (!f) return;
+        const sev = severityOf(f, bucket);
+        const imp = normalizeImpact(f.impact);
+
+        if (imp.amount === null) {
+          // Only red/yellow findings are "unquantified"; a green finding with no
+          // amount is simply a verification, not a gap in pricing.
+          if (sev === 'red' || sev === 'yellow') out.unquantified++;
+          return;
+        }
+        if (imp.kind === 'none') return; // an amount recorded for context only
+
+        const key = imp.kind + '::' + (imp.scope || ('#' + (anon++)));
+        const prev = seen[key];
+        if (prev && prev.amount >= imp.amount) return;   // already counted, larger
+        if (prev) {
+          // A bigger claim on the same money supersedes the smaller one.
+          out[prev.field] -= prev.amount;
+          const ci = out.contributors[prev.list].indexOf(prev.title);
+          if (ci >= 0) out.contributors[prev.list].splice(ci, 1);
+        }
+
+        const field = imp.kind === 'at_risk'      ? 'confirmedAtRisk'
+                    : imp.kind === 'under_review' ? 'requiringReview'
+                    : imp.kind === 'recoverable'  ? 'excludedRecoverable'
+                    :                               'poolUnsubstantiated';
+        const listName = imp.kind === 'unsubstantiated' ? 'unsubstantiated' : imp.kind;
+
+        out[field] += imp.amount;
+        out.contributors[listName].push(f.title);
+        seen[key] = { amount: imp.amount, field, list: listName, title: f.title };
+      });
     });
 
     return out;
+  }
+
+  /**
+   * The allocation-side total: what is outstanding against dollars being billed.
+   * Kept as a function so no caller is tempted to add poolUnsubstantiated in.
+   */
+  function allocationExposure(x) {
+    if (!x) return 0;
+    return (x.confirmedAtRisk || 0) + (x.requiringReview || 0);
   }
 
   const fmtMoney = (n) => '$' + Math.round(Number(n) || 0).toLocaleString('en-US');
@@ -158,13 +234,18 @@
     if (x.confirmedAtRisk > 0)     parts.push(`${fmtMoney(x.confirmedAtRisk)} at risk`);
     if (x.requiringReview > 0)     parts.push(`${fmtMoney(x.requiringReview)} requiring review`);
     if (x.excludedRecoverable > 0) parts.push(`${fmtMoney(x.excludedRecoverable)} excluded or recovered`);
+    // Said in its own words, because it is not part of the running total above.
+    if (x.poolUnsubstantiated > 0) {
+      parts.push(`${fmtMoney(x.poolUnsubstantiated)} of the pool weakly evidenced (separate measure)`);
+    }
 
     if (x.unquantified > 0) {
       parts.push(`${x.unquantified} finding${x.unquantified === 1 ? '' : 's'} not yet quantified`);
     }
 
     const nothingOutstanding =
-      x.confirmedAtRisk === 0 && x.requiringReview === 0 && x.unquantified === 0;
+      x.confirmedAtRisk === 0 && x.requiringReview === 0
+      && !(x.poolUnsubstantiated > 0) && x.unquantified === 0;
 
     if (nothingOutstanding && x.counts.red === 0 && x.counts.yellow === 0) {
       return `${fmtMoney(x.totalPool)} total CAM pool — no at-risk amounts identified`;
@@ -227,6 +308,14 @@
         reasons.push(`${fmtMoney(x.confirmedAtRisk)} of the pool at risk (−${capped})`);
       }
     }
+    if (x.totalPool > 0 && x.poolUnsubstantiated > 0) {
+      const pct = (x.poolUnsubstantiated / x.totalPool) * 100;
+      const capped = Math.min(10, Math.round(pct / 2));
+      if (capped > 0) {
+        d += capped;
+        reasons.push(`${fmtMoney(x.poolUnsubstantiated)} of the pool weakly evidenced (−${capped})`);
+      }
+    }
     if (x.unquantified > 0) {
       d += x.unquantified * 3;
       reasons.push(`${x.unquantified} finding${x.unquantified === 1 ? '' : 's'} not yet quantified (−3 each)`);
@@ -235,8 +324,8 @@
   }
 
   return {
-    IMPACT_KINDS, VERDICT, VERDICT_LABEL, VERDICT_ICON, VERDICT_MEANING,
-    normalizeImpact, deriveExposure, describeExposure, billingReadiness,
-    healthDeductions, fmtMoney,
+    IMPACT_KINDS, ALLOCATION_KINDS, VERDICT, VERDICT_LABEL, VERDICT_ICON, VERDICT_MEANING,
+    normalizeImpact, severityOf, deriveExposure, allocationExposure,
+    describeExposure, billingReadiness, healthDeductions, fmtMoney,
   };
 });

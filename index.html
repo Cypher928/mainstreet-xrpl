@@ -3574,6 +3574,11 @@
          surface that produced it. */
       display: none; position: fixed; inset: 0; z-index: 1100;
       background: var(--theme-bg); overflow-y: auto;
+      /* The page itself never scrolls sideways. Wide content scrolls inside its
+         own container (.rpt-table-scroll); anything that escapes that is a bug
+         to fix in the content, not a reason to let the sticky toolbar — and the
+         Print and Close buttons on it — slide out of reach. */
+      overflow-x: hidden;
     }
     #reportOverlay.open { display: block; }
     .rpt-toolbar {
@@ -3696,9 +3701,61 @@
       font-size: 0.67rem; color: var(--text-4); margin-top: 6px;
       text-transform: uppercase; letter-spacing: 0.07em; font-family: 'DM Sans', sans-serif;
     }
+    /* Contained horizontal scrolling for wide report tables. Applied by
+       _rptMakeTablesScrollable() at render time, so report generators keep
+       emitting plain <table class="rpt-table">. */
+    .rpt-table-scroll {
+      overflow-x: auto; max-width: 100%;
+      -webkit-overflow-scrolling: touch;
+      /* A scrollable region is focusable; make that visible rather than
+         removing the outline. */
+      scrollbar-width: thin;
+    }
+    .rpt-table-scroll:focus-visible { outline: 2px solid var(--c-c9973a); outline-offset: 2px; }
     .rpt-table {
       width: 100%; border-collapse: collapse; font-size: 0.86rem;
       margin-bottom: 8px; page-break-inside: auto;
+    }
+
+    /* ── Cross-report shared blocks ───────────────────────────────────── */
+    /* Used by the Audit Exception Summary, Risk & Disputes and Coverage Gap so
+       the same statement of scope and readiness looks the same in each. */
+    .rpt-scope-note {
+      font-family: 'DM Sans', sans-serif; font-size: 0.78rem; line-height: 1.6;
+      color: var(--text-3); background: rgba(var(--line-rgb), 0.03);
+      border-left: 3px solid rgba(201,151,58,0.35);
+      padding: 10px 14px; border-radius: 0 6px 6px 0; margin: 0 0 18px;
+    }
+    .rpt-scope-note strong { color: var(--text-1); }
+    .rpt-readiness {
+      font-family: 'DM Sans', sans-serif; font-size: 0.82rem; line-height: 1.55;
+      padding: 10px 14px; border-radius: 7px; margin: 14px 0 18px;
+    }
+    .rpt-readiness--ok {
+      background: rgba(34,197,94,0.08); border: 1px solid rgba(34,197,94,0.28); color: var(--c-4ade80);
+    }
+    .rpt-readiness--blocked {
+      background: rgba(239,68,68,0.08); border: 1px solid rgba(239,68,68,0.28); color: var(--c-f87171);
+    }
+    .rpt-readiness strong { font-weight: 700; }
+    .exc-narrative-impact {
+      font-family: 'DM Sans', sans-serif; font-size: 0.84rem; font-weight: 600;
+      color: var(--text-1); margin-top: 10px; line-height: 1.55;
+    }
+    .exc-flag-impact {
+      font-family: 'DM Sans', sans-serif; font-size: 0.8rem; line-height: 1.55;
+      color: var(--text-1); margin: 8px 0 0;
+    }
+    .exc-flag-impact--none { color: var(--text-3); font-style: italic; }
+    .exc-flag-source {
+      font-family: 'DM Sans', sans-serif; font-size: 0.73rem; color: var(--text-3);
+      margin-top: 6px; overflow-wrap: anywhere;
+    }
+    .exc-flag-actions { display: flex; flex-wrap: wrap; gap: 6px; margin-top: 10px; }
+    .exc-action {
+      font-family: 'DM Sans', sans-serif; font-size: 0.72rem; font-weight: 600;
+      padding: 4px 10px; border-radius: 999px; color: var(--c-e4b15c);
+      background: rgba(201,151,58,0.1); border: 1px solid rgba(201,151,58,0.25);
     }
     .rpt-table th {
       background: rgba(201,151,58,0.08); color: var(--c-e4b15c); text-align: left;
@@ -3938,13 +3995,24 @@
     /* ── Print styles ─────────────────────────────────────────────────── */
     /* ── Mobile: Report / Export overlay (Phase 1 — presentation only) ───── */
     @media (max-width: 600px) {
-      .rpt-toolbar { padding: 10px 14px; gap: 8px; }
+      /* The toolbar is sticky and always visible, so every row it costs is a row
+         of report the reader does not get. Two lines of title plus 44px buttons
+         took ~92px of an 844px viewport; this brings it to ~52px while keeping
+         both controls at a 44px touch target. */
+      .rpt-toolbar { padding: 6px 12px; gap: 8px; min-height: 52px; }
       .rpt-toolbar h2 {
-        font-size: 0.9rem; flex: 1 1 auto; min-width: 0;
+        font-size: 0.82rem; flex: 1 1 auto; min-width: 0;
         overflow: hidden; text-overflow: ellipsis; white-space: nowrap;
       }
       .rpt-toolbar-actions { flex-shrink: 0; gap: 6px; }
-      .rpt-tool-btn, .rpt-close-btn { padding: 10px 14px; font-size: 0.78rem; min-height: 40px; }
+      .rpt-tool-btn, .rpt-close-btn {
+        padding: 8px 12px; font-size: 0.76rem; min-height: 44px;
+        display: inline-flex; align-items: center; white-space: nowrap;
+      }
+      /* "Print / Save PDF" is the longest label on the row and the first thing
+         to push Close off-screen. The icon plus "PDF" is unambiguous next to it
+         and holds the full-size tap target. */
+      .rpt-tool-btn .rpt-btn-long { display: none; }
       .rpt-body { margin: 20px auto 56px; padding: 0 16px; }
       .rpt-cover { padding: 22px 0 20px; margin-bottom: 24px; }
       .rpt-cover-title { font-size: 1.5rem; }
@@ -3953,6 +4021,31 @@
       .rpt-kpi-row { gap: 8px; }
       .rpt-kpi { min-width: 90px; padding: 14px 10px; }
       .rpt-kpi .kpi-val { font-size: 1.2rem; }
+
+      /* Wide tables scroll inside their own box; the page does not. */
+      .rpt-table-scroll {
+        /* Bleed to the body's padding edge so a scrolled table uses the full
+           screen width instead of scrolling within a 16px-inset column. */
+        margin-left: -16px; margin-right: -16px;
+        padding-left: 16px; padding-right: 16px;
+      }
+      .rpt-table { font-size: 0.78rem; min-width: max-content; }
+      .rpt-table th { padding: 8px 10px; }
+      .rpt-table td { padding: 9px 10px; }
+      .rpt-table td:first-child, .rpt-table th:first-child { min-width: 132px; }
+      .rpt-scope-note { font-size: 0.74rem; padding: 9px 12px; }
+      /* Long unbroken strings — vendor names, file names, source citations —
+         are the other way a report pushes past the viewport edge. */
+      .rpt-body, .exc-flag-title, .exc-flag-detail, .exc-conditions li,
+      .hole-text, .hole-detail { overflow-wrap: anywhere; }
+    }
+
+    /* Print restores the full label and drops the scroll container's clipping,
+       so a PDF shows the whole table rather than one screen of it. */
+    @media print {
+      .rpt-tool-btn .rpt-btn-long { display: inline; }
+      .rpt-table-scroll { overflow: visible !important; margin: 0 !important; padding: 0 !important; }
+      .rpt-table { min-width: 0 !important; }
     }
 
     @media print {
@@ -7286,7 +7379,7 @@
   <div class="rpt-toolbar">
     <h2 id="rptToolbarTitle">Report</h2>
     <div class="rpt-toolbar-actions">
-      <button class="rpt-tool-btn" onclick="window.print()">&#x1F5A8; Print / Save PDF</button>
+      <button class="rpt-tool-btn" onclick="window.print()">&#x1F5A8; <span class="rpt-btn-long">Print / Save&nbsp;</span>PDF</button>
       <button class="rpt-close-btn" onclick="closeReport()">&#x2715; Close</button>
     </div>
   </div>

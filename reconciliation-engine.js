@@ -138,9 +138,16 @@ window.ReconciliationEngine = (() => {
         title:    `Pro-rata allocation conflict — ${r.name}`,
         detail:   `Lease-stated proportionate share differs from the square-footage-derived allocation. ` +
                   `Verify the executed lease and applicable allocation methodology before billing.`,
-        impact:   { amount: spread, kind: 'under_review',
+        impact:   { amount: spread, kind: 'under_review', scope: `tenant:${r.name}`,
                     basis: 'Difference between the two methodologies. Not a confirmed over- or under-recovery — ' +
                            'which figure governs is unresolved.' },
+        // Two sources disagree about one field. Carried explicitly so surfaces
+        // that summarise a tenant's data quality can say CONFLICT rather than
+        // fall through to INFERRED, which would report a known disagreement as
+        // a mere absence of citation.
+        conflict: { tenant: r.name, field: 'pro_rata_share',
+                    sources: ['Lease document (stated proportionate share)',
+                              'Computed (leased sqft ÷ property sqft)'] },
         actions:  ['Review lease clause', 'Confirm allocation methodology',
                    'Update tenant allocation if verified', 'Re-run reconciliation'],
         source:   'Lease-stated share (lease document) vs computed share (leased sqft ÷ property sqft)',

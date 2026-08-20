@@ -384,22 +384,57 @@ t('[source] the renderer already suppresses the button for non-disputable findin
 
 console.log('\n── AI Auditor: unallocated space ──');
 
-t('[source] the gap is described as "not covered by loaded leases", not "untenanted"', () => {
-  ok(!/is untenanted — its share of CAM expenses/.test(scriptCode),
-     'the auditor still asserts the remaining space is untenanted');
-  ok(/not covered by any lease currently loaded/.test(scriptCode),
-     'the auditor does not scope the gap to the leases actually loaded');
-  ok(/leases currently loaded cover/.test(scriptCode),
-     'the context line does not say these are the loaded leases');
+// These two assertions were written against buildAuditSummary section 8, which
+// raised its own under-coverage finding. It has since been removed as a
+// duplicate: reconciliation-engine.js section 3 raises the same finding on the
+// same threshold, and the Test 2 audit was listing the fact twice. The
+// REQUIREMENT is unchanged and is asserted here in full — the gap must never be
+// called untenanted, both causes must be offered, and neither asserted — but it
+// is now asserted against the implementation that survived, and against the
+// finding's real output rather than only the source text.
+const gapFinding = (() => {
+  const box = { window: {}, console, module: {}, Date, Math, Number, String, Array, JSON, isFinite, parseFloat };
+  box.globalThis = box;
+  vm.createContext(box);
+  vm.runInContext(fs.readFileSync(path.join(__dirname, 'reconciliation-engine.js'), 'utf8'), box);
+  const flags = box.window.ReconciliationEngine.detectReconciliationIssues(
+    [{ tenantId: 't1', name: 'Olenox Corp', proRataPercent: 23.57, totalAllocated: 12960.75 }],
+    { tenants: [{ id: 't1', name: 'Olenox Corp' }] }, '2026-12-31');
+  return flags.find(f => /Coverage gap/i.test(f.title));
+})();
+
+t('the gap is described as not covered by loaded leases, not "untenanted"', () => {
+  ok(gapFinding, 'the coverage-gap finding is no longer raised at all');
+  const text = gapFinding.title + ' ' + gapFinding.detail + ' ' + gapFinding.conditions.join(' ');
+  ok(!/untenanted/i.test(text), 'the auditor still asserts the remaining space is untenanted');
+  ok(/loaded leases cover/i.test(gapFinding.title),
+     'the finding does not scope the gap to the leases actually loaded');
+  ok(/leases currently loaded account for/i.test(gapFinding.detail),
+     'the detail does not say these are the loaded leases');
 });
 
-t('[source] both causes are offered, neither asserted', () => {
-  ok(/either vacant space/.test(scriptCode) && /has not been uploaded yet/.test(scriptCode),
+t('both causes are offered, neither asserted', () => {
+  ok(gapFinding, 'the coverage-gap finding is no longer raised at all');
+  const text = gapFinding.detail + ' ' + gapFinding.conditions.join(' ');
+  ok(/either vacant space/i.test(text) && /has not been uploaded yet/i.test(text),
      'the auditor does not present both explanations for the gap');
-  ok(!/`Unrecoverable gap: \$\{gap\}%`/.test(scriptCode),
-     'the condition list still calls the gap unrecoverable as a fact');
-  ok(/Gap not covered by loaded leases/.test(scriptCode),
-     'the condition list is not scoped to loaded leases');
+  ok(!/unrecoverable gap/i.test(text),
+     'the finding still calls the gap unrecoverable as a fact');
+  ok(gapFinding.conditions.some(c => /cause not determined/i.test(c)),
+     'the condition list does not record that the cause is undetermined');
+  ok(gapFinding.disputable === false,
+     'the coverage gap is disputable again — there is no counterparty to dispute with');
+});
+
+t('[source] the duplicate under-coverage finding does not come back', () => {
+  // Both detectors fired on the same threshold, so the Test 2 audit reported
+  // "Pro-rata totals 56.8% — 43.3% of expenses not allocated to a loaded lease"
+  // directly above "Coverage gap: loaded leases cover 56.8% of the property",
+  // inflating the warning count and deducting twice from the health score.
+  ok(!/of expenses not allocated to a loaded lease/.test(scriptCode),
+     'buildAuditSummary raises its own under-coverage finding again');
+  ok(!/Pro-rata totals \$\{totalPR\.toFixed\(1\)\}% — exceeds 100%/.test(scriptCode),
+     'buildAuditSummary raises its own over-allocation finding again');
 });
 
 t('[source] the recommendation asks which cause applies before concluding', () => {
@@ -573,7 +608,7 @@ t('the allocation figures themselves are untouched', () => {
   ok(/\$55,000\.00/.test(f.detail), 'the pool total no longer appears in the finding');
 });
 
-const TOTAL_EXPECTED = 44;
+const TOTAL_EXPECTED = 45;   // +1: the duplicate under-coverage finding must not return
 t(`suite runs all ${TOTAL_EXPECTED} checks`, () => {
   eq(pass + fail + 1, TOTAL_EXPECTED, 'test count changed — update TOTAL_EXPECTED deliberately');
 });

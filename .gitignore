@@ -145,3 +145,6 @@ phase25-screenshots/
 xrpl-ui-screenshots/
 
 node_modules/
+
+# Screenshots regenerated on demand by `SHOTS=1 node test-mobile-reports.js`
+screenshots/

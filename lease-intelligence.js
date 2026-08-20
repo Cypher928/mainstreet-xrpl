@@ -305,10 +305,26 @@ window.LeaseIntelligence = (() => {
   // Generates human-readable summaries for review acceleration.
   // Output: { fieldSummaries:{}, overallSummary:string, reviewNotes:[] }
 
+  // A date-only lease value is a calendar day, not an instant. `new Date(
+  // '2016-02-28')` is midnight UTC, which renders as February 27th anywhere west
+  // of Greenwich — the same one-day shift that made this module and the Lender
+  // Summary disagree with the audit about when SHONAC's lease ended. Build the
+  // date from its parts so the day survives the round trip.
+  function _leaseDate(d) {
+    if (d == null || d === '') return null;
+    if (d instanceof Date) return isNaN(d.getTime()) ? null : d;
+    const s = String(d).trim();
+    const m = /^(\d{4})-(\d{2})-(\d{2})$/.exec(s);
+    const dt = m ? new Date(Number(m[1]), Number(m[2]) - 1, Number(m[3])) : new Date(s);
+    return isNaN(dt.getTime()) ? null : dt;
+  }
+
   function _fmtDate(d) {
     if (!d) return null;
-    try { return new Date(d).toLocaleDateString('en-US', { year: 'numeric', month: 'long', day: 'numeric' }); }
-    catch (_) { return d; }
+    try {
+      const dt = _leaseDate(d);
+      return dt ? dt.toLocaleDateString('en-US', { year: 'numeric', month: 'long', day: 'numeric' }) : d;
+    } catch (_) { return d; }
   }
 
   // Mirrors the enforcement condition in script.js runCAMAllocation (the stricter
@@ -568,7 +584,9 @@ window.LeaseIntelligence = (() => {
       reviewerNote: 'Verify renewal option dates against lease expiration.',
       detect: (t) => {
         if (!t.renewal_options || !t.end_date) return false;
-        const leaseEndYr = new Date(t.end_date).getFullYear();
+        const _le = _leaseDate(t.end_date);
+        if (!_le) return false;
+        const leaseEndYr = _le.getFullYear();
         const m = t.renewal_options.match(/20(\d{2})/);
         if (!m) return false;
         return parseInt('20' + m[1]) < leaseEndYr;

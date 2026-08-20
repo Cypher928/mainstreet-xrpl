@@ -1,0 +1,510 @@
+'use strict';
+/**
+ * test-cross-report.js — five reports, one reconciliation, no contradictions.
+ *
+ *   node test-cross-report.js
+ *
+ * Each report is written in a different place against a different set of module
+ * globals, which is precisely why they were free to disagree. Every assertion
+ * here runs two of them against ONE fixture and compares what they say.
+ *
+ * THE CONTRADICTIONS THIS SUITE PINS DOWN, found by tracing the Test 2
+ * reconciliation against df143a7:
+ *
+ *  C1  Audit Exception Summary reported 5 critical / 5 warnings while Risk &
+ *      Disputes reported 4 / 2 for the same reconciliation on the same day.
+ *      Risk & Disputes called _detectReconciliationIssues, a strict subset of
+ *      buildAuditSummary, so the $38,000 concentration flag, the undated
+ *      invoice and the low-confidence match existed in one report only.
+ *
+ *  C2  "Exposure" meant open-dispute value in Risk & Disputes and canonical
+ *      at-risk elsewhere. With no disputes it printed "$0.00" beside $40,832
+ *      of allocated CAM that had no lease behind it.
+ *
+ *  C3  deriveExposure counted unpriced findings via `f.severity`, which only
+ *      the reconciliation engine sets. Five findings carried no amount; one was
+ *      counted. The other four were silently treated as costing nothing, which
+ *      is the exact failure audit-exposure.js exists to prevent.
+ *
+ *  C4  The coverage gap was raised twice — by buildAuditSummary section 8 and
+ *      by reconciliation-engine section 3, on identical thresholds.
+ *
+ *  C5  SHONAC 2016-02-28 rendered as "February 27, 2016"; Digital River
+ *      2003-07-31 as "July 30, 2003"; Tollgrade 2008-04-30 as "April 29, 2008".
+ *      Reported as source conflicts. They are not: one stored value, parsed as
+ *      UTC midnight and rendered in local time, always a day early and never a
+ *      day late. Fixed at the parse, not surfaced as a conflict.
+ *
+ *  C6  The Lender Summary's verdict was floored only by the health score, so a
+ *      single critical exception left 88/100 and read "Proceed" on a
+ *      reconciliation the operator was blocked from billing. Its narrative
+ *      never mentioned the audit at all.
+ *
+ *  C7  Coverage Gap said "1 item needs attention" on a property carrying five
+ *      critical exceptions, with nothing on either page explaining that the two
+ *      reports answer different questions.
+ */
+// PIN THE TIMEZONE BEFORE ANYTHING CONSTRUCTS A DATE.
+//
+// The C5 date assertions are vacuous under UTC: `new Date('2016-02-28')` and a
+// locally-constructed February 28th render identically there, so a CI runner in
+// UTC — which is the default — would pass whether or not the bug was present. A
+// mutation reverting the fix survived this suite until this line was added.
+// Pinning to a negative-offset zone is what makes the assertions load-bearing,
+// and it is the zone the reports were observed misbehaving in.
+process.env.TZ = 'America/New_York';
+
+const fs   = require('fs');
+const path = require('path');
+const F    = require('./test-cross-report-fixture.js');
+
+if (new Date(2016, 1, 28).getTimezoneOffset() <= 0) {
+  console.error('\x1b[31mFATAL: the timezone pin did not take effect — the C5 date '
+    + 'assertions would pass vacuously. Run with TZ=America/New_York.\x1b[0m');
+  process.exit(1);
+}
+
+let pass = 0, fail = 0;
+const ok  = (m) => { console.log('  \x1b[32m✓\x1b[0m ' + m); pass++; };
+const bad = (m, d) => { console.log('  \x1b[31m✗\x1b[0m ' + m + (d ? '\n      ' + d : '')); fail++; };
+const eq  = (l, a, e) => a === e ? ok(`${l} → ${a}`) : bad(l, `expected ${e}, got ${a}`);
+const yes = (l, c, d) => c ? ok(l) : bad(l, d);
+const no  = (l, c, d) => !c ? ok(l) : bad(l, d);
+
+const AX   = F.AX;
+const text = (h) => String(h || '').replace(/<[^>]+>/g, ' ').replace(/&mdash;/g, '—')
+  .replace(/&middot;/g, '·').replace(/&nbsp;/g, ' ').replace(/\s+/g, ' ').trim();
+
+// One reconciliation, computed once, read by every assertion below.
+const SUMMARY   = F.auditSummary();
+const NARRATIVE = F.auditNarrative();
+const EXCEPTION = text(F.exceptionReport().html);
+const GAP       = text(F.coverageGap().html);
+const RISK      = text(F.riskAndDisputes().html);
+const LENDER    = text(F.lenderSummary({
+  exposure: NARRATIVE.exposure, readiness: NARRATIVE.readiness,
+  camYear: NARRATIVE.camYear, conflicts: NARRATIVE.conflicts,
+}));
+
+// ── C1. One finding set ─────────────────────────────────────────────────────
+console.log('\n── C1 · A count labelled "Critical" means the same thing in every report ──');
+{
+  const kpi = (src, label) => {
+    const m = new RegExp('(\\d+)\\s+' + label).exec(src);
+    return m ? Number(m[1]) : null;
+  };
+  eq('the audit finding set', SUMMARY.red.length + ' red / ' + SUMMARY.yellow.length + ' yellow',
+     '5 red / 4 yellow');
+  eq('Risk & Disputes critical count', kpi(RISK, 'Critical Issues'), SUMMARY.red.length);
+  eq('Risk & Disputes warning count',  kpi(RISK, 'Warnings'),        SUMMARY.yellow.length);
+
+  // The three findings that lived in one report only.
+  ['Unusually large invoice', 'missing invoice date', 'insufficient confidence'].forEach(needle => {
+    yes(`Risk & Disputes now carries "${needle}"`, RISK.indexOf(needle) >= 0,
+        'this finding is still visible only in the Audit Exception Summary');
+  });
+
+  no('[source] Risk & Disputes no longer derives its own finding list',
+     /const reconIss\s+= _detectReconciliationIssues\(lastResults, currentProperty\(\)\);/
+       .test(fs.readFileSync(path.join(__dirname, 'script.js'), 'utf8')),
+     'generateLandlordExport is calling _detectReconciliationIssues directly again');
+}
+
+// ── C2. One meaning of "exposure" ───────────────────────────────────────────
+console.log('\n── C2 · "Exposure" is one measure, not two ──');
+{
+  const atRisk = AX.fmtMoney(NARRATIVE.exposure.confirmedAtRisk).replace('$', '');
+  yes('Risk & Disputes states the canonical at-risk figure',
+      RISK.indexOf('Allocation At Risk') >= 0 && /40,83[0-9]/.test(RISK),
+      `no allocation-at-risk figure in Risk & Disputes (expected ~${atRisk})`);
+  yes('the dispute figure keeps its own label',
+      RISK.indexOf('Dispute Exposure') >= 0,
+      'the open-dispute total is still labelled just "Exposure"');
+  no('and no bare "Exposure" label survives to be confused with it',
+     /[^ ]Exposure\b(?!\s*(?::|Report))/.test(RISK.replace(/Dispute Exposure/g, '')
+       .replace(/Allocation At Risk/g, '')),
+     'a bare "Exposure" label is still present');
+
+  // The one that matters: a reader must not be able to conclude "no exposure".
+  no('Risk & Disputes cannot read as "no exposure" while money is at risk',
+     /Exposure \$0\.00/.test(RISK) && NARRATIVE.exposure.confirmedAtRisk > 0
+       && RISK.indexOf('Allocation At Risk') < 0,
+     'the only exposure figure shown is $0.00 while the audit holds money at risk');
+}
+
+// ── C3. Unpriced findings are counted ───────────────────────────────────────
+console.log('\n── C3 · A finding nobody priced is never treated as costing nothing ──');
+{
+  // Which array a finding is in is the authoritative severity, because it is
+  // what every report renders "Critical"/"Warning" from.
+  const noSeverityField = AX.deriveExposure({
+    red:    [{ title: 'detector that never set severity' }],
+    yellow: [{ title: 'another' }, { title: 'and another' }],
+    green:  [{ title: 'a passed check, correctly not counted' }],
+  }, 1000);
+  eq('three unpriced red/yellow findings without a severity field', noSeverityField.unquantified, 3);
+
+  const withField = AX.deriveExposure({
+    red: [{ severity: 'red', title: 'x' }], yellow: [], green: [],
+  }, 1000);
+  eq('an explicit severity field still works', withField.unquantified, 1);
+
+  eq('severityOf falls back to the array', AX.severityOf({ title: 'x' }, 'yellow'), 'yellow');
+  eq('severityOf prefers an explicit field', AX.severityOf({ severity: 'red' }, 'yellow'), 'red');
+
+  // A green finding with no amount is a verification, not an unpriced gap.
+  eq('green findings are not "unquantified"',
+     AX.deriveExposure({ red: [], yellow: [], green: [{ title: 'v' }, { title: 'w' }] }, 1000).unquantified, 0);
+}
+
+console.log('\n── C3b · The two axes are never added together ──');
+{
+  const x = NARRATIVE.exposure;
+  yes('allocation exposure stays within the pool',
+      AX.allocationExposure(x) <= x.totalPool,
+      `allocation exposure ${Math.round(AX.allocationExposure(x))} exceeds the pool ${x.totalPool}`);
+  yes('the expense-side figure is non-zero and reported separately',
+      x.poolUnsubstantiated > 0 && !AX.ALLOCATION_KINDS.includes('unsubstantiated'),
+      'unsubstantiated has leaked into the allocation kinds');
+  yes('adding the two would have overstated the pool — which is why they are separate',
+      AX.allocationExposure(x) + x.poolUnsubstantiated > x.totalPool,
+      'the fixture no longer reproduces the overlap, so this guard proves nothing');
+  yes('the exposure line names the expense-side figure as a separate measure',
+      /separate measure/.test(AX.describeExposure(x)),
+      AX.describeExposure(x));
+
+  // Two findings about the same invoice are one sum of money.
+  const deduped = AX.deriveExposure({
+    red: [], green: [],
+    yellow: [
+      { title: 'undated',      impact: { amount: 11750, kind: 'unsubstantiated', scope: 'invoice:Harbor' } },
+      { title: 'undocumented', impact: { amount: 11750, kind: 'unsubstantiated', scope: 'invoice:Harbor' } },
+    ],
+  }, 71950);
+  eq('one invoice flagged twice is counted once', deduped.poolUnsubstantiated, 11750);
+
+  const bigger = AX.deriveExposure({
+    red: [], green: [],
+    yellow: [
+      { title: 'small', impact: { amount: 500,  kind: 'at_risk', scope: 'tenant:A' } },
+      { title: 'large', impact: { amount: 2000, kind: 'at_risk', scope: 'tenant:A' } },
+    ],
+  }, 71950);
+  eq('the larger claim on the same money supersedes the smaller', bigger.confirmedAtRisk, 2000);
+  eq('and only the surviving claim is listed as a contributor', bigger.contributors.at_risk.length, 1);
+
+  const unscoped = AX.deriveExposure({
+    red: [], green: [],
+    yellow: [
+      { title: 'a', impact: { amount: 100, kind: 'at_risk' } },
+      { title: 'b', impact: { amount: 100, kind: 'at_risk' } },
+    ],
+  }, 71950);
+  eq('findings with no scope are treated as distinct', unscoped.confirmedAtRisk, 200);
+
+  // kind 'none' means "here is a number for context" — a category total, a
+  // threshold. It must never land in a bucket, or a report would total figures
+  // that were only ever printed to explain another one.
+  const contextual = AX.deriveExposure({
+    red: [], green: [],
+    yellow: [{ title: 'context', impact: { amount: 9999, kind: 'none' } }],
+  }, 71950);
+  eq('a contextual amount enters no bucket', contextual.confirmedAtRisk
+     + contextual.requiringReview + contextual.excludedRecoverable
+     + contextual.poolUnsubstantiated, 0);
+  eq('and is not counted as unpriced either — it was priced, just not as exposure',
+     contextual.unquantified, 0);
+
+  // The reassurance must be withheld for weakly-evidenced money too. Nothing is
+  // at risk and nothing is under review, but a third of the pool has no
+  // supporting document — "no at-risk amounts identified" is not the sentence a
+  // manager should read before billing it out.
+  const onlyUnsub = AX.deriveExposure({
+    red: [], yellow: [], green: [
+      { title: 'undocumented', impact: { amount: 24000, kind: 'unsubstantiated', scope: 'invoice:X' } },
+    ],
+  }, 71950);
+  eq('weakly-evidenced money is totalled', onlyUnsub.poolUnsubstantiated, 24000);
+  no('and withholds the "no at-risk amounts identified" phrasing',
+     /no at-risk amounts identified/.test(AX.describeExposure(onlyUnsub)),
+     AX.describeExposure(onlyUnsub));
+  yes('a truly empty reconciliation still gets the plain-language all-clear',
+      /no at-risk amounts identified/.test(
+        AX.describeExposure(AX.deriveExposure({ red: [], yellow: [], green: [{ title: 'ok' }] }, 71950))),
+      'the clean case lost its summary');
+}
+
+// ── C4. No duplicate findings ───────────────────────────────────────────────
+console.log('\n── C4 · One fact, one finding ──');
+{
+  const coverage = SUMMARY.yellow.filter(f => /coverage|not allocated to a loaded lease|Pro-rata totals/i.test(f.title));
+  eq('the coverage gap is raised exactly once', coverage.length, 1);
+  yes('and it is the engine\'s version, which carries the renderer contract',
+      coverage[0] && coverage[0].disputable === false && coverage[0].kind === 'coverage',
+      'the surviving coverage finding lost kind:coverage / disputable:false');
+
+  const titles = [...SUMMARY.red, ...SUMMARY.yellow].map(f => f.title);
+  eq('no finding title is duplicated', titles.length, new Set(titles).size);
+}
+
+// ── C5. One stored date, one rendered date ──────────────────────────────────
+console.log('\n── C5 · A lease date renders as the day it was stored ──');
+{
+  // The three pairs reported as source conflicts.
+  const PAIRS = [
+    ['SHONAC',        '2016-02-28', 'February 28, 2016', 'February 27, 2016'],
+    ['Digital River', '2003-07-31', 'July 31, 2003',     'July 30, 2003'],
+    ['Tollgrade',     '2008-04-30', 'April 30, 2008',    'April 29, 2008'],
+  ];
+  PAIRS.forEach(([name, stored, correct, shifted]) => {
+    const finding = SUMMARY.red.find(f => f.title.indexOf(name) === 0 && /ended/.test(f.title));
+    yes(`${name}: the audit finding cites the stored value ${stored}`,
+        !!finding && finding.title.indexOf(stored) >= 0,
+        finding ? finding.title : 'no expired-lease finding raised');
+    yes(`${name}: the Lender Summary renders ${correct}`,
+        LENDER.indexOf(correct) >= 0, `"${correct}" not found in the Lender Summary`);
+    no(`${name}: and never ${shifted}`, LENDER.indexOf(shifted) >= 0,
+       'the UTC-parse shift is back — a date-only value is being read as an instant');
+  });
+
+  // The direction of the bug: always earlier, never later. A test that only
+  // checked "the two agree" would pass if both shifted together.
+  yes('the expiration schedule buckets by the stored year',
+      /2003 Digital River/.test(LENDER) && /2016 SHONAC/.test(LENDER),
+      'the year buckets moved with the timezone');
+
+  // Start dates shifted too, which the original report did not notice.
+  yes('start dates are equally unshifted', LENDER.indexOf('March 1, 2011') >= 0,
+      'SHONAC\'s 2011-03-01 start date is still rendering as February 28, 2011');
+
+  no('[source] no lease date is parsed by handing a bare date string to Date()',
+     /new Date\((?:t|lt)\.(?:end|start)_date\)/.test(
+       fs.readFileSync(path.join(__dirname, 'lease-review-packets.js'), 'utf8')),
+     'a lease date is being parsed as an instant again in lease-review-packets.js');
+
+  // lease-intelligence.js renders dates independently and had the identical
+  // defect. It is a pure module, so it loads directly.
+  new Function(fs.readFileSync(path.join(__dirname, 'lease-intelligence.js'), 'utf8'))();
+  const LI = global.window.LeaseIntelligence;
+
+  const exp = LI.generateLeaseExplainability({
+    tenant_name: 'Digital River', leased_sqft: 17800, lease_type: 'NNN',
+    start_date: '1998-08-01', end_date: '2003-07-31',
+    // The amendment date is rendered only where a field summary cites the
+    // governing amendment, so the overridden field has to be one that gets a
+    // summary. `cap` does; `leased_sqft` does not.
+    cap: 5, capBaseAmount: 40000,
+    amendments: [{ effectiveDate: '2001-03-31', overriddenFields: ['cap'] }],
+    fieldEvidence: {},
+  });
+  const expText = JSON.stringify(exp);
+  yes('lease intelligence dates an amendment on the day it was stored',
+      expText.indexOf('March 31, 2001') >= 0,
+      'the amendment date shifted — 2001-03-31 is not rendering as March 31, 2001');
+  no('and never a day early', expText.indexOf('March 30, 2001') >= 0,
+     'the UTC-parse shift is back in lease-intelligence.js');
+
+  // The renewal-option edge case compares the lease end YEAR, and a lease that
+  // ends on January 1st is where the shift changes the year rather than just the
+  // day: parsed as an instant, 2021-01-01 becomes December 31st 2020. The
+  // renewal text then no longer predates the expiry and the conflict is not
+  // raised at all — a silent false negative on a real lease conflict.
+  const janExpiry = {
+    tenant_name: 'Year Boundary Co', leased_sqft: 1000, lease_type: 'NNN',
+    start_date: '2015-01-01', end_date: '2021-01-01',
+    renewal_options: 'Tenant may renew through 2020.',
+  };
+  const cases = (LI.detectLeaseEdgeCases(janExpiry) || {}).edgeCases || [];
+  yes('a renewal option predating a January-1 lease expiry is still detected',
+      cases.some(c => /renewal/i.test(c.type || '')),
+      'the year-boundary expiry was read as the previous year, so the conflict vanished');
+}
+
+// ── C6. The Lender Summary consumes canonical state ─────────────────────────
+console.log('\n── C6 · The Lender Summary says what the audit says ──');
+{
+  yes('the health basis names the critical exceptions',
+      /5 critical exceptions/.test(LENDER), 'the health score still does not show the findings');
+  yes('the health basis keeps the document-completeness penalties too',
+      /low-confidence extraction/.test(LENDER),
+      'the document penalties were replaced rather than added to');
+  yes('the underwriting narrative leads with the audit',
+      /CAM audit raised 5 critical exceptions and 4 advisory findings/.test(LENDER),
+      'the narrative still opens on occupancy and never mentions the reconciliation');
+  yes('the narrative states the at-risk figure',
+      /\$40,832 of allocated CAM lacking a documented basis/.test(LENDER),
+      'the at-risk total never reaches the underwriting prose');
+  yes('the narrative flags the unpriced finding as a floor, not a total',
+      /a floor, not a total/.test(LENDER),
+      'the exposure figures are presented as complete when one finding is unpriced');
+  yes('the narrative reports the blocked billing state',
+      /cannot issue reconciliation statements/.test(LENDER),
+      'a lender is not told the operator cannot bill');
+
+  // The floor. Without it a single red finding scores 88 and reads "Proceed".
+  const oneRed = { counts: { red: 1, yellow: 0, green: 4 }, totalPool: 100000,
+                   confirmedAtRisk: 0, requiringReview: 0, excludedRecoverable: 0,
+                   poolUnsubstantiated: 0, unquantified: 0, contributors: {} };
+  const scoreNoFloor = 100 - AX.healthDeductions(oneRed).deduction;
+  yes('one critical exception alone would still score in "Proceed" territory',
+      scoreNoFloor >= 75,
+      `the fixture no longer reproduces the gap the floor exists to close (score ${scoreNoFloor})`);
+
+  // See P3 below: several tenants, none dominant, so concentration risk does not
+  // independently drive the verdict this assertion is about.
+  const clean = { name: 'Clean', totalSqft: 10000, timeline: [], disputes: [],
+    tenants: ['A', 'B', 'C', 'D', 'E'].map((n, i) => ({
+      id: 't' + i, tenant_name: n + ' Co', name: n + ' Co', leased_sqft: 1900,
+      lease_type: 'NNN', start_date: '2020-01-01', end_date: '2032-12-31' })) };
+  const LRP = global.window.LeaseReviewPackets;
+  const blocked = text(LRP.generateLenderSummaryHtml(clean, {
+    exposure: oneRed, readiness: AX.billingReadiness(oneRed), camYear: 2026 }));
+  yes('but readiness floors the verdict to Additional Due Diligence Required',
+      /Additional Due Diligence Required/.test(blocked) && !/\bProceed\b/.test(blocked),
+      'a lender is told to Proceed on a reconciliation that cannot be billed');
+
+  const okState = { counts: { red: 0, yellow: 0, green: 6 }, totalPool: 100000,
+                    confirmedAtRisk: 0, requiringReview: 0, excludedRecoverable: 0,
+                    poolUnsubstantiated: 0, unquantified: 0, contributors: {} };
+  const green = text(LRP.generateLenderSummaryHtml(clean, {
+    exposure: okState, readiness: AX.billingReadiness(okState), camYear: 2026 }));
+  yes('a genuinely clean property can still reach Proceed',
+      /\bProceed\b/.test(green),
+      'the floor is now blocking clean properties too — it must be a floor, not a ceiling');
+}
+
+// ── P3. Evidence semantics ──────────────────────────────────────────────────
+console.log('\n── P3 · VERIFIED · INFERRED · MISSING · CONFLICT ──');
+{
+  yes('a field whose two sources disagree reads CONFLICT, not Inferred',
+      /Digital River[^|]*?Conflict/.test(LENDER.replace(/\s+/g, ' ')) || /Conflict/.test(LENDER),
+      'the pro-rata conflict is still reported as an absence of citation');
+  yes('and the conflict names the field and both sources',
+      /pro_rata_share — sources disagree/.test(LENDER),
+      'the conflict has no provenance attached');
+  yes('a tenant with values but no citations still reads Inferred',
+      /Inferred/.test(LENDER), 'the Inferred state disappeared');
+
+  eq('the conflict is carried on the finding, with both sources named',
+     ((NARRATIVE.conflicts[0] || {}).sources || []).length, 2);
+
+  // Unknown must never become satisfactory. The sentence claiming satisfactory
+  // extraction confidence used to turn on document completeness alone.
+  no('"extraction confidence is satisfactory" is withheld while findings are open',
+     /extraction confidence is satisfactory/.test(LENDER),
+     'a reconciliation with five critical exceptions is described as satisfactory');
+
+  const LRP = global.window.LeaseReviewPackets;
+  // Five tenants, none dominant: concentration risk gates this sentence too, so
+  // a single-tenant fixture would withhold it for a reason unrelated to the
+  // audit and the assertion would prove nothing.
+  const clean = { name: 'Clean', totalSqft: 10000, timeline: [], disputes: [],
+    tenants: ['A', 'B', 'C', 'D', 'E'].map((n, i) => ({
+      id: 't' + i, tenant_name: n + ' Co', name: n + ' Co', leased_sqft: 1900,
+      lease_type: 'NNN', start_date: '2020-01-01', end_date: '2032-12-31' })) };
+  const unpriced = { counts: { red: 0, yellow: 0, green: 3 }, totalPool: 100000,
+                     confirmedAtRisk: 0, requiringReview: 0, excludedRecoverable: 0,
+                     poolUnsubstantiated: 0, unquantified: 1, contributors: {} };
+  no('and withheld when a finding is merely unpriced, not resolved',
+     /extraction confidence is satisfactory/.test(text(LRP.generateLenderSummaryHtml(clean, {
+       exposure: unpriced, readiness: AX.billingReadiness(unpriced), camYear: 2026 }))),
+     'an unquantified finding still reads as a satisfactory state');
+
+  const allClear = { counts: { red: 0, yellow: 0, green: 6 }, totalPool: 100000,
+                     confirmedAtRisk: 0, requiringReview: 0, excludedRecoverable: 0,
+                     poolUnsubstantiated: 0, unquantified: 0, contributors: {} };
+  yes('a genuinely clean audit can still say so',
+      /extraction confidence is satisfactory/.test(text(LRP.generateLenderSummaryHtml(clean, {
+        exposure: allClear, readiness: AX.billingReadiness(allClear), camYear: 2026 }))),
+      'the sentence is now unreachable even when everything checks out');
+}
+
+// ── P5. Coverage Gap scope ──────────────────────────────────────────────────
+console.log('\n── P5 · Coverage Gap says which question it answers ──');
+{
+  yes('the report states its scope up front',
+      /checks whether the inputs are complete before you reconcile/.test(GAP),
+      'nothing tells the reader what this report does and does not cover');
+  yes('it says explicitly that it does not evaluate the reconciliation',
+      /does not evaluate a reconciliation that has already been produced/.test(GAP),
+      'the exclusion is left to be inferred from a differing count');
+  yes('it names the audit finding counts and points at the other report',
+      /5 critical and 4 advisory audit findings/.test(GAP)
+        && /Audit Exception Summary, not here/.test(GAP),
+      'a reader still cannot reconcile this report\'s count with the audit\'s');
+  no('it does not claim everything is fine while exceptions are open',
+     /Everything looks good/.test(GAP),
+     'the all-clear banner shows on a property with five critical exceptions');
+  yes('its own count is described as inputs, not as findings',
+      /input[s]? need[s]? attention/.test(GAP),
+      'the summary bar still says "items", which reads as the audit\'s items');
+}
+
+// ── Uniform finding structure ───────────────────────────────────────────────
+console.log('\n── Every finding states what, how much, on what evidence, what to do ──');
+{
+  yes('the Exception Summary states the exposure line, not just a count',
+      EXCEPTION.indexOf(NARRATIVE.financialImpact) >= 0,
+      'the report enumerates findings without ever totalling them');
+  yes('and the same readiness verdict as every other surface',
+      EXCEPTION.indexOf(NARRATIVE.readiness.reason) >= 0,
+      'the Exception Summary omits the billing readiness verdict');
+
+  yes('a priced finding shows its amount and how it is treated',
+      /\$38,000\.00 weakly evidenced \(expense-side\)/.test(EXCEPTION),
+      'the $38,000 concentration renders with no dollar figure');
+  yes('an unpriced finding says so rather than showing nothing',
+      /Not yet quantified/.test(EXCEPTION),
+      'an unpriced finding is silently rendered as though it had no consequence');
+  yes('every finding cites its source',
+      /Source: Invoice amount vs total CAM pool/.test(EXCEPTION)
+        && /Source: Lease record \(end_date\) vs reconciliation allocation/.test(EXCEPTION),
+      'the source field is recorded on findings but still never displayed');
+  yes('and offers the actions that resolve it',
+      /Confirm occupancy/.test(EXCEPTION) && /Review lease clause/.test(EXCEPTION),
+      'findings render without their recommended actions');
+
+  // The pro-rata conflict, verbatim to the specification it was built to.
+  yes('the pro-rata conflict states both figures and the difference',
+      /18\.54%/.test(EXCEPTION) && /22\.25%/.test(EXCEPTION)
+        && /3\.71 percentage points/.test(EXCEPTION),
+      'the conflict no longer shows both shares and their difference');
+  yes('and asserts neither as controlling',
+      /does not assert which figure is controlling/.test(EXCEPTION),
+      'MainStreet is now asserting which pro-rata figure governs');
+  yes('and is rendered as a Warning, never a Critical',
+      /Warning Pro-rata allocation conflict/.test(EXCEPTION),
+      'the conflict has been promoted to a critical exception');
+}
+
+// ── P1 rollup. Every report agrees on the numbers it shares ─────────────────
+console.log('\n── P1 · The five reports agree wherever they overlap ──');
+{
+  const x = NARRATIVE.exposure;
+  // The Exception Summary now states the same exposure line as everywhere else.
+  yes('the exposure line the audit narrative computes reaches every surface',
+      NARRATIVE.financialImpact === AX.describeExposure(x),
+      'the narrative re-derives its own exposure string');
+  yes('billing readiness is one verdict, not one per report',
+      RISK.indexOf(NARRATIVE.readiness.label) >= 0
+        && LENDER.indexOf(NARRATIVE.readiness.reason) >= 0,
+      'the readiness verdict differs between Risk & Disputes and the Lender Summary');
+
+  // The four expired leases and the $38,000 concentration are the material
+  // findings the pass was asked to follow end to end.
+  ['SHONAC', 'Digital River', 'Tollgrade', 'Fourth Tenant Co'].forEach(t => {
+    yes(`${t}'s expired lease is visible in both the audit and Risk & Disputes`,
+        RISK.indexOf(t) >= 0 && SUMMARY.red.some(f => f.title.indexOf(t) === 0),
+        'the expired lease is missing from one of the two');
+  });
+  yes('the $38,000 concentration reaches the Lender Summary\'s expense-side figure',
+      x.contributors.unsubstantiated.some(t => /38,000/.test(t)) && /57,750/.test(LENDER),
+      'the concentration finding still carries no money anywhere');
+  yes('the pro-rata conflict is under review, never asserted as a loss',
+      x.contributors.under_review.some(t => /Pro-rata allocation conflict/.test(t))
+        && !x.contributors.at_risk.some(t => /Pro-rata/.test(t)),
+      'the pro-rata conflict has been classified as a confirmed loss');
+}
+
+console.log(`\n${fail === 0 ? '\x1b[32m' : '\x1b[31m'}RESULT: ${pass} passed, ${fail} failed\x1b[0m`);
+process.exit(fail === 0 ? 0 : 1);

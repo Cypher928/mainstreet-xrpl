@@ -22,10 +22,37 @@ window.LeaseReviewPackets = (() => {
     return '$' + num.toLocaleString('en-US', { minimumFractionDigits: 2, maximumFractionDigits: 2 });
   }
 
+  /**
+   * Parse a lease date without moving it.
+   *
+   * `new Date('2016-02-28')` is midnight UTC by specification. Rendered through
+   * toLocaleDateString in any US timezone that is February 27th, so a lease the
+   * audit reported as ending 2016-02-28 appeared in this report as expiring
+   * February 27, 2016 — and Digital River's 2003-07-31 as July 30, Tollgrade's
+   * 2008-04-30 as April 29. Three "source conflicts" that were one stored value
+   * rendered two ways, always a day early, never a day late.
+   *
+   * A date-only string carries no timezone and is not an instant; it is a
+   * calendar day. Constructing it from its parts pins it to the local calendar,
+   * so the day that comes out is the day that went in. Values that already carry
+   * a time or a zone are left to the normal Date parse.
+   */
+  function _leaseDate(d) {
+    if (d == null || d === '') return null;
+    if (d instanceof Date) return isNaN(d.getTime()) ? null : d;
+    const s = String(d).trim();
+    const m = /^(\d{4})-(\d{2})-(\d{2})$/.exec(s);
+    const dt = m ? new Date(Number(m[1]), Number(m[2]) - 1, Number(m[3])) : new Date(s);
+    return isNaN(dt.getTime()) ? null : dt;
+  }
+
   function _fmtDate(d) {
     if (!d) return null;
-    try { return new Date(d).toLocaleDateString('en-US', { year: 'numeric', month: 'long', day: 'numeric' }); }
-    catch (_) { return String(d); }
+    try {
+      const dt = _leaseDate(d);
+      return dt ? dt.toLocaleDateString('en-US', { year: 'numeric', month: 'long', day: 'numeric' })
+                : String(d);
+    } catch (_) { return String(d); }
   }
 
   function _displayValue(field, val) {
@@ -814,6 +841,8 @@ window.LeaseReviewPackets = (() => {
     // A lender summary must never imply the reconciliation is billable when the
     // audit says otherwise. Read from the same canonical state, not re-derived.
     const _readiness = auditState && auditState.readiness ? auditState.readiness : null;
+    const _money = (n) => (_AX ? _AX.fmtMoney(n) : '$' + Math.round(Number(n) || 0).toLocaleString('en-US'));
+    const camYearLabel = (auditState && auditState.camYear) || '';
 
     // ── Risk levels ───────────────────────────────────────────────────────────
 
@@ -1007,7 +1036,30 @@ window.LeaseReviewPackets = (() => {
     // Compute lender-facing data quality signal from fieldEvidence.
     // Checks the four key underwriting fields; returns Verified / Partially Verified /
     // Inferred / Missing Evidence — lender language, no raw confidence scores.
+    // The four states, and the order they are tested in.
+    //
+    //   CONFLICT  two sources disagree about the same field
+    //   MISSING   no value to evaluate
+    //   VERIFIED  every populated key field quotes the executed document
+    //   INFERRED  a value exists but nothing cites it
+    //
+    // CONFLICT is tested first and separately, because it is not a point on the
+    // same scale as the others. A tenant whose lease states an 18.54% share
+    // while the square footage derives 22.25% has plenty of evidence — it just
+    // disagrees with itself. Ranking that by citation count returned "Inferred",
+    // which reads as a gap in documentation and understates it.
+    const _conflictsByTenant = {};
+    ((auditState && auditState.conflicts) || []).forEach(c => {
+      if (!c || !c.tenant) return;
+      (_conflictsByTenant[c.tenant] = _conflictsByTenant[c.tenant] || []).push(c);
+    });
+
     function _lenderVerification(t) {
+      const conf = _conflictsByTenant[t.tenant_name] || _conflictsByTenant[t.name];
+      if (conf && conf.length) {
+        return { label: 'Conflict', color: '#f87171',
+                 note: `${conf.map(c => c.field).join(', ')} — sources disagree` };
+      }
       const fe = t.fieldEvidence;
       const KEY_FIELDS = ['leased_sqft', 'lease_type', 'start_date', 'end_date'];
       let checked = 0, cited = 0;
@@ -1029,7 +1081,8 @@ window.LeaseReviewPackets = (() => {
       const pct   = (totalSqft > 0 && sf > 0) ? Math.round((sf / totalSqft) * 100) + '%' : '—';
       const flag  = _tenantRiskFlag(t);
       const flagR = _risk(flag);
-      const expired = t.end_date && new Date(t.end_date) < new Date() ? 'Expired' : 'Active';
+      const _end = _leaseDate(t.end_date);
+      const expired = _end && _end < new Date() ? 'Expired' : 'Active';
       const verif   = _lenderVerification(t);
       return `<tr>
         <td>${_d(t.tenant_name)}</td>
@@ -1038,7 +1091,8 @@ window.LeaseReviewPackets = (() => {
         <td>${_d(t.lease_type)}</td>
         <td><span style="color:${expired === 'Expired' ? '#f87171' : '#4ade80'};font-size:0.8rem;">${expired}</span></td>
         <td><span style="color:${flagR.color};font-weight:600;font-size:0.8rem;">${flag}</span></td>
-        <td><span style="color:${verif.color};font-size:0.8rem;font-weight:600;">${_esc(verif.label)}</span></td>
+        <td><span style="color:${verif.color};font-size:0.8rem;font-weight:600;">${_esc(verif.label)}</span>${
+          verif.note ? `<span style="display:block;font-size:0.7rem;color:#94a3b8;">${_esc(verif.note)}</span>` : ''}</td>
       </tr>`;
     }).join('');
 
@@ -1066,7 +1120,9 @@ window.LeaseReviewPackets = (() => {
       // Group by expiration year
       const byYear = {};
       for (const t of tenantsWithDates) {
-        const year = new Date(t.end_date).getFullYear();
+        const _ed  = _leaseDate(t.end_date);
+        const year = _ed ? _ed.getFullYear() : null;
+        if (year == null) continue;
         if (!byYear[year]) byYear[year] = [];
         byYear[year].push(t);
       }
@@ -1124,7 +1180,7 @@ window.LeaseReviewPackets = (() => {
           ])}
           ${kpiGroup('Lease Term', [
             ['Start Date',     lt.start_date ? _fmtDate(lt.start_date) : '—'],
-            ['Expiration',     lt.end_date   ? _fmtDate(lt.end_date)   : '—', lt.end_date && new Date(lt.end_date) < new Date()],
+            ['Expiration',     lt.end_date   ? _fmtDate(lt.end_date)   : '—', !!(_leaseDate(lt.end_date) && _leaseDate(lt.end_date) < new Date())],
             ['Renewal Option', lt.renewal_options || '—'],
             ['Amendments',     Array.isArray(lt.amendments) ? lt.amendments.length : 0],
           ])}
@@ -1288,21 +1344,66 @@ window.LeaseReviewPackets = (() => {
 
     // ── SECTION: Underwriting Recommendation ─────────────────────────────────
     const highRiskCount = [occRiskLevel, concRiskLevel, docRiskLevel, dispRiskLevel].filter(r => r === 'High').length;
-    const uwVerdict = (healthScore == null || activeTenants.length === 0) ? 'Insufficient Data'
+
+    // The audit reached the verdict only through the health score, and the score
+    // is a weighted total that a single critical exception cannot dominate: one
+    // red finding on an otherwise complete property deducts 12 and still leaves
+    // 88, which read "Proceed" on the very reconciliation the audit was refusing
+    // to let the landlord bill. A lender must not be told to proceed on numbers
+    // the operator is blocked from issuing, so readiness is a floor, applied
+    // after the score and independent of it.
+    const _blockedByAudit = !!(_readiness && _readiness.canBill === false);
+
+    let uwVerdict = (healthScore == null || activeTenants.length === 0) ? 'Insufficient Data'
       : healthScore >= 75 && highRiskCount === 0 ? 'Proceed'
       : healthScore >= 50 && highRiskCount <= 1 ? 'Proceed with Conditions'
       : 'Additional Due Diligence Required';
+    if (_blockedByAudit && uwVerdict !== 'Insufficient Data' && uwVerdict !== 'Additional Due Diligence Required') {
+      uwVerdict = 'Additional Due Diligence Required';
+    }
     const uwColor = uwVerdict === 'Proceed' ? '#4ade80' : uwVerdict === 'Proceed with Conditions' ? '#fbbf24' : '#f87171';
     const uwBg    = uwVerdict === 'Proceed' ? 'rgba(34,197,94,0.07)' : uwVerdict === 'Proceed with Conditions' ? 'rgba(245,158,11,0.07)' : 'rgba(239,68,68,0.07)';
 
     const uwSentences = [];
+
+    // The audit's own conclusion, stated first, because it is the finding a
+    // credit committee most needs and the one this narrative never carried. The
+    // prose used to open on occupancy and never mention the reconciliation at
+    // all, so a package with five critical exceptions read as a vacancy story.
+    if (_exposure && (_exposure.counts.red > 0 || _exposure.counts.yellow > 0)) {
+      const bits = [];
+      if (_exposure.counts.red > 0)
+        bits.push(`${_exposure.counts.red} critical exception${_exposure.counts.red === 1 ? '' : 's'}`);
+      if (_exposure.counts.yellow > 0)
+        bits.push(`${_exposure.counts.yellow} advisory finding${_exposure.counts.yellow === 1 ? '' : 's'}`);
+      let s = `The ${camYearLabel ? camYearLabel + " " : ""}CAM audit raised ${bits.join(' and ')}`;
+      if (_exposure.confirmedAtRisk > 0)
+        s += `, with ${_money(_exposure.confirmedAtRisk)} of allocated CAM lacking a documented basis`;
+      if (_exposure.requiringReview > 0)
+        s += ` and a further ${_money(_exposure.requiringReview)} whose treatment is unresolved`;
+      uwSentences.push(s + '.');
+      if (_exposure.poolUnsubstantiated > 0)
+        uwSentences.push(`Separately, ${_money(_exposure.poolUnsubstantiated)} of the expense pool is weakly evidenced — undated, undocumented or concentrated in a single vendor. This measures the expenses rather than the amounts billed, and is not additive to the figures above.`);
+      if (_exposure.unquantified > 0)
+        uwSentences.push(`${_exposure.unquantified} finding${_exposure.unquantified === 1 ? ' has' : 's have'} not yet been quantified; the exposure figures above are therefore a floor, not a total.`);
+    }
+    if (_blockedByAudit)
+      uwSentences.push(`The operator cannot issue reconciliation statements in the current state: ${_readiness.reason}`);
+
     if (occupancyPct != null)
       uwSentences.push(`The property is ${occupancyPct}% occupied${occupancyPct >= 85 ? ', demonstrating strong utilization that supports revenue stability' : occupancyPct >= 70 ? ', with moderate vacancy that warrants review of absorption assumptions' : ', with elevated vacancy exposure that should be factored into debt service coverage analysis'}.`);
     if (concRiskLevel === 'High' && top1Pct != null)
       uwSentences.push(`Concentration risk is elevated — the largest tenant represents ${top1Pct}% of rentable square footage, creating meaningful rollover exposure.`);
     if (docRiskLevel === 'High')
       uwSentences.push(`${missingCritDocs} lease${missingCritDocs !== 1 ? 's are' : ' is'} missing critical field data; executed documents should be obtained and reviewed prior to commitment.`);
-    else if (docRiskLevel === 'Low' && highRiskCount === 0)
+    // "Extraction confidence is satisfactory" is a claim about evidence, so it
+    // may only be made when the evidence actually supports it. It used to turn
+    // on document completeness alone, which is how a reconciliation carrying
+    // unresolved findings could be described to a lender as satisfactory. An
+    // unpriced finding or an outstanding exception is not a satisfactory state;
+    // it is an unknown one, and this sentence is withheld rather than softened.
+    else if (docRiskLevel === 'Low' && highRiskCount === 0 && !_blockedByAudit
+             && (!_exposure || (_exposure.counts.red === 0 && _exposure.counts.yellow === 0 && _exposure.unquantified === 0)))
       uwSentences.push('Key lease terms are captured for all tenants with no missing critical fields, and extraction confidence is satisfactory for underwriting purposes.');
     if (openDisputes.length > 0)
       uwSentences.push(`${openDisputes.length} open CAM dispute${openDisputes.length !== 1 ? 's' : ''} should be resolved or quantified as a contingency before loan closing.`);
