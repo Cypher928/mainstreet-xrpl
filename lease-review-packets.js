@@ -829,6 +829,25 @@ window.LeaseReviewPackets = (() => {
       - _auditPenalty.deduction;
     const healthScore  = activeTenants.length > 0 ? Math.max(0, Math.min(100, Math.round(rawHealth))) : null;
 
+    // WHEN THE DEDUCTIONS OUTRUN THE SCALE.
+    //
+    // The Test 2 property deducts 109 points from a 100-point scale, so the
+    // score clamps to 0 — and stays at 0 through the first several fixes,
+    // because no single finding is worth the 9 points needed to get back onto
+    // the scale. Resolving SHONAC's expired lease takes the deductions from 109
+    // to 97 and the reader sees the same 0/100 they saw before. The score is
+    // correct; it just has nothing left to say.
+    //
+    // So state the deduction total alongside it when it exceeds the scale. The
+    // score, its weights, its caps and every gate downstream are untouched —
+    // this is the same number the reader could already add up from the basis
+    // line, said once instead of left to arithmetic.
+    const _deductionTotal = activeTenants.length > 0 ? Math.round(100 - rawHealth) : null;
+    const _deductionsExceedScale = _deductionTotal != null && _deductionTotal > 100;
+    const _deductionNote = _deductionsExceedScale
+      ? `${_deductionTotal} points of deductions against a 100-point scale`
+      : null;
+
     // Show the working. An unexplained score invites the reader to trust it;
     // a score with its deductions listed invites them to check it.
     const _healthBasis = []
@@ -983,6 +1002,7 @@ window.LeaseReviewPackets = (() => {
           ['Missing Documents',  missingCritDocs, missingCritDocs > 0],
           ['Health Score',       healthScore != null ? healthScore + ' / 100' : '—', healthScore != null && healthScore < 60],
         ])}
+        ${_deductionNote ? `<div style="margin-top:8px;font-size:11.5px;line-height:1.6;color:#fbbf24;">${_esc(_deductionNote)}</div>` : ''}
         ${_healthBasis.length ? `<div style="margin-top:8px;font-size:11px;line-height:1.6;color:#94a3b8;"><strong>Health score basis:</strong> ${_healthBasis.map(_esc).join(' &middot; ')}</div>` : ''}
         ${_readiness ? `<div style="margin-top:10px;padding:8px 11px;border-radius:5px;font-size:12px;line-height:1.5;${
             _readiness.canBill
@@ -1413,7 +1433,8 @@ window.LeaseReviewPackets = (() => {
         <div style="display:flex;align-items:center;gap:10px;margin-bottom:10px;">
           <span style="display:inline-block;width:10px;height:10px;border-radius:50%;background:${uwColor};flex-shrink:0;"></span>
           <span style="font-size:0.95rem;font-weight:700;color:${uwColor};">${_esc(uwVerdict)}</span>
-          ${healthScore != null ? `<span style="margin-left:auto;font-size:0.78rem;color:#64748b;">Health Score: <strong style="color:#e2e8f0;">${healthScore} / 100</strong></span>` : ''}
+          ${healthScore != null ? `<span style="margin-left:auto;text-align:right;font-size:0.78rem;color:#64748b;">Health Score: <strong style="color:#e2e8f0;">${healthScore} / 100</strong>${
+            _deductionNote ? `<span style="display:block;font-size:0.72rem;color:#fbbf24;">${_esc(_deductionNote)}</span>` : ''}</span>` : ''}
         </div>
         <div style="font-size:0.83rem;color:#cbd5e1;line-height:1.6;">${uwSentences.map(s => _esc(s)).join(' ')}</div>
       </div>`;

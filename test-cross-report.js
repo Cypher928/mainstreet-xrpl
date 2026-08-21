@@ -373,6 +373,128 @@ console.log('\n── C6 · The Lender Summary says what the audit says ──')
       'the floor is now blocking clean properties too — it must be a floor, not a ceiling');
 }
 
+// ── C6b. The score saturates; the deduction total must not ──────────────────
+console.log('\n── C6b · Progress is visible even when the score has nothing left to say ──');
+{
+  const LRP = global.window.LeaseReviewPackets;
+  const S   = SUMMARY;
+  const ALL = { red: S.red.slice(), yellow: S.yellow.slice(), green: S.green };
+  const drop = (re) => ({
+    red:    ALL.red.filter(f => !re.test(f.title)),
+    yellow: ALL.yellow.filter(f => !re.test(f.title)),
+    green:  ALL.green,
+  });
+
+  // Render the real Lender Summary for a given finding set and read back the
+  // two numbers a reader actually sees.
+  function render(findings) {
+    const x = AX.deriveExposure(findings, F.POOL);
+    const ready = AX.billingReadiness(x);
+    const html = LRP.generateLenderSummaryHtml(F.PROPERTY,
+      { exposure: x, readiness: ready, camYear: 2026 });
+    const score = (html.match(/Health Score: <strong[^>]*>([^<]*)</) || [])[1];
+    const note  = (html.match(/(\d+) points of deductions against a 100-point scale/) || [])[1];
+    const basis = (html.match(/Health score basis:<\/strong>([\s\S]*?)<\/div>/) || [])[1] || '';
+    return {
+      score: (score || '').trim(),
+      scoreNum: score ? Number(String(score).split('/')[0].trim()) : null,
+      deductions: note ? Number(note) : null,
+      verdict: (html.match(/font-weight:700;color:#[0-9a-f]{6};">([^<]*)</) || [])[1],
+      canBill: ready.canBill,
+      basisSum: (basis.match(/−(\d+)/g) || []).length,   // component count, not a total
+      html,
+    };
+  }
+
+  const base    = render(ALL);
+  const lessOne = render(drop(/^SHONAC is being billed/));
+  const lessAll = render(drop(/is being billed 2026 CAM/));
+
+  // 1 · The displayed score stays 0 while the deductions outrun the scale.
+  eq('baseline displayed score', base.score, '0 / 100');
+  yes('baseline deductions exceed the 100-point scale',
+      base.deductions > 100, `deduction total is ${base.deductions}`);
+  eq('one finding resolved — displayed score is unchanged', lessOne.score, '0 / 100');
+
+  // 2 · The uncapped total decreases, which is the whole point.
+  yes('the deduction total falls when a finding is resolved',
+      lessOne.deductions < base.deductions,
+      `${base.deductions} → ${lessOne.deductions} — no progress is visible`);
+  eq('and falls by exactly the weight of that finding',
+     base.deductions - lessOne.deductions, 12);
+
+  // 3 · Clamped at zero, never negative, however bad it gets.
+  yes('the score is clamped at 0, never negative',
+      base.scoreNum === 0 && lessOne.scoreNum === 0,
+      `scores ${base.scoreNum} / ${lessOne.scoreNum}`);
+  {
+    // Far past the scale: nine critical exceptions on top of everything else.
+    const piled = {
+      red: ALL.red.concat(Array.from({ length: 9 }, (_, i) => ({ title: 'piled ' + i }))),
+      yellow: ALL.yellow, green: ALL.green,
+    };
+    const p = render(piled);
+    eq('an extreme deduction total still shows 0 / 100', p.score, '0 / 100');
+    yes('and reports the larger total rather than saturating the note too',
+        p.deductions > base.deductions,
+        `${base.deductions} → ${p.deductions} — the note is capped as well as the score`);
+  }
+
+  // 4 · Once the total drops under 100, the score resumes and the note stops.
+  eq('with all four expired leases resolved the score resumes', lessAll.score, '51 / 100');
+  eq('and the deduction note is withheld', lessAll.deductions, null);
+  yes('the note appears only while the total exceeds the scale',
+      base.deductions != null && lessAll.deductions == null,
+      'the note is shown for a total that fits inside the scale');
+  {
+    // Exactly at the boundary: 100 deductions must NOT print the note, since
+    // 100 does not exceed the scale — it lands on 0/100 legitimately.
+    const boundary = { counts: { red: 0, yellow: 0, green: 0 }, totalPool: 71950,
+      confirmedAtRisk: 0, requiringReview: 0, excludedRecoverable: 0,
+      poolUnsubstantiated: 0, unquantified: 0, contributors: {} };
+    const html = LRP.generateLenderSummaryHtml(
+      // 6 leases each missing critical dates: 6 × 15 = 90, plus the property's
+      // own low-confidence extraction weight, to sit near the boundary.
+      { name: 'Boundary', totalSqft: 10000, timeline: [], disputes: [],
+        tenants: Array.from({ length: 6 }, (_, i) => ({ id: 'b' + i, tenant_name: 'B' + i,
+          name: 'B' + i, leased_sqft: 1000, lease_type: 'NNN' })) },
+      { exposure: boundary, readiness: AX.billingReadiness(boundary), camYear: 2026 });
+    const note = (html.match(/(\d+) points of deductions against a 100-point scale/) || [])[1];
+    const score = (html.match(/Health Score: <strong[^>]*>([^<]*)</) || [])[1];
+    eq('a deduction total of exactly 90 shows no note', note === undefined, true);
+    eq('and scores 10 / 100', (score || '').trim(), '10 / 100');
+  }
+
+  // 5 · Nothing downstream moved. Same verdict, same readiness, at every step.
+  eq('baseline verdict unchanged',        base.verdict,    'Additional Due Diligence Required');
+  eq('verdict after one fix unchanged',   lessOne.verdict, 'Additional Due Diligence Required');
+  eq('verdict after all leases fixed',    lessAll.verdict, 'Additional Due Diligence Required');
+  eq('readiness at baseline',   base.canBill,    false);
+  eq('readiness after one fix', lessOne.canBill, false);
+  eq('readiness after four',    lessAll.canBill, false);
+
+  // 6 · The note must reconcile with the basis line printed beneath it. A total
+  // that disagrees with the components listed under it would be the same defect
+  // this whole pass exists to remove.
+  {
+    const basis = (base.html.match(/Health score basis:<\/strong>([\s\S]*?)<\/div>/) || [])[1] || '';
+    // "5 critical exceptions (−12 each)" style entries multiply; flat ones do not.
+    let sum = 0;
+    basis.replace(/&minus;|−/g, '−').split('&middot;').forEach(part => {
+      const m = /−(\d+)(\s*each)?/.exec(part);
+      if (!m) return;
+      const each = !!m[2];
+      const n = each ? Number((/^\s*(\d+)/.exec(part.replace(/<[^>]*>/g, '')) || [0, 1])[1]) : 1;
+      sum += Number(m[1]) * (each ? n : 1);
+    });
+    eq('the deduction note equals the sum of the basis components', sum, base.deductions);
+  }
+
+  // 7 · The reader sees the pair together, in both places the score appears.
+  eq('the note is rendered beside the score in both places',
+     (base.html.match(/points of deductions against a 100-point scale/g) || []).length, 2);
+}
+
 // ── P3. Evidence semantics ──────────────────────────────────────────────────
 console.log('\n── P3 · VERIFIED · INFERRED · MISSING · CONFLICT ──');
 {
