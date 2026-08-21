@@ -15625,6 +15625,16 @@ function generateExceptionReport() {
       { label: 'Checks Passed', value: green.length },
     ])}
 
+    <div class="rpt-scope-note">
+      <strong>What is counted here:</strong> reconciliation findings — conditions in
+      <em>this ${esc(String(period))}</em> reconciliation that affect whether it can be billed.
+      ${red.length} critical and ${yellow.length} advisory.
+      The Lease Review Packet counts something different: <em>lease-field</em> exceptions, which are
+      fields in a lease document lacking a clause citation or extracted with low confidence.
+      A lease field with no citation is not a reconciliation exception, and a reconciliation billed on an
+      expired lease is not a field exception, so the two counts are not expected to match.
+    </div>
+
     ${narrativeBlock}
 
     <div class="rpt-kpi-row">
@@ -16363,11 +16373,27 @@ function generateLandlordExport() {
     </tr>`;
   }).join('');
 
-  const _expTotalCAM = _expDm.financialStats?.totalCAM ?? lastTotal;
+  // "Total CAM" must mean the expense pool, the way the Audit Exception Summary
+  // and the exposure line mean it.
+  //
+  // This read derivePropertyMetrics().financialStats.totalCAM, which despite its
+  // name is the sum of allocatedAmount across the reconciliation results — the
+  // amount billed OUT to tenants, not the pool it came from. (The same object
+  // sets totalAllocated to the identical value, which is the honest name for
+  // it.) On Test 2 that put "Total CAM $8,259" in this report's header beside
+  // "$71,950 total CAM pool" in the Exception Summary, for one reconciliation.
+  //
+  // The metrics field keeps its meaning and its consumers; this report simply
+  // stops labelling an allocation total as the pool, and shows both.
+  const _expTotalCAM   = lastTotal || 0;
+  const _expAllocated  = _expDm.financialStats?.totalAllocated
+                      ?? _expDm.financialStats?.totalCAM
+                      ?? lastResults.reduce((s, r) => s + (r.totalAllocated || r.allocatedAmount || 0), 0);
   const _expOpenDisp = _expDm.disputeStats?.openDisputes ?? openD.length;
   const html = `
     ${_rptHeader(propName, 'Risk & Disputes Report', period, now, [
-      { label: 'Total CAM',        value: fmt(_expTotalCAM) },
+      { label: 'Total CAM Pool',   value: fmt(_expTotalCAM) },
+      { label: 'Billed to Tenants', value: fmt(_expAllocated) },
       { label: 'Open Disputes',    value: _expOpenDisp },
       { label: 'Dispute Exposure', value: fmt(disputeExposure) },
       ...(_rExp ? [{ label: 'Allocation At Risk', value: fmt(_rExp.confirmedAtRisk) }] : []),
@@ -16816,7 +16842,89 @@ function _renderExclusionBlock(block) {
     </button>`);
 }
 
-function generateTenantStatement(tenantName) {
+/**
+ * The audit's billing verdict, for the statement path.
+ *
+ * Returns null when statements may be issued, or the blocking state when they
+ * may not. Reads the same canonical exposure every other surface reads — it does
+ * not re-derive a second opinion about whether this reconciliation is billable.
+ */
+function _statementReadinessBlock(tenantName) {
+  const AXs = window.AuditExposure;
+  if (!AXs || !lastResults.length) return null;
+  let summary;
+  try { summary = buildAuditSummary(); } catch (_) { return null; }
+  const exposure  = AXs.deriveExposure(summary, lastTotal || 0);
+  const readiness = AXs.billingReadiness(exposure);
+  if (readiness.canBill) return null;
+
+  // Which of the blocking exceptions name THIS tenant. A statement is refused
+  // whenever the reconciliation as a whole cannot be billed, but a manager
+  // deciding what to fix first needs to see which findings are about the tenant
+  // in front of them.
+  const esc0 = (s) => String(s == null ? '' : s);
+  const mine = summary.red.filter(f => esc0(f.title).indexOf(tenantName) >= 0
+    || (f.conditions || []).some(c => esc0(c).indexOf(tenantName) >= 0));
+  return { readiness, exposure, red: summary.red, mine, tenantName };
+}
+
+/**
+ * Refuse the statement, and show the reader exactly what is blocking it.
+ *
+ * Modelled on _renderExclusionBlock: refuse rather than warn, list the reasons
+ * in a table, and offer one explicit way forward. The way forward here is a
+ * clearly-marked non-billable draft, not an override — nothing about it should
+ * be usable as an invoice.
+ */
+function _renderStatementReadinessBlock(block) {
+  // Only ever called with a block, but a null here would throw inside report
+  // rendering and leave the user with no screen at all — which on this path
+  // would silently drop the refusal rather than show it. Fail visibly instead.
+  if (!block) { showToast('Could not determine billing readiness — statement not issued.', { color: '#92400e', textColor: '#fef3c7' }); return; }
+  const AXs = window.AuditExposure;
+  const rows = block.red.map(f => {
+    const imp = AXs ? AXs.normalizeImpact(f.impact) : { amount: null };
+    const isMine = block.mine.indexOf(f) >= 0;
+    return `<tr${isMine ? ' style="background:rgba(239,68,68,0.06)"' : ''}>
+      <td>${isMine ? '<strong>This tenant</strong>' : '—'}</td>
+      <td>${esc(f.title)}</td>
+      <td style="text-align:right;white-space:nowrap">${imp.amount != null ? fmt(imp.amount) : '<span style="color:#64748b">not yet quantified</span>'}</td>
+    </tr>`;
+  }).join('');
+
+  openReport(`Statement blocked — ${block.tenantName}`, `
+    <div class="rpt-section-title">This statement has not been issued</div>
+    <div class="rpt-readiness rpt-readiness--blocked">
+      <strong>${esc(block.readiness.label)}</strong> &mdash; ${esc(block.readiness.reason)}
+    </div>
+    <p class="rpt-helper-text">
+      The audit engine has not cleared this reconciliation for billing, so no tenant statement is issued from it.
+      Issuing one now would bill a tenant from figures the audit is still holding open.
+      ${block.mine.length
+        ? `<strong>${block.mine.length} of the ${block.red.length} blocking exception${block.red.length !== 1 ? 's' : ''} name${block.mine.length === 1 ? 's' : ''} ${esc(block.tenantName)} directly</strong> — highlighted below.`
+        : `None of the blocking exceptions name ${esc(block.tenantName)} directly, but they affect the reconciliation this statement would be drawn from.`}
+    </p>
+    <table class="rpt-table">
+      <thead><tr><th>Names this tenant</th><th>Critical exception</th><th style="text-align:right">Amount</th></tr></thead>
+      <tbody>${rows}</tbody>
+    </table>
+    <div class="rpt-section-title">To proceed</div>
+    <p class="rpt-helper-text">
+      Resolve the exceptions above and re-run the reconciliation — the statement issues on its own once the audit
+      clears. If you need to see the figures before then, open the draft below. It is marked non-billable on every
+      page, carries no settlement language, and must not be sent to a tenant.
+    </p>
+    <button class="rpt-action-btn" onclick="generateTenantStatement('${esc(block.tenantName).replace(/'/g, "\\'")}', { draft: true })">
+      View non-billable draft
+    </button>`);
+}
+
+/**
+ * @param {string} tenantName
+ * @param {{draft?: boolean}} [opts] draft:true renders the figures with every
+ *        billable affordance removed, reachable only from the block screen above.
+ */
+function generateTenantStatement(tenantName, opts = {}) {
   if (!lastResults.length) { showToast('Run a CAM allocation first to generate reports.', { color: '#92400e', textColor: '#fef3c7' }); return; }
 
   // Staleness guards — the same two exportReconciliationCSV has applied all
@@ -16854,8 +16962,39 @@ function generateTenantStatement(tenantName) {
     return;
   }
 
+  // AUDIT READINESS GATE.
+  //
+  // The audit reported "Not ready to bill — 5 critical exceptions must be
+  // resolved before statements are issued", and this function then produced a
+  // statement headed "Total CAM Billed to You $2,385.60" for a tenant named in
+  // one of those exceptions. Two surfaces of one system, one saying the
+  // reconciliation cannot be billed and the other billing it.
+  //
+  // Placed after the staleness and exclusion guards and refusing the same way
+  // they do. The draft is an explicit second step from the block screen, not a
+  // flag a caller can pass to skip the gate.
+  if (!opts.draft) {
+    const _ready = _statementReadinessBlock(tenantName);
+    if (_ready) {
+      logActivity('tenant_statement_blocked', `Tenant statement blocked — ${tenantName}`, {
+        severity: 'warning', actor: 'System', relatedEntity: tenantName,
+        detail: `${_ready.readiness.reason} ${_ready.mine.length} exception(s) name this tenant.`,
+      });
+      _renderStatementReadinessBlock(_ready);
+      return;
+    }
+  }
+
+  // The draft carries the audit state it was drawn from, so a figure lifted out
+  // of it cannot arrive anywhere without the reason it was not billable.
+  const _draftState = opts.draft ? _statementReadinessBlock(tenantName) : null;
+
   try {
-  logActivity('tenant_statement', `Tenant statement generated — ${tenantName}`, { severity: 'info', actor: 'User', relatedEntity: tenantName });
+  logActivity(opts.draft ? 'tenant_statement_draft' : 'tenant_statement',
+    opts.draft
+      ? `Non-billable draft statement viewed — ${tenantName}`
+      : `Tenant statement generated — ${tenantName}`,
+    { severity: opts.draft ? 'warning' : 'info', actor: 'User', relatedEntity: tenantName });
 
   const r = lastResults.find(x => x.name === tenantName);
   const t = lastTenants.find(x => x.name === tenantName);
@@ -17031,13 +17170,33 @@ function generateTenantStatement(tenantName) {
     : '<tr><td colspan="5" style="color:var(--text-3);text-align:center">No disputes filed</td></tr>';
 
   const html = `
-    ${_rptHeader(lastPropName, 'Tenant CAM Statement', period, now, [
+    ${_rptHeader(lastPropName, _draftState ? 'Tenant CAM Statement — NON-BILLABLE DRAFT' : 'Tenant CAM Statement', period, now, [
       { label: 'Tenant',     value: tenantName },
       { label: 'Your Share', value: (r.proRata * 100).toFixed(2) + '%' },
+      ...(_draftState ? [{ label: 'Status', value: 'Draft — not issued' }] : []),
     ])}
 
-    <div class="ts-summary-card">
-      <div class="ts-summary-total-label">Total CAM Billed to You</div>
+    ${_draftState ? `
+    <div class="ts-draft-banner">
+      <div class="ts-draft-title">&#x26D4; NON-BILLABLE DRAFT &mdash; DO NOT SEND TO TENANT</div>
+      <div class="ts-draft-body">
+        ${esc(_draftState.readiness.reason)}
+        ${_draftState.mine.length
+          ? ` ${_draftState.mine.length} of them name ${esc(tenantName)} directly:`
+          : ' None names this tenant directly, but each affects the reconciliation these figures come from:'}
+      </div>
+      <ul class="ts-draft-list">${_draftState.red.map(f =>
+        `<li${_draftState.mine.indexOf(f) >= 0 ? ' class="ts-draft-mine"' : ''}>${esc(f.title)}</li>`).join('')}</ul>
+      <div class="ts-draft-body">
+        The figure below is what the reconciliation currently computes. It is not a bill, and the amount may change
+        once these exceptions are resolved.
+      </div>
+    </div>` : ''}
+
+    <div class="ts-summary-card${_draftState ? ' ts-summary-card--draft' : ''}">
+      <div class="ts-summary-total-label">${_draftState
+        ? 'Provisional CAM allocation — not billable'
+        : 'Total CAM Billed to You'}</div>
       <div class="ts-summary-total-amount">${fmt(r.allocatedAmount)}</div>
       <div class="ts-summary-stats">
         <div class="ts-summary-stat">
@@ -17055,9 +17214,29 @@ function generateTenantStatement(tenantName) {
       </div>
     </div>
 
-    <div class="rpt-section-title">Settlement via RLUSD on XRPL</div>
-    <p class="rpt-helper-text">When you pay, MainStreet settles the matching amount in RLUSD (a regulated USD stablecoin) on the XRP Ledger — a public, permanent transaction you can verify yourself. This is the trust layer behind your statement.</p>
-    ${_buildSettlementFlowHtml(_getSettlementState(currentProperty() || {}), { showPayButton: false, hideNote: true })}
+    ${_draftState ? '' : (() => {
+      // NOTHING HAS SETTLED BECAUSE A STATEMENT WAS GENERATED.
+      //
+      // This section was headed "Settlement via RLUSD on XRPL" and introduced
+      // with "MainStreet settles the matching amount ... This is the trust layer
+      // behind your statement" — present tense, on a document produced before
+      // any payment, on a property with no settlement transaction. It also
+      // passed hideNote:true and substituted its own copy, which dropped the
+      // shared widget's "this goes live once the settlement wallet is funded"
+      // caveat. A tenant could reasonably read it as saying their charge had
+      // already been settled on a public ledger.
+      //
+      // Say what is true of THIS statement: whether a settlement transaction
+      // exists, and if not, that none has occurred.
+      const _st = _getSettlementState(currentProperty() || {});
+      const _settled = _st.status === 'settled';
+      return `
+    <div class="rpt-section-title">${_settled ? 'Settlement — RLUSD on the XRP Ledger' : 'How payment will settle'}</div>
+    <p class="rpt-helper-text">${_settled
+      ? `This charge was settled in RLUSD (a US-dollar stablecoin) on the XRP Ledger. The transaction below is public and permanent — you can verify it yourself without taking MainStreet's word for it.`
+      : `<strong>No payment has been made and no settlement has occurred for this statement.</strong> When you do pay, MainStreet intends to settle the matching amount in RLUSD (a US-dollar stablecoin) on the XRP Ledger, so that you can verify the transaction yourself. That capability goes live once the settlement wallet is funded; until then this section describes the intended flow, not a completed one.`}</p>
+    ${_buildSettlementFlowHtml(_st, { showPayButton: false, hideNote: true })}`;
+    })()}
 
     <div class="rpt-section-title">Expense Breakdown</div>
     <p class="rpt-helper-text">Click a category to expand individual charges.</p>
@@ -19423,14 +19602,41 @@ function derivePropertyMetrics(p) {
     ? window.Selectors.derivePropertyReadiness(p)
     : { riskScore: 0, readiness: 'needs_review' };
   let healthScore = Math.max(0, Math.min(100, 100 - (rd.riskScore || 0)));
+
+  // WHY THE SCORE IS WHAT IT IS.
+  //
+  // derivePropertyReadiness already returns every component of riskScore —
+  // expiredCount, missingCapCount, lowConfCount, proRataGap — and none of them
+  // was ever surfaced. So the Lease Review packet printed a bare "0" beside an
+  // Unresolved line reading "N leases carry no extraction confidence score",
+  // and the two together read as though the zero WERE the missing confidence.
+  // It is not: on the Test 2 property the zero is 4 expired leases (−80), 4 NNN
+  // leases with no CAM cap (−80) and a pro-rata gap (−15), which is 175 against
+  // a 100-point scale. Measured, and badly — but measured.
+  //
+  // Same treatment as the Lender Summary: show the components, and when they
+  // outrun the scale say so, rather than leaving a floor to be misread as an
+  // absence of data.
+  const basis = [];
+  if (rd.expiredCount)     basis.push(`${rd.expiredCount} expired lease${rd.expiredCount !== 1 ? 's' : ''} (−${rd.expiredCount * 20})`);
+  if (rd.missingCapCount)  basis.push(`${rd.missingCapCount} NNN lease${rd.missingCapCount !== 1 ? 's' : ''} with no CAM cap (−${rd.missingCapCount * 20})`);
+  if (rd.incompleteCount)  basis.push(`${rd.incompleteCount} lease${rd.incompleteCount !== 1 ? 's' : ''} missing required information (−${rd.incompleteCount * 15})`);
+  if (rd.lowConfCount)     basis.push(`${rd.lowConfCount} low-confidence extraction${rd.lowConfCount !== 1 ? 's' : ''} (−${rd.lowConfCount * 10})`);
+  if (rd.proRataGap >= 5)  basis.push(`pro-rata coverage gap of ${rd.proRataGap.toFixed(1)}% (−15)`);
+  const rawRisk = (rd.expiredCount || 0) * 20 + (rd.missingCapCount || 0) * 20
+                + (rd.incompleteCount || 0) * 15 + (rd.lowConfCount || 0) * 10
+                + (rd.proRataGap >= 5 ? 15 : 0);
+
   const reasons = [];
   if (openDisputes > 0) {
     healthScore = Math.max(0, healthScore - Math.min(20, openDisputes * 7));
     reasons.push(`${openDisputes} open dispute${openDisputes !== 1 ? 's' : ''}`);
+    basis.push(`${openDisputes} open dispute${openDisputes !== 1 ? 's' : ''} (−${Math.min(20, openDisputes * 7)})`);
   }
   if (tenantsNeedingReview > 0) {
     healthScore = Math.max(0, healthScore - Math.min(15, tenantsNeedingReview * 5));
     reasons.push(`${tenantsNeedingReview} tenant${tenantsNeedingReview !== 1 ? 's' : ''} need review`);
+    basis.push(`${tenantsNeedingReview} tenant${tenantsNeedingReview !== 1 ? 's' : ''} pending review (−${Math.min(15, tenantsNeedingReview * 5)})`);
   }
   if (invStats.totalInvoices === 0) reasons.push('No invoices loaded');
   const healthStatus = healthScore >= 80 ? 'healthy' : healthScore >= 50 ? 'warning' : 'high-risk';
@@ -19455,7 +19661,13 @@ function derivePropertyMetrics(p) {
     disputeStats:   { totalDisputes: disputes_arr.length, openDisputes, resolvedDisputes },
     reviewStats:    { tenantsNeedingReview, flaggedLeaseCount, amendmentCount, unresolvedWarnings },
     financialStats: { totalCAM, totalAllocated: totalCAM, allocationCoveragePct },
-    health:         { score: healthScore, status: healthStatus, reasons },
+    health:         { score: healthScore, status: healthStatus, reasons, basis,
+                      // Total deductions before the 100-point clamp, so a
+                      // saturated score can report progress the way the Lender
+                      // Summary does rather than sitting at 0 indefinitely.
+                      deductionTotal: Math.round(rawRisk
+                        + (openDisputes > 0 ? Math.min(20, openDisputes * 7) : 0)
+                        + (tenantsNeedingReview > 0 ? Math.min(15, tenantsNeedingReview * 5) : 0)) },
     extraction:     { tenantsWithEvidence, tenantsMissingEvidence: tenants_arr.length - tenantsWithEvidence, avgConfidence },
   };
 

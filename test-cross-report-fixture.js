@@ -192,6 +192,64 @@ function exceptionReport() {
   return captured;
 }
 
+// ── Derived property metrics ────────────────────────────────────────────────
+//
+// The real derivePropertyMetrics out of script.js, wired to the real
+// derivePropertyReadiness out of selectors.js. The health score's components
+// originate there, so a stub would prove nothing about the seam between them.
+
+function propertyMetrics(property) {
+  const box = baseSandbox();
+  // selectors.js is loaded outside the vm, so its closures resolve free
+  // variables against Node's global rather than the sandbox — the same way the
+  // page resolves them against window when each file arrives in its own <script>
+  // tag. Publish them there once.
+  if (!global.Selectors) {
+    const sel = {};
+    ['lease-intelligence.js', 'review-engine.js', 'selectors.js'].forEach(f => {
+      new Function('window', fs.readFileSync(path.join(ROOT, f), 'utf8'))
+        .call({ window: sel }, sel);
+    });
+    global.LeaseIntelligence = sel.LeaseIntelligence;
+    global.ReviewEngine      = sel.ReviewEngine;
+    global.Selectors         = sel.Selectors;
+  }
+  box.window    = { Selectors: global.Selectors, AuditExposure: AX };
+  box.Selectors = global.Selectors;
+  box.disputes  = property.disputes || [];
+  return run(box,
+    fn('getPropertyInvoiceStats') + fn('derivePropertyMetrics')
+      + `\nthis.__m = derivePropertyMetrics(${JSON.stringify(property)});`,
+    '__m');
+}
+
+// ── The billing gate on tenant statements ───────────────────────────────────
+//
+// generateTenantStatement builds a large amount of DOM-coupled HTML, so the two
+// functions that decide whether a statement may be issued are exercised here
+// directly. What they return is what the statement path acts on.
+
+function statementReadiness(tenantName, findings) {
+  const box = baseSandbox();
+  box.window = { AuditExposure: AX };
+  const src = findings
+    ? `function buildAuditSummary(){ return ${JSON.stringify(findings)}; }`
+    : SUSPICIONS_SRC + fn('buildAuditSummary');
+  return run(box, src + fn('_statementReadinessBlock'),
+             `_statementReadinessBlock(${JSON.stringify(tenantName)})`);
+}
+
+function statementBlockHtml(tenantName) {
+  const box = baseSandbox();
+  box.window = { AuditExposure: AX };
+  const captured = {};
+  box.openReport = (title, html) => { captured.title = title; captured.html = html; };
+  run(box, SUSPICIONS_SRC + fn('buildAuditSummary') + fn('_statementReadinessBlock')
+         + fn('_renderStatementReadinessBlock'),
+      `_renderStatementReadinessBlock(_statementReadinessBlock(${JSON.stringify(tenantName)}))`);
+  return captured;
+}
+
 // ── Report 3: Coverage Gap ──────────────────────────────────────────────────
 //
 // generateHolesReport writes straight into the DOM, so it runs here against a
@@ -229,7 +287,18 @@ function riskAndDisputes() {
   const captured = {};
   box.window = { AuditExposure: AX };
   box.rebuildDerivedState      = () => {};
-  box.derivePropertyMetrics    = () => ({});
+  // The real shape, including the field that caused the defect: financialStats
+  // .totalCAM is the sum of allocatedAmount — the amount billed OUT — despite
+  // its name. Returning {} here would stub away the exact thing that broke, so
+  // a regression could not be detected.
+  box.derivePropertyMetrics    = () => ({
+    financialStats: {
+      totalCAM:      Math.round(RESULTS.reduce((s, r) => s + r.totalAllocated, 0)),
+      totalAllocated: Math.round(RESULTS.reduce((s, r) => s + r.totalAllocated, 0) * 100) / 100,
+      allocationCoveragePct: 57,
+    },
+    disputeStats: { openDisputes: DISPUTES.filter(d => d.status === 'open').length },
+  });
   box.derivePropertyTimeline   = () => ({ recentActivity: [] });
   box.appendPropertyTimelineEvent = () => {};
   box._deriveCalcState         = () => ({ cls: 'ok', label: 'Pro-rata' });
@@ -262,5 +331,6 @@ module.exports = {
   TENANTS, RESULTS, INVOICES, DISPUTES, PROPERTY,
   AX, RE, fmt, esc,
   auditSummary, auditNarrative, exceptionReport, coverageGap, riskAndDisputes, lenderSummary,
+  statementReadiness, statementBlockHtml, propertyMetrics,
   baseSandbox, extract, fn, run,
 };

@@ -3738,6 +3738,27 @@
       background: rgba(239,68,68,0.08); border: 1px solid rgba(239,68,68,0.28); color: var(--c-f87171);
     }
     .rpt-readiness strong { font-weight: 700; }
+
+    /* Non-billable draft statement. Loud on purpose: this document exists only
+       so a manager can see the figures, and must never be mistaken for a bill. */
+    .ts-draft-banner {
+      border: 2px solid rgba(239,68,68,0.55); background: rgba(239,68,68,0.09);
+      border-radius: 9px; padding: 14px 16px; margin: 0 0 18px;
+      font-family: 'DM Sans', sans-serif;
+    }
+    .ts-draft-title {
+      font-size: 0.86rem; font-weight: 800; letter-spacing: 0.06em;
+      color: var(--c-f87171); margin-bottom: 8px;
+    }
+    .ts-draft-body { font-size: 0.8rem; line-height: 1.55; color: var(--text-2); }
+    .ts-draft-list { margin: 8px 0 8px 18px; padding: 0; font-size: 0.78rem; line-height: 1.6; color: var(--text-3); }
+    .ts-draft-list .ts-draft-mine { color: var(--c-f87171); font-weight: 600; }
+    .ts-summary-card--draft { opacity: 0.82; border: 1px dashed rgba(239,68,68,0.5); }
+    /* A draft must stay a draft on paper too. */
+    @media print {
+      .ts-draft-banner { border-color: #b91c1c !important; background: #fef2f2 !important; }
+      .ts-draft-title  { color: #b91c1c !important; }
+    }
     .exc-narrative-impact {
       font-family: 'DM Sans', sans-serif; font-size: 0.84rem; font-weight: 600;
       color: var(--text-1); margin-top: 10px; line-height: 1.55;

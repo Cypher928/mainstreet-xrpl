@@ -354,20 +354,33 @@ t('a tenant with everything applied is never blocked', () => {
 t('[source] the statement is BLOCKED, not merely warned', () => {
   ok(/function _exclusionBlockReason/.test(scriptCode), 'no block function');
   const i = scriptCode.indexOf('function generateTenantStatement');
-  // Window widened from 1200. It was sized to the function as it stood, and the
-  // pilot smoke-test staleness guards (_resultsStale / CAM-year, added ahead of
-  // the F-02 check) pushed "logActivity('tenant_statement'" so it straddled the
-  // 1200 boundary — indexOf then returned -1 and this test failed even though
-  // the ordering it asserts was intact. A fixed window makes an ordering test
-  // fail on unrelated edits above it; 2400 restores headroom.
-  const body = scriptCode.slice(i, i + 2400);
+  // Read the whole function rather than a fixed byte window.
+  //
+  // This sliced 2400 characters, widened once from 1200 after the staleness
+  // guards were added above the F-02 check and pushed the log call past the
+  // boundary. It went on to fail a third time when the audit-readiness gate
+  // landed. An ordering assertion should not break because something unrelated
+  // was inserted above the lines it is about, so take the function to its
+  // closing brace and stop guessing at a size.
+  const nextFn = scriptCode.indexOf('\nfunction ', i + 1);
+  const body   = scriptCode.slice(i, nextFn === -1 ? undefined : nextFn);
   ok(/const _block = _exclusionBlockReason\(tenantName\);/.test(body), 'guard not called');
-  ok(/if \(_block\) \{/.test(body) && /return;/.test(body), 'guard does not return early');
-  // The guard must precede statement construction: no openReport of a statement
-  // can appear before the early return.
+  // The return has to follow the block screen. Testing for `if (_block) {` and
+  // `return;` separately passed on any function containing a return anywhere,
+  // which this one does several times over, so deleting the early return left
+  // the assertion green. Anchor on the two statements in sequence.
+  ok(/if \(_block\) \{/.test(body), 'the F-02 guard no longer branches on the block');
+  ok(/_renderExclusionBlock\(_block\);\s*return;/.test(body),
+     'the F-02 guard renders the block screen but does not return — the statement is still built');
+  // The guard must precede statement construction: nothing may log or build a
+  // statement before the early return.
   const guardPos = body.indexOf('_exclusionBlockReason(tenantName)');
-  const logPos   = body.indexOf("logActivity('tenant_statement'");
-  ok(guardPos !== -1 && logPos !== -1 && guardPos < logPos,
+  // The log call carries a draft/issued ternary since the audit-readiness gate
+  // was added, so match the call rather than one literal argument.
+  const logPos   = body.search(/logActivity\(\s*opts\.draft \?|logActivity\('tenant_statement'/);
+  ok(guardPos !== -1, 'the F-02 guard is no longer called in generateTenantStatement');
+  ok(logPos !== -1, 'the statement-generated log call was not found — check the call shape');
+  ok(guardPos < logPos,
      'a blocked attempt must not be logged as a generated statement');
 });
 

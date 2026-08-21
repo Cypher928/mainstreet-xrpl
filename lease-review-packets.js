@@ -55,10 +55,25 @@ window.LeaseReviewPackets = (() => {
     } catch (_) { return String(d); }
   }
 
+  // `x != null` admits the empty string, and `'' + '%'` renders as a bare "%".
+  // Digital River's CAM cap came through extraction as '' rather than null and
+  // the packet printed "%" in the cap column — a percent sign with no percent.
+  // Absence and zero are different, and both differ from "we have a value";
+  // this is the one place that decides which is which.
+  function _hasNum(v) {
+    return v !== null && v !== undefined && v !== '' && !Number.isNaN(Number(v));
+  }
+  function _pctCell(v) { return _hasNum(v) ? Number(v) + '%' : '—'; }
+
   function _displayValue(field, val) {
-    if (val == null) return '—';
+    // '' is absence, not a value. Reaching the percent branch with an empty
+    // string printed a bare "%" — in the terms table and again in the evidence
+    // appendix, which renders through here.
+    if (val == null || val === '') return '—';
     if (typeof val === 'boolean') return val ? 'Yes' : 'No';
-    if (field === 'cap' || field === 'admin_fee_pct' || field === 'gross_up_pct') return val + '%';
+    if (field === 'cap' || field === 'admin_fee_pct' || field === 'gross_up_pct') {
+      return _hasNum(val) ? Number(val) + '%' : '—';
+    }
     if (field === 'expense_stop') return _fmt(val) + '/sqft';
     if (field === 'leased_sqft') return Number(val).toLocaleString('en-US') + ' sqft';
     if (field === 'start_date' || field === 'end_date') return _fmtDate(val) || String(val);
@@ -134,6 +149,15 @@ window.LeaseReviewPackets = (() => {
     return {
       healthStatus:        m.health?.status        || 'unknown',
       healthScore:         m.health?.score          ?? null,
+      // The components behind the score, and the pre-clamp total. Without these
+      // a bare 0 sat beside "N leases carry no extraction confidence score" and
+      // read as though the zero were that absence rather than a measured
+      // result. See derivePropertyMetrics in script.js.
+      healthBasis:         m.health?.basis          || [],
+      healthDeductionTotal: m.health?.deductionTotal ?? null,
+      // Genuinely unavailable, and distinct from a measured zero: null when no
+      // lease carries an extraction confidence score at all.
+      avgConfidence:       m.extraction?.avgConfidence ?? null,
       criticalItems,
       warningItems,
       unresolvedItems,
@@ -573,13 +597,22 @@ window.LeaseReviewPackets = (() => {
     const itemList = (items, cls) => items.length
       ? `<ul style="margin:6px 0 0 16px;padding:0;">${items.map(i => `<li class="${cls}" style="margin-bottom:3px;font-size:0.82rem;">${_esc(i)}</li>`).join('')}</ul>`
       : '';
+    // A measured zero and an absent measurement must not look the same.
+    // healthScore is null only when the property has no readiness signal at all;
+    // avgConfidence is null whenever no lease carries a confidence score, which
+    // is the Test 2 case and which must read N/A rather than 0.
+    const _hsOver = es.healthDeductionTotal != null && es.healthDeductionTotal > 100;
     const execHtml = `<div class="rpt-section-title">Executive Summary</div>
       <div class="rpt-kpi-row">
-        <div class="rpt-kpi${es.healthScore != null && es.healthScore < 50 ? ' rpt-kpi--alert' : ''}"><div class="kpi-val">${_esc(String(es.healthScore ?? '—'))}</div><div class="kpi-lbl">Health Score</div></div>
+        <div class="rpt-kpi${es.healthScore != null && es.healthScore < 50 ? ' rpt-kpi--alert' : ''}"><div class="kpi-val">${es.healthScore == null ? 'N/A' : _esc(String(es.healthScore))}</div><div class="kpi-lbl">Health Score</div></div>
+        <div class="rpt-kpi"><div class="kpi-val">${es.avgConfidence == null ? 'N/A' : _esc(String(es.avgConfidence)) + '%'}</div><div class="kpi-lbl">Extraction Confidence</div></div>
         <div class="rpt-kpi${es.openDisputes > 0 ? ' rpt-kpi--warn' : ''}"><div class="kpi-val">${_esc(String(es.openDisputes ?? '—'))}</div><div class="kpi-lbl">Open Disputes</div></div>
         <div class="rpt-kpi"><div class="kpi-val">${_esc(String(es.totalTenants ?? '—'))}</div><div class="kpi-lbl">Tenants</div></div>
         <div class="rpt-kpi"><div class="kpi-val">${_esc(String(es.amendmentCount ?? '—'))}</div><div class="kpi-lbl">Amendments</div></div>
       </div>
+      ${es.healthBasis && es.healthBasis.length ? `<div style="margin-top:8px;font-size:11px;line-height:1.6;color:#94a3b8;"><strong>Health score basis:</strong> ${es.healthBasis.map(_esc).join(' &middot; ')}</div>` : ''}
+      ${_hsOver ? `<div style="margin-top:6px;font-size:11.5px;line-height:1.6;color:#fbbf24;">${es.healthDeductionTotal} points of deductions against a 100-point scale</div>` : ''}
+      ${es.avgConfidence == null ? `<div style="margin-top:6px;font-size:11px;line-height:1.6;color:#94a3b8;">Extraction confidence is <strong>unavailable</strong>, not zero — no lease in this packet carries a confidence score. The health score above is measured from lease terms and reconciliation coverage, and does not include confidence.</div>` : ''}
       ${es.criticalItems.length ? `<div style="margin-top:10px;font-size:0.78rem;font-weight:600;color:#f87171;">Critical Items</div>${itemList(es.criticalItems, 'lrp-critical')}` : ''}
       ${es.warningItems.length  ? `<div style="margin-top:8px;font-size:0.78rem;font-weight:600;color:#fbbf24;">Warnings</div>${itemList(es.warningItems, 'lrp-warning')}` : ''}
       ${es.unresolvedItems.length ? `<div style="margin-top:8px;font-size:0.78rem;font-weight:600;color:#94a3b8;">Unresolved</div>${itemList(es.unresolvedItems, 'lrp-unresolved')}` : ''}`;
@@ -610,9 +643,9 @@ window.LeaseReviewPackets = (() => {
         <td>${_esc(t.tenantName)}</td>
         <td style="text-align:right">${t.leasedSqft != null ? Number(t.leasedSqft).toLocaleString('en-US') : '—'}${_citeChip(fe, 'leased_sqft', t.leasedSqft != null)}</td>
         <td>${_esc(t.leaseType || '—')}${_citeChip(fe, 'lease_type', !!t.leaseType)}</td>
-        <td style="text-align:right">${t.cap != null ? t.cap + '%' : '—'}${_citeChip(fe, 'cap', t.cap != null)}</td>
-        <td style="text-align:right">${t.adminFeePct != null ? t.adminFeePct + '%' : '—'}${_citeChip(fe, 'admin_fee_pct', t.adminFeePct != null)}</td>
-        <td style="text-align:right">${t.grossUpPct != null ? t.grossUpPct + '%' : '—'}</td>
+        <td style="text-align:right">${_pctCell(t.cap)}${_citeChip(fe, 'cap', _hasNum(t.cap))}</td>
+        <td style="text-align:right">${_pctCell(t.adminFeePct)}${_citeChip(fe, 'admin_fee_pct', _hasNum(t.adminFeePct))}</td>
+        <td style="text-align:right">${_pctCell(t.grossUpPct)}</td>
         <td>${t.auditRights === true ? '✓' : t.auditRights === false ? '✗' : '—'}${_citeChip(fe, 'audit_rights', t.auditRights != null)}</td>
         <td><span style="color:${t.confidence === 'high' ? '#4ade80' : t.confidence === 'medium' ? '#fbbf24' : t.confidence === 'low' ? '#f87171' : '#94a3b8'}">${_esc(t.confidence || '—')}</span></td>
       </tr>`;
@@ -632,10 +665,24 @@ window.LeaseReviewPackets = (() => {
       <td>${_esc((e.overriddenFields || []).join(', ') || '—')}</td>
       <td style="font-size:0.72rem;color:#64748b;">${_esc(e.precedenceNote)}</td>
     </tr>`).join('');
-    const chronoHtml = `<div class="rpt-section-title">Amendment Chronology</div>
+    // The section is a DOCUMENT chronology, not an amendment chronology.
+    //
+    // buildAmendmentChronology deliberately emits one `original_lease` row per
+    // tenant as the baseline every later amendment is measured against, and the
+    // rows are correctly typed. The title was the problem: a section headed
+    // "Amendment Chronology" listing four Original Lease rows, on a packet whose
+    // cover reads "Amendments 0", says the count is wrong. It is not — those
+    // rows are not amendments. Name the section for what it contains and say so
+    // in one line, rather than removing a baseline the precedence notes need.
+    const _amdRows  = (packet.amendmentChronology || []).filter(e => e.docType !== 'original_lease').length;
+    const _origRows = (packet.amendmentChronology || []).length - _amdRows;
+    const chronoHtml = `<div class="rpt-section-title">Document Chronology</div>
+      <div class="rpt-scope-note">Every lease document on file in effective-date order.
+        ${_origRows} original lease${_origRows === 1 ? '' : 's'} shown as the baseline for field values, and
+        ${_amdRows} amendment${_amdRows === 1 ? '' : 's'}. The Amendments count on the cover counts amendments only.</div>
       <table class="rpt-table">
         <thead><tr><th>Date</th><th>Tenant</th><th>Document</th><th>File</th><th>Fields Modified</th><th>Precedence</th></tr></thead>
-        <tbody>${chronoRows || '<tr><td colspan="6" style="text-align:center;color:#64748b;">No amendments on file</td></tr>'}</tbody>
+        <tbody>${chronoRows || '<tr><td colspan="6" style="text-align:center;color:#64748b;">No lease documents on file</td></tr>'}</tbody>
       </table>`;
 
     // ── Evidence Appendix ──────────────────────────────────────────────────
@@ -671,23 +718,41 @@ window.LeaseReviewPackets = (() => {
         const citeHtml = _evCat(s.missingCitations, 'Missing Citations', 'cite', e =>
           _evRow(e.field, e.displayValue, `No verbatim clause quote — ${_esc(e.governingDocument.replace('_', ' '))}`));
 
+        // BOTH NUMBERS COUNT FIELDS, AND THE READER HAS TO BE TOLD SO.
+        //
+        // The card read "1 exception" and, two lines below, "4 fields verified
+        // — no exceptions". Both were right and neither was scoped: the first
+        // counts fields carrying a citation or risk exception, the second counts
+        // the fields that came through clean, and "no exceptions" belonged to
+        // those four fields rather than to the tenant. Read together they say
+        // this lease both does and does not have an exception.
+        //
+        // Give the denominator, and drop the categorical clause.
+        const _fieldsChecked = s.exceptionCount + s.cleanFieldCount;
         const cleanLine = s.cleanFieldCount > 0
-          ? `<div class="rpt-ev-clean">✓ ${s.cleanFieldCount} field${s.cleanFieldCount !== 1 ? 's' : ''} verified — no exceptions</div>` : '';
+          ? `<div class="rpt-ev-clean">✓ ${s.cleanFieldCount} of ${_fieldsChecked} field${_fieldsChecked !== 1 ? 's' : ''} verified against the executed document</div>` : '';
 
         return `<details class="rpt-ev-tenant"${s.exceptionCount > 0 ? ' open' : ''}>
           <summary class="rpt-ev-tenant-hdr">
             <span class="rpt-ev-tenant-name">${_esc(s.tenantName)}</span>
             <span class="rpt-ev-tenant-conf" style="color:${cc};">${_esc(s.confidence || '—')}${s.confidenceScore != null ? ` (${s.confidenceScore}/100)` : ''}</span>
             ${s.exceptionCount > 0
-              ? `<span class="rpt-ev-tenant-exc">${s.exceptionCount} exception${s.exceptionCount !== 1 ? 's' : ''}</span>`
-              : `<span class="rpt-ev-tenant-clean">✓ Clean</span>`}
+              ? `<span class="rpt-ev-tenant-exc">${s.exceptionCount} of ${_fieldsChecked} field${_fieldsChecked !== 1 ? 's' : ''} with an exception</span>`
+              : `<span class="rpt-ev-tenant-clean">✓ All ${_fieldsChecked} field${_fieldsChecked !== 1 ? 's' : ''} verified</span>`}
           </summary>
           <div class="rpt-ev-tenant-body">${critHtml}${riskHtml}${lcHtml}${citeHtml}${cleanLine}</div>
         </details>`;
       }).join('');
 
+      // Named explicitly as FIELD exceptions. The audit engine also reports
+      // "exceptions" — critical reconciliation findings — and the two counts are
+      // different things over different populations: a lease field lacking a
+      // clause citation is not a reconciliation exception, and a reconciliation
+      // billed on an expired lease is not a field-level one. Sharing the bare
+      // word left a reader to guess whether 4 and 5 were the same tally.
       const sumBar = eaSum.totalTenants
-        ? `<div class="rpt-ev-summary">${eaSum.totalTenants} tenant${eaSum.totalTenants !== 1 ? 's' : ''} · ${eaSum.totalExceptions} exception${eaSum.totalExceptions !== 1 ? 's' : ''} · ${eaSum.totalCleanFields} verified field${eaSum.totalCleanFields !== 1 ? 's' : ''}</div>`
+        ? `<div class="rpt-ev-summary">${eaSum.totalTenants} tenant${eaSum.totalTenants !== 1 ? 's' : ''} · ${eaSum.totalExceptions} lease-field exception${eaSum.totalExceptions !== 1 ? 's' : ''} · ${eaSum.totalCleanFields} field${eaSum.totalCleanFields !== 1 ? 's' : ''} verified against the executed document
+           <span style="display:block;margin-top:3px;font-size:0.72rem;color:#64748b;">Field-level findings about lease documents. Reconciliation exceptions are counted separately in the Audit Exception Summary.</span></div>`
         : '';
 
       evidenceHtml = `<div class="rpt-section-title">Evidence Appendix</div>
@@ -1243,7 +1308,7 @@ window.LeaseReviewPackets = (() => {
         <td>${_d(t.lease_type)}</td>
         <td>${t.start_date ? _fmtDate(t.start_date) : '—'}</td>
         <td>${t.end_date   ? _fmtDate(t.end_date)   : '—'}</td>
-        <td>${t.cap        != null ? t.cap + '%'      : '—'}</td>
+        <td>${_pctCell(t.cap)}</td>
         <td style="font-size:0.78rem;">${_d(t.renewal_options)}</td>
       </tr>`;
     }).join('');

@@ -117,6 +117,15 @@ console.log('\n── C2 · "Exposure" is one measure, not two ──');
   yes('Risk & Disputes states the canonical at-risk figure',
       RISK.indexOf('Allocation At Risk') >= 0 && /40,83[0-9]/.test(RISK),
       `no allocation-at-risk figure in Risk & Disputes (expected ~${atRisk})`);
+  yes('the header states the canonical pool as Total CAM',
+      /Total CAM Pool \$71,950\.00/.test(RISK),
+      'the Total CAM header is not the $71,950 pool the Exception Summary reports');
+  yes('and shows what was billed out under its own label',
+      /Billed to Tenants \$40,831\.64/.test(RISK),
+      'the allocated total is missing or is still labelled Total CAM');
+  no('the allocated figure is never labelled Total CAM',
+     /Total CAM Pool \$40,83/.test(RISK),
+     'the allocation total is being presented as the expense pool again');
   yes('the dispute figure keeps its own label',
       RISK.indexOf('Dispute Exposure') >= 0,
       'the open-dispute total is still labelled just "Exposure"');
@@ -597,6 +606,240 @@ console.log('\n── Every finding states what, how much, on what evidence, wha
   yes('and is rendered as a Warning, never a Critical',
       /Warning Pro-rata allocation conflict/.test(EXCEPTION),
       'the conflict has been promoted to a critical exception');
+}
+
+// ── W1. Billing workflow obeys the audit's verdict ──────────────────────────
+console.log('\n── W1 · A statement is not issued from a reconciliation that cannot be billed ──');
+{
+  const scriptText = fs.readFileSync(path.join(__dirname, 'script.js'), 'utf8');
+
+  const blocked = F.statementReadiness('SHONAC');
+  yes('the gate blocks while the audit says Not ready to bill', !!blocked,
+      'generateTenantStatement would proceed on a reconciliation the audit is holding open');
+  // Everything below reads off `blocked`; without this the gate's removal shows
+  // up as a crash rather than as a named failure.
+  if (!blocked) {
+    bad('the remaining W1 assertions cannot run', 'the gate returned nothing to inspect');
+  } else {
+  eq('and reports the canonical readiness verdict', blocked.readiness.label, 'Not ready to bill');
+  eq('with the canonical reason', blocked.readiness.reason,
+     NARRATIVE.readiness.reason);
+  eq('all five critical exceptions are carried into the block', blocked.red.length, 5);
+  eq('and the one naming SHONAC is identified', blocked.mine.length, 1);
+  yes('specifically SHONAC\'s own expired lease',
+      /^SHONAC is being billed/.test(blocked.mine[0].title), blocked.mine[0].title);
+
+  // A tenant not named by any exception is still blocked — the reconciliation
+  // as a whole is what cannot be billed.
+  }
+
+  const other = F.statementReadiness('Northline Landscaping');
+  yes('a tenant named by no exception is blocked too', !!other,
+      'the gate only blocks tenants that appear in a finding');
+  eq('and the block says so rather than implying they are implicated',
+     other ? other.mine.length : null, 0);
+
+  // The gate opens by itself once the audit clears. No override, no flag.
+  const clean = F.statementReadiness('SHONAC', { red: [], yellow: [], green: [{ title: 'ok' }] });
+  eq('a clean reconciliation issues the statement', clean, null);
+  const advisoryOnly = F.statementReadiness('SHONAC',
+    { red: [], yellow: [{ title: 'advisory only' }], green: [] });
+  eq('advisory findings alone do not block billing', advisoryOnly, null);
+
+  const blockScreen = F.statementBlockHtml('SHONAC');
+  yes('the block screen is actually produced', !!blockScreen.html,
+      'the readiness gate produced no screen — the refusal would be invisible');
+  eq('and is titled as a refusal', blockScreen.title, 'Statement blocked — SHONAC');
+  const html = blockScreen.html;
+  const bt   = text(html);
+  yes('the block screen refuses rather than warns',
+      /This statement has not been issued/.test(bt), 'the block screen reads as a warning');
+  yes('it lists every blocking exception with its amount',
+      /\$10,792\.50/.test(bt) && /\$16,008\.88/.test(bt), 'amounts are missing from the block screen');
+  yes('and marks the ones naming this tenant',
+      /This tenant/.test(bt), 'the tenant\'s own exceptions are not distinguished');
+  yes('the only way forward is an explicitly non-billable draft',
+      /View non-billable draft/.test(bt) && /must not be sent to a tenant/.test(bt),
+      'the block screen offers a way to issue the statement anyway');
+  no('and it offers no override that issues the real statement',
+     /issue the statement/i.test(bt), 'the block can be overridden into a real statement');
+
+  // Source-level: the gate must sit on the statement path, and the draft flag
+  // must not be reachable from the ordinary Tenant Statement button.
+  yes('[source] the gate runs inside generateTenantStatement',
+      /if \(!opts\.draft\) \{\s*const _ready = _statementReadinessBlock\(tenantName\);/.test(scriptText),
+      'the readiness gate is no longer on the statement path');
+  yes('[source] the tenant statement buttons pass no draft flag',
+      (scriptText.match(/generateTenantStatement\('\$\{esc\(r\.name\)\}'\)/g) || []).length >= 2,
+      'a Tenant Statement button now passes options, which could bypass the gate');
+  yes('[source] the draft is reachable only from the block screen',
+      (scriptText.match(/draft: true/g) || []).length === 1
+        && /function _renderStatementReadinessBlock[\s\S]*?draft: true[\s\S]*?\n\}/.test(scriptText),
+      'draft mode is reachable from somewhere other than the block screen');
+
+  // The draft carries the audit state with it.
+  yes('[source] the draft relabels the billed total',
+      /Provisional CAM allocation — not billable/.test(scriptText),
+      'the draft still says "Total CAM Billed to You"');
+  eq('[source] the draft is marked non-billable in the banner AND the report header',
+     (scriptText.match(/NON-BILLABLE DRAFT/g) || []).length, 2);
+  yes('[source] the banner tells the reader not to send it',
+      /DO NOT SEND TO TENANT/.test(scriptText),
+      'the draft banner no longer warns against sending it to a tenant');
+  yes('[source] the draft carries the blocking exceptions',
+      /_draftState\.red\.map/.test(scriptText),
+      'the draft does not list what is blocking it');
+  yes('[source] the draft shows no settlement section at all',
+      /\$\{_draftState \? '' : \(\(\) => \{/.test(scriptText),
+      'a non-billable draft still renders payment settlement language');
+}
+
+// ── W2. Settlement language reflects settlement, not statement generation ───
+console.log('\n── W2 · Settlement is claimed only when a transaction exists ──');
+{
+  const scriptText = fs.readFileSync(path.join(__dirname, 'script.js'), 'utf8');
+  no('the statement no longer asserts settlement in the present tense',
+     /This is the trust layer behind your statement/.test(scriptText),
+     'the statement still claims RLUSD settlement backs it');
+  yes('an unsettled statement says so in as many words',
+      /No payment has been made and no settlement has occurred for this statement/.test(scriptText),
+      'nothing tells the tenant that no settlement has occurred');
+  yes('and keeps the "not yet live" caveat the shared widget carries',
+      /goes live once the settlement wallet is funded/.test(scriptText),
+      'the statement drops the caveat that the capability is not live');
+  yes('the settled wording is reachable only from a real transaction',
+      /const _settled = _st\.status === 'settled'/.test(scriptText),
+      'the settled copy is not gated on settlement state');
+  yes('[source] settled state still requires a txHash',
+      /if \(s && s\.txHash\) \{[\s\S]{0,120}status:\s*'settled'/.test(scriptText),
+      'settlement state no longer requires a transaction hash');
+}
+
+// ── W3. Lease Review counts, chronology, empty values ───────────────────────
+console.log('\n── W3 · Lease Review says what it is counting ──');
+{
+  const lrpText = fs.readFileSync(path.join(__dirname, 'lease-review-packets.js'), 'utf8');
+
+  no('a card no longer claims "no exceptions" beside an exception count',
+     /verified — no exceptions/.test(lrpText),
+     'the card still says "N fields verified — no exceptions" under an exception count');
+  yes('both counts state their denominator',
+      /of \$\{_fieldsChecked\} field/.test(lrpText),
+      'the exception and verified counts are still bare numbers over an unstated population');
+  yes('the appendix names them lease-field exceptions',
+      /lease-field exception/.test(lrpText),
+      'the field-level count still shares the bare word "exception" with the audit');
+  yes('and points at where reconciliation exceptions are counted',
+      /Reconciliation exceptions are counted separately in the Audit Exception Summary/.test(lrpText),
+      'nothing relates the two counts');
+
+  // Empty string is not a value.
+  const LRP = global.window.LeaseReviewPackets;
+  const packet = LRP.generateLeaseReviewPacket({
+    name: 'Cap Render', totalSqft: 10000, disputes: [], timeline: [],
+    tenants: [
+      { id: 'a', tenant_name: 'Digital River', name: 'Digital River', leased_sqft: 5000,
+        lease_type: 'NNN', start_date: '1998-08-01', end_date: '2003-07-31',
+        cap: '', admin_fee_pct: '', gross_up_pct: '' },
+      { id: 'b', tenant_name: 'Real Cap Co', name: 'Real Cap Co', leased_sqft: 5000,
+        lease_type: 'NNN', start_date: '2020-01-01', end_date: '2030-01-01', cap: 5 },
+    ],
+  }, { audience: 'landlord' });
+  const ph = LRP.formatReviewPacketHtml(packet);
+  no('an empty cap does not render as a bare percent sign',
+     />\s*%\s*</.test(ph), 'a "%" with no number is still rendered for an empty cap');
+  // Nor as 0% — Number('') is 0, so a guard that merely coerces turns an absent
+  // cap into a stated one, which is worse than the bare "%" it replaced.
+  no('and never as 0%, which would assert a cap that does not exist',
+     /Digital River[\s\S]{0,400}?>0%</.test(ph),
+     'an empty cap now renders as 0%, asserting a cap the lease does not state');
+  yes('the empty cap cell is an em-dash, like any absent value',
+      /Digital River[\s\S]{0,400}?>—</.test(ph),
+      'the absent cap does not render as an em-dash');
+  yes('a real cap still renders its number', /5%/.test(ph), 'a populated cap stopped rendering');
+  // The evidence appendix renders through _displayValue, which had the same
+  // defect independently.
+  no('the evidence appendix does not print a bare percent either',
+     /rpt-ev-val">%</.test(ph), 'the appendix still prints "%" with no number');
+  // The same guard has to hold for fields that are not percentages: an empty
+  // expense_stop rendered "$0.00/sqft", asserting a stop the lease never set.
+  eq('an empty non-percent field is absent, not zero',
+     LRP.formatReviewPacketHtml(LRP.generateLeaseReviewPacket({
+       name: 'Stop', totalSqft: 1000, disputes: [], timeline: [],
+       tenants: [{ id: 'a', tenant_name: 'Empty Stop Co', name: 'Empty Stop Co', leased_sqft: 1000,
+                   lease_type: 'NNN', start_date: '2020-01-01', end_date: '2030-01-01',
+                   expense_stop: '' }],
+     }, { audience: 'landlord' })).indexOf('/sqft') >= 0, false);
+
+  // Original leases are not amendments.
+  const pt = text(ph);
+  no('the chronology is no longer titled "Amendment Chronology"',
+     /Amendment Chronology/.test(pt),
+     'original leases are still listed under a heading that says amendments');
+  yes('it is titled for what it contains', /Document Chronology/.test(pt),
+      'the chronology section lost its title');
+  yes('and reconciles its own rows with the Amendments count',
+      /original lease(s)? shown as the baseline/.test(pt)
+        && /Amendments count on the cover counts amendments only/.test(pt),
+      'nothing explains why originals appear where Amendments reads 0');
+}
+
+// ── W4. Measured zero vs unavailable ────────────────────────────────────────
+console.log('\n── W4 · A measured zero and a missing measurement do not look alike ──');
+{
+  const LRP = global.window.LeaseReviewPackets;
+  // The Test 2 shape: no lease carries a confidence score, and the readiness
+  // score is genuinely 0 from expired leases and missing caps.
+  const prop = {
+    name: 'Test 2 Property', totalSqft: 80000, disputes: [], timeline: [],
+    tenants: F.TENANTS.map(t => { const c = Object.assign({}, t); delete c._confidence; delete c._confidenceScore; return c; }),
+  };
+  const packet = LRP.generateLeaseReviewPacket(prop, { audience: 'landlord' });
+  const es = packet.executiveSummary || {};
+  eq('extraction confidence is null when no lease carries a score', es.avgConfidence, null);
+
+  const ph = text(LRP.formatReviewPacketHtml(prop.tenants.length ? packet : packet));
+  yes('and renders as N/A, never as 0',
+      /N\/A Extraction Confidence/.test(ph),
+      'unavailable confidence is rendered as a number');
+  yes('the packet says unavailable is not zero, in as many words',
+      /unavailable<\/strong>, not zero/.test(LRP.formatReviewPacketHtml(packet))
+        || /unavailable , not zero/.test(ph) || /unavailable, not zero/.test(ph),
+      'nothing distinguishes unavailable confidence from a measured zero');
+  yes('and says the health score does not include confidence',
+      /does not include confidence/.test(ph),
+      'a reader can still attribute the health score to the missing confidence');
+
+  // The basis reaches the packet through property._derivedMetrics, which the app
+  // fills from derivePropertyMetrics. Drive that for real — its components come
+  // from derivePropertyReadiness in selectors.js — then render with it, so both
+  // halves of the seam are exercised rather than a stub.
+  const realMetrics = F.propertyMetrics(prop);
+  yes('derivePropertyMetrics builds a basis for the score',
+      realMetrics.health.basis.length > 0,
+      'the score components are computed but still not exposed');
+  yes('naming the expired leases and missing caps that produced it',
+      realMetrics.health.basis.some(b => /expired lease/.test(b))
+        && realMetrics.health.basis.some(b => /no CAM cap/.test(b)),
+      realMetrics.health.basis.join(' · '));
+  eq('the score is a measured zero, not an absent one', realMetrics.health.score, 0);
+  yes('and its deductions are reported past the 100-point scale',
+      realMetrics.health.deductionTotal > 100,
+      `deduction total is ${realMetrics.health.deductionTotal}`);
+
+  const withMetrics = Object.assign({}, prop, { _derivedMetrics: realMetrics });
+  const ph2 = text(LRP.formatReviewPacketHtml(
+    LRP.generateLeaseReviewPacket(withMetrics, { audience: 'landlord' })));
+  yes('the packet renders the components it is made of',
+      /Health score basis:/.test(ph2), 'the health score is still an unexplained number');
+  yes('including the expired leases and missing caps',
+      /expired lease/.test(ph2) && /no CAM cap/.test(ph2),
+      'the basis does not name the drivers of the score');
+  yes('and states the deduction total that outran the scale',
+      /points of deductions against a 100-point scale/.test(ph2),
+      'a saturated Lease Review score reports no progress, as the Lender Summary once did');
+  eq('the score still renders as the measured 0, not N/A',
+     /(\d+|N\/A)\s*Health Score/.exec(ph2) ? /0\s*Health Score/.test(ph2) : false, true);
 }
 
 // ── P1 rollup. Every report agrees on the numbers it shares ─────────────────
