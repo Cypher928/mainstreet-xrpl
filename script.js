@@ -16882,15 +16882,48 @@ function _renderStatementReadinessBlock(block) {
   // would silently drop the refusal rather than show it. Fail visibly instead.
   if (!block) { showToast('Could not determine billing readiness — statement not issued.', { color: '#92400e', textColor: '#fef3c7' }); return; }
   const AXs = window.AuditExposure;
+
+  // ONE COLUMN, TWO AXES — LABEL THEM.
+  //
+  // These rows carry whatever each finding recorded, and the blocking set mixes
+  // both measures: an expired lease contributes allocation-side money
+  // (at_risk), while the single-vendor concentration contributes expense-side
+  // money (unsubstantiated). Rendered as one unlabelled "Amount" column they
+  // invite a reader to add $38,000 of weakly-evidenced pool to $40,832 of
+  // at-risk allocation and arrive at a figure that means nothing — the exact
+  // conflation audit-exposure.js separates the buckets to prevent.
+  //
+  // So each row states its treatment, and the totals are struck per axis with
+  // no grand total, because there is no honest one to strike.
+  const KIND_LBL = {
+    at_risk:         'Allocation at risk',
+    under_review:    'Requiring review',
+    recoverable:     'Excluded / recovered',
+    unsubstantiated: 'Expense weakly evidenced',
+    none:            '—',
+  };
+  const subtotals = {};
   const rows = block.red.map(f => {
-    const imp = AXs ? AXs.normalizeImpact(f.impact) : { amount: null };
+    const imp = AXs ? AXs.normalizeImpact(f.impact) : { amount: null, kind: 'none' };
+    if (imp.amount != null && imp.kind !== 'none') {
+      subtotals[imp.kind] = (subtotals[imp.kind] || 0) + imp.amount;
+    }
     const isMine = block.mine.indexOf(f) >= 0;
     return `<tr${isMine ? ' style="background:rgba(239,68,68,0.06)"' : ''}>
       <td>${isMine ? '<strong>This tenant</strong>' : '—'}</td>
       <td>${esc(f.title)}</td>
       <td style="text-align:right;white-space:nowrap">${imp.amount != null ? fmt(imp.amount) : '<span style="color:#64748b">not yet quantified</span>'}</td>
+      <td style="white-space:normal;color:#94a3b8">${esc(KIND_LBL[imp.kind] || '—')}</td>
     </tr>`;
   }).join('');
+
+  const subtotalRows = Object.keys(subtotals).map(k =>
+    `<tr><td colspan="2" style="text-align:right;color:#94a3b8">${esc(KIND_LBL[k])} — total</td>
+     <td style="text-align:right;white-space:nowrap"><strong>${fmt(subtotals[k])}</strong></td>
+     <td></td></tr>`).join('');
+
+  const mixedAxes = subtotals.unsubstantiated != null
+    && (subtotals.at_risk != null || subtotals.under_review != null);
 
   openReport(`Statement blocked — ${block.tenantName}`, `
     <div class="rpt-section-title">This statement has not been issued</div>
@@ -16905,9 +16938,16 @@ function _renderStatementReadinessBlock(block) {
         : `None of the blocking exceptions name ${esc(block.tenantName)} directly, but they affect the reconciliation this statement would be drawn from.`}
     </p>
     <table class="rpt-table">
-      <thead><tr><th>Names this tenant</th><th>Critical exception</th><th style="text-align:right">Amount</th></tr></thead>
-      <tbody>${rows}</tbody>
+      <thead><tr><th>Names this tenant</th><th>Critical exception</th><th style="text-align:right">Amount</th><th>Treatment</th></tr></thead>
+      <tbody>${rows}${subtotalRows}</tbody>
     </table>
+    <div class="rpt-scope-note">
+      <strong>Allocation at risk</strong> is CAM allocated to a tenant with no documented basis — the same figure
+      the Audit Exception Summary and the Risk &amp; Disputes report state, read from the same finding.
+      ${mixedAxes ? `<strong>Expense weakly evidenced</strong> measures something different: pool dollars whose
+        supporting evidence is thin. The same dollar can appear on both, so the two totals are struck separately
+        and must not be added together.` : ''}
+    </div>
     <div class="rpt-section-title">To proceed</div>
     <p class="rpt-helper-text">
       Resolve the exceptions above and re-run the reconciliation — the statement issues on its own once the audit

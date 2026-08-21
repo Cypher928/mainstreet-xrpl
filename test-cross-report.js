@@ -658,6 +658,43 @@ console.log('\n── W1 · A statement is not issued from a reconciliation that
       /\$10,792\.50/.test(bt) && /\$16,008\.88/.test(bt), 'amounts are missing from the block screen');
   yes('and marks the ones naming this tenant',
       /This tenant/.test(bt), 'the tenant\'s own exceptions are not distinguished');
+
+  // THE AMOUNTS ARE THE SAME METRIC THE AUDIT REPORTS — asserted, not assumed.
+  // Each row renders the finding's own impact.amount, which for an expired
+  // lease is r.totalAllocated: the identical field deriveExposure sums into
+  // confirmedAtRisk. If these ever diverge, a manager reading the block screen
+  // and a manager reading the Exception Summary are looking at different money.
+  const atRiskRows = blocked.red
+    .map(f => AX.normalizeImpact(f.impact))
+    .filter(i => i.kind === 'at_risk')
+    .reduce((s, i) => s + i.amount, 0);
+  yes('the block screen\'s at-risk rows sum to the canonical confirmedAtRisk',
+      Math.abs(atRiskRows - NARRATIVE.exposure.confirmedAtRisk) < 0.005,
+      `block screen ${atRiskRows.toFixed(2)} vs exposure ${NARRATIVE.exposure.confirmedAtRisk.toFixed(2)}`);
+  yes('and each row states which measure it belongs to',
+      /Allocation at risk/.test(bt) && /Expense weakly evidenced/.test(bt),
+      'the Amount column mixes allocation-side and expense-side money unlabelled');
+  yes('totals are struck per measure',
+      /Allocation at risk — total/.test(bt) && /Expense weakly evidenced — total/.test(bt),
+      'the block screen shows no per-measure subtotal');
+  no('and there is no grand total to invite adding them',
+     /(Grand total|Total exposure|All exceptions — total)/i.test(bt),
+     'a grand total sums two measures that must not be added');
+  yes('the screen says so in as many words',
+      /must not be added together/.test(bt),
+      'nothing warns the reader against summing the column');
+  yes('and points at where the same figure appears elsewhere',
+      /the same figure[\s\S]{0,120}Audit Exception Summary/.test(bt),
+      'the block screen does not relate its at-risk figure to the other reports');
+
+  // The concentration finding is expense-side and must never be labelled as
+  // allocation at risk on this screen.
+  const conc = blocked.red.find(f => /^Unusually large invoice/.test(f.title));
+  eq('the concentration row is expense-side, not allocation-side',
+     AX.normalizeImpact(conc.impact).kind, 'unsubstantiated');
+  no('so it is not counted in the allocation-at-risk subtotal',
+     Math.abs(atRiskRows - (NARRATIVE.exposure.confirmedAtRisk + 38000)) < 0.005,
+     'the $38,000 concentration has been folded into allocation at risk');
   yes('the only way forward is an explicitly non-billable draft',
       /View non-billable draft/.test(bt) && /must not be sent to a tenant/.test(bt),
       'the block screen offers a way to issue the statement anyway');
