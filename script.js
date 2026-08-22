@@ -5481,7 +5481,7 @@ async function bulkApproveReady() {
   // extraction-only predicate the count did, so a lease missing square footage
   // was both counted as ready and bulk-approved — see renderBulkResults.
   const _blockers = (d) => {
-    try { return (deriveTenantReviewState(d).missing || []); } catch (_) { return []; }
+    try { return (deriveTenantReviewState(d).camBlocking || []); } catch (_) { return []; }
   };
   const all = tenantData.map((d, i) => ({ d, i })).filter(({ d }) =>
     d && !d._needsReview && !d.extractionFailed && d.status !== 'pending' && d.tenant_name && !d._userConfirmed
@@ -5632,6 +5632,7 @@ function _reviewStatusPillHtml(status) {
 // These shims maintain backward-compatible global function names and supply
 // the live lastResults context for the active-property view.
 const _RQ_MISSING_FIELD_TYPES = ReviewEngine.MISSING_FIELD_TYPES;
+const _RQ_CAM_BLOCKING_TYPES  = ReviewEngine.CAM_BLOCKING_FIELD_TYPES;
 function deriveTenantReviewState(t) {
   const rv = ReviewEngine.deriveTenantReviewState(t, lastResults);
   // Add missing[] — structural-blocking warnings separated from quality signals.
@@ -5639,6 +5640,18 @@ function deriveTenantReviewState(t) {
   // those that want all quality signals use rv.warnings.
   rv.missing = rv.warnings
     .filter(function(w) { return _RQ_MISSING_FIELD_TYPES.has(w.type); })
+    .map(function(w) { return w.label; });
+  // camBlocking — the subset of missing[] that stops the CAM engine from
+  // reconciling this lease at all (see CAM_BLOCKING_FIELD_TYPES). reviewItems is
+  // the remainder: real gaps a human should close, none of which prevent a
+  // number being produced. Any surface that tells a reader a lease "cannot be
+  // reconciled" must branch on camBlocking, not on missing.
+  rv.camBlocking = rv.warnings
+    .filter(function(w) { return _RQ_CAM_BLOCKING_TYPES.has(w.type); })
+    .map(function(w) { return w.label; });
+  rv.reviewItems = rv.warnings
+    .filter(function(w) { return _RQ_MISSING_FIELD_TYPES.has(w.type)
+                              && !_RQ_CAM_BLOCKING_TYPES.has(w.type); })
     .map(function(w) { return w.label; });
   return rv;
 }
@@ -8061,8 +8074,21 @@ function renderBulkResults() {
   //
   // deriveTenantReviewState already computes `missing[]` — the required fields a
   // lease lacks. It was simply never consulted here.
+  //
+  // camBlocking, not missing. Wiring this to the whole missing[] set over-blocked:
+  // every Triple Net lease without an explicit cap percentage and without a
+  // resolved audit-rights clause was listed as unreconcilable, on the same
+  // screen and the same run in which the CAM engine reconciled it. That is the
+  // original contradiction inverted, and the sentence below ("cannot be
+  // reconciled until the missing values are entered") made it an untrue claim.
   const _camBlockers = (d) => {
-    try { return (deriveTenantReviewState(d).missing || []); } catch (_) { return []; }
+    try { return (deriveTenantReviewState(d).camBlocking || []); } catch (_) { return []; }
+  };
+  // Gaps that do NOT stop reconciliation. Surfaced separately so "ready for CAM"
+  // is never read as "verified" — the lease reconciles, and a human still owes
+  // it a look.
+  const _reviewItems = (d) => {
+    try { return (deriveTenantReviewState(d).reviewItems || []); } catch (_) { return []; }
   };
   const _extractionOk = (d) =>
     !d._needsReview && !d.extractionFailed && d.status !== 'pending' && d.tenant_name && !d._userConfirmed;
@@ -8071,6 +8097,8 @@ function renderBulkResults() {
   const _blockedList = tenants.filter(d => _extractionOk(d) && _camBlockers(d).length > 0);
   const _readyCount  = _approvable.length;
   const _blockedCount = _blockedList.length;
+  // Reconcilable, but carrying unresolved review items.
+  const _reviewList  = _approvable.filter(d => _reviewItems(d).length > 0);
   const filterBarHtml = tenants.length > 0 ? `
   <div class="bulk-filter-bar">
     <input class="bulk-filter-input" type="text" placeholder="Search tenants…"
@@ -8087,6 +8115,11 @@ function renderBulkResults() {
     <strong>${_blockedCount} lease${_blockedCount === 1 ? '' : 's'} extracted but not ready for CAM</strong> —
     ${_blockedList.map(d => `${esc(d.tenant_name || 'Unnamed')} (missing ${esc(_camBlockers(d).join(', '))})`).join('; ')}.
     These are not included in the approve button above and cannot be reconciled until the missing values are entered.
+  </div>` : ''}
+  ${_reviewList.length > 0 ? `<div class="bulk-cam-review">
+    <strong>${_reviewList.length} lease${_reviewList.length === 1 ? '' : 's'} will reconcile but ${_reviewList.length === 1 ? 'has' : 'have'} open review items</strong> —
+    ${_reviewList.map(d => `${esc(d.tenant_name || 'Unnamed')} (${esc(_reviewItems(d).join(', '))})`).join('; ')}.
+    These do not stop the CAM calculation. Approving confirms the extraction, not the lease terms.
   </div>` : ''}` : '';
 
   el.innerHTML = `

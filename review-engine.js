@@ -17,6 +17,23 @@ window.ReviewEngine = (() => {
     'amendment_applied', 'multiple_amendments',
   ]);
 
+  // Of those, the ones whose absence makes a lease UNRECONCILABLE — the CAM
+  // engine drops it from the run entirely. getValidTenants() is the authority:
+  // it keeps a lease only when it has a name, leased_sqft > 0, a successful
+  // extraction and no property mismatch. Square footage is the only field in
+  // MISSING_FIELD_TYPES that appears in that filter.
+  //
+  // The distinction matters because the bulk screen tells the reader a blocked
+  // lease "cannot be reconciled until the missing values are entered". Applied
+  // to the whole MISSING_FIELD_TYPES set that sentence is false: a Triple Net
+  // lease with no cap percentage and an unresolved audit-rights clause
+  // reconciles perfectly well — those change how much trust the resulting
+  // number deserves, not whether it can be produced. Saying otherwise recreates
+  // the contradiction the readiness fix existed to remove, only inverted: the
+  // screen claimed two leases could not be reconciled on the same run in which
+  // the engine reconciled them.
+  const CAM_BLOCKING_FIELD_TYPES = new Set(['missing_sqft']);
+
   const _FINANCIAL_PROTECTION_TYPES = new Set([
     'nnn_cap_missing', 'admin_fee_present', 'gross_up_present', 'expense_stop_present',
   ]);
@@ -242,6 +259,7 @@ window.ReviewEngine = (() => {
 
   return {
     MISSING_FIELD_TYPES,
+    CAM_BLOCKING_FIELD_TYPES,
     getWarnings,
     computeFlags,
     computeFlagsStrict,

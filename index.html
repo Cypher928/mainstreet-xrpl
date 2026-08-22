@@ -3807,6 +3807,18 @@
     }
     .bulk-cam-blocked strong { color: var(--c-fbbf24); }
 
+    /* Reconcilable, but with open review items. Deliberately cooler than the
+       blocked block: these leases produce a CAM number, so the note must not
+       read as an error. */
+    .bulk-cam-review {
+      font-family: 'DM Sans', sans-serif; font-size: 0.79rem; line-height: 1.55;
+      color: var(--text-2); background: rgba(59,130,246,0.06);
+      border: 1px solid rgba(59,130,246,0.28); border-left-width: 3px;
+      border-radius: 0 7px 7px 0; padding: 10px 13px; margin: 0 0 12px;
+      overflow-wrap: anywhere;
+    }
+    .bulk-cam-review strong { color: var(--c-93c5fd, #93c5fd); }
+
     /* Coverage Gap: input coverage and reconciliation status, side by side and
        separately headed, because they answer different questions. */
     .cg-split {

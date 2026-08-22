@@ -27,6 +27,12 @@ const SUITES = [
   { label: 'Ask the Lease API',              cmd: 'node test-ask-lease.js' },
   { label: 'Lease Validation (Phase 23)',    cmd: 'node test-validate-lease.js' },
   { label: 'Escrow & Reserve engine (Phase 21)', cmd: 'node test-reserve-engine.js' },
+  // Lease readiness. "Ready for CAM" is a claim about what the reconciliation
+  // engine will accept, and this screen has now been wrong in both directions —
+  // once counting a lease with no square footage as ready, then once telling
+  // the reader two leases could not be reconciled on the run that reconciled
+  // them. Nothing covered it either time, which is why both shipped.
+  { label: 'Lease CAM readiness',               cmd: 'node test-lease-readiness.js' },
   // XRPL/RLUSD settlement configuration. Offline only: it asserts the issuer,
   // currency code, Make Waves source tag and memo payload, and SKIPS (does not
   // fail) the live ledger reads when the network is unreachable — so it is safe
