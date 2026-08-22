@@ -55,10 +55,25 @@
   // the same species of nonsense this module was written to stop. So the
   // expense-side figure is totalled separately, labelled by what it measures,
   // and never folded into the allocation total.
-  const IMPACT_KINDS = ['at_risk', 'under_review', 'recoverable', 'unsubstantiated', 'none'];
+  const IMPACT_KINDS = ['at_risk', 'under_review', 'recoverable',
+                       'unsubstantiated', 'concentration', 'none'];
 
-  // Allocation-side kinds. `unsubstantiated` is deliberately absent.
+  // Allocation-side kinds. The expense-side kinds are deliberately absent.
   const ALLOCATION_KINDS = ['at_risk', 'under_review', 'recoverable'];
+
+  // EXPENSE-SIDE KINDS, AND WHY THERE ARE TWO OF THEM.
+  //
+  // These were one bucket called `unsubstantiated`, which put a $55,000 invoice
+  // under "weakly evidenced" on a reconciliation whose own green finding read
+  // "All 5 invoices have source documents attached". The evidence was not weak.
+  // What was notable is that one invoice was 81.7% of the pool — a materiality
+  // question, not a documentation one, and answered by an independent bid rather
+  // than by attaching a receipt.
+  //
+  //   unsubstantiated — the supporting document is missing or incomplete
+  //   concentration   — the document exists; the amount is large enough that one
+  //                     source should not be taken on trust
+  const EXPENSE_KINDS = ['unsubstantiated', 'concentration'];
 
   // ONE VOCABULARY FOR THE BUCKETS, AND WHY "AT RISK" WAS THE WRONG WORD.
   //
@@ -78,6 +93,7 @@
     under_review:    'requiring review',
     recoverable:     'excluded or already recovered',
     unsubstantiated: 'weakly evidenced',
+    concentration:   'requiring independent verification',
     none:            '—',
   };
 
@@ -87,6 +103,10 @@
     under_review:    'Requiring Review',
     recoverable:     'Excluded / Recovered',
     unsubstantiated: 'Weakly Evidenced',
+    // Kept short: this is a table column heading and a subtotal label. The full
+    // "Independent Verification Required" phrasing lives in KIND_MEANING, where
+    // there is room for it.
+    concentration:   'Material Concentration',
     none:            '—',
   };
 
@@ -94,7 +114,8 @@
     at_risk:         'Allocated CAM with no unexpired lease on file. A holdover or renewal may cover it — none has been confirmed.',
     under_review:    'A real amount whose correct treatment is unresolved. Not a loss.',
     recoverable:     'Already excluded or recovered under lease terms.',
-    unsubstantiated: 'Pool dollars whose supporting evidence is thin. Measures the expenses, not the amounts billed.',
+    unsubstantiated: 'Pool dollars whose supporting document is missing or incomplete. Measures the expenses, not the amounts billed.',
+    concentration:   'The document exists. One source accounts for enough of the pool that it should be verified independently before billing.',
     none:            'No dollar consequence.',
   };
 
@@ -154,7 +175,32 @@
       // two observations about one sum of money, not two sums — see dedupe in
       // deriveExposure. Findings without a scope are assumed distinct.
       scope: impact.scope ? String(impact.scope) : null,
+      // The atomic dollars this finding is about, as [{id, amount}].
+      //
+      // A bare `scope` string could not express OVERLAP. On the Test 3
+      // reconciliation the same $55,000 invoice was flagged twice — once as a
+      // concentration with scope "invoice:MainStreet CAM Validation", once as
+      // undated with scope "invoices:MainStreet CAM Validation" — and because
+      // the two strings differ by one character the exposure reported $110,000
+      // of a $67,300 pool. Fixing the prefix would have hidden the flaw rather
+      // than removed it: three findings over overlapping SETS of invoices would
+      // still have triple-counted.
+      //
+      // Items are compared per id, so one invoice contributes its dollars once
+      // however many findings mention it, and a finding covering {A,B} correctly
+      // shares A with a finding covering {A}.
+      items: Array.isArray(impact.items)
+        ? impact.items.filter(x => x && x.id != null && num(x.amount) !== null)
+                      .map(x => ({ id: String(x.id), amount: num(x.amount) }))
+        : null,
     };
+  }
+
+  /** The atoms a finding's money decomposes into, whatever shorthand it used. */
+  function impactItems(imp, seq) {
+    if (imp.items && imp.items.length) return imp.items;
+    if (imp.amount === null) return [];
+    return [{ id: imp.scope || ('#anon:' + seq), amount: imp.amount }];
   }
 
   /**
@@ -196,16 +242,19 @@
       requiringReview:     0,
       excludedRecoverable: 0,
       poolUnsubstantiated: 0,   // expense-side; NOT part of the allocation total
+      poolConcentration:   0,   // expense-side; documented, but materially large
+      poolFlagged:         0,   // the UNION of the two above — each dollar once
       unquantified:        0,   // findings that matter but carry no amount yet
       counts: { red: buckets[0][1].length, yellow: buckets[1][1].length, green: buckets[2][1].length },
-      contributors: { at_risk: [], under_review: [], recoverable: [], unsubstantiated: [] },
+      contributors: { at_risk: [], under_review: [], recoverable: [],
+                      unsubstantiated: [], concentration: [] },
     };
 
-    // scope key -> the largest amount claimed for it, per kind. Two findings
-    // about one invoice (undated AND undocumented, say) describe one sum of
-    // money twice; counting it twice would inflate the total past the pool.
-    const seen = {};
-    let anon = 0;
+    // kind -> item id -> the largest amount any finding claims for it. Taking the
+    // max rather than the sum is what makes one invoice count once however many
+    // findings describe it.
+    const byKind = {};
+    let seq = 0;
 
     buckets.forEach(([bucket, list]) => {
       list.forEach((f) => {
@@ -213,7 +262,7 @@
         const sev = severityOf(f, bucket);
         const imp = normalizeImpact(f.impact);
 
-        if (imp.amount === null) {
+        if (imp.amount === null && !(imp.items && imp.items.length)) {
           // Only red/yellow findings are "unquantified"; a green finding with no
           // amount is simply a verification, not a gap in pricing.
           if (sev === 'red' || sev === 'yellow') out.unquantified++;
@@ -221,27 +270,44 @@
         }
         if (imp.kind === 'none') return; // an amount recorded for context only
 
-        const key = imp.kind + '::' + (imp.scope || ('#' + (anon++)));
-        const prev = seen[key];
-        if (prev && prev.amount >= imp.amount) return;   // already counted, larger
-        if (prev) {
-          // A bigger claim on the same money supersedes the smaller one.
-          out[prev.field] -= prev.amount;
-          const ci = out.contributors[prev.list].indexOf(prev.title);
-          if (ci >= 0) out.contributors[prev.list].splice(ci, 1);
+        const bag = byKind[imp.kind] || (byKind[imp.kind] = {});
+        let contributed = false;
+        impactItems(imp, seq++).forEach(({ id, amount }) => {
+          if (!(bag[id] > amount)) { bag[id] = amount; }
+          contributed = true;
+        });
+        const listName = out.contributors[imp.kind] ? imp.kind : null;
+        if (contributed && listName && out.contributors[listName].indexOf(f.title) < 0) {
+          out.contributors[listName].push(f.title);
         }
-
-        const field = imp.kind === 'at_risk'      ? 'confirmedAtRisk'
-                    : imp.kind === 'under_review' ? 'requiringReview'
-                    : imp.kind === 'recoverable'  ? 'excludedRecoverable'
-                    :                               'poolUnsubstantiated';
-        const listName = imp.kind === 'unsubstantiated' ? 'unsubstantiated' : imp.kind;
-
-        out[field] += imp.amount;
-        out.contributors[listName].push(f.title);
-        seen[key] = { amount: imp.amount, field, list: listName, title: f.title };
       });
     });
+
+    const sumOf = (kind) => Object.values(byKind[kind] || {}).reduce((a, b) => a + b, 0);
+    out.confirmedAtRisk     = sumOf('at_risk');
+    out.requiringReview     = sumOf('under_review');
+    out.excludedRecoverable = sumOf('recoverable');
+    out.poolUnsubstantiated = sumOf('unsubstantiated');
+    out.poolConcentration   = sumOf('concentration');
+
+    // The union across the expense-side kinds. One invoice that is BOTH undated
+    // and materially concentrated is one sum of pool dollars needing attention,
+    // not two — so the flagged figure takes each id once across both kinds.
+    {
+      const union = {};
+      EXPENSE_KINDS.forEach((k) => {
+        Object.entries(byKind[k] || {}).forEach(([id, amt]) => {
+          if (!(union[id] > amt)) union[id] = amt;
+        });
+      });
+      out.poolFlagged = Object.values(union).reduce((a, b) => a + b, 0);
+    }
+
+    // An expense-side figure larger than the pool it is a share of is
+    // arithmetically impossible and always indicates double counting. Report it
+    // rather than printing it: a reader who sees "$110,000 of a $67,300 pool"
+    // has no way to know which number to distrust.
+    out.exceedsPool = out.totalPool > 0 && out.poolFlagged > out.totalPool + 0.005;
 
     return out;
   }
@@ -272,9 +338,20 @@
     if (x.confirmedAtRisk > 0)     parts.push(`${fmtMoney(x.confirmedAtRisk)} ${KIND_LABEL.at_risk}`);
     if (x.requiringReview > 0)     parts.push(`${fmtMoney(x.requiringReview)} ${KIND_LABEL.under_review}`);
     if (x.excludedRecoverable > 0) parts.push(`${fmtMoney(x.excludedRecoverable)} excluded or recovered`);
-    // Said in its own words, because it is not part of the running total above.
-    if (x.poolUnsubstantiated > 0) {
-      parts.push(`${fmtMoney(x.poolUnsubstantiated)} of the pool weakly evidenced (separate measure)`);
+    // Expense-side, said in its own words because it is not part of the running
+    // total above — and stated as the UNION, so an invoice that is both undated
+    // and materially concentrated is one figure rather than two.
+    if (x.poolFlagged > 0) {
+      const why = [];
+      if (x.poolConcentration > 0)   why.push('concentration');
+      if (x.poolUnsubstantiated > 0) why.push('documentation');
+      parts.push(`${fmtMoney(x.poolFlagged)} of the pool flagged for ${why.join(' and ')} (separate measure)`);
+    }
+    // An expense figure above the pool is arithmetically impossible. Say so
+    // rather than printing it — "$110,000 of a $67,300 pool" leaves a reader no
+    // way to know which number to distrust.
+    if (x.exceedsPool) {
+      parts.push('expense-side total exceeds the pool — figures withheld pending review');
     }
 
     if (x.unquantified > 0) {
@@ -283,7 +360,7 @@
 
     const nothingOutstanding =
       x.confirmedAtRisk === 0 && x.requiringReview === 0
-      && !(x.poolUnsubstantiated > 0) && x.unquantified === 0;
+      && !(x.poolFlagged > 0) && x.unquantified === 0;
 
     if (nothingOutstanding && x.counts.red === 0 && x.counts.yellow === 0) {
       return `${fmtMoney(x.totalPool)} total CAM pool — no at-risk amounts identified`;
@@ -346,12 +423,12 @@
         reasons.push(`${fmtMoney(x.confirmedAtRisk)} of the pool ${KIND_LABEL.at_risk} (−${capped})`);
       }
     }
-    if (x.totalPool > 0 && x.poolUnsubstantiated > 0) {
-      const pct = (x.poolUnsubstantiated / x.totalPool) * 100;
+    if (x.totalPool > 0 && x.poolFlagged > 0) {
+      const pct = (x.poolFlagged / x.totalPool) * 100;
       const capped = Math.min(10, Math.round(pct / 2));
       if (capped > 0) {
         d += capped;
-        reasons.push(`${fmtMoney(x.poolUnsubstantiated)} of the pool weakly evidenced (−${capped})`);
+        reasons.push(`${fmtMoney(x.poolFlagged)} of the pool flagged on the expense side (−${capped})`);
       }
     }
     if (x.unquantified > 0) {
@@ -362,7 +439,8 @@
   }
 
   return {
-    IMPACT_KINDS, ALLOCATION_KINDS, KIND_LABEL, KIND_LABEL_TITLE, KIND_MEANING,
+    IMPACT_KINDS, ALLOCATION_KINDS, EXPENSE_KINDS,
+    KIND_LABEL, KIND_LABEL_TITLE, KIND_MEANING,
     VERDICT, VERDICT_LABEL, VERDICT_ICON, VERDICT_MEANING,
     normalizeImpact, severityOf, deriveExposure, allocationExposure,
     describeExposure, billingReadiness, healthDeductions, fmtMoney,

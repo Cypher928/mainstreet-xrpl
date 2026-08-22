@@ -3796,6 +3796,17 @@
       font-size: 0.64rem; font-weight: 700; letter-spacing: 0.12em;
       text-transform: uppercase; color: var(--text-4); white-space: nowrap;
     }
+    /* Extracted but not CAM-ready. Deliberately not styled as an error — the
+       extraction succeeded; what is missing is a value CAM needs. */
+    .bulk-cam-blocked {
+      font-family: 'DM Sans', sans-serif; font-size: 0.79rem; line-height: 1.55;
+      color: var(--text-2); background: rgba(245,158,11,0.07);
+      border: 1px solid rgba(245,158,11,0.3); border-left-width: 3px;
+      border-radius: 0 7px 7px 0; padding: 10px 13px; margin: 0 0 12px;
+      overflow-wrap: anywhere;
+    }
+    .bulk-cam-blocked strong { color: var(--c-fbbf24); }
+
     /* Coverage Gap: input coverage and reconciliation status, side by side and
        separately headed, because they answer different questions. */
     .cg-split {

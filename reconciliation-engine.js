@@ -214,7 +214,13 @@ window.ReconciliationEngine = (() => {
           //                      whose allocation is correct.
           kind:       'coverage',
           disputable: false,
-          title:    `Coverage gap: loaded leases cover ${totalPR.toFixed(1)}% of the property`,
+          // "Coverage gap" named the deficiency; it did not say what to do about
+          // it. The share is unresolved rather than lost, and uploading the
+          // remaining leases is what resolves it — so say that, in the actions a
+          // reader can act on.
+          actions:  ['Upload remaining leases', 'Confirm vacant space', 'Re-run reconciliation'],
+          source:   'Sum of loaded-lease square footage vs property total',
+          title:    `Property CAM coverage: ${totalPR.toFixed(1)}% documented · ${gap.toFixed(1)}% unresolved`,
           detail:   `The leases currently loaded account for ${totalPR.toFixed(2)}% of the property's square footage, leaving ${gap.toFixed(1)}% unallocated. That remainder is either vacant space — whose share of CAM the landlord absorbs — or space under a lease that has not been uploaded yet, in which case that share is recoverable and is missing from this reconciliation. The amounts billed to the tenants above are unaffected: each is charged only its own share.`,
           conditions: [
             `Loaded leases cover: ${totalPR.toFixed(2)}% of the property`,
@@ -222,8 +228,8 @@ window.ReconciliationEngine = (() => {
             `${results.length} lease${results.length !== 1 ? 's' : ''} in this reconciliation`,
             'Cause not determined: vacant space, or a lease not yet uploaded',
             'Tenant charges are unaffected — each tenant is billed only its own share',
-            'To resolve: upload any lease still missing, then re-run the reconciliation',
-            'If every lease is loaded, the remainder is vacant and the landlord absorbs its share',
+            'To resolve: upload the remaining leases, then re-run the reconciliation — that determines whether the unresolved share is vacant space or a missing tenant obligation',
+            'If every lease is already loaded, the remainder is vacant and the landlord absorbs its share',
           ],
         });
       } else if (gap < -2) {

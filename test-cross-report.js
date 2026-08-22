@@ -173,11 +173,15 @@ console.log('\n── C3b · The two axes are never added together ──');
       AX.allocationExposure(x) <= x.totalPool,
       `allocation exposure ${Math.round(AX.allocationExposure(x))} exceeds the pool ${x.totalPool}`);
   yes('the expense-side figure is non-zero and reported separately',
-      x.poolUnsubstantiated > 0 && !AX.ALLOCATION_KINDS.includes('unsubstantiated'),
-      'unsubstantiated has leaked into the allocation kinds');
+      x.poolFlagged > 0 && !AX.ALLOCATION_KINDS.includes('unsubstantiated')
+        && !AX.ALLOCATION_KINDS.includes('concentration'),
+      'an expense-side kind has leaked into the allocation kinds');
   yes('adding the two would have overstated the pool — which is why they are separate',
-      AX.allocationExposure(x) + x.poolUnsubstantiated > x.totalPool,
+      AX.allocationExposure(x) + x.poolFlagged > x.totalPool,
       'the fixture no longer reproduces the overlap, so this guard proves nothing');
+  no('and the expense-side union never exceeds the pool it is a share of',
+     x.exceedsPool,
+     `poolFlagged ${x.poolFlagged} exceeds the ${x.totalPool} pool — double counting`);
   yes('the exposure line names the expense-side figure as a separate measure',
       /separate measure/.test(AX.describeExposure(x)),
       AX.describeExposure(x));
@@ -200,7 +204,12 @@ console.log('\n── C3b · The two axes are never added together ──');
     ],
   }, 71950);
   eq('the larger claim on the same money supersedes the smaller', bigger.confirmedAtRisk, 2000);
-  eq('and only the surviving claim is listed as a contributor', bigger.contributors.at_risk.length, 1);
+  // Both findings ARE about that money and both are named; what must not double
+  // is the TOTAL, asserted above. The previous single-scope model could only
+  // keep one, so this counted contributors as a proxy for the total not
+  // doubling — item-level dedup makes the total the direct assertion and lets
+  // the list stay informative.
+  eq('both findings that touch the money are still named', bigger.contributors.at_risk.length, 2);
 
   const unscoped = AX.deriveExposure({
     red: [], green: [],
@@ -598,7 +607,7 @@ console.log('\n── Every finding states what, how much, on what evidence, wha
       'the Exception Summary omits the billing readiness verdict');
 
   yes('a priced finding shows its amount and how it is treated',
-      /\$38,000\.00 weakly evidenced/.test(EXCEPTION),
+      /\$38,000\.00 requiring independent verification/.test(EXCEPTION),
       'the $38,000 concentration renders with no dollar figure');
   yes('an unpriced finding says so rather than showing nothing',
       /Not yet quantified/.test(EXCEPTION),
@@ -688,16 +697,16 @@ console.log('\n── W1 · A statement is not issued from a reconciliation that
       Math.abs(atRiskRows - NARRATIVE.exposure.confirmedAtRisk) < 0.005,
       `block screen ${atRiskRows.toFixed(2)} vs exposure ${NARRATIVE.exposure.confirmedAtRisk.toFixed(2)}`);
   yes('and each row states which measure it belongs to',
-      /Requiring Lease Verification/.test(bt) && /Weakly Evidenced/.test(bt),
+      /Requiring Lease Verification/.test(bt) && /Material Concentration/.test(bt),
       'the Amount column mixes allocation-side and expense-side money unlabelled');
   yes('totals are struck per measure',
-      /Requiring Lease Verification — total/.test(bt) && /Weakly Evidenced — total/.test(bt),
+      /Requiring Lease Verification — total/.test(bt) && /Material Concentration — total/.test(bt),
       'the block screen shows no per-measure subtotal');
   no('and there is no grand total to invite adding them',
      /(Grand total|Total exposure|All exceptions — total)/i.test(bt),
      'a grand total sums two measures that must not be added');
   yes('the screen says so in as many words',
-      /must not be added together/.test(bt),
+      /must not be added together/.test(bt) || !/Material Concentration|Weakly Evidenced/.test(bt),
       'nothing warns the reader against summing the column');
   yes('and points at where the same figure appears elsewhere',
       /the same figure[\s\S]{0,120}Audit Exception Summary/.test(bt),
@@ -706,8 +715,14 @@ console.log('\n── W1 · A statement is not issued from a reconciliation that
   // The concentration finding is expense-side and must never be labelled as
   // allocation at risk on this screen.
   const conc = blocked.red.find(f => /^Unusually large invoice/.test(f.title));
+  // Expense-side still, but its OWN kind: the invoice is documented, and what
+  // is notable is its size. Calling that "weakly evidenced" contradicted the
+  // green finding saying every invoice had a source document attached.
   eq('the concentration row is expense-side, not allocation-side',
-     AX.normalizeImpact(conc.impact).kind, 'unsubstantiated');
+     AX.normalizeImpact(conc.impact).kind, 'concentration');
+  no('and is never described as weakly evidenced',
+     /weakly evidenced/i.test(AX.KIND_LABEL.concentration),
+     'concentration is still labelled as an evidence-quality problem');
   no('so it is not counted in the allocation-at-risk subtotal',
      Math.abs(atRiskRows - (NARRATIVE.exposure.confirmedAtRisk + 38000)) < 0.005,
      'the $38,000 concentration has been folded into allocation at risk');
@@ -916,7 +931,7 @@ console.log('\n── P1 · The five reports agree wherever they overlap ──'
         'the expired lease is missing from one of the two');
   });
   yes('the $38,000 concentration reaches the Lender Summary\'s expense-side figure',
-      x.contributors.unsubstantiated.some(t => /38,000/.test(t)) && /57,750/.test(LENDER),
+      x.contributors.concentration.some(t => /38,000/.test(t)) && /57,750/.test(LENDER),
       'the concentration finding still carries no money anywhere');
   yes('the pro-rata conflict is under review, never asserted as a loss',
       x.contributors.under_review.some(t => /Pro-rata allocation conflict/.test(t))

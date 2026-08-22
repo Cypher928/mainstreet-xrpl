@@ -167,7 +167,7 @@ window.QAHarness = (() => {
       'Sample B → expired lease flag (red)');
     s.assert(bIssues.some(i => i.severity === 'yellow' && /Cap applied/i.test(i.title)),
       'Sample B → cap applied flag (yellow)');
-    s.assert(bIssues.some(i => /Coverage gap: loaded leases cover/i.test(i.title)),
+    s.assert(bIssues.some(i => /Property CAM coverage/i.test(i.title)),
       'Sample B → property coverage gap flag');
     s.assert(bIssues.some(i => i.severity === 'yellow' && /Gross-lease/i.test(i.title)),
       'Sample B → gross lease CAM flag (yellow)');
@@ -176,7 +176,7 @@ window.QAHarness = (() => {
     // building than its total sqft. It is yellow at any magnitude, and it must
     // not claim a tenant is missing. Over-allocation (>100%) stays red — see
     // reconciliation-engine.js section 3.
-    const gapFlag = bIssues.find(i => /Coverage gap: loaded leases cover/i.test(i.title));
+    const gapFlag = bIssues.find(i => /Property CAM coverage/i.test(i.title));
     s.assertEq(gapFlag?.severity, 'yellow',      'Under-coverage → yellow, not red');
     s.assert(!/tenant may be missing/i.test(gapFlag?.detail || ''),
       'Coverage gap does not assert a tenant is missing');

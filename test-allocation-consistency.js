@@ -224,7 +224,7 @@ const overish = [
 ];
 const propStub = { tenants: [{ id: 't1', lease_type: 'NNN' }, { id: 't2', lease_type: 'NNN' }] };
 const gapFlag = rs => RCE.detectReconciliationIssues(rs, propStub, '2025-12-31')
-  .find(f => /Coverage gap|over-allocation/i.test(f.title));
+  .find(f => /Property CAM coverage|over-allocation/i.test(f.title));
 
 t('a 76.4% coverage gap is yellow, not red', () => {
   const f = gapFlag(partial);
@@ -266,12 +266,26 @@ t('over-allocation stays disputable — it IS a tenant-facing billing error', ()
   ok(f.kind !== 'coverage', 'over-allocation is not a coverage finding');
 });
 
+// The wording of the resolution path changed when the finding was made
+// actionable (it now names the re-run as the step that settles which cause
+// applies). The REQUIREMENT is unchanged and is what is asserted: a reader must
+// be given a concrete next step for BOTH causes, and a machine-readable action
+// list, not just a description of the deficiency. Matched on the substance
+// (upload a lease / re-run / the remainder is vacant) rather than on one exact
+// sentence, so a rewording that keeps the guidance does not fail, but deleting
+// either branch does.
 t('the coverage finding tells the user how to resolve the ambiguity', () => {
   const f = gapFlag(partial);
-  ok(f.conditions.some(c => /upload any lease still missing/i.test(c)),
+  ok(f.conditions.some(c => /upload/i.test(c) && /lease/i.test(c)),
      'no path offered for the "lease not uploaded" case');
-  ok(f.conditions.some(c => /every lease is loaded, the remainder is vacant/i.test(c)),
+  ok(f.conditions.some(c => /re-run/i.test(c)),
+     'the reader is not told that re-running is what settles the cause');
+  ok(f.conditions.some(c => /remainder is vacant|is vacant and the landlord absorbs/i.test(c)),
      'no path offered for the "vacant space" case');
+  ok(Array.isArray(f.actions) && f.actions.length >= 2,
+     'the finding offers no actions a reader can act on');
+  ok(f.actions.some(a => /upload/i.test(a)) && f.actions.some(a => /vacant/i.test(a)),
+     `actions do not cover both causes — got: ${JSON.stringify(f.actions)}`);
 });
 
 t('[source] a non-disputable finding renders no Open Dispute button', () => {
@@ -400,14 +414,24 @@ const gapFinding = (() => {
   const flags = box.window.ReconciliationEngine.detectReconciliationIssues(
     [{ tenantId: 't1', name: 'Olenox Corp', proRataPercent: 23.57, totalAllocated: 12960.75 }],
     { tenants: [{ id: 't1', name: 'Olenox Corp' }] }, '2026-12-31');
-  return flags.find(f => /Coverage gap/i.test(f.title));
+  return flags.find(f => /Property CAM coverage/i.test(f.title));
 })();
 
 t('the gap is described as not covered by loaded leases, not "untenanted"', () => {
   ok(gapFinding, 'the coverage-gap finding is no longer raised at all');
   const text = gapFinding.title + ' ' + gapFinding.detail + ' ' + gapFinding.conditions.join(' ');
   ok(!/untenanted/i.test(text), 'the auditor still asserts the remaining space is untenanted');
-  ok(/loaded leases cover/i.test(gapFinding.title),
+  // The title now leads with the measured state ("X% documented · Y% unresolved")
+  // instead of repeating the loaded-lease phrasing. Both framings satisfy the
+  // requirement, which is that the title must NOT characterise the gap as
+  // vacancy or as lost money — it may only report that the share is
+  // undocumented. The loaded-lease scoping itself is still required, and is
+  // asserted below against the finding as a whole.
+  ok(!/vacant|unleased|empty|lost|unrecoverable/i.test(gapFinding.title),
+     `the title characterises the gap rather than reporting it: ${gapFinding.title}`);
+  ok(/unresolved|unallocated|undocumented/i.test(gapFinding.title),
+     `the title does not report the gap as unresolved: ${gapFinding.title}`);
+  ok(/loaded leases cover/i.test(gapFinding.conditions.join(' ')),
      'the finding does not scope the gap to the leases actually loaded');
   ok(/leases currently loaded account for/i.test(gapFinding.detail),
      'the detail does not say these are the loaded leases');

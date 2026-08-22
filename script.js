@@ -5477,12 +5477,27 @@ function _amendmentProvenanceChip(d, fieldKey) {
 
 // One-click approval for all ready (high-confidence, unconfirmed) tenants.
 async function bulkApproveReady() {
-  const ready = tenantData.map((d, i) => ({ d, i })).filter(({ d }) =>
+  // Must approve exactly what the button offers. This carried the same
+  // extraction-only predicate the count did, so a lease missing square footage
+  // was both counted as ready and bulk-approved — see renderBulkResults.
+  const _blockers = (d) => {
+    try { return (deriveTenantReviewState(d).missing || []); } catch (_) { return []; }
+  };
+  const all = tenantData.map((d, i) => ({ d, i })).filter(({ d }) =>
     d && !d._needsReview && !d.extractionFailed && d.status !== 'pending' && d.tenant_name && !d._userConfirmed
   );
-  if (!ready.length) { showToast('All ready tenants are already confirmed.'); return; }
+  const ready   = all.filter(({ d }) => _blockers(d).length === 0);
+  const blocked = all.filter(({ d }) => _blockers(d).length > 0);
+  if (!ready.length) {
+    showToast(blocked.length
+      ? `${blocked.length} lease${blocked.length === 1 ? ' is' : 's are'} extracted but missing values CAM requires — open each and fill them in.`
+      : 'All ready tenants are already confirmed.',
+      blocked.length ? { color: '#92400e', textColor: '#fef3c7', duration: 6000 } : undefined);
+    return;
+  }
   for (const { i } of ready) await saveBulkTenant(i);
-  showToast(`✓ ${ready.length} tenant${ready.length !== 1 ? 's' : ''} approved.`);
+  showToast(`✓ ${ready.length} tenant${ready.length !== 1 ? 's' : ''} approved.` +
+    (blocked.length ? ` ${blocked.length} left unapproved — missing values CAM requires.` : ''));
 }
 
 // Shows/hides the stale-results warning banner based on _resultsStale flag.
@@ -8033,19 +8048,46 @@ function renderBulkResults() {
       </div>`;
   }).join('');
 
-  const _readyCount = tenants.filter(d => !d._needsReview && !d.extractionFailed && d.status !== 'pending' && d.tenant_name && !d._userConfirmed).length;
+  // EXTRACTION READINESS IS NOT CAM READINESS.
+  //
+  // This counted only extraction signals — not flagged for review, not failed,
+  // not still processing, has a name, not yet confirmed — and never looked at
+  // whether the lease carries the fields CAM actually needs. So a tenant with no
+  // square footage counted as "Ready" and was offered under "Approve all ready",
+  // on a screen whose own banner read "3 of 3 leases need a human before CAM can
+  // be trusted". Both were right about different questions, and the button was
+  // the dangerous one: a user could reasonably read it as "these are ready to
+  // reconcile".
+  //
+  // deriveTenantReviewState already computes `missing[]` — the required fields a
+  // lease lacks. It was simply never consulted here.
+  const _camBlockers = (d) => {
+    try { return (deriveTenantReviewState(d).missing || []); } catch (_) { return []; }
+  };
+  const _extractionOk = (d) =>
+    !d._needsReview && !d.extractionFailed && d.status !== 'pending' && d.tenant_name && !d._userConfirmed;
+  // Approvable = extraction finished AND nothing CAM requires is missing.
+  const _approvable  = tenants.filter(d => _extractionOk(d) && _camBlockers(d).length === 0);
+  const _blockedList = tenants.filter(d => _extractionOk(d) && _camBlockers(d).length > 0);
+  const _readyCount  = _approvable.length;
+  const _blockedCount = _blockedList.length;
   const filterBarHtml = tenants.length > 0 ? `
   <div class="bulk-filter-bar">
     <input class="bulk-filter-input" type="text" placeholder="Search tenants…"
       value="${esc(_bulkFilter.query)}"
       oninput="setBulkFilter('query',this.value)" />
     <div class="bulk-filter-pills">
-      ${[['all','All'],['ready','Ready'],['issues','Needs Attention'],['failed','Failed'],['pending','Processing']].map(([v,l]) =>
+      ${[['all','All'],['ready','Extracted'],['issues','Needs Attention'],['failed','Failed'],['pending','Processing']].map(([v,l]) =>
         `<button class="bulk-filter-pill${_bulkFilter.status===v?' active':''}" onclick="setBulkFilter('status','${v}')">${l}</button>`
       ).join('')}
     </div>
-    ${_readyCount > 0 ? `<button class="bulk-approve-all-btn" onclick="bulkApproveReady()">Approve all ready (${_readyCount})</button>` : ''}
-  </div>` : '';
+    ${_readyCount > 0 ? `<button class="bulk-approve-all-btn" onclick="bulkApproveReady()">Approve ${_readyCount} ready for CAM</button>` : ''}
+  </div>
+  ${_blockedCount > 0 ? `<div class="bulk-cam-blocked">
+    <strong>${_blockedCount} lease${_blockedCount === 1 ? '' : 's'} extracted but not ready for CAM</strong> —
+    ${_blockedList.map(d => `${esc(d.tenant_name || 'Unnamed')} (missing ${esc(_camBlockers(d).join(', '))})`).join('; ')}.
+    These are not included in the approve button above and cannot be reconciled until the missing values are entered.
+  </div>` : ''}` : '';
 
   el.innerHTML = `
     <div class="bulk-results-head">
@@ -13858,10 +13900,19 @@ function buildAuditSummary() {
           severity: 'red',
           title:  `Unusually large invoice — ${vendor}: ${fmt(amt)} (${pct}% of total CAM)`,
           detail: `This invoice represents ${pct}% of total CAM expenses (${fmt(amt)} of ${fmt(total)}), exceeding the 40% materiality threshold by ${excess}. A single vendor accounting for more than 40% of the total expense pool warrants independent verification before billing.`,
-          // Expense-side, not allocation-side: the concentration is a reason to
-          // verify this invoice, not a claim that the money is lost. Scoped to
-          // the vendor so an invoice flagged twice is still counted once.
-          impact: { amount: amt, kind: 'unsubstantiated', scope: `invoice:${vendor}`,
+          // Materiality, NOT evidence quality — the two were one bucket, which
+          // put a fully-documented $55,000 invoice under "weakly evidenced" on a
+          // reconciliation whose own green finding said every invoice had a
+          // source document attached. What is notable here is the size, and the
+          // answer is an independent bid, not a receipt.
+          //
+          // `items` carries the atom this finding is about. Every invoice-scoped
+          // finding uses the same `invoice:<vendor>` id, so one invoice flagged
+          // by several detectors contributes its dollars once. A near-miss on
+          // that convention — "invoice:" here against "invoices:" elsewhere —
+          // is what reported $110,000 of a $67,300 pool.
+          impact: { amount: amt, kind: 'concentration',
+                    items: [{ id: `invoice:${vendor}`, amount: amt }],
                     basis: `Single invoice at ${pct}% of the pool, pending independent verification` },
           actions: ['Obtain competitive bids', 'Verify against vendor contract', 'Attach supporting detail'],
           source: 'Invoice amount vs total CAM pool',
@@ -13948,7 +13999,7 @@ function buildAuditSummary() {
         // a documentation gap, not a determination that the charge is wrong.
         impact: missingAmt > 0
           ? { amount: missingAmt, kind: 'unsubstantiated',
-              scope: `invoices:${missing.map(i => i.vendorName).sort().join('|')}`,
+              items: missing.map(i => ({ id: `invoice:${i.vendorName}`, amount: parseFloat(i.amount) || 0 })),
               basis: 'Charges with no attached invoice or receipt' }
           : undefined,
         actions: ['Attach source invoices', 'Request copies from vendor', 'Exclude from billing until documented'],
@@ -13982,7 +14033,7 @@ function buildAuditSummary() {
         // undated and undocumented is one sum of money, counted once.
         impact: noDateAmt > 0
           ? { amount: noDateAmt, kind: 'unsubstantiated',
-              scope: `invoices:${noDates.map(i => i.vendorName).sort().join('|')}`,
+              items: noDates.map(i => ({ id: `invoice:${i.vendorName}`, amount: parseFloat(i.amount) || 0 })),
               basis: `Charges that cannot be placed in the ${camYr} period from the document alone` }
           : undefined,
         actions: ['Obtain dated invoice', 'Confirm service period with vendor', 'Exclude if outside the CAM year'],
@@ -14019,7 +14070,7 @@ function buildAuditSummary() {
         severity: 'yellow',
         impact: lowConfAmt > 0
           ? { amount: lowConfAmt, kind: 'unsubstantiated',
-              scope: `invoices:${lowConf.map(i => i.vendorName).sort().join('|')}`,
+              items: lowConf.map(i => ({ id: `invoice:${i.vendorName}`, amount: parseFloat(i.amount) || 0 })),
               basis: 'Charges whose tenant attribution was too weak to direct-bill, so they were spread pro-rata' }
           : undefined,
         actions: ['Confirm the tenant on the invoice', 'Correct the unit or tenant name', 'Re-run reconciliation'],
@@ -17015,8 +17066,13 @@ function _renderStatementReadinessBlock(block) {
      <td style="text-align:right;white-space:nowrap"><strong>${fmt(subtotals[k])}</strong></td>
      <td></td></tr>`).join('');
 
-  const mixedAxes = subtotals.unsubstantiated != null
-    && (subtotals.at_risk != null || subtotals.under_review != null);
+  // Both expense-side kinds count as "the other axis" — this keyed off
+  // `unsubstantiated` alone, so splitting concentration out silently removed the
+  // warning from exactly the finding set that most needs it.
+  const _expenseKinds = (AXs && AXs.EXPENSE_KINDS) || ['unsubstantiated', 'concentration'];
+  const _expenseShown = _expenseKinds.some(k => subtotals[k] != null);
+  const _allocationShown = ['at_risk', 'under_review', 'recoverable'].some(k => subtotals[k] != null);
+  const mixedAxes = _expenseShown && _allocationShown;
 
   openReport(`Statement blocked — ${block.tenantName}`, `
     <div class="rpt-section-title">This statement has not been issued</div>
@@ -22151,7 +22207,13 @@ function _renderValidationPanel(findings, { loading = false, charsAnalyzed = nul
         <span class="lv-finding-icon">${icon}</span>
         <span class="lv-finding-title">${esc(title)}</span>
         <span class="lv-sev-badge lv-sev-badge--${f.severity}">${label}</span>
-        <span class="lv-conf ${confCls}">${f.confidence}</span>
+        <!-- Labelled, because it is NOT a second severity. "EXCEPTION" beside a
+             bare "high" reads as a two-level severity — critical above high —
+             and invites the question of why an overall Critical Risk sits above
+             a merely "high" finding. There is no such hierarchy: this is how
+             confident the AI is in its reading of the clause, and it is
+             orthogonal to how serious the finding is. -->
+        <span class="lv-conf ${confCls}" title="How confident the AI is in its reading of this clause — not a severity level.">AI confidence: ${f.confidence}</span>
       </div>
       <div class="lv-finding-body">
         <div class="lv-finding-text">${fSafe}</div>
