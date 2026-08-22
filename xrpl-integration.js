@@ -1,6 +1,23 @@
 /**
- * CAM Logic — XRPL Integration
- * Hashes a reconciliation result and anchors it on the XRP Ledger testnet.
+ * CAM Logic — XRPL Integration  ·  ⚠️ UNWIRED PROTOTYPE — DO NOT EDIT FOR PRODUCTION
+ *
+ * Hashes a reconciliation result and anchors it on the XRP Ledger TESTNET.
+ *
+ * THIS FILE HAS ZERO CALLERS. Nothing in the app, the API or the tests requires
+ * it. The production settlement path is `rlusd-integration.js`, which is what
+ * `api/rlusd-settlement.js` and `scripts/send-settlement.js` use. The two files
+ * have similar shapes and similar function names (`hashReconciliation` here,
+ * `hashSettlement` there), which is exactly the trap this banner exists to
+ * prevent: a change made here has no effect on anything a user touches.
+ *
+ * It is kept deliberately, not by accident. README.md §"Hash-anchoring
+ * prototype" describes it as a reference implementation and attributes a real
+ * testnet transaction to it, so deleting the file would orphan that account of
+ * a genuine on-chain artifact. docs/PRODUCTION_READINESS_REVIEW.md proposes
+ * removing it; that is a documentation decision as much as a code one and has
+ * not been taken.
+ *
+ * If you are here to change settlement behaviour, you want rlusd-integration.js.
  */
 
 const xrpl = require("xrpl");

@@ -27,6 +27,12 @@ const SUITES = [
   { label: 'Ask the Lease API',              cmd: 'node test-ask-lease.js' },
   { label: 'Lease Validation (Phase 23)',    cmd: 'node test-validate-lease.js' },
   { label: 'Escrow & Reserve engine (Phase 21)', cmd: 'node test-reserve-engine.js' },
+  // XRPL/RLUSD settlement configuration. Offline only: it asserts the issuer,
+  // currency code, Make Waves source tag and memo payload, and SKIPS (does not
+  // fail) the live ledger reads when the network is unreachable — so it is safe
+  // in CI and in sandboxes with no egress. It was absent from this list, which
+  // is why a missing `xrpl` dependency went unnoticed.
+  { label: 'XRPL RLUSD settlement config',      cmd: 'node test-rlusd.js' },
 ];
 
 let anyFailed = false;
