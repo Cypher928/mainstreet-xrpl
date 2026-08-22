@@ -33,6 +33,14 @@ const SUITES = [
   // the reader two leases could not be reconciled on the run that reconciled
   // them. Nothing covered it either time, which is why both shipped.
   { label: 'Lease CAM readiness',               cmd: 'node test-lease-readiness.js' },
+  // Test 3, replayed end to end in a real browser: real sign-in, real
+  // runAllocation, real report renderers, real billing gate, real statement.
+  // Every defect Test 3 found was a rendering defect that the unit suites were
+  // green through, so this one asserts against what is on screen. It is the
+  // only registered suite that drives a browser; with no browser available it
+  // fails loudly rather than passing, and SKIP_BROWSER_TESTS=1 is the explicit
+  // opt-out.
+  { label: 'Test 3 workflow replay (e2e)',      cmd: 'node test-e2e-test3.js' },
   // XRPL/RLUSD settlement configuration. Offline only: it asserts the issuer,
   // currency code, Make Waves source tag and memo payload, and SKIPS (does not
   // fail) the live ledger reads when the network is unreachable — so it is safe
