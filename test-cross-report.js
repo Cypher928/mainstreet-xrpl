@@ -115,7 +115,7 @@ console.log('\n── C2 · "Exposure" is one measure, not two ──');
 {
   const atRisk = AX.fmtMoney(NARRATIVE.exposure.confirmedAtRisk).replace('$', '');
   yes('Risk & Disputes states the canonical at-risk figure',
-      RISK.indexOf('Allocation At Risk') >= 0 && /40,83[0-9]/.test(RISK),
+      RISK.indexOf('Requiring Lease Verification') >= 0 && /40,83[0-9]/.test(RISK),
       `no allocation-at-risk figure in Risk & Disputes (expected ~${atRisk})`);
   yes('the header states the canonical pool as Total CAM',
       /Total CAM Pool \$71,950\.00/.test(RISK),
@@ -131,13 +131,13 @@ console.log('\n── C2 · "Exposure" is one measure, not two ──');
       'the open-dispute total is still labelled just "Exposure"');
   no('and no bare "Exposure" label survives to be confused with it',
      /[^ ]Exposure\b(?!\s*(?::|Report))/.test(RISK.replace(/Dispute Exposure/g, '')
-       .replace(/Allocation At Risk/g, '')),
+       .replace(/Requiring Lease Verification/g, '')),
      'a bare "Exposure" label is still present');
 
   // The one that matters: a reader must not be able to conclude "no exposure".
   no('Risk & Disputes cannot read as "no exposure" while money is at risk',
      /Exposure \$0\.00/.test(RISK) && NARRATIVE.exposure.confirmedAtRisk > 0
-       && RISK.indexOf('Allocation At Risk') < 0,
+       && RISK.indexOf('Requiring Lease Verification') < 0,
      'the only exposure figure shown is $0.00 while the audit holds money at risk');
 }
 
@@ -566,6 +566,22 @@ console.log('\n── P5 · Coverage Gap says which question it answers ──')
   no('it does not claim everything is fine while exceptions are open',
      /Everything looks good/.test(GAP),
      'the all-clear banner shows on a property with five critical exceptions');
+  // Two questions, two headed answers — not one sentence trying to hold both.
+  yes('input coverage and reconciliation status are stated separately',
+      /Input coverage/.test(GAP) && /Reconciliation status/.test(GAP),
+      'the two states are still merged into a single summary line');
+  // The Test 2 fixture has one low-confidence extraction, so input coverage is
+  // NOT clean here — which is the more useful case to pin: the two blocks must
+  // carry independent verdicts rather than one echoing the other.
+  yes('input coverage states its own verdict, independent of the audit',
+      /Input coverage[\s\S]{0,60}1 input needs attention/.test(GAP),
+      'input coverage does not state its own verdict');
+  no('and does not borrow the reconciliation\'s count',
+     /Input coverage[\s\S]{0,60}5 critical/.test(GAP),
+     'the input block is reporting the audit\'s exceptions as input problems');
+  yes('and reconciliation status states the exceptions',
+      /Reconciliation status[\s\S]{0,60}5 critical exceptions/.test(GAP),
+      'reconciliation status does not carry the audit count');
   yes('its own count is described as inputs, not as findings',
       /input[s]? need[s]? attention/.test(GAP),
       'the summary bar still says "items", which reads as the audit\'s items');
@@ -582,7 +598,7 @@ console.log('\n── Every finding states what, how much, on what evidence, wha
       'the Exception Summary omits the billing readiness verdict');
 
   yes('a priced finding shows its amount and how it is treated',
-      /\$38,000\.00 weakly evidenced \(expense-side\)/.test(EXCEPTION),
+      /\$38,000\.00 weakly evidenced/.test(EXCEPTION),
       'the $38,000 concentration renders with no dollar figure');
   yes('an unpriced finding says so rather than showing nothing',
       /Not yet quantified/.test(EXCEPTION),
@@ -672,10 +688,10 @@ console.log('\n── W1 · A statement is not issued from a reconciliation that
       Math.abs(atRiskRows - NARRATIVE.exposure.confirmedAtRisk) < 0.005,
       `block screen ${atRiskRows.toFixed(2)} vs exposure ${NARRATIVE.exposure.confirmedAtRisk.toFixed(2)}`);
   yes('and each row states which measure it belongs to',
-      /Allocation at risk/.test(bt) && /Expense weakly evidenced/.test(bt),
+      /Requiring Lease Verification/.test(bt) && /Weakly Evidenced/.test(bt),
       'the Amount column mixes allocation-side and expense-side money unlabelled');
   yes('totals are struck per measure',
-      /Allocation at risk — total/.test(bt) && /Expense weakly evidenced — total/.test(bt),
+      /Requiring Lease Verification — total/.test(bt) && /Weakly Evidenced — total/.test(bt),
       'the block screen shows no per-measure subtotal');
   no('and there is no grand total to invite adding them',
      /(Grand total|Total exposure|All exceptions — total)/i.test(bt),

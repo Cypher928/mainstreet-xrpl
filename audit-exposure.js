@@ -60,6 +60,44 @@
   // Allocation-side kinds. `unsubstantiated` is deliberately absent.
   const ALLOCATION_KINDS = ['at_risk', 'under_review', 'recoverable'];
 
+  // ONE VOCABULARY FOR THE BUCKETS, AND WHY "AT RISK" WAS THE WRONG WORD.
+  //
+  // Every surface wrote its own label, and the shorthand they converged on for
+  // `at_risk` was "at risk" — which a property manager handing this to an owner
+  // reads as money that definitely cannot be billed. It is not. Every finding
+  // that contributes to this bucket is an allocation whose supporting lease has
+  // expired, and each says so itself: "Unless a holdover or renewal extends the
+  // CAM obligation, there is no lease on file supporting this charge." A
+  // holdover may well exist. What is certain is that nobody has verified it.
+  //
+  // So the bucket is named for what is actually true of it — the allocation
+  // needs its lease verified — and the labels live here so no surface can drift
+  // back to a stronger claim on its own.
+  const KIND_LABEL = {
+    at_risk:         'requiring lease verification',
+    under_review:    'requiring review',
+    recoverable:     'excluded or already recovered',
+    unsubstantiated: 'weakly evidenced',
+    none:            '—',
+  };
+
+  // Title case, for column headings and KPI labels.
+  const KIND_LABEL_TITLE = {
+    at_risk:         'Requiring Lease Verification',
+    under_review:    'Requiring Review',
+    recoverable:     'Excluded / Recovered',
+    unsubstantiated: 'Weakly Evidenced',
+    none:            '—',
+  };
+
+  const KIND_MEANING = {
+    at_risk:         'Allocated CAM with no unexpired lease on file. A holdover or renewal may cover it — none has been confirmed.',
+    under_review:    'A real amount whose correct treatment is unresolved. Not a loss.',
+    recoverable:     'Already excluded or recovered under lease terms.',
+    unsubstantiated: 'Pool dollars whose supporting evidence is thin. Measures the expenses, not the amounts billed.',
+    none:            'No dollar consequence.',
+  };
+
   // Verdict vocabulary for clause-level (tenant) checks.
   //
   // The panel previously mapped severity->label with three values, so `info`
@@ -231,8 +269,8 @@
     if (!x || !x.totalPool) return 'Insufficient data';
 
     const parts = [`${fmtMoney(x.totalPool)} total CAM pool`];
-    if (x.confirmedAtRisk > 0)     parts.push(`${fmtMoney(x.confirmedAtRisk)} at risk`);
-    if (x.requiringReview > 0)     parts.push(`${fmtMoney(x.requiringReview)} requiring review`);
+    if (x.confirmedAtRisk > 0)     parts.push(`${fmtMoney(x.confirmedAtRisk)} ${KIND_LABEL.at_risk}`);
+    if (x.requiringReview > 0)     parts.push(`${fmtMoney(x.requiringReview)} ${KIND_LABEL.under_review}`);
     if (x.excludedRecoverable > 0) parts.push(`${fmtMoney(x.excludedRecoverable)} excluded or recovered`);
     // Said in its own words, because it is not part of the running total above.
     if (x.poolUnsubstantiated > 0) {
@@ -305,7 +343,7 @@
       const capped = Math.min(20, Math.round(pct));
       if (capped > 0) {
         d += capped;
-        reasons.push(`${fmtMoney(x.confirmedAtRisk)} of the pool at risk (−${capped})`);
+        reasons.push(`${fmtMoney(x.confirmedAtRisk)} of the pool ${KIND_LABEL.at_risk} (−${capped})`);
       }
     }
     if (x.totalPool > 0 && x.poolUnsubstantiated > 0) {
@@ -324,7 +362,8 @@
   }
 
   return {
-    IMPACT_KINDS, ALLOCATION_KINDS, VERDICT, VERDICT_LABEL, VERDICT_ICON, VERDICT_MEANING,
+    IMPACT_KINDS, ALLOCATION_KINDS, KIND_LABEL, KIND_LABEL_TITLE, KIND_MEANING,
+    VERDICT, VERDICT_LABEL, VERDICT_ICON, VERDICT_MEANING,
     normalizeImpact, severityOf, deriveExposure, allocationExposure,
     describeExposure, billingReadiness, healthDeductions, fmtMoney,
   };

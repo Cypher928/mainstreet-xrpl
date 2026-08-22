@@ -3778,6 +3778,57 @@
       padding: 4px 10px; border-radius: 999px; color: var(--c-e4b15c);
       background: rgba(201,151,58,0.1); border: 1px solid rgba(201,151,58,0.25);
     }
+
+    /* ── Report status bar ────────────────────────────────────────────────
+       Grid, not flex. The previous inline flex row gave "Status:" and the
+       exposure line flex-shrink:0, leaving the headline between them as the
+       only item that could shrink — which on a phone crushed it to a column one
+       character wide. Here the headline owns the flexible track and the other
+       two size to their content; below 640px everything simply stacks. */
+    .rpt-status-bar {
+      display: grid; grid-template-columns: auto minmax(0, 1fr) auto;
+      align-items: baseline; gap: 6px 12px;
+      padding: 10px 14px; margin-bottom: 14px; border-radius: 7px;
+      background: var(--theme-surface);
+      font-family: 'DM Sans', sans-serif; font-size: 0.82rem; line-height: 1.5;
+    }
+    .rpt-status-label {
+      font-size: 0.64rem; font-weight: 700; letter-spacing: 0.12em;
+      text-transform: uppercase; color: var(--text-4); white-space: nowrap;
+    }
+    /* Coverage Gap: input coverage and reconciliation status, side by side and
+       separately headed, because they answer different questions. */
+    .cg-split {
+      display: grid; grid-template-columns: repeat(auto-fit, minmax(240px, 1fr));
+      gap: 12px; margin-top: 18px;
+      font-family: 'DM Sans', sans-serif;
+    }
+    .cg-block {
+      border: 1px solid rgba(var(--line-rgb), 0.16); border-radius: 9px;
+      padding: 13px 15px; background: rgba(var(--line-rgb), 0.02);
+    }
+    .cg-block--ok    { border-color: rgba(34,197,94,0.32);  background: rgba(34,197,94,0.06); }
+    .cg-block--warn  { border-color: rgba(245,158,11,0.32); background: rgba(245,158,11,0.06); }
+    .cg-block--alert { border-color: rgba(239,68,68,0.32);  background: rgba(239,68,68,0.06); }
+    .cg-block-title {
+      font-size: 0.63rem; font-weight: 700; letter-spacing: 0.13em;
+      text-transform: uppercase; color: var(--text-4); margin-bottom: 6px;
+    }
+    .cg-block-state { font-size: 1.02rem; font-weight: 700; color: var(--text-1); line-height: 1.3; }
+    .cg-block--ok    .cg-block-state { color: var(--c-4ade80); }
+    .cg-block--warn  .cg-block-state { color: var(--c-fbbf24); }
+    .cg-block--alert .cg-block-state { color: var(--c-f87171); }
+    .cg-block-sub {
+      font-size: 0.76rem; line-height: 1.55; color: var(--text-3); margin-top: 6px;
+      overflow-wrap: anywhere;
+    }
+
+    .rpt-status-headline { color: var(--text-1); font-weight: 600; overflow-wrap: anywhere; }
+    .rpt-status-impact   { color: var(--text-3); text-align: right; overflow-wrap: anywhere; }
+    @media (max-width: 640px) {
+      .rpt-status-bar { grid-template-columns: minmax(0, 1fr); gap: 4px; }
+      .rpt-status-impact { text-align: left; }
+    }
     .rpt-table th {
       background: rgba(201,151,58,0.08); color: var(--c-e4b15c); text-align: left;
       padding: 10px 14px; font-size: 0.69rem; text-transform: uppercase;
@@ -4043,7 +4094,57 @@
       .rpt-kpi { min-width: 90px; padding: 14px 10px; }
       .rpt-kpi .kpi-val { font-size: 1.2rem; }
 
-      /* Wide tables scroll inside their own box; the page does not. */
+      /* ── Report tables become stacked cards ─────────────────────────────
+         Every row is one record and every cell carries its column heading, so
+         nothing sits off the right edge waiting to be discovered. Applied only
+         to tables _rptMakeTablesScrollable could label from a <thead>; anything
+         else keeps the scroll container below. */
+      /* `table.` raises specificity above the plain `.rpt-table` rule below,
+         which sets min-width:max-content and would otherwise win on source
+         order and push a card table past the viewport. */
+      /* The table box must stop being a table, or the anonymous table layout
+         keeps sizing columns from the hidden <thead> — which collapsed each
+         card to ~180px of a 390px screen and wrapped every label one letter per
+         line, the very failure this replaces. display:block on the table AND
+         the row group is what actually hands layout to the grid below. */
+      table.rpt-table--cards {
+        display: block; width: 100%; min-width: 0 !important; font-size: 0.82rem;
+      }
+      .rpt-table--cards tbody, .rpt-table--cards tfoot { display: block; width: 100%; }
+      .rpt-table--cards thead { display: none; }
+      .rpt-table--cards tbody tr, .rpt-table--cards tfoot tr { width: 100%; }
+      .rpt-table--cards tbody tr {
+        display: block; margin-bottom: 10px; padding: 4px 2px 6px;
+        border: 1px solid rgba(var(--line-rgb), 0.14); border-radius: 8px;
+        background: rgba(var(--line-rgb), 0.02);
+      }
+      .rpt-table--cards tbody tr:nth-child(even) td { background: none; }
+      .rpt-table--cards tbody td, .rpt-table--cards tfoot td {
+        display: grid; grid-template-columns: minmax(6.5em, 38%) minmax(0, 1fr);
+        gap: 10px; align-items: baseline;
+        padding: 6px 12px; border: none;
+        text-align: left !important; white-space: normal !important;
+        width: auto !important; overflow-wrap: anywhere;
+      }
+      .rpt-table--cards tbody td[data-label]::before {
+        content: attr(data-label);
+        font-family: 'DM Sans', sans-serif; font-size: 0.66rem; font-weight: 700;
+        text-transform: uppercase; letter-spacing: 0.07em; color: var(--text-4);
+        line-height: 1.5;
+      }
+      /* A cell with no heading — a subtotal label, an icon column — spans the
+         card rather than leaving an empty label gutter. */
+      .rpt-table--cards tbody td:not([data-label]) { grid-template-columns: minmax(0, 1fr); }
+      .rpt-table--cards tbody tr.rpt-row--full { border: none; background: none; padding: 0; }
+      .rpt-table--cards tbody tr.rpt-row--full td { display: block; }
+      .rpt-table--cards tfoot tr {
+        display: block; margin-bottom: 10px; padding: 4px 2px 6px;
+        border: 1px solid rgba(201,151,58,0.3); border-radius: 8px;
+        background: rgba(201,151,58,0.05);
+      }
+
+      /* Tables without a <thead> keep the scroll container: contained, and the
+         page still never scrolls sideways. */
       .rpt-table-scroll {
         /* Bleed to the body's padding edge so a scrolled table uses the full
            screen width instead of scrolling within a 16px-inset column. */
@@ -4054,6 +4155,10 @@
       .rpt-table th { padding: 8px 10px; }
       .rpt-table td { padding: 9px 10px; }
       .rpt-table td:first-child, .rpt-table th:first-child { min-width: 132px; }
+      /* Cards do not need the bleed or the min-width — they fit by construction. */
+      .rpt-table-scroll:has(.rpt-table--cards) {
+        margin-left: 0; margin-right: 0; padding-left: 0; padding-right: 0; overflow-x: visible;
+      }
       .rpt-scope-note { font-size: 0.74rem; padding: 9px 12px; }
       /* Long unbroken strings — vendor names, file names, source citations —
          are the other way a report pushes past the viewport edge. */
@@ -4067,6 +4172,14 @@
       .rpt-tool-btn .rpt-btn-long { display: inline; }
       .rpt-table-scroll { overflow: visible !important; margin: 0 !important; padding: 0 !important; }
       .rpt-table { min-width: 0 !important; }
+      /* Print is never narrow — a PDF gets the real table back, headings and
+         all, whatever the screen it was generated from. */
+      .rpt-table--cards thead { position: static !important; width: auto !important;
+        height: auto !important; clip: auto !important; }
+      .rpt-table--cards tbody tr { display: table-row !important; border: none !important;
+        background: none !important; padding: 0 !important; }
+      .rpt-table--cards tbody td { display: table-cell !important; }
+      .rpt-table--cards tbody td[data-label]::before { content: none !important; }
     }
 
     @media print {

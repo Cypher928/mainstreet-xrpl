@@ -80,6 +80,7 @@ const REPORTS = (() => {
     ['Risk & Disputes Report',   F.riskAndDisputes().html],
     ['Audit Exception Summary',  F.exceptionReport().html],
     ['Coverage Gap Report',      F.coverageGap().html],
+    ['CAM Reconciliation Summary', F.reconciliationSummary().html],
   ];
 })();
 
@@ -168,6 +169,38 @@ const REPORTS = (() => {
           wrapsFocusable:  wraps.filter(w => w.getAttribute('tabindex') === '0').length,
           // titleW is what the compacting is FOR: every pixel the buttons give
           // back is a pixel of report title the reader can actually read.
+          // The status bar that collapsed to one character per line. Measure the
+          // headline's rendered width, not just that it exists.
+          statusHeadlineW: (() => {
+            const h = document.querySelector('#rptBody .rpt-status-headline');
+            return h ? Math.round(h.getBoundingClientRect().width) : null;
+          })(),
+          cardTables: [...document.querySelectorAll('#rptBody table.rpt-table--cards')].length,
+          // A labelled cell renders its heading through ::before; read it back.
+          labelledCells: [...document.querySelectorAll('#rptBody td[data-label]')].length,
+          cardLabelShown: (() => {
+            const td = document.querySelector('#rptBody .rpt-table--cards tbody td[data-label]');
+            if (!td) return null;
+            return getComputedStyle(td, '::before').content !== 'none';
+          })(),
+          // A card that renders in a 180px column of a 390px screen wraps every
+          // label one letter per line — the same defect the cards replaced. The
+          // suite passed on exactly that state until this measured the card's
+          // own width rather than only the table's.
+          narrowestCardRow: (() => {
+            const rows = [...document.querySelectorAll('#rptBody .rpt-table--cards tbody tr')];
+            if (!rows.length) return null;
+            return Math.round(Math.min(...rows.map(r => r.getBoundingClientRect().width)));
+          })(),
+          // The label gutter must fit its shortest real heading on one line.
+          labelWraps: (() => {
+            const tds = [...document.querySelectorAll('#rptBody .rpt-table--cards tbody td[data-label]')];
+            return tds.filter(td => {
+              const cs = getComputedStyle(td);
+              const col = parseFloat(cs.gridTemplateColumns.split(' ')[0]);
+              return isFinite(col) && col < 70;
+            }).length;
+          })(),
           titleW: (() => {
             const h = document.querySelector('.rpt-toolbar h2');
             return h ? Math.round(h.getBoundingClientRect().width) : 0;
@@ -239,6 +272,25 @@ const REPORTS = (() => {
     yes('    both stay at a 44px tap target',
         !!print && !!close && print.h >= 44 && close.h >= 44,
         `heights ${print && print.h} / ${close && close.h}`);
+    // The collapsed-column defect: the headline was the only shrinkable item in
+    // a flex row between two flex-shrink:0 siblings, and rendered one character
+    // per line. Any width below ~120px on a 390px screen is that failure.
+    if (m.statusHeadlineW != null) {
+      yes('    the status headline gets a usable column, not one character',
+          m.statusHeadlineW >= 150,
+          `the headline is ${m.statusHeadlineW}px wide on a ${m.vw}px screen`);
+    }
+    if (m.cardTables > 0) {
+      yes(`    ${m.cardTables} table(s) render as stacked cards`,
+          m.labelledCells > 0 && m.cardLabelShown === true,
+          `${m.labelledCells} labelled cells, heading rendered: ${m.cardLabelShown}`);
+      yes('    and each card uses the full width of the screen',
+          m.narrowestCardRow != null && m.narrowestCardRow >= m.vw * 0.8,
+          `narrowest card is ${m.narrowestCardRow}px on a ${m.vw}px screen — the table box is still doing table layout`);
+      yes('    with a label gutter wide enough not to wrap per letter',
+          m.labelWraps === 0,
+          `${m.labelWraps} label column(s) narrower than 70px`);
+    }
     yes('    the sticky header stays compact',
         m.toolbarH != null && m.toolbarH <= 60,
         `toolbar is ${m.toolbarH}px tall — it is sticky, so every pixel costs report`);

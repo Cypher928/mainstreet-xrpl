@@ -73,6 +73,10 @@ const RESULTS = TENANTS.map(t => ({
   proRata:        pct(t.leased_sqft) / 100,
   proRataPercent: pct(t.leased_sqft),
   totalAllocated: Math.round(POOL * pct(t.leased_sqft)) / 100,
+  // ReconciliationResult assigns allocatedAmount from totalAllocated and the
+  // penny-adjustment path keeps them in lockstep; surfaces read one or the
+  // other. Carrying only one here made a report print $NaN.
+  allocatedAmount: Math.round(POOL * pct(t.leased_sqft)) / 100,
   ambiguityFlags: [],
   includedInvoices: [],
   capApplied: false,
@@ -250,6 +254,25 @@ function statementBlockHtml(tenantName) {
   return captured;
 }
 
+// ── The CAM Reconciliation Summary ──────────────────────────────────────────
+//
+// The report the collapsed status bar was seen in, and the one carrying the
+// Tenant Allocation table whose percentage column needed its denominator named.
+
+function reconciliationSummary() {
+  const box = baseSandbox();
+  const captured = {};
+  box.window = { AuditExposure: AX };
+  box.openReport = (title, html) => { captured.title = title; captured.html = html; };
+  box.logError   = (where, e) => { throw e; };
+  box._deriveCalcState = () => ({ cls: 'ok', label: 'Pro-rata' });
+  box.buildHistoricalTrends = () => null;
+  run(box, SUSPICIONS_SRC + fn('buildAuditSummary') + fn('buildAuditNarrative')
+         + fn('_rptHeader') + fn('_rptFooter') + fn('generateReconciliationSummary'),
+      'generateReconciliationSummary()');
+  return captured;
+}
+
 // ── Report 3: Coverage Gap ──────────────────────────────────────────────────
 //
 // generateHolesReport writes straight into the DOM, so it runs here against a
@@ -331,6 +354,7 @@ module.exports = {
   TENANTS, RESULTS, INVOICES, DISPUTES, PROPERTY,
   AX, RE, fmt, esc,
   auditSummary, auditNarrative, exceptionReport, coverageGap, riskAndDisputes, lenderSummary,
+  reconciliationSummary,
   statementReadiness, statementBlockHtml, propertyMetrics,
   baseSandbox, extract, fn, run,
 };

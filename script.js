@@ -14531,7 +14531,7 @@ function renderNarrativePanel() {
         const money = (v) => '$' + Math.round(v).toLocaleString('en-US');
         const rows = [
           ['Total CAM pool', money(x.totalPool), null],
-          ['Confirmed at risk', money(x.confirmedAtRisk),
+          ['Requiring lease verification', money(x.confirmedAtRisk),
             x.confirmedAtRisk > 0 ? 'an-exp--risk' : null],
           ['Requiring review', money(x.requiringReview),
             x.requiringReview > 0 ? 'an-exp--review' : null],
@@ -15286,28 +15286,40 @@ function generateHolesReport() {
         : ''}
     </div>`;
 
-  const summaryBar = totalIssues === 0 ? `
-    <div class="holes-summary-bar ${_auditFindingCount && _auditFindingCount.red > 0 ? 'has-issues' : 'all-clear'}">
-      <div class="holes-summary-count">${_auditFindingCount && _auditFindingCount.red > 0 ? '&#x26A0;' : '&#x2713;'}</div>
-      <div class="holes-summary-msg">
-        ${_auditFindingCount && _auditFindingCount.red > 0
-          ? `Inputs are complete — but the reconciliation already run has
-             ${_auditFindingCount.red} critical exception${_auditFindingCount.red === 1 ? '' : 's'}`
-          : 'Inputs look complete — ready to run reconciliation'}
-        <span style="display:block;font-size:0.78rem;font-weight:400;margin-top:2px;opacity:0.8;">
-          ${_auditFindingCount && _auditFindingCount.red > 0
-            ? 'See the Audit Exception Summary before billing.'
-            : 'This covers input completeness only.'}
-        </span>
+  // TWO STATES, SHOWN AS TWO STATES.
+  //
+  // A single bar reading "Inputs are complete — but the reconciliation has 5
+  // critical exceptions" sat under four green-looking KPIs and read as a
+  // contradiction: complete, and yet a large red warning. They are two different
+  // questions with two different answers, so they get two headed blocks rather
+  // than one sentence trying to hold both.
+  const _redCount = (_auditFindingCount && _auditFindingCount.red) || 0;
+  const _yelCount = (_auditFindingCount && _auditFindingCount.yellow) || 0;
+  const summaryBar = `
+    <div class="cg-split">
+      <div class="cg-block ${totalIssues === 0 ? 'cg-block--ok' : criticalItems.length > 0 ? 'cg-block--alert' : 'cg-block--warn'}">
+        <div class="cg-block-title">Input coverage</div>
+        <div class="cg-block-state">${totalIssues === 0
+          ? '&#x2713; Complete'
+          : `&#x26A0; ${totalIssues} input${totalIssues === 1 ? '' : 's'} need${totalIssues === 1 ? 's' : ''} attention`}</div>
+        <div class="cg-block-sub">${totalIssues === 0
+          ? 'Every vendor and category from the last run is present, all leases are uploaded, and no extraction needs review.'
+          : `${criticalItems.length} critical &middot; ${warningItems.length} warning${warningItems.length === 1 ? '' : 's'}, listed above. Fix these before running the reconciliation.`}</div>
       </div>
-    </div>` : `
-    <div class="holes-summary-bar has-issues">
-      <div class="holes-summary-count">${totalIssues}</div>
-      <div class="holes-summary-msg">
-        ${totalIssues} input${totalIssues !== 1 ? 's' : ''} need${totalIssues === 1 ? 's' : ''} attention before running reconciliation
-        <span style="display:block;font-size:0.78rem;font-weight:400;margin-top:2px;opacity:0.8;">
-          ${criticalItems.length} critical &nbsp;·&nbsp; ${warningItems.length} warning${warningItems.length !== 1 ? 's' : ''}
-        </span>
+      <div class="cg-block ${_redCount > 0 ? 'cg-block--alert' : _yelCount > 0 ? 'cg-block--warn' : 'cg-block--ok'}">
+        <div class="cg-block-title">Reconciliation status</div>
+        <div class="cg-block-state">${_auditFindingCount === null
+          ? '&mdash; Not yet run'
+          : _redCount > 0
+            ? `&#x26A0; ${_redCount} critical exception${_redCount === 1 ? '' : 's'}`
+            : _yelCount > 0
+              ? `&#x26A0; ${_yelCount} advisory finding${_yelCount === 1 ? '' : 's'}`
+              : '&#x2713; No exceptions'}</div>
+        <div class="cg-block-sub">${_auditFindingCount === null
+          ? 'Run a CAM allocation to evaluate the reconciliation.'
+          : _redCount > 0
+            ? 'Enumerated in the Audit Exception Summary. Resolve before billing.'
+            : 'Enumerated in the Audit Exception Summary.'}</div>
       </div>
     </div>`;
 
@@ -15371,6 +15383,37 @@ function openReport(title, bodyHtml) {
 function _rptMakeTablesScrollable(root) {
   if (!root || !root.querySelectorAll) return;
   root.querySelectorAll('table.rpt-table').forEach(tbl => {
+    // ── Stacked cards on mobile ────────────────────────────────────────────
+    //
+    // A scroll container kept the page from scrolling sideways, but it did not
+    // make the table readable: a property manager on a phone still had to
+    // discover that "Billing Method" and "Flags" existed somewhere off the
+    // right edge, and nothing on screen said so. These are operational reports,
+    // not spreadsheets — the row is the unit of meaning, not the column.
+    //
+    // So each cell is stamped with its column heading and the CSS at ≤600px
+    // turns every row into a labelled card. Done here, at render time, from the
+    // table's own <thead>, which means no report generator changes and no
+    // duplicated heading strings to drift.
+    const heads = [...tbl.querySelectorAll('thead th')].map(th =>
+      (th.textContent || '').replace(/\s+/g, ' ').trim());
+    if (heads.length) {
+      tbl.querySelectorAll('tbody tr, tfoot tr').forEach(tr => {
+        // A row that spans the table is a subtotal or an empty-state message,
+        // not a record — it keeps its full width and gets no label.
+        const cells = [...tr.children];
+        const spans = cells.some(td => Number(td.getAttribute('colspan') || 1) > 1);
+        if (spans) { tr.classList.add('rpt-row--full'); return; }
+        cells.forEach((td, i) => {
+          const label = heads[i];
+          if (label) td.setAttribute('data-label', label);
+        });
+      });
+      tbl.classList.add('rpt-table--cards');
+    }
+
+    // The scroll container stays for the wide-screen case and for any table
+    // without a <thead> to label from — it is the fallback, no longer the plan.
     if (tbl.parentElement && tbl.parentElement.classList.contains('rpt-table-scroll')) return;
     const wrap = document.createElement('div');
     wrap.className = 'rpt-table-scroll';
@@ -15441,12 +15484,22 @@ function generateReconciliationSummary() {
       <td style="text-align:right">${((amt / lastTotal) * 100).toFixed(1)}%</td>
     </tr>`).join('');
 
+  // THE HEADLINE WAS THE ONLY THING ALLOWED TO SHRINK.
+  //
+  // This was a hand-rolled flex row: "Status:" and the exposure line both
+  // carried flex-shrink:0, so on a narrow screen the headline between them was
+  // the only item that could give — and give it did, down to a column one
+  // character wide. "Critical Audit Risk — Immediate Review Required Before
+  // Tenant Billing" rendered as a vertical stack of single letters.
+  //
+  // A class, not inline styles, so the layout can be responsive at all — and so
+  // the next person changing it can see it in one place.
   const reconNarrative = buildAuditNarrative();
   const reconStatusBar = reconNarrative.headline ? `
-    <div style="display:flex;align-items:center;gap:10px;padding:10px 14px;background:var(--theme-surface);border-radius:7px;margin-bottom:14px;font-size:0.82rem;">
-      <span style="color:var(--text-4);font-weight:600;flex-shrink:0;">Status:</span>
-      <span style="color:var(--text-1);">${esc(reconNarrative.headline)}</span>
-      ${reconNarrative.financialImpact ? `<span style="margin-left:auto;color:var(--text-3);flex-shrink:0;">${esc(reconNarrative.financialImpact)}</span>` : ''}
+    <div class="rpt-status-bar">
+      <span class="rpt-status-label">Status</span>
+      <span class="rpt-status-headline">${esc(reconNarrative.headline)}</span>
+      ${reconNarrative.financialImpact ? `<span class="rpt-status-impact">${esc(reconNarrative.financialImpact)}</span>` : ''}
     </div>` : '';
 
   const html = `
@@ -15466,21 +15519,59 @@ function generateReconciliationSummary() {
     </div>
 
     <div class="rpt-section-title">Tenant Allocation</div>
+    ${(() => {
+      // STATE THE DENOMINATOR, AND LET THE TABLE ADD UP ON THE PAGE.
+      //
+      // The percentage column is each lease's share of the BUILDING — leased
+      // sqft ÷ total property sqft (reconciliation-engine / runFullReconciliation
+      // line 9901) — and the billed figure is that share applied to the expense
+      // pool. Two different denominators, one unlabelled column.
+      //
+      // The shares therefore sum to less than 100% whenever the loaded leases
+      // do not cover the whole building, and the TOTAL row left that cell EMPTY,
+      // so the one number that would have explained it was the one number not
+      // shown. A reader reasonably assumed the percentages were shares of the
+      // billed total, checked, and found they matched neither that nor 100%.
+      //
+      // Nothing is recomputed here. The sum, the pool and the gap are stated so
+      // the arithmetic can be followed without leaving the page.
+      const _prSum = lastResults.reduce((s2, r) => s2 + (r.proRataPercent || 0), 0);
+      const _gap   = 100 - _prSum;
+      // Never print NaN at a landlord. If either figure is missing the note
+      // states the shares and omits the dollar amount rather than inventing one.
+      const _unbilledRaw = lastTotal - totalBilled;
+      const _unbilled = isFinite(_unbilledRaw) ? _unbilledRaw : null;
+      return `
+    <div class="rpt-scope-note">
+      <strong>Pro-rata % is each lease's share of the building</strong> — leased sqft ÷ ${propSqft > 0 ? propSqft.toLocaleString() + ' total sqft' : 'total property sqft'} —
+      not a share of the amount billed. CAM Billed is that share applied to the ${esc(fmt(lastTotal))} expense pool.
+      ${_gap > 0.01
+        ? `The shares total ${_prSum.toFixed(2)}% because the loaded leases cover that much of the property;
+           the remaining ${_gap.toFixed(2)}%${_unbilled != null ? ` (${esc(fmt(_unbilled))})` : ''} is space no loaded lease covers and is not billed to anyone.`
+        : `The shares total ${_prSum.toFixed(2)}% — the whole building is covered by loaded leases.`}
+    </div>
     <table class="rpt-table">
       <thead><tr>
         <th>Tenant</th>
         <th style="text-align:right">Leased sqft</th>
-        <th style="text-align:right">Pro-Rata %</th>
+        <th style="text-align:right">% of building</th>
         <th style="text-align:right">CAM Billed</th>
       </tr></thead>
       <tbody>${tenantRows}</tbody>
       <tfoot><tr class="total-row">
         <td>TOTAL</td>
         <td style="text-align:right">${totalLeasedSqft > 0 ? totalLeasedSqft.toLocaleString() : '—'}</td>
-        <td></td>
+        <td style="text-align:right">${_prSum.toFixed(2)}%</td>
         <td style="text-align:right">${fmt(totalBilled)}</td>
       </tr></tfoot>
-    </table>
+      ${_gap > 0.01 ? `<tfoot><tr>
+        <td>Not covered by a loaded lease</td>
+        <td style="text-align:right">${propSqft > 0 ? Math.max(0, propSqft - totalLeasedSqft).toLocaleString() : '—'}</td>
+        <td style="text-align:right">${_gap.toFixed(2)}%</td>
+        <td style="text-align:right">${_unbilled != null ? fmt(_unbilled) : '—'}</td>
+      </tr></tfoot>` : ''}
+    </table>`;
+    })()}
 
     <div class="rpt-section-title">Expense Categories</div>
     <table class="rpt-table">
@@ -15559,11 +15650,11 @@ function generateExceptionReport() {
   // here, which is why the report could enumerate five critical exceptions
   // without stating a single dollar figure.
   const _AXe = window.AuditExposure;
-  const _KIND_LBL = {
-    at_risk:         'at risk',
-    under_review:    'requiring review',
-    recoverable:     'excluded or already recovered',
-    unsubstantiated: 'weakly evidenced (expense-side)',
+  // One vocabulary, owned by audit-exposure.js — see KIND_LABEL there for why
+  // "at risk" was replaced. Local fallback only for the module-missing case.
+  const _KIND_LBL = (_AXe && _AXe.KIND_LABEL) || {
+    at_risk: 'requiring lease verification', under_review: 'requiring review',
+    recoverable: 'excluded or already recovered', unsubstantiated: 'weakly evidenced',
   };
   const renderFlag = f => {
     const sevLabel = f.severity === 'red' ? 'Critical' : 'Warning';
@@ -15828,7 +15919,8 @@ function generateMasterReport() {
       <div class="rpt-hash-lbl">&#x1F512; Tamper-Detection Hash (SHA-256)</div>
       <div class="rpt-hash-val">Computing…</div>
     </div>
-    <p style="font-size:0.78rem;color:var(--text-4);line-height:1.5;margin-top:10px;">MainStreet settles tenant payments in RLUSD on the XRP Ledger, embedding a SHA-256 fingerprint of each settlement in the transaction memo for public, independent verification. The reconciliation record itself carries the local audit fingerprint above.</p>
+    <p style="font-size:0.78rem;color:var(--text-4);line-height:1.5;margin-top:10px;">The fingerprint above is computed locally over this reconciliation and lets you detect any later change to it. It is <strong>not</strong> published anywhere.
+      <br>MainStreet is <strong>designed</strong> to settle tenant payments in RLUSD on the XRP Ledger and to carry a SHA-256 fingerprint of the settlement in the transaction memo, which anyone could then verify independently. That is not live: no settlement has been submitted from this application, and no fingerprint has been published to any ledger. This report makes no on-chain claim.</p>
 
     ${_rptFooter(lastPropName, 'Landlord Master CAM Report', now)}`;
 
@@ -16336,9 +16428,9 @@ function generateLandlordExport() {
     const money = imp.amount != null
       ? fmt(imp.amount)
       : '<span style="color:#64748b">not yet quantified</span>';
-    const KIND_LBL = {
-      at_risk: 'At risk', under_review: 'Under review',
-      recoverable: 'Excluded', unsubstantiated: 'Weakly evidenced', none: '—',
+    const KIND_LBL = (_AXr && _AXr.KIND_LABEL_TITLE) || {
+      at_risk: 'Requiring Lease Verification', under_review: 'Requiring Review',
+      recoverable: 'Excluded / Recovered', unsubstantiated: 'Weakly Evidenced', none: '—',
     };
     return `<tr>
       <td><span style="color:${sev === 'red' ? '#f87171' : '#fbbf24'}">${sev === 'red' ? '⛔' : '⚠'}</span></td>
@@ -16396,7 +16488,7 @@ function generateLandlordExport() {
       { label: 'Billed to Tenants', value: fmt(_expAllocated) },
       { label: 'Open Disputes',    value: _expOpenDisp },
       { label: 'Dispute Exposure', value: fmt(disputeExposure) },
-      ...(_rExp ? [{ label: 'Allocation At Risk', value: fmt(_rExp.confirmedAtRisk) }] : []),
+      ...(_rExp ? [{ label: 'Requiring Lease Verification', value: fmt(_rExp.confirmedAtRisk) }] : []),
     ])}
 
     ${_rReady ? `<div class="rpt-readiness rpt-readiness--${_rReady.canBill ? 'ok' : 'blocked'}">
@@ -16408,7 +16500,7 @@ function generateLandlordExport() {
       <div class="rpt-kpi${yellowIss.length > 0 ? ' rpt-kpi--warn' : ''}"><div class="kpi-val">${yellowIss.length}</div><div class="kpi-lbl">Warnings</div></div>
       <div class="rpt-kpi${openD.length > 0 ? ' rpt-kpi--warn' : ''}"><div class="kpi-val">${openD.length}</div><div class="kpi-lbl">Open Disputes</div></div>
       <div class="rpt-kpi${disputeExposure > 0 ? ' rpt-kpi--alert' : ''}"><div class="kpi-val">${fmt(disputeExposure)}</div><div class="kpi-lbl">Dispute Exposure</div></div>
-      ${_rExp ? `<div class="rpt-kpi${_rExp.confirmedAtRisk > 0 ? ' rpt-kpi--alert' : ''}"><div class="kpi-val">${fmt(_rExp.confirmedAtRisk)}</div><div class="kpi-lbl">Allocation At Risk</div></div>
+      ${_rExp ? `<div class="rpt-kpi${_rExp.confirmedAtRisk > 0 ? ' rpt-kpi--alert' : ''}"><div class="kpi-val">${fmt(_rExp.confirmedAtRisk)}</div><div class="kpi-lbl">Requiring Lease Verification</div></div>
       <div class="rpt-kpi${_rExp.requiringReview > 0 ? ' rpt-kpi--warn' : ''}"><div class="kpi-val">${fmt(_rExp.requiringReview)}</div><div class="kpi-lbl">Requiring Review</div></div>` : ''}
       <div class="rpt-kpi${redSusp.length > 0 ? ' rpt-kpi--alert' : ''}"><div class="kpi-val">${redSusp.length}</div><div class="kpi-lbl">Invoice Red Flags</div></div>
       <div class="rpt-kpi${Math.abs(proRataSum - 100) > 5 ? ' rpt-kpi--alert' : ''}"><div class="kpi-val">${proRataSum.toFixed(1)}%</div><div class="kpi-lbl">Pro-Rata Sum</div></div>
@@ -16433,7 +16525,11 @@ function generateLandlordExport() {
     <table class="rpt-table">
       <thead><tr><th>#</th><th>Tenant</th><th>Charge</th><th style="text-align:right">Amount</th><th>Type</th><th>Severity</th></tr></thead>
       <tbody>${disputeRows}</tbody>
-    </table>` : '<div class="rpt-section-title" style="color:var(--c-4ade80)">&#x2713; No open disputes</div>'}
+    </table>` : `<div class="rpt-section-title" style="color:var(--c-4ade80)">&#x2713; No open tenant disputes</div>
+    <div class="rpt-scope-note">A dispute is a charge a tenant has formally challenged. None is open.
+      This says nothing about the audit findings above${_rExp && _rExp.counts.red > 0
+        ? ` — ${_rExp.counts.red} critical exception${_rExp.counts.red === 1 ? '' : 's'} remain${_rExp.counts.red === 1 ? 's' : ''} open`
+        : ''}.</div>`}
 
     <div class="rpt-section-title">Reconciliation Completeness by Tenant</div>
     <table class="rpt-table">
@@ -16895,12 +16991,9 @@ function _renderStatementReadinessBlock(block) {
   //
   // So each row states its treatment, and the totals are struck per axis with
   // no grand total, because there is no honest one to strike.
-  const KIND_LBL = {
-    at_risk:         'Allocation at risk',
-    under_review:    'Requiring review',
-    recoverable:     'Excluded / recovered',
-    unsubstantiated: 'Expense weakly evidenced',
-    none:            '—',
+  const KIND_LBL = (AXs && AXs.KIND_LABEL_TITLE) || {
+    at_risk: 'Requiring Lease Verification', under_review: 'Requiring Review',
+    recoverable: 'Excluded / Recovered', unsubstantiated: 'Weakly Evidenced', none: '—',
   };
   const subtotals = {};
   const rows = block.red.map(f => {
@@ -16942,9 +17035,10 @@ function _renderStatementReadinessBlock(block) {
       <tbody>${rows}${subtotalRows}</tbody>
     </table>
     <div class="rpt-scope-note">
-      <strong>Allocation at risk</strong> is CAM allocated to a tenant with no documented basis — the same figure
+      <strong>Requiring lease verification</strong> is CAM allocated to a tenant whose lease on file has expired.
+      A holdover or renewal may cover it; none has been confirmed. It is the same figure
       the Audit Exception Summary and the Risk &amp; Disputes report state, read from the same finding.
-      ${mixedAxes ? `<strong>Expense weakly evidenced</strong> measures something different: pool dollars whose
+      ${mixedAxes ? `<strong>Weakly evidenced</strong> measures something different: pool dollars whose
         supporting evidence is thin. The same dollar can appear on both, so the two totals are struck separately
         and must not be added together.` : ''}
     </div>
