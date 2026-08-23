@@ -47,6 +47,12 @@ const SUITES = [
   // mostly negative assertions: no exceptions, no coverage gap, no manufactured
   // "needs review" on a lease that scores 100, and a statement that issues.
   { label: 'Clean property, happy path (e2e)',  cmd: 'node test-e2e-clean-property.js' },
+  // The lease review flow: Needs Review must lead somewhere. A "Mark reviewed"
+  // button turned the card green while the CAM blocker stood, and a confirmed
+  // property mismatch could never clear Needs Review at all because the status
+  // derivation read the raw detector. Both are pinned here, on the real path a
+  // person takes rather than on the functions underneath it.
+  { label: 'Lease review flow (e2e)',           cmd: 'node test-e2e-lease-review-flow.js' },
   // XRPL/RLUSD settlement configuration. Offline only: it asserts the issuer,
   // currency code, Make Waves source tag and memo payload, and SKIPS (does not
   // fail) the live ledger reads when the network is unreachable — so it is safe

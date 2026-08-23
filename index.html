@@ -3851,6 +3851,26 @@
     }
     .an-next-steps li { margin-bottom: 3px; overflow-wrap: anywhere; }
 
+    /* Where openLeaseBlockerFix lands the reader, so the control it navigated
+       to is unmistakable rather than "somewhere on this card". */
+    .lease-blocker-flash {
+      animation: leaseBlockerFlash 2.2s ease-out 1;
+      border-radius: 8px;
+    }
+    @keyframes leaseBlockerFlash {
+      0%, 55% { box-shadow: 0 0 0 3px rgba(249,115,22,0.55); }
+      100%    { box-shadow: 0 0 0 3px rgba(249,115,22,0); }
+    }
+    /* Says why acknowledgement is not on offer for a blocked lease. */
+    .ts-review-gap-hint {
+      font-family: 'DM Sans', sans-serif; font-size: 0.76rem; line-height: 1.5;
+      color: var(--text-3); margin-top: 7px;
+    }
+    .rq-btn--fix {
+      background: rgba(249,115,22,0.13); color: var(--c-fdba74, #fdba74);
+      border: 1px solid rgba(249,115,22,0.4);
+    }
+
     .rcs-readiness--blocked {
       background: rgba(239,68,68,0.12); color: var(--c-fca5a5, #fca5a5);
       border: 1px solid rgba(239,68,68,0.38);

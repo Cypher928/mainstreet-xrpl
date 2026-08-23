@@ -18505,6 +18505,11 @@ function _emphasiseReviewGap(propertyId, tenantId) {
   const reasons = [...(item.missingFields || []), ...(item.warningReasons || [])];
   if (!reasons.length) return;
 
+  // Does anything here actually STOP CAM? That decides which action is honest.
+  const _liveT    = tenantData.find(t => t && t.id === tenantId)
+                    || (prop.tenants || []).find(t => t && t.id === tenantId);
+  const _blockFix = _liveT ? _leaseBlockerResolution(_liveT) : null;
+
   const paint = (tries) => {
     const host = document.querySelector('#tsOverlay .ts-body, #tsOverlay .ts-card, #tsOverlay');
     if (!host) { if (tries > 0) setTimeout(() => paint(tries - 1), 120); return; }
@@ -18518,8 +18523,16 @@ function _emphasiseReviewGap(propertyId, tenantId) {
         reasons.map(r => '<li>' + esc(r) + '</li>').join('') +
       '</ul>' +
       '<div class="ts-review-gap-act">' +
-        '<button class="ts-review-gap-btn" onclick="markTenantReviewAcknowledged(\'' + esc(tenantId) + '\');' +
-          'var g=document.getElementById(\'tsReviewGap\');if(g)g.remove();">Mark reviewed</button>' +
+        // A blocker gets a way to CLOSE it, not a way to acknowledge it. See
+        // _leaseBlockerResolution: acknowledging a blocked lease turned the card
+        // green while the lease stayed out of CAM.
+        (_blockFix
+          ? '<button class="ts-review-gap-btn" onclick="openLeaseBlockerFix(\'' + esc(tenantId) + '\')">' +
+              esc(_blockFix.label) + '</button>' +
+            '<div class="ts-review-gap-hint">This lease cannot take part in CAM until that is resolved. ' +
+              'Marking it reviewed would not change that, so it is not offered here.</div>'
+          : '<button class="ts-review-gap-btn" onclick="markTenantReviewAcknowledged(\'' + esc(tenantId) + '\');' +
+              'var g=document.getElementById(\'tsReviewGap\');if(g)g.remove();">Mark reviewed</button>') +
       '</div>';
     host.insertBefore(box, host.firstChild);
     box.scrollIntoView({ behavior: 'smooth', block: 'nearest' });
@@ -18555,6 +18568,77 @@ function setReviewQueueFilter(filter) {
   if (!activePropId) return;
   const prop = _props.find(p => p.id === activePropId);
   if (prop) renderPropertyReviewQueue(prop);
+}
+
+// ── Acknowledgement vs resolution ────────────────────────────────────────────
+//
+// "Mark reviewed" sets review.reviewerConfirmed, and deriveTenantReviewState
+// SHORT-CIRCUITS on that flag: it returns 'manually_verified' before the status
+// derivation runs. So on a lease with an unresolved CAM blocker, pressing it
+// turned the card green — glyph ✓, no "Needs Review" — while the blocker stood,
+// the lease stayed out of getValidTenants(), and the bulk screen went on listing
+// it as not ready for CAM. Measured, on an unconfirmed property mismatch:
+//
+//   before   needs_review      ⚠️  camBlocking 1  engine rejects
+//   after    manually_verified ✓   camBlocking 1  engine rejects
+//
+// The button was not inert; it was worse than inert. A human "I looked at this"
+// is a real and useful act, but it cannot stand in for the one thing that
+// unblocks the lease, and it must not look like it did.
+//
+// So: acknowledgement stays available for advisory review items, and is replaced
+// by a link to the resolution wherever a CAM blocker is what needs closing. The
+// blocker itself is untouched — this changes which button is offered, never what
+// clears the state.
+
+// The CAM blockers on this lease, plus the words for a button that leads to
+// where they are resolved. null when nothing blocks and acknowledgement is fine.
+function _leaseBlockerResolution(d) {
+  let st = null;
+  try { st = deriveTenantReviewState(d); } catch (_) { return null; }
+  const blockers = st.camBlocking || [];
+  if (!blockers.length) return null;
+  const types = (st.warnings || []).map(w => w.type);
+  if (types.includes('property_name_mismatch'))
+    return { blockers, label: 'Confirm which property this lease belongs to \u203A' };
+  if (types.includes('missing_sqft'))
+    return { blockers, label: 'Add the leased square footage \u203A' };
+  return { blockers, label: 'Resolve: ' + blockers[0] + ' \u203A' };
+}
+
+// Takes the reader to the control that actually closes the blocker. Navigation
+// only: it opens the lease card and scrolls to the resolution, and changes no
+// state of its own. The state-changing action stays where it is — the explicit
+// "Confirm lease belongs to this property" button on the card.
+function openLeaseBlockerFix(tenantId) {
+  const i = tenantData.findIndex(t => t && t.id === tenantId);
+  if (i === -1) {
+    showToast('Could not open that lease — it is not on the active property.',
+              { color: '#92400e', textColor: '#fef3c7' });
+    return;
+  }
+  if (window.TenantSpace && typeof window.TenantSpace.closeSpace === 'function') {
+    try { window.TenantSpace.closeSpace(); } catch (_) {}
+  }
+  if (typeof switchWorkspaceTab === 'function') switchWorkspaceTab('spaces');
+  if (typeof switchLeaseTab === 'function') switchLeaseTab('bulk');
+  if (typeof renderBulkResults === 'function') renderBulkResults();
+  // The card renders collapsed and the detail is built on expand, so the scroll
+  // target does not exist until after both.
+  setTimeout(() => {
+    const det = document.getElementById('bdet-' + i);
+    if (det && getComputedStyle(det).display === 'none' && typeof toggleBulkDetail === 'function') {
+      try { toggleBulkDetail(i); } catch (_) {}
+    }
+    setTimeout(() => {
+      const row = document.getElementById('btr-' + i);
+      if (!row) return;
+      const tgt = row.querySelector('.lease-prop-confirm') || row.querySelector('.field') || row;
+      tgt.scrollIntoView({ behavior: 'smooth', block: 'center' });
+      tgt.classList.add('lease-blocker-flash');
+      setTimeout(() => tgt.classList.remove('lease-blocker-flash'), 2200);
+    }, 90);
+  }, 60);
 }
 
 function markTenantReviewAcknowledged(tenantId, note = null) {
@@ -18628,9 +18712,17 @@ function _rqCompactItemHtml(item) {
     <div class="rq-chips rq-chips--inline">${missingChips}${warnChips}</div>
     <div class="rq-compact-actions" style="display:flex;gap:4px;align-items:center;">
       <button class="rq-action-btn rq-btn--primary" onclick="openReviewWorkspace('${tid}')">Review ${esc(item.tenantName)} &#x203A;</button>
-      ${acked
-        ? `<span class="rq-chip">Ack'd</span>`
-        : `<button class="rq-action-btn rq-btn--ack" onclick="markTenantReviewAcknowledged('${tid}')">Mark ${esc(item.tenantName)} reviewed</button>`}
+      ${(() => {
+        if (acked) return `<span class="rq-chip">Ack'd</span>`;
+        // Same rule as the space modal: a lease the CAM engine will not accept
+        // is offered the resolution, never the acknowledgement.
+        const liveT = tenantData.find(t => t && t.id === tid)
+                      || ((currentProperty() || {}).tenants || []).find(t => t && t.id === tid);
+        const fix   = liveT ? _leaseBlockerResolution(liveT) : null;
+        return fix
+          ? `<button class="rq-action-btn rq-btn--fix" onclick="openLeaseBlockerFix('${tid}')" title="${esc(fix.blockers.join('; '))}">${esc(fix.label)}</button>`
+          : `<button class="rq-action-btn rq-btn--ack" onclick="markTenantReviewAcknowledged('${tid}')">Mark ${esc(item.tenantName)} reviewed</button>`;
+      })()}
     </div>
   </div>`;
 }
@@ -19029,6 +19121,21 @@ function rwSaveNote(tenantId) {
 }
 
 function rwApprove(tenantId) {
+  // Refuse rather than record a review that cannot mean what it says. The
+  // workspace is reachable from the queue card, so it needs the same rule: a
+  // lease the CAM engine will not accept cannot be approved into readiness by
+  // acknowledgement, and pretending otherwise turns the card green while the
+  // lease stays out of the run.
+  const _liveT = tenantData.find(t => t && t.id === tenantId)
+                 || ((currentProperty() || {}).tenants || []).find(t => t && t.id === tenantId);
+  const _fix   = _liveT ? _leaseBlockerResolution(_liveT) : null;
+  if (_fix) {
+    showToast(`Cannot mark reviewed — ${_fix.blockers.join('; ')}. Opening where that is resolved.`,
+              { color: '#92400e', textColor: '#fef3c7', duration: 7000 });
+    if (typeof closeReviewWorkspace === 'function') { try { closeReviewWorkspace(); } catch (_) {} }
+    openLeaseBlockerFix(tenantId);
+    return;
+  }
   const note = document.getElementById('rwNoteInput')?.value?.trim() || null;
   markTenantReviewAcknowledged(tenantId, note);
   let t = null;
@@ -25949,7 +26056,7 @@ const _ASYNC_USER_ACTIONS = [
   // unguarded, a rejection there is a click that does nothing and says nothing.
   'archiveActiveProperty', 'restoreProperty', 'toggleArchivedProperties',
   'runAllocation', 'handleBulkLeases', 'handleBatchInvoices', 'generateTenantStatement',
-  'loadDemo', 'openReviewItem', 'markTenantReviewAcknowledged',
+  'loadDemo', 'openReviewItem', 'markTenantReviewAcknowledged', 'openLeaseBlockerFix',
 ];
 
 // What the user is told when an action fails. Names the action in their words.

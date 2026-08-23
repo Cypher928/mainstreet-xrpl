@@ -259,7 +259,22 @@ window.ReviewEngine = (() => {
       (isNNN && (t.cap == null || t.cap === '')) ||
       t._needsReview === true ||
       (recon && recon.proRata > 1.0) ||
-      hasPropertyMismatch
+      // UNCONFIRMED, matching the score penalty on line ~222 and the CAM gate.
+      //
+      // This read the raw detector, so a lease that had ever shown a property
+      // mismatch stayed in 'needs_review' permanently — the landlord could open
+      // the review panel, press "Confirm lease belongs to this property", watch
+      // the CAM blocker clear and the lease enter the reconciliation, and the
+      // card would still say Needs Review with a warning glyph. There was no
+      // action anywhere in the product that could clear it.
+      //
+      // The same function already treats confirmation as resolving the
+      // consequence when it computes the score (the -30 penalty lifts), so the
+      // two answers disagreed about one fact inside one derivation. The finding
+      // itself is untouched and still recorded on _edgeCases: confirmation
+      // resolves the CONSEQUENCE, never the finding, and the warning array
+      // still carries property_name_confirmed so the history stays visible.
+      (hasPropertyMismatch && !propertyConfirmed)
     ) {
       status = 'needs_review';
     } else {
