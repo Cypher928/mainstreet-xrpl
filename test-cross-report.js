@@ -793,9 +793,30 @@ console.log('\n── W2 · Settlement is claimed only when a transaction exists
   yes('an unsettled statement says so in as many words',
       /No payment has been made and no settlement has occurred for this statement/.test(scriptText),
       'nothing tells the tenant that no settlement has occurred');
-  yes('and keeps the "not yet live" caveat the shared widget carries',
-      /goes live once the settlement wallet is funded/.test(scriptText),
-      'the statement drops the caveat that the capability is not live');
+  // THIS ASSERTION USED TO REQUIRE THE OPPOSITE, and that is why the stale copy
+  // survived: it pinned "goes live once the settlement wallet is funded" in
+  // place. RLUSD settlement is live on XRPL Mainnet — it shipped and was
+  // demonstrated — so that caveat was describing a completed capability as
+  // forthcoming, and a test was holding it there.
+  //
+  // The two facts the copy must keep separate are unchanged in substance:
+  //   · whether the CAPABILITY exists          → it does, on Mainnet
+  //   · whether THIS charge has settled        → only if a transaction exists
+  // Neither is evidence for the other. An unsettled charge is not an unbuilt
+  // feature, and a live capability is not a paid invoice.
+  no('the copy no longer describes the capability as forthcoming',
+     /going live on mainnet|goes live once|wallet is funded|intends to settle/i
+       .test(scriptText.split('\n').filter(l => !/^\s*(\/\/|\*)/.test(l)).join('\n')),
+     'the "not yet live" wording is back — RLUSD settlement is live on XRPL Mainnet');
+  yes('the capability is described as live on XRPL Mainnet',
+      /live on XRPL Mainnet/.test(scriptText),
+      'no surface states that RLUSD settlement is live');
+  // The per-charge truth must survive the correction: making the capability
+  // sound live must never make an unpaid charge sound settled.
+  yes('an unsettled charge still says it has no settlement transaction',
+      /this charge has no settlement transaction yet/i.test(scriptText)
+        && /this statement simply has no settlement transaction yet/i.test(scriptText),
+      'the per-charge caveat was lost when the capability wording was corrected');
   yes('the settled wording is reachable only from a real transaction',
       /const _settled = _st\.status === 'settled'/.test(scriptText),
       'the settled copy is not gated on settlement state');

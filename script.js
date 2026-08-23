@@ -4005,11 +4005,19 @@ function _buildRlusdStatusHtml(status) {
 // Renders the full tenant-payment → on-chain-settlement journey:
 //   Pay Now → RLUSD Settlement → Settled on XRPL → View Transaction
 // It is driven entirely by a property's settlement record and NEVER fabricates a
-// transaction hash. Until the production wallet is funded and the first real
-// mainnet settlement is recorded (see RLUSD_GO_LIVE_CHECKLIST.md), it shows an
-// honest "launching on mainnet" pending state. The moment a real settlement is
-// recorded on `property.settlement` (status:'settled' + txHash), every place that
-// calls this lights up with the real explorer link — no further code changes.
+// transaction hash.
+//
+// RLUSD settlement is LIVE on XRPL Mainnet. The pending state below is a
+// statement about THIS charge — no settlement transaction has been recorded
+// against it yet — and never about the capability, which the copy used to
+// describe as forthcoming ("going live on mainnet", "goes live once the
+// settlement wallet is funded"). Those two facts are independent and must stay
+// worded that way: an unsettled charge is not evidence of an unbuilt feature,
+// and a live capability is not evidence that this charge was paid.
+//
+// The moment a real settlement is recorded on `property.settlement`
+// (status:'settled' + txHash), every place that calls this lights up with the
+// real explorer link — no further code changes.
 const XRPL_MAINNET_TX_EXPLORER = 'https://livenet.xrpl.org/transactions/';
 
 // Settlement is executed out-of-band (the app's endpoint is read-only and holds
@@ -4081,7 +4089,7 @@ function _buildSettlementFlowHtml(state, opts = {}) {
 
   const head = settled
     ? `<div class="stl-head stl-head--live"><span class="stl-dot"></span>Payment settled &amp; verified on the XRP Ledger (RLUSD)${amtTxt ? ' · ' + amtTxt : ''}</div>`
-    : `<div class="stl-head stl-head--pending"><span class="stl-dot"></span>Verifiable payment settlement on the XRP Ledger (RLUSD) — going live on mainnet</div>`;
+    : `<div class="stl-head stl-head--pending"><span class="stl-dot"></span>Verifiable payment settlement on the XRP Ledger (RLUSD) — live on XRPL Mainnet</div>`;
 
   // opts.hideNote suppresses the explanatory paragraph for callers that already print
   // their own (e.g. the tenant statement section header) — avoids duplicated copy.
@@ -4089,7 +4097,7 @@ function _buildSettlementFlowHtml(state, opts = {}) {
     ? ''
     : settled
       ? `<p class="stl-note">This payment was settled in RLUSD (a US-dollar stablecoin) on the XRP Ledger — a public, permanent receipt that you and your tenant can each verify independently.</p>`
-      : `<p class="stl-note">When a tenant pays, MainStreet settles the matching amount as RLUSD — a US-dollar stablecoin — on the XRP Ledger, creating a public receipt both you and your tenant can verify independently. This goes live once the settlement wallet is funded.</p>`;
+      : `<p class="stl-note">When a tenant pays, MainStreet settles the matching amount as RLUSD — a US-dollar stablecoin — on the XRP Ledger, creating a public receipt both you and your tenant can verify independently. RLUSD settlement is live on XRPL Mainnet; this charge has no settlement transaction yet.</p>`;
 
   return `<div class="stl-flow ${settled ? 'stl-flow--live' : 'stl-flow--pending'}">
     ${head}
@@ -17651,11 +17659,15 @@ function generateTenantStatement(tenantName, opts = {}) {
       // This section was headed "Settlement via RLUSD on XRPL" and introduced
       // with "MainStreet settles the matching amount ... This is the trust layer
       // behind your statement" — present tense, on a document produced before
-      // any payment, on a property with no settlement transaction. It also
-      // passed hideNote:true and substituted its own copy, which dropped the
-      // shared widget's "this goes live once the settlement wallet is funded"
-      // caveat. A tenant could reasonably read it as saying their charge had
-      // already been settled on a public ledger.
+      // any payment, on a property with no settlement transaction. A tenant
+      // could reasonably read it as saying their charge had already been
+      // settled on a public ledger.
+      //
+      // The caveat that used to sit here ("goes live once the settlement wallet
+      // is funded") is gone: RLUSD settlement is live on XRPL Mainnet. What
+      // remains true, and is what this paragraph says, is narrower and about
+      // THIS document — no settlement transaction has been recorded against
+      // this statement.
       //
       // Say what is true of THIS statement: whether a settlement transaction
       // exists, and if not, that none has occurred.
@@ -17665,7 +17677,7 @@ function generateTenantStatement(tenantName, opts = {}) {
     <div class="rpt-section-title">${_settled ? 'Settlement — RLUSD on the XRP Ledger' : 'How payment will settle'}</div>
     <p class="rpt-helper-text">${_settled
       ? `This charge was settled in RLUSD (a US-dollar stablecoin) on the XRP Ledger. The transaction below is public and permanent — you can verify it yourself without taking MainStreet's word for it.`
-      : `<strong>No payment has been made and no settlement has occurred for this statement.</strong> When you do pay, MainStreet intends to settle the matching amount in RLUSD (a US-dollar stablecoin) on the XRP Ledger, so that you can verify the transaction yourself. That capability goes live once the settlement wallet is funded; until then this section describes the intended flow, not a completed one.`}</p>
+      : `<strong>No payment has been made and no settlement has occurred for this statement.</strong> When you do pay, MainStreet settles the matching amount in RLUSD (a US-dollar stablecoin) on the XRP Ledger, so that you can verify the transaction yourself. RLUSD settlement is live on XRPL Mainnet; this statement simply has no settlement transaction yet.`}</p>
     ${_buildSettlementFlowHtml(_st, { showPayButton: false, hideNote: true })}`;
     })()}
 
