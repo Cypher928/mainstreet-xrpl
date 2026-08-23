@@ -53,6 +53,16 @@ const SUITES = [
   // derivation read the raw detector. Both are pinned here, on the real path a
   // person takes rather than on the functions underneath it.
   { label: 'Lease review flow (e2e)',           cmd: 'node test-e2e-lease-review-flow.js' },
+  // Where the pool-vs-billed difference went. The banner could state a $63,690.70
+  // gap and then close with "Re-check invoice amounts" — advice that was wrong,
+  // on a run where every amount was right — and clicking it did nothing. The
+  // unit half pins the identity that keeps the panel from inventing arithmetic:
+  // every dollar of the gap lands in a named bucket or in a visible residual.
+  { label: 'Variance breakdown',                cmd: 'node test-variance-breakdown.js' },
+  // The same thing on screen, plus the blocked statement's Scope column, which
+  // printed an em dash against property-level exceptions and matched a tenant
+  // whose name appeared as an invoice VENDOR.
+  { label: 'Variance flow + exception scope (e2e)', cmd: 'node test-e2e-variance-flow.js' },
   // XRPL/RLUSD settlement configuration. Offline only: it asserts the issuer,
   // currency code, Make Waves source tag and memo payload, and SKIPS (does not
   // fail) the live ledger reads when the network is unreachable — so it is safe

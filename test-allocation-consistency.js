@@ -322,15 +322,32 @@ t('[source] the banner branches on coverage before warning', () => {
 });
 
 t('[source] partial coverage does not tell the user to re-check invoices', () => {
-  const i = scriptCode.indexOf('const _coverageIncomplete');
-  const slice = scriptCode.slice(i, i + 1400);
-  const expectedBranch = slice.slice(0, slice.indexOf('Reconciliation variance detected'));
-  ok(/Expected — partial property coverage/.test(expectedBranch),
-     'no expected-coverage wording');
+  // FOUND VACUOUS, REPAIRED. The previous form sliced a fixed 1400 characters
+  // from the `_coverageIncomplete` declaration and looked for the
+  // "Reconciliation variance detected" branch inside that window. A later edit
+  // pushed that branch past 1400, so indexOf returned -1, slice(0, -1) handed
+  // back nearly the whole window, and both assertions were then satisfied by an
+  // HTML comment quoting the exact wording the branch had deliberately STOPPED
+  // saying. Deleting the entire live sentence left the suite green.
+  //
+  // Two changes: the branch is located by content rather than by byte offset,
+  // and HTML comments are stripped, so only copy a reader can actually see
+  // counts. `code()` strips // and /* */ but not <!-- -->, which is what let the
+  // old form pass.
+  //
+  // The assertions also now test the intent rather than wording that has since
+  // been revised twice: this branch must not give defect advice, and it must
+  // still tell the reader their tenant charges are unaffected.
+  const i = scriptCode.indexOf('const varianceBanner');
+  const j = scriptCode.indexOf('Reconciliation variance detected', i);
+  ok(i !== -1 && j !== -1, 'the variance banner branches were not found');
+  const expectedBranch = scriptCode.slice(i, j).replace(/<!--[\s\S]*?-->/g, '');
+  ok(/Partial property coverage/.test(expectedBranch),
+     'the partial-coverage branch no longer names partial coverage');
   ok(!/Re-check invoice amounts or re-run allocation/.test(expectedBranch),
      'the partial-coverage branch still gives defect advice');
-  ok(/no action needed/i.test(expectedBranch),
-     'the partial-coverage branch does not tell the user nothing is wrong');
+  ok(/No tenant charge changes/.test(expectedBranch),
+     'the partial-coverage branch no longer says tenant charges are unaffected');
 });
 
 t('[source] the diagnostic warning survives for complete coverage', () => {

@@ -2872,6 +2872,19 @@
     .rcs-issue-kind { display:inline-block; font-size:0.68rem; letter-spacing:0.04em; text-transform:uppercase;
                       padding:1px 6px; margin-right:6px; border-radius:4px;
                       background:rgba(148,163,184,0.16); color:var(--text-3); }
+    /* The variance banner leads to the Variance details panel, so it has to look
+       like something you can press. Cursor and hover lift only — the colours of
+       both branches are unchanged, because which branch you are looking at is
+       still the signal that matters. */
+    .rcs-variance-banner { cursor: pointer; transition: filter 0.12s ease, transform 0.12s ease; }
+    .rcs-variance-banner:hover { filter: brightness(1.12); }
+    .rcs-variance-banner:focus-visible { outline: 2px solid var(--c-c9973a); outline-offset: 2px; }
+    .rcs-variance-cta {
+      display: inline-block; margin-top: 8px; padding: 5px 11px; border-radius: 6px;
+      border: 1px solid currentColor; background: transparent; color: inherit;
+      font: inherit; font-weight: 600; cursor: pointer;
+    }
+    .rcs-variance-cta:hover { background: rgba(var(--line-rgb), 0.12); }
     .rcs-panel--ok    { border-color: rgba(74,222,128,0.2); }
     .rcs-panel--warn  { border-color: rgba(251,191,36,0.25); }
     .rcs-panel--alert { border-color: rgba(248,113,113,0.3); }
@@ -3727,6 +3740,14 @@
       padding: 10px 14px; border-radius: 0 6px 6px 0; margin: 0 0 18px;
     }
     .rpt-scope-note strong { color: var(--text-1); }
+    /* A property-wide exception is a real answer in the Scope column, not an
+       absent tenant — styled as a quiet label so it reads as a category rather
+       than as a name that failed to render. */
+    .rpt-scope-property {
+      display: inline-block; font-size: 0.68rem; letter-spacing: 0.04em;
+      text-transform: uppercase; padding: 1px 6px; border-radius: 4px;
+      background: rgba(148,163,184,0.16); color: var(--text-3); white-space: nowrap;
+    }
     .rpt-readiness {
       font-family: 'DM Sans', sans-serif; font-size: 0.82rem; line-height: 1.55;
       padding: 10px 14px; border-radius: 7px; margin: 14px 0 18px;
@@ -7708,6 +7729,10 @@
 <script src="review-engine.js"></script>
 <script src="reconciliation-engine.js"></script>
 <script src="audit-exposure.js"></script>
+<!-- Explains the pool-vs-billed gap by re-adding what the reconciliation already
+     produced. Pure derivation, no CAM arithmetic; must load before script.js
+     renders the reconciliation summary banner. -->
+<script src="variance-breakdown.js"></script>
 <script src="audit-service.js"></script>
 <script src="selectors.js"></script>
 <script src="cam-exclusions.js"></script>

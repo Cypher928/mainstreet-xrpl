@@ -239,7 +239,10 @@ function statementReadiness(tenantName, findings) {
   const src = findings
     ? `function buildAuditSummary(){ return ${JSON.stringify(findings)}; }`
     : SUSPICIONS_SRC + fn('buildAuditSummary');
-  return run(box, src + fn('_statementReadinessBlock'),
+  // _findingScope is how both the readiness block and its renderer decide whether
+  // an exception belongs to a tenant or to the property. Pulled in alongside them
+  // so the sandbox exercises the real derivation rather than a stub.
+  return run(box, src + fn('_findingScope') + fn('_statementReadinessBlock'),
              `_statementReadinessBlock(${JSON.stringify(tenantName)})`);
 }
 
@@ -248,8 +251,8 @@ function statementBlockHtml(tenantName) {
   box.window = { AuditExposure: AX };
   const captured = {};
   box.openReport = (title, html) => { captured.title = title; captured.html = html; };
-  run(box, SUSPICIONS_SRC + fn('buildAuditSummary') + fn('_statementReadinessBlock')
-         + fn('_renderStatementReadinessBlock'),
+  run(box, SUSPICIONS_SRC + fn('buildAuditSummary') + fn('_findingScope')
+         + fn('_statementReadinessBlock') + fn('_renderStatementReadinessBlock'),
       `_renderStatementReadinessBlock(_statementReadinessBlock(${JSON.stringify(tenantName)}))`);
   return captured;
 }

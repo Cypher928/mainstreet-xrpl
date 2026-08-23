@@ -9986,6 +9986,12 @@ function runFullReconciliation(property) {
     }
   }
   property._yearScope = { year: _year, excluded: _outOfYear, undated: _undated };
+  // The set this run actually considered, after the CAM-year filter above. Kept
+  // so the variance panel can name out-of-year invoices as out-of-year instead
+  // of reporting them as expenses that mysteriously reached no tenant — the year
+  // filter narrows a LOCAL, so nothing outside this function could otherwise
+  // tell the two apart. Diagnostic only: nothing reads it to allocate.
+  property._reconciledInvoices = invoices;
 
   // Pre-compute property-level sqFt overflow once
   const totalLeasedSqFt = leases.reduce((s, l) => s + (l.sqFt || 0), 0);
@@ -10377,6 +10383,11 @@ async function runAllocation() {
       { camEligible: inv.camEligible, spaceId: inv.spaceId, system: inv.system })
   ));
   const fullResults = runFullReconciliation(_prop);
+  // The records the engine ran on, kept so the variance panel can say which
+  // invoices were held out of the allocation and why. `invoices` above cannot:
+  // it is stripped to {vendor, category, amount} before the summary sees it.
+  _lastEngineInvoices     = _prop.invoices || [];
+  _lastReconciledInvoices = _prop._reconciledInvoices || _lastEngineInvoices;
 
   // Sync matchedTenant tags back to invoiceData for badge display
   const activeTenants = (currentProperty()?.tenants || []).filter(t => t && t.tenant_name);
@@ -10426,7 +10437,7 @@ async function runAllocation() {
   applySqftMismatchUI(sqftExceedsProperty);
 
   let html = _buildNeedsReviewRollupHtml(fullResults) +
-  _buildReconciliationSummaryHtml(fullResults, invoices, propName) +
+  _buildReconciliationSummaryHtml(fullResults, invoices, propName, _lastEngineInvoices, _lastReconciledInvoices) +
   // Warnings appear before numbers so the landlord sees issues before interpreting results.
   (sqftExceedsProperty ? `
   <div class="sqft-mismatch-banner">
@@ -11665,6 +11676,174 @@ function _resultCardAnchorId(name) {
   return 'result-card-' + String(name || '').replace(/[^a-zA-Z0-9]/g, '-');
 }
 
+// The breakdown behind whichever variance banner is currently on screen, kept so
+// the panel opens from the same numbers the banner was rendered from rather than
+// re-deriving against globals that may since have moved.
+let _lastVarianceBreakdown = null;
+// The invoice records the engine last ran on, captured for the same reason.
+// `_lastEngineInvoices` is everything behind the pool total; the second is the
+// subset that survived the CAM-year filter, so the panel can tell an out-of-year
+// invoice apart from one that simply reached no tenant.
+let _lastEngineInvoices     = [];
+let _lastReconciledInvoices = [];
+
+// One sentence naming what the gap is mostly made of, for the banner. Reads off
+// the buckets; asserts nothing the panel would not also show.
+function _varianceCauseSentence(bk) {
+  if (!bk) return '';
+  const top = (bk.lines || []).filter(l => l.key !== 'residual')[0];
+  if (!top) return 'the panel below shows how it is made up.';
+  const share = bk.difference ? Math.round((Math.abs(top.amount) / Math.abs(bk.difference)) * 100) : 0;
+  const most  = share >= 60 ? 'most of it' : share >= 30 ? 'the largest part of it' : 'the largest single part of it';
+  const lead  = {
+    out_of_year:  `${most} is ${fmt(top.amount)} of invoices dated outside the CAM year`,
+    not_eligible: `${most} is ${fmt(top.amount)} of invoices marked not CAM-eligible`,
+    uncovered:    `${most} is ${fmt(top.amount)} sitting outside the covered share`,
+    claim:        `${most} is ${fmt(top.amount)} that no lease claimed — excluded categories, or invoices matched to no tenant`,
+    caps:         `${most} is ${fmt(top.amount)} withheld by CAM caps`,
+  }[top.key];
+  return lead ? lead + '.' : 'the panel below shows how it is made up.';
+}
+
+/**
+ * Explain the pool-vs-billed difference. NAVIGATION AND EXPLANATION ONLY.
+ *
+ * Nothing here changes a figure, a finding, an eligibility flag or a billing
+ * gate. It re-adds what the run already produced into named buckets and lists
+ * the invoices behind them, which is what the banner was asserting without
+ * evidence. If a manager decides an invoice is wrongly marked, the place that
+ * changes is the invoice register — this panel points there and stops.
+ */
+function openVarianceDetails() {
+  const VB = window.VarianceBreakdown;
+  const bk = _lastVarianceBreakdown || (VB && lastResults && lastResults.length
+    ? VB.derive({
+        results:    lastResults,
+        invoices:   _lastEngineInvoices || [],
+        reconciled: _lastReconciledInvoices && _lastReconciledInvoices.length
+          ? _lastReconciledInvoices : undefined,
+        pool:     lastTotal || 0,
+        billed:   lastResults.reduce((s, r) => s + (Number(r.totalAllocated) || 0), 0),
+      })
+    : null);
+  if (!bk) {
+    showToast('Run a reconciliation first — there is no allocation to explain yet.',
+      { color: '#92400e', textColor: '#fef3c7' });
+    return;
+  }
+
+  const lineRows = bk.lines.map(l => `<tr${l.key === 'residual' ? ' style="background:rgba(239,68,68,0.06)"' : ''}>
+    <td>${esc(l.label)}</td>
+    <td style="text-align:right;white-space:nowrap"><strong>${fmt(l.amount)}</strong></td>
+    <td style="white-space:normal;color:#94a3b8">${esc(l.detail)}</td>
+  </tr>`).join('');
+
+  const RL = (VB && VB.REASON_LABEL) || {};
+  // Every invoice, sorted by how much of it never reached a tenant — the reader
+  // opened this panel to find the difference, so the rows that make it up come
+  // first. Fully-allocated invoices stay in the table rather than being filtered
+  // out, because "13 invoices, 5 of them billed" is the fact that answers the
+  // question, and it cannot be read off a table that only lists 8.
+  const invRows = bk.invoices.slice()
+    .sort((a, b) => b.unallocated - a.unallocated)
+    .map(r => `<tr${r.unallocated > 0.005 ? '' : ' style="color:#64748b"'}>
+      <td>${esc(r.vendor)}</td>
+      <td style="white-space:normal;color:#94a3b8">${esc(r.category)}</td>
+      <td style="text-align:right;white-space:nowrap">${fmt(r.amount)}</td>
+      <td style="text-align:right;white-space:nowrap">${fmt(r.allocated)}</td>
+      <td style="text-align:right;white-space:nowrap">${r.unallocated > 0.005 ? `<strong>${fmt(r.unallocated)}</strong>` : '—'}</td>
+      <td style="white-space:normal;color:#94a3b8">${esc(RL[r.reason] || r.reason)}</td>
+    </tr>`).join('');
+
+  const step = VB ? VB.nextStep(bk) : null;
+  // Where each next step actually goes. Navigation only — none of these is a
+  // state change, and none of the destinations is invented for this panel: the
+  // invoice register on the Property tab and the lease cards on Spaces are where
+  // a manager already edits eligibility, exclusions and caps.
+  const stepBtn = step ? {
+    out_of_year:  `<button class="rpt-action-btn" onclick="openVarianceFix('out_of_year')">Open the invoice register</button>`,
+    not_eligible: `<button class="rpt-action-btn" onclick="openVarianceFix('not_eligible')">Open the invoice register</button>`,
+    uncovered:    `<button class="rpt-action-btn" onclick="openVarianceFix('uncovered')">Open Spaces to upload the remaining leases</button>`,
+    claim:        `<button class="rpt-action-btn" onclick="openVarianceFix('claim')">Open Spaces to review exclusion schedules</button>`,
+    caps:         `<button class="rpt-action-btn" onclick="openVarianceFix('caps')">Open Spaces to review the CAM caps</button>`,
+    residual:     `<button class="rpt-action-btn" onclick="openVarianceFix('residual')">Open the invoice register</button>`,
+  }[step.key] || '' : '';
+
+  openReport('Variance details', `
+    <div class="rpt-section-title">Where the difference went</div>
+    <table class="rpt-table">
+      <tbody>
+        <tr><td>Expense pool</td><td style="text-align:right;white-space:nowrap"><strong>${fmt(bk.pool)}</strong></td></tr>
+        <tr><td>Allocated to tenants</td><td style="text-align:right;white-space:nowrap"><strong>${fmt(bk.billed)}</strong></td></tr>
+        <tr><td>Difference</td><td style="text-align:right;white-space:nowrap"><strong>${fmt(bk.difference)}</strong></td></tr>
+        <tr><td>Share of the pool that reached a tenant</td><td style="text-align:right;white-space:nowrap"><strong>${bk.billedPct == null ? '—' : bk.billedPct.toFixed(1) + '%'}</strong></td></tr>
+        <tr><td>Property covered by loaded leases</td><td style="text-align:right;white-space:nowrap"><strong>${bk.proRataSum.toFixed(1)}%</strong></td></tr>
+      </tbody>
+    </table>
+    <p class="rpt-helper-text">
+      ${bk.unbilledCount > 0
+        ? `<strong>${bk.unbilledCount} of the ${bk.invoiceCount} invoice${bk.invoiceCount !== 1 ? 's' : ''} in this pool contributed nothing to any tenant allocation</strong>
+           (${fmt(bk.unbilledTotal)}). The rest of the difference comes from invoices that were allocated in part.`
+        : `Every invoice in this pool reached at least one tenant; the difference is made up of partial allocations.`}
+      ${bk.explained
+        ? ' Every dollar of the difference is accounted for below, so nothing here indicates the reconciliation is wrong.'
+        : ` <strong>${fmt(Math.abs(bk.residual))} of the difference is not accounted for below</strong> — that part is worth checking against the invoice register.`}
+    </p>
+    <div class="rpt-section-title">Made up of</div>
+    <table class="rpt-table">
+      <thead><tr><th>Reason</th><th style="text-align:right">Amount</th><th>What it means</th></tr></thead>
+      <tbody>${lineRows}</tbody>
+    </table>
+    <div class="rpt-section-title">Invoice by invoice</div>
+    <table class="rpt-table">
+      <thead><tr><th>Vendor</th><th>Category</th><th style="text-align:right">Invoice</th><th style="text-align:right">Allocated</th><th style="text-align:right">Not allocated</th><th>Why</th></tr></thead>
+      <tbody>${invRows}</tbody>
+    </table>
+    <div class="rpt-scope-note">
+      No tenant charge changes because of anything on this page. Each tenant is billed its own
+      pro-rata share of the expenses its lease allows; the difference above is pool the
+      reconciliation did not pass through to anyone.
+    </div>
+    ${step ? `<div class="rpt-section-title">Next step</div>
+    <p class="rpt-helper-text">${esc(step.cta)}.</p>
+    ${stepBtn}` : ''}`);
+}
+
+// The destinations behind the Variance details next step. Same navigate-and-
+// flash shape as openReviewItemFix: close the report, switch to the pane that
+// holds the control, put the control on screen. It changes nothing.
+const _VARIANCE_FIX_TARGET = {
+  out_of_year:  { tab: 'property', sel: '.pos-reg' },
+  not_eligible: { tab: 'property', sel: '.pos-reg' },
+  residual:     { tab: 'property', sel: '.pos-reg' },
+  uncovered:    { tab: 'spaces',   sel: null },
+  claim:        { tab: 'spaces',   sel: null },
+  caps:         { tab: 'spaces',   sel: null },
+};
+
+function openVarianceFix(key) {
+  const target = _VARIANCE_FIX_TARGET[key];
+  if (!target) return;
+  try { closeReport(); } catch (_) {}
+  if (window.TenantSpace && typeof window.TenantSpace.closeSpace === 'function') {
+    try { window.TenantSpace.closeSpace(); } catch (_) {}
+  }
+  if (typeof switchWorkspaceTab === 'function') switchWorkspaceTab(target.tab);
+  if (target.tab === 'spaces') {
+    if (typeof switchLeaseTab === 'function') switchLeaseTab('bulk');
+    if (typeof renderBulkResults === 'function') renderBulkResults();
+  }
+  // The pane is populated on switch, so the target does not exist until after it.
+  setTimeout(() => {
+    const tgt = document.querySelector(target.sel || '#wsPane-' + target.tab)
+             || document.getElementById('wsPane-' + target.tab);
+    if (!tgt) return;
+    tgt.scrollIntoView({ behavior: 'smooth', block: 'start' });
+    tgt.classList.add('lease-blocker-flash');
+    setTimeout(() => tgt.classList.remove('lease-blocker-flash'), 2200);
+  }, 60);
+}
+
 // Builds the dominant "Needs Review" rollup shown at the very top of CAM
 // results, above the Reconciliation Summary — so problems surface before
 // the landlord has to scroll past financial details to find them.
@@ -11692,7 +11871,14 @@ function _buildNeedsReviewRollupHtml(results) {
 }
 
 // Builds the in-app Reconciliation Summary HTML panel displayed above result cards.
-function _buildReconciliationSummaryHtml(results, invoices, propName) {
+//
+// `engineInvoices` is the Invoice[] the reconciliation engine was actually
+// handed. It is a fourth, optional argument rather than a replacement for
+// `invoices` because `invoices` is what totalPool is struck from and that must
+// not move — but it is a stripped shape that dropped `camEligible` and `id`, so
+// it cannot say which invoices were held out of the allocation. The variance
+// panel needs both: the pool the screen shows, and the records behind it.
+function _buildReconciliationSummaryHtml(results, invoices, propName, engineInvoices, reconciledInvoices) {
   if (!results || !results.length) return '';
 
   const totalPool   = invoices.reduce((s, inv) => s + (parseFloat(inv.amount) || 0), 0);
@@ -11798,10 +11984,45 @@ function _buildReconciliationSummaryHtml(results, invoices, propName) {
   // No arithmetic changed: totalPool, totalBilled and variance are as they were.
   const variance = Math.abs(totalBilled - totalPool);
   const _coverageIncomplete = proRataSum < 98;
+
+  // WHERE THE DIFFERENCE WENT, not just how big it is.
+  //
+  // Both branches below used to end at a full stop. The reader was told a
+  // five-figure sum was unallocated and given nowhere to go: the amber branch
+  // said "re-check invoice amounts", which is wrong advice in the ordinary case,
+  // and the grey branch named property coverage as the cause when coverage is
+  // only ever one of four. So the banner now carries the same "Next step ›"
+  // affordance the lease review flow uses, opening a panel that decomposes the
+  // gap. Derivation only — see variance-breakdown.js; no CAM arithmetic here or
+  // there changes, and the panel cannot state a figure the run did not produce.
+  _lastVarianceBreakdown = (() => {
+    try {
+      const VB = window.VarianceBreakdown;
+      if (!VB) return null;
+      return VB.derive({
+        results, invoices: engineInvoices || [], reconciled: reconciledInvoices,
+        pool: totalPool, billed: totalBilled,
+      });
+    } catch (_) { return null; }
+  })();
+  const _vbStep = (() => {
+    try { return window.VarianceBreakdown ? window.VarianceBreakdown.nextStep(_lastVarianceBreakdown) : null; }
+    catch (_) { return null; }
+  })();
+  // No breakdown module, or nothing it can attribute → no CTA rather than a
+  // button that opens an empty panel. A dead-end is what this change exists to
+  // remove; offering one on the failure path would reintroduce it.
+  const _vbCta = (_lastVarianceBreakdown && _vbStep)
+    ? `<button type="button" class="rcs-variance-cta" onclick="event.stopPropagation();openVarianceDetails()">Next step: ${esc(_vbStep.cta)} &rsaquo;</button>`
+    : '';
+  const _vbOpen = _lastVarianceBreakdown
+    ? ` role="button" tabindex="0" class="rcs-variance-banner" onclick="openVarianceDetails()" onkeydown="if(event.key==='Enter'||event.key===' '){event.preventDefault();openVarianceDetails();}" title="See how this difference is made up"`
+    : '';
+
   const varianceBanner = variance <= 0.05
     ? ''
     : _coverageIncomplete
-      ? `<div style="background:var(--theme-surface);border:1px solid rgba(148,163,184,0.28);color:var(--text-3);padding:10px 14px;border-radius:8px;margin-bottom:12px;font-size:0.85rem;">
+      ? `<div${_vbOpen} style="background:var(--theme-surface);border:1px solid rgba(148,163,184,0.28);color:var(--text-3);padding:10px 14px;border-radius:8px;margin-bottom:12px;font-size:0.85rem;">
         <!-- Was "Expected — partial property coverage ... no action needed."
              The arithmetic was right and the certainty was not. At 37.3%
              coverage the system has NOT established what the remaining 62.7%
@@ -11816,9 +12037,22 @@ function _buildReconciliationSummaryHtml(results, invoices, propName) {
              proRataSum are exactly as they were. Only the claim about what
              they mean has changed. -->
         &#x1F4D0; <strong>Partial property coverage — ${fmt(variance)} currently unallocated.</strong> Total billed (${fmt(totalBilled)}) is less than the expense pool (${fmt(totalPool)}) because the loaded leases cover ${proRataSum.toFixed(1)}% of the property. Whether that remainder is vacant space the landlord absorbs, or space under a lease not yet uploaded, has not been established — upload any remaining leases and re-run to resolve it. Invoices marked not CAM-eligible, excluded by a lease, or reduced by a cap are also outside the billed total. No tenant charge changes when this is resolved: each is billed only its own share.
+        ${_vbCta}
       </div>`
-      : `<div style="background:var(--bgc-431407);border:1px solid #f97316;color:var(--c-fed7aa);padding:10px 14px;border-radius:8px;margin-bottom:12px;font-size:0.85rem;">
-        ⚠️ <strong>Reconciliation variance detected</strong> — total billed (${fmt(totalBilled)}) differs from total expense pool (${fmt(totalPool)}) by <strong>${fmt(variance)}</strong>. Re-check invoice amounts or re-run allocation.
+      : `<div${_vbOpen} style="background:var(--bgc-431407);border:1px solid #f97316;color:var(--c-fed7aa);padding:10px 14px;border-radius:8px;margin-bottom:12px;font-size:0.85rem;">
+        <!-- Was ". Re-check invoice amounts or re-run allocation."
+             The shares add up here, so coverage is not the explanation — but
+             "re-check the invoice amounts" was only ever right for the one cause
+             the panel now calls the unattributed residual, and wrong for the
+             three that actually produce most of these gaps. It sent a manager
+             looking for a typo in a register that was correct. The sentence now
+             states the composition instead, and the CTA names the largest
+             bucket. -->
+        ⚠️ <strong>Reconciliation variance detected</strong> — total billed (${fmt(totalBilled)}) differs from total expense pool (${fmt(totalPool)}) by <strong>${fmt(variance)}</strong>.${
+          _lastVarianceBreakdown
+            ? ` The loaded leases cover ${proRataSum.toFixed(1)}% of the property, so this is not a coverage gap: ${esc(_varianceCauseSentence(_lastVarianceBreakdown))}`
+            : ' Re-check invoice amounts or re-run allocation.'}
+        ${_vbCta}
       </div>`;
 
   const rows = results.map(r => {
@@ -17249,10 +17483,48 @@ function _statementReadinessBlock(tenantName) {
   // whenever the reconciliation as a whole cannot be billed, but a manager
   // deciding what to fix first needs to see which findings are about the tenant
   // in front of them.
-  const esc0 = (s) => String(s == null ? '' : s);
-  const mine = summary.red.filter(f => esc0(f.title).indexOf(tenantName) >= 0
-    || (f.conditions || []).some(c => esc0(c).indexOf(tenantName) >= 0));
+  const mine = summary.red.filter(f => _findingScope(f).tenant === tenantName);
   return { readiness, exposure, red: summary.red, mine, tenantName };
+}
+
+/**
+ * Is this finding about ONE TENANT, or about the property?
+ *
+ * The blocked-statement table used to answer with a substring search for the
+ * tenant's name across the title and conditions, print "This tenant" on a hit
+ * and an em dash on a miss. Two things were wrong with that.
+ *
+ * The em dash said nothing. A manager reading "NAMES THIS TENANT — —" beside a
+ * $38,000 concentration finding has to work out for themselves that the row is
+ * property-level and not a tenant row with a missing name.
+ *
+ * And the substring search over-matched. "Unusually large invoice — SHONAC
+ * CORPORATION: $38,000" is a finding about an INVOICE whose vendor happens to
+ * share a name with a tenant; the old predicate read that as naming the tenant
+ * and highlighted it as theirs, on a row whose money is measured on the expense
+ * side and has nothing to do with that tenant's allocation.
+ *
+ * So scope is read from the explicit marker a finding carries when it is about a
+ * tenant — `Tenant: <name>` in conditions, `impact.scope: tenant:<name>`, or
+ * `conflict.tenant`. Every tenant-scoped detector in reconciliation-engine.js
+ * writes one; the property/pool-level detectors in buildAuditSummary write none.
+ * An authored marker, not a guess about prose.
+ *
+ * FAILS TO PROPERTY, deliberately. A finding with no tenant marker reads as
+ * property-wide, which is a statement about the reconciliation the reader is
+ * already looking at. The other direction — inferring a tenant from text —
+ * is what put another tenant's vendor invoice in this tenant's highlighted rows.
+ */
+function _findingScope(f) {
+  if (!f) return { level: 'property', tenant: null };
+  const cond = (f.conditions || [])
+    .map(c => /^\s*Tenant:\s*(.+?)\s*$/.exec(String(c == null ? '' : c)))
+    .find(Boolean);
+  if (cond) return { level: 'tenant', tenant: cond[1] };
+  const scope = String((f.impact && f.impact.scope) || '');
+  if (scope.indexOf('tenant:') === 0) return { level: 'tenant', tenant: scope.slice(7) };
+  if (f.conflict && f.conflict.tenant) return { level: 'tenant', tenant: String(f.conflict.tenant) };
+  return { level: 'property', tenant: null };
 }
 
 /**
@@ -17292,9 +17564,18 @@ function _renderStatementReadinessBlock(block) {
     if (imp.amount != null && imp.kind !== 'none') {
       subtotals[imp.kind] = (subtotals[imp.kind] || 0) + imp.amount;
     }
-    const isMine = block.mine.indexOf(f) >= 0;
+    // SCOPE, NOT A BLANK. Three states, each of which says something:
+    // this tenant's own exception, another tenant's, or one that belongs to the
+    // property as a whole. The em dash this replaces was indistinguishable from
+    // a missing value on exactly the rows — concentration, missing documents,
+    // duplicate invoices — where there is no tenant to name and none missing.
+    const sc     = _findingScope(f);
+    const isMine = sc.level === 'tenant' && sc.tenant === block.tenantName;
+    const scopeCell = isMine ? '<strong>This tenant</strong>'
+      : sc.level === 'tenant' ? esc(sc.tenant)
+      : '<span class="rpt-scope-property">Property-wide</span>';
     return `<tr${isMine ? ' style="background:rgba(239,68,68,0.06)"' : ''}>
-      <td>${isMine ? '<strong>This tenant</strong>' : '—'}</td>
+      <td>${scopeCell}</td>
       <td>${esc(f.title)}</td>
       <td style="text-align:right;white-space:nowrap">${imp.amount != null ? fmt(imp.amount) : '<span style="color:#64748b">not yet quantified</span>'}</td>
       <td style="white-space:normal;color:#94a3b8">${esc(KIND_LBL[imp.kind] || '—')}</td>
@@ -17333,10 +17614,17 @@ function _renderStatementReadinessBlock(block) {
       Issuing one now would bill a tenant from figures the audit is still holding open.
       ${block.mine.length
         ? `<strong>${block.mine.length} of the ${block.red.length} blocking exception${block.red.length !== 1 ? 's' : ''} name${block.mine.length === 1 ? 's' : ''} ${esc(block.tenantName)} directly</strong> — highlighted below.`
-        : `None of the blocking exceptions name ${esc(block.tenantName)} directly, but they affect the reconciliation this statement would be drawn from.`}
+        : `None of the blocking exceptions name ${esc(block.tenantName)} directly, but they affect the reconciliation this statement would be drawn from.`}${
+        // Say how many rows are not about any tenant. Without it the reader has
+        // to count the Scope column to learn that the largest figure in the
+        // table is a property-level finding rather than someone else's charge.
+        (() => {
+          const pw = block.red.filter(f => _findingScope(f).level === 'property').length;
+          return pw ? ` ${pw} ${pw === 1 ? 'is' : 'are'} property-wide — ${pw === 1 ? 'it belongs' : 'they belong'} to the reconciliation as a whole, not to any one tenant.` : '';
+        })()}
     </p>
     <table class="rpt-table">
-      <thead><tr><th>Names this tenant</th><th>Critical exception</th><th style="text-align:right">Amount</th><th>Treatment</th></tr></thead>
+      <thead><tr><th>Scope</th><th>Critical exception</th><th style="text-align:right">Amount</th><th>Treatment</th></tr></thead>
       <tbody>${rows}${subtotalRows}</tbody>
     </table>
     <div class="rpt-scope-note">
