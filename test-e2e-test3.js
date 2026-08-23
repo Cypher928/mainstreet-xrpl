@@ -573,11 +573,124 @@ const SUPABASE_MOCK = `
       !!confirmedRun.okBanner && /confirmed by the property owner/i.test(confirmedRun.okBanner),
       `note: ${JSON.stringify(confirmedRun.okBanner)}`);
 
+  // ── The decision, and the finding it resolved, must survive a load ────────
+  //
+  // normalizeTenant() is an allow-list and the property blob is re-read through
+  // it on every property LOAD. _edgeCases and _propertyConfirm were written to
+  // storage and dropped on the way back in, so on the next load the mismatch was
+  // gone, the blocker lifted, and the lease reconciled again with nothing on
+  // screen — a safety gate evaporating in the permissive direction.
+  //
+  // THIS MUST BE A REAL PAGE RELOAD. The first version of this check called
+  // selectProperty(null) then selectProperty(id), which re-reads objects already
+  // normalized and held in _props — normalizeTenant never runs, and dropping the
+  // fields from its allow-list left the check green. Verified by mutation: that
+  // version caught neither MUT A nor MUT B.
+  console.log('\n── Both states survive a real page reload ──');
+
+  const READ_DOVER = () => {
+    const d = tenantData.filter(Boolean).find(t => /^Dover/.test(t.tenant_name));
+    if (!d) return { missing: true };
+    return {
+      edges:     !!d._edgeCases,
+      confirm:   !!d._propertyConfirm,
+      mismatch:  _hasPropertyMismatch(d),
+      blocked:   !!_propertyMismatchBlockReason(d),
+      confirmed: window.LeaseIntelligence.isPropertyMismatchConfirmed(d),
+      by:        (d._propertyConfirm || {}).by || null,
+      at:        (d._propertyConfirm || {}).at || null,
+      camBlocking: (deriveTenantReviewState(d).camBlocking || []),
+      engine:    getValidTenants().map(t => t.tenant_name),
+    };
+  };
+
+  // Write the state straight into the stored blob and reload. Going through
+  // savePropertyData() here proved unreliable inside the suite — an earlier
+  // block's state won — and it is not what is under test anyway: the question is
+  // strictly what survives being READ BACK through normalizeTenant().
+  async function seedAndReload(withConfirmation) {
+    await page.evaluate((confirmed) => {
+      const store = window.__store();
+      const t = store.properties[0].data.tenants.find(x => /^Dover/.test(x.tenant_name));
+      t.property_name = 'Northgate Commons';
+      t.fileName = 'dover-lease-v1.pdf';
+      t._edgeCases = { edgeCases: [{ type: 'PROPERTY_NAME_MISMATCH', severity: 'high',
+        description: 'names a different property', confidenceAdjustment: -20 }],
+        totalConfidenceAdjustment: -20 };
+      if (confirmed) {
+        t._propertyConfirm = { extractedName: 'Northgate Commons',
+          documentKey: 'dover-lease-v1.pdf', propertyId: window.__PROP_ID,
+          propertyName: 'Test 3 Property', at: '2026-08-20T10:00:00.000Z',
+          by: 'owner@e2e-test.local' };
+      } else { delete t._propertyConfirm; }
+      localStorage.setItem('__t3_store', JSON.stringify(store));
+    }, withConfirmation);
+    await page.reload({ waitUntil: 'domcontentloaded' });
+    await page.waitForSelector('#loginBtn', { state: 'visible', timeout: 20000 }).catch(() => {});
+    if (await page.evaluate(() => { const b = document.getElementById('loginBtn');
+                                    return !!(b && b.offsetParent !== null); })) {
+      await page.fill('#loginEmail', 't3@e2e-test.local');
+      await page.fill('#loginPassword', 'TestPass123!');
+      await page.click('#loginBtn');
+    }
+    await page.waitForFunction(() => {
+      const a = document.getElementById('appContent');
+      return a && a.style.display !== 'none' && a.style.display !== '';
+    }, { timeout: 30000 });
+    await page.waitForFunction(() => typeof _props !== 'undefined' && _props.length > 0, { timeout: 30000 });
+    await page.evaluate(() => selectProperty(window.__PROP_ID));
+    await page.waitForFunction(() => typeof tenantData !== 'undefined'
+      && tenantData.filter(Boolean).length === 3, { timeout: 20000 });
+    // Guard against a vacuous run: the blob must really carry the state we are
+    // asking the load path to preserve.
+    const inBlob = await page.evaluate(() => {
+      const t = window.__store().properties[0].data.tenants.find(x => /^Dover/.test(x.tenant_name));
+      return { edges: !!t._edgeCases, confirm: !!t._propertyConfirm };
+    });
+    return { loaded: await page.evaluate(READ_DOVER), inBlob };
+  }
+
+  const c = await seedAndReload(true);
+  const u = await seedAndReload(false);
+  const afterConfirmed = c.loaded, afterUnconfirmed = u.loaded;
+  console.log('  stored (confirmed / unconfirmed):', JSON.stringify(c.inBlob), JSON.stringify(u.inBlob));
+  console.log('  confirmed,   after real reload:', JSON.stringify(afterConfirmed));
+  console.log('  unconfirmed, after real reload:', JSON.stringify(afterUnconfirmed));
+
+  yes('the two scenarios really were stored differently (not a vacuous check)',
+      c.inBlob.edges && c.inBlob.confirm && u.inBlob.edges && !u.inBlob.confirm,
+      `stored: ${JSON.stringify(c.inBlob)} vs ${JSON.stringify(u.inBlob)}`);
+
+  yes('the detected mismatch survives a real page reload',
+      afterConfirmed.edges && afterConfirmed.mismatch,
+      'the mismatch is gone after reload — the CAM blocker evaporates on its own');
+  yes('the landlord confirmation survives a real page reload',
+      afterConfirmed.confirm && afterConfirmed.confirmed,
+      'the recorded human decision is lost on reload');
+  yes('who confirmed it and when survive too',
+      afterConfirmed.by === 'owner@e2e-test.local'
+        && afterConfirmed.at === '2026-08-20T10:00:00.000Z',
+      JSON.stringify({ by: afterConfirmed.by, at: afterConfirmed.at }));
+  yes('a CONFIRMED lease stays unblocked after reload',
+      !afterConfirmed.blocked && afterConfirmed.camBlocking.length === 0
+        && afterConfirmed.engine.some(n => /^Dover/.test(n)),
+      JSON.stringify(afterConfirmed));
+  yes('an UNCONFIRMED lease is STILL blocked after reload',
+      afterUnconfirmed.mismatch && afterUnconfirmed.blocked
+        && afterUnconfirmed.camBlocking.length === 1
+        && !afterUnconfirmed.engine.some(n => /^Dover/.test(n)),
+      JSON.stringify(afterUnconfirmed));
+  yes('reloading the page never clears a CAM blocker by itself',
+      afterUnconfirmed.blocked === true,
+      'a reload lifted the blocker with no human decision behind it');
+
   // Restore the untouched Test 3 state for the rest of the suite.
   await page.evaluate(async () => {
     const dover = tenantData.filter(Boolean).find(t => /^Dover/.test(t.tenant_name));
-    const b = window.__doverRestore;
-    dover.property_name = b.property_name; dover._edgeCases = b.edges;
+    // A real page reload cleared window.__doverRestore, so restore to the known
+    // Test 3 baseline explicitly rather than to a captured snapshot.
+    dover.property_name = null;
+    delete dover._edgeCases;
     delete dover._propertyConfirm;
     currentProperty().tenants = tenantData.filter(Boolean);
     await runAllocation();
@@ -618,6 +731,49 @@ const SUPABASE_MOCK = `
       JSON.stringify(recon.rows));
   yes('tenants are billed less than the pool (the gap is not billed to anyone)',
       recon.billed < recon.pool, `billed ${recon.billed} vs pool ${recon.pool}`);
+
+  // ── The unallocated remainder must not be claimed as settled ─────────────
+  //
+  // $42,209.22 of a $67,300 pool is unbilled because only 37.28% of the
+  // property is covered by loaded leases. The system has NOT established what
+  // the other 62.72% is — the coverage finding says so and asks the reader to
+  // upload the remaining leases and re-run. The reconciliation banner used to
+  // call the same figure "Expected" and close with "no action needed", which
+  // contradicts that finding on the same screen and quietly assigns the whole
+  // variance to the landlord.
+  console.log('\n── The unallocated remainder is unresolved, not absorbed ──');
+  const banner = await page.evaluate(() => {
+    const el = document.getElementById('resultsBody') || document.body;
+    const m = el.textContent.replace(/\s+/g, ' ')
+      .match(/Partial property coverage[^]{0,700}?own share\./);
+    return m ? m[0].trim() : null;
+  });
+  console.log('  banner:', banner ? banner.slice(0, 420) : '(not found)');
+  yes('the coverage banner rendered (not a vacuous check)', !!banner,
+      'the partial-coverage banner is not on screen');
+  if (banner) {
+    yes('it names the unallocated amount',
+        /\$42,209\.22/.test(banner), banner.slice(0, 200));
+    yes('it calls the amount unallocated, not absorbed or expected',
+        /currently unallocated/i.test(banner) && !/\bExpected\b/.test(banner),
+        banner.slice(0, 200));
+    yes('it does NOT tell the reader no action is needed',
+        !/no action needed/i.test(banner),
+        'the banner still closes with "no action needed" on an unresolved 62.7% gap');
+    yes('it states that the cause has not been established',
+        /has not been established/i.test(banner), banner.slice(0, 300));
+    yes('it offers both causes without asserting either',
+        /vacant space/i.test(banner) && /not yet uploaded/i.test(banner),
+        banner.slice(0, 300));
+    yes('it names the resolution, matching the coverage finding',
+        /upload any remaining leases and re-run/i.test(banner), banner.slice(0, 300));
+    yes('and it still reassures that tenant charges are unaffected',
+        /billed only its own share/i.test(banner), banner.slice(0, 300));
+  }
+  // The calculation itself is untouched.
+  yes('the arithmetic behind the banner is unchanged',
+      Math.abs((recon.pool - recon.billed) - 42209.22) < 0.01,
+      `pool ${recon.pool} - billed ${recon.billed}`);
 
   // ══ ISSUES 1, 2, 4 — the audit findings as the app derives them ════════════
   console.log('\n── Issues 1/2/4: audit findings and exposure ──');
@@ -1051,7 +1207,7 @@ const SUPABASE_MOCK = `
   // rather than computed wrongly, so an assertion silently disappearing from
   // this file is the exact way its coverage would erode. Change this number
   // deliberately, in the same commit as the assertions.
-  const TOTAL_EXPECTED = 83;
+  const TOTAL_EXPECTED = 99;
   yes(`suite runs all ${TOTAL_EXPECTED} checks`, pass + fail + 1 === TOTAL_EXPECTED,
       `assertion count changed — update TOTAL_EXPECTED deliberately (saw ${pass + fail + 1})`);
 

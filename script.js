@@ -1410,6 +1410,31 @@ function normalizeTenant(d) {
     _error:              d._error              ?? null,
     reviewOverrides:     d.reviewOverrides     ?? {},
     review:              d.review              ?? {},
+    // ── State a CAM blocker depends on ─────────────────────────────────────
+    //
+    // This function is an allow-list, and the property blob is re-read through
+    // it on every property load. These three were written to storage and then
+    // silently dropped on the way back in, which is worse than never saving
+    // them: the record looked complete and the behaviour was not.
+    //
+    // _edgeCases is computed ONCE, at extraction, and never recomputed. Losing
+    // it on load meant _hasPropertyMismatch() went false, _propertyMismatchBlockReason()
+    // returned null, and a lease whose document names a different property
+    // silently became CAM-eligible again on the next page load — the blocker
+    // evaporating in the permissive direction, with the warning gone from the
+    // card too. That is the one direction a safety gate must never fail in.
+    //
+    // _propertyConfirm is the landlord's explicit verification. Dropping it
+    // discarded a recorded human decision — who, when, against which document —
+    // so the audit trail on the record disappeared even though the activity log
+    // entry survived.
+    //
+    // _exclusionAck is the same shape for the exclusion gate. It failed the
+    // safe way (the landlord was asked again) but was lost for the same reason,
+    // and is restored here rather than left as a known-broken sibling.
+    _edgeCases:          d._edgeCases          ?? null,
+    _propertyConfirm:    d._propertyConfirm    ?? null,
+    _exclusionAck:       d._exclusionAck       ?? null,
     capBaseAmount:       d.capBaseAmount       ?? null,
     fieldEvidence:       d.fieldEvidence       ?? {},
     admin_fee_pct:       d.admin_fee_pct       ?? null,
@@ -11745,7 +11770,20 @@ function _buildReconciliationSummaryHtml(results, invoices, propName) {
     ? ''
     : _coverageIncomplete
       ? `<div style="background:var(--theme-surface);border:1px solid rgba(148,163,184,0.28);color:var(--text-3);padding:10px 14px;border-radius:8px;margin-bottom:12px;font-size:0.85rem;">
-        &#x1F4D0; <strong>Expected — partial property coverage.</strong> Total billed (${fmt(totalBilled)}) is less than the expense pool (${fmt(totalPool)}) by ${fmt(variance)} because the loaded leases cover ${proRataSum.toFixed(1)}% of the property. The unallocated share belongs to space no loaded lease covers, and any invoices marked not CAM-eligible, excluded by a lease, or reduced by a cap are also outside the billed total. Each tenant is billed only its own share — no action needed.
+        <!-- Was "Expected — partial property coverage ... no action needed."
+             The arithmetic was right and the certainty was not. At 37.3%
+             coverage the system has NOT established what the remaining 62.7%
+             is: the coverage finding says so explicitly and asks the reader to
+             upload the remaining leases and re-run, because the answer decides
+             whether that share is vacant space the landlord absorbs or a
+             tenant obligation missing from the reconciliation. A banner
+             calling the same figure expected and closing with "no action
+             needed" contradicts that finding on the same screen, and quietly
+             assigns the whole variance to the landlord.
+             The numbers are untouched — totalBilled, totalPool, variance and
+             proRataSum are exactly as they were. Only the claim about what
+             they mean has changed. -->
+        &#x1F4D0; <strong>Partial property coverage — ${fmt(variance)} currently unallocated.</strong> Total billed (${fmt(totalBilled)}) is less than the expense pool (${fmt(totalPool)}) because the loaded leases cover ${proRataSum.toFixed(1)}% of the property. Whether that remainder is vacant space the landlord absorbs, or space under a lease not yet uploaded, has not been established — upload any remaining leases and re-run to resolve it. Invoices marked not CAM-eligible, excluded by a lease, or reduced by a cap are also outside the billed total. No tenant charge changes when this is resolved: each is billed only its own share.
       </div>`
       : `<div style="background:var(--bgc-431407);border:1px solid #f97316;color:var(--c-fed7aa);padding:10px 14px;border-radius:8px;margin-bottom:12px;font-size:0.85rem;">
         ⚠️ <strong>Reconciliation variance detected</strong> — total billed (${fmt(totalBilled)}) differs from total expense pool (${fmt(totalPool)}) by <strong>${fmt(variance)}</strong>. Re-check invoice amounts or re-run allocation.

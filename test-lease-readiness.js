@@ -228,6 +228,35 @@ yes('the ordinary review items are unchanged by confirmation',
     JSON.stringify(dc.reviewItems) === JSON.stringify(du.reviewItems),
     `${JSON.stringify(du.reviewItems)} vs ${JSON.stringify(dc.reviewItems)}`);
 
+console.log('\n── The blocker must survive a property load ──');
+
+// normalizeTenant() is an allow-list, and the property blob is re-read through
+// it on EVERY property load. _edgeCases and _propertyConfirm were written to
+// storage and then dropped on the way back in, which is worse than never saving
+// them: the stored record looked complete while the behaviour was not.
+//
+// _edgeCases is computed once, at extraction, and never recomputed. Losing it
+// made _hasPropertyMismatch() false, so a lease whose document names a different
+// property silently became CAM-eligible again on the next page load, with the
+// warning gone from the card. A safety gate that evaporates on reload is the
+// same defect as one that was never wired — and it fails in the permissive
+// direction, which is the one direction it must never fail in.
+const normalizeSrc = scriptCode.slice(
+  scriptCode.indexOf('function normalizeTenant'),
+  scriptCode.indexOf('function isValidTenant'));
+[
+  ['_edgeCases',       'the detected mismatch itself'],
+  ['_propertyConfirm', "the landlord's explicit confirmation"],
+  ['_exclusionAck',    'the exclusion acknowledgement'],
+].forEach(([field, what]) => {
+  yes(`[source] normalizeTenant carries ${field} — ${what}`,
+      new RegExp(`\\b${field}:\\s*d\\.${field}`).test(normalizeSrc),
+      `${field} is dropped on every property load, so whatever it gates resets`);
+});
+yes('[source] normalizeTenant is still an allow-list, not a spread',
+    !/\.\.\.d[,\s}]/.test(normalizeSrc),
+    'normalizeTenant now spreads the raw record — the allow-list was the point');
+
 console.log('\n── The screen and the button must agree ──');
 
 const bulkSrc = scriptCode.slice(
@@ -282,7 +311,7 @@ yes('the review note is driven by reviewItems, not by missing',
     /_reviewItems\(d\)/.test(scriptCode) && !/_reviewList[\s\S]{0,120}\.missing/.test(scriptCode),
     'the review note reads the wrong list');
 
-const TOTAL_EXPECTED = 41;
+const TOTAL_EXPECTED = 45;
 yes(`suite runs all ${TOTAL_EXPECTED} checks`, pass + fail + 1 === TOTAL_EXPECTED,
     `test count changed — update TOTAL_EXPECTED deliberately (saw ${pass + fail + 1})`);
 
