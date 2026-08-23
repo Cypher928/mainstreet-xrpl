@@ -3562,7 +3562,6 @@ function toInputDate(val) {
 
 function renderTenantFields(i) {
   const d = tenantData[i];
-  const flags = computeFlagsStrict(d);
   const body = document.getElementById(`tb-${i}`);
   body.innerHTML = `
     <div class="extracted">
@@ -3571,7 +3570,7 @@ function renderTenantFields(i) {
         Fields extracted — review and edit below
         <button class="re-btn" onclick="resetTenant(${i})">Re-upload</button>
       </div>
-      ${(() => { const w = getWarnings(flags); return w.length ? `<div class="rc-flags"><div class="rc-flags-title">&#x26A0;&#xFE0F; Needs Review</div>${w.map(m => `<div class="rc-flag-item">${m}</div>`).join('')}</div>` : ''; })()}
+      ${_requiredGapsHtml(d, i, false)}
       ${_leaseEdgeCaseAndReviewNotesHtml(d, i)}
       ${d.leaseExpected
         ? (d.leaseFile instanceof File || d.leaseUrl)
@@ -5567,6 +5566,42 @@ function _confidenceBadgeHtml(level) {
 // but, before this, were only ever written to the browser console — the
 // property manager reviewing the upload never saw them. Pure rendering of
 // existing data; no new detection logic.
+/**
+ * The red "Needs Review" box on a lease card: every required field still blank,
+ * and where to go and fill it in.
+ *
+ * Both call sites used to render getWarnings(computeFlags(d)), which enumerates
+ * missing fields a second time and has no square-footage branch. A lease with no
+ * sqft, no end date and no lease type therefore listed two of its three gaps —
+ * omitting the one that stops the reconciliation. Reading the canonical warnings
+ * instead means the box, the CAM blocker and the Next step CTA cannot disagree
+ * about what is missing.
+ *
+ * `withCta` is off for the single-lease editor, whose fields live in a different
+ * container than the one openReviewItemFix navigates to. Sending a reader to the
+ * bulk list from there would be a new dead end, which is the opposite of the
+ * point.
+ */
+function _requiredGapsHtml(d, i, withCta) {
+  let gaps = [];
+  try { gaps = deriveTenantReviewState(d).requiredGaps || []; } catch (_) { return ''; }
+  if (!gaps.length) return '';
+  let cta = '';
+  if (withCta && i != null && d && d.id) {
+    const r = _reviewResolution(d);
+    if (r) {
+      cta = `<button class="rc-flag-cta" type="button"
+        onclick="event.stopPropagation();openReviewItemFix('${esc(String(d.id)).replace(/'/g, "\\'")}','${esc(String(r.field || ''))}')"
+        >Next step: ${esc(r.cta)}</button>`;
+    }
+  }
+  return `<div class="rc-flags">
+    <div class="rc-flags-title">&#x26A0;&#xFE0F; Needs Review</div>
+    ${gaps.map(m => `<div class="rc-flag-item">${esc(m)}</div>`).join('')}
+    ${cta}
+  </div>`;
+}
+
 function _leaseEdgeCaseAndReviewNotesHtml(d, i) {
   const edgeCases  = (d._edgeCases && Array.isArray(d._edgeCases.edgeCases)) ? d._edgeCases.edgeCases : [];
   const reviewNotes = (d._explainability && Array.isArray(d._explainability.reviewNotes)) ? d._explainability.reviewNotes : [];
@@ -8022,7 +8057,7 @@ function renderBulkResults() {
           ${confBannerHtml || (d._error
             ? `<div class="err-banner" style="margin-bottom:10px;">Extraction error: ${esc(d._error)}</div>`
             : '')}
-          ${(() => { const w = getWarnings(computeFlags(d)); return w.length ? `<div class="rc-flags"><div class="rc-flags-title">&#x26A0;&#xFE0F; Needs Review</div>${w.map(m => `<div class="rc-flag-item">${m}</div>`).join('')}</div>` : ''; })()}
+          ${_requiredGapsHtml(d, i, true)}
           ${_leaseEdgeCaseAndReviewNotesHtml(d, i)}
           <div class="citation-hint">&#x1F4CE; The colored chips below each field show the exact lease clause the AI used to determine each value. Hover a chip to read the full clause and verify accuracy.</div>
           <div class="field-row">

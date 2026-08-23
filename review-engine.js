@@ -59,6 +59,63 @@ window.ReviewEngine = (() => {
     property_name_mismatch: 'lease names a different property, not yet confirmed',
   };
 
+  // ── The required fields the card asks a reader to fill in ─────────────────
+  //
+  // The red "Needs Review" box on a lease card rendered
+  // getWarnings(computeFlags(t)) — a SECOND, older enumeration of what a lease is
+  // missing, and one with no square-footage branch at all. On a lease with no
+  // sqft, no end date and no lease type it listed two of the three gaps, and the
+  // one it silently dropped was the CAM blocker: the field that decides whether
+  // the lease can be reconciled at all. The reader had to scroll the form and
+  // find the blank themselves.
+  //
+  // deriveTenantReviewState already knows about all three, and its warnings are
+  // what camBlocking, reviewItems and the "Next step" CTA are built from. This
+  // maps those same warning types to the sentences the card shows, so the list a
+  // reader is given and the list the product acts on are one list.
+  //
+  // computeFlags IS DELIBERATELY LEFT ALONE, and must stay that way. It also
+  // feeds the health score — `score -= getWarnings(computeFlags(t)).length * 5`
+  // — so adding a type to it would move every score for a lease missing that
+  // field, and missing sqft already carries its own −25. The score was not what
+  // was wrong here; the list on the card was.
+  //
+  // PROPERTY_NAME_MISMATCH is deliberately absent. It is not an absent field but
+  // a present one that contradicts the property, and the card already renders it
+  // with its own explanation and its own Confirm control (see
+  // _leaseEdgeCaseAndReviewNotesHtml). Listing it here would say the same thing
+  // twice in two different vocabularies.
+  const REQUIRED_FIELD_TYPES = [
+    'missing_sqft', 'missing_lease_type', 'missing_start_date', 'missing_end_date',
+  ];
+  const REQUIRED_FIELD_SENTENCE = {
+    missing_sqft:       'Missing leased square footage',
+    missing_lease_type: 'Lease type not specified',
+    missing_start_date: 'Missing start date',
+    missing_end_date:   'Missing end date',
+  };
+  const NO_TERM_SENTENCE = 'No lease term found in document — please enter manually';
+
+  /**
+   * Every required field this lease is still missing, as reader-facing sentences.
+   * Pure: derived from the warnings deriveTenantReviewState already produced.
+   */
+  function requiredFieldGaps(t, warnings) {
+    const types = new Set((warnings || []).map(w => w.type));
+    // Preserved from computeFlags: when the document states no term at all,
+    // "missing start date / missing end date" is two symptoms of one cause, and
+    // the single sentence tells the reader more than the pair does.
+    const noTerm = !!(t && t.doc_has_dates === false && !t.start_date && !t.end_date);
+    const out = [];
+    REQUIRED_FIELD_TYPES.forEach(ty => {
+      if (!types.has(ty)) return;
+      if (noTerm && (ty === 'missing_start_date' || ty === 'missing_end_date')) return;
+      out.push(REQUIRED_FIELD_SENTENCE[ty]);
+    });
+    if (noTerm) out.push(NO_TERM_SENTENCE);
+    return out;
+  }
+
   const _FINANCIAL_PROTECTION_TYPES = new Set([
     'nnn_cap_missing', 'admin_fee_present', 'gross_up_present', 'expense_stop_present',
   ]);
@@ -128,7 +185,7 @@ window.ReviewEngine = (() => {
    */
   function deriveTenantReviewState(t, reconResults) {
     const _empty = {
-      status: 'incomplete', score: 0, warnings: [],
+      status: 'incomplete', score: 0, warnings: [], requiredGaps: [],
       warningGroups: { financialProtections: [], tenantRights: [], amendments: [], dataQuality: [] },
       reviewerConfirmed: false, reviewedAt: null, reviewedBy: null, notes: null,
     };
@@ -242,6 +299,10 @@ window.ReviewEngine = (() => {
     if (reviewerConfirmed || hasLegacyOverride) {
       return {
         status: 'manually_verified', score, warnings, warningGroups, reviewerConfirmed,
+        // Carried on the acknowledged path too. A manual override records that a
+        // human vouched for the lease; it does not fill in a field, and a reader
+        // looking at the card still needs to see what is blank.
+        requiredGaps: requiredFieldGaps(t, warnings),
         reviewedAt: persisted.reviewedAt || null, reviewedBy: persisted.reviewedBy || null,
         notes: persisted.notes || null,
       };
@@ -283,6 +344,7 @@ window.ReviewEngine = (() => {
 
     return {
       status, score, warnings, warningGroups, reviewerConfirmed: false,
+      requiredGaps: requiredFieldGaps(t, warnings),
       reviewedAt: persisted.reviewedAt || null, reviewedBy: persisted.reviewedBy || null,
       notes: persisted.notes || null,
     };
@@ -301,6 +363,9 @@ window.ReviewEngine = (() => {
     MISSING_FIELD_TYPES,
     CAM_BLOCKING_FIELD_TYPES,
     CAM_BLOCKER_REASON,
+    REQUIRED_FIELD_TYPES,
+    REQUIRED_FIELD_SENTENCE,
+    requiredFieldGaps,
     getWarnings,
     computeFlags,
     computeFlagsStrict,

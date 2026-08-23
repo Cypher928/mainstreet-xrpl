@@ -629,9 +629,188 @@ const SUPABASE_MOCK = `
   yes('and the screen does not claim the lease is blocked',
       residual.blockedOnScreen === false, 'the blocked list still names a lease with no blocker');
 
+  // ── THE BENEFITFOCUS CASE: the box must list EVERY blank required field ──
+  //
+  // Reported from the live Pilot. A lease with three blanks on screen — Leased
+  // Sqft, Lease End Date, Lease Type — whose Needs Review box named only two:
+  //
+  //     Missing end date
+  //     Lease type not specified
+  //
+  // The omitted one was the square footage, which is the CAM blocker: the field
+  // that decides whether the lease can be reconciled at all. The reader had to
+  // scroll the form and find the blank themselves.
+  //
+  // Cause: the box rendered getWarnings(computeFlags(d)), a second enumeration of
+  // what a lease is missing, and computeFlags has NO square-footage branch.
+  // deriveTenantReviewState knew about all three the whole time — it is what
+  // camBlocking and the Next step CTA are built from — so the list the reader saw
+  // and the list the product acted on were different lists.
+  console.log('\n══ Benefitfocus: every blank required field is listed ══');
+  const bf = await page.evaluate(async (tid) => {
+    const d = tenantData.filter(Boolean).find(t => t.id === tid);
+    // Exactly what the screenshots show: a name, a start date, nothing else.
+    Object.assign(d, { tenant_name: 'Benefitfocus.com, Inc', leased_sqft: null,
+      start_date: '2016-12-12', end_date: null, lease_type: null,
+      cap: null, capBaseAmount: null });
+    delete d._edgeCases; delete d._propertyConfirm; delete d.review; d.property_name = null;
+    currentProperty().tenants = tenantData.filter(Boolean);
+    if (typeof renderBulkResults === 'function') renderBulkResults();
+    await new Promise(x => setTimeout(x, 300));
+    const i   = tenantData.findIndex(t => t && t.id === tid);
+    const det = document.getElementById('bdet-' + i);
+    if (det && getComputedStyle(det).display === 'none') toggleBulkDetail(i);
+    await new Promise(x => setTimeout(x, 300));
+    const row = document.getElementById('btr-' + i);
+    const box = row ? row.querySelector('.rc-flags') : null;
+    const st  = deriveTenantReviewState(d);
+    // What the form itself shows as blank, read from the inputs — so the
+    // assertion compares the box against the FIELDS, not against another
+    // derivation that could be wrong in the same direction.
+    const blanks = [...row.querySelectorAll('.field')].filter(f => {
+      const c = f.querySelector('input, select');
+      return c && !String(c.value || '').trim();
+    }).map(f => (f.querySelector('label') || {}).textContent.trim());
+    const cta = box ? box.querySelector('.rc-flag-cta') : null;
+    return {
+      idx: i,
+      boxItems: box ? [...box.querySelectorAll('.rc-flag-item')].map(x => x.textContent.trim()) : null,
+      blanksOnForm: blanks,
+      ctaText:  cta ? cta.textContent.replace(/\s+/g, ' ').trim() : null,
+      ctaClick: cta ? (cta.getAttribute('onclick') || '') : null,
+      state: st.status, score: st.score,
+      requiredGaps: st.requiredGaps, camBlocking: st.camBlocking,
+      // The second enumeration, kept only to show it is still the incomplete one
+      // and that nothing was added to it — it feeds the health score.
+      computeFlags: computeFlags(d),
+    };
+  }, T.gsb);
+  R('box lists', bf.boxItems);
+  R('blank fields on the form', bf.blanksOnForm);
+  R('requiredGaps', bf.requiredGaps);
+  R('camBlocking', bf.camBlocking);
+  R('cta', bf.ctaText);
+  R('computeFlags (untouched)', bf.computeFlags);
+  R('score', bf.score);
+
+  yes('the reported shape is reproduced — three required fields blank on the form',
+      bf.blanksOnForm.some(l => /^Leased Sqft/i.test(l))
+        && bf.blanksOnForm.some(l => /^Lease End Date/i.test(l))
+        && bf.blanksOnForm.some(l => /^Lease Type/i.test(l)),
+      JSON.stringify(bf.blanksOnForm));
+  yes('THE DEFECT IS FIXED: the box names the missing square footage',
+      !!bf.boxItems && bf.boxItems.some(x => /square footage/i.test(x)),
+      JSON.stringify(bf.boxItems));
+  yes('and still names the other two',
+      bf.boxItems.some(x => /missing end date/i.test(x))
+        && bf.boxItems.some(x => /lease type not specified/i.test(x)),
+      JSON.stringify(bf.boxItems));
+  yes('the box lists three items, one per blank required field',
+      bf.boxItems.length === 3, JSON.stringify(bf.boxItems));
+  yes('the CAM blocker is among them rather than silently omitted',
+      bf.camBlocking.length === 1 && /Sq Ft/i.test(bf.camBlocking[0]),
+      JSON.stringify(bf.camBlocking));
+
+  yes('the box offers a next step',
+      !!bf.ctaText && /^Next step:/.test(bf.ctaText), String(bf.ctaText));
+  yes('and it resolves the blocker first, not the cosmetic items',
+      /add the leased square footage/i.test(bf.ctaText || ''), String(bf.ctaText));
+  yes('the CTA navigates rather than acknowledging',
+      /(^|;)\s*openReviewItemFix\(/.test(bf.ctaClick || '')
+        && /'leased_sqft'/.test(bf.ctaClick || '')
+        && !/markTenantReviewAcknowledged/.test(bf.ctaClick || ''), String(bf.ctaClick));
+
+  // THE SCORE MUST NOT MOVE. computeFlags feeds the health score
+  // (score -= getWarnings(computeFlags(t)).length * 5), so "fixing" this by
+  // adding a type to computeFlags would silently reprice every sqft-less lease.
+  yes('computeFlags was NOT widened — the health score is untouched',
+      bf.computeFlags.length === 2 && bf.computeFlags.indexOf('missing_sqft') === -1
+        && bf.score === 40,
+      JSON.stringify({ flags: bf.computeFlags, score: bf.score }));
+
+  // ── and the resolution actually resolves ─────────────────────────────────
+  console.log('\n── Following the next step, then resolving it ──');
+  const bfLand = await page.evaluate(async ([tid, i]) => {
+    openReviewItemFix(tid, 'leased_sqft');
+    await new Promise(x => setTimeout(x, 700));
+    const row = document.getElementById('btr-' + i);
+    const hit = row ? row.querySelector('.lease-blocker-flash') : null;
+    return { landed: !!hit,
+             label: hit ? ((hit.querySelector('label') || {}).textContent || '').trim() : null };
+  }, [T.gsb, bf.idx]);
+  R('lands on', bfLand.label);
+  yes('the next step lands on the Leased Sqft field',
+      bfLand.landed && /^Leased Sqft/i.test(bfLand.label || ''), JSON.stringify(bfLand));
+
+  // RESOLVE IT THE WAY A PERSON DOES — by typing into the field the CTA landed
+  // on, not by assigning to the model. Assigning does not survive here: the
+  // navigator leaves that input focused, so the next re-render fires its onblur
+  // and writes the input's still-empty value back over the assignment. Driving
+  // the input is both the honest path and the one that works.
+  const bfFix = await page.evaluate(async (tid) => {
+    const i = tenantData.findIndex(t => t && t.id === tid);
+    const row = document.getElementById('btr-' + i);
+    const fld = [...row.querySelectorAll('.field')]
+      .find(f => /^Leased Sqft/i.test((f.querySelector('label') || {}).textContent || ''));
+    const inp = fld && fld.querySelector('input');
+    if (inp) { inp.focus(); inp.value = '12000'; inp.blur(); }
+    await new Promise(x => setTimeout(x, 300));
+    const d = tenantData.filter(Boolean).find(t => t.id === tid);
+    currentProperty().tenants = tenantData.filter(Boolean);
+    renderBulkResults();
+    await new Promise(x => setTimeout(x, 300));
+    const det = document.getElementById('bdet-' + i);
+    if (det && getComputedStyle(det).display === 'none') toggleBulkDetail(i);
+    await new Promise(x => setTimeout(x, 300));
+    const row2 = document.getElementById('btr-' + i);
+    const box = row2 ? row2.querySelector('.rc-flags') : null;
+    const cta = box ? box.querySelector('.rc-flag-cta') : null;
+    const st  = deriveTenantReviewState(d);
+    return {
+      sqftNow: d.leased_sqft,
+      boxItems: box ? [...box.querySelectorAll('.rc-flag-item')].map(x => x.textContent.trim()) : null,
+      ctaText: cta ? cta.textContent.replace(/\s+/g, ' ').trim() : null,
+      camBlocking: st.camBlocking, inEngine: getValidTenants().some(t => t.id === tid),
+    };
+  }, T.gsb);
+  R('sqft after typing', bfFix.sqftNow);
+  R('box now lists', bfFix.boxItems);
+  R('cta now', bfFix.ctaText);
+  yes('resolving it removes exactly that line from the box',
+      !!bfFix.boxItems && bfFix.boxItems.length === 2
+        && !bfFix.boxItems.some(x => /square footage/i.test(x)),
+      JSON.stringify(bfFix.boxItems));
+  yes('the CAM blocker clears and the lease reaches the engine',
+      bfFix.camBlocking.length === 0 && bfFix.inEngine === true, JSON.stringify(bfFix));
+  yes('and the next step moves on to the next outstanding field',
+      /set the lease type/i.test(bfFix.ctaText || ''), String(bfFix.ctaText));
+
+  const bfDone = await page.evaluate(async (tid) => {
+    const d = tenantData.filter(Boolean).find(t => t.id === tid);
+    const i = tenantData.findIndex(t => t && t.id === tid);
+    d.lease_type = 'Gross'; d.end_date = '2030-01-01';
+    currentProperty().tenants = tenantData.filter(Boolean);
+    renderBulkResults();
+    await new Promise(x => setTimeout(x, 300));
+    const det = document.getElementById('bdet-' + i);
+    if (det && getComputedStyle(det).display === 'none') toggleBulkDetail(i);
+    await new Promise(x => setTimeout(x, 300));
+    const row = document.getElementById('btr-' + i);
+    return {
+      box: !!(row && row.querySelector('.rc-flags')),
+      state: getTenantReviewState(d),
+      gaps: deriveTenantReviewState(d).requiredGaps,
+    };
+  }, T.gsb);
+  R('box still rendered', bfDone.box); R('state', bfDone.state);
+  yes('filling the rest clears the box entirely',
+      bfDone.box === false && bfDone.gaps.length === 0, JSON.stringify(bfDone));
+  yes('and the lease leaves Needs Review',
+      bfDone.state === 'verified', bfDone.state);
+
   yes('no uncaught page errors', errors.length === 0, errors.slice(0, 3).join(' | '));
 
-  const TOTAL_EXPECTED = 59;
+  const TOTAL_EXPECTED = 74;
   yes(`suite runs all ${TOTAL_EXPECTED} checks`, pass + fail + 1 === TOTAL_EXPECTED,
       `assertion count changed — update TOTAL_EXPECTED deliberately (saw ${pass + fail + 1})`);
   await browser.close(); server.close();

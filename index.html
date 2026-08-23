@@ -3116,6 +3116,16 @@
     .rc-flag-item {
       font-size: 0.78rem; color: var(--c-fca5a5); line-height: 1.5; margin-bottom: 6px;
     }
+    /* Needs Review lists what is blank; this takes the reader to the first one.
+       On a phone the blank field can be a full screen below the box that names
+       it, which is how a missing square footage went unnoticed. */
+    .rc-flag-cta {
+      display: inline-block; margin-top: 4px; padding: 5px 11px; border-radius: 6px;
+      border: 1px solid rgba(248,113,113,0.45); background: transparent;
+      color: var(--c-fca5a5); font: inherit; font-size: 0.78rem; font-weight: 600;
+      cursor: pointer;
+    }
+    .rc-flag-cta:hover { background: rgba(248,113,113,0.12); }
     .rc-flag-expl {
       font-size: 0.73rem; color: #f8717188; font-weight: 400; line-height: 1.4;
     }

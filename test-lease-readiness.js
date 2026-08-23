@@ -347,7 +347,81 @@ yes('the review note is driven by reviewItems, not by missing',
     /_reviewItems\(d\)/.test(scriptCode) && !/_reviewList[\s\S]{0,120}\.missing/.test(scriptCode),
     'the review note reads the wrong list');
 
-const TOTAL_EXPECTED = 52;
+// ── The Needs Review box must enumerate every blank required field ──────────
+//
+// Reported from Pilot: a lease with Leased Sqft, Lease End Date and Lease Type
+// all blank listed only the last two. The box rendered
+// getWarnings(computeFlags(d)) — a second enumeration of what a lease is missing
+// — and computeFlags has no square-footage branch, so the one it omitted was the
+// CAM blocker.
+console.log('\n── Needs Review lists every blank required field ──');
+
+const _bfShape = {
+  id: 'bf', tenant_name: 'Benefitfocus.com, Inc', leased_sqft: null,
+  start_date: '2016-12-12', end_date: null, lease_type: null, cap: null,
+};
+const _bfState = RE.deriveTenantReviewState(_bfShape, []);
+
+yes('the reported lease shows three outstanding required fields, not two',
+    _bfState.requiredGaps.length === 3, JSON.stringify(_bfState.requiredGaps));
+yes('and the square footage is one of them',
+    _bfState.requiredGaps.some(g => /square footage/i.test(g)),
+    JSON.stringify(_bfState.requiredGaps));
+yes('the gaps agree with the warnings the blocker and the CTA are built from',
+    _bfState.warnings.filter(w => RE.REQUIRED_FIELD_TYPES.indexOf(w.type) >= 0).length
+      === _bfState.requiredGaps.length,
+    JSON.stringify({ warnings: _bfState.warnings.map(w => w.type), gaps: _bfState.requiredGaps }));
+
+// THE SCORE IS THE REASON computeFlags STAYS AS IT IS. It feeds
+// `score -= getWarnings(computeFlags(t)).length * 5`, and missing sqft already
+// costs −25, so adding a type there would reprice every sqft-less lease.
+yes('computeFlags is NOT the place this was fixed',
+    RE.computeFlags(_bfShape).indexOf('missing_sqft') === -1,
+    JSON.stringify(RE.computeFlags(_bfShape)));
+yes('so the health score is exactly what it was', _bfState.score === 40, String(_bfState.score));
+
+yes('a lease with nothing blank lists nothing',
+    RE.deriveTenantReviewState(
+      { tenant_name: 'Y', leased_sqft: 1000, start_date: '2020-01-01',
+        end_date: '2030-01-01', lease_type: 'Gross' }, []).requiredGaps.length === 0,
+    'a complete lease still reports gaps');
+
+// A document that states no term at all is one cause, not two symptoms. This
+// wording came from computeFlags and has to survive the move.
+const _noTerm = RE.deriveTenantReviewState(
+  { tenant_name: 'X', leased_sqft: null, doc_has_dates: false,
+    start_date: null, end_date: null, lease_type: null }, []).requiredGaps;
+yes('no term in the document collapses to one sentence, not two date lines',
+    _noTerm.some(g => /No lease term found in document/i.test(g))
+      && !_noTerm.some(g => /^Missing (start|end) date$/i.test(g)),
+    JSON.stringify(_noTerm));
+
+// A manual override records that a human vouched for the lease. It does not fill
+// in a field, so the card must still be able to say what is blank.
+const _ack = RE.deriveTenantReviewState(
+  Object.assign({}, _bfShape, { review: { reviewerConfirmed: true } }), []);
+yes('an acknowledged lease still reports its blank fields',
+    _ack.status === 'manually_verified' && _ack.requiredGaps.length === 3,
+    JSON.stringify({ status: _ack.status, gaps: _ack.requiredGaps }));
+
+// PROPERTY_NAME_MISMATCH is deliberately absent: it is not an absent field but a
+// present one that contradicts the property, and the card renders it with its own
+// explanation and its own Confirm control.
+yes('the property mismatch is not duplicated into this list',
+    RE.REQUIRED_FIELD_TYPES.indexOf('property_name_mismatch') === -1,
+    'the mismatch would now be stated twice in two vocabularies');
+
+// Comments stripped first. The rationale above _requiredGapsHtml quotes the
+// expression it replaced, and a checker that reads raw source would find that
+// quote and report the defect as still present — a mistake this session has
+// already made twice.
+const _liveScript = scriptCode.replace(/\/\*[\s\S]*?\*\//g, '').replace(/^\s*\/\/.*$/gm, '');
+yes('[source] both Needs Review boxes read the canonical list',
+    (_liveScript.match(/_requiredGapsHtml\(d, i, (?:true|false)\)/g) || []).length === 2
+      && !/getWarnings\(computeFlags\(d\)\)/.test(_liveScript),
+    'a card still enumerates missing fields from computeFlags');
+
+const TOTAL_EXPECTED = 62;
 yes(`suite runs all ${TOTAL_EXPECTED} checks`, pass + fail + 1 === TOTAL_EXPECTED,
     `test count changed — update TOTAL_EXPECTED deliberately (saw ${pass + fail + 1})`);
 
