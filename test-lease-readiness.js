@@ -67,6 +67,7 @@ const RE = box.window.ReviewEngine;
 const LI = box.window.LeaseIntelligence;
 
 const scriptCode = fs.readFileSync(path.join(__dirname, 'script.js'), 'utf8');
+const engineCode = fs.readFileSync(path.join(__dirname, 'reconciliation-engine.js'), 'utf8');
 
 // Mirror of script.js's deriveTenantReviewState post-processing, built from the
 // engine's own exported sets so it cannot drift from them silently. The source
@@ -286,6 +287,41 @@ yes('[source] bulkApproveReady uses the SAME predicate as the count',
     /deriveTenantReviewState\(d\)\.camBlocking/.test(approveSrc),
     'the button can approve leases the count excluded, or the reverse');
 
+console.log('\n── The calc-state chip means the same thing everywhere it appears ──');
+
+// C3 was fixed at ONE of five call sites. The reconciliation results table was
+// corrected to "CAM calculation" while the Dispute Packet, the Risk & Disputes
+// roster and the CSV export kept "Billing Method" over the same values — so
+// those surfaces read "Billing Method: Calc verified", a heading and a value
+// that do not match, which is worse than the ambiguity being fixed.
+//
+// A whole-file guard rather than a per-site one: the point is that no surface
+// may present these values under a heading that describes something else.
+const calcLabels = ['Calc verified', 'Calc estimated', 'Calc partial', 'Inputs missing'];
+calcLabels.forEach(l => {
+  yes(`[source] the engine still emits "${l}"`,
+      new RegExp(`label: '${l}'`).test(engineCode),
+      'the calc-state label set changed — every surface heading must follow it');
+});
+// Comments quoting the old heading are not renders, so only markup is examined.
+const renderedHeadings = scriptCode
+  .split('\n')
+  .filter(l => !/^\s*(\/\/|\*|<!--)/.test(l))
+  .join('\n');
+yes('[source] no rendered surface heads these values "Billing Method"',
+    !/>Billing Method<|'Billing Method'|<td>Billing Method<\/td>/.test(renderedHeadings),
+    'a surface still labels the CAM calculation state as a billing method');
+yes('[source] the CSV export column matches the on-screen wording',
+    /'CAM Calculation'/.test(scriptCode) && /'Allocation Flags'/.test(scriptCode),
+    'the CSV still exports the old column names — this is the copy most likely to '
+    + 'reach a lender pack with nobody left to explain it');
+// Every place the chip is rendered should say what it describes.
+const chipRenders = (scriptCode.match(/rc-calc-state \$\{/g) || []).length;
+const chipTitled  = (scriptCode.match(/rc-calc-state \$\{[^}]+\}"\s+title=/g) || []).length;
+yes(`[source] every calc-state chip carries its scope note (${chipTitled}/${chipRenders})`,
+    chipRenders > 0 && chipTitled === chipRenders,
+    `${chipRenders - chipTitled} chip render(s) have no title explaining what is verified`);
+
 console.log('\n── The wording must not overstate what is blocked ──');
 
 // "cannot be reconciled" is a factual claim about the engine. It may appear only
@@ -311,7 +347,7 @@ yes('the review note is driven by reviewItems, not by missing',
     /_reviewItems\(d\)/.test(scriptCode) && !/_reviewList[\s\S]{0,120}\.missing/.test(scriptCode),
     'the review note reads the wrong list');
 
-const TOTAL_EXPECTED = 45;
+const TOTAL_EXPECTED = 52;
 yes(`suite runs all ${TOTAL_EXPECTED} checks`, pass + fail + 1 === TOTAL_EXPECTED,
     `test count changed — update TOTAL_EXPECTED deliberately (saw ${pass + fail + 1})`);
 

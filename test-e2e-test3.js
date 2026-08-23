@@ -769,6 +769,62 @@ const SUPABASE_MOCK = `
       screen.colHdr.includes('CAM calculation') && !screen.colHdr.includes('Billing Method'),
       JSON.stringify(screen.colHdr));
 
+  // ── C3 at the OTHER call sites ────────────────────────────────────────────
+  //
+  // The first C3 fix corrected the results table and left four other renders of
+  // the same chip alone, so the Dispute Packet and the Risk & Disputes roster
+  // showed "Billing Method: Calc verified" — a heading and a value that do not
+  // match — and the CSV exported the old column name into whatever a lender or
+  // an auditor opened it in. Rendered here, not inferred from source.
+  console.log('\n── The calc-state chip reads the same on every surface ──');
+  const surfaces = await page.evaluate(async () => {
+    const out = {};
+    const body = () => (document.getElementById('rptBody')?.textContent || '').replace(/\s+/g, ' ').trim();
+
+    // Risk & Disputes roster.
+    const b0 = document.getElementById('rptBody'); if (b0) b0.innerHTML = '';
+    await generateLandlordExport();
+    out.riskDisputes = body();
+
+    // Dispute Packet needs a dispute to exist; raise one on a real result.
+    const r = lastResults[0];
+    disputes.push({
+      id: disputes.length, tenantName: r.name, status: 'open', severity: 'medium',
+      disputeType: 'allocation_mismatch', vendor: 'Alpha Landscaping', category: 'landscaping',
+      tenantShare: 100, amount: 100, reason: 'e2e fixture', createdAt: new Date().toISOString(),
+      history: [], messages: [],
+    });
+    const b1 = document.getElementById('rptBody'); if (b1) b1.innerHTML = '';
+    generateDisputePacket(disputes[disputes.length - 1].id);
+    out.disputePacket = body();
+    disputes.pop();
+
+    // The chip labels the engine actually produced on this run.
+    out.chipLabels = [...new Set(lastResults.map(x =>
+      _deriveCalcState(x, tenantData.find(t => t && t.id === x.tenantId)).label))];
+    return out;
+  });
+  console.log('  chip labels in play :', JSON.stringify(surfaces.chipLabels));
+  console.log('  Risk & Disputes hdr :', (surfaces.riskDisputes.match(/Pro-Rata\s+\S+[^|]{0,40}/) || [''])[0].slice(0, 70));
+  console.log('  Dispute Packet row  :', (surfaces.disputePacket.match(/CAM calculation[^A-Z]{0,40}|Billing Method[^A-Z]{0,40}/) || ['(neither)'])[0]);
+
+  yes('the chip actually rendered on both surfaces (not a vacuous check)',
+      surfaces.chipLabels.length > 0
+        && surfaces.chipLabels.some(l => surfaces.riskDisputes.includes(l))
+        && surfaces.chipLabels.some(l => surfaces.disputePacket.includes(l)),
+      `labels ${JSON.stringify(surfaces.chipLabels)} not found on both surfaces`);
+  yes('C3 the Risk & Disputes roster heads the column "CAM calculation"',
+      /CAM calculation/i.test(surfaces.riskDisputes) && !/Billing Method/i.test(surfaces.riskDisputes),
+      surfaces.riskDisputes.slice(0, 300));
+  yes('C3 the Dispute Packet labels the row "CAM calculation"',
+      /CAM calculation/i.test(surfaces.disputePacket) && !/Billing Method/i.test(surfaces.disputePacket),
+      surfaces.disputePacket.slice(0, 300));
+  yes('C4 the roster names its flags column by scope too',
+      /Allocation flags/i.test(surfaces.riskDisputes), surfaces.riskDisputes.slice(0, 300));
+  yes('and neither surface reverts to a bare "Verified"',
+      !/\bVerified\b/.test(surfaces.riskDisputes) && !/\bVerified\b/.test(surfaces.disputePacket),
+      'a bare Verified is back on one of these surfaces');
+
   // ── I11: the one required next action, on a BLOCKED run ──────────────────
   //
   // recommendations[] lists advisory items with equal weight, so a manager could
@@ -1298,7 +1354,7 @@ const SUPABASE_MOCK = `
   // rather than computed wrongly, so an assertion silently disappearing from
   // this file is the exact way its coverage would erode. Change this number
   // deliberately, in the same commit as the assertions.
-  const TOTAL_EXPECTED = 114;
+  const TOTAL_EXPECTED = 119;
   yes(`suite runs all ${TOTAL_EXPECTED} checks`, pass + fail + 1 === TOTAL_EXPECTED,
       `assertion count changed — update TOTAL_EXPECTED deliberately (saw ${pass + fail + 1})`);
 

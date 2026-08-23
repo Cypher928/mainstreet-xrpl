@@ -10562,7 +10562,7 @@ async function runAllocation() {
     const _calcSt = _deriveCalcState(r, _liveT);
 
     html += `<div class="result-card${flags.length ? ' result-card--flagged' : ''}" id="${_resultCardAnchorId(r.name)}">
-      <div class="r-name">${esc(r.name)}${r.unitNumber ? `<span class="rc-unit"> · Unit ${esc(r.unitNumber)}</span>` : ''}<span class="rc-calc-state ${_calcSt.cls}">${_calcSt.label}</span></div>
+      <div class="r-name">${esc(r.name)}${r.unitNumber ? `<span class="rc-unit"> · Unit ${esc(r.unitNumber)}</span>` : ''}<span class="rc-calc-state ${_calcSt.cls}" title="Describes the CAM calculation for this row, not the tenant's standing. Audit exceptions are listed in the AI Audit Summary.">${_calcSt.label}</span></div>
       <div class="result-grid">
         ${stat('Total', fmt(r.allocatedAmount))}
         <div class="result-stat"><div class="stat-label">Pro-Rata <span class="stat-info-tip" title="The percentage of the property occupied by this tenant. This determines their share of common area expenses: Pro-Rata % = Tenant Sqft ÷ Total Property Sqft.">&#x24D8;</span></div><div class="stat-value">${(r.proRata * 100).toFixed(2)}%</div></div>
@@ -16517,7 +16517,12 @@ function generateDisputePacket(disputeId) {
         <tr><td>Raw Allocation</td><td style="text-align:right">${fmt(recon.capApplied ? recon.totalAllocated + recon.capAdjustment : recon.totalAllocated)}</td></tr>
         ${recon.capApplied ? `<tr><td>Cap Reduction</td><td style="text-align:right;color:var(--c-fb923c);">−${fmt(recon.capAdjustment)}</td></tr>` : ''}
         <tr class="total-row"><td>Final CAM Charge</td><td style="text-align:right">${fmt(recon.totalAllocated)}</td></tr>
-        ${calcSt ? `<tr><td>Billing Method</td><td style="text-align:right"><span class="rc-calc-state ${calcSt.cls}">${calcSt.label}</span></td></tr>` : ''}
+        <!-- Same chip, same label set, same meaning as the reconciliation
+             results table: it describes the CAM arithmetic, not the tenant.
+             This row was left reading "Billing Method" when the results table
+             was corrected, so the packet showed "Billing Method: Calc verified"
+             — a heading and a value that do not match. -->
+        ${calcSt ? `<tr><td>CAM calculation</td><td style="text-align:right"><span class="rc-calc-state ${calcSt.cls}" title="Describes the CAM calculation for this tenant, not the tenant's standing. Audit exceptions are listed in the AI Audit Summary.">${calcSt.label}</span></td></tr>` : ''}
       </tbody>
     </table>` : '';
 
@@ -16733,7 +16738,7 @@ function generateLandlordExport() {
       <td>${esc(r.name)}</td>
       <td style="text-align:right">${fmt(r.totalAllocated)}</td>
       <td style="text-align:right">${(r.proRata * 100).toFixed(2)}%</td>
-      <td><span class="rc-calc-state ${calcSt.cls}">${calcSt.label}</span></td>
+      <td><span class="rc-calc-state ${calcSt.cls}" title="Describes the CAM calculation for this row, not the tenant's standing. Audit exceptions are listed in the AI Audit Summary.">${calcSt.label}</span></td>
       <td style="text-align:center">${flagCnt > 0 ? `<span style="color:var(--c-fbbf24)">${flagCnt}</span>` : '—'}</td>
     </tr>`;
   }).join('');
@@ -16806,7 +16811,7 @@ function generateLandlordExport() {
 
     <div class="rpt-section-title">Reconciliation Completeness by Tenant</div>
     <table class="rpt-table">
-      <thead><tr><th>Tenant</th><th style="text-align:right">Allocated</th><th style="text-align:right">Pro-Rata</th><th>Billing Method</th><th style="text-align:center">Flags</th></tr></thead>
+      <thead><tr><th>Tenant</th><th style="text-align:right">Allocated</th><th style="text-align:right">Pro-Rata</th><th title="Whether the CAM arithmetic for this row used sound inputs. Not a statement about the lease or the tenant — audit exceptions are reported in the AI Audit Summary.">CAM calculation</th><th style="text-align:center" title="Per-tenant allocation ambiguity only — approximate square footage, unknown lease type, square-footage overflow or a base-year mismatch. Audit exceptions are counted separately.">Allocation flags</th></tr></thead>
       <tbody>${tenantRows}</tbody>
     </table>
 
@@ -16928,7 +16933,12 @@ function exportReconciliationCSV() {
     return;
   }
   const rows = [
-    ['Tenant', 'Unit', 'Sqft', 'Pro-Rata % (0-100)', 'Cap Applied', 'Cap Reduction (negative = savings)', 'Allocated', 'Invoices', 'AI Read Confidence (%)', 'Billing Method', 'Flags'],
+    // 'CAM Calculation' and 'Allocation Flags', matching every on-screen
+    // surface. This column carries calcSt.label — "Calc verified", "Inputs
+    // missing" — which describes the arithmetic, not the tenant, and a CSV
+    // headed "Billing Method" is the version most likely to be pasted into a
+    // lender pack or an audit response with nobody left to explain it.
+    ['Tenant', 'Unit', 'Sqft', 'Pro-Rata % (0-100)', 'Cap Applied', 'Cap Reduction (negative = savings)', 'Allocated', 'Invoices', 'AI Read Confidence (%)', 'CAM Calculation', 'Allocation Flags'],
     ...lastResults.map(r => {
       const liveT  = tenantData.find(t => t && t.id === r.tenantId);
       const calcSt = _deriveCalcState(r, liveT);
