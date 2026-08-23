@@ -5491,13 +5491,13 @@ async function bulkApproveReady() {
   if (!ready.length) {
     showToast(blocked.length
       ? `${blocked.length} lease${blocked.length === 1 ? ' is' : 's are'} extracted but missing values CAM requires — open each and fill them in.`
-      : 'All ready tenants are already confirmed.',
+      : 'Every CAM-ready extraction is already confirmed.',
       blocked.length ? { color: '#92400e', textColor: '#fef3c7', duration: 6000 } : undefined);
     return;
   }
   for (const { i } of ready) await saveBulkTenant(i);
-  showToast(`✓ ${ready.length} tenant${ready.length !== 1 ? 's' : ''} approved.` +
-    (blocked.length ? ` ${blocked.length} left unapproved — missing values CAM requires.` : ''));
+  showToast(`✓ ${ready.length} extraction${ready.length !== 1 ? 's' : ''} confirmed as CAM-ready.` +
+    (blocked.length ? ` ${blocked.length} left unconfirmed — missing values CAM requires.` : ''));
 }
 
 // Shows/hides the stale-results warning banner based on _resultsStale flag.
@@ -8109,17 +8109,25 @@ function renderBulkResults() {
         `<button class="bulk-filter-pill${_bulkFilter.status===v?' active':''}" onclick="setBulkFilter('status','${v}')">${l}</button>`
       ).join('')}
     </div>
-    ${_readyCount > 0 ? `<button class="bulk-approve-all-btn" onclick="bulkApproveReady()">Approve ${_readyCount} ready for CAM</button>` : ''}
+    <!-- "Confirm ... extractions", not "Approve". In a CRE accounting workflow
+         "Approve" carries the weight of approving lease terms for billing, and
+         a property manager could reasonably read it that way. What this control
+         actually does is confirm that an extraction is complete enough to take
+         part in the CAM calculation — it says nothing about whether the lease
+         terms are right, and it does not clear anything for billing. The audit
+         gate does that, separately. Naming the object ("extractions") is what
+         makes the two impossible to confuse. -->
+    ${_readyCount > 0 ? `<button class="bulk-approve-all-btn" onclick="bulkApproveReady()">Confirm ${_readyCount} CAM-ready extraction${_readyCount === 1 ? '' : 's'}</button>` : ''}
   </div>
   ${_blockedCount > 0 ? `<div class="bulk-cam-blocked">
     <strong>${_blockedCount} lease${_blockedCount === 1 ? '' : 's'} extracted but not ready for CAM</strong> —
     ${_blockedList.map(d => `${esc(d.tenant_name || 'Unnamed')} (missing ${esc(_camBlockers(d).join(', '))})`).join('; ')}.
-    These are not included in the approve button above and cannot be reconciled until the missing values are entered.
+    These are not included in the confirm button above and cannot be reconciled until the missing values are entered.
   </div>` : ''}
   ${_reviewList.length > 0 ? `<div class="bulk-cam-review">
     <strong>${_reviewList.length} lease${_reviewList.length === 1 ? '' : 's'} will reconcile but ${_reviewList.length === 1 ? 'has' : 'have'} open review items</strong> —
     ${_reviewList.map(d => `${esc(d.tenant_name || 'Unnamed')} (${esc(_reviewItems(d).join(', '))})`).join('; ')}.
-    These do not stop the CAM calculation. Approving confirms the extraction, not the lease terms.
+    These do not stop the CAM calculation. Confirming validates the extraction, not the lease terms.
   </div>` : ''}` : '';
 
   el.innerHTML = `

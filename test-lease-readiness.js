@@ -131,9 +131,19 @@ const bulkSrc = scriptCode.slice(
 yes('[source] the readiness count reads camBlocking, not missing',
     /_camBlockers\s*=\s*\(d\)\s*=>\s*\{[\s\S]{0,200}?deriveTenantReviewState\(d\)\.camBlocking/.test(bulkSrc),
     'the bulk screen is back on the whole missing[] set');
+// The control confirms EXTRACTIONS, and its label must name that object.
+// "Approve N ready for CAM" was accurate about the count and vague about the
+// noun: in a CRE accounting workflow "Approve" reads as approving lease terms
+// for billing, which this control does not do and cannot do — the audit gate
+// decides billing, separately. Both halves are asserted: the count, and the
+// word that says what is being confirmed.
 yes('[source] the button names the CAM-ready count',
-    /Approve \$\{_readyCount\} ready for CAM/.test(scriptCode),
-    'the approve button no longer states what it is approving');
+    /Confirm \$\{_readyCount\} CAM-ready extraction/.test(scriptCode),
+    'the confirm button no longer states how many extractions it will confirm');
+yes('[source] the button says it confirms extractions, not approves leases',
+    /Confirm \$\{_readyCount\} CAM-ready extraction/.test(scriptCode)
+      && !/>Approve \$\{_readyCount\}/.test(scriptCode),
+    'the control still reads as approving the leases themselves');
 
 const approveSrc = scriptCode.slice(
   scriptCode.indexOf('async function bulkApproveReady'),
@@ -160,14 +170,14 @@ yes('a separate note exists for leases that reconcile with open review items',
     'reconcilable leases with review items are invisible or lumped in with blocked ones');
 yes('the review note does NOT claim those leases cannot be reconciled',
     !/cannot be reconciled/.test(reviewBlock), 'the untrue claim is back');
-yes('the review note says approval confirms extraction, not lease terms',
-    /Approving confirms the extraction, not the lease terms/.test(reviewBlock),
-    '"ready for CAM" can still be read as "verified"');
+yes('the review note says confirmation validates the extraction, not lease terms',
+    /Confirming validates the extraction, not the lease terms/.test(reviewBlock),
+    '"CAM-ready" can still be read as "verified"');
 yes('the review note is driven by reviewItems, not by missing',
     /_reviewItems\(d\)/.test(scriptCode) && !/_reviewList[\s\S]{0,120}\.missing/.test(scriptCode),
     'the review note reads the wrong list');
 
-const TOTAL_EXPECTED = 24;
+const TOTAL_EXPECTED = 25;
 yes(`suite runs all ${TOTAL_EXPECTED} checks`, pass + fail + 1 === TOTAL_EXPECTED,
     `test count changed — update TOTAL_EXPECTED deliberately (saw ${pass + fail + 1})`);
 

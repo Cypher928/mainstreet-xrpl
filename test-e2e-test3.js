@@ -310,7 +310,7 @@ const SUPABASE_MOCK = `
     });
     const btn = [...el.querySelectorAll('button')]
       .map(b => b.textContent.replace(/\s+/g, ' ').trim())
-      .find(t => /approve/i.test(t));
+      .find(t => /confirm .* extraction/i.test(t));
     const blocked = el.querySelector('.bulk-cam-blocked');
     return {
       full: el.textContent.replace(/\s+/g, ' ').trim(),
@@ -327,8 +327,9 @@ const SUPABASE_MOCK = `
   console.log('  review block   :', bulk.reviewText ? bulk.reviewText.slice(0, 240) : '(none)');
   bulk.cards.forEach(c => console.log('  card:', c.text.slice(0, 150)));
 
-  yes('the approve control names the CAM-ready count, not a bare "ready"',
-      !!bulk.approveBtn && /ready for CAM/i.test(bulk.approveBtn),
+  yes('the control names what it confirms — CAM-ready extractions, not leases',
+      !!bulk.approveBtn && /CAM-ready extraction/i.test(bulk.approveBtn)
+        && !/^approve/i.test(bulk.approveBtn),
       `button reads ${JSON.stringify(bulk.approveBtn)}`);
   // getValidTenants() excludes a lease only for a missing name, sqft <= 0, a
   // failed extraction or a property mismatch. Dover and Paradigm have square
@@ -352,13 +353,14 @@ const SUPABASE_MOCK = `
       `review block reads: ${JSON.stringify((bulk.reviewText || '').slice(0, 240))}`);
   yes('the review note does not claim those leases cannot be reconciled',
       !!bulk.reviewText && /do not stop the CAM calculation/i.test(bulk.reviewText)
+        && /Confirming validates the extraction, not the lease terms/i.test(bulk.reviewText)
         && !/cannot be reconciled/i.test(bulk.reviewText),
       `review block reads: ${JSON.stringify((bulk.reviewText || '').slice(0, 240))}`);
 
   // Does the button approve exactly what it advertises?
   const approveMatch = await page.evaluate(() => {
     const el  = document.getElementById('bulkResults');
-    const btn = [...el.querySelectorAll('button')].find(b => /approve/i.test(b.textContent));
+    const btn = [...el.querySelectorAll('button')].find(b => /confirm .* extraction/i.test(b.textContent));
     const advertised = parseInt((btn?.textContent || '').replace(/[^0-9]/g, ''), 10);
     // count what the same predicate would approve
     const blockers = (d) => {
