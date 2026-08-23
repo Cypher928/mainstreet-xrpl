@@ -388,6 +388,205 @@ const SUPABASE_MOCK = `
       approveMatch.advertised === approveMatch.wouldApprove && sharesPredicate,
       `advertises ${approveMatch.advertised}, would approve ${approveMatch.wouldApprove}`);
 
+  // ══ THE INVARIANT ══════════════════════════════════════════════════════════
+  //
+  // Every lease the UI says "will reconcile" must actually be eligible for
+  // runAllocation(), and every lease the engine excludes for a blocking
+  // condition must read as blocked on the readiness screen. The screen and the
+  // engine have now disagreed twice — once over square footage, once over an
+  // unconfirmed property mismatch — and both times a matching COUNT hid the
+  // disagreement. So this compares the two SETS by name, not their sizes.
+  //
+  // getValidTenants() is the engine's own filter, called here directly.
+  // _approvable is a strict subset of it by design: it additionally excludes
+  // leases a human has already confirmed (_userConfirmed), which reconcile
+  // perfectly well but need no further confirming.
+  console.log('\n── Invariant: the readiness screen and the engine must agree ──');
+  const agree = await page.evaluate(() => {
+    const camBlockers  = (d) => { try { return deriveTenantReviewState(d).camBlocking || []; } catch (_) { return []; } };
+    const extractionOk = (d) => !d._needsReview && !d.extractionFailed && d.status !== 'pending'
+                                 && d.tenant_name && !d._userConfirmed;
+    const ts = tenantData.filter(Boolean);
+    const advertised = ts.filter(d => extractionOk(d) && camBlockers(d).length === 0).map(d => d.tenant_name);
+    const blockedUI  = ts.filter(d => extractionOk(d) && camBlockers(d).length >  0).map(d => d.tenant_name);
+    const engineOk   = getValidTenants().map(t => t.tenant_name);
+    return {
+      advertised, blockedUI, engineOk,
+      advertisedNotEligible: advertised.filter(n => !engineOk.includes(n)),
+      engineExcludedNotShownBlocked: ts
+        .filter(d => extractionOk(d) && !engineOk.includes(d.tenant_name) && camBlockers(d).length === 0)
+        .map(d => d.tenant_name),
+    };
+  });
+  console.log('  UI says will reconcile :', JSON.stringify(agree.advertised));
+  console.log('  UI says blocked        :', JSON.stringify(agree.blockedUI));
+  console.log('  engine will accept     :', JSON.stringify(agree.engineOk));
+  yes('every lease the UI advertises as CAM-ready IS eligible for runAllocation',
+      agree.advertisedNotEligible.length === 0,
+      `advertised but the engine drops: ${JSON.stringify(agree.advertisedNotEligible)}`);
+  yes('every lease the engine drops reads as blocked on the readiness screen',
+      agree.engineExcludedNotShownBlocked.length === 0,
+      `engine drops but the UI calls CAM-ready: ${JSON.stringify(agree.engineExcludedNotShownBlocked)}`);
+
+  // ══ The Dover scenario, end to end ═════════════════════════════════════════
+  //
+  // The Pilot finding: a lease whose document names a different property was
+  // advertised as one of "2 leases will reconcile" while runAllocation dropped
+  // it, silently moving $5,514.56 from the tenant to the landlord.
+  console.log('\n── The Pilot scenario: an unconfirmed property mismatch ──');
+  const mismatch = await page.evaluate(async () => {
+    const prop  = currentProperty();
+    const dover = tenantData.filter(Boolean).find(t => /^Dover/.test(t.tenant_name));
+    const before = { name: dover.tenant_name, property_name: dover.property_name,
+                     edges: dover._edgeCases, confirm: dover._propertyConfirm };
+    // Make the lease name a different building, then run the REAL detector.
+    dover.property_name = 'Northgate Commons';
+    dover.fileName = dover.fileName || 'dover-lease.pdf';
+    dover._edgeCases = window.LeaseIntelligence.detectLeaseEdgeCases(
+      dover, { currentPropertyName: prop.name });
+    prop.tenants = tenantData.filter(Boolean);
+
+    const camBlockers  = (d) => { try { return deriveTenantReviewState(d).camBlocking || []; } catch (_) { return []; } };
+    const extractionOk = (d) => !d._needsReview && !d.extractionFailed && d.status !== 'pending'
+                                 && d.tenant_name && !d._userConfirmed;
+
+    renderBulkResults();
+    const el = document.getElementById('bulkResults');
+    const g  = (sel) => { const n = el.querySelector(sel); return n ? n.textContent.replace(/\s+/g,' ').trim() : null; };
+    const btn = [...el.querySelectorAll('button')].map(b => b.textContent.replace(/\s+/g,' ').trim())
+      .find(t => /confirm .* extraction/i.test(t));
+
+    await runAllocation();
+    const reconciled = lastResults.map(r => r.name);
+
+    // bulkApproveReady must refuse the same lease the count refuses.
+    const wouldApprove = tenantData.filter(Boolean)
+      .filter(d => extractionOk(d) && camBlockers(d).length === 0).map(d => d.tenant_name);
+
+    const out = {
+      detected: (dover._edgeCases.edgeCases || []).map(e => e.type),
+      confirmed: window.LeaseIntelligence.isPropertyMismatchConfirmed(dover),
+      blockReason: !!_propertyMismatchBlockReason(dover),
+      camBlocking: camBlockers(dover),
+      button: btn || null,
+      blocked: g('.bulk-cam-blocked'),
+      review:  g('.bulk-cam-review'),
+      engineOk: getValidTenants().map(t => t.tenant_name),
+      reconciled, wouldApprove,
+      billed: +lastResults.reduce((s, r) => s + (Number(r.totalAllocated) || 0), 0).toFixed(2),
+      banner: (() => { const n = document.querySelector('.cam-skip-warning');
+        return n ? n.textContent.replace(/\s+/g,' ').trim() : null; })(),
+    };
+    window.__doverRestore = before;
+    return out;
+  });
+  console.log('  detected      :', JSON.stringify(mismatch.detected));
+  console.log('  confirmed     :', mismatch.confirmed, ' blocking:', mismatch.blockReason);
+  console.log('  camBlocking   :', JSON.stringify(mismatch.camBlocking));
+  console.log('  button        :', JSON.stringify(mismatch.button));
+  console.log('  blocked block :', mismatch.blocked);
+  console.log('  review block  :', mismatch.review);
+  console.log('  engine accepts:', JSON.stringify(mismatch.engineOk));
+  console.log('  reconciled    :', JSON.stringify(mismatch.reconciled), ' billed $' + mismatch.billed);
+
+  yes('the mismatch is detected and unconfirmed (not a vacuous scenario)',
+      mismatch.detected.includes('PROPERTY_NAME_MISMATCH') && mismatch.confirmed === false
+        && mismatch.blockReason === true,
+      JSON.stringify(mismatch));
+  yes('the readiness model now sees it as a CAM blocker',
+      mismatch.camBlocking.some(b => /different property/i.test(b)),
+      JSON.stringify(mismatch.camBlocking));
+  yes('the count drops to the one lease that can actually reconcile',
+      !!mismatch.button && /\b1\b/.test(mismatch.button), `button reads ${JSON.stringify(mismatch.button)}`);
+  yes('Dover is named as blocked, with the reason',
+      !!mismatch.blocked && /^.*Dover/i.test(mismatch.blocked)
+        && /different property/i.test(mismatch.blocked),
+      `blocked block: ${JSON.stringify(mismatch.blocked)}`);
+  yes('Dover is NOT advertised as a lease that will reconcile',
+      !mismatch.review || !/Dover/i.test(mismatch.review),
+      `review block still names Dover: ${JSON.stringify(mismatch.review)}`);
+  yes('bulk confirmation cannot confirm Dover',
+      !mismatch.wouldApprove.some(n => /^Dover/.test(n)),
+      `would confirm: ${JSON.stringify(mismatch.wouldApprove)}`);
+  yes('the engine excludes Dover',
+      !mismatch.engineOk.some(n => /^Dover/.test(n)), JSON.stringify(mismatch.engineOk));
+  yes('the allocation excludes Dover',
+      !mismatch.reconciled.some(n => /^Dover/.test(n)), JSON.stringify(mismatch.reconciled));
+  yes('the blocking reason is visible after the run too',
+      !!mismatch.banner && /different property/i.test(mismatch.banner),
+      `banner: ${JSON.stringify(mismatch.banner)}`);
+  yes('screen and engine now agree on the same lease',
+      (!mismatch.review || !/Dover/i.test(mismatch.review))
+        && !mismatch.reconciled.some(n => /^Dover/.test(n)),
+      'the UI and the engine still disagree about Dover');
+
+  // ══ The same lease, confirmed by the landlord ══════════════════════════════
+  console.log('\n── The same mismatch, explicitly confirmed ──');
+  const confirmedRun = await page.evaluate(async () => {
+    const dover = tenantData.filter(Boolean).find(t => /^Dover/.test(t.tenant_name));
+    dover._propertyConfirm = {
+      extractedName: dover.property_name,
+      documentKey:   window.LeaseIntelligence.propertyDocumentKey(dover),
+      propertyId:    activePropId,
+      confirmedAt:   '2026-08-23T00:00:00.000Z',
+    };
+    currentProperty().tenants = tenantData.filter(Boolean);
+    const camBlockers = (d) => { try { return deriveTenantReviewState(d).camBlocking || []; } catch (_) { return []; } };
+    renderBulkResults();
+    const el = document.getElementById('bulkResults');
+    const g  = (sel) => { const n = el.querySelector(sel); return n ? n.textContent.replace(/\s+/g,' ').trim() : null; };
+    const btn = [...el.querySelectorAll('button')].map(b => b.textContent.replace(/\s+/g,' ').trim())
+      .find(t => /confirm .* extraction/i.test(t));
+    await runAllocation();
+    return {
+      confirmed:   window.LeaseIntelligence.isPropertyMismatchConfirmed(dover),
+      blockReason: !!_propertyMismatchBlockReason(dover),
+      camBlocking: camBlockers(dover),
+      button:  btn || null,
+      blocked: g('.bulk-cam-blocked'),
+      engineOk: getValidTenants().map(t => t.tenant_name),
+      rows: lastResults.map(r => ({ name: r.name, allocated: +Number(r.totalAllocated).toFixed(2) })),
+      billed: +lastResults.reduce((s, r) => s + (Number(r.totalAllocated) || 0), 0).toFixed(2),
+      okBanner: (() => { const n = document.querySelector('.cam-confirmed-note');
+        return n ? n.textContent.replace(/\s+/g,' ').trim() : null; })(),
+    };
+  });
+  console.log('  confirmed     :', confirmedRun.confirmed, ' still blocking:', confirmedRun.blockReason);
+  console.log('  camBlocking   :', JSON.stringify(confirmedRun.camBlocking));
+  console.log('  button        :', JSON.stringify(confirmedRun.button));
+  console.log('  reconciled    :', JSON.stringify(confirmedRun.rows), ' billed $' + confirmedRun.billed);
+  console.log('  confirmed note:', confirmedRun.okBanner);
+
+  yes('confirmation clears the block',
+      confirmedRun.confirmed === true && confirmedRun.blockReason === false
+        && confirmedRun.camBlocking.length === 0,
+      JSON.stringify(confirmedRun));
+  yes('Dover is no longer listed as blocked',
+      !confirmedRun.blocked || !/Dover/i.test(confirmedRun.blocked),
+      `blocked block: ${JSON.stringify(confirmedRun.blocked)}`);
+  yes('the engine accepts Dover again',
+      confirmedRun.engineOk.some(n => /^Dover/.test(n)), JSON.stringify(confirmedRun.engineOk));
+  yes('Dover reconciles at its original $5,514.56',
+      confirmedRun.rows.some(r => /^Dover/.test(r.name) && Math.abs(r.allocated - 5514.56) < 0.01),
+      JSON.stringify(confirmedRun.rows));
+  yes('the confirmation is reported, not silent — an auditor must see it',
+      !!confirmedRun.okBanner && /confirmed by the property owner/i.test(confirmedRun.okBanner),
+      `note: ${JSON.stringify(confirmedRun.okBanner)}`);
+
+  // Restore the untouched Test 3 state for the rest of the suite.
+  await page.evaluate(async () => {
+    const dover = tenantData.filter(Boolean).find(t => /^Dover/.test(t.tenant_name));
+    const b = window.__doverRestore;
+    dover.property_name = b.property_name; dover._edgeCases = b.edges;
+    delete dover._propertyConfirm;
+    currentProperty().tenants = tenantData.filter(Boolean);
+    await runAllocation();
+  });
+  const restored = await page.evaluate(() => lastResults.map(r => r.name));
+  yes('the Test 3 baseline is restored for the remaining checks',
+      restored.length === 2 && restored.some(n => /^Dover/.test(n)),
+      JSON.stringify(restored));
+
   // ══ Run the reconciliation the way the button does ═════════════════════════
   console.log('\n── Running the reconciliation (real runAllocation) ──');
   await page.evaluate(() => { if (typeof switchWorkspaceTab === 'function') switchWorkspaceTab('cam'); });
@@ -736,6 +935,112 @@ const SUPABASE_MOCK = `
         'a draft still offers settlement');
   }
 
+  // ══ A billing-blocked statement must not read as a bill ════════════════════
+  //
+  // The Pilot showed "Total Billed $5,514.56" on a document whose own header
+  // read NON-BILLABLE DRAFT, beside an audit verdict of Not ready to bill. The
+  // canonical billing-status component (_statementReadinessBlock -> _draftState)
+  // already governed the report title, the Status field, the banner and the hero
+  // total; one row in the Year-End Reconciliation table was never wired to it.
+  console.log('\n── A blocked statement cannot be mistaken for a final bill ──');
+  if (!draft.err) {
+    const claimsBilled = /Total Billed/i.test(draft.text);
+    console.log('  says "Total Billed"      :', claimsBilled);
+    console.log('  marked NON-BILLABLE DRAFT:', /NON-BILLABLE DRAFT/i.test(draft.text));
+    yes('the draft never uses the word "billed" as a completed fact',
+        !claimsBilled,
+        'the draft still carries a "Total Billed" row while billing is blocked');
+    yes('the figure is labelled as a calculation, not a charge',
+        /Calculated CAM charge — not billed/i.test(draft.text)
+          || /Provisional CAM allocation — not billable/i.test(draft.text),
+        'no label states that the figure is not a bill');
+    yes('the draft is unmistakably marked, in the title and on the page',
+        /NON-BILLABLE DRAFT/i.test(draft.text) && /DO NOT SEND TO TENANT/i.test(draft.text),
+        'the draft marking is not unmistakable');
+    yes('the draft states why billing is blocked',
+        /critical exception/i.test(draft.text) && /resolved/i.test(draft.text),
+        'the draft does not say what is blocking it');
+    yes('and the figure itself is still shown — the draft remains reviewable',
+        /5,514\.56/.test(draft.text), 'the draft no longer shows the computed figure');
+  }
+
+  // ══ PASSED vs NOT CONFIRMED ════════════════════════════════════════════════
+  //
+  // "The lease is silent on structural exclusions" rendered as a green tick
+  // reading PASSED, beside a $55,000 unitemised category. Silence establishes
+  // nothing. The four-verdict panel has always been able to say NOT CONFIRMED;
+  // the AI tier could not produce that severity, and both fallbacks in the
+  // renderer landed on the affirmative pass.
+  console.log('\n── PASSED means evidence supports it; silence does not ──');
+  const verdicts = await page.evaluate(() => {
+    const mk = (sev, conf, finding) => ({
+      check: 'STRUCT_EXCLUSIONS', severity: sev, confidence: conf, finding,
+      source: 'ai', section: null, quote: null,
+    });
+    const render = (f) => {
+      const host = document.createElement('div');
+      host.innerHTML = _renderValidationPanel([f], {});
+      const badge = host.querySelector('.lv-sev-badge');
+      const chip  = host.querySelector('.lv-conf');
+      const mean  = host.querySelector('.lv-meaning');
+      return {
+        badge: badge ? badge.textContent.trim() : null,
+        icon:  (host.querySelector('.lv-finding-icon') || {}).textContent || null,
+        chip:  chip ? chip.textContent.trim() : null,
+        chipTitle: chip ? chip.getAttribute('title') : null,
+        meaning: mean ? mean.textContent.trim() : null,
+      };
+    };
+    return {
+      supported:   render(mk('info', 'high', 'The lease expressly excludes capital expenditures from CAM.')),
+      silent:      render(mk('unconfirmed', 'high', 'The lease does not address structural exclusions.')),
+      conflicting: render(mk('critical', 'high', 'The reconciliation includes a charge the lease excludes.')),
+      unknownSev:  render(mk('not-a-real-severity', 'high', 'Something the model invented.')),
+    };
+  });
+  console.log('  evidence supports it :', JSON.stringify(verdicts.supported.badge), verdicts.supported.icon);
+  console.log('  lease is silent      :', JSON.stringify(verdicts.silent.badge), verdicts.silent.icon);
+  console.log('  evidence conflicts   :', JSON.stringify(verdicts.conflicting.badge), verdicts.conflicting.icon);
+  console.log('  unknown severity     :', JSON.stringify(verdicts.unknownSev.badge), verdicts.unknownSev.icon);
+  console.log('  silent card meaning  :', JSON.stringify(verdicts.silent.meaning));
+
+  yes('the three verdicts render as three different things',
+      new Set([verdicts.supported.badge, verdicts.silent.badge, verdicts.conflicting.badge]).size === 3,
+      JSON.stringify([verdicts.supported.badge, verdicts.silent.badge, verdicts.conflicting.badge]));
+  yes('PASSED is reserved for evidence that affirmatively supports the condition',
+      verdicts.supported.badge === 'PASSED', `got ${JSON.stringify(verdicts.supported.badge)}`);
+  yes('lease silence reads NOT CONFIRMED, never PASSED',
+      verdicts.silent.badge === 'NOT CONFIRMED' && verdicts.silent.badge !== 'PASSED',
+      `got ${JSON.stringify(verdicts.silent.badge)}`);
+  yes('a conflict still reads EXCEPTION',
+      verdicts.conflicting.badge === 'EXCEPTION', `got ${JSON.stringify(verdicts.conflicting.badge)}`);
+  yes('an unrecognised verdict fails SAFE, not to a green pass',
+      verdicts.unknownSev.badge === 'NOT CONFIRMED' && verdicts.unknownSev.badge !== 'PASSED',
+      `got ${JSON.stringify(verdicts.unknownSev.badge)} — an unknown verdict must not read as compliance`);
+  yes('the NOT CONFIRMED card says what it means for billing',
+      /not a failure/i.test(verdicts.silent.meaning || '')
+        && /not a pass/i.test(verdicts.silent.meaning || ''),
+      JSON.stringify(verdicts.silent.meaning));
+
+  // ── AI confidence on a NOT CONFIRMED card ────────────────────────────────
+  //
+  // "NOT CONFIRMED" beside a bare "AI confidence: high" reads as "the AI is
+  // highly confident the condition does not hold". What is high is confidence in
+  // the READING — that the lease is clearly silent here — which is exactly why
+  // the check could not be confirmed.
+  console.log('\n── Confidence on a NOT CONFIRMED card names its object ──');
+  console.log('  unconfirmed chip :', JSON.stringify(verdicts.silent.chip));
+  console.log('  supported   chip :', JSON.stringify(verdicts.supported.chip));
+  yes('the chip on a NOT CONFIRMED card describes the evidence, not the verdict',
+      /evidence read with high confidence/i.test(verdicts.silent.chip || ''),
+      `chip reads ${JSON.stringify(verdicts.silent.chip)}`);
+  yes('its tooltip says high means the lease is clearly silent, not confirmed',
+      /clearly silent or ambiguous/i.test(verdicts.silent.chipTitle || ''),
+      `title: ${JSON.stringify(verdicts.silent.chipTitle)}`);
+  yes('other cards keep the existing AI confidence wording, unchanged',
+      /^AI confidence: high$/i.test(verdicts.supported.chip || ''),
+      `chip reads ${JSON.stringify(verdicts.supported.chip)}`);
+
   console.log('\n── Page errors ──');
   yes('no uncaught page errors during the whole replay', errors.length === 0,
       errors.slice(0, 5).join(' | '));
@@ -746,7 +1051,7 @@ const SUPABASE_MOCK = `
   // rather than computed wrongly, so an assertion silently disappearing from
   // this file is the exact way its coverage would erode. Change this number
   // deliberately, in the same commit as the assertions.
-  const TOTAL_EXPECTED = 51;
+  const TOTAL_EXPECTED = 83;
   yes(`suite runs all ${TOTAL_EXPECTED} checks`, pass + fail + 1 === TOTAL_EXPECTED,
       `assertion count changed — update TOTAL_EXPECTED deliberately (saw ${pass + fail + 1})`);
 

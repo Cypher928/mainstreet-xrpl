@@ -17,22 +17,47 @@ window.ReviewEngine = (() => {
     'amendment_applied', 'multiple_amendments',
   ]);
 
-  // Of those, the ones whose absence makes a lease UNRECONCILABLE — the CAM
-  // engine drops it from the run entirely. getValidTenants() is the authority:
-  // it keeps a lease only when it has a name, leased_sqft > 0, a successful
-  // extraction and no property mismatch. Square footage is the only field in
-  // MISSING_FIELD_TYPES that appears in that filter.
+  // ── What actually stops the CAM engine ─────────────────────────────────────
   //
-  // The distinction matters because the bulk screen tells the reader a blocked
-  // lease "cannot be reconciled until the missing values are entered". Applied
-  // to the whole MISSING_FIELD_TYPES set that sentence is false: a Triple Net
-  // lease with no cap percentage and an unresolved audit-rights clause
-  // reconciles perfectly well — those change how much trust the resulting
-  // number deserves, not whether it can be produced. Saying otherwise recreates
-  // the contradiction the readiness fix existed to remove, only inverted: the
-  // screen claimed two leases could not be reconciled on the same run in which
-  // the engine reconciled them.
-  const CAM_BLOCKING_FIELD_TYPES = new Set(['missing_sqft']);
+  // getValidTenants() in script.js is the authority. It keeps a lease only when
+  // it has a name, leased_sqft > 0, a successful extraction, and no UNCONFIRMED
+  // property mismatch. Anything else — a missing cap percentage, an unresolved
+  // audit-rights clause, an amendment on file — changes how much trust the
+  // resulting number deserves, not whether it can be produced.
+  //
+  // This set names the warning types that correspond to those blocking
+  // conditions, so the readiness UI and the engine reach the same answer from
+  // one derivation instead of two.
+  //
+  // THIS SET IS NOT A SUBSET OF MISSING_FIELD_TYPES, AND MUST NOT BE MADE ONE.
+  // It was, and that is precisely how the property mismatch went unmodelled:
+  // MISSING_FIELD_TYPES means "a required field is absent", while a property
+  // mismatch is the opposite — a field is present and CONFLICTS with the
+  // property it was filed under. Deriving the blocking set from the missing set
+  // could only ever describe blockers of the first kind. The two sets answer
+  // different questions and are now defined independently; the only invariant
+  // between them is that camBlocking and reviewItems stay disjoint.
+  //
+  // Only the UNCONFIRMED mismatch is listed. deriveTenantReviewState emits
+  // `property_name_mismatch` when a human has not vouched for the lease and
+  // `property_name_confirmed` when one has, so a confirmed lease stops blocking
+  // by virtue of carrying a different warning type. That is why no second
+  // "is it confirmed" predicate is needed here, and why none should be added:
+  // isPropertyMismatchConfirmed() is consulted once, in one place.
+  const CAM_BLOCKING_FIELD_TYPES = new Set([
+    'missing_sqft',
+    'property_name_mismatch',
+  ]);
+
+  // How each blocking condition is described to a reader. Kept beside the set so
+  // a type can never be added to one without the other. The bulk screen used to
+  // hard-code the word "missing" before every blocker label, which reads as
+  // nonsense for a mismatch ("missing Lease document names a different
+  // property"), so the phrasing lives with the type that earns it.
+  const CAM_BLOCKER_REASON = {
+    missing_sqft:           'missing Sq Ft',
+    property_name_mismatch: 'lease names a different property, not yet confirmed',
+  };
 
   const _FINANCIAL_PROTECTION_TYPES = new Set([
     'nnn_cap_missing', 'admin_fee_present', 'gross_up_present', 'expense_stop_present',
@@ -260,6 +285,7 @@ window.ReviewEngine = (() => {
   return {
     MISSING_FIELD_TYPES,
     CAM_BLOCKING_FIELD_TYPES,
+    CAM_BLOCKER_REASON,
     getWarnings,
     computeFlags,
     computeFlagsStrict,

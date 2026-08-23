@@ -749,8 +749,17 @@ console.log('\n── W1 · A statement is not issued from a reconciliation that
   yes('[source] the draft relabels the billed total',
       /Provisional CAM allocation — not billable/.test(scriptText),
       'the draft still says "Total CAM Billed to You"');
-  eq('[source] the draft is marked non-billable in the banner AND the report header',
-     (scriptText.match(/NON-BILLABLE DRAFT/g) || []).length, 2);
+  // Was a whole-file count of the literal string, which counts prose in comments
+  // as if it were a marking on the page. The requirement is that the phrase
+  // renders in BOTH places — the report header and the banner title — so both
+  // sites are now asserted directly. Strictly stronger than the count: moving
+  // one marking into a comment would have kept the old total at 2.
+  yes('[source] the report header marks the draft non-billable',
+      /_rptHeader\([\s\S]{0,120}?'Tenant CAM Statement — NON-BILLABLE DRAFT'/.test(scriptText),
+      'the report header no longer marks a blocked statement as a non-billable draft');
+  yes('[source] the banner title marks the draft non-billable',
+      /ts-draft-title[\s\S]{0,80}?NON-BILLABLE DRAFT/.test(scriptText),
+      'the draft banner no longer carries the non-billable title');
   yes('[source] the banner tells the reader not to send it',
       /DO NOT SEND TO TENANT/.test(scriptText),
       'the draft banner no longer warns against sending it to a tenant');

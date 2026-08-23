@@ -19,11 +19,26 @@
  *    the same run in which the engine reconciled it. That is the same
  *    contradiction inverted, and the sentence is untrue.
  *
+ * 3. The blocking set was derived as a SUBSET of MISSING_FIELD_TYPES, so it
+ *    could only ever model blockers of the form "a required field is absent".
+ *    An unconfirmed PROPERTY_NAME_MISMATCH is the opposite shape — a field is
+ *    present and CONTRADICTS the property the lease was filed under — so it was
+ *    invisible to the readiness model even though getValidTenants() has always
+ *    excluded it. The screen said "2 leases will reconcile" and named Dover;
+ *    the engine reconciled Paradigm alone and dropped Dover's $5,514.56.
+ *
+ *    This suite's own prose named that fourth condition while its assertion
+ *    pinned the set to ['missing_sqft'], so the suite was green on the bug. The
+ *    invariant is now asserted, not just described.
+ *
  * THE RULE
- * getValidTenants() is the authority on what the CAM engine will reconcile: a
- * name, leased_sqft > 0, a successful extraction, no property mismatch. Only
- * the absence of a field in THAT filter may be described as blocking
- * reconciliation. Everything else is a review item and must be worded as one.
+ * getValidTenants() is the authority on what the CAM engine will reconcile:
+ *
+ *     tenant_name && leased_sqft > 0 && extraction succeeded
+ *                 && no UNCONFIRMED property mismatch
+ *
+ * Only a condition in THAT filter may be described as blocking reconciliation.
+ * Everything else is a review item and must be worded as one.
  */
 
 const fs   = require('fs');
@@ -42,8 +57,14 @@ const eqj = (m, a, e) => JSON.stringify(a) === JSON.stringify(e)
 const box = { window: {}, console, Date, Math, Number, String, Array, JSON, RegExp, Set, Boolean };
 box.globalThis = box;
 vm.createContext(box);
+// LeaseIntelligence first: review-engine reads window.LeaseIntelligence to ask
+// whether a property mismatch has been confirmed, and FAILS CLOSED when it is
+// absent. Loading it here means the confirmed case is exercised for real rather
+// than passing because the module was missing.
+vm.runInContext(fs.readFileSync(path.join(__dirname, 'lease-intelligence.js'), 'utf8'), box);
 vm.runInContext(fs.readFileSync(path.join(__dirname, 'review-engine.js'), 'utf8'), box);
 const RE = box.window.ReviewEngine;
+const LI = box.window.LeaseIntelligence;
 
 const scriptCode = fs.readFileSync(path.join(__dirname, 'script.js'), 'utf8');
 
@@ -53,7 +74,8 @@ const scriptCode = fs.readFileSync(path.join(__dirname, 'script.js'), 'utf8');
 const derive = (t) => {
   const rv = RE.deriveTenantReviewState(t, []);
   const missing     = rv.warnings.filter(w => RE.MISSING_FIELD_TYPES.has(w.type)).map(w => w.label);
-  const camBlocking = rv.warnings.filter(w => RE.CAM_BLOCKING_FIELD_TYPES.has(w.type)).map(w => w.label);
+  const camBlocking = rv.warnings.filter(w => RE.CAM_BLOCKING_FIELD_TYPES.has(w.type))
+    .map(w => RE.CAM_BLOCKER_REASON[w.type] || w.label);
   const reviewItems = rv.warnings
     .filter(w => RE.MISSING_FIELD_TYPES.has(w.type) && !RE.CAM_BLOCKING_FIELD_TYPES.has(w.type))
     .map(w => w.label);
@@ -72,12 +94,23 @@ console.log('\n── The two sets ──');
 
 yes('CAM_BLOCKING_FIELD_TYPES is exported', RE.CAM_BLOCKING_FIELD_TYPES instanceof Set,
     'the engine does not expose a CAM-blocking set');
-yes('every CAM-blocking type is also a missing-field type',
-    [...RE.CAM_BLOCKING_FIELD_TYPES].every(t => RE.MISSING_FIELD_TYPES.has(t)),
-    'a blocking type is not in MISSING_FIELD_TYPES');
-yes('the blocking set is strictly smaller than the missing set',
-    RE.CAM_BLOCKING_FIELD_TYPES.size < RE.MISSING_FIELD_TYPES.size,
-    'the two sets are the same size — the over-blocking bug is back');
+// DELIBERATELY NOT a subset assertion. It used to be one, and that is exactly
+// how the property mismatch went unmodelled: "a required field is absent" and
+// "a present field contradicts the property" are different shapes, and only the
+// first can be expressed as a subset of MISSING_FIELD_TYPES. The two sets are
+// independent; the invariant they owe each other is that camBlocking and
+// reviewItems never overlap, which is asserted per-lease below.
+yes('the blocking set is NOT constrained to missing-field types',
+    [...RE.CAM_BLOCKING_FIELD_TYPES].some(t => !RE.MISSING_FIELD_TYPES.has(t)),
+    'the blocking set is a subset of MISSING_FIELD_TYPES again — a conflict-shaped '
+    + 'blocker like an unconfirmed property mismatch cannot be expressed that way');
+yes('every review item is a missing-field type that does not block',
+    [...RE.MISSING_FIELD_TYPES].some(t => !RE.CAM_BLOCKING_FIELD_TYPES.has(t)),
+    'every missing field now blocks CAM — the over-blocking bug is back');
+yes('every blocking type has a reason phrase a reader can act on',
+    [...RE.CAM_BLOCKING_FIELD_TYPES].every(t =>
+      typeof RE.CAM_BLOCKER_REASON[t] === 'string' && RE.CAM_BLOCKER_REASON[t].length > 3),
+    `missing reason for: ${[...RE.CAM_BLOCKING_FIELD_TYPES].filter(t => !RE.CAM_BLOCKER_REASON[t])}`);
 
 // The blocking set must match getValidTenants(), which is what actually decides
 // whether a lease reaches the engine. Of the fields MISSING_FIELD_TYPES names,
@@ -88,11 +121,17 @@ const validTenants = scriptCode.slice(
 yes('[source] getValidTenants still gates on leased_sqft',
     /Number\(t\.leased_sqft\)\s*>\s*0/.test(validTenants),
     'the engine filter changed — the blocking set must be re-derived from it');
+yes('[source] getValidTenants still gates on the property mismatch',
+    /!_propertyMismatchBlockReason\(t\)/.test(validTenants),
+    'the fourth condition left the engine filter — the blocking set must follow it');
 yes('[source] getValidTenants does NOT gate on a cap or on audit rights',
     !/\bcap\b/.test(validTenants) && !/audit_rights/.test(validTenants),
     'the engine filter now reads a field the blocking set does not model');
-eqj('the blocking set is exactly the fields the engine filter reads',
-    [...RE.CAM_BLOCKING_FIELD_TYPES].sort(), ['missing_sqft']);
+// The whole point of the set: one entry per condition in getValidTenants() that
+// a warning can express. tenant_name and extractionFailed are handled upstream
+// by _extractionOk and the failed-tenant list, so they raise no warning here.
+eqj('the blocking set is exactly the conditions the engine filter reads',
+    [...RE.CAM_BLOCKING_FIELD_TYPES].sort(), ['missing_sqft', 'property_name_mismatch']);
 
 console.log('\n── A Triple Net lease with no cap reconciles ──');
 
@@ -103,14 +142,21 @@ eqj('but nothing blocks CAM', d1.camBlocking, []);
 yes('the cap and the audit-rights clause are review items',
     d1.reviewItems.some(l => /NNN Cap/i.test(l)) && d1.reviewItems.some(l => /audit rights/i.test(l)),
     JSON.stringify(d1.reviewItems));
-yes('missing = camBlocking + reviewItems, with nothing lost between them',
-    d1.missing.length === d1.camBlocking.length + d1.reviewItems.length,
+// "missing = camBlocking + reviewItems" no longer holds and must not be
+// reasserted: camBlocking can now carry a conflict that was never a missing
+// field. What must hold is that the two lists never describe the same thing.
+yes('camBlocking and reviewItems are disjoint',
+    d1.camBlocking.every(b => !d1.reviewItems.includes(b)),
+    JSON.stringify(d1));
+yes('every missing field is either blocking or a review item, never dropped',
+    d1.missing.every(l => d1.reviewItems.includes(l)
+      || d1.camBlocking.some(b => b.includes(l))),
     JSON.stringify(d1));
 
 console.log('\n── A lease with no square footage does not ──');
 
 const d2 = derive(noSqft);
-eqj('square footage blocks CAM', d2.camBlocking, ['Sq Ft']);
+eqj('square footage blocks CAM', d2.camBlocking, ['missing Sq Ft']);
 yes('and the same lease still carries its review items',
     d2.reviewItems.length > 0, JSON.stringify(d2));
 yes('Sq Ft is not double-counted as a review item',
@@ -122,6 +168,65 @@ const d3 = derive(capped);
 eqj('nothing blocks CAM', d3.camBlocking, []);
 yes('and no NNN cap review item is raised once a cap exists',
     !d3.reviewItems.some(l => /NNN Cap/i.test(l)), JSON.stringify(d3.reviewItems));
+
+console.log('\n── The Dover scenario: a property mismatch, unconfirmed ──');
+
+// The exact Pilot finding. Dover Saddlery Retail is a complete, reconcilable
+// lease in every other respect — it has square footage, dates and a lease type
+// — but the document names a different building than the property it was filed
+// under, and no human has vouched for it.
+const DOVER = {
+  tenant_name: 'Dover Saddlery Retail', leased_sqft: 8194, lease_type: NNN,
+  start_date: '2011-07-01', end_date: '2016-07-01', cap: null,
+  property_name: 'Northgate Commons', fileName: 'dover-lease.pdf',
+};
+const doverEdges = LI.detectLeaseEdgeCases(DOVER, { currentPropertyName: 'Test 3 Property' });
+const doverUnconfirmed = { ...DOVER, _edgeCases: doverEdges };
+const doverConfirmed   = { ...DOVER, _edgeCases: doverEdges,
+  _propertyConfirm: { extractedName: 'Northgate Commons', documentKey: 'dover-lease.pdf' } };
+
+// Guard: if the detector stops firing, everything below passes on nothing.
+yes('the detector actually fires on this lease (not a vacuous scenario)',
+    (doverEdges.edgeCases || []).some(e => e.type === 'PROPERTY_NAME_MISMATCH'),
+    `edge cases detected: ${JSON.stringify((doverEdges.edgeCases || []).map(e => e.type))}`);
+yes('and it is NOT confirmed', LI.isPropertyMismatchConfirmed(doverUnconfirmed) === false,
+    'the unconfirmed fixture reads as confirmed');
+
+const du = derive(doverUnconfirmed);
+const duState = RE.deriveTenantReviewState(doverUnconfirmed, []);
+eqj('the unconfirmed mismatch blocks CAM', du.camBlocking,
+    ['lease names a different property, not yet confirmed']);
+yes('the blocking reason is visible, not a bare field name',
+    du.camBlocking[0].length > 20 && /different property/i.test(du.camBlocking[0]),
+    du.camBlocking[0]);
+yes('it is NOT filed as a review item — it stops the calculation',
+    !du.reviewItems.some(l => /different property/i.test(l)), JSON.stringify(du.reviewItems));
+yes('the lease still carries its ordinary review items',
+    du.reviewItems.some(l => /NNN Cap/i.test(l)), JSON.stringify(du.reviewItems));
+yes('the card still shows the full-sentence warning',
+    (duState.warnings.find(w => w.type === 'property_name_mismatch') || {}).label
+      === 'Lease document names a different property — confirm this lease belongs here',
+    JSON.stringify(duState.warnings.map(w => w.type)));
+yes('the lease is otherwise complete — nothing else blocks it',
+    du.camBlocking.length === 1, JSON.stringify(du.camBlocking));
+
+console.log('\n── The same lease, once a human confirms it belongs here ──');
+
+const dc = derive(doverConfirmed);
+yes('the confirmation is recognised', LI.isPropertyMismatchConfirmed(doverConfirmed) === true,
+    'the confirmed fixture does not read as confirmed');
+eqj('nothing blocks CAM any more', dc.camBlocking, []);
+yes('the warning type switches rather than disappearing',
+    RE.deriveTenantReviewState(doverConfirmed, []).warnings
+      .some(w => w.type === 'property_name_confirmed'),
+    'the confirmed lease no longer records that it named a different property');
+yes('confirmation resolves the consequence, not the finding',
+    RE.deriveTenantReviewState(doverConfirmed, []).warnings
+      .every(w => w.type !== 'property_name_mismatch'),
+    'the blocking warning survived confirmation');
+yes('the ordinary review items are unchanged by confirmation',
+    JSON.stringify(dc.reviewItems) === JSON.stringify(du.reviewItems),
+    `${JSON.stringify(du.reviewItems)} vs ${JSON.stringify(dc.reviewItems)}`);
 
 console.log('\n── The screen and the button must agree ──');
 
@@ -158,7 +263,7 @@ console.log('\n── The wording must not overstate what is blocked ──');
 // in the block listing camBlocking leases, never in the review-items note.
 const blockedBlock = scriptCode.slice(
   scriptCode.indexOf('<div class="bulk-cam-blocked">'),
-  scriptCode.indexOf('<div class="bulk-cam-blocked">') + 600);
+  scriptCode.indexOf('<div class="bulk-cam-blocked">') + 1200);
 const reviewBlock = scriptCode.slice(
   scriptCode.indexOf('<div class="bulk-cam-review">'),
   scriptCode.indexOf('<div class="bulk-cam-review">') + 600);
@@ -177,7 +282,7 @@ yes('the review note is driven by reviewItems, not by missing',
     /_reviewItems\(d\)/.test(scriptCode) && !/_reviewList[\s\S]{0,120}\.missing/.test(scriptCode),
     'the review note reads the wrong list');
 
-const TOTAL_EXPECTED = 25;
+const TOTAL_EXPECTED = 41;
 yes(`suite runs all ${TOTAL_EXPECTED} checks`, pass + fail + 1 === TOTAL_EXPECTED,
     `test count changed — update TOTAL_EXPECTED deliberately (saw ${pass + fail + 1})`);
 

@@ -5490,14 +5490,14 @@ async function bulkApproveReady() {
   const blocked = all.filter(({ d }) => _blockers(d).length > 0);
   if (!ready.length) {
     showToast(blocked.length
-      ? `${blocked.length} lease${blocked.length === 1 ? ' is' : 's are'} extracted but missing values CAM requires — open each and fill them in.`
+      ? `${blocked.length} lease${blocked.length === 1 ? ' is' : 's are'} extracted but blocked from CAM — open each and resolve what it lists.`
       : 'Every CAM-ready extraction is already confirmed.',
       blocked.length ? { color: '#92400e', textColor: '#fef3c7', duration: 6000 } : undefined);
     return;
   }
   for (const { i } of ready) await saveBulkTenant(i);
   showToast(`✓ ${ready.length} extraction${ready.length !== 1 ? 's' : ''} confirmed as CAM-ready.` +
-    (blocked.length ? ` ${blocked.length} left unconfirmed — missing values CAM requires.` : ''));
+    (blocked.length ? ` ${blocked.length} left unconfirmed — blocked from CAM.` : ''));
 }
 
 // Shows/hides the stale-results warning banner based on _resultsStale flag.
@@ -5633,6 +5633,7 @@ function _reviewStatusPillHtml(status) {
 // the live lastResults context for the active-property view.
 const _RQ_MISSING_FIELD_TYPES = ReviewEngine.MISSING_FIELD_TYPES;
 const _RQ_CAM_BLOCKING_TYPES  = ReviewEngine.CAM_BLOCKING_FIELD_TYPES;
+const _RQ_CAM_BLOCKER_REASON  = ReviewEngine.CAM_BLOCKER_REASON;
 function deriveTenantReviewState(t) {
   const rv = ReviewEngine.deriveTenantReviewState(t, lastResults);
   // Add missing[] — structural-blocking warnings separated from quality signals.
@@ -5641,14 +5642,23 @@ function deriveTenantReviewState(t) {
   rv.missing = rv.warnings
     .filter(function(w) { return _RQ_MISSING_FIELD_TYPES.has(w.type); })
     .map(function(w) { return w.label; });
-  // camBlocking — the subset of missing[] that stops the CAM engine from
-  // reconciling this lease at all (see CAM_BLOCKING_FIELD_TYPES). reviewItems is
-  // the remainder: real gaps a human should close, none of which prevent a
-  // number being produced. Any surface that tells a reader a lease "cannot be
-  // reconciled" must branch on camBlocking, not on missing.
+  // camBlocking — the warnings that stop the CAM engine from reconciling this
+  // lease at all, phrased as reasons a reader can act on. It is NOT a subset of
+  // missing[]: a missing square footage blocks because a required field is
+  // absent, while an unconfirmed property mismatch blocks because a field is
+  // present and contradicts the property the lease was filed under. Deriving
+  // this from missing[] is what left the mismatch unmodelled — see
+  // CAM_BLOCKING_FIELD_TYPES.
+  //
+  // Any surface that tells a reader a lease "cannot be reconciled" must branch
+  // on camBlocking. Any surface that says a lease "will reconcile" must branch
+  // on camBlocking being empty, and will then agree with getValidTenants().
   rv.camBlocking = rv.warnings
     .filter(function(w) { return _RQ_CAM_BLOCKING_TYPES.has(w.type); })
-    .map(function(w) { return w.label; });
+    .map(function(w) { return _RQ_CAM_BLOCKER_REASON[w.type] || w.label; });
+  // reviewItems — real gaps a human should close, none of which prevent a number
+  // being produced. Disjoint from camBlocking by construction, which is the one
+  // invariant the two sets owe each other.
   rv.reviewItems = rv.warnings
     .filter(function(w) { return _RQ_MISSING_FIELD_TYPES.has(w.type)
                               && !_RQ_CAM_BLOCKING_TYPES.has(w.type); })
@@ -8121,8 +8131,12 @@ function renderBulkResults() {
   </div>
   ${_blockedCount > 0 ? `<div class="bulk-cam-blocked">
     <strong>${_blockedCount} lease${_blockedCount === 1 ? '' : 's'} extracted but not ready for CAM</strong> —
-    ${_blockedList.map(d => `${esc(d.tenant_name || 'Unnamed')} (missing ${esc(_camBlockers(d).join(', '))})`).join('; ')}.
-    These are not included in the confirm button above and cannot be reconciled until the missing values are entered.
+    <!-- The word "missing" used to be hard-coded here, which reads as nonsense
+         for a blocker that is not a missing field ("missing lease names a
+         different property"). Each blocker now carries its own phrasing, from
+         CAM_BLOCKER_REASON. -->
+    ${_blockedList.map(d => `${esc(d.tenant_name || 'Unnamed')} (${esc(_camBlockers(d).join('; '))})`).join('; ')}.
+    These are not included in the confirm button above and cannot be reconciled until each blocker is resolved.
   </div>` : ''}
   ${_reviewList.length > 0 ? `<div class="bulk-cam-review">
     <strong>${_reviewList.length} lease${_reviewList.length === 1 ? '' : 's'} will reconcile but ${_reviewList.length === 1 ? 'has' : 'have'} open review items</strong> —
@@ -17479,7 +17493,17 @@ function generateTenantStatement(tenantName, opts = {}) {
       <tbody>
         <tr><td>Reconciled CAM Responsibility</td><td style="text-align:right">${fmt(actual)}</td></tr>
         <tr><td>Pro-Rata Share</td><td style="text-align:right">${(r.proRata * 100).toFixed(2)}%</td></tr>
-        <tr class="total-row"><td>Total Billed</td><td style="text-align:right">${fmt(r.allocatedAmount)}</td></tr>
+        <!-- The one row that was never wired to the draft state. Every other
+             surface on a blocked statement already branches on _draftState —
+             the report title, the Status field, the banner, the hero total —
+             but this row read "Total Billed" on a document whose own header
+             says NON-BILLABLE DRAFT. The same figure appeared as a billed
+             amount beside an audit verdict of Not ready to bill. Nothing about
+             the number changes; only whether the document claims it was
+             billed. -->
+        <tr class="total-row"><td>${_draftState
+          ? 'Calculated CAM charge — not billed'
+          : 'Total Billed'}</td><td style="text-align:right">${fmt(r.allocatedAmount)}</td></tr>
       </tbody>
     </table>
     <p style="font-size:0.78rem;color:var(--text-4);margin-top:6px;">Variance from monthly estimates requires payment history data not yet in this system — please reconcile against your accounts payable records.</p>
@@ -22219,9 +22243,13 @@ function _renderValidationPanel(findings, { loading = false, charsAnalyzed = nul
   };
 
   const cards = findings.map(f => {
-    const icon    = SEV_ICON[f.severity]  || '✅';
-    const label   = SEV_LABEL[f.severity] || 'PASSED';
-    const cls     = SEV_CLS[f.severity]   || 'lv-finding--info';
+    // Every fallback here used to land on the affirmative pass: an unrecognised
+    // severity rendered as a green tick reading PASSED. That is the wrong
+    // direction to fail in a document an auditor may rely on — an unknown
+    // verdict has confirmed nothing, so it falls back to NOT CONFIRMED.
+    const icon    = SEV_ICON[f.severity]  || '❓';
+    const label   = SEV_LABEL[f.severity] || 'NOT CONFIRMED';
+    const cls     = SEV_CLS[f.severity]   || 'lv-finding--unconfirmed';
     const title   = CHECK_LABELS[f.check] || f.check;
     const qSafe   = f.quote ? f.quote.replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;') : null;
     const fSafe   = esc(f.finding);
@@ -22254,7 +22282,18 @@ function _renderValidationPanel(findings, { loading = false, charsAnalyzed = nul
              a merely "high" finding. There is no such hierarchy: this is how
              confident the AI is in its reading of the clause, and it is
              orthogonal to how serious the finding is. -->
-        <span class="lv-conf ${confCls}" title="How confident the AI is in its reading of this clause — not a severity level.">AI confidence: ${f.confidence}</span>
+        <!-- On a NOT CONFIRMED card the unqualified phrase "AI confidence:
+             high" reads as "the AI is highly confident the condition does not
+             hold". It never meant that. What is high is confidence in the
+             READING — that the lease really is silent or ambiguous here — which
+             is precisely why the check could not be confirmed. Naming the
+             object of the confidence separates the two readings without
+             changing how confidence is computed anywhere. -->
+        <span class="lv-conf ${confCls}" title="${f.severity === 'unconfirmed'
+          ? 'How clearly the lease was read on this point — high means the lease is clearly silent or ambiguous here, not that the condition is confirmed either way.'
+          : 'How confident the AI is in its reading of this clause — not a severity level.'}">${
+          f.severity === 'unconfirmed' ? 'Evidence read with' : 'AI confidence:'} ${f.confidence}${
+          f.severity === 'unconfirmed' ? ' confidence' : ''}</span>
       </div>
       <div class="lv-finding-body">
         <div class="lv-finding-text">${fSafe}</div>

@@ -32,7 +32,8 @@ ${UNTRUSTED_DOCUMENT_RULE}
 
 STRICT RULES:
 - Only report severity "critical" when you can cite exact verbatim lease language AND a specific section reference. Both quote and section must be non-null.
-- If the lease is silent or ambiguous on an item, return severity "info" and confidence "high". Never return "warning" or "critical" for lease silence.
+- "info" means the lease AFFIRMATIVELY SUPPORTS the condition — it says so, and you can quote it.
+- If the lease is silent or ambiguous on an item, return severity "unconfirmed", NOT "info". Silence is not compliance: it means the evidence needed to confirm the condition is not there. Never return "warning" or "critical" for lease silence either.
 - Confidence must reflect how directly the lease language supports the finding: "high" = explicit exact language, "medium" = related but ambiguous language, "low" = inferred.
 - Prefer fewer high-confidence findings. A missed finding is acceptable; an unsupported critical finding is not.
 
@@ -41,7 +42,7 @@ Return ONLY valid JSON — no markdown, no text outside the object:
   "findings": [
     {
       "check": "CAM_EXCLUSIONS",
-      "severity": "info" | "warning" | "critical",
+      "severity": "info" | "unconfirmed" | "warning" | "critical",
       "confidence": "high" | "medium" | "low",
       "finding": "Human-readable summary (1-2 sentences)",
       "quote": "Verbatim excerpt from the lease or null",

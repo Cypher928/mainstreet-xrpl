@@ -43,7 +43,13 @@ const VALIDATION_TIMEOUT = 45000;
 const VALIDATION_MODEL   = 'claude-sonnet-4-6';
 
 const TIER2_CHECKS      = new Set(['CAM_EXCLUSIONS', 'STRUCT_EXCLUSIONS', 'TAX_ALLOCATION']);
-const VALID_SEVERITIES  = new Set(['info', 'warning', 'critical']);
+// 'unconfirmed' is a verdict, not a lesser 'info'. 'info' asserts that the
+// lease affirmatively supports the condition and renders as PASSED; a lease
+// that is SILENT supports nothing, and saying otherwise turns absence of
+// evidence into evidence of compliance — the one inversion this codebase
+// must never make. The client has rendered 'unconfirmed' as NOT CONFIRMED
+// since the four-verdict panel landed; only this tier could not produce it.
+const VALID_SEVERITIES  = new Set(['info', 'unconfirmed', 'warning', 'critical']);
 const VALID_CONFIDENCES = new Set(['high', 'medium', 'low']);
 
 // Phrases Claude uses to indicate the lease does not address an item.
@@ -87,7 +93,10 @@ function normalizeFinding(f) {
   let severity   = typeof f.severity   === 'string' ? f.severity.toLowerCase()   : '';
   let confidence = typeof f.confidence === 'string' ? f.confidence.toLowerCase() : '';
 
-  if (!VALID_SEVERITIES.has(severity))    severity   = 'info';
+  // Fails SAFE, not open. An unrecognised verdict used to default to 'info',
+  // which renders as an affirmative green PASSED — so a malformed or future
+  // severity was reported to the reader as compliance confirmed.
+  if (!VALID_SEVERITIES.has(severity))    severity   = 'unconfirmed';
   if (!VALID_CONFIDENCES.has(confidence)) confidence = 'medium';
 
   const quote       = typeof f.quote       === 'string' && f.quote.trim()       ? f.quote.trim()       : null;
@@ -102,10 +111,21 @@ function normalizeFinding(f) {
     confidence = confidence === 'high' ? 'medium' : confidence;
   }
 
-  // Hard requirement 4: Lease silence → Info/High
+  // Hard requirement 4: lease silence → Unconfirmed/High.
+  //
+  // This is the deterministic guarantee behind the prompt rule, and it is the
+  // one that matters: it holds whether or not the model complies. It used to
+  // coerce silence to 'info', which the panel renders as PASSED with a green
+  // tick — so "the lease does not address structural exclusions" was shown to a
+  // reader as a passed check on a $55,000 unitemised category. The finding text
+  // is unchanged; only the verdict it carries.
+  //
+  // Confidence stays 'high' and means what it always meant here: high
+  // confidence in the READING (the lease really is silent), not high confidence
+  // that the condition holds. The panel labels it accordingly.
   const findingLc = finding.toLowerCase();
   if (SILENCE_PHRASES.some(p => findingLc.includes(p))) {
-    severity   = 'info';
+    severity   = 'unconfirmed';
     confidence = 'high';
   }
 
