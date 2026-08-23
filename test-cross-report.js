@@ -575,19 +575,31 @@ console.log('\n── P5 · Coverage Gap says which question it answers ──')
   no('it does not claim everything is fine while exceptions are open',
      /Everything looks good/.test(GAP),
      'the all-clear banner shows on a property with five critical exceptions');
-  // Two questions, two headed answers — not one sentence trying to hold both.
-  yes('input coverage and reconciliation status are stated separately',
-      /Input coverage/.test(GAP) && /Reconciliation status/.test(GAP),
+  // THREE questions, three headed answers — not one sentence trying to hold them.
+  // The block was called "Input coverage", which collided with the property
+  // coverage this report is named after and let a reader take "Complete" as an
+  // answer about the property. It is "Input completeness" now, and property
+  // coverage has a block of its own.
+  yes('input completeness and reconciliation status are stated separately',
+      /Input completeness/.test(GAP) && /Reconciliation status/.test(GAP),
       'the two states are still merged into a single summary line');
-  // The Test 2 fixture has one low-confidence extraction, so input coverage is
-  // NOT clean here — which is the more useful case to pin: the two blocks must
-  // carry independent verdicts rather than one echoing the other.
-  yes('input coverage states its own verdict, independent of the audit',
-      /Input coverage[\s\S]{0,60}1 input needs attention/.test(GAP),
-      'input coverage does not state its own verdict');
+  yes('property coverage is stated too — this report is named after it',
+      /Property coverage/.test(GAP),
+      'the Coverage Gap Report still says nothing about property coverage');
+  // The Test 2 fixture has one low-confidence extraction, so input completeness
+  // is NOT clean here — which is the more useful case to pin: the blocks must
+  // carry independent verdicts rather than one echoing another.
+  yes('input completeness states its own verdict, independent of the audit',
+      /Input completeness[\s\S]{0,80}1 input needs attention/.test(GAP),
+      'input completeness does not state its own verdict');
   no('and does not borrow the reconciliation\'s count',
-     /Input coverage[\s\S]{0,60}5 critical/.test(GAP),
+     /Input completeness[\s\S]{0,80}5 critical/.test(GAP),
      'the input block is reporting the audit\'s exceptions as input problems');
+  // The claim that made this block unsafe: MainStreet cannot know that a lease
+  // it has never been given does not exist.
+  no('it never claims every lease has been uploaded',
+     /all leases are uploaded/i.test(GAP),
+     'the report asserts a completeness it has no way to establish');
   yes('and reconciliation status states the exceptions',
       /Reconciliation status[\s\S]{0,60}5 critical exceptions/.test(GAP),
       'reconciliation status does not carry the audit count');

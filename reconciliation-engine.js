@@ -30,19 +30,27 @@ window.ReconciliationEngine = (() => {
    */
   function deriveCalcState(result, liveT) {
     const codes = (result?.ambiguityFlags || []).map(f => f.code);
+    // THESE LABELS DESCRIBE THE CALCULATION, NOT THE TENANT.
+    //
+    // A bare "Verified" sat in the row beside Dover's allocation while Dover was
+    // a RED critical exception for a lease that expired in 2016. Both were true
+    // about different questions — the arithmetic used sound inputs; the lease
+    // does not support billing them — but one word in the row next to the dollar
+    // figure reads as "this tenant is fine". Naming the object of the verb costs
+    // nothing and removes the reading entirely.
     if (codes.includes('NNN_GROSS_UNKNOWN') || codes.includes('SQFT_APPROXIMATE')) {
-      return { state: 'missing_inputs', label: 'Missing Inputs', cls: 'cs-missing' };
+      return { state: 'missing_inputs', label: 'Inputs missing', cls: 'cs-missing' };
     }
     if (codes.includes('SQFT_OVERFLOW') || codes.includes('BASE_YEAR_MISMATCH')) {
-      return { state: 'partial', label: 'Partial', cls: 'cs-partial' };
+      return { state: 'partial', label: 'Calc partial', cls: 'cs-partial' };
     }
     const sqftConf   = parseFloat(liveT?.confidence?.leased_sqft ?? liveT?.confidence?.leasedSqft ?? 100);
     const hasType    = !!(liveT?.lease_type);
     const docHasType = liveT?.doc_has_lease_type !== false;
     if (sqftConf < 70 || !hasType || !docHasType) {
-      return { state: 'estimated', label: 'Estimated', cls: 'cs-estimated' };
+      return { state: 'estimated', label: 'Calc estimated', cls: 'cs-estimated' };
     }
-    return { state: 'verified', label: 'Verified', cls: 'cs-verified' };
+    return { state: 'verified', label: 'Calc verified', cls: 'cs-verified' };
   }
 
   /**

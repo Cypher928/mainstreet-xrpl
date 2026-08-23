@@ -7909,7 +7909,14 @@ function renderBulkResults() {
 
     const isPending = d.status === 'pending';
     const confLevel = _tenantConfLevel(d);
-    const icon = isPending ? '⏳' : d.extractionFailed ? '❌' : showWarning ? '⚠️' : d.tenant_name ? '✓' : '?';
+    // The glyph read `d._needsReview` (an extraction flag) while the badge beside
+    // it read the DERIVED review state, so a card could show a green tick and
+    // "Needs Review" on the same line. One source for both.
+    const _rvState = (() => { try { return getTenantReviewState(d); } catch (_) { return null; } })();
+    const _rvUnsettled = _rvState === 'needs_review' || _rvState === 'incomplete';
+    const icon = isPending ? '⏳' : d.extractionFailed ? '❌'
+      : (showWarning || _rvUnsettled) ? '⚠️'
+      : d.tenant_name ? '✓' : '?';
 
     // Job progress state — only relevant when pending
     const _job        = _leaseJobs.get(d.id);
@@ -11688,6 +11695,23 @@ function _buildReconciliationSummaryHtml(results, invoices, propName) {
   const capTotal    = results.filter(r => r.capApplied).reduce((s, r) => s + (r.capAdjustment || 0), 0);
   const flaggedCnt  = results.filter(r => (r.ambiguityFlags || []).length > 0).length;
 
+  // THE CANONICAL BILLING STATE, read from the one model that decides it.
+  //
+  // AuditExposure.billingReadiness is what gates every tenant statement. The
+  // reconciliation screen showed none of it, so "Total Billed $25,090.78" sat at
+  // the top of a run on which no statement could be issued — the same word used
+  // as a completed fact that was fixed on the statement itself. Reading the same
+  // model here keeps one source of truth: this screen reports the state, it does
+  // not compute it.
+  const _billing = (() => {
+    try {
+      const AXs = window.AuditExposure;
+      if (!AXs || !results.length) return null;
+      return AXs.billingReadiness(AXs.deriveExposure(buildAuditSummary(), totalPool || 0));
+    } catch (_) { return null; }
+  })();
+  const _billable = !!(_billing && _billing.canBill);
+
   const issues   = _detectReconciliationIssues(results, currentProperty());
   _lastReconIssues = issues; // capture for openDisputeFromFlag()
   const reds     = issues.filter(f => f.severity === 'red');
@@ -11801,7 +11825,7 @@ function _buildReconciliationSummaryHtml(results, invoices, propName) {
       <td class="rcs-td rcs-num">${(r.proRata * 100).toFixed(2)}%</td>
       ${capCell}
       <td class="rcs-td rcs-num rcs-alloc-total">${fmt(r.totalAllocated)}</td>
-      <td class="rcs-td"><span class="rc-calc-state ${calcSt.cls}">${calcSt.label}</span></td>
+      <td class="rcs-td"><span class="rc-calc-state ${calcSt.cls}" title="Describes the CAM calculation for this row, not the tenant's standing. Audit exceptions are listed in the AI Audit Summary.">${calcSt.label}</span></td>
     </tr>`;
   }).join('');
 
@@ -11811,15 +11835,29 @@ function _buildReconciliationSummaryHtml(results, invoices, propName) {
         <span class="rcs-panel-title">&#x1F4CA; Reconciliation Summary</span>
         ${confidenceBadgeHtml}
         <span class="rcs-coverage-badge">${totalPool > 0 ? (totalBilled / totalPool * 100).toFixed(1) : '—'}% coverage</span>
+        <!-- The same two words the tenant statement, the blocked screen and the
+             Lender Summary use, from the same model. A manager should learn
+             whether this run can be billed on the screen that produces it, not
+             by trying to issue a statement and being refused. -->
+        ${_billing ? `<span class="rcs-readiness-badge ${_billable ? 'rcs-readiness--ok' : 'rcs-readiness--blocked'}" title="${esc(_billing.reason || '')}">${_billable ? '&#x2713; Ready to bill' : '&#x26D4; Not ready to bill'}</span>` : ''}
         ${_balBadgeHtml}
       </div>
       <div class="rcs-kpis">
         ${avgConfidence !== null ? `<div class="rcs-kpi ${avgConfidence < 70 ? 'rcs-kpi--warn' : ''}"><div class="rcs-kpi-val">${avgConfidence}%</div><div class="rcs-kpi-lbl">Confidence</div></div>` : ''}
         <div class="rcs-kpi"><div class="rcs-kpi-val">${fmt(totalPool)}</div><div class="rcs-kpi-lbl">CAM Pool</div></div>
-        <div class="rcs-kpi"><div class="rcs-kpi-val">${fmt(totalBilled)}</div><div class="rcs-kpi-lbl">Total Billed</div></div>
+        <!-- "Total Billed" is a claim that money was billed. Until the audit
+             clears this reconciliation, nothing has been: every statement is
+             refused. The figure is identical either way; only the claim changes. -->
+        <div class="rcs-kpi"><div class="rcs-kpi-val">${fmt(totalBilled)}</div><div class="rcs-kpi-lbl">${
+          _billable ? 'Total Billed' : 'Calculated Tenant Allocation'}</div></div>
         <div class="rcs-kpi ${proCls}"><div class="rcs-kpi-val">${proRataSum.toFixed(1)}%</div><div class="rcs-kpi-lbl">Pro-Rata Sum</div></div>
         <div class="rcs-kpi ${capsCls}"><div class="rcs-kpi-val">${capsCount > 0 ? capsCount + ' (−' + fmt(capTotal) + ')' : '0'}</div><div class="rcs-kpi-lbl">Caps Applied</div></div>
-        <div class="rcs-kpi ${flagCls}"><div class="rcs-kpi-val">${flaggedCnt}</div><div class="rcs-kpi-lbl">Flagged</div></div>
+        <!-- "Flagged" counted ONLY per-row allocation ambiguity (approximate
+             sqft, unknown NNN/Gross, sqft overflow, base-year mismatch). It
+             says nothing about audit exceptions, so "0 Flagged" sat beside 3
+             critical exceptions and read as "no problems". The scope is now in
+             the label, and the readiness chip above states the real verdict. -->
+        <div class="rcs-kpi ${flagCls}" title="Per-tenant allocation ambiguity only — approximate square footage, unknown lease type, square-footage overflow or a base-year mismatch. Audit exceptions are counted separately in the AI Audit Summary."><div class="rcs-kpi-val">${flaggedCnt}</div><div class="rcs-kpi-lbl">Allocation Flags</div></div>
       </div>
       ${issueHtml}
       <div class="rcs-table-wrap">
@@ -11830,7 +11868,7 @@ function _buildReconciliationSummaryHtml(results, invoices, propName) {
             <th class="rcs-th rcs-num">Pro-Rata</th>
             <th class="rcs-th rcs-num">Cap Adj</th>
             <th class="rcs-th rcs-num">Allocated</th>
-            <th class="rcs-th">Billing Method</th>
+            <th class="rcs-th" title="Whether the CAM arithmetic for this row used sound inputs. It is not a statement about the lease or the tenant — audit exceptions are reported in the AI Audit Summary.">CAM calculation</th>
           </tr></thead>
           <tbody>${rows}</tbody>
           <tfoot><tr class="rcs-total-row">
@@ -14596,12 +14634,48 @@ function buildAuditNarrative() {
     );
   }
 
+  // ── The single next REQUIRED action ───────────────────────────────────────
+  //
+  // recommendations[] is a good advisory list, but every entry carries the same
+  // weight, so a manager reading it cannot tell which one stands between them
+  // and issuing a statement. This is that one thing, and it is DERIVED — from
+  // billingReadiness (the model that actually gates statements) and from the
+  // blocking findings themselves. It introduces no new state and no new
+  // threshold: if readiness says the run can be billed, this says so too, by
+  // construction.
+  const nextAction = (() => {
+    if (!readiness) {
+      return { state: 'unknown', label: 'Run a reconciliation',
+               detail: 'No reconciliation has been produced yet, so there is nothing to bill or to review.' };
+    }
+    if (readiness.canBill) {
+      return { state: 'ready', label: readiness.label,
+               detail: yellow.length
+                 ? `Statements can be issued. ${yellow.length} advisory finding${yellow.length === 1 ? '' : 's'} ${yellow.length === 1 ? 'is' : 'are'} recorded for the file and ${yellow.length === 1 ? 'does' : 'do'} not block billing.`
+                 : 'Statements can be issued for every tenant in this reconciliation.' };
+    }
+    // Not billable: name the blocking findings and the first action each offers,
+    // read straight off the finding rather than restated here.
+    const steps = red.slice(0, 3).map(f => {
+      const a = Array.isArray(f.actions) && f.actions.length ? f.actions[0] : 'Resolve this exception';
+      return `${f.title} → ${a}`;
+    });
+    return {
+      state: 'blocked',
+      label: readiness.label,
+      detail: `${readiness.reason} Resolve ${red.length === 1 ? 'it' : 'them'}, then re-run the reconciliation — statements issue on their own once the audit clears.`,
+      steps,
+    };
+  })();
+
   return {
     headline,
     riskLevel,
     summaryParagraph,
     keyFindings,
     recommendations,
+    // The one required next step, derived from readiness — see above.
+    nextAction,
     financialImpact,
     confidence,
     // Canonical audit state, exposed so every other surface — the exposure
@@ -14658,6 +14732,17 @@ function renderNarrativePanel() {
       </div>
     </div>
     <div class="an-body">
+      <!-- The one required next step, above the advisory list. Every entry in
+           Recommended Actions carries the same weight, so a manager could not
+           tell which one stood between them and issuing a statement. Derived
+           from billingReadiness — the same model that gates the statements —
+           so it cannot disagree with them. -->
+      ${n.nextAction ? `<div class="an-next an-next--${esc(n.nextAction.state)}">
+        <div class="an-next-label">${n.nextAction.state === 'ready' ? '&#x2713;' : n.nextAction.state === 'blocked' ? '&#x26D4;' : '&#x2139;'} ${esc(n.nextAction.label)}</div>
+        <div class="an-next-detail">${esc(n.nextAction.detail)}</div>
+        ${Array.isArray(n.nextAction.steps) && n.nextAction.steps.length
+          ? `<ul class="an-next-steps">${n.nextAction.steps.map(x => `<li>${esc(x)}</li>`).join('')}</ul>` : ''}
+      </div>` : ''}
       <p class="an-summary">${esc(n.summaryParagraph)}</p>
       ${n.keyFindings.length ? `<div class="an-section-title">Key Findings</div>${findingsHtml}` : ''}
       ${n.recommendations.length ? `<div class="an-section-title">Recommended Actions</div>${recsHtml}` : ''}
@@ -15439,15 +15524,41 @@ function generateHolesReport() {
   // than one sentence trying to hold both.
   const _redCount = (_auditFindingCount && _auditFindingCount.red) || 0;
   const _yelCount = (_auditFindingCount && _auditFindingCount.yellow) || 0;
+
+  // PROPERTY COVERAGE — the question this report is named after.
+  //
+  // It used to be absent: a manager opened the "Coverage Gap Report" to
+  // understand a 62.7% gap and was told coverage was Complete, because the only
+  // coverage this report measured was input-vs-last-run. The number is read from
+  // the SAME coverage finding the CAM screen and the Audit Exception Summary
+  // use — reconciliation-engine section 3 — so there is no second source of
+  // truth and no second calculation.
+  const _propertyCoverage = (() => {
+    try {
+      if (!lastResults.length) return null;
+      const sum = lastResults.reduce((a, r) => a + ((Number(r.proRata) || 0) * 100), 0);
+      const f = _detectReconciliationIssues(lastResults, currentProperty())
+        .find(x => /Property CAM coverage|over-allocation/i.test(x.title || ''));
+      return { documented: sum, unresolved: Math.max(0, 100 - sum), finding: f || null };
+    } catch (_) { return null; }
+  })();
   const summaryBar = `
     <div class="cg-split">
       <div class="cg-block ${totalIssues === 0 ? 'cg-block--ok' : criticalItems.length > 0 ? 'cg-block--alert' : 'cg-block--warn'}">
-        <div class="cg-block-title">Input coverage</div>
+        <!-- "all leases are uploaded" was a claim MainStreet cannot make. It
+             has no way to know a lease exists that has never been given to it —
+             that is precisely the ambiguity the CAM coverage banner refuses to
+             resolve, and stating it as settled fact under a green tick
+             contradicted that banner one screen away. What this block actually
+             checks is narrower and is now said exactly: the inputs PRESENT have
+             been compared against the previous run. Whether the set is complete
+             is a different question, answered by property coverage below. -->
+        <div class="cg-block-title">Input completeness</div>
         <div class="cg-block-state">${totalIssues === 0
-          ? '&#x2713; Complete'
+          ? '&#x2713; Nothing missing vs. the last run'
           : `&#x26A0; ${totalIssues} input${totalIssues === 1 ? '' : 's'} need${totalIssues === 1 ? 's' : ''} attention`}</div>
         <div class="cg-block-sub">${totalIssues === 0
-          ? 'Every vendor and category from the last run is present, all leases are uploaded, and no extraction needs review.'
+          ? 'Every vendor and category from the last run is present, and no uploaded lease needs extraction review. This compares what you have loaded against the previous reconciliation — it cannot tell you whether a lease you have never uploaded exists. Property coverage answers that.'
           : `${criticalItems.length} critical &middot; ${warningItems.length} warning${warningItems.length === 1 ? '' : 's'}, listed above. Fix these before running the reconciliation.`}</div>
       </div>
       <div class="cg-block ${_redCount > 0 ? 'cg-block--alert' : _yelCount > 0 ? 'cg-block--warn' : 'cg-block--ok'}">
@@ -15464,6 +15575,24 @@ function generateHolesReport() {
           : _redCount > 0
             ? 'Enumerated in the Audit Exception Summary. Resolve before billing.'
             : 'Enumerated in the Audit Exception Summary.'}</div>
+      </div>
+      <!-- The gap this report is named for. Read from the same finding the CAM
+           screen and the Audit Exception Summary use, so the three cannot
+           disagree. Deliberately states the cause as UNDETERMINED: the system
+           knows how much of the property its loaded leases account for, and
+           nothing at all about the remainder. -->
+      <div class="cg-block ${_propertyCoverage && _propertyCoverage.unresolved > 2 ? 'cg-block--warn' : 'cg-block--ok'}">
+        <div class="cg-block-title">Property coverage</div>
+        <div class="cg-block-state">${!_propertyCoverage
+          ? '&mdash; Not yet run'
+          : _propertyCoverage.unresolved > 2
+            ? `&#x26A0; ${_propertyCoverage.documented.toFixed(1)}% documented &middot; ${_propertyCoverage.unresolved.toFixed(1)}% unresolved`
+            : `&#x2713; ${_propertyCoverage.documented.toFixed(1)}% documented`}</div>
+        <div class="cg-block-sub">${!_propertyCoverage
+          ? 'Run a reconciliation to measure how much of the property the loaded leases account for.'
+          : _propertyCoverage.unresolved > 2
+            ? `The loaded leases account for ${_propertyCoverage.documented.toFixed(1)}% of the property's square footage. MainStreet cannot tell whether the remaining ${_propertyCoverage.unresolved.toFixed(1)}% is vacant space or space under a lease it has never been given. <strong>What MainStreet needs from you:</strong> upload any remaining leases and re-run — if every lease is already loaded, the remainder is vacant and the landlord absorbs its share.`
+            : 'The loaded leases account for the property\'s square footage. Nothing is unresolved.'}</div>
       </div>
     </div>`;
 
@@ -17166,6 +17295,15 @@ function _renderStatementReadinessBlock(block) {
   const _expenseShown = _expenseKinds.some(k => subtotals[k] != null);
   const _allocationShown = ['at_risk', 'under_review', 'recoverable'].some(k => subtotals[k] != null);
   const mixedAxes = _expenseShown && _allocationShown;
+  // Name the expense-side treatment ACTUALLY in the table above. This paragraph
+  // hard-coded "Weakly evidenced", so once concentration was split out it
+  // explained a term the reader had never seen — the table said "Material
+  // Concentration" and the note defined something else.
+  const _expenseKindShown  = _expenseKinds.find(k => subtotals[k] != null) || 'unsubstantiated';
+  const _expenseLabelShown = (AXs && AXs.KIND_LABEL_TITLE && AXs.KIND_LABEL_TITLE[_expenseKindShown])
+    || KIND_LBL[_expenseKindShown] || 'Expense-side';
+  const _expenseMeaningShown = (AXs && AXs.KIND_MEANING && AXs.KIND_MEANING[_expenseKindShown])
+    || 'pool dollars measured on the expense side rather than on what was billed.';
 
   openReport(`Statement blocked — ${block.tenantName}`, `
     <div class="rpt-section-title">This statement has not been issued</div>
@@ -17187,8 +17325,8 @@ function _renderStatementReadinessBlock(block) {
       <strong>Requiring lease verification</strong> is CAM allocated to a tenant whose lease on file has expired.
       A holdover or renewal may cover it; none has been confirmed. It is the same figure
       the Audit Exception Summary and the Risk &amp; Disputes report state, read from the same finding.
-      ${mixedAxes ? `<strong>Weakly evidenced</strong> measures something different: pool dollars whose
-        supporting evidence is thin. The same dollar can appear on both, so the two totals are struck separately
+      ${mixedAxes ? `<strong>${esc(_expenseLabelShown)}</strong> measures something different: ${esc(_expenseMeaningShown)}
+        The same dollar can appear on both, so the two totals are struck separately
         and must not be added together.` : ''}
     </div>
     <div class="rpt-section-title">To proceed</div>

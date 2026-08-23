@@ -732,6 +732,85 @@ const SUPABASE_MOCK = `
   yes('tenants are billed less than the pool (the gap is not billed to anyone)',
       recon.billed < recon.pool, `billed ${recon.billed} vs pool ${recon.pool}`);
 
+  // ── C2/C3/C4: the reconciliation screen must not overstate its own state ──
+  //
+  // "Total Billed $25,090.78" sat at the top of a run on which every statement
+  // is refused; "0 Flagged" sat beside 3 critical exceptions; and the row chip
+  // read "Verified" next to a tenant whose lease expired in 2016. Each was
+  // separately defensible and together they read as "this is done and fine".
+  console.log('\n── The reconciliation screen states its own billing state ──');
+  const screen = await page.evaluate(() => {
+    const b = document.getElementById('resultsBody') || document.body;
+    return {
+      kpis:  [...b.querySelectorAll('.rcs-kpi')].map(k => k.textContent.replace(/\s+/g,' ').trim()),
+      badge: (()=>{const n=b.querySelector('.rcs-readiness-badge');return n?n.textContent.trim():null;})(),
+      chips: [...b.querySelectorAll('.rc-calc-state')].map(x => x.textContent.trim()),
+      colHdr: [...b.querySelectorAll('.rcs-th')].map(x => x.textContent.trim()),
+    };
+  });
+  console.log('  KPIs   :', JSON.stringify(screen.kpis));
+  console.log('  badge  :', JSON.stringify(screen.badge));
+  console.log('  chips  :', JSON.stringify(screen.chips));
+  console.log('  columns:', JSON.stringify(screen.colHdr));
+  yes('C2 the KPI does NOT claim money was billed on a blocked run',
+      !screen.kpis.some(k => /Total Billed/.test(k))
+        && screen.kpis.some(k => /Calculated Tenant Allocation/.test(k)),
+      JSON.stringify(screen.kpis));
+  yes('the canonical readiness state is on the screen that produces the run',
+      !!screen.badge && /Not ready to bill/i.test(screen.badge), String(screen.badge));
+  yes('C4 the flags KPI names its narrow scope rather than reading as "no problems"',
+      screen.kpis.some(k => /Allocation Flags/.test(k)) && !screen.kpis.some(k => /\bFlagged\b/.test(k)),
+      JSON.stringify(screen.kpis));
+  yes('C3 the row chip says what was verified — the calculation, not the tenant',
+      screen.chips.length > 0 && !screen.chips.includes('Verified')
+        && screen.chips.every(c => /^(Calc |Inputs )/.test(c)),
+      JSON.stringify(screen.chips));
+  yes('C3 the column is headed for the calculation, not the billing method',
+      screen.colHdr.includes('CAM calculation') && !screen.colHdr.includes('Billing Method'),
+      JSON.stringify(screen.colHdr));
+
+  // ── I11: the one required next action, on a BLOCKED run ──────────────────
+  //
+  // recommendations[] lists advisory items with equal weight, so a manager could
+  // not tell which one stood between them and a statement. nextAction is derived
+  // from billingReadiness — the model that gates statements — so it cannot
+  // disagree with them.
+  console.log('\n── The next required action ──');
+  const na = await page.evaluate(() => {
+    const n = buildAuditNarrative();
+    return { nextAction: n.nextAction, readiness: n.readiness, recs: (n.recommendations||[]).length };
+  });
+  console.log('  nextAction:', JSON.stringify(na.nextAction, null, 1).replace(/\n/g, '\n    '));
+  yes('it exists and names the blocked state', !!na.nextAction && na.nextAction.state === 'blocked',
+      JSON.stringify(na.nextAction));
+  yes('it agrees with the canonical readiness — no second source of truth',
+      na.nextAction.label === na.readiness.label
+        && (na.nextAction.state === 'ready') === (na.readiness.canBill === true),
+      JSON.stringify({ na: na.nextAction.label, rd: na.readiness.label }));
+  yes('it lists the blocking findings, each with an action read off the finding',
+      Array.isArray(na.nextAction.steps) && na.nextAction.steps.length === 3
+        && na.nextAction.steps.every(x => /→/.test(x)),
+      JSON.stringify(na.nextAction.steps));
+  yes('it tells the reader what happens after they resolve them',
+      /re-run the reconciliation/i.test(na.nextAction.detail || ''), String(na.nextAction.detail));
+  yes('and the advisory list still exists alongside it', na.recs > 0, `recommendations: ${na.recs}`);
+
+  // ── C5: the blocked screen must define the term it actually showed ────────
+  console.log('\n── The blocked screen names the treatment it displayed ──');
+  const axis = await page.evaluate(async () => {
+    const b = document.getElementById('rptBody'); if (b) b.innerHTML = '';
+    await generateTenantStatement('Dover');
+    const t = (document.getElementById('rptBody')?.textContent || '').replace(/\s+/g, ' ');
+    return { text: t,
+      treatments: [...new Set((t.match(/Material Concentration|Weakly Evidenced|Requiring Lease Verification/gi) || []))] };
+  });
+  console.log('  treatments named:', JSON.stringify(axis.treatments));
+  yes('the explainer names a treatment that is actually in the table',
+      /Material Concentration/i.test(axis.text) && !/Weakly evidenced/i.test(axis.text),
+      `the note defines a term the reader never saw: ${JSON.stringify(axis.treatments)}`);
+  yes('and still warns the two measures must not be added',
+      /must not be added together/i.test(axis.text), 'the two-axis warning is gone');
+
   // ── The unallocated remainder must not be claimed as settled ─────────────
   //
   // $42,209.22 of a $67,300 pool is unbilled because only 37.28% of the
@@ -1020,9 +1099,21 @@ const SUPABASE_MOCK = `
   yes('it never asserts the gap is vacant',
       !!cgFinding && !/untenanted/i.test(JSON.stringify(cgFinding)),
       'the finding asserts vacancy as fact');
-  yes('the Coverage Gap report shows the input/reconciliation split',
-      /Input coverage/i.test(cg) && /Reconciliation status/i.test(cg),
+  yes('the Coverage Gap report separates the three scopes',
+      /Input completeness/i.test(cg) && /Reconciliation status/i.test(cg)
+        && /Property coverage/i.test(cg),
       'the scope split is missing from the rendered report');
+  // B1: the report is named after property coverage and used to answer a
+  // different question with a green tick, telling a manager coverage was
+  // Complete on a run whose CAM screen said 62.7% was unresolved.
+  yes('it reports the real property coverage figure',
+      /37\.3% documented/.test(cg) && /62\.7% unresolved/.test(cg), cg.slice(0, 400));
+  yes('it never claims every lease has been uploaded',
+      !/all leases are uploaded/i.test(cg),
+      'the report asserts a completeness it cannot establish');
+  yes('it says what MainStreet needs from the reader next',
+      /What MainStreet needs from you/i.test(cg) && /upload any remaining leases/i.test(cg),
+      cg.slice(0, 400));
 
   // ══ The billing gate and the tenant statement ══════════════════════════════
   console.log('\n── Billing gate and tenant statement ──');
@@ -1207,7 +1298,7 @@ const SUPABASE_MOCK = `
   // rather than computed wrongly, so an assertion silently disappearing from
   // this file is the exact way its coverage would erode. Change this number
   // deliberately, in the same commit as the assertions.
-  const TOTAL_EXPECTED = 99;
+  const TOTAL_EXPECTED = 114;
   yes(`suite runs all ${TOTAL_EXPECTED} checks`, pass + fail + 1 === TOTAL_EXPECTED,
       `assertion count changed — update TOTAL_EXPECTED deliberately (saw ${pass + fail + 1})`);
 

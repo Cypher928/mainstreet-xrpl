@@ -3819,6 +3819,43 @@
     }
     .bulk-cam-review strong { color: var(--c-93c5fd, #93c5fd); }
 
+    /* The canonical billing state, shown on the reconciliation panel head with
+       the same two words every other surface uses. */
+    .rcs-readiness-badge {
+      font-family: 'DM Sans', sans-serif; font-size: 0.72rem; font-weight: 600;
+      letter-spacing: 0.01em; padding: 3px 9px; border-radius: 999px;
+      white-space: nowrap; margin-left: 6px;
+    }
+    .rcs-readiness--ok {
+      background: rgba(16,185,129,0.12); color: var(--c-6ee7b7, #6ee7b7);
+      border: 1px solid rgba(16,185,129,0.35);
+    }
+    /* The single required next action, at the top of the audit narrative. */
+    .an-next {
+      font-family: 'DM Sans', sans-serif; border-radius: 9px; padding: 12px 15px;
+      margin: 0 0 14px; border: 1px solid; border-left-width: 3px;
+    }
+    .an-next--blocked { background: rgba(239,68,68,0.07); border-color: rgba(239,68,68,0.34); }
+    .an-next--ready   { background: rgba(16,185,129,0.07); border-color: rgba(16,185,129,0.34); }
+    .an-next--unknown { background: rgba(148,163,184,0.07); border-color: rgba(148,163,184,0.3); }
+    .an-next-label {
+      font-size: 0.92rem; font-weight: 700; letter-spacing: -0.01em; margin-bottom: 4px;
+    }
+    .an-next--blocked .an-next-label { color: var(--c-fca5a5, #fca5a5); }
+    .an-next--ready   .an-next-label { color: var(--c-6ee7b7, #6ee7b7); }
+    .an-next--unknown .an-next-label { color: var(--text-2); }
+    .an-next-detail { font-size: 0.83rem; line-height: 1.55; color: var(--text-2); }
+    .an-next-steps {
+      margin: 8px 0 0; padding-left: 18px; font-size: 0.8rem;
+      line-height: 1.6; color: var(--text-3);
+    }
+    .an-next-steps li { margin-bottom: 3px; overflow-wrap: anywhere; }
+
+    .rcs-readiness--blocked {
+      background: rgba(239,68,68,0.12); color: var(--c-fca5a5, #fca5a5);
+      border: 1px solid rgba(239,68,68,0.38);
+    }
+
     /* Coverage Gap: input coverage and reconciliation status, side by side and
        separately headed, because they answer different questions. */
     .cg-split {

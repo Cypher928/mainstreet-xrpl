@@ -41,6 +41,12 @@ const SUITES = [
   // fails loudly rather than passing, and SKIP_BROWSER_TESTS=1 is the explicit
   // opt-out.
   { label: 'Test 3 workflow replay (e2e)',      cmd: 'node test-e2e-test3.js' },
+  // The happy path. Every other e2e suite drives a property with problems,
+  // which is where the defects were — and left the most common real case
+  // untested. A system tuned only on failure cases cries wolf, so this one is
+  // mostly negative assertions: no exceptions, no coverage gap, no manufactured
+  // "needs review" on a lease that scores 100, and a statement that issues.
+  { label: 'Clean property, happy path (e2e)',  cmd: 'node test-e2e-clean-property.js' },
   // XRPL/RLUSD settlement configuration. Offline only: it asserts the issuer,
   // currency code, Make Waves source tag and memo payload, and SKIPS (does not
   // fail) the live ledger reads when the network is unreachable — so it is safe
