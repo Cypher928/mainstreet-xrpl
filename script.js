@@ -18506,9 +18506,9 @@ function _emphasiseReviewGap(propertyId, tenantId) {
   if (!reasons.length) return;
 
   // Does anything here actually STOP CAM? That decides which action is honest.
-  const _liveT    = tenantData.find(t => t && t.id === tenantId)
-                    || (prop.tenants || []).find(t => t && t.id === tenantId);
-  const _blockFix = _liveT ? _leaseBlockerResolution(_liveT) : null;
+  const _liveT   = tenantData.find(t => t && t.id === tenantId)
+                   || (prop.tenants || []).find(t => t && t.id === tenantId);
+  const _nextFix = _liveT ? _reviewResolution(_liveT) : null;
 
   const paint = (tries) => {
     const host = document.querySelector('#tsOverlay .ts-body, #tsOverlay .ts-card, #tsOverlay');
@@ -18523,16 +18523,28 @@ function _emphasiseReviewGap(propertyId, tenantId) {
         reasons.map(r => '<li>' + esc(r) + '</li>').join('') +
       '</ul>' +
       '<div class="ts-review-gap-act">' +
-        // A blocker gets a way to CLOSE it, not a way to acknowledge it. See
-        // _leaseBlockerResolution: acknowledging a blocked lease turned the card
-        // green while the lease stayed out of CAM.
-        (_blockFix
-          ? '<button class="ts-review-gap-btn" onclick="openLeaseBlockerFix(\'' + esc(tenantId) + '\')">' +
-              esc(_blockFix.label) + '</button>' +
-            '<div class="ts-review-gap-hint">This lease cannot take part in CAM until that is resolved. ' +
-              'Marking it reviewed would not change that, so it is not offered here.</div>'
-          : '<button class="ts-review-gap-btn" onclick="markTenantReviewAcknowledged(\'' + esc(tenantId) + '\');' +
-              'var g=document.getElementById(\'tsReviewGap\');if(g)g.remove();">Mark reviewed</button>') +
+        // ONE CTA, AND IT ALWAYS LEADS SOMEWHERE.
+        //
+        // This offered "Mark reviewed", which set review.reviewerConfirmed. That
+        // flag short-circuits deriveTenantReviewState to 'manually_verified', so
+        // on a lease with three outstanding items the card went green and all
+        // three items stayed exactly where they were. Every condition that puts a
+        // lease here has a concrete resolution — a field to fill, a value to
+        // verify, a confirmation to make — so the button goes to the first one.
+        // Where nothing outstanding is resolvable there is no button, because
+        // there is no action to offer.
+        (_nextFix
+          ? '<button class="ts-review-gap-btn" onclick="openReviewItemFix(\'' + esc(tenantId) + '\',' +
+              (_nextFix.field ? '\'' + esc(_nextFix.field) + '\'' : 'null') + ')">' +
+              esc('Next step: ' + _nextFix.cta) + '</button>' +
+            '<div class="ts-review-gap-hint">' +
+              (_nextFix.blocking
+                ? 'This lease cannot take part in CAM until that is resolved. '
+                : 'Each item clears when the underlying value is resolved. ') +
+              'Marking it reviewed would not change any of them, so it is not offered here.' +
+            '</div>'
+          : '<div class="ts-review-gap-hint">These are recorded for the file. ' +
+              'Nothing here is outstanding, so there is no action to take.</div>') +
       '</div>';
     host.insertBefore(box, host.firstChild);
     box.scrollIntoView({ behavior: 'smooth', block: 'nearest' });
@@ -18591,26 +18603,74 @@ function setReviewQueueFilter(filter) {
 // blocker itself is untouched — this changes which button is offered, never what
 // clears the state.
 
-// The CAM blockers on this lease, plus the words for a button that leads to
-// where they are resolved. null when nothing blocks and acknowledgement is fine.
+// EVERY condition that puts a lease in Needs Review or Incomplete, in the order
+// a person should deal with them, paired with where each one is actually
+// resolved. Derived from the status branches in review-engine.js
+// deriveTenantReviewState — if a condition is added there it must be added here,
+// or its CTA falls back to the generic form below.
+//
+// The point of the list: every driver of Needs Review has a concrete
+// resolution — a field to fill, a value to verify, a confirmation to make.
+// Not one of them is closed by saying "I looked at it". That is why this panel
+// no longer offers an acknowledgement at all.
+const _REVIEW_RESOLUTIONS = [
+  // CAM blockers first: these stop the reconciliation, not just the trust in it.
+  { type: 'missing_sqft',           cta: 'Add the leased square footage',                field: 'leased_sqft' },
+  { type: 'property_name_mismatch', cta: 'Confirm which property this lease belongs to', field: '_confirm'    },
+  // Then the fields whose absence leaves the record incomplete.
+  { type: 'missing_lease_type',     cta: 'Set the lease type',                           field: 'lease_type'  },
+  { type: 'missing_start_date',     cta: 'Add the lease start date',                     field: 'start_date'  },
+  { type: 'missing_end_date',       cta: 'Add the lease end date',                       field: 'end_date'    },
+  // Then the review items that hold a lease in needs_review.
+  { type: 'pro_rata_overflow',      cta: 'Fix the square footage — shares exceed 100%',  field: 'leased_sqft' },
+  { type: 'low_sqft_confidence',    cta: 'Verify the leased square footage',             field: 'leased_sqft' },
+  { type: 'nnn_cap_missing',        cta: 'Enter the CAM cap percentage',                 field: 'cap'         },
+  { type: 'fallback_extraction',    cta: 'Verify the extracted lease fields',            field: null          },
+];
+const _REVIEW_FIELD_LABEL = {
+  leased_sqft: /^Leased Sqft/i, lease_type: /^Lease Type/i,
+  start_date:  /^Lease Start/i, end_date:   /^Lease End/i,
+  cap:         /^CAM Cap/i,
+};
+
+// What this lease needs next, and what to put on the button that leads there.
+// Returns null when nothing outstanding is resolvable — in which case no action
+// is offered, because there is none to offer.
+function _reviewResolution(d) {
+  let st = null;
+  try { st = deriveTenantReviewState(d); } catch (_) { return null; }
+  const types = new Set((st.warnings || []).map(w => w.type));
+  const label = (ty) => ((st.warnings || []).find(w => w.type === ty) || {}).label || ty;
+  const hit = _REVIEW_RESOLUTIONS.find(r => types.has(r.type));
+  if (!hit) return null;
+  const blockers = st.camBlocking || [];
+  const outstanding = _REVIEW_RESOLUTIONS.filter(r => types.has(r.type)).map(r => label(r.type));
+  return {
+    type: hit.type, field: hit.field,
+    cta: hit.cta + ' \u203A',
+    item: label(hit.type),
+    blocking: blockers.length > 0,
+    blockers,
+    outstanding,
+  };
+}
+
+// Kept as the CAM-blocker view of the same model, because two callers ask that
+// narrower question (rwApprove, and the queue card's refusal copy).
 function _leaseBlockerResolution(d) {
   let st = null;
   try { st = deriveTenantReviewState(d); } catch (_) { return null; }
   const blockers = st.camBlocking || [];
   if (!blockers.length) return null;
-  const types = (st.warnings || []).map(w => w.type);
-  if (types.includes('property_name_mismatch'))
-    return { blockers, label: 'Confirm which property this lease belongs to \u203A' };
-  if (types.includes('missing_sqft'))
-    return { blockers, label: 'Add the leased square footage \u203A' };
-  return { blockers, label: 'Resolve: ' + blockers[0] + ' \u203A' };
+  const r = _reviewResolution(d);
+  return { blockers, label: (r && r.blocking) ? r.cta : 'Resolve: ' + blockers[0] + ' \u203A' };
 }
 
-// Takes the reader to the control that actually closes the blocker. Navigation
-// only: it opens the lease card and scrolls to the resolution, and changes no
-// state of its own. The state-changing action stays where it is — the explicit
-// "Confirm lease belongs to this property" button on the card.
-function openLeaseBlockerFix(tenantId) {
+// Takes the reader to the control that actually closes the item. Navigation
+// only: it opens the lease card, expands it, scrolls to the field or the
+// confirmation and highlights it. It changes no state of its own — the
+// state-changing actions stay where they are, on the card.
+function openReviewItemFix(tenantId, field) {
   const i = tenantData.findIndex(t => t && t.id === tenantId);
   if (i === -1) {
     showToast('Could not open that lease — it is not on the active property.',
@@ -18623,8 +18683,8 @@ function openLeaseBlockerFix(tenantId) {
   if (typeof switchWorkspaceTab === 'function') switchWorkspaceTab('spaces');
   if (typeof switchLeaseTab === 'function') switchLeaseTab('bulk');
   if (typeof renderBulkResults === 'function') renderBulkResults();
-  // The card renders collapsed and the detail is built on expand, so the scroll
-  // target does not exist until after both.
+  // The card renders collapsed and its detail is built on expand, so the target
+  // does not exist until after both.
   setTimeout(() => {
     const det = document.getElementById('bdet-' + i);
     if (det && getComputedStyle(det).display === 'none' && typeof toggleBulkDetail === 'function') {
@@ -18633,12 +18693,28 @@ function openLeaseBlockerFix(tenantId) {
     setTimeout(() => {
       const row = document.getElementById('btr-' + i);
       if (!row) return;
-      const tgt = row.querySelector('.lease-prop-confirm') || row.querySelector('.field') || row;
+      let tgt = null;
+      if (field === '_confirm') tgt = row.querySelector('.lease-prop-confirm');
+      else if (field && _REVIEW_FIELD_LABEL[field]) {
+        const re = _REVIEW_FIELD_LABEL[field];
+        const f = [...row.querySelectorAll('.field')]
+          .find(x => re.test((x.querySelector('label')?.textContent || '').trim()));
+        if (f) { tgt = f; const inp = f.querySelector('input, select'); if (inp) { try { inp.focus(); } catch (_) {} } }
+      }
+      tgt = tgt || row.querySelector('.lease-prop-confirm') || row.querySelector('.field') || row;
       tgt.scrollIntoView({ behavior: 'smooth', block: 'center' });
       tgt.classList.add('lease-blocker-flash');
       setTimeout(() => tgt.classList.remove('lease-blocker-flash'), 2200);
     }, 90);
   }, 60);
+}
+
+// Back-compat for the one call site that still names the blocker-only entry.
+function openLeaseBlockerFix(tenantId) {
+  let d = tenantData.find(t => t && t.id === tenantId);
+  if (!d) d = ((currentProperty() || {}).tenants || []).find(t => t && t.id === tenantId);
+  const r = d ? _reviewResolution(d) : null;
+  openReviewItemFix(tenantId, r ? r.field : null);
 }
 
 function markTenantReviewAcknowledged(tenantId, note = null) {
@@ -18718,10 +18794,13 @@ function _rqCompactItemHtml(item) {
         // is offered the resolution, never the acknowledgement.
         const liveT = tenantData.find(t => t && t.id === tid)
                       || ((currentProperty() || {}).tenants || []).find(t => t && t.id === tid);
-        const fix   = liveT ? _leaseBlockerResolution(liveT) : null;
+        // Same rule as the panel: the action leads to the next unresolved item,
+        // whatever kind it is. Acknowledgement is not offered, because it closes
+        // none of them.
+        const fix   = liveT ? _reviewResolution(liveT) : null;
         return fix
-          ? `<button class="rq-action-btn rq-btn--fix" onclick="openLeaseBlockerFix('${tid}')" title="${esc(fix.blockers.join('; '))}">${esc(fix.label)}</button>`
-          : `<button class="rq-action-btn rq-btn--ack" onclick="markTenantReviewAcknowledged('${tid}')">Mark ${esc(item.tenantName)} reviewed</button>`;
+          ? `<button class="rq-action-btn rq-btn--fix" onclick="openReviewItemFix('${tid}', ${fix.field ? `'${esc(fix.field)}'` : 'null'})" title="${esc(fix.outstanding.join('; '))}">Next step: ${esc(fix.cta)}</button>`
+          : '';
       })()}
     </div>
   </div>`;
@@ -26056,7 +26135,7 @@ const _ASYNC_USER_ACTIONS = [
   // unguarded, a rejection there is a click that does nothing and says nothing.
   'archiveActiveProperty', 'restoreProperty', 'toggleArchivedProperties',
   'runAllocation', 'handleBulkLeases', 'handleBatchInvoices', 'generateTenantStatement',
-  'loadDemo', 'openReviewItem', 'markTenantReviewAcknowledged', 'openLeaseBlockerFix',
+  'loadDemo', 'openReviewItem', 'markTenantReviewAcknowledged', 'openLeaseBlockerFix', 'openReviewItemFix',
 ];
 
 // What the user is told when an action fails. Names the action in their words.

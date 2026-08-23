@@ -350,7 +350,8 @@ const SUPABASE_MOCK = `
       /confirm which property this lease belongs to/i.test(panel.buttons[0].text),
       panel.buttons[0].text);
   yes('and the panel says why acknowledgement is not offered',
-      !!panel.hint && /cannot take part in CAM/i.test(panel.hint) && /would not change that/i.test(panel.hint),
+      !!panel.hint && /cannot take part in CAM/i.test(panel.hint)
+        && /would not change/i.test(panel.hint) && /not offered here/i.test(panel.hint),
       String(panel.hint));
 
   // NO DEAD ENDS: every button in the panel must be wired to a real function.
@@ -448,23 +449,120 @@ const SUPABASE_MOCK = `
       'the blocked list still names it');
   yes('and the decision is attributed', done.recordedBy === 'owner@e2e-test.local', String(done.recordedBy));
 
-  // ── Acknowledgement is still offered where it is honest ──────────────────
-  console.log('\n── An advisory-only lease may still be acknowledged ──');
-  const advisory = await page.evaluate(async () => {
-    const d = tenantData.filter(Boolean).find(t => /^Paradigm/.test(t.tenant_name));
-    const fix = _leaseBlockerResolution(d);
-    await openReviewItem(window.__PROP_ID, d.id);
-    await new Promise(r => setTimeout(r, 900));
-    const gap = document.getElementById('tsReviewGap');
-    const btns = gap ? [...gap.querySelectorAll('button')].map(b => b.textContent.replace(/\s+/g,' ').trim()) : [];
-    if (window.TenantSpace && window.TenantSpace.closeSpace) window.TenantSpace.closeSpace();
-    return { blockers: fix ? fix.blockers : [], camBlocking: deriveTenantReviewState(d).camBlocking, btns };
+  // ── EVERY review type gets a resolution, not just the blocker ────────────
+  //
+  // The reported case: a lease with three outstanding review items and NO CAM
+  // blocker still showed "Mark reviewed", which set reviewerConfirmed and
+  // flipped the card to verified while all three items stayed put. Each type is
+  // driven here through the real panel.
+  console.log('\n── Every Needs Review type leads to its own resolution ──');
+  // What the card labels each field, so the landing can be checked by what the
+  // reader sees rather than by an internal key.
+  const LANDING = {
+    leased_sqft: /^Leased Sqft/i, lease_type: /^Lease Type/i,
+    start_date:  /^Lease Start/i, end_date:   /^Lease End/i,
+    cap:         /^CAM Cap/i,
+  };
+  const KINDS = [
+    ['missing square footage', { leased_sqft: null },
+     /add the leased square footage/i, 'leased_sqft'],
+    ['missing lease type',     { lease_type: '' },
+     /set the lease type/i, 'lease_type'],
+    ['missing end date',       { end_date: '' },
+     /add the lease end date/i, 'end_date'],
+    ['cap verification',       { cap: null, capBaseAmount: null },
+     /enter the cam cap percentage/i, 'cap'],
+    ['property mismatch',      { __mismatch: true },
+     /confirm which property this lease belongs to/i, '_confirm'],
+  ];
+  for (const [name, patch, ctaRe, field] of KINDS) {
+    const r = await page.evaluate(async ([p, tid]) => {
+      const d = tenantData.filter(Boolean).find(t => t.id === tid);
+      // Reset to a lease with nothing outstanding, then introduce exactly one.
+      Object.assign(d, { leased_sqft: 8194, lease_type: 'Triple Net (NNN)',
+        start_date: '2011-07-01', end_date: '2016-07-01',
+        cap: '5', capBaseAmount: '30000', audit_rights: true });
+      delete d._edgeCases; delete d._propertyConfirm; d.property_name = null;
+      if (p.__mismatch) {
+        d.property_name = 'Northgate Commons'; d.fileName = 'dover-lease-v1.pdf';
+        d._edgeCases = window.LeaseIntelligence.detectLeaseEdgeCases(
+          d, { currentPropertyName: currentProperty().name });
+      } else { Object.assign(d, p); }
+      currentProperty().tenants = tenantData.filter(Boolean);
+      if (window.TenantSpace && window.TenantSpace.closeSpace) window.TenantSpace.closeSpace();
+      await openReviewItem(window.__PROP_ID, tid);
+      await new Promise(x => setTimeout(x, 800));
+      const gap = document.getElementById('tsReviewGap');
+      const btn = gap ? gap.querySelector('button') : null;
+      const out = {
+        state: getTenantReviewState(d),
+        painted: !!gap,
+        cta: btn ? btn.textContent.replace(/\s+/g, ' ').trim() : null,
+        onclick: btn ? (btn.getAttribute('onclick') || '') : '',
+        hint: gap ? (gap.querySelector('.ts-review-gap-hint') || {}).textContent || '' : '',
+      };
+      if (window.TenantSpace && window.TenantSpace.closeSpace) window.TenantSpace.closeSpace();
+      return out;
+    }, [patch, seed.id]);
+    console.log(`  ${name.padEnd(24)} state=${r.state} cta=${JSON.stringify(r.cta)}`);
+    yes(`${name}: the panel opens and offers a next step`,
+        r.painted && !!r.cta && /^Next step:/.test(r.cta), JSON.stringify(r));
+    yes(`${name}: the CTA names this item's resolution`, ctaRe.test(r.cta || ''), String(r.cta));
+    yes(`${name}: it navigates to that field, and acknowledges nothing`,
+        r.onclick.indexOf('openReviewItemFix(') === 0
+          && r.onclick.indexOf(field === null ? 'null' : "'" + field + "'") > 0
+          && !/markTenantReviewAcknowledged/.test(r.onclick),
+        r.onclick);
+    yes(`${name}: the panel says acknowledgement would not change it`,
+        /would not change/i.test(r.hint), r.hint);
+
+    // WHERE THE CLICK ACTUALLY LANDS, not what the onclick attribute says.
+    // A mutation that made openReviewItemFix ignore the field entirely left the
+    // attribute assertion above green, because the attribute is generated from
+    // _reviewResolution while the landing is done by the navigator.
+    const land = await page.evaluate(async ([tid, f]) => {
+      openReviewItemFix(tid, f);
+      await new Promise(x => setTimeout(x, 700));
+      const i   = tenantData.findIndex(t => t && t.id === tid);
+      const row = document.getElementById('btr-' + i);
+      const hit = row ? row.querySelector('.lease-blocker-flash') : null;
+      return {
+        landed: !!hit,
+        isConfirm: !!(hit && hit.classList.contains('lease-prop-confirm')),
+        fieldLabel: hit ? ((hit.querySelector('label') || {}).textContent || '').trim() : null,
+        focused: (document.activeElement && document.activeElement.tagName === 'INPUT')
+          ? ((document.activeElement.closest('.field') || {}).querySelector
+              ? ((document.activeElement.closest('.field').querySelector('label') || {}).textContent || '').trim()
+              : null)
+          : null,
+      };
+    }, [seed.id, field]);
+    console.log(`     lands on: ${JSON.stringify(land.fieldLabel || (land.isConfirm ? '[confirm control]' : null))}`);
+    yes(`${name}: the click lands on something specific`, land.landed, JSON.stringify(land));
+    yes(`${name}: it lands on the control that resolves THIS item`,
+        field === '_confirm'
+          ? land.isConfirm
+          : (LANDING[field] || /$^/).test(land.fieldLabel || land.focused || ''),
+        JSON.stringify({ expected: field, label: land.fieldLabel, focused: land.focused }));
+  }
+
+  // No panel anywhere in this flow may still offer the acknowledgement CTA.
+  console.log('\n── "Mark reviewed" is gone from these panels ──');
+  const gone = await page.evaluate(() => {
+    const src = String(_emphasiseReviewGap);
+    return {
+      // A rendered acknowledgement CONTROL, not the phrase: the words still
+      // appear in the note explaining why it is absent, and in the comment
+      // recording why it was removed. Neither is a button.
+      ackButton: /<button[^>]*>\s*Mark reviewed/.test(src),
+      callsAck:  /onclick="markTenantReviewAcknowledged/.test(src)
+                 || /markTenantReviewAcknowledged\(/.test(src),
+    };
   });
-  R('Paradigm camBlocking', advisory.camBlocking);
-  R('buttons offered', advisory.btns);
-  yes('a lease with nothing blocking is still offered acknowledgement',
-      advisory.camBlocking.length === 0 && advisory.btns.some(b => /mark reviewed/i.test(b)),
-      JSON.stringify(advisory));
+  yes('the review panel renders no acknowledgement button',
+      gone.ackButton === false, JSON.stringify(gone));
+  yes('and never wires one to markTenantReviewAcknowledged',
+      gone.callsAck === false, JSON.stringify(gone));
 
   // ── The workspace approve path obeys the same rule ───────────────────────
   console.log('\n── rwApprove refuses a blocked lease ──');
@@ -533,7 +631,7 @@ const SUPABASE_MOCK = `
 
   yes('no uncaught page errors', errors.length === 0, errors.slice(0, 3).join(' | '));
 
-  const TOTAL_EXPECTED = 28;
+  const TOTAL_EXPECTED = 59;
   yes(`suite runs all ${TOTAL_EXPECTED} checks`, pass + fail + 1 === TOTAL_EXPECTED,
       `assertion count changed — update TOTAL_EXPECTED deliberately (saw ${pass + fail + 1})`);
   await browser.close(); server.close();
