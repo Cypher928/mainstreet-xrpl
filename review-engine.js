@@ -126,6 +126,29 @@ window.ReviewEngine = (() => {
     'amendment_applied', 'multiple_amendments',
   ]);
 
+  // ── Square footage, read the same way the CAM gate reads it ───────────────
+  //
+  // These three predicates used to be `!t.leased_sqft`, which is false for the
+  // string "50,000" — so a lease with a formatted area raised NO missing_sqft
+  // warning, scored as if the field were present, and derived to 'verified',
+  // while getValidTenants() excluded it from the reconciliation entirely. The
+  // card said verified about a lease that was not in the run.
+  //
+  // FAILS CLOSED. If source-values.js has not loaded, every lease reads as
+  // having no usable area: the warning fires, the CAM blocker stands, and
+  // nothing is quietly included. Over-warning is recoverable; silent exclusion
+  // is what this whole change exists to stop.
+  function _hasArea(t) {
+    var SV = (typeof window !== 'undefined' && window.SourceValues) || null;
+    if (!SV || typeof SV.readArea !== 'function') {
+      if (typeof console !== 'undefined' && console.error) {
+        console.error('[ReviewEngine] source-values.js is not loaded — every lease will read as missing its area.');
+      }
+      return false;
+    }
+    return SV.readArea(t && t.leased_sqft).usable;
+  }
+
   function getWarnings(flags) {
     if (!Array.isArray(flags)) return [];
     return flags.map(f => {
@@ -196,7 +219,7 @@ window.ReviewEngine = (() => {
     // ── Structured warnings ────────────────────────────────────────────────
     const warnings = [];
     if (!t.lease_type)  warnings.push({ type: 'missing_lease_type',  severity: 'high',   label: 'Lease Type' });
-    if (!t.leased_sqft) warnings.push({ type: 'missing_sqft',        severity: 'high',   label: 'Sq Ft' });
+    if (!_hasArea(t))   warnings.push({ type: 'missing_sqft',        severity: 'high',   label: 'Sq Ft' });
     if (!t.start_date)  warnings.push({ type: 'missing_start_date',  severity: 'high',   label: 'Start Date' });
     if (!t.end_date)    warnings.push({ type: 'missing_end_date',    severity: 'high',   label: 'End Date' });
     const isNNN = /nnn|triple[\s-]?net/i.test(String(t.lease_type || ''));
@@ -267,7 +290,7 @@ window.ReviewEngine = (() => {
 
     // ── Score ──────────────────────────────────────────────────────────────
     let score = 100;
-    if (!t.leased_sqft)  score -= 25;
+    if (!_hasArea(t))    score -= 25;
     if (!t.lease_type)   score -= 25;
     if (t._usedFallback) score -= 15;
     if (sqftConf != null && sqftConf < 70) score -= 10;
@@ -312,7 +335,7 @@ window.ReviewEngine = (() => {
     let status;
     if (!t.tenant_name || (t.extractionFailed && !t._userConfirmed)) {
       status = 'incomplete';
-    } else if (!t.lease_type || !t.leased_sqft || !t.start_date || !t.end_date) {
+    } else if (!t.lease_type || !_hasArea(t) || !t.start_date || !t.end_date) {
       status = 'incomplete';
     } else if (
       t._usedFallback === true ||

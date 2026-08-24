@@ -61,6 +61,11 @@ vm.createContext(box);
 // whether a property mismatch has been confirmed, and FAILS CLOSED when it is
 // absent. Loading it here means the confirmed case is exercised for real rather
 // than passing because the module was missing.
+// source-values.js first: review-engine reads it for every square-footage
+// predicate and FAILS CLOSED without it, so a sandbox missing it reports every
+// lease as having no area. That is the intended production behaviour; here it
+// would just make the suite measure the wrong thing.
+vm.runInContext(fs.readFileSync(path.join(__dirname, 'source-values.js'), 'utf8'), box);
 vm.runInContext(fs.readFileSync(path.join(__dirname, 'lease-intelligence.js'), 'utf8'), box);
 vm.runInContext(fs.readFileSync(path.join(__dirname, 'review-engine.js'), 'utf8'), box);
 const RE = box.window.ReviewEngine;
@@ -116,12 +121,26 @@ yes('every blocking type has a reason phrase a reader can act on',
 // The blocking set must match getValidTenants(), which is what actually decides
 // whether a lease reaches the engine. Of the fields MISSING_FIELD_TYPES names,
 // square footage is the only one that filter reads.
-const validTenants = scriptCode.slice(
-  scriptCode.indexOf('function getValidTenants'),
-  scriptCode.indexOf('function getValidTenants') + 400);
+// Read the whole function body rather than a fixed byte window. The window was
+// 400 characters and the gate's conditions now sit past it, so the assertions
+// below silently stopped seeing the code they exist to pin.
+const _gvtStart = scriptCode.indexOf('function getValidTenants');
+// COMMENTS STRIPPED. The gate's rationale quotes the predicate it replaced
+// ("WAS Number(t.leased_sqft) > 0 …"), so a checker reading raw source finds
+// that quote and reports the old code as still live. Only what executes counts.
+const validTenants = scriptCode.slice(_gvtStart, scriptCode.indexOf('\n}', _gvtStart))
+  .replace(/\/\*[\s\S]*?\*\//g, '').replace(/^\s*\/\/.*$/gm, '');
+// The intent is unchanged — the engine filter must still gate on square footage,
+// which is why missing_sqft is in the blocking set. What changed is that it no
+// longer carries its own opinion about what the value means: it asks
+// SourceValues, the same reading the warning surfaces use. Pinning the literal
+// `Number(t.leased_sqft) > 0` would now pin the defect.
 yes('[source] getValidTenants still gates on leased_sqft',
-    /Number\(t\.leased_sqft\)\s*>\s*0/.test(validTenants),
-    'the engine filter changed — the blocking set must be re-derived from it');
+    /SourceValues\.readArea\(t\.leased_sqft\)\.usable/.test(validTenants),
+    'the engine filter no longer gates on square footage at all');
+yes('[source] and does not re-derive what the value means',
+    !/Number\(t\.leased_sqft\)/.test(validTenants) && !/parseSqft\(/.test(validTenants),
+    'a private predicate is back in the eligibility gate');
 yes('[source] getValidTenants still gates on the property mismatch',
     /!_propertyMismatchBlockReason\(t\)/.test(validTenants),
     'the fourth condition left the engine filter — the blocking set must follow it');
@@ -421,7 +440,7 @@ yes('[source] both Needs Review boxes read the canonical list',
       && !/getWarnings\(computeFlags\(d\)\)/.test(_liveScript),
     'a card still enumerates missing fields from computeFlags');
 
-const TOTAL_EXPECTED = 62;
+const TOTAL_EXPECTED = 63;
 yes(`suite runs all ${TOTAL_EXPECTED} checks`, pass + fail + 1 === TOTAL_EXPECTED,
     `test count changed — update TOTAL_EXPECTED deliberately (saw ${pass + fail + 1})`);
 

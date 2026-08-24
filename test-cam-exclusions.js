@@ -55,6 +55,11 @@ function loadEngine() {
   ].join('\n');
   const sandbox = {
     console: { log() {}, warn() {}, error() {}, groupCollapsed() {}, groupEnd() {} },
+    // parseSqft delegates to source-values.js, which is the single reading of a
+    // square-footage value shared with getValidTenants and the review engine.
+    // The sandbox loads the real module rather than stubbing it, so these suites
+    // exercise the same interpretation production does.
+    window: { SourceValues: require('./source-values.js') },
     parseFloat, isNaN, Number, Math, Date, JSON, Set, Array, Object, String,
     currentProperty: () => ({ tenants: [] }),          // live-tenant overlay: none
     matchInvoiceToTenant: () => null,                   // force every invoice shared

@@ -494,6 +494,111 @@ const SUPABASE_MOCK = `
     await new Promise(r => setTimeout(r, 300));
   });
 
+
+  // ══ I-1 / I-2 · the source-value fixes, on the real screens ══
+  //
+  // Both defects were surfaces disagreeing, not functions being wrong, so they
+  // are asserted here on what the app actually does rather than on the readers.
+  console.log('\n══ I-1: a formatted square footage no longer vanishes ══');
+  const sv1 = await page.evaluate(async () => {
+    const ts = tenantData.filter(Boolean);
+    ts[0].leased_sqft = '50,000';        // as a person types it, or an extractor reads it
+    ts[1].leased_sqft = 30000;
+    ts[2].leased_sqft = 20000;
+    currentProperty().tenants = ts;
+    await runAllocation();
+    await new Promise(r => setTimeout(r, 400));
+    const sec = document.getElementById('results');
+    const st  = deriveTenantReviewState(ts[0]);
+    return {
+      reachedEngine: lastResults.some(r => r.name === ts[0].tenant_name),
+      reconciled:    lastResults.map(r => r.name),
+      allocated:     +(lastResults.find(r => r.name === ts[0].tenant_name) || {}).totalAllocated,
+      proRataSum:    +lastResults.reduce((s, r) => s + r.proRataPercent, 0).toFixed(1),
+      reviewState:   st.status,
+      camBlocking:   st.camBlocking,
+      sqftBanner:    !!sec.querySelector('.cam-sqft-warning'),
+    };
+  });
+  Object.entries(sv1).forEach(([k, v]) => R(k, v));
+  yes('the lease reaches the reconciliation instead of vanishing',
+      sv1.reachedEngine === true && sv1.reconciled.length === 3, JSON.stringify(sv1));
+  yes('it is allocated on the real area, and coverage is complete',
+      sv1.proRataSum === 100 && sv1.allocated > 0, JSON.stringify(sv1));
+  yes('and nothing warns that its area is missing, because it is not',
+      sv1.sqftBanner === false && sv1.camBlocking.length === 0, JSON.stringify(sv1));
+  yes('"verified" is now a true statement about a lease that is in the run',
+      sv1.reviewState === 'verified' && sv1.reachedEngine === true, sv1.reviewState);
+
+  console.log('\n── an unreadable area is excluded AND says so ──');
+  const sv2 = await page.evaluate(async () => {
+    const ts = tenantData.filter(Boolean);
+    ts[0].leased_sqft = 'see exhibit A';
+    currentProperty().tenants = ts;
+    await runAllocation();
+    await new Promise(r => setTimeout(r, 400));
+    const sec = document.getElementById('results');
+    const st  = deriveTenantReviewState(ts[0]);
+    const out = {
+      reachedEngine: lastResults.some(r => r.name === ts[0].tenant_name),
+      reviewState: st.status, camBlocking: st.camBlocking,
+      requiredGaps: st.requiredGaps,
+      bannerNamesIt: (() => { const b = sec.querySelector('.cam-sqft-warning');
+        return b ? b.textContent.indexOf(ts[0].tenant_name) >= 0 : false; })(),
+    };
+    ts[0].leased_sqft = 50000; currentProperty().tenants = ts;   // restore
+    return out;
+  });
+  Object.entries(sv2).forEach(([k, v]) => R(k, v));
+  yes('THE SILENT DROP IS GONE: excluded and warned, never one without the other',
+      sv2.reachedEngine === false && sv2.bannerNamesIt === true
+        && sv2.camBlocking.length === 1 && sv2.reviewState !== 'verified',
+      JSON.stringify(sv2));
+  yes('and the card lists it as a required field to fill in',
+      sv2.requiredGaps.some(g => /square footage/i.test(g)), JSON.stringify(sv2.requiredGaps));
+
+  console.log('\n══ I-2: the pool the screen shows is the pool the engine allocates ══');
+  const sv3 = await page.evaluate(async () => {
+    invoiceData.forEach(i => { if (i) i.camEligible = true; });
+    invoiceData[0].amount = '$1,250.00';      // currency symbol + separator
+    invoiceData[1].amount = '2,000.00';       // separator only
+    invoiceData[2].amount = 'TBD';            // genuinely unreadable
+    canonicaliseInvoiceAmounts(invoiceData);
+    await runAllocation();
+    await new Promise(r => setTimeout(r, 400));
+    const billed = +lastResults.reduce((s, r) => s + r.totalAllocated, 0).toFixed(2);
+    const bk = window.VarianceBreakdown.derive({
+      results: lastResults, invoices: _lastEngineInvoices,
+      pool: lastTotal, billed });
+    return {
+      stored: invoiceData.slice(0, 3).map(i => i.amount),
+      unparsedKept: invoiceData[2].amountUnparsed,
+      pool: lastTotal, billed, gap: +(lastTotal - billed).toFixed(2),
+      residual: bk.residual, explained: bk.explained,
+      skipBanner: (() => { const n = document.querySelector('#results .cam-skip-warning');
+        return n ? n.textContent.replace(/\s+/g, ' ').trim().slice(0, 72) : null; })(),
+    };
+  });
+  Object.entries(sv3).forEach(([k, v]) => R(k, v));
+  yes('a currency-formatted amount is stored as a number',
+      sv3.stored[0] === 1250 && sv3.stored[1] === 2000, JSON.stringify(sv3.stored));
+  yes('THE POOL AND THE ALLOCATION AGREE — no unattributed remainder',
+      sv3.gap === 0 && sv3.residual === 0 && sv3.explained === true, JSON.stringify(sv3));
+  yes('an unreadable amount is not silently priced at zero',
+      sv3.stored[2] === '' && sv3.unparsedKept === 'TBD', JSON.stringify(sv3));
+  yes('it is reported as an excluded invoice instead',
+      !!sv3.skipBanner && /no amount were excluded/i.test(sv3.skipBanner), String(sv3.skipBanner));
+
+  // Restore the fixture so the statement assertions below run against it.
+  await page.evaluate(async () => {
+    const seed = { 'vf-i-01': '38000', 'vf-i-02': '3000', 'vf-i-03': '2500' };
+    invoiceData.forEach(i => { if (i && seed[i.id]) { i.amount = seed[i.id]; delete i.amountUnparsed; } });
+    invoiceData[0].camEligible = false;
+    canonicaliseInvoiceAmounts(invoiceData);
+    await runAllocation();
+    await new Promise(r => setTimeout(r, 300));
+  });
+
   // ── the blocked statement's scope column ───────────────────────────────────
   console.log('\n══ Blocked statement — scope, not a blank ══');
   const stmt = await page.evaluate(async () => {
@@ -548,7 +653,7 @@ const SUPABASE_MOCK = `
 
   yes('no uncaught page errors', errors.length === 0, errors.join(' | '));
 
-  const EXPECTED = 45;
+  const EXPECTED = 55;
   yes(`suite runs all ${EXPECTED} checks`, pass + fail === EXPECTED + 1, `ran ${pass + fail}`);
 
   await browser.close();

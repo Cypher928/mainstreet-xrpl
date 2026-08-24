@@ -788,23 +788,50 @@ class Lease {
  * to do with null, and every caller in the money path must surface it.
  */
 function parseMoney(v) {
-  if (v == null || v === '') return null;
-  if (typeof v === 'number') return Number.isFinite(v) ? v : null;
-  var raw = String(v).trim();
-  // Accounting negatives: (500) means -500.
-  var neg = /^\(.*\)$/.test(raw);
-  if (neg) raw = raw.slice(1, -1);
-  // Strip currency symbols, thousands separators, spaces and a trailing code.
-  var cleaned = raw.replace(/[$£€]/g, '')
-                   .replace(/[,\s]/g, '')
-                   .replace(/[A-Za-z]+$/, '');
-  if (cleaned === '' || cleaned === '-' || cleaned === '.') return null;
-  if (!/^-?\d*\.?\d+$/.test(cleaned)) return null;   // reject "12.34.56", "1e9x"
-  var n = Number(cleaned);
-  if (!Number.isFinite(n)) return null;
-  return neg ? -n : n;
+  // DELEGATE, same reasoning as parseSqft. Contract unchanged: a number, or
+  // null when the value could not be read. Never 0 for unreadable.
+  return window.SourceValues.readMoney(v).value;
 }
 window.parseMoney = parseMoney;
+
+// ── Invoice amounts, canonicalised once on the way in ───────────────────────
+//
+// 35 places read `inv.amount` with `parseFloat(inv.amount) || 0`. Every one of
+// them is CORRECT for a number and wrong for "$1,250.00", which parseFloat reads
+// as NaN -> 0. The engine meanwhile built its Invoice objects with parseMoney
+// and allocated the full $1,250. So the pool the screen reported and the pool
+// the engine distributed were different pools, and `Math.abs()` in the variance
+// banner hid the sign of the gap.
+//
+// Rewriting 35 readers would be a wide change that leaves the same assumption
+// unenforced for the 36th. Instead the assumption is made true: an amount that
+// enters invoiceData is a Number, or '' when nothing readable was provided.
+// Every existing reader then behaves, unchanged.
+//
+// UNREADABLE IS NOT ZERO. A value that cannot be read becomes '' rather than 0,
+// which routes it into the "N invoices with no amount were excluded" banner that
+// already exists — a warning, not a silent $0. The original text is kept on
+// `amountUnparsed`, the same field name Invoice already uses for this, so the
+// two layers describe the condition with one word.
+function canonicaliseInvoiceAmount(inv) {
+  if (!inv) return inv;
+  const r = window.SourceValues.readMoney(inv.amount);
+  if (r.status === 'unreadable') {
+    if (inv.amountUnparsed == null) inv.amountUnparsed = String(inv.amount);
+    inv.amount = '';
+  } else if (r.value !== null) {
+    inv.amount = r.value;
+    if (inv.amountUnparsed != null) delete inv.amountUnparsed;
+  }
+  return inv;
+}
+function canonicaliseInvoiceAmounts(list) {
+  if (Array.isArray(list)) list.forEach(canonicaliseInvoiceAmount);
+  return list;
+}
+window.canonicaliseInvoiceAmount  = canonicaliseInvoiceAmount;
+window.canonicaliseInvoiceAmounts = canonicaliseInvoiceAmounts;
+
 
 class Invoice {
   // PW-3 — relations set in the invoice register (CAM eligible, space, building
@@ -3458,7 +3485,12 @@ function getValidTenants() {
   return (currentProperty()?.tenants || []).filter(t =>
     t &&
     t.tenant_name &&
-    Number(t.leased_sqft) > 0 &&
+    // WAS Number(t.leased_sqft) > 0, which is NaN for "50,000" — so a lease with
+    // a formatted area was dropped from CAM while every warning surface, which
+    // used parseSqft, stayed silent about it. This function still OWNS the
+    // eligibility decision; it no longer owns a private opinion about what the
+    // value means.
+    window.SourceValues.readArea(t.leased_sqft).usable &&
     !t.extractionFailed &&
     !_propertyMismatchBlockReason(t)
   );
@@ -4485,7 +4517,7 @@ async function importGLToInvoices() {
   if (!items.length) { alert('No GL items are selected.'); return; }
 
   items.forEach(r => {
-    invoiceData.push({
+    invoiceData.push(canonicaliseInvoiceAmount({
       vendorName:  cleanHTML(r.vendor),
       amount:      r.amount,
       category:    r.category,
@@ -4497,7 +4529,7 @@ async function importGLToInvoices() {
         invoiceDate: r.confidence.date,
       },
       _error: null,
-    });
+    }));
   });
 
   renderInvResults();
@@ -8801,7 +8833,7 @@ async function handleBatchInvoices(fileList) {
       ? window.EscrowReserveEngine.classifyInvoiceReserveType({ vendorName, category: resolvedCategory })
       : { reserveType: 'other', confidence: 30 };
 
-    invoiceData.push({
+    invoiceData.push(canonicaliseInvoiceAmount({
       vendorName:  cleanHTML(vendorName),
       amount:      d?.amount      ?? '',
       category:    resolvedCategory,
@@ -8812,7 +8844,7 @@ async function handleBatchInvoices(fileList) {
       _error:           claudeError,
       _fileUploadError: fileUploadError,
       fileUrl, fileName: files[i].name, fileType: files[i].type,
-    });
+    }));
 
     renderInvResults();
     const idx = invoiceData.length - 1;
@@ -8833,7 +8865,7 @@ async function handleBatchInvoices(fileList) {
   const merged = mergeInvoicesDedup(existing.invoices, newInvoices);
   property.invoices = merged;
   // Keep invoiceData in sync with merged result so UI shows the full set.
-  invoiceData.splice(0, invoiceData.length, ...merged);
+  invoiceData.splice(0, invoiceData.length, ...canonicaliseInvoiceAmounts(merged));
   renderInvResults();
   if (lastResults.length > 0) { _resultsStale = true; _updateStaleResultsBanner(); }
 
@@ -9312,7 +9344,7 @@ async function removeInvItem(i) {
     if (_p && window.PropertyOS && PropertyOS.ensureInvoiceIds) {
       _p.invoices = Array.from(invoiceData);
       PropertyOS.ensureInvoiceIds(_p);
-      invoiceData.splice(0, invoiceData.length, ..._p.invoices);
+      invoiceData.splice(0, invoiceData.length, ...canonicaliseInvoiceAmounts(_p.invoices));
     }
   } catch (e) { logError('removeInvItem:ensureInvoiceIds', e, {}); }
   invoiceData.splice(i, 1);
@@ -9578,14 +9610,14 @@ async function confirmYardiImport() {
     const date   = cleanHTML(yardiCell(row, 'invoiceDate'));
     const cat    = document.getElementById(`ycat-${i}`)?.value || 'other';
     if (!vendor && amt <= 0) return;
-    invoiceData.push({
+    invoiceData.push(canonicaliseInvoiceAmount({
       vendorName:  vendor || 'Unknown Vendor',
       amount:      amt,
       category:    cat,
       invoiceDate: date,
       confidence:  { vendorName: 95, amount: 95, category: 70, invoiceDate: 90 },
       _error:      null,
-    });
+    }));
     imported++;
   });
 
@@ -9752,16 +9784,13 @@ function showSanityWarning(idx, category, amount, avg) {
 // with commas (e.g. "2,500") or trailing units (e.g. "2500 sq ft").
 // Returns the numeric value, or 0 if the value is empty / non-numeric.
 function parseSqft(v) {
-  if (v === null || v === undefined || v === '') return 0;
-  let s = String(v).trim();
-  // Replace capital-O OCR artifact with zero: "45,OOO" → "45,000"
-  s = s.replace(/O/g, '0');
-  // European-style thousand separators: "45.000" → "45000" (only when no decimal follows)
-  s = s.replace(/\.(?=\d{3}(?:[,\s]|$))/g, '');
-  // Strip remaining non-numeric chars except decimal point
-  s = s.replace(/[^0-9.]/g, '');
-  const n = parseFloat(s);
-  return isNaN(n) ? 0 : n;
+  // DELEGATE. The parsing rules moved to source-values.js so that the four
+  // places which used to ask "does this lease have square footage?" in four
+  // different ways now share one reading. This wrapper keeps the old contract
+  // exactly — a number, 0 for anything unusable — because dozens of callers sum
+  // areas with it and none of them wants a null. Callers that must tell "0"
+  // apart from "unreadable" call SourceValues.readArea directly.
+  return window.SourceValues.readArea(v).value || 0;
 }
 
 function showAllocationModal() {
@@ -10283,7 +10312,7 @@ async function runAllocation() {
 
   // Warn about tenants that exist but are excluded from CAM due to missing sqft
   const allNamedTenants = (currentProperty()?.tenants || []).filter(t => t && t.tenant_name);
-  const missingSquare   = allNamedTenants.filter(t => parseSqft(t.leased_sqft) <= 0);
+  const missingSquare   = allNamedTenants.filter(t => !window.SourceValues.readArea(t.leased_sqft).usable);
   if (missingSquare.length > 0 && validTenants.length > 0) {
     const warn = document.createElement('div');
     warn.className = 'cam-sqft-warning';
@@ -10331,7 +10360,7 @@ async function runAllocation() {
 
   if (!tenants.length) {
     // If there are tenants with names but missing sqft, give a more specific message
-    const namedTenantsWithNoSqft = (currentProperty()?.tenants || []).filter(t => t && t.tenant_name && parseSqft(t.leased_sqft) <= 0);
+    const namedTenantsWithNoSqft = (currentProperty()?.tenants || []).filter(t => t && t.tenant_name && !window.SourceValues.readArea(t.leased_sqft).usable);
     if (namedTenantsWithNoSqft.length) {
       showErr(body, section,
         `${namedTenantsWithNoSqft.length} tenant(s) are missing Leased Sqft. ` +
@@ -13136,7 +13165,7 @@ function enterReviewMode(payload) {
     })));
   }
   activityLog.splice(0, activityLog.length, ...(snap.activityLog || []));
-  invoiceData.splice(0, invoiceData.length, ...(snap.invoiceData || []));
+  invoiceData.splice(0, invoiceData.length, ...canonicaliseInvoiceAmounts(snap.invoiceData || []));
   disputes.splice(0, disputes.length, ...(snap.disputes || []));
 
   // Apply body class — CSS hides all edit controls
@@ -24200,7 +24229,7 @@ function renderProperty(property, opts = {}) {
   try {
     const invoices = property.invoices || [];
     if (invoices.length) {
-      invoiceData.splice(0, invoiceData.length, ...invoices);
+      invoiceData.splice(0, invoiceData.length, ...canonicaliseInvoiceAmounts(invoices));
       console.groupCollapsed('[PIPELINE:5] renderProperty invoices restored');
       console.log('invoices[0]:', JSON.parse(JSON.stringify(invoices[0] || {})));
       console.log('invoiceData[0] after splice:', JSON.parse(JSON.stringify(invoiceData[0] || {})));

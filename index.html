@@ -7736,6 +7736,11 @@
 
 <script src="auth-service.js"></script>
 <script src="access-control.js"></script>
+<!-- ONE interpretation of every number read off a document — square footage and
+     money. Must precede review-engine.js and script.js: both consult it, and
+     review-engine fails closed (every lease reads as missing its area) if it is
+     absent, so load order is load-bearing, not cosmetic. -->
+<script src="source-values.js"></script>
 <script src="review-engine.js"></script>
 <script src="reconciliation-engine.js"></script>
 <script src="audit-exposure.js"></script>

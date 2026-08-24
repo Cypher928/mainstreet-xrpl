@@ -58,6 +58,14 @@ const SUITES = [
   // on a run where every amount was right — and clicking it did nothing. The
   // unit half pins the identity that keeps the panel from inventing arithmetic:
   // every dollar of the gap lands in a named bucket or in a visible residual.
+  // ONE interpretation of every number read off a document. Four predicates for
+  // "does this lease have square footage?" let a lease with a formatted area
+  // vanish from CAM with its card reading "verified"; two parsers for "what is
+  // this invoice worth?" let $1,250 be allocated out of a pool that counted it
+  // as $0. The load-bearing assertion is the INVARIANT — for every value in a
+  // corpus of real extraction output, the eligibility gate and every warning
+  // surface must reach the same conclusion.
+  { label: 'Source values (sqft + money)',      cmd: 'node test-source-values.js' },
   { label: 'Variance breakdown',                cmd: 'node test-variance-breakdown.js' },
   // The same thing on screen, plus the blocked statement's Scope column, which
   // printed an em dash against property-level exceptions and matched a tenant
