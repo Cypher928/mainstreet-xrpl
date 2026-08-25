@@ -284,6 +284,12 @@ window.ReconciliationEngine = (() => {
         // says the charge "may violate lease terms", which is an allegation.
         flags.push({
           severity: 'yellow',
+          // STAYS YELLOW, BUT BLOCKS THIS TENANT. The lease may or may not permit
+          // CAM pass-throughs and this engine will not assert which — that is why
+          // the severity is not red and the finding is not disputable. But the
+          // charge in doubt IS this tenant's, so its statement waits for a human
+          // to confirm the CAM treatment. It blocks nobody else.
+          blocksBilling: true,
           kind:       'lease_verification',
           disputable: false,
           title:    `Modified Gross tenant receiving shared CAM — ${r.name} (${_fmt(sharedTotal)})`,
@@ -300,6 +306,10 @@ window.ReconciliationEngine = (() => {
       } else {
         flags.push({
           severity: 'yellow',
+          // Same reasoning as the Modified Gross branch above: the tenant whose
+          // charge is in question cannot be billed until the treatment is
+          // confirmed, and no other tenant is affected.
+          blocksBilling: true,
           title:    `Gross-lease tenant receiving shared CAM — ${r.name} (${_fmt(sharedTotal)})`,
           detail:   `${r.name} holds a ${t.lease_type} lease, which typically bundles operating expenses into base rent. Charging ${_fmt(sharedTotal)} in shared CAM may violate lease terms. Review exclusion clauses.`,
           conditions: [

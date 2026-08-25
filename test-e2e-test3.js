@@ -1260,8 +1260,16 @@ const SUPABASE_MOCK = `
     yes('the draft is unmistakably marked, in the title and on the page',
         /NON-BILLABLE DRAFT/i.test(draft.text) && /DO NOT SEND TO TENANT/i.test(draft.text),
         'the draft marking is not unmistakable');
+    // WORDING MOVED, INTENT UNCHANGED (I-4). The reason used to read "N critical
+    // exceptions must be resolved before statements are issued" — a property-wide
+    // claim. It is now scoped to the tenant whose draft this is: "1 exception on
+    // this tenant must be resolved before this statement is issued." Pinning the
+    // old phrase would pin the global gate this change removed, so the assertion
+    // holds the requirement instead: the draft must say a reason AND name what is
+    // actually holding it.
     yes('the draft states why billing is blocked',
-        /critical exception/i.test(draft.text) && /resolved/i.test(draft.text),
+        /must be (resolved|confirmed)/i.test(draft.text)
+          && /lease that ended|exception/i.test(draft.text),
         'the draft does not say what is blocking it');
     yes('and the figure itself is still shown — the draft remains reviewable',
         /5,514\.56/.test(draft.text), 'the draft no longer shows the computed figure');

@@ -332,14 +332,10 @@ t('[source] openVarianceDetails changes nothing', () => {
 
 console.log('\n── Exception scope: property-wide is an answer, not a blank ──');
 
-// _findingScope is a plain function inside script.js; evaluate it in isolation
-// rather than loading the whole file, which needs a DOM.
-const _scopeSrc = (() => {
-  const i = scriptCode.indexOf('function _findingScope(f) {');
-  const j = scriptCode.indexOf('\n}', i);
-  return scriptCode.slice(i, j + 2);
-})();
-const _findingScope = new Function(_scopeSrc + '; return _findingScope;')();
+// The scope derivation MOVED to audit-exposure.js (I-4), beside billingReadiness
+// which needs it; script.js keeps a one-line delegate. Exercise the real
+// implementation rather than eval'ing the delegate, which has no window here.
+const _findingScope = require('./audit-exposure.js').findingScope;
 
 t('a finding carrying "Tenant: X" is scoped to X', () => {
   const s = _findingScope({ title: 'anything', conditions: ['Tenant: SHONAC CORPORATION', 'Lease end date: 2016-02-28'] });
@@ -395,9 +391,12 @@ t('[source] the statement table renders scope, not an em dash', () => {
 
 t('[source] the row highlight and mine[] read the same derivation', () => {
   // These disagreed before: `mine` used a substring search while the table drew
-  // its own conclusion. One derivation, consulted twice.
+  // its own conclusion. One derivation, consulted twice. Since I-4 the set being
+  // filtered is the tenant's BLOCKING set rather than every red finding, but the
+  // predicate that decides "is this row about this tenant" is still the one
+  // shared derivation — which is what this assertion exists to hold.
   const i = scriptCode.indexOf('function _statementReadinessBlock');
-  const body = scriptCode.slice(i, i + 900);
+  const body = scriptCode.slice(i, scriptCode.indexOf('\n}', i));
   ok(/_findingScope\(f\)\.tenant === tenantName/.test(body),
      'mine[] no longer reads _findingScope — the count and the column can disagree again');
   ok(!/indexOf\(tenantName\) >= 0/.test(body), 'the substring predicate is back');

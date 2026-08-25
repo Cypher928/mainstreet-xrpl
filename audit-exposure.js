@@ -229,6 +229,60 @@
    * Deliberately tolerant of findings that predate the structured fields: one
    * without `impact` counts as unquantified rather than as zero.
    */
+  /**
+   * Is this finding about ONE TENANT, or about the property?
+   *
+   * MOVED HERE from script.js. It has to live beside billingReadiness, which is
+   * the function that needs it, and one implementation is the whole point —
+   * script.js keeps a delegate. Behaviour is unchanged.
+   *
+   * Scope is read from the explicit marker a finding carries when it is about a
+   * tenant: `Tenant: <name>` in conditions, `impact.scope: tenant:<name>`, or
+   * `conflict.tenant`. Every tenant-scoped detector writes one; the pool-level
+   * detectors write none.
+   *
+   * FAILS TO PROPERTY, deliberately. Inferring a tenant from prose is what once
+   * put another tenant's vendor invoice into this tenant's highlighted rows.
+   */
+  function findingScope(f) {
+    if (!f) return { level: 'property', tenant: null };
+    const cond = ((f.conditions || []))
+      .map(c => /^\s*Tenant:\s*(.+?)\s*$/.exec(String(c == null ? '' : c)))
+      .find(Boolean);
+    if (cond) return { level: 'tenant', tenant: cond[1] };
+    const scope = String((f.impact && f.impact.scope) || '');
+    if (scope.indexOf('tenant:') === 0) return { level: 'tenant', tenant: scope.slice(7) };
+    if (f.conflict && f.conflict.tenant) return { level: 'tenant', tenant: String(f.conflict.tenant) };
+    return { level: 'property', tenant: null };
+  }
+
+  /**
+   * May a statement issue in spite of this finding?
+   *
+   * SEVERITY AND BILLING-BLOCKING ARE SEPARATE AXES. Treating them as one axis
+   * is what produced two opposite errors at once:
+   *
+   *   a >20% year-over-year rise is RED — materially notable, requiring landlord
+   *   documentation — and blocked every tenant on the property, though it is no
+   *   evidence that any tenant's calculation is wrong;
+   *
+   *   a Gross-lease tenant receiving shared CAM is YELLOW — the system will not
+   *   assert a violation it cannot prove — and so blocked nobody, though that
+   *   tenant's charge is exactly what is in doubt.
+   *
+   * So severity says how alarming a finding is, `Tenant:` says who it is about,
+   * and this says whether billing may proceed. Three questions, three answers,
+   * each authored once at the detector that raises the finding.
+   *
+   * DEFAULTS TO `severity === 'red'`, which preserves today's behaviour for every
+   * finding that does not set it and makes any future red fail closed.
+   */
+  function blocksBilling(f, bucket) {
+    if (!f) return false;
+    if (typeof f.blocksBilling === 'boolean') return f.blocksBilling;
+    return severityOf(f, bucket) === 'red';
+  }
+
   function deriveExposure(findings, totalPool) {
     const buckets = [
       ['red',    (findings && findings.red)    || []],
@@ -248,6 +302,11 @@
       counts: { red: buckets[0][1].length, yellow: buckets[1][1].length, green: buckets[2][1].length },
       contributors: { at_risk: [], under_review: [], recoverable: [],
                       unsubstantiated: [], concentration: [] },
+      // Who cannot be billed, and why. Tallied during the single pass below
+      // rather than by a second walk over the findings, so there is no way for
+      // the count and the list to disagree. `property` blocks every tenant;
+      // `byTenant` blocks only the tenant it names.
+      blocking: { property: [], byTenant: {} },
     };
 
     // kind -> item id -> the largest amount any finding claims for it. Taking the
@@ -260,6 +319,15 @@
       list.forEach((f) => {
         if (!f) return;
         const sev = severityOf(f, bucket);
+        if (blocksBilling(f, bucket)) {
+          const sc  = findingScope(f);
+          const rec = { title: f.title, severity: sev, scope: sc.level, tenant: sc.tenant };
+          if (sc.level === 'tenant' && sc.tenant) {
+            (out.blocking.byTenant[sc.tenant] = out.blocking.byTenant[sc.tenant] || []).push(rec);
+          } else {
+            out.blocking.property.push(rec);
+          }
+        }
         const imp = normalizeImpact(f.impact);
 
         if (imp.amount === null && !(imp.items && imp.items.length)) {
@@ -373,12 +441,94 @@
    * the whole screen exists to answer, so it is derived once here rather than
    * inferred separately by each surface.
    */
-  function billingReadiness(x) {
+  /**
+   * Whether a statement may issue. Derived once here rather than inferred
+   * separately by each surface.
+   *
+   * TWO SCOPES, ONE FUNCTION.
+   *   billingReadiness(x)            the PROPERTY verdict — is this reconciliation
+   *                                  fully billable? Every existing caller.
+   *   billingReadiness(x, tenant)    may THIS tenant's statement issue?
+   *
+   * A tenant is blocked by property-scoped blockers (which change the pool every
+   * share is struck from) and by its own — never by another tenant's. One
+   * holdover on an anchor lease used to make four clean inline tenants
+   * unbillable, which is the defect this argument exists to fix.
+   *
+   * The property verdict deliberately survives per-tenant billing: a landlord
+   * needs to know the reconciliation as a whole is not clear even while three of
+   * five statements can issue. It no longer claims NOBODY can be billed.
+   */
+  function billingReadiness(x, tenantName) {
     if (!x) return { canBill: false, label: 'Unknown', reason: 'No audit state available.' };
-    if (x.counts.red > 0) {
+
+    // FAIL CLOSED ON AN EXPOSURE THAT PREDATES THE BLOCKING TALLY.
+    //
+    // deriveExposure always populates `blocking`, but an exposure can also
+    // arrive reconstructed — from a stored snapshot, from a caller that built
+    // one by hand. Without this branch such an object has no blockers, reads as
+    // having nothing outstanding, and returns "Ready to bill" on a
+    // reconciliation carrying critical exceptions. The cross-report suite caught
+    // exactly that: a lender summary told to Proceed on a run that cannot be
+    // billed. An absent tally is missing information, not an all-clear, so fall
+    // back to the property-wide behaviour this function has always had.
+    if (!x.blocking) {
+      if ((x.counts && x.counts.red) > 0) {
+        return {
+          canBill: false, label: 'Not ready to bill', blockers: [],
+          reason: `${x.counts.red} critical exception${x.counts.red === 1 ? '' : 's'} `
+                + `must be resolved before statements are issued.`,
+        };
+      }
+      if ((x.counts && x.counts.yellow) > 0 || x.unquantified > 0) {
+        return { canBill: true, label: 'Bill with review',
+          reason: `${x.counts.yellow} advisory finding${x.counts.yellow === 1 ? '' : 's'} should be reviewed; none blocks billing.` };
+      }
+      return { canBill: true, label: 'Ready to bill', reason: 'No exceptions were detected.' };
+    }
+
+    const bl   = x.blocking;
+    const prop = bl.property || [];
+    const mine = tenantName ? ((bl.byTenant || {})[tenantName] || []) : null;
+
+    if (tenantName) {
+      const blockers = prop.concat(mine);
+      if (blockers.length) {
+        // Label by what is actually holding the statement. A finding the system
+        // will not assert as a violation must not be reported as one: a Gross
+        // tenant receiving shared CAM needs the CAM treatment confirmed, and
+        // saying "not ready to bill" would overstate what is known.
+        const anyRed = blockers.some(b => b.severity === 'red');
+        const own    = mine.length, shared = prop.length;
+        const why = shared && own ? `${shared} property-level and ${own} on this tenant`
+                  : shared        ? `${shared} property-level exception${shared === 1 ? '' : 's'}`
+                  :                 `${own} exception${own === 1 ? '' : 's'} on this tenant`;
+        return anyRed
+          ? { canBill: false, label: 'Not ready to bill', blockers,
+              reason: `${why} must be resolved before this statement is issued.` }
+          : { canBill: false, label: 'Needs confirmation before billing', blockers,
+              reason: `${why} must be confirmed before this statement is issued.` };
+      }
+      return { canBill: true, label: 'Ready to bill', blockers: [],
+               reason: 'Nothing blocks this tenant\u2019s statement.' };
+    }
+
+    // ── property verdict ──────────────────────────────────────────────────
+    const tenantsBlocked = Object.keys(bl.byTenant || {}).length;
+    if (prop.length) {
       return {
         canBill: false, label: 'Not ready to bill',
-        reason: `${x.counts.red} critical exception${x.counts.red === 1 ? '' : 's'} must be resolved before statements are issued.`,
+        reason: `${prop.length} property-level exception${prop.length === 1 ? '' : 's'} `
+              + `must be resolved before any statement is issued.`,
+      };
+    }
+    if (tenantsBlocked) {
+      // WAS "N critical exceptions must be resolved before statements are
+      // issued", which asserted a global block that is no longer true — the
+      // other tenants can be billed today.
+      return {
+        canBill: false, label: 'Not ready to bill',
+        reason: `${tenantsBlocked} tenant${tenantsBlocked === 1 ? '' : 's'} cannot be billed yet.`,
       };
     }
     if (x.counts.yellow > 0 || x.unquantified > 0) {
@@ -389,6 +539,7 @@
     }
     return { canBill: true, label: 'Ready to bill', reason: 'No exceptions were detected.' };
   }
+
 
   /**
    * Health-score deductions derived from canonical audit state.
@@ -444,5 +595,6 @@
     VERDICT, VERDICT_LABEL, VERDICT_ICON, VERDICT_MEANING,
     normalizeImpact, severityOf, deriveExposure, allocationExposure,
     describeExposure, billingReadiness, healthDeductions, fmtMoney,
+    findingScope, blocksBilling,
   };
 });

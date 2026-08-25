@@ -659,9 +659,18 @@ console.log('\n── W1 · A statement is not issued from a reconciliation that
     bad('the remaining W1 assertions cannot run', 'the gate returned nothing to inspect');
   } else {
   eq('and reports the canonical readiness verdict', blocked.readiness.label, 'Not ready to bill');
-  eq('with the canonical reason', blocked.readiness.reason,
-     NARRATIVE.readiness.reason);
-  eq('all five critical exceptions are carried into the block', blocked.red.length, 5);
+  // SCOPE NARROWED BY I-4, DELIBERATELY. The verdict this screen reports is now
+  // the TENANT's, not the property's: SHONAC is held by the property-level
+  // concentration plus its own expired lease, and not by the three other
+  // tenants' expired leases. The property verdict still exists and is still
+  // asserted — NARRATIVE.readiness is it — but the two are no longer the same
+  // sentence, and pinning them together would pin the global gate that made four
+  // clean tenants unbillable.
+  yes('with a reason scoped to this tenant', /this statement/.test(blocked.readiness.reason)
+      && /property-level/.test(blocked.readiness.reason), blocked.readiness.reason);
+  yes('and the property verdict still says the reconciliation is not clear',
+      NARRATIVE.readiness.canBill === false, JSON.stringify(NARRATIVE.readiness));
+  eq('only what blocks THIS tenant is carried into the block', blocked.red.length, 2);
   eq('and the one naming SHONAC is identified', blocked.mine.length, 1);
   yes('specifically SHONAC\'s own expired lease',
       /^SHONAC is being billed/.test(blocked.mine[0].title), blocked.mine[0].title);
@@ -691,23 +700,36 @@ console.log('\n── W1 · A statement is not issued from a reconciliation that
   const bt   = text(html);
   yes('the block screen refuses rather than warns',
       /This statement has not been issued/.test(bt), 'the block screen reads as a warning');
-  yes('it lists every blocking exception with its amount',
-      /\$10,792\.50/.test(bt) && /\$16,008\.88/.test(bt), 'amounts are missing from the block screen');
+  yes('it lists this tenant\'s blocking exceptions with their amounts',
+      /\$10,792\.50/.test(bt) && /\$38,000/.test(bt),
+      'amounts are missing from the block screen');
+  no('and does not list another tenant\'s expired lease as blocking this one',
+     /\$16,008\.88/.test(bt),
+     'a different tenant\'s at-risk allocation is still shown as blocking this statement');
   yes('and marks the ones naming this tenant',
       /This tenant/.test(bt), 'the tenant\'s own exceptions are not distinguished');
 
-  // THE AMOUNTS ARE THE SAME METRIC THE AUDIT REPORTS — asserted, not assumed.
-  // Each row renders the finding's own impact.amount, which for an expired
-  // lease is r.totalAllocated: the identical field deriveExposure sums into
-  // confirmedAtRisk. If these ever diverge, a manager reading the block screen
-  // and a manager reading the Exception Summary are looking at different money.
+  // THE AMOUNTS ARE STILL THE SAME METRIC THE AUDIT REPORTS — asserted, not
+  // assumed. Each row renders the finding's own impact.amount, the identical
+  // field deriveExposure sums into confirmedAtRisk.
+  //
+  // What changed with I-4 is the SET, not the metric: this screen now carries
+  // the exceptions blocking one tenant, so its subtotal is a SUBSET of the
+  // property-wide confirmedAtRisk rather than equal to it. Asserting equality
+  // would now be asserting that a tenant is blocked by every tenant's problems.
+  // So the invariant is restated as containment plus per-finding identity, which
+  // is what actually prevents two reports showing different money.
   const atRiskRows = blocked.red
     .map(f => AX.normalizeImpact(f.impact))
     .filter(i => i.kind === 'at_risk')
     .reduce((s, i) => s + i.amount, 0);
-  yes('the block screen\'s at-risk rows sum to the canonical confirmedAtRisk',
-      Math.abs(atRiskRows - NARRATIVE.exposure.confirmedAtRisk) < 0.005,
+  yes('the block screen\'s at-risk rows are a subset of the canonical confirmedAtRisk',
+      atRiskRows > 0 && atRiskRows <= NARRATIVE.exposure.confirmedAtRisk + 0.005,
       `block screen ${atRiskRows.toFixed(2)} vs exposure ${NARRATIVE.exposure.confirmedAtRisk.toFixed(2)}`);
+  yes('and every row it does carry is the same figure the audit states for it',
+      blocked.red.filter(f => AX.normalizeImpact(f.impact).kind === 'at_risk')
+        .every(f => NARRATIVE.exposure.contributors.at_risk.indexOf(f.title) >= 0),
+      'a blocking row carries an at-risk amount the exposure never counted');
   yes('and each row states which measure it belongs to',
       /Requiring Lease Verification/.test(bt) && /Material Concentration/.test(bt),
       'the Amount column mixes allocation-side and expense-side money unlabelled');
@@ -720,9 +742,16 @@ console.log('\n── W1 · A statement is not issued from a reconciliation that
   yes('the screen says so in as many words',
       /must not be added together/.test(bt) || !/Material Concentration|Weakly Evidenced/.test(bt),
       'nothing warns the reader against summing the column');
-  yes('and points at where the same figure appears elsewhere',
-      /the same figure[\s\S]{0,120}Audit Exception Summary/.test(bt),
+  // It used to say "It is the same figure the Audit Exception Summary states",
+  // which was true while this table listed every exception on the property. Now
+  // that it lists one tenant's, the note must relate the two WITHOUT claiming
+  // they are one number — otherwise two reports carry one label over two values.
+  yes('and relates its figure to the other reports without claiming they are equal',
+      /Audit Exception Summary/.test(bt) && /property as a whole/.test(bt),
       'the block screen does not relate its at-risk figure to the other reports');
+  no('it no longer claims the two figures are the same number',
+     /the same figure[\s\S]{0,120}Audit Exception Summary/.test(bt),
+     'a tenant-scoped subtotal is still asserted to equal the property-wide one');
 
   // The concentration finding is expense-side and must never be labelled as
   // allocation at risk on this screen.

@@ -640,8 +640,19 @@ const SUPABASE_MOCK = `
       'the $38,000 invoice from a vendor called SHONAC CORPORATION is still attributed to the tenant');
   yes('this tenant\'s own exception still says This tenant',
       mineRow === 'This tenant', String(mineRow));
-  yes('another tenant\'s exception names that tenant instead of an em dash',
-      otherRow === 'Tollgrade', String(otherRow));
+  // SCOPE NARROWED BY I-4, DELIBERATELY. A refusal now lists only what blocks
+  // THIS tenant — its own findings plus any property-wide ones — so another
+  // tenant's expired lease no longer appears here at all. That is the fix: SHONAC
+  // was previously shown Tollgrade's lease as one of "the blocking exceptions".
+  // The Scope column still distinguishes its two reachable states, asserted above
+  // and below; the third state is now unreachable on this screen.
+  yes('another tenant\'s exception is no longer listed as blocking this one',
+      otherRow === undefined,
+      `Tollgrade's finding is still on SHONAC's refusal as "${otherRow}"`);
+  yes('and the rows that remain are this tenant\'s and the property\'s',
+      stmt.rows.filter(r => (r[3] || '').length)
+               .every(r => r[0] === 'This tenant' || r[0] === 'Property-wide'),
+      JSON.stringify(stmt.rows.map(r => r[0])));
   yes('no row in the scope column is a bare em dash',
       !stmt.rows.some(r => r[0] === '—'),
       JSON.stringify(stmt.rows.map(r => r[0])));
@@ -653,7 +664,7 @@ const SUPABASE_MOCK = `
 
   yes('no uncaught page errors', errors.length === 0, errors.join(' | '));
 
-  const EXPECTED = 55;
+  const EXPECTED = 56;
   yes(`suite runs all ${EXPECTED} checks`, pass + fail === EXPECTED + 1, `ran ${pass + fail}`);
 
   await browser.close();

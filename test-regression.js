@@ -66,6 +66,13 @@ const SUITES = [
   // corpus of real extraction output, the eligibility gate and every warning
   // surface must reach the same conclusion.
   { label: 'Source values (sqft + money)',      cmd: 'node test-source-values.js' },
+  // Per-tenant billing readiness. billingReadiness branched on property-wide
+  // red counts and every tenant statement asked it, so one anchor holding over
+  // on a month-to-month made four clean inline tenants unbillable. The model
+  // this pins: severity says how alarming a finding is, the Tenant: marker says
+  // who it is about, and blocksBilling says whether billing may proceed — three
+  // questions that were being answered by one field.
+  { label: 'Billing readiness (per tenant)',    cmd: 'node test-billing-readiness.js' },
   { label: 'Variance breakdown',                cmd: 'node test-variance-breakdown.js' },
   // The same thing on screen, plus the blocked statement's Scope column, which
   // printed an em dash against property-level exceptions and matched a tenant
@@ -76,6 +83,10 @@ const SUITES = [
   // fail) the live ledger reads when the network is unreachable — so it is safe
   // in CI and in sandboxes with no egress. It was absent from this list, which
   // is why a missing `xrpl` dependency went unnoticed.
+  // The Riverside Commons walkthrough, asserted on RENDERED statements: an
+  // anchor holding over, a Gross lease taking shared CAM, three clean tenants
+  // that must bill anyway, and a property headline that survives all of it.
+  { label: 'Riverside billing readiness (e2e)', cmd: 'node test-e2e-billing-readiness.js' },
   { label: 'XRPL RLUSD settlement config',      cmd: 'node test-rlusd.js' },
 ];
 

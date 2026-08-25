@@ -14386,6 +14386,18 @@ function buildAuditSummary() {
         if (pct > 20) {
           red.push({
             group: 'allocation',
+            // RED, AND DELIBERATELY NOT A BILLING BLOCKER.
+            //
+            // Exceeding the 20% materiality threshold is a critical finding: it
+            // calls for landlord documentation and belongs at the top of the
+            // audit. It is not evidence that any tenant's calculation is wrong,
+            // and it used to block every statement on the property — a landlord
+            // could not bill a single tenant because last year's snow bill was
+            // lighter. Severity is what this is; blocksBilling is what it does.
+            //
+            // Left RED rather than demoted so the health score, which deducts per
+            // advisory finding, is untouched by this decision.
+            blocksBilling: false,
             title: `Total CAM ${dir} ${Math.abs(pct).toFixed(1)}% year-over-year`,
             detail: `Total CAM expenses rose ${Math.abs(pct).toFixed(1)}% from ${fmt(prev.totalExpenses)} in ${years[1]} to ${fmt(curr.totalExpenses)} in ${years[0]}, a ${fmt(Math.abs(absDiff))} ${absDiff > 0 ? 'increase' : 'decrease'}. This exceeds the 20% year-over-year materiality threshold and may require additional landlord documentation under standard CAM audit protocols.`,
             conditions: [...yoyConditions, 'Threshold: >20% triggers critical flag'],
@@ -17540,15 +17552,30 @@ function _statementReadinessBlock(tenantName) {
   let summary;
   try { summary = buildAuditSummary(); } catch (_) { return null; }
   const exposure  = AXs.deriveExposure(summary, lastTotal || 0);
-  const readiness = AXs.billingReadiness(exposure);
+  // THE TENANT'S OWN VERDICT, not the property's. One holdover on an anchor
+  // lease used to make every clean inline tenant unbillable. A tenant is now
+  // blocked by property-scoped blockers and by its own, never by another
+  // tenant's. The property verdict still exists and is still shown — every
+  // other caller reads billingReadiness(exposure) with no tenant.
+  const readiness = AXs.billingReadiness(exposure, tenantName);
   if (readiness.canBill) return null;
 
-  // Which of the blocking exceptions name THIS tenant. A statement is refused
-  // whenever the reconciliation as a whole cannot be billed, but a manager
-  // deciding what to fix first needs to see which findings are about the tenant
-  // in front of them.
-  const mine = summary.red.filter(f => _findingScope(f).tenant === tenantName);
-  return { readiness, exposure, red: summary.red, mine, tenantName };
+  // READ THE BLOCKING SET, NOT summary.red.
+  //
+  // This filtered `summary.red`, which silently misses a blocker that is not
+  // red — and one now exists by design: a Gross-lease tenant receiving shared
+  // CAM blocks its own statement at YELLOW severity, because the engine will
+  // not assert a violation it cannot prove. Filtering reds would have reported
+  // that tenant as billable.
+  const _titles  = new Set((readiness.blockers || []).map(b => b.title));
+  const blocking = summary.red.concat(summary.yellow).filter(f => _titles.has(f.title));
+  const mine     = blocking.filter(f => _findingScope(f).tenant === tenantName);
+  // How many OTHER tenants are held for reasons of their own. Not blockers here,
+  // but the difference between "the property is clear" and "you are one of three
+  // waiting" is what a manager reads this screen to learn.
+  const othersBlocked = Object.keys((exposure.blocking || {}).byTenant || {})
+    .filter(n => n !== tenantName).length;
+  return { readiness, exposure, red: blocking, mine, tenantName, othersBlocked };
 }
 
 /**
@@ -17580,15 +17607,9 @@ function _statementReadinessBlock(tenantName) {
  * is what put another tenant's vendor invoice in this tenant's highlighted rows.
  */
 function _findingScope(f) {
-  if (!f) return { level: 'property', tenant: null };
-  const cond = (f.conditions || [])
-    .map(c => /^\s*Tenant:\s*(.+?)\s*$/.exec(String(c == null ? '' : c)))
-    .find(Boolean);
-  if (cond) return { level: 'tenant', tenant: cond[1] };
-  const scope = String((f.impact && f.impact.scope) || '');
-  if (scope.indexOf('tenant:') === 0) return { level: 'tenant', tenant: scope.slice(7) };
-  if (f.conflict && f.conflict.tenant) return { level: 'tenant', tenant: String(f.conflict.tenant) };
-  return { level: 'property', tenant: null };
+  // DELEGATE. The implementation moved to audit-exposure.js, beside
+  // billingReadiness, which is the function that needs it. Behaviour unchanged.
+  return window.AuditExposure.findingScope(f);
 }
 
 /**
@@ -17674,11 +17695,17 @@ function _renderStatementReadinessBlock(block) {
       <strong>${esc(block.readiness.label)}</strong> &mdash; ${esc(block.readiness.reason)}
     </div>
     <p class="rpt-helper-text">
-      The audit engine has not cleared this reconciliation for billing, so no tenant statement is issued from it.
-      Issuing one now would bill a tenant from figures the audit is still holding open.
+      ${block.readiness.canBill === false && block.mine.length && !(block.exposure.blocking || {}).property?.length
+        ? `This statement is held for ${esc(block.tenantName)}\u2019s own outstanding items. Other tenants on this
+           reconciliation are not affected by them.`
+        : `The audit engine has not cleared this reconciliation for billing, so no statement is issued from it.
+           Issuing one now would bill a tenant from figures the audit is still holding open.`}
       ${block.mine.length
         ? `<strong>${block.mine.length} of the ${block.red.length} blocking exception${block.red.length !== 1 ? 's' : ''} name${block.mine.length === 1 ? 's' : ''} ${esc(block.tenantName)} directly</strong> — highlighted below.`
         : `None of the blocking exceptions name ${esc(block.tenantName)} directly, but they affect the reconciliation this statement would be drawn from.`}${
+        block.othersBlocked
+          ? ` ${block.othersBlocked} other tenant${block.othersBlocked === 1 ? ' is' : 's are'} held for reasons of their own, which do not affect this statement.`
+          : ''}${
         // Say how many rows are not about any tenant. Without it the reader has
         // to count the Scope column to learn that the largest figure in the
         // table is a property-level finding rather than someone else's charge.
@@ -17692,9 +17719,27 @@ function _renderStatementReadinessBlock(block) {
       <tbody>${rows}${subtotalRows}</tbody>
     </table>
     <div class="rpt-scope-note">
-      <strong>Requiring lease verification</strong> is CAM allocated to a tenant whose lease on file has expired.
-      A holdover or renewal may cover it; none has been confirmed. It is the same figure
-      the Audit Exception Summary and the Risk &amp; Disputes report state, read from the same finding.
+      ${/* EXPLAIN ONLY WHAT IS ON THIS SCREEN.
+            This paragraph was unconditional, and said "Requiring lease verification is CAM
+            allocated to a tenant whose lease on file has expired". That was safe while an
+            expired lease was the only thing that could block a statement. It no longer is:
+            a Gross-lease tenant is now held for an unconfirmed CAM treatment, and the note
+            told its landlord the lease had expired. It hadn't. */''}
+      ${subtotals.at_risk != null
+        ? `<strong>Requiring lease verification</strong> is CAM allocated to a tenant whose lease on file has expired.
+           A holdover or renewal may cover it; none has been confirmed.
+           ${/* WAS "It is the same figure the Audit Exception Summary and the Risk &
+                 Disputes report state." That was true while this table listed every
+                 critical exception on the property. It now lists only what blocks
+                 THIS statement, so the subtotal is a subset of the property-wide
+                 figure and claiming they are the same number would put two
+                 different values under one label across two reports — the exact
+                 cross-report contradiction this note was written to prevent. */''}
+           This total covers the exceptions holding this statement; the Audit Exception Summary
+           and the Risk &amp; Disputes report state the figure for the property as a whole.`
+        : `A finding shown without a dollar figure is one the audit has not quantified. It is not
+           zero — it means the amount in question has not been established, which is itself a
+           reason the statement is being held.`}
       ${mixedAxes ? `<strong>${esc(_expenseLabelShown)}</strong> measures something different: ${esc(_expenseMeaningShown)}
         The same dollar can appear on both, so the two totals are struck separately
         and must not be added together.` : ''}
