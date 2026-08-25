@@ -10663,7 +10663,21 @@ async function runAllocation() {
       <div class="result-card-actions">
         <button class="explain-btn" onclick="openExplainPanel('${esc(r.name)}')">&#x1F4CA; View Calculation</button>
         <button class="lv-validate-btn" onclick="_startLeaseValidation('${_lvPanelId}',${tdIdx})">&#x1F50D; Validate Against Lease</button>
-        <button class="tenant-stmt-card-btn" onclick="generateTenantStatement('${esc(r.name)}')" title="Generate the tenant-facing CAM statement">&#x1F9FE; Tenant Statement</button>
+        ${(() => {
+          // The label follows billing state. "Tenant Statement" on a tenant the
+          // gate is about to refuse promises a document it cannot produce, and
+          // sends the manager through a refusal to find that out.
+          let _b = null;
+          try {
+            const AXs = window.AuditExposure;
+            const _ex = AXs ? AXs.deriveExposure(buildAuditSummary(), lastTotal || 0) : null;
+            _b = _tenantBillingState(r.name, _ex);
+          } catch (_) { _b = null; }
+          const _lbl = _b ? _b.cta : '&#x1F9FE; Tenant Statement';
+          const _ttl = _b ? _b.reason : 'Generate the tenant-facing CAM statement';
+          return `<button class="tenant-stmt-card-btn${_b && _b.state !== 'billable' ? ' tenant-stmt-card-btn--held' : ''}"
+            onclick="generateTenantStatement('${esc(r.name)}')" title="${esc(_ttl)}">${_lbl}</button>`;
+        })()}
       </div>
       <div id="${_lvPanelId}" class="lv-panel" style="display:none;"></div>
     </div>`;
@@ -11961,14 +11975,28 @@ function _buildReconciliationSummaryHtml(results, invoices, propName, engineInvo
   // as a completed fact that was fixed on the statement itself. Reading the same
   // model here keeps one source of truth: this screen reports the state, it does
   // not compute it.
-  const _billing = (() => {
+  // The exposure is kept, not just the verdict: I-12 asks it the same question
+  // once per tenant, through the one derivation the statement path uses.
+  const _exposure = (() => {
     try {
       const AXs = window.AuditExposure;
       if (!AXs || !results.length) return null;
-      return AXs.billingReadiness(AXs.deriveExposure(buildAuditSummary(), totalPool || 0));
+      return AXs.deriveExposure(buildAuditSummary(), totalPool || 0);
+    } catch (_) { return null; }
+  })();
+  const _billing = (() => {
+    try {
+      const AXs = window.AuditExposure;
+      if (!AXs || !_exposure) return null;
+      return AXs.billingReadiness(_exposure);
     } catch (_) { return null; }
   })();
   const _billable = !!(_billing && _billing.canBill);
+  // Per-tenant billing state, derived once and used by the rows and the roster
+  // line above them so the two can never report different counts.
+  const _tenantBilling = {};
+  results.forEach(r => { _tenantBilling[r.name] = _tenantBillingState(r.name, _exposure); });
+  const _billableNames = results.map(r => r.name).filter(n => _tenantBilling[n].state === 'billable');
 
   const issues   = _detectReconciliationIssues(results, currentProperty());
   _lastReconIssues = issues; // capture for openDisputeFromFlag()
@@ -12132,6 +12160,18 @@ function _buildReconciliationSummaryHtml(results, invoices, propName, engineInvo
       ${capCell}
       <td class="rcs-td rcs-num rcs-alloc-total">${fmt(r.totalAllocated)}</td>
       <td class="rcs-td"><span class="rc-calc-state ${calcSt.cls}" title="Describes the CAM calculation for this row, not the tenant's standing. Audit exceptions are listed in the AI Audit Summary.">${calcSt.label}</span></td>
+      <td class="rcs-td">${(() => {
+        // BILLING STATUS. Distinct from the CAM calculation state beside it: that
+        // column says how much to trust the number, this one says whether it may
+        // be sent. A row can read "Calc verified" and still be unbillable, which
+        // is exactly the pairing a manager needs to see rather than infer.
+        const b = _tenantBilling[r.name];
+        if (!b) return '<span class="rcs-muted">—</span>';
+        const nm = esc(r.name).replace(/'/g, "\\'");
+        return `<button type="button" class="rcs-bill rcs-bill--${b.state}"
+          onclick="generateTenantStatement('${nm}')"
+          title="${esc(b.reason)}">${esc(b.label)}</button>`;
+      })()}</td>
     </tr>`;
   }).join('');
 
@@ -12141,6 +12181,15 @@ function _buildReconciliationSummaryHtml(results, invoices, propName, engineInvo
         <span class="rcs-panel-title">&#x1F4CA; Reconciliation Summary</span>
         ${confidenceBadgeHtml}
         <span class="rcs-coverage-badge">${totalPool > 0 ? (totalBilled / totalPool * 100).toFixed(1) : '—'}% coverage</span>
+        ${/* THE ROSTER LINE. On a phone the results table is several screens down
+             and scrolls sideways, so the count that answers "who can I bill?"
+             is stated here in words, beside the property verdict it qualifies.
+             Reading _tenantBilling means it can never disagree with the column. */''}
+        ${_exposure ? `<span class="rcs-bill-roster rcs-bill-roster--${
+            _billableNames.length === results.length ? 'all'
+          : _billableNames.length === 0              ? 'none' : 'some'}"
+          title="${esc(_billableNames.length ? _billableNames.join(', ') : 'No tenant can be billed from this reconciliation yet.')}"
+          >${_billableNames.length} of ${results.length} tenant${results.length === 1 ? '' : 's'} billable</span>` : ''}
         <!-- The same two words the tenant statement, the blocked screen and the
              Lender Summary use, from the same model. A manager should learn
              whether this run can be billed on the screen that produces it, not
@@ -12175,6 +12224,7 @@ function _buildReconciliationSummaryHtml(results, invoices, propName, engineInvo
             <th class="rcs-th rcs-num">Cap Adj</th>
             <th class="rcs-th rcs-num">Allocated</th>
             <th class="rcs-th" title="Whether the CAM arithmetic for this row used sound inputs. It is not a statement about the lease or the tenant — audit exceptions are reported in the AI Audit Summary.">CAM calculation</th>
+            <th class="rcs-th" title="Whether a statement may be issued to this tenant. Read from the same billing readiness the statement itself applies — the two cannot disagree.">Billing status</th>
           </tr></thead>
           <tbody>${rows}</tbody>
           <tfoot><tr class="rcs-total-row">
@@ -12183,6 +12233,7 @@ function _buildReconciliationSummaryHtml(results, invoices, propName, engineInvo
             <td class="rcs-td rcs-num">${capsCount > 0 ? '−' + fmt(capTotal) : '—'}</td>
             <td class="rcs-td rcs-num rcs-alloc-total">${fmt(totalBilled)}</td>
             <td class="rcs-td"></td>
+            <td class="rcs-td rcs-bill-total">${_billableNames.length} of ${results.length} billable</td>
           </tr></tfoot>
         </table>
       </div>
@@ -17546,6 +17597,75 @@ function _renderExclusionBlock(block) {
  * may not. Reads the same canonical exposure every other surface reads — it does
  * not re-derive a second opinion about whether this reconciliation is billable.
  */
+/**
+ * ONE ANSWER TO "CAN I BILL THIS TENANT?", read by the results table and by the
+ * statement path.
+ *
+ * I-4 made billing readiness a per-tenant question and answered it correctly —
+ * and then reported the answer nowhere. A manager could not tell which of four
+ * tenants were billable without generating four statements one at a time, which
+ * across thirty properties is a hundred and fifty statements to find the ones
+ * that work. The state was right; it had no surface.
+ *
+ * NO NEW PREDICATE. This consults the two gates that already decide, in the
+ * order the statement path applies them:
+ *
+ *   AuditExposure.billingReadiness(exposure, tenant)   the I-4 verdict
+ *   _exclusionBlockReason(tenant)                      the older per-tenant gate
+ *
+ * Reading both is what keeps the column honest: a tenant blocked ONLY by an
+ * unapplied lease exclusion would otherwise read "Billable" in the table and be
+ * refused the moment it was asked for, which is the two-surfaces-one-fact defect
+ * this codebase keeps producing. Because generateTenantStatement now reads the
+ * same helper, the chip and the refusal cannot disagree.
+ *
+ * @returns {{ state, label, reason, propertyLevel, exclusionOnly, cta }}
+ *          state is 'billable' | 'confirm' | 'blocked'
+ */
+function _tenantBillingState(tenantName, exposure) {
+  const AXs = window.AuditExposure;
+  let readiness = null;
+  try {
+    if (AXs && exposure) readiness = AXs.billingReadiness(exposure, tenantName);
+  } catch (_) { readiness = null; }
+
+  let exclusion = null;
+  try { exclusion = _exclusionBlockReason(tenantName); } catch (_) { exclusion = null; }
+
+  // FAIL CLOSED. No readiness verdict means the audit state could not be read,
+  // which is missing information rather than an all-clear.
+  if (!readiness) {
+    return { state: 'blocked', label: 'Blocked', reason: 'Billing readiness could not be determined.',
+             propertyLevel: false, exclusionOnly: false, readiness: null, exclusion,
+             cta: '\u26D4 Why it can\u2019t bill' };
+  }
+
+  const blockers      = readiness.blockers || [];
+  const propertyLevel = blockers.some(b => b.scope === 'property');
+
+  if (readiness.canBill && !exclusion) {
+    return { state: 'billable', label: 'Billable', reason: readiness.reason,
+             propertyLevel: false, exclusionOnly: false, readiness, exclusion: null,
+             cta: '\u{1F9FE} Tenant Statement' };
+  }
+  if (readiness.canBill && exclusion) {
+    // The audit clears this tenant; a lease exclusion the matcher could not
+    // apply is what holds it. That is a confirmation, not a correction.
+    return { state: 'confirm', label: 'Needs confirmation',
+             reason: `${exclusion.notApplied.length} lease exclusion${exclusion.notApplied.length === 1 ? '' : 's'} could not be applied automatically.`,
+             propertyLevel: false, exclusionOnly: true, readiness, exclusion,
+             cta: '\u26A0\uFE0F Confirm to bill' };
+  }
+  if (readiness.label === 'Needs confirmation before billing') {
+    return { state: 'confirm', label: 'Needs confirmation', reason: readiness.reason,
+             propertyLevel, exclusionOnly: false, readiness, exclusion,
+             cta: '\u26A0\uFE0F Confirm to bill' };
+  }
+  return { state: 'blocked', label: propertyLevel ? 'Blocked \u00b7 property' : 'Blocked',
+           reason: readiness.reason, propertyLevel, exclusionOnly: false, readiness, exclusion,
+           cta: '\u26D4 Why it can\u2019t bill' };
+}
+
 function _statementReadinessBlock(tenantName) {
   const AXs = window.AuditExposure;
   if (!AXs || !lastResults.length) return null;
@@ -17744,6 +17864,28 @@ function _renderStatementReadinessBlock(block) {
         The same dollar can appear on both, so the two totals are struck separately
         and must not be added together.` : ''}
     </div>
+    ${block.exclusion ? `
+    <div class="rpt-section-title">Also on this lease</div>
+    ${/* SECONDARY, NOT SUPPRESSED. This used to be the whole screen, and it
+         pre-empted the material reason: a tenant billed on a lease that expired
+         in 2024 was shown "capital / ambiguous / repairs" and nothing else. It
+         is real information — a lease exclusion the matcher declined to apply,
+         whose expenses are still in this tenant's pool — so it is kept, below
+         the thing that actually decides whether a statement issues. */''}
+    <p class="rpt-helper-text">
+      ${block.exclusion.notApplied.length} lease exclusion${block.exclusion.notApplied.length === 1 ? '' : 's'}
+      could not be applied to the reconciliation automatically, so ${block.exclusion.notApplied.length === 1 ? 'that expense stays' : 'those expenses stay'}
+      in this tenant's pool. It is reviewed on the way to issuing, not instead of the exception${block.red.length === 1 ? '' : 's'} above.
+    </p>
+    <div class="tw"><table class="rpt-table">
+      <thead><tr><th>Lease says</th><th>Match</th><th>Would map to</th><th>Why it was not applied</th></tr></thead>
+      <tbody>${block.exclusion.notApplied.map(u => `<tr>
+        <td>${esc(u.raw)}</td>
+        <td>${esc(u.status)}</td>
+        <td>${esc(u.candidates && u.candidates.length ? u.candidates.join(', ') : '\u2014')}</td>
+        <td style="white-space:normal;color:#94a3b8">${esc(u.reason)}</td>
+      </tr>`).join('')}</tbody>
+    </table></div>` : ''}
     <div class="rpt-section-title">To proceed</div>
     <p class="rpt-helper-text">
       Resolve the exceptions above and re-run the reconciliation — the statement issues on its own once the audit
@@ -17787,16 +17929,21 @@ function generateTenantStatement(tenantName, opts = {}) {
     return;
   }
 
-  // F-02 lifecycle guard — refuse to build the statement at all. Not a banner.
+  // ORDER: THE MATERIAL REASON FIRST.
+  //
+  // The exclusion gate used to run first and return. On a tenant with BOTH an
+  // unapplied lease exclusion and a lease that expired in 2024, the refusal
+  // screen was entirely about "capital / ambiguous / repairs" and did not
+  // mention the holdover at all. The only way to reach the material reason was
+  // to press a button reading "I have reviewed these — issue the statement",
+  // which then produced a different refusal: a button promising issuance it
+  // could not deliver, guarding the fact the manager actually needed.
+  //
+  // So the audit gate is asked first, and when it refuses, the exclusion detail
+  // rides along on that screen as a secondary section rather than pre-empting
+  // it. Nothing about either gate's decision changed — only which one speaks
+  // first, and neither loses its information.
   const _block = _exclusionBlockReason(tenantName);
-  if (_block) {
-    logActivity('tenant_statement_blocked', `Tenant statement blocked — ${tenantName}`, {
-      severity: 'warning', actor: 'System', relatedEntity: tenantName,
-      detail: `${_block.notApplied.length} lease exclusion(s) could not be applied: ${_block.notApplied.map(u => u.raw).join(', ')}`,
-    });
-    _renderExclusionBlock(_block);
-    return;
-  }
 
   // AUDIT READINESS GATE.
   //
@@ -17811,12 +17958,24 @@ function generateTenantStatement(tenantName, opts = {}) {
   // flag a caller can pass to skip the gate.
   if (!opts.draft) {
     const _ready = _statementReadinessBlock(tenantName);
+    if (_ready) _ready.exclusion = _block;
     if (_ready) {
       logActivity('tenant_statement_blocked', `Tenant statement blocked — ${tenantName}`, {
         severity: 'warning', actor: 'System', relatedEntity: tenantName,
         detail: `${_ready.readiness.reason} ${_ready.mine.length} exception(s) name this tenant.`,
       });
       _renderStatementReadinessBlock(_ready);
+      return;
+    }
+    // The audit clears this tenant; an exclusion the matcher could not apply is
+    // what holds it. Same refusal as before, now reached only when it IS the
+    // material reason rather than merely the first one checked.
+    if (_block) {
+      logActivity('tenant_statement_blocked', `Tenant statement blocked — ${tenantName}`, {
+        severity: 'warning', actor: 'System', relatedEntity: tenantName,
+        detail: `${_block.notApplied.length} lease exclusion(s) could not be applied: ${_block.notApplied.map(u => u.raw).join(', ')}`,
+      });
+      _renderExclusionBlock(_block);
       return;
     }
   }
@@ -24924,7 +25083,21 @@ function restoreResultsDisplay(snapshot) {
       <div class="result-card-actions">
         <button class="explain-btn" onclick="openExplainPanel('${esc(r.name)}')">&#x1F4CA; View Calculation</button>
         <button class="lv-validate-btn" onclick="_startLeaseValidation('${_lvPanelId}',${tdIdx})">&#x1F50D; Validate Against Lease</button>
-        <button class="tenant-stmt-card-btn" onclick="generateTenantStatement('${esc(r.name)}')" title="Generate the tenant-facing CAM statement">&#x1F9FE; Tenant Statement</button>
+        ${(() => {
+          // The label follows billing state. "Tenant Statement" on a tenant the
+          // gate is about to refuse promises a document it cannot produce, and
+          // sends the manager through a refusal to find that out.
+          let _b = null;
+          try {
+            const AXs = window.AuditExposure;
+            const _ex = AXs ? AXs.deriveExposure(buildAuditSummary(), lastTotal || 0) : null;
+            _b = _tenantBillingState(r.name, _ex);
+          } catch (_) { _b = null; }
+          const _lbl = _b ? _b.cta : '&#x1F9FE; Tenant Statement';
+          const _ttl = _b ? _b.reason : 'Generate the tenant-facing CAM statement';
+          return `<button class="tenant-stmt-card-btn${_b && _b.state !== 'billable' ? ' tenant-stmt-card-btn--held' : ''}"
+            onclick="generateTenantStatement('${esc(r.name)}')" title="${esc(_ttl)}">${_lbl}</button>`;
+        })()}
       </div>
       <div id="${_lvPanelId}" class="lv-panel" style="display:none;"></div>
     </div>`;

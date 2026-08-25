@@ -2885,6 +2885,32 @@
       font: inherit; font-weight: 600; cursor: pointer;
     }
     .rcs-variance-cta:hover { background: rgba(var(--line-rgb), 0.12); }
+    /* ── I-12 · Billing status ────────────────────────────────────────────
+       Distinct from .rc-calc-state beside it: that says how much to trust the
+       number, this says whether it may be sent. Semantic colour only — the
+       three states must be separable at a glance and without relying on hue,
+       so each carries its own word rather than a bare dot. */
+    .rcs-bill {
+      font-family: 'DM Sans', sans-serif; font-size: 0.72rem; font-weight: 700;
+      letter-spacing: 0.02em; padding: 3px 9px; border-radius: 5px; cursor: pointer;
+      border: 1px solid currentColor; background: transparent; white-space: nowrap;
+    }
+    .rcs-bill--billable { color: var(--c-6ee7b7, #6ee7b7); background: rgba(52,211,153,0.10); }
+    .rcs-bill--confirm  { color: var(--c-fbbf24, #fbbf24); background: rgba(251,191,36,0.10); }
+    .rcs-bill--blocked  { color: var(--c-fca5a5, #fca5a5); background: rgba(248,113,113,0.10); }
+    .rcs-bill:hover     { filter: brightness(1.18); }
+    .rcs-bill:focus-visible { outline: 2px solid var(--c-c9973a); outline-offset: 2px; }
+    .rcs-bill-total { font-size: 0.74rem; color: var(--text-3); white-space: nowrap; }
+    /* The roster line sits with the panel badges, above the table, because on a
+       phone the table is several screens down and scrolls sideways. */
+    .rcs-bill-roster {
+      font-family: 'DM Sans', sans-serif; font-size: 0.72rem; font-weight: 700;
+      padding: 3px 9px; border-radius: 5px; border: 1px solid currentColor; white-space: nowrap;
+    }
+    .rcs-bill-roster--all  { color: var(--c-6ee7b7, #6ee7b7); background: rgba(52,211,153,0.10); }
+    .rcs-bill-roster--some { color: var(--c-fbbf24, #fbbf24); background: rgba(251,191,36,0.10); }
+    .rcs-bill-roster--none { color: var(--c-fca5a5, #fca5a5); background: rgba(248,113,113,0.10); }
+    .tenant-stmt-card-btn--held { opacity: 0.92; }
     .rcs-panel--ok    { border-color: rgba(74,222,128,0.2); }
     .rcs-panel--warn  { border-color: rgba(251,191,36,0.25); }
     .rcs-panel--alert { border-color: rgba(248,113,113,0.3); }

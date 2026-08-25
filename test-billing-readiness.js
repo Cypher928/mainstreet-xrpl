@@ -217,10 +217,22 @@ t('[source] the statement gate reads the blocking set, not summary.red', () => {
   ok(/readiness\.blockers/.test(body), 'the gate does not read the blocking set');
 });
 
-t('[source] the three property-level callers were not given a tenant', () => {
+t('[source] the property-level callers were not given a tenant', () => {
+  // Two callers ask the tenant question, and both are the shared derivation:
+  // _statementReadinessBlock (the gate) and _tenantBillingState (the chip the
+  // results table renders, added by I-12). Naming them rather than counting to
+  // one means a THIRD surface deciding billability on its own still fails here,
+  // which is the thing worth catching.
   const calls = (scriptCode.match(/billingReadiness\([^)]*\)/g) || []);
   const withTenant = calls.filter(c => /,\s*tenantName/.test(c));
-  eq(withTenant.length, 1, `expected exactly one tenant-scoped caller, saw ${JSON.stringify(calls)}`);
+  eq(withTenant.length, 2, `expected two tenant-scoped callers, saw ${JSON.stringify(calls)}`);
+  const owners = ['function _statementReadinessBlock', 'function _tenantBillingState']
+    .map(f => scriptCode.slice(scriptCode.indexOf(f), scriptCode.indexOf(f) + 1400))
+    .filter(body => /billingReadiness\(exposure, tenantName\)/.test(body));
+  eq(owners.length, 2,
+     'a tenant-scoped billingReadiness call lives somewhere other than the gate and the chip');
+  eq(calls.filter(c => !/,\s*tenantName/.test(c)).length, 3,
+     'the number of property-level callers changed — each one is a screen that reports the property verdict');
 });
 
 t('[source] both Gross findings block their own tenant and stay yellow', () => {

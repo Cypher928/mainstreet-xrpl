@@ -229,9 +229,10 @@ const SUPABASE_MOCK = `
 // expired lease; Golden Wok by an unconfirmed CAM treatment on a Gross lease;
 // the other three by nothing at all.
 const EXPECTED = {
-  // Reaches the exclusion gate before the readiness gate — see the note at that
-  // assertion. Both refuse it, and both refuse it for its own reasons.
-  'Value Grocers #418':           { bills: false, label: 'Not ready to bill', viaExclusionGate: true },
+  // Carries BOTH an expired lease and an exclusion the matcher cannot apply. It
+  // used to land on the exclusion screen first; I-12 puts the material reason in
+  // front and keeps the exclusion as a secondary section.
+  'Value Grocers #418':           { bills: false, label: 'Not ready to bill' },
   'Golden Wok':                   { bills: false, label: 'Needs confirmation before billing' },
   'Cornerstone Physical Therapy': { bills: true,  label: 'Ready to bill' },
   'Sunrise Cleaners':             { bills: true,  label: 'Ready to bill' },
@@ -332,15 +333,6 @@ const EXPECTED = {
         r.refused === !want.bills, JSON.stringify(r));
     if (want.bills) {
       yes(`${r.name}: and it is a real statement`, r.isStatement, JSON.stringify(r));
-    } else if (want.viaExclusionGate) {
-      // PRE-EXISTING ORDERING, asserted rather than papered over.
-      // generateTenantStatement checks _exclusionBlockReason BEFORE the audit
-      // readiness gate and returns early, so this tenant lands on the exclusion
-      // screen — which has no .rpt-readiness element. That gate is itself
-      // tenant-scoped and correct; only the order is arguable, and changing it
-      // is not part of I-4. The chain behind it is asserted below.
-      yes(`${r.name}: refused by the tenant-scoped exclusion gate first`,
-          r.label === null && r.refused, JSON.stringify(r));
     } else {
       yes(`${r.name}: refusal reads "${want.label}"`,
           (r.label || '').indexOf(want.label) === 0, String(r.label));
@@ -386,37 +378,157 @@ const EXPECTED = {
   yes('and it says other tenants are held for their own reasons',
       detail.saysOthersHeld === true, detail.lead.slice(0,200));
 
-  // ── the chain behind the anchor's refusal ────────────────────────────────
-  console.log('\n── Acknowledging the exclusion still lands on the expired lease ──');
+  // ── the anchor's refusal leads with the material reason ──────────────────
+  //
+  // WAS: "Acknowledging the exclusion still lands on the expired lease". This
+  // tenant carries both, and the exclusion gate used to return first — so the
+  // screen was about "capital / ambiguous / repairs" and the holdover was
+  // reachable only by pressing "I have reviewed these — issue the statement",
+  // a button promising a document it could not produce. I-12 reverses the order;
+  // the exclusion is kept below, where it is context rather than the headline.
+  console.log('\n── The anchor is refused for the reason that matters ──');
   const anchor = await page.evaluate(async () => {
-    generateTenantStatement('Value Grocers #418'); await new Promise(x=>setTimeout(x,400));
-    const b1 = document.getElementById('rptBody');
-    const ack = [...b1.querySelectorAll('button')].find(x=>/I have reviewed/i.test(x.textContent));
-    if (!ack) return { noAck: true };
-    ack.click(); await new Promise(x=>setTimeout(x,600));
-    const b2 = document.getElementById('rptBody');
-    const txt = b2.innerText || b2.textContent;
+    generateTenantStatement('Value Grocers #418'); await new Promise(x=>setTimeout(x,500));
+    const b = document.getElementById('rptBody');
+    // innerText for the HEAD (it preserves the visual line order a reader sees);
+    // textContent for presence checks, because innerText omits anything outside
+    // the overlay's visible region and would report a rendered section as absent.
+    const txt = b.innerText || b.textContent;
+    const head = txt.replace(/\n{2,}/g,'\n').trim().split('\n').slice(0, 6).join(' ');
     const out = {
-      stillRefused: /HAS NOT BEEN ISSUED/i.test(txt),
-      label: (b2.querySelector('.rpt-readiness')||{}).textContent
-        ? b2.querySelector('.rpt-readiness').textContent.replace(/\s+/g,' ').trim().split('—')[0].trim() : null,
-      namesItsOwnLease: /lease that ended 2025-12-31/.test(txt),
+      refused: /HAS NOT BEEN ISSUED/i.test(txt),
+      label: (b.querySelector('.rpt-readiness')||{}).textContent
+        ? b.querySelector('.rpt-readiness').textContent.replace(/\s+/g,' ').trim().split('—')[0].trim() : null,
+      leadsWithLease: /lease that ended 2025-12-31/.test(head),
+      leadsWithExclusion: /exclusion in this lease/.test(head),
+      // textContent, not innerText — see the note on the head capture below.
+      keepsExclusion: /Also on this lease/.test(b.textContent),
+      promisesIssue: [...b.querySelectorAll('button')].some(x=>/issue the statement/i.test(x.textContent)),
       leaksOtherTenants: ['Golden Wok','Cornerstone Physical Therapy','Sunrise Cleaners','Bella Nails']
         .filter(o => txt.indexOf(o) >= 0),
     };
     closeReport(); return out;
   });
-  R('after acknowledging the exclusion', anchor);
-  yes('the anchor is still refused, now by the audit gate',
-      anchor.stillRefused === true && anchor.label === 'Not ready to bill', JSON.stringify(anchor));
-  yes('and the reason given is its OWN expired lease',
-      anchor.namesItsOwnLease === true, JSON.stringify(anchor));
+  R('the anchor refusal', anchor);
+  yes('it is refused, by the audit gate',
+      anchor.refused === true && anchor.label === 'Not ready to bill', JSON.stringify(anchor));
+  yes('THE ORDERING: it leads with the expired lease, not the exclusion',
+      anchor.leadsWithLease === true && anchor.leadsWithExclusion === false, JSON.stringify(anchor));
+  yes('the exclusion is preserved below rather than dropped',
+      anchor.keepsExclusion === true, JSON.stringify(anchor));
+  yes('no button promises to issue a statement that is refused',
+      anchor.promisesIssue === false, JSON.stringify(anchor));
   yes('no other tenant appears on its refusal',
       anchor.leaksOtherTenants.length === 0, JSON.stringify(anchor.leaksOtherTenants));
 
+  // ── I-12 · the verdict must be VISIBLE, not merely correct ───────────────
+  //
+  // I-4 answered "can I bill this tenant" correctly and reported it nowhere. The
+  // results table's last column read "Calc verified" for every tenant — a
+  // statement about the arithmetic — and the only billing signal on screen was a
+  // property badge, true of the property and false of the tenants under it. A
+  // manager had to generate every statement to find the ones that work.
+  console.log('\n── I-12: billing status on the results screen ──');
+  const surf = await page.evaluate(() => {
+    const b = document.getElementById('resultsBody');
+    const roster = b.querySelector('.rcs-bill-roster');
+    return {
+      columns: [...b.querySelectorAll('thead th')].map(h => h.textContent.replace(/\s+/g,' ').trim()),
+      rows: [...b.querySelectorAll('.rcs-row')].map(r => {
+        const c = [...r.querySelectorAll('td')].map(x => x.textContent.replace(/\s+/g,' ').trim());
+        const chip = r.querySelector('.rcs-bill');
+        return { name: c[0], calc: c[5], billing: c[6],
+                 cls: chip ? chip.className : null,
+                 onclick: chip ? chip.getAttribute('onclick') : null,
+                 tip: chip ? chip.getAttribute('title') : null };
+      }),
+      roster: roster ? roster.textContent.replace(/\s+/g,' ').trim() : null,
+      rosterNames: roster ? roster.getAttribute('title') : null,
+      footer: (() => { const f = b.querySelector('.rcs-bill-total'); return f ? f.textContent.trim() : null; })(),
+    };
+  });
+  R('columns', surf.columns);
+  surf.rows.forEach(r => console.log('    ' + (r.name||'').padEnd(30) + (r.calc||'').padEnd(16) + (r.billing||'')));
+  R('roster', surf.roster + '  — ' + surf.rosterNames);
+
+  yes('the results table carries a Billing status column',
+      surf.columns.indexOf('Billing status') >= 0, JSON.stringify(surf.columns));
+  yes('and keeps the CAM calculation column beside it',
+      surf.columns.indexOf('CAM calculation') >= 0, JSON.stringify(surf.columns));
+
+  const by = Object.fromEntries(surf.rows.map(r => [r.name, r]));
+  yes('Value Grocers reads Blocked', (by['Value Grocers #418']||{}).billing === 'Blocked',
+      JSON.stringify(by['Value Grocers #418']));
+  yes('Golden Wok reads Needs confirmation', (by['Golden Wok']||{}).billing === 'Needs confirmation',
+      JSON.stringify(by['Golden Wok']));
+  ['Cornerstone Physical Therapy','Sunrise Cleaners','Bella Nails & Spa'].forEach(n =>
+    yes(`${n} reads Billable`, (by[n]||{}).billing === 'Billable', JSON.stringify(by[n])));
+
+  yes('every chip is colour-coded by its state, not by severity',
+      surf.rows.every(r => /rcs-bill--(billable|confirm|blocked)/.test(r.cls || '')),
+      JSON.stringify(surf.rows.map(r => r.cls)));
+  yes('every chip carries the reason as its tooltip',
+      surf.rows.every(r => (r.tip || '').length > 10), JSON.stringify(surf.rows.map(r => r.tip)));
+  yes('and every chip navigates into the existing statement workflow',
+      surf.rows.every(r => /^generateTenantStatement\(/.test(r.onclick || '')),
+      JSON.stringify(surf.rows.map(r => r.onclick)));
+
+  // THE ACCEPTANCE CRITERION: the count is readable without opening anything.
+  yes('THE PHONE TEST: the screen states how many tenants are billable',
+      surf.roster === '3 of 5 tenants billable', String(surf.roster));
+  yes('and names them without opening a statement',
+      /Cornerstone Physical Therapy/.test(surf.rosterNames || '')
+        && /Sunrise Cleaners/.test(surf.rosterNames || '')
+        && !/Value Grocers/.test(surf.rosterNames || ''), String(surf.rosterNames));
+  yes('the table footer agrees with the roster line',
+      surf.footer === '3 of 5 billable', String(surf.footer));
+  yes('the roster count matches the chips exactly',
+      surf.rows.filter(r => r.billing === 'Billable').length === 3, JSON.stringify(surf.rows.map(r=>r.billing)));
+
+  // ── I-12 · the material reason speaks first ──────────────────────────────
+  console.log('\n── I-12: refusal ordering ──');
+  const order = await page.evaluate(async () => {
+    // Give the anchor an exclusion the matcher cannot apply, so BOTH gates hit
+    // the same tenant — the condition under which the technicality used to win.
+    const t = tenantData.filter(Boolean).find(x => /Value Grocers/.test(x.tenant_name));
+    t.excluded_categories = 'capital';
+    currentProperty().tenants = tenantData.filter(Boolean);
+    await runAllocation(); await new Promise(x => setTimeout(x, 500));
+    generateTenantStatement('Value Grocers #418'); await new Promise(x => setTimeout(x, 500));
+    const b = document.getElementById('rptBody');
+    const txt = b.innerText || b.textContent;
+    const head = txt.replace(/\n{2,}/g,'\n').trim().split('\n').slice(0, 6);
+    const o = {
+      head,
+      leadsWithMaterial: /lease that ended/.test(head.join(' ')),
+      leadsWithExclusion: /exclusion in this lease/.test(head.join(' ')),
+      keepsExclusion: /Also on this lease/.test(b.textContent),
+      exclusionDetail: /capital/.test(b.textContent) && /ambiguous/.test(b.textContent),
+      buttons: [...b.querySelectorAll('button')].map(x => x.textContent.replace(/\s+/g,' ').trim()),
+    };
+    closeReport(); return o;
+  });
+  console.log('  first lines of the refusal:');
+  order.head.forEach(l => console.log('    ' + l.slice(0, 96)));
+  yes('THE MATERIAL REASON LEADS — the expired lease, not the exclusion',
+      order.leadsWithMaterial === true && order.leadsWithExclusion === false,
+      JSON.stringify(order.head));
+  yes('the exclusion is preserved as a secondary section',
+      order.keepsExclusion === true && order.exclusionDetail === true, JSON.stringify(order));
+  yes('and the screen no longer offers a button promising to issue the statement',
+      !order.buttons.some(x => /issue the statement/i.test(x)), JSON.stringify(order.buttons));
+
+  const held = await page.evaluate(() => {
+    const btns = [...document.querySelectorAll('.tenant-stmt-card-btn')].map(b => b.textContent.replace(/\s+/g,' ').trim());
+    return btns;
+  });
+  R('result-card buttons', held);
+  yes('a held tenant\'s card button does not read "Tenant Statement"',
+      held.some(b => /Why it/.test(b) || /Confirm to bill/.test(b)), JSON.stringify(held));
+
   yes('no uncaught page errors', errors.length === 0, errors.slice(0,3).join(' | '));
 
-  const TOTAL = 26;
+  const TOTAL = 46;
   yes(`suite runs all ${TOTAL} checks`, pass + fail + 1 === TOTAL, `saw ${pass + fail + 1}`);
   await browser.close(); server.close();
   console.log(`\n${fail === 0 ? '\x1b[32m' : '\x1b[31m'}RESULT: ${pass} passed, ${fail} failed\x1b[0m`);

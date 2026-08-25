@@ -73,6 +73,14 @@ const SUITES = [
   // who it is about, and blocksBilling says whether billing may proceed — three
   // questions that were being answered by one field.
   { label: 'Billing readiness (per tenant)',    cmd: 'node test-billing-readiness.js' },
+  // I-12. I-4 answered "can I bill this tenant" correctly and reported it
+  // nowhere: the results table's last column read "Calc verified" for every
+  // tenant — a statement about the arithmetic — and the only billing signal was
+  // a property badge, true of the property and false of the tenants under it. A
+  // manager had to generate every statement to find the ones that work. This
+  // pins the chip, the roster line, the card button and the refusal all reading
+  // ONE derivation; each has at some point been the surface that disagreed.
+  { label: 'Tenant billing status (I-12)',      cmd: 'node test-tenant-billing-status.js' },
   { label: 'Variance breakdown',                cmd: 'node test-variance-breakdown.js' },
   // The same thing on screen, plus the blocked statement's Scope column, which
   // printed an em dash against property-level exceptions and matched a tenant
