@@ -134,6 +134,11 @@ const AX = require('./audit-exposure.js');
 function baseSandbox() {
   return {
     console: { log() {}, warn() {}, error() {}, groupCollapsed() {}, groupEnd() {} },
+    // The browser modules script.js resolves off `window`. Loaded for real, not
+    // stubbed, so these reports run against the same definitions production
+    // uses — CamPool in particular decides what is in the CAM pool, and a stub
+    // of it would let this fixture agree with a script.js that had drifted.
+    window: { CamPool: require('./cam-pool.js') },
     parseFloat, parseInt, isNaN, isFinite, Number, Math, Date, JSON, Set, Map,
     Array, Object, String, Boolean, RegExp,
     fmt, esc,
@@ -142,6 +147,12 @@ function baseSandbox() {
     lastResults:      RESULTS,
     lastTenants:      TENANTS,
     lastTotal:        POOL,
+    // The gross expense pool and the CAM pool are two different quantities, and
+    // buildAuditSummary reads whichever one each of its findings claims. This
+    // fixture's invoices are all CAM-eligible, so the two coincide here — the
+    // point of computing it rather than aliasing POOL is that a fixture invoice
+    // marked not eligible would move one and not the other.
+    lastCamPool:      require('./cam-pool.js').total(INVOICES),
     lastPropName:     PROPERTY.name,
     tenantData:       TENANTS,
     disputes:         DISPUTES,
@@ -177,7 +188,7 @@ function auditSummary() {
 
 function auditNarrative() {
   const box = baseSandbox();
-  box.window = { AuditExposure: AX };
+  box.window = Object.assign(box.window, { AuditExposure: AX });
   return run(box, SUSPICIONS_SRC + fn('buildAuditSummary') + fn('buildAuditNarrative'),
              'buildAuditNarrative()');
 }
@@ -187,7 +198,7 @@ function auditNarrative() {
 function exceptionReport() {
   const box = baseSandbox();
   const captured = {};
-  box.window = { AuditExposure: AX };
+  box.window = Object.assign(box.window, { AuditExposure: AX });
   box.openReport = (title, html) => { captured.title = title; captured.html = html; };
   box.logError   = (where, e) => { throw e; };
   run(box, SUSPICIONS_SRC + fn('buildAuditSummary') + fn('buildAuditNarrative')
@@ -218,7 +229,7 @@ function propertyMetrics(property) {
     global.ReviewEngine      = sel.ReviewEngine;
     global.Selectors         = sel.Selectors;
   }
-  box.window    = { Selectors: global.Selectors, AuditExposure: AX };
+  box.window    = Object.assign(box.window, { Selectors: global.Selectors, AuditExposure: AX });
   box.Selectors = global.Selectors;
   box.disputes  = property.disputes || [];
   return run(box,
@@ -235,7 +246,7 @@ function propertyMetrics(property) {
 
 function statementReadiness(tenantName, findings) {
   const box = baseSandbox();
-  box.window = { AuditExposure: AX };
+  box.window = Object.assign(box.window, { AuditExposure: AX });
   const src = findings
     ? `function buildAuditSummary(){ return ${JSON.stringify(findings)}; }`
     : SUSPICIONS_SRC + fn('buildAuditSummary');
@@ -248,7 +259,7 @@ function statementReadiness(tenantName, findings) {
 
 function statementBlockHtml(tenantName) {
   const box = baseSandbox();
-  box.window = { AuditExposure: AX };
+  box.window = Object.assign(box.window, { AuditExposure: AX });
   const captured = {};
   box.openReport = (title, html) => { captured.title = title; captured.html = html; };
   run(box, SUSPICIONS_SRC + fn('buildAuditSummary') + fn('_findingScope')
@@ -265,7 +276,7 @@ function statementBlockHtml(tenantName) {
 function reconciliationSummary() {
   const box = baseSandbox();
   const captured = {};
-  box.window = { AuditExposure: AX };
+  box.window = Object.assign(box.window, { AuditExposure: AX });
   box.openReport = (title, html) => { captured.title = title; captured.html = html; };
   box.logError   = (where, e) => { throw e; };
   box._deriveCalcState = () => ({ cls: 'ok', label: 'Pro-rata' });
@@ -294,7 +305,7 @@ function coverageGap() {
       scrollIntoView() {},
     }),
   };
-  box.window = { scrollTo() {} };
+  box.window = Object.assign(box.window, { scrollTo() {} });
   box.openReport = (title, html) => { captured.title = title; captured.html = html; };
   run(box, SUSPICIONS_SRC + fn('buildAuditSummary') + fn('_rptHeader') + fn('_rptFooter')
          + fn('generateHolesReport'),
@@ -311,7 +322,7 @@ function coverageGap() {
 function riskAndDisputes() {
   const box = baseSandbox();
   const captured = {};
-  box.window = { AuditExposure: AX };
+  box.window = Object.assign(box.window, { AuditExposure: AX });
   box.rebuildDerivedState      = () => {};
   // The real shape, including the field that caused the defect: financialStats
   // .totalCAM is the sum of allocatedAmount — the amount billed OUT — despite

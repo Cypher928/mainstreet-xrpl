@@ -2901,6 +2901,10 @@
     .rcs-bill:hover     { filter: brightness(1.18); }
     .rcs-bill:focus-visible { outline: 2px solid var(--c-c9973a); outline-offset: 2px; }
     .rcs-bill-total { font-size: 0.74rem; color: var(--text-3); white-space: nowrap; }
+    /* "CAM Pool $90,500 of $160,500 invoiced" — the second figure relates the
+       KPI to the expense pool the variance banner names, so two numbers on one
+       screen read as one fact rather than a contradiction. */
+    .rcs-kpi-sub { display: block; font-size: 0.62rem; font-weight: 400; opacity: 0.75; margin-top: 1px; }
     /* The roster line sits with the panel badges, above the table, because on a
        phone the table is several screens down and scrolls sideways. */
     .rcs-bill-roster {
@@ -7767,6 +7771,11 @@
      review-engine fails closed (every lease reads as missing its area) if it is
      absent, so load order is load-bearing, not cosmetic. -->
 <script src="source-values.js"></script>
+<!-- What is in the CAM pool, defined once. The eligibility rule had four
+     transcriptions; the allocation honoured it and the concentration detector
+     did not, so a $70,000 invoice a manager had removed from CAM kept blocking
+     every tenant's statement. Must precede script.js and variance-breakdown.js. -->
+<script src="cam-pool.js"></script>
 <script src="review-engine.js"></script>
 <script src="reconciliation-engine.js"></script>
 <script src="audit-exposure.js"></script>

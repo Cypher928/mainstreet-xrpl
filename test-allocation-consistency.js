@@ -57,11 +57,15 @@ function loadEngine(directVendors) {
   ].join('\n');
   const sandbox = {
     console: { log() {}, warn() {}, error() {}, groupCollapsed() {}, groupEnd() {} },
-    // parseSqft delegates to source-values.js, which is the single reading of a
-    // square-footage value shared with getValidTenants and the review engine.
-    // The sandbox loads the real module rather than stubbing it, so these suites
-    // exercise the same interpretation production does.
-    window: { SourceValues: require('./source-values.js') },
+    // ONE reading of a square-footage value (SourceValues) and ONE definition of
+    // what is in the CAM pool (CamPool), shared with getValidTenants, the review
+    // engine and the concentration detector. The sandbox loads the real modules
+    // rather than stubbing them, so these suites exercise the same
+    // interpretations production does.
+    window: {
+      SourceValues: require('./source-values.js'),
+      CamPool:      require('./cam-pool.js'),
+    },
     parseFloat, isNaN, Number, Math, Date, JSON, Set, Array, Object, String,
     currentProperty: () => ({ tenants: [] }),
     matchInvoiceToTenant: inv => direct.has(inv.vendorName)
@@ -502,11 +506,18 @@ function auditSummary({ invoices, results, tenants, total, camYear }) {
   const sandbox = {
     console: { log() {}, warn() {}, error() {} },
     parseFloat, isNaN, Number, Math, Date, JSON, Set, Array, Object, String,
-    lastInvoicesFull: invoices.map(i => ({ vendor: i.vendorName, amount: i.amount, category: i.category })),
+    window: { CamPool: require('./cam-pool.js') },
+    // CARRIES camEligible. This mirrors the stripped shape script.js builds, and
+    // that shape used to drop the flag — which is why buildAuditSummary could
+    // not tell an invoice held out of CAM from a billable one and reported a
+    // $70,000 capital item as "43.6% of total CAM".
+    lastInvoicesFull: invoices.map(i => ({ vendor: i.vendorName, amount: i.amount,
+                                          category: i.category, camEligible: i.camEligible })),
     invoiceData:  invoices,
     lastResults:  results,
     lastTenants:  tenants,
     lastTotal:    total,
+    lastCamPool:  require('./cam-pool.js').total(invoices),
     camRuns:      [],
     fmt: n => '$' + Number(n).toLocaleString('en-US', { minimumFractionDigits: 2, maximumFractionDigits: 2 }),
     getCamYear:   () => camYear,

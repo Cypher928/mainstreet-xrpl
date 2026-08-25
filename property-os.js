@@ -94,7 +94,9 @@ window.PropertyOS = (function () {
         fileName: inv.fileName || null,
         // relations (optional, additive — absent on legacy invoices)
         spaceId: inv.spaceId || null,
-        camEligible: inv.camEligible !== false,   // default: CAM-eligible unless told otherwise
+        // One definition, shared with the allocation, the concentration detector
+        // and the variance panel. Absent means recoverable — see cam-pool.js.
+        camEligible: window.CamPool.isEligible(inv),
         system: inv.system || null,
       };
     });
@@ -856,8 +858,7 @@ window.PropertyOS = (function () {
     var spaceScoped    = inYear.filter(function (i) { return !!i.spaceId; });
 
     var total   = propertyScoped.reduce(function (s, i) { return s + i.amount; }, 0);
-    var camPool = propertyScoped.filter(function (i) { return i.camEligible; })
-                                .reduce(function (s, i) { return s + i.amount; }, 0);
+    var camPool = window.CamPool.total(propertyScoped);
     var nonCam  = total - camPool;
 
     var scopeBits = [];

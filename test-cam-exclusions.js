@@ -55,11 +55,15 @@ function loadEngine() {
   ].join('\n');
   const sandbox = {
     console: { log() {}, warn() {}, error() {}, groupCollapsed() {}, groupEnd() {} },
-    // parseSqft delegates to source-values.js, which is the single reading of a
-    // square-footage value shared with getValidTenants and the review engine.
-    // The sandbox loads the real module rather than stubbing it, so these suites
-    // exercise the same interpretation production does.
-    window: { SourceValues: require('./source-values.js') },
+    // ONE reading of a square-footage value (SourceValues) and ONE definition of
+    // what is in the CAM pool (CamPool), shared with getValidTenants, the review
+    // engine and the concentration detector. The sandbox loads the real modules
+    // rather than stubbing them, so these suites exercise the same
+    // interpretations production does.
+    window: {
+      SourceValues: require('./source-values.js'),
+      CamPool:      require('./cam-pool.js'),
+    },
     parseFloat, isNaN, Number, Math, Date, JSON, Set, Array, Object, String,
     currentProperty: () => ({ tenants: [] }),          // live-tenant overlay: none
     matchInvoiceToTenant: () => null,                   // force every invoice shared

@@ -117,8 +117,19 @@ const doc = n => ({ fileName: n + '.pdf', fileUrl: 'https://mock.local/' + n + '
 const INVOICES = [
   { id: 'vf-i-01', vendorName: 'SHONAC CORPORATION', amount: '38000', category: 'capital',
     invoiceDate: '2026-06-01', camEligible: false, ...doc('roof') },
-  { id: 'vf-i-02', vendorName: 'Alpha Landscaping',  amount: '3000',   category: 'grounds',    invoiceDate: '2026-03-01', camEligible: true,  ...doc('alpha') },
-  { id: 'vf-i-03', vendorName: 'Beta Janitorial',    amount: '2500',   category: 'janitorial', invoiceDate: '2026-04-01', camEligible: true,  ...doc('beta') },
+  // THE OVER-MATCH CASE, and it has to be CAM-ELIGIBLE to exist at all.
+  //
+  // It used to be vf-i-01 above — the $38,000 invoice the manager had unticked.
+  // That stopped raising a concentration finding once the detector was corrected
+  // to divide by the CAM pool, which is right: an invoice contributing nothing
+  // to CAM cannot be a share of it. But it left the three assertions below with
+  // no row to read, passing for the wrong reason. So the over-match now comes
+  // from an invoice that IS in the pool: $3,600 of $8,259.30 is 43.6%, over the
+  // 40% materiality threshold, from a vendor that shares a name with a tenant.
+  // vf-i-03 absorbs the $600 so the eligible total — and every pool, billed and
+  // variance figure this suite pins to the live Pilot run — is unchanged.
+  { id: 'vf-i-02', vendorName: 'SHONAC CORPORATION', amount: '3600',   category: 'grounds',    invoiceDate: '2026-03-01', camEligible: true,  ...doc('alpha') },
+  { id: 'vf-i-03', vendorName: 'Beta Janitorial',    amount: '1900',   category: 'janitorial', invoiceDate: '2026-04-01', camEligible: true,  ...doc('beta') },
   { id: 'vf-i-04', vendorName: 'Gamma Snow',         amount: '1200',   category: 'snow',       invoiceDate: '2026-01-15', camEligible: true,  ...doc('gamma') },
   { id: 'vf-i-05', vendorName: 'Delta Utilities',    amount: '900',    category: 'utilities',  invoiceDate: '2026-05-01', camEligible: true,  ...doc('delta') },
   { id: 'vf-i-06', vendorName: 'Epsilon Security',   amount: '659.30', category: 'security',   invoiceDate: '2026-07-01', camEligible: true,  ...doc('eps') },
@@ -386,15 +397,18 @@ const SUPABASE_MOCK = `
   yes('every invoice in the pool is listed, not only the unallocated ones',
       panel.invoices.length === 13, `${panel.invoices.length} rows`);
 
-  const roof = panel.invoices.find(r => /SHONAC/.test(r[0]));
+  // By vendor AND amount: two invoices carry the SHONAC vendor name — the
+  // $38,000 capital item and the $3,600 concentration invoice — and a bare name
+  // match would read whichever the panel happened to list first.
+  const roof = panel.invoices.find(r => /SHONAC/.test(r[0]) && r[2] === '$38,000.00');
   R('the $38,000 row', roof);
   yes('each row says what happened to that invoice',
-      !!roof && roof[2] === '$38,000.00' && roof[3] === '$0.00' && /not CAM-eligible/i.test(roof[5]),
+      !!roof && roof[3] === '$0.00' && /not CAM-eligible/i.test(roof[5]),
       JSON.stringify(roof));
 
-  const billedRow = panel.invoices.find(r => /Alpha Landscaping/.test(r[0]));
+  const billedRow = panel.invoices.find(r => /Gamma Snow/.test(r[0]));
   yes('a fully-allocated invoice reads as fully allocated',
-      !!billedRow && billedRow[2] === '$3,000.00' && billedRow[3] === '$3,000.00' && billedRow[4] === '—',
+      !!billedRow && billedRow[2] === '$1,200.00' && billedRow[3] === '$1,200.00' && billedRow[4] === '—',
       JSON.stringify(billedRow));
 
   yes('the panel offers a way to act on it', !!panel.actionBtn, 'no action button');
@@ -590,14 +604,26 @@ const SUPABASE_MOCK = `
       !!sv3.skipBanner && /no amount were excluded/i.test(sv3.skipBanner), String(sv3.skipBanner));
 
   // Restore the fixture so the statement assertions below run against it.
-  await page.evaluate(async () => {
-    const seed = { 'vf-i-01': '38000', 'vf-i-02': '3000', 'vf-i-03': '2500' };
-    invoiceData.forEach(i => { if (i && seed[i.id]) { i.amount = seed[i.id]; delete i.amountUnparsed; } });
-    invoiceData[0].camEligible = false;
+  //
+  // FROM THE FIXTURE, not from a hand-written partial. This used to reset three
+  // amounts and one eligibility flag, which left the seven `camEligible = true`
+  // writes above standing — the pool the statement assertions ran against was
+  // $33,950, not the $8,259.30 this file documents. It went unnoticed because
+  // the concentration finding was computed off the gross total either way.
+  await page.evaluate(async (seed) => {
+    const byId = {};
+    seed.forEach(s => { byId[s.id] = s; });
+    invoiceData.forEach(i => {
+      const s = i && byId[i.id];
+      if (!s) return;
+      i.amount = s.amount;
+      i.camEligible = s.camEligible;
+      delete i.amountUnparsed;
+    });
     canonicaliseInvoiceAmounts(invoiceData);
     await runAllocation();
     await new Promise(r => setTimeout(r, 300));
-  });
+  }, INVOICES.map(i => ({ id: i.id, amount: i.amount, camEligible: i.camEligible })));
 
   // ── the blocked statement's scope column ───────────────────────────────────
   console.log('\n══ Blocked statement — scope, not a blank ══');

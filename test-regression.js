@@ -82,6 +82,20 @@ const SUITES = [
   // ONE derivation; each has at some point been the surface that disagreed.
   { label: 'Tenant billing status (I-12)',      cmd: 'node test-tenant-billing-status.js' },
   { label: 'Variance breakdown',                cmd: 'node test-variance-breakdown.js' },
+  // What is IN the CAM pool, defined once. The concentration detector's own
+  // sentence said "% of total CAM" and it divided by the gross expense total,
+  // so a $70,000 roof the manager had correctly held out of CAM still blocked
+  // every tenant on the property — and unticking it, the exact remedy, cleared
+  // nothing. Two quantities have to stay distinct here (the gross pool is what
+  // the variance panel exists to explain), so the assertions are about which
+  // one each surface uses, not about collapsing them into one number.
+  { label: 'CAM pool definition',               cmd: 'node test-cam-pool.js' },
+  // The same defect as the loop a manager actually walks: mark the roof not
+  // CAM-eligible through the real register checkbox, re-run, and the blocker
+  // must clear, the tenants must bill, and the statements must issue — then
+  // re-tick it and the blocker must come back, because a deleted detector
+  // would pass the first half perfectly.
+  { label: 'CAM-eligibility remediation loop (e2e)', cmd: 'node test-e2e-cam-pool-loop.js' },
   // The same thing on screen, plus the blocked statement's Scope column, which
   // printed an em dash against property-level exceptions and matched a tenant
   // whose name appeared as an invoice VENDOR.

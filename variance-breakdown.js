@@ -118,10 +118,17 @@
     const covered = proRataSum / 100;
     let outOfYear = 0, notEligible = 0, uncovered = 0, claimShortfall = 0;
 
+    // One definition of what is in the CAM pool, shared with the allocation and
+    // the concentration detector. Resolved once here rather than per invoice,
+    // and guarded because this module is also required directly by the suites.
+    const _CP = (typeof window !== 'undefined' && window.CamPool)
+              || (typeof require === 'function' ? require('./cam-pool.js') : null);
+    const isEligible = _CP ? _CP.isEligible : (inv => inv.camEligible !== false);
+
     const rows = invoices.map(inv => {
       const amount    = _round(inv.amount);
       const allocated = _round(allocatedByInvoice.get(invoiceKey(inv)) || 0);
-      const eligible  = inv.camEligible !== false;
+      const eligible  = isEligible(inv);
       // The engine splits on this threshold; read it, do not re-derive it.
       const isDirect  = (Number(inv.matchConfidence) || 0) >= 75;
       // Likewise the CAM-year decision: this asks whether the engine kept the

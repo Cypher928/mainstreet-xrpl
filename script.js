@@ -840,7 +840,7 @@ class Invoice {
   // checkbox changed a display total and nothing else.
   constructor(id, date, amount, vendor, category, description = '', rel = {}) {
     this.id              = id || null;
-    this.camEligible     = rel.camEligible !== false;   // absent → recoverable
+    this.camEligible     = window.CamPool.isEligible(rel);   // absent → recoverable
     this.spaceId         = rel.spaceId || null;
     this.system          = rel.system  || null;
     this.date            = date     || '';
@@ -10093,8 +10093,8 @@ function runFullReconciliation(property) {
   // reconciliation entirely. Default is recoverable (`!== false`), so existing
   // and AI-imported invoices are unaffected: only an explicit untick changes
   // the number, which is exactly what the control promises.
-  const recoverable   = invoices.filter(inv => inv.camEligible !== false);
-  const notRecoverable = invoices.filter(inv => inv.camEligible === false);
+  const recoverable    = window.CamPool.eligible(invoices);
+  const notRecoverable = window.CamPool.excluded(invoices);
   if (notRecoverable.length) {
     console.log('[runFullReconciliation] excluded as not CAM-eligible:',
       notRecoverable.map(i => `${i.vendorName} ${i.amount}`));
@@ -10374,7 +10374,11 @@ async function runAllocation() {
   const allInvoices   = invoiceData.filter(inv => inv && inv.vendorName);
   const invoices      = allInvoices
     .filter(inv => parseFloat(inv.amount) > 0)
-    .map(inv => ({ vendor: inv.vendorName, category: inv.category, amount: parseFloat(inv.amount) }));
+    .map(inv => ({ vendor: inv.vendorName, category: inv.category, amount: parseFloat(inv.amount),
+                   // WAS DROPPED HERE. buildAuditSummary reads this list, so the
+                   // concentration detector could not tell a $70,000 invoice the
+                   // manager had removed from CAM from one still in it.
+                   camEligible: window.CamPool.isEligible(inv) }));
   const skippedCount  = allInvoices.length - invoices.length;
 
   if (!invoices.length) {
@@ -10413,6 +10417,11 @@ async function runAllocation() {
   // statement ever came from. The call is gone; runFullReconciliation is the
   // only CAM arithmetic that runs.
   const totalCost = invoices.reduce((s, e) => s + e.amount, 0);
+  // THE CAM POOL, distinct from the gross expense total above and derived from
+  // the one definition. `totalCost` is every invoice the manager loaded;
+  // `camPool` is the subset a tenant can be billed from. Every claim of the form
+  // "N% of total CAM" must divide by the second.
+  const camPool   = window.CamPool.total(invoices);
 
   const totalLeasedSqft = tenants.reduce((s, t) => s + (t.leasedSqft || 0), 0);
   const sqftExceedsProperty = totalLeasedSqft > totalSqft;
@@ -10491,6 +10500,7 @@ async function runAllocation() {
   lastFullResults     = fullResults;
   lastPropName        = propName;
   lastTotal           = totalCost;
+  lastCamPool         = camPool;
   lastInvoicesFull    = invoices;
   console.groupCollapsed('[PIPELINE:1] runAllocation runtime snapshot');
   console.log('lastInvoicesFull[0]:', JSON.parse(JSON.stringify(lastInvoicesFull[0] || {})));
@@ -11960,6 +11970,12 @@ function _buildReconciliationSummaryHtml(results, invoices, propName, engineInvo
   if (!results || !results.length) return '';
 
   const totalPool   = invoices.reduce((s, inv) => s + (parseFloat(inv.amount) || 0), 0);
+  // The KPI beside this one is LABELLED "CAM Pool" and showed totalPool — every
+  // invoice loaded, including ones the manager had removed from CAM. Two numbers
+  // now, each matching its own label: the variance banner keeps the gross figure
+  // (its words say "expense pool"), and the KPI shows what tenants can actually
+  // be billed from.
+  const camPoolTotal = window.CamPool.total(invoices);
   const totalBilled = results.reduce((s, r) => s + r.totalAllocated, 0);
   const proRataSum  = results.reduce((s, r) => s + (r.proRataPercent || 0), 0);
   const proRataGap  = parseFloat((100 - proRataSum).toFixed(2));
@@ -12199,7 +12215,13 @@ function _buildReconciliationSummaryHtml(results, invoices, propName, engineInvo
       </div>
       <div class="rcs-kpis">
         ${avgConfidence !== null ? `<div class="rcs-kpi ${avgConfidence < 70 ? 'rcs-kpi--warn' : ''}"><div class="rcs-kpi-val">${avgConfidence}%</div><div class="rcs-kpi-lbl">Confidence</div></div>` : ''}
-        <div class="rcs-kpi"><div class="rcs-kpi-val">${fmt(totalPool)}</div><div class="rcs-kpi-lbl">CAM Pool</div></div>
+        <div class="rcs-kpi"><div class="rcs-kpi-val">${fmt(camPoolTotal)}</div><div class="rcs-kpi-lbl">CAM Pool${
+          // When some invoices are held out of CAM the two figures differ, and a
+          // reader seeing "CAM Pool $90,500" beside a banner that says "expense
+          // pool $160,500" needs the two related on the spot rather than inferred.
+          camPoolTotal < totalPool
+            ? `<span class="rcs-kpi-sub"> of ${fmt(totalPool)} invoiced</span>` : ''
+        }</div></div>
         <!-- "Total Billed" is a claim that money was billed. Until the audit
              clears this reconciliation, nothing has been: every statement is
              refused. The figure is identical either way; only the claim changes. -->
@@ -12689,7 +12711,8 @@ function rerunAfterWarning() {
   setTimeout(() => runAllocation(), 50);
 }
 let lastPropName = '';
-let lastTotal    = 0;
+let lastTotal    = 0;   // gross: every invoice loaded
+let lastCamPool  = 0;   // the subset tenants can be billed from
 let lastInvoicesFull = []; // full invoice list with category sums
 let lastFullResults  = []; // ReconciliationResult[] from runFullReconciliation
 
@@ -14367,6 +14390,19 @@ function buildAuditSummary() {
   const red = [], yellow = [], green = [];
 
   const invs     = lastInvoicesFull.length ? lastInvoicesFull : [];
+  // THE CAM POOL, not the gross expense total.
+  //
+  // This detector's own sentence says "N% of total CAM", and it divided by
+  // lastTotal — every invoice the manager loaded, eligible or not. So a $70,000
+  // roof marked NOT CAM-eligible, correctly dropped by the allocation, was still
+  // reported as "43.6% of total CAM" and — since I-4 made concentration a
+  // property-level blocker — still stopped every tenant on the property from
+  // being billed. The manager's correct remediation cleared nothing.
+  //
+  // Falls back to the gross total only when no CAM pool was captured (a snapshot
+  // written before this existed), which is the pre-existing behaviour.
+  const camInvs  = window.CamPool.eligible(invs);
+  const camPool  = lastCamPool || window.CamPool.total(invs) || (lastTotal || 0);
   const allInvData = invoiceData.filter(inv => inv && inv.vendorName);
   const paidInvData = allInvData.filter(inv => parseFloat(inv.amount) > 0);
   const results  = lastResults;
@@ -14374,20 +14410,20 @@ function buildAuditSummary() {
   const total    = lastTotal || 0;
 
   // ── 1. Unusually large single invoice (> 40% of total) ───────────────────
-  if (total > 0 && invs.length) {
-    const thresh = total * 0.4;
-    invs.forEach(inv => {
+  if (camPool > 0 && camInvs.length) {
+    const thresh = camPool * 0.4;
+    camInvs.forEach(inv => {
       if (!inv) return;
       const amt = parseFloat(inv.amount) || 0;
       if (amt > thresh) {
-        const pct     = ((amt / total) * 100).toFixed(1);
+        const pct     = ((amt / camPool) * 100).toFixed(1);
         const excess  = fmt(amt - thresh);
         const vendor  = inv.vendor || inv.vendorName || 'Unknown';
         red.push({
           group:  'red_flags',
           severity: 'red',
           title:  `Unusually large invoice — ${vendor}: ${fmt(amt)} (${pct}% of total CAM)`,
-          detail: `This invoice represents ${pct}% of total CAM expenses (${fmt(amt)} of ${fmt(total)}), exceeding the 40% materiality threshold by ${excess}. A single vendor accounting for more than 40% of the total expense pool warrants independent verification before billing.`,
+          detail: `This invoice represents ${pct}% of total CAM expenses (${fmt(amt)} of ${fmt(camPool)}), exceeding the 40% materiality threshold by ${excess}. A single vendor accounting for more than 40% of the recoverable pool warrants independent verification before billing.`,
           // Materiality, NOT evidence quality — the two were one bucket, which
           // put a fully-documented $55,000 invoice under "weakly evidenced" on a
           // reconciliation whose own green finding said every invoice had a
@@ -14407,7 +14443,7 @@ function buildAuditSummary() {
           conditions: [
             `Vendor: "${vendor}"`,
             `Invoice amount: ${fmt(amt)}`,
-            `Total CAM pool: ${fmt(total)}`,
+            `Total CAM pool: ${fmt(camPool)}`,
             `Concentration: ${pct}% (threshold: 40%)`,
             `Dollar excess above threshold: ${excess}`,
           ],
