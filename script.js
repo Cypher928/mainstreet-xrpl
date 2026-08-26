@@ -10420,9 +10420,17 @@ function runFullReconciliation(property) {
     // window, or because it has no date to place it by. Both are reported by
     // name and amount: the manager has to know the charge was recognised and
     // why it was not billed, exactly as CAM-3 does for lease exclusions.
+    // The prose below names them for a reader. `held` names them for a READER OF
+    // THE RECORD: the variance panel has to attribute this money to occupancy
+    // rather than to "no lease claimed it", and parsing a sentence to find out
+    // which invoices they were is not an interface. Same shape on both flags.
+    const _heldRef = inv => ({ id: inv.id ?? null, vendorName: inv.vendorName || inv.vendor || '',
+                               amount: Number(inv.amount) || 0,
+                               date: inv.date || inv.invoiceDate || null });
     if (outsideWindow.length) {
       flags.push({
         code:    'DIRECT_OUTSIDE_OCCUPANCY',
+        held:    outsideWindow.map(_heldRef),
         message: `${outsideWindow.length} matched invoice${outsideWindow.length !== 1 ? 's' : ''} dated outside this tenant's occupancy`,
         explanation: `${outsideWindow.map(i => `${i.vendorName} ${_fmtMoney(i.amount)} (${i.date || i.invoiceDate || 'no date'})`).join('; ')} matched this tenant but ${outsideWindow.length !== 1 ? 'are' : 'is'} dated outside ${occ && occ.overlapStart ? `${occ.overlapStart} to ${occ.overlapEnd}` : 'the occupancy window'}, so ${outsideWindow.length !== 1 ? 'they were' : 'it was'} not billed.`,
       });
@@ -10430,6 +10438,7 @@ function runFullReconciliation(property) {
     if (undatedDirect.length) {
       flags.push({
         code:    'DIRECT_UNDATED_OCCUPANCY',
+        held:    undatedDirect.map(_heldRef),
         message: `${undatedDirect.length} matched invoice${undatedDirect.length !== 1 ? 's' : ''} could not be placed in this tenant's occupancy`,
         explanation: `${undatedDirect.map(i => `${i.vendorName} ${_fmtMoney(i.amount)}`).join('; ')} matched this tenant but carr${undatedDirect.length !== 1 ? 'y' : 'ies'} no readable date, and this tenant occupied only part of the CAM period. ${undatedDirect.length !== 1 ? 'They were' : 'It was'} not billed — add the invoice date and re-run.`,
       });

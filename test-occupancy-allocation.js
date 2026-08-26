@@ -142,7 +142,13 @@ const go = (mut) => {
                           { camEligible: inv.camEligible });
     return i;
   });
-  return run({ leases, invoices, totalSqFt: p.totalSqft, camYear: p.camYear });
+  const out = run({ leases, invoices, totalSqFt: p.totalSqft, camYear: p.camYear });
+  // The invoice records this run was built from, carried alongside the results so
+  // a test can hand BOTH to VarianceBreakdown — which needs the register shape
+  // (id, amount, camEligible, matchConfidence), not the engine's Invoice objects.
+  try { Object.defineProperty(out, '_invoices', { value: p.invoices, enumerable: false }); }
+  catch (_) {}
+  return out;
 };
 const of_ = (res, name) => res.find(r => r.tenantName === name);
 
@@ -247,6 +253,38 @@ t('an UNDATED direct invoice cannot be placed, so it is held and named', () => {
   const f = (dun.ambiguityFlags || []).find(x => x.code === 'DIRECT_UNDATED_OCCUPANCY');
   ok(f, 'an undated direct invoice was silently included or silently dropped');
   ok(/no readable date/.test(f.explanation), f.explanation);
+});
+
+// D-5. The prose above tells a person. This tells the variance panel, which has
+// to attribute the money to occupancy rather than to "no lease claimed it" — and
+// parsing that sentence to find out which invoices they were is not an
+// interface.
+t('the engine names the held invoices structurally, not only in prose', () => {
+  const out = (dun.ambiguityFlags || []).find(x => x.code === 'DIRECT_OUTSIDE_OCCUPANCY');
+  const und = (dun.ambiguityFlags || []).find(x => x.code === 'DIRECT_UNDATED_OCCUPANCY');
+  ok(Array.isArray(out && out.held), 'DIRECT_OUTSIDE_OCCUPANCY carries no held list');
+  ok(Array.isArray(und && und.held), 'DIRECT_UNDATED_OCCUPANCY carries no held list');
+  eq(out.held.length, 1);
+  eq(out.held[0].id, 'd2');
+  eq(out.held[0].amount, 5000);
+  eq(und.held[0].id, 'd3');
+});
+
+t('and the variance panel attributes them to occupancy, not to a lease exclusion', () => {
+  // The real engine output, through the real module. The unit fixtures state the
+  // `held` shape by hand; this is the only assertion that both halves agree.
+  const VB = require('./variance-breakdown.js');
+  const invoices = direct._invoices;
+  const pool   = invoices.reduce((s, i) => s + (Number(i.amount) || 0), 0);
+  const billed = direct.reduce((s, r) => s + (r.totalAllocated || 0), 0);
+  const bk = VB.derive({ results: direct, invoices, pool, billed });
+  const held = bk.invoices.filter(r => r.id === 'd2' || r.id === 'd3');
+  eq(held.length, 2, 'the held invoices are missing from the breakdown entirely');
+  eq(held.find(r => r.id === 'd2').reason, 'outside_occupancy');
+  eq(held.find(r => r.id === 'd3').reason, 'undated_occupancy');
+  const line = k => { const l = (bk.lines || []).find(x => x.key === k); return l ? l.amount : 0; };
+  ok(line('not_occupied') >= 8000, `expected the 5,000 + 3,000 held out, got ${line('not_occupied')}`);
+  ok(Math.abs(bk.residual) < 0.05, `the identity broke: residual ${bk.residual}`);
 });
 
 t('the shared part of the same tenant IS apportioned', () => {

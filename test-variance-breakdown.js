@@ -180,6 +180,83 @@ t('a direct invoice that no lease billed shows up, and is not called coverage', 
   eq(bk.invoices[0].reason, 'unclaimed_direct');
 });
 
+// ── D-5. A direct invoice held out over its DATE ────────────────────────────
+//
+// Since T2 the engine holds back a direct-matched invoice dated outside the
+// tenant's occupancy window, and one carrying no date at all when the tenant
+// occupied only part of the period. Both landed in `claim`, whose label reads
+// "Excluded by a lease, or matched to no tenant" — the one thing neither of them
+// is. The manager was sent to read exclusion schedules to explain money that was
+// held back over a date.
+//
+// The engine names the held invoices on the flag, so these fixtures carry the
+// same `held` array a real run produces.
+const heldFlag = (code, invs) => ({
+  code, held: invs.map(i => ({ id: i.id, vendorName: i.vendorName, amount: i.amount })),
+  message: 'held', explanation: 'held',
+});
+
+t('a direct invoice dated outside the occupancy is named as occupancy, not as a claim', () => {
+  const early = inv('d', 900, { matchConfidence: 92, invoiceDate: '2026-02-01' });
+  const own   = inv('o', 100, { matchConfidence: 92, invoiceDate: '2026-09-01' });
+  const results = [Object.assign(lease('A', 100, [[own, 100]]), {
+    occupancy: { applied: true, factor: 1 },
+    ambiguityFlags: [heldFlag('DIRECT_OUTSIDE_OCCUPANCY', [early])],
+  })];
+  const bk = run(results, [early, own]);
+  near(bucket(bk, 'not_occupied'), 900, 'the held invoice belongs to the occupancy bucket');
+  eq(bucket(bk, 'claim'), 0, 'and nothing is left implying a lease excluded it');
+  eq(bk.invoices.find(r => r.id === 'd').reason, 'outside_occupancy');
+  eq(bk.residual, 0, 'THE IDENTITY IS UNCHANGED — the money only moved bucket');
+});
+
+t('an undated direct invoice is named as unplaceable, and the advice follows', () => {
+  const undated = inv('u', 700, { matchConfidence: 92 });
+  const own     = inv('o', 100, { matchConfidence: 92, invoiceDate: '2026-09-01' });
+  const results = [Object.assign(lease('A', 100, [[own, 100]]), {
+    occupancy: { applied: true, factor: 1 },
+    ambiguityFlags: [heldFlag('DIRECT_UNDATED_OCCUPANCY', [undated])],
+  })];
+  const bk = run(results, [undated, own]);
+  near(bucket(bk, 'not_occupied'), 700);
+  eq(bucket(bk, 'claim'), 0);
+  eq(bk.invoices.find(r => r.id === 'u').reason, 'undated_occupancy');
+  eq(bk.residual, 0);
+  // "Review the partial-period treatment on the leases" is the wrong errand when
+  // the lease is fine and the INVOICE has no date on it.
+  ok(/Add the missing invoice date/.test(VB.nextStep(bk).cta), VB.nextStep(bk).cta);
+});
+
+t('a direct invoice no lease claimed is still a claim, not an occupancy exclusion', () => {
+  // The control. Without it, attributing everything direct-and-unbilled to
+  // occupancy would pass the two tests above and be wrong in the common case.
+  const d = inv('d', 900, { matchConfidence: 92 });
+  const results = [Object.assign(lease('A', 100, []), {
+    occupancy: { applied: true, factor: 1 }, ambiguityFlags: [],
+  })];
+  const bk = run(results, [d]);
+  near(bucket(bk, 'claim'), 900);
+  eq(bucket(bk, 'not_occupied'), 0);
+  eq(bk.invoices[0].reason, 'unclaimed_direct');
+  eq(bk.residual, 0);
+});
+
+t('a SHARED invoice is never attributed to a held-out direct one', () => {
+  // The held list is keyed by invoice. A shared invoice that happens to share a
+  // vendor with a held one must keep its own attribution.
+  const held   = inv('h', 500, { matchConfidence: 92 });
+  const shared = inv('s', 500, { matchConfidence: 10 });
+  const results = [Object.assign(lease('A', 60, [[shared, 300]]), {
+    occupancy: { applied: true, factor: 1 },
+    ambiguityFlags: [heldFlag('DIRECT_OUTSIDE_OCCUPANCY', [held])],
+  })];
+  const bk = run(results, [held, shared]);
+  near(bucket(bk, 'not_occupied'), 500, 'only the held direct invoice');
+  near(bucket(bk, 'uncovered'), 200, 'the shared one keeps its coverage shortfall');
+  eq(bk.invoices.find(r => r.id === 's').reason, 'uncovered_share');
+  eq(bk.residual, 0);
+});
+
 t('an out-of-year invoice is named as out-of-year, not as one nobody claimed', () => {
   // The CAM-year filter narrows a LOCAL inside runFullReconciliation, so without
   // being told what survived it, the panel would report a 2025 invoice sitting in

@@ -147,6 +147,30 @@
               || (typeof require === 'function' ? require('./cam-pool.js') : null);
     const isEligible = _CP ? _CP.isEligible : (inv => inv.camEligible !== false);
 
+    // A DIRECT INVOICE HELD OUT FOR OCCUPANCY IS NOT AN UNCLAIMED ONE.
+    //
+    // Since T2 the engine holds back a direct-matched invoice when it is dated
+    // outside the tenant's occupancy window, or carries no date to place it by.
+    // Both are reported to the manager by name and amount — and both landed here
+    // in `claim`, under the label "Excluded by a lease, or matched to no
+    // tenant", which is the one thing they are not. The manager was sent to
+    // read exclusion schedules to explain money that was held back over a date.
+    //
+    // The engine records which invoices those were on the flag itself, so this
+    // reads the decision rather than re-applying the date rule — the same
+    // discipline as `considered` and `isDirect` above.
+    const occHeld = new Map();
+    results.forEach(r => {
+      (r.ambiguityFlags || []).forEach(f => {
+        if (!f || !Array.isArray(f.held)) return;
+        const kind = f.code === 'DIRECT_OUTSIDE_OCCUPANCY' ? 'outside'
+                   : f.code === 'DIRECT_UNDATED_OCCUPANCY' ? 'undated'
+                   : null;
+        if (!kind) return;
+        f.held.forEach(h => { if (h) occHeld.set(invoiceKey(h), kind); });
+      });
+    });
+
     const rows = invoices.map(inv => {
       const amount    = _round(inv.amount);
       const allocated = _round(allocatedByInvoice.get(invoiceKey(inv)) || 0);
@@ -165,14 +189,23 @@
         notEligible += amount;
         reason = 'not_eligible';
       } else {
+        const held = isDirect ? occHeld.get(invoiceKey(inv)) : undefined;
         coverageShare  = isDirect ? 0 : _round(amount * (1 - covered));
-        // The part of the covered share that a part-period lease did not take.
-        occupancyShare = isDirect ? 0 : _round(amount * (covered - occCovered));
+        // The part of the covered share that a part-period lease did not take —
+        // or, for a direct invoice the engine held out over its date, the whole
+        // of what went unbilled. THE IDENTITY IS UNTOUCHED: claimShare is still
+        // the remainder, so naming this money only moves it between two buckets
+        // that already sum to the same difference.
+        occupancyShare = isDirect
+          ? (held ? _round(amount - allocated) : 0)
+          : _round(amount * (covered - occCovered));
         claimShare     = _round(amount - coverageShare - occupancyShare - allocated);
         uncovered      += coverageShare;
         notOccupied    += occupancyShare;
         claimShortfall += claimShare;
-        reason = allocated <= 0 && amount > 0
+        reason = held === 'outside' ? 'outside_occupancy'
+          : held === 'undated' ? 'undated_occupancy'
+          : allocated <= 0 && amount > 0
           ? (isDirect ? 'unclaimed_direct' : 'unclaimed_shared')
           : claimShare > 0.005 ? 'partly_claimed'
           : occupancyShare > 0.005 ? 'part_period'
@@ -209,7 +242,7 @@
       { key: 'uncovered', label: `Outside the ${proRataSum.toFixed(1)}% of the property covered by loaded leases`, amount: uncovered,
         detail: `Shared expenses are split by pro-rata share. The loaded leases hold ${proRataSum.toFixed(1)}% of the building, so ${gapPct.toFixed(1)}% of every shared invoice belongs to space that is either vacant or under a lease not yet uploaded.` },
       { key: 'not_occupied', label: 'Leased, but the lease did not run the whole period', amount: notOccupied,
-        detail: `Shared expense belonging to space that IS under a loaded lease, for the part of the period that lease did not cover — a tenant who took occupancy or moved out mid-year. It is apportioned away from that tenant and is not charged to anyone else: the landlord absorbs it, exactly as with vacant space.` },
+        detail: `Expense belonging to space that IS under a loaded lease, for the part of the period that lease did not cover — a tenant who took occupancy or moved out mid-year. Two things land here: the apportioned-away part of every shared invoice, and any invoice matched directly to that tenant but dated outside their occupancy, or carrying no date to place it by. None of it is charged to anyone else: the landlord absorbs it, exactly as with vacant space.` },
       { key: 'claim', label: 'Excluded by a lease, or matched to no tenant', amount: claimShortfall,
         detail: 'Dollars inside the covered share that no lease ended up claiming — a category a lease excludes from CAM, or an invoice matched to a tenant that no lease then took.' },
       { key: 'caps', label: 'Reduced by a CAM cap', amount: capTotal,
@@ -249,7 +282,16 @@
     if (biggest.key === 'out_of_year')  return { cta: 'Check the CAM year against the invoice dates', key: 'out_of_year' };
     if (biggest.key === 'not_eligible') return { cta: 'Review which invoices are CAM-eligible', key: 'not_eligible' };
     if (biggest.key === 'uncovered')    return { cta: 'Upload the remaining leases, or confirm the space is vacant', key: 'uncovered' };
-    if (biggest.key === 'not_occupied') return { cta: 'Review the partial-period treatment on the leases that started or ended mid-year', key: 'not_occupied' };
+    if (biggest.key === 'not_occupied') {
+      // The remedy differs by cause, and sending someone to review lease dates
+      // when the real problem is an invoice with no date on it is the kind of
+      // dead end this CTA exists to remove.
+      const _undated = (bk.invoices || []).filter(r => r.reason === 'undated_occupancy');
+      if (_undated.length) {
+        return { cta: `Add the missing invoice date${_undated.length === 1 ? '' : 's'} and re-run`, key: 'not_occupied' };
+      }
+      return { cta: 'Review the partial-period treatment on the leases that started or ended mid-year', key: 'not_occupied' };
+    }
     if (biggest.key === 'claim')        return { cta: 'Review the lease exclusion schedules', key: 'claim' };
     if (biggest.key === 'caps')         return { cta: 'Review the CAM caps that were applied', key: 'caps' };
     return null;
@@ -263,6 +305,8 @@
     partly_claimed:   'Partly allocated — a lease excludes part of it',
     uncovered_share:  'Allocated to the covered share only',
     part_period:      'Reduced — a lease covered only part of the period',
+    outside_occupancy:'Matched to a tenant, but dated outside their occupancy',
+    undated_occupancy:'Matched to a part-period tenant, but carries no date to place it by',
     fully_allocated:  'Fully allocated',
   };
 
