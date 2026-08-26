@@ -90,6 +90,16 @@ const SUITES = [
   // the variance panel exists to explain), so the assertions are about which
   // one each surface uses, not about collapsing them into one number.
   { label: 'CAM pool definition',               cmd: 'node test-cam-pool.js' },
+  // T1. A lease term and a CAM period are two intervals, and one endpoint was
+  // standing in for the overlap: an ordinary expiry inside the period was
+  // reported as "a lease that ENDED", past tense about a future date, and
+  // blocked — while a lease that COMMENCED inside the period was never tested
+  // at all and billed twelve months as "Calc verified". Classification and
+  // wording only; the suite pins that no allocation moved and that nothing here
+  // apportions, because how a partial period is billed is still an open
+  // question and a helper returning a factor would answer it by accident.
+  { label: 'Lease term vs CAM period (T1)',     cmd: 'node test-lease-period.js' },
+  { label: 'Lease period cases on screen (e2e)', cmd: 'node test-e2e-lease-period.js' },
   // The same defect as the loop a manager actually walks: mark the roof not
   // CAM-eligible through the real register checkbox, re-run, and the blocker
   // must clear, the tenants must bill, and the statements must issue — then

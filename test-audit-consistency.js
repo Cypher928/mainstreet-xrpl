@@ -30,7 +30,10 @@ const eq  = (l, a, e) => a === e ? ok(`${l} → ${a}`) : bad(l, `expected ${e}, 
 const AX = require('./audit-exposure.js');
 
 // reconciliation-engine.js is a browser module; load it the way the page does.
-const sandbox = { window: {}, console, module: {}, Date, Math, Number, String, Array, JSON, isFinite, parseFloat };
+// The real lease-period module, loaded rather than stubbed: the engine now
+// reads its interval classification instead of re-deriving a date rule, and a
+// stub here would let this sandbox agree with an engine that had drifted.
+const sandbox = { window: { LeasePeriod: require('./lease-period.js') }, console, module: {}, Date, Math, Number, String, Array, JSON, isFinite, parseFloat };
 sandbox.globalThis = sandbox;
 vm.createContext(sandbox);
 vm.runInContext(fs.readFileSync(path.join(__dirname, 'reconciliation-engine.js'), 'utf8'),

@@ -624,9 +624,14 @@ console.log('\n── Every finding states what, how much, on what evidence, wha
   yes('an unpriced finding says so rather than showing nothing',
       /Not yet quantified/.test(EXCEPTION),
       'an unpriced finding is silently rendered as though it had no consequence');
+  // The lease source string changed with T1 and the new one is asserted, not
+  // relaxed. It used to read "Lease record (end_date) vs reconciliation
+  // allocation", which named the one endpoint the old predicate compared; the
+  // detector now reads both endpoints against the CAM period, and the cited
+  // source has to say what was actually consulted.
   yes('every finding cites its source',
       /Source: Invoice amount vs total CAM pool/.test(EXCEPTION)
-        && /Source: Lease record \(end_date\) vs reconciliation allocation/.test(EXCEPTION),
+        && /Source: Lease term \(start_date, end_date\) vs the CAM period being billed/.test(EXCEPTION),
       'the source field is recorded on findings but still never displayed');
   yes('and offers the actions that resolve it',
       /Confirm occupancy/.test(EXCEPTION) && /Review lease clause/.test(EXCEPTION),

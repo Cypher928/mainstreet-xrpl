@@ -120,7 +120,10 @@ function esc(s) {
 }
 
 function engine() {
-  const box = { window: {}, console, module: {}, Date, Math, Number, String, Array, JSON, isFinite, parseFloat };
+  // The real lease-period module, loaded rather than stubbed: the engine now
+  // reads its interval classification instead of re-deriving a date rule, and a
+  // stub here would let this sandbox agree with an engine that had drifted.
+  const box = { window: { LeasePeriod: require('./lease-period.js') }, console, module: {}, Date, Math, Number, String, Array, JSON, isFinite, parseFloat };
   box.globalThis = box;
   vm.createContext(box);
   vm.runInContext(fs.readFileSync(path.join(ROOT, 'reconciliation-engine.js'), 'utf8'), box,

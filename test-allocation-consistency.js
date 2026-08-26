@@ -216,7 +216,10 @@ console.log('\n── Coverage gap is not an allocation error ──');
 
 // The real reconciliation-engine, loaded from disk.
 function loadReconEngine() {
-  const sandbox = { window: {}, console };
+  // The real lease-period module, loaded rather than stubbed: the engine now
+  // reads its interval classification instead of re-deriving a date rule, and a
+  // stub here would let this sandbox agree with an engine that had drifted.
+  const sandbox = { window: { LeasePeriod: require('./lease-period.js') }, console };
   vm.createContext(sandbox);
   vm.runInContext(fs.readFileSync(path.join(__dirname, 'reconciliation-engine.js'), 'utf8'), sandbox);
   return sandbox.window.ReconciliationEngine;

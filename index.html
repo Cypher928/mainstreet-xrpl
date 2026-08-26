@@ -7776,6 +7776,12 @@
      did not, so a $70,000 invoice a manager had removed from CAM kept blocking
      every tenant's statement. Must precede script.js and variance-breakdown.js. -->
 <script src="cam-pool.js"></script>
+<!-- Where a lease term sits relative to the CAM period, decided once. The
+     detector used to compare one endpoint against the CAM year end, which
+     called an ordinary mid-period expiry "a lease that ended" and said
+     nothing at all about a lease that commenced mid-period. Must precede
+     reconciliation-engine.js, which reads it and never re-derives it. -->
+<script src="lease-period.js"></script>
 <script src="review-engine.js"></script>
 <script src="reconciliation-engine.js"></script>
 <script src="audit-exposure.js"></script>
