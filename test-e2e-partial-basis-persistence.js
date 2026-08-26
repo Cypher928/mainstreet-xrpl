@@ -187,6 +187,12 @@ const SUPABASE_MOCK = `
   });
   await ctx.addInitScript(SUPABASE_MOCK);
 
+  // The waits below pass their options as the THIRD argument. Playwright's
+  // signature is (pageFunction, arg, options), so `waitForFunction(fn, {timeout})`
+  // — the spelling used across these suites — hands the options object to the
+  // page function as data and silently falls back to the 30s default. That is
+  // how a suite that looked like it waited 20s was really waiting 30, and then
+  // failed once in ten runs on a loaded machine.
   const signInAndRun = async () => {
     await page.goto('http://127.0.0.1:' + PORT + '/?signin=1', { waitUntil: 'domcontentloaded', timeout: 30000 });
     await page.waitForSelector('#loginBtn', { state: 'visible', timeout: 20000 });
@@ -194,13 +200,13 @@ const SUPABASE_MOCK = `
     await page.fill('#loginPassword', 'TestPass123!');
     await page.click('#loginBtn');
     await page.waitForFunction(() => { const a = document.getElementById('appContent');
-      return a && a.style.display !== 'none' && a.style.display !== ''; }, { timeout: 20000 });
-    await page.waitForFunction(() => typeof _props !== 'undefined' && _props.length > 0, { timeout: 20000 });
+      return a && a.style.display !== 'none' && a.style.display !== ''; }, null, { timeout: 45000 });
+    await page.waitForFunction(() => typeof _props !== 'undefined' && _props.length > 0, null, { timeout: 45000 });
     await page.evaluate((id) => selectProperty(id), PROP_ID);
-    await page.waitForFunction(() => typeof tenantData !== 'undefined' && tenantData.filter(Boolean).length === 3,
-                               { timeout: 20000 });
+    await page.waitForFunction(() => typeof tenantData !== 'undefined' && tenantData.filter(Boolean).length === 3, null,
+                               { timeout: 45000 });
     await page.evaluate(async () => { await runAllocation(); });
-    await page.waitForFunction(() => typeof lastResults !== 'undefined' && lastResults.length === 3, { timeout: 25000 });
+    await page.waitForFunction(() => typeof lastResults !== 'undefined' && lastResults.length === 3, null, { timeout: 45000 });
   };
 
   const readState = (name) => page.evaluate((n) => {

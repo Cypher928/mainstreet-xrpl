@@ -116,11 +116,39 @@
    * cost, and a second optional end field would be a second representation for
    * no gain.
    */
+  /**
+   * Read one date field, pairing the stored ISO value with what could not be
+   * read.
+   *
+   * normalizeTenant keeps `start_date`/`end_date`/`cam_commencement_date`
+   * strictly ISO-or-empty, so a lease whose term begins "upon substantial
+   * completion" stores '' — the same '' as a lease with no date at all. The
+   * original text is kept beside it in `unreadableDates`, and this is where the
+   * two come back together: the field is empty, but the lease was not silent.
+   *
+   * The raw travels with the reading so the surfaces can QUOTE it. Telling
+   * someone a date cannot be read, without saying what is written there, sends
+   * them back to the document to find out what the system already knew.
+   */
+  function _readField(t, field, altKey) {
+    var v = t[field] !== undefined ? t[field] : (altKey ? t[altKey] : undefined);
+    var r = readDate(v);
+    if (r.status === 'absent') {
+      var u = t.unreadableDates;
+      var raw = (u && typeof u === 'object') ? u[field] : null;
+      if (raw != null && String(raw).trim() !== '') {
+        return { value: null, status: 'unreadable', normalised: null, raw: String(raw).trim() };
+      }
+    }
+    r.raw = (v == null || String(v).trim() === '') ? null : String(v).trim();
+    return r;
+  }
+
   function obligationTerm(tenant) {
     var t = tenant || {};
-    var camStart   = readDate(t.cam_commencement_date);
-    var leaseStart = readDate(t.start_date !== undefined ? t.start_date : t.start);
-    var end        = readDate(t.end_date   !== undefined ? t.end_date   : t.end);
+    var camStart   = _readField(t, 'cam_commencement_date');
+    var leaseStart = _readField(t, 'start_date', 'start');
+    var end        = _readField(t, 'end_date', 'end');
 
     // An UNREADABLE cam_commencement_date is not "fall back to start_date". The
     // field was populated and cannot be read, so the answer is unknown and the
@@ -138,6 +166,10 @@
       startSource:      useCam ? 'cam_commencement_date' : 'start_date',
       leaseStart:       leaseStart.value,
       camStart:         camStart.value,
+      // What is actually written where a date should be — quotable by any
+      // surface reporting that it could not be read.
+      startRaw:         startReading.raw || null,
+      endRaw:           end.raw || null,
     };
   }
 
@@ -235,6 +267,11 @@
       leaseStart: s.value, leaseEnd: e.value,
       startStatus: s.status, endStatus: e.status,
       startSource: ot.startSource,
+      // What is written on the lease where a date should be. Carried so a
+      // surface can quote it without reading start_date/end_date itself — the
+      // detector was doing exactly that, and printed "" for the very case it
+      // exists to report.
+      startRaw: ot.startRaw, endRaw: ot.endRaw,
       normalisedStart: s.normalised, normalisedEnd: e.normalised,
       overlapStart: null, overlapEnd: null,
       assumedStart: false, assumedEnd: false,

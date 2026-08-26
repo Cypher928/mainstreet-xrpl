@@ -1418,15 +1418,51 @@ function extractDatesFromText(text) {
   };
 }
 
+// A DATE THE LEASE HAS AND WE CANNOT READ IS NOT A DATE THE LEASE LACKS.
+//
+// toISODate answers '' for both, and normalizeTenant stored that '' — so
+// "Commencement: upon substantial completion", "TBD", and a European
+// "31/08/2026" all arrived downstream indistinguishable from a lease with no
+// date at all. Two different conversations with the tenant: one is "send us
+// your dates", the other is "your lease says the term starts on an event that
+// has to be dated before we can bill it". lease-period.js has had an
+// `unreadable` status the whole time and nothing in storage could ever produce
+// it.
+//
+// So the ISO field keeps its exact contract — ISO or empty, and every existing
+// consumer is untouched — and what could not be read is kept beside it, under
+// the field it belongs to. obligationTerm() pairs them back up; it remains the
+// only reader of either.
+function _dateWithRaw(input) {
+  const raw = input == null ? '' : String(input).trim();
+  const iso = toISODate(raw);
+  return { iso, unreadable: (raw !== '' && iso === '') ? raw : null };
+}
+
 function normalizeTenant(d) {
   if (!d) return d;
   const fallback = extractDatesFromText(d.rawText || '');
+  const _start = _dateWithRaw(d.start_date ?? d.startDate ?? d.lease_start_date ?? fallback.startDate ?? '');
+  const _end   = _dateWithRaw(d.end_date   ?? d.endDate   ?? d.lease_end_date  ?? fallback.endDate   ?? '');
+  const _cam   = _dateWithRaw(d.cam_commencement_date ?? d.camCommencementDate ?? '');
+  // Carried forward when normalizeTenant runs over an already-normalized record,
+  // which it does on every load — otherwise the second pass, seeing an empty ISO
+  // field and no raw input, would erase the distinction it exists to keep.
+  const _prior = (d.unreadableDates && typeof d.unreadableDates === 'object') ? d.unreadableDates : {};
+  const _unreadable = {};
+  for (const [k, r] of [['start_date', _start], ['end_date', _end], ['cam_commencement_date', _cam]]) {
+    // A readable date clears the record of the unreadable one: once the manager
+    // corrects "TBD" to a real date there is nothing left that could not be read.
+    if (r.iso) continue;
+    const keep = r.unreadable ?? (_prior[k] ?? null);
+    if (keep) _unreadable[k] = String(keep);
+  }
   return {
     tenant_name:         cleanTenantName(d.tenant_name ?? d.tenantName ?? d.name ?? ''),
     suite:               d.suite ?? d.unit ?? d.unitNumber ?? '',
     leased_sqft:         d.leased_sqft         ?? d.leasedSqft ?? d.sqft  ?? '',
-    start_date:          toISODate(d.start_date ?? d.startDate ?? d.lease_start_date ?? fallback.startDate ?? ''),
-    end_date:            toISODate(d.end_date   ?? d.endDate   ?? d.lease_end_date  ?? fallback.endDate   ?? ''),
+    start_date:          _start.iso,
+    end_date:            _end.iso,
     lease_type:          d.lease_type          ?? d.leaseType                     ?? '',
     excluded_categories: d.excluded_categories ?? d.excludedCategories            ?? null,  // F-02: null = never extracted, '' = none found
     cap:                 d.cap                 ?? d.cam_cap ?? d.capPercentage    ?? null,
@@ -1486,7 +1522,11 @@ function normalizeTenant(d) {
     // them on the next property load — the failure this list already carries a
     // warning about, and the one that would make a lease's own partial-period
     // clause evaporate between sessions.
-    cam_commencement_date: toISODate(d.cam_commencement_date ?? d.camCommencementDate ?? '') || null,
+    cam_commencement_date: _cam.iso || null,
+    // ALLOW-LIST, and the reason this one is here: without it the record of what
+    // could not be read is written to storage and dropped on the next load, and
+    // the field goes back to reading as simply absent.
+    unreadableDates:       Object.keys(_unreadable).length ? _unreadable : null,
     partial_period_basis:  (() => {
       const v = d.partial_period_basis ?? d.partialPeriodBasis ?? null;
       const k = v == null ? '' : String(v).trim().toLowerCase();
@@ -5942,6 +5982,15 @@ function getFieldConfidence(fieldName, t) {
 
     case 'start_date':
     case 'end_date': {
+      // "Not found in extraction" is the wrong sentence for a lease that states
+      // its term as an event — "upon substantial completion" — or in a format
+      // this parser rejects. The field is empty either way; what to do about it
+      // is not the same, so the note has to distinguish them.
+      const _raw = (t && t.unreadableDates && t.unreadableDates[fieldName]) || null;
+      if (isEmpty && _raw) {
+        return { status: 'missing', source: 'unreadable',
+                 note: `On the lease as "${_raw}" — not a date this reconciliation can use` };
+      }
       if (isEmpty) return { status: 'missing', source: 'missing', note: 'Not found in extraction' };
       if (t._usedFallback)           return { status: 'estimated', source: 'heuristic', note: 'Estimated from document text — confirm accuracy' };
       if (t.doc_has_dates === false) return { status: 'estimated', source: 'heuristic', note: 'No structured date field found — date inferred' };

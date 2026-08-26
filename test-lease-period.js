@@ -412,6 +412,35 @@ t('an unreadable date asks rather than failing open', () => {
   ok(/cannot be read/.test(f.title), f.title);
 });
 
+// D-1. The test above hands the detector a RAW 'TBD', which is not the shape a
+// stored tenant has: normalizeTenant keeps start_date/end_date strictly
+// ISO-or-empty and puts what it could not read in `unreadableDates`. For a
+// while that meant the case above was unreachable from real data — every
+// unreadable date arrived looking absent — so these two pin the STORED shapes,
+// which is where the difference actually has to survive.
+t('the stored shape of an unreadable date still asks, and quotes the lease', () => {
+  const f = occupancyFinding(detect({
+    start_date: '2019-09-01', end_date: '',
+    unreadableDates: { end_date: 'upon substantial completion of the Landlord Work' },
+  }));
+  ok(f, 'an unreadable end date in its stored form raised nothing at all');
+  eq(f.severity, 'yellow');
+  eq(f.blocksBilling, true);
+  ok(/cannot be read/.test(f.title), f.title);
+  // The whole value of the finding is the quotation. It used to read
+  // (end: "") — the field, which is empty precisely BECAUSE it could not be
+  // read — and sent the reader back to the document for what we already knew.
+  ok(/upon substantial completion of the Landlord Work/.test(f.detail), f.detail);
+  ok((f.conditions || []).some(c => /End date on file: upon substantial completion/.test(c)),
+     JSON.stringify(f.conditions));
+});
+
+t('and an absent end date is still absent — the other problem', () => {
+  const f = occupancyFinding(detect({ start_date: '2019-09-01', end_date: '' }));
+  ok(!f || !/cannot be read/.test(f.title),
+     'a lease with no end date is being reported as one whose date cannot be read');
+});
+
 console.log('\n── The remedies offered match the case ──');
 
 t('a holdover keeps Confirm occupancy / Update lease / Remove allocation', () => {

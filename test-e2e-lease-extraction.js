@@ -103,6 +103,14 @@ const LEASE_TEXT = [
   '    falling within such Expense Year.',
 ].join('\n');
 
+// For the D-1 fixtures: a document with no dates anywhere in it, so the
+// regex fallback inside the normaliser cannot quietly supply one and turn a
+// deliberately absent date into a present one.
+const TEXT_NO_DATES = [
+  'ARTICLE 4. OPERATING EXPENSES.',
+  '4.1 Tenant shall pay its Proportionate Share of Operating Expenses.',
+].join('\n');
+
 const CLAUSE_CAM   = 'Tenant shall commence payment of its Proportionate Share of Operating Expenses on the Rent Commencement Date, being April 1, 2026';
 const CLAUSE_BASIS = 'shall be prorated on a per diem basis, based upon the number of days of the Term falling within such Expense Year';
 
@@ -208,6 +216,21 @@ const REPLY = {
     cam_commencement_date: '4/1/2026', partial_period_basis: 'per_diem',
     lease_type: 'NNN', sqft: 2500, property_name: 'Larkspur Exchange', quotes: {},
   },
+  // D-1. A lease whose term ends on an EVENT, which is how a great many real
+  // leases are written before the certificate of occupancy is issued.
+  unreadableEnd: {
+    tenant_name: 'Fenwick Interiors', lease_start_date: '2026-01-01',
+    lease_end_date: 'upon substantial completion of the Landlord Work',
+    cam_commencement_date: null, partial_period_basis: 'per_diem',
+    lease_type: 'NNN', sqft: 4000, property_name: 'Larkspur Exchange', quotes: {},
+  },
+  // The control: a lease with genuinely no end date on file. Same empty field,
+  // different problem, and the two must not read alike.
+  absentEnd: {
+    tenant_name: 'Marrow & Co', lease_start_date: '2026-01-01', lease_end_date: null,
+    cam_commencement_date: null, partial_period_basis: 'per_diem',
+    lease_type: 'NNN', sqft: 4000, property_name: 'Larkspur Exchange', quotes: {},
+  },
   // An older extraction that never heard of either field.
   legacy: {
     tenant_name: 'Legacy Lease Co', lease_start_date: '2026-01-01', lease_end_date: '2030-12-31',
@@ -250,17 +273,22 @@ const REPLY = {
 
   console.log('\n══ Lease clause → extracted field → evidence → obligation term ══');
 
-  await page.goto('http://127.0.0.1:' + PORT + '/?signin=1', { waitUntil: 'domcontentloaded', timeout: 30000 });
-  await page.waitForSelector('#loginBtn', { state: 'visible', timeout: 20000 });
-  await page.fill('#loginEmail', 'lx@e2e-test.local');
-  await page.fill('#loginPassword', 'TestPass123!');
-  await page.click('#loginBtn');
-  await page.waitForFunction(() => {
-    const app = document.getElementById('appContent');
-    return app && app.style.display !== 'none' && app.style.display !== '';
-  }, { timeout: 20000 });
-  await page.waitForFunction(() => typeof _props !== 'undefined' && _props.length > 0, { timeout: 20000 });
-  await page.evaluate((id) => selectProperty(id), PROP_ID);
+  // Factored out because D-1 needs to come back through it a second time: an
+  // allow-list drop is invisible until the page is loaded again from storage.
+  const signIn = async () => {
+    await page.goto('http://127.0.0.1:' + PORT + '/?signin=1', { waitUntil: 'domcontentloaded', timeout: 30000 });
+    await page.waitForSelector('#loginBtn', { state: 'visible', timeout: 20000 });
+    await page.fill('#loginEmail', 'lx@e2e-test.local');
+    await page.fill('#loginPassword', 'TestPass123!');
+    await page.click('#loginBtn');
+    await page.waitForFunction(() => {
+      const app = document.getElementById('appContent');
+      return app && app.style.display !== 'none' && app.style.display !== '';
+    }, null, { timeout: 45000 });
+    await page.waitForFunction(() => typeof _props !== 'undefined' && _props.length > 0, null, { timeout: 45000 });
+    await page.evaluate((id) => selectProperty(id), PROP_ID);
+  };
+  await signIn();
 
   yes('the resolver module is loaded',
       await page.evaluate(() => !!(window.LeasePeriod && window.LeasePeriod.obligationTerm)),
@@ -285,6 +313,8 @@ const REPLY = {
       quoteBasis: quoteOf(rec, 'partial_period_basis'),
       confCam:    getFieldConfidence('cam_commencement_date', rec),
       confBasis:  getFieldConfidence('partial_period_basis', rec),
+      confEnd:    getFieldConfidence('end_date', rec),
+      unreadableDates: rec.unreadableDates ?? null,
       term:       LP.obligationTerm(rec),
       basis:      LP.partialPeriodBasis(rec),
       classify:   LP.classify(rec, LP.periodFrom('2026-12-31')),
@@ -292,6 +322,9 @@ const REPLY = {
         cam_commencement_date: roundTripped.cam_commencement_date,
         partial_period_basis:  roundTripped.partial_period_basis,
         quoteBasis:            quoteOf(roundTripped, 'partial_period_basis'),
+        end_date:              roundTripped.end_date,
+        unreadableDates:       roundTripped.unreadableDates ?? null,
+        endStatus:             LP.obligationTerm(roundTripped).endStatus,
       },
     };
   }, text);
@@ -413,6 +446,121 @@ const REPLY = {
       us.term.start === '2026-04-01' && us.term.startSource === 'cam_commencement_date',
       JSON.stringify(us.term));
 
+  // ── 5b. D-1: a date the lease HAS and we cannot read ───────────────────────
+  //
+  // toISODate answers '' for a date it cannot parse and '' for no date at all,
+  // and normalizeTenant stored that ''. So a term ending "upon substantial
+  // completion of the Landlord Work" — how a great many leases are written
+  // before the certificate of occupancy — arrived at the reconciliation
+  // indistinguishable from a lease with no end date. lease-period.js had an
+  // `unreadable` status the whole time that nothing in storage could produce,
+  // and the finding that quotes the offending text printed "".
+  //
+  // Two different conversations: "send us your dates" versus "your lease dates
+  // its term from an event that has to be fixed before we can bill it".
+  console.log('\n── 5b. An unreadable date is not an absent date ──');
+  currentReply = REPLY.unreadableEnd;
+  const unread = await extract(LEASE_TEXT);
+  R('stored end_date',   unread.end_date);
+  R('unreadableDates',   unread.unreadableDates);
+  R('term end',          { status: unread.term.endStatus, raw: unread.term.endRaw });
+  R('classification',    unread.classify.case);
+  R('confidence',        unread.confEnd);
+  yes('the ISO field keeps its contract — empty, never half a date',
+      unread.end_date === '', JSON.stringify(unread.end_date));
+  yes('THE TEXT IS KEPT: what the lease actually says is recorded beside it',
+      /upon substantial completion/i.test(String((unread.unreadableDates || {}).end_date)),
+      JSON.stringify(unread.unreadableDates));
+  yes('    so the resolver reports UNREADABLE, not absent',
+      unread.term.endStatus === 'unreadable', JSON.stringify(unread.term));
+  yes('    and carries the raw text, so a finding can quote it',
+      /upon substantial completion/i.test(String(unread.term.endRaw)), String(unread.term.endRaw));
+  yes('    and the classification is the unreadable case, not unknown_end',
+      unread.classify.case === 'unreadable', unread.classify.case);
+  yes('    with the confidence note quoting it rather than saying "not found"',
+      unread.confEnd.source === 'unreadable'
+        && /upon substantial completion/i.test(unread.confEnd.note),
+      JSON.stringify(unread.confEnd));
+  yes('    and it survives the storage allow-list — value AND distinction',
+      unread.rt.end_date === ''
+        && /upon substantial completion/i.test(String((unread.rt.unreadableDates || {}).end_date))
+        && unread.rt.endStatus === 'unreadable',
+      JSON.stringify(unread.rt));
+
+  console.log('\n── 5c. The control: a lease with genuinely no end date ──');
+  currentReply = REPLY.absentEnd;
+  const absent = await extract(TEXT_NO_DATES);
+  R('stored end_date', absent.end_date);
+  R('unreadableDates', absent.unreadableDates);
+  R('term end',        { status: absent.term.endStatus, raw: absent.term.endRaw });
+  R('classification',  absent.classify.case);
+  yes('nothing is invented to fill the gap',
+      absent.end_date === '' && absent.unreadableDates === null,
+      JSON.stringify({ e: absent.end_date, u: absent.unreadableDates }));
+  yes('    the resolver reports ABSENT — the other problem entirely',
+      absent.term.endStatus === 'absent' && absent.term.endRaw === null,
+      JSON.stringify(absent.term));
+  yes('    and the classification says no end date is on file',
+      absent.classify.case === 'unknown_end', absent.classify.case);
+  yes('    with the confidence note that belongs to a missing field',
+      absent.confEnd.source === 'missing' && /not found/i.test(absent.confEnd.note),
+      JSON.stringify(absent.confEnd));
+
+  // A REAL RELOAD. normalizeTenant runs over every stored tenant on load, so the
+  // second pass sees an empty ISO field and no raw input to re-derive from — and
+  // would erase the distinction it had just preserved. Only a load shows that.
+  console.log('\n── 5d. …and both survive a real page load ──');
+  currentReply = REPLY.unreadableEnd;
+  await page.evaluate(async (t) => {
+    const rec = await callClaudeForLease(t, 'lease.pdf');
+    tenantData.length = 0;
+    tenantData.push(rec);
+    await savePropertyData();
+    await savePropertyNow();
+  }, LEASE_TEXT);
+  await signIn();
+  // selectProperty kicks off the load; the tenants arrive a tick later.
+  await page.waitForFunction(
+    () => typeof tenantData !== 'undefined' && tenantData.filter(Boolean).length > 0, null,
+    { timeout: 45000 });
+  const reloaded = await page.evaluate(() => {
+    const t = tenantData.find(Boolean) || {};
+    const LP = window.LeasePeriod;
+    const term = LP.obligationTerm(t);
+    return { name: t.tenant_name, end_date: t.end_date, unreadableDates: t.unreadableDates ?? null,
+             endStatus: term.endStatus, endRaw: term.endRaw,
+             case: LP.classify(t, LP.periodFrom('2026-12-31')).case,
+             conf: getFieldConfidence('end_date', t) };
+  });
+  R('after reload', reloaded);
+  yes('the record came back',
+      reloaded.name === 'Fenwick Interiors', JSON.stringify(reloaded.name));
+  yes('THE DISTINCTION SURVIVED THE ALLOW-LIST AND THE ROUND TRIP',
+      /upon substantial completion/i.test(String((reloaded.unreadableDates || {}).end_date))
+        && reloaded.endStatus === 'unreadable' && reloaded.case === 'unreadable',
+      JSON.stringify(reloaded));
+  yes('    and still reads as unreadable on the confidence surface',
+      reloaded.conf.source === 'unreadable', JSON.stringify(reloaded.conf));
+
+  // And it has to STOP being unreadable when someone fixes it. Left behind, the
+  // text would sit under a field that now holds a perfectly good date — inert
+  // today because the resolver only consults it when the field is empty, and a
+  // trap for the next reader who does not know that.
+  const corrected = await page.evaluate(() => {
+    const t = tenantData.find(Boolean);
+    const fixed = normalizeTenant(Object.assign({}, t, { end_date: '2031-03-31' }));
+    return { end_date: fixed.end_date, unreadableDates: fixed.unreadableDates ?? null,
+             endStatus: window.LeasePeriod.obligationTerm(fixed).endStatus,
+             conf: getFieldConfidence('end_date', fixed) };
+  });
+  R('after the manager corrects it', corrected);
+  yes('correcting the date clears the record of the unreadable one',
+      corrected.end_date === '2031-03-31' && corrected.unreadableDates === null,
+      JSON.stringify(corrected));
+  yes('    and nothing is left claiming the date cannot be read',
+      corrected.endStatus === 'ok' && corrected.conf.source !== 'unreadable',
+      JSON.stringify(corrected));
+
   // ── 6. Leases that predate the fields ──────────────────────────────────────
   console.log('\n── 6. An extraction that never heard of either field ──');
   currentReply = REPLY.legacy;
@@ -454,22 +602,46 @@ const REPLY = {
   yes('only lease-period.js and the extraction/persistence path name it',
       readers.every(([f]) => f === 'script.js' || f === 'lease-period.js'),
       JSON.stringify(readers));
-  yes('and lease-period.js reads it in exactly ONE function',
-      (src['lease-period.js'].match(/t\.cam_commencement_date/g) || []).length === 1,
-      'more than one reader of cam_commencement_date in the resolver module');
-  // ONE read of start_date in the module, and it must be the resolver's. A bare
-  // "no readDate(t.start_date anywhere" would forbid obligationTerm's own read,
-  // so this locates it instead of counting it out.
+  // ONE READER, WHATEVER THE MECHANISM. The three date fields are no longer
+  // read as `t.<field>` at all — D-1 pairs each one with what could not be read
+  // (`unreadableDates`), and _readField does that pairing. So the property to
+  // assert is not the old spelling: it is that nothing reads the fields
+  // directly, that the pairing helper is the single door, and that every call to
+  // it is inside the resolver. Retargeted rather than relaxed — a second reader
+  // still fails this, by either route.
   const _lp        = src['lease-period.js'];
-  const _startReads = (_lp.match(/readDate\(t\.start_date/g) || []).length;
   const _obligIdx  = _lp.indexOf('function obligationTerm');
   const _classIdx  = _lp.indexOf('function classify');
-  const _readIdx   = _lp.indexOf('readDate(t.start_date');
+  const _helperIdx = _lp.indexOf('function _readField');
+  const _bareReads = (_lp.match(/t\.(?:start_date|end_date|cam_commencement_date)\b/g) || []);
+  const _calls     = [..._lp.matchAll(/_readField\(/g)].map(m => m.index)
+                       .filter(i => i !== _helperIdx + 'function '.length);
+  R('bare field reads in the resolver module', _bareReads);
+  R('_readField call sites inside obligationTerm',
+    _calls.filter(i => i > _obligIdx && i < _classIdx).length + ' of ' + _calls.length);
+  yes('and lease-period.js reads it in exactly ONE function',
+      _bareReads.length === 0 && _calls.length === 3
+        && _calls.every(i => i > _obligIdx && i < _classIdx),
+      JSON.stringify({ bare: _bareReads, calls: _calls.length }));
   yes('classify() goes THROUGH the resolver, not around it',
       /var ot = obligationTerm\(t\);/.test(_lp), 'classify does not call obligationTerm');
   yes('    and start_date is read in exactly one place — the resolver',
-      _startReads === 1 && _obligIdx > 0 && _readIdx > _obligIdx && _readIdx < _classIdx,
-      JSON.stringify({ reads: _startReads, inObligationTerm: _readIdx > _obligIdx && _readIdx < _classIdx }));
+      (_lp.match(/_readField\(t, 'start_date'/g) || []).length === 1
+        && (_lp.match(/_readField\(t, 'cam_commencement_date'/g) || []).length === 1
+        && _lp.indexOf("_readField(t, 'start_date'") > _obligIdx
+        && _lp.indexOf("_readField(t, 'start_date'") < _classIdx,
+      'start_date is resolved somewhere other than obligationTerm');
+  // And the record of what could not be read is reachable ONLY through the same
+  // door. A surface that reads unreadableDates itself is a second reader of the
+  // date fields wearing a different hat.
+  const _rawReaders = Object.entries(src)
+    .map(([f, code]) => [f, (code.match(/unreadableDates/g) || []).length])
+    .filter(([, n]) => n > 0);
+  R('files naming unreadableDates', _rawReaders);
+  yes('    and only the normaliser and the resolver name unreadableDates',
+      _rawReaders.every(([f]) => f === 'script.js' || f === 'lease-period.js')
+        && (_lp.match(/unreadableDates/g) || []).length === 1,
+      JSON.stringify(_rawReaders));
   yes('no consumer outside the resolver derives a term itself',
       !/cam_commencement_date\s*\|\|\s*/.test(src['script.js'])
         && !/cam_commencement_date\s*\?\?\s*[a-z]*\.?start_date/i.test(src['script.js']),

@@ -181,14 +181,20 @@ window.ReconciliationEngine = (() => {
           severity: 'yellow',
           blocksBilling: true,
           title:    `Confirm ${r.name}'s lease dates — a date on file cannot be read`,
+          // QUOTED FROM THE CLASSIFICATION, NOT THE FIELD. These lines used to
+          // read t.start_date/t.end_date directly, which is both a second reader
+          // of the two fields obligationTerm owns and — since normalization
+          // stores an unreadable date as '' — empty on precisely the finding
+          // that exists to report one. `upon substantial completion` is the
+          // whole message; "start: """ is not.
           detail:   `${r.name} is allocated ${_fmt(r.totalAllocated)} of ${camYear} CAM, but the lease term on file could not be read as a date` +
-                    `${c.startStatus === 'unreadable' ? ` (start: "${t.start_date}")` : ''}` +
-                    `${c.endStatus === 'unreadable' ? ` (end: "${t.end_date}")` : ''}` +
+                    `${c.startStatus === 'unreadable' ? ` (start: "${c.startRaw}")` : ''}` +
+                    `${c.endStatus === 'unreadable' ? ` (end: "${c.endRaw}")` : ''}` +
                     `, so this reconciliation cannot tell whether the lease covered ${period.start} to ${period.end}. Correct the dates on the lease record and re-run.`,
           actions: ['Correct the lease dates', 'Re-run the reconciliation'],
           conditions: cond([
-            `Start date on file: ${t.start_date == null || t.start_date === '' ? '(none)' : String(t.start_date)}`,
-            `End date on file: ${t.end_date == null || t.end_date === '' ? '(none)' : String(t.end_date)}`,
+            `Start date on file: ${c.startRaw == null || c.startRaw === '' ? '(none)' : String(c.startRaw)}`,
+            `End date on file: ${c.endRaw == null || c.endRaw === '' ? '(none)' : String(c.endRaw)}`,
           ], UNAPPORTIONED),
         }, base));
         return;
