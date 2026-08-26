@@ -117,6 +117,15 @@ const SUITES = [
   // being stored instead of the rational that replays exactly.
   { label: 'Occupancy allocation (T2)',         cmd: 'node test-occupancy-allocation.js' },
   { label: 'Lease period cases on screen (e2e)', cmd: 'node test-e2e-lease-period.js' },
+  // D-2. A manager's confirmation has to survive a reload AS A CONFIRMATION.
+  // It did not: the value came back and its provenance did not, so the answer
+  // the manager gave read as the lease's own language — the one claim this flow
+  // exists to prevent. Four separate save-boundary defects produced it, and the
+  // only way to see any of them is a real page load, because every in-session
+  // check passes. The last section takes the blob copy away and leaves the
+  // evidence row, because the two writes are not one transaction and the state
+  // where they disagree is the state that was shipped.
+  { label: 'Confirmation survives a reload (e2e)', cmd: 'node test-e2e-partial-basis-persistence.js' },
   // B. The two fields T2's arithmetic will read, followed from the prompt to the
   // resolver with /api/claude intercepted: prompt asks -> normaliser stores ->
   // clause becomes fieldEvidence -> normalizeTenant's ALLOW-LIST keeps it ->

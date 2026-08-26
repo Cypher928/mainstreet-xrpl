@@ -7427,7 +7427,7 @@ window.ms_testAuditInsert = async function() {
  * decision, distinguishable from both a clause and a default. Asked once per
  * lease; the blocker stops firing from the next run.
  */
-function confirmPartialPeriodBasis(tenantId, basis) {
+async function confirmPartialPeriodBasis(tenantId, basis) {
   const LP = window.LeasePeriod;
   const key = String(basis || '').trim().toLowerCase();
   if (!LP || LP.BASES.indexOf(key) < 0) {
@@ -7446,18 +7446,43 @@ function confirmPartialPeriodBasis(tenantId, basis) {
       { color: '#92400e', textColor: '#fef3c7', duration: 6000 });
     return false;
   }
-  const _apply = (rec) => {
+  const _apply = (rec, snap) => {
     rec.partial_period_basis = key;
     const fev  = rec.fieldEvidence || (rec.fieldEvidence = {});
     const slot = fev.partial_period_basis || (fev.partial_period_basis = { snapshots: [] });
-    slot.snapshots = [...(slot.snapshots || []),
-      _mkEvidenceSnapshot('partial_period_basis', rec, { value: key, manuallyEdited: true, approved: true })];
+    slot.snapshots = [...(slot.snapshots || []), snap];
   };
-  _apply(t);
+  const _snap = _mkEvidenceSnapshot('partial_period_basis', t,
+    { value: key, manuallyEdited: true, approved: true });
+  _apply(t, _snap);
   // And the persisted record, when it is a different object from the live one.
   const _stored = (currentProperty()?.tenants || []).find(x => x && String(x.id) === String(tenantId));
-  if (_stored && _stored !== t) _apply(_stored);
-  try { savePropertyData(); } catch (_) {}
+  if (_stored && _stored !== t) _apply(_stored, _snap);
+
+  // THE NORMALIZED TABLE, WHICH IS THE ONE THAT SURVIVES.
+  //
+  // With ms_useNormalizedEvidence on — it is — savePropertyData STRIPS
+  // fieldEvidence out of the property blob, because tenant_field_evidence is
+  // authoritative. Writing only to the blob meant the basis value persisted and
+  // its provenance did not: after a reload partialPeriodBasis reported source
+  // 'lease', so a manager's own confirmation came back reading as though the
+  // lease had stated it. That is the one thing this flow exists to prevent.
+  //
+  // _persistExtractedEvidence cannot carry it either — it skips any snapshot
+  // with no quote and no page, which is exactly what a manual confirmation is.
+  // So the write is direct, and it is awaited by the caller that needs it.
+  const _propId = (currentProperty() || {}).id || activePropId;
+  if (typeof _writeTenantFieldEvidence === 'function' && _propId) {
+    try { await _writeTenantFieldEvidence(_propId, tenantId, 'partial_period_basis', _snap); }
+    catch (e) { console.warn('[partial-period] evidence not persisted:', e && e.message); }
+  }
+  // savePropertyData syncs tenantData into the property record and then queues
+  // the write on an 800ms keystroke debounce. A confirmation is not a keystroke:
+  // the manager clicks it and may navigate immediately, and a write still
+  // sitting in a timer at that moment is simply lost. savePropertyNow cancels
+  // the queued write and performs the one this caller awaits.
+  try { await savePropertyData(); } catch (_) {}
+  try { await savePropertyNow(); } catch (_) {}
   logActivity('Partial-period basis confirmed',
     `${t.tenant_name}: CAM for a partial year is apportioned ${key.replace('_', '-')} — recorded by the manager, not extracted from the lease.`);
   showToast(`Recorded: ${t.tenant_name} apportions a partial CAM year ${key.replace('_', '-')}. Re-run to apply it.`,
@@ -22846,6 +22871,19 @@ function _stripBlobs(property) {
       ...t,
       leaseFile: undefined, // File objects are not serializable
       rawText:   undefined, // OCR text only needed during extraction — can be 10k+ chars
+      // Phase 20: tenant_field_evidence is authoritative, so evidence is not
+      // written into the property blob as well.
+      //
+      // THIS IS A STORAGE DECISION AND IT BELONGS HERE. savePropertyData used to
+      // do the stripping as it synced tenantData into the property record, which
+      // dropped the evidence from the IN-MEMORY property too — and the
+      // reconciliation detector reads its tenants from that record. A
+      // manager's confirmation, written to tenant_field_evidence and restored on
+      // load, was discarded again by the next save, so the tenant was asked to
+      // confirm something already confirmed. Both writers — the Supabase payload
+      // and _lsSave — pass through this function, so the persisted shape is
+      // unchanged; only the live object keeps what it always had.
+      fieldEvidence: window.ms_useNormalizedEvidence ? undefined : t.fieldEvidence,
     } : t),
     // Strip the full invoice list from the DB payload — invoices live separately
     // and are merged back in on load; keeping them in `data` inflates the row.
@@ -24303,15 +24341,16 @@ async function savePropertyData() {
     if (sqft) prop.totalSqft = sqft;
     // tenantData is the live working buffer; always sync it to prop.tenants before saving
     // so any field edit (even if prop.tenants wasn't updated) is captured.
-    // Phase 20: when normalized evidence reads are active, omit fieldEvidence from the
-    // JSON blob — the normalized table is authoritative and storing it in both places
-    // bloats properties.data unnecessarily.
+    //
+    // The live records go across whole. Omitting fieldEvidence from the stored
+    // blob is Phase 20's decision and it is applied at the storage boundary
+    // (_stripBlobs), which both the Supabase payload and the localStorage write
+    // pass through. Doing it here instead handed the property record a set of
+    // COPIES with the evidence removed — so the reconciliation detector, which
+    // reads its tenants from that record, could no longer see a confirmation
+    // that tenant_field_evidence had restored moments earlier.
     if (tenantData.some(t => t !== null)) {
-      prop.tenants = tenantData.filter(t => t !== null).map(t => {
-        if (!window.ms_useNormalizedEvidence) return t;
-        const { fieldEvidence, ...rest } = t;  // eslint-disable-line no-unused-vars
-        return rest;
-      });
+      prop.tenants = tenantData.filter(t => t !== null);
     }
     // Guard: only overwrite invoices when invoiceData is populated. In tenant portal
     // mode invoiceData is always empty — writing it would wipe the property's invoice list.

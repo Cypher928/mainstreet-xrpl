@@ -157,19 +157,38 @@
     var t = tenant || {};
     var raw = t.partial_period_basis;
     var v = raw == null ? '' : String(raw).trim().toLowerCase();
+    // The latest manual snapshot, read once: it answers both questions below —
+    // whether a recognised value was a manager's answer, and, when the field
+    // itself came back empty, what that answer was.
+    var snaps = (t.fieldEvidence && t.fieldEvidence.partial_period_basis
+                 && t.fieldEvidence.partial_period_basis.snapshots) || [];
+    var manualSnap = null;
+    for (var i = snaps.length - 1; i >= 0; i--) {
+      if (snaps[i] && snaps[i].manuallyEdited === true) { manualSnap = snaps[i]; break; }
+    }
     if (BASES.indexOf(v) >= 0) {
       // A MANAGER'S CONFIRMATION IS NOT THE LEASE'S LANGUAGE. When the lease is
       // silent the manager is asked once, and that answer is written to the same
       // field with a manual evidence snapshot behind it. Both then read as
       // "stated", because both are a decision someone made — but the source has
       // to say which, or a confirmation quietly becomes a citation.
-      var snaps = (t.fieldEvidence && t.fieldEvidence.partial_period_basis
-                   && t.fieldEvidence.partial_period_basis.snapshots) || [];
-      var manual = false;
-      for (var i = snaps.length - 1; i >= 0; i--) {
-        if (snaps[i] && snaps[i].manuallyEdited === true) { manual = true; break; }
+      return { basis: v, source: manualSnap ? 'manual' : 'lease', stated: true, raw: raw };
+    }
+    // THE EVIDENCE ROW IS THE RECORD OF THE CONFIRMATION, not a footnote to it.
+    // The confirmation writes two places: the field on the tenant, which travels
+    // in the property blob, and a tenant_field_evidence row, which is written
+    // immediately and is authoritative. Those two can come apart — the blob is
+    // written on a debounce, and savePropertyData strips fieldEvidence out of it
+    // entirely — and when they did, the value came back null while the manual
+    // snapshot came back intact, so the tenant was held for a confirmation that
+    // had already been given. Read the answer back off the evidence when the
+    // field is empty; the provenance travels with it, so this can never turn a
+    // manager's answer into a lease citation.
+    if (v === '' && manualSnap) {
+      var mv = manualSnap.value == null ? '' : String(manualSnap.value).trim().toLowerCase();
+      if (BASES.indexOf(mv) >= 0) {
+        return { basis: mv, source: 'manual', stated: true, raw: manualSnap.value };
       }
-      return { basis: v, source: manual ? 'manual' : 'lease', stated: true, raw: raw };
     }
     if (v !== '') {
       // Populated with something that is not one of the three. Not silently

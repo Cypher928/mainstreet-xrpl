@@ -470,7 +470,7 @@ const SUPABASE_MOCK = `
   console.log('\n── Confirming the basis once ──');
   const after = await page.evaluate(async () => {
     const t = tenantData.find(x => x.tenant_name === 'Birch Optical');
-    const okc = confirmPartialPeriodBasis(t.id, 'per_diem');
+    const okc = await confirmPartialPeriodBasis(t.id, 'per_diem');
     await runAllocation();
     await new Promise(r => setTimeout(r, 300));
     const AX = window.AuditExposure;
