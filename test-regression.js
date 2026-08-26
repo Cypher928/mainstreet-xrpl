@@ -134,6 +134,15 @@ const SUITES = [
   // The negative half matters as much: a lease silent about partial periods
   // must read as source 'default' and never as lease-confirmed.
   { label: 'Lease extraction chain (e2e)',      cmd: 'node test-e2e-lease-extraction.js' },
+  // D-3. The recovery panel, which is what a person reaches for when they think
+  // their data is wrong. "Rebuild Reconciliation State" called a function that
+  // has never existed, so it threw on every property that HAD results to
+  // rebuild — the modal closed, nothing happened, and the confirmation never
+  // ran, so there was not even a failure to see. The panel above it reported a
+  // permanent, always-false integrity ERROR built on a field no reconciliation
+  // row carries. This clicks the real button, from a screen deliberately put out
+  // of step with the saved record, and checks the dollars that come back.
+  { label: 'Rebuild reconciliation state (e2e)', cmd: 'node test-e2e-rebuild-state.js' },
   // The same defect as the loop a manager actually walks: mark the roof not
   // CAM-eligible through the real register checkbox, re-run, and the blocker
   // must clear, the tenants must bill, and the statements must issue — then

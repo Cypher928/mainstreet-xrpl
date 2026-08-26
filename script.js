@@ -13140,15 +13140,30 @@ function checkIntegrity(prop) {
   const tenants  = prop.tenants  || [];
   const disps    = prop.disputes || [];
 
-  // 1. Allocation sums — each tenant share should be ≤ total CAM
+  // 1. Allocation sums — the allocated total must never EXCEED the expense pool.
+  //
+  // This check was wrong twice, and both were visible on every reconciled
+  // property. It summed `tenantShare`, which no reconciliation row has ever
+  // carried — the field is `totalAllocated` — so the sum was always 0. And it
+  // tested EQUALITY against the snapshot's `total`, which is the GROSS expense
+  // pool: allocations fall short of it whenever a suite is vacant, an invoice
+  // is not CAM-eligible, or a cap bites, all of them normal and all of them
+  // already accounted for, line by line, in the variance breakdown. So a clean
+  // run reported "Allocated total ($0.00) differs from declared total
+  // ($40,000.00)" as a data-integrity ERROR, permanently, and the only recovery
+  // action on the panel sat under a finding that was never true.
+  //
+  // The inequality in the comment above is the invariant worth keeping: money
+  // may go unallocated, but more money may never be allocated than came in.
   if (results.length) {
-    const totalCam = results.reduce((s, r) => s + (parseFloat(r.tenantShare) || 0), 0);
-    const declared = (prop.camReconciliation ?? prop.results)?.total || 0;
-    if (declared && Math.abs(totalCam - declared) > 1) {
+    const allocated = results.reduce(
+      (s, r) => s + (parseFloat(r.totalAllocated ?? r.allocatedAmount ?? r.tenantShare) || 0), 0);
+    const pool = (prop.camReconciliation ?? prop.results)?.total || 0;
+    if (pool && allocated - pool > 1) {
       issues.push({
         type:    'allocation_mismatch',
         level:   'error',
-        message: `Allocated total (${fmt(totalCam)}) differs from declared total (${fmt(declared)}) by ${fmt(Math.abs(totalCam - declared))}`,
+        message: `Allocated total (${fmt(allocated)}) exceeds the expense pool (${fmt(pool)}) by ${fmt(allocated - pool)}`,
       });
     }
   }
@@ -13382,12 +13397,18 @@ function rebuildReconciliationState() {
   const prop = _props.find(p => p.id === activePropId);
   if (!prop) return;
   closeRecoveryModal();
-  // Reload the property to re-hydrate all globals from canonical storage
+  // Reload the property to re-hydrate all globals from canonical storage.
+  //
+  // renderProperty IS the restore path: it reads camReconciliation (or the
+  // legacy results blob), re-hydrates the invoicesFull the save boundary
+  // strips, and calls restoreResultsDisplay. What used to follow this line was
+  // `if (snapshot exists) restoreResults(prop)` — a second name for that same
+  // job, and a function that has never existed in this codebase. So the button
+  // threw a ReferenceError on every property that HAD results to rebuild:
+  // the modal closed, nothing rebuilt, and the confirmation below never ran, so
+  // there was not even a failure to see. A recovery action that silently does
+  // nothing is worse than no recovery action.
   renderProperty(prop);
-  // Re-run if results exist
-  if ((prop.camReconciliation ?? prop.results)?.results?.length) {
-    restoreResults(prop);
-  }
   const banner = document.createElement('div');
   banner.style.cssText = 'position:fixed;top:16px;left:50%;transform:translateX(-50%);z-index:9999;background:var(--bgc-134e4a);color:var(--c-99f6e4);padding:10px 20px;border-radius:10px;font-size:0.85rem;font-weight:600;box-shadow:0 4px 20px rgba(0,0,0,.5);pointer-events:none;white-space:nowrap;';
   banner.textContent = '↺ Reconciliation state rebuilt from saved data';
