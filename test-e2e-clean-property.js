@@ -256,12 +256,12 @@ const SUPABASE_MOCK = `
   await page.waitForFunction(() => {
     const app = document.getElementById('appContent');
     return app && app.style.display !== 'none' && app.style.display !== '';
-  }, { timeout: 20000 });
-  await page.waitForFunction(() => typeof _props !== 'undefined' && Array.isArray(_props) && _props.length > 0,
-                             { timeout: 20000 });
+  }, null, { timeout: 45000 });
+  await page.waitForFunction(() => typeof _props !== 'undefined' && Array.isArray(_props) && _props.length > 0, null,
+                             { timeout: 45000 });
   await page.evaluate(() => selectProperty(window.__PROP_ID));
   await page.waitForFunction(() => typeof tenantData !== 'undefined'
-    && tenantData.filter(Boolean).length === 3, { timeout: 20000 });
+    && tenantData.filter(Boolean).length === 3, null, { timeout: 45000 });
 
   const seeded = await page.evaluate(() => ({
     prop:     currentProperty()?.name,

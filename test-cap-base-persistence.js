@@ -195,7 +195,7 @@ async function signIn(page) {
   await page.waitForFunction(() => {
     const app = document.getElementById('appContent');
     return app && app.style.display !== 'none' && app.style.display !== '';
-  }, { timeout: 20000 });
+  }, null, { timeout: 45000 });
 }
 
 // Open the property and render the lease cards the fields live on.
@@ -203,10 +203,10 @@ async function openLeaseCard(page) {
   // Wait for the app's own property list to arrive before selecting from it —
   // selectProperty() is a no-op against a list that has not loaded yet.
   await page.waitForFunction(() => typeof _props !== 'undefined'
-    && Array.isArray(_props) && _props.length > 0, { timeout: 20000 });
+    && Array.isArray(_props) && _props.length > 0, null, { timeout: 45000 });
   await page.evaluate((id) => selectProperty(id), PROP_ID);
-  await page.waitForFunction(() => typeof tenantData !== 'undefined' && tenantData.length > 0,
-                             { timeout: 15000 });
+  await page.waitForFunction(() => typeof tenantData !== 'undefined' && tenantData.length > 0, null,
+                             { timeout: 45000 });
   await page.evaluate(() => {
     if (typeof switchWorkspaceTab === 'function') switchWorkspaceTab('spaces');
     if (typeof switchLeaseTab === 'function') switchLeaseTab('bulk');
@@ -311,7 +311,7 @@ const READ_FIELDS = () => {
     await page.waitForFunction(() => {
       const app = document.getElementById('appContent');
       return app && app.style.display !== 'none' && app.style.display !== '';
-    }, { timeout: 20000 });
+    }, null, { timeout: 45000 });
   }
   await openLeaseCard(page);
 

@@ -258,7 +258,7 @@ Capital expenditures are excluded from the CAM expense pool.
     await page.waitForFunction(() => {
       const app = document.getElementById('appContent');
       return app && app.style.display !== 'none' && app.style.display !== '';
-    }, { timeout: 10000 }).catch(() => {});
+    }, null, { timeout: 45000 }).catch(() => {});
 
     const appVisibleAfterSignup = await page.$eval('#appContent', el => el.style.display !== 'none' && el.style.display !== '').catch(() => false);
     assert(appVisibleAfterSignup, 'STEP 1: app content visible after sign-up submit');
@@ -294,7 +294,7 @@ Capital expenditures are excluded from the CAM expense pool.
     await page.waitForFunction(() => {
       const el = document.getElementById('propertyName');
       return el && el.value === 'Cascade Commons';
-    }, { timeout: 10000 }).catch(() => {});
+    }, null, { timeout: 45000 }).catch(() => {});
 
     const demoPropName = await page.$eval('#propertyName', el => el.value).catch(() => '');
     assert(demoPropName === 'Cascade Commons', 'STEP 2: demo property workspace opened ("Cascade Commons")', demoPropName);
@@ -307,7 +307,7 @@ Capital expenditures are excluded from the CAM expense pool.
     await page.waitForFunction(() => {
       const el = document.getElementById('portfolioDashboard');
       return el && el.style.display !== 'none';
-    }, { timeout: 5000 });
+    }, null, { timeout: 45000 });
     pass('STEP 2: returned to portfolio dashboard after exploring demo');
 
     // ── STEP 3: Create Property ─────────────────────────────────────────────────
@@ -316,7 +316,7 @@ Capital expenditures are excluded from the CAM expense pool.
     await page.waitForFunction(() => {
       const el = document.getElementById('propertyName');
       return el && document.getElementById('portfolioDashboard').style.display === 'none';
-    }, { timeout: 5000 });
+    }, null, { timeout: 45000 });
 
     const newPropWorkspaceOpen = await page.$eval('#portfolioDashboard', el => el.style.display === 'none').catch(() => false);
     assert(newPropWorkspaceOpen, 'STEP 3: new property workspace opened (portfolio hidden)');
@@ -348,7 +348,7 @@ Capital expenditures are excluded from the CAM expense pool.
     await page.waitForFunction(() => {
       return Array.isArray(window.__lastTenantDataDebug) || document.querySelectorAll('#bulkResults [class*="bulk-t"]').length > 0
         || document.getElementById('bulkResults').innerText.length > 10;
-    }, { timeout: 20000 }).catch(() => {});
+    }, null, { timeout: 45000 }).catch(() => {});
     // Give the async pipeline (upload + extraction + render) a moment to settle.
     await page.waitForTimeout(1500);
 
@@ -388,7 +388,7 @@ Capital expenditures are excluded from the CAM expense pool.
     await page.waitForFunction(() => {
       const body = document.getElementById('resultsBody');
       return body && body.innerText.trim().length > 20;
-    }, { timeout: 10000 }).catch(() => {});
+    }, null, { timeout: 45000 }).catch(() => {});
 
     const camResultsText = await page.$eval('#resultsBody', el => el.innerText).catch(() => '');
     const camRanSuccessfully = camResultsText.includes('Riverside Hardware') || /\$[\d,]+/.test(camResultsText);
@@ -410,7 +410,7 @@ Capital expenditures are excluded from the CAM expense pool.
     await page.waitForFunction(() => {
       const overlay = document.getElementById('reportOverlay');
       return overlay && overlay.style.display !== 'none';
-    }, { timeout: 8000 }).catch(() => {});
+    }, null, { timeout: 45000 }).catch(() => {});
 
     const reportOverlayVisible = await page.$eval('#reportOverlay', el => el.style.display !== 'none').catch(() => false);
     assert(reportOverlayVisible, 'STEP 6: report overlay opened after clicking Master Report');

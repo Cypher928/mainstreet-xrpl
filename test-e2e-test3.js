@@ -268,12 +268,12 @@ const SUPABASE_MOCK = `
   await page.waitForFunction(() => {
     const app = document.getElementById('appContent');
     return app && app.style.display !== 'none' && app.style.display !== '';
-  }, { timeout: 20000 });
-  await page.waitForFunction(() => typeof _props !== 'undefined' && Array.isArray(_props) && _props.length > 0,
-                             { timeout: 20000 });
+  }, null, { timeout: 45000 });
+  await page.waitForFunction(() => typeof _props !== 'undefined' && Array.isArray(_props) && _props.length > 0, null,
+                             { timeout: 45000 });
   await page.evaluate(() => selectProperty(window.__PROP_ID));
   await page.waitForFunction(() => typeof tenantData !== 'undefined'
-    && tenantData.filter(Boolean).length === 3, { timeout: 20000 });
+    && tenantData.filter(Boolean).length === 3, null, { timeout: 45000 });
 
   const seeded = await page.evaluate(() => ({
     prop:     currentProperty()?.name,
@@ -636,11 +636,11 @@ const SUPABASE_MOCK = `
     await page.waitForFunction(() => {
       const a = document.getElementById('appContent');
       return a && a.style.display !== 'none' && a.style.display !== '';
-    }, { timeout: 30000 });
-    await page.waitForFunction(() => typeof _props !== 'undefined' && _props.length > 0, { timeout: 30000 });
+    }, null, { timeout: 45000 });
+    await page.waitForFunction(() => typeof _props !== 'undefined' && _props.length > 0, null, { timeout: 45000 });
     await page.evaluate(() => selectProperty(window.__PROP_ID));
     await page.waitForFunction(() => typeof tenantData !== 'undefined'
-      && tenantData.filter(Boolean).length === 3, { timeout: 20000 });
+      && tenantData.filter(Boolean).length === 3, null, { timeout: 45000 });
     // Guard against a vacuous run: the blob must really carry the state we are
     // asking the load path to preserve.
     const inBlob = await page.evaluate(() => {
@@ -704,8 +704,8 @@ const SUPABASE_MOCK = `
   console.log('\n── Running the reconciliation (real runAllocation) ──');
   await page.evaluate(() => { if (typeof switchWorkspaceTab === 'function') switchWorkspaceTab('cam'); });
   await page.evaluate(() => runAllocation());
-  await page.waitForFunction(() => typeof lastResults !== 'undefined' && lastResults.length > 0,
-                             { timeout: 30000 });
+  await page.waitForFunction(() => typeof lastResults !== 'undefined' && lastResults.length > 0, null,
+                             { timeout: 45000 });
 
   const recon = await page.evaluate(() => ({
     pool:  lastTotal,

@@ -243,14 +243,14 @@ CAM charges shall not increase more than 3% per annum. Pro rata share based on o
     await page.waitForFunction(() => {
       const app = document.getElementById('appContent');
       return app && app.style.display !== 'none' && app.style.display !== '';
-    }, { timeout: 10000 }).catch(() => {});
+    }, null, { timeout: 45000 }).catch(() => {});
 
     const appVisible = await page.$eval('#appContent', el => el.style.display !== 'none' && el.style.display !== '').catch(() => false);
     assert(appVisible, 'STEP 1: app content visible after sign-in');
 
     // ── STEP 2: Open existing property ─────────────────────────────────────────
     section('STEP 2: Open existing property');
-    await page.waitForFunction(() => window._props && window._props.length >= 0, { timeout: 1 }).catch(() => {});
+    await page.waitForFunction(() => window._props && window._props.length >= 0, null, { timeout: 45000 }).catch(() => {});
     await page.waitForSelector('.ptf-prop-card:not(.ptf-demo-card)', { timeout: 10000 });
 
     const realCardText = await page.$eval('.ptf-prop-card:not(.ptf-demo-card)', el => el.innerText).catch(() => '');
@@ -260,7 +260,7 @@ CAM charges shall not increase more than 3% per annum. Pro rata share based on o
     await page.waitForFunction(() => {
       const el = document.getElementById('propertyName');
       return el && el.value === 'Existing Plaza';
-    }, { timeout: 10000 });
+    }, null, { timeout: 45000 });
 
     const openedName = await page.$eval('#propertyName', el => el.value).catch(() => '');
     assert(openedName === 'Existing Plaza', 'STEP 2: property workspace opened with correct name', openedName);
@@ -278,7 +278,7 @@ CAM charges shall not increase more than 3% per annum. Pro rata share based on o
       buffer: Buffer.from(LEASE_TEXT_2, 'utf-8'),
     });
 
-    await page.waitForFunction(() => document.getElementById('bulkResults').innerText.includes('Lakeside Dental'), { timeout: 20000 }).catch(() => {});
+    await page.waitForFunction(() => document.getElementById('bulkResults').innerText.includes('Lakeside Dental'), null, { timeout: 45000 }).catch(() => {});
     await page.waitForTimeout(800);
 
     const bulkResultsAfterUpload = await page.$eval('#bulkResults', el => el.innerText).catch(() => '');
@@ -299,7 +299,7 @@ CAM charges shall not increase more than 3% per annum. Pro rata share based on o
     await page.waitForFunction(() => {
       const body = document.getElementById('resultsBody');
       return body && body.innerText.trim().length > 20;
-    }, { timeout: 10000 }).catch(() => {});
+    }, null, { timeout: 45000 }).catch(() => {});
 
     const camResultsText = await page.$eval('#resultsBody', el => el.innerText).catch(() => '');
     assert(camResultsText.includes('Anchor Bakery') && camResultsText.includes('Lakeside Dental'),
@@ -318,7 +318,7 @@ CAM charges shall not increase more than 3% per annum. Pro rata share based on o
     await page.waitForFunction(() => {
       const overlay = document.getElementById('reportOverlay');
       return overlay && overlay.style.display !== 'none';
-    }, { timeout: 8000 }).catch(() => {});
+    }, null, { timeout: 45000 }).catch(() => {});
 
     const reportBodyHtml = await page.$eval('#rptBody', el => el.innerHTML).catch(() => '');
     assert(reportBodyHtml.includes('Anchor Bakery') && reportBodyHtml.includes('Lakeside Dental'),
@@ -333,7 +333,7 @@ CAM charges shall not increase more than 3% per annum. Pro rata share based on o
     await page.waitForFunction(() => {
       const overlay = document.getElementById('reportOverlay');
       return overlay && overlay.style.display !== 'none';
-    }, { timeout: 8000 }).catch(() => {});
+    }, null, { timeout: 45000 }).catch(() => {});
     const holesBodyHtml = await page.$eval('#rptBody', el => el.innerHTML).catch(() => '');
     assert(holesBodyHtml.length > 100, 'STEP 5: Coverage Gap Report rendered with content', holesBodyHtml.length + ' chars');
 

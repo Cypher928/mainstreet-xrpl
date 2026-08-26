@@ -311,12 +311,12 @@ const SNAPSHOT = () => {
   await page.waitForFunction(() => {
     const app = document.getElementById('appContent');
     return app && app.style.display !== 'none' && app.style.display !== '';
-  }, { timeout: 20000 });
-  await page.waitForFunction(() => typeof _props !== 'undefined' && Array.isArray(_props) && _props.length > 0,
-                             { timeout: 20000 });
+  }, null, { timeout: 45000 });
+  await page.waitForFunction(() => typeof _props !== 'undefined' && Array.isArray(_props) && _props.length > 0, null,
+                             { timeout: 45000 });
   await page.evaluate(() => selectProperty(window.__PROP_ID));
   await page.waitForFunction(() => typeof tenantData !== 'undefined'
-    && tenantData.filter(Boolean).length === 4, { timeout: 20000 });
+    && tenantData.filter(Boolean).length === 4, null, { timeout: 45000 });
 
   yes('the module the whole fix depends on is actually loaded',
       await page.evaluate(() => !!(window.CamPool && window.CamPool.total)),
@@ -325,8 +325,8 @@ const SNAPSHOT = () => {
   // ═══ STEP 1 — the roof is CAM-eligible; the blocker appears ════════════════
   console.log('\n── Step 1: the roof is in the CAM pool ──');
   await page.evaluate(async () => { await runAllocation(); });
-  await page.waitForFunction(() => typeof lastResults !== 'undefined' && lastResults.length === 4,
-                             { timeout: 20000 });
+  await page.waitForFunction(() => typeof lastResults !== 'undefined' && lastResults.length === 4, null,
+                             { timeout: 45000 });
   const before = await page.evaluate(SNAPSHOT);
   R('expense pool (gross)', '$' + before.pool.toLocaleString());
   R('CAM pool',             '$' + Number(before.camPool).toLocaleString());
@@ -400,8 +400,8 @@ const SNAPSHOT = () => {
   // ═══ STEP 3 — re-run ══════════════════════════════════════════════════════
   console.log('\n── Steps 3-6: re-run ──');
   await page.evaluate(async () => { await runAllocation(); });
-  await page.waitForFunction(() => typeof lastResults !== 'undefined' && lastResults.length === 4,
-                             { timeout: 20000 });
+  await page.waitForFunction(() => typeof lastResults !== 'undefined' && lastResults.length === 4, null,
+                             { timeout: 45000 });
   const after = await page.evaluate(SNAPSHOT);
   R('expense pool (gross)', '$' + after.pool.toLocaleString());
   R('CAM pool',             '$' + Number(after.camPool).toLocaleString());
@@ -572,8 +572,8 @@ const SNAPSHOT = () => {
   yes('the roof is back in CAM', reMarked === true, JSON.stringify({ camEligible: reMarked }));
 
   await page.evaluate(async () => { await runAllocation(); });
-  await page.waitForFunction(() => typeof lastResults !== 'undefined' && lastResults.length === 4,
-                             { timeout: 20000 });
+  await page.waitForFunction(() => typeof lastResults !== 'undefined' && lastResults.length === 4, null,
+                             { timeout: 45000 });
   const again = await page.evaluate(SNAPSHOT);
   R('CAM pool',              '$' + Number(again.camPool).toLocaleString());
   R('roof in the allocation', again.roofInAllocation);

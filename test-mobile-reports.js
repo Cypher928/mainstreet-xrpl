@@ -121,7 +121,7 @@ const REPORTS = (() => {
     });
 
     await page.goto(`http://127.0.0.1:${PORT}/?signin=1`, { waitUntil: 'domcontentloaded' });
-    await page.waitForFunction(() => typeof window.openReport === 'function', { timeout: 20000 });
+    await page.waitForFunction(() => typeof window.openReport === 'function', null, { timeout: 45000 });
 
     // #appContent is display:none until a session exists, and a hidden ancestor
     // gives every descendant a zero-sized rect. An earlier version of this test

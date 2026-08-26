@@ -238,7 +238,7 @@ const MOCK_INVOICE = { vendorName: 'Harbor Cleaning Services', amount: 5400, cat
     await page.waitForFunction(() => {
       const app = document.getElementById('appContent');
       return app && app.style.display !== 'none' && app.style.display !== '';
-    }, { timeout: 10000 }).catch(() => {});
+    }, null, { timeout: 45000 }).catch(() => {});
 
     const appVisible = await page.$eval('#appContent', el => el.style.display !== 'none' && el.style.display !== '').catch(() => false);
     assert(appVisible, 'STEP 1: app content visible after sign-in');
@@ -256,7 +256,7 @@ const MOCK_INVOICE = { vendorName: 'Harbor Cleaning Services', amount: 5400, cat
     await page.waitForFunction(() => {
       const p = document.getElementById('acqDetailPanel');
       return p && p.style.display !== 'none';
-    }, { timeout: 5000 });
+    }, null, { timeout: 45000 });
 
     const titleText = await page.$eval('#acqDetailTitle', el => el.textContent).catch(() => '');
     assert(titleText.includes('Harborview Plaza'), 'STEP 2: detail panel opened for new review', titleText);
@@ -272,7 +272,7 @@ const MOCK_INVOICE = { vendorName: 'Harbor Cleaning Services', amount: 5400, cat
     await page.waitForFunction(() => {
       const el = document.getElementById('acqLeaseList');
       return el && el.innerText.includes('Harborview Outfitters');
-    }, { timeout: 20000 }).catch(() => {});
+    }, null, { timeout: 45000 }).catch(() => {});
 
     const leaseListText = await page.$eval('#acqLeaseList', el => el.innerText).catch(() => '');
     assert(leaseListText.includes('Harborview Outfitters'), 'STEP 3: lease extracted via real pipeline and listed', leaseListText.slice(0, 150));
@@ -288,7 +288,7 @@ const MOCK_INVOICE = { vendorName: 'Harbor Cleaning Services', amount: 5400, cat
     await page.waitForFunction(() => {
       const el = document.getElementById('acqInvoiceList');
       return el && el.innerText.includes('Harbor Cleaning Services');
-    }, { timeout: 20000 }).catch(() => {});
+    }, null, { timeout: 45000 }).catch(() => {});
 
     const invoiceListText = await page.$eval('#acqInvoiceList', el => el.innerText).catch(() => '');
     assert(invoiceListText.includes('Harbor Cleaning Services'), 'STEP 4: invoice extracted via real pipeline and listed', invoiceListText.slice(0, 150));
@@ -305,7 +305,7 @@ const MOCK_INVOICE = { vendorName: 'Harbor Cleaning Services', amount: 5400, cat
     await page.waitForFunction(() => {
       const c = document.getElementById('acqReportContainer');
       return c && c.innerHTML.length > 100;
-    }, { timeout: 8000 }).catch(() => {});
+    }, null, { timeout: 45000 }).catch(() => {});
 
     const badgeAfterAnalysis = await page.$eval('#acqDetailBadge', el => el.textContent).catch(() => '');
     assert(badgeAfterAnalysis === 'complete', 'STEP 5: review badge updated to "complete"', badgeAfterAnalysis);
@@ -319,14 +319,14 @@ const MOCK_INVOICE = { vendorName: 'Harbor Cleaning Services', amount: 5400, cat
     await page.waitForFunction(() => {
       const m = document.getElementById('acqConvertModal');
       return m && m.style.display !== 'none';
-    }, { timeout: 5000 }).catch(() => {});
+    }, null, { timeout: 45000 }).catch(() => {});
 
     await page.click('#acqConvertConfirmBtn');
 
     await page.waitForFunction(() => {
       const badge = document.getElementById('acqDetailBadge');
       return badge && badge.textContent === 'converted';
-    }, { timeout: 10000 }).catch(() => {});
+    }, null, { timeout: 45000 }).catch(() => {});
 
     const badgeAfterConvert = await page.$eval('#acqDetailBadge', el => el.textContent).catch(() => '');
     assert(badgeAfterConvert === 'converted', 'STEP 6: review badge updated to "converted"', badgeAfterConvert);

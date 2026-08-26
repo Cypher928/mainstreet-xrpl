@@ -257,12 +257,12 @@ const SUPABASE_MOCK = `
   await page.waitForFunction(() => {
     const app = document.getElementById('appContent');
     return app && app.style.display !== 'none' && app.style.display !== '';
-  }, { timeout: 20000 });
-  await page.waitForFunction(() => typeof _props !== 'undefined' && Array.isArray(_props) && _props.length > 0,
-                             { timeout: 20000 });
+  }, null, { timeout: 45000 });
+  await page.waitForFunction(() => typeof _props !== 'undefined' && Array.isArray(_props) && _props.length > 0, null,
+                             { timeout: 45000 });
   await page.evaluate(() => selectProperty(window.__PROP_ID));
   await page.waitForFunction(() => typeof tenantData !== 'undefined'
-    && tenantData.filter(Boolean).length === 3, { timeout: 20000 });
+    && tenantData.filter(Boolean).length === 3, null, { timeout: 45000 });
 
   yes('the module the panel depends on is actually loaded',
       await page.evaluate(() => !!(window.VarianceBreakdown && window.VarianceBreakdown.derive)),
@@ -271,8 +271,8 @@ const SUPABASE_MOCK = `
   // ── run the reconciliation ─────────────────────────────────────────────────
   console.log('\n── The reported reconciliation ──');
   await page.evaluate(async () => { await runAllocation(); });
-  await page.waitForFunction(() => typeof lastResults !== 'undefined' && lastResults.length === 3,
-                             { timeout: 20000 });
+  await page.waitForFunction(() => typeof lastResults !== 'undefined' && lastResults.length === 3, null,
+                             { timeout: 45000 });
 
   const run = await page.evaluate(() => ({
     pool:   lastTotal,

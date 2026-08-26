@@ -243,14 +243,14 @@ CAM charges shall not increase more than 4% per annum.
     await page.waitForFunction(() => {
       const app = document.getElementById('appContent');
       return app && app.style.display !== 'none' && app.style.display !== '';
-    }, { timeout: 10000 }).catch(() => {});
+    }, null, { timeout: 45000 }).catch(() => {});
 
     await page.waitForSelector('.ptf-prop-card:not(.ptf-demo-card)', { timeout: 10000 });
     await page.evaluate((propId) => { if (typeof selectProperty === 'function') selectProperty(propId); }, EXISTING_PROP_ID);
     await page.waitForFunction(() => {
       const el = document.getElementById('propertyName');
       return el && el.value === 'Cascade Commons';
-    }, { timeout: 10000 });
+    }, null, { timeout: 45000 });
     assert(true, 'STEP 1: Cascade Commons workspace opened');
 
     section('STEP 2: Bulk upload a Lakeview Plaza lease into Cascade Commons');
@@ -266,7 +266,7 @@ CAM charges shall not increase more than 4% per annum.
       buffer: Buffer.from(LEASE_TEXT_MISMATCH, 'utf-8'),
     });
 
-    await page.waitForFunction(() => document.getElementById('bulkResults').innerText.includes('Lakeview Dental'), { timeout: 20000 }).catch(() => {});
+    await page.waitForFunction(() => document.getElementById('bulkResults').innerText.includes('Lakeview Dental'), null, { timeout: 45000 }).catch(() => {});
     await page.waitForTimeout(800);
 
     const bulkResultsHtml = await page.$eval('#bulkResults', el => el.innerHTML).catch(() => '');
@@ -288,7 +288,7 @@ CAM charges shall not increase more than 4% per annum.
       buffer: Buffer.from(LEASE_TEXT_MATCH, 'utf-8'),
     });
 
-    await page.waitForFunction(() => document.getElementById('bulkResults').innerText.includes('Cascade Hardware'), { timeout: 20000 }).catch(() => {});
+    await page.waitForFunction(() => document.getElementById('bulkResults').innerText.includes('Cascade Hardware'), null, { timeout: 45000 }).catch(() => {});
     await page.waitForTimeout(800);
 
     const bulkResultsAfterMatch = await page.$eval('#bulkResults', el => el.innerHTML).catch(() => '');
@@ -317,7 +317,7 @@ CAM charges shall not increase more than 4% per annum.
     await page.waitForFunction(() => {
       const el = document.getElementById('tb-0');
       return el && el.innerText.includes('Lakeview Dental');
-    }, { timeout: 20000 }).catch(() => {});
+    }, null, { timeout: 45000 }).catch(() => {});
     await page.waitForTimeout(500);
 
     const singleSlotHtml = await page.$eval('#tb-0', el => el.innerHTML).catch(() => '');
@@ -365,7 +365,7 @@ CAM charges shall not increase more than 4% per annum.
     await page.waitForFunction(() => {
       const body = document.getElementById('resultsBody');
       return body && body.innerText.trim().length > 20;
-    }, { timeout: 10000 }).catch(() => {});
+    }, null, { timeout: 45000 }).catch(() => {});
 
     const camResultsText = await page.$eval('#resultsBody', el => el.innerText).catch(() => '');
     assert(camResultsText.includes('Cascade Hardware'), 'STEP 5: CAM ran and includes the matching tenant', camResultsText.slice(0, 150));

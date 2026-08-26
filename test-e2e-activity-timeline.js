@@ -172,13 +172,13 @@ const SUPABASE_MOCK = `
     await page.waitForFunction(() => {
       const app = document.getElementById('appContent');
       return app && app.style.display !== 'none' && app.style.display !== '';
-    }, { timeout: 10000 });
+    }, null, { timeout: 45000 });
 
     await page.evaluate(() => loadDemo());
     await page.waitForFunction(() => {
       const el = document.getElementById('mainWorkflow');
       return el && el.style.display !== 'none';
-    }, { timeout: 15000 });
+    }, null, { timeout: 45000 });
     await page.evaluate(() => switchWorkspaceTab('overview'));
     await page.waitForTimeout(500);
 

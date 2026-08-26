@@ -195,7 +195,7 @@ async function login(page, port, email, password) {
   await page.waitForFunction(() => {
     const app = document.getElementById('appContent');
     return app && app.style.display !== 'none' && app.style.display !== '';
-  }, { timeout: 10000 }).catch(() => {});
+  }, null, { timeout: 45000 }).catch(() => {});
 }
 
 (async () => {
@@ -233,7 +233,7 @@ async function login(page, port, email, password) {
     await page.waitForFunction(() => {
       const el = document.getElementById('propertyName');
       return el && el.value === 'New Property';
-    }, { timeout: 10000 });
+    }, null, { timeout: 45000 });
     pass('STEP 1: new property created via addNewProperty() and auto-opened');
 
     const createdId = await page.evaluate(() => activePropId);
@@ -258,7 +258,7 @@ async function login(page, port, email, password) {
     await page.waitForFunction(() => {
       const app = document.getElementById('appContent');
       return app && app.style.display !== 'none' && app.style.display !== '';
-    }, { timeout: 10000 }).catch(() => {});
+    }, null, { timeout: 45000 }).catch(() => {});
 
     await page.waitForSelector('.ptf-prop-card:not(.ptf-demo-card)', { timeout: 10000 });
     const portfolioAfterReload = await page.evaluate(() => document.querySelector('#propertyCardsGrid')?.innerText || '');
@@ -280,7 +280,7 @@ async function login(page, port, email, password) {
     await page.waitForFunction(() => {
       const login = document.getElementById('loginScreen');
       return login && getComputedStyle(login).display !== 'none';
-    }, { timeout: 10000 });
+    }, null, { timeout: 45000 });
     pass('STEP 3: login screen reappears after signOut()');
 
     const propsAfterLogout = await page.evaluate(() => (_props || []).length);

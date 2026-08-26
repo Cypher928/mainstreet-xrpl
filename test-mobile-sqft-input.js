@@ -199,14 +199,14 @@ const SUPABASE_MOCK = `
     await page.waitForFunction(() => {
       const app = document.getElementById('appContent');
       return app && app.style.display !== 'none' && app.style.display !== '';
-    }, { timeout: 20000 });
+    }, null, { timeout: 45000 });
 
     // Create a property through the app's own "Add Property" path, because the
     // reported bug is specifically about CREATING a property — pre-seeding state
     // would skip the flow under test.
     await page.evaluate(() => addNewProperty());
-    await page.waitForFunction(() => typeof activePropId !== 'undefined' && !!activePropId,
-                               { timeout: 15000 });
+    await page.waitForFunction(() => typeof activePropId !== 'undefined' && !!activePropId, null,
+                               { timeout: 45000 });
     await page.evaluate(() => {
       if (typeof switchWorkspaceTab === 'function') switchWorkspaceTab('property');
       const el = document.getElementById('totalSqft');
@@ -219,8 +219,8 @@ const SUPABASE_MOCK = `
     // a person filling in a new property types the NAME first anyway, and this
     // keeps the test measuring the sqft bug instead of a setup race.
     await page.waitForFunction(
-      () => document.activeElement && document.activeElement.id === 'propertyName',
-      { timeout: 5000 }).catch(() => {});
+      () => document.activeElement && document.activeElement.id === 'propertyName', null,
+      { timeout: 45000 }).catch(() => {});
     await page.fill('#propertyName', 'Mobile Test Property');
 
     // Instrument: record every scroll and every time the field loses focus while

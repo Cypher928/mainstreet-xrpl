@@ -228,14 +228,14 @@ const REPORT_BUTTONS = [
     await page.waitForFunction(() => {
       const app = document.getElementById('appContent');
       return app && app.style.display !== 'none' && app.style.display !== '';
-    }, { timeout: 10000 }).catch(() => {});
+    }, null, { timeout: 45000 }).catch(() => {});
 
     await page.waitForSelector('.ptf-prop-card:not(.ptf-demo-card)', { timeout: 10000 });
     await page.evaluate((propId) => { if (typeof selectProperty === 'function') selectProperty(propId); }, PROP_ID);
     await page.waitForFunction(() => {
       const el = document.getElementById('propertyName');
       return el && el.value === 'Crestview Commons';
-    }, { timeout: 10000 });
+    }, null, { timeout: 45000 });
     await page.waitForTimeout(800);
 
     await page.evaluate(() => { if (typeof switchWorkspaceTab === 'function') switchWorkspaceTab('cam'); });
@@ -247,7 +247,7 @@ const REPORT_BUTTONS = [
     await page.waitForFunction(() => {
       const body = document.getElementById('resultsBody');
       return body && body.innerText.includes('Pacific Hardware');
-    }, { timeout: 10000 }).catch(() => {});
+    }, null, { timeout: 45000 }).catch(() => {});
 
     const camOk = await page.$eval('#resultsBody', el => el.innerText.includes('Pacific Hardware')).catch(() => false);
     assert(camOk, 'STEP 1: CAM allocation ran successfully');
@@ -263,7 +263,7 @@ const REPORT_BUTTONS = [
       const opened = await page.waitForFunction(() => {
         const overlay = document.getElementById('reportOverlay');
         return overlay && overlay.style.display !== 'none';
-      }, { timeout: 8000 }).then(() => true).catch(() => false);
+      }, null, { timeout: 45000 }).then(() => true).catch(() => false);
       assert(opened, 'REPORT[' + r.id + ']: report overlay opened');
 
       if (opened) {
@@ -286,7 +286,7 @@ const REPORT_BUTTONS = [
         const opened = await page.waitForFunction(() => {
           const overlay = document.getElementById('reportOverlay');
           return overlay && overlay.style.display !== 'none';
-        }, { timeout: 8000 }).then(() => true).catch(() => false);
+        }, null, { timeout: 45000 }).then(() => true).catch(() => false);
         assert(opened, 'REPORT[test-lab-score]: Lease Intelligence Score report overlay opened');
         if (opened) {
           const html = await page.$eval('#rptBody', el => el.innerHTML).catch(() => '');
@@ -308,7 +308,7 @@ const REPORT_BUTTONS = [
     await page.waitForFunction(() => {
       const overlay = document.getElementById('reportOverlay');
       return overlay && overlay.style.display !== 'none';
-    }, { timeout: 8000 });
+    }, null, { timeout: 45000 });
 
     const toolBtnFontSize = await page.$eval('.rpt-tool-btn', el => getComputedStyle(el).fontSize).catch(() => '');
     assert(toolBtnFontSize === '12.48px', 'STEP 3: mobile @media(max-width:600px) report toolbar styling applied', toolBtnFontSize);

@@ -247,20 +247,20 @@ const SUPABASE_MOCK = `
   await page.waitForFunction(() => {
     const app = document.getElementById('appContent');
     return app && app.style.display !== 'none' && app.style.display !== '';
-  }, { timeout: 20000 });
-  await page.waitForFunction(() => typeof _props !== 'undefined' && Array.isArray(_props) && _props.length > 0,
-                             { timeout: 20000 });
+  }, null, { timeout: 45000 });
+  await page.waitForFunction(() => typeof _props !== 'undefined' && Array.isArray(_props) && _props.length > 0, null,
+                             { timeout: 45000 });
   await page.evaluate((id) => selectProperty(id), PROP_ID);
   await page.waitForFunction(() => typeof tenantData !== 'undefined'
-    && tenantData.filter(Boolean).length === 5, { timeout: 20000 });
+    && tenantData.filter(Boolean).length === 5, null, { timeout: 45000 });
 
   yes('the module the whole change depends on is actually loaded',
       await page.evaluate(() => !!(window.LeasePeriod && window.LeasePeriod.classify)),
       'lease-period.js is not on the page — every assertion below would be vacuous');
 
   await page.evaluate(async () => { await runAllocation(); });
-  await page.waitForFunction(() => typeof lastResults !== 'undefined' && lastResults.length === 5,
-                             { timeout: 20000 });
+  await page.waitForFunction(() => typeof lastResults !== 'undefined' && lastResults.length === 5, null,
+                             { timeout: 45000 });
 
   const run = await page.evaluate(() => {
     const AX = window.AuditExposure;

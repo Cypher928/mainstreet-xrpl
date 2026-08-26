@@ -214,14 +214,14 @@ const SUPABASE_MOCK = `
     await page.waitForFunction(() => {
       const app = document.getElementById('appContent');
       return app && app.style.display !== 'none' && app.style.display !== '';
-    }, { timeout: 10000 }).catch(() => {});
+    }, null, { timeout: 45000 }).catch(() => {});
 
     await page.waitForSelector('.ptf-prop-card:not(.ptf-demo-card)', { timeout: 10000 });
     await page.evaluate((propId) => { if (typeof selectProperty === 'function') selectProperty(propId); }, PROP_ID);
     await page.waitForFunction(() => {
       const el = document.getElementById('propertyName');
       return el && el.value === 'Sunrise Retail Center';
-    }, { timeout: 10000 });
+    }, null, { timeout: 45000 });
     await page.waitForTimeout(800); // let background loadPropertyData() refresh settle
 
     const opened = await page.$eval('#propertyName', el => el.value).catch(() => '');
@@ -238,7 +238,7 @@ const SUPABASE_MOCK = `
     await page.waitForFunction(() => {
       const body = document.getElementById('resultsBody');
       return body && body.innerText.includes('Sunrise Bagels');
-    }, { timeout: 10000 }).catch(() => {});
+    }, null, { timeout: 45000 }).catch(() => {});
 
     const resultsText = await page.$eval('#resultsBody', el => el.innerText).catch(() => '');
     assert(resultsText.includes('Sunrise Bagels'), 'STEP 2: CAM allocation produced a result for the tenant', resultsText.slice(0, 150));
@@ -252,7 +252,7 @@ const SUPABASE_MOCK = `
     await page.waitForFunction(() => {
       const overlay = document.getElementById('reportOverlay');
       return overlay && overlay.style.display !== 'none';
-    }, { timeout: 8000 });
+    }, null, { timeout: 45000 });
 
     const stmtHtml = await page.$eval('#rptBody', el => el.innerHTML).catch(() => '');
     assert(stmtHtml.includes('Acme Cleaning Co'), 'STEP 3: tenant statement shows the invoiced charge', stmtHtml.length + ' chars');
@@ -264,26 +264,26 @@ const SUPABASE_MOCK = `
     await page.waitForFunction(() => {
       const row = document.querySelector('#rptBody .ts-inv-card');
       return row && row.offsetParent !== null;
-    }, { timeout: 5000 });
+    }, null, { timeout: 45000 });
     // Expand the first charge row to reveal the dispute button.
     await page.click('#rptBody .ts-inv-card');
     await page.waitForFunction(() => {
       const btn = document.querySelector('#rptBody .btn-danger-outline');
       return btn && btn.offsetParent !== null;
-    }, { timeout: 5000 });
+    }, null, { timeout: 45000 });
 
     await page.click('#rptBody .btn-danger-outline');
     await page.waitForFunction(() => {
       const ta = document.querySelector('#rptBody .dispute-form textarea');
       return ta && ta.offsetParent !== null;
-    }, { timeout: 5000 });
+    }, null, { timeout: 45000 });
 
     await page.fill('#rptBody .dispute-form textarea', 'This cleaning charge was already billed last quarter — requesting a credit.');
     await page.click('#rptBody .d-submit-btn');
 
     await page.waitForFunction(() => {
       return document.querySelector('#rptBody .ts-dispute-submitted-msg') != null;
-    }, { timeout: 5000 }).catch(() => {});
+    }, null, { timeout: 45000 }).catch(() => {});
 
     const submittedMsg = await page.$('#rptBody .ts-dispute-submitted-msg');
     assert(!!submittedMsg, 'STEP 4: dispute submission confirmation shown in tenant statement');
@@ -301,7 +301,7 @@ const SUPABASE_MOCK = `
     await page.waitForFunction(() => {
       const sec = document.getElementById('disputeSection');
       return sec && sec.style.display !== 'none';
-    }, { timeout: 5000 });
+    }, null, { timeout: 45000 });
 
     const openDisputesHtml = await page.$eval('#openDisputesList', el => el.innerHTML).catch(() => '');
     assert(openDisputesHtml.includes('Sunrise Bagels'), 'STEP 5: open dispute card shows tenant name', openDisputesHtml.length + ' chars');
@@ -316,7 +316,7 @@ const SUPABASE_MOCK = `
 
     await page.waitForFunction(() => {
       return typeof disputes !== 'undefined' && disputes[0] && disputes[0].status === 'accepted';
-    }, { timeout: 5000 }).catch(() => {});
+    }, null, { timeout: 45000 }).catch(() => {});
 
     const resolvedStatus = await page.evaluate(() => (typeof disputes !== 'undefined' && disputes[0] ? disputes[0].status : null));
     assert(resolvedStatus === 'accepted', 'STEP 6: dispute status transitioned to "accepted"', resolvedStatus);
