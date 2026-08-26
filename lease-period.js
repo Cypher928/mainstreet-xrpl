@@ -100,6 +100,75 @@
     return { start: d.value.slice(0, 4) + '-01-01', end: d.value };
   }
 
+  /**
+   * THE ONE OWNER OF "WHEN DOES THIS TENANT OWE CAM".
+   *
+   * `start_date` is when the LEASE begins. `cam_commencement_date` is when the
+   * CAM OBLIGATION begins, and the two differ routinely — free-rent periods,
+   * delivery versus opening for business, "CAM commences upon opening". Two
+   * fields answering one question is the shape of every defect this codebase has
+   * spent weeks removing, so exactly one function resolves them and everything
+   * else takes the resolved term. No caller reads `cam_commencement_date`
+   * directly; a test asserts that.
+   *
+   * There is deliberately no `cam_expiration_date`. A CAM obligation ending
+   * before the term is rare enough that a manual edit to `end_date` is the right
+   * cost, and a second optional end field would be a second representation for
+   * no gain.
+   */
+  function obligationTerm(tenant) {
+    var t = tenant || {};
+    var camStart   = readDate(t.cam_commencement_date);
+    var leaseStart = readDate(t.start_date !== undefined ? t.start_date : t.start);
+    var end        = readDate(t.end_date   !== undefined ? t.end_date   : t.end);
+
+    // An UNREADABLE cam_commencement_date is not "fall back to start_date". The
+    // field was populated and cannot be read, so the answer is unknown and the
+    // term must fail closed rather than quietly using a different date.
+    var useCam = camStart.status === 'ok' || camStart.status === 'unreadable';
+
+    var startReading = useCam ? camStart : leaseStart;
+    return {
+      start:            startReading.value,
+      end:              end.value,
+      startStatus:      startReading.status,
+      endStatus:        end.status,
+      startNormalised:  startReading.normalised,
+      endNormalised:    end.normalised,
+      startSource:      useCam ? 'cam_commencement_date' : 'start_date',
+      leaseStart:       leaseStart.value,
+      camStart:         camStart.value,
+    };
+  }
+
+  /**
+   * How a partial period is apportioned, and WHERE THAT ANSWER CAME FROM.
+   *
+   * `basis` alone is not enough: per-diem chosen by the product and per-diem
+   * written into the lease are the same word and a completely different claim.
+   * `source: 'default'` is what keeps a system assumption from ever reading as
+   * lease-confirmed — the same discipline SourceValues applies to a number that
+   * could not be read.
+   */
+  var BASES = ['per_diem', 'monthly', 'full_period'];
+  var DEFAULT_BASIS = 'per_diem';
+
+  function partialPeriodBasis(tenant) {
+    var t = tenant || {};
+    var raw = t.partial_period_basis;
+    var v = raw == null ? '' : String(raw).trim().toLowerCase();
+    if (BASES.indexOf(v) >= 0) {
+      return { basis: v, source: 'lease', stated: true, raw: raw };
+    }
+    if (v !== '') {
+      // Populated with something that is not one of the three. Not silently
+      // defaulted — an unrecognised basis is a data problem, and saying so is
+      // cheaper than guessing which of the three was meant.
+      return { basis: DEFAULT_BASIS, source: 'unrecognised', stated: false, raw: raw };
+    }
+    return { basis: DEFAULT_BASIS, source: 'default', stated: false, raw: null };
+  }
+
   var CASES = {
     covers_period:    'Runs for the whole CAM period',
     commences_within: 'Begins inside the CAM period',
@@ -122,14 +191,20 @@
   function classify(term, period) {
     var p = periodFrom(period);
     var t = term || {};
-    var s = readDate(t.start_date !== undefined ? t.start_date : t.start);
-    var e = readDate(t.end_date   !== undefined ? t.end_date   : t.end);
+    // THROUGH THE RESOLVER, NEVER AROUND IT. classify() used to read start_date
+    // and end_date itself, which would have made it a second reader the moment
+    // cam_commencement_date existed. obligationTerm() is the only function in
+    // the codebase that touches either field.
+    var ot = obligationTerm(t);
+    var s = { value: ot.start, status: ot.startStatus, normalised: ot.startNormalised };
+    var e = { value: ot.end,   status: ot.endStatus,   normalised: ot.endNormalised };
 
     var out = {
       case: null, label: null,
       periodStart: p ? p.start : null, periodEnd: p ? p.end : null,
       leaseStart: s.value, leaseEnd: e.value,
       startStatus: s.status, endStatus: e.status,
+      startSource: ot.startSource,
       normalisedStart: s.normalised, normalisedEnd: e.normalised,
       overlapStart: null, overlapEnd: null,
       assumedStart: false, assumedEnd: false,
@@ -204,7 +279,9 @@
   function minDate(a, b) { return a < b ? a : b; }
 
   var api = { readDate: readDate, periodForYear: periodForYear, periodFrom: periodFrom,
-              classify: classify, CASES: CASES };
+              classify: classify, CASES: CASES,
+              obligationTerm: obligationTerm, partialPeriodBasis: partialPeriodBasis,
+              BASES: BASES, DEFAULT_BASIS: DEFAULT_BASIS };
   if (root) root.LeasePeriod = api;
   if (typeof module !== 'undefined' && module.exports) module.exports = api;
 

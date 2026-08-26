@@ -206,6 +206,94 @@ t('absent is absent — not zero, not unreadable', () => {
   ['', null, undefined].forEach(v => eq(LP.readDate(v).status, 'absent', JSON.stringify(v)));
 });
 
+console.log('\n── B: one owner of "when does this tenant owe CAM" ──');
+
+t('a plain lease resolves to its own term', () => {
+  const o = LP.obligationTerm({ start_date: '2020-01-01', end_date: '2030-12-31' });
+  eq(o.start, '2020-01-01'); eq(o.end, '2030-12-31'); eq(o.startSource, 'start_date');
+});
+
+t('cam_commencement_date overrides start_date, and start_date survives', () => {
+  const o = LP.obligationTerm({ start_date: '2026-01-01', cam_commencement_date: '2026-04-01',
+                                end_date: '2031-03-31' });
+  eq(o.start, '2026-04-01');
+  eq(o.startSource, 'cam_commencement_date');
+  eq(o.leaseStart, '2026-01-01', 'the lease start was overwritten rather than recorded beside it');
+});
+
+t('an EMPTY cam_commencement_date falls back — it is the common case', () => {
+  [null, undefined, ''].forEach(v => {
+    const o = LP.obligationTerm({ start_date: '2026-01-01', cam_commencement_date: v, end_date: '2030-12-31' });
+    eq(o.start, '2026-01-01', JSON.stringify(v));
+    eq(o.startSource, 'start_date', JSON.stringify(v));
+  });
+});
+
+t('an UNREADABLE cam_commencement_date does NOT fall back — it fails closed', () => {
+  // Falling back here would quietly bill from a different date than the lease
+  // names, which is the failure mode this whole module exists to remove.
+  const o = LP.obligationTerm({ start_date: '2026-01-01', cam_commencement_date: 'upon opening',
+                                end_date: '2030-12-31' });
+  eq(o.start, null);
+  eq(o.startStatus, 'unreadable');
+  eq(o.startSource, 'cam_commencement_date');
+  eq(LP.classify({ start_date: '2026-01-01', cam_commencement_date: 'upon opening',
+                   end_date: '2030-12-31' }, P2026).case, 'unreadable');
+});
+
+t('classify() reads the OBLIGATION term, not the lease term', () => {
+  const c = LP.classify({ start_date: '2026-01-01', cam_commencement_date: '2026-04-01',
+                          end_date: '2031-03-31' }, P2026);
+  eq(c.case, 'commences_within', 'the lease term alone would read as covers_period');
+  eq(c.overlapStart, '2026-04-01');
+  eq(c.startSource, 'cam_commencement_date');
+});
+
+t('a lease with neither new field behaves exactly as before', () => {
+  const legacy = { start_date: '2020-01-01', end_date: '2030-12-31' };
+  const o = LP.obligationTerm(legacy);
+  eq(o.start, '2020-01-01'); eq(o.startSource, 'start_date');
+  eq(LP.classify(legacy, P2026).case, 'covers_period');
+  eq(LP.classify(legacy, P2026).needsOccupancyConfirmation, false);
+});
+
+console.log('\n── B: a stated basis and a defaulted one are different claims ──');
+
+t('the three recognised bases are read as lease-stated', () => {
+  LP.BASES.forEach(v => {
+    const b = LP.partialPeriodBasis({ partial_period_basis: v });
+    eq(b.basis, v); eq(b.source, 'lease'); eq(b.stated, true);
+  });
+});
+
+t('case and whitespace do not change the answer', () => {
+  const b = LP.partialPeriodBasis({ partial_period_basis: '  PER_DIEM ' });
+  eq(b.basis, 'per_diem'); eq(b.source, 'lease');
+});
+
+t('SILENCE defaults to per-diem and says it defaulted', () => {
+  [null, undefined, '', '   '].forEach(v => {
+    const b = LP.partialPeriodBasis(v === undefined ? {} : { partial_period_basis: v });
+    eq(b.basis, 'per_diem', JSON.stringify(v));
+    eq(b.source, 'default', JSON.stringify(v) + ' — a product choice is reading as lease language');
+    eq(b.stated, false, JSON.stringify(v));
+  });
+});
+
+t('an unrecognised value is neither stated nor a default', () => {
+  const b = LP.partialPeriodBasis({ partial_period_basis: 'weekly' });
+  eq(b.basis, 'per_diem', 'something still has to be computable');
+  eq(b.source, 'unrecognised', 'a bad value and a silent lease are different problems');
+  eq(b.raw, 'weekly', 'the raw value was discarded');
+});
+
+t('[source] the module states no apportionment even now', () => {
+  const src = fs.readFileSync(path.join(__dirname, 'lease-period.js'), 'utf8')
+                .replace(/\/\*[\s\S]*?\*\//g, '').replace(/^\s*\/\/.*$/gm, '');
+  ok(!/factor|apportion/i.test(src),
+     'B added a basis vocabulary, not arithmetic — T2 owns the factor');
+});
+
 console.log('\n── T1 DOES NOT APPORTION ──');
 
 t('[source] the module exposes no factor, no day count, no apportionment', () => {

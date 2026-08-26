@@ -1470,6 +1470,16 @@ function normalizeTenant(d) {
     audit_rights:        d.audit_rights        ?? null,
     pro_rata_method:     d.pro_rata_method     ?? null,
     renewal_options:     d.renewal_options     ?? null,
+    // ALLOW-LIST. Omitting either of these would write them to storage and drop
+    // them on the next property load — the failure this list already carries a
+    // warning about, and the one that would make a lease's own partial-period
+    // clause evaporate between sessions.
+    cam_commencement_date: toISODate(d.cam_commencement_date ?? d.camCommencementDate ?? '') || null,
+    partial_period_basis:  (() => {
+      const v = d.partial_period_basis ?? d.partialPeriodBasis ?? null;
+      const k = v == null ? '' : String(v).trim().toLowerCase();
+      return k === '' ? null : k;
+    })(),
     base_rent:           d.base_rent           ?? null,
     security_deposit:    d.security_deposit    ?? null,
     amendments:          Array.isArray(d.amendments) ? d.amendments : [],
@@ -1599,6 +1609,8 @@ Return ONLY valid JSON. No explanation. No markdown.
   "tenant_name": string or null,
   "lease_start_date": "YYYY-MM-DD" or null,
   "lease_end_date": "YYYY-MM-DD" or null,
+  "cam_commencement_date": "YYYY-MM-DD" or null,
+  "partial_period_basis": "per_diem" | "monthly" | "full_period" | null,
   "lease_type": "NNN" | "Gross" | "Modified Gross" | null,
   "sqft": number or null,
   "cam_cap": number or null,
@@ -1616,6 +1628,14 @@ TENANT NAME:
 DATES:
 - Start: Commencement Date → Lease Start Date → Effective Date → Execution Date
 - End: Expiration Date → Lease End Date → calculate from start date + term length
+
+CAM COMMENCEMENT DATE: Only when the CAM/operating-expense obligation begins on a DIFFERENT date from the lease start — e.g. "Tenant shall commence payment of Operating Expenses upon the Rent Commencement Date", "upon opening for business", or after a stated free-rent or abatement period. Return null when CAM begins with the lease term. Do NOT copy the lease start date into this field.
+
+PARTIAL PERIOD BASIS: How the lease says CAM is apportioned when the term covers only PART of an expense year. Look for: "prorated on a per diem basis", "prorated based on the number of days", "a fraction, the numerator of which is the number of days", "prorated monthly", "based on the number of full calendar months", or language requiring the full annual amount regardless of a partial year.
+  per diem / number of days   → "per_diem"
+  monthly / calendar months   → "monthly"
+  full amount regardless      → "full_period"
+Return null if the lease says nothing about partial years. Null is a real answer here — do NOT guess.
 
 LEASE TYPE: Triple Net / NNN → "NNN" | Modified Gross | Gross
 
@@ -1968,6 +1988,8 @@ Extract:
   "tenant_name": string,
   "lease_start_date": "YYYY-MM-DD" or null,
   "lease_end_date": "YYYY-MM-DD" or null,
+  "cam_commencement_date": "YYYY-MM-DD" or null,
+  "partial_period_basis": "per_diem" | "monthly" | "full_period" | null,
   "lease_type": "NNN" | "Gross" | "Modified Gross" | null,
   "sqft": number or null,
   "cam_cap": number or null,
@@ -1979,7 +2001,7 @@ Extract:
   "renewal_options": string or null,
   "excluded_categories": string or null,
   "property_name": string or null,
-  "quotes": { "cam_cap": string|null, "admin_fee_pct": string|null, "gross_up_pct": string|null, "expense_stop": string|null, "audit_rights": string|null, "pro_rata_method": string|null, "renewal_options": string|null }
+  "quotes": { "cam_cap": string|null, "admin_fee_pct": string|null, "gross_up_pct": string|null, "expense_stop": string|null, "audit_rights": string|null, "pro_rata_method": string|null, "renewal_options": string|null, "cam_commencement_date": string|null, "partial_period_basis": string|null }
 }
 
 TENANT NAME (highest priority):
@@ -1991,6 +2013,10 @@ TENANT NAME (highest priority):
 DATES:
 - Start: Commencement Date → Lease Start Date → Effective Date → Execution Date
 - End: Expiration Date → Lease End Date → calculate from start + term length if needed
+
+CAM COMMENCEMENT DATE: Only when the CAM/operating-expense obligation begins on a DIFFERENT date from the lease start — "commence payment of Operating Expenses upon the Rent Commencement Date", "upon opening for business", or after a stated free-rent or abatement period. Null when CAM begins with the term. Do NOT copy the lease start date here.
+
+PARTIAL PERIOD BASIS: How the lease apportions CAM when the term covers only PART of an expense year. "per diem" / "number of days" → "per_diem". "prorated monthly" / "full calendar months" → "monthly". Full annual amount regardless of a partial year → "full_period". Return null if the lease is silent — null is a real answer, do NOT guess.
 
 CAM CAP: Search the entire document for any language limiting CAM increases ("not to exceed", "capped at X%", "expense stop"). Return the number (e.g. 5% → 5). Null if no cap language exists.
 
@@ -2119,6 +2145,20 @@ ${leaseSnippet}
       : null,
     pro_rata_method:     raw.pro_rata_method ?? null,
     renewal_options:     raw.renewal_options ?? null,
+    // WHEN THE CAM OBLIGATION BEGINS, when the lease sets it apart from the
+    // lease term — free rent, delivery vs opening, "upon opening for business".
+    // Nothing reads this field directly: LeasePeriod.obligationTerm() resolves
+    // it against start_date and is the only owner of the question.
+    cam_commencement_date: toISODate(raw.cam_commencement_date ?? raw.camCommencementDate ?? '') || null,
+    // How the lease apportions CAM across a partial year. NULL IS A REAL
+    // ANSWER — it means the lease is silent, and LeasePeriod.partialPeriodBasis
+    // reports that as source 'default' rather than letting a product choice
+    // read as lease-confirmed.
+    partial_period_basis: (() => {
+      const v = raw.partial_period_basis ?? raw.partialPeriodBasis ?? null;
+      const k = v == null ? '' : String(v).trim().toLowerCase();
+      return k === '' ? null : k;
+    })(),
     property_name:       (() => {
       const v = raw.property_name ?? raw.propertyName ?? null;
       return (typeof v === 'string' && v.trim()) ? v.trim() : null;
@@ -2140,6 +2180,8 @@ ${leaseSnippet}
     sqft:             'leased_sqft',
     lease_start_date: 'start_date',
     lease_end_date:   'end_date',
+    cam_commencement_date: 'cam_commencement_date',
+    partial_period_basis:  'partial_period_basis',
   };
   const _rawQuotes = (raw.quotes && typeof raw.quotes === 'object') ? raw.quotes : {};
   const _qTs = new Date().toISOString();
@@ -5860,6 +5902,32 @@ function getFieldConfidence(fieldName, t) {
   const isEmpty = val === null || val === undefined || String(val).trim() === '';
 
   switch (fieldName) {
+    // THE PRODUCT'S CHOICE MUST NEVER READ AS THE LEASE'S. When a lease says
+    // nothing about apportioning a partial year, the reconciliation still needs
+    // a basis to compute with — but "per diem because we chose it" and "per diem
+    // because the lease says so" are the same two words and completely different
+    // claims. `source: 'default'` is what separates them, machine-readably, so
+    // no downstream surface has to infer it from prose.
+    case 'partial_period_basis':
+      if (isEmpty) return { status: 'missing', source: 'default',
+        note: 'No partial-period clause found — per-diem applied by default' };
+      if (!(window.LeasePeriod && window.LeasePeriod.BASES.includes(String(val).trim().toLowerCase()))) {
+        return { status: 'estimated', source: 'heuristic',
+          note: 'Partial-period basis not recognised — confirm against the lease' };
+      }
+      return hasFieldQuote('partial_period_basis', t)
+        ? { status: 'verified',  source: 'structured', note: 'Extracted from lease document' }
+        : { status: 'estimated', source: 'heuristic',  note: 'No supporting clause captured — confirm against the lease' };
+
+    // Absent is the NORMAL case: most leases start the CAM obligation with the
+    // term, and null means exactly that. It is not a gap to be chased.
+    case 'cam_commencement_date':
+      if (isEmpty) return { status: 'verified', source: 'structured',
+        note: 'CAM begins with the lease term' };
+      return hasFieldQuote('cam_commencement_date', t)
+        ? { status: 'verified',  source: 'structured', note: 'Extracted from lease document' }
+        : { status: 'estimated', source: 'heuristic',  note: 'No supporting clause captured — confirm against the lease' };
+
     case 'start_date':
     case 'end_date': {
       if (isEmpty) return { status: 'missing', source: 'missing', note: 'Not found in extraction' };

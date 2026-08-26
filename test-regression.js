@@ -108,6 +108,14 @@ const SUITES = [
   // question and a helper returning a factor would answer it by accident.
   { label: 'Lease term vs CAM period (T1)',     cmd: 'node test-lease-period.js' },
   { label: 'Lease period cases on screen (e2e)', cmd: 'node test-e2e-lease-period.js' },
+  // B. The two fields T2's arithmetic will read, followed from the prompt to the
+  // resolver with /api/claude intercepted: prompt asks -> normaliser stores ->
+  // clause becomes fieldEvidence -> normalizeTenant's ALLOW-LIST keeps it ->
+  // obligationTerm() resolves it. Asserting the field name appears in a schema
+  // proves none of those five links, and this codebase has broken every one.
+  // The negative half matters as much: a lease silent about partial periods
+  // must read as source 'default' and never as lease-confirmed.
+  { label: 'Lease extraction chain (e2e)',      cmd: 'node test-e2e-lease-extraction.js' },
   // The same defect as the loop a manager actually walks: mark the roof not
   // CAM-eligible through the real register checkbox, re-run, and the blocker
   // must clear, the tenants must bill, and the statements must issue — then
