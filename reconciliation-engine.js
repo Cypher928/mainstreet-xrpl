@@ -121,12 +121,17 @@ window.ReconciliationEngine = (() => {
       const base = {
         source: 'Lease term (start_date, end_date) vs the CAM period being billed',
       };
-      const cond = extra => [
+      // The amount line has to say whether it WAS apportioned. Since T2 that
+      // differs by case — a holdover's allocation is un-apportioned and a
+      // partial period's is — and a fixed parenthetical would be false on one
+      // of them.
+      const cond = (extra, note) => [
         `Tenant: ${r.name}`,
         `CAM period billed: ${period.start} to ${period.end}`,
         ...extra,
-        `Allocated amount: ${_fmt(r.totalAllocated)} (full period — not apportioned)`,
+        `Allocated amount: ${_fmt(r.totalAllocated)}${note ? ` (${note})` : ''}`,
       ];
+      const UNAPPORTIONED = 'full period — not apportioned';
 
       // ── The lease ended before the period began: a holdover, or a vacancy.
       // The file cannot tell which, and the money genuinely has no documented
@@ -148,7 +153,7 @@ window.ReconciliationEngine = (() => {
           impact:  { amount: r.totalAllocated, kind: 'at_risk',
                      basis: `Full ${camYear} allocation to ${r.name}; occupancy for the period not yet confirmed` },
           actions: ['Confirm occupancy', 'Update lease', 'Remove allocation'],
-          conditions: cond([`Lease end date: ${c.leaseEnd}`, `Lease term ended before the CAM period began`]),
+          conditions: cond([`Lease end date: ${c.leaseEnd}`, `Lease term ended before the CAM period began`], UNAPPORTIONED),
         }, base));
         return;
       }
@@ -163,7 +168,7 @@ window.ReconciliationEngine = (() => {
           impact:  { amount: r.totalAllocated, kind: 'at_risk',
                      basis: `Full ${camYear} allocation to ${r.name}; lease term does not reach the period billed` },
           actions: ['Confirm occupancy', 'Update lease', 'Remove allocation'],
-          conditions: cond([`Lease start date: ${c.leaseStart}`, `Lease term begins after the CAM period ended`]),
+          conditions: cond([`Lease start date: ${c.leaseStart}`, `Lease term begins after the CAM period ended`], UNAPPORTIONED),
         }, base));
         return;
       }
@@ -184,41 +189,47 @@ window.ReconciliationEngine = (() => {
           conditions: cond([
             `Start date on file: ${t.start_date == null || t.start_date === '' ? '(none)' : String(t.start_date)}`,
             `End date on file: ${t.end_date == null || t.end_date === '' ? '(none)' : String(t.end_date)}`,
-          ]),
+          ], UNAPPORTIONED),
         }, base));
         return;
       }
 
-      // ── The lease is valid and covers PART of the period. Nothing is wrong
-      // with it; what is unresolved is how a partial period should be billed.
-      // Yellow, because there is nothing alarming here — and blocking, because
-      // the run allocates a full-period share and the treatment has not been
-      // decided. No impact amount: quantifying the difference would state an
-      // apportionment policy this reconciliation does not have.
-      const sideNote =
-          c.case === 'commences_within' ? `The lease commences ${c.leaseStart}, after the period opened on ${period.start}.`
-        : c.case === 'expires_within'   ? `The lease runs to ${c.leaseEnd}, before the period closes on ${period.end}.`
-        : `The lease runs from ${c.leaseStart} to ${c.leaseEnd}, inside the period.`;
-      const whichEnd =
-          c.case === 'commences_within' ? `begins`
-        : c.case === 'expires_within'   ? `ends`
-        : `begins and ends`;
+      // ── The lease is valid and covers PART of the period. Since T2 the
+      // allocation is apportioned, so there is no longer anything to warn about
+      // WHEN THE LEASE SAYS HOW. What remains is the case where it does not: the
+      // reconciliation computes on a per-diem default, and a default is not a
+      // lease term. The manager is asked once, and only once — a confirmed basis
+      // is written to the lease and this stops firing.
+      const _basis = LP.partialPeriodBasis(t);
+      if (_basis.stated) return;
+
+      const _occ = LP.occupancy(t, period);
+      const _window = _occ && _occ.overlapStart
+        ? `${_occ.overlapStart} to ${_occ.overlapEnd}` : 'the part of the period it covers';
+      const _frac = _occ && _occ.numerator !== null
+        ? `${_occ.numerator} of ${_occ.denominator} days` : 'a partial period';
+      const _which =
+          c.case === 'commences_within' ? `commences ${c.leaseStart}, after the period opened on ${period.start}`
+        : c.case === 'expires_within'   ? `runs to ${c.leaseEnd}, before the period closes on ${period.end}`
+        : `runs from ${c.leaseStart} to ${c.leaseEnd}, inside the period`;
 
       flags.push(Object.assign({
         severity: 'yellow',
         blocksBilling: true,
-        title:    `Confirm CAM treatment for ${r.name} — lease ${whichEnd} inside the ${camYear} CAM period`,
-        detail:   `${sideNote} It covers ${c.overlapStart} to ${c.overlapEnd} of the ${period.start}–${period.end} period being billed, and this run allocates a full-period share of ${_fmt(r.totalAllocated)}. Whether a partial period is billed in full or apportioned — and on what basis — is governed by the lease, not by this reconciliation. Confirm the treatment for ${r.name} before issuing the statement.`,
-        actions: ['Confirm the CAM treatment for a partial period',
-                  'Check the lease commencement and surrender terms',
-                  'Update lease dates'],
-        // Deliberately no `impact`. The amount in question is whatever the
-        // apportionment turns out to be, and that has not been decided; a figure
-        // here would be this engine deciding it.
+        title:    `Confirm how ${r.name}'s partial year is apportioned — the lease does not say`,
+        detail:   `${r.name}'s lease ${_which}, covering ${_window}. This reconciliation has apportioned its share of the shared CAM pool on a PER-DIEM basis — ${_frac} — and billed ${_fmt(r.totalAllocated)}. That basis is this product's default, not a term of the lease: no partial-period clause was found in the document. Confirm the apportionment for ${r.name} once and it will be recorded against the lease; this will not be asked again.` +
+                  (_basis.source === 'unrecognised'
+                    ? ` (The lease record carries "${String(_basis.raw)}", which is not a basis this reconciliation recognises.)` : ''),
+        actions: ['Confirm the partial-period basis',
+                  'Check the lease for a proration clause',
+                  'Record the basis against the lease'],
         conditions: cond([
           `Lease term: ${c.leaseStart} to ${c.leaseEnd}`,
-          `Covered by the lease within the period: ${c.overlapStart} to ${c.overlapEnd}`,
-        ]),
+          `Occupied within the period: ${_window}`,
+          `Basis applied: ${_basis.basis} (source: ${_basis.source})`,
+        ], _occ && _occ.numerator !== null
+             ? `apportioned ${_occ.numerator}/${_occ.denominator} ${_occ.unit}`
+             : 'apportioned'),
       }, base));
     });
 

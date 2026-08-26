@@ -863,7 +863,8 @@ class Invoice {
 
 class ReconciliationResult {
   constructor(tenantName, unitNumber, sqFt, totalAllocated, proRataPercent,
-              includedInvoices, capApplied = false, capAdjustment = null) {
+              includedInvoices, capApplied = false, capAdjustment = null,
+              occupancy = null) {
     this.tenantName         = tenantName;
     this.unitNumber         = unitNumber || '';
     this.sqFt               = sqFt;
@@ -872,6 +873,17 @@ class ReconciliationResult {
     this.includedInvoices   = includedInvoices || [];
     this.capApplied         = capApplied;
     this.capAdjustment      = capAdjustment;
+    // T2 — HOW MUCH OF THE PERIOD, and everything needed to reproduce it without
+    // recomputing: the rational (numerator/denominator), the days behind it, the
+    // window, the case, and where the basis came from. NULL means this run
+    // predates occupancy — it does NOT mean a factor of 1, and no reader may
+    // treat it as one.
+    this.occupancy          = occupancy || null;
+    // The two shares, and their product, kept as three separate values. The
+    // effective share is DERIVED for display and is never the stored pro-rata.
+    this.effectiveSharePercent = (occupancy && occupancy.applied && occupancy.factor !== null)
+      ? parseFloat((proRataPercent * occupancy.factor).toFixed(4))
+      : proRataPercent;
     this.ambiguityFlags     = [];  // populated by runFullReconciliation after construction
     this.status             = totalAllocated > 0 ? 'calculated' : 'needs review';
     const total = this.includedInvoices.reduce((s, inv) => s + (inv.share || 0), 0);
@@ -7404,6 +7416,56 @@ window.ms_testAuditInsert = async function() {
 // ── Field Override + Manual Confirmation ──────────────────────────────────
 // Priority: manual override → extracted value → null.
 // Resolver used by all display layers so override logic stays in one place.
+/**
+ * T2 — record the partial-period apportionment against a lease that does not
+ * state one.
+ *
+ * The reconciliation can always COMPUTE, because per-diem is a sane default. It
+ * must not claim the lease said so. This writes the manager's answer to the same
+ * field the extractor would have filled, with a manual evidence snapshot behind
+ * it, so LeasePeriod.partialPeriodBasis reports source 'manual' — a human
+ * decision, distinguishable from both a clause and a default. Asked once per
+ * lease; the blocker stops firing from the next run.
+ */
+function confirmPartialPeriodBasis(tenantId, basis) {
+  const LP = window.LeasePeriod;
+  const key = String(basis || '').trim().toLowerCase();
+  if (!LP || LP.BASES.indexOf(key) < 0) {
+    showToast(`"${basis}" is not a partial-period basis this reconciliation recognises.`,
+      { color: '#7f1d1d', textColor: '#fecaca', duration: 6000 });
+    return false;
+  }
+  // tenantData IS the live array the reconciliation reads — every other
+  // field mutator in this file finds its target there. Writing only to
+  // currentProperty().tenants is a silent no-op when the two hold different
+  // objects, which they do: the confirmation appeared to succeed, the toast
+  // fired, and the next run behaved as though nothing had been recorded.
+  const t = tenantData.find(x => x && String(x.id) === String(tenantId));
+  if (!t) {
+    showToast('That lease is no longer on this property — the page has been refreshed.',
+      { color: '#92400e', textColor: '#fef3c7', duration: 6000 });
+    return false;
+  }
+  const _apply = (rec) => {
+    rec.partial_period_basis = key;
+    const fev  = rec.fieldEvidence || (rec.fieldEvidence = {});
+    const slot = fev.partial_period_basis || (fev.partial_period_basis = { snapshots: [] });
+    slot.snapshots = [...(slot.snapshots || []),
+      _mkEvidenceSnapshot('partial_period_basis', rec, { value: key, manuallyEdited: true, approved: true })];
+  };
+  _apply(t);
+  // And the persisted record, when it is a different object from the live one.
+  const _stored = (currentProperty()?.tenants || []).find(x => x && String(x.id) === String(tenantId));
+  if (_stored && _stored !== t) _apply(_stored);
+  try { savePropertyData(); } catch (_) {}
+  logActivity('Partial-period basis confirmed',
+    `${t.tenant_name}: CAM for a partial year is apportioned ${key.replace('_', '-')} — recorded by the manager, not extracted from the lease.`);
+  showToast(`Recorded: ${t.tenant_name} apportions a partial CAM year ${key.replace('_', '-')}. Re-run to apply it.`,
+    { duration: 6000 });
+  return true;
+}
+window.confirmPartialPeriodBasis = confirmPartialPeriodBasis;
+
 function getEffectiveLeaseField(fieldName, t) {
   if (!t) return null;
   const ov = t.reviewOverrides?.[fieldName];
@@ -10170,23 +10232,59 @@ function runFullReconciliation(property) {
   const directInvoices = recoverable.filter(inv => inv.matchConfidence >= 75);
   const sharedInvoices = recoverable.filter(inv => inv.matchConfidence <  75);
 
+  // T2 — THE CAM PERIOD, for occupancy. Built from the same camYear the invoice
+  // filter above uses, so the period a tenant is measured against is the period
+  // the invoices were selected for. No camYear means no period, and with no
+  // period nothing is apportioned: an un-apportioned figure is the pre-T2
+  // behaviour and is the honest answer when we cannot say what is being billed.
+  const _camPeriod = (_year && window.LeasePeriod)
+    ? window.LeasePeriod.periodForYear(_year) : null;
+
   const results = leases.map(lease => {
     // Look up current tenant state directly from property.tenants by stable id
     const live    = liveTenants.find(t => t?.id === lease.id) || {};
+    // SPATIAL SHARE. This is how much of the BUILDING the tenant holds and it is
+    // never adjusted for time — the occupancy factor is a second, independent
+    // multiplicand. Collapsing them into one percentage would destroy the
+    // distinction the statement has to explain.
     const proRata = lease.sqFt / totalSqFt;
+
+    // HOW MUCH OF THE PERIOD. Read once, from the one module that owns it.
+    const occ = (_camPeriod && window.LeasePeriod)
+      ? window.LeasePeriod.occupancy(live, _camPeriod) : null;
+    const occFactor = (occ && occ.applied && occ.factor !== null) ? occ.factor : 1;
 
     const _isExcluded = inv => lease.excludedCategories.includes((inv.category || '').toLowerCase());
 
+    // A DIRECT invoice is placed by its DATE, not multiplied by the factor. A
+    // direct match bills the whole invoice to one tenant — their own submeter,
+    // their own repair — so a tenant who took occupancy in September and caused
+    // a $3,000 October repair owes $3,000, not four twelfths of it. Applying a
+    // time fraction to a specific charge is simply the wrong operation.
+    const _inWindow = inv => {
+      if (!occ || !occ.applied || !occ.overlapStart) return true;
+      const d = window.LeasePeriod.readDate(inv.date || inv.invoiceDate || '');
+      if (d.status !== 'ok') return null;          // undated — cannot be placed
+      return d.value >= occ.overlapStart && d.value <= occ.overlapEnd;
+    };
+
     const eligibleShared = sharedInvoices.filter(inv => !_isExcluded(inv));
-    const sharedTotal = eligibleShared.reduce((s, inv) => s + inv.amount, 0) * proRata;
+    const sharedTotal = eligibleShared.reduce((s, inv) => s + inv.amount, 0) * proRata * occFactor;
 
     // CAM-3 — the exclusion schedule applies to DIRECT invoices too. It used to
     // filter only the shared pool, so a $50,000 capital expenditure the lease
     // explicitly excludes was billed 100% to whichever tenant it matched —
     // uncapped by pro-rata, and in the clause tenants audit hardest.
     const matched     = directInvoices.filter(inv => matchesTenant(inv, lease));
-    const ownInvoices = matched.filter(inv => !_isExcluded(inv));
+    const _claimable  = matched.filter(inv => !_isExcluded(inv));
     const excludedDirect = matched.filter(_isExcluded);
+    // Split three ways: inside the occupancy window, outside it, and undated.
+    // An undated direct invoice on a partial-period tenant cannot be placed, so
+    // it is held out and REPORTED — never silently billed and never silently
+    // dropped.
+    const ownInvoices     = _claimable.filter(inv => _inWindow(inv) === true);
+    const outsideWindow   = _claimable.filter(inv => _inWindow(inv) === false);
+    const undatedDirect   = _claimable.filter(inv => _inWindow(inv) === null);
     const ownTotal    = ownInvoices.reduce((s, inv) => s + inv.amount, 0);
 
     let rawTotal      = sharedTotal + ownTotal;
@@ -10206,7 +10304,7 @@ function runFullReconciliation(property) {
       ...eligibleShared.map(inv => ({
         ...inv,
         allocation: 'shared',
-        share: parseFloat((inv.amount * proRata).toFixed(2)),
+        share: parseFloat((inv.amount * proRata * occFactor).toFixed(2)),
         ...(inv.matchConfidence < 75 ? {
           flag: {
             message:     'Low confidence invoice match',
@@ -10241,6 +10339,25 @@ function runFullReconciliation(property) {
         code:    'DIRECT_ASSIGNMENT',
         message: `${ownInvoices.length} invoice${ownInvoices.length !== 1 ? 's' : ''} billed in full to this tenant`,
         explanation: `${ownInvoices.map(i => `${i.vendorName} ${_fmtMoney(i.amount)}${i.matchReason ? ` — matched on ${i.matchReason}` : ''}`).join('; ')}. Direct matches are charged in full rather than by pro-rata share — confirm each one belongs to this tenant.`,
+      });
+    }
+
+    // T2 — a direct invoice held out because it falls outside the occupancy
+    // window, or because it has no date to place it by. Both are reported by
+    // name and amount: the manager has to know the charge was recognised and
+    // why it was not billed, exactly as CAM-3 does for lease exclusions.
+    if (outsideWindow.length) {
+      flags.push({
+        code:    'DIRECT_OUTSIDE_OCCUPANCY',
+        message: `${outsideWindow.length} matched invoice${outsideWindow.length !== 1 ? 's' : ''} dated outside this tenant's occupancy`,
+        explanation: `${outsideWindow.map(i => `${i.vendorName} ${_fmtMoney(i.amount)} (${i.date || i.invoiceDate || 'no date'})`).join('; ')} matched this tenant but ${outsideWindow.length !== 1 ? 'are' : 'is'} dated outside ${occ && occ.overlapStart ? `${occ.overlapStart} to ${occ.overlapEnd}` : 'the occupancy window'}, so ${outsideWindow.length !== 1 ? 'they were' : 'it was'} not billed.`,
+      });
+    }
+    if (undatedDirect.length) {
+      flags.push({
+        code:    'DIRECT_UNDATED_OCCUPANCY',
+        message: `${undatedDirect.length} matched invoice${undatedDirect.length !== 1 ? 's' : ''} could not be placed in this tenant's occupancy`,
+        explanation: `${undatedDirect.map(i => `${i.vendorName} ${_fmtMoney(i.amount)}`).join('; ')} matched this tenant but carr${undatedDirect.length !== 1 ? 'y' : 'ies'} no readable date, and this tenant occupied only part of the CAM period. ${undatedDirect.length !== 1 ? 'They were' : 'It was'} not billed — add the invoice date and re-run.`,
       });
     }
 
@@ -10286,10 +10403,13 @@ function runFullReconciliation(property) {
       lease.unitNumber,
       lease.sqFt,
       parseFloat(rawTotal.toFixed(2)),
+      // STILL THE SPATIAL SHARE. Not multiplied by the occupancy factor — the
+      // two live side by side on the result and are combined only for display.
       parseFloat((proRata * 100).toFixed(2)),
       included,
       capApplied,
-      capAdjustment
+      capAdjustment,
+      occ
     );
     result.ambiguityFlags = flags;
     result.tenantId       = lease.id;
@@ -10841,6 +10961,11 @@ async function runAllocation() {
       propName,
       camYear:      getCamYear(),
       savedAt:      new Date().toISOString(),
+      // A run computed WITH occupancy apportionment. Its absence marks a run
+      // from before T2, whose results carry no `occupancy` — and absent must
+      // never be read as a factor of 1, or every historical partial-period run
+      // silently acquires a claim it never made.
+      schemaVersion: 2,
       total:        totalCost,
       results:      fullResults.map(r => ({ ...r })),
       invoices:     lastInvoices,
@@ -17768,8 +17893,27 @@ function _tenantBillingState(tenantName, exposure) {
   const propertyLevel = blockers.some(b => b.scope === 'property');
 
   if (readiness.canBill && !exclusion) {
-    return { state: 'billable', label: 'Billable', reason: readiness.reason,
+    // T2 — "prorated because of lease dates" and "held because occupancy is
+    // uncertain" are different states and must not read alike. This tenant IS
+    // billable; the qualifier says its bill covers part of the period, so a
+    // manager seeing a smaller number than last year knows why without opening
+    // the statement. Read off the stored result, not recomputed.
+    // GUARDED. This function is called from contexts that do not carry the
+    // reconciliation globals — the billing-readiness suites evaluate it against
+    // a constructed exposure with no lastResults at all — and an unguarded read
+    // turns a missing global into a thrown ReferenceError inside the billing
+    // gate. No result means no occupancy detail, which is the pre-T2 reading.
+    const _all = (typeof lastResults !== 'undefined' && Array.isArray(lastResults)) ? lastResults : [];
+    const _r = _all.find(x => x && x.name === tenantName);
+    const _o = _r && _r.occupancy;
+    const _part = !!(_o && _o.applied && _o.factor !== null && _o.factor < 1);
+    return { state: 'billable',
+             label: _part ? 'Billable \u00B7 part period' : 'Billable',
+             reason: _part
+               ? `${readiness.reason} Apportioned for occupancy: ${_o.numerator} of ${_o.denominator} ${_o.unit}.`
+               : readiness.reason,
              propertyLevel: false, exclusionOnly: false, readiness, exclusion: null,
+             partPeriod: _part, occupancy: _o || null,
              cta: '\u{1F9FE} Tenant Statement' };
   }
   if (readiness.canBill && exclusion) {
@@ -18131,6 +18275,11 @@ function generateTenantStatement(tenantName, opts = {}) {
   // Use the reconciliation's actual year (not the current calendar year) so the period
   // label matches the statement's data and the other reports.
   const period = (getCamYear() || new Date().getFullYear()) + ' CAM Year';
+  // T2 — HOW MUCH OF THE PERIOD this tenant occupied, read off the stored
+  // result. Never recomputed: a statement reprinted next year must show the
+  // figures that were billed, not what today's lease record would produce.
+  const _occ = r.occupancy || null;
+  const _partial = !!(_occ && _occ.applied && _occ.factor !== null && _occ.factor < 1);
 
   // Per-invoice breakdown — ONE authoritative source.
   //
@@ -18329,9 +18478,35 @@ function generateTenantStatement(tenantName, opts = {}) {
         <div class="ts-summary-stat">
           <span class="ts-ss-label">Your Sq Ft</span>
           <span class="ts-ss-val">${t.leasedSqft.toLocaleString()}</span>
-        </div>
+        </div>${_partial ? `
+        <div class="ts-summary-stat">
+          <span class="ts-ss-label">Period Occupied</span>
+          <span class="ts-ss-val highlight">${_occ.numerator} / ${_occ.denominator} ${esc(_occ.unit)}</span>
+        </div>` : ''}
       </div>
     </div>
+    ${_partial ? `
+    <!-- A tenant handed a reduced bill will check the arithmetic, so the whole
+         calculation is shown rather than just its result — and the BASIS says
+         where the apportionment rule came from. "Per diem because the lease says
+         so" and "per diem because this product defaults to it" are the same two
+         words and a different claim, and the tenant is entitled to know which. -->
+    <div class="ts-occupancy" role="note">
+      <div class="ts-occ-head">Your occupancy of the ${esc(String(getCamYear() || ''))} CAM period</div>
+      <table class="ts-occ-table">
+        <tr><td>CAM period billed</td><td>${esc(_occ.periodStart)} to ${esc(_occ.periodEnd)}</td></tr>
+        <tr><td>Your lease covered</td><td>${esc(_occ.overlapStart)} to ${esc(_occ.overlapEnd)}</td></tr>
+        <tr><td>Share of the building</td><td>${(r.proRata * 100).toFixed(2)}%</td></tr>
+        <tr><td>Share of the period</td><td>${_occ.numerator} of ${_occ.denominator} ${esc(_occ.unit)} (${(_occ.factor * 100).toFixed(1)}%)</td></tr>
+        <tr class="ts-occ-total"><td>Total CAM billed to you</td><td>${fmt(r.allocatedAmount)}</td></tr>
+      </table>
+      <div class="ts-occ-basis">${
+        _occ.basisSource === 'lease'  ? 'Apportioned on a ' + esc(_occ.basis.replace('_', '-')) + ' basis, as provided in your lease.'
+      : _occ.basisSource === 'manual' ? 'Apportioned on a ' + esc(_occ.basis.replace('_', '-')) + ' basis, confirmed by the property manager against your lease.'
+      : 'Your lease does not state how a partial year is apportioned. A per-diem apportionment has been applied.'
+      }</div>
+      ${_occ.startSource === 'cam_commencement_date' ? `<div class="ts-occ-basis">CAM charges begin ${esc(_occ.overlapStart)} under your lease, which is later than the lease commencement date.</div>` : ''}
+    </div>` : ''}
 
     ${_draftState ? '' : (() => {
       // NOTHING HAS SETTLED BECAUSE A STATEMENT WAS GENERATED.

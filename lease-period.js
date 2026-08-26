@@ -158,7 +158,18 @@
     var raw = t.partial_period_basis;
     var v = raw == null ? '' : String(raw).trim().toLowerCase();
     if (BASES.indexOf(v) >= 0) {
-      return { basis: v, source: 'lease', stated: true, raw: raw };
+      // A MANAGER'S CONFIRMATION IS NOT THE LEASE'S LANGUAGE. When the lease is
+      // silent the manager is asked once, and that answer is written to the same
+      // field with a manual evidence snapshot behind it. Both then read as
+      // "stated", because both are a decision someone made — but the source has
+      // to say which, or a confirmation quietly becomes a citation.
+      var snaps = (t.fieldEvidence && t.fieldEvidence.partial_period_basis
+                   && t.fieldEvidence.partial_period_basis.snapshots) || [];
+      var manual = false;
+      for (var i = snaps.length - 1; i >= 0; i--) {
+        if (snaps[i] && snaps[i].manuallyEdited === true) { manual = true; break; }
+      }
+      return { basis: v, source: manual ? 'manual' : 'lease', stated: true, raw: raw };
     }
     if (v !== '') {
       // Populated with something that is not one of the three. Not silently
@@ -230,6 +241,13 @@
 
     if (!sKnown && !eKnown) {
       out.case = 'no_term'; out.label = CASES.no_term;
+      // Assumed to cover the period, exactly as unknown_start and unknown_end
+      // are — and the overlap bounds are filled in so a caller doing arithmetic
+      // on them is not handed a null. Both bounds are marked assumed, so nothing
+      // downstream can mistake this for a term that was read off a document.
+      out.assumedStart = true; out.assumedEnd = true;
+      out.overlapStart = p.start; out.overlapEnd = p.end;
+      out.overlapsPeriod = true; out.coversWholePeriod = true;
       return out;                                  // D4 owns this; no claim made here
     }
 
@@ -275,12 +293,104 @@
     return out;
   }
 
+  // ── T2: the arithmetic, kept OUT of classify() ─────────────────────────────
+  //
+  // classify() answers "where does this term sit"; occupancy() answers "what
+  // fraction of the period is that". They are deliberately separate functions:
+  // classify() returns dates and booleans and no numbers at all, so a reader can
+  // still ask the shape question without being handed a factor it did not want.
+  //
+  // THE RATIONAL IS THE STORED FORM. `factor` is a convenience for display;
+  // 243/365 replays exactly and 0.66575342 does not. Every consumer that has to
+  // reproduce a billed figure reads numerator/denominator.
+
+  function _dayNum(iso) { return Date.UTC(+iso.slice(0, 4), +iso.slice(5, 7) - 1, +iso.slice(8, 10)) / 86400000; }
+  // INCLUSIVE of both endpoints: 1 Jan – 31 Dec is 365 days, not 364. An
+  // exclusive convention loses a day per tenant and the variance identity stops
+  // closing. UTC throughout, so a DST boundary cannot move a day.
+  function _span(a, b) { return _dayNum(b) - _dayNum(a) + 1; }
+  function _monthNum(iso) { return (+iso.slice(0, 4)) * 12 + (+iso.slice(5, 7)) - 1; }
+  function _monthSpan(a, b) { return _monthNum(b) - _monthNum(a) + 1; }
+
+  /**
+   * @param {object} tenant  carries start_date / cam_commencement_date / end_date
+   *                         and optionally partial_period_basis
+   * @param {object|string} period
+   * @returns {object} the factor, the rational behind it, and where both came from
+   */
+  function occupancy(tenant, period) {
+    var c = classify(tenant, period);
+    var b = partialPeriodBasis(tenant);
+
+    var out = {
+      // The shape, carried through so no caller re-derives it.
+      case: c.case, label: c.label,
+      periodStart: c.periodStart, periodEnd: c.periodEnd,
+      termStart: c.leaseStart, termEnd: c.leaseEnd, startSource: c.startSource,
+      overlapStart: c.overlapStart, overlapEnd: c.overlapEnd,
+      assumedStart: c.assumedStart, assumedEnd: c.assumedEnd,
+      // The basis and — the part that matters — where the basis came from.
+      basis: b.basis, basisSource: b.source, basisStated: b.stated,
+      // The arithmetic.
+      factor: null, numerator: null, denominator: null, unit: null,
+      overlapDays: null, periodDays: null,
+      // Was the factor applied to money? FALSE is not "factor 1" — it means the
+      // allocation is un-apportioned and something else must decide what to do.
+      applied: false,
+      // Occupancy could not be established at all.
+      unresolved: false,
+      capProrated: false,   // T2 keeps the annual cap. Recorded so it is a
+                            // stated treatment and not an unexamined default.
+    };
+
+    if (!c.periodStart || !c.periodEnd) { out.unresolved = true; return out; }
+    out.periodDays = _span(c.periodStart, c.periodEnd);
+
+    // Unreadable dates, a holdover, or a term that begins after the period: no
+    // factor is computed and none is applied. A holdover must NEVER fall through
+    // to factor 0 and a $0 bill — that silently writes off a real receivable.
+    if (c.case === 'unreadable' || c.case === 'ended_before' || c.case === 'begins_after') {
+      out.unresolved = true;
+      return out;
+    }
+
+    // Belt and braces: every case that reaches here has overlap bounds, but a
+    // null slipping into the day arithmetic threw inside runFullReconciliation
+    // and took the whole reconciliation down with it. An unresolved occupancy is
+    // a state to report, never an exception to raise.
+    if (!c.overlapStart || !c.overlapEnd) { out.unresolved = true; return out; }
+    out.overlapDays = _span(c.overlapStart, c.overlapEnd);
+
+    if (b.basis === 'full_period') {
+      // The lease says the full annual amount is due regardless of a partial
+      // year. The overlap is still reported; it just does not reduce the bill.
+      out.unit = 'period'; out.numerator = 1; out.denominator = 1; out.factor = 1;
+    } else if (b.basis === 'monthly') {
+      // "Prorated monthly" — calendar months of the period in which the tenant
+      // occupied at least one day. Conventions vary and this is the common
+      // commercial reading; the numerator and denominator are stored so the
+      // convention used is inspectable rather than implied.
+      out.unit = 'months';
+      out.numerator   = _monthSpan(c.overlapStart, c.overlapEnd);
+      out.denominator = _monthSpan(c.periodStart, c.periodEnd);
+      out.factor = out.numerator / out.denominator;
+    } else {
+      out.unit = 'days';
+      out.numerator   = out.overlapDays;
+      out.denominator = out.periodDays;
+      out.factor = out.numerator / out.denominator;
+    }
+    out.applied = true;
+    return out;
+  }
+
   function maxDate(a, b) { return a > b ? a : b; }
   function minDate(a, b) { return a < b ? a : b; }
 
   var api = { readDate: readDate, periodForYear: periodForYear, periodFrom: periodFrom,
               classify: classify, CASES: CASES,
               obligationTerm: obligationTerm, partialPeriodBasis: partialPeriodBasis,
+              occupancy: occupancy,
               BASES: BASES, DEFAULT_BASIS: DEFAULT_BASIS };
   if (root) root.LeasePeriod = api;
   if (typeof module !== 'undefined' && module.exports) module.exports = api;

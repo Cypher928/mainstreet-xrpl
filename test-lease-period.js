@@ -73,7 +73,7 @@ function detect(term, allocated) {
     { tenants: [t1] }, '2026-12-31');
 }
 const occupancyFinding = fs2 =>
-  fs2.find(f => /lease that ended|does not begin until|Confirm CAM treatment|lease dates/.test(f.title || ''));
+  fs2.find(f => /lease that ended|does not begin until|partial year is apportioned|lease dates/.test(f.title || ''));
 
 const scriptSrc  = fs.readFileSync(path.join(__dirname, 'reconciliation-engine.js'), 'utf8');
 const engineCode = scriptSrc.replace(/\/\*[\s\S]*?\*\//g, '').replace(/^\s*\/\/.*$/gm, '');
@@ -287,30 +287,40 @@ t('an unrecognised value is neither stated nor a default', () => {
   eq(b.raw, 'weekly', 'the raw value was discarded');
 });
 
-t('[source] the module states no apportionment even now', () => {
-  const src = fs.readFileSync(path.join(__dirname, 'lease-period.js'), 'utf8')
-                .replace(/\/\*[\s\S]*?\*\//g, '').replace(/^\s*\/\/.*$/gm, '');
-  ok(!/factor|apportion/i.test(src),
-     'B added a basis vocabulary, not arithmetic — T2 owns the factor');
+t('the basis chooses the arithmetic, and each is inspectable', () => {
+  const term = { start_date: '2019-09-01', end_date: '2026-08-31' };
+  const day  = LP.occupancy(Object.assign({}, term, { partial_period_basis: 'per_diem' }), P2026);
+  const mon  = LP.occupancy(Object.assign({}, term, { partial_period_basis: 'monthly' }), P2026);
+  const full = LP.occupancy(Object.assign({}, term, { partial_period_basis: 'full_period' }), P2026);
+  eq(day.unit, 'days');    eq(day.numerator, 243);  eq(day.denominator, 365);
+  eq(mon.unit, 'months');  eq(mon.numerator, 8);    eq(mon.denominator, 12);
+  eq(full.unit, 'period'); eq(full.factor, 1, 'full_period must not reduce the bill');
 });
 
 console.log('\n── T1 DOES NOT APPORTION ──');
 
-t('[source] the module exposes no factor, no day count, no apportionment', () => {
+t('[source] the apportionment lives in occupancy(), not scattered', () => {
+  // T1 asserted this module held NO arithmetic at all, because the policy was
+  // undecided. T2 is that decision, so the assertion is retargeted rather than
+  // dropped: the factor exists in exactly one function, and classify() still
+  // holds none of it.
   const src = fs.readFileSync(path.join(__dirname, 'lease-period.js'), 'utf8')
                 .replace(/\/\*[\s\S]*?\*\//g, '').replace(/^\s*\/\/.*$/gm, '');
-  ['factor', 'days', 'prorat', 'apportion', 'occupancyFactor'].forEach(word => {
-    ok(!new RegExp(word, 'i').test(src),
-       `lease-period.js mentions "${word}" in live code — T2 owns apportionment, and a helper that ` +
-       `returns a factor settles the policy question by accident`);
-  });
-  ok(!/getTime\(\)\s*-\s*/.test(src), 'a date subtraction appeared — that is a day count');
+  const occIdx = src.indexOf('function occupancy(');
+  ok(occIdx > 0, 'occupancy() is gone');
+  const classIdx = src.indexOf('function classify(');
+  const classBody = src.slice(classIdx, src.indexOf('\n  function ', classIdx + 10));
+  ok(!/factor/i.test(classBody), 'classify() computes a factor — it answers the shape question only');
+  ok(!/_span\(/.test(classBody),  'classify() counts days');
+  // Day arithmetic exists in exactly the two helpers and their use in occupancy.
+  ok(/function _dayNum\(iso\)/.test(src) && /Date\.UTC/.test(src),
+     'the day count is not UTC-based — a DST boundary can move a day');
 });
 
-t('the classification carries dates, and no arithmetic', () => {
+t('classify() still carries dates and no arithmetic', () => {
   const c = LP.classify({ start_date: '2026-09-01', end_date: '2031-08-31' }, P2026);
   Object.keys(c).forEach(k => {
-    if (typeof c[k] === 'number') throw new Error(`classify() returned a number at "${k}" — T1 has no arithmetic`);
+    if (typeof c[k] === 'number') throw new Error(`classify() returned a number at "${k}"`);
   });
 });
 
@@ -341,39 +351,49 @@ t('    but it no longer concludes against the charge', () => {
   ok(/holdover or a renewal may well carry the obligation forward/.test(f.detail), f.detail);
 });
 
-t('THE MID-PERIOD EXPIRY is no longer described as already ended', () => {
-  const f = occupancyFinding(detect({ start_date: '2019-09-01', end_date: '2026-08-31' }));
-  ok(f, 'a lease expiring inside the period raises nothing at all');
-  ok(!/ended 2026-08-31/.test(f.title),
-     'still past tense about a date inside the period being billed');
-  ok(/lease ends inside the 2026 CAM period/.test(f.title), f.title);
-  ok(/2026-01-01 to 2026-08-31/.test(f.detail), 'the covered part of the period is not stated');
+t('T2 REVERSAL: a stated basis means a mid-period lease raises NOTHING', () => {
+  // T1 held these pending the apportionment policy. T2 is that policy, so a
+  // lease that says how to apportion is simply apportioned and billed.
+  ['per_diem', 'monthly', 'full_period'].forEach(b => {
+    eq(occupancyFinding(detect({ start_date: '2019-09-01', end_date: '2026-08-31',
+                                 partial_period_basis: b })), undefined, b);
+    eq(occupancyFinding(detect({ start_date: '2026-09-01', end_date: '2031-08-31',
+                                 partial_period_basis: b })), undefined, b);
+  });
 });
 
-t('    it blocks billing, and says confirmation is what is needed', () => {
+t('a SILENT lease is still held — once — and the finding says why', () => {
   const f = occupancyFinding(detect({ start_date: '2019-09-01', end_date: '2026-08-31' }));
-  eq(f.severity, 'yellow', 'a valid lease expiring on schedule is not an alarming finding');
-  eq(f.blocksBilling, true, 'the product decision is that this still holds the statement');
-  ok(/Confirm the treatment/.test(f.detail), f.detail);
+  ok(f, 'a lease with no partial-period clause was billed on a default with no confirmation');
+  eq(f.severity, 'yellow', 'nothing alarming here — the lease is valid');
+  eq(f.blocksBilling, true, 'the approved model holds once before billing');
+  ok(/the lease does not say/.test(f.title), f.title);
+  ok(/this product's default, not a term of the lease/.test(f.detail), f.detail);
+  ok(/no partial-period clause was found/.test(f.detail), f.detail);
+  ok(/will not be asked again/.test(f.detail), 'the hold must read as once, not forever');
 });
 
-t('    and it states NO apportioned amount', () => {
+t('    and it states the apportionment it actually applied', () => {
   const f = occupancyFinding(detect({ start_date: '2019-09-01', end_date: '2026-08-31' }));
-  eq(f.impact, undefined,
-     'a dollar figure here states an apportionment policy that has not been decided');
-  ok(/full-period share of \$10,000\.00/.test(f.detail),
-     'the detail should name what WAS allocated, which is the un-apportioned figure');
-  ok(!/prorat/i.test(f.detail + f.title), 'the finding recommends proration, which T1 must not assume');
+  ok(/243 of 365 days/.test(f.detail), f.detail);
+  ok(f.conditions.some(c => /apportioned 243\/365 days/.test(c)),
+     'the amount line still claims the allocation was un-apportioned: ' + JSON.stringify(f.conditions));
 });
 
-t('THE MID-PERIOD COMMENCEMENT is caught — the silent case', () => {
-  const f = occupancyFinding(detect({ start_date: '2026-09-01', end_date: '2031-08-31' }));
-  ok(f, 'a lease commencing inside the period STILL raises nothing — the whole point of T1');
-  eq(f.severity, 'yellow');
-  eq(f.blocksBilling, true);
-  ok(/lease begins inside the 2026 CAM period/.test(f.title), f.title);
-  ok(/2026-09-01 to 2026-12-31/.test(f.detail), f.detail);
-  eq(f.impact, undefined);
+t('a manager-confirmed basis clears the hold, and is not called the lease', () => {
+  const confirmed = { start_date: '2019-09-01', end_date: '2026-08-31',
+    partial_period_basis: 'per_diem',
+    fieldEvidence: { partial_period_basis: { snapshots: [{ manuallyEdited: true }] } } };
+  eq(occupancyFinding(detect(confirmed)), undefined, 'a confirmed basis still blocks');
+  eq(LP.partialPeriodBasis(confirmed).source, 'manual',
+     'a manager\'s decision is being reported as the lease\'s own language');
+});
+
+t('an UNRECOGNISED basis is held too, and named', () => {
+  const f = occupancyFinding(detect({ start_date: '2019-09-01', end_date: '2026-08-31',
+                                      partial_period_basis: 'weekly' }));
+  ok(f, 'an unrecognised basis was silently treated as a stated one');
+  ok(/"weekly", which is not a basis this reconciliation recognises/.test(f.detail), f.detail);
 });
 
 t('a lease that has not begun by period end is a data error, and says so', () => {
@@ -405,8 +425,8 @@ t('a partial period is NOT told to remove the allocation', () => {
   // answer for a vacancy and bad advice here.
   const f = occupancyFinding(detect({ start_date: '2026-09-01', end_date: '2031-08-31' }));
   ok(!(f.actions || []).includes('Remove allocation'), JSON.stringify(f.actions));
-  ok((f.actions || []).some(a => /commencement and surrender/.test(a)),
-     'the remedy should point at the lease language that governs a partial period');
+  ok((f.actions || []).some(a => /Confirm the partial-period basis/.test(a)),
+     'the remedy should be the confirmation the finding asks for: ' + JSON.stringify(f.actions));
 });
 
 console.log('\n── Ownership: the date rule lives in one place ──');

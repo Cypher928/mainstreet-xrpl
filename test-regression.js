@@ -107,6 +107,15 @@ const SUITES = [
   // apportions, because how a partial period is billed is still an open
   // question and a helper returning a factor would answer it by accident.
   { label: 'Lease term vs CAM period (T1)',     cmd: 'node test-lease-period.js' },
+  // T2. A tenant's CAM share has two independent multiplicands — how much of the
+  // BUILDING, and how much of the PERIOD — and the product had only the first,
+  // so a tenant who took occupancy on 1 September was billed twelve months. The
+  // four things this pins are the four ways it can go wrong: the factor
+  // multiplying a DIRECT invoice (a specific charge is not smaller because the
+  // tenant arrived late), proRataPercent quietly absorbing the factor, one
+  // tenant's unoccupied share being redistributed to the others, and the decimal
+  // being stored instead of the rational that replays exactly.
+  { label: 'Occupancy allocation (T2)',         cmd: 'node test-occupancy-allocation.js' },
   { label: 'Lease period cases on screen (e2e)', cmd: 'node test-e2e-lease-period.js' },
   // B. The two fields T2's arithmetic will read, followed from the prompt to the
   // resolver with /api/claude intercepted: prompt asks -> normaliser stores ->

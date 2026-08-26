@@ -28,6 +28,8 @@
  *   pool − billed  =  outOfYear             (dated outside the CAM year)
  *                  +  notEligible
  *                  +  uncovered            (shared dollars outside the loaded shares)
+ *                  +  notOccupied          (leased space whose lease did not run
+ *                                           the whole period — T2 apportionment)
  *                  +  excludedOrUnmatched  (dollars no lease claimed)
  *                  +  caps
  *                  +  residual
@@ -115,8 +117,28 @@
     //                      ended up claiming. These two are not separable from
     //                      the outputs alone, so they share one honestly-named
     //                      bucket rather than being guessed apart.
+    // TWO COVERAGE FRACTIONS SINCE T2, and they answer different questions.
+    //
+    //   spaceCovered      is there a lease over this square footage at all?
+    //   occupancyCovered  did the lease covering it run the whole period?
+    //
+    // Their difference is money that belongs to leased space whose lease did not
+    // span the period — landlord absorption, exactly like vacancy, but from a
+    // different cause. Folding the two together would report a part-year tenant
+    // as a coverage gap and send the manager looking for a lease that is already
+    // uploaded.
     const covered = proRataSum / 100;
-    let outOfYear = 0, notEligible = 0, uncovered = 0, claimShortfall = 0;
+    // NOT ROUNDED. This is a multiplicand, not a displayed figure: rounding the
+    // percentage sum to two places before dividing by 100 moved $4.93 of a
+    // $100,000 pool out of notOccupied and into the unattributed claim bucket.
+    // The rounded form is exposed separately for display.
+    const occCoveredRaw = results.reduce((s, r) => {
+      const f = (r.occupancy && r.occupancy.applied && r.occupancy.factor !== null)
+        ? r.occupancy.factor : 1;
+      return s + (Number(r.proRataPercent) || 0) * f;
+    }, 0) / 100;
+    const occCovered = occCoveredRaw;
+    let outOfYear = 0, notEligible = 0, uncovered = 0, notOccupied = 0, claimShortfall = 0;
 
     // One definition of what is in the CAM pool, shared with the allocation and
     // the concentration detector. Resolved once here rather than per invoice,
@@ -135,7 +157,7 @@
       // invoice, it does not re-apply the date rule.
       const considered = !inYear || inYear.has(invoiceKey(inv));
 
-      let reason, coverageShare = 0, claimShare = 0;
+      let reason, coverageShare = 0, occupancyShare = 0, claimShare = 0;
       if (!considered) {
         outOfYear += amount;
         reason = 'out_of_year';
@@ -143,13 +165,17 @@
         notEligible += amount;
         reason = 'not_eligible';
       } else {
-        coverageShare = isDirect ? 0 : _round(amount * (1 - covered));
-        claimShare    = _round(amount - coverageShare - allocated);
+        coverageShare  = isDirect ? 0 : _round(amount * (1 - covered));
+        // The part of the covered share that a part-period lease did not take.
+        occupancyShare = isDirect ? 0 : _round(amount * (covered - occCovered));
+        claimShare     = _round(amount - coverageShare - occupancyShare - allocated);
         uncovered      += coverageShare;
+        notOccupied    += occupancyShare;
         claimShortfall += claimShare;
         reason = allocated <= 0 && amount > 0
           ? (isDirect ? 'unclaimed_direct' : 'unclaimed_shared')
           : claimShare > 0.005 ? 'partly_claimed'
+          : occupancyShare > 0.005 ? 'part_period'
           : coverageShare > 0.005 ? 'uncovered_share'
           : 'fully_allocated';
       }
@@ -161,16 +187,18 @@
         amount, allocated,
         unallocated: _round(amount - allocated),
         eligible, isDirect, considered, reason,
-        coverageShare: _round(coverageShare),
-        claimShare:    _round(claimShare),
+        coverageShare:  _round(coverageShare),
+        occupancyShare: _round(occupancyShare),
+        claimShare:     _round(claimShare),
       };
     });
 
     outOfYear      = _round(outOfYear);
     notEligible    = _round(notEligible);
     uncovered      = _round(uncovered);
+    notOccupied    = _round(notOccupied);
     claimShortfall = _round(claimShortfall);
-    const residual = _round(difference - outOfYear - notEligible - uncovered - claimShortfall - capTotal);
+    const residual = _round(difference - outOfYear - notEligible - uncovered - notOccupied - claimShortfall - capTotal);
 
     const gapPct = _round(100 - proRataSum);
     const lines = [
@@ -180,6 +208,8 @@
         detail: 'Invoices the manager unticked in the invoice register. They stay in the expense pool and are never allocated to any tenant.' },
       { key: 'uncovered', label: `Outside the ${proRataSum.toFixed(1)}% of the property covered by loaded leases`, amount: uncovered,
         detail: `Shared expenses are split by pro-rata share. The loaded leases hold ${proRataSum.toFixed(1)}% of the building, so ${gapPct.toFixed(1)}% of every shared invoice belongs to space that is either vacant or under a lease not yet uploaded.` },
+      { key: 'not_occupied', label: 'Leased, but the lease did not run the whole period', amount: notOccupied,
+        detail: `Shared expense belonging to space that IS under a loaded lease, for the part of the period that lease did not cover — a tenant who took occupancy or moved out mid-year. It is apportioned away from that tenant and is not charged to anyone else: the landlord absorbs it, exactly as with vacant space.` },
       { key: 'claim', label: 'Excluded by a lease, or matched to no tenant', amount: claimShortfall,
         detail: 'Dollars inside the covered share that no lease ended up claiming — a category a lease excludes from CAM, or an invoice matched to a tenant that no lease then took.' },
       { key: 'caps', label: 'Reduced by a CAM cap', amount: capTotal,
@@ -194,7 +224,8 @@
     return {
       pool: _round(pool), billed: _round(billed), difference,
       billedPct, proRataSum, gapPct, capTotal,
-      outOfYear, notEligible, uncovered, claimShortfall, residual,
+      occupancyCoveredPct: _round(occCoveredRaw * 100),
+      outOfYear, notEligible, uncovered, notOccupied, claimShortfall, residual,
       lines, invoices: rows,
       invoiceCount:  rows.length,
       unbilledCount: unbilled.length,
@@ -218,6 +249,7 @@
     if (biggest.key === 'out_of_year')  return { cta: 'Check the CAM year against the invoice dates', key: 'out_of_year' };
     if (biggest.key === 'not_eligible') return { cta: 'Review which invoices are CAM-eligible', key: 'not_eligible' };
     if (biggest.key === 'uncovered')    return { cta: 'Upload the remaining leases, or confirm the space is vacant', key: 'uncovered' };
+    if (biggest.key === 'not_occupied') return { cta: 'Review the partial-period treatment on the leases that started or ended mid-year', key: 'not_occupied' };
     if (biggest.key === 'claim')        return { cta: 'Review the lease exclusion schedules', key: 'claim' };
     if (biggest.key === 'caps')         return { cta: 'Review the CAM caps that were applied', key: 'caps' };
     return null;
@@ -230,6 +262,7 @@
     unclaimed_shared: 'Shared expense that reached no tenant',
     partly_claimed:   'Partly allocated — a lease excludes part of it',
     uncovered_share:  'Allocated to the covered share only',
+    part_period:      'Reduced — a lease covered only part of the period',
     fully_allocated:  'Fully allocated',
   };
 
