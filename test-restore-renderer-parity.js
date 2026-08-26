@@ -64,14 +64,14 @@ function eq(a, b, m) { if (a !== b) throw new Error(`${m || ''} expected ${JSON.
 
 const src = fs.readFileSync(path.join(__dirname, 'script.js'), 'utf8');
 
-function fnSource(pattern, label) {
-  const m = src.match(pattern);
-  if (!m) throw new Error(`${label} not found in script.js`);
-  return m[0];
-}
+// The shared extractor. See test-support/fn-source.js — the regexes here used
+// to pin the SIGNATURE and run to the first `}` at column 0, which is how a
+// sibling suite died unnoticed when a function gained a parameter.
+const { fnSource: _fnSource } = require('./test-support/fn-source.js');
+const fnSource = (name) => _fnSource(src, name);
 
-const FRESH   = fnSource(/\nasync function runAllocation\(\) \{[\s\S]*?\n\}\n/, 'runAllocation');
-const RESTORE = fnSource(/\nfunction restoreResultsDisplay\(snapshot\) \{[\s\S]*?\n\}\n/, 'restoreResultsDisplay');
+const FRESH   = fnSource('runAllocation');
+const RESTORE = fnSource('restoreResultsDisplay');
 
 // The action row each renderer emits, and the button classes inside it.
 function actionRow(fnSrc, label) {
@@ -79,10 +79,25 @@ function actionRow(fnSrc, label) {
   if (!m) throw new Error(`${label} emits no <div class="result-card-actions"> block`);
   return m[1];
 }
+// The BASE class of each button in the row.
+//
+// This used to require a literal closing quote — `<button class="foo"` — and
+// I-12 gave the statement button a conditional modifier:
+//
+//     class="tenant-stmt-card-btn${... ? ' tenant-stmt-card-btn--held' : ''}"
+//
+// so the matcher stopped seeing a button that was right there in both
+// renderers, and reported the product as missing an action it has. Reading the
+// base class up to the quote, the whitespace, or the start of an interpolation
+// keeps every assertion below intact — the button must still be present, in the
+// action row, wired to its handler — while surviving a modifier class.
 function buttonClasses(rowHtml) {
-  return (rowHtml.match(/<button class="([a-zA-Z0-9_-]+)"/g) || [])
-    .map(s => s.replace(/^<button class="/, '').replace(/"$/, ''))
+  return (rowHtml.match(/<button class="([a-zA-Z0-9_-]+)/g) || [])
+    .map(s => s.replace(/^<button class="/, ''))
     .sort();
+}
+function rowHasButton(rowHtml, cls) {
+  return new RegExp('<button class="' + cls + '(?=["\\s$])').test(rowHtml);
 }
 
 // The three actions a tenant result card must offer, and the handler each must
@@ -104,7 +119,7 @@ for (const [label, fnSrc] of [['fresh (runAllocation)', FRESH], ['restored (rest
   for (const [cls, handler, human] of REQUIRED_ACTIONS) {
     t(`${label}: offers ${human}`, () => {
       const row = actionRow(fnSrc, label);
-      ok(row.includes(`<button class="${cls}"`), `${human} button (.${cls}) missing from the action row`);
+      ok(rowHasButton(row, cls), `${human} button (.${cls}) missing from the action row`);
       ok(handler.test(row), `${human} is not wired to its handler`);
     });
   }
@@ -147,13 +162,30 @@ t('the action set is exactly the three documented actions', () => {
      'the restored renderer gained or lost an action without this test being updated —');
 });
 
+// The parity the class-literal matcher had accidentally stopped checking. I-12
+// made the statement button's LABEL follow billing state — a tenant the gate is
+// about to refuse must not be offered "Tenant Statement" — and that behaviour
+// has to be in both renderers or a reopened reconciliation offers a document it
+// will then refuse to produce.
+t('both renderers derive the statement button from the billing state', () => {
+  for (const [label, fnSrc] of [['fresh', FRESH], ['restored', RESTORE]]) {
+    const row = actionRow(fnSrc, label);
+    ok(/_tenantBillingState\(r\.name/.test(row),
+       `the ${label} renderer does not ask _tenantBillingState for the button label`);
+    ok(/tenant-stmt-card-btn--held/.test(row),
+       `the ${label} renderer never marks the button held`);
+    ok(/_b \? _b\.cta/.test(row),
+       `the ${label} renderer does not use the billing state's own call to action`);
+  }
+});
+
 t('the lease-validation guard that makes the mount point mandatory still exists', () => {
   ok(/async function _runLeaseValidation\(panelEl[^)]*\) \{\s*if \(!panelEl\) return;/.test(src),
      '_runLeaseValidation no longer early-returns on a missing panel — if this guard changed, ' +
      'the lv-panel assertions above may no longer describe why the mount point is required');
 });
 
-const TOTAL_EXPECTED = 16;
+const TOTAL_EXPECTED = 17;
 t(`suite runs all ${TOTAL_EXPECTED} checks`, () => {
   eq(pass + fail + 1, TOTAL_EXPECTED, 'test count changed — update TOTAL_EXPECTED deliberately');
 });

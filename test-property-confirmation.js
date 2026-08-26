@@ -182,11 +182,22 @@ console.log('\n── Source wiring: the CAM gate and the UI ──');
 {
   const src = fs.readFileSync(path.join(__dirname, 'script.js'), 'utf8');
 
-  /function getValidTenants\(\)[\s\S]{0,320}?!_propertyMismatchBlockReason\(t\)/.test(src)
+  // BOUNDED BY THE FUNCTION, NOT BY A CHARACTER COUNT.
+  //
+  // These were `[\s\S]{0,320}?` windows, and the window is not a property of
+  // the code — it is a guess about how long the function happens to be. A
+  // comment added inside getValidTenants pushed the very line being asserted
+  // past 320 characters, and this suite then reported that the CAM gate had
+  // stopped consulting the block reason. It had not: the call is right there.
+  // A test that fails when a comment is added, naming a defect that does not
+  // exist, is worse than no test — someone eventually stops believing it.
+  const { fnSource } = require('./test-support/fn-source.js');
+  const _valid = fnSource(src, 'getValidTenants');
+  /!_propertyMismatchBlockReason\(t\)/.test(_valid)
     ? ok('getValidTenants() gates on the BLOCK reason, so a confirmed lease enters CAM')
     : bad('getValidTenants() does not consult _propertyMismatchBlockReason');
 
-  /function _hasPropertyMismatch\(t\)[\s\S]{0,260}?edgeCaseTypes\.includes\('PROPERTY_NAME_MISMATCH'\)/.test(src)
+  /edgeCaseTypes\.includes\('PROPERTY_NAME_MISMATCH'\)/.test(fnSource(src, '_hasPropertyMismatch'))
     ? ok('_hasPropertyMismatch() is still the raw detector, unchanged')
     : bad('the raw detector was modified');
 

@@ -36,6 +36,12 @@ function pick(re, label) {
   return m[0];
 }
 
+// The shared extractor. See test-support/fn-source.js for why the regex form
+// this file used — signature-pinned, and run to the first `}` at column 0 —
+// silently killed this suite when generateTenantStatement gained a parameter.
+const { fnSource } = require('./test-support/fn-source.js');
+const fnSrc = (name) => fnSource(src, name);
+
 // ── 1. Same-year runs must never be called year-over-year ──────────────────
 console.log('\n── 1. Run-over-run is not year-over-year ──');
 
@@ -110,8 +116,8 @@ t('[source] the distinct-year YoY audit finding is untouched', () => {
 // ── 2. Tenant Statement staleness guards ───────────────────────────────────
 console.log('\n── 2. Tenant Statement refuses stale results ──');
 
-const stmt = pick(/\nfunction generateTenantStatement\(tenantName\) \{[\s\S]*?\n\}\n/, 'generateTenantStatement');
-const csv  = pick(/\nfunction exportReconciliationCSV\(\) \{[\s\S]*?\n\}\n/, 'exportReconciliationCSV');
+const stmt = fnSrc('generateTenantStatement');
+const csv  = fnSrc('exportReconciliationCSV');
 
 t('the statement refuses when _resultsStale is set', () => {
   ok(/if \(_resultsStale\) \{/.test(stmt), 'generateTenantStatement has no _resultsStale guard');
@@ -180,15 +186,48 @@ t('all three scope elements are styled', () => {
 });
 
 t('neither engine determination was altered', () => {
-  // Risk thresholds and the lease severity mapping must be byte-identical.
+  // Risk thresholds must be byte-identical: these ARE the determination.
   ok(/if \(red\.length >= 3 \|\| \(red\.length >= 1 && openDisputes\.length >= 1\)\) \{/.test(src),
      'the Critical risk threshold changed');
   ok(/riskLevel = 'Critical';/.test(src), 'the Critical risk level was renamed or removed');
-  ok(/SEV_LABEL = \{ critical: 'CRITICAL', warning: 'REVIEW', info: 'PASSED' \}/.test(src),
-     'the lease validation severity labels changed');
 });
 
-const TOTAL_EXPECTED = 18;
+t('a lease finding is never labelled as a pass it did not earn', () => {
+  // THIS ASSERTION USED TO BE A BYTE MATCH on the whole SEV_LABEL literal —
+  // { critical: 'CRITICAL', warning: 'REVIEW', info: 'PASSED' } — and it broke
+  // when a FOURTH verdict was added deliberately: `unconfirmed`, separating "we
+  // checked and it holds" from "the lease does not say", because absence of
+  // evidence was rendering as a green tick reading PASSED. That was a reviewed
+  // product decision, and this file's own header says neither engine's
+  // determination is under test here; the map is labelling.
+  //
+  // So it pins the property the change was FOR, which a byte match never
+  // checked: no severity, known or unknown, may read as an affirmative pass
+  // unless it is `info`. That survives the next vocabulary change and still
+  // fails the edit this guard exists to stop.
+  const panel = fnSrc('_renderValidationPanel');
+  const lit = panel.match(/SEV_LABEL\s*=\s*\{([^}]*)\}/);
+  ok(lit, 'SEV_LABEL is gone from the validation panel');
+  const map = {};
+  lit[1].split(',').forEach(pair => {
+    const m = pair.match(/\s*(\w+)\s*:\s*'([^']*)'/);
+    if (m) map[m[1]] = m[2];
+  });
+  eq(map.info, 'PASSED', 'the affirmative verdict is no longer PASSED —');
+  ok(map.critical && map.critical !== 'PASSED', `critical reads as "${map.critical}"`);
+  ok(map.warning  && map.warning  !== 'PASSED', `warning reads as "${map.warning}"`);
+  // Every non-info verdict must be distinguishable from every other one, or the
+  // reader cannot tell which of them they are looking at.
+  const nonInfo = Object.keys(map).filter(k => k !== 'info').map(k => map[k]);
+  eq(new Set(nonInfo).size, nonInfo.length, 'two verdicts share one label —');
+  // The fallback for a severity nobody anticipated. An unrecognised verdict has
+  // confirmed nothing, and this is a document an auditor may rely on.
+  const fallback = panel.match(/SEV_LABEL\[f\.severity\]\s*\|\|\s*'([^']*)'/);
+  ok(fallback, 'the unknown-severity fallback was removed');
+  ok(fallback[1] !== 'PASSED', `an unrecognised severity renders as "${fallback[1]}"`);
+});
+
+const TOTAL_EXPECTED = 19;
 t(`suite runs all ${TOTAL_EXPECTED} checks`, () => {
   eq(pass + fail + 1, TOTAL_EXPECTED, 'test count changed — update TOTAL_EXPECTED deliberately');
 });

@@ -299,7 +299,17 @@ const READ_FIELDS = () => {
       `blob capBaseAmount is ${JSON.stringify(saved.base)} — this is where it is lost`);
 
   await page.reload({ waitUntil: 'domcontentloaded' });
-  await page.waitForSelector('#loginBtn', { state: 'visible', timeout: 20000 }).catch(() => {});
+  // Wait for one of the two states the reload can land in, rather than waiting
+  // for one and swallowing the timeout. The discarded form let a slow login
+  // screen read as "already signed in", after which every later wait sat until
+  // its own timeout on a condition that could no longer come true — an
+  // intermittent hang that only ever showed up under the full regression.
+  await page.waitForFunction(() => {
+    const b = document.getElementById('loginBtn');
+    const a = document.getElementById('appContent');
+    return (b && b.offsetParent !== null)
+        || (a && a.style.display !== 'none' && a.style.display !== '');
+  }, null, { timeout: 45000 });
   const needsLogin = await page.evaluate(() => {
     const b = document.getElementById('loginBtn');
     return !!(b && b.offsetParent !== null);

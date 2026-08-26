@@ -172,6 +172,64 @@ const SUITES = [
   // anchor holding over, a Gross lease taking shared CAM, three clean tenants
   // that must bill anyway, and a property headline that survives all of it.
   { label: 'Riverside billing readiness (e2e)', cmd: 'node test-e2e-billing-readiness.js' },
+  // ────────────────────────────────────────────────────────────────────────
+  // BROUGHT IN FROM THE UNREGISTERED PILE.
+  //
+  // An audit found 74 of 110 test files running nowhere. Two were broken and
+  // nobody knew, which is what prompted the audit; the rest of these were
+  // passing all along and had simply never been asked. Everything below passed
+  // on the audit run and covers real product behaviour, so it is asked now.
+  //
+  // What stays out — live-credential suites, network suites, the marketing-film
+  // contracts, and the ones failing on a diagnosed entry-point drift — is listed
+  // with a category and a reason in test-support/coverage-manifest.js, and
+  // test-suite-registration.js fails if a test file is in neither place.
+  // ────────────────────────────────────────────────────────────────────────
+  { label: 'Test accounting (registered vs excluded)',  cmd: 'node test-suite-registration.js' },
+  { label: 'Pilot smoke fixes (guards + labelling)',    cmd: 'node test-smoke-fixes.js' },
+  { label: 'Restore/fresh renderer parity',             cmd: 'node test-restore-renderer-parity.js' },
+  { label: 'Property mismatch confirmation',            cmd: 'node test-property-confirmation.js' },
+  { label: 'Cross-report consistency',                  cmd: 'node test-cross-report.js' },
+  { label: 'Cross-report fixture (Test 2)',             cmd: 'node test-cross-report-fixture.js' },
+  { label: 'Audit summary self-consistency',            cmd: 'node test-audit-consistency.js' },
+  { label: 'Allocation/statement consistency',          cmd: 'node test-allocation-consistency.js' },
+  { label: 'CAM exclusions (F-02)',                     cmd: 'node test-cam-exclusions.js' },
+  { label: 'Phase 0 remediation (M1a, M5, P1b)',        cmd: 'node test-phase0-remediation.js' },
+  { label: 'Acquisition due diligence',                 cmd: 'node test-acquisition.js' },
+  { label: 'Acquisition orphan repair',                 cmd: 'node test-acq-orphan-repair.js' },
+  { label: 'Escrow reserve extraction',                 cmd: 'node test-escrow.js' },
+  { label: 'Demo lease document contract',              cmd: 'node test-demo-lease.js' },
+  { label: 'Vercel routing contract',                   cmd: 'node test-routing.js' },
+  { label: 'Extraction field preservation',             cmd: 'node test-tenant-field-preservation.js' },
+  { label: 'Spaces list refresh after upload',          cmd: 'node test-spaces-refresh.js' },
+  { label: 'Security (Part 4)',                         cmd: 'node test-security.js' },
+  { label: 'A lease is data, not instructions',         cmd: 'node test-untrusted-lease-text.js' },
+  { label: 'Explain prompt control (AI-2)',             cmd: 'node test-explain-prompt-control.js' },
+  { label: 'Request limits',                            cmd: 'node test-request-limits.js' },
+  { label: 'Evidence honesty',                          cmd: 'node test-evidence-honesty.js' },
+  { label: 'Evidence persisted as PENDING',             cmd: 'node test-evidence-persistence.js' },
+  { label: 'AI confidence surfaces',                    cmd: 'node test-ai-confidence.js' },
+  { label: 'Tenant matching on lease upload',           cmd: 'node test-tenant-matching.js' },
+  { label: 'Lease job lifecycle',                       cmd: 'node test-lease-job-lifecycle.js' },
+  { label: 'Live extraction walk',                      cmd: 'node test-live-extraction-walk.js' },
+  { label: 'Lease validator: management fee cap',       cmd: 'node test-mgmt-fee-cap.js' },
+  { label: 'Lease validator: audit rights',             cmd: 'node test-audit-rights.js' },
+  { label: 'Property workspace',                        cmd: 'node test-property-workspace.js' },
+  { label: 'Property lifecycle',                        cmd: 'node test-property-lifecycle.js' },
+  { label: 'Space activity',                            cmd: 'node test-space-activity.js' },
+  { label: 'Space lease chip (no Invalid Date)',        cmd: 'node test-space-lease-chip.js' },
+  { label: 'Dispute lifecycle',                         cmd: 'node test-dispute-lifecycle.js' },
+  { label: 'Prior-year CAM base persistence',           cmd: 'node test-cap-base-persistence.js' },
+  { label: 'Activity timeline (e2e)',                   cmd: 'node test-e2e-activity-timeline.js' },
+  { label: 'Needs Review rollup (e2e)',                 cmd: 'node test-e2e-cam-needs-review.js' },
+  { label: 'Inline handlers',                           cmd: 'node test-inline-handlers.js' },
+  { label: 'Broken promises (dead controls)',           cmd: 'node test-broken-promises.js' },
+  { label: 'First run experience',                      cmd: 'node test-first-run.js' },
+  { label: 'First run walkthrough',                     cmd: 'node test-first-run-walkthrough.js' },
+  { label: 'Sign-in walkthrough',                       cmd: 'node test-signin-walkthrough.js' },
+  { label: 'Pilot readiness',                           cmd: 'node test-pilot-readiness.js' },
+  { label: 'Mobile reports',                            cmd: 'node test-mobile-reports.js' },
+  { label: 'Mobile sqft input',                         cmd: 'node test-mobile-sqft-input.js' },
   { label: 'XRPL RLUSD settlement config',      cmd: 'node test-rlusd.js' },
 ];
 

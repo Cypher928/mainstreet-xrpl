@@ -626,7 +626,21 @@ const SUPABASE_MOCK = `
       localStorage.setItem('__t3_store', JSON.stringify(store));
     }, withConfirmation);
     await page.reload({ waitUntil: 'domcontentloaded' });
-    await page.waitForSelector('#loginBtn', { state: 'visible', timeout: 20000 }).catch(() => {});
+    // WAIT FOR THE PAGE TO SETTLE INTO ONE OF ITS TWO STATES, rather than
+    // guessing which one arrived. This used to wait up to 20s for #loginBtn and
+    // SWALLOW the timeout, then ask whether the button happened to be visible.
+    // Under load — a dozen browsers launched and torn down before this one — the
+    // button arrived late, the swallowed catch hid that, no sign-in happened,
+    // and the next wait then sat for its full 45s on a condition that could no
+    // longer come true. The suite passed on its own every time and failed
+    // intermittently in the full regression, which is the worst way for this to
+    // present. A wait whose failure is discarded is not a wait.
+    await page.waitForFunction(() => {
+      const b = document.getElementById('loginBtn');
+      const a = document.getElementById('appContent');
+      return (b && b.offsetParent !== null)
+          || (a && a.style.display !== 'none' && a.style.display !== '');
+    }, null, { timeout: 45000 });
     if (await page.evaluate(() => { const b = document.getElementById('loginBtn');
                                     return !!(b && b.offsetParent !== null); })) {
       await page.fill('#loginEmail', 't3@e2e-test.local');

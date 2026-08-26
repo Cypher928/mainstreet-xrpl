@@ -24,16 +24,33 @@ const EE = (typeof EscrowReserveEngine !== 'undefined') ? EscrowReserveEngine : 
 
 const FIXTURES = require('./escrow-verification-fixtures.js');
 
-// Pulls the live CLAUDE_ESCROW_SYSTEM constant straight out of script.js so this
-// verification can never silently drift from what the app actually sends.
-function loadConstFromScript(constName) {
-  const src = fs.readFileSync(path.join(__dirname, 'script.js'), 'utf8');
-  const re = new RegExp('const ' + constName + ' = (`[\\s\\S]*?`);');
-  const m = src.match(re);
-  if (!m) throw new Error(`Could not find ${constName} in script.js`);
-  return eval(m[1]);
+// Pulls the LIVE escrow system prompt out of the file that actually sends it, so
+// this verification can never silently drift from what the app does.
+//
+// It used to read `CLAUDE_ESCROW_SYSTEM` from script.js. SEC-2 moved that prompt
+// — and the lease, invoice and category ones — into api/_claude-tasks.js, because
+// a schema defined in the browser is a schema the caller can rewrite before it
+// reaches Anthropic. The prompt moved; this reader did not, so the suite crashed
+// on load with "Could not find CLAUDE_ESCROW_SYSTEM in script.js" and verified
+// nothing from that day on.
+//
+// Both names are tried, and a miss names both places rather than only the old
+// one: the next move should fail loudly here too, but legibly.
+function loadPromptConst(names) {
+  const files = ['api/_claude-tasks.js', 'script.js'];
+  for (const f of files) {
+    const p = path.join(__dirname, f);
+    if (!fs.existsSync(p)) continue;
+    const src = fs.readFileSync(p, 'utf8');
+    for (const constName of names) {
+      const m = src.match(new RegExp('const ' + constName + ' = (`[\\s\\S]*?`);'));
+      if (m) return eval(m[1]);
+    }
+  }
+  throw new Error(`Could not find any of [${names.join(', ')}] in ${files.join(' or ')} — ` +
+                  'the escrow extraction prompt has moved again; point this reader at its new home.');
 }
-const CLAUDE_ESCROW_SYSTEM = loadConstFromScript('CLAUDE_ESCROW_SYSTEM');
+const CLAUDE_ESCROW_SYSTEM = loadPromptConst(['ESCROW_EXTRACTION_SYSTEM', 'CLAUDE_ESCROW_SYSTEM']);
 
 const API_KEY = process.env.ANTHROPIC_API_KEY;
 const MODEL = process.env.CLAUDE_MODEL || 'claude-sonnet-4-6';
