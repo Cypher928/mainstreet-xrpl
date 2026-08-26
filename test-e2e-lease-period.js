@@ -394,6 +394,41 @@ const SUPABASE_MOCK = `
       !Object.values(stmts).some(s => s.prorated),
       'a statement mentions proration — T1 must not state a policy that has not been decided');
 
+  // ── The reduced-fidelity notice (change A) ────────────────────────────────
+  // A reconciliation rebuilt from normalized summary rows must say what it
+  // cannot tell you, and must say it ABOVE the KPI row it qualifies. Driven
+  // here rather than in its own browser suite because this is the only thing
+  // that needs a rendered panel and one boot is enough.
+  console.log('\n── Rebuilt-record notice ──');
+  const fid = await page.evaluate(async () => {
+    const p = currentProperty();
+    p.camReconciliation = Object.assign({}, p.camReconciliation, {
+      fidelity: 'reduced',
+      rebuiltFrom: 'cam_reconciliations',
+      fidelityReasons: ['Reason one about invoices.', 'Reason two about <caps>.'],
+    });
+    await runAllocation();
+    await new Promise(r => setTimeout(r, 300));
+    const body = document.getElementById('resultsBody');
+    const note = body ? body.querySelector('.rcs-fidelity') : null;
+    const kpis = body ? body.querySelector('.rcs-kpis') : null;
+    return {
+      present: !!note,
+      text: note ? note.textContent.replace(/\s+/g, ' ').trim() : null,
+      items: note ? [...note.querySelectorAll('li')].map(li => li.textContent.trim()) : [],
+      beforeKpis: !!(note && kpis && (note.compareDocumentPosition(kpis) & Node.DOCUMENT_POSITION_FOLLOWING)),
+      rawHasScriptTag: note ? /<caps>/.test(note.innerHTML) : null,
+    };
+  });
+  R('notice', fid.present);
+  R('items', fid.items);
+  yes('a rebuilt record renders the fidelity notice', fid.present, JSON.stringify(fid));
+  yes('    it lists the reasons it was given',
+      fid.items.length === 2 && /Reason one/.test(fid.items[0]), JSON.stringify(fid.items));
+  yes('    it sits above the KPI row it qualifies', fid.beforeKpis, JSON.stringify(fid));
+  yes('    and the reasons are escaped, not injected as markup',
+      fid.rawHasScriptTag === false, 'a fidelity reason was interpolated unescaped');
+
   console.log('\n── Console ──');
   yes('no uncaught page errors', errors.length === 0, errors.slice(0, 3).join(' | '));
 

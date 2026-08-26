@@ -2905,6 +2905,19 @@
        KPI to the expense pool the variance banner names, so two numbers on one
        screen read as one fact rather than a contradiction. */
     .rcs-kpi-sub { display: block; font-size: 0.62rem; font-weight: 400; opacity: 0.75; margin-top: 1px; }
+    /* A reconciliation rebuilt from normalized summary rows carries the amount
+       and the share and nothing else. Placed ABOVE the KPI row so it is read
+       before the figures it qualifies, not after them. */
+    .rcs-fidelity {
+      margin: 10px 0 4px; padding: 10px 12px; border-radius: 8px;
+      background: var(--bgc-1e293b, rgba(30,41,59,0.6));
+      border-left: 3px solid var(--c-f59e0b, #f59e0b);
+      font-size: 0.78rem; line-height: 1.5; color: var(--text-2);
+    }
+    .rcs-fidelity strong { color: var(--text-1); }
+    .rcs-fidelity-list { margin: 6px 0 4px; padding-left: 18px; }
+    .rcs-fidelity-list li { margin: 2px 0; }
+    .rcs-fidelity-cta { display: block; font-size: 0.74rem; opacity: 0.85; }
     /* The roster line sits with the panel badges, above the table, because on a
        phone the table is several screens down and scrolls sideways. */
     .rcs-bill-roster {

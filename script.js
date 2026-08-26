@@ -12213,6 +12213,26 @@ function _buildReconciliationSummaryHtml(results, invoices, propName, engineInvo
         ${_billing ? `<span class="rcs-readiness-badge ${_billable ? 'rcs-readiness--ok' : 'rcs-readiness--blocked'}" title="${esc(_billing.reason || '')}">${_billable ? '&#x2713; Ready to bill' : '&#x26D4; Not ready to bill'}</span>` : ''}
         ${_balBadgeHtml}
       </div>
+      ${(() => {
+        // A REBUILT RECORD SAYS SO, ABOVE THE FIGURES IT QUALIFIES.
+        //
+        // When the snapshot blob is missing, the reconciliation is rebuilt from
+        // the normalized cam_reconciliations rows, which carry the amount and
+        // the share and nothing else. Rendered without a word, that record is
+        // indistinguishable from a full run: "0 Caps Applied" and a per-tenant
+        // invoice count read as findings about the reconciliation rather than as
+        // data the rows never held.
+        const _rec = (typeof currentProperty === 'function' && currentProperty()) || null;
+        const _cr  = _rec && _rec.camReconciliation;
+        if (!_cr || _cr.fidelity !== 'reduced') return '';
+        const _why = (_cr.fidelityReasons || []).map(r => `<li>${esc(r)}</li>`).join('');
+        return `<div class="rcs-fidelity" role="note">
+          <strong>Rebuilt from saved summary rows.</strong>
+          The amount billed to each tenant and its pro-rata share are as recorded. The detail below them is not:
+          <ul class="rcs-fidelity-list">${_why}</ul>
+          <span class="rcs-fidelity-cta">Re-run the reconciliation to restore the full breakdown.</span>
+        </div>`;
+      })()}
       <div class="rcs-kpis">
         ${avgConfidence !== null ? `<div class="rcs-kpi ${avgConfidence < 70 ? 'rcs-kpi--warn' : ''}"><div class="rcs-kpi-val">${avgConfidence}%</div><div class="rcs-kpi-lbl">Confidence</div></div>` : ''}
         <div class="rcs-kpi"><div class="rcs-kpi-val">${fmt(camPoolTotal)}</div><div class="rcs-kpi-lbl">CAM Pool${
@@ -24122,32 +24142,84 @@ function _mergeCamReconciliationRows(dbData, camRows) {
   const invoiceCount = invoiceList.length;
   const invoiceTotal = invoiceList.reduce((s, inv) => s + (parseFloat(inv.amount) || 0), 0);
 
+  // THE SHARE THAT WAS BILLED, READ BACK — not one recomputed from today's
+  // square footage.
+  //
+  // This rebuilt `proRataPercent` from `leased_sqft / totalSqft` while taking
+  // the dollar figure from the stored `actual_cam`. Two numbers from two
+  // different moments: if a suite was re-measured, a lease amended, or the
+  // property's total square footage corrected after the run, the restored
+  // record showed the amount that was billed beside a percentage that could
+  // never have produced it. `pro_rata_percent` has been a column on
+  // cam_reconciliations since migration 003 and saveCamResults has always
+  // written it; the rebuild simply never read it.
+  const _rowFor = t => camRows.find(r => r && String(r.tenant_id) === String(t.id)) || null;
+  const _pct = v => {
+    const n = typeof v === 'number' ? v : parseFloat(v);
+    return Number.isFinite(n) ? n : null;
+  };
+
+  let _recomputedShares = 0;
   const snapResults = dbData.tenants
     .filter(t => t.actualCam != null)
-    .map(t => ({
-      name:             t.tenant_name || '(Unknown)',
-      allocatedAmount:  t.actualCam,
-      totalAllocated:   t.actualCam,
-      proRata:          (Number(t.leased_sqft) || 0) / totalSqft,
-      proRataPercent:   ((Number(t.leased_sqft) || 0) / totalSqft) * 100,
-      // Per-tenant invoice breakdown isn't recoverable from cam_reconciliations
-      // alone; use the full invoice count as the best approximation.
-      eligibleCount:    invoiceCount,
-      capApplied:       false,
-      capAdjustment:    null,
-      includedInvoices: [],
-      ambiguityFlags:   [],
-    }));
+    .map(t => {
+      const row       = _rowFor(t);
+      const storedPct = row ? _pct(row.pro_rata_percent) : null;
+      // Falls back to a recomputed share only when the row genuinely has none —
+      // a legacy row written before the column was populated. It is still shown,
+      // because a derived share beats no share at all, but it is LABELLED so no
+      // reader mistakes it for what was billed.
+      const pct = storedPct !== null
+        ? storedPct
+        : ((Number(t.leased_sqft) || 0) / totalSqft) * 100;
+      if (storedPct === null) _recomputedShares++;
+      return {
+        name:             t.tenant_name || '(Unknown)',
+        allocatedAmount:  t.actualCam,
+        totalAllocated:   t.actualCam,
+        proRataPercent:   pct,
+        proRata:          pct / 100,
+        proRataSource:    storedPct !== null ? 'stored' : 'recomputed',
+        // Per-tenant invoice breakdown isn't recoverable from cam_reconciliations
+        // alone; use the full invoice count as the best approximation.
+        eligibleCount:    invoiceCount,
+        // NULL, NOT FALSE. `false` is the assertion "no cap was applied", and
+        // these rows do not record whether one was. Every consumer tests this
+        // truthily, so null reads as "unknown" without changing any behaviour —
+        // and the fidelity notice below says so in words.
+        capApplied:       null,
+        capAdjustment:    null,
+        includedInvoices: [],
+        ambiguityFlags:   [],
+      };
+    });
   if (!snapResults.length) return;
+
+  // WHAT THIS RECORD CANNOT TELL YOU. A rebuilt snapshot carries the amount and
+  // the share as billed and nothing else; without this it renders identically to
+  // a full reconciliation, so "0 Caps Applied" and a per-tenant invoice count
+  // read as findings rather than as absent data.
+  const fidelityReasons = [
+    'The per-invoice breakdown was not stored on these rows, so each tenant shows the property-wide invoice count rather than its own.',
+    'Whether a lease cap was applied was not stored either — caps read as unknown here, not as "no cap applied".',
+  ];
+  if (_recomputedShares > 0) {
+    fidelityReasons.push(
+      `${_recomputedShares} tenant${_recomputedShares === 1 ? "'s" : "s'"} pro-rata share had no stored value and has been recomputed from current square footage — it may differ from the share actually billed.`);
+  }
 
   console.log('[CamReconciliation] FALLBACK — rebuilding camReconciliation from cam_reconciliations rows', {
     snapResultsLen: snapResults.length, dbTenantsLen: (dbData.tenants || []).length, totalSqft,
+    storedShares: snapResults.length - _recomputedShares, recomputedShares: _recomputedShares,
   });
   dbData.camReconciliation = {
     propId:       dbData.id,
     propName:     dbData.name || '',
     camYear:      camRows[0]?.year ?? getCamYear(),
     total:        invoiceTotal || snapResults.reduce((s, r) => s + (r.allocatedAmount || 0), 0),
+    fidelity:     'reduced',
+    rebuiltFrom:  'cam_reconciliations',
+    fidelityReasons,
     results:      snapResults,
     invoices:     invoiceList.map((inv, i) => ({ id: `inv-${i}`, ...inv })),
     invoicesFull: invoiceList,

@@ -23,6 +23,14 @@ const SUITES = [
   { label: 'Lease test lab',               cmd: 'node test-testlab.js'   },
   { label: 'Normalized read migration',    cmd: 'node test-normalized-reads.js' },
   { label: 'CAM reconciliation persistence', cmd: 'node test-cam-persistence.js' },
+  // When the snapshot blob is missing, the reconciliation is rebuilt from the
+  // normalized cam_reconciliations rows — and that rebuild took each tenant's
+  // dollar figure from the stored actual_cam while RECOMPUTING its pro-rata
+  // share from current square footage. Two numbers from two different moments,
+  // printed side by side. The stored pro_rata_percent column had been there
+  // since migration 003; the rebuild never read it. Fixed here, ahead of T2,
+  // where the same contradiction would have carried a prorated amount.
+  { label: 'Rebuilt-record fidelity',        cmd: 'node test-cam-rebuild-fidelity.js' },
   { label: 'Lease document persistence',     cmd: 'node test-lease-persistence.js' },
   { label: 'Ask the Lease API',              cmd: 'node test-ask-lease.js' },
   { label: 'Lease Validation (Phase 23)',    cmd: 'node test-validate-lease.js' },
