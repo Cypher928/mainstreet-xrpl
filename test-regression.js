@@ -143,6 +143,16 @@ const SUITES = [
   // row carries. This clicks the real button, from a screen deliberately put out
   // of step with the saved record, and checks the dollars that come back.
   { label: 'Rebuild reconciliation state (e2e)', cmd: 'node test-e2e-rebuild-state.js' },
+  // D-4. Two renderers write to #resultsBody, and the one a landlord gets when
+  // they OPEN a saved reconciliation was two generations behind the one that
+  // produced it: no summary panel, no KPIs, no variance banner, no findings, no
+  // per-tenant billing chip and no roster — everything that says whether the
+  // money on screen may be sent. This compares the fresh screen against the
+  // reopened one rather than listing selectors, because a surface the fresh run
+  // gains and the restore does not is exactly the defect, and asserts the
+  // dollars are identical to the cent: the saved record is reported, not
+  // recomputed.
+  { label: 'Restored reconciliation surface (e2e)', cmd: 'node test-e2e-restored-surface.js' },
   // The same defect as the loop a manager actually walks: mark the roof not
   // CAM-eligible through the real register checkbox, re-run, and the blocker
   // must clear, the tenants must bill, and the statements must issue — then

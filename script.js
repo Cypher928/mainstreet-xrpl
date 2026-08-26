@@ -25495,11 +25495,45 @@ function restoreResultsDisplay(snapshot) {
   const body    = document.getElementById('resultsBody');
   document.getElementById('resultsTitle').textContent = `${getCamYear()} CAM — ${lastPropName}`;
 
-  let html = `<div class="summary-bar">
-    <strong>Total Expenses:</strong> ${fmt(lastTotal)}
-    &nbsp;|&nbsp; <strong>Tenants:</strong> ${lastResults.length}
-    &nbsp;|&nbsp; <strong>Invoices:</strong> ${lastInvoicesFull.length}
-  </div>`;
+  // THE SAME PANEL THE FRESH RUN DRAWS, FROM THE STORED ROWS.
+  //
+  // Opening a saved reconciliation used to drop the reader two generations back:
+  // a bare summary line and three stats per tenant. No KPI row, no variance
+  // banner and no way into the breakdown, no audit findings, no per-tenant
+  // billing chip, no roster — none of the surface a manager was taught to read
+  // on the run that produced these numbers. It was the same reconciliation
+  // wearing an older face, and the parts missing were exactly the parts that say
+  // whether the money on screen may be billed.
+  //
+  // _buildReconciliationSummaryHtml is a pure builder over (results, invoices):
+  // every figure comes from the stored rows, so THE SAVED RECORD IS NOT
+  // RECOMPUTED — what it adds is the reporting around them. It also populates
+  // _lastReconIssues and _lastVarianceBreakdown, which is why "Open Dispute" and
+  // the variance panel were inert on this path.
+  //
+  // invoiceData is passed as the engine invoices because lastInvoicesFull is the
+  // stripped shape — it has lost camEligible and id, so it cannot say which
+  // invoices were held out of CAM, and the variance panel needs both.
+  const _summaryHtml = (() => {
+    try {
+      return _buildReconciliationSummaryHtml(
+        lastResults, lastInvoicesFull, lastPropName,
+        Array.isArray(invoiceData) && invoiceData.length ? invoiceData : lastInvoicesFull,
+        undefined);
+    } catch (e) {
+      // A restored reconciliation must still render if the summary cannot be
+      // built. The cards below are the record; the panel is the reporting.
+      console.warn('[restoreResultsDisplay] summary panel not built:', e && e.message);
+      return '';
+    }
+  })();
+
+  let html = _summaryHtml + `<div class="summary-bar">
+    <div class="summary-bar-item"><span class="summary-bar-label">Total Expenses</span><strong>${fmt(lastTotal)}</strong></div>
+    <div class="summary-bar-item"><span class="summary-bar-label">Tenants</span><strong>${lastResults.length}</strong></div>
+    <div class="summary-bar-item"><span class="summary-bar-label">Invoices</span><strong>${lastInvoicesFull.length}</strong></div>
+  </div>
+  <div class="pro-rata-note">Pro-Rata % = Tenant Sqft &divide; Total Property Sqft &nbsp;<span class="pro-rata-note-tip" title="The percentage of the property occupied by a tenant. This percentage determines their share of common area expenses.">&#x24D8;</span></div>`;
 
   lastResults.forEach(r => {
     // This renderer and the one in runAllocation both write to #resultsBody, but
@@ -25530,8 +25564,18 @@ function restoreResultsDisplay(snapshot) {
     // drift is now caught by test-restore-renderer-parity.js instead.
     const tdIdx      = tenantData.findIndex(t => t && t.tenant_name === r.name);
     const _lvPanelId = `lv-panel-${tdIdx >= 0 ? tdIdx : r.name.replace(/[^a-zA-Z0-9]/g, '-')}`;
+    // The calculation state, the same badge and the same derivation the fresh
+    // card carries. It says how far to trust the figure beneath it — whether the
+    // row was apportioned, capped, or is missing something — and a reopened
+    // reconciliation showed the figure with that qualification removed.
+    const _rCalcSt = (() => {
+      try { return _deriveCalcState(r, tenantData.find(t => t && t.id === r.tenantId)); }
+      catch (_) { return null; }
+    })();
     html += `<div class="result-card" id="${_resultCardAnchorId(r.name)}">
-      <div class="r-name">${esc(r.name)}</div>
+      <div class="r-name">${esc(r.name)}${_rCalcSt
+        ? `<span class="rc-calc-state ${_rCalcSt.cls}" title="Describes the CAM calculation for this row, not the tenant's standing. Audit exceptions are listed in the AI Audit Summary.">${_rCalcSt.label}</span>`
+        : ''}</div>
       <div class="result-grid">
         ${stat('Allocated Amount',  fmt(r.allocatedAmount))}
         ${stat('Pro-Rata Share',    (r.proRata * 100).toFixed(2) + '%')}
