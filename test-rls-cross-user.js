@@ -18,8 +18,18 @@
  *   exit 1 = one or more assertions failed
  */
 
-const SUPABASE_URL = 'https://zhsuhehgehbzkmzurzyf.supabase.co';
-const ANON_KEY     = 'eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6Inpoc3VoZWhnZWhiemttenVyenlmIiwicm9sZSI6ImFub24iLCJpYXQiOjE3NzU4NDkwNDAsImV4cCI6MjA5MTQyNTA0MH0.HUl9ha9hhjIO1F_k8xPkqbZQnWx-ERRGbnmc6KS3lNE';
+// THE PROJECT IS CHOSEN, NOT HARD-CODED — and the default is PILOT.
+//
+// These two lines used to be the PRODUCTION url and anon key as literals, so
+// this suite read the customer database no matter which accounts were supplied.
+// The resolver reads both projects out of supabase-config.js (the app's own
+// source of truth, so a key here cannot drift from the key the app ships) and
+// refuses production unless MS_TEST_ALLOW_PRODUCTION carries the force token.
+// See test-support/supabase-target.js.
+const { resolveOrAbort } = require('./test-support/supabase-target.js');
+const TARGET       = resolveOrAbort('rls-cross-user');
+const SUPABASE_URL = TARGET.url;
+const ANON_KEY     = TARGET.anonKey;
 const APP_URL      = process.env.APP_URL || 'http://localhost:7821';
 
 let failures = 0;

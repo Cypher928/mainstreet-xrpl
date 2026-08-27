@@ -19,7 +19,8 @@
  *
  * Requirements:
  *   - Playwright installed: npm install playwright (or npx playwright install chromium)
- *   - Network access to https://zhsuhehgehbzkmzurzyf.supabase.co
+ *   - Network access to the target Supabase project (PILOT by default;
+ *     see test-support/supabase-target.js)
  *   - App running at http://localhost:7821
  *
  * Exit codes:
@@ -33,6 +34,17 @@ try { pw = require('playwright'); }
 catch (_) { pw = require('/opt/node22/lib/node_modules/playwright'); }
 const { chromium } = pw;
 
+// THE PROJECT IS CHOSEN, NOT HARD-CODED — and the default is PILOT.
+//
+// This suite INSERTS into tenant_field_evidence and tenant_review_audit via
+// ms_debug_dualwrite(), and the REST read-back below used the PRODUCTION url
+// and anon key as literals — so it wrote test rows into the customer database
+// regardless of which account was supplied. The resolver reads both projects
+// out of supabase-config.js and refuses production unless
+// MS_TEST_ALLOW_PRODUCTION carries the force token.
+// See test-support/supabase-target.js.
+const { resolveOrAbort } = require('./test-support/supabase-target.js');
+const TARGET    = resolveOrAbort('supabase-integration');
 const BASE      = process.env.APP_URL    || 'http://localhost:7821';
 const EMAIL     = process.env.TEST_EMAIL;
 const PASSWORD  = process.env.TEST_PASSWORD;
@@ -247,13 +259,16 @@ function assert(condition, label, detail) {
 
   // ── Step 6: Direct REST read-back (bypasses app layer) ───────────────────────
   section('Step 6: Direct REST read-back (confirms rows exist independently of app)');
-  const restResults = await page.evaluate(async (pid) => {
+  // The read-back runs inside the page, so the resolved target is passed IN
+  // rather than written here — a literal in this block is exactly what pointed
+  // the whole suite at production.
+  const restResults = await page.evaluate(async ({ pid, baseUrl, key }) => {
     const { data: sess } = await db.auth.getSession();
     const token = sess?.session?.access_token;
     if (!token) return { error: 'no access_token' };
 
-    const BASE_URL = 'https://zhsuhehgehbzkmzurzyf.supabase.co';
-    const KEY      = 'eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6Inpoc3VoZWhnZWhiemttenVyenlmIiwicm9sZSI6ImFub24iLCJpYXQiOjE3NzU4NDkwNDAsImV4cCI6MjA5MTQyNTA0MH0.HUl9ha9hhjIO1F_k8xPkqbZQnWx-ERRGbnmc6KS3lNE';
+    const BASE_URL = baseUrl;
+    const KEY      = key;
 
     const headers = {
       'apikey': KEY,
@@ -270,7 +285,7 @@ function assert(condition, label, detail) {
     ]);
 
     return { tfe: tfeRes, tra: traRes };
-  }, propId).catch(e => ({ error: e.message }));
+  }, { pid: propId, baseUrl: TARGET.url, key: TARGET.anonKey }).catch(e => ({ error: e.message }));
 
   if (restResults?.error) {
     warn('Direct REST check skipped: ' + restResults.error);

@@ -186,6 +186,14 @@ const SUITES = [
   // test-suite-registration.js fails if a test file is in neither place.
   // ────────────────────────────────────────────────────────────────────────
   { label: 'Test accounting (registered vs excluded)',  cmd: 'node test-suite-registration.js' },
+  // Which database a LIVE test talks to. Two suites carried the PRODUCTION url
+  // and anon key as literals — one read the customer database, the other
+  // INSERTED into it — so pilot credentials would have been ignored and the
+  // writes would have landed in production. Neither had ever been run, so
+  // nothing said so. This pins that the resolver has no undeliberate path to
+  // production and no fallback of any kind, and that neither suite can go back
+  // to naming a project. Offline: it resolves config and reads source.
+  { label: 'Live-test Supabase target (fail-safe)',     cmd: 'node test-supabase-target.js' },
   { label: 'Pilot smoke fixes (guards + labelling)',    cmd: 'node test-smoke-fixes.js' },
   { label: 'Restore/fresh renderer parity',             cmd: 'node test-restore-renderer-parity.js' },
   { label: 'Property mismatch confirmation',            cmd: 'node test-property-confirmation.js' },

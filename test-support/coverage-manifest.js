@@ -54,12 +54,17 @@ const EXCLUDED = {
   'test-rls-cross-user.js': {
     reason: 'credentials',
     detail: 'Cross-user row-level-security verification against a live database. Two real ' +
-            'users are required to prove one cannot read the other. Run before any release ' +
+            'users are required to prove one cannot read the other. TARGETS PILOT BY DEFAULT ' +
+            'since the retarget — it used to hard-code the production project. Needs ' +
+            'USER_A_EMAIL/PASS/PROP_ID, USER_B_EMAIL/PASS and APP_URL. Run before any release ' +
             'that touches RLS policies or property ownership.',
   },
   'test-supabase-integration.js': {
     reason: 'credentials',
-    detail: 'Phase 20 live Supabase write/read verification of the normalized evidence tables. Needs a real project and service credentials.',
+    detail: 'Phase 20 live Supabase write/read verification of the normalized evidence tables. ' +
+            'It INSERTS via ms_debug_dualwrite(), and used to hard-code the production project — ' +
+            'it now targets PILOT by default through test-support/supabase-target.js. Needs ' +
+            'TEST_EMAIL, TEST_PASSWORD, TEST_PROP_ID and APP_URL.',
   },
   'test-escrow-extraction-verification.js': {
     reason: 'credentials',
