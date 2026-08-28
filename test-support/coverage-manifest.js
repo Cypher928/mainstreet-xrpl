@@ -49,7 +49,9 @@ const EXCLUDED = {
     detail: 'Phase A tenant authorization, verified against a real Supabase project. ' +
             'Needs TENANT_A_TENANT_ID and friends. It exits NON-ZERO rather than skipping, ' +
             'deliberately: an unrun security test must never read as a pass. Run it against ' +
-            'a real environment before any release that touches tenant access.',
+            'a real environment before any release that touches tenant access. The fixture it ' +
+            'needs is built by scripts/provision-pilot-authz-fixture.js, which refuses to run ' +
+            'anywhere but pilot and prints the fourteen values.',
   },
   'test-rls-cross-user.js': {
     reason: 'credentials',
