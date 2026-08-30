@@ -46,12 +46,13 @@ const EXCLUDED = {
   // ── credentials ───────────────────────────────────────────────────────────
   'test-tenant-authz.js': {
     reason: 'credentials',
-    detail: 'Phase A tenant authorization, verified against a real Supabase project. ' +
-            'Needs TENANT_A_TENANT_ID and friends. It exits NON-ZERO rather than skipping, ' +
-            'deliberately: an unrun security test must never read as a pass. Run it against ' +
-            'a real environment before any release that touches tenant access. The fixture it ' +
-            'needs is built by scripts/provision-pilot-authz-fixture.js, which refuses to run ' +
-            'anywhere but pilot and prints the fourteen values.',
+    detail: 'Phase A tenant authorization against the real PILOT project. NOT UNRUN: it runs ' +
+            'in CI on every change to the auth surface, via .github/workflows/b1-authorization.yml, ' +
+            'which builds a disposable world (scripts/b1-ci-fixture.js), runs the suite and tears ' +
+            'the world down. It is excluded from the offline regression only because it needs ' +
+            'network and a service-role key — not because it is unverified. Latest run at the time ' +
+            'of writing: 66 passed, 0 failed on head efe64c0. It exits NON-ZERO rather than ' +
+            'skipping, deliberately: an unrun security test must never read as a pass.',
   },
   'test-rls-cross-user.js': {
     reason: 'credentials',
