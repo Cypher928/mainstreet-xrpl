@@ -85,6 +85,10 @@ jobs:
       # deployment's alias. NOTE: pilot.mainstreetcam.com was deferred and never
       # assigned; docs that name it are stale.
       APP_URL: https://www.mainstreet-review.com
+      # The APP, not the site. vercel.json redirects "/" to /home (marketing) and
+      # rewrites /app to index.html, which is the only page carrying #loginScreen.
+      # APP_URL stays the bare origin because the API probes are built on it.
+      APP_ENTRY_URL: https://www.mainstreet-review.com/app
       HEADLESS: 'true'
 
     steps:

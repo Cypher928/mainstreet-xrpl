@@ -46,6 +46,18 @@ const { chromium } = pw;
 const { resolveOrAbort } = require('./test-support/supabase-target.js');
 const TARGET    = resolveOrAbort('supabase-integration');
 const BASE      = process.env.APP_URL    || 'http://localhost:7821';
+
+// THE APP IS NOT AT THE SITE ROOT ON A DEPLOYMENT. vercel.json redirects "/" to
+// "/home", the marketing page, and rewrites "/app" to index.html — the only page
+// that has #loginScreen. Locally a static server hands index.html straight off
+// "/", which is why this suite worked by hand and failed the moment it was
+// pointed at the deployed pilot: it loaded the marketing site, found no login
+// form, and reported the app as not running.
+//
+// Kept as its own variable rather than derived from APP_URL, because APP_URL is
+// also the ORIGIN the API probes are built on ("/api/cam-reconciliations") and
+// appending a path to it would break those.
+const ENTRY     = process.env.APP_ENTRY_URL || BASE;
 const EMAIL     = process.env.TEST_EMAIL;
 const PASSWORD  = process.env.TEST_PASSWORD;
 const TARGET_PROP = process.env.TEST_PROP_ID || null;
@@ -89,9 +101,11 @@ function assert(condition, label, detail) {
   // are currently parked as stale for exactly that reason. The flag says
   // "someone who clicked Log in has already declared what they want", and every
   // current suite uses it.
-  const ENTRY = BASE + (BASE.includes('?') ? '&' : '?') + 'signin=1';
-  await page.goto(ENTRY, { waitUntil: 'networkidle', timeout: 45000 });
+  const entryUrl = ENTRY + (ENTRY.includes('?') ? '&' : '?') + 'signin=1';
+  info('Entry: ' + entryUrl);
+  await page.goto(entryUrl, { waitUntil: 'networkidle', timeout: 45000 });
   await page.waitForTimeout(2000);
+  info('Landed on: ' + page.url());
 
   const pageTitle = await page.title();
   info('Page title: ' + pageTitle);
@@ -106,7 +120,9 @@ function assert(condition, label, detail) {
   // Ensure the login form is shown
   const loginScreen = await page.$('#loginScreen');
   if (!loginScreen) {
-    fail('Login screen (#loginScreen) not found — is the app running at ' + BASE + '?');
+    fail('Login screen (#loginScreen) not found at ' + page.url());
+    info('#loginScreen exists only in index.html. On a deployment that is served at /app —');
+    info('vercel.json redirects "/" to the marketing page — so set APP_ENTRY_URL to the /app URL.');
     await browser.close();
     process.exit(1);
   }
