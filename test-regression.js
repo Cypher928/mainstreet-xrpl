@@ -112,6 +112,12 @@ const SUITES = [
   // invoices was reconciled as 2026 — $8,280.00 of a $217,900.00 pool, internally
   // consistent and wrong. The property is authoritative now; this holds it there.
   { label: 'CAM year authority',               cmd: 'node test-cam-year-authority.js' },
+  // A SAVED RECONCILIATION MUST COME BACK MEANING THE SAME THING. Every dollar
+  // survived a reload and nothing that says what the dollars MEAN did: the Needs
+  // Review rollup vanished, the CAM Pool KPI reported the gross invoiced figure,
+  // and the variance panel attributed nothing and told the manager to re-check
+  // the register on a run that had reconciled to one cent.
+  { label: 'Restore completeness',             cmd: 'node test-restore-completeness.js' },
   // T2. A tenant's CAM share has two independent multiplicands — how much of the
   // BUILDING, and how much of the PERIOD — and the product had only the first,
   // so a tenant who took occupancy on 1 September was billed twelve months. The

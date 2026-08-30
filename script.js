@@ -11093,6 +11093,41 @@ async function runAllocation() {
       invoices:     lastInvoices,
       invoicesFull: lastInvoicesFull,
       tenants:      lastTenants,
+      // THE RECORDS THE VARIANCE PANEL ATTRIBUTES AGAINST.
+      //
+      // _lastEngineInvoices and _lastReconciledInvoices are assigned in
+      // runAllocation and nowhere else, so a restored reconciliation had neither
+      // — VarianceBreakdown.derive was handed an empty invoice list, attributed
+      // nothing, and reported the entire difference as unattributed residual. On
+      // a run that had reconciled to one cent the restored banner then read
+      // "Re-check the invoice register", which is the one message on that panel
+      // that means the numbers may be wrong.
+      //
+      // Stored as a lean projection rather than the engine objects: these six
+      // fields are everything derive() reads — invoiceKey needs id, isEligible
+      // needs camEligible, the direct/shared split needs matchConfidence, and
+      // the rows need vendor, category and amount. invoicesFull is stripped
+      // before every save precisely to keep this payload small, so this does not
+      // reintroduce it.
+      //
+      // `reconciledKeys` is separate and cannot be re-derived here: it is which
+      // invoices survived the CAM-year filter, and the filter narrows a local
+      // inside runFullReconciliation. Without it, an out-of-year invoice comes
+      // back indistinguishable from one that reached no tenant.
+      engineInvoices: (_lastEngineInvoices || []).map(i => ({
+        id:              i.id ?? null,
+        vendorName:      i.vendorName || i.vendor || '',
+        category:        i.category || '',
+        amount:          Number(i.amount) || 0,
+        camEligible:     i.camEligible,
+        matchConfidence: Number(i.matchConfidence) || 0,
+      })),
+      reconciledKeys: (() => {
+        try {
+          const VB = window.VarianceBreakdown;
+          return VB ? (_lastReconciledInvoices || []).map(i => VB.invoiceKey(i)) : null;
+        } catch (_) { return null; }
+      })(),
       camRuns:      camRuns.map(r => ({
         ...r,
         timestamp: r.timestamp instanceof Date ? r.timestamp.toISOString() : r.timestamp,
@@ -23060,6 +23095,20 @@ function _stripBlobs(property) {
     // Strip the full invoice list from the DB payload — invoices live separately
     // and are merged back in on load; keeping them in `data` inflates the row.
     invoices: (property.invoices || []).map(inv => inv ? {
+      // THE MANAGER'S OWN DECISION HAS TO SURVIVE. `camEligible` is what the
+      // untick in the invoice register writes, and it was not on this list — so
+      // a $15,000 invoice removed from CAM came back eligible after a reload,
+      // CamPool.total counted it again, the KPI reported the whole invoiced
+      // figure as the CAM pool, and the NEXT run would have billed tenants for
+      // it. Measured: fresh run $45,000 of $60,000 invoiced; after save and
+      // reload, $60,000.
+      //
+      // `id` travels for the same reason one layer up: it is how
+      // VarianceBreakdown.invoiceKey matches an invoice to what was allocated
+      // against it, and without it the fallback key is vendor+category+amount,
+      // which merges two genuinely different invoices that happen to look alike.
+      id:          inv.id,
+      camEligible: inv.camEligible,
       vendorName:  inv.vendorName,
       amount:      inv.amount,
       category:    inv.category,
@@ -25580,6 +25629,32 @@ function restoreResultsDisplay(snapshot) {
       : inv
     );
     lastTenants      = snapshot.tenants      || [];
+
+    // THE ENGINE RECORDS THE VARIANCE PANEL NEEDS, from the saved reconciliation
+    // rather than from a re-run. Both globals are assigned in runAllocation and
+    // nowhere else, so before this a restored screen derived its breakdown from
+    // an empty invoice list: pool 0, every bucket 0, and the whole difference
+    // dumped into "Not attributed".
+    //
+    // Falls back to the invoice register for a snapshot written before these
+    // were stored. That is a partial answer — the register carries no
+    // matchConfidence, so a direct invoice reads as shared — but it is a far
+    // better one than nothing, and the alternative is that every reconciliation
+    // saved to date restores broken. The reconciled subset has no fallback: an
+    // older snapshot cannot say which invoices survived the year filter, so it
+    // is left undefined, which derive() reads as "no year filter ran".
+    if (Array.isArray(snapshot.engineInvoices) && snapshot.engineInvoices.length) {
+      _lastEngineInvoices = snapshot.engineInvoices.map(i => ({ ...i }));
+      const _keys = Array.isArray(snapshot.reconciledKeys) ? new Set(snapshot.reconciledKeys) : null;
+      const _VB = window.VarianceBreakdown;
+      _lastReconciledInvoices = (_keys && _VB)
+        ? _lastEngineInvoices.filter(i => _keys.has(_VB.invoiceKey(i)))
+        : _lastEngineInvoices;
+    } else if (Array.isArray(invoiceData) && invoiceData.length) {
+      _lastEngineInvoices     = invoiceData.map(i => ({ ...i }));
+      _lastReconciledInvoices = _lastEngineInvoices;
+    }
+
     console.groupCollapsed('[PIPELINE:6] restoreResultsDisplay');
     console.log('lastInvoicesFull[0]:', JSON.parse(JSON.stringify(lastInvoicesFull[0] || {})));
     console.log('lastResults[0].includedInvoices[0]:', JSON.parse(JSON.stringify(lastResults[0]?.includedInvoices?.[0] || {})));
@@ -25613,15 +25688,27 @@ function restoreResultsDisplay(snapshot) {
   // _lastReconIssues and _lastVarianceBreakdown, which is why "Open Dispute" and
   // the variance panel were inert on this path.
   //
-  // invoiceData is passed as the engine invoices because lastInvoicesFull is the
-  // stripped shape — it has lost camEligible and id, so it cannot say which
-  // invoices were held out of CAM, and the variance panel needs both.
+  // THE SAVED ENGINE RECORDS, not the register. _lastEngineInvoices is restored
+  // from the snapshot above; the register was a stand-in for it, and a poor one
+  // — it carries no matchConfidence, so every direct invoice read as shared, and
+  // the reconciled subset was passed as `undefined`, so an out-of-year invoice
+  // could not be named as out-of-year.
+  //
+  // The SECOND argument is what totalPool and camPoolTotal are struck from, and
+  // it stays lastInvoicesFull. That list now carries camEligible again — the
+  // register block rehydrates it from invoiceData, and _stripBlobs no longer
+  // drops the field on the way to storage — which is what puts the "of $X
+  // invoiced" qualifier back on the CAM Pool KPI.
   const _summaryHtml = (() => {
     try {
+      const _eng = (Array.isArray(_lastEngineInvoices) && _lastEngineInvoices.length)
+        ? _lastEngineInvoices
+        : (Array.isArray(invoiceData) && invoiceData.length ? invoiceData : lastInvoicesFull);
+      const _rec = (Array.isArray(_lastReconciledInvoices) && _lastReconciledInvoices.length)
+        ? _lastReconciledInvoices
+        : undefined;
       return _buildReconciliationSummaryHtml(
-        lastResults, lastInvoicesFull, lastPropName,
-        Array.isArray(invoiceData) && invoiceData.length ? invoiceData : lastInvoicesFull,
-        undefined);
+        lastResults, lastInvoicesFull, lastPropName, _eng, _rec);
     } catch (e) {
       // A restored reconciliation must still render if the summary cannot be
       // built. The cards below are the record; the panel is the reporting.
@@ -25630,7 +25717,26 @@ function restoreResultsDisplay(snapshot) {
     }
   })();
 
-  let html = _summaryHtml + `<div class="summary-bar">
+  // NEEDS REVIEW, ON THIS PATH TOO. _buildNeedsReviewRollupHtml was called only
+  // from runAllocation, so a restored reconciliation showed none of it: the four
+  // allocation flags on the fresh screen — an invoice billed in full to one
+  // tenant, another dated outside a tenant's occupancy, a third that could not
+  // be placed at all — simply were not there after a reload. The flags
+  // themselves survive on lastResults; nothing was rendering them.
+  //
+  // It is a pure builder over the stored results and recomputes nothing. The
+  // result-card anchor ids its buttons scroll to are already emitted on this
+  // path, which was the precondition recorded in
+  // PHASE2_FOLLOWUP_RESTORE_ROLLUP.md — this is that follow-up.
+  const _rollupHtml = (() => {
+    try { return _buildNeedsReviewRollupHtml(lastResults); }
+    catch (e) {
+      console.warn('[restoreResultsDisplay] needs-review rollup not built:', e && e.message);
+      return '';
+    }
+  })();
+
+  let html = _rollupHtml + _summaryHtml + `<div class="summary-bar">
     <div class="summary-bar-item"><span class="summary-bar-label">Total Expenses</span><strong>${fmt(lastTotal)}</strong></div>
     <div class="summary-bar-item"><span class="summary-bar-label">Tenants</span><strong>${lastResults.length}</strong></div>
     <div class="summary-bar-item"><span class="summary-bar-label">Invoices</span><strong>${lastInvoicesFull.length}</strong></div>
