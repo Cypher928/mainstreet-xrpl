@@ -171,10 +171,72 @@ t('but a month-to-month covering the period stays silent — that is D4, not T1'
   eq(c.assumedEnd, true, 'the assumption is at least recorded');
 });
 
-t('and a lease with no dates at all stays silent', () => {
+// THIS TEST USED TO ASSERT THE OPPOSITE, and the change is a decision rather
+// than an accommodation. It read:
+//
+//   t('and a lease with no dates at all stays silent', ...)
+//   eq(c.needsOccupancyConfirmation, false);
+//
+// A fresh-property run found what that silence costs. A lease with no
+// commencement date on file was classified as covering the whole period, its
+// chip read "Billable", its reason read "Nothing blocks this tenant's
+// statement", and a twelve-month statement for $12,880.00 was issued against it
+// — with no finding raised at any severity.
+//
+// The rule the silence came from is right for a missing END and wrong for a
+// missing START, and the two had been sharing one predicate. See the note on
+// needsOccupancyConfirmation in lease-period.js: an end date in the future is
+// inferable from the tenant sitting in the rent roll, a start date in the past
+// is inferable from nothing, and the error runs toward over-billing a tenant
+// for months before their lease began.
+//
+// The missing-END silence directly above is UNCHANGED and still asserted. D4
+// still owns it.
+t('a lease with NO COMMENCEMENT DATE is held, not billed in silence', () => {
   const c = LP.classify({}, P2026);
   eq(c.case, 'no_term');
-  eq(c.needsOccupancyConfirmation, false);
+  eq(c.assumedStart, true, 'the assumption is recorded');
+  eq(c.needsOccupancyConfirmation, true,
+     'no start date on file must not read as "covers the whole period, nothing to confirm"');
+});
+
+t('a missing start with a known end past the period is held too', () => {
+  // unknown_start: the end is documented and runs past the period, so the only
+  // thing missing is when the obligation began. Before this rule that was the
+  // quietest shape of all — coversWholePeriod true, no finding, full-year bill.
+  const c = LP.classify({ end_date: '2030-06-30' }, P2026);
+  eq(c.case, 'unknown_start');
+  eq(c.coversWholePeriod, true, 'the assumption itself is unchanged');
+  eq(c.assumedStart, true);
+  eq(c.needsOccupancyConfirmation, true);
+});
+
+t('THE ASYMMETRY: a known start with no end stays silent, a known end with no start does not', () => {
+  const noEnd   = LP.classify({ start_date: '2024-01-01' }, P2026);
+  const noStart = LP.classify({ end_date:   '2030-06-30' }, P2026);
+  eq(noEnd.needsOccupancyConfirmation,   false, 'missing END is D4 and stays as it was');
+  eq(noStart.needsOccupancyConfirmation, true,  'missing START fails closed');
+  // And the pair is what makes it an asymmetry rather than two unrelated rules:
+  // both are "one bound absent", and they must not answer alike.
+  eq(noEnd.assumedEnd,     true);
+  eq(noStart.assumedStart, true);
+});
+
+t('the gate keys on the missing commencement, not on the case label', () => {
+  // expires_within with an absent start: the end IS documented and inside the
+  // period, so the case name says nothing about the start — but the commencement
+  // is still unknown and the tenant must still be held.
+  const c = LP.classify({ end_date: '2026-08-31' }, P2026);
+  eq(c.case, 'expires_within');
+  eq(c.assumedStart, true);
+  eq(c.needsOccupancyConfirmation, true);
+});
+
+t('a fully documented term is untouched by the new gate', () => {
+  const c = LP.classify({ start_date: '2019-03-01', end_date: '2034-02-28' }, P2026);
+  eq(c.case, 'covers_period');
+  eq(c.assumedStart, false);
+  eq(c.needsOccupancyConfirmation, false, 'the gate must not fire on a complete lease');
 });
 
 console.log('\n── Dates are read once, and fail closed ──');
@@ -378,6 +440,65 @@ t('    and it states the apportionment it actually applied', () => {
   ok(/243 of 365 days/.test(f.detail), f.detail);
   ok(f.conditions.some(c => /apportioned 243\/365 days/.test(c)),
      'the amount line still claims the allocation was un-apportioned: ' + JSON.stringify(f.conditions));
+});
+
+// ── P1: no commencement date on file ───────────────────────────────────────
+const commencementFinding = fs2 =>
+  fs2.find(f => /CAM obligation began/.test(f.title || ''));
+
+t('a lease with no start date raises a finding at all — it used to raise none', () => {
+  const f = commencementFinding(detect({ end_date: '2030-06-30' }));
+  ok(f, 'a lease with no commencement date was billed a full year in silence');
+  eq(f.severity, 'yellow', 'a documentation gap, not a claim that the charge is wrong');
+  eq(f.blocksBilling, true, 'the statement must not issue until the date is supplied');
+});
+
+t('    and it asks the right question — when it began, not how to apportion', () => {
+  const f = commencementFinding(detect({ end_date: '2030-06-30' }));
+  ok(/no commencement date on file/.test(f.title), f.title);
+  ok(/carries no start date and no CAM commencement date/.test(f.detail), f.detail);
+  // The wrong question, explicitly: the partial-period branch would have asked
+  // how a partial year is apportioned, when there is no established partial year.
+  ok(!/partial year is apportioned/.test(f.title), 'asked the apportionment question instead');
+  ok(f.actions.some(a => /commencement date/i.test(a)), JSON.stringify(f.actions));
+});
+
+t('    and it says what was billed and on what assumption', () => {
+  const f = commencementFinding(detect({ end_date: '2030-06-30' }, 12880));
+  ok(/\$12,880/.test(f.detail), f.detail);
+  ok(/nothing on file says otherwise — not because the lease says it did/.test(f.detail), f.detail);
+  ok(/over-billed by the months before it began/.test(f.detail), f.detail);
+  ok(f.conditions.some(c => /Start date on file: \(none\)/.test(c)), JSON.stringify(f.conditions));
+  ok(f.conditions.some(c => /End date on file: 2030-06-30/.test(c)), JSON.stringify(f.conditions));
+});
+
+t('    a lease with NO dates at all lands in the same branch', () => {
+  const f = commencementFinding(detect({}));
+  ok(f, 'no_term produced no finding');
+  ok(/no end date either/.test(f.detail), f.detail);
+});
+
+t('    and a confirmed partial-period basis does NOT clear it', () => {
+  // The reason this branch returns before the partial-period one: that branch
+  // exits early on a stated basis, so a tenant who had answered an unrelated
+  // question would have re-opened the commencement gate.
+  const f = commencementFinding(detect({
+    end_date: '2030-06-30',
+    partial_period_basis: 'per_diem',
+    fieldEvidence: { partial_period_basis: { snapshots: [{ manuallyEdited: true }] } },
+  }));
+  ok(f, 'answering the apportionment question cleared the commencement gate');
+  eq(f.blocksBilling, true);
+});
+
+t('    a documented term raises nothing — the gate is not a blanket', () => {
+  eq(commencementFinding(detect({ start_date: '2019-03-01', end_date: '2034-02-28' })), undefined);
+});
+
+t('    an UNREADABLE start is still the unreadable finding, not this one', () => {
+  const fs3 = detect({ start_date: 'TBD', end_date: '2029-11-30' });
+  eq(commencementFinding(fs3), undefined, 'a date that IS on file must not read as absent');
+  ok(fs3.some(f => /a date on file cannot be read/.test(f.title || '')), 'the unreadable finding was lost');
 });
 
 t('a manager-confirmed basis clears the hold, and is not called the lease', () => {

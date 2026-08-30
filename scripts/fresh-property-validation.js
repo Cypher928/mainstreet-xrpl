@@ -20,12 +20,16 @@ const { chromium } = pw;
 const http = require('http');
 const fs   = require('fs');
 const path = require('path');
+const os   = require('os');
 
 const ROOT     = process.env.APP_ROOT || '/home/user/mainstreet-xrpl';
 const PORT     = parseInt(process.env.APP_PORT || '7991', 10);
 const HEADLESS = process.env.HEADLESS !== '0';
 const CHROME   = process.env.CHROMIUM_PATH || '/opt/pw-browsers/chromium-1194/chrome-linux/chrome';
-const OUT      = process.env.OUT_DIR || __dirname;
+// Artifacts go OUTSIDE the repo by default. Defaulting to __dirname wrote a
+// result JSON and four PNGs into scripts/ on every run, which is a diff nobody
+// asked for on a tool that is supposed to observe and change nothing.
+const OUT      = process.env.OUT_DIR || fs.mkdtempSync(path.join(os.tmpdir(), 'fresh-prop-'));
 
 const MIME = { '.html':'text/html', '.js':'application/javascript', '.css':'text/css',
                '.json':'application/json', '.png':'image/png', '.svg':'image/svg+xml' };

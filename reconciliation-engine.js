@@ -200,6 +200,59 @@ window.ReconciliationEngine = (() => {
         return;
       }
 
+      // ── NO COMMENCEMENT DATE ON FILE.
+      //
+      // This case used to reach nothing at all. classify() marked the term
+      // `assumedStart`, said it covered the whole period, and returned
+      // needsOccupancyConfirmation false — so the loop above returned before
+      // reaching any branch, the tenant's chip read "Billable", its reason read
+      // "Nothing blocks this tenant's statement", and generateTenantStatement
+      // issued a full twelve months of CAM against a lease whose start date
+      // nobody has. Measured on a fresh property: $12,880.00 billed, no finding
+      // of any severity raised.
+      //
+      // It has its own branch rather than sharing the partial-period one below,
+      // for two reasons. The wording there asks how a partial year should be
+      // APPORTIONED, which is the wrong question — the open fact is when the
+      // obligation began, and until that is answered there is no partial year to
+      // apportion. And that branch returns early on `_basis.stated`, so a tenant
+      // who had once confirmed a per-diem basis would have produced no finding
+      // here either; the gate would have been re-opened by an unrelated answer.
+      //
+      // Yellow with blocksBilling, matching `unreadable` — its nearest sibling,
+      // and for the same reason. This is a documentation gap, not a finding that
+      // the charge is wrong: the tenant may well have occupied the whole period.
+      // It carries no `impact` for that same reason.
+      if (c.assumedStart) {
+        const _endKnown = c.endStatus === 'ok';
+        const _occA = LP.occupancy(t, period);
+        const _apportioned = !!(_occA && _occA.applied && _occA.numerator !== null
+                                && _occA.numerator !== _occA.denominator);
+        flags.push(Object.assign({
+          severity: 'yellow',
+          blocksBilling: true,
+          title:    `Confirm when ${r.name}'s CAM obligation began — no commencement date on file`,
+          detail:   `${r.name} is allocated ${_fmt(r.totalAllocated)} of ${camYear} CAM, but the lease record carries no start date and no CAM commencement date` +
+                    `${_endKnown ? `, only an end date of ${c.leaseEnd}` : ' and no end date either'}. ` +
+                    (_apportioned
+                      ? `The allocation has been apportioned to ${_occA.overlapStart} – ${_occA.overlapEnd}, but that window opens on the first day of the period because nothing on file says otherwise — not because the lease says it did. `
+                      : `The allocation therefore covers the whole period, from ${period.start}, because nothing on file says otherwise — not because the lease says it did. `) +
+                    `A lease that commenced part-way through ${camYear} would be over-billed by the months before it began, and that is a charge to the tenant this file cannot substantiate. ` +
+                    `Enter the commencement date, or confirm ${r.name} occupied from ${period.start}, and re-run.`,
+          actions: ['Enter the lease commencement date',
+                    'Confirm occupancy from the start of the period',
+                    'Re-run the reconciliation'],
+          conditions: cond([
+            `Start date on file: (none)`,
+            `CAM commencement date on file: (none)`,
+            `End date on file: ${_endKnown ? c.leaseEnd : '(none)'}`,
+          ], _apportioned
+               ? `apportioned ${_occA.numerator}/${_occA.denominator} ${_occA.unit} from an assumed start`
+               : UNAPPORTIONED),
+        }, base));
+        return;
+      }
+
       // ── The lease is valid and covers PART of the period. Since T2 the
       // allocation is apportioned, so there is no longer anything to warn about
       // WHEN THE LEASE SAYS HOW. What remains is the case where it does not: the

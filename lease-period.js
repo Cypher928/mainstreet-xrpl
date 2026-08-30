@@ -297,14 +297,19 @@
 
     if (!sKnown && !eKnown) {
       out.case = 'no_term'; out.label = CASES.no_term;
-      // Assumed to cover the period, exactly as unknown_start and unknown_end
-      // are — and the overlap bounds are filled in so a caller doing arithmetic
-      // on them is not handed a null. Both bounds are marked assumed, so nothing
-      // downstream can mistake this for a term that was read off a document.
+      // The overlap bounds are filled in so a caller doing arithmetic on them is
+      // not handed a null. Both bounds are marked assumed, so nothing downstream
+      // can mistake this for a term that was read off a document.
       out.assumedStart = true; out.assumedEnd = true;
       out.overlapStart = p.start; out.overlapEnd = p.end;
       out.overlapsPeriod = true; out.coversWholePeriod = true;
-      return out;                                  // D4 owns this; no claim made here
+      // THE MISSING START IS THE OPERATIVE FACT, not the missing end. See the
+      // note on needsOccupancyConfirmation below: a term with no commencement
+      // date cannot establish that CAM was owed from the first day of the
+      // period, and this case has no commencement date. D4 still owns what to
+      // say about the missing END; the gate here is about the start.
+      out.needsOccupancyConfirmation = true;
+      return out;
     }
 
     // AN ABSENT BOUND IS NOT AN UNKNOWABLE ONE. A missing start date says
@@ -345,7 +350,34 @@
     else                       out.case = 'covers_period';
 
     out.label = CASES[out.case];
-    out.needsOccupancyConfirmation = !out.coversWholePeriod;
+    // A MISSING START AND A MISSING END ARE NOT THE SAME QUESTION, and treating
+    // them alike is what let a lease with no commencement date bill a full year
+    // in silence.
+    //
+    // MISSING END, start known. The file establishes that the tenant took
+    // occupancy on a documented date at or before the period. A lease with no
+    // end date is overwhelmingly one still running — month-to-month, a holdover,
+    // or an end page that was never captured — so carrying it to the end of the
+    // period bills a tenant the record shows was in occupancy throughout. The
+    // opposite assumption is worse: occupancy() already refuses to let a
+    // holdover fall through to factor 0, because that silently writes off a real
+    // receivable. So the assumption stands and the open question is only whether
+    // to SAY so. That is D4, and this line does not pre-empt it.
+    //
+    // MISSING START. Nothing on file says when the CAM obligation began. Billing
+    // the whole period asserts that the tenant owed CAM from the first day of
+    // it, which is precisely the claim the document does not support — and the
+    // error runs toward OVER-billing a third party: a lease that commenced in
+    // October, billed for twelve months, over-charges by three quarters of the
+    // year. An end date in the future is inferable from the fact that the tenant
+    // sits in the rent roll today; a start date in the past is inferable from
+    // nothing at all.
+    //
+    // So the gate is asymmetric on purpose. `assumedStart` rather than a case
+    // name, because the fact that matters is "the commencement is unknown", and
+    // that is true of unknown_start, of no_term, and of a lease whose end is
+    // documented inside the period while its start is not.
+    out.needsOccupancyConfirmation = !out.coversWholePeriod || out.assumedStart;
     return out;
   }
 
