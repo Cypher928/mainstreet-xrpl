@@ -196,24 +196,53 @@ function assert(condition, label, detail) {
     info('Using TEST_PROP_ID: ' + propId);
   }
 
-  // Load the property in-app
-  await page.evaluate(async (pid) => {
-    if (typeof loadPropertyById === 'function') {
-      await loadPropertyById(pid);
-    } else if (typeof activePropId !== 'undefined') {
-      // fallback: set via localStorage and reload
-      localStorage.setItem('_ms_activePropId_anon', pid);
-    }
-  }, propId).catch(() => {});
+  // OPEN IT THE WAY A PERSON DOES. This block used to call loadPropertyById(),
+  // which does not exist and never has — the app's entry point is
+  // selectProperty(id), which is what the property card's own onclick calls. The
+  // `else` branch then wrote a localStorage key and returned, so nothing was
+  // opened, activePropId stayed null, and ms_debug_dualwrite() bailed at its
+  // "No active property" guard and returned {propId: null}. Every assertion
+  // after this point was reading undefined.
+  //
+  // selectProperty looks the property up in _props, the in-memory list the app
+  // loads after sign-in, so the wait below is for that list — not a sleep. A
+  // fixed timeout here would be a race against a network read.
+  const listed = await page.waitForFunction(
+    (pid) => typeof _props !== 'undefined' && Array.isArray(_props) && _props.some(p => p && p.id === pid),
+    propId, { timeout: 45000 },
+  ).then(() => true).catch(() => false);
+  assert(listed, 'the fixture property appears in the app\'s property list', 'propId=' + propId);
 
-  await page.waitForTimeout(2000);
+  if (listed) {
+    await page.evaluate(async (pid) => { await selectProperty(pid); }, propId).catch(e => {
+      fail('selectProperty(' + propId + ') threw: ' + e.message);
+    });
+  }
 
-  const propLoaded = await page.evaluate((pid) => {
-    if (typeof activePropId !== 'undefined') return activePropId === pid;
-    return typeof currentProperty === 'function' && currentProperty()?.id === pid;
-  }, propId).catch(() => false);
+  const propLoaded = await page.waitForFunction(
+    (pid) => typeof activePropId !== 'undefined' && activePropId === pid,
+    propId, { timeout: 30000 },
+  ).then(() => true).catch(() => false);
 
   assert(propLoaded, 'Property loaded in app context', 'propId=' + propId);
+  if (!propLoaded) {
+    // Everything downstream reads an unopened property and reports undefined,
+    // which blames the database for a navigation that never happened.
+    fail('Cannot proceed without an open property — ms_debug_dualwrite() would bail at its own guard');
+    await browser.close();
+    process.exit(1);
+  }
+
+  // AND WAIT FOR THE TENANTS, which is a separate fact from the property being
+  // open. ms_debug_dualwrite() writes against tenantData[0].id and falls back to
+  // the literal 'debug-tenant-<epoch>' when the list is empty — not a UUID, so
+  // the insert fails on the column type and the run reports a database problem
+  // for what is really a page that had not finished loading.
+  const tenantsReady = await page.waitForFunction(
+    () => typeof tenantData !== 'undefined' && tenantData.filter(Boolean).length > 0,
+    null, { timeout: 30000 },
+  ).then(() => true).catch(() => false);
+  assert(tenantsReady, 'the property\'s tenants are loaded, so the write targets a real tenant id');
 
   // ── Step 4: Run ms_debug_dualwrite() ─────────────────────────────────────────
   section('Step 4: Run ms_debug_dualwrite() — inserts + read-back');
@@ -234,9 +263,15 @@ function assert(condition, label, detail) {
     // TFE insert assertions
     const tfe = dw.evStatus;
     assert(tfe === 'ok', 'tenant_field_evidence insert status = ok', 'got: ' + tfe);
-    if (window?.ms_lastDualWrite?.evidence?.error) {
-      fail('tenant_field_evidence insert error: ' + JSON.stringify(dw.evStatus));
-    }
+    // `window` IS THE PAGE'S, AND THIS CODE RUNS IN NODE. The line here used to
+    // read window.ms_lastDualWrite directly, which is a ReferenceError in the
+    // test process — it crashed the suite outright the first time execution ever
+    // reached it. The diagnostic is worth keeping, so it is fetched from the
+    // page instead of assumed to be in scope.
+    const dwErr = await page.evaluate(() => {
+      try { return window.ms_lastDualWrite?.evidence?.error || null; } catch (_) { return null; }
+    }).catch(() => null);
+    if (dwErr) fail('tenant_field_evidence insert error: ' + JSON.stringify(dwErr));
 
     // TRA insert assertions
     const tra = dw.audStatus;
