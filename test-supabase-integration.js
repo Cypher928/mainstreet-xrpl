@@ -83,7 +83,14 @@ function assert(condition, label, detail) {
 
   // ── Step 1: Load the app (no stubs — real Supabase) ─────────────────────────
   section('Step 1: Load app with real Supabase connection');
-  await page.goto(BASE, { waitUntil: 'networkidle', timeout: 30000 });
+  // ?signin=1 — THE PRODUCT'S OWN ANSWER TO ITS LANDING DIALOG. #msLanding
+  // covers the page on a bare load, so a suite that navigates to `/` and reaches
+  // for the login form is clicking through an overlay. Ten suites in this repo
+  // are currently parked as stale for exactly that reason. The flag says
+  // "someone who clicked Log in has already declared what they want", and every
+  // current suite uses it.
+  const ENTRY = BASE + (BASE.includes('?') ? '&' : '?') + 'signin=1';
+  await page.goto(ENTRY, { waitUntil: 'networkidle', timeout: 45000 });
   await page.waitForTimeout(2000);
 
   const pageTitle = await page.title();
@@ -107,6 +114,15 @@ function assert(condition, label, detail) {
   await page.evaluate(() => { document.getElementById('loginScreen').style.display = 'flex'; });
   await page.fill('#loginEmail',    EMAIL);
   await page.fill('#loginPassword', PASSWORD);
+
+  // THE LOGIN HANDLER ARRIVES AFTER THE BUTTON DOES. #loginBtn paints with the
+  // HTML; submitAuth is defined by script.js; and the form calls it through an
+  // inline onsubmit attribute. A click landing in that gap raises a
+  // ReferenceError and is simply LOST — the page looks fine, no request is made,
+  // and the suite then waits out its full timeout on a sign-in that never
+  // started. Thirteen suites in this repo carry this same wait for the same
+  // reason.
+  await page.waitForFunction(() => typeof submitAuth === 'function', null, { timeout: 45000 });
   await page.click('#loginBtn');
 
   // Wait for auth state change (up to 15 s)

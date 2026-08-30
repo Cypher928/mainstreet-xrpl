@@ -58,16 +58,32 @@ const EXCLUDED = {
     reason: 'credentials',
     detail: 'Cross-user row-level-security verification against a live database. Two real ' +
             'users are required to prove one cannot read the other. TARGETS PILOT BY DEFAULT ' +
-            'since the retarget — it used to hard-code the production project. Needs ' +
-            'USER_A_EMAIL/PASS/PROP_ID, USER_B_EMAIL/PASS and APP_URL. Run before any release ' +
-            'that touches RLS policies or property ownership.',
+            'since the retarget — it used to hard-code the production project. NOT UNRUN: it ' +
+            'runs in CI via .github/workflows/pilot-live-verification.yml, which builds two ' +
+            'disposable landlords (scripts/pilot-live-fixture.js) and deletes them. Excluded ' +
+            'from the offline regression only because it needs network and real accounts. ' +
+            'CI sets MS_REQUIRE_ALL_GROUPS=1 so a missing variable fails the run instead of ' +
+            'printing SKIPPED and exiting 0.',
   },
   'test-supabase-integration.js': {
     reason: 'credentials',
     detail: 'Phase 20 live Supabase write/read verification of the normalized evidence tables. ' +
             'It INSERTS via ms_debug_dualwrite(), and used to hard-code the production project — ' +
-            'it now targets PILOT by default through test-support/supabase-target.js. Needs ' +
-            'TEST_EMAIL, TEST_PASSWORD, TEST_PROP_ID and APP_URL.',
+            'it now targets PILOT by default through test-support/supabase-target.js. Runs in CI ' +
+            'via .github/workflows/pilot-live-verification.yml. SCOPE: it drives a browser ' +
+            'against the DEPLOYED pilot app, so it verifies what is deployed, not this branch — ' +
+            'which is why the D-2 round trip is a separate suite.',
+  },
+  'test-pilot-evidence-roundtrip.js': {
+    reason: 'credentials',
+    detail: 'D-2 through a real database: a manual partial-period confirmation is written to ' +
+            'tenant_field_evidence with the product\'s own _writeTenantFieldEvidence, the blob ' +
+            'is saved through the product\'s _stripBlobs (which discards fieldEvidence), and the ' +
+            'reload must still report source "manual" rather than "lease". Sixteen functions are ' +
+            'extracted from script.js by name so the suite runs product code at both ends. Runs ' +
+            'in CI via .github/workflows/pilot-live-verification.yml against pilot only; it ' +
+            'WRITES, so it carries a second target lock of its own and exits 2 rather than ' +
+            'skipping. Needs TEST_EMAIL/PASSWORD/PROP_ID/TENANT_ID and @supabase/supabase-js.',
   },
   'test-escrow-extraction-verification.js': {
     reason: 'credentials',
