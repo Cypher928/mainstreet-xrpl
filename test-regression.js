@@ -107,6 +107,11 @@ const SUITES = [
   // apportions, because how a partial period is billed is still an open
   // question and a helper returning a factor would answer it by accident.
   { label: 'Lease term vs CAM period (T1)',     cmd: 'node test-lease-period.js' },
+  // WHOSE CAM YEAR IS IT. `_camYear` is a per-USER localStorage preference and
+  // selecting a property did not touch it, so a fresh property carrying 2025
+  // invoices was reconciled as 2026 — $8,280.00 of a $217,900.00 pool, internally
+  // consistent and wrong. The property is authoritative now; this holds it there.
+  { label: 'CAM year authority',               cmd: 'node test-cam-year-authority.js' },
   // T2. A tenant's CAM share has two independent multiplicands — how much of the
   // BUILDING, and how much of the PERIOD — and the product had only the first,
   // so a tenant who took occupancy on 1 September was billed twelve months. The

@@ -170,9 +170,12 @@ const sec = t => console.log('\n── ' + t + ' ──');
       tenants: [{ id: 't1', tenant_name: 'A', leased_sqft: 5000, excluded: [] }],
       invoices: [{ vendor: 'Undated', category: 'utilities', amount: 10000, date: '' }],
     });
-    (Math.round(r[0].allocated) === 5000)
+    // Guarded. A refusal returns [], and reading r[0].allocated off an empty
+    // array crashes the whole suite before it can report which assertion broke
+    // — which is what a mutation on the year filter did, costing the diagnosis.
+    (r.length === 1 && Math.round(r[0].allocated) === 5000)
       ? ok('an undated invoice is kept rather than silently dropped')
-      : bad('undated invoice handling', String(r[0].allocated));
+      : bad('undated invoice handling', JSON.stringify(r));
   }
   {
     // CAM-2 shipped with a bare `return []` when the year filter emptied the
@@ -210,6 +213,73 @@ const sec = t => console.log('\n── ' + t + ' ──');
     (r.scope && r.scope.refused === true && r.scope.excluded === 1)
       ? ok('_yearScope records the refusal and the count that caused it')
       : bad('_yearScope did not record the refusal', JSON.stringify(r.scope));
+  }
+  {
+    // P2 — AN UNDATED INVOICE USED TO HOLD A MISMATCHED YEAR OPEN.
+    //
+    // The refusal above fires only when NOTHING survives the filter, and an
+    // undated invoice always survives it. One undated invoice was therefore
+    // enough to keep a completely wrong year alive: measured on a fresh
+    // property, twelve 2025 invoices reconciled as 2026 kept the two undated
+    // ones and produced $8,280.00 of a $217,900.00 pool, internally consistent
+    // and wrong.
+    const r = await p.evaluate(() => {
+      const said = [];
+      const orig = window.showToast;
+      window.showToast = (msg) => { said.push(String(msg)); };
+      try {
+        const prop = new Property('Test Center', 10000);
+        prop.camYear = 2026;
+        const l = new Lease('A', '', 5000, '', '', [], null, null, false, null, 'NNN');
+        l.id = 't1'; prop.addLeases([l]);
+        prop.addInvoices([
+          new Invoice('i0', '2025-03-01', 50000, 'LastYear',  'utilities', '', {}),
+          new Invoice('i1', '',           10000, 'NoDateAtAll','repairs',  '', {}),
+        ]);
+        window.currentProperty = () => ({ id: 'p1', tenants: [{ id: 't1', tenant_name: 'A', leased_sqft: 5000 }] });
+        const res = runFullReconciliation(prop) || [];
+        return { count: res.length, allocated: res[0] ? res[0].totalAllocated : null,
+                 said, scope: prop._yearScope || null };
+      } finally { window.showToast = orig; }
+    });
+    (r.count === 0)
+      ? ok('one undated invoice no longer keeps a mismatched CAM year alive')
+      : bad('the run proceeded on undated invoices alone', `allocated ${r.allocated}`);
+    (r.said.some(m => /2026/.test(m) && /no date/i.test(m)))
+      ? ok('    and the refusal says the undated ones cannot establish a year on their own')
+      : bad('the message does not explain the undated half', JSON.stringify(r.said));
+    (r.scope && r.scope.reason === 'no_dated_invoice_in_year' && r.scope.datedInYear === 0)
+      ? ok('    _yearScope records WHICH refusal fired')
+      : bad('_yearScope did not distinguish the two refusals', JSON.stringify(r.scope));
+  }
+  {
+    // THE TRIGGER IS A CONTRADICTION, NOT A SHORTAGE. A register with no dated
+    // invoices at all says nothing about the year, so refusing there would block
+    // a sloppy but legitimate run. Only dated invoices that all fall elsewhere
+    // are evidence the year is wrong.
+    const r = await run({
+      totalSqft: 10000, camYear: 2026,
+      tenants: [{ id: 't1', tenant_name: 'A', leased_sqft: 5000, excluded: [] }],
+      invoices: [{ vendor: 'Undated', category: 'utilities', amount: 10000, date: '' }],
+    });
+    (r.length === 1 && Math.round(r[0].allocated) === 5000)
+      ? ok('a register of only undated invoices still reconciles — nothing contradicts the year')
+      : bad('the refusal fired on a register that contradicts nothing', JSON.stringify(r));
+  }
+  {
+    // And one invoice inside the year is enough to keep the run: the year is
+    // supported by the register even when most of it falls outside.
+    const r = await run({
+      totalSqft: 10000, camYear: 2026,
+      tenants: [{ id: 't1', tenant_name: 'A', leased_sqft: 5000, excluded: [] }],
+      invoices: [
+        { vendor: 'InYear',   category: 'utilities', amount: 10000, date: '2026-04-01' },
+        { vendor: 'LastYear', category: 'repairs',   amount: 90000, date: '2025-04-01' },
+      ],
+    });
+    (r.length === 1 && Math.round(r[0].allocated) === 5000)
+      ? ok('one in-year invoice keeps the run, and only that invoice is allocated')
+      : bad('a supported year was refused, or out-of-year money leaked in', JSON.stringify(r));
   }
 
   // ── CAM-3 · exclusions apply to direct matches too ──────────────────────

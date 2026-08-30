@@ -10220,16 +10220,46 @@ function runFullReconciliation(property) {
   // — but they are counted and reported, because "included on no evidence" is a
   // decision the manager should see rather than one the engine makes quietly.
   const _year = property.camYear != null ? String(property.camYear) : null;
-  let _outOfYear = 0, _undated = 0;
+  let _outOfYear = 0, _undated = 0, _datedInYear = 0;
   if (_year) {
     invoices = invoices.filter(inv => {
       const raw = inv.invoiceDate || inv.date || '';
       const d = raw ? new Date(raw) : null;
       if (!d || isNaN(d.getTime())) { _undated++; return true; }
       const keep = String(d.getFullYear()) === _year;
-      if (!keep) _outOfYear++;
+      if (keep) _datedInYear++; else _outOfYear++;
       return keep;
     });
+
+    // THE UNDATED INVOICES WERE HOLDING THE RUN OPEN.
+    //
+    // The refusal below fires when NOTHING survives the filter. An undated
+    // invoice always survives it — deliberately, so a real expense is never
+    // silently dropped — and that is enough to keep a completely mismatched
+    // year alive. Measured: a property whose twelve dated invoices were all
+    // 2025, reconciled as 2026, kept its two undated invoices and produced
+    // $8,280.00 of a $217,900.00 pool. Every figure on screen was internally
+    // consistent and the year was wrong.
+    //
+    // The trigger is a CONTRADICTION, not a shortage. Dated invoices exist and
+    // none of them falls in the year being billed, so the register and the year
+    // disagree and one of them has to be corrected. A property with no dated
+    // invoices at all is a different situation — nothing contradicts the year,
+    // and refusing there would block a sloppy but legitimate run.
+    if (_datedInYear === 0 && _outOfYear > 0) {
+      console.error(`[runFullReconciliation] refused: no invoice is dated in CAM year ${_year}; ` +
+                    `${_outOfYear} dated invoice(s) fall outside it and ${_undated} carry no date`);
+      if (typeof showToast === 'function') {
+        showToast(`⚠️ Nothing to reconcile for ${_year} — none of the ${_outOfYear + _undated} invoice${_outOfYear + _undated !== 1 ? 's' : ''} loaded is dated in ${_year}. ` +
+          `${_outOfYear} ${_outOfYear !== 1 ? 'are' : 'is'} dated outside it` +
+          (_undated ? `, and ${_undated} carr${_undated !== 1 ? 'y' : 'ies'} no date at all — those alone cannot establish a CAM year` : '') +
+          `. Switch the CAM year to match your invoices, or upload invoices for ${_year}.`,
+          { color: '#92400e', textColor: '#fef3c7', duration: 14000 });
+      }
+      property._yearScope = { year: _year, excluded: _outOfYear, undated: _undated,
+                              datedInYear: 0, refused: true, reason: 'no_dated_invoice_in_year' };
+      return [];
+    }
     if (_outOfYear || _undated) {
       console.log(`[runFullReconciliation] year ${_year}: excluded ${_outOfYear} out-of-year invoice(s); ${_undated} undated invoice(s) included`);
     }
@@ -10249,11 +10279,12 @@ function runFullReconciliation(property) {
         showToast(`⚠️ Nothing to reconcile — all ${_outOfYear} invoice${_outOfYear !== 1 ? 's' : ''} are dated outside the ${_year} CAM year. Switch the CAM year to match your invoices, or upload invoices for ${_year}.`,
           { color: '#92400e', textColor: '#fef3c7', duration: 12000 });
       }
-      property._yearScope = { year: _year, excluded: _outOfYear, undated: _undated, refused: true };
+      property._yearScope = { year: _year, excluded: _outOfYear, undated: _undated,
+                              datedInYear: 0, refused: true, reason: 'all_out_of_year' };
       return [];
     }
   }
-  property._yearScope = { year: _year, excluded: _outOfYear, undated: _undated };
+  property._yearScope = { year: _year, excluded: _outOfYear, undated: _undated, datedInYear: _datedInYear };
   // The set this run actually considered, after the CAM-year filter above. Kept
   // so the variance panel can name out-of-year invoices as out-of-year instead
   // of reporting them as expenses that mysteriously reached no tenant — the year
@@ -10700,6 +10731,14 @@ async function runAllocation() {
   // Build a Property + run full reconciliation (for per-tenant invoice breakdown + direct matching)
   const _prop = new Property(propName, totalSqft);
   _prop.camYear = _runYear;   // CAM-2: the engine scopes its own inputs
+  // AND THE PROPERTY REMEMBERS IT. properties.data.camYear had a reader in
+  // loadPropertyData and a slot in saveProperty, and no assignment anywhere in
+  // the codebase — the only `.camYear =` was the throwaway engine Property on
+  // the line above. So the field round-tripped as null forever and the year a
+  // property was reconciled for lived nowhere but one per-user localStorage
+  // key. Stamping it here is what makes selectProperty's adoption possible.
+  const _appProp = currentProperty();
+  if (_appProp) _appProp.camYear = _runYear;
   _prop.addLeases(getValidTenants().map(t => {
     const lease = new Lease(t.tenant_name, t.unitNumber || '', parseSqft(t.leased_sqft), t.start_date || '', t.end_date || '',
       _appliedExclusions(t),   // F-02: applied only — see _exclusionState
@@ -12949,9 +12988,20 @@ let _camYear = new Date().getFullYear(); // hydrated from scoped key in _lsMigra
 // Financials panel; expose a reader rather than the binding.
 window.currentCamYear = function () { return _camYear != null ? _camYear : null; };
 function getCamYear() { return _camYear; }
-function setCamYear(y) {
+// `persist` defaults TRUE, because the two long-standing callers — the Property
+// Setup dropdown and a restored snapshot — are both statements of intent worth
+// remembering.
+//
+// The property-year adoption in selectProperty passes false, and that matters.
+// setCamYear writes the per-user key, so adopting property A's 2025 REPLACED the
+// user's stored default with it; opening property B, which has never been
+// reconciled and has no year of its own, then inherited 2025 from a property it
+// has nothing to do with. That is the same silent carry-across this whole change
+// exists to remove, one level down. A property's own year applies to the
+// session; only a person's choice becomes the default.
+function setCamYear(y, opts) {
   _camYear = parseInt(y, 10) || new Date().getFullYear();
-  localStorage.setItem(_camYearKey(), _camYear);
+  if (!opts || opts.persist !== false) localStorage.setItem(_camYearKey(), _camYear);
   const glLbl = document.getElementById('glUploadLabel');
   if (glLbl) glLbl.textContent = `Upload ${_camYear} GL Excel File (.xlsx only)`;
   const _cyb = document.getElementById('camYearBadge');
@@ -22542,9 +22592,52 @@ async function selectProperty(id) {
       safeResults:  !!safeResults,
     });
 
+    // THE CAM YEAR BELONGS TO THE PROPERTY, NOT TO THE PERSON.
+    //
+    // `_camYear` is one global, hydrated from a per-USER localStorage key and
+    // defaulting to the current calendar year. Selecting a property did not
+    // touch it, so the year in force was whatever the last property — or the
+    // last session — happened to leave there. A fresh property carrying 2025
+    // invoices was reconciled as 2026: the year filter dropped all twelve dated
+    // invoices, kept the two undated ones, and produced $8,280.00 of a
+    // $217,900.00 pool with nothing on screen to say the year was wrong.
+    //
+    // properties.data.camYear already had a reader here and a slot in
+    // saveProperty — it was simply never written, so it round-tripped as null
+    // forever. runAllocation now stamps it, and this adopts it: a property
+    // remembers the year it was last reconciled for. The localStorage
+    // preference keeps its old job for a property that has never been
+    // reconciled, which is the honest role for a UI default.
+    //
+    // RESOLVED, NOT INHERITED. The year is taken from the property when it has
+    // one and from the user's stored default when it does not — never from
+    // whichever property happened to be open a moment ago. Adopting property A's
+    // 2025 and then opening property B, which has never been reconciled, left B
+    // sitting on 2025: the same silent carry-across one level down.
+    //
+    // persist:false on both branches. setCamYear writes the per-user key, and a
+    // property's own year is not the user's default — only a choice made in the
+    // Property Setup dropdown is.
+    //
+    // Before the snapshot restore below, so a saved reconciliation restoring its
+    // own camYear still wins; the two agree once a run has stamped the record.
+    {
+      let _pref = NaN;
+      try { _pref = parseInt(localStorage.getItem(_camYearKey()), 10); } catch (_) {}
+      if (!Number.isFinite(_pref)) _pref = new Date().getFullYear();
+      const _want = data.camYear != null ? parseInt(data.camYear, 10) : _pref;
+      if (Number.isFinite(_want) && _want !== getCamYear()) {
+        console.log('[selectProperty] resolving the CAM year', {
+          propertyId: id, was: getCamYear(), now: _want,
+          from: data.camYear != null ? 'property' : 'user default' });
+        setCamYear(_want, { persist: false });
+      }
+    }
+
     // Reconciliation results are always applied — they don't depend on tenant count.
     property.results           = safeResults;
     property.camReconciliation = safeCamRec;
+    property.camYear           = data.camYear ?? property.camYear ?? null;
     // Settlement record (RLUSD proof-of-settlement) is loaded from the data blob here too —
     // loadProperties() skips the blob, so this lazy load is the only place it arrives. Without
     // this, the settlement flow renders "pending" because property.settlement stays undefined.
