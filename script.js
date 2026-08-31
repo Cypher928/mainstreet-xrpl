@@ -18501,9 +18501,69 @@ function generateTenantStatement(tenantName, opts = {}) {
   // breakdown quietly disagree with the total above it.
   const _breakdownSum  = Object.values(catMap).reduce((s2, d) => s2 + d.share, 0);
   const _breakdownGap  = parseFloat((r.allocatedAmount - _breakdownSum).toFixed(2));
-  const _breakdownReconcileNote = Math.abs(_breakdownGap) >= 0.01
-    ? `<p style="font-size:0.78rem;color:var(--text-4);margin-top:6px;">Line items above total ${fmt(_breakdownSum)}; rounding adjustment ${_breakdownGap >= 0 ? '+' : '&minus;'}${fmt(Math.abs(_breakdownGap))} brings your billed total to ${fmt(r.allocatedAmount)}.</p>`
+
+  // A CAP IS NOT A ROUNDING ADJUSTMENT, and this line called it one.
+  //
+  // The line items are the UNCAPPED shares the engine computed; allocatedAmount
+  // is what is billed after the cap. So when a cap fires, the entire gap between
+  // them IS the cap — and a tenant read "rounding adjustment −$3,100.00" over a
+  // contractual ceiling their lease negotiated. The very next paragraph then
+  // said "Cap applied — your allocation was reduced by $3,100.00 to meet the
+  // lease cap", so the statement contradicted itself and the wrong sentence came
+  // first.
+  //
+  // The two components are separated rather than one being folded into the
+  // other: a cap and a half-cent of rounding are different facts, they can both
+  // be non-zero in the same statement, and only one of them is a term of a
+  // lease.
+  const _capReduction = r.capApplied ? Math.abs(parseFloat(r.capAdjustment) || 0) : 0;
+  const _roundingGap  = parseFloat((_breakdownGap + _capReduction).toFixed(2));
+
+  // The cap the lease actually states, so the tenant can check the arithmetic
+  // against their own document rather than taking the reduction on trust. Both
+  // halves have to be readable to name a ceiling; with either missing the
+  // reduction is still stated, just without the terms behind it.
+  const _capPct  = t ? parseFloat(t.capPct)        : NaN;
+  const _capBase = t ? parseFloat(t.capBaseAmount) : NaN;
+  const _capTermsKnown = Number.isFinite(_capPct) && Number.isFinite(_capBase) && _capBase > 0;
+  const _capCeiling = _capTermsKnown ? _capBase * (1 + _capPct / 100) : null;
+
+  const _capReconcileNote = _capReduction >= 0.01
+    ? `<p class="ts-cap-reconcile" style="font-size:0.8rem;color:var(--c-b45309);margin-top:6px;">
+        Line items above total ${fmt(_breakdownSum)}. ${_capTermsKnown
+          ? `Your lease caps recoverable CAM at ${_capPct}% above a prior-year base of ${fmt(_capBase)} &mdash; a ceiling of ${fmt(_capCeiling)}`
+          : `Your lease caps recoverable CAM`}, so <strong>${fmt(_capReduction)} was not billed to you</strong>. Your billed total is ${fmt(r.allocatedAmount)}.</p>`
     : '';
+
+  const _roundingReconcileNote = Math.abs(_roundingGap) >= 0.01
+    ? `<p style="font-size:0.78rem;color:var(--text-4);margin-top:6px;">Line items above total ${fmt(_breakdownSum)}${_capReduction >= 0.01 ? ' before the cap' : ''}; rounding adjustment ${_roundingGap >= 0 ? '+' : '&minus;'}${fmt(Math.abs(_roundingGap))} brings your billed total to ${fmt(r.allocatedAmount)}.</p>`
+    : '';
+
+  const _breakdownReconcileNote = _capReconcileNote + _roundingReconcileNote;
+
+  // ── Charges included on no date evidence ──────────────────────────────────
+  //
+  // The reconciliation KEEPS an undated invoice rather than dropping it, because
+  // dropping it would silently lose a real expense — that is a deliberate
+  // decision in runFullReconciliation and this change does not touch it. What
+  // the statement did was present the resulting charge as an ordinary one: the
+  // detail panel lists vendor, category, invoice total and share, and no date at
+  // all, so nothing distinguished a charge dated inside the CAM year from one
+  // whose year nobody can establish.
+  //
+  // Read through LeasePeriod.readDate, the one owner of date reading, so
+  // "absent" and "unreadable" stay the different problems they are: nothing was
+  // written on the invoice, versus something was written and cannot be read.
+  const _invDateState = (inv) => {
+    const raw = (inv && (inv.date || inv.invoiceDate)) || '';
+    const LP = window.LeasePeriod;
+    if (!LP) return { ok: !!raw, status: raw ? 'ok' : 'absent', raw: raw || null, value: raw || null };
+    const d = LP.readDate(raw);
+    return { ok: d.status === 'ok', status: d.status, raw: raw || null, value: d.value || null };
+  };
+  const _undatedCharges = eligible
+    .map((inv) => ({ inv, d: _invDateState(inv) }))
+    .filter(x => !x.d.ok);
 
   const categoryCards = Object.entries(catMap)
     .sort((a, b) => b[1].share - a[1].share)
@@ -18517,6 +18577,17 @@ function generateTenantStatement(tenantName, opts = {}) {
         const viewInvBtn = stored && stored.fileUrl
           ? `<button class="btn-secondary" onclick="event.stopPropagation();openInvFileViewer('${stored.fileUrl.replace(/\\/g,'\\\\').replace(/'/g,"\\'")}','${esc(inv.vendor || inv.vendorName || '')}','${esc(stored.fileType || '')}')">&#x1F4C4; View Invoice</button>`
           : '';
+        // On the collapsed row as well as inside the detail. A tenant should not
+        // have to open every charge to find the one nobody can date.
+        const _ds = _invDateState(inv);
+        const _rowDateWarn = _ds.ok ? '' :
+          `<div class="charge-sub ts-charge-undated" style="color:var(--c-b45309);">&#x26A0; No invoice date on file</div>`;
+        const _detailDateRow = _ds.ok
+          ? `<div class="ts-detail-row"><span>Invoice Date</span><span class="ts-detail-val">${esc(_ds.value)}</span></div>`
+          : `<div class="ts-detail-row"><span>Invoice Date</span><span class="ts-detail-val" style="color:var(--c-b45309);">${
+               _ds.status === 'unreadable'
+                 ? `On file as &ldquo;${esc(String(_ds.raw))}&rdquo; &mdash; not a date this reconciliation can read`
+                 : 'Not on file'}</span></div>`;
         return `
           <div class="charge-row ts-inv-card" id="crow-${rowId}"
             onclick="(function(row){var d=document.getElementById('ddetail-${rowId}');var open=d.style.display==='block';d.style.display=open?'none':'block';row.classList.toggle('detail-open',!open);})(this)">
@@ -18525,6 +18596,7 @@ function generateTenantStatement(tenantName, opts = {}) {
                 <div class="charge-vendor">${esc(inv.vendor)}</div>
                 <div class="charge-amount">${fmt(share)}</div>
                 <div class="charge-sub">Your share (${pct}%)</div>
+                ${_rowDateWarn}
                 <p class="ts-vendor-hint">Tap here for details or to dispute this charge</p>
               </div>
               <div class="charge-chevron">&#x203A;</div>
@@ -18537,6 +18609,7 @@ function generateTenantStatement(tenantName, opts = {}) {
               </div>
               <div class="ts-detail-row"><span>Vendor</span><span class="ts-detail-val">${esc(inv.vendor)}</span></div>
               <div class="ts-detail-row"><span>Category</span><span class="ts-detail-val">${esc(inv.category)}</span></div>
+              ${_detailDateRow}
               <div class="ts-detail-row"><span>Invoice Total</span><span class="ts-detail-val">${fmt(inv.amount)}</span></div>
               <div class="ts-detail-row ts-detail-highlight"><span>Your Share</span><span class="ts-detail-val">${fmt(share)}</span></div>
               <div class="ts-detail-basis">${inv.allocation === 'direct'
@@ -18591,10 +18664,32 @@ function generateTenantStatement(tenantName, opts = {}) {
          : ''}</p>`
     : '';
 
+  // WHAT THE STATEMENT OWES A TENANT ABOUT A CHARGE NOBODY CAN DATE.
+  //
+  // The allocation is unchanged — these invoices are in the pool because the
+  // engine keeps undated expenses rather than losing them, and re-scoping them
+  // is a separate question this does not answer. What changes is that the tenant
+  // is told, by vendor and amount, which charges rest on no date, and what to do
+  // about it. Silence here asks a tenant to accept a share of an expense whose
+  // CAM year cannot be established from the file.
+  const undatedNote = _undatedCharges.length
+    ? `<p class="ts-undated-note" style="font-size:0.82rem;color:var(--c-b45309);margin-top:8px;padding:8px 10px;border:1px solid var(--c-b45309);border-radius:6px;">
+        <strong>&#x26A0; ${_undatedCharges.length} charge${_undatedCharges.length !== 1 ? 's' : ''} on this statement ${_undatedCharges.length !== 1 ? 'carry' : 'carries'} no invoice date.</strong>
+        ${_undatedCharges.map(({ inv, d }) =>
+            `${esc(inv.vendor || inv.vendorName || 'Unknown vendor')} (${fmt(inv.amount)}${
+              d.status === 'unreadable' ? `, dated &ldquo;${esc(String(d.raw))}&rdquo; on the invoice` : ', no date on the invoice'})`
+          ).join('; ')}.
+        ${_undatedCharges.length !== 1 ? 'They were' : 'It was'} included in this ${esc(String(getCamYear()))} reconciliation and your share above,
+        but the file does not establish that ${_undatedCharges.length !== 1 ? 'they fall' : 'it falls'} inside the ${esc(String(getCamYear()))} CAM year.
+        <strong>Ask your landlord for the dated invoice before paying this line</strong>, or open a dispute on the charge above &mdash;
+        if the date turns out to fall outside ${esc(String(getCamYear()))}, the charge belongs to a different reconciliation.</p>`
+    : '';
+
   // Cap info
   const capNote = r.capApplied
     ? `<p style="font-size:0.82rem;color:var(--c-b45309);margin-top:6px;font-style:italic;">
-        Cap applied — your allocation was reduced by ${fmt(r.capAdjustment)} to meet the lease cap.</p>`
+        Cap applied — your allocation was reduced by ${fmt(r.capAdjustment)} to meet the lease cap${
+          _capTermsKnown ? ` of ${fmt(_capCeiling)} (${_capPct}% above a ${fmt(_capBase)} base)` : ''}.</p>`
     : '';
 
   // Year-end reconciliation (estimated = allocated, actual = allocated for demo)
@@ -18728,7 +18823,7 @@ function generateTenantStatement(tenantName, opts = {}) {
     <div class="rpt-section-title">Expense Breakdown</div>
     <p class="rpt-helper-text">Click a category to expand individual charges.</p>
     <div class="ts-cat-list">${categoryCards}</div>
-    ${_breakdownReconcileNote}${exclNote}${capNote}
+    ${_breakdownReconcileNote}${undatedNote}${exclNote}${capNote}
 
     <div class="rpt-section-title">Year-End Reconciliation</div>
     <table class="rpt-table">

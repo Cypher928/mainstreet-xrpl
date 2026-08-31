@@ -118,6 +118,12 @@ const SUITES = [
   // and the variance panel attributed nothing and told the manager to re-check
   // the register on a run that had reconciled to one cent.
   { label: 'Restore completeness',             cmd: 'node test-restore-completeness.js' },
+  // WHAT THE STATEMENT TELLS A TENANT MUST BE TRUE OF WHAT IT BILLED THEM. A
+  // $3,100 lease cap was described as a "rounding adjustment", contradicted two
+  // paragraphs later by the statement's own cap note; and a $9,000 invoice that
+  // carries no date was billed across six tenants with nothing on any statement
+  // to say its CAM year could not be established.
+  { label: 'Tenant statement truthfulness',    cmd: 'node test-tenant-statement-truthfulness.js' },
   // T2. A tenant's CAM share has two independent multiplicands — how much of the
   // BUILDING, and how much of the PERIOD — and the product had only the first,
   // so a tenant who took occupancy on 1 September was billed twelve months. The
