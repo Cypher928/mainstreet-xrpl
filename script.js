@@ -10890,7 +10890,7 @@ async function runAllocation() {
                   <div class="charge-row-left">
                     <div class="charge-vendor">${esc(inv.vendorName || '')}</div>
                     <div class="charge-amount">${fmt(inv.share)}</div>
-                    <div class="charge-sub">Tenant share (${pct}%)${inv.allocation === 'direct' ? ' &middot; direct' : ''}</div>
+                    <div class="charge-sub">Tenant share (${_shareExplanation(r, inv).rowSuffix})</div>
                     <p class="ts-vendor-hint">Tap for details or to dispute</p>
                   </div>
                   <div class="charge-chevron">&#x203A;</div>
@@ -10905,8 +10905,10 @@ async function runAllocation() {
                   <div class="ts-detail-row"><span>Category</span><span class="ts-detail-val">${esc(inv.category || '')}</span></div>
                   <div class="ts-detail-row"><span>Invoice Total</span><span class="ts-detail-val">${fmt(inv.amount)}</span></div>
                   <div class="ts-detail-row ts-detail-highlight"><span>Tenant Share</span><span class="ts-detail-val">${fmt(inv.share)}</span></div>
-                  <div class="ts-detail-basis">Based on ${pct}% pro-rata allocation by square footage</div>
-                  <div class="ts-detail-formula">${inv.allocation === 'direct' ? fmt(inv.amount) + ' direct charge — full amount to this unit' : fmt(inv.amount) + ' &times; ' + pct + '% = ' + fmt(inv.share)}</div>
+                  ${(() => { const _x = _shareExplanation(r, inv); return `
+                  <div class="ts-detail-basis">${esc(_x.basis)}</div>
+                  <div class="ts-detail-formula">${_x.formula}</div>
+                  ${_x.steps}`; })()}
                   <div class="ts-detail-actions">
                     <button class="inv-act-btn inv-act-explain" id="tsexplbtn-${rowId}"
                       onclick="event.stopPropagation();tsExplainInvoice('${rowId}','${esc(inv.vendorName||'')}','${esc(inv.category||'')}',${inv.amount},'${esc(inv.invoiceDate||'')}')">Explain</button>
@@ -12215,9 +12217,32 @@ function openVarianceDetails() {
         <tr><td>Allocated to tenants</td><td style="text-align:right;white-space:nowrap"><strong>${fmt(bk.billed)}</strong></td></tr>
         <tr><td>Difference</td><td style="text-align:right;white-space:nowrap"><strong>${fmt(bk.difference)}</strong></td></tr>
         <tr><td>Share of the pool that reached a tenant</td><td style="text-align:right;white-space:nowrap"><strong>${bk.billedPct == null ? '—' : bk.billedPct.toFixed(1) + '%'}</strong></td></tr>
-        <tr><td>Property covered by loaded leases</td><td style="text-align:right;white-space:nowrap"><strong>${bk.proRataSum.toFixed(1)}%</strong></td></tr>
+        <tr><td>Property covered by loaded leases (space)</td><td style="text-align:right;white-space:nowrap"><strong>${bk.proRataSum.toFixed(1)}%</strong></td></tr>
+        <tr><td>Covered for the whole period (space &times; time)</td><td style="text-align:right;white-space:nowrap"><strong>${bk.occupancyCoveredPct.toFixed(1)}%</strong></td></tr>
       </tbody>
     </table>
+    ${(() => {
+      // THE GAP BETWEEN THE TWO COVERAGE FIGURES, and what it does and does not
+      // account for. It explains the SHARED half of the notOccupied bucket only;
+      // the direct half is invoices matched to a part-period tenant but dated
+      // outside their occupancy, which no percentage of the building describes.
+      // Claiming the gap explains the whole bucket would be wrong by $9,700 on
+      // the property this was measured against.
+      const _gap = parseFloat((bk.proRataSum - bk.occupancyCoveredPct).toFixed(1));
+      if (_gap < 0.05) return '';
+      return `<p class="rpt-helper-text">
+        Loaded leases cover <strong>${bk.proRataSum.toFixed(1)}%</strong> of the building, but because some leases
+        covered only part of the CAM period, they cover <strong>${bk.occupancyCoveredPct.toFixed(1)}%</strong> of the
+        building for the full year. That <strong>${_gap.toFixed(1)} percentage-point</strong> gap is leased space whose
+        lease did not run for the full CAM period.
+        It accounts for <strong>${fmt(bk.notOccupiedShared)}</strong> of the ${fmt(bk.notOccupied)} on the
+        &ldquo;Leased, but the lease did not run the whole period&rdquo; line below${
+          bk.notOccupiedDirect >= 0.005
+            ? `; the remaining <strong>${fmt(bk.notOccupiedDirect)}</strong> is invoices matched directly to a
+               part-period tenant but dated outside their occupancy, or carrying no date to place them by`
+            : ''}.
+        None of it is charged to another tenant &mdash; it remains unallocated to tenants in this reconciliation.</p>`;
+    })()}
     <p class="rpt-helper-text">
       ${bk.unbilledCount > 0
         ? `<strong>${bk.unbilledCount} of the ${bk.invoiceCount} invoice${bk.invoiceCount !== 1 ? 's' : ''} in this pool contributed nothing to any tenant allocation</strong>
@@ -12308,6 +12333,138 @@ function _buildNeedsReviewRollupHtml(results) {
   </div>`;
 }
 
+// ── T2 · HOW A SHARE WAS ARRIVED AT, SAID ONCE ───────────────────────────────
+//
+// A tenant's CAM share has two independent multiplicands — how much of the
+// BUILDING they hold, and how much of the PERIOD their lease ran — and no
+// surface named the second one. Both charge-detail renderers printed:
+//
+//     $31,000.00 × 18.00% = $4,204.11
+//
+// and 31,000 × 18% is $5,580.00. The equation did not produce the number beside
+// it, on every shared line of every part-period tenant.
+//
+// THE OPERANDS ARE RATIONALS, NOT PERCENTAGES. lease-period.js already states
+// the rule for the temporal half — "243/365 replays exactly and 0.66575342 does
+// not" — and the spatial half has the same hazard: a one-third tenant renders
+// 33.33%, and 31,000 × 33.33% is $10,332.30 while the engine computed
+// $10,333.33. Printing a rounded percentage as an OPERATOR would have replaced
+// one false equation with another. Percentages appear as gloss; the equation
+// uses sqft/sqft and days/days, so a manager can re-key it and land on the cent.
+//
+// One helper for both renderers: the results card and the tenant statement must
+// not be able to describe the same charge differently.
+function _shareExplanation(r, inv) {
+  const _n = (v) => { const x = parseFloat(v); return Number.isFinite(x) ? x : null; };
+  const occ   = r && r.occupancy ? r.occupancy : null;
+  const share = _n(inv && inv.share) || 0;
+  const amt   = _n(inv && inv.amount) || 0;
+  const isDirect = (inv && inv.allocation) === 'direct';
+
+  // The building denominator. Read from the run's own tenant record, which
+  // carries it, rather than derived from proRataPercent — that percentage is
+  // rounded to two places and dividing by it reconstructs the wrong building.
+  const _lt = (typeof lastTenants !== 'undefined' && Array.isArray(lastTenants))
+    ? lastTenants.find(x => x && x.name === r.name) : null;
+  const tenantSqft   = _n(_lt && _lt.leasedSqft) ?? _n(r && r.sqFt);
+  const buildingSqft = _n(_lt && _lt.totalSqft)
+    ?? _n((typeof currentProperty === 'function' && currentProperty() || {}).totalSqft);
+  const pct = (_n(r && r.proRataPercent) ?? 0).toFixed(2);
+
+  // A DIRECT INVOICE IS NOT APPORTIONED — not by space and not by time. It is
+  // placed by its date and billed in full, so neither multiplicand appears.
+  if (isDirect) {
+    return {
+      rowSuffix: `${pct}% &middot; direct`,
+      basis:     'Billed directly to your space — charged in full, not apportioned by pro-rata share or by time.',
+      formula:   `${fmt(amt)} charged in full (100%)`,
+      steps:     '',
+    };
+  }
+
+  const haveSpace = tenantSqft != null && buildingSqft != null && buildingSqft > 0;
+  const spaceOperand = haveSpace
+    ? `${Math.round(tenantSqft).toLocaleString()}/${Math.round(buildingSqft).toLocaleString()} sqft`
+    : `${pct}%`;
+  const spaceProduct = haveSpace ? amt * (tenantSqft / buildingSqft) : amt * (_n(r.proRataPercent) || 0) / 100;
+
+  // A REAL FRACTION, OR NONE AT ALL. `unit: 'period'` is the full_period basis —
+  // numerator and denominator are both 1 and printing "× 1/1" would be noise
+  // dressed as arithmetic. Unresolved occupancy has no fraction to print at all,
+  // and inventing one is exactly what this whole change exists to stop.
+  const hasFraction = !!(occ && occ.applied && occ.numerator != null && occ.denominator > 0
+                         && (occ.unit === 'days' || occ.unit === 'months'));
+  const timeOperand = hasFraction ? `${occ.numerator}/${occ.denominator}` : null;
+  const unitWord    = hasFraction ? occ.unit : null;
+
+  // WHERE THE PERIOD FIGURE CAME FROM. An assumed bound and a measured one are
+  // different claims and must not read alike; an unreadable date is a third
+  // thing again.
+  let occupiedRow, periodProse;
+  if (!occ || !occ.applied) {
+    // UNRESOLVED IS NOT ONE CONDITION. occupancy() returns unresolved for an
+    // unreadable date, for a term that ended before the period, and for one that
+    // begins after it — three different facts with three different next actions.
+    // A single sentence about a date that "could not be read" is simply false on
+    // two of them, and a tenant reading it would go looking for a typo that is
+    // not there.
+    const _case = occ && occ.case;
+    if (!occ || !occ.unresolved) {
+      occupiedRow = 'not measured for this run';
+      periodProse = 'This run predates partial-period apportionment, so no occupancy fraction was recorded.';
+    } else if (_case === 'ended_before') {
+      occupiedRow = 'not established — lease ended before the period';
+      periodProse = `The lease on file ran to ${occ.termEnd}, before the ${getCamYear()} CAM period began, so this reconciliation cannot establish occupancy for it. The full period has been used, un-apportioned. A holdover or renewal may carry the obligation forward — confirm it and record it against the lease.`;
+    } else if (_case === 'begins_after') {
+      occupiedRow = 'not established — lease begins after the period';
+      periodProse = `The lease on file commences ${occ.termStart}, after the ${getCamYear()} CAM period ended, so this reconciliation cannot establish occupancy for it. The full period has been used, un-apportioned. Confirm whether the lease dates or the CAM year is wrong before issuing anything from this run.`;
+    } else if (_case === 'unreadable') {
+      occupiedRow = 'not established — a lease date cannot be read';
+      periodProse = 'A date on the lease could not be read, so occupancy could not be established. The full period has been used, un-apportioned. Correct the lease dates and re-run.';
+    } else {
+      occupiedRow = 'not established — full period used';
+      periodProse = 'Occupancy could not be established for this run, so the full period has been used, un-apportioned. Confirm the lease dates and the CAM period, and re-run.';
+    }
+  } else if (occ.unit === 'period') {
+    occupiedRow = 'the full annual amount — your lease says so';
+    periodProse = `Your lease bills the full annual amount regardless of a partial year, so no apportionment applies even though your lease ran ${occ.overlapStart} to ${occ.overlapEnd}.`;
+  } else if (occ.factor !== null && occ.factor >= 1) {
+    const _assumed = occ.assumedStart || occ.assumedEnd;
+    occupiedRow = `${occ.numerator} of ${occ.denominator} ${occ.unit}` +
+                  (_assumed ? ' — assumed, no ' + (occ.assumedStart ? 'start' : 'end') + ' date on file'
+                            : ' — the whole period');
+    periodProse = _assumed
+      ? `The lease on file carries no ${occ.assumedStart ? 'start' : 'end'} date, so this reconciliation has treated your term as covering the whole ${getCamYear()} CAM period. That is an assumption, not a date read from the lease.`
+      : `Your lease covered the whole ${getCamYear()} CAM period, so no part-year apportionment applies.`;
+  } else {
+    occupiedRow = `${occ.numerator} of ${occ.denominator} ${occ.unit}`;
+    const _src = occ.basisSource === 'lease'  ? `Apportioned ${String(occ.basis || '').replace('_', ' ')}, as your lease states.`
+               : occ.basisSource === 'manual' ? `Apportioned ${String(occ.basis || '').replace('_', ' ')}, as confirmed by your property manager.`
+               : `Apportioned ${String(occ.basis || '').replace('_', ' ')}: this reconciliation's default, not a term of your lease.`;
+    periodProse = `Apportioned for the part of the CAM period your lease covered — ${occ.overlapStart} to ${occ.overlapEnd}, ${occ.numerator} of ${occ.denominator} ${occ.unit}. ${_src}`;
+  }
+
+  // The one line a manager re-keys. Every operand exact; the printed result is
+  // the engine's own `share`, never recomputed here.
+  const formula = timeOperand
+    ? `${fmt(amt)} &times; ${spaceOperand} &times; ${timeOperand} ${unitWord} = ${fmt(share)}`
+    : `${fmt(amt)} &times; ${spaceOperand} = ${fmt(share)}`;
+
+  const steps = `<div class="ts-detail-steps">
+      <div class="ts-step"><span>Building expense</span><span></span><span class="ts-step-amt">${fmt(amt)}</span></div>
+      <div class="ts-step"><span>Your pro-rata share</span><span class="ts-step-op">${spaceOperand}</span><span class="ts-step-amt">${fmt(spaceProduct)}</span></div>
+      <div class="ts-step"><span>Occupied</span><span class="ts-step-op">${occupiedRow}</span><span class="ts-step-amt"></span></div>
+      <div class="ts-step ts-step-total"><span>Your share</span><span></span><span class="ts-step-amt">${fmt(share)}</span></div>
+    </div>`;
+
+  return {
+    rowSuffix: timeOperand ? `${pct}% &times; ${timeOperand} ${unitWord}` : `${pct}%`,
+    basis:     `Your ${pct}% pro-rata share of a building expense. ${periodProse}`,
+    formula,
+    steps,
+  };
+}
+
 // Builds the in-app Reconciliation Summary HTML panel displayed above result cards.
 //
 // `engineInvoices` is the Invoice[] the reconciliation engine was actually
@@ -12329,6 +12486,17 @@ function _buildReconciliationSummaryHtml(results, invoices, propName, engineInvo
   const totalBilled = results.reduce((s, r) => s + r.totalAllocated, 0);
   const proRataSum  = results.reduce((s, r) => s + (r.proRataPercent || 0), 0);
   const proRataGap  = parseFloat((100 - proRataSum).toFixed(2));
+  // ONE SOURCE. Read from the module that owns it rather than re-derived here —
+  // a second copy of this reduce is a second definition of coverage, and the two
+  // would drift the first time an occupancy shape changed. Null when the module
+  // is unavailable, which renders no tile rather than a wrong one.
+  const _occCoveredPct = (() => {
+    try {
+      const VB = window.VarianceBreakdown;
+      return VB && typeof VB.occupancyCovered === 'function'
+        ? parseFloat((VB.occupancyCovered(results) * 100).toFixed(2)) : null;
+    } catch (_) { return null; }
+  })();
   const capsCount   = results.filter(r => r.capApplied).length;
   const capTotal    = results.filter(r => r.capApplied).reduce((s, r) => s + (r.capAdjustment || 0), 0);
   const flaggedCnt  = results.filter(r => (r.ambiguityFlags || []).length > 0).length;
@@ -12597,7 +12765,17 @@ function _buildReconciliationSummaryHtml(results, invoices, propName, engineInvo
              refused. The figure is identical either way; only the claim changes. -->
         <div class="rcs-kpi"><div class="rcs-kpi-val">${fmt(totalBilled)}</div><div class="rcs-kpi-lbl">${
           _billable ? 'Total Billed' : 'Calculated Tenant Allocation'}</div></div>
-        <div class="rcs-kpi ${proCls}"><div class="rcs-kpi-val">${proRataSum.toFixed(1)}%</div><div class="rcs-kpi-lbl">Pro-Rata Sum</div></div>
+        <!-- TWO COVERAGE FIGURES, because they answer different questions.
+             proRataSum says whether a lease covers the square footage at all;
+             occupancyCovered says whether the lease covering it ran the whole
+             period. Only the first was ever shown, so a property 92% leased and
+             83.8% leased-for-the-year read as 92% covered, and the T2
+             distinction the allocation is built on was invisible. The figure
+             comes from variance-breakdown.js so there is one definition of it. -->
+        <div class="rcs-kpi ${proCls}"><div class="rcs-kpi-val">${proRataSum.toFixed(1)}%</div><div class="rcs-kpi-lbl">Space under lease</div></div>
+        ${_occCoveredPct === null ? '' :
+        `<div class="rcs-kpi ${Math.abs(_occCoveredPct - proRataSum) > 0.05 ? 'rcs-kpi--warn' : ''}"
+              title="How much of the building was under a loaded lease FOR THE WHOLE CAM PERIOD. Lower than the space figure when a lease began or ended mid-year."><div class="rcs-kpi-val">${_occCoveredPct.toFixed(1)}%</div><div class="rcs-kpi-lbl">Covered all year</div></div>`}
         <div class="rcs-kpi ${capsCls}"><div class="rcs-kpi-val">${capsCount > 0 ? capsCount + ' (−' + fmt(capTotal) + ')' : '0'}</div><div class="rcs-kpi-lbl">Caps Applied</div></div>
         <!-- "Flagged" counted ONLY per-row allocation ambiguity (approximate
              sqft, unknown NNN/Gross, sqft overflow, base-year mismatch). It
@@ -18595,7 +18773,7 @@ function generateTenantStatement(tenantName, opts = {}) {
               <div class="charge-row-left">
                 <div class="charge-vendor">${esc(inv.vendor)}</div>
                 <div class="charge-amount">${fmt(share)}</div>
-                <div class="charge-sub">Your share (${pct}%)</div>
+                <div class="charge-sub">Your share (${_shareExplanation(r, { ...inv, share }).rowSuffix})</div>
                 ${_rowDateWarn}
                 <p class="ts-vendor-hint">Tap here for details or to dispute this charge</p>
               </div>
@@ -18612,12 +18790,10 @@ function generateTenantStatement(tenantName, opts = {}) {
               ${_detailDateRow}
               <div class="ts-detail-row"><span>Invoice Total</span><span class="ts-detail-val">${fmt(inv.amount)}</span></div>
               <div class="ts-detail-row ts-detail-highlight"><span>Your Share</span><span class="ts-detail-val">${fmt(share)}</span></div>
-              <div class="ts-detail-basis">${inv.allocation === 'direct'
-                ? 'Billed directly to your space — not shared with other tenants'
-                : `Based on ${pct}% pro-rata allocation by square footage`}</div>
-              <div class="ts-detail-formula">${inv.allocation === 'direct'
-                ? `${fmt(inv.amount)} charged in full (100%)`
-                : `${fmt(inv.amount)} &times; ${pct}% = ${fmt(share)}`}</div>
+              ${(() => { const _x = _shareExplanation(r, { ...inv, share }); return `
+              <div class="ts-detail-basis">${esc(_x.basis)}</div>
+              <div class="ts-detail-formula">${_x.formula}</div>
+              ${_x.steps}`; })()}
               <div class="ts-detail-actions">
                 ${viewInvBtn}
                 <button class="inv-act-btn inv-act-explain" id="tsexplbtn-${rowId}"

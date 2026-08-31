@@ -198,11 +198,20 @@ t('[source] the statement reconciles its line items to the authoritative total',
      'a residual gap is not disclosed to the tenant');
 });
 
+// P5 moved this branch into _shareExplanation, the single helper both charge
+// renderers now call, so the predicate is written `(inv && inv.allocation)`
+// rather than `inv.allocation`. The guarantee is unchanged and the regex
+// accepts either spelling; what it additionally requires now is that the branch
+// live in ONE place, because the defect this guards against is the two
+// renderers describing the same charge differently. The rendered behaviour is
+// asserted end-to-end in test-partial-period-explanation.js.
 t('[source] a direct invoice is not described with the pro-rata formula', () => {
-  ok(/inv\.allocation === 'direct'/.test(scriptCode),
+  ok(/\(?inv(?: && inv)?\.allocation\)? === 'direct'/.test(scriptCode),
      'the charge detail does not distinguish direct from shared');
   ok(/charged in full \(100%\)/.test(scriptCode),
      'a directly-billed invoice still shows a pro-rata multiplication');
+  ok(/function _shareExplanation\(/.test(scriptCode),
+     'the two charge renderers no longer share one explanation helper');
 });
 
 t('[source] the dispute row indexes the same array the statement rendered', () => {

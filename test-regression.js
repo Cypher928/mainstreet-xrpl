@@ -124,6 +124,15 @@ const SUITES = [
   // carries no date was billed across six tenants with nothing on any statement
   // to say its CAM year could not be established.
   { label: 'Tenant statement truthfulness',    cmd: 'node test-tenant-statement-truthfulness.js' },
+  // THE PRINTED EQUATION MUST MULTIPLY OUT. "$12,500.00 × 33.33% = $1,678.08"
+  // was on the charge detail of a tenant who occupied 245 of 365 days: the left
+  // side is $4,166.25, the right side is the engine's answer, and the second
+  // multiplicand was not on the page. This parses every rendered operand back
+  // out of the DOM and asserts the product to the cent, on a fixture where one
+  // tenant holds exactly a third of the building so no rounded percentage can
+  // reproduce the bill. It also holds the two coverage figures apart — space,
+  // and space × time — which one number was doing the work of.
+  { label: 'Partial-period explanation',       cmd: 'node test-partial-period-explanation.js' },
   // T2. A tenant's CAM share has two independent multiplicands — how much of the
   // BUILDING, and how much of the PERIOD — and the product had only the first,
   // so a tenant who took occupancy on 1 September was billed twelve months. The

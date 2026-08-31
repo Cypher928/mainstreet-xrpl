@@ -2814,6 +2814,33 @@
       color: var(--c-c9973a); background: rgba(201,151,58,0.07); border: 1px solid rgba(201,151,58,0.18);
       border-radius: 5px; padding: 5px 9px; margin-top: 6px; letter-spacing: 0.01em;
     }
+    /* ── T2 · the two multiplicands, kept visibly apart ────────────────────
+       The single-line formula above is the one a manager re-keys; this is the
+       same calculation read as steps, so the pro-rata product and the occupancy
+       fraction cannot be mistaken for one number. Grid rather than flex: the
+       operand column has to line up down the block for the steps to read as
+       arithmetic at all. */
+    .ts-detail-steps {
+      margin-top: 8px; font-size: 0.74rem; color: var(--text-5);
+      border-top: 1px solid rgba(var(--line-rgb), 0.05); padding-top: 8px;
+    }
+    .ts-step {
+      display: grid; grid-template-columns: minmax(0, 1fr) minmax(0, auto) minmax(64px, auto);
+      gap: 10px; align-items: baseline; padding: 3px 0;
+    }
+    .ts-step-op  { color: var(--text-4); font-family: 'Courier New', Courier, monospace; text-align: right; }
+    .ts-step-amt { color: var(--text-2); font-weight: 600; text-align: right; white-space: nowrap; }
+    .ts-step-total {
+      border-top: 1px solid rgba(var(--line-rgb), 0.12); margin-top: 4px; padding-top: 6px;
+    }
+    .ts-step-total .ts-step-amt { color: var(--c-f59e0b); font-weight: 800; }
+    /* Phone: the three columns cannot hold their width, so the operand wraps
+       under its label rather than forcing the block wider than the viewport. */
+    @media (max-width: 480px) {
+      .ts-step { grid-template-columns: minmax(0, 1fr) minmax(56px, auto); }
+      .ts-step-op { grid-column: 1 / -1; text-align: left; }
+    }
+
     /* ── Calc state badges ─────────────────────────────────────────────── */
     .rc-calc-state {
       display: inline-flex; align-items: center; font-size: 0.6rem; font-weight: 700;

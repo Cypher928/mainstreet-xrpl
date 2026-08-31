@@ -62,6 +62,32 @@
   function _round(n) { return Math.round((Number(n) || 0) * 100) / 100; }
 
   /**
+   * HOW MUCH OF THE BUILDING-YEAR THE LOADED LEASES COVER.
+   *
+   * `proRataSum` answers "is there a lease over this square footage at all";
+   * this answers "did the lease covering it run the whole period". The two are
+   * different questions and the screen has to be able to show both — which it
+   * could not, because this figure was computed inside derive() and available
+   * nowhere else, so every surface that wanted it would have had to re-derive
+   * it. One definition, exported, used by derive() itself.
+   *
+   * NOT ROUNDED, and that is deliberate: it is a multiplicand, not a display
+   * figure. Rounding the percentage sum before dividing by 100 moved $4.93 of a
+   * $100,000 pool out of notOccupied and into the unattributed claim bucket.
+   * Callers that want to print it round at the point of printing.
+   *
+   * @returns {number} a fraction in [0,1] — multiply by 100 to display.
+   */
+  function occupancyCovered(results) {
+    const rs = Array.isArray(results) ? results.filter(Boolean) : [];
+    return rs.reduce((s, r) => {
+      const f = (r.occupancy && r.occupancy.applied && r.occupancy.factor !== null)
+        ? r.occupancy.factor : 1;
+      return s + (Number(r.proRataPercent) || 0) * f;
+    }, 0) / 100;
+  }
+
+  /**
    * @param {object} args
    * @param {Array}  args.results   ReconciliationResult[] from runFullReconciliation
    * @param {Array}  args.invoices   the Invoice[] behind the pool total (carries camEligible)
@@ -128,17 +154,21 @@
     // as a coverage gap and send the manager looking for a lease that is already
     // uploaded.
     const covered = proRataSum / 100;
-    // NOT ROUNDED. This is a multiplicand, not a displayed figure: rounding the
-    // percentage sum to two places before dividing by 100 moved $4.93 of a
-    // $100,000 pool out of notOccupied and into the unattributed claim bucket.
-    // The rounded form is exposed separately for display.
-    const occCoveredRaw = results.reduce((s, r) => {
-      const f = (r.occupancy && r.occupancy.applied && r.occupancy.factor !== null)
-        ? r.occupancy.factor : 1;
-      return s + (Number(r.proRataPercent) || 0) * f;
-    }, 0) / 100;
+    // ONE DEFINITION, shared with the surfaces that display it. See
+    // occupancyCovered() above for why it is not rounded here.
+    const occCoveredRaw = occupancyCovered(results);
     const occCovered = occCoveredRaw;
     let outOfYear = 0, notEligible = 0, uncovered = 0, notOccupied = 0, claimShortfall = 0;
+    // THE TWO THINGS THAT LAND IN notOccupied, kept apart as well as together.
+    //
+    // The bucket sums the apportioned-away share of every SHARED invoice and the
+    // whole of every DIRECT invoice held out over its date. Both belong to
+    // "leased space whose lease did not run the whole period", so the total is
+    // right — but a property-level explanation that says the space-versus-time
+    // coverage gap accounts for the bucket is wrong by exactly the direct half,
+    // and on Northgate that half is $9,700.00 of $22,932.88. Additive: the
+    // existing field and the identity are untouched.
+    let notOccupiedShared = 0, notOccupiedDirect = 0;
 
     // One definition of what is in the CAM pool, shared with the allocation and
     // the concentration detector. Resolved once here rather than per invoice,
@@ -202,6 +232,8 @@
         claimShare     = _round(amount - coverageShare - occupancyShare - allocated);
         uncovered      += coverageShare;
         notOccupied    += occupancyShare;
+        if (isDirect) notOccupiedDirect += occupancyShare;
+        else          notOccupiedShared += occupancyShare;
         claimShortfall += claimShare;
         reason = held === 'outside' ? 'outside_occupancy'
           : held === 'undated' ? 'undated_occupancy'
@@ -230,6 +262,8 @@
     notEligible    = _round(notEligible);
     uncovered      = _round(uncovered);
     notOccupied    = _round(notOccupied);
+    notOccupiedShared = _round(notOccupiedShared);
+    notOccupiedDirect = _round(notOccupiedDirect);
     claimShortfall = _round(claimShortfall);
     const residual = _round(difference - outOfYear - notEligible - uncovered - notOccupied - claimShortfall - capTotal);
 
@@ -242,7 +276,7 @@
       { key: 'uncovered', label: `Outside the ${proRataSum.toFixed(1)}% of the property covered by loaded leases`, amount: uncovered,
         detail: `Shared expenses are split by pro-rata share. The loaded leases hold ${proRataSum.toFixed(1)}% of the building, so ${gapPct.toFixed(1)}% of every shared invoice belongs to space that is either vacant or under a lease not yet uploaded.` },
       { key: 'not_occupied', label: 'Leased, but the lease did not run the whole period', amount: notOccupied,
-        detail: `Expense belonging to space that IS under a loaded lease, for the part of the period that lease did not cover — a tenant who took occupancy or moved out mid-year. Two things land here: the apportioned-away part of every shared invoice, and any invoice matched directly to that tenant but dated outside their occupancy, or carrying no date to place it by. None of it is charged to anyone else: the landlord absorbs it, exactly as with vacant space.` },
+        detail: `Expense belonging to space that IS under a loaded lease, for the part of the period that lease did not cover — a tenant who took occupancy or moved out mid-year. Two things land here: the apportioned-away part of every shared invoice, and any invoice matched directly to that tenant but dated outside their occupancy, or carrying no date to place it by. None of it is charged to anyone else; it remains unallocated to tenants in this reconciliation.` },
       { key: 'claim', label: 'Excluded by a lease, or matched to no tenant', amount: claimShortfall,
         detail: 'Dollars inside the covered share that no lease ended up claiming — a category a lease excludes from CAM, or an invoice matched to a tenant that no lease then took.' },
       { key: 'caps', label: 'Reduced by a CAM cap', amount: capTotal,
@@ -259,6 +293,9 @@
       billedPct, proRataSum, gapPct, capTotal,
       occupancyCoveredPct: _round(occCoveredRaw * 100),
       outOfYear, notEligible, uncovered, notOccupied, claimShortfall, residual,
+      // Additive. `notOccupied` keeps its meaning and its place in the identity;
+      // these two say which half is which.
+      notOccupiedShared, notOccupiedDirect,
       lines, invoices: rows,
       invoiceCount:  rows.length,
       unbilledCount: unbilled.length,
@@ -310,7 +347,7 @@
     fully_allocated:  'Fully allocated',
   };
 
-  const api = { derive, nextStep, invoiceKey, REASON_LABEL };
+  const api = { derive, nextStep, invoiceKey, occupancyCovered, REASON_LABEL };
   if (root) root.VarianceBreakdown = api;
   if (typeof module !== 'undefined' && module.exports) module.exports = api;
 

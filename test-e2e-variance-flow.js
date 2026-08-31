@@ -388,8 +388,18 @@ const SUPABASE_MOCK = `
   yes('it states the difference', headline['Difference'] === '$63,690.70', JSON.stringify(headline));
   yes('it states the coverage percentage the reader asked for',
       headline['Share of the pool that reached a tenant'] === '11.5%', JSON.stringify(headline));
+  // P5 renamed this row and added a second one beside it. The row used to be
+  // the only coverage figure on the panel and did two jobs: how much of the
+  // building is under a loaded lease, and how much of it was under one FOR THE
+  // WHOLE PERIOD. Those differ on any property with a mid-year lease. The
+  // assertion this line makes — that pool coverage and property coverage are
+  // told apart — is unchanged; the key it reads by is now explicit about which
+  // coverage it is, and the sibling row is asserted too, because a panel that
+  // printed only one of them is the defect P5 fixed.
   yes('and distinguishes that from how much of the property is leased',
-      headline['Property covered by loaded leases'] === '100.0%', JSON.stringify(headline));
+      headline['Property covered by loaded leases (space)'] === '100.0%', JSON.stringify(headline));
+  yes('    and from how much of it was leased for the WHOLE period',
+      headline['Covered for the whole period (space × time)'] === '100.0%', JSON.stringify(headline));
 
   const buckets = Object.fromEntries(panel.buckets.map(r => [r[0], r[1]]));
   yes('the cause is named explicitly rather than left to the reader',
@@ -698,7 +708,8 @@ const SUPABASE_MOCK = `
 
   yes('no uncaught page errors', errors.length === 0, errors.join(' | '));
 
-  const EXPECTED = 56;
+  // 57 since P5 added the whole-period coverage row assertion in step 2.
+  const EXPECTED = 57;
   yes(`suite runs all ${EXPECTED} checks`, pass + fail === EXPECTED + 1, `ran ${pass + fail}`);
 
   await browser.close();
