@@ -73,7 +73,18 @@
   function eligible(list)   { return (Array.isArray(list) ? list : []).filter(isEligible); }
   function excluded(list)   { return (Array.isArray(list) ? list : []).filter(i => i && !isEligible(i)); }
 
-  function _sum(list) { return Math.round((list || []).reduce((s, i) => s + _amount(i), 0) * 100) / 100; }
+  // P6 — SUMMED IN CENTS, NOT ROUNDED AFTERWARDS. Eight clean two-decimal
+  // invoices add up to 36000.299999999996 in binary floating point; rounding
+  // that at the end hides the drift but does not prevent it, and the variance
+  // identity has to close against this number exactly. Each amount becomes an
+  // integer first, and the total is an integer sum.
+  function _sum(list) {
+    const MC = (typeof window !== 'undefined' && window.MoneyCents)
+            || (typeof require === 'function' ? require('./money-cents.js') : null);
+    const items = list || [];
+    if (!MC) return Math.round(items.reduce((s, i) => s + _amount(i), 0) * 100) / 100;
+    return MC.fromCents(items.reduce((s, i) => s + (MC.toCents(_amount(i)) || 0), 0));
+  }
 
   /** The CAM pool: what tenants can be billed from. */
   function total(list)         { return _sum(eligible(list)); }

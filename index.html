@@ -7821,6 +7821,13 @@
      review-engine fails closed (every lease reads as missing its area) if it is
      absent, so load order is load-bearing, not cosmetic. -->
 <script src="source-values.js"></script>
+<!-- The canonical integer-cent boundary for reconciliation arithmetic. Three
+     tenants at exactly one third of a building summed to 99.99%, so a fully
+     leased property reported three cents of vacancy and a −$0.03 "Not
+     attributed" line. Reads amounts through source-values.js, so it must load
+     after it and before script.js and variance-breakdown.js, both of which do
+     their money arithmetic through it. -->
+<script src="money-cents.js"></script>
 <!-- What is in the CAM pool, defined once. The eligibility rule had four
      transcriptions; the allocation honoured it and the concentration detector
      did not, so a $70,000 invoice a manager had removed from CAM kept blocking

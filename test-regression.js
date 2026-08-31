@@ -133,6 +133,15 @@ const SUITES = [
   // reproduce the bill. It also holds the two coverage figures apart — space,
   // and space × time — which one number was doing the work of.
   { label: 'Partial-period explanation',       cmd: 'node test-partial-period-explanation.js' },
+  // EVERY CENT HAS AN HONEST ATTRIBUTION, and the panel cannot buy that by
+  // moving a tenant's charge. A fully-leased property reported $0.03 of vacancy
+  // and a −$0.03 "Not attributed" line, because three tenants at one third each
+  // sum to 99.99%; on a larger fixture the same mechanism printed −$1.06 under
+  // "Excluded by a lease". This pins the integer-cent identity, the split
+  // between a real exclusion and a rounding residue, and — in three independent
+  // ways including deep-frozen inputs — that the decomposition never writes to
+  // an allocation.
+  { label: 'Cent policy and variance separation', cmd: 'node test-cent-policy.js' },
   // T2. A tenant's CAM share has two independent multiplicands — how much of the
   // BUILDING, and how much of the PERIOD — and the product had only the first,
   // so a tenant who took occupancy on 1 September was billed twelve months. The

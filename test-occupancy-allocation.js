@@ -59,6 +59,10 @@ function loadEngine() {
     console: { log() {}, warn() {}, error() {}, groupCollapsed() {}, groupEnd() {} },
     window: { SourceValues: require('./source-values.js'),
               CamPool:      require('./cam-pool.js'),
+              // P6 — the engine's money arithmetic goes through the canonical
+              // integer-cent boundary, so the harness has to provide it the same
+              // way it provides the other modules the engine owns nothing of.
+              MoneyCents:   require('./money-cents.js'),
               LeasePeriod:  LP },
     parseFloat, parseInt, isNaN, Number, Math, Date, JSON, Set, Array, Object, String, Boolean,
     currentProperty: () => ({ tenants: _live }),
@@ -408,10 +412,19 @@ t('[source] the run is stamped so a reader can tell T2 from pre-T2', () => {
 
 console.log('\n── Ownership ──');
 
-t('[source] the factor is applied in exactly one place', () => {
+t('[source] the temporal multiplicand is built once and applied through one function', () => {
   const code = scriptSrc.replace(/\/\*[\s\S]*?\*\//g, '').replace(/^\s*\/\/.*$/gm, '');
-  const uses = (code.match(/\* occFactor/g) || []).length;
-  eq(uses, 2, `${uses} multiplications by occFactor — expected exactly two (the shared total and the per-invoice share)`);
+  // P6 replaced the float `occFactor` with the RATIONAL the lease states —
+  // 245/365, not 0.6712328767 — so there is no longer a factor to multiply by.
+  // The invariant is unchanged and now tighter: the temporal operand is
+  // constructed in exactly one place and reaches money through exactly one
+  // function, which is the only thing that multiplies it.
+  eq((code.match(/const _temporal =/g) || []).length, 1,
+     'the temporal rational is built in more than one place');
+  eq((code.match(/const _shareCents = /g) || []).length, 1,
+     'more than one function applies the share arithmetic');
+  eq((code.match(/\* occFactor/g) || []).length, 0,
+     'the float occupancy factor is being multiplied into money again — the rational is the stored form');
   eq((code.match(/window\.LeasePeriod\.occupancy\(/g) || []).length, 1,
      'occupancy() is called from more than one place in script.js');
 });
@@ -419,7 +432,11 @@ t('[source] the factor is applied in exactly one place', () => {
 t('[source] the allocation does not re-derive a factor of its own', () => {
   const i = scriptSrc.indexOf('function runFullReconciliation');
   const body = scriptSrc.slice(i, scriptSrc.indexOf('\n}\n', i));
-  ok(!/\/\s*365|\/\s*366|getTime\(\)\s*-/.test(body.replace(/\/\*[\s\S]*?\*\//g, '')),
+  // Line comments are stripped as well as block comments. They were not, so a
+  // comment that QUOTED a day count — "the lease says 245/365" — read as the
+  // allocation computing one. The assertion is about code, so it looks at code.
+  const codeOnly = body.replace(/\/\*[\s\S]*?\*\//g, '').replace(/^\s*\/\/.*$/gm, '');
+  ok(!/\/\s*365|\/\s*366|getTime\(\)\s*-/.test(codeOnly),
      'a day count appeared in the allocation — the arithmetic belongs in lease-period.js');
 });
 

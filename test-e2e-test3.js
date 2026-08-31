@@ -909,8 +909,13 @@ const SUPABASE_MOCK = `
   yes('the coverage banner rendered (not a vacuous check)', !!banner,
       'the partial-coverage banner is not on screen');
   if (banner) {
+    // $42,209.21 since P6/D5, one cent lower than before. The billed total is
+    // now the SUM OF THE TENANT'S ROUNDED LINE ITEMS rather than round2 of the
+    // exact sum, so a statement's charges add up to the number at the bottom of
+    // it. That moved this property's billed total from $25,090.78 to
+    // $25,090.79. The assertion still pins an exact cent; it is the correct one.
     yes('it names the unallocated amount',
-        /\$42,209\.22/.test(banner), banner.slice(0, 200));
+        /\$42,209\.21/.test(banner), banner.slice(0, 200));
     yes('it calls the amount unallocated, not absorbed or expected',
         /currently unallocated/i.test(banner) && !/\bExpected\b/.test(banner),
         banner.slice(0, 200));
@@ -928,8 +933,11 @@ const SUPABASE_MOCK = `
         /billed only its own share/i.test(banner), banner.slice(0, 300));
   }
   // The calculation itself is untouched.
+  // Unchanged in everything but the D5 cent above: the pool is identical and the
+  // billed total differs only by the line-item rounding rule, which is the whole
+  // of what P6 changed about money.
   yes('the arithmetic behind the banner is unchanged',
-      Math.abs((recon.pool - recon.billed) - 42209.22) < 0.01,
+      recon.pool === 67300 && Math.abs((recon.pool - recon.billed) - 42209.21) < 0.005,
       `pool ${recon.pool} - billed ${recon.billed}`);
 
   // ══ ISSUES 1, 2, 4 — the audit findings as the app derives them ════════════

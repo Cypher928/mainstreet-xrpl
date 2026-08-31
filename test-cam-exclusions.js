@@ -63,6 +63,9 @@ function loadEngine() {
     window: {
       SourceValues: require('./source-values.js'),
       CamPool:      require('./cam-pool.js'),
+      // P6 — the canonical integer-cent boundary. The engine's money arithmetic
+      // goes through it, so the sandbox has to supply it like the others.
+      MoneyCents:   require('./money-cents.js'),
     },
     parseFloat, isNaN, Number, Math, Date, JSON, Set, Array, Object, String,
     currentProperty: () => ({ tenants: [] }),          // live-tenant overlay: none

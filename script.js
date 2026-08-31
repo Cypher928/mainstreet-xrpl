@@ -10357,7 +10357,9 @@ function runFullReconciliation(property) {
     // HOW MUCH OF THE PERIOD. Read once, from the one module that owns it.
     const occ = (_camPeriod && window.LeasePeriod)
       ? window.LeasePeriod.occupancy(live, _camPeriod) : null;
-    const occFactor = (occ && occ.applied && occ.factor !== null) ? occ.factor : 1;
+    // The factor is no longer an operand — the allocation multiplies by the
+    // rational below (P6/D9a). It is still read to decide whether occupancy was
+    // applied at all, which is a different question from what it equals.
 
     const _isExcluded = inv => lease.excludedCategories.includes((inv.category || '').toLowerCase());
 
@@ -10373,8 +10375,47 @@ function runFullReconciliation(property) {
       return d.value >= occ.overlapStart && d.value <= occ.overlapEnd;
     };
 
+    // ── P6 · THE CANONICAL INTEGER-CENT BOUNDARY (D9a) ───────────────────────
+    //
+    // Money crosses into the reconciliation here and nowhere else. Below this
+    // line every amount is an integer number of cents, every share is one
+    // BigInt rational rounded once, and the identity closes exactly.
+    //
+    // THE SOURCE RECORD IS NOT REWRITTEN (D9b). `inv.amount` on the stored
+    // invoice keeps whatever the document said; what the reconciliation bills is
+    // the cent. The two differ only when a source genuinely carried sub-cent
+    // precision — or when a general ledger handed us `1234.56 - 1000.01` and
+    // IEEE-754 handed back 234.54999999999995.
+    const _MC = window.MoneyCents;
+    const _spatial  = _MC.ratio(lease.sqFt, totalSqFt);
+    // The rational, not the factor. `occ.factor` is 0.6712328767 where the lease
+    // says 245/365, and only one of those two replays exactly. `applied: false`
+    // is un-apportioned, which is 1/1 — never 0.
+    const _temporal = (occ && occ.applied && occ.numerator != null && occ.denominator > 0)
+      ? { n: occ.numerator, d: occ.denominator } : { n: 1, d: 1 };
+    const _shareCents = inv => _MC.shareCents(_MC.toCents(inv.amount) || 0, [_spatial, _temporal]);
+
     const eligibleShared = sharedInvoices.filter(inv => !_isExcluded(inv));
-    const sharedTotal = eligibleShared.reduce((s, inv) => s + inv.amount, 0) * proRata * occFactor;
+    // D8 — WHAT THIS LEASE EXCLUDED, RECORDED RATHER THAN INFERRED.
+    //
+    // The variance panel used to reach "excluded by a lease" by subtraction, so
+    // a rounding artefact came out under that label — negative $1.06 on the P5
+    // fixture. An exclusion is a decision this loop makes from a schedule the
+    // manager can point at, so this loop is what records it. Nothing here
+    // changes an allocation: these are the cents the tenant did NOT take.
+    const excludedShares = sharedInvoices.filter(_isExcluded).map(inv => ({
+      id: inv.id ?? null, vendorName: inv.vendorName || inv.vendor || '',
+      category: inv.category || '', scope: 'shared', cents: _shareCents(inv),
+    }));
+    // D5 — THE TOTAL IS THE SUM OF THE LINES.
+    //
+    // It used to be `round2(Σ exact)` while the statement listed `round2(exact)`
+    // per line. Both were called "what the tenant owes" and they differed by up
+    // to n/2 cents, which is the whole of the ±$0.01 residual. A tenant adds up
+    // the charges on their statement; the total they arrive at is now the total
+    // they are billed.
+    const _sharedLineCents = eligibleShared.map(_shareCents);
+    const sharedTotalCents = _sharedLineCents.reduce((s, c) => s + c, 0);
 
     // CAM-3 — the exclusion schedule applies to DIRECT invoices too. It used to
     // filter only the shared pool, so a $50,000 capital expenditure the lease
@@ -10383,6 +10424,14 @@ function runFullReconciliation(property) {
     const matched     = directInvoices.filter(inv => matchesTenant(inv, lease));
     const _claimable  = matched.filter(inv => !_isExcluded(inv));
     const excludedDirect = matched.filter(_isExcluded);
+    // A DIRECT exclusion keeps the WHOLE invoice off the bill, not a share of
+    // it — a direct match bills one tenant in full, so what the exclusion
+    // withholds is the full amount. Recorded on the same list so the variance
+    // panel reads one decision rather than two rules.
+    excludedDirect.forEach(inv => excludedShares.push({
+      id: inv.id ?? null, vendorName: inv.vendorName || inv.vendor || '',
+      category: inv.category || '', scope: 'direct', cents: _MC.toCents(inv.amount) || 0,
+    }));
     // Split three ways: inside the occupancy window, outside it, and undated.
     // An undated direct invoice on a partial-period tenant cannot be placed, so
     // it is held out and REPORTED — never silently billed and never silently
@@ -10390,26 +10439,41 @@ function runFullReconciliation(property) {
     const ownInvoices     = _claimable.filter(inv => _inWindow(inv) === true);
     const outsideWindow   = _claimable.filter(inv => _inWindow(inv) === false);
     const undatedDirect   = _claimable.filter(inv => _inWindow(inv) === null);
-    const ownTotal    = ownInvoices.reduce((s, inv) => s + inv.amount, 0);
+    // A direct invoice is billed in full, so its line is the invoice itself —
+    // quantised at the same boundary, never apportioned by either multiplicand.
+    const _ownLineCents = ownInvoices.map(inv => _MC.toCents(inv.amount) || 0);
+    const ownTotalCents = _ownLineCents.reduce((s, c) => s + c, 0);
 
-    let rawTotal      = sharedTotal + ownTotal;
+    let rawCents      = sharedTotalCents + ownTotalCents;
     let capApplied    = false;
     let capAdjustment = null;
 
     if (lease.capPercentage !== null && lease.capBaseAmount !== null) {
-      const cap = lease.capBaseAmount * (1 + lease.capPercentage / 100);
-      if (rawTotal > cap) {
-        capAdjustment = parseFloat((rawTotal - cap).toFixed(2));
-        rawTotal      = cap;
+      // D6 — THE CEILING IS ROUNDED TO CENTS WHERE IT IS COMPUTED.
+      //
+      // `33,333.33 × 1.075` is 35,833.32975. The engine capped to that and the
+      // statement printed "a ceiling of $35,833.33", so the number the tenant
+      // was shown was not the number applied and the cap could not be checked
+      // against the lease with a calculator. One ceiling, in cents, both places.
+      const capCents = _MC.toCents(lease.capBaseAmount * (1 + lease.capPercentage / 100));
+      if (capCents !== null && rawCents > capCents) {
+        capAdjustment = _MC.fromCents(rawCents - capCents);
+        rawCents      = capCents;
         capApplied    = true;
       }
     }
 
     const included = [
-      ...eligibleShared.map(inv => ({
+      ...eligibleShared.map((inv, _i) => ({
         ...inv,
         allocation: 'shared',
-        share: parseFloat((inv.amount * proRata * occFactor).toFixed(2)),
+        // The amount the equation on the statement multiplies. It is the
+        // quantised cent, not the source float, so `$234.55 × 9,200/26,000` is
+        // an equation a manager can re-key — which it would not be if the line
+        // printed $234.55 and the engine had used 234.54999999999995.
+        amount: _MC.fromCents(_MC.toCents(inv.amount) || 0),
+        amountSource: inv.amount,
+        share: _MC.fromCents(_sharedLineCents[_i]),
         ...(inv.matchConfidence < 75 ? {
           flag: {
             message:     'Low confidence invoice match',
@@ -10417,7 +10481,12 @@ function runFullReconciliation(property) {
           },
         } : {}),
       })),
-      ...ownInvoices.map(inv => ({ ...inv, allocation: 'direct', share: inv.amount })),
+      ...ownInvoices.map((inv, _i) => ({
+        ...inv, allocation: 'direct',
+        amount: _MC.fromCents(_ownLineCents[_i]),
+        amountSource: inv.amount,
+        share: _MC.fromCents(_ownLineCents[_i]),
+      })),
     ];
 
     // Recompute flags from live tenant data — never cache between runs
@@ -10516,7 +10585,7 @@ function runFullReconciliation(property) {
       lease.tenantName,
       lease.unitNumber,
       lease.sqFt,
-      parseFloat(rawTotal.toFixed(2)),
+      _MC.fromCents(rawCents),
       // STILL THE SPATIAL SHARE. Not multiplied by the occupancy factor — the
       // two live side by side on the result and are combined only for display.
       parseFloat((proRata * 100).toFixed(2)),
@@ -10527,6 +10596,21 @@ function runFullReconciliation(property) {
     );
     result.ambiguityFlags = flags;
     result.tenantId       = lease.id;
+    // D7 — THE SPATIAL RATIONAL, STORED. `sqFt` was already here; the building
+    // it is a fraction OF was not, so the only reproducible spatial figure on
+    // the result was `proRataPercent` — a two-decimal DISPLAY value that
+    // variance-breakdown.js was then dividing by. 33.33% is not one third, and
+    // over a $31,800 shared pool that difference is $1.06. Now the rational is
+    // the stored form for space, exactly as lease-period.js already makes it for
+    // time. proRataPercent stays, for printing, and is never an operand again.
+    result.totalSqFt      = totalSqFt;
+    // D8 — the cents this lease's exclusion schedule kept it from taking.
+    result.excludedShares = excludedShares;
+    // D12 — WHICH ARITHMETIC PRODUCED THIS RECORD. A reconciliation saved before
+    // P6 carries neither the rational nor the exclusion record, and reopening it
+    // must not have its explanation reconstructed as though it did. Stamped, not
+    // sniffed: absence of a field is a weaker claim than a statement of fact.
+    result.precision      = 'cents';
 
     const actualCam   = result.totalAllocated ?? null;
     const expectedCam = live.cap ?? null;
@@ -12140,6 +12224,13 @@ function _varianceCauseSentence(bk) {
     not_eligible: `${most} is ${fmt(top.amount)} of invoices marked not CAM-eligible`,
     uncovered:    `${most} is ${fmt(top.amount)} sitting outside the covered share`,
     claim:        `${most} is ${fmt(top.amount)} that no lease claimed — excluded categories, or invoices matched to no tenant`,
+    // P6 — the two halves `claim` could not tell apart, and the residue that is
+    // neither. Without these the banner fell through to "the panel below shows
+    // how it is made up" on exactly the runs whose cause is now nameable.
+    not_occupied:      `${most} is ${fmt(top.amount)} belonging to leases that did not run the whole period`,
+    excluded_by_lease: `${most} is ${fmt(top.amount)} in categories one or more leases exclude from CAM`,
+    unclaimed:         `${most} is ${fmt(top.amount)} matched to a tenant that no loaded lease then took`,
+    rounding_residue:  `${most} is ${fmt(top.amount)} of rounding each charge to the nearest cent`,
     caps:         `${most} is ${fmt(top.amount)} withheld by CAM caps`,
   }[top.key];
   return lead ? lead + '.' : 'the panel below shows how it is made up.';
@@ -12211,6 +12302,13 @@ function openVarianceDetails() {
 
   openReport('Variance details', `
     <div class="rpt-section-title">Where the difference went</div>
+    ${bk.precision === 'legacy' ? `<p class="rpt-helper-text">
+      <strong>This reconciliation was run before the cent-level attribution change.</strong>
+      Its explanation is reconstructed from the stored percentages rather than from the exact
+      square-footage and occupancy fractions, so the last few cents may sit in
+      &ldquo;Not attributed&rdquo; and an exclusion cannot be separated from a rounding difference.
+      <strong>The amounts billed are unchanged and are exactly what was issued.</strong>
+      Re-running the reconciliation would produce the fuller explanation &mdash; and a new record.</p>` : ''}
     <table class="rpt-table">
       <tbody>
         <tr><td>Expense pool</td><td style="text-align:right;white-space:nowrap"><strong>${fmt(bk.pool)}</strong></td></tr>
@@ -18704,7 +18802,14 @@ function generateTenantStatement(tenantName, opts = {}) {
   const _capPct  = t ? parseFloat(t.capPct)        : NaN;
   const _capBase = t ? parseFloat(t.capBaseAmount) : NaN;
   const _capTermsKnown = Number.isFinite(_capPct) && Number.isFinite(_capBase) && _capBase > 0;
-  const _capCeiling = _capTermsKnown ? _capBase * (1 + _capPct / 100) : null;
+  // D6 — THE CEILING THIS PRINTS IS THE CEILING THAT WAS APPLIED. It used to be
+  // the raw product: `33,333.33 × 1.075` is 35,833.32975, the engine capped to
+  // that, and this line displayed `fmt()` of it — $35,833.33 — so the tenant was
+  // shown a ceiling the arithmetic had not used. Same quantisation, same module,
+  // both sides.
+  const _capCeiling = _capTermsKnown
+    ? window.MoneyCents.fromCents(window.MoneyCents.toCents(_capBase * (1 + _capPct / 100)))
+    : null;
 
   const _capReconcileNote = _capReduction >= 0.01
     ? `<p class="ts-cap-reconcile" style="font-size:0.8rem;color:var(--c-b45309);margin-top:6px;">

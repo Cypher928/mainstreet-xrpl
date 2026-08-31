@@ -52,10 +52,18 @@
   function invoiceKey(inv) {
     if (!inv) return '';
     if (inv.id) return 'id:' + String(inv.id);
+    // P6 — THE AMOUNT IN THE FALLBACK KEY IS THE CENT, not the raw value. The
+    // engine's line items now carry the quantised amount and the source records
+    // carry what the document said, so keying on the raw would stop an
+    // un-id'd invoice matching itself across the two lists — and its allocation
+    // would silently read as zero. One canonical form on both sides.
+    var MCk = (typeof window !== 'undefined' && window.MoneyCents)
+           || (typeof require === 'function' ? require('./money-cents.js') : null);
+    var amt = MCk ? (MCk.toCents(inv.amount) || 0) : (Number(inv.amount) || 0);
     return [
       String(inv.vendorName || inv.vendor || '').toLowerCase().trim(),
       String(inv.category || '').toLowerCase().trim(),
-      Number(inv.amount) || 0,
+      amt,
     ].join('|');
   }
 
@@ -81,10 +89,24 @@
   function occupancyCovered(results) {
     const rs = Array.isArray(results) ? results.filter(Boolean) : [];
     return rs.reduce((s, r) => {
-      const f = (r.occupancy && r.occupancy.applied && r.occupancy.factor !== null)
-        ? r.occupancy.factor : 1;
-      return s + (Number(r.proRataPercent) || 0) * f;
-    }, 0) / 100;
+      // P6 — THE RATIONAL WHERE THERE IS ONE. `proRataPercent` is a two-decimal
+      // display value; a one-third tenant reads 33.33 and the building it is a
+      // third of does not. `totalSqFt` is stored since P6, so the exact fraction
+      // is available for any record run under the cent policy — and this
+      // function has to agree to the cent with derive(), which now uses it, or
+      // the KPI tile and the variance panel print two different coverages.
+      const t = Number(r.totalSqFt) || 0;
+      const space = (r.precision === 'cents' && t > 0)
+        ? (Number(r.sqFt) || 0) / t
+        : (Number(r.proRataPercent) || 0) / 100;
+      const o = r.occupancy;
+      const f = (o && o.applied)
+        ? (o.numerator != null && Number(o.denominator) > 0
+            ? o.numerator / o.denominator
+            : (o.factor !== null ? o.factor : 1))
+        : 1;
+      return s + space * f;
+    }, 0);
   }
 
   /**
@@ -153,9 +175,34 @@
     // different cause. Folding the two together would report a part-year tenant
     // as a coverage gap and send the manager looking for a lease that is already
     // uploaded.
-    const covered = proRataSum / 100;
-    // ONE DEFINITION, shared with the surfaces that display it. See
-    // occupancyCovered() above for why it is not rounded here.
+    // ── P6 · WHICH ARITHMETIC THIS RECONCILIATION WAS RUN UNDER (D12) ────────
+    //
+    // A record saved before P6 carries neither the spatial rational (`totalSqFt`)
+    // nor the engine's exclusion decisions, so its explanation CANNOT be
+    // reconstructed at cent precision. Reopening it must not manufacture a clean
+    // zero it never had, and must not claim an `excluded_by_lease` figure it
+    // cannot establish. The stamp is read off the results, not sniffed from the
+    // presence of a field.
+    const isCents = results.length > 0 && results.every(r => r && r.precision === 'cents');
+    const MC = (typeof window !== 'undefined' && window.MoneyCents)
+            || (typeof require === 'function' ? require('./money-cents.js') : null);
+    const precision = (isCents && MC) ? 'cents' : 'legacy';
+
+    // THE SPATIAL SHARE, EXACT. `proRataSum` is a sum of two-decimal DISPLAY
+    // percentages and dividing by it is what put $1.06 in the wrong bucket and
+    // three cents of phantom vacancy on a fully-leased building. Under the cent
+    // policy the fraction comes from sqFt/totalSqFt, which is what the engine
+    // actually allocated on.
+    const _exactSpace = (r) => {
+      const t = Number(r && r.totalSqFt) || 0;
+      if (precision === 'cents' && t > 0) return (Number(r.sqFt) || 0) / t;
+      return (Number(r && r.proRataPercent) || 0) / 100;
+    };
+    const covered = precision === 'cents'
+      ? results.reduce((s, r) => s + _exactSpace(r), 0)
+      : proRataSum / 100;
+    // ONE DEFINITION, and it now knows about the rational itself — so the KPI
+    // tile that calls occupancyCovered() and this panel cannot disagree.
     const occCoveredRaw = occupancyCovered(results);
     const occCovered = occCoveredRaw;
     let outOfYear = 0, notEligible = 0, uncovered = 0, notOccupied = 0, claimShortfall = 0;
@@ -201,9 +248,38 @@
       });
     });
 
+    // D8 — WHAT EACH LEASE'S EXCLUSION SCHEDULE ACTUALLY WITHHELD, per invoice,
+    // read from the engine's own decision. Inferring it by subtraction is what
+    // put a −$1.06 rounding artefact under the label "Excluded by a lease".
+    const excludedByInvoice = new Map();
+    if (precision === 'cents') {
+      results.forEach(r => {
+        (Array.isArray(r.excludedShares) ? r.excludedShares : []).forEach(e => {
+          if (!e) return;
+          const k = invoiceKey(e);
+          excludedByInvoice.set(k, (excludedByInvoice.get(k) || 0) + (Number(e.cents) || 0));
+        });
+      });
+    }
+    // Billed cents per invoice, summed from the tenant lines. THIS IS AN INPUT
+    // to the decomposition and is never adjusted by it — see the note on
+    // largestRemainder in money-cents.js, and test-cent-policy.js.
+    const allocatedCentsByInvoice = new Map();
+    if (precision === 'cents') {
+      results.forEach(r => {
+        (Array.isArray(r.includedInvoices) ? r.includedInvoices : []).forEach(li => {
+          const k = invoiceKey(li);
+          allocatedCentsByInvoice.set(k, (allocatedCentsByInvoice.get(k) || 0) + (MC.toCents(li.share) || 0));
+        });
+      });
+    }
+    let roundingResidue = 0, excludedByLease = 0, unclaimed = 0;
+
     const rows = invoices.map(inv => {
-      const amount    = _round(inv.amount);
-      const allocated = _round(allocatedByInvoice.get(invoiceKey(inv)) || 0);
+      const amount    = precision === 'cents' ? MC.fromCents(MC.toCents(inv.amount) || 0) : _round(inv.amount);
+      const allocated = precision === 'cents'
+        ? MC.fromCents(allocatedCentsByInvoice.get(invoiceKey(inv)) || 0)
+        : _round(allocatedByInvoice.get(invoiceKey(inv)) || 0);
       const eligible  = isEligible(inv);
       // The engine splits on this threshold; read it, do not re-derive it.
       const isDirect  = (Number(inv.matchConfidence) || 0) >= 75;
@@ -212,12 +288,92 @@
       const considered = !inYear || inYear.has(invoiceKey(inv));
 
       let reason, coverageShare = 0, occupancyShare = 0, claimShare = 0;
+      let excludedShare = 0, unclaimedShare = 0, residueShare = 0;
       if (!considered) {
         outOfYear += amount;
         reason = 'out_of_year';
       } else if (!eligible) {
         notEligible += amount;
         reason = 'not_eligible';
+      } else if (precision === 'cents') {
+        // ── THE CENT-EXACT DECOMPOSITION (D8 / D11) ──────────────────────────
+        //
+        //   amount = allocated                  ← given by the engine, never moved
+        //          + uncovered                  ⎫
+        //          + notOccupied                ⎬ exact values, quantised together
+        //          + excludedByLease            ⎪ by largest remainder
+        //          + unclaimed                  ⎭
+        //          + roundingResidue            ← measured, not plugged
+        //
+        // The five parts after `allocated` are all money NOBODY WAS BILLED. The
+        // remainder sweep runs over four of them and cannot reach `allocated`,
+        // which is why no tenant charge can move to make this close.
+        const key       = invoiceKey(inv);
+        const held      = isDirect ? occHeld.get(key) : undefined;
+        const amtC      = MC.toCents(inv.amount) || 0;
+        const allocC    = allocatedCentsByInvoice.get(key) || 0;
+        const exclC     = excludedByInvoice.get(key) || 0;
+
+        // Exact parts, in cents, still carrying their fractions.
+        let uncoveredE, notOccupiedE, unclaimedE;
+        if (isDirect) {
+          // A direct invoice is not apportioned by either multiplicand. It is
+          // billed in full, held over its date, excluded by a schedule, or
+          // matched to a tenant no loaded lease covers.
+          uncoveredE   = 0;
+          notOccupiedE = held ? Math.max(0, amtC - allocC - exclC) : 0;
+          unclaimedE   = held ? 0 : Math.max(0, amtC - allocC - exclC);
+        } else {
+          uncoveredE   = amtC * (1 - covered);
+          notOccupiedE = amtC * (covered - occCovered);
+          // Every tenant that does not exclude the category takes its share of
+          // every shared invoice, so nothing inside the covered, occupied,
+          // non-excluded portion goes unclaimed.
+          unclaimedE   = 0;
+        }
+        // What the takers were owed exactly, against what they were billed.
+        const takersE  = isDirect ? allocC : Math.max(0, amtC * occCovered - exclC);
+        const T        = amtC - allocC;
+        const rhoGuess = Math.round(takersE - allocC);
+        const lr       = MC.largestRemainder([uncoveredE, notOccupiedE, exclC, unclaimedE], T - rhoGuess);
+        const p        = lr.parts;
+        // D11 — THE RESIDUE IS A MEASURED QUANTITY, NOT A PLUG. It is exactly
+        // "what the takers were owed, less what they were billed": the cents
+        // lost or gained rounding each charge. It is NOT defined as whatever
+        // makes the invoice close.
+        //
+        // That distinction is load-bearing. Defining it as the leftover would
+        // make it absorb any condition the four buckets cannot describe — an
+        // over-allocated building, where the loaded leases exceed 100% and
+        // `uncovered` would be negative, dumps a large number here and the panel
+        // calls a real defect "rounding". Left as a measurement, the leftover
+        // falls through to `residual` instead, which is the line that says the
+        // numbers may be wrong. In the ordinary case the two are identical and
+        // `residual` is exactly zero.
+        residueShare   = MC.fromCents(rhoGuess);
+
+        coverageShare   = MC.fromCents(p[0]);
+        occupancyShare  = MC.fromCents(p[1]);
+        excludedShare   = MC.fromCents(p[2]);
+        unclaimedShare  = MC.fromCents(p[3]);
+        claimShare      = 0;      // superseded by the two named buckets
+
+        uncovered       += coverageShare;
+        notOccupied     += occupancyShare;
+        if (isDirect) notOccupiedDirect += occupancyShare;
+        else          notOccupiedShared += occupancyShare;
+        excludedByLease += excludedShare;
+        unclaimed       += unclaimedShare;
+        roundingResidue += residueShare;
+
+        reason = held === 'outside' ? 'outside_occupancy'
+          : held === 'undated' ? 'undated_occupancy'
+          : excludedShare > 0 && allocC === 0 ? 'excluded_by_lease'
+          : allocC <= 0 && amtC > 0 ? (isDirect ? 'unclaimed_direct' : 'unclaimed_shared')
+          : excludedShare > 0 ? 'partly_excluded'
+          : occupancyShare > 0 ? 'part_period'
+          : coverageShare  > 0 ? 'uncovered_share'
+          : 'fully_allocated';
       } else {
         const held = isDirect ? occHeld.get(invoiceKey(inv)) : undefined;
         coverageShare  = isDirect ? 0 : _round(amount * (1 - covered));
@@ -255,6 +411,11 @@
         coverageShare:  _round(coverageShare),
         occupancyShare: _round(occupancyShare),
         claimShare:     _round(claimShare),
+        // P6 — the two halves the old `claim` bucket could not tell apart, and
+        // the residue that must never be mistaken for either.
+        excludedShare:  _round(excludedShare),
+        unclaimedShare: _round(unclaimedShare),
+        residueShare:   _round(residueShare),
       };
     });
 
@@ -265,7 +426,16 @@
     notOccupiedShared = _round(notOccupiedShared);
     notOccupiedDirect = _round(notOccupiedDirect);
     claimShortfall = _round(claimShortfall);
-    const residual = _round(difference - outOfYear - notEligible - uncovered - notOccupied - claimShortfall - capTotal);
+    excludedByLease = _round(excludedByLease);
+    unclaimed       = _round(unclaimed);
+    roundingResidue = _round(roundingResidue);
+    // THE RESIDUAL IS STILL COMPUTED AS A REMAINDER, and that is the point: it
+    // is the one number on the panel nobody designs. Under the cent policy every
+    // other bucket holds a quantity that was measured, so this arrives at zero
+    // because the money is understood — not because a bucket was bent to make it
+    // so. If it is ever non-zero, something here is genuinely unexplained.
+    const residual = _round(difference - outOfYear - notEligible - uncovered - notOccupied
+                            - claimShortfall - excludedByLease - unclaimed - roundingResidue - capTotal);
 
     const gapPct = _round(100 - proRataSum);
     const lines = [
@@ -277,8 +447,23 @@
         detail: `Shared expenses are split by pro-rata share. The loaded leases hold ${proRataSum.toFixed(1)}% of the building, so ${gapPct.toFixed(1)}% of every shared invoice belongs to space that is either vacant or under a lease not yet uploaded.` },
       { key: 'not_occupied', label: 'Leased, but the lease did not run the whole period', amount: notOccupied,
         detail: `Expense belonging to space that IS under a loaded lease, for the part of the period that lease did not cover — a tenant who took occupancy or moved out mid-year. Two things land here: the apportioned-away part of every shared invoice, and any invoice matched directly to that tenant but dated outside their occupancy, or carrying no date to place it by. None of it is charged to anyone else; it remains unallocated to tenants in this reconciliation.` },
+      // LEGACY ONLY. Pre-P6 records cannot separate an exclusion from a rounding
+      // residue, so they keep the honestly-vague label they were computed under.
       { key: 'claim', label: 'Excluded by a lease, or matched to no tenant', amount: claimShortfall,
         detail: 'Dollars inside the covered share that no lease ended up claiming — a category a lease excludes from CAM, or an invoice matched to a tenant that no lease then took.' },
+      // D8 — the two halves that bucket could not tell apart, each now read from
+      // a decision rather than reached by subtraction.
+      { key: 'excluded_by_lease', label: 'Excluded from CAM by a lease', amount: excludedByLease,
+        detail: 'Expense in a category one or more leases exclude from CAM. It stays in the expense pool and is not billed to the tenants whose leases exclude it. The invoice rows below name which invoices and which categories.' },
+      { key: 'unclaimed', label: 'Matched to no lease', amount: unclaimed,
+        detail: 'Expense matched to a tenant that no loaded lease then took — most often an invoice matched by unit number or vendor name to a space whose lease has not been uploaded.' },
+      // D11 — THE RESIDUE HAS ITS OWN NAME. Every tenant charge is rounded to a
+      // cent, and the cents lost or gained in that rounding are a real quantity.
+      // Folding them into an exclusion is how a $1.06 rounding artefact came to
+      // be labelled "Excluded by a lease" — as a NEGATIVE amount. It is small by
+      // construction and it is never anything else.
+      { key: 'rounding_residue', label: 'Rounding to the nearest cent', amount: roundingResidue,
+        detail: 'The difference between each tenant\u2019s exact computed share and the whole cent they were billed. Every charge on every statement is rounded to a cent, and this line is what that rounding adds up to across the pool. It is not an exclusion, a cap, or a coverage gap.' },
       { key: 'caps', label: 'Reduced by a CAM cap', amount: capTotal,
         detail: 'Allocation the engine computed and then withheld because a lease cap was reached. The expense stays in the pool; the tenant is not billed for it.' },
       { key: 'residual', label: 'Not attributed', amount: residual,
@@ -293,6 +478,13 @@
       billedPct, proRataSum, gapPct, capTotal,
       occupancyCoveredPct: _round(occCoveredRaw * 100),
       outOfYear, notEligible, uncovered, notOccupied, claimShortfall, residual,
+      // P6. `claimShortfall` is retained and stays in the identity so a legacy
+      // record reads exactly as it did; under the cent policy it is always 0 and
+      // these three carry the money instead.
+      excludedByLease, unclaimed, roundingResidue,
+      // D12 — 'cents' or 'legacy'. Which arithmetic produced this explanation,
+      // stated rather than implied, so a surface can say so.
+      precision,
       // Additive. `notOccupied` keeps its meaning and its place in the identity;
       // these two say which half is which.
       notOccupiedShared, notOccupiedDirect,
@@ -302,7 +494,11 @@
       unbilledTotal: _round(unbilled.reduce((s, r) => s + r.amount, 0)),
       // True when the gap is fully explained by settings the manager chose or by
       // coverage — i.e. nothing here says the reconciliation is wrong.
-      explained: Math.abs(residual) < 0.05,
+      // P6 — EXACTLY ZERO, not "close enough". The five-cent tolerance existed
+      // because the arithmetic could not do better; in integer cents it can, so
+      // a residual of any size is now a real finding. Legacy records keep the
+      // old tolerance, because their arithmetic genuinely cannot reach zero.
+      explained: precision === 'cents' ? residual === 0 : Math.abs(residual) < 0.05,
     };
   }
 
@@ -311,7 +507,10 @@
   // advice matches this reconciliation instead of being generic.
   function nextStep(bk) {
     if (!bk) return null;
-    if (Math.abs(bk.residual) >= 0.05) {
+    // P6 — in integer cents an unexplained penny is a real finding, so the
+    // five-cent tolerance goes with it. Legacy records keep the old threshold.
+    const _resTol = bk.precision === 'cents' ? 0 : 0.05;
+    if (Math.abs(bk.residual) > _resTol) {
       return { cta: 'Re-check the invoice register', key: 'residual' };
     }
     const biggest = (bk.lines || []).filter(l => l.key !== 'residual')[0];
@@ -330,6 +529,12 @@
       return { cta: 'Review the partial-period treatment on the leases that started or ended mid-year', key: 'not_occupied' };
     }
     if (biggest.key === 'claim')        return { cta: 'Review the lease exclusion schedules', key: 'claim' };
+    if (biggest.key === 'excluded_by_lease') return { cta: 'Review the lease exclusion schedules', key: 'excluded_by_lease' };
+    if (biggest.key === 'unclaimed')    return { cta: 'Upload the lease for the space these invoices matched', key: 'unclaimed' };
+    // NO NEXT STEP FOR ROUNDING. There is nothing to fix: every charge is
+    // rounded to a cent and this is what that adds up to. Offering an action
+    // would send a manager looking for a defect that is not there.
+    if (biggest.key === 'rounding_residue') return null;
     if (biggest.key === 'caps')         return { cta: 'Review the CAM caps that were applied', key: 'caps' };
     return null;
   }
@@ -340,6 +545,8 @@
     unclaimed_direct: 'Matched to a tenant, but no lease billed it',
     unclaimed_shared: 'Shared expense that reached no tenant',
     partly_claimed:   'Partly allocated — a lease excludes part of it',
+    excluded_by_lease:'Excluded from CAM by a lease',
+    partly_excluded:  'Partly allocated — a lease excludes it from CAM',
     uncovered_share:  'Allocated to the covered share only',
     part_period:      'Reduced — a lease covered only part of the period',
     outside_occupancy:'Matched to a tenant, but dated outside their occupancy',

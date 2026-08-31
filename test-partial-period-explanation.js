@@ -624,8 +624,13 @@ function parseEquation(formula) {
   R('space × time coverage', cov.occupancyCoveredPct + '%');
   R('notOccupied (shared/direct)', `${cov.notOccupied} = ${cov.notOccupiedShared} + ${cov.notOccupiedDirect}`);
 
+  // 71.76, not the 71.75 this asserted before P6. The old figure came from
+  // summing TWO-DECIMAL percentages — Aspen's exact third of the building reads
+  // 33.33 — and P6 makes the coverage fraction sqFt/totalSqFt. The assertion is
+  // no weaker: it still pins an exact value, and it is now the arithmetically
+  // correct one. 33.3333… + 20 × 245/365 + 15 + 10 = 71.7580.
   yes('the two coverage figures are genuinely different on this property',
-      cov.proRataSum === 78.33 && cov.occupancyCoveredPct === 71.75,
+      cov.proRataSum === 78.33 && cov.occupancyCoveredPct === 71.76,
       JSON.stringify(cov));
   yes('one function owns the displayed coverage figure — the panel and the KPI agree',
       cov.pure === cov.occupancyCoveredPct, `${cov.pure} vs ${cov.occupancyCoveredPct}`);
@@ -639,8 +644,11 @@ function parseEquation(formula) {
   yes('notOccupiedShared + notOccupiedDirect === notOccupied, to the cent',
       r2(cov.notOccupiedShared + cov.notOccupiedDirect) === r2(cov.notOccupied),
       JSON.stringify(cov));
-  yes('    the shared half is the leased space that did not run the whole period ($2,090.96)',
-      cov.notOccupiedShared === 2090.96, String(cov.notOccupiedShared));
+  // $2,090.95 since P6 — one cent lower, for the same reason: the shared half is
+  // now 31,800 x (exact space coverage - exact space x time coverage) rather
+  // than the same expression built out of rounded percentages.
+  yes('    the shared half is the leased space that did not run the whole period ($2,090.95)',
+      cov.notOccupiedShared === 2090.95, String(cov.notOccupiedShared));
   yes('    the direct half is the invoice dated outside the tenant\'s occupancy ($1,800.00)',
       cov.notOccupiedDirect === 1800, String(cov.notOccupiedDirect));
 
@@ -661,7 +669,7 @@ function parseEquation(formula) {
       /6\.6 percentage-point gap is leased space whose lease did not run for the full CAM period/.test(variance),
       variance.slice(Math.max(0, variance.indexOf('percentage-point') - 120), variance.indexOf('percentage-point') + 200));
   yes('    it accounts for only the SHARED half with that gap, and says what the rest is',
-      /accounts for \$2,090\.96 of the \$3,890\.96/.test(variance)
+      /accounts for \$2,090\.95 of the \$3,890\.95/.test(variance)
         && /remaining \$1,800\.00 is invoices matched directly to a part-period tenant/.test(variance),
       variance.slice(Math.max(0, variance.indexOf('accounts for') - 60), variance.indexOf('accounts for') + 400));
 

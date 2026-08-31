@@ -124,12 +124,25 @@ const INVOICES = [
   { id: 'kp-i-06', vendorName: 'Moss Waste',        amount: '11000', category: 'waste',      invoiceDate: '2026-07-01', camEligible: true, ...doc('moss') },
 ];
 
-// Area share × occupancy factor × $100,000. The two multiplicands are
-// independent, and only the mid-period tenants carry a factor below 1.
+// Area share × occupancy fraction, PER INVOICE, summed. The two multiplicands
+// are independent, and only the mid-period tenants carry a fraction below 1.
+//
+// SUMMED PER INVOICE, NOT APPLIED TO THE POOL (P6/D5). A tenant's total is the
+// sum of the charges printed on their statement, so it is computed the way they
+// would add it up. That is one cent higher than the old rule for both
+// apportioned tenants, and the cent is real: it is the difference between
+// rounding six charges and rounding their total.
+//
+//   Birch  20% x 273/365 of 24,000 / 20,000 / 18,000 / 14,000 / 13,000 / 11,000
+//          = 3,590.14 + 2,991.78 + 2,692.60 + 2,094.25 + 1,944.66 + 1,645.48
+//          = 14,958.91          (the pool-level product rounds to 14,958.90)
+//   Cedar  26% x 275/365 likewise
+//          = 4,701.37 + 3,917.81 + 3,526.03 + 2,742.47 + 2,546.58 + 2,154.79
+//          = 19,589.05          (the pool-level product rounds to 19,589.04)
 const EXPECTED_ALLOCATION = {
   'Alder Bakery':   '$24,000.00',   // 24%, full period
-  'Birch Optical':  '$14,958.90',   // 20% x 273/365 (ends 2026-09-30)
-  'Cedar Fitness':  '$19,589.04',   // 26% x 275/365 (begins 2026-04-01)
+  'Birch Optical':  '$14,958.91',   // 20% x 273/365 (ends 2026-09-30)
+  'Cedar Fitness':  '$19,589.05',   // 26% x 275/365 (begins 2026-04-01)
   'Dogwood Deli':   '$14,000.00',   // holdover — NOT apportioned, held instead
   'Elm Stationers': '$16,000.00',   // 16%, full period
 };
@@ -319,7 +332,7 @@ const SUPABASE_MOCK = `
         && run.alloc['Dogwood Deli'] === '$14,000.00',
       'a tenant moved when a different tenant was apportioned — the share was redistributed');
   yes('    and the unoccupied share is NOT billed to anyone',
-      Math.abs(run.billed - 88547.94) < 0.02,
+      Math.abs(run.billed - 88547.96) < 0.005,
       `${run.billed} — the pool should be under-billed by exactly the apportioned-away share`);
 
   // ── The four cases ─────────────────────────────────────────────────────────
@@ -447,8 +460,10 @@ const SUPABASE_MOCK = `
   R('Birch occupancy', t2.birchOcc && { n: t2.birchOcc.numerator, d: t2.birchOcc.denominator, src: t2.birchOcc.basisSource });
 
   yes('THE MONEY MOVES: a mid-period lease is now apportioned',
-      t2.alloc['Birch Optical'] === '$14,958.90' && t2.alloc['Cedar Fitness'] === '$19,589.04',
-      JSON.stringify(t2.alloc) + ' — expected 273/365 x $20,000 and 275/365 x $26,000');
+      t2.alloc['Birch Optical'] === EXPECTED_ALLOCATION['Birch Optical']
+        && t2.alloc['Cedar Fitness'] === EXPECTED_ALLOCATION['Cedar Fitness'],
+      JSON.stringify(t2.alloc) + ' — expected 273/365 x $20,000 and 275/365 x $26,000,'
+        + ' summed per invoice (see EXPECTED_ALLOCATION)');
   yes('    the full-period tenants are untouched',
       t2.alloc['Alder Bakery'] === '$24,000.00' && t2.alloc['Elm Stationers'] === '$16,000.00',
       JSON.stringify(t2.alloc));
