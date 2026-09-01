@@ -24214,11 +24214,42 @@ async function syncTenantsToTable(propertyId, tenants) {
 // Phase 23 — CAM Validation Against Lease
 // ─────────────────────────────────────────────────────────────────────────────
 
+// THE CATEGORY THE PRODUCT ITSELF WRITES. `CATEGORIES` (script.js:696) holds
+// exactly 'management', and _catFromText (script.js:9667) routes every
+// /manag|admin|management fee|service fee/ hit to it — so 'management' is what
+// an invoice actually carries by the time any check sees it.
+//
+// It was not on the keyword list below, and the list is matched with
+// `cat.includes(kw)`. Nothing in it is a substring of 'management': 'admin' is
+// not, and 'management fee' is LONGER than the category. So the fee-cap check
+// could not fire on the product's own taxonomy — measured across all 12
+// management invoices in the pilot dataset, every one of which is categorised
+// exactly 'management'. The panel reported "no administrative fee line items
+// identified" on a reconciliation whose largest line was the management fee.
+const _LV_ADMIN_CATEGORY = 'management';
+// Kept for data that never went through the categoriser — a free-text or
+// imported category like "Property Management Fee — Q3". The canonical match
+// above is the one that fires on anything this product wrote.
 const _LV_ADMIN_KEYWORDS = ['admin', 'administrative', 'management fee', 'mgmt fee', 'property management'];
+
+const _lvIsAdminLine = (li) => {
+  const cat = String((li && li.category) || '').toLowerCase().trim();
+  if (!cat) return false;
+  return cat === _LV_ADMIN_CATEGORY || _LV_ADMIN_KEYWORDS.some(kw => cat.includes(kw));
+};
 
 // Tier 1: deterministic checks using already-extracted tenant fields. Runs
 // entirely in-browser — no server call, no Claude. Returns findings instantly.
-function _tier1LeaseChecks(tenant, totalExpenses, lineItems, reconciledAt) {
+//
+// `camPool` is THE CAM POOL — the eligible dollars this reconciliation billed
+// from — and it must be struck from the same list as `lineItems`. It used to be
+// `lastTotal`, documented at script.js:13508 as "gross: every invoice loaded",
+// while the finding it produced said "% of total CAM". A $100,000 roof the
+// manager had marked NOT CAM-eligible doubled the denominator and halved the
+// ratio: a management fee at 20% of the pool reported as 10%, "within the 15%
+// lease cap". The same mislabel detector #1 carried until script.js:15206 fixed
+// it, and it errs the same way — toward a clean bill of health.
+function _tier1LeaseChecks(tenant, camPool, lineItems, reconciledAt) {
   const findings  = [];
   const today     = new Date();
   // Parse rather than type-check. admin_fee_pct arrives as a number through the
@@ -24247,14 +24278,14 @@ function _tier1LeaseChecks(tenant, totalExpenses, lineItems, reconciledAt) {
   const quote     = adminFeeEvidence?.quote || null;
 
   // MGMT_FEE_CAP ──────────────────────────────────────────────────────────────
-  if (cap !== null && totalExpenses > 0) {
-    const adminLines = (lineItems || []).filter(li => {
-      const cat = (li.category || '').toLowerCase();
-      return _LV_ADMIN_KEYWORDS.some(kw => cat.includes(kw));
-    });
+  if (cap !== null && camPool > 0) {
+    const adminLines = (lineItems || []).filter(_lvIsAdminLine);
     if (adminLines.length > 0) {
       const adminTotal = adminLines.reduce((s, li) => s + (li.amount || 0), 0);
-      const actualPct  = (adminTotal / totalExpenses) * 100;
+      // ONE BASIS. adminTotal is a subset of the same list camPool is struck
+      // from, so the ratio cannot exceed 100% by construction and cannot be
+      // deflated by dollars the tenant was never billed.
+      const actualPct  = (adminTotal / camPool) * 100;
       const exceeded   = actualPct > cap + 0.5;   // 0.5% rounding tolerance
       findings.push({
         check: 'MGMT_FEE_CAP', source: 'deterministic',
@@ -24264,8 +24295,11 @@ function _tier1LeaseChecks(tenant, totalExpenses, lineItems, reconciledAt) {
           ? `Admin fee (${actualPct.toFixed(1)}%) exceeds the ${cap}% lease cap by ${(actualPct - cap).toFixed(1)} percentage points.`
           : `Admin fee (${actualPct.toFixed(1)}%) is within the ${cap}% lease cap.`,
         quote, section: null, page: null,
+        // NAME THE DENOMINATOR. "% of total CAM" beside a gross figure is how
+        // the wrong basis stayed invisible; the sentence now states the pool it
+        // divided by, so a reader can re-strike the ratio from the screen.
         explanation: exceeded
-          ? `Reconciliation admin fee of $${adminTotal.toLocaleString()} is ${actualPct.toFixed(1)}% of total CAM ($${totalExpenses.toLocaleString()}), exceeding the ${cap}% cap.`
+          ? `Reconciliation admin fee of $${adminTotal.toLocaleString()} is ${actualPct.toFixed(1)}% of the $${camPool.toLocaleString()} CAM pool this reconciliation billed from, exceeding the ${cap}% cap.`
           : null,
       });
     } else {
@@ -24284,7 +24318,7 @@ function _tier1LeaseChecks(tenant, totalExpenses, lineItems, reconciledAt) {
       severity: 'unconfirmed', confidence: 'high',
       finding: cap === null
         ? 'No management fee cap was extracted from the lease, so no cap could be checked against this reconciliation.'
-        : 'Total expenses are zero — fee cap check skipped.',
+        : 'The CAM pool for this reconciliation is zero — fee cap check skipped.',
       quote: null, section: null, page: null, explanation: null,
     });
   }
@@ -24495,13 +24529,37 @@ async function _runLeaseValidation(panelEl, tenant, recon, totalExpenses) {
   panelEl.style.display = 'block';
 
   const reconciledAt = `${getCamYear() || new Date().getFullYear()}-12-31`;
-  const lineItems    = (recon.includedInvoices || []).map(inv => ({
+
+  // ONE LIST, BOTH SIDES OF THE RATIO.
+  //
+  // `includedInvoices` is what this reconciliation actually billed this tenant
+  // from: CAM-eligible (script.js:10421 filters the pool before the split),
+  // scoped to the CAM year, and with the lease's own excluded categories
+  // already withheld. Striking the pool from THAT list is what makes the
+  // percentage mean something — the numerator is a subset of the denominator by
+  // construction, so the ratio cannot be deflated by a dollar the tenant was
+  // never charged.
+  //
+  // NOT `lastCamPool`, though it is the named CAM pool elsewhere. It is not
+  // year-scoped: runAllocation strikes it from every invoice in the register
+  // (script.js:10917) and the year filter runs later, inside the engine.
+  // Measured — a property carrying a $50,000 2024 management invoice alongside
+  // a $100,000 2025 pool reports lastCamPool = $150,000, and a genuine 20%
+  // breach reads as 13.3%, "within cap". Retained below as the fallback for a
+  // record with no included invoices, ending at the gross figure the caller
+  // passes, which is the same progressively-weaker chain detector #1 uses.
+  const _eligibleLines = (recon.includedInvoices || [])
+    .filter(inv => !window.CamPool || window.CamPool.isEligible(inv));
+  const lineItems = _eligibleLines.map(inv => ({
     category: inv.category || inv.invoiceCategory || 'other',
     amount:   inv.amount   || 0,
   }));
+  const camPool = lineItems.reduce((s, li) => s + (li.amount || 0), 0)
+                  || (typeof lastCamPool !== 'undefined' ? lastCamPool : 0)
+                  || totalExpenses || 0;
 
   // Tier 1 — instant, no server call
-  const t1 = _tier1LeaseChecks(tenant, totalExpenses, lineItems, reconciledAt);
+  const t1 = _tier1LeaseChecks(tenant, camPool, lineItems, reconciledAt);
   panelEl.innerHTML = _renderValidationPanel(t1, { loading: true });
 
   // Look up the lease document for this tenant
@@ -24537,7 +24595,13 @@ async function _runLeaseValidation(panelEl, tenant, recon, totalExpenses) {
       headers: { 'Content-Type': 'application/json', ...(await _authHeaders()) },
       body:    JSON.stringify({
         leaseDocumentId:    leaseDoc.id,
-        reconciliationData: { totalExpenses, year: getCamYear(), lineItems },
+        // THE SAME POOL TIER 1 STATED. The prompt renders this as "Total CAM
+        // Expenses" (api/_validate-lease-contract.js:62) beside these very line
+        // items, and it was handed the gross figure — so the model was told a
+        // total that included invoices the list below does not contain, on a
+        // panel where the deterministic finding directly above now names the
+        // pool. Two tiers, one panel, one denominator.
+        reconciliationData: { totalExpenses: camPool, year: getCamYear(), lineItems },
       }),
     });
     const result = await resp.json().catch(() => ({}));

@@ -287,6 +287,18 @@ const SUITES = [
   { label: 'Lease job lifecycle',                       cmd: 'node test-lease-job-lifecycle.js' },
   { label: 'Live extraction walk',                      cmd: 'node test-live-extraction-walk.js' },
   { label: 'Lease validator: management fee cap',       cmd: 'node test-mgmt-fee-cap.js' },
+  // D2-1 — AND THE SAME CHECK ON THE PANEL, WITH ARGUMENTS IT DID NOT BUILD.
+  // The suite above pins _tier1LeaseChecks against hand-built inputs, and that
+  // is how two defects survived it: it fed `category: 'management fee'`, a
+  // string the product never writes (every invoice leaves the categoriser as
+  // 'management', which no keyword matched), and a `totalExpenses` that happened
+  // to equal the sum of its own line items, so the gross-vs-pool denominator was
+  // never exercised. This drives runAllocation and the real coordinator, with a
+  // $100,000 non-CAM-eligible invoice separating the two denominators: 20% of
+  // the pool, 10% of gross, against a 15% cap. It also pins what D2-1 must NOT
+  // do — allocations, audit findings and the billing verdict are asserted
+  // identical either side of the breach.
+  { label: 'Management fee cap on the panel (e2e)',     cmd: 'node test-e2e-mgmt-fee-cap.js' },
   { label: 'Lease validator: audit rights',             cmd: 'node test-audit-rights.js' },
   { label: 'Property workspace',                        cmd: 'node test-property-workspace.js' },
   { label: 'Property lifecycle',                        cmd: 'node test-property-lifecycle.js' },
