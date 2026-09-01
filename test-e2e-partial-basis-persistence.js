@@ -72,6 +72,7 @@ const { chromium } = pw;
 const http = require('http');
 const fs   = require('fs');
 const path = require('path');
+const { signIn: _e2eSignIn, attachDiagnostics } = require('./test-support/e2e-login');
 
 const ROOT     = __dirname;
 const PORT     = parseInt(process.env.APP_PORT || '7975', 10);
@@ -177,8 +178,7 @@ const SUPABASE_MOCK = `
     args: ['--no-sandbox', '--disable-setuid-sandbox'] });
   const ctx  = await browser.newContext({ viewport: { width: 1280, height: 900 } });
   const page = await ctx.newPage();
-  const errors = [];
-  page.on('pageerror', e => errors.push(e.message));
+  const errors = attachDiagnostics(page);
   await ctx.route('**', route => {
     const u = route.request().url();
     if (u.startsWith('http://127.0.0.1:' + PORT)) return route.continue();
@@ -195,40 +195,7 @@ const SUPABASE_MOCK = `
   // failed once in ten runs on a loaded machine.
   const signInAndRun = async () => {
     await page.goto('http://127.0.0.1:' + PORT + '/?signin=1', { waitUntil: 'domcontentloaded', timeout: 30000 });
-    await page.waitForSelector('#loginBtn', { state: 'visible', timeout: 20000 });
-    // The button paints with the HTML; submitAuth() arrives with script.js. The
-    // form is wired as onsubmit="submitAuth(event)", an inline attribute, so a
-    // click in the gap between those two moments fires a ReferenceError and is
-    // LOST — after which the suite waits out its full timeout for an app that was
-    // never told to sign in. Three suites failed this way intermittently, only
-    // ever inside the full regression, where a dozen browsers have already run.
-    // Waiting for the handler states the real precondition.
-    await page.waitForFunction(() => typeof submitAuth === 'function', null, { timeout: 45000 });
-    await page.fill('#loginEmail', 'pb@e2e-test.local');
-    await page.fill('#loginPassword', 'TestPass123!');
-    // A CLICK THAT CAN BE LOST IS CLICKED AGAIN — once, and then it fails loudly.
-    //
-    // Waiting for submitAuth to exist closed most of the window, and this suite
-    // still stalled occasionally on the SECOND sign-in, inside the full
-    // regression only: the click registered nowhere and the run then sat out its
-    // whole timeout waiting for an app nobody had told to sign in. A person whose
-    // click did not take clicks once more, so the suite does too — and if the app
-    // still has not come up, the failure carries the page's own errors instead of
-    // a bare timeout, because the last three of these cost a full run each to
-    // diagnose.
-    const appUp = () => page.waitForFunction(() => { const a = document.getElementById('appContent');
-      return a && a.style.display !== 'none' && a.style.display !== ''; }, null, { timeout: 12000 });
-    await page.click('#loginBtn');
-    try {
-      await appUp();
-    } catch (_) {
-      await page.click('#loginBtn').catch(() => {});
-      try { await appUp(); }
-      catch (e) {
-        throw new Error('the app never signed in after two clicks — page errors: ' +
-          (errors.length ? errors.slice(0, 3).join(' | ') : '(none captured)'));
-      }
-    }
+    await _e2eSignIn(page, { email: 'pb@e2e-test.local' });
     await page.waitForFunction(() => typeof _props !== 'undefined' && _props.length > 0, null, { timeout: 45000 });
     await page.evaluate((id) => selectProperty(id), PROP_ID);
     await page.waitForFunction(() => typeof tenantData !== 'undefined' && tenantData.filter(Boolean).length === 3, null,

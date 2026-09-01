@@ -117,6 +117,16 @@ const SUITES = [
   // Review rollup vanished, the CAM Pool KPI reported the gross invoiced figure,
   // and the variance panel attributed nothing and told the manager to re-check
   // the register on a run that had reconciled to one cent.
+  // THE SIGN-IN THE BROWSER SUITES SHARE. Three suites — restore-completeness,
+  // partial-basis-persistence and cap-base-persistence — each failed a full run
+  // on the same post-click wait and each passed standalone straight after. The
+  // cause is mechanical: submitAuth disables the button before it awaits, so an
+  // attempt that never resolves leaves a dead control and the retry the
+  // surviving copies relied on could not have worked. test-support/e2e-login.js
+  // re-enables before retrying and reports the app's own state instead of a bare
+  // timeout; this drives it against pages built to fail that way, because a
+  // helper exercised only on the happy path proves nothing about a flake.
+  { label: 'Shared e2e sign-in helper',        cmd: 'node test-e2e-login-helper.js' },
   { label: 'Restore completeness',             cmd: 'node test-restore-completeness.js' },
   // WHAT THE STATEMENT TELLS A TENANT MUST BE TRUE OF WHAT IT BILLED THEM. A
   // $3,100 lease cap was described as a "rounding adjustment", contradicted two

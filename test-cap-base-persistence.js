@@ -45,6 +45,7 @@ const { chromium } = pw;
 const http = require('http');
 const fs   = require('fs');
 const path = require('path');
+const { signIn: _e2eSignIn, attachDiagnostics } = require('./test-support/e2e-login');
 
 const ROOT     = __dirname;
 const PORT     = parseInt(process.env.APP_PORT || '7877', 10);
@@ -188,22 +189,7 @@ async function signIn(page) {
   });
   await page.addInitScript(SUPABASE_MOCK);
   await page.goto('http://127.0.0.1:' + PORT + '/?signin=1', { waitUntil: 'domcontentloaded', timeout: 30000 });
-  await page.waitForSelector('#loginBtn', { state: 'visible', timeout: 20000 });
-  // The button paints with the HTML; submitAuth() arrives with script.js. The
-  // form is wired as onsubmit="submitAuth(event)", an inline attribute, so a
-  // click in the gap between those two moments fires a ReferenceError and is
-  // LOST — after which the suite waits out its full timeout for an app that was
-  // never told to sign in. Three suites failed this way intermittently, only
-  // ever inside the full regression, where a dozen browsers have already run.
-  // Waiting for the handler states the real precondition.
-  await page.waitForFunction(() => typeof submitAuth === 'function', null, { timeout: 45000 });
-  await page.fill('#loginEmail', 'capbase@e2e-test.local');
-  await page.fill('#loginPassword', 'TestPass123!');
-  await page.click('#loginBtn');
-  await page.waitForFunction(() => {
-    const app = document.getElementById('appContent');
-    return app && app.style.display !== 'none' && app.style.display !== '';
-  }, null, { timeout: 45000 });
+  await _e2eSignIn(page, { email: 'capbase@e2e-test.local' });
 }
 
 // Open the property and render the lease cards the fields live on.
@@ -252,8 +238,11 @@ const READ_FIELDS = () => {
   });
   const ctx  = await browser.newContext({ viewport: { width: 390, height: 844 }, isMobile: true, hasTouch: true });
   const page = await ctx.newPage();
-  const errors = [];
-  page.on('pageerror', e => errors.push(e.message));
+  // Same sink and same semantics as before — thrown exceptions only, so the
+  // "no page errors" assertion below is unchanged. What is new is the
+  // unhandledrejection capture attachDiagnostics installs, which is the channel
+  // the previous failure here was invisible on.
+  const errors = attachDiagnostics(page);
 
   console.log('\n── Entering both cap fields on a lease card ──');
   await signIn(page);
@@ -312,25 +301,12 @@ const READ_FIELDS = () => {
   // screen read as "already signed in", after which every later wait sat until
   // its own timeout on a condition that could no longer come true — an
   // intermittent hang that only ever showed up under the full regression.
-  await page.waitForFunction(() => {
-    const b = document.getElementById('loginBtn');
-    const a = document.getElementById('appContent');
-    return (b && b.offsetParent !== null)
-        || (a && a.style.display !== 'none' && a.style.display !== '');
-  }, null, { timeout: 45000 });
-  const needsLogin = await page.evaluate(() => {
-    const b = document.getElementById('loginBtn');
-    return !!(b && b.offsetParent !== null);
-  });
-  if (needsLogin) {
-    await page.fill('#loginEmail', 'capbase@e2e-test.local');
-    await page.fill('#loginPassword', 'TestPass123!');
-    await page.click('#loginBtn');
-    await page.waitForFunction(() => {
-      const app = document.getElementById('appContent');
-      return app && app.style.display !== 'none' && app.style.display !== '';
-    }, null, { timeout: 45000 });
-  }
+  // THIS IS THE WAIT THAT FAILED. A reload may or may not still hold a session,
+  // so the old code branched on it and then waited out a second bare 45s
+  // timeout when the click did not take. signIn() treats "already in" as
+  // success, re-enables the button before retrying, and reports what the app
+  // said instead of timing out silently.
+  await _e2eSignIn(page, { email: 'capbase@e2e-test.local' });
   await openLeaseCard(page);
 
   const after = await page.evaluate(READ_FIELDS);
