@@ -23750,21 +23750,37 @@ function _stripBlobs(property) {
       // `matchNearMisses` for the advisory finding, unchanged in kind and still
       // non-blocking.
       //
-      // AND NO MORE THAN THAT. `matchCandidates` is the superset `tied` is
-      // filtered from and no consumer reads it. `matchConfidence` is read only
-      // by the direct/shared split, which runFullReconciliation recomputes from
-      // scratch before it is consulted, and by the restored variance panel's
-      // fallback — a separate divergence, noted where it lives rather than
-      // widened into this one. Persisting a field no reader needs is how an
-      // allow-list stops being one.
+      // `matchConfidence` IS THE DIRECT/SHARED DECISION, and it was the half of
+      // this hole N5 left open. N5 reasoned that runFullReconciliation recomputes
+      // it before it is consulted — true of a re-run, and irrelevant to a
+      // RESTORE, which never re-runs the engine. On the restored path
+      // `_lastEngineInvoices` falls back to the register (script.js:26253):
+      // `snapshot.engineInvoices` is read at 26247 and written nowhere, so the
+      // fallback is not a legacy branch, it is the only branch. And
+      // VarianceBreakdown decides direct-vs-shared with
+      // `(Number(inv.matchConfidence) || 0) >= 75` (variance-breakdown.js:285).
       //
-      // An ordinary shared invoice matched nobody: `false`, `[]`, `null`, `[]`.
-      // It restores as exactly what it was, and no ambiguity is invented for it.
+      // Absent, that reads 0. So every invoice on a reopened reconciliation was
+      // classified as shared pro-rata — including one billed in full to a single
+      // tenant — and the audit's own count flipped with it: "1 invoice directly
+      // matched to tenant, 5 shared pro-rata" on the run, "6 invoices allocated
+      // as shared CAM expenses" on reopening it. Same money, two different
+      // accounts of who owes it and why. The comment at script.js:26241 called
+      // this a limitation of an older fallback; it was the live behaviour.
+      //
+      // AND STILL NO MORE THAN THAT. `matchCandidates` is the superset `tied` is
+      // filtered from and no consumer reads it; `matchedTenantId` and
+      // `matchReason` have no reader on the restored path either. Persisting a
+      // field no reader needs is how an allow-list stops being one.
+      //
+      // An ordinary shared invoice matched nobody: `false`, `[]`, `null`, `[]`,
+      // `0`. It restores as exactly what it was, and nothing is invented for it.
       matchAmbiguous:  inv.matchAmbiguous,
       matchTied:       inv.matchTied,
       matchedTenant:   inv.matchedTenant,
+      matchConfidence: inv.matchConfidence,
       matchNearMisses: inv.matchNearMisses,
-      // drop confidence, _error, raw text — not needed for persistence
+      // drop _error, raw text — not needed for persistence
     } : inv),
     // CAM results can be very large; strip the full invoice copy inside results/camReconciliation
     results: property.results ? {

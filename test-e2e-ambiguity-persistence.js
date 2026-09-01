@@ -41,6 +41,23 @@
  *   • promote the near-miss advisory into a blocker,
  *   • move a single cent of anyone's allocation.
  *
+ * AND THE SECOND HALF OF THE SAME HOLE. N5 left `matchConfidence` out of the
+ * allow-list, reasoning that runFullReconciliation recomputes it — true of a
+ * re-run, and irrelevant to a RESTORE, which never re-runs the engine. On the
+ * restored path `_lastEngineInvoices` falls back to the register
+ * (script.js:26253; `snapshot.engineInvoices` is read at 26247 and written
+ * nowhere, so the fallback is the only branch) and VarianceBreakdown decides
+ * direct-vs-shared with `(Number(inv.matchConfidence) || 0) >= 75`
+ * (variance-breakdown.js:285). Absent, that reads 0.
+ *
+ *   fresh     "1 invoice directly matched to tenant, 5 shared pro-rata"
+ *   reloaded  "6 invoices allocated as shared CAM expenses (pro-rata)"
+ *
+ * Same money, two different accounts of who owes it and why — an invoice billed
+ * in full to one tenant, reported on reopening as a pro-rata share of everyone's.
+ * The block below that was a printed diagnostic while that was known and
+ * unfixed is assertions now.
+ *
  * DETERMINISM
  * Fixed timezone, fixed fixture, own port and localStorage key, no egress. The
  * mock store is seeded ONCE and then persists across the reload — clearing it
@@ -219,10 +236,50 @@ const READ = () => {
     register: (invoiceData || []).map(i => ({
       vendor:    i && i.vendorName,
       ambiguous: !!(i && i.matchAmbiguous),
+      // THE DIRECT/SHARED DECISION. Read as a raw value, not coerced — the
+      // defect this closes was `undefined` reading as 0 downstream, and a
+      // `|| 0` here would reproduce the coercion inside the assertion and hide
+      // exactly what it is meant to catch.
+      confidence: i ? i.matchConfidence : undefined,
+      billedTo:  i ? i.matchedTenant : undefined,
       tied:      ((i && i.matchTied) || []).map(c => c.tenantName).sort(),
       near:      ((i && i.matchNearMisses) || [])
                    .map(n => `${n.signal}:${n.token}:${n.tenantName}`).sort(),
     })),
+    // THE CLASSIFICATION VarianceBreakdown ACTUALLY MAKES, struck the way it
+    // strikes it (variance-breakdown.js:285) from the list it actually reads on
+    // this path — `_lastEngineInvoices`, which on a restore is the register.
+    varianceClass: (typeof _lastEngineInvoices !== 'undefined' ? (_lastEngineInvoices || []) : [])
+      .map(i => [i && i.vendorName, ((Number(i && i.matchConfidence) || 0) >= 75) ? 'direct' : 'shared']),
+    // THE BREAKDOWN THE PANEL ACTUALLY RENDERS, not one this suite re-derives.
+    // _buildReconciliationSummaryHtml caches it (script.js:12854) and passes
+    // `pool` and `billed` explicitly — a derive() call that omits them reads
+    // `Number(a.pool) || 0` as zero (variance-breakdown.js:126) and returns a
+    // breakdown of nothing, which would make the equality below pass by
+    // comparing two empty objects. Populated on both paths: runAllocation on the
+    // fresh one, restoreResultsDisplay on the restored one.
+    varianceBuckets: (() => {
+      try {
+        const d = (typeof _lastVarianceBreakdown !== 'undefined') ? _lastVarianceBreakdown : null;
+        if (!d) return { error: 'no cached breakdown' };
+        // Round to the cent so a float tail cannot fail an equality that is
+        // about attribution rather than about IEEE-754.
+        const r = v => (typeof v === 'number' ? Math.round(v * 100) / 100 : v);
+        return {
+          pool: r(d.pool), billed: r(d.billed), difference: r(d.difference),
+          outOfYear: r(d.outOfYear), notEligible: r(d.notEligible),
+          uncovered: r(d.uncovered), notOccupied: r(d.notOccupied),
+          claimShortfall: r(d.claimShortfall), excludedByLease: r(d.excludedByLease),
+          unclaimed: r(d.unclaimed), roundingResidue: r(d.roundingResidue),
+          capTotal: r(d.capTotal), residual: r(d.residual), explained: d.explained,
+          precision: d.precision,
+          // The per-invoice reason codes are where a direct/shared misread
+          // actually lands: an invoice billed in full to one tenant and one
+          // split pro-rata are attributed to different buckets.
+          reasons: (d.invoices || []).map(x => [x.vendorName || x.vendor, x.reason]),
+        };
+      } catch (e) { return { error: e && e.message }; }
+    })(),
     findings: flat.map(f => ({
       title: f.title, severity: f.severity, blocksBilling: !!f.blocksBilling,
       conditions: f.conditions || [], detail: f.detail || '',
@@ -377,6 +434,7 @@ async function openProperty(page) {
         const p = all[PROP_ID];
         out.ls = (p && p.invoices || []).map(i => ({
           vendor: i.vendorName, ambiguous: i.matchAmbiguous, billedTo: i.matchedTenant,
+          confidence: i.matchConfidence,
           tied: (i.matchTied || []).map(c => c.tenantName).sort(),
           near: (i.matchNearMisses || []).map(n => `${n.signal}:${n.token}:${n.tenantName}`).sort(),
           keys: Object.keys(i).sort(),
@@ -406,6 +464,10 @@ async function openProperty(page) {
     yes('    and the tenant the run actually billed it to',
         !!(lsAmb[0] && TIED_NAMES.includes(lsAmb[0].billedTo)),
         JSON.stringify(lsAmb[0] && lsAmb[0].billedTo));
+    yes('    and the direct/shared confidence that classifies it',
+        (stored.ls || []).some(i => i.vendor === AMBIG_VENDOR && i.confidence === 90)
+          && (stored.ls || []).every(i => typeof i.confidence === 'number'),
+        JSON.stringify((stored.ls || []).map(i => [i.vendor, i.confidence])));
     yes('    and the near-miss signal too',
         (stored.ls || []).some(i => i.near.length === 1 && /^unit:5:Cedar Fitness$/.test(i.near[0])),
         JSON.stringify((stored.ls || []).map(i => i.near)));
@@ -554,20 +616,94 @@ async function openProperty(page) {
         JSON.stringify(back.allocations) === JSON.stringify(fresh.allocations),
         'fresh: ' + JSON.stringify(fresh.allocations) + '\n      → back:  ' + JSON.stringify(back.allocations));
 
-    // ── Reported, not asserted ─────────────────────────────────────────────
+    // ── The direct/shared decision, which used to be the residual ──────────
     //
-    // WHAT STILL DIFFERS BETWEEN THE TWO PATHS, measured rather than assumed.
-    // `matchConfidence` is deliberately not persisted (see _stripBlobs), so any
-    // finding that counts direct-vs-shared invoices reads the restored register
-    // as all-shared. That is a real divergence and a separate one — it moves no
-    // billing gate and holds no statement — and it is printed here so it stays
-    // visible instead of being discovered again later.
-    H('Known residual divergence — NOT the billing gate (reported, not asserted)');
+    // This block was a printed diagnostic while `matchConfidence` was left out
+    // of _stripBlobs on purpose. It is assertions now.
+    //
+    // The reasoning that left it out was that runFullReconciliation recomputes
+    // the confidence before anything consults it — true of a re-run, and
+    // irrelevant here, because a RESTORE never re-runs the engine.
+    // `_lastEngineInvoices` falls back to the register (script.js:26253) and
+    // VarianceBreakdown reads `(Number(inv.matchConfidence) || 0) >= 75`
+    // (variance-breakdown.js:285). Absent, that is 0: every invoice on a
+    // reopened reconciliation was classified shared pro-rata, including one
+    // billed in full to a single tenant.
+    H('The direct/shared decision survives the reload');
+    R('fresh confidences', fresh.register.map(r => [r.vendor, r.confidence]));
+    R('restored confidences', back.register.map(r => [r.vendor, r.confidence]));
+    yes('the fixture actually contains a DIRECT match to classify',
+        fresh.register.some(r => (r.confidence || 0) >= 75),
+        JSON.stringify(fresh.register.map(r => r.confidence)));
+    yes('every confidence survives the reload unchanged',
+        JSON.stringify(back.register.map(r => r.confidence))
+          === JSON.stringify(fresh.register.map(r => r.confidence)),
+        'fresh: ' + JSON.stringify(fresh.register.map(r => r.confidence)) +
+        '\n      → back:  ' + JSON.stringify(back.register.map(r => r.confidence)));
+    yes('    and none of them restores as undefined',
+        back.register.every(r => typeof r.confidence === 'number'),
+        JSON.stringify(back.register.map(r => [r.vendor, typeof r.confidence])));
+
+    H('VarianceBreakdown classifies the same way on both paths');
+    R('fresh classification', fresh.varianceClass);
+    R('restored classification', back.varianceClass);
+    yes('the direct/shared split is identical, invoice for invoice',
+        JSON.stringify(back.varianceClass) === JSON.stringify(fresh.varianceClass),
+        'fresh: ' + JSON.stringify(fresh.varianceClass) +
+        '\n      → back:  ' + JSON.stringify(back.varianceClass));
+    yes('    and it still calls the tied invoice DIRECT after the reload',
+        (back.varianceClass.find(([v]) => v === AMBIG_VENDOR) || [])[1] === 'direct',
+        JSON.stringify(back.varianceClass));
+    // READ OFF THE MODULE, NOT RECOMPUTED HERE. `varianceClass` above applies
+    // the >= 75 rule in this file, which means it agrees with a mutated module
+    // rather than testing it — the two would move together and the equality
+    // would still hold. The reason code is VarianceBreakdown's own verdict: an
+    // invoice billed in full to one tenant is `fully_allocated`, a pro-rata one
+    // is not, so this fails if the module's threshold moves under it.
+    const _reasonFor = (b, v) => ((b.varianceBuckets && b.varianceBuckets.reasons) || [])
+      .filter(([n]) => n === v).map(([, r]) => r);
+    R('tied invoice reason (fresh)', _reasonFor(fresh, AMBIG_VENDOR));
+    R('tied invoice reason (restored)', _reasonFor(back, AMBIG_VENDOR));
+    yes('    and VarianceBreakdown itself still attributes it as fully allocated',
+        JSON.stringify(_reasonFor(back, AMBIG_VENDOR)) === JSON.stringify(['fully_allocated']),
+        JSON.stringify(_reasonFor(back, AMBIG_VENDOR)));
+    yes('    while a genuinely shared invoice is not attributed that way',
+        !_reasonFor(back, 'Halloway Janitorial').includes('fully_allocated'),
+        JSON.stringify(_reasonFor(back, 'Halloway Janitorial')));
+    R('fresh buckets', fresh.varianceBuckets);
+    R('restored buckets', back.varianceBuckets);
+    yes('the fixture produced a NON-EMPTY breakdown — the equality has teeth',
+        !!(fresh.varianceBuckets && fresh.varianceBuckets.pool > 0
+           && fresh.varianceBuckets.billed > 0),
+        JSON.stringify(fresh.varianceBuckets));
+    yes('the panel cached a breakdown on both paths',
+        !!(fresh.varianceBuckets && !fresh.varianceBuckets.error)
+          && !!(back.varianceBuckets && !back.varianceBuckets.error),
+        JSON.stringify([fresh.varianceBuckets && fresh.varianceBuckets.error,
+                        back.varianceBuckets && back.varianceBuckets.error]));
+    yes('EVERY VARIANCE BUCKET IS IDENTICAL ACROSS THE RELOAD',
+        JSON.stringify(back.varianceBuckets) === JSON.stringify(fresh.varianceBuckets),
+        'fresh: ' + JSON.stringify(fresh.varianceBuckets) +
+        '\n      → back:  ' + JSON.stringify(back.varianceBuckets));
+
+    H('The audit says the same thing about the same run');
     const fT = fresh.findings.map(f => f.title).concat(fresh.greenTitles);
     const bT = back.findings.map(f => f.title).concat(back.greenTitles);
     R('fresh only', fT.filter(t => !bT.includes(t)));
     R('restored only', bT.filter(t => !fT.includes(t)));
-    R('blocking findings differ at all', JSON.stringify(fresh.blockingByTenant) !== JSON.stringify(back.blockingByTenant));
+    const _direct = f => /directly matched to tenant/.test(f);
+    R('direct/shared finding (fresh)', fresh.greenTitles.filter(_direct));
+    R('direct/shared finding (restored)', back.greenTitles.filter(_direct));
+    yes('the direct/shared finding is present and identical on both paths',
+        fresh.greenTitles.filter(_direct).length === 1
+          && JSON.stringify(back.greenTitles.filter(_direct))
+             === JSON.stringify(fresh.greenTitles.filter(_direct)),
+        'fresh: ' + JSON.stringify(fresh.greenTitles.filter(_direct)) +
+        '\n      → back:  ' + JSON.stringify(back.greenTitles.filter(_direct)));
+    yes('NO FINDING APPEARS ON ONE PATH AND NOT THE OTHER',
+        JSON.stringify(fT.slice().sort()) === JSON.stringify(bT.slice().sort()),
+        'fresh only: ' + JSON.stringify(fT.filter(t => !bT.includes(t))) +
+        '\n      → restored only: ' + JSON.stringify(bT.filter(t => !fT.includes(t))));
 
     H('Page errors');
     R('errors', errors.length ? errors : '(none)');
