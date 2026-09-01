@@ -152,6 +152,16 @@ const SUITES = [
   // CAM-4 length guard suppressed. Both are now recorded and reported.
   { label: 'Invoice match confidence (F-14)',   cmd: 'node test-invoice-match-confidence.js' },
   { label: 'Match warnings on screen (e2e)',    cmd: 'node test-e2e-match-warnings.js' },
+  // WHOSE NAME IS ON THE CHARGE, AND WHAT COMES BACK WHEN YOU REOPEN THE RUN.
+  // Statement charge rows rendered `inv.vendor`, a field the engine's Invoice
+  // objects do not have — 17 of 17 rows across four tenants showed a blank
+  // vendor on a document a tenant is asked to pay. And the restored result card
+  // was a second, thinner renderer that emitted no invoice breakdown at all,
+  // though `includedInvoices` restores intact: 36,103 rendered characters became
+  // 3,610. One shared builder now serves both cards; the reduced-fidelity
+  // disclosure is reserved for a record that genuinely stored no detail, and
+  // this pins that it neither fabricates one nor leaves the absence unexplained.
+  { label: 'Statement + restore completeness', cmd: 'node test-e2e-statement-restore-completeness.js' },
   // T2. A tenant's CAM share has two independent multiplicands — how much of the
   // BUILDING, and how much of the PERIOD — and the product had only the first,
   // so a tenant who took occupancy on 1 September was billed twelve months. The

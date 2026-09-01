@@ -2942,6 +2942,17 @@
       font-size: 0.78rem; line-height: 1.5; color: var(--text-2);
     }
     .rcs-fidelity strong { color: var(--text-1); }
+    /* N2 — the per-tenant counterpart of the panel notice above. It appears
+       where a breakdown would be, on a restored record that genuinely stored
+       none, so the absence is explained in the place the reader is looking
+       rather than only at the top of the screen. */
+    .rc-breakdown-absent {
+      margin: 8px 0 2px; padding: 9px 11px; border-radius: 8px;
+      background: var(--bgc-1e293b, rgba(30,41,59,0.6));
+      border-left: 3px solid var(--c-f59e0b, #f59e0b);
+      font-size: 0.76rem; line-height: 1.5; color: var(--text-3);
+    }
+    .rc-breakdown-absent-cta { display: block; margin-top: 5px; color: var(--text-2); font-weight: 600; }
     /* T2 — a prorated tenant's arithmetic, shown end to end. */
     .ts-occupancy { margin: 14px 0; padding: 12px 14px; border-radius: 10px;
       background: var(--bgc-1e293b, rgba(30,41,59,0.5));

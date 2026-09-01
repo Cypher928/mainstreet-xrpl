@@ -11060,91 +11060,7 @@ async function runAllocation() {
       : '';
 
     // ── Category-grouped invoice breakdown (matches Tenant Statement style) ──
-    const invBreakdown = (() => {
-      if (!r.includedInvoices.length) return '';
-
-      // Group invoices by category, accumulate share per category
-      const catMap = {};
-      r.includedInvoices.forEach((inv, invIdx) => {
-        const key = (inv.category || 'other').toLowerCase();
-        if (!catMap[key]) catMap[key] = { label: inv.category || 'Other', share: 0, invoices: [] };
-        catMap[key].share += inv.share;
-        catMap[key].invoices.push({ inv, invIdx });
-      });
-
-      const pct = (r.proRata * 100).toFixed(2);
-
-      const catCards = Object.entries(catMap)
-        .sort((a, b) => b[1].share - a[1].share)
-        .map(([, data]) => {
-          const invRows = data.invoices.map(({ inv, invIdx }) => {
-            const rowId = `rcn-${r.name}-${invIdx}`.replace(/[^a-zA-Z0-9-]/g, '-');
-            return `
-              <div class="charge-row ts-inv-card" id="crow-${rowId}"
-                onclick="(function(row){var d=document.getElementById('ddetail-${rowId}');var open=d.style.display==='block';d.style.display=open?'none':'block';row.classList.toggle('detail-open',!open);})(this)">
-                <div class="charge-row-top">
-                  <div class="charge-row-left">
-                    <div class="charge-vendor">${esc(inv.vendorName || '')}</div>
-                    <div class="charge-amount">${fmt(inv.share)}</div>
-                    <div class="charge-sub">Tenant share (${_shareExplanation(r, inv).rowSuffix})</div>
-                    <p class="ts-vendor-hint">Tap for details or to dispute</p>
-                  </div>
-                  <div class="charge-chevron">&#x203A;</div>
-                </div>
-                <div id="ddetail-${rowId}" class="ts-detail-box" style="display:none;" onclick="event.stopPropagation()">
-                  <div class="ts-detail-header">
-                    <span class="ts-detail-title">Charge Details</span>
-                    <button class="ts-detail-close"
-                      onclick="document.getElementById('ddetail-${rowId}').style.display='none';document.getElementById('crow-${rowId}').classList.remove('detail-open')">&#x2715;</button>
-                  </div>
-                  <div class="ts-detail-row"><span>Vendor</span><span class="ts-detail-val">${esc(inv.vendorName || '')}</span></div>
-                  <div class="ts-detail-row"><span>Category</span><span class="ts-detail-val">${esc(inv.category || '')}</span></div>
-                  <div class="ts-detail-row"><span>Invoice Total</span><span class="ts-detail-val">${fmt(inv.amount)}</span></div>
-                  <div class="ts-detail-row ts-detail-highlight"><span>Tenant Share</span><span class="ts-detail-val">${fmt(inv.share)}</span></div>
-                  ${(() => { const _x = _shareExplanation(r, inv); return `
-                  <div class="ts-detail-basis">${esc(_x.basis)}</div>
-                  <div class="ts-detail-formula">${_x.formula}</div>
-                  ${_x.steps}`; })()}
-                  <div class="ts-detail-actions">
-                    <button class="inv-act-btn inv-act-explain" id="tsexplbtn-${rowId}"
-                      onclick="event.stopPropagation();tsExplainInvoice('${rowId}','${esc(inv.vendorName||'')}','${esc(inv.category||'')}',${inv.amount},'${esc(inv.invoiceDate||'')}')">Explain</button>
-                    <button class="inv-act-btn inv-act-dispute" id="dbtn-${rowId}"
-                      onclick="event.stopPropagation();toggleDisputeForm('${rowId}','${esc(r.name)}','${rowId}','${esc(inv.vendorName||'')}','${esc(inv.category||'')}',${inv.share})">Dispute</button>
-                  </div>
-                  ${inv.flag ? `<div class="recon-inv-flag" style="margin-top:8px;">&#x26A0; ${esc(inv.flag.message)}</div>` : ''}
-                  <div id="tsexpl-${rowId}"></div>
-                  <div id="dform-${rowId}" style="display:none;"></div>
-                </div>
-              </div>`;
-          }).join('');
-
-          const count = data.invoices.length;
-          return `
-            <div class="ts-cat-accordion">
-              <div class="ts-cat-header"
-                onclick="(function(hdr){var body=hdr.nextElementSibling;var open=body.style.display==='block';body.style.display=open?'none':'block';hdr.classList.toggle('active',!open);})(this)">
-                <div class="ts-cat-left">
-                  <div class="ts-cat-name">${esc(data.label)}</div>
-                  <div class="ts-cat-meta">${count} invoice${count !== 1 ? 's' : ''}</div>
-                </div>
-                <div class="ts-cat-right">
-                  <div class="ts-cat-share-amt">${fmt(parseFloat(data.share.toFixed(2)))}</div>
-                  <div class="ts-cat-share-lbl">YOUR SHARE</div>
-                </div>
-                <div class="ts-cat-chevron">&#x203A;</div>
-              </div>
-              <div class="ts-cat-body" style="display:none;">
-                <div class="charge-list">${invRows}</div>
-              </div>
-            </div>`;
-        }).join('');
-
-      const capLine = r.capApplied
-        ? `<div class="recon-cap-note">&#x26A0; Cap applied — ${fmt(r.capAdjustment)} reduced</div>`
-        : '';
-
-      return `<div class="rc-cat-breakdown">${capLine}${catCards}</div>`;
-    })();
+    const invBreakdown = _invoiceBreakdownHtml(r);
 
     // ── Confidence stat ────────────────────────────────────────────────
     // D16 — the per-tenant "Confidence N%" stat is gone; see ReconciliationResult.
@@ -12540,6 +12456,108 @@ function _buildNeedsReviewRollupHtml(results) {
     </div>
     <div class="nrr-body">${items}</div>
   </div>`;
+}
+
+// ── ONE INVOICE BREAKDOWN, BUILT ONCE (N2) ──────────────────────────────────
+//
+// This markup used to exist only inside runAllocation's result-card loop. The
+// RESTORED card is a separate, simpler renderer, and it emitted no breakdown at
+// all — so reopening a saved reconciliation dropped every charge-level fact:
+// vendor, invoice total, tenant share, and the equation P5 prints. Measured on
+// Northgate Exchange: 36,103 rendered characters became 3,610, six "View invoice
+// breakdown" buttons became zero, 49 charge-detail panels became zero.
+//
+// NOTHING WAS MISSING FROM THE DATA. `includedInvoices` came back [6,5,5,5] with
+// identical totals; only the renderer was thinner. So this is not a fidelity
+// problem and must not be labelled as one — it is one builder, now called from
+// both places, which is also what keeps them from drifting apart again.
+//
+// Returns '' when there is genuinely nothing to show, which is the signal the
+// caller uses to disclose reduced fidelity instead.
+function _invoiceBreakdownHtml(r) {
+    if (!r.includedInvoices.length) return '';
+
+    // Group invoices by category, accumulate share per category
+    const catMap = {};
+    r.includedInvoices.forEach((inv, invIdx) => {
+      const key = (inv.category || 'other').toLowerCase();
+      if (!catMap[key]) catMap[key] = { label: inv.category || 'Other', share: 0, invoices: [] };
+      catMap[key].share += inv.share;
+      catMap[key].invoices.push({ inv, invIdx });
+    });
+
+    const pct = (r.proRata * 100).toFixed(2);
+
+    const catCards = Object.entries(catMap)
+      .sort((a, b) => b[1].share - a[1].share)
+      .map(([, data]) => {
+        const invRows = data.invoices.map(({ inv, invIdx }) => {
+          const rowId = `rcn-${r.name}-${invIdx}`.replace(/[^a-zA-Z0-9-]/g, '-');
+          return `
+            <div class="charge-row ts-inv-card" id="crow-${rowId}"
+              onclick="(function(row){var d=document.getElementById('ddetail-${rowId}');var open=d.style.display==='block';d.style.display=open?'none':'block';row.classList.toggle('detail-open',!open);})(this)">
+              <div class="charge-row-top">
+                <div class="charge-row-left">
+                  <div class="charge-vendor">${esc(inv.vendorName || '')}</div>
+                  <div class="charge-amount">${fmt(inv.share)}</div>
+                  <div class="charge-sub">Tenant share (${_shareExplanation(r, inv).rowSuffix})</div>
+                  <p class="ts-vendor-hint">Tap for details or to dispute</p>
+                </div>
+                <div class="charge-chevron">&#x203A;</div>
+              </div>
+              <div id="ddetail-${rowId}" class="ts-detail-box" style="display:none;" onclick="event.stopPropagation()">
+                <div class="ts-detail-header">
+                  <span class="ts-detail-title">Charge Details</span>
+                  <button class="ts-detail-close"
+                    onclick="document.getElementById('ddetail-${rowId}').style.display='none';document.getElementById('crow-${rowId}').classList.remove('detail-open')">&#x2715;</button>
+                </div>
+                <div class="ts-detail-row"><span>Vendor</span><span class="ts-detail-val">${esc(inv.vendorName || '')}</span></div>
+                <div class="ts-detail-row"><span>Category</span><span class="ts-detail-val">${esc(inv.category || '')}</span></div>
+                <div class="ts-detail-row"><span>Invoice Total</span><span class="ts-detail-val">${fmt(inv.amount)}</span></div>
+                <div class="ts-detail-row ts-detail-highlight"><span>Tenant Share</span><span class="ts-detail-val">${fmt(inv.share)}</span></div>
+                ${(() => { const _x = _shareExplanation(r, inv); return `
+                <div class="ts-detail-basis">${esc(_x.basis)}</div>
+                <div class="ts-detail-formula">${_x.formula}</div>
+                ${_x.steps}`; })()}
+                <div class="ts-detail-actions">
+                  <button class="inv-act-btn inv-act-explain" id="tsexplbtn-${rowId}"
+                    onclick="event.stopPropagation();tsExplainInvoice('${rowId}','${esc(inv.vendorName||'')}','${esc(inv.category||'')}',${inv.amount},'${esc(inv.invoiceDate||'')}')">Explain</button>
+                  <button class="inv-act-btn inv-act-dispute" id="dbtn-${rowId}"
+                    onclick="event.stopPropagation();toggleDisputeForm('${rowId}','${esc(r.name)}','${rowId}','${esc(inv.vendorName||'')}','${esc(inv.category||'')}',${inv.share})">Dispute</button>
+                </div>
+                ${inv.flag ? `<div class="recon-inv-flag" style="margin-top:8px;">&#x26A0; ${esc(inv.flag.message)}</div>` : ''}
+                <div id="tsexpl-${rowId}"></div>
+                <div id="dform-${rowId}" style="display:none;"></div>
+              </div>
+            </div>`;
+        }).join('');
+
+        const count = data.invoices.length;
+        return `
+          <div class="ts-cat-accordion">
+            <div class="ts-cat-header"
+              onclick="(function(hdr){var body=hdr.nextElementSibling;var open=body.style.display==='block';body.style.display=open?'none':'block';hdr.classList.toggle('active',!open);})(this)">
+              <div class="ts-cat-left">
+                <div class="ts-cat-name">${esc(data.label)}</div>
+                <div class="ts-cat-meta">${count} invoice${count !== 1 ? 's' : ''}</div>
+              </div>
+              <div class="ts-cat-right">
+                <div class="ts-cat-share-amt">${fmt(parseFloat(data.share.toFixed(2)))}</div>
+                <div class="ts-cat-share-lbl">YOUR SHARE</div>
+              </div>
+              <div class="ts-cat-chevron">&#x203A;</div>
+            </div>
+            <div class="ts-cat-body" style="display:none;">
+              <div class="charge-list">${invRows}</div>
+            </div>
+          </div>`;
+      }).join('');
+
+    const capLine = r.capApplied
+      ? `<div class="recon-cap-note">&#x26A0; Cap applied — ${fmt(r.capAdjustment)} reduced</div>`
+      : '';
+
+    return `<div class="rc-cat-breakdown">${capLine}${catCards}</div>`;
 }
 
 // ── T2 · HOW A SHARE WAS ARRIVED AT, SAID ONCE ───────────────────────────────
@@ -19044,13 +19062,28 @@ function generateTenantStatement(tenantName, opts = {}) {
     .sort((a, b) => b[1].share - a[1].share)
     .map(([, data]) => {
       const invRows = data.invoices.map(({ inv, idx, share }) => {
+        // N1 — ONE READING OF "WHO SENT THIS INVOICE", declared before its first
+        // use in this row.
+        //
+        // These rows rendered `inv.vendor`, and the engine's Invoice objects do
+        // not have that field — the constructor sets `vendorName` (see class
+        // Invoice). So every charge row on every tenant statement showed a BLANK
+        // vendor: measured 17 of 17 rows across four tenants. The results card
+        // was unaffected because it reads `vendorName`, which is why this
+        // survived so long.
+        //
+        // `vendorName` first because it is what the engine writes; `vendor` is
+        // the alias runAllocation and restoreResultsDisplay attach to some
+        // shapes. Nothing else is consulted — a fallback to category or
+        // description would put a plausible wrong name on a billing document.
+        const _vendorName = inv.vendorName || inv.vendor || '';
         const rowId = `ts-${tenantName}-${idx}`.replace(/\s+/g, '-');
-        const vendorKey = (inv.vendor || inv.vendorName || '').toLowerCase();
+        const vendorKey = _vendorName.toLowerCase();
         const stored = invoiceData.find(d =>
           d.vendorName && d.vendorName.toLowerCase() === vendorKey
         );
         const viewInvBtn = stored && stored.fileUrl
-          ? `<button class="btn-secondary" onclick="event.stopPropagation();openInvFileViewer('${stored.fileUrl.replace(/\\/g,'\\\\').replace(/'/g,"\\'")}','${esc(inv.vendor || inv.vendorName || '')}','${esc(stored.fileType || '')}')">&#x1F4C4; View Invoice</button>`
+          ? `<button class="btn-secondary" onclick="event.stopPropagation();openInvFileViewer('${stored.fileUrl.replace(/\\/g,'\\\\').replace(/'/g,"\\'")}','${esc(_vendorName)}','${esc(stored.fileType || '')}')">&#x1F4C4; View Invoice</button>`
           : '';
         // On the collapsed row as well as inside the detail. A tenant should not
         // have to open every charge to find the one nobody can date.
@@ -19068,7 +19101,7 @@ function generateTenantStatement(tenantName, opts = {}) {
             onclick="(function(row){var d=document.getElementById('ddetail-${rowId}');var open=d.style.display==='block';d.style.display=open?'none':'block';row.classList.toggle('detail-open',!open);})(this)">
             <div class="charge-row-top">
               <div class="charge-row-left">
-                <div class="charge-vendor">${esc(inv.vendor)}</div>
+                <div class="charge-vendor">${esc(_vendorName)}</div>
                 <div class="charge-amount">${fmt(share)}</div>
                 <div class="charge-sub">Your share (${_shareExplanation(r, { ...inv, share }).rowSuffix})</div>
                 ${_rowDateWarn}
@@ -19082,7 +19115,7 @@ function generateTenantStatement(tenantName, opts = {}) {
                 <button class="ts-detail-close"
                   onclick="document.getElementById('ddetail-${rowId}').style.display='none';document.getElementById('crow-${rowId}').classList.remove('detail-open')">&#x2715;</button>
               </div>
-              <div class="ts-detail-row"><span>Vendor</span><span class="ts-detail-val">${esc(inv.vendor)}</span></div>
+              <div class="ts-detail-row"><span>Vendor</span><span class="ts-detail-val">${esc(_vendorName)}</span></div>
               <div class="ts-detail-row"><span>Category</span><span class="ts-detail-val">${esc(inv.category)}</span></div>
               ${_detailDateRow}
               <div class="ts-detail-row"><span>Invoice Total</span><span class="ts-detail-val">${fmt(inv.amount)}</span></div>
@@ -19094,7 +19127,7 @@ function generateTenantStatement(tenantName, opts = {}) {
               <div class="ts-detail-actions">
                 ${viewInvBtn}
                 <button class="inv-act-btn inv-act-explain" id="tsexplbtn-${rowId}"
-                  onclick="event.stopPropagation();tsExplainInvoice('${rowId}','${esc(inv.vendor)}','${esc(inv.category)}',${inv.amount},'${esc(inv.invoiceDate||'')}')">Explain</button>
+                  onclick="event.stopPropagation();tsExplainInvoice('${rowId}','${esc(_vendorName)}','${esc(inv.category)}',${inv.amount},'${esc(inv.invoiceDate||'')}')">Explain</button>
                 <button class="btn-danger-outline" id="dbtn-${rowId}"
                   onclick="event.stopPropagation();tsToggleDispute('${rowId}','${esc(tenantName)}',${idx})">Dispute this charge</button>
               </div>
@@ -19149,7 +19182,7 @@ function generateTenantStatement(tenantName, opts = {}) {
     ? `<p class="ts-undated-note" style="font-size:0.82rem;color:var(--c-b45309);margin-top:8px;padding:8px 10px;border:1px solid var(--c-b45309);border-radius:6px;">
         <strong>&#x26A0; ${_undatedCharges.length} charge${_undatedCharges.length !== 1 ? 's' : ''} on this statement ${_undatedCharges.length !== 1 ? 'carry' : 'carries'} no invoice date.</strong>
         ${_undatedCharges.map(({ inv, d }) =>
-            `${esc(inv.vendor || inv.vendorName || 'Unknown vendor')} (${fmt(inv.amount)}${
+            `${esc(inv.vendorName || inv.vendor || 'Unknown vendor')} (${fmt(inv.amount)}${
               d.status === 'unreadable' ? `, dated &ldquo;${esc(String(d.raw))}&rdquo; on the invoice` : ', no date on the invoice'})`
           ).join('; ')}.
         ${_undatedCharges.length !== 1 ? 'They were' : 'It was'} included in this ${esc(String(getCamYear()))} reconciliation and your share above,
@@ -26360,6 +26393,33 @@ function restoreResultsDisplay(snapshot) {
       ${r.capApplied
         ? `<div class="cap-badge">Cap applied — ${fmt(r.capAdjustment)} reduced</div>`
         : ''}
+      ${(() => {
+        // N2 — THE BREAKDOWN THE SNAPSHOT ALREADY CARRIES.
+        //
+        // This card used to render none, so reopening a saved reconciliation
+        // showed the dollars and dropped every charge-level fact behind them.
+        // The data was never missing — `includedInvoices` restores intact — so
+        // nothing here is reconstructed, inferred or recomputed: it is the same
+        // builder the fresh card calls, over the same stored shares.
+        //
+        // When the snapshot GENUINELY carries no per-invoice detail — a record
+        // rebuilt from cam_reconciliations rows, where includedInvoices is []
+        // by construction — this renders nothing and says so, rather than
+        // inventing a breakdown or leaving the absence unexplained.
+        const _n = (r.includedInvoices || []).length;
+        if (!_n) {
+          return `<div class="rc-breakdown-absent" role="note">
+            Per-invoice detail was not stored with this saved reconciliation, so the charges behind
+            ${fmt(r.allocatedAmount)} cannot be listed here. The amount and share above are as billed.
+            <span class="rc-breakdown-absent-cta">Re-run the reconciliation to rebuild the breakdown.</span>
+          </div>`;
+        }
+        return `<button class="rc-breakdown-toggle" type="button"
+            onclick="(function(btn){var w=btn.nextElementSibling;var open=w.style.display==='block';w.style.display=open?'none':'block';btn.classList.toggle('rc-breakdown-toggle--open',!open);})(this)">
+            &#x25B8; View invoice breakdown (${_n} invoice${_n !== 1 ? 's' : ''})
+          </button>
+          <div class="rc-breakdown-wrap" style="display:none;">${_invoiceBreakdownHtml(r)}</div>`;
+      })()}
       <div class="result-card-actions">
         <button class="explain-btn" onclick="openExplainPanel('${esc(r.name)}')">&#x1F4CA; View Calculation</button>
         <button class="lv-validate-btn" onclick="_startLeaseValidation('${_lvPanelId}',${tdIdx})">&#x1F50D; Validate Against Lease</button>
