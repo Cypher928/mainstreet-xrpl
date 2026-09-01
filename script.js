@@ -23716,6 +23716,54 @@ function _stripBlobs(property) {
       invoiceDate: inv.invoiceDate,
       fileUrl:     inv.fileUrl,
       fileName:    inv.fileName,
+      // A BILLING BLOCK MUST NOT EVAPORATE ACROSS A RELOAD.
+      //
+      // matchInvoiceToTenant is the authority on whether an invoice names two
+      // tenants equally well. Nothing downstream re-derives that: the audit
+      // detector reads `matchAmbiguous`/`matchTied` straight off the invoice
+      // register (buildAuditSummary -> paidInvData <- invoiceData), raises a
+      // blocksBilling finding scoped to each tied candidate, and the statement
+      // gate refuses on it. The register IS the record, and this list is what
+      // the register survives on: `prop.invoices = Array.from(invoiceData)`
+      // hands the live objects here, and what is not named is gone.
+      //
+      // So it was. Measured on the tied-invoice fixture: fresh run 1 ambiguous
+      // invoice, 2 blocking findings, Alder unbillable; after save and reload,
+      // 0, 0, and billable — the same reconciliation, the same money, and a
+      // statement that would now issue for a charge nobody has established is
+      // theirs. The gate did not fail; it was never asked.
+      //
+      // RESTORED, NOT RECOMPUTED. Re-running the matcher on load would answer a
+      // different question — "do these tenants tie TODAY" — against a roster
+      // that may have changed since, and would either invent a block that never
+      // held or clear one that did. The tie is a decision the run made, and it
+      // is stored the way camEligible is stored: the next reconciliation is what
+      // replaces it. In-session the flag already lives on the register until the
+      // next run; after this, a reload is indistinguishable from not reloading.
+      //
+      // A BLOCK THAT CANNOT SAY WHY IS HALF A BLOCK, so the finding's own
+      // evidence travels with the flag. `matchTied` because the finding names
+      // its candidates and scopes itself per tenant; `matchedTenant` because
+      // both the detail and the conditions read "this reconciliation billed it
+      // to X because that lease was read first" — restoring the flag without it
+      // put the word `undefined` in the sentence that explains the hold;
+      // `matchNearMisses` for the advisory finding, unchanged in kind and still
+      // non-blocking.
+      //
+      // AND NO MORE THAN THAT. `matchCandidates` is the superset `tied` is
+      // filtered from and no consumer reads it. `matchConfidence` is read only
+      // by the direct/shared split, which runFullReconciliation recomputes from
+      // scratch before it is consulted, and by the restored variance panel's
+      // fallback — a separate divergence, noted where it lives rather than
+      // widened into this one. Persisting a field no reader needs is how an
+      // allow-list stops being one.
+      //
+      // An ordinary shared invoice matched nobody: `false`, `[]`, `null`, `[]`.
+      // It restores as exactly what it was, and no ambiguity is invented for it.
+      matchAmbiguous:  inv.matchAmbiguous,
+      matchTied:       inv.matchTied,
+      matchedTenant:   inv.matchedTenant,
+      matchNearMisses: inv.matchNearMisses,
       // drop confidence, _error, raw text — not needed for persistence
     } : inv),
     // CAM results can be very large; strip the full invoice copy inside results/camReconciliation

@@ -162,6 +162,17 @@ const SUITES = [
   // disclosure is reserved for a record that genuinely stored no detail, and
   // this pins that it neither fabricates one nor leaves the absence unexplained.
   { label: 'Statement + restore completeness', cmd: 'node test-e2e-statement-restore-completeness.js' },
+  // AND WHETHER THE BLOCK ABOVE SURVIVES BEING SAVED. It did not. The tie lives
+  // on the invoice register, which is the list _stripBlobs rebuilds from an
+  // allow-list on the way to storage — and the allow-list did not name it. So a
+  // reconciliation that refused to issue a statement for a $5,000 charge nobody
+  // had established, refused it only until the page was reloaded: 1 ambiguous
+  // invoice and 2 blocking findings became 0 and 0, and both tied tenants read
+  // as billable. This walks the whole chain — register, persisted bytes, a real
+  // reload, the audit summary, the exposure gate and generateTenantStatement
+  // itself — and requires the restored path to be indistinguishable from the
+  // fresh one, without inventing a tie for any invoice that never had one.
+  { label: 'Ambiguity survives save/reload',   cmd: 'node test-e2e-ambiguity-persistence.js' },
   // T2. A tenant's CAM share has two independent multiplicands — how much of the
   // BUILDING, and how much of the PERIOD — and the product had only the first,
   // so a tenant who took occupancy on 1 September was billed twelve months. The
