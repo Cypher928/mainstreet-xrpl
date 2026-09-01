@@ -15424,7 +15424,13 @@ function buildAuditSummary() {
           group:  'allocation',
           severity: 'yellow',
           blocksBilling: true,
-          title:  `Confirm which tenant ${inv.vendorName} belongs to — it names ${names.length}`,
+          // TITLED FOR THE TENANT IT HOLDS. One finding is emitted per tied
+          // candidate so each is blocked, and two findings sharing one title
+          // read as a duplicate in every report that lists them — and are
+          // indistinguishable in a per-tenant block, which is exactly where
+          // they are shown. The invoice is named in both; the tenant is what
+          // differs.
+          title:  `Confirm whether ${inv.vendorName} belongs to ${cand.tenantName} — it names ${names.length} tenants`,
           detail: `${inv.vendorName} (${fmt(amt)}) matched ${who} equally well — ${tied.map(c => `${c.tenantName} on ${c.reason}`).join(', ')}. A direct match bills the whole invoice to one tenant, and this reconciliation billed it to ${inv.matchedTenant} because that lease was read first, not because the document says so. Confirm which tenant it belongs to, or correct the unit or vendor name on the invoice, and re-run.`,
           impact: { amount: amt, kind: 'unsubstantiated',
                     scope: `tenant:${cand.tenantName}`,
@@ -15459,7 +15465,15 @@ function buildAuditSummary() {
         blocksBilling: false,
         title:  `${nearMiss.length} invoice${nearMiss.length > 1 ? 's' : ''} mention${nearMiss.length > 1 ? '' : 's'} a tenant too briefly to match on`,
         detail: `These invoices contain a tenant's unit number or name, but one too short to assign a whole invoice on: a single-character unit is a substring of half the numbers in a document, and a two-letter name carries no evidence. They have been allocated pro-rata as shared expenses, which is the safe treatment and is unchanged by this finding. If one of them is in fact a direct charge, confirm it on the invoice and re-run.`,
-        impact: { amount: nmAmt, kind: 'under_review',
+        // SAME EXPOSURE TREATMENT AS THE FINDING THIS REPLACES. The detector it
+        // supersedes carried this money as `unsubstantiated`, and that
+        // classification flows into the Lender Summary's expense-side figure.
+        // Whether an attribution question is better read as `under_review` than
+        // as weak evidence is a fair question — and answering it here would move
+        // a lender-facing number inside a change about a false warning. The kind
+        // and the amount are held exactly as they were; only the words a manager
+        // reads have changed.
+        impact: { amount: nmAmt, kind: 'unsubstantiated',
                   items: nearMiss.map(i => ({ id: `invoice:${i.vendorName}`, amount: parseFloat(i.amount) || 0 })),
                   basis: 'Allocated pro-rata; a short tenant identifier appears in the invoice text' },
         actions: ['Confirm whether the invoice is a direct charge',

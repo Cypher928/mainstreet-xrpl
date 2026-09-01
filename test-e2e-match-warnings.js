@@ -260,7 +260,7 @@ async function runOrder(browser, tenants, label) {
   const fwd = await runOrder(browser, FORWARD,  'tenants in order');
   const rev = await runOrder(browser, REVERSED, 'tenants reversed');
 
-  const amb = f => /Confirm which tenant/.test(f.title);
+  const amb = f => /Confirm whether .* belongs to/.test(f.title);
   const near = f => /mention.? a tenant too briefly/.test(f.title);
 
   // ── 1 · ordinary shared invoice → no warning ──────────────────────────────
@@ -312,7 +312,7 @@ async function runOrder(browser, tenants, label) {
       Object.keys(fwd.blockingByTenant).sort().join('|') === 'Alder Bakery|Birch Optical',
       JSON.stringify(fwd.blockingByTenant));
   yes('    and nothing about this tie blocks the property as a whole',
-      !fwd.blockingProperty.some(t => /Confirm which tenant/.test(t)),
+      !fwd.blockingProperty.some(t => /Confirm whether .* belongs to/.test(t)),
       JSON.stringify(fwd.blockingProperty));
 
   // ── 3 · ORDER-INDEPENDENCE ────────────────────────────────────────────────

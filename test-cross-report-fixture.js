@@ -49,7 +49,11 @@ const POOL       = 71950;
 // out "month-end rounding" as an explanation for the observed off-by-one and
 // leaves only a rendering shift, which applies to all three equally.
 const TENANTS = [
-  { id: 'shonac', tenant_name: 'SHONAC',        name: 'SHONAC',
+  // F-14 — the unit is one character, which is BELOW MIN_UNIT_LEN. It can never
+  // produce a direct match, so no allocation can move because of it; what it
+  // makes possible is a NEAR MISS, which is the reachable state that replaces
+  // the unreachable one this fixture used to invent. See the Ridgeway invoice.
+  { id: 'shonac', tenant_name: 'SHONAC',        name: 'SHONAC', unitNumber: '7',
     leased_sqft: 12000, lease_type: 'NNN', start_date: '2011-03-01', end_date: '2016-02-28',
     pro_rata_share: null, excludedCategories: [] },
   { id: 'digriv', tenant_name: 'Digital River', name: 'Digital River',
@@ -93,11 +97,31 @@ const INVOICES = [
   { vendorName: 'Harbor Snow Removal', vendor: 'Harbor Snow Removal',
     amount: 11750, category: 'snow',        invoiceDate: null,
     fileName: 'harbor-jan.pdf', matchConfidence: 0, confidence: { amount: 88, vendor: 84 } },
-  { vendorName: 'Ridgeway Electric', vendor: 'Ridgeway Electric',
+  // F-14 — THIS INVOICE USED TO CARRY A CONFIDENCE THE MATCHER CANNOT PRODUCE.
+  //
+  // It read `matchConfidence: 61, matchReason: 'tenant name partial'` with the
+  // comment "matched a tenant partially — below the 75% direct-charge
+  // threshold". matchInvoiceToTenant assigns 0, 75 or 90 and nothing else, so 61
+  // is a state no property can reach. It was the ONLY thing that ever fired the
+  // "matched with insufficient confidence" detector, which filtered `> 0 && < 75`
+  // — an empty band. A hand-written fixture was the sole evidence for a finding
+  // no real reconciliation could raise, and this suite was green on it.
+  //
+  // Replaced with a state the matcher genuinely produces. SHONAC is in Unit 7
+  // above; this invoice names Unit 7; "7" is one character, so the CAM-4 guard
+  // refuses to assign a whole invoice on it and the expense stays shared. The
+  // fields below are exactly what matchInvoiceToTenant writes for that case, and
+  // running the real matcher over this vendor name and that tenant reproduces
+  // them. The finding it raises is advisory: no allocation and no billing gate
+  // changes, which is why the counts either side of this line are unchanged.
+  { vendorName: 'Ridgeway Electric Unit 7 service',
+    vendor: 'Ridgeway Electric Unit 7 service',
     amount: 8000,  category: 'utilities',   invoiceDate: '2026-07-19',
     fileName: 'ridgeway-jul.pdf',
-    // Matched a tenant partially — below the 75% direct-charge threshold.
-    matchConfidence: 61, matchReason: 'tenant name partial',
+    matchConfidence: 0, matchReason: '', matchedTenant: null,
+    matchAmbiguous: false, matchTied: [], matchCandidates: [],
+    matchNearMisses: [{ tenantName: 'SHONAC', tenantId: 'shonac',
+                        signal: 'unit', token: '7', why: 'too_short' }],
     confidence: { amount: 64, vendor: 71 } },
 ];
 

@@ -232,8 +232,8 @@ yes('[source] the tie-break is still strictly greater — the winner did not cha
 console.log('\n══ 6 · The findings the detectors will raise ══');
 
 yes('[source] the ambiguity finding blocks billing',
-    /AMBIGUOUS|Confirm which tenant \$\{inv\.vendorName\} belongs to/.test(scriptSrc)
-      && /blocksBilling: true,\n          title:  `Confirm which tenant/.test(scriptSrc),
+    /AMBIGUOUS|Confirm whether \$\{inv\.vendorName\} belongs to/.test(scriptSrc)
+      && /blocksBilling: true,\n          \/\/[\s\S]*?title:  `Confirm whether/.test(scriptSrc),
     'the tie no longer blocks a statement');
 yes('[source] it is scoped to each tied candidate, so every one of them is held',
     /`Tenant: \$\{cand\.tenantName\}`/.test(scriptSrc),

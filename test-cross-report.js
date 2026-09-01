@@ -99,7 +99,11 @@ console.log('\n── C1 · A count labelled "Critical" means the same thing in 
   eq('Risk & Disputes warning count',  kpi(RISK, 'Warnings'),        SUMMARY.yellow.length);
 
   // The three findings that lived in one report only.
-  ['Unusually large invoice', 'missing invoice date', 'insufficient confidence'].forEach(needle => {
+  // 'insufficient confidence' was the title of a detector that filtered an empty
+  // confidence band and could never fire on a real property — see the note on
+  // the Ridgeway invoice in the fixture. The near-miss finding that replaced it
+  // is raised by a state the matcher actually produces.
+  ['Unusually large invoice', 'missing invoice date', 'too briefly to match on'].forEach(needle => {
     yes(`Risk & Disputes now carries "${needle}"`, RISK.indexOf(needle) >= 0,
         'this finding is still visible only in the Audit Exception Summary');
   });
