@@ -69,7 +69,8 @@ function loadEngine() {
     },
     parseFloat, isNaN, Number, Math, Date, JSON, Set, Array, Object, String,
     currentProperty: () => ({ tenants: [] }),          // live-tenant overlay: none
-    matchInvoiceToTenant: () => null,                   // force every invoice shared
+    // force every invoice shared. F-14 return shape: `.match` null = no match.
+    matchInvoiceToTenant: () => ({ match: null, candidates: [], tied: [], ambiguous: false, nearMisses: [] }),
     matchesTenant: () => false,
     showToast: () => {},
     _fmtMoney: n => String(n),

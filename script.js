@@ -886,10 +886,22 @@ class ReconciliationResult {
       : proRataPercent;
     this.ambiguityFlags     = [];  // populated by runFullReconciliation after construction
     this.status             = totalAllocated > 0 ? 'calculated' : 'needs review';
-    const total = this.includedInvoices.reduce((s, inv) => s + (inv.share || 0), 0);
-    this.averageConfidence  = total > 0
-      ? Math.round(this.includedInvoices.reduce((s, inv) => s + (inv.matchConfidence || 0) * (inv.share || 0), 0) / total)
-      : 0;
+    // F-14/D16 — THERE IS NO PER-TENANT CONFIDENCE NUMBER, so this no longer
+    // computes one.
+    //
+    // `averageConfidence` was a share-weighted mean of `matchConfidence`. That
+    // field is a routing signal with three reachable values — 0 for "no tenant
+    // matched", 75 for a name hit, 90 for a unit hit — not a measure of how
+    // sure anyone is. Every shared invoice carries 0, so the mean read 0% for a
+    // perfectly ordinary tenant and was hidden entirely by the `> 0` gate; a
+    // tenant with one direct invoice showed "Confidence 32%", which was
+    // (2400 x 90) / 6669.04 — the share of their bill that came from a direct
+    // match, wearing the word "confidence".
+    //
+    // Nothing replaces it. Inventing a percentage with no defensible basis is
+    // the defect, not the absence of one. How well the LEASE was read is a real
+    // and separate measure (`_confidence` / `_confidenceScore`), and the
+    // surfaces that want a confidence figure use that one.
     // Aliases for lastResults consumers (runCAMAllocation shape compatibility)
     this.name           = tenantName;
     this.allocatedAmount = totalAllocated;
@@ -10137,6 +10149,25 @@ function matchInvoiceToTenant(invoice, tenants) {
     tenantUnits:        tenants.map(t => t.unitNumber || '(none)'),
   });
 
+  // F-14 — WHAT THE MATCHER DISCARDED, RECORDED RATHER THAN RE-DERIVED.
+  //
+  // `confidence` is a routing signal with exactly three reachable values — 0, 75
+  // and 90 — not a continuous score. Two consumers were written as though the
+  // band below 75 meant "matched weakly": the per-invoice flag fired on
+  // `< 75`, which is the DEFINITION of a shared invoice and so decorated 16 of
+  // 17 charge rows; and the audit detector fired on `> 0 && < 75`, a band this
+  // function cannot produce, so it never fired at all. Always true, and never
+  // true, for the same intended idea.
+  //
+  // The genuine uncertainty is not in the number. It is in what the loop below
+  // throws away: a TIE, where two tenants hit equally and the winner is decided
+  // by array order; and a NEAR MISS, where a tenant's own unit number or name
+  // appears in the text but is too short for the CAM-4 guard to trust. Both are
+  // recorded here, by the code that makes the decision, and read by the audit
+  // layer — the same discipline the occupancy and exclusion records follow.
+  const candidates = [];
+  const nearMisses = [];
+
   for (const t of tenants) {
     let conf   = 0;
     let reason = '';
@@ -10144,8 +10175,25 @@ function matchInvoiceToTenant(invoice, tenants) {
     const name = t.tenantName || t.tenant_name || '';
 
     const unitStr = String(t.unitNumber || '').trim();
-    const unitHit = unitStr.length >= MIN_UNIT_LEN && _tokenHit(unitStr, text);
-    const nameHit = String(name || '').trim().length >= MIN_NAME_LEN && _tokenHit(name, text);
+    const nameStr = String(name || '').trim();
+    const unitLong = unitStr.length >= MIN_UNIT_LEN;
+    const nameLong = nameStr.length >= MIN_NAME_LEN;
+    const unitHit = unitLong && _tokenHit(unitStr, text);
+    const nameHit = nameLong && _tokenHit(nameStr, text);
+
+    // THE GUARD IS CORRECT; ITS SILENCE WAS NOT. "1" is a substring of half the
+    // numbers in a document and a two-letter tenant name carries no evidence, so
+    // neither may assign a whole invoice — that is CAM-4 and it stays. But an
+    // invoice reading "Repair to Unit 5" for the tenant in Unit 5 currently
+    // looks identical to an ordinary janitorial invoice, and it is not.
+    if (!unitLong && unitStr && _tokenHit(unitStr, text)) {
+      nearMisses.push({ tenantName: name, tenantId: t.id || null,
+                        signal: 'unit', token: unitStr, why: 'too_short' });
+    }
+    if (!nameLong && nameStr && _tokenHit(nameStr, text)) {
+      nearMisses.push({ tenantName: name, tenantId: t.id || null,
+                        signal: 'name', token: nameStr, why: 'too_short' });
+    }
 
     if (unitHit) {
       conf   = 90;
@@ -10154,6 +10202,8 @@ function matchInvoiceToTenant(invoice, tenants) {
     if (nameHit) {
       if (conf < 75) { conf = 75; reason = name; }
     }
+
+    if (conf > 0) candidates.push({ tenantName: name, tenantId: t.id || null, confidence: conf, reason });
 
     console.log('[matchInvoiceToTenant] CANDIDATE', {
       tenantName:  name,
@@ -10172,14 +10222,46 @@ function matchInvoiceToTenant(invoice, tenants) {
     }
   }
 
+  // A TIE IS AN UNANSWERED QUESTION, not a match. `conf > bestConf` is strict,
+  // so when two tenants hit equally the FIRST IN THE ARRAY takes the whole
+  // invoice — and reversing the tenant order bills a different tenant. That is
+  // a whole-invoice decision made by iteration order, and nothing reported it.
+  // The selection below is unchanged; what changes is that the tie is now on the
+  // record, and the audit layer refuses to bill either candidate until a person
+  // resolves it.
+  // SORTED, so the REPORT does not inherit the array order the defect is about.
+  // `bestMatch` above is still first-wins on the original order — changing that
+  // would invent the answer the finding exists to ask a person for — but the
+  // candidate list a manager reads, and the finding built from it, must be the
+  // same whichever lease was uploaded first. Confidence descending, then name.
+  const _rank = (a, b) => b.confidence - a.confidence
+    || (a.tenantName < b.tenantName ? -1 : a.tenantName > b.tenantName ? 1 : 0);
+  candidates.sort(_rank);
+  const tied = candidates.filter(c => c.confidence === bestConf);
+  const ambiguous = bestConf > 0 && tied.length > 1;
+
   console.log('[matchInvoiceToTenant] RESULT', {
     vendor:     invoice.vendorName || invoice.vendor,
     bestConf,
     bestMatch,
-    verdict:    bestConf >= 75 ? 'DIRECT' : bestConf > 0 ? 'LOW-CONF' : 'SHARED (no match)',
+    candidates: candidates.length,
+    ambiguous,
+    nearMisses: nearMisses.length,
+    verdict:    ambiguous ? 'AMBIGUOUS (tie)'
+              : bestConf >= 75 ? 'DIRECT' : 'SHARED (no match)',
   });
 
-  return bestMatch; // null = no match, shared expense
+  // ONE RETURN SHAPE, ALWAYS. It used to be `bestMatch | null`, which had no
+  // room for a near miss — a case where nothing matched and there is still
+  // something to say. Callers read `.match` for the decision and the rest for
+  // what the decision passed over.
+  return {
+    match: bestMatch,          // null = no match, shared expense
+    candidates,
+    tied,
+    ambiguous,
+    nearMisses,
+  };
 }
 
 // ─── Full Reconciliation Engine ───────────────────────────────────────────────
@@ -10310,11 +10392,19 @@ function runFullReconciliation(property) {
   });
 
   invoices.forEach(inv => {
-    const m = matchInvoiceToTenant(inv, leases);
+    const d = matchInvoiceToTenant(inv, leases);
+    const m = d.match;
     inv.matchedTenant   = m ? m.tenantName : null;
     inv.matchedTenantId = m ? m.tenantId   : null;
     inv.matchConfidence = m ? m.confidence : 0;
     inv.matchReason     = m ? m.reason     : '';
+    // F-14 — what the matcher passed over, carried on the record the audit
+    // layer reads. Not re-derived downstream: the tie and the near miss are
+    // decisions this match made, and only it can see them.
+    inv.matchCandidates = d.candidates;
+    inv.matchAmbiguous  = d.ambiguous;
+    inv.matchTied       = d.tied;
+    inv.matchNearMisses = d.nearMisses;
     console.log('[runFullReconciliation] MATCH RESULT', {
       vendor:         inv.vendorName || inv.vendor,
       matchConfidence: inv.matchConfidence,
@@ -10474,18 +10564,35 @@ function runFullReconciliation(property) {
         amount: _MC.fromCents(_MC.toCents(inv.amount) || 0),
         amountSource: inv.amount,
         share: _MC.fromCents(_sharedLineCents[_i]),
-        ...(inv.matchConfidence < 75 ? {
-          flag: {
-            message:     'Low confidence invoice match',
-            explanation: 'This invoice could not be confidently matched to a tenant using unit number or name, so it was treated as a shared expense.',
-          },
-        } : {}),
+        // F-14 — NO FLAG HERE ANY MORE.
+        //
+        // This used to attach "Low confidence invoice match" whenever
+        // `matchConfidence < 75`, which is identical to `=== 0`, which is the
+        // DEFINITION of the set being mapped: `sharedInvoices` is built by
+        // filtering on exactly that predicate. So the warning was true of every
+        // member of the set it decorated — measured at 16 of 17 charge rows on
+        // the Kettle Row fixture — and said "could not be confidently matched"
+        // about janitorial and insurance invoices that were never expected to
+        // match anyone. That a shared invoice is shared is already stated by the
+        // row: its allocation kind, and the pro-rata equation beside it.
+        //
+        // A tie between two tenants IS worth a marker, and it gets one below.
       })),
       ...ownInvoices.map((inv, _i) => ({
         ...inv, allocation: 'direct',
         amount: _MC.fromCents(_ownLineCents[_i]),
         amountSource: inv.amount,
         share: _MC.fromCents(_ownLineCents[_i]),
+        // F-14 — THE MARKER THAT MEANS SOMETHING. A tie is the only per-invoice
+        // condition here that a manager can act on, and it is the one that moves
+        // a whole invoice: this row is billed in full to this tenant because it
+        // came first in an array, and it names another tenant just as strongly.
+        ...(inv.matchAmbiguous ? {
+          flag: {
+            message: `Names ${(inv.matchTied || []).length} tenants — billed in full to ${lease.tenantName}`,
+            explanation: `This invoice matched ${(inv.matchTied || []).map(c => `${c.tenantName} (${c.reason})`).join(' and ')} equally well, and a direct match bills the whole invoice to one tenant. Which one it belongs to has not been established, so no statement will issue for either until it is confirmed.`,
+          },
+        } : {}),
       })),
     ];
 
@@ -10872,11 +10979,16 @@ async function runAllocation() {
   });
   invoiceData.forEach((inv, i) => {
     if (!inv) return;
-    const m = matchInvoiceToTenant(inv, activeTenants);
+    const d = matchInvoiceToTenant(inv, activeTenants);
+    const m = d.match;
     invoiceData[i].matchedTenant   = m ? m.tenantName : null;
     invoiceData[i].matchedTenantId = m ? m.tenantId   : null;
     invoiceData[i].matchConfidence = m ? m.confidence : 0;
     invoiceData[i].matchReason     = m ? m.reason     : '';
+    invoiceData[i].matchCandidates = d.candidates;
+    invoiceData[i].matchAmbiguous  = d.ambiguous;
+    invoiceData[i].matchTied       = d.tied;
+    invoiceData[i].matchNearMisses = d.nearMisses;
     console.log('[runAllocation] badge-sync RESULT', {
       idx:             i,
       vendor:          inv.vendorName || inv.vendor,
@@ -11035,9 +11147,8 @@ async function runAllocation() {
     })();
 
     // ── Confidence stat ────────────────────────────────────────────────
-    const confStat = r.averageConfidence > 0
-      ? stat('Confidence', r.averageConfidence + '%')
-      : '';
+    // D16 — the per-tenant "Confidence N%" stat is gone; see ReconciliationResult.
+    const confStat = '';
 
     const tdIdx = tenantData.findIndex(t => t && t.tenant_name === r.name);
     const _td   = tdIdx >= 0 ? tenantData[tdIdx] : null;
@@ -12660,20 +12771,23 @@ function _buildReconciliationSummaryHtml(results, invoices, propName, engineInvo
   const capsCls  = capsCount > 0 ? 'rcs-kpi--warn' : '';
   const flagCls  = flaggedCnt > 0 ? 'rcs-kpi--warn' : '';
 
-  // Overall confidence rollup — surfaced prominently so a skeptical reviewer
-  // sees "how sure are we" before drilling into per-field detail.
-  const _confResults  = results.filter(r => r.averageConfidence > 0);
-  const avgConfidence = _confResults.length
-    ? Math.round(_confResults.reduce((s, r) => s + r.averageConfidence, 0) / _confResults.length)
-    : null;
+  // D16 — THE PERCENTAGE IS GONE; THE COUNT THAT MEANT SOMETHING STAYS.
+  //
+  // This badge read "N% confidence" and its own tooltip called it "Average
+  // extraction confidence across all tenants in this run". It was neither: it
+  // averaged `averageConfidence`, a share-weighted mean of the invoice-matching
+  // ROUTING SIGNAL, over the tenants for which that mean happened to be
+  // non-zero — which is the tenants who had a direct-matched invoice. A property
+  // whose invoices are all ordinary shared expenses produced no badge at all,
+  // and one with a single submeter invoice produced a number that measured the
+  // weight of that invoice in the bill.
+  //
+  // "N items need review" is a count of real ambiguity flags and is kept
+  // verbatim. Nothing takes the percentage's place.
   const reviewFieldCount = results.reduce((s, r) => s + (r.ambiguityFlags || []).length, 0);
-  const confCls = avgConfidence === null ? ''
-    : avgConfidence < 70 ? 'rcs-confidence-badge--warn'
-    : avgConfidence < 90 ? 'rcs-confidence-badge--ok'
-    : 'rcs-confidence-badge--high';
-  const confidenceBadgeHtml = avgConfidence !== null
-    ? `<span class="rcs-confidence-badge ${confCls}" title="Average extraction confidence across all tenants in this run">
-        ${avgConfidence}% confidence${reviewFieldCount > 0 ? ` &middot; ${reviewFieldCount} item${reviewFieldCount !== 1 ? 's' : ''} need review` : ''}
+  const confidenceBadgeHtml = reviewFieldCount > 0
+    ? `<span class="rcs-confidence-badge rcs-confidence-badge--warn">
+        ${reviewFieldCount} item${reviewFieldCount !== 1 ? 's' : ''} need review
       </span>`
     : '';
 
@@ -12850,7 +12964,12 @@ function _buildReconciliationSummaryHtml(results, invoices, propName, engineInvo
         </div>`;
       })()}
       <div class="rcs-kpis">
-        ${avgConfidence !== null ? `<div class="rcs-kpi ${avgConfidence < 70 ? 'rcs-kpi--warn' : ''}"><div class="rcs-kpi-val">${avgConfidence}%</div><div class="rcs-kpi-lbl">Confidence</div></div>` : ''}
+        <!-- D16 — the "N% Confidence" KPI tile is gone with the metric behind it.
+             It printed the same share-weighted mean of the invoice-matching
+             routing signal as the badge above and the per-tenant stat: three
+             surfaces, one number, and the number measured how much of a bill
+             came from a direct match. Nothing replaces it; a percentage with no
+             defensible basis is the defect, not the absence of one. -->
         <div class="rcs-kpi"><div class="rcs-kpi-val">${fmt(camPoolTotal)}</div><div class="rcs-kpi-lbl">CAM Pool${
           // When some invoices are held out of CAM the two figures differ, and a
           // reader seeing "CAM Pool $90,500" beside a banner that says "expense
@@ -15269,33 +15388,88 @@ function buildAuditSummary() {
     }
   }
 
-  // ── 6. Low-confidence tenant matches ────────────────────────────────────
+  // ── 6. Ambiguous and near-miss tenant matches (F-14) ────────────────────
+  //
+  // WHAT THIS REPLACED, AND WHY IT NEVER FIRED.
+  //
+  // The detector here filtered `matchConfidence > 0 && matchConfidence < 75` and
+  // said of the result: "These invoices matched partially but fell below the
+  // 75% direct-charge threshold." matchInvoiceToTenant assigns exactly three
+  // values — 0, 75 and 90 — so that band is empty and the finding could not be
+  // raised by any input. Its mirror image, the per-invoice "Low confidence
+  // invoice match" flag, tested `< 75`, which is the definition of a shared
+  // invoice, and so fired on every one of them.
+  //
+  // Neither described a real state. The two below do, and both are read off
+  // decisions the matcher recorded rather than inferred from a score.
   {
-    const lowConf = paidInvData.filter(inv => inv.matchConfidence > 0 && inv.matchConfidence < 75);
-    if (lowConf.length) {
-      const lowConfConditions = lowConf.slice(0, 5).map(inv => {
-        const reason = inv.matchReason || 'no field match';
-        return `"${inv.vendorName}": matched on "${reason}" at ${inv.matchConfidence}% — below 75% threshold, allocated pro-rata`;
+    // (a) A TIE. Two or more tenants matched equally well, so the whole invoice
+    // went to whichever came first in the tenant array — reverse the array and a
+    // different tenant is billed. Blocks billing for every tied candidate: until
+    // a person says which, either statement could over-charge by the full amount.
+    const ambiguous = paidInvData.filter(inv => inv && inv.matchAmbiguous
+                                          && (inv.matchTied || []).length > 1);
+    ambiguous.forEach(inv => {
+      const amt   = parseFloat(inv.amount) || 0;
+      const tied  = inv.matchTied || [];
+      const names = tied.map(c => c.tenantName);
+      const who   = names.join(' and ');
+      // ONE FINDING PER TIED CANDIDATE, because findingScope names a single
+      // tenant and every candidate has to be blocked. Uninvolved tenants on the
+      // property are untouched — that is the I-4 discipline, and it is right
+      // here: which of these two owns the invoice does not change anyone else's
+      // pro-rata share of the shared pool.
+      tied.forEach(cand => {
+        yellow.push({
+          group:  'allocation',
+          severity: 'yellow',
+          blocksBilling: true,
+          title:  `Confirm which tenant ${inv.vendorName} belongs to — it names ${names.length}`,
+          detail: `${inv.vendorName} (${fmt(amt)}) matched ${who} equally well — ${tied.map(c => `${c.tenantName} on ${c.reason}`).join(', ')}. A direct match bills the whole invoice to one tenant, and this reconciliation billed it to ${inv.matchedTenant} because that lease was read first, not because the document says so. Confirm which tenant it belongs to, or correct the unit or vendor name on the invoice, and re-run.`,
+          impact: { amount: amt, kind: 'unsubstantiated',
+                    scope: `tenant:${cand.tenantName}`,
+                    items: [{ id: `invoice:${inv.vendorName}`, amount: amt }],
+                    basis: `Whole invoice assigned to one of ${names.length} equally-matched tenants by array order` },
+          actions: ['Confirm which tenant this invoice belongs to',
+                    'Correct the unit number or vendor name on the invoice',
+                    'Re-run the reconciliation'],
+          source: 'Invoice-to-tenant matching engine — tied candidates',
+          conditions: [
+            `Tenant: ${cand.tenantName}`,
+            `Invoice: "${inv.vendorName}" ${fmt(amt)}`,
+            ...tied.map(c => `Matched: ${c.tenantName} on "${c.reason}" at ${c.confidence}%`),
+            `Billed in this run to: ${inv.matchedTenant}`,
+          ],
+        });
       });
-      if (lowConf.length > 5) lowConfConditions.push(`+${lowConf.length - 5} more`);
-      const lowConfAmt = lowConf.reduce((s, inv) => s + (parseFloat(inv.amount) || 0), 0);
+    });
+
+    // (b) A NEAR MISS. The invoice text contains a tenant's own unit number or
+    // name, but too short for the CAM-4 guard to assign a whole invoice on —
+    // "Unit 5", a tenant called "BP". ADVISORY ONLY: the allocation is correct
+    // as it stands and does not change, and the guard stays exactly as it is.
+    // What changes is that the invoice no longer looks identical to an ordinary
+    // janitorial bill.
+    const nearMiss = paidInvData.filter(inv => inv && (inv.matchNearMisses || []).length);
+    if (nearMiss.length) {
+      const nmAmt = nearMiss.reduce((s, inv) => s + (parseFloat(inv.amount) || 0), 0);
       yellow.push({
         group:  'allocation',
         severity: 'yellow',
-        impact: lowConfAmt > 0
-          ? { amount: lowConfAmt, kind: 'unsubstantiated',
-              items: lowConf.map(i => ({ id: `invoice:${i.vendorName}`, amount: parseFloat(i.amount) || 0 })),
-              basis: 'Charges whose tenant attribution was too weak to direct-bill, so they were spread pro-rata' }
-          : undefined,
-        actions: ['Confirm the tenant on the invoice', 'Correct the unit or tenant name', 'Re-run reconciliation'],
-        source: 'Invoice-to-tenant matching engine — match confidence',
-        title:  `${lowConf.length} invoice${lowConf.length > 1 ? 's' : ''} matched with insufficient confidence for direct tenant charge`,
-        detail: `The matching engine assigns confidence based on unit number hits (90%) and tenant name hits (75%). These invoices matched partially but fell below the 75% direct-charge threshold, so they were distributed pro-rata across all tenants rather than charged to a specific tenant.`,
-        conditions: [
-          `Confidence threshold for direct charge: 75%`,
-          `Matching signals: unit number match = 90%, tenant name match = 75%`,
-          ...lowConfConditions,
-        ],
+        blocksBilling: false,
+        title:  `${nearMiss.length} invoice${nearMiss.length > 1 ? 's' : ''} mention${nearMiss.length > 1 ? '' : 's'} a tenant too briefly to match on`,
+        detail: `These invoices contain a tenant's unit number or name, but one too short to assign a whole invoice on: a single-character unit is a substring of half the numbers in a document, and a two-letter name carries no evidence. They have been allocated pro-rata as shared expenses, which is the safe treatment and is unchanged by this finding. If one of them is in fact a direct charge, confirm it on the invoice and re-run.`,
+        impact: { amount: nmAmt, kind: 'under_review',
+                  items: nearMiss.map(i => ({ id: `invoice:${i.vendorName}`, amount: parseFloat(i.amount) || 0 })),
+                  basis: 'Allocated pro-rata; a short tenant identifier appears in the invoice text' },
+        actions: ['Confirm whether the invoice is a direct charge',
+                  'Add the full tenant name or a longer unit reference to the invoice',
+                  'Re-run the reconciliation'],
+        source: 'Invoice-to-tenant matching engine — suppressed short identifiers',
+        conditions: nearMiss.slice(0, 5).flatMap(inv =>
+          (inv.matchNearMisses || []).map(nm =>
+            `"${inv.vendorName}" ${fmt(parseFloat(inv.amount) || 0)} contains ${nm.signal} "${nm.token}" — ${nm.tenantName}; too short to match on, allocated pro-rata`))
+          .concat(nearMiss.length > 5 ? [`+${nearMiss.length - 5} more`] : []),
       });
     }
   }
@@ -18028,7 +18202,11 @@ function exportReconciliationCSV() {
       // Use extraction confidence (how well Claude read the lease) rather than
       // invoice-match confidence (which is 0 when no direct matches exist).
       const extractionConf = liveT?._confidenceScore ?? liveT?._confidence ?? null;
-      const confExport = extractionConf !== null ? extractionConf : (r.averageConfidence > 0 ? r.averageConfidence : '');
+      // D16 — no fallback to invoice-match confidence. The comment above already
+      // diagnosed why it is the wrong number; the column is now blank when the
+      // lease carries no extraction confidence, rather than quietly filling with
+      // a figure that measures something else.
+      const confExport = extractionConf !== null ? extractionConf : '';
       return [
         r.name, r.unitNumber || '', r.sqFt || '', (r.proRata * 100).toFixed(2),
         r.capApplied ? 'Yes' : 'No', r.capApplied ? (-(r.capAdjustment || 0)).toFixed(2) : '',

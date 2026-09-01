@@ -142,6 +142,16 @@ const SUITES = [
   // ways including deep-frozen inputs — that the decomposition never writes to
   // an allocation.
   { label: 'Cent policy and variance separation', cmd: 'node test-cent-policy.js' },
+  // A WARNING MUST NAME SOMETHING THAT COULD BE WRONG. `matchConfidence` is a
+  // routing signal with three reachable values (0, 75, 90), and two consumers
+  // read it as a continuous score: the per-invoice flag fired on `< 75`, which
+  // is the definition of a shared invoice, so 16 of 17 charge rows carried "Low
+  // confidence invoice match"; the audit detector fired on `> 0 && < 75`, an
+  // empty band, so it never fired at all. The real uncertainty is what the
+  // matcher discards — a TIE decided by tenant-array order, and a near miss the
+  // CAM-4 length guard suppressed. Both are now recorded and reported.
+  { label: 'Invoice match confidence (F-14)',   cmd: 'node test-invoice-match-confidence.js' },
+  { label: 'Match warnings on screen (e2e)',    cmd: 'node test-e2e-match-warnings.js' },
   // T2. A tenant's CAM share has two independent multiplicands — how much of the
   // BUILDING, and how much of the PERIOD — and the product had only the first,
   // so a tenant who took occupancy on 1 September was billed twelve months. The

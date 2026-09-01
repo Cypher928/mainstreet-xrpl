@@ -71,8 +71,13 @@ function loadEngine(directVendors) {
     },
     parseFloat, isNaN, Number, Math, Date, JSON, Set, Array, Object, String,
     currentProperty: () => ({ tenants: [] }),
-    matchInvoiceToTenant: inv => direct.has(inv.vendorName)
-      ? { tenantName: 'T', tenantId: 't1', confidence: 100, reason: 'test' } : null,
+    // F-14 return shape: `.match` is the decision; the rest is what was passed over.
+    matchInvoiceToTenant: inv => {
+      const match = direct.has(inv.vendorName)
+        ? { tenantName: 'T', tenantId: 't1', confidence: 100, reason: 'test' } : null;
+      return { match, candidates: match ? [match] : [], tied: match ? [match] : [],
+               ambiguous: false, nearMisses: [] };
+    },
     matchesTenant: inv => direct.has(inv.vendorName),
     showToast: () => {},
     _fmtMoney: n => String(n),

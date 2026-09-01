@@ -74,7 +74,11 @@ function loadEngine() {
     matchInvoiceToTenant: (inv, leases) => {
       const v = String(inv.vendorName || inv.vendor || '').toLowerCase().trim();
       const l = (leases || []).find(x => String(x.tenantName || '').toLowerCase().trim() === v);
-      return l ? { tenantName: l.tenantName, tenantId: l.id, confidence: 100, reason: 'vendor name' } : null;
+      const match = l ? { tenantName: l.tenantName, tenantId: l.id, confidence: 100, reason: 'vendor name' } : null;
+      // F-14 — the matcher now always returns a shape: `.match` is the decision,
+      // and the rest is what it passed over (ties, suppressed short identifiers).
+      return { match, candidates: match ? [match] : [], tied: match ? [match] : [],
+               ambiguous: false, nearMisses: [] };
     },
     matchesTenant: (inv, lease) =>
       String(inv.vendorName || '').toLowerCase() === String(lease.tenantName || '').toLowerCase(),

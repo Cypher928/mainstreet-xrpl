@@ -329,12 +329,12 @@ const sec = t => console.log('\n── ' + t + ' ──');
     const cases = await p.evaluate(() => {
       const inv = { vendorName: 'Apex Roofing & Sheet Metal', category: 'repairs', invoiceDate: '2026-05-01' };
       const probe = (name, unit) => {
-        const m = matchInvoiceToTenant(inv, [{ tenantName: name, unitNumber: unit, id: 't' }]);
+        const m = matchInvoiceToTenant(inv, [{ tenantName: name, unitNumber: unit, id: 't' }]).match;
         return m ? m.confidence : 0;
       };
       const legit = matchInvoiceToTenant(
         { vendorName: 'Suite 210 HVAC service', category: 'maintenance', invoiceDate: '2026-05-01' },
-        [{ tenantName: 'Harbor Cafe', unitNumber: '210', id: 't' }]);
+        [{ tenantName: 'Harbor Cafe', unitNumber: '210', id: 't' }]).match;
       return {
         unit1: probe('X', '1'), unit2: probe('Y', '2'),
         singleLetter: probe('A', ''), substring: probe('Roof', ''),
