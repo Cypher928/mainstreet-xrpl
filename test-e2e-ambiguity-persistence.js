@@ -230,6 +230,11 @@ const READ = () => {
     blockingByTenant: Object.fromEntries(Object.entries((expo.blocking || {}).byTenant || {})
       .map(([k, v]) => [k, v.map(b => b.title).sort()])),
     blockingProperty: ((expo.blocking || {}).property || []).map(b => b.title).sort(),
+    // Green findings never block, so they carry no assertion — but the
+    // direct-vs-shared count lives here, and it is the one surface where the
+    // unpersisted matchConfidence shows. Collected so the divergence is
+    // reported rather than assumed absent.
+    greenTitles: (summary.green || []).map(f => f.title),
     billable: Object.fromEntries((lastResults || []).map(r => [r.name,
       window.AuditExposure.billingReadiness(expo, r.name).canBill])),
     allocations: Object.fromEntries((lastResults || []).map(r => [r.name, r.totalAllocated])),
@@ -548,6 +553,21 @@ async function openProperty(page) {
     yes('EVERY TENANT ALLOCATION IS IDENTICAL ACROSS THE RELOAD',
         JSON.stringify(back.allocations) === JSON.stringify(fresh.allocations),
         'fresh: ' + JSON.stringify(fresh.allocations) + '\n      → back:  ' + JSON.stringify(back.allocations));
+
+    // ── Reported, not asserted ─────────────────────────────────────────────
+    //
+    // WHAT STILL DIFFERS BETWEEN THE TWO PATHS, measured rather than assumed.
+    // `matchConfidence` is deliberately not persisted (see _stripBlobs), so any
+    // finding that counts direct-vs-shared invoices reads the restored register
+    // as all-shared. That is a real divergence and a separate one — it moves no
+    // billing gate and holds no statement — and it is printed here so it stays
+    // visible instead of being discovered again later.
+    H('Known residual divergence — NOT the billing gate (reported, not asserted)');
+    const fT = fresh.findings.map(f => f.title).concat(fresh.greenTitles);
+    const bT = back.findings.map(f => f.title).concat(back.greenTitles);
+    R('fresh only', fT.filter(t => !bT.includes(t)));
+    R('restored only', bT.filter(t => !fT.includes(t)));
+    R('blocking findings differ at all', JSON.stringify(fresh.blockingByTenant) !== JSON.stringify(back.blockingByTenant));
 
     H('Page errors');
     R('errors', errors.length ? errors : '(none)');
