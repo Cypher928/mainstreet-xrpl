@@ -396,9 +396,17 @@ const REPLY = {
       JSON.stringify(silent.confBasis));
   yes('no clause is invented to support it',
       silent.quoteBasis === null, String(silent.quoteBasis));
+  // "Normal, not a gap to chase" is still the claim, and it is now made the same
+  // way its sibling two assertions above makes it: `missing` with
+  // `source: 'default'`. An absent field reading `verified` was the one place
+  // getFieldConfidence promoted a value that does not exist — and `missing`
+  // renders as a neutral dash, not a warning, so nothing reads as a gap.
   yes('an absent CAM commencement is normal, not a gap to chase',
-      silent.confCam.status === 'verified' && /begins with the lease term/i.test(silent.confCam.note),
+      silent.confCam.status === 'missing' && silent.confCam.source === 'default'
+        && /begins with the lease term/i.test(silent.confCam.note),
       JSON.stringify(silent.confCam));
+  yes('    and it is not promoted to verified on the strength of being absent',
+      silent.confCam.status !== 'verified', JSON.stringify(silent.confCam));
   yes('and the term falls back to the lease start',
       silent.term.start === '2026-01-01' && silent.term.startSource === 'start_date',
       JSON.stringify(silent.term));

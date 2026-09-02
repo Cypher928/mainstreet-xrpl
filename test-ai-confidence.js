@@ -151,7 +151,24 @@ const BARE = { id: 't-bare', tenant_name: 'Bare Co', leased_sqft: 2400, fieldEvi
 
     eq(r.quoted.status,    'verified',  'a stored verbatim clause IS evidence — quoted field stays verified');
     eq(r.lowScore.status,  'estimated', 'a reported score below 70 is estimated');
-    eq(r.highScore.status, 'verified',  'a reported score above 70 is verified');
+
+    // NARROWED SINCE AI-1, DELIBERATELY. This asserted that a score above 70 is
+    // 'verified'. That was right while `verified` meant "trust this reading" —
+    // AI-1's whole subject. It is wrong now that `verified` means "the document
+    // says so": a confidence score reports how well a number was READ, and no
+    // score of any size is a citation. field-provenance.js draws the line at a
+    // quote or a page, so a scored-but-uncited value is an AI extraction like
+    // any other.
+    //
+    // The assertion is STRICTER than the one it replaces — it pins both the
+    // status and the absence of the document claim, where the old line pinned
+    // only that the status was the strongest one available.
+    eq(r.highScore.status, 'estimated',
+       'a score above 70 is still only a reading — it is not a citation');
+    !/Extracted from lease document/i.test(r.highScore.note)
+      ? ok('    and a scored-but-uncited number does not claim the lease document')
+      : bad('a confidence score is standing in for a clause', r.highScore.note);
+
     eq(r.empty.status,     'missing',   'an empty square footage is missing, not estimated');
   }
 
