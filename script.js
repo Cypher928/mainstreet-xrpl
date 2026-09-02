@@ -22061,6 +22061,30 @@ function appendPropertyTimelineEventOnce(property, dedupeKey, event) {
   return appendPropertyTimelineEvent(property, ev);
 }
 
+/**
+ * The one place `sync_restored` is written.
+ *
+ * Deduped on a key that is constant per property, so a property carries exactly
+ * one of these however many times it is opened. See timeline-merge.js for why
+ * that is the right cardinality rather than one-per-session: it is the shape the
+ * pilot data already has, and it is the shape that keeps "reload, then save"
+ * from growing the record.
+ */
+function _appendSyncRestored(property) {
+  if (!property) return null;
+  const key = (window.TimelineMerge && TimelineMerge.syncRestoredKey)
+    ? TimelineMerge.syncRestoredKey(property.id)
+    : 'sync_restored:' + (property.id ?? '');
+  return appendPropertyTimelineEventOnce(property, key, {
+    type: 'sync_restored', severity: 'info',
+    actor: 'System', title: 'Property state restored from sync',
+    metadata: {
+      tenantCount: (property.tenants || []).length,
+      hasReconciliation: !!(property.camReconciliation ?? property.results),
+    },
+  });
+}
+
 function appendPropertyTimelineEvent(property, event) {
   if (!property || !event) return null;
   if (!Array.isArray(property.timeline)) property.timeline = [];
@@ -23317,6 +23341,29 @@ async function selectProperty(id) {
     property.settlement        = data.settlement ?? property.settlement ?? null;
     property.aiDrafts          = data.aiDrafts?.length ? data.aiDrafts : (property.aiDrafts || []);
 
+    // THE PROPERTY'S HISTORY, PUT BACK.
+    //
+    // loadPropertyData has always returned `timeline`; nothing ever assigned it.
+    // So the stored record was read and discarded, `sync_restored` was appended
+    // to an empty array a few lines below, and the next saveProperty wrote that
+    // array over the history. Measured on a non-demo property: two manual
+    // entries in Supabase and localStorage before a reload, zero in either after
+    // the following save. Across the pilot it left 27 properties holding a
+    // single session each — Happy Plaza has 7 lease documents, 6 reconciliations
+    // and 1.1 minutes of timeline.
+    //
+    // MERGED, NOT ASSIGNED, and the live side is primary. This callback runs on
+    // a timer after the instant render, so events can be written between the two
+    // — an upload in flight emits `lease_uploaded` — and an event edited this
+    // session exists on both sides in two versions. Assigning the stored array
+    // would discard the first and revert the second; taking only the live array
+    // is the bug being fixed. TimelineMerge unions them on event identity and
+    // orders the result, so this is a function of its inputs: reloading and
+    // saving reproduces the same history rather than rewriting it.
+    property.timeline = window.TimelineMerge
+      ? TimelineMerge.mergeTimelines(property.timeline, data.timeline)
+      : (property.timeline || data.timeline || []);
+
     // Tenant/invoice data: only overwrite when loaded data is at least as rich,
     // preventing a stale DB record from erasing a fresh in-session upload.
     const inMemCount  = (property.tenants || []).length;
@@ -23335,9 +23382,13 @@ async function selectProperty(id) {
       console.log('[selectProperty] SECOND renderProperty firing', { id, activePropId });
       renderProperty(property);
       rebuildDerivedState(property); // rebuild after LS/DB merge so metrics reflect loaded data
-      appendPropertyTimelineEvent(property, { type: 'sync_restored', severity: 'info',
-        actor: 'System', title: 'Property state restored from sync',
-        metadata: { tenantCount: (property.tenants||[]).length, hasReconciliation: !!(property.camReconciliation ?? property.results) } });
+      // ONCE PER PROPERTY, NOT ONCE PER LOAD. While the timeline was being wiped
+      // on every load this could only ever produce one row, which is exactly what
+      // the pilot contains: 27 sync_restored events across 27 properties. Now
+      // that the history survives, an unkeyed append would add one on every
+      // reload — trading data loss for unbounded growth. Restoring from sync is a
+      // status marker, not something that happened to the building.
+      _appendSyncRestored(property);
       console.log('[selectProperty] SECOND renderProperty done — mainWorkflow display:', document.getElementById('mainWorkflow')?.style.display, 'portfolio display:', document.getElementById('portfolioDashboard')?.style.display);
     }
   }, 0);
@@ -25676,10 +25727,23 @@ async function loadPropertyData(id) {
   const _lsOnlyDisps = _lsDisps.filter(d => !_dbDisps.some(dd => dd.id === d.id));
   const _mergedDisps = [..._dbDisps, ..._lsOnlyDisps];
 
+  // Timeline: the same rule as disputes, for the same reason. `base` is chosen
+  // on tenant count, so whichever side lost that comparison would have had its
+  // history discarded — a local session's records dropped because the DB
+  // happened to know about one more tenant, or the reverse. Supabase is
+  // authoritative on a shared event; anything only localStorage has is an event
+  // that has not reached Supabase yet, and it survives.
+  const _dbTl = dbData.timeline || [];
+  const _lsTl = lsData.timeline || [];
+  const _mergedTl = window.TimelineMerge
+    ? TimelineMerge.mergeTimelines(_dbTl, _lsTl)
+    : [..._dbTl, ..._lsTl.filter(e => !_dbTl.some(d => d && e && d.id === e.id))];
+
   console.groupCollapsed('[PIPELINE:4b] MERGE decision');
   console.log('winner:', lsCount > dbCount ? 'localStorage' : 'supabase', { dbTenants: dbCount, lsTenants: lsCount, dbInvoices: (dbData.invoices||[]).length, lsInvoices: (lsData.invoices||[]).length });
   console.log('base.invoices[0]:', JSON.parse(JSON.stringify(base.invoices?.[0] || {})));
   console.log('[LANDLORD disputes]', { source: 'merge', dbDisputesLen: _dbDisps.length, lsDisputesLen: _lsDisps.length, lsOnlyLen: _lsOnlyDisps.length, mergedLen: _mergedDisps.length, dbDisputes: _dbDisps, lsDisputes: _lsDisps });
+  console.log('[TIMELINE merge]', { source: 'db+ls', dbLen: _dbTl.length, lsLen: _lsTl.length, mergedLen: _mergedTl.length });
   console.groupEnd();
 
   // Reconciliation results and disputes: always prefer Supabase — both are
@@ -25688,6 +25752,7 @@ async function loadPropertyData(id) {
   const merged = {
     ...base,
     disputes:          _mergedDisps,
+    timeline:          _mergedTl,
     results:           dbData.results           ?? base.results           ?? null,
     camReconciliation: dbData.camReconciliation ?? base.camReconciliation ?? null,
     // Settlement record (RLUSD proof-of-settlement) — persisted in properties.data;

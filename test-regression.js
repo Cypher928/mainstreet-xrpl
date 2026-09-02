@@ -312,6 +312,17 @@ const SUITES = [
   // could not store. Migration 019 adds the nullable column; this drives the
   // real writer and reader through a save and a reload.
   { label: 'Evidence quote round trip (e2e)',   cmd: 'node test-e2e-evidence-quote.js' },
+  // THE HISTORY HAS TO SURVIVE BEING LOADED. saveProperty wrote `timeline` into
+  // properties.data on every save and loadPropertyData read it back; nothing in
+  // between assigned it. So selectProperty appended sync_restored to an empty
+  // array and the next save wrote that array over the record — two manual
+  // entries in both stores before a reload, zero in either after the save that
+  // followed. Across the pilot: 27 properties, 27 sync_restored events, one
+  // each, and not a single manual entry, attachment or lease reference in 91
+  // events. The unit suite pins the merge; the e2e suite drives the real app
+  // through four reloads and asserts no allocation moved.
+  { label: 'Timeline merge',                    cmd: 'node test-timeline-merge.js' },
+  { label: 'Timeline persistence (e2e)',        cmd: 'node test-e2e-timeline-persistence.js' },
   { label: 'Lease validator: management fee cap',       cmd: 'node test-mgmt-fee-cap.js' },
   // D2-1 — AND THE SAME CHECK ON THE PANEL, WITH ARGUMENTS IT DID NOT BUILD.
   // The suite above pins _tier1LeaseChecks against hand-built inputs, and that
