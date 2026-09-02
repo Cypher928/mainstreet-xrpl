@@ -89,6 +89,7 @@ const { chromium } = pw;
 const http = require('http');
 const fs   = require('fs');
 const path = require('path');
+const { signIn: _e2eSignIn, attachDiagnostics } = require('./test-support/e2e-login');
 
 const ROOT     = __dirname;
 const PORT     = parseInt(process.env.APP_PORT || '7991', 10);
@@ -327,16 +328,13 @@ const STATEMENT = (tenantName) => {
   };
 };
 
-async function signIn(page) {
-  await page.waitForSelector('#loginBtn', { state: 'visible', timeout: 20000 });
-  await page.waitForFunction(() => typeof submitAuth === 'function', null, { timeout: 45000 });
-  await page.fill('#loginEmail', 'ap@e2e-test.local');
-  await page.fill('#loginPassword', 'TestPass123!');
-  const appUp = () => page.waitForFunction(() => { const a = document.getElementById('appContent');
-    return a && a.style.display !== 'none' && a.style.display !== ''; }, null, { timeout: 15000 });
-  await page.click('#loginBtn');
-  try { await appUp(); }
-  catch (_) { await page.click('#loginBtn').catch(() => {}); await appUp(); }
+// THE SECOND SIGN-IN — the one after the reload — is where this suite's own
+// copy of the login block failed a full regression run, on the same appUp wait
+// that took three other suites. submitAuth disables the button before it
+// awaits, so the retry above was clicking a dead control; the shared helper
+// re-enables first, which is what makes a retry work at all.
+async function signIn(page, errors) {
+  await _e2eSignIn(page, { email: 'ap@e2e-test.local', errors });
   await page.waitForFunction(() => typeof _props !== 'undefined' && _props.length > 0, null, { timeout: 45000 });
 }
 
@@ -355,8 +353,9 @@ async function openProperty(page) {
 
   const ctx  = await browser.newContext({ viewport: { width: 1280, height: 900 } });
   const page = await ctx.newPage();
-  const errors = [];
-  page.on('pageerror', e => errors.push(e.message));
+  // Same sink, same semantics — thrown exceptions only, so the "no uncaught
+  // page errors" assertion at the end of the run is unchanged.
+  const errors = attachDiagnostics(page);
   await ctx.route('**', route => {
     const u = route.request().url();
     if (u.startsWith('http://127.0.0.1:' + PORT)) return route.continue();
@@ -368,7 +367,7 @@ async function openProperty(page) {
   try {
     // ── 1–3. An ambiguous invoice, reconciled, blocking billing ────────────
     await page.goto('http://127.0.0.1:' + PORT + '/?signin=1', { waitUntil: 'domcontentloaded', timeout: 30000 });
-    await signIn(page);
+    await signIn(page, errors);
     await openProperty(page);
     await page.evaluate(async () => { await runAllocation(); });
     await page.waitForFunction((n) => typeof lastResults !== 'undefined' && lastResults.length === n,
@@ -482,7 +481,7 @@ async function openProperty(page) {
     // ── 5. A REAL RELOAD ───────────────────────────────────────────────────
     H('A REAL RELOAD — new page, register rebuilt from stored bytes');
     await page.goto('http://127.0.0.1:' + PORT + '/?signin=1', { waitUntil: 'domcontentloaded', timeout: 30000 });
-    await signIn(page);
+    await signIn(page, errors);
     await openProperty(page);
     await page.waitForFunction((n) => typeof lastResults !== 'undefined' && lastResults.length === n,
                                TENANTS.length, { timeout: 60000 });
