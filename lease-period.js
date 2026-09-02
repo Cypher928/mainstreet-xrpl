@@ -231,6 +231,88 @@
     return { basis: DEFAULT_BASIS, source: 'default', stated: false, raw: null };
   }
 
+  // ── WHAT A MANAGEMENT-FEE CAP IS A PERCENTAGE *OF* ───────────────────────
+  //
+  // The same question as partialPeriodBasis above, about a different clause, and
+  // it is here because that function is already the answer to "which lease term
+  // is this, and who said so" — this module holds that category, not only
+  // intervals.
+  //
+  // WHY IT MATTERS. "Administrative fee shall not exceed 15%" is not a testable
+  // statement until you know 15% of what. A cap on operating expenses, a cap on
+  // controllable expenses, and a cap on expenses excluding the fee itself give
+  // three different answers from the same dollars: $20,000 of a $100,000 pool is
+  // 20.0%, and 25.0% against a base that excludes the fee. D2-1 measures against
+  // the CAM pool because that is the pool the reconciliation bills from — a
+  // sound computational basis, and NOT a claim about any lease.
+  //
+  // So the basis carries its own provenance, exactly as the partial-period basis
+  // does. `source: 'default'` is what stops the product's own assumption from
+  // ever reading as a lease term, and `stated: false` is what a billing gate
+  // would have to test before it could hold anybody's statement.
+  //
+  // 'unstated' IS A REAL EXTRACTED ANSWER, distinct from null: it means the
+  // model read the clause and the clause does not say. Both resolve to
+  // stated:false, and they are kept apart because "we looked and it is silent"
+  // and "nobody has looked" are different facts about a lease.
+  var FEE_BASES = ['operating_expenses', 'controllable_expenses',
+                   'excluding_management_fee', 'unstated'];
+  var DEFAULT_FEE_BASIS = 'unstated';
+
+  /**
+   * The base a management-fee cap applies to, and WHERE THAT ANSWER CAME FROM.
+   *
+   * @param   {object} tenant  carries admin_fee_basis and (optionally) fieldEvidence
+   * @returns {{value:string, source:'lease'|'manual'|'default'|'unrecognised', stated:boolean, raw:*}}
+   */
+  function adminFeeBasis(tenant) {
+    var t = tenant || {};
+    var raw = t.admin_fee_basis;
+    var v = raw == null ? '' : String(raw).trim().toLowerCase();
+    // The latest MANUAL snapshot, read the same way partialPeriodBasis reads it
+    // and for the same reason: savePropertyData strips fieldEvidence out of the
+    // blob, so the field and its provenance can come apart, and the evidence row
+    // is the one that survives.
+    var snaps = (t.fieldEvidence && t.fieldEvidence.admin_fee_basis
+                 && t.fieldEvidence.admin_fee_basis.snapshots) || [];
+    var manualSnap = null;
+    for (var i = snaps.length - 1; i >= 0; i--) {
+      if (snaps[i] && snaps[i].manuallyEdited === true) { manualSnap = snaps[i]; break; }
+    }
+
+    // 'unstated' is recognised, but it is not a basis anything can be measured
+    // against — the lease was read and said nothing. It reports the source that
+    // produced it and stated:false, so a gate cannot mistake a silent clause for
+    // a confirmed one.
+    if (v === DEFAULT_FEE_BASIS) {
+      return { value: DEFAULT_FEE_BASIS, source: manualSnap ? 'manual' : 'lease',
+               stated: false, raw: raw };
+    }
+    if (FEE_BASES.indexOf(v) >= 0) {
+      return { value: v, source: manualSnap ? 'manual' : 'lease', stated: true, raw: raw };
+    }
+    if (v === '' && manualSnap) {
+      var mv = manualSnap.value == null ? '' : String(manualSnap.value).trim().toLowerCase();
+      if (mv === DEFAULT_FEE_BASIS) {
+        return { value: DEFAULT_FEE_BASIS, source: 'manual', stated: false, raw: manualSnap.value };
+      }
+      if (FEE_BASES.indexOf(mv) >= 0) {
+        return { value: mv, source: 'manual', stated: true, raw: manualSnap.value };
+      }
+    }
+    if (v !== '') {
+      // Populated with something outside the vocabulary. Not silently defaulted:
+      // an unrecognised basis is a data problem, and it must never read as a
+      // lease term.
+      return { value: DEFAULT_FEE_BASIS, source: 'unrecognised', stated: false, raw: raw };
+    }
+    // THE PRE-EXISTING RECORD. No basis was ever captured — every management-fee
+    // cap in the pilot dataset is one of these. Never lease-confirmed, so a
+    // billing gate built on `stated` cannot fire on them, which is the whole
+    // point of resolving it this way rather than assuming a denominator.
+    return { value: DEFAULT_FEE_BASIS, source: 'default', stated: false, raw: null };
+  }
+
   var CASES = {
     covers_period:    'Runs for the whole CAM period',
     commences_within: 'Begins inside the CAM period',
@@ -478,8 +560,10 @@
   var api = { readDate: readDate, periodForYear: periodForYear, periodFrom: periodFrom,
               classify: classify, CASES: CASES,
               obligationTerm: obligationTerm, partialPeriodBasis: partialPeriodBasis,
+              adminFeeBasis: adminFeeBasis,
               occupancy: occupancy,
-              BASES: BASES, DEFAULT_BASIS: DEFAULT_BASIS };
+              BASES: BASES, DEFAULT_BASIS: DEFAULT_BASIS,
+              FEE_BASES: FEE_BASES, DEFAULT_FEE_BASIS: DEFAULT_FEE_BASIS };
   if (root) root.LeasePeriod = api;
   if (typeof module !== 'undefined' && module.exports) module.exports = api;
 

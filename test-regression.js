@@ -296,6 +296,22 @@ const SUITES = [
   { label: 'Tenant matching on lease upload',           cmd: 'node test-tenant-matching.js' },
   { label: 'Lease job lifecycle',                       cmd: 'node test-lease-job-lifecycle.js' },
   { label: 'Live extraction walk',                      cmd: 'node test-live-extraction-walk.js' },
+  // D2 PREREQUISITES. A cap percentage is not a testable statement until you
+  // know what it is a percentage OF: $20,000 of a $100,000 pool is 20.0%, and
+  // 25.0% against a base excluding the fee from itself. So the base is captured
+  // as its own field with its own provenance — lease, manual, default,
+  // unrecognised — and a product assumption can never read as a lease term.
+  // Every management-fee cap in the pilot dataset predates the field and
+  // resolves default/not-stated, which is what keeps a future billing gate off
+  // them. No gate is implemented: D2-2 stays unbuilt until this evidence exists.
+  { label: 'Management fee cap basis',          cmd: 'node test-admin-fee-basis.js' },
+  // AND THE CLAUSE ITSELF. Extraction returned a verbatim quote for every field
+  // and normalizeTenant wrote it into a snapshot — then _stripBlobs deleted the
+  // blob copy and the evidence row had no column to keep it in. A row is written
+  // only when it HAS a quote (script.js:5038), and that was the one thing it
+  // could not store. Migration 019 adds the nullable column; this drives the
+  // real writer and reader through a save and a reload.
+  { label: 'Evidence quote round trip (e2e)',   cmd: 'node test-e2e-evidence-quote.js' },
   { label: 'Lease validator: management fee cap',       cmd: 'node test-mgmt-fee-cap.js' },
   // D2-1 — AND THE SAME CHECK ON THE PANEL, WITH ARGUMENTS IT DID NOT BUILD.
   // The suite above pins _tier1LeaseChecks against hand-built inputs, and that

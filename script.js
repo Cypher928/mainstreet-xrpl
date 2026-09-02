@@ -1544,6 +1544,17 @@ function normalizeTenant(d) {
       const k = v == null ? '' : String(v).trim().toLowerCase();
       return k === '' ? null : k;
     })(),
+    // SAME ALLOW-LIST, SAME REASON. This function is a whitelist: a field it
+    // does not name is dropped on the next load, so a basis captured at
+    // extraction would come back absent and LeasePeriod.adminFeeBasis would
+    // report `source: 'default'` on a lease that had actually stated one. That
+    // is the failure this field exists to prevent, arriving through the door
+    // the field was added to close.
+    admin_fee_basis:       (() => {
+      const v = d.admin_fee_basis ?? d.adminFeeBasis ?? null;
+      const k = v == null ? '' : String(v).trim().toLowerCase();
+      return k === '' ? null : k;
+    })(),
     base_rent:           d.base_rent           ?? null,
     security_deposit:    d.security_deposit    ?? null,
     amendments:          Array.isArray(d.amendments) ? d.amendments : [],
@@ -2058,6 +2069,7 @@ Extract:
   "sqft": number or null,
   "cam_cap": number or null,
   "admin_fee_pct": number or null,
+  "admin_fee_basis": "operating_expenses" | "controllable_expenses" | "excluding_management_fee" | "unstated" | null,
   "gross_up_pct": number or null,
   "expense_stop": number or null,
   "audit_rights": true | false | null,
@@ -2065,7 +2077,7 @@ Extract:
   "renewal_options": string or null,
   "excluded_categories": string or null,
   "property_name": string or null,
-  "quotes": { "cam_cap": string|null, "admin_fee_pct": string|null, "gross_up_pct": string|null, "expense_stop": string|null, "audit_rights": string|null, "pro_rata_method": string|null, "renewal_options": string|null, "cam_commencement_date": string|null, "partial_period_basis": string|null }
+  "quotes": { "cam_cap": string|null, "admin_fee_pct": string|null, "gross_up_pct": string|null, "expense_stop": string|null, "audit_rights": string|null, "pro_rata_method": string|null, "renewal_options": string|null, "cam_commencement_date": string|null, "partial_period_basis": string|null, "admin_fee_basis": string|null }
 }
 
 TENANT NAME (highest priority):
@@ -2081,6 +2093,7 @@ DATES:
 CAM COMMENCEMENT DATE: Only when the CAM/operating-expense obligation begins on a DIFFERENT date from the lease start — "commence payment of Operating Expenses upon the Rent Commencement Date", "upon opening for business", or after a stated free-rent or abatement period. Null when CAM begins with the term. Do NOT copy the lease start date here.
 
 PARTIAL PERIOD BASIS: How the lease apportions CAM when the term covers only PART of an expense year. "per diem" / "number of days" → "per_diem". "prorated monthly" / "full calendar months" → "monthly". Full annual amount regardless of a partial year → "full_period". Return null if the lease is silent — null is a real answer, do NOT guess.
+ADMIN FEE BASIS: What the management/administrative fee cap is a percentage OF. "of operating expenses" / "of CAM costs" / "of total expenses" → "operating_expenses". "of controllable expenses" / "of controllable operating costs" → "controllable_expenses". Fee excluded from its own base — "of expenses excluding the management fee", "exclusive of such fee" → "excluding_management_fee". If the lease states a fee percentage but never says what it applies to → "unstated". Return null ONLY when there is no fee cap clause at all. A percentage with no stated base is "unstated", NOT a guess at one.
 
 CAM CAP: Search the entire document for any language limiting CAM increases ("not to exceed", "capped at X%", "expense stop"). Return the number (e.g. 5% → 5). Null if no cap language exists.
 
@@ -2223,6 +2236,17 @@ ${leaseSnippet}
       const k = v == null ? '' : String(v).trim().toLowerCase();
       return k === '' ? null : k;
     })(),
+    // WHAT A MANAGEMENT-FEE CAP IS A PERCENTAGE OF. Normalised, never
+    // interpreted: an unrecognised string is stored as written so
+    // LeasePeriod.adminFeeBasis can report `source: 'unrecognised'` rather than
+    // this function quietly picking one of the four. NULL IS A REAL ANSWER and
+    // is distinct from 'unstated' — null is "nobody has looked", 'unstated' is
+    // "the clause was read and it does not say". Both resolve to stated:false.
+    admin_fee_basis: (() => {
+      const v = raw.admin_fee_basis ?? raw.adminFeeBasis ?? null;
+      const k = v == null ? '' : String(v).trim().toLowerCase();
+      return k === '' ? null : k;
+    })(),
     property_name:       (() => {
       const v = raw.property_name ?? raw.propertyName ?? null;
       return (typeof v === 'string' && v.trim()) ? v.trim() : null;
@@ -2246,6 +2270,7 @@ ${leaseSnippet}
     lease_end_date:   'end_date',
     cam_commencement_date: 'cam_commencement_date',
     partial_period_basis:  'partial_period_basis',
+    admin_fee_basis:       'admin_fee_basis',
   };
   const _rawQuotes = (raw.quotes && typeof raw.quotes === 'object') ? raw.quotes : {};
   const _qTs = new Date().toISOString();
@@ -6076,6 +6101,7 @@ const _LEV_FIELD_LABELS = {
   cap:             'CAM Cap',
   proRata:         'Pro-Rata %',
   admin_fee_pct:   'Admin Fee %',
+  admin_fee_basis: 'Admin Fee Basis',
   gross_up_pct:    'Gross-Up %',
   expense_stop:    'Expense Stop',
   audit_rights:    'Audit Rights',
@@ -6527,6 +6553,9 @@ function _evidenceRowToSnapshot(row) {
     approved:               row.approved,
     manuallyEdited:         row.manually_edited,
     originalExtractedValue: row.original_extracted_value,
+    // null for every row written before 019 — the clause was never stored and
+    // cannot be reconstructed without re-extracting the document.
+    quote:                  row.quote != null ? row.quote : null,
   };
 }
 
@@ -6581,6 +6610,14 @@ async function _writeTenantFieldEvidence(propId, tenantId, fieldKey, snapshot) {
     approved:                 snapshot.approved                        ?? false,
     manually_edited:          snapshot.manuallyEdited                  ?? false,
     original_extracted_value: _evidenceValStr(snapshot.originalExtractedValue),
+    // THE CLAUSE THE ROW EXISTS BECAUSE OF. _persistExtractedEvidence writes a
+    // snapshot only when it has a quote or a page (script.js:5038) — the quote
+    // is the reason the row is written, and until migration 019 there was no
+    // column to put it in. So extraction produced the verbatim clause,
+    // _stripBlobs deleted the blob copy on the first save, and the authoritative
+    // row could not carry it: the text was unrecoverable from that moment.
+    // Nullable, so every pre-019 row stays valid reading null.
+    quote:                    snapshot.quote != null ? String(snapshot.quote).slice(0, 200) : null,
   };
   const ts = new Date().toISOString();
   console.groupCollapsed('[DualWrite:tfe] INSERT tenant_field_evidence @ ' + ts);
@@ -7707,7 +7744,7 @@ function quickConfirmTenantFields(tenantId) {
   const t = tenantData[idx];
   const CORE_FIELDS = [
     'tenant_name', 'leased_sqft', 'lease_type', 'start_date', 'end_date', 'cap',
-    'admin_fee_pct', 'gross_up_pct', 'expense_stop', 'audit_rights',
+    'admin_fee_pct', 'admin_fee_basis', 'gross_up_pct', 'expense_stop', 'audit_rights',
     'pro_rata_method', 'renewal_options',
   ];
   const user = window.AuthService?.getCurrentUser?.() || null;
@@ -7841,7 +7878,7 @@ function applyAmendmentOverrides(tenantId, amNorm, amendmentId, fileName) {
 
   const COMPARABLE_FIELDS = [
     'tenant_name', 'leased_sqft', 'start_date', 'end_date', 'lease_type', 'cap',
-    'admin_fee_pct', 'gross_up_pct', 'expense_stop', 'audit_rights',
+    'admin_fee_pct', 'admin_fee_basis', 'gross_up_pct', 'expense_stop', 'audit_rights',
     'pro_rata_method', 'renewal_options',
   ];
 

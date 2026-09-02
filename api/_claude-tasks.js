@@ -39,6 +39,7 @@ Return exactly this structure:
   "base_rent": number | null,
   "cam_cap": number,
   "admin_fee_pct": number | null,
+  "admin_fee_basis": "operating_expenses" | "controllable_expenses" | "excluding_management_fee" | "unstated" | null,
   "gross_up_pct": number | null,
   "expense_stop": number | null,
   "audit_rights": true | false | null,
@@ -50,6 +51,7 @@ Return exactly this structure:
   "quotes": {
     "cam_cap": string | null,
     "admin_fee_pct": string | null,
+    "admin_fee_basis": string | null,
     "gross_up_pct": string | null,
     "expense_stop": string | null,
     "audit_rights": string | null,
@@ -82,6 +84,7 @@ Rules:
 - sqft: Integer. Strip commas, units, and the word "approximately". Null if not found.
 - cam_cap: CRITICAL — you MUST search the entire document for any language that limits CAM or operating expense increases. Look for ALL of the following phrases: "CAM cap", "operating expense cap", "expense stop", "base year stop", "not to exceed", "shall not pay more than", "increases limited to", "capped at", "no more than X% increase", "annual increase cap", "controllable expense cap". If a percentage is found (e.g. "5%" or "5 percent"), return 5. If a dollar amount is found, return that number. Only return null if absolutely no cap-related language exists anywhere in the document.
 - admin_fee_pct: Look for "management fee", "administrative fee not to exceed X%", "admin fee cap". Return percentage number only (e.g. 15 for "15%"). Null if not found.
+- admin_fee_basis: What that percentage is OF. "of operating expenses"/"of CAM costs" -> "operating_expenses". "of controllable expenses" -> "controllable_expenses". Fee excluded from its own base ("exclusive of such fee") -> "excluding_management_fee". A fee percentage with no stated base -> "unstated". Null ONLY when there is no fee cap clause at all. Never guess a base.
 - gross_up_pct: Look for "gross up", "grossed up to X% occupancy", "occupancy factor". Return percentage (e.g. 95 for "95% occupancy"). Null if not found.
 - expense_stop: Look for "expense stop", "base year stop", "base operating expenses of $X per square foot". Return dollar amount per sqft if found, else null.
 - audit_rights: Return true if tenant has explicit right to audit CAM records. Return false if explicitly waived. Return null if not addressed.
