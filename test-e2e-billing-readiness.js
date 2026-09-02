@@ -48,6 +48,7 @@ if (SKIP) {
 const { chromium } = pw;
 
 const http = require('http');
+const { signIn: _e2eSignIn, attachDiagnostics } = require('./test-support/e2e-login');
 const fs   = require('fs');
 const path = require('path');
 
@@ -245,6 +246,7 @@ const EXPECTED = {
     args: ['--no-sandbox', '--disable-setuid-sandbox'] });
   const ctx  = await browser.newContext({ viewport: { width: 1280, height: 900 } });
   const page = await ctx.newPage();
+  const _e2eErrors = attachDiagnostics(page);
   const errors = []; page.on('pageerror', e => errors.push(e.message));
   await page.route('**', r => {
     const u = r.request().url();
@@ -258,19 +260,7 @@ const EXPECTED = {
   console.log('\n══ Riverside Commons — per-tenant billing readiness ══');
 
   await page.goto('http://127.0.0.1:' + PORT + '/?signin=1', { waitUntil:'domcontentloaded', timeout:30000 });
-  await page.waitForSelector('#loginBtn', { state:'visible', timeout:20000 });
-  // The button paints with the HTML; submitAuth() arrives with script.js. The
-  // form is wired as onsubmit="submitAuth(event)", an inline attribute, so a
-  // click in the gap between those two moments fires a ReferenceError and is
-  // LOST — after which the suite waits out its full timeout for an app that was
-  // never told to sign in. Three suites failed this way intermittently, only
-  // ever inside the full regression, where a dozen browsers have already run.
-  // Waiting for the handler states the real precondition.
-  await page.waitForFunction(() => typeof submitAuth === 'function', null, { timeout: 45000 });
-  await page.fill('#loginEmail','rc@e2e-test.local'); await page.fill('#loginPassword','TestPass123!');
-  await page.click('#loginBtn');
-  await page.waitForFunction(() => { const a=document.getElementById('appContent');
-    return a && a.style.display !== 'none' && a.style.display !== ''; }, null, { timeout:45000 });
+    await _e2eSignIn(page, { email: "rc@e2e-test.local", errors: _e2eErrors });
   await page.waitForFunction(() => typeof _props!=='undefined' && _props.length>0, null, { timeout:45000 });
   await page.evaluate(() => selectProperty(window.__PROP_ID));
   await page.waitForFunction(() => typeof tenantData!=='undefined' && tenantData.filter(Boolean).length===5, null, { timeout:45000 });

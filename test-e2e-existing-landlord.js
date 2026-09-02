@@ -24,6 +24,7 @@ catch (_) { pw = require('/opt/node22/lib/node_modules/playwright'); }
 const { chromium } = pw;
 
 const http   = require('http');
+const { signIn: _e2eSignIn, attachDiagnostics } = require('./test-support/e2e-login');
 const fs     = require('fs');
 const path   = require('path');
 const PORT   = parseInt(process.env.APP_PORT || '7835', 10);
@@ -211,6 +212,7 @@ CAM charges shall not increase more than 3% per annum. Pro rata share based on o
 
   const ctx  = await browser.newContext({ viewport: { width: 1280, height: 900 } });
   const page = await ctx.newPage();
+  const _e2eErrors = attachDiagnostics(page);
 
   const consoleLogs = [];
   page.on('console', m => consoleLogs.push({ type: m.type(), text: m.text() }));
@@ -236,14 +238,7 @@ CAM charges shall not increase more than 3% per annum. Pro rata share based on o
     const loginVisible = await page.$eval('#loginScreen', el => el.style.display !== 'none').catch(() => false);
     assert(loginVisible, 'STEP 1: login screen visible before sign-in');
 
-    await page.fill('#loginEmail', 'returning-landlord@e2e-test.local');
-    await page.fill('#loginPassword', 'ExistingPass123!');
-    await page.click('#loginBtn');
-
-    await page.waitForFunction(() => {
-      const app = document.getElementById('appContent');
-      return app && app.style.display !== 'none' && app.style.display !== '';
-    }, null, { timeout: 45000 }).catch(() => {});
+    await _e2eSignIn(page, { email: "returning-landlord@e2e-test.local", errors: _e2eErrors });
 
     const appVisible = await page.$eval('#appContent', el => el.style.display !== 'none' && el.style.display !== '').catch(() => false);
     assert(appVisible, 'STEP 1: app content visible after sign-in');

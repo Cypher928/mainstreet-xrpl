@@ -55,6 +55,7 @@ if (SKIP) {
 const { chromium } = pw;
 
 const http = require('http');
+const { signIn: _e2eSignIn, attachDiagnostics } = require('./test-support/e2e-login');
 const fs   = require('fs');
 const path = require('path');
 
@@ -246,8 +247,7 @@ const REPLY = {
   });
   const ctx  = await browser.newContext({ viewport: { width: 1280, height: 900 } });
   const page = await ctx.newPage();
-  const errors = [];
-  page.on('pageerror', e => errors.push(e.message));
+  const errors = attachDiagnostics(page);
 
   let currentReply = REPLY.stated;
   let lastPrompt   = '';
@@ -277,22 +277,7 @@ const REPLY = {
   // allow-list drop is invisible until the page is loaded again from storage.
   const signIn = async () => {
     await page.goto('http://127.0.0.1:' + PORT + '/?signin=1', { waitUntil: 'domcontentloaded', timeout: 30000 });
-    await page.waitForSelector('#loginBtn', { state: 'visible', timeout: 20000 });
-    // The button paints with the HTML; submitAuth() arrives with script.js. The
-    // form is wired as onsubmit="submitAuth(event)", an inline attribute, so a
-    // click in the gap between those two moments fires a ReferenceError and is
-    // LOST — after which the suite waits out its full timeout for an app that was
-    // never told to sign in. Three suites failed this way intermittently, only
-    // ever inside the full regression, where a dozen browsers have already run.
-    // Waiting for the handler states the real precondition.
-    await page.waitForFunction(() => typeof submitAuth === 'function', null, { timeout: 45000 });
-    await page.fill('#loginEmail', 'lx@e2e-test.local');
-    await page.fill('#loginPassword', 'TestPass123!');
-    await page.click('#loginBtn');
-    await page.waitForFunction(() => {
-      const app = document.getElementById('appContent');
-      return app && app.style.display !== 'none' && app.style.display !== '';
-    }, null, { timeout: 45000 });
+    await _e2eSignIn(page, { email: "lx@e2e-test.local", errors: errors });
     await page.waitForFunction(() => typeof _props !== 'undefined' && _props.length > 0, null, { timeout: 45000 });
     await page.evaluate((id) => selectProperty(id), PROP_ID);
   };

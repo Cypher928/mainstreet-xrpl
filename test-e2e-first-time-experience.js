@@ -25,6 +25,7 @@ catch (_) { pw = require('/opt/node22/lib/node_modules/playwright'); }
 const { chromium } = pw;
 
 const http   = require('http');
+const { signIn: _e2eSignIn, attachDiagnostics } = require('./test-support/e2e-login');
 const fs     = require('fs');
 const path   = require('path');
 const PORT   = parseInt(process.env.APP_PORT || '7833', 10);
@@ -213,6 +214,7 @@ Capital expenditures are excluded from the CAM expense pool.
 
   const ctx  = await browser.newContext({ viewport: { width: 1280, height: 900 } });
   const page = await ctx.newPage();
+  const _e2eErrors = attachDiagnostics(page);
 
   const consoleLogs = [];
   page.on('console', m => consoleLogs.push({ type: m.type(), text: m.text() }));
@@ -251,14 +253,7 @@ Capital expenditures are excluded from the CAM expense pool.
     const signUpTabActive = await page.$eval('#loginTabSignUp', el => el.classList.contains('active')).catch(() => false);
     assert(signUpTabActive, 'STEP 1: "Sign Up" tab activates on click');
 
-    await page.fill('#loginEmail', 'newuser@e2e-test.local');
-    await page.fill('#loginPassword', 'TestPass123!');
-    await page.click('#loginBtn');
-
-    await page.waitForFunction(() => {
-      const app = document.getElementById('appContent');
-      return app && app.style.display !== 'none' && app.style.display !== '';
-    }, null, { timeout: 45000 }).catch(() => {});
+    await _e2eSignIn(page, { email: "newuser@e2e-test.local", errors: _e2eErrors });
 
     const appVisibleAfterSignup = await page.$eval('#appContent', el => el.style.display !== 'none' && el.style.display !== '').catch(() => false);
     assert(appVisibleAfterSignup, 'STEP 1: app content visible after sign-up submit');

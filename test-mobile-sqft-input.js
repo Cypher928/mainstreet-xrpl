@@ -35,6 +35,7 @@ catch (_) { pw = require('/opt/node22/lib/node_modules/playwright'); }
 const { chromium } = pw;
 
 const http = require('http');
+const { signIn: _e2eSignIn, attachDiagnostics } = require('./test-support/e2e-login');
 const fs   = require('fs');
 const path = require('path');
 
@@ -172,8 +173,7 @@ const SUPABASE_MOCK = `
         : undefined,
     });
     const page = await ctx.newPage();
-    const errors = [];
-    page.on('pageerror', e => errors.push(e.message));
+    const errors = attachDiagnostics(page);
 
     // No egress in CI or this container: block everything off-origin rather than
     // waiting for it. networkidle would never settle.
@@ -201,13 +201,7 @@ const SUPABASE_MOCK = `
     // Waiting for the handler states the real precondition.
     await page.waitForFunction(() => typeof submitAuth === 'function', null, { timeout: 45000 });
 
-    await page.fill('#loginEmail', 'mobile-sqft@e2e-test.local');
-    await page.fill('#loginPassword', 'TestPass123!');
-    await page.click('#loginBtn');
-    await page.waitForFunction(() => {
-      const app = document.getElementById('appContent');
-      return app && app.style.display !== 'none' && app.style.display !== '';
-    }, null, { timeout: 45000 });
+    await _e2eSignIn(page, { email: "mobile-sqft@e2e-test.local", errors: errors });
 
     // Create a property through the app's own "Add Property" path, because the
     // reported bug is specifically about CREATING a property — pre-seeding state

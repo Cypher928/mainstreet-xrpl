@@ -57,6 +57,7 @@ if (SKIP) {
 const { chromium } = pw;
 
 const http = require('http');
+const { signIn: _e2eSignIn, attachDiagnostics } = require('./test-support/e2e-login');
 const fs   = require('fs');
 const path = require('path');
 
@@ -233,8 +234,7 @@ const STATE = () => {
 async function run(browser, invoices, label) {
   const ctx  = await browser.newContext({ viewport: { width: 1280, height: 900 } });
   const page = await ctx.newPage();
-  const errors = [];
-  page.on('pageerror', e => errors.push(e.message));
+  const errors = attachDiagnostics(page);
   await ctx.route('**', route => {
     const u = route.request().url();
     if (u.startsWith('http://127.0.0.1:' + PORT)) return route.continue();
@@ -243,15 +243,7 @@ async function run(browser, invoices, label) {
   });
   await ctx.addInitScript(mockFor(invoices));
   await page.goto('http://127.0.0.1:' + PORT + '/?signin=1', { waitUntil: 'domcontentloaded', timeout: 30000 });
-  await page.waitForSelector('#loginBtn', { state: 'visible', timeout: 20000 });
-  await page.waitForFunction(() => typeof submitAuth === 'function', null, { timeout: 45000 });
-  await page.fill('#loginEmail', 'mf@e2e-test.local');
-  await page.fill('#loginPassword', 'TestPass123!');
-  const appUp = () => page.waitForFunction(() => { const a = document.getElementById('appContent');
-    return a && a.style.display !== 'none' && a.style.display !== ''; }, null, { timeout: 15000 });
-  await page.click('#loginBtn');
-  try { await appUp(); }
-  catch (_) { await page.click('#loginBtn').catch(() => {}); await appUp(); }
+  await _e2eSignIn(page, { email: "mf@e2e-test.local", errors: errors });
   await page.waitForFunction(() => typeof _props !== 'undefined' && _props.length > 0, null, { timeout: 45000 });
   await page.evaluate(id => selectProperty(id), PROP_ID);
   await page.waitForFunction(n => typeof tenantData !== 'undefined' && tenantData.filter(Boolean).length === n,

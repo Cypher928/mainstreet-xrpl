@@ -18,6 +18,7 @@ catch (_) { pw = require('/opt/node22/lib/node_modules/playwright'); }
 const { chromium } = pw;
 
 const http = require('http');
+const { signIn: _e2eSignIn, attachDiagnostics } = require('../test-support/e2e-login');
 const fs   = require('fs');
 const path = require('path');
 const os   = require('os');
@@ -332,6 +333,7 @@ const RENDER_FINGERPRINT = () => {
     args: ['--no-sandbox', '--disable-setuid-sandbox'] });
   const ctx  = await browser.newContext({ viewport: { width: 1280, height: 900 } });
   const page = await ctx.newPage();
+  const _e2eErrors = attachDiagnostics(page);
 
   const pageErrors = [];
   const consoleErrors = [];
@@ -348,15 +350,7 @@ const RENDER_FINGERPRINT = () => {
 
   const signIn = async () => {
     await page.goto('http://127.0.0.1:' + PORT + '/?signin=1', { waitUntil: 'domcontentloaded', timeout: 30000 });
-    await page.waitForSelector('#loginBtn', { state: 'visible', timeout: 20000 });
-    await page.waitForFunction(() => typeof submitAuth === 'function', null, { timeout: 45000 });
-    await page.fill('#loginEmail', 'ng@fresh-validation.local');
-    await page.fill('#loginPassword', 'TestPass123!');
-    const appUp = () => page.waitForFunction(() => { const a = document.getElementById('appContent');
-      return a && a.style.display !== 'none' && a.style.display !== ''; }, null, { timeout: 15000 });
-    await page.click('#loginBtn');
-    try { await appUp(); }
-    catch (_) { await page.click('#loginBtn').catch(() => {}); await appUp(); }
+    await _e2eSignIn(page, { email: 'ng@fresh-validation.local', errors: _e2eErrors });
     await page.waitForFunction(() => typeof _props !== 'undefined' && _props.length > 0, null, { timeout: 45000 });
     await page.evaluate((id) => selectProperty(id), PROP_ID);
     await page.waitForFunction((n) => typeof tenantData !== 'undefined' && tenantData.filter(Boolean).length === n,

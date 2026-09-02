@@ -27,6 +27,7 @@ catch (_) { pw = require('/opt/node22/lib/node_modules/playwright'); }
 const { chromium } = pw;
 
 const http   = require('http');
+const { signIn: _e2eSignIn, attachDiagnostics } = require('./test-support/e2e-login');
 const fs     = require('fs');
 const path   = require('path');
 const PORT     = parseInt(process.env.APP_PORT || '7841', 10);
@@ -218,6 +219,7 @@ CAM charges shall not increase more than 4% per annum.
 
   const ctx  = await browser.newContext({ viewport: { width: 1280, height: 900 } });
   const page = await ctx.newPage();
+  const _e2eErrors = attachDiagnostics(page);
 
   const consoleLogs = [];
   page.on('console', m => consoleLogs.push({ type: m.type(), text: m.text() }));
@@ -236,14 +238,7 @@ CAM charges shall not increase more than 4% per annum.
     section('STEP 1: Sign in and open Cascade Commons');
     await page.goto('http://127.0.0.1:' + PORT + '/', { waitUntil: 'networkidle', timeout: 30000 });
 
-    await page.fill('#loginEmail', 'mismatch-test@e2e-test.local');
-    await page.fill('#loginPassword', 'TestPass123!');
-    await page.click('#loginBtn');
-
-    await page.waitForFunction(() => {
-      const app = document.getElementById('appContent');
-      return app && app.style.display !== 'none' && app.style.display !== '';
-    }, null, { timeout: 45000 }).catch(() => {});
+    await _e2eSignIn(page, { email: "mismatch-test@e2e-test.local", errors: _e2eErrors });
 
     await page.waitForSelector('.ptf-prop-card:not(.ptf-demo-card)', { timeout: 10000 });
     await page.evaluate((propId) => { if (typeof selectProperty === 'function') selectProperty(propId); }, EXISTING_PROP_ID);
