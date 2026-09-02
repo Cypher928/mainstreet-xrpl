@@ -5954,6 +5954,17 @@ function sqftConfidenceScore(t) {
  * quote has nothing behind it and must not be badged as though it does.
  */
 function hasFieldQuote(fieldKey, t) {
+  // THE LATEST SNAPSHOT, NOT ANY SNAPSHOT EVER TAKEN. This asked
+  // `snapshots.some(s => s.quote)`, so a clause captured for an OLD value went
+  // on vouching for a new one: a re-extraction that found no quote, and a
+  // manual correction that replaced the quoted figure, both kept reading as
+  // document-backed on the strength of a citation that no longer supports what
+  // is on screen. FieldProvenance.latestSnapshot skips superseded entries and
+  // returns the one describing the current value.
+  if (window.FieldProvenance) {
+    const s = FieldProvenance.latestSnapshot(fieldKey, t);
+    return !!(s && s.quote);
+  }
   return (t?.fieldEvidence?.[fieldKey]?.snapshots || []).some(s => s && s.quote);
 }
 
@@ -5980,15 +5991,53 @@ window.sqftConfidenceScore = sqftConfidenceScore;
 window.hasFieldQuote       = hasFieldQuote;
 window.sqftIsApproximate   = sqftIsApproximate;
 
+/**
+ * How certain are we about this field, and on whose authority.
+ *
+ * DELEGATES. field-provenance.js decides which of the five states a value is
+ * in; this function projects that onto the four-status contract every surface
+ * already branches on, and supplies the field-specific REASON within a state.
+ * It no longer decides for itself whether something is verified.
+ *
+ * What that removes: `case 'cap'` and the `default:` branch used to return
+ * `verified / 'Extracted from lease document'` whenever a value was non-empty,
+ * so a cap typed by hand into a property with no document read exactly like one
+ * quoted off a 25,824-character lease — and so did one that genuinely carried a
+ * clause and a page. Roughly 449 of Pilot's ~501 "verified" field values had
+ * nothing behind them.
+ *
+ * What it keeps: every sub-reason the switch below already got right. Those are
+ * real field-specific knowledge — an unreadable date, a lease that names no
+ * type, a square footage under the confidence threshold — and they still
+ * distinguish degrees WITHIN a state rather than deciding the state.
+ */
 function getFieldConfidence(fieldName, t) {
   if (!t) return { status: 'missing', source: 'missing', note: 'No lease data' };
-  // Manual override takes precedence — field was corrected by a reviewer.
-  const _latestSnap = getLatestFieldEvidence(fieldName, t);
-  if (_latestSnap?.manuallyEdited === true) {
-    return { status: 'manual', source: 'manual', note: 'Manually corrected' };
+
+  const _prov = window.FieldProvenance
+    ? FieldProvenance.fieldProvenance(fieldName, t)
+    : null;
+
+  // A HUMAN ACT ON THIS FIELD IS THE ANSWER, and it is not the lease's. Both
+  // manual states report `manual` so nothing downstream mistakes a typed or
+  // approved value for a citation — including the evidence row this note is
+  // copied into.
+  if (_prov && _prov.state === 'manually_confirmed') {
+    return { status: 'manual', source: 'manual',
+             note: _prov.by ? `Manually confirmed by ${_prov.by}` : 'Manually confirmed' };
   }
+  if (_prov && _prov.state === 'manually_entered') {
+    return { status: 'manual', source: 'manual', note: 'Manually entered' };
+  }
+
   const val = (fieldName === 'proRata') ? null : t[fieldName];
   const isEmpty = val === null || val === undefined || String(val).trim() === '';
+
+  // THE ONE GATE. Below this line the switch may still choose `missing` or
+  // `estimated` and name the reason, but it can no longer reach `verified`
+  // unless the resolver found a citation for the value actually on screen.
+  const _cited = !!(_prov && _prov.state === 'lease_confirmed');
+  const _uncited = (note) => ({ status: 'estimated', source: 'extraction', note });
 
   switch (fieldName) {
     // THE PRODUCT'S CHOICE MUST NEVER READ AS THE LEASE'S. When a lease says
@@ -6004,16 +6053,20 @@ function getFieldConfidence(fieldName, t) {
         return { status: 'estimated', source: 'heuristic',
           note: 'Partial-period basis not recognised — confirm against the lease' };
       }
-      return hasFieldQuote('partial_period_basis', t)
+      return _cited
         ? { status: 'verified',  source: 'structured', note: 'Extracted from lease document' }
         : { status: 'estimated', source: 'heuristic',  note: 'No supporting clause captured — confirm against the lease' };
 
     // Absent is the NORMAL case: most leases start the CAM obligation with the
     // term, and null means exactly that. It is not a gap to be chased.
     case 'cam_commencement_date':
-      if (isEmpty) return { status: 'verified', source: 'structured',
+      // Absent is still the normal case and still not a gap to chase — but it
+      // is not a reading of a document either, and it used to render a ✓ beside
+      // a method label reading "Not Found". `missing` renders neutrally, which
+      // is what "the lease says nothing and nothing is wrong" looks like.
+      if (isEmpty) return { status: 'missing', source: 'default',
         note: 'CAM begins with the lease term' };
-      return hasFieldQuote('cam_commencement_date', t)
+      return _cited
         ? { status: 'verified',  source: 'structured', note: 'Extracted from lease document' }
         : { status: 'estimated', source: 'heuristic',  note: 'No supporting clause captured — confirm against the lease' };
 
@@ -6031,12 +6084,16 @@ function getFieldConfidence(fieldName, t) {
       if (isEmpty) return { status: 'missing', source: 'missing', note: 'Not found in extraction' };
       if (t._usedFallback)           return { status: 'estimated', source: 'heuristic', note: 'Estimated from document text — confirm accuracy' };
       if (t.doc_has_dates === false) return { status: 'estimated', source: 'heuristic', note: 'No structured date field found — date inferred' };
-      return { status: 'verified', source: 'structured', note: 'Extracted from lease document' };
+      return _cited
+        ? { status: 'verified', source: 'structured', note: 'Extracted from lease document' }
+        : _uncited('AI extraction — no supporting clause captured');
     }
     case 'lease_type': {
       if (isEmpty) return { status: 'missing', source: 'missing', note: 'Lease type not identified' };
       if (t.doc_has_lease_type === false) return { status: 'estimated', source: 'ocr', note: 'Lease type inferred from document context' };
-      return { status: 'verified', source: 'structured', note: 'Extracted from lease document' };
+      return _cited
+        ? { status: 'verified', source: 'structured', note: 'Extracted from lease document' }
+        : _uncited('AI extraction — no supporting clause captured');
     }
     case 'leased_sqft': {
       if (isEmpty) return { status: 'missing', source: 'missing', note: 'Square footage not found' };
@@ -6047,26 +6104,48 @@ function getFieldConfidence(fieldName, t) {
       // which put a ✓ on a number nothing stands behind. Square footage drives
       // every pro-rata share on every tenant statement; it is the last field
       // that should be assumed correct.
-      if (fc == null && !hasFieldQuote('leased_sqft', t)) {
+      if (fc == null && !_cited) {
         return { status: 'estimated', source: 'extraction',
                  note: 'No confidence score and no source clause — verify against lease' };
       }
-      return { status: 'verified', source: 'structured', note: 'Extracted from lease document' };
+      // A CONFIDENCE SCORE IS NOT A CITATION. AI-1 let a score of 70 or better
+      // stand in for a clause, which was the right call while `verified` only
+      // meant "trust this reading". Now that it means "the document says so",
+      // a scored-but-uncited number is an AI extraction like any other.
+      return _cited
+        ? { status: 'verified', source: 'structured', note: 'Extracted from lease document' }
+        : _uncited('AI extraction — no supporting clause captured');
     }
     case 'cap': {
       if (isEmpty) return { status: 'missing', source: 'missing', note: 'CAM cap not stated in lease' };
-      return { status: 'verified', source: 'structured', note: 'Extracted from lease document' };
+      // The number that limits what a tenant can be billed. It had no test at
+      // all beyond being non-empty.
+      return _cited
+        ? { status: 'verified', source: 'structured', note: 'Extracted from lease document' }
+        : _uncited('AI extraction — no supporting clause captured');
     }
     case 'proRata': {
+      // DERIVED, SO IT INHERITS — all of it. This handled `missing` and
+      // `estimated` and let everything else fall through to verified, which was
+      // harmless while `manual` could not reach here and `verified` meant
+      // "trust this number". Now that square footage can be manually entered
+      // and that verified means the document says so, falling through would
+      // have a hand-typed area produce "Computed from verified square footage".
       const sqftConf = getFieldConfidence('leased_sqft', t);
       if (sqftConf.status === 'missing')   return { status: 'missing',   source: 'missing',    note: 'Cannot compute — square footage missing' };
       if (sqftConf.status === 'estimated') return { status: 'estimated', source: 'heuristic',  note: 'Computed from estimated square footage' };
+      if (sqftConf.status === 'manual')    return { status: 'manual',    source: 'manual',     note: 'Computed from a manually entered square footage' };
       return { status: 'verified', source: 'structured', note: 'Computed from verified square footage' };
     }
     default:
-      return isEmpty
-        ? { status: 'missing',  source: 'missing',    note: 'Not found' }
-        : { status: 'verified', source: 'structured', note: 'Extracted from lease document' };
+      // admin_fee_pct, admin_fee_basis, gross_up_pct, expense_stop,
+      // audit_rights, pro_rata_method, renewal_options, excluded_categories,
+      // base_rent, security_deposit, capBaseAmount, tenant_name. Not a small
+      // residue, and the branch that produced most of the overclaim.
+      if (isEmpty) return { status: 'missing', source: 'missing', note: 'Not found' };
+      return _cited
+        ? { status: 'verified', source: 'structured', note: 'Extracted from lease document' }
+        : _uncited('AI extraction — no supporting clause captured');
   }
 }
 
@@ -6312,6 +6391,28 @@ window.ms_debug_evidence = function(fieldKey, tenant) {
 // Returns the extraction version tag for a tenant.
 // 'v1' on first pass, 'v1-retry' if prior evidence snapshots already exist,
 // 'manual' is passed explicitly from confirmFieldOverride paths.
+/**
+ * The snapshot's four-status label, narrowed to the three the column permits.
+ *
+ * `manual` is the only status that has to be decided: it covers both a reviewer
+ * approving a field and a person typing one, and only the first is verification.
+ * The snapshot's own flags tell them apart, and the note is the tiebreak for
+ * legacy snapshots written before those flags meant anything.
+ */
+function _evidenceDbStatus(snapshot) {
+  const s = snapshot?.confidence?.status ?? null;
+  if (s === 'verified') return 'verified';
+  if (s === 'missing')  return 'missing';
+  if (s === 'manual') {
+    const approvedByAReviewer = snapshot?.approved === true &&
+      !!(snapshot?.reviewerEmail || snapshot?.reviewerUid) &&
+      snapshot?.manuallyEdited !== true;
+    return approvedByAReviewer ? 'verified' : 'estimated';
+  }
+  if (s === 'estimated') return 'estimated';
+  return s == null ? null : 'estimated';
+}
+
 function _extractionVersionTag(t) {
   if (!t) return 'v1';
   const fev = t.fieldEvidence || {};
@@ -6598,7 +6699,20 @@ async function _writeTenantFieldEvidence(propId, tenantId, fieldKey, snapshot) {
     tenant_id:                tenantId,
     field_key:                fieldKey,
     value:                    _evidenceValStr(snapshot.value),
-    confidence_status:        snapshot.confidence?.status              ?? null,
+    // THE CHECK CONSTRAINT HAS THREE VALUES AND THE MODEL HAS FIVE, so the
+    // projection is explicit here rather than left to whatever string the
+    // in-app status happens to be. `verified | estimated | missing` is what
+    // tenant_field_evidence_confidence_status_check permits; widening it would
+    // be a migration, and the line below is drawn so it is not needed:
+    //
+    //   verified   a clause supports it, or a named reviewer approved it
+    //   estimated  a value with no affirmative confirmation — an extraction
+    //              nobody checked, or data entry, which is not verification
+    //   missing    nothing to evaluate
+    //
+    // An uncited AI value can never reach `verified` through it, which is the
+    // whole point. The exact state travels beside it in confidence_note.
+    confidence_status:        _evidenceDbStatus(snapshot),
     confidence_note:          snapshot.confidence?.note                ?? null,
     source_file:              snapshot.sourceFile                      ?? null,
     source_page:              snapshot.page                            ?? null,
@@ -20612,9 +20726,18 @@ function _rwRenderScoreCard(rv) {
 
 // Returns { label, cls } confidence chip for a field on tenant t.
 function _rwConfChip(key, t) {
+  // ONE RESOLVER FOR THE ROW. The chip, the method and the note used to be
+  // three opinions rendered side by side: a manually corrected cap showed
+  // "Manual" beside "Extracted from lease document", and a snapshot-edited one
+  // showed "Low" beside "Manually corrected". They now read the same answer.
+  const _p = window.FieldProvenance ? FieldProvenance.fieldProvenance(key, t) : null;
+  if (_p && (_p.state === 'manually_confirmed' || _p.state === 'manually_entered'))
+    return { label: 'Manual', cls: 'rw-conf-chip--manual' };
   if (key !== 'tenant_name' && isFieldManuallyVerified(key, t))
     return { label: 'Manual', cls: 'rw-conf-chip--manual' };
-  // leased_sqft has a numeric per-field confidence score
+  // leased_sqft has a numeric per-field confidence score. It reports how well
+  // the number was READ, which is a different question from who stands behind
+  // it — a 100% score on an uncited extraction is still uncited.
   const numericConf = key === 'leased_sqft' ? sqftConfidenceScore(t) : null;
   if (numericConf !== null) {
     if (numericConf >= 80) return { label: 'High',   cls: 'rw-conf-chip--high' };
@@ -20632,6 +20755,8 @@ function _rwConfChip(key, t) {
 
 // Returns the human-readable extraction method for a field (maps to required fallback states).
 function _rwExtractionMethod(key, t) {
+  const _p = window.FieldProvenance ? FieldProvenance.fieldProvenance(key, t) : null;
+  if (_p && _p.state !== 'ai_extracted' && _p.state !== 'lease_confirmed') return _p.method;
   if (key !== 'tenant_name' && isFieldManuallyVerified(key, t)) return 'Manually Entered';
   const val = key === 'tenant_name' ? t[key] : (getEffectiveLeaseField(key, t) ?? t[key]);
   const isEmpty = val === null || val === undefined || String(val).trim() === '';

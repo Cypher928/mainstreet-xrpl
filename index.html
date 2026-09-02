@@ -7856,6 +7856,12 @@
      the record — 27 pilot properties were left holding one session each. Both
      restore paths in script.js consult this, so it must precede script.js. -->
 <script src="timeline-merge.js"></script>
+<!-- Where a lease field's value actually came from. getFieldConfidence decided
+     "verified" from non-emptiness, so a cap typed by hand read exactly like one
+     quoted off a lease — and so did one that genuinely carried a clause. The
+     five states live here and getFieldConfidence projects them onto the four it
+     has always returned; must precede script.js, which delegates to it. -->
+<script src="field-provenance.js"></script>
 <script src="review-engine.js"></script>
 <script src="reconciliation-engine.js"></script>
 <script src="audit-exposure.js"></script>

@@ -323,6 +323,16 @@ const SUITES = [
   // through four reloads and asserts no allocation moved.
   { label: 'Timeline merge',                    cmd: 'node test-timeline-merge.js' },
   { label: 'Timeline persistence (e2e)',        cmd: 'node test-e2e-timeline-persistence.js' },
+  // A LABEL MAY NOT OUTRUN ITS EVIDENCE. getFieldConfidence decided "verified"
+  // from non-emptiness for `cap` and for the default branch, so a cap typed by
+  // hand into a property with no document rendered byte-identically to one read
+  // off a 25,824-character lease — and identically again to one carrying a
+  // verbatim clause and a page number. Across Pilot, 530 field values asserted a
+  // document nothing pointed at while the 52 that could cite one were
+  // indistinguishable. The rule was not invented for this: the lender packet's
+  // _lenderVerification has always computed it correctly, at tenant granularity.
+  { label: 'Field provenance',                  cmd: 'node test-field-provenance.js' },
+  { label: 'Field provenance (e2e)',            cmd: 'node test-e2e-field-provenance.js' },
   { label: 'Lease validator: management fee cap',       cmd: 'node test-mgmt-fee-cap.js' },
   // D2-1 — AND THE SAME CHECK ON THE PANEL, WITH ARGUMENTS IT DID NOT BUILD.
   // The suite above pins _tier1LeaseChecks against hand-built inputs, and that
