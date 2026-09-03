@@ -10424,6 +10424,57 @@ function _fmtMoney(n) {
   return v == null ? '—' : v.toLocaleString('en-US', { style: 'currency', currency: 'USD' });
 }
 
+/**
+ * THE LEASE'S CEILING, IN CENTS — computed in exactly one place.
+ *
+ * `capBaseAmount × (1 + capPercentage%)` is the maximum billable CAM the lease
+ * permits; the cap-basis panel already states it in those words. It was computed
+ * inline where the cap is ENFORCED, and a second, different notion of "expected
+ * CAM" was written a hundred lines below it:
+ *
+ *     const expectedCam = live.cap;                     // a PERCENTAGE
+ *     const variance    = actualCam - expectedCam;      // dollars minus percent
+ *
+ * So a $34,650 charge reported a $34,645 variance — essentially the entire bill —
+ * and that pair was persisted to cam_reconciliations and rendered as the Space
+ * view's "Variance" tile. The two numbers were never the same quantity; only one
+ * of them was ever a dollar amount.
+ *
+ * Returns null when either operand is missing. A cap percentage ALONE cannot
+ * produce a dollar ceiling, and manufacturing the base is precisely what the
+ * defect did. Null is the honest answer, and it is the answer the caller must
+ * carry through rather than substituting a percent.
+ */
+function _camCeilingCents(capBaseAmount, capPercentage) {
+  const _MC = window.MoneyCents;
+  if (!_MC || capBaseAmount == null || capPercentage == null) return null;
+  const base = parseFloat(capBaseAmount);
+  const pct  = parseFloat(capPercentage);
+  if (!Number.isFinite(base) || !Number.isFinite(pct)) return null;
+  return _MC.toCents(base * (1 + pct / 100));
+}
+
+/**
+ * Expected CAM and variance for one tenant, derived ONLY from the dollar basis.
+ *
+ * `expectedCamBasis` is STAMPED, NOT SNIFFED — the same doctrine `precision`
+ * already follows on this record. A persister cannot tell a legitimate small
+ * ceiling ($92.00) from a stray cap percentage (5) by looking at the number, so
+ * the producer states which arithmetic made it and saveCamResults trusts nothing
+ * that lacks the stamp. That is what makes the bad pair structurally
+ * unpersistable rather than merely absent today.
+ */
+function _camExpectation(capBaseAmount, capPercentage, actualCam) {
+  const _MC   = window.MoneyCents;
+  const cents = _camCeilingCents(capBaseAmount, capPercentage);
+  if (cents === null || !_MC) return { expectedCam: null, variance: null, expectedCamBasis: null };
+  const expectedCam = _MC.fromCents(cents);
+  const variance = (actualCam != null && Number.isFinite(actualCam))
+    ? Math.round((actualCam - expectedCam) * 100) / 100
+    : null;
+  return { expectedCam, variance, expectedCamBasis: 'cap_ceiling' };
+}
+
 function runFullReconciliation(property) {
   // Always read fresh tenant data — never rely on what was baked into Lease objects
   const liveTenants = currentProperty()?.tenants || [];
@@ -10696,7 +10747,11 @@ function runFullReconciliation(property) {
       // statement printed "a ceiling of $35,833.33", so the number the tenant
       // was shown was not the number applied and the cap could not be checked
       // against the lease with a calculator. One ceiling, in cents, both places.
-      const capCents = _MC.toCents(lease.capBaseAmount * (1 + lease.capPercentage / 100));
+      //
+      // H — and now the SAME ceiling the expectation below reports, because it
+      // is the same function. Enforcement and expectation disagreeing about what
+      // the lease permits is how a percentage ended up in a dollar field.
+      const capCents = _camCeilingCents(lease.capBaseAmount, lease.capPercentage);
       if (capCents !== null && rawCents > capCents) {
         capAdjustment = _MC.fromCents(rawCents - capCents);
         rawCents      = capCents;
@@ -10870,15 +10925,26 @@ function runFullReconciliation(property) {
     // sniffed: absence of a field is a weaker claim than a statement of fact.
     result.precision      = 'cents';
 
-    const actualCam   = result.totalAllocated ?? null;
-    const expectedCam = live.cap ?? null;
-    const variance    = (actualCam !== null && expectedCam !== null)
-      ? Math.round((actualCam - expectedCam) * 100) / 100
-      : null;
+    // H — EXPECTED CAM IS A DOLLAR CEILING OR IT IS NOTHING.
+    //
+    // This read `live.cap` — the cap PERCENTAGE — and called it expectedCam, then
+    // subtracted it from dollars to get a variance. Both operands of a comparison
+    // have to be the same quantity; these never were. The ceiling the cap gate
+    // above already enforces IS the expected amount, so both now come from
+    // _camExpectation and there is one definition of what the lease permits.
+    //
+    // No base, no expectation: a tenant with a cap percentage but no
+    // capBaseAmount yields null/null and the surfaces render "—". That is the
+    // same line D2-2 draws — a cap percentage is not testable until the lease's
+    // own base for it is known — and back-computing a base from the charge would
+    // make the number agree with itself by construction.
+    const actualCam = result.totalAllocated ?? null;
+    const _exp      = _camExpectation(lease.capBaseAmount, lease.capPercentage, actualCam);
 
-    result.actualCam   = actualCam;
-    result.expectedCam = expectedCam;
-    result.variance    = variance;
+    result.actualCam         = actualCam;
+    result.expectedCam       = _exp.expectedCam;
+    result.variance          = _exp.variance;
+    result.expectedCamBasis  = _exp.expectedCamBasis;
     return result;
   });
 
@@ -24888,16 +24954,32 @@ async function saveCamResults(propertyId, fullResults, year, totalExpenses = nul
   const reconciledAt = new Date().toISOString();
   const rows = (fullResults || []).map(r => {
     const actual   = r.actualCam ?? r.totalAllocated ?? null;
-    const expected = r.expectedCam ?? null;
+    // H — ONLY A STAMPED DOLLAR CEILING IS PERSISTABLE AS expected_cam.
+    //
+    // This took `r.expectedCam` on trust and re-derived the variance from it. When
+    // the producer was handing it a cap PERCENTAGE, this faithfully wrote the
+    // percent into a dollar column and the dollars-minus-percent variance beside
+    // it — 19 such rows are in pilot today. Nothing here can tell 5 (a percent)
+    // from 5.00 (a small ceiling) by inspection, so it no longer tries: the
+    // producer stamps `expectedCamBasis` when the value came from
+    // capBaseAmount × (1 + cap%), and an unstamped result persists null/null.
+    // A legacy in-memory result therefore cannot round-trip its bad pair back in.
+    const _stamped = r.expectedCamBasis === 'cap_ceiling' &&
+                     typeof r.expectedCam === 'number' && Number.isFinite(r.expectedCam);
+    const expected = _stamped ? r.expectedCam : null;
     return {
       property_id:      propertyId,
       tenant_id:        r.tenantId,
       tenant_name:      r.tenantName ?? r.name ?? null,
       actual_cam:       actual,
       expected_cam:     expected,
+      // No expected, no variance. The `?? r.variance` fallback that used to sit
+      // here would have carried a legacy dollars-minus-percent figure straight
+      // back into the column the stamp above just refused to fill — the pair has
+      // to travel together or not at all.
       variance:         (actual !== null && expected !== null)
         ? Math.round((actual - expected) * 100) / 100
-        : (r.variance ?? null),
+        : null,
       allocated_amount: r.allocatedAmount ?? r.totalAllocated ?? actual,
       pro_rata_percent: r.proRataPercent ?? (r.proRata != null ? r.proRata * 100 : null),
       total_expenses:   totalExpenses,

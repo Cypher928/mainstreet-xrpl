@@ -334,9 +334,18 @@ yes('[d] [source] the remainder sweep is handed only unallocated buckets',
 // Both sides go through the same quantiser; a fixture cannot tell them apart
 // once they agree, so this is asserted where the two expressions live.
 const srcJS = require('fs').readFileSync(require('path').join(__dirname, 'script.js'), 'utf8');
+// H moved this expression into _camCeilingCents, the one definition of the
+// ceiling, because the cap GATE and the expected-CAM figure had drifted apart —
+// the gate quantised a real ceiling while the expectation reported the cap
+// PERCENTAGE as dollars. D6 is unchanged and now carries a second guarantee, so
+// this pins both: the quantiser is still applied where the ceiling is computed,
+// AND enforcement reads that same shared definition rather than its own copy.
 yes('[source] the engine caps at a ceiling quantised to cents (D6)',
-    /const capCents = _MC\.toCents\(lease\.capBaseAmount \* \(1 \+ lease\.capPercentage \/ 100\)\)/.test(srcJS),
-    'the engine still caps at an unrounded product');
+    /return _MC\.toCents\(base \* \(1 \+ pct \/ 100\)\);/.test(srcJS),
+    'the ceiling is no longer quantised where it is computed');
+yes('[source] and the cap gate caps at that one shared ceiling (D6/H)',
+    /const capCents = _camCeilingCents\(lease\.capBaseAmount, lease\.capPercentage\);/.test(srcJS),
+    'the cap gate computes its own ceiling again — enforcement can drift from what is reported');
 yes('[source] and the statement prints that same quantised ceiling',
     /_capCeiling = _capTermsKnown\s*\n\s*\? window\.MoneyCents\.fromCents\(window\.MoneyCents\.toCents\(_capBase \* \(1 \+ _capPct \/ 100\)\)\)/.test(srcJS),
     'the statement still prints an unrounded ceiling');

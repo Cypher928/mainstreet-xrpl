@@ -353,6 +353,7 @@ const SUITES = [
   { label: 'Space lease chip (no Invalid Date)',        cmd: 'node test-space-lease-chip.js' },
   { label: 'Dispute lifecycle',                         cmd: 'node test-dispute-lifecycle.js' },
   { label: 'Prior-year CAM base persistence',           cmd: 'node test-cap-base-persistence.js' },
+  { label: 'Expected CAM is a dollar ceiling',          cmd: 'node test-cam-expected-variance.js' },
   { label: 'Activity timeline (e2e)',                   cmd: 'node test-e2e-activity-timeline.js' },
   { label: 'Needs Review rollup (e2e)',                 cmd: 'node test-e2e-cam-needs-review.js' },
   { label: 'Inline handlers',                           cmd: 'node test-inline-handlers.js' },

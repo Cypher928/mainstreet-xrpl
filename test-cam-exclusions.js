@@ -51,6 +51,11 @@ function loadEngine() {
     extract(/\nclass ReconciliationResult \{[\s\S]*?\n\}\n/, 'class ReconciliationResult'),
     extract(/\nclass Lease \{[\s\S]*?\n\}\n/, 'class Lease'),
     extract(/\nfunction parseSqft\(v\) \{[\s\S]*?\n\}\n/, 'parseSqft'),
+    // H — the engine's cap ceiling and its expected-CAM derivation; the cap gate
+    // and the expectation both call these, so the sandbox supplies them for the
+    // same reason it supplies MoneyCents: they are the engine's own arithmetic.
+    extract(/\nfunction _camCeilingCents\(capBaseAmount, capPercentage\) \{[\s\S]*?\n\}\n/, '_camCeilingCents'),
+    extract(/\nfunction _camExpectation\(capBaseAmount, capPercentage, actualCam\) \{[\s\S]*?\n\}\n/, '_camExpectation'),
     extract(/\nfunction runFullReconciliation\(property\) \{[\s\S]*?\n\}\n/, 'runFullReconciliation'),
   ].join('\n');
   const sandbox = {

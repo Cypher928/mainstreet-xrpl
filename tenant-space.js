@@ -302,8 +302,14 @@ window.TenantSpace = (function () {
     if (rec.camResult) {
       var cr = rec.camResult;
       var alloc = cr.allocatedAmount != null ? cr.allocatedAmount : cr.totalAllocated;
-      var vari = (cr.variance != null) ? cr.variance
-        : ((cr.actualCam != null && cr.expectedCam != null) ? (cr.actualCam - cr.expectedCam) : null);
+      // H — NO RE-DERIVATION HERE. This used to fall back to
+      // `cr.actualCam - cr.expectedCam` whenever a stored variance was absent.
+      // expectedCam was the cap PERCENTAGE, so the fallback rebuilt the
+      // dollars-minus-percent figure client-side and printed it as this space's
+      // "Variance" — reviving the defect for exactly the older records that had
+      // escaped it. A variance is now either persisted with its expected amount
+      // or it is not a number this tile is entitled to invent: it shows "—".
+      var vari = (cr.variance != null) ? cr.variance : null;
       var status = (cr.status === 'needs review') ? 'Needs review' : 'Ready';
       var vStr = vari == null ? '—' : ((vari > 0 ? '+' : '') + _money(vari));
       // Summary only — the full reconciliation stays in CAM.
