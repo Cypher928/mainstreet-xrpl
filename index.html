@@ -7912,6 +7912,11 @@
 <script src="tenant-space.js"></script>
 <!-- Property Operating System — "Act on this space" (grounded AI actions; Reply is action #1). Reads TenantSpace.record(); must load after it. -->
 <script src="space-actions.js"></script>
+<!-- The canonical property-scoped read model. Composes CamPool, TimelineMerge,
+     FieldProvenance, VarianceBreakdown, LeaseIntelligence, PropertyWorkspace,
+     PropertyReference and TenantSpace — so it loads after all of them. It owns
+     no business rule of its own; it only asks each owner for its answer. -->
+<script src="property-record.js"></script>
 <!-- Pre-login landing + 60-second animated demo (additive overlay; self-mounts) -->
 <!-- The product film, shared with home.html so there is one implementation. -->
 <script src="product-film.js"></script>

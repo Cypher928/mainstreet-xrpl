@@ -292,6 +292,7 @@ const SUITES = [
   { label: 'Request limits',                            cmd: 'node test-request-limits.js' },
   { label: 'Evidence honesty',                          cmd: 'node test-evidence-honesty.js' },
   { label: 'AI citation & confidence integrity',        cmd: 'node test-ai-citation-integrity.js' },
+  { label: 'PropertyRecord canonical read model',        cmd: 'node test-property-record.js' },
   { label: 'Evidence persisted as PENDING',             cmd: 'node test-evidence-persistence.js' },
   { label: 'AI confidence surfaces',                    cmd: 'node test-ai-confidence.js' },
   { label: 'Tenant matching on lease upload',           cmd: 'node test-tenant-matching.js' },
