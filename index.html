@@ -6746,6 +6746,10 @@
   .evd-jump-chip--on { border-color: #C9973A; color: var(--c-c9973a); }
   .aiw-cite--live { cursor: pointer; border-color: rgba(201,151,58,0.55); }
   .aiw-cite--live:hover { background: rgba(201,151,58,0.12); color: var(--text-1); }
+  /* I — a source with no captured clause is provenance, not a citation, and must
+     not borrow the citation palette. Muted, dashed, never gold, never clickable:
+     it says where the value came from without claiming to quote it. */
+  .aiw-cite--nosrc { border-style: dashed; border-color: rgba(var(--line-rgb), 0.22); color: var(--text-4); cursor: help; }
 </style>
 <div id="evidenceViewer" onclick="if(event.target===this)EvidenceViewer.close()" role="dialog" aria-modal="true" aria-labelledby="evdTitle">
   <div class="evd-box" tabindex="-1">

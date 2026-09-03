@@ -110,6 +110,33 @@ window.AIWorkspace = (() => {
     return null;
   }
 
+  /**
+   * I — the clause a citation actually carries, or null.
+   *
+   * One reading of "has a quote", used by the renderer and by every intent that
+   * describes its own evidence. A blank or whitespace-only string is not a
+   * clause: `''`, `'   '` and `'\n'` all cite nothing, and a chip built on one
+   * would make the same claim as a chip built on real lease text.
+   */
+  function _clauseQuote(c) {
+    const q = c && c.quote;
+    return (typeof q === 'string' && q.trim()) ? q.trim() : null;
+  }
+
+  /**
+   * I — describe the evidence actually held, not the evidence hoped for.
+   *
+   * cam_caps reported `basis: 'extracted lease terms'` on citations whose quote
+   * was null, so the sentence under the answer asserted a captured clause that
+   * did not exist. The basis now follows the citations: it claims a term only
+   * when one of them carries the clause.
+   */
+  function _clauseBasis(citations, whenCaptured) {
+    return (citations || []).some(_clauseQuote)
+      ? whenCaptured
+      : 'lease source identified; clause not captured';
+  }
+
   function _leaseCitation(p, t, fieldKeys) {
     const ev = _tenantEvidence(t, fieldKeys || []);
     return {
@@ -419,10 +446,14 @@ window.AIWorkspace = (() => {
       if (withCap.length) paragraphs.push(`${withCap.length} lease${withCap.length !== 1 ? 's carry' : ' carries'} a CAM cap.`);
       if (withoutCap.length) paragraphs.push(`Until a cap is confirmed, MainStreet can't verify the flagged tenants aren't being overcharged.`);
       if (!withCap.length && !withoutCap.length) paragraphs.push('No CAM caps are on file for this scope — upload leases so cap terms can be extracted and enforced.');
+      // I — the basis names what these very citations hold. The cap PERCENTAGES
+      // below are genuinely extracted, so the confidence stands; what was not
+      // always true is that a lease CLAUSE was captured behind them.
+      const _cites4 = citations.slice(0, 4);
       return {
-        heading: 'CAM caps on file', paragraphs, bullets, citations: citations.slice(0, 4),
+        heading: 'CAM caps on file', paragraphs, bullets, citations: _cites4,
         actions: scoped.slice(0, 2).map(_actOpenProperty),
-        confidence: { pct: 92, basis: 'extracted lease terms' },
+        confidence: { pct: 92, basis: _clauseBasis(_cites4, 'extracted lease terms') },
         resultSet: items.length ? { kind: 'tenants', label: 'Tenants with CAM caps', items } : null,
       };
     },
@@ -1050,7 +1081,13 @@ window.AIWorkspace = (() => {
         'Show RLUSD settlement status, and draft letters and lender packages',
       ],
       citations: [], actions: [_actCommandCenter(), _actPortfolio()],
-      confidence: { pct: 100, basis: 'honest fallback' },
+      // I — NO CONFIDENCE ON A NON-ANSWER. This carried
+      // `{ pct: 100, basis: 'honest fallback' }`, which the renderer printed as
+      // "Confidence 100% · honest fallback" directly beneath "I couldn't map that
+      // question to your data". Twenty-one of the thirty-five questions in the
+      // Phase G battery ended here, each wearing a full-confidence badge over an
+      // admission that nothing had been answered. The fallback is still honest
+      // about what it can do; it no longer scores itself for failing.
       showSuggestions: true,
     }),
   };
@@ -1120,25 +1157,58 @@ window.AIWorkspace = (() => {
     return base;
   }
 
+  /**
+   * I — a confidence badge belongs to an ANSWER, never to a fallback.
+   *
+   * Enforced here rather than only at the fallback's own return, because this is
+   * the one place every answer passes through: any future intent that reaches
+   * the fallback outcome inherits the rule without having to remember it.
+   */
+  function _showConfidence(a) {
+    if (!a || !a.confidence) return false;
+    const intent = a.intent || (a.trace && a.trace.intent) || null;
+    return intent !== 'fallback';
+  }
+
   // ── renderer — the identity rule lives HERE so every answer carries it ────
   function renderAnswerHtml(a) {
     // Phase 24: citations with real evidence (a quote, a page, or a source file)
     // become interactive — one click opens the Evidence Viewer at that citation.
-    const liveCites = (a.citations || []).filter(c => c && (c.source || c.quote));
+    // ── I — A CITATION MAY CLAIM A CLAUSE ONLY WHEN IT CARRIES ONE ───────────
+    //
+    // The chip was promoted to live evidence on `quote || page != null ||
+    // fileUrl`, so a lease with a filename and no captured clause rendered as a
+    // gold, clickable citation. Asked "show me where the lease says the CAM cap
+    // is 5%", the workspace answered with four such chips — every one
+    // quote: null — under the words "extracted lease terms". That is the
+    // product's central promise (every figure traceable to the clause it came
+    // from) spent on chips backed by nothing.
+    //
+    // _lenderVerification() and /api/ask-lease already draw this line: a value
+    // nothing cites is INFERRED, not VERIFIED, and a refusal that still carries
+    // a citation is the failure being fixed. The renderer now draws it too.
+    //
+    //   quote present  → an evidence chip, clickable, opening that clause
+    //   quote absent   → plain provenance text that says the clause is not held
+    //
+    // A blank or whitespace-only quote is an absent quote: " " cites nothing.
+    const liveCites = (a.citations || []).filter(c => c && (c.source || _clauseQuote(c)));
     const evdPayload = liveCites.map(c => ({
       source: c.source || null, detail: c.detail || null,
       page: c.page ?? (c.detail && /Page (\d+)/.exec(c.detail) ? Number(RegExp.$1) : null),
-      quote: c.quote || null, fileUrl: c.fileUrl || null, fileName: c.fileName || null,
+      quote: _clauseQuote(c), fileUrl: c.fileUrl || null, fileName: c.fileName || null,
       reason: c.reason || null, confidence: c.confidence ?? null,
     }));
-    const hasEvidence = evdPayload.some(c => c.quote || c.page != null || c.fileUrl);
+    // "Show Evidence" must not appear when there is no clause to show. A page
+    // number or a file URL locates a document; it does not quote it.
+    const hasEvidence = evdPayload.some(c => c.quote);
     const evdAttr = hasEvidence ? ` data-evd="${_esc(JSON.stringify(evdPayload))}"` : '';
     const cites = liveCites.map((c, i) => {
       const label = `${_esc(c.source)}${c.detail ? ` · ${_esc(c.detail)}` : ''}`;
-      const live = evdPayload[i].quote || evdPayload[i].page != null || evdPayload[i].fileUrl;
-      return live
-        ? `<button class="aiw-cite aiw-cite--live" data-idx="${i}" onclick="EvidenceViewer.openFromChip(this)" title="${_esc(c.quote || 'Open the supporting evidence')}">${label} ↗</button>`
-        : `<span class="aiw-cite" title="${_esc(c.quote || '')}">${label}</span>`;
+      const cited = evdPayload[i].quote !== null;
+      return cited
+        ? `<button class="aiw-cite aiw-cite--live" data-idx="${i}" onclick="EvidenceViewer.openFromChip(this)" title="${_esc(evdPayload[i].quote)}">${label} ↗</button>`
+        : `<span class="aiw-cite aiw-cite--nosrc" title="MainStreet has this source on file but did not capture the clause behind this value.">${label} · clause not captured</span>`;
     }).join('');
     // Phase 25: whenever real evidence exists, offer it as a first-class action —
     // the button clicks the first live citation chip (no payload duplication).
@@ -1167,7 +1237,7 @@ window.AIWorkspace = (() => {
         ${(a.bullets && a.bullets.length) ? `<ul class="aiw-bullets">${a.bullets.map(b => `<li>${_esc(b)}</li>`).join('')}</ul>` : ''}
         ${(a.paragraphs || []).map(t => `<p class="aiw-p">${_esc(t)}</p>`).join('')}
         ${cites ? `<div class="aiw-cites">${cites}</div>` : ''}
-        ${a.confidence ? `<div class="aiw-conf">Confidence ${a.confidence.pct}% · ${_esc(a.confidence.basis)}</div>` : ''}
+        ${_showConfidence(a) ? `<div class="aiw-conf">Confidence ${a.confidence.pct}% · ${_esc(a.confidence.basis)}</div>` : ''}
         ${a.trace ? `<div class="aiw-from">Answer generated from: <b>${_esc(a.trace.engine)}</b> · ${_esc(a.trace.property)}${a.trace.resultSetProduced ? ` · ${_esc(a.trace.resultSetProduced)}` : ''}${a.trace.reusedResultSet ? ` · reused “${_esc(a.trace.reusedResultSet)}”` : ''}</div>
         <details class="aiw-trace"><summary>Reasoning trace</summary>
           <div class="aiw-trace-rows">
