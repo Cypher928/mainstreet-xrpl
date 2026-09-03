@@ -347,6 +347,7 @@ window.AIWorkspace = (() => {
     draw_ready: 'Reserve Intelligence Engine', acquisitions: 'Acquisition Engine',
     settlements: 'Settlement Records', draft_document: 'Drafting Engine',
     explain_property: 'Portfolio Records', fallback: 'None (honest fallback)',
+    intent_error: 'None (request failed)',
     // K, Tier 2 — retrieval over the canonical record.
     property_history: 'Property Record — Timeline', spaces_list: 'Property Record — Spaces',
     attention: 'Property Record — Attention', field_provenance: 'Property Record — Field Provenance',
@@ -373,6 +374,7 @@ window.AIWorkspace = (() => {
     knowledge_search: ['lease fieldEvidence (canonical snapshot)', 'excluded categories', 'reserve terms', 'dispute reasons'],
     draft_document: ['drafting engine (evidence-grounded)'],
     explain_property: ['PropertyRecord.identity', 'PropertyRecord.attention', 'portfolio KPIs'],
+    intent_error:     [],
     property_history: ['PropertyRecord.timeline'],
     spaces_list:      ['PropertyRecord.spaces'],
     attention:        ['PropertyRecord.attention'],
@@ -545,36 +547,101 @@ window.AIWorkspace = (() => {
   });
 
   // 1) CAM caps across the portfolio
+  /**
+   * L — one reading of "asking which leases DON'T have a cap".
+   *
+   * The matcher decides whether cam_caps answers at all; the handler decides
+   * which direction to answer in. Sharing one predicate is what stops them from
+   * disagreeing — a matcher that admits the question and a handler that answers
+   * the opposite one is precisely the defect being fixed.
+   */
+  const _ASKS_NO_CAP = /\b(missing|without|no cap|don'?t have|do not have|lack|lacking|uncapped|not have)\b/;
+
   registerIntent({
     id: 'cam_caps',
-    match: (s) => /cam cap|expense cap|caps\b/.test(s) && !/reserve|readiness/.test(s),
+    // L — the matcher required "cam cap", "expense cap" or the PLURAL "caps", so
+    // "which tenants are missing a cap?" matched none of them and fell through to
+    // knowledge_search, which answered about captured text instead. Widened by
+    // exactly one case: a singular "cap" alongside a negative qualifier. Every
+    // other phrasing routes as it did before.
+    match: (s) => (/cam cap|expense cap|caps\b/.test(s)
+                   || (/\bcaps?\b/.test(s) && _ASKS_NO_CAP.test(s)))
+                  && !/reserve|readiness/.test(s),
     handle: (q, ctx, { props, deps, record }) => {
       const scoped = _scopedProps(ctx, props);
-      const withCap = [], withoutCap = [], citations = [], items = [];
+      // L — WHICH QUESTION WAS ACTUALLY ASKED.
+      //
+      // This intent answered one question however it was phrased. Asked "which
+      // tenants are MISSING a cap?" it replied "4 leases carry a CAM cap" and
+      // listed the four that have one — the precise inverse, delivered at 92%
+      // confidence. The matcher is unchanged; what is new is that the handler
+      // now reads whether the question was negative before choosing a heading.
+      const asksMissing = _ASKS_NO_CAP.test(q.toLowerCase());
+
+      const withCap = [], withoutCap = [], unknownCap = [];
+      const citations = [], items = [], missingItems = [];
       for (const p of scoped) {
         // K — the lease terms come from the record's spaces, so the cap this
         // sentence reports and the cap the Space view shows are the same read.
         const rec = record ? record(p) : null;
+        const fieldsUnavailable = _unavailable(rec, 'fields');
         for (const sp of _spacesOf(rec, p)) {
           const t = sp.tenant, name = sp.name, cap = sp.lease && sp.lease.cap;
+          // THREE STATES, KEPT APART.
+          //   has        — a cap value is on file
+          //   none       — the record was read and carries no cap for this lease
+          //   unreadable — the cap field could not be read at all
+          // Collapsing the last two would turn "I don't know" into "there is no
+          // cap", which is the same false certainty the inverse bug produced.
+          const prov = (rec && rec.fields && rec.fields[sp.tenantId]) ? rec.fields[sp.tenantId].cap : null;
+          const capKnown = !fieldsUnavailable && (prov || rec === null || !rec.fields);
           if (cap != null && cap !== '') {
             withCap.push(`${name} (${p.name}) — ${cap}% annual cap${t && t.capBaseAmount ? ` on a ${_fmt$(t.capBaseAmount)} base` : ''}`);
             citations.push(_leaseCitation(p, t, ['cam_cap', 'cap'], deps));
             items.push({ propertyId: p.id, propertyName: p.name, tenantId: sp.tenantId, tenantName: name });
-          } else if (/nnn|triple/i.test(String((sp.lease && sp.lease.type) || ''))) {
-            withoutCap.push(`${name} (${p.name}) — NNN lease, no cap on file`);
+          } else if (!capKnown) {
+            unknownCap.push(`${name} (${p.name}) — cap information could not be read`);
+          } else {
+            const kind = /nnn|triple/i.test(String((sp.lease && sp.lease.type) || '')) ? 'NNN lease, ' : '';
+            withoutCap.push(`${name} (${p.name}) — ${kind}no cap on file`);
+            missingItems.push({ propertyId: p.id, propertyName: p.name, tenantId: sp.tenantId, tenantName: name });
           }
         }
       }
+      // I — the basis names what these very citations hold. The cap PERCENTAGES
+      // are genuinely extracted, so the confidence stands; what was not always
+      // true is that a lease CLAUSE was captured behind them.
+      const _cites4 = citations.slice(0, 4);
       const paragraphs = [];
-      const bullets = [...withCap, ...withoutCap.map(w => `⚠ ${w}`)];
+
+      if (asksMissing) {
+        if (withoutCap.length) {
+          paragraphs.push(`${withoutCap.length} lease${withoutCap.length !== 1 ? 's carry' : ' carries'} no CAM cap on file.`);
+          paragraphs.push(`Until a cap is confirmed, MainStreet can't verify these tenants aren't being overcharged.`);
+        } else {
+          paragraphs.push('Every lease in this scope has a cap on file.');
+        }
+        if (unknownCap.length) paragraphs.push(`${unknownCap.length} more could not be read, so I can't say either way about ${unknownCap.length !== 1 ? 'them' : 'it'}.`);
+        if (withCap.length) paragraphs.push(`${withCap.length} lease${withCap.length !== 1 ? 's do' : ' does'} carry one — ask "which tenants have a CAM cap?" for those.`);
+        return {
+          heading: 'Leases with no CAM cap on file',
+          paragraphs,
+          bullets: [...withoutCap.map(w => `⚠ ${w}`), ...unknownCap.map(u => `? ${u}`)],
+          // The citations that exist belong to the CAPPED leases, which this
+          // answer is not about. Citing them here would attach evidence to the
+          // opposite claim.
+          citations: [],
+          actions: scoped.slice(0, 2).map(_actOpenProperty),
+          confidence: { pct: 92, basis: 'lease cap fields on file' },
+          resultSet: missingItems.length ? { kind: 'tenants', label: 'Tenants with no CAM cap', items: missingItems } : null,
+        };
+      }
+
+      const bullets = [...withCap, ...withoutCap.map(w => `⚠ ${w}`), ...unknownCap.map(u => `? ${u}`)];
       if (withCap.length) paragraphs.push(`${withCap.length} lease${withCap.length !== 1 ? 's carry' : ' carries'} a CAM cap.`);
       if (withoutCap.length) paragraphs.push(`Until a cap is confirmed, MainStreet can't verify the flagged tenants aren't being overcharged.`);
-      if (!withCap.length && !withoutCap.length) paragraphs.push('No CAM caps are on file for this scope — upload leases so cap terms can be extracted and enforced.');
-      // I — the basis names what these very citations hold. The cap PERCENTAGES
-      // below are genuinely extracted, so the confidence stands; what was not
-      // always true is that a lease CLAUSE was captured behind them.
-      const _cites4 = citations.slice(0, 4);
+      if (unknownCap.length) paragraphs.push(`${unknownCap.length} lease${unknownCap.length !== 1 ? 's' : ''} could not be read for a cap — that is not the same as having none.`);
+      if (!withCap.length && !withoutCap.length && !unknownCap.length) paragraphs.push('No CAM caps are on file for this scope — upload leases so cap terms can be extracted and enforced.');
       return {
         heading: 'CAM caps on file', paragraphs, bullets, citations: _cites4,
         actions: scoped.slice(0, 2).map(_actOpenProperty),
@@ -1221,17 +1288,66 @@ window.AIWorkspace = (() => {
   registerIntent({
     id: 'knowledge_search',
     match: (s) => /where does|which (lease|tenant)|find |search |show .*(clause|exclusion)|who pays|clause/.test(s),
-    handle: (q, ctx, { props, deps }) => {
+    handle: (q, ctx, { props, deps, record }) => {
       const scoped = _scopedProps(ctx, props);
       const terms = q.toLowerCase().replace(/[^a-z0-9\s]/g, ' ').split(/\s+/)
         .filter(w => w.length > 3 && !['does', 'which', 'where', 'show', 'find', 'search', 'every', 'lease', 'leases', 'tenant', 'tenants', 'discuss', 'clause', 'clauses', 'document', 'documents', 'pays'].includes(w));
       const hits = _scanEvidence(scoped, terms, deps);
       if (!hits.length) {
+        // ── L — "NOTHING ON FILE" WAS A CLAIM THIS SEARCH COULD NOT MAKE ─────
+        //
+        // A miss returned "I searched … and found nothing on file", which reads
+        // as a statement about the building. It is a statement about the text
+        // MainStreet happens to have captured. Phase G caught it saying exactly
+        // that about a property holding two open disputes — the same records the
+        // dispute intent lists on request.
+        //
+        // The four cases are now kept apart:
+        //   A  nothing captured at all — the honest empty case
+        //   B  fields are on file but their clauses were never captured, so the
+        //      words could not be there to find
+        //   C  the words are absent from captured text, but related records
+        //      (disputes) exist and can be asked for directly
+        //   D  the record could not be read, so nothing may be concluded
+        //
+        // Wording of the HIT path and the matcher are untouched.
+        let fieldsTotal = 0, fieldsUncited = 0, disputesN = 0, unreadable = 0;
+        for (const p of scoped) {
+          const rec = record ? record(p) : null;
+          if (!rec || _unavailable(rec, 'fields')) { unreadable++; continue; }
+          for (const byField of Object.values(rec.fields || {})) {
+            for (const prov of Object.values(byField || {})) {
+              if (!prov || prov.state === 'unknown') continue;
+              fieldsTotal++;
+              if (!prov.quote) fieldsUncited++;
+            }
+          }
+          disputesN += (rec.disputes || []).length;
+        }
+        const searched = terms.length ? ` for "${terms.join(' ')}"` : '';
+        const paragraphs = [];
+        if (unreadable) {
+          paragraphs.push(`I could not read the records for ${unreadable} propert${unreadable !== 1 ? 'ies' : 'y'} in this scope, so I can't tell you whether they mention it.`);
+        }
+        if (fieldsTotal || disputesN) {
+          paragraphs.push(`Nothing in the text I have captured matches${searched}.`);
+          if (fieldsUncited) {
+            paragraphs.push(`That is a limit of what was captured, not a finding about your lease: ${fieldsUncited} of the ${fieldsTotal} lease field${fieldsTotal !== 1 ? 's' : ''} on file ${fieldsUncited !== 1 ? 'have' : 'has'} a value but no clause text behind ${fieldsUncited !== 1 ? 'them' : 'it'}, so the wording simply isn't here to search.`);
+          } else if (fieldsTotal) {
+            paragraphs.push(`${fieldsTotal} lease field${fieldsTotal !== 1 ? 's are' : ' is'} on file with captured text, and none of ${fieldsTotal !== 1 ? 'them' : 'it'} contains those words.`);
+          }
+          if (disputesN) paragraphs.push(`There ${disputesN !== 1 ? 'are' : 'is'} ${disputesN} dispute record${disputesN !== 1 ? 's' : ''} on file here — ask about disputes and I'll show ${disputesN !== 1 ? 'them' : 'it'}.`);
+          paragraphs.push('If the source document does mention it, reprocess it with AI so the clause gets extracted.');
+        } else if (!unreadable) {
+          paragraphs.push(`No lease clauses, reserve terms or dispute records are captured for this scope at all, so there is nothing${searched} to search yet. Upload and process the documents and I'll be able to answer.`);
+        }
         return {
-          heading: 'No matches in your documents',
-          paragraphs: [`I searched the extracted lease terms, reserve documents, and dispute records${terms.length ? ` for "${terms.join(' ')}"` : ''} and found nothing on file. If the source document mentions it, reprocess it with AI so the clause gets extracted.`],
+          heading: unreadable && !fieldsTotal && !disputesN
+            ? 'I couldn\'t read those records'
+            : 'No match in the text I have captured',
+          paragraphs,
           citations: [], actions: scoped.slice(0, 1).map(_actOpenProperty),
-          confidence: { pct: 85, basis: 'extracted evidence on file' },
+          confidence: { pct: 85, basis: 'captured evidence text only' },
         };
       }
       return {
@@ -1439,6 +1555,40 @@ window.AIWorkspace = (() => {
     }),
   };
 
+  /**
+   * L — a handler fault, made observable without being made public.
+   *
+   * Two audiences, two channels. A developer needs the intent, the message and
+   * the stack, and gets them on the console and on `AIWorkspace.lastFailure`,
+   * which a test can read. A property manager needs to know the request failed
+   * and gets exactly that — no message, no stack, nothing that would invite them
+   * to debug the product instead of running their building.
+   */
+  var _lastFailure = null;
+  function _noteFailure(where, err) {
+    const f = { intent: where, message: (err && err.message) || String(err),
+                stack: (err && err.stack) || null, at: new Date().toISOString() };
+    _lastFailure = f;
+    try { console.error('[AIWorkspace] intent "' + where + '" threw:', err); } catch (_e) {}
+    return f;
+  }
+
+  function _failureAnswer(f) {
+    return {
+      heading: 'I couldn\'t complete that request',
+      paragraphs: [
+        'Something went wrong on my side while answering this one. That is a fault in MainStreet, not a statement about your property — it does not mean there is no record of what you asked about.',
+        'Try again, or open the property directly and I\'ll pick it up from there.',
+      ],
+      // No citations and NO CONFIDENCE. A failure that scored itself would be
+      // the Phase I defect wearing a different hat.
+      citations: [], actions: [_actCommandCenter(), _actPortfolio()],
+      // Not rendered — carried so a test can assert the failure was real and a
+      // developer can see which intent produced it.
+      _failure: { intent: f.intent, message: f.message },
+    };
+  }
+
   // ── public API ─────────────────────────────────────────────────────────────
 
   function answer({ question, context, wctx, props, acqReviews, deps } = {}) {
@@ -1451,20 +1601,46 @@ window.AIWorkspace = (() => {
 
     // Follow-up pre-pass: reuse the current deterministic result set when the
     // question refers back to it ("which of those…", "generate letters", "why?").
-    let result = null, intentId = 'fallback', isFollowup = false;
-    try { result = _tryFollowup(q, s, wctx || null, env); } catch (_) { result = null; }
+    // ── L — A CRASH IS NOT A "NOTHING FOUND" ────────────────────────────────
+    //
+    // Every handler ran inside `catch (_) { result = null; }`, so a thrown intent
+    // fell through to the same fallback an unrecognised question gets. The two
+    // are opposite claims: one says MainStreet has no answer for you, the other
+    // says MainStreet broke. The workspace said the first while meaning the
+    // second, and it said it in a voice built to sound trustworthy.
+    //
+    // It was not hypothetical. Phase K shipped knowledge_search referencing an
+    // undestructured `deps`, so EVERY search threw and every search answered
+    // "I couldn't map that question to your data" — a sentence that was false
+    // about the question and false about the data. Nothing surfaced it; the
+    // suite caught it only because it asserted on a specific answer.
+    //
+    // A failure now stops the loop and takes its own path. It is reported to the
+    // console for a developer and carried on the result for a test, and the
+    // reader is told plainly that the request failed rather than that their
+    // building holds no such record.
+    let result = null, intentId = 'fallback', isFollowup = false, failure = null;
+    try { result = _tryFollowup(q, s, wctx || null, env); }
+    catch (e) { failure = _noteFailure('followup', e); result = null; }
     if (result) { intentId = result.intent; isFollowup = true; }
 
-    if (!result) {
+    if (!result && !failure) {
       for (const intent of INTENTS) {
         let m = false;
-        try { m = intent.match(s, context, env); } catch (_) { m = false; }
+        // A matcher that throws is also broken, but it must not take the whole
+        // question down with it: the next intent still deserves its turn. It is
+        // recorded rather than routed.
+        try { m = intent.match(s, context, env); }
+        catch (e) { _noteFailure(intent.id + '.match', e); m = false; }
         if (!m) continue;
-        try { result = intent.handle(q, context, env); } catch (_) { result = null; }
+        try { result = intent.handle(q, context, env); }
+        catch (e) { failure = _noteFailure(intent.id, e); result = null; }
+        if (failure) { intentId = intent.id; break; }
         if (result) { intentId = intent.id; break; }
       }
     }
-    if (!result) result = FALLBACK.handle(q, context, env);
+    if (failure) { result = _failureAnswer(failure); intentId = 'intent_error'; }
+    else if (!result) result = FALLBACK.handle(q, context, env);
 
     // ── Reasoning trace — the deterministic trail of how this answer was made.
     const scopedProp = _ctxProperty(context, safeProps);
@@ -1603,5 +1779,7 @@ window.AIWorkspace = (() => {
       </div>`;
   }
 
-  return { answer, buildSuggestions, renderAnswerHtml, registerIntent };
+  return { answer, buildSuggestions, renderAnswerHtml, registerIntent,
+           // L — the developer/test channel for a handler fault. Never rendered.
+           lastFailure: function () { return _lastFailure; } };
 })();
