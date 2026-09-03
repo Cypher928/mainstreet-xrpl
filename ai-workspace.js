@@ -90,7 +90,94 @@ window.AIWorkspace = (() => {
       AcquisitionEngine: window.AcquisitionEngine,
       ReconExplainer:    window.ReconciliationExplainer,
       computeRecovered:  window.computeRecoveredRevenue || null,
+      // K — THE CANONICAL READ SOURCE. Every property-scoped fact an intent
+      // needs now comes from here rather than from the blob, so the workspace
+      // and the rest of the product cannot hold different opinions about the
+      // same property. Injectable, so the rewiring is testable without a browser.
+      PropertyRecord:    window.PropertyRecord || null,
+      FieldProvenance:   window.FieldProvenance || null,
       now:               new Date(),
+    };
+  }
+
+  /**
+   * K — one assembly per answer, per property.
+   *
+   * PropertyRecord.assemble() is pure, so calling it twice is safe but wasteful;
+   * more importantly, an intent that assembled its own copy could be handed a
+   * different one than the intent beside it. A single memo per answer means every
+   * section of an answer describes the same instant of the same property.
+   *
+   * Returns null when the record cannot be built at all — which is NOT the same
+   * as a record whose sections are empty, and callers must not conflate them.
+   */
+  function _makeRecordFn(deps) {
+    const memo = new Map();
+    return function record(p) {
+      if (!p || !deps || !deps.PropertyRecord) return null;
+      const key = p.id != null ? p.id : p;
+      if (memo.has(key)) return memo.get(key);
+      let rec = null;
+      try { rec = deps.PropertyRecord.assemble(p, deps.recordDeps || undefined); }
+      catch (_e) { rec = null; }
+      memo.set(key, rec);
+      return rec;
+    };
+  }
+
+  /**
+   * K — did the record fail to compose this section?
+   *
+   * `meta.unavailable` names sections that could not be built. An intent that
+   * treated that as an empty list would answer "no spaces", "no documents",
+   * "nothing needs attention" about a property it simply could not read — the
+   * exact false negative Phase G found knowledge_search making. Absence of
+   * knowledge is reported as such.
+   */
+  function _unavailable(rec, section) {
+    return !!(rec && rec.meta && Array.isArray(rec.meta.unavailable) &&
+              rec.meta.unavailable.indexOf(section) !== -1);
+  }
+
+  /**
+   * K — one shape for "the spaces of this property", record-first.
+   *
+   * Lease facts come from PropertyRecord.spaces[].lease, which TenantSpace owns,
+   * so a cap quoted in an answer is the cap the Space view shows. The raw tenant
+   * travels alongside because CITATIONS still need its fieldEvidence — the record
+   * deliberately does not expose evidence blobs, and Phase I's citation rules read
+   * them through the canonical resolver rather than the record.
+   *
+   * The legacy branch fires only when the record could not be built at all. It is
+   * the previous behaviour, not a preferred alternative, and an intent that needs
+   * to TELL the user something is missing should ask _unavailable() rather than
+   * silently accepting this fallback.
+   */
+  function _spacesOf(rec, p) {
+    const tenants = (p && p.tenants || []).filter(Boolean);
+    if (rec && Array.isArray(rec.spaces)) {
+      return rec.spaces.map(function (sp) {
+        const t = tenants.find(function (x) { return x && x.id === sp.tenantId; }) || null;
+        return { tenantId: sp.tenantId, name: sp.tenantName || (sp.space && sp.space.name) || null,
+                 lease: sp.lease || null, camResult: sp.camResult || null,
+                 space: sp.space || null, noIdentity: !!sp.noIdentity, tenant: t };
+      });
+    }
+    return tenants.map(function (t) {
+      return { tenantId: t.id, name: t.tenant_name || null,
+               lease: { type: t.lease_type || null, sqft: t.leased_sqft || t.sqft || null,
+                        start: t.start_date || null, end: t.end_date || null,
+                        cap: (t.cap != null && t.cap !== '') ? t.cap : null },
+               camResult: null, space: null, noIdentity: false, tenant: t };
+    });
+  }
+
+  function _cannotRead(what, p) {
+    return {
+      heading: `I can't read ${what} right now`,
+      paragraphs: [`MainStreet could not assemble the ${what} for ${p ? p.name : 'this property'}. ` +
+        `That is not the same as there being none on file — I don't know either way, so I won't say.`],
+      citations: [], actions: p ? [_actOpenProperty(p)] : [_actPortfolio()],
     };
   }
 
@@ -99,10 +186,37 @@ window.AIWorkspace = (() => {
 
   // ── evidence / citation helpers (reuse existing structures, no new index) ──
 
-  function _tenantEvidence(t, fieldKeys) {
+  /**
+   * G1 — THE CANONICAL SNAPSHOT, NOT THE LAST ONE IN THE ARRAY.
+   *
+   * This read `snaps[snaps.length - 1]`: newest by array position. The provenance
+   * model decides differently and for good reason — FieldProvenance.latestSnapshot
+   * skips snapshots marked `superseded` and orders by `reviewedAt`, because a
+   * field's provenance is a property of its CURRENT value, not of everything that
+   * ever happened to it.
+   *
+   * Where those two disagree the workspace quoted the retired clause. Demonstrated:
+   * a cap whose canonical snapshot reads "five percent (5%)" and whose superseded
+   * one, sitting last in the array, reads "nine percent (9%)" — the AI cited the
+   * nine. A citation naming a clause the lease no longer operates under is worse
+   * than no citation, because it is checkable and wrong.
+   *
+   * One resolver now, shared with every other surface. The array-position read is
+   * kept ONLY as the fallback for when FieldProvenance is not injected at all, so
+   * a caller without it degrades to the previous behaviour rather than to nothing.
+   */
+  function _canonicalSnapshot(t, key, deps) {
+    const FP = deps && deps.FieldProvenance;
+    if (FP && typeof FP.latestSnapshot === 'function') {
+      try { return FP.latestSnapshot(key, t) || null; } catch (_e) { /* fall through */ }
+    }
+    const snaps = t && t.fieldEvidence && t.fieldEvidence[key] && t.fieldEvidence[key].snapshots;
+    return (Array.isArray(snaps) && snaps.length) ? snaps[snaps.length - 1] : null;
+  }
+
+  function _tenantEvidence(t, fieldKeys, deps) {
     for (const k of fieldKeys) {
-      const snaps = t.fieldEvidence?.[k]?.snapshots;
-      const last = Array.isArray(snaps) && snaps.length ? snaps[snaps.length - 1] : null;
+      const last = _canonicalSnapshot(t, k, deps);
       if (last && (last.quote || last.page != null)) {
         return { quote: last.quote || null, page: last.page ?? null };
       }
@@ -137,8 +251,8 @@ window.AIWorkspace = (() => {
       : 'lease source identified; clause not captured';
   }
 
-  function _leaseCitation(p, t, fieldKeys) {
-    const ev = _tenantEvidence(t, fieldKeys || []);
+  function _leaseCitation(p, t, fieldKeys, deps) {
+    const ev = _tenantEvidence(t, fieldKeys || [], deps);
     return {
       source: `Lease — ${t.tenant_name}`,
       detail: ev && ev.page != null ? `Page ${ev.page}` : (p ? p.name : null),
@@ -233,18 +347,21 @@ window.AIWorkspace = (() => {
     draw_ready: 'Reserve Intelligence Engine', acquisitions: 'Acquisition Engine',
     settlements: 'Settlement Records', draft_document: 'Drafting Engine',
     explain_property: 'Portfolio Records', fallback: 'None (honest fallback)',
+    // K, Tier 2 — retrieval over the canonical record.
+    property_history: 'Property Record — Timeline', spaces_list: 'Property Record — Spaces',
+    attention: 'Property Record — Attention', field_provenance: 'Property Record — Field Provenance',
     followup_filter: 'Workspace Context', followup_draft: 'Drafting Engine',
     followup_evidence: 'Lease Review Engine', followup_open: 'Workspace Context',
     followup_why: 'Reasoning Trace',
   };
 
   const INTENT_SOURCES = {
-    cam_caps: ['extracted lease terms', 'lease fieldEvidence (quotes + pages)'],
-    audit_rights: ['extracted lease terms', 'lease fieldEvidence (quotes + pages)'],
-    expirations: ['lease end dates on file'],
-    tenant_charge: ['reconciliation snapshot', 'lease terms', 'ReconciliationExplainer'],
-    explain_recon: ['reconciliation snapshot'],
-    disputes: ['dispute records'],
+    cam_caps: ['PropertyRecord.spaces (lease terms)', 'lease fieldEvidence (canonical snapshot)'],
+    audit_rights: ['PropertyRecord.spaces', 'lease fieldEvidence (canonical snapshot)'],
+    expirations: ['PropertyRecord.spaces (lease end dates)'],
+    tenant_charge: ['PropertyRecord.cam.results', 'lease terms', 'ReconciliationExplainer'],
+    explain_recon: ['PropertyRecord.cam (pool, results, capped)'],
+    disputes: ['PropertyRecord.disputes'],
     compare_costs: ['invoice records'],
     recovered_most: ['computeRecoveredRevenue'],
     reserve_balances: ['lender-stated balances', 'draw records'],
@@ -253,9 +370,13 @@ window.AIWorkspace = (() => {
     acquisitions: ['acquisition analysis'],
     settlements: ['settlement records', 'reconciliation state'],
     forecast: ['reconciliation history (camRuns)'],
-    knowledge_search: ['extracted evidence quotes', 'excluded categories', 'reserve terms', 'dispute reasons'],
+    knowledge_search: ['lease fieldEvidence (canonical snapshot)', 'excluded categories', 'reserve terms', 'dispute reasons'],
     draft_document: ['drafting engine (evidence-grounded)'],
-    explain_property: ['property records', 'portfolio KPIs'],
+    explain_property: ['PropertyRecord.identity', 'PropertyRecord.attention', 'portfolio KPIs'],
+    property_history: ['PropertyRecord.timeline'],
+    spaces_list:      ['PropertyRecord.spaces'],
+    attention:        ['PropertyRecord.attention'],
+    field_provenance: ['PropertyRecord.fields (FieldProvenance)'],
     fallback: [],
   };
 
@@ -340,7 +461,7 @@ window.AIWorkspace = (() => {
       for (const it of set.items.slice(0, 5)) {
         const { p, t } = _findItem(it, props);
         if (!t) continue;
-        const ev = _tenantEvidence(t, ['cam_cap', 'cap', 'audit_rights', 'excluded_categories']);
+        const ev = _tenantEvidence(t, ['cam_cap', 'cap', 'audit_rights', 'excluded_categories'], deps);
         if (ev && ev.quote) {
           rows.push(`${it.tenantName}: "${ev.quote}"${ev.page != null ? ` (p. ${ev.page})` : ''}`);
           citations.push({ source: `Lease — ${it.tenantName}`, detail: ev.page != null ? `Page ${ev.page}` : (p ? p.name : null), page: ev.page ?? null, quote: ev.quote, fileUrl: (t.leaseUrl || t.lease_url || null) });
@@ -427,17 +548,21 @@ window.AIWorkspace = (() => {
   registerIntent({
     id: 'cam_caps',
     match: (s) => /cam cap|expense cap|caps\b/.test(s) && !/reserve|readiness/.test(s),
-    handle: (q, ctx, { props }) => {
+    handle: (q, ctx, { props, deps, record }) => {
       const scoped = _scopedProps(ctx, props);
       const withCap = [], withoutCap = [], citations = [], items = [];
       for (const p of scoped) {
-        for (const t of (p.tenants || []).filter(Boolean)) {
-          if (t.cap != null && t.cap !== '') {
-            withCap.push(`${t.tenant_name} (${p.name}) — ${t.cap}% annual cap${t.capBaseAmount ? ` on a ${_fmt$(t.capBaseAmount)} base` : ''}`);
-            citations.push(_leaseCitation(p, t, ['cam_cap', 'cap']));
-            items.push({ propertyId: p.id, propertyName: p.name, tenantId: t.id, tenantName: t.tenant_name });
-          } else if (/nnn|triple/i.test(String(t.lease_type || ''))) {
-            withoutCap.push(`${t.tenant_name} (${p.name}) — NNN lease, no cap on file`);
+        // K — the lease terms come from the record's spaces, so the cap this
+        // sentence reports and the cap the Space view shows are the same read.
+        const rec = record ? record(p) : null;
+        for (const sp of _spacesOf(rec, p)) {
+          const t = sp.tenant, name = sp.name, cap = sp.lease && sp.lease.cap;
+          if (cap != null && cap !== '') {
+            withCap.push(`${name} (${p.name}) — ${cap}% annual cap${t && t.capBaseAmount ? ` on a ${_fmt$(t.capBaseAmount)} base` : ''}`);
+            citations.push(_leaseCitation(p, t, ['cam_cap', 'cap'], deps));
+            items.push({ propertyId: p.id, propertyName: p.name, tenantId: sp.tenantId, tenantName: name });
+          } else if (/nnn|triple/i.test(String((sp.lease && sp.lease.type) || ''))) {
+            withoutCap.push(`${name} (${p.name}) — NNN lease, no cap on file`);
           }
         }
       }
@@ -463,15 +588,19 @@ window.AIWorkspace = (() => {
   registerIntent({
     id: 'audit_rights',
     match: (s) => /audit right/.test(s),
-    handle: (q, ctx, { props }) => {
+    handle: (q, ctx, { props, deps, record }) => {
       const scoped = _scopedProps(ctx, props);
       const rows = [], citations = [], items = [];
       for (const p of scoped) {
-        for (const t of (p.tenants || []).filter(Boolean)) {
-          if (t.audit_rights) {
-            rows.push(`${t.tenant_name} (${p.name}) — ${typeof t.audit_rights === 'string' ? t.audit_rights : 'audit rights on file'}`);
-            citations.push(_leaseCitation(p, t, ['audit_rights']));
-            items.push({ propertyId: p.id, propertyName: p.name, tenantId: t.id, tenantName: t.tenant_name });
+        // K — the roster comes from the record; audit_rights itself is not a
+        // lease field the record carries, so it is still read from the tenant.
+        const rec = record ? record(p) : null;
+        for (const sp of _spacesOf(rec, p)) {
+          const t = sp.tenant;
+          if (t && t.audit_rights) {
+            rows.push(`${sp.name} (${p.name}) — ${typeof t.audit_rights === 'string' ? t.audit_rights : 'audit rights on file'}`);
+            citations.push(_leaseCitation(p, t, ['audit_rights'], deps));
+            items.push({ propertyId: p.id, propertyName: p.name, tenantId: sp.tenantId, tenantName: sp.name });
           }
         }
       }
@@ -493,7 +622,7 @@ window.AIWorkspace = (() => {
   registerIntent({
     id: 'expirations',
     match: (s) => (/expir/.test(s) && /lease|tenant|next year|this year|soon/.test(s)) || /renewal|renewals|rollover/.test(s),
-    handle: (q, ctx, { props, deps }) => {
+    handle: (q, ctx, { props, deps, record }) => {
       const scoped = _scopedProps(ctx, props);
       const today = deps.now.toISOString().slice(0, 10);
       const yearMatch = q.match(/(20\d{2})/);
@@ -501,12 +630,16 @@ window.AIWorkspace = (() => {
       const targetYear = yearMatch ? Number(yearMatch[1]) : nextYear;
       const rows = [], items = [];
       for (const p of scoped) {
-        for (const t of (p.tenants || []).filter(x => x && x.end_date)) {
-          const inYear = targetYear ? t.end_date.startsWith(String(targetYear)) : true;
+        // K — end dates and areas come from the record's lease facts.
+        const rec = record ? record(p) : null;
+        for (const sp of _spacesOf(rec, p)) {
+          const end = sp.lease && sp.lease.end;
+          if (!end) continue;
+          const inYear = targetYear ? String(end).startsWith(String(targetYear)) : true;
           if (!inYear) continue;
-          const expired = t.end_date < today;
-          rows.push({ line: `${t.tenant_name} (${p.name}) — ${expired ? 'EXPIRED ' : ''}${t.end_date} · ${Number(t.leased_sqft || 0).toLocaleString('en-US')} sf`, date: t.end_date });
-          items.push({ propertyId: p.id, propertyName: p.name, tenantId: t.id, tenantName: t.tenant_name });
+          const expired = end < today;
+          rows.push({ line: `${sp.name} (${p.name}) — ${expired ? 'EXPIRED ' : ''}${end} · ${Number((sp.lease && sp.lease.sqft) || 0).toLocaleString('en-US')} sf`, date: end });
+          items.push({ propertyId: p.id, propertyName: p.name, tenantId: sp.tenantId, tenantName: sp.name });
         }
       }
       rows.sort((a, b) => a.date.localeCompare(b.date));
@@ -528,11 +661,22 @@ window.AIWorkspace = (() => {
     id: 'tenant_charge',
     match: (s, ctx, { props }) => (/why does|owes?\b|charge/.test(s) && !!_findTenantByQuestion(s, props, ctx)) ||
                                   (/explain (this )?(lease|tenant)/.test(s) && !!(ctx && ctx.tenantId)),
-    handle: (q, ctx, { props, deps }) => {
+    handle: (q, ctx, { props, deps, record }) => {
       const hit = _findTenantByQuestion(q, props, ctx);
       if (!hit) return null;
       const { p, t } = hit;
-      const result = (_recon(p)?.results || []).find(r => r.tenantName === t.tenant_name);
+      // K — JOIN ON IDENTITY, NOT ON A NAME.
+      // This matched `r.tenantName === t.tenant_name`, so two tenants sharing a
+      // name — a chain in two suites, or the very common "Vacant" — could be
+      // handed each other's charge. The record carries tenantId on every row, so
+      // the id is used where it exists and the name only as the last resort for
+      // rows written before ids were stored.
+      const rec = record ? record(p) : null;
+      const _rows = (rec && rec.cam && Array.isArray(rec.cam.results)) ? rec.cam.results : (_recon(p)?.results || []);
+      const result = (t.id != null && _rows.some(r => r && r.tenantId != null)
+                        ? _rows.find(r => r && r.tenantId === t.id)
+                        : null)
+                    || _rows.find(r => r && r.tenantName === t.tenant_name);
       const paragraphs = [];
       if (result) {
         let narrative = null;
@@ -550,7 +694,7 @@ window.AIWorkspace = (() => {
       }
       return {
         heading: `${t.tenant_name} — charge explanation`, paragraphs,
-        citations: [_leaseCitation(p, t, ['cam_cap', 'leased_sqft']), _camReportCitation(p)].filter(c => c.detail || c.quote),
+        citations: [_leaseCitation(p, t, ['cam_cap', 'leased_sqft'], deps), _camReportCitation(p)].filter(c => c.detail || c.quote),
         actions: [_actOpenProperty(p)],
         confidence: { pct: result ? 93 : 85, basis: result ? 'reconciliation results & lease terms' : 'workflow state' },
       };
@@ -561,17 +705,22 @@ window.AIWorkspace = (() => {
   registerIntent({
     id: 'explain_recon',
     match: (s) => /explain (this |the )?reconciliation|how was cam calculated|how is cam calculated|what are (the |my )?operating expenses/.test(s),
-    handle: (q, ctx, { props }) => {
+    handle: (q, ctx, { props, record }) => {
       const p = _ctxProperty(ctx, props);
       if (!p) return { heading: 'Which property?', paragraphs: ['Open a property (or ask about one by name) and I\'ll walk through its reconciliation.'], citations: [], actions: [_actPortfolio()], confidence: { pct: 95, basis: 'workflow state' } };
+      // K — the pool, the rows and the unallocated remainder all come from the
+      // record, so this narrative cannot disagree with the CAM tab about any of
+      // the three. Nothing here recomputes a share, a ceiling or a variance.
+      const rec = record ? record(p) : null;
       const recon = _recon(p);
-      const results = recon?.results || [];
+      const results = (rec && rec.cam && Array.isArray(rec.cam.results)) ? rec.cam.results : (recon?.results || []);
       if (!results.length) {
         return { heading: `${p.name} — no reconciliation yet`, paragraphs: ['No completed reconciliation is on file. Load leases and invoices, then run the CAM allocation.'], citations: [], actions: [_actOpenProperty(p)], confidence: { pct: 95, basis: 'workflow state' } };
       }
-      const total = _num(recon.total);
-      const billed = _reconBilled(p);
-      const capSaved = results.reduce((s, r) => s + (r.capApplied ? _num(r.capAdjustment) : 0), 0);
+      const total = (rec && rec.cam && rec.cam.pool != null) ? rec.cam.pool : _num(recon && recon.total);
+      const billed = results.reduce((s, r) => s + (_num(r.totalAllocated) || _num(r.allocated) || _num(r.allocatedAmount)), 0);
+      const capSaved = ((rec && rec.cam && rec.cam.capped) || results.filter(r => r.capApplied))
+        .reduce((s, r) => s + _num(r.capAdjustment), 0);
       const prSum = results.reduce((s, r) => s + _num(r.proRataPercent), 0);
       const paragraphs = [
         `${p.name}'s ${recon.camYear || ''} CAM pool was ${_fmt$(total)}. Each tenant's share is their square footage as a percentage of the building, applied to the pool, then adjusted for the caps and exclusions in their lease.`,
@@ -591,11 +740,15 @@ window.AIWorkspace = (() => {
   registerIntent({
     id: 'disputes',
     match: (s) => /dispute|underpay/.test(s),
-    handle: (q, ctx, { props }) => {
+    handle: (q, ctx, { props, record }) => {
       const scoped = _scopedProps(ctx, props);
       const open = [], resolved = [], citations = [];
       for (const p of scoped) {
-        for (const d of (p.disputes || []).filter(Boolean)) {
+        // K — dispute records come from the record. They are real stored records
+        // either way; reading them here keeps one path to them.
+        const rec = record ? record(p) : null;
+        const list = (rec && Array.isArray(rec.disputes)) ? rec.disputes : (p.disputes || []).filter(Boolean);
+        for (const d of list) {
           const line = `${d.tenantName || 'Tenant'} — ${d.vendor || d.category || 'charge'} ${_num(d.tenantShare ?? d.amount) ? '(' + _fmt$(d.tenantShare ?? d.amount) + ')' : ''} · ${d.status}`;
           (d.status === 'open' || d.status === 'docs_requested' ? open : resolved).push(line);
           citations.push({ source: 'Dispute Record', detail: `${d.tenantName || ''} · ${p.name}`, quote: d.reason ? String(d.reason).slice(0, 140) : null });
@@ -833,7 +986,7 @@ window.AIWorkspace = (() => {
   registerIntent({
     id: 'explain_property',
     match: (s, ctx) => /explain (this )?(property|portfolio)|overview|summar(y|ize)/.test(s) || (/^explain/.test(s.trim()) && !!ctx?.propertyId),
-    handle: (q, ctx, { props, deps }) => {
+    handle: (q, ctx, { props, deps, record }) => {
       const p = _ctxProperty(ctx, props);
       const S = deps.Selectors;
       if (!p) {
@@ -851,12 +1004,24 @@ window.AIWorkspace = (() => {
         };
       }
       const meta = S?.buildPropMeta ? S.buildPropMeta(p) : {};
-      const occupied = (p.tenants || []).reduce((s, t) => s + _num(t && t.leased_sqft), 0);
-      const occ = p.totalSqft ? Math.round((occupied / p.totalSqft) * 100) : null;
+      // K — OCCUPANCY IS THE RECORD'S, NOT A LOCAL SUM.
+      // This computed its own leased/total ratio, which is one of the three
+      // disagreeing definitions Phase J refused to make canonical. The record
+      // exposes PropertyReference.occupancyPct — the single named occupancy rule
+      // — and returns null when the property has no total area, which this now
+      // reports as "occupancy not on file" instead of inventing a percentage.
+      const rec = record ? record(p) : null;
+      const occ = (rec && rec.identity && rec.identity.occupancy != null)
+        ? rec.identity.occupancy : null;
+      const tenantCount = (rec && Array.isArray(rec.spaces)) ? rec.spaces.length : (p.tenants || []).length;
+      // Attention was invisible to the AI entirely (Phase G). It is a ranked list
+      // the product already computes; the summary now names its top item.
+      const attn = (rec && Array.isArray(rec.attention)) ? rec.attention : null;
       return {
         heading: `${p.name} at a glance`,
         paragraphs: [
-          `${(p.tenants || []).length} tenants${occ != null ? `, ${occ}% occupied` : ''}${meta.total ? `, ${_fmt$(meta.total)} in ${meta.camYear || 'current'} CAM expenses` : ''}${meta.openDisputes ? `, ${meta.openDisputes} open dispute${meta.openDisputes !== 1 ? 's' : ''}` : ''}. Risk level: ${meta.riskLevel || 'not assessed'}.`,
+          `${tenantCount} tenants${occ != null ? `, ${occ}% occupied` : ', occupancy not on file'}${meta.total ? `, ${_fmt$(meta.total)} in ${meta.camYear || 'current'} CAM expenses` : ''}${meta.openDisputes ? `, ${meta.openDisputes} open dispute${meta.openDisputes !== 1 ? 's' : ''}` : ''}. Risk level: ${meta.riskLevel || 'not assessed'}.`,
+          ...(attn && attn.length ? [`Top of the list right now: ${attn[0].title}.`] : []),
           'Ask me anything specific — a tenant\'s charge, a lease clause, reserve rules, or settlement status.',
         ],
         citations: [_camReportCitation(p)],
@@ -872,17 +1037,26 @@ window.AIWorkspace = (() => {
   registerIntent({
     id: 'balances',
     match: (s) => /outstanding|balance due|balances? due|unpaid|remaining balance|amount due|past due|owes? the most|who owes/.test(s),
-    handle: (q, ctx, { props }) => {
+    handle: (q, ctx, { props, record }) => {
       const scoped = _scopedProps(ctx, props);
       const rows = [], items = [];
       for (const p of scoped) {
+        // K — billed amounts come from the record's reconciliation rows, and the
+        // tenant id off the row itself where it has one rather than by matching
+        // the printed name back to a tenant.
+        const rec = record ? record(p) : null;
         const recon = _recon(p);
-        for (const r of (recon?.results || [])) {
-          const billed = _num(r.totalAllocated) || _num(r.allocated);
+        const camYear = (rec && rec.identity && rec.identity.camYear != null)
+          ? rec.identity.camYear : (recon && recon.camYear) || '';
+        const _rows = (rec && rec.cam && Array.isArray(rec.cam.results)) ? rec.cam.results : (recon?.results || []);
+        for (const r of _rows) {
+          const billed = _num(r.totalAllocated) || _num(r.allocated) || _num(r.allocatedAmount);
           if (!(billed > 0)) continue;
-          rows.push({ billed, line: `${r.tenantName} (${p.name}) — ${_fmt$(billed)} reconciled ${recon.camYear || ''} CAM share` });
+          rows.push({ billed, line: `${r.tenantName} (${p.name}) — ${_fmt$(billed)} reconciled ${camYear} CAM share` });
           const t = (p.tenants || []).find(x => x && x.tenant_name === r.tenantName);
-          items.push({ propertyId: p.id, propertyName: p.name, tenantId: t ? t.id : null, tenantName: r.tenantName });
+          items.push({ propertyId: p.id, propertyName: p.name,
+                       tenantId: r.tenantId != null ? r.tenantId : (t ? t.id : null),
+                       tenantName: r.tenantName });
         }
       }
       rows.sort((a, b) => b.billed - a.billed);
@@ -904,15 +1078,18 @@ window.AIWorkspace = (() => {
   registerIntent({
     id: 'rent_roll',
     match: (s) => /rent roll|tenant (list|roster)|list (of )?(my )?tenants|show (me )?(my |the )?tenants/.test(s),
-    handle: (q, ctx, { props, deps }) => {
+    handle: (q, ctx, { props, deps, record }) => {
       const scoped = _scopedProps(ctx, props);
       const today = deps.now.toISOString().slice(0, 10);
       const bullets = [], items = [];
       for (const p of scoped) {
-        for (const t of (p.tenants || []).filter(Boolean)) {
-          const expired = t.end_date && t.end_date < today;
-          bullets.push(`${t.tenant_name} (${p.name}) — ${Number(t.leased_sqft || 0).toLocaleString('en-US')} sf · ${t.lease_type || 'lease type n/a'} · ${t.cap != null && t.cap !== '' ? t.cap + '% cap' : 'no cap'} · ${expired ? '⚠ expired ' : 'expires '}${t.end_date || 'n/a'}`);
-          items.push({ propertyId: p.id, propertyName: p.name, tenantId: t.id, tenantName: t.tenant_name });
+        // K — the roll is the record's spaces, so it agrees with the Spaces view.
+        const rec = record ? record(p) : null;
+        for (const sp of _spacesOf(rec, p)) {
+          const L = sp.lease || {};
+          const expired = L.end && L.end < today;
+          bullets.push(`${sp.name} (${p.name}) — ${Number(L.sqft || 0).toLocaleString('en-US')} sf · ${L.type || 'lease type n/a'} · ${L.cap != null && L.cap !== '' ? L.cap + '% cap' : 'no cap'} · ${expired ? '⚠ expired ' : 'expires '}${L.end || 'n/a'}`);
+          items.push({ propertyId: p.id, propertyName: p.name, tenantId: sp.tenantId, tenantName: sp.name });
         }
       }
       return {
@@ -943,7 +1120,7 @@ window.AIWorkspace = (() => {
   registerIntent({
     id: 'navigation',
     match: (s) => /(where (is|are|do i|can i)|how do i (find|open|get to|see|start|run)|where do i)/.test(s) && NAV_MAP.some(n => n.re.test(s)),
-    handle: (q, ctx, { props }) => {
+    handle: (q, ctx, { props, deps }) => {
       const s = q.toLowerCase();
       const hit = NAV_MAP.find(n => n.re.test(s));
       if (!hit) return null;
@@ -964,16 +1141,19 @@ window.AIWorkspace = (() => {
   // Shared evidence scanner — the ONE search over extracted terms, evidence
   // quotes, reserve terms, and dispute records. Used by knowledge_search and
   // lease_terms; never duplicated.
-  function _scanEvidence(scoped, terms) {
+  function _scanEvidence(scoped, terms, deps) {
     const hits = [];
     if (!terms.length) return hits;
     for (const p of scoped) {
       for (const t of (p.tenants || []).filter(Boolean)) {
         const excl = String(t.excluded_categories || '').toLowerCase();
-        if (terms.some(w => excl.includes(w))) hits.push({ text: `${t.tenant_name} (${p.name}) — lease excludes: ${t.excluded_categories}`, cite: _leaseCitation(p, t, ['excluded_categories']) });
+        if (terms.some(w => excl.includes(w))) hits.push({ text: `${t.tenant_name} (${p.name}) — lease excludes: ${t.excluded_categories}`, cite: _leaseCitation(p, t, ['excluded_categories'], deps) });
         for (const k of Object.keys(t.fieldEvidence || {})) {
-          const snaps = t.fieldEvidence[k]?.snapshots || [];
-          const last = snaps[snaps.length - 1];
+          // G1 — the CANONICAL snapshot, not the last one in the array. Searching
+          // a superseded clause would surface text the lease no longer operates
+          // under, and hand it to the reader as a find. Wording and matching are
+          // untouched here; only WHICH snapshot is read has changed.
+          const last = _canonicalSnapshot(t, k, deps);
           if (last && last.quote && terms.some(w => String(last.quote).toLowerCase().includes(w))) {
             hits.push({ text: `${t.tenant_name} (${p.name}) — lease ${k.replace(/_/g, ' ')}: "${String(last.quote).slice(0, 120)}"`, cite: { source: `Lease — ${t.tenant_name}`, detail: last.page != null ? `Page ${last.page}` : null, page: last.page ?? null, quote: last.quote, fileUrl: t.leaseUrl || t.lease_url || null } });
           }
@@ -1041,11 +1221,11 @@ window.AIWorkspace = (() => {
   registerIntent({
     id: 'knowledge_search',
     match: (s) => /where does|which (lease|tenant)|find |search |show .*(clause|exclusion)|who pays|clause/.test(s),
-    handle: (q, ctx, { props }) => {
+    handle: (q, ctx, { props, deps }) => {
       const scoped = _scopedProps(ctx, props);
       const terms = q.toLowerCase().replace(/[^a-z0-9\s]/g, ' ').split(/\s+/)
         .filter(w => w.length > 3 && !['does', 'which', 'where', 'show', 'find', 'search', 'every', 'lease', 'leases', 'tenant', 'tenants', 'discuss', 'clause', 'clauses', 'document', 'documents', 'pays'].includes(w));
-      const hits = _scanEvidence(scoped, terms);
+      const hits = _scanEvidence(scoped, terms, deps);
       if (!hits.length) {
         return {
           heading: 'No matches in your documents',
@@ -1061,6 +1241,173 @@ window.AIWorkspace = (() => {
         citations: hits.slice(0, 4).map(h => h.cite).filter(Boolean),
         actions: scoped.slice(0, 2).map(_actOpenProperty),
         confidence: { pct: 88, basis: 'extracted evidence (quotes & citations)' },
+      };
+    },
+  });
+
+  // ── K, Tier 2 — four retrieval intents over the canonical record ───────────
+  //
+  // The Phase G battery asked what happened at a property, which spaces it has,
+  // what needs attention and where a lease term came from. All four fell to the
+  // honest fallback — not because the data was missing, but because nothing read
+  // it: Timeline, Spaces, attention and provenance were invisible to the AI while
+  // the product computed all four. These intents retrieve. They compute nothing,
+  // call no model, and add no business rule; each hands back one section of
+  // PropertyRecord in the shape this workspace already renders.
+  //
+  // Each also distinguishes "there are none" from "I could not read it" via
+  // meta.unavailable, because a read model that fails silently is worse than one
+  // that fails loudly.
+
+  // 20) Property history / timeline.
+  registerIntent({
+    id: 'property_history',
+    match: (s) => /what happened|property history|history of|recent activity|activity log|timeline/.test(s),
+    handle: (q, ctx, { props, record }) => {
+      const p = _ctxProperty(ctx, props);
+      if (!p) return { heading: 'Which property?', paragraphs: ['Open a property and I\'ll show its recorded history.'],
+                       citations: [], actions: [_actPortfolio()], confidence: { pct: 95, basis: 'workflow state' } };
+      const rec = record ? record(p) : null;
+      if (!rec) return _cannotRead('history', p);
+      if (_unavailable(rec, 'timeline.scoping')) return _cannotRead('history', p);
+
+      // A named tenant narrows to that space's events; otherwise property-level.
+      const hit = _findTenantByQuestion(q, [p], ctx);
+      const tenantScoped = !!(hit && hit.t && hit.t.id != null);
+      const events = tenantScoped
+        ? ((rec.timeline.byTenant || {})[hit.t.id] || [])
+        : (rec.timeline.property || []);
+      const who = tenantScoped ? hit.t.tenant_name : p.name;
+
+      if (!events.length) {
+        return {
+          heading: `${who} — nothing recorded yet`,
+          paragraphs: [tenantScoped
+            ? `No events are recorded against ${who}. Property-level activity is kept separately — ask about ${p.name} to see it.`
+            : `No property-level events are recorded for ${p.name} yet.`],
+          citations: [], actions: [_actOpenProperty(p)],
+          confidence: { pct: 95, basis: 'property timeline' },
+        };
+      }
+      const sorted = events.slice().sort((a, b) =>
+        String(b.timestamp || '').localeCompare(String(a.timestamp || '')));
+      return {
+        heading: `${who} — recorded history`,
+        paragraphs: [`${events.length} event${events.length !== 1 ? 's' : ''} on file` +
+          (tenantScoped ? ', scoped to this tenant.' : ', at property level.')],
+        bullets: sorted.slice(0, 8).map(e =>
+          `${String(e.timestamp || '').slice(0, 10)} — ${e.title || e.type}${e.description ? ' · ' + e.description : ''}`),
+        citations: [], actions: [_actOpenProperty(p)],
+        confidence: { pct: 95, basis: 'property timeline' },
+      };
+    },
+  });
+
+  // 21) Spaces / tenants.
+  registerIntent({
+    id: 'spaces_list',
+    match: (s) => /what spaces|which spaces|space list|who occupies|occupied space|vacant space|spaces (does|are)/.test(s),
+    handle: (q, ctx, { props, record }) => {
+      const p = _ctxProperty(ctx, props);
+      if (!p) return { heading: 'Which property?', paragraphs: ['Open a property and I\'ll list its spaces.'],
+                       citations: [], actions: [_actPortfolio()], confidence: { pct: 95, basis: 'workflow state' } };
+      const rec = record ? record(p) : null;
+      if (!rec || rec.spaces === null || _unavailable(rec, 'spaces')) return _cannotRead('spaces', p);
+
+      const rows = rec.spaces.map(sp => {
+        const L = sp.lease || {};
+        const name = sp.tenantName || (sp.space && sp.space.name) || 'Unnamed space';
+        return `${name} — ${L.sqft ? Number(L.sqft).toLocaleString('en-US') + ' sf' : 'area not on file'}` +
+               `${L.type ? ' · ' + L.type : ''}${L.end ? ' · through ' + L.end : ''}`;
+      });
+      // Vacancy is NOT invented here. MainStreet records a space through its
+      // tenant, so it has no representation for an empty one; saying "none are
+      // vacant" would be a claim the data cannot support.
+      const asksVacancy = /vacant/.test(q.toLowerCase());
+      const paragraphs = [`${rec.spaces.length} space${rec.spaces.length !== 1 ? 's' : ''} on file at ${p.name}, each identified by its tenant.`];
+      if (asksVacancy) paragraphs.push('MainStreet records a space through the tenant occupying it, so it holds no representation of a vacant one. I can only list what is occupied — an empty suite would simply be absent from this list rather than marked vacant.');
+      return {
+        heading: `${p.name} — spaces`, paragraphs, bullets: rows,
+        citations: [], actions: [_actOpenProperty(p)],
+        resultSet: rec.spaces.length
+          ? { kind: 'tenants', label: 'Spaces', items: rec.spaces.map(sp => ({
+              propertyId: p.id, propertyName: p.name, tenantId: sp.tenantId, tenantName: sp.tenantName })) }
+          : null,
+        confidence: { pct: 95, basis: 'space records' },
+      };
+    },
+  });
+
+  // 22) What needs attention.
+  registerIntent({
+    id: 'attention',
+    match: (s) => /needs? (my |your )?attention|need attention|what should i (look at|do)|attention items?|what.s wrong|priorit(y|ies) (here|for this)/.test(s),
+    handle: (q, ctx, { props, record }) => {
+      const p = _ctxProperty(ctx, props);
+      if (!p) return { heading: 'Which property?', paragraphs: ['Open a property and I\'ll show what needs attention there. For the whole portfolio, the Command Center ranks it.'],
+                       citations: [], actions: [_actCommandCenter(), _actPortfolio()], confidence: { pct: 95, basis: 'workflow state' } };
+      const rec = record ? record(p) : null;
+      if (!rec || rec.attention === null || _unavailable(rec, 'attention')) return _cannotRead('attention list', p);
+      if (!rec.attention.length) {
+        return { heading: `${p.name} — nothing needs action`, paragraphs: ['No attention items are outstanding on this property.'],
+                 citations: [], actions: [_actOpenProperty(p)], confidence: { pct: 95, basis: 'property readiness' } };
+      }
+      return {
+        heading: `${p.name} — ${rec.attention.length} item${rec.attention.length !== 1 ? 's' : ''} need${rec.attention.length === 1 ? 's' : ''} attention`,
+        paragraphs: ['Ranked by severity, from the same list the property workspace shows.'],
+        bullets: rec.attention.map(a => `${a.title}${a.why ? ' — ' + a.why : ''}`),
+        citations: [], actions: [_actOpenProperty(p)],
+        confidence: { pct: 95, basis: 'property readiness' },
+      };
+    },
+  });
+
+  // 23) Where a lease term came from.
+  registerIntent({
+    id: 'field_provenance',
+    match: (s) => /where did .*(come from|it come)|source of (this |the )?(field|term|value|number)|how do you know|provenance|lease.?confirmed|ai.?extracted|is that verified|who confirmed/.test(s),
+    handle: (q, ctx, { props, record }) => {
+      const p = _ctxProperty(ctx, props);
+      if (!p) return { heading: 'Which property?', paragraphs: ['Open a property and name a tenant, and I\'ll show where each lease term came from.'],
+                       citations: [], actions: [_actPortfolio()], confidence: { pct: 95, basis: 'workflow state' } };
+      const rec = record ? record(p) : null;
+      if (!rec || _unavailable(rec, 'fields')) return _cannotRead('field provenance', p);
+
+      const hit = _findTenantByQuestion(q, [p], ctx);
+      const t = hit && hit.t;
+      const ids = t && t.id != null ? [t.id] : Object.keys(rec.fields || {});
+      if (!ids.length) {
+        return { heading: `${p.name} — no field provenance on file`,
+                 paragraphs: ['No lease fields have provenance recorded for this property yet.'],
+                 citations: [], actions: [_actOpenProperty(p)], confidence: { pct: 90, basis: 'field provenance' } };
+      }
+      const bullets = [], citations = [];
+      for (const id of ids.slice(0, 3)) {
+        const byField = (rec.fields || {})[id] || {};
+        const name = (rec.spaces || []).find(sp => sp.tenantId === id);
+        const who = (name && name.tenantName) || id;
+        for (const [key, prov] of Object.entries(byField)) {
+          if (!prov || prov.state === 'unknown') continue;
+          bullets.push(`${who} · ${key.replace(/_/g, ' ')} — ${prov.label}`);
+          // Phase I governs the chip: a clause travels only when one was captured.
+          // A provenance answer never manufactures one to look better cited.
+          citations.push({ source: `Lease — ${who}`, detail: prov.page != null ? `Page ${prov.page}` : p.name,
+                           page: prov.page != null ? prov.page : null, quote: prov.quote || null,
+                           fileUrl: prov.sourceFile || null });
+        }
+      }
+      if (!bullets.length) {
+        return { heading: `${t ? t.tenant_name : p.name} — nothing recorded`,
+                 paragraphs: ['Every canonical lease field for this scope is still unknown — no value, so no source to report.'],
+                 citations: [], actions: [_actOpenProperty(p)], confidence: { pct: 90, basis: 'field provenance' } };
+      }
+      const _c = citations.slice(0, 4);
+      return {
+        heading: `${t ? t.tenant_name : p.name} — where each term came from`,
+        paragraphs: ['Each line states how MainStreet knows that value: a lease clause, a person, or an unverified extraction.'],
+        bullets: bullets.slice(0, 12), citations: _c,
+        actions: [_actOpenProperty(p)],
+        confidence: { pct: 92, basis: _clauseBasis(_c, 'lease fieldEvidence (verbatim quotes)') },
       };
     },
   });
@@ -1098,7 +1445,8 @@ window.AIWorkspace = (() => {
     const d = { ..._defaultDeps(), ...(deps || {}) };
     const q = String(question || '').trim();
     const safeProps = Array.isArray(props) ? props.filter(Boolean) : [];
-    const env = { props: safeProps, acqReviews: acqReviews || [], deps: d };
+    const env = { props: safeProps, acqReviews: acqReviews || [], deps: d,
+                  record: _makeRecordFn(d) };
     const s = q.toLowerCase();
 
     // Follow-up pre-pass: reuse the current deterministic result set when the
