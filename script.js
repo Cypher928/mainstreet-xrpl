@@ -5712,6 +5712,45 @@ function handleFieldBlur(index, field, value, el) {
   }
 }
 
+/**
+ * A field edit that leaves a provenance record behind.
+ *
+ * handleFieldBlur writes the value and nothing else — no snapshot, no audit
+ * row, no reviewer, no timestamp. For most fields an extraction already
+ * deposited evidence and the edit lands on top of it. The cap base has no
+ * extraction: /api/claude's contract has no key for it, so the form IS its only
+ * origin, and a value typed through handleFieldBlur was the entire record of
+ * itself. That is why the eleven cap bases in pilot cannot say who entered
+ * them, and why the $26,000 on Maple Coffee Co is unattributable.
+ *
+ * This routes the edit through saveFieldOverride — the path the Lease Review
+ * Workspace has always used — so a snapshot (manuallyEdited: true, with the
+ * signed-in reviewer and a timestamp) and a field-level audit row are written
+ * exactly as they are for any other corrected field. No new mechanism.
+ *
+ * ONLY ON A REAL CHANGE. A blur is not an assertion: tabbing through a field
+ * without touching it must not manufacture "a person entered this". Unchanged
+ * values fall through to the plain write.
+ */
+function handleProvenancedFieldBlur(index, field, value, el) {
+  const t    = tenantData[index];
+  const next = (value === '' || value === undefined) ? null : value;
+  const prev = t ? (t[field] ?? null) : null;
+  const changed = String(prev ?? '') !== String(next ?? '');
+
+  if (t && t.id && changed) {
+    isEditingField = false;
+    saveFieldOverride(t.id, field, next);   // value + override + snapshot + audit
+    if (lastResults.length > 0) { _resultsStale = true; _updateStaleResultsBanner(); }
+    if (el) {
+      el.classList.add('field-save-flash');
+      setTimeout(() => el.classList.remove('field-save-flash'), 900);
+    }
+    return;
+  }
+  handleFieldBlur(index, field, value, el);
+}
+
 function _confidenceBadgeHtml(level) {
   if (!level || level === 'pending') return '';
   const cfg = {
@@ -6014,8 +6053,16 @@ window.sqftIsApproximate   = sqftIsApproximate;
 function getFieldConfidence(fieldName, t) {
   if (!t) return { status: 'missing', source: 'missing', note: 'No lease data' };
 
+  // The cap base is stored under a different name than its canonical key, so
+  // the value travels through the resolver's opts.value override — otherwise
+  // this would read t['cap_base_amount'], find nothing, and report `missing`
+  // for a field that has a value. Every other key is its own storage property,
+  // so _fieldStore is the identity for them and nothing else changes.
+  const _stored = (typeof _fieldStore === 'function') ? _fieldStore(fieldName) : fieldName;
   const _prov = window.FieldProvenance
-    ? FieldProvenance.fieldProvenance(fieldName, t)
+    ? (_stored !== fieldName
+        ? FieldProvenance.fieldProvenance(fieldName, t, { value: t[_stored] })
+        : FieldProvenance.fieldProvenance(fieldName, t))
     : null;
 
   // A HUMAN ACT ON THIS FIELD IS THE ANSWER, and it is not the lease's. Both
@@ -6030,7 +6077,7 @@ function getFieldConfidence(fieldName, t) {
     return { status: 'manual', source: 'manual', note: 'Manually entered' };
   }
 
-  const val = (fieldName === 'proRata') ? null : t[fieldName];
+  const val = (fieldName === 'proRata') ? null : t[_stored];
   const isEmpty = val === null || val === undefined || String(val).trim() === '';
 
   // THE ONE GATE. Below this line the switch may still choose `missing` or
@@ -6425,12 +6472,32 @@ function _extractionVersionTag(t) {
 // Builds one immutable evidence snapshot object.
 // Snippet is intentionally NOT stored — it is re-read from _leaseDebug at
 // display time so the Supabase row stays small.
+// ── Canonical field key ↔ the tenant property that stores it ────────────────
+//
+// Every canonical key in LeaseIntelligence.CANONICAL_FIELDS IS the property it
+// is stored under — `cap`, `leased_sqft`, `start_date` — with one exception.
+// The cap base is stored as camelCase `capBaseAmount` and its canonical key is
+// `cap_base_amount`, because the canonical list is snake_case throughout.
+//
+// Anything that READS a value off the tenant by canonical key needs the
+// storage name; anything that WRITES evidence or audit needs the canonical
+// name. Both directions live here so the two never drift apart, and renaming
+// the stored property is avoided — that would be a data migration to fix a
+// naming mismatch. PropertyRecord._fields resolves the same mismatch through
+// FieldProvenance's opts.value override.
+const _FIELD_STORAGE  = { cap_base_amount: 'capBaseAmount' };
+const _FIELD_CANONICAL = { capBaseAmount: 'cap_base_amount' };
+/** Canonical key → the tenant property holding its value. */
+function _fieldStore(k) { return _FIELD_STORAGE[k] || k; }
+/** Tenant property → the canonical key evidence and audit are written under. */
+function _fieldCanonical(k) { return _FIELD_CANONICAL[k] || k; }
+
 function _mkEvidenceSnapshot(fieldKey, t, opts) {
   const conf = getFieldConfidence(fieldKey, t);
   const user = window.AuthService?.getCurrentUser?.() || null;
   return {
     fieldKey,
-    value:                  opts.value !== undefined ? opts.value : (getEffectiveLeaseField(fieldKey, t) ?? t[fieldKey] ?? null),
+    value:                  opts.value !== undefined ? opts.value : (getEffectiveLeaseField(_fieldStore(fieldKey), t) ?? t[_fieldStore(fieldKey)] ?? null),
     confidence:             { status: conf.status, note: conf.note },
     sourceFile:             t.fileName  || null,
     page:                   opts.page   ?? null,
@@ -7772,6 +7839,16 @@ function saveFieldOverride(tenantId, fieldName, newValue) {
   const idx = tenantData.findIndex(t => t && t.id === tenantId);
   if (idx === -1) return;
   const t = tenantData[idx];
+  // PRE-EXISTING DEFECT, found by S2 and fixed because S2 depends on this path.
+  // The property-timeline append near the end of this function reads
+  // `user?.email`, and `user` was declared NOWHERE — not here, not as a global.
+  // Optional chaining does not save an undeclared identifier: it throws
+  // ReferenceError. So every manual field correction wrote its value, its
+  // evidence snapshot, its audit row — and then threw, before the timeline
+  // event, the list re-render, the inline-editor refresh and the success toast.
+  // The writes landed and the screen never acknowledged them. Eight other
+  // functions in this file resolve the reviewer exactly this way.
+  const user = window.AuthService?.getCurrentUser?.() || null;
   const prev = t.reviewOverrides || {};
   // Preserve the very first extracted value as the permanent original
   const original = prev[fieldName]?.original ?? (t[fieldName] ?? null);
@@ -7791,7 +7868,17 @@ function saveFieldOverride(tenantId, fieldName, newValue) {
   });
   // Append immutable evidence snapshot — survives refresh, re-login, re-extraction.
   // Called after tenantData[idx] is updated so _mkEvidenceSnapshot reads the new value.
-  persistFieldEvidence(tenantId, fieldName, {
+  //
+  // Evidence and audit are keyed CANONICALLY. For every field but the cap base
+  // that is the same string; for the cap base it is `cap_base_amount`, which is
+  // what FieldProvenance.latestSnapshot() looks up and what tenant_field_evidence
+  // stores. The value and the reviewOverride above stay on `capBaseAmount`, the
+  // property the engine and getEffectiveLeaseField read. The snapshot's
+  // manuallyEdited:true is what resolves the field to manually_entered — the
+  // override is not required for that, and keeping it under the storage name
+  // leaves every existing reader working.
+  const _evKey = _fieldCanonical(fieldName);
+  persistFieldEvidence(tenantId, _evKey, {
     value:                  newValue,
     approved:               true,
     manuallyEdited:         true,
@@ -7802,7 +7889,7 @@ function saveFieldOverride(tenantId, fieldName, newValue) {
   appendReviewAuditEntry({
     tenantId,
     tenantName:        tenantData[idx]?.tenant_name || tenantId,
-    fieldKey:          fieldName,
+    fieldKey:          _evKey,
     action:            'field_override',
     label:             `Field corrected — ${fieldName}`,
     oldValue:          original,
@@ -7856,14 +7943,19 @@ function quickConfirmTenantFields(tenantId) {
   const idx = tenantData.findIndex(t => t && t.id === tenantId);
   if (idx === -1) return;
   const t = tenantData[idx];
+  // cap_base_amount joins the list so a reviewer can reach manually_confirmed
+  // on the dollar half of a cap, not just the percentage. It is named
+  // canonically here — the value lookup below resolves it to `capBaseAmount`
+  // via _fieldStore, which is the identity for every other key.
   const CORE_FIELDS = [
     'tenant_name', 'leased_sqft', 'lease_type', 'start_date', 'end_date', 'cap',
-    'admin_fee_pct', 'admin_fee_basis', 'gross_up_pct', 'expense_stop', 'audit_rights',
-    'pro_rata_method', 'renewal_options',
+    'cap_base_amount', 'admin_fee_pct', 'admin_fee_basis', 'gross_up_pct',
+    'expense_stop', 'audit_rights', 'pro_rata_method', 'renewal_options',
   ];
   const user = window.AuthService?.getCurrentUser?.() || null;
   for (const fk of CORE_FIELDS) {
-    const val = t[fk] ?? t.reviewOverrides?.[fk]?.override ?? null;
+    const sk  = _fieldStore(fk);
+    const val = t[sk] ?? t.reviewOverrides?.[sk]?.override ?? null;
     if (val == null || val === '') continue;
     persistFieldEvidence(tenantId, fk, { approved: true, manuallyEdited: false });
   }
@@ -8529,7 +8621,7 @@ function renderBulkResults() {
               <input type="number" step="0.01" min="0" value="${d.capBaseAmount ?? ''}"
                 onfocus="isEditingField=true"
                 onkeydown="_onFieldKeydown(event)"
-                onblur="handleFieldBlur(${i},'capBaseAmount',this.value,this)"/>
+                onblur="handleProvenancedFieldBlur(${i},'capBaseAmount',this.value,this)"/>
             </div>
           </div>
           <div style="display:flex;justify-content:space-between;align-items:center;padding-top:10px;">
