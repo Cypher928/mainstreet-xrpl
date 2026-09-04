@@ -20,7 +20,15 @@
   <meta http-equiv="Pragma" content="no-cache" />
   <title>MainStreet — AI-Powered CAM Reconciliation</title>
   <meta name="description" content="MainStreet recovers the CAM revenue hiding in your leases. AI reads every lease, finds what manual reviews miss, cites every charge, and settles it — verified — on the XRP Ledger. Built for commercial landlords and property managers." />
-  <link rel="canonical" href="https://mainstreetcam.com/" />
+  <!-- This is the authenticated application, not a marketing page. It was being
+       offered to search engines as though it were one, and the public nav links
+       straight into it. -->
+  <meta name="robots" content="noindex, nofollow" />
+  <!-- The canonical that stood here pointed at https://mainstreetcam.com/ .
+       It is removed rather than repointed: a page carrying BOTH noindex and a
+       rel=canonical to another URL can have the noindex attributed to the
+       CANONICAL TARGET, which here is the marketing page we are trying to get
+       indexed. noindex alone is unambiguous; the pair is not. -->
   <!-- Favicon / app icons (MainStreet brand) -->
   <link rel="icon" type="image/svg+xml" href="/assets/brand/favicon.svg" />
   <link rel="icon" type="image/png" sizes="32x32" href="/favicon.png" />

@@ -1,8 +1,39 @@
 <?xml version="1.0" encoding="UTF-8"?>
+<!--
+  Every <loc> is a URL that answers 200 with no redirect hop.
+
+  The previous sitemap listed https://mainstreetcam.com/ , which 308s to the www
+  host and then 307s to /home. Google treats a redirecting <loc> as a soft error
+  and will not index the target from it, so the one URL this file contained was
+  the one URL it could not deliver.
+
+  Host: www — the apex 308s to it.
+  Path: /home — vercel.json redirects "/" to "/home", and redirects are applied
+        before the filesystem (asserted in test-routing.js).
+
+  lastmod is the date each file's CONTENT last changed, taken from git, not the
+  date this metadata was edited:
+    home.html              11b38c6  2026-08-02
+    privacy-policy.html    09cdac9  2026-07-01
+    terms-of-service.html  09cdac9  2026-07-01
+-->
 <urlset xmlns="http://www.sitemaps.org/schemas/sitemap/0.9">
   <url>
-    <loc>https://mainstreetcam.com/</loc>
+    <loc>https://www.mainstreetcam.com/home</loc>
+    <lastmod>2026-08-02</lastmod>
     <changefreq>weekly</changefreq>
     <priority>1.0</priority>
+  </url>
+  <url>
+    <loc>https://www.mainstreetcam.com/privacy-policy</loc>
+    <lastmod>2026-07-01</lastmod>
+    <changefreq>yearly</changefreq>
+    <priority>0.3</priority>
+  </url>
+  <url>
+    <loc>https://www.mainstreetcam.com/terms-of-service</loc>
+    <lastmod>2026-07-01</lastmod>
+    <changefreq>yearly</changefreq>
+    <priority>0.3</priority>
   </url>
 </urlset>

@@ -6,11 +6,18 @@
 <title>MainStreet — The AI Operating System for Commercial Real Estate</title>
 <meta name="description" content="MainStreet is the AI operating system for commercial real estate — the verified memory for every property. It reads every lease, reconciles every CAM charge, remembers everything that happens to a space, and proves it with clause-level citations.">
 <meta name="theme-color" content="#050709">
+<!-- The one URL that serves this page without a redirect. The apex 308s to www,
+     and vercel.json redirects "/" to "/home" before the filesystem is consulted
+     (see test-routing.js), so www + /home is the only hop-free address. Every
+     other canonical signal — sitemap.xml, robots.txt — must name this exact URL. -->
+<link rel="canonical" href="https://www.mainstreetcam.com/home">
 <link rel="icon" href="assets/brand/favicon.svg" type="image/svg+xml">
 <link rel="apple-touch-icon" href="assets/brand/apple-touch-icon.png">
 <meta property="og:title" content="MainStreet — The verified memory for every commercial property">
 <meta property="og:description" content="The AI operating system for commercial real estate. Reads every lease, reconciles every charge, remembers every space — and proves it.">
-<meta property="og:image" content="assets/brand/og-image.png">
+<!-- Absolute, not relative. OpenGraph resolves image URLs against nothing —
+     a relative path here is why the preview card rendered blank everywhere. -->
+<meta property="og:image" content="https://www.mainstreetcam.com/assets/brand/og-image.png">
 <meta property="og:type" content="website">
 <link rel="preconnect" href="https://fonts.googleapis.com">
 <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
