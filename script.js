@@ -7959,11 +7959,33 @@ function quickConfirmTenantFields(tenantId) {
     if (val == null || val === '') continue;
     persistFieldEvidence(tenantId, fk, { approved: true, manuallyEdited: false });
   }
+  // `reviewStateBefore` is deliberately read from the ORIGINAL `t` — "before"
+  // means before this whole operation, not before the last line of it.
   const reviewStateBefore = deriveTenantReviewState(t).status;
+  // ...BUT THE SPREAD BELOW MUST READ THE ARRAY, NOT `t`.
+  //
+  // persistFieldEvidence REPLACES tenantData[idx] with a new object each time it
+  // appends a snapshot, so after the loop above the slot holds a tenant carrying
+  // up to fourteen fresh confirmations. `t` is the object captured before the
+  // loop and knows about none of them. Spreading it here overwrote the slot and
+  // discarded every snapshot the loop had just written — the confirmations were
+  // gone the instant they were made.
+  //
+  // What that cost: in-session, the fields resolved back to their floor state
+  // (ai_extracted, or manually_entered for the cap base) immediately after a
+  // reviewer clicked Confirm, so the screen contradicted the act. It survived at
+  // all only because persistFieldEvidence dual-writes each snapshot to
+  // tenant_field_evidence BEFORE this line runs, and that table is authoritative
+  // on the next load — so a reload silently repaired it. When the dual-write
+  // fails, and it is deliberately fail-silent, nothing repaired it.
+  //
+  // Reading the slot is also what the other two call sites of this shape already
+  // do (`...tenantData[i]` at the exclusion acknowledgements).
+  const _confirmed = tenantData[idx];
   tenantData[idx] = {
-    ...t,
+    ..._confirmed,
     review: {
-      ...t.review,
+      ..._confirmed.review,
       reviewerConfirmed: true,
       reviewedAt:  new Date().toISOString(),
       reviewedBy:  user?.email || 'Reviewer',
