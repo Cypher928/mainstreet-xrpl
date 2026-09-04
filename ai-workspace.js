@@ -557,16 +557,38 @@ window.AIWorkspace = (() => {
    */
   const _ASKS_NO_CAP = /\b(missing|without|no cap|don'?t have|do not have|lack|lacking|uncapped|not have)\b/;
 
+  /**
+   * L.1 — the same question in the positive.
+   *
+   * L widened the matcher for the NEGATIVE singular ("missing a cap") and left
+   * the positive singular where it was, so "which tenants have a cap?" still
+   * matched nothing here and was answered by knowledge_search — which reports on
+   * captured text, not on cap coverage. "Who has a cap?" reached the fallback and
+   * was told MainStreet couldn't map the question at all.
+   *
+   * Deliberately not `/\bcaps?\b/` on its own: "cap" is a word this product uses
+   * for two unrelated things, and a bare match would pull "what is the cap rate?"
+   * — an investment metric — into a CAM answer. So the phrasing has to look like
+   * someone asking WHICH leases carry one: an interrogative or a listing verb,
+   * plus a possession word. `cap rate` is excluded outright below, because it is
+   * the one collocation that satisfies that shape while meaning something else.
+   */
+  const _ASKS_HAS_CAP = /\b(which|who|whose|any|list|show)\b.*\b(ha(?:ve|s)|carr(?:y|ies)|with)\b/;
+
   registerIntent({
     id: 'cam_caps',
     // L — the matcher required "cam cap", "expense cap" or the PLURAL "caps", so
     // "which tenants are missing a cap?" matched none of them and fell through to
-    // knowledge_search, which answered about captured text instead. Widened by
-    // exactly one case: a singular "cap" alongside a negative qualifier. Every
-    // other phrasing routes as it did before.
+    // knowledge_search, which answered about captured text instead.
+    //
+    // L.1 — and the positive singular had the same gap: "which tenants have a
+    // cap?" also matched nothing. A singular "cap" now routes here when the
+    // question asks WHICH leases have one or WHICH lack one, and `cap rate` is
+    // excluded so the investment metric never lands in a CAM answer. Plural and
+    // "cam cap" phrasings, and every unrelated question, route as before.
     match: (s) => (/cam cap|expense cap|caps\b/.test(s)
-                   || (/\bcaps?\b/.test(s) && _ASKS_NO_CAP.test(s)))
-                  && !/reserve|readiness/.test(s),
+                   || (/\bcaps?\b/.test(s) && (_ASKS_NO_CAP.test(s) || _ASKS_HAS_CAP.test(s))))
+                  && !/reserve|readiness|cap rate/.test(s),
     handle: (q, ctx, { props, deps, record }) => {
       const scoped = _scopedProps(ctx, props);
       // L — WHICH QUESTION WAS ACTUALLY ASKED.

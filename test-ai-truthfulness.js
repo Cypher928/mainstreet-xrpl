@@ -142,6 +142,31 @@ const sec = (t) => console.log('\n\x1b[1m── ' + t + ' ──\x1b[0m');
       unmatched:   shape(ask('what is the airspeed velocity of an unladen swallow?')),
     };
 
+    // L.1 — routing matrix. Each phrasing is recorded with the intent that
+    // actually answered it, so a regression shows up as a changed route rather
+    // than as a changed sentence.
+    out.routing = {};
+    [
+      // positive singular — the L.1 gap
+      'which tenants have a cap?', 'which tenant has a cap?', 'who has a cap?',
+      'which leases carry a cap?', 'show tenants with a cap', 'any tenants with a cap?',
+      // positive plural / explicit — must be unchanged
+      'which tenants have a CAM cap?', 'which tenants have caps?', 'what are the expense caps?',
+      // negative — Phase L, must be unchanged
+      'which tenants are missing a cap?', 'which tenants have no cap?',
+      'which tenants do not have a cap?',
+      // must NOT be pulled into cam_caps
+      'what is the cap rate?', 'which properties have a good cap rate?',
+      'show reserve balances', 'which tenants have audit rights?',
+      'which tenants have capital expenses?', 'show me the rent roll',
+      'what needs my attention?', 'explain this reconciliation',
+      // Clause LOOKUPS. These name a cap and ask an interrogative, but nobody is
+      // asking which leases carry one — they want the clause. Only the possession
+      // verb in _ASKS_HAS_CAP keeps cam_caps from claiming them.
+      'which clause defines the cap?', 'which section sets the cap?',
+      'show me the cap clause',
+    ].forEach(function (qq) { out.routing[qq] = ask(qq).intent; });
+
     // ── The crash path. A registered intent is made to throw on demand.
     window.AIWorkspace.registerIntent({
       id: 'l_boom',
@@ -269,6 +294,41 @@ const sec = (t) => console.log('\n\x1b[1m── ' + t + ' ──\x1b[0m');
      'L17c a throwing matcher never escapes answer() to the caller');
   eq(R.afterBadMatcherUnmatched && R.afterBadMatcherUnmatched.intent, 'fallback',
      'L17d a question that REACHES the broken matcher still gets the normal fallback');
+
+  // ═══ L.1 — the positive singular cap question ═══
+  sec('a cap question routes to cam_caps in either direction');
+  const RT = R.routing;
+  for (const qq of ['which tenants have a cap?', 'which tenant has a cap?', 'who has a cap?',
+                    'which leases carry a cap?', 'show tenants with a cap', 'any tenants with a cap?']) {
+    eq(RT[qq], 'cam_caps', `L22 positive singular routes to cam_caps: "${qq}"`);
+  }
+  for (const qq of ['which tenants have a CAM cap?', 'which tenants have caps?',
+                    'what are the expense caps?']) {
+    eq(RT[qq], 'cam_caps', `L23 plural/explicit phrasing is unchanged: "${qq}"`);
+  }
+  for (const qq of ['which tenants are missing a cap?', 'which tenants have no cap?',
+                    'which tenants do not have a cap?']) {
+    eq(RT[qq], 'cam_caps', `L24 the Phase L inverse form still routes: "${qq}"`);
+  }
+  // The inverse answers must still be inverse — routing alone is not enough.
+  is(/no CAM cap on file/i.test(R.capsMissing.heading),
+     'L24b and still answers in the negative direction', R.capsMissing.heading);
+  is(/CAM caps on file/.test(R.capsHave.heading),
+     'L24c while the positive keeps its own heading', R.capsHave.heading);
+
+  sec('and "cap" alone does not capture unrelated questions');
+  for (const qq of ['what is the cap rate?', 'which properties have a good cap rate?',
+                    'show reserve balances', 'which tenants have audit rights?',
+                    'which tenants have capital expenses?', 'show me the rent roll',
+                    'what needs my attention?', 'explain this reconciliation',
+                    'which clause defines the cap?', 'which section sets the cap?',
+                    'show me the cap clause']) {
+    is(RT[qq] !== 'cam_caps', `L25 not cam_caps: "${qq}"`, RT[qq]);
+  }
+  eq(RT['which clause defines the cap?'], 'knowledge_search',
+     'L25d a clause LOOKUP naming a cap goes to the search, not the cap roster');
+  eq(RT['which tenants have audit rights?'], 'audit_rights', 'L25b audit rights still wins its own question');
+  eq(RT['show reserve balances'], 'reserve_balances', 'L25c reserves still win theirs');
 
   // ═══ Phase H / I / K protections ═══
   sec('the earlier phases still hold');
