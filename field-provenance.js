@@ -86,6 +86,36 @@
   var STATES = ['lease_confirmed', 'manually_confirmed', 'manually_entered', 'ai_extracted', 'unknown'];
 
   /**
+   * Fields NO EXTRACTION PATH CAN SUPPLY, so `ai_extracted` is not their floor.
+   *
+   * `ai_extracted` means something specific — "a model read a document and
+   * nothing points at the passage". For most fields that is the honest floor,
+   * because the extractor really did produce the value and simply cited
+   * nothing. For a field the extractor cannot produce at all, it is a false
+   * statement about origin in the opposite direction: it credits a machine for
+   * a number a person typed.
+   *
+   * cap_base_amount is the case. Verified against the write paths, not assumed:
+   * /api/claude's contract has no cap-base key in either the value channel or
+   * the parallel `quotes` channel, `_quoteMap` has no entry for it, and the
+   * only writers in the codebase are the manual form (handleFieldBlur →
+   * script.js:8532) and hardcoded demo/acquisition seed literals.
+   * lease-intelligence.js has said so in prose since Phase 0 — "capBaseAmount
+   * is manual entry and extraction never sets it".
+   *
+   * So when such a field has a value and nothing affirms it, the floor is
+   * `manually_entered`: a person put it there, asserting rather than checking.
+   * That is the weakest TRUE claim available. The three states above the floor
+   * are unaffected — a cap base that later arrives with a clause still reaches
+   * lease_confirmed by exactly the same rule as every other field.
+   *
+   * This map is deliberately about where a value CAN come from, not about
+   * trust. It adds no state, changes no precedence, and is empty of policy
+   * beyond a fact each entry has to be able to prove.
+   */
+  var NEVER_EXTRACTED = { cap_base_amount: true };
+
+  /**
    * The storage vocabulary, which has three values and cannot hold five.
    *
    * `tenant_field_evidence.confidence_status` is CHECK-constrained to
@@ -243,6 +273,13 @@
       out.page = (snap.page != null ? snap.page : null);
       out.sourceFile = snap.sourceFile || null;
       out.when = snap.extractedAt || snap.reviewedAt || null;
+    } else if (NEVER_EXTRACTED[fieldKey] === true) {
+      // 4a. THE FLOOR, for a field no extractor can produce. Crediting a model
+      //     for it would be as wrong as crediting the lease. A person typed it.
+      out.state = 'manually_entered'; out.stated = true;
+      out.by = null;                  // nothing on file names who; see saveFieldOverride
+      out.sourceFile = null;          // a typed value has no source document
+      out.when = (snap && (snap.reviewedAt || snap.extractedAt)) || null;
     } else {
       // 4. THE FLOOR. A value exists and nothing affirms it.
       out.state = 'ai_extracted';

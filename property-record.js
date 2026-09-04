@@ -188,7 +188,17 @@
     for (const t of _arr(property && property.tenants)) {
       if (!t || t.id == null) continue;
       const byField = {};
-      for (const k of keys) byField[k] = FP.fieldProvenance(k, t);
+      for (const k of keys) {
+        // fieldProvenance reads t[fieldKey]. Every canonical key matches its
+        // tenant property except the cap base, which is stored as camelCase
+        // `capBaseAmount` — so it travels through the opts.value override the
+        // resolver already provides for values that are not on the tenant under
+        // their canonical name. Renaming the stored property instead would be a
+        // data migration for a naming mismatch.
+        byField[k] = (k === 'cap_base_amount')
+          ? FP.fieldProvenance(k, t, { value: t.capBaseAmount })
+          : FP.fieldProvenance(k, t);
+      }
       out[t.id] = byField;
     }
     return out;

@@ -336,6 +336,7 @@ const SUITES = [
   // indistinguishable. The rule was not invented for this: the lender packet's
   // _lenderVerification has always computed it correctly, at tenant granularity.
   { label: 'Field provenance',                  cmd: 'node test-field-provenance.js' },
+  { label: 'Cap base provenance',               cmd: 'node test-cap-base-provenance.js' },
   { label: 'Field provenance (e2e)',            cmd: 'node test-e2e-field-provenance.js' },
   { label: 'Lease validator: management fee cap',       cmd: 'node test-mgmt-fee-cap.js' },
   // D2-1 — AND THE SAME CHECK ON THE PANEL, WITH ARGUMENTS IT DID NOT BUILD.

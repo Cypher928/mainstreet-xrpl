@@ -17,8 +17,16 @@
 window.LeaseIntelligence = (() => {
 
   // ── Canonical field list (mirrors CLAUDE_LEASE_SYSTEM schema) ────────────────
+  // cap_base_amount is the DOLLAR operand of the CAM ceiling, and it was the one
+  // input to that calculation with no provenance at all: absent from this list,
+  // so FieldProvenance never resolved it and PropertyRecord never carried it,
+  // while `cap` — the percentage beside it — had both. A ceiling is
+  // capBaseAmount x (1 + cap%), so half of every enforced cap rested on a number
+  // no surface could describe. It is stored on the tenant as `capBaseAmount`
+  // (camelCase, unlike every key here), so callers resolve it through the
+  // existing opts.value override rather than reshaping the tenant record.
   const CANONICAL_FIELDS = [
-    'cap', 'admin_fee_pct', 'gross_up_pct', 'expense_stop',
+    'cap', 'cap_base_amount', 'admin_fee_pct', 'gross_up_pct', 'expense_stop',
     'audit_rights', 'pro_rata_method', 'renewal_options',
     'tenant_name', 'leased_sqft', 'start_date', 'end_date', 'lease_type',
   ];
