@@ -272,6 +272,15 @@ function fixture() {
       spacesN: r1.spaces ? r1.spaces.length : null,
       spaceName: r1.spaces && r1.spaces[0] ? (r1.spaces[0].space || {}).name : null,
       capState: r1.fields && r1.fields.tA ? r1.fields.tA.cap.state : null,
+      // The cap base travels through FieldProvenance's opts.value override,
+      // because the tenant stores it as camelCase `capBaseAmount` while the
+      // canonical key is snake_case. Drop that route and the resolver reads an
+      // absent t.cap_base_amount and reports `unknown` for a populated field.
+      fieldKeys:    r1.fields && r1.fields.tA ? Object.keys(r1.fields.tA).sort().join(',') : null,
+      capBaseState: r1.fields && r1.fields.tA ? r1.fields.tA.cap_base_amount.state : null,
+      capBaseCited: r1.fields && r1.fields.tA ? r1.fields.tA.cap_base_amount.cited : null,
+      capBaseSrc:   r1.fields && r1.fields.tA ? r1.fields.tA.cap_base_amount.sourceFile : null,
+      capBaseNone:  r1.fields && r1.fields.tB ? r1.fields.tB.cap_base_amount.state : null,
       camPool: r1.cam.pool,
       camResults: r1.cam.results.length,
       cappedN: r1.cam.capped.length,
@@ -298,6 +307,15 @@ function fixture() {
     eq(live.spaceName, 'Alpha Co', 'J34b named by TenantSpace, not by this record');
     eq(live.capState, 'lease_confirmed',
        'J35 the real FieldProvenance resolves the quoted cap to lease_confirmed');
+    is(String(live.fieldKeys).split(',').includes('cap_base_amount'),
+       'J35c the record carries cap_base_amount — the dollar half of the ceiling',
+       live.fieldKeys);
+    eq(live.capBaseState, 'manually_entered',
+       'J35d and resolves the STORED capBaseAmount through opts.value');
+    eq(live.capBaseCited, false, 'J35e reporting it as uncited');
+    eq(live.capBaseSrc, null,    'J35f and attributing no document to it');
+    eq(live.capBaseNone, 'unknown',
+       'J35g while a tenant with no base at all reads unknown, not manually_entered');
     eq(live.camPool, 100000, 'J36 the real CamPool totals the eligible invoices');
     eq(live.camResults, 2,   'J36b the stored reconciliation rows come through');
     eq(live.cappedN, 1,      'J36c and the capped one is identified');

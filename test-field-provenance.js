@@ -268,5 +268,71 @@ P('cap', frozen);
 yes('and it does not mutate the tenant it was given',
     JSON.stringify(frozen) === before, 'the resolver mutated its input');
 
+// ── The cap base: a field no extractor can supply ──────────────────────────
+//
+// Every other canonical field floors at `ai_extracted`, and that is honest:
+// the extractor really did produce the value and simply cited nothing. The cap
+// base has no extraction path at all — /api/claude's contract has no key for it
+// in either the value channel or the quotes channel — so crediting a model for
+// one is false in the opposite direction. NEVER_EXTRACTED moves its floor to
+// `manually_entered`, the weakest claim that is also true.
+//
+// Note the assertion higher up in this file that lists `capBaseAmount` among
+// the fields reaching ai_extracted on presence alone. That is the camelCase
+// STORAGE name and it is deliberately unaffected: the canonical key is
+// `cap_base_amount`, and only the canonical key carries the moved floor.
+H('cap_base_amount — the floor moves, and only for this field');
+const PB = (t) => FP.fieldProvenance('cap_base_amount', t, { value: t.capBaseAmount });
+
+p = PB({ capBaseAmount: '26000', fileName: 'lease.pdf' });
+R('typed base', { state: p.state, cited: p.cited, sourceFile: p.sourceFile });
+yes('a stored base with no evidence → manually_entered, not ai_extracted',
+    p.state === 'manually_entered', p.state);
+yes('    stated is true — a value IS on file',  p.stated === true, String(p.stated));
+yes('    cited is false — nothing supports it', p.cited === false, String(p.cited));
+yes('    sourceFile is null even though the tenant names a lease',
+    p.sourceFile === null, String(p.sourceFile));
+yes('    the label credits a person, never an extraction',
+    !/AI|extract/i.test(p.label) && !/lease document/i.test(p.label), p.label);
+yes('    it can never reach the verified storage status',
+    p.dbStatus === 'estimated', p.dbStatus);
+
+yes('the moved floor is scoped to the canonical key ONLY',
+    P('capBaseAmount', { capBaseAmount: '26000' }).state === 'ai_extracted',
+    'the camelCase storage name also moved — the map is keyed too loosely');
+yes('and no other canonical field floor moved',
+    ['cap','admin_fee_pct','leased_sqft','start_date','audit_rights']
+      .every(f => P(f, { [f]: 'x' }).state === 'ai_extracted'),
+    'a sibling field stopped flooring at ai_extracted');
+
+yes('an ABSENT base is unknown, not "manually entered nothing"',
+    ['', null, undefined, '   '].every(v => PB({ capBaseAmount: v }).state === 'unknown'),
+    'an empty base was promoted above unknown');
+
+// The three states above the floor must still be reachable by the same rules.
+p = PB({ capBaseAmount: '26000',
+         fieldEvidence: fe('cap_base_amount', [snap({ fieldKey: 'cap_base_amount', value: '26000',
+           quote: 'the 2023 base year CAM was $26,000', page: 4, sourceFile: 'lease.pdf' })]) });
+yes('a quote still earns lease_confirmed for the cap base',
+    p.state === 'lease_confirmed' && p.cited === true, p.state);
+p = PB({ capBaseAmount: '26000',
+         fieldEvidence: fe('cap_base_amount', [snap({ fieldKey: 'cap_base_amount', value: '26000',
+           quote: null, approved: true, manuallyEdited: false,
+           reviewerEmail: 'r@x.io', reviewedAt: '2026-09-04T00:00:00Z' })]) });
+yes('an approved snapshot with a named reviewer earns manually_confirmed',
+    p.state === 'manually_confirmed' && p.by === 'r@x.io', p.state);
+p = PB({ capBaseAmount: '26000',
+         fieldEvidence: fe('cap_base_amount', [snap({ fieldKey: 'cap_base_amount', value: '26000',
+           approved: true, manuallyEdited: true,
+           reviewerEmail: 'r@x.io', reviewedAt: '2026-09-04T00:00:00Z' })]) });
+yes('a manual edit stays manually_entered, and now NAMES the editor',
+    p.state === 'manually_entered' && p.by === 'r@x.io', p.state + '/' + p.by);
+
+yes('the module still has exactly five states',
+    FP.STATES.length === 5, FP.STATES.join(','));
+yes('and NEVER_EXTRACTED is a fact about origin, not a trust judgement',
+    /NEVER_EXTRACTED\s*=\s*\{\s*cap_base_amount:\s*true\s*\}/.test(FPSRC),
+    'the map grew beyond the one field it can prove');
+
 console.log(`\n${fail ? '\x1b[31m' : '\x1b[32m'}RESULT: ${pass} passed, ${fail} failed\x1b[0m\n`);
 process.exit(fail ? 1 : 0);

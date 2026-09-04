@@ -241,6 +241,36 @@ function code(src) {
     ? bad('H15 saveCamResults has no `?? r.variance` fallback')
     : ok('H15 saveCamResults has no `?? r.variance` fallback');
 
+  // ── The two axes are independent ─────────────────────────────────────────
+  //
+  // expected_cam_basis describes the ARITHMETIC. The provenance of the base it
+  // consumed is a separate fact, resolved by FieldProvenance. A correct
+  // cap_ceiling can rest on a manually entered, uncited base, and MainStreet
+  // has to be able to state both at once — "calculation $34,650, basis
+  // cap_ceiling, base $33,000, base provenance manually_entered, lease evidence
+  // none". Collapsing them in either direction is the tempting mistake:
+  // discarding a correct calculation because its input is unverified, or
+  // letting a stamped basis imply the input was verified.
+  sec('the basis describes the calculation, not the trustworthiness of the base');
+  const h16 = await page.evaluate(() => {
+    const t = { id: 'x', tenant_name: 'Capped Co', cap: 5, capBaseAmount: 33000,
+                leased_sqft: 9200, fieldEvidence: {}, reviewOverrides: {} };
+    const prov = window.FieldProvenance.fieldProvenance('cap_base_amount', t,
+                                                        { value: t.capBaseAmount });
+    const exp  = _camExpectation(t.capBaseAmount, t.cap, 34650);
+    return { state: prov.state, cited: prov.cited, by: prov.by,
+             expectedCam: exp.expectedCam, basis: exp.expectedCamBasis, variance: exp.variance };
+  });
+  eq(h16.expectedCam, 34650,            'H16 the ceiling is still computed from an unverified base');
+  eq(h16.basis, 'cap_ceiling',          'H16b and still stamped cap_ceiling — the math is the math');
+  eq(h16.variance, 0,                   'H16c and the variance is still derived');
+  eq(h16.state, 'manually_entered',     'H16d while the BASE resolves as manually entered');
+  eq(h16.cited, false,                  'H16e uncited');
+  eq(h16.by, null,                      'H16f and unattributed, because nothing recorded who typed it');
+  h16.basis === 'cap_ceiling' && h16.state !== 'lease_confirmed'
+    ? ok('H16g a correct cap_ceiling coexists with an unverified base — the axes do not collapse')
+    : bad('H16g the two axes collapsed into one', JSON.stringify(h16));
+
   console.log(`\nRESULT: ${pass} passed, ${fail} failed`);
   await b.close(); srv.close();
   process.exit(fail ? 1 : 0);

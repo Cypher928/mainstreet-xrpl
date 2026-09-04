@@ -229,6 +229,49 @@ const REAL_CLAUSE = 'Operating Expenses shall not increase by more than five per
     ? bad('I13 the confidence badge is rendered behind _showConfidence')
     : ok('I13 the confidence badge is rendered behind _showConfidence');
 
+  // ── The cap base cannot be cited into the answer ─────────────────────────
+  //
+  // S1 admitted cap_base_amount to the canonical fields, so PropertyRecord now
+  // carries it and the AI can read it. That is the point — and it is also the
+  // moment the field becomes able to appear in an answer. A hand-typed base has
+  // no clause, so the chip rule must refuse it a live citation exactly as it
+  // refuses any other uncited value. This asserts the RENDERED html, which is
+  // the only place that guarantee is observable.
+  sec('an uncited cap base gets no live citation');
+  const CB = await page.evaluate(() => {
+    const t = { id: 'x', tenant_name: 'Maple Coffee Co', cap: 5, capBaseAmount: '26000',
+                fileName: 'maple_plaza_messy_lease.pdf',
+                fieldEvidence: {}, reviewOverrides: {} };
+    const prov = window.FieldProvenance.fieldProvenance('cap_base_amount', t,
+                                                        { value: t.capBaseAmount });
+    // Build the citation the way an answer would from that resolved field.
+    const cite = { source: 'Lease — Maple Coffee Co', detail: 'Maple Plaza',
+                   quote: prov.quote, page: prov.page,
+                   fileUrl: null, fileName: prov.sourceFile };
+    const html = window.AIWorkspace.renderAnswerHtml({
+      intent: 'cam_caps', heading: 'Prior-year CAM base', paragraphs: ['x'], bullets: [],
+      citations: [cite], confidence: { pct: 92, basis: 'lease cap fields on file' },
+      trace: { intent: 'cam_caps', engine: 'Lease Review Engine', property: 'P',
+               sources: [], citationsUsed: 1 },
+    });
+    return {
+      state: prov.state, quote: prov.quote, sourceFile: prov.sourceFile,
+      liveChips:  (html.match(/aiw-cite--live/g)  || []).length,
+      noSrcChips: (html.match(/aiw-cite--nosrc/g) || []).length,
+      openFromChip: (html.match(/openFromChip/g)  || []).length,
+      saysNotCaptured: /clause not captured/.test(html),
+      namesDocument: /maple_plaza_messy_lease/.test(html),
+    };
+  });
+  eq(CB.state, 'manually_entered', 'I14 the cap base resolves as manually entered');
+  eq(CB.quote, null,               'I14b carrying no clause');
+  eq(CB.liveChips, 0,              'I14c so the answer renders NO live citation chip');
+  eq(CB.openFromChip, 0,           'I14d and nothing is clickable through to a document');
+  eq(CB.noSrcChips, 1,             'I14e it renders the no-source chip instead');
+  is(CB.saysNotCaptured,           'I14f which says the clause was not captured');
+  is(!CB.namesDocument,
+     'I14g and the tenant\'s lease filename is NOT attributed to a typed number');
+
   console.log(`\nRESULT: ${pass} passed, ${fail} failed`);
   await b.close(); srv.close();
   process.exit(fail ? 1 : 0);
