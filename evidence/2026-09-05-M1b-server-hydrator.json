@@ -115,6 +115,19 @@
         "a failed property read was untested (H-property-read-failure-ignored survived) — now A10/A11/A12",
         "the read-only guard's method list was asserted against itself (H-write-method-dropped survived) — now D0 pins it to a literal"
       ]
+    },
+    "full_regression": {
+      "command": "node test-regression.js",
+      "suites_run": 117,
+      "suites_passed": 116,
+      "suites_failed": 1,
+      "failing_suite": "Broken promises (dead controls) — test-broken-promises.js",
+      "failing_assertions": [
+        "4 control(s) promise an object and navigate generically",
+        "review actions do not carry the tenant id"
+      ],
+      "baseline_check": "the identical two assertions fail at c3dbee9, the commit before M1b — preserved as the known unrelated baseline regression, not fixed or repinned",
+      "m1b_suite_inside_the_run": "Server PropertyRecord hydrator (M1b) — 102 passed, 0 failed"
     }
   },
 
