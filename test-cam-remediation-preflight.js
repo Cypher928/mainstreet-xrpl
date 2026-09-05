@@ -205,5 +205,155 @@ sec('H. A pre-image is captured first and a verification follows');
      'H8 and 4 rows left with a value and no basis — exactly the held set');
 }
 
+// ── I. The manifest, counted from the text a database would act on ─────────
+// Groups A and F count the `ids` METADATA the generator attaches to each
+// statement. That answers "what does the plan say?" and not "what does the SQL
+// say?", and the two can disagree: a statement emitted twice, or an
+// illustrative UPDATE pasted into a body, changes the text while leaving the
+// metadata untouched. This group counts UUID occurrences in the executable
+// string itself, and then proves the check has teeth by tampering with the
+// statements and requiring assertSafe to object.
+sec('I. Exactly one executable UPDATE per approved row, counted in the SQL');
+{
+  const m = pf.manifest;
+  eq(m.updateStatements, 11, 'I1 eleven UPDATE statements — one for Class N, ten for Class M');
+  eq(m.totalIds, 24,         'I2 addressing twenty-four ids in total');
+  eq(m.uniqueIds, 24,        'I3 all of them distinct');
+  eq(m.duplicateIds.length, 0, 'I4 with no id written twice');
+  eq(m.classNIds.length, 14, 'I5 fourteen Class N ids');
+  eq(m.classMIds.length, 10, 'I6 ten Class M ids');
+  eq(m.heldIds.length, 4,    'I7 four held ids');
+
+  // The manifest must not be able to drift from the statements it describes.
+  const fromStmts = pf.statements.filter(s => s.kind === 'update').flatMap(s => s.ids);
+  is(m.totalIds === fromStmts.length && m.uniqueIds === new Set(fromStmts).size,
+     'I8 and the manifest is derived from those statements, not asserted beside them');
+  is(m.classNIds.every(i => !m.classMIds.includes(i))
+     && m.classNIds.every(i => !m.heldIds.includes(i))
+     && m.classMIds.every(i => !m.heldIds.includes(i)),
+     'I9 the three sets are disjoint');
+  eq(m.classNIds.length + m.classMIds.length + m.heldIds.length, 28,
+     'I10 and together they are all 28 rows');
+
+  // Now the text. Comments are stripped: this is what the database receives.
+  const text = P.executableOnly(pf);
+  const UUID = /[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}/g;
+  const seen = (text.match(UUID) || []).reduce((a, i) => (a[i] = (a[i] || 0) + 1, a), {});
+  eq(Object.keys(seen).length, 24, 'I11 the executable SQL names twenty-four distinct uuids');
+  eq((text.match(UUID) || []).length, 24, 'I12 in twenty-four occurrences — none repeated');
+  is(Object.entries(seen).every(([, n]) => n === 1),
+     'I13 every uuid appears exactly once');
+  is([...m.classNIds, ...m.classMIds].every(i => seen[i] === 1),
+     'I14 and the twenty-four are exactly the approved rows');
+
+  // The four held rows, named, occurring zero times.
+  for (const h of [MAPLE, ...CLASS_O]) {
+    eq(seen[h] || 0, 0, 'I15 held uuid absent from executable SQL — ' + h.slice(0, 8));
+  }
+
+  // IMPCO specifically: the row an earlier write-up appeared to update twice.
+  const IMPCO = m.classMIds.find(i => i.startsWith('360b8a20'));
+  is(!!IMPCO, 'I16 IMPCO is in the Class M set');
+  eq(seen[IMPCO], 1, 'I17 and occurs exactly once in the executable SQL');
+  eq((sql.match(new RegExp(IMPCO, 'g')) || []).length, 1,
+     'I18 and once in the full statement text, comments included — no example copy');
+
+  // executableSql is the whole batch, in order, and nothing else.
+  is(P.executableSql(pf) === sql,
+     'I19 executableSql is the statements and only the statements',
+     P.executableSql(pf).length + ' chars, ' + pf.statements.length + ' statements');
+
+  // ── The check has teeth: tamper, and require an objection ────────────────
+  const clone = (extra) => ({ ...pf, statements: pf.statements.concat(extra) });
+  const impcoStmt = pf.statements.find(s => (s.ids || [])[0] === IMPCO);
+
+  // Matched against the SPECIFIC message. Two of assertSafe's checks can both
+  // say "appears 2 times"; a loose match would let either stand in for the
+  // other, and a mutation of the repeat check would go unnoticed.
+  const dupd = P.assertSafe(clone([{ ...impcoStmt, id: impcoStmt.id + '-COPY' }]));
+  is(dupd.some(x => x === 'UUID appears 2 times in executable SQL: ' + IMPCO),
+     'I20 a duplicated statement is caught — the exact shape reported in review');
+
+  const held = P.assertSafe(clone([{
+    id: 'X-maple', kind: 'update', rowsAffected: 1, ids: [],
+    sql: `UPDATE cam_reconciliations SET expected_cam = 1 WHERE id = '${MAPLE}'::uuid;`,
+  }]));
+  is(held.some(x => /HELD UUID PRESENT/.test(x)),
+     'I21 a held row smuggled in without metadata is caught by the text check');
+
+  // The case the metadata check CANNOT see: an illustrative UPDATE pasted into
+  // an existing statement's body. ids is untouched, so every count in group F
+  // still passes; only the text check notices.
+  const pasted = { ...pf, statements: pf.statements.map(s => s.id === 'S1-class-N'
+    ? { ...s, sql: s.sql + `\n-- example only:\nUPDATE cam_reconciliations SET expected_cam = 107000 WHERE id = '${IMPCO}'::uuid;` }
+    : s) };
+  const pastedIds = pasted.statements.filter(s => s.kind === 'update').flatMap(s => s.ids);
+  eq(new Set(pastedIds).size, 24, 'I22 pasted example leaves the id metadata clean…');
+  is(P.assertSafe(pasted).some(x => x === 'UUID appears 2 times in executable SQL: ' + IMPCO),
+     'I23 …and is still caught, because the text is counted separately');
+}
+
+// ── J. The manifest and the text check hold on dirty input too ─────────────
+// Group I proves the numbers are right on the real snapshot, where nothing is
+// duplicated. That is not enough: a manifest that always reports "0 duplicates"
+// would pass every assertion in group I and be worthless, because the one time
+// it matters is the time something IS duplicated. So this group feeds the
+// generator input that does duplicate, and requires the manifest to say so.
+sec('J. The counts are counts, not constants');
+{
+  const IMPCO = pf.manifest.classMIds.find(i => i.startsWith('360b8a20'));
+  const impcoRow = SNAP.rows.find(r => r.recon_id === IMPCO);
+
+  // The reported shape, reproduced from the generator's own input: one Class M
+  // row appearing twice yields twelve statements and twenty-five ids.
+  const dirty = P.preflight(SNAP.rows.concat([impcoRow]));
+  eq(dirty.manifest.updateStatements, 12, 'J1 a duplicated row produces a twelfth statement');
+  eq(dirty.manifest.totalIds, 25,         'J2 and a twenty-fifth id…');
+  eq(dirty.manifest.uniqueIds, 24,        'J3 …over twenty-four distinct rows');
+  eq(dirty.manifest.duplicateIds.length, 1, 'J4 which the manifest names as a duplicate');
+  is(dirty.manifest.duplicateIds[0] && dirty.manifest.duplicateIds[0].id === IMPCO
+     && dirty.manifest.duplicateIds[0].count === 2,
+     'J5 by id and by count — ' + IMPCO.slice(0, 8) + ' ×2');
+  is(P.assertSafe(dirty).some(x => x === 'UUID appears 2 times in executable SQL: ' + IMPCO),
+     'J6 and assertSafe refuses the batch');
+
+  // executableOnly is the write set. The reads carry no uuids today, so
+  // including them would be harmless by luck rather than by construction.
+  const text = P.executableOnly(pf);
+  is(!/\bSELECT\b/i.test(text), 'J7 executableOnly contains no SELECT — it is the writes only');
+  is(!/PRE-IMAGE|VERIFY/.test(text), 'J8 and neither the pre-image nor the verification');
+  is(/UPDATE cam_reconciliations/.test(text), 'J9 while still containing the UPDATEs');
+
+  // Comments are stripped because a comment is not executed. A note that names
+  // a held row is documentation, not a write, and must not raise a violation —
+  // otherwise the check would punish the very annotation that keeps the batch
+  // readable.
+  const annotated = { ...pf, statements: pf.statements.map(s => s.id === 'S1-class-N'
+    ? { ...s, sql: '-- excluded from this batch: ' + MAPLE + ' (Maple Coffee, human review)\n' + s.sql }
+    : s) };
+  eq(P.assertSafe(annotated).length, 0,
+     'J10 a comment naming a held uuid raises nothing — comments are not executed');
+  is(!P.executableOnly(annotated).includes(MAPLE),
+     'J11 because executableOnly removed it before counting');
+
+  // A uuid from outside the audited 28, pasted in. It is not held, it is not
+  // approved, and it appears once — so only the distinct-count tally can see it.
+  const FOREIGN = 'aaaaaaaa-bbbb-4ccc-8ddd-eeeeeeeeeeee';
+  const foreign = { ...pf, statements: pf.statements.concat([{
+    id: 'X-foreign', kind: 'update', rowsAffected: 1, ids: [],
+    sql: `UPDATE cam_reconciliations SET expected_cam = 1 WHERE id = '${FOREIGN}'::uuid;`,
+  }]) };
+  is(P.assertSafe(foreign).some(x => /names 25 uuids, approved 24/.test(x)),
+     'J12 a uuid from outside the 28 is caught by the distinct-count tally');
+
+  // And the mirror case: an approved row whose statement forgets to name it.
+  // Only the approved-presence loop can see this one.
+  const dropped = { ...pf, statements: pf.statements.map(s => (s.ids || [])[0] === IMPCO
+    ? { ...s, sql: s.sql.split(IMPCO).join('00000000-0000-4000-8000-000000000000') }
+    : s) };
+  is(P.assertSafe(dropped).some(x => x === 'approved UUID appears 0 times in text: ' + IMPCO),
+     'J13 an approved row missing from its own SQL is caught');
+}
+
 console.log(`\n${fail ? '\x1b[31m' : '\x1b[32m'}RESULT: ${pass} passed, ${fail} failed\x1b[0m`);
 process.exit(fail ? 1 : 0);

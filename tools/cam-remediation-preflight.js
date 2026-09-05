@@ -166,6 +166,10 @@ FROM cam_reconciliations;
 --            sum_actual_cam, sum_allocated, sum_total_expenses ALL UNCHANGED`,
   });
 
+  const updates = stmts.filter(s => s.kind === 'update');
+  const idList  = updates.flatMap(s => s.ids || []);
+  const counts  = idList.reduce((a, i) => (a[i] = (a[i] || 0) + 1, a), {});
+
   return {
     plan: {
       totalConsidered: decided.length,
@@ -176,8 +180,44 @@ FROM cam_reconciliations;
       rowsWritten: classN.length + classM.length,
       billingColumnsTouched: 0,
     },
+    // ── THE MANIFEST ────────────────────────────────────────────────────────
+    // What is actually executable, counted, so a reader never has to infer it
+    // from prose. An earlier write-up of this plan printed one Class M
+    // statement a second time as an illustrative example, and it read as an
+    // eleventh write against a row already in the batch. The artifact was
+    // correct and the description was not, which is its own kind of defect:
+    // a plan nobody can check at a glance is not a plan.
+    manifest: {
+      updateStatements: updates.length,
+      totalIds: idList.length,
+      uniqueIds: new Set(idList).size,
+      duplicateIds: Object.entries(counts).filter(([, c]) => c > 1).map(([id, c]) => ({ id, count: c })),
+      classNIds: classN.map(d => d.recon_id).sort(),
+      classMIds: classM.map(d => d.recon_id).sort(),
+      heldIds: held.map(h => h.recon_id).sort(),
+    },
     classN, classM, held, statements: stmts,
   };
+}
+
+/**
+ * The executable batch, and ONLY the executable batch, in run order.
+ *
+ * Anything illustrative belongs outside what this returns. There is no example
+ * material in the preflight today and none should be added; if a future reader
+ * wants one, it goes in prose clearly marked NON-EXECUTABLE, never inside the
+ * string this function produces.
+ */
+function executableSql(pf) {
+  return pf.statements.map(s => s.sql).join('\n\n');
+}
+
+/** Statement text with SQL comments removed — what the database would act on. */
+function executableOnly(pf) {
+  return pf.statements
+    .filter(s => s.kind === 'update')
+    .map(s => s.sql.replace(/^\s*--.*$/gm, ''))
+    .join('\n');
 }
 
 /**
@@ -223,7 +263,34 @@ function assertSafe(pf) {
   for (const id of approved) if (!written.has(id)) v.push('approved row missing from statements: ' + id);
   if (written.size !== approved.length) v.push('write set size ' + written.size + ' != approved ' + approved.length);
 
+  // ── EACH UUID EXACTLY ONCE, COUNTED IN THE TEXT ───────────────────────────
+  // The checks above count the `ids` metadata. This one counts the SQL a
+  // database would actually act on, which is a different question: a statement
+  // duplicated in the emitted string, or example material pasted inside it,
+  // would pass the metadata check and fail here. The two are kept separate on
+  // purpose — one guards the plan, the other guards the text.
+  const text = executableOnly(pf);
+  const UUID = /[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}/g;
+  const seen = (text.match(UUID) || []).reduce((a, i) => (a[i] = (a[i] || 0) + 1, a), {});
+  for (const [id, n] of Object.entries(seen)) {
+    if (n !== 1) v.push('UUID appears ' + n + ' times in executable SQL: ' + id);
+  }
+  for (const h of pf.held) {
+    if (seen[h.recon_id]) v.push('HELD UUID PRESENT IN EXECUTABLE SQL: ' + h.recon_id);
+  }
+  // This loop's unique contribution is the ZERO case — an approved row whose
+  // own statement does not name it. Its >1 branch is already covered above, so
+  // `!== 1` and `!seen[id]` cannot produce different verdicts here; the stricter
+  // form is kept because the message it prints says which of the two happened.
+  for (const id of approved) {
+    if (seen[id] !== 1) v.push('approved UUID appears ' + (seen[id] || 0) + ' times in text: ' + id);
+  }
+  if (Object.keys(seen).length !== approved.length) {
+    v.push('executable SQL names ' + Object.keys(seen).length + ' uuids, approved ' + approved.length);
+  }
+
   return v;
 }
 
-module.exports = { preflight, assertSafe, HELD_FOR_REVIEW, WRITABLE, BILLING_COLUMNS };
+module.exports = { preflight, assertSafe, executableSql, executableOnly,
+                   HELD_FOR_REVIEW, WRITABLE, BILLING_COLUMNS };
