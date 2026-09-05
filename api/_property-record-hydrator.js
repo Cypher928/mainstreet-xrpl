@@ -57,11 +57,13 @@
  * session state that has no meaning on a server).
  */
 
-const path = require('path');
+// String-literal requires only. A computed path is invisible to the bundler
+// that builds the serverless function, so the file would simply not be there at
+// runtime. See the header of api/_server-deps.js.
 const _t   = require('./_pilot-target');
 const DEPS = require('./_server-deps');
-const TN   = require(path.join(__dirname, '..', 'tenant-normalize.js'));
-const PropertyRecord = require(path.join(__dirname, '..', 'property-record.js'));
+const TN   = require('../tenant-normalize.js');
+const PropertyRecord = require('../property-record.js');
 
 const SUPABASE_URL      = _t.url;
 const SUPABASE_ANON_KEY = _t.anonKey;

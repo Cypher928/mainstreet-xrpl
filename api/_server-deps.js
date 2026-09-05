@@ -76,6 +76,43 @@
 const path = require('path');
 const ROOT = path.join(__dirname, '..');
 
+/**
+ * EVERY REQUIRE BELOW IS A STRING LITERAL, AND THAT IS NOT A STYLE CHOICE
+ * ----------------------------------------------------------------------
+ * A serverless deployment does not ship the repository. Vercel's Node builder
+ * runs @vercel/nft over each entry point, follows the requires it can resolve
+ * statically, and packages only those files. `require(path.join(__dirname, rel))`
+ * is a computed expression: nft has no value for `rel`, follows nothing, and
+ * says nothing. The function deploys, every local test passes, and the first
+ * real invocation dies on MODULE_NOT_FOUND — because the eight dependencies were
+ * never in the bundle.
+ *
+ * This file used to do exactly that. tools/static-require-trace.js models what a
+ * bundler can see, and test-m2-runtime-harness.js asserts that every dependency
+ * is reachable from the hydrator by literal requires alone. If you replace one
+ * of these with a computed path, that test fails — before a deployment does.
+ */
+const REQUIRE = {
+  '../field-provenance.js':   () => require('../field-provenance.js'),
+  '../cam-pool.js':           () => require('../cam-pool.js'),
+  '../property-reference.js': () => require('../property-reference.js'),
+  '../timeline-merge.js':     () => require('../timeline-merge.js'),
+  '../variance-breakdown.js': () => require('../variance-breakdown.js'),
+  '../lease-intelligence.js': () => require('../lease-intelligence.js'),
+  '../tenant-space.js':       () => require('../tenant-space.js'),
+  '../property-workspace.js': () => require('../property-workspace.js'),
+};
+
+/** Load one declared dependency. Refuses a path that has no literal require. */
+function _req(rel) {
+  const load = REQUIRE[rel];
+  if (!load) {
+    throw new Error('[server-deps] ' + rel + ' has no static require entry — a ' +
+                    'bundler could not see it, so it would be absent at runtime');
+  }
+  return load();
+}
+
 /** Plain CommonJS: these export properly and need no shim. */
 const CLEAN = {
   FieldProvenance:   '../field-provenance.js',
@@ -107,6 +144,7 @@ let _cached  = null;
 let _shim    = null;   // the raw backing object, writable during load
 let _window  = null;   // the sealed view handed to withWindow()
 const _blocked = [];   // names something tried to attach at call time
+const _reads   = [];   // every window.* name the dependency graph asked for
 
 /**
  * Seal the shim behind a proxy that ignores writes of names outside the
@@ -129,6 +167,19 @@ const _blocked = [];   // names something tried to attach at call time
  */
 function _seal(shim) {
   return new Proxy(shim, {
+    // Every name the dependency graph asks the shim for, recorded as it is asked.
+    // This is what makes requirement "fail loudly if a new undeclared global
+    // dependency appears" checkable at RUNTIME rather than by reading files: a
+    // dependency that starts reaching for window.Something shows up here the
+    // first time it runs, whether or not anyone thought to grep for it.
+    get(target, prop, recv) {
+      if (typeof prop === 'string' && _reads.indexOf(prop) === -1) _reads.push(prop);
+      return Reflect.get(target, prop, recv);
+    },
+    has(target, prop) {
+      if (typeof prop === 'string' && _reads.indexOf(prop) === -1) _reads.push(prop);
+      return Reflect.has(target, prop);
+    },
     set(target, prop, value) {
       if (SHIM_KEYS.indexOf(prop) === -1) {
         if (_blocked.indexOf(prop) === -1) _blocked.push(String(prop));
@@ -183,7 +234,7 @@ function _loadWindowBound() {
   const out  = {};
   _underShim(shim, () => {
     for (const [name, rel] of Object.entries(NEEDS_WINDOW)) {
-      require(path.join(__dirname, rel));
+      _req(rel);
       out[name] = shim[name] || null;
     }
   });
@@ -200,7 +251,7 @@ function load() {
   if (_cached) return _cached;
   const deps = {};
   for (const [name, rel] of Object.entries(CLEAN)) {
-    deps[name] = require(path.join(__dirname, rel));
+    deps[name] = _req(rel);
   }
   Object.assign(deps, _loadWindowBound());
 
@@ -246,6 +297,21 @@ function shimKeys() {
 /** Names something tried to attach to the sealed shim and was refused. */
 function blockedWrites() { return _blocked.slice().sort(); }
 
+/**
+ * Every `window.<name>` the dependency graph has actually reached for, in the
+ * order first seen. A name here that is not in SHIM_KEYS is a dependency on a
+ * browser global that this module does not supply — harmless today because it
+ * reads `undefined`, but it is exactly how a new undeclared global dependency
+ * would arrive, and the M2 harness fails loudly when one appears.
+ */
+function shimReads() { return _reads.slice().sort(); }
+
+/** Reads seen so far that are NOT on the allow-list. */
+function undeclaredReads() { return _reads.filter(n => SHIM_KEYS.indexOf(n) === -1).sort(); }
+
+/** Forget the recorded reads. For a harness that wants a clean measurement. */
+function resetObservations() { _reads.length = 0; _blocked.length = 0; }
+
 /** Names assemble() asks for, so a caller can assert the set is complete. */
 const REQUIRED = Object.keys(CLEAN).concat(Object.keys(NEEDS_WINDOW));
 
@@ -263,6 +329,7 @@ function leakedWindow() {
 }
 
 module.exports = {
-  load, withWindow, shimKeys, blockedWrites, missing, leakedWindow, _pruneToAllowList,
+  load, withWindow, shimKeys, blockedWrites, shimReads, undeclaredReads, _req,
+  resetObservations, missing, leakedWindow, _pruneToAllowList,
   REQUIRED, CLEAN, NEEDS_WINDOW, SHIM_KEYS, ROOT,
 };

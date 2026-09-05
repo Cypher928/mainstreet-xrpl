@@ -1,0 +1,99 @@
+{
+  "phase": "M2 — server-side runtime harness",
+  "date": "2026-09-05",
+  "branch": "claude/validation-runs-analysis-ji1zb3",
+  "base_commit": "ba0c1ed",
+  "scope": "Runtime harness only. No HTTP route, no MCP tool, no auth infrastructure beyond exercising the existing ownership contract. No Pilot, Production, schema, payment, Ripple, UI or CAM-data changes.",
+
+  "headline_finding": {
+    "what": "The hydrator would not have run on a real deployment at all.",
+    "detail": "api/_server-deps.js and api/_property-record-hydrator.js loaded every dependency through require(path.join(__dirname, rel)). Vercel's Node builder traces requires statically; a computed path traces to nothing, so the ten dependency modules would not have been in the deployed bundle. The function would deploy cleanly, pass every local test, and die on its first invocation with MODULE_NOT_FOUND.",
+    "measured_before": "a static trace from api/_property-record-hydrator.js reached 3 files: itself, _server-deps.js, _pilot-target.js",
+    "measured_after": "15 files, 0 computed requires, 0 unresolved, 0 npm packages, 1 node builtin (path)",
+    "invisible_to_M1b": "every M1b test ran inside a full repository checkout, where each file exists regardless of whether a bundler could see it",
+    "fix": "string-literal requires throughout, behind a REQUIRE table whose entries are checked against the declared dependency maps"
+  },
+
+  "artifacts": [
+    { "path": "tools/static-require-trace.js", "lines": 141, "sha256_16": "71ad3db46775da27",
+      "purpose": "Models what a bundler can see: follows only string-literal relative requires, reports every computed one it had to give up on, plus npm packages and node builtins." },
+    { "path": "tools/m2-runtime-harness.js", "lines": 330, "sha256_16": "1ff6c75a42b40c06",
+      "purpose": "Copies exactly the traceable file set into a temp directory and runs a probe there in a fresh Node process with browser globals booby-trapped and fetch throwing. Seven scenarios." },
+    { "path": "test-m2-runtime-harness.js", "lines": 407, "sha256_16": "5d0a75b61e996e15",
+      "purpose": "147 assertions across the thirteen required proofs." },
+    { "path": "api/_server-deps.js", "lines": 336, "sha256_16": "0226c21ff86b46c1",
+      "changed": ["static REQUIRE table replacing computed requires",
+                  "_req() refuses a path with no literal require entry",
+                  "shim get/has traps record every window.<name> the graph asks for",
+                  "shimReads / undeclaredReads / resetObservations / _req exported"] },
+    { "path": "api/_property-record-hydrator.js", "lines": 328, "sha256_16": "4c1b6609e0b44cd6",
+      "changed": ["require('../tenant-normalize.js') and require('../property-record.js') as literals"] }
+  ],
+
+  "note_on_paths_in_the_brief": "The brief named tools/property-record.js and tools/field-provenance.js. Both actually live at the repository root (property-record.js, field-provenance.js); there are no copies under tools/. The harness uses the real paths, and both are asserted present in the traced bundle.",
+
+  "sandbox": {
+    "cwd_example": "/tmp/m2-sandbox-XXXXXX",
+    "contains": ["api/_pilot-target.js", "api/_property-record-hydrator.js", "api/_server-deps.js",
+                 "cam-pool.js", "field-provenance.js", "lease-intelligence.js", "money-cents.js",
+                 "property-record.js", "property-reference.js", "property-workspace.js",
+                 "source-values.js", "tenant-normalize.js", "tenant-space.js",
+                 "timeline-merge.js", "variance-breakdown.js"],
+    "proven_absent": ["script.js", "selectors.js", "index.html", "node_modules"],
+    "why_that_matters": "a bundle assertion made from inside a full checkout proves nothing; the probe reports what is beside it, and the suite asserts the untraced files are not"
+  },
+
+  "runtime_global_surface": {
+    "measured_how": "the sealed shim records every property read, so this is what the dependency graph ACTUALLY asked for at runtime, not what a grep suggests",
+    "supplied_by_the_shim": ["LeaseIntelligence", "TenantSpace", "PropertyWorkspace", "PropertyReference"],
+    "reached_for_but_not_supplied": {
+      "CamPool":      "variance-breakdown.js:223 — falls back to require('./cam-pool.js')",
+      "MoneyCents":   "cam-pool.js:82, variance-breakdown.js:60/187 — falls back to require('./money-cents.js')",
+      "SourceValues": "cam-pool.js:54, money-cents.js:83 — falls back to require('./source-values.js')",
+      "Selectors":    "property-workspace.js:42 — falls back to {}, and the hydrator reports the degradation"
+    },
+    "fail_loudly_rule": "the suite asserts the measured set equals exactly the four accounted-for names. A new name appearing at runtime fails E2, rather than being absorbed.",
+    "blocked_writes": ["MoneyCents"]
+  },
+
+  "scenarios": {
+    "normal":          { "ok": true,  "spaces": 2, "reads": 3, "unavailable": [], "degraded": ["attention.without_selectors_readiness"] },
+    "degraded":        { "ok": true,  "spaces": 1, "reads": 4, "unavailable": [], "degraded": ["tenants.from_table_no_review_state", "evidence.read_failed", "attention.without_selectors_readiness"] },
+    "unauthenticated": { "ok": false, "reason": "authentication_required", "reads": 0 },
+    "notOwned":        { "ok": false, "reason": "not_authorized", "reads": 1 },
+    "writeAttempt":    { "refused": ["POST", "PATCH", "PUT", "DELETE", "post"] },
+    "trapSelfTest":    { "purpose": "proves the booby-traps fire and the new-global detector sees a planted global — without it, an empty list is indistinguishable from a broken measurement" },
+    "noTransport":     { "networkAttempted": true, "ok": false, "purpose": "the only other path out of the module is a network call, and it is blocked" }
+  },
+
+  "verification": {
+    "focused": { "command": "node test-m2-runtime-harness.js", "passed": 147, "failed": 0 },
+    "m1b_unchanged": { "command": "node test-property-record-hydrator.js", "passed": 102, "failed": 0 },
+    "mutation_m2": {
+      "command": "scratchpad/mutate-m2.js",
+      "mutants": 31, "killed": 31, "survived": 0,
+      "gaps_the_first_run_exposed": [
+        "B-req-guard-removed — the refusal in _req() was unreachable on the happy path; now unit-tested directly (A14a/b/c)",
+        "H-newglobals-blind — the new-global detector could return [] always and pass; the probe now plants a marker global (C6)",
+        "O-reset-clears-nothing — resetObservations() was a no-op at its call site; now tested directly (D8)",
+        "R-selectors-allowlisted — adding Selectors to SHIM_KEYS passed silently, because the shim only gains a key when something assigns it. SHIM_KEYS is now pinned to a literal (D7) and the undeclared set to an exact list (E2)."
+      ]
+    },
+    "mutation_m1b": { "mutants": 34, "killed": 33, "survived": 1,
+      "survivor": "D-prune-removed — the same equivalent mutant reported in M1b, unchanged" }
+  },
+
+  "constraints_honoured": {
+    "no_http_route": true,
+    "no_mcp_tool": true,
+    "no_auth_infrastructure_added": true,
+    "pilot_writes": 0,
+    "production_contact": false,
+    "schema_or_migrations_touched": false,
+    "payment_or_ripple_touched": false,
+    "ui_navigation_public_site_touched": false,
+    "cam_data_repaired": false,
+    "broken_promises_touched": false,
+    "network_reachable_from_tests": false
+  }
+}
