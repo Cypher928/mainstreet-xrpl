@@ -340,6 +340,7 @@ const SUITES = [
   { label: 'Cap base writer',                   cmd: 'node test-cap-base-writer.js' },
   { label: 'Quick-confirm provenance',          cmd: 'node test-quick-confirm-provenance.js' },
   { label: 'Cap base extraction',               cmd: 'node test-cap-base-extraction.js' },
+  { label: 'CAM row classification (S5)',       cmd: 'node test-cam-row-classification.js' },
   { label: 'Field provenance (e2e)',            cmd: 'node test-e2e-field-provenance.js' },
   { label: 'Lease validator: management fee cap',       cmd: 'node test-mgmt-fee-cap.js' },
   // D2-1 — AND THE SAME CHECK ON THE PANEL, WITH ARGUMENTS IT DID NOT BUILD.
