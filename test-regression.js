@@ -344,6 +344,7 @@ const SUITES = [
   { label: 'CAM remediation preflight (S5.1)',  cmd: 'node test-cam-remediation-preflight.js' },
   { label: 'Orphan identity lifecycle (S6)',    cmd: 'node test-orphan-identity-lifecycle.js' },
   { label: 'Tenant identity prevention (S6.2)', cmd: 'node test-tenant-identity-prevention.js' },
+  { label: 'Tenant normalize extraction (M1a)', cmd: 'node test-tenant-normalize-extraction.js' },
   { label: 'Payment state machine (P1a)',       cmd: 'node test-payment-state-machine.js' },
   { label: 'Payment schema contract (P1a)',     cmd: 'node test-payment-schema-contract.js' },
   { label: 'Field provenance (e2e)',            cmd: 'node test-e2e-field-provenance.js' },

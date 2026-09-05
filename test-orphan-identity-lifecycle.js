@@ -90,9 +90,13 @@ sec('B′. normalizeTenant mints an identity for any record that lacks one');
   // This asserted the DEFECT until S6.2 removed it. It now asserts the fix.
   // The historical shape is preserved in the evidence snapshot rather than in a
   // test that would have to keep failing to be honest.
-  is(!/id:\s*d\.id\s*\?\?\s*crypto\.randomUUID\(\)/.test(CODE),
+  // M1a moved normalizeTenant into tenant-normalize.js, so the pins about what
+  // the normaliser DOES read that file. The claim is unchanged.
+  const TNCODE = fs.readFileSync(require.resolve('./tenant-normalize.js'), 'utf8')
+                   .replace(/^\s*\/\/.*$/gm, '').replace(/\/\*[\s\S]*?\*\//g, '');
+  is(!/id:\s*d\.id\s*\?\?\s*crypto\.randomUUID\(\)/.test(TNCODE),
      'B10 normalizeTenant NO LONGER mints an id — the defect this analysis found');
-  is(/id:\s*d\.id\s*\?\?\s*null,/.test(CODE),
+  is(/id:\s*d\.id\s*\?\?\s*null,/.test(TNCODE),
      'B10b it preserves d.id or leaves null, so a missing id stays visible');
   // The same function runs over ALREADY-normalized records on every load, which
   // is safe only because the id survives the round trip.

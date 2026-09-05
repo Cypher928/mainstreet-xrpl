@@ -31,6 +31,10 @@ const sec = (t) => console.log('\n\x1b[1m── ' + t + ' ──\x1b[0m');
 
 const SRC  = fs.readFileSync(require.resolve('./script.js'), 'utf8');
 const CODE = SRC.replace(/^\s*\/\/.*$/gm, '').replace(/\/\*[\s\S]*?\*\//g, '');
+// M1a: normalizeTenant and its helpers now live here. Pins about what the
+// normalizer does must read this file; pins about the call sites still read SRC.
+const TNCODE = fs.readFileSync(require.resolve('./tenant-normalize.js'), 'utf8')
+                 .replace(/^\s*\/\/.*$/gm, '').replace(/\/\*[\s\S]*?\*\//g, '');
 // Comments stripped: 021's header quotes the defective lines it removes, so an
 // un-stripped pin would match the explanation and pass for the wrong reason.
 const SQL  = fs.readFileSync('./migrations/021_safe_tenant_resync.sql', 'utf8')
@@ -55,11 +59,16 @@ vm.createContext(sandbox);
     }
     throw new Error('unbalanced: ' + name);
   };
-  const deps = ['cleanTenantName', 'toISODate', 'extractDatesFromText', '_dateWithRaw',
-                'mintTenantIdentity', 'normalizeTenant'];
+  // mintTenantIdentity still lives in script.js — the mint happens at the
+  // extraction boundary, not inside normalization — so it is still lifted.
+  const deps = ['mintTenantIdentity'];
   for (const d of deps) { try { vm.runInContext(grab(d), sandbox); } catch (_) { /* optional */ } }
 }
-const normalizeTenant    = sandbox.normalizeTenant;
+// normalizeTenant MOVED to tenant-normalize.js in M1a. Requiring the module is
+// not a workaround for the move: it is stricter than the old text lift, because
+// it exercises the function the application actually calls rather than a copy
+// re-evaluated in a sandbox.
+const normalizeTenant    = require('./tenant-normalize.js').normalizeTenant;
 const mintTenantIdentity = sandbox.mintTenantIdentity;
 
 // ── 4. A genuinely new tenant receives an identity exactly once ────────────
@@ -91,12 +100,11 @@ sec('4. Identity is created once, where a tenant becomes new');
   eq(sandbox._n, 1, '4k still one uuid generated in this whole suite');
 
   // Source pins for the two halves of the rule.
-  is(/id:\s*d\.id\s*\?\?\s*null,/.test(CODE), '4l source: normalizeTenant preserves or nulls');
+  is(/id:\s*d\.id\s*\?\?\s*null,/.test(TNCODE), '4l source: normalizeTenant preserves or nulls');
   const mintCalls = (CODE.match(/mintTenantIdentity\(normalizeTenant\(/g) || []).length;
   is(mintCalls >= 4, '4m source: the extraction boundaries mint explicitly', mintCalls + ' sites');
-  is(!/crypto\.randomUUID\(\)[\s,]*$/m.test(CODE.split('function mintTenantIdentity')[0]
-       .split('function normalizeTenant')[1] || ''),
-     '4n source: no minting remains inside normalizeTenant');
+  is(!/crypto\.randomUUID/.test(TNCODE),
+     '4n source: tenant-normalize.js mints nothing at all');
 
   // THE LOAD BOUNDARY. Removing the mint from normalizeTenant broke the Space
   // panel, because a tenant read from a property blob reached the UI with a null

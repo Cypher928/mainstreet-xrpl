@@ -7873,6 +7873,9 @@
      quoted off a lease — and so did one that genuinely carried a clause. The
      five states live here and getFieldConfidence projects them onto the four it
      has always returned; must precede script.js, which delegates to it. -->
+<!-- tenant-normalize.js defines what a tenant record IS. script.js delegates to
+     it with no local fallback, so it must load first. -->
+<script src="tenant-normalize.js"></script>
 <script src="field-provenance.js"></script>
 <script src="review-engine.js"></script>
 <script src="reconciliation-engine.js"></script>

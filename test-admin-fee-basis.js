@@ -148,7 +148,10 @@ H('normalizeTenant carries the field, and the quote map carries the clause');
 // source:'default', the exact failure this field exists to prevent. The first
 // draft of this change missed the second one and this assertion caught it.
 const EXTRACT = fnSource(SCRIPT, 'callClaudeForLease');
-const LOADED  = fnSource(SCRIPT, 'normalizeTenant');
+// M1a: the load-path normaliser moved to tenant-normalize.js. Same allow-list,
+// same reason for checking it — a field it does not name is dropped on reload.
+const LOADED  = require('fs').readFileSync(
+  require('path').join(__dirname, 'tenant-normalize.js'), 'utf8');
 yes('the extraction normaliser carries admin_fee_basis',
     /admin_fee_basis:\s*\(\(\)\s*=>/.test(EXTRACT), 'field not normalised at extraction');
 yes('THE LOAD-PATH ALLOW-LIST carries it too — or it is dropped on reload',

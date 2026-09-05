@@ -261,9 +261,11 @@ console.log('\n── The blocker must survive a property load ──');
 // warning gone from the card. A safety gate that evaporates on reload is the
 // same defect as one that was never wired — and it fails in the permissive
 // direction, which is the one direction it must never fail in.
-const normalizeSrc = scriptCode.slice(
-  scriptCode.indexOf('function normalizeTenant'),
-  scriptCode.indexOf('function isValidTenant'));
+// M1a moved normalizeTenant into tenant-normalize.js. The allow-list is the
+// same list and the reason for checking it is unchanged: a field this function
+// does not name is dropped on the next property load.
+const normalizeSrc = require('fs').readFileSync(
+  require('path').join(__dirname, 'tenant-normalize.js'), 'utf8');
 [
   ['_edgeCases',       'the detected mismatch itself'],
   ['_propertyConfirm', "the landlord's explicit confirmation"],
