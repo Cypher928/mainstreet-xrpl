@@ -1,0 +1,71 @@
+{
+  "captured": "2026-09-05",
+  "phase": "S6 — Class O orphan-identity lifecycle investigation (READ-ONLY)",
+  "source": "Pilot bhmktujbxdbvdmpybmad — SELECT only, no mutation of any kind",
+  "note": "Frozen so the lifecycle analysis is reproducible without re-querying. The three Class O rows named in S5 are a SUBSET of the dangling references in this table: S5 only examined rows with a non-null expected_cam, and three further dangling rows always had expected_cam NULL, so they never entered that scope.",
+
+  "cross_table_id_resolution": {
+    "_what": "For each table carrying a column named tenant_id, how many of those values actually resolve to a row in public.tenants.",
+    "cam_reconciliations":      { "resolves": 40, "total": 46, "dangling": 6, "null_tenant_id": 0 },
+    "tenant_field_evidence":    { "resolves": 408, "total": 423, "dangling": 15 },
+    "tenant_field_evidence_distinct_ids": { "resolves": 53, "total": 55, "dangling": 2 },
+    "lease_documents":          { "resolves": 0, "total": 73, "dangling": 73 },
+    "lease_documents_distinct_ids": { "resolves": 0, "total": 73 },
+    "lease_documents_ids_seen_in_evidence": 0,
+    "lease_documents_ids_seen_in_cam": 0,
+    "lease_documents_ids_seen_in_property_blob": 0
+  },
+
+  "dangling_cam_rows": [
+    {"recon_id":"0669ad47-e616-4999-af9f-0b25c9520126","tenant_id":"52158098-9099-416d-85bc-ad69c3c3414c","tenant_name":"Whole Health Market, Inc","year":2025,"property":"Cascade Commons","property_id":"dec00000-0000-4000-a000-97d242509394","expected_cam":"5","actual_cam":"66629.23","created_at":"2026-07-26 12:53:31.616679+00","evidence_rows":0,"id_in_property_blob":false,"same_name_on_property":0,"same_name_anywhere":0,"in_s5_class_O":true},
+    {"recon_id":"455c4ab5-d770-4313-8297-f6b1200dfc9f","tenant_id":"b49c89ec-3cae-4564-9732-b197fc2cb072","tenant_name":"Prime Wellness Spa","year":2026,"property":"Maple Plaza","property_id":"514763a6-bb65-4098-a1dc-ae9ca33b1ce2","expected_cam":"5","actual_cam":"720","created_at":"2026-08-07 01:23:31.942678+00","evidence_rows":7,"id_in_property_blob":true,"same_name_on_property":1,"same_name_anywhere":4,"in_s5_class_O":true},
+    {"recon_id":"a83706b6-6843-4764-96c9-3647de231e0e","tenant_id":"0a345749-33e2-47ae-a5ef-04b4c956c357","tenant_name":"Fresh Market Café","year":2026,"property":"LV","property_id":"015e8dda-b807-4e41-afd0-f23e8cb983c5","expected_cam":null,"actual_cam":"765.33","created_at":"2026-08-07 22:32:47.672225+00","evidence_rows":0,"id_in_property_blob":true,"same_name_on_property":0,"same_name_anywhere":2,"in_s5_class_O":false},
+    {"recon_id":"0e70f662-319b-4707-852d-5acbf60357e5","tenant_id":"5d806399-94ee-4efc-a80c-113e044682cd","tenant_name":"Elevate Fitness Studio","year":2026,"property":"LV","property_id":"015e8dda-b807-4e41-afd0-f23e8cb983c5","expected_cam":null,"actual_cam":"1394","created_at":"2026-08-07 22:32:47.672225+00","evidence_rows":0,"id_in_property_blob":true,"same_name_on_property":0,"same_name_anywhere":2,"in_s5_class_O":false},
+    {"recon_id":"17f9f0a8-b373-4dce-a44d-abeb59e73971","tenant_id":"e20b632d-1d45-494c-8da9-e8ada5345aa4","tenant_name":"Lakeview Dental Group","year":2026,"property":"LV","property_id":"015e8dda-b807-4e41-afd0-f23e8cb983c5","expected_cam":null,"actual_cam":"1148","created_at":"2026-08-07 22:32:47.672225+00","evidence_rows":0,"id_in_property_blob":true,"same_name_on_property":0,"same_name_anywhere":1,"in_s5_class_O":false},
+    {"recon_id":"7b5c9e2c-68b5-4010-974f-0fdeca78fa5e","tenant_id":"5a273eba-e306-422e-9e83-47ec9ec002de","tenant_name":"Whole Health Market, Inc","year":2026,"property":"LV","property_id":"015e8dda-b807-4e41-afd0-f23e8cb983c5","expected_cam":"5","actual_cam":"2514.67","created_at":"2026-08-07 22:32:47.672225+00","evidence_rows":8,"id_in_property_blob":true,"same_name_on_property":0,"same_name_anywhere":0,"in_s5_class_O":true}
+  ],
+
+  "dangling_evidence_groups": [
+    {"tenant_id":"5a273eba-e306-422e-9e83-47ec9ec002de","property":"LV","property_id":"015e8dda-b807-4e41-afd0-f23e8cb983c5","evidence_rows":8,"first_seen":"2026-08-07 22:29:57.755276+00","last_seen":"2026-08-07 22:29:57.789648+00","approved":0,"quoted":0,
+     "attributes":{"tenant_name":"Whole Health Market, Inc","leased_sqft":"9200","cap":"5","start_date":"2021-01-01","end_date":"2028-12-31"},
+     "name_candidates_on_property":0,"candidate_detail":null},
+    {"tenant_id":"b49c89ec-3cae-4564-9732-b197fc2cb072","property":"Maple Plaza","property_id":"514763a6-bb65-4098-a1dc-ae9ca33b1ce2","evidence_rows":7,"first_seen":"2026-08-07 01:18:30.272135+00","last_seen":"2026-08-07 01:18:30.383351+00","approved":0,"quoted":0,
+     "attributes":{"tenant_name":"Prime Wellness Spa","leased_sqft":"4500","cap":"5","start_date":"2024-03-01","end_date":"2029-02-28"},
+     "name_candidates_on_property":1,"candidate_detail":"1373a5ba-e4ba-4f49-87cf-0ba6c4e54b25 sqft=4500 cap=5"}
+  ],
+
+  "the_cross_property_trap": {
+    "_what": "Why attribute matching is NOT safe, demonstrated on real rows rather than argued.",
+    "orphan": {"tenant_id":"5a273eba-e306-422e-9e83-47ec9ec002de","property":"LV","name":"Whole Health Market, Inc","sqft":"9200","cap":"5","start":"2021-01-01","end":"2028-12-31"},
+    "candidates_on_its_own_property": 0,
+    "exact_attribute_match_elsewhere": {"tenant_id":"dec00000-0000-4000-a002-97d242509394","property":"Cascade Commons","name":"Whole Health Market","sqft":"9200","cap":"5","start":"2021-01-01","end":"2028-12-31"},
+    "conclusion": "Every attribute matches a tenant on a DIFFERENT property, because the same lease PDF (lease-whole-health-market.pdf) was uploaded to both. A matcher keyed on name+sqft+cap+dates would confidently attach an LV reconciliation to a Cascade Commons tenant. The strongest available signal produces a cross-property false positive."
+  },
+
+  "property_tenant_rosters": {
+    "_note": "tenants.created_at is reset for every row on every resync, because the stored procedure deletes before inserting and so never hits its ON CONFLICT branch. It records the last resync, not when the tenant was first known.",
+    "dec00000-0000-4000-a000-97d242509394": {"property":"Cascade Commons","roster_created_at":"2026-08-06 12:36:09","names":["FitZone Athletics","Harbor Nail & Beauty Studio","Prime Wellness Spa","ProActive Physical Therapy","Summit Coffee & Provisions","Whole Health Market"]},
+    "514763a6-bb65-4098-a1dc-ae9ca33b1ce2": {"property":"Maple Plaza","roster_created_at":"2026-08-07 04:07:15","names":["Luxe Nails","Prime Wellness Spa","ShopRite Supermarkets, LLC"]},
+    "015e8dda-b807-4e41-afd0-f23e8cb983c5": {"property":"LV","roster_created_at":"2026-08-08 18:38:25","names":["CafePress.com, Inc","CafePress.com, Inc","Consumer Programs Incorporated","Consumer Programs Incorporated","Siga Technologies, Inc","Wink Davis Equipment Company","Wink Davis Equipment Company"]}
+  },
+
+  "timeline_evidence": {
+    "_claim": "In all six cases the surviving tenant roster was written AFTER the reconciliation that references the missing id.",
+    "0669ad47": {"recon_at":"2026-07-26 12:53:31","roster_at":"2026-08-06 12:36:09","roster_is_later":true},
+    "455c4ab5": {"recon_at":"2026-08-07 01:23:31","roster_at":"2026-08-07 04:07:15","roster_is_later":true},
+    "a83706b6": {"recon_at":"2026-08-07 22:32:47","roster_at":"2026-08-08 18:38:25","roster_is_later":true},
+    "0e70f662": {"recon_at":"2026-08-07 22:32:47","roster_at":"2026-08-08 18:38:25","roster_is_later":true},
+    "17f9f0a8": {"recon_at":"2026-08-07 22:32:47","roster_at":"2026-08-08 18:38:25","roster_is_later":true},
+    "7b5c9e2c": {"recon_at":"2026-08-07 22:32:47","roster_at":"2026-08-08 18:38:25","roster_is_later":true}
+  },
+
+  "one_tenant_three_ids": {
+    "_what": "A single logical tenant carries a different uuid in each table that references it. This is the root cause in one row of data.",
+    "tenant": "Prime Wellness Spa @ Maple Plaza",
+    "lease_documents_tenant_id": "60dc18c6-1d2f-4ab0-8b6c-f506780b37bd",
+    "tenant_field_evidence_tenant_id": "b49c89ec-3cae-4564-9732-b197fc2cb072",
+    "cam_reconciliations_tenant_id": "b49c89ec-3cae-4564-9732-b197fc2cb072",
+    "tenants_id": "1373a5ba-e4ba-4f49-87cf-0ba6c4e54b25",
+    "distinct_ids": 3
+  }
+}
