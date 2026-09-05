@@ -2068,6 +2068,7 @@ Extract:
   "lease_type": "NNN" | "Gross" | "Modified Gross" | null,
   "sqft": number or null,
   "cam_cap": number or null,
+  "cap_base_amount": number or null,
   "admin_fee_pct": number or null,
   "admin_fee_basis": "operating_expenses" | "controllable_expenses" | "excluding_management_fee" | "unstated" | null,
   "gross_up_pct": number or null,
@@ -2077,7 +2078,7 @@ Extract:
   "renewal_options": string or null,
   "excluded_categories": string or null,
   "property_name": string or null,
-  "quotes": { "cam_cap": string|null, "admin_fee_pct": string|null, "gross_up_pct": string|null, "expense_stop": string|null, "audit_rights": string|null, "pro_rata_method": string|null, "renewal_options": string|null, "cam_commencement_date": string|null, "partial_period_basis": string|null, "admin_fee_basis": string|null }
+  "quotes": { "cam_cap": string|null, "cap_base_amount": string|null, "admin_fee_pct": string|null, "gross_up_pct": string|null, "expense_stop": string|null, "audit_rights": string|null, "pro_rata_method": string|null, "renewal_options": string|null, "cam_commencement_date": string|null, "partial_period_basis": string|null, "admin_fee_basis": string|null }
 }
 
 TENANT NAME (highest priority):
@@ -2096,6 +2097,14 @@ PARTIAL PERIOD BASIS: How the lease apportions CAM when the term covers only PAR
 ADMIN FEE BASIS: What the management/administrative fee cap is a percentage OF. "of operating expenses" / "of CAM costs" / "of total expenses" → "operating_expenses". "of controllable expenses" / "of controllable operating costs" → "controllable_expenses". Fee excluded from its own base — "of expenses excluding the management fee", "exclusive of such fee" → "excluding_management_fee". If the lease states a fee percentage but never says what it applies to → "unstated". Return null ONLY when there is no fee cap clause at all. A percentage with no stated base is "unstated", NOT a guess at one.
 
 CAM CAP: Search the entire document for any language limiting CAM increases ("not to exceed", "capped at X%", "expense stop"). Return the number (e.g. 5% → 5). Null if no cap language exists.
+
+CAP BASE AMOUNT: The DOLLAR amount a CAM cap percentage is applied to — the prior-year, base-year or stated baseline CAM/operating-expense figure. Return the number only (e.g. "$26,000.00" → 26000).
+- Return it ONLY when the lease states the dollar figure itself, in words you can quote.
+- NEVER derive it. Do not compute it from the cap percentage, from a CAM or operating-expense total elsewhere in the document, from base rent, from square footage, from a rate per square foot, or from any arithmetic of your own.
+- A lease that names a base YEAR ("increases over the 2023 base year") without stating that year's dollar amount has NO cap base. Return null.
+- A lease that caps increases with no baseline figure at all has NO cap base. Return null.
+- If you cannot supply the verbatim clause stating the amount, return null for this field. A cap base with no quote is not usable and will be discarded.
+- Null is the correct and expected answer for most leases. Do not guess.
 
 PROPERTY NAME: The name or address of the building/property covered by this lease, as stated in the premises description or recitals (e.g. "Lakeview Plaza", "123 Main Street"). Null if not stated.
 
@@ -2193,6 +2202,38 @@ ${leaseSnippet}
 
   const finalFlags = computeFlags({ start_date: resolvedStart, end_date: resolvedEnd, lease_type: resolvedType, flags: raw.flags, doc_has_dates, doc_has_lease_type });
 
+  // ── A CAP BASE IS ACCEPTED ONLY WITH THE CLAUSE THAT STATES IT ─────────────
+  //
+  // The prompt asks for the dollar figure and forbids deriving one. This is the
+  // enforcement, because a prompt is a request and not a guarantee.
+  //
+  // The rule is not a preference. FieldProvenance floors `cap_base_amount` at
+  // `manually_entered` rather than `ai_extracted` (NEVER_EXTRACTED), on the
+  // proven ground that no extraction path could supply one. A value that
+  // arrived here from the model WITHOUT a quote would write no evidence
+  // snapshot — the _quoteMap loop below skips quote-less fields — and would
+  // then resolve at that floor, claiming a person typed a number the model
+  // invented. That is a worse lie than the one S1 removed.
+  //
+  // So the two travel together or not at all: no quote, no base. The value is
+  // dropped here, before it reaches the tenant, and the field reads `unknown` —
+  // which is what a lease that does not state its baseline actually means.
+  //
+  // Trimmed to the same 120-char budget the prompt asks for; a whitespace-only
+  // quote is no quote.
+  const _capBaseQuote = (() => {
+    const q = raw.quotes && typeof raw.quotes === 'object' ? raw.quotes.cap_base_amount : null;
+    return (typeof q === 'string' && q.trim()) ? q.trim() : null;
+  })();
+  const _capBaseAmount = (() => {
+    if (!_capBaseQuote) return null;                 // unquoted ⇒ unusable
+    const n = _pf(raw.cap_base_amount ?? raw.capBaseAmount ?? null);
+    // A base of zero or below cannot be a ceiling's operand; treat it as absent
+    // rather than letting `capBaseAmount * (1 + pct/100)` produce a $0 ceiling
+    // the lease never stated.
+    return (n != null && Number.isFinite(n) && n > 0) ? n : null;
+  })();
+
   const normalized = normalizeTenant({
     tenant_name:         resolvedName,
     leased_sqft:         resolvedSqft,
@@ -2200,6 +2241,11 @@ ${leaseSnippet}
     end_date:            resolvedEnd,
     lease_type:          resolvedType,
     cap:                 normalizeCap(raw.capPercentage ?? raw.cam_cap ?? null),
+    // The dollar operand of the ceiling. Null unless the clause stating it came
+    // back with it — see _capBaseAmount above. Stored camelCase because that is
+    // the property the engine and getEffectiveLeaseField read; its canonical
+    // key, for evidence and provenance, is `cap_base_amount`.
+    capBaseAmount:       _capBaseAmount,
     // F-02: '' and null are DIFFERENT. '' means extraction ran and found no
     // exclusion schedule; null means the field was never extracted. This used to
     // collapse '' into null, and normalizeTenant then turned null back into '',
@@ -2257,6 +2303,11 @@ ${leaseSnippet}
   // Map: Claude quote key → normalized field key (cam_cap is stored as 'cap' in tenant objects).
   const _quoteMap = {
     cam_cap:          'cap',
+    // Canonical on both sides — the extraction key and the evidence key are the
+    // same string, unlike cam_cap → cap. A snapshot only lands here when the
+    // value survived the quote gate above, so an extracted cap base always
+    // reaches lease_confirmed and never the manually_entered floor.
+    cap_base_amount:  'cap_base_amount',
     admin_fee_pct:    'admin_fee_pct',
     gross_up_pct:     'gross_up_pct',
     expense_stop:     'expense_stop',
@@ -2287,7 +2338,11 @@ ${leaseSnippet}
       ..._fev,
       [fieldKey]: { snapshots: [...prev, {
         fieldKey,
-        value:                  normalized[fieldKey] ?? null,
+        // _fieldStore, not the raw key: every canonical key IS its storage
+        // property except cap_base_amount, which is stored as `capBaseAmount`.
+        // Reading the canonical name directly would stamp `value: null` onto a
+        // snapshot whose quote is real — evidence citing a clause for nothing.
+        value:                  normalized[_fieldStore(fieldKey)] ?? null,
         confidence:             { status: 'estimated', note: 'AI-extracted' },
         // Phase 0 (P1b): this read `normalized.fileName`, which is not set here —
         // the filename is spread onto the tenant later (processLeaseFile), so
