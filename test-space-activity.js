@@ -82,7 +82,7 @@ const tenantId = await p.evaluate(async()=>{
   await new Promise(r=>setTimeout(r,800));
   await addNewProperty();
   await new Promise(r=>setTimeout(r,2200));
-  const rows=[{tenant_name:'Suite 204 — Vantage Optical',leased_sqft:2400,start_date:'2022-01-01',end_date:'2027-12-31',lease_type:'NNN',cap:5}].map(normalizeTenant);
+  const rows=[{tenant_name:'Suite 204 — Vantage Optical',leased_sqft:2400,start_date:'2022-01-01',end_date:'2027-12-31',lease_type:'NNN',cap:5}].map(t=>mintTenantIdentity(normalizeTenant(t)));
   const prop=_props.find(y=>y.id===activePropId);
   prop.name='Harbour Point'; prop.totalSqft=26000; prop.tenants=rows;
   tenantData.splice(0,tenantData.length,...rows);
@@ -207,7 +207,7 @@ const demo = await p.evaluate(async(t)=>{
   // Fresh property + space so we can observe the transition from zero.
   await addNewProperty();
   await new Promise(r=>setTimeout(r,2000));
-  const rows=[{tenant_name:'Suite 118 — Halcyon Bakery',leased_sqft:1600,start_date:'2023-01-01',end_date:'2028-01-01',lease_type:'NNN',cap:4}].map(normalizeTenant);
+  const rows=[{tenant_name:'Suite 118 — Halcyon Bakery',leased_sqft:1600,start_date:'2023-01-01',end_date:'2028-01-01',lease_type:'NNN',cap:4}].map(t=>mintTenantIdentity(normalizeTenant(t)));
   const prop=_props.find(y=>y.id===activePropId);
   prop.name='Harbour Point'; prop.totalSqft=26000; prop.tenants=rows;
   tenantData.splice(0,tenantData.length,...rows);
@@ -370,7 +370,7 @@ const freshEmpties = await (async () => {
     const x=[...document.querySelectorAll('button')].find(e=>/go to portfolio/i.test(e.innerText)); if(x)x.click();
     await new Promise(r=>setTimeout(r,800));
     await addNewProperty(); await new Promise(r=>setTimeout(r,2200));
-    const rows=[{tenant_name:'Suite 300 — Untouched',leased_sqft:900,lease_type:'NNN',cap:3}].map(normalizeTenant);
+    const rows=[{tenant_name:'Suite 300 — Untouched',leased_sqft:900,lease_type:'NNN',cap:3}].map(t=>mintTenantIdentity(normalizeTenant(t)));
     const prop=_props.find(y=>y.id===activePropId);
     prop.tenants=rows; tenantData.splice(0,tenantData.length,...rows);
     switchWorkspaceTab('spaces'); renderBulkResults(); await new Promise(r=>setTimeout(r,400));
@@ -560,7 +560,7 @@ const gated = await (async()=>{
     const x=[...document.querySelectorAll('button')].find(e=>/go to portfolio/i.test(e.innerText)); if(x)x.click();
     await new Promise(r=>setTimeout(r,700));
     await addNewProperty(); await new Promise(r=>setTimeout(r,2200));
-    const rows=[{tenant_name:'Suite 401 — Empty',leased_sqft:800,lease_type:'NNN',cap:3}].map(normalizeTenant);
+    const rows=[{tenant_name:'Suite 401 — Empty',leased_sqft:800,lease_type:'NNN',cap:3}].map(t=>mintTenantIdentity(normalizeTenant(t)));
     const prop=_props.find(y=>y.id===activePropId);
     prop.tenants=rows; tenantData.splice(0,tenantData.length,...rows);
     switchWorkspaceTab('spaces'); renderBulkResults(); await new Promise(r=>setTimeout(r,400));

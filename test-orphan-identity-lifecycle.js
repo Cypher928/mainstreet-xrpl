@@ -87,9 +87,13 @@ sec('B. Root cause: one tenant, three identities');
 // ── B2. The minting site, read from the source ─────────────────────────────
 sec('B′. normalizeTenant mints an identity for any record that lacks one');
 {
-  is(/id:\s*d\.id\s*\?\?\s*crypto\.randomUUID\(\)/.test(CODE),
-     'B10 normalizeTenant assigns crypto.randomUUID() when d.id is absent',
-     'if this stops being true the root-cause analysis needs redoing');
+  // This asserted the DEFECT until S6.2 removed it. It now asserts the fix.
+  // The historical shape is preserved in the evidence snapshot rather than in a
+  // test that would have to keep failing to be honest.
+  is(!/id:\s*d\.id\s*\?\?\s*crypto\.randomUUID\(\)/.test(CODE),
+     'B10 normalizeTenant NO LONGER mints an id — the defect this analysis found');
+  is(/id:\s*d\.id\s*\?\?\s*null,/.test(CODE),
+     'B10b it preserves d.id or leaves null, so a missing id stays visible');
   // The same function runs over ALREADY-normalized records on every load, which
   // is safe only because the id survives the round trip.
   is(/normalizeTenant\(\{[\s\S]{0,200}?id:\s*t\.id/.test(CODE),
@@ -104,21 +108,27 @@ sec('B′. normalizeTenant mints an identity for any record that lacks one');
 sec('C. The current application can still produce this');
 {
   const calls = (CODE.match(/\bawait resyncTenantsToTable\(/g) || []).length;
-  const guarded = (CODE.match(/_tenantsBelongTo\([^)]*\)\s*\)\s*await resyncTenantsToTable\(/g) || []).length;
   is(calls >= 5, 'C1 resyncTenantsToTable has five call sites', calls + ' found');
-  is(guarded === 2, 'C2 exactly two of them pass through the _tenantsBelongTo guard', guarded + ' guarded');
-  is(calls - guarded >= 3, 'C3 so at least three write the tenants table unguarded',
-     (calls - guarded) + ' unguarded — the guard exists and does not cover its own function');
+  // S6.2: the guard moved INSIDE the function, so the number of call sites that
+  // remember to apply it stopped mattering. That is the only arrangement that
+  // covers entry points nobody has written yet.
+  const body = CODE.slice(CODE.indexOf('async function resyncTenantsToTable('),
+                          CODE.indexOf('async function syncTenantsToTable('));
+  is(/if\s*\(!_tenantsBelongTo\(propertyId,\s*tenants\)\)\s*return;/.test(body),
+     'C2 the ownership guard is applied INSIDE resyncTenantsToTable');
+  is(body.indexOf('_tenantsBelongTo') < body.indexOf('_resyncQueues.get'),
+     'C3 before the queue, so a coalesced pending write cannot bypass it either');
 
-  // Every call site filters the roster before handing it over. Anything filtered
-  // out is deleted by the resync and never reinserted, while its CAM and
-  // evidence rows keep pointing at it.
-  is(/filter\(t\s*=>\s*t\s*&&\s*t\.tenant_name\s*&&\s*!t\._pendingJobReview\)/.test(CODE),
-     'C4 _doResyncTenantsToTable drops rows with no name or a pending review');
+  // The roster filter still drops unusable rows — but a dropped row can no
+  // longer destroy anything, because the resync no longer deletes wholesale.
+  // Pinned with the .map() that follows, because the same predicate also appears
+  // in resyncTenantsToTable's _usable guard — a looser pin would pass on that
+  // line while this one had lost its id check.
+  is(/filter\(t => t && t\.tenant_name && !t\._pendingJobReview && t\.id\)\s*\n\s*\.map\(t => \(\{/.test(CODE),
+     'C4 _doResyncTenantsToTable now also requires an id before persisting a row');
   is(/tenantData\.filter\(t\s*=>\s*t\?\.tenant_name\s*&&\s*\(!t\?\.extractionFailed/.test(CODE),
-     'C5 and callers drop failed extractions too');
-  ok('C6 a dropped tenant is DELETED by the resync and not reinserted — the orphan is created there,'
-     + ' not by any explicit delete');
+     'C5 and callers still drop failed extractions');
+  ok('C6 a dropped tenant is no longer deleted — migration 021 prunes only unreferenced absentees');
 }
 
 // ── C2. The empty-roster wipe ──────────────────────────────────────────────
@@ -132,10 +142,29 @@ sec('C″. An empty roster deletes everything and inserts nothing');
      'C7 the procedure deletes unconditionally, before any insert');
   is(/if p_rows is not null and jsonb_array_length\(p_rows\) > 0 then/.test(proc),
      'C8 but only inserts when the array is non-empty');
-  ok('C9 so resyncTenantsToTable(id, []) is a full wipe of that property\'s tenants');
-  // One call site guards against it; the others do not.
-  is(/qualifiedTenants\.length\)\s*\{?\s*\n?\s*await resyncTenantsToTable/.test(CODE),
-     'C10 one call site checks the list is non-empty first');
+  ok('C9 so under 009, resyncTenantsToTable(id, []) was a full wipe of the roster');
+
+  // S6.2 closes it in both places: the app refuses before dispatching, and
+  // migration 021 refuses again server-side. Either alone would do; both is
+  // deliberate, because the RPC is reachable by an older deployed client.
+  const body = CODE.slice(CODE.indexOf('async function resyncTenantsToTable('),
+                          CODE.indexOf('async function syncTenantsToTable('));
+  is(/if\s*\(!_usable\.length\)\s*\{[\s\S]{0,300}?return;/.test(body),
+     'C10 the app returns early on an empty roster and deletes nothing');
+  // Comments stripped first. 021's header QUOTES the defective line it removes,
+  // so a naive text pin would read the explanation as the code — the same trap
+  // that has caught source assertions in this repo before.
+  const safe = fs.readFileSync('./migrations/021_safe_tenant_resync.sql', 'utf8')
+                 .replace(/^\s*--.*$/gm, '');
+  is(/if p_rows is null or jsonb_array_length\(p_rows\) = 0 then[\s\S]{0,400}?noop_reason/.test(safe),
+     'C11 and migration 021 returns a no-op server-side for the same case');
+  is(!/delete from public\.tenants\s*\n\s*where property_id = p_property_id;/.test(safe),
+     'C12 021 contains no unconditional delete-by-property at all');
+  is(/not exists \(select 1 from public\.cam_reconciliations c where c\.tenant_id = t\.id\)/.test(safe)
+     && /not exists \(select 1 from public\.tenant_field_evidence e where e\.tenant_id = t\.id::text\)/.test(safe),
+     'C13 its delete is conditioned on nothing referencing the tenant');
+  is(!/coalesce\(v_tenant_id, gen_random_uuid\(\)\)/.test(safe),
+     'C14 and it no longer mints an id server-side that the app would never see');
 }
 
 // ── D. REPAIR — resemblance is not identity, demonstrated ──────────────────

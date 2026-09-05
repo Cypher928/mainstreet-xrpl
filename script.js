@@ -1359,6 +1359,32 @@ function cleanTenantName(raw) {
     .trim();
 }
 
+// ─── TENANT IDENTITY IS MINTED ONCE, ON PURPOSE, HERE ────────────────────────
+//
+// normalizeTenant() used to end with `id: d.id ?? crypto.randomUUID()`, which
+// looks harmless and is not. That function runs on every property load, on
+// every extraction, and over records that have already been normalized — so a
+// record that arrived without an id was silently given a NEW one each time it
+// passed through, and every writer downstream captured whichever id its own
+// copy happened to be holding. Pilot has one tenant carrying three different
+// uuids across lease_documents, tenant_field_evidence and tenants, and six
+// reconciliations whose tenant_id was never a primary key in tenants at all.
+// Those rows were never detached from their tenant; they were never attached.
+//
+// So normalizeTenant no longer mints. It preserves `d.id` or leaves null, and
+// the decision to create an identity is made explicitly, at the boundary where
+// a tenant genuinely becomes new: a fresh extraction. Call this there and
+// nowhere else. A null id downstream is now a visible bug rather than a silent
+// second identity, which is the entire point.
+function mintTenantIdentity(t) {
+  if (!t || typeof t !== 'object') return t;
+  if (t.id) return t;                      // already has one — never re-mint
+  t.id = (typeof crypto !== 'undefined' && crypto.randomUUID)
+    ? crypto.randomUUID()
+    : (typeof _genUUID === 'function' ? _genUUID() : String(Date.now()) + Math.random().toString(36).slice(2));
+  return t;
+}
+
 // Returns true when a name is a real business/person name rather than a
 // document-level phrase that the AI mistakenly returned as the tenant name.
 function isStrongName(name) {
@@ -1492,7 +1518,8 @@ function normalizeTenant(d) {
     _userConfirmed:      d._userConfirmed      ?? false,
     _jobId:              d._jobId              ?? null,
     _usedFallback:       d._usedFallback       ?? fallback._usedFallback ?? false,
-    id:                  d.id                  ?? crypto.randomUUID(),
+    // Preserved, never minted. See mintTenantIdentity() for why.
+    id:                  d.id                  ?? null,
     fileName:            d.fileName            ?? '',
     _error:              d._error              ?? null,
     reviewOverrides:     d.reviewOverrides     ?? {},
@@ -3498,7 +3525,9 @@ async function handleLease(i, file) {
     }
 
     if (!extracted) throw new Error('Could not extract lease fields');
-    const normalized = normalizeTenant(extracted);
+    // A fresh extraction is where a tenant becomes new, so this is one of the
+    // few places allowed to create an identity. See mintTenantIdentity().
+    const normalized = mintTenantIdentity(normalizeTenant(extracted));
     if (!isValidTenant(normalized)) throw new Error('Extracted tenant has no usable fields');
 
     // Phase 19: edge case detection — mirrors the bulk upload pipeline (_runLeaseJobPipeline)
@@ -5266,7 +5295,7 @@ async function _runLeaseJobPipeline(jobId, placeholderIdx) {
     updateLeaseJob(jobId, { stage: 'normalize', progress: _JOB_STAGES.normalize.progress });
     renderBulkResults();
 
-    const norm = extracted ? normalizeTenant(extracted) : null;
+    const norm = extracted ? mintTenantIdentity(normalizeTenant(extracted)) : null;
 
     // ── Stage: Confidence ─────────────────────────────────────────────────────
     updateLeaseJob(jobId, { stage: 'confidence', progress: _JOB_STAGES.confidence.progress });
@@ -9166,7 +9195,9 @@ async function retryExtractionWithFile(index, file) {
     }
 
     if (extracted && leaseText) extracted.rawText = leaseText;
-    const norm = extracted ? normalizeTenant(extracted) : null;
+    // Re-extracting an EXISTING tenant: the id below is taken from `t`, so this
+    // mint only fires for a record that never had one.
+    const norm = extracted ? mintTenantIdentity(normalizeTenant(extracted)) : null;
 
     // Confidence scoring (mirrors handleBulkLeases exactly)
     const hasStrongName = norm ? isStrongName(norm.tenant_name) : false;
@@ -9222,7 +9253,7 @@ async function retryExtractionWithFile(index, file) {
       _needsReview:     isPartial,
       _showRetry,
       _error:           isValid ? null : 'Could not identify a tenant — please enter fields manually',
-      id:               t?.id ?? crypto.randomUUID(),
+      id:               t?.id ?? mergedNorm?.id ?? null,   // minted above, never here
       reviewOverrides:  prevOverrides,
       fieldEvidence:    prevEvidence,
     };
@@ -24310,7 +24341,17 @@ function normalizePropertyState(data) {
       // Reject objects with no identifying tenant fields — not a tenant record.
       if (!t.id && !t.tenant_name && !t.name) { malformed = true; return false; }
       return true;
-    }).map(t => normalizeTenant(t));
+    // A record entering the working set must be addressable — the UI routes by
+    // id — so a legacy blob entry without one is given an identity HERE, and
+    // says so. Pilot has none (86 of 86 blob tenants carry an id), and with the
+    // extraction boundary now minting, reaching this branch means either data
+    // older than that boundary or a bug worth seeing. It is not silent.
+    }).map(t => {
+      const n = normalizeTenant(t);
+      if (!n.id) console.warn('[loadPropertyData] tenant "%s" had no id; minting one. '
+        + 'It will differ from any id already recorded against this tenant elsewhere.', n.tenant_name);
+      return mintTenantIdentity(n);
+    });
   })();
 
   const disputes = (() => {
@@ -24367,7 +24408,7 @@ function sanitizeImportedPropertyData(raw) {
       return true;
     })
     .map(t => {
-      const n = normalizeTenant(t);
+      const n = mintTenantIdentity(normalizeTenant(t));
       if (n.start_date && isNaN(new Date(n.start_date).getTime())) n.start_date = null;
       if (n.end_date   && isNaN(new Date(n.end_date).getTime()))   n.end_date   = null;
       if (n.confidence && typeof n.confidence === 'object') {
@@ -24505,11 +24546,24 @@ async function loadProperties(opts) {
 const _resyncQueues = new Map();
 
 async function _doResyncTenantsToTable(propertyId, tenants) {
-  // Primary path: atomic delete+insert via resync_property_tenants() stored procedure.
-  // Requires migrations/009_atomic_tenant_resync.sql to have been applied in Supabase.
-  // If the function is absent (PGRST202), falls back to direct table ops silently.
+  // Primary path: atomic upsert-and-prune via resync_property_tenants().
+  // migrations/021_safe_tenant_resync.sql replaces the destructive 009 body;
+  // the signature is unchanged, so this call works against either. If the
+  // function is absent entirely (PGRST202), falls back to direct table ops.
+  //
+  // A row with no id is dropped HERE, before it can reach the database. 009
+  // used to coalesce a missing id to gen_random_uuid(), minting an identity
+  // server-side that the application never saw — so the next resync minted
+  // another one and the tenant multiplied. Identity is created in exactly one
+  // place now (mintTenantIdentity, at extraction) and anything that arrives
+  // here without one is a bug upstream that must not be papered over.
+  const _idless = (tenants || []).filter(t => t && t.tenant_name && !t._pendingJobReview && !t.id);
+  if (_idless.length) {
+    console.error('[resyncTenantsToTable] %d tenant(s) have no id and were NOT persisted: %s',
+      _idless.length, _idless.map(t => t.tenant_name).join(', '));
+  }
   const rows = (tenants || [])
-    .filter(t => t && t.tenant_name && !t._pendingJobReview)
+    .filter(t => t && t.tenant_name && !t._pendingJobReview && t.id)
     .map(t => ({
       id:         t.id,
       name:       t.tenant_name || null,
@@ -24551,17 +24605,19 @@ async function _doResyncTenantsToTable(propertyId, tenants) {
   console.log('[resyncTenantsToTable] atomic resync OK — inserted:', data?.inserted ?? rows.length, 'rows for property', propertyId);
 }
 
-// Fallback: non-atomic delete+insert used when the stored procedure is unavailable.
-// Less safe than the RPC (insert failure leaves tenants deleted), but prevents total failure.
+// Fallback used when the stored procedure is unavailable. It used to open with
+// an unconditional delete of every tenant for the property, which meant an
+// insert failure left the property with none — and, worse, that a tenant merely
+// filtered out upstream was destroyed while its reconciliations and evidence
+// went on naming it.
+//
+// It now runs in the same order as migration 021: UPSERT FIRST, then remove
+// only the absentees nothing references. The order matters. Upserting first
+// means a failure at any point leaves the table with more truth in it than it
+// started with, never less.
 async function _doResyncTenantsDirectly(propertyId, rows) {
-  const { error: delErr } = await db.from('tenants').delete().eq('property_id', propertyId);
-  if (delErr) {
-    console.error('[resyncTenantsDirectly] delete error:', delErr.message);
-    return;
-  }
-  if (!rows.length) return;
-  const insertRows = rows
-    .filter(r => r.name && r.name.trim())
+  const insertRows = (rows || [])
+    .filter(r => r && r.id && r.name && r.name.trim())
     .map(r => ({
       id:          r.id,
       property_id: propertyId,
@@ -24573,20 +24629,57 @@ async function _doResyncTenantsDirectly(propertyId, rows) {
       lease_url:   r.lease_url  || null,
       lease_type:  r.lease_type || null,
     }));
-  if (!insertRows.length) return;
+
+  // An empty roster asserts nothing. It must never be read as "delete them all".
+  if (!insertRows.length) {
+    console.warn('[resyncTenantsDirectly] empty roster — no-op, nothing deleted for property', propertyId);
+    return;
+  }
+
   const { error: insErr } = await db.from('tenants').upsert(insertRows, { onConflict: 'id' });
   if (insErr) {
-    console.error('[resyncTenantsDirectly] insert error:', insErr.message);
-    // The delete already committed — tenants table is now empty for this property.
-    // Show a critical error and attempt to re-save from in-memory state so the
-    // data is at least persisted to localStorage until the user reloads.
+    console.error('[resyncTenantsDirectly] upsert error:', insErr.message);
     showToast('⚠ Tenant sync error — your lease data is safe in this browser session but could not be saved to the database. Please stay on this page and try saving again.', { color: '#7f1d1d', textColor: '#fca5a5', duration: 10000 });
-    // Re-trigger a full property save (localStorage + Supabase properties table)
-    // so the data is not silently lost if the user navigates away.
     const _recProp = currentProperty();
     if (_recProp?.id === propertyId) savePropertyData();
-  } else {
-    console.log('[resyncTenantsDirectly] fallback resync OK —', insertRows.length, 'rows for property', propertyId);
+    return;   // nothing was deleted, so nothing was lost
+  }
+
+  // Prune absentees, but never one a reconciliation or a piece of evidence still
+  // names. Losing a stale row is tidiness; losing a referenced one is the defect
+  // this whole phase exists to prevent, so when the reference lookups fail we
+  // keep everything rather than guess.
+  try {
+    const keep = new Set(insertRows.map(r => String(r.id)));
+    const { data: existing, error: exErr } = await db
+      .from('tenants').select('id').eq('property_id', propertyId);
+    if (exErr) throw exErr;
+
+    const absent = (existing || []).map(t => String(t.id)).filter(id => !keep.has(id));
+    if (!absent.length) return;
+
+    const [{ data: camRefs, error: camErr }, { data: evRefs, error: evErr }] = await Promise.all([
+      db.from('cam_reconciliations').select('tenant_id').in('tenant_id', absent),
+      db.from('tenant_field_evidence').select('tenant_id').in('tenant_id', absent),
+    ]);
+    if (camErr || evErr) throw (camErr || evErr);
+
+    const referenced = new Set([
+      ...(camRefs || []).map(r => String(r.tenant_id)),
+      ...(evRefs  || []).map(r => String(r.tenant_id)),
+    ]);
+    const removable = absent.filter(id => !referenced.has(id));
+    const retained  = absent.length - removable.length;
+
+    if (removable.length) {
+      const { error: delErr } = await db.from('tenants').delete().in('id', removable);
+      if (delErr) console.error('[resyncTenantsDirectly] prune error:', delErr.message);
+    }
+    console.log('[resyncTenantsDirectly] fallback resync OK —', insertRows.length,
+      'upserted,', removable.length, 'pruned,', retained, 'retained because still referenced');
+  } catch (e) {
+    console.warn('[resyncTenantsDirectly] reference check failed — pruning skipped, '
+      + 'stale rows kept rather than risk orphaning:', e?.message);
   }
 }
 
@@ -24610,7 +24703,16 @@ async function _doResyncTenantsDirectly(propertyId, rows) {
 // (no id yet, i.e. freshly extracted and not persisted anywhere).
 function _tenantsBelongTo(propertyId, rows) {
   const prop = (typeof _props !== 'undefined' ? _props : []).find(p => p && p.id === propertyId);
-  if (!prop) return false;
+  // Now that this gates every resync rather than two call sites, a silent false
+  // would mean a legitimate save quietly not happening. Every caller registers
+  // the property in _props before resyncing (currentProperty() returns a _props
+  // entry; the acquisition path pushes before it saves), so reaching here is a
+  // bug worth seeing rather than a condition worth swallowing.
+  if (!prop) {
+    console.error('[resyncTenantsToTable] REFUSED — property %s is not in _props; '
+      + 'nothing was written and nothing was deleted.', propertyId);
+    return false;
+  }
   const own = new Set((prop.tenants || []).filter(Boolean).map(t => t.id));
   const foreign = (rows || []).filter(t => t && t.id && !own.has(t.id));
   if (foreign.length) {
@@ -24623,6 +24725,27 @@ function _tenantsBelongTo(propertyId, rows) {
 
 async function resyncTenantsToTable(propertyId, tenants) {
   if (!propertyId || typeof propertyId !== 'string' || propertyId.length < 10) return;
+
+  // ── THE GUARD LIVES HERE, NOT AT THE CALL SITES ──────────────────────────
+  // _tenantsBelongTo was written for this function and then applied at two of
+  // its five call sites, so three paths wrote the tenants table with no
+  // ownership check at all. A guard that has to be remembered is a guard that
+  // will be forgotten; the only way to cover every entry point, including ones
+  // written later, is to make the function itself refuse.
+  if (!_tenantsBelongTo(propertyId, tenants)) return;
+
+  // ── AN EMPTY ROSTER IS A NO-OP, NOT AN INSTRUCTION TO DELETE ─────────────
+  // Checked before the queue so a coalesced pending write cannot smuggle one
+  // through either. Every caller filters its list first, so "empty" almost
+  // always means "the filters removed everything", never "this property has no
+  // tenants". The old path took it as the latter and erased the roster.
+  const _usable = (tenants || []).filter(t => t && t.tenant_name && !t._pendingJobReview && t.id);
+  if (!_usable.length) {
+    console.warn('[resyncTenantsToTable] no usable rows for property %s — no-op (%d supplied). '
+      + 'Nothing deleted.', propertyId, (tenants || []).length);
+    return;
+  }
+
   let state = _resyncQueues.get(propertyId);
   if (!state) {
     state = { running: false, pending: null };
@@ -27678,7 +27801,7 @@ async function acqHandleLeaseFiles(fileList) {
         extracted = await callClaudeWithPdfDirect(file);
       }
       if (!extracted) throw new Error('Extraction returned null');
-      const normalized = normalizeTenant(extracted);
+      const normalized = mintTenantIdentity(normalizeTenant(extracted));
       Object.assign(placeholder, normalized, { _status: 'ok', _fileName: file.name });
     } catch (e) {
       console.warn('[acq] lease extraction failed:', file.name, e.message);
