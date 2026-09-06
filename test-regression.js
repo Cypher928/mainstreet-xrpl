@@ -349,6 +349,7 @@ const SUITES = [
   { label: 'Payment schema contract (P1a)',     cmd: 'node test-payment-schema-contract.js' },
   { label: 'Server PropertyRecord hydrator (M1b)', cmd: 'node test-property-record-hydrator.js' },
   { label: 'Server runtime harness (M2)',        cmd: 'node test-m2-runtime-harness.js' },
+  { label: 'Dependency hardening (M3)',         cmd: 'node test-m3-dependency-hardening.js' },
   { label: 'Field provenance (e2e)',            cmd: 'node test-e2e-field-provenance.js' },
   { label: 'Lease validator: management fee cap',       cmd: 'node test-mgmt-fee-cap.js' },
   // D2-1 — AND THE SAME CHECK ON THE PANEL, WITH ARGUMENTS IT DID NOT BUILD.

@@ -105,6 +105,52 @@ const BLOB_TENANTS = [
     start_date: '2021-06-01', end_date: '2026-06-01', lease_type: 'NNN' },
 ];
 
+const RICH_TENANTS = [
+  { id: T1, tenant_name: 'Acme Coffee LLC', leased_sqft: 500, cap: 0.05,
+    start_date: '2020-01-01', end_date: '2030-01-01', lease_type: 'NNN',
+    lease_url: 'https://example.invalid/acme-lease.pdf', leaseFileName: 'acme-lease.pdf' },
+  { id: T2, tenant_name: 'Northside Hardware', leased_sqft: 300, cap: null,
+    start_date: '2021-06-01', end_date: '2026-06-01', lease_type: 'NNN' },
+];
+
+const RICH_DISPUTES = [
+  { id: 'd1', tenantId: T1, tenantName: 'Acme Coffee LLC', status: 'open',
+    amount: 1200, reason: 'Roof work billed as CAM', timestamp: '2025-03-01T00:00:00Z' },
+  { id: 'd2', tenantName: 'Northside Hardware', status: 'resolved',
+    amount: 300, reason: 'Snow removal proration', timestamp: '2025-02-01T00:00:00Z' },
+];
+
+// One of every kind TenantSpace sorts: photo, invoice, warranty, pdf, file,
+// manual note, and each CAM event type it recognises.
+const RICH_TIMELINE = [
+  { id: 'e1', type: 'photo',   tenantId: T1, when: '2025-01-05T00:00:00Z',
+    attachments: [{ name: 'storefront.jpg', url: 'https://example.invalid/a.jpg', kind: 'photo' }] },
+  { id: 'e2', type: 'invoice', tenantId: T1, when: '2025-01-06T00:00:00Z',
+    attachments: [{ name: 'inv-1.pdf', url: 'https://example.invalid/i.pdf', kind: 'invoice' }] },
+  { id: 'e3', type: 'warranty', tenantId: T1, when: '2025-01-07T00:00:00Z',
+    attachments: [{ name: 'hvac.pdf', url: 'https://example.invalid/w.pdf', kind: 'warranty' }] },
+  { id: 'e4', type: 'pdf',     tenantId: T1, when: '2025-01-08T00:00:00Z',
+    attachments: [{ name: 'doc.pdf', url: 'https://example.invalid/d.pdf', kind: 'pdf' }] },
+  { id: 'e5', type: 'file',    tenantId: T2, when: '2025-01-09T00:00:00Z',
+    attachments: [{ name: 'notes.txt', url: 'https://example.invalid/n.txt', kind: 'file' }] },
+  { id: 'e6', type: 'note', manual: true, category: 'note', tenantId: T1,
+    when: '2025-01-10T00:00:00Z', text: 'Called about the roof.' },
+  { id: 'e7', type: 'cam_reconciled',          when: '2025-02-01T00:00:00Z' },
+  { id: 'e8', type: 'invoice_imported',        when: '2025-02-02T00:00:00Z' },
+  { id: 'e9', type: 'derived_metrics_rebuilt', when: '2025-02-03T00:00:00Z' },
+  { id: 'e10', type: 'manual_cam',             when: '2025-02-04T00:00:00Z' },
+  { id: 'e11', type: 'repair', tenantName: 'Acme Coffee LLC', responsibility: 'landlord',
+    when: '2025-02-05T00:00:00Z' },
+];
+
+const RICH_RECON = {
+  camYear: 2025, total: 16500,
+  results: [
+    { tenantId: T1, tenantName: 'Acme Coffee LLC', allocatedAmount: 6000, proRata: 0.5 },
+    { tenantName: 'Northside Hardware', totalAllocated: 3600, proRata: 0.3 },
+  ],
+};
+
 const TABLE_TENANTS = [
   { id: T1, property_id: PROP, name: 'Legacy Tenant', sqft: 400, cap: null,
     start_date: null, end_date: null, lease_url: null, lease_type: 'NNN' },
@@ -140,6 +186,19 @@ const SCENARIOS = {
   // The global fetch throws in here, which proves the only other path out of
   // this module is a network call, and that nothing else was quietly making one.
   noTransport:     { owns: true, blobTenants: BLOB_TENANTS, omitTransport: true },
+  // M3: the widest property this graph can be handed. Disputes, a timeline with
+  // every attachment kind TenantSpace sorts, a CAM reconciliation that matches a
+  // space, lease document urls, invoices. M2's scenarios touched none of the
+  // eighteen browser-only globals tenant-space.js and property-workspace.js
+  // reach for; this one exists to find out whether any of them is reachable at
+  // all, rather than merely unreached by thin fixtures.
+  rich: {
+    owns: true, blobTenants: RICH_TENANTS, evidence: EVIDENCE,
+    invoices: [{ id: 'i1', amount: 12000, category: 'Landscaping', camEligible: true },
+               { id: 'i2', amount:  8000, category: 'Roof',        camEligible: false },
+               { id: 'i3', amount:  4500, category: 'Snow Removal', camEligible: true }],
+    disputes: RICH_DISPUTES, timeline: RICH_TIMELINE, recon: RICH_RECON,
+  },
 };
 
 function transport(s) {
@@ -155,8 +214,8 @@ function transport(s) {
         data: {
           tenants:  s.blobTenants || [],
           invoices: s.invoices    || [],
-          disputes: [],
-          timeline: [],
+          disputes: s.disputes    || [],
+          timeline: s.timeline    || [],
           camReconciliation: s.recon || null,
         },
       }] };
@@ -236,12 +295,54 @@ function transport(s) {
         spaces:      r.record.spaces.length,
         spaceNames:  r.record.spaces.map(x => x.tenantName),
         fieldTenants: Object.keys(r.record.fields || {}).length,
+        disputes:     Array.isArray(r.record.disputes) ? r.record.disputes.length : null,
+        timeline:     (function (tl) {
+                        if (!tl) return null;
+                        var n = Array.isArray(tl.property) ? tl.property.length : 0;
+                        for (var k in (tl.byTenant || {})) n += (tl.byTenant[k] || []).length;
+                        return n;
+                      })(r.record.timeline),
+        documents:    Array.isArray(r.record.documents) ? r.record.documents.length : null,
+        spaceEvents:  r.record.spaces.map(x => (x.counts && x.counts.events) || 0),
+        spaceDisputes:r.record.spaces.map(x => (x.counts && x.counts.disputes) || 0),
+        camResults:   r.record.cam && Array.isArray(r.record.cam.results)
+                        ? r.record.cam.results.length : null,
         attention:   Array.isArray(r.record.attention) ? r.record.attention.length : null,
         identity:    r.record.identity || null,
       };
     }
 
     // ── 5. What the dependency graph asked the runtime for ─────────────────
+    // One module, one instance. If variance-breakdown.js resolved a different
+    // copy of cam-pool.js than the declared dependency set holds, the record
+    // could be assembled from two versions of the same logic — which would not
+    // throw, it would just quietly disagree with itself.
+    //
+    // Driven from a table, with negative pairs in the SAME loop: a check that
+    // simply answered "true" would turn the negatives true as well, and the
+    // suite reads both.
+    const IDENTITY_PAIRS = [
+      ['CamPool',           './cam-pool.js',           'CamPool'],
+      ['FieldProvenance',   './field-provenance.js',   'FieldProvenance'],
+      ['VarianceBreakdown', './variance-breakdown.js', 'VarianceBreakdown'],
+      ['PropertyReference', './property-reference.js', 'PropertyReference'],
+      ['TimelineMerge',     './timeline-merge.js',     'TimelineMerge'],
+      // Negative controls: different modules must NOT compare equal. The suite
+      // knows which of these are meant to be false.
+      ['control_pool_vs_cents',  './cam-pool.js',       'FieldProvenance'],
+      ['control_merge_vs_pool',  './timeline-merge.js', 'CamPool'],
+    ];
+    // Only the MEASURED value is reported. The expected polarity lives in
+    // test-m3-dependency-hardening.js: a probe that reported its own
+    // expectations would agree with itself whatever it measured.
+    out.sameInstance = {};
+    try {
+      const _dl = DEPS.load();
+      for (const [label, modPath, depName] of IDENTITY_PAIRS) {
+        out.sameInstance[label] = require(modPath) === _dl[depName];
+      }
+    } catch (_e) { out.sameInstance.error = String(_e && _e.message); }
+
     out.shimReads       = DEPS.shimReads();
     out.undeclaredReads = DEPS.undeclaredReads();
     out.blockedWrites   = DEPS.blockedWrites();
@@ -308,7 +409,7 @@ function runScenario(dir, scenario) {
 function run(scenarios) {
   const names = scenarios ||
     ['normal', 'degraded', 'unauthenticated', 'notOwned', 'writeAttempt',
-     'trapSelfTest', 'noTransport'];
+     'trapSelfTest', 'noTransport', 'rich'];
   const box = buildSandbox({});
   const results = {};
   try {
