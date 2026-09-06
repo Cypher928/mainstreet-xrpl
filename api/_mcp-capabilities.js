@@ -67,6 +67,8 @@ const REFUSAL = {
   NOT_AUTHORIZED:  'not_authorized',
   NOT_FOUND:       'property_not_found',
   TENANT_NOT_FOUND:'tenant_not_found',
+  SPACE_NOT_FOUND: 'space_not_found',
+  FIELD_NOT_FOUND: 'field_not_found',
   READ_FAILED:     'read_failed',
   BAD_REQUEST:     'invalid_arguments',
   UNKNOWN_TOOL:    'unknown_tool',
@@ -574,6 +576,452 @@ async function getTenant(args, ctx) {
   });
 }
 
+// ── M5: four more read-only projections of the SAME record ─────────────────
+//
+// Every capability below calls the same hydrator through the same
+// _hydrateOwned(), over the same three approved reads. M5 adds no database
+// read of any kind; it adds ways of ASKING about a record the server already
+// knows how to build. That is deliberate — a second fetch path would be a
+// second place for the ownership check and the truthfulness rules to drift.
+
+/**
+ * Resolve one space inside an already-hydrated owned record.
+ *
+ * Returns { kind: 'ok', space } | { kind: 'unavailable' } | { kind: 'absent' }.
+ *
+ * The three are different answers and every caller below must keep them apart.
+ * `unavailable` means the spaces could not be composed, so whether this space
+ * exists is UNKNOWN — reporting "no such space" there would be a false negative
+ * about a real tenant, which is the same mistake as reporting "no disputes"
+ * when the dispute source could not be read.
+ */
+function _resolveSpace(rec, id, unavailable, degradedCodes) {
+  const status = sectionStatus('spaces', rec.spaces, unavailable, degradedCodes);
+  if (status === STATUS.UNAVAILABLE) return { kind: 'unavailable', status };
+  // A space's id IS its tenant id in this data model — TenantSpace sets
+  // space.id from the tenant. Both are accepted so a caller need not know that,
+  // and neither can reach outside this property's own space list.
+  const space = (rec.spaces || []).find(s =>
+    s && (s.tenantId === id || (s.space && s.space.id === id))) || null;
+  return space ? { kind: 'ok', space, status } : { kind: 'absent', status };
+}
+
+/** The envelope for "the section that would have answered this is unknown". */
+function _unknownSection(scope, message, rec, unavailable, degradedCodes, reads, now, extra) {
+  return envelope({
+    data: null,
+    provenance: Object.assign({
+      origin: rec.meta.origin,
+      includesBrowserLocalState: rec.meta.includesBrowserLocalState,
+      unavailable: unavailable.slice(), degraded: degradedCodes.slice(),
+      reads, hydrated: true,
+    }, extra || {}),
+    caveats: [{ code: 'section_unavailable', severity: SEVERITY.UNAVAILABLE,
+                scope, message }].concat(buildCaveats([], degradedCodes)),
+    asOf: now,
+  });
+}
+
+/** Shared preamble: authenticate, validate, hydrate. */
+async function _open(a, c, needTenant) {
+  const id = await resolveIdentity(c.token, c.authFetch);
+  if (!id.ok) return { stop: refuse(id.reason, 'The caller could not be authenticated.',
+                                    { asOf: c.now }) };
+  if (!a.propertyId || typeof a.propertyId !== 'string') {
+    return { stop: refuse(REFUSAL.BAD_REQUEST, 'propertyId is required and must be a string.',
+                          { asOf: c.now }) };
+  }
+  if (needTenant && (!a[needTenant] || typeof a[needTenant] !== 'string')) {
+    return { stop: refuse(REFUSAL.BAD_REQUEST, needTenant + ' is required and must be a string.',
+                          { asOf: c.now }) };
+  }
+  const h = await _hydrateOwned(a.propertyId, id.userId, c);
+  if (!h.ok) return { stop: _refusalFor(h.reason, h.reads, c.now) };
+  return {
+    h, rec: h.record,
+    unavailable: (h.record.meta && h.record.meta.unavailable) || [],
+    degradedCodes: h.degraded || [],
+  };
+}
+
+// ── Tool 4: get_lease_evidence ─────────────────────────────────────────────
+
+/**
+ * The provenance PropertyRecord already holds for one tenant's lease fields.
+ *
+ * Nothing here is computed. Each entry is what FieldProvenance resolved —
+ * which state the value is in, who attested it, and the clause and page it was
+ * read from — passed through unchanged. No quote is reconstructed, no citation
+ * is inferred from a filename, and no field is promoted because a value happens
+ * to exist somewhere else on the tenant.
+ *
+ * When the evidence read failed this returns null, not a list of uncited
+ * fields. That is the M4 contract and it exists because the alternative is
+ * worse than vague: without the evidence rows a reviewer-confirmed field falls
+ * to `ai_extracted` with no reviewer named, so a transient failure would
+ * actively contradict the record rather than merely thin it.
+ */
+async function getLeaseEvidence(args, ctx) {
+  const a = args || {}, c = ctx || {};
+  const o = await _open(a, c, 'tenantId');
+  if (o.stop) return o.stop;
+  const { h, rec, unavailable, degradedCodes } = o;
+
+  const found = _resolveSpace(rec, a.tenantId, unavailable, degradedCodes);
+  if (found.kind === 'unavailable') {
+    return _unknownSection('spaces',
+      'The spaces for this property could not be composed, so whether this ' +
+      'tenant exists is UNKNOWN. This is not a statement that it does not.',
+      rec, unavailable, degradedCodes, h.reads, c.now);
+  }
+  if (found.kind === 'absent') {
+    return refuse(REFUSAL.TENANT_NOT_FOUND,
+      'No tenant with that id exists in this property. A tenant id belonging to ' +
+      'another property does not resolve here.',
+      { provenance: { reads: h.reads, hydrated: true,
+                      spacesConsidered: (rec.spaces || []).length }, asOf: c.now });
+  }
+
+  const fieldsStatus = sectionStatus('fields', rec.fields, unavailable, degradedCodes);
+  if (fieldsStatus === STATUS.UNAVAILABLE) {
+    return _unknownSection('fields',
+      'Field evidence could not be read, so the provenance of this lease is ' +
+      'UNKNOWN. It is reported as null rather than as a set of uncited fields, ' +
+      'because without the evidence rows a field a reviewer has confirmed is ' +
+      'indistinguishable from one nobody has ever checked.',
+      rec, unavailable, degradedCodes, h.reads, c.now,
+      { sectionStatus: { spaces: found.status, fields: fieldsStatus },
+        resolvedWithin: a.propertyId });
+  }
+
+  const all = (rec.fields || {})[a.tenantId] || null;
+  if (a.fieldKey != null) {
+    if (typeof a.fieldKey !== 'string') {
+      return refuse(REFUSAL.BAD_REQUEST, 'fieldKey, when given, must be a string.',
+                    { asOf: c.now });
+    }
+    if (!all || !(a.fieldKey in all)) {
+      return refuse(REFUSAL.FIELD_NOT_FOUND,
+        'No canonical lease field named "' + a.fieldKey + '". This is a statement ' +
+        'about the field name, not about the evidence behind it.',
+        { provenance: { reads: h.reads, hydrated: true,
+                        knownFields: all ? Object.keys(all) : [] }, asOf: c.now });
+    }
+  }
+
+  const evidence = !all ? null
+    : (a.fieldKey != null ? { [a.fieldKey]: all[a.fieldKey] } : all);
+
+  const caveats = buildCaveats(unavailable, degradedCodes);
+  if (!all) {
+    caveats.push({
+      code: 'no_field_evidence', severity: SEVERITY.INFO, scope: 'evidence',
+      message: 'The evidence read succeeded and there is no field evidence on ' +
+               'record for this tenant. Lease terms shown elsewhere are ' +
+               'unverified rather than contradicted.',
+    });
+  }
+
+  return envelope({
+    data: {
+      propertyId: a.propertyId,
+      tenantId:   found.space.tenantId,
+      tenantName: found.space.tenantName,
+      fieldKey:   a.fieldKey != null ? a.fieldKey : null,
+      evidence:   sectionValue(fieldsStatus, evidence),
+      fieldCount: evidence ? Object.keys(evidence).length : 0,
+    },
+    provenance: {
+      origin: rec.meta.origin,
+      includesBrowserLocalState: rec.meta.includesBrowserLocalState,
+      note: rec.meta.note,
+      unavailable: unavailable.slice(), degraded: degradedCodes.slice(),
+      sectionStatus: { spaces: found.status, fields: fieldsStatus },
+      reads: h.reads, hydrated: true,
+      ownership: 'properties.user_id = authenticated user',
+      resolvedWithin: a.propertyId,
+      source: 'PropertyRecord.fields via FieldProvenance — passed through unchanged',
+    },
+    caveats,
+    asOf: c.now,
+  });
+}
+
+// ── Tool 5: get_space ──────────────────────────────────────────────────────
+
+/**
+ * One space, as PropertyRecord already represents it.
+ *
+ * This is deliberately the NARROW view, and it overlaps get_tenant by
+ * construction — in this data model a space and its tenant are one object, and
+ * inventing a difference would mean inventing a second space model. get_tenant
+ * is the aggregate (it also folds in disputes, documents and provenance);
+ * get_space is the space itself, for a caller that wants the physical and
+ * lease facts without the rest.
+ *
+ * A space that cannot be composed is UNKNOWN, never not_found.
+ */
+async function getSpace(args, ctx) {
+  const a = args || {}, c = ctx || {};
+  const o = await _open(a, c, 'spaceId');
+  if (o.stop) return o.stop;
+  const { h, rec, unavailable, degradedCodes } = o;
+
+  const found = _resolveSpace(rec, a.spaceId, unavailable, degradedCodes);
+  if (found.kind === 'unavailable') {
+    return _unknownSection('spaces',
+      'The spaces for this property could not be composed, so whether this ' +
+      'space exists is UNKNOWN. A real space must never be reported as absent ' +
+      'because the roster could not be read.',
+      rec, unavailable, degradedCodes, h.reads, c.now,
+      { resolvedWithin: a.propertyId });
+  }
+  if (found.kind === 'absent') {
+    return refuse(REFUSAL.SPACE_NOT_FOUND,
+      'No space with that id exists in this property. A space id belonging to ' +
+      'another property does not resolve here.',
+      { provenance: { reads: h.reads, hydrated: true,
+                      spacesConsidered: (rec.spaces || []).length }, asOf: c.now });
+  }
+
+  const s = found.space;
+  return envelope({
+    data: {
+      propertyId: a.propertyId,
+      spaceId:    (s.space && s.space.id) || s.tenantId,
+      spaceName:  (s.space && s.space.name) || null,
+      tenantId:   s.tenantId,
+      tenantName: s.tenantName,
+      noIdentity: !!s.noIdentity,
+      lease:      s.lease || null,
+      summary:    s.summary || null,
+      counts:     s.counts || null,
+      camResult:  s.camResult || null,
+    },
+    provenance: {
+      origin: rec.meta.origin,
+      includesBrowserLocalState: rec.meta.includesBrowserLocalState,
+      note: rec.meta.note,
+      unavailable: unavailable.slice(), degraded: degradedCodes.slice(),
+      sectionStatus: { spaces: found.status },
+      reads: h.reads, hydrated: true,
+      ownership: 'properties.user_id = authenticated user',
+      resolvedWithin: a.propertyId,
+      source: 'PropertyRecord.spaces — the same representation get_property returns',
+      identityNote: 'In this data model a space id and its tenant id are the ' +
+                    'same value; both are accepted here.',
+    },
+    caveats: buildCaveats(unavailable, degradedCodes),
+    asOf: c.now,
+  });
+}
+
+// ── Tool 6: get_timeline ───────────────────────────────────────────────────
+
+/**
+ * The timeline the SERVER can see, and an explicit statement of what it cannot.
+ *
+ * loadPropertyData() in the browser merges localStorage into the stored
+ * timeline, so a browser can hold events that exist nowhere else. This
+ * capability reads the database only. That is not a failure and it is not
+ * reported as one — it is a permanent scope limit, and it travels on every
+ * response as an `info` caveat rather than hiding in the record's prose.
+ *
+ * THE SCOPING CASE. When TimelineMerge is absent PropertyRecord still returns a
+ * timeline, but byTenant is {} and the property list is un-deduplicated. Asking
+ * for one tenant's events would then yield undefined, and returning [] for that
+ * would be a confident, empty, wrong answer. Tenant-scoped becomes UNAVAILABLE;
+ * property-level becomes DEGRADED, because the events are real and merely
+ * unfiltered.
+ */
+async function getTimeline(args, ctx) {
+  const a = args || {}, c = ctx || {};
+  const o = await _open(a, c, null);
+  if (o.stop) return o.stop;
+  const { h, rec, unavailable, degradedCodes } = o;
+
+  const tl        = rec.timeline || null;
+  const noScoping = unavailable.indexOf('timeline.scoping') !== -1;
+  let status      = sectionStatus('timeline', tl, unavailable, degradedCodes);
+  if (status !== STATUS.UNAVAILABLE && noScoping) status = STATUS.DEGRADED;
+
+  const caveats = buildCaveats(unavailable, degradedCodes);
+  caveats.push({
+    code: 'timeline.server_origin_only', severity: SEVERITY.INFO, scope: 'timeline',
+    message: 'This is the timeline as stored in the database. A browser session ' +
+             'may hold events that were never persisted; they are absent here, ' +
+             'and their absence is not a claim that they do not exist.',
+  });
+  if (noScoping) {
+    caveats.push({
+      code: 'timeline.scoping_unavailable', severity: SEVERITY.UNAVAILABLE,
+      scope: 'timeline.byTenant',
+      message: 'Timeline scoping could not be composed, so events cannot be ' +
+               'attributed to spaces. Per-tenant timelines are UNKNOWN, not ' +
+               'empty, and the property list below is un-deduplicated.',
+    });
+  }
+
+  // ── tenant-scoped ────────────────────────────────────────────────────────
+  if (a.tenantId != null) {
+    if (typeof a.tenantId !== 'string') {
+      return refuse(REFUSAL.BAD_REQUEST, 'tenantId, when given, must be a string.',
+                    { asOf: c.now });
+    }
+    const found = _resolveSpace(rec, a.tenantId, unavailable, degradedCodes);
+    if (found.kind === 'unavailable') {
+      return _unknownSection('spaces',
+        'The spaces for this property could not be composed, so whether this ' +
+        'tenant exists is UNKNOWN, and so is its timeline.',
+        rec, unavailable, degradedCodes, h.reads, c.now, { resolvedWithin: a.propertyId });
+    }
+    if (found.kind === 'absent') {
+      return refuse(REFUSAL.TENANT_NOT_FOUND,
+        'No tenant with that id exists in this property.',
+        { provenance: { reads: h.reads, hydrated: true,
+                        spacesConsidered: (rec.spaces || []).length }, asOf: c.now });
+    }
+
+    // Scoping gone ⇒ this tenant's events are unknown, not none.
+    const scoped = (status === STATUS.UNAVAILABLE || noScoping)
+      ? null
+      : ((tl.byTenant || {})[a.tenantId] || []);
+    const scopedStatus = scoped === null ? STATUS.UNAVAILABLE
+      : (scoped.length ? STATUS.OK : STATUS.EMPTY);
+
+    return envelope({
+      data: {
+        propertyId: a.propertyId, tenantId: a.tenantId,
+        tenantName: found.space.tenantName,
+        scope: 'tenant',
+        events: scoped,
+        eventCount: scoped ? scoped.length : null,
+      },
+      provenance: {
+        origin: rec.meta.origin,
+        includesBrowserLocalState: rec.meta.includesBrowserLocalState,
+        note: rec.meta.note,
+        unavailable: unavailable.slice(), degraded: degradedCodes.slice(),
+        sectionStatus: { spaces: found.status, timeline: scopedStatus },
+        reads: h.reads, hydrated: true,
+        ownership: 'properties.user_id = authenticated user',
+        resolvedWithin: a.propertyId,
+        source: 'PropertyRecord.timeline.byTenant — scoped by TimelineMerge',
+      },
+      caveats, asOf: c.now,
+    });
+  }
+
+  // ── property-level ───────────────────────────────────────────────────────
+  const propertyEvents = status === STATUS.UNAVAILABLE ? null : ((tl && tl.property) || []);
+  // Per-tenant counts, so a caller can see that scoping exists without asking
+  // once per space. Null when scoping is gone: an index of zeroes would read as
+  // "no tenant has any events".
+  const byTenantCounts = (status === STATUS.UNAVAILABLE || noScoping) ? null
+    : Object.keys((tl && tl.byTenant) || {}).reduce((acc, k) => {
+        acc[k] = ((tl.byTenant[k]) || []).length; return acc;
+      }, {});
+
+  return envelope({
+    data: {
+      propertyId: a.propertyId,
+      scope: 'property',
+      events: propertyEvents,
+      eventCount: propertyEvents ? propertyEvents.length : null,
+      byTenantCounts,
+    },
+    provenance: {
+      origin: rec.meta.origin,
+      includesBrowserLocalState: rec.meta.includesBrowserLocalState,
+      note: rec.meta.note,
+      unavailable: unavailable.slice(), degraded: degradedCodes.slice(),
+      sectionStatus: { timeline: status },
+      reads: h.reads, hydrated: true,
+      ownership: 'properties.user_id = authenticated user',
+      source: 'PropertyRecord.timeline.property — database only, never localStorage',
+    },
+    caveats, asOf: c.now,
+  });
+}
+
+// ── Tool 7: get_disputes ───────────────────────────────────────────────────
+
+/**
+ * Disputes as the server-side record holds them, property-wide or for one
+ * tenant.
+ *
+ * This is the capability the whole truthfulness contract was written for. If
+ * the dispute source could not be read — the property has no stored record at
+ * all, or a module that composes it is missing — the answer is null with a
+ * caveat, never []. An MCP client asking "does this property have any
+ * disputes?" must not be able to receive "no" from a system that does not know.
+ */
+async function getDisputes(args, ctx) {
+  const a = args || {}, c = ctx || {};
+  const o = await _open(a, c, null);
+  if (o.stop) return o.stop;
+  const { h, rec, unavailable, degradedCodes } = o;
+
+  const status = sectionStatus('disputes', rec.disputes, unavailable, degradedCodes);
+  const caveats = buildCaveats(unavailable, degradedCodes);
+
+  let scopeName = 'property', tenantName = null, list = rec.disputes || [];
+
+  if (a.tenantId != null) {
+    if (typeof a.tenantId !== 'string') {
+      return refuse(REFUSAL.BAD_REQUEST, 'tenantId, when given, must be a string.',
+                    { asOf: c.now });
+    }
+    const found = _resolveSpace(rec, a.tenantId, unavailable, degradedCodes);
+    if (found.kind === 'unavailable') {
+      return _unknownSection('spaces',
+        'The spaces for this property could not be composed, so whether this ' +
+        'tenant exists is UNKNOWN, and its disputes cannot be scoped.',
+        rec, unavailable, degradedCodes, h.reads, c.now, { resolvedWithin: a.propertyId });
+    }
+    if (found.kind === 'absent') {
+      return refuse(REFUSAL.TENANT_NOT_FOUND,
+        'No tenant with that id exists in this property.',
+        { provenance: { reads: h.reads, hydrated: true,
+                        spacesConsidered: (rec.spaces || []).length }, asOf: c.now });
+    }
+    scopeName = 'tenant';
+    tenantName = found.space.tenantName;
+    // The same predicate TenantSpace uses, so a space's dispute COUNT and this
+    // list can never disagree.
+    list = list.filter(d => d && (d.tenantId === a.tenantId || d.tenantName === tenantName));
+  }
+
+  const value = sectionValue(status, list);
+  const open  = value ? value.filter(d => d && (d.status === 'open' || d.status === 'docs_requested')) : null;
+
+  return envelope({
+    data: {
+      propertyId: a.propertyId,
+      scope: scopeName,
+      tenantId:   a.tenantId != null ? a.tenantId : null,
+      tenantName,
+      disputes:   value,
+      // Null rather than 0 when the source is unknown: a count of zero is an
+      // assertion, and there is nothing here to assert it from.
+      disputeCount:     value ? value.length : null,
+      openDisputeCount: open  ? open.length  : null,
+    },
+    provenance: {
+      origin: rec.meta.origin,
+      includesBrowserLocalState: rec.meta.includesBrowserLocalState,
+      note: rec.meta.note,
+      unavailable: unavailable.slice(), degraded: degradedCodes.slice(),
+      sectionStatus: { disputes: status },
+      reads: h.reads, hydrated: true,
+      ownership: 'properties.user_id = authenticated user',
+      resolvedWithin: a.propertyId,
+      source: 'PropertyRecord.disputes — the stored record only',
+    },
+    caveats, asOf: c.now,
+  });
+}
+
 // ── Tool descriptors ───────────────────────────────────────────────────────
 
 const TOOLS = [
@@ -615,6 +1063,75 @@ const TOOLS = [
     },
     handler: getTenant,
   },
+  {
+    name: 'get_lease_evidence',
+    description:
+      'The provenance behind one tenant\'s lease fields: which state each value ' +
+      'is in, who attested it, and the clause and page it was read from. Nothing ' +
+      'is reconstructed. If the evidence could not be read the answer is null, ' +
+      'not a list of uncited fields — a confirmed field and an unchecked one are ' +
+      'indistinguishable without the evidence rows.',
+    inputSchema: {
+      type: 'object',
+      properties: {
+        propertyId: { type: 'string', description: 'Property UUID.' },
+        tenantId:   { type: 'string', description: 'Tenant UUID within that property.' },
+        fieldKey:   { type: 'string', description: 'Optional. One canonical lease field.' },
+      },
+      required: ['propertyId', 'tenantId'], additionalProperties: false,
+    },
+    handler: getLeaseEvidence,
+  },
+  {
+    name: 'get_space',
+    description:
+      'One space within an owned property: its identity, lease terms, summary, ' +
+      'record counts and CAM result. This is the narrow view — get_tenant returns ' +
+      'the same space plus disputes, documents and provenance. A space that ' +
+      'cannot be composed is reported as unknown, never as not found.',
+    inputSchema: {
+      type: 'object',
+      properties: {
+        propertyId: { type: 'string', description: 'Property UUID.' },
+        spaceId:    { type: 'string', description: 'Space UUID — the same value as its tenant id.' },
+      },
+      required: ['propertyId', 'spaceId'], additionalProperties: false,
+    },
+    handler: getSpace,
+  },
+  {
+    name: 'get_timeline',
+    description:
+      'The property timeline as STORED IN THE DATABASE, property-wide or scoped ' +
+      'to one tenant. A browser session may hold events that were never ' +
+      'persisted; those are absent here and their absence is not a claim that ' +
+      'they do not exist. Every response says so.',
+    inputSchema: {
+      type: 'object',
+      properties: {
+        propertyId: { type: 'string', description: 'Property UUID.' },
+        tenantId:   { type: 'string', description: 'Optional. Scope to one tenant.' },
+      },
+      required: ['propertyId'], additionalProperties: false,
+    },
+    handler: getTimeline,
+  },
+  {
+    name: 'get_disputes',
+    description:
+      'Disputes on the stored record, property-wide or for one tenant. If the ' +
+      'dispute source could not be read the answer is null with a caveat and the ' +
+      'counts are null — never an empty list, and never a count of zero.',
+    inputSchema: {
+      type: 'object',
+      properties: {
+        propertyId: { type: 'string', description: 'Property UUID.' },
+        tenantId:   { type: 'string', description: 'Optional. Scope to one tenant.' },
+      },
+      required: ['propertyId'], additionalProperties: false,
+    },
+    handler: getDisputes,
+  },
 ];
 
 /** Dispatch by name. An unknown tool is refused, not guessed at. */
@@ -629,6 +1146,7 @@ async function call(name, args, ctx) {
 
 module.exports = {
   TOOLS, call, listProperties, getProperty, getTenant,
+  getLeaseEvidence, getSpace, getTimeline, getDisputes, _resolveSpace,
   resolveIdentity, envelope, refuse, sectionStatus, sectionValue, buildCaveats,
   REFUSAL, SEVERITY, STATUS, WRITE_METHODS, DEGRADED_SECTIONS, UNKNOWN_CODES, CAVEAT_TEXT,
   _readOnly,

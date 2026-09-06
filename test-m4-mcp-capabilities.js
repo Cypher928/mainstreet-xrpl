@@ -36,9 +36,14 @@ const path = require('path');
 const MCP  = require('./api/_mcp-capabilities.js');
 const HYD  = require('./api/_property-record-hydrator.js');
 
+const INV  = require('./tools/global-dependency-inventory.js');
 const SRC  = fs.readFileSync(require.resolve('./api/_mcp-capabilities.js'), 'utf8');
 const strip = (s) => s.replace(/^\s*\/\/.*$/gm, '').replace(/\/\*[\s\S]*?\*\//g, '');
 const CODE  = strip(SRC);
+/** Code with comments AND strings blanked — the module names browser APIs in
+ *  its own prose to promise it does not use them, and a word-scan would flag
+ *  the promise. What must be absent is the access. */
+const EXEC = INV.stripStringsAndComments(SRC);
 
 let pass = 0, fail = 0;
 const ok  = (m, d) => { console.log('  \x1b[32m✓\x1b[0m ' + m + (d ? '  — ' + d : '')); pass++; };
@@ -693,11 +698,13 @@ sec('I. No writes, no RPC, and only the reads M1b approved');
 // ── J. No browser anything ─────────────────────────────────────────────────
 sec('J. No browser API, no localStorage, no second hydration');
 {
-  is(!/\blocalStorage\b/.test(CODE),        'J1 localStorage does not appear');
-  is(!/\bdocument\./.test(CODE),            'J2 nor document.');
-  is(!/\bwindow\./.test(CODE),              'J3 nor window.');
-  is(!/\bloadPropertyData\s*\(/.test(CODE), 'J4 loadPropertyData is not called');
-  is(!/\bgetCamYear\s*\(/.test(CODE),       'J5 getCamYear is not called');
+  is(!/\blocalStorage\b/.test(EXEC),
+     'J1 localStorage is never accessed — checked with string literals blanked, ' +
+     'because the module says "never localStorage" in a provenance field');
+  is(!/\bdocument\./.test(EXEC),            'J2 nor document.');
+  is(!/\bwindow\./.test(EXEC),              'J3 nor window.');
+  is(!/\bloadPropertyData\s*\(/.test(EXEC), 'J4 loadPropertyData is not called');
+  is(!/\bgetCamYear\s*\(/.test(EXEC),       'J5 getCamYear is not called');
   is(/require\('\.\/_property-record-hydrator\.js'\)/.test(CODE),
      'J6 the accepted hydrator is used');
   is(!/PropertyRecord\.assemble/.test(CODE),
@@ -730,8 +737,13 @@ sec('J. No browser API, no localStorage, no second hydration');
 // ── K. Tool descriptors ────────────────────────────────────────────────────
 sec('K. Exactly three capabilities, described honestly');
 {
-  eq(MCP.TOOLS.map(t => t.name), ['list_properties', 'get_property', 'get_tenant'],
-     'K1 three tools, and only three');
+  // M4 owns three of these. Later phases add more, so this asserts that M4's
+  // three are still present and still first — not that nothing was ever added.
+  const M4_TOOLS = ['list_properties', 'get_property', 'get_tenant'];
+  eq(MCP.TOOLS.slice(0, 3).map(t => t.name), M4_TOOLS,
+     'K1 M4\'s three capabilities are present, unchanged, and first');
+  is(new Set(MCP.TOOLS.map(t => t.name)).size === MCP.TOOLS.length,
+     'K1a and no capability name is registered twice');
   for (const t of MCP.TOOLS) {
     is(typeof t.description === 'string' && t.description.length > 60,
        'K2.' + t.name + ' has a description worth reading');
