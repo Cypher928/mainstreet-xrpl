@@ -91,6 +91,24 @@
       "killed": 33,
       "survived": 1,
       "survivor": "D-prune-removed — the same equivalent mutant reported since M1b, unchanged"
+    },
+    "full_regression": {
+      "command": "node test-regression.js",
+      "suites_run": 120,
+      "suites_passed": 119,
+      "suites_failed": 1,
+      "failing_suite": "Broken promises (dead controls) — test-broken-promises.js",
+      "failing_assertions": [
+        "4 control(s) promise an object and navigate generically",
+        "review actions do not carry the tenant id"
+      ],
+      "baseline_check": "the identical two assertions fail at c3dbee9, before any of this work — preserved as the known unrelated baseline, not fixed or repinned",
+      "m_suites_inside_the_run": {
+        "M1b": "passed",
+        "M2": "passed",
+        "M3": "passed",
+        "M4": "passed"
+      }
     }
   },
   "constraints_honoured": {
