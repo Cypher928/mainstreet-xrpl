@@ -202,6 +202,20 @@ async function hydrate(opts) {
   const d    = row.data || {};
   const degraded = [];
 
+  // A property row can exist with no stored blob at all — a property created
+  // but never saved. Every section below then reads `d.<x> || []` and produces
+  // an empty list, which is indistinguishable from "we looked, and there are
+  // none". For disputes in particular that is the difference between "this
+  // property has no disputes" and "nothing has ever been recorded about this
+  // property", and a caller acting on the first when the second is true is
+  // exactly the failure a verified-memory system exists to prevent.
+  //
+  // Reported as a degradation rather than in meta.unavailable, because
+  // assemble() DOES compose every section — it composes them from nothing.
+  if (row.data == null || typeof row.data !== 'object') {
+    degraded.push('property.no_stored_record');
+  }
+
   // The in-memory shape loadPropertyData builds, minus everything that can only
   // come from a browser. Fields are read exactly as that function reads them.
   const property = {
