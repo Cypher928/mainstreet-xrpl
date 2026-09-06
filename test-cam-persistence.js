@@ -44,54 +44,35 @@ function camResultsToRows(propertyId, fullResults, year, totalExpenses) {
   });
 }
 
-// Mirrors _mergeCamReconciliationRows() from script.js.
-function mergeCamReconciliationRows(dbData, camRows, getCamYear) {
-  if (!dbData || !Array.isArray(camRows) || !camRows.length) return;
-
-  dbData.tenants = (dbData.tenants || []).map(t => {
-    const cam = camRows.find(r => r.tenant_id === t.id);
-    if (!cam) return t;
-    return { ...t, expectedCam: cam.expected_cam, actualCam: cam.actual_cam, variance: cam.variance };
-  });
-
-  if (dbData.camReconciliation || dbData.results) return;
-
-  const totalSqft    = dbData.totalSqft || 1;
-  const invoiceList  = dbData.invoices || [];
-  const invoiceCount = invoiceList.length;
-  const invoiceTotal = invoiceList.reduce((s, inv) => s + (parseFloat(inv.amount) || 0), 0);
-
-  const snapResults = dbData.tenants
-    .filter(t => t.actualCam != null)
-    .map(t => ({
-      name:             t.tenant_name || '(Unknown)',
-      allocatedAmount:  t.actualCam,
-      totalAllocated:   t.actualCam,
-      proRata:          (Number(t.leased_sqft) || 0) / totalSqft,
-      proRataPercent:   ((Number(t.leased_sqft) || 0) / totalSqft) * 100,
-      eligibleCount:    invoiceCount,
-      capApplied:       false,
-      capAdjustment:    null,
-      includedInvoices: [],
-      ambiguityFlags:   [],
-    }));
-  if (!snapResults.length) return;
-
-  dbData.camReconciliation = {
-    propId:   dbData.id,
-    propName: dbData.name || '',
-    camYear:  camRows[0]?.year ?? getCamYear(),
-    total:    invoiceTotal || snapResults.reduce((s, r) => s + (r.allocatedAmount || 0), 0),
-    results:  snapResults,
-    invoices: invoiceList.map((inv, i) => ({ id: `inv-${i}`, ...inv })),
-    invoicesFull: invoiceList,
-    tenants:  (dbData.tenants || []).filter(t => t && t.tenant_name).map(t => ({
-      name: t.tenant_name, leasedSqft: Number(t.leased_sqft) || 0, totalSqft,
-      excludedCategories: t.excluded_categories
-        ? t.excluded_categories.split(',').map(s => s.trim().toLowerCase()).filter(Boolean) : [],
-    })),
-    camRuns: [],
+// THE REAL _mergeCamReconciliationRows, EXTRACTED — not a copy of it.
+//
+// This file used to carry an inline mirror of the function. A mirror passes
+// whatever it mirrors: the rebuild recomputed each tenant's pro-rata share from
+// current square footage while taking the dollar figure from the stored
+// actual_cam — two numbers from two different moments — and the mirror
+// faithfully reproduced that for as long as it existed. Running the real thing
+// is the only version of this test that can fail when script.js is wrong.
+const _vm = require('vm');
+const _scriptSrc = require('fs').readFileSync(require('path').join(__dirname, 'script.js'), 'utf8');
+function _loadMerge() {
+  const m = _scriptSrc.match(/\nfunction _mergeCamReconciliationRows\(dbData, camRows\) \{[\s\S]*?\n\}\n/);
+  if (!m) throw new Error('_mergeCamReconciliationRows not found in script.js');
+  const box = {
+    console: { log() {}, warn() {}, error() {} },
+    parseFloat, parseInt, Number, String, Array, Object, JSON, Math, isFinite,
+    getCamYear:         () => 2026,
+    _appliedExclusions: (t) => (t && t.excluded_categories
+      ? String(t.excluded_categories).split(',').map(x => x.trim().toLowerCase()).filter(Boolean) : []),
+    _exclusionState:    () => ({ notApplied: [] }),
   };
+  _vm.createContext(box);
+  _vm.runInContext(m[0] + '\nthis.__f = _mergeCamReconciliationRows;', box);
+  return box.__f;
+}
+const _realMerge = _loadMerge();
+// Same signature the mirror had, so the assertions below are untouched.
+function mergeCamReconciliationRows(dbData, camRows, _getCamYear) {
+  return _realMerge(dbData, camRows);
 }
 
 console.log('\nCAM persistence — Phase 21 unit tests');

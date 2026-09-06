@@ -22,16 +22,58 @@ window.LeaseReviewPackets = (() => {
     return '$' + num.toLocaleString('en-US', { minimumFractionDigits: 2, maximumFractionDigits: 2 });
   }
 
-  function _fmtDate(d) {
-    if (!d) return null;
-    try { return new Date(d).toLocaleDateString('en-US', { year: 'numeric', month: 'long', day: 'numeric' }); }
-    catch (_) { return String(d); }
+  /**
+   * Parse a lease date without moving it.
+   *
+   * `new Date('2016-02-28')` is midnight UTC by specification. Rendered through
+   * toLocaleDateString in any US timezone that is February 27th, so a lease the
+   * audit reported as ending 2016-02-28 appeared in this report as expiring
+   * February 27, 2016 — and Digital River's 2003-07-31 as July 30, Tollgrade's
+   * 2008-04-30 as April 29. Three "source conflicts" that were one stored value
+   * rendered two ways, always a day early, never a day late.
+   *
+   * A date-only string carries no timezone and is not an instant; it is a
+   * calendar day. Constructing it from its parts pins it to the local calendar,
+   * so the day that comes out is the day that went in. Values that already carry
+   * a time or a zone are left to the normal Date parse.
+   */
+  function _leaseDate(d) {
+    if (d == null || d === '') return null;
+    if (d instanceof Date) return isNaN(d.getTime()) ? null : d;
+    const s = String(d).trim();
+    const m = /^(\d{4})-(\d{2})-(\d{2})$/.exec(s);
+    const dt = m ? new Date(Number(m[1]), Number(m[2]) - 1, Number(m[3])) : new Date(s);
+    return isNaN(dt.getTime()) ? null : dt;
   }
 
+  function _fmtDate(d) {
+    if (!d) return null;
+    try {
+      const dt = _leaseDate(d);
+      return dt ? dt.toLocaleDateString('en-US', { year: 'numeric', month: 'long', day: 'numeric' })
+                : String(d);
+    } catch (_) { return String(d); }
+  }
+
+  // `x != null` admits the empty string, and `'' + '%'` renders as a bare "%".
+  // Digital River's CAM cap came through extraction as '' rather than null and
+  // the packet printed "%" in the cap column — a percent sign with no percent.
+  // Absence and zero are different, and both differ from "we have a value";
+  // this is the one place that decides which is which.
+  function _hasNum(v) {
+    return v !== null && v !== undefined && v !== '' && !Number.isNaN(Number(v));
+  }
+  function _pctCell(v) { return _hasNum(v) ? Number(v) + '%' : '—'; }
+
   function _displayValue(field, val) {
-    if (val == null) return '—';
+    // '' is absence, not a value. Reaching the percent branch with an empty
+    // string printed a bare "%" — in the terms table and again in the evidence
+    // appendix, which renders through here.
+    if (val == null || val === '') return '—';
     if (typeof val === 'boolean') return val ? 'Yes' : 'No';
-    if (field === 'cap' || field === 'admin_fee_pct' || field === 'gross_up_pct') return val + '%';
+    if (field === 'cap' || field === 'admin_fee_pct' || field === 'gross_up_pct') {
+      return _hasNum(val) ? Number(val) + '%' : '—';
+    }
     if (field === 'expense_stop') return _fmt(val) + '/sqft';
     if (field === 'leased_sqft') return Number(val).toLocaleString('en-US') + ' sqft';
     if (field === 'start_date' || field === 'end_date') return _fmtDate(val) || String(val);
@@ -83,8 +125,15 @@ window.LeaseReviewPackets = (() => {
     if (auditNoTimeline.length > 0) warningItems.push(`Audit rights language missing reimbursement timeline in ${auditNoTimeline.length} lease${auditNoTimeline.length !== 1 ? 's' : ''}.`);
 
     // Low confidence leases
-    const lowConf = tenants.filter(t => t._confidence === 'low' || t._confidenceScore < 55);
+    // AI-1 — the null guard is explicit. `undefined < 55` is false, so a lease
+    // with no score was silently counted as fine; the packet then reported
+    // nothing at all about it. Unknown gets its own line rather than being
+    // folded into "low" (which would overstate) or dropped (which understates).
+    const _score = t => (typeof t._confidenceScore === 'number' && Number.isFinite(t._confidenceScore)) ? t._confidenceScore : null;
+    const lowConf = tenants.filter(t => t._confidence === 'low' || (_score(t) != null && _score(t) < 55));
     if (lowConf.length > 0) warningItems.push(`${lowConf.length} lease${lowConf.length !== 1 ? 's' : ''} extracted with low confidence — manual field verification recommended.`);
+    const unknownConf = tenants.filter(t => !t._confidence && _score(t) == null);
+    if (unknownConf.length > 0) unresolvedItems.push(`${unknownConf.length} lease${unknownConf.length !== 1 ? 's' : ''} carry no extraction confidence score — this packet cannot say how reliable those fields are.`);
 
     // Missing critical fields
     const missingCrit = tenants.filter(t => !t.leased_sqft || !t.start_date || !t.end_date);
@@ -100,6 +149,15 @@ window.LeaseReviewPackets = (() => {
     return {
       healthStatus:        m.health?.status        || 'unknown',
       healthScore:         m.health?.score          ?? null,
+      // The components behind the score, and the pre-clamp total. Without these
+      // a bare 0 sat beside "N leases carry no extraction confidence score" and
+      // read as though the zero were that absence rather than a measured
+      // result. See derivePropertyMetrics in script.js.
+      healthBasis:         m.health?.basis          || [],
+      healthDeductionTotal: m.health?.deductionTotal ?? null,
+      // Genuinely unavailable, and distinct from a measured zero: null when no
+      // lease carries an extraction confidence score at all.
+      avgConfidence:       m.extraction?.avgConfidence ?? null,
       criticalItems,
       warningItems,
       unresolvedItems,
@@ -350,17 +408,24 @@ window.LeaseReviewPackets = (() => {
   // ── TASK 8: CONFIDENCE NARRATIVES ────────────────────────────────────────
 
   function buildConfidenceNarratives(tenants) {
-    const high = [], medium = [], low = [];
+    const high = [], medium = [], low = [], unknown = [];
     const narratives = [];
     let scoreSum = 0, scoreCount = 0;
 
     for (const t of (tenants || [])) {
       const name  = t.tenant_name || t.id || 'Unknown';
-      const score = t._confidenceScore ?? 70;
-      const level = t._confidence || (score >= 80 ? 'high' : score >= 55 ? 'medium' : 'low');
-      scoreSum += score; scoreCount++;
+      // AI-1 — `?? 70` invented a passing grade for a lease nobody scored, then
+      // averaged that invention into the packet's headline confidence number.
+      // A landlord reading "average confidence 74" had no way to tell how much
+      // of it was measured. Unmeasured leases are counted, named, and excluded
+      // from the average instead.
+      const score = (typeof t._confidenceScore === 'number' && Number.isFinite(t._confidenceScore))
+        ? t._confidenceScore : null;
+      const level = t._confidence
+        || (score == null ? 'unknown' : score >= 80 ? 'high' : score >= 55 ? 'medium' : 'low');
+      if (score != null) { scoreSum += score; scoreCount++; }
 
-      const bucket = level === 'high' ? high : level === 'medium' ? medium : low;
+      const bucket = level === 'high' ? high : level === 'medium' ? medium : level === 'low' ? low : unknown;
       bucket.push({ tenantName: name, score, level });
 
       const ams = Array.isArray(t.amendments) ? t.amendments : [];
@@ -401,9 +466,15 @@ window.LeaseReviewPackets = (() => {
     }
 
     const avgScore = scoreCount > 0 ? Math.round(scoreSum / scoreCount) : null;
-    const overallLevel = !avgScore ? 'low' : avgScore >= 80 ? 'high' : avgScore >= 55 ? 'medium' : 'low';
+    // AI-1 — no measured lease means no overall level. This used to report
+    // 'low', which is a claim; the truthful answer is that we don't know.
+    const overallLevel = avgScore == null ? 'unknown'
+      : avgScore >= 80 ? 'high' : avgScore >= 55 ? 'medium' : 'low';
+    if (unknown.length > 0) {
+      narratives.push(`${unknown.length} lease${unknown.length !== 1 ? 's' : ''} carry no extraction confidence score and are excluded from the average.`);
+    }
 
-    return { highConfidence: high, mediumConfidence: medium, lowConfidence: low, narratives: [...new Set(narratives)], overallConfidenceLevel: overallLevel, averageScore: avgScore };
+    return { highConfidence: high, mediumConfidence: medium, lowConfidence: low, unknownConfidence: unknown, narratives: [...new Set(narratives)], overallConfidenceLevel: overallLevel, averageScore: avgScore };
   }
 
   // ── TASK 1: MAIN GENERATOR ────────────────────────────────────────────────
@@ -526,13 +597,22 @@ window.LeaseReviewPackets = (() => {
     const itemList = (items, cls) => items.length
       ? `<ul style="margin:6px 0 0 16px;padding:0;">${items.map(i => `<li class="${cls}" style="margin-bottom:3px;font-size:0.82rem;">${_esc(i)}</li>`).join('')}</ul>`
       : '';
+    // A measured zero and an absent measurement must not look the same.
+    // healthScore is null only when the property has no readiness signal at all;
+    // avgConfidence is null whenever no lease carries a confidence score, which
+    // is the Test 2 case and which must read N/A rather than 0.
+    const _hsOver = es.healthDeductionTotal != null && es.healthDeductionTotal > 100;
     const execHtml = `<div class="rpt-section-title">Executive Summary</div>
       <div class="rpt-kpi-row">
-        <div class="rpt-kpi${es.healthScore != null && es.healthScore < 50 ? ' rpt-kpi--alert' : ''}"><div class="kpi-val">${_esc(String(es.healthScore ?? '—'))}</div><div class="kpi-lbl">Health Score</div></div>
+        <div class="rpt-kpi${es.healthScore != null && es.healthScore < 50 ? ' rpt-kpi--alert' : ''}"><div class="kpi-val">${es.healthScore == null ? 'N/A' : _esc(String(es.healthScore))}</div><div class="kpi-lbl">Health Score</div></div>
+        <div class="rpt-kpi"><div class="kpi-val">${es.avgConfidence == null ? 'N/A' : _esc(String(es.avgConfidence)) + '%'}</div><div class="kpi-lbl">Extraction Confidence</div></div>
         <div class="rpt-kpi${es.openDisputes > 0 ? ' rpt-kpi--warn' : ''}"><div class="kpi-val">${_esc(String(es.openDisputes ?? '—'))}</div><div class="kpi-lbl">Open Disputes</div></div>
         <div class="rpt-kpi"><div class="kpi-val">${_esc(String(es.totalTenants ?? '—'))}</div><div class="kpi-lbl">Tenants</div></div>
         <div class="rpt-kpi"><div class="kpi-val">${_esc(String(es.amendmentCount ?? '—'))}</div><div class="kpi-lbl">Amendments</div></div>
       </div>
+      ${es.healthBasis && es.healthBasis.length ? `<div style="margin-top:8px;font-size:11px;line-height:1.6;color:#94a3b8;"><strong>Health score basis:</strong> ${es.healthBasis.map(_esc).join(' &middot; ')}</div>` : ''}
+      ${_hsOver ? `<div style="margin-top:6px;font-size:11.5px;line-height:1.6;color:#fbbf24;">${es.healthDeductionTotal} points of deductions against a 100-point scale</div>` : ''}
+      ${es.avgConfidence == null ? `<div style="margin-top:6px;font-size:11px;line-height:1.6;color:#94a3b8;">Extraction confidence is <strong>unavailable</strong>, not zero — no lease in this packet carries a confidence score. The health score above is measured from lease terms and reconciliation coverage, and does not include confidence.</div>` : ''}
       ${es.criticalItems.length ? `<div style="margin-top:10px;font-size:0.78rem;font-weight:600;color:#f87171;">Critical Items</div>${itemList(es.criticalItems, 'lrp-critical')}` : ''}
       ${es.warningItems.length  ? `<div style="margin-top:8px;font-size:0.78rem;font-weight:600;color:#fbbf24;">Warnings</div>${itemList(es.warningItems, 'lrp-warning')}` : ''}
       ${es.unresolvedItems.length ? `<div style="margin-top:8px;font-size:0.78rem;font-weight:600;color:#94a3b8;">Unresolved</div>${itemList(es.unresolvedItems, 'lrp-unresolved')}` : ''}`;
@@ -563,9 +643,9 @@ window.LeaseReviewPackets = (() => {
         <td>${_esc(t.tenantName)}</td>
         <td style="text-align:right">${t.leasedSqft != null ? Number(t.leasedSqft).toLocaleString('en-US') : '—'}${_citeChip(fe, 'leased_sqft', t.leasedSqft != null)}</td>
         <td>${_esc(t.leaseType || '—')}${_citeChip(fe, 'lease_type', !!t.leaseType)}</td>
-        <td style="text-align:right">${t.cap != null ? t.cap + '%' : '—'}${_citeChip(fe, 'cap', t.cap != null)}</td>
-        <td style="text-align:right">${t.adminFeePct != null ? t.adminFeePct + '%' : '—'}${_citeChip(fe, 'admin_fee_pct', t.adminFeePct != null)}</td>
-        <td style="text-align:right">${t.grossUpPct != null ? t.grossUpPct + '%' : '—'}</td>
+        <td style="text-align:right">${_pctCell(t.cap)}${_citeChip(fe, 'cap', _hasNum(t.cap))}</td>
+        <td style="text-align:right">${_pctCell(t.adminFeePct)}${_citeChip(fe, 'admin_fee_pct', _hasNum(t.adminFeePct))}</td>
+        <td style="text-align:right">${_pctCell(t.grossUpPct)}</td>
         <td>${t.auditRights === true ? '✓' : t.auditRights === false ? '✗' : '—'}${_citeChip(fe, 'audit_rights', t.auditRights != null)}</td>
         <td><span style="color:${t.confidence === 'high' ? '#4ade80' : t.confidence === 'medium' ? '#fbbf24' : t.confidence === 'low' ? '#f87171' : '#94a3b8'}">${_esc(t.confidence || '—')}</span></td>
       </tr>`;
@@ -585,10 +665,24 @@ window.LeaseReviewPackets = (() => {
       <td>${_esc((e.overriddenFields || []).join(', ') || '—')}</td>
       <td style="font-size:0.72rem;color:#64748b;">${_esc(e.precedenceNote)}</td>
     </tr>`).join('');
-    const chronoHtml = `<div class="rpt-section-title">Amendment Chronology</div>
+    // The section is a DOCUMENT chronology, not an amendment chronology.
+    //
+    // buildAmendmentChronology deliberately emits one `original_lease` row per
+    // tenant as the baseline every later amendment is measured against, and the
+    // rows are correctly typed. The title was the problem: a section headed
+    // "Amendment Chronology" listing four Original Lease rows, on a packet whose
+    // cover reads "Amendments 0", says the count is wrong. It is not — those
+    // rows are not amendments. Name the section for what it contains and say so
+    // in one line, rather than removing a baseline the precedence notes need.
+    const _amdRows  = (packet.amendmentChronology || []).filter(e => e.docType !== 'original_lease').length;
+    const _origRows = (packet.amendmentChronology || []).length - _amdRows;
+    const chronoHtml = `<div class="rpt-section-title">Document Chronology</div>
+      <div class="rpt-scope-note">Every lease document on file in effective-date order.
+        ${_origRows} original lease${_origRows === 1 ? '' : 's'} shown as the baseline for field values, and
+        ${_amdRows} amendment${_amdRows === 1 ? '' : 's'}. The Amendments count on the cover counts amendments only.</div>
       <table class="rpt-table">
         <thead><tr><th>Date</th><th>Tenant</th><th>Document</th><th>File</th><th>Fields Modified</th><th>Precedence</th></tr></thead>
-        <tbody>${chronoRows || '<tr><td colspan="6" style="text-align:center;color:#64748b;">No amendments on file</td></tr>'}</tbody>
+        <tbody>${chronoRows || '<tr><td colspan="6" style="text-align:center;color:#64748b;">No lease documents on file</td></tr>'}</tbody>
       </table>`;
 
     // ── Evidence Appendix ──────────────────────────────────────────────────
@@ -624,23 +718,41 @@ window.LeaseReviewPackets = (() => {
         const citeHtml = _evCat(s.missingCitations, 'Missing Citations', 'cite', e =>
           _evRow(e.field, e.displayValue, `No verbatim clause quote — ${_esc(e.governingDocument.replace('_', ' '))}`));
 
+        // BOTH NUMBERS COUNT FIELDS, AND THE READER HAS TO BE TOLD SO.
+        //
+        // The card read "1 exception" and, two lines below, "4 fields verified
+        // — no exceptions". Both were right and neither was scoped: the first
+        // counts fields carrying a citation or risk exception, the second counts
+        // the fields that came through clean, and "no exceptions" belonged to
+        // those four fields rather than to the tenant. Read together they say
+        // this lease both does and does not have an exception.
+        //
+        // Give the denominator, and drop the categorical clause.
+        const _fieldsChecked = s.exceptionCount + s.cleanFieldCount;
         const cleanLine = s.cleanFieldCount > 0
-          ? `<div class="rpt-ev-clean">✓ ${s.cleanFieldCount} field${s.cleanFieldCount !== 1 ? 's' : ''} verified — no exceptions</div>` : '';
+          ? `<div class="rpt-ev-clean">✓ ${s.cleanFieldCount} of ${_fieldsChecked} field${_fieldsChecked !== 1 ? 's' : ''} verified against the executed document</div>` : '';
 
         return `<details class="rpt-ev-tenant"${s.exceptionCount > 0 ? ' open' : ''}>
           <summary class="rpt-ev-tenant-hdr">
             <span class="rpt-ev-tenant-name">${_esc(s.tenantName)}</span>
             <span class="rpt-ev-tenant-conf" style="color:${cc};">${_esc(s.confidence || '—')}${s.confidenceScore != null ? ` (${s.confidenceScore}/100)` : ''}</span>
             ${s.exceptionCount > 0
-              ? `<span class="rpt-ev-tenant-exc">${s.exceptionCount} exception${s.exceptionCount !== 1 ? 's' : ''}</span>`
-              : `<span class="rpt-ev-tenant-clean">✓ Clean</span>`}
+              ? `<span class="rpt-ev-tenant-exc">${s.exceptionCount} of ${_fieldsChecked} field${_fieldsChecked !== 1 ? 's' : ''} with an exception</span>`
+              : `<span class="rpt-ev-tenant-clean">✓ All ${_fieldsChecked} field${_fieldsChecked !== 1 ? 's' : ''} verified</span>`}
           </summary>
           <div class="rpt-ev-tenant-body">${critHtml}${riskHtml}${lcHtml}${citeHtml}${cleanLine}</div>
         </details>`;
       }).join('');
 
+      // Named explicitly as FIELD exceptions. The audit engine also reports
+      // "exceptions" — critical reconciliation findings — and the two counts are
+      // different things over different populations: a lease field lacking a
+      // clause citation is not a reconciliation exception, and a reconciliation
+      // billed on an expired lease is not a field-level one. Sharing the bare
+      // word left a reader to guess whether 4 and 5 were the same tally.
       const sumBar = eaSum.totalTenants
-        ? `<div class="rpt-ev-summary">${eaSum.totalTenants} tenant${eaSum.totalTenants !== 1 ? 's' : ''} · ${eaSum.totalExceptions} exception${eaSum.totalExceptions !== 1 ? 's' : ''} · ${eaSum.totalCleanFields} verified field${eaSum.totalCleanFields !== 1 ? 's' : ''}</div>`
+        ? `<div class="rpt-ev-summary">${eaSum.totalTenants} tenant${eaSum.totalTenants !== 1 ? 's' : ''} · ${eaSum.totalExceptions} lease-field exception${eaSum.totalExceptions !== 1 ? 's' : ''} · ${eaSum.totalCleanFields} field${eaSum.totalCleanFields !== 1 ? 's' : ''} verified against the executed document
+           <span style="display:block;margin-top:3px;font-size:0.72rem;color:#64748b;">Field-level findings about lease documents. Reconciliation exceptions are counted separately in the Audit Exception Summary.</span></div>`
         : '';
 
       evidenceHtml = `<div class="rpt-section-title">Evidence Appendix</div>
@@ -713,7 +825,13 @@ window.LeaseReviewPackets = (() => {
   // Completely separate from formatReviewPacketHtml. No internal extraction
   // metadata, confidence scores, or evidence appendix.
 
-  function generateLenderSummaryHtml(property) {
+  /**
+   * @param {object} property
+   * @param {object} [auditState] canonical audit state from buildAuditNarrative():
+   *        { exposure, readiness }. Optional so existing callers keep working,
+   *        but WITHOUT it the health score can only see document completeness.
+   */
+  function generateLenderSummaryHtml(property, auditState) {
     const tenants  = Array.isArray(property.tenants)  ? property.tenants  : [];
     const disputes = Array.isArray(property.disputes) ? property.disputes : [];
     const timeline = Array.isArray(property.timeline) ? property.timeline : [];
@@ -753,12 +871,62 @@ window.LeaseReviewPackets = (() => {
 
     // Health score: simple weighted formula
     const lowConfCount = activeTenants.filter(t => t._confidence === 'low' || (t._confidenceScore != null && t._confidenceScore < 55)).length;
+    // The audit's own findings, via the canonical model.
+    //
+    // This score was 100 minus penalties for missing documents, low extraction
+    // confidence, open disputes and lease exceptions — four inputs, none of
+    // which is the audit finding set. A property with five critical exceptions,
+    // complete documents and no disputes therefore scored 100/100 and was
+    // presented to a lender as pristine.
+    //
+    // The document-completeness penalties are kept: they measure something real
+    // that the audit findings do not. They were simply never the whole picture.
+    const _AX = (typeof window !== 'undefined' && window.AuditExposure)
+      || (typeof require === 'function' ? (function () { try { return require('./audit-exposure.js'); } catch (_) { return null; } })() : null);
+    const _exposure = auditState && auditState.exposure ? auditState.exposure : null;
+    const _auditPenalty = (_AX && _exposure) ? _AX.healthDeductions(_exposure) : { deduction: 0, reasons: [] };
+
     const rawHealth    = 100
       - (missingCritDocs  * 15)
       - (lowConfCount     * 8)
       - (openDisputes.length * 5)
-      - (leaseExceptions  * 2);
+      - (leaseExceptions  * 2)
+      - _auditPenalty.deduction;
     const healthScore  = activeTenants.length > 0 ? Math.max(0, Math.min(100, Math.round(rawHealth))) : null;
+
+    // WHEN THE DEDUCTIONS OUTRUN THE SCALE.
+    //
+    // The Test 2 property deducts 109 points from a 100-point scale, so the
+    // score clamps to 0 — and stays at 0 through the first several fixes,
+    // because no single finding is worth the 9 points needed to get back onto
+    // the scale. Resolving SHONAC's expired lease takes the deductions from 109
+    // to 97 and the reader sees the same 0/100 they saw before. The score is
+    // correct; it just has nothing left to say.
+    //
+    // So state the deduction total alongside it when it exceeds the scale. The
+    // score, its weights, its caps and every gate downstream are untouched —
+    // this is the same number the reader could already add up from the basis
+    // line, said once instead of left to arithmetic.
+    const _deductionTotal = activeTenants.length > 0 ? Math.round(100 - rawHealth) : null;
+    const _deductionsExceedScale = _deductionTotal != null && _deductionTotal > 100;
+    const _deductionNote = _deductionsExceedScale
+      ? `${_deductionTotal} points of deductions against a 100-point scale`
+      : null;
+
+    // Show the working. An unexplained score invites the reader to trust it;
+    // a score with its deductions listed invites them to check it.
+    const _healthBasis = []
+      .concat(missingCritDocs      ? [`${missingCritDocs} lease${missingCritDocs === 1 ? '' : 's'} missing critical dates or sqft (−${missingCritDocs * 15})`] : [])
+      .concat(lowConfCount         ? [`${lowConfCount} low-confidence extraction${lowConfCount === 1 ? '' : 's'} (−${lowConfCount * 8})`] : [])
+      .concat(openDisputes.length  ? [`${openDisputes.length} open dispute${openDisputes.length === 1 ? '' : 's'} (−${openDisputes.length * 5})`] : [])
+      .concat(leaseExceptions      ? [`${leaseExceptions} lease exception${leaseExceptions === 1 ? '' : 's'} (−${leaseExceptions * 2})`] : [])
+      .concat(_auditPenalty.reasons);
+
+    // A lender summary must never imply the reconciliation is billable when the
+    // audit says otherwise. Read from the same canonical state, not re-derived.
+    const _readiness = auditState && auditState.readiness ? auditState.readiness : null;
+    const _money = (n) => (_AX ? _AX.fmtMoney(n) : '$' + Math.round(Number(n) || 0).toLocaleString('en-US'));
+    const camYearLabel = (auditState && auditState.camYear) || '';
 
     // ── Risk levels ───────────────────────────────────────────────────────────
 
@@ -899,6 +1067,14 @@ window.LeaseReviewPackets = (() => {
           ['Missing Documents',  missingCritDocs, missingCritDocs > 0],
           ['Health Score',       healthScore != null ? healthScore + ' / 100' : '—', healthScore != null && healthScore < 60],
         ])}
+        ${_deductionNote ? `<div style="margin-top:8px;font-size:11.5px;line-height:1.6;color:#fbbf24;">${_esc(_deductionNote)}</div>` : ''}
+        ${_healthBasis.length ? `<div style="margin-top:8px;font-size:11px;line-height:1.6;color:#94a3b8;"><strong>Health score basis:</strong> ${_healthBasis.map(_esc).join(' &middot; ')}</div>` : ''}
+        ${_readiness ? `<div style="margin-top:10px;padding:8px 11px;border-radius:5px;font-size:12px;line-height:1.5;${
+            _readiness.canBill
+              ? 'background:#0f2a1c;color:#86efac;border:1px solid #14532d;'
+              : 'background:#2d1010;color:#fca5a5;border:1px solid #7f1d1d;'}">
+          <strong>${_esc(_readiness.label)}</strong> &mdash; ${_esc(_readiness.reason)}
+        </div>` : ''}
       </div>`;
 
     // ── SECTION: Property Risk Snapshot ──────────────────────────────────────
@@ -945,7 +1121,30 @@ window.LeaseReviewPackets = (() => {
     // Compute lender-facing data quality signal from fieldEvidence.
     // Checks the four key underwriting fields; returns Verified / Partially Verified /
     // Inferred / Missing Evidence — lender language, no raw confidence scores.
+    // The four states, and the order they are tested in.
+    //
+    //   CONFLICT  two sources disagree about the same field
+    //   MISSING   no value to evaluate
+    //   VERIFIED  every populated key field quotes the executed document
+    //   INFERRED  a value exists but nothing cites it
+    //
+    // CONFLICT is tested first and separately, because it is not a point on the
+    // same scale as the others. A tenant whose lease states an 18.54% share
+    // while the square footage derives 22.25% has plenty of evidence — it just
+    // disagrees with itself. Ranking that by citation count returned "Inferred",
+    // which reads as a gap in documentation and understates it.
+    const _conflictsByTenant = {};
+    ((auditState && auditState.conflicts) || []).forEach(c => {
+      if (!c || !c.tenant) return;
+      (_conflictsByTenant[c.tenant] = _conflictsByTenant[c.tenant] || []).push(c);
+    });
+
     function _lenderVerification(t) {
+      const conf = _conflictsByTenant[t.tenant_name] || _conflictsByTenant[t.name];
+      if (conf && conf.length) {
+        return { label: 'Conflict', color: '#f87171',
+                 note: `${conf.map(c => c.field).join(', ')} — sources disagree` };
+      }
       const fe = t.fieldEvidence;
       const KEY_FIELDS = ['leased_sqft', 'lease_type', 'start_date', 'end_date'];
       let checked = 0, cited = 0;
@@ -967,7 +1166,8 @@ window.LeaseReviewPackets = (() => {
       const pct   = (totalSqft > 0 && sf > 0) ? Math.round((sf / totalSqft) * 100) + '%' : '—';
       const flag  = _tenantRiskFlag(t);
       const flagR = _risk(flag);
-      const expired = t.end_date && new Date(t.end_date) < new Date() ? 'Expired' : 'Active';
+      const _end = _leaseDate(t.end_date);
+      const expired = _end && _end < new Date() ? 'Expired' : 'Active';
       const verif   = _lenderVerification(t);
       return `<tr>
         <td>${_d(t.tenant_name)}</td>
@@ -976,7 +1176,8 @@ window.LeaseReviewPackets = (() => {
         <td>${_d(t.lease_type)}</td>
         <td><span style="color:${expired === 'Expired' ? '#f87171' : '#4ade80'};font-size:0.8rem;">${expired}</span></td>
         <td><span style="color:${flagR.color};font-weight:600;font-size:0.8rem;">${flag}</span></td>
-        <td><span style="color:${verif.color};font-size:0.8rem;font-weight:600;">${_esc(verif.label)}</span></td>
+        <td><span style="color:${verif.color};font-size:0.8rem;font-weight:600;">${_esc(verif.label)}</span>${
+          verif.note ? `<span style="display:block;font-size:0.7rem;color:#94a3b8;">${_esc(verif.note)}</span>` : ''}</td>
       </tr>`;
     }).join('');
 
@@ -1004,7 +1205,9 @@ window.LeaseReviewPackets = (() => {
       // Group by expiration year
       const byYear = {};
       for (const t of tenantsWithDates) {
-        const year = new Date(t.end_date).getFullYear();
+        const _ed  = _leaseDate(t.end_date);
+        const year = _ed ? _ed.getFullYear() : null;
+        if (year == null) continue;
         if (!byYear[year]) byYear[year] = [];
         byYear[year].push(t);
       }
@@ -1062,7 +1265,7 @@ window.LeaseReviewPackets = (() => {
           ])}
           ${kpiGroup('Lease Term', [
             ['Start Date',     lt.start_date ? _fmtDate(lt.start_date) : '—'],
-            ['Expiration',     lt.end_date   ? _fmtDate(lt.end_date)   : '—', lt.end_date && new Date(lt.end_date) < new Date()],
+            ['Expiration',     lt.end_date   ? _fmtDate(lt.end_date)   : '—', !!(_leaseDate(lt.end_date) && _leaseDate(lt.end_date) < new Date())],
             ['Renewal Option', lt.renewal_options || '—'],
             ['Amendments',     Array.isArray(lt.amendments) ? lt.amendments.length : 0],
           ])}
@@ -1105,7 +1308,7 @@ window.LeaseReviewPackets = (() => {
         <td>${_d(t.lease_type)}</td>
         <td>${t.start_date ? _fmtDate(t.start_date) : '—'}</td>
         <td>${t.end_date   ? _fmtDate(t.end_date)   : '—'}</td>
-        <td>${t.cap        != null ? t.cap + '%'      : '—'}</td>
+        <td>${_pctCell(t.cap)}</td>
         <td style="font-size:0.78rem;">${_d(t.renewal_options)}</td>
       </tr>`;
     }).join('');
@@ -1226,21 +1429,66 @@ window.LeaseReviewPackets = (() => {
 
     // ── SECTION: Underwriting Recommendation ─────────────────────────────────
     const highRiskCount = [occRiskLevel, concRiskLevel, docRiskLevel, dispRiskLevel].filter(r => r === 'High').length;
-    const uwVerdict = (healthScore == null || activeTenants.length === 0) ? 'Insufficient Data'
+
+    // The audit reached the verdict only through the health score, and the score
+    // is a weighted total that a single critical exception cannot dominate: one
+    // red finding on an otherwise complete property deducts 12 and still leaves
+    // 88, which read "Proceed" on the very reconciliation the audit was refusing
+    // to let the landlord bill. A lender must not be told to proceed on numbers
+    // the operator is blocked from issuing, so readiness is a floor, applied
+    // after the score and independent of it.
+    const _blockedByAudit = !!(_readiness && _readiness.canBill === false);
+
+    let uwVerdict = (healthScore == null || activeTenants.length === 0) ? 'Insufficient Data'
       : healthScore >= 75 && highRiskCount === 0 ? 'Proceed'
       : healthScore >= 50 && highRiskCount <= 1 ? 'Proceed with Conditions'
       : 'Additional Due Diligence Required';
+    if (_blockedByAudit && uwVerdict !== 'Insufficient Data' && uwVerdict !== 'Additional Due Diligence Required') {
+      uwVerdict = 'Additional Due Diligence Required';
+    }
     const uwColor = uwVerdict === 'Proceed' ? '#4ade80' : uwVerdict === 'Proceed with Conditions' ? '#fbbf24' : '#f87171';
     const uwBg    = uwVerdict === 'Proceed' ? 'rgba(34,197,94,0.07)' : uwVerdict === 'Proceed with Conditions' ? 'rgba(245,158,11,0.07)' : 'rgba(239,68,68,0.07)';
 
     const uwSentences = [];
+
+    // The audit's own conclusion, stated first, because it is the finding a
+    // credit committee most needs and the one this narrative never carried. The
+    // prose used to open on occupancy and never mention the reconciliation at
+    // all, so a package with five critical exceptions read as a vacancy story.
+    if (_exposure && (_exposure.counts.red > 0 || _exposure.counts.yellow > 0)) {
+      const bits = [];
+      if (_exposure.counts.red > 0)
+        bits.push(`${_exposure.counts.red} critical exception${_exposure.counts.red === 1 ? '' : 's'}`);
+      if (_exposure.counts.yellow > 0)
+        bits.push(`${_exposure.counts.yellow} advisory finding${_exposure.counts.yellow === 1 ? '' : 's'}`);
+      let s = `The ${camYearLabel ? camYearLabel + " " : ""}CAM audit raised ${bits.join(' and ')}`;
+      if (_exposure.confirmedAtRisk > 0)
+        s += `, with ${_money(_exposure.confirmedAtRisk)} of allocated CAM lacking a documented basis`;
+      if (_exposure.requiringReview > 0)
+        s += ` and a further ${_money(_exposure.requiringReview)} whose treatment is unresolved`;
+      uwSentences.push(s + '.');
+      if (_exposure.poolUnsubstantiated > 0)
+        uwSentences.push(`Separately, ${_money(_exposure.poolUnsubstantiated)} of the expense pool is weakly evidenced — undated, undocumented or concentrated in a single vendor. This measures the expenses rather than the amounts billed, and is not additive to the figures above.`);
+      if (_exposure.unquantified > 0)
+        uwSentences.push(`${_exposure.unquantified} finding${_exposure.unquantified === 1 ? ' has' : 's have'} not yet been quantified; the exposure figures above are therefore a floor, not a total.`);
+    }
+    if (_blockedByAudit)
+      uwSentences.push(`The operator cannot issue reconciliation statements in the current state: ${_readiness.reason}`);
+
     if (occupancyPct != null)
       uwSentences.push(`The property is ${occupancyPct}% occupied${occupancyPct >= 85 ? ', demonstrating strong utilization that supports revenue stability' : occupancyPct >= 70 ? ', with moderate vacancy that warrants review of absorption assumptions' : ', with elevated vacancy exposure that should be factored into debt service coverage analysis'}.`);
     if (concRiskLevel === 'High' && top1Pct != null)
       uwSentences.push(`Concentration risk is elevated — the largest tenant represents ${top1Pct}% of rentable square footage, creating meaningful rollover exposure.`);
     if (docRiskLevel === 'High')
       uwSentences.push(`${missingCritDocs} lease${missingCritDocs !== 1 ? 's are' : ' is'} missing critical field data; executed documents should be obtained and reviewed prior to commitment.`);
-    else if (docRiskLevel === 'Low' && highRiskCount === 0)
+    // "Extraction confidence is satisfactory" is a claim about evidence, so it
+    // may only be made when the evidence actually supports it. It used to turn
+    // on document completeness alone, which is how a reconciliation carrying
+    // unresolved findings could be described to a lender as satisfactory. An
+    // unpriced finding or an outstanding exception is not a satisfactory state;
+    // it is an unknown one, and this sentence is withheld rather than softened.
+    else if (docRiskLevel === 'Low' && highRiskCount === 0 && !_blockedByAudit
+             && (!_exposure || (_exposure.counts.red === 0 && _exposure.counts.yellow === 0 && _exposure.unquantified === 0)))
       uwSentences.push('Key lease terms are captured for all tenants with no missing critical fields, and extraction confidence is satisfactory for underwriting purposes.');
     if (openDisputes.length > 0)
       uwSentences.push(`${openDisputes.length} open CAM dispute${openDisputes.length !== 1 ? 's' : ''} should be resolved or quantified as a contingency before loan closing.`);
@@ -1250,7 +1498,8 @@ window.LeaseReviewPackets = (() => {
         <div style="display:flex;align-items:center;gap:10px;margin-bottom:10px;">
           <span style="display:inline-block;width:10px;height:10px;border-radius:50%;background:${uwColor};flex-shrink:0;"></span>
           <span style="font-size:0.95rem;font-weight:700;color:${uwColor};">${_esc(uwVerdict)}</span>
-          ${healthScore != null ? `<span style="margin-left:auto;font-size:0.78rem;color:#64748b;">Health Score: <strong style="color:#e2e8f0;">${healthScore} / 100</strong></span>` : ''}
+          ${healthScore != null ? `<span style="margin-left:auto;text-align:right;font-size:0.78rem;color:#64748b;">Health Score: <strong style="color:#e2e8f0;">${healthScore} / 100</strong>${
+            _deductionNote ? `<span style="display:block;font-size:0.72rem;color:#fbbf24;">${_esc(_deductionNote)}</span>` : ''}</span>` : ''}
         </div>
         <div style="font-size:0.83rem;color:#cbd5e1;line-height:1.6;">${uwSentences.map(s => _esc(s)).join(' ')}</div>
       </div>`;

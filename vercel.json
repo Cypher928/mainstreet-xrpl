@@ -17,7 +17,8 @@
     { "source": "/reset-password",  "destination": "/reset-password.html" },
     { "source": "/home",            "destination": "/home.html"            },
     { "source": "/app",             "destination": "/index.html"           },
-    { "source": "/index",           "destination": "/index.html"           }
+    { "source": "/index",           "destination": "/index.html"           },
+    { "source": "/portal",          "destination": "/portal.html"          }
   ],
   "headers": [
     {

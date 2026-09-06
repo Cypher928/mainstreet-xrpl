@@ -999,8 +999,32 @@ where routine_schema = 'public'
 
 
 -- ─────────────────────────────────────────────────────────────────────────
--- Storage buckets (public — uploads return /object/public/ URLs; see api/upload.js)
+-- Storage buckets
 -- ─────────────────────────────────────────────────────────────────────────
+-- `do nothing`, NOT `do update set public = excluded.public`.
+--
+-- The previous clause re-asserted public=true on every run. That makes this
+-- bundle capable of silently UNDOING a security change: flip these buckets to
+-- private, re-run the bundle for an unrelated migration, and they are public
+-- again with nothing in the output to say so. A setup script must not quietly
+-- overwrite a deliberate configuration decision.
+--
+-- Creating a bucket that is absent is setup. Changing one that exists is a
+-- policy decision, and it belongs with whoever made it — not in a file people
+-- re-run without reading.
+--
+-- SEC-1 is OPEN and pending verification: whether these buckets should be
+-- public at all is unresolved. api/upload.js currently returns
+-- /object/public/ URLs, so a fresh project needs them public for uploads to be
+-- readable — hence `true` on CREATE. An existing project keeps whatever it has.
 insert into storage.buckets (id, name, public)
 values ('leases', 'leases', true), ('invoices', 'invoices', true)
-on conflict (id) do update set public = excluded.public;
+on conflict (id) do nothing;
+
+-- Read-only check — run this to see what the buckets ACTUALLY are, rather than
+-- what this file would have created. `public = true` means every uploaded lease
+-- is retrievable by URL with no authentication.
+--
+--   select id, name, public, file_size_limit, allowed_mime_types
+--   from storage.buckets
+--   where id in ('leases', 'invoices');

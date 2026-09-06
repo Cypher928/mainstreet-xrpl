@@ -45,8 +45,28 @@ window.PropertyTimeline = (function () {
     { key: 'payment',             label: 'Payment',             icon: '\u{1F4B5}' },        // 💵
     { key: 'inspection',          label: 'Inspection',          icon: '\u{1F50D}' },        // 🔍
     { key: 'capital_improvement', label: 'Capital Improvement', icon: '\u{1F3D7}\u{FE0F}' },// 🏗️
+    // Building-level records. These are what makes the Property tab the
+    // operating system for the building rather than a report about it — and
+    // they are CATEGORIES on the one timeline, not new stores. Adding an
+    // entry here is the whole of "supporting Real Estate Taxes"; nothing else
+    // needs to know.
+    { key: 'real_estate_taxes',   label: 'Real Estate Taxes',   icon: '\u{1F3DB}\u{FE0F}' },// 🏛️
+    { key: 'mortgage_financing',  label: 'Mortgage / Financing',icon: '\u{1F3E6}' },        // 🏦
+    { key: 'survey',              label: 'Survey',              icon: '\u{1F4CF}' },        // 📏
+    { key: 'site_plan',           label: 'Site Plan',           icon: '\u{1F5FA}\u{FE0F}' },// 🗺️
+    { key: 'building_plan',       label: 'Building Plan',       icon: '\u{1F4D0}' },        // 📐
+    { key: 'environmental',       label: 'Environmental Report',icon: '\u{1F33F}' },        // 🌿
+    { key: 'building_photo',      label: 'Building Photo',      icon: '\u{1F5BC}\u{FE0F}' },// 🖼️
+    { key: 'warranty',            label: 'Warranty',            icon: '\u{1F6E1}\u{FE0F}' },// 🛡️
     { key: 'other',               label: 'Other',               icon: '\u{1F4CC}' },        // 📌
   ];
+
+  // Categories that describe the BUILDING rather than a tenancy. Used by the
+  // Property Records filter; a category absent from this list still works, it
+  // just is not offered as a building-level filter chip.
+  var PROPERTY_CATEGORIES = ['real_estate_taxes', 'insurance', 'mortgage_financing', 'survey',
+    'site_plan', 'building_plan', 'environmental', 'capital_improvement', 'building_photo',
+    'warranty', 'inspection', 'vendor'];
   MANUAL_CATEGORIES.forEach(function (c) { registerType(c.key, { label: c.label, icon: c.icon, group: 'manual' }); });
 
   // Existing auto types (so they render through the same registry path).
@@ -185,6 +205,151 @@ window.PropertyTimeline = (function () {
     openAddEntry(p, e);
   }
 
+  // The signed-in user, by the same route the Space workspace uses.
+  function _who() {
+    try {
+      var u = window.AuthService && AuthService.getCurrentUser && AuthService.getCurrentUser();
+      return (u && (u.email || u.name)) || 'Property Manager';
+    } catch (_) { return 'Property Manager'; }
+  }
+
+  // Human labels for the fields a revision can report, so the history reads as
+  // sentences rather than as property names.
+  var FIELD_LABEL = {
+    title: 'Title', description: 'Notes', category: 'Category', timestamp: 'Date',
+    responsibility: 'Responsibility', leaseRef: 'Lease reference', subject: 'Attached to',
+  };
+
+  function _subjectLabel(sub) {
+    if (!sub || sub.type === 'property') return 'Property-wide';
+    if (sub.type === 'system') {
+      return (window.PropertyOS && PropertyOS.systemLabel && PropertyOS.systemLabel(sub.id)) || sub.id;
+    }
+    return sub.label || sub.id || String(sub.type);
+  }
+
+  function _fieldValue(ev, k) {
+    if (k === 'subject') return _subjectLabel(ev.subject);
+    if (k === 'timestamp') return _isoToDateInput(ev.timestamp);
+    if (k === 'category') return (describe({ category: ev.category, type: ev.type }) || {}).label || ev.category;
+    return ev[k];
+  }
+
+  /**
+   * Append-only edit. Returns true if anything actually changed.
+   *
+   * Attachment REMOVAL is recorded, not silently applied: a document that was
+   * on the record yesterday and is gone today is exactly the kind of thing the
+   * timeline exists to still know about. The file reference survives in the
+   * revision even though it leaves the current attachment list.
+   */
+  function _amendEvent(ev, next, finalAtt) {
+    if (!Array.isArray(ev.revisions) || !ev.revisions.length) {
+      ev.revisions = [{
+        at: ev.timestamp,
+        by: (ev.metadata && ev.metadata.recordedBy) || ev.actor || 'Unknown',
+        action: 'created',
+        snapshot: {
+          title: ev.title, description: ev.description, category: ev.category,
+          timestamp: ev.timestamp, responsibility: ev.responsibility,
+          leaseRef: ev.leaseRef, subject: ev.subject ? Object.assign({}, ev.subject) : null,
+          attachments: (ev.attachments || []).map(function (a) { return { name: a.name, url: a.url, kind: a.kind }; }),
+        },
+      }];
+    }
+
+    var rev = { at: new Date().toISOString(), by: _who(), action: 'amended', changes: [] };
+
+    Object.keys(next).forEach(function (k) {
+      if (k === 'tenantId') { ev.tenantId = next[k]; return; }   // derived, not reported
+      var from = _fieldValue(ev, k);
+      var applied = next[k];
+      var to = k === 'subject' ? _subjectLabel(applied)
+             : k === 'timestamp' ? _isoToDateInput(applied)
+             : k === 'category' ? ((describe({ category: applied, type: applied }) || {}).label || applied)
+             : applied;
+      if (String(from == null ? '' : from) === String(to == null ? '' : to)) {
+        // Unchanged as far as the user is concerned, but still assign: the raw
+        // value may differ in form (an ISO timestamp vs a date input) while the
+        // meaning is identical, and we do not want a spurious revision line.
+        if (k === 'subject') ev.subject = applied; else if (k !== 'category') ev[k] = applied;
+        return;
+      }
+      rev.changes.push({ field: k, label: FIELD_LABEL[k] || k, from: from == null ? null : String(from), to: to == null ? null : String(to) });
+      if (k === 'subject') ev.subject = applied;
+      else if (k === 'category') { ev.category = applied; ev.type = 'manual_' + applied; }
+      else ev[k] = applied;
+    });
+
+    // Attachments: what arrived, and what left.
+    var before = (ev.attachments || []);
+    var afterUrls = (finalAtt || []).map(function (a) { return a.url; });
+    var beforeUrls = before.map(function (a) { return a.url; });
+    var added   = (finalAtt || []).filter(function (a) { return beforeUrls.indexOf(a.url) < 0; });
+    var removed = before.filter(function (a) { return afterUrls.indexOf(a.url) < 0; });
+    if (added.length)   rev.added   = added.map(function (a) { return { name: a.name, url: a.url, kind: a.kind }; });
+    if (removed.length) rev.removed = removed.map(function (a) { return { name: a.name, url: a.url, kind: a.kind }; });
+    ev.attachments = finalAtt || [];
+
+    ev.manual = true;
+    if (!rev.changes.length && !rev.added && !rev.removed) return false;
+    ev.revisions.push(rev);
+    return true;
+  }
+
+  /**
+   * Linking is an edit, and edits are recorded. Who connected the invoice to
+   * the roof job, and when, belongs in the history for exactly the reason every
+   * other change does — otherwise the connective tissue is the one part of the
+   * record with no provenance.
+   */
+  function _amendRelated(ev, nextLinks, label, removed) {
+    if (!ev) return false;
+    if (!Array.isArray(ev.revisions) || !ev.revisions.length) {
+      ev.revisions = [{
+        at: ev.timestamp,
+        by: (ev.metadata && ev.metadata.recordedBy) || ev.actor || 'Unknown',
+        action: 'created',
+        snapshot: { title: ev.title, description: ev.description, category: ev.category,
+                    timestamp: ev.timestamp, subject: ev.subject ? Object.assign({}, ev.subject) : null,
+                    relatedTo: (ev.relatedTo || []).slice() },
+      }];
+    }
+    ev.relatedTo = nextLinks;
+    ev.revisions.push({
+      at: new Date().toISOString(), by: _who(),
+      action: removed ? 'unlinked' : 'linked',
+      changes: [],
+      note: removed ? 'Removed a link' : ('Linked to ' + (label || 'a related record')),
+    });
+    return true;
+  }
+
+  /**
+   * Files added to an existing record. An amendment like any other: the record
+   * gained something, so the history says so and says who did it.
+   */
+  function _amendAttachments(ev, added) {
+    if (!ev || !added || !added.length) return false;
+    if (!Array.isArray(ev.revisions) || !ev.revisions.length) {
+      ev.revisions = [{
+        at: ev.timestamp,
+        by: (ev.metadata && ev.metadata.recordedBy) || ev.actor || 'Unknown',
+        action: 'created',
+        snapshot: { title: ev.title, description: ev.description, category: ev.category,
+                    timestamp: ev.timestamp, subject: ev.subject ? Object.assign({}, ev.subject) : null,
+                    attachments: (ev.attachments || []).map(function (a) { return { name: a.name, url: a.url, kind: a.kind }; }) },
+      }];
+    }
+    ev.attachments = (ev.attachments || []).concat(added);
+    ev.revisions.push({
+      at: new Date().toISOString(), by: _who(), action: 'attached', changes: [],
+      added: added.map(function (a) { return { name: a.name, url: a.url, kind: a.kind }; }),
+      note: 'Attached ' + added.map(function (a) { return a.name; }).join(', '),
+    });
+    return true;
+  }
+
   function openAddEntry(property, existing) {
     property = property || (window.currentProperty && window.currentProperty());
     if (!property) { _toast('Open a property first', 'err'); return; }
@@ -209,6 +374,25 @@ window.PropertyTimeline = (function () {
         _spaces.map(function (t) { return '<option value="' + _esc(t.id) + '"' + (_curSpace === String(t.id) ? ' selected' : '') + '>' + _esc(t.tenant_name || t.id) + '</option>'; }).join('') +
         '</select></div>'
       : '';
+
+    // Building system (subject) — the piece the subject model always supported
+    // and the UI never offered. property-os.js has counted
+    // subject.type === 'system' events since it shipped; nothing could create
+    // one. This is how a warranty gets attached to the Roof.
+    //
+    // A record has ONE subject. Space and System are mutually exclusive, and
+    // choosing one clears the other rather than silently winning — a warranty
+    // that claims to be both Suite 210 and the HVAC is not a record anyone can
+    // act on.
+    var _systems = (window.PropertyOS && PropertyOS.BUILDING_SYSTEMS) || [];
+    var _curSys = isEdit ? String((existing.subject && existing.subject.type === 'system' && existing.subject.id) || '') : '';
+    var _sysFieldHtml = _systems.length
+      ? '<div class="ptl-field"><label class="ptl-label" for="ptlSystem">Building system (optional)</label>' +
+        '<select class="ptl-input" id="ptlSystem"><option value="">Not system-specific</option>' +
+        _systems.map(function (sy) { return '<option value="' + _esc(sy.key) + '"' + (_curSys === String(sy.key) ? ' selected' : '') + '>' + _esc(sy.label) + '</option>'; }).join('') +
+        '</select>' +
+        '<div class="ptl-hint" id="ptlSubjHint">Warranties, inspections and repairs belong to a system.</div></div>'
+      : '';
     var curResp = isEdit ? (existing.responsibility || 'na') : 'na';
     var curTitle = isEdit ? (existing.title || '') : '';
     var curNotes = isEdit ? (existing.description || '') : '';
@@ -229,6 +413,7 @@ window.PropertyTimeline = (function () {
           '<div class="ptl-field"><label class="ptl-label" for="ptlCat">Category</label>' +
             '<select class="ptl-input" id="ptlCat">' + catOpts + '</select></div>' +
           _spaceFieldHtml +
+          _sysFieldHtml +
           // 3. Date
           '<div class="ptl-field"><label class="ptl-label" for="ptlDate">Date</label>' +
             '<input class="ptl-input" type="date" id="ptlDate" value="' + curDate + '"></div>' +
@@ -270,6 +455,16 @@ window.PropertyTimeline = (function () {
     document.getElementById('ptlAddPdf').onclick = function () { _pickFiles('pdf', 'application/pdf'); };
     document.getElementById('ptlAddPhoto').onclick = function () { _pickFiles('photo', 'image/*'); };
     document.getElementById('ptlTitle').addEventListener('input', _syncSave);
+
+    // One subject per record: picking a Space clears the System and vice versa.
+    // Enforced in the form, so the user sees which one they chose rather than
+    // discovering later that the other silently won.
+    var _sp = document.getElementById('ptlSpace');
+    var _sy = document.getElementById('ptlSystem');
+    if (_sp && _sy) {
+      _sp.addEventListener('change', function () { if (_sp.value) _sy.value = ''; });
+      _sy.addEventListener('change', function () { if (_sy.value) _sp.value = ''; });
+    }
     document.getElementById('ptlSave').onclick = function () { _save(property, isEdit ? existing : null); };
     _syncSave();
     setTimeout(function () { var el = document.getElementById('ptlTitle'); if (el) el.focus(); }, 40);
@@ -293,7 +488,14 @@ window.PropertyTimeline = (function () {
     var spaceEl  = document.getElementById('ptlSpace');
     var spaceId  = spaceEl ? (spaceEl.value || '') : '';
     var spaceLabel = (spaceId && spaceEl && spaceEl.options[spaceEl.selectedIndex]) ? spaceEl.options[spaceEl.selectedIndex].text : '';
-    var subject  = spaceId ? { type: 'suite', id: spaceId, label: spaceLabel } : null;
+    var sysEl    = document.getElementById('ptlSystem');
+    var sysId    = sysEl ? (sysEl.value || '') : '';
+    var sysLabel = (sysId && window.PropertyOS && PropertyOS.systemLabel) ? PropertyOS.systemLabel(sysId) : '';
+    // One subject per record. A space wins if somehow both are set, because the
+    // space is the narrower claim — but the form clears the other on change, so
+    // this is a guard rather than a policy.
+    var subject  = spaceId ? { type: 'suite', id: spaceId, label: spaceLabel }
+                 : (sysId ? { type: 'system', id: sysId, label: sysLabel } : null);
 
     var timestamp;
     try { timestamp = dateVal ? new Date(dateVal + 'T12:00:00').toISOString() : new Date().toISOString(); }
@@ -315,28 +517,36 @@ window.PropertyTimeline = (function () {
     }
 
     if (existing && existing.id) {
-      // Edit in place — same modal, complete the workflow.
+      // AMEND, never overwrite. This used to assign straight onto the event —
+      // target.title = title — so an edit destroyed what the record previously
+      // said, on a timeline whose entire purpose is being the building's
+      // verified memory. ARCHITECTURE_PRINCIPLES §6.
+      //
+      // Same shape as the Space workspace's _amend(): revisions[0] is a
+      // snapshot of the record AS CREATED, captured lazily on the first edit,
+      // and every edit after that appends a field-level diff. The current
+      // values do move on — that is what an edit is — but the original and the
+      // path it took are both still readable.
       var target = (property.timeline || []).find(function (x) { return x.id === existing.id; });
-      if (target) {
-        target.title = title;
-        target.description = notes;
-        target.category = category;
-        target.type = 'manual_' + category;
-        target.timestamp = timestamp;
-        target.responsibility = (['landlord', 'tenant', 'shared', 'na'].indexOf(responsibility) >= 0 ? responsibility : 'na');
-        target.leaseRef = leaseRef;
-        target.attachments = finalAtt;
-        target.tenantId = spaceId || null;
-        target.subject = subject || { type: 'property', id: (property.id || null), label: null };
-        target.manual = true;
-      }
+      if (target) _amendEvent(target, {
+        title: title, description: notes, category: category,
+        timestamp: timestamp,
+        responsibility: (['landlord', 'tenant', 'shared', 'na'].indexOf(responsibility) >= 0 ? responsibility : 'na'),
+        leaseRef: leaseRef,
+        subject: subject || { type: 'property', id: (property.id || null), label: null },
+        tenantId: spaceId || null,
+      }, finalAtt);
     } else if (window.appendPropertyTimelineEvent) {
       window.appendPropertyTimelineEvent(property, {
         manual: true, type: 'manual_' + category, category: category, severity: 'info',
         title: title, description: notes, timestamp: timestamp,
         responsibility: responsibility, leaseRef: leaseRef, attachments: finalAtt,
         tenantId: spaceId || null, subject: subject || undefined,
-        actor: 'Property Manager',
+        // Who recorded it, mirroring the Space workspace. 'Property Manager'
+        // was a placeholder that named nobody; metadata.recordedBy is what
+        // every Space record already carries and what the UI already reads.
+        actor: _who(),
+        metadata: { recordedBy: _who() },
       });
     }
 
@@ -355,6 +565,7 @@ window.PropertyTimeline = (function () {
     var css = [
       '.tl-add-btn{font:700 0.72rem/1 inherit;color:' + gold + ';background:rgba(201,151,58,0.12);border:1px solid rgba(201,151,58,0.4);border-radius:7px;padding:6px 11px;cursor:pointer;margin-right:8px;min-height:30px;}',
       '.tl-add-btn:hover{background:rgba(201,151,58,0.2);}',
+      '.ptl-hint{font-size:0.7rem;color:var(--text-4,#64748B);margin-top:4px;}',
       '.tl-open-space{font:700 0.72rem/1 inherit;color:#07090C;background:' + gold + ';border:1px solid ' + gold + ';border-radius:8px;padding:7px 11px;cursor:pointer;white-space:nowrap;min-height:34px;}',
       '.tl-open-space:hover{filter:brightness(1.08);}',
       '.tl-edit-btn{font:600 0.68rem/1 inherit;color:var(--text-4,#64748B);background:none;border:1px solid rgba(var(--line-rgb,255,255,255),0.14);border-radius:6px;padding:4px 8px;cursor:pointer;min-height:26px;}',
@@ -435,9 +646,13 @@ window.PropertyTimeline = (function () {
     navFor: navFor,
     viewSource: viewSource,
     openAddEntry: openAddEntry,
+    amendEvent: _amendEvent,
+    amendRelated: _amendRelated,
+    amendAttachments: _amendAttachments,
     openEditEntry: openEditEntry,
     closeModal: closeModal,
     categories: MANUAL_CATEGORIES,
+    propertyCategories: PROPERTY_CATEGORIES,
     _registry: REGISTRY,
   };
 })();

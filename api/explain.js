@@ -1,9 +1,18 @@
 // Explain endpoint — returns raw Anthropic response so callers can read
 // content[0].text directly. Unlike /api/claude, does NOT parse inner JSON.
 //
-// WHY 20mb: extractTextFromPdfDirect sends scanned PDFs as base64 document blocks.
-// A 10 MB PDF becomes ~13 MB of JSON. Without this override, Vercel's default
-// 4.5 MB bodyParser limit returns 413 before the handler runs.
+// ⚠ CORRECTION: this export does NOT raise any limit.
+//
+// It used to say the 20mb override prevented a 413. It does not.
+// `api.bodyParser` is a Next.js API-route construct and this is not a Next.js
+// project (no next dependency, no pages/ or app/ dir) — api/claude.js has
+// documented that correctly all along while this file claimed the opposite.
+//
+// extractTextFromPdfDirect sends scanned PDFs as base64 document blocks, and
+// base64 adds a third. Vercel rejects the body over ~4.5 MB BEFORE this handler
+// runs, so the real ceiling is ~3.3 MB of source PDF. The export is retained
+// only as documentation of the constraint; the limit that IS real lives in
+// request-limits.js and is checked below.
 module.exports.config = {
   api: {
     bodyParser: {
@@ -12,6 +21,8 @@ module.exports.config = {
   },
 };
 
+const { resolveExplainTask, resolveMaxTokens } = require('./_explain-tasks');
+const { checkEncodedSize, base64DocBytes } = require('../request-limits.js');
 const _t = require('./_pilot-target');
 const _SB_URL  = _t.url;
 const _SB_ANON = _t.anonKey;
@@ -19,14 +30,10 @@ if (!_SB_URL || !_SB_ANON) {
   throw new Error('[api/explain] Supabase URL/anon not configured for ' + _t.name + ' target');
 }
 
-const _rl = new Map();
-function _chkRate(uid, max, winMs) {
-  const now = Date.now();
-  let w = _rl.get(uid) || { n: 0, reset: now + winMs };
-  if (now > w.reset) w = { n: 0, reset: now + winMs };
-  w.n++; _rl.set(uid, w);
-  return w.n <= max;
-}
+// SEC-12 — one sliding-window limiter, shared. See api/_rate-limit.js for what
+// it can and cannot do: it is per-instance and Vercel scales instances, so it
+// brakes runaway loops and single-client hammering, not a determined attacker.
+const { checkRate, sendRateLimited } = require('./_rate-limit');
 
 async function _verifyUser(req, res) {
   const tok = (req.headers['authorization'] || '').replace(/^Bearer\s+/, '');
@@ -54,8 +61,9 @@ module.exports = async function handler(req, res) {
 
   const user = await _verifyUser(req, res);
   if (!user) return;
-  if (!_chkRate(user.id, 20, 60000)) {
-    return res.status(429).json({ error: 'Too many requests — please slow down.' });
+  {
+    const _rl = checkRate(user.id, 20, 60000);
+    if (!_rl.ok) return sendRateLimited(res, _rl);
   }
 
   const apiKey = process.env.ANTHROPIC_API_KEY;
@@ -64,17 +72,42 @@ module.exports = async function handler(req, res) {
     return res.status(500).json({ error: 'API key not configured on server' });
   }
 
-  const { max_tokens, messages, model: requestedModel, system } = req.body || {};
+  const { max_tokens, messages } = req.body || {};
   if (!messages) {
     return res.status(400).json({ error: 'Missing required field: messages' });
   }
 
+  // A base64 document block that got this far is under the platform limit by
+  // definition — the runtime would have rejected the body otherwise. The check
+  // is here anyway so the ONE place that defines this ceiling is also the one
+  // place that reports it, and so a body that squeaks past the platform but
+  // cannot be served gets the explaining sentence rather than a generic error.
+  const _docBytes = base64DocBytes(messages);
+  if (_docBytes > 0) {
+    const v = checkEncodedSize(_docBytes, 'lease');
+    if (!v.ok) return res.status(413).json({ error: v.error });
+  }
+
+  // AI-2 — the instructions are the server's, not the caller's.
+  //
+  // This handler used to read `system` off the request body and forward it to
+  // Anthropic verbatim. Every promise MainStreet makes about how its AI behaves
+  // lived in a browser string that anyone could rewrite, and the server had no
+  // idea what it had just been asked to say. The client now names a task; the
+  // server decides what the model is told. See api/_explain-tasks.js.
+  const resolved = resolveExplainTask(req.body);
+  if (!resolved.ok) {
+    return res.status(resolved.status).json({ error: resolved.error });
+  }
+
   // Always use the server-configured model — never allow callers to request expensive models.
   const model = process.env.CLAUDE_MODEL || 'claude-sonnet-4-6';
-  // Cap token output to prevent runaway cost from caller-supplied values.
-  const safeMaxTokens = Math.min(Number.isFinite(max_tokens) ? max_tokens : 4096, 8192);
-  const payload = { model, max_tokens: safeMaxTokens, messages };
-  if (system) payload.system = system;
+  const payload = {
+    model,
+    max_tokens: resolveMaxTokens(max_tokens, resolved.task),
+    system:     resolved.task.system,
+    messages,
+  };
 
   let anthropicResp;
   try {

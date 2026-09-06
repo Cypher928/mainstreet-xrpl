@@ -98,10 +98,25 @@ window.DocViewer = (function () {
     if (!rec) return;
     // Tier 1 — a real file: open it.
     if (rec.url) {
-      try {
-        if (/\.pdf($|\?)/i.test(rec.url) && typeof window.openLeaseModal === 'function') { window.openLeaseModal(rec.url); return; }
-      } catch (_e) {}
-      try { window.open(rec.url, '_blank', 'noopener'); return; } catch (_e) {}
+      // SEC-1 — a stored /object/public/ URL no longer resolves once the bucket
+      // is private. Exchange it for a signed one, which also re-checks that the
+      // document belongs to this user. Async, so the tier-2 fallback below only
+      // runs when there is genuinely no file.
+      (async function () {
+        var readable = window.resolveDocumentUrl ? await window.resolveDocumentUrl(rec.url) : rec.url;
+        if (!readable) {
+          if (typeof window.showToast === 'function') {
+            window.showToast('⚠️ That document could not be opened — you may not have access, or it is no longer stored.',
+              { color: '#92400e', textColor: '#fef3c7', duration: 8000 });
+          }
+          return;
+        }
+        try {
+          if (/\.pdf($|\?)/i.test(readable) && typeof window.openLeaseModal === 'function') { window.openLeaseModal(readable); return; }
+        } catch (_e) {}
+        try { window.open(readable, '_blank', 'noopener'); } catch (_e) {}
+      })();
+      return;
     }
     // Tier 2 — a sample record: show a rendered preview, labelled honestly.
     if (typeof window.openReport !== 'function') return;

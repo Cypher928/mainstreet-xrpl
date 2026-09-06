@@ -105,8 +105,14 @@ window.AIExplanation = (function () {
         var src = sources[key] || null;
         var onFile = !!(src && (src.url || src.onFile));
         if (onFile && src.url) {
-          html += '<a class="aix-chip aix-chip--live" href="' + _esc(src.url) + '" target="_blank" rel="noopener">' +
-            def.icon + '&nbsp;' + _esc(src.label || def.label) + '</a>';
+          // SEC-1 — this rendered a raw <a href> to inv.fileUrl. Once uploads
+          // began returning a relative storage reference, the browser resolved
+          // it against the page origin and navigated to a Vercel 404. Every
+          // document link goes through docLinkHtml now.
+          html += (window.docLinkHtml
+            ? window.docLinkHtml(src.url, def.icon + '&nbsp;' + _esc(src.label || def.label),
+                                 { className: 'aix-chip aix-chip--live' })
+            : '<span class="aix-chip aix-chip--live">' + def.icon + '&nbsp;' + _esc(src.label || def.label) + '</span>');
         } else if (onFile) {
           html += '<span class="aix-chip aix-chip--live">' + def.icon + '&nbsp;' + _esc(src.label || def.label) + '</span>';
         } else {

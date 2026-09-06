@@ -1,0 +1,61 @@
+{
+  "executed": "2026-09-05",
+  "phase": "S6.1 — Class O calculation-axis nulling. Committed on its own, deliberately NOT combined with the prevention change.",
+  "target": "Pilot bhmktujbxdbvdmpybmad",
+
+  "what_this_settles_and_what_it_does_not": "The CALCULATION axis only. These three rows held a cap percentage in expected_cam and dollars-minus-percent in variance, and no cap base exists to build a ceiling from, so there is no number that belongs there. The IDENTITY axis is deliberately left unresolved: tenant_id, tenant_name and property_id are untouched, the rows are not deleted, and the six dangling references remain six. MainStreet is a verified-memory system; a record whose subject cannot currently be identified is still a record of something that happened, and destroying it would destroy the evidence that the identity problem exists.",
+
+  "rows_changed": 3,
+  "rows_in_table": 46,
+  "non_target_rows_changed": 0,
+
+  "fingerprints": {
+    "_formula_target":   "md5(string_agg(id||':'||expected_cam||':'||variance||':'||expected_cam_basis, '|' ORDER BY id))",
+    "_formula_billing":  "md5(string_agg(id||':'||actual_cam||':'||allocated_amount||':'||total_expenses||':'||pro_rata_percent, '|' ORDER BY id))",
+    "_formula_identity": "md5(string_agg(id||':'||tenant_id||':'||tenant_name||':'||property_id||':'||year, '|' ORDER BY id))",
+    "target_before":   "3ea10a40a2d8ada08bd4ce005555fcfe",
+    "target_after":    "adc94703ead4dbb5f3bcb55cf005b61f",
+    "billing_before":  "6acf22e57bca6a60359a29256b9e15eb",
+    "billing_after":   "6acf22e57bca6a60359a29256b9e15eb",
+    "identity_before": "95175b5c1b6e24c0f60c11abbaf3a0a0",
+    "identity_after":  "95175b5c1b6e24c0f60c11abbaf3a0a0"
+  },
+
+  "predicted_vs_actual": {
+    "rows_changed":         {"predicted": 3,  "actual": 3},
+    "null_expected_cam":    {"predicted": 35, "actual": 35},
+    "value_present_no_basis":{"predicted": 1, "actual": 1},
+    "stamped_cap_ceiling":  {"predicted": 10, "actual": 10}
+  },
+
+  "changed": [
+    {"id":"0669ad47-e616-4999-af9f-0b25c9520126","tenant_name":"Whole Health Market, Inc","property":"Cascade Commons","year":2025,
+     "before":{"expected_cam":5,"variance":66624.23,"expected_cam_basis":null},
+     "after":{"expected_cam":null,"variance":null,"expected_cam_basis":null},
+     "preserved":{"tenant_id":"52158098-9099-416d-85bc-ad69c3c3414c","actual_cam":"66629.23","allocated_amount":"66629.23","pro_rata_percent":"35.38","total_expenses":"188300"}},
+    {"id":"455c4ab5-d770-4313-8297-f6b1200dfc9f","tenant_name":"Prime Wellness Spa","property":"Maple Plaza","year":2026,
+     "before":{"expected_cam":5,"variance":715,"expected_cam_basis":null},
+     "after":{"expected_cam":null,"variance":null,"expected_cam_basis":null},
+     "preserved":{"tenant_id":"b49c89ec-3cae-4564-9732-b197fc2cb072","actual_cam":"720","allocated_amount":"720","pro_rata_percent":"8.57","total_expenses":"71950"}},
+    {"id":"7b5c9e2c-68b5-4010-974f-0fdeca78fa5e","tenant_name":"Whole Health Market, Inc","property":"LV","year":2026,
+     "before":{"expected_cam":5,"variance":2509.67,"expected_cam_basis":null},
+     "after":{"expected_cam":null,"variance":null,"expected_cam_basis":null},
+     "preserved":{"tenant_id":"5a273eba-e306-422e-9e83-47ec9ec002de","actual_cam":"2514.67","allocated_amount":"2514.67","pro_rata_percent":"20.44","total_expenses":"12300"}}
+  ],
+
+  "deliberately_unchanged": {
+    "dangling_tenant_references": 6,
+    "three_already_null_orphans": ["a83706b6-6843-4764-96c9-3647de231e0e","0e70f662-319b-4707-852d-5acbf60357e5","17f9f0a8-b373-4dce-a44d-abeb59e73971"],
+    "dangling_evidence_rows": 15,
+    "maple_coffee_human_review": "275d2435-3ac8-4cb5-b4a3-f30bea48e5e9 — still the only row with a value and no basis",
+    "tenants_rows": 84,
+    "tenant_field_evidence_rows": 423
+  },
+
+  "final_state": {
+    "total_rows": 46,
+    "stamped_cap_ceiling": 10,
+    "expected_cam_null": 35,
+    "value_present_no_basis": 1
+  }
+}

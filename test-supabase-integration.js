@@ -19,7 +19,8 @@
  *
  * Requirements:
  *   - Playwright installed: npm install playwright (or npx playwright install chromium)
- *   - Network access to https://zhsuhehgehbzkmzurzyf.supabase.co
+ *   - Network access to the target Supabase project (PILOT by default;
+ *     see test-support/supabase-target.js)
  *   - App running at http://localhost:7821
  *
  * Exit codes:
@@ -33,7 +34,30 @@ try { pw = require('playwright'); }
 catch (_) { pw = require('/opt/node22/lib/node_modules/playwright'); }
 const { chromium } = pw;
 
+// THE PROJECT IS CHOSEN, NOT HARD-CODED — and the default is PILOT.
+//
+// This suite INSERTS into tenant_field_evidence and tenant_review_audit via
+// ms_debug_dualwrite(), and the REST read-back below used the PRODUCTION url
+// and anon key as literals — so it wrote test rows into the customer database
+// regardless of which account was supplied. The resolver reads both projects
+// out of supabase-config.js and refuses production unless
+// MS_TEST_ALLOW_PRODUCTION carries the force token.
+// See test-support/supabase-target.js.
+const { resolveOrAbort } = require('./test-support/supabase-target.js');
+const TARGET    = resolveOrAbort('supabase-integration');
 const BASE      = process.env.APP_URL    || 'http://localhost:7821';
+
+// THE APP IS NOT AT THE SITE ROOT ON A DEPLOYMENT. vercel.json redirects "/" to
+// "/home", the marketing page, and rewrites "/app" to index.html — the only page
+// that has #loginScreen. Locally a static server hands index.html straight off
+// "/", which is why this suite worked by hand and failed the moment it was
+// pointed at the deployed pilot: it loaded the marketing site, found no login
+// form, and reported the app as not running.
+//
+// Kept as its own variable rather than derived from APP_URL, because APP_URL is
+// also the ORIGIN the API probes are built on ("/api/cam-reconciliations") and
+// appending a path to it would break those.
+const ENTRY     = process.env.APP_ENTRY_URL || BASE;
 const EMAIL     = process.env.TEST_EMAIL;
 const PASSWORD  = process.env.TEST_PASSWORD;
 const TARGET_PROP = process.env.TEST_PROP_ID || null;
@@ -71,8 +95,17 @@ function assert(condition, label, detail) {
 
   // ── Step 1: Load the app (no stubs — real Supabase) ─────────────────────────
   section('Step 1: Load app with real Supabase connection');
-  await page.goto(BASE, { waitUntil: 'networkidle', timeout: 30000 });
+  // ?signin=1 — THE PRODUCT'S OWN ANSWER TO ITS LANDING DIALOG. #msLanding
+  // covers the page on a bare load, so a suite that navigates to `/` and reaches
+  // for the login form is clicking through an overlay. Ten suites in this repo
+  // are currently parked as stale for exactly that reason. The flag says
+  // "someone who clicked Log in has already declared what they want", and every
+  // current suite uses it.
+  const entryUrl = ENTRY + (ENTRY.includes('?') ? '&' : '?') + 'signin=1';
+  info('Entry: ' + entryUrl);
+  await page.goto(entryUrl, { waitUntil: 'networkidle', timeout: 45000 });
   await page.waitForTimeout(2000);
+  info('Landed on: ' + page.url());
 
   const pageTitle = await page.title();
   info('Page title: ' + pageTitle);
@@ -87,7 +120,9 @@ function assert(condition, label, detail) {
   // Ensure the login form is shown
   const loginScreen = await page.$('#loginScreen');
   if (!loginScreen) {
-    fail('Login screen (#loginScreen) not found — is the app running at ' + BASE + '?');
+    fail('Login screen (#loginScreen) not found at ' + page.url());
+    info('#loginScreen exists only in index.html. On a deployment that is served at /app —');
+    info('vercel.json redirects "/" to the marketing page — so set APP_ENTRY_URL to the /app URL.');
     await browser.close();
     process.exit(1);
   }
@@ -95,6 +130,15 @@ function assert(condition, label, detail) {
   await page.evaluate(() => { document.getElementById('loginScreen').style.display = 'flex'; });
   await page.fill('#loginEmail',    EMAIL);
   await page.fill('#loginPassword', PASSWORD);
+
+  // THE LOGIN HANDLER ARRIVES AFTER THE BUTTON DOES. #loginBtn paints with the
+  // HTML; submitAuth is defined by script.js; and the form calls it through an
+  // inline onsubmit attribute. A click landing in that gap raises a
+  // ReferenceError and is simply LOST — the page looks fine, no request is made,
+  // and the suite then waits out its full timeout on a sign-in that never
+  // started. Thirteen suites in this repo carry this same wait for the same
+  // reason.
+  await page.waitForFunction(() => typeof submitAuth === 'function', null, { timeout: 45000 });
   await page.click('#loginBtn');
 
   // Wait for auth state change (up to 15 s)
@@ -152,24 +196,53 @@ function assert(condition, label, detail) {
     info('Using TEST_PROP_ID: ' + propId);
   }
 
-  // Load the property in-app
-  await page.evaluate(async (pid) => {
-    if (typeof loadPropertyById === 'function') {
-      await loadPropertyById(pid);
-    } else if (typeof activePropId !== 'undefined') {
-      // fallback: set via localStorage and reload
-      localStorage.setItem('_ms_activePropId_anon', pid);
-    }
-  }, propId).catch(() => {});
+  // OPEN IT THE WAY A PERSON DOES. This block used to call loadPropertyById(),
+  // which does not exist and never has — the app's entry point is
+  // selectProperty(id), which is what the property card's own onclick calls. The
+  // `else` branch then wrote a localStorage key and returned, so nothing was
+  // opened, activePropId stayed null, and ms_debug_dualwrite() bailed at its
+  // "No active property" guard and returned {propId: null}. Every assertion
+  // after this point was reading undefined.
+  //
+  // selectProperty looks the property up in _props, the in-memory list the app
+  // loads after sign-in, so the wait below is for that list — not a sleep. A
+  // fixed timeout here would be a race against a network read.
+  const listed = await page.waitForFunction(
+    (pid) => typeof _props !== 'undefined' && Array.isArray(_props) && _props.some(p => p && p.id === pid),
+    propId, { timeout: 45000 },
+  ).then(() => true).catch(() => false);
+  assert(listed, 'the fixture property appears in the app\'s property list', 'propId=' + propId);
 
-  await page.waitForTimeout(2000);
+  if (listed) {
+    await page.evaluate(async (pid) => { await selectProperty(pid); }, propId).catch(e => {
+      fail('selectProperty(' + propId + ') threw: ' + e.message);
+    });
+  }
 
-  const propLoaded = await page.evaluate((pid) => {
-    if (typeof activePropId !== 'undefined') return activePropId === pid;
-    return typeof currentProperty === 'function' && currentProperty()?.id === pid;
-  }, propId).catch(() => false);
+  const propLoaded = await page.waitForFunction(
+    (pid) => typeof activePropId !== 'undefined' && activePropId === pid,
+    propId, { timeout: 30000 },
+  ).then(() => true).catch(() => false);
 
   assert(propLoaded, 'Property loaded in app context', 'propId=' + propId);
+  if (!propLoaded) {
+    // Everything downstream reads an unopened property and reports undefined,
+    // which blames the database for a navigation that never happened.
+    fail('Cannot proceed without an open property — ms_debug_dualwrite() would bail at its own guard');
+    await browser.close();
+    process.exit(1);
+  }
+
+  // AND WAIT FOR THE TENANTS, which is a separate fact from the property being
+  // open. ms_debug_dualwrite() writes against tenantData[0].id and falls back to
+  // the literal 'debug-tenant-<epoch>' when the list is empty — not a UUID, so
+  // the insert fails on the column type and the run reports a database problem
+  // for what is really a page that had not finished loading.
+  const tenantsReady = await page.waitForFunction(
+    () => typeof tenantData !== 'undefined' && tenantData.filter(Boolean).length > 0,
+    null, { timeout: 30000 },
+  ).then(() => true).catch(() => false);
+  assert(tenantsReady, 'the property\'s tenants are loaded, so the write targets a real tenant id');
 
   // ── Step 4: Run ms_debug_dualwrite() ─────────────────────────────────────────
   section('Step 4: Run ms_debug_dualwrite() — inserts + read-back');
@@ -190,9 +263,15 @@ function assert(condition, label, detail) {
     // TFE insert assertions
     const tfe = dw.evStatus;
     assert(tfe === 'ok', 'tenant_field_evidence insert status = ok', 'got: ' + tfe);
-    if (window?.ms_lastDualWrite?.evidence?.error) {
-      fail('tenant_field_evidence insert error: ' + JSON.stringify(dw.evStatus));
-    }
+    // `window` IS THE PAGE'S, AND THIS CODE RUNS IN NODE. The line here used to
+    // read window.ms_lastDualWrite directly, which is a ReferenceError in the
+    // test process — it crashed the suite outright the first time execution ever
+    // reached it. The diagnostic is worth keeping, so it is fetched from the
+    // page instead of assumed to be in scope.
+    const dwErr = await page.evaluate(() => {
+      try { return window.ms_lastDualWrite?.evidence?.error || null; } catch (_) { return null; }
+    }).catch(() => null);
+    if (dwErr) fail('tenant_field_evidence insert error: ' + JSON.stringify(dwErr));
 
     // TRA insert assertions
     const tra = dw.audStatus;
@@ -247,13 +326,16 @@ function assert(condition, label, detail) {
 
   // ── Step 6: Direct REST read-back (bypasses app layer) ───────────────────────
   section('Step 6: Direct REST read-back (confirms rows exist independently of app)');
-  const restResults = await page.evaluate(async (pid) => {
+  // The read-back runs inside the page, so the resolved target is passed IN
+  // rather than written here — a literal in this block is exactly what pointed
+  // the whole suite at production.
+  const restResults = await page.evaluate(async ({ pid, baseUrl, key }) => {
     const { data: sess } = await db.auth.getSession();
     const token = sess?.session?.access_token;
     if (!token) return { error: 'no access_token' };
 
-    const BASE_URL = 'https://zhsuhehgehbzkmzurzyf.supabase.co';
-    const KEY      = 'eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6Inpoc3VoZWhnZWhiemttenVyenlmIiwicm9sZSI6ImFub24iLCJpYXQiOjE3NzU4NDkwNDAsImV4cCI6MjA5MTQyNTA0MH0.HUl9ha9hhjIO1F_k8xPkqbZQnWx-ERRGbnmc6KS3lNE';
+    const BASE_URL = baseUrl;
+    const KEY      = key;
 
     const headers = {
       'apikey': KEY,
@@ -270,7 +352,7 @@ function assert(condition, label, detail) {
     ]);
 
     return { tfe: tfeRes, tra: traRes };
-  }, propId).catch(e => ({ error: e.message }));
+  }, { pid: propId, baseUrl: TARGET.url, key: TARGET.anonKey }).catch(e => ({ error: e.message }));
 
   if (restResults?.error) {
     warn('Direct REST check skipped: ' + restResults.error);

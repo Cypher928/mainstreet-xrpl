@@ -84,6 +84,23 @@ async function _showApp(user) {
   }
 }
 
+// Someone who clicked "Log in" on the marketing page has already declared what
+// they want. Show the form at once rather than making them wait on the auth
+// round-trip and then click a second Sign In on whatever was rendered
+// meanwhile — that intermediate state is the second click reported from the
+// pilot walkthrough.
+function _maybeShowLoginFromIntent() {
+  try {
+    if (!/[?&]signin=1/.test(location.search)) return false;
+    _showLogin();
+    var t = document.getElementById('loginTabSignIn');
+    if (t && typeof switchAuthTab === 'function') { try { switchAuthTab('signin'); } catch (_) {} }
+    var e = document.getElementById('loginEmail');
+    if (e) setTimeout(function () { try { e.focus(); } catch (_) {} }, 60);
+    return true;
+  } catch (_) { return false; }
+}
+
 function _showLogin() {
   document.getElementById('loginScreen').style.display = 'flex';
   document.getElementById('appContent').style.display  = 'none';
@@ -100,16 +117,52 @@ function _cpKey()       { return _lsUserId ? `mainstreet_ckpt_v1_${_lsUserId}`  
 function _rvKey()       { return _lsUserId ? `mainstreet_review_v1_${_lsUserId}`  : 'mainstreet_review_v1'; }
 function _camYearKey()  { return _lsUserId ? `ms_camYear_${_lsUserId}`            : 'ms_camYear_anon'; }
 
+// SEC-9 — a legacy unscoped key belongs to whoever wrote it, and we cannot know
+// who that was.
+//
+// This migration copied unscoped keys into the CURRENT user's scoped key. On a
+// shared browser holding keys from an older build, whoever signed in FIRST
+// inherited them — including `mainstreet_errors_v1`, which records email and
+// role. That is a cross-tenant read, narrow but real, and the app performed it
+// automatically at sign-in.
+//
+// There is no ownership stamp on those keys to check against, so adoption
+// cannot be made safe — only refused. They are DELETED instead: the data is
+// unattributable, its only consumers are diagnostics, and leaving it on disk
+// keeps the leak available to the next migration someone writes.
+//
+// `camYear` is the one exception. It is a UI preference with no tenant content
+// (an integer year), so it is migrated rather than discarded.
+const _LS_UNSCOPED_UNATTRIBUTABLE = [
+  'mainstreet_errors_v1',
+  'mainstreet_ckpt_v1',
+  'mainstreet_review_v1',
+  'ms_debug_leases',
+];
+
+function _lsPurgeUnattributableKeys() {
+  let purged = 0;
+  for (const k of _LS_UNSCOPED_UNATTRIBUTABLE) {
+    try {
+      if (localStorage.getItem(k) !== null) { localStorage.removeItem(k); purged++; }
+    } catch (_) {}
+  }
+  if (purged) console.warn(`[storage] discarded ${purged} unscoped legacy key(s) — owner unknown, not adopted`);
+  return purged;
+}
+window._lsPurgeUnattributableKeys = _lsPurgeUnattributableKeys;
+
 // One-time migration: if the unscoped key has data and the scoped key does not,
 // move the value to the scoped key and delete the unscoped one.
 function _lsMigrateAncillaryKeys() {
   if (!_lsUserId) return;
+  // SEC-9 — refuse the unattributable ones before anything else runs.
+  _lsPurgeUnattributableKeys();
+  // Only camYear survives the SEC-9 cut: an integer year is a UI preference,
+  // not tenant content, so adopting it leaks nothing. The other four carried
+  // diagnostics and PII and are purged above rather than migrated.
   [
-    ['mainstreet_errors_v1',  _errKey()],
-    ['mainstreet_ckpt_v1',   _cpKey()],
-    ['mainstreet_review_v1', _rvKey()],
-    ['camYear',              _camYearKey()],
-    ['ms_debug_leases',      'ms_debug_leases_' + _lsUserId],
+    ['camYear', _camYearKey()],
   ].forEach(function(pair) {
     var old = pair[0], scoped = pair[1];
     if (old === scoped) return;
@@ -226,7 +279,12 @@ async function submitAuth(event) {
 }
 
 async function signOut() {
+  // SEC-10 — capture the id BEFORE _clearAppState() nulls it, then wipe this
+  // user's local data. An explicit sign-out is the one point where the user has
+  // said they are done with this device.
+  const _outgoing = _lsUserId;
   if (window.AuthService) window.AuthService.clear();
+  _lsClearUserData(_outgoing);
   _clearAppState();
   _initialized = false;
   _showLogin(); // Reset UI immediately — don't wait on Supabase
@@ -236,6 +294,38 @@ async function signOut() {
     console.warn('[signOut] Supabase error:', e?.message);
   }
 }
+
+/**
+ * SEC-10 — remove this user's data from disk, not just from memory.
+ *
+ * _clearAppState() nulled the in-memory state and left `_ms_props_v2_<uuid>`
+ * and every scoped ancillary key sitting in localStorage. Another account
+ * couldn't read them (the keys are UUID-scoped), but a signed-out user's whole
+ * portfolio stayed on a shared machine indefinitely. "Sign out" implies the data
+ * is gone from the device; it wasn't.
+ *
+ * Called from the sign-out path ONLY, never from the session-expiry path —
+ * SEC-3 deliberately preserves work there so it can be recovered on re-entry.
+ * Wiping on expiry would destroy exactly what that fix rescues.
+ */
+function _lsClearUserData(userId) {
+  if (!userId) return 0;
+  let removed = 0;
+  try {
+    // Enumerate rather than reconstruct: the key helpers are the source of
+    // truth for the current shape, but a key written by an older build with a
+    // different prefix would survive a hard-coded list.
+    const doomed = [];
+    for (let i = 0; i < localStorage.length; i++) {
+      const k = localStorage.key(i);
+      if (k && k.endsWith('_' + userId)) doomed.push(k);
+    }
+    for (const k of doomed) { localStorage.removeItem(k); removed++; }
+  } catch (e) { console.warn('[storage] could not clear user data:', e && e.message); }
+  if (removed) console.log(`[storage] cleared ${removed} local key(s) for the signed-out user`);
+  return removed;
+}
+window._lsClearUserData = _lsClearUserData;
 
 function _clearAppState() {
   _lsUserId        = null;
@@ -297,6 +387,10 @@ db.auth.onAuthStateChange((event, session) => {
   } else if (event === 'TOKEN_REFRESHED') {
     console.log('[Auth] Token refreshed');
   } else if (event === 'SIGNED_OUT') {
+    // SEC-10 — Supabase can raise SIGNED_OUT without signOut() running (another
+    // tab signed out, or the refresh token was revoked server-side). Clear disk
+    // here too, or the sign-out only counts when it starts in this tab.
+    _lsClearUserData(_lsUserId);
     _clearAppState();
     _initialized = false;
     _showLogin();
@@ -386,10 +480,104 @@ const MAX_LEASES  = 3;
 
 // Wraps fetch with a hard client-side abort timeout.
 // Vercel Pro maxDuration is 60 s; 58 s gives a clean abort before platform kills the lambda.
+/**
+ * SEC-3 — the one place the app learns its session is gone.
+ *
+ * `_authHeaders()` returns {} when there is no session, so the request goes out
+ * unauthenticated and the server correctly answers 401. Nothing on the client
+ * read that 401. A manager whose refresh token expired mid-session kept working
+ * in a fully-rendered UI while every save failed — and because savePropertyData
+ * is debounced, the failure wasn't attached to anything they did. That is the
+ * worst shape a session bug can take: silent, delayed, and indistinguishable
+ * from working normally.
+ *
+ * ORDER MATTERS HERE. Work is preserved BEFORE anything is shown and before any
+ * state is touched, because the in-memory edits are the thing being rescued.
+ * _clearAppState() is deliberately NOT called: it would destroy exactly what
+ * this function exists to save.
+ */
+let _authLostHandled = false;
+function _onAuthLost(where) {
+  if (_authLostHandled) return;       // one banner, not one per in-flight request
+  _authLostHandled = true;
+  console.warn('[auth] session lost at', where, '— preserving work locally');
+
+  // 1. Rescue first. _lsSave writes per-property under the user-scoped key, so
+  //    a re-sign-in as the same user finds it again.
+  let saved = 0;
+  try {
+    for (const p of (Array.isArray(_props) ? _props : [])) {
+      if (p && p.id) { _lsSave(p); saved++; }
+    }
+  } catch (e) { console.error('[auth] could not preserve work:', e && e.message); }
+
+  // 2. Then say so. A toast is not enough for something that stops all saving —
+  //    this stays on screen until acted on.
+  try { _setSyncStatus('error', 'Session expired — work saved on this device'); } catch (_) {}
+  try {
+    _showAuthLostBanner(saved);
+  } catch (e) {
+    // Never let the notification path swallow the rescue.
+    console.error('[auth] banner failed:', e && e.message);
+    alert('Your session expired. Your work is saved on this device — sign in again to continue.');
+  }
+}
+
+function _showAuthLostBanner(savedCount) {
+  if (document.getElementById('msAuthLostBanner')) return;
+  const bar = document.createElement('div');
+  bar.id = 'msAuthLostBanner';
+  bar.className = 'ms-authlost';
+  bar.setAttribute('role', 'alert');
+  bar.innerHTML =
+    `<span class="ms-authlost-msg"><strong>Your session expired.</strong> ` +
+    `${savedCount > 0
+        ? `Your work on ${savedCount} propert${savedCount === 1 ? 'y is' : 'ies is'} saved on this device and will be restored when you sign back in.`
+        : `Nothing was lost — no unsaved changes were pending.`} ` +
+    `Changes made from now on will not be saved until you sign in.</span>` +
+    `<button class="ms-authlost-btn" onclick="_reauthenticate()">Sign in again</button>`;
+  document.body.appendChild(bar);
+}
+
+/**
+ * Re-sign-in WITHOUT wiping state. The normal signOut() path clears app state,
+ * which would discard the unsaved edits just rescued. Here the login overlay is
+ * shown over the top and the in-memory work is left intact, so a successful
+ * sign-in as the same user lands back on the same data.
+ */
+function _reauthenticate() {
+  const b = document.getElementById('msAuthLostBanner');
+  if (b) b.remove();
+  _authLostHandled = false;
+  if (window.AuthService) window.AuthService.clear();
+  _showLogin();
+}
+window._reauthenticate = _reauthenticate;
+window._onAuthLost     = _onAuthLost;
+
+/** True for the errors Supabase/PostgREST raise when a JWT is missing or dead. */
+function _isAuthError(e) {
+  if (!e) return false;
+  const msg  = String(e.message || e.error_description || e.error || e || '');
+  const code = String(e.code || e.status || '');
+  return code === '401' || code === 'PGRST301' || e.status === 401 ||
+         /jwt (expired|invalid|malformed)|invalid token|not authenticated|authentication required|no api key/i.test(msg);
+}
+window._isAuthError = _isAuthError;
+
 function _fetchWithTimeout(url, opts, ms = 58000) {
   const ctrl = new AbortController();
   const timer = setTimeout(() => ctrl.abort(), ms);
-  return fetch(url, { ...opts, signal: ctrl.signal }).finally(() => clearTimeout(timer));
+  return fetch(url, { ...opts, signal: ctrl.signal })
+    .then(resp => {
+      // SEC-3 — every API call in this app goes through here, which is why the
+      // interception lives here rather than at each call site. A 401 means the
+      // session is gone; the response is still returned so callers keep their
+      // own error handling.
+      if (resp && resp.status === 401) _onAuthLost(url);
+      return resp;
+    })
+    .finally(() => clearTimeout(timer));
 }
 
 // Returns the Authorization header object for the current Supabase session.
@@ -458,113 +646,17 @@ async function explainFetch(body, opts = {}) {
   }
 }
 
-const CAM_EXPLAIN_SYSTEM_PROMPT = `You are an expert in commercial real estate CAM (Common Area Maintenance) charges.
-
-Your job is to help tenants understand charges in a calm, neutral, and practical way — WITHOUT creating unnecessary concern or conflict with landlords.
-
-PRIMARY GOAL:
-Make charges feel understandable and normal unless there is a clear reason not to.
-
-CLASSIFY EACH CHARGE AS:
-- Looks standard
-- Needs clarification
-- Potential issue
-
-STRICT CLASSIFICATION RULES:
-
-DEFAULT TO "Looks standard" unless there is a clear and meaningful problem.
-
-DO NOT use "Needs clarification" for:
-- Missing dates
-- Generic categories like "other"
-- Limited detail
-- Common vendor types (insurance, landscaping, snow, repairs)
-
-Use "Needs clarification" ONLY if:
-- The tenant cannot reasonably understand what the charge is
-- OR something directly impacts how much they are paying
-
-Use "Potential issue" ONLY if:
-- The charge appears clearly incorrect, duplicated, or unusually high
-- OR it violates common CAM practices
-
-TONE RULES:
-- Calm, confident, matter-of-fact
-- Reassuring, not investigative
-- Do NOT imply something is wrong unless it clearly is
-- Avoid phrases like:
-  - "it might be worth checking"
-  - "you may want to verify"
-  - "this could be an issue"
-
-QUESTION RULES:
-- Do NOT include questions if the charge looks standard
-- ONLY include questions if classification is "Needs clarification" or "Potential issue"
-- Maximum ONE short, casual question
-- Keep it simple and optional
-
-OUTPUT FORMAT:
-
-STATUS: [Looks standard / Needs clarification / Potential issue]
-
-SUMMARY:
-One short, plain-English sentence
-
-EXPLANATION:
-Clear, confident explanation of what the charge is and why it exists
-
-CONTEXT:
-Brief explanation of how this is typically handled in commercial leases
-
-IF NEEDED:
-(Optional — only if necessary)
-One short, simple question
-
-FINAL RULE:
-When in doubt → choose "Looks standard" and do NOT include questions.
-
-If the category appears incorrect based on the vendor or description, gently interpret the charge correctly in your explanation without criticizing the classification.`;
-
-const LANDLORD_SYSTEM_PROMPT = `You are an expert in commercial real estate CAM (Common Area Maintenance) reconciliation.
-You are advising a landlord reviewing expenses before sending them to tenants.
-Your job is NOT to audit for correctness, but to identify which charges tenants may question and how to make them clearer.
-Focus on:
-- Clarity
-- Presentation
-- Reducing tenant confusion and disputes
-CLASSIFICATIONS:
-- No issues → Clear and typical
-- Might get questions → Minor clarity issues
-- Likely to be challenged → High risk of pushback
-ONLY flag something if it could realistically confuse or concern a tenant.
-COMMON TRIGGERS:
-- Missing dates
-- Vague categories like "other"
-- Large or unusual amounts
-- Unclear vendor names
-TONE:
-- Calm
-- Professional
-- Practical
-- Never alarmist
-- Never suggest legal wrongdoing
-
-OUTPUT FORMAT — use these exact labels, one per line. Be brief: a property
-manager scans this in seconds. Do not add headings, preamble, or markdown.
-STATUS: [No issues / Might get questions / Likely to be challenged]
-WHY: one sentence (max 20 words) — what a tenant might question.
-SUGGESTION: one sentence (max 20 words) — a practical way to reduce pushback.
-EVIDENCE: a comma-separated list of what would substantiate this charge, using
-only these labels: Lease clause, Invoice, Work order, Vendor contract, Photo,
-Service record. List only what is genuinely relevant — 1 to 3 items. If nothing
-would substantiate it, write: None.
-
-IMPORTANT:
-If the charge looks normal, say "No issues" and do not invent problems.
-If the category appears incorrect based on the vendor or description, gently interpret the charge correctly in your explanation without criticizing the classification.
-Never state a fact you were not given. EVIDENCE names the KIND of document that
-would support the charge — it is a pointer for the manager to attach, not a claim
-that the document exists.`;
+// AI-2 — CAM_EXPLAIN_SYSTEM_PROMPT and LANDLORD_SYSTEM_PROMPT used to be
+// defined here and shipped to /api/explain in the request body. Every promise
+// they make — "never state a fact you were not given", "EVIDENCE names the KIND
+// of document ... not a claim that the document exists", "do not invent
+// problems" — was a browser string the caller could rewrite, and the server
+// forwarded it to the model unread.
+//
+// They now live in api/_explain-tasks.js and are selected by name. The client
+// says WHICH task it wants; the server decides what the model is told. They are
+// deliberately not duplicated here: a copy in the client is a copy that will
+// drift, and a copy that drifts is the version nobody is actually running.
 
 // WHY single source of truth: previously there were THREE schema definitions
 // (CLAUDE_LEASE_SYSTEM, CLAUDE_LEASE_PROMPT, and inline user prompts in each call
@@ -576,165 +668,66 @@ that the document exists.`;
 //   lease_type, sqft, cam_cap.
 // The resolver in callClaudeForLease handles aliases (sqft→leased_sqft, etc.)
 // for backward compatibility with any previously-cached extraction results.
-const CLAUDE_LEASE_SYSTEM = `You are a strict JSON extraction engine for commercial leases.
-Return ONLY valid JSON. No text. No explanation. No markdown. Start with { and end with }.
-
-Return exactly this structure:
-{
-  "tenant_name": string,
-  "suite": string | null,
-  "lease_start_date": "YYYY-MM-DD",
-  "lease_end_date": "YYYY-MM-DD",
-  "lease_type": string,
-  "sqft": number,
-  "base_rent": number | null,
-  "cam_cap": number,
-  "admin_fee_pct": number | null,
-  "gross_up_pct": number | null,
-  "expense_stop": number | null,
-  "audit_rights": true | false | null,
-  "pro_rata_method": "rentable" | "leasable" | "occupied" | "gross" | null,
-  "renewal_options": string | null,
-  "excluded_categories": string | null,
-  "security_deposit": number | null,
-  "property_name": string | null,
-  "quotes": {
-    "cam_cap": string | null,
-    "admin_fee_pct": string | null,
-    "gross_up_pct": string | null,
-    "expense_stop": string | null,
-    "audit_rights": string | null,
-    "pro_rata_method": string | null,
-    "renewal_options": string | null,
-    "base_rent": string | null,
-    "security_deposit": string | null,
-    "tenant_name": string | null,
-    "lease_type": string | null,
-    "sqft": string | null,
-    "lease_start_date": string | null,
-    "lease_end_date": string | null
-  }
-}
-
-Rules:
-- tenant_name: HIGHEST PRIORITY. The text may be OCR'd from a scanned document — tolerate spacing/character noise.
-  Step 1: Look for labels "Tenant:", "Lessee:", "Occupant:" and take the name that follows.
-  Step 2: If no label, find the first entity name with a suffix: LLC, Inc, Corp, Ltd, Co., L.P.
-  Step 3: If multiple entities exist, EXCLUDE any containing: Properties, Realty, Real Estate, Holdings, Capital, Investments, Partners, Trust.
-  Step 4: Return the most prominent remaining company name.
-  NEVER return null if any company name exists anywhere in the text.
-- lease_start_date: YYYY-MM-DD. Hierarchy: "Commencement Date" → "Lease Start Date" → "Term begins" → "Effective Date" → "Execution Date". Calculate from context if needed. Never null if any date exists.
-- lease_end_date: YYYY-MM-DD. Hierarchy: "Expiration Date" → "Lease End Date" → "Term ends". Calculate from start_date + term length if needed. Never null if start date and term length are both known.
-- lease_type: One of "NNN", "Gross", "Modified Gross".
-  Explicit: "Triple Net" / "Triple-Net" / "NNN" → "NNN". "Modified Gross" → "Modified Gross". "Gross" → "Gross".
-  Inferred: If tenant pays "Pro Rata Share" of taxes + insurance + operating expenses → "NNN".
-  If landlord pays operating expenses → "Gross".
-  If some expenses split → "Modified Gross". Null only if completely unresolvable.
-- sqft: Integer. Strip commas, units, and the word "approximately". Null if not found.
-- cam_cap: CRITICAL — you MUST search the entire document for any language that limits CAM or operating expense increases. Look for ALL of the following phrases: "CAM cap", "operating expense cap", "expense stop", "base year stop", "not to exceed", "shall not pay more than", "increases limited to", "capped at", "no more than X% increase", "annual increase cap", "controllable expense cap". If a percentage is found (e.g. "5%" or "5 percent"), return 5. If a dollar amount is found, return that number. Only return null if absolutely no cap-related language exists anywhere in the document.
-- admin_fee_pct: Look for "management fee", "administrative fee not to exceed X%", "admin fee cap". Return percentage number only (e.g. 15 for "15%"). Null if not found.
-- gross_up_pct: Look for "gross up", "grossed up to X% occupancy", "occupancy factor". Return percentage (e.g. 95 for "95% occupancy"). Null if not found.
-- expense_stop: Look for "expense stop", "base year stop", "base operating expenses of $X per square foot". Return dollar amount per sqft if found, else null.
-- audit_rights: Return true if tenant has explicit right to audit CAM records. Return false if explicitly waived. Return null if not addressed.
-- pro_rata_method: Return "rentable", "leasable", "occupied", or "gross" based on how the lease defines the pro-rata denominator. Return null if unresolvable.
-- renewal_options: Short description including count, term length, and rate basis (max 120 chars). Null if no renewal options stated.
-- excluded_categories: Comma-separated list of expense categories explicitly excluded from CAM (e.g. "capital expenditures, management fees, structural repairs"). Return null if no exclusion schedule is stated.
-- suite: The tenant's unit or suite identifier. Look for "Suite", "Unit", "Space", "Ste.", "#" labels. Return the short designator (e.g. "101", "Suite A", "200"). Null if not identified.
-- base_rent: Annual base rent in dollars as a plain number. If the lease states a monthly amount, multiply by 12. Look for "Base Rent", "Annual Rent", "Minimum Rent", "Fixed Rent", "Monthly Rent". Null if not found.
-- security_deposit: Security deposit in dollars as a plain number. Look for "Security Deposit", "Deposit", "Holdback". Null if not found.
-- property_name: The name or address of the building/property the lease covers, as stated in the lease (e.g. "Lakeview Plaza", "123 Main Street"). Look in the premises description, recitals, or property address fields. Null if no property/building name or address is stated.
-- quotes: For each field where you return a non-null value, copy ≤120 chars of the exact verbatim clause text from the lease that led to that value. Return null for any field where the value is null.
-- Use null only when a field is truly impossible to determine.`;
+// SEC-2 — CLAUDE_LEASE_SYSTEM and CLAUDE_ESCROW_SYSTEM used to be defined here
+// and shipped to /api/claude in the request body, which forwarded them to
+// Anthropic verbatim. They define the extraction schema itself — what counts as
+// a CAM cap, how sqft is parsed, which entity is the tenant — so every
+// extraction guarantee was a browser string the caller could rewrite, and its
+// output flows into the fieldEvidence snapshots the Evidence Viewer presents as
+// provenance.
+//
+// They now live in api/_claude-tasks.js and are selected by name
+// ('lease_extraction' / 'escrow_extraction'), the same contract AI-2 gave
+// /api/explain. Deliberately not duplicated here: a copy in the client is a
+// copy that drifts, and a copy that drifts is the version nobody is running.
 
 // ─── Phase 21: Escrow & Reserve Intelligence ─────────────────────────────────
-// Extracts lender reserve terms from mortgage/loan/escrow/reserve agreements,
-// capital expenditure reserve schedules, insurance settlement documents, and
-// lender draw instructions. Mirrors CLAUDE_LEASE_SYSTEM's structure exactly so
+// The escrow extraction schema moved to api/_claude-tasks.js with the lease one
+// (task: 'escrow_extraction'). It still mirrors the lease schema's structure, so
 // the same proxy/parsing conventions apply.
-const CLAUDE_ESCROW_SYSTEM = `You are a strict JSON extraction engine for lender reserve and escrow documents (mortgage agreements, loan agreements, escrow agreements, reserve agreements, capital expenditure reserve schedules, insurance settlement documents, lender draw instructions, repair reserve documentation).
-Return ONLY valid JSON. No text. No explanation. No markdown. Start with [ and end with ].
 
-A single document often governs MORE THAN ONE reserve account (e.g. a loan agreement with a separate Roof Reserve, HVAC Reserve, and Capital Reserve, each with its own balance and rules). Return a JSON ARRAY with one element per distinct reserve account the document describes. If the document only describes one reserve, return an array with exactly one element. Each array element follows this structure:
-{
-  "reserve_type": string,
-  "reserve_name": string | null,
-  "current_balance": number | null,
-  "eligible_uses": string | null,
-  "requires_invoices": true | false | null,
-  "requires_photos": true | false | null,
-  "requires_lien_waivers": true | false | null,
-  "requires_contractor_bids": true | false | null,
-  "requires_engineer_certification": true | false | null,
-  "min_draw_amount": number | null,
-  "requires_approval": true | false | null,
-  "draw_request_deadline": "YYYY-MM-DD" | null,
-  "repair_completion_deadline": "YYYY-MM-DD" | null,
-  "reserve_expiration_date": "YYYY-MM-DD" | null,
-  "notes": string | null,
-  "evidence": {
-    "reserve_type":    { "quote": string | null, "page": number | null },
-    "current_balance": { "quote": string | null, "page": number | null },
-    "eligible_uses":    { "quote": string | null, "page": number | null }
-  }
-}
-
-Rules:
-- Treat each named reserve/escrow account as its own array element. Do not merge balances or terms from different reserves into one element.
-- reserve_type: Identify which kind of reserve this element governs. Use one of: "Roof Reserve", "HVAC Reserve", "Tenant Improvement Reserve", "Leasing Commission Reserve", "Capital Reserve", "Insurance Recovery Reserve", or the lender's own term if none of those fit.
-- reserve_name: If the lender gives this reserve a specific account name (e.g. "Special Reserve Account No. 4"), return it verbatim. Null otherwise.
-- current_balance: The reserve balance stated in the document for THIS reserve, as a plain number (no $ or commas). Null if not stated.
-- eligible_uses: A short description (max 200 chars) of what THIS reserve's funds may be used for (e.g. "Roof repair and replacement only").
-- requires_invoices: true if the lender requires paid/unpaid invoices to support a draw request against this reserve. Default to true unless the document explicitly says otherwise.
-- requires_photos: true if before/after photos of completed work are required for a draw against this reserve.
-- requires_lien_waivers: true if lien waivers (conditional or unconditional) are required for this reserve.
-- requires_contractor_bids: true if contractor bids/estimates must be submitted before work funded by this reserve is approved.
-- requires_engineer_certification: true if a licensed engineer or architect must certify work funded by this reserve.
-- min_draw_amount: The minimum dollar amount per draw request against this reserve, if stated. Null otherwise.
-- requires_approval: true if the lender (or a third party such as a construction inspector) must approve a draw against this reserve before funding. Default true unless explicitly waived.
-- draw_request_deadline: The deadline by which draw requests against this reserve must be submitted, if a fixed or recurring deadline is stated.
-- repair_completion_deadline: The deadline by which the underlying repair/improvement work funded by this reserve must be completed.
-- reserve_expiration_date: The date after which this reserve account terminates or unused funds are released/forfeited.
-- notes: Any other reserve-specific requirement or condition worth flagging for this reserve (max 300 chars). Null if nothing additional applies.
-- evidence: For reserve_type, current_balance, and eligible_uses, copy ≤160 chars of the exact verbatim clause text that produced that value, AND the page number from the nearest preceding "--- Page N ---" marker in the document text. Both null if the value itself is null or the page cannot be determined.
-- Never paraphrase a quote — it must be copied character-for-character from the source text.
-- Use null only when a field is truly impossible to determine. Do not guess a page number; null is acceptable.`;
-
-const INVOICE_PROMPT = `You are extracting data from a commercial real estate invoice or bill.
-This document may be a scanned image — tolerate OCR noise, spacing issues, and number formatting quirks.
-Return ONLY valid JSON. No explanation. No markdown.
-
-{
-  "vendorName": string,
-  "amount": number,
-  "invoiceDate": "YYYY-MM-DD" or null,
-  "category": string,
-  "confidence": { "vendorName": 0-100, "amount": 0-100, "invoiceDate": 0-100, "category": 0-100 }
-}
-
-RULES:
-- vendorName: The company that issued the invoice (top of page, "From:", "Bill From:", or largest company name). Not the property owner.
-- amount: Total due / Amount due / Invoice total. Numbers only — strip $, commas. If you see periods used as thousand separators (e.g. "1.200,00") convert correctly. Never null if any dollar amount exists.
-- invoiceDate: Invoice date / Bill date / Date issued. YYYY-MM-DD format. Not the due date.
-- category: One of: insurance, landscaping, snow, repairs, utilities, janitorial, security, management, other.
-  - insurance → any insurance company, premium, policy, or coverage
-  - utilities → electric, gas, water, sewer, telecom
-  - landscaping → lawn, grounds, irrigation, tree, mulch
-  - snow → snow removal, plowing, salting, ice
-  - repairs → maintenance, HVAC, plumbing, roof, painting, carpentry
-  - janitorial → cleaning, custodial, sanitation
-  - security → alarm, guard, monitoring, access control
-  - management → property management, admin fee
-- confidence: 0 = not found, 100 = explicitly labeled`;
-
-const CATEGORY_PROMPT = `Classify this invoice into ONE category:
-[insurance, landscaping, snow, repairs, janitorial, utilities, other]
-
-Prioritize vendor name when obvious (e.g. insurance companies → insurance).
-
-Return JSON:
-{ "category": "...", "confidence": 0.0-1.0 }`;
+// SEC-2 — INVOICE_PROMPT and CATEGORY_PROMPT moved to api/_claude-tasks.js
+// ('invoice_extraction' / 'category_classification'). They travelled in the USER
+// turn beside the invoice image, which put instructions and customer data at the
+// same level; they are system prompts on the server now. CATEGORIES below stays
+// here — the client validates the returned category against it, which is a check
+// on the model's answer, not an instruction to it.
 
 const CATEGORIES = ['insurance','landscaping','snow','repairs','utilities','janitorial','security','management','other'];
+
+// F-02 — lease exclusion prose resolved against CATEGORIES.
+//
+// `excluded_categories` is free text; CATEGORIES is a closed nine-value enum;
+// the allocation filter compared them with exact equality, so 52 of 55 phrases
+// extracted across Runs 1-3 were inert. A non-matching exclusion fails OPEN —
+// the expense stays in the pool — so the tenant was billed for categories their
+// lease excludes while the statement said otherwise.
+//
+// Every array builder below now emits APPLIED categories only, which is why the
+// nine downstream `.includes(inv.category)` predicates did not have to change:
+// they receive a list that is true rather than one that is aspirational.
+//
+// If the resolver module is missing this fails CLOSED — no categories applied
+// and a synthetic unapplied entry, which blocks the tenant statement (see
+// _exclusionBlockReason). Failing open here would silently over-bill.
+function _exclusionState(rawExcluded) {
+  const CX = (typeof window !== 'undefined' && window.CamExclusions) || null;
+  if (!CX) {
+    console.error('[CAM] cam-exclusions.js not loaded — exclusions cannot be resolved; statements will be blocked.');
+    return {
+      resolved: [], applied: [],
+      notApplied: [{ raw: String(rawExcluded || ''), category: null, status: 'unmapped', candidates: [],
+                     reason: 'Exclusion resolver unavailable — cannot verify which exclusions apply.' }],
+      fingerprint: '', extracted: rawExcluded !== null && rawExcluded !== undefined, empty: rawExcluded === '',
+    };
+  }
+  return CX.tenantExclusionState(rawExcluded);
+}
+
+// Applied-only category list for a tenant record (the shape stored in tenantData).
+function _appliedExclusions(t) {
+  return _exclusionState(t && t.excluded_categories).applied;
+}
 
 // ─── State ────────────────────────────────────────────────────────────────────
 // tenantData[i] = null | { tenantName, leasedSqft, capPercentage, excludedCategories, baseYear }
@@ -777,11 +770,86 @@ class Lease {
   }
 }
 
+/**
+ * CAM-1 — ONE currency parser, for the engine and every surface that reports it.
+ *
+ * The engine used `parseFloat`, which stops at the first non-numeric character:
+ *
+ *   parseFloat("1,250.00")      = 1      -> an invoice worth $1
+ *   parseFloat("$84,500")       = NaN    -> `|| 0` made it $0, silently dropped
+ *   parseFloat("84,500.00 USD") = 84
+ *
+ * A dropped invoice does not fail loudly — it leaves the pool, every tenant is
+ * under-billed, and the landlord absorbs it with nothing on screen to say so.
+ * Extraction produces exactly these shapes.
+ *
+ * Returns null for anything it cannot parse, NEVER 0. Zero is a real amount and
+ * must not be how the system says "I could not read this". Callers decide what
+ * to do with null, and every caller in the money path must surface it.
+ */
+function parseMoney(v) {
+  // DELEGATE, same reasoning as parseSqft. Contract unchanged: a number, or
+  // null when the value could not be read. Never 0 for unreadable.
+  return window.SourceValues.readMoney(v).value;
+}
+window.parseMoney = parseMoney;
+
+// ── Invoice amounts, canonicalised once on the way in ───────────────────────
+//
+// 35 places read `inv.amount` with `parseFloat(inv.amount) || 0`. Every one of
+// them is CORRECT for a number and wrong for "$1,250.00", which parseFloat reads
+// as NaN -> 0. The engine meanwhile built its Invoice objects with parseMoney
+// and allocated the full $1,250. So the pool the screen reported and the pool
+// the engine distributed were different pools, and `Math.abs()` in the variance
+// banner hid the sign of the gap.
+//
+// Rewriting 35 readers would be a wide change that leaves the same assumption
+// unenforced for the 36th. Instead the assumption is made true: an amount that
+// enters invoiceData is a Number, or '' when nothing readable was provided.
+// Every existing reader then behaves, unchanged.
+//
+// UNREADABLE IS NOT ZERO. A value that cannot be read becomes '' rather than 0,
+// which routes it into the "N invoices with no amount were excluded" banner that
+// already exists — a warning, not a silent $0. The original text is kept on
+// `amountUnparsed`, the same field name Invoice already uses for this, so the
+// two layers describe the condition with one word.
+function canonicaliseInvoiceAmount(inv) {
+  if (!inv) return inv;
+  const r = window.SourceValues.readMoney(inv.amount);
+  if (r.status === 'unreadable') {
+    if (inv.amountUnparsed == null) inv.amountUnparsed = String(inv.amount);
+    inv.amount = '';
+  } else if (r.value !== null) {
+    inv.amount = r.value;
+    if (inv.amountUnparsed != null) delete inv.amountUnparsed;
+  }
+  return inv;
+}
+function canonicaliseInvoiceAmounts(list) {
+  if (Array.isArray(list)) list.forEach(canonicaliseInvoiceAmount);
+  return list;
+}
+window.canonicaliseInvoiceAmount  = canonicaliseInvoiceAmount;
+window.canonicaliseInvoiceAmounts = canonicaliseInvoiceAmounts;
+
+
 class Invoice {
-  constructor(id, date, amount, vendor, category, description = '') {
+  // PW-3 — relations set in the invoice register (CAM eligible, space, building
+  // system) used to be dropped at this boundary. The engine therefore could not
+  // honour them however carefully the manager set them, and the "CAM eligible"
+  // checkbox changed a display total and nothing else.
+  constructor(id, date, amount, vendor, category, description = '', rel = {}) {
     this.id              = id || null;
+    this.camEligible     = window.CamPool.isEligible(rel);   // absent → recoverable
+    this.spaceId         = rel.spaceId || null;
+    this.system          = rel.system  || null;
     this.date            = date     || '';
-    this.amount          = parseFloat(amount) || 0;
+    // CAM-1 — null means "unreadable", which is not the same as zero. The
+    // reconciliation refuses to allocate an unreadable invoice rather than
+    // silently pricing it at nothing.
+    var _parsed         = parseMoney(amount);
+    this.amountUnparsed = _parsed === null ? String(amount == null ? '' : amount) : null;
+    this.amount         = _parsed === null ? 0 : _parsed;
     this.vendorName      = vendor   || '';  // field matchInvoiceToTenant expects
     this.category        = category || 'other';
     this.invoiceDate     = date     || '';  // field matchInvoiceToTenant expects
@@ -795,7 +863,8 @@ class Invoice {
 
 class ReconciliationResult {
   constructor(tenantName, unitNumber, sqFt, totalAllocated, proRataPercent,
-              includedInvoices, capApplied = false, capAdjustment = null) {
+              includedInvoices, capApplied = false, capAdjustment = null,
+              occupancy = null) {
     this.tenantName         = tenantName;
     this.unitNumber         = unitNumber || '';
     this.sqFt               = sqFt;
@@ -804,12 +873,35 @@ class ReconciliationResult {
     this.includedInvoices   = includedInvoices || [];
     this.capApplied         = capApplied;
     this.capAdjustment      = capAdjustment;
+    // T2 — HOW MUCH OF THE PERIOD, and everything needed to reproduce it without
+    // recomputing: the rational (numerator/denominator), the days behind it, the
+    // window, the case, and where the basis came from. NULL means this run
+    // predates occupancy — it does NOT mean a factor of 1, and no reader may
+    // treat it as one.
+    this.occupancy          = occupancy || null;
+    // The two shares, and their product, kept as three separate values. The
+    // effective share is DERIVED for display and is never the stored pro-rata.
+    this.effectiveSharePercent = (occupancy && occupancy.applied && occupancy.factor !== null)
+      ? parseFloat((proRataPercent * occupancy.factor).toFixed(4))
+      : proRataPercent;
     this.ambiguityFlags     = [];  // populated by runFullReconciliation after construction
     this.status             = totalAllocated > 0 ? 'calculated' : 'needs review';
-    const total = this.includedInvoices.reduce((s, inv) => s + (inv.share || 0), 0);
-    this.averageConfidence  = total > 0
-      ? Math.round(this.includedInvoices.reduce((s, inv) => s + (inv.matchConfidence || 0) * (inv.share || 0), 0) / total)
-      : 0;
+    // F-14/D16 — THERE IS NO PER-TENANT CONFIDENCE NUMBER, so this no longer
+    // computes one.
+    //
+    // `averageConfidence` was a share-weighted mean of `matchConfidence`. That
+    // field is a routing signal with three reachable values — 0 for "no tenant
+    // matched", 75 for a name hit, 90 for a unit hit — not a measure of how
+    // sure anyone is. Every shared invoice carries 0, so the mean read 0% for a
+    // perfectly ordinary tenant and was hidden entirely by the `> 0` gate; a
+    // tenant with one direct invoice showed "Confidence 32%", which was
+    // (2400 x 90) / 6669.04 — the share of their bill that came from a direct
+    // match, wearing the word "confidence".
+    //
+    // Nothing replaces it. Inventing a percentage with no defensible basis is
+    // the defect, not the absence of one. How well the LEASE was read is a real
+    // and separate measure (`_confidence` / `_confidenceScore`), and the
+    // surfaces that want a confidence figure use that one.
     // Aliases for lastResults consumers (runCAMAllocation shape compatibility)
     this.name           = tenantName;
     this.allocatedAmount = totalAllocated;
@@ -822,6 +914,10 @@ class ReconciliationResult {
 const portfolio = [];
 let activePropId = null; // null = portfolio view
 let _props = []; // canonical merged array from loadProperties()
+// Has a properties load actually SUCCEEDED this session? Consulted by
+// _acqOrphaned(): "this property is gone" is only sayable once we know what
+// exists. An empty _props after a failed load must never be read as deletion.
+let _propsLoadedOk = false;
 
 // ─── Acquisition Review State ─────────────────────────────────────────────────
 // Fully isolated — never touches _props, tenantData, invoiceData, or activePropId.
@@ -841,9 +937,176 @@ function currentProperty() {
   return _props.find(p => p.id === activePropId) || null;
 }
 
+// ─── Supabase Storage: reading a stored document ──────────────────────────────
+
+/**
+ * SEC-1 — turn a stored document reference into a URL that may actually be read.
+ *
+ * The `leases` and `invoices` buckets were public, so `/object/public/...` URLs
+ * worked for anyone who had one. Once those buckets are private, every stored
+ * URL stops resolving — and every surface that renders a document
+ * (Evidence Viewer, lease modal, Documents, Ask-the-Lease citations) goes
+ * through here instead.
+ *
+ * The server re-derives the object path from whatever is passed and checks that
+ * it belongs to the caller before signing, so nothing here needs to be trusted.
+ * Signed URLs are short-lived, which is why they are fetched at view time rather
+ * than stored: a URL kept in a row would be expired by the time anyone used it.
+ *
+ * Returns null rather than throwing — every caller has a real "can't show it"
+ * path already, and a throw here would take out the surface around it.
+ */
+const _signedUrlCache = new Map();   // ref → { url, until }
+
+async function resolveDocumentUrl(ref) {
+  if (!ref) return null;
+  // Anything not in our storage (a sample fixture, an external link) is
+  // returned untouched — there is nothing for us to sign.
+  if (!/\/storage\/v1\/object\//.test(String(ref)) && !/^(leases|invoices)\//.test(String(ref))) {
+    return ref;
+  }
+
+  const hit = _signedUrlCache.get(ref);
+  // 30s of headroom so a URL fetched now is not handed to pdf.js as it expires.
+  if (hit && hit.until - 30000 > Date.now()) return hit.url;
+
+  try {
+    const resp = await _fetchWithTimeout('/api/document-url', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json', ...(await _authHeaders()) },
+      body: JSON.stringify({ ref }),
+    }, 15000);
+    if (!resp.ok) {
+      let msg = `HTTP ${resp.status}`;
+      try { msg = (await resp.json()).error || msg; } catch (_) {}
+      console.warn('[document] could not authorise', ref, '—', msg);
+      return null;
+    }
+    const body = await resp.json();
+    if (!body || !body.url) return null;
+    _signedUrlCache.set(ref, { url: body.url, until: Date.now() + (body.expiresIn || 300) * 1000 });
+    return body.url;
+  } catch (e) {
+    console.warn('[document] authorisation request failed:', e && e.message);
+    return null;
+  }
+}
+window.resolveDocumentUrl = resolveDocumentUrl;
+
+/**
+ * SEC-1 — the ONE way a stored document reaches the browser.
+ *
+ * Every previous fix converted one call site at a time, and each pass missed
+ * some: the invoice viewer, then the Space chips, then the AI evidence chips,
+ * then Property Documents, then timeline attachments. A per-site fix is a fix
+ * that has to be remembered, and this has now been forgotten four times.
+ *
+ * So the render sites stop deciding. They emit a marker; these three functions
+ * and the observer below do the rest:
+ *
+ *   docLinkHtml()   a clickable document  → <button data-doc-url> or <a href>
+ *   docImageHtml()  an inline thumbnail   → <img data-doc-src> (src filled later)
+ *   the observer    fills every data-doc-src the moment it enters the DOM
+ *
+ * A caller that forgets to hydrate cannot exist, because nothing calls hydrate.
+ */
+// isStoredDocumentRef / docLinkHtml / docImageHtml live in document-links.js —
+// a pure module both the browser and Node can load, so the rendering decision
+// is exercised by tests directly rather than only through a browser. What stays
+// here is what needs the DOM and the network.
+
+/** Resolve, then open. The scheme is pinned: a stored ref must never navigate. */
+async function openStoredDocument(ref) {
+  const readable = await resolveDocumentUrl(ref);
+  if (!readable) {
+    showToast('⚠️ That document could not be opened — you may not have access to it, or it is no longer stored.',
+      { color: '#92400e', textColor: '#fef3c7', duration: 8000 });
+    return;
+  }
+  let u;
+  try { u = new URL(readable, window.location.origin); } catch (_) { return; }
+  if (u.protocol !== 'https:' && u.protocol !== 'http:' && u.protocol !== 'blob:') return;
+  window.open(u.href, '_blank', 'noopener');
+}
+window.openStoredDocument = openStoredDocument;
+
+// One delegated handler for every document button, anywhere in the app.
+document.addEventListener('click', function (e) {
+  const btn = e.target && e.target.closest && e.target.closest('[data-doc-url]');
+  if (!btn) return;
+  e.preventDefault();
+  openStoredDocument(btn.getAttribute('data-doc-url'));
+});
+
+/**
+ * Fill in every stored thumbnail as it enters the DOM.
+ *
+ * An observer rather than a hydrate() call at each render site, because "call
+ * hydrate after you render" is exactly the instruction that gets forgotten —
+ * this whole exercise is the evidence.
+ */
+async function _hydrateDocImages(root) {
+  const imgs = [];
+  if (root.nodeType === 1) {
+    if (root.matches && root.matches('img[data-doc-src]')) imgs.push(root);
+    if (root.querySelectorAll) imgs.push(...root.querySelectorAll('img[data-doc-src]'));
+  }
+  for (const img of imgs) {
+    const ref = img.getAttribute('data-doc-src');
+    img.removeAttribute('data-doc-src');   // claim it before awaiting — no double work
+    const readable = await resolveDocumentUrl(ref);
+    if (readable) img.src = readable;
+    else img.alt = (img.alt || 'Image') + ' — not available';
+  }
+}
+if (typeof MutationObserver === 'function') {
+  new MutationObserver(function (records) {
+    for (const r of records) for (const n of r.addedNodes) _hydrateDocImages(n);
+  }).observe(document.documentElement, { childList: true, subtree: true });
+}
+
 // ─── Supabase Storage upload ──────────────────────────────────────────────────
 
+/**
+ * The one client-side size gate, checked BEFORE the file is read or encoded.
+ *
+ * Two guards used to sit in this file at 60 MB — eighteen times what the
+ * platform accepts. Everything between ~3.3 MB and 60 MB passed, was read into
+ * memory, base64-encoded (seconds of main-thread work and ~1.33× the
+ * allocation), sent, and came back as a bare HTTP 413 that no code path
+ * explained. Failing here costs nothing and says why.
+ *
+ * The limit itself lives in request-limits.js, which the serverless handlers
+ * require() — so the two sides cannot drift apart.
+ *
+ * Returns true when the file may be sent. On refusal it has already told the
+ * user, in one sentence naming the size, the ceiling, and what to do.
+ */
+function _guardUploadSize(file, what) {
+  const L = window.MSRequestLimits;
+  if (!L) {
+    // The gate is not optional. Without it this function would return true and
+    // silently restore the behaviour it exists to prevent.
+    console.error('[upload] request-limits.js did not load — refusing rather than guessing');
+    showToast('⚠️ Upload is unavailable — the page did not load completely. Refresh and try again.',
+      { color: '#92400e', textColor: '#fef3c7', duration: 8000 });
+    return false;
+  }
+  const verdict = L.checkUploadSize(file && file.size, what);
+  if (verdict.ok) return true;
+  console.warn('[upload] refused before encoding:', file && file.name, verdict.error);
+  showToast('⚠️ ' + verdict.error, { color: '#92400e', textColor: '#fef3c7', duration: 14000 });
+  return false;
+}
+window._guardUploadSize = _guardUploadSize;
+
 async function uploadInvoiceFile(file) {
+  // Fail before toBase64, not after the round trip.
+  if (!_guardUploadSize(file, 'invoice')) {
+    throw new Error(window.MSRequestLimits
+      ? window.MSRequestLimits.checkUploadSize(file && file.size, 'invoice').error
+      : 'Upload is unavailable — the page did not load completely.');
+  }
   const attempt = async () => {
     const fileBase64 = await toBase64(file);
     const resp = await fetch('/api/upload', {
@@ -905,7 +1168,9 @@ function parseJSON(text) {
   }
 }
 
-async function callClaude(file, prompt) {
+// SEC-2 — takes a TASK NAME, not a prompt. The instructions live in
+// api/_claude-tasks.js; this sends only the document.
+async function callClaude(file, task) {
   let base64;
   try {
     base64 = await toBase64(file);
@@ -925,9 +1190,9 @@ async function callClaude(file, prompt) {
   let data;
   try {
     data = await claudeFetch({
-      model: MODEL,
+      task,
       max_tokens: 1024,
-      messages: [{ role: 'user', content: [contentBlock, { type: 'text', text: prompt }] }],
+      messages: [{ role: 'user', content: [contentBlock] }],
     });
   } catch (e) {
     console.error('[Mainstreet] fetch error:', e);
@@ -1085,13 +1350,51 @@ function enrichLeaseData(data, extractedText) {
 
 // Remove stray single-letter initials (e.g. "P." or "M.") that AI sometimes
 // prepends/appends to extracted names, then collapse extra whitespace.
-function cleanTenantName(raw) {
-  if (!raw) return '';
-  return raw
-    .replace(/\b[A-Z]\.\s*/g, '')   // drop "P. ", "M. " etc.
-    .replace(/\s+/g, ' ')
-    .replace(/^[\s,;.]+|[\s,;.]+$/g, '')
-    .trim();
+// ─── TENANT NORMALIZATION LIVES IN tenant-normalize.js ───────────────────────
+//
+// These five functions moved out verbatim in M1a so the server-side
+// PropertyRecord hydrator can reuse the definition instead of growing a second
+// one. Two definitions of what a tenant IS would diverge, and the divergence
+// would be invisible — both sides correct in isolation, disagreeing only in
+// production.
+//
+// The delegation is deliberately HARD. There is no local fallback copy: a
+// fallback would be a second definition wearing a disguise, and the first time
+// it were used nobody would know. If the module is missing this throws, loudly,
+// at the first call.
+function _TN() {
+  const m = (typeof window !== 'undefined' && window.TenantNormalize) || null;
+  if (!m) throw new Error('tenant-normalize.js is not loaded — normalizeTenant and its ' +
+                          'helpers have no local fallback by design. Check the script order in index.html.');
+  return m;
+}
+
+function cleanTenantName(raw) { return _TN().cleanTenantName(raw); }
+
+// ─── TENANT IDENTITY IS MINTED ONCE, ON PURPOSE, HERE ────────────────────────
+//
+// normalizeTenant() used to end with `id: d.id ?? crypto.randomUUID()`, which
+// looks harmless and is not. That function runs on every property load, on
+// every extraction, and over records that have already been normalized — so a
+// record that arrived without an id was silently given a NEW one each time it
+// passed through, and every writer downstream captured whichever id its own
+// copy happened to be holding. Pilot has one tenant carrying three different
+// uuids across lease_documents, tenant_field_evidence and tenants, and six
+// reconciliations whose tenant_id was never a primary key in tenants at all.
+// Those rows were never detached from their tenant; they were never attached.
+//
+// So normalizeTenant no longer mints. It preserves `d.id` or leaves null, and
+// the decision to create an identity is made explicitly, at the boundary where
+// a tenant genuinely becomes new: a fresh extraction. Call this there and
+// nowhere else. A null id downstream is now a visible bug rather than a silent
+// second identity, which is the entire point.
+function mintTenantIdentity(t) {
+  if (!t || typeof t !== 'object') return t;
+  if (t.id) return t;                      // already has one — never re-mint
+  t.id = (typeof crypto !== 'undefined' && crypto.randomUUID)
+    ? crypto.randomUUID()
+    : (typeof _genUUID === 'function' ? _genUUID() : String(Date.now()) + Math.random().toString(36).slice(2));
+  return t;
 }
 
 // Returns true when a name is a real business/person name rather than a
@@ -1107,13 +1410,7 @@ function isStrongName(name) {
 }
 
 // Normalizes any date string/value to YYYY-MM-DD; returns '' if absent or unparseable.
-function toISODate(val) {
-  if (!val) return '';
-  const s = String(val).trim();
-  if (/^\d{4}-\d{2}-\d{2}$/.test(s)) return s;
-  const d = new Date(s);
-  return isNaN(d) ? '' : d.toISOString().split('T')[0];
-}
+function toISODate(val) { return _TN().toISODate(val); }
 
 // Deterministic tenant name extractor — runs before and after Claude as a hard fallback.
 function extractTenantFromText(text) {
@@ -1153,66 +1450,26 @@ function extractTenantFromText(text) {
 }
 
 // Regex-based fallback: scans raw lease text for date strings.
-function extractDatesFromText(text) {
-  if (!text) return {};
-  const re = /\b(\d{1,2}\/\d{1,2}\/\d{2,4}|\w+\s\d{1,2},\s\d{4})\b/g;
-  const matches = text.match(re) || [];
-  if (matches.length < 2) return {};
-  return {
-    startDate:     matches[0],
-    endDate:       matches[1],
-    _usedFallback: true,
-  };
-}
+function extractDatesFromText(text) { return _TN().extractDatesFromText(text); }
 
-function normalizeTenant(d) {
-  if (!d) return d;
-  const fallback = extractDatesFromText(d.rawText || '');
-  return {
-    tenant_name:         cleanTenantName(d.tenant_name ?? d.tenantName ?? d.name ?? ''),
-    suite:               d.suite ?? d.unit ?? d.unitNumber ?? '',
-    leased_sqft:         d.leased_sqft         ?? d.leasedSqft ?? d.sqft  ?? '',
-    start_date:          toISODate(d.start_date ?? d.startDate ?? d.lease_start_date ?? fallback.startDate ?? ''),
-    end_date:            toISODate(d.end_date   ?? d.endDate   ?? d.lease_end_date  ?? fallback.endDate   ?? ''),
-    lease_type:          d.lease_type          ?? d.leaseType                     ?? '',
-    excluded_categories: d.excluded_categories ?? d.excludedCategories            ?? '',
-    cap:                 d.cap                 ?? d.cam_cap ?? d.capPercentage    ?? null,
-    flags:               d.flags               ?? [],
-    confidence:          d.confidence          ?? {},
-    baseYear:            d.baseYear            ?? null,
-    unitNumber:          d.unitNumber          ?? '',
-    doc_has_dates:       d.doc_has_dates       ?? true,
-    doc_has_lease_type:  d.doc_has_lease_type  ?? true,
-    leaseUrl:            d.leaseUrl ?? d.lease_url ?? d.file_url ?? null,
-    leaseExpected:       d.leaseExpected ?? !!(d.leaseUrl ?? d.lease_url ?? d.file_url),
-    extractionFailed:    d.extractionFailed    ?? false,
-    _needsReview:        d._needsReview        ?? false,
-    _pendingJobReview:   d._pendingJobReview   ?? false,
-    _userConfirmed:      d._userConfirmed      ?? false,
-    _jobId:              d._jobId              ?? null,
-    _usedFallback:       d._usedFallback       ?? fallback._usedFallback ?? false,
-    id:                  d.id                  ?? crypto.randomUUID(),
-    fileName:            d.fileName            ?? '',
-    _error:              d._error              ?? null,
-    reviewOverrides:     d.reviewOverrides     ?? {},
-    review:              d.review              ?? {},
-    capBaseAmount:       d.capBaseAmount       ?? null,
-    fieldEvidence:       d.fieldEvidence       ?? {},
-    admin_fee_pct:       d.admin_fee_pct       ?? null,
-    gross_up_pct:        d.gross_up_pct        ?? null,
-    expense_stop:        d.expense_stop        ?? null,
-    audit_rights:        d.audit_rights        ?? null,
-    pro_rata_method:     d.pro_rata_method     ?? null,
-    renewal_options:     d.renewal_options     ?? null,
-    base_rent:           d.base_rent           ?? null,
-    security_deposit:    d.security_deposit    ?? null,
-    amendments:          Array.isArray(d.amendments) ? d.amendments : [],
-    property_name:       (() => {
-      const v = d.property_name ?? d.propertyName ?? null;
-      return (typeof v === 'string' && v.trim()) ? v.trim() : null;
-    })(),
-  };
-}
+// A DATE THE LEASE HAS AND WE CANNOT READ IS NOT A DATE THE LEASE LACKS.
+//
+// toISODate answers '' for both, and normalizeTenant stored that '' — so
+// "Commencement: upon substantial completion", "TBD", and a European
+// "31/08/2026" all arrived downstream indistinguishable from a lease with no
+// date at all. Two different conversations with the tenant: one is "send us
+// your dates", the other is "your lease says the term starts on an event that
+// has to be dated before we can bill it". lease-period.js has had an
+// `unreadable` status the whole time and nothing in storage could ever produce
+// it.
+//
+// So the ISO field keeps its exact contract — ISO or empty, and every existing
+// consumer is untouched — and what could not be read is kept beside it, under
+// the field it belongs to. obligationTerm() pairs them back up; it remains the
+// only reader of either.
+function _dateWithRaw(v) { return _TN()._dateWithRaw(v); }
+
+function normalizeTenant(d) { return _TN().normalizeTenant(d); }
 
 function isValidTenant(d) {
   if (!d) return false;
@@ -1333,6 +1590,8 @@ Return ONLY valid JSON. No explanation. No markdown.
   "tenant_name": string or null,
   "lease_start_date": "YYYY-MM-DD" or null,
   "lease_end_date": "YYYY-MM-DD" or null,
+  "cam_commencement_date": "YYYY-MM-DD" or null,
+  "partial_period_basis": "per_diem" | "monthly" | "full_period" | null,
   "lease_type": "NNN" | "Gross" | "Modified Gross" | null,
   "sqft": number or null,
   "cam_cap": number or null,
@@ -1350,6 +1609,14 @@ TENANT NAME:
 DATES:
 - Start: Commencement Date → Lease Start Date → Effective Date → Execution Date
 - End: Expiration Date → Lease End Date → calculate from start date + term length
+
+CAM COMMENCEMENT DATE: Only when the CAM/operating-expense obligation begins on a DIFFERENT date from the lease start — e.g. "Tenant shall commence payment of Operating Expenses upon the Rent Commencement Date", "upon opening for business", or after a stated free-rent or abatement period. Return null when CAM begins with the lease term. Do NOT copy the lease start date into this field.
+
+PARTIAL PERIOD BASIS: How the lease says CAM is apportioned when the term covers only PART of an expense year. Look for: "prorated on a per diem basis", "prorated based on the number of days", "a fraction, the numerator of which is the number of days", "prorated monthly", "based on the number of full calendar months", or language requiring the full annual amount regardless of a partial year.
+  per diem / number of days   → "per_diem"
+  monthly / calendar months   → "monthly"
+  full amount regardless      → "full_period"
+Return null if the lease says nothing about partial years. Null is a real answer here — do NOT guess.
 
 LEASE TYPE: Triple Net / NNN → "NNN" | Modified Gross | Gross
 
@@ -1387,7 +1654,7 @@ Return best guess — do not leave fields null unless truly impossible.`;
   const res = await _fetchWithTimeout('/api/claude', {
     method: 'POST',
     headers: { 'Content-Type': 'application/json', ...(await _authHeaders()) },
-    body: JSON.stringify({ messages, max_tokens: 1500, system: CLAUDE_LEASE_SYSTEM }),
+    body: JSON.stringify({ messages, max_tokens: 1500, task: 'lease_extraction' }),
   });
 
   if (!res.ok) {
@@ -1474,7 +1741,7 @@ async function _visionExtractCompressed(file, extractionPrompt, LI) {
       const res = await _fetchWithTimeout('/api/claude', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json', ...(await _authHeaders()) },
-        body: JSON.stringify({ messages, max_tokens: 1500, system: CLAUDE_LEASE_SYSTEM }),
+        body: JSON.stringify({ messages, max_tokens: 1500, task: 'lease_extraction' }),
       });
       if (!res.ok) throw new Error(`HTTP ${res.status}`);
       parts.push(await res.json());
@@ -1512,9 +1779,23 @@ async function _visionExtractCompressed(file, extractionPrompt, LI) {
 // — no JSON extraction step that would mangle plain-text lease content.
 // Timeout is 85s to accommodate max_tokens=8096 output (~25-30s generation time).
 async function extractTextFromPdfDirect(file) {
+  // This path sends the WHOLE PDF as one base64 body. lease-ingest.js batches
+  // and downscales for /api/claude; nothing did so here, so a scanned lease
+  // over ~3.3 MB spent up to 85 seconds on a request the platform had already
+  // rejected, and surfaced as "PDF text extraction failed: HTTP 413" with no
+  // explanation. Refuse up front, in words, before encoding.
+  const _L = window.MSRequestLimits;
+  if (!_L) throw new Error('Upload is unavailable — the page did not load completely. Refresh and try again.');
+  const _verdict = _L.checkUploadSize(file && file.size, 'lease');
+  if (!_verdict.ok) throw new Error(_verdict.error);
+
   const base64 = await fileToBase64(file);
 
-  const prompt = `Return the substantive text from this commercial lease document for use in question-answering.
+  // AI-2 — the transcription RULES moved to the server
+  // (api/_explain-tasks.js, lease_text_extraction). What stays here is the
+  // request: which provisions this product needs out of the document. Rules are
+  // instructions; a list of wanted sections is a query.
+  const prompt = `Return the substantive text from this commercial lease document.
 
 Include the complete text of all provisions relating to:
 - Parties (tenant name, landlord name, guarantors)
@@ -1529,12 +1810,7 @@ Include the complete text of all provisions relating to:
 - Assignment and subletting
 - Default and remedies
 
-Also include the complete text of any exhibits, addenda, or schedules that contain financial terms or definitions.
-
-Preserve all section numbers, headings, and exact figures (percentages, dollar amounts, dates).
-Omit: page headers, page footers, page numbers, signature blocks, notary certifications, and table of contents lines.
-
-Return plain text only. No JSON, no markdown, no commentary.`;
+Also include the complete text of any exhibits, addenda, or schedules that contain financial terms or definitions.`;
 
   const messages = [{
     role: 'user',
@@ -1548,7 +1824,7 @@ Return plain text only. No JSON, no markdown, no commentary.`;
   const res = await _fetchWithTimeout('/api/explain', {
     method:  'POST',
     headers: { 'Content-Type': 'application/json', ...(await _authHeaders()) },
-    body:    JSON.stringify({ messages, max_tokens: 8096, model: 'claude-sonnet-4-6' }),
+    body:    JSON.stringify({ task: 'lease_text_extraction', messages, max_tokens: 8096 }),
   }, 85000);
 
   if (!res.ok) throw new Error(`PDF text extraction failed: HTTP ${res.status}`);
@@ -1661,7 +1937,24 @@ function prepareLeaseTextForClaude(rawText) {
   ].filter(Boolean).join('\n\n...\n\n');
 }
 
-async function callClaudeForLease(text) {
+// Phase 0 (M5): the single source of truth for "can this lease be reconciled".
+// Reads the list from lease-intelligence.js so the ingest gate and the
+// explainability summary cannot drift apart again; the literal is a fallback for
+// load-order and for Node test harnesses that have not evaluated the module.
+function _reconciliationCriticalFields() {
+  const fromModule = window.LeaseIntelligence?.RECONCILIATION_CRITICAL_FIELDS;
+  return Array.isArray(fromModule) && fromModule.length
+    ? fromModule
+    : ['tenant_name', 'leased_sqft', 'start_date', 'end_date'];
+}
+
+// Lowers a confidence level by one step so it can never read 'high' for a lease
+// that cannot be reconciled. Mirrors the thresholds in deriveExtractionConfidence.
+function _capConfidenceLevel(level) {
+  return level === 'high' ? 'medium' : level;
+}
+
+async function callClaudeForLease(text, fileName) {
   const leaseSnippet = prepareLeaseTextForClaude(text);
   // WHY cam_cap added: the system prompt (CLAUDE_LEASE_SYSTEM) always asks for cam_cap,
   // but the user prompt previously omitted it. Conflicting instructions caused Claude to
@@ -1676,10 +1969,14 @@ Extract:
   "tenant_name": string,
   "lease_start_date": "YYYY-MM-DD" or null,
   "lease_end_date": "YYYY-MM-DD" or null,
+  "cam_commencement_date": "YYYY-MM-DD" or null,
+  "partial_period_basis": "per_diem" | "monthly" | "full_period" | null,
   "lease_type": "NNN" | "Gross" | "Modified Gross" | null,
   "sqft": number or null,
   "cam_cap": number or null,
+  "cap_base_amount": number or null,
   "admin_fee_pct": number or null,
+  "admin_fee_basis": "operating_expenses" | "controllable_expenses" | "excluding_management_fee" | "unstated" | null,
   "gross_up_pct": number or null,
   "expense_stop": number or null,
   "audit_rights": true | false | null,
@@ -1687,7 +1984,7 @@ Extract:
   "renewal_options": string or null,
   "excluded_categories": string or null,
   "property_name": string or null,
-  "quotes": { "cam_cap": string|null, "admin_fee_pct": string|null, "gross_up_pct": string|null, "expense_stop": string|null, "audit_rights": string|null, "pro_rata_method": string|null, "renewal_options": string|null }
+  "quotes": { "cam_cap": string|null, "cap_base_amount": string|null, "admin_fee_pct": string|null, "gross_up_pct": string|null, "expense_stop": string|null, "audit_rights": string|null, "pro_rata_method": string|null, "renewal_options": string|null, "cam_commencement_date": string|null, "partial_period_basis": string|null, "admin_fee_basis": string|null }
 }
 
 TENANT NAME (highest priority):
@@ -1700,7 +1997,20 @@ DATES:
 - Start: Commencement Date → Lease Start Date → Effective Date → Execution Date
 - End: Expiration Date → Lease End Date → calculate from start + term length if needed
 
+CAM COMMENCEMENT DATE: Only when the CAM/operating-expense obligation begins on a DIFFERENT date from the lease start — "commence payment of Operating Expenses upon the Rent Commencement Date", "upon opening for business", or after a stated free-rent or abatement period. Null when CAM begins with the term. Do NOT copy the lease start date here.
+
+PARTIAL PERIOD BASIS: How the lease apportions CAM when the term covers only PART of an expense year. "per diem" / "number of days" → "per_diem". "prorated monthly" / "full calendar months" → "monthly". Full annual amount regardless of a partial year → "full_period". Return null if the lease is silent — null is a real answer, do NOT guess.
+ADMIN FEE BASIS: What the management/administrative fee cap is a percentage OF. "of operating expenses" / "of CAM costs" / "of total expenses" → "operating_expenses". "of controllable expenses" / "of controllable operating costs" → "controllable_expenses". Fee excluded from its own base — "of expenses excluding the management fee", "exclusive of such fee" → "excluding_management_fee". If the lease states a fee percentage but never says what it applies to → "unstated". Return null ONLY when there is no fee cap clause at all. A percentage with no stated base is "unstated", NOT a guess at one.
+
 CAM CAP: Search the entire document for any language limiting CAM increases ("not to exceed", "capped at X%", "expense stop"). Return the number (e.g. 5% → 5). Null if no cap language exists.
+
+CAP BASE AMOUNT: The DOLLAR amount a CAM cap percentage is applied to — the prior-year, base-year or stated baseline CAM/operating-expense figure. Return the number only (e.g. "$26,000.00" → 26000).
+- Return it ONLY when the lease states the dollar figure itself, in words you can quote.
+- NEVER derive it. Do not compute it from the cap percentage, from a CAM or operating-expense total elsewhere in the document, from base rent, from square footage, from a rate per square foot, or from any arithmetic of your own.
+- A lease that names a base YEAR ("increases over the 2023 base year") without stating that year's dollar amount has NO cap base. Return null.
+- A lease that caps increases with no baseline figure at all has NO cap base. Return null.
+- If you cannot supply the verbatim clause stating the amount, return null for this field. A cap base with no quote is not usable and will be discarded.
+- Null is the correct and expected answer for most leases. Do not guess.
 
 PROPERTY NAME: The name or address of the building/property covered by this lease, as stated in the premises description or recitals (e.g. "Lakeview Plaza", "123 Main Street"). Null if not stated.
 
@@ -1721,7 +2031,7 @@ ${leaseSnippet}
   const res = await _fetchWithTimeout('/api/claude', {
     method: 'POST',
     headers: { 'Content-Type': 'application/json', ...(await _authHeaders()) },
-    body: JSON.stringify({ messages, max_tokens: 1500, system: CLAUDE_LEASE_SYSTEM }),
+    body: JSON.stringify({ messages, max_tokens: 1500, task: 'lease_extraction' }),
   });
 
   if (!res.ok) {
@@ -1798,6 +2108,38 @@ ${leaseSnippet}
 
   const finalFlags = computeFlags({ start_date: resolvedStart, end_date: resolvedEnd, lease_type: resolvedType, flags: raw.flags, doc_has_dates, doc_has_lease_type });
 
+  // ── A CAP BASE IS ACCEPTED ONLY WITH THE CLAUSE THAT STATES IT ─────────────
+  //
+  // The prompt asks for the dollar figure and forbids deriving one. This is the
+  // enforcement, because a prompt is a request and not a guarantee.
+  //
+  // The rule is not a preference. FieldProvenance floors `cap_base_amount` at
+  // `manually_entered` rather than `ai_extracted` (NEVER_EXTRACTED), on the
+  // proven ground that no extraction path could supply one. A value that
+  // arrived here from the model WITHOUT a quote would write no evidence
+  // snapshot — the _quoteMap loop below skips quote-less fields — and would
+  // then resolve at that floor, claiming a person typed a number the model
+  // invented. That is a worse lie than the one S1 removed.
+  //
+  // So the two travel together or not at all: no quote, no base. The value is
+  // dropped here, before it reaches the tenant, and the field reads `unknown` —
+  // which is what a lease that does not state its baseline actually means.
+  //
+  // Trimmed to the same 120-char budget the prompt asks for; a whitespace-only
+  // quote is no quote.
+  const _capBaseQuote = (() => {
+    const q = raw.quotes && typeof raw.quotes === 'object' ? raw.quotes.cap_base_amount : null;
+    return (typeof q === 'string' && q.trim()) ? q.trim() : null;
+  })();
+  const _capBaseAmount = (() => {
+    if (!_capBaseQuote) return null;                 // unquoted ⇒ unusable
+    const n = _pf(raw.cap_base_amount ?? raw.capBaseAmount ?? null);
+    // A base of zero or below cannot be a ceiling's operand; treat it as absent
+    // rather than letting `capBaseAmount * (1 + pct/100)` produce a $0 ceiling
+    // the lease never stated.
+    return (n != null && Number.isFinite(n) && n > 0) ? n : null;
+  })();
+
   const normalized = normalizeTenant({
     tenant_name:         resolvedName,
     leased_sqft:         resolvedSqft,
@@ -1805,10 +2147,17 @@ ${leaseSnippet}
     end_date:            resolvedEnd,
     lease_type:          resolvedType,
     cap:                 normalizeCap(raw.capPercentage ?? raw.cam_cap ?? null),
-    excluded_categories: (() => {
-      const v = raw.excludedCategories ?? raw.excluded_categories ?? null;
-      return v === '' ? null : v;
-    })(),
+    // The dollar operand of the ceiling. Null unless the clause stating it came
+    // back with it — see _capBaseAmount above. Stored camelCase because that is
+    // the property the engine and getEffectiveLeaseField read; its canonical
+    // key, for evidence and provenance, is `cap_base_amount`.
+    capBaseAmount:       _capBaseAmount,
+    // F-02: '' and null are DIFFERENT. '' means extraction ran and found no
+    // exclusion schedule; null means the field was never extracted. This used to
+    // collapse '' into null, and normalizeTenant then turned null back into '',
+    // so CAM_EXCLUSIONS_UNDEFINED could never fire. SIGA proved it matters:
+    // '' in Runs 1-2, five exclusions in Run 3, from byte-identical input.
+    excluded_categories: raw.excludedCategories ?? raw.excluded_categories ?? null,
     baseYear:            raw.baseYear ?? null,
     confidence:          raw.confidence || {},
     flags:               finalFlags,
@@ -1825,6 +2174,31 @@ ${leaseSnippet}
       : null,
     pro_rata_method:     raw.pro_rata_method ?? null,
     renewal_options:     raw.renewal_options ?? null,
+    // WHEN THE CAM OBLIGATION BEGINS, when the lease sets it apart from the
+    // lease term — free rent, delivery vs opening, "upon opening for business".
+    // Nothing reads this field directly: LeasePeriod.obligationTerm() resolves
+    // it against start_date and is the only owner of the question.
+    cam_commencement_date: toISODate(raw.cam_commencement_date ?? raw.camCommencementDate ?? '') || null,
+    // How the lease apportions CAM across a partial year. NULL IS A REAL
+    // ANSWER — it means the lease is silent, and LeasePeriod.partialPeriodBasis
+    // reports that as source 'default' rather than letting a product choice
+    // read as lease-confirmed.
+    partial_period_basis: (() => {
+      const v = raw.partial_period_basis ?? raw.partialPeriodBasis ?? null;
+      const k = v == null ? '' : String(v).trim().toLowerCase();
+      return k === '' ? null : k;
+    })(),
+    // WHAT A MANAGEMENT-FEE CAP IS A PERCENTAGE OF. Normalised, never
+    // interpreted: an unrecognised string is stored as written so
+    // LeasePeriod.adminFeeBasis can report `source: 'unrecognised'` rather than
+    // this function quietly picking one of the four. NULL IS A REAL ANSWER and
+    // is distinct from 'unstated' — null is "nobody has looked", 'unstated' is
+    // "the clause was read and it does not say". Both resolve to stated:false.
+    admin_fee_basis: (() => {
+      const v = raw.admin_fee_basis ?? raw.adminFeeBasis ?? null;
+      const k = v == null ? '' : String(v).trim().toLowerCase();
+      return k === '' ? null : k;
+    })(),
     property_name:       (() => {
       const v = raw.property_name ?? raw.propertyName ?? null;
       return (typeof v === 'string' && v.trim()) ? v.trim() : null;
@@ -1835,6 +2209,11 @@ ${leaseSnippet}
   // Map: Claude quote key → normalized field key (cam_cap is stored as 'cap' in tenant objects).
   const _quoteMap = {
     cam_cap:          'cap',
+    // Canonical on both sides — the extraction key and the evidence key are the
+    // same string, unlike cam_cap → cap. A snapshot only lands here when the
+    // value survived the quote gate above, so an extracted cap base always
+    // reaches lease_confirmed and never the manually_entered floor.
+    cap_base_amount:  'cap_base_amount',
     admin_fee_pct:    'admin_fee_pct',
     gross_up_pct:     'gross_up_pct',
     expense_stop:     'expense_stop',
@@ -1846,6 +2225,9 @@ ${leaseSnippet}
     sqft:             'leased_sqft',
     lease_start_date: 'start_date',
     lease_end_date:   'end_date',
+    cam_commencement_date: 'cam_commencement_date',
+    partial_period_basis:  'partial_period_basis',
+    admin_fee_basis:       'admin_fee_basis',
   };
   const _rawQuotes = (raw.quotes && typeof raw.quotes === 'object') ? raw.quotes : {};
   const _qTs = new Date().toISOString();
@@ -1862,9 +2244,17 @@ ${leaseSnippet}
       ..._fev,
       [fieldKey]: { snapshots: [...prev, {
         fieldKey,
-        value:                  normalized[fieldKey] ?? null,
+        // _fieldStore, not the raw key: every canonical key IS its storage
+        // property except cap_base_amount, which is stored as `capBaseAmount`.
+        // Reading the canonical name directly would stamp `value: null` onto a
+        // snapshot whose quote is real — evidence citing a clause for nothing.
+        value:                  normalized[_fieldStore(fieldKey)] ?? null,
         confidence:             { status: 'estimated', note: 'AI-extracted' },
-        sourceFile:             normalized.fileName || null,
+        // Phase 0 (P1b): this read `normalized.fileName`, which is not set here —
+        // the filename is spread onto the tenant later (processLeaseFile), so
+        // every evidence snapshot persisted source_file NULL and the Evidence
+        // Viewer had no document to name. The filename now arrives as a parameter.
+        sourceFile:             fileName || normalized.fileName || null,
         page:                   null,
         section:                null,
         quote:                  qt,
@@ -1884,6 +2274,19 @@ ${leaseSnippet}
     };
   }
   normalized.fieldEvidence = _fev;
+
+  // The model that ACTUALLY served this extraction, reported by Anthropic in
+  // its own response and forwarded by api/claude.js as __meta.model. It was
+  // already being written into each fieldEvidence snapshot here, but it stopped
+  // at this function — so saveLeaseDocument() had nothing to record and two
+  // call sites wrote the literal 'claude-3-5-sonnet-20241022' instead. That
+  // model had not run in this product for some time; the Evidence Viewer
+  // displayed it as provenance anyway.
+  //
+  // null when the response did not name a model. Never a default: a provenance
+  // field that guesses is worse than one that is blank, because a blank one
+  // cannot be mistaken for a record of what happened.
+  normalized._extractionModel = _extractionModel;
 
   // Populate extraction telemetry for debugging / diagnostics panel
   const _extractMs = Date.now() - _extractStart;
@@ -1983,7 +2386,7 @@ ${snippet}
   const res = await _fetchWithTimeout('/api/claude', {
     method: 'POST',
     headers: { 'Content-Type': 'application/json', ...(await _authHeaders()) },
-    body: JSON.stringify({ messages, max_tokens: 2400, system: CLAUDE_ESCROW_SYSTEM }),
+    body: JSON.stringify({ messages, max_tokens: 2400, task: 'escrow_extraction' }),
   });
 
   if (!res.ok) throw new Error(`Escrow document extraction failed: HTTP ${res.status}`);
@@ -2046,7 +2449,7 @@ Return best guess — do not leave reserve_type null.`;
   const res = await _fetchWithTimeout('/api/claude', {
     method: 'POST',
     headers: { 'Content-Type': 'application/json', ...(await _authHeaders()) },
-    body: JSON.stringify({ messages, max_tokens: 2400, system: CLAUDE_ESCROW_SYSTEM }),
+    body: JSON.stringify({ messages, max_tokens: 2400, task: 'escrow_extraction' }),
   });
 
   if (!res.ok) throw new Error(`Escrow PDF direct extraction failed: HTTP ${res.status}`);
@@ -2114,7 +2517,10 @@ async function reprocessEscrowReserveDocument(reserveId) {
     return;
   }
   try {
-    const res = await fetch(reserve.sourceFileUrl);
+    // SEC-1 — the stored URL will not fetch once the bucket is private.
+    const _readable = await resolveDocumentUrl(reserve.sourceFileUrl);
+    if (!_readable) throw new Error('You do not have access to that document, or it is no longer stored');
+    const res = await fetch(_readable);
     if (!res.ok) throw new Error('Could not fetch the stored document');
     const blob = await res.blob();
     const file = new File([blob], reserve.sourceFileName || 'reserve-document.pdf', { type: blob.type || 'application/pdf' });
@@ -2139,7 +2545,7 @@ function openEscrowPackageView(reserveId) {
     ? docs.map(d => `
       <div class="escrow-doc-row">
         <span>${esc(d.fileName || 'Document')}</span>
-        ${d.fileUrl ? `<a class="escrow-doc-btn" href="${esc(d.fileUrl)}" target="_blank" rel="noopener">View</a>` : ''}
+        ${d.fileUrl ? docLinkHtml(d.fileUrl, 'View', { className: 'escrow-doc-btn' }) : ''}
       </div>`).join('')
     : `<p style="color:var(--text-3);font-size:0.85rem;">No source documents recorded for this reserve.</p>`;
 
@@ -2981,7 +3387,7 @@ async function handleLease(i, file) {
       const _tt = window.LeaseIngest ? window.LeaseIngest.begin(file.size) : null;
       if (_tt) window.LeaseIngest.mark(_tt, { path: window.LeaseIngest.PATHS.TEXT, payloadBytes: leaseText.length });
       try {
-        extracted = await callClaudeForLease(leaseText);
+        extracted = await callClaudeForLease(leaseText, file.name);
         if (_tt) { window.LeaseIngest.end(_tt, 'success'); _recordIngestTelemetry(window.LeaseIngest.summary(_tt)); }
       } catch (e) {
         if (_tt) { window.LeaseIngest.end(_tt, 'failure', 'text-extraction-failed'); _recordIngestTelemetry(window.LeaseIngest.summary(_tt)); }
@@ -2998,7 +3404,9 @@ async function handleLease(i, file) {
     }
 
     if (!extracted) throw new Error('Could not extract lease fields');
-    const normalized = normalizeTenant(extracted);
+    // A fresh extraction is where a tenant becomes new, so this is one of the
+    // few places allowed to create an identity. See mintTenantIdentity().
+    const normalized = mintTenantIdentity(normalizeTenant(extracted));
     if (!isValidTenant(normalized)) throw new Error('Extracted tenant has no usable fields');
 
     // Phase 19: edge case detection — mirrors the bulk upload pipeline (_runLeaseJobPipeline)
@@ -3040,7 +3448,8 @@ async function handleLease(i, file) {
       fileUrl:         leaseUrl,
       extractedText:   _extractedText,
       parsingStatus:   'success',
-      extractionModel: 'claude-3-5-sonnet-20241022',
+      // The model that ran, not a literal. See normalizeExtractedTenant().
+      extractionModel: normalized._extractionModel ?? null,
       usedPdfDirect:   _usedPdfDirect,
     }).catch(e => console.warn('[saveLeaseDocument:single] failed:', e?.message));
   } catch (err) {
@@ -3129,13 +3538,55 @@ function _hasPropertyMismatch(t) {
   return edgeCaseTypes.includes('PROPERTY_NAME_MISMATCH');
 }
 
+// Whether a detected mismatch is STILL BLOCKING, i.e. detected and not resolved
+// by an explicit landlord confirmation. _hasPropertyMismatch() above is the raw
+// detector and is deliberately left alone — a confirmed lease still carries its
+// mismatch on _edgeCases, still shows in AI Review Notes, and still reads as a
+// mismatch to anything that asks. Confirmation resolves the CONSEQUENCE, never
+// the finding.
+//
+// Returns null when CAM may proceed; otherwise the reason, for the card and the
+// banner. Mirrors _exclusionBlockReason()'s shape on purpose, including its
+// stale case: a confirmation that no longer matches the lease in front of us is
+// reported as stale rather than quietly ignored, so the landlord is told why
+// they are being asked again.
+function _propertyMismatchBlockReason(t) {
+  if (!_hasPropertyMismatch(t)) return null;
+
+  const LI = window.LeaseIntelligence;
+  const confirmed = LI && typeof LI.isPropertyMismatchConfirmed === 'function'
+    ? LI.isPropertyMismatchConfirmed(t)
+    : false;   // module missing ⇒ nothing is confirmed ⇒ stays blocked
+
+  // A confirmation belongs to the property it was made in. If this record has
+  // been copied or moved to a different property, the human verification does
+  // not travel with it.
+  const c = t && t._propertyConfirm;
+  const sameProperty = !c || !c.propertyId || !activePropId || c.propertyId === activePropId;
+
+  if (confirmed && sameProperty) return null;
+
+  return {
+    tenantName:    t.tenant_name,
+    extractedName: (t.property_name || '').trim(),
+    propertyName:  (currentProperty()?.name || '').trim(),
+    hasConfirm:    !!c,
+    staleConfirm:  !!c && (!confirmed || !sameProperty),
+  };
+}
+
 function getValidTenants() {
   return (currentProperty()?.tenants || []).filter(t =>
     t &&
     t.tenant_name &&
-    Number(t.leased_sqft) > 0 &&
+    // WAS Number(t.leased_sqft) > 0, which is NaN for "50,000" — so a lease with
+    // a formatted area was dropped from CAM while every warning surface, which
+    // used parseSqft, stayed silent about it. This function still OWNS the
+    // eligibility decision; it no longer owns a private opinion about what the
+    // value means.
+    window.SourceValues.readArea(t.leased_sqft).usable &&
     !t.extractionFailed &&
-    !_hasPropertyMismatch(t)
+    !_propertyMismatchBlockReason(t)
   );
 }
 
@@ -3168,7 +3619,6 @@ function updatePropertySqft(val) {
   const prop = currentProperty();
   if (!prop) return;
 
-  // Capture name from DOM now — renderProperty() below will reset the field
   const nameEl = document.getElementById('propertyName');
   if (nameEl && nameEl.value.trim()) prop.name = nameEl.value.trim();
 
@@ -3179,7 +3629,35 @@ function updatePropertySqft(val) {
   checkSqftValidation();
   runCamValidation();
 
+  // Do NOT re-render the property while the number is still being typed.
+  //
+  // renderProperty() rebuilds the whole pane — including switchLeaseTab('bulk')
+  // and renderBulkResults() — and it ran on every keystroke. On a phone that
+  // relayout under an open keyboard threw the page to the top and dropped focus
+  // after the FIRST digit, so "25550" needed five separate taps. The model,
+  // localStorage, the sqft banner and CAM validation above are all already
+  // up to date; the only thing deferred is redrawing the surrounding DOM.
+  //
+  // The full render happens on commit (blur / Enter) via commitPropertySqft().
+  const sqftEl = document.getElementById('totalSqft');
+  if (document.activeElement === sqftEl) return;
+
   renderProperty(prop);
+}
+
+// Commit point for Total Sqft: the user has finished typing (blur, or Enter).
+// This is where the deferred renderProperty() from updatePropertySqft() happens,
+// so the pane catches up exactly once instead of once per digit.
+function commitPropertySqft(val) {
+  const prop = currentProperty();
+  if (!prop) return;
+  prop.totalSqft = Number(val) || 0;
+  saveProperty(prop);
+  checkSqftValidation();
+  runCamValidation();
+  // Refresh, not navigation: the user is still on this screen and may be
+  // reaching for Save. Jumping to the top here is the same defect one beat later.
+  renderProperty(prop, { scrollToTop: false });
 }
 
 function showSqftBanner(msg, severity) {
@@ -3210,7 +3688,6 @@ function toInputDate(val) {
 
 function renderTenantFields(i) {
   const d = tenantData[i];
-  const flags = computeFlagsStrict(d);
   const body = document.getElementById(`tb-${i}`);
   body.innerHTML = `
     <div class="extracted">
@@ -3219,8 +3696,8 @@ function renderTenantFields(i) {
         Fields extracted — review and edit below
         <button class="re-btn" onclick="resetTenant(${i})">Re-upload</button>
       </div>
-      ${(() => { const w = getWarnings(flags); return w.length ? `<div class="rc-flags"><div class="rc-flags-title">&#x26A0;&#xFE0F; Needs Review</div>${w.map(m => `<div class="rc-flag-item">${m}</div>`).join('')}</div>` : ''; })()}
-      ${_leaseEdgeCaseAndReviewNotesHtml(d)}
+      ${_requiredGapsHtml(d, i, false)}
+      ${_leaseEdgeCaseAndReviewNotesHtml(d, i)}
       ${d.leaseExpected
         ? (d.leaseFile instanceof File || d.leaseUrl)
           ? `<button class="action-btn" onclick="openLeaseModalFromFile(${i})">&#x1F4C4; View Lease</button>`
@@ -3310,6 +3787,9 @@ function resetTenant(i) {
 // suite), CAM (a workflow that references invoices), Reports (outputs only),
 // Reserves (capital planning). 'documents' is retired from navigation: lease
 // intake moved under Spaces, property documents live on Property.
+// 'property' has no pane in index.html — property-os.js builds #wsPane-property
+// at runtime (property-os.js:97). Grepping the HTML for it finds nothing, which
+// is misleading; the tab works.
 const WORKSPACE_TABS = ['overview', 'property', 'spaces', 'cam', 'reports', 'reserves'];
 let _activeWorkspaceTab = 'overview';
 
@@ -3650,11 +4130,19 @@ function _buildRlusdStatusHtml(status) {
 // Renders the full tenant-payment → on-chain-settlement journey:
 //   Pay Now → RLUSD Settlement → Settled on XRPL → View Transaction
 // It is driven entirely by a property's settlement record and NEVER fabricates a
-// transaction hash. Until the production wallet is funded and the first real
-// mainnet settlement is recorded (see RLUSD_GO_LIVE_CHECKLIST.md), it shows an
-// honest "launching on mainnet" pending state. The moment a real settlement is
-// recorded on `property.settlement` (status:'settled' + txHash), every place that
-// calls this lights up with the real explorer link — no further code changes.
+// transaction hash.
+//
+// RLUSD settlement is LIVE on XRPL Mainnet. The pending state below is a
+// statement about THIS charge — no settlement transaction has been recorded
+// against it yet — and never about the capability, which the copy used to
+// describe as forthcoming ("going live on mainnet", "goes live once the
+// settlement wallet is funded"). Those two facts are independent and must stay
+// worded that way: an unsettled charge is not evidence of an unbuilt feature,
+// and a live capability is not evidence that this charge was paid.
+//
+// The moment a real settlement is recorded on `property.settlement`
+// (status:'settled' + txHash), every place that calls this lights up with the
+// real explorer link — no further code changes.
 const XRPL_MAINNET_TX_EXPLORER = 'https://livenet.xrpl.org/transactions/';
 
 // Settlement is executed out-of-band (the app's endpoint is read-only and holds
@@ -3726,7 +4214,7 @@ function _buildSettlementFlowHtml(state, opts = {}) {
 
   const head = settled
     ? `<div class="stl-head stl-head--live"><span class="stl-dot"></span>Payment settled &amp; verified on the XRP Ledger (RLUSD)${amtTxt ? ' · ' + amtTxt : ''}</div>`
-    : `<div class="stl-head stl-head--pending"><span class="stl-dot"></span>Verifiable payment settlement on the XRP Ledger (RLUSD) — going live on mainnet</div>`;
+    : `<div class="stl-head stl-head--pending"><span class="stl-dot"></span>Verifiable payment settlement on the XRP Ledger (RLUSD) — live on XRPL Mainnet</div>`;
 
   // opts.hideNote suppresses the explanatory paragraph for callers that already print
   // their own (e.g. the tenant statement section header) — avoids duplicated copy.
@@ -3734,7 +4222,7 @@ function _buildSettlementFlowHtml(state, opts = {}) {
     ? ''
     : settled
       ? `<p class="stl-note">This payment was settled in RLUSD (a US-dollar stablecoin) on the XRP Ledger — a public, permanent receipt that you and your tenant can each verify independently.</p>`
-      : `<p class="stl-note">When a tenant pays, MainStreet settles the matching amount as RLUSD — a US-dollar stablecoin — on the XRP Ledger, creating a public receipt both you and your tenant can verify independently. This goes live once the settlement wallet is funded.</p>`;
+      : `<p class="stl-note">When a tenant pays, MainStreet settles the matching amount as RLUSD — a US-dollar stablecoin — on the XRP Ledger, creating a public receipt both you and your tenant can verify independently. RLUSD settlement is live on XRPL Mainnet; this charge has no settlement transaction yet.</p>`;
 
   return `<div class="stl-flow ${settled ? 'stl-flow--live' : 'stl-flow--pending'}">
     ${head}
@@ -4123,7 +4611,7 @@ async function importGLToInvoices() {
   if (!items.length) { alert('No GL items are selected.'); return; }
 
   items.forEach(r => {
-    invoiceData.push({
+    invoiceData.push(canonicaliseInvoiceAmount({
       vendorName:  cleanHTML(r.vendor),
       amount:      r.amount,
       category:    r.category,
@@ -4135,7 +4623,7 @@ async function importGLToInvoices() {
         invoiceDate: r.confidence.date,
       },
       _error: null,
-    });
+    }));
   });
 
   renderInvResults();
@@ -4656,7 +5144,7 @@ async function _runLeaseJobPipeline(jobId, placeholderIdx) {
     try {
       if (leaseText && leaseText.length >= 50) {
         console.log('path: text extraction, chars:', leaseText.length);
-        extracted = await callClaudeForLease(leaseText);
+        extracted = await callClaudeForLease(leaseText, file.name);
       } else {
         usedPdfDirect = true;
         console.log('path: PDF direct (text weak/missing, chars:', leaseText?.length ?? 0, ')');
@@ -4686,7 +5174,7 @@ async function _runLeaseJobPipeline(jobId, placeholderIdx) {
     updateLeaseJob(jobId, { stage: 'normalize', progress: _JOB_STAGES.normalize.progress });
     renderBulkResults();
 
-    const norm = extracted ? normalizeTenant(extracted) : null;
+    const norm = extracted ? mintTenantIdentity(normalizeTenant(extracted)) : null;
 
     // ── Stage: Confidence ─────────────────────────────────────────────────────
     updateLeaseJob(jobId, { stage: 'confidence', progress: _JOB_STAGES.confidence.progress });
@@ -4743,10 +5231,28 @@ async function _runLeaseJobPipeline(jobId, placeholderIdx) {
     const hasLeaseType  = !!norm?.lease_type;
     const hadExtraction = !!extracted;
 
+    // Phase 0 (M5): a lease missing any reconciliation-critical field cannot be
+    // allocated a CAM share, so it must not pass the review gate. leased_sqft was
+    // absent from this condition, so Wink Davis — no square footage anywhere in
+    // the document — came through status 'success', _needsReview false,
+    // confidence 'high', while the explainability summary built from the SAME
+    // field list said "Review required before reconciliation". The gate is
+    // machine-readable and the summary is prose, so the gate won.
+    // Evaluated against the values that actually land on the tenant row, not the
+    // raw extraction — tenant_name has regex and filename fallbacks, and gating
+    // on norm.tenant_name would newly fail leases those fallbacks already rescue.
+    const _criticalState = {
+      tenant_name: resolvedName,
+      leased_sqft: norm?.leased_sqft,
+      start_date:  norm?.start_date,
+      end_date:    norm?.end_date,
+    };
+    const _missingCritical = _reconciliationCriticalFields().filter(f => !_criticalState[f]);
+
     let status;
     if (!hadExtraction || !hasTenant) {
       status = 'failed';
-    } else if (!norm?.start_date || !norm?.end_date || !hasLeaseType) {
+    } else if (_missingCritical.length > 0 || !hasLeaseType) {
       status = 'partial';
     } else {
       status = 'success';
@@ -4794,9 +5300,16 @@ async function _runLeaseJobPipeline(jobId, placeholderIdx) {
       _showRetry,
       _nameFromClaude:      nameFromClaude,
       _error:               status === 'failed' ? 'Extraction failed — tap Retry to re-upload' : null,
-      _confidence:          _conf.level,
-      _confidenceScore:     _conf.score,
-      _confidenceReasons:   _conf.reasons,
+      // Phase 0 (M5): confidence describes how well the document was read, but a
+      // lease missing a reconciliation-critical field cannot be reconciled at
+      // ANY reading quality. Wink Davis scored 90/'high' with no square footage.
+      // Cap below the 'high' threshold (80, lease-intelligence.js
+      // deriveExtractionConfidence) so the badge cannot contradict the gate.
+      _confidence:          _missingCritical.length ? _capConfidenceLevel(_conf.level) : _conf.level,
+      _confidenceScore:     _missingCritical.length ? Math.min(_conf.score, 79)        : _conf.score,
+      _confidenceReasons:   _missingCritical.length
+        ? _conf.reasons.concat([`Cannot reconcile — missing: ${_missingCritical.join(', ')}`])
+        : _conf.reasons,
       _meta,
       _autoExpand:          _conf.level === 'low' || _conf.level === 'failed',
       _userConfirmed:       false,
@@ -4888,7 +5401,8 @@ async function _runLeaseJobPipeline(jobId, placeholderIdx) {
         fileUrl:         leaseUrl,
         extractedText:   _extractedText,
         parsingStatus:   status,
-        extractionModel: 'claude-3-5-sonnet-20241022',
+        // The model that ran, not a literal. See normalizeExtractedTenant().
+        extractionModel: norm?._extractionModel ?? null,
         usedPdfDirect:   usedPdfDirect,
       }).catch(e => console.warn('[saveLeaseDocument:bulk] failed:', e?.message));
     })();
@@ -5034,8 +5548,55 @@ async function handleBulkLeases(fileList) {
       actor: 'User', title: `${total} lease${total !== 1 ? 's' : ''} uploaded`,
       description: `${successCount} of ${total} extracted successfully`,
       metadata: { total, successCount } });
+
+    // Show the manager what was extracted.
+    //
+    // Walkthrough finding: the upload finishes on whichever pane the user was
+    // on, but the extracted tenant rows render in Overview. So the single most
+    // important moment in the product — did the AI read my lease correctly? —
+    // ended with the screen apparently unchanged, and nothing said where to
+    // look. Measured: visibleTenantRow=false on the active pane after a
+    // successful extraction.
+    //
+    // No new UI. The rows already exist and are already correct; this just puts
+    // the user in front of them.
+    _revealExtractedLeases(successCount, total);
   }
 }
+
+/**
+ * Bring the extracted lease rows on screen after an upload.
+ *
+ * Navigates only when the results are NOT already visible — if the user is
+ * looking at them, moving the page under them is its own kind of rude.
+ */
+function _revealExtractedLeases(successCount, total) {
+  try {
+    const results = document.getElementById('bulkResults');
+    const alreadyVisible = !!(results && results.getBoundingClientRect().height > 2);
+
+    if (!alreadyVisible && typeof switchWorkspaceTab === 'function') {
+      switchWorkspaceTab('overview');
+    }
+    // After the pane swap, scroll the rows into view and say what happened.
+    setTimeout(() => {
+      const r = document.getElementById('bulkResults');
+      if (r && r.getBoundingClientRect().height > 2) {
+        r.scrollIntoView({ behavior: 'smooth', block: 'start' });
+      }
+      if (typeof showToast === 'function') {
+        showToast(successCount === total
+          ? `✓ ${successCount} lease${successCount !== 1 ? 's' : ''} extracted — review the fields below before approving.`
+          : `${successCount} of ${total} lease${total !== 1 ? 's' : ''} extracted. The rest need attention below.`,
+          { duration: 7000 });
+      }
+    }, 250);
+  } catch (e) {
+    // Navigation is a courtesy; never let it take out the upload that succeeded.
+    console.warn('[lease upload] could not reveal results:', e && e.message);
+  }
+}
+window._revealExtractedLeases = _revealExtractedLeases;
 
 function updateTenantField(index, field, value) {
   // Primary write: property.tenants by stable id
@@ -5074,12 +5635,27 @@ function _amendmentProvenanceChip(d, fieldKey) {
 
 // One-click approval for all ready (high-confidence, unconfirmed) tenants.
 async function bulkApproveReady() {
-  const ready = tenantData.map((d, i) => ({ d, i })).filter(({ d }) =>
+  // Must approve exactly what the button offers. This carried the same
+  // extraction-only predicate the count did, so a lease missing square footage
+  // was both counted as ready and bulk-approved — see renderBulkResults.
+  const _blockers = (d) => {
+    try { return (deriveTenantReviewState(d).camBlocking || []); } catch (_) { return []; }
+  };
+  const all = tenantData.map((d, i) => ({ d, i })).filter(({ d }) =>
     d && !d._needsReview && !d.extractionFailed && d.status !== 'pending' && d.tenant_name && !d._userConfirmed
   );
-  if (!ready.length) { showToast('All ready tenants are already confirmed.'); return; }
+  const ready   = all.filter(({ d }) => _blockers(d).length === 0);
+  const blocked = all.filter(({ d }) => _blockers(d).length > 0);
+  if (!ready.length) {
+    showToast(blocked.length
+      ? `${blocked.length} lease${blocked.length === 1 ? ' is' : 's are'} extracted but blocked from CAM — open each and resolve what it lists.`
+      : 'Every CAM-ready extraction is already confirmed.',
+      blocked.length ? { color: '#92400e', textColor: '#fef3c7', duration: 6000 } : undefined);
+    return;
+  }
   for (const { i } of ready) await saveBulkTenant(i);
-  showToast(`✓ ${ready.length} tenant${ready.length !== 1 ? 's' : ''} approved.`);
+  showToast(`✓ ${ready.length} extraction${ready.length !== 1 ? 's' : ''} confirmed as CAM-ready.` +
+    (blocked.length ? ` ${blocked.length} left unconfirmed — blocked from CAM.` : ''));
 }
 
 // Shows/hides the stale-results warning banner based on _resultsStale flag.
@@ -5099,6 +5675,45 @@ function handleFieldBlur(index, field, value, el) {
   }
 }
 
+/**
+ * A field edit that leaves a provenance record behind.
+ *
+ * handleFieldBlur writes the value and nothing else — no snapshot, no audit
+ * row, no reviewer, no timestamp. For most fields an extraction already
+ * deposited evidence and the edit lands on top of it. The cap base has no
+ * extraction: /api/claude's contract has no key for it, so the form IS its only
+ * origin, and a value typed through handleFieldBlur was the entire record of
+ * itself. That is why the eleven cap bases in pilot cannot say who entered
+ * them, and why the $26,000 on Maple Coffee Co is unattributable.
+ *
+ * This routes the edit through saveFieldOverride — the path the Lease Review
+ * Workspace has always used — so a snapshot (manuallyEdited: true, with the
+ * signed-in reviewer and a timestamp) and a field-level audit row are written
+ * exactly as they are for any other corrected field. No new mechanism.
+ *
+ * ONLY ON A REAL CHANGE. A blur is not an assertion: tabbing through a field
+ * without touching it must not manufacture "a person entered this". Unchanged
+ * values fall through to the plain write.
+ */
+function handleProvenancedFieldBlur(index, field, value, el) {
+  const t    = tenantData[index];
+  const next = (value === '' || value === undefined) ? null : value;
+  const prev = t ? (t[field] ?? null) : null;
+  const changed = String(prev ?? '') !== String(next ?? '');
+
+  if (t && t.id && changed) {
+    isEditingField = false;
+    saveFieldOverride(t.id, field, next);   // value + override + snapshot + audit
+    if (lastResults.length > 0) { _resultsStale = true; _updateStaleResultsBanner(); }
+    if (el) {
+      el.classList.add('field-save-flash');
+      setTimeout(() => el.classList.remove('field-save-flash'), 900);
+    }
+    return;
+  }
+  handleFieldBlur(index, field, value, el);
+}
+
 function _confidenceBadgeHtml(level) {
   if (!level || level === 'pending') return '';
   const cfg = {
@@ -5116,15 +5731,85 @@ function _confidenceBadgeHtml(level) {
 // but, before this, were only ever written to the browser console — the
 // property manager reviewing the upload never saw them. Pure rendering of
 // existing data; no new detection logic.
-function _leaseEdgeCaseAndReviewNotesHtml(d) {
+/**
+ * The red "Needs Review" box on a lease card: every required field still blank,
+ * and where to go and fill it in.
+ *
+ * Both call sites used to render getWarnings(computeFlags(d)), which enumerates
+ * missing fields a second time and has no square-footage branch. A lease with no
+ * sqft, no end date and no lease type therefore listed two of its three gaps —
+ * omitting the one that stops the reconciliation. Reading the canonical warnings
+ * instead means the box, the CAM blocker and the Next step CTA cannot disagree
+ * about what is missing.
+ *
+ * `withCta` is off for the single-lease editor, whose fields live in a different
+ * container than the one openReviewItemFix navigates to. Sending a reader to the
+ * bulk list from there would be a new dead end, which is the opposite of the
+ * point.
+ */
+function _requiredGapsHtml(d, i, withCta) {
+  let gaps = [];
+  try { gaps = deriveTenantReviewState(d).requiredGaps || []; } catch (_) { return ''; }
+  if (!gaps.length) return '';
+  let cta = '';
+  if (withCta && i != null && d && d.id) {
+    const r = _reviewResolution(d);
+    if (r) {
+      cta = `<button class="rc-flag-cta" type="button"
+        onclick="event.stopPropagation();openReviewItemFix('${esc(String(d.id)).replace(/'/g, "\\'")}','${esc(String(r.field || ''))}')"
+        >Next step: ${esc(r.cta)}</button>`;
+    }
+  }
+  return `<div class="rc-flags">
+    <div class="rc-flags-title">&#x26A0;&#xFE0F; Needs Review</div>
+    ${gaps.map(m => `<div class="rc-flag-item">${esc(m)}</div>`).join('')}
+    ${cta}
+  </div>`;
+}
+
+function _leaseEdgeCaseAndReviewNotesHtml(d, i) {
   const edgeCases  = (d._edgeCases && Array.isArray(d._edgeCases.edgeCases)) ? d._edgeCases.edgeCases : [];
   const reviewNotes = (d._explainability && Array.isArray(d._explainability.reviewNotes)) ? d._explainability.reviewNotes : [];
   if (!edgeCases.length && !reviewNotes.length) return '';
 
   const SEV_ICON = { high: '&#x26D4;', medium: '&#x26A0;&#xFE0F;', low: '&#x2139;&#xFE0F;' };
-  const edgeRows = edgeCases.map(e => `
-    <div class="lease-edge-note-item"><span class="len-icon">${SEV_ICON[e.severity] || '&#x2139;&#xFE0F;'}</span>
-      <span>${esc(e.reviewerNote || e.description || e.type)}</span></div>`).join('');
+
+  // PROPERTY_NAME_MISMATCH is the one edge case a landlord can resolve here, so
+  // it gets an action rather than only a note. Every other edge case renders
+  // exactly as before — this is not a general "dismiss warning" affordance.
+  const edgeRows = edgeCases.map(e => {
+    const note = `<div class="lease-edge-note-item"><span class="len-icon">${SEV_ICON[e.severity] || '&#x2139;&#xFE0F;'}</span>
+      <span>${esc(e.reviewerNote || e.description || e.type)}</span></div>`;
+    if (e.type !== 'PROPERTY_NAME_MISMATCH' || i == null) return note;
+
+    const block = _propertyMismatchBlockReason(d);
+    if (!block) {
+      const c = d._propertyConfirm || {};
+      const who  = c.by ? ` by ${esc(c.by)}` : '';
+      const when = c.at ? ` on ${esc(new Date(c.at).toLocaleDateString())}` : '';
+      return note + `<div class="lease-prop-confirmed">
+        <span class="lpc-check">&#x2713;</span>
+        <span><strong>Property confirmed</strong>${who}${when}.
+        The lease names &ldquo;${esc(c.extractedName || '')}&rdquo;; confirmed as part of
+        &ldquo;${esc(c.propertyName || '')}&rdquo;. Extracted values were not changed.</span>
+      </div>`;
+    }
+
+    const stale = block.staleConfirm
+      ? `<div class="lpm-stale">This lease was confirmed before, but the document or the
+         property name it states has changed since. Please confirm again.</div>`
+      : '';
+    return note + `<div class="lease-prop-confirm">
+      ${stale}
+      <div class="lpm-detail">Lease states <strong>${esc(block.extractedName || 'an unnamed property')}</strong>
+        &middot; uploaded into <strong>${esc(block.propertyName || 'this property')}</strong></div>
+      <button class="lpm-btn" type="button" onclick="confirmLeaseBelongsToProperty(${i})">
+        &#x2713; Confirm lease belongs to this property</button>
+      <div class="lpm-hint">Confirming records who verified it and when, and lets this tenant
+        take part in CAM. It does not change any extracted value or clear other warnings.</div>
+    </div>`;
+  }).join('');
+
   const noteRows = reviewNotes.map(n => `
     <div class="lease-edge-note-item"><span class="len-icon">&#x1F4CB;</span><span>${esc(n)}</span></div>`).join('');
 
@@ -5180,6 +5865,8 @@ function _reviewStatusPillHtml(status) {
 // These shims maintain backward-compatible global function names and supply
 // the live lastResults context for the active-property view.
 const _RQ_MISSING_FIELD_TYPES = ReviewEngine.MISSING_FIELD_TYPES;
+const _RQ_CAM_BLOCKING_TYPES  = ReviewEngine.CAM_BLOCKING_FIELD_TYPES;
+const _RQ_CAM_BLOCKER_REASON  = ReviewEngine.CAM_BLOCKER_REASON;
 function deriveTenantReviewState(t) {
   const rv = ReviewEngine.deriveTenantReviewState(t, lastResults);
   // Add missing[] — structural-blocking warnings separated from quality signals.
@@ -5187,6 +5874,27 @@ function deriveTenantReviewState(t) {
   // those that want all quality signals use rv.warnings.
   rv.missing = rv.warnings
     .filter(function(w) { return _RQ_MISSING_FIELD_TYPES.has(w.type); })
+    .map(function(w) { return w.label; });
+  // camBlocking — the warnings that stop the CAM engine from reconciling this
+  // lease at all, phrased as reasons a reader can act on. It is NOT a subset of
+  // missing[]: a missing square footage blocks because a required field is
+  // absent, while an unconfirmed property mismatch blocks because a field is
+  // present and contradicts the property the lease was filed under. Deriving
+  // this from missing[] is what left the mismatch unmodelled — see
+  // CAM_BLOCKING_FIELD_TYPES.
+  //
+  // Any surface that tells a reader a lease "cannot be reconciled" must branch
+  // on camBlocking. Any surface that says a lease "will reconcile" must branch
+  // on camBlocking being empty, and will then agree with getValidTenants().
+  rv.camBlocking = rv.warnings
+    .filter(function(w) { return _RQ_CAM_BLOCKING_TYPES.has(w.type); })
+    .map(function(w) { return _RQ_CAM_BLOCKER_REASON[w.type] || w.label; });
+  // reviewItems — real gaps a human should close, none of which prevent a number
+  // being produced. Disjoint from camBlocking by construction, which is the one
+  // invariant the two sets owe each other.
+  rv.reviewItems = rv.warnings
+    .filter(function(w) { return _RQ_MISSING_FIELD_TYPES.has(w.type)
+                              && !_RQ_CAM_BLOCKING_TYPES.has(w.type); })
     .map(function(w) { return w.label; });
   return rv;
 }
@@ -5215,49 +5923,239 @@ function _tenantReviewStateBadgeHtml(t) {
 
 // ── Field Confidence + Source Trace helpers ────────────────────────────────
 // Pure functions — read tenant fields and metadata only, no mutations.
+
+/**
+ * AI-1 — the extractor's per-field confidence for square footage, or null when
+ * it reported none.
+ *
+ * There is no `?? 100` here, and there must never be one. The lease extraction
+ * prompt (CLAUDE_LEASE_SYSTEM) does not ask the model for a per-field
+ * confidence block at all — it asks for `quotes`. So for every AI-extracted
+ * lease this value is ABSENT, and each `?? 100` in the codebase was quietly
+ * converting "the extractor told us nothing" into "the extractor was certain".
+ *
+ * That is the exact inversion Architecture Principle #8 forbids: absence of
+ * evidence is not evidence of absence. It also corrupts Phase 0, whose whole
+ * purpose is to count how often a reviewer had to correct a field — a lease
+ * that never gets flagged never gets reviewed, and the measurement reads as
+ * success.
+ *
+ * Returns a finite number or null. Callers must branch on null explicitly.
+ */
+function sqftConfidenceScore(t) {
+  const fc = t?.confidence?.leased_sqft ?? t?.confidence?.leasedSqft;
+  return (typeof fc === 'number' && Number.isFinite(fc)) ? fc : null;
+}
+
+/**
+ * AI-1 — true when extraction stored a verbatim clause for this field.
+ *
+ * This is the OTHER kind of evidence a field can carry. MainStreet is
+ * evidence-first, so a field backed by the clause it came from is legitimately
+ * "verified" even without a numeric score. A field with neither a score nor a
+ * quote has nothing behind it and must not be badged as though it does.
+ */
+function hasFieldQuote(fieldKey, t) {
+  // THE LATEST SNAPSHOT, NOT ANY SNAPSHOT EVER TAKEN. This asked
+  // `snapshots.some(s => s.quote)`, so a clause captured for an OLD value went
+  // on vouching for a new one: a re-extraction that found no quote, and a
+  // manual correction that replaced the quoted figure, both kept reading as
+  // document-backed on the strength of a citation that no longer supports what
+  // is on screen. FieldProvenance.latestSnapshot skips superseded entries and
+  // returns the one describing the current value.
+  if (window.FieldProvenance) {
+    const s = FieldProvenance.latestSnapshot(fieldKey, t);
+    return !!(s && s.quote);
+  }
+  return (t?.fieldEvidence?.[fieldKey]?.snapshots || []).some(s => s && s.quote);
+}
+
+/**
+ * AI-1 — is this tenant's square footage approximate?
+ *
+ * Square footage is the denominator of every pro-rata share on every tenant
+ * statement, so "we don't actually know how good this number is" has to be
+ * expressible. Three states, not two:
+ *
+ *   score reported        → approximate when it is below the 70 threshold
+ *   no score, but a quote → not approximate; the clause is the evidence
+ *   no score, no quote    → approximate. Nothing stands behind the number.
+ *
+ * A reviewer who has confirmed the field takes precedence over all of it.
+ */
+function sqftIsApproximate(t) {
+  if (isFieldManuallyVerified('leased_sqft', t)) return false;
+  const fc = sqftConfidenceScore(t);
+  if (fc != null) return fc < 70;
+  return !hasFieldQuote('leased_sqft', t);
+}
+window.sqftConfidenceScore = sqftConfidenceScore;
+window.hasFieldQuote       = hasFieldQuote;
+window.sqftIsApproximate   = sqftIsApproximate;
+
+/**
+ * How certain are we about this field, and on whose authority.
+ *
+ * DELEGATES. field-provenance.js decides which of the five states a value is
+ * in; this function projects that onto the four-status contract every surface
+ * already branches on, and supplies the field-specific REASON within a state.
+ * It no longer decides for itself whether something is verified.
+ *
+ * What that removes: `case 'cap'` and the `default:` branch used to return
+ * `verified / 'Extracted from lease document'` whenever a value was non-empty,
+ * so a cap typed by hand into a property with no document read exactly like one
+ * quoted off a 25,824-character lease — and so did one that genuinely carried a
+ * clause and a page. Roughly 449 of Pilot's ~501 "verified" field values had
+ * nothing behind them.
+ *
+ * What it keeps: every sub-reason the switch below already got right. Those are
+ * real field-specific knowledge — an unreadable date, a lease that names no
+ * type, a square footage under the confidence threshold — and they still
+ * distinguish degrees WITHIN a state rather than deciding the state.
+ */
 function getFieldConfidence(fieldName, t) {
   if (!t) return { status: 'missing', source: 'missing', note: 'No lease data' };
-  // Manual override takes precedence — field was corrected by a reviewer.
-  const _latestSnap = getLatestFieldEvidence(fieldName, t);
-  if (_latestSnap?.manuallyEdited === true) {
-    return { status: 'manual', source: 'manual', note: 'Manually corrected' };
+
+  // The cap base is stored under a different name than its canonical key, so
+  // the value travels through the resolver's opts.value override — otherwise
+  // this would read t['cap_base_amount'], find nothing, and report `missing`
+  // for a field that has a value. Every other key is its own storage property,
+  // so _fieldStore is the identity for them and nothing else changes.
+  const _stored = (typeof _fieldStore === 'function') ? _fieldStore(fieldName) : fieldName;
+  const _prov = window.FieldProvenance
+    ? (_stored !== fieldName
+        ? FieldProvenance.fieldProvenance(fieldName, t, { value: t[_stored] })
+        : FieldProvenance.fieldProvenance(fieldName, t))
+    : null;
+
+  // A HUMAN ACT ON THIS FIELD IS THE ANSWER, and it is not the lease's. Both
+  // manual states report `manual` so nothing downstream mistakes a typed or
+  // approved value for a citation — including the evidence row this note is
+  // copied into.
+  if (_prov && _prov.state === 'manually_confirmed') {
+    return { status: 'manual', source: 'manual',
+             note: _prov.by ? `Manually confirmed by ${_prov.by}` : 'Manually confirmed' };
   }
-  const val = (fieldName === 'proRata') ? null : t[fieldName];
+  if (_prov && _prov.state === 'manually_entered') {
+    return { status: 'manual', source: 'manual', note: 'Manually entered' };
+  }
+
+  const val = (fieldName === 'proRata') ? null : t[_stored];
   const isEmpty = val === null || val === undefined || String(val).trim() === '';
 
+  // THE ONE GATE. Below this line the switch may still choose `missing` or
+  // `estimated` and name the reason, but it can no longer reach `verified`
+  // unless the resolver found a citation for the value actually on screen.
+  const _cited = !!(_prov && _prov.state === 'lease_confirmed');
+  const _uncited = (note) => ({ status: 'estimated', source: 'extraction', note });
+
   switch (fieldName) {
+    // THE PRODUCT'S CHOICE MUST NEVER READ AS THE LEASE'S. When a lease says
+    // nothing about apportioning a partial year, the reconciliation still needs
+    // a basis to compute with — but "per diem because we chose it" and "per diem
+    // because the lease says so" are the same two words and completely different
+    // claims. `source: 'default'` is what separates them, machine-readably, so
+    // no downstream surface has to infer it from prose.
+    case 'partial_period_basis':
+      if (isEmpty) return { status: 'missing', source: 'default',
+        note: 'No partial-period clause found — per-diem applied by default' };
+      if (!(window.LeasePeriod && window.LeasePeriod.BASES.includes(String(val).trim().toLowerCase()))) {
+        return { status: 'estimated', source: 'heuristic',
+          note: 'Partial-period basis not recognised — confirm against the lease' };
+      }
+      return _cited
+        ? { status: 'verified',  source: 'structured', note: 'Extracted from lease document' }
+        : { status: 'estimated', source: 'heuristic',  note: 'No supporting clause captured — confirm against the lease' };
+
+    // Absent is the NORMAL case: most leases start the CAM obligation with the
+    // term, and null means exactly that. It is not a gap to be chased.
+    case 'cam_commencement_date':
+      // Absent is still the normal case and still not a gap to chase — but it
+      // is not a reading of a document either, and it used to render a ✓ beside
+      // a method label reading "Not Found". `missing` renders neutrally, which
+      // is what "the lease says nothing and nothing is wrong" looks like.
+      if (isEmpty) return { status: 'missing', source: 'default',
+        note: 'CAM begins with the lease term' };
+      return _cited
+        ? { status: 'verified',  source: 'structured', note: 'Extracted from lease document' }
+        : { status: 'estimated', source: 'heuristic',  note: 'No supporting clause captured — confirm against the lease' };
+
     case 'start_date':
     case 'end_date': {
+      // "Not found in extraction" is the wrong sentence for a lease that states
+      // its term as an event — "upon substantial completion" — or in a format
+      // this parser rejects. The field is empty either way; what to do about it
+      // is not the same, so the note has to distinguish them.
+      const _raw = (t && t.unreadableDates && t.unreadableDates[fieldName]) || null;
+      if (isEmpty && _raw) {
+        return { status: 'missing', source: 'unreadable',
+                 note: `On the lease as "${_raw}" — not a date this reconciliation can use` };
+      }
       if (isEmpty) return { status: 'missing', source: 'missing', note: 'Not found in extraction' };
       if (t._usedFallback)           return { status: 'estimated', source: 'heuristic', note: 'Estimated from document text — confirm accuracy' };
       if (t.doc_has_dates === false) return { status: 'estimated', source: 'heuristic', note: 'No structured date field found — date inferred' };
-      return { status: 'verified', source: 'structured', note: 'Extracted from lease document' };
+      return _cited
+        ? { status: 'verified', source: 'structured', note: 'Extracted from lease document' }
+        : _uncited('AI extraction — no supporting clause captured');
     }
     case 'lease_type': {
       if (isEmpty) return { status: 'missing', source: 'missing', note: 'Lease type not identified' };
       if (t.doc_has_lease_type === false) return { status: 'estimated', source: 'ocr', note: 'Lease type inferred from document context' };
-      return { status: 'verified', source: 'structured', note: 'Extracted from lease document' };
+      return _cited
+        ? { status: 'verified', source: 'structured', note: 'Extracted from lease document' }
+        : _uncited('AI extraction — no supporting clause captured');
     }
     case 'leased_sqft': {
       if (isEmpty) return { status: 'missing', source: 'missing', note: 'Square footage not found' };
-      const fc = t.confidence?.leased_sqft ?? t.confidence?.leasedSqft;
+      const fc = sqftConfidenceScore(t);
       if (fc != null && fc < 70) return { status: 'estimated', source: 'ocr', note: 'Confidence below threshold — verify against lease' };
-      return { status: 'verified', source: 'structured', note: 'Extracted from lease document' };
+      // AI-1 — no score AND no source clause is not verification. This branch
+      // used to fall through to 'verified / Extracted from lease document',
+      // which put a ✓ on a number nothing stands behind. Square footage drives
+      // every pro-rata share on every tenant statement; it is the last field
+      // that should be assumed correct.
+      if (fc == null && !_cited) {
+        return { status: 'estimated', source: 'extraction',
+                 note: 'No confidence score and no source clause — verify against lease' };
+      }
+      // A CONFIDENCE SCORE IS NOT A CITATION. AI-1 let a score of 70 or better
+      // stand in for a clause, which was the right call while `verified` only
+      // meant "trust this reading". Now that it means "the document says so",
+      // a scored-but-uncited number is an AI extraction like any other.
+      return _cited
+        ? { status: 'verified', source: 'structured', note: 'Extracted from lease document' }
+        : _uncited('AI extraction — no supporting clause captured');
     }
     case 'cap': {
       if (isEmpty) return { status: 'missing', source: 'missing', note: 'CAM cap not stated in lease' };
-      return { status: 'verified', source: 'structured', note: 'Extracted from lease document' };
+      // The number that limits what a tenant can be billed. It had no test at
+      // all beyond being non-empty.
+      return _cited
+        ? { status: 'verified', source: 'structured', note: 'Extracted from lease document' }
+        : _uncited('AI extraction — no supporting clause captured');
     }
     case 'proRata': {
+      // DERIVED, SO IT INHERITS — all of it. This handled `missing` and
+      // `estimated` and let everything else fall through to verified, which was
+      // harmless while `manual` could not reach here and `verified` meant
+      // "trust this number". Now that square footage can be manually entered
+      // and that verified means the document says so, falling through would
+      // have a hand-typed area produce "Computed from verified square footage".
       const sqftConf = getFieldConfidence('leased_sqft', t);
       if (sqftConf.status === 'missing')   return { status: 'missing',   source: 'missing',    note: 'Cannot compute — square footage missing' };
       if (sqftConf.status === 'estimated') return { status: 'estimated', source: 'heuristic',  note: 'Computed from estimated square footage' };
+      if (sqftConf.status === 'manual')    return { status: 'manual',    source: 'manual',     note: 'Computed from a manually entered square footage' };
       return { status: 'verified', source: 'structured', note: 'Computed from verified square footage' };
     }
     default:
-      return isEmpty
-        ? { status: 'missing',  source: 'missing',    note: 'Not found' }
-        : { status: 'verified', source: 'structured', note: 'Extracted from lease document' };
+      // admin_fee_pct, admin_fee_basis, gross_up_pct, expense_stop,
+      // audit_rights, pro_rata_method, renewal_options, excluded_categories,
+      // base_rent, security_deposit, capBaseAmount, tenant_name. Not a small
+      // residue, and the branch that produced most of the overclaim.
+      if (isEmpty) return { status: 'missing', source: 'missing', note: 'Not found' };
+      return _cited
+        ? { status: 'verified', source: 'structured', note: 'Extracted from lease document' }
+        : _uncited('AI extraction — no supporting clause captured');
   }
 }
 
@@ -5292,6 +6190,7 @@ const _LEV_FIELD_LABELS = {
   cap:             'CAM Cap',
   proRata:         'Pro-Rata %',
   admin_fee_pct:   'Admin Fee %',
+  admin_fee_basis: 'Admin Fee Basis',
   gross_up_pct:    'Gross-Up %',
   expense_stop:    'Expense Stop',
   audit_rights:    'Audit Rights',
@@ -5403,8 +6302,13 @@ function renderLeaseEvidencePanel(fieldKey, t) {
     `<div class="lev-src-row"><span class="lev-src-lbl">Section</span><span class="lev-src-val">${esc(src.section)}</span></div>`);
   if (src.extractionVersion) srcRows.push(
     `<div class="lev-src-row"><span class="lev-src-lbl">Extraction</span><span class="lev-src-val">${esc(src.extractionVersion)}</span></div>`);
-  if (src.extractionModel) srcRows.push(
-    `<div class="lev-src-row"><span class="lev-src-lbl">Model</span><span class="lev-src-val lev-model-tag">${esc(src.extractionModel)}</span></div>`);
+  // Model is provenance — the row appears either way. An extraction that did
+  // not report its model says so, rather than the row vanishing and leaving the
+  // panel looking complete. Same reasoning as the Citation/Page rows above:
+  // absence is a fact about the record, not a rendering gap.
+  srcRows.push(src.extractionModel
+    ? `<div class="lev-src-row"><span class="lev-src-lbl">Model</span><span class="lev-src-val lev-model-tag">${esc(src.extractionModel)}</span></div>`
+    : `<div class="lev-src-row"><span class="lev-src-lbl">Model</span><span class="lev-src-val lev-na">Not recorded for this extraction</span></div>`);
   if (src.extractedAt) srcRows.push(
     `<div class="lev-src-row"><span class="lev-src-lbl">Extracted</span><span class="lev-src-val">${esc(src.extractedAt.slice(0, 10))}</span></div>`);
   if (src.extractionId) srcRows.push(
@@ -5497,6 +6401,28 @@ window.ms_debug_evidence = function(fieldKey, tenant) {
 // Returns the extraction version tag for a tenant.
 // 'v1' on first pass, 'v1-retry' if prior evidence snapshots already exist,
 // 'manual' is passed explicitly from confirmFieldOverride paths.
+/**
+ * The snapshot's four-status label, narrowed to the three the column permits.
+ *
+ * `manual` is the only status that has to be decided: it covers both a reviewer
+ * approving a field and a person typing one, and only the first is verification.
+ * The snapshot's own flags tell them apart, and the note is the tiebreak for
+ * legacy snapshots written before those flags meant anything.
+ */
+function _evidenceDbStatus(snapshot) {
+  const s = snapshot?.confidence?.status ?? null;
+  if (s === 'verified') return 'verified';
+  if (s === 'missing')  return 'missing';
+  if (s === 'manual') {
+    const approvedByAReviewer = snapshot?.approved === true &&
+      !!(snapshot?.reviewerEmail || snapshot?.reviewerUid) &&
+      snapshot?.manuallyEdited !== true;
+    return approvedByAReviewer ? 'verified' : 'estimated';
+  }
+  if (s === 'estimated') return 'estimated';
+  return s == null ? null : 'estimated';
+}
+
 function _extractionVersionTag(t) {
   if (!t) return 'v1';
   const fev = t.fieldEvidence || {};
@@ -5509,12 +6435,32 @@ function _extractionVersionTag(t) {
 // Builds one immutable evidence snapshot object.
 // Snippet is intentionally NOT stored — it is re-read from _leaseDebug at
 // display time so the Supabase row stays small.
+// ── Canonical field key ↔ the tenant property that stores it ────────────────
+//
+// Every canonical key in LeaseIntelligence.CANONICAL_FIELDS IS the property it
+// is stored under — `cap`, `leased_sqft`, `start_date` — with one exception.
+// The cap base is stored as camelCase `capBaseAmount` and its canonical key is
+// `cap_base_amount`, because the canonical list is snake_case throughout.
+//
+// Anything that READS a value off the tenant by canonical key needs the
+// storage name; anything that WRITES evidence or audit needs the canonical
+// name. Both directions live here so the two never drift apart, and renaming
+// the stored property is avoided — that would be a data migration to fix a
+// naming mismatch. PropertyRecord._fields resolves the same mismatch through
+// FieldProvenance's opts.value override.
+const _FIELD_STORAGE  = { cap_base_amount: 'capBaseAmount' };
+const _FIELD_CANONICAL = { capBaseAmount: 'cap_base_amount' };
+/** Canonical key → the tenant property holding its value. */
+function _fieldStore(k) { return _FIELD_STORAGE[k] || k; }
+/** Tenant property → the canonical key evidence and audit are written under. */
+function _fieldCanonical(k) { return _FIELD_CANONICAL[k] || k; }
+
 function _mkEvidenceSnapshot(fieldKey, t, opts) {
   const conf = getFieldConfidence(fieldKey, t);
   const user = window.AuthService?.getCurrentUser?.() || null;
   return {
     fieldKey,
-    value:                  opts.value !== undefined ? opts.value : (getEffectiveLeaseField(fieldKey, t) ?? t[fieldKey] ?? null),
+    value:                  opts.value !== undefined ? opts.value : (getEffectiveLeaseField(_fieldStore(fieldKey), t) ?? t[_fieldStore(fieldKey)] ?? null),
     confidence:             { status: conf.status, note: conf.note },
     sourceFile:             t.fileName  || null,
     page:                   opts.page   ?? null,
@@ -5738,6 +6684,9 @@ function _evidenceRowToSnapshot(row) {
     approved:               row.approved,
     manuallyEdited:         row.manually_edited,
     originalExtractedValue: row.original_extracted_value,
+    // null for every row written before 019 — the clause was never stored and
+    // cannot be reconstructed without re-extracting the document.
+    quote:                  row.quote != null ? row.quote : null,
   };
 }
 
@@ -5780,7 +6729,20 @@ async function _writeTenantFieldEvidence(propId, tenantId, fieldKey, snapshot) {
     tenant_id:                tenantId,
     field_key:                fieldKey,
     value:                    _evidenceValStr(snapshot.value),
-    confidence_status:        snapshot.confidence?.status              ?? null,
+    // THE CHECK CONSTRAINT HAS THREE VALUES AND THE MODEL HAS FIVE, so the
+    // projection is explicit here rather than left to whatever string the
+    // in-app status happens to be. `verified | estimated | missing` is what
+    // tenant_field_evidence_confidence_status_check permits; widening it would
+    // be a migration, and the line below is drawn so it is not needed:
+    //
+    //   verified   a clause supports it, or a named reviewer approved it
+    //   estimated  a value with no affirmative confirmation — an extraction
+    //              nobody checked, or data entry, which is not verification
+    //   missing    nothing to evaluate
+    //
+    // An uncited AI value can never reach `verified` through it, which is the
+    // whole point. The exact state travels beside it in confidence_note.
+    confidence_status:        _evidenceDbStatus(snapshot),
     confidence_note:          snapshot.confidence?.note                ?? null,
     source_file:              snapshot.sourceFile                      ?? null,
     source_page:              snapshot.page                            ?? null,
@@ -5792,6 +6754,14 @@ async function _writeTenantFieldEvidence(propId, tenantId, fieldKey, snapshot) {
     approved:                 snapshot.approved                        ?? false,
     manually_edited:          snapshot.manuallyEdited                  ?? false,
     original_extracted_value: _evidenceValStr(snapshot.originalExtractedValue),
+    // THE CLAUSE THE ROW EXISTS BECAUSE OF. _persistExtractedEvidence writes a
+    // snapshot only when it has a quote or a page (script.js:5038) — the quote
+    // is the reason the row is written, and until migration 019 there was no
+    // column to put it in. So extraction produced the verbatim clause,
+    // _stripBlobs deleted the blob copy on the first save, and the authoritative
+    // row could not carry it: the text was unrecoverable from that moment.
+    // Nullable, so every pre-019 row stays valid reading null.
+    quote:                    snapshot.quote != null ? String(snapshot.quote).slice(0, 200) : null,
   };
   const ts = new Date().toISOString();
   console.groupCollapsed('[DualWrite:tfe] INSERT tenant_field_evidence @ ' + ts);
@@ -6688,6 +7658,81 @@ window.ms_testAuditInsert = async function() {
 // ── Field Override + Manual Confirmation ──────────────────────────────────
 // Priority: manual override → extracted value → null.
 // Resolver used by all display layers so override logic stays in one place.
+/**
+ * T2 — record the partial-period apportionment against a lease that does not
+ * state one.
+ *
+ * The reconciliation can always COMPUTE, because per-diem is a sane default. It
+ * must not claim the lease said so. This writes the manager's answer to the same
+ * field the extractor would have filled, with a manual evidence snapshot behind
+ * it, so LeasePeriod.partialPeriodBasis reports source 'manual' — a human
+ * decision, distinguishable from both a clause and a default. Asked once per
+ * lease; the blocker stops firing from the next run.
+ */
+async function confirmPartialPeriodBasis(tenantId, basis) {
+  const LP = window.LeasePeriod;
+  const key = String(basis || '').trim().toLowerCase();
+  if (!LP || LP.BASES.indexOf(key) < 0) {
+    showToast(`"${basis}" is not a partial-period basis this reconciliation recognises.`,
+      { color: '#7f1d1d', textColor: '#fecaca', duration: 6000 });
+    return false;
+  }
+  // tenantData IS the live array the reconciliation reads — every other
+  // field mutator in this file finds its target there. Writing only to
+  // currentProperty().tenants is a silent no-op when the two hold different
+  // objects, which they do: the confirmation appeared to succeed, the toast
+  // fired, and the next run behaved as though nothing had been recorded.
+  const t = tenantData.find(x => x && String(x.id) === String(tenantId));
+  if (!t) {
+    showToast('That lease is no longer on this property — the page has been refreshed.',
+      { color: '#92400e', textColor: '#fef3c7', duration: 6000 });
+    return false;
+  }
+  const _apply = (rec, snap) => {
+    rec.partial_period_basis = key;
+    const fev  = rec.fieldEvidence || (rec.fieldEvidence = {});
+    const slot = fev.partial_period_basis || (fev.partial_period_basis = { snapshots: [] });
+    slot.snapshots = [...(slot.snapshots || []), snap];
+  };
+  const _snap = _mkEvidenceSnapshot('partial_period_basis', t,
+    { value: key, manuallyEdited: true, approved: true });
+  _apply(t, _snap);
+  // And the persisted record, when it is a different object from the live one.
+  const _stored = (currentProperty()?.tenants || []).find(x => x && String(x.id) === String(tenantId));
+  if (_stored && _stored !== t) _apply(_stored, _snap);
+
+  // THE NORMALIZED TABLE, WHICH IS THE ONE THAT SURVIVES.
+  //
+  // With ms_useNormalizedEvidence on — it is — savePropertyData STRIPS
+  // fieldEvidence out of the property blob, because tenant_field_evidence is
+  // authoritative. Writing only to the blob meant the basis value persisted and
+  // its provenance did not: after a reload partialPeriodBasis reported source
+  // 'lease', so a manager's own confirmation came back reading as though the
+  // lease had stated it. That is the one thing this flow exists to prevent.
+  //
+  // _persistExtractedEvidence cannot carry it either — it skips any snapshot
+  // with no quote and no page, which is exactly what a manual confirmation is.
+  // So the write is direct, and it is awaited by the caller that needs it.
+  const _propId = (currentProperty() || {}).id || activePropId;
+  if (typeof _writeTenantFieldEvidence === 'function' && _propId) {
+    try { await _writeTenantFieldEvidence(_propId, tenantId, 'partial_period_basis', _snap); }
+    catch (e) { console.warn('[partial-period] evidence not persisted:', e && e.message); }
+  }
+  // savePropertyData syncs tenantData into the property record and then queues
+  // the write on an 800ms keystroke debounce. A confirmation is not a keystroke:
+  // the manager clicks it and may navigate immediately, and a write still
+  // sitting in a timer at that moment is simply lost. savePropertyNow cancels
+  // the queued write and performs the one this caller awaits.
+  try { await savePropertyData(); } catch (_) {}
+  try { await savePropertyNow(); } catch (_) {}
+  logActivity('Partial-period basis confirmed',
+    `${t.tenant_name}: CAM for a partial year is apportioned ${key.replace('_', '-')} — recorded by the manager, not extracted from the lease.`);
+  showToast(`Recorded: ${t.tenant_name} apportions a partial CAM year ${key.replace('_', '-')}. Re-run to apply it.`,
+    { duration: 6000 });
+  return true;
+}
+window.confirmPartialPeriodBasis = confirmPartialPeriodBasis;
+
 function getEffectiveLeaseField(fieldName, t) {
   if (!t) return null;
   const ov = t.reviewOverrides?.[fieldName];
@@ -6757,6 +7802,16 @@ function saveFieldOverride(tenantId, fieldName, newValue) {
   const idx = tenantData.findIndex(t => t && t.id === tenantId);
   if (idx === -1) return;
   const t = tenantData[idx];
+  // PRE-EXISTING DEFECT, found by S2 and fixed because S2 depends on this path.
+  // The property-timeline append near the end of this function reads
+  // `user?.email`, and `user` was declared NOWHERE — not here, not as a global.
+  // Optional chaining does not save an undeclared identifier: it throws
+  // ReferenceError. So every manual field correction wrote its value, its
+  // evidence snapshot, its audit row — and then threw, before the timeline
+  // event, the list re-render, the inline-editor refresh and the success toast.
+  // The writes landed and the screen never acknowledged them. Eight other
+  // functions in this file resolve the reviewer exactly this way.
+  const user = window.AuthService?.getCurrentUser?.() || null;
   const prev = t.reviewOverrides || {};
   // Preserve the very first extracted value as the permanent original
   const original = prev[fieldName]?.original ?? (t[fieldName] ?? null);
@@ -6776,7 +7831,17 @@ function saveFieldOverride(tenantId, fieldName, newValue) {
   });
   // Append immutable evidence snapshot — survives refresh, re-login, re-extraction.
   // Called after tenantData[idx] is updated so _mkEvidenceSnapshot reads the new value.
-  persistFieldEvidence(tenantId, fieldName, {
+  //
+  // Evidence and audit are keyed CANONICALLY. For every field but the cap base
+  // that is the same string; for the cap base it is `cap_base_amount`, which is
+  // what FieldProvenance.latestSnapshot() looks up and what tenant_field_evidence
+  // stores. The value and the reviewOverride above stay on `capBaseAmount`, the
+  // property the engine and getEffectiveLeaseField read. The snapshot's
+  // manuallyEdited:true is what resolves the field to manually_entered — the
+  // override is not required for that, and keeping it under the storage name
+  // leaves every existing reader working.
+  const _evKey = _fieldCanonical(fieldName);
+  persistFieldEvidence(tenantId, _evKey, {
     value:                  newValue,
     approved:               true,
     manuallyEdited:         true,
@@ -6787,7 +7852,7 @@ function saveFieldOverride(tenantId, fieldName, newValue) {
   appendReviewAuditEntry({
     tenantId,
     tenantName:        tenantData[idx]?.tenant_name || tenantId,
-    fieldKey:          fieldName,
+    fieldKey:          _evKey,
     action:            'field_override',
     label:             `Field corrected — ${fieldName}`,
     oldValue:          original,
@@ -6841,22 +7906,49 @@ function quickConfirmTenantFields(tenantId) {
   const idx = tenantData.findIndex(t => t && t.id === tenantId);
   if (idx === -1) return;
   const t = tenantData[idx];
+  // cap_base_amount joins the list so a reviewer can reach manually_confirmed
+  // on the dollar half of a cap, not just the percentage. It is named
+  // canonically here — the value lookup below resolves it to `capBaseAmount`
+  // via _fieldStore, which is the identity for every other key.
   const CORE_FIELDS = [
     'tenant_name', 'leased_sqft', 'lease_type', 'start_date', 'end_date', 'cap',
-    'admin_fee_pct', 'gross_up_pct', 'expense_stop', 'audit_rights',
-    'pro_rata_method', 'renewal_options',
+    'cap_base_amount', 'admin_fee_pct', 'admin_fee_basis', 'gross_up_pct',
+    'expense_stop', 'audit_rights', 'pro_rata_method', 'renewal_options',
   ];
   const user = window.AuthService?.getCurrentUser?.() || null;
   for (const fk of CORE_FIELDS) {
-    const val = t[fk] ?? t.reviewOverrides?.[fk]?.override ?? null;
+    const sk  = _fieldStore(fk);
+    const val = t[sk] ?? t.reviewOverrides?.[sk]?.override ?? null;
     if (val == null || val === '') continue;
     persistFieldEvidence(tenantId, fk, { approved: true, manuallyEdited: false });
   }
+  // `reviewStateBefore` is deliberately read from the ORIGINAL `t` — "before"
+  // means before this whole operation, not before the last line of it.
   const reviewStateBefore = deriveTenantReviewState(t).status;
+  // ...BUT THE SPREAD BELOW MUST READ THE ARRAY, NOT `t`.
+  //
+  // persistFieldEvidence REPLACES tenantData[idx] with a new object each time it
+  // appends a snapshot, so after the loop above the slot holds a tenant carrying
+  // up to fourteen fresh confirmations. `t` is the object captured before the
+  // loop and knows about none of them. Spreading it here overwrote the slot and
+  // discarded every snapshot the loop had just written — the confirmations were
+  // gone the instant they were made.
+  //
+  // What that cost: in-session, the fields resolved back to their floor state
+  // (ai_extracted, or manually_entered for the cap base) immediately after a
+  // reviewer clicked Confirm, so the screen contradicted the act. It survived at
+  // all only because persistFieldEvidence dual-writes each snapshot to
+  // tenant_field_evidence BEFORE this line runs, and that table is authoritative
+  // on the next load — so a reload silently repaired it. When the dual-write
+  // fails, and it is deliberately fail-silent, nothing repaired it.
+  //
+  // Reading the slot is also what the other two call sites of this shape already
+  // do (`...tenantData[i]` at the exclusion acknowledgements).
+  const _confirmed = tenantData[idx];
   tenantData[idx] = {
-    ...t,
+    ..._confirmed,
     review: {
-      ...t.review,
+      ..._confirmed.review,
       reviewerConfirmed: true,
       reviewedAt:  new Date().toISOString(),
       reviewedBy:  user?.email || 'Reviewer',
@@ -6914,7 +8006,7 @@ async function handleAmendmentUpload(tenantId, file) {
     const leaseText = await extractLeaseText(file);
     let extracted;
     if (leaseText && leaseText.length >= 50) {
-      extracted = await callClaudeForLease(leaseText);
+      extracted = await callClaudeForLease(leaseText, file.name);
     } else {
       extracted = await callClaudeWithPdfDirect(file);
     }
@@ -6977,7 +8069,7 @@ function applyAmendmentOverrides(tenantId, amNorm, amendmentId, fileName) {
 
   const COMPARABLE_FIELDS = [
     'tenant_name', 'leased_sqft', 'start_date', 'end_date', 'lease_type', 'cap',
-    'admin_fee_pct', 'gross_up_pct', 'expense_stop', 'audit_rights',
+    'admin_fee_pct', 'admin_fee_basis', 'gross_up_pct', 'expense_stop', 'audit_rights',
     'pro_rata_method', 'renewal_options',
   ];
 
@@ -7300,7 +8392,10 @@ function renderBulkResults() {
   if (!tenants.length) {
     el.innerHTML = _workspaceEmptyStateHtml('&#x1F4C4;',
       'No lease documents have been uploaded yet.',
-      'Upload a lease PDF in the Documents tab to begin lease extraction.');
+      // Was "in the Documents tab" — that tab was retired from navigation and the
+      // upload card now lives here under Spaces. Pointing a first-time user at a
+      // tab that does not exist is worse than saying nothing.
+      'Use "Upload Leases" above — the AI reads each lease and extracts its CAM terms.');
     return;
   }
 
@@ -7333,7 +8428,14 @@ function renderBulkResults() {
 
     const isPending = d.status === 'pending';
     const confLevel = _tenantConfLevel(d);
-    const icon = isPending ? '⏳' : d.extractionFailed ? '❌' : showWarning ? '⚠️' : d.tenant_name ? '✓' : '?';
+    // The glyph read `d._needsReview` (an extraction flag) while the badge beside
+    // it read the DERIVED review state, so a card could show a green tick and
+    // "Needs Review" on the same line. One source for both.
+    const _rvState = (() => { try { return getTenantReviewState(d); } catch (_) { return null; } })();
+    const _rvUnsettled = _rvState === 'needs_review' || _rvState === 'incomplete';
+    const icon = isPending ? '⏳' : d.extractionFailed ? '❌'
+      : (showWarning || _rvUnsettled) ? '⚠️'
+      : d.tenant_name ? '✓' : '?';
 
     // Job progress state — only relevant when pending
     const _job        = _leaseJobs.get(d.id);
@@ -7431,8 +8533,8 @@ function renderBulkResults() {
           ${confBannerHtml || (d._error
             ? `<div class="err-banner" style="margin-bottom:10px;">Extraction error: ${esc(d._error)}</div>`
             : '')}
-          ${(() => { const w = getWarnings(computeFlags(d)); return w.length ? `<div class="rc-flags"><div class="rc-flags-title">&#x26A0;&#xFE0F; Needs Review</div>${w.map(m => `<div class="rc-flag-item">${m}</div>`).join('')}</div>` : ''; })()}
-          ${_leaseEdgeCaseAndReviewNotesHtml(d)}
+          ${_requiredGapsHtml(d, i, true)}
+          ${_leaseEdgeCaseAndReviewNotesHtml(d, i)}
           <div class="citation-hint">&#x1F4CE; The colored chips below each field show the exact lease clause the AI used to determine each value. Hover a chip to read the full clause and verify accuracy.</div>
           <div class="field-row">
             <div class="field">
@@ -7504,7 +8606,7 @@ function renderBulkResults() {
               <input type="number" step="0.01" min="0" value="${d.capBaseAmount ?? ''}"
                 onfocus="isEditingField=true"
                 onkeydown="_onFieldKeydown(event)"
-                onblur="handleFieldBlur(${i},'capBaseAmount',this.value,this)"/>
+                onblur="handleProvenancedFieldBlur(${i},'capBaseAmount',this.value,this)"/>
             </div>
           </div>
           <div style="display:flex;justify-content:space-between;align-items:center;padding-top:10px;">
@@ -7520,19 +8622,78 @@ function renderBulkResults() {
       </div>`;
   }).join('');
 
-  const _readyCount = tenants.filter(d => !d._needsReview && !d.extractionFailed && d.status !== 'pending' && d.tenant_name && !d._userConfirmed).length;
+  // EXTRACTION READINESS IS NOT CAM READINESS.
+  //
+  // This counted only extraction signals — not flagged for review, not failed,
+  // not still processing, has a name, not yet confirmed — and never looked at
+  // whether the lease carries the fields CAM actually needs. So a tenant with no
+  // square footage counted as "Ready" and was offered under "Approve all ready",
+  // on a screen whose own banner read "3 of 3 leases need a human before CAM can
+  // be trusted". Both were right about different questions, and the button was
+  // the dangerous one: a user could reasonably read it as "these are ready to
+  // reconcile".
+  //
+  // deriveTenantReviewState already computes `missing[]` — the required fields a
+  // lease lacks. It was simply never consulted here.
+  //
+  // camBlocking, not missing. Wiring this to the whole missing[] set over-blocked:
+  // every Triple Net lease without an explicit cap percentage and without a
+  // resolved audit-rights clause was listed as unreconcilable, on the same
+  // screen and the same run in which the CAM engine reconciled it. That is the
+  // original contradiction inverted, and the sentence below ("cannot be
+  // reconciled until the missing values are entered") made it an untrue claim.
+  const _camBlockers = (d) => {
+    try { return (deriveTenantReviewState(d).camBlocking || []); } catch (_) { return []; }
+  };
+  // Gaps that do NOT stop reconciliation. Surfaced separately so "ready for CAM"
+  // is never read as "verified" — the lease reconciles, and a human still owes
+  // it a look.
+  const _reviewItems = (d) => {
+    try { return (deriveTenantReviewState(d).reviewItems || []); } catch (_) { return []; }
+  };
+  const _extractionOk = (d) =>
+    !d._needsReview && !d.extractionFailed && d.status !== 'pending' && d.tenant_name && !d._userConfirmed;
+  // Approvable = extraction finished AND nothing CAM requires is missing.
+  const _approvable  = tenants.filter(d => _extractionOk(d) && _camBlockers(d).length === 0);
+  const _blockedList = tenants.filter(d => _extractionOk(d) && _camBlockers(d).length > 0);
+  const _readyCount  = _approvable.length;
+  const _blockedCount = _blockedList.length;
+  // Reconcilable, but carrying unresolved review items.
+  const _reviewList  = _approvable.filter(d => _reviewItems(d).length > 0);
   const filterBarHtml = tenants.length > 0 ? `
   <div class="bulk-filter-bar">
     <input class="bulk-filter-input" type="text" placeholder="Search tenants…"
       value="${esc(_bulkFilter.query)}"
       oninput="setBulkFilter('query',this.value)" />
     <div class="bulk-filter-pills">
-      ${[['all','All'],['ready','Ready'],['issues','Needs Attention'],['failed','Failed'],['pending','Processing']].map(([v,l]) =>
+      ${[['all','All'],['ready','Extracted'],['issues','Needs Attention'],['failed','Failed'],['pending','Processing']].map(([v,l]) =>
         `<button class="bulk-filter-pill${_bulkFilter.status===v?' active':''}" onclick="setBulkFilter('status','${v}')">${l}</button>`
       ).join('')}
     </div>
-    ${_readyCount > 0 ? `<button class="bulk-approve-all-btn" onclick="bulkApproveReady()">Approve all ready (${_readyCount})</button>` : ''}
-  </div>` : '';
+    <!-- "Confirm ... extractions", not "Approve". In a CRE accounting workflow
+         "Approve" carries the weight of approving lease terms for billing, and
+         a property manager could reasonably read it that way. What this control
+         actually does is confirm that an extraction is complete enough to take
+         part in the CAM calculation — it says nothing about whether the lease
+         terms are right, and it does not clear anything for billing. The audit
+         gate does that, separately. Naming the object ("extractions") is what
+         makes the two impossible to confuse. -->
+    ${_readyCount > 0 ? `<button class="bulk-approve-all-btn" onclick="bulkApproveReady()">Confirm ${_readyCount} CAM-ready extraction${_readyCount === 1 ? '' : 's'}</button>` : ''}
+  </div>
+  ${_blockedCount > 0 ? `<div class="bulk-cam-blocked">
+    <strong>${_blockedCount} lease${_blockedCount === 1 ? '' : 's'} extracted but not ready for CAM</strong> —
+    <!-- The word "missing" used to be hard-coded here, which reads as nonsense
+         for a blocker that is not a missing field ("missing lease names a
+         different property"). Each blocker now carries its own phrasing, from
+         CAM_BLOCKER_REASON. -->
+    ${_blockedList.map(d => `${esc(d.tenant_name || 'Unnamed')} (${esc(_camBlockers(d).join('; '))})`).join('; ')}.
+    These are not included in the confirm button above and cannot be reconciled until each blocker is resolved.
+  </div>` : ''}
+  ${_reviewList.length > 0 ? `<div class="bulk-cam-review">
+    <strong>${_reviewList.length} lease${_reviewList.length === 1 ? '' : 's'} will reconcile but ${_reviewList.length === 1 ? 'has' : 'have'} open review items</strong> —
+    ${_reviewList.map(d => `${esc(d.tenant_name || 'Unnamed')} (${esc(_reviewItems(d).join(', '))})`).join('; ')}.
+    These do not stop the CAM calculation. Confirming validates the extraction, not the lease terms.
+  </div>` : ''}` : '';
 
   el.innerHTML = `
     <div class="bulk-results-head">
@@ -7562,10 +8723,69 @@ function renderBulkResults() {
   if (activePropId) {
     const _rqProp = _props.find(p => p.id === activePropId);
     if (_rqProp) renderPropertyReviewQueue(_rqProp);
+    _renderExtractionNextStep(_rqProp);
   }
 
   // Advance onboarding step bar when the first lease is extracted
   if (tenantData.some(t => t && t.tenant_name)) _obSyncState();
+}
+
+// After extraction, say what to do next — on the screen the user is standing on.
+//
+// #propertyReviewQueuePanel renders into the OVERVIEW pane. Uploading leases
+// leaves the user on Spaces, looking at the extracted tenants, with the review
+// queue and every resolve action one tab away and nothing pointing there. The
+// tenant is flagged inline, but nothing tells them a flag is actionable or what
+// resolving it involves — so the workflow stops at step 5.
+//
+// This banner sits with the extraction results and names the specific tenant,
+// the specific missing field, and the button that opens it. When there is
+// nothing to resolve it says what comes next instead, so the screen is never a
+// dead end in either state.
+function _renderExtractionNextStep(prop) {
+  // CLEAR FIRST, ALWAYS. This banner is stale the moment the property changes,
+  // so removing it must not sit behind any early return.
+  //
+  // It used to read `if (!host || !prop) return;` BEFORE the remove. renderBulkResults
+  // calls this with _props.find(p => p.id === activePropId), which is undefined
+  // whenever activePropId points at a property that is no longer in _props —
+  // exactly what happens the moment a property is deleted. The banner from the
+  // previous property then stayed in the DOM permanently, and reappeared over
+  // every property opened afterwards.
+  //
+  // Reported from the pilot as a data leak: a brand-new property, on an account
+  // whose portfolio had just been emptied, showing "1 of 5 leases need a human —
+  // SafeShield Insurance". Nothing had leaked. The drop zone was empty and the
+  // list said "No lease documents have been uploaded yet" — the only thing on
+  // screen claiming otherwise was this node, left behind from a property that
+  // no longer existed. My bug, and it wasted a round of database forensics.
+  const old = document.getElementById('extractionNextStep');
+  if (old) old.remove();
+  const host = document.getElementById('bulkResults');
+  if (!host || !prop) return;
+  const tenants = (prop.tenants || []).filter(Boolean);
+  if (!tenants.length) return;
+
+  const items = (typeof getReviewQueueItems === 'function' ? getReviewQueueItems([prop]) : [])
+    .filter(i => !i.reviewerConfirmed);
+  const box = document.createElement('div');
+  box.id = 'extractionNextStep';
+  box.className = 'ob-hint ens' + (items.length ? ' ens--todo' : ' ens--ready');
+
+  if (items.length) {
+    const first = items[0];
+    const why = (first.missingFields[0] || first.warningReasons[0] || 'needs a check');
+    box.innerHTML =
+      `<strong>Next step:</strong> ${esc(String(items.length))} of ${esc(String(tenants.length))} leases need a human before CAM can be trusted — ` +
+      `<b>${esc(first.tenantName)}</b> is missing <b>${esc(why)}</b>.` +
+      `<button class="ens-btn" onclick="openReviewItem('${esc(prop.id)}','${esc(first.tenantId)}','tenant')">Resolve ${esc(first.tenantName)} &rsaquo;</button>`;
+  } else {
+    box.innerHTML =
+      `<strong>Next step:</strong> all ${esc(String(tenants.length))} leases are verified. ` +
+      `Upload this year&rsquo;s CAM invoices, then run the reconciliation.` +
+      `<button class="ens-btn" onclick="switchWorkspaceTab('cam');var c=document.getElementById('cardInvoices');if(c)c.scrollIntoView({behavior:'smooth',block:'start'});">Go to Invoices &rsaquo;</button>`;
+  }
+  host.parentNode.insertBefore(box, host);
 }
 
 function toggleBulkDetail(i) {
@@ -7657,16 +8877,44 @@ async function saveBulkTenant(i) {
     });
   }
 
-  // Persist to Supabase immediately — don't rely on debounced oninput
-  await savePropertyData();
+  // Persist to Supabase immediately — don't rely on debounced oninput.
+  //
+  // WRAPPED, because every line of user feedback below this point — the row
+  // flash, the "Saved ✓" button state, the collapse, the re-render and the
+  // "Lease updated" toast — is downstream of these awaits. Any rejection
+  // skipped all of it, and the onclick does not catch, so a failed save was
+  // completely silent: the user fills in every field, presses Done, and
+  // nothing whatsoever happens. Reported from the pilot exactly that way.
+  //
+  // A save that fails must say so and must leave the editor open with the
+  // user's values intact, so the work is not lost and can be retried.
+  const _doneBtn = document.getElementById(`bdone-${i}`);
   const prop = currentProperty();
-  if (prop?.id) await resyncTenantsToTable(prop.id, tenantData.filter(t => t?.tenant_name && (!t?.extractionFailed || t?._userConfirmed) && !t?._pendingJobReview));
+  try {
+    await savePropertyData();
+    const _rows = tenantData.filter(t => t?.tenant_name && (!t?.extractionFailed || t?._userConfirmed) && !t?._pendingJobReview);
+    if (prop?.id && _tenantsBelongTo(prop.id, _rows)) await resyncTenantsToTable(prop.id, _rows);
+  } catch (e) {
+    logError('saveBulkTenant', e, { tenant: d?.tenant_name, propId: prop?.id });
+    if (_doneBtn) { _doneBtn.disabled = false; _doneBtn.textContent = 'Done \u2713'; }
+    showToast(`Could not save ${d?.tenant_name || 'this lease'} \u2014 ${e?.message || 'the save failed'}. Your changes are still on screen; try again.`,
+              { color: '#92400e', textColor: '#fef3c7', duration: 8000 });
+    return;
+  }
   // Flush the blob immediately so a reload within 800ms still reads fresh data.
   // loadPropertyData() skips the tenants table when the blob exists, so the blob
   // must be current before the debounce would naturally fire.
   clearTimeout(_saveDebounceTimer);
   _saveDebounceTimer = null;
-  if (prop) await saveProperty(prop);
+  try {
+    if (prop) await saveProperty(prop);
+  } catch (e) {
+    logError('saveBulkTenant/saveProperty', e, { tenant: d?.tenant_name, propId: prop?.id });
+    if (_doneBtn) { _doneBtn.disabled = false; _doneBtn.textContent = 'Done \u2713'; }
+    showToast(`Could not save ${d?.tenant_name || 'this lease'} \u2014 ${e?.message || 'the save failed'}. Your changes are still on screen; try again.`,
+              { color: '#92400e', textColor: '#fef3c7', duration: 8000 });
+    return;
+  }
   console.log('[saveBulkTenant] tenant', i, 'saved:', d?.tenant_name);
 
   // Success flash
@@ -7745,7 +8993,10 @@ async function removeBulkTenant(i) {
   renderBulkResults();
   checkSqftValidation();
   // Full re-sync: delete all rows for this property then re-insert what remains
-  if (prop?.id) await resyncTenantsToTable(prop.id, tenantData.filter(t => t?.tenant_name && (!t?.extractionFailed || t?._userConfirmed) && !t?._pendingJobReview));
+  {
+    const _rows = tenantData.filter(t => t?.tenant_name && (!t?.extractionFailed || t?._userConfirmed) && !t?._pendingJobReview);
+    if (prop?.id && _tenantsBelongTo(prop.id, _rows)) await resyncTenantsToTable(prop.id, _rows);
+  }
   await savePropertyData();
 }
 
@@ -7762,14 +9013,15 @@ function retryUploadForSlot(index) {
       alert("No file selected.");
       return;
     }
+    // NO raw-size gate here. This path goes through LeaseIngest, which
+    // rasterizes and batches a 40 MB copier scan so the original file is never
+    // sent whole — gating it on raw size would reject the documents that
+    // feature exists to accept. The 60 MB guard removed from here was doing
+    // nothing useful either; the real limits apply per-request, downstream.
     if (file.size === 0) {
       alert("File failed to load. Try re-uploading.");
       return;
     }
-    if (file.size > 60 * 1024 * 1024) {
-      alert("This lease is very large (" + (file.size/1048576).toFixed(0) + " MB). Please split it or upload a compressed copy.");
-      return;
-      }
     await retryExtractionWithFile(index, file);
   };
   input.click();
@@ -7790,11 +9042,8 @@ async function retryExtractionWithFile(index, file) {
   const t    = tenantData[index];
   const prop = currentProperty();
 
-  if (file.size > 60 * 1024 * 1024) {
-    alert("This lease is very large (" + (file.size/1048576).toFixed(0) + " MB). Please split it or upload a compressed copy.");
-    return;
-    }
-
+  // No raw-size gate — see retryUploadForSlot. LeaseIngest.preflight below
+  // handles large scans by downscaling them, not by refusing them.
   const row = document.getElementById(`btr-${index}`);
   if (row) {
     row.style.opacity = '0.5';
@@ -7818,14 +9067,16 @@ async function retryExtractionWithFile(index, file) {
       if (!leaseText) {
         extracted = { tenant_name: null, status: 'failed' };
       } else {
-        extracted = await callClaudeForLease(leaseText);
+        extracted = await callClaudeForLease(leaseText, file.name);
       }
     } catch (err) {
       console.error('[retryExtraction] extraction error:', err);
     }
 
     if (extracted && leaseText) extracted.rawText = leaseText;
-    const norm = extracted ? normalizeTenant(extracted) : null;
+    // Re-extracting an EXISTING tenant: the id below is taken from `t`, so this
+    // mint only fires for a record that never had one.
+    const norm = extracted ? mintTenantIdentity(normalizeTenant(extracted)) : null;
 
     // Confidence scoring (mirrors handleBulkLeases exactly)
     const hasStrongName = norm ? isStrongName(norm.tenant_name) : false;
@@ -7881,7 +9132,7 @@ async function retryExtractionWithFile(index, file) {
       _needsReview:     isPartial,
       _showRetry,
       _error:           isValid ? null : 'Could not identify a tenant — please enter fields manually',
-      id:               t?.id ?? crypto.randomUUID(),
+      id:               t?.id ?? mergedNorm?.id ?? null,   // minted above, never here
       reviewOverrides:  prevOverrides,
       fieldEvidence:    prevEvidence,
     };
@@ -7933,11 +9184,13 @@ function normalizeCategory(vendor, description) {
 
 async function classifyCategory(vendorName, amount) {
   try {
+    // SEC-2 — the classification rules are server-side now; the user turn
+    // carries only the invoice facts.
     const data = await claudeFetch({
-      model: MODEL,
+      task: 'category_classification',
       max_tokens: 64,
       messages: [{ role: 'user', content:
-        CATEGORY_PROMPT + `\n\nVendor: ${vendorName || 'Unknown'}\nAmount: $${amount || '0'}`
+        `Vendor: ${vendorName || 'Unknown'}\nAmount: $${amount || '0'}`
       }],
     });
     if (data?.category && CATEGORIES.includes(data.category)) return data;
@@ -7984,7 +9237,7 @@ async function handleBatchInvoices(fileList) {
     let d = null;
     let claudeError = null;
     try {
-      d = await callClaude(files[i], INVOICE_PROMPT);
+      d = await callClaude(files[i], 'invoice_extraction');
     } catch (err) {
       console.error('[Mainstreet] Claude extraction failed:', err.message, err);
       claudeError = err.message;
@@ -8026,7 +9279,7 @@ async function handleBatchInvoices(fileList) {
       ? window.EscrowReserveEngine.classifyInvoiceReserveType({ vendorName, category: resolvedCategory })
       : { reserveType: 'other', confidence: 30 };
 
-    invoiceData.push({
+    invoiceData.push(canonicaliseInvoiceAmount({
       vendorName:  cleanHTML(vendorName),
       amount:      d?.amount      ?? '',
       category:    resolvedCategory,
@@ -8037,7 +9290,7 @@ async function handleBatchInvoices(fileList) {
       _error:           claudeError,
       _fileUploadError: fileUploadError,
       fileUrl, fileName: files[i].name, fileType: files[i].type,
-    });
+    }));
 
     renderInvResults();
     const idx = invoiceData.length - 1;
@@ -8058,7 +9311,7 @@ async function handleBatchInvoices(fileList) {
   const merged = mergeInvoicesDedup(existing.invoices, newInvoices);
   property.invoices = merged;
   // Keep invoiceData in sync with merged result so UI shows the full set.
-  invoiceData.splice(0, invoiceData.length, ...merged);
+  invoiceData.splice(0, invoiceData.length, ...canonicaliseInvoiceAmounts(merged));
   renderInvResults();
   if (lastResults.length > 0) { _resultsStale = true; _updateStaleResultsBanner(); }
 
@@ -8175,6 +9428,10 @@ function renderInvResults() {
           ${d._error ? `<div class="err-banner" style="margin-bottom:10px;">Extraction error: ${esc(d._error)}</div>` : ''}
           <div id="dup-warn-${i}"></div>
           <div id="sanity-warn-${i}"></div>
+          ${d.fileUrl ? `<div class="inv-source-row">
+            <button class="inv-view-file-btn" onclick="event.stopPropagation();viewInvFile(${i})">&#x1F4C4; View Invoice</button>
+            <span class="inv-source-name">${esc(d.fileName || 'source document')}</span>
+          </div>` : ''}
           <div class="field-row">
             <div class="field" style="flex:2;">
               <label>Vendor ${confidenceBadge(conf.vendorName)}</label>
@@ -8232,8 +9489,12 @@ function clickableConfBadge(score, i, weakFields) {
   if (isNaN(s) || s >= 90 || !weakFields.length) return confidenceBadge(score);
   const label = s >= 70 ? '&#x26A0; Please verify' : '&#x2691; Low confidence — click to review';
   const cls   = s >= 70 ? 'conf-mid' : 'conf-low';
+  // data-* not string interpolation: JSON.stringify emits double quotes, which
+  // terminate a double-quoted attribute and leave the handler a syntax error.
+  // This badge had been dead since it shipped — clicking it ran nothing.
   return `<span class="conf-badge ${cls} conf-clickable"
-    onclick="event.stopPropagation();openInvoiceAndHighlight(${i},${JSON.stringify(weakFields)})"
+    data-inv-idx="${i}" data-weak-fields="${esc(JSON.stringify(weakFields))}"
+    onclick="event.stopPropagation();openInvoiceAndHighlight(Number(this.dataset.invIdx),JSON.parse(this.dataset.weakFields||'[]'))"
     title="Click to jump to fields that need review">${label}</span>`;
 }
 
@@ -8358,23 +9619,41 @@ function closeInvFileViewer() {
   document.getElementById('invFileViewerBody').innerHTML = '';
 }
 
-function openInvFileViewer(url, title, fileType) {
+async function openInvFileViewer(url, title, fileType) {
   if (!url) return;
   document.getElementById('invFileViewerTitle').textContent = title || 'Invoice';
   const body = document.getElementById('invFileViewerBody');
   body.innerHTML = '';
+  document.getElementById('invFileViewer').style.display = 'flex';
+
+  // SEC-1 — invoices are UPLOADED FILES (PDFs, phone photos, scans), stored in
+  // the same bucket family as leases. Setting .src straight from the stored
+  // /object/public/ URL worked only while that bucket was public; once it is
+  // private the image is a broken icon and the iframe is a blank rectangle,
+  // with nothing on screen to say why. This surface was missed when the Evidence
+  // Viewer, lease modal and Documents were routed through the resolver.
+  body.innerHTML = '<div class="inv-file-loading" style="padding:24px;color:var(--text-4);font-size:0.85rem;">Loading document…</div>';
+  const readable = await resolveDocumentUrl(url);
+  if (!readable) {
+    body.innerHTML = '<div style="padding:24px;color:var(--c-fed7aa);font-size:0.88rem;line-height:1.5;">'
+      + 'This invoice could not be opened — you may not have access to it, or it is no longer stored.'
+      + '</div>';
+    return;
+  }
+  body.innerHTML = '';
+
   if (fileType && fileType.startsWith('image/')) {
     const img = document.createElement('img');
-    img.src = url;
+    img.src = readable;
+    img.alt = title || 'Invoice';
     img.style.cssText = 'max-width:100%;max-height:calc(100vh - 80px);border-radius:8px;object-fit:contain;';
     body.appendChild(img);
   } else {
     const iframe = document.createElement('iframe');
-    iframe.src = url;
+    iframe.src = readable;
     iframe.style.cssText = 'width:100%;height:calc(100vh - 80px);border:none;border-radius:8px;';
     body.appendChild(iframe);
   }
-  document.getElementById('invFileViewer').style.display = 'flex';
 }
 
 async function handleExplain(button, fn) {
@@ -8409,9 +9688,8 @@ async function explainCharge(i) {
   try {
     await handleExplain(btn, async () => {
     const data = await explainFetch({
-      model: MODEL,
+      task: 'invoice_explanation_landlord',
       max_tokens: 1024,
-      system: LANDLORD_SYSTEM_PROMPT,
       messages: [{ role: 'user', content:
         `Vendor: ${inv.vendorName || 'Unknown'}\n` +
         `Category: ${inv.category || 'other'}\n` +
@@ -8504,6 +9782,17 @@ function refreshInvSummary(i) {
 
 async function removeInvItem(i) {
   if (!confirm('Remove this invoice from the list?')) return;
+  // PW-1 — stamp stable ids and migrate any positional Related-Items link
+  // BEFORE the splice. After it, every index past `i` means a different
+  // invoice, and a link recorded as "invoice 3" would silently re-point.
+  try {
+    const _p = currentProperty();
+    if (_p && window.PropertyOS && PropertyOS.ensureInvoiceIds) {
+      _p.invoices = Array.from(invoiceData);
+      PropertyOS.ensureInvoiceIds(_p);
+      invoiceData.splice(0, invoiceData.length, ...canonicaliseInvoiceAmounts(_p.invoices));
+    }
+  } catch (e) { logError('removeInvItem:ensureInvoiceIds', e, {}); }
   invoiceData.splice(i, 1);
   // Explicitly sync before savePropertyData() — the empty-array guard in
   // savePropertyData() protects tenant-portal mode from wiping invoices,
@@ -8767,14 +10056,14 @@ async function confirmYardiImport() {
     const date   = cleanHTML(yardiCell(row, 'invoiceDate'));
     const cat    = document.getElementById(`ycat-${i}`)?.value || 'other';
     if (!vendor && amt <= 0) return;
-    invoiceData.push({
+    invoiceData.push(canonicaliseInvoiceAmount({
       vendorName:  vendor || 'Unknown Vendor',
       amount:      amt,
       category:    cat,
       invoiceDate: date,
       confidence:  { vendorName: 95, amount: 95, category: 70, invoiceDate: 90 },
       _error:      null,
-    });
+    }));
     imported++;
   });
 
@@ -8941,26 +10230,53 @@ function showSanityWarning(idx, category, amount, avg) {
 // with commas (e.g. "2,500") or trailing units (e.g. "2500 sq ft").
 // Returns the numeric value, or 0 if the value is empty / non-numeric.
 function parseSqft(v) {
-  if (v === null || v === undefined || v === '') return 0;
-  let s = String(v).trim();
-  // Replace capital-O OCR artifact with zero: "45,OOO" → "45,000"
-  s = s.replace(/O/g, '0');
-  // European-style thousand separators: "45.000" → "45000" (only when no decimal follows)
-  s = s.replace(/\.(?=\d{3}(?:[,\s]|$))/g, '');
-  // Strip remaining non-numeric chars except decimal point
-  s = s.replace(/[^0-9.]/g, '');
-  const n = parseFloat(s);
-  return isNaN(n) ? 0 : n;
+  // DELEGATE. The parsing rules moved to source-values.js so that the four
+  // places which used to ask "does this lease have square footage?" in four
+  // different ways now share one reading. This wrapper keeps the old contract
+  // exactly — a number, 0 for anything unusable — because dozens of callers sum
+  // areas with it and none of them wants a null. Callers that must tell "0"
+  // apart from "unreadable" call SourceValues.readArea directly.
+  return window.SourceValues.readArea(v).value || 0;
 }
 
 function showAllocationModal() {
   const totalSqft = parseFloat(document.getElementById('totalSqft').value);
-  const tenants   = tenantData.filter(t => t && t.tenantName && parseSqft(t.leasedSqft) > 0);
-  const invoices  = invoiceData.filter(inv => inv && inv.vendorName && parseFloat(inv.amount) > 0);
+  // Canonical tenant fields are snake_case — normalizeTenant() produces
+  // tenant_name / leased_sqft, and that is what every tenant in the app
+  // actually carries. This filter read t.tenantName / t.leasedSqft, which no
+  // tenant has ever had, so it matched ZERO tenants on every property
+  // including the demo. The effect was silent: the guard below fell through to
+  // runAllocation() and the confirmation step — "You are about to allocate $X
+  // across N tenants" — never appeared for anybody. camelCase is still accepted
+  // in case an older record carries it.
+  const tName = t => t && (t.tenant_name ?? t.tenantName);
+  const tSqft = t => t && (t.leased_sqft ?? t.leasedSqft);
+  const tenants   = tenantData.filter(t => t && tName(t) && parseSqft(tSqft(t)) > 0);
+  const invoices  = invoiceData.filter(inv => inv && (inv.vendorName ?? inv.vendor) && parseFloat(inv.amount) > 0);
 
-  // If data isn't ready let runAllocation() surface the validation error
+  // If data isn't ready, SAY SO WHERE THE USER IS STANDING.
+  //
+  // This used to hand straight to runAllocation(), which writes its validation
+  // message into #resultsBody — inside the CAM pane. A user who presses this
+  // before the property is set up is usually on Property or Spaces, so the
+  // guidance was rendered into a hidden tab and the button did nothing at all:
+  // no toast, no message, no visible change. Verified by walking it.
+  //
+  // The old wording pointed at "Section 1" and "Section 2", which stopped
+  // existing when the workspace became tabbed.
   if (!totalSqft || totalSqft <= 0 || !tenants.length || !invoices.length) {
-    runAllocation();
+    const missing = [];
+    if (!totalSqft || totalSqft <= 0) missing.push('the property\u2019s total square footage (Property tab)');
+    if (!tenants.length)              missing.push('at least one lease with a tenant name and leased sqft (Spaces tab)');
+    if (!invoices.length)             missing.push('this year\u2019s CAM invoices (CAM tab)');
+    showToast('Not ready to reconcile yet \u2014 still needed: ' + missing.join('; ') + '.',
+              { color: '#1e3a5f', textColor: '#dbeafe', duration: 7000 });
+    // Take them to the first thing that is missing rather than leaving them to
+    // work out which tab it was.
+    if (!totalSqft || totalSqft <= 0)      switchWorkspaceTab('property');
+    else if (!tenants.length)              switchWorkspaceTab('spaces');
+    else                                   switchWorkspaceTab('cam');
+    runAllocation();   // still records the validation state for the CAM pane
     return;
   }
 
@@ -9020,8 +10336,35 @@ function matchesTenant(inv, tenant) {
 function matchInvoiceToTenant(invoice, tenants) {
   let bestMatch = null;
   let bestConf  = 0;
-  const text = [invoice.vendorName, invoice.category, invoice.invoiceDate]
+  // CAM-4 — a direct match bills the ENTIRE invoice to one tenant, so the
+  // matcher must be conservative. It was neither.
+  //
+  // The haystack included invoiceDate, and matching was naive substring:
+  //   unit "1"  vs "apex roofing 2026-05-01"  -> hit, conf 90, whole invoice
+  //   unit "2"  vs "...2026-..."              -> hit, conf 90
+  //   name "A"  vs "...repairs..."            -> hit, conf 75
+  //   name "Roof" vs "Apex Roofing"           -> hit, conf 75
+  // Units 1 and 2 are the most common unit numbers there are; on any property
+  // with a Unit 1 tenant, EVERY invoice in a 2026 reconciliation was billed in
+  // full to them.
+  //
+  // A date can never identify a tenant, so it is out of the haystack. Matching
+  // is now on word boundaries, and identifiers too short to be evidence are not
+  // allowed to trigger a whole-invoice assignment.
+  const text = [invoice.vendorName, invoice.category]
     .filter(Boolean).join(' ').toLowerCase();
+
+  const MIN_NAME_LEN = 4;   // "A", "Li", "BP" cannot carry an invoice on their own
+  const MIN_UNIT_LEN = 2;   // "1" is a substring of half the numbers in a document
+  const _tokenHit = (needle, hay) => {
+    if (!needle) return false;
+    const n = String(needle).trim().toLowerCase();
+    if (!n) return false;
+    // Whole-token match: "roof" must not match "roofing", and "1" must not
+    // match "2026-05-01".
+    const esc = n.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
+    return new RegExp('(^|[^a-z0-9])' + esc + '($|[^a-z0-9])', 'i').test(hay);
+  };
 
   console.log('[matchInvoiceToTenant] INPUT', {
     invoiceVendorName:  invoice.vendorName,
@@ -9036,14 +10379,51 @@ function matchInvoiceToTenant(invoice, tenants) {
     tenantUnits:        tenants.map(t => t.unitNumber || '(none)'),
   });
 
+  // F-14 — WHAT THE MATCHER DISCARDED, RECORDED RATHER THAN RE-DERIVED.
+  //
+  // `confidence` is a routing signal with exactly three reachable values — 0, 75
+  // and 90 — not a continuous score. Two consumers were written as though the
+  // band below 75 meant "matched weakly": the per-invoice flag fired on
+  // `< 75`, which is the DEFINITION of a shared invoice and so decorated 16 of
+  // 17 charge rows; and the audit detector fired on `> 0 && < 75`, a band this
+  // function cannot produce, so it never fired at all. Always true, and never
+  // true, for the same intended idea.
+  //
+  // The genuine uncertainty is not in the number. It is in what the loop below
+  // throws away: a TIE, where two tenants hit equally and the winner is decided
+  // by array order; and a NEAR MISS, where a tenant's own unit number or name
+  // appears in the text but is too short for the CAM-4 guard to trust. Both are
+  // recorded here, by the code that makes the decision, and read by the audit
+  // layer — the same discipline the occupancy and exclusion records follow.
+  const candidates = [];
+  const nearMisses = [];
+
   for (const t of tenants) {
     let conf   = 0;
     let reason = '';
     // support both Lease objects (tenantName) and tenantData items (tenant_name)
     const name = t.tenantName || t.tenant_name || '';
 
-    const unitHit = !!(t.unitNumber && text.includes(t.unitNumber.toLowerCase()));
-    const nameHit = !!(name && text.includes(name.toLowerCase()));
+    const unitStr = String(t.unitNumber || '').trim();
+    const nameStr = String(name || '').trim();
+    const unitLong = unitStr.length >= MIN_UNIT_LEN;
+    const nameLong = nameStr.length >= MIN_NAME_LEN;
+    const unitHit = unitLong && _tokenHit(unitStr, text);
+    const nameHit = nameLong && _tokenHit(nameStr, text);
+
+    // THE GUARD IS CORRECT; ITS SILENCE WAS NOT. "1" is a substring of half the
+    // numbers in a document and a two-letter tenant name carries no evidence, so
+    // neither may assign a whole invoice — that is CAM-4 and it stays. But an
+    // invoice reading "Repair to Unit 5" for the tenant in Unit 5 currently
+    // looks identical to an ordinary janitorial invoice, and it is not.
+    if (!unitLong && unitStr && _tokenHit(unitStr, text)) {
+      nearMisses.push({ tenantName: name, tenantId: t.id || null,
+                        signal: 'unit', token: unitStr, why: 'too_short' });
+    }
+    if (!nameLong && nameStr && _tokenHit(nameStr, text)) {
+      nearMisses.push({ tenantName: name, tenantId: t.id || null,
+                        signal: 'name', token: nameStr, why: 'too_short' });
+    }
 
     if (unitHit) {
       conf   = 90;
@@ -9052,6 +10432,8 @@ function matchInvoiceToTenant(invoice, tenants) {
     if (nameHit) {
       if (conf < 75) { conf = 75; reason = name; }
     }
+
+    if (conf > 0) candidates.push({ tenantName: name, tenantId: t.id || null, confidence: conf, reason });
 
     console.log('[matchInvoiceToTenant] CANDIDATE', {
       tenantName:  name,
@@ -9070,25 +10452,208 @@ function matchInvoiceToTenant(invoice, tenants) {
     }
   }
 
+  // A TIE IS AN UNANSWERED QUESTION, not a match. `conf > bestConf` is strict,
+  // so when two tenants hit equally the FIRST IN THE ARRAY takes the whole
+  // invoice — and reversing the tenant order bills a different tenant. That is
+  // a whole-invoice decision made by iteration order, and nothing reported it.
+  // The selection below is unchanged; what changes is that the tie is now on the
+  // record, and the audit layer refuses to bill either candidate until a person
+  // resolves it.
+  // SORTED, so the REPORT does not inherit the array order the defect is about.
+  // `bestMatch` above is still first-wins on the original order — changing that
+  // would invent the answer the finding exists to ask a person for — but the
+  // candidate list a manager reads, and the finding built from it, must be the
+  // same whichever lease was uploaded first. Confidence descending, then name.
+  const _rank = (a, b) => b.confidence - a.confidence
+    || (a.tenantName < b.tenantName ? -1 : a.tenantName > b.tenantName ? 1 : 0);
+  candidates.sort(_rank);
+  const tied = candidates.filter(c => c.confidence === bestConf);
+  const ambiguous = bestConf > 0 && tied.length > 1;
+
   console.log('[matchInvoiceToTenant] RESULT', {
     vendor:     invoice.vendorName || invoice.vendor,
     bestConf,
     bestMatch,
-    verdict:    bestConf >= 75 ? 'DIRECT' : bestConf > 0 ? 'LOW-CONF' : 'SHARED (no match)',
+    candidates: candidates.length,
+    ambiguous,
+    nearMisses: nearMisses.length,
+    verdict:    ambiguous ? 'AMBIGUOUS (tie)'
+              : bestConf >= 75 ? 'DIRECT' : 'SHARED (no match)',
   });
 
-  return bestMatch; // null = no match, shared expense
+  // ONE RETURN SHAPE, ALWAYS. It used to be `bestMatch | null`, which had no
+  // room for a near miss — a case where nothing matched and there is still
+  // something to say. Callers read `.match` for the decision and the rest for
+  // what the decision passed over.
+  return {
+    match: bestMatch,          // null = no match, shared expense
+    candidates,
+    tied,
+    ambiguous,
+    nearMisses,
+  };
 }
 
 // ─── Full Reconciliation Engine ───────────────────────────────────────────────
 // Works on a Property object. Shared invoices are split pro-rata; invoices with
 // a direct tenant match (confidence >= 75) are charged only to that tenant.
 
+function _fmtMoney(n) {
+  const v = typeof n === 'number' ? n : parseMoney(n);
+  return v == null ? '—' : v.toLocaleString('en-US', { style: 'currency', currency: 'USD' });
+}
+
+/**
+ * THE LEASE'S CEILING, IN CENTS — computed in exactly one place.
+ *
+ * `capBaseAmount × (1 + capPercentage%)` is the maximum billable CAM the lease
+ * permits; the cap-basis panel already states it in those words. It was computed
+ * inline where the cap is ENFORCED, and a second, different notion of "expected
+ * CAM" was written a hundred lines below it:
+ *
+ *     const expectedCam = live.cap;                     // a PERCENTAGE
+ *     const variance    = actualCam - expectedCam;      // dollars minus percent
+ *
+ * So a $34,650 charge reported a $34,645 variance — essentially the entire bill —
+ * and that pair was persisted to cam_reconciliations and rendered as the Space
+ * view's "Variance" tile. The two numbers were never the same quantity; only one
+ * of them was ever a dollar amount.
+ *
+ * Returns null when either operand is missing. A cap percentage ALONE cannot
+ * produce a dollar ceiling, and manufacturing the base is precisely what the
+ * defect did. Null is the honest answer, and it is the answer the caller must
+ * carry through rather than substituting a percent.
+ */
+function _camCeilingCents(capBaseAmount, capPercentage) {
+  const _MC = window.MoneyCents;
+  if (!_MC || capBaseAmount == null || capPercentage == null) return null;
+  const base = parseFloat(capBaseAmount);
+  const pct  = parseFloat(capPercentage);
+  if (!Number.isFinite(base) || !Number.isFinite(pct)) return null;
+  return _MC.toCents(base * (1 + pct / 100));
+}
+
+/**
+ * Expected CAM and variance for one tenant, derived ONLY from the dollar basis.
+ *
+ * `expectedCamBasis` is STAMPED, NOT SNIFFED — the same doctrine `precision`
+ * already follows on this record. A persister cannot tell a legitimate small
+ * ceiling ($92.00) from a stray cap percentage (5) by looking at the number, so
+ * the producer states which arithmetic made it and saveCamResults trusts nothing
+ * that lacks the stamp. That is what makes the bad pair structurally
+ * unpersistable rather than merely absent today.
+ */
+function _camExpectation(capBaseAmount, capPercentage, actualCam) {
+  const _MC   = window.MoneyCents;
+  const cents = _camCeilingCents(capBaseAmount, capPercentage);
+  if (cents === null || !_MC) return { expectedCam: null, variance: null, expectedCamBasis: null };
+  const expectedCam = _MC.fromCents(cents);
+  const variance = (actualCam != null && Number.isFinite(actualCam))
+    ? Math.round((actualCam - expectedCam) * 100) / 100
+    : null;
+  return { expectedCam, variance, expectedCamBasis: 'cap_ceiling' };
+}
+
 function runFullReconciliation(property) {
   // Always read fresh tenant data — never rely on what was baked into Lease objects
   const liveTenants = currentProperty()?.tenants || [];
-  const { leases, invoices, totalSqFt } = property;
+  const { leases, totalSqFt } = property;
+  let { invoices } = property;
+
+  // CAM-5 — refuse rather than divide by zero. proRata = sqFt / 0 is Infinity,
+  // which rendered as "$∞" on a tenant statement; with both zero it is NaN.
+  // The other engine guarded this; the one that runs did not.
+  if (!(Number(totalSqFt) > 0)) {
+    console.error('[runFullReconciliation] refused: property has no rentable area');
+    if (typeof showToast === 'function') {
+      showToast('⚠️ Cannot reconcile — this property has no total square footage. Enter it in Property Setup first.',
+        { color: '#92400e', textColor: '#fef3c7', duration: 8000 });
+    }
+    return [];
+  }
   if (!leases.length || !invoices.length) return [];
+
+  // CAM-2 — allocate only the invoices that belong to THIS reconciliation year.
+  // The year was computed and used to TAG the result but never to select the
+  // inputs, so a run headed "2026 CAM" summed 2025's invoices too and every
+  // number was inflated by a full prior year. The only signal was an advisory
+  // flag saying dates "may not match".
+  //
+  // Undated invoices are kept — dropping them would silently lose real expenses
+  // — but they are counted and reported, because "included on no evidence" is a
+  // decision the manager should see rather than one the engine makes quietly.
+  const _year = property.camYear != null ? String(property.camYear) : null;
+  let _outOfYear = 0, _undated = 0, _datedInYear = 0;
+  if (_year) {
+    invoices = invoices.filter(inv => {
+      const raw = inv.invoiceDate || inv.date || '';
+      const d = raw ? new Date(raw) : null;
+      if (!d || isNaN(d.getTime())) { _undated++; return true; }
+      const keep = String(d.getFullYear()) === _year;
+      if (keep) _datedInYear++; else _outOfYear++;
+      return keep;
+    });
+
+    // THE UNDATED INVOICES WERE HOLDING THE RUN OPEN.
+    //
+    // The refusal below fires when NOTHING survives the filter. An undated
+    // invoice always survives it — deliberately, so a real expense is never
+    // silently dropped — and that is enough to keep a completely mismatched
+    // year alive. Measured: a property whose twelve dated invoices were all
+    // 2025, reconciled as 2026, kept its two undated invoices and produced
+    // $8,280.00 of a $217,900.00 pool. Every figure on screen was internally
+    // consistent and the year was wrong.
+    //
+    // The trigger is a CONTRADICTION, not a shortage. Dated invoices exist and
+    // none of them falls in the year being billed, so the register and the year
+    // disagree and one of them has to be corrected. A property with no dated
+    // invoices at all is a different situation — nothing contradicts the year,
+    // and refusing there would block a sloppy but legitimate run.
+    if (_datedInYear === 0 && _outOfYear > 0) {
+      console.error(`[runFullReconciliation] refused: no invoice is dated in CAM year ${_year}; ` +
+                    `${_outOfYear} dated invoice(s) fall outside it and ${_undated} carry no date`);
+      if (typeof showToast === 'function') {
+        showToast(`⚠️ Nothing to reconcile for ${_year} — none of the ${_outOfYear + _undated} invoice${_outOfYear + _undated !== 1 ? 's' : ''} loaded is dated in ${_year}. ` +
+          `${_outOfYear} ${_outOfYear !== 1 ? 'are' : 'is'} dated outside it` +
+          (_undated ? `, and ${_undated} carr${_undated !== 1 ? 'y' : 'ies'} no date at all — those alone cannot establish a CAM year` : '') +
+          `. Switch the CAM year to match your invoices, or upload invoices for ${_year}.`,
+          { color: '#92400e', textColor: '#fef3c7', duration: 14000 });
+      }
+      property._yearScope = { year: _year, excluded: _outOfYear, undated: _undated,
+                              datedInYear: 0, refused: true, reason: 'no_dated_invoice_in_year' };
+      return [];
+    }
+    if (_outOfYear || _undated) {
+      console.log(`[runFullReconciliation] year ${_year}: excluded ${_outOfYear} out-of-year invoice(s); ${_undated} undated invoice(s) included`);
+    }
+    // CAM-2 follow-on — the year filter must not fail silently.
+    //
+    // The filter shipped with a bare `return []`, and the default CAM year is
+    // the CURRENT year. A manager reconciling last year's CAM in August — which
+    // is when CAM reconciliation actually happens — fed the engine a full set of
+    // real invoices, every one of them out of year, and got back an empty run
+    // with nothing on screen to say why. The correctness fix had turned an
+    // inflated number into a missing one, which is not an improvement.
+    //
+    // Refusing is still right. Refusing quietly is not.
+    if (!invoices.length) {
+      console.error(`[runFullReconciliation] refused: all ${_outOfYear} invoice(s) fall outside CAM year ${_year}`);
+      if (typeof showToast === 'function') {
+        showToast(`⚠️ Nothing to reconcile — all ${_outOfYear} invoice${_outOfYear !== 1 ? 's' : ''} are dated outside the ${_year} CAM year. Switch the CAM year to match your invoices, or upload invoices for ${_year}.`,
+          { color: '#92400e', textColor: '#fef3c7', duration: 12000 });
+      }
+      property._yearScope = { year: _year, excluded: _outOfYear, undated: _undated,
+                              datedInYear: 0, refused: true, reason: 'all_out_of_year' };
+      return [];
+    }
+  }
+  property._yearScope = { year: _year, excluded: _outOfYear, undated: _undated, datedInYear: _datedInYear };
+  // The set this run actually considered, after the CAM-year filter above. Kept
+  // so the variance panel can name out-of-year invoices as out-of-year instead
+  // of reporting them as expenses that mysteriously reached no tenant — the year
+  // filter narrows a LOCAL, so nothing outside this function could otherwise
+  // tell the two apart. Diagnostic only: nothing reads it to allocate.
+  property._reconciledInvoices = invoices;
 
   // Pre-compute property-level sqFt overflow once
   const totalLeasedSqFt = leases.reduce((s, l) => s + (l.sqFt || 0), 0);
@@ -9108,11 +10673,19 @@ function runFullReconciliation(property) {
   });
 
   invoices.forEach(inv => {
-    const m = matchInvoiceToTenant(inv, leases);
+    const d = matchInvoiceToTenant(inv, leases);
+    const m = d.match;
     inv.matchedTenant   = m ? m.tenantName : null;
     inv.matchedTenantId = m ? m.tenantId   : null;
     inv.matchConfidence = m ? m.confidence : 0;
     inv.matchReason     = m ? m.reason     : '';
+    // F-14 — what the matcher passed over, carried on the record the audit
+    // layer reads. Not re-derived downstream: the tie and the near miss are
+    // decisions this match made, and only it can see them.
+    inv.matchCandidates = d.candidates;
+    inv.matchAmbiguous  = d.ambiguous;
+    inv.matchTied       = d.tied;
+    inv.matchNearMisses = d.nearMisses;
     console.log('[runFullReconciliation] MATCH RESULT', {
       vendor:         inv.vendorName || inv.vendor,
       matchConfidence: inv.matchConfidence,
@@ -9122,52 +10695,246 @@ function runFullReconciliation(property) {
     });
   });
 
-  const directInvoices = invoices.filter(inv => inv.matchConfidence >= 75);
-  const sharedInvoices = invoices.filter(inv => inv.matchConfidence <  75);
+  // PW-3 — an invoice the manager marked NOT CAM-eligible is excluded from the
+  // reconciliation entirely. Default is recoverable (`!== false`), so existing
+  // and AI-imported invoices are unaffected: only an explicit untick changes
+  // the number, which is exactly what the control promises.
+  const recoverable    = window.CamPool.eligible(invoices);
+  const notRecoverable = window.CamPool.excluded(invoices);
+  if (notRecoverable.length) {
+    console.log('[runFullReconciliation] excluded as not CAM-eligible:',
+      notRecoverable.map(i => `${i.vendorName} ${i.amount}`));
+  }
+  const directInvoices = recoverable.filter(inv => inv.matchConfidence >= 75);
+  const sharedInvoices = recoverable.filter(inv => inv.matchConfidence <  75);
+
+  // T2 — THE CAM PERIOD, for occupancy. Built from the same camYear the invoice
+  // filter above uses, so the period a tenant is measured against is the period
+  // the invoices were selected for. No camYear means no period, and with no
+  // period nothing is apportioned: an un-apportioned figure is the pre-T2
+  // behaviour and is the honest answer when we cannot say what is being billed.
+  const _camPeriod = (_year && window.LeasePeriod)
+    ? window.LeasePeriod.periodForYear(_year) : null;
 
   const results = leases.map(lease => {
     // Look up current tenant state directly from property.tenants by stable id
     const live    = liveTenants.find(t => t?.id === lease.id) || {};
+    // SPATIAL SHARE. This is how much of the BUILDING the tenant holds and it is
+    // never adjusted for time — the occupancy factor is a second, independent
+    // multiplicand. Collapsing them into one percentage would destroy the
+    // distinction the statement has to explain.
     const proRata = lease.sqFt / totalSqFt;
 
-    const eligibleShared = sharedInvoices.filter(inv =>
-      !lease.excludedCategories.includes((inv.category || '').toLowerCase())
-    );
-    const sharedTotal = eligibleShared.reduce((s, inv) => s + inv.amount, 0) * proRata;
+    // HOW MUCH OF THE PERIOD. Read once, from the one module that owns it.
+    const occ = (_camPeriod && window.LeasePeriod)
+      ? window.LeasePeriod.occupancy(live, _camPeriod) : null;
+    // The factor is no longer an operand — the allocation multiplies by the
+    // rational below (P6/D9a). It is still read to decide whether occupancy was
+    // applied at all, which is a different question from what it equals.
 
-    const ownInvoices = directInvoices.filter(inv => matchesTenant(inv, lease));
-    const ownTotal    = ownInvoices.reduce((s, inv) => s + inv.amount, 0);
+    const _isExcluded = inv => lease.excludedCategories.includes((inv.category || '').toLowerCase());
 
-    let rawTotal      = sharedTotal + ownTotal;
+    // A DIRECT invoice is placed by its DATE, not multiplied by the factor. A
+    // direct match bills the whole invoice to one tenant — their own submeter,
+    // their own repair — so a tenant who took occupancy in September and caused
+    // a $3,000 October repair owes $3,000, not four twelfths of it. Applying a
+    // time fraction to a specific charge is simply the wrong operation.
+    const _inWindow = inv => {
+      if (!occ || !occ.applied || !occ.overlapStart) return true;
+      const d = window.LeasePeriod.readDate(inv.date || inv.invoiceDate || '');
+      if (d.status !== 'ok') return null;          // undated — cannot be placed
+      return d.value >= occ.overlapStart && d.value <= occ.overlapEnd;
+    };
+
+    // ── P6 · THE CANONICAL INTEGER-CENT BOUNDARY (D9a) ───────────────────────
+    //
+    // Money crosses into the reconciliation here and nowhere else. Below this
+    // line every amount is an integer number of cents, every share is one
+    // BigInt rational rounded once, and the identity closes exactly.
+    //
+    // THE SOURCE RECORD IS NOT REWRITTEN (D9b). `inv.amount` on the stored
+    // invoice keeps whatever the document said; what the reconciliation bills is
+    // the cent. The two differ only when a source genuinely carried sub-cent
+    // precision — or when a general ledger handed us `1234.56 - 1000.01` and
+    // IEEE-754 handed back 234.54999999999995.
+    const _MC = window.MoneyCents;
+    const _spatial  = _MC.ratio(lease.sqFt, totalSqFt);
+    // The rational, not the factor. `occ.factor` is 0.6712328767 where the lease
+    // says 245/365, and only one of those two replays exactly. `applied: false`
+    // is un-apportioned, which is 1/1 — never 0.
+    const _temporal = (occ && occ.applied && occ.numerator != null && occ.denominator > 0)
+      ? { n: occ.numerator, d: occ.denominator } : { n: 1, d: 1 };
+    const _shareCents = inv => _MC.shareCents(_MC.toCents(inv.amount) || 0, [_spatial, _temporal]);
+
+    const eligibleShared = sharedInvoices.filter(inv => !_isExcluded(inv));
+    // D8 — WHAT THIS LEASE EXCLUDED, RECORDED RATHER THAN INFERRED.
+    //
+    // The variance panel used to reach "excluded by a lease" by subtraction, so
+    // a rounding artefact came out under that label — negative $1.06 on the P5
+    // fixture. An exclusion is a decision this loop makes from a schedule the
+    // manager can point at, so this loop is what records it. Nothing here
+    // changes an allocation: these are the cents the tenant did NOT take.
+    const excludedShares = sharedInvoices.filter(_isExcluded).map(inv => ({
+      id: inv.id ?? null, vendorName: inv.vendorName || inv.vendor || '',
+      category: inv.category || '', scope: 'shared', cents: _shareCents(inv),
+    }));
+    // D5 — THE TOTAL IS THE SUM OF THE LINES.
+    //
+    // It used to be `round2(Σ exact)` while the statement listed `round2(exact)`
+    // per line. Both were called "what the tenant owes" and they differed by up
+    // to n/2 cents, which is the whole of the ±$0.01 residual. A tenant adds up
+    // the charges on their statement; the total they arrive at is now the total
+    // they are billed.
+    const _sharedLineCents = eligibleShared.map(_shareCents);
+    const sharedTotalCents = _sharedLineCents.reduce((s, c) => s + c, 0);
+
+    // CAM-3 — the exclusion schedule applies to DIRECT invoices too. It used to
+    // filter only the shared pool, so a $50,000 capital expenditure the lease
+    // explicitly excludes was billed 100% to whichever tenant it matched —
+    // uncapped by pro-rata, and in the clause tenants audit hardest.
+    const matched     = directInvoices.filter(inv => matchesTenant(inv, lease));
+    const _claimable  = matched.filter(inv => !_isExcluded(inv));
+    const excludedDirect = matched.filter(_isExcluded);
+    // A DIRECT exclusion keeps the WHOLE invoice off the bill, not a share of
+    // it — a direct match bills one tenant in full, so what the exclusion
+    // withholds is the full amount. Recorded on the same list so the variance
+    // panel reads one decision rather than two rules.
+    excludedDirect.forEach(inv => excludedShares.push({
+      id: inv.id ?? null, vendorName: inv.vendorName || inv.vendor || '',
+      category: inv.category || '', scope: 'direct', cents: _MC.toCents(inv.amount) || 0,
+    }));
+    // Split three ways: inside the occupancy window, outside it, and undated.
+    // An undated direct invoice on a partial-period tenant cannot be placed, so
+    // it is held out and REPORTED — never silently billed and never silently
+    // dropped.
+    const ownInvoices     = _claimable.filter(inv => _inWindow(inv) === true);
+    const outsideWindow   = _claimable.filter(inv => _inWindow(inv) === false);
+    const undatedDirect   = _claimable.filter(inv => _inWindow(inv) === null);
+    // A direct invoice is billed in full, so its line is the invoice itself —
+    // quantised at the same boundary, never apportioned by either multiplicand.
+    const _ownLineCents = ownInvoices.map(inv => _MC.toCents(inv.amount) || 0);
+    const ownTotalCents = _ownLineCents.reduce((s, c) => s + c, 0);
+
+    let rawCents      = sharedTotalCents + ownTotalCents;
     let capApplied    = false;
     let capAdjustment = null;
 
     if (lease.capPercentage !== null && lease.capBaseAmount !== null) {
-      const cap = lease.capBaseAmount * (1 + lease.capPercentage / 100);
-      if (rawTotal > cap) {
-        capAdjustment = parseFloat((rawTotal - cap).toFixed(2));
-        rawTotal      = cap;
+      // D6 — THE CEILING IS ROUNDED TO CENTS WHERE IT IS COMPUTED.
+      //
+      // `33,333.33 × 1.075` is 35,833.32975. The engine capped to that and the
+      // statement printed "a ceiling of $35,833.33", so the number the tenant
+      // was shown was not the number applied and the cap could not be checked
+      // against the lease with a calculator. One ceiling, in cents, both places.
+      //
+      // H — and now the SAME ceiling the expectation below reports, because it
+      // is the same function. Enforcement and expectation disagreeing about what
+      // the lease permits is how a percentage ended up in a dollar field.
+      const capCents = _camCeilingCents(lease.capBaseAmount, lease.capPercentage);
+      if (capCents !== null && rawCents > capCents) {
+        capAdjustment = _MC.fromCents(rawCents - capCents);
+        rawCents      = capCents;
         capApplied    = true;
       }
     }
 
     const included = [
-      ...eligibleShared.map(inv => ({
+      ...eligibleShared.map((inv, _i) => ({
         ...inv,
         allocation: 'shared',
-        share: parseFloat((inv.amount * proRata).toFixed(2)),
-        ...(inv.matchConfidence < 75 ? {
+        // The amount the equation on the statement multiplies. It is the
+        // quantised cent, not the source float, so `$234.55 × 9,200/26,000` is
+        // an equation a manager can re-key — which it would not be if the line
+        // printed $234.55 and the engine had used 234.54999999999995.
+        amount: _MC.fromCents(_MC.toCents(inv.amount) || 0),
+        amountSource: inv.amount,
+        share: _MC.fromCents(_sharedLineCents[_i]),
+        // F-14 — NO FLAG HERE ANY MORE.
+        //
+        // This used to attach "Low confidence invoice match" whenever
+        // `matchConfidence < 75`, which is identical to `=== 0`, which is the
+        // DEFINITION of the set being mapped: `sharedInvoices` is built by
+        // filtering on exactly that predicate. So the warning was true of every
+        // member of the set it decorated — measured at 16 of 17 charge rows on
+        // the Kettle Row fixture — and said "could not be confidently matched"
+        // about janitorial and insurance invoices that were never expected to
+        // match anyone. That a shared invoice is shared is already stated by the
+        // row: its allocation kind, and the pro-rata equation beside it.
+        //
+        // A tie between two tenants IS worth a marker, and it gets one below.
+      })),
+      ...ownInvoices.map((inv, _i) => ({
+        ...inv, allocation: 'direct',
+        amount: _MC.fromCents(_ownLineCents[_i]),
+        amountSource: inv.amount,
+        share: _MC.fromCents(_ownLineCents[_i]),
+        // F-14 — THE MARKER THAT MEANS SOMETHING. A tie is the only per-invoice
+        // condition here that a manager can act on, and it is the one that moves
+        // a whole invoice: this row is billed in full to this tenant because it
+        // came first in an array, and it names another tenant just as strongly.
+        ...(inv.matchAmbiguous ? {
           flag: {
-            message:     'Low confidence invoice match',
-            explanation: 'This invoice could not be confidently matched to a tenant using unit number or name, so it was treated as a shared expense.',
+            message: `Names ${(inv.matchTied || []).length} tenants — billed in full to ${lease.tenantName}`,
+            explanation: `This invoice matched ${(inv.matchTied || []).map(c => `${c.tenantName} (${c.reason})`).join(' and ')} equally well, and a direct match bills the whole invoice to one tenant. Which one it belongs to has not been established, so no statement will issue for either until it is confirmed.`,
           },
         } : {}),
       })),
-      ...ownInvoices.map(inv => ({ ...inv, allocation: 'direct', share: inv.amount })),
     ];
 
     // Recompute flags from live tenant data — never cache between runs
     const flags = [];
+
+    // CAM-3 — an excluded invoice that matched this tenant is reported, not
+    // silently dropped: the manager needs to know it was recognised and why it
+    // was not billed.
+    if (excludedDirect.length) {
+      flags.push({
+        code:    'DIRECT_EXCLUDED_CATEGORY',
+        message: `${excludedDirect.length} matched invoice${excludedDirect.length !== 1 ? 's' : ''} excluded by the lease`,
+        explanation: `${excludedDirect.map(i => `${i.vendorName} ${_fmtMoney(i.amount)} (${i.category})`).join('; ')} matched this tenant but ${excludedDirect.length !== 1 ? 'their categories are' : 'its category is'} excluded from CAM by the lease, so ${excludedDirect.length !== 1 ? 'they were' : 'it was'} not billed.`,
+      });
+    }
+
+    // CAM-4 — a direct match bills the WHOLE invoice to one tenant, on a fuzzy
+    // name/unit match at >=75% confidence. The consequence is wildly asymmetric:
+    // a wrong shared classification moves a few percent, a wrong direct match
+    // moves the entire invoice. Every one is surfaced by name and amount so it
+    // can be checked before a statement goes out.
+    if (ownInvoices.length) {
+      flags.push({
+        code:    'DIRECT_ASSIGNMENT',
+        message: `${ownInvoices.length} invoice${ownInvoices.length !== 1 ? 's' : ''} billed in full to this tenant`,
+        explanation: `${ownInvoices.map(i => `${i.vendorName} ${_fmtMoney(i.amount)}${i.matchReason ? ` — matched on ${i.matchReason}` : ''}`).join('; ')}. Direct matches are charged in full rather than by pro-rata share — confirm each one belongs to this tenant.`,
+      });
+    }
+
+    // T2 — a direct invoice held out because it falls outside the occupancy
+    // window, or because it has no date to place it by. Both are reported by
+    // name and amount: the manager has to know the charge was recognised and
+    // why it was not billed, exactly as CAM-3 does for lease exclusions.
+    // The prose below names them for a reader. `held` names them for a READER OF
+    // THE RECORD: the variance panel has to attribute this money to occupancy
+    // rather than to "no lease claimed it", and parsing a sentence to find out
+    // which invoices they were is not an interface. Same shape on both flags.
+    const _heldRef = inv => ({ id: inv.id ?? null, vendorName: inv.vendorName || inv.vendor || '',
+                               amount: Number(inv.amount) || 0,
+                               date: inv.date || inv.invoiceDate || null });
+    if (outsideWindow.length) {
+      flags.push({
+        code:    'DIRECT_OUTSIDE_OCCUPANCY',
+        held:    outsideWindow.map(_heldRef),
+        message: `${outsideWindow.length} matched invoice${outsideWindow.length !== 1 ? 's' : ''} dated outside this tenant's occupancy`,
+        explanation: `${outsideWindow.map(i => `${i.vendorName} ${_fmtMoney(i.amount)} (${i.date || i.invoiceDate || 'no date'})`).join('; ')} matched this tenant but ${outsideWindow.length !== 1 ? 'are' : 'is'} dated outside ${occ && occ.overlapStart ? `${occ.overlapStart} to ${occ.overlapEnd}` : 'the occupancy window'}, so ${outsideWindow.length !== 1 ? 'they were' : 'it was'} not billed.`,
+      });
+    }
+    if (undatedDirect.length) {
+      flags.push({
+        code:    'DIRECT_UNDATED_OCCUPANCY',
+        held:    undatedDirect.map(_heldRef),
+        message: `${undatedDirect.length} matched invoice${undatedDirect.length !== 1 ? 's' : ''} could not be placed in this tenant's occupancy`,
+        explanation: `${undatedDirect.map(i => `${i.vendorName} ${_fmtMoney(i.amount)}`).join('; ')} matched this tenant but carr${undatedDirect.length !== 1 ? 'y' : 'ies'} no readable date, and this tenant occupied only part of the CAM period. ${undatedDirect.length !== 1 ? 'They were' : 'It was'} not billed — add the invoice date and re-run.`,
+      });
+    }
 
     if (sqFtOverflow) {
       flags.push({
@@ -9210,24 +10977,53 @@ function runFullReconciliation(property) {
       lease.tenantName,
       lease.unitNumber,
       lease.sqFt,
-      parseFloat(rawTotal.toFixed(2)),
+      _MC.fromCents(rawCents),
+      // STILL THE SPATIAL SHARE. Not multiplied by the occupancy factor — the
+      // two live side by side on the result and are combined only for display.
       parseFloat((proRata * 100).toFixed(2)),
       included,
       capApplied,
-      capAdjustment
+      capAdjustment,
+      occ
     );
     result.ambiguityFlags = flags;
     result.tenantId       = lease.id;
+    // D7 — THE SPATIAL RATIONAL, STORED. `sqFt` was already here; the building
+    // it is a fraction OF was not, so the only reproducible spatial figure on
+    // the result was `proRataPercent` — a two-decimal DISPLAY value that
+    // variance-breakdown.js was then dividing by. 33.33% is not one third, and
+    // over a $31,800 shared pool that difference is $1.06. Now the rational is
+    // the stored form for space, exactly as lease-period.js already makes it for
+    // time. proRataPercent stays, for printing, and is never an operand again.
+    result.totalSqFt      = totalSqFt;
+    // D8 — the cents this lease's exclusion schedule kept it from taking.
+    result.excludedShares = excludedShares;
+    // D12 — WHICH ARITHMETIC PRODUCED THIS RECORD. A reconciliation saved before
+    // P6 carries neither the rational nor the exclusion record, and reopening it
+    // must not have its explanation reconstructed as though it did. Stamped, not
+    // sniffed: absence of a field is a weaker claim than a statement of fact.
+    result.precision      = 'cents';
 
-    const actualCam   = result.totalAllocated ?? null;
-    const expectedCam = live.cap ?? null;
-    const variance    = (actualCam !== null && expectedCam !== null)
-      ? Math.round((actualCam - expectedCam) * 100) / 100
-      : null;
+    // H — EXPECTED CAM IS A DOLLAR CEILING OR IT IS NOTHING.
+    //
+    // This read `live.cap` — the cap PERCENTAGE — and called it expectedCam, then
+    // subtracted it from dollars to get a variance. Both operands of a comparison
+    // have to be the same quantity; these never were. The ceiling the cap gate
+    // above already enforces IS the expected amount, so both now come from
+    // _camExpectation and there is one definition of what the lease permits.
+    //
+    // No base, no expectation: a tenant with a cap percentage but no
+    // capBaseAmount yields null/null and the surfaces render "—". That is the
+    // same line D2-2 draws — a cap percentage is not testable until the lease's
+    // own base for it is known — and back-computing a base from the charge would
+    // make the number agree with itself by construction.
+    const actualCam = result.totalAllocated ?? null;
+    const _exp      = _camExpectation(lease.capBaseAmount, lease.capPercentage, actualCam);
 
-    result.actualCam   = actualCam;
-    result.expectedCam = expectedCam;
-    result.variance    = variance;
+    result.actualCam         = actualCam;
+    result.expectedCam       = _exp.expectedCam;
+    result.variance          = _exp.variance;
+    result.expectedCamBasis  = _exp.expectedCamBasis;
     return result;
   });
 
@@ -9248,38 +11044,12 @@ function runFullReconciliation(property) {
 
 // ─── CAM Allocation Engine ────────────────────────────────────────────────────
 
-function runCAMAllocation(expenses, tenants) {
-  return tenants.map(t => {
-    const proRata  = t.totalSqft > 0 ? t.leasedSqft / t.totalSqft : 0;
-    const eligible = expenses.filter(e =>
-      !t.excludedCategories.includes(e.category.toLowerCase())
-    );
-    let total = eligible.reduce((s, e) => s + e.amount * proRata, 0);
-    let capAdj = null;
+// CAM-6 — runCAMAllocation lived here as a SECOND CAM engine. Its result was
+// computed in runAllocation() and discarded; test-allocation.js tested it while
+// production used runFullReconciliation. Two implementations that disagreed,
+// with the coverage on the wrong one. Removed rather than left to rot.
+// runFullReconciliation is the only CAM arithmetic in the product.
 
-    // Cap requires a prior-year base amount to calculate correctly.
-    // capBaseAmount must be entered manually; without it we skip cap enforcement
-    // rather than show wrong math.
-    const _capPctVal = parseFloat(t.capPct);
-    if (t.capPct !== null && t.capPct !== '' && !isNaN(_capPctVal) &&
-        _capPctVal >= 0 && _capPctVal <= 100 &&
-        t.capBaseAmount !== null && t.capBaseAmount !== undefined && !isNaN(parseFloat(t.capBaseAmount))) {
-      const cap = parseFloat(t.capBaseAmount) * (1 + _capPctVal / 100);
-      if (total > cap) { capAdj = total - cap; total = cap; }
-    } else if (t.capPct !== null && t.capPct !== '' && !isNaN(_capPctVal) && (_capPctVal < 0 || _capPctVal > 100)) {
-      console.warn('[CAM] Ignoring out-of-range cap percentage for', t.name, ':', _capPctVal);
-    }
-
-    return {
-      name:            t.name,
-      proRata,
-      allocatedAmount: parseFloat(total.toFixed(2)),
-      capAdjustment:   capAdj !== null ? parseFloat(capAdj.toFixed(2)) : null,
-      capApplied:      capAdj !== null,
-      eligibleCount:   eligible.length,
-    };
-  });
-}
 
 async function runAllocation() {
   if (isRunning) return; // prevent concurrent runs
@@ -9312,7 +11082,7 @@ async function runAllocation() {
   const body      = document.getElementById('resultsBody');
 
   if (!totalSqft || totalSqft <= 0) {
-    showErr(body, section, 'Please enter a valid Total Property Sqft in Section 1.');
+    showErr(body, section, 'Enter the property\u2019s Total Property Sqft on the Property tab before reconciling.');
     return;
   }
 
@@ -9331,23 +11101,39 @@ async function runAllocation() {
 
   // Warn about tenants that exist but are excluded from CAM due to missing sqft
   const allNamedTenants = (currentProperty()?.tenants || []).filter(t => t && t.tenant_name);
-  const missingSquare   = allNamedTenants.filter(t => parseSqft(t.leased_sqft) <= 0);
+  const missingSquare   = allNamedTenants.filter(t => !window.SourceValues.readArea(t.leased_sqft).usable);
   if (missingSquare.length > 0 && validTenants.length > 0) {
     const warn = document.createElement('div');
     warn.className = 'cam-sqft-warning';
     warn.style.cssText = 'background:#7c2d1220;border:1px solid #f97316;color:var(--c-fb923c);padding:10px 14px;border-radius:8px;margin-bottom:14px;font-size:0.85rem;';
-    warn.textContent = `⚠️ ${missingSquare.length} tenant${missingSquare.length > 1 ? 's' : ''} excluded from CAM — missing Leased Sqft: ${missingSquare.map(t => t.tenant_name).join(', ')}. Edit those tenants in Section 2 and re-run to include them.`;
+    warn.textContent = `⚠️ ${missingSquare.length} tenant${missingSquare.length > 1 ? 's' : ''} excluded from CAM — missing Leased Sqft: ${missingSquare.map(t => t.tenant_name).join(', ')}. Edit those tenants on the Spaces tab and re-run to include them.`;
     section.prepend(warn);
   }
 
-  // Warn about tenants excluded from CAM because the lease names a different property
-  const mismatchedTenants = allNamedTenants.filter(t => _hasPropertyMismatch(t));
+  // Warn about tenants excluded from CAM because the lease names a different
+  // property. Counts only leases that are STILL blocking: one the landlord has
+  // explicitly confirmed is no longer excluded, so listing it here would tell
+  // them to go and fix something they already fixed. The mismatch itself is still
+  // recorded on the tenant's card either way.
+  const mismatchedTenants = allNamedTenants.filter(t => _propertyMismatchBlockReason(t));
   if (mismatchedTenants.length > 0) {
     const warn = document.createElement('div');
     warn.className = 'cam-skip-warning';
     warn.style.cssText = 'background:#7c2d1220;border:1px solid #f87171;color:var(--c-fca5a5);padding:10px 14px;border-radius:8px;margin-bottom:14px;font-size:0.85rem;';
-    warn.textContent = `⚠️ ${mismatchedTenants.length} tenant${mismatchedTenants.length > 1 ? 's' : ''} excluded from CAM — lease names a different property: ${mismatchedTenants.map(t => t.tenant_name).join(', ')}. Confirm the lease belongs here, then resolve the warning on that tenant's card and re-run.`;
+    warn.textContent = `⚠️ ${mismatchedTenants.length} tenant${mismatchedTenants.length > 1 ? 's' : ''} excluded from CAM — lease names a different property: ${mismatchedTenants.map(t => t.tenant_name).join(', ')}. Open that tenant's card on the Spaces tab and use "Confirm lease belongs to this property", then re-run.`;
     section.prepend(warn);
+  }
+
+  // Confirmed leases are reported separately rather than silently disappearing.
+  // A tenant taking part in CAM on a human's say-so is a fact the next person to
+  // read these results needs, and it is exactly what an auditor would ask about.
+  const confirmedTenants = allNamedTenants.filter(t => _hasPropertyMismatch(t) && !_propertyMismatchBlockReason(t));
+  if (confirmedTenants.length > 0) {
+    const okBanner = document.createElement('div');
+    okBanner.className = 'cam-confirmed-note';
+    okBanner.style.cssText = 'background:#064e3b20;border:1px solid #34d399;color:var(--c-6ee7b7,#6ee7b7);padding:10px 14px;border-radius:8px;margin-bottom:14px;font-size:0.85rem;';
+    okBanner.textContent = `✓ ${confirmedTenants.length} lease${confirmedTenants.length > 1 ? 's' : ''} named a different property and ${confirmedTenants.length > 1 ? 'were' : 'was'} confirmed by the property owner as belonging here: ${confirmedTenants.map(t => t.tenant_name).join(', ')}. Included in CAM.`;
+    section.prepend(okBanner);
   }
 
   const tenants = validTenants.map(t => ({
@@ -9356,14 +11142,14 @@ async function runAllocation() {
       totalSqft,
       capPct:             t.cap,
       capBaseAmount:      t.capBaseAmount ?? null,
-      excludedCategories: t.excluded_categories
-        ? t.excluded_categories.split(',').map(s => s.trim().toLowerCase()).filter(Boolean)
-        : [],
+      excludedCategories:   _appliedExclusions(t),   // F-02: applied only
+      exclusionsNotApplied: _exclusionState(t.excluded_categories).notApplied,
+      exclusionFingerprint: _exclusionState(t.excluded_categories).fingerprint,
     }));
 
   if (!tenants.length) {
     // If there are tenants with names but missing sqft, give a more specific message
-    const namedTenantsWithNoSqft = (currentProperty()?.tenants || []).filter(t => t && t.tenant_name && parseSqft(t.leased_sqft) <= 0);
+    const namedTenantsWithNoSqft = (currentProperty()?.tenants || []).filter(t => t && t.tenant_name && !window.SourceValues.readArea(t.leased_sqft).usable);
     if (namedTenantsWithNoSqft.length) {
       showErr(body, section,
         `${namedTenantsWithNoSqft.length} tenant(s) are missing Leased Sqft. ` +
@@ -9377,7 +11163,11 @@ async function runAllocation() {
   const allInvoices   = invoiceData.filter(inv => inv && inv.vendorName);
   const invoices      = allInvoices
     .filter(inv => parseFloat(inv.amount) > 0)
-    .map(inv => ({ vendor: inv.vendorName, category: inv.category, amount: parseFloat(inv.amount) }));
+    .map(inv => ({ vendor: inv.vendorName, category: inv.category, amount: parseFloat(inv.amount),
+                   // WAS DROPPED HERE. buildAuditSummary reads this list, so the
+                   // concentration detector could not tell a $70,000 invoice the
+                   // manager had removed from CAM from one still in it.
+                   camEligible: window.CamPool.isEligible(inv) }));
   const skippedCount  = allInvoices.length - invoices.length;
 
   if (!invoices.length) {
@@ -9408,28 +11198,66 @@ async function runAllocation() {
     section.prepend(warn);
   }
 
-  const results   = runCAMAllocation(invoices, tenants);
+  // CAM-6 — runCAMAllocation's result was computed here and DISCARDED four
+  // lines later by `lastResults = fullResults`. Two CAM engines existed, they
+  // disagreed (one guarded divide-by-zero and validated the cap range, the
+  // production one did neither), and test-allocation.js tested the dead one —
+  // so every green run of that suite was evidence about a function no tenant
+  // statement ever came from. The call is gone; runFullReconciliation is the
+  // only CAM arithmetic that runs.
   const totalCost = invoices.reduce((s, e) => s + e.amount, 0);
+  // THE CAM POOL, distinct from the gross expense total above and derived from
+  // the one definition. `totalCost` is every invoice the manager loaded;
+  // `camPool` is the subset a tenant can be billed from. Every claim of the form
+  // "N% of total CAM" must divide by the second.
+  const camPool   = window.CamPool.total(invoices);
 
   const totalLeasedSqft = tenants.reduce((s, t) => s + (t.leasedSqft || 0), 0);
   const sqftExceedsProperty = totalLeasedSqft > totalSqft;
 
   // Build a Property + run full reconciliation (for per-tenant invoice breakdown + direct matching)
   const _prop = new Property(propName, totalSqft);
+  _prop.camYear = _runYear;   // CAM-2: the engine scopes its own inputs
+  // AND THE PROPERTY REMEMBERS IT. properties.data.camYear had a reader in
+  // loadPropertyData and a slot in saveProperty, and no assignment anywhere in
+  // the codebase — the only `.camYear =` was the throwaway engine Property on
+  // the line above. So the field round-tripped as null forever and the year a
+  // property was reconciled for lived nowhere but one per-user localStorage
+  // key. Stamping it here is what makes selectProperty's adoption possible.
+  const _appProp = currentProperty();
+  if (_appProp) _appProp.camYear = _runYear;
   _prop.addLeases(getValidTenants().map(t => {
     const lease = new Lease(t.tenant_name, t.unitNumber || '', parseSqft(t.leased_sqft), t.start_date || '', t.end_date || '',
-      t.excluded_categories ? t.excluded_categories.split(',').map(s => s.trim()) : [],
+      _appliedExclusions(t),   // F-02: applied only — see _exclusionState
       t.cap ?? null, t.capBaseAmount ?? null,
-      (t.confidence?.leased_sqft ?? t.confidence?.leasedSqft ?? 100) < 70,
+      // AI-1 — sqFtApproximate. `?? 100` meant an unreported confidence read as
+      // a perfect one, so this flag could never be true for an AI-extracted
+      // lease. See sqftIsApproximate().
+      sqftIsApproximate(t),
       t.baseYear ?? null,
       t.lease_type || null);
     lease.id = t.id || null; // stable id for invoice linking
     return lease;
   }));
-  _prop.addInvoices(invoiceData.filter(inv => inv && inv.vendorName && parseFloat(inv.amount) > 0).map(inv =>
-    new Invoice(null, inv.invoiceDate, inv.amount, inv.vendorName, inv.category)
+  // CAM-1 — an amount that will not parse is reported, not filtered into
+  // silence. parseFloat used here let "1,250.00" through as 1.
+  const _unreadable = invoiceData.filter(inv => inv && inv.vendorName && parseMoney(inv.amount) === null);
+  if (_unreadable.length) {
+    const _names = _unreadable.map(i => `${i.vendorName} (${i.amount})`).join(', ');
+    console.warn('[CAM] invoices with unreadable amounts, excluded from the pool:', _names);
+    showToast(`⚠️ ${_unreadable.length} invoice${_unreadable.length !== 1 ? 's' : ''} had an amount that could not be read and were left OUT of this reconciliation: ${_names}`,
+      { color: '#92400e', textColor: '#fef3c7', duration: 10000 });
+  }
+  _prop.addInvoices(invoiceData.filter(inv => inv && inv.vendorName && (parseMoney(inv.amount) || 0) > 0).map(inv =>
+    new Invoice(inv.id || null, inv.invoiceDate, inv.amount, inv.vendorName, inv.category, '',
+      { camEligible: inv.camEligible, spaceId: inv.spaceId, system: inv.system })
   ));
   const fullResults = runFullReconciliation(_prop);
+  // The records the engine ran on, kept so the variance panel can say which
+  // invoices were held out of the allocation and why. `invoices` above cannot:
+  // it is stripped to {vendor, category, amount} before the summary sees it.
+  _lastEngineInvoices     = _prop.invoices || [];
+  _lastReconciledInvoices = _prop._reconciledInvoices || _lastEngineInvoices;
 
   // Sync matchedTenant tags back to invoiceData for badge display
   const activeTenants = (currentProperty()?.tenants || []).filter(t => t && t.tenant_name);
@@ -9447,11 +11275,16 @@ async function runAllocation() {
   });
   invoiceData.forEach((inv, i) => {
     if (!inv) return;
-    const m = matchInvoiceToTenant(inv, activeTenants);
+    const d = matchInvoiceToTenant(inv, activeTenants);
+    const m = d.match;
     invoiceData[i].matchedTenant   = m ? m.tenantName : null;
     invoiceData[i].matchedTenantId = m ? m.tenantId   : null;
     invoiceData[i].matchConfidence = m ? m.confidence : 0;
     invoiceData[i].matchReason     = m ? m.reason     : '';
+    invoiceData[i].matchCandidates = d.candidates;
+    invoiceData[i].matchAmbiguous  = d.ambiguous;
+    invoiceData[i].matchTied       = d.tied;
+    invoiceData[i].matchNearMisses = d.nearMisses;
     console.log('[runAllocation] badge-sync RESULT', {
       idx:             i,
       vendor:          inv.vendorName || inv.vendor,
@@ -9469,6 +11302,7 @@ async function runAllocation() {
   lastFullResults     = fullResults;
   lastPropName        = propName;
   lastTotal           = totalCost;
+  lastCamPool         = camPool;
   lastInvoicesFull    = invoices;
   console.groupCollapsed('[PIPELINE:1] runAllocation runtime snapshot');
   console.log('lastInvoicesFull[0]:', JSON.parse(JSON.stringify(lastInvoicesFull[0] || {})));
@@ -9479,7 +11313,7 @@ async function runAllocation() {
   applySqftMismatchUI(sqftExceedsProperty);
 
   let html = _buildNeedsReviewRollupHtml(fullResults) +
-  _buildReconciliationSummaryHtml(fullResults, invoices, propName) +
+  _buildReconciliationSummaryHtml(fullResults, invoices, propName, _lastEngineInvoices, _lastReconciledInvoices) +
   // Warnings appear before numbers so the landlord sees issues before interpreting results.
   (sqftExceedsProperty ? `
   <div class="sqft-mismatch-banner">
@@ -9522,94 +11356,11 @@ async function runAllocation() {
       : '';
 
     // ── Category-grouped invoice breakdown (matches Tenant Statement style) ──
-    const invBreakdown = (() => {
-      if (!r.includedInvoices.length) return '';
-
-      // Group invoices by category, accumulate share per category
-      const catMap = {};
-      r.includedInvoices.forEach((inv, invIdx) => {
-        const key = (inv.category || 'other').toLowerCase();
-        if (!catMap[key]) catMap[key] = { label: inv.category || 'Other', share: 0, invoices: [] };
-        catMap[key].share += inv.share;
-        catMap[key].invoices.push({ inv, invIdx });
-      });
-
-      const pct = (r.proRata * 100).toFixed(2);
-
-      const catCards = Object.entries(catMap)
-        .sort((a, b) => b[1].share - a[1].share)
-        .map(([, data]) => {
-          const invRows = data.invoices.map(({ inv, invIdx }) => {
-            const rowId = `rcn-${r.name}-${invIdx}`.replace(/[^a-zA-Z0-9-]/g, '-');
-            return `
-              <div class="charge-row ts-inv-card" id="crow-${rowId}"
-                onclick="(function(row){var d=document.getElementById('ddetail-${rowId}');var open=d.style.display==='block';d.style.display=open?'none':'block';row.classList.toggle('detail-open',!open);})(this)">
-                <div class="charge-row-top">
-                  <div class="charge-row-left">
-                    <div class="charge-vendor">${esc(inv.vendorName || '')}</div>
-                    <div class="charge-amount">${fmt(inv.share)}</div>
-                    <div class="charge-sub">Tenant share (${pct}%)${inv.allocation === 'direct' ? ' &middot; direct' : ''}</div>
-                    <p class="ts-vendor-hint">Tap for details or to dispute</p>
-                  </div>
-                  <div class="charge-chevron">&#x203A;</div>
-                </div>
-                <div id="ddetail-${rowId}" class="ts-detail-box" style="display:none;" onclick="event.stopPropagation()">
-                  <div class="ts-detail-header">
-                    <span class="ts-detail-title">Charge Details</span>
-                    <button class="ts-detail-close"
-                      onclick="document.getElementById('ddetail-${rowId}').style.display='none';document.getElementById('crow-${rowId}').classList.remove('detail-open')">&#x2715;</button>
-                  </div>
-                  <div class="ts-detail-row"><span>Vendor</span><span class="ts-detail-val">${esc(inv.vendorName || '')}</span></div>
-                  <div class="ts-detail-row"><span>Category</span><span class="ts-detail-val">${esc(inv.category || '')}</span></div>
-                  <div class="ts-detail-row"><span>Invoice Total</span><span class="ts-detail-val">${fmt(inv.amount)}</span></div>
-                  <div class="ts-detail-row ts-detail-highlight"><span>Tenant Share</span><span class="ts-detail-val">${fmt(inv.share)}</span></div>
-                  <div class="ts-detail-basis">Based on ${pct}% pro-rata allocation by square footage</div>
-                  <div class="ts-detail-formula">${inv.allocation === 'direct' ? fmt(inv.amount) + ' direct charge — full amount to this unit' : fmt(inv.amount) + ' &times; ' + pct + '% = ' + fmt(inv.share)}</div>
-                  <div class="ts-detail-actions">
-                    <button class="inv-act-btn inv-act-explain" id="tsexplbtn-${rowId}"
-                      onclick="event.stopPropagation();tsExplainInvoice('${rowId}','${esc(inv.vendorName||'')}','${esc(inv.category||'')}',${inv.amount},'${esc(inv.invoiceDate||'')}')">Explain</button>
-                    <button class="inv-act-btn inv-act-dispute" id="dbtn-${rowId}"
-                      onclick="event.stopPropagation();toggleDisputeForm('${rowId}','${esc(r.name)}','${rowId}','${esc(inv.vendorName||'')}','${esc(inv.category||'')}',${inv.share})">Dispute</button>
-                  </div>
-                  ${inv.flag ? `<div class="recon-inv-flag" style="margin-top:8px;">&#x26A0; ${esc(inv.flag.message)}</div>` : ''}
-                  <div id="tsexpl-${rowId}"></div>
-                  <div id="dform-${rowId}" style="display:none;"></div>
-                </div>
-              </div>`;
-          }).join('');
-
-          const count = data.invoices.length;
-          return `
-            <div class="ts-cat-accordion">
-              <div class="ts-cat-header"
-                onclick="(function(hdr){var body=hdr.nextElementSibling;var open=body.style.display==='block';body.style.display=open?'none':'block';hdr.classList.toggle('active',!open);})(this)">
-                <div class="ts-cat-left">
-                  <div class="ts-cat-name">${esc(data.label)}</div>
-                  <div class="ts-cat-meta">${count} invoice${count !== 1 ? 's' : ''}</div>
-                </div>
-                <div class="ts-cat-right">
-                  <div class="ts-cat-share-amt">${fmt(parseFloat(data.share.toFixed(2)))}</div>
-                  <div class="ts-cat-share-lbl">YOUR SHARE</div>
-                </div>
-                <div class="ts-cat-chevron">&#x203A;</div>
-              </div>
-              <div class="ts-cat-body" style="display:none;">
-                <div class="charge-list">${invRows}</div>
-              </div>
-            </div>`;
-        }).join('');
-
-      const capLine = r.capApplied
-        ? `<div class="recon-cap-note">&#x26A0; Cap applied — ${fmt(r.capAdjustment)} reduced</div>`
-        : '';
-
-      return `<div class="rc-cat-breakdown">${capLine}${catCards}</div>`;
-    })();
+    const invBreakdown = _invoiceBreakdownHtml(r);
 
     // ── Confidence stat ────────────────────────────────────────────────
-    const confStat = r.averageConfidence > 0
-      ? stat('Confidence', r.averageConfidence + '%')
-      : '';
+    // D16 — the per-tenant "Confidence N%" stat is gone; see ReconciliationResult.
+    const confStat = '';
 
     const tdIdx = tenantData.findIndex(t => t && t.tenant_name === r.name);
     const _td   = tdIdx >= 0 ? tenantData[tdIdx] : null;
@@ -9623,7 +11374,7 @@ async function runAllocation() {
     const _calcSt = _deriveCalcState(r, _liveT);
 
     html += `<div class="result-card${flags.length ? ' result-card--flagged' : ''}" id="${_resultCardAnchorId(r.name)}">
-      <div class="r-name">${esc(r.name)}${r.unitNumber ? `<span class="rc-unit"> · Unit ${esc(r.unitNumber)}</span>` : ''}<span class="rc-calc-state ${_calcSt.cls}">${_calcSt.label}</span></div>
+      <div class="r-name">${esc(r.name)}${r.unitNumber ? `<span class="rc-unit"> · Unit ${esc(r.unitNumber)}</span>` : ''}<span class="rc-calc-state ${_calcSt.cls}" title="Describes the CAM calculation for this row, not the tenant's standing. Audit exceptions are listed in the AI Audit Summary.">${_calcSt.label}</span></div>
       <div class="result-grid">
         ${stat('Total', fmt(r.allocatedAmount))}
         <div class="result-stat"><div class="stat-label">Pro-Rata <span class="stat-info-tip" title="The percentage of the property occupied by this tenant. This determines their share of common area expenses: Pro-Rata % = Tenant Sqft ÷ Total Property Sqft.">&#x24D8;</span></div><div class="stat-value">${(r.proRata * 100).toFixed(2)}%</div></div>
@@ -9641,7 +11392,21 @@ async function runAllocation() {
       <div class="result-card-actions">
         <button class="explain-btn" onclick="openExplainPanel('${esc(r.name)}')">&#x1F4CA; View Calculation</button>
         <button class="lv-validate-btn" onclick="_startLeaseValidation('${_lvPanelId}',${tdIdx})">&#x1F50D; Validate Against Lease</button>
-        <button class="tenant-stmt-card-btn" onclick="generateTenantStatement('${esc(r.name)}')" title="Generate the tenant-facing CAM statement">&#x1F9FE; Tenant Statement</button>
+        ${(() => {
+          // The label follows billing state. "Tenant Statement" on a tenant the
+          // gate is about to refuse promises a document it cannot produce, and
+          // sends the manager through a refusal to find that out.
+          let _b = null;
+          try {
+            const AXs = window.AuditExposure;
+            const _ex = AXs ? AXs.deriveExposure(buildAuditSummary(), lastTotal || 0) : null;
+            _b = _tenantBillingState(r.name, _ex);
+          } catch (_) { _b = null; }
+          const _lbl = _b ? _b.cta : '&#x1F9FE; Tenant Statement';
+          const _ttl = _b ? _b.reason : 'Generate the tenant-facing CAM statement';
+          return `<button class="tenant-stmt-card-btn${_b && _b.state !== 'billable' ? ' tenant-stmt-card-btn--held' : ''}"
+            onclick="generateTenantStatement('${esc(r.name)}')" title="${esc(_ttl)}">${_lbl}</button>`;
+        })()}
       </div>
       <div id="${_lvPanelId}" class="lv-panel" style="display:none;"></div>
     </div>`;
@@ -9692,7 +11457,9 @@ async function runAllocation() {
     const trendsData = buildHistoricalTrends();
     if (trendsData && trendsData.trends.length) {
       logActivity('historical_comparison',
-        `Historical comparison — ${trendsData.priorYear} vs ${trendsData.currYear}`,
+        trendsData.comparisonKind === 'year-over-year'
+          ? `Historical comparison — ${trendsData.priorYear} vs ${trendsData.currYear}`
+          : `Run comparison — previous ${trendsData.priorYear} run vs current run`,
         { severity: 'info', actor: 'System', relatedEntity: propName, detail: `${trendsData.trends.length} trend${trendsData.trends.length > 1 ? 's' : ''} detected` }
       );
     }
@@ -9725,11 +11492,51 @@ async function runAllocation() {
       propName,
       camYear:      getCamYear(),
       savedAt:      new Date().toISOString(),
+      // A run computed WITH occupancy apportionment. Its absence marks a run
+      // from before T2, whose results carry no `occupancy` — and absent must
+      // never be read as a factor of 1, or every historical partial-period run
+      // silently acquires a claim it never made.
+      schemaVersion: 2,
       total:        totalCost,
       results:      fullResults.map(r => ({ ...r })),
       invoices:     lastInvoices,
       invoicesFull: lastInvoicesFull,
       tenants:      lastTenants,
+      // THE RECORDS THE VARIANCE PANEL ATTRIBUTES AGAINST.
+      //
+      // _lastEngineInvoices and _lastReconciledInvoices are assigned in
+      // runAllocation and nowhere else, so a restored reconciliation had neither
+      // — VarianceBreakdown.derive was handed an empty invoice list, attributed
+      // nothing, and reported the entire difference as unattributed residual. On
+      // a run that had reconciled to one cent the restored banner then read
+      // "Re-check the invoice register", which is the one message on that panel
+      // that means the numbers may be wrong.
+      //
+      // Stored as a lean projection rather than the engine objects: these six
+      // fields are everything derive() reads — invoiceKey needs id, isEligible
+      // needs camEligible, the direct/shared split needs matchConfidence, and
+      // the rows need vendor, category and amount. invoicesFull is stripped
+      // before every save precisely to keep this payload small, so this does not
+      // reintroduce it.
+      //
+      // `reconciledKeys` is separate and cannot be re-derived here: it is which
+      // invoices survived the CAM-year filter, and the filter narrows a local
+      // inside runFullReconciliation. Without it, an out-of-year invoice comes
+      // back indistinguishable from one that reached no tenant.
+      engineInvoices: (_lastEngineInvoices || []).map(i => ({
+        id:              i.id ?? null,
+        vendorName:      i.vendorName || i.vendor || '',
+        category:        i.category || '',
+        amount:          Number(i.amount) || 0,
+        camEligible:     i.camEligible,
+        matchConfidence: Number(i.matchConfidence) || 0,
+      })),
+      reconciledKeys: (() => {
+        try {
+          const VB = window.VarianceBreakdown;
+          return VB ? (_lastReconciledInvoices || []).map(i => VB.invoiceKey(i)) : null;
+        } catch (_) { return null; }
+      })(),
       camRuns:      camRuns.map(r => ({
         ...r,
         timestamp: r.timestamp instanceof Date ? r.timestamp.toISOString() : r.timestamp,
@@ -10525,16 +12332,28 @@ function openExplainPanel(tenantName) {
   const totalSqft   = parseFloat(t.totalSqft)  || 0;
   const totalCamAll = lastInvoicesFull.reduce((s, inv) => s + (parseFloat(inv.amount) || 0), 0);
 
-  const eligible = lastInvoicesFull.filter(inv =>
-    !t.excludedCategories.includes((inv.category || '').toLowerCase())
-  );
+  // ONE authoritative source: the invoices runFullReconciliation actually
+  // allocated, carrying the share it computed. Re-deriving from
+  // lastInvoicesFull disagreed with the reconciliation three ways — it skipped
+  // the camEligible filter (PW-3, script.js:9791), pro-rated directly-matched
+  // invoices that are charged in full, and re-rounded from raw amounts.
+  const eligible = r.includedInvoices || [];
 
   // Section 1 — Summary
   const adjHtml = r.capApplied
     ? `<div class="ep-adj">&#x26A0; Cap applied — your share reduced by ${fmt(r.capAdjustment)}</div>`
     : '';
-  const exclHtml = t.excludedCategories.length
-    ? `<div class="ep-excl">Excluded from your CAM: ${t.excludedCategories.join(', ')}</div>`
+  // F-02: list only what was actually filtered out of the pool, and say so when
+  // the lease excludes more than the engine could apply. Printing the raw AI
+  // phrases told the tenant seven categories were excluded when one was; simply
+  // dropping the other six would replace one untruth with another.
+  const _exUnapplied = (t.exclusionsNotApplied || []);
+  const exclHtml = (t.excludedCategories.length || _exUnapplied.length)
+    ? `<div class="ep-excl">${t.excludedCategories.length
+          ? `Excluded from your CAM: ${esc(t.excludedCategories.join(', '))}`
+          : 'No exclusions were applied to your CAM.'}${_exUnapplied.length
+          ? `<br><span class="ep-excl-warn">&#x26A0; ${_exUnapplied.length} further exclusion${_exUnapplied.length !== 1 ? 's' : ''} in this lease could not be applied automatically and ${_exUnapplied.length !== 1 ? 'are' : 'is'} under review: ${esc(_exUnapplied.map(u => u.raw).join(', '))}</span>`
+          : ''}</div>`
     : '';
   const narrativeHtml = (() => {
     if (!window.ReconciliationExplainer) return '';
@@ -10577,9 +12396,10 @@ function openExplainPanel(tenantName) {
   const catMap = {};
   eligible.forEach(inv => {
     const cat = (inv.category || 'other').toLowerCase();
-    if (!catMap[cat]) catMap[cat] = { total: 0, count: 0, invs: [] };
+    if (!catMap[cat]) catMap[cat] = { total: 0, count: 0, share: 0, invs: [] };
     const amt = parseFloat(inv.amount) || 0;
     catMap[cat].total += amt;
+    catMap[cat].share += parseFloat(inv.share) || 0;   // engine's share, not amount * proRata
     catMap[cat].count++;
     catMap[cat].invs.push(inv);
   });
@@ -10587,7 +12407,7 @@ function openExplainPanel(tenantName) {
   const s2rows = Object.entries(catMap)
     .sort((a, b) => b[1].total - a[1].total)
     .map(([cat, data]) => {
-      const yourShare = parseFloat((data.total * r.proRata).toFixed(2));
+      const yourShare = parseFloat(data.share.toFixed(2));   // sums the engine's per-invoice shares
       return `
         <div class="ep-cat-row" id="epcat-${esc(cat.replace(/\s+/g,'-'))}"
           onclick="epToggleDrill('${esc(cat)}','${esc(tenantName)}')">
@@ -10650,8 +12470,7 @@ function epToggleDrill(category, tenantName) {
   if (open)   return;
 
   // Build drill-down invoice list for this category
-  const invs = lastInvoicesFull.filter(inv =>
-    !t.excludedCategories.includes((inv.category || '').toLowerCase()) &&
+  const invs = (r.includedInvoices || []).filter(inv =>
     (inv.category || 'other').toLowerCase() === category.toLowerCase()
   );
 
@@ -10704,6 +12523,211 @@ function _resultCardAnchorId(name) {
   return 'result-card-' + String(name || '').replace(/[^a-zA-Z0-9]/g, '-');
 }
 
+// The breakdown behind whichever variance banner is currently on screen, kept so
+// the panel opens from the same numbers the banner was rendered from rather than
+// re-deriving against globals that may since have moved.
+let _lastVarianceBreakdown = null;
+// The invoice records the engine last ran on, captured for the same reason.
+// `_lastEngineInvoices` is everything behind the pool total; the second is the
+// subset that survived the CAM-year filter, so the panel can tell an out-of-year
+// invoice apart from one that simply reached no tenant.
+let _lastEngineInvoices     = [];
+let _lastReconciledInvoices = [];
+
+// One sentence naming what the gap is mostly made of, for the banner. Reads off
+// the buckets; asserts nothing the panel would not also show.
+function _varianceCauseSentence(bk) {
+  if (!bk) return '';
+  const top = (bk.lines || []).filter(l => l.key !== 'residual')[0];
+  if (!top) return 'the panel below shows how it is made up.';
+  const share = bk.difference ? Math.round((Math.abs(top.amount) / Math.abs(bk.difference)) * 100) : 0;
+  const most  = share >= 60 ? 'most of it' : share >= 30 ? 'the largest part of it' : 'the largest single part of it';
+  const lead  = {
+    out_of_year:  `${most} is ${fmt(top.amount)} of invoices dated outside the CAM year`,
+    not_eligible: `${most} is ${fmt(top.amount)} of invoices marked not CAM-eligible`,
+    uncovered:    `${most} is ${fmt(top.amount)} sitting outside the covered share`,
+    claim:        `${most} is ${fmt(top.amount)} that no lease claimed — excluded categories, or invoices matched to no tenant`,
+    // P6 — the two halves `claim` could not tell apart, and the residue that is
+    // neither. Without these the banner fell through to "the panel below shows
+    // how it is made up" on exactly the runs whose cause is now nameable.
+    not_occupied:      `${most} is ${fmt(top.amount)} belonging to leases that did not run the whole period`,
+    excluded_by_lease: `${most} is ${fmt(top.amount)} in categories one or more leases exclude from CAM`,
+    unclaimed:         `${most} is ${fmt(top.amount)} matched to a tenant that no loaded lease then took`,
+    rounding_residue:  `${most} is ${fmt(top.amount)} of rounding each charge to the nearest cent`,
+    caps:         `${most} is ${fmt(top.amount)} withheld by CAM caps`,
+  }[top.key];
+  return lead ? lead + '.' : 'the panel below shows how it is made up.';
+}
+
+/**
+ * Explain the pool-vs-billed difference. NAVIGATION AND EXPLANATION ONLY.
+ *
+ * Nothing here changes a figure, a finding, an eligibility flag or a billing
+ * gate. It re-adds what the run already produced into named buckets and lists
+ * the invoices behind them, which is what the banner was asserting without
+ * evidence. If a manager decides an invoice is wrongly marked, the place that
+ * changes is the invoice register — this panel points there and stops.
+ */
+function openVarianceDetails() {
+  const VB = window.VarianceBreakdown;
+  const bk = _lastVarianceBreakdown || (VB && lastResults && lastResults.length
+    ? VB.derive({
+        results:    lastResults,
+        invoices:   _lastEngineInvoices || [],
+        reconciled: _lastReconciledInvoices && _lastReconciledInvoices.length
+          ? _lastReconciledInvoices : undefined,
+        pool:     lastTotal || 0,
+        billed:   lastResults.reduce((s, r) => s + (Number(r.totalAllocated) || 0), 0),
+      })
+    : null);
+  if (!bk) {
+    showToast('Run a reconciliation first — there is no allocation to explain yet.',
+      { color: '#92400e', textColor: '#fef3c7' });
+    return;
+  }
+
+  const lineRows = bk.lines.map(l => `<tr${l.key === 'residual' ? ' style="background:rgba(239,68,68,0.06)"' : ''}>
+    <td>${esc(l.label)}</td>
+    <td style="text-align:right;white-space:nowrap"><strong>${fmt(l.amount)}</strong></td>
+    <td style="white-space:normal;color:#94a3b8">${esc(l.detail)}</td>
+  </tr>`).join('');
+
+  const RL = (VB && VB.REASON_LABEL) || {};
+  // Every invoice, sorted by how much of it never reached a tenant — the reader
+  // opened this panel to find the difference, so the rows that make it up come
+  // first. Fully-allocated invoices stay in the table rather than being filtered
+  // out, because "13 invoices, 5 of them billed" is the fact that answers the
+  // question, and it cannot be read off a table that only lists 8.
+  const invRows = bk.invoices.slice()
+    .sort((a, b) => b.unallocated - a.unallocated)
+    .map(r => `<tr${r.unallocated > 0.005 ? '' : ' style="color:#64748b"'}>
+      <td>${esc(r.vendor)}</td>
+      <td style="white-space:normal;color:#94a3b8">${esc(r.category)}</td>
+      <td style="text-align:right;white-space:nowrap">${fmt(r.amount)}</td>
+      <td style="text-align:right;white-space:nowrap">${fmt(r.allocated)}</td>
+      <td style="text-align:right;white-space:nowrap">${r.unallocated > 0.005 ? `<strong>${fmt(r.unallocated)}</strong>` : '—'}</td>
+      <td style="white-space:normal;color:#94a3b8">${esc(RL[r.reason] || r.reason)}</td>
+    </tr>`).join('');
+
+  const step = VB ? VB.nextStep(bk) : null;
+  // Where each next step actually goes. Navigation only — none of these is a
+  // state change, and none of the destinations is invented for this panel: the
+  // invoice register on the Property tab and the lease cards on Spaces are where
+  // a manager already edits eligibility, exclusions and caps.
+  const stepBtn = step ? {
+    out_of_year:  `<button class="rpt-action-btn" onclick="openVarianceFix('out_of_year')">Open the invoice register</button>`,
+    not_eligible: `<button class="rpt-action-btn" onclick="openVarianceFix('not_eligible')">Open the invoice register</button>`,
+    uncovered:    `<button class="rpt-action-btn" onclick="openVarianceFix('uncovered')">Open Spaces to upload the remaining leases</button>`,
+    claim:        `<button class="rpt-action-btn" onclick="openVarianceFix('claim')">Open Spaces to review exclusion schedules</button>`,
+    caps:         `<button class="rpt-action-btn" onclick="openVarianceFix('caps')">Open Spaces to review the CAM caps</button>`,
+    residual:     `<button class="rpt-action-btn" onclick="openVarianceFix('residual')">Open the invoice register</button>`,
+  }[step.key] || '' : '';
+
+  openReport('Variance details', `
+    <div class="rpt-section-title">Where the difference went</div>
+    ${bk.precision === 'legacy' ? `<p class="rpt-helper-text">
+      <strong>This reconciliation was run before the cent-level attribution change.</strong>
+      Its explanation is reconstructed from the stored percentages rather than from the exact
+      square-footage and occupancy fractions, so the last few cents may sit in
+      &ldquo;Not attributed&rdquo; and an exclusion cannot be separated from a rounding difference.
+      <strong>The amounts billed are unchanged and are exactly what was issued.</strong>
+      Re-running the reconciliation would produce the fuller explanation &mdash; and a new record.</p>` : ''}
+    <table class="rpt-table">
+      <tbody>
+        <tr><td>Expense pool</td><td style="text-align:right;white-space:nowrap"><strong>${fmt(bk.pool)}</strong></td></tr>
+        <tr><td>Allocated to tenants</td><td style="text-align:right;white-space:nowrap"><strong>${fmt(bk.billed)}</strong></td></tr>
+        <tr><td>Difference</td><td style="text-align:right;white-space:nowrap"><strong>${fmt(bk.difference)}</strong></td></tr>
+        <tr><td>Share of the pool that reached a tenant</td><td style="text-align:right;white-space:nowrap"><strong>${bk.billedPct == null ? '—' : bk.billedPct.toFixed(1) + '%'}</strong></td></tr>
+        <tr><td>Property covered by loaded leases (space)</td><td style="text-align:right;white-space:nowrap"><strong>${bk.proRataSum.toFixed(1)}%</strong></td></tr>
+        <tr><td>Covered for the whole period (space &times; time)</td><td style="text-align:right;white-space:nowrap"><strong>${bk.occupancyCoveredPct.toFixed(1)}%</strong></td></tr>
+      </tbody>
+    </table>
+    ${(() => {
+      // THE GAP BETWEEN THE TWO COVERAGE FIGURES, and what it does and does not
+      // account for. It explains the SHARED half of the notOccupied bucket only;
+      // the direct half is invoices matched to a part-period tenant but dated
+      // outside their occupancy, which no percentage of the building describes.
+      // Claiming the gap explains the whole bucket would be wrong by $9,700 on
+      // the property this was measured against.
+      const _gap = parseFloat((bk.proRataSum - bk.occupancyCoveredPct).toFixed(1));
+      if (_gap < 0.05) return '';
+      return `<p class="rpt-helper-text">
+        Loaded leases cover <strong>${bk.proRataSum.toFixed(1)}%</strong> of the building, but because some leases
+        covered only part of the CAM period, they cover <strong>${bk.occupancyCoveredPct.toFixed(1)}%</strong> of the
+        building for the full year. That <strong>${_gap.toFixed(1)} percentage-point</strong> gap is leased space whose
+        lease did not run for the full CAM period.
+        It accounts for <strong>${fmt(bk.notOccupiedShared)}</strong> of the ${fmt(bk.notOccupied)} on the
+        &ldquo;Leased, but the lease did not run the whole period&rdquo; line below${
+          bk.notOccupiedDirect >= 0.005
+            ? `; the remaining <strong>${fmt(bk.notOccupiedDirect)}</strong> is invoices matched directly to a
+               part-period tenant but dated outside their occupancy, or carrying no date to place them by`
+            : ''}.
+        None of it is charged to another tenant &mdash; it remains unallocated to tenants in this reconciliation.</p>`;
+    })()}
+    <p class="rpt-helper-text">
+      ${bk.unbilledCount > 0
+        ? `<strong>${bk.unbilledCount} of the ${bk.invoiceCount} invoice${bk.invoiceCount !== 1 ? 's' : ''} in this pool contributed nothing to any tenant allocation</strong>
+           (${fmt(bk.unbilledTotal)}). The rest of the difference comes from invoices that were allocated in part.`
+        : `Every invoice in this pool reached at least one tenant; the difference is made up of partial allocations.`}
+      ${bk.explained
+        ? ' Every dollar of the difference is accounted for below, so nothing here indicates the reconciliation is wrong.'
+        : ` <strong>${fmt(Math.abs(bk.residual))} of the difference is not accounted for below</strong> — that part is worth checking against the invoice register.`}
+    </p>
+    <div class="rpt-section-title">Made up of</div>
+    <table class="rpt-table">
+      <thead><tr><th>Reason</th><th style="text-align:right">Amount</th><th>What it means</th></tr></thead>
+      <tbody>${lineRows}</tbody>
+    </table>
+    <div class="rpt-section-title">Invoice by invoice</div>
+    <table class="rpt-table">
+      <thead><tr><th>Vendor</th><th>Category</th><th style="text-align:right">Invoice</th><th style="text-align:right">Allocated</th><th style="text-align:right">Not allocated</th><th>Why</th></tr></thead>
+      <tbody>${invRows}</tbody>
+    </table>
+    <div class="rpt-scope-note">
+      No tenant charge changes because of anything on this page. Each tenant is billed its own
+      pro-rata share of the expenses its lease allows; the difference above is pool the
+      reconciliation did not pass through to anyone.
+    </div>
+    ${step ? `<div class="rpt-section-title">Next step</div>
+    <p class="rpt-helper-text">${esc(step.cta)}.</p>
+    ${stepBtn}` : ''}`);
+}
+
+// The destinations behind the Variance details next step. Same navigate-and-
+// flash shape as openReviewItemFix: close the report, switch to the pane that
+// holds the control, put the control on screen. It changes nothing.
+const _VARIANCE_FIX_TARGET = {
+  out_of_year:  { tab: 'property', sel: '.pos-reg' },
+  not_eligible: { tab: 'property', sel: '.pos-reg' },
+  residual:     { tab: 'property', sel: '.pos-reg' },
+  uncovered:    { tab: 'spaces',   sel: null },
+  claim:        { tab: 'spaces',   sel: null },
+  caps:         { tab: 'spaces',   sel: null },
+};
+
+function openVarianceFix(key) {
+  const target = _VARIANCE_FIX_TARGET[key];
+  if (!target) return;
+  try { closeReport(); } catch (_) {}
+  if (window.TenantSpace && typeof window.TenantSpace.closeSpace === 'function') {
+    try { window.TenantSpace.closeSpace(); } catch (_) {}
+  }
+  if (typeof switchWorkspaceTab === 'function') switchWorkspaceTab(target.tab);
+  if (target.tab === 'spaces') {
+    if (typeof switchLeaseTab === 'function') switchLeaseTab('bulk');
+    if (typeof renderBulkResults === 'function') renderBulkResults();
+  }
+  // The pane is populated on switch, so the target does not exist until after it.
+  setTimeout(() => {
+    const tgt = document.querySelector(target.sel || '#wsPane-' + target.tab)
+             || document.getElementById('wsPane-' + target.tab);
+    if (!tgt) return;
+    tgt.scrollIntoView({ behavior: 'smooth', block: 'start' });
+    tgt.classList.add('lease-blocker-flash');
+    setTimeout(() => tgt.classList.remove('lease-blocker-flash'), 2200);
+  }, 60);
+}
+
 // Builds the dominant "Needs Review" rollup shown at the very top of CAM
 // results, above the Reconciliation Summary — so problems surface before
 // the landlord has to scroll past financial details to find them.
@@ -10730,17 +12754,306 @@ function _buildNeedsReviewRollupHtml(results) {
   </div>`;
 }
 
+// ── ONE INVOICE BREAKDOWN, BUILT ONCE (N2) ──────────────────────────────────
+//
+// This markup used to exist only inside runAllocation's result-card loop. The
+// RESTORED card is a separate, simpler renderer, and it emitted no breakdown at
+// all — so reopening a saved reconciliation dropped every charge-level fact:
+// vendor, invoice total, tenant share, and the equation P5 prints. Measured on
+// Northgate Exchange: 36,103 rendered characters became 3,610, six "View invoice
+// breakdown" buttons became zero, 49 charge-detail panels became zero.
+//
+// NOTHING WAS MISSING FROM THE DATA. `includedInvoices` came back [6,5,5,5] with
+// identical totals; only the renderer was thinner. So this is not a fidelity
+// problem and must not be labelled as one — it is one builder, now called from
+// both places, which is also what keeps them from drifting apart again.
+//
+// Returns '' when there is genuinely nothing to show, which is the signal the
+// caller uses to disclose reduced fidelity instead.
+function _invoiceBreakdownHtml(r) {
+    if (!r.includedInvoices.length) return '';
+
+    // Group invoices by category, accumulate share per category
+    const catMap = {};
+    r.includedInvoices.forEach((inv, invIdx) => {
+      const key = (inv.category || 'other').toLowerCase();
+      if (!catMap[key]) catMap[key] = { label: inv.category || 'Other', share: 0, invoices: [] };
+      catMap[key].share += inv.share;
+      catMap[key].invoices.push({ inv, invIdx });
+    });
+
+    const pct = (r.proRata * 100).toFixed(2);
+
+    const catCards = Object.entries(catMap)
+      .sort((a, b) => b[1].share - a[1].share)
+      .map(([, data]) => {
+        const invRows = data.invoices.map(({ inv, invIdx }) => {
+          const rowId = `rcn-${r.name}-${invIdx}`.replace(/[^a-zA-Z0-9-]/g, '-');
+          return `
+            <div class="charge-row ts-inv-card" id="crow-${rowId}"
+              onclick="(function(row){var d=document.getElementById('ddetail-${rowId}');var open=d.style.display==='block';d.style.display=open?'none':'block';row.classList.toggle('detail-open',!open);})(this)">
+              <div class="charge-row-top">
+                <div class="charge-row-left">
+                  <div class="charge-vendor">${esc(inv.vendorName || '')}</div>
+                  <div class="charge-amount">${fmt(inv.share)}</div>
+                  <div class="charge-sub">Tenant share (${_shareExplanation(r, inv).rowSuffix})</div>
+                  <p class="ts-vendor-hint">Tap for details or to dispute</p>
+                </div>
+                <div class="charge-chevron">&#x203A;</div>
+              </div>
+              <div id="ddetail-${rowId}" class="ts-detail-box" style="display:none;" onclick="event.stopPropagation()">
+                <div class="ts-detail-header">
+                  <span class="ts-detail-title">Charge Details</span>
+                  <button class="ts-detail-close"
+                    onclick="document.getElementById('ddetail-${rowId}').style.display='none';document.getElementById('crow-${rowId}').classList.remove('detail-open')">&#x2715;</button>
+                </div>
+                <div class="ts-detail-row"><span>Vendor</span><span class="ts-detail-val">${esc(inv.vendorName || '')}</span></div>
+                <div class="ts-detail-row"><span>Category</span><span class="ts-detail-val">${esc(inv.category || '')}</span></div>
+                <div class="ts-detail-row"><span>Invoice Total</span><span class="ts-detail-val">${fmt(inv.amount)}</span></div>
+                <div class="ts-detail-row ts-detail-highlight"><span>Tenant Share</span><span class="ts-detail-val">${fmt(inv.share)}</span></div>
+                ${(() => { const _x = _shareExplanation(r, inv); return `
+                <div class="ts-detail-basis">${esc(_x.basis)}</div>
+                <div class="ts-detail-formula">${_x.formula}</div>
+                ${_x.steps}`; })()}
+                <div class="ts-detail-actions">
+                  <button class="inv-act-btn inv-act-explain" id="tsexplbtn-${rowId}"
+                    onclick="event.stopPropagation();tsExplainInvoice('${rowId}','${esc(inv.vendorName||'')}','${esc(inv.category||'')}',${inv.amount},'${esc(inv.invoiceDate||'')}')">Explain</button>
+                  <button class="inv-act-btn inv-act-dispute" id="dbtn-${rowId}"
+                    onclick="event.stopPropagation();toggleDisputeForm('${rowId}','${esc(r.name)}','${rowId}','${esc(inv.vendorName||'')}','${esc(inv.category||'')}',${inv.share})">Dispute</button>
+                </div>
+                ${inv.flag ? `<div class="recon-inv-flag" style="margin-top:8px;">&#x26A0; ${esc(inv.flag.message)}</div>` : ''}
+                <div id="tsexpl-${rowId}"></div>
+                <div id="dform-${rowId}" style="display:none;"></div>
+              </div>
+            </div>`;
+        }).join('');
+
+        const count = data.invoices.length;
+        return `
+          <div class="ts-cat-accordion">
+            <div class="ts-cat-header"
+              onclick="(function(hdr){var body=hdr.nextElementSibling;var open=body.style.display==='block';body.style.display=open?'none':'block';hdr.classList.toggle('active',!open);})(this)">
+              <div class="ts-cat-left">
+                <div class="ts-cat-name">${esc(data.label)}</div>
+                <div class="ts-cat-meta">${count} invoice${count !== 1 ? 's' : ''}</div>
+              </div>
+              <div class="ts-cat-right">
+                <div class="ts-cat-share-amt">${fmt(parseFloat(data.share.toFixed(2)))}</div>
+                <div class="ts-cat-share-lbl">YOUR SHARE</div>
+              </div>
+              <div class="ts-cat-chevron">&#x203A;</div>
+            </div>
+            <div class="ts-cat-body" style="display:none;">
+              <div class="charge-list">${invRows}</div>
+            </div>
+          </div>`;
+      }).join('');
+
+    const capLine = r.capApplied
+      ? `<div class="recon-cap-note">&#x26A0; Cap applied — ${fmt(r.capAdjustment)} reduced</div>`
+      : '';
+
+    return `<div class="rc-cat-breakdown">${capLine}${catCards}</div>`;
+}
+
+// ── T2 · HOW A SHARE WAS ARRIVED AT, SAID ONCE ───────────────────────────────
+//
+// A tenant's CAM share has two independent multiplicands — how much of the
+// BUILDING they hold, and how much of the PERIOD their lease ran — and no
+// surface named the second one. Both charge-detail renderers printed:
+//
+//     $31,000.00 × 18.00% = $4,204.11
+//
+// and 31,000 × 18% is $5,580.00. The equation did not produce the number beside
+// it, on every shared line of every part-period tenant.
+//
+// THE OPERANDS ARE RATIONALS, NOT PERCENTAGES. lease-period.js already states
+// the rule for the temporal half — "243/365 replays exactly and 0.66575342 does
+// not" — and the spatial half has the same hazard: a one-third tenant renders
+// 33.33%, and 31,000 × 33.33% is $10,332.30 while the engine computed
+// $10,333.33. Printing a rounded percentage as an OPERATOR would have replaced
+// one false equation with another. Percentages appear as gloss; the equation
+// uses sqft/sqft and days/days, so a manager can re-key it and land on the cent.
+//
+// One helper for both renderers: the results card and the tenant statement must
+// not be able to describe the same charge differently.
+function _shareExplanation(r, inv) {
+  const _n = (v) => { const x = parseFloat(v); return Number.isFinite(x) ? x : null; };
+  const occ   = r && r.occupancy ? r.occupancy : null;
+  const share = _n(inv && inv.share) || 0;
+  const amt   = _n(inv && inv.amount) || 0;
+  const isDirect = (inv && inv.allocation) === 'direct';
+
+  // The building denominator. Read from the run's own tenant record, which
+  // carries it, rather than derived from proRataPercent — that percentage is
+  // rounded to two places and dividing by it reconstructs the wrong building.
+  const _lt = (typeof lastTenants !== 'undefined' && Array.isArray(lastTenants))
+    ? lastTenants.find(x => x && x.name === r.name) : null;
+  const tenantSqft   = _n(_lt && _lt.leasedSqft) ?? _n(r && r.sqFt);
+  const buildingSqft = _n(_lt && _lt.totalSqft)
+    ?? _n((typeof currentProperty === 'function' && currentProperty() || {}).totalSqft);
+  const pct = (_n(r && r.proRataPercent) ?? 0).toFixed(2);
+
+  // A DIRECT INVOICE IS NOT APPORTIONED — not by space and not by time. It is
+  // placed by its date and billed in full, so neither multiplicand appears.
+  if (isDirect) {
+    return {
+      rowSuffix: `${pct}% &middot; direct`,
+      basis:     'Billed directly to your space — charged in full, not apportioned by pro-rata share or by time.',
+      formula:   `${fmt(amt)} charged in full (100%)`,
+      steps:     '',
+    };
+  }
+
+  const haveSpace = tenantSqft != null && buildingSqft != null && buildingSqft > 0;
+  const spaceOperand = haveSpace
+    ? `${Math.round(tenantSqft).toLocaleString()}/${Math.round(buildingSqft).toLocaleString()} sqft`
+    : `${pct}%`;
+  const spaceProduct = haveSpace ? amt * (tenantSqft / buildingSqft) : amt * (_n(r.proRataPercent) || 0) / 100;
+
+  // A REAL FRACTION, OR NONE AT ALL. `unit: 'period'` is the full_period basis —
+  // numerator and denominator are both 1 and printing "× 1/1" would be noise
+  // dressed as arithmetic. Unresolved occupancy has no fraction to print at all,
+  // and inventing one is exactly what this whole change exists to stop.
+  const hasFraction = !!(occ && occ.applied && occ.numerator != null && occ.denominator > 0
+                         && (occ.unit === 'days' || occ.unit === 'months'));
+  const timeOperand = hasFraction ? `${occ.numerator}/${occ.denominator}` : null;
+  const unitWord    = hasFraction ? occ.unit : null;
+
+  // WHERE THE PERIOD FIGURE CAME FROM. An assumed bound and a measured one are
+  // different claims and must not read alike; an unreadable date is a third
+  // thing again.
+  let occupiedRow, periodProse;
+  if (!occ || !occ.applied) {
+    // UNRESOLVED IS NOT ONE CONDITION. occupancy() returns unresolved for an
+    // unreadable date, for a term that ended before the period, and for one that
+    // begins after it — three different facts with three different next actions.
+    // A single sentence about a date that "could not be read" is simply false on
+    // two of them, and a tenant reading it would go looking for a typo that is
+    // not there.
+    const _case = occ && occ.case;
+    if (!occ || !occ.unresolved) {
+      occupiedRow = 'not measured for this run';
+      periodProse = 'This run predates partial-period apportionment, so no occupancy fraction was recorded.';
+    } else if (_case === 'ended_before') {
+      occupiedRow = 'not established — lease ended before the period';
+      periodProse = `The lease on file ran to ${occ.termEnd}, before the ${getCamYear()} CAM period began, so this reconciliation cannot establish occupancy for it. The full period has been used, un-apportioned. A holdover or renewal may carry the obligation forward — confirm it and record it against the lease.`;
+    } else if (_case === 'begins_after') {
+      occupiedRow = 'not established — lease begins after the period';
+      periodProse = `The lease on file commences ${occ.termStart}, after the ${getCamYear()} CAM period ended, so this reconciliation cannot establish occupancy for it. The full period has been used, un-apportioned. Confirm whether the lease dates or the CAM year is wrong before issuing anything from this run.`;
+    } else if (_case === 'unreadable') {
+      occupiedRow = 'not established — a lease date cannot be read';
+      periodProse = 'A date on the lease could not be read, so occupancy could not be established. The full period has been used, un-apportioned. Correct the lease dates and re-run.';
+    } else {
+      occupiedRow = 'not established — full period used';
+      periodProse = 'Occupancy could not be established for this run, so the full period has been used, un-apportioned. Confirm the lease dates and the CAM period, and re-run.';
+    }
+  } else if (occ.unit === 'period') {
+    occupiedRow = 'the full annual amount — your lease says so';
+    periodProse = `Your lease bills the full annual amount regardless of a partial year, so no apportionment applies even though your lease ran ${occ.overlapStart} to ${occ.overlapEnd}.`;
+  } else if (occ.factor !== null && occ.factor >= 1) {
+    const _assumed = occ.assumedStart || occ.assumedEnd;
+    occupiedRow = `${occ.numerator} of ${occ.denominator} ${occ.unit}` +
+                  (_assumed ? ' — assumed, no ' + (occ.assumedStart ? 'start' : 'end') + ' date on file'
+                            : ' — the whole period');
+    periodProse = _assumed
+      ? `The lease on file carries no ${occ.assumedStart ? 'start' : 'end'} date, so this reconciliation has treated your term as covering the whole ${getCamYear()} CAM period. That is an assumption, not a date read from the lease.`
+      : `Your lease covered the whole ${getCamYear()} CAM period, so no part-year apportionment applies.`;
+  } else {
+    occupiedRow = `${occ.numerator} of ${occ.denominator} ${occ.unit}`;
+    const _src = occ.basisSource === 'lease'  ? `Apportioned ${String(occ.basis || '').replace('_', ' ')}, as your lease states.`
+               : occ.basisSource === 'manual' ? `Apportioned ${String(occ.basis || '').replace('_', ' ')}, as confirmed by your property manager.`
+               : `Apportioned ${String(occ.basis || '').replace('_', ' ')}: this reconciliation's default, not a term of your lease.`;
+    periodProse = `Apportioned for the part of the CAM period your lease covered — ${occ.overlapStart} to ${occ.overlapEnd}, ${occ.numerator} of ${occ.denominator} ${occ.unit}. ${_src}`;
+  }
+
+  // The one line a manager re-keys. Every operand exact; the printed result is
+  // the engine's own `share`, never recomputed here.
+  const formula = timeOperand
+    ? `${fmt(amt)} &times; ${spaceOperand} &times; ${timeOperand} ${unitWord} = ${fmt(share)}`
+    : `${fmt(amt)} &times; ${spaceOperand} = ${fmt(share)}`;
+
+  const steps = `<div class="ts-detail-steps">
+      <div class="ts-step"><span>Building expense</span><span></span><span class="ts-step-amt">${fmt(amt)}</span></div>
+      <div class="ts-step"><span>Your pro-rata share</span><span class="ts-step-op">${spaceOperand}</span><span class="ts-step-amt">${fmt(spaceProduct)}</span></div>
+      <div class="ts-step"><span>Occupied</span><span class="ts-step-op">${occupiedRow}</span><span class="ts-step-amt"></span></div>
+      <div class="ts-step ts-step-total"><span>Your share</span><span></span><span class="ts-step-amt">${fmt(share)}</span></div>
+    </div>`;
+
+  return {
+    rowSuffix: timeOperand ? `${pct}% &times; ${timeOperand} ${unitWord}` : `${pct}%`,
+    basis:     `Your ${pct}% pro-rata share of a building expense. ${periodProse}`,
+    formula,
+    steps,
+  };
+}
+
 // Builds the in-app Reconciliation Summary HTML panel displayed above result cards.
-function _buildReconciliationSummaryHtml(results, invoices, propName) {
+//
+// `engineInvoices` is the Invoice[] the reconciliation engine was actually
+// handed. It is a fourth, optional argument rather than a replacement for
+// `invoices` because `invoices` is what totalPool is struck from and that must
+// not move — but it is a stripped shape that dropped `camEligible` and `id`, so
+// it cannot say which invoices were held out of the allocation. The variance
+// panel needs both: the pool the screen shows, and the records behind it.
+function _buildReconciliationSummaryHtml(results, invoices, propName, engineInvoices, reconciledInvoices) {
   if (!results || !results.length) return '';
 
   const totalPool   = invoices.reduce((s, inv) => s + (parseFloat(inv.amount) || 0), 0);
+  // The KPI beside this one is LABELLED "CAM Pool" and showed totalPool — every
+  // invoice loaded, including ones the manager had removed from CAM. Two numbers
+  // now, each matching its own label: the variance banner keeps the gross figure
+  // (its words say "expense pool"), and the KPI shows what tenants can actually
+  // be billed from.
+  const camPoolTotal = window.CamPool.total(invoices);
   const totalBilled = results.reduce((s, r) => s + r.totalAllocated, 0);
   const proRataSum  = results.reduce((s, r) => s + (r.proRataPercent || 0), 0);
   const proRataGap  = parseFloat((100 - proRataSum).toFixed(2));
+  // ONE SOURCE. Read from the module that owns it rather than re-derived here —
+  // a second copy of this reduce is a second definition of coverage, and the two
+  // would drift the first time an occupancy shape changed. Null when the module
+  // is unavailable, which renders no tile rather than a wrong one.
+  const _occCoveredPct = (() => {
+    try {
+      const VB = window.VarianceBreakdown;
+      return VB && typeof VB.occupancyCovered === 'function'
+        ? parseFloat((VB.occupancyCovered(results) * 100).toFixed(2)) : null;
+    } catch (_) { return null; }
+  })();
   const capsCount   = results.filter(r => r.capApplied).length;
   const capTotal    = results.filter(r => r.capApplied).reduce((s, r) => s + (r.capAdjustment || 0), 0);
   const flaggedCnt  = results.filter(r => (r.ambiguityFlags || []).length > 0).length;
+
+  // THE CANONICAL BILLING STATE, read from the one model that decides it.
+  //
+  // AuditExposure.billingReadiness is what gates every tenant statement. The
+  // reconciliation screen showed none of it, so "Total Billed $25,090.78" sat at
+  // the top of a run on which no statement could be issued — the same word used
+  // as a completed fact that was fixed on the statement itself. Reading the same
+  // model here keeps one source of truth: this screen reports the state, it does
+  // not compute it.
+  // The exposure is kept, not just the verdict: I-12 asks it the same question
+  // once per tenant, through the one derivation the statement path uses.
+  const _exposure = (() => {
+    try {
+      const AXs = window.AuditExposure;
+      if (!AXs || !results.length) return null;
+      return AXs.deriveExposure(buildAuditSummary(), totalPool || 0);
+    } catch (_) { return null; }
+  })();
+  const _billing = (() => {
+    try {
+      const AXs = window.AuditExposure;
+      if (!AXs || !_exposure) return null;
+      return AXs.billingReadiness(_exposure);
+    } catch (_) { return null; }
+  })();
+  const _billable = !!(_billing && _billing.canBill);
+  // Per-tenant billing state, derived once and used by the rows and the roster
+  // line above them so the two can never report different counts.
+  const _tenantBilling = {};
+  results.forEach(r => { _tenantBilling[r.name] = _tenantBillingState(r.name, _exposure); });
+  const _billableNames = results.map(r => r.name).filter(n => _tenantBilling[n].state === 'billable');
 
   const issues   = _detectReconciliationIssues(results, currentProperty());
   _lastReconIssues = issues; // capture for openDisputeFromFlag()
@@ -10772,36 +13085,127 @@ function _buildReconciliationSummaryHtml(results, invoices, propName) {
   const capsCls  = capsCount > 0 ? 'rcs-kpi--warn' : '';
   const flagCls  = flaggedCnt > 0 ? 'rcs-kpi--warn' : '';
 
-  // Overall confidence rollup — surfaced prominently so a skeptical reviewer
-  // sees "how sure are we" before drilling into per-field detail.
-  const _confResults  = results.filter(r => r.averageConfidence > 0);
-  const avgConfidence = _confResults.length
-    ? Math.round(_confResults.reduce((s, r) => s + r.averageConfidence, 0) / _confResults.length)
-    : null;
+  // D16 — THE PERCENTAGE IS GONE; THE COUNT THAT MEANT SOMETHING STAYS.
+  //
+  // This badge read "N% confidence" and its own tooltip called it "Average
+  // extraction confidence across all tenants in this run". It was neither: it
+  // averaged `averageConfidence`, a share-weighted mean of the invoice-matching
+  // ROUTING SIGNAL, over the tenants for which that mean happened to be
+  // non-zero — which is the tenants who had a direct-matched invoice. A property
+  // whose invoices are all ordinary shared expenses produced no badge at all,
+  // and one with a single submeter invoice produced a number that measured the
+  // weight of that invoice in the bill.
+  //
+  // "N items need review" is a count of real ambiguity flags and is kept
+  // verbatim. Nothing takes the percentage's place.
   const reviewFieldCount = results.reduce((s, r) => s + (r.ambiguityFlags || []).length, 0);
-  const confCls = avgConfidence === null ? ''
-    : avgConfidence < 70 ? 'rcs-confidence-badge--warn'
-    : avgConfidence < 90 ? 'rcs-confidence-badge--ok'
-    : 'rcs-confidence-badge--high';
-  const confidenceBadgeHtml = avgConfidence !== null
-    ? `<span class="rcs-confidence-badge ${confCls}" title="Average extraction confidence across all tenants in this run">
-        ${avgConfidence}% confidence${reviewFieldCount > 0 ? ` &middot; ${reviewFieldCount} item${reviewFieldCount !== 1 ? 's' : ''} need review` : ''}
+  const confidenceBadgeHtml = reviewFieldCount > 0
+    ? `<span class="rcs-confidence-badge rcs-confidence-badge--warn">
+        ${reviewFieldCount} item${reviewFieldCount !== 1 ? 's' : ''} need review
       </span>`
     : '';
 
+  // A finding that is not disputable gets no dispute button. The property
+  // coverage gap has no counterparty — offering "Open Dispute" there raised an
+  // allocation_mismatch dispute against a tenant whose allocation is correct.
+  // It is also labelled so it reads as incomplete coverage, not an exception.
   const issueHtml = issues.length > 0 ? `<div class="rcs-issues">${
-    issues.map((f, fi) => `<div class="rcs-issue rcs-issue--${f.severity}">
-      <span class="rcs-issue-main">${f.severity === 'red' ? '&#x26D4;' : '&#x26A0;'} ${esc(f.title)}</span>
-      <button class="rcs-dispute-btn" onclick="openDisputeFromFlag(${fi})">Open Dispute</button>
+    issues.map((f, fi) => `<div class="rcs-issue rcs-issue--${f.severity}${f.kind === 'coverage' ? ' rcs-issue--coverage' : ''}">
+      <span class="rcs-issue-main">${f.kind === 'coverage' ? '&#x1F4D0;' : f.severity === 'red' ? '&#x26D4;' : '&#x26A0;'} ${f.kind === 'coverage' ? '<span class="rcs-issue-kind">Property coverage</span> ' : ''}${esc(f.title)}</span>
+      ${f.disputable === false ? '' : `<button class="rcs-dispute-btn" onclick="openDisputeFromFlag(${fi})">Open Dispute</button>`}
     </div>`).join('')
   }</div>` : '';
 
+  // totalBilled and totalPool are structurally different quantities and are only
+  // expected to agree when the property is fully covered by loaded leases.
+  // totalPool is the gross invoice total; totalBilled is what the engine
+  // allocated AFTER four legitimate reductions: property coverage below 100%,
+  // invoices marked not CAM-eligible (PW-3 — note the summary's invoice list is
+  // built without the camEligible flag, so those sit in totalPool and never in
+  // totalBilled), per-tenant category exclusions, and cap adjustments.
+  //
+  // Comparing them unconditionally meant a landlord validating on a subset of
+  // leases was told to "re-check invoice amounts or re-run allocation" — advice
+  // that would change nothing, because nothing was wrong. Same mistake the
+  // coverage flag made: a completeness signal presented as a defect.
+  //
+  // The diagnostic case is variance WITH complete coverage: the shares add up,
+  // and the pool still does not reconcile. That one keeps the original warning.
+  // Threshold matches reconciliation-engine.js section 3 (gap > 2 = incomplete).
+  //
+  // No arithmetic changed: totalPool, totalBilled and variance are as they were.
   const variance = Math.abs(totalBilled - totalPool);
-  const varianceBanner = variance > 0.05
-    ? `<div style="background:var(--bgc-431407);border:1px solid #f97316;color:var(--c-fed7aa);padding:10px 14px;border-radius:8px;margin-bottom:12px;font-size:0.85rem;">
-        ⚠️ <strong>Reconciliation variance detected</strong> — total billed (${fmt(totalBilled)}) differs from total expense pool (${fmt(totalPool)}) by <strong>${fmt(variance)}</strong>. Re-check invoice amounts or re-run allocation.
-      </div>`
+  const _coverageIncomplete = proRataSum < 98;
+
+  // WHERE THE DIFFERENCE WENT, not just how big it is.
+  //
+  // Both branches below used to end at a full stop. The reader was told a
+  // five-figure sum was unallocated and given nowhere to go: the amber branch
+  // said "re-check invoice amounts", which is wrong advice in the ordinary case,
+  // and the grey branch named property coverage as the cause when coverage is
+  // only ever one of four. So the banner now carries the same "Next step ›"
+  // affordance the lease review flow uses, opening a panel that decomposes the
+  // gap. Derivation only — see variance-breakdown.js; no CAM arithmetic here or
+  // there changes, and the panel cannot state a figure the run did not produce.
+  _lastVarianceBreakdown = (() => {
+    try {
+      const VB = window.VarianceBreakdown;
+      if (!VB) return null;
+      return VB.derive({
+        results, invoices: engineInvoices || [], reconciled: reconciledInvoices,
+        pool: totalPool, billed: totalBilled,
+      });
+    } catch (_) { return null; }
+  })();
+  const _vbStep = (() => {
+    try { return window.VarianceBreakdown ? window.VarianceBreakdown.nextStep(_lastVarianceBreakdown) : null; }
+    catch (_) { return null; }
+  })();
+  // No breakdown module, or nothing it can attribute → no CTA rather than a
+  // button that opens an empty panel. A dead-end is what this change exists to
+  // remove; offering one on the failure path would reintroduce it.
+  const _vbCta = (_lastVarianceBreakdown && _vbStep)
+    ? `<button type="button" class="rcs-variance-cta" onclick="event.stopPropagation();openVarianceDetails()">Next step: ${esc(_vbStep.cta)} &rsaquo;</button>`
     : '';
+  const _vbOpen = _lastVarianceBreakdown
+    ? ` role="button" tabindex="0" class="rcs-variance-banner" onclick="openVarianceDetails()" onkeydown="if(event.key==='Enter'||event.key===' '){event.preventDefault();openVarianceDetails();}" title="See how this difference is made up"`
+    : '';
+
+  const varianceBanner = variance <= 0.05
+    ? ''
+    : _coverageIncomplete
+      ? `<div${_vbOpen} style="background:var(--theme-surface);border:1px solid rgba(148,163,184,0.28);color:var(--text-3);padding:10px 14px;border-radius:8px;margin-bottom:12px;font-size:0.85rem;">
+        <!-- Was "Expected — partial property coverage ... no action needed."
+             The arithmetic was right and the certainty was not. At 37.3%
+             coverage the system has NOT established what the remaining 62.7%
+             is: the coverage finding says so explicitly and asks the reader to
+             upload the remaining leases and re-run, because the answer decides
+             whether that share is vacant space the landlord absorbs or a
+             tenant obligation missing from the reconciliation. A banner
+             calling the same figure expected and closing with "no action
+             needed" contradicts that finding on the same screen, and quietly
+             assigns the whole variance to the landlord.
+             The numbers are untouched — totalBilled, totalPool, variance and
+             proRataSum are exactly as they were. Only the claim about what
+             they mean has changed. -->
+        &#x1F4D0; <strong>Partial property coverage — ${fmt(variance)} currently unallocated.</strong> Total billed (${fmt(totalBilled)}) is less than the expense pool (${fmt(totalPool)}) because the loaded leases cover ${proRataSum.toFixed(1)}% of the property. Whether that remainder is vacant space the landlord absorbs, or space under a lease not yet uploaded, has not been established — upload any remaining leases and re-run to resolve it. Invoices marked not CAM-eligible, excluded by a lease, or reduced by a cap are also outside the billed total. No tenant charge changes when this is resolved: each is billed only its own share.
+        ${_vbCta}
+      </div>`
+      : `<div${_vbOpen} style="background:var(--bgc-431407);border:1px solid #f97316;color:var(--c-fed7aa);padding:10px 14px;border-radius:8px;margin-bottom:12px;font-size:0.85rem;">
+        <!-- Was ". Re-check invoice amounts or re-run allocation."
+             The shares add up here, so coverage is not the explanation — but
+             "re-check the invoice amounts" was only ever right for the one cause
+             the panel now calls the unattributed residual, and wrong for the
+             three that actually produce most of these gaps. It sent a manager
+             looking for a typo in a register that was correct. The sentence now
+             states the composition instead, and the CTA names the largest
+             bucket. -->
+        ⚠️ <strong>Reconciliation variance detected</strong> — total billed (${fmt(totalBilled)}) differs from total expense pool (${fmt(totalPool)}) by <strong>${fmt(variance)}</strong>.${
+          _lastVarianceBreakdown
+            ? ` The loaded leases cover ${proRataSum.toFixed(1)}% of the property, so this is not a coverage gap: ${esc(_varianceCauseSentence(_lastVarianceBreakdown))}`
+            : ' Re-check invoice amounts or re-run allocation.'}
+        ${_vbCta}
+      </div>`;
 
   const rows = results.map(r => {
     const liveT  = tenantData.find(t => t && t.id === r.tenantId);
@@ -10815,7 +13219,19 @@ function _buildReconciliationSummaryHtml(results, invoices, propName) {
       <td class="rcs-td rcs-num">${(r.proRata * 100).toFixed(2)}%</td>
       ${capCell}
       <td class="rcs-td rcs-num rcs-alloc-total">${fmt(r.totalAllocated)}</td>
-      <td class="rcs-td"><span class="rc-calc-state ${calcSt.cls}">${calcSt.label}</span></td>
+      <td class="rcs-td"><span class="rc-calc-state ${calcSt.cls}" title="Describes the CAM calculation for this row, not the tenant's standing. Audit exceptions are listed in the AI Audit Summary.">${calcSt.label}</span></td>
+      <td class="rcs-td">${(() => {
+        // BILLING STATUS. Distinct from the CAM calculation state beside it: that
+        // column says how much to trust the number, this one says whether it may
+        // be sent. A row can read "Calc verified" and still be unbillable, which
+        // is exactly the pairing a manager needs to see rather than infer.
+        const b = _tenantBilling[r.name];
+        if (!b) return '<span class="rcs-muted">—</span>';
+        const nm = esc(r.name).replace(/'/g, "\\'");
+        return `<button type="button" class="rcs-bill rcs-bill--${b.state}"
+          onclick="generateTenantStatement('${nm}')"
+          title="${esc(b.reason)}">${esc(b.label)}</button>`;
+      })()}</td>
     </tr>`;
   }).join('');
 
@@ -10825,15 +13241,79 @@ function _buildReconciliationSummaryHtml(results, invoices, propName) {
         <span class="rcs-panel-title">&#x1F4CA; Reconciliation Summary</span>
         ${confidenceBadgeHtml}
         <span class="rcs-coverage-badge">${totalPool > 0 ? (totalBilled / totalPool * 100).toFixed(1) : '—'}% coverage</span>
+        ${/* THE ROSTER LINE. On a phone the results table is several screens down
+             and scrolls sideways, so the count that answers "who can I bill?"
+             is stated here in words, beside the property verdict it qualifies.
+             Reading _tenantBilling means it can never disagree with the column. */''}
+        ${_exposure ? `<span class="rcs-bill-roster rcs-bill-roster--${
+            _billableNames.length === results.length ? 'all'
+          : _billableNames.length === 0              ? 'none' : 'some'}"
+          title="${esc(_billableNames.length ? _billableNames.join(', ') : 'No tenant can be billed from this reconciliation yet.')}"
+          >${_billableNames.length} of ${results.length} tenant${results.length === 1 ? '' : 's'} billable</span>` : ''}
+        <!-- The same two words the tenant statement, the blocked screen and the
+             Lender Summary use, from the same model. A manager should learn
+             whether this run can be billed on the screen that produces it, not
+             by trying to issue a statement and being refused. -->
+        ${_billing ? `<span class="rcs-readiness-badge ${_billable ? 'rcs-readiness--ok' : 'rcs-readiness--blocked'}" title="${esc(_billing.reason || '')}">${_billable ? '&#x2713; Ready to bill' : '&#x26D4; Not ready to bill'}</span>` : ''}
         ${_balBadgeHtml}
       </div>
+      ${(() => {
+        // A REBUILT RECORD SAYS SO, ABOVE THE FIGURES IT QUALIFIES.
+        //
+        // When the snapshot blob is missing, the reconciliation is rebuilt from
+        // the normalized cam_reconciliations rows, which carry the amount and
+        // the share and nothing else. Rendered without a word, that record is
+        // indistinguishable from a full run: "0 Caps Applied" and a per-tenant
+        // invoice count read as findings about the reconciliation rather than as
+        // data the rows never held.
+        const _rec = (typeof currentProperty === 'function' && currentProperty()) || null;
+        const _cr  = _rec && _rec.camReconciliation;
+        if (!_cr || _cr.fidelity !== 'reduced') return '';
+        const _why = (_cr.fidelityReasons || []).map(r => `<li>${esc(r)}</li>`).join('');
+        return `<div class="rcs-fidelity" role="note">
+          <strong>Rebuilt from saved summary rows.</strong>
+          The amount billed to each tenant and its pro-rata share are as recorded. The detail below them is not:
+          <ul class="rcs-fidelity-list">${_why}</ul>
+          <span class="rcs-fidelity-cta">Re-run the reconciliation to restore the full breakdown.</span>
+        </div>`;
+      })()}
       <div class="rcs-kpis">
-        ${avgConfidence !== null ? `<div class="rcs-kpi ${avgConfidence < 70 ? 'rcs-kpi--warn' : ''}"><div class="rcs-kpi-val">${avgConfidence}%</div><div class="rcs-kpi-lbl">Confidence</div></div>` : ''}
-        <div class="rcs-kpi"><div class="rcs-kpi-val">${fmt(totalPool)}</div><div class="rcs-kpi-lbl">CAM Pool</div></div>
-        <div class="rcs-kpi"><div class="rcs-kpi-val">${fmt(totalBilled)}</div><div class="rcs-kpi-lbl">Total Billed</div></div>
-        <div class="rcs-kpi ${proCls}"><div class="rcs-kpi-val">${proRataSum.toFixed(1)}%</div><div class="rcs-kpi-lbl">Pro-Rata Sum</div></div>
+        <!-- D16 — the "N% Confidence" KPI tile is gone with the metric behind it.
+             It printed the same share-weighted mean of the invoice-matching
+             routing signal as the badge above and the per-tenant stat: three
+             surfaces, one number, and the number measured how much of a bill
+             came from a direct match. Nothing replaces it; a percentage with no
+             defensible basis is the defect, not the absence of one. -->
+        <div class="rcs-kpi"><div class="rcs-kpi-val">${fmt(camPoolTotal)}</div><div class="rcs-kpi-lbl">CAM Pool${
+          // When some invoices are held out of CAM the two figures differ, and a
+          // reader seeing "CAM Pool $90,500" beside a banner that says "expense
+          // pool $160,500" needs the two related on the spot rather than inferred.
+          camPoolTotal < totalPool
+            ? `<span class="rcs-kpi-sub"> of ${fmt(totalPool)} invoiced</span>` : ''
+        }</div></div>
+        <!-- "Total Billed" is a claim that money was billed. Until the audit
+             clears this reconciliation, nothing has been: every statement is
+             refused. The figure is identical either way; only the claim changes. -->
+        <div class="rcs-kpi"><div class="rcs-kpi-val">${fmt(totalBilled)}</div><div class="rcs-kpi-lbl">${
+          _billable ? 'Total Billed' : 'Calculated Tenant Allocation'}</div></div>
+        <!-- TWO COVERAGE FIGURES, because they answer different questions.
+             proRataSum says whether a lease covers the square footage at all;
+             occupancyCovered says whether the lease covering it ran the whole
+             period. Only the first was ever shown, so a property 92% leased and
+             83.8% leased-for-the-year read as 92% covered, and the T2
+             distinction the allocation is built on was invisible. The figure
+             comes from variance-breakdown.js so there is one definition of it. -->
+        <div class="rcs-kpi ${proCls}"><div class="rcs-kpi-val">${proRataSum.toFixed(1)}%</div><div class="rcs-kpi-lbl">Space under lease</div></div>
+        ${_occCoveredPct === null ? '' :
+        `<div class="rcs-kpi ${Math.abs(_occCoveredPct - proRataSum) > 0.05 ? 'rcs-kpi--warn' : ''}"
+              title="How much of the building was under a loaded lease FOR THE WHOLE CAM PERIOD. Lower than the space figure when a lease began or ended mid-year."><div class="rcs-kpi-val">${_occCoveredPct.toFixed(1)}%</div><div class="rcs-kpi-lbl">Covered all year</div></div>`}
         <div class="rcs-kpi ${capsCls}"><div class="rcs-kpi-val">${capsCount > 0 ? capsCount + ' (−' + fmt(capTotal) + ')' : '0'}</div><div class="rcs-kpi-lbl">Caps Applied</div></div>
-        <div class="rcs-kpi ${flagCls}"><div class="rcs-kpi-val">${flaggedCnt}</div><div class="rcs-kpi-lbl">Flagged</div></div>
+        <!-- "Flagged" counted ONLY per-row allocation ambiguity (approximate
+             sqft, unknown NNN/Gross, sqft overflow, base-year mismatch). It
+             says nothing about audit exceptions, so "0 Flagged" sat beside 3
+             critical exceptions and read as "no problems". The scope is now in
+             the label, and the readiness chip above states the real verdict. -->
+        <div class="rcs-kpi ${flagCls}" title="Per-tenant allocation ambiguity only — approximate square footage, unknown lease type, square-footage overflow or a base-year mismatch. Audit exceptions are counted separately in the AI Audit Summary."><div class="rcs-kpi-val">${flaggedCnt}</div><div class="rcs-kpi-lbl">Allocation Flags</div></div>
       </div>
       ${issueHtml}
       <div class="rcs-table-wrap">
@@ -10844,7 +13324,8 @@ function _buildReconciliationSummaryHtml(results, invoices, propName) {
             <th class="rcs-th rcs-num">Pro-Rata</th>
             <th class="rcs-th rcs-num">Cap Adj</th>
             <th class="rcs-th rcs-num">Allocated</th>
-            <th class="rcs-th">Billing Method</th>
+            <th class="rcs-th" title="Whether the CAM arithmetic for this row used sound inputs. It is not a statement about the lease or the tenant — audit exceptions are reported in the AI Audit Summary.">CAM calculation</th>
+            <th class="rcs-th" title="Whether a statement may be issued to this tenant. Read from the same billing readiness the statement itself applies — the two cannot disagree.">Billing status</th>
           </tr></thead>
           <tbody>${rows}</tbody>
           <tfoot><tr class="rcs-total-row">
@@ -10853,6 +13334,7 @@ function _buildReconciliationSummaryHtml(results, invoices, propName) {
             <td class="rcs-td rcs-num">${capsCount > 0 ? '−' + fmt(capTotal) : '—'}</td>
             <td class="rcs-td rcs-num rcs-alloc-total">${fmt(totalBilled)}</td>
             <td class="rcs-td"></td>
+            <td class="rcs-td rcs-bill-total">${_billableNames.length} of ${results.length} billable</td>
           </tr></tfoot>
         </table>
       </div>
@@ -11103,8 +13585,20 @@ function openLeaseModalFromFile(index) {
 }
 
 // Modal viewer — accepts a File object (local) or a URL string (persisted).
-function openLeaseModal(fileOrUrl) {
+async function openLeaseModal(fileOrUrl) {
   if (!fileOrUrl) return;
+  // SEC-1 — a stored /object/public/ URL will not load in the iframe once the
+  // bucket is private. Resolve it to a signed URL first; a File object is a
+  // local blob and needs nothing.
+  if (typeof fileOrUrl === 'string') {
+    const _readable = await resolveDocumentUrl(fileOrUrl);
+    if (!_readable) {
+      showToast('⚠️ That lease could not be opened — you may not have access, or it is no longer stored.',
+        { color: '#92400e', textColor: '#fef3c7', duration: 8000 });
+      return;
+    }
+    fileOrUrl = _readable;
+  }
   const modal = document.getElementById('leaseViewerModal');
   const frame = document.getElementById('leaseViewerFrame');
   const title = document.getElementById('leaseViewerTitle');
@@ -11145,7 +13639,14 @@ function closeLeaseModal() {
 
 function leaseViewerOpenExternal() {
   const modal = document.getElementById('leaseViewerModal');
-  if (modal?._leaseUrl) window.open(modal._leaseUrl, '_blank');
+  if (!modal?._leaseUrl) return;
+  // The modal holds an already-resolved URL, but this opens whatever is in it —
+  // and a blob: or javascript: value must never reach window.open from a field
+  // that other code writes. Allow only what can legitimately be here.
+  let u;
+  try { u = new URL(modal._leaseUrl, window.location.origin); } catch (_) { return; }
+  if (u.protocol !== 'https:' && u.protocol !== 'blob:' && u.protocol !== 'http:') return;
+  window.open(u.href, '_blank', 'noopener');
 }
 
 // ESC key always closes modal — user can never be trapped
@@ -11226,10 +13727,25 @@ let _resultsStale = false; // true when field edits happen after a reconciliatio
 
 // ─── CAM Year ─────────────────────────────────────────────────────────────────
 let _camYear = new Date().getFullYear(); // hydrated from scoped key in _lsMigrateAncillaryKeys()
+// Top-level `let` in a classic script is NOT a window property, so other
+// modules cannot read it. property-os.js needs the active CAM year to scope the
+// Financials panel; expose a reader rather than the binding.
+window.currentCamYear = function () { return _camYear != null ? _camYear : null; };
 function getCamYear() { return _camYear; }
-function setCamYear(y) {
+// `persist` defaults TRUE, because the two long-standing callers — the Property
+// Setup dropdown and a restored snapshot — are both statements of intent worth
+// remembering.
+//
+// The property-year adoption in selectProperty passes false, and that matters.
+// setCamYear writes the per-user key, so adopting property A's 2025 REPLACED the
+// user's stored default with it; opening property B, which has never been
+// reconciled and has no year of its own, then inherited 2025 from a property it
+// has nothing to do with. That is the same silent carry-across this whole change
+// exists to remove, one level down. A property's own year applies to the
+// session; only a person's choice becomes the default.
+function setCamYear(y, opts) {
   _camYear = parseInt(y, 10) || new Date().getFullYear();
-  localStorage.setItem(_camYearKey(), _camYear);
+  if (!opts || opts.persist !== false) localStorage.setItem(_camYearKey(), _camYear);
   const glLbl = document.getElementById('glUploadLabel');
   if (glLbl) glLbl.textContent = `Upload ${_camYear} GL Excel File (.xlsx only)`;
   const _cyb = document.getElementById('camYearBadge');
@@ -11285,7 +13801,8 @@ function rerunAfterWarning() {
   setTimeout(() => runAllocation(), 50);
 }
 let lastPropName = '';
-let lastTotal    = 0;
+let lastTotal    = 0;   // gross: every invoice loaded
+let lastCamPool  = 0;   // the subset tenants can be billed from
 let lastInvoicesFull = []; // full invoice list with category sums
 let lastFullResults  = []; // ReconciliationResult[] from runFullReconciliation
 
@@ -11426,15 +13943,30 @@ function checkIntegrity(prop) {
   const tenants  = prop.tenants  || [];
   const disps    = prop.disputes || [];
 
-  // 1. Allocation sums — each tenant share should be ≤ total CAM
+  // 1. Allocation sums — the allocated total must never EXCEED the expense pool.
+  //
+  // This check was wrong twice, and both were visible on every reconciled
+  // property. It summed `tenantShare`, which no reconciliation row has ever
+  // carried — the field is `totalAllocated` — so the sum was always 0. And it
+  // tested EQUALITY against the snapshot's `total`, which is the GROSS expense
+  // pool: allocations fall short of it whenever a suite is vacant, an invoice
+  // is not CAM-eligible, or a cap bites, all of them normal and all of them
+  // already accounted for, line by line, in the variance breakdown. So a clean
+  // run reported "Allocated total ($0.00) differs from declared total
+  // ($40,000.00)" as a data-integrity ERROR, permanently, and the only recovery
+  // action on the panel sat under a finding that was never true.
+  //
+  // The inequality in the comment above is the invariant worth keeping: money
+  // may go unallocated, but more money may never be allocated than came in.
   if (results.length) {
-    const totalCam = results.reduce((s, r) => s + (parseFloat(r.tenantShare) || 0), 0);
-    const declared = (prop.camReconciliation ?? prop.results)?.total || 0;
-    if (declared && Math.abs(totalCam - declared) > 1) {
+    const allocated = results.reduce(
+      (s, r) => s + (parseFloat(r.totalAllocated ?? r.allocatedAmount ?? r.tenantShare) || 0), 0);
+    const pool = (prop.camReconciliation ?? prop.results)?.total || 0;
+    if (pool && allocated - pool > 1) {
       issues.push({
         type:    'allocation_mismatch',
         level:   'error',
-        message: `Allocated total (${fmt(totalCam)}) differs from declared total (${fmt(declared)}) by ${fmt(Math.abs(totalCam - declared))}`,
+        message: `Allocated total (${fmt(allocated)}) exceeds the expense pool (${fmt(pool)}) by ${fmt(allocated - pool)}`,
       });
     }
   }
@@ -11587,6 +14119,22 @@ function _buildRecoveryModalBody(prop) {
       <button class="rc-action-btn rc-export-btn" onclick="exportPropertyBackup()">⬇ Export Property Backup</button>
     </div>`;
 
+  // ── Property Lifecycle ──
+  // Archive is the NORMAL end of a property's life, so it needs its own way in.
+  // It shipped reachable only from inside the Delete modal's "Archive Instead"
+  // button — which made the normal path a subordinate of the exceptional one,
+  // and meant the only route to a non-destructive action was through the
+  // destructive dialog. ARCHITECTURE_PRINCIPLES §4.
+  //
+  // No confirmation: archiving destroys nothing and Restore is one click from
+  // the portfolio. Ceremony belongs to the irreversible action, not this one.
+  const lifecycleHtml = `
+    <div class="rc-section">
+      <div class="rc-section-title">Property Lifecycle</div>
+      <p class="rc-export-desc">No longer managing this building? Archive keeps every lease, timeline entry, document and reconciliation, removes it from your active portfolio, and can be undone at any time.</p>
+      <button class="rc-action-btn" onclick="closeRecoveryModal(); archiveActiveProperty();">&#x1F4E6; Archive Property — keep the history, clear it from the portfolio</button>
+    </div>`;
+
   // ── Danger Zone (moved here from the property breadcrumb so destructive actions
   //    aren't one stray click away in the primary bar) ──
   const dangerHtml = `
@@ -11597,7 +14145,7 @@ function _buildRecoveryModalBody(prop) {
       <button class="rc-action-btn" style="border-color:rgba(239,68,68,0.35);color:var(--c-fca5a5);margin-top:8px;" onclick="closeRecoveryModal(); openDeletePropertyModal();">&#x1F5D1; Delete Property — remove this property and all its data</button>
     </div>`;
 
-  body.innerHTML = syncHtml + integrityHtml + cpHtml + exportHtml + dangerHtml;
+  body.innerHTML = syncHtml + integrityHtml + cpHtml + exportHtml + lifecycleHtml + dangerHtml;
 }
 
 function restoreCheckpoint(index) {
@@ -11652,12 +14200,18 @@ function rebuildReconciliationState() {
   const prop = _props.find(p => p.id === activePropId);
   if (!prop) return;
   closeRecoveryModal();
-  // Reload the property to re-hydrate all globals from canonical storage
+  // Reload the property to re-hydrate all globals from canonical storage.
+  //
+  // renderProperty IS the restore path: it reads camReconciliation (or the
+  // legacy results blob), re-hydrates the invoicesFull the save boundary
+  // strips, and calls restoreResultsDisplay. What used to follow this line was
+  // `if (snapshot exists) restoreResults(prop)` — a second name for that same
+  // job, and a function that has never existed in this codebase. So the button
+  // threw a ReferenceError on every property that HAD results to rebuild:
+  // the modal closed, nothing rebuilt, and the confirmation below never ran, so
+  // there was not even a failure to see. A recovery action that silently does
+  // nothing is worse than no recovery action.
   renderProperty(prop);
-  // Re-run if results exist
-  if ((prop.camReconciliation ?? prop.results)?.results?.length) {
-    restoreResults(prop);
-  }
   const banner = document.createElement('div');
   banner.style.cssText = 'position:fixed;top:16px;left:50%;transform:translateX(-50%);z-index:9999;background:var(--bgc-134e4a);color:var(--c-99f6e4);padding:10px 20px;border-radius:10px;font-size:0.85rem;font-weight:600;box-shadow:0 4px 20px rgba(0,0,0,.5);pointer-events:none;white-space:nowrap;';
   banner.textContent = '↺ Reconciliation state rebuilt from saved data';
@@ -11796,7 +14350,7 @@ function enterReviewMode(payload) {
     })));
   }
   activityLog.splice(0, activityLog.length, ...(snap.activityLog || []));
-  invoiceData.splice(0, invoiceData.length, ...(snap.invoiceData || []));
+  invoiceData.splice(0, invoiceData.length, ...canonicaliseInvoiceAmounts(snap.invoiceData || []));
   disputes.splice(0, disputes.length, ...(snap.disputes || []));
 
   // Apply body class — CSS hides all edit controls
@@ -11971,9 +14525,8 @@ async function tsExplainInvoice(rowId, vendor, category, amount, date) {
   try {
     await handleExplain(btn, async () => {
     const data = await explainFetch({
-      model: MODEL,
+      task: 'invoice_explanation_tenant',
       max_tokens: 1024,
-      system: CAM_EXPLAIN_SYSTEM_PROMPT,
       messages: [{ role: 'user', content:
         `Vendor: ${vendor || 'Unknown'}\n` +
         `Category: ${category || 'other'}\n` +
@@ -12001,12 +14554,12 @@ function tsToggleDispute(rowId, tenantName, idx) {
   const t = lastTenants.find(x => x.name === tenantName);
   const r = lastResults.find(x => x.name === tenantName);
   if (!t || !r) return;
-  const eligible = lastInvoicesFull.filter(inv =>
-    !t.excludedCategories.includes(inv.category.toLowerCase())
-  );
+  // Indexes the SAME array generateTenantStatement rendered, or a dispute
+  // attaches to the wrong invoice.
+  const eligible = r.includedInvoices || [];
   const inv = eligible[idx];
   if (!inv) return;
-  const share = parseFloat((inv.amount * r.proRata).toFixed(2));
+  const share = parseFloat((parseFloat(inv.share) || 0).toFixed(2));
   toggleDisputeForm(rowId, tenantName, `inv-${idx}`, inv.vendor, inv.category, share);
 }
 
@@ -12633,6 +15186,13 @@ async function _dwResolveWithNote(disputeId, resolution) {
 function openDisputeFromFlag(flagIdx) {
   const flag = _lastReconIssues[flagIdx];
   if (!flag) return;
+  // Defence in depth: the button is not rendered for these, but the function is
+  // global. A property-level coverage finding has no tenant to dispute with.
+  if (flag.disputable === false) {
+    showToast('That finding is about how much of the property is loaded, not a tenant charge — there is nothing to dispute.',
+              { color: '#92400e', textColor: '#fef3c7' });
+    return;
+  }
 
   const typeKeyMap = [
     [/expired lease/i,  'expired_lease_billing'],
@@ -12714,9 +15274,8 @@ Be neutral, practical, factual. Use markdown.`;
 
   try {
     const data = await explainFetch({
-      model:      MODEL,
+      task:       'dispute_analysis',
       max_tokens: 700,
-      system:     'You are a CAM reconciliation expert. Provide concise, neutral dispute analysis. Focus on lease compliance, financial exposure, and resolution paths. Use markdown with headers and bullet points.',
       messages:   [{ role: 'user', content: prompt }],
     });
     const text = data?.content?.[0]?.text || '';
@@ -12942,6 +15501,19 @@ function buildAuditSummary() {
   const red = [], yellow = [], green = [];
 
   const invs     = lastInvoicesFull.length ? lastInvoicesFull : [];
+  // THE CAM POOL, not the gross expense total.
+  //
+  // This detector's own sentence says "N% of total CAM", and it divided by
+  // lastTotal — every invoice the manager loaded, eligible or not. So a $70,000
+  // roof marked NOT CAM-eligible, correctly dropped by the allocation, was still
+  // reported as "43.6% of total CAM" and — since I-4 made concentration a
+  // property-level blocker — still stopped every tenant on the property from
+  // being billed. The manager's correct remediation cleared nothing.
+  //
+  // Falls back to the gross total only when no CAM pool was captured (a snapshot
+  // written before this existed), which is the pre-existing behaviour.
+  const camInvs  = window.CamPool.eligible(invs);
+  const camPool  = lastCamPool || window.CamPool.total(invs) || (lastTotal || 0);
   const allInvData = invoiceData.filter(inv => inv && inv.vendorName);
   const paidInvData = allInvData.filter(inv => parseFloat(inv.amount) > 0);
   const results  = lastResults;
@@ -12949,23 +15521,40 @@ function buildAuditSummary() {
   const total    = lastTotal || 0;
 
   // ── 1. Unusually large single invoice (> 40% of total) ───────────────────
-  if (total > 0 && invs.length) {
-    const thresh = total * 0.4;
-    invs.forEach(inv => {
+  if (camPool > 0 && camInvs.length) {
+    const thresh = camPool * 0.4;
+    camInvs.forEach(inv => {
       if (!inv) return;
       const amt = parseFloat(inv.amount) || 0;
       if (amt > thresh) {
-        const pct     = ((amt / total) * 100).toFixed(1);
+        const pct     = ((amt / camPool) * 100).toFixed(1);
         const excess  = fmt(amt - thresh);
         const vendor  = inv.vendor || inv.vendorName || 'Unknown';
         red.push({
           group:  'red_flags',
+          severity: 'red',
           title:  `Unusually large invoice — ${vendor}: ${fmt(amt)} (${pct}% of total CAM)`,
-          detail: `This invoice represents ${pct}% of total CAM expenses (${fmt(amt)} of ${fmt(total)}), exceeding the 40% materiality threshold by ${excess}. A single vendor accounting for more than 40% of the total expense pool warrants independent verification before billing.`,
+          detail: `This invoice represents ${pct}% of total CAM expenses (${fmt(amt)} of ${fmt(camPool)}), exceeding the 40% materiality threshold by ${excess}. A single vendor accounting for more than 40% of the recoverable pool warrants independent verification before billing.`,
+          // Materiality, NOT evidence quality — the two were one bucket, which
+          // put a fully-documented $55,000 invoice under "weakly evidenced" on a
+          // reconciliation whose own green finding said every invoice had a
+          // source document attached. What is notable here is the size, and the
+          // answer is an independent bid, not a receipt.
+          //
+          // `items` carries the atom this finding is about. Every invoice-scoped
+          // finding uses the same `invoice:<vendor>` id, so one invoice flagged
+          // by several detectors contributes its dollars once. A near-miss on
+          // that convention — "invoice:" here against "invoices:" elsewhere —
+          // is what reported $110,000 of a $67,300 pool.
+          impact: { amount: amt, kind: 'concentration',
+                    items: [{ id: `invoice:${vendor}`, amount: amt }],
+                    basis: `Single invoice at ${pct}% of the pool, pending independent verification` },
+          actions: ['Obtain competitive bids', 'Verify against vendor contract', 'Attach supporting detail'],
+          source: 'Invoice amount vs total CAM pool',
           conditions: [
             `Vendor: "${vendor}"`,
             `Invoice amount: ${fmt(amt)}`,
-            `Total CAM pool: ${fmt(total)}`,
+            `Total CAM pool: ${fmt(camPool)}`,
             `Concentration: ${pct}% (threshold: 40%)`,
             `Dollar excess above threshold: ${excess}`,
           ],
@@ -12995,6 +15584,18 @@ function buildAuditSummary() {
         if (pct > 20) {
           red.push({
             group: 'allocation',
+            // RED, AND DELIBERATELY NOT A BILLING BLOCKER.
+            //
+            // Exceeding the 20% materiality threshold is a critical finding: it
+            // calls for landlord documentation and belongs at the top of the
+            // audit. It is not evidence that any tenant's calculation is wrong,
+            // and it used to block every statement on the property — a landlord
+            // could not bill a single tenant because last year's snow bill was
+            // lighter. Severity is what this is; blocksBilling is what it does.
+            //
+            // Left RED rather than demoted so the health score, which deducts per
+            // advisory finding, is untouched by this decision.
+            blocksBilling: false,
             title: `Total CAM ${dir} ${Math.abs(pct).toFixed(1)}% year-over-year`,
             detail: `Total CAM expenses rose ${Math.abs(pct).toFixed(1)}% from ${fmt(prev.totalExpenses)} in ${years[1]} to ${fmt(curr.totalExpenses)} in ${years[0]}, a ${fmt(Math.abs(absDiff))} ${absDiff > 0 ? 'increase' : 'decrease'}. This exceeds the 20% year-over-year materiality threshold and may require additional landlord documentation under standard CAM audit protocols.`,
             conditions: [...yoyConditions, 'Threshold: >20% triggers critical flag'],
@@ -13036,9 +15637,20 @@ function buildAuditSummary() {
         (missing.length > 3 ? ` +${missing.length - 3} more` : '');
       const bucket = pct === 100 ? red : yellow;
       const allMissing = pct === 100;
+      const missingAmt = missing.reduce((s, inv) => s + (parseFloat(inv.amount) || 0), 0);
       bucket.push({
         group:  'missing_docs',
+        severity: allMissing ? 'red' : 'yellow',
         title:  `${missing.length} of ${allInvData.length} invoice${missing.length > 1 ? 's' : ''} missing source document`,
+        // The dollars that cannot be independently verified. Expense-side: it is
+        // a documentation gap, not a determination that the charge is wrong.
+        impact: missingAmt > 0
+          ? { amount: missingAmt, kind: 'unsubstantiated',
+              items: missing.map(i => ({ id: `invoice:${i.vendorName}`, amount: parseFloat(i.amount) || 0 })),
+              basis: 'Charges with no attached invoice or receipt' }
+          : undefined,
+        actions: ['Attach source invoices', 'Request copies from vendor', 'Exclude from billing until documented'],
+        source: 'Invoice records — attachment presence',
         detail: allMissing
           ? `No invoices have attached source documents — the entire CAM expense pool of ${fmt(total)} cannot be independently verified. Standard CAM audit requirements mandate supporting documentation for all billed charges.`
           : `CAM audits require source documentation for all billed expenses. Without attachments, ${names} cannot be independently verified and are susceptible to tenant challenge. ${missing.length} of ${allInvData.length} invoices (${pct}%) are affected.`,
@@ -13060,12 +15672,29 @@ function buildAuditSummary() {
       const noDateNames = noDates.slice(0, 3).map(inv => inv.vendorName).join(', ') +
         (noDates.length > 3 ? ` +${noDates.length - 3} more` : '');
       const camYr = getCamYear() || 'the reconciliation period';
+      const noDateAmt = noDates.reduce((s, inv) => s + (parseFloat(inv.amount) || 0), 0);
       yellow.push({
         group:  'missing_docs',
+        severity: 'yellow',
+        // Same expense-side axis, scoped by vendor so an invoice that is both
+        // undated and undocumented is one sum of money, counted once.
+        impact: noDateAmt > 0
+          ? { amount: noDateAmt, kind: 'unsubstantiated',
+              items: noDates.map(i => ({ id: `invoice:${i.vendorName}`, amount: parseFloat(i.amount) || 0 })),
+              basis: `Charges that cannot be placed in the ${camYr} period from the document alone` }
+          : undefined,
+        actions: ['Obtain dated invoice', 'Confirm service period with vendor', 'Exclude if outside the CAM year'],
+        source: 'Invoice records — invoice date field',
         title:  `${noDates.length} invoice${noDates.length > 1 ? 's' : ''} missing invoice date`,
-        detail: `Invoice date confirms that a charge falls within the ${camYr} CAM reconciliation period. Undated invoices may be excluded or challenged in a formal tenant audit. Affected: ${noDateNames}.`,
+        // The detail used to open "Invoice date confirms that a charge falls
+        // within the <year> CAM reconciliation period" — a general statement of
+        // why dates matter, but written in the present tense at the head of a
+        // finding whose own title says the date is MISSING. It read as though the
+        // date had been checked and confirmed, contradicting the finding.
+        // State the requirement, then state that this invoice does not meet it.
+        detail: `An invoice date is required to establish that a charge falls within the ${camYr} CAM reconciliation period. ${noDates.length === 1 ? 'This invoice has' : 'These invoices have'} no recorded date, so ${noDates.length === 1 ? 'it cannot' : 'they cannot'} be placed in the period from the document alone. Undated invoices may be excluded or challenged in a formal tenant audit. Affected: ${noDateNames}.`,
         conditions: [
-          `Count: ${noDates.length} invoice${noDates.length > 1 ? 's' : ''} have no recorded invoice date`,
+          `Count: ${noDates.length} invoice${noDates.length > 1 ? 's' : ''} ${noDates.length > 1 ? 'have' : 'has'} no recorded invoice date`,
           `Affected vendors: ${noDateNames}`,
           `Required: invoice date must fall within the ${camYr} reconciliation year`,
         ],
@@ -13073,24 +15702,102 @@ function buildAuditSummary() {
     }
   }
 
-  // ── 6. Low-confidence tenant matches ────────────────────────────────────
+  // ── 6. Ambiguous and near-miss tenant matches (F-14) ────────────────────
+  //
+  // WHAT THIS REPLACED, AND WHY IT NEVER FIRED.
+  //
+  // The detector here filtered `matchConfidence > 0 && matchConfidence < 75` and
+  // said of the result: "These invoices matched partially but fell below the
+  // 75% direct-charge threshold." matchInvoiceToTenant assigns exactly three
+  // values — 0, 75 and 90 — so that band is empty and the finding could not be
+  // raised by any input. Its mirror image, the per-invoice "Low confidence
+  // invoice match" flag, tested `< 75`, which is the definition of a shared
+  // invoice, and so fired on every one of them.
+  //
+  // Neither described a real state. The two below do, and both are read off
+  // decisions the matcher recorded rather than inferred from a score.
   {
-    const lowConf = paidInvData.filter(inv => inv.matchConfidence > 0 && inv.matchConfidence < 75);
-    if (lowConf.length) {
-      const lowConfConditions = lowConf.slice(0, 5).map(inv => {
-        const reason = inv.matchReason || 'no field match';
-        return `"${inv.vendorName}": matched on "${reason}" at ${inv.matchConfidence}% — below 75% threshold, allocated pro-rata`;
+    // (a) A TIE. Two or more tenants matched equally well, so the whole invoice
+    // went to whichever came first in the tenant array — reverse the array and a
+    // different tenant is billed. Blocks billing for every tied candidate: until
+    // a person says which, either statement could over-charge by the full amount.
+    const ambiguous = paidInvData.filter(inv => inv && inv.matchAmbiguous
+                                          && (inv.matchTied || []).length > 1);
+    ambiguous.forEach(inv => {
+      const amt   = parseFloat(inv.amount) || 0;
+      const tied  = inv.matchTied || [];
+      const names = tied.map(c => c.tenantName);
+      const who   = names.join(' and ');
+      // ONE FINDING PER TIED CANDIDATE, because findingScope names a single
+      // tenant and every candidate has to be blocked. Uninvolved tenants on the
+      // property are untouched — that is the I-4 discipline, and it is right
+      // here: which of these two owns the invoice does not change anyone else's
+      // pro-rata share of the shared pool.
+      tied.forEach(cand => {
+        yellow.push({
+          group:  'allocation',
+          severity: 'yellow',
+          blocksBilling: true,
+          // TITLED FOR THE TENANT IT HOLDS. One finding is emitted per tied
+          // candidate so each is blocked, and two findings sharing one title
+          // read as a duplicate in every report that lists them — and are
+          // indistinguishable in a per-tenant block, which is exactly where
+          // they are shown. The invoice is named in both; the tenant is what
+          // differs.
+          title:  `Confirm whether ${inv.vendorName} belongs to ${cand.tenantName} — it names ${names.length} tenants`,
+          detail: `${inv.vendorName} (${fmt(amt)}) matched ${who} equally well — ${tied.map(c => `${c.tenantName} on ${c.reason}`).join(', ')}. A direct match bills the whole invoice to one tenant, and this reconciliation billed it to ${inv.matchedTenant} because that lease was read first, not because the document says so. Confirm which tenant it belongs to, or correct the unit or vendor name on the invoice, and re-run.`,
+          impact: { amount: amt, kind: 'unsubstantiated',
+                    scope: `tenant:${cand.tenantName}`,
+                    items: [{ id: `invoice:${inv.vendorName}`, amount: amt }],
+                    basis: `Whole invoice assigned to one of ${names.length} equally-matched tenants by array order` },
+          actions: ['Confirm which tenant this invoice belongs to',
+                    'Correct the unit number or vendor name on the invoice',
+                    'Re-run the reconciliation'],
+          source: 'Invoice-to-tenant matching engine — tied candidates',
+          conditions: [
+            `Tenant: ${cand.tenantName}`,
+            `Invoice: "${inv.vendorName}" ${fmt(amt)}`,
+            ...tied.map(c => `Matched: ${c.tenantName} on "${c.reason}" at ${c.confidence}%`),
+            `Billed in this run to: ${inv.matchedTenant}`,
+          ],
+        });
       });
-      if (lowConf.length > 5) lowConfConditions.push(`+${lowConf.length - 5} more`);
+    });
+
+    // (b) A NEAR MISS. The invoice text contains a tenant's own unit number or
+    // name, but too short for the CAM-4 guard to assign a whole invoice on —
+    // "Unit 5", a tenant called "BP". ADVISORY ONLY: the allocation is correct
+    // as it stands and does not change, and the guard stays exactly as it is.
+    // What changes is that the invoice no longer looks identical to an ordinary
+    // janitorial bill.
+    const nearMiss = paidInvData.filter(inv => inv && (inv.matchNearMisses || []).length);
+    if (nearMiss.length) {
+      const nmAmt = nearMiss.reduce((s, inv) => s + (parseFloat(inv.amount) || 0), 0);
       yellow.push({
         group:  'allocation',
-        title:  `${lowConf.length} invoice${lowConf.length > 1 ? 's' : ''} matched with insufficient confidence for direct tenant charge`,
-        detail: `The matching engine assigns confidence based on unit number hits (90%) and tenant name hits (75%). These invoices matched partially but fell below the 75% direct-charge threshold, so they were distributed pro-rata across all tenants rather than charged to a specific tenant.`,
-        conditions: [
-          `Confidence threshold for direct charge: 75%`,
-          `Matching signals: unit number match = 90%, tenant name match = 75%`,
-          ...lowConfConditions,
-        ],
+        severity: 'yellow',
+        blocksBilling: false,
+        title:  `${nearMiss.length} invoice${nearMiss.length > 1 ? 's' : ''} mention${nearMiss.length > 1 ? '' : 's'} a tenant too briefly to match on`,
+        detail: `These invoices contain a tenant's unit number or name, but one too short to assign a whole invoice on: a single-character unit is a substring of half the numbers in a document, and a two-letter name carries no evidence. They have been allocated pro-rata as shared expenses, which is the safe treatment and is unchanged by this finding. If one of them is in fact a direct charge, confirm it on the invoice and re-run.`,
+        // SAME EXPOSURE TREATMENT AS THE FINDING THIS REPLACES. The detector it
+        // supersedes carried this money as `unsubstantiated`, and that
+        // classification flows into the Lender Summary's expense-side figure.
+        // Whether an attribution question is better read as `under_review` than
+        // as weak evidence is a fair question — and answering it here would move
+        // a lender-facing number inside a change about a false warning. The kind
+        // and the amount are held exactly as they were; only the words a manager
+        // reads have changed.
+        impact: { amount: nmAmt, kind: 'unsubstantiated',
+                  items: nearMiss.map(i => ({ id: `invoice:${i.vendorName}`, amount: parseFloat(i.amount) || 0 })),
+                  basis: 'Allocated pro-rata; a short tenant identifier appears in the invoice text' },
+        actions: ['Confirm whether the invoice is a direct charge',
+                  'Add the full tenant name or a longer unit reference to the invoice',
+                  'Re-run the reconciliation'],
+        source: 'Invoice-to-tenant matching engine — suppressed short identifiers',
+        conditions: nearMiss.slice(0, 5).flatMap(inv =>
+          (inv.matchNearMisses || []).map(nm =>
+            `"${inv.vendorName}" ${fmt(parseFloat(inv.amount) || 0)} contains ${nm.signal} "${nm.token}" — ${nm.tenantName}; too short to match on, allocated pro-rata`))
+          .concat(nearMiss.length > 5 ? [`+${nearMiss.length - 5} more`] : []),
       });
     }
   }
@@ -13101,12 +15808,37 @@ function buildAuditSummary() {
     const shared  = paidInvData.length - matched;
     if (paidInvData.length > 0) {
       if (matched === 0) {
+        // This finding describes HOW the invoices were allocated. It used to say
+        // "all <total> of CAM expenses were distributed pro-rata across all
+        // tenants" — false whenever the loaded leases cover less than the whole
+        // property, because the pool is only billed out to the leases actually
+        // loaded. On the pilot's 23.57%-covered property it claimed the full
+        // $55,000 pool had been distributed while the coverage finding directly
+        // above it, and the variance banner, both reported the opposite.
+        //
+        // Scope the claim to the loaded leases, and when coverage is incomplete
+        // name the amount actually billed. totalAllocated is the same engine
+        // field _buildReconciliationSummaryHtml sums for totalBilled, so this
+        // figure cannot drift from the banner. Threshold matches
+        // reconciliation-engine.js section 3 and the banner (gap > 2).
+        //
+        // No allocation math is touched here — this reads engine output only.
+        const _n          = paidInvData.length;
+        const _invWord    = _n === 1 ? 'invoice' : 'invoices';
+        const _prSum      = results.reduce((s, r) => s + (r.proRataPercent || 0), 0);
+        const _billed     = results.reduce((s, r) => s + (r.totalAllocated || 0), 0);
+        const _incomplete = _prSum < 98;
         green.push({
-          title:  `All ${paidInvData.length} invoices allocated as shared CAM expenses (pro-rata)`,
-          detail: `No invoices were matched to an individual tenant — all ${fmt(total)} of CAM expenses were distributed pro-rata across all tenants using their square footage share of the total building.`,
+          title:  `${_n} ${_invWord} allocated as shared CAM expense${_n === 1 ? '' : 's'} (pro-rata)`,
+          detail: _incomplete
+            ? `No invoice was matched to an individual tenant — each was distributed pro-rata across the currently loaded tenant leases, using each lease's leased square footage as a share of total building square footage. The loaded leases cover ${_prSum.toFixed(2)}% of the property, so ${fmt(_billed)} of the ${fmt(total)} expense pool is billed to them. The remainder is the share of space no loaded lease covers and is not allocated in this reconciliation.`
+            : `No invoice was matched to an individual tenant — each was distributed pro-rata across the loaded tenant leases, using each lease's leased square footage as a share of total building square footage. The loaded leases cover ${_prSum.toFixed(2)}% of the property, and ${fmt(_billed)} of the ${fmt(total)} expense pool is billed across them.`,
           conditions: [
-            `${paidInvData.length} invoices distributed pro-rata; none directly charged to a single tenant`,
-            'Allocation basis: each tenant\'s leased sqft as a percentage of total building sqft',
+            `${_n} ${_invWord} distributed pro-rata; none directly charged to a single tenant`,
+            'Allocation basis: each loaded lease\'s leased sqft as a percentage of total building sqft',
+            ...(_incomplete
+              ? [`Loaded leases cover ${_prSum.toFixed(2)}% of the property — the unallocated remainder is reported separately under property coverage`]
+              : []),
           ],
         });
       } else {
@@ -13121,54 +15853,42 @@ function buildAuditSummary() {
     }
   }
 
-  // ── 8. Pro-rata allocation coverage ─────────────────────────────────────
+  // ── 8. Pro-rata allocation coverage — CONFIRMATION ONLY ─────────────────
+  //
+  // This section used to raise its own finding when the shares did not sum to
+  // 100%, in both directions. So does reconciliation-engine.js section 3, on
+  // identical thresholds (gap > 2 under, gap < -2 over). The Test 2 audit
+  // therefore listed the same fact twice — "Pro-rata totals 56.8% — 43.3% of
+  // expenses not allocated to a loaded lease" directly above "Coverage gap:
+  // loaded leases cover 56.8% of the property" — which inflated the warning
+  // count by one and deducted twice from the Lender Summary health score.
+  //
+  // The engine's version is the one to keep: it carries `kind: 'coverage'` and
+  // `disputable: false`, which the renderer needs in order not to style a
+  // property-level coverage figure as a tenant exception or offer a dispute
+  // against a tenant whose allocation is correct.
+  //
+  // What is left here is the case the engine says nothing about: the shares DO
+  // sum to 100%, which is a passed check worth showing.
   {
     const totalPR     = results.reduce((s, r) => s + (r.proRataPercent || 0), 0);
     const prop        = currentProperty();
     const propSqft    = parseFloat(prop?.totalSqft || prop?.totalSqFt) || 0;
     const leasedSqft  = results.reduce((s, r) => s + (r.sqFt || 0), 0);
     const sqftCtx     = propSqft > 0 && leasedSqft > 0
-      ? `Tenant leases cover ${leasedSqft.toLocaleString()} of ${propSqft.toLocaleString()} total sqft.`
+      ? `The leases currently loaded cover ${leasedSqft.toLocaleString()} of ${propSqft.toLocaleString()} total sqft.`
       : null;
-    if (results.length > 0) {
-      if (Math.abs(totalPR - 100) < 2) {
-        green.push({
-          group: 'allocation',
-          title: `Pro-rata percentages sum to ${totalPR.toFixed(1)}% — all expenses accounted for`,
-          conditions: [
-            `Sum of tenant pro-rata: ${totalPR.toFixed(1)}% (within ±2% of 100%)`,
-            ...(sqftCtx ? [sqftCtx + ' Full building is under lease.'] : []),
-          ],
-        });
-      } else if (totalPR < 98) {
-        const gap = (100 - totalPR).toFixed(1);
-        yellow.push({
-          group:  'allocation',
-          title:  `Pro-rata totals ${totalPR.toFixed(1)}% — ${gap}% of expenses unallocated`,
-          detail: sqftCtx
-            ? `${sqftCtx} The remaining ${(propSqft - leasedSqft).toLocaleString()} sqft is untenanted — its share of CAM expenses (${gap}%) is not recoverable under current leases.`
-            : `Total leased sqft is less than the property total, leaving ${gap}% of CAM expenses unallocated. Review tenant sqft entries.`,
-          conditions: [
-            `Sum of tenant pro-rata: ${totalPR.toFixed(1)}%`,
-            `Unrecoverable gap: ${gap}%`,
-            ...(sqftCtx ? [`Leased sqft: ${leasedSqft.toLocaleString()} of ${propSqft.toLocaleString()} total`] : []),
-          ],
-        });
-      } else {
-        const excess = (totalPR - 100).toFixed(1);
-        yellow.push({
-          group:  'allocation',
-          title:  `Pro-rata totals ${totalPR.toFixed(1)}% — exceeds 100%`,
-          detail: sqftCtx
-            ? `${sqftCtx} Tenant sqft entries sum to ${leasedSqft.toLocaleString()}, which exceeds the property total of ${propSqft.toLocaleString()} sqft. This overallocates CAM by ${excess}% and must be corrected to avoid overbilling.`
-            : `Tenant sqft entries sum to more than the property total, overallocating CAM by ${excess}%. Review and correct sqft entries.`,
-          conditions: [
-            `Sum of tenant pro-rata: ${totalPR.toFixed(1)}%`,
-            `Overallocation: ${excess}% above 100%`,
-            ...(sqftCtx ? [`Leased sqft: ${leasedSqft.toLocaleString()} vs property total: ${propSqft.toLocaleString()}`] : []),
-          ],
-        });
-      }
+    if (results.length > 0 && Math.abs(totalPR - 100) < 2) {
+      green.push({
+        group: 'allocation',
+        severity: 'green',
+        source: 'Sum of tenant pro-rata shares vs 100%',
+        title: `Pro-rata percentages sum to ${totalPR.toFixed(1)}% — all expenses accounted for`,
+        conditions: [
+          `Sum of tenant pro-rata: ${totalPR.toFixed(1)}% (within ±2% of 100%)`,
+          ...(sqftCtx ? [sqftCtx + ' Full building is under lease.'] : []),
+        ],
+      });
     }
   }
 
@@ -13189,6 +15909,17 @@ function buildAuditSummary() {
       });
       yellow.push({
         group:  'allocation',
+        severity: 'yellow',
+        // Allocation-side, and the one bucket that is good news: the cap already
+        // reduced what tenants owe. Recording it here is what stops the exposure
+        // line from being computed out of cap savings, which is one of the three
+        // disjoint inputs that produced the original contradiction.
+        impact: totalSaved > 0
+          ? { amount: totalSaved, kind: 'recoverable', scope: 'cap:aggregate',
+              basis: 'Reduction already applied under lease cap language' }
+          : undefined,
+        actions: ['Verify cap percentage against the lease', 'Confirm the cap base year amount'],
+        source: 'Lease cap terms vs uncapped pro-rata allocation',
         title:  `CAM cap applied for ${capped.length} tenant${capped.length > 1 ? 's' : ''}: ${capped.map(r => r.name).join(', ')}`,
         detail: `Tenant responsibility was reduced due to annual controllable CAM cap language in the lease${capped.length > 1 ? 's' : ''}. Affected tenant${capped.length > 1 ? 's' : ''} paid ${fmt(totalSaved)} less in aggregate than their uncapped pro-rata share.`,
         conditions: [
@@ -13318,18 +16049,33 @@ function buildAuditNarrative() {
   }
 
   // ── Financial Impact ──────────────────────────────────────────────────────
+  // Derived from the FINDINGS THEMSELVES via the canonical model, not from a
+  // separate set of inputs.
+  //
+  // This line used to be computed from exactly three things — undocumented
+  // invoices, open disputes and cap savings — none of which is a red flag. With
+  // every invoice documented, no disputes and no caps applied, all three were
+  // zero and the fallback printed "no at-risk amounts identified" directly
+  // beneath "5 critical exceptions". Both numbers were right; they were simply
+  // computed from disjoint inputs and had never been reconciled.
+  //
+  // Those three amounts are still counted — they are now attached to the
+  // findings that report them (see below), so they flow in through the same
+  // path as everything else instead of bypassing it.
   const disputeAmt   = openDisputes.reduce((s, d) => s + (parseFloat(d.tenantShare) || 0), 0);
   const capSavings   = lastResults.filter(r => r.capApplied).reduce((s, r) => s + (r.capAdjustment || 0), 0);
   const missingDocAmt = invAll
     .filter(i => !i.fileUrl && !i.fileName)
     .reduce((s, i) => s + (parseFloat(i.amount) || 0), 0);
-  const impactParts = [];
-  if (missingDocAmt > 0) impactParts.push(`${fmt(missingDocAmt)} in undocumented charges`);
-  if (disputeAmt   > 0) impactParts.push(`${fmt(disputeAmt)} in open dispute`);
-  if (capSavings   > 0) impactParts.push(`${fmt(capSavings)} reduced via CAM caps`);
-  const financialImpact = impactParts.length > 0
-    ? impactParts.join(' · ')
-    : total > 0 ? `${fmt(total)} total CAM pool — no at-risk amounts identified` : 'Insufficient data';
+
+  const AX = window.AuditExposure;
+  const exposure = AX
+    ? AX.deriveExposure({ red, yellow, green }, total)
+    : null;
+  const readiness = AX && exposure ? AX.billingReadiness(exposure) : null;
+  const financialImpact = (AX && exposure)
+    ? AX.describeExposure(exposure)
+    : (total > 0 ? `${fmt(total)} total CAM pool` : 'Insufficient data');
 
   // ── Summary Paragraph ─────────────────────────────────────────────────────
   const parts = [];
@@ -13359,9 +16105,17 @@ function buildAuditNarrative() {
   if (trends) {
     const nonGreenTrends = trends.trends.filter(t => t.severity !== 'green').length;
     if (nonGreenTrends > 0) {
+      // Only call it year-over-year when the years actually differ. Re-running
+      // the same property in one session compares 2026 against 2026, which is a
+      // run-over-run delta; naming it year-over-year invites a landlord to read
+      // a same-year re-run as an annual expense trend.
       parts.push(
-        `Year-over-year comparison against ${trends.priorYear} identified ${nonGreenTrends}` +
-        ` trend${nonGreenTrends > 1 ? 's' : ''} warranting further review.`
+        trends.comparisonKind === 'year-over-year'
+          ? `Year-over-year comparison against ${trends.priorYear} identified ${nonGreenTrends}` +
+            ` trend${nonGreenTrends > 1 ? 's' : ''} warranting further review.`
+          : `Comparison against the previous ${trends.priorYear} reconciliation run identified ${nonGreenTrends}` +
+            ` trend${nonGreenTrends > 1 ? 's' : ''} warranting further review. This is a run-over-run` +
+            ` comparison within ${trends.currYear}, not a year-over-year trend.`
       );
     }
   }
@@ -13453,8 +16207,9 @@ function buildAuditNarrative() {
   }
   if (yellow.some(f => f.group === 'allocation' && f.title.includes('unallocated'))) {
     recommendations.push(
-      'Review tenant square footage entries — the current unallocated gap represents CAM expenses ' +
-      'that cannot be recovered under existing leases without amendment.'
+      'Confirm whether the unallocated square footage is vacant or simply not yet loaded into MainStreet. ' +
+      'If every lease for the property is loaded, that share of CAM expenses is unrecoverable without amendment; ' +
+      'if any lease is missing, upload it and re-run the reconciliation before issuing statements.'
     );
   }
   if (recommendations.length === 0) {
@@ -13464,14 +16219,61 @@ function buildAuditNarrative() {
     );
   }
 
+  // ── The single next REQUIRED action ───────────────────────────────────────
+  //
+  // recommendations[] is a good advisory list, but every entry carries the same
+  // weight, so a manager reading it cannot tell which one stands between them
+  // and issuing a statement. This is that one thing, and it is DERIVED — from
+  // billingReadiness (the model that actually gates statements) and from the
+  // blocking findings themselves. It introduces no new state and no new
+  // threshold: if readiness says the run can be billed, this says so too, by
+  // construction.
+  const nextAction = (() => {
+    if (!readiness) {
+      return { state: 'unknown', label: 'Run a reconciliation',
+               detail: 'No reconciliation has been produced yet, so there is nothing to bill or to review.' };
+    }
+    if (readiness.canBill) {
+      return { state: 'ready', label: readiness.label,
+               detail: yellow.length
+                 ? `Statements can be issued. ${yellow.length} advisory finding${yellow.length === 1 ? '' : 's'} ${yellow.length === 1 ? 'is' : 'are'} recorded for the file and ${yellow.length === 1 ? 'does' : 'do'} not block billing.`
+                 : 'Statements can be issued for every tenant in this reconciliation.' };
+    }
+    // Not billable: name the blocking findings and the first action each offers,
+    // read straight off the finding rather than restated here.
+    const steps = red.slice(0, 3).map(f => {
+      const a = Array.isArray(f.actions) && f.actions.length ? f.actions[0] : 'Resolve this exception';
+      return `${f.title} → ${a}`;
+    });
+    return {
+      state: 'blocked',
+      label: readiness.label,
+      detail: `${readiness.reason} Resolve ${red.length === 1 ? 'it' : 'them'}, then re-run the reconciliation — statements issue on their own once the audit clears.`,
+      steps,
+    };
+  })();
+
   return {
     headline,
     riskLevel,
     summaryParagraph,
     keyFindings,
     recommendations,
+    // The one required next step, derived from readiness — see above.
+    nextAction,
     financialImpact,
     confidence,
+    // Canonical audit state, exposed so every other surface — the exposure
+    // breakdown, the Lender Summary health score — reads the same numbers
+    // instead of deriving its own from a different set of inputs.
+    exposure,
+    readiness,
+    camYear,
+    // Fields where two sources disagree, keyed by tenant. Passed to surfaces
+    // that summarise data quality so a known disagreement is reported as a
+    // CONFLICT rather than collapsing into "Inferred" — which reads as a
+    // missing citation, not as two documents saying different things.
+    conflicts: [...red, ...yellow].map(f => f.conflict).filter(Boolean),
   };
 }
 
@@ -13506,6 +16308,7 @@ function renderNarrativePanel() {
         <div>
           <div class="an-label">AI Auditor Narrative</div>
           <div class="an-headline">${esc(n.headline)}</div>
+          <div class="an-scope">Scope: reconciliation and invoice evidence for this property. Lease-clause compliance is assessed separately under Validate Against Lease on each tenant.</div>
         </div>
       </div>
       <div class="an-header-right">
@@ -13514,6 +16317,17 @@ function renderNarrativePanel() {
       </div>
     </div>
     <div class="an-body">
+      <!-- The one required next step, above the advisory list. Every entry in
+           Recommended Actions carries the same weight, so a manager could not
+           tell which one stood between them and issuing a statement. Derived
+           from billingReadiness — the same model that gates the statements —
+           so it cannot disagree with them. -->
+      ${n.nextAction ? `<div class="an-next an-next--${esc(n.nextAction.state)}">
+        <div class="an-next-label">${n.nextAction.state === 'ready' ? '&#x2713;' : n.nextAction.state === 'blocked' ? '&#x26D4;' : '&#x2139;'} ${esc(n.nextAction.label)}</div>
+        <div class="an-next-detail">${esc(n.nextAction.detail)}</div>
+        ${Array.isArray(n.nextAction.steps) && n.nextAction.steps.length
+          ? `<ul class="an-next-steps">${n.nextAction.steps.map(x => `<li>${esc(x)}</li>`).join('')}</ul>` : ''}
+      </div>` : ''}
       <p class="an-summary">${esc(n.summaryParagraph)}</p>
       ${n.keyFindings.length ? `<div class="an-section-title">Key Findings</div>${findingsHtml}` : ''}
       ${n.recommendations.length ? `<div class="an-section-title">Recommended Actions</div>${recsHtml}` : ''}
@@ -13521,6 +16335,36 @@ function renderNarrativePanel() {
         <span class="an-impact-label">Estimated Financial Exposure</span>
         <span class="an-impact-val">${esc(n.financialImpact)}</span>
       </div>
+      ${(() => {
+        // The four buckets, itemised. A single sentence could still be read as
+        // "the pool is fine" — the breakdown makes the difference between money
+        // that is at risk, money that is merely unresolved, and money nobody has
+        // priced yet impossible to conflate.
+        const x = n.exposure;
+        if (!x || !x.totalPool) return '';
+        const money = (v) => '$' + Math.round(v).toLocaleString('en-US');
+        const rows = [
+          ['Total CAM pool', money(x.totalPool), null],
+          ['Requiring lease verification', money(x.confirmedAtRisk),
+            x.confirmedAtRisk > 0 ? 'an-exp--risk' : null],
+          ['Requiring review', money(x.requiringReview),
+            x.requiringReview > 0 ? 'an-exp--review' : null],
+          ['Excluded or recovered', money(x.excludedRecoverable), null],
+        ];
+        const unq = x.unquantified > 0
+          ? `<div class="an-exp-note">${x.unquantified} finding${x.unquantified === 1 ? '' : 's'} not yet quantified — these carry no dollar figure and are NOT counted as zero.</div>`
+          : '';
+        return `<div class="an-exposure">
+          ${rows.map(([l, v, cls]) => `<div class="an-exp-row ${cls || ''}">
+            <span class="an-exp-label">${esc(l)}</span><span class="an-exp-val">${esc(v)}</span></div>`).join('')}
+          ${unq}
+        </div>`;
+      })()}
+      ${n.readiness ? `<div class="an-readiness an-readiness--${n.readiness.canBill ? 'ok' : 'blocked'}">
+        <span class="an-readiness-q">Can I bill these tenants?</span>
+        <span class="an-readiness-a">${esc(n.readiness.label)}</span>
+        <span class="an-readiness-why">${esc(n.readiness.reason)}</span>
+      </div>` : ''}
     </div>`;
 
   // Insert before auditPanel so narrative sits above the flag detail panel
@@ -13568,7 +16412,7 @@ function renderAuditPanel() {
       this.querySelector('.ap-chevron').classList.toggle('ap-chevron--open');
     ">
       <div class="ap-header-left">
-        <span class="ap-title">&#x1F50D;&nbsp; AI Audit Summary</span>
+        <span class="ap-title">&#x1F50D;&nbsp; AI Audit Summary <span class="ap-scope">&mdash; reconciliation &amp; invoice evidence</span></span>
       </div>
       <div class="ap-header-right">
         ${badge(red.length, 'red')}
@@ -13593,13 +16437,26 @@ function buildHistoricalTrends() {
 
   const curr  = camRuns[0];
   // Find the most recent prior run for the same property with a different year
-  const prior = camRuns.slice(1).find(r =>
+  const priorDifferentYear = camRuns.slice(1).find(r =>
     r.propName === curr.propName && r.camYear !== curr.camYear
-  ) || camRuns.slice(1).find(r => r.propName === curr.propName);
+  );
+  // Fallback: the most recent prior run for this property regardless of year.
+  // camRuns.unshift() records EVERY runAllocation, so re-running the same
+  // property twice in one session puts two same-year runs at the head of the
+  // list and this fallback selects one of them. The comparison is still useful
+  // — it is how the pilot noticed $55,000 becoming $110,000 — but it is a
+  // run-over-run comparison, not year-over-year, and calling a 2026 vs 2026
+  // delta "year-over-year" is simply false. Callers get comparisonKind so they
+  // can label it honestly rather than having to re-derive it from the years.
+  const prior = priorDifferentYear
+    || camRuns.slice(1).find(r => r.propName === curr.propName);
   if (!prior) return null;
 
   const currYear  = curr.camYear  || 'Current';
   const priorYear = prior.camYear || 'Prior';
+  const comparisonKind = (priorDifferentYear && String(priorYear) !== String(currYear))
+    ? 'year-over-year'
+    : 'run-over-run';
   const trends    = [];
 
   // ── Total Expenses trend ───────────────────────────────────────────────────
@@ -13751,7 +16608,7 @@ function buildHistoricalTrends() {
     });
   }
 
-  return { trends, currYear, priorYear };
+  return { trends, currYear, priorYear, comparisonKind };
 }
 
 function renderHistoricalTrendsPanel() {
@@ -13814,7 +16671,9 @@ function renderHistoricalTrendsPanel() {
       this.querySelector('.ap-chevron').classList.toggle('ap-chevron--open');
     ">
       <div class="ap-header-left">
-        <span class="ap-title">&#x1F4C8;&nbsp; Historical Trends &mdash; ${esc(String(priorYear))} &rarr; ${esc(String(currYear))}</span>
+        <span class="ap-title">&#x1F4C8;&nbsp; ${data.comparisonKind === 'year-over-year'
+          ? `Historical Trends &mdash; ${esc(String(priorYear))} &rarr; ${esc(String(currYear))}`
+          : `Run Comparison &mdash; previous ${esc(String(priorYear))} run &rarr; current run`}</span>
       </div>
       <div class="ap-header-right">
         ${badge(redCount, 'red')}
@@ -13954,9 +16813,18 @@ function showReportSection() {
     const label = isDup && t?.leasedSqft
       ? `${r.name} (${Number(t.leasedSqft).toLocaleString()} sqft)`
       : r.name;
-    html += `<button class="tenant-report-btn" onclick="generateTenantStatement('${esc(r.name)}')">${esc(label)}</button>`;
+    // Walkthrough finding: these rendered as bare tenant names sitting in the
+    // same grid as "🧾 Tenant Statement", so the Reports pane read as
+    //   [Tenant Statement] [Sunrise Cafe LLC] [Coverage Gap Report]
+    // — one action, one name, one action. A name is not a verb; say what the
+    // button does and let the name be the subject.
+    html += `<button class="tenant-report-btn" onclick="generateTenantStatement('${esc(r.name)}')">`
+         +  `<span class="trb-verb">Statement for</span>`
+         +  `<span class="trb-who">${esc(label)}</span></button>`;
   });
-  wrap.innerHTML = html;
+  wrap.innerHTML = html
+    ? `<div class="rpt-btn-cell rpt-tenant-list"><div class="rpt-tenant-list-lbl">Per tenant</div>${html}</div>`
+    : '';
 }
 
 function guardedMasterReport() {
@@ -14196,23 +17064,127 @@ function generateHolesReport() {
       </div>
     </div>`;
 
-  const summaryBar = totalIssues === 0 ? `
-    <div class="holes-summary-bar all-clear">
-      <div class="holes-summary-count">&#x2713;</div>
-      <div class="holes-summary-msg">Everything looks good — ready to run reconciliation</div>
-    </div>` : `
-    <div class="holes-summary-bar has-issues">
-      <div class="holes-summary-count">${totalIssues}</div>
-      <div class="holes-summary-msg">
-        ${totalIssues} item${totalIssues !== 1 ? 's' : ''} need${totalIssues === 1 ? 's' : ''} attention before running reconciliation
-        <span style="display:block;font-size:0.78rem;font-weight:400;margin-top:2px;opacity:0.8;">
-          ${criticalItems.length} critical &nbsp;·&nbsp; ${warningItems.length} warning${warningItems.length !== 1 ? 's' : ''}
-        </span>
+  // WHAT THIS REPORT DOES AND DOES NOT ANSWER.
+  //
+  // Coverage Gap is a pre-flight check on the INPUTS: are the invoices and
+  // leases you need in front of you before you reconcile? Every item above is
+  // month-over-month vendor and category continuity, upload completeness, and
+  // extraction quality. It never looks at reconciliation output.
+  //
+  // The Audit Exception Summary asks the opposite question — given this
+  // reconciliation, what is wrong with the result? On the Test 2 property this
+  // report showed "1 item needs attention" while that one showed five critical
+  // exceptions, and nothing on either page said why two counts of the same
+  // property differed. They are answering different questions, so the fix is to
+  // say which question, not to force the numbers together.
+  const _auditFindingCount = (() => {
+    try {
+      if (!lastResults.length) return null;
+      const { red, yellow } = buildAuditSummary();
+      return { red: red.length, yellow: yellow.length };
+    } catch (_) { return null; }
+  })();
+
+  const scopeNote = `
+    <div class="rpt-scope-note">
+      <strong>Scope:</strong> this report checks whether the inputs are complete
+      <em>before</em> you reconcile — missing vendors or categories against the last run,
+      leases not yet uploaded, and low-confidence extractions. It does not evaluate a
+      reconciliation that has already been produced.
+      ${_auditFindingCount && (_auditFindingCount.red + _auditFindingCount.yellow) > 0
+        ? `The current reconciliation additionally carries
+           <strong>${_auditFindingCount.red} critical</strong> and
+           <strong>${_auditFindingCount.yellow} advisory</strong> audit finding${
+             _auditFindingCount.red + _auditFindingCount.yellow === 1 ? '' : 's'};
+           those are enumerated in the Audit Exception Summary, not here.`
+        : ''}
+    </div>`;
+
+  // TWO STATES, SHOWN AS TWO STATES.
+  //
+  // A single bar reading "Inputs are complete — but the reconciliation has 5
+  // critical exceptions" sat under four green-looking KPIs and read as a
+  // contradiction: complete, and yet a large red warning. They are two different
+  // questions with two different answers, so they get two headed blocks rather
+  // than one sentence trying to hold both.
+  const _redCount = (_auditFindingCount && _auditFindingCount.red) || 0;
+  const _yelCount = (_auditFindingCount && _auditFindingCount.yellow) || 0;
+
+  // PROPERTY COVERAGE — the question this report is named after.
+  //
+  // It used to be absent: a manager opened the "Coverage Gap Report" to
+  // understand a 62.7% gap and was told coverage was Complete, because the only
+  // coverage this report measured was input-vs-last-run. The number is read from
+  // the SAME coverage finding the CAM screen and the Audit Exception Summary
+  // use — reconciliation-engine section 3 — so there is no second source of
+  // truth and no second calculation.
+  const _propertyCoverage = (() => {
+    try {
+      if (!lastResults.length) return null;
+      const sum = lastResults.reduce((a, r) => a + ((Number(r.proRata) || 0) * 100), 0);
+      const f = _detectReconciliationIssues(lastResults, currentProperty())
+        .find(x => /Property CAM coverage|over-allocation/i.test(x.title || ''));
+      return { documented: sum, unresolved: Math.max(0, 100 - sum), finding: f || null };
+    } catch (_) { return null; }
+  })();
+  const summaryBar = `
+    <div class="cg-split">
+      <div class="cg-block ${totalIssues === 0 ? 'cg-block--ok' : criticalItems.length > 0 ? 'cg-block--alert' : 'cg-block--warn'}">
+        <!-- "all leases are uploaded" was a claim MainStreet cannot make. It
+             has no way to know a lease exists that has never been given to it —
+             that is precisely the ambiguity the CAM coverage banner refuses to
+             resolve, and stating it as settled fact under a green tick
+             contradicted that banner one screen away. What this block actually
+             checks is narrower and is now said exactly: the inputs PRESENT have
+             been compared against the previous run. Whether the set is complete
+             is a different question, answered by property coverage below. -->
+        <div class="cg-block-title">Input completeness</div>
+        <div class="cg-block-state">${totalIssues === 0
+          ? '&#x2713; Nothing missing vs. the last run'
+          : `&#x26A0; ${totalIssues} input${totalIssues === 1 ? '' : 's'} need${totalIssues === 1 ? 's' : ''} attention`}</div>
+        <div class="cg-block-sub">${totalIssues === 0
+          ? 'Every vendor and category from the last run is present, and no uploaded lease needs extraction review. This compares what you have loaded against the previous reconciliation — it cannot tell you whether a lease you have never uploaded exists. Property coverage answers that.'
+          : `${criticalItems.length} critical &middot; ${warningItems.length} warning${warningItems.length === 1 ? '' : 's'}, listed above. Fix these before running the reconciliation.`}</div>
+      </div>
+      <div class="cg-block ${_redCount > 0 ? 'cg-block--alert' : _yelCount > 0 ? 'cg-block--warn' : 'cg-block--ok'}">
+        <div class="cg-block-title">Reconciliation status</div>
+        <div class="cg-block-state">${_auditFindingCount === null
+          ? '&mdash; Not yet run'
+          : _redCount > 0
+            ? `&#x26A0; ${_redCount} critical exception${_redCount === 1 ? '' : 's'}`
+            : _yelCount > 0
+              ? `&#x26A0; ${_yelCount} advisory finding${_yelCount === 1 ? '' : 's'}`
+              : '&#x2713; No exceptions'}</div>
+        <div class="cg-block-sub">${_auditFindingCount === null
+          ? 'Run a CAM allocation to evaluate the reconciliation.'
+          : _redCount > 0
+            ? 'Enumerated in the Audit Exception Summary. Resolve before billing.'
+            : 'Enumerated in the Audit Exception Summary.'}</div>
+      </div>
+      <!-- The gap this report is named for. Read from the same finding the CAM
+           screen and the Audit Exception Summary use, so the three cannot
+           disagree. Deliberately states the cause as UNDETERMINED: the system
+           knows how much of the property its loaded leases account for, and
+           nothing at all about the remainder. -->
+      <div class="cg-block ${_propertyCoverage && _propertyCoverage.unresolved > 2 ? 'cg-block--warn' : 'cg-block--ok'}">
+        <div class="cg-block-title">Property coverage</div>
+        <div class="cg-block-state">${!_propertyCoverage
+          ? '&mdash; Not yet run'
+          : _propertyCoverage.unresolved > 2
+            ? `&#x26A0; ${_propertyCoverage.documented.toFixed(1)}% documented &middot; ${_propertyCoverage.unresolved.toFixed(1)}% unresolved`
+            : `&#x2713; ${_propertyCoverage.documented.toFixed(1)}% documented`}</div>
+        <div class="cg-block-sub">${!_propertyCoverage
+          ? 'Run a reconciliation to measure how much of the property the loaded leases account for.'
+          : _propertyCoverage.unresolved > 2
+            ? `The loaded leases account for ${_propertyCoverage.documented.toFixed(1)}% of the property's square footage. MainStreet cannot tell whether the remaining ${_propertyCoverage.unresolved.toFixed(1)}% is vacant space or space under a lease it has never been given. <strong>What MainStreet needs from you:</strong> upload any remaining leases and re-run — if every lease is already loaded, the remainder is vacant and the landlord absorbs its share.`
+            : 'The loaded leases account for the property\'s square footage. Nothing is unresolved.'}</div>
       </div>
     </div>`;
 
   const html = `
     ${_rptHeader(propName, 'Coverage Gap Report', month, now)}
+
+    ${scopeNote}
 
     <div class="rpt-kpi-row">
       <div class="rpt-kpi">
@@ -14244,9 +17216,73 @@ function generateHolesReport() {
 
 function openReport(title, bodyHtml) {
   document.getElementById('rptToolbarTitle').textContent = title;
-  document.getElementById('rptBody').innerHTML = bodyHtml;
+  const body = document.getElementById('rptBody');
+  body.innerHTML = bodyHtml;
+  _rptMakeTablesScrollable(body);
   document.getElementById('reportOverlay').style.display = 'block';
   window.scrollTo(0, 0);
+}
+
+/**
+ * Give every report table its own horizontal scroller.
+ *
+ * Report tables set `white-space: nowrap` on every column but the first, which
+ * is right for a wide screen and right for print — a lease term or a dollar
+ * figure should never wrap mid-value. On a 390px phone it made the Lender
+ * Summary's seven-column roster wider than the viewport, and because nothing
+ * contained it the whole PAGE scrolled sideways: the sticky toolbar slid off,
+ * taking Print and Close with it.
+ *
+ * Doing this here rather than in each report generator means the twelve or so
+ * places that emit `<table class="rpt-table">` keep emitting plain tables, and
+ * the containment is applied once, to markup that is already built. No report's
+ * content, columns or numbers are altered — the table is moved inside a div.
+ */
+function _rptMakeTablesScrollable(root) {
+  if (!root || !root.querySelectorAll) return;
+  root.querySelectorAll('table.rpt-table').forEach(tbl => {
+    // ── Stacked cards on mobile ────────────────────────────────────────────
+    //
+    // A scroll container kept the page from scrolling sideways, but it did not
+    // make the table readable: a property manager on a phone still had to
+    // discover that "Billing Method" and "Flags" existed somewhere off the
+    // right edge, and nothing on screen said so. These are operational reports,
+    // not spreadsheets — the row is the unit of meaning, not the column.
+    //
+    // So each cell is stamped with its column heading and the CSS at ≤600px
+    // turns every row into a labelled card. Done here, at render time, from the
+    // table's own <thead>, which means no report generator changes and no
+    // duplicated heading strings to drift.
+    const heads = [...tbl.querySelectorAll('thead th')].map(th =>
+      (th.textContent || '').replace(/\s+/g, ' ').trim());
+    if (heads.length) {
+      tbl.querySelectorAll('tbody tr, tfoot tr').forEach(tr => {
+        // A row that spans the table is a subtotal or an empty-state message,
+        // not a record — it keeps its full width and gets no label.
+        const cells = [...tr.children];
+        const spans = cells.some(td => Number(td.getAttribute('colspan') || 1) > 1);
+        if (spans) { tr.classList.add('rpt-row--full'); return; }
+        cells.forEach((td, i) => {
+          const label = heads[i];
+          if (label) td.setAttribute('data-label', label);
+        });
+      });
+      tbl.classList.add('rpt-table--cards');
+    }
+
+    // The scroll container stays for the wide-screen case and for any table
+    // without a <thead> to label from — it is the fallback, no longer the plan.
+    if (tbl.parentElement && tbl.parentElement.classList.contains('rpt-table-scroll')) return;
+    const wrap = document.createElement('div');
+    wrap.className = 'rpt-table-scroll';
+    // Announced to assistive tech and reachable by keyboard, since a scrollable
+    // region that only a trackpad can reach is not actually accessible.
+    wrap.setAttribute('tabindex', '0');
+    wrap.setAttribute('role', 'region');
+    wrap.setAttribute('aria-label', 'Scrollable table');
+    tbl.parentNode.insertBefore(wrap, tbl);
+    wrap.appendChild(tbl);
+  });
 }
 
 function closeReport() {
@@ -14306,12 +17342,22 @@ function generateReconciliationSummary() {
       <td style="text-align:right">${((amt / lastTotal) * 100).toFixed(1)}%</td>
     </tr>`).join('');
 
+  // THE HEADLINE WAS THE ONLY THING ALLOWED TO SHRINK.
+  //
+  // This was a hand-rolled flex row: "Status:" and the exposure line both
+  // carried flex-shrink:0, so on a narrow screen the headline between them was
+  // the only item that could give — and give it did, down to a column one
+  // character wide. "Critical Audit Risk — Immediate Review Required Before
+  // Tenant Billing" rendered as a vertical stack of single letters.
+  //
+  // A class, not inline styles, so the layout can be responsive at all — and so
+  // the next person changing it can see it in one place.
   const reconNarrative = buildAuditNarrative();
   const reconStatusBar = reconNarrative.headline ? `
-    <div style="display:flex;align-items:center;gap:10px;padding:10px 14px;background:var(--theme-surface);border-radius:7px;margin-bottom:14px;font-size:0.82rem;">
-      <span style="color:var(--text-4);font-weight:600;flex-shrink:0;">Status:</span>
-      <span style="color:var(--text-1);">${esc(reconNarrative.headline)}</span>
-      ${reconNarrative.financialImpact ? `<span style="margin-left:auto;color:var(--text-3);flex-shrink:0;">${esc(reconNarrative.financialImpact)}</span>` : ''}
+    <div class="rpt-status-bar">
+      <span class="rpt-status-label">Status</span>
+      <span class="rpt-status-headline">${esc(reconNarrative.headline)}</span>
+      ${reconNarrative.financialImpact ? `<span class="rpt-status-impact">${esc(reconNarrative.financialImpact)}</span>` : ''}
     </div>` : '';
 
   const html = `
@@ -14331,21 +17377,59 @@ function generateReconciliationSummary() {
     </div>
 
     <div class="rpt-section-title">Tenant Allocation</div>
+    ${(() => {
+      // STATE THE DENOMINATOR, AND LET THE TABLE ADD UP ON THE PAGE.
+      //
+      // The percentage column is each lease's share of the BUILDING — leased
+      // sqft ÷ total property sqft (reconciliation-engine / runFullReconciliation
+      // line 9901) — and the billed figure is that share applied to the expense
+      // pool. Two different denominators, one unlabelled column.
+      //
+      // The shares therefore sum to less than 100% whenever the loaded leases
+      // do not cover the whole building, and the TOTAL row left that cell EMPTY,
+      // so the one number that would have explained it was the one number not
+      // shown. A reader reasonably assumed the percentages were shares of the
+      // billed total, checked, and found they matched neither that nor 100%.
+      //
+      // Nothing is recomputed here. The sum, the pool and the gap are stated so
+      // the arithmetic can be followed without leaving the page.
+      const _prSum = lastResults.reduce((s2, r) => s2 + (r.proRataPercent || 0), 0);
+      const _gap   = 100 - _prSum;
+      // Never print NaN at a landlord. If either figure is missing the note
+      // states the shares and omits the dollar amount rather than inventing one.
+      const _unbilledRaw = lastTotal - totalBilled;
+      const _unbilled = isFinite(_unbilledRaw) ? _unbilledRaw : null;
+      return `
+    <div class="rpt-scope-note">
+      <strong>Pro-rata % is each lease's share of the building</strong> — leased sqft ÷ ${propSqft > 0 ? propSqft.toLocaleString() + ' total sqft' : 'total property sqft'} —
+      not a share of the amount billed. CAM Billed is that share applied to the ${esc(fmt(lastTotal))} expense pool.
+      ${_gap > 0.01
+        ? `The shares total ${_prSum.toFixed(2)}% because the loaded leases cover that much of the property;
+           the remaining ${_gap.toFixed(2)}%${_unbilled != null ? ` (${esc(fmt(_unbilled))})` : ''} is space no loaded lease covers and is not billed to anyone.`
+        : `The shares total ${_prSum.toFixed(2)}% — the whole building is covered by loaded leases.`}
+    </div>
     <table class="rpt-table">
       <thead><tr>
         <th>Tenant</th>
         <th style="text-align:right">Leased sqft</th>
-        <th style="text-align:right">Pro-Rata %</th>
+        <th style="text-align:right">% of building</th>
         <th style="text-align:right">CAM Billed</th>
       </tr></thead>
       <tbody>${tenantRows}</tbody>
       <tfoot><tr class="total-row">
         <td>TOTAL</td>
         <td style="text-align:right">${totalLeasedSqft > 0 ? totalLeasedSqft.toLocaleString() : '—'}</td>
-        <td></td>
+        <td style="text-align:right">${_prSum.toFixed(2)}%</td>
         <td style="text-align:right">${fmt(totalBilled)}</td>
       </tr></tfoot>
-    </table>
+      ${_gap > 0.01 ? `<tfoot><tr>
+        <td>Not covered by a loaded lease</td>
+        <td style="text-align:right">${propSqft > 0 ? Math.max(0, propSqft - totalLeasedSqft).toLocaleString() : '—'}</td>
+        <td style="text-align:right">${_gap.toFixed(2)}%</td>
+        <td style="text-align:right">${_unbilled != null ? fmt(_unbilled) : '—'}</td>
+      </tr></tfoot>` : ''}
+    </table>`;
+    })()}
 
     <div class="rpt-section-title">Expense Categories</div>
     <table class="rpt-table">
@@ -14417,15 +17501,38 @@ function generateExceptionReport() {
     buckets[key].push(f);
   });
 
+  // Every finding renders the same four parts — what, how much, on what
+  // evidence, what to do — so a manager reads them the same way each time
+  // instead of learning a different layout per finding type. `impact` and
+  // `source` were already recorded on the findings and simply never displayed
+  // here, which is why the report could enumerate five critical exceptions
+  // without stating a single dollar figure.
+  const _AXe = window.AuditExposure;
+  // One vocabulary, owned by audit-exposure.js — see KIND_LABEL there for why
+  // "at risk" was replaced. Local fallback only for the module-missing case.
+  const _KIND_LBL = (_AXe && _AXe.KIND_LABEL) || {
+    at_risk: 'requiring lease verification', under_review: 'requiring review',
+    recoverable: 'excluded or already recovered', unsubstantiated: 'weakly evidenced',
+  };
   const renderFlag = f => {
     const sevLabel = f.severity === 'red' ? 'Critical' : 'Warning';
+    const imp = _AXe ? _AXe.normalizeImpact(f.impact) : { amount: null, kind: 'none' };
+    const impLine = imp.amount != null && _KIND_LBL[imp.kind]
+      ? `<div class="exc-flag-impact"><strong>${esc(fmt(imp.amount))}</strong> ${esc(_KIND_LBL[imp.kind])}${
+          imp.basis ? ` &mdash; ${esc(imp.basis)}` : ''}</div>`
+      : (f.severity === 'red' || f.severity === 'yellow'
+          ? `<div class="exc-flag-impact exc-flag-impact--none">Not yet quantified &mdash; this finding carries no dollar figure, which is not the same as carrying none.</div>`
+          : '');
     return `<div class="exc-flag exc-flag--${f.severity}">
       <div class="exc-flag-header">
         <span class="exc-sev exc-sev--${f.severity}">${sevLabel}</span>
         <span class="exc-flag-title">${esc(f.title)}</span>
       </div>
       ${f.detail ? `<div class="exc-flag-detail">${esc(f.detail)}</div>` : ''}
+      ${impLine}
+      ${f.source ? `<div class="exc-flag-source">Source: ${esc(f.source)}</div>` : ''}
       ${f.conditions?.length ? `<ul class="exc-conditions">${f.conditions.map(c => `<li>${esc(c)}</li>`).join('')}</ul>` : ''}
+      ${f.actions?.length ? `<div class="exc-flag-actions">${f.actions.map(a => `<span class="exc-action">${esc(a)}</span>`).join('')}</div>` : ''}
     </div>`;
   };
 
@@ -14447,10 +17554,18 @@ function generateExceptionReport() {
 
   const narrative = buildAuditNarrative();
   const excNClass = narrative.riskLevel === 'Critical' ? 'exc-narrative--critical' : narrative.riskLevel === 'Elevated' ? 'exc-narrative--elevated' : narrative.riskLevel === 'Moderate' ? 'exc-narrative--moderate' : 'exc-narrative--low';
+  // The same exposure line and readiness verdict the on-screen summary, the
+  // Risk & Disputes report and the Lender Summary state. This report enumerated
+  // the findings without ever totalling them, so it was the one place a reader
+  // could count five exceptions and still not learn what they came to.
   const narrativeBlock = narrative.headline ? `
     <div class="exc-narrative ${excNClass}">
       <div class="exc-narrative-headline">${esc(narrative.headline)}</div>
       <div class="exc-narrative-summary">${esc(narrative.summaryParagraph || '')}</div>
+      ${narrative.financialImpact ? `<div class="exc-narrative-impact">${esc(narrative.financialImpact)}</div>` : ''}
+      ${narrative.readiness ? `<div class="rpt-readiness rpt-readiness--${narrative.readiness.canBill ? 'ok' : 'blocked'}">
+        <strong>${esc(narrative.readiness.label)}</strong> &mdash; ${esc(narrative.readiness.reason)}
+      </div>` : ''}
     </div>` : '';
 
   const html = `
@@ -14458,6 +17573,16 @@ function generateExceptionReport() {
       { label: 'Flags Raised', value: red.length + yellow.length },
       { label: 'Checks Passed', value: green.length },
     ])}
+
+    <div class="rpt-scope-note">
+      <strong>What is counted here:</strong> reconciliation findings — conditions in
+      <em>this ${esc(String(period))}</em> reconciliation that affect whether it can be billed.
+      ${red.length} critical and ${yellow.length} advisory.
+      The Lease Review Packet counts something different: <em>lease-field</em> exceptions, which are
+      fields in a lease document lacking a clause citation or extracted with low confidence.
+      A lease field with no citation is not a reconciliation exception, and a reconciliation billed on an
+      expired lease is not a field exception, so the two counts are not expected to match.
+    </div>
 
     ${narrativeBlock}
 
@@ -14652,7 +17777,8 @@ function generateMasterReport() {
       <div class="rpt-hash-lbl">&#x1F512; Tamper-Detection Hash (SHA-256)</div>
       <div class="rpt-hash-val">Computing…</div>
     </div>
-    <p style="font-size:0.78rem;color:var(--text-4);line-height:1.5;margin-top:10px;">MainStreet settles tenant payments in RLUSD on the XRP Ledger, embedding a SHA-256 fingerprint of each settlement in the transaction memo for public, independent verification. The reconciliation record itself carries the local audit fingerprint above.</p>
+    <p style="font-size:0.78rem;color:var(--text-4);line-height:1.5;margin-top:10px;">The fingerprint above is computed locally over this reconciliation and lets you detect any later change to it. It is <strong>not</strong> published anywhere.
+      <br>MainStreet is <strong>designed</strong> to settle tenant payments in RLUSD on the XRP Ledger and to carry a SHA-256 fingerprint of the settlement in the transaction memo, which anyone could then verify independently. That is not live: no settlement has been submitted from this application, and no fingerprint has been published to any ledger. This report makes no on-chain claim.</p>
 
     ${_rptFooter(lastPropName, 'Landlord Master CAM Report', now)}`;
 
@@ -14901,9 +18027,8 @@ async function runLandlordAIReview() {
     for (const inv of toReview) {
       try {
         const data = await explainFetch({
-          model: MODEL,
+          task: 'invoice_explanation_landlord',
           max_tokens: 512,
-          system: LANDLORD_SYSTEM_PROMPT,
           messages: [{ role: 'user', content:
             `Vendor: ${inv.vendorName || 'Unknown'}\n` +
             `Category: ${inv.category || 'other'}\n` +
@@ -14977,7 +18102,12 @@ function generateDisputePacket(disputeId) {
         <tr><td>Raw Allocation</td><td style="text-align:right">${fmt(recon.capApplied ? recon.totalAllocated + recon.capAdjustment : recon.totalAllocated)}</td></tr>
         ${recon.capApplied ? `<tr><td>Cap Reduction</td><td style="text-align:right;color:var(--c-fb923c);">−${fmt(recon.capAdjustment)}</td></tr>` : ''}
         <tr class="total-row"><td>Final CAM Charge</td><td style="text-align:right">${fmt(recon.totalAllocated)}</td></tr>
-        ${calcSt ? `<tr><td>Billing Method</td><td style="text-align:right"><span class="rc-calc-state ${calcSt.cls}">${calcSt.label}</span></td></tr>` : ''}
+        <!-- Same chip, same label set, same meaning as the reconciliation
+             results table: it describes the CAM arithmetic, not the tenant.
+             This row was left reading "Billing Method" when the results table
+             was corrected, so the packet showed "Billing Method: Calc verified"
+             — a heading and a value that do not match. -->
+        ${calcSt ? `<tr><td>CAM calculation</td><td style="text-align:right"><span class="rc-calc-state ${calcSt.cls}" title="Describes the CAM calculation for this tenant, not the tenant's standing. Audit exceptions are listed in the AI Audit Summary.">${calcSt.label}</span></td></tr>` : ''}
       </tbody>
     </table>` : '';
 
@@ -15123,18 +18253,58 @@ function generateLandlordExport() {
   const now        = new Date().toLocaleDateString('en-US', { year: 'numeric', month: 'long', day: 'numeric' });
   const period     = (getCamYear() || new Date().getFullYear()) + ' CAM Year';
   const openD      = disputes.filter(d => d.status === 'open');
-  const exposure   = openD.reduce((s, d) => s + (parseFloat(d.tenantShare) || 0), 0);
-  const reconIss   = _detectReconciliationIssues(lastResults, currentProperty());
-  const redIss     = reconIss.filter(f => f.severity === 'red');
-  const yellowIss  = reconIss.filter(f => f.severity === 'yellow');
+  const disputeExposure = openD.reduce((s, d) => s + (parseFloat(d.tenantShare) || 0), 0);
+
+  // THE SAME FINDING SET AS THE AUDIT EXCEPTION SUMMARY.
+  //
+  // This report used to call _detectReconciliationIssues directly, which is a
+  // strict subset of buildAuditSummary — it sees the engine's structural flags
+  // and nothing else. On the Test 2 reconciliation that produced "4 Critical
+  // Issues / 2 Warnings" here beside "5 Critical Flags / 5 Warnings" in the
+  // Audit Exception Summary, for one reconciliation, on the same day. The
+  // $38,000 concentration flag, the undated invoice and the low-confidence
+  // match existed only in the other report.
+  //
+  // The two reports still differ in PURPOSE — this one is about counterparty
+  // risk and disputes, that one enumerates every audit finding — but a count
+  // labelled "Critical Issues" has to mean the same thing in both.
+  const { red: auditRed, yellow: auditYellow, green: auditGreen } = buildAuditSummary();
+  const redIss     = auditRed;
+  const yellowIss  = auditYellow;
   const invSusp    = _detectInvoiceSuspicions(invoiceData.filter(inv => inv && inv.vendorName));
   const redSusp    = invSusp.filter(f => f.severity === 'red');
   const proRataSum = lastResults.reduce((s, r) => s + (r.proRataPercent || 0), 0);
 
-  const issueRows = [...redIss, ...yellowIss].map(f => `<tr>
-    <td><span style="color:${f.severity === 'red' ? '#f87171' : '#fbbf24'}">${f.severity === 'red' ? '⛔' : '⚠'}</span></td>
-    <td>${esc(f.title)}</td>
-  </tr>`).join('');
+  // Canonical exposure, so "exposure" in this report means what it means
+  // everywhere else. The dispute figure is a different measure and keeps its
+  // own label rather than borrowing the word.
+  const _AXr = window.AuditExposure;
+  const _rExp = _AXr
+    ? _AXr.deriveExposure({ red: auditRed, yellow: auditYellow, green: auditGreen }, lastTotal || 0)
+    : null;
+  const _rReady = _AXr && _rExp ? _AXr.billingReadiness(_rExp) : null;
+
+  const issueRows = [...redIss, ...yellowIss].map(f => {
+    const sev = _AXr ? _AXr.severityOf(f, redIss.indexOf(f) >= 0 ? 'red' : 'yellow')
+                     : (f.severity || 'yellow');
+    const imp = _AXr ? _AXr.normalizeImpact(f.impact) : { amount: null, kind: 'none' };
+    const money = imp.amount != null
+      ? fmt(imp.amount)
+      : '<span style="color:#64748b">not yet quantified</span>';
+    const KIND_LBL = (_AXr && _AXr.KIND_LABEL_TITLE) || {
+      at_risk: 'Requiring Lease Verification', under_review: 'Requiring Review',
+      recoverable: 'Excluded / Recovered', unsubstantiated: 'Weakly Evidenced', none: '—',
+    };
+    return `<tr>
+      <td><span style="color:${sev === 'red' ? '#f87171' : '#fbbf24'}">${sev === 'red' ? '⛔' : '⚠'}</span></td>
+      <td>${esc(f.title)}</td>
+      <td style="text-align:right;white-space:nowrap">${money}</td>
+      <!-- Treatment is the one column that may wrap: its longest value is two
+           words, and holding it on one line pushed the table past the report
+           column on a desktop screen. -->
+      <td style="white-space:normal;color:#94a3b8">${esc(KIND_LBL[imp.kind] || '—')}</td>
+    </tr>`;
+  }).join('');
 
   const disputeRows = openD.map(d => `<tr>
     <td>#${d.id + 1}</td>
@@ -15153,43 +18323,80 @@ function generateLandlordExport() {
       <td>${esc(r.name)}</td>
       <td style="text-align:right">${fmt(r.totalAllocated)}</td>
       <td style="text-align:right">${(r.proRata * 100).toFixed(2)}%</td>
-      <td><span class="rc-calc-state ${calcSt.cls}">${calcSt.label}</span></td>
+      <td><span class="rc-calc-state ${calcSt.cls}" title="Describes the CAM calculation for this row, not the tenant's standing. Audit exceptions are listed in the AI Audit Summary.">${calcSt.label}</span></td>
       <td style="text-align:center">${flagCnt > 0 ? `<span style="color:var(--c-fbbf24)">${flagCnt}</span>` : '—'}</td>
     </tr>`;
   }).join('');
 
-  const _expTotalCAM = _expDm.financialStats?.totalCAM ?? lastTotal;
+  // "Total CAM" must mean the expense pool, the way the Audit Exception Summary
+  // and the exposure line mean it.
+  //
+  // This read derivePropertyMetrics().financialStats.totalCAM, which despite its
+  // name is the sum of allocatedAmount across the reconciliation results — the
+  // amount billed OUT to tenants, not the pool it came from. (The same object
+  // sets totalAllocated to the identical value, which is the honest name for
+  // it.) On Test 2 that put "Total CAM $8,259" in this report's header beside
+  // "$71,950 total CAM pool" in the Exception Summary, for one reconciliation.
+  //
+  // The metrics field keeps its meaning and its consumers; this report simply
+  // stops labelling an allocation total as the pool, and shows both.
+  const _expTotalCAM   = lastTotal || 0;
+  const _expAllocated  = _expDm.financialStats?.totalAllocated
+                      ?? _expDm.financialStats?.totalCAM
+                      ?? lastResults.reduce((s, r) => s + (r.totalAllocated || r.allocatedAmount || 0), 0);
   const _expOpenDisp = _expDm.disputeStats?.openDisputes ?? openD.length;
   const html = `
     ${_rptHeader(propName, 'Risk & Disputes Report', period, now, [
-      { label: 'Total CAM',   value: fmt(_expTotalCAM) },
-      { label: 'Open Disputes', value: _expOpenDisp },
-      { label: 'Exposure',    value: fmt(exposure) },
+      { label: 'Total CAM Pool',   value: fmt(_expTotalCAM) },
+      { label: 'Billed to Tenants', value: fmt(_expAllocated) },
+      { label: 'Open Disputes',    value: _expOpenDisp },
+      { label: 'Dispute Exposure', value: fmt(disputeExposure) },
+      ...(_rExp ? [{ label: 'Requiring Lease Verification', value: fmt(_rExp.confirmedAtRisk) }] : []),
     ])}
+
+    ${_rReady ? `<div class="rpt-readiness rpt-readiness--${_rReady.canBill ? 'ok' : 'blocked'}">
+      <strong>${esc(_rReady.label)}</strong> &mdash; ${esc(_rReady.reason)}
+    </div>` : ''}
 
     <div class="rpt-kpi-row">
       <div class="rpt-kpi${redIss.length > 0 ? ' rpt-kpi--alert' : ''}"><div class="kpi-val">${redIss.length}</div><div class="kpi-lbl">Critical Issues</div></div>
       <div class="rpt-kpi${yellowIss.length > 0 ? ' rpt-kpi--warn' : ''}"><div class="kpi-val">${yellowIss.length}</div><div class="kpi-lbl">Warnings</div></div>
       <div class="rpt-kpi${openD.length > 0 ? ' rpt-kpi--warn' : ''}"><div class="kpi-val">${openD.length}</div><div class="kpi-lbl">Open Disputes</div></div>
-      <div class="rpt-kpi${exposure > 0 ? ' rpt-kpi--alert' : ''}"><div class="kpi-val">${fmt(exposure)}</div><div class="kpi-lbl">Dispute Exposure</div></div>
+      <div class="rpt-kpi${disputeExposure > 0 ? ' rpt-kpi--alert' : ''}"><div class="kpi-val">${fmt(disputeExposure)}</div><div class="kpi-lbl">Dispute Exposure</div></div>
+      ${_rExp ? `<div class="rpt-kpi${_rExp.confirmedAtRisk > 0 ? ' rpt-kpi--alert' : ''}"><div class="kpi-val">${fmt(_rExp.confirmedAtRisk)}</div><div class="kpi-lbl">Requiring Lease Verification</div></div>
+      <div class="rpt-kpi${_rExp.requiringReview > 0 ? ' rpt-kpi--warn' : ''}"><div class="kpi-val">${fmt(_rExp.requiringReview)}</div><div class="kpi-lbl">Requiring Review</div></div>` : ''}
       <div class="rpt-kpi${redSusp.length > 0 ? ' rpt-kpi--alert' : ''}"><div class="kpi-val">${redSusp.length}</div><div class="kpi-lbl">Invoice Red Flags</div></div>
       <div class="rpt-kpi${Math.abs(proRataSum - 100) > 5 ? ' rpt-kpi--alert' : ''}"><div class="kpi-val">${proRataSum.toFixed(1)}%</div><div class="kpi-lbl">Pro-Rata Sum</div></div>
     </div>
 
+    ${_rExp && _rExp.poolUnsubstantiated > 0 ? `<div class="rpt-scope-note">
+      A further ${esc(fmt(_rExp.poolUnsubstantiated))} of the expense pool is weakly evidenced — undated,
+      undocumented or concentrated in a single vendor. That is a measure of the expenses, not of the
+      amounts billed out, so it is reported separately and is not added to the figures above.
+    </div>` : ''}
+
     ${(redIss.length + yellowIss.length) > 0 ? `
     <div class="rpt-section-title">Reconciliation Issues</div>
-    <table class="rpt-table"><tbody>${issueRows}</tbody></table>` : ''}
+    <div class="rpt-scope-note">Every audit finding for this reconciliation — the same set the Audit Exception Summary enumerates.</div>
+    <table class="rpt-table">
+      <thead><tr><th style="width:32px"></th><th>Finding</th><th style="text-align:right">Amount</th><th>Treatment</th></tr></thead>
+      <tbody>${issueRows}</tbody>
+    </table>` : ''}
 
     ${openD.length > 0 ? `
-    <div class="rpt-section-title">Open Disputes — ${fmt(exposure)} Total Exposure</div>
+    <div class="rpt-section-title">Open Disputes — ${fmt(disputeExposure)} Total Dispute Exposure</div>
     <table class="rpt-table">
       <thead><tr><th>#</th><th>Tenant</th><th>Charge</th><th style="text-align:right">Amount</th><th>Type</th><th>Severity</th></tr></thead>
       <tbody>${disputeRows}</tbody>
-    </table>` : '<div class="rpt-section-title" style="color:var(--c-4ade80)">&#x2713; No open disputes</div>'}
+    </table>` : `<div class="rpt-section-title" style="color:var(--c-4ade80)">&#x2713; No open tenant disputes</div>
+    <div class="rpt-scope-note">A dispute is a charge a tenant has formally challenged. None is open.
+      This says nothing about the audit findings above${_rExp && _rExp.counts.red > 0
+        ? ` — ${_rExp.counts.red} critical exception${_rExp.counts.red === 1 ? '' : 's'} remain${_rExp.counts.red === 1 ? 's' : ''} open`
+        : ''}.</div>`}
 
     <div class="rpt-section-title">Reconciliation Completeness by Tenant</div>
     <table class="rpt-table">
-      <thead><tr><th>Tenant</th><th style="text-align:right">Allocated</th><th style="text-align:right">Pro-Rata</th><th>Billing Method</th><th style="text-align:center">Flags</th></tr></thead>
+      <thead><tr><th>Tenant</th><th style="text-align:right">Allocated</th><th style="text-align:right">Pro-Rata</th><th title="Whether the CAM arithmetic for this row used sound inputs. Not a statement about the lease or the tenant — audit exceptions are reported in the AI Audit Summary.">CAM calculation</th><th style="text-align:center" title="Per-tenant allocation ambiguity only — approximate square footage, unknown lease type, square-footage overflow or a base-year mismatch. Audit exceptions are counted separately.">Allocation flags</th></tr></thead>
       <tbody>${tenantRows}</tbody>
     </table>
 
@@ -15237,7 +18444,12 @@ function generateLenderSummaryReport() {
     const prop = currentProperty();
     if (!prop) { showToast('Select a property first.', { color: '#92400e', textColor: '#fef3c7' }); return; }
     if (!window.LeaseReviewPackets) { showToast('Lease Review Packets module not loaded.', { color: '#92400e', textColor: '#fef3c7' }); return; }
-    const html = window.LeaseReviewPackets.generateLenderSummaryHtml(prop);
+    // Hand the Lender Summary the SAME audit state the on-screen summary shows.
+    // Without it the health score can only see document completeness, which is
+    // how a property with five critical exceptions reported 100/100.
+    let _auditState = null;
+    try { if (lastResults.length) _auditState = buildAuditNarrative(); } catch (_) {}
+    const html = window.LeaseReviewPackets.generateLenderSummaryHtml(prop, _auditState);
     logActivity('lender_summary', 'Lender Summary generated', { severity: 'info', actor: 'User', relatedEntity: prop.name || 'Property' });
     openReport('Lender Summary — ' + (prop.name || 'Property'), html);
   } catch (e) {
@@ -15306,14 +18518,23 @@ function exportReconciliationCSV() {
     return;
   }
   const rows = [
-    ['Tenant', 'Unit', 'Sqft', 'Pro-Rata % (0-100)', 'Cap Applied', 'Cap Reduction (negative = savings)', 'Allocated', 'Invoices', 'AI Read Confidence (%)', 'Billing Method', 'Flags'],
+    // 'CAM Calculation' and 'Allocation Flags', matching every on-screen
+    // surface. This column carries calcSt.label — "Calc verified", "Inputs
+    // missing" — which describes the arithmetic, not the tenant, and a CSV
+    // headed "Billing Method" is the version most likely to be pasted into a
+    // lender pack or an audit response with nobody left to explain it.
+    ['Tenant', 'Unit', 'Sqft', 'Pro-Rata % (0-100)', 'Cap Applied', 'Cap Reduction (negative = savings)', 'Allocated', 'Invoices', 'AI Read Confidence (%)', 'CAM Calculation', 'Allocation Flags'],
     ...lastResults.map(r => {
       const liveT  = tenantData.find(t => t && t.id === r.tenantId);
       const calcSt = _deriveCalcState(r, liveT);
       // Use extraction confidence (how well Claude read the lease) rather than
       // invoice-match confidence (which is 0 when no direct matches exist).
       const extractionConf = liveT?._confidenceScore ?? liveT?._confidence ?? null;
-      const confExport = extractionConf !== null ? extractionConf : (r.averageConfidence > 0 ? r.averageConfidence : '');
+      // D16 — no fallback to invoice-match confidence. The comment above already
+      // diagnosed why it is the wrong number; the column is now blank when the
+      // lease carries no extraction confidence, rather than quietly filling with
+      // a figure that measures something else.
+      const confExport = extractionConf !== null ? extractionConf : '';
       return [
         r.name, r.unitNumber || '', r.sqFt || '', (r.proRata * 100).toFixed(2),
         r.capApplied ? 'Yes' : 'No', r.capApplied ? (-(r.capAdjustment || 0)).toFixed(2) : '',
@@ -15391,10 +18612,623 @@ function exportAuditLog() {
   logActivity('audit_log_export', 'Audit log exported (JSON)', { severity: 'info', actor: 'User', relatedEntity: lastPropName || 'Property' });
 }
 
-function generateTenantStatement(tenantName) {
-  if (!lastResults.length) { showToast('Run a CAM allocation first to generate reports.', { color: '#92400e', textColor: '#fef3c7' }); return; }
+// ─── F-02: unapplied-exclusion lifecycle guard ────────────────────────────────
+//
+// A statement is "issued" the moment generateTenantStatement renders it into the
+// report overlay — there is no separate send/approve step, and the tenant prints
+// from that overlay. So the guard has to sit inside this function, before any
+// HTML is built. All three entry points (guardedTenantStatement, the per-result
+// card button, the Reports tab buttons) funnel through here, which makes it a
+// single choke point rather than a warning the user can scroll past.
+//
+// Returns null when the statement may be issued, or the reason it may not.
+function _exclusionBlockReason(tenantName) {
+  const t = lastTenants.find(x => x.name === tenantName);
+  if (!t) return null;
+  const notApplied = t.exclusionsNotApplied || [];
+  if (!notApplied.length) return null;
+
+  const rec = tenantData.find(d => d && d.tenant_name === tenantName);
+
+  // The fingerprint normally rides along on lastTenants from the run that
+  // produced it. Two paths do not carry it: _mergeCamReconciliationRows, which
+  // rebuilds tenants from DB rows on reload, and any snapshot written before
+  // this field existed. Without a fingerprint the acknowledgement check below
+  // can never match, so the landlord clicks "I have reviewed these", the ack is
+  // stored, and the same block screen returns — an unbreakable loop on every
+  // reloaded reconciliation.
+  //
+  // So derive it from the tenant record's own raw exclusions, which is the same
+  // input the run used. Derive ONLY from a real stored string: if there is no
+  // record, or its exclusions are absent or blank, the fingerprint stays empty
+  // and the statement stays blocked. A default or fabricated value here would
+  // let an acknowledgement match a set nobody has actually reviewed.
+  const _recRaw = rec && typeof rec.excluded_categories === 'string' && rec.excluded_categories.trim()
+    ? rec.excluded_categories
+    : null;
+  const fp  = t.exclusionFingerprint || (_recRaw ? _exclusionState(_recRaw).fingerprint : '');
+  const ack = rec && rec._exclusionAck;
+
+  // The acknowledgement is keyed to the exclusion set it was given for. Editing
+  // the lease's exclusions changes the fingerprint and re-blocks automatically —
+  // a landlord cannot acknowledge one set and issue against another.
+  if (ack && fp && ack.fingerprint === fp) return null;
+
+  return { tenantName, notApplied, fingerprint: fp, staleAck: !!(ack && ack.fingerprint !== fp) };
+}
+
+// Records the landlord's explicit verification that a lease whose document names
+// a different property does, in fact, belong to this one.
+//
+// WHAT THIS IS NOT. It does not accept the lease, does not touch a single
+// AI-extracted value, and does not clear any other warning. The extracted
+// property_name stays exactly as the model read it, the PROPERTY_NAME_MISMATCH
+// edge case stays on the record, and every other CAM exclusion, staleness guard
+// and lease-review check is untouched. The only thing that changes is that this
+// one tenant stops being held out of CAM.
+//
+// PER LEASE, DELIBERATELY. There is no "confirm all". A blanket override is the
+// one thing that would turn a human verification step back into a checkbox — the
+// landlord has to look at each lease that was flagged and say so about that lease.
+//
+// AUTHORIZATION. The button is landlord-only in the UI, but the real boundary is
+// the database: this writes into properties.data, and properties carries
+// `properties_owner_all USING (user_id = auth.uid())`, so a save by anyone who
+// does not own the property affects zero rows. The check below is defence in
+// depth and an affordance, not the control — role lives in client-writable
+// user_metadata and is not an authorization input (see T10 in the auth suite).
+function confirmLeaseBelongsToProperty(i) {
+  if (window.AuthService?.getCurrentUser?.()?.role === 'tenant' ||
+      (window.AuthService?.isLandlord && !window.AuthService.isLandlord())) {
+    showToast('Only the property owner can confirm a lease.', { color: '#92400e', textColor: '#fef3c7' });
+    return;
+  }
+  const prop = currentProperty();
+  if (!prop || !activePropId) {
+    showToast('Select a property before confirming a lease.', { color: '#92400e', textColor: '#fef3c7' });
+    return;
+  }
+  const t = tenantData[i];
+  if (!t) { showToast('Could not find that lease to confirm.', { color: '#92400e', textColor: '#fef3c7' }); return; }
+
+  // Never record a confirmation for something that was not flagged. An
+  // acknowledgement of a finding that does not exist is noise in the audit trail
+  // and would look, later, like a review that happened.
+  if (!_hasPropertyMismatch(t)) {
+    showToast('That lease is not flagged for a property mismatch.', { color: '#92400e', textColor: '#fef3c7' });
+    return;
+  }
+
+  const extractedName = (t.property_name || '').trim();
+  const documentKey   = window.LeaseIntelligence?.propertyDocumentKey?.(t) || '';
+
+  // Refuse to store a confirmation that identifies nothing — the same refusal
+  // acknowledgeUnappliedExclusions() makes for an empty fingerprint. Without the
+  // extracted name there is nothing to invalidate against later, so a re-upload
+  // naming a third property would inherit this confirmation.
+  if (!extractedName) {
+    showToast('Cannot confirm this lease — the property name could not be read from the document. Re-upload the lease and try again.',
+              { color: '#92400e', textColor: '#fef3c7' });
+    return;
+  }
+
+  const user = window.AuthService?.getCurrentUser?.() || null;
+  tenantData[i] = {
+    ...tenantData[i],
+    _propertyConfirm: {
+      extractedName,                       // what the lease said, at confirmation
+      documentKey,                         // which document was verified
+      propertyId:   activePropId,
+      propertyName: (prop.name || '').trim(),
+      at:           new Date().toISOString(),
+      by:           user?.email || null,
+    },
+  };
+
+  savePropertyData();
+  logActivity('property_confirmed',
+    `Lease confirmed as belonging to this property — ${t.tenant_name}`, {
+      severity: 'warning', actor: 'User', relatedEntity: t.tenant_name,
+      detail: `Lease document names "${extractedName}"; confirmed by ${user?.email || 'unknown user'} ` +
+              `as belonging to "${(prop.name || '').trim()}". Extracted values unchanged; ` +
+              `tenant is now eligible for CAM. Document: ${documentKey || 'not recorded'}.`,
+    });
+
+  showToast(`✓ Property confirmed for ${t.tenant_name}. Re-run the reconciliation to include them.`,
+            { color: '#064e3b', textColor: '#d1fae5' });
+
+  if (typeof renderTenantCards === 'function') renderTenantCards();
+  if (typeof renderBulkResults === 'function') renderBulkResults();
+}
+
+// Records the landlord's review of exclusions the engine could not apply, then
+// re-attempts the statement. Auditable: written to the activity log and
+// persisted on the tenant record.
+function acknowledgeUnappliedExclusions(tenantName) {
+  const block = _exclusionBlockReason(tenantName);
+  if (!block) { closeReport(); generateTenantStatement(tenantName); return; }
+  const idx = tenantData.findIndex(d => d && d.tenant_name === tenantName);
+  if (idx === -1) { showToast('Could not find that tenant to record the review.', { color: '#92400e', textColor: '#fef3c7' }); return; }
+  // Refuse to store an acknowledgement that identifies nothing. An empty
+  // fingerprint means neither the run nor the tenant record could tell us which
+  // exclusion set is being reviewed, and an ack that matches nothing is worse
+  // than no ack — it looks like a completed review.
+  if (!block.fingerprint) {
+    showToast('Cannot record this review — the lease exclusions could not be identified. Re-run the reconciliation and try again.',
+              { color: '#92400e', textColor: '#fef3c7' });
+    return;
+  }
+  const user = window.AuthService?.getCurrentUser?.() || null;
+  tenantData[idx] = {
+    ...tenantData[idx],
+    _exclusionAck: {
+      fingerprint: block.fingerprint,
+      at:          new Date().toISOString(),
+      by:          user?.email || null,
+      unapplied:   block.notApplied.map(u => u.raw),
+    },
+  };
+  savePropertyData();
+  logActivity('exclusion_review', `Unapplied lease exclusions reviewed — ${tenantName}`, {
+    severity: 'warning', actor: 'User', relatedEntity: tenantName,
+    detail: `${block.notApplied.length} exclusion(s) acknowledged as not automatically applied: ${block.notApplied.map(u => u.raw).join(', ')}`,
+  });
+  closeReport();
+  generateTenantStatement(tenantName);
+}
+
+function _renderExclusionBlock(block) {
+  const rows = block.notApplied.map(u => `<tr>
+      <td>${esc(u.raw)}</td>
+      <td>${esc(u.status)}</td>
+      <td>${esc(u.candidates && u.candidates.length ? u.candidates.join(', ') : '—')}</td>
+      <td>${esc(u.reason)}</td>
+    </tr>`).join('');
+  const staleNote = block.staleAck
+    ? `<p class="rpt-helper-text"><strong>The previous review no longer applies</strong> — this lease's exclusions have changed since it was recorded.</p>`
+    : '';
+  openReport(`Statement blocked — ${block.tenantName}`, `
+    <div class="rpt-section-title">This statement has not been issued</div>
+    <p class="rpt-helper-text">
+      ${block.notApplied.length} exclusion${block.notApplied.length !== 1 ? 's' : ''} in this lease could not be
+      applied to the reconciliation automatically. Those expenses are still in the tenant's pool, so issuing the
+      statement now would bill them for categories the lease may exclude.
+    </p>
+    ${staleNote}
+    <table class="rpt-table">
+      <thead><tr><th>Lease exclusion</th><th>Status</th><th>Nearest category</th><th>Why it was not applied</th></tr></thead>
+      <tbody>${rows}</tbody>
+    </table>
+    <div class="rpt-section-title">To proceed</div>
+    <p class="rpt-helper-text">
+      Either edit the lease's excluded categories so they match a billable category, or record that you have
+      reviewed these and accept that they are not being applied. The review is stored against this exact set of
+      exclusions — changing them will block the statement again.
+    </p>
+    <button class="rpt-action-btn" onclick="acknowledgeUnappliedExclusions('${esc(block.tenantName).replace(/'/g, "\\'")}')">
+      I have reviewed these — issue the statement
+    </button>`);
+}
+
+/**
+ * The audit's billing verdict, for the statement path.
+ *
+ * Returns null when statements may be issued, or the blocking state when they
+ * may not. Reads the same canonical exposure every other surface reads — it does
+ * not re-derive a second opinion about whether this reconciliation is billable.
+ */
+/**
+ * ONE ANSWER TO "CAN I BILL THIS TENANT?", read by the results table and by the
+ * statement path.
+ *
+ * I-4 made billing readiness a per-tenant question and answered it correctly —
+ * and then reported the answer nowhere. A manager could not tell which of four
+ * tenants were billable without generating four statements one at a time, which
+ * across thirty properties is a hundred and fifty statements to find the ones
+ * that work. The state was right; it had no surface.
+ *
+ * NO NEW PREDICATE. This consults the two gates that already decide, in the
+ * order the statement path applies them:
+ *
+ *   AuditExposure.billingReadiness(exposure, tenant)   the I-4 verdict
+ *   _exclusionBlockReason(tenant)                      the older per-tenant gate
+ *
+ * Reading both is what keeps the column honest: a tenant blocked ONLY by an
+ * unapplied lease exclusion would otherwise read "Billable" in the table and be
+ * refused the moment it was asked for, which is the two-surfaces-one-fact defect
+ * this codebase keeps producing. Because generateTenantStatement now reads the
+ * same helper, the chip and the refusal cannot disagree.
+ *
+ * @returns {{ state, label, reason, propertyLevel, exclusionOnly, cta }}
+ *          state is 'billable' | 'confirm' | 'blocked'
+ */
+function _tenantBillingState(tenantName, exposure) {
+  const AXs = window.AuditExposure;
+  let readiness = null;
   try {
-  logActivity('tenant_statement', `Tenant statement generated — ${tenantName}`, { severity: 'info', actor: 'User', relatedEntity: tenantName });
+    if (AXs && exposure) readiness = AXs.billingReadiness(exposure, tenantName);
+  } catch (_) { readiness = null; }
+
+  let exclusion = null;
+  try { exclusion = _exclusionBlockReason(tenantName); } catch (_) { exclusion = null; }
+
+  // FAIL CLOSED. No readiness verdict means the audit state could not be read,
+  // which is missing information rather than an all-clear.
+  if (!readiness) {
+    return { state: 'blocked', label: 'Blocked', reason: 'Billing readiness could not be determined.',
+             propertyLevel: false, exclusionOnly: false, readiness: null, exclusion,
+             cta: '\u26D4 Why it can\u2019t bill' };
+  }
+
+  const blockers      = readiness.blockers || [];
+  const propertyLevel = blockers.some(b => b.scope === 'property');
+
+  if (readiness.canBill && !exclusion) {
+    // T2 — "prorated because of lease dates" and "held because occupancy is
+    // uncertain" are different states and must not read alike. This tenant IS
+    // billable; the qualifier says its bill covers part of the period, so a
+    // manager seeing a smaller number than last year knows why without opening
+    // the statement. Read off the stored result, not recomputed.
+    // GUARDED. This function is called from contexts that do not carry the
+    // reconciliation globals — the billing-readiness suites evaluate it against
+    // a constructed exposure with no lastResults at all — and an unguarded read
+    // turns a missing global into a thrown ReferenceError inside the billing
+    // gate. No result means no occupancy detail, which is the pre-T2 reading.
+    const _all = (typeof lastResults !== 'undefined' && Array.isArray(lastResults)) ? lastResults : [];
+    const _r = _all.find(x => x && x.name === tenantName);
+    const _o = _r && _r.occupancy;
+    const _part = !!(_o && _o.applied && _o.factor !== null && _o.factor < 1);
+    return { state: 'billable',
+             label: _part ? 'Billable \u00B7 part period' : 'Billable',
+             reason: _part
+               ? `${readiness.reason} Apportioned for occupancy: ${_o.numerator} of ${_o.denominator} ${_o.unit}.`
+               : readiness.reason,
+             propertyLevel: false, exclusionOnly: false, readiness, exclusion: null,
+             partPeriod: _part, occupancy: _o || null,
+             cta: '\u{1F9FE} Tenant Statement' };
+  }
+  if (readiness.canBill && exclusion) {
+    // The audit clears this tenant; a lease exclusion the matcher could not
+    // apply is what holds it. That is a confirmation, not a correction.
+    return { state: 'confirm', label: 'Needs confirmation',
+             reason: `${exclusion.notApplied.length} lease exclusion${exclusion.notApplied.length === 1 ? '' : 's'} could not be applied automatically.`,
+             propertyLevel: false, exclusionOnly: true, readiness, exclusion,
+             cta: '\u26A0\uFE0F Confirm to bill' };
+  }
+  if (readiness.label === 'Needs confirmation before billing') {
+    return { state: 'confirm', label: 'Needs confirmation', reason: readiness.reason,
+             propertyLevel, exclusionOnly: false, readiness, exclusion,
+             cta: '\u26A0\uFE0F Confirm to bill' };
+  }
+  return { state: 'blocked', label: propertyLevel ? 'Blocked \u00b7 property' : 'Blocked',
+           reason: readiness.reason, propertyLevel, exclusionOnly: false, readiness, exclusion,
+           cta: '\u26D4 Why it can\u2019t bill' };
+}
+
+function _statementReadinessBlock(tenantName) {
+  const AXs = window.AuditExposure;
+  if (!AXs || !lastResults.length) return null;
+  let summary;
+  try { summary = buildAuditSummary(); } catch (_) { return null; }
+  const exposure  = AXs.deriveExposure(summary, lastTotal || 0);
+  // THE TENANT'S OWN VERDICT, not the property's. One holdover on an anchor
+  // lease used to make every clean inline tenant unbillable. A tenant is now
+  // blocked by property-scoped blockers and by its own, never by another
+  // tenant's. The property verdict still exists and is still shown — every
+  // other caller reads billingReadiness(exposure) with no tenant.
+  const readiness = AXs.billingReadiness(exposure, tenantName);
+  if (readiness.canBill) return null;
+
+  // READ THE BLOCKING SET, NOT summary.red.
+  //
+  // This filtered `summary.red`, which silently misses a blocker that is not
+  // red — and one now exists by design: a Gross-lease tenant receiving shared
+  // CAM blocks its own statement at YELLOW severity, because the engine will
+  // not assert a violation it cannot prove. Filtering reds would have reported
+  // that tenant as billable.
+  const _titles  = new Set((readiness.blockers || []).map(b => b.title));
+  const blocking = summary.red.concat(summary.yellow).filter(f => _titles.has(f.title));
+  const mine     = blocking.filter(f => _findingScope(f).tenant === tenantName);
+  // How many OTHER tenants are held for reasons of their own. Not blockers here,
+  // but the difference between "the property is clear" and "you are one of three
+  // waiting" is what a manager reads this screen to learn.
+  const othersBlocked = Object.keys((exposure.blocking || {}).byTenant || {})
+    .filter(n => n !== tenantName).length;
+  return { readiness, exposure, red: blocking, mine, tenantName, othersBlocked };
+}
+
+/**
+ * Is this finding about ONE TENANT, or about the property?
+ *
+ * The blocked-statement table used to answer with a substring search for the
+ * tenant's name across the title and conditions, print "This tenant" on a hit
+ * and an em dash on a miss. Two things were wrong with that.
+ *
+ * The em dash said nothing. A manager reading "NAMES THIS TENANT — —" beside a
+ * $38,000 concentration finding has to work out for themselves that the row is
+ * property-level and not a tenant row with a missing name.
+ *
+ * And the substring search over-matched. "Unusually large invoice — SHONAC
+ * CORPORATION: $38,000" is a finding about an INVOICE whose vendor happens to
+ * share a name with a tenant; the old predicate read that as naming the tenant
+ * and highlighted it as theirs, on a row whose money is measured on the expense
+ * side and has nothing to do with that tenant's allocation.
+ *
+ * So scope is read from the explicit marker a finding carries when it is about a
+ * tenant — `Tenant: <name>` in conditions, `impact.scope: tenant:<name>`, or
+ * `conflict.tenant`. Every tenant-scoped detector in reconciliation-engine.js
+ * writes one; the property/pool-level detectors in buildAuditSummary write none.
+ * An authored marker, not a guess about prose.
+ *
+ * FAILS TO PROPERTY, deliberately. A finding with no tenant marker reads as
+ * property-wide, which is a statement about the reconciliation the reader is
+ * already looking at. The other direction — inferring a tenant from text —
+ * is what put another tenant's vendor invoice in this tenant's highlighted rows.
+ */
+function _findingScope(f) {
+  // DELEGATE. The implementation moved to audit-exposure.js, beside
+  // billingReadiness, which is the function that needs it. Behaviour unchanged.
+  return window.AuditExposure.findingScope(f);
+}
+
+/**
+ * Refuse the statement, and show the reader exactly what is blocking it.
+ *
+ * Modelled on _renderExclusionBlock: refuse rather than warn, list the reasons
+ * in a table, and offer one explicit way forward. The way forward here is a
+ * clearly-marked non-billable draft, not an override — nothing about it should
+ * be usable as an invoice.
+ */
+function _renderStatementReadinessBlock(block) {
+  // Only ever called with a block, but a null here would throw inside report
+  // rendering and leave the user with no screen at all — which on this path
+  // would silently drop the refusal rather than show it. Fail visibly instead.
+  if (!block) { showToast('Could not determine billing readiness — statement not issued.', { color: '#92400e', textColor: '#fef3c7' }); return; }
+  const AXs = window.AuditExposure;
+
+  // ONE COLUMN, TWO AXES — LABEL THEM.
+  //
+  // These rows carry whatever each finding recorded, and the blocking set mixes
+  // both measures: an expired lease contributes allocation-side money
+  // (at_risk), while the single-vendor concentration contributes expense-side
+  // money (unsubstantiated). Rendered as one unlabelled "Amount" column they
+  // invite a reader to add $38,000 of weakly-evidenced pool to $40,832 of
+  // at-risk allocation and arrive at a figure that means nothing — the exact
+  // conflation audit-exposure.js separates the buckets to prevent.
+  //
+  // So each row states its treatment, and the totals are struck per axis with
+  // no grand total, because there is no honest one to strike.
+  const KIND_LBL = (AXs && AXs.KIND_LABEL_TITLE) || {
+    at_risk: 'Requiring Lease Verification', under_review: 'Requiring Review',
+    recoverable: 'Excluded / Recovered', unsubstantiated: 'Weakly Evidenced', none: '—',
+  };
+  const subtotals = {};
+  const rows = block.red.map(f => {
+    const imp = AXs ? AXs.normalizeImpact(f.impact) : { amount: null, kind: 'none' };
+    if (imp.amount != null && imp.kind !== 'none') {
+      subtotals[imp.kind] = (subtotals[imp.kind] || 0) + imp.amount;
+    }
+    // SCOPE, NOT A BLANK. Three states, each of which says something:
+    // this tenant's own exception, another tenant's, or one that belongs to the
+    // property as a whole. The em dash this replaces was indistinguishable from
+    // a missing value on exactly the rows — concentration, missing documents,
+    // duplicate invoices — where there is no tenant to name and none missing.
+    const sc     = _findingScope(f);
+    const isMine = sc.level === 'tenant' && sc.tenant === block.tenantName;
+    const scopeCell = isMine ? '<strong>This tenant</strong>'
+      : sc.level === 'tenant' ? esc(sc.tenant)
+      : '<span class="rpt-scope-property">Property-wide</span>';
+    return `<tr${isMine ? ' style="background:rgba(239,68,68,0.06)"' : ''}>
+      <td>${scopeCell}</td>
+      <td>${esc(f.title)}</td>
+      <td style="text-align:right;white-space:nowrap">${imp.amount != null ? fmt(imp.amount) : '<span style="color:#64748b">not yet quantified</span>'}</td>
+      <td style="white-space:normal;color:#94a3b8">${esc(KIND_LBL[imp.kind] || '—')}</td>
+    </tr>`;
+  }).join('');
+
+  const subtotalRows = Object.keys(subtotals).map(k =>
+    `<tr><td colspan="2" style="text-align:right;color:#94a3b8">${esc(KIND_LBL[k])} — total</td>
+     <td style="text-align:right;white-space:nowrap"><strong>${fmt(subtotals[k])}</strong></td>
+     <td></td></tr>`).join('');
+
+  // Both expense-side kinds count as "the other axis" — this keyed off
+  // `unsubstantiated` alone, so splitting concentration out silently removed the
+  // warning from exactly the finding set that most needs it.
+  const _expenseKinds = (AXs && AXs.EXPENSE_KINDS) || ['unsubstantiated', 'concentration'];
+  const _expenseShown = _expenseKinds.some(k => subtotals[k] != null);
+  const _allocationShown = ['at_risk', 'under_review', 'recoverable'].some(k => subtotals[k] != null);
+  const mixedAxes = _expenseShown && _allocationShown;
+  // Name the expense-side treatment ACTUALLY in the table above. This paragraph
+  // hard-coded "Weakly evidenced", so once concentration was split out it
+  // explained a term the reader had never seen — the table said "Material
+  // Concentration" and the note defined something else.
+  const _expenseKindShown  = _expenseKinds.find(k => subtotals[k] != null) || 'unsubstantiated';
+  const _expenseLabelShown = (AXs && AXs.KIND_LABEL_TITLE && AXs.KIND_LABEL_TITLE[_expenseKindShown])
+    || KIND_LBL[_expenseKindShown] || 'Expense-side';
+  const _expenseMeaningShown = (AXs && AXs.KIND_MEANING && AXs.KIND_MEANING[_expenseKindShown])
+    || 'pool dollars measured on the expense side rather than on what was billed.';
+
+  openReport(`Statement blocked — ${block.tenantName}`, `
+    <div class="rpt-section-title">This statement has not been issued</div>
+    <div class="rpt-readiness rpt-readiness--blocked">
+      <strong>${esc(block.readiness.label)}</strong> &mdash; ${esc(block.readiness.reason)}
+    </div>
+    <p class="rpt-helper-text">
+      ${block.readiness.canBill === false && block.mine.length && !(block.exposure.blocking || {}).property?.length
+        ? `This statement is held for ${esc(block.tenantName)}\u2019s own outstanding items. Other tenants on this
+           reconciliation are not affected by them.`
+        : `The audit engine has not cleared this reconciliation for billing, so no statement is issued from it.
+           Issuing one now would bill a tenant from figures the audit is still holding open.`}
+      ${block.mine.length
+        ? `<strong>${block.mine.length} of the ${block.red.length} blocking exception${block.red.length !== 1 ? 's' : ''} name${block.mine.length === 1 ? 's' : ''} ${esc(block.tenantName)} directly</strong> — highlighted below.`
+        : `None of the blocking exceptions name ${esc(block.tenantName)} directly, but they affect the reconciliation this statement would be drawn from.`}${
+        block.othersBlocked
+          ? ` ${block.othersBlocked} other tenant${block.othersBlocked === 1 ? ' is' : 's are'} held for reasons of their own, which do not affect this statement.`
+          : ''}${
+        // Say how many rows are not about any tenant. Without it the reader has
+        // to count the Scope column to learn that the largest figure in the
+        // table is a property-level finding rather than someone else's charge.
+        (() => {
+          const pw = block.red.filter(f => _findingScope(f).level === 'property').length;
+          return pw ? ` ${pw} ${pw === 1 ? 'is' : 'are'} property-wide — ${pw === 1 ? 'it belongs' : 'they belong'} to the reconciliation as a whole, not to any one tenant.` : '';
+        })()}
+    </p>
+    <table class="rpt-table">
+      <thead><tr><th>Scope</th><th>Critical exception</th><th style="text-align:right">Amount</th><th>Treatment</th></tr></thead>
+      <tbody>${rows}${subtotalRows}</tbody>
+    </table>
+    <div class="rpt-scope-note">
+      ${/* EXPLAIN ONLY WHAT IS ON THIS SCREEN.
+            This paragraph was unconditional, and said "Requiring lease verification is CAM
+            allocated to a tenant whose lease on file has expired". That was safe while an
+            expired lease was the only thing that could block a statement. It no longer is:
+            a Gross-lease tenant is now held for an unconfirmed CAM treatment, and the note
+            told its landlord the lease had expired. It hadn't. */''}
+      ${subtotals.at_risk != null
+        ? `<strong>Requiring lease verification</strong> is CAM allocated to a tenant whose lease on file has expired.
+           A holdover or renewal may cover it; none has been confirmed.
+           ${/* WAS "It is the same figure the Audit Exception Summary and the Risk &
+                 Disputes report state." That was true while this table listed every
+                 critical exception on the property. It now lists only what blocks
+                 THIS statement, so the subtotal is a subset of the property-wide
+                 figure and claiming they are the same number would put two
+                 different values under one label across two reports — the exact
+                 cross-report contradiction this note was written to prevent. */''}
+           This total covers the exceptions holding this statement; the Audit Exception Summary
+           and the Risk &amp; Disputes report state the figure for the property as a whole.`
+        : `A finding shown without a dollar figure is one the audit has not quantified. It is not
+           zero — it means the amount in question has not been established, which is itself a
+           reason the statement is being held.`}
+      ${mixedAxes ? `<strong>${esc(_expenseLabelShown)}</strong> measures something different: ${esc(_expenseMeaningShown)}
+        The same dollar can appear on both, so the two totals are struck separately
+        and must not be added together.` : ''}
+    </div>
+    ${block.exclusion ? `
+    <div class="rpt-section-title">Also on this lease</div>
+    ${/* SECONDARY, NOT SUPPRESSED. This used to be the whole screen, and it
+         pre-empted the material reason: a tenant billed on a lease that expired
+         in 2024 was shown "capital / ambiguous / repairs" and nothing else. It
+         is real information — a lease exclusion the matcher declined to apply,
+         whose expenses are still in this tenant's pool — so it is kept, below
+         the thing that actually decides whether a statement issues. */''}
+    <p class="rpt-helper-text">
+      ${block.exclusion.notApplied.length} lease exclusion${block.exclusion.notApplied.length === 1 ? '' : 's'}
+      could not be applied to the reconciliation automatically, so ${block.exclusion.notApplied.length === 1 ? 'that expense stays' : 'those expenses stay'}
+      in this tenant's pool. It is reviewed on the way to issuing, not instead of the exception${block.red.length === 1 ? '' : 's'} above.
+    </p>
+    <div class="tw"><table class="rpt-table">
+      <thead><tr><th>Lease says</th><th>Match</th><th>Would map to</th><th>Why it was not applied</th></tr></thead>
+      <tbody>${block.exclusion.notApplied.map(u => `<tr>
+        <td>${esc(u.raw)}</td>
+        <td>${esc(u.status)}</td>
+        <td>${esc(u.candidates && u.candidates.length ? u.candidates.join(', ') : '\u2014')}</td>
+        <td style="white-space:normal;color:#94a3b8">${esc(u.reason)}</td>
+      </tr>`).join('')}</tbody>
+    </table></div>` : ''}
+    <div class="rpt-section-title">To proceed</div>
+    <p class="rpt-helper-text">
+      Resolve the exceptions above and re-run the reconciliation — the statement issues on its own once the audit
+      clears. If you need to see the figures before then, open the draft below. It is marked non-billable on every
+      page, carries no settlement language, and must not be sent to a tenant.
+    </p>
+    <button class="rpt-action-btn" onclick="generateTenantStatement('${esc(block.tenantName).replace(/'/g, "\\'")}', { draft: true })">
+      View non-billable draft
+    </button>`);
+}
+
+/**
+ * @param {string} tenantName
+ * @param {{draft?: boolean}} [opts] draft:true renders the figures with every
+ *        billable affordance removed, reachable only from the block screen above.
+ */
+function generateTenantStatement(tenantName, opts = {}) {
+  if (!lastResults.length) { showToast('Run a CAM allocation first to generate reports.', { color: '#92400e', textColor: '#fef3c7' }); return; }
+
+  // Staleness guards — the same two exportReconciliationCSV has applied all
+  // along. They were missing here, which had the protection backwards: the
+  // internal CSV export refused to emit when the run no longer matched the
+  // data, while the TENANT-FACING statement — the document a tenant is billed
+  // from — was generated regardless.
+  //
+  // Cross-property staleness is already impossible (selectProperty calls
+  // resetWorkflow, and restored snapshots are propId-checked), and rerun and
+  // restore both overwrite lastResults wholesale. The uncovered case is an
+  // EDIT after a run: handleFieldBlur, applyAmendmentOverrides and
+  // handleBatchInvoices each set _resultsStale, and until now nothing on this
+  // path looked at it. Same for a CAM year change after the run.
+  //
+  // Refusing, rather than warning, matches the CSV export and F-02: a statement
+  // that cannot be trusted should not be produced at all.
+  if (lastResultsYear && getCamYear() !== lastResultsYear) {
+    showToast(`⚠️ Results are from ${lastResultsYear} — re-run the reconciliation for ${getCamYear()} before generating a tenant statement.`, { color: '#92400e', textColor: '#fef3c7', duration: 6000 });
+    return;
+  }
+  if (_resultsStale) {
+    showToast('⚠️ Results may be stale — lease or invoice data changed since the last run. Re-run the reconciliation before generating a tenant statement.', { color: '#92400e', textColor: '#fef3c7', duration: 7000 });
+    return;
+  }
+
+  // ORDER: THE MATERIAL REASON FIRST.
+  //
+  // The exclusion gate used to run first and return. On a tenant with BOTH an
+  // unapplied lease exclusion and a lease that expired in 2024, the refusal
+  // screen was entirely about "capital / ambiguous / repairs" and did not
+  // mention the holdover at all. The only way to reach the material reason was
+  // to press a button reading "I have reviewed these — issue the statement",
+  // which then produced a different refusal: a button promising issuance it
+  // could not deliver, guarding the fact the manager actually needed.
+  //
+  // So the audit gate is asked first, and when it refuses, the exclusion detail
+  // rides along on that screen as a secondary section rather than pre-empting
+  // it. Nothing about either gate's decision changed — only which one speaks
+  // first, and neither loses its information.
+  const _block = _exclusionBlockReason(tenantName);
+
+  // AUDIT READINESS GATE.
+  //
+  // The audit reported "Not ready to bill — 5 critical exceptions must be
+  // resolved before statements are issued", and this function then produced a
+  // statement headed "Total CAM Billed to You $2,385.60" for a tenant named in
+  // one of those exceptions. Two surfaces of one system, one saying the
+  // reconciliation cannot be billed and the other billing it.
+  //
+  // Placed after the staleness and exclusion guards and refusing the same way
+  // they do. The draft is an explicit second step from the block screen, not a
+  // flag a caller can pass to skip the gate.
+  if (!opts.draft) {
+    const _ready = _statementReadinessBlock(tenantName);
+    if (_ready) _ready.exclusion = _block;
+    if (_ready) {
+      logActivity('tenant_statement_blocked', `Tenant statement blocked — ${tenantName}`, {
+        severity: 'warning', actor: 'System', relatedEntity: tenantName,
+        detail: `${_ready.readiness.reason} ${_ready.mine.length} exception(s) name this tenant.`,
+      });
+      _renderStatementReadinessBlock(_ready);
+      return;
+    }
+    // The audit clears this tenant; an exclusion the matcher could not apply is
+    // what holds it. Same refusal as before, now reached only when it IS the
+    // material reason rather than merely the first one checked.
+    if (_block) {
+      logActivity('tenant_statement_blocked', `Tenant statement blocked — ${tenantName}`, {
+        severity: 'warning', actor: 'System', relatedEntity: tenantName,
+        detail: `${_block.notApplied.length} lease exclusion(s) could not be applied: ${_block.notApplied.map(u => u.raw).join(', ')}`,
+      });
+      _renderExclusionBlock(_block);
+      return;
+    }
+  }
+
+  // The draft carries the audit state it was drawn from, so a figure lifted out
+  // of it cannot arrive anywhere without the reason it was not billable.
+  const _draftState = opts.draft ? _statementReadinessBlock(tenantName) : null;
+
+  try {
+  logActivity(opts.draft ? 'tenant_statement_draft' : 'tenant_statement',
+    opts.draft
+      ? `Non-billable draft statement viewed — ${tenantName}`
+      : `Tenant statement generated — ${tenantName}`,
+    { severity: opts.draft ? 'warning' : 'info', actor: 'User', relatedEntity: tenantName });
 
   const r = lastResults.find(x => x.name === tenantName);
   const t = lastTenants.find(x => x.name === tenantName);
@@ -15412,17 +19246,28 @@ function generateTenantStatement(tenantName) {
   // Use the reconciliation's actual year (not the current calendar year) so the period
   // label matches the statement's data and the other reports.
   const period = (getCamYear() || new Date().getFullYear()) + ' CAM Year';
+  // T2 — HOW MUCH OF THE PERIOD this tenant occupied, read off the stored
+  // result. Never recomputed: a statement reprinted next year must show the
+  // figures that were billed, not what today's lease record would produce.
+  const _occ = r.occupancy || null;
+  const _partial = !!(_occ && _occ.applied && _occ.factor !== null && _occ.factor < 1);
 
-  // Per-invoice breakdown
-  const eligible = lastInvoicesFull.filter(inv =>
-    !t.excludedCategories.includes(inv.category.toLowerCase())
-  );
-  // Group eligible invoices by category, preserving per-invoice indices
+  // Per-invoice breakdown — ONE authoritative source.
+  //
+  // This used to re-derive from lastInvoicesFull and multiply every invoice by
+  // proRata. That disagreed with the reconciliation total three ways: it ignored
+  // the camEligible filter (PW-3, script.js:9791) so invoices the manager had
+  // marked not-recoverable were still shown and summed; it pro-rated
+  // directly-matched invoices the engine charges in full; and it re-rounded from
+  // raw amounts instead of using the share the engine computed. The result was a
+  // breakdown that did not add up to the number in the summary, the tenant
+  // allocation and the audit narrative.
+  const eligible = r.includedInvoices || [];
   const catMap = {};
   eligible.forEach((inv, idx) => {
     const key = (inv.category || 'other').toLowerCase();
     if (!catMap[key]) catMap[key] = { label: inv.category || 'Other', share: 0, invoices: [] };
-    const share = parseFloat((inv.amount * r.proRata).toFixed(2));
+    const share = parseFloat(inv.share) || 0;
     catMap[key].share += share;
     catMap[key].invoices.push({ inv, idx, share });
   });
@@ -15430,26 +19275,132 @@ function generateTenantStatement(tenantName) {
   const pct = (r.proRata * 100).toFixed(2);
 
   // Build accordion: one card per category, invoices expand inside
+  // The authoritative figure is r.allocatedAmount — what runFullReconciliation
+  // computed and what the summary, the tenant allocation and the audit
+  // narrative all print. Per-invoice shares are rounded individually and the
+  // engine may absorb a sub-cent pro-rata gap into the largest tenant, so their
+  // sum can land a few cents away. Show that difference rather than letting the
+  // breakdown quietly disagree with the total above it.
+  const _breakdownSum  = Object.values(catMap).reduce((s2, d) => s2 + d.share, 0);
+  const _breakdownGap  = parseFloat((r.allocatedAmount - _breakdownSum).toFixed(2));
+
+  // A CAP IS NOT A ROUNDING ADJUSTMENT, and this line called it one.
+  //
+  // The line items are the UNCAPPED shares the engine computed; allocatedAmount
+  // is what is billed after the cap. So when a cap fires, the entire gap between
+  // them IS the cap — and a tenant read "rounding adjustment −$3,100.00" over a
+  // contractual ceiling their lease negotiated. The very next paragraph then
+  // said "Cap applied — your allocation was reduced by $3,100.00 to meet the
+  // lease cap", so the statement contradicted itself and the wrong sentence came
+  // first.
+  //
+  // The two components are separated rather than one being folded into the
+  // other: a cap and a half-cent of rounding are different facts, they can both
+  // be non-zero in the same statement, and only one of them is a term of a
+  // lease.
+  const _capReduction = r.capApplied ? Math.abs(parseFloat(r.capAdjustment) || 0) : 0;
+  const _roundingGap  = parseFloat((_breakdownGap + _capReduction).toFixed(2));
+
+  // The cap the lease actually states, so the tenant can check the arithmetic
+  // against their own document rather than taking the reduction on trust. Both
+  // halves have to be readable to name a ceiling; with either missing the
+  // reduction is still stated, just without the terms behind it.
+  const _capPct  = t ? parseFloat(t.capPct)        : NaN;
+  const _capBase = t ? parseFloat(t.capBaseAmount) : NaN;
+  const _capTermsKnown = Number.isFinite(_capPct) && Number.isFinite(_capBase) && _capBase > 0;
+  // D6 — THE CEILING THIS PRINTS IS THE CEILING THAT WAS APPLIED. It used to be
+  // the raw product: `33,333.33 × 1.075` is 35,833.32975, the engine capped to
+  // that, and this line displayed `fmt()` of it — $35,833.33 — so the tenant was
+  // shown a ceiling the arithmetic had not used. Same quantisation, same module,
+  // both sides.
+  const _capCeiling = _capTermsKnown
+    ? window.MoneyCents.fromCents(window.MoneyCents.toCents(_capBase * (1 + _capPct / 100)))
+    : null;
+
+  const _capReconcileNote = _capReduction >= 0.01
+    ? `<p class="ts-cap-reconcile" style="font-size:0.8rem;color:var(--c-b45309);margin-top:6px;">
+        Line items above total ${fmt(_breakdownSum)}. ${_capTermsKnown
+          ? `Your lease caps recoverable CAM at ${_capPct}% above a prior-year base of ${fmt(_capBase)} &mdash; a ceiling of ${fmt(_capCeiling)}`
+          : `Your lease caps recoverable CAM`}, so <strong>${fmt(_capReduction)} was not billed to you</strong>. Your billed total is ${fmt(r.allocatedAmount)}.</p>`
+    : '';
+
+  const _roundingReconcileNote = Math.abs(_roundingGap) >= 0.01
+    ? `<p style="font-size:0.78rem;color:var(--text-4);margin-top:6px;">Line items above total ${fmt(_breakdownSum)}${_capReduction >= 0.01 ? ' before the cap' : ''}; rounding adjustment ${_roundingGap >= 0 ? '+' : '&minus;'}${fmt(Math.abs(_roundingGap))} brings your billed total to ${fmt(r.allocatedAmount)}.</p>`
+    : '';
+
+  const _breakdownReconcileNote = _capReconcileNote + _roundingReconcileNote;
+
+  // ── Charges included on no date evidence ──────────────────────────────────
+  //
+  // The reconciliation KEEPS an undated invoice rather than dropping it, because
+  // dropping it would silently lose a real expense — that is a deliberate
+  // decision in runFullReconciliation and this change does not touch it. What
+  // the statement did was present the resulting charge as an ordinary one: the
+  // detail panel lists vendor, category, invoice total and share, and no date at
+  // all, so nothing distinguished a charge dated inside the CAM year from one
+  // whose year nobody can establish.
+  //
+  // Read through LeasePeriod.readDate, the one owner of date reading, so
+  // "absent" and "unreadable" stay the different problems they are: nothing was
+  // written on the invoice, versus something was written and cannot be read.
+  const _invDateState = (inv) => {
+    const raw = (inv && (inv.date || inv.invoiceDate)) || '';
+    const LP = window.LeasePeriod;
+    if (!LP) return { ok: !!raw, status: raw ? 'ok' : 'absent', raw: raw || null, value: raw || null };
+    const d = LP.readDate(raw);
+    return { ok: d.status === 'ok', status: d.status, raw: raw || null, value: d.value || null };
+  };
+  const _undatedCharges = eligible
+    .map((inv) => ({ inv, d: _invDateState(inv) }))
+    .filter(x => !x.d.ok);
+
   const categoryCards = Object.entries(catMap)
     .sort((a, b) => b[1].share - a[1].share)
     .map(([, data]) => {
       const invRows = data.invoices.map(({ inv, idx, share }) => {
+        // N1 — ONE READING OF "WHO SENT THIS INVOICE", declared before its first
+        // use in this row.
+        //
+        // These rows rendered `inv.vendor`, and the engine's Invoice objects do
+        // not have that field — the constructor sets `vendorName` (see class
+        // Invoice). So every charge row on every tenant statement showed a BLANK
+        // vendor: measured 17 of 17 rows across four tenants. The results card
+        // was unaffected because it reads `vendorName`, which is why this
+        // survived so long.
+        //
+        // `vendorName` first because it is what the engine writes; `vendor` is
+        // the alias runAllocation and restoreResultsDisplay attach to some
+        // shapes. Nothing else is consulted — a fallback to category or
+        // description would put a plausible wrong name on a billing document.
+        const _vendorName = inv.vendorName || inv.vendor || '';
         const rowId = `ts-${tenantName}-${idx}`.replace(/\s+/g, '-');
-        const vendorKey = (inv.vendor || inv.vendorName || '').toLowerCase();
+        const vendorKey = _vendorName.toLowerCase();
         const stored = invoiceData.find(d =>
           d.vendorName && d.vendorName.toLowerCase() === vendorKey
         );
         const viewInvBtn = stored && stored.fileUrl
-          ? `<button class="btn-secondary" onclick="event.stopPropagation();openInvFileViewer('${stored.fileUrl.replace(/\\/g,'\\\\').replace(/'/g,"\\'")}','${esc(inv.vendor || inv.vendorName || '')}','${esc(stored.fileType || '')}')">&#x1F4C4; View Invoice</button>`
+          ? `<button class="btn-secondary" onclick="event.stopPropagation();openInvFileViewer('${stored.fileUrl.replace(/\\/g,'\\\\').replace(/'/g,"\\'")}','${esc(_vendorName)}','${esc(stored.fileType || '')}')">&#x1F4C4; View Invoice</button>`
           : '';
+        // On the collapsed row as well as inside the detail. A tenant should not
+        // have to open every charge to find the one nobody can date.
+        const _ds = _invDateState(inv);
+        const _rowDateWarn = _ds.ok ? '' :
+          `<div class="charge-sub ts-charge-undated" style="color:var(--c-b45309);">&#x26A0; No invoice date on file</div>`;
+        const _detailDateRow = _ds.ok
+          ? `<div class="ts-detail-row"><span>Invoice Date</span><span class="ts-detail-val">${esc(_ds.value)}</span></div>`
+          : `<div class="ts-detail-row"><span>Invoice Date</span><span class="ts-detail-val" style="color:var(--c-b45309);">${
+               _ds.status === 'unreadable'
+                 ? `On file as &ldquo;${esc(String(_ds.raw))}&rdquo; &mdash; not a date this reconciliation can read`
+                 : 'Not on file'}</span></div>`;
         return `
           <div class="charge-row ts-inv-card" id="crow-${rowId}"
             onclick="(function(row){var d=document.getElementById('ddetail-${rowId}');var open=d.style.display==='block';d.style.display=open?'none':'block';row.classList.toggle('detail-open',!open);})(this)">
             <div class="charge-row-top">
               <div class="charge-row-left">
-                <div class="charge-vendor">${esc(inv.vendor)}</div>
+                <div class="charge-vendor">${esc(_vendorName)}</div>
                 <div class="charge-amount">${fmt(share)}</div>
-                <div class="charge-sub">Your share (${pct}%)</div>
+                <div class="charge-sub">Your share (${_shareExplanation(r, { ...inv, share }).rowSuffix})</div>
+                ${_rowDateWarn}
                 <p class="ts-vendor-hint">Tap here for details or to dispute this charge</p>
               </div>
               <div class="charge-chevron">&#x203A;</div>
@@ -15460,16 +19411,19 @@ function generateTenantStatement(tenantName) {
                 <button class="ts-detail-close"
                   onclick="document.getElementById('ddetail-${rowId}').style.display='none';document.getElementById('crow-${rowId}').classList.remove('detail-open')">&#x2715;</button>
               </div>
-              <div class="ts-detail-row"><span>Vendor</span><span class="ts-detail-val">${esc(inv.vendor)}</span></div>
+              <div class="ts-detail-row"><span>Vendor</span><span class="ts-detail-val">${esc(_vendorName)}</span></div>
               <div class="ts-detail-row"><span>Category</span><span class="ts-detail-val">${esc(inv.category)}</span></div>
+              ${_detailDateRow}
               <div class="ts-detail-row"><span>Invoice Total</span><span class="ts-detail-val">${fmt(inv.amount)}</span></div>
               <div class="ts-detail-row ts-detail-highlight"><span>Your Share</span><span class="ts-detail-val">${fmt(share)}</span></div>
-              <div class="ts-detail-basis">Based on ${pct}% pro-rata allocation by square footage</div>
-              <div class="ts-detail-formula">${fmt(inv.amount)} &times; ${pct}% = ${fmt(share)}</div>
+              ${(() => { const _x = _shareExplanation(r, { ...inv, share }); return `
+              <div class="ts-detail-basis">${esc(_x.basis)}</div>
+              <div class="ts-detail-formula">${_x.formula}</div>
+              ${_x.steps}`; })()}
               <div class="ts-detail-actions">
                 ${viewInvBtn}
                 <button class="inv-act-btn inv-act-explain" id="tsexplbtn-${rowId}"
-                  onclick="event.stopPropagation();tsExplainInvoice('${rowId}','${esc(inv.vendor)}','${esc(inv.category)}',${inv.amount},'${esc(inv.invoiceDate||'')}')">Explain</button>
+                  onclick="event.stopPropagation();tsExplainInvoice('${rowId}','${esc(_vendorName)}','${esc(inv.category)}',${inv.amount},'${esc(inv.invoiceDate||'')}')">Explain</button>
                 <button class="btn-danger-outline" id="dbtn-${rowId}"
                   onclick="event.stopPropagation();tsToggleDispute('${rowId}','${esc(tenantName)}',${idx})">Dispute this charge</button>
               </div>
@@ -15500,15 +19454,44 @@ function generateTenantStatement(tenantName) {
         </div>`;
     }).join('');
 
-  // Excluded categories note
-  const exclNote = t.excludedCategories.length
-    ? `<p style="font-size:0.8rem;color:var(--text-3);margin-top:6px;">Excluded categories: ${t.excludedCategories.join(', ')}</p>`
+  // Excluded categories note — F-02: applied only, plus an explicit count of
+  // what could not be applied. The statement must never imply a category was
+  // excluded unless it was filtered out of the pool.
+  const _stmtUnapplied = (t.exclusionsNotApplied || []);
+  const exclNote = (t.excludedCategories.length || _stmtUnapplied.length)
+    ? `<p style="font-size:0.8rem;color:var(--text-3);margin-top:6px;">${t.excludedCategories.length
+         ? `Excluded categories: ${esc(t.excludedCategories.join(', '))}`
+         : 'No lease exclusions were applied to this reconciliation.'}${_stmtUnapplied.length
+         ? `<br><strong>&#x26A0; ${_stmtUnapplied.length} lease exclusion${_stmtUnapplied.length !== 1 ? 's' : ''} could not be applied automatically:</strong> ${esc(_stmtUnapplied.map(u => u.raw).join(', '))}. These expenses remain in the pool above.`
+         : ''}</p>`
+    : '';
+
+  // WHAT THE STATEMENT OWES A TENANT ABOUT A CHARGE NOBODY CAN DATE.
+  //
+  // The allocation is unchanged — these invoices are in the pool because the
+  // engine keeps undated expenses rather than losing them, and re-scoping them
+  // is a separate question this does not answer. What changes is that the tenant
+  // is told, by vendor and amount, which charges rest on no date, and what to do
+  // about it. Silence here asks a tenant to accept a share of an expense whose
+  // CAM year cannot be established from the file.
+  const undatedNote = _undatedCharges.length
+    ? `<p class="ts-undated-note" style="font-size:0.82rem;color:var(--c-b45309);margin-top:8px;padding:8px 10px;border:1px solid var(--c-b45309);border-radius:6px;">
+        <strong>&#x26A0; ${_undatedCharges.length} charge${_undatedCharges.length !== 1 ? 's' : ''} on this statement ${_undatedCharges.length !== 1 ? 'carry' : 'carries'} no invoice date.</strong>
+        ${_undatedCharges.map(({ inv, d }) =>
+            `${esc(inv.vendorName || inv.vendor || 'Unknown vendor')} (${fmt(inv.amount)}${
+              d.status === 'unreadable' ? `, dated &ldquo;${esc(String(d.raw))}&rdquo; on the invoice` : ', no date on the invoice'})`
+          ).join('; ')}.
+        ${_undatedCharges.length !== 1 ? 'They were' : 'It was'} included in this ${esc(String(getCamYear()))} reconciliation and your share above,
+        but the file does not establish that ${_undatedCharges.length !== 1 ? 'they fall' : 'it falls'} inside the ${esc(String(getCamYear()))} CAM year.
+        <strong>Ask your landlord for the dated invoice before paying this line</strong>, or open a dispute on the charge above &mdash;
+        if the date turns out to fall outside ${esc(String(getCamYear()))}, the charge belongs to a different reconciliation.</p>`
     : '';
 
   // Cap info
   const capNote = r.capApplied
     ? `<p style="font-size:0.82rem;color:var(--c-b45309);margin-top:6px;font-style:italic;">
-        Cap applied — your allocation was reduced by ${fmt(r.capAdjustment)} to meet the lease cap.</p>`
+        Cap applied — your allocation was reduced by ${fmt(r.capAdjustment)} to meet the lease cap${
+          _capTermsKnown ? ` of ${fmt(_capCeiling)} (${_capPct}% above a ${fmt(_capBase)} base)` : ''}.</p>`
     : '';
 
   // Year-end reconciliation (estimated = allocated, actual = allocated for demo)
@@ -15541,13 +19524,33 @@ function generateTenantStatement(tenantName) {
     : '<tr><td colspan="5" style="color:var(--text-3);text-align:center">No disputes filed</td></tr>';
 
   const html = `
-    ${_rptHeader(lastPropName, 'Tenant CAM Statement', period, now, [
+    ${_rptHeader(lastPropName, _draftState ? 'Tenant CAM Statement — NON-BILLABLE DRAFT' : 'Tenant CAM Statement', period, now, [
       { label: 'Tenant',     value: tenantName },
       { label: 'Your Share', value: (r.proRata * 100).toFixed(2) + '%' },
+      ...(_draftState ? [{ label: 'Status', value: 'Draft — not issued' }] : []),
     ])}
 
-    <div class="ts-summary-card">
-      <div class="ts-summary-total-label">Total CAM Billed to You</div>
+    ${_draftState ? `
+    <div class="ts-draft-banner">
+      <div class="ts-draft-title">&#x26D4; NON-BILLABLE DRAFT &mdash; DO NOT SEND TO TENANT</div>
+      <div class="ts-draft-body">
+        ${esc(_draftState.readiness.reason)}
+        ${_draftState.mine.length
+          ? ` ${_draftState.mine.length} of them name ${esc(tenantName)} directly:`
+          : ' None names this tenant directly, but each affects the reconciliation these figures come from:'}
+      </div>
+      <ul class="ts-draft-list">${_draftState.red.map(f =>
+        `<li${_draftState.mine.indexOf(f) >= 0 ? ' class="ts-draft-mine"' : ''}>${esc(f.title)}</li>`).join('')}</ul>
+      <div class="ts-draft-body">
+        The figure below is what the reconciliation currently computes. It is not a bill, and the amount may change
+        once these exceptions are resolved.
+      </div>
+    </div>` : ''}
+
+    <div class="ts-summary-card${_draftState ? ' ts-summary-card--draft' : ''}">
+      <div class="ts-summary-total-label">${_draftState
+        ? 'Provisional CAM allocation — not billable'
+        : 'Total CAM Billed to You'}</div>
       <div class="ts-summary-total-amount">${fmt(r.allocatedAmount)}</div>
       <div class="ts-summary-stats">
         <div class="ts-summary-stat">
@@ -15561,25 +19564,85 @@ function generateTenantStatement(tenantName) {
         <div class="ts-summary-stat">
           <span class="ts-ss-label">Your Sq Ft</span>
           <span class="ts-ss-val">${t.leasedSqft.toLocaleString()}</span>
-        </div>
+        </div>${_partial ? `
+        <div class="ts-summary-stat">
+          <span class="ts-ss-label">Period Occupied</span>
+          <span class="ts-ss-val highlight">${_occ.numerator} / ${_occ.denominator} ${esc(_occ.unit)}</span>
+        </div>` : ''}
       </div>
     </div>
+    ${_partial ? `
+    <!-- A tenant handed a reduced bill will check the arithmetic, so the whole
+         calculation is shown rather than just its result — and the BASIS says
+         where the apportionment rule came from. "Per diem because the lease says
+         so" and "per diem because this product defaults to it" are the same two
+         words and a different claim, and the tenant is entitled to know which. -->
+    <div class="ts-occupancy" role="note">
+      <div class="ts-occ-head">Your occupancy of the ${esc(String(getCamYear() || ''))} CAM period</div>
+      <table class="ts-occ-table">
+        <tr><td>CAM period billed</td><td>${esc(_occ.periodStart)} to ${esc(_occ.periodEnd)}</td></tr>
+        <tr><td>Your lease covered</td><td>${esc(_occ.overlapStart)} to ${esc(_occ.overlapEnd)}</td></tr>
+        <tr><td>Share of the building</td><td>${(r.proRata * 100).toFixed(2)}%</td></tr>
+        <tr><td>Share of the period</td><td>${_occ.numerator} of ${_occ.denominator} ${esc(_occ.unit)} (${(_occ.factor * 100).toFixed(1)}%)</td></tr>
+        <tr class="ts-occ-total"><td>Total CAM billed to you</td><td>${fmt(r.allocatedAmount)}</td></tr>
+      </table>
+      <div class="ts-occ-basis">${
+        _occ.basisSource === 'lease'  ? 'Apportioned on a ' + esc(_occ.basis.replace('_', '-')) + ' basis, as provided in your lease.'
+      : _occ.basisSource === 'manual' ? 'Apportioned on a ' + esc(_occ.basis.replace('_', '-')) + ' basis, confirmed by the property manager against your lease.'
+      : 'Your lease does not state how a partial year is apportioned. A per-diem apportionment has been applied.'
+      }</div>
+      ${_occ.startSource === 'cam_commencement_date' ? `<div class="ts-occ-basis">CAM charges begin ${esc(_occ.overlapStart)} under your lease, which is later than the lease commencement date.</div>` : ''}
+    </div>` : ''}
 
-    <div class="rpt-section-title">Settlement via RLUSD on XRPL</div>
-    <p class="rpt-helper-text">When you pay, MainStreet settles the matching amount in RLUSD (a regulated USD stablecoin) on the XRP Ledger — a public, permanent transaction you can verify yourself. This is the trust layer behind your statement.</p>
-    ${_buildSettlementFlowHtml(_getSettlementState(currentProperty() || {}), { showPayButton: false, hideNote: true })}
+    ${_draftState ? '' : (() => {
+      // NOTHING HAS SETTLED BECAUSE A STATEMENT WAS GENERATED.
+      //
+      // This section was headed "Settlement via RLUSD on XRPL" and introduced
+      // with "MainStreet settles the matching amount ... This is the trust layer
+      // behind your statement" — present tense, on a document produced before
+      // any payment, on a property with no settlement transaction. A tenant
+      // could reasonably read it as saying their charge had already been
+      // settled on a public ledger.
+      //
+      // The caveat that used to sit here ("goes live once the settlement wallet
+      // is funded") is gone: RLUSD settlement is live on XRPL Mainnet. What
+      // remains true, and is what this paragraph says, is narrower and about
+      // THIS document — no settlement transaction has been recorded against
+      // this statement.
+      //
+      // Say what is true of THIS statement: whether a settlement transaction
+      // exists, and if not, that none has occurred.
+      const _st = _getSettlementState(currentProperty() || {});
+      const _settled = _st.status === 'settled';
+      return `
+    <div class="rpt-section-title">${_settled ? 'Settlement — RLUSD on the XRP Ledger' : 'How payment will settle'}</div>
+    <p class="rpt-helper-text">${_settled
+      ? `This charge was settled in RLUSD (a US-dollar stablecoin) on the XRP Ledger. The transaction below is public and permanent — you can verify it yourself without taking MainStreet's word for it.`
+      : `<strong>No payment has been made and no settlement has occurred for this statement.</strong> When you do pay, MainStreet settles the matching amount in RLUSD (a US-dollar stablecoin) on the XRP Ledger, so that you can verify the transaction yourself. RLUSD settlement is live on XRPL Mainnet; this statement simply has no settlement transaction yet.`}</p>
+    ${_buildSettlementFlowHtml(_st, { showPayButton: false, hideNote: true })}`;
+    })()}
 
     <div class="rpt-section-title">Expense Breakdown</div>
     <p class="rpt-helper-text">Click a category to expand individual charges.</p>
     <div class="ts-cat-list">${categoryCards}</div>
-    ${exclNote}${capNote}
+    ${_breakdownReconcileNote}${undatedNote}${exclNote}${capNote}
 
     <div class="rpt-section-title">Year-End Reconciliation</div>
     <table class="rpt-table">
       <tbody>
         <tr><td>Reconciled CAM Responsibility</td><td style="text-align:right">${fmt(actual)}</td></tr>
         <tr><td>Pro-Rata Share</td><td style="text-align:right">${(r.proRata * 100).toFixed(2)}%</td></tr>
-        <tr class="total-row"><td>Total Billed</td><td style="text-align:right">${fmt(r.allocatedAmount)}</td></tr>
+        <!-- The one row that was never wired to the draft state. Every other
+             surface on a blocked statement already branches on _draftState —
+             the report title, the Status field, the banner, the hero total —
+             but this row read "Total Billed" on a document whose own header
+             says NON-BILLABLE DRAFT. The same figure appeared as a billed
+             amount beside an audit verdict of Not ready to bill. Nothing about
+             the number changes; only whether the document claims it was
+             billed. -->
+        <tr class="total-row"><td>${_draftState
+          ? 'Calculated CAM charge — not billed'
+          : 'Total Billed'}</td><td style="text-align:right">${fmt(r.allocatedAmount)}</td></tr>
       </tbody>
     </table>
     <p style="font-size:0.78rem;color:var(--text-4);margin-top:6px;">Variance from monthly estimates requires payment history data not yet in this system — please reconcile against your accounts payable records.</p>
@@ -15840,7 +19903,7 @@ async function ensureDemoProperty() {
   // ── Build Property object for reconciliation engine ───────────────────────
   const reconProp = new Property(PROP_NAME, PROP_SQFT);
   reconProp.addLeases(demoTenants.map(t => {
-    const excl  = (t.excluded_categories || '').split(',').map(s => s.trim()).filter(Boolean);
+    const excl  = _appliedExclusions(t);   // F-02: applied only
     const lease = new Lease(
       t.tenant_name, '', parseSqft(t.leased_sqft),
       t.start_date || '', t.end_date || '', excl,
@@ -15880,7 +19943,7 @@ async function ensureDemoProperty() {
     leasedSqft:         parseSqft(t.leased_sqft),
     totalSqft:          PROP_SQFT,
     capPct:             t.cap ? parseFloat(t.cap) : null,
-    excludedCategories: (t.excluded_categories || '').split(',').map(s => s.trim().toLowerCase()).filter(Boolean),
+    excludedCategories: _appliedExclusions(t),   // F-02: applied only
   }));
 
   const camReconciliation = {
@@ -16318,43 +20381,124 @@ function _fmtCardTs(ts) {
 function getReviewQueueItems(props) { return Selectors.getReviewQueueItems(props); }
 function _rqUrgencyClass(score)     { return ReviewEngine.urgencyClass(score); }
 
-function _rqItemHtml(item) {
-  const acked = item.reviewerConfirmed;
-  const urgCls = _rqUrgencyClass(item.reviewScore);
-  const stateCfg = {
-    incomplete:        { cls: 'trs-incomplete',        label: 'Incomplete' },
-    needs_review:      { cls: 'trs-needs-review',      label: 'Needs Review' },
-    manually_verified: { cls: 'trs-manually-verified', label: 'Verified' },
-  }[item.reviewState] || { cls: 'trs-needs-review', label: item.reviewState };
-  const scoreColor = item.reviewScore >= 80 ? 'trs-score--high' : item.reviewScore >= 50 ? 'trs-score--mid' : 'trs-score--low';
-
-  const missingChips = item.missingFields.map(f => `<span class="rq-chip rq-chip--missing">${esc(f)}</span>`).join('');
-  const warnChips    = item.warningReasons.map(w => `<span class="rq-chip rq-chip--warn">${esc(w)}</span>`).join('');
-
-  const pid = esc(item.propertyId);
-  const tid = esc(item.tenantId);
-
-  return `
-  <div class="rq-card ${urgCls}${acked ? ' rq-acknowledged' : ''}" data-rq-tenant-id="${tid}">
-    <div class="rq-card-main">
-      <div class="rq-tenant-name">${esc(item.tenantName)}</div>
-      <div class="rq-prop-name">${esc(item.propertyName)}</div>
-      <div class="rq-badges">
-        <span class="trs-badge ${stateCfg.cls}">${stateCfg.label}</span>
-        <span class="trs-score ${scoreColor}">Score: ${item.reviewScore}</span>
-      </div>
-      ${(missingChips || warnChips) ? `<div class="rq-chips">${missingChips}${warnChips}</div>` : ''}
-    </div>
-    <div class="rq-actions">
-      <button class="rq-action-btn rq-btn--primary" onclick="selectProperty('${pid}')">Review Lease</button>
-      <button class="rq-action-btn rq-btn--secondary" onclick="selectProperty('${pid}')">Jump to Tenant</button>
-      ${acked
-        ? `<span class="rq-chip" style="text-align:center;justify-content:center;">Acknowledged</span>`
-        : `<button class="rq-action-btn rq-btn--ack" onclick="markTenantReviewAcknowledged('${tid}')">Mark Reviewed</button>`
-      }
-    </div>
-  </div>`;
+// Open the specific thing a review item is about, not the property it lives in.
+//
+// Both buttons on a review card used to call selectProperty(propertyId): "Review
+// Lease" opened the property, and "Jump to Tenant" — which promises a tenant by
+// name — also opened the property, leaving the user to find the row themselves
+// among however many tenants there are. Generic navigation dressed as specific
+// navigation is worse than no button, because the user believes they have been
+// taken somewhere.
+//
+// If the destination genuinely cannot be opened, say which one and why, rather
+// than silently landing somewhere adjacent.
+async function openReviewItem(propertyId, tenantId, intent) {
+  if (activePropId !== propertyId) await selectProperty(propertyId);
+  const prop = _props.find(p => p.id === propertyId);
+  const tenant = (prop?.tenants || []).find(t => t && t.id === tenantId);
+  if (!tenant) {
+    showToast('That tenant is no longer on this property — it may have been removed.',
+              { color: '#92400e', textColor: '#fef3c7', duration: 5000 });
+    return;
+  }
+  if (intent === 'lease') {
+    // "Review Lease" must open the lease. If none was ever attached, the honest
+    // answer is to say so and open the record where it would be attached.
+    if (!tenant.leaseUrl) {
+      showToast(`No lease document is attached to ${tenant.tenant_name || 'this tenant'} — opening its record so you can add one.`,
+                { color: '#1e3a5f', textColor: '#dbeafe', duration: 5000 });
+    } else if (typeof openLeaseModal === 'function') {
+      // openLeaseModal takes a File or a URL — leaseUrl is the persisted one.
+      try { openLeaseModal(tenant.leaseUrl); return; } catch (_) {}
+    }
+  }
+  switchWorkspaceTab('spaces');
+  if (window.TenantSpace && typeof window.TenantSpace.openSpace === 'function') {
+    window.TenantSpace.openSpace(tenantId);
+    _emphasiseReviewGap(propertyId, tenantId);
+    return;
+  }
+  // No space modal available — scroll the actual row into view and flash it,
+  // which is still specific.
+  const row = document.querySelector(`[data-rq-tenant-id="${tenantId}"], [data-tenant-id="${tenantId}"]`);
+  if (row) { row.scrollIntoView({ behavior: 'smooth', block: 'center' }); row.classList.add('rq-flash'); }
+  else showToast('Could not open that tenant directly — it is in the Spaces list below.',
+                 { color: '#92400e', textColor: '#fef3c7', duration: 5000 });
 }
+
+// Landing on the right record is not enough — the user must not have to hunt
+// for the problem once they get there. Walked as a first-time user: clicking
+// "Resolve Willow & Vine Florist" opened her space, and the space showed the
+// lease terms it DID find. The missing CAM cap — the entire reason the item was
+// flagged — was nowhere on the panel, so the screen looked fine and the user was
+// left to work out what was wrong with it.
+//
+// This states the gap at the top of the record, in the review engine's own
+// words, and offers the action that closes it.
+function _emphasiseReviewGap(propertyId, tenantId) {
+  const prop = _props.find(p => p.id === propertyId);
+  if (!prop) return;
+  const item = (typeof getReviewQueueItems === 'function' ? getReviewQueueItems([prop]) : [])
+    .find(i => i.tenantId === tenantId);
+  // Nothing wrong with this one — say nothing rather than invent a problem.
+  if (!item || item.reviewerConfirmed) return;
+
+  const reasons = [...(item.missingFields || []), ...(item.warningReasons || [])];
+  if (!reasons.length) return;
+
+  // Does anything here actually STOP CAM? That decides which action is honest.
+  const _liveT   = tenantData.find(t => t && t.id === tenantId)
+                   || (prop.tenants || []).find(t => t && t.id === tenantId);
+  const _nextFix = _liveT ? _reviewResolution(_liveT) : null;
+
+  const paint = (tries) => {
+    const host = document.querySelector('#tsOverlay .ts-body, #tsOverlay .ts-card, #tsOverlay');
+    if (!host) { if (tries > 0) setTimeout(() => paint(tries - 1), 120); return; }
+    if (host.querySelector('#tsReviewGap')) return;
+    const box = document.createElement('div');
+    box.id = 'tsReviewGap';
+    box.className = 'ts-review-gap';
+    box.innerHTML =
+      '<div class="ts-review-gap-h">\u26A0 This lease needs a human before CAM can be trusted</div>' +
+      '<ul class="ts-review-gap-list">' +
+        reasons.map(r => '<li>' + esc(r) + '</li>').join('') +
+      '</ul>' +
+      '<div class="ts-review-gap-act">' +
+        // ONE CTA, AND IT ALWAYS LEADS SOMEWHERE.
+        //
+        // This offered "Mark reviewed", which set review.reviewerConfirmed. That
+        // flag short-circuits deriveTenantReviewState to 'manually_verified', so
+        // on a lease with three outstanding items the card went green and all
+        // three items stayed exactly where they were. Every condition that puts a
+        // lease here has a concrete resolution — a field to fill, a value to
+        // verify, a confirmation to make — so the button goes to the first one.
+        // Where nothing outstanding is resolvable there is no button, because
+        // there is no action to offer.
+        (_nextFix
+          ? '<button class="ts-review-gap-btn" onclick="openReviewItemFix(\'' + esc(tenantId) + '\',' +
+              (_nextFix.field ? '\'' + esc(_nextFix.field) + '\'' : 'null') + ')">' +
+              esc('Next step: ' + _nextFix.cta) + '</button>' +
+            '<div class="ts-review-gap-hint">' +
+              (_nextFix.blocking
+                ? 'This lease cannot take part in CAM until that is resolved. '
+                : 'Each item clears when the underlying value is resolved. ') +
+              'Marking it reviewed would not change any of them, so it is not offered here.' +
+            '</div>'
+          : '<div class="ts-review-gap-hint">These are recorded for the file. ' +
+              'Nothing here is outstanding, so there is no action to take.</div>') +
+      '</div>';
+    host.insertBefore(box, host.firstChild);
+    box.scrollIntoView({ behavior: 'smooth', block: 'nearest' });
+  };
+  paint(12);   // the space modal builds asynchronously; retry briefly
+}
+
+// _rqItemHtml() was deleted here. It rendered review cards with "Review Lease"
+// and "Jump to Tenant" buttons and had ZERO callers — the property review panel
+// builds its own markup in renderPropertyReviewQueue(). Worth recording because
+// I "fixed" those two buttons earlier in this sprint: the fix was real but the
+// template was dead, so no user ever saw either the bug or the repair. The live
+// equivalents are asserted in test-broken-promises.js.
 
 // Portfolio homepage: banner only — detailed queue lives inside each property view.
 function renderReviewQueue(props) {
@@ -16377,6 +20521,141 @@ function setReviewQueueFilter(filter) {
   if (!activePropId) return;
   const prop = _props.find(p => p.id === activePropId);
   if (prop) renderPropertyReviewQueue(prop);
+}
+
+// ── Acknowledgement vs resolution ────────────────────────────────────────────
+//
+// "Mark reviewed" sets review.reviewerConfirmed, and deriveTenantReviewState
+// SHORT-CIRCUITS on that flag: it returns 'manually_verified' before the status
+// derivation runs. So on a lease with an unresolved CAM blocker, pressing it
+// turned the card green — glyph ✓, no "Needs Review" — while the blocker stood,
+// the lease stayed out of getValidTenants(), and the bulk screen went on listing
+// it as not ready for CAM. Measured, on an unconfirmed property mismatch:
+//
+//   before   needs_review      ⚠️  camBlocking 1  engine rejects
+//   after    manually_verified ✓   camBlocking 1  engine rejects
+//
+// The button was not inert; it was worse than inert. A human "I looked at this"
+// is a real and useful act, but it cannot stand in for the one thing that
+// unblocks the lease, and it must not look like it did.
+//
+// So: acknowledgement stays available for advisory review items, and is replaced
+// by a link to the resolution wherever a CAM blocker is what needs closing. The
+// blocker itself is untouched — this changes which button is offered, never what
+// clears the state.
+
+// EVERY condition that puts a lease in Needs Review or Incomplete, in the order
+// a person should deal with them, paired with where each one is actually
+// resolved. Derived from the status branches in review-engine.js
+// deriveTenantReviewState — if a condition is added there it must be added here,
+// or its CTA falls back to the generic form below.
+//
+// The point of the list: every driver of Needs Review has a concrete
+// resolution — a field to fill, a value to verify, a confirmation to make.
+// Not one of them is closed by saying "I looked at it". That is why this panel
+// no longer offers an acknowledgement at all.
+const _REVIEW_RESOLUTIONS = [
+  // CAM blockers first: these stop the reconciliation, not just the trust in it.
+  { type: 'missing_sqft',           cta: 'Add the leased square footage',                field: 'leased_sqft' },
+  { type: 'property_name_mismatch', cta: 'Confirm which property this lease belongs to', field: '_confirm'    },
+  // Then the fields whose absence leaves the record incomplete.
+  { type: 'missing_lease_type',     cta: 'Set the lease type',                           field: 'lease_type'  },
+  { type: 'missing_start_date',     cta: 'Add the lease start date',                     field: 'start_date'  },
+  { type: 'missing_end_date',       cta: 'Add the lease end date',                       field: 'end_date'    },
+  // Then the review items that hold a lease in needs_review.
+  { type: 'pro_rata_overflow',      cta: 'Fix the square footage — shares exceed 100%',  field: 'leased_sqft' },
+  { type: 'low_sqft_confidence',    cta: 'Verify the leased square footage',             field: 'leased_sqft' },
+  { type: 'nnn_cap_missing',        cta: 'Enter the CAM cap percentage',                 field: 'cap'         },
+  { type: 'fallback_extraction',    cta: 'Verify the extracted lease fields',            field: null          },
+];
+const _REVIEW_FIELD_LABEL = {
+  leased_sqft: /^Leased Sqft/i, lease_type: /^Lease Type/i,
+  start_date:  /^Lease Start/i, end_date:   /^Lease End/i,
+  cap:         /^CAM Cap/i,
+};
+
+// What this lease needs next, and what to put on the button that leads there.
+// Returns null when nothing outstanding is resolvable — in which case no action
+// is offered, because there is none to offer.
+function _reviewResolution(d) {
+  let st = null;
+  try { st = deriveTenantReviewState(d); } catch (_) { return null; }
+  const types = new Set((st.warnings || []).map(w => w.type));
+  const label = (ty) => ((st.warnings || []).find(w => w.type === ty) || {}).label || ty;
+  const hit = _REVIEW_RESOLUTIONS.find(r => types.has(r.type));
+  if (!hit) return null;
+  const blockers = st.camBlocking || [];
+  const outstanding = _REVIEW_RESOLUTIONS.filter(r => types.has(r.type)).map(r => label(r.type));
+  return {
+    type: hit.type, field: hit.field,
+    cta: hit.cta + ' \u203A',
+    item: label(hit.type),
+    blocking: blockers.length > 0,
+    blockers,
+    outstanding,
+  };
+}
+
+// Kept as the CAM-blocker view of the same model, because two callers ask that
+// narrower question (rwApprove, and the queue card's refusal copy).
+function _leaseBlockerResolution(d) {
+  let st = null;
+  try { st = deriveTenantReviewState(d); } catch (_) { return null; }
+  const blockers = st.camBlocking || [];
+  if (!blockers.length) return null;
+  const r = _reviewResolution(d);
+  return { blockers, label: (r && r.blocking) ? r.cta : 'Resolve: ' + blockers[0] + ' \u203A' };
+}
+
+// Takes the reader to the control that actually closes the item. Navigation
+// only: it opens the lease card, expands it, scrolls to the field or the
+// confirmation and highlights it. It changes no state of its own — the
+// state-changing actions stay where they are, on the card.
+function openReviewItemFix(tenantId, field) {
+  const i = tenantData.findIndex(t => t && t.id === tenantId);
+  if (i === -1) {
+    showToast('Could not open that lease — it is not on the active property.',
+              { color: '#92400e', textColor: '#fef3c7' });
+    return;
+  }
+  if (window.TenantSpace && typeof window.TenantSpace.closeSpace === 'function') {
+    try { window.TenantSpace.closeSpace(); } catch (_) {}
+  }
+  if (typeof switchWorkspaceTab === 'function') switchWorkspaceTab('spaces');
+  if (typeof switchLeaseTab === 'function') switchLeaseTab('bulk');
+  if (typeof renderBulkResults === 'function') renderBulkResults();
+  // The card renders collapsed and its detail is built on expand, so the target
+  // does not exist until after both.
+  setTimeout(() => {
+    const det = document.getElementById('bdet-' + i);
+    if (det && getComputedStyle(det).display === 'none' && typeof toggleBulkDetail === 'function') {
+      try { toggleBulkDetail(i); } catch (_) {}
+    }
+    setTimeout(() => {
+      const row = document.getElementById('btr-' + i);
+      if (!row) return;
+      let tgt = null;
+      if (field === '_confirm') tgt = row.querySelector('.lease-prop-confirm');
+      else if (field && _REVIEW_FIELD_LABEL[field]) {
+        const re = _REVIEW_FIELD_LABEL[field];
+        const f = [...row.querySelectorAll('.field')]
+          .find(x => re.test((x.querySelector('label')?.textContent || '').trim()));
+        if (f) { tgt = f; const inp = f.querySelector('input, select'); if (inp) { try { inp.focus(); } catch (_) {} } }
+      }
+      tgt = tgt || row.querySelector('.lease-prop-confirm') || row.querySelector('.field') || row;
+      tgt.scrollIntoView({ behavior: 'smooth', block: 'center' });
+      tgt.classList.add('lease-blocker-flash');
+      setTimeout(() => tgt.classList.remove('lease-blocker-flash'), 2200);
+    }, 90);
+  }, 60);
+}
+
+// Back-compat for the one call site that still names the blocker-only entry.
+function openLeaseBlockerFix(tenantId) {
+  let d = tenantData.find(t => t && t.id === tenantId);
+  if (!d) d = ((currentProperty() || {}).tenants || []).find(t => t && t.id === tenantId);
+  const r = d ? _reviewResolution(d) : null;
+  openReviewItemFix(tenantId, r ? r.field : null);
 }
 
 function markTenantReviewAcknowledged(tenantId, note = null) {
@@ -16449,10 +20728,21 @@ function _rqCompactItemHtml(item) {
     <span class="trs-score ${scoreColor}">Score: ${item.reviewScore}</span>
     <div class="rq-chips rq-chips--inline">${missingChips}${warnChips}</div>
     <div class="rq-compact-actions" style="display:flex;gap:4px;align-items:center;">
-      <button class="rq-action-btn rq-btn--primary" onclick="openReviewWorkspace('${tid}')">AI Review &#x203A;</button>
-      ${acked
-        ? `<span class="rq-chip">Ack'd</span>`
-        : `<button class="rq-action-btn rq-btn--ack" onclick="markTenantReviewAcknowledged('${tid}')">Ack</button>`}
+      <button class="rq-action-btn rq-btn--primary" onclick="openReviewWorkspace('${tid}')">Review ${esc(item.tenantName)} &#x203A;</button>
+      ${(() => {
+        if (acked) return `<span class="rq-chip">Ack'd</span>`;
+        // Same rule as the space modal: a lease the CAM engine will not accept
+        // is offered the resolution, never the acknowledgement.
+        const liveT = tenantData.find(t => t && t.id === tid)
+                      || ((currentProperty() || {}).tenants || []).find(t => t && t.id === tid);
+        // Same rule as the panel: the action leads to the next unresolved item,
+        // whatever kind it is. Acknowledgement is not offered, because it closes
+        // none of them.
+        const fix   = liveT ? _reviewResolution(liveT) : null;
+        return fix
+          ? `<button class="rq-action-btn rq-btn--fix" onclick="openReviewItemFix('${tid}', ${fix.field ? `'${esc(fix.field)}'` : 'null'})" title="${esc(fix.outstanding.join('; '))}">Next step: ${esc(fix.cta)}</button>`
+          : '';
+      })()}
     </div>
   </div>`;
 }
@@ -16581,12 +20871,19 @@ function _rwRenderScoreCard(rv) {
 
 // Returns { label, cls } confidence chip for a field on tenant t.
 function _rwConfChip(key, t) {
+  // ONE RESOLVER FOR THE ROW. The chip, the method and the note used to be
+  // three opinions rendered side by side: a manually corrected cap showed
+  // "Manual" beside "Extracted from lease document", and a snapshot-edited one
+  // showed "Low" beside "Manually corrected". They now read the same answer.
+  const _p = window.FieldProvenance ? FieldProvenance.fieldProvenance(key, t) : null;
+  if (_p && (_p.state === 'manually_confirmed' || _p.state === 'manually_entered'))
+    return { label: 'Manual', cls: 'rw-conf-chip--manual' };
   if (key !== 'tenant_name' && isFieldManuallyVerified(key, t))
     return { label: 'Manual', cls: 'rw-conf-chip--manual' };
-  // leased_sqft has a numeric per-field confidence score
-  const numericConf = key === 'leased_sqft'
-    ? (t.confidence?.leased_sqft ?? t.confidence?.leasedSqft ?? null)
-    : null;
+  // leased_sqft has a numeric per-field confidence score. It reports how well
+  // the number was READ, which is a different question from who stands behind
+  // it — a 100% score on an uncited extraction is still uncited.
+  const numericConf = key === 'leased_sqft' ? sqftConfidenceScore(t) : null;
   if (numericConf !== null) {
     if (numericConf >= 80) return { label: 'High',   cls: 'rw-conf-chip--high' };
     if (numericConf >= 50) return { label: 'Medium', cls: 'rw-conf-chip--mid' };
@@ -16603,6 +20900,8 @@ function _rwConfChip(key, t) {
 
 // Returns the human-readable extraction method for a field (maps to required fallback states).
 function _rwExtractionMethod(key, t) {
+  const _p = window.FieldProvenance ? FieldProvenance.fieldProvenance(key, t) : null;
+  if (_p && _p.state !== 'ai_extracted' && _p.state !== 'lease_confirmed') return _p.method;
   if (key !== 'tenant_name' && isFieldManuallyVerified(key, t)) return 'Manually Entered';
   const val = key === 'tenant_name' ? t[key] : (getEffectiveLeaseField(key, t) ?? t[key]);
   const isEmpty = val === null || val === undefined || String(val).trim() === '';
@@ -16612,7 +20911,7 @@ function _rwExtractionMethod(key, t) {
   if (key === 'lease_type' && t.doc_has_lease_type === false)
     return 'Estimated from Context';
   if (key === 'leased_sqft') {
-    const nc = t.confidence?.leased_sqft ?? t.confidence?.leasedSqft;
+    const nc = sqftConfidenceScore(t);
     if (nc != null && nc < 50) return 'Estimated from Context';
   }
   return 'AI Extraction';
@@ -16853,6 +21152,21 @@ function rwSaveNote(tenantId) {
 }
 
 function rwApprove(tenantId) {
+  // Refuse rather than record a review that cannot mean what it says. The
+  // workspace is reachable from the queue card, so it needs the same rule: a
+  // lease the CAM engine will not accept cannot be approved into readiness by
+  // acknowledgement, and pretending otherwise turns the card green while the
+  // lease stays out of the run.
+  const _liveT = tenantData.find(t => t && t.id === tenantId)
+                 || ((currentProperty() || {}).tenants || []).find(t => t && t.id === tenantId);
+  const _fix   = _liveT ? _leaseBlockerResolution(_liveT) : null;
+  if (_fix) {
+    showToast(`Cannot mark reviewed — ${_fix.blockers.join('; ')}. Opening where that is resolved.`,
+              { color: '#92400e', textColor: '#fef3c7', duration: 7000 });
+    if (typeof closeReviewWorkspace === 'function') { try { closeReviewWorkspace(); } catch (_) {} }
+    openLeaseBlockerFix(tenantId);
+    return;
+  }
   const note = document.getElementById('rwNoteInput')?.value?.trim() || null;
   markTenantReviewAcknowledged(tenantId, note);
   let t = null;
@@ -16968,8 +21282,7 @@ function computeRecoveredRevenue(props) {
     let pExcl = 0;
     const pExclTenants = new Set();
     for (const t of tenants) {
-      const excl = (t.excluded_categories || '')
-        .split(',').map(s => s.trim().toLowerCase()).filter(Boolean);
+      const excl = _appliedExclusions(t);   // F-02: applied only
       if (!excl.length) continue;
       const sqft = parseFloat(t.leased_sqft) || 0;
       const proRata = sqft / totalSqft;
@@ -17880,14 +22193,41 @@ function derivePropertyMetrics(p) {
     ? window.Selectors.derivePropertyReadiness(p)
     : { riskScore: 0, readiness: 'needs_review' };
   let healthScore = Math.max(0, Math.min(100, 100 - (rd.riskScore || 0)));
+
+  // WHY THE SCORE IS WHAT IT IS.
+  //
+  // derivePropertyReadiness already returns every component of riskScore —
+  // expiredCount, missingCapCount, lowConfCount, proRataGap — and none of them
+  // was ever surfaced. So the Lease Review packet printed a bare "0" beside an
+  // Unresolved line reading "N leases carry no extraction confidence score",
+  // and the two together read as though the zero WERE the missing confidence.
+  // It is not: on the Test 2 property the zero is 4 expired leases (−80), 4 NNN
+  // leases with no CAM cap (−80) and a pro-rata gap (−15), which is 175 against
+  // a 100-point scale. Measured, and badly — but measured.
+  //
+  // Same treatment as the Lender Summary: show the components, and when they
+  // outrun the scale say so, rather than leaving a floor to be misread as an
+  // absence of data.
+  const basis = [];
+  if (rd.expiredCount)     basis.push(`${rd.expiredCount} expired lease${rd.expiredCount !== 1 ? 's' : ''} (−${rd.expiredCount * 20})`);
+  if (rd.missingCapCount)  basis.push(`${rd.missingCapCount} NNN lease${rd.missingCapCount !== 1 ? 's' : ''} with no CAM cap (−${rd.missingCapCount * 20})`);
+  if (rd.incompleteCount)  basis.push(`${rd.incompleteCount} lease${rd.incompleteCount !== 1 ? 's' : ''} missing required information (−${rd.incompleteCount * 15})`);
+  if (rd.lowConfCount)     basis.push(`${rd.lowConfCount} low-confidence extraction${rd.lowConfCount !== 1 ? 's' : ''} (−${rd.lowConfCount * 10})`);
+  if (rd.proRataGap >= 5)  basis.push(`pro-rata coverage gap of ${rd.proRataGap.toFixed(1)}% (−15)`);
+  const rawRisk = (rd.expiredCount || 0) * 20 + (rd.missingCapCount || 0) * 20
+                + (rd.incompleteCount || 0) * 15 + (rd.lowConfCount || 0) * 10
+                + (rd.proRataGap >= 5 ? 15 : 0);
+
   const reasons = [];
   if (openDisputes > 0) {
     healthScore = Math.max(0, healthScore - Math.min(20, openDisputes * 7));
     reasons.push(`${openDisputes} open dispute${openDisputes !== 1 ? 's' : ''}`);
+    basis.push(`${openDisputes} open dispute${openDisputes !== 1 ? 's' : ''} (−${Math.min(20, openDisputes * 7)})`);
   }
   if (tenantsNeedingReview > 0) {
     healthScore = Math.max(0, healthScore - Math.min(15, tenantsNeedingReview * 5));
     reasons.push(`${tenantsNeedingReview} tenant${tenantsNeedingReview !== 1 ? 's' : ''} need review`);
+    basis.push(`${tenantsNeedingReview} tenant${tenantsNeedingReview !== 1 ? 's' : ''} pending review (−${Math.min(15, tenantsNeedingReview * 5)})`);
   }
   if (invStats.totalInvoices === 0) reasons.push('No invoices loaded');
   const healthStatus = healthScore >= 80 ? 'healthy' : healthScore >= 50 ? 'warning' : 'high-risk';
@@ -17912,7 +22252,13 @@ function derivePropertyMetrics(p) {
     disputeStats:   { totalDisputes: disputes_arr.length, openDisputes, resolvedDisputes },
     reviewStats:    { tenantsNeedingReview, flaggedLeaseCount, amendmentCount, unresolvedWarnings },
     financialStats: { totalCAM, totalAllocated: totalCAM, allocationCoveragePct },
-    health:         { score: healthScore, status: healthStatus, reasons },
+    health:         { score: healthScore, status: healthStatus, reasons, basis,
+                      // Total deductions before the 100-point clamp, so a
+                      // saturated score can report progress the way the Lender
+                      // Summary does rather than sitting at 0 indefinitely.
+                      deductionTotal: Math.round(rawRisk
+                        + (openDisputes > 0 ? Math.min(20, openDisputes * 7) : 0)
+                        + (tenantsNeedingReview > 0 ? Math.min(15, tenantsNeedingReview * 5) : 0)) },
     extraction:     { tenantsWithEvidence, tenantsMissingEvidence: tenants_arr.length - tenantsWithEvidence, avgConfidence },
   };
 
@@ -17983,6 +22329,30 @@ function appendPropertyTimelineEventOnce(property, dedupeKey, event) {
   const ev = Object.assign({}, event);
   ev.metadata = Object.assign({}, event.metadata || {}, { dedupeKey });
   return appendPropertyTimelineEvent(property, ev);
+}
+
+/**
+ * The one place `sync_restored` is written.
+ *
+ * Deduped on a key that is constant per property, so a property carries exactly
+ * one of these however many times it is opened. See timeline-merge.js for why
+ * that is the right cardinality rather than one-per-session: it is the shape the
+ * pilot data already has, and it is the shape that keeps "reload, then save"
+ * from growing the record.
+ */
+function _appendSyncRestored(property) {
+  if (!property) return null;
+  const key = (window.TimelineMerge && TimelineMerge.syncRestoredKey)
+    ? TimelineMerge.syncRestoredKey(property.id)
+    : 'sync_restored:' + (property.id ?? '');
+  return appendPropertyTimelineEventOnce(property, key, {
+    type: 'sync_restored', severity: 'info',
+    actor: 'System', title: 'Property state restored from sync',
+    metadata: {
+      tenantCount: (property.tenants || []).length,
+      hasReconciliation: !!(property.camReconciliation ?? property.results),
+    },
+  });
 }
 
 function appendPropertyTimelineEvent(property, event) {
@@ -18184,9 +22554,16 @@ function renderPropertyActivity(property) {
     const leaseHtml = ev.leaseRef ? `<div class="tl-refline"><span class="tl-lease-ref">&#x1F4C4;&nbsp;${esc(ev.leaseRef)}</span></div>` : '';
     const attHtml = (ev.attachments && ev.attachments.length)
       ? `<div class="tl-attachments">` + ev.attachments.map(a => {
-          if (a.kind === 'photo') return `<a class="tl-attach tl-attach--photo" href="${esc(a.url)}" target="_blank" rel="noopener" title="${esc(a.name)}"><img class="tl-thumb" src="${esc(a.url)}" alt="${esc(a.name)}" loading="lazy"></a>`;
+          // SEC-1 — a timeline attachment may be an inline data: URL (Add
+          // Activity) or a stored object (Property OS uploads via
+          // uploadInvoiceFile). docLinkHtml/docImageHtml tell them apart.
+          if (a.kind === 'photo') {
+            return docLinkHtml(a.url,
+              docImageHtml(a.url, a.name, { className: 'tl-thumb' }),
+              { className: 'tl-attach tl-attach--photo', title: a.name });
+          }
           const _ic = a.kind === 'invoice' ? '&#x1F9FE;' : (a.kind === 'warranty' ? '&#x1F6E1;&#xFE0F;' : (a.kind === 'pdf' ? '&#x1F4C4;' : '&#x1F4CE;'));
-          return `<a class="tl-attach" href="${esc(a.url)}" target="_blank" rel="noopener">${_ic}&nbsp;${esc(a.name)}</a>`;
+          return docLinkHtml(a.url, `${_ic}&nbsp;${esc(a.name)}`, { className: 'tl-attach' });
         }).join('') + `</div>` : '';
     let _divider = '';
     const _dk = _dayKey(ev.timestamp);
@@ -18974,7 +23351,7 @@ function renderPortfolio(props) {
         <div class="ptf-empty-title">Add your first property</div>
         <div class="ptf-empty-desc">Create your own property and get audit-ready in 5 minutes — or open one of the demo properties above to explore with sample data.</div>
         <div class="ptf-empty-cta">
-          <button class="ptf-empty-btn-primary" onclick="addNewProperty()">+ Create Property</button>
+          <button class="ptf-empty-btn-primary" onclick="addNewProperty()">+ Add Property</button>
         </div>
       </div>`;
     renderReviewQueue(props);
@@ -19100,7 +23477,7 @@ function renderPortfolio(props) {
       <div class="ptf-empty-title">No properties yet</div>
       <div class="ptf-empty-desc">Add your first property to get CAM reconciliation, cap enforcement, and audit-ready tenant statements — in about 5 minutes.</div>
       <div class="ptf-empty-cta">
-        <button class="ptf-empty-btn-primary" onclick="addNewProperty()">+ Create First Property</button>
+        <button class="ptf-empty-btn-primary" onclick="addNewProperty()">+ Add Property</button>
         <button class="ptf-empty-btn-secondary" onclick="loadDemo()">&#x1F3AF; Try Live Demo</button>
       </div>
     </div>`;
@@ -19119,6 +23496,12 @@ function renderPortfolio(props) {
 async function selectProperty(id) {
   // Tenants use _initTenantPortal() as their data path — they never enter the main workflow
   if (window.AuthService?.getCurrentUser()?.role === 'tenant') return;
+  // Refuse a falsy id. _props.find(p => p.id === undefined) matches ANY property
+  // that has not been assigned one yet, so an id-less property could select a
+  // different id-less property; and the staleness guard further down reads
+  // `activePropId !== id`, which is false when BOTH are undefined — so a load
+  // for the wrong record would be applied rather than discarded.
+  if (!id) { console.warn('[selectProperty] refusing a falsy property id'); return; }
   const property = _props.find(p => p.id === id);
   if (!property) return;
 
@@ -19142,8 +23525,16 @@ async function selectProperty(id) {
     }
   }
 
-  // Switch active property and clear workflow state
-  if (id !== activePropId) _activeWorkspaceTab = 'overview';
+  // A property that has not been described yet opens on Property, not Overview.
+  // Walked as a first-time user: creating a property lands on Overview, which
+  // reports "OCCUPANCY — Set total sqft to enable" and offers no field to set it
+  // in. The name and square-footage inputs live in #cardSetup, which renders into
+  // the Property pane (built at runtime by property-os.js), and nothing on
+  // Overview points there. That is the first dead end in the product.
+  if (id !== activePropId) {
+    const described = !!(property.name && property.name !== 'New Property' && property.totalSqft > 0);
+    _activeWorkspaceTab = described ? 'overview' : 'property';
+  }
   activePropId = id;
   resetWorkflow();
 
@@ -19168,14 +23559,80 @@ async function selectProperty(id) {
       safeResults:  !!safeResults,
     });
 
+    // THE CAM YEAR BELONGS TO THE PROPERTY, NOT TO THE PERSON.
+    //
+    // `_camYear` is one global, hydrated from a per-USER localStorage key and
+    // defaulting to the current calendar year. Selecting a property did not
+    // touch it, so the year in force was whatever the last property — or the
+    // last session — happened to leave there. A fresh property carrying 2025
+    // invoices was reconciled as 2026: the year filter dropped all twelve dated
+    // invoices, kept the two undated ones, and produced $8,280.00 of a
+    // $217,900.00 pool with nothing on screen to say the year was wrong.
+    //
+    // properties.data.camYear already had a reader here and a slot in
+    // saveProperty — it was simply never written, so it round-tripped as null
+    // forever. runAllocation now stamps it, and this adopts it: a property
+    // remembers the year it was last reconciled for. The localStorage
+    // preference keeps its old job for a property that has never been
+    // reconciled, which is the honest role for a UI default.
+    //
+    // RESOLVED, NOT INHERITED. The year is taken from the property when it has
+    // one and from the user's stored default when it does not — never from
+    // whichever property happened to be open a moment ago. Adopting property A's
+    // 2025 and then opening property B, which has never been reconciled, left B
+    // sitting on 2025: the same silent carry-across one level down.
+    //
+    // persist:false on both branches. setCamYear writes the per-user key, and a
+    // property's own year is not the user's default — only a choice made in the
+    // Property Setup dropdown is.
+    //
+    // Before the snapshot restore below, so a saved reconciliation restoring its
+    // own camYear still wins; the two agree once a run has stamped the record.
+    {
+      let _pref = NaN;
+      try { _pref = parseInt(localStorage.getItem(_camYearKey()), 10); } catch (_) {}
+      if (!Number.isFinite(_pref)) _pref = new Date().getFullYear();
+      const _want = data.camYear != null ? parseInt(data.camYear, 10) : _pref;
+      if (Number.isFinite(_want) && _want !== getCamYear()) {
+        console.log('[selectProperty] resolving the CAM year', {
+          propertyId: id, was: getCamYear(), now: _want,
+          from: data.camYear != null ? 'property' : 'user default' });
+        setCamYear(_want, { persist: false });
+      }
+    }
+
     // Reconciliation results are always applied — they don't depend on tenant count.
     property.results           = safeResults;
     property.camReconciliation = safeCamRec;
+    property.camYear           = data.camYear ?? property.camYear ?? null;
     // Settlement record (RLUSD proof-of-settlement) is loaded from the data blob here too —
     // loadProperties() skips the blob, so this lazy load is the only place it arrives. Without
     // this, the settlement flow renders "pending" because property.settlement stays undefined.
     property.settlement        = data.settlement ?? property.settlement ?? null;
     property.aiDrafts          = data.aiDrafts?.length ? data.aiDrafts : (property.aiDrafts || []);
+
+    // THE PROPERTY'S HISTORY, PUT BACK.
+    //
+    // loadPropertyData has always returned `timeline`; nothing ever assigned it.
+    // So the stored record was read and discarded, `sync_restored` was appended
+    // to an empty array a few lines below, and the next saveProperty wrote that
+    // array over the history. Measured on a non-demo property: two manual
+    // entries in Supabase and localStorage before a reload, zero in either after
+    // the following save. Across the pilot it left 27 properties holding a
+    // single session each — Happy Plaza has 7 lease documents, 6 reconciliations
+    // and 1.1 minutes of timeline.
+    //
+    // MERGED, NOT ASSIGNED, and the live side is primary. This callback runs on
+    // a timer after the instant render, so events can be written between the two
+    // — an upload in flight emits `lease_uploaded` — and an event edited this
+    // session exists on both sides in two versions. Assigning the stored array
+    // would discard the first and revert the second; taking only the live array
+    // is the bug being fixed. TimelineMerge unions them on event identity and
+    // orders the result, so this is a function of its inputs: reloading and
+    // saving reproduces the same history rather than rewriting it.
+    property.timeline = window.TimelineMerge
+      ? TimelineMerge.mergeTimelines(property.timeline, data.timeline)
+      : (property.timeline || data.timeline || []);
 
     // Tenant/invoice data: only overwrite when loaded data is at least as rich,
     // preventing a stale DB record from erasing a fresh in-session upload.
@@ -19195,9 +23652,13 @@ async function selectProperty(id) {
       console.log('[selectProperty] SECOND renderProperty firing', { id, activePropId });
       renderProperty(property);
       rebuildDerivedState(property); // rebuild after LS/DB merge so metrics reflect loaded data
-      appendPropertyTimelineEvent(property, { type: 'sync_restored', severity: 'info',
-        actor: 'System', title: 'Property state restored from sync',
-        metadata: { tenantCount: (property.tenants||[]).length, hasReconciliation: !!(property.camReconciliation ?? property.results) } });
+      // ONCE PER PROPERTY, NOT ONCE PER LOAD. While the timeline was being wiped
+      // on every load this could only ever produce one row, which is exactly what
+      // the pilot contains: 27 sync_restored events across 27 properties. Now
+      // that the history survives, an unkeyed append would add one on every
+      // reload — trading data loss for unbounded growth. Restoring from sync is a
+      // status marker, not something that happened to the building.
+      _appendSyncRestored(property);
       console.log('[selectProperty] SECOND renderProperty done — mainWorkflow display:', document.getElementById('mainWorkflow')?.style.display, 'portfolio display:', document.getElementById('portfolioDashboard')?.style.display);
     }
   }, 0);
@@ -19271,6 +23732,17 @@ async function addNewProperty() {
   _props.push(newProp);
   portfolio.push(newProp);
   await saveProperty(newProp); // patches newProp.id in-place
+  // If the INSERT did not come back with an id the property does not exist yet.
+  // Carrying on would open a record that cannot be saved, cannot be reloaded,
+  // and collides with every other id-less property. Fail visibly instead.
+  if (!newProp.id) {
+    const i = _props.indexOf(newProp);       if (i > -1) _props.splice(i, 1);
+    const j = portfolio.indexOf(newProp);    if (j > -1) portfolio.splice(j, 1);
+    showToast('Could not create the property — check your connection and try again.',
+              { color: '#92400e', textColor: '#fef3c7', duration: 6000 });
+    renderPortfolio();
+    return;
+  }
   logActivity('property_created', 'Property created', { severity: 'success', actor: 'User', relatedEntity: newProp.name || 'New Property' });
   await selectProperty(newProp.id);
   setTimeout(() => {
@@ -19337,6 +23809,20 @@ function resetWorkflow() {
     'Upload leases and invoices, then run CAM Allocation to generate results.');
   document.getElementById('resultsTitle').textContent = `${getCamYear()} CAM Reconciliation`;
   document.getElementById('results').style.display = 'block';
+  // Per-run panels are separate elements appended INTO #results, not into
+  // #resultsBody — so clearing resultsBody above leaves them on screen. They
+  // are built from the module-level lastResults/lastPropName/lastTotal, which
+  // belong to whichever property was reconciled last.
+  //
+  // Reported from the pilot: opening a new property showed "The 2026 CAM
+  // reconciliation for Lakeview covers $12,300.00 across 3 tenants" under a
+  // different property's CAM tab, naming a tenant that lives elsewhere. Nothing
+  // had leaked — the panel was simply never removed. Same failure as the
+  // extraction banner that outlived its property.
+  ['narrativePanel', 'auditPanel', 'trendsPanel'].forEach(function (id) {
+    var el = document.getElementById(id);
+    if (el) el.remove();
+  });
   document.getElementById('disputeSection').style.display = '';
   document.getElementById('disputeInvoiceList').innerHTML = '';
   document.getElementById('openDisputesWrap').style.display = 'none';
@@ -19360,11 +23846,97 @@ function resetWorkflow() {
   document.getElementById('glStatus').innerHTML    = '';
   document.getElementById('glFileInput').value     = '';
   renderGLResults(); // shows the "no GL import" empty state (also clears glImportBar)
+  // The setup prompt is part of the workflow state, so it resets with it —
+  // otherwise a freshly created property inherits the previous one's "Ready".
+  if (typeof _setupNextSync === 'function') _setupNextSync();
+  // Same for the extraction banner: it names a specific tenant on a specific
+  // property and must never outlive the property it was rendered for.
+  const _ens = document.getElementById('extractionNextStep');
+  if (_ens) _ens.remove();
+}
+
+// ─── Property Setup → Upload Leases ───────────────────────────────────────────
+// The setup fields save on every keystroke. That is the right behaviour and it
+// is completely invisible: a first-time user fills in a name and a square
+// footage, sees no Save, no confirmation and no next step, and reasonably
+// concludes the app is waiting for something. These two functions are the
+// visible half of the flow the product already performs:
+//
+//   Create Property -> Save -> Upload Leases -> AI Processing
+//
+// _setupNextSync() keeps the prompt and the button honest about which of those
+// the user is standing on; savePropertyAndContinue() commits and hands over.
+
+function _setupNextSync() {
+  const row  = document.getElementById('setupNext');
+  const msg  = document.getElementById('setupNextMsg');
+  const btn  = document.getElementById('setupSaveBtn');
+  if (!row || !msg || !btn) return;
+  const name = (document.getElementById('propertyName')?.value || '').trim();
+  const sqft = parseFloat(document.getElementById('totalSqft')?.value) || 0;
+  const named = !!name && name !== 'New Property';
+  const hasLeases = tenantData.some(t => t && t.tenant_name);
+
+  if (hasLeases) {
+    row.classList.add('setup-next--saved');
+    msg.innerHTML = '<b>Property saved.</b> Leases are uploaded — run the CAM reconciliation when you are ready.';
+    btn.textContent = 'Go to Leases \u203A';
+    btn.disabled = false;
+    return;
+  }
+  row.classList.toggle('setup-next--saved', named && sqft > 0);
+  btn.disabled = !(named && sqft > 0);
+  btn.textContent = 'Save & Continue \u203A';
+  msg.innerHTML = !named
+    ? 'Name your property and enter its total square footage to begin.'
+    : sqft > 0
+      ? '<b>Ready.</b> Save this, then upload your leases &mdash; the AI reads each one and extracts its CAM terms.'
+      : 'Now enter the total square footage &mdash; it is what every tenant\u2019s pro-rata share is calculated from.';
+}
+
+async function savePropertyAndContinue() {
+  const nameEl = document.getElementById('propertyName');
+  const sqftEl = document.getElementById('totalSqft');
+  const name = (nameEl?.value || '').trim();
+  const sqft = parseFloat(sqftEl?.value) || 0;
+  if (!name || name === 'New Property') { nameEl?.focus(); return; }
+  if (!(sqft > 0))                      { sqftEl?.focus(); return; }
+
+  const btn = document.getElementById('setupSaveBtn');
+  if (btn) { btn.disabled = true; btn.textContent = 'Saving\u2026'; }
+  try {
+    await savePropertyData();                       // DOM -> model
+    const prop = _props.find(p => p.id === activePropId);
+    if (prop) await saveProperty(prop);             // model -> localStorage + Supabase
+    // Deliberately NOT renderPortfolio(): it does not just refresh the card
+    // list, it shows #portfolioDashboard and hides #mainWorkflow. Calling it
+    // here threw the user back out to the portfolio the moment they saved,
+    // which is the opposite of continuing. The portfolio re-renders itself when
+    // they navigate back to it.
+  } catch (e) {
+    logError('savePropertyAndContinue', e, { propId: activePropId });
+    showToast('Could not save the property — check your connection and try again.',
+              { color: '#92400e', textColor: '#fef3c7', duration: 6000 });
+    if (btn) { btn.disabled = false; btn.textContent = 'Save & Continue \u203A'; }
+    return;
+  }
+  // Hand over to lease intake, which is where the workflow actually continues.
+  switchWorkspaceTab('spaces');
+  // Select the upload sub-tab BEFORE scrolling: the Lease Upload card opens on
+  // whichever sub-tab was last active, so arriving here could show "Add One
+  // Tenant" or "Ask the Lease" and no drop zone at all — the user is told to
+  // upload leases and handed a screen with nowhere to drop one.
+  if (typeof switchLeaseTab === 'function') { try { switchLeaseTab('bulk'); } catch (_) {} }
+  const card = document.getElementById('cardLeases');
+  if (card) card.scrollIntoView({ behavior: 'smooth', block: 'start' });
+  _setupNextSync();
+  _obSyncState();
 }
 
 function liveUpdateBreadcrumb(name) {
   const el = document.getElementById('breadcrumbPropName');
   if (el) el.textContent = name || 'New Property';
+  if (typeof _setupNextSync === 'function') _setupNextSync();
   // Advance step bar once a real name is typed
   if (name && name.trim() && name.trim() !== 'New Property') {
     const sqft = parseFloat(document.getElementById('totalSqft')?.value) || 0;
@@ -19465,17 +24037,108 @@ function _stripBlobs(property) {
       ...t,
       leaseFile: undefined, // File objects are not serializable
       rawText:   undefined, // OCR text only needed during extraction — can be 10k+ chars
+      // Phase 20: tenant_field_evidence is authoritative, so evidence is not
+      // written into the property blob as well.
+      //
+      // THIS IS A STORAGE DECISION AND IT BELONGS HERE. savePropertyData used to
+      // do the stripping as it synced tenantData into the property record, which
+      // dropped the evidence from the IN-MEMORY property too — and the
+      // reconciliation detector reads its tenants from that record. A
+      // manager's confirmation, written to tenant_field_evidence and restored on
+      // load, was discarded again by the next save, so the tenant was asked to
+      // confirm something already confirmed. Both writers — the Supabase payload
+      // and _lsSave — pass through this function, so the persisted shape is
+      // unchanged; only the live object keeps what it always had.
+      fieldEvidence: window.ms_useNormalizedEvidence ? undefined : t.fieldEvidence,
     } : t),
     // Strip the full invoice list from the DB payload — invoices live separately
     // and are merged back in on load; keeping them in `data` inflates the row.
     invoices: (property.invoices || []).map(inv => inv ? {
+      // THE MANAGER'S OWN DECISION HAS TO SURVIVE. `camEligible` is what the
+      // untick in the invoice register writes, and it was not on this list — so
+      // a $15,000 invoice removed from CAM came back eligible after a reload,
+      // CamPool.total counted it again, the KPI reported the whole invoiced
+      // figure as the CAM pool, and the NEXT run would have billed tenants for
+      // it. Measured: fresh run $45,000 of $60,000 invoiced; after save and
+      // reload, $60,000.
+      //
+      // `id` travels for the same reason one layer up: it is how
+      // VarianceBreakdown.invoiceKey matches an invoice to what was allocated
+      // against it, and without it the fallback key is vendor+category+amount,
+      // which merges two genuinely different invoices that happen to look alike.
+      id:          inv.id,
+      camEligible: inv.camEligible,
       vendorName:  inv.vendorName,
       amount:      inv.amount,
       category:    inv.category,
       invoiceDate: inv.invoiceDate,
       fileUrl:     inv.fileUrl,
       fileName:    inv.fileName,
-      // drop confidence, _error, raw text — not needed for persistence
+      // A BILLING BLOCK MUST NOT EVAPORATE ACROSS A RELOAD.
+      //
+      // matchInvoiceToTenant is the authority on whether an invoice names two
+      // tenants equally well. Nothing downstream re-derives that: the audit
+      // detector reads `matchAmbiguous`/`matchTied` straight off the invoice
+      // register (buildAuditSummary -> paidInvData <- invoiceData), raises a
+      // blocksBilling finding scoped to each tied candidate, and the statement
+      // gate refuses on it. The register IS the record, and this list is what
+      // the register survives on: `prop.invoices = Array.from(invoiceData)`
+      // hands the live objects here, and what is not named is gone.
+      //
+      // So it was. Measured on the tied-invoice fixture: fresh run 1 ambiguous
+      // invoice, 2 blocking findings, Alder unbillable; after save and reload,
+      // 0, 0, and billable — the same reconciliation, the same money, and a
+      // statement that would now issue for a charge nobody has established is
+      // theirs. The gate did not fail; it was never asked.
+      //
+      // RESTORED, NOT RECOMPUTED. Re-running the matcher on load would answer a
+      // different question — "do these tenants tie TODAY" — against a roster
+      // that may have changed since, and would either invent a block that never
+      // held or clear one that did. The tie is a decision the run made, and it
+      // is stored the way camEligible is stored: the next reconciliation is what
+      // replaces it. In-session the flag already lives on the register until the
+      // next run; after this, a reload is indistinguishable from not reloading.
+      //
+      // A BLOCK THAT CANNOT SAY WHY IS HALF A BLOCK, so the finding's own
+      // evidence travels with the flag. `matchTied` because the finding names
+      // its candidates and scopes itself per tenant; `matchedTenant` because
+      // both the detail and the conditions read "this reconciliation billed it
+      // to X because that lease was read first" — restoring the flag without it
+      // put the word `undefined` in the sentence that explains the hold;
+      // `matchNearMisses` for the advisory finding, unchanged in kind and still
+      // non-blocking.
+      //
+      // `matchConfidence` IS THE DIRECT/SHARED DECISION, and it was the half of
+      // this hole N5 left open. N5 reasoned that runFullReconciliation recomputes
+      // it before it is consulted — true of a re-run, and irrelevant to a
+      // RESTORE, which never re-runs the engine. On the restored path
+      // `_lastEngineInvoices` falls back to the register (script.js:26253):
+      // `snapshot.engineInvoices` is read at 26247 and written nowhere, so the
+      // fallback is not a legacy branch, it is the only branch. And
+      // VarianceBreakdown decides direct-vs-shared with
+      // `(Number(inv.matchConfidence) || 0) >= 75` (variance-breakdown.js:285).
+      //
+      // Absent, that reads 0. So every invoice on a reopened reconciliation was
+      // classified as shared pro-rata — including one billed in full to a single
+      // tenant — and the audit's own count flipped with it: "1 invoice directly
+      // matched to tenant, 5 shared pro-rata" on the run, "6 invoices allocated
+      // as shared CAM expenses" on reopening it. Same money, two different
+      // accounts of who owes it and why. The comment at script.js:26241 called
+      // this a limitation of an older fallback; it was the live behaviour.
+      //
+      // AND STILL NO MORE THAN THAT. `matchCandidates` is the superset `tied` is
+      // filtered from and no consumer reads it; `matchedTenantId` and
+      // `matchReason` have no reader on the restored path either. Persisting a
+      // field no reader needs is how an allow-list stops being one.
+      //
+      // An ordinary shared invoice matched nobody: `false`, `[]`, `null`, `[]`,
+      // `0`. It restores as exactly what it was, and nothing is invented for it.
+      matchAmbiguous:  inv.matchAmbiguous,
+      matchTied:       inv.matchTied,
+      matchedTenant:   inv.matchedTenant,
+      matchConfidence: inv.matchConfidence,
+      matchNearMisses: inv.matchNearMisses,
+      // drop _error, raw text — not needed for persistence
     } : inv),
     // CAM results can be very large; strip the full invoice copy inside results/camReconciliation
     results: property.results ? {
@@ -19490,6 +24153,17 @@ function _stripBlobs(property) {
 }
 
 function _lsSave(property) {
+  // A property with no id must never be written. stored[undefined] stringifies
+  // to the literal key "undefined", and every id-less property in the app's
+  // lifetime then shares that one slot — so the next brand-new property loads
+  // whatever the last one left there. That is a cross-property data leak, and
+  // it is reachable in normal use: addNewProperty() calls saveProperty() BEFORE
+  // the INSERT assigns an id, so any failed or slow insert (offline, RLS hiccup,
+  // expired session) drops a record into that slot.
+  if (!property || !property.id) {
+    console.warn('[_lsSave] refusing to persist a property with no id — nothing written');
+    return;
+  }
   try {
     const stored = JSON.parse(_lsGet(_lsUserKey()) || '{}');
     stored[property.id] = _stripBlobs(property);
@@ -19517,6 +24191,8 @@ function _lsLoadAll() {
 }
 
 function _lsLoad(id) {
+  // Symmetric with _lsSave: a falsy id would read the shared "undefined" slot.
+  if (!id) return null;
   try {
     const stored = JSON.parse(_lsGet(_lsUserKey()) || '{}');
     return stored[id] || null;
@@ -19544,7 +24220,17 @@ function normalizePropertyState(data) {
       // Reject objects with no identifying tenant fields — not a tenant record.
       if (!t.id && !t.tenant_name && !t.name) { malformed = true; return false; }
       return true;
-    }).map(t => normalizeTenant(t));
+    // A record entering the working set must be addressable — the UI routes by
+    // id — so a legacy blob entry without one is given an identity HERE, and
+    // says so. Pilot has none (86 of 86 blob tenants carry an id), and with the
+    // extraction boundary now minting, reaching this branch means either data
+    // older than that boundary or a bug worth seeing. It is not silent.
+    }).map(t => {
+      const n = normalizeTenant(t);
+      if (!n.id) console.warn('[loadPropertyData] tenant "%s" had no id; minting one. '
+        + 'It will differ from any id already recorded against this tenant elsewhere.', n.tenant_name);
+      return mintTenantIdentity(n);
+    });
   })();
 
   const disputes = (() => {
@@ -19601,7 +24287,7 @@ function sanitizeImportedPropertyData(raw) {
       return true;
     })
     .map(t => {
-      const n = normalizeTenant(t);
+      const n = mintTenantIdentity(normalizeTenant(t));
       if (n.start_date && isNaN(new Date(n.start_date).getTime())) n.start_date = null;
       if (n.end_date   && isNaN(new Date(n.end_date).getTime()))   n.end_date   = null;
       if (n.confidence && typeof n.confidence === 'object') {
@@ -19665,15 +24351,35 @@ function recoverLastSnapshot(propertyId) {
 }
 window.recoverLastSnapshot = recoverLastSnapshot;
 
-async function loadProperties() {
+async function loadProperties(opts) {
   const { data: { user } } = await db.auth.getUser();
   if (!user?.id) throw new Error('Not authenticated');
 
+  // THE read path, and therefore the one place the active/archived filter
+  // belongs. Everything downstream — renderPortfolio, the dashboards, and
+  // computePortfolioIntelligence(props, …) which simply takes the array it is
+  // given — inherits it from here. An archived building that still moves your
+  // occupancy number is a wrong number, not a preserved memory.
+  const archived = !!(opts && opts.archived);
+
   // Select only the columns needed for the property list — skip the large data blob.
-  const { data, error } = await db
+  let q = db
     .from('properties')
-    .select('id, name, sqft, user_id')
+    .select('id, name, sqft, user_id, archived_at')
     .eq('user_id', user.id);
+  q = archived ? q.not('archived_at', 'is', null) : q.is('archived_at', null);
+  let { data, error } = await q;
+
+  // Pre-migration fallback. Until migrations/010_property_archive.sql is
+  // applied the column does not exist and PostgREST rejects the whole query
+  // (42703) — which would empty the portfolio rather than degrade. Retry
+  // without the filter and treat every row as active, which is what it is.
+  if (error && /archived_at/.test(error.message || '')) {
+    console.warn('[loadProperties] archived_at missing — apply migrations/010_property_archive.sql. Treating all properties as active.');
+    if (archived) return [];
+    ({ data, error } = await db.from('properties')
+      .select('id, name, sqft, user_id').eq('user_id', user.id));
+  }
 
   if (error) throw error;
 
@@ -19681,6 +24387,7 @@ async function loadProperties() {
     id:         p.id,
     name:       p.name,
     totalSqft:  p.sqft || 0,
+    archivedAt: p.archived_at || null,
   }));
 
   if (properties.length === 0) return properties;
@@ -19718,11 +24425,24 @@ async function loadProperties() {
 const _resyncQueues = new Map();
 
 async function _doResyncTenantsToTable(propertyId, tenants) {
-  // Primary path: atomic delete+insert via resync_property_tenants() stored procedure.
-  // Requires migrations/009_atomic_tenant_resync.sql to have been applied in Supabase.
-  // If the function is absent (PGRST202), falls back to direct table ops silently.
+  // Primary path: atomic upsert-and-prune via resync_property_tenants().
+  // migrations/021_safe_tenant_resync.sql replaces the destructive 009 body;
+  // the signature is unchanged, so this call works against either. If the
+  // function is absent entirely (PGRST202), falls back to direct table ops.
+  //
+  // A row with no id is dropped HERE, before it can reach the database. 009
+  // used to coalesce a missing id to gen_random_uuid(), minting an identity
+  // server-side that the application never saw — so the next resync minted
+  // another one and the tenant multiplied. Identity is created in exactly one
+  // place now (mintTenantIdentity, at extraction) and anything that arrives
+  // here without one is a bug upstream that must not be papered over.
+  const _idless = (tenants || []).filter(t => t && t.tenant_name && !t._pendingJobReview && !t.id);
+  if (_idless.length) {
+    console.error('[resyncTenantsToTable] %d tenant(s) have no id and were NOT persisted: %s',
+      _idless.length, _idless.map(t => t.tenant_name).join(', '));
+  }
   const rows = (tenants || [])
-    .filter(t => t && t.tenant_name && !t._pendingJobReview)
+    .filter(t => t && t.tenant_name && !t._pendingJobReview && t.id)
     .map(t => ({
       id:         t.id,
       name:       t.tenant_name || null,
@@ -19764,17 +24484,19 @@ async function _doResyncTenantsToTable(propertyId, tenants) {
   console.log('[resyncTenantsToTable] atomic resync OK — inserted:', data?.inserted ?? rows.length, 'rows for property', propertyId);
 }
 
-// Fallback: non-atomic delete+insert used when the stored procedure is unavailable.
-// Less safe than the RPC (insert failure leaves tenants deleted), but prevents total failure.
+// Fallback used when the stored procedure is unavailable. It used to open with
+// an unconditional delete of every tenant for the property, which meant an
+// insert failure left the property with none — and, worse, that a tenant merely
+// filtered out upstream was destroyed while its reconciliations and evidence
+// went on naming it.
+//
+// It now runs in the same order as migration 021: UPSERT FIRST, then remove
+// only the absentees nothing references. The order matters. Upserting first
+// means a failure at any point leaves the table with more truth in it than it
+// started with, never less.
 async function _doResyncTenantsDirectly(propertyId, rows) {
-  const { error: delErr } = await db.from('tenants').delete().eq('property_id', propertyId);
-  if (delErr) {
-    console.error('[resyncTenantsDirectly] delete error:', delErr.message);
-    return;
-  }
-  if (!rows.length) return;
-  const insertRows = rows
-    .filter(r => r.name && r.name.trim())
+  const insertRows = (rows || [])
+    .filter(r => r && r.id && r.name && r.name.trim())
     .map(r => ({
       id:          r.id,
       property_id: propertyId,
@@ -19786,28 +24508,123 @@ async function _doResyncTenantsDirectly(propertyId, rows) {
       lease_url:   r.lease_url  || null,
       lease_type:  r.lease_type || null,
     }));
-  if (!insertRows.length) return;
+
+  // An empty roster asserts nothing. It must never be read as "delete them all".
+  if (!insertRows.length) {
+    console.warn('[resyncTenantsDirectly] empty roster — no-op, nothing deleted for property', propertyId);
+    return;
+  }
+
   const { error: insErr } = await db.from('tenants').upsert(insertRows, { onConflict: 'id' });
   if (insErr) {
-    console.error('[resyncTenantsDirectly] insert error:', insErr.message);
-    // The delete already committed — tenants table is now empty for this property.
-    // Show a critical error and attempt to re-save from in-memory state so the
-    // data is at least persisted to localStorage until the user reloads.
+    console.error('[resyncTenantsDirectly] upsert error:', insErr.message);
     showToast('⚠ Tenant sync error — your lease data is safe in this browser session but could not be saved to the database. Please stay on this page and try saving again.', { color: '#7f1d1d', textColor: '#fca5a5', duration: 10000 });
-    // Re-trigger a full property save (localStorage + Supabase properties table)
-    // so the data is not silently lost if the user navigates away.
     const _recProp = currentProperty();
     if (_recProp?.id === propertyId) savePropertyData();
-  } else {
-    console.log('[resyncTenantsDirectly] fallback resync OK —', insertRows.length, 'rows for property', propertyId);
+    return;   // nothing was deleted, so nothing was lost
+  }
+
+  // Prune absentees, but never one a reconciliation or a piece of evidence still
+  // names. Losing a stale row is tidiness; losing a referenced one is the defect
+  // this whole phase exists to prevent, so when the reference lookups fail we
+  // keep everything rather than guess.
+  try {
+    const keep = new Set(insertRows.map(r => String(r.id)));
+    const { data: existing, error: exErr } = await db
+      .from('tenants').select('id').eq('property_id', propertyId);
+    if (exErr) throw exErr;
+
+    const absent = (existing || []).map(t => String(t.id)).filter(id => !keep.has(id));
+    if (!absent.length) return;
+
+    const [{ data: camRefs, error: camErr }, { data: evRefs, error: evErr }] = await Promise.all([
+      db.from('cam_reconciliations').select('tenant_id').in('tenant_id', absent),
+      db.from('tenant_field_evidence').select('tenant_id').in('tenant_id', absent),
+    ]);
+    if (camErr || evErr) throw (camErr || evErr);
+
+    const referenced = new Set([
+      ...(camRefs || []).map(r => String(r.tenant_id)),
+      ...(evRefs  || []).map(r => String(r.tenant_id)),
+    ]);
+    const removable = absent.filter(id => !referenced.has(id));
+    const retained  = absent.length - removable.length;
+
+    if (removable.length) {
+      const { error: delErr } = await db.from('tenants').delete().in('id', removable);
+      if (delErr) console.error('[resyncTenantsDirectly] prune error:', delErr.message);
+    }
+    console.log('[resyncTenantsDirectly] fallback resync OK —', insertRows.length,
+      'upserted,', removable.length, 'pruned,', retained, 'retained because still referenced');
+  } catch (e) {
+    console.warn('[resyncTenantsDirectly] reference check failed — pruning skipped, '
+      + 'stale rows kept rather than risk orphaning:', e?.message);
   }
 }
 
 // Full replace: delete all rows for the property then insert the given list.
 // Serialized per-property (last-writer wins): if a resync is already in flight,
 // coalesces concurrent callers so the final state always wins with no interleaving.
+// Ownership guard for the tenants table.
+//
+// The two callers that pass the live `tenantData` buffer take the property id
+// from currentProperty() and the rows from a module-level global. Nothing binds
+// those two together: if the active property changes while the buffer still
+// holds the previous property's rows, this writes those rows into the tenants
+// table stamped with the NEW property's id. loadProperties() then attaches them
+// to the new property entirely correctly, and because the buffer is empty the
+// lease list still reads "No lease documents have been uploaded yet" — a brand
+// new property showing another property's tenants, which is what was reported
+// from the pilot ("SafeShield Insurance from Maple Plaza showed up in Lakeview").
+//
+// Refuse any write whose rows do not belong to the property being written to.
+// A tenant belongs if the property already lists it, or if it is genuinely new
+// (no id yet, i.e. freshly extracted and not persisted anywhere).
+function _tenantsBelongTo(propertyId, rows) {
+  const prop = (typeof _props !== 'undefined' ? _props : []).find(p => p && p.id === propertyId);
+  // Now that this gates every resync rather than two call sites, a silent false
+  // would mean a legitimate save quietly not happening. Every caller registers
+  // the property in _props before resyncing (currentProperty() returns a _props
+  // entry; the acquisition path pushes before it saves), so reaching here is a
+  // bug worth seeing rather than a condition worth swallowing.
+  if (!prop) {
+    console.error('[resyncTenantsToTable] REFUSED — property %s is not in _props; '
+      + 'nothing was written and nothing was deleted.', propertyId);
+    return false;
+  }
+  const own = new Set((prop.tenants || []).filter(Boolean).map(t => t.id));
+  const foreign = (rows || []).filter(t => t && t.id && !own.has(t.id));
+  if (foreign.length) {
+    console.error('[resyncTenantsToTable] REFUSED — %d tenant(s) do not belong to property %s: %s',
+      foreign.length, propertyId, foreign.map(t => t.tenant_name).join(', '));
+    return false;
+  }
+  return true;
+}
+
 async function resyncTenantsToTable(propertyId, tenants) {
   if (!propertyId || typeof propertyId !== 'string' || propertyId.length < 10) return;
+
+  // ── THE GUARD LIVES HERE, NOT AT THE CALL SITES ──────────────────────────
+  // _tenantsBelongTo was written for this function and then applied at two of
+  // its five call sites, so three paths wrote the tenants table with no
+  // ownership check at all. A guard that has to be remembered is a guard that
+  // will be forgotten; the only way to cover every entry point, including ones
+  // written later, is to make the function itself refuse.
+  if (!_tenantsBelongTo(propertyId, tenants)) return;
+
+  // ── AN EMPTY ROSTER IS A NO-OP, NOT AN INSTRUCTION TO DELETE ─────────────
+  // Checked before the queue so a coalesced pending write cannot smuggle one
+  // through either. Every caller filters its list first, so "empty" almost
+  // always means "the filters removed everything", never "this property has no
+  // tenants". The old path took it as the latter and erased the roster.
+  const _usable = (tenants || []).filter(t => t && t.tenant_name && !t._pendingJobReview && t.id);
+  if (!_usable.length) {
+    console.warn('[resyncTenantsToTable] no usable rows for property %s — no-op (%d supplied). '
+      + 'Nothing deleted.', propertyId, (tenants || []).length);
+    return;
+  }
+
   let state = _resyncQueues.get(propertyId);
   if (!state) {
     state = { running: false, pending: null };
@@ -19863,11 +24680,42 @@ async function syncTenantsToTable(propertyId, tenants) {
 // Phase 23 — CAM Validation Against Lease
 // ─────────────────────────────────────────────────────────────────────────────
 
+// THE CATEGORY THE PRODUCT ITSELF WRITES. `CATEGORIES` (script.js:696) holds
+// exactly 'management', and _catFromText (script.js:9667) routes every
+// /manag|admin|management fee|service fee/ hit to it — so 'management' is what
+// an invoice actually carries by the time any check sees it.
+//
+// It was not on the keyword list below, and the list is matched with
+// `cat.includes(kw)`. Nothing in it is a substring of 'management': 'admin' is
+// not, and 'management fee' is LONGER than the category. So the fee-cap check
+// could not fire on the product's own taxonomy — measured across all 12
+// management invoices in the pilot dataset, every one of which is categorised
+// exactly 'management'. The panel reported "no administrative fee line items
+// identified" on a reconciliation whose largest line was the management fee.
+const _LV_ADMIN_CATEGORY = 'management';
+// Kept for data that never went through the categoriser — a free-text or
+// imported category like "Property Management Fee — Q3". The canonical match
+// above is the one that fires on anything this product wrote.
 const _LV_ADMIN_KEYWORDS = ['admin', 'administrative', 'management fee', 'mgmt fee', 'property management'];
+
+const _lvIsAdminLine = (li) => {
+  const cat = String((li && li.category) || '').toLowerCase().trim();
+  if (!cat) return false;
+  return cat === _LV_ADMIN_CATEGORY || _LV_ADMIN_KEYWORDS.some(kw => cat.includes(kw));
+};
 
 // Tier 1: deterministic checks using already-extracted tenant fields. Runs
 // entirely in-browser — no server call, no Claude. Returns findings instantly.
-function _tier1LeaseChecks(tenant, totalExpenses, lineItems, reconciledAt) {
+//
+// `camPool` is THE CAM POOL — the eligible dollars this reconciliation billed
+// from — and it must be struck from the same list as `lineItems`. It used to be
+// `lastTotal`, documented at script.js:13508 as "gross: every invoice loaded",
+// while the finding it produced said "% of total CAM". A $100,000 roof the
+// manager had marked NOT CAM-eligible doubled the denominator and halved the
+// ratio: a management fee at 20% of the pool reported as 10%, "within the 15%
+// lease cap". The same mislabel detector #1 carried until script.js:15206 fixed
+// it, and it errs the same way — toward a clean bill of health.
+function _tier1LeaseChecks(tenant, camPool, lineItems, reconciledAt) {
   const findings  = [];
   const today     = new Date();
   // Parse rather than type-check. admin_fee_pct arrives as a number through the
@@ -19896,14 +24744,14 @@ function _tier1LeaseChecks(tenant, totalExpenses, lineItems, reconciledAt) {
   const quote     = adminFeeEvidence?.quote || null;
 
   // MGMT_FEE_CAP ──────────────────────────────────────────────────────────────
-  if (cap !== null && totalExpenses > 0) {
-    const adminLines = (lineItems || []).filter(li => {
-      const cat = (li.category || '').toLowerCase();
-      return _LV_ADMIN_KEYWORDS.some(kw => cat.includes(kw));
-    });
+  if (cap !== null && camPool > 0) {
+    const adminLines = (lineItems || []).filter(_lvIsAdminLine);
     if (adminLines.length > 0) {
       const adminTotal = adminLines.reduce((s, li) => s + (li.amount || 0), 0);
-      const actualPct  = (adminTotal / totalExpenses) * 100;
+      // ONE BASIS. adminTotal is a subset of the same list camPool is struck
+      // from, so the ratio cannot exceed 100% by construction and cannot be
+      // deflated by dollars the tenant was never billed.
+      const actualPct  = (adminTotal / camPool) * 100;
       const exceeded   = actualPct > cap + 0.5;   // 0.5% rounding tolerance
       findings.push({
         check: 'MGMT_FEE_CAP', source: 'deterministic',
@@ -19913,25 +24761,30 @@ function _tier1LeaseChecks(tenant, totalExpenses, lineItems, reconciledAt) {
           ? `Admin fee (${actualPct.toFixed(1)}%) exceeds the ${cap}% lease cap by ${(actualPct - cap).toFixed(1)} percentage points.`
           : `Admin fee (${actualPct.toFixed(1)}%) is within the ${cap}% lease cap.`,
         quote, section: null, page: null,
+        // NAME THE DENOMINATOR. "% of total CAM" beside a gross figure is how
+        // the wrong basis stayed invisible; the sentence now states the pool it
+        // divided by, so a reader can re-strike the ratio from the screen.
         explanation: exceeded
-          ? `Reconciliation admin fee of $${adminTotal.toLocaleString()} is ${actualPct.toFixed(1)}% of total CAM ($${totalExpenses.toLocaleString()}), exceeding the ${cap}% cap.`
+          ? `Reconciliation admin fee of $${adminTotal.toLocaleString()} is ${actualPct.toFixed(1)}% of the $${camPool.toLocaleString()} CAM pool this reconciliation billed from, exceeding the ${cap}% cap.`
           : null,
       });
     } else {
       findings.push({
         check: 'MGMT_FEE_CAP', source: 'deterministic',
-        severity: 'info', confidence: 'high',
-        finding: 'No administrative fee line items identified in this reconciliation.',
+        // Nothing to measure the cap against. Not a pass — the cap was never tested.
+        severity: 'unconfirmed', confidence: 'high',
+        finding: 'No administrative fee line items identified in this reconciliation, so the cap could not be tested.',
         quote: null, section: null, page: null, explanation: null,
       });
     }
   } else {
     findings.push({
       check: 'MGMT_FEE_CAP', source: 'deterministic',
-      severity: 'info', confidence: 'high',
+      // Absence of a cap clause is absence of evidence, not a passing check.
+      severity: 'unconfirmed', confidence: 'high',
       finding: cap === null
-        ? 'No management fee cap was extracted from the lease.'
-        : 'Total expenses are zero — fee cap check skipped.',
+        ? 'No management fee cap was extracted from the lease, so no cap could be checked against this reconciliation.'
+        : 'The CAM pool for this reconciliation is zero — fee cap check skipped.',
       quote: null, section: null, page: null, explanation: null,
     });
   }
@@ -19976,9 +24829,11 @@ function _tier1LeaseChecks(tenant, totalExpenses, lineItems, reconciledAt) {
     } else {
       findings.push({
         check: 'AUDIT_RIGHTS', source: 'deterministic',
-        severity: 'info', confidence: 'medium',
+        // The right exists but its deadline does not parse, so the window cannot
+        // be confirmed open or closed.
+        severity: 'unconfirmed', confidence: 'medium',
         finding: auditText
-          ? `Audit rights found but deadline could not be computed: "${auditText.slice(0, 80)}"`
+          ? `Audit rights found but the deadline could not be computed: "${auditText.slice(0, 80)}"`
           : 'Audit rights granted, but no deadline was extracted from the clause.',
         quote: auditText, section: null, page: auditEvidence?.page ?? null, explanation: null,
       });
@@ -19986,8 +24841,11 @@ function _tier1LeaseChecks(tenant, totalExpenses, lineItems, reconciledAt) {
   } else {
     findings.push({
       check: 'AUDIT_RIGHTS', source: 'deterministic',
-      severity: 'info', confidence: 'high',
-      finding: 'Audit rights are not addressed in this lease.',
+      // Silence is not consent. A lease that says nothing about audit rights
+      // leaves the tenant's position undetermined, which is materially different
+      // from one that grants them — and from one that waives them.
+      severity: 'unconfirmed', confidence: 'high',
+      finding: 'Audit rights are not addressed in this lease. The tenant\u2019s audit position cannot be confirmed from this document.',
       quote: null, section: null, page: null, explanation: null,
     });
   }
@@ -19997,9 +24855,32 @@ function _tier1LeaseChecks(tenant, totalExpenses, lineItems, reconciledAt) {
 
 // Renders the validation panel HTML for a given findings array and loading state.
 function _renderValidationPanel(findings, { loading = false, charsAnalyzed = null, truncated = false, fileUrl = null } = {}) {
-  const SEV_ICON  = { critical: '⛔', warning: '⚠️', info: '✅' };
-  const SEV_LABEL = { critical: 'CRITICAL', warning: 'REVIEW', info: 'PASSED' };
-  const SEV_CLS   = { critical: 'lv-finding--critical', warning: 'lv-finding--warning', info: 'lv-finding--info' };
+  // Four verdicts, not three. `info` previously rendered as "PASSED", so
+  // "No management fee cap was extracted from the lease" and "Audit rights are
+  // not addressed in this lease" both displayed a green tick — absence of
+  // evidence presented as confirmation, which is indefensible in front of a
+  // tenant auditor. `unconfirmed` separates "we checked and it holds" from
+  // "the lease does not say".
+  const SEV_ICON  = { critical: '⛔', warning: '⚠️', unconfirmed: '❓', info: '✅' };
+  const SEV_LABEL = { critical: 'EXCEPTION', warning: 'REVIEW', unconfirmed: 'NOT CONFIRMED', info: 'PASSED' };
+  const SEV_CLS   = { critical: 'lv-finding--critical', warning: 'lv-finding--warning',
+                      unconfirmed: 'lv-finding--unconfirmed', info: 'lv-finding--info' };
+  // One line saying what the verdict means for billing, so the reader never has
+  // to infer it from a coloured badge.
+  const SEV_MEANING = {
+    critical:    'The reconciliation conflicts with the lease.',
+    warning:     'Resolve before billing: the lease and the reconciliation may not agree.',
+    unconfirmed: 'The lease does not provide enough information to confirm this. Not a failure — not a pass either.',
+    info:        'The lease explicitly supports this condition.',
+  };
+  // Where the finding came from. Already recorded on every deterministic
+  // finding and never rendered — which is why two CAM Exclusions cards could
+  // appear, one PASSED and one REVIEW, with nothing on screen explaining that
+  // they answer different questions.
+  const SRC_LABEL = {
+    deterministic: 'Computed from the reconciliation',
+    ai:            'AI clause reading',
+  };
   const CHECK_LABELS = {
     MGMT_FEE_CAP:      'Management Fee Cap',
     AUDIT_RIGHTS:      'Audit Rights',
@@ -20009,9 +24890,13 @@ function _renderValidationPanel(findings, { loading = false, charsAnalyzed = nul
   };
 
   const cards = findings.map(f => {
-    const icon    = SEV_ICON[f.severity]  || '✅';
-    const label   = SEV_LABEL[f.severity] || 'PASSED';
-    const cls     = SEV_CLS[f.severity]   || 'lv-finding--info';
+    // Every fallback here used to land on the affirmative pass: an unrecognised
+    // severity rendered as a green tick reading PASSED. That is the wrong
+    // direction to fail in a document an auditor may rely on — an unknown
+    // verdict has confirmed nothing, so it falls back to NOT CONFIRMED.
+    const icon    = SEV_ICON[f.severity]  || '❓';
+    const label   = SEV_LABEL[f.severity] || 'NOT CONFIRMED';
+    const cls     = SEV_CLS[f.severity]   || 'lv-finding--unconfirmed';
     const title   = CHECK_LABELS[f.check] || f.check;
     const qSafe   = f.quote ? f.quote.replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;') : null;
     const fSafe   = esc(f.finding);
@@ -20024,20 +24909,42 @@ function _renderValidationPanel(findings, { loading = false, charsAnalyzed = nul
       : '';
     const explanHtml = eSafe ? `<div class="lv-explanation">${eSafe}</div>` : '';
     const viewBtn    = (f.severity !== 'info' && fileUrl)
-      ? `<button class="lv-view-btn" onclick="openLeaseModal(${JSON.stringify(fileUrl)})">View in Lease ↗</button>`
+      ? `<button class="lv-view-btn" data-lease-url="${esc(fileUrl)}" onclick="openLeaseModal(this.dataset.leaseUrl)">View in Lease ↗</button>`
       : '';
     const confCls  = { high: 'lv-conf--high', medium: 'lv-conf--medium', low: 'lv-conf--low' }[f.confidence] || 'lv-conf--medium';
+
+    const meaning  = SEV_MEANING[f.severity];
+    const srcText  = f.subject || SRC_LABEL[f.source] || (f.source ? esc(f.source) : null);
+    const srcHtml  = srcText ? `<div class="lv-source">Source: ${esc(srcText)}</div>` : '';
+    const meanHtml = meaning ? `<div class="lv-meaning">${esc(meaning)}</div>` : '';
 
     return `<div class="lv-finding ${cls}">
       <div class="lv-finding-hdr">
         <span class="lv-finding-icon">${icon}</span>
         <span class="lv-finding-title">${esc(title)}</span>
         <span class="lv-sev-badge lv-sev-badge--${f.severity}">${label}</span>
-        <span class="lv-conf ${confCls}">${f.confidence}</span>
+        <!-- Labelled, because it is NOT a second severity. "EXCEPTION" beside a
+             bare "high" reads as a two-level severity — critical above high —
+             and invites the question of why an overall Critical Risk sits above
+             a merely "high" finding. There is no such hierarchy: this is how
+             confident the AI is in its reading of the clause, and it is
+             orthogonal to how serious the finding is. -->
+        <!-- On a NOT CONFIRMED card the unqualified phrase "AI confidence:
+             high" reads as "the AI is highly confident the condition does not
+             hold". It never meant that. What is high is confidence in the
+             READING — that the lease really is silent or ambiguous here — which
+             is precisely why the check could not be confirmed. Naming the
+             object of the confidence separates the two readings without
+             changing how confidence is computed anywhere. -->
+        <span class="lv-conf ${confCls}" title="${f.severity === 'unconfirmed'
+          ? 'How clearly the lease was read on this point — high means the lease is clearly silent or ambiguous here, not that the condition is confirmed either way.'
+          : 'How confident the AI is in its reading of this clause — not a severity level.'}">${
+          f.severity === 'unconfirmed' ? 'Evidence read with' : 'AI confidence:'} ${f.confidence}${
+          f.severity === 'unconfirmed' ? ' confidence' : ''}</span>
       </div>
       <div class="lv-finding-body">
         <div class="lv-finding-text">${fSafe}</div>
-        ${quoteHtml}${explanHtml}${viewBtn}
+        ${meanHtml}${quoteHtml}${explanHtml}${srcHtml}${viewBtn}
       </div>
     </div>`;
   }).join('');
@@ -20046,7 +24953,18 @@ function _renderValidationPanel(findings, { loading = false, charsAnalyzed = nul
   const warnCount = findings.filter(f => f.severity === 'warning').length;
   const statusText = loading
     ? `${findings.length} check${findings.length !== 1 ? 's' : ''} complete · analyzing clauses…`
-    : `${findings.length} check${findings.length !== 1 ? 's' : ''}${warnCount ? ` · ${warnCount} review` : ''}${critCount ? ` · ${critCount} critical` : ''}`;
+    : (() => {
+        const unconfCount = findings.filter(f => f.severity === 'unconfirmed').length;
+        const passCount   = findings.filter(f => f.severity === 'info').length;
+        // Spelled out rather than reduced to "N checks": "8 checks" beside a row
+        // of green ticks reads as eight confirmations even when four of them
+        // only mean the lease was silent.
+        return `${findings.length} check${findings.length !== 1 ? 's' : ''}` +
+               `${passCount ? ` · ${passCount} passed` : ''}` +
+               `${unconfCount ? ` · ${unconfCount} not confirmed` : ''}` +
+               `${warnCount ? ` · ${warnCount} review` : ''}` +
+               `${critCount ? ` · ${critCount} exception${critCount !== 1 ? 's' : ''}` : ''}`;
+      })();
 
   const metaLine  = !loading && charsAnalyzed
     ? `<div class="lv-meta">Analyzed ${Math.round(charsAnalyzed/1000)}k chars of stored lease text${truncated ? ' (truncated)' : ''}</div>`
@@ -20055,10 +24973,18 @@ function _renderValidationPanel(findings, { loading = false, charsAnalyzed = nul
     ? `<div class="lv-loading">&#x23F3; Checking lease clauses…</div>`
     : '';
 
+  // Scope line. Pilot QA surfaced "Lease Validation: all PASSED" sitting beside
+  // "Critical Audit Risk" and read the two as contradicting each other. They
+  // never were: this panel checks THIS TENANT'S LEASE CLAUSES, while the AI
+  // Audit Summary judges the property's reconciliation and invoice evidence.
+  // Both can be true at once — a lease can permit every charge while the
+  // invoices backing those charges are unverifiable. Naming each scope is
+  // enough; neither engine's determination changes.
   return `<div class="lv-header">
     <span class="lv-title">LEASE VALIDATION</span>
     <span class="lv-status">${statusText}</span>
   </div>
+  <div class="lv-scope">Scope: this tenant's lease clauses. Property-level reconciliation findings are reported separately in the AI Audit Summary.</div>
   ${cards}${loadingRow}${metaLine}`;
 }
 
@@ -20069,13 +24995,37 @@ async function _runLeaseValidation(panelEl, tenant, recon, totalExpenses) {
   panelEl.style.display = 'block';
 
   const reconciledAt = `${getCamYear() || new Date().getFullYear()}-12-31`;
-  const lineItems    = (recon.includedInvoices || []).map(inv => ({
+
+  // ONE LIST, BOTH SIDES OF THE RATIO.
+  //
+  // `includedInvoices` is what this reconciliation actually billed this tenant
+  // from: CAM-eligible (script.js:10421 filters the pool before the split),
+  // scoped to the CAM year, and with the lease's own excluded categories
+  // already withheld. Striking the pool from THAT list is what makes the
+  // percentage mean something — the numerator is a subset of the denominator by
+  // construction, so the ratio cannot be deflated by a dollar the tenant was
+  // never charged.
+  //
+  // NOT `lastCamPool`, though it is the named CAM pool elsewhere. It is not
+  // year-scoped: runAllocation strikes it from every invoice in the register
+  // (script.js:10917) and the year filter runs later, inside the engine.
+  // Measured — a property carrying a $50,000 2024 management invoice alongside
+  // a $100,000 2025 pool reports lastCamPool = $150,000, and a genuine 20%
+  // breach reads as 13.3%, "within cap". Retained below as the fallback for a
+  // record with no included invoices, ending at the gross figure the caller
+  // passes, which is the same progressively-weaker chain detector #1 uses.
+  const _eligibleLines = (recon.includedInvoices || [])
+    .filter(inv => !window.CamPool || window.CamPool.isEligible(inv));
+  const lineItems = _eligibleLines.map(inv => ({
     category: inv.category || inv.invoiceCategory || 'other',
     amount:   inv.amount   || 0,
   }));
+  const camPool = lineItems.reduce((s, li) => s + (li.amount || 0), 0)
+                  || (typeof lastCamPool !== 'undefined' ? lastCamPool : 0)
+                  || totalExpenses || 0;
 
   // Tier 1 — instant, no server call
-  const t1 = _tier1LeaseChecks(tenant, totalExpenses, lineItems, reconciledAt);
+  const t1 = _tier1LeaseChecks(tenant, camPool, lineItems, reconciledAt);
   panelEl.innerHTML = _renderValidationPanel(t1, { loading: true });
 
   // Look up the lease document for this tenant
@@ -20111,7 +25061,13 @@ async function _runLeaseValidation(panelEl, tenant, recon, totalExpenses) {
       headers: { 'Content-Type': 'application/json', ...(await _authHeaders()) },
       body:    JSON.stringify({
         leaseDocumentId:    leaseDoc.id,
-        reconciliationData: { totalExpenses, year: getCamYear(), lineItems },
+        // THE SAME POOL TIER 1 STATED. The prompt renders this as "Total CAM
+        // Expenses" (api/_validate-lease-contract.js:62) beside these very line
+        // items, and it was handed the gross figure — so the model was told a
+        // total that included invoices the list below does not contain, on a
+        // panel where the deterministic finding directly above now names the
+        // pool. Two tiers, one panel, one denominator.
+        reconciliationData: { totalExpenses: camPool, year: getCamYear(), lineItems },
       }),
     });
     const result = await resp.json().catch(() => ({}));
@@ -20169,16 +25125,32 @@ async function saveCamResults(propertyId, fullResults, year, totalExpenses = nul
   const reconciledAt = new Date().toISOString();
   const rows = (fullResults || []).map(r => {
     const actual   = r.actualCam ?? r.totalAllocated ?? null;
-    const expected = r.expectedCam ?? null;
+    // H — ONLY A STAMPED DOLLAR CEILING IS PERSISTABLE AS expected_cam.
+    //
+    // This took `r.expectedCam` on trust and re-derived the variance from it. When
+    // the producer was handing it a cap PERCENTAGE, this faithfully wrote the
+    // percent into a dollar column and the dollars-minus-percent variance beside
+    // it — 19 such rows are in pilot today. Nothing here can tell 5 (a percent)
+    // from 5.00 (a small ceiling) by inspection, so it no longer tries: the
+    // producer stamps `expectedCamBasis` when the value came from
+    // capBaseAmount × (1 + cap%), and an unstamped result persists null/null.
+    // A legacy in-memory result therefore cannot round-trip its bad pair back in.
+    const _stamped = r.expectedCamBasis === 'cap_ceiling' &&
+                     typeof r.expectedCam === 'number' && Number.isFinite(r.expectedCam);
+    const expected = _stamped ? r.expectedCam : null;
     return {
       property_id:      propertyId,
       tenant_id:        r.tenantId,
       tenant_name:      r.tenantName ?? r.name ?? null,
       actual_cam:       actual,
       expected_cam:     expected,
+      // No expected, no variance. The `?? r.variance` fallback that used to sit
+      // here would have carried a legacy dollars-minus-percent figure straight
+      // back into the column the stamp above just refused to fill — the pair has
+      // to travel together or not at all.
       variance:         (actual !== null && expected !== null)
         ? Math.round((actual - expected) * 100) / 100
-        : (r.variance ?? null),
+        : null,
       allocated_amount: r.allocatedAmount ?? r.totalAllocated ?? actual,
       pro_rata_percent: r.proRataPercent ?? (r.proRata != null ? r.proRata * 100 : null),
       total_expenses:   totalExpenses,
@@ -20444,8 +25416,17 @@ async function _submitLeaseQuestion(docId) {
         .replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;')
         .replace(/\n/g, '<br>');
 
+      // A refusal is not an answer with the sources missing — it is a different
+      // outcome and has to read as one. Asked "who pays the most rent?", the
+      // assistant used to return the nearest pro-rata allocation clause, cited,
+      // and the screen presented it exactly like a real answer. Nothing said it
+      // had failed. When the server reports answered:false the citation block is
+      // suppressed here as well as server-side, so no path can pair "this lease
+      // cannot answer that" with evidence.
+      const answered = result.answered !== false;
+
       // Citation cards — each citation has { quote, section, page }
-      const citations = Array.isArray(result.citations) ? result.citations : [];
+      const citations = answered && Array.isArray(result.citations) ? result.citations : [];
       let citationsHtml = '';
       if (citations.length > 0) {
         const cards = citations.map(c => {
@@ -20460,9 +25441,11 @@ async function _submitLeaseQuestion(docId) {
         if (cards) citationsHtml = `<div class="lc-citations-label">Source from lease:</div>${cards}`;
       }
 
-      // "View in Lease" button (opens the stored PDF)
+      // "View in Lease" button (opens the stored PDF). Kept on a refusal too —
+      // there is nothing to jump to, but reading the lease yourself is the
+      // obvious next move when the assistant says it cannot help.
       const viewBtn = result.fileUrl
-        ? `<button class="lc-view-lease-btn" onclick="openLeaseModal(${JSON.stringify(result.fileUrl)})">View in Lease ↗</button>`
+        ? `<button class="lc-view-lease-btn" data-lease-url="${esc(result.fileUrl)}" onclick="openLeaseModal(this.dataset.leaseUrl)">View in Lease ↗</button>`
         : '';
 
       const kbRead  = result.charsAnalyzed ? Math.round(result.charsAnalyzed / 1000) : null;
@@ -20472,7 +25455,9 @@ async function _submitLeaseQuestion(docId) {
             : `Analyzed ${kbRead}k chars of stored lease text.`
           }</div>`
         : '';
-      ansEl.innerHTML = `<div class="lc-answer-text">${safe}</div>${citationsHtml}${viewBtn}${metaLine}`;
+      const unanswered = answered ? '' :
+        `<div class="lc-answer-noanswer">This lease doesn’t answer that</div>`;
+      ansEl.innerHTML = `${unanswered}<div class="lc-answer-text">${safe}</div>${citationsHtml}${viewBtn}${metaLine}`;
     }
   } catch (e) {
     ansEl.innerHTML = `<span class="lc-answer-error">Network error: ${e.message}</span>`;
@@ -20492,6 +25477,25 @@ async function _deleteLeaseCenterRow(id, propertyId) {
 async function uploadLeaseToStorage(file, propertyId) {
   if (!propertyId) {
     console.warn('[uploadLeaseToStorage] skipped — property has no id yet');
+    return null;
+  }
+
+  // Fail before toBase64 — and before the three retries below, which would
+  // otherwise spend three round trips re-earning the same 413.
+  //
+  // This stores the ORIGINAL file, whole. Unlike extraction (which LeaseIngest
+  // downscales and batches), there is no way to shrink it and still have it be
+  // the source document. So a large scan still EXTRACTS fine; what it loses is
+  // the stored copy the Evidence Viewer would otherwise show. That is a real
+  // limitation and it is now stated, rather than three silent retries and a
+  // null. Raising it needs chunked or direct-to-Supabase upload — new work,
+  // deliberately not started under the freeze.
+  const _L = window.MSRequestLimits;
+  const _v = _L && _L.checkUploadSize(file && file.size, 'lease');
+  if (!_L || !_v.ok) {
+    console.warn('[uploadLeaseToStorage] original not stored:', _v ? _v.error : 'request-limits.js missing');
+    showToast(`⚠️ ${file.name} was read and extracted, but the original is too large to store (${(file.size / 1048576).toFixed(1)} MB; limit ${(_L ? _L.MAX_UPLOAD_BYTES / 1048576 : 0).toFixed(1)} MB). The lease data is saved — the source document just won’t open in the Evidence Viewer. Upload a compressed copy to attach it.`,
+      { color: '#92400e', textColor: '#fef3c7', duration: 14000 });
     return null;
   }
 
@@ -20613,6 +25617,15 @@ async function saveProperty(property) {
     const msg = e?.message || String(e);
     const isNetErr  = /load failed|failed to fetch|networkerror|offline/i.test(msg);
 
+    // SEC-3 — the direct Supabase write does not go through _fetchWithTimeout,
+    // so an expired JWT surfaces here as a PostgREST error rather than a 401.
+    // Route it to the same place: _lsSave() already ran at the top of this
+    // function, so the work is on disk before the user is told anything.
+    if (_isAuthError(e)) {
+      _onAuthLost('saveProperty');
+      return;
+    }
+
     if (isNetErr) {
       // Stay in 'local' — data is safe in localStorage. Show a non-alarming offline notice.
       const prev = document.getElementById('_offlineToast');
@@ -20665,6 +25678,53 @@ let _saveDebounceTimer = null;
 
 // Snapshot current in-memory state back into the canonical _props entry and
 // persist to Supabase. Debounced — rapid successive calls collapse into one write.
+/**
+ * Save NOW, and cancel any debounced save that is already queued.
+ *
+ * S9 — two writers for one record. savePropertyData() debounces an 800ms write;
+ * the Space workspace called saveProperty(prop) directly and immediately. Add an
+ * activity while a debounced write is pending and both fired, racing on the same
+ * row. Today they serialise the same shared object so the outcome happens to
+ * match — that is luck, and it stops being true the moment either path prunes or
+ * transforms before writing.
+ *
+ * Anything that needs "saved, and tell me when" uses this. It clears the pending
+ * timer first, so there is exactly one write in flight and the caller's promise
+ * is the one that resolves it.
+ */
+function savePropertyNow(property) {
+  const prop = property || _props.find(p => p.id === activePropId);
+  if (!prop) return Promise.reject(new Error('No property is open.'));
+  clearTimeout(_saveDebounceTimer);   // the queued write is superseded by this one
+  _saveDebounceTimer = null;
+  let out;
+  try { out = saveProperty(prop); } catch (e) { return Promise.reject(e); }
+  return Promise.resolve(out).then(function (r) {
+    // Derived surfaces are recomputed on any write, wherever it came from.
+    try { _refreshAdvisorSurfaces(prop); } catch (_) {}
+    return r;
+  });
+}
+window.savePropertyNow = savePropertyNow;
+
+// Re-render everything computed FROM the property record rather than stored on
+// it. Debounced: a bulk upload calls savePropertyData() once per file, and the
+// panel only needs to be right when the burst ends.
+let _advisorRefreshTimer = null;
+function _refreshAdvisorSurfaces(prop) {
+  clearTimeout(_advisorRefreshTimer);
+  _advisorRefreshTimer = setTimeout(() => {
+    try {
+      if (window.PropertyWorkspace && window.PropertyWorkspace.renderAttention) {
+        window.PropertyWorkspace.renderAttention(prop);
+      }
+    } catch (e) { logError('_refreshAdvisorSurfaces:attention', e, { propId: prop && prop.id }); }
+    try {
+      if (window.TenantSpace && window.TenantSpace.renderList) window.TenantSpace.renderList(prop);
+    } catch (e) { logError('_refreshAdvisorSurfaces:spaces', e, { propId: prop && prop.id }); }
+  }, 120);
+}
+
 async function savePropertyData() {
   // Tenant-role users have read-only access — writes are not permitted
   if (window.AuthService?.getCurrentUser()?.role === 'tenant') return;
@@ -20697,15 +25757,16 @@ async function savePropertyData() {
     if (sqft) prop.totalSqft = sqft;
     // tenantData is the live working buffer; always sync it to prop.tenants before saving
     // so any field edit (even if prop.tenants wasn't updated) is captured.
-    // Phase 20: when normalized evidence reads are active, omit fieldEvidence from the
-    // JSON blob — the normalized table is authoritative and storing it in both places
-    // bloats properties.data unnecessarily.
+    //
+    // The live records go across whole. Omitting fieldEvidence from the stored
+    // blob is Phase 20's decision and it is applied at the storage boundary
+    // (_stripBlobs), which both the Supabase payload and the localStorage write
+    // pass through. Doing it here instead handed the property record a set of
+    // COPIES with the evidence removed — so the reconciliation detector, which
+    // reads its tenants from that record, could no longer see a confirmation
+    // that tenant_field_evidence had restored moments earlier.
     if (tenantData.some(t => t !== null)) {
-      prop.tenants = tenantData.filter(t => t !== null).map(t => {
-        if (!window.ms_useNormalizedEvidence) return t;
-        const { fieldEvidence, ...rest } = t;  // eslint-disable-line no-unused-vars
-        return rest;
-      });
+      prop.tenants = tenantData.filter(t => t !== null);
     }
     // Guard: only overwrite invoices when invoiceData is populated. In tenant portal
     // mode invoiceData is always empty — writing it would wipe the property's invoice list.
@@ -20733,6 +25794,21 @@ async function savePropertyData() {
     _setSyncStatus('pending');
     clearTimeout(_saveDebounceTimer);
     _saveDebounceTimer = setTimeout(() => saveProperty(prop), 800);
+
+    // The advisor surface is DERIVED state — recompute it whenever the record
+    // it describes changes.
+    //
+    // Reported from the pilot: a CAM cap added from Spaces saved correctly and
+    // showed on the tenant, but Overview went on saying "Missing cap on 1 NNN
+    // tenant". The data was right; the panel had simply been rendered once, on
+    // entry to the property, and nothing recomputed it. A warning that survives
+    // its own fix is worse than no warning — it teaches people the panel is
+    // decorative.
+    //
+    // Hooked here rather than at each call site because every path that changes
+    // a property passes through this function, and adding the refresh per
+    // caller is how one gets forgotten.
+    _refreshAdvisorSurfaces(prop);
   } catch (e) {
     logError('savePropertyData', e, { propId: prop.id, propName: prop.name });
   }
@@ -20764,32 +25840,84 @@ function _mergeCamReconciliationRows(dbData, camRows) {
   const invoiceCount = invoiceList.length;
   const invoiceTotal = invoiceList.reduce((s, inv) => s + (parseFloat(inv.amount) || 0), 0);
 
+  // THE SHARE THAT WAS BILLED, READ BACK — not one recomputed from today's
+  // square footage.
+  //
+  // This rebuilt `proRataPercent` from `leased_sqft / totalSqft` while taking
+  // the dollar figure from the stored `actual_cam`. Two numbers from two
+  // different moments: if a suite was re-measured, a lease amended, or the
+  // property's total square footage corrected after the run, the restored
+  // record showed the amount that was billed beside a percentage that could
+  // never have produced it. `pro_rata_percent` has been a column on
+  // cam_reconciliations since migration 003 and saveCamResults has always
+  // written it; the rebuild simply never read it.
+  const _rowFor = t => camRows.find(r => r && String(r.tenant_id) === String(t.id)) || null;
+  const _pct = v => {
+    const n = typeof v === 'number' ? v : parseFloat(v);
+    return Number.isFinite(n) ? n : null;
+  };
+
+  let _recomputedShares = 0;
   const snapResults = dbData.tenants
     .filter(t => t.actualCam != null)
-    .map(t => ({
-      name:             t.tenant_name || '(Unknown)',
-      allocatedAmount:  t.actualCam,
-      totalAllocated:   t.actualCam,
-      proRata:          (Number(t.leased_sqft) || 0) / totalSqft,
-      proRataPercent:   ((Number(t.leased_sqft) || 0) / totalSqft) * 100,
-      // Per-tenant invoice breakdown isn't recoverable from cam_reconciliations
-      // alone; use the full invoice count as the best approximation.
-      eligibleCount:    invoiceCount,
-      capApplied:       false,
-      capAdjustment:    null,
-      includedInvoices: [],
-      ambiguityFlags:   [],
-    }));
+    .map(t => {
+      const row       = _rowFor(t);
+      const storedPct = row ? _pct(row.pro_rata_percent) : null;
+      // Falls back to a recomputed share only when the row genuinely has none —
+      // a legacy row written before the column was populated. It is still shown,
+      // because a derived share beats no share at all, but it is LABELLED so no
+      // reader mistakes it for what was billed.
+      const pct = storedPct !== null
+        ? storedPct
+        : ((Number(t.leased_sqft) || 0) / totalSqft) * 100;
+      if (storedPct === null) _recomputedShares++;
+      return {
+        name:             t.tenant_name || '(Unknown)',
+        allocatedAmount:  t.actualCam,
+        totalAllocated:   t.actualCam,
+        proRataPercent:   pct,
+        proRata:          pct / 100,
+        proRataSource:    storedPct !== null ? 'stored' : 'recomputed',
+        // Per-tenant invoice breakdown isn't recoverable from cam_reconciliations
+        // alone; use the full invoice count as the best approximation.
+        eligibleCount:    invoiceCount,
+        // NULL, NOT FALSE. `false` is the assertion "no cap was applied", and
+        // these rows do not record whether one was. Every consumer tests this
+        // truthily, so null reads as "unknown" without changing any behaviour —
+        // and the fidelity notice below says so in words.
+        capApplied:       null,
+        capAdjustment:    null,
+        includedInvoices: [],
+        ambiguityFlags:   [],
+      };
+    });
   if (!snapResults.length) return;
+
+  // WHAT THIS RECORD CANNOT TELL YOU. A rebuilt snapshot carries the amount and
+  // the share as billed and nothing else; without this it renders identically to
+  // a full reconciliation, so "0 Caps Applied" and a per-tenant invoice count
+  // read as findings rather than as absent data.
+  const fidelityReasons = [
+    'The per-invoice breakdown was not stored on these rows, so each tenant shows the property-wide invoice count rather than its own.',
+    'Whether a lease cap was applied was not stored either — caps read as unknown here, not as "no cap applied".',
+  ];
+  if (_recomputedShares > 0) {
+    fidelityReasons.push(
+      `${_recomputedShares} tenant${_recomputedShares === 1 ? "'s" : "s'"} pro-rata share had no stored value and has been recomputed from current square footage — it may differ from the share actually billed.`);
+  }
 
   console.log('[CamReconciliation] FALLBACK — rebuilding camReconciliation from cam_reconciliations rows', {
     snapResultsLen: snapResults.length, dbTenantsLen: (dbData.tenants || []).length, totalSqft,
+    storedShares: snapResults.length - _recomputedShares, recomputedShares: _recomputedShares,
   });
   dbData.camReconciliation = {
     propId:       dbData.id,
     propName:     dbData.name || '',
     camYear:      camRows[0]?.year ?? getCamYear(),
     total:        invoiceTotal || snapResults.reduce((s, r) => s + (r.allocatedAmount || 0), 0),
+    fidelity:     'reduced',
+    rebuiltFrom:  'cam_reconciliations',
+    fidelityReasons,
     results:      snapResults,
     invoices:     invoiceList.map((inv, i) => ({ id: `inv-${i}`, ...inv })),
     invoicesFull: invoiceList,
@@ -20799,9 +25927,8 @@ function _mergeCamReconciliationRows(dbData, camRows) {
         name:               t.tenant_name,
         leasedSqft:         Number(t.leased_sqft) || 0,
         totalSqft:          totalSqft,
-        excludedCategories: t.excluded_categories
-          ? t.excluded_categories.split(',').map(s => s.trim().toLowerCase()).filter(Boolean)
-          : [],
+        excludedCategories: _appliedExclusions(t),   // F-02: applied only
+        exclusionsNotApplied: _exclusionState(t.excluded_categories).notApplied,
       })),
     camRuns:      [],
   };
@@ -20811,16 +25938,29 @@ function _mergeCamReconciliationRows(dbData, camRows) {
 // This prevents a timed-out DB write from making the old (empty) DB record win over
 // the localStorage snapshot that was written before the timeout.
 async function loadPropertyData(id) {
+  if (!id) { console.warn('[loadPropertyData] called with no id — returning null'); return null; }
   let dbData  = null;
   let lsData  = _lsLoad(id);
 
   try {
     if (!id || typeof id !== 'string') throw new Error('invalid id');
-    const { data, error } = await db
-      .from('properties')
-      .select('id, name, sqft, data')
-      .eq('id', id)
-      .single();
+    // SEC-11 — RLS stays the primary protection; this is the second layer.
+    //
+    // This read selected by id alone and let the policy decide. That is correct
+    // today — every table has RLS and the properties policy is
+    // `user_id = auth.uid()`. But there was no second layer: one policy
+    // regression in a future migration turns this into a cross-tenant read with
+    // nothing in the application to stop it and no test that would notice.
+    //
+    // The serverless handlers already model the right shape (_ownsProperty
+    // filters on user_id explicitly AND runs behind RLS). The client can do the
+    // same for the cost of one filter. If the session is gone, `uid` is null and
+    // the filter matches nothing — which fails closed, not open.
+    const { data: { user: _sessUser } = {} } = await db.auth.getUser();
+    const uid = _sessUser?.id || null;
+    let _q = db.from('properties').select('id, name, sqft, data').eq('id', id);
+    if (uid) _q = _q.eq('user_id', uid);
+    const { data, error } = await _q.single();
     if (!error && data) {
       const d = data.data || {};
       dbData = {
@@ -20965,10 +26105,23 @@ async function loadPropertyData(id) {
   const _lsOnlyDisps = _lsDisps.filter(d => !_dbDisps.some(dd => dd.id === d.id));
   const _mergedDisps = [..._dbDisps, ..._lsOnlyDisps];
 
+  // Timeline: the same rule as disputes, for the same reason. `base` is chosen
+  // on tenant count, so whichever side lost that comparison would have had its
+  // history discarded — a local session's records dropped because the DB
+  // happened to know about one more tenant, or the reverse. Supabase is
+  // authoritative on a shared event; anything only localStorage has is an event
+  // that has not reached Supabase yet, and it survives.
+  const _dbTl = dbData.timeline || [];
+  const _lsTl = lsData.timeline || [];
+  const _mergedTl = window.TimelineMerge
+    ? TimelineMerge.mergeTimelines(_dbTl, _lsTl)
+    : [..._dbTl, ..._lsTl.filter(e => !_dbTl.some(d => d && e && d.id === e.id))];
+
   console.groupCollapsed('[PIPELINE:4b] MERGE decision');
   console.log('winner:', lsCount > dbCount ? 'localStorage' : 'supabase', { dbTenants: dbCount, lsTenants: lsCount, dbInvoices: (dbData.invoices||[]).length, lsInvoices: (lsData.invoices||[]).length });
   console.log('base.invoices[0]:', JSON.parse(JSON.stringify(base.invoices?.[0] || {})));
   console.log('[LANDLORD disputes]', { source: 'merge', dbDisputesLen: _dbDisps.length, lsDisputesLen: _lsDisps.length, lsOnlyLen: _lsOnlyDisps.length, mergedLen: _mergedDisps.length, dbDisputes: _dbDisps, lsDisputes: _lsDisps });
+  console.log('[TIMELINE merge]', { source: 'db+ls', dbLen: _dbTl.length, lsLen: _lsTl.length, mergedLen: _mergedTl.length });
   console.groupEnd();
 
   // Reconciliation results and disputes: always prefer Supabase — both are
@@ -20977,6 +26130,7 @@ async function loadPropertyData(id) {
   const merged = {
     ...base,
     disputes:          _mergedDisps,
+    timeline:          _mergedTl,
     results:           dbData.results           ?? base.results           ?? null,
     camReconciliation: dbData.camReconciliation ?? base.camReconciliation ?? null,
     // Settlement record (RLUSD proof-of-settlement) — persisted in properties.data;
@@ -21021,12 +26175,23 @@ async function loadPropertyData(id) {
 
 // Restore a property's saved state into working arrays and render the detail view.
 // Called exactly once from selectProperty — after data has been attached to `property`.
-function renderProperty(property) {
+function renderProperty(property, opts = {}) {
   let restored = false;
 
   // ── Header ────────────────────────────────────────────────────────────
-  document.getElementById('propertyName').value             = property.name;
-  document.getElementById('totalSqft').value                = property.totalSqft || '';
+  // NEVER overwrite a field the user is currently typing in. Assigning .value
+  // collapses the caret to the end of the input, and on a phone that reflow
+  // under an open keyboard is enough to drop focus entirely — which is what made
+  // Total Sqft unusable on mobile: every digit re-rendered the property, this
+  // line rewrote the input mid-entry, and the field had to be tapped again.
+  //
+  // The value being written is one this very keystroke just put into the model,
+  // so skipping it loses nothing; the field already shows it.
+  const _active = document.activeElement;
+  const _nameEl = document.getElementById('propertyName');
+  const _sqftEl = document.getElementById('totalSqft');
+  if (_nameEl && _active !== _nameEl) _nameEl.value = property.name;
+  if (_sqftEl && _active !== _sqftEl) _sqftEl.value = property.totalSqft || '';
   document.getElementById('breadcrumbPropName').textContent = property.name;
 
   // ── Tenants ───────────────────────────────────────────────────────────
@@ -21088,7 +26253,7 @@ function renderProperty(property) {
   try {
     const invoices = property.invoices || [];
     if (invoices.length) {
-      invoiceData.splice(0, invoiceData.length, ...invoices);
+      invoiceData.splice(0, invoiceData.length, ...canonicaliseInvoiceAmounts(invoices));
       console.groupCollapsed('[PIPELINE:5] renderProperty invoices restored');
       console.log('invoices[0]:', JSON.parse(JSON.stringify(invoices[0] || {})));
       console.log('invoiceData[0] after splice:', JSON.parse(JSON.stringify(invoiceData[0] || {})));
@@ -21137,7 +26302,12 @@ function renderProperty(property) {
 
   // ── Property subject page (building-as-a-whole records) ────────────────
   try {
-    if (window.PropertyOS) { window.PropertyOS.init(); window.PropertyOS.renderPropertyPage(property); }
+    // Pass the render intent through: a refresh must not collapse the setup card
+    // the user is still filling in (see property-os.js renderSetupSummary).
+    if (window.PropertyOS) {
+      window.PropertyOS.init();
+      window.PropertyOS.renderPropertyPage(property, { allowCollapse: opts.scrollToTop !== false });
+    }
   } catch (e) { }
 
   // ── CAM Results ───────────────────────────────────────────────────────
@@ -21234,7 +26404,15 @@ function renderProperty(property) {
   // Sync onboarding step bar + contextual hints from current property state
   _obSyncState();
 
-  window.scrollTo({ top: 0, behavior: 'smooth' });
+  // Scrolling to the top is right when renderProperty() is a NAVIGATION — the
+  // user just opened a property and should start at its top. It is wrong when
+  // renderProperty() is a REFRESH triggered by an edit: this line ran on every
+  // keystroke in Total Sqft and threw the page to the top mid-number, which on a
+  // phone moved the field out from under the keyboard and dropped focus.
+  //
+  // Defaults to true so every existing navigation caller is unchanged; only the
+  // refresh paths opt out.
+  if (opts.scrollToTop !== false) window.scrollTo({ top: 0, behavior: 'smooth' });
   _obSyncState();
 }
 
@@ -21261,18 +26439,328 @@ async function clearPropertyData() {
   document.getElementById('totalSqft').value    = savedSqft;
 }
 
+// ─── Property Lifecycle ───────────────────────────────────────────────────────
+// Archive is the normal end state; Delete is for mistakes. See
+// docs/PROPERTY_LIFECYCLE.md and docs/ARCHITECTURE_PRINCIPLES.md §4, §5.
+
+// THE activity predicate. One function, one place — Archive-vs-Delete must never
+// disagree between screens, and it will the moment two callers each decide for
+// themselves what "has history" means.
+//
+// Returns the COUNTS as well as the verdict, because the delete confirmation has
+// to name what it would destroy and re-counting it elsewhere is how the dialog
+// starts lying. Sibling of _hasRealActivity() in tenant-space.js, which draws
+// the same line for a Space.
+//
+// Name and square footage are deliberately NOT activity: a property carrying
+// only those is exactly the "wrong address, start again" case Delete exists for.
+function _propertyActivity(prop) {
+  const p = prop || {};
+  const cam = (p.camReconciliation ?? p.results);
+  const counts = {
+    tenants:          (p.tenants  || []).filter(t => t && (t.tenant_name || t.tenantName)).length,
+    leases:           (p.tenants  || []).filter(t => t && (t.leaseUrl || t.lease_url)).length,
+    invoices:         (p.invoices || []).length,
+    reconciliations:  cam && (cam.results || []).length ? 1 : 0,
+    timelineEntries:  (p.timeline || []).length,
+    disputes:         (p.disputes || []).length,
+  };
+  // Settlements live on the reconciliation snapshot when one has been settled.
+  counts.settlements = cam && cam.settlement ? 1 : 0;
+  const total = Object.keys(counts).reduce((n, k) => n + counts[k], 0);
+  return { counts, total, hasActivity: total > 0 };
+}
+
+function _propertyHasActivity(prop) { return _propertyActivity(prop).hasActivity; }
+
+// "3 tenants · 2 leases · 14 timeline entries" — only the non-zero ones, in the
+// order a manager would grieve them.
+function _describePropertyActivity(prop) {
+  const { counts } = _propertyActivity(prop);
+  const LABEL = [
+    ['tenants',         'tenant',            'tenants'],
+    ['leases',          'lease document',    'lease documents'],
+    ['invoices',        'invoice',           'invoices'],
+    ['reconciliations', 'CAM reconciliation','CAM reconciliations'],
+    ['settlements',     'settlement',        'settlements'],
+    ['timelineEntries', 'timeline entry',    'timeline entries'],
+    ['disputes',        'dispute',           'disputes'],
+  ];
+  return LABEL
+    .filter(([k]) => counts[k] > 0)
+    .map(([k, one, many]) => `${counts[k]} ${counts[k] === 1 ? one : many}`)
+    .join(' · ');
+}
+
 function openDeletePropertyModal() {
   if (!activePropId) return;
   const prop = _props.find(p => p.id === activePropId);
-  document.getElementById('delModalPropName').textContent = prop?.name || 'This Property';
-  document.getElementById('delModalConfirmBtn').disabled  = false;
+  const name = prop?.name || 'This Property';
+  document.getElementById('delModalPropName').textContent = name;
   document.getElementById('delModalConfirmBtn').textContent = 'Delete Property';
   document.getElementById('delModalCancelBtn').disabled   = false;
   document.getElementById('deletePropertyModal').classList.add('open');
+
+  const act     = _propertyActivity(prop);
+  const guard   = document.getElementById('delModalGuard');
+  const summary = document.getElementById('delModalActivity');
+  const advice  = document.getElementById('delModalAdvice');
+  const input   = document.getElementById('delModalConfirmName');
+  const btn     = document.getElementById('delModalConfirmBtn');
+
+  // The guidance appears ONLY where there is history to preserve. On an empty
+  // property there is no case for Archive and nothing to explain — showing the
+  // warning anyway trains people to dismiss it unread, which is exactly how it
+  // stops working on the day it matters.
+  if (guard) guard.style.display = act.hasActivity ? 'block' : 'none';
+  if (summary) summary.textContent = act.hasActivity ? _describePropertyActivity(prop) : '';
+  if (advice) advice.style.display = act.hasActivity ? 'block' : 'none';
+
+  if (input) {
+    input.value = '';
+    input.placeholder = name;
+    input.dataset.expect = name;
+    input.style.display = act.hasActivity ? 'block' : 'none';
+  }
+  // Typing the name is required only when there is something to lose. Deleting
+  // a blank property the user just mistyped should not be a ceremony.
+  if (btn) btn.disabled = act.hasActivity;
+  const lbl = document.getElementById('delModalConfirmLabel');
+  if (lbl) lbl.style.display = act.hasActivity ? 'block' : 'none';
+  if (act.hasActivity && input) setTimeout(() => { try { input.focus(); } catch (_) {} }, 60);
+}
+
+// Enables Delete only on an exact name match. Trimmed, because a trailing space
+// pasted from the header is not a different intent — but not case-folded: this
+// is the last gate in front of an irreversible cascade.
+function _delModalNameTyped() {
+  const input = document.getElementById('delModalConfirmName');
+  const btn   = document.getElementById('delModalConfirmBtn');
+  if (!input || !btn) return;
+  btn.disabled = (input.value || '').trim() !== (input.dataset.expect || '');
 }
 
 function closeDeletePropertyModal() {
   document.getElementById('deletePropertyModal').classList.remove('open');
+}
+
+// ─── Archive / Restore ────────────────────────────────────────────────────────
+// The normal end of a property's life. Nothing is destroyed and nothing
+// cascades: one timestamp moves the property out of the active portfolio and
+// out of every aggregate, and clearing it puts it back exactly as it was.
+async function _setPropertyArchived(propId, archivedAt) {
+  const { error } = await db.from('properties')
+    .update({ archived_at: archivedAt })
+    .eq('id', propId);
+  if (error) {
+    if (/archived_at/.test(error.message || '')) {
+      throw new Error('Archiving is not available yet — apply migrations/010_property_archive.sql in Supabase.');
+    }
+    throw error;
+  }
+}
+
+async function archiveActiveProperty() {
+  if (!activePropId) return;
+  const propId = activePropId;
+  const prop   = _props.find(p => p.id === propId);
+  const name   = prop?.name || 'Property';
+
+  // Reachable from Data Health as well as from the Delete dialog, so the
+  // modal's button may not be on screen at all.
+  const btn = document.getElementById('delModalArchiveBtn');
+  const fromModal = !!(btn && document.getElementById('deletePropertyModal')?.classList.contains('open'));
+  if (fromModal) { btn.disabled = true; btn.textContent = 'Archiving…'; }
+
+  try {
+    await _setPropertyArchived(propId, new Date().toISOString());
+  } catch (e) {
+    if (fromModal) { btn.disabled = false; btn.textContent = 'Archive Instead'; }
+    showToast('⚠️ Archive failed — ' + (e.message || String(e)),
+      { color: '#92400e', textColor: '#fef3c7', duration: 6000 });
+    logError('archiveActiveProperty', e, { propId, propName: name });
+    return;
+  }
+
+  // The property still EXISTS, so a converted acquisition stays converted and
+  // keeps its link. Only deletion makes that record untrue.
+  const idx = _props.findIndex(p => p.id === propId);
+  if (idx >= 0) _props.splice(idx, 1);
+  const pidx = portfolio.findIndex(p => p.id === propId);
+  if (pidx >= 0) portfolio.splice(pidx, 1);
+
+  logActivity('property_archived', `Property archived: ${name}`, { severity: 'info', actor: 'User' });
+  _archivedProps = null;            // force a re-read; do not guess the new list
+  _refreshArchivedLink();
+  closeDeletePropertyModal();
+  activePropId = null;
+  renderPortfolio(_props);
+  if (_acqReviews && _acqReviews.length) _renderAcqSection(_acqReviews);
+  showToast(`📦 ${name} archived — its history is intact and it can be restored.`,
+    { duration: 5000 });
+  window.scrollTo({ top: 0, behavior: 'smooth' });
+}
+
+// The Archived view. Loaded on demand rather than kept in memory: archived
+// properties are the rare read, and holding them alongside _props is how one of
+// them ends up in an aggregate.
+let _archivedProps = null;   // null = never loaded; [] = loaded and empty
+
+async function _refreshArchivedLink() {
+  const bar  = document.getElementById('ptfArchivedBar');
+  const link = document.getElementById('ptfArchivedLink');
+  if (!bar || !link) return;
+  let rows = [];
+  try { rows = await loadProperties({ archived: true }); }
+  catch (e) {
+    // Absence of evidence is not evidence of absence (ARCHITECTURE_PRINCIPLES
+    // §8): a failed read must not render "0 archived". Leave the bar as it was.
+    logError('_refreshArchivedLink', e, {});
+    return;
+  }
+  _archivedProps = rows || [];
+  bar.style.display = _archivedProps.length ? 'block' : 'none';
+  link.textContent = _archivedProps.length === 1
+    ? '1 archived property'
+    : `${_archivedProps.length} archived properties`;
+  const list = document.getElementById('ptfArchivedList');
+  if (list && list.style.display !== 'none') _renderArchivedList();
+  // _acqPropertyState() answers 'unknown' until this list exists, so anything
+  // rendered before now was rendered without it. Re-render, or an archived
+  // property's acquisition keeps whatever it guessed at boot.
+  if (_acqReviews && _acqReviews.length) {
+    try { _renderAcqSection(_acqReviews); } catch (_) {}
+  }
+}
+
+function _renderArchivedList() {
+  const list = document.getElementById('ptfArchivedList');
+  if (!list) return;
+  const rows = _archivedProps || [];
+  if (!rows.length) {
+    list.innerHTML = '<div class="ptf-arch-empty">Nothing archived.</div>';
+    return;
+  }
+  // Values go through data-* attributes, never interpolated into the onclick
+  // string. The first version built the handler as
+  //   onclick="restoreProperty('${esc(p.id)}', ${JSON.stringify(p.name)})"
+  // and JSON.stringify emits DOUBLE quotes, inside a double-quoted attribute.
+  // The browser terminated the attribute at the first one, so the handler was
+  // the fragment `restoreProperty('p-1', ` — a syntax error, which compiles to
+  // a null onclick. Restore did nothing at all: no error, no toast, no request,
+  // because the click never reached any code. The property name also leaked out
+  // as two junk attributes.
+  //
+  // esc() into a data attribute is safe for every name — quotes, apostrophes,
+  // ampersands, a building called O'Neill & Sons "Annex".
+  list.innerHTML = rows.map(p => {
+    const when = p.archivedAt ? new Date(p.archivedAt).toLocaleDateString() : null;
+    return `<div class="ptf-arch-row">
+      <div>
+        <div class="ptf-arch-name">${esc(p.name || 'Property')}</div>
+        <div class="ptf-arch-meta">${when ? 'Archived ' + esc(when) : 'Archived'} — history intact</div>
+      </div>
+      <button class="ptf-arch-restore" data-prop-id="${esc(p.id)}" data-prop-name="${esc(p.name || '')}"
+        onclick="restoreProperty(this.dataset.propId, this.dataset.propName)">Restore</button>
+    </div>`;
+  }).join('');
+}
+
+async function toggleArchivedProperties() {
+  const list = document.getElementById('ptfArchivedList');
+  if (!list) return;
+  const opening = list.style.display === 'none';
+  list.style.display = opening ? 'block' : 'none';
+  if (opening) {
+    if (_archivedProps === null) await _refreshArchivedLink();
+    _renderArchivedList();
+  }
+}
+
+async function restoreProperty(propId, name) {
+  try {
+    await _setPropertyArchived(propId, null);
+  } catch (e) {
+    showToast('⚠️ Restore failed — ' + (e.message || String(e)),
+      { color: '#92400e', textColor: '#fef3c7', duration: 6000 });
+    logError('restoreProperty', e, { propId });
+    return;
+  }
+  logActivity('property_restored', `Property restored: ${name || propId}`, { severity: 'info', actor: 'User' });
+  _archivedProps = null;
+  await _refreshArchivedLink();
+  showToast(`✓ ${name || 'Property'} restored to your portfolio.`, { duration: 4000 });
+  await _reloadPortfolioAfterLifecycleChange();
+}
+
+async function _reloadPortfolioAfterLifecycleChange() {
+  try {
+    const properties = await loadProperties();
+    _props = properties || [];
+    _propsLoadedOk = true;
+    portfolio.splice(0, portfolio.length, ..._props);
+    renderPortfolio(_props);
+    if (_acqReviews && _acqReviews.length) _renderAcqSection(_acqReviews);
+  } catch (e) {
+    logError('_reloadPortfolioAfterLifecycleChange', e, {});
+  }
+}
+
+// Reverts any acquisition review whose converted property has just been deleted.
+//
+// PREVENTION — the orphan repair (_acqOrphaned) becomes the backstop rather than
+// the normal path. The record said "converted to this property"; that property no
+// longer exists, so the record is no longer true and must not be kept as though
+// it were.
+//
+// The superseded record is MOVED, never discarded: a reverted acquisition must
+// still be able to say it was converted once and what became of that property.
+// Same rule as the repair path.
+//
+// Called AFTER the property row is gone, deliberately. These are two writes to
+// two tables with no transaction between them, so one of the two orderings has
+// to be chosen for the failure it leaves behind. A failure here leaves an
+// orphan, which _acqOrphaned() detects and offers to repair. Reverting first and
+// then failing to delete would leave a live property that no acquisition points
+// at — and nothing detects that.
+async function _revertAcquisitionsForDeletedProperty(propId) {
+  const reviews = (_acqReviews || []).filter(
+    r => r && r.data && r.data.conversionRecord && r.data.conversionRecord.propertyId === propId
+  );
+  for (const review of reviews) {
+    try {
+      const prior = review.data.conversionRecord;
+      const conversionHistory = Array.isArray(review.data.conversionHistory)
+        ? review.data.conversionHistory.slice() : [];
+      conversionHistory.push(Object.assign({}, prior, {
+        supersededAt: new Date().toISOString(),
+        supersededReason: 'The property created by this conversion was deleted.',
+      }));
+      // Merge, never replace — the analysis, tenants and invoices live here.
+      const nextData = Object.assign({}, review.data, { conversionHistory });
+      delete nextData.conversionRecord;   // the claim is no longer true
+      review.data   = nextData;
+      review.status = 'complete';         // back to Ready to Convert
+      // _saveAcqReview never throws — it toasts and returns false. Read the
+      // result, or a failed write looks exactly like a successful one.
+      const saved = await _saveAcqReview(review);
+      if (!saved) {
+        // In-memory is reverted, the row is not. On the next load the stored
+        // record comes back and _acqOrphaned() flags it — the repair path is
+        // the backstop this ordering was chosen to leave.
+        console.warn('[acq] revert not persisted for review', review.id,
+          '— it will be detected as orphaned on next load');
+      } else {
+        console.log('[acq] reverted review', review.id, 'after property', propId, 'was deleted');
+      }
+    } catch (e) {
+      // Non-fatal by design: the property is already gone, so the review is now
+      // an orphan and the repair path will offer Convert Again. Better a
+      // recoverable state than a half-failed delete.
+      logError('_revertAcquisitionsForDeletedProperty', e, { propId, reviewId: review.id });
+    }
+  }
+  return reviews.length;
 }
 
 async function confirmDeleteProperty() {
@@ -21317,6 +26805,16 @@ async function confirmDeleteProperty() {
 
   logActivity('property_deleted', `Property deleted: ${propName}`, { severity: 'warning', actor: 'User' });
 
+  // Prevention: an acquisition that pointed at this property is no longer
+  // converted to anything. Runs after the delete has succeeded — see the
+  // ordering note on the function.
+  const reverted = await _revertAcquisitionsForDeletedProperty(propId);
+  if (reverted) {
+    _renderAcqSection(_acqReviews);
+    showToast(`${propName} deleted — its acquisition review is available to convert again.`,
+      { duration: 5000 });
+  }
+
   closeDeletePropertyModal();
   activePropId = null;
   renderPortfolio(_props);
@@ -21340,6 +26838,32 @@ function restoreResultsDisplay(snapshot) {
       : inv
     );
     lastTenants      = snapshot.tenants      || [];
+
+    // THE ENGINE RECORDS THE VARIANCE PANEL NEEDS, from the saved reconciliation
+    // rather than from a re-run. Both globals are assigned in runAllocation and
+    // nowhere else, so before this a restored screen derived its breakdown from
+    // an empty invoice list: pool 0, every bucket 0, and the whole difference
+    // dumped into "Not attributed".
+    //
+    // Falls back to the invoice register for a snapshot written before these
+    // were stored. That is a partial answer — the register carries no
+    // matchConfidence, so a direct invoice reads as shared — but it is a far
+    // better one than nothing, and the alternative is that every reconciliation
+    // saved to date restores broken. The reconciled subset has no fallback: an
+    // older snapshot cannot say which invoices survived the year filter, so it
+    // is left undefined, which derive() reads as "no year filter ran".
+    if (Array.isArray(snapshot.engineInvoices) && snapshot.engineInvoices.length) {
+      _lastEngineInvoices = snapshot.engineInvoices.map(i => ({ ...i }));
+      const _keys = Array.isArray(snapshot.reconciledKeys) ? new Set(snapshot.reconciledKeys) : null;
+      const _VB = window.VarianceBreakdown;
+      _lastReconciledInvoices = (_keys && _VB)
+        ? _lastEngineInvoices.filter(i => _keys.has(_VB.invoiceKey(i)))
+        : _lastEngineInvoices;
+    } else if (Array.isArray(invoiceData) && invoiceData.length) {
+      _lastEngineInvoices     = invoiceData.map(i => ({ ...i }));
+      _lastReconciledInvoices = _lastEngineInvoices;
+    }
+
     console.groupCollapsed('[PIPELINE:6] restoreResultsDisplay');
     console.log('lastInvoicesFull[0]:', JSON.parse(JSON.stringify(lastInvoicesFull[0] || {})));
     console.log('lastResults[0].includedInvoices[0]:', JSON.parse(JSON.stringify(lastResults[0]?.includedInvoices?.[0] || {})));
@@ -21357,15 +26881,118 @@ function restoreResultsDisplay(snapshot) {
   const body    = document.getElementById('resultsBody');
   document.getElementById('resultsTitle').textContent = `${getCamYear()} CAM — ${lastPropName}`;
 
-  let html = `<div class="summary-bar">
-    <strong>Total Expenses:</strong> ${fmt(lastTotal)}
-    &nbsp;|&nbsp; <strong>Tenants:</strong> ${lastResults.length}
-    &nbsp;|&nbsp; <strong>Invoices:</strong> ${lastInvoicesFull.length}
-  </div>`;
+  // THE SAME PANEL THE FRESH RUN DRAWS, FROM THE STORED ROWS.
+  //
+  // Opening a saved reconciliation used to drop the reader two generations back:
+  // a bare summary line and three stats per tenant. No KPI row, no variance
+  // banner and no way into the breakdown, no audit findings, no per-tenant
+  // billing chip, no roster — none of the surface a manager was taught to read
+  // on the run that produced these numbers. It was the same reconciliation
+  // wearing an older face, and the parts missing were exactly the parts that say
+  // whether the money on screen may be billed.
+  //
+  // _buildReconciliationSummaryHtml is a pure builder over (results, invoices):
+  // every figure comes from the stored rows, so THE SAVED RECORD IS NOT
+  // RECOMPUTED — what it adds is the reporting around them. It also populates
+  // _lastReconIssues and _lastVarianceBreakdown, which is why "Open Dispute" and
+  // the variance panel were inert on this path.
+  //
+  // THE SAVED ENGINE RECORDS, not the register. _lastEngineInvoices is restored
+  // from the snapshot above; the register was a stand-in for it, and a poor one
+  // — it carries no matchConfidence, so every direct invoice read as shared, and
+  // the reconciled subset was passed as `undefined`, so an out-of-year invoice
+  // could not be named as out-of-year.
+  //
+  // The SECOND argument is what totalPool and camPoolTotal are struck from, and
+  // it stays lastInvoicesFull. That list now carries camEligible again — the
+  // register block rehydrates it from invoiceData, and _stripBlobs no longer
+  // drops the field on the way to storage — which is what puts the "of $X
+  // invoiced" qualifier back on the CAM Pool KPI.
+  const _summaryHtml = (() => {
+    try {
+      const _eng = (Array.isArray(_lastEngineInvoices) && _lastEngineInvoices.length)
+        ? _lastEngineInvoices
+        : (Array.isArray(invoiceData) && invoiceData.length ? invoiceData : lastInvoicesFull);
+      const _rec = (Array.isArray(_lastReconciledInvoices) && _lastReconciledInvoices.length)
+        ? _lastReconciledInvoices
+        : undefined;
+      return _buildReconciliationSummaryHtml(
+        lastResults, lastInvoicesFull, lastPropName, _eng, _rec);
+    } catch (e) {
+      // A restored reconciliation must still render if the summary cannot be
+      // built. The cards below are the record; the panel is the reporting.
+      console.warn('[restoreResultsDisplay] summary panel not built:', e && e.message);
+      return '';
+    }
+  })();
+
+  // NEEDS REVIEW, ON THIS PATH TOO. _buildNeedsReviewRollupHtml was called only
+  // from runAllocation, so a restored reconciliation showed none of it: the four
+  // allocation flags on the fresh screen — an invoice billed in full to one
+  // tenant, another dated outside a tenant's occupancy, a third that could not
+  // be placed at all — simply were not there after a reload. The flags
+  // themselves survive on lastResults; nothing was rendering them.
+  //
+  // It is a pure builder over the stored results and recomputes nothing. The
+  // result-card anchor ids its buttons scroll to are already emitted on this
+  // path, which was the precondition recorded in
+  // PHASE2_FOLLOWUP_RESTORE_ROLLUP.md — this is that follow-up.
+  const _rollupHtml = (() => {
+    try { return _buildNeedsReviewRollupHtml(lastResults); }
+    catch (e) {
+      console.warn('[restoreResultsDisplay] needs-review rollup not built:', e && e.message);
+      return '';
+    }
+  })();
+
+  let html = _rollupHtml + _summaryHtml + `<div class="summary-bar">
+    <div class="summary-bar-item"><span class="summary-bar-label">Total Expenses</span><strong>${fmt(lastTotal)}</strong></div>
+    <div class="summary-bar-item"><span class="summary-bar-label">Tenants</span><strong>${lastResults.length}</strong></div>
+    <div class="summary-bar-item"><span class="summary-bar-label">Invoices</span><strong>${lastInvoicesFull.length}</strong></div>
+  </div>
+  <div class="pro-rata-note">Pro-Rata % = Tenant Sqft &divide; Total Property Sqft &nbsp;<span class="pro-rata-note-tip" title="The percentage of the property occupied by a tenant. This percentage determines their share of common area expenses.">&#x24D8;</span></div>`;
 
   lastResults.forEach(r => {
-    html += `<div class="result-card">
-      <div class="r-name">${esc(r.name)}</div>
+    // This renderer and the one in runAllocation both write to #resultsBody, but
+    // this one is what a landlord sees when they OPEN a saved reconciliation
+    // rather than run a fresh one. It carried only "View Calculation", so the
+    // saved view silently lost two actions the fresh view has — including the
+    // one the Modified Gross finding tells the user to run
+    // ("use 'Validate Against Lease' on <tenant>'s result card"), which made
+    // that instruction a dead end on this path.
+    //
+    // Three things are restored here, all presentation:
+    //   · the full action row;
+    //   · the lv-panel mount div — _runLeaseValidation starts with
+    //     `if (!panelEl) return;`, so the button without the panel is a no-op;
+    //   · the result-card anchor id — structural parity with the fresh card.
+    //     To be precise about that last one: _buildNeedsReviewRollupHtml is
+    //     called only from runAllocation, so the "Needs Review" rollup that
+    //     scrolls to result-card-<name> is NOT emitted on this path. The anchor
+    //     repairs no broken control here; it is held as a precondition for
+    //     wiring that rollup into the restore path later. See
+    //     PHASE2_FOLLOWUP_RESTORE_ROLLUP.md.
+    //
+    // tdIdx / _lvPanelId are derived exactly as runAllocation derives them so
+    // both renderers address the same tenant record and the same panel node.
+    //
+    // Deliberately NOT unified with runAllocation's card yet: the shared-helper
+    // refactor is the durable fix, but this is a pilot-window change and the
+    // drift is now caught by test-restore-renderer-parity.js instead.
+    const tdIdx      = tenantData.findIndex(t => t && t.tenant_name === r.name);
+    const _lvPanelId = `lv-panel-${tdIdx >= 0 ? tdIdx : r.name.replace(/[^a-zA-Z0-9]/g, '-')}`;
+    // The calculation state, the same badge and the same derivation the fresh
+    // card carries. It says how far to trust the figure beneath it — whether the
+    // row was apportioned, capped, or is missing something — and a reopened
+    // reconciliation showed the figure with that qualification removed.
+    const _rCalcSt = (() => {
+      try { return _deriveCalcState(r, tenantData.find(t => t && t.id === r.tenantId)); }
+      catch (_) { return null; }
+    })();
+    html += `<div class="result-card" id="${_resultCardAnchorId(r.name)}">
+      <div class="r-name">${esc(r.name)}${_rCalcSt
+        ? `<span class="rc-calc-state ${_rCalcSt.cls}" title="Describes the CAM calculation for this row, not the tenant's standing. Audit exceptions are listed in the AI Audit Summary.">${_rCalcSt.label}</span>`
+        : ''}</div>
       <div class="result-grid">
         ${stat('Allocated Amount',  fmt(r.allocatedAmount))}
         ${stat('Pro-Rata Share',    (r.proRata * 100).toFixed(2) + '%')}
@@ -21374,7 +27001,53 @@ function restoreResultsDisplay(snapshot) {
       ${r.capApplied
         ? `<div class="cap-badge">Cap applied — ${fmt(r.capAdjustment)} reduced</div>`
         : ''}
-      <button class="explain-btn" onclick="openExplainPanel('${esc(r.name)}')">&#x1F4CA; View Calculation</button>
+      ${(() => {
+        // N2 — THE BREAKDOWN THE SNAPSHOT ALREADY CARRIES.
+        //
+        // This card used to render none, so reopening a saved reconciliation
+        // showed the dollars and dropped every charge-level fact behind them.
+        // The data was never missing — `includedInvoices` restores intact — so
+        // nothing here is reconstructed, inferred or recomputed: it is the same
+        // builder the fresh card calls, over the same stored shares.
+        //
+        // When the snapshot GENUINELY carries no per-invoice detail — a record
+        // rebuilt from cam_reconciliations rows, where includedInvoices is []
+        // by construction — this renders nothing and says so, rather than
+        // inventing a breakdown or leaving the absence unexplained.
+        const _n = (r.includedInvoices || []).length;
+        if (!_n) {
+          return `<div class="rc-breakdown-absent" role="note">
+            Per-invoice detail was not stored with this saved reconciliation, so the charges behind
+            ${fmt(r.allocatedAmount)} cannot be listed here. The amount and share above are as billed.
+            <span class="rc-breakdown-absent-cta">Re-run the reconciliation to rebuild the breakdown.</span>
+          </div>`;
+        }
+        return `<button class="rc-breakdown-toggle" type="button"
+            onclick="(function(btn){var w=btn.nextElementSibling;var open=w.style.display==='block';w.style.display=open?'none':'block';btn.classList.toggle('rc-breakdown-toggle--open',!open);})(this)">
+            &#x25B8; View invoice breakdown (${_n} invoice${_n !== 1 ? 's' : ''})
+          </button>
+          <div class="rc-breakdown-wrap" style="display:none;">${_invoiceBreakdownHtml(r)}</div>`;
+      })()}
+      <div class="result-card-actions">
+        <button class="explain-btn" onclick="openExplainPanel('${esc(r.name)}')">&#x1F4CA; View Calculation</button>
+        <button class="lv-validate-btn" onclick="_startLeaseValidation('${_lvPanelId}',${tdIdx})">&#x1F50D; Validate Against Lease</button>
+        ${(() => {
+          // The label follows billing state. "Tenant Statement" on a tenant the
+          // gate is about to refuse promises a document it cannot produce, and
+          // sends the manager through a refusal to find that out.
+          let _b = null;
+          try {
+            const AXs = window.AuditExposure;
+            const _ex = AXs ? AXs.deriveExposure(buildAuditSummary(), lastTotal || 0) : null;
+            _b = _tenantBillingState(r.name, _ex);
+          } catch (_) { _b = null; }
+          const _lbl = _b ? _b.cta : '&#x1F9FE; Tenant Statement';
+          const _ttl = _b ? _b.reason : 'Generate the tenant-facing CAM statement';
+          return `<button class="tenant-stmt-card-btn${_b && _b.state !== 'billable' ? ' tenant-stmt-card-btn--held' : ''}"
+            onclick="generateTenantStatement('${esc(r.name)}')" title="${esc(_ttl)}">${_lbl}</button>`;
+        })()}
+      </div>
+      <div id="${_lvPanelId}" class="lv-panel" style="display:none;"></div>
     </div>`;
   });
 
@@ -21590,14 +27263,17 @@ function _renderAcqSection(reviews) {
     const tenantCount  = (d.tenants  || []).length;
     const invoiceCount = (d.invoices || []).length;
     const date = r.created_at ? new Date(r.created_at).toLocaleDateString() : '';
-    const convertedNote = r.status === 'converted' && d.conversionRecord?.convertedAt
-      ? `<div class="acq-card-converted-note">Acquired ${new Date(d.conversionRecord.convertedAt).toLocaleDateString()}</div>`
-      : '';
+    const orphaned = _acqOrphaned(r);
+    const convertedNote = orphaned
+      ? '<div class="acq-card-converted-note acq-card-orphan-note">Property no longer exists — open to convert again</div>'
+      : (r.status === 'converted' && d.conversionRecord?.convertedAt
+        ? `<div class="acq-card-converted-note">Acquired ${new Date(d.conversionRecord.convertedAt).toLocaleDateString()}</div>`
+        : '');
     return `
     <div class="acq-card${r.status === 'converted' ? ' converted' : ''}" onclick="selectAcquisitionReview('${esc(r.id)}')">
       <div class="acq-card-name">${esc(r.name)}</div>
       <div class="acq-card-meta">${esc(date)}</div>
-      <span class="acq-card-status ${esc(r.status)}">${esc(r.status)}</span>
+      <span class="acq-card-status ${orphaned ? 'orphaned' : esc(r.status)}">${orphaned ? 'converted' : esc(r.status)}</span>
       ${convertedNote}
       <div class="acq-card-stats">
         <div class="acq-card-stat"><strong>${tenantCount}</strong> Tenants</div>
@@ -21661,8 +27337,11 @@ function selectAcquisitionReview(id) {
 
   document.getElementById('acqDetailTitle').textContent = review.name;
   const badge = document.getElementById('acqDetailBadge');
-  badge.textContent = review.status;
-  badge.className = 'acq-detail-badge ' + review.status;
+  // "converted" on its own is the claim that misled: it stayed true-looking
+  // after the property it referred to was deleted.
+  const _orphan = _acqOrphaned(review);
+  badge.textContent = _orphan ? 'converted — property no longer exists' : review.status;
+  badge.className = 'acq-detail-badge ' + (_orphan ? 'orphaned' : review.status);
   _renderAcqConvertAction(review);
 
   const sqftEl = document.getElementById('acqTotalSqft');
@@ -21723,14 +27402,83 @@ async function deleteActiveAcquisitionReview() {
 
 // ── Acquisition → Property conversion ─────────────────────────────────────────
 
+// Is this review pointing at a property that no longer exists?
+//
+// A converted review keeps conversionRecord.propertyId forever, and deleting
+// the property never touched it — so the review went on claiming Converted with
+// nothing behind it, and the duplicate guard in convertAcquisitionToProperty()
+// (which tests for the RECORD, not the property) sealed it shut permanently.
+// This predicate is the whole repair: everything else reads from it.
+//
+// _propsLoadedOk is not optional. Without it a failed properties load would
+// make EVERY converted review look orphaned, and the product would tell a user
+// their buildings had been deleted because the network blipped. Absence of
+// evidence is not evidence of deletion — say nothing until the load succeeded.
+// What became of the property this review was converted to?
+//
+//   'none'     — the review was never converted
+//   'active'   — the property exists in the portfolio
+//   'archived' — it exists but has been archived; the conversion is still true
+//   'missing'  — it is gone, and this review is an orphan
+//   'unknown'  — we have not established which, and must say nothing
+//
+// The 'unknown' case is not defensive padding, it is the whole point.
+// ARCHITECTURE_PRINCIPLES §8: absence of evidence is not evidence of absence.
+// Two separate reads can leave us ignorant here — a failed properties load
+// (_propsLoadedOk false) and an archived list that has not come back yet
+// (_archivedProps null). Either one, and an existing property looks deleted.
+// Archiving Lakeview used to report its acquisition as "property no longer
+// exists"; the property was fine, it was just not in the list being searched.
+function _acqPropertyState(review) {
+  const pid = review?.data?.conversionRecord?.propertyId;
+  if (!pid || review.status !== 'converted') return 'none';
+  if (!_propsLoadedOk) return 'unknown';
+  if ((_props || []).some(p => p && p.id === pid)) return 'active';
+  // Not active. It is either archived or deleted, and until the archived list
+  // has been read those are indistinguishable — so do not guess.
+  if (_archivedProps === null) return 'unknown';
+  if (_archivedProps.some(p => p && p.id === pid)) return 'archived';
+  return 'missing';
+}
+
+// Is this review pointing at a property that no longer exists?
+//
+// A converted review keeps conversionRecord.propertyId forever, and deleting
+// the property never touched it — so the review went on claiming Converted with
+// nothing behind it, and the duplicate guard in convertAcquisitionToProperty()
+// (which tests for the RECORD, not the property) sealed it shut permanently.
+//
+// Deletion now reverts the acquisition directly
+// (_revertAcquisitionsForDeletedProperty), so this is the BACKSTOP rather than
+// the normal path — it catches the case where the property row is gone but the
+// revert did not land.
+function _acqOrphaned(review) {
+  return _acqPropertyState(review) === 'missing';
+}
+
 function _renderAcqConvertAction(review) {
   const el = document.getElementById('acqConvertAction');
   if (!el) return;
   const cr = review?.data?.conversionRecord;
-  if (cr?.propertyId) {
+  if (_acqOrphaned(review)) {
+    // Say what is true, then offer the way out. The analysis, tenants and
+    // invoices on this review are untouched — only the property built from
+    // them is gone, so converting again rebuilds it from the same evidence.
+    el.innerHTML = `<div class="acq-orphan">
+      <div class="acq-orphan-head">Converted — property no longer exists</div>
+      <div class="acq-orphan-body">The property created from this review has been deleted.
+        This review, its documents and its analysis are all still here.</div>
+      <button class="acq-convert-btn" onclick="_showAcqConvertModal()"
+        title="Rebuild the property from this review's analysis">&#x1F3E2; Convert Again</button>
+    </div>`;
+  } else if (cr?.propertyId) {
+    // Archived is still converted — the property exists, so the record is true.
+    // The badge makes the state legible rather than merely consistent.
+    const archivedBadge = _acqPropertyState(review) === 'archived'
+      ? ' <span class="acq-archived-badge">Archived</span>' : '';
     el.innerHTML = `<span class="acq-converted-link"
       onclick="event.preventDefault();closeAcquisitionDetail();selectProperty('${esc(cr.propertyId)}')">
-      Converted ✓ — Open Property →</span>`;
+      Converted ✓ — Open Property →</span>${archivedBadge}`;
   } else if (review.status === 'complete') {
     el.innerHTML = `<button class="acq-convert-btn" onclick="_showAcqConvertModal()"
       title="Create a managed property from this acquisition review">
@@ -21745,6 +27493,22 @@ function _showAcqConvertModal() {
   if (!review) return;
   const nameEl = document.getElementById('acqConvertModalName');
   if (nameEl) nameEl.textContent = review.name;
+  // A repair is not a first conversion and must not be described as one. The
+  // standard copy promises the review will be "preserved and marked converted",
+  // which reads as nonsense to someone who is here precisely because that
+  // marking outlived the property.
+  const orphan = _acqOrphaned(review);
+  const titleEl = document.getElementById('acqConvertModalTitle');
+  const repairEl = document.getElementById('acqConvertModalRepair');
+  const btn = document.getElementById('acqConvertConfirmBtn');
+  if (titleEl) titleEl.innerHTML = orphan ? '&#x1F3E2; Convert Again' : '&#x1F3E2; Acquire Property';
+  if (btn) btn.textContent = orphan ? 'Convert Again' : 'Acquire Property';
+  if (repairEl) {
+    repairEl.style.display = orphan ? 'block' : 'none';
+    repairEl.textContent = orphan
+      ? 'The property built from this review was deleted. Converting again rebuilds it from the same analysis — a new property is created, and the record of the previous one is kept on this review.'
+      : '';
+  }
   document.getElementById('acqConvertModal').style.display = 'flex';
 }
 
@@ -21756,10 +27520,17 @@ async function convertAcquisitionToProperty() {
   const review = _acqReviews.find(r => r.id === _activeAcqId);
   if (!review) return;
 
-  // Duplicate prevention
-  if (review.data?.conversionRecord?.propertyId) {
+  // Duplicate prevention — but NOT when the duplicate no longer exists.
+  //
+  // This guard tests for the conversion RECORD. Once the property was deleted
+  // the record outlived the thing it was protecting against, so it stopped
+  // preventing a duplicate and started preventing a repair. The bypass is
+  // scoped to exactly that state: an orphan, and nothing else.
+  const _priorRecord = review.data?.conversionRecord;
+  const _isRepair    = _acqOrphaned(review);
+  if (_priorRecord?.propertyId && !_isRepair) {
     _hideAcqConvertModal();
-    alert('This review has already been converted.\nProperty ID: ' + review.data.conversionRecord.propertyId);
+    alert('This review has already been converted.\nProperty ID: ' + _priorRecord.propertyId);
     return;
   }
 
@@ -21793,9 +27564,27 @@ async function convertAcquisitionToProperty() {
       waltAtAcquisition:      prop._conversionSource.waltAtAcquisition,
     };
 
-    // Mark review as converted (in-memory + DB)
+    // Mark review as converted (in-memory + DB).
+    //
+    // A repair does not erase the conversion it replaces. Same rule as the
+    // Space workspace: nothing important disappears, the original record is
+    // preserved and the history shows how it evolved. The superseded record
+    // moves to conversionHistory with the reason it was superseded, so the
+    // review can still answer "this was converted once before, and that
+    // property was deleted".
+    //
+    // Object.assign onto review.data, never a replacement — analysis, tenants
+    // and invoices live on that object and are the point of preserving it.
+    const conversionHistory = Array.isArray(review.data?.conversionHistory)
+      ? review.data.conversionHistory.slice() : [];
+    if (_isRepair && _priorRecord?.propertyId) {
+      conversionHistory.push(Object.assign({}, _priorRecord, {
+        supersededAt: new Date().toISOString(),
+        supersededReason: 'The property created by this conversion no longer exists.',
+      }));
+    }
     review.status = 'converted';
-    review.data   = Object.assign({}, review.data, { conversionRecord });
+    review.data   = Object.assign({}, review.data, { conversionRecord, conversionHistory });
     await _saveAcqReview(review);
 
     // Update detail header badge + action area
@@ -21886,12 +27675,12 @@ async function acqHandleLeaseFiles(fileList) {
       const leaseText = await extractLeaseText(file);
       let extracted;
       if (leaseText && leaseText.length >= 50) {
-        extracted = await callClaudeForLease(leaseText);
+        extracted = await callClaudeForLease(leaseText, file.name);
       } else {
         extracted = await callClaudeWithPdfDirect(file);
       }
       if (!extracted) throw new Error('Extraction returned null');
-      const normalized = normalizeTenant(extracted);
+      const normalized = mintTenantIdentity(normalizeTenant(extracted));
       Object.assign(placeholder, normalized, { _status: 'ok', _fileName: file.name });
     } catch (e) {
       console.warn('[acq] lease extraction failed:', file.name, e.message);
@@ -21923,7 +27712,7 @@ async function acqHandleInvoiceFiles(fileList) {
     _renderAcqInvoiceList();
 
     try {
-      const d = await callClaude(file, INVOICE_PROMPT);
+      const d = await callClaude(file, 'invoice_extraction');
       if (d) {
         const vendorName = d.vendorName || file.name.replace(/\.(pdf|jpe?g|png|webp)$/i, '');
         let category     = d.category || 'other';
@@ -22749,14 +28538,24 @@ async function init() {
   try {
     const properties = await loadProperties();
     _props = properties || [];
+    _propsLoadedOk = true;   // gates the orphaned-acquisition check
     portfolio.splice(0, portfolio.length, ..._props);
+    _refreshArchivedLink();  // fire-and-forget; the portfolio must not wait on it
     renderPortfolio(properties);
     _loadAcqReviewsAndRender();
-    // Phase 21: land on the AI Command Center (landlord only; guarded — any
-    // failure falls back to the portfolio view already rendered above).
-    try {
-      if (window.CommandCenter && window.AuthService?.getCurrentUser?.()?.role !== 'tenant') showCommandCenter();
-    } catch (e) { console.warn('[CommandCenter] landing failed — portfolio shown instead:', e?.message); }
+    // Land on the PORTFOLIO, not the Command Center.
+    //
+    // Phase 21 landed here on the AI Command Center, and showCommandCenter()
+    // sets portfolioDashboard.style.display = 'none'. So renderPortfolio() ran
+    // and was immediately hidden: a signed-in user saw the assistant, never the
+    // properties, and never the Add Property button — which is why it only
+    // appeared after opening a property and coming back, since that route calls
+    // renderPortfolio() again.
+    //
+    // MainStreet is the operating system for managing properties. The portfolio
+    // is the work; the Command Center assists it and is one tap away, below the
+    // property list and from the header. Reordering content inside the dashboard
+    // achieved nothing while the app opened on a different view entirely.
   } catch (e) {
     const isNet = /load failed|failed to fetch|networkerror|offline/i.test(e?.message || '');
     if (!isNet) logError('init.loadProperties', e, {});
@@ -22828,3 +28627,89 @@ async function init() {
   if (document.readyState === 'loading') document.addEventListener('DOMContentLoaded', attach);
   else attach();
 })();
+
+// ─── No async user action may fail silently ───────────────────────────────────
+// Audited every async function reachable from an inline handler: 20 of 45 had no
+// try/catch at all. Each ends with its user feedback downstream of bare awaits,
+// so a rejected promise skipped the feedback and rejected into nothing — the
+// button simply appeared not to work. That is how the lease Done button
+// presented in the pilot: every field filled in, pressed, nothing happened.
+//
+// Wrapping at the dispatch level rather than editing twenty bodies, because the
+// twenty is not the point — the next async handler someone adds would have the
+// same hole. This guarantees the invariant for all of them: a failure leaves the
+// user's data untouched, says what broke, and is logged for debugging.
+//
+// Handlers that already catch are still wrapped; their own catch runs first and
+// this only sees what they rethrow.
+const _ASYNC_USER_ACTIONS = [
+  'addNewProperty', 'clearBulkResults', 'removeBulkTenant', 'selectProperty',
+  'submitDispute', '_confirmDrawReject', '_deleteLeaseCenterRow', '_dwResolveWithNote',
+  'bulkApproveReady', 'clearInvResults', 'clearPropertyData', 'confirmCreateDrawRequest',
+  'confirmDocsRequest', 'confirmYardiImport', 'importGLToInvoices', 'navigateToPropertyTenant',
+  'removeInvItem', 'resolveDispute', 'submitInvDispute', 'updateDrawStatus',
+  'saveBulkTenant', 'savePropertyAndContinue', 'confirmDeleteProperty', 'confirmAllocation',
+  // Property Lifecycle. toggleArchivedProperties awaits a read that can fail;
+  // unguarded, a rejection there is a click that does nothing and says nothing.
+  'archiveActiveProperty', 'restoreProperty', 'toggleArchivedProperties',
+  'runAllocation', 'handleBulkLeases', 'handleBatchInvoices', 'generateTenantStatement',
+  'loadDemo', 'openReviewItem', 'markTenantReviewAcknowledged', 'openLeaseBlockerFix', 'openReviewItemFix',
+];
+
+// What the user is told when an action fails. Names the action in their words.
+const _ACTION_LABEL = {
+  saveBulkTenant: 'save this lease', savePropertyAndContinue: 'save the property',
+  addNewProperty: 'create the property', confirmDeleteProperty: 'delete the property',
+  archiveActiveProperty: 'archive the property', restoreProperty: 'restore the property',
+  toggleArchivedProperties: 'open the archived properties',
+  handleBulkLeases: 'upload those leases', handleBatchInvoices: 'upload those invoices',
+  runAllocation: 'run the reconciliation', confirmAllocation: 'run the reconciliation',
+  generateTenantStatement: 'generate that statement', submitDispute: 'submit the dispute',
+  resolveDispute: 'resolve the dispute', importGLToInvoices: 'import the GL file',
+  confirmYardiImport: 'import from Yardi', removeBulkTenant: 'remove that tenant',
+  clearPropertyData: 'clear the property data', updateDrawStatus: 'update the draw request',
+};
+
+function _guardAsyncUserActions(scope) {
+  const g = scope || (typeof window !== 'undefined' ? window : null);
+  if (!g || g.__asyncActionsGuarded) return 0;
+  let wrapped = 0;
+  for (const name of _ASYNC_USER_ACTIONS) {
+    const fn = g[name];
+    if (typeof fn !== 'function' || fn.__guarded) continue;
+    const guarded = async function (...args) {
+      try {
+        return await fn.apply(this, args);
+      } catch (e) {
+        // Logged for debugging, surfaced for the user, data left as it was.
+        try { logError('asyncAction/' + name, e, {}); } catch (_) {}
+        const what = _ACTION_LABEL[name] || 'complete that action';
+        try {
+          showToast(`Could not ${what} — ${e?.message || 'something went wrong'}. Nothing was changed; please try again.`,
+                    { color: '#92400e', textColor: '#fef3c7', duration: 8000 });
+        } catch (_) { console.error('[asyncAction]', name, e); }
+        return undefined;
+      }
+    };
+    guarded.__guarded = true;
+    guarded.__wraps = name;
+    g[name] = guarded;
+    wrapped++;
+  }
+  g.__asyncActionsGuarded = true;
+  return wrapped;
+}
+
+if (typeof window !== 'undefined') {
+  // Exposed so the invariant can be asserted from outside. A top-level `const`
+  // in a classic script is NOT a window property, so without this the guard is
+  // unobservable and any test of it silently measures nothing.
+  window._ASYNC_USER_ACTIONS = _ASYNC_USER_ACTIONS;
+  window._guardAsyncUserActions = _guardAsyncUserActions;
+  const _install = () => { window.__asyncGuardCount = _guardAsyncUserActions(); };
+  // Sign-in intent runs before the async auth check resolves, so the form is on
+  // screen the moment the page paints.
+  const _boot = () => { _install(); _maybeShowLoginFromIntent(); };
+  if (document.readyState === 'loading') document.addEventListener('DOMContentLoaded', _boot);
+  else _boot();
+}

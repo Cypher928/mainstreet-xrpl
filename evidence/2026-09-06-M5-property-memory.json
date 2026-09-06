@@ -1,0 +1,185 @@
+{
+  "phase": "M5 — read-only Property Memory expansion",
+  "date": "2026-09-06",
+  "branch": "claude/validation-runs-analysis-ji1zb3",
+  "base_commit": "bc721a2",
+  "commit": "bafaf52",
+  "capabilities_added": [
+    "get_lease_evidence",
+    "get_space",
+    "get_timeline",
+    "get_disputes"
+  ],
+  "get_lease": {
+    "built": false,
+    "reason": "Its terms travel through get_tenant (space.lease) and its provenance through get_lease_evidence.",
+    "finding": "The correction's premise did not fully hold. LeaseIntelligence.CANONICAL_FIELDS has 13 entries; space.lease exposes 5 as values plus url/fileName, and tenant_name comes via space.tenantName. The remaining SEVEN — cap_base_amount, admin_fee_pct, gross_up_pct, expense_stop, audit_rights, pro_rata_method, renewal_options — carry provenance with NO VALUE anywhere in PropertyRecord. Measured: a tenant with admin_fee_pct 15 produces a response in which 15 appears nowhere.",
+    "decision": "Documented and deferred. The gap is in PropertyRecord, not the capability layer; closing it means extending the record, which is out of M5 scope (\"do not redesign the architecture\"). No second data path was built around the record to fetch them."
+  },
+  "database_reads": {
+    "new_reads_added": 0,
+    "per_capability": "exactly three, identical for all four: /properties?id=eq.<pid>&user_id=eq.<uid>&select=id (ownership probe); /properties?id=eq.<pid>&user_id=eq.<uid>&select=id,name,sqft,data; /tenant_field_evidence?property_id=eq.<pid>&select=*&order=created_at.asc",
+    "tables_touched": [
+      "properties",
+      "tenant_field_evidence"
+    ],
+    "tenants_table": "fallback only, inside the hydrator, when the blob carries no tenants",
+    "write_methods_issued": 0,
+    "rpc_calls": 0,
+    "asserted": "E1-E6 assert the tables, the GET-only methods, the exact count of three per capability, and that each reports them"
+  },
+  "security_boundaries": {
+    "identity": "server-derived only; handlers take a token, there is no userId parameter",
+    "only_id_read": "user.id and nothing else — not role, app_metadata or user_metadata",
+    "ownership": "properties.user_id = authenticated user; tenant_users is never consulted",
+    "service_role": "transport only",
+    "retested_per_capability": "owner succeeds, missing token, bad token, auth timeout, id-less auth payload, tenant-portal identity, caller-supplied userId, foreign property, missing propertyId — all four capabilities, not inherited from M4",
+    "cross_property": "the space lookup is a find() inside the owned record; no query in the module could reach another property",
+    "generous_backend": "the test database answers about the property for anyone, so every refusal is the module's own",
+    "blank_token": "refused without contacting the auth service"
+  },
+  "unavailable_degraded_empty": {
+    "disputes_no_stored_record": {
+      "disputes": null,
+      "disputeCount": null,
+      "openDisputeCount": null,
+      "status": "unavailable"
+    },
+    "disputes_genuinely_none": {
+      "disputes": [],
+      "disputeCount": 0,
+      "status": "empty"
+    },
+    "evidence_read_failed": {
+      "evidence": null,
+      "status": "unavailable",
+      "caveat": "evidence.read_failed:unavailable"
+    },
+    "evidence_none_on_file": {
+      "evidence": "the fields' genuine floor states",
+      "status": "ok"
+    },
+    "timeline_scoping_lost": {
+      "tenant_scoped": {
+        "events": null,
+        "eventCount": null,
+        "status": "unavailable"
+      },
+      "property_level": {
+        "events": "returned, un-deduplicated",
+        "status": "degraded"
+      },
+      "byTenantCounts": "null — an index of zeroes would read as \"no tenant has any events\""
+    },
+    "space_uncomposable": "section_unavailable, never space_not_found — the same rule applied to all four capabilities",
+    "spaces_from_table": "degraded — the rows are real, the review state is not",
+    "new_caveats": [
+      "timeline.server_origin_only (info, on every get_timeline response)",
+      "timeline.scoping_unavailable (unavailable)"
+    ],
+    "hierarchy": "unavailable > degraded > empty re-verified as a contract after the change (M1-M7)"
+  },
+  "verification": {
+    "m5": {
+      "passed": 312,
+      "failed": 0
+    },
+    "m5_mutation": {
+      "mutants": 39,
+      "killed": 39,
+      "survived": 0,
+      "gaps_the_first_run_exposed": [
+        "P-required-arg-unchecked — a missing tenantId/spaceId fell through to not_found instead of invalid_arguments (B13a-B13d)",
+        "S-camresult-dropped — the fixture had no CAM reconciliation, so \"returns the CAM result\" was untested by construction (I7a-I7d)",
+        "G-unavailable-caveats-dropped — section_unavailable caveats were never asserted to REACH the caller, only inferred from provenance (M9a-M9d)",
+        "G-readonly-guard-removed — M5 issues no writes, so the guard was unexercised here (E7a-E7c)"
+      ]
+    },
+    "m4": {
+      "passed": 241,
+      "failed": 0
+    },
+    "m4_mutation": {
+      "mutants": 44,
+      "killed": 44,
+      "survived": 0
+    },
+    "m3": {
+      "passed": 130,
+      "failed": 0
+    },
+    "m3_mutation": {
+      "mutants": 34,
+      "killed": 34,
+      "survived": 0
+    },
+    "m2": {
+      "passed": 152,
+      "failed": 0
+    },
+    "m2_mutation": {
+      "mutants": 31,
+      "killed": 31,
+      "survived": 0
+    },
+    "m1b": {
+      "passed": 102,
+      "failed": 0
+    },
+    "m1b_mutation": {
+      "mutants": 34,
+      "killed": 33,
+      "survived": 1,
+      "survivor": "D-prune-removed — the same equivalent reported since M1b"
+    },
+    "full_regression": {
+      "suites_run": 121,
+      "suites_passed": 120,
+      "suites_failed": 1,
+      "failing_suite": "Broken promises (dead controls) — test-broken-promises.js",
+      "failing_assertions": [
+        "4 control(s) promise an object and navigate generically",
+        "review actions do not carry the tenant id"
+      ],
+      "baseline_check": "the same two assertions, unchanged since before M1b; not fixed, repinned or modified",
+      "m_suites_inside_the_run": {
+        "M1b": "passed",
+        "M2": "passed",
+        "M3": "passed",
+        "M4": "passed",
+        "M5": "passed"
+      }
+    }
+  },
+  "m4_assertions_changed": [
+    "K1 \"three tools, and only three\" -> M4's three are present, unchanged and FIRST, plus a new K1a that no name is registered twice. The original was correct for M4 and false once any phase adds a capability.",
+    "J1 the browser-API scan now reads code with string literals blanked. M5 added \"never localStorage\" to a provenance value, and a word-scan was flagging the sentence that promises the thing it checks for. A companion assertion checks that sentence is still present, so the check is discriminating rather than lucky."
+  ],
+  "deferred": [
+    "Seven canonical lease fields carry provenance without values in PropertyRecord (see get_lease above)",
+    "No transport — still module-only",
+    "No rate limiting; resolveIdentity calls /auth/v1/user on every invocation with no caching",
+    "No pagination or size cap; get_timeline and get_disputes return every row",
+    "get_space overlaps get_tenant by construction — in this data model a space and its tenant are one object; documented rather than disguised",
+    "D-prune-removed remains the one equivalent mutant across all phases"
+  ],
+  "constraints_honoured": {
+    "transport": false,
+    "rate_limiting": false,
+    "pagination": false,
+    "search_property_memory": false,
+    "cam_capability": false,
+    "attention_capability": false,
+    "payment_or_ripple": false,
+    "writes_or_actions": false,
+    "cam_data_repair": false,
+    "fk_or_orphan_cleanup": false,
+    "seo": false,
+    "pilot_changes": false,
+    "production_changes": false,
+    "broken_promises_touched": false,
+    "m3_shim_broadened": false,
+    "second_property_data_model": false,
+    "new_database_reads": 0
+  }
+}

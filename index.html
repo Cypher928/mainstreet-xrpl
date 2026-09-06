@@ -20,7 +20,15 @@
   <meta http-equiv="Pragma" content="no-cache" />
   <title>MainStreet — AI-Powered CAM Reconciliation</title>
   <meta name="description" content="MainStreet recovers the CAM revenue hiding in your leases. AI reads every lease, finds what manual reviews miss, cites every charge, and settles it — verified — on the XRP Ledger. Built for commercial landlords and property managers." />
-  <link rel="canonical" href="https://mainstreetcam.com/" />
+  <!-- This is the authenticated application, not a marketing page. It was being
+       offered to search engines as though it were one, and the public nav links
+       straight into it. -->
+  <meta name="robots" content="noindex, nofollow" />
+  <!-- The canonical that stood here pointed at https://mainstreetcam.com/ .
+       It is removed rather than repointed: a page carrying BOTH noindex and a
+       rel=canonical to another URL can have the noindex attributed to the
+       CANONICAL TARGET, which here is the marketing page we are trying to get
+       indexed. noindex alone is unambiguous; the pair is not. -->
   <!-- Favicon / app icons (MainStreet brand) -->
   <link rel="icon" type="image/svg+xml" href="/assets/brand/favicon.svg" />
   <link rel="icon" type="image/png" sizes="32x32" href="/favicon.png" />
@@ -49,9 +57,22 @@
   <link href="https://fonts.googleapis.com/css2?family=Cormorant+Garamond:wght@400;600;700&family=DM+Sans:ital,wght@0,400;0,500;0,600;0,700;1,400&family=DM+Mono:wght@400;500&display=swap" rel="stylesheet" />
   <script src="https://cdnjs.cloudflare.com/ajax/libs/pdf.js/3.11.174/pdf.min.js"></script>
   <script src="https://cdn.jsdelivr.net/npm/xlsx@0.18.5/dist/xlsx.full.min.js"></script>
-  <script src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2"></script>
+  <!-- PINNED. `@2` is a moving tag: jsDelivr serves whatever the newest 2.x is,
+       and there are 241 of them. Production behaviour could change with no
+       deploy, no commit, and nothing in git to explain it — and the version that
+       broke would not be the version anyone tested. 2.112.1 is exactly what `@2`
+       resolved to when this pin was taken, so pinning changed nothing today; it
+       only stops tomorrow from changing by itself. Bump deliberately. -->
+  <script src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2.112.1"></script>
   <!-- Host-based Supabase routing: production domain → prod project; previews (incl. pilot) → pilot project. Must precede script.js. -->
   <script src="supabase-config.js"></script>
+  <!-- ONE definition of how large a request body may be, shared byte-for-byte with
+       the serverless handlers via require(). Must precede lease-ingest.js and
+       script.js, which both gate uploads on it. -->
+  <script src="request-limits.js"></script>
+  <!-- ONE renderer for every stored document link and thumbnail, shared with the
+       tests via require(). Must precede script.js and every render module. -->
+  <script src="document-links.js"></script>
   <style>
     /* ── Theme design tokens ─────────────────────────────────────────────────
        The entire neutral palette — surfaces (elevation), text, and hairlines —
@@ -1245,7 +1266,31 @@
     .del-modal-prop  { font-size: 0.95rem; color: var(--text-1); font-weight: 600; margin-bottom: 14px; }
     .del-modal-desc  { font-size: 0.8rem; color: var(--text-4); line-height: 1.55; margin-bottom: 18px; }
     .del-modal-desc strong { color: var(--text-3); }
-    .del-modal-actions { display: flex; gap: 10px; justify-content: flex-end; }
+    /* What would be destroyed, counted. Amber not red: this is the thing worth
+       keeping, not the danger. */
+    .del-modal-guard {
+      border: 1px solid rgba(201,151,58,0.35); background: rgba(201,151,58,0.07);
+      border-radius: 9px; padding: 10px 12px; margin-bottom: 14px;
+    }
+    .del-modal-guard-head { color: var(--c-fbbf24, #fbbf24); font-weight: 600; font-size: 0.78rem; margin-bottom: 4px; }
+    .del-modal-activity { color: var(--text-2); font-size: 0.82rem; line-height: 1.5; }
+    .del-modal-advice { font-size: 0.8rem; color: var(--text-3); line-height: 1.6; margin-bottom: 16px; }
+    .del-modal-advice strong { color: var(--text-1); }
+    .del-modal-confirm-label { display: block; font-size: 0.74rem; color: var(--text-4); margin-bottom: 5px; }
+    .del-modal-confirm-name {
+      width: 100%; box-sizing: border-box; padding: 8px 10px; margin-bottom: 16px;
+      border-radius: 7px; border: 1px solid rgba(var(--line-rgb), 0.16);
+      background: var(--theme-surface); color: var(--text-1); font-size: 0.85rem;
+    }
+    .del-modal-actions { display: flex; gap: 10px; justify-content: flex-end; flex-wrap: wrap; }
+    /* Archive is the recommended action, so it carries the emphasis Delete used
+       to have. Delete stays reachable and stays red — demoted, not hidden. */
+    .del-modal-archive {
+      padding: 8px 18px; border-radius: 7px; font-size: 0.82rem; font-weight: 600;
+      background: rgba(201,151,58,0.16); border: 1px solid rgba(201,151,58,0.45);
+      color: var(--c-fbbf24, #fbbf24); cursor: pointer; transition: all 0.15s;
+    }
+    .del-modal-archive:hover { background: rgba(201,151,58,0.28); }
     .del-modal-cancel {
       padding: 8px 18px; border-radius: 7px; font-size: 0.82rem; font-weight: 600;
       background: rgba(var(--line-rgb), 0.04); border: 1px solid rgba(var(--line-rgb), 0.1);
@@ -1781,6 +1826,12 @@
     }
     .lc-answer-text { color: var(--text-2); line-height: 1.65; white-space: pre-wrap; }
     .lc-answer-error { color: var(--c-f87171); font-style: italic; }
+    /* A refusal is a distinct outcome from an answer, and has to look like one
+       before the sentence is read. Amber, not red: nothing went wrong. */
+    .lc-answer-noanswer { display: inline-block; margin-bottom: 8px; padding: 3px 10px;
+      border: 1px solid rgba(201, 151, 58, 0.35); background: rgba(201, 151, 58, 0.09);
+      border-radius: 999px; color: var(--c-fbbf24, #fbbf24);
+      font-size: 0.72rem; font-weight: 600; letter-spacing: 0.04em; }
     .lc-answer-loading { color: var(--text-4); font-style: italic; }
     .lc-answer-meta { margin-top: 8px; font-size: 0.75rem; color: var(--text-4); border-top: 1px solid rgba(var(--line-rgb), 0.06); padding-top: 6px; }
     .lc-citations-label { margin-top: 12px; font-size: 0.72rem; text-transform: uppercase; letter-spacing: 0.06em; color: var(--text-4); }
@@ -1820,6 +1871,9 @@
     .tenant-stmt-card-btn:hover { background: rgba(34,197,94,0.2); border-color: #22c55e; }
     .lv-panel { margin-top: 10px; border: 1px solid rgba(var(--line-rgb), 0.08); border-radius: 6px; overflow: hidden; }
     .lv-header { display: flex; align-items: center; gap: 10px; padding: 8px 12px; background: rgba(var(--shade-a-rgb), 0.7); border-bottom: 1px solid rgba(var(--line-rgb), 0.06); }
+    /* Scope line — states what this panel judges, so "PASSED" here is not read
+       as contradicting a Critical verdict in the AI Audit Summary. */
+    .lv-scope { padding: 6px 12px 8px; font-size: 0.7rem; line-height: 1.45; color: var(--text-3); border-bottom: 1px solid rgba(var(--line-rgb), 0.06); }
     .lv-title { font-size: 0.68rem; font-weight: 700; letter-spacing: 0.08em; text-transform: uppercase; color: var(--text-4); }
     .lv-status { font-size: 0.75rem; color: var(--text-3); }
     .lv-finding { padding: 10px 12px; border-bottom: 1px solid rgba(var(--line-rgb), 0.05); }
@@ -1843,6 +1897,17 @@
     .lv-quote { margin: 6px 0 2px; padding-left: 8px; border-left: 2px solid rgba(99,102,241,0.45); font-style: italic; font-size: 0.8rem; color: var(--text-3); white-space: pre-wrap; }
     .lv-citation { font-size: 0.7rem; color: var(--text-4); margin-bottom: 4px; }
     .lv-explanation { margin-top: 5px; font-size: 0.78rem; color: var(--text-3); font-style: italic; }
+
+    /* NOT CONFIRMED — deliberately neither green nor red. The lease was silent;
+       that is neither a pass nor a fault, and colouring it either way is the
+       misrepresentation this verdict exists to end. */
+    .lv-finding--unconfirmed { background: rgba(148,163,184,0.06); }
+    .lv-sev-badge--unconfirmed { background: rgba(148,163,184,0.18); color: var(--c-cbd5e1, #cbd5e1); }
+    .lv-meaning { margin-top: 4px; font-size: 0.76rem; color: var(--text-3); }
+    .lv-source {
+      margin-top: 6px; font-size: 0.72rem; color: var(--text-4);
+      padding-top: 5px; border-top: 1px solid rgba(var(--line-rgb), 0.06);
+    }
     .lv-view-btn { margin-top: 8px; display: inline-block; font-size: 0.75rem; padding: 3px 9px; background: rgba(99,102,241,0.12); border: 1px solid rgba(99,102,241,0.3); border-radius: 4px; color: var(--c-818cf8); cursor: pointer; }
     .lv-view-btn:hover { background: rgba(99,102,241,0.22); }
     .lv-loading { padding: 10px 12px; font-size: 0.8rem; color: var(--text-4); font-style: italic; }
@@ -2015,6 +2080,8 @@
     .lev-src-row { display: flex; justify-content: space-between; align-items: baseline; gap: 8px; }
     .lev-src-lbl { font-size: 0.62rem; color: var(--text-5); text-transform: uppercase; letter-spacing: 0.05em; flex-shrink: 0; }
     .lev-src-val { font-size: 0.75rem; color: var(--text-3); text-align: right; word-break: break-all; }
+    /* Absence, styled as absence — so the eye doesn't read it as a value. */
+    .lev-src-val.lev-na { color: var(--text-4); font-style: italic; word-break: normal; }
     .lev-jobid { font-family: monospace; font-size: 0.68rem; color: var(--text-4); }
     .lev-excerpt-lbl { font-size: 0.6rem; color: var(--text-5); text-transform: uppercase; letter-spacing: 0.05em; margin-top: 4px; }
     .lev-quote {
@@ -2301,6 +2368,55 @@
     .field-helper-text {
       font-size: 0.72rem; color: var(--text-4); margin-top: 5px; line-height: 1.4;
     }
+    /* The reason a flagged record was flagged, stated on the record itself. */
+    .ts-review-gap {
+      margin: 0 0 14px 0; padding: 12px 14px; border-radius: 10px;
+      background: rgba(234,179,8,0.1); border: 1px solid rgba(234,179,8,0.38);
+      color: #fde68a; font-size: 0.82rem; line-height: 1.5;
+    }
+    .ts-review-gap-h { font-weight: 700; color: #fff; margin-bottom: 6px; }
+    .ts-review-gap-list { margin: 0; padding-left: 18px; }
+    .ts-review-gap-list li { margin: 2px 0; }
+    .ts-review-gap-act { margin-top: 10px; }
+    .ts-review-gap-btn {
+      padding: 6px 13px; border: none; border-radius: 7px; background: #16a34a;
+      color: #fff; font-size: 0.76rem; font-weight: 700; cursor: pointer;
+    }
+    .ts-review-gap-btn:hover { background: #15803d; }
+
+    /* Extraction → the next step, stated where the user is standing. */
+    .ens {
+      display: flex; align-items: center; gap: 12px; flex-wrap: wrap;
+      margin: 0 0 14px 0; padding: 12px 14px; border-radius: 10px;
+      font-size: 0.82rem; line-height: 1.5;
+    }
+    .ens--todo  { background: rgba(234,179,8,0.08);  border: 1px solid rgba(234,179,8,0.3); color: #fde68a; }
+    .ens--ready { background: rgba(52,211,153,0.08); border: 1px solid rgba(52,211,153,0.3); color: #a7f3d0; }
+    .ens b { color: #fff; }
+    .ens-btn {
+      margin-left: auto; padding: 7px 14px; border: none; border-radius: 7px;
+      background: #16a34a; color: #fff; font-size: 0.78rem; font-weight: 700;
+      cursor: pointer; white-space: nowrap;
+    }
+    .ens-btn:hover { background: #15803d; }
+    .rq-flash { outline: 2px solid #34D399; outline-offset: 2px; transition: outline .3s; }
+
+    /* Property Setup → the explicit save and the handoff to lease upload. */
+    .setup-next {
+      display: flex; align-items: center; justify-content: space-between; gap: 14px;
+      flex-wrap: wrap; margin-top: 18px; padding-top: 16px;
+      border-top: 1px solid rgba(var(--line-rgb), 0.08);
+    }
+    .setup-next-msg { font-size: 0.8rem; color: var(--text-3); line-height: 1.5; }
+    .setup-next-msg b { color: var(--text-1); }
+    .setup-next-btn {
+      padding: 9px 20px; background: #16a34a; border: none; border-radius: 8px;
+      color: #fff; font-size: 0.82rem; font-weight: 700; cursor: pointer;
+      white-space: nowrap; transition: background .15s;
+    }
+    .setup-next-btn:hover:not(:disabled) { background: #15803d; }
+    .setup-next-btn:disabled { background: rgba(var(--line-rgb), 0.12); color: var(--text-4); cursor: not-allowed; }
+    .setup-next--saved .setup-next-msg b { color: #4ade80; }
     /* Citation evidence explanation */
     .citation-hint {
       font-size: 0.72rem; color: var(--text-4); padding: 6px 0 10px 0;
@@ -2477,6 +2593,47 @@
       display: flex; align-items: center; gap: 10px; padding: 5px 14px 5px 42px;
       background: rgba(234,179,8,0.06); border-top: 1px solid rgba(234,179,8,0.15);
       font-size: 0.77rem; color: var(--c-ca8a04); flex-wrap: wrap;
+    }
+    /* ── Tenant row: mobile ────────────────────────────────────────────
+       On a phone this was one flex line — status, name, the review reason and
+       three buttons — so .bulk-t-info collapsed and tenant names truncated to
+       six characters ("Lux…", "ShopR…", "Elevat…"), sqft to "45000 s…", and the
+       reason for the flag was squeezed into a column one or two words wide.
+
+       Flex WRAP, not a named grid. The first attempt made this a grid and put
+       every action on the same `grid-area: actions` — items sharing one grid
+       area are placed on top of one another, so Edit, View Lease and Remove
+       rendered stacked over each other in a single box. Wrapping is what was
+       wanted: identity takes the first line, the actions flow onto the next and
+       sit side by side.
+
+       The desktop grid further down is untouched. */
+    @media (max-width: 767px) {
+      .bulk-tenant-summary {
+        display: flex; flex-wrap: wrap; align-items: flex-start;
+        row-gap: 10px; column-gap: 10px; padding: 12px 14px;
+      }
+      .bulk-t-status { order: 0; flex: 0 0 auto; padding-top: 2px; }
+      /* Identity CLAIMS the first line. flex-basis 0 let it shrink to share the
+         line with the buttons instead — measured 89px wide and still clipped.
+         Basing it on the full width minus the status glyph forces everything
+         after it to wrap onto the next line, which is the whole point. */
+      .bulk-t-info   { order: 1; flex: 1 1 calc(100% - 44px); min-width: 0; }
+      /* The name is the thing you are looking for — never truncate it. */
+      .tenant-title  { white-space: normal; overflow: visible; text-overflow: clip; line-height: 1.3; }
+      .tenant-meta   { white-space: normal; overflow: visible; text-overflow: clip; line-height: 1.4; }
+      /* The review reason reads as a sentence on its own full-width line. */
+      .bulk-tenant-summary .tenant-warn-text,
+      .bulk-tenant-summary > em,
+      .bulk-tenant-summary > i {
+        order: 2; flex: 1 1 100%; display: block; white-space: normal;
+        font-size: 0.78rem; line-height: 1.45; margin: 0;
+      }
+      /* Everything else is an action: its own line, laid out in a row. */
+      .bulk-tenant-summary > *:not(.bulk-t-status):not(.bulk-t-info):not(em):not(i):not(.tenant-warn-text) {
+        order: 3; flex: 0 0 auto;
+      }
+      .bulk-tenant-summary .bulk-t-chevron { margin-right: auto; }
     }
     /* ── Invoice row: desktop grid ──────────────────────────────────── */
     @media (min-width: 768px) {
@@ -2665,6 +2822,33 @@
       color: var(--c-c9973a); background: rgba(201,151,58,0.07); border: 1px solid rgba(201,151,58,0.18);
       border-radius: 5px; padding: 5px 9px; margin-top: 6px; letter-spacing: 0.01em;
     }
+    /* ── T2 · the two multiplicands, kept visibly apart ────────────────────
+       The single-line formula above is the one a manager re-keys; this is the
+       same calculation read as steps, so the pro-rata product and the occupancy
+       fraction cannot be mistaken for one number. Grid rather than flex: the
+       operand column has to line up down the block for the steps to read as
+       arithmetic at all. */
+    .ts-detail-steps {
+      margin-top: 8px; font-size: 0.74rem; color: var(--text-5);
+      border-top: 1px solid rgba(var(--line-rgb), 0.05); padding-top: 8px;
+    }
+    .ts-step {
+      display: grid; grid-template-columns: minmax(0, 1fr) minmax(0, auto) minmax(64px, auto);
+      gap: 10px; align-items: baseline; padding: 3px 0;
+    }
+    .ts-step-op  { color: var(--text-4); font-family: 'Courier New', Courier, monospace; text-align: right; }
+    .ts-step-amt { color: var(--text-2); font-weight: 600; text-align: right; white-space: nowrap; }
+    .ts-step-total {
+      border-top: 1px solid rgba(var(--line-rgb), 0.12); margin-top: 4px; padding-top: 6px;
+    }
+    .ts-step-total .ts-step-amt { color: var(--c-f59e0b); font-weight: 800; }
+    /* Phone: the three columns cannot hold their width, so the operand wraps
+       under its label rather than forcing the block wider than the viewport. */
+    @media (max-width: 480px) {
+      .ts-step { grid-template-columns: minmax(0, 1fr) minmax(56px, auto); }
+      .ts-step-op { grid-column: 1 / -1; text-align: left; }
+    }
+
     /* ── Calc state badges ─────────────────────────────────────────────── */
     .rc-calc-state {
       display: inline-flex; align-items: center; font-size: 0.6rem; font-weight: 700;
@@ -2719,6 +2903,87 @@
       border-radius: 10px; border: 1px solid rgba(var(--line-rgb), 0.07); background: rgba(var(--shade-a-rgb), 0.6);
       padding: 14px 16px; margin-bottom: 16px;
     }
+    .rcs-issue--coverage .rcs-issue-main { color: var(--text-2); }
+    .rcs-issue-kind { display:inline-block; font-size:0.68rem; letter-spacing:0.04em; text-transform:uppercase;
+                      padding:1px 6px; margin-right:6px; border-radius:4px;
+                      background:rgba(148,163,184,0.16); color:var(--text-3); }
+    /* The variance banner leads to the Variance details panel, so it has to look
+       like something you can press. Cursor and hover lift only — the colours of
+       both branches are unchanged, because which branch you are looking at is
+       still the signal that matters. */
+    .rcs-variance-banner { cursor: pointer; transition: filter 0.12s ease, transform 0.12s ease; }
+    .rcs-variance-banner:hover { filter: brightness(1.12); }
+    .rcs-variance-banner:focus-visible { outline: 2px solid var(--c-c9973a); outline-offset: 2px; }
+    .rcs-variance-cta {
+      display: inline-block; margin-top: 8px; padding: 5px 11px; border-radius: 6px;
+      border: 1px solid currentColor; background: transparent; color: inherit;
+      font: inherit; font-weight: 600; cursor: pointer;
+    }
+    .rcs-variance-cta:hover { background: rgba(var(--line-rgb), 0.12); }
+    /* ── I-12 · Billing status ────────────────────────────────────────────
+       Distinct from .rc-calc-state beside it: that says how much to trust the
+       number, this says whether it may be sent. Semantic colour only — the
+       three states must be separable at a glance and without relying on hue,
+       so each carries its own word rather than a bare dot. */
+    .rcs-bill {
+      font-family: 'DM Sans', sans-serif; font-size: 0.72rem; font-weight: 700;
+      letter-spacing: 0.02em; padding: 3px 9px; border-radius: 5px; cursor: pointer;
+      border: 1px solid currentColor; background: transparent; white-space: nowrap;
+    }
+    .rcs-bill--billable { color: var(--c-6ee7b7, #6ee7b7); background: rgba(52,211,153,0.10); }
+    .rcs-bill--confirm  { color: var(--c-fbbf24, #fbbf24); background: rgba(251,191,36,0.10); }
+    .rcs-bill--blocked  { color: var(--c-fca5a5, #fca5a5); background: rgba(248,113,113,0.10); }
+    .rcs-bill:hover     { filter: brightness(1.18); }
+    .rcs-bill:focus-visible { outline: 2px solid var(--c-c9973a); outline-offset: 2px; }
+    .rcs-bill-total { font-size: 0.74rem; color: var(--text-3); white-space: nowrap; }
+    /* "CAM Pool $90,500 of $160,500 invoiced" — the second figure relates the
+       KPI to the expense pool the variance banner names, so two numbers on one
+       screen read as one fact rather than a contradiction. */
+    .rcs-kpi-sub { display: block; font-size: 0.62rem; font-weight: 400; opacity: 0.75; margin-top: 1px; }
+    /* A reconciliation rebuilt from normalized summary rows carries the amount
+       and the share and nothing else. Placed ABOVE the KPI row so it is read
+       before the figures it qualifies, not after them. */
+    .rcs-fidelity {
+      margin: 10px 0 4px; padding: 10px 12px; border-radius: 8px;
+      background: var(--bgc-1e293b, rgba(30,41,59,0.6));
+      border-left: 3px solid var(--c-f59e0b, #f59e0b);
+      font-size: 0.78rem; line-height: 1.5; color: var(--text-2);
+    }
+    .rcs-fidelity strong { color: var(--text-1); }
+    /* N2 — the per-tenant counterpart of the panel notice above. It appears
+       where a breakdown would be, on a restored record that genuinely stored
+       none, so the absence is explained in the place the reader is looking
+       rather than only at the top of the screen. */
+    .rc-breakdown-absent {
+      margin: 8px 0 2px; padding: 9px 11px; border-radius: 8px;
+      background: var(--bgc-1e293b, rgba(30,41,59,0.6));
+      border-left: 3px solid var(--c-f59e0b, #f59e0b);
+      font-size: 0.76rem; line-height: 1.5; color: var(--text-3);
+    }
+    .rc-breakdown-absent-cta { display: block; margin-top: 5px; color: var(--text-2); font-weight: 600; }
+    /* T2 — a prorated tenant's arithmetic, shown end to end. */
+    .ts-occupancy { margin: 14px 0; padding: 12px 14px; border-radius: 10px;
+      background: var(--bgc-1e293b, rgba(30,41,59,0.5));
+      border-left: 3px solid var(--c-38bdf8, #38bdf8); }
+    .ts-occ-head { font-weight: 600; font-size: 0.85rem; margin-bottom: 8px; color: var(--text-1); }
+    .ts-occ-table { width: 100%; border-collapse: collapse; font-size: 0.8rem; }
+    .ts-occ-table td { padding: 3px 0; color: var(--text-2); }
+    .ts-occ-table td:last-child { text-align: right; white-space: nowrap; color: var(--text-1); }
+    .ts-occ-total td { border-top: 1px solid rgba(148,163,184,0.25); padding-top: 6px; font-weight: 600; }
+    .ts-occ-basis { margin-top: 8px; font-size: 0.75rem; color: var(--text-3); line-height: 1.5; }
+    .rcs-fidelity-list { margin: 6px 0 4px; padding-left: 18px; }
+    .rcs-fidelity-list li { margin: 2px 0; }
+    .rcs-fidelity-cta { display: block; font-size: 0.74rem; opacity: 0.85; }
+    /* The roster line sits with the panel badges, above the table, because on a
+       phone the table is several screens down and scrolls sideways. */
+    .rcs-bill-roster {
+      font-family: 'DM Sans', sans-serif; font-size: 0.72rem; font-weight: 700;
+      padding: 3px 9px; border-radius: 5px; border: 1px solid currentColor; white-space: nowrap;
+    }
+    .rcs-bill-roster--all  { color: var(--c-6ee7b7, #6ee7b7); background: rgba(52,211,153,0.10); }
+    .rcs-bill-roster--some { color: var(--c-fbbf24, #fbbf24); background: rgba(251,191,36,0.10); }
+    .rcs-bill-roster--none { color: var(--c-fca5a5, #fca5a5); background: rgba(248,113,113,0.10); }
+    .tenant-stmt-card-btn--held { opacity: 0.92; }
     .rcs-panel--ok    { border-color: rgba(74,222,128,0.2); }
     .rcs-panel--warn  { border-color: rgba(251,191,36,0.25); }
     .rcs-panel--alert { border-color: rgba(248,113,113,0.3); }
@@ -2950,6 +3215,16 @@
     .rc-flag-item {
       font-size: 0.78rem; color: var(--c-fca5a5); line-height: 1.5; margin-bottom: 6px;
     }
+    /* Needs Review lists what is blank; this takes the reader to the first one.
+       On a phone the blank field can be a full screen below the box that names
+       it, which is how a missing square footage went unnoticed. */
+    .rc-flag-cta {
+      display: inline-block; margin-top: 4px; padding: 5px 11px; border-radius: 6px;
+      border: 1px solid rgba(248,113,113,0.45); background: transparent;
+      color: var(--c-fca5a5); font: inherit; font-size: 0.78rem; font-weight: 600;
+      cursor: pointer;
+    }
+    .rc-flag-cta:hover { background: rgba(248,113,113,0.12); }
     .rc-flag-expl {
       font-size: 0.73rem; color: #f8717188; font-weight: 400; line-height: 1.4;
     }
@@ -2967,6 +3242,40 @@
       display: flex; gap: 6px;
     }
     .lease-edge-note-item .len-icon { flex-shrink: 0; }
+
+    /* ── Property-mismatch confirmation (landlord verification step) ─────
+       Deliberately NOT styled as a dismiss/ignore control. The unresolved
+       state restates what the lease says versus where it was uploaded, so the
+       landlord is deciding on facts rather than clicking a warning away. */
+    .lease-prop-confirm {
+      margin: 8px 0 2px; padding: 10px 12px; border-radius: 6px;
+      background: rgba(248,113,113,0.08); border: 1px solid rgba(248,113,113,0.32);
+    }
+    .lpm-detail { font-size: 0.78rem; color: var(--c-fca5a5); line-height: 1.5; margin-bottom: 8px; }
+    .lpm-detail strong { color: var(--c-fecaca, #fecaca); }
+    .lpm-stale {
+      font-size: 0.75rem; color: var(--c-fbbf24); line-height: 1.5; margin-bottom: 8px;
+      padding-bottom: 8px; border-bottom: 1px solid rgba(248,113,113,0.22);
+    }
+    .lpm-btn {
+      font-size: 0.78rem; font-weight: 600; cursor: pointer;
+      background: rgba(52,211,153,0.14); color: var(--c-6ee7b7, #6ee7b7);
+      border: 1px solid rgba(52,211,153,0.45); border-radius: 6px; padding: 7px 12px;
+    }
+    .lpm-btn:hover { background: rgba(52,211,153,0.24); border-color: #34d399; }
+    .lpm-btn:focus-visible { outline: 2px solid #34d399; outline-offset: 2px; }
+    .lpm-hint { font-size: 0.72rem; color: var(--c-fca5a5); opacity: 0.85; margin-top: 7px; line-height: 1.45; }
+
+    .lease-prop-confirmed {
+      margin: 8px 0 2px; padding: 9px 12px; border-radius: 6px;
+      display: flex; gap: 8px; align-items: flex-start;
+      font-size: 0.78rem; line-height: 1.5;
+      background: rgba(52,211,153,0.10); border: 1px solid rgba(52,211,153,0.38);
+      color: var(--c-6ee7b7, #6ee7b7);
+    }
+    .lease-prop-confirmed .lpc-check { flex-shrink: 0; font-weight: 700; }
+    .lease-prop-confirmed strong { color: #a7f3d0; }
+
     .recon-inv-flag {
       width: 100%; font-size: 0.68rem; color: var(--c-f87171); margin-top: 2px; cursor: help;
     }
@@ -3387,6 +3696,11 @@
          surface that produced it. */
       display: none; position: fixed; inset: 0; z-index: 1100;
       background: var(--theme-bg); overflow-y: auto;
+      /* The page itself never scrolls sideways. Wide content scrolls inside its
+         own container (.rpt-table-scroll); anything that escapes that is a bug
+         to fix in the content, not a reason to let the sticky toolbar — and the
+         Print and Close buttons on it — slide out of reach. */
+      overflow-x: hidden;
     }
     #reportOverlay.open { display: block; }
     .rpt-toolbar {
@@ -3509,9 +3823,221 @@
       font-size: 0.67rem; color: var(--text-4); margin-top: 6px;
       text-transform: uppercase; letter-spacing: 0.07em; font-family: 'DM Sans', sans-serif;
     }
+    /* Contained horizontal scrolling for wide report tables. Applied by
+       _rptMakeTablesScrollable() at render time, so report generators keep
+       emitting plain <table class="rpt-table">. */
+    .rpt-table-scroll {
+      overflow-x: auto; max-width: 100%;
+      -webkit-overflow-scrolling: touch;
+      /* A scrollable region is focusable; make that visible rather than
+         removing the outline. */
+      scrollbar-width: thin;
+    }
+    .rpt-table-scroll:focus-visible { outline: 2px solid var(--c-c9973a); outline-offset: 2px; }
     .rpt-table {
       width: 100%; border-collapse: collapse; font-size: 0.86rem;
       margin-bottom: 8px; page-break-inside: auto;
+    }
+
+    /* ── Cross-report shared blocks ───────────────────────────────────── */
+    /* Used by the Audit Exception Summary, Risk & Disputes and Coverage Gap so
+       the same statement of scope and readiness looks the same in each. */
+    .rpt-scope-note {
+      font-family: 'DM Sans', sans-serif; font-size: 0.78rem; line-height: 1.6;
+      color: var(--text-3); background: rgba(var(--line-rgb), 0.03);
+      border-left: 3px solid rgba(201,151,58,0.35);
+      padding: 10px 14px; border-radius: 0 6px 6px 0; margin: 0 0 18px;
+    }
+    .rpt-scope-note strong { color: var(--text-1); }
+    /* A property-wide exception is a real answer in the Scope column, not an
+       absent tenant — styled as a quiet label so it reads as a category rather
+       than as a name that failed to render. */
+    .rpt-scope-property {
+      display: inline-block; font-size: 0.68rem; letter-spacing: 0.04em;
+      text-transform: uppercase; padding: 1px 6px; border-radius: 4px;
+      background: rgba(148,163,184,0.16); color: var(--text-3); white-space: nowrap;
+    }
+    .rpt-readiness {
+      font-family: 'DM Sans', sans-serif; font-size: 0.82rem; line-height: 1.55;
+      padding: 10px 14px; border-radius: 7px; margin: 14px 0 18px;
+    }
+    .rpt-readiness--ok {
+      background: rgba(34,197,94,0.08); border: 1px solid rgba(34,197,94,0.28); color: var(--c-4ade80);
+    }
+    .rpt-readiness--blocked {
+      background: rgba(239,68,68,0.08); border: 1px solid rgba(239,68,68,0.28); color: var(--c-f87171);
+    }
+    .rpt-readiness strong { font-weight: 700; }
+
+    /* Non-billable draft statement. Loud on purpose: this document exists only
+       so a manager can see the figures, and must never be mistaken for a bill. */
+    .ts-draft-banner {
+      border: 2px solid rgba(239,68,68,0.55); background: rgba(239,68,68,0.09);
+      border-radius: 9px; padding: 14px 16px; margin: 0 0 18px;
+      font-family: 'DM Sans', sans-serif;
+    }
+    .ts-draft-title {
+      font-size: 0.86rem; font-weight: 800; letter-spacing: 0.06em;
+      color: var(--c-f87171); margin-bottom: 8px;
+    }
+    .ts-draft-body { font-size: 0.8rem; line-height: 1.55; color: var(--text-2); }
+    .ts-draft-list { margin: 8px 0 8px 18px; padding: 0; font-size: 0.78rem; line-height: 1.6; color: var(--text-3); }
+    .ts-draft-list .ts-draft-mine { color: var(--c-f87171); font-weight: 600; }
+    .ts-summary-card--draft { opacity: 0.82; border: 1px dashed rgba(239,68,68,0.5); }
+    /* A draft must stay a draft on paper too. */
+    @media print {
+      .ts-draft-banner { border-color: #b91c1c !important; background: #fef2f2 !important; }
+      .ts-draft-title  { color: #b91c1c !important; }
+    }
+    .exc-narrative-impact {
+      font-family: 'DM Sans', sans-serif; font-size: 0.84rem; font-weight: 600;
+      color: var(--text-1); margin-top: 10px; line-height: 1.55;
+    }
+    .exc-flag-impact {
+      font-family: 'DM Sans', sans-serif; font-size: 0.8rem; line-height: 1.55;
+      color: var(--text-1); margin: 8px 0 0;
+    }
+    .exc-flag-impact--none { color: var(--text-3); font-style: italic; }
+    .exc-flag-source {
+      font-family: 'DM Sans', sans-serif; font-size: 0.73rem; color: var(--text-3);
+      margin-top: 6px; overflow-wrap: anywhere;
+    }
+    .exc-flag-actions { display: flex; flex-wrap: wrap; gap: 6px; margin-top: 10px; }
+    .exc-action {
+      font-family: 'DM Sans', sans-serif; font-size: 0.72rem; font-weight: 600;
+      padding: 4px 10px; border-radius: 999px; color: var(--c-e4b15c);
+      background: rgba(201,151,58,0.1); border: 1px solid rgba(201,151,58,0.25);
+    }
+
+    /* ── Report status bar ────────────────────────────────────────────────
+       Grid, not flex. The previous inline flex row gave "Status:" and the
+       exposure line flex-shrink:0, leaving the headline between them as the
+       only item that could shrink — which on a phone crushed it to a column one
+       character wide. Here the headline owns the flexible track and the other
+       two size to their content; below 640px everything simply stacks. */
+    .rpt-status-bar {
+      display: grid; grid-template-columns: auto minmax(0, 1fr) auto;
+      align-items: baseline; gap: 6px 12px;
+      padding: 10px 14px; margin-bottom: 14px; border-radius: 7px;
+      background: var(--theme-surface);
+      font-family: 'DM Sans', sans-serif; font-size: 0.82rem; line-height: 1.5;
+    }
+    .rpt-status-label {
+      font-size: 0.64rem; font-weight: 700; letter-spacing: 0.12em;
+      text-transform: uppercase; color: var(--text-4); white-space: nowrap;
+    }
+    /* Extracted but not CAM-ready. Deliberately not styled as an error — the
+       extraction succeeded; what is missing is a value CAM needs. */
+    .bulk-cam-blocked {
+      font-family: 'DM Sans', sans-serif; font-size: 0.79rem; line-height: 1.55;
+      color: var(--text-2); background: rgba(245,158,11,0.07);
+      border: 1px solid rgba(245,158,11,0.3); border-left-width: 3px;
+      border-radius: 0 7px 7px 0; padding: 10px 13px; margin: 0 0 12px;
+      overflow-wrap: anywhere;
+    }
+    .bulk-cam-blocked strong { color: var(--c-fbbf24); }
+
+    /* Reconcilable, but with open review items. Deliberately cooler than the
+       blocked block: these leases produce a CAM number, so the note must not
+       read as an error. */
+    .bulk-cam-review {
+      font-family: 'DM Sans', sans-serif; font-size: 0.79rem; line-height: 1.55;
+      color: var(--text-2); background: rgba(59,130,246,0.06);
+      border: 1px solid rgba(59,130,246,0.28); border-left-width: 3px;
+      border-radius: 0 7px 7px 0; padding: 10px 13px; margin: 0 0 12px;
+      overflow-wrap: anywhere;
+    }
+    .bulk-cam-review strong { color: var(--c-93c5fd, #93c5fd); }
+
+    /* The canonical billing state, shown on the reconciliation panel head with
+       the same two words every other surface uses. */
+    .rcs-readiness-badge {
+      font-family: 'DM Sans', sans-serif; font-size: 0.72rem; font-weight: 600;
+      letter-spacing: 0.01em; padding: 3px 9px; border-radius: 999px;
+      white-space: nowrap; margin-left: 6px;
+    }
+    .rcs-readiness--ok {
+      background: rgba(16,185,129,0.12); color: var(--c-6ee7b7, #6ee7b7);
+      border: 1px solid rgba(16,185,129,0.35);
+    }
+    /* The single required next action, at the top of the audit narrative. */
+    .an-next {
+      font-family: 'DM Sans', sans-serif; border-radius: 9px; padding: 12px 15px;
+      margin: 0 0 14px; border: 1px solid; border-left-width: 3px;
+    }
+    .an-next--blocked { background: rgba(239,68,68,0.07); border-color: rgba(239,68,68,0.34); }
+    .an-next--ready   { background: rgba(16,185,129,0.07); border-color: rgba(16,185,129,0.34); }
+    .an-next--unknown { background: rgba(148,163,184,0.07); border-color: rgba(148,163,184,0.3); }
+    .an-next-label {
+      font-size: 0.92rem; font-weight: 700; letter-spacing: -0.01em; margin-bottom: 4px;
+    }
+    .an-next--blocked .an-next-label { color: var(--c-fca5a5, #fca5a5); }
+    .an-next--ready   .an-next-label { color: var(--c-6ee7b7, #6ee7b7); }
+    .an-next--unknown .an-next-label { color: var(--text-2); }
+    .an-next-detail { font-size: 0.83rem; line-height: 1.55; color: var(--text-2); }
+    .an-next-steps {
+      margin: 8px 0 0; padding-left: 18px; font-size: 0.8rem;
+      line-height: 1.6; color: var(--text-3);
+    }
+    .an-next-steps li { margin-bottom: 3px; overflow-wrap: anywhere; }
+
+    /* Where openLeaseBlockerFix lands the reader, so the control it navigated
+       to is unmistakable rather than "somewhere on this card". */
+    .lease-blocker-flash {
+      animation: leaseBlockerFlash 2.2s ease-out 1;
+      border-radius: 8px;
+    }
+    @keyframes leaseBlockerFlash {
+      0%, 55% { box-shadow: 0 0 0 3px rgba(249,115,22,0.55); }
+      100%    { box-shadow: 0 0 0 3px rgba(249,115,22,0); }
+    }
+    /* Says why acknowledgement is not on offer for a blocked lease. */
+    .ts-review-gap-hint {
+      font-family: 'DM Sans', sans-serif; font-size: 0.76rem; line-height: 1.5;
+      color: var(--text-3); margin-top: 7px;
+    }
+    .rq-btn--fix {
+      background: rgba(249,115,22,0.13); color: var(--c-fdba74, #fdba74);
+      border: 1px solid rgba(249,115,22,0.4);
+    }
+
+    .rcs-readiness--blocked {
+      background: rgba(239,68,68,0.12); color: var(--c-fca5a5, #fca5a5);
+      border: 1px solid rgba(239,68,68,0.38);
+    }
+
+    /* Coverage Gap: input coverage and reconciliation status, side by side and
+       separately headed, because they answer different questions. */
+    .cg-split {
+      display: grid; grid-template-columns: repeat(auto-fit, minmax(240px, 1fr));
+      gap: 12px; margin-top: 18px;
+      font-family: 'DM Sans', sans-serif;
+    }
+    .cg-block {
+      border: 1px solid rgba(var(--line-rgb), 0.16); border-radius: 9px;
+      padding: 13px 15px; background: rgba(var(--line-rgb), 0.02);
+    }
+    .cg-block--ok    { border-color: rgba(34,197,94,0.32);  background: rgba(34,197,94,0.06); }
+    .cg-block--warn  { border-color: rgba(245,158,11,0.32); background: rgba(245,158,11,0.06); }
+    .cg-block--alert { border-color: rgba(239,68,68,0.32);  background: rgba(239,68,68,0.06); }
+    .cg-block-title {
+      font-size: 0.63rem; font-weight: 700; letter-spacing: 0.13em;
+      text-transform: uppercase; color: var(--text-4); margin-bottom: 6px;
+    }
+    .cg-block-state { font-size: 1.02rem; font-weight: 700; color: var(--text-1); line-height: 1.3; }
+    .cg-block--ok    .cg-block-state { color: var(--c-4ade80); }
+    .cg-block--warn  .cg-block-state { color: var(--c-fbbf24); }
+    .cg-block--alert .cg-block-state { color: var(--c-f87171); }
+    .cg-block-sub {
+      font-size: 0.76rem; line-height: 1.55; color: var(--text-3); margin-top: 6px;
+      overflow-wrap: anywhere;
+    }
+
+    .rpt-status-headline { color: var(--text-1); font-weight: 600; overflow-wrap: anywhere; }
+    .rpt-status-impact   { color: var(--text-3); text-align: right; overflow-wrap: anywhere; }
+    @media (max-width: 640px) {
+      .rpt-status-bar { grid-template-columns: minmax(0, 1fr); gap: 4px; }
+      .rpt-status-impact { text-align: left; }
     }
     .rpt-table th {
       background: rgba(201,151,58,0.08); color: var(--c-e4b15c); text-align: left;
@@ -3751,13 +4277,24 @@
     /* ── Print styles ─────────────────────────────────────────────────── */
     /* ── Mobile: Report / Export overlay (Phase 1 — presentation only) ───── */
     @media (max-width: 600px) {
-      .rpt-toolbar { padding: 10px 14px; gap: 8px; }
+      /* The toolbar is sticky and always visible, so every row it costs is a row
+         of report the reader does not get. Two lines of title plus 44px buttons
+         took ~92px of an 844px viewport; this brings it to ~52px while keeping
+         both controls at a 44px touch target. */
+      .rpt-toolbar { padding: 6px 12px; gap: 8px; min-height: 52px; }
       .rpt-toolbar h2 {
-        font-size: 0.9rem; flex: 1 1 auto; min-width: 0;
+        font-size: 0.82rem; flex: 1 1 auto; min-width: 0;
         overflow: hidden; text-overflow: ellipsis; white-space: nowrap;
       }
       .rpt-toolbar-actions { flex-shrink: 0; gap: 6px; }
-      .rpt-tool-btn, .rpt-close-btn { padding: 10px 14px; font-size: 0.78rem; min-height: 40px; }
+      .rpt-tool-btn, .rpt-close-btn {
+        padding: 8px 12px; font-size: 0.76rem; min-height: 44px;
+        display: inline-flex; align-items: center; white-space: nowrap;
+      }
+      /* "Print / Save PDF" is the longest label on the row and the first thing
+         to push Close off-screen. The icon plus "PDF" is unambiguous next to it
+         and holds the full-size tap target. */
+      .rpt-tool-btn .rpt-btn-long { display: none; }
       .rpt-body { margin: 20px auto 56px; padding: 0 16px; }
       .rpt-cover { padding: 22px 0 20px; margin-bottom: 24px; }
       .rpt-cover-title { font-size: 1.5rem; }
@@ -3766,6 +4303,93 @@
       .rpt-kpi-row { gap: 8px; }
       .rpt-kpi { min-width: 90px; padding: 14px 10px; }
       .rpt-kpi .kpi-val { font-size: 1.2rem; }
+
+      /* ── Report tables become stacked cards ─────────────────────────────
+         Every row is one record and every cell carries its column heading, so
+         nothing sits off the right edge waiting to be discovered. Applied only
+         to tables _rptMakeTablesScrollable could label from a <thead>; anything
+         else keeps the scroll container below. */
+      /* `table.` raises specificity above the plain `.rpt-table` rule below,
+         which sets min-width:max-content and would otherwise win on source
+         order and push a card table past the viewport. */
+      /* The table box must stop being a table, or the anonymous table layout
+         keeps sizing columns from the hidden <thead> — which collapsed each
+         card to ~180px of a 390px screen and wrapped every label one letter per
+         line, the very failure this replaces. display:block on the table AND
+         the row group is what actually hands layout to the grid below. */
+      table.rpt-table--cards {
+        display: block; width: 100%; min-width: 0 !important; font-size: 0.82rem;
+      }
+      .rpt-table--cards tbody, .rpt-table--cards tfoot { display: block; width: 100%; }
+      .rpt-table--cards thead { display: none; }
+      .rpt-table--cards tbody tr, .rpt-table--cards tfoot tr { width: 100%; }
+      .rpt-table--cards tbody tr {
+        display: block; margin-bottom: 10px; padding: 4px 2px 6px;
+        border: 1px solid rgba(var(--line-rgb), 0.14); border-radius: 8px;
+        background: rgba(var(--line-rgb), 0.02);
+      }
+      .rpt-table--cards tbody tr:nth-child(even) td { background: none; }
+      .rpt-table--cards tbody td, .rpt-table--cards tfoot td {
+        display: grid; grid-template-columns: minmax(6.5em, 38%) minmax(0, 1fr);
+        gap: 10px; align-items: baseline;
+        padding: 6px 12px; border: none;
+        text-align: left !important; white-space: normal !important;
+        width: auto !important; overflow-wrap: anywhere;
+      }
+      .rpt-table--cards tbody td[data-label]::before {
+        content: attr(data-label);
+        font-family: 'DM Sans', sans-serif; font-size: 0.66rem; font-weight: 700;
+        text-transform: uppercase; letter-spacing: 0.07em; color: var(--text-4);
+        line-height: 1.5;
+      }
+      /* A cell with no heading — a subtotal label, an icon column — spans the
+         card rather than leaving an empty label gutter. */
+      .rpt-table--cards tbody td:not([data-label]) { grid-template-columns: minmax(0, 1fr); }
+      .rpt-table--cards tbody tr.rpt-row--full { border: none; background: none; padding: 0; }
+      .rpt-table--cards tbody tr.rpt-row--full td { display: block; }
+      .rpt-table--cards tfoot tr {
+        display: block; margin-bottom: 10px; padding: 4px 2px 6px;
+        border: 1px solid rgba(201,151,58,0.3); border-radius: 8px;
+        background: rgba(201,151,58,0.05);
+      }
+
+      /* Tables without a <thead> keep the scroll container: contained, and the
+         page still never scrolls sideways. */
+      .rpt-table-scroll {
+        /* Bleed to the body's padding edge so a scrolled table uses the full
+           screen width instead of scrolling within a 16px-inset column. */
+        margin-left: -16px; margin-right: -16px;
+        padding-left: 16px; padding-right: 16px;
+      }
+      .rpt-table { font-size: 0.78rem; min-width: max-content; }
+      .rpt-table th { padding: 8px 10px; }
+      .rpt-table td { padding: 9px 10px; }
+      .rpt-table td:first-child, .rpt-table th:first-child { min-width: 132px; }
+      /* Cards do not need the bleed or the min-width — they fit by construction. */
+      .rpt-table-scroll:has(.rpt-table--cards) {
+        margin-left: 0; margin-right: 0; padding-left: 0; padding-right: 0; overflow-x: visible;
+      }
+      .rpt-scope-note { font-size: 0.74rem; padding: 9px 12px; }
+      /* Long unbroken strings — vendor names, file names, source citations —
+         are the other way a report pushes past the viewport edge. */
+      .rpt-body, .exc-flag-title, .exc-flag-detail, .exc-conditions li,
+      .hole-text, .hole-detail { overflow-wrap: anywhere; }
+    }
+
+    /* Print restores the full label and drops the scroll container's clipping,
+       so a PDF shows the whole table rather than one screen of it. */
+    @media print {
+      .rpt-tool-btn .rpt-btn-long { display: inline; }
+      .rpt-table-scroll { overflow: visible !important; margin: 0 !important; padding: 0 !important; }
+      .rpt-table { min-width: 0 !important; }
+      /* Print is never narrow — a PDF gets the real table back, headings and
+         all, whatever the screen it was generated from. */
+      .rpt-table--cards thead { position: static !important; width: auto !important;
+        height: auto !important; clip: auto !important; }
+      .rpt-table--cards tbody tr { display: table-row !important; border: none !important;
+        background: none !important; padding: 0 !important; }
+      .rpt-table--cards tbody td { display: table-cell !important; }
+      .rpt-table--cards tbody td[data-label]::before { content: none !important; }
     }
 
     @media print {
@@ -4249,6 +4873,31 @@
     .an-header-right { display: flex; flex-direction: column; align-items: flex-end; gap: 5px; flex-shrink: 0; }
     .an-icon    { font-size: 1.35rem; margin-top: 2px; flex-shrink: 0; }
     .an-label   { font-size: 0.66rem; font-weight: 700; color: var(--c-c9973a); text-transform: uppercase; letter-spacing: 0.19em; margin-bottom: 3px; }
+    /* Counterpart to .lv-scope — names what the narrative's risk level covers. */
+    .an-scope   { font-size: 0.7rem; line-height: 1.45; color: var(--text-3); margin-top: 4px; max-width: 62ch; }
+
+    /* Exposure breakdown — the four buckets, itemised. */
+    .an-exposure { margin-top: 10px; border: 1px solid rgba(var(--line-rgb), 0.10); border-radius: 6px; overflow: hidden; }
+    .an-exp-row { display: flex; justify-content: space-between; gap: 12px; padding: 7px 12px;
+                  font-size: 0.79rem; border-bottom: 1px solid rgba(var(--line-rgb), 0.06); }
+    .an-exp-row:last-of-type { border-bottom: 0; }
+    .an-exp-label { color: var(--text-3); }
+    .an-exp-val { font-variant-numeric: tabular-nums; color: var(--text-2); }
+    .an-exp--risk   .an-exp-val { color: var(--c-f87171); font-weight: 600; }
+    .an-exp--review .an-exp-val { color: var(--c-fbbf24); font-weight: 600; }
+    .an-exp-note { padding: 7px 12px; font-size: 0.73rem; line-height: 1.5; color: var(--text-4);
+                   background: rgba(var(--shade-a-rgb), 0.4); }
+
+    /* "Can I bill these tenants?" — the question the screen exists to answer. */
+    .an-readiness { margin-top: 10px; padding: 9px 12px; border-radius: 6px;
+                    display: flex; flex-wrap: wrap; align-items: baseline; gap: 4px 10px; font-size: 0.8rem; }
+    .an-readiness--ok      { background: rgba(52,211,153,0.10); border: 1px solid rgba(52,211,153,0.34); }
+    .an-readiness--blocked { background: rgba(248,113,113,0.10); border: 1px solid rgba(248,113,113,0.34); }
+    .an-readiness-q { color: var(--text-3); }
+    .an-readiness-a { font-weight: 700; }
+    .an-readiness--ok      .an-readiness-a { color: var(--c-6ee7b7, #6ee7b7); }
+    .an-readiness--blocked .an-readiness-a { color: var(--c-fca5a5); }
+    .an-readiness-why { flex-basis: 100%; color: var(--text-3); font-size: 0.75rem; line-height: 1.5; }
     .an-headline { font-size: 0.93rem; font-weight: 600; color: var(--text-1); line-height: 1.3; }
     .an-risk { font-size: 0.71rem; font-weight: 700; padding: 3px 10px; border-radius: 99px; white-space: nowrap; }
     .an-risk--red    { background: rgba(239,68,68,0.16);  color: var(--c-f87171); border: 1px solid rgba(239,68,68,0.32); }
@@ -4291,6 +4940,7 @@
     .ap-header-left { display: flex; align-items: center; gap: 8px; }
     .ap-header-right { display: flex; align-items: center; gap: 7px; }
     .ap-title { font-size: 0.85rem; font-weight: 700; color: var(--text-2); letter-spacing: 0.02em; }
+    .ap-scope { font-weight: 500; color: var(--text-3); letter-spacing: 0; }
     .ap-badge {
       display: inline-flex; align-items: center; justify-content: center;
       min-width: 20px; height: 20px; padding: 0 6px;
@@ -5084,6 +5734,21 @@
     .acq-detail-badge.complete  { background: var(--bgc-14291a); color: var(--c-4ade80); }
     .acq-detail-badge.converted { background: var(--bgc-1e1245); color: var(--c-a78bfa); }
     .acq-card-status.converted  { background: var(--bgc-1e1245); color: var(--c-a78bfa); }
+    /* Orphaned: converted, but the property it names is gone. Amber — this is a
+       state to resolve, not an error and not a healthy Converted. */
+    .acq-card-status.orphaned   { background: rgba(201,151,58,0.12); color: var(--c-fbbf24, #fbbf24); }
+    .acq-detail-badge.orphaned  { background: rgba(201,151,58,0.12); color: var(--c-fbbf24, #fbbf24); }
+    .acq-card-orphan-note       { color: var(--c-fbbf24, #fbbf24); }
+    .acq-archived-badge { display: inline-block; margin-left: 8px; padding: 2px 8px;
+      border-radius: 10px; font-size: 0.7rem; font-weight: 600;
+      background: rgba(var(--line-rgb), 0.07); color: var(--text-4); }
+    .acq-orphan { border: 1px solid rgba(201,151,58,0.35); background: rgba(201,151,58,0.07);
+      border-radius: 10px; padding: 12px 14px; max-width: 480px; }
+    .acq-orphan-head { color: var(--c-fbbf24, #fbbf24); font-weight: 600; font-size: 0.85rem; margin-bottom: 4px; }
+    .acq-orphan-body { color: var(--text-3); font-size: 0.8rem; line-height: 1.5; margin-bottom: 10px; }
+    .acq-modal-repair { margin-top: 14px; padding: 10px 12px; border-radius: 8px;
+      border: 1px solid rgba(201,151,58,0.35); background: rgba(201,151,58,0.07);
+      color: var(--c-fbbf24, #fbbf24); font-size: 0.82rem; line-height: 1.55; }
     .acq-card.converted         { border-color: #2d1a5e; }
     .acq-card-converted-note    { font-size: 0.72rem; color: var(--c-7c3aed); margin-top: 4px; }
 
@@ -5613,6 +6278,49 @@
     }
     .ob-hint strong { color: var(--c-818cf8); font-weight: 600; }
     .ob-hint a { color: var(--c-818cf8); cursor: pointer; text-decoration: underline; }
+    /* Dashboard lead-in: the user's work, and the one action that starts it. */
+    .ptf-start {
+      display: flex; align-items: flex-end; justify-content: space-between; gap: 16px;
+      flex-wrap: wrap; margin: 4px 0 18px;
+    }
+    .ptf-start-title { font-size: clamp(1.5rem, 4vw, 2rem); font-weight: 800; margin: 0; color: var(--text-1); }
+    .ptf-start-sub { margin: 6px 0 0; font-size: 0.86rem; color: var(--text-3); }
+    .ptf-start-cta {
+      padding: 12px 22px; border: none; border-radius: 10px; background: #16a34a; color: #fff;
+      font-size: 0.9rem; font-weight: 800; cursor: pointer; white-space: nowrap; flex-shrink: 0;
+    }
+    .ptf-start-cta:hover { background: #15803d; }
+    /* Archived properties: present, quiet, never competing with Add Property. */
+    .ptf-archived-bar { margin: -4px 0 14px; }
+    .ptf-archived-link {
+      background: none; border: none; padding: 4px 0; cursor: pointer;
+      font: inherit; font-size: 0.8rem; color: var(--text-4);
+      border-bottom: 1px dashed rgba(var(--line-rgb), 0.25);
+    }
+    .ptf-archived-link:hover { color: var(--text-2); }
+    .ptf-archived-list { margin: 0 0 18px; }
+    .ptf-arch-row {
+      display: flex; align-items: center; justify-content: space-between; gap: 12px;
+      padding: 10px 12px; margin-bottom: 6px; border-radius: 8px;
+      border: 1px solid rgba(var(--line-rgb), 0.09); background: rgba(var(--line-rgb), 0.03);
+    }
+    .ptf-arch-name { font-size: 0.88rem; color: var(--text-2); font-weight: 600; }
+    .ptf-arch-meta { font-size: 0.74rem; color: var(--text-4); margin-top: 2px; }
+    .ptf-arch-restore {
+      padding: 6px 14px; border-radius: 7px; font-size: 0.78rem; font-weight: 600; cursor: pointer;
+      background: rgba(var(--line-rgb), 0.05); border: 1px solid rgba(var(--line-rgb), 0.14);
+      color: var(--text-2); flex: none;
+    }
+    .ptf-arch-restore:hover { background: rgba(var(--line-rgb), 0.1); }
+    .ptf-arch-empty { font-size: 0.8rem; color: var(--text-4); padding: 8px 2px; }
+    /* The assistant sits after the work it assists. */
+    .ptf-assist { margin-top: 26px; padding-top: 18px; border-top: 1px solid rgba(var(--line-rgb), 0.08); }
+    .ptf-assist .cc-nav-link { margin-top: 6px; }
+    @media (max-width: 560px) {
+      .ptf-start { align-items: stretch; }
+      .ptf-start-cta { width: 100%; }
+    }
+
     /* Empty state CTA buttons */
     .ptf-empty-cta { display: flex; gap: 8px; justify-content: center; flex-wrap: wrap; margin-top: 14px; }
     .ptf-empty-btn-primary {
@@ -5981,7 +6689,48 @@
   .evd-banner { background: rgba(251,191,36,0.1); border: 1px solid rgba(251,191,36,0.4); color: var(--c-fbbf24); border-radius: 8px; padding: 7px 12px; font-size: 0.8rem; margin-bottom: 8px; }
   .evd-main { display: flex; gap: 14px; flex: 1; min-height: 0; }
   .evd-doc { flex: 1; overflow: auto; background: var(--theme-surface); border: 1px solid rgba(var(--line-rgb), 0.07); border-radius: 10px; padding: 12px; }
+  /* SEC-3 — session lost. Deliberately a fixed bar, not a toast: it reports that
+     saving has stopped, which stays true until it is acted on. */
+  .ms-authlost {
+    position: fixed; top: 0; left: 0; right: 0; z-index: 100000;
+    display: flex; align-items: center; justify-content: center; gap: 14px; flex-wrap: wrap;
+    padding: 12px 18px; background: #7c2d12; color: #fed7aa;
+    font-size: 0.86rem; line-height: 1.45; text-align: center;
+    box-shadow: 0 2px 12px rgba(0,0,0,.35);
+  }
+  .ms-authlost strong { color: #ffedd5; }
+  .ms-authlost-btn {
+    background: #fed7aa; color: #7c2d12; border: 0; border-radius: 6px;
+    padding: 7px 16px; font-size: 0.84rem; font-weight: 700; cursor: pointer; white-space: nowrap;
+  }
+  .ms-authlost-btn:hover { background: #ffedd5; }
+  @media (max-width: 560px) { .ms-authlost { font-size: 0.8rem; padding: 10px 12px; } }
+
+  /* The stored invoice, reachable from the screen the manager is already on.
+     "View" on the row expands the extracted FIELDS; this opens the DOCUMENT. */
+  .inv-source-row { display: flex; align-items: center; gap: 10px; flex-wrap: wrap; margin-bottom: 12px; }
+  .inv-view-file-btn {
+    background: var(--theme-accent, #1e3a5f); color: #bfdbfe; border: 1px solid rgba(191,219,254,.35);
+    border-radius: 6px; padding: 7px 14px; font-size: 0.82rem; font-weight: 600; cursor: pointer;
+  }
+  .inv-view-file-btn:hover { filter: brightness(1.15); }
+  .inv-source-name { color: var(--text-4); font-size: 0.78rem; word-break: break-all; }
+
+  /* Reports · per-tenant statement buttons. Grouped under one label and given a
+     verb, so a tenant name never sits in a row of actions looking like one. */
+  .rpt-tenant-list { display: flex; flex-direction: column; gap: 6px; }
+  .rpt-tenant-list-lbl {
+    font-size: 0.7rem; letter-spacing: .08em; text-transform: uppercase;
+    color: var(--text-4); margin-bottom: 2px;
+  }
+  .tenant-report-btn { display: flex; align-items: baseline; gap: 7px; text-align: left; width: 100%; }
+  .trb-verb { font-size: 0.72rem; color: var(--text-4); flex: none; }
+  .trb-who  { font-weight: 600; }
+
   .evd-page-lbl { color: var(--text-4); font-size: 0.74rem; margin-bottom: 8px; }
+  /* AI-4 — a citation naming a page the document does not have. Read as a
+     fault, not as a caption: this is the surface where a citation gets checked. */
+  .evd-page-lbl--bad { color: #fbbf24; font-weight: 600; }
   .evd-stage { position: relative; display: inline-block; }
   .evd-stage canvas { display: block; border-radius: 4px; background: #fff; }
   .evd-hl-layer { position: absolute; inset: 0; pointer-events: none; }
@@ -5991,6 +6740,9 @@
   .evd-side { width: 320px; flex-shrink: 0; overflow-y: auto; background: var(--theme-card); border: 1px solid rgba(var(--line-rgb), 0.07); border-radius: 10px; padding: 14px 16px; }
   .evd-row { display: flex; justify-content: space-between; gap: 10px; padding: 5px 0; font-size: 0.8rem; border-bottom: 1px solid rgba(var(--line-rgb), 0.05); }
   .evd-row span { color: var(--text-4); } .evd-row b { color: var(--text-1); text-align: right; }
+  /* Absence, not a value: dimmed and unemphasised so "Not available for this
+     document" cannot be misread as the section reference itself. */
+  .evd-row b.evd-na { color: var(--text-4); font-weight: 400; font-style: italic; }
   .evd-lbl { font-size: 0.68rem; font-weight: 700; letter-spacing: 0.06em; text-transform: uppercase; color: var(--c-22d3ee); margin: 12px 0 5px; }
   .evd-quote { margin: 0; padding: 10px 12px; background: rgba(14,116,144,0.12); border-left: 3px solid #22d3ee; border-radius: 6px; color: var(--text-2); font-size: 0.83rem; line-height: 1.55; font-style: italic; }
   .evd-reason { color: var(--text-3); font-size: 0.8rem; line-height: 1.5; }
@@ -6002,6 +6754,10 @@
   .evd-jump-chip--on { border-color: #C9973A; color: var(--c-c9973a); }
   .aiw-cite--live { cursor: pointer; border-color: rgba(201,151,58,0.55); }
   .aiw-cite--live:hover { background: rgba(201,151,58,0.12); color: var(--text-1); }
+  /* I — a source with no captured clause is provenance, not a citation, and must
+     not borrow the citation palette. Muted, dashed, never gold, never clickable:
+     it says where the value came from without claiming to quote it. */
+  .aiw-cite--nosrc { border-style: dashed; border-color: rgba(var(--line-rgb), 0.22); color: var(--text-4); cursor: help; }
 </style>
 <div id="evidenceViewer" onclick="if(event.target===this)EvidenceViewer.close()" role="dialog" aria-modal="true" aria-labelledby="evdTitle">
   <div class="evd-box" tabindex="-1">
@@ -6025,17 +6781,28 @@
 <!-- ── Portfolio Dashboard ──────────────────────────────────────────── -->
 <div id="portfolioDashboard">
 
-  <!-- Phase 21: entry point into the AI Command Center -->
-  <button class="cc-portfolio-entry" onclick="showCommandCenter()">✨ <b>AI Command Center</b> — your prioritized daily briefing</button>
-  <button class="cc-nav-link" style="margin: -8px 0 18px;" onclick="startGuidedTour()">▶ Take the 2-minute guided tour</button>
-
-  <!-- Hero Intro -->
-  <div class="hero-intro">
-    <h1 class="hero-title">MainStreet</h1>
-    <p class="hero-tagline">AI-powered CAM reconciliation. Settling on the XRP Ledger.</p>
-    <p class="hero-sub">CAM Reconciliation &nbsp;&middot;&nbsp; Works Alongside Yardi &nbsp;&middot;&nbsp; AI-Powered Analysis</p>
-    <p class="hero-desc">AI-powered CAM reconciliation built for landlords and property managers</p>
+  <!-- The dashboard leads with the user's work.
+       It used to open with the AI Command Center as a full-width primary and a
+       marketing hero beneath it, pushing the portfolio — the reason anyone signs
+       in — below both. A first-time user arrived with nothing to do and no
+       obvious way to start. MainStreet is the operating system for managing
+       properties; the assistant helps throughout, it is not the front door.
+       The Command Center now sits under the portfolio, as an assistant to it. -->
+  <div class="ptf-start">
+    <div class="ptf-start-text">
+      <h1 class="ptf-start-title">Your properties</h1>
+      <p class="ptf-start-sub">Every lease, invoice, repair and reconciliation, by building.</p>
+    </div>
+    <button class="ptf-start-cta" onclick="addNewProperty()">＋ Add Property</button>
   </div>
+
+  <!-- Archived properties. Hidden until there is at least one — an empty link to
+       an empty screen is clutter on the first-run portfolio, which is the one
+       screen that must not be. Populated by _renderArchivedLink(). -->
+  <div class="ptf-archived-bar" id="ptfArchivedBar" style="display:none">
+    <button class="ptf-archived-link" id="ptfArchivedLink" onclick="toggleArchivedProperties()"></button>
+  </div>
+  <div class="ptf-archived-list" id="ptfArchivedList" style="display:none"></div>
 
   <!-- Demo Welcome Panel — shown to new users until dismissed; managed by _maybeShowWelcome().
        Phase 25: simplified to a single pointer (no buttons) since the demo properties now
@@ -6139,6 +6906,13 @@
     </div>
   </div>
 
+
+  <!-- Assistant to the work above, not ahead of it. -->
+  <div class="ptf-assist">
+    <button class="cc-portfolio-entry" onclick="showCommandCenter()">✨ <b>AI Command Center</b> — your prioritized daily briefing</button>
+    <button class="cc-nav-link" onclick="startGuidedTour()">▶ Take the 2-minute guided tour</button>
+  </div>
+
 </div>
 
 <!-- ── Acquisition Detail Panel ──────────────────────────────────────── -->
@@ -6154,12 +6928,15 @@
   <!-- Conversion confirmation modal (hidden until triggered) -->
   <div id="acqConvertModal" class="acq-modal-backdrop" style="display:none" onclick="if(event.target===this)_hideAcqConvertModal()">
     <div class="acq-modal-box">
-      <div class="acq-modal-title">&#x1F3E2; Acquire Property</div>
+      <div class="acq-modal-title" id="acqConvertModalTitle">&#x1F3E2; Acquire Property</div>
       <div class="acq-modal-body">
         Convert <span class="acq-modal-name" id="acqConvertModalName"></span> to a managed
         property?<br><br>
         Tenant records, lease metadata, rent roll, and acquisition analysis will be copied.
         The due diligence review is preserved and marked <em>converted</em> for historical reference.
+        <!-- Shown only when repairing an orphaned conversion; the copy above
+             describes a first conversion and is wrong for that case. -->
+        <div class="acq-modal-repair" id="acqConvertModalRepair" style="display:none"></div>
       </div>
       <div class="acq-modal-actions">
         <button class="acq-modal-cancel" onclick="_hideAcqConvertModal()">Cancel</button>
@@ -6309,13 +7086,35 @@
     <div class="del-modal-icon">&#x26A0;&#xFE0F;</div>
     <div class="del-modal-title">Delete Property</div>
     <div class="del-modal-prop" id="delModalPropName"></div>
+    <!-- Shown only when the property actually has history. A warning that
+         appears every time is one people learn to dismiss unread. -->
+    <div class="del-modal-guard" id="delModalGuard" style="display:none">
+      <div class="del-modal-guard-head">This property has history</div>
+      <div class="del-modal-activity" id="delModalActivity"></div>
+    </div>
+    <div class="del-modal-advice" id="delModalAdvice" style="display:none">
+      This property contains leases, timeline history, reconciliations, and
+      supporting documents.<br><br>
+      If the property is no longer managed, <strong>Archive</strong> preserves its
+      history while removing it from your active portfolio.<br><br>
+      <strong>Delete</strong> permanently removes all records and should only be
+      used for properties created by mistake.
+    </div>
     <div class="del-modal-desc">
       This will permanently delete this property and all of its data, including:<br><br>
       <strong>Tenants &amp; leases &nbsp;·&nbsp; CAM reconciliations &nbsp;·&nbsp; Invoices &nbsp;·&nbsp; Disputes &nbsp;·&nbsp; Activity history</strong><br><br>
       This action cannot be undone.
     </div>
+    <label class="del-modal-confirm-label" id="delModalConfirmLabel" for="delModalConfirmName" style="display:none">
+      Type the property name to confirm
+    </label>
+    <input class="del-modal-confirm-name" id="delModalConfirmName" type="text"
+      autocomplete="off" spellcheck="false" style="display:none"
+      oninput="_delModalNameTyped()" />
     <div class="del-modal-actions">
       <button class="del-modal-cancel" id="delModalCancelBtn" onclick="closeDeletePropertyModal()">Cancel</button>
+      <!-- Archive is the primary action wherever there is history to preserve. -->
+      <button class="del-modal-archive" id="delModalArchiveBtn" onclick="archiveActiveProperty()">Archive Instead</button>
       <button class="del-modal-confirm" id="delModalConfirmBtn" onclick="confirmDeleteProperty()">Delete Property</button>
     </div>
   </div>
@@ -6339,10 +7138,13 @@
   <div id="propertyKpiHeader"></div>
   <div id="rlusdSettlementPanel"></div>
 
-  <!-- ══════════════════════════ TAB: Overview ══════════════════════════ -->
-  <div class="workspace-tab-pane" id="wsPane-overview">
-
-  <!-- ── Step Progress Bar ─────────────────────────────────────────── -->
+  <!-- ── Step Progress Bar ───────────────────────────────────────────────
+       OUTSIDE the tab panes on purpose. It used to live inside
+       #wsPane-overview, so the one thing telling a first-time user where they
+       are in the sequence disappeared the moment they left Overview — which is
+       immediately, because every step of the workflow (Property, Spaces, CAM,
+       Reports) happens on another tab. It renders fine; it was just only ever
+       visible on the one screen where the user is not working. -->
   <div class="step-bar" id="stepBar">
     <div class="step-item active" id="step-setup">
       <div class="step-dot">1</div>
@@ -6366,6 +7168,11 @@
     </div>
   </div>
 
+  <!-- ══════════════════════════ TAB: Overview ══════════════════════════ -->
+  <div class="workspace-tab-pane" id="wsPane-overview">
+
+  <!-- ── Step Progress Bar ─────────────────────────────────────────── -->
+
   <!-- ── SECTION 1: Property Setup ─────────────────────────────────── -->
   <div class="card" id="cardSetup">
     <div class="sec-head">
@@ -6376,12 +7183,17 @@
       <div class="field">
         <label>Property Name</label>
         <input type="text" id="propertyName" placeholder="e.g. Westfield Plaza"
-          oninput="liveUpdateBreadcrumb(this.value);savePropertyData()" />
+          oninput="liveUpdateBreadcrumb(this.value);savePropertyData();_setupNextSync()" />
       </div>
       <div class="field">
         <label>Total Property Sqft <span class="field-info-tip" title="Total rentable square footage for the property. This number is used to calculate each tenant&#x27;s pro-rata share of common area expenses.">&#x24D8;</span></label>
+        <!-- inputmode="numeric" gives phones the digit keypad rather than the
+             full keyboard; `change` fires on blur (and Enter), which is where the
+             deferred re-render happens — see updatePropertySqft/commitPropertySqft. -->
         <input type="number" id="totalSqft" placeholder="e.g. 20000" min="1"
-          oninput="updatePropertySqft(this.value)" />
+          inputmode="numeric" enterkeyhint="done"
+          oninput="updatePropertySqft(this.value);_setupNextSync()"
+          onchange="commitPropertySqft(this.value);_setupNextSync()" />
         <div class="field-helper-text">Example: If the property is 20,000 sqft and a tenant occupies 2,000 sqft, that tenant&#x27;s pro-rata share is 10%.</div>
       </div>
       <div class="field">
@@ -6390,6 +7202,16 @@
           <!-- Options populated by initCamYearSelect() on load -->
         </select>
       </div>
+    </div>
+
+    <!-- The fields above save themselves on every keystroke, which is good
+         behaviour and completely invisible: a first-time user fills them in and
+         has no way to tell whether anything was kept, and nothing tells them
+         what happens next. This is the explicit confirmation and the handoff. -->
+    <div class="setup-next" id="setupNext">
+      <div class="setup-next-msg" id="setupNextMsg">Name your property and enter its total square footage to begin.</div>
+      <button class="btn-primary setup-next-btn" id="setupSaveBtn" type="button"
+              onclick="savePropertyAndContinue()" disabled>Save &amp; Continue &rsaquo;</button>
     </div>
   </div>
 
@@ -6413,59 +7235,68 @@
       </div>
       <div id="spacesList"></div>
     </div>
+
+    <!-- ── Lease Upload ──────────────────────────────────────────────────
+         Lives HERE, under Spaces, because that is where the information
+         architecture says lease intake belongs (script.js: "'documents' is
+         retired from navigation: lease intake moved under Spaces").
+
+         It did not actually move. Only the tab was removed — the card stayed
+         behind in #wsPane-documents, a pane that 'documents' being absent from
+         WORKSPACE_TABS means switchWorkspaceTab() can never display and nothing
+         else displays either. So the entire lease-upload workflow, and the
+         "Next step: upload your lease PDFs" hint that lives with it, were
+         unreachable in the shipped app: a new property had nowhere to go.
+         This completes the migration the comment describes. -->
+
+      <!-- ── SECTION 2: Lease Upload ────────────────────────────────────── -->
+      <div class="card" id="cardLeases">
+        <div class="sec-head">
+          <div class="sec-num">2</div>
+          <div>
+            <h2>Lease Upload</h2>
+            <p>Upload leases and invoices — AI extracts CAM terms automatically</p>
+          </div>
+        </div>
+        <div id="obHintLeases" class="ob-hint" style="display:none;"></div>
+
+        <!-- Tab bar -->
+        <div class="lease-tab-bar">
+          <button class="lease-tab active" id="lTabBulk"   onclick="switchLeaseTab('bulk')">&#x1F4C2; Upload Leases</button>
+          <button class="lease-tab"        id="lTabSingle" onclick="switchLeaseTab('single')">&#x1F464; Add One Tenant</button>
+          <button class="lease-tab"        id="lTabCenter" onclick="switchLeaseTab('center')">&#x1F4AC; Ask the Lease</button>
+        </div>
+
+        <!-- SqFt mismatch banner — lives above both panels so it's always visible -->
+        <div id="sqft-error" class="sqft-error-banner hidden"></div>
+
+        <!-- Panel A: Bulk -->
+        <div id="leasePanelBulk">
+          <div class="bulk-upload-zone" id="bulkZone"
+            ondragover="event.preventDefault();this.classList.add('drag-over')"
+            ondragleave="this.classList.remove('drag-over')"
+            ondrop="event.preventDefault();this.classList.remove('drag-over');handleBulkLeases(event.dataTransfer.files)">
+            <div class="bulk-uz-icon">&#x1F4C2;</div>
+            <div class="bulk-uz-label">Drop all lease PDFs here, or click to select</div>
+            <div class="bulk-uz-sub">Multiple PDFs accepted &middot; AI processes each one sequentially</div>
+            <input type="file" id="bulkLeaseInput" multiple accept=".pdf,application/pdf"
+              onchange="handleBulkLeases(this.files)" />
+          </div>
+          <div id="bulkProgress" style="display:none;"></div>
+          <div id="bulkResults"></div>
+        </div>
+
+        <!-- Panel B: Single -->
+        <div id="leasePanelSingle" style="display:none;">
+          <div id="tenantSlots"></div>
+        </div>
+
+        <!-- Panel C: Lease Center -->
+        <div id="leasePanelCenter" style="display:none;">
+        </div>
+      </div>
+
   </div><!-- /wsPane-spaces -->
-
-  <!-- ══════════════════════════ TAB: Documents ══════════════════════════ -->
-  <div class="workspace-tab-pane" id="wsPane-documents" style="display:none;">
-
-  <!-- ── SECTION 2: Lease Upload ────────────────────────────────────── -->
-  <div class="card" id="cardLeases">
-    <div class="sec-head">
-      <div class="sec-num">2</div>
-      <div>
-        <h2>Lease Upload</h2>
-        <p>Upload leases and invoices — AI extracts CAM terms automatically</p>
-      </div>
-    </div>
-    <div id="obHintLeases" class="ob-hint" style="display:none;"></div>
-
-    <!-- Tab bar -->
-    <div class="lease-tab-bar">
-      <button class="lease-tab active" id="lTabBulk"   onclick="switchLeaseTab('bulk')">&#x1F4C2; Upload Leases</button>
-      <button class="lease-tab"        id="lTabSingle" onclick="switchLeaseTab('single')">&#x1F464; Add One Tenant</button>
-      <button class="lease-tab"        id="lTabCenter" onclick="switchLeaseTab('center')">&#x1F4AC; Ask the Lease</button>
-    </div>
-
-    <!-- SqFt mismatch banner — lives above both panels so it's always visible -->
-    <div id="sqft-error" class="sqft-error-banner hidden"></div>
-
-    <!-- Panel A: Bulk -->
-    <div id="leasePanelBulk">
-      <div class="bulk-upload-zone" id="bulkZone"
-        ondragover="event.preventDefault();this.classList.add('drag-over')"
-        ondragleave="this.classList.remove('drag-over')"
-        ondrop="event.preventDefault();this.classList.remove('drag-over');handleBulkLeases(event.dataTransfer.files)">
-        <div class="bulk-uz-icon">&#x1F4C2;</div>
-        <div class="bulk-uz-label">Drop all lease PDFs here, or click to select</div>
-        <div class="bulk-uz-sub">Multiple PDFs accepted &middot; AI processes each one sequentially</div>
-        <input type="file" id="bulkLeaseInput" multiple accept=".pdf,application/pdf"
-          onchange="handleBulkLeases(this.files)" />
-      </div>
-      <div id="bulkProgress" style="display:none;"></div>
-      <div id="bulkResults"></div>
-    </div>
-
-    <!-- Panel B: Single -->
-    <div id="leasePanelSingle" style="display:none;">
-      <div id="tenantSlots"></div>
-    </div>
-
-    <!-- Panel C: Lease Center -->
-    <div id="leasePanelCenter" style="display:none;">
-    </div>
-  </div>
-
-  </div><!-- /wsPane-documents -->
 
   <!-- ══════════════════════════ TAB: CAM ══════════════════════════════ -->
   <div class="workspace-tab-pane" id="wsPane-cam" style="display:none;">
@@ -6896,7 +7727,7 @@
   <div class="rpt-toolbar">
     <h2 id="rptToolbarTitle">Report</h2>
     <div class="rpt-toolbar-actions">
-      <button class="rpt-tool-btn" onclick="window.print()">&#x1F5A8; Print / Save PDF</button>
+      <button class="rpt-tool-btn" onclick="window.print()">&#x1F5A8; <span class="rpt-btn-long">Print / Save&nbsp;</span>PDF</button>
       <button class="rpt-close-btn" onclick="closeReport()">&#x2715; Close</button>
     </div>
   </div>
@@ -7008,10 +7839,54 @@
 
 <script src="auth-service.js"></script>
 <script src="access-control.js"></script>
+<!-- ONE interpretation of every number read off a document — square footage and
+     money. Must precede review-engine.js and script.js: both consult it, and
+     review-engine fails closed (every lease reads as missing its area) if it is
+     absent, so load order is load-bearing, not cosmetic. -->
+<script src="source-values.js"></script>
+<!-- The canonical integer-cent boundary for reconciliation arithmetic. Three
+     tenants at exactly one third of a building summed to 99.99%, so a fully
+     leased property reported three cents of vacancy and a −$0.03 "Not
+     attributed" line. Reads amounts through source-values.js, so it must load
+     after it and before script.js and variance-breakdown.js, both of which do
+     their money arithmetic through it. -->
+<script src="money-cents.js"></script>
+<!-- What is in the CAM pool, defined once. The eligibility rule had four
+     transcriptions; the allocation honoured it and the concentration detector
+     did not, so a $70,000 invoice a manager had removed from CAM kept blocking
+     every tenant's statement. Must precede script.js and variance-breakdown.js. -->
+<script src="cam-pool.js"></script>
+<!-- Where a lease term sits relative to the CAM period, decided once. The
+     detector used to compare one endpoint against the CAM year end, which
+     called an ordinary mid-period expiry "a lease that ended" and said
+     nothing at all about a lease that commenced mid-period. Must precede
+     reconciliation-engine.js, which reads it and never re-derives it. -->
+<script src="lease-period.js"></script>
+<!-- Reuniting a property's history with itself. The timeline was written to
+     properties.data on every save and never read back, so selectProperty
+     appended sync_restored to an empty array and the next save wrote it over
+     the record — 27 pilot properties were left holding one session each. Both
+     restore paths in script.js consult this, so it must precede script.js. -->
+<script src="timeline-merge.js"></script>
+<!-- Where a lease field's value actually came from. getFieldConfidence decided
+     "verified" from non-emptiness, so a cap typed by hand read exactly like one
+     quoted off a lease — and so did one that genuinely carried a clause. The
+     five states live here and getFieldConfidence projects them onto the four it
+     has always returned; must precede script.js, which delegates to it. -->
+<!-- tenant-normalize.js defines what a tenant record IS. script.js delegates to
+     it with no local fallback, so it must load first. -->
+<script src="tenant-normalize.js"></script>
+<script src="field-provenance.js"></script>
 <script src="review-engine.js"></script>
 <script src="reconciliation-engine.js"></script>
+<script src="audit-exposure.js"></script>
+<!-- Explains the pool-vs-billed gap by re-adding what the reconciliation already
+     produced. Pure derivation, no CAM arithmetic; must load before script.js
+     renders the reconciliation summary banner. -->
+<script src="variance-breakdown.js"></script>
 <script src="audit-service.js"></script>
 <script src="selectors.js"></script>
+<script src="cam-exclusions.js"></script>
 <script src="allocation-integrity.js"></script>
 <script src="reconciliation-explainer.js"></script>
 <script src="lease-test-lab.js"></script>
@@ -7048,6 +7923,11 @@
 <script src="tenant-space.js"></script>
 <!-- Property Operating System — "Act on this space" (grounded AI actions; Reply is action #1). Reads TenantSpace.record(); must load after it. -->
 <script src="space-actions.js"></script>
+<!-- The canonical property-scoped read model. Composes CamPool, TimelineMerge,
+     FieldProvenance, VarianceBreakdown, LeaseIntelligence, PropertyWorkspace,
+     PropertyReference and TenantSpace — so it loads after all of them. It owns
+     no business rule of its own; it only asks each owner for its answer. -->
+<script src="property-record.js"></script>
 <!-- Pre-login landing + 60-second animated demo (additive overlay; self-mounts) -->
 <!-- The product film, shared with home.html so there is one implementation. -->
 <script src="product-film.js"></script>

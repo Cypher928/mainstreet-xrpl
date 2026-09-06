@@ -1,0 +1,203 @@
+{
+  "phase": "M4 — first three read-only MCP capabilities",
+  "date": "2026-09-06",
+  "branch": "claude/validation-runs-analysis-ji1zb3",
+  "base_commit": "7657c0a",
+  "scope": "list_properties, get_property, get_tenant. Module only — no transport is mounted. No search_property_memory, CAM/attention/timeline/evidence/dispute/payment tools, no Ripple, no write tools, no approval workflows, no UI, no Pilot, no Production, no CAM repair.",
+  "transport_note": {
+    "what_was_built": "a capability module exporting MCP-shaped tool descriptors (name, description, inputSchema, handler) plus a call(name,args,ctx) dispatcher",
+    "what_was_not": "no HTTP route, no MCP server process, no socket. Mounting a transport exposes an external surface, and the brief said build only the three capabilities.",
+    "to_mount_later": "a transport needs only to pass the caller Authorization header through as ctx.token and return the envelope verbatim"
+  },
+  "headline_finding": {
+    "what": "A property row whose data blob was never written answered \"no disputes\" instead of \"nothing has been recorded\".",
+    "detail": "The hydrator reads d.disputes || [] from row.data || {}. A property created but never saved therefore produced empty spaces, disputes, timeline and documents — indistinguishable from a property that genuinely has none. An MCP client asking \"does this property have any disputes?\" would have been told no.",
+    "fix": "The hydrator now reports degraded[\"property.no_stored_record\"] when row.data is absent, and the capability layer maps that to section status UNAVAILABLE, returning null rather than []. meta.unavailable is untouched, because assemble() DID compose every section — from nothing.",
+    "why_it_matters_here": "This is the first phase where the semantics leave the building. A caveat in a sibling field does not stop a client reading data.disputes.length === 0; null does."
+  },
+  "four_states": {
+    "ok": "composed, has content",
+    "empty": "composed, source present, genuinely none — returned as []",
+    "degraded": "composed from fewer inputs — returned with the rows and a caveat",
+    "unavailable": "could not be composed, or nothing was ever recorded — returned as null",
+    "ordering": "unavailable outranks degraded outranks empty, asserted directly as a contract (G9a-G9k)",
+    "unknown_vs_less": "tenants.read_failed and property.no_stored_record mean UNKNOWN and force null; tenants.from_table_no_review_state and attention.without_selectors_readiness mean KNOWN-FROM-LESS and keep their rows"
+  },
+  "security": {
+    "identity": "handlers take a token and resolve the user server-side. There is deliberately no userId parameter.",
+    "only_id_crosses": "resolveIdentity returns {ok,userId} and nothing else. Not role, not app_metadata, not user_metadata — the last is user-writable in Supabase.",
+    "ownership": "properties.user_id = authenticated user. Nothing else confers it.",
+    "second_identity_space": "tenant_users (migration 012) links an auth user to a tenant space and carries a property_id. A tenant-portal user therefore holds a valid session for a property they do not own. They get an empty portfolio and a refusal — tested in section D.",
+    "service_role": "transport only, never a decision",
+    "fail_closed": [
+      "blank token refuses without contacting the auth service",
+      "a non-2xx from auth refuses",
+      "an auth payload with no id refuses",
+      "an auth timeout refuses, and is distinguished from a bad token",
+      "a failed ownership probe refuses",
+      "a failed list read returns null, not an empty portfolio"
+    ]
+  },
+  "reads": {
+    "list_properties": "ONE read: /properties?user_id=eq.<uid>&select=id,name,sqft,created_at,updated_at,archived_at — the blob is deliberately not selected and no property is hydrated",
+    "get_property": "the three approved M1b reads via the accepted hydrator",
+    "get_tenant": "the same three; the tenant is found with find() inside the owned record, never fetched by id",
+    "write_methods_issued": 0,
+    "rpc_calls": 0
+  },
+  "verification": {
+    "m4": {
+      "command": "node test-m4-mcp-capabilities.js",
+      "passed": 204,
+      "failed": 0
+    },
+    "m3": {
+      "command": "node test-m3-dependency-hardening.js",
+      "passed": 130,
+      "failed": 0
+    },
+    "m2": {
+      "command": "node test-m2-runtime-harness.js",
+      "passed": 152,
+      "failed": 0
+    },
+    "m1b": {
+      "command": "node test-property-record-hydrator.js",
+      "passed": 102,
+      "failed": 0
+    },
+    "mutation_m4": {
+      "mutants": 40,
+      "killed": 40,
+      "survived": 0,
+      "gaps_the_first_run_exposed": [
+        "I-userid-from-args-getprop and I-list-uses-arg-userid — the most serious of the set. A caller-supplied userId was honoured, and every existing refusal happened BEFORE the argument was reachable, so none of them proved it was ignored. Now tested with a VALID tenant session naming the owner (B7a-B7g).",
+        "S-null-value-not-unavailable — a null section could be reclassified empty; the ordering rules are now asserted as a contract, not only through fixtures (G9a-G9k).",
+        "X-documents-not-scoped — the fixture only gave documents to one tenant, so filtered and unfiltered produced the same list. Both tenants now have documents (F18a-F18d)."
+      ]
+    },
+    "mutation_m3": {
+      "mutants": 34,
+      "killed": 34,
+      "survived": 0
+    },
+    "mutation_m2": {
+      "mutants": 31,
+      "killed": 31,
+      "survived": 0
+    },
+    "mutation_m1b": {
+      "mutants": 34,
+      "killed": 33,
+      "survived": 1,
+      "survivor": "D-prune-removed — the same equivalent mutant reported since M1b, unchanged"
+    },
+    "full_regression": {
+      "command": "node test-regression.js",
+      "suites_run": 120,
+      "suites_passed": 119,
+      "suites_failed": 1,
+      "failing_suite": "Broken promises (dead controls) — test-broken-promises.js",
+      "failing_assertions": [
+        "4 control(s) promise an object and navigate generically",
+        "review actions do not carry the tenant id"
+      ],
+      "baseline_check": "the identical two assertions fail at c3dbee9, before any of this work — preserved as the known unrelated baseline, not fixed or repinned",
+      "m_suites_inside_the_run": {
+        "M1b": "passed",
+        "M2": "passed",
+        "M3": "passed",
+        "M4": "passed"
+      }
+    }
+  },
+  "constraints_honoured": {
+    "excluded_tools_built": 0,
+    "http_endpoints": false,
+    "mcp_server": false,
+    "write_tools": false,
+    "approval_workflows": false,
+    "ui_changes": false,
+    "pilot_changes": false,
+    "production_changes": false,
+    "cam_data_repair": false,
+    "ripple_or_payment": false,
+    "broken_promises_touched": false,
+    "m3_shim_broadened": false,
+    "browser_globals_used": false,
+    "second_property_data_model": false,
+    "network_reachable_from_tests": false
+  },
+  "amendment_evidence_read_failed": {
+    "date": "2026-09-06",
+    "authorized": "after a read-only investigation into evidence.read_failed semantics",
+    "finding": "When the evidence read failed, the hydrator never attached tenant.fieldEvidence, FieldProvenance found no snapshot, and every field carrying a value fell to its floor state ai_extracted. That output was byte-identical to a SUCCESSFUL read with no evidence on file — and for a reviewer-approved field it was not merely indistinguishable but false: manually_confirmed with a named reviewer became ai_extracted with by:null. A transient 503 turned \"a named person verified this\" into \"a model guessed this\". Six of thirteen canonical fields per tenant were affected.",
+    "change": "evidence.read_failed moved into UNKNOWN_CODES in api/_mcp-capabilities.js; caveat wording sharpened from \"provenance is incomplete\" to \"provenance is UNKNOWN\". FieldProvenance itself was NOT changed.",
+    "result": {
+      "data.fieldProvenance": "null",
+      "section_status": "unavailable",
+      "caveat": "evidence.read_failed:unavailable",
+      "unaffected": [
+        "lease",
+        "tenantName",
+        "space",
+        "counts",
+        "summary",
+        "camResult"
+      ]
+    },
+    "distinction_preserved": {
+      "read OK, no evidence": "fields ok; field state is its genuine floor (unknown / ai_extracted)",
+      "read OK, manual confirmation": "manually_confirmed, reviewer named",
+      "read FAILED": "provenance unknown — null, never fabricated as ai_extracted"
+    },
+    "nothing_true_discarded": "measured, not assumed — evidence supplies provenance, never values",
+    "verification": {
+      "m4": {
+        "passed": 224,
+        "failed": 0
+      },
+      "m4_mutation": {
+        "mutants": 44,
+        "killed": 44,
+        "survived": 0
+      },
+      "m3": {
+        "passed": 130,
+        "failed": 0
+      },
+      "m3_mutation": {
+        "mutants": 34,
+        "killed": 34,
+        "survived": 0
+      },
+      "m2": {
+        "passed": 152,
+        "failed": 0
+      },
+      "m2_mutation": {
+        "mutants": 31,
+        "killed": 31,
+        "survived": 0
+      },
+      "m1b": {
+        "passed": 102,
+        "failed": 0
+      },
+      "m1b_mutation": {
+        "mutants": 34,
+        "killed": 33,
+        "survived": 1,
+        "survivor": "D-prune-removed (equivalent, unchanged)"
+      },
+      "full_regression": {
+        "suites_run": 120,
+        "suites_passed": 119,
+        "suites_failed": 1,
+        "failing_suite": "Broken promises (dead controls) — test-broken-promises.js",
+        "baseline_check": "the same two assertions, unchanged since before M1b; not touched"
+      },
+      "contract_intact": "unavailable > degraded > empty re-verified as a contract after the change"
+    }
+  }
+}

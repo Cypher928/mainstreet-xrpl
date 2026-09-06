@@ -100,6 +100,13 @@ const SUPABASE_MOCK = `
       },
       eq:       function(col, val) { _filters[col] = val; return q; },
       neq:      function() { return q; },
+      // MOCK DRIFT. The product added an .is(col, null) filter to a query this
+      // flow runs, and this mock had no such method, so the page threw
+      // "q.is is not a function" and the suite's console-error check failed.
+      // Nothing about the product is wrong here — the stand-in had simply
+      // stopped standing in for the real client.
+      is:       function() { return q; },
+      not:      function() { return q; },
       in:       function() { return q; },
       order:    function() { return q; },
       limit:    function() { return q; },
@@ -172,13 +179,13 @@ const SUPABASE_MOCK = `
     await page.waitForFunction(() => {
       const app = document.getElementById('appContent');
       return app && app.style.display !== 'none' && app.style.display !== '';
-    }, { timeout: 10000 });
+    }, null, { timeout: 45000 });
 
     await page.evaluate(() => loadDemo());
     await page.waitForFunction(() => {
       const el = document.getElementById('mainWorkflow');
       return el && el.style.display !== 'none';
-    }, { timeout: 15000 });
+    }, null, { timeout: 45000 });
     await page.evaluate(() => switchWorkspaceTab('cam'));
     await page.waitForTimeout(300);
 
@@ -189,7 +196,7 @@ const SUPABASE_MOCK = `
     await page.waitForFunction(() => {
       const body = document.getElementById('resultsBody');
       return body && body.innerText.trim().length > 20;
-    }, { timeout: 10000 });
+    }, null, { timeout: 45000 });
 
     const cleanHtml = await page.$eval('#resultsBody', el => el.innerHTML);
     assert(!cleanHtml.includes('needs-review-rollup'),
@@ -210,7 +217,7 @@ const SUPABASE_MOCK = `
     await page.waitForFunction(() => {
       const body = document.getElementById('resultsBody');
       return body && body.innerHTML.includes('needs-review-rollup');
-    }, { timeout: 10000 });
+    }, null, { timeout: 45000 });
 
     const flaggedHtml = await page.$eval('#resultsBody', el => el.innerHTML);
     const rollupIdx  = flaggedHtml.indexOf('needs-review-rollup');

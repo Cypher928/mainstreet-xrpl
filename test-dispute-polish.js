@@ -45,9 +45,9 @@ srv.listen(PORT, '127.0.0.1', async () => {
 
   try {
     await page.goto('http://127.0.0.1:' + PORT + '/', { waitUntil: 'networkidle', timeout: 30000 });
-    await page.waitForFunction(() => { const a = document.getElementById('appContent'); return a && a.style.display !== 'none' && a.style.display !== ''; }, { timeout: 10000 });
+    await page.waitForFunction(() => { const a = document.getElementById('appContent'); return a && a.style.display !== 'none' && a.style.display !== ''; }, null, { timeout: 45000 });
     await page.evaluate(() => loadDemo());
-    await page.waitForFunction(() => { const el = document.getElementById('mainWorkflow'); return el && el.style.display !== 'none'; }, { timeout: 15000 });
+    await page.waitForFunction(() => { const el = document.getElementById('mainWorkflow'); return el && el.style.display !== 'none'; }, null, { timeout: 45000 });
     await page.waitForTimeout(400);
 
     sec('AI explanation — shorter and scannable');

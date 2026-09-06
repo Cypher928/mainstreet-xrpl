@@ -17,11 +17,29 @@
 window.LeaseIntelligence = (() => {
 
   // ── Canonical field list (mirrors CLAUDE_LEASE_SYSTEM schema) ────────────────
+  // cap_base_amount is the DOLLAR operand of the CAM ceiling, and it was the one
+  // input to that calculation with no provenance at all: absent from this list,
+  // so FieldProvenance never resolved it and PropertyRecord never carried it,
+  // while `cap` — the percentage beside it — had both. A ceiling is
+  // capBaseAmount x (1 + cap%), so half of every enforced cap rested on a number
+  // no surface could describe. It is stored on the tenant as `capBaseAmount`
+  // (camelCase, unlike every key here), so callers resolve it through the
+  // existing opts.value override rather than reshaping the tenant record.
   const CANONICAL_FIELDS = [
-    'cap', 'admin_fee_pct', 'gross_up_pct', 'expense_stop',
+    'cap', 'cap_base_amount', 'admin_fee_pct', 'gross_up_pct', 'expense_stop',
     'audit_rights', 'pro_rata_method', 'renewal_options',
     'tenant_name', 'leased_sqft', 'start_date', 'end_date', 'lease_type',
   ];
+
+  // ── Fields without which a CAM reconciliation cannot be computed ─────────────
+  // Phase 0 (M5): the ingest gate in script.js used to derive "partial" from
+  // start_date/end_date/lease_type only, so a lease with no square footage —
+  // which cannot be allocated a pro-rata share at all — passed as status
+  // 'success', _needsReview false, confidence 'high', while the explainability
+  // summary generated from THIS list said "Review required before
+  // reconciliation". Two lists, two answers, and the machine-readable one gated
+  // the workflow. Exported so both consumers read the same array.
+  const RECONCILIATION_CRITICAL_FIELDS = ['tenant_name', 'leased_sqft', 'start_date', 'end_date'];
 
   // ── TASK 2: CLAUSE SEMANTIC NORMALIZATION ─────────────────────────────────────
   //
@@ -295,10 +313,40 @@ window.LeaseIntelligence = (() => {
   // Generates human-readable summaries for review acceleration.
   // Output: { fieldSummaries:{}, overallSummary:string, reviewNotes:[] }
 
+  // A date-only lease value is a calendar day, not an instant. `new Date(
+  // '2016-02-28')` is midnight UTC, which renders as February 27th anywhere west
+  // of Greenwich — the same one-day shift that made this module and the Lender
+  // Summary disagree with the audit about when SHONAC's lease ended. Build the
+  // date from its parts so the day survives the round trip.
+  function _leaseDate(d) {
+    if (d == null || d === '') return null;
+    if (d instanceof Date) return isNaN(d.getTime()) ? null : d;
+    const s = String(d).trim();
+    const m = /^(\d{4})-(\d{2})-(\d{2})$/.exec(s);
+    const dt = m ? new Date(Number(m[1]), Number(m[2]) - 1, Number(m[3])) : new Date(s);
+    return isNaN(dt.getTime()) ? null : dt;
+  }
+
   function _fmtDate(d) {
     if (!d) return null;
-    try { return new Date(d).toLocaleDateString('en-US', { year: 'numeric', month: 'long', day: 'numeric' }); }
-    catch (_) { return d; }
+    try {
+      const dt = _leaseDate(d);
+      return dt ? dt.toLocaleDateString('en-US', { year: 'numeric', month: 'long', day: 'numeric' }) : d;
+    } catch (_) { return d; }
+  }
+
+  // Mirrors the enforcement condition in script.js runCAMAllocation (the stricter
+  // of the two engine sites — runFullReconciliation only null-checks). Kept in
+  // this module so the summary and the engine cannot disagree about whether a
+  // cap is live. If the engine's condition changes, change this with it.
+  function capIsEnforceable(t) {
+    if (!t) return false;
+    const pct = parseFloat(t.cap);
+    if (t.cap == null || t.cap === '' || !Number.isFinite(pct) || pct < 0 || pct > 100) return false;
+    // parseFloat(null/undefined/'') is NaN, so this one check covers absence and
+    // non-numeric alike. Note 0 IS enforceable here: the engine treats a zero
+    // base the same way, and this helper must not diverge from it.
+    return Number.isFinite(parseFloat(t.capBaseAmount));
   }
 
   function generateLeaseExplainability(tenantState) {
@@ -335,6 +383,17 @@ window.LeaseIntelligence = (() => {
         fieldSummaries.cap = `CAM Cap of ${t.cap}% applied by ${amdLabel(gov)}.`;
       } else {
         fieldSummaries.cap = `CAM Cap of ${t.cap}% defined in original lease.`;
+      }
+      // Phase 0 (M1a): a cap percentage alone does not cap anything. The engine
+      // (script.js runFullReconciliation / runCAMAllocation) requires BOTH
+      // capPercentage and capBaseAmount and skips enforcement when the base is
+      // absent — deliberately, rather than invent a base. capBaseAmount is
+      // manual entry and extraction never sets it, so every extracted cap is
+      // inert on arrival. Saying "CAM Cap of 5.25%" without saying that is a
+      // claim the reconciliation does not honour.
+      if (!capIsEnforceable(t)) {
+        fieldSummaries.cap += ' NOT ENFORCED — no prior-year base amount on file, so the cap cannot be calculated and this reconciliation applies no limit.';
+        reviewNotes.push(`CAM Cap of ${t.cap}% found in the lease but NOT being enforced. Enter the prior-year CAM base amount for this tenant to apply it.`);
       }
     } else {
       fieldSummaries.cap = 'No CAM Cap found — tenant bears full proportionate share of expense increases.';
@@ -405,9 +464,12 @@ window.LeaseIntelligence = (() => {
       reviewNotes.push(`${amendments.length} amendment${amendments.length > 1 ? 's' : ''} on file, modifying: ${modified.join(', ')}.`);
     }
 
-    const missingCritical = ['tenant_name', 'leased_sqft', 'start_date', 'end_date'].filter(f => !t[f]);
+    const missingCritical = RECONCILIATION_CRITICAL_FIELDS.filter(f => !t[f]);
+    const capPhrase = t.cap == null
+      ? 'No CAM Cap.'
+      : (capIsEnforceable(t) ? `CAM Cap: ${t.cap}%.` : `CAM Cap: ${t.cap}% (not enforced — no base amount).`);
     const overallSummary = missingCritical.length === 0
-      ? `Lease complete. ${amendments.length > 0 ? amendments.length + ' amendment(s) applied. ' : ''}${t.cap != null ? 'CAM Cap: ' + t.cap + '%.' : 'No CAM Cap.'}`
+      ? `Lease complete. ${amendments.length > 0 ? amendments.length + ' amendment(s) applied. ' : ''}${capPhrase}`
       : `Lease incomplete — missing: ${missingCritical.join(', ')}. Review required before reconciliation.`;
 
     return { fieldSummaries, overallSummary, reviewNotes };
@@ -473,9 +535,26 @@ window.LeaseIntelligence = (() => {
       detect: (t) => {
         const lt = (t.lease_type || '').toLowerCase();
         const isNnn = lt.includes('nnn') || lt.includes('triple') || lt.includes('net');
-        // Only fire when field was never extracted (null/undefined).
-        // Empty string means Claude confirmed no exclusions — still informative, don't alert.
+        // F-02: this could never fire before, because script.js collapsed '' to
+        // null at extraction and normalizeTenant turned null back into '' — so
+        // the stored value was '' either way. Both sides are fixed; null now
+        // genuinely means "never extracted" and reaches this branch.
         return isNnn && (t.excluded_categories === null || t.excluded_categories === undefined);
+      },
+    },
+    {
+      type: 'CAM_EXCLUSIONS_EMPTY',
+      severity: 'low',
+      description: 'NNN lease where extraction found no exclusion schedule at all.',
+      confidenceAdjustment: -5,
+      fieldImpact: ['excluded_categories'],
+      reviewerNote: 'Extraction returned no exclusions for a net lease. Confirm against the lease — SIGA returned none twice and five exclusions on a third run of the identical document.',
+      // '' means extraction ran and found nothing. That is a real answer, but on
+      // a net lease it is an unusual one and F-02 showed it can be wrong.
+      detect: (t) => {
+        const lt = (t.lease_type || '').toLowerCase();
+        const isNnn = lt.includes('nnn') || lt.includes('triple') || lt.includes('net');
+        return isNnn && t.excluded_categories === '';
       },
     },
     {
@@ -513,7 +592,9 @@ window.LeaseIntelligence = (() => {
       reviewerNote: 'Verify renewal option dates against lease expiration.',
       detect: (t) => {
         if (!t.renewal_options || !t.end_date) return false;
-        const leaseEndYr = new Date(t.end_date).getFullYear();
+        const _le = _leaseDate(t.end_date);
+        if (!_le) return false;
+        const leaseEndYr = _le.getFullYear();
         const m = t.renewal_options.match(/20(\d{2})/);
         if (!m) return false;
         return parseInt('20' + m[1]) < leaseEndYr;
@@ -541,6 +622,54 @@ window.LeaseIntelligence = (() => {
       },
     },
   ];
+
+  // ── PROPERTY_NAME_MISMATCH: the landlord's explicit resolution ─────────────
+  // Detection above is deliberately unchanged and stays unchanged: a mismatch is
+  // always detected, always recorded on _edgeCases, and always visible. What
+  // follows only answers a second, separate question — has a human who owns this
+  // property said "yes, this lease really does belong here".
+  //
+  // Lives here, beside the detector, so script.js (the CAM gate) and
+  // review-engine.js (Needs Review) cannot drift into two different opinions of
+  // what "confirmed" means. Same reasoning as F-02's single resolver.
+  //
+  // WHY THIS COMPARES VALUES RATHER THAN HASHING THEM
+  // The exclusion acknowledgement (_exclusionAck) keys on a fingerprint because
+  // its input is free-text prose that has to be normalised before two versions
+  // can be compared. The facts here are already discrete — a property name and a
+  // document identity — so storing and comparing them directly is both simpler
+  // and strictly more auditable: a person reading the record sees exactly what
+  // was confirmed, instead of an opaque eight-character hash.
+
+  /**
+   * Stable identity of the lease document a confirmation was made against.
+   * Re-uploading a different document changes this, which invalidates the
+   * confirmation — the landlord verified one document, not the tenant forever.
+   */
+  function propertyDocumentKey(t) {
+    if (!t) return '';
+    return String(t.leaseUrl || t.fileName || (t.leaseFile && t.leaseFile.name) || '').trim();
+  }
+
+  /**
+   * True when a landlord confirmation is present AND still describes the lease
+   * as it stands now.
+   *
+   * FAILS CLOSED in every ambiguous case. A confirmation that cannot be matched
+   * to the current extracted property name and document is treated as absent, so
+   * the mismatch re-blocks rather than silently persisting across a re-upload or
+   * a re-extraction that changed what the lease says.
+   */
+  function isPropertyMismatchConfirmed(t) {
+    const c = t && t._propertyConfirm;
+    if (!c || typeof c !== 'object') return false;
+    const confirmedName = String(c.extractedName == null ? '' : c.extractedName).trim();
+    const currentName   = String((t && t.property_name) == null ? '' : t.property_name).trim();
+    // An empty confirmed name identifies nothing and must never match.
+    if (!confirmedName) return false;
+    if (confirmedName !== currentName) return false;
+    return String(c.documentKey == null ? '' : c.documentKey) === propertyDocumentKey(t);
+  }
 
   function detectLeaseEdgeCases(tenantState, extractionResult) {
     const t = tenantState || {};
@@ -581,12 +710,17 @@ window.LeaseIntelligence = (() => {
     const t = tenantState || {};
     const amendments = Array.isArray(t.amendments) ? t.amendments : [];
     const { edgeCases, overallRisk } = detectLeaseEdgeCases(t, null);
-    const confScore = t._confidenceScore ?? 100;
+    // AI-1 — `?? 100` routed an unmeasured lease to the lightweight model on the
+    // strength of a score nobody computed. Unknown confidence is a reason to
+    // spend more reasoning, not less: null routes conservatively.
+    const confScore = (typeof t._confidenceScore === 'number' && Number.isFinite(t._confidenceScore))
+      ? t._confidenceScore : null;
 
     const signals = [];
     if (amendments.length > 0)           signals.push(`${amendments.length} amendment(s) require precedence reasoning`);
     if (overallRisk === 'high')           signals.push('High-risk edge cases detected');
-    if (confScore < 60)                   signals.push(`Low confidence score (${confScore})`);
+    if (confScore == null)                signals.push('Extraction confidence unknown — routing conservatively');
+    else if (confScore < 60)              signals.push(`Low confidence score (${confScore})`);
     if (edgeCases.some(e => e.type === 'AMENDMENT_CONFLICT'))       signals.push('Amendment conflict — governing version uncertain');
     if (edgeCases.some(e => e.type === 'CONTRADICTORY_CAP_AND_STOP')) signals.push('Contradictory CAM clauses present');
     if (t.expense_stop != null && t.cap != null)                    signals.push('Both expense stop and CAM cap present');
@@ -637,6 +771,8 @@ window.LeaseIntelligence = (() => {
   // ── Public API ────────────────────────────────────────────────────────────────
   return {
     CANONICAL_FIELDS,
+    RECONCILIATION_CRITICAL_FIELDS,
+    capIsEnforceable,
     CAM_CONCEPT_MAP,
     normalizeClauseConcept,
     reasonMultiDocumentLease,
@@ -645,5 +781,7 @@ window.LeaseIntelligence = (() => {
     detectLeaseEdgeCases,
     modelRoutingRecommendation,
     buildMultiDocReasoningDocs,
+    propertyDocumentKey,
+    isPropertyMismatchConfirmed,
   };
 })();

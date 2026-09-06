@@ -1,0 +1,147 @@
+{
+  "phase": "M1b — server-side PropertyRecord hydrator",
+  "date": "2026-09-05",
+  "branch": "claude/validation-runs-analysis-ji1zb3",
+  "base_commit": "c3dbee9",
+  "scope": "Read-only, module-only. No HTTP endpoint. No Pilot or Production contact.",
+
+  "artifacts": [
+    {
+      "path": "api/_server-deps.js",
+      "lines": 269,
+      "sha256": "57d843fe14fc81c40185274b08d9d13a58b19d4d1ca169b31b13c094736bfdd6",
+      "purpose": "Loads the eight modules PropertyRecord.assemble() needs under Node, behind a controlled and allow-listed window shim."
+    },
+    {
+      "path": "api/_property-record-hydrator.js",
+      "lines": 326,
+      "sha256": "df0b56f7eff629eaeef3ead77c3dccb514ca3883c68feae419b435f93954bd22",
+      "purpose": "hydrate({propertyId,userId,sbFetch?,deps?}) -> {ok,record?,reason?,reads,degraded}. Database truth only."
+    },
+    {
+      "path": "test-property-record-hydrator.js",
+      "lines": 484,
+      "sha256": "c8db3cc33c5a67442fc09f2f1e0cd8a834d4e824f8b3a07dd53c3834fa0b6060",
+      "purpose": "102 assertions across the eleven required properties. Offline: every transport is a local function."
+    }
+  ],
+
+  "reads": {
+    "approved_tables": ["properties", "tenants", "tenant_field_evidence"],
+    "requests_on_the_blob_path": [
+      "/properties?id=eq.<pid>&user_id=eq.<uid>&select=id            (ownership probe)",
+      "/properties?id=eq.<pid>&user_id=eq.<uid>&select=id,name,sqft,data",
+      "/tenant_field_evidence?property_id=eq.<pid>&select=*&order=created_at.asc"
+    ],
+    "tenants_table": "fallback only — read when the property blob carries no tenants",
+    "deliberately_absent": {
+      "tenant_review_audit": "feeds activityLog, which PropertyRecord never reads",
+      "cam_reconciliations": "the record's cam section reads the camReconciliation snapshot from the blob; the browser's extra merge runs through loadCamResults(id, getCamYear()), and getCamYear() is localStorage session state"
+    },
+    "write_methods_issued": 0
+  },
+
+  "authorization": {
+    "model": "authenticated userId -> _ownsProperty(propertyId, userId) -> read",
+    "fail_closed_before_transport": true,
+    "redundant_filter": "the property read carries user_id=eq.<uid> as well as the independent ownership probe",
+    "service_role": "transport credential only; never consulted in a decision",
+    "probe_failure_is_refusal": "a non-2xx ownership probe returns not_authorized, not ownership"
+  },
+
+  "window_shim": {
+    "why_needed": "property-workspace.js reads window.Selectors (line 42) and window.PropertyReference (line 86) at CALL time, so assemble() throws ReferenceError without a window",
+    "allow_list": ["LeaseIntelligence", "TenantSpace", "PropertyWorkspace", "PropertyReference"],
+    "excluded_and_why": {
+      "Selectors": "selectors.js references a bare ReviewEngine global; including it would require leaking a second global. collectAttention degrades by design without it.",
+      "PropertyTimeline": "property-timeline.js touches document at load",
+      "currentProperty": "browser session state",
+      "showToast": "browser session state",
+      "savePropertyNow": "browser session state",
+      "AuthService": "browser session state"
+    },
+    "containment": {
+      "installed_only_inside_withWindow": true,
+      "restored_in_finally": true,
+      "restored_on_throw": true,
+      "prior_window_preserved": true,
+      "leaked_after_load": false,
+      "leaked_after_hydration": false,
+      "sealed_against_call_time_writes": true,
+      "blocked_writes_observed": ["MoneyCents"],
+      "blocked_writes_note": "cam-pool.js requires money-cents.js from inside a function; its UMD tail then assigns itself to whatever window it finds. The seal refuses it and cam-pool takes the require's return value instead."
+    }
+  },
+
+  "degradation_reporting": {
+    "meta_unavailable_semantics": "unchanged — it still means 'could not be composed'",
+    "attention_handling": "attention IS composed, from fewer inputs, so it is NOT listed in meta.unavailable; the difference is reported as degraded['attention.without_selectors_readiness']",
+    "other_degraded_codes": [
+      "tenants.from_table_no_review_state",
+      "tenants.read_failed",
+      "evidence.read_failed",
+      "deps.missing:<names>"
+    ]
+  },
+
+  "server_origin_metadata": {
+    "origin": "server",
+    "includesBrowserLocalState": false,
+    "note_is_machine_readable": false,
+    "additive": "every meta key the browser record carries survives"
+  },
+
+  "defect_found_and_fixed_during_the_phase": {
+    "what": "_evidenceRowToSnapshot initially emitted sourcePage instead of page, and an extra extractedAt field",
+    "consequence": "silent — no throw; every page citation would have been dropped and `when` would have carried a value the browser does not have",
+    "how_caught": "an assertion comparing the server mapping's keys against script.js's, key for key",
+    "status": "corrected; the mapping is now field-for-field identical to script.js"
+  },
+
+  "verification": {
+    "focused_suite": { "command": "node test-property-record-hydrator.js", "passed": 102, "failed": 0 },
+    "mutation": {
+      "command": "scratchpad/mutate-m1b.js",
+      "mutants": 34,
+      "killed": 33,
+      "survived": 1,
+      "survivor": {
+        "name": "D-prune-removed",
+        "mutation": "delete the _pruneToAllowList(_shim) call site in load()",
+        "assessment": "EQUIVALENT for the current dependency set, and reported as such rather than fake-killed. The prune is the load-time half of the guarantee the Proxy seal gives at call time. No module in today's eight attaches an extra name during load, so removing the call changes nothing observable. The function itself is covered — D-prune-inverted and D-prune-silent both die — and the post-load shim contents are asserted directly (I4). It is kept as defence for a future dependency that does attach one."
+      },
+      "gaps_the_first_mutation_run_exposed": [
+        "an ownership probe returning a non-2xx was untested (H-ownership-ignores-status survived) — now A9.401/403/500/503",
+        "a failed property read was untested (H-property-read-failure-ignored survived) — now A10/A11/A12",
+        "the read-only guard's method list was asserted against itself (H-write-method-dropped survived) — now D0 pins it to a literal"
+      ]
+    },
+    "full_regression": {
+      "command": "node test-regression.js",
+      "suites_run": 117,
+      "suites_passed": 116,
+      "suites_failed": 1,
+      "failing_suite": "Broken promises (dead controls) — test-broken-promises.js",
+      "failing_assertions": [
+        "4 control(s) promise an object and navigate generically",
+        "review actions do not carry the tenant id"
+      ],
+      "baseline_check": "the identical two assertions fail at c3dbee9, the commit before M1b — preserved as the known unrelated baseline regression, not fixed or repinned",
+      "m1b_suite_inside_the_run": "Server PropertyRecord hydrator (M1b) — 102 passed, 0 failed"
+    }
+  },
+
+  "constraints_honoured": {
+    "no_http_endpoint": true,
+    "no_loadPropertyData_call": true,
+    "no_getCamYear_call": true,
+    "no_localStorage": true,
+    "no_dom_api": true,
+    "tenant_normalize_reused_not_recreated": true,
+    "pilot_writes": 0,
+    "production_contact": false,
+    "payment_022_or_1b_touched": false,
+    "ripple_xrpl_touched": false,
+    "ui_or_public_site_touched": false
+  }
+}

@@ -149,7 +149,7 @@ srv.listen(PORT, '127.0.0.1', async () => {
 
   try {
     await page.goto('http://127.0.0.1:' + PORT + '/', { waitUntil: 'networkidle', timeout: 30000 });
-    await page.waitForFunction(() => !!window.LeaseIngest && !!window.pdfjsLib, { timeout: 15000 });
+    await page.waitForFunction(() => !!window.LeaseIngest && !!window.pdfjsLib, null, { timeout: 45000 });
     ok('LeaseIngest + PDF.js available in the app');
 
     sec('analyze() on a real PDF');

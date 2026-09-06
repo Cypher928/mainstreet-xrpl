@@ -24,6 +24,8 @@ module.exports.config = {
   },
 };
 
+const { resolveClaudeTask, resolveClaudeMaxTokens } = require('./_claude-tasks');
+const { checkEncodedSize, base64DocBytes } = require('../request-limits.js');
 const _t = require('./_pilot-target');
 const _SB_URL  = _t.url;
 const _SB_ANON = _t.anonKey;
@@ -32,14 +34,10 @@ if (!_SB_URL || !_SB_ANON) {
 }
 
 // In-process sliding-window rate limiter (resets per cold-start; good enough for abuse prevention).
-const _rl = new Map();
-function _chkRate(uid, max, winMs) {
-  const now = Date.now();
-  let w = _rl.get(uid) || { n: 0, reset: now + winMs };
-  if (now > w.reset) w = { n: 0, reset: now + winMs };
-  w.n++; _rl.set(uid, w);
-  return w.n <= max;
-}
+// SEC-12 — one sliding-window limiter, shared. See api/_rate-limit.js for what
+// it can and cannot do: it is per-instance and Vercel scales instances, so it
+// brakes runaway loops and single-client hammering, not a determined attacker.
+const { checkRate, sendRateLimited } = require('./_rate-limit');
 
 // Verifies the Supabase JWT from the Authorization header.
 // Returns the user object on success; sends 401/500 and returns null on failure.
@@ -69,8 +67,9 @@ module.exports = async function handler(req, res) {
 
   const user = await _verifyUser(req, res);
   if (!user) return;
-  if (!_chkRate(user.id, 20, 60000)) {
-    return res.status(429).json({ error: 'Too many requests — please slow down.' });
+  {
+    const _rl = checkRate(user.id, 20, 60000);
+    if (!_rl.ok) return sendRateLimited(res, _rl);
   }
 
   const apiKey = process.env.ANTHROPIC_API_KEY;
@@ -79,17 +78,40 @@ module.exports = async function handler(req, res) {
     return res.status(500).json({ error: 'API key not configured on server' });
   }
 
-  const { max_tokens, messages, model: requestedModel, system } = req.body || {};
+  const { max_tokens, messages } = req.body || {};
   if (!messages) {
     return res.status(400).json({ error: 'Missing required field: messages' });
   }
 
+  // Same ceiling, same words, same constant as the client and every other
+  // handler. lease-ingest.js batches to stay under it; this is the backstop for
+  // anything that reaches here unbatched.
+  const _docBytes = base64DocBytes(messages);
+  if (_docBytes > 0) {
+    const v = checkEncodedSize(_docBytes, 'lease');
+    if (!v.ok) return res.status(413).json({ error: v.error });
+  }
+
+  // SEC-2 — the extraction schema is the server's, not the caller's.
+  //
+  // This handler read `system` off the request body and forwarded it verbatim.
+  // /api/claude is LEASE EXTRACTION: that prompt defines what counts as a CAM
+  // cap, how sqft is parsed, and which entity is the tenant. Every one of those
+  // guarantees was a browser string, and its output flows into the fieldEvidence
+  // snapshots the Evidence Viewer presents as provenance. See _claude-tasks.js.
+  const resolved = resolveClaudeTask(req.body);
+  if (!resolved.ok) {
+    return res.status(resolved.status).json({ error: resolved.error });
+  }
+
   // Always use the server-configured model — never allow callers to request expensive models.
   const model = process.env.CLAUDE_MODEL || 'claude-sonnet-4-6';
-  // Cap token output to prevent runaway cost from caller-supplied values.
-  const safeMaxTokens = Math.min(Number.isFinite(max_tokens) ? max_tokens : 4096, 8192);
-  const payload = { model, max_tokens: safeMaxTokens, messages };
-  if (system) payload.system = system;
+  const payload = {
+    model,
+    max_tokens: resolveClaudeMaxTokens(max_tokens, resolved.task),
+    system:     resolved.task.system,
+    messages,
+  };
 
   let anthropicResp;
   try {
