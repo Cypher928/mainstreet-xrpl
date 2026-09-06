@@ -127,5 +127,77 @@
     "browser_globals_used": false,
     "second_property_data_model": false,
     "network_reachable_from_tests": false
+  },
+  "amendment_evidence_read_failed": {
+    "date": "2026-09-06",
+    "authorized": "after a read-only investigation into evidence.read_failed semantics",
+    "finding": "When the evidence read failed, the hydrator never attached tenant.fieldEvidence, FieldProvenance found no snapshot, and every field carrying a value fell to its floor state ai_extracted. That output was byte-identical to a SUCCESSFUL read with no evidence on file — and for a reviewer-approved field it was not merely indistinguishable but false: manually_confirmed with a named reviewer became ai_extracted with by:null. A transient 503 turned \"a named person verified this\" into \"a model guessed this\". Six of thirteen canonical fields per tenant were affected.",
+    "change": "evidence.read_failed moved into UNKNOWN_CODES in api/_mcp-capabilities.js; caveat wording sharpened from \"provenance is incomplete\" to \"provenance is UNKNOWN\". FieldProvenance itself was NOT changed.",
+    "result": {
+      "data.fieldProvenance": "null",
+      "section_status": "unavailable",
+      "caveat": "evidence.read_failed:unavailable",
+      "unaffected": [
+        "lease",
+        "tenantName",
+        "space",
+        "counts",
+        "summary",
+        "camResult"
+      ]
+    },
+    "distinction_preserved": {
+      "read OK, no evidence": "fields ok; field state is its genuine floor (unknown / ai_extracted)",
+      "read OK, manual confirmation": "manually_confirmed, reviewer named",
+      "read FAILED": "provenance unknown — null, never fabricated as ai_extracted"
+    },
+    "nothing_true_discarded": "measured, not assumed — evidence supplies provenance, never values",
+    "verification": {
+      "m4": {
+        "passed": 224,
+        "failed": 0
+      },
+      "m4_mutation": {
+        "mutants": 44,
+        "killed": 44,
+        "survived": 0
+      },
+      "m3": {
+        "passed": 130,
+        "failed": 0
+      },
+      "m3_mutation": {
+        "mutants": 34,
+        "killed": 34,
+        "survived": 0
+      },
+      "m2": {
+        "passed": 152,
+        "failed": 0
+      },
+      "m2_mutation": {
+        "mutants": 31,
+        "killed": 31,
+        "survived": 0
+      },
+      "m1b": {
+        "passed": 102,
+        "failed": 0
+      },
+      "m1b_mutation": {
+        "mutants": 34,
+        "killed": 33,
+        "survived": 1,
+        "survivor": "D-prune-removed (equivalent, unchanged)"
+      },
+      "full_regression": {
+        "suites_run": 120,
+        "suites_passed": 119,
+        "suites_failed": 1,
+        "failing_suite": "Broken promises (dead controls) — test-broken-promises.js",
+        "baseline_check": "the same two assertions, unchanged since before M1b; not touched"
+      },
+      "contract_intact": "unavailable > degraded > empty re-verified as a contract after the change"
+    }
   }
 }

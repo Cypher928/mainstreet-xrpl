@@ -207,8 +207,24 @@ const DEGRADED_SECTIONS = {
  * reading `data.disputes.length === 0` will conclude "no disputes" no matter
  * what a caveat in a sibling field says. Caveats inform; null is what actually
  * stops the wrong answer being formed.
+ *
+ * `evidence.read_failed` belongs here for a sharper reason than the others, and
+ * it took a traced investigation to see it. When the evidence read fails the
+ * hydrator never attaches tenant.fieldEvidence, so FieldProvenance finds no
+ * snapshot and every field carrying a value falls to its floor state,
+ * `ai_extracted`. That output is byte-identical to the case where the read
+ * SUCCEEDED and there is genuinely no evidence — and for a field a reviewer had
+ * approved it is worse than identical, it is false: `manually_confirmed` with a
+ * named reviewer becomes `ai_extracted` with `by: null`. A transient 503 turns
+ * "a named person verified this" into "a model guessed this".
+ *
+ * So this is the one degradation that fabricates a positive claim rather than
+ * thinning a true one, and null is the only honest answer. Nothing true is lost
+ * by it: evidence supplies provenance, never values, so lease, tenantName,
+ * space, counts, summary and camResult are unaffected — measured, not assumed.
  */
-const UNKNOWN_CODES = ['property.no_stored_record', 'tenants.read_failed'];
+const UNKNOWN_CODES = ['property.no_stored_record', 'tenants.read_failed',
+                       'evidence.read_failed'];
 
 /** Human wording for the codes a caller will actually see. */
 const CAVEAT_TEXT = {
@@ -218,8 +234,11 @@ const CAVEAT_TEXT = {
   'tenants.read_failed':
     'The tenant roster could not be read. Spaces are not empty — they are unknown.',
   'evidence.read_failed':
-    'Field evidence could not be read, so provenance is incomplete. A field ' +
-    'shown without a citation here may still have one on record.',
+    'Field evidence could not be read, so provenance is UNKNOWN and is reported ' +
+    'as null rather than guessed. Without it every field would read as an ' +
+    'unverified AI extraction, including fields a reviewer has confirmed — so ' +
+    'no provenance is stated at all. The lease terms and space details in this ' +
+    'response are unaffected.',
   'attention.without_selectors_readiness':
     'Attention items were composed without the readiness module, so this list ' +
     'is shorter than the application would show. It is not a complete list of concerns.',

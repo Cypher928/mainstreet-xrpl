@@ -544,14 +544,86 @@ sec('G. "We could not load it" never becomes "there are none"');
   const dc = degraded.caveats.find(c => c.code === 'tenants.from_table_no_review_state');
   is(dc && dc.severity === 'degraded', 'G26 at severity degraded');
 
-  // 6. Evidence that could not be read: provenance is incomplete, not absent.
+  // 6. Evidence that could not be read: provenance is UNKNOWN, not guessed.
+  //
+  // This one is not "known, from less" like the two above. Without the evidence
+  // rows FieldProvenance finds no snapshot, so every field carrying a value
+  // falls to its floor state `ai_extracted` — output byte-identical to the case
+  // where the read SUCCEEDED and there is genuinely nothing on file, and for a
+  // reviewer-approved field it is not merely indistinguishable, it is false.
+  // G31a-G31j below pin all three states apart.
   const noEv = await MCP.call('get_tenant', { propertyId: PROP, tenantId: T1 },
                               ctx({ sbFetch: db({ evStatus: 503 }) }));
   is(noEv.data !== null, 'G27 the tenant still resolves without evidence');
-  eq(noEv.provenance.sectionStatus.fields, 'degraded', 'G28 fields is degraded');
+  eq(noEv.provenance.sectionStatus.fields, 'unavailable',
+     'G28 fields is UNAVAILABLE — provenance is unknown, not thinner');
+  eq(noEv.data.fieldProvenance, null,
+     'G28a and fieldProvenance is null rather than a fabricated state');
   const ec = noEv.caveats.find(c => c.code === 'evidence.read_failed');
-  is(ec && /may still have one on record/.test(ec.message),
-     'G29 with a caveat that an uncited field is not a contradicted one');
+  is(ec && ec.severity === 'unavailable', 'G29 the caveat is at severity unavailable');
+  is(ec && /provenance is UNKNOWN/.test(ec.message),
+     'G29a and says provenance is unknown, not incomplete');
+  is(ec && /including fields a reviewer has confirmed/.test(ec.message),
+     'G29b naming the reason: a confirmed field would otherwise read as an AI guess');
+
+  // Nothing true is discarded by that null: evidence supplies provenance, never
+  // values. Compared against the SAME tenant with the read succeeding.
+  {
+    const withEv = await MCP.call('get_tenant', { propertyId: PROP, tenantId: T1 }, ctx());
+    for (const k of ['tenantName', 'lease', 'space', 'counts', 'summary', 'camResult']) {
+      eq(noEv.data[k], withEv.data[k],
+         'G29c.' + k + ' ' + k + ' is unaffected by the evidence read failing');
+    }
+    is(withEv.data.fieldProvenance !== null,
+       'G29d while the successful read does return provenance');
+  }
+
+  // ── The three states this contract must keep apart ──────────────────────
+  // 1 no evidence exists · 2 evidence read, uncited · 3 evidence read FAILED
+  {
+    const UNCITED = Object.assign({}, EV_ROW,
+      { source_file: null, source_page: null, quote: null });
+    const CONFIRMED = Object.assign({}, EV_ROW,
+      { reviewer_uid: 'rev-1', reviewer_email: 'asset.manager@example.com',
+        reviewed_at: '2025-06-01T00:00:00Z', approved: true });
+
+    const s1 = await MCP.call('get_tenant', { propertyId: PROP, tenantId: T1 },
+                              ctx({ sbFetch: db({ evidence: [] }) }));
+    const s2 = await MCP.call('get_tenant', { propertyId: PROP, tenantId: T1 },
+                              ctx({ sbFetch: db({ evidence: [UNCITED] }) }));
+    const s3 = await MCP.call('get_tenant', { propertyId: PROP, tenantId: T1 },
+                              ctx({ sbFetch: db({ evStatus: 503 }) }));
+    const s4 = await MCP.call('get_tenant', { propertyId: PROP, tenantId: T1 },
+                              ctx({ sbFetch: db({ evidence: [CONFIRMED] }) }));
+
+    eq(s1.provenance.sectionStatus.fields, 'ok',
+       'G31a state 1 — read succeeded, no evidence on file: fields is ok');
+    is(s1.data.fieldProvenance !== null && s1.data.fieldProvenance.cap.state === 'ai_extracted',
+       'G31b and the field states its genuine floor, ai_extracted',
+       s1.data.fieldProvenance.cap.state);
+
+    eq(s2.provenance.sectionStatus.fields, 'ok',
+       'G31c state 2 — read succeeded, a row with no citation: fields is ok');
+    is(s2.data.fieldProvenance.cap.cited === false,
+       'G31d and the field is honestly uncited');
+
+    eq(s3.provenance.sectionStatus.fields, 'unavailable',
+       'G31e state 3 — the read FAILED: fields is unavailable');
+    eq(s3.data.fieldProvenance, null, 'G31f and provenance is null');
+
+    // The distinction, as one assertion each way.
+    is(s1.data.fieldProvenance !== null && s3.data.fieldProvenance === null,
+       'G31g so "no evidence exists" and "evidence unreadable" are DIFFERENT answers');
+    is(s2.data.fieldProvenance !== null && s3.data.fieldProvenance === null,
+       'G31h and so are "uncited" and "unreadable"');
+
+    // The case that made this incorrect rather than merely imprecise.
+    eq(s4.data.fieldProvenance.cap.state, 'manually_confirmed',
+       'G31i a reviewer-approved field reads as manually confirmed when evidence loads');
+    eq(s4.data.fieldProvenance.cap.by, 'asset.manager@example.com',
+       'G31j naming the reviewer — which a failed read must never silently replace ' +
+       'with an unattributed AI extraction');
+  }
 
   // 7. get_tenant when spaces are unavailable must not say "no such tenant".
   const ghost = await MCP.call('get_tenant', { propertyId: PROP, tenantId: T1 },
