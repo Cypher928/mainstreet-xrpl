@@ -499,6 +499,51 @@ sec('H. The timeline the server can see, and what it says it cannot');
   is(sc && sc.severity === 'unavailable', 'H20 with an unavailable caveat naming the cause');
   is(sc && /UNKNOWN, not\s+empty/.test(sc.message.replace(/\s+/g, ' ')),
      'H21 that says per-tenant timelines are unknown rather than empty');
+
+  // ── THE SECOND ROUTE TO AN EMPTY INDEX ─────────────────────────────────
+  // Attribution disappears two ways and they arrive differently. Losing
+  // TimelineMerge means no event key can be computed; losing TenantSpace means
+  // there are no spaces to attribute events TO. Both leave byTenant as {}, and
+  // an empty index reads as "no tenant has any events" either way — so both
+  // must be null. The second route returned {} until this was found.
+  const noTS2 = Object.assign({}, DEPS.load()); delete noTS2.TenantSpace;
+  const noAttr = await MCP.call('get_timeline', { propertyId: PROP }, ctx({ deps: noTS2 }));
+  eq(noAttr.provenance.sectionStatus.spaces, 'unavailable',
+     'H22 with TenantSpace gone, the spaces section is unavailable');
+  eq(noAttr.data.byTenantCounts, null,
+     'H23 so byTenantCounts is NULL — attribution is unknown, not zero for everyone');
+  eq(noAttr.provenance.attributionUnknown, true,
+     'H24 and the response says attribution is unknown rather than leaving it to be inferred');
+  is(noAttr.caveats.some(c => c.code === 'section_unavailable' && c.scope === 'spaces'),
+     'H25 with a caveat naming the section that went missing');
+  is(Array.isArray(noAttr.data.events) && noAttr.data.events.length === 3,
+     'H26 while the property events themselves are still returned',
+     String(noAttr.data.eventCount));
+
+  // The two routes agree with each other.
+  eq(noAttr.data.byTenantCounts, sp.data.byTenantCounts,
+     'H27 both routes to lost attribution give the same answer: null');
+
+  // AND the case that must NOT be nulled: a property that genuinely has no
+  // tenants. Its spaces section is `empty`, not `unavailable`, and {} is then
+  // the true answer — nulling it would trade one wrong answer for another.
+  const noTenants = { tenants: [], invoices: [], disputes: [],
+                      timeline: [{ id: 'e9', type: 'note', when: '2025-02-01T00:00:00Z' }] };
+  const none = await MCP.call('get_timeline', { propertyId: PROP },
+                              ctx({ sbFetch: db({ blob: noTenants }) }));
+  eq(none.provenance.sectionStatus.spaces, 'empty',
+     'H28 a property with no tenants has an EMPTY spaces section, not an unavailable one');
+  eq(none.data.byTenantCounts, {},
+     'H29 so byTenantCounts is {} — genuinely composed, genuinely nobody to attribute to');
+  eq(none.provenance.attributionUnknown, false,
+     'H30 and attribution is known, not unknown');
+  is(none.data.eventCount === 1,
+     'H31 with the property event still present', String(none.data.eventCount));
+
+  // A populated index still populates — the fix must not null the healthy path.
+  eq(p.provenance.attributionUnknown, false, 'H32 the healthy path reports known attribution');
+  is(p.data.byTenantCounts !== null && Object.keys(p.data.byTenantCounts).length === 2,
+     'H33 and a populated index', JSON.stringify(p.data.byTenantCounts));
 }
 
 // ── I. get_space ───────────────────────────────────────────────────────────

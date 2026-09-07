@@ -914,10 +914,29 @@ async function getTimeline(args, ctx) {
 
   // ── property-level ───────────────────────────────────────────────────────
   const propertyEvents = status === STATUS.UNAVAILABLE ? null : ((tl && tl.property) || []);
+
   // Per-tenant counts, so a caller can see that scoping exists without asking
-  // once per space. Null when scoping is gone: an index of zeroes would read as
-  // "no tenant has any events".
-  const byTenantCounts = (status === STATUS.UNAVAILABLE || noScoping) ? null
+  // once per space. Null whenever attribution is UNKNOWN, because an index of
+  // zeroes — or an empty index — reads as "no tenant has any events".
+  //
+  // There are TWO ways attribution disappears and they arrive by different
+  // routes, which is what made the second one easy to miss:
+  //
+  //   TimelineMerge absent  meta.unavailable gains 'timeline.scoping', byTenant
+  //                         is {} because nothing can compute an event key
+  //   TenantSpace absent    meta.unavailable gains 'spaces', byTenant is {}
+  //                         because there are no spaces to attribute events TO
+  //
+  // The first was handled from the start; the second returned {} — accurate in
+  // the narrow sense that the index has no entries, and misleading in every
+  // sense that matters to a caller asking how many events a tenant has.
+  //
+  // A property that genuinely has no tenants is NOT this case: its spaces
+  // section is `empty`, not `unavailable`, and {} there is the true answer.
+  const spacesStatus = sectionStatus('spaces', rec.spaces, unavailable, degradedCodes);
+  const attributionUnknown = status === STATUS.UNAVAILABLE || noScoping ||
+                             spacesStatus === STATUS.UNAVAILABLE;
+  const byTenantCounts = attributionUnknown ? null
     : Object.keys((tl && tl.byTenant) || {}).reduce((acc, k) => {
         acc[k] = ((tl.byTenant[k]) || []).length; return acc;
       }, {});
@@ -935,10 +954,11 @@ async function getTimeline(args, ctx) {
       includesBrowserLocalState: rec.meta.includesBrowserLocalState,
       note: rec.meta.note,
       unavailable: unavailable.slice(), degraded: degradedCodes.slice(),
-      sectionStatus: { timeline: status },
+      sectionStatus: { timeline: status, spaces: spacesStatus },
       reads: h.reads, hydrated: true,
       ownership: 'properties.user_id = authenticated user',
       source: 'PropertyRecord.timeline.property — database only, never localStorage',
+      attributionUnknown,
     },
     caveats, asOf: c.now,
   });
