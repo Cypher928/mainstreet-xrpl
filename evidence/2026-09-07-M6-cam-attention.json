@@ -1,0 +1,166 @@
+{
+  "phase": "M6 — read-only CAM status and attention capabilities",
+  "date": "2026-09-07",
+  "branch": "claude/validation-runs-analysis-ji1zb3",
+  "base_commit": "5324184",
+  "commit": "1b31fc1",
+  "capabilities_added": ["get_cam_status", "get_attention"],
+  "transport": {
+    "endpoints": 0,
+    "note": "Module only, as M4 and M5. No HTTP route, no MCP server, no socket. Tool descriptors and handlers only, for a transport that has not been approved."
+  },
+
+  "investigation_before_coding": {
+    "cam_data_flow": "script.js _camExpectation (10546) returns {expectedCam, variance, expectedCamBasis:'cap_ceiling'} when _camCeilingCents (10527) can compute a ceiling, and {null, null, null} when it cannot. script.js 11024-11026 sets those three on the in-memory result; 11499 snapshots fullResults.map(r => ({...r})) into property.camReconciliation. PropertyRecord._cam (207) resolves that snapshot and returns {pool, results: results.slice(), unallocated, capped: results.filter(r => r.capApplied === true)} — the stored rows untouched.",
+    "measured_states": "A three-tenant probe produced pool 12000 (roof excluded), unallocated 0, capped 1, and all three basis states surviving into record.cam.results: cap_ceiling with expectedCam 5500 / variance 500; null with null / null; legacy_unverified with expectedCam 5 / variance 2395.",
+    "attention_shape": "PropertyWorkspace._mk (35-37) returns {severity, icon, title, why, nav, action}. nav is {tab, anchors:[...]} — literal DOM element ids from this application's HTML (disputeSection, cardLeases, propertyReviewQueuePanel, ...). action is a button label ('Review disputes').",
+    "blocker_found": "expected_cam_basis is a COLUMN ON THE cam_reconciliations TABLE, which M1b deliberately does not read. get_cam_status reads the blob snapshot's expectedCamBasis field instead. The unresolved Pilot CAM rows are table rows and are therefore outside this capability's visibility entirely — it can neither mislead about them nor mutate them. Reported, not fixed, per the instruction not to repair, null, rewrite or mutate those rows."
+  },
+
+  "expected_cam_gate": {
+    "predicate": "expectedCamBasis === 'cap_ceiling' AND typeof expectedCam === 'number' AND Number.isFinite(expectedCam)",
+    "why_this_predicate": "It is byte-for-byte the _stamped gate saveCamResults (script.js 25138) uses before persisting. If the two drifted, this reader would present as money a value the persister would refuse to write.",
+    "states": {
+      "cap_ceiling + finite": "value and variance presented; trust cap_ceiling_arithmetic",
+      "cap_ceiling + null/NaN/Infinity/string": "null; trust stamped_without_usable_value",
+      "legacy_unverified": "null; trust legacy_unverified_not_money — the stored number is a cap PERCENTAGE in a dollar field and the variance beside it is dollars minus a percentage",
+      "null basis + finite value": "null; trust unstamped_value_withheld — nothing can tell a small ceiling ($92.00) from a stray percent (92) by inspection, which is exactly the judgement the persister refuses to make",
+      "null basis + no value": "null; trust no_expectation_established",
+      "unrecognised basis word": "null; trust unrecognised_basis — a future vocabulary word is not trusted by a build that has never been told what it means"
+    },
+    "variance": "Travels with the expectation or not at all, and is never recomputed. Deriving one would manufacture the expectation the gate just refused.",
+    "mutation_preserved": "Stored rows are passed through unchanged. Asserted byte-identical after the call (I1), and the projected rows are new objects rather than aliases (I2). expectedCamBasis is reported as stored on every row — the row is described, not rewritten."
+  },
+
+  "two_axes": {
+    "rule": "expected_cam_basis = 'cap_ceiling' describes ARITHMETIC (capBaseAmount x (1 + cap%)). It asserts nothing about whether the cap base or the cap percentage was read off a lease or confirmed by a reviewer.",
+    "enforcement": "No field in data asserts verification (D1). The positive form of the word 'verified' appears nowhere in data (D2) while 'legacy_unverified' does (D2c), so the check discriminates rather than passing because the topic is absent. The phrase 'lease-supported' appears in exactly one caveat (D2a), and that caveat forbids the description rather than making it (D2b), and points at get_lease_evidence as the capability that can answer the other question (D4)."
+  },
+
+  "scope_stated_not_implied": {
+    "source_read": "PropertyRecord.cam — the stored camReconciliation blob snapshot only",
+    "table_not_read": "cam_reconciliations",
+    "how_it_travels": "A cam.snapshot_scope caveat on every response, and provenance.source, both saying the table is not read and that a row absent here is not a claim no reconciliation was run. provenance.expectedCamGate states the gate itself so a caller can audit what was shown.",
+    "asserted": "F1-F5, plus F7 asserting no read touches cam_reconciliations"
+  },
+
+  "null_vs_zero": {
+    "pool": "null when uncomputable (CamPool absent, or meta.unavailable carries cam.pool); 0 when the property genuinely has no eligible invoices. Read off meta.unavailable rather than tested for truthiness — E15/E16 assert a real 0 is reported as 0 and not mistaken for unavailable.",
+    "unallocated": "same treatment; E12-E14 assert the remainder goes null without VarianceBreakdown while the still-computable pool is reported",
+    "whole_section": "A property with no stored record returns data null with property.no_stored_record, and no empty results list appears anywhere in the response to be misread (E1-E4). A SAVED property with no reconciliation returns results [] with status ok — that one IS an assertion and is the true answer (E5-E7)."
+  },
+
+  "attention_projection": {
+    "kept": ["rank", "severity", "title", "why"],
+    "stripped": ["icon", "nav", "action"],
+    "why_stripped": "nav is {tab, anchors} naming DOM element ids in this application's HTML, and action is a button label. Handing them to an MCP caller would invite a client to render a button that goes nowhere, or to quote 'Review disputes' as though it were advice from the record.",
+    "declared": "provenance.omittedFields names the three, so they are removed visibly rather than silently. H2a asserts their only appearance in the whole response is that declaration.",
+    "rules_added": "none — no attention rule, threshold, severity or item is defined here. provenance.rulesAdded says so and H12 asserts it.",
+    "ranking": "preserved as composed, not re-derived (H9, H10)",
+    "all_clear": {
+      "value": "null, never true, whenever completeness cannot be established",
+      "why": "collectAttention reads window.Selectors for its readiness signals — expired leases, incomplete lease terms, missing caps, low-confidence extractions — and the server graph deliberately excludes Selectors. The server's list is therefore systematically SHORTER than the application's, so an empty list cannot mean 'all caught up'. This is the same argument as disputes: null.",
+      "not_hardcoded": "complete is computed from section status (ok or empty), so it would become true honestly, and only, if the readiness gap ever closed. Mutant M proved a hard-coded true is caught.",
+      "asserted": "G1-G7 on a property with a genuinely empty list; G13-G16 on an uncomposable one"
+    }
+  },
+
+  "database_reads": {
+    "new_reads_added": 0,
+    "per_capability": "exactly three, identical for both and identical to M4/M5: /properties?id=eq.<pid>&user_id=eq.<uid>&select=id (ownership probe); /properties?id=eq.<pid>&user_id=eq.<uid>&select=id,name,sqft,data; /tenant_field_evidence?property_id=eq.<pid>&select=*&order=created_at.asc",
+    "write_methods_issued": 0,
+    "rpc_calls": 0,
+    "asserted": "F6 (three reads, all GET), F7 (none touches cam_reconciliations), F8 (get_attention performs the identical three), I3 (the transport guard refuses a PATCH), I4 (no write verb in the executable code), I5/I5a (no localStorage, sessionStorage or DOM access in code, while the prose that promises it is still present so the scan discriminates)"
+  },
+
+  "security": {
+    "identity": "server-derived only; handlers take a token, there is no userId parameter",
+    "only_id_read": "user.id and nothing else — not role, app_metadata or user_metadata",
+    "ownership": "properties.user_id = authenticated user; tenant_users is never consulted",
+    "service_role": "transport only, never a substitute for the check",
+    "retested_per_capability": "owner succeeds, missing token, bad token, auth timeout, id-less auth payload, tenant-portal identity, caller-supplied userId, foreign property, missing propertyId, non-string propertyId — for both capabilities, not inherited from M4/M5",
+    "foreign_property": "not_authorized, with data null. Owned-or-not is a single predicate, so a property belonging to another user and one that does not exist are the same refusal — distinguishing them would let a caller enumerate which property ids are real.",
+    "generous_backend": "the test database answers about the property for anyone, so every refusal is the module's own"
+  },
+
+  "tests": {
+    "file": "test-m6-cam-attention.js",
+    "assertions": 161,
+    "failed": 0,
+    "registered_in": "test-regression.js",
+    "offline": "every transport and auth call is a function defined in the test file; nothing opens a socket or can reach Pilot or Production"
+  },
+
+  "mutation_testing": {
+    "harness": "scratchpad only, never committed; applies each patch to a copy of the module, runs the suite, restores, and verifies the file is byte-identical afterwards",
+    "mutants": 26,
+    "killed": 26,
+    "survived": 0,
+    "malformed": 0,
+    "real_gap_found": {
+      "mutant": "Z-capApplied-loosened",
+      "change": "capApplied: row.capApplied === true  ->  !!row.capApplied",
+      "why_it_mattered": "PropertyRecord._cam counts a capped row with r.capApplied === true, strictly. Under the loosened test a row stored with a truthy non-boolean — 'yes', 1, a leftover string from an older writer — would report capApplied true beside a cappedCount that does not include it. One response would contradict itself about the same row.",
+      "closed_by": "C28-C32, including an end-to-end case proving the row and cappedCount cannot disagree"
+    },
+    "note": "This was a gap in the code's testability, not merely a missing assertion — the first pass left it as the only survivor and it was classified honestly rather than written off as equivalent."
+  },
+
+  "full_regression": {
+    "suites_total": 121,
+    "suites_passed": 120,
+    "suites_failed": 1,
+    "failing_suite": "test-broken-promises.js",
+    "failure_status": "KNOWN PRE-EXISTING BASELINE — not fixed, not repinned, per standing instruction",
+    "failure_detail": "9 passed, 2 failed. Four controls promise an object and navigate generically (TenantSpace.openSpace(''), toggleLeaseAlertMedium()); review queue actions do not carry the tenant id (openReviewWorkspace('')). All in script.js UI handlers, untouched by M6.",
+    "m_phase_suites_inside_the_run": {
+      "Server PropertyRecord hydrator (M1b)": "passed (102)",
+      "Server runtime harness (M2)": "passed (152)",
+      "Dependency hardening (M3)": "passed (130)",
+      "Read-only MCP capabilities (M4)": "passed (249)",
+      "Property Memory capabilities (M5)": "passed (325)",
+      "CAM status + attention (M6)": "passed (161)"
+    },
+    "invalidated_run": "An earlier full-regression run was discarded, not reported: the mutation harness was rewriting api/_mcp-capabilities.js concurrently, so that run tested mutated files. It was killed and restarted on a quiet tree."
+  },
+
+  "static_require_trace": {
+    "reachable": 16,
+    "computed_requires": 0,
+    "npm_packages": 0,
+    "note": "Every require a bundler must follow is a string literal, so @vercel/nft can see the whole graph."
+  },
+
+  "prior_assertions_narrowed": {
+    "what": "M4's K6 and M5's A7 excluded any registered tool name matching /cam_/ or /attention/. M5's A1 pinned the complete tool list as exactly seven names.",
+    "why_they_had_to_change": "K6 and A7 asserted each phase's own boundary and named the phases after it. M6 built both capabilities under approval, so keeping those patterns would assert a boundary that no longer exists rather than a rule that still does.",
+    "how_they_changed": "K6 and A7 now exclude only what writes, pays, or was never approved (search_property_memory, payment, invoice_, ripple, xrpl, wallet, create, update, delete, write, set_, save_). A1 pins the first seven tools as a PREFIX, which still catches a reorder, a rename or a quiet removal, plus a new no-duplicates check (A1a).",
+    "flagged_because": "This is the agent editing tests that previously constrained it. Stated plainly rather than buried."
+  },
+
+  "not_done": [
+    "No transport, HTTP route or MCP server",
+    "No write path of any kind",
+    "No change to PropertyRecord, the hydrator, TimelineMerge, FieldProvenance, PropertyWorkspace or any M1-M5 behaviour",
+    "No CAM data repair, cleanup, nulling or rewriting — in Pilot, Production or the blob",
+    "No payments, UI, deployment, database repair, authentication architecture, rate limiting, pagination, or unrelated refactors",
+    "No Pilot or Production access of any kind during this phase"
+  ],
+
+  "deferred_each_needing_separate_approval": [
+    "transport / HTTP / MCP server",
+    "rate limiting (/auth/v1/user is uncached per call)",
+    "pagination and response size caps",
+    "the seven canonical lease fields carrying provenance without values in PropertyRecord (M5 finding)",
+    "Phase 1b payment write path",
+    "lease_documents.tenant_id rename",
+    "FK on cam_reconciliations.tenant_id",
+    "6 orphan reconciliations and 15 dangling evidence rows",
+    "Maple Coffee 275d2435 human review",
+    "Ripple integration",
+    "SEO P1/P2",
+    "/ -> /home routing",
+    "fail-silent persistFieldEvidence",
+    "test-broken-promises.js baseline"
+  ]
+}
