@@ -753,8 +753,13 @@ sec('K. Exactly three capabilities, described honestly');
        'K4.' + t.name + ' refuses unknown arguments');
     is(typeof t.handler === 'function', 'K5.' + t.name + ' has a handler');
   }
-  is(!MCP.TOOLS.some(t => /search_property_memory|cam_|attention|timeline_|evidence_|dispute_|payment|ripple|xrpl/i.test(t.name)),
-     'K6 and none of the capabilities this phase excluded');
+  // This asserted M4's own boundary and named the phases after it — `cam_` and
+  // `attention` among them — which M6 has since built under approval. Widening
+  // it to keep passing would be scope drift; narrowing it to only the
+  // never-approved names keeps it a real check. What must still be absent is
+  // anything that MOVES MONEY or was never authorised at all, and every write.
+  is(!MCP.TOOLS.some(t => /search_property_memory|payment|invoice_|ripple|xrpl|wallet|create|update|delete|write|set_|save_/i.test(t.name)),
+     'K6 and nothing that writes, pays or was never approved');
   const gp = MCP.TOOLS.find(t => t.name === 'get_property');
   is(/null never means "none"/.test(gp.description),
      'K7 get_property\'s own description states the null rule');

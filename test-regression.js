@@ -352,6 +352,7 @@ const SUITES = [
   { label: 'Dependency hardening (M3)',         cmd: 'node test-m3-dependency-hardening.js' },
   { label: 'Read-only MCP capabilities (M4)',   cmd: 'node test-m4-mcp-capabilities.js' },
   { label: 'Property Memory capabilities (M5)', cmd: 'node test-m5-property-memory.js' },
+  { label: 'CAM status + attention (M6)',       cmd: 'node test-m6-cam-attention.js' },
   { label: 'Field provenance (e2e)',            cmd: 'node test-e2e-field-provenance.js' },
   { label: 'Lease validator: management fee cap',       cmd: 'node test-mgmt-fee-cap.js' },
   // D2-1 — AND THE SAME CHECK ON THE PANEL, WITH ARGUMENTS IT DID NOT BUILD.

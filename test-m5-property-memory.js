@@ -180,9 +180,13 @@ const M5 = [
 sec('A. Four capabilities, added to the existing set rather than beside it');
 {
   const names = MCP.TOOLS.map(t => t.name);
-  eq(names, ['list_properties', 'get_property', 'get_tenant',
+  // M5's four, in order, immediately after M4's three. Pinning the whole list
+  // would make every later phase edit this line; pinning the PREFIX still
+  // catches a reorder, a rename or a quiet removal, which is what it was for.
+  eq(names.slice(0, 7), ['list_properties', 'get_property', 'get_tenant',
              'get_lease_evidence', 'get_space', 'get_timeline', 'get_disputes'],
-     'A1 seven tools — M4\'s three, plus M5\'s four');
+     'A1 M4\'s three, then M5\'s four, present and in order');
+  is(new Set(names).size === names.length, 'A1a and no name is registered twice');
   for (const [name] of M5) {
     const t = MCP.TOOLS.find(x => x.name === name);
     is(!!t, 'A2.' + name + ' is registered');
@@ -194,9 +198,12 @@ sec('A. Four capabilities, added to the existing set rather than beside it');
     is(t.inputSchema.required.indexOf('propertyId') !== -1,
        'A6.' + name + ' requires a propertyId');
   }
-  // Nothing from the excluded list crept in.
-  is(!names.some(n => /search_property_memory|^get_cam|attention|payment|ripple|xrpl|create|update|delete/i.test(n)),
-     'A7 and none of the capabilities this phase excluded');
+  // Nothing that writes, pays, or was never approved. `^get_cam` and
+  // `attention` used to be on this list because M5 excluded them; M6 built both
+  // under approval, so keeping them here would assert a boundary that no longer
+  // exists rather than a rule that still does.
+  is(!names.some(n => /search_property_memory|payment|invoice_|ripple|xrpl|wallet|create|update|delete|write|set_|save_/i.test(n)),
+     'A7 and nothing that writes, pays or was never approved');
   is(names.indexOf('get_lease') === -1,
      'A8 get_lease was NOT built — its terms come through get_tenant and get_lease_evidence');
 }

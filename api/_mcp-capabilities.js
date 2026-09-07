@@ -1,7 +1,11 @@
 'use strict';
 /**
- * api/_mcp-capabilities.js — the first three read-only capabilities another
- * system may ask MainStreet for.
+ * api/_mcp-capabilities.js — the read-only capabilities another system may ask
+ * MainStreet for.
+ *
+ * Nine of them, added a phase at a time and all projections of one record:
+ * list_properties, get_property, get_tenant (M4); get_lease_evidence, get_space,
+ * get_timeline, get_disputes (M5); get_cam_status, get_attention (M6).
  *
  * MODULE ONLY. There is no transport here: no HTTP route, no MCP server, no
  * socket. It exports tool descriptors and handlers so a transport can mount
@@ -1042,6 +1046,354 @@ async function getDisputes(args, ctx) {
   });
 }
 
+// ── M6: CAM status and attention ───────────────────────────────────────────
+//
+// Both are projections of the SAME hydrated record over the SAME three reads.
+// M6 adds no database read, exactly as M5 did not.
+
+/**
+ * The vocabulary of `expectedCamBasis`, and what each value licenses.
+ *
+ * THE TWO AXES. `cap_ceiling` describes ARITHMETIC — the value came from
+ * capBaseAmount × (1 + cap%), so it is a dollar figure and comparing it with an
+ * actual charge is a like-for-like comparison. It asserts NOTHING about whether
+ * the cap base itself was ever read off a lease by a human. A caller that reads
+ * "basis: cap_ceiling" as "lease-supported" or "verified" has crossed from one
+ * axis to the other, and this module must never encourage that: the trust label
+ * below says `cap_ceiling_arithmetic` and a caveat says the rest in words.
+ *
+ * `legacy_unverified` marks a row whose `expectedCam` is a cap PERCENTAGE that
+ * an older code path wrote into a dollar field. Five is not $5. Presenting it
+ * would be presenting a percent as money, and the stored `variance` beside it is
+ * dollars-minus-percent — a number with no unit. Both are withheld.
+ *
+ * A null or absent basis is UNKNOWN, not "no expectation": the row predates the
+ * stamp, so nothing can tell a legitimate small ceiling ($92.00) from a stray
+ * percentage (5) by inspection. That is precisely the judgement saveCamResults
+ * refused to make, and this reader refuses it for the same reason.
+ *
+ * The gate below is deliberately the same predicate as script.js's `_stamped`.
+ * If the two ever drift, a value this capability presents as money would be one
+ * the persister would not have written.
+ */
+const CAM_TRUST = {
+  ARITHMETIC:  'cap_ceiling_arithmetic',
+  STAMP_NO_VALUE: 'stamped_without_usable_value',
+  LEGACY:      'legacy_unverified_not_money',
+  UNSTAMPED:   'unstamped_value_withheld',
+  NONE:        'no_expectation_established',
+  UNRECOGNISED:'unrecognised_basis',
+};
+
+/** Which trust labels permit the expected value to be shown at all. */
+function _classifyExpectation(r) {
+  const row    = r || {};
+  const basis  = row.expectedCamBasis == null ? null : row.expectedCamBasis;
+  const value  = row.expectedCam;
+  const finite = typeof value === 'number' && Number.isFinite(value);
+
+  if (basis === 'cap_ceiling') {
+    return finite
+      ? { trust: CAM_TRUST.ARITHMETIC,     expectedCam: value }
+      : { trust: CAM_TRUST.STAMP_NO_VALUE, expectedCam: null };
+  }
+  if (basis === 'legacy_unverified') {
+    return { trust: CAM_TRUST.LEGACY, expectedCam: null };
+  }
+  if (basis === null) {
+    return finite
+      ? { trust: CAM_TRUST.UNSTAMPED, expectedCam: null }
+      : { trust: CAM_TRUST.NONE,      expectedCam: null };
+  }
+  // A basis this build does not know about. Refusing it is the safe direction:
+  // a future vocabulary word must not be presented as money by a reader that
+  // has never been told what it means.
+  return { trust: CAM_TRUST.UNRECOGNISED, expectedCam: null };
+}
+
+/** Numbers pass through as themselves; anything else becomes null, never 0. */
+function _numOrNull(v) {
+  return typeof v === 'number' && Number.isFinite(v) ? v : null;
+}
+
+/** One stored reconciliation row, projected with its expectation gated. */
+function _camRow(r) {
+  const row = r || {};
+  const cls = _classifyExpectation(row);
+  const actual = _numOrNull(row.actualCam != null ? row.actualCam : row.totalAllocated);
+  return {
+    tenantId:   row.tenantId != null ? row.tenantId : null,
+    tenantName: row.tenantName != null ? row.tenantName : (row.name != null ? row.name : null),
+    actualCam:  actual,
+    allocatedAmount: _numOrNull(row.allocatedAmount != null ? row.allocatedAmount
+                                                            : row.totalAllocated),
+    proRataPercent: _numOrNull(row.proRataPercent != null ? row.proRataPercent
+                      : (row.proRata != null ? row.proRata * 100 : null)),
+    capApplied: row.capApplied === true,
+    expectedCam: cls.expectedCam,
+    // Variance travels WITH the expectation or not at all. A stored variance
+    // whose expected half is withheld is a difference against a number this
+    // response declines to state — and for a legacy row it is literally
+    // dollars minus a percentage. It is not recomputed here either: deriving
+    // one would be manufacturing the expectation the gate just refused.
+    variance: cls.expectedCam === null ? null : _numOrNull(row.variance),
+    expectedCamBasis: row.expectedCamBasis == null ? null : row.expectedCamBasis,
+    expectedCamTrust: cls.trust,
+  };
+}
+
+// ── Tool 8: get_cam_status ─────────────────────────────────────────────────
+
+/**
+ * The CAM reconciliation as the STORED SNAPSHOT holds it, with every expected
+ * value gated on its basis stamp.
+ *
+ * SCOPE, STATED PLAINLY. This reads `property.data.camReconciliation` — the
+ * blob snapshot the browser saved — through PropertyRecord._cam. It does NOT
+ * read the `cam_reconciliations` table, and therefore does not see that table's
+ * `expected_cam_basis` column. A row that exists only in the table is invisible
+ * here, and this response says so rather than implying its results are the
+ * complete reconciliation history.
+ *
+ * Nothing is repaired, nulled, rewritten or recomputed. Rows whose basis is
+ * unresolved are reported as unresolved and left exactly as stored.
+ */
+async function getCamStatus(args, ctx) {
+  const a = args || {}, c = ctx || {};
+  const o = await _open(a, c, null);
+  if (o.stop) return o.stop;
+  const { h, rec, unavailable, degradedCodes } = o;
+
+  const status = sectionStatus('cam', rec.cam, unavailable, degradedCodes);
+
+  // The unknown case first, and it takes its own envelope — nothing composed
+  // below it would have anything true to say.
+  if (status === STATUS.UNAVAILABLE) {
+    return _unknownSection('cam',
+      'The CAM section could not be composed, so the reconciliation for this ' +
+      'property is UNKNOWN. This is not a statement that no CAM was run and not ' +
+      'a statement that nothing is owed.',
+      rec, unavailable, degradedCodes, h.reads, c.now,
+      { resolvedWithin: a.propertyId, sectionStatus: { cam: status } });
+  }
+
+  const caveats = buildCaveats(unavailable, degradedCodes);
+  caveats.push({
+    code: 'cam.snapshot_scope', severity: SEVERITY.INFO, scope: 'cam',
+    message: 'This is the reconciliation snapshot stored on the property record. ' +
+             'The cam_reconciliations table is not read here, so rows that exist ' +
+             'only in that table are absent — their absence is not a claim that ' +
+             'no reconciliation was run.',
+  });
+
+  const cam = rec.cam || {};
+  const rows = Array.isArray(cam.results) ? cam.results : [];
+
+  // `pool` and `unallocated` are separately composable and separately absent.
+  // PropertyRecord reports their loss in meta.unavailable under their own
+  // names, which sectionStatus('cam', …) does not look at — so they are read
+  // here directly. A pool of 0 is a real answer (no eligible invoices) and must
+  // not be confused with a pool nobody could compute.
+  const poolUnavailable = unavailable.indexOf('cam.pool') !== -1 || cam.pool == null;
+  const unallocUnavailable = unavailable.indexOf('cam.unallocated') !== -1 ||
+                             cam.unallocated == null;
+  if (poolUnavailable) {
+    caveats.push({
+      code: 'cam.pool_unavailable', severity: SEVERITY.UNAVAILABLE, scope: 'cam.pool',
+      message: 'The eligible expense pool could not be computed. It is null, not ' +
+               'zero: this is not a statement that there are no CAM expenses.',
+    });
+  }
+  if (unallocUnavailable) {
+    caveats.push({
+      code: 'cam.unallocated_unavailable', severity: SEVERITY.UNAVAILABLE,
+      scope: 'cam.unallocated',
+      message: 'The unallocated remainder could not be derived. It is null, not ' +
+               'zero: this is not a statement that the pool is fully allocated.',
+    });
+  }
+
+  const results = rows.map(_camRow);
+
+  // A tally of trust states, so a caller can see at a glance how much of this
+  // reconciliation carries a usable expectation — without having to know the
+  // vocabulary, and without any row being promoted to get into a bucket.
+  const expectation = { established: 0, withheld: 0, none: 0 };
+  const byTrust = {};
+  for (const r of results) {
+    byTrust[r.expectedCamTrust] = (byTrust[r.expectedCamTrust] || 0) + 1;
+    if (r.expectedCamTrust === CAM_TRUST.ARITHMETIC) expectation.established++;
+    else if (r.expectedCamTrust === CAM_TRUST.NONE)  expectation.none++;
+    else expectation.withheld++;
+  }
+
+  if (expectation.withheld > 0) {
+    caveats.push({
+      code: 'cam.expectation_withheld', severity: SEVERITY.UNAVAILABLE,
+      scope: 'cam.results.expectedCam',
+      message: expectation.withheld + ' of ' + results.length + ' rows have an ' +
+               'expected-CAM state this response will not present as money: a cap ' +
+               'percentage stored in a dollar field, a value with no basis stamp ' +
+               '(nothing can tell a small ceiling from a percentage by ' +
+               'inspection), a stamp with no usable number, or a basis word this ' +
+               'build does not recognise. Those rows report expectedCam and ' +
+               'variance as null and name their state in expectedCamTrust. This ' +
+               'is different from having no expectation at all, which ' +
+               'expectation.none counts separately. The stored rows are unchanged.',
+    });
+  }
+  if (expectation.established > 0) {
+    caveats.push({
+      code: 'cam.basis_is_arithmetic_not_verification', severity: SEVERITY.INFO,
+      scope: 'cam.results.expectedCam',
+      message: 'A cap_ceiling basis states only which arithmetic produced the ' +
+               'expected amount: capBaseAmount x (1 + cap%). It is NOT a claim ' +
+               'that the cap base or the cap percentage was read off a lease or ' +
+               'confirmed by a reviewer. Call get_lease_evidence for that, and do ' +
+               'not describe these figures as lease-supported or verified.',
+    });
+  }
+
+  return envelope({
+    data: {
+      propertyId: a.propertyId,
+      camYear: (rec.identity && rec.identity.camYear != null) ? rec.identity.camYear : null,
+      pool:        poolUnavailable    ? null : cam.pool,
+      unallocated: unallocUnavailable ? null : cam.unallocated,
+      results,
+      resultCount: results.length,
+      cappedCount: Array.isArray(cam.capped) ? cam.capped.length : null,
+      expectation,
+      expectationByTrust: byTrust,
+    },
+    provenance: {
+      origin: rec.meta.origin,
+      includesBrowserLocalState: rec.meta.includesBrowserLocalState,
+      note: rec.meta.note,
+      unavailable: unavailable.slice(), degraded: degradedCodes.slice(),
+      sectionStatus: { cam: status,
+                       'cam.pool': poolUnavailable ? STATUS.UNAVAILABLE : STATUS.OK,
+                       'cam.unallocated': unallocUnavailable ? STATUS.UNAVAILABLE : STATUS.OK },
+      reads: h.reads, hydrated: true,
+      ownership: 'properties.user_id = authenticated user',
+      resolvedWithin: a.propertyId,
+      source: 'PropertyRecord.cam — the stored camReconciliation snapshot only; ' +
+              'the cam_reconciliations table is NOT read',
+      expectedCamGate: 'expectedCamBasis === "cap_ceiling" AND a finite number — ' +
+                       'the same predicate saveCamResults uses before persisting',
+    },
+    caveats, asOf: c.now,
+  });
+}
+
+// ── Tool 9: get_attention ──────────────────────────────────────────────────
+
+/**
+ * The ranked attention list PropertyWorkspace already derives, projected to
+ * facts and stripped of the browser.
+ *
+ * WHAT IS STRIPPED, AND WHY. Each item as composed carries `icon` (a UI emoji),
+ * `nav` ({ tab, anchors }) and `action` (a button label). Those are instructions
+ * to a DOM that an MCP caller does not have: `{ tab: 'spaces', anchors:
+ * ['cardLeases'] }` names element ids in this application's HTML. Handing them
+ * over would invite a client to render a button that goes nowhere, or to quote
+ * "Review disputes" as though it were advice from the record. What survives is
+ * what is true independently of any screen: severity, what it is, and why.
+ *
+ * NO RULE IS INVENTED HERE. Every item comes from collectAttention unchanged in
+ * substance; this function selects fields and counts them. It adds no threshold,
+ * no severity, and no item of its own.
+ *
+ * "ALL CAUGHT UP" IS NOT AVAILABLE FROM THIS SERVER. collectAttention reads
+ * window.Selectors for readiness signals — expired leases, incomplete lease
+ * terms, missing caps, low-confidence extractions — and the server graph
+ * deliberately excludes Selectors, so those signals are silently absent. The
+ * list still composes, so it is DEGRADED rather than unavailable, but it is
+ * systematically SHORTER than the application's. An empty list therefore cannot
+ * mean "nothing needs attention", and `allClear` is null rather than true to
+ * stop exactly that inference being drawn from `items.length === 0`.
+ */
+async function getAttention(args, ctx) {
+  const a = args || {}, c = ctx || {};
+  const o = await _open(a, c, null);
+  if (o.stop) return o.stop;
+  const { h, rec, unavailable, degradedCodes } = o;
+
+  const status = sectionStatus('attention', rec.attention, unavailable, degradedCodes);
+
+  if (status === STATUS.UNAVAILABLE) {
+    return _unknownSection('attention',
+      'The attention list could not be composed, so what needs attention on this ' +
+      'property is UNKNOWN. This is not a statement that nothing does.',
+      rec, unavailable, degradedCodes, h.reads, c.now,
+      { resolvedWithin: a.propertyId, sectionStatus: { attention: status } });
+  }
+
+  const caveats = buildCaveats(unavailable, degradedCodes);
+  const raw = Array.isArray(rec.attention) ? rec.attention : [];
+  const items = raw.map((it, i) => ({
+    rank:     i,                       // the order collectAttention ranked them in
+    severity: (it && it.severity) != null ? it.severity : null,
+    title:    (it && it.title)    != null ? it.title    : null,
+    why:      (it && it.why)      != null ? it.why      : null,
+  }));
+
+  const severityCounts = items.reduce((acc, it) => {
+    const k = it.severity == null ? 'unknown' : it.severity;
+    acc[k] = (acc[k] || 0) + 1; return acc;
+  }, {});
+
+  // Complete only if nothing thinned the list. Today the hydrator always
+  // reports attention.without_selectors_readiness, so this is false on the
+  // server as a matter of course — and it is computed rather than hard-coded so
+  // that it becomes true honestly, and only, if that ever stops being the case.
+  const complete = status === STATUS.OK || status === STATUS.EMPTY;
+
+  caveats.push({
+    code: 'attention.ui_fields_removed', severity: SEVERITY.INFO, scope: 'attention',
+    message: 'Each item is reported as severity, title and why. The icon, the ' +
+             'in-app navigation target and the button label are application UI ' +
+             'and are deliberately not exposed.',
+  });
+  if (!complete) {
+    caveats.push({
+      code: 'attention.not_a_complete_list', severity: SEVERITY.UNAVAILABLE,
+      scope: 'attention.allClear',
+      message: 'This list is composed without the readiness module, so it is ' +
+               'shorter than the application would show and an empty list does ' +
+               'NOT mean the property is all caught up. allClear is null because ' +
+               'nothing here can establish it.',
+    });
+  }
+
+  return envelope({
+    data: {
+      propertyId: a.propertyId,
+      items,
+      itemCount: items.length,
+      severityCounts,
+      // Null, not false: "we cannot tell" is not "there is something wrong".
+      allClear: complete ? items.length === 0 : null,
+      complete,
+    },
+    provenance: {
+      origin: rec.meta.origin,
+      includesBrowserLocalState: rec.meta.includesBrowserLocalState,
+      note: rec.meta.note,
+      unavailable: unavailable.slice(), degraded: degradedCodes.slice(),
+      sectionStatus: { attention: status },
+      reads: h.reads, hydrated: true,
+      ownership: 'properties.user_id = authenticated user',
+      resolvedWithin: a.propertyId,
+      source: 'PropertyWorkspace.collectAttention via PropertyRecord.attention — ' +
+              'ranked as composed, projected to severity/title/why',
+      omittedFields: ['icon', 'nav', 'action'],
+      rulesAdded: 'none — no attention rule, threshold or severity is defined here',
+    },
+    caveats, asOf: c.now,
+  });
+}
+
 // ── Tool descriptors ───────────────────────────────────────────────────────
 
 const TOOLS = [
@@ -1152,6 +1504,41 @@ const TOOLS = [
     },
     handler: getDisputes,
   },
+  {
+    name: 'get_cam_status',
+    description:
+      'The CAM reconciliation stored on an owned property: the eligible pool, ' +
+      'the unallocated remainder, and each tenant row. An expected-CAM figure is ' +
+      'shown ONLY when the row carries a cap_ceiling basis stamp and a finite ' +
+      'value; otherwise expectedCam and variance are null. A cap_ceiling basis ' +
+      'describes arithmetic only — it is NOT a claim that the cap base was read ' +
+      'off a lease or confirmed by a reviewer, and these figures must never be ' +
+      'described as lease-supported or verified. Reads the stored snapshot, not ' +
+      'the cam_reconciliations table.',
+    inputSchema: {
+      type: 'object',
+      properties: { propertyId: { type: 'string', description: 'Property UUID.' } },
+      required: ['propertyId'], additionalProperties: false,
+    },
+    handler: getCamStatus,
+  },
+  {
+    name: 'get_attention',
+    description:
+      'What the verified record says needs attention on an owned property, ' +
+      'ranked as the application ranks it: severity, what it is, and why. No ' +
+      'icons, navigation targets or button labels — those are application UI. No ' +
+      'rule is invented here. The server composes this list without the ' +
+      'readiness module, so it is shorter than the application\'s and an empty ' +
+      'list does NOT mean the property is all caught up; allClear is null ' +
+      'whenever that cannot be established.',
+    inputSchema: {
+      type: 'object',
+      properties: { propertyId: { type: 'string', description: 'Property UUID.' } },
+      required: ['propertyId'], additionalProperties: false,
+    },
+    handler: getAttention,
+  },
 ];
 
 /** Dispatch by name. An unknown tool is refused, not guessed at. */
@@ -1167,6 +1554,7 @@ async function call(name, args, ctx) {
 module.exports = {
   TOOLS, call, listProperties, getProperty, getTenant,
   getLeaseEvidence, getSpace, getTimeline, getDisputes, _resolveSpace,
+  getCamStatus, getAttention, _classifyExpectation, _camRow, CAM_TRUST,
   resolveIdentity, envelope, refuse, sectionStatus, sectionValue, buildCaveats,
   REFUSAL, SEVERITY, STATUS, WRITE_METHODS, DEGRADED_SECTIONS, UNKNOWN_CODES, CAVEAT_TEXT,
   _readOnly,
