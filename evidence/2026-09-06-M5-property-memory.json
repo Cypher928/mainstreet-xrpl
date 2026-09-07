@@ -181,5 +181,101 @@
     "m3_shim_broadened": false,
     "second_property_data_model": false,
     "new_database_reads": 0
+  },
+  "amendment_byTenantCounts": {
+    "date": "2026-09-07",
+    "commit": "bcf8748",
+    "authorized_after": "the TimelineMerge investigation, accepted as Verdict A — no integration work needed",
+    "finding": "byTenantCounts was nulled when TimelineMerge went missing but left as {} when TenantSpace did. Both leave PropertyRecord.byTenant empty for the same reason — nothing can attribute an event to a space — so both had to be null. {} reads as \"no tenant has any events\".",
+    "change": "one condition in getTimeline: attribution is unknown when the timeline section is unavailable, OR scoping is unavailable, OR the spaces section is unavailable. Plus attributionUnknown and the spaces status in provenance.",
+    "semantics_preserved": {
+      "populated attribution": "populated byTenantCounts, attributionUnknown false",
+      "composed, zero tenants": "{} — spaces section is EMPTY not unavailable, so {} is the true answer",
+      "attribution unavailable (TenantSpace)": "null, attributionUnknown true",
+      "timeline scoping unavailable (TimelineMerge)": "null — unchanged from before"
+    },
+    "not_touched": [
+      "timeline-merge.js",
+      "property-record.js",
+      "api/_property-record-hydrator.js",
+      "M1b",
+      "M2",
+      "M3",
+      "M4 behaviour"
+    ],
+    "verification": {
+      "m5": {
+        "passed": 324,
+        "failed": 0
+      },
+      "m5_mutation": {
+        "mutants": 44,
+        "killed": 44,
+        "survived": 0,
+        "new_mutants": [
+          "T-bytenant-index-zeroes (the exact revert to {})",
+          "T-bytenant-not-nulled-at-all",
+          "T-bytenant-scoping-route-dropped",
+          "T-bytenant-nulled-when-merely-empty",
+          "T-attribution-flag-not-reported",
+          "T-spaces-status-not-reported"
+        ]
+      },
+      "m4": {
+        "passed": 241,
+        "failed": 0
+      },
+      "m4_mutation": {
+        "mutants": 44,
+        "killed": 44,
+        "survived": 0
+      },
+      "m3": {
+        "passed": 130,
+        "failed": 0
+      },
+      "m3_mutation": {
+        "mutants": 34,
+        "killed": 34,
+        "survived": 0
+      },
+      "m2": {
+        "passed": 152,
+        "failed": 0
+      },
+      "m2_mutation": {
+        "mutants": 31,
+        "killed": 31,
+        "survived": 0
+      },
+      "m1b": {
+        "passed": 102,
+        "failed": 0
+      },
+      "m1b_mutation": {
+        "mutants": 34,
+        "killed": 33,
+        "survived": 1,
+        "survivor": "D-prune-removed (equivalent)"
+      },
+      "full_regression": {
+        "suites_run": 121,
+        "suites_passed": 120,
+        "suites_failed": 1,
+        "failing_suite": "Broken promises (dead controls) — test-broken-promises.js",
+        "baseline_check": "last touched at dda1f35, long before M1b; not modified, repinned or fixed"
+      }
+    }
+  },
+  "timeline_merge_investigation": {
+    "verdict": "A — correct intentional limitation; no integration gap",
+    "findings": [
+      "TimelineMerge has been in api/_server-deps.js CLEAN since M1b and loads under plain Node",
+      "the default server runtime produces byTenant populated and tenant-scoped timelines status ok",
+      "byTenant empties only when a dependency is deleted by injection; DEPS.missing() is [] in a real load",
+      "PropertyRecord uses TimelineMerge.eventKey for de-duplication — in use, correct",
+      "TimelineMerge.mergeTimelines is the browser DB-localStorage union, called only from script.js selectProperty and loadPropertyData; using it server-side would fabricate a merge with no second side, and is correctly unused"
+    ],
+    "report_correction": "the M5 report led with the injected degraded case and read as if it were the production path"
   }
 }
