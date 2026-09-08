@@ -42,9 +42,21 @@ window.PropertyWorkspace = (function () {
     var S = window.Selectors || {};
     var rd = (typeof S.derivePropertyReadiness === 'function') ? S.derivePropertyReadiness(p) : {};
     var meta = (typeof S.buildPropMeta === 'function') ? S.buildPropMeta(p) : {};
-    var openDisputes = (meta.openDisputes != null)
-      ? meta.openDisputes
-      : (Array.isArray(p.disputes) ? p.disputes.filter(function (d) { return d && d.status === 'open'; }).length : 0);
+    // M7 — ONE definition of open, shared with TenantSpace and get_disputes.
+    //
+    // This read `d.status === 'open'`, so a dispute in `docs_requested` — which
+    // the state machine says can still move, and which nobody has decided —
+    // was not counted. get_disputes counted it. The same property reported "1
+    // open dispute" here and openDisputeCount 2 there, both confidently.
+    //
+    // meta.openDisputes is no longer preferred: Selectors.buildPropMeta derives
+    // it with the narrow rule, so trusting it would reintroduce the divergence
+    // through the back door on any property where Selectors IS available.
+    var DS = (typeof window !== 'undefined') && window.DisputeStatus;
+    var _disp = Array.isArray(p.disputes) ? p.disputes : [];
+    var openDisputes = (DS && typeof DS.tally === 'function')
+      ? DS.tally(_disp).open
+      : _disp.filter(function (d) { return d && (d.status === 'open' || d.status === 'docs_requested'); }).length;
 
     var items = [];
     // Critical — the record is out of date in a way that affects money/renewals.

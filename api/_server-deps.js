@@ -98,6 +98,8 @@ const REQUIRE = {
   '../property-reference.js': () => require('../property-reference.js'),
   '../timeline-merge.js':     () => require('../timeline-merge.js'),
   '../variance-breakdown.js': () => require('../variance-breakdown.js'),
+  '../dispute-status.js':     () => require('../dispute-status.js'),
+  '../property-area.js':      () => require('../property-area.js'),
   '../lease-intelligence.js': () => require('../lease-intelligence.js'),
   '../tenant-space.js':       () => require('../tenant-space.js'),
   '../property-workspace.js': () => require('../property-workspace.js'),
@@ -120,6 +122,10 @@ const CLEAN = {
   PropertyReference: '../property-reference.js',
   TimelineMerge:     '../timeline-merge.js',
   VarianceBreakdown: '../variance-breakdown.js',
+  // M7 — the two canonical-semantics modules. Both are pure predicate/arithmetic
+  // files with no DOM, no network, no storage and no session state.
+  DisputeStatus:     '../dispute-status.js',
+  PropertyArea:      '../property-area.js',
 };
 
 /** Browser-first: they assign to `window` and return nothing useful from require. */
@@ -138,7 +144,26 @@ const NEEDS_WINDOW = {
  * reach a server-assembled record, so an addition needs the same scrutiny as a
  * new database read.
  */
-const SHIM_KEYS = ['LeaseIntelligence', 'TenantSpace', 'PropertyWorkspace', 'PropertyReference'];
+const SHIM_KEYS = ['LeaseIntelligence', 'TenantSpace', 'PropertyWorkspace', 'PropertyReference',
+                   // M7. Added under the scrutiny this list demands, and it
+                   // clears the same bar PropertyReference already clears: a
+                   // pure module looked up by name at CALL time.
+                   //
+                   // property-workspace.js and tenant-space.js are browser-first
+                   // files that must count open disputes the same way every
+                   // other consumer does. Reaching them any other way would mean
+                   // passing a dependency into a `window.`-shaped file, or
+                   // keeping a second copy of the predicate in each — which is
+                   // the duplication M7 exists to remove.
+                   //
+                   // What makes it safe is what it CANNOT carry: dispute-status.js
+                   // is a pure classifier over a frozen transition table. It has
+                   // no DOM access, no network, no storage, no session state and
+                   // no mutable state of any kind, so nothing about a browser
+                   // session can travel through it into a server-assembled
+                   // record. test-m3 asserts that emptiness rather than trusting
+                   // this comment.
+                   'DisputeStatus'];
 
 let _cached  = null;
 let _shim    = null;   // the raw backing object, writable during load
@@ -265,6 +290,14 @@ function load() {
   // PropertyReference is looked up by name at call time (property-workspace.js:86)
   // and is not one of the three that self-attach, so it is placed explicitly.
   _shim.PropertyReference = deps.PropertyReference;
+  // M7 — DisputeStatus the same way, and for a reason worth stating: it loads as
+  // a CLEAN CommonJS module, which happens with no global installed, so its UMD
+  // tail finds no `window` to attach to. Without this line
+  // `window.DisputeStatus` is undefined inside withWindow(), tenant-space.js and
+  // property-workspace.js quietly take their literal fallbacks, and the single
+  // shared definition M7 exists to create is not the one actually running.
+  // test-m1b I4 caught exactly that, which is why the assertion is worth having.
+  _shim.DisputeStatus = deps.DisputeStatus;
 
   // From here on the shim is closed: writes outside the allow-list are refused.
   _window = _seal(_shim);

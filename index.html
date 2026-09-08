@@ -7876,6 +7876,11 @@
 <!-- tenant-normalize.js defines what a tenant record IS. script.js delegates to
      it with no local fallback, so it must load first. -->
 <script src="tenant-normalize.js"></script>
+<!-- M7 canonical semantics. Both must load before script.js, tenant-space.js and
+     property-workspace.js, which read them for the one definition of an open
+     dispute and the one definition of leased area. -->
+<script src="dispute-status.js"></script>
+<script src="property-area.js"></script>
 <script src="field-provenance.js"></script>
 <script src="review-engine.js"></script>
 <script src="reconciliation-engine.js"></script>

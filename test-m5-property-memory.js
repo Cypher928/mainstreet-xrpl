@@ -682,9 +682,14 @@ sec('K. No browser API, no localStorage, no second hydration');
   is(outs.length === 4 && outs.every(o => o.data !== null),
      'K8 and all four produced answers');
   eq(DEPS.leakedWindow(), false, 'K9 leaving no window behind');
-  eq(DEPS.SHIM_KEYS.slice().sort(),
-     ['LeaseIntelligence', 'PropertyReference', 'PropertyWorkspace', 'TenantSpace'],
-     'K10 the M3 shim allow-list is unchanged — M5 did not broaden it');
+  // What this asserts is that M5 did not put a name here, not that the
+  // list is frozen for all time. M7 added DisputeStatus deliberately, under
+  // its own purity proof in test-m2 (D7a-c) and test-m7. Pinning the literal
+  // would make every later phase edit this line and learn nothing; pinning
+  // the ABSENCE of anything M5 could have wanted still catches the thing
+  // it was written to catch.
+  eq(DEPS.SHIM_KEYS.filter(k => ['DisputeStatus', 'LeaseIntelligence', 'PropertyReference', 'PropertyWorkspace', 'TenantSpace'].indexOf(k) === -1), [],
+     'K10 the shim allow-list holds no name beyond the reviewed set — M5 added none');
 }
 
 // ── L. Envelope, asOf, and a stable shape ──────────────────────────────────

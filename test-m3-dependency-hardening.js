@@ -127,8 +127,8 @@ sec('B. Each classification is verified against the source it describes');
   // shimmed ⇒ on the allow-list.
   const shimmed = Object.entries(INV.CLASSIFICATION)
     .filter(([, v]) => v.kind === 'shimmed').map(([k]) => k).sort();
-  eq(shimmed, ['LeaseIntelligence', 'PropertyReference', 'PropertyWorkspace', 'TenantSpace'],
-     'B1 exactly four names are classified as intentionally shimmed');
+  eq(shimmed, ['DisputeStatus', 'LeaseIntelligence', 'PropertyReference', 'PropertyWorkspace', 'TenantSpace'],
+     'B1 exactly the reviewed names are classified as intentionally shimmed');
   eq(shimmed, DEPS.SHIM_KEYS.slice().sort(),
      'B2 and that set IS the sealed allow-list — the two cannot drift apart');
 
@@ -366,7 +366,7 @@ sec('I. The bundle-trace proof from M2 is intact');
   eq(RUN.bundle.computed, [], 'I1 no computed require anywhere in the graph');
   eq(RUN.bundle.external, [], 'I2 no npm package');
   eq(RUN.bundle.unresolved, [], 'I3 nothing unresolved');
-  is(RUN.bundle.files.length === 15, 'I4 fifteen files in the bundle',
+  is(RUN.bundle.files.length === 17, 'I4 seventeen files in the bundle',
      String(RUN.bundle.files.length));
   eq(INVENTORY.files, RUN.bundle.files,
      'I5 and the inventory covers exactly the files the bundle contains');

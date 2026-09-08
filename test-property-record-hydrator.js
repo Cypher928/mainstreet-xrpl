@@ -365,12 +365,13 @@ sec('I. The shim exists only inside the call, and holds no session state');
 {
   eq(DEPS.leakedWindow(), false, 'I1 no window exists before anything is loaded here');
   const deps = DEPS.load();
-  eq(DEPS.missing(deps), [], 'I2 all eight dependencies load');
+  eq(DEPS.missing(deps), [], 'I2 every declared dependency loads');
   eq(DEPS.leakedWindow(), false, 'I3 and loading them leaves no window behind');
 
-  eq(DEPS.shimKeys(), ['LeaseIntelligence', 'PropertyReference', 'PropertyWorkspace', 'TenantSpace'],
-     'I4 the shim holds exactly the four allow-listed names');
-  eq(DEPS.SHIM_KEYS.slice().sort(), DEPS.shimKeys(), 'I5 and matches its declared allow-list');
+  eq(DEPS.shimKeys(), ['DisputeStatus', 'LeaseIntelligence', 'PropertyReference', 'PropertyWorkspace', 'TenantSpace'],
+     'I4 the shim holds exactly the allow-listed names');
+  eq(DEPS.SHIM_KEYS.slice().sort(), DEPS.shimKeys(),
+     'I5 and what the shim HOLDS matches what it DECLARES — a declared name that\n      never gets placed would leave its consumers on a silent fallback');
   for (const forbidden of ['currentProperty', 'showToast', 'savePropertyNow', 'AuthService',
                            'Selectors', 'PropertyTimeline', 'localStorage', 'document']) {
     is(DEPS.shimKeys().indexOf(forbidden) === -1,
@@ -402,10 +403,10 @@ sec('I. The shim exists only inside the call, and holds no session state');
   is(DEPS.blockedWrites().includes('MoneyCents'),
      'I11a a call-time attempt to attach MoneyCents was refused, not absorbed',
      DEPS.blockedWrites().join(','));
-  eq(DEPS.shimKeys(), ['LeaseIntelligence', 'PropertyReference', 'PropertyWorkspace', 'TenantSpace'],
-     'I11b so the shim still holds exactly four names after a full hydration');
+  eq(DEPS.shimKeys(), ['DisputeStatus', 'LeaseIntelligence', 'PropertyReference', 'PropertyWorkspace', 'TenantSpace'],
+     'I11b so the shim still holds exactly the allow-listed names after a full hydration');
   DEPS.withWindow(() => { global.window.somethingNew = 1; global.window.Selectors = {}; });
-  is(DEPS.shimKeys().length === 4 && DEPS.blockedWrites().includes('Selectors'),
+  is(DEPS.shimKeys().length === DEPS.SHIM_KEYS.length && DEPS.blockedWrites().includes('Selectors'),
      'I11c and an explicit attempt to inject Selectors is refused too');
 
   // The prune is the LOAD-time half of the guarantee the seal gives at call

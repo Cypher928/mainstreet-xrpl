@@ -25,6 +25,22 @@ window.TenantSpace = (function () {
     });
   };
   var _t = function (id) { return document.getElementById(id); };
+
+  // M7 — one definition of "open dispute", shared with property-workspace,
+  // getDisputes and get_attention. Looked up at CALL time, so the shim the
+  // server installs for one synchronous assemble() is enough. Absent ⇒ fall
+  // back to the transition-table pair rather than throwing, which keeps this
+  // file working in a browser that failed to load one script.
+  function _isOpenDispute(d) {
+    var DS = (typeof window !== 'undefined') && window.DisputeStatus;
+    if (DS && typeof DS.isOpen === 'function') return DS.isOpen(d);
+    return !!d && (d.status === 'open' || d.status === 'docs_requested');
+  }
+  function _openDisputes(list) {
+    var n = 0;
+    for (var i = 0; i < (list || []).length; i++) if (_isOpenDispute(list[i])) n++;
+    return n;
+  }
   var _openRec = null; // the assembled record for the currently-open space (actions read this)
   function _fmtDate(ts) {
     // An absent or unparsable date renders as nothing, not "Invalid Date".
@@ -148,7 +164,7 @@ window.TenantSpace = (function () {
       space: { id: tenantId, name: t.tenant_name || 'Space' },
       lease: lease, leaseDocs: leaseDocs, summary: summary,
       camYear: (camRec && camRec.camYear) || null, camResult: camResult,
-      counts: { disputes: disputes.length, openDisputes: disputes.filter(function (d) { return d.status === 'open' || d.status === 'docs_requested'; }).length,
+      counts: { disputes: disputes.length, openDisputes: _openDisputes(disputes),
         events: events.length, photos: photos.length, invoices: invoices.length, warranties: warranties.length, documents: documents.length, notes: notes.length, cam: camEvents.length + (camResult ? 1 : 0) },
       events: events, photos: photos, invoices: invoices, warranties: warranties, documents: documents, notes: notes, cam: camEvents,
     };
@@ -359,7 +375,7 @@ window.TenantSpace = (function () {
     var disputesHtml = (rec.disputes || []).length
       ? '<div class="ts-disputes">' + rec.disputes.slice(0, 5).map(function (d) {
           var st = _DSTAT[d.status] || d.status || 'Open';
-          var isOpen = d.status === 'open' || d.status === 'docs_requested';
+          var isOpen = _isOpenDispute(d);
           var last = d.resolvedAt || d.timestamp;
           return '<button type="button" class="ts-disp" data-dispid="' + _esc(String(d.id)) + '" title="Open the dispute workspace">' +
             '<span class="ts-disp-st ts-disp-st--' + (isOpen ? 'open' : 'closed') + '">' + _esc(st) + '</span>' +

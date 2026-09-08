@@ -210,8 +210,8 @@ sec('D. Nothing survives the call');
   }
   eq(R.normal.leakedWindowAfterLoad, false, 'D3 loading the dependencies alone leaves none either');
   eq(R.normal.shimKeysAfterLoad,
-     ['LeaseIntelligence', 'PropertyReference', 'PropertyWorkspace', 'TenantSpace'],
-     'D4 the shim holds exactly the four allow-listed names');
+     ['DisputeStatus', 'LeaseIntelligence', 'PropertyReference', 'PropertyWorkspace', 'TenantSpace'],
+     'D4 the shim holds exactly the allow-listed names — measured in the deployment-shaped sandbox, not in this process');
   eq(R.normal.shimKeys, R.normal.shimKeysAfterLoad,
      'D5 and a full hydration does not grow it');
   is((R.normal.blockedWrites || []).indexOf('MoneyCents') !== -1,
@@ -222,8 +222,26 @@ sec('D. Nothing survives the call');
   // that could let browser state into a server record, and a test that reads the
   // list it is checking would wave it through.
   eq(DEPS.SHIM_KEYS.slice().sort(),
-     ['LeaseIntelligence', 'PropertyReference', 'PropertyWorkspace', 'TenantSpace'],
-     'D7 the declared allow-list is exactly those four names and no others');
+     ['DisputeStatus', 'LeaseIntelligence', 'PropertyReference', 'PropertyWorkspace', 'TenantSpace'],
+     'D7 the declared allow-list is exactly those names and no others');
+  // M7 added DisputeStatus. Widening the pin without re-proving the property
+  // the pin protects would turn this assertion into a rubber stamp, so the
+  // new entry is checked for the emptiness that makes it safe: a pure module
+  // carries no state a browser session could travel through.
+  {
+    const DS = require('./dispute-status.js');
+    const src = require('fs').readFileSync(require.resolve('./dispute-status.js'), 'utf8');
+    const exec = require('./tools/global-dependency-inventory.js').stripStringsAndComments(src);
+    is(!/document\.|localStorage|sessionStorage|fetch\(|XMLHttpRequest|window\.[A-Za-z]/.test(exec),
+       'D7a and the name M7 added reaches for no DOM, storage, network or other global');
+    is(typeof DS.classify === 'function' && DS.classify('open') === 'open' &&
+       DS.classify('open') === DS.classify('open'),
+       'D7b it is a pure function of its argument');
+    const before = JSON.stringify(DS.TRANSITIONS);
+    DS.tally([{ status: 'open' }, { status: 'nonsense' }]);
+    eq(JSON.stringify(DS.TRANSITIONS), before,
+       'D7c and classifying disputes mutates nothing it holds');
+  }
 
   // resetObservations() is only worth having if it actually clears.
   DEPS.load();
@@ -276,14 +294,14 @@ sec('E. Every global the graph reaches for is one we have accounted for');
 sec('F. The declared dependency set is sufficient, and complete');
 {
   eq(R.normal.deps.missing, [], 'F1 nothing in the declared set failed to load in the sandbox');
-  eq(R.normal.deps.required.length, 8, 'F2 eight dependencies are declared');
+  eq(R.normal.deps.required.length, 10, 'F2 ten dependencies are declared');
   eq(R.normal.record.meta.unavailable, [],
      'F3 and assemble() reports no section it could not compose');
-  eq(Object.keys(DEPS.CLEAN).length + Object.keys(DEPS.NEEDS_WINDOW).length, 8,
+  eq(Object.keys(DEPS.CLEAN).length + Object.keys(DEPS.NEEDS_WINDOW).length, 10,
      'F4 the two maps together are that same set');
   // Sufficiency is only meaningful if a shortfall would be visible.
   const short = DEPS.missing({ FieldProvenance: {} });
-  is(short.length === 7, 'F5 a shortfall IS detected — missing() is not blind', short.length + ' reported');
+  is(short.length === 9, 'F5 a shortfall IS detected — missing() is not blind', short.length + ' reported');
 }
 
 // ── G. Normal hydration ────────────────────────────────────────────────────

@@ -729,9 +729,14 @@ sec('J. No browser API, no localStorage, no second hydration');
 
   const DEPS = require('./api/_server-deps.js');
   eq(DEPS.leakedWindow(), false, 'J10 and leave no window behind');
-  eq(DEPS.SHIM_KEYS.slice().sort(),
-     ['LeaseIntelligence', 'PropertyReference', 'PropertyWorkspace', 'TenantSpace'],
-     'J11 the M3 shim allow-list is unchanged — M4 did not broaden it');
+  // What this asserts is that M4 did not put a name here, not that the
+  // list is frozen for all time. M7 added DisputeStatus deliberately, under
+  // its own purity proof in test-m2 (D7a-c) and test-m7. Pinning the literal
+  // would make every later phase edit this line and learn nothing; pinning
+  // the ABSENCE of anything M4 could have wanted still catches the thing
+  // it was written to catch.
+  eq(DEPS.SHIM_KEYS.filter(k => ['DisputeStatus', 'LeaseIntelligence', 'PropertyReference', 'PropertyWorkspace', 'TenantSpace'].indexOf(k) === -1), [],
+     'J11 the shim allow-list holds no name beyond the reviewed set — M4 added none');
 }
 
 // ── K. Tool descriptors ────────────────────────────────────────────────────

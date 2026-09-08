@@ -36,10 +36,17 @@
  *                        Property Setup (script.js: prop.totalSqft = Number(val))
  *                        and persisted. Both spellings exist in the codebase and
  *                        both are read here, exactly as script.js does.
- *   identity.leasedSqft  NO AUTHORITATIVE SOURCE — see LIMITS. Always null.
- *   identity.occupancy   PropertyReference.occupancyPct(property) — the single
- *                        named occupancy rule, which already returns null when
- *                        the property has no total area.
+ *   identity.leasedSqft  PropertyArea.leasedSqft — Σ leased_sqft over EVERY
+ *                        tenant, and only when every tenant has one. Null with
+ *                        a reason otherwise. (M7. Was always null; see LIMITS.)
+ *   identity.occupancy   PropertyArea.occupancyPct — leasedSqft / totalSqft from
+ *                        the SAME numerator, so the pair cannot contradict each
+ *                        other, and NOT clamped: leased > total returns null
+ *                        with reason 'exceeds_total' rather than a confident
+ *                        100. (M7. Was PropertyReference.occupancyPct, which is
+ *                        one of the three disagreeing leased-area rules.)
+ *   identity.areaBasis   why the two above are what they are — the rule applied,
+ *                        the reason for a null, and how many tenants lack an area
  *   spaces               TenantSpace.assemble(property, tenantId), once per
  *                        tenant. All space scoping (the S1 "no identity, no
  *                        record" guard and the S2 duplicate-name guard) belongs
@@ -66,13 +73,16 @@
  *
  * LIMITS — READ THESE BEFORE TRUSTING A FIELD
  * -------------------------------------------
- * · identity.leasedSqft is ALWAYS null. Three modules compute a property-level
- *   leased total and they do not agree: acquisition-engine sums
+ * · identity.leasedSqft was ALWAYS null until M7, because three modules compute
+ *   a property-level leased total and do not agree: acquisition-engine sums
  *   parseFloat(leased_sqft) while skipping extractionFailed tenants,
  *   lease-review-packets sums over "active" tenants only, and
  *   PropertyReference.occupancyPct sums (leased_sqft || sqft) over every tenant.
- *   Those are three different questions. Picking one here would silently make it
- *   canonical, so this returns null until the meaning is settled.
+ *   M7 settled it — see property-area.js for why all three are wrong in the
+ *   same way, and what replaced them. It is still null whenever ANY tenant
+ *   lacks an area, which is the honest answer far more often than not; what
+ *   changed is that a property whose roster is complete now gets a number, and
+ *   occupancy is derived from that same number rather than from a fourth rule.
  *
  * · documents covers tenant-scoped attachments. Attachments on PROPERTY-level
  *   timeline events are not included: TenantSpace's _attach is not exported, and
@@ -126,9 +136,54 @@
     return null;
   }
 
+  /**
+   * M7 — leased area and occupancy now come from ONE definition, or from
+   * neither.
+   *
+   * This used to return `leasedSqft: null` (three modules disagree, so refuse)
+   * while publishing `occupancy` from PropertyReference.occupancyPct — which is
+   * one of those three disagreeing rules. The record declined to state the
+   * numerator and published a ratio computed from it, so a consumer could
+   * recover the refused number by multiplying occupancy by totalSqft.
+   *
+   * PropertyArea settles it: leased area is the sum of leased_sqft over every
+   * tenant, and only when every tenant has one — no `|| 0`, no `|| sqft`, no
+   * "active" filter, because each of those substitutes a guess for a tenant
+   * whose area is unknown. Occupancy is derived from that same numerator, so
+   * the two can no longer contradict each other, and both are null together.
+   *
+   * `areaBasis` travels with them so a reader never has to infer why a null is
+   * null — and, when a value IS present, what it was computed from.
+   */
+  function _area(property, deps) {
+    const PA = _dep(deps, 'PropertyArea');
+    if (!PA || typeof PA.occupancyPct !== 'function') {
+      return { leasedSqft: null, occupancy: null,
+               basis: { available: false, reason: 'property_area_module_absent',
+                        tenantsMissingArea: null } };
+    }
+    const occ = PA.occupancyPct(property);
+    return {
+      leasedSqft: occ.leasedSqft,
+      occupancy:  occ.value,
+      basis: {
+        available: true,
+        // 'Σ leased_sqft over every tenant, only when every tenant has one.'
+        rule: 'sum_leased_sqft_all_tenants_complete',
+        reason: occ.reason,
+        tenantsMissingArea: occ.tenantsMissingArea,
+        // Stated rather than implied: this ratio is NOT clamped. A property
+        // whose tenant areas exceed its own total returns null with reason
+        // 'exceeds_total', because that contradiction is the data telling you
+        // something is wrong and a clamp to 100 would erase it.
+        clamped: false,
+      },
+    };
+  }
+
   function _identity(property, deps) {
     const snap = _camSnapshot(property);
-    const PR   = _dep(deps, 'PropertyReference');
+    const area = _area(property, deps);
     return {
       name:     (property && property.name) != null ? property.name : null,
       // The property's own year. A string '2025' and a number 2025 both occur in
@@ -136,9 +191,9 @@
       camYear:  _num((snap && snap.camYear) != null ? snap.camYear
                     : (property ? property.camYear : null)),
       totalSqft: _num(property && (property.totalSqft != null ? property.totalSqft : property.totalSqFt)),
-      // Not derivable without choosing between three disagreeing rules. See LIMITS.
-      leasedSqft: null,
-      occupancy: (PR && typeof PR.occupancyPct === 'function') ? PR.occupancyPct(property) : null,
+      leasedSqft: area.leasedSqft,
+      occupancy:  area.occupancy,
+      areaBasis:  area.basis,
     };
   }
 

@@ -55,6 +55,8 @@
 
 const _t   = require('./_pilot-target');
 const HYD  = require('./_property-record-hydrator.js');
+// Literal, like every require in _server-deps.js, so a bundler can see it.
+const DEPS = require('./_server-deps.js');
 
 const SUPABASE_URL      = _t.url;
 const SUPABASE_ANON_KEY = _t.anonKey;
@@ -253,6 +255,147 @@ const CAVEAT_TEXT = {
     'documents are UNKNOWN, not zero — nothing has been saved for it.',
 };
 
+// ── M7: semantic coherence ─────────────────────────────────────────────────
+
+/**
+ * WHICH STORE AN ANSWER CAME OUT OF.
+ *
+ * MainStreet holds the same facts twice. `properties.data` is a JSON blob the
+ * browser writes; `tenants`, `cam_reconciliations` and `lease_documents` are
+ * normalised tables written on their own paths with their own gates. Nothing
+ * reconciles the two, and they genuinely disagree — saveCamResults writes raw
+ * in-memory rows to the blob and gated rows to the table, so a value the table
+ * refused to store can still be sitting in the blob.
+ *
+ * These capabilities read the blob for everything except field evidence. That
+ * is a fact about the answer, so it travels WITH the answer rather than living
+ * in a design document: a caller told "this came from the browser's last saved
+ * snapshot, and the normalised table was not consulted" can reason about
+ * staleness. A caller not told that will assume it read the system of record.
+ */
+const STORE = {
+  BLOB:  'properties.data blob — the snapshot the application last saved. The ' +
+         'normalised tables were NOT read and are not reconciled with this.',
+  TABLE: 'normalised table, read directly',
+  ROW:   'properties row columns only — not the blob, not any normalised table',
+};
+
+/** Stated on every response that counts disputes, so the rule is auditable. */
+const DISPUTE_RULE =
+  'open = the dispute state machine still permits a transition (open, ' +
+  'docs_requested); closed = terminal (accepted, rejected, and the legacy ' +
+  'status resolved); anything else is unknown and counted separately. ' +
+  'Defined once in dispute-status.js and shared with get_attention.';
+
+/**
+ * THE UNIT OF EVERY NUMBER THIS SURFACE EXPOSES.
+ *
+ * The audit measured `lease.cap` arriving as a bare `5` with nothing anywhere in
+ * the response saying whether that meant 5%, 0.05, or $5. Every consumer had
+ * simply agreed on a convention without writing it down, which works until the
+ * consumer is someone else's model.
+ *
+ * `unit` is what the number means. `guarantee` is how much that claim is worth:
+ *
+ *   'enforced'   a code path normalises it and nothing else can write it
+ *   'convention' the intended unit, applied on some write paths and not all —
+ *                so it is what the value almost certainly is, not what it is
+ *                certainly
+ *   'unknown'    nothing in the system records this, and it is NOT guessed
+ *
+ * cap is 'convention' and the distinction is real rather than pedantic:
+ * normalizeCap (script.js:2077) maps "35%" and "0.35" both to 35 on the
+ * AI-extraction path, but tenant-normalize.js — which is the path THIS surface
+ * reads through — copies `cap` across untouched. A cap that arrived from the
+ * tenants table, a manual review edit or an import was never normalised.
+ *
+ * Currency is 'unknown' deliberately. `fmt()` renders a '$' with en-US, and no
+ * currency code is stored on any property, invoice or reconciliation row
+ * anywhere in the schema. Declaring USD here would be inventing a fact about
+ * every property in the system in order to avoid an awkward null.
+ */
+const UNITS = {
+  'identity.totalSqft':          { unit: 'square_feet', guarantee: 'convention' },
+  'identity.leasedSqft':         { unit: 'square_feet', guarantee: 'convention',
+                                   note: 'Sum of leased_sqft over every tenant, present ONLY when every tenant has one — no `|| 0`, no "active" filter, no substitution at this layer. The guarantee is `convention` rather than `enforced` for one measured reason: tenant-normalize.js resolves leased_sqft as `leased_sqft ?? leasedSqft ?? sqft`, so a tenant whose demised area was never recorded may arrive here carrying its rentable sqft under the leased name. That substitution happens upstream of this rule and is not something this layer can see or undo.' },
+  'identity.occupancy':          { unit: 'percent', guarantee: 'convention',
+                                   note: 'leasedSqft / totalSqft, from the SAME numerator, so the two cannot contradict each other. Not clamped: leased > total yields null, not 100. Inherits the leasedSqft caveat above.' },
+  'lease.sqft':                  { unit: 'square_feet', guarantee: 'convention',
+                                   note: 'TenantSpace reads leased_sqft and falls back to the tenant row\'s own sqft, so this may be rentable rather than demised area.' },
+  'lease.cap':                   { unit: 'percent', guarantee: 'convention',
+                                   note: 'A CAM cap percentage: 5 means 5%. normalizeCap enforces this on the AI-extraction path only; a value from the tenants table, a manual edit or an import is stored as written. A value strictly between 0 and 1 is genuinely ambiguous — see the cap_unit_ambiguous caveat.' },
+  'cam.pool':                    { unit: 'currency', currencyCode: null, guarantee: 'unknown' },
+  'cam.unallocated':             { unit: 'currency', currencyCode: null, guarantee: 'unknown' },
+  'cam.results.actualCam':       { unit: 'currency', currencyCode: null, guarantee: 'unknown' },
+  'cam.results.allocatedAmount': { unit: 'currency', currencyCode: null, guarantee: 'unknown' },
+  'cam.results.expectedCam':     { unit: 'currency', currencyCode: null, guarantee: 'unknown' },
+  'cam.results.variance':        { unit: 'currency', currencyCode: null, guarantee: 'unknown' },
+  'cam.results.proRataPercent':  { unit: 'percent', guarantee: 'convention' },
+  'disputes.amount':             { unit: 'currency', currencyCode: null, guarantee: 'unknown' },
+};
+
+/** Only the entries a given response actually contains. */
+function unitsFor(prefixes) {
+  const out = {};
+  for (const k of Object.keys(UNITS)) {
+    if (prefixes.some(p => k === p || k.indexOf(p + '.') === 0)) out[k] = UNITS[k];
+  }
+  return out;
+}
+
+/**
+ * A stored cap that cannot be read with confidence.
+ *
+ * Under the percentage convention 0.05 means one twentieth of one percent. It
+ * is far likelier to be 5% written as a fraction by a path that never ran
+ * normalizeCap — but "far likelier" is not a fact, and picking one silently is
+ * a hundred-fold error in whichever direction it is wrong. Both readings are
+ * stated and neither is chosen.
+ */
+function capAmbiguityCaveat(cap, scope) {
+  if (typeof cap !== 'number' || !Number.isFinite(cap)) return null;
+  if (!(cap > 0 && cap < 1)) return null;
+  return {
+    code: 'lease.cap_unit_ambiguous', severity: SEVERITY.DEGRADED, scope,
+    message: 'The stored CAM cap is ' + cap + '. Under this system\'s convention ' +
+             'that is ' + cap + '%, but a value below 1 is the shape a fraction ' +
+             'takes, so it may be ' + (cap * 100) + '% written as a decimal by a ' +
+             'path that did not normalise it. The two readings differ by a factor ' +
+             'of 100 and nothing stored distinguishes them. The value is passed ' +
+             'through unchanged and NOT converted.',
+  };
+}
+
+/** Why leased area and occupancy are unavailable, in the caller's terms. */
+const AREA_REASON = {
+  no_tenants:
+    'No tenants are on this record, so leased area is not zero — it is ' +
+    'unknown. Check the spaces section: an empty roster and a roster that ' +
+    'could not be read reach this the same way.',
+  incomplete_tenant_area:
+    'At least one tenant has no leased square footage on file, so the ' +
+    'property total is UNKNOWN rather than smaller. The absent tenant is not ' +
+    'counted as occupying nothing, and its area is not substituted from the ' +
+    'tenant row\'s own sqft — both were rules this system used to apply ' +
+    'silently, and both produced a confident wrong number.',
+  negative_area:
+    'A tenant carries a negative leased square footage. No total is stated ' +
+    'from data that cannot be true.',
+  no_total:
+    'The property has no total square footage on file, so occupancy has no ' +
+    'denominator. Leased area, where present, is still reported.',
+  exceeds_total:
+    'The tenant areas sum to MORE than the property\'s own total square ' +
+    'footage. That is a contradiction in the stored record — double-counted ' +
+    'tenants, a stale suite, or a total never updated after a subdivision — ' +
+    'and it is reported as unavailable rather than clamped to 100%. The ' +
+    'clamp this replaces turned exactly this evidence into a confident ' +
+    '"fully occupied".',
+  property_area_module_absent:
+    'The module that defines leased area could not be loaded, so leased area ' +
+    'and occupancy are UNKNOWN.',
+};
+
 /**
  * Status for one section of the record.
  *
@@ -369,7 +512,9 @@ async function listProperties(args, ctx) {
   return envelope({
     data: { properties, count: properties.length },
     provenance: { reads, tables: ['properties'], hydrated: false,
-                  ownership: 'properties.user_id = authenticated user' },
+                  ownership: 'properties.user_id = authenticated user',
+                  store: STORE.ROW,
+                  units: unitsFor([]) },
     caveats,
     asOf: c.now,
   });
@@ -428,6 +573,26 @@ async function getProperty(args, ctx) {
     documents: st('documents', rec.documents),
   };
 
+  // M7 — say why leased area and occupancy are absent, when they are. Both
+  // come from ONE definition now, so they are null together and for one stated
+  // reason; a caller never has to guess whether a null means "no tenants",
+  // "some tenant has no area on file", or "the areas contradict the property".
+  const propertyCaveats = buildCaveats(unavailable, degradedCodes);
+  const ab = (rec.identity && rec.identity.areaBasis) || null;
+  if (ab && ab.reason) {
+    propertyCaveats.push({
+      code: 'identity.area_' + ab.reason, severity: SEVERITY.UNAVAILABLE,
+      scope: 'identity.leasedSqft+identity.occupancy',
+      message: AREA_REASON[ab.reason] ||
+               'Leased area could not be established, so occupancy is null too.',
+    });
+  }
+  for (const sp of (rec.spaces || [])) {
+    const cv = capAmbiguityCaveat(sp && sp.lease && sp.lease.cap,
+                                  'spaces[' + (sp && sp.tenantId) + '].lease.cap');
+    if (cv) propertyCaveats.push(cv);
+  }
+
   const data = {
     propertyId: a.propertyId,
     identity:   sectionValue(status.identity,  rec.identity),
@@ -452,8 +617,13 @@ async function getProperty(args, ctx) {
       reads: h.reads,
       hydrated: true,
       ownership: 'properties.user_id = authenticated user',
+      store: STORE.BLOB,
+      evidenceStore: STORE.TABLE + ' (tenant_field_evidence)',
+      units: unitsFor(['identity', 'lease', 'cam', 'disputes']),
+      openDisputeRule: DISPUTE_RULE,
+      areaBasis: (rec.identity && rec.identity.areaBasis) || null,
     },
-    caveats: buildCaveats(unavailable, degradedCodes),
+    caveats: propertyCaveats,
     asOf: c.now,
   });
 }
@@ -553,6 +723,8 @@ async function getTenant(args, ctx) {
   };
 
   const caveats = buildCaveats(unavailable, degradedCodes);
+  const capCav = capAmbiguityCaveat(space.lease && space.lease.cap, 'lease.cap');
+  if (capCav) caveats.push(capCav);
   if (fieldsStatus !== STATUS.UNAVAILABLE && !provenanceForTenant) {
     caveats.push({
       code: 'no_field_provenance', severity: SEVERITY.INFO, scope: 'fieldProvenance',
@@ -574,6 +746,9 @@ async function getTenant(args, ctx) {
       reads: h.reads, hydrated: true,
       ownership: 'properties.user_id = authenticated user',
       resolvedWithin: a.propertyId,
+      store: STORE.BLOB,
+      units: unitsFor(['lease', 'disputes']),
+      openDisputeRule: DISPUTE_RULE,
     },
     caveats,
     asOf: c.now,
@@ -745,6 +920,11 @@ async function getLeaseEvidence(args, ctx) {
       ownership: 'properties.user_id = authenticated user',
       resolvedWithin: a.propertyId,
       source: 'PropertyRecord.fields via FieldProvenance — passed through unchanged',
+      store: STORE.TABLE + ' (tenant_field_evidence)',
+      valuesNote: 'Provenance only. FieldProvenance states which evidence stands ' +
+                  'behind a field and never the value itself; seven canonical ' +
+                  'fields therefore have provenance here and no value anywhere ' +
+                  'on this surface.',
     },
     caveats,
     asOf: c.now,
@@ -789,6 +969,9 @@ async function getSpace(args, ctx) {
   }
 
   const s = found.space;
+  const spaceCaveats = buildCaveats(unavailable, degradedCodes);
+  const spaceCap = capAmbiguityCaveat(s.lease && s.lease.cap, 'lease.cap');
+  if (spaceCap) spaceCaveats.push(spaceCap);
   return envelope({
     data: {
       propertyId: a.propertyId,
@@ -812,10 +995,12 @@ async function getSpace(args, ctx) {
       ownership: 'properties.user_id = authenticated user',
       resolvedWithin: a.propertyId,
       source: 'PropertyRecord.spaces — the same representation get_property returns',
+      store: STORE.BLOB,
+      units: unitsFor(['lease']),
       identityNote: 'In this data model a space id and its tenant id are the ' +
                     'same value; both are accepted here.',
     },
-    caveats: buildCaveats(unavailable, degradedCodes),
+    caveats: spaceCaveats,
     asOf: c.now,
   });
 }
@@ -911,6 +1096,7 @@ async function getTimeline(args, ctx) {
         ownership: 'properties.user_id = authenticated user',
         resolvedWithin: a.propertyId,
         source: 'PropertyRecord.timeline.byTenant — scoped by TimelineMerge',
+      store: STORE.BLOB,
       },
       caveats, asOf: c.now,
     });
@@ -962,6 +1148,7 @@ async function getTimeline(args, ctx) {
       reads: h.reads, hydrated: true,
       ownership: 'properties.user_id = authenticated user',
       source: 'PropertyRecord.timeline.property — database only, never localStorage',
+      store: STORE.BLOB,
       attributionUnknown,
     },
     caveats, asOf: c.now,
@@ -1016,8 +1203,25 @@ async function getDisputes(args, ctx) {
     list = list.filter(d => d && (d.tenantId === a.tenantId || d.tenantName === tenantName));
   }
 
+  // M7 — counted through the ONE shared predicate, so this number and the one
+  // get_attention reports come from the same definition. `unknown` is carried
+  // rather than absorbed: a status the dispute state machine has never heard of
+  // is neither open nor closed, and silently choosing one would be exactly the
+  // confident-wrong-number this file exists to prevent.
+  const DS = (c.deps && c.deps.DisputeStatus) || DEPS.load().DisputeStatus;
   const value = sectionValue(status, list);
-  const open  = value ? value.filter(d => d && (d.status === 'open' || d.status === 'docs_requested')) : null;
+  const t     = value ? DS.tally(value) : null;
+  const open  = value ? value.filter(d => DS.isOpen(d)) : null;
+  if (t && t.unknown > 0) {
+    caveats.push({
+      code: 'disputes.unknown_status', severity: SEVERITY.DEGRADED, scope: 'disputes',
+      message: t.unknown + ' dispute(s) carry a status the dispute state machine ' +
+               'does not define (' + t.unknownStatuses.join(', ') + '). They are ' +
+               'counted in disputeCount and in neither openDisputeCount nor ' +
+               'closedDisputeCount, because classifying them either way would be ' +
+               'a guess. openDisputeCount is therefore a LOWER BOUND.',
+    });
+  }
 
   return envelope({
     data: {
@@ -1030,6 +1234,8 @@ async function getDisputes(args, ctx) {
       // assertion, and there is nothing here to assert it from.
       disputeCount:     value ? value.length : null,
       openDisputeCount: open  ? open.length  : null,
+      closedDisputeCount:  t ? t.closed  : null,
+      unknownStatusCount:  t ? t.unknown : null,
     },
     provenance: {
       origin: rec.meta.origin,
@@ -1041,6 +1247,8 @@ async function getDisputes(args, ctx) {
       ownership: 'properties.user_id = authenticated user',
       resolvedWithin: a.propertyId,
       source: 'PropertyRecord.disputes — the stored record only',
+      store: STORE.BLOB,
+      openDisputeRule: DISPUTE_RULE,
     },
     caveats, asOf: c.now,
   });
@@ -1279,6 +1487,8 @@ async function getCamStatus(args, ctx) {
       resolvedWithin: a.propertyId,
       source: 'PropertyRecord.cam — the stored camReconciliation snapshot only; ' +
               'the cam_reconciliations table is NOT read',
+      store: STORE.BLOB,
+      units: unitsFor(['cam']),
       expectedCamGate: 'expectedCamBasis === "cap_ceiling" AND a finite number — ' +
                        'the same predicate saveCamResults uses before persisting',
     },
@@ -1387,6 +1597,8 @@ async function getAttention(args, ctx) {
       resolvedWithin: a.propertyId,
       source: 'PropertyWorkspace.collectAttention via PropertyRecord.attention — ' +
               'ranked as composed, projected to severity/title/why',
+      store: STORE.BLOB,
+      openDisputeRule: DISPUTE_RULE,
       omittedFields: ['icon', 'nav', 'action'],
       rulesAdded: 'none — no attention rule, threshold or severity is defined here',
     },
@@ -1555,6 +1767,7 @@ module.exports = {
   TOOLS, call, listProperties, getProperty, getTenant,
   getLeaseEvidence, getSpace, getTimeline, getDisputes, _resolveSpace,
   getCamStatus, getAttention, _classifyExpectation, _camRow, CAM_TRUST,
+  STORE, UNITS, unitsFor, DISPUTE_RULE, AREA_REASON, capAmbiguityCaveat,
   resolveIdentity, envelope, refuse, sectionStatus, sectionValue, buildCaveats,
   REFUSAL, SEVERITY, STATUS, WRITE_METHODS, DEGRADED_SECTIONS, UNKNOWN_CODES, CAVEAT_TEXT,
   _readOnly,

@@ -14894,7 +14894,14 @@ async function confirmDocsRequest(id) {
 // once the documentation arrives the dispute still has to be decided, so
 // docs_requested must lead on to accepted or rejected. accepted and rejected
 // are terminal — a decided dispute is not re-decided.
-const DISPUTE_TRANSITIONS = {
+// M7 — the transition table moved to dispute-status.js, which derives the
+// canonical "is this dispute open?" predicate FROM it. Keeping a second copy
+// here is how the four divergent open-dispute definitions arose in the first
+// place, so this reads the one table rather than restating it. The literal
+// remains only as the fallback for a browser that failed to load that script,
+// and test-m7 asserts the two are identical so a fallback can never silently
+// become a second definition.
+const DISPUTE_TRANSITIONS = (window.DisputeStatus && window.DisputeStatus.TRANSITIONS) || {
   open:            ['docs_requested', 'accepted', 'rejected'],
   docs_requested:  ['accepted', 'rejected'],
   accepted:        [],
