@@ -316,12 +316,25 @@ const DISPUTE_RULE =
  */
 const UNITS = {
   'identity.totalSqft':          { unit: 'square_feet', guarantee: 'convention' },
+  // M8d — list_properties reports the same column under its own path and was
+  // declaring no units at all (`unitsFor([])` is `{}`), so the one capability
+  // most likely to be called first shipped a bare square-footage number with
+  // nothing saying what it measured. Same column, same meaning, said in both
+  // places now that both agree on the value.
+  'properties.totalSqft':        { unit: 'square_feet', guarantee: 'convention',
+                                   note: 'The property row\'s own total area, by the same rule get_property applies to identity.totalSqft: absent, blank or unparseable is null, never 0.' },
   'identity.leasedSqft':         { unit: 'square_feet', guarantee: 'convention',
                                    note: 'Sum of leased_sqft over every tenant, present ONLY when every tenant has one — no `|| 0`, no "active" filter, no substitution at this layer. The guarantee is `convention` rather than `enforced` for one measured reason: tenant-normalize.js resolves leased_sqft as `leased_sqft ?? leasedSqft ?? sqft`, so a tenant whose demised area was never recorded may arrive here carrying its rentable sqft under the leased name. That substitution happens upstream of this rule and is not something this layer can see or undo.' },
   'identity.occupancy':          { unit: 'percent', guarantee: 'convention',
                                    note: 'leasedSqft / totalSqft, from the SAME numerator, so the two cannot contradict each other. Not clamped: leased > total yields null, not 100. Inherits the leasedSqft caveat above.' },
+  // M8d rewrote this note. It said "TenantSpace reads leased_sqft and falls back
+  // to the tenant row's own sqft, so this may be rentable rather than demised
+  // area" — which described the code M8c deleted. All three remaining `t.sqft`
+  // mentions in tenant-space.js are comments about the removed branch; no
+  // fallback runs. A caveat that is no longer true is not a harmless leftover,
+  // it is a false statement about the number it is attached to.
   'lease.sqft':                  { unit: 'square_feet', guarantee: 'convention',
-                                   note: 'TenantSpace reads leased_sqft and falls back to the tenant row\'s own sqft, so this may be rentable rather than demised area.' },
+                                   note: 'This space\'s demised area, read from leased_sqft through PropertyArea._area — the same definition identity.leasedSqft uses, so the two agree on every stored shape including a genuine 0 and a numeric string. Nothing is substituted at this layer: an absent area is null, never the tenant row\'s own sqft and never 0. The guarantee is `convention` for the reason identity.leasedSqft gives — tenant-normalize.js resolves leased_sqft as `leased_sqft ?? leasedSqft ?? sqft`, so a tenant whose demised area was never recorded may arrive carrying its rentable sqft under the leased name, upstream of this rule and invisible to it.' },
   'lease.cap':                   { unit: 'percent', guarantee: 'convention',
                                    note: 'A CAM cap percentage: 5 means 5%. normalizeCap enforces this on the AI-extraction path only; a value from the tenants table, a manual edit or an import is stored as written. A value strictly between 0 and 1 is genuinely ambiguous — see the cap_unit_ambiguous caveat.' },
   'cam.pool':                    { unit: 'currency', currencyCode: null, guarantee: 'unknown' },
@@ -381,6 +394,62 @@ function capAmbiguityCaveat(cap, scope) {
              'of 100 and nothing stored distinguishes them. The value is passed ' +
              'through unchanged and NOT converted.',
   };
+}
+
+/**
+ * M8d — the property's own total area, read the one way.
+ *
+ * Character-for-character the rule `_num` applies in property-record.js, which
+ * is what get_property's `identity.totalSqft` reports. list_properties reads the
+ * same `properties.sqft` column and must not answer differently; test-m8d drives
+ * both capabilities over the same stored values and asserts they agree, so a
+ * change to either side is caught rather than merely discouraged.
+ */
+function _canonicalSqft(v) {
+  if (v === null || v === undefined || v === '') return null;
+  const n = Number(v);
+  return Number.isFinite(n) ? n : null;
+}
+
+/**
+ * M8d — WHAT AN ATTENTION ITEM IS ON THE WIRE, decided once.
+ *
+ * collectAttention builds items for a browser: `_mk(severity, icon, title, why,
+ * nav, action)`, where `nav` is `{ tab, anchors }` and `anchors` are DOM element
+ * ids. get_attention has always projected those away and says so in a caveat —
+ * `attention.ui_fields_removed`: "the icon, the in-app navigation target and the
+ * button label are application UI and are deliberately not exposed."
+ *
+ * get_property returned the raw item. So the same list, in the same response
+ * family, arrived one way from one capability and another from the other, and
+ * the caveat asserting the removal was false wherever it mattered:
+ *
+ *     get_property.data.attention[0]
+ *       { severity, icon: '⚖️', title, why,
+ *         nav: { tab: 'cam', anchors: ['disputeSection', 'openDisputesWrap'] },
+ *         action: 'Review disputes' }
+ *
+ * Those are this application's internal element ids. They mean nothing to an
+ * external reader, they are not facts about the property, and they are exactly
+ * the browser-implementation detail this surface undertook not to expose.
+ *
+ * One projection, used by both. `rank` is the position collectAttention ranked
+ * the item at — the order is part of the answer, so it is stated rather than
+ * left implicit in array position.
+ *
+ * Null in, null out: a list that could not be composed is UNKNOWN, and mapping
+ * it to [] here would be the "empty is not unknown" mistake one layer down.
+ */
+function _attentionItems(raw) {
+  if (!Array.isArray(raw)) return null;
+  return raw.map(function (it, i) {
+    return {
+      rank:     i,
+      severity: (it && it.severity) != null ? it.severity : null,
+      title:    (it && it.title)    != null ? it.title    : null,
+      why:      (it && it.why)      != null ? it.why      : null,
+    };
+  });
 }
 
 /** Why leased area and occupancy are unavailable, in the caller's terms. */
@@ -505,7 +574,14 @@ async function listProperties(args, ctx) {
   const properties = rows.map(row => ({
     propertyId: row.id,
     name:       row.name,
-    totalSqft:  row.sqft == null ? null : Number(row.sqft),
+    // M8d — the SAME rule get_property's identity.totalSqft applies to the same
+    // column (_num in property-record.js): absent, blank or unparseable is null,
+    // and only a finite number is a number. This read null while the hydrator
+    // read `row.sqft || 0`, so one capability called a never-entered area
+    // unknown and the other called it zero. `Number(row.sqft)` alone was not
+    // quite it either — it yields NaN for a malformed value, which serialises
+    // to null and reads as absence without ever having been decided.
+    totalSqft:  _canonicalSqft(row.sqft),
     archived:   !!row.archived_at,
     createdAt:  row.created_at || null,
     updatedAt:  row.updated_at || null,
@@ -531,7 +607,7 @@ async function listProperties(args, ctx) {
     provenance: { reads, tables: ['properties'], hydrated: false,
                   ownership: 'properties.user_id = authenticated user',
                   store: STORE.ROW,
-                  units: unitsFor([]) },
+                  units: unitsFor(['properties']) },
     caveats,
     asOf: c.now,
   });
@@ -609,16 +685,30 @@ async function getProperty(args, ctx) {
                                   'spaces[' + (sp && sp.tenantId) + '].lease.cap');
     if (cv) propertyCaveats.push(cv);
   }
+  // M8d — the same contract get_attention states, now that it is true here too.
+  if (status.attention !== STATUS.UNAVAILABLE) {
+    propertyCaveats.push({
+      code: 'attention.ui_fields_removed', severity: SEVERITY.INFO, scope: 'attention',
+      message: 'Each item is reported as severity, title and why. The icon, the ' +
+               'in-app navigation target and the button label are application UI ' +
+               'and are deliberately not exposed.',
+    });
+  }
 
   const data = {
     propertyId: a.propertyId,
     identity:   sectionValue(status.identity,  rec.identity),
-    spaces:     sectionValue(status.spaces,    rec.spaces),
+    // M8d — every stored CAM row this response carries goes through the same
+    // gate get_cam_status uses: the per-space rows on `spaces`, and both
+    // `results` and `capped` on `cam`. See _gatedSpaces / _gatedCam.
+    spaces:     sectionValue(status.spaces,    _gatedSpaces(rec.spaces)),
     fields:     sectionValue(status.fields,    rec.fields),
-    cam:        sectionValue(status.cam,       rec.cam),
+    cam:        sectionValue(status.cam,       _gatedCam(rec.cam)),
     timeline:   sectionValue(status.timeline,  rec.timeline),
     disputes:   sectionValue(status.disputes,  rec.disputes),
-    attention:  sectionValue(status.attention, rec.attention),
+    // M8d — projected to severity/title/why, the same shape get_attention
+    // returns. See _attentionItems.
+    attention:  sectionValue(status.attention, _attentionItems(rec.attention)),
     documents:  sectionValue(status.documents, rec.documents),
   };
 
@@ -733,7 +823,8 @@ async function getTenant(args, ctx) {
     lease:      space.lease || null,
     summary:    space.summary || null,
     counts:     space.counts || null,
-    camResult:  space.camResult || null,
+    // M8d — gated, exactly as get_cam_status gates it. See _gatedCamResult.
+    camResult:  _gatedCamResult(space.camResult),
     disputes:   sectionValue(disputesStatus,  tenantDisputes),
     documents:  sectionValue(documentsStatus, tenantDocuments),
     fieldProvenance: provenanceForTenant,
@@ -764,7 +855,10 @@ async function getTenant(args, ctx) {
       ownership: 'properties.user_id = authenticated user',
       resolvedWithin: a.propertyId,
       store: STORE.BLOB,
-      units: unitsFor(['lease', 'disputes', 'fields']),
+      // M8d — 'cam' joins the list because camResult now comes through the same
+      // gate get_cam_status uses, and the money it carries needs the same unit
+      // declaration there as it has there.
+      units: unitsFor(['lease', 'disputes', 'fields', 'cam']),
       openDisputeRule: DISPUTE_RULE,
     },
     caveats,
@@ -1015,7 +1109,8 @@ async function getSpace(args, ctx) {
       lease:      s.lease || null,
       summary:    s.summary || null,
       counts:     s.counts || null,
-      camResult:  s.camResult || null,
+      // M8d — gated, exactly as get_cam_status gates it. See _gatedCamResult.
+      camResult:  _gatedCamResult(s.camResult),
     },
     provenance: {
       origin: rec.meta.origin,
@@ -1028,7 +1123,8 @@ async function getSpace(args, ctx) {
       resolvedWithin: a.propertyId,
       source: 'PropertyRecord.spaces — the same representation get_property returns',
       store: STORE.BLOB,
-      units: unitsFor(['lease']),
+      // M8d — see get_tenant: camResult is gated here too, so its units travel.
+      units: unitsFor(['lease', 'cam']),
       identityNote: 'In this data model a space id and its tenant id are the ' +
                     'same value; both are accepted here.',
     },
@@ -1382,6 +1478,58 @@ function _camRow(r) {
   };
 }
 
+/**
+ * M8d — THE GATE IS THE ONLY WAY A STORED CAM ROW LEAVES THIS FILE.
+ *
+ * _camRow above was built for get_cam_status and, for two phases, was used
+ * there and nowhere else. Four other exposure paths kept handing the stored row
+ * over verbatim — get_space.camResult, get_tenant.camResult,
+ * get_property.spaces[].camResult and get_property.cam (results AND capped).
+ * The M8 final-gate audit measured what that meant on a single legacy row:
+ *
+ *     get_cam_status  expectedCam null   variance null   trust legacy_unverified_not_money
+ *     get_space       expectedCam 5      variance 11995
+ *     get_tenant      expectedCam 5      variance 11995
+ *     get_property    expectedCam 5      variance 11995   (both results and capped)
+ *
+ * A five that is a cap PERCENTAGE, presented as five dollars against a $12,000
+ * actual, with a "variance" that is dollars minus a percentage. The safeguard
+ * existed and guarded one door of five.
+ *
+ * So the gate stops being get_cam_status's private helper and becomes the only
+ * projection of a stored CAM row anywhere in this file. These two functions are
+ * the whole of that: nothing below may read `.camResult` or `cam.results` and
+ * pass it on unprojected. Whitelisting travels with the gate — _camRow names its
+ * output keys, so a key the reconciliation happened to write cannot ride along.
+ */
+function _gatedCamResult(row) {
+  return row ? _camRow(row) : null;
+}
+
+/** Every space, with its CAM row gated. Nothing else about the space changes. */
+function _gatedSpaces(spaces) {
+  if (!Array.isArray(spaces)) return spaces;
+  return spaces.map(function (s) {
+    if (!s) return s;
+    return Object.assign({}, s, { camResult: _gatedCamResult(s.camResult) });
+  });
+}
+
+/**
+ * The record's cam section with every row gated — `results` and `capped` alike.
+ *
+ * `capped` is a filtered view of the same stored rows (capApplied === true), so
+ * an ungated `capped` would hand back exactly the rows `results` just withheld.
+ * pool and unallocated are computed figures, not stored rows, and pass through.
+ */
+function _gatedCam(cam) {
+  if (!cam || typeof cam !== 'object') return cam;
+  return Object.assign({}, cam, {
+    results: Array.isArray(cam.results) ? cam.results.map(_camRow) : cam.results,
+    capped:  Array.isArray(cam.capped)  ? cam.capped.map(_camRow)  : cam.capped,
+  });
+}
+
 // ── Tool 8: get_cam_status ─────────────────────────────────────────────────
 
 /**
@@ -1572,13 +1720,9 @@ async function getAttention(args, ctx) {
   }
 
   const caveats = buildCaveats(unavailable, degradedCodes);
-  const raw = Array.isArray(rec.attention) ? rec.attention : [];
-  const items = raw.map((it, i) => ({
-    rank:     i,                       // the order collectAttention ranked them in
-    severity: (it && it.severity) != null ? it.severity : null,
-    title:    (it && it.title)    != null ? it.title    : null,
-    why:      (it && it.why)      != null ? it.why      : null,
-  }));
+  // M8d — the projection moved to _attentionItems so get_property uses the same
+  // one. Reaching here means the section IS composed, so [] is the right floor.
+  const items = _attentionItems(rec.attention) || [];
 
   const severityCounts = items.reduce((acc, it) => {
     const k = it.severity == null ? 'unknown' : it.severity;
@@ -1799,6 +1943,11 @@ module.exports = {
   TOOLS, call, listProperties, getProperty, getTenant,
   getLeaseEvidence, getSpace, getTimeline, getDisputes, _resolveSpace,
   getCamStatus, getAttention, _classifyExpectation, _camRow, CAM_TRUST,
+  // M8d. Exported so their contracts can be asserted directly rather than only
+  // through a capability that happens to exercise them: _attentionItems must
+  // return null — not [] — for a section that could not be composed, and
+  // sectionValue's own guard would otherwise hide a regression in that.
+  _attentionItems, _canonicalSqft, _gatedCamResult, _gatedSpaces, _gatedCam,
   STORE, UNITS, unitsFor, DISPUTE_RULE, AREA_REASON, capAmbiguityCaveat,
   resolveIdentity, envelope, refuse, sectionStatus, sectionValue, buildCaveats,
   REFUSAL, SEVERITY, STATUS, WRITE_METHODS, DEGRADED_SECTIONS, UNKNOWN_CODES, CAVEAT_TEXT,

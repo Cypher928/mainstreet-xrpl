@@ -221,7 +221,23 @@ async function hydrate(opts) {
   const property = {
     id:                row.id,
     name:              row.name,
-    totalSqft:         row.sqft || 0,
+    // M8d — ABSENCE STAYS ABSENCE. This was `row.sqft || 0`.
+    //
+    // `properties.sqft` is a nullable numeric with no default, and both NULL and
+    // a real 0 occur (addNewProperty creates `totalSqft: 0`; migration 014's own
+    // comment refers to "an abandoned 0-sqft New Property"). The `|| 0` turned
+    // the first into the second, so a property whose area was never entered
+    // reported `identity.totalSqft: 0` — a building stated to have no area.
+    //
+    // PropertyRecord already refuses that: test-property-record J14 pins "a
+    // property with no totalSqft reports null, not 0". The record was right and
+    // this line was overwriting it before the record ever saw the column, which
+    // is also why list_properties (`row.sqft == null ? null : …`) and
+    // get_property disagreed about the same column at the same moment.
+    //
+    // Passed through unnormalised on purpose: _num in property-record.js is the
+    // canonical rule for this field and applies it once, here as everywhere.
+    totalSqft:         row.sqft == null ? null : row.sqft,
     invoices:          d.invoices          || [],
     disputes:          d.disputes          || [],
     camYear:           d.camYear           ?? null,

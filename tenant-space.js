@@ -181,7 +181,11 @@ window.TenantSpace = (function () {
     if (lease.url) leaseDocs.push({ name: lease.fileName || ((t.tenant_name || 'Tenant') + ' lease'), url: lease.url, kind: 'pdf' });
     // Grounded summary — facts read from the record, not general knowledge.
     var bits = [];
-    if (lease.type) bits.push(lease.type + (lease.sqft ? ' · ' + lease.sqft + ' sqft' : ''));
+    // M8d — `!= null`, not truthiness. `summary` is part of the canonical record
+    // and ships on get_space, get_tenant and get_property, so a 0-area space
+    // whose lease.sqft says 0 must not have its area vanish from the sentence
+    // beside it. Same value, same response, one answer.
+    if (lease.type) bits.push(lease.type + (lease.sqft != null ? ' · ' + lease.sqft + ' sqft' : ''));
     if (camResult) bits.push((camRec && camRec.camYear ? camRec.camYear + ' ' : '') + 'CAM ' + _money(camResult.allocatedAmount != null ? camResult.allocatedAmount : camResult.totalAllocated) + ' allocated');
     if (warranties.length) bits.push(warranties.length + ' warranty doc' + (warranties.length !== 1 ? 's' : '') + ' on file');
     if (invoices.length) bits.push(invoices.length + ' invoice' + (invoices.length !== 1 ? 's' : ''));
@@ -222,7 +226,10 @@ window.TenantSpace = (function () {
     if (rec.noIdentity) return { ok: false,
       why: 'This space has no identifier yet \u2014 finish saving the tenant, then its record can be cited.' };
     var lease = rec.lease || {};
-    var hasLease = !!(lease.type || lease.sqft || lease.start || lease.end || lease.cap != null);
+    // M8d — a demised area of 0 is a lease fact on file like any other, so it
+    // makes a record citable. Truthiness here meant a space whose only recorded
+    // lease term was a genuine 0 sqft was treated as having no lease at all.
+    var hasLease = !!(lease.type || lease.sqft != null || lease.start || lease.end || lease.cap != null);
 
     // S7 — ONE predicate. This used to count `rec.events.length > 0`, which is
     // true of a system-generated event like "lease uploaded", directly against
@@ -303,7 +310,10 @@ window.TenantSpace = (function () {
 
     var leaseRows = [];
     if (rec.lease.type)  leaseRows.push(['Lease type', rec.lease.type]);
-    if (rec.lease.sqft)  leaseRows.push(['Leased area', rec.lease.sqft + ' sqft']);
+    // M8d — the last of the five. M8c fixed the space-list card to `!= null`;
+    // leaving this one on truthiness meant the card showed "0 sqft" while the
+    // detail view for the same space showed no Leased area row at all.
+    if (rec.lease.sqft != null) leaseRows.push(['Leased area', rec.lease.sqft + ' sqft']);
     if (rec.lease.start || rec.lease.end) leaseRows.push(['Term', (rec.lease.start || '?') + ' → ' + (rec.lease.end || '?')]);
     if (rec.lease.cap != null) leaseRows.push(['CAM cap', String(rec.lease.cap)]);
     var leaseDocsHtml = (rec.leaseDocs || []).map(function (a) { return _attachChip(a, '\u{1F4C4}'); }).join('');

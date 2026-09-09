@@ -183,6 +183,87 @@
   }
 
   /**
+   * ── M8d: DOES THIS SNAPSHOT DESCRIBE THE VALUE ON SCREEN? ──────────────────
+   *
+   * The module header already commits to this: "a manual correction is not
+   * vouched for by the clause it overrode." It enforced that only for edits that
+   * left a RECORD — a `manuallyEdited` snapshot, or a reviewOverride. The M8
+   * final-gate audit measured the case where an edit leaves no record at all.
+   *
+   * `handleFieldBlur` → `updateTenantField` writes `pt[field] = value` and
+   * nothing else: no snapshot, no override, no audit row. Six of the thirteen
+   * canonical fields are edited that way — cap, tenant_name, leased_sqft,
+   * start_date, end_date, lease_type — and the CAM Cap input renders the
+   * citation chip directly beside itself. So a user corrected a cap from 5 to 6
+   * while looking at the clause stating five percent, and afterwards:
+   *
+   *     value 6 · state lease_confirmed · cited true · page 12
+   *     quote "shall not increase by more than five percent (5%) annually"
+   *     label "Extracted from lease document"
+   *
+   * A fabricated citation: the document is real, the clause is real, and it does
+   * not say six. Nothing in the response contradicted it.
+   *
+   * The evidence row carried what it needed all along. `tenant_field_evidence`
+   * has a `value` column, both _evidenceRowToSnapshot implementations copy it
+   * onto the snapshot, and this resolver has never looked at it. Comparing it to
+   * the value being judged is the whole fix, and it lives here — in the
+   * canonical layer — rather than in the write path, because a read model that
+   * depends on every writer behaving is not a verified-memory system.
+   *
+   * WHAT COUNTS AS A CONTRADICTION, AND WHAT DOES NOT
+   *
+   * Only a snapshot that HAS a value and DISAGREES with the current one. A
+   * snapshot with no value on file cannot contradict anything and is left
+   * exactly as it was — that is most of the existing corpus, and demoting it
+   * would be inventing a disagreement to go with a silence.
+   *
+   * The column is TEXT, so the comparison has to be. `5` and `'5'` are the same
+   * cap, `4.5` and `'4.50'` the same expense stop, `true` and `'true'` the same
+   * audit right. Numeric equality is tried before string equality precisely so
+   * that a faithful round-trip through a text column is not read as an edit.
+   */
+  /**
+   * Same value, allowing for the evidence column storing everything as text.
+   *
+   * Three comparisons, in order, and nothing else. Deliberately NOT tolerant
+   * beyond format: '5' and '5%' are different strings and neither is a number,
+   * so they count as different — refusing to certify is the safe direction when
+   * two readings cannot be reconciled.
+   *
+   * NO BOOLEAN BRANCH, and that is a measured decision rather than an omission.
+   * The first draft had one. `String(true)` is 'true', so a boolean and its text
+   * form are already equal at the first comparison, and a case difference is
+   * already equal at the third — an exhaustive sweep over 400 pairs of booleans,
+   * their text forms, mixed casing, 0/1 and non-boolean strings found zero pairs
+   * where the branch changed the answer. Two mutants of it survived precisely
+   * because it could not affect anything. A branch that cannot fire still asks
+   * to be read and maintained as though it could, so it is gone; audit_rights,
+   * the one boolean canonical field, is covered by the tests either way.
+   */
+  function _sameValue(a, b) {
+    var sa = String(a).trim(), sb = String(b).trim();
+    if (sa === sb) return true;
+
+    if (sa !== '' && sb !== '') {
+      var na = Number(sa), nb = Number(sb);
+      if (isFinite(na) && isFinite(nb)) return na === nb;
+    }
+    return sa.toLowerCase() === sb.toLowerCase();
+  }
+
+  /**
+   * True only when the snapshot states a value and it is not the current one.
+   * Absent, null or blank evidence values return false: unverifiable, not wrong.
+   */
+  function _evidenceContradicts(snap, raw) {
+    if (!snap || typeof snap !== 'object') return false;
+    if (!('value' in snap)) return false;
+    if (_isEmpty(snap.value)) return false;
+    return !_sameValue(snap.value, raw);
+  }
+
+  /**
    * The snapshot that describes the value on screen right now.
    *
    * Superseded snapshots are skipped — that flag exists precisely to say "this
@@ -224,6 +305,12 @@
       by: null, when: null, quote: null, page: null, sourceFile: null,
       label: LABEL.unknown, method: METHOD.unknown,
       uiStatus: UI_STATUS.unknown, dbStatus: DB_STATUS.unknown,
+      // M8d. Additive, and deliberately NOT a sixth state: the five states are
+      // branched on across the app and the DB/UI projections map onto them, so
+      // widening that scale would be a semantic change. This says only why a
+      // field that has evidence on file is nonetheless uncited — the evidence
+      // describes a different value than the one being reported.
+      evidenceStale: false,
     };
 
     // 1. UNKNOWN STAYS UNKNOWN. Nothing below may promote a field because a
@@ -248,10 +335,22 @@
     var snapReviewer = (snap && (snap.reviewerEmail || snap.reviewerUid)) || null;
     var snapApproved = !!(snap && snap.approved === true && snapReviewer);
 
+    // M8d — a snapshot that states a DIFFERENT value cannot certify this one.
+    //
+    // Gates both certifying branches, not just the citation. An approval is a
+    // claim that a named person checked THIS figure; if the figure has changed
+    // since, that claim is about a number they never saw, and attaching their
+    // name to it is the same fabrication as attaching the clause. What survives
+    // is the manual branch below — `manuallyEdited` and reviewOverrides are
+    // records OF an edit, so they describe the edit rather than a superseded
+    // reading, and demoting them would lose a true fact.
+    var stale = _evidenceContradicts(snap, raw);
+    out.evidenceStale = stale;
+
     // 2. A HUMAN ACT ON THIS FIELD OUTRANKS A CITATION, because a citation
     //    describes the value it was captured for. A reviewer who corrected a
     //    figure is not vouched for by the clause that stated the old one.
-    if (snapApproved && !snapManual) {
+    if (snapApproved && !snapManual && !stale) {
       out.state = 'manually_confirmed'; out.stated = true;
       out.by = snapReviewer; out.when = snap.reviewedAt || null;
       // A confirmed field may ALSO carry the clause it was confirmed against.
@@ -265,8 +364,9 @@
       out.by = snapReviewer || null;
       out.when = (overrideIsCurrent && ov.reviewedAt) || (snap && snap.reviewedAt) || null;
       out.sourceFile = null;    // a typed value has no source document
-    } else if (snap && (snap.quote || snap.page != null)) {
-      // 3. LEASE-CONFIRMED REQUIRES A CITATION ON THE CURRENT SNAPSHOT.
+    } else if (snap && !stale && (snap.quote || snap.page != null)) {
+      // 3. LEASE-CONFIRMED REQUIRES A CITATION ON THE CURRENT SNAPSHOT, and
+      //    (M8d) a snapshot whose own value is the one the citation supports.
       //    Never on any snapshot ever taken, and never on presence alone.
       out.state = 'lease_confirmed'; out.stated = true; out.cited = true;
       out.quote = snap.quote || null;
@@ -279,12 +379,20 @@
       out.state = 'manually_entered'; out.stated = true;
       out.by = null;                  // nothing on file names who; see saveFieldOverride
       out.sourceFile = null;          // a typed value has no source document
-      out.when = (snap && (snap.reviewedAt || snap.extractedAt)) || null;
+      out.when = (stale ? null
+                        : (snap && (snap.reviewedAt || snap.extractedAt))) || null;
     } else {
       // 4. THE FLOOR. A value exists and nothing affirms it.
+      //
+      // M8d — a stale snapshot reaches this floor, and must not furnish it. Its
+      // sourceFile and timestamp belong to the reading it captured, not to the
+      // value being reported: dating the current cap to the extraction that
+      // found a different one is the same overstatement one notch quieter. The
+      // tenant's own fileName still stands — it says which document is on file,
+      // never that this value came out of it.
       out.state = 'ai_extracted';
-      out.sourceFile = (snap && snap.sourceFile) || t.fileName || null;
-      out.when = (snap && (snap.extractedAt || snap.reviewedAt)) || null;
+      out.sourceFile = (stale ? null : (snap && snap.sourceFile)) || t.fileName || null;
+      out.when = (stale ? null : (snap && (snap.extractedAt || snap.reviewedAt))) || null;
     }
 
     out.label    = LABEL[out.state];
