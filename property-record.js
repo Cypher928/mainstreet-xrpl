@@ -229,9 +229,90 @@
   }
 
   /**
-   * Provenance for every canonical lease field, per tenant, from the one
-   * resolver. `_confidence` — the pre-Phase-D string — is deliberately not read:
-   * it is the superseded notion of "verified" that the provenance model replaced.
+   * The canonical key whose value is not stored under its own name.
+   * `cap_base_amount` lives on the tenant as camelCase `capBaseAmount`; renaming
+   * the stored property would be a data migration for a naming mismatch.
+   */
+  const FIELD_STORAGE_KEY = { cap_base_amount: 'capBaseAmount' };
+
+  /** The value the resolver will judge, read the same way the resolver reads it. */
+  function _fieldValue(tenant, key) {
+    const stored = FIELD_STORAGE_KEY[key] || key;
+    const v = tenant ? tenant[stored] : undefined;
+    return v === undefined ? null : v;
+  }
+
+  /**
+   * WHAT KIND OF FACT A FIELD IS — a separate axis from what evidence backs it.
+   *
+   * M8b exists for one field. `cap_base_amount` sits in CANONICAL_FIELDS beside
+   * twelve lease terms, and it is not one: it is LAST YEAR'S ACTUAL CAM CHARGE
+   * for this tenant. The application's own label says so —
+   *
+   *     "Prior-Year CAM Base ($) — last year's total CAM charge for this
+   *      tenant. Required to calculate the cap ceiling."      script.js:8605
+   *
+   * — no lease states it, the extraction schema never requests it
+   * (api/_claude-tasks.js has no cap_base_amount key), and script.js:2134 will
+   * not accept one without a quote that extraction cannot produce. It reaches a
+   * record only when a person types it into that input.
+   *
+   * That matters because it is the dollar operand of every cap ceiling. A
+   * reader that saw it in a list of lease fields and inferred "the lease says
+   * the base is $100,000" would be wrong in the direction this codebase spends
+   * its time preventing — so the record states the kind of fact, every time,
+   * whatever evidence happens to be attached.
+   *
+   * `extractable` is DERIVED from FieldProvenance.NEVER_EXTRACTED rather than
+   * restated here: that module already owns the fact and already floors such a
+   * field to `manually_entered`. Two lists would be one too many.
+   */
+  const OPERATING_ACTUAL = {
+    cap_base_amount:
+      'Last year\'s actual CAM charge for this tenant, typed by a person. NOT a ' +
+      'lease term: no lease states it, no extractor produces it, and it is the ' +
+      'dollar operand of the cap ceiling. Never describe it as lease-supported.',
+  };
+
+  function _fieldOrigin(key, FP) {
+    const never = !!(FP && FP.NEVER_EXTRACTED && FP.NEVER_EXTRACTED[key] === true);
+    const note  = OPERATING_ACTUAL[key] || null;
+    return {
+      // 'lease_term'       a clause in the lease document
+      // 'operating_actual' a figure from operations, entered by a person
+      kind: note ? 'operating_actual' : 'lease_term',
+      // Can any extractor produce this at all? Derived, not restated.
+      extractable: !never,
+      note: note,
+    };
+  }
+
+  /**
+   * Provenance AND VALUE for every canonical lease field, per tenant, from the
+   * one resolver. `_confidence` — the pre-Phase-D string — is deliberately not
+   * read: it is the superseded notion of "verified" that the provenance model
+   * replaced.
+   *
+   * M8a — WHY THE VALUE IS HERE NOW.
+   *
+   * FieldProvenance answers "what stands behind this field?" and returns
+   * thirteen keys, none of them the value. That is coherent for a provenance
+   * resolver and it was the only route seven canonical fields had to any
+   * reader — so an agent could learn that a named reviewer entered the cap base
+   * and could not learn what it is. The values were never lost: they survive
+   * ingest, normalizeTenant and _stripBlobs, and most are stored a second time
+   * in tenant_field_evidence.value. They were simply never picked up.
+   *
+   * The value projected is THE SAME `raw` the resolver judged, read through the
+   * same storage-key rule. Projecting a different one would let value and state
+   * describe different things — the field would report `manually_confirmed`
+   * beside a number nobody confirmed.
+   *
+   * `valuePresent` is derived from `state === 'unknown'`, which is exactly the
+   * resolver's own emptiness test (`_isEmpty(raw) ⇒ return out`, and every other
+   * path sets a different state). Re-implementing that test here would be a
+   * second definition of empty; test-m8 pins the equivalence across '', '   ',
+   * null, undefined and 0 so the two cannot drift.
    */
   function _fields(property, deps) {
     const FP = _dep(deps, 'FieldProvenance');
@@ -244,15 +325,23 @@
       if (!t || t.id == null) continue;
       const byField = {};
       for (const k of keys) {
-        // fieldProvenance reads t[fieldKey]. Every canonical key matches its
-        // tenant property except the cap base, which is stored as camelCase
-        // `capBaseAmount` — so it travels through the opts.value override the
-        // resolver already provides for values that are not on the tenant under
-        // their canonical name. Renaming the stored property instead would be a
-        // data migration for a naming mismatch.
-        byField[k] = (k === 'cap_base_amount')
-          ? FP.fieldProvenance(k, t, { value: t.capBaseAmount })
+        const raw = _fieldValue(t, k);
+        // The cap base travels through opts.value because it is not stored
+        // under its canonical name; every other key is on the tenant already.
+        const prov = (FIELD_STORAGE_KEY[k])
+          ? FP.fieldProvenance(k, t, { value: raw })
           : FP.fieldProvenance(k, t);
+        const present = prov.state !== 'unknown';
+        byField[k] = Object.assign({}, prov, {
+          // Null when the resolver found nothing. A caller reading `value: null`
+          // alongside `state: 'unknown'` is being told the field is genuinely
+          // absent from the record — not that it could not be read. A section
+          // that could not be read is null at the SECTION level (meta.unavailable
+          // / evidence.read_failed), which is a different answer entirely.
+          value: present ? raw : null,
+          valuePresent: present,
+          origin: _fieldOrigin(k, FP),
+        });
       }
       out[t.id] = byField;
     }

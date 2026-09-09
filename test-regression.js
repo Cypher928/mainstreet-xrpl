@@ -354,6 +354,7 @@ const SUITES = [
   { label: 'Property Memory capabilities (M5)', cmd: 'node test-m5-property-memory.js' },
   { label: 'CAM status + attention (M6)',       cmd: 'node test-m6-cam-attention.js' },
   { label: 'Semantic coherence (M7)',           cmd: 'node test-m7-semantic-coherence.js' },
+  { label: 'Lease field values (M8a/b)',        cmd: 'node test-m8-lease-field-values.js' },
   { label: 'Field provenance (e2e)',            cmd: 'node test-e2e-field-provenance.js' },
   { label: 'Lease validator: management fee cap',       cmd: 'node test-mgmt-fee-cap.js' },
   // D2-1 — AND THE SAME CHECK ON THE PANEL, WITH ARGUMENTS IT DID NOT BUILD.

@@ -332,6 +332,23 @@ const UNITS = {
   'cam.results.variance':        { unit: 'currency', currencyCode: null, guarantee: 'unknown' },
   'cam.results.proRataPercent':  { unit: 'percent', guarantee: 'convention' },
   'disputes.amount':             { unit: 'currency', currencyCode: null, guarantee: 'unknown' },
+  // M8a — the canonical field values, now that they are visible. Each is
+  // reported as extraction returned it; api/_claude-tasks.js states the unit it
+  // asks for, and that prompt is the only thing standing behind these numbers,
+  // which is what `convention` means here.
+  'fields.admin_fee_pct.value':  { unit: 'percent', guarantee: 'convention',
+                                   note: 'Extraction asks for the number only — 15 for "15%".' },
+  'fields.gross_up_pct.value':   { unit: 'percent', guarantee: 'convention',
+                                   note: 'Occupancy factor — 95 for "grossed up to 95% occupancy".' },
+  'fields.expense_stop.value':   { unit: 'currency_per_square_foot', currencyCode: null,
+                                   guarantee: 'convention',
+                                   note: 'Extraction asks for a dollar amount PER SQUARE FOOT, not a total.' },
+  'fields.cap_base_amount.value':{ unit: 'currency', currencyCode: null, guarantee: 'convention',
+                                   note: 'Last year\'s actual CAM charge for this tenant, typed by a person. Not a lease term — see the field\'s own origin.note.' },
+  // audit_rights, pro_rata_method and renewal_options carry no unit: the first
+  // is a boolean-or-prose right, the second an enum (rentable|leasable|
+  // occupied|gross), the third free prose capped at 120 characters. Declaring a
+  // unit for any of them would be inventing one.
 };
 
 /** Only the entries a given response actually contains. */
@@ -619,7 +636,7 @@ async function getProperty(args, ctx) {
       ownership: 'properties.user_id = authenticated user',
       store: STORE.BLOB,
       evidenceStore: STORE.TABLE + ' (tenant_field_evidence)',
-      units: unitsFor(['identity', 'lease', 'cam', 'disputes']),
+      units: unitsFor(['identity', 'lease', 'cam', 'disputes', 'fields']),
       openDisputeRule: DISPUTE_RULE,
       areaBasis: (rec.identity && rec.identity.areaBasis) || null,
     },
@@ -747,7 +764,7 @@ async function getTenant(args, ctx) {
       ownership: 'properties.user_id = authenticated user',
       resolvedWithin: a.propertyId,
       store: STORE.BLOB,
-      units: unitsFor(['lease', 'disputes']),
+      units: unitsFor(['lease', 'disputes', 'fields']),
       openDisputeRule: DISPUTE_RULE,
     },
     caveats,
@@ -921,10 +938,25 @@ async function getLeaseEvidence(args, ctx) {
       resolvedWithin: a.propertyId,
       source: 'PropertyRecord.fields via FieldProvenance — passed through unchanged',
       store: STORE.TABLE + ' (tenant_field_evidence)',
-      valuesNote: 'Provenance only. FieldProvenance states which evidence stands ' +
-                  'behind a field and never the value itself; seven canonical ' +
-                  'fields therefore have provenance here and no value anywhere ' +
-                  'on this surface.',
+      // M8a. This capability is where the field values live, so it is where
+      // their units have to be declared.
+      units: unitsFor(['fields']),
+      // M8a rewrote this. It used to say "provenance only ... no value anywhere
+      // on this surface", which was true and is not any more.
+      valuesNote: 'Each field carries BOTH its value and the evidence behind it. ' +
+                  '`value` is the figure the provenance resolver judged, so the ' +
+                  'two always describe the same thing; `valuePresent` is false ' +
+                  'and `value` null when the field is genuinely absent from the ' +
+                  'record, which state `unknown` says too. A field that could ' +
+                  'not be READ at all is not represented here — the whole ' +
+                  'section is null in that case.',
+      originNote: '`origin.kind` says what KIND of fact a field is, on a ' +
+                  'separate axis from what evidence backs it. cap_base_amount ' +
+                  'is `operating_actual`: last year\'s actual CAM charge, typed ' +
+                  'by a person. It is NOT a lease term and must never be ' +
+                  'described as lease-supported, whatever its state says. ' +
+                  '`origin.extractable` is derived from FieldProvenance, not ' +
+                  'restated here.',
     },
     caveats,
     asOf: c.now,

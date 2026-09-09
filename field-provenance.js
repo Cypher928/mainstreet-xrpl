@@ -307,6 +307,13 @@
   var api = {
     STATES: STATES, DB_STATUS: DB_STATUS, UI_STATUS: UI_STATUS,
     LABEL: LABEL, METHOD: METHOD,
+    // M8a. Exported, not duplicated. PropertyRecord projects a field's ORIGIN
+    // alongside its value, and "no extractor can produce this" is a fact this
+    // module already owns and already acts on (see the 4a floor above). A
+    // reader that restated the list would be a second place to keep in step;
+    // test-m8 asserts this export agrees with the behaviour it describes.
+    // Additive: nothing here changes what fieldProvenance() returns.
+    NEVER_EXTRACTED: NEVER_EXTRACTED,
     fieldProvenance: fieldProvenance, latestSnapshot: latestSnapshot,
     isLeaseConfirmed: isLeaseConfirmed, isHumanBacked: isHumanBacked,
   };
