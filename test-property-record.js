@@ -100,6 +100,10 @@ function fixture() {
   const calls = [];
   const sentinelDeps = {
     PropertyReference: { occupancyPct: (p) => { calls.push('occupancyPct'); return 77.7; } },
+    // M7. Real rather than a sentinel: it is pure arithmetic over the fixture's
+    // own tenants, and the point of J2 is now that the record calls THIS and not
+    // PropertyReference — which the sentinel above still records if it is called.
+    PropertyArea:      require(path.join(ROOT, 'property-area.js')),
     CamPool:           { total: (inv) => { calls.push('CamPool.total'); return 123456; } },
     VarianceBreakdown: { derive: (a) => { calls.push('VB.derive'); return { difference: -999 }; } },
     FieldProvenance:   { fieldProvenance: (k, t) => { calls.push('FP:' + k);
@@ -129,8 +133,23 @@ function fixture() {
      'attention,cam,disputes,documents,fields,identity,meta,spaces,timeline',
      'J1  assemble() returns the declared top-level shape');
 
-  is(calls.includes('occupancyPct'),     'J2  occupancy comes from PropertyReference.occupancyPct');
-  eq(rec.identity.occupancy, 77.7,       'J2b and the record carries what that returned');
+  // M7 REVERSED THIS ASSERTION, DELIBERATELY.
+  //
+  // It used to require that occupancy came from PropertyReference.occupancyPct.
+  // That function sums (leased_sqft || sqft) over every tenant — one of the
+  // three disagreeing leased-area rules the record REFUSES to make canonical
+  // for identity.leasedSqft. So the record declined to state the numerator and
+  // published a ratio computed from it, and a consumer could recover the
+  // refused number by multiplying. Occupancy now comes from PropertyArea, from
+  // the same numerator as leasedSqft, so the two cannot contradict each other.
+  is(!calls.includes('occupancyPct'),
+     'J2  occupancy does NOT come from PropertyReference.occupancyPct any more');
+  eq(rec.identity.occupancy, 55,
+     'J2b it comes from PropertyArea — 11,000 leased of 20,000 total');
+  eq(rec.identity.leasedSqft, 11000,
+     'J2c and the numerator it was computed from is stated, not withheld');
+  eq(rec.identity.areaBasis.rule, 'sum_leased_sqft_all_tenants_complete',
+     'J2d with the rule named on the record');
   is(calls.includes('CamPool.total'),    'J3  cam.pool comes from CamPool.total');
   eq(rec.cam.pool, 123456,               'J3b and is not recomputed from invoices');
   is(calls.includes('VB.derive'),        'J4  cam.unallocated comes from VarianceBreakdown.derive');
@@ -169,7 +188,23 @@ function fixture() {
   eq(rec.identity.name, 'Harborview Retail Center', 'J12 name is property.name');
   eq(rec.identity.camYear, 2025,        'J12b camYear is the reconciliation year, normalised');
   eq(rec.identity.totalSqft, 20000,     'J12c totalSqft is the persisted Property Setup value');
-  eq(rec.identity.leasedSqft, null,     'J13 leasedSqft is null — three modules disagree on its meaning');
+  // M7 settled the disagreement rather than living with it — see property-area.js
+  // for why all three prior rules were wrong in the same way. It is still null
+  // whenever ANY tenant lacks an area, which J13b holds it to; what changed is
+  // that a complete roster now yields a number, and occupancy is derived from
+  // that same number instead of from a fourth rule.
+  eq(rec.identity.leasedSqft, 11000,
+     'J13 leasedSqft is the sum over every tenant, now that one definition exists');
+  {
+    const gap = PR.assemble({ id: 'g', name: 'Gap', totalSqft: 20000,
+      tenants: [{ id: 't1', tenant_name: 'A', leased_sqft: 500 },
+                { id: 't2', tenant_name: 'B' }] }, sentinelDeps);
+    eq(gap.identity.leasedSqft, null,
+       'J13b and it is still null the moment ONE tenant has no area — not a smaller sum');
+    eq(gap.identity.occupancy, null, 'J13c with occupancy null alongside it');
+    eq(gap.identity.areaBasis.reason, 'incomplete_tenant_area',
+       'J13d and the reason stated rather than left to be inferred');
+  }
 
   const bare = PR.assemble({ id: 'x', name: 'Bare' }, sentinelDeps);
   eq(bare.identity.totalSqft, null,     'J14 a property with no totalSqft reports null, not 0');
@@ -325,8 +360,10 @@ function fixture() {
     eq(live.disputesN, 1,        'J38 the dispute record survives');
     is(live.attentionIsArray,    'J39 the real collectAttention returns a list');
     eq(live.docsN, 1,            'J40 the real TenantSpace yields one attachment document');
-    eq(live.occupancy, 55,       'J41 the real occupancyPct computes 11,000 / 20,000');
-    eq(live.leasedSqft, null,    'J42 leasedSqft stays null even where occupancy resolves');
+    eq(live.occupancy, 55,       'J41 occupancy is 11,000 / 20,000 — PropertyArea agrees with the old rule wherever every tenant has an area');
+    eq(live.leasedSqft, 11000,
+       'J42 and leasedSqft is now STATED rather than withheld, because it is the ' +
+       'number occupancy was computed from — M7 reversed this deliberately');
   }
 
   console.log(`\nRESULT: ${pass} passed, ${fail} failed`);
