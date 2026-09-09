@@ -368,7 +368,7 @@ sec('I. The shim exists only inside the call, and holds no session state');
   eq(DEPS.missing(deps), [], 'I2 every declared dependency loads');
   eq(DEPS.leakedWindow(), false, 'I3 and loading them leaves no window behind');
 
-  eq(DEPS.shimKeys(), ['DisputeStatus', 'LeaseIntelligence', 'PropertyReference', 'PropertyWorkspace', 'TenantSpace'],
+  eq(DEPS.shimKeys(), ['DisputeStatus', 'LeaseIntelligence', 'PropertyArea', 'PropertyReference', 'PropertyWorkspace', 'TenantSpace'],
      'I4 the shim holds exactly the allow-listed names');
   eq(DEPS.SHIM_KEYS.slice().sort(), DEPS.shimKeys(),
      'I5 and what the shim HOLDS matches what it DECLARES — a declared name that\n      never gets placed would leave its consumers on a silent fallback');
@@ -403,7 +403,7 @@ sec('I. The shim exists only inside the call, and holds no session state');
   is(DEPS.blockedWrites().includes('MoneyCents'),
      'I11a a call-time attempt to attach MoneyCents was refused, not absorbed',
      DEPS.blockedWrites().join(','));
-  eq(DEPS.shimKeys(), ['DisputeStatus', 'LeaseIntelligence', 'PropertyReference', 'PropertyWorkspace', 'TenantSpace'],
+  eq(DEPS.shimKeys(), ['DisputeStatus', 'LeaseIntelligence', 'PropertyArea', 'PropertyReference', 'PropertyWorkspace', 'TenantSpace'],
      'I11b so the shim still holds exactly the allow-listed names after a full hydration');
   DEPS.withWindow(() => { global.window.somethingNew = 1; global.window.Selectors = {}; });
   is(DEPS.shimKeys().length === DEPS.SHIM_KEYS.length && DEPS.blockedWrites().includes('Selectors'),

@@ -210,7 +210,7 @@ sec('D. Nothing survives the call');
   }
   eq(R.normal.leakedWindowAfterLoad, false, 'D3 loading the dependencies alone leaves none either');
   eq(R.normal.shimKeysAfterLoad,
-     ['DisputeStatus', 'LeaseIntelligence', 'PropertyReference', 'PropertyWorkspace', 'TenantSpace'],
+     ['DisputeStatus', 'LeaseIntelligence', 'PropertyArea', 'PropertyReference', 'PropertyWorkspace', 'TenantSpace'],
      'D4 the shim holds exactly the allow-listed names — measured in the deployment-shaped sandbox, not in this process');
   eq(R.normal.shimKeys, R.normal.shimKeysAfterLoad,
      'D5 and a full hydration does not grow it');
@@ -222,7 +222,7 @@ sec('D. Nothing survives the call');
   // that could let browser state into a server record, and a test that reads the
   // list it is checking would wave it through.
   eq(DEPS.SHIM_KEYS.slice().sort(),
-     ['DisputeStatus', 'LeaseIntelligence', 'PropertyReference', 'PropertyWorkspace', 'TenantSpace'],
+     ['DisputeStatus', 'LeaseIntelligence', 'PropertyArea', 'PropertyReference', 'PropertyWorkspace', 'TenantSpace'],
      'D7 the declared allow-list is exactly those names and no others');
   // M7 added DisputeStatus. Widening the pin without re-proving the property
   // the pin protects would turn this assertion into a rubber stamp, so the

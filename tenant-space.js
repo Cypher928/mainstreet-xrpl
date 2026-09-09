@@ -41,6 +41,44 @@ window.TenantSpace = (function () {
     for (var i = 0; i < (list || []).length; i++) if (_isOpenDispute(list[i])) n++;
     return n;
   }
+
+  /**
+   * M8c — this space's leased area, through the ONE definition of leased area.
+   *
+   * It read `t.leased_sqft || t.sqft || null`, and that had three faults.
+   *
+   *   · `||` on a NUMBER. A tenant whose demised area is genuinely 0 — a signage
+   *     or parking licence, a percentage-rent-only space — projected as null,
+   *     i.e. "no area on file". Measured: 0 in, null out. Meanwhile the STRING
+   *     '0' is truthy, so it survived as '0'. The same fact reported two ways
+   *     depending on which type the extractor happened to return.
+   *
+   *   · `|| t.sqft` is dead and has never fired. normalizeTenant resolves
+   *     `leased_sqft ?? leasedSqft ?? sqft` and emits no `sqft` key at all, and
+   *     every caller of assemble() passes normalized tenants — the browser via
+   *     currentProperty(), the server via the hydrator. Measured in Pilot: 0 of
+   *     86 stored tenants carry a bare `sqft`. Keeping a branch that cannot run
+   *     preserved the impression that leased and rentable area are
+   *     interchangeable here, which the M8 preflight found no evidence for.
+   *
+   *   · No parsing. normalizeTenant does not coerce, so lease.sqft could be the
+   *     string '500' while identity.leasedSqft was the number 500 — one
+   *     quantity, two types, one response.
+   *
+   * PropertyArea._area is the definition M7 settled on and identity.leasedSqft
+   * already uses. Reaching for it here rather than restating it is what stops a
+   * fourth rule appearing. The literal fallback exists only for a browser that
+   * failed to load property-area.js; test-m8c asserts the two agree across every
+   * shape a stored area takes, so the fallback cannot become a second answer.
+   */
+  function _leasedArea(t) {
+    var PA = (typeof window !== 'undefined') && window.PropertyArea;
+    if (PA && typeof PA._area === 'function') return PA._area(t && t.leased_sqft);
+    var v = t ? t.leased_sqft : null;
+    if (v === null || v === undefined || v === '') return null;
+    var n = typeof v === 'number' ? v : parseFloat(v);
+    return isFinite(n) ? n : null;
+  }
   var _openRec = null; // the assembled record for the currently-open space (actions read this)
   function _fmtDate(ts) {
     // An absent or unparsable date renders as nothing, not "Invalid Date".
@@ -134,7 +172,7 @@ window.TenantSpace = (function () {
       }) || null;
     }
     var lease = {
-      type: t.lease_type || null, sqft: t.leased_sqft || t.sqft || null,
+      type: t.lease_type || null, sqft: _leasedArea(t),
       start: t.start_date || null, end: t.end_date || null, cap: (t.cap != null && t.cap !== '') ? t.cap : null,
       url: t.leaseUrl || t.lease_url || null, fileName: t.leaseFileName || null,
     };
@@ -568,7 +606,14 @@ window.TenantSpace = (function () {
       var rec = assemble(property, t.id);
       var meta = [];
       if (t.lease_type) meta.push(t.lease_type);
-      if (t.leased_sqft || t.sqft) meta.push((t.leased_sqft || t.sqft) + ' sqft');
+      // M8c — the SAME area this card's own record already computed, rather than
+      // a second reading of the tenant. This carried the identical defect the
+      // lease projection did: `||` hid a genuine 0 (so a signage or parking
+      // licence showed no area at all, reading as "unknown" rather than "none"),
+      // and `|| t.sqft` was dead here for the same reason it was dead there.
+      // `rec` is assembled one line above, so this is the value the space view
+      // itself will show — the card and the space cannot disagree.
+      if (rec.lease.sqft != null) meta.push(rec.lease.sqft + ' sqft');
       if (t.end_date) meta.push('to ' + t.end_date);
       var counts = [];
       if (rec.counts.events) counts.push(rec.counts.events + ' event' + (rec.counts.events !== 1 ? 's' : ''));

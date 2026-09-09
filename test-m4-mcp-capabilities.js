@@ -735,7 +735,7 @@ sec('J. No browser API, no localStorage, no second hydration');
   // would make every later phase edit this line and learn nothing; pinning
   // the ABSENCE of anything M4 could have wanted still catches the thing
   // it was written to catch.
-  eq(DEPS.SHIM_KEYS.filter(k => ['DisputeStatus', 'LeaseIntelligence', 'PropertyReference', 'PropertyWorkspace', 'TenantSpace'].indexOf(k) === -1), [],
+  eq(DEPS.SHIM_KEYS.filter(k => ['DisputeStatus', 'LeaseIntelligence', 'PropertyArea', 'PropertyReference', 'PropertyWorkspace', 'TenantSpace'].indexOf(k) === -1), [],
      'J11 the shim allow-list holds no name beyond the reviewed set — M4 added none');
 }
 

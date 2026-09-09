@@ -163,7 +163,16 @@ const SHIM_KEYS = ['LeaseIntelligence', 'TenantSpace', 'PropertyWorkspace', 'Pro
                    // session can travel through it into a server-assembled
                    // record. test-m3 asserts that emptiness rather than trusting
                    // this comment.
-                   'DisputeStatus'];
+                   'DisputeStatus',
+                   // M8c. Same bar, same reasoning. tenant-space.js must compute
+                   // a space's leased area by the ONE definition identity.leasedSqft
+                   // already uses, and it is a browser-first file with no dependency
+                   // channel — so the name has to be reachable at call time or the
+                   // file silently runs its own literal instead. property-area.js is
+                   // pure arithmetic over its argument: no DOM, no network, no
+                   // storage, no session state, nothing a browser session could
+                   // travel through. test-m8c asserts that emptiness.
+                   'PropertyArea'];
 
 let _cached  = null;
 let _shim    = null;   // the raw backing object, writable during load
@@ -298,6 +307,12 @@ function load() {
   // shared definition M7 exists to create is not the one actually running.
   // test-m1b I4 caught exactly that, which is why the assertion is worth having.
   _shim.DisputeStatus = deps.DisputeStatus;
+  // M8c, and for exactly the reason recorded above DisputeStatus: property-area.js
+  // loads as a CLEAN CommonJS module, which happens with no global installed, so
+  // its UMD tail finds no window to attach to. Declared-but-not-placed would leave
+  // tenant-space.js on its literal fallback and the single definition would not be
+  // the one running. test-m1b I4 exists because that already happened once.
+  _shim.PropertyArea = deps.PropertyArea;
 
   // From here on the shim is closed: writes outside the allow-list are refused.
   _window = _seal(_shim);

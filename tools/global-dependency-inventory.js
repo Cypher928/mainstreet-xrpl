@@ -101,6 +101,7 @@ const CLASSIFICATION = {
   PropertyWorkspace: { kind: 'shimmed', why: 'pure; supplied by the allow-list' },
   PropertyReference: { kind: 'shimmed', why: 'pure; supplied by the allow-list, and read at call time by property-workspace.js:86 with no fallback' },
   DisputeStatus:     { kind: 'shimmed', why: 'M7; pure classifier over a fixed transition table, read at call time by property-workspace.js and tenant-space.js so both count open disputes the same way as get_disputes' },
+  PropertyArea:      { kind: 'shimmed', why: 'M8c; pure arithmetic over its argument, read at call time by tenant-space.js so a space\'s leased area uses the same definition as identity.leasedSqft' },
 
   // ── explicit module dependencies (dual-resolution, require wins here) ──
   CamPool:      { kind: 'module', require: './cam-pool.js',

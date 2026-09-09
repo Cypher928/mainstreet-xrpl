@@ -127,7 +127,7 @@ sec('B. Each classification is verified against the source it describes');
   // shimmed ⇒ on the allow-list.
   const shimmed = Object.entries(INV.CLASSIFICATION)
     .filter(([, v]) => v.kind === 'shimmed').map(([k]) => k).sort();
-  eq(shimmed, ['DisputeStatus', 'LeaseIntelligence', 'PropertyReference', 'PropertyWorkspace', 'TenantSpace'],
+  eq(shimmed, ['DisputeStatus', 'LeaseIntelligence', 'PropertyArea', 'PropertyReference', 'PropertyWorkspace', 'TenantSpace'],
      'B1 exactly the reviewed names are classified as intentionally shimmed');
   eq(shimmed, DEPS.SHIM_KEYS.slice().sort(),
      'B2 and that set IS the sealed allow-list — the two cannot drift apart');
