@@ -10530,6 +10530,22 @@ function _camCeilingCents(capBaseAmount, capPercentage) {
   const base = parseFloat(capBaseAmount);
   const pct  = parseFloat(capPercentage);
   if (!Number.isFinite(base) || !Number.isFinite(pct)) return null;
+  // A BASE OF ZERO IS NOT A BASE. `0 x (1 + 5/100)` is 0, so a zero base does
+  // not merely produce a loose ceiling — it produces a ceiling of NOTHING. The
+  // caller above it sees `rawCents > 0`, caps the tenant's entire CAM charge to
+  // $0, and stamps capApplied: true; the expectation below it reports an
+  // expectedCam of $0 with basis 'cap_ceiling', which reads downstream as a
+  // ceiling the lease established. A blank field and a typed 0 produced
+  // opposite outcomes — no cap at all, versus the whole bill erased — and
+  // nothing on any surface distinguished them.
+  //
+  // Two paths already refused this value. Extraction drops a base unless
+  // `n > 0` (_capBaseAmount) and the tenant statement requires `_capBase > 0`
+  // before it will describe a ceiling. Only the two engine sites and
+  // LeaseIntelligence.capIsEnforceable accepted it. They now agree with the
+  // other two: not a number we can build a ceiling from, so null — the same
+  // answer a missing base gets, because it is the same situation.
+  if (!(base > 0)) return null;
   return _MC.toCents(base * (1 + pct / 100));
 }
 
@@ -11142,6 +11158,13 @@ async function runAllocation() {
       totalSqft,
       capPct:             t.cap,
       capBaseAmount:      t.capBaseAmount ?? null,
+      // Carried so the cap banner below can DERIVE its state instead of
+      // assuming one: the id is what its action navigates by, and the stored
+      // clause is the only thing that says whether this cap is a percentage or
+      // a dollar amount. Both are read-only here; nothing downstream writes them.
+      id:                 t.id ?? null,
+      cap:                t.cap,
+      fieldEvidence:      t.fieldEvidence || null,
       excludedCategories:   _appliedExclusions(t),   // F-02: applied only
       exclusionsNotApplied: _exclusionState(t.excluded_categories).notApplied,
       exclusionFingerprint: _exclusionState(t.excluded_categories).fingerprint,
@@ -11184,17 +11207,60 @@ async function runAllocation() {
     section.prepend(warn);
   }
 
-  // Warn when a tenant has a cap percentage but no base amount — cap won't be enforced
-  const tenantsWithIncompleteCapData = tenants.filter(t =>
-    t.capPct !== null && t.capPct !== '' && !isNaN(parseFloat(t.capPct)) &&
-    (t.capBaseAmount === null || t.capBaseAmount === undefined || isNaN(parseFloat(t.capBaseAmount)))
-  );
-  if (tenantsWithIncompleteCapData.length > 0) {
-    const names = tenantsWithIncompleteCapData.map(t => t.name).join(', ');
+  // ── A KNOWN CAP THAT IS NOT BEING APPLIED, NAMED BY ITS ACTUAL CAUSE ───────
+  //
+  // This banner existed and was live, and it said ONE thing: "a prior-year base
+  // amount is required. Enter Prior-Year CAM Base ($)". It said it for every
+  // tenant carrying any numeric cap, which is a claim the stored data does not
+  // support — api/_claude-tasks.js puts a percentage cap and a DOLLAR cap in the
+  // same `cam_cap` field with no discriminator, so this told the owner of a
+  // $50,000 cap to go and find a prior-year base that would not have helped and
+  // that their lease never mentioned. It also missed the worst case entirely:
+  // `!isNaN(parseFloat(0))` is false, so a base of 0 counted as PRESENT, no
+  // warning appeared, and the engine capped that tenant's whole bill to $0.
+  //
+  // Now the cause is derived (LeaseIntelligence.deriveCapState) and each cause
+  // gets its own sentence, and only the one a base actually fixes offers the
+  // button that goes there. The three unresolved states are grouped rather than
+  // merged: a manager reading this needs to know which of their tenants they can
+  // fix in ten seconds and which need the lease reread.
+  const _LI = window.LeaseIntelligence;
+  const _capStates = _LI && typeof _LI.deriveCapState === 'function'
+    ? tenants.map(t => ({ t: t, s: _LI.deriveCapState(t) })).filter(x => !x.s.enforceable && x.s.state !== 'no_cap')
+    : [];
+  if (_capStates.length > 0) {
+    const _byState = {};
+    _capStates.forEach(x => { (_byState[x.s.state] = _byState[x.s.state] || []).push(x); });
+    // missing_base first: it is the only one with a one-field remedy.
+    const _order = ['missing_base', 'unit_unconfirmed', 'dollar_cap', 'cap_out_of_range'];
+    const _blocks = _order.filter(k => _byState[k]).map(k => {
+      const group = _byState[k];
+      const why   = group[0].s.why;
+      const rows  = group.map(x => {
+        // The action reuses openReviewItemFix — the app's existing "take me to
+        // that field" primitive — so the manager lands on the SAME provenanced
+        // capBaseAmount input, with its existing snapshot-and-audit write path.
+        // No second editor for this value exists, and none is created here.
+        const act = (x.s.actionable && x.t.id)
+          ? `<button type="button" class="cam-cap-fix" style="margin-left:8px;background:transparent;border:1px solid currentColor;color:inherit;border-radius:6px;padding:1px 8px;font-size:0.78rem;cursor:pointer;"
+               onclick="openReviewItemFix('${esc(String(x.t.id)).replace(/'/g, "\\'")}','cap_base_amount')">Add cap base &#x2192;</button>`
+          : '';
+        return `<li style="margin:3px 0;">${esc(x.t.name || 'Unnamed tenant')}${act}</li>`;
+      }).join('');
+      return `<div style="margin-top:8px;"><div>${esc(why)}</div><ul style="margin:4px 0 0;padding-left:18px;">${rows}</ul></div>`;
+    }).join('');
     const warn = document.createElement('div');
     warn.className = 'cam-cap-incomplete-warning';
     warn.style.cssText = 'background:var(--bgc-431407);border:1px solid #f97316;color:var(--c-fed7aa);padding:10px 14px;border-radius:8px;margin-bottom:12px;font-size:0.85rem;';
-    warn.innerHTML = `⚠️ <strong>CAM cap not enforced</strong> for ${esc(names)} — a prior-year base amount is required. Enter "Prior-Year CAM Base ($)" in each tenant card to enable cap enforcement.`;
+    // The headline states only what is true of EVERY tenant listed: their cap is
+    // unresolved. "Calculated with no cap limit" is true of most of them but not
+    // of an out-of-range cap, where the engine did compute a ceiling from a
+    // number it should not have trusted — so that claim moved down into the
+    // per-group sentence, which knows whether it applies.
+    const _noLimit = _capStates.filter(x => !x.s.engineWillCap).length;
+    warn.innerHTML = `⚠️ <strong>CAM cap unresolved</strong> for ${_capStates.length} tenant${_capStates.length > 1 ? 's' : ''}.`
+      + (_noLimit ? ` ${_noLimit === _capStates.length ? 'These charges were' : `${_noLimit} of these were`} calculated with no cap limit.` : '')
+      + _blocks;
     section.prepend(warn);
   }
 
@@ -20579,6 +20645,12 @@ const _REVIEW_FIELD_LABEL = {
   leased_sqft: /^Leased Sqft/i, lease_type: /^Lease Type/i,
   start_date:  /^Lease Start/i, end_date:   /^Lease End/i,
   cap:         /^CAM Cap/i,
+  // The cap banner's "Add cap base" action navigates by this entry. Without it
+  // openReviewItemFix falls through to its generic target and drops the manager
+  // at the top of the card, which is where the old text instruction already left
+  // them. Matches the existing label "Prior-Year CAM Base ($) ⓘ" — the input
+  // beside it is the provenanced editor, and the only one for this value.
+  cap_base_amount: /^Prior-Year CAM Base/i,
 };
 
 // What this lease needs next, and what to put on the button that leads there.

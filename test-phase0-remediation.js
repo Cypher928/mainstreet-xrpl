@@ -103,10 +103,32 @@ t('field summary does NOT say NOT ENFORCED once the cap is live', () => {
   ok(!/NOT ENFORCED/.test(r.fieldSummaries.cap), `cap summary was: ${r.fieldSummaries.cap}`);
 });
 
-t('a review note names the missing base amount', () => {
+// M1a's claim — an inert cap must be reported as inert — is unchanged and still
+// asserted above. What changed is WHICH cause the note is allowed to name.
+//
+// Canvas On Demand carries `fieldEvidence: {}`: no clause on record, so nothing
+// stored says whether 5.25 means 5.25% or $5.25. The note used to tell this
+// manager to go and enter a prior-year base, which is sound advice for a
+// percentage cap and useless for a dollar one — and the extraction contract
+// (api/_claude-tasks.js) puts both kinds in `cam_cap` with no discriminator.
+// Naming the missing base here would be asserting the unit, so the note names
+// what is actually known instead.
+//
+// The base-amount note is not gone; it is CONDITIONAL, and the second test
+// proves it still fires the moment the lease says "percent".
+t('a review note reports the cap as unenforced without asserting its unit', () => {
   const r = LI.generateLeaseExplainability(CANVAS);
-  ok(r.reviewNotes.some(n => /NOT being enforced/.test(n) && /base amount/.test(n)),
+  ok(r.reviewNotes.some(n => /NOT being enforced/.test(n) && /needs confirmation/i.test(n)),
      `reviewNotes were: ${JSON.stringify(r.reviewNotes)}`);
+});
+
+t('a review note DOES name the missing base once a clause states a percentage', () => {
+  const pct = { ...CANVAS, fieldEvidence: { cap: { snapshots: [
+    { quote: 'CAM increases shall not exceed five and one quarter percent (5.25%) per annum', page: 9 } ] } } };
+  ok(LI.capUnit(pct) === 'percent', 'fixture did not declare a percentage');
+  ok(LI.generateLeaseExplainability(pct).reviewNotes
+       .some(n => /NOT being enforced/.test(n) && /base amount/.test(n)),
+     `reviewNotes were: ${JSON.stringify(LI.generateLeaseExplainability(pct).reviewNotes)}`);
 });
 
 t('overallSummary no longer asserts a bare "CAM Cap: 5.25%." for an inert cap', () => {
@@ -208,7 +230,10 @@ t('no assertion in this file can be satisfied by a comment', () => {
   ok(!/NOT ENFORCED/.test(code('// NOT ENFORCED')), 'code() left a comment behind');
 });
 
-const TOTAL_EXPECTED = 19;
+// 20 since the first-year cap slice: the unit-blind base note above was split
+// into the undeclared case and the percentage case, so M1a is now asserted from
+// both sides rather than one.
+const TOTAL_EXPECTED = 20;
 t(`suite runs all ${TOTAL_EXPECTED} checks (guards silent test loss)`, () => {
   eq(pass + fail + 1, TOTAL_EXPECTED, 'test count changed — update TOTAL_EXPECTED deliberately');
 });

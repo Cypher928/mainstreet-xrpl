@@ -335,18 +335,232 @@ window.LeaseIntelligence = (() => {
     } catch (_) { return d; }
   }
 
+  // ── THE CAP'S UNIT IS READ, NEVER GUESSED ──────────────────────────────────
+  //
+  // api/_claude-tasks.js asks for `cam_cap` as a bare number and says, in the
+  // prompt itself: "If a percentage is found return 5. If a dollar amount is
+  // found, return that number." So a 5% cap and a $5 cap arrive in the same
+  // field wearing the same shape, and NOTHING stored tells them apart. The
+  // engine treats every cap as a percentage — `base x (1 + cap/100)` — which is
+  // right for the first and meaningless for the second.
+  //
+  // The one thing that CAN say which is meant is the clause the value came from,
+  // because the lease writes its own unit down. So the unit is read out of the
+  // stored evidence quote and nowhere else.
+  //
+  // THE NUMBER IS NEVER CONSULTED. "5 is too small to be dollars" and "120 is
+  // too big to be a percent" are exactly the inferences that put a percentage in
+  // a dollar field once already; M7's cap_unit_ambiguous caveat exists because
+  // magnitude cannot settle this. A quote that says both, or says neither, or
+  // does not exist, leaves the unit UNDECLARED — which is a fact about our
+  // knowledge, not a defect in the lease, and it is the default rather than the
+  // exception so that silence can never read as a percentage.
+  const CAP_UNIT = { PERCENT: 'percent', DOLLAR: 'dollar', UNDECLARED: 'undeclared' };
+
+  // 'cap' is the canonical key; 'cam_cap' is the name extraction returns and
+  // several fixtures store. Both are read so the unit does not depend on which
+  // path wrote the evidence.
+  const _CAP_EVIDENCE_KEYS = ['cap', 'cam_cap'];
+  const _PERCENT_MARK = /%|\bper\s?cent(?:um|age)?\b|\bpercent\b/i;
+  const _DOLLAR_MARK  = /\$|\bdollars?\b|\bUSD\b/i;
+
+  function _capQuotes(t) {
+    const fev = (t && t.fieldEvidence) || {};
+    const out = [];
+    for (const k of _CAP_EVIDENCE_KEYS) {
+      const snaps = (fev[k] && fev[k].snapshots) || [];
+      for (const s of snaps) {
+        if (s && typeof s.quote === 'string' && s.quote.trim()) out.push(s.quote);
+      }
+    }
+    return out;
+  }
+
+  /**
+   * percent | dollar | undeclared — from the lease's own words.
+   *
+   * Every stored cap quote must agree. One clause saying "5%" and another saying
+   * "$5.00" is not a majority vote to be counted; it is two readings of the same
+   * term, and picking one would be the hundred-fold guess this exists to refuse.
+   */
+  function capUnit(t) {
+    const quotes = _capQuotes(t);
+    if (!quotes.length) return CAP_UNIT.UNDECLARED;
+    let sawPercent = false, sawDollar = false;
+    for (const q of quotes) {
+      const pct = _PERCENT_MARK.test(q);
+      const usd = _DOLLAR_MARK.test(q);
+      // A single clause carrying both marks states a compound term this slice
+      // does not model. It settles nothing.
+      if (pct && usd) return CAP_UNIT.UNDECLARED;
+      if (pct) sawPercent = true;
+      if (usd) sawDollar  = true;
+    }
+    if (sawPercent && sawDollar) return CAP_UNIT.UNDECLARED;
+    if (sawPercent) return CAP_UNIT.PERCENT;
+    if (sawDollar)  return CAP_UNIT.DOLLAR;
+    return CAP_UNIT.UNDECLARED;
+  }
+
+  /**
+   * Is there a dollar base the ceiling can actually stand on?
+   *
+   * ZERO IS NOT A BASE. `0 x (1 + 5/100)` is 0, so a zero base does not produce
+   * a loose ceiling — it produces a ceiling of nothing, capping the tenant's
+   * entire CAM charge to $0 and reporting capApplied: true. That is the single
+   * most destructive value this field can hold, and it is the one value the old
+   * `!isNaN(parseFloat(base))` test waved through.
+   *
+   * Two paths already knew this. Extraction refuses a base unless `n > 0`
+   * (script.js _capBaseAmount) and the tenant statement requires `_capBase > 0`
+   * before it will describe a ceiling. Only the engine and this helper disagreed.
+   * They no longer do.
+   */
+  function capBaseIsUsable(t) {
+    if (!t) return false;
+    const n = parseFloat(t.capBaseAmount);
+    return Number.isFinite(n) && n > 0;
+  }
+
   // Mirrors the enforcement condition in script.js runCAMAllocation (the stricter
   // of the two engine sites — runFullReconciliation only null-checks). Kept in
   // this module so the summary and the engine cannot disagree about whether a
   // cap is live. If the engine's condition changes, change this with it.
+  // Unit-blind ON PURPOSE — see deriveCapState. The only thing that changed here
+  // is that a base of 0 no longer counts as a base, which tracks the matching
+  // guard now in script.js _camCeilingCents. The mirror still holds.
   function capIsEnforceable(t) {
     if (!t) return false;
     const pct = parseFloat(t.cap);
     if (t.cap == null || t.cap === '' || !Number.isFinite(pct) || pct < 0 || pct > 100) return false;
-    // parseFloat(null/undefined/'') is NaN, so this one check covers absence and
-    // non-numeric alike. Note 0 IS enforceable here: the engine treats a zero
-    // base the same way, and this helper must not diverge from it.
-    return Number.isFinite(parseFloat(t.capBaseAmount));
+    return capBaseIsUsable(t);
+  }
+
+  /**
+   * THE ONE ANSWER TO "IS THIS TENANT'S CAP DOING ANYTHING?"
+   *
+   * Derived at read time from what is already stored. Nothing here is persisted:
+   * a second copy of this truth in the database is a second thing that can drift
+   * away from the lease, and the inputs — the cap, the base, the quote — are
+   * already the record.
+   *
+   * The states are deliberately five rather than two, because "the cap is not
+   * being enforced" has three different causes that call for three different
+   * things from the manager, and collapsing them is how the old banner came to
+   * tell the owner of a DOLLAR cap to go and enter a prior-year percentage base:
+   *
+   *   no_cap            nothing to enforce; say nothing
+   *   enforceable       percentage cap standing on a usable base
+   *   missing_base      percentage cap, no usable base — ASK, and say where
+   *   dollar_cap        the lease states dollars; a base is NOT the missing piece
+   *   unit_unconfirmed  we do not know which kind of cap this is
+   *
+   * `actionable` marks only the state where a manager typing one number into an
+   * existing field resolves the whole thing. The other two unresolved states are
+   * real and must stay visible, but neither is fixed by supplying a base, and
+   * offering that action would be a lie about what would happen.
+   */
+  function deriveCapState(t) {
+    const capRaw = t ? t.cap : null;
+    const pct    = parseFloat(capRaw);
+    const hasCap = t != null && capRaw != null && capRaw !== '' && Number.isFinite(pct);
+
+    if (!hasCap) {
+      return { state: 'no_cap', unit: null, enforceable: false, actionable: false,
+               capValue: null, baseUsable: false, engineWillCap: false,
+               title: 'No CAM cap', why: 'This lease states no limit on CAM increases.',
+               needed: null, field: null };
+    }
+
+    const unit   = capUnit(t);
+    const usable = capBaseIsUsable(t);
+
+    // WHAT THE ENGINE WILL ACTUALLY DO — not what we wish it did.
+    //
+    // `enforceable` is capIsEnforceable, which mirrors runCAMAllocation. It is
+    // deliberately NOT unit-aware, because the engine is not: it applies
+    // percentage arithmetic to whatever `cap` holds, under the system-wide
+    // convention that lease.cap is a percentage (api/_mcp-capabilities.js UNITS
+    // records that convention, and normalizeCap enforces it on the extraction
+    // path). Teaching the engine about units is a separate decision.
+    //
+    // Making this flag unit-dependent was tried and was wrong: it made this
+    // module report "not enforced" for caps the engine was in fact enforcing,
+    // which is the exact divergence the mirror exists to prevent. The unit
+    // instead decides WHICH unresolved cause to name when the engine is not
+    // enforcing — it never contradicts the engine about whether it is.
+    const enforceable = capIsEnforceable(t);
+    if (enforceable) {
+      return { state: 'enforced', unit, enforceable: true, actionable: false,
+               capValue: pct, baseUsable: true, engineWillCap: true,
+               title: 'CAM cap enforced', why: null, needed: null, field: null };
+    }
+
+    // AND WHAT THE LIVE ENGINE DOES IS NOT QUITE WHAT capIsEnforceable SAYS.
+    //
+    // capIsEnforceable's comment describes it as mirroring runCAMAllocation —
+    // but CAM-6 deleted that call, and runFullReconciliation, the only CAM
+    // arithmetic that now runs, has NO percentage-range check. Its gate is a
+    // finite cap and a usable base, nothing more. So a cap of 150 with a base
+    // still produces a ceiling and can still bind (a NEGATIVE cap binds hard:
+    // -50 on a $26,000 base yields a $13,000 ceiling that silently halves the
+    // bill).
+    //
+    // That gap matters for one sentence in particular. Every other unresolved
+    // state can honestly say "no limit was applied"; this one cannot, and a
+    // banner that said it anyway would be making exactly the kind of false
+    // reassurance this slice exists to remove. So the engine's real condition
+    // is carried separately rather than inferred from `enforceable`.
+    const engineWillCap = Number.isFinite(pct) && usable;
+
+    if (unit === CAP_UNIT.DOLLAR) {
+      // A base is NOT what is missing here, so none is requested. Sending this
+      // manager after a prior-year base would be advice that could not have
+      // helped, for a term their lease never wrote.
+      return { state: 'dollar_cap', unit, enforceable: false, actionable: false,
+               capValue: pct, baseUsable: usable, engineWillCap: engineWillCap,
+               title: 'CAM cap recorded in dollars',
+               // Same rule as cap_out_of_range below: the flat claim is made only
+               // when the engine really did compute nothing. A dollar cap with a
+               // base still reaches the ceiling arithmetic, which reads it as a
+               // percentage — the resulting ceiling is nonsense rather than
+               // absent, and calling that "not applied" would understate it.
+               why: 'The lease clause states this cap as a dollar amount, and MainStreet applies percentage caps only.'
+                    + (engineWillCap
+                        ? ' It was read as a percentage, so the ceiling calculated from it does not reflect the lease. Confirm the cap.'
+                        : ' This cap is not being applied, and a prior-year base would not change that.'),
+               needed: null, field: null };
+    }
+
+    if (pct < 0 || pct > 100) {
+      return { state: 'cap_out_of_range', unit, enforceable: false, actionable: false,
+               capValue: pct, baseUsable: usable, engineWillCap: engineWillCap,
+               title: 'Cap value out of range',
+               why: 'A CAM cap of ' + pct + ' is on file, which is outside the range MainStreet treats as a percentage.'
+                    + (engineWillCap
+                        ? ' A ceiling was still calculated from it, so the amount charged may not reflect what the lease allows. Confirm the cap.'
+                        : ' Confirm the cap before it can be enforced.'),
+               needed: null, field: null };
+    }
+
+    if (unit === CAP_UNIT.UNDECLARED) {
+      // The honest weaker state. We know a base is absent, but not whether a
+      // base is even the right thing to ask for — so we ask for neither.
+      return { state: 'unit_unconfirmed', unit, enforceable: false, actionable: false,
+               capValue: pct, baseUsable: usable, engineWillCap: engineWillCap,
+               title: 'Cap type needs confirmation',
+               why: 'A CAM cap of ' + pct + ' is on file, but no clause on record says whether that is a percentage or a dollar amount. Cap type needs confirmation before MainStreet can determine whether a base is required.',
+               needed: null, field: null };
+    }
+
+    // Percentage, in range, no usable base: the one state a manager fixes by
+    // typing a single number into a field that already exists.
+    return { state: 'missing_base', unit, enforceable: false, actionable: true,
+             capValue: pct, baseUsable: false, engineWillCap: false,
+             title: 'CAM cap not enforced',
+             why: 'The lease caps CAM increases at ' + pct + '% over a prior-year base, and MainStreet has no base amount on file for this tenant. Without it the ceiling cannot be calculated, so this reconciliation applies no limit.',
+             needed: 'Prior-Year CAM Base ($)',
+             field: 'cap_base_amount' };
   }
 
   function generateLeaseExplainability(tenantState) {
@@ -391,9 +605,19 @@ window.LeaseIntelligence = (() => {
       // manual entry and extraction never sets it, so every extracted cap is
       // inert on arrival. Saying "CAM Cap of 5.25%" without saying that is a
       // claim the reconciliation does not honour.
-      if (!capIsEnforceable(t)) {
-        fieldSummaries.cap += ' NOT ENFORCED — no prior-year base amount on file, so the cap cannot be calculated and this reconciliation applies no limit.';
-        reviewNotes.push(`CAM Cap of ${t.cap}% found in the lease but NOT being enforced. Enter the prior-year CAM base amount for this tenant to apply it.`);
+      //
+      // WHICH inertness, though, is now read from deriveCapState rather than
+      // assumed. This said "no prior-year base amount on file" for every
+      // unenforced cap, including one the lease states in DOLLARS — sending that
+      // manager off to find a prior-year base that would not have helped, for a
+      // cap that needs no base at all. One derivation, so this note and the CAM
+      // banner cannot name different causes for the same tenant.
+      const _cs = deriveCapState(t);
+      if (!_cs.enforceable) {
+        fieldSummaries.cap += ' NOT ENFORCED — ' + _cs.why;
+        reviewNotes.push(_cs.actionable
+          ? `CAM Cap of ${t.cap}% found in the lease but NOT being enforced. Enter the prior-year CAM base amount for this tenant to apply it.`
+          : `CAM Cap of ${t.cap} found in the lease but NOT being enforced. ${_cs.why}`);
       }
     } else {
       fieldSummaries.cap = 'No CAM Cap found — tenant bears full proportionate share of expense increases.';
@@ -465,9 +689,24 @@ window.LeaseIntelligence = (() => {
     }
 
     const missingCritical = RECONCILIATION_CRITICAL_FIELDS.filter(f => !t[f]);
+    // The one-line verdict, from the same derivation as the note above. The
+    // unenforced branch used to name a missing base unconditionally and print a
+    // "%" sign on a cap whose unit nothing had established; both are claims, and
+    // neither survived contact with a dollar cap.
+    const _capSummaryState = deriveCapState(t);
+    // The "%" follows the same convention the engine does: lease.cap is read as
+    // a percentage unless a clause says otherwise, so it is printed for percent
+    // and undeclared alike and withheld ONLY from a cap the lease states in
+    // dollars — where "50000%" would be the app repeating a mistake in a louder
+    // voice. Dropping it everywhere was tried and was wrong: it made the summary
+    // disagree with the tenant card, the CAM tile and the engine, all of which
+    // apply the convention.
+    const _pctMark = _capSummaryState.unit === CAP_UNIT.DOLLAR ? '' : '%';
     const capPhrase = t.cap == null
       ? 'No CAM Cap.'
-      : (capIsEnforceable(t) ? `CAM Cap: ${t.cap}%.` : `CAM Cap: ${t.cap}% (not enforced — no base amount).`);
+      : (_capSummaryState.enforceable
+          ? `CAM Cap: ${t.cap}${_pctMark}.`
+          : `CAM Cap: ${t.cap}${_pctMark} (not enforced — ${_capSummaryState.actionable ? 'no base amount' : _capSummaryState.title.toLowerCase()}).`);
     const overallSummary = missingCritical.length === 0
       ? `Lease complete. ${amendments.length > 0 ? amendments.length + ' amendment(s) applied. ' : ''}${capPhrase}`
       : `Lease incomplete — missing: ${missingCritical.join(', ')}. Review required before reconciliation.`;
@@ -773,6 +1012,10 @@ window.LeaseIntelligence = (() => {
     CANONICAL_FIELDS,
     RECONCILIATION_CRITICAL_FIELDS,
     capIsEnforceable,
+    CAP_UNIT,
+    capUnit,
+    capBaseIsUsable,
+    deriveCapState,
     CAM_CONCEPT_MAP,
     normalizeClauseConcept,
     reasonMultiDocumentLease,
