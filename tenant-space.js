@@ -152,10 +152,37 @@ window.TenantSpace = (function () {
   // Structured verified record for a space — the single source both the view and
   // the (future) grounded AI reply read from.
   function assemble(property, tenantId) {
-    var t = (property.tenants || []).find(function (x) { return x && x.id === tenantId; }) || {};
     // Surfaced rather than swallowed: a space with no id shows nothing, and the
     // view has to be able to explain why instead of looking like an empty one.
     var noIdentity = (tenantId == null || tenantId === '');
+
+    // NO IDENTITY, NO TENANT — the same rule _scopedEvents already applies to
+    // events, applied one step earlier to the tenant lookup itself.
+    //
+    // This resolved with `x.id === tenantId`, and `null === null` is true. So on
+    // a property with two id-less tenants, BOTH assembled against whichever came
+    // first, and every field below reads off that stranger:
+    //
+    //   space.name    the NEIGHBOUR'S NAME, shown as this space's name
+    //   lease.*       their lease type, area, dates and cap
+    //   lease.url     their lease DOCUMENT, linked and openable
+    //   camResult     their CAM allocation — matched by t.tenant_name — with
+    //                 the dollar figure that goes on a statement
+    //   disputes      theirs, by the same name match
+    //   summary       one sentence asserting all of it
+    //
+    // And it did not stop at the card. PropertyRecord._spaces passes lease,
+    // space, summary and camResult straight through, AIWorkspace reads those
+    // for its answers, and the MCP projection ships them — so an id-less space
+    // could report a neighbour's money to an external caller under a name that
+    // was not its own.
+    //
+    // Resolving nothing is the only correct answer: with no identity there is
+    // no fact to attribute, and every identity-dependent field below already
+    // yields null from an empty tenant. Nothing is substituted in its place.
+    var t = noIdentity
+      ? {}
+      : ((property.tenants || []).find(function (x) { return x && x.id === tenantId; }) || {});
     var events = _scopedEvents(property, tenantId, t.tenant_name);
     var photos     = _attach(events, 'photo');
     var invoices   = _attach(events, 'invoice');
@@ -196,7 +223,13 @@ window.TenantSpace = (function () {
 
     // Disputes for this tenant — surfaced here so issues are discovered where a
     // manager looks; the dispute WORKFLOW stays in CAM (not duplicated).
-    var disputes = (property.disputes || []).filter(function (d) {
+    // The same refusal, for the same reason. Emptying the tenant above is not
+    // enough here, because this filter can match on ABSENCE: with no identity
+    // `d.tenantId === tenantId` is true for any dispute whose own tenantId is
+    // also null, and `d.tenantName === t.tenant_name` is true for any dispute
+    // with no tenantName at all, since both sides are undefined. A property-wide
+    // dispute would attach itself to whichever space had no id.
+    var disputes = noIdentity ? [] : (property.disputes || []).filter(function (d) {
       return d && (d.tenantId === tenantId || d.tenantName === t.tenant_name);
     }).sort(function (a, b) { return (new Date(b.timestamp || 0)) - (new Date(a.timestamp || 0)); });
 
@@ -641,20 +674,19 @@ window.TenantSpace = (function () {
       // `rec` is assembled one line above, so this is the value the space view
       // itself will show — the card and the space cannot disagree.
       //
-      // KNOWN, MEASURED, AND DELIBERATELY LEFT: when a space has no id this
-      // area can be a NEIGHBOUR's. assemble() resolves its tenant with
-      // `x.id === tenantId` and `null === null` is true, so with two id-less
-      // tenants on one property both cards assemble against whichever comes
-      // first — a second id-less tenant of 111 sqft rendered "9999 sqft" under
-      // its own name. Only the area leaks: rec.counts come from _scopedEvents,
-      // which refuses to scope anything without an identity, so those are
-      // already 0.
+      // This line needs NO identity guard of its own, and that is now a fact
+      // about assemble() rather than an oversight. It used to leak: assemble()
+      // resolved its tenant with `x.id === tenantId`, `null === null` is true,
+      // and two id-less tenants on one property both assembled against
+      // whichever came first — a 111 sqft tenant rendered "9999 sqft" under its
+      // own name. The fix is at that boundary, where every consumer benefits;
+      // guarding it here instead would have changed the shape M8c/M8d pinned
+      // (test-m8d E12) while leaving PropertyRecord, AIWorkspace and the MCP
+      // projection still reading the leaked record.
       //
-      // Guarding it here was tried and reverted. The honest fix is in
-      // assemble()'s lookup — which PropertyRecord, AIWorkspace and the MCP
-      // projection all read — and a guard on this line alone changes the shape
-      // M8c/M8d fixed and pinned (test-m8d E12). Both are decisions for a slice
-      // that is scoped to them; this one is scoped to the CONTROL below.
+      // So `rec.lease.sqft` is null for an id-less space because there was no
+      // tenant to read it from — see assemble(), and
+      // test-space-identity-isolation.js, which owns that rule.
       if (rec.lease.sqft != null) meta.push(rec.lease.sqft + ' sqft');
       if (t.end_date) meta.push('to ' + t.end_date);
       var counts = [];

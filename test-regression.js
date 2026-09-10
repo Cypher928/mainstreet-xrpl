@@ -360,6 +360,7 @@ const SUITES = [
   { label: 'External transport (M9)',           cmd: 'node test-m9-external-transport.js' },
   { label: 'First-year CAM cap workflow',       cmd: 'node test-cap-workflow.js' },
   { label: 'Open space / review identity',      cmd: 'node test-open-space-identity.js' },
+  { label: 'Space identity isolation',          cmd: 'node test-space-identity-isolation.js' },
   { label: 'Field provenance (e2e)',            cmd: 'node test-e2e-field-provenance.js' },
   { label: 'Lease validator: management fee cap',       cmd: 'node test-mgmt-fee-cap.js' },
   // D2-1 — AND THE SAME CHECK ON THE PANEL, WITH ARGUMENTS IT DID NOT BUILD.

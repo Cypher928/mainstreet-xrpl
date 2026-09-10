@@ -213,25 +213,17 @@ sec('A′. An id-less card shows no figures it cannot attribute');
   TS.renderList(TWO_BLANKS);
   const html = doc._nodes.spacesList.innerHTML;
 
-  // ── KNOWN GAP, PINNED SO IT CANNOT BE FORGOTTEN ────────────────────────────
-  //
-  // The area on an id-less card can be its NEIGHBOUR's. This test records the
-  // defect exactly rather than asserting it away, for two reasons: the honest
-  // fix belongs in assemble()'s lookup (read by PropertyRecord, AIWorkspace and
-  // the MCP projection, so not this slice's to change), and guarding the render
-  // line alone changes the shape M8c/M8d pinned in test-m8d E12.
-  //
-  // A future slice that fixes it will fail A7 and have to update it on purpose,
-  // which is the point of writing it down this way.
-  t('A7 KNOWN GAP: an id-less card can show a neighbour’s area (not fixed here)', () => {
-    ok(/9999 sqft/.test(html),
-       'the neighbour-area leak appears to be fixed — good, but update this test deliberately');
+  // A7 was written as a KNOWN GAP — it asserted the neighbour-area leak still
+  // existed, so that whoever fixed it would be forced to update this test on
+  // purpose rather than discover the gap again. That is exactly what happened:
+  // the fix landed in assemble() (see test-space-identity-isolation.js, which
+  // owns the canonical rule) and this assertion failed and was turned round.
+  t('A7 an id-less card shows NO area — not its neighbour’s, not its own', () => {
+    ok(!/9999 sqft/.test(html), `a neighbour's area leaked onto an id-less card:\n${html}`);
     ok(!/111 sqft/.test(html),
-       'the second id-less card now shows its OWN area, which would mean assemble() was changed');
+       'an area was attributed to a space with no identity to attribute it to');
   });
-  t('A8 the leak is confined to the area — no records are claimed', () => {
-    // The part that IS safe today, and worth holding: _scopedEvents refuses to
-    // scope without an identity, so neither card claims the other's history.
+  t('A8 and it claims no records either', () => {
     eq((html.match(/No records yet/g) || []).length, 2,
        `an id-less space claimed records it cannot own:\n${html}`);
   });
