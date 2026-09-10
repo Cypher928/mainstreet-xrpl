@@ -11176,9 +11176,9 @@ async function runAllocation() {
     if (namedTenantsWithNoSqft.length) {
       showErr(body, section,
         `${namedTenantsWithNoSqft.length} tenant(s) are missing Leased Sqft. ` +
-        'Click "Edit" on each tenant in Section 2 and enter their square footage, then run again.');
+        'Click "Edit" on each tenant on the Spaces tab and enter their square footage, then run again.');
     } else {
-      showErr(body, section, 'Please upload at least one lease with a name and square footage in Section 2.');
+      showErr(body, section, 'Please upload at least one lease with a name and square footage on the Spaces tab.');
     }
     return;
   }
@@ -11194,7 +11194,7 @@ async function runAllocation() {
   const skippedCount  = allInvoices.length - invoices.length;
 
   if (!invoices.length) {
-    showErr(body, section, 'Please upload at least one invoice with a vendor and amount in Section 3.');
+    showErr(body, section, 'Please upload at least one invoice with a vendor and amount on the CAM tab.');
     return;
   }
 
@@ -11203,7 +11203,7 @@ async function runAllocation() {
     const warn = document.createElement('div');
     warn.className = 'cam-skip-warning';
     warn.style.cssText = 'background:#7c3a0020;border:1px solid #f59e0b;color:var(--c-fbbf24);padding:10px 14px;border-radius:8px;margin-bottom:14px;font-size:0.85rem;';
-    warn.textContent = `⚠️ ${skippedCount} invoice${skippedCount > 1 ? 's' : ''} with no amount were excluded from this calculation. Open each invoice in Section 3 and enter the missing amount to include them.`;
+    warn.textContent = `⚠️ ${skippedCount} invoice${skippedCount > 1 ? 's' : ''} with no amount were excluded from this calculation. Open each invoice on the CAM tab and enter the missing amount to include them.`;
     section.prepend(warn);
   }
 
@@ -17030,7 +17030,7 @@ function generateHolesReport() {
     warningItems.push({
       icon: '👤',
       text: 'No tenant leases uploaded',
-      detail: 'Upload at least one lease in Section 2 before running allocation',
+      detail: 'Upload at least one lease on the Spaces tab before running allocation',
     });
   }
   errorTenants.forEach(t => {
@@ -23940,7 +23940,7 @@ function resetWorkflow() {
   document.getElementById('openDisputesWrap').style.display = 'none';
   document.getElementById('resolvedCount').textContent = '0';
   document.getElementById('reportsMsg').style.display = 'block';
-  document.getElementById('reportsMsg').textContent = 'Run a CAM allocation in Section 4 to generate reports.';
+  document.getElementById('reportsMsg').textContent = 'Run a CAM allocation on the CAM tab to generate reports.';
   document.getElementById('tenantReportButtons').innerHTML = '';
 
   renderTenantSlots();

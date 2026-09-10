@@ -539,8 +539,30 @@ window.TenantSpace = (function () {
     ov.innerHTML =
       '<div class="ts-panel" role="dialog" aria-modal="true" aria-label="' + _esc(rec.space.name) + '">' +
         '<div class="ts-head">' +
+          // WHICH BUILDING IS THIS SUITE IN?
+          //
+          // This line read "Everything about this space, in one place" — true,
+          // and it answers a question nobody was asking. A space is only ever
+          // meaningful inside a property, and this overlay covers the whole
+          // screen: once it is open, the workspace behind it, its tab bar and
+          // the property name are all hidden. A manager who arrived from the
+          // attention panel, a review action or a deep link is then looking at
+          // "Fairview Dental Group" with nothing on screen saying which of
+          // their buildings it belongs to.
+          //
+          // The review overlay beside it already gets this right — it puts
+          // prop.name in exactly this slot (script.js rwSubtitle) — so the two
+          // panels disagreed about whether a manager needs to know where they
+          // are. `property` is already resolved at the top of openSpace, so
+          // this names it from what the caller was given and invents nothing;
+          // a property with no name falls back to the original line rather
+          // than showing an empty subtitle.
           '<div class="ts-head-main"><div class="ts-space-name">\u{1F4CD}&nbsp;' + _esc(rec.space.name) + '</div>' +
-            '<div class="ts-space-sub">Everything about this space, in one place</div></div>' +
+            '<div class="ts-space-sub">' +
+              (property && property.name
+                ? _esc(property.name)
+                : 'Everything about this space, in one place') +
+            '</div></div>' +
           '<button class="ts-x" id="tsClose" aria-label="Close">✕</button>' +
         '</div>' +
         '<div class="ts-summary">' + _esc(rec.summary) + '</div>' +
