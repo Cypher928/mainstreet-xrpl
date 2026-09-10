@@ -302,7 +302,24 @@ window.TenantSpace = (function () {
 
   function openSpace(tenantId) {
     var property = window.currentProperty && window.currentProperty();
-    if (!property || !tenantId) return;
+    // THE GUARD STAYS; WHAT CHANGES IS THAT IT NO LONGER FAILS IN SILENCE.
+    //
+    // The list no longer renders a button that can call this with '', so
+    // reaching here without an identity now means some other caller passed
+    // one it did not have. Returning quietly made that indistinguishable from
+    // a click that worked — which is exactly how the dead "Open space →"
+    // survived. The overlay-already-open case below is deliberately still
+    // silent: the space the caller asked for IS on screen, so there is nothing
+    // to report.
+    if (!property || !tenantId) {
+      if (typeof window.showToast === 'function') {
+        window.showToast(property
+          ? 'That space has no saved record yet, so there is nothing to open. Save the tenant first.'
+          : 'Open a property first — a space can only be opened from the property it belongs to.',
+          { color: '#92400e', textColor: '#fef3c7', duration: 5000 });
+      }
+      return;
+    }
     if (_t('tsOverlay')) return;
     injectStyles();
     var rec = assemble(property, tenantId);
@@ -623,6 +640,21 @@ window.TenantSpace = (function () {
       // and `|| t.sqft` was dead here for the same reason it was dead there.
       // `rec` is assembled one line above, so this is the value the space view
       // itself will show — the card and the space cannot disagree.
+      //
+      // KNOWN, MEASURED, AND DELIBERATELY LEFT: when a space has no id this
+      // area can be a NEIGHBOUR's. assemble() resolves its tenant with
+      // `x.id === tenantId` and `null === null` is true, so with two id-less
+      // tenants on one property both cards assemble against whichever comes
+      // first — a second id-less tenant of 111 sqft rendered "9999 sqft" under
+      // its own name. Only the area leaks: rec.counts come from _scopedEvents,
+      // which refuses to scope anything without an identity, so those are
+      // already 0.
+      //
+      // Guarding it here was tried and reverted. The honest fix is in
+      // assemble()'s lookup — which PropertyRecord, AIWorkspace and the MCP
+      // projection all read — and a guard on this line alone changes the shape
+      // M8c/M8d fixed and pinned (test-m8d E12). Both are decisions for a slice
+      // that is scoped to them; this one is scoped to the CONTROL below.
       if (rec.lease.sqft != null) meta.push(rec.lease.sqft + ' sqft');
       if (t.end_date) meta.push('to ' + t.end_date);
       var counts = [];
@@ -634,7 +666,26 @@ window.TenantSpace = (function () {
         '<div class="tsl-name">\u{1F4CD}&nbsp;' + _esc(t.tenant_name || 'Space') + '</div>' +
         (meta.length ? '<div class="tsl-meta">' + _esc(meta.join(' · ')) + '</div>' : '') +
         (counts.length ? '<div class="tsl-counts">' + _esc(counts.join(' · ')) + '</div>' : '<div class="tsl-counts tsl-counts--empty">No records yet</div>') +
-        '<button class="tsl-open" onclick="if(window.TenantSpace){TenantSpace.openSpace(\'' + _esc(t.id) + '\');}">Open space →</button>' +
+        // A BUTTON THAT CANNOT DO WHAT IT SAYS IS WORSE THAN NO BUTTON.
+        //
+        // This rendered unconditionally. The list admits a tenant with a name
+        // OR an id (see the filter above), so a named tenant with no id got a
+        // full gold "Open space →" — and _esc(undefined) is '', so the click
+        // called openSpace(''), which hits its own no-identity guard and
+        // returns. Nothing opened, nothing was said, and the card kept
+        // inviting the click. The manager's only reading is that the app is
+        // broken.
+        //
+        // The condition is not re-derived here: `rec` was assembled one line
+        // up and assemble() already decides this exact question and publishes
+        // it as noIdentity — the same flag _citableRecord, PropertyRecord and
+        // AIWorkspace branch on. One definition of "this space cannot be
+        // opened", so the card and the space view cannot disagree.
+        (rec.noIdentity
+          ? '<div class="tsl-noopen" title="MainStreet has no stored record id for this space, so there is nothing to open yet.">' +
+              'Can’t open yet — no saved record' +
+            '</div>'
+          : '<button class="tsl-open" onclick="if(window.TenantSpace){TenantSpace.openSpace(\'' + _esc(t.id) + '\');}">Open space →</button>') +
       '</div>';
     }).join('') + '</div>';
   }
@@ -800,6 +851,9 @@ window.TenantSpace = (function () {
       '.tsl-counts--empty{font-style:italic;}',
       '.tsl-open{margin-top:8px;min-height:40px;border-radius:9px;font:800 0.82rem/1 inherit;cursor:pointer;color:#07090C;background:' + gold + ';border:1px solid ' + gold + ';}',
       '.tsl-open:hover{filter:brightness(1.08);}',
+      // Occupies the button's slot so the card keeps its shape, and reads as a
+      // state rather than a control: no pointer cursor, no fill, no hover.
+      '.tsl-noopen{margin-top:8px;min-height:40px;display:flex;align-items:center;justify-content:center;text-align:center;padding:0 8px;border-radius:9px;font:600 0.76rem/1.25 inherit;color:var(--text-3,#94A3B8);background:transparent;border:1px dashed rgba(var(--line-rgb,255,255,255),0.18);cursor:default;}',
       '@media (max-width:480px){',
       '  .ts-overlay{padding:10px 8px;}',
       '  .ts-tl-when{width:74px;}',

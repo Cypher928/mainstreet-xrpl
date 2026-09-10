@@ -20807,9 +20807,26 @@ function _rqCompactItemHtml(item) {
     <span class="trs-score ${scoreColor}">Score: ${item.reviewScore}</span>
     <div class="rq-chips rq-chips--inline">${missingChips}${warnChips}</div>
     <div class="rq-compact-actions" style="display:flex;gap:4px;align-items:center;">
-      <button class="rq-action-btn rq-btn--primary" onclick="openReviewWorkspace('${tid}')">Review ${esc(item.tenantName)} &#x203A;</button>
       ${(() => {
-        if (acked) return `<span class="rq-chip">Ack'd</span>`;
+        // BOTH ACTIONS ON THIS CARD NAME A TENANT, SO BOTH NEED ONE.
+        //
+        // `tid` is esc(item.tenantId), and esc(null) is '' — so an item whose
+        // tenantId never resolved rendered "Review Acme Corp ›" wired to
+        // openReviewWorkspace(''), which scans for a tenant with id '' , finds
+        // none, and returns. The card named a real tenant and the button did
+        // nothing. The "Next step" button beside it is wired to the same `tid`,
+        // so it inherits the same hole: normally the liveT lookup finds nothing
+        // and it silently vanishes, and where tenants DO carry blank ids the
+        // lookup matches the first of them, which is not necessarily this card's.
+        //
+        // Nothing is invented to fill the gap — an item with no record id is
+        // reported as one, in the actions' own slot, so the card still shows
+        // what is wrong with the lease and simply stops promising to open it.
+        if (!tid) {
+          return `<span class="rq-chip rq-chip--warn" title="This review item has no stored tenant record id, so MainStreet cannot open it.">Can’t open — no saved record</span>`;
+        }
+        const primary = `<button class="rq-action-btn rq-btn--primary" onclick="openReviewWorkspace('${tid}')">Review ${esc(item.tenantName)} &#x203A;</button>`;
+        if (acked) return primary + `<span class="rq-chip">Ack'd</span>`;
         // Same rule as the space modal: a lease the CAM engine will not accept
         // is offered the resolution, never the acknowledgement.
         const liveT = tenantData.find(t => t && t.id === tid)
@@ -20818,9 +20835,9 @@ function _rqCompactItemHtml(item) {
         // whatever kind it is. Acknowledgement is not offered, because it closes
         // none of them.
         const fix   = liveT ? _reviewResolution(liveT) : null;
-        return fix
+        return primary + (fix
           ? `<button class="rq-action-btn rq-btn--fix" onclick="openReviewItemFix('${tid}', ${fix.field ? `'${esc(fix.field)}'` : 'null'})" title="${esc(fix.outstanding.join('; '))}">Next step: ${esc(fix.cta)}</button>`
-          : '';
+          : '');
       })()}
     </div>
   </div>`;
@@ -20894,13 +20911,29 @@ function renderPropertyReviewQueue(property) {
 let _rwActiveTenantId = null;
 
 function openReviewWorkspace(tenantId) {
+  // An empty id can never match a tenant, so the lookup below would run its
+  // full scan and fall out the bottom into the same silent return a genuinely
+  // missing tenant gets. Separated, because they are different facts and the
+  // second one is worth saying out loud: the queue card no longer offers this
+  // action without an id, so arriving here without one means a caller lost it.
+  if (!tenantId) {
+    showToast('That review item has no saved tenant record, so there is nothing to open.',
+              { color: '#92400e', textColor: '#fef3c7', duration: 5000 });
+    return;
+  }
   let t = null;
   for (const p of _props) {
     const found = (p.tenants || []).find(x => x && x.id === tenantId);
     if (found) { t = found; break; }
   }
   if (!t) t = tenantData.find(x => x && x.id === tenantId);
-  if (!t) return;
+  // Was a bare `return`: the button dimmed, nothing opened, and the manager was
+  // left to guess whether the click had registered at all.
+  if (!t) {
+    showToast('Could not open that tenant for review — it is not on any loaded property.',
+              { color: '#92400e', textColor: '#fef3c7', duration: 5000 });
+    return;
+  }
 
   _rwActiveTenantId = tenantId;
   document.getElementById('rwTitle').textContent = t.tenant_name || 'Tenant Review';
