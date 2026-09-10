@@ -79,7 +79,26 @@ for (const name of ['document','localStorage','sessionStorage','navigator','loca
   });
 }
 // A server-side record must come from the injected transport, never a socket.
-global.fetch = function () { throw new Error('[probe] fetch was called — no network here'); };
+//
+// M9 — COUNTED AS WELL AS THROWN. The probe used to detect a network attempt by
+// catching this error where it escaped hydrate(). M9 gave every database read a
+// bounded timeout, and the same catch that converts an AbortError into a stated
+// read_timeout also converts this one into read_unreachable — so nothing
+// escapes any more and the old detection silently read "no attempt".
+//
+// What J4 exists to prove is unchanged: with no transport injected the module
+// reaches for its own fetch, which is what shows every other scenario was NOT
+// quietly using a socket. That is now observed where it actually happens — at
+// the call — instead of inferred from an exception that no longer surfaces.
+// The count hangs off the stub itself rather than being a new global name.
+// The first draft used global.__m2_fetchCalls and D2 caught it immediately —
+// "no new global appeared" is exactly the invariant this harness exists to
+// hold, and a probe that violates it to measure something is not a probe.
+global.fetch = function () {
+  global.fetch.calls++;
+  throw new Error('[probe] fetch was called — no network here');
+};
+global.fetch.calls = 0;
 
 // ── 3. Fixtures. Plain data: nothing crosses the process boundary. ─────────
 const PROP  = '11111111-1111-4111-8111-111111111111';
@@ -277,8 +296,12 @@ function transport(s) {
 
     let r;
     if (s.omitTransport) {
-      try { r = await H.hydrate(args); out.networkAttempted = false; }
-      catch (e) { out.networkAttempted = /no network here/.test(String(e && e.message)); r = { ok: false }; }
+      // Counted at the call — see the fetch stub above for why this no longer
+      // relies on an exception escaping hydrate().
+      const before = global.fetch.calls;
+      try { r = await H.hydrate(args); }
+      catch (_e) { r = { ok: false }; }
+      out.networkAttempted = global.fetch.calls > before;
     } else {
       r = await H.hydrate(args);
     }

@@ -55,8 +55,20 @@ const RUN = HARNESS.run(['rich', 'normal', 'degraded', 'unauthenticated', 'notOw
 const R   = RUN.results;
 const RICH = R.rich;
 
-/** The four kinds the brief asks for, plus env. `undeclared` must stay empty. */
-const KINDS = ['shimmed', 'module', 'browser_only', 'env'];
+/**
+ * The four kinds the M3 brief asks for, plus env — and, since M9, `platform`.
+ *
+ * M9 bounded every database read with AbortSignal.timeout(), which put a global
+ * into the graph that none of the five existing kinds describes: it is present
+ * on the server AND in the browser, so calling it `browser_only` would assert
+ * the opposite of what makes it safe. The inventory's job is to force a
+ * decision on every name it finds, and `platform` is that decision recorded —
+ * a runtime standard, no shim, no state, no session.
+ *
+ * The invariant this list actually guards is unchanged and is asserted below:
+ * nothing may be UNCLASSIFIED, and no kind may appear that is not named here.
+ */
+const KINDS = ['shimmed', 'module', 'platform', 'browser_only', 'env'];
 
 // ── A. The inventory is complete ───────────────────────────────────────────
 sec('A. Every global the graph can reach for is inventoried and classified');

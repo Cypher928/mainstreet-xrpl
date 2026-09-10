@@ -133,17 +133,35 @@ async function _defaultAuthFetch(tok) {
 
 // ── Transport ──────────────────────────────────────────────────────────────
 
+/**
+ * M9 — the same bound the hydrator applies, for the one read that does not go
+ * through it (list_properties). A timeout surfaces as a failed read, which
+ * listProperties already answers with "this is not an empty portfolio".
+ */
+const READ_TIMEOUT_MS = 8000;
+
 /** The default PostgREST transport. Injectable so tests never open a socket. */
 async function _defaultFetch(pathAndQuery, options = {}) {
   const k = _key();
-  const res = await fetch(`${SUPABASE_URL}/rest/v1${pathAndQuery}`, {
-    ...options,
-    headers: {
-      'Content-Type': 'application/json',
-      'apikey': k, 'Authorization': `Bearer ${k}`, 'Prefer': '',
-      ...(options.headers || {}),
-    },
-  });
+  let res;
+  try {
+    res = await fetch(`${SUPABASE_URL}/rest/v1${pathAndQuery}`, {
+      signal: AbortSignal.timeout(READ_TIMEOUT_MS),
+      ...options,
+      headers: {
+        'Content-Type': 'application/json',
+        'apikey': k, 'Authorization': `Bearer ${k}`, 'Prefer': '',
+        ...(options.headers || {}),
+      },
+    });
+  } catch (e) {
+    const timedOut = e && (e.name === 'TimeoutError' || e.name === 'AbortError');
+    return {
+      status: timedOut ? 504 : 502,
+      json: { error: timedOut ? 'read_timeout' : 'read_unreachable',
+              timeoutMs: timedOut ? READ_TIMEOUT_MS : null },
+    };
+  }
   const text = await res.text();
   let json; try { json = JSON.parse(text); } catch { json = { raw: text }; }
   return { status: res.status, json };
@@ -1952,4 +1970,6 @@ module.exports = {
   resolveIdentity, envelope, refuse, sectionStatus, sectionValue, buildCaveats,
   REFUSAL, SEVERITY, STATUS, WRITE_METHODS, DEGRADED_SECTIONS, UNKNOWN_CODES, CAVEAT_TEXT,
   _readOnly,
+  // M9. Exported so the bound can be asserted rather than read off a comment.
+  READ_TIMEOUT_MS, _defaultFetch,
 };

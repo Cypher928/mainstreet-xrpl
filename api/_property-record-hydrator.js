@@ -71,19 +71,47 @@ const SUPABASE_ANON_KEY = _t.anonKey;
 /** Transport credential. Service role when configured, exactly as api/ does. */
 function _key() { return _t.serviceRoleKey || SUPABASE_ANON_KEY; }
 
+/**
+ * M9 — every read is time-bounded.
+ *
+ * An external caller can otherwise hold a database read open for as long as the
+ * upstream is willing to stall, and an agent that retries turns one slow query
+ * into an unbounded number of them. The bound is deliberately generous: it is a
+ * ceiling on pathology, not a latency target.
+ *
+ * A timeout is reported as a failed read, which every caller above already
+ * handles — the ownership check treats a non-2xx as a refusal, the property read
+ * returns `read_failed`, and tenants/evidence degrade with a stated code. That
+ * matters more than it looks: a thrown AbortError would have escaped `hydrate()`
+ * entirely, and the transport would have turned it into an opaque 500 rather
+ * than an answer that says which section is unknown and why.
+ */
+const READ_TIMEOUT_MS = 8000;
+
 /** The default PostgREST transport. Injectable so tests never touch a network. */
 async function _defaultFetch(pathAndQuery, options = {}) {
   const k = _key();
-  const res = await fetch(`${SUPABASE_URL}/rest/v1${pathAndQuery}`, {
-    ...options,
-    headers: {
-      'Content-Type': 'application/json',
-      'apikey': k,
-      'Authorization': `Bearer ${k}`,
-      'Prefer': '',
-      ...(options.headers || {}),
-    },
-  });
+  let res;
+  try {
+    res = await fetch(`${SUPABASE_URL}/rest/v1${pathAndQuery}`, {
+      signal: AbortSignal.timeout(READ_TIMEOUT_MS),
+      ...options,
+      headers: {
+        'Content-Type': 'application/json',
+        'apikey': k,
+        'Authorization': `Bearer ${k}`,
+        'Prefer': '',
+        ...(options.headers || {}),
+      },
+    });
+  } catch (e) {
+    const timedOut = e && (e.name === 'TimeoutError' || e.name === 'AbortError');
+    return {
+      status: timedOut ? 504 : 502,
+      json: { error: timedOut ? 'read_timeout' : 'read_unreachable',
+              timeoutMs: timedOut ? READ_TIMEOUT_MS : null },
+    };
+  }
   const text = await res.text();
   let json; try { json = JSON.parse(text); } catch { json = { raw: text }; }
   return { status: res.status, json };
@@ -354,4 +382,7 @@ module.exports = {
   REFUSAL,
   // Exported for tests and for a future endpoint; not used elsewhere here.
   _ownsProperty, _evidenceRowToSnapshot, _readOnly, WRITE_METHODS,
+  // M9. The read bound, exported so a test can assert it is applied rather than
+  // trust the comment above it.
+  READ_TIMEOUT_MS, _defaultFetch,
 };

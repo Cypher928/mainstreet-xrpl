@@ -137,6 +137,23 @@ const CLASSIFICATION = {
   _ccFlashEl:       { kind: 'browser_only', why: 'DOM highlight effect' },
   FileReader:       { kind: 'browser_only', why: 'bare browser global at tenant-space.js:1114, inside an upload handler assemble() never reaches' },
 
+  // ── platform ───────────────────────────────────────────────────────────
+  // A fifth kind, added in M9 because AbortSignal is honestly none of the four
+  // that existed. It is not `browser_only` — the whole point is that it is
+  // present on the server too, and classifying it there would say the opposite
+  // of what is true. It is not `env`, not a `module`, and not `shimmed`.
+  //
+  // `platform` means: a language- or runtime-standard global, present in both
+  // Node and the browser, requiring no shim and carrying no session state. The
+  // bar for adding a name here is that reaching for it on a server is correct
+  // rather than tolerated.
+  AbortSignal: { kind: 'platform',
+                 why: 'M9 — AbortSignal.timeout() bounds every database read in ' +
+                      'api/_mcp-capabilities.js and api/_property-record-hydrator.js. ' +
+                      'A WHATWG standard, present in Node 16+ and every browser; it ' +
+                      'holds no state, reads nothing, and cannot carry a browser ' +
+                      'session into a server-assembled record.' },
+
   // ── environment ────────────────────────────────────────────────────────
   VERCEL_ENV:                     { kind: 'env', why: 'selects production vs pilot; absent ⇒ pilot, which is the fail-safe direction' },
   SUPABASE_URL:                   { kind: 'env', why: 'production transport target' },
@@ -224,7 +241,7 @@ module.exports = { inventory, scanFile, bareGlobals, stripStringsAndComments,
 
 if (require.main === module) {
   const inv = inventory();
-  for (const kind of ['shimmed', 'module', 'browser_only', 'env', 'UNCLASSIFIED']) {
+  for (const kind of ['shimmed', 'module', 'platform', 'browser_only', 'env', 'UNCLASSIFIED']) {
     const rows = inv.rows.filter(r => r.kind === kind);
     if (!rows.length) continue;
     console.log('\n' + kind.toUpperCase() + ' (' + rows.length + ')');
