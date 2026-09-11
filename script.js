@@ -13121,6 +13121,16 @@ function _buildReconciliationSummaryHtml(results, invoices, propName, engineInvo
   results.forEach(r => { _tenantBilling[r.name] = _tenantBillingState(r.name, _exposure); });
   const _billableNames = results.map(r => r.name).filter(n => _tenantBilling[n].state === 'billable');
 
+  // Ask AI reads THIS verdict — the one on screen — rather than deriving its
+  // own. See _lastBillingVerdict.
+  _lastBillingVerdict = _billing ? {
+    propertyId:    (currentProperty() || {}).id   || null,
+    propertyName:  (currentProperty() || {}).name || null,
+    readiness:     _billing,
+    billableNames: _billableNames.slice(),
+    tenantCount:   results.length,
+  } : null;
+
   const issues   = _detectReconciliationIssues(results, currentProperty());
   _lastReconIssues = issues; // capture for openDisputeFromFlag()
   const reds     = issues.filter(f => f.severity === 'red');
@@ -13323,6 +13333,54 @@ function _buildReconciliationSummaryHtml(results, invoices, propName, engineInvo
         ${_billing ? `<span class="rcs-readiness-badge ${_billable ? 'rcs-readiness--ok' : 'rcs-readiness--blocked'}" title="${esc(_billing.reason || '')}">${_billable ? '&#x2713; Ready to bill' : '&#x26D4; Not ready to bill'}</span>` : ''}
         ${_balBadgeHtml}
       </div>
+      ${(() => {
+        // ── WHAT IS ACTUALLY HOLDING THE BILL ─────────────────────────────
+        //
+        // "Not ready to bill" was the whole of it. The reason lived in a
+        // `title=` tooltip, and that reason was a COUNT — "1 property-level
+        // exception must be resolved" — because the property branch of
+        // billingReadiness returned the tally and dropped the records it had
+        // tallied. The one place that named the exception was the tenant
+        // statement, which a manager only reaches by trying to bill and being
+        // refused. So the product knew "26 of 26 invoices missing source
+        // document" and made you fail an action to hear it.
+        //
+        // These are the records the verdict was already counting, printed in
+        // the order the audit produced them. No severity sort, no "main
+        // reason", no remediation invented here: each line is a finding's own
+        // title, and the scope label is read off the record rather than
+        // inferred. The statement screen is untouched and still says more.
+        if (!_billing || _billable) return '';
+        const _bl = _billing.blockers || [];
+        if (!_bl.length) return '';
+        const _prop = _bl.filter(b => b && b.scope === 'property');
+        const _ten  = _bl.filter(b => b && b.scope !== 'property');
+        const _row = (b) => {
+          // A finding's title often already names its tenant ("Modified Gross
+          // tenant receiving shared CAM — ProActive Physical Therapy"). The
+          // chip then says the name twice, so it falls back to the scope word.
+          const _who = b.tenant || 'Tenant';
+          const _title = String(b.title || 'Unnamed exception');
+          const _label = b.scope === 'property' ? 'Property-wide'
+                       : _title.includes(_who) ? 'One tenant' : _who;
+          return `<li class="rcs-held-item">
+            <span class="rcs-held-scope rcs-held-scope--${b.scope === 'property' ? 'prop' : 'tenant'}">${esc(_label)}</span>
+            <span class="rcs-held-title">${esc(_title)}</span>
+          </li>`;
+        };
+        // Counted from the same two arrays that are about to be printed, so the
+        // sentence and the list cannot disagree.
+        const _scopeLine = _prop.length && _ten.length
+            ? `${_prop.length} affect${_prop.length === 1 ? 's' : ''} the whole reconciliation, ${_ten.length} ${_ten.length === 1 ? 'is' : 'are'} on a single tenant.`
+          : _prop.length
+            ? `${_prop.length === 1 ? 'It affects' : 'They affect'} the whole reconciliation, so no statement can issue until ${_prop.length === 1 ? 'it is' : 'they are'} resolved.`
+            : `${_ten.length === 1 ? 'It is' : 'They are'} on individual tenants — other tenants are unaffected.`;
+        return `<div class="rcs-held" role="note">
+          <div class="rcs-held-head">Why billing is on hold</div>
+          <div class="rcs-held-sub">${_bl.length === 1 ? 'One exception is' : `${_bl.length} exceptions are`} holding this reconciliation. ${esc(_scopeLine)}</div>
+          <ul class="rcs-held-list">${_prop.map(_row).join('')}${_ten.map(_row).join('')}</ul>
+        </div>`;
+      })()}
       ${(() => {
         // A REBUILT RECORD SAYS SO, ABOVE THE FIGURES IT QUALIFIES.
         //
@@ -13890,6 +13948,24 @@ const _DISPUTE_SEV = {
 };
 let _lastReconIssues = []; // last _detectReconciliationIssues() output — used by openDisputeFromFlag
 let _dwActiveDid     = null; // active dispute ID in workspace overlay
+
+/**
+ * The billing verdict the CAM screen last rendered, captured for Ask AI.
+ *
+ * NOT a second derivation. The reconciliation summary already asks
+ * AuditExposure the billing question once, off buildAuditSummary() and the
+ * pool that run was struck from; this holds on to that same answer object so a
+ * question typed into Ask AI is answered from the verdict on screen rather
+ * than from a parallel computation that could drift from it. Same idiom as
+ * _lastReconIssues above.
+ *
+ * Carries the property it describes, because it describes exactly one: an
+ * answer about a property this is not about would be a confident wrong answer.
+ * Null until a reconciliation has been rendered, which is a real state and is
+ * reported as one.
+ */
+let _lastBillingVerdict = null;
+window.billingVerdictOnScreen = function () { return _lastBillingVerdict; };
 
 // ─── Dispute State ────────────────────────────────────────────────────────────
 let lastInvoices = []; // [{ id, vendor, category, amount }]
@@ -23907,6 +23983,9 @@ function resetWorkflow() {
   lastResults = []; lastInvoices = []; lastTenants = [];
   lastPropName = ''; lastTotal = 0; lastInvoicesFull = []; lastFullResults = [];
   _lastReconIssues = []; _dwActiveDid = null; _resultsStale = false;
+  // A verdict outliving the reconciliation it describes would answer questions
+  // about a run that is no longer on screen.
+  _lastBillingVerdict = null;
   activityLog.splice(0, activityLog.length);
   disputes.length = 0;
   nextDisputeId = 0;

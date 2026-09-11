@@ -515,9 +515,27 @@
 
     // ── property verdict ──────────────────────────────────────────────────
     const tenantsBlocked = Object.keys(bl.byTenant || {}).length;
+
+    // WHAT IS BLOCKING, NOT JUST HOW MANY.
+    //
+    // The tenant branch above has always returned `blockers`, which is why the
+    // statement screen can say "26 of 26 invoices missing source document"
+    // while the CAM screen that produced the reconciliation could only say
+    // "1 property-level exception" — the property branch returned a COUNT and
+    // dropped the records it was counting. The manager had to try to issue a
+    // statement, and be refused, to learn the reason.
+    //
+    // These are the same records, already tallied in the single pass through
+    // deriveExposure. Nothing is recomputed and no order is imposed beyond the
+    // one the findings arrived in: every record carries its own `scope` and
+    // `tenant`, so a surface labels rather than ranks.
+    const tenantFlat = Object.keys(bl.byTenant || {})
+      .reduce((all, n) => all.concat(bl.byTenant[n] || []), []);
+    const allBlockers = prop.concat(tenantFlat);
+
     if (prop.length) {
       return {
-        canBill: false, label: 'Not ready to bill',
+        canBill: false, label: 'Not ready to bill', blockers: allBlockers,
         reason: `${prop.length} property-level exception${prop.length === 1 ? '' : 's'} `
               + `must be resolved before any statement is issued.`,
       };
@@ -527,17 +545,18 @@
       // issued", which asserted a global block that is no longer true — the
       // other tenants can be billed today.
       return {
-        canBill: false, label: 'Not ready to bill',
+        canBill: false, label: 'Not ready to bill', blockers: allBlockers,
         reason: `${tenantsBlocked} tenant${tenantsBlocked === 1 ? '' : 's'} cannot be billed yet.`,
       };
     }
     if (x.counts.yellow > 0 || x.unquantified > 0) {
       return {
-        canBill: true, label: 'Bill with review',
+        canBill: true, label: 'Bill with review', blockers: [],
         reason: `${x.counts.yellow} advisory finding${x.counts.yellow === 1 ? '' : 's'} should be reviewed; none blocks billing.`,
       };
     }
-    return { canBill: true, label: 'Ready to bill', reason: 'No exceptions were detected.' };
+    return { canBill: true, label: 'Ready to bill', blockers: [],
+             reason: 'No exceptions were detected.' };
   }
 
 

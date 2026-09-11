@@ -4006,6 +4006,40 @@
       border: 1px solid rgba(239,68,68,0.38);
     }
 
+    /* Why billing is on hold — the blocking exceptions, named on the screen
+       that produced the reconciliation rather than only inside a refused
+       statement. Same palette as the blocked readiness badge above it. */
+    .rcs-held {
+      font-family: 'DM Sans', sans-serif; margin: 12px 0 4px;
+      background: rgba(239,68,68,0.06); border: 1px solid rgba(239,68,68,0.3);
+      border-left-width: 3px; border-radius: 9px; padding: 12px 15px;
+    }
+    .rcs-held-head {
+      font-size: 0.9rem; font-weight: 700; letter-spacing: -0.01em;
+      color: var(--c-fca5a5, #fca5a5); margin-bottom: 4px;
+    }
+    .rcs-held-sub { font-size: 0.82rem; line-height: 1.55; color: var(--text-2); }
+    .rcs-held-list { list-style: none; margin: 9px 0 0; padding: 0; }
+    .rcs-held-item {
+      display: flex; flex-wrap: wrap; align-items: baseline; gap: 8px;
+      padding: 6px 0; border-top: 1px solid rgba(var(--line-rgb, 255,255,255), 0.08);
+    }
+    .rcs-held-item:first-child { border-top: 0; }
+    .rcs-held-scope {
+      font-size: 0.6rem; font-weight: 800; text-transform: uppercase;
+      letter-spacing: 0.04em; border-radius: 5px; padding: 2px 6px; flex: none;
+    }
+    .rcs-held-scope--prop {
+      color: var(--c-fca5a5, #fca5a5); background: rgba(239,68,68,0.12);
+    }
+    .rcs-held-scope--tenant {
+      color: var(--c-fbbf24, #fbbf24); background: rgba(251,191,36,0.12);
+    }
+    .rcs-held-title {
+      font-size: 0.83rem; line-height: 1.5; color: var(--text-2);
+      overflow-wrap: anywhere;
+    }
+
     /* Coverage Gap: input coverage and reconciliation status, side by side and
        separately headed, because they answer different questions. */
     .cg-split {

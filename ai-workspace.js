@@ -96,6 +96,11 @@ window.AIWorkspace = (() => {
       // same property. Injectable, so the rewiring is testable without a browser.
       PropertyRecord:    window.PropertyRecord || null,
       FieldProvenance:   window.FieldProvenance || null,
+      // The billing verdict the CAM screen last rendered. A getter, not a
+      // derivation: the workspace answers "why can't I bill?" from the same
+      // object the manager is looking at, so the two cannot drift. Injectable,
+      // so the intent is testable without a browser.
+      billingVerdict:    window.billingVerdictOnScreen || null,
       now:               new Date(),
     };
   }
@@ -341,6 +346,7 @@ window.AIWorkspace = (() => {
     cam_caps: 'Lease Review Engine', audit_rights: 'Lease Review Engine',
     expirations: 'Lease Review Engine', knowledge_search: 'Lease Review Engine',
     tenant_charge: 'Reconciliation Engine', explain_recon: 'Reconciliation Engine',
+    billing_blocked: 'Audit Exposure — Billing Readiness',
     compare_costs: 'Reconciliation Engine', forecast: 'Reconciliation Engine',
     recovered_most: 'Recovery Engine', disputes: 'Dispute Records',
     reserve_balances: 'Reserve Intelligence Engine', reserve_rules: 'Reserve Intelligence Engine',
@@ -362,6 +368,7 @@ window.AIWorkspace = (() => {
     expirations: ['PropertyRecord.spaces (lease end dates)'],
     tenant_charge: ['PropertyRecord.cam.results', 'lease terms', 'ReconciliationExplainer'],
     explain_recon: ['PropertyRecord.cam (pool, results, capped)'],
+    billing_blocked: ['AuditExposure.billingReadiness (the verdict rendered on the CAM screen)'],
     disputes: ['PropertyRecord.disputes'],
     compare_costs: ['invoice records'],
     recovered_most: ['computeRecoveredRevenue'],
@@ -786,6 +793,123 @@ window.AIWorkspace = (() => {
         citations: [_leaseCitation(p, t, ['cam_cap', 'leased_sqft'], deps), _camReportCitation(p)].filter(c => c.detail || c.quote),
         actions: [_actOpenProperty(p)],
         confidence: { pct: result ? 93 : 85, basis: result ? 'reconciliation results & lease terms' : 'workflow state' },
+      };
+    },
+  });
+
+  // 4b) Why billing is blocked.
+  //
+  // The CAM screen can say "0 of 5 tenants billable · Not ready to bill", and
+  // every natural way of asking why — "why is this reconciliation blocked?",
+  // "why are 0 of 5 tenants billable?", "what is holding up billing?", "why
+  // can't I bill these tenants?" — reached the honest fallback. The product
+  // was blocking the manager's work and its own assistant could not say what
+  // on.
+  //
+  // It answers from `deps.billingVerdict()`, which is the verdict the CAM
+  // screen rendered, not a second derivation of it. Three states are kept
+  // apart, because they are three different sentences:
+  //   no verdict          — no reconciliation has been rendered this session
+  //   a different property — a verdict exists but is not about what was asked
+  //   a verdict           — answer it, blocked or clear
+  // Every branch is deliberate. An earlier draft carried `why.*n'?t.*billable`,
+  // which matched "why are 0 of 5 tenants billable?" — through the "nt" inside
+  // "tenants", not through any negation. It answered the right question for the
+  // wrong reason and would have matched "why is the rent billable?" too.
+  // Branches deliberately overlap: a manager's phrasing is not a grammar, and
+  // two ways of catching the same sentence is robustness, not redundancy.
+  const _BILL_BLOCK_RE = new RegExp([
+    'blocked', 'blocking', 'on hold', 'not ready to bill',
+    'hold(?:ing)? (?:this |it )?(?:up|back)',   // "holding up billing", "hold it up"
+    'can(?:\'|’)?t (?:i )?bill', 'cannot bill', 'unable to bill',
+    '(?:stopping|prevent(?:ing|s)?) .*bill',
+    'why .*billable',                            // "why are 0 of 5 tenants billable?"
+    'tenants? (?:not )?billable',
+  ].join('|'));
+  registerIntent({
+    id: 'billing_blocked',
+    match: (s) => _BILL_BLOCK_RE.test(s) && /bill|recon|statement|tenant/.test(s),
+    handle: (q, ctx, { props, deps }) => {
+      const p = _ctxProperty(ctx, props);
+      const getter = deps && deps.billingVerdict;
+      const v = (typeof getter === 'function') ? (function () {
+        try { return getter(); } catch (_) { return null; }
+      })() : null;
+
+      // NO VERDICT IS NOT "NOTHING IS WRONG". Saying "nothing blocks billing"
+      // here would be an all-clear MainStreet has not earned.
+      if (!v || !v.readiness) {
+        return {
+          heading: 'No reconciliation is open',
+          paragraphs: ['I read the billing verdict off the reconciliation on screen, and none has been run or opened in this session. Open the property’s CAM tab and run or load the reconciliation, then ask me again — I won’t guess at what would block it.'],
+          citations: [], actions: p ? [_actOpenProperty(p)] : [_actPortfolio()],
+          confidence: { pct: 95, basis: 'workflow state — no reconciliation rendered' },
+        };
+      }
+      // A VERDICT ABOUT ANOTHER BUILDING IS THE WRONG ANSWER, CONFIDENTLY GIVEN.
+      if (p && v.propertyId && p.id !== v.propertyId) {
+        return {
+          heading: `That verdict isn’t ${p.name}’s`,
+          paragraphs: [`The billing verdict I can read belongs to ${v.propertyName || 'another property'}, not ${p.name}. Open ${p.name}’s CAM tab so its reconciliation is the one on screen, then ask again.`],
+          citations: [], actions: [_actOpenProperty(p)],
+          confidence: { pct: 95, basis: 'workflow state — verdict scoped to another property' },
+        };
+      }
+
+      const r        = v.readiness;
+      const name     = v.propertyName || (p && p.name) || 'This property';
+      const blockers = Array.isArray(r.blockers) ? r.blockers.filter(Boolean) : [];
+      const propBl   = blockers.filter(b => b.scope === 'property');
+      const tenBl    = blockers.filter(b => b.scope !== 'property');
+
+      if (r.canBill) {
+        return {
+          heading: `${name} — nothing is blocking billing`,
+          paragraphs: [`The reconciliation reads "${r.label}". ${r.reason}`,
+                       `${v.billableNames.length} of ${v.tenantCount} tenant${v.tenantCount === 1 ? '' : 's'} can be billed from it.`],
+          citations: [], actions: p ? [_actOpenProperty(p)] : [],
+          confidence: { pct: 95, basis: 'billing readiness on the CAM screen' },
+        };
+      }
+
+      // Blocked. List every blocker, in the order the audit produced them, each
+      // labelled by the scope its own record carries. No ranking is invented
+      // and no remediation is promised that the finding did not state.
+      // A finding's title often already names its tenant ("Modified Gross
+      // tenant receiving shared CAM — ProActive Physical Therapy"), so the
+      // scope prefix is added only when it tells the reader something new.
+      const _line = (b) => {
+        const title = String(b.title || 'Unnamed exception');
+        if (b.scope === 'property') return `Property-wide — ${title}`;
+        const who = b.tenant || 'One tenant';
+        return title.includes(who) ? title : `${who} — ${title}`;
+      };
+      const bullets = propBl.map(_line).concat(tenBl.map(_line));
+      const paragraphs = [];
+      if (!blockers.length) {
+        // The verdict says blocked but named nothing. Report the verdict, and
+        // do not manufacture a cause for it.
+        paragraphs.push(`${name} reads "${r.label}". ${r.reason}`);
+        paragraphs.push('The verdict did not name the individual exceptions behind it, so I won’t guess at them — the reconciliation summary on the CAM tab lists what it has.');
+      } else {
+        paragraphs.push(`${v.billableNames.length} of ${v.tenantCount} tenant${v.tenantCount === 1 ? '' : 's'} can be billed. ${r.reason}`);
+        if (propBl.length && tenBl.length) {
+          paragraphs.push(`${propBl.length} of these ${propBl.length === 1 ? 'affects' : 'affect'} the whole reconciliation, so no statement issues until ${propBl.length === 1 ? 'it is' : 'they are'} resolved. The ${tenBl.length === 1 ? 'other is scoped to one tenant and holds' : 'others are scoped to individual tenants and hold'} only their own statements.`);
+        } else if (propBl.length) {
+          paragraphs.push(`${propBl.length === 1 ? 'This affects' : 'These affect'} the whole reconciliation, so no tenant statement can issue until resolved.`);
+        } else {
+          paragraphs.push('These are scoped to individual tenants — every other tenant’s statement is unaffected.');
+        }
+      }
+      return {
+        heading: `Why ${name} can’t be billed yet`,
+        bullets,
+        paragraphs,
+        // No citation. This is a derived audit verdict, not a clause anyone
+        // quoted, and a chip claiming a captured source would be a fabrication.
+        citations: [],
+        actions: p ? [_actOpenProperty(p)] : [_actPortfolio()],
+        confidence: { pct: 96, basis: 'billing readiness on the CAM screen (audit exposure)' },
       };
     },
   });
