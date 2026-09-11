@@ -102,6 +102,17 @@ window.AIWorkspace = (() => {
       // object the manager is looking at, so the two cannot drift. Injectable,
       // so the intent is testable without a browser.
       billingVerdict:    window.billingVerdictOnScreen || null,
+      // The variance breakdown the CAM banner last rendered, on the same terms
+      // as billingVerdict above: a getter, not a derivation. "Why wasn't the
+      // rest billed?" is answered from the object on screen, so the workspace
+      // and the banner cannot attribute the same gap differently.
+      varianceBreakdown: window.varianceBreakdownOnScreen || null,
+      // Reference facts about the building itself — manager, owner, parcel.
+      // PropertyReference.infoFor decides what is knowable: the property's own
+      // stored `info` when it has one, seeded values for the demo property, and
+      // null otherwise. The null is the point — it is what keeps a real
+      // property with no reference data from being handed invented facts.
+      PropertyReference: window.PropertyReference || null,
       now:               new Date(),
     };
   }
@@ -359,6 +370,7 @@ window.AIWorkspace = (() => {
     expirations: 'Lease Review Engine', knowledge_search: 'Lease Review Engine',
     tenant_charge: 'Reconciliation Engine', explain_recon: 'Reconciliation Engine',
     billing_blocked: 'Audit Exposure — Billing Readiness',
+    variance_unbilled: 'Variance Breakdown', property_info: 'Property Reference Record',
     compare_costs: 'Reconciliation Engine', forecast: 'Reconciliation Engine',
     recovered_most: 'Recovery Engine', disputes: 'Dispute Records',
     reserve_balances: 'Reserve Intelligence Engine', reserve_rules: 'Reserve Intelligence Engine',
@@ -381,6 +393,8 @@ window.AIWorkspace = (() => {
     tenant_charge: ['PropertyRecord.cam.results', 'lease terms', 'ReconciliationExplainer'],
     explain_recon: ['PropertyRecord.cam (pool, results, capped)'],
     billing_blocked: ['AuditExposure.billingReadiness (the verdict rendered on the CAM screen)'],
+    variance_unbilled: ['VarianceBreakdown (the breakdown rendered on the CAM screen)'],
+    property_info: ['PropertyReference.infoFor (property reference record)'],
     disputes: ['PropertyRecord.disputes'],
     compare_costs: ['invoice records'],
     recovered_most: ['computeRecoveredRevenue'],
@@ -767,7 +781,20 @@ window.AIWorkspace = (() => {
   // 4) "Why does <tenant> owe …" / explain a tenant's charge
   registerIntent({
     id: 'tenant_charge',
-    match: (s, ctx, { props }) => (/why does|owes?\b|charge/.test(s) && !!_findTenantByQuestion(s, props, ctx)) ||
+    // ALLOCATION IS THE SAME QUESTION AS CHARGE, ASKED IN THE PRODUCT'S OWN
+    // WORDS. This matched only "why does / owes / charge", so "how much CAM was
+    // allocated to Whole Health Market?" fell through — even though the handler
+    // below already answers it, from PropertyRecord.cam.results, joined on
+    // tenantId. The word the CAM screen prints over that number is ALLOCATED
+    // (its column header, and the "Calculated Tenant Allocation" KPI), so a
+    // manager asking it back in those words is asking the question this intent
+    // exists for.
+    //
+    // _findTenantByQuestion stays the gate in every branch: no tenant resolved,
+    // no tenant answer. That is what keeps "why was $99,523 not billed?" — a
+    // property-wide question with no tenant in it — out of here.
+    match: (s, ctx, { props }) => (/why does|owes?\b|charge|allocat|billed to|cam (?:amount|share|total)|how much/.test(s)
+                                    && !!_findTenantByQuestion(s, props, ctx)) ||
                                   (/explain (this )?(lease|tenant)/.test(s) && !!(ctx && ctx.tenantId)),
     handle: (q, ctx, { props, deps, record }) => {
       const hit = _findTenantByQuestion(q, props, ctx);
@@ -837,6 +864,18 @@ window.AIWorkspace = (() => {
     '(?:stopping|prevent(?:ing|s)?) .*bill',
     'why .*billable',                            // "why are 0 of 5 tenants billable?"
     'tenants? (?:not )?billable',
+    // THE SAME QUESTION ASKED FORWARDS. Every pattern above is phrased as a
+    // complaint — blocked, can't bill, not ready. A manager who simply wants to
+    // know where they stand asks "is this ready to bill?", and that fell to the
+    // honest fallback while the verdict it wanted was already on screen and
+    // already being read by this very intent. The handler is unchanged: it
+    // reports AuditExposure.billingReadiness either way, so an affirmative
+    // question gets the affirmative answer when the run is clear and the same
+    // blocker list when it is not.
+    'ready to bill', 'ready to invoice',
+    'can (?:i|we) bill', 'can (?:i|we) issue', 'able to bill',
+    'safe to bill', 'ok(?:ay)? to bill', 'clear to bill',
+    'issue (?:the )?statements?',
   ].join('|'));
   registerIntent({
     id: 'billing_blocked',
@@ -957,6 +996,149 @@ window.AIWorkspace = (() => {
         citations: [_camReportCitation(p)],
         actions: [_actOpenProperty(p)],
         confidence: { pct: 95, basis: 'reconciliation snapshot' },
+      };
+    },
+  });
+
+  // 5b) Where the unbilled part of the pool went.
+  //
+  // NOT the same question as billing_blocked, and the distinction is the whole
+  // point. "Why can't I bill?" is about EXCEPTIONS — audit findings that hold a
+  // statement. "Why wasn't the rest of the pool billed?" is about ATTRIBUTION —
+  // caps, coverage, eligibility, exclusions, rounding. A run can be fully
+  // blocked with a perfectly explained gap, or clear to bill with a large one.
+  //
+  // NO SECOND DERIVATION. The answer reads the breakdown the CAM banner
+  // rendered, through deps.varianceBreakdown, and prints that module's OWN
+  // labels off bk.lines. It never subtracts allocation from pool to infer a
+  // cause: that subtraction is the size of the gap, not its reason, and
+  // presenting it as a reason is the mistake this intent exists to avoid.
+  const _UNBILLED_RE = new RegExp([
+    'not (?:been )?billed', 'never billed', 'unbilled', 'un-billed',
+    'not (?:been )?allocated', 'unallocated', 'not recovered', 'unrecovered',
+    'rest of the (?:pool|expenses)', 'remainder of the (?:pool|expenses)',
+    'only part of the pool', 'where did .*(?:money|pool|expenses) go',
+    'what happened to the (?:rest|remainder|money)',
+    'shortfall', 'not charged to (?:any )?tenants?',
+  ].join('|'));
+  registerIntent({
+    id: 'variance_unbilled',
+    match: (s) => _UNBILLED_RE.test(s),
+    handle: (q, ctx, { props, deps }) => {
+      const p = _ctxProperty(ctx, props);
+      const getter = deps && deps.varianceBreakdown;
+      const v = (typeof getter === 'function') ? (function () {
+        try { return getter(); } catch (_) { return null; }
+      })() : null;
+
+      // NO BREAKDOWN IS NOT "NOTHING WAS LEFT OVER".
+      if (!v || !v.breakdown) {
+        return {
+          heading: 'No reconciliation is open',
+          paragraphs: ['I read the variance breakdown off the reconciliation on screen, and none has been run or opened in this session. Open the property’s CAM tab and run or load the reconciliation, then ask me again — I won’t guess at where the money went.'],
+          citations: [], actions: p ? [_actOpenProperty(p)] : [_actPortfolio()],
+          confidence: { pct: 95, basis: 'workflow state — no reconciliation rendered' },
+        };
+      }
+      // A BREAKDOWN ABOUT ANOTHER BUILDING IS THE WRONG ANSWER.
+      if (p && v.propertyId && p.id !== v.propertyId) {
+        return {
+          heading: `That breakdown isn’t ${p.name}’s`,
+          paragraphs: [`The variance breakdown I can read belongs to ${v.propertyName || 'another property'}, not ${p.name}. Open ${p.name}’s CAM tab so its reconciliation is the one on screen, then ask again.`],
+          citations: [], actions: [_actOpenProperty(p)],
+          confidence: { pct: 95, basis: 'workflow state — breakdown scoped to another property' },
+        };
+      }
+
+      const bk    = v.breakdown;
+      const name  = v.propertyName || (p && p.name) || 'This property';
+      const lines = Array.isArray(bk.lines) ? bk.lines.filter(Boolean) : [];
+
+      if (!(Math.abs(_num(bk.difference)) >= 0.005)) {
+        return {
+          heading: `${name} — the whole pool was allocated`,
+          paragraphs: [`${_fmt$(bk.pool)} went into the reconciliation and ${_fmt$(bk.billed)} was allocated to tenants. There is nothing left to explain.`],
+          citations: [], actions: p ? [_actOpenProperty(p)] : [],
+          confidence: { pct: 95, basis: 'variance breakdown on the CAM screen' },
+        };
+      }
+
+      // The module's own labels and amounts, in its own order (largest first).
+      const bullets = lines.map(l => `${l.label} — ${_fmt$(l.amount)}`);
+      const paragraphs = [
+        `${_fmt$(bk.difference)} of ${name}’s ${_fmt$(bk.pool)} expense pool was not billed to tenants. Here is where it went, largest first:`,
+      ];
+      // HONESTY FLAGS, CARRIED THROUGH RATHER THAN SMOOTHED OVER.
+      if (!bk.explained) {
+        paragraphs.push(`${_fmt$(bk.residual)} of that is "Not attributed" — the categories above do not account for it. That is the one line here that can mean the numbers are wrong, and it is worth checking against the invoice register.`);
+      }
+      if (_num(bk.unmatchedInvoices) > 0) {
+        paragraphs.push(`${bk.unmatchedInvoices} invoice${bk.unmatchedInvoices === 1 ? '' : 's'} could not be matched to an allocation with confidence, so this explanation is incomplete by whatever they carry.`);
+      }
+      paragraphs.push('None of this is an audit exception — it is where the pool went. Ask "why can’t I bill?" for the exceptions that hold statements.');
+      return {
+        heading: `Where ${name}’s unbilled ${_fmt$(bk.difference)} went`,
+        bullets, paragraphs,
+        // Derived attribution, not a quoted clause — a citation chip here would
+        // claim a source nobody captured.
+        citations: [],
+        actions: p ? [_actOpenProperty(p)] : [_actPortfolio()],
+        confidence: { pct: 95, basis: 'variance breakdown on the CAM screen' },
+      };
+    },
+  });
+
+  // 5c) Reference facts about the building — manager, owner, parcel, zoning.
+  //
+  // PropertyReference.infoFor IS THE AUTHORITY, and its null is the feature.
+  // It returns the property's own stored `info` when it has one, seeded values
+  // for the demo property, and null for a real property with neither — so a
+  // building whose manager nobody has recorded produces "not in the record"
+  // rather than a plausible name. Nothing here infers, and nothing falls back
+  // to unrelated metadata.
+  const _PROP_INFO_FIELDS = [
+    { key: 'propertyManager',   label: 'Property manager', re: /property manager|who manages|managing agent|manager of this/ },
+    { key: 'owner',             label: 'Owner',            re: /who owns|owner of|ownership entity|\bthe owner\b/ },
+    { key: 'parcelId',          label: 'Parcel / Tax ID',  re: /parcel|tax id|apn\b/ },
+    { key: 'address',           label: 'Address',          re: /address of|what.{0,12}address|where is (?:this|the) (?:property|building)/ },
+    { key: 'zoning',            label: 'Zoning',           re: /zoning|zoned/ },
+    { key: 'insuranceCarrier',  label: 'Insurance carrier', re: /insurance carrier|who insures|insurer/ },
+  ];
+  registerIntent({
+    id: 'property_info',
+    match: (s) => _PROP_INFO_FIELDS.some(f => f.re.test(s)),
+    handle: (q, ctx, { props, deps }) => {
+      const s = String(q || '').toLowerCase();
+      const field = _PROP_INFO_FIELDS.find(f => f.re.test(s));
+      if (!field) return null;
+      const p = _ctxProperty(ctx, props);
+      if (!p) {
+        return { heading: 'Which property?', paragraphs: [`Open a property (or name one) and I'll read its ${field.label.toLowerCase()} off the record.`],
+                 citations: [], actions: [_actPortfolio()], confidence: { pct: 95, basis: 'workflow state' } };
+      }
+      const PR = deps && deps.PropertyReference;
+      const info = (PR && typeof PR.infoFor === 'function') ? (function () {
+        try { return PR.infoFor(p); } catch (_) { return null; }
+      })() : null;
+      const raw = info ? info[field.key] : null;
+      const value = (raw == null || String(raw).trim() === '') ? null : String(raw).trim();
+
+      // THE HONEST MISS. No reference record, or the field is blank in it.
+      // Saying so is the answer; guessing from a name, an address or a vendor
+      // list would be a fabrication wearing this workspace's confident voice.
+      if (!value) {
+        return {
+          heading: `${field.label} isn’t in ${p.name}’s record`,
+          paragraphs: [`I don’t have a ${field.label.toLowerCase()} for ${p.name} in the verified property record, so I won’t guess at one. Add it on the Property tab and I’ll read it from there.`],
+          citations: [], actions: [_actOpenProperty(p)],
+          confidence: { pct: 95, basis: 'property reference record — field not present' },
+        };
+      }
+      return {
+        heading: `${p.name} — ${field.label.toLowerCase()}`,
+        paragraphs: [`${field.label}: ${value}.`],
+        citations: [], actions: [_actOpenProperty(p)],
+        confidence: { pct: 92, basis: 'property reference record' },
       };
     },
   });

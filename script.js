@@ -12672,6 +12672,11 @@ function _resultCardAnchorId(name) {
 // the panel opens from the same numbers the banner was rendered from rather than
 // re-deriving against globals that may since have moved.
 let _lastVarianceBreakdown = null;
+// Which property that breakdown belongs to, captured in the same pass that
+// builds it. See varianceBreakdownOnScreen: a breakdown about another building
+// is the wrong answer, confidently given.
+let _lastVarianceScopeId   = null;
+let _lastVarianceScopeName = null;
 // The invoice records the engine last ran on, captured for the same reason.
 // `_lastEngineInvoices` is everything behind the pool total; the second is the
 // subset that survived the CAM-year filter, so the panel can tell an out-of-year
@@ -13406,6 +13411,10 @@ function _buildReconciliationSummaryHtml(results, invoices, propName, engineInvo
       });
     } catch (_) { return null; }
   })();
+  // Scope stamped in the same pass, never re-read later from a global that may
+  // since have moved to another property.
+  _lastVarianceScopeId   = (currentProperty() || {}).id   || null;
+  _lastVarianceScopeName = (currentProperty() || {}).name || null;
   const _vbStep = (() => {
     try { return window.VarianceBreakdown ? window.VarianceBreakdown.nextStep(_lastVarianceBreakdown) : null; }
     catch (_) { return null; }
@@ -14153,6 +14162,29 @@ let _dwActiveDid     = null; // active dispute ID in workspace overlay
  */
 let _lastBillingVerdict = null;
 window.billingVerdictOnScreen = function () { return _lastBillingVerdict; };
+
+/**
+ * The variance breakdown behind the banner currently on screen, scoped to the
+ * property it was rendered for.
+ *
+ * Exactly the same arrangement, and for the same reason, as
+ * billingVerdictOnScreen above: Ask AI answers "why wasn't the rest billed?"
+ * from the object the manager is looking at rather than deriving a second
+ * opinion. VarianceBreakdown.derive is fed engineInvoices and the CAM-year
+ * subset inside the render — re-deriving it anywhere else would need those same
+ * two lists and would produce a figure that could drift from the banner.
+ *
+ * The scope travels with it so a caller can refuse a breakdown belonging to
+ * another building, which is the guard the billing verdict already carries.
+ */
+window.varianceBreakdownOnScreen = function () {
+  if (!_lastVarianceBreakdown) return null;
+  return {
+    propertyId:   _lastVarianceScopeId,
+    propertyName: _lastVarianceScopeName,
+    breakdown:    _lastVarianceBreakdown,
+  };
+};
 
 // ─── Dispute State ────────────────────────────────────────────────────────────
 let lastInvoices = []; // [{ id, vendor, category, amount }]
