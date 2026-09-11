@@ -466,7 +466,16 @@ const SUPABASE_MOCK = `
     const cta = el ? el.querySelector('.rcs-variance-cta') : null;
     return {
       found: !!el,
-      partialBranch: !!el && /Partial property coverage/.test(el.textContent),
+      // WHICH BRANCH, not which sentence.
+      //
+      // This read for the literal phrase "Partial property coverage" — the
+      // headline that asserted coverage was the cause of the whole gap, when on
+      // a capped property most of it is the caps. That headline is gone, so the
+      // branch is identified by what actually distinguishes it: it is NOT the
+      // amber diagnostic branch, and it carries the bucket list the
+      // coverage-incomplete branch renders from the breakdown.
+      partialBranch: !!el && !/Reconciliation variance detected/.test(el.textContent)
+                          && !!el.querySelector('.rcs-vb-list'),
       opens: !!el && /openVarianceDetails\(\)/.test(el.getAttribute('onclick') || ''),
       ctaText: cta ? cta.textContent.replace(/\s+/g, ' ').trim() : null,
       proRata: +lastResults.reduce((s, r) => s + r.proRataPercent, 0).toFixed(1),

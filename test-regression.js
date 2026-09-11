@@ -364,6 +364,7 @@ const SUITES = [
   { label: 'Workflow navigation',               cmd: 'node test-workflow-navigation.js' },
   { label: 'Billing blocker visibility',        cmd: 'node test-billing-blocker-visibility.js' },
   { label: 'Dispute status consistency',        cmd: 'node test-dispute-consistency.js' },
+  { label: 'Variance identity & attribution',    cmd: 'node test-variance-identity.js' },
   { label: 'Field provenance (e2e)',            cmd: 'node test-e2e-field-provenance.js' },
   { label: 'Lease validator: management fee cap',       cmd: 'node test-mgmt-fee-cap.js' },
   // D2-1 — AND THE SAME CHECK ON THE PANEL, WITH ARGUMENTS IT DID NOT BUILD.

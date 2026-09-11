@@ -869,10 +869,21 @@ const SUPABASE_MOCK = `
   // contradicts that finding on the same screen and quietly assigns the whole
   // variance to the landlord.
   console.log('\n── The unallocated remainder is unresolved, not absorbed ──');
+  // RE-ANCHORED, NOT RELAXED.
+  //
+  // The banner used to open "Partial property coverage — $X currently
+  // unallocated … because the loaded leases cover N% of the property", which
+  // named coverage as the cause of the whole gap. On a capped property most of
+  // that gap is the caps, so the banner now leads with the amount and lists the
+  // authoritative buckets. Every assertion below still holds and still means
+  // what it meant; only the two phrases that were deliberately retired are
+  // matched differently, and each is called out where it happens.
   const banner = await page.evaluate(() => {
     const el = document.getElementById('resultsBody') || document.body;
     const m = el.textContent.replace(/\s+/g, ' ')
-      .match(/Partial property coverage[^]{0,700}?own share\./);
+      // Captures from the leading amount, not from the phrase after it — the
+      // headline figure is the first thing the next assertion checks.
+      .match(/\$[\d,]+\.\d\d of the \$[\d,]+\.\d\d expense pool was not billed to tenants[^]{0,1200}?own share\./);
     return m ? m[0].trim() : null;
   });
   console.log('  banner:', banner ? banner.slice(0, 420) : '(not found)');
@@ -886,16 +897,24 @@ const SUPABASE_MOCK = `
     // $25,090.79. The assertion still pins an exact cent; it is the correct one.
     yes('it names the unallocated amount',
         /\$42,209\.21/.test(banner), banner.slice(0, 200));
-    yes('it calls the amount unallocated, not absorbed or expected',
-        /currently unallocated/i.test(banner) && !/\bExpected\b/.test(banner),
+    // Was `/currently unallocated/`. Same claim, current words: the money is
+    // stated as not billed, and still never as expected or absorbed.
+    yes('it calls the amount unbilled, not absorbed or expected',
+        /was not billed to tenants/i.test(banner)
+        && !/\bExpected\b/.test(banner) && !/\babsorb/i.test(banner),
         banner.slice(0, 200));
     yes('it does NOT tell the reader no action is needed',
         !/no action needed/i.test(banner),
         'the banner still closes with "no action needed" on an unresolved 62.7% gap');
     yes('it states that the cause has not been established',
         /has not been established/i.test(banner), banner.slice(0, 300));
+    // Was `/vacant space/`; the sentence now reads "whether that space is
+    // vacant or under a lease not yet uploaded". Both causes, neither asserted —
+    // which is the assertion, and it is the one that stops the uncovered share
+    // being reported as vacancy.
     yes('it offers both causes without asserting either',
-        /vacant space/i.test(banner) && /not yet uploaded/i.test(banner),
+        /\bvacant\b/i.test(banner) && /not yet uploaded/i.test(banner)
+        && /whether/i.test(banner),
         banner.slice(0, 300));
     yes('it names the resolution, matching the coverage finding',
         /upload any remaining leases and re-run/i.test(banner), banner.slice(0, 300));

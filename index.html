@@ -4008,6 +4008,26 @@
       border: 1px solid rgba(239,68,68,0.38);
     }
 
+    /* Where the unbilled money went — the authoritative variance buckets, on the
+       CAM summary rather than only behind its CTA. */
+    .rcs-vb-list {
+      list-style: none; margin: 9px 0 8px; padding: 0;
+      font-family: 'DM Sans', sans-serif;
+    }
+    .rcs-vb-item {
+      display: flex; align-items: baseline; gap: 10px; padding: 5px 0;
+      border-top: 1px solid rgba(var(--line-rgb, 255,255,255), 0.08);
+    }
+    .rcs-vb-item:first-child { border-top: 0; }
+    .rcs-vb-label { flex: 1 1 auto; line-height: 1.45; overflow-wrap: anywhere; }
+    .rcs-vb-amt {
+      flex: none; font-family: 'DM Mono', monospace; font-weight: 600;
+      color: var(--text-2); white-space: nowrap;
+    }
+    .rcs-vb-item--residual .rcs-vb-label,
+    .rcs-vb-item--residual .rcs-vb-amt { color: var(--c-fca5a5, #fca5a5); }
+    .rcs-vb-note { line-height: 1.55; margin-top: 4px; }
+
     /* Why billing is on hold — the blocking exceptions, named on the screen
        that produced the reconciliation rather than only inside a refused
        statement. Same palette as the blocked readiness badge above it. */

@@ -13062,6 +13062,100 @@ function _shareExplanation(r, inv) {
 // not move — but it is a stripped shape that dropped `camEligible` and `id`, so
 // it cannot say which invoices were held out of the allocation. The variance
 // panel needs both: the pool the screen shows, and the records behind it.
+/**
+ * The CAM summary's explanation of the unbilled difference, built from the
+ * authoritative VarianceBreakdown result.
+ *
+ * A NAMED FUNCTION so it can be exercised directly. It began as an inline IIFE
+ * inside _buildReconciliationSummaryHtml, which meant its behaviour could only
+ * be asserted by grepping the source — and mutation testing proved that hollow:
+ * flipping `if (_residAmt >= 0.005)` to `if (false)`, or reading the uncovered
+ * figure out of the CAPS bucket, left every string in place and every source
+ * assertion green. Those are precisely the confusions this slice exists to
+ * prevent, so they are now tested by calling this with a breakdown and reading
+ * what comes out.
+ *
+ * PURE: derives nothing, computes no CAM figure, and reads only what it is
+ * handed.
+ */
+function _varianceExplanationHtml(bk, ctx) {
+  const { variance, totalBilled, totalPool, proRataSum } = ctx || {};
+  const _openAttrs = (ctx && ctx.openAttrs) || '';
+  // These locals are deliberately NOT named after the caller's variables.
+  // test-variance-breakdown.js finds the caller's CTA guard by searching for
+  // its declaration, and a same-named local declared earlier in the file
+  // silently captured that search — turning a real assertion green-to-red
+  // against code that had not changed.
+  const _ctaHtml   = (ctx && ctx.cta) || '';
+
+    // WHERE DID THE MONEY GO — FROM THE BREAKDOWN, NOT FROM THE BRANCH NAME.
+    //
+    // This branch fires BECAUSE coverage is below 98%, and it used to assert
+    // that coverage was therefore the explanation: "Partial property
+    // coverage — $99,523.23 currently unallocated … because the loaded leases
+    // cover 90.0% of the property", with caps demoted to a trailing clause
+    // lumped in with two other causes. On the demo that is backwards. The
+    // authoritative decomposition, already computed a few lines above and
+    // sitting in _lastVarianceBreakdown, says:
+    //
+    //     Reduced by a CAM cap                       $75,548.60   (75.9%)
+    //     Outside the 90.0% covered by loaded leases  $18,830.00   (18.9%)
+    //     Excluded from CAM by a lease                 $5,144.60
+    //     Rounding to the nearest cent                     $0.03
+    //
+    // A cap reduction and an uncovered share are not interchangeable: one is
+    // money the leases say a tenant does not owe, the other is property
+    // expense with no paying tenant. So the banner now lists the buckets the
+    // run actually produced, in the module's own labels, and names those two
+    // in prose only when they are present.
+    //
+    // The other branch already read this breakdown. The asymmetry was the
+    // whole defect. No figure here is computed locally — variance,
+    // totalBilled, totalPool and proRataSum are untouched.
+      const _hdr = `&#x1F4D0; <strong>${fmt(variance)} of the ${fmt(totalPool)} expense pool was not billed to tenants.</strong>`;
+    if (!bk || !Array.isArray(bk.lines) || !bk.lines.length) {
+      // No breakdown to read. Say what is known and claim no cause — the
+      // reason this branch existed is that coverage was being asserted
+      // without evidence, and asserting it here would repeat that.
+      return `<div style="background:var(--theme-surface);border:1px solid rgba(148,163,184,0.28);color:var(--text-3);padding:10px 14px;border-radius:8px;margin-bottom:12px;font-size:0.85rem;">
+        ${_hdr} Total billed (${fmt(totalBilled)}) is less than the expense pool, and the loaded leases cover ${proRataSum.toFixed(1)}% of the property. MainStreet could not break this difference down into its causes on this run, so it is not attributing one. No tenant charge is affected: each is billed only its own share.
+      </div>`;
+    }
+    const _byKey = (k) => (bk.lines.find(l => l && l.key === k) || null);
+    const _capsLine = _byKey('caps');
+    const _uncovLine = _byKey('uncovered');
+    const _caps  = _capsLine  ? Number(_capsLine.amount)  || 0 : 0;
+    const _uncov = _uncovLine ? Number(_uncovLine.amount) || 0 : 0;
+    // Every bucket the run produced, in the module's own words, largest
+    // first. Ordering by size is not a claim about cause — the label carries
+    // the cause, and the reader is the one comparing magnitudes.
+    const _rows = bk.lines
+      .filter(l => l && Math.abs(Number(l.amount) || 0) >= 0.005)
+      .slice()
+      .sort((a, b) => Math.abs(Number(b.amount) || 0) - Math.abs(Number(a.amount) || 0))
+      .map(l => `<li class="rcs-vb-item${l.key === 'residual' ? ' rcs-vb-item--residual' : ''}">
+        <span class="rcs-vb-label">${esc(l.label)}</span>
+        <span class="rcs-vb-amt">${fmt(l.amount)}</span>
+      </li>`).join('');
+    // Prose for the two the manager most often conflates — each only when it
+    // is actually present, and neither ever described as the other.
+    const _notes = [];
+    if (_caps > 0) _notes.push(`The ${fmt(_caps)} reduced by a CAM cap is money the leases say those tenants do not owe.`);
+    if (_uncov > 0) _notes.push(`The ${fmt(_uncov)} outside the covered share is property expense with no paying tenant allocation. Whether that space is vacant or under a lease not yet uploaded has not been established — upload any remaining leases and re-run to settle it.`);
+    if (_caps > 0 && _uncov > 0) _notes.push('These are different things and neither explains the other.');
+    const _resid = _byKey('residual');
+    const _residAmt = _resid ? Math.abs(Number(_resid.amount) || 0) : 0;
+    if (_residAmt >= 0.005) _notes.push(`${fmt(_residAmt)} is not attributed to any of these causes — that part is worth checking against the invoice register.`);
+    if (Number(bk.unmatchedInvoices) > 0) _notes.push(`${bk.unmatchedInvoices} invoice${bk.unmatchedInvoices === 1 ? '' : 's'} could not be matched to an allocation, so the figures above do not account for ${bk.unmatchedInvoices === 1 ? 'it' : 'them'}.`);
+    _notes.push('No tenant charge changes: each is billed only its own share.');
+    return `<div${_openAttrs} style="background:var(--theme-surface);border:1px solid rgba(148,163,184,0.28);color:var(--text-3);padding:10px 14px;border-radius:8px;margin-bottom:12px;font-size:0.85rem;">
+      ${_hdr}
+      <ul class="rcs-vb-list">${_rows}</ul>
+      <div class="rcs-vb-note">${esc(_notes.join(' '))}</div>
+      ${_ctaHtml}
+    </div>`;
+}
+
 function _buildReconciliationSummaryHtml(results, invoices, propName, engineInvoices, reconciledInvoices) {
   if (!results || !results.length) return '';
 
@@ -13250,23 +13344,10 @@ function _buildReconciliationSummaryHtml(results, invoices, propName, engineInvo
   const varianceBanner = variance <= 0.05
     ? ''
     : _coverageIncomplete
-      ? `<div${_vbOpen} style="background:var(--theme-surface);border:1px solid rgba(148,163,184,0.28);color:var(--text-3);padding:10px 14px;border-radius:8px;margin-bottom:12px;font-size:0.85rem;">
-        <!-- Was "Expected — partial property coverage ... no action needed."
-             The arithmetic was right and the certainty was not. At 37.3%
-             coverage the system has NOT established what the remaining 62.7%
-             is: the coverage finding says so explicitly and asks the reader to
-             upload the remaining leases and re-run, because the answer decides
-             whether that share is vacant space the landlord absorbs or a
-             tenant obligation missing from the reconciliation. A banner
-             calling the same figure expected and closing with "no action
-             needed" contradicts that finding on the same screen, and quietly
-             assigns the whole variance to the landlord.
-             The numbers are untouched — totalBilled, totalPool, variance and
-             proRataSum are exactly as they were. Only the claim about what
-             they mean has changed. -->
-        &#x1F4D0; <strong>Partial property coverage — ${fmt(variance)} currently unallocated.</strong> Total billed (${fmt(totalBilled)}) is less than the expense pool (${fmt(totalPool)}) because the loaded leases cover ${proRataSum.toFixed(1)}% of the property. Whether that remainder is vacant space the landlord absorbs, or space under a lease not yet uploaded, has not been established — upload any remaining leases and re-run to resolve it. Invoices marked not CAM-eligible, excluded by a lease, or reduced by a cap are also outside the billed total. No tenant charge changes when this is resolved: each is billed only its own share.
-        ${_vbCta}
-      </div>`
+      ? _varianceExplanationHtml(_lastVarianceBreakdown, {
+          variance, totalBilled, totalPool, proRataSum,
+          openAttrs: _vbOpen, cta: _vbCta,
+        })
       : `<div${_vbOpen} style="background:var(--bgc-431407);border:1px solid #f97316;color:var(--c-fed7aa);padding:10px 14px;border-radius:8px;margin-bottom:12px;font-size:0.85rem;">
         <!-- Was ". Re-check invoice amounts or re-run allocation."
              The shares add up here, so coverage is not the explanation — but

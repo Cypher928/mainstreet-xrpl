@@ -373,12 +373,24 @@ t('[source] partial coverage does not tell the user to re-check invoices', () =>
   // The assertions also now test the intent rather than wording that has since
   // been revised twice: this branch must not give defect advice, and it must
   // still tell the reader their tenant charges are unaffected.
-  const i = scriptCode.indexOf('const varianceBanner');
-  const j = scriptCode.indexOf('Reconciliation variance detected', i);
-  ok(i !== -1 && j !== -1, 'the variance banner branches were not found');
-  const expectedBranch = scriptCode.slice(i, j).replace(/<!--[\s\S]*?-->/g, '');
-  ok(/Partial property coverage/.test(expectedBranch),
-     'the partial-coverage branch no longer names partial coverage');
+  // THIRD REVISION, AND THE WORDING ASSERTION IS NOW GONE FOR GOOD.
+  //
+  // The note above says these test intent rather than wording — but one of them
+  // still required the literal phrase "Partial property coverage", and that
+  // headline has since been retired on purpose: it named coverage as the cause
+  // of the WHOLE gap, when on a capped property most of it is the caps. The
+  // coverage-incomplete branch now delegates to _varianceExplanationHtml, which
+  // lists the authoritative buckets, so that is where the copy lives and what
+  // is read here.
+  const i = scriptCode.indexOf('function _varianceExplanationHtml');
+  ok(i !== -1, 'the coverage-branch explanation builder was not found');
+  const expectedBranch = scriptCode.slice(i, scriptCode.indexOf('\n}\n', i))
+    .replace(/<!--[\s\S]*?-->/g, '');
+  // The branch must attribute from the breakdown rather than assert one cause.
+  ok(/bk\.lines/.test(expectedBranch),
+     'the partial-coverage branch no longer attributes from the authoritative breakdown');
+  ok(!/because the loaded leases cover/.test(expectedBranch),
+     'the partial-coverage branch is blaming coverage for the whole gap again');
   ok(!/Re-check invoice amounts or re-run allocation/.test(expectedBranch),
      'the partial-coverage branch still gives defect advice');
   ok(/No tenant charge changes/.test(expectedBranch),

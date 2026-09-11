@@ -67,6 +67,127 @@
     ].join('|');
   }
 
+  /**
+   * MATCHING AN ALLOCATION TO AN INVOICE WHEN THE TWO SIDES CARRY DIFFERENT
+   * IDENTITY.
+   *
+   * invoiceKey() prefers `id`, which is right for a set of records of the SAME
+   * shape — and that is what it is used for elsewhere, including the year-filter
+   * set script.js persists into a snapshot, so its output must not move.
+   *
+   * It is the wrong rule for matching ACROSS the two shapes. On the demo
+   * property the engine's stored line items carry `id: null` and key as
+   * `meridian property insurance|insurance|4200000`, while the register rows
+   * carry `id: 'inv-yovet8pa-0'` and key as `id:inv-yovet8pa-0`. The two can
+   * never meet, so every one of the 26 invoices read as allocated $0.00 on a
+   * reconciliation that had billed $88,776.77 — and because the residue is a
+   * measurement rather than a plug, the whole allocated pool landed in
+   * "Rounding to the nearest cent" ($169,470.00) with "Not attributed" swinging
+   * to −$164,325.37 to close the identity.
+   *
+   * THE RULE, strongest available identity first, and never a guess:
+   *
+   *   1  id        both sides carry the same authoritative id      → exact
+   *   2  dated     vendor|category|cents|date                      → the same
+   *                invoice, distinguished from its own repeats
+   *   3  loose     vendor|category|cents                           → ONLY when
+   *                exactly one dated group answers to it
+   *
+   * Step 2 exists because step 3 is genuinely ambiguous on real data: this
+   * property bills Cascade Property Management $7,600 four times and WatchPoint
+   * Security $2,850 four times. Under the loose key alone those four invoices
+   * merge, and each of the four register rows would then read the merged total —
+   * turning "allocated $0" into four-times-over-attribution, a different wrong
+   * answer. The date is already on both sides, so it separates them without
+   * inventing anything.
+   *
+   * Step 3 refuses rather than guesses. If two or more distinct dated groups
+   * collapse onto one loose key, no allocation is returned for it: the invoice
+   * reads as unmatched, which is what it honestly is, and the unattributed line
+   * — the one that means "the numbers may be wrong" — says so.
+   */
+  function _datePart(inv) {
+    var d = (inv && (inv.invoiceDate || inv.date)) || '';
+    return String(d).trim().slice(0, 10);
+  }
+  function _looseKey(inv, toCents) {
+    if (!inv) return '';
+    return [
+      String(inv.vendorName || inv.vendor || '').toLowerCase().trim(),
+      String(inv.category || '').toLowerCase().trim(),
+      toCents(inv.amount),
+    ].join('|');
+  }
+
+  /**
+   * Index the allocations the run produced, under every identity the line items
+   * actually carry. Returns a lookup that takes a register invoice and answers
+   * in cents, or null when it will not guess.
+   */
+  function buildAllocationIndex(results, toCents, opts) {
+    var field = (opts && opts.list)   || 'includedInvoices';
+    var amt   = (opts && opts.amount) || 'share';
+    var raw   = !!(opts && opts.rawCents);
+    var byId    = new Map();   // 'id:x'                    -> cents
+    var byDated = new Map();   // vendor|cat|cents|date      -> cents
+    var loose   = new Map();   // vendor|cat|cents           -> { cents, dated:Set }
+
+    (Array.isArray(results) ? results : []).forEach(function (r) {
+      var items = (r && Array.isArray(r[field])) ? r[field] : [];
+      // MULTIPLICITY, MEASURED WITHIN ONE TENANT.
+      //
+      // A shared invoice produces one line item per tenant, so a loose key
+      // appearing many times across results says nothing about how many
+      // invoices are behind it. WITHIN a single tenant's list each invoice
+      // appears at most once — so a loose key occurring twice there is proof of
+      // two distinct invoices wearing the same key. That is the only reliable
+      // count available, and without it the guard below cannot fire: two
+      // undated, identical invoices each read the merged total and the panel
+      // over-attributes by exactly the number of duplicates.
+      var seenHere = new Map();
+      items.forEach(function (li) {
+        if (!li) return;
+        // `excludedShares` already records cents; a tenant line records dollars.
+        var cents = raw ? (Number(li[amt]) || 0) : (toCents(li[amt]) || 0);
+        var lk    = _looseKey(li, toCents);
+        var dt    = _datePart(li);
+        var dk    = dt ? lk + '|' + dt : null;
+        if (li.id) {
+          var ik = 'id:' + String(li.id);
+          byId.set(ik, (byId.get(ik) || 0) + cents);
+        }
+        if (dk) byDated.set(dk, (byDated.get(dk) || 0) + cents);
+        seenHere.set(lk, (seenHere.get(lk) || 0) + 1);
+        var e = loose.get(lk) || { cents: 0, dated: new Set(), maxPerResult: 0 };
+        e.cents += cents;
+        if (dk) e.dated.add(dk);
+        e.maxPerResult = Math.max(e.maxPerResult, seenHere.get(lk));
+        loose.set(lk, e);
+      });
+    });
+
+    return function lookup(inv) {
+      if (!inv) return null;
+      if (inv.id) {
+        var ik = 'id:' + String(inv.id);
+        if (byId.has(ik)) return byId.get(ik);
+      }
+      var lk = _looseKey(inv, toCents);
+      var dt = _datePart(inv);
+      if (dt) {
+        var dk = lk + '|' + dt;
+        if (byDated.has(dk)) return byDated.get(dk);
+      }
+      var e = loose.get(lk);
+      if (!e) return null;
+      // The loose key stands for ONE invoice only when nothing says otherwise:
+      // no more than one dated group answers to it, and no single tenant's list
+      // held it twice. Anything else is a coin toss, which is not an answer.
+      if (e.dated.size <= 1 && e.maxPerResult <= 1) return e.cents;
+      return null;
+    };
+  }
+
   function _round(n) { return Math.round((Number(n) || 0) * 100) / 100; }
 
   /**
@@ -142,12 +263,13 @@
     const capTotal   = _round(results.reduce((s, r) => s + (r.capApplied ? (Number(r.capAdjustment) || 0) : 0), 0));
 
     // ── What each invoice actually contributed, read off the results ─────────
-    const allocatedByInvoice = new Map();
-    results.forEach(r => {
-      (Array.isArray(r.includedInvoices) ? r.includedInvoices : []).forEach(li => {
-        const k = invoiceKey(li);
-        allocatedByInvoice.set(k, (allocatedByInvoice.get(k) || 0) + (Number(li.share) || 0));
-      });
+    //
+    // Matched through buildAllocationIndex rather than invoiceKey, because the
+    // two sides carry different identity — see the note on that function. This
+    // is the legacy (non-cent) path and uses the same rule, so both precisions
+    // answer the same question the same way.
+    const allocatedLookupLegacy = buildAllocationIndex(results, function (v) {
+      return Math.round((Number(v) || 0) * 100);
     });
 
     // ── Per-invoice attribution ──────────────────────────────────────────────
@@ -251,35 +373,36 @@
     // D8 — WHAT EACH LEASE'S EXCLUSION SCHEDULE ACTUALLY WITHHELD, per invoice,
     // read from the engine's own decision. Inferring it by subtraction is what
     // put a −$1.06 rounding artefact under the label "Excluded by a lease".
-    const excludedByInvoice = new Map();
-    if (precision === 'cents') {
-      results.forEach(r => {
-        (Array.isArray(r.excludedShares) ? r.excludedShares : []).forEach(e => {
-          if (!e) return;
-          const k = invoiceKey(e);
-          excludedByInvoice.set(k, (excludedByInvoice.get(k) || 0) + (Number(e.cents) || 0));
-        });
-      });
-    }
+    // Matched by the same rule as the allocations: an excluded share is recorded
+    // against the same line-item shape, so keying it on `id` had the identical
+    // cross-shape failure.
+    const excludedLookup = (precision === 'cents' && MC)
+      ? buildAllocationIndex(results, function (v) { return MC.toCents(v) || 0; },
+                             { list: 'excludedShares', amount: 'cents', rawCents: true })
+      : null;
     // Billed cents per invoice, summed from the tenant lines. THIS IS AN INPUT
     // to the decomposition and is never adjusted by it — see the note on
     // largestRemainder in money-cents.js, and test-cent-policy.js.
-    const allocatedCentsByInvoice = new Map();
-    if (precision === 'cents') {
-      results.forEach(r => {
-        (Array.isArray(r.includedInvoices) ? r.includedInvoices : []).forEach(li => {
-          const k = invoiceKey(li);
-          allocatedCentsByInvoice.set(k, (allocatedCentsByInvoice.get(k) || 0) + (MC.toCents(li.share) || 0));
-        });
-      });
-    }
+    const allocatedCentsLookup = (precision === 'cents' && MC)
+      ? buildAllocationIndex(results, function (v) { return MC.toCents(v) || 0; })
+      : null;
+    // How many register invoices the index would not commit to. Not used to move
+    // a figure — it is carried out on the result so a surface can say "N could
+    // not be matched" instead of implying the gap is fully explained.
+    let unmatchedInvoices = 0;
+    // How much of the excluded total no invoice could claim. Carried out so a
+    // surface can say the exclusion is known in aggregate but not per invoice.
+    let excludedUnattributed = 0;
     let roundingResidue = 0, excludedByLease = 0, unclaimed = 0;
 
     const rows = invoices.map(inv => {
       const amount    = precision === 'cents' ? MC.fromCents(MC.toCents(inv.amount) || 0) : _round(inv.amount);
+      const _allocC   = allocatedCentsLookup ? allocatedCentsLookup(inv) : null;
+      const _allocL   = precision === 'cents' ? null : allocatedLookupLegacy(inv);
+      if ((precision === 'cents' ? _allocC : _allocL) === null) unmatchedInvoices++;
       const allocated = precision === 'cents'
-        ? MC.fromCents(allocatedCentsByInvoice.get(invoiceKey(inv)) || 0)
-        : _round(allocatedByInvoice.get(invoiceKey(inv)) || 0);
+        ? MC.fromCents(_allocC || 0)
+        : _round((_allocL || 0) / 100);
       const eligible  = isEligible(inv);
       // The engine splits on this threshold; read it, do not re-derive it.
       const isDirect  = (Number(inv.matchConfidence) || 0) >= 75;
@@ -311,8 +434,8 @@
         const key       = invoiceKey(inv);
         const held      = isDirect ? occHeld.get(key) : undefined;
         const amtC      = MC.toCents(inv.amount) || 0;
-        const allocC    = allocatedCentsByInvoice.get(key) || 0;
-        const exclC     = excludedByInvoice.get(key) || 0;
+        const allocC    = _allocC || 0;
+        const exclC     = (excludedLookup ? excludedLookup(inv) : null) || 0;
 
         // Exact parts, in cents, still carrying their fractions.
         let uncoveredE, notOccupiedE, unclaimedE;
@@ -426,6 +549,42 @@
     notOccupiedShared = _round(notOccupiedShared);
     notOccupiedDirect = _round(notOccupiedDirect);
     claimShortfall = _round(claimShortfall);
+
+    // AN EXCLUSION THAT COULD NOT BE PINNED TO AN INVOICE IS STILL AN EXCLUSION.
+    //
+    // `excludedShares` records what each lease's schedule withheld — but the
+    // entries carry neither an amount nor a date (`{id:null, vendorName,
+    // category, scope, cents}`), so they cannot be matched to a specific invoice
+    // at all, and MUST NOT be guessed at: this property withholds the management
+    // category from a tenant that is billed four separate $7,600 management
+    // invoices, and nothing in the record says which cents belong to which.
+    //
+    // The AGGREGATE, though, is exact — it is a sum of stored cents. So the part
+    // no invoice claimed moves into the excluded bucket where it belongs, and out
+    // of the residue, which was reporting $5,144.60 of a lease exclusion under
+    // the label "Rounding to the nearest cent".
+    //
+    // This RESTORES the residue as a measurement rather than plugging it. The
+    // residue is "what the takers were owed, less what they were billed"; with
+    // exclC reading zero, `takersE` was overstated by exactly the exclusion, so
+    // the residue was overstated by exactly the same amount. No per-invoice claim
+    // is made and no allocation moves.
+    if (MC && precision === 'cents') {
+      let aggExclC = 0;
+      results.forEach(r => {
+        (Array.isArray(r.excludedShares) ? r.excludedShares : []).forEach(e => {
+          if (e) aggExclC += Number(e.cents) || 0;
+        });
+      });
+      const attributedC   = MC.toCents(excludedByLease) || 0;
+      const unattributedC = Math.max(0, aggExclC - attributedC);
+      if (unattributedC > 0) {
+        excludedByLease += MC.fromCents(unattributedC);
+        roundingResidue -= MC.fromCents(unattributedC);
+        excludedUnattributed = MC.fromCents(unattributedC);
+      }
+    }
+
     excludedByLease = _round(excludedByLease);
     unclaimed       = _round(unclaimed);
     roundingResidue = _round(roundingResidue);
@@ -482,6 +641,11 @@
       // record reads exactly as it did; under the cent policy it is always 0 and
       // these three carry the money instead.
       excludedByLease, unclaimed, roundingResidue,
+      // How many register invoices the identity rule would not commit to. Zero
+      // on a healthy run. Non-zero means the explanation below is incomplete by
+      // that much, and a surface must say so rather than implying the buckets
+      // account for everything.
+      unmatchedInvoices, excludedUnattributed,
       // D12 — 'cents' or 'legacy'. Which arithmetic produced this explanation,
       // stated rather than implied, so a surface can say so.
       precision,
