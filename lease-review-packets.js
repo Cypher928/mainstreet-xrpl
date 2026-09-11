@@ -9,6 +9,21 @@
  */
 window.LeaseReviewPackets = (() => {
 
+  /**
+   * M7 — one definition of an open dispute, read at call time.
+   *
+   * Four sites here read `status === 'open'`, so a packet could report "no open
+   * disputes" on a tenant whose charge was sitting in docs_requested, and the
+   * Risk section's `resolved` list — `status !== 'open'` — printed that same
+   * dispute under resolved history. A packet is something a landlord forwards
+   * to a lender or a tenant, so both readings travel.
+   */
+  const _isOpenDispute = (d) => {
+    const DS = (typeof window !== 'undefined') && window.DisputeStatus;
+    if (DS && typeof DS.isOpen === 'function') return DS.isOpen(d);
+    return !!d && (d.status === 'open' || d.status === 'docs_requested');
+  };
+
   // ── DISPLAY HELPERS ───────────────────────────────────────────────────────
 
   function _esc(s) {
@@ -140,7 +155,7 @@ window.LeaseReviewPackets = (() => {
     if (missingCrit.length > 0) unresolvedItems.push(`${missingCrit.length} lease${missingCrit.length !== 1 ? 's' : ''} missing critical fields (sqft or dates) — reconciliation may be inaccurate.`);
 
     // Open disputes
-    const openDisp = disputes.filter(d => d.status === 'open');
+    const openDisp = disputes.filter(_isOpenDispute);
     if (openDisp.length > 0) {
       const exposure = openDisp.reduce((s, d) => s + (parseFloat(d.tenantShare) || 0), 0);
       criticalItems.push(`${openDisp.length} open dispute${openDisp.length !== 1 ? 's' : ''} totaling ${_fmt(exposure)} require resolution before reconciliation close.`);
@@ -362,8 +377,8 @@ window.LeaseReviewPackets = (() => {
 
   function buildDisputeSummary(property) {
     const allDisputes = Array.isArray(property.disputes) ? property.disputes : [];
-    const open        = allDisputes.filter(d => d.status === 'open');
-    const resolved    = allDisputes.filter(d => d.status !== 'open');
+    const open        = allDisputes.filter(_isOpenDispute);
+    const resolved    = allDisputes.filter(d => !_isOpenDispute(d));
     const totalExposure = open.reduce((s, d) => s + (parseFloat(d.tenantShare) || 0), 0);
 
     const now = Date.now();
@@ -559,7 +574,7 @@ window.LeaseReviewPackets = (() => {
   function _deriveMetricsLite(p) {
     const disputes   = Array.isArray(p.disputes)  ? p.disputes  : [];
     const tenants    = Array.isArray(p.tenants)   ? p.tenants   : [];
-    const openDisp   = disputes.filter(d => d.status === 'open').length;
+    const openDisp   = disputes.filter(_isOpenDispute).length;
     const amdCount   = tenants.reduce((s, t) => s + (t.amendments || []).length, 0);
     return {
       health:       { status: 'unknown', score: null },
@@ -860,7 +875,7 @@ window.LeaseReviewPackets = (() => {
 
     // Lease quality
     const totalAmendments  = activeTenants.reduce((s, t) => s + (Array.isArray(t.amendments) ? t.amendments.length : 0), 0);
-    const openDisputes     = disputes.filter(d => d.status === 'open');
+    const openDisputes     = disputes.filter(_isOpenDispute);
     const leaseExceptions  = activeTenants.reduce((s, t) => s + ((t._edgeCases?.edgeCases || []).length), 0);
 
     // Document completeness

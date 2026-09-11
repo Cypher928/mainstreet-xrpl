@@ -901,6 +901,8 @@
 
     .disputes-open-head     { color: var(--c-f87171); border-color: rgba(239,68,68,0.2); }
     .disputes-resolved-head { color: var(--c-4ade80); border-color: rgba(34,197,94,0.2); }
+    /* Neither open nor resolved — a status the lifecycle table does not know. */
+    .disputes-unknown-head  { color: var(--c-fbbf24, #fbbf24); border-color: rgba(251,191,36,0.25); }
     .resolved-badge {
       display: inline-flex; align-items: center; gap: 5px;
       padding: 3px 10px; background: rgba(34,197,94,0.15); color: var(--c-4ade80);

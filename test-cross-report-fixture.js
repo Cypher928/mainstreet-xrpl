@@ -198,9 +198,23 @@ function baseSandbox() {
   };
 }
 
+// THE SHARED DISPUTE PREDICATE, REAL, IN EVERY SANDBOX.
+//
+// script.js resolves "is this dispute open?" through _disputeIsOpen /
+// _disputeClass / _openDisputes, which delegate to dispute-status.js. A function
+// extracted on its own loses them and dies with "_openDisputes is not defined"
+// — which is how this fixture failed the first time the reports were converted.
+//
+// Extracted from script.js rather than re-implemented here, and DisputeStatus is
+// loaded for real rather than stubbed, for the same reason CamPool is above: a
+// stub would let this fixture agree with a script.js that had drifted from the
+// authority.
+const DISPUTE_HELPERS_SRC = fn('_disputeIsOpen') + fn('_disputeClass') + fn('_openDisputes');
+
 function run(box, src, expr) {
+  box.window = Object.assign(box.window || {}, { DisputeStatus: require('./dispute-status.js') });
   vm.createContext(box);
-  vm.runInContext(src + `\nthis.__out = (${expr});`, box);
+  vm.runInContext(DISPUTE_HELPERS_SRC + src + `\nthis.__out = (${expr});`, box);
   return box.__out;
 }
 

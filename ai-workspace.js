@@ -96,6 +96,7 @@ window.AIWorkspace = (() => {
       // same property. Injectable, so the rewiring is testable without a browser.
       PropertyRecord:    window.PropertyRecord || null,
       FieldProvenance:   window.FieldProvenance || null,
+      DisputeStatus:     window.DisputeStatus || null,
       // The billing verdict the CAM screen last rendered. A getter, not a
       // derivation: the workspace answers "why can't I bill?" from the same
       // object the manager is looking at, so the two cannot drift. Injectable,
@@ -291,6 +292,17 @@ window.AIWorkspace = (() => {
   }
 
   // ── context resolution ──────────────────────────────────────────────────
+
+  /**
+   * M7 — one definition of an open dispute. Injectable through deps so the
+   * answer is the same in a browser and in a headless test.
+   */
+  function _isOpenDispute(d, deps) {
+    const DS = (deps && deps.DisputeStatus)
+      || ((typeof window !== 'undefined') && window.DisputeStatus);
+    if (DS && typeof DS.isOpen === 'function') return DS.isOpen(d);
+    return !!d && (d.status === 'open' || d.status === 'docs_requested');
+  }
 
   function _ctxProperty(ctx, props) {
     if (ctx && ctx.propertyId) {
@@ -953,9 +965,15 @@ window.AIWorkspace = (() => {
   registerIntent({
     id: 'disputes',
     match: (s) => /dispute|underpay/.test(s),
-    handle: (q, ctx, { props, record }) => {
+    handle: (q, ctx, { props, record, deps }) => {
       const scoped = _scopedProps(ctx, props);
-      const open = [], resolved = [], citations = [];
+      const open = [], resolved = [], unrecognised = [], citations = [];
+      const _classOf = (d) => {
+        const DS = (deps && deps.DisputeStatus)
+          || ((typeof window !== 'undefined') && window.DisputeStatus);
+        if (DS && typeof DS.classify === 'function') return DS.classify(d && d.status);
+        return _isOpenDispute(d, deps) ? 'open' : 'closed';
+      };
       for (const p of scoped) {
         // K — dispute records come from the record. They are real stored records
         // either way; reading them here keeps one path to them.
@@ -963,7 +981,13 @@ window.AIWorkspace = (() => {
         const list = (rec && Array.isArray(rec.disputes)) ? rec.disputes : (p.disputes || []).filter(Boolean);
         for (const d of list) {
           const line = `${d.tenantName || 'Tenant'} — ${d.vendor || d.category || 'charge'} ${_num(d.tenantShare ?? d.amount) ? '(' + _fmt$(d.tenantShare ?? d.amount) + ')' : ''} · ${d.status}`;
-          (d.status === 'open' || d.status === 'docs_requested' ? open : resolved).push(line);
+          // M7 — the same answer, asked of the authority rather than spelled out
+          // again here. This restatement happened to agree with DisputeStatus,
+          // but agreeing by coincidence is how the original four definitions
+          // drifted apart; `resolved` below is a HISTORY list, so a status the
+          // lifecycle does not recognise must not fall into it by default.
+          const _k = _classOf(d);
+          (_k === 'open' ? open : _k === 'closed' ? resolved : unrecognised).push(line);
           citations.push({ source: 'Dispute Record', detail: `${d.tenantName || ''} · ${p.name}`, quote: d.reason ? String(d.reason).slice(0, 140) : null });
         }
       }
@@ -971,6 +995,10 @@ window.AIWorkspace = (() => {
       if (open.length) paragraphs.push(`${open.length} dispute${open.length !== 1 ? 's need' : ' needs'} a decision — each holds its charge in limbo until you respond.`);
       else paragraphs.push('No disputes are awaiting a decision.');
       if (resolved.length) paragraphs.push(`Resolved history: ${resolved.join('; ')}.`);
+      // Reported, never folded. Calling these resolved would settle a charge
+      // nobody decided; calling them open would invent work.
+      if (unrecognised.length) paragraphs.push(
+        `${unrecognised.length} dispute${unrecognised.length === 1 ? ' carries a status' : 's carry statuses'} MainStreet does not recognise, so ${unrecognised.length === 1 ? 'it is' : 'they are'} counted as neither open nor resolved: ${unrecognised.join('; ')}.`);
       return {
         heading: 'Dispute status', paragraphs, bullets: open, citations: citations.slice(0, 4),
         actions: scoped.slice(0, 2).map(_actOpenProperty),

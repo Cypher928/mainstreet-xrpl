@@ -13973,6 +13973,52 @@ let lastTenants  = []; // [{ name, excludedCategories }]
 const disputes   = []; // [{ id, tenantName, invoiceId, vendor, category, tenantShare, reason, timestamp, status, resolution, resolvedAt, hash, disputeType, severity, reviewerNote, leaseClause, history[] }]
 let nextDisputeId = 0;
 
+/**
+ * M7, finished: one answer to "is this dispute still open?" inside script.js.
+ *
+ * dispute-status.js derived that answer from the lifecycle table in 2025 and
+ * three consumers adopted it — property-workspace.js, tenant-space.js and
+ * get_disputes. script.js did not, and kept ~17 copies of `status === 'open'`.
+ * The manager-visible result, on the demo property, with two disputes:
+ *
+ *     Overview (DisputeStatus)        2 open disputes
+ *     CAM list (status === 'open')    1 open · 1 filed under "Resolved"
+ *     Selectors.buildPropMeta         openDisputes: 1
+ *
+ * The one in "Resolved" was `docs_requested`: the landlord asked the tenant for
+ * documents and nobody has decided anything. The lifecycle table says it can
+ * still move to accepted or rejected, so it is open, and calling it resolved
+ * tells a manager a charge is settled when it is waiting on them.
+ *
+ * These delegate rather than restate — a fourth spelling of the same rule is
+ * how the first three diverged. The literal fallback matches
+ * property-workspace.js's, for a browser that failed to load the module.
+ *
+ * NOT for gating a transition. `_dwResolveWithNote` and the decision buttons
+ * ask whether a SPECIFIC action is allowed, which the transition table answers
+ * directly; widening those to "open" would offer Accept on a dispute the table
+ * says cannot take it. Those sites deliberately still read the status.
+ */
+function _disputeIsOpen(d) {
+  const DS = window.DisputeStatus;
+  if (DS && typeof DS.isOpen === 'function') return DS.isOpen(d);
+  return !!d && (d.status === 'open' || d.status === 'docs_requested');
+}
+/** 'open' | 'closed' | 'unknown' — unknown is reported, never folded. */
+function _disputeClass(d) {
+  const DS = window.DisputeStatus;
+  if (DS && typeof DS.classify === 'function') return DS.classify(d && d.status);
+  return _disputeIsOpen(d) ? 'open'
+       : (d && ['accepted', 'rejected', 'resolved'].includes(d.status)) ? 'closed' : 'unknown';
+}
+/** Open disputes in a list, optionally scoped to one tenant. */
+function _openDisputes(list, tenantName) {
+  const arr = Array.isArray(list) ? list : [];
+  return arr.filter(d => d && _disputeIsOpen(d) &&
+    (tenantName == null || d.tenantName === tenantName));
+}
+window._disputeIsOpen = _disputeIsOpen;
+
 // ─── Activity Log ─────────────────────────────────────────────────────────────
 const activityLog = []; // { type, title, detail, severity, timestamp, actor, relatedEntity, financialImpact }
 
@@ -14152,7 +14198,7 @@ function checkIntegrity(prop) {
   }
 
   // 7. Open disputes with no resolution path
-  const openDisps = disps.filter(d => d.status === 'open');
+  const openDisps = _openDisputes(disps);
   if (openDisps.length) {
     issues.push({ type: 'open_disputes', level: 'warning', message: `${openDisps.length} open dispute${openDisps.length > 1 ? 's' : ''} require resolution.` });
   }
@@ -14862,7 +14908,7 @@ async function submitDispute(rowId, tenantName, invoiceId, vendor, category, ten
   // Patch tenant portal card dispute chip if visible (tenant mode)
   const _tenantChip = document.querySelector('.tp-property-meta .tp-meta-item.tp-dispute-count--open, .tp-property-meta .tp-meta-item[class*="dispute"]');
   if (_tenantChip) {
-    const _oc = disputes.filter(d => d.status === 'open').length;
+    const _oc = _openDisputes(disputes).length;
     _tenantChip.textContent = `${_oc} open dispute${_oc !== 1 ? 's' : ''}`;
     _tenantChip.classList.add('tp-dispute-count--open');
   }
@@ -14905,8 +14951,19 @@ function renderOpenDisputes() {
   section.style.display = 'block';
   wrap.style.display = 'block';
 
-  const openList     = disputes.filter(d => d.status === 'open');
-  const resolvedList = disputes.filter(d => d.status !== 'open');
+  // THREE GROUPS, BECAUSE THERE ARE THREE ANSWERS.
+  //
+  // This was `=== 'open'` and `!== 'open'`, so a docs_requested dispute — open
+  // by the lifecycle table, waiting on the landlord — was printed under
+  // "🟢 Resolved Disputes" while the Overview panel counted it as open. The
+  // `!== 'open'` half also swept up any status the machine has never heard of
+  // and called it resolved, which is the reclassification dispute-status.js
+  // exists to refuse.
+  const openList     = disputes.filter(d => _disputeClass(d) === 'open');
+  const resolvedList = disputes.filter(d => _disputeClass(d) === 'closed');
+  const unknownList  = disputes.filter(d => _disputeClass(d) === 'unknown');
+  // The label beside this counter reads "Disputes Resolved", and now only
+  // decided disputes reach it.
   document.getElementById('resolvedCount').textContent = resolvedList.length;
 
   function fmtTs(iso) {
@@ -14915,24 +14972,37 @@ function renderOpenDisputes() {
   }
 
   function renderCard(d) {
-    const isResolved = d.status !== 'open';
+    const klass      = _disputeClass(d);
+    const isResolved = klass === 'closed';
+    // WHICH DECISIONS ARE STILL AVAILABLE — FROM THE TABLE, NOT FROM A GUESS.
+    //
+    // The card branched on `status !== 'open'`, so a docs_requested dispute got
+    // a badge and no controls: the manager could not accept or reject it from
+    // the screen that listed it, even though DISPUTE_TRANSITIONS says both are
+    // permitted and resolveDispute() will honour them. Reading the same table
+    // the engine enforces means the card cannot offer a decision the engine
+    // would refuse, and cannot withhold one it would accept.
+    const nextStates = DISPUTE_TRANSITIONS[d.status] || [];
     const docHtml = d.docName
       ? `<div style="font-size:0.75rem;color:var(--c-4ade80);margin:4px 0 0;font-family:'DM Mono',monospace;">📎 ${esc(d.docName)}</div>`
       : '';
 
     let actionsHtml = '';
-    if (isResolved) {
+    if (isResolved || klass === 'unknown') {
       const label      = d.status === 'accepted' ? '✅ Accepted'
                        : d.status === 'rejected' ? '❌ Rejected'
-                       : '📄 Docs Requested';
+                       : klass === 'unknown' ? `❔ ${esc(String(d.status || 'No status recorded'))}`
+                       : '✔️ Resolved';
       const statusWord = d.status === 'accepted' ? 'Accepted'
                        : d.status === 'rejected' ? 'Rejected' : 'Resolved';
       const badgeClass = d.status === 'rejected' ? 'resolved-badge rejected'
-                       : d.status === 'docs_requested' ? 'resolved-badge docs'
+                       : klass === 'unknown' ? 'resolved-badge docs'
                        : 'resolved-badge';
       actionsHtml = `
         <div class="${badgeClass}">${label}</div>
-        ${d.resolvedAt ? `<div class="d-resolved-ts">${statusWord} · ${fmtTs(d.resolvedAt)}</div>` : ''}
+        ${klass === 'unknown'
+          ? '<div class="d-resolved-ts">MainStreet does not recognise this status, so it is not counted as open or as resolved.</div>'
+          : (d.resolvedAt ? `<div class="d-resolved-ts">${statusWord} · ${fmtTs(d.resolvedAt)}</div>` : '')}
         ${d.hash ? `<div class="onchain-record">
           <div class="oc-label">Audit Hash</div>
           <div class="oc-hash">${d.hash}</div>
@@ -14940,11 +15010,16 @@ function renderOpenDisputes() {
         </div>` : ''}`;
     } else {
       actionsHtml = `
+        ${d.status === 'docs_requested'
+          ? `<div class="resolved-badge docs">📄 Docs Requested</div>${
+              d.resolvedAt ? `<div class="d-resolved-ts">Requested · ${fmtTs(d.resolvedAt)}</div>` : ''}`
+          : ''}
         <div class="d-actions">
-          <button class="d-res-btn accept" onclick="resolveDispute(${d.id},'accepted')">✅ Accept</button>
-          <button class="d-res-btn reject" onclick="resolveDispute(${d.id},'rejected')">❌ Reject</button>
-          <button class="d-res-btn docs"   onclick="showDocsRequest(${d.id})">📄 Request Documentation</button>
+          ${nextStates.includes('accepted') ? `<button class="d-res-btn accept" onclick="resolveDispute(${d.id},'accepted')">✅ Accept</button>` : ''}
+          ${nextStates.includes('rejected') ? `<button class="d-res-btn reject" onclick="resolveDispute(${d.id},'rejected')">❌ Reject</button>` : ''}
+          ${nextStates.includes('docs_requested') ? `<button class="d-res-btn docs"   onclick="showDocsRequest(${d.id})">📄 Request Documentation</button>` : ''}
         </div>
+        ${nextStates.includes('docs_requested') ? `
         <div id="docs-req-${d.id}" style="display:none;margin-top:8px;padding:10px 12px;background:rgba(201,151,58,0.07);border:1px solid rgba(201,151,58,0.2);border-radius:8px;">
           <span class="dispute-doc-label" style="color:var(--c-c9973a);">Attach landlord documentation for this dispute:</span>
           <input type="file" id="docs-file-${d.id}" class="dispute-doc-input"
@@ -14954,7 +15029,7 @@ function renderOpenDisputes() {
             <button class="warn-btn add" onclick="confirmDocsRequest(${d.id})">Submit &amp; Resolve</button>
             <button class="warn-btn dismiss" onclick="document.getElementById('docs-req-${d.id}').style.display='none'">Cancel</button>
           </div>
-        </div>`;
+        </div>` : ''}`;
     }
 
     const typeLabel = d.disputeType && _DISPUTE_TYPES[d.disputeType] ? `<span class="d-type-chip">${_DISPUTE_TYPES[d.disputeType].label}</span>` : '';
@@ -14979,13 +15054,21 @@ function renderOpenDisputes() {
     html += `<div class="disputes-heading disputes-resolved-head">&#x1F7E2; Resolved Disputes</div>`;
     html += resolvedList.map(renderCard).join('');
   }
+  // A status the lifecycle has never heard of is neither open nor resolved, and
+  // saying so is the whole reason tally() reports unknowns separately. Hiding
+  // this group would put those disputes nowhere, which is worse than the
+  // miscategorisation it replaces.
+  if (unknownList.length) {
+    html += `<div class="disputes-heading disputes-unknown-head">&#x2753; Unrecognised status &mdash; not counted as open or resolved</div>`;
+    html += unknownList.map(renderCard).join('');
+  }
   list.innerHTML = html;
 }
 
 // Updates all live dispute count surfaces from the canonical disputes[] array.
 // Call after any mutation to disputes[] (submit, resolve).
 function _refreshDisputeCountUI() {
-  const openCount = disputes.filter(d => d.status === 'open').length;
+  const openCount = _openDisputes(disputes).length;
   const pKpi = document.getElementById('pKpiDisputes');
   if (pKpi) {
     pKpi.textContent = openCount;
@@ -15000,7 +15083,7 @@ function _refreshDisputeCountUI() {
 function _refreshTenantDisputeBadge(tenantName) {
   if (!tenantName) return;
   const dc = disputes.filter(d => d.tenantName === tenantName).length;
-  const oc = disputes.filter(d => d.tenantName === tenantName && d.status === 'open').length;
+  const oc = _openDisputes(disputes, tenantName).length;
   const row = document.querySelector(`tr[data-tenant-name="${CSS.escape(tenantName)}"]`);
   if (!row) return;
   const td = row.cells[3];
@@ -15143,6 +15226,15 @@ function _dwRenderAll(disputeId) {
 
   const typeInfo = _DISPUTE_TYPES[d.disputeType] || null;
   const sevInfo  = _DISPUTE_SEV[d.severity || 'medium'] || _DISPUTE_SEV.medium;
+  // DELIBERATELY NARROW, AND NOT A COUNT.
+  //
+  // This gates whether the dispute is still EDITABLE — classify, note, clause —
+  // not whether it is open. A docs_requested dispute IS open, and the panel
+  // says so in its own words ("Documentation requested — decide when it
+  // arrives"); what it withholds is re-classification while the landlord waits
+  // on the tenant, which is an existing product rule and not this slice's to
+  // change. The decisions themselves come from the table on the next line, so
+  // an open dispute is never left without the actions it is entitled to.
   const isOpen   = d.status === 'open';
   // Which decisions are still available, straight from the lifecycle table, so
   // the panel and the engine can never disagree about what is allowed.
@@ -15321,7 +15413,16 @@ function _dwSaveLeaseClause(disputeId) {
 
 async function _dwResolveWithNote(disputeId, resolution) {
   const d    = disputes.find(x => x.id === disputeId);
-  if (!d || d.status !== 'open') return;
+  // A DEAD CONTROL, FROM THE SAME NARROW READING.
+  //
+  // The panel above renders Accept and Reject from DISPUTE_TRANSITIONS, so a
+  // docs_requested dispute shows both — and this guard then dropped the click
+  // in silence, because the status was not literally 'open'. Gate on the same
+  // table resolveDispute() enforces: a decision the panel offers now lands,
+  // and one it never offers is still refused.
+  if (!d) return;
+  const _allowed = DISPUTE_TRANSITIONS[d.status] || [];
+  if (!_allowed.includes(resolution)) return;
   const note = (document.getElementById(`dwResolveNote-${disputeId}`)?.value || '').trim();
   if (note) {
     if (!d.history) d.history = [];
@@ -16158,7 +16259,7 @@ function buildAuditNarrative() {
   const camYear     = getCamYear() || new Date().getFullYear();
   const total       = lastTotal || 0;
   const tenantCount = lastResults.length;
-  const openDisputes = disputes.filter(d => d.status === 'open');
+  const openDisputes = _openDisputes(disputes);
 
   // ── Risk Level ────────────────────────────────────────────────────────────
   let riskLevel;
@@ -17785,7 +17886,7 @@ function generateMasterReport() {
     return disputes.filter(d => d.tenantName === tenantName).length;
   }
   function openDisputeCount(tenantName) {
-    return disputes.filter(d => d.tenantName === tenantName && d.status === 'open').length;
+    return _openDisputes(disputes, tenantName).length;
   }
 
   const totalBilled = lastResults.reduce((s, r) => s + r.allocatedAmount, 0);
@@ -17798,7 +17899,7 @@ function generateMasterReport() {
     const scores = [conf.vendorName, conf.amount, conf.category].filter(s => s != null);
     const minScore = scores.length ? Math.min(...scores) : 0;
     const flagged = minScore < 90 || inv.category === 'other' || !inv.invoiceDate;
-    const openDispute = disputes.some(d => d.vendor === inv.vendorName && d.status === 'open');
+    const openDispute = disputes.some(d => d.vendor === inv.vendorName && _disputeIsOpen(d));
     if (openDispute) riskRed++;
     else if (flagged) riskYellow++;
     else riskGreen++;
@@ -18038,7 +18139,7 @@ function renderReportTenantExpansion(tr, tenantName) {
   const recon = lastResults.find(r => r.name === tenantName) || null;
   const td    = tenantData.find(t => t && t.tenant_name === tenantName) || null;
   const dc    = disputes.filter(d => d.tenantName === tenantName).length;
-  const oc    = disputes.filter(d => d.tenantName === tenantName && d.status === 'open').length;
+  const oc    = _openDisputes(disputes, tenantName).length;
 
   const _v = (val) =>
     (val !== null && val !== undefined && String(val).trim() !== '') ? esc(String(val)) : null;
@@ -18401,7 +18502,7 @@ function generateLandlordExport() {
   const propName   = lastPropName || 'Property';
   const now        = new Date().toLocaleDateString('en-US', { year: 'numeric', month: 'long', day: 'numeric' });
   const period     = (getCamYear() || new Date().getFullYear()) + ' CAM Year';
-  const openD      = disputes.filter(d => d.status === 'open');
+  const openD      = _openDisputes(disputes);
   const disputeExposure = openD.reduce((s, d) => s + (parseFloat(d.tenantShare) || 0), 0);
 
   // THE SAME FINDING SET AS THE AUDIT EXCEPTION SUMMARY.
@@ -19657,11 +19758,19 @@ function generateTenantStatement(tenantName, opts = {}) {
   const tenantDisputes = disputes.filter(d => d.tenantName === tenantName);
   const disputeRows = tenantDisputes.length
     ? tenantDisputes.map(d => {
+        // The LABEL names the status the dispute actually holds; the PILL
+        // colours it by whether it is still open, which is the question a
+        // landlord reading a statement is asking. Docs Requested is open, so it
+        // no longer renders in the closed colour — and a status the lifecycle
+        // does not know is named rather than printed as "Docs Requested",
+        // which is what the trailing `else` used to do to it.
         const statusLabel = d.status === 'open' ? 'Open'
           : d.status === 'accepted' ? 'Accepted'
           : d.status === 'rejected' ? 'Rejected'
-          : 'Docs Requested';
-        const pill = `<span class="rpt-pill ${d.status === 'open' ? 'open' : 'closed'}">${statusLabel}</span>`;
+          : d.status === 'docs_requested' ? 'Docs Requested'
+          : d.status === 'resolved' ? 'Resolved'
+          : `Unrecognised (${esc(String(d.status || 'none'))})`;
+        const pill = `<span class="rpt-pill ${_disputeIsOpen(d) ? 'open' : 'closed'}">${statusLabel}</span>`;
         return `<tr>
           <td>${esc(d.vendor)}</td>
           <td>${fmt(d.tenantShare)}</td>
@@ -22347,8 +22456,8 @@ function derivePropertyMetrics(p) {
 
   // ── Dispute stats ─────────────────────────────────────────────────────────
   const disputes_arr    = Array.isArray(p.disputes) ? p.disputes : [];
-  const openDisputes    = disputes_arr.filter(d => d.status === 'open').length;
-  const resolvedDisputes = disputes_arr.filter(d => d.status !== 'open' && d.status != null).length;
+  const openDisputes    = _openDisputes(disputes_arr).length;
+  const resolvedDisputes = disputes_arr.filter(d => _disputeClass(d) === 'closed').length;
 
   // ── Review stats ──────────────────────────────────────────────────────────
   const tenants_arr = Array.isArray(p.tenants) ? p.tenants : [];
@@ -23887,7 +23996,7 @@ async function backToPortfolio() {
         prop.tenantCount  = (prop.tenants || []).length;
         prop.invoiceCount = (prop.invoices || []).length;
       }
-      const openCount   = disputes.filter(d => d.status === 'open').length;
+      const openCount   = _openDisputes(disputes).length;
       prop.openDisputes = openCount;
       prop.status       = openCount > 0      ? 'disputes'
                         : lastResults.length ? 'reconciled'
@@ -23955,7 +24064,7 @@ async function syncPortfolioEntry() {
     prop.totalCAM     = Math.round(lastResults.reduce((s, r) => s + r.allocatedAmount, 0));
   }
 
-  const openCount   = disputes.filter(d => d.status === 'open').length;
+  const openCount   = _openDisputes(disputes).length;
   prop.openDisputes = openCount;
   prop.status       = openCount > 0      ? 'disputes'
                     : lastResults.length ? 'reconciled'
@@ -27361,7 +27470,7 @@ function _renderTenantPropertyView(property) {
   const year       = property.camYear || (hasResults ? (camRec.results[0]?.year ?? null) : null) || '—';
   const statusText = hasResults ? `Reconciliation complete · ${year}` : 'Reconciliation pending';
   const _allDisps  = property.disputes || [];
-  const _openDisps = _allDisps.filter(d => d.status === 'open').length;
+  const _openDisps = _openDisputes(_allDisps).length;
   const _dispChip  = _allDisps.length > 0
     ? `<span class="tp-meta-item${_openDisps > 0 ? ' tp-dispute-count--open' : ''}">${
         _openDisps > 0
